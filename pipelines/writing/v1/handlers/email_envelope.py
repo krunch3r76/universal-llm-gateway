@@ -88,23 +88,30 @@ _PROVIDE_REFUSAL_SCOPE_BOUNDARY = re.compile(
     r"(?:[,;]|\b(?:but|so|because|and|though|although|while)\b)",
     re.I,
 )
-_PROVIDE_REFUSAL_FILLER_DISQUALIFIERS = frozenset(
+_MODAL_NOT_PROVIDE_SINGLE_ADVERBS = frozenset(
     {
-        "because",
-        "but",
-        "decline",
-        "help",
-        "never",
-        "not",
-        "only",
-        "refuse",
-        "see",
-        "so",
-        "think",
-        "unable",
-        "wait",
-        "why",
+        "actually",
+        "always",
+        "currently",
+        "easily",
+        "ever",
+        "feasibly",
+        "honestly",
+        "just",
+        "now",
+        "possibly",
+        "presently",
+        "readily",
+        "really",
+        "reliably",
+        "simply",
+        "today",
+        "yet",
     }
+)
+_COORDINATED_INFINITIVE_BEFORE_PROVIDE = re.compile(
+    r"^(?:commit|agree|promise|undertake|manage|afford)\s+to\s+(?:or|and)$",
+    re.I,
 )
 _NEGATED_PROVIDE_GOVERNANCE = re.compile(
     r"\b(?:no|not|never|unable|decline|declining|without)\b(?:\s+\w+){0,3}\s+\bprovide\b",
@@ -518,16 +525,6 @@ def _pin_segment_has_provide_verb(pin_segment: str) -> bool:
     return "provide" in _TOKEN.findall(norm)
 
 
-def _expand_can_not_provide_window(norm_seg: str, match: re.Match[str]) -> str:
-    window = match.group(0)
-    if not window.startswith("not "):
-        return window
-    prefix = norm_seg[max(0, match.start() - 4) : match.start()]
-    if prefix.endswith("can "):
-        return f"can {window}"
-    return window
-
-
 def _provide_refusal_windows(norm_seg: str) -> list[tuple[int, int, str]]:
     """Collect negator-through-``provide`` spans as ``(start, end, text)`` for validation."""
     windows: list[tuple[int, int, str]] = []
@@ -624,25 +621,45 @@ def _provide_refusal_see_path_genuine(window: str) -> bool:
     return True
 
 
+def _modal_not_provide_adverb_allowed(tok: str) -> bool:
+    """True when one filler token is an allowed adverb before ``provide`` in a modal refusal."""
+    lower = tok.lower()
+    if lower in _MODAL_NOT_PROVIDE_SINGLE_ADVERBS:
+        return True
+    return lower.endswith("ly") and lower not in {"only"}
+
+
 def _modal_not_through_provide_genuine(window: str) -> bool:
-    """True for modal ``not`` … ``provide`` with up to three non-disqualifying filler tokens."""
-    w = window.strip()
-    m = re.match(r"^(can not|could not|will not|would not)\s+(.+)$", w, re.I)
+    """True for ``can not`` … ``provide`` when middle filler matches the closed allowlist."""
+    w = window.strip().lower()
+    if w == "can not provide":
+        return True
+    m = re.match(r"^can not\s+(.+)$", w)
     if not m:
         return False
-    tail = m.group(2)
+    tail = m.group(1)
     pm = _PROVIDE_WORD.search(tail)
     if not pm or pm.end() != len(tail.rstrip()):
         return False
     middle = tail[: pm.start()].strip()
     if "," in middle or ";" in middle:
         return False
-    fillers = _TOKEN.findall(middle.lower())
-    if len(fillers) > 3:
-        return False
-    if set(fillers) & _PROVIDE_REFUSAL_FILLER_DISQUALIFIERS:
-        return False
-    return True
+    if not middle:
+        return True
+    fillers = _TOKEN.findall(middle)
+    if len(fillers) == 1:
+        return _modal_not_provide_adverb_allowed(fillers[0])
+    if _COORDINATED_INFINITIVE_BEFORE_PROVIDE.match(middle):
+        return True
+    if len(fillers) == 4:
+        adverb, verb, to_tok, conj = fillers
+        if to_tok != "to" or conj not in {"or", "and"}:
+            return False
+        coord = " ".join(fillers[1:])
+        return _modal_not_provide_adverb_allowed(
+            adverb
+        ) and bool(_COORDINATED_INFINITIVE_BEFORE_PROVIDE.match(coord))
+    return False
 
 
 def _provide_refusal_window_is_genuine(window: str) -> bool:
@@ -666,7 +683,7 @@ def _provide_refusal_window_is_genuine(window: str) -> bool:
         return _provide_refusal_see_path_genuine(w)
     if re.match(r"^(?:will|would)\s+not\s+provide\b", w):
         return False
-    if re.match(r"^(?:can not|could not|will not|would not)\b", w):
+    if re.match(r"^can not\b", w):
         return _modal_not_through_provide_genuine(w)
     if re.match(r"^not provide\b", w):
         return False
@@ -676,7 +693,11 @@ def _provide_refusal_window_is_genuine(window: str) -> bool:
 
 
 def _draft_segment_satisfies_provide_refusal(draft_segment: str) -> bool:
-    """True when normalized draft segment contains a genuine supply refusal of ``provide``."""
+    """True when normalized draft segment contains a genuine supply refusal of ``provide``.
+
+    Outer negator windows that fail genuineness veto nested inner windows in the
+    same ``provide`` span (fail-closed over same-clause inner matches).
+    """
     norm_seg = normalize_text_for_token_match(draft_segment).lower()
     if re.search(r"\b(?:decline|declining)\b", norm_seg):
         return True
