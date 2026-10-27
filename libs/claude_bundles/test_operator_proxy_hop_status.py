@@ -243,9 +243,11 @@ def test_first_acts_are_numbered_in_order() -> None:
     assert block.index("2.") < block.index("8. Act")
     assert "## Induction (K44)" in out
     assert (
-        "induction open: greet me, volunteer what the handoff underweights, then answer my "
-        "questions and follow-ups citing a file or turn. We continue until we both agree I am "
-        "strongly oriented; then I send the stand-down and you detach."
+        "induction open: greet me, then walk what is outstanding before anything else — open "
+        "decisions, acts in flight, promises to Kaywan, and anything you said in chat that is "
+        "not yet written in the handoff or on the bus; then answer my questions and follow-ups "
+        "citing a file or turn. We continue until we both agree I am strongly oriented; then I "
+        "send the stand-down and you detach."
     ) in out
     assert (
         "no cap on follow-ups; the 3-question limit covers the successor's opening questions only"
