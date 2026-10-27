@@ -29,18 +29,15 @@ afterEach(() => {
 });
 
 describe("fix2 poll gap N4", () => {
-  it("setPollGapForTest rejects 0, negative, and NaN", () => {
-    for (const bad of [0, -1, Number.NaN]) {
+  it("setPollGapForTest rejects 0, negative, NaN, and Infinity", () => {
+    for (const bad of [0, -1, Number.NaN, Number.POSITIVE_INFINITY]) {
       assert.throws(
         () => setPollGapForTest(bad),
-        /positive finite number, Infinity, or null/,
+        /positive finite number or null/,
       );
     }
     setPollGapForTest(10);
-    resetPollGapForTest();
-    setPollGapForTest(null);
-    setPollGapForTest(Number.POSITIVE_INFINITY);
-    assert.equal(pollGapMs(), Number.POSITIVE_INFINITY);
+    assert.equal(pollGapMs(), 10);
     resetPollGapForTest();
     assert.equal(pollGapMs(), 5000);
   });

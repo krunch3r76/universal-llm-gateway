@@ -3,8 +3,8 @@ import { describe, it } from "node:test";
 
 import agentConfig from "../bot/agent.js";
 
-describe("impresario harness Read allowlist (stage 9 N1)", () => {
-  it("agent tools allowlist is exactly Read for workspace preload files", () => {
-    assert.deepEqual(agentConfig.tools, ["read"]);
+describe("impresario harness tools (R2)", () => {
+  it("does not expose harness Read; workspace reads use read_workspace server tool", () => {
+    assert.deepEqual(agentConfig.tools, []);
   });
 });

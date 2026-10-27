@@ -1,10 +1,9 @@
 import fs from "node:fs";
 import path from "node:path";
 
-import { defineTool } from "@grok/agent-sdk/tools";
+import { defineTool, type ToolContext } from "@grok/agent-sdk/tools";
 import { z } from "zod";
 
-import { gateToolCall } from "../lib/tool-call-cap.js";
 import {
   busMailbox,
   IMPRESARIO_MAILBOX,
@@ -297,13 +296,18 @@ export default defineTool({
     sidecar_content: z.string().max(256_000).optional(),
   }),
   effect: "write",
-  dryRunResult: (input) => {
-    const workspaceDir =
-      process.env.ULG_IMPRESARIO_DRY_RUN_WORKSPACE?.trim() ?? "";
+  dryRunResult: (input, ctx?: Pick<ToolContext, "workspaceDir">) => {
+    const workspaceDir = ctx?.workspaceDir?.trim();
+    if (!workspaceDir) {
+      return {
+        posted: false,
+        error: "bus_send dry-run requires ctx.workspaceDir",
+        workspaceDir: undefined,
+      };
+    }
     return busSendDryRunResult(input, workspaceDir);
   },
   async execute(input, ctx) {
-    return gateToolCall(ctx, async () => {
       const resolvedFields = resolveBusSendInput({
         subject: input.subject,
         thread: input.thread,
@@ -355,6 +359,5 @@ export default defineTool({
         turn_number: ack.turn_number,
         turn_id: ack.turn_id,
       };
-    });
   },
 });

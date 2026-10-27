@@ -2,7 +2,6 @@ import { defineTool } from "@grok/agent-sdk/tools";
 import { z } from "zod";
 
 import { closeoutFromFixture, fixturesEnabled } from "../lib/bus-fixtures.js";
-import { gateToolCall } from "../lib/tool-call-cap.js";
 import {
   callFs,
   closeoutUri,
@@ -20,18 +19,16 @@ export default defineTool({
   }),
   effect: "read",
   async execute({ dispatch_id }, ctx) {
-    return gateToolCall(ctx, async () => {
-      if (fixturesEnabled()) {
-        return closeoutFromFixture(dispatch_id);
-      }
-      const path = closeoutUri(dispatch_id);
-      await callFs(ctx, { op: "md_list", path });
-      const read = (await callFs(ctx, {
-        op: "read",
-        path,
-        limit: 60,
-      })) as { content?: string };
-      return parseCloseoutExcerpt(read.content ?? "");
-    });
+    if (fixturesEnabled()) {
+      return closeoutFromFixture(dispatch_id);
+    }
+    const path = closeoutUri(dispatch_id);
+    await callFs(ctx, { op: "md_list", path });
+    const read = (await callFs(ctx, {
+      op: "read",
+      path,
+      limit: 60,
+    })) as { content?: string };
+    return parseCloseoutExcerpt(read.content ?? "");
   },
 });

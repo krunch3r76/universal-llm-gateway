@@ -114,12 +114,10 @@ let pollGapOverride: number | null = null;
 
 export function setPollGapForTest(ms: number | null): void {
   if (ms !== null) {
-    const ok =
-      ms === Number.POSITIVE_INFINITY ||
-      (Number.isFinite(ms) && ms > 0);
+    const ok = Number.isFinite(ms) && ms > 0;
     if (!ok) {
       throw new Error(
-        "setPollGapForTest: gap must be a positive finite number, Infinity, or null",
+        "setPollGapForTest: gap must be a positive finite number or null",
       );
     }
   }

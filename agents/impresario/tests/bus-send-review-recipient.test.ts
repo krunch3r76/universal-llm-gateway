@@ -204,6 +204,32 @@ describe("bus_send thread validation (stage 8)", () => {
     assert.equal(out.workspaceDir, workspaceDir);
     assert.equal(out.thread, "20901");
   });
+
+  it("busSendTool.dryRunResult uses ctx.workspaceDir and turn.json thread", () => {
+    fs.writeFileSync(
+      path.join(workspaceDir, "turn.json"),
+      JSON.stringify({ thread: "20901" }),
+    );
+    type DryRunFn = (
+      input: { subject: string; thread?: string },
+      ctx: { workspaceDir: string },
+    ) => ReturnType<typeof busSendDryRunResult>;
+    const dryRun = busSendTool.dryRunResult as DryRunFn;
+    const out = dryRun(
+      { subject: "REQUEST|review|todo:reaper-amendment" },
+      { workspaceDir },
+    );
+    assert.equal(out.workspaceDir, workspaceDir);
+    assert.equal(out.thread, "20901");
+    assert.equal(out.posted, false);
+    const missingCtx = busSendTool.dryRunResult as (
+      input: { subject: string },
+      ctx?: { workspaceDir?: string },
+    ) => { posted: boolean; error?: string };
+    const refused = missingCtx({ subject: "REQUEST|review|todo:x" });
+    assert.equal(refused.posted, false);
+    assert.match(String(refused.error), /workspaceDir/);
+  });
 });
 
 describe("bus_send posted ack (stage 9 N2)", () => {
