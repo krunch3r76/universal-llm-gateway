@@ -1561,6 +1561,31 @@ def test_ordinary_word_ms_suffix_does_not_block_sentence_split() -> None:
     assert rows[1]["quoted_span"] == "What time works?"
 
 
+def test_lowercase_ms_abbreviation_splits_sentences() -> None:
+    rows = source_obligations.fallback_obligations("We use ms. timing. Ok?")
+    assert len(rows) == 2
+    assert rows[0]["quoted_span"] == "We use ms. timing."
+    assert rows[1]["quoted_span"] == "Ok?"
+
+
+def test_lowercase_dr_street_abbreviation_splits_sentences() -> None:
+    rows = source_obligations.fallback_obligations(
+        "The lab is on Elm dr. Next, turn left."
+    )
+    assert len(rows) == 2
+    assert rows[0]["quoted_span"] == "The lab is on Elm dr."
+    assert rows[1]["quoted_span"] == "Next, turn left."
+
+
+def test_capitalized_honorifics_remain_single_span() -> None:
+    ms_rows = source_obligations.fallback_obligations("Please contact Ms. Jones.")
+    assert len(ms_rows) == 1
+    assert ms_rows[0]["quoted_span"] == "Please contact Ms. Jones."
+    mr_rows = source_obligations.fallback_obligations("Thank you, Mr. Smith.")
+    assert len(mr_rows) == 1
+    assert mr_rows[0]["quoted_span"] == "Thank you, Mr. Smith."
+
+
 @pytest.mark.parametrize(
     "inbound",
     (
