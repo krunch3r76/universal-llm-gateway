@@ -14,6 +14,8 @@ const section = z.enum([
   "open_stops",
   "rulings",
   "log",
+  "worker",
+  "stage",
 ]);
 
 export default defineTool({

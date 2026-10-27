@@ -1,0 +1,24 @@
+{
+  "scenario": "stage12-request-changes",
+  "turn": {
+    "id": 1,
+    "thread": "15851",
+    "turn_number": 4001,
+    "from": "grok-bot-gc1",
+    "to": "impresario-sdk",
+    "subject": "VERDICT|review todo:agent-sdk-impresario-probe",
+    "body": "VERDICT: REQUEST_CHANGES range=c0fcf51..fcd887f head=fcd887f\n\nBLOCKING\n- B1 agents/impresario/bot/lib/dispatch.ts:230 missing reuse_thread when resume_of set.\n- B2 agents/impresario/bot/tools/commission.ts:57 no score resume wiring.",
+    "work_key": "todo:agent-sdk-impresario-probe",
+    "status": "open"
+  },
+  "score_md": "## state\nreview_requested · head fcd887f · review 15851#4000\n\n## dispatches\n\n## open_stops\n\n## rulings\n\n## log\n",
+  "scores": {
+    "todo:agent-sdk-impresario-probe": "## state\nreview_requested · head fcd887f · review 15851#4000\n\n## dispatches\n\n## worker\ndispatch_id: parent-disp-20996\nthread_id: 20996\nexecution_id: exec-parent\nstate: completed\n\n## stage\nverdict_at: 2026-10-27T21:00:00.000Z\nverdict: REQUEST_CHANGES\n\n## open_stops\n\n## rulings\n\n## log\n"
+  },
+  "closeouts": {},
+  "ledger": {
+    "todo:agent-sdk-impresario-probe": {
+      "dispatches": []
+    }
+  }
+}
