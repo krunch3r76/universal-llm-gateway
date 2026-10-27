@@ -6,6 +6,7 @@ import {
   SCORE_READ_LINE_LIMIT,
   windowScoreContent,
 } from "../lib/score-guards.js";
+import { gateToolCall } from "../lib/tool-call-cap.js";
 import { callFs } from "../lib/ulg.js";
 import { WORK_KEY_ZOD_REGEX } from "../lib/work-key.js";
 
@@ -17,21 +18,23 @@ export default defineTool({
   }),
   effect: "read",
   async execute({ work_key }, ctx) {
-    const resolved = resolveScoreUri(work_key);
-    if (!resolved.ok) {
-      return resolved;
-    }
-    const path = resolved.uri;
-    const result = (await callFs(ctx, {
-      op: "read",
-      path,
-      limit: SCORE_READ_LINE_LIMIT,
-    })) as { content?: string };
-    const raw = result.content ?? "";
-    const { content, truncated } = windowScoreContent(
-      raw,
-      SCORE_READ_LINE_LIMIT,
-    );
-    return { content, truncated, path };
+    return gateToolCall(ctx, async () => {
+      const resolved = resolveScoreUri(work_key);
+      if (!resolved.ok) {
+        return resolved;
+      }
+      const path = resolved.uri;
+      const result = (await callFs(ctx, {
+        op: "read",
+        path,
+        limit: SCORE_READ_LINE_LIMIT,
+      })) as { content?: string };
+      const raw = result.content ?? "";
+      const { content, truncated } = windowScoreContent(
+        raw,
+        SCORE_READ_LINE_LIMIT,
+      );
+      return { content, truncated, path };
+    });
   },
 });

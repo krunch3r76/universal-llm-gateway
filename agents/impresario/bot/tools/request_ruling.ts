@@ -1,6 +1,7 @@
 import { defineTool } from "@grok/agent-sdk/tools";
 import { z } from "zod";
 
+import { gateToolCall } from "../lib/tool-call-cap.js";
 import {
   callAgentBus,
   IMPRESARIO_LANE,
@@ -26,6 +27,7 @@ export default defineTool({
     posted: false,
   }),
   async execute(input, ctx) {
+    return gateToolCall(ctx, async () => {
     const subject = `QUESTION|${input.work_key}`;
     const body = truncateBody(
       `${input.question}\n\nrecommended_default: ${input.recommended_default}`,
@@ -59,5 +61,6 @@ export default defineTool({
       work_key: input.work_key,
       posted: !isEvalOrFixture(ctx),
     };
+    });
   },
 });

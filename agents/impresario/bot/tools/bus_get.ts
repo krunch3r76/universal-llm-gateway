@@ -1,6 +1,7 @@
 import { defineTool } from "@grok/agent-sdk/tools";
 import { z } from "zod";
 
+import { gateToolCall } from "../lib/tool-call-cap.js";
 import { callAgentBusRead, truncateBody } from "../lib/ulg.js";
 
 export default defineTool({
@@ -12,14 +13,16 @@ export default defineTool({
   }),
   effect: "read",
   async execute({ thread, turn_number }, ctx) {
-    const result = (await callAgentBusRead(ctx, "get", {
-      thread,
-      turn_number,
-      projection: "compact",
-    })) as { turn?: { body?: string } };
-    if (result.turn?.body) {
-      result.turn.body = truncateBody(result.turn.body);
-    }
-    return result;
+    return gateToolCall(ctx, async () => {
+      const result = (await callAgentBusRead(ctx, "get", {
+        thread,
+        turn_number,
+        projection: "compact",
+      })) as { turn?: { body?: string } };
+      if (result.turn?.body) {
+        result.turn.body = truncateBody(result.turn.body);
+      }
+      return result;
+    });
   },
 });
