@@ -127,7 +127,13 @@ def normalize_temporal_monthly_synonyms(text: str) -> str:
 
 
 def normalize_supply_verbs(text: str) -> str:
-    """Map delivery/supply verbs to ``provide`` for restate token overlap."""
+    """Map delivery/supply verbs to ``provide`` for non-verbatim restate overlap.
+
+    Equivalence ``provide`` ↔ ``send`` / ``share`` / ``give`` / ``submit`` applies
+    in ``normalize_text_for_token_match`` for restate token sets and
+    ``provenance_check`` anchor overlap. ``_restate_negation_guard`` still requires
+    refusal polarity on every draft segment whose tokens cover those content anchors.
+    """
     return _SUPPLY_VERBS.sub("provide", text)
 
 
@@ -368,13 +374,8 @@ def _restate_text_segments(text: str) -> list[str]:
     return segments if segments else [text]
 
 
-def _restate_negation_guard(
-    draft_text: str,
-    pin_excerpt: str,
-    anchors: set[str],
-) -> bool:
-    """Require negation in the draft span that carries the pin's content anchors."""
-    del anchors
+def _restate_negation_guard(draft_text: str, pin_excerpt: str) -> bool:
+    """Require negation on every draft span that carries a refusing pin's content."""
     norm_pin = normalize_text_for_token_match(pin_excerpt)
     pin_tokens = set(_TOKEN.findall(norm_pin.lower())) - _RESTATE_STOPWORDS
     if not _negation_tokens(pin_tokens):
@@ -390,16 +391,15 @@ def _restate_negation_guard(
         )
         if not content_anchors:
             continue
-        found_with_negation = False
+        matched_any = False
         for draft_segment in draft_segments:
             draft_segment_tokens = _restate_clause_tokens(draft_segment)
             if not content_anchors <= draft_segment_tokens:
                 continue
-            if _negation_tokens(draft_segment_tokens):
-                found_with_negation = True
-                break
-            return False
-        if not found_with_negation:
+            matched_any = True
+            if not _negation_tokens(draft_segment_tokens):
+                return False
+        if not matched_any:
             return False
     return True
 
@@ -434,15 +434,11 @@ def email_restate_pin_satisfied(
         norm_variant = normalize_text_for_token_match(variant)
         anchors = _restate_anchor_tokens(norm_variant)
         if anchors and anchors <= draft_tokens:
-            if _restate_negation_guard(draft_text, pin_excerpt, anchors):
+            if _restate_negation_guard(draft_text, pin_excerpt):
                 return True
             continue
         if variant.strip().lower() in normalize_email_dashes(draft_text).lower():
-            if _restate_negation_guard(
-                draft_text,
-                pin_excerpt,
-                _restate_anchor_tokens(norm_variant),
-            ):
+            if _restate_negation_guard(draft_text, pin_excerpt):
                 return True
     return False
 

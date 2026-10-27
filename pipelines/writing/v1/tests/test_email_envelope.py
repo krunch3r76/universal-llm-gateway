@@ -22,6 +22,7 @@ if _PKG not in sys.modules:
     _spec.loader.exec_module(_mod)
 
 email_envelope = importlib.import_module("writing_v1_handlers.email_envelope")
+draft_selector = importlib.import_module("writing_v1_handlers.draft_selector")
 provenance = importlib.import_module("writing_v1_handlers.provenance_check")
 
 _gates_path = Path(__file__).resolve().parent / "test_channel_purpose_gates.py"
@@ -175,8 +176,40 @@ def test_email_restate_pin_currently_requires_token_or_right_now_synonym() -> No
             "I don't have standing availability on any day of the week. "
             "My schedule stays full most of the time, so I can send a monthly open calendar."
         ),
+        "My schedule stays full, I don't have open days, so I can send a monthly open calendar.",
+        "Not a problem, I can send a monthly open calendar.",
+        (
+            "I don't have standing availability on any day of the week, "
+            "but I can send a monthly open calendar."
+        ),
+        "I can't send a monthly open calendar. I can send a monthly open calendar.",
+        "I can send a monthly open calendar. I can't send a monthly open calendar.",
     ):
         assert not email_envelope.email_restate_pin_satisfied(flipped, pin_provide)
+
+    pin_standing = "I do not have standing availability on any day of the week."
+    assert not email_envelope.email_restate_pin_satisfied(
+        "I don't mind, I have standing availability on any day of the week.",
+        pin_standing,
+    )
+
+
+def test_score_draft_verbatim_required_email_restate_pin() -> None:
+    pin_provide = "I am not able to provide a monthly open calendar."
+    verbatim_pin = [
+        {
+            "pin_id": "P1",
+            "attested": True,
+            "restate": True,
+            "verbatim_required": True,
+            "excerpt": pin_provide,
+        }
+    ]
+    paraphrase = "I can't send a monthly open calendar."
+    assert draft_selector._score_draft(paraphrase, verbatim_pin, channel="email") == 0
+    assert (
+        draft_selector._score_draft(pin_provide, verbatim_pin, channel="email") == 1
+    )
 
 
 def test_email_restate_pin_satisfied_contraction_and_decline_synonyms() -> None:
