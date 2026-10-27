@@ -84,6 +84,19 @@ async function busGetTurn(
   }) as Promise<{ turn?: Record<string, unknown> }>;
 }
 
+/** Per-recipient read_at for turns addressed `to=impresario-sdk`. */
+async function busMarkReadForMailbox(
+  host: HostContext,
+  thread: string,
+  turnNumber: number,
+): Promise<void> {
+  await busCall(host, "mark_read", {
+    thread,
+    through_turn: turnNumber,
+    agent: IMPRESARIO_MAILBOX,
+  });
+}
+
 let pollStopped = false;
 const channelLogger = console;
 
@@ -128,7 +141,7 @@ async function prepareTurn(
   fallbackScore: string,
 ): Promise<PreparedTurn | null> {
   if (await isDelivered(host, thread, turnNumber)) {
-    await busGetTurn(host, thread, turnNumber, true);
+    await busMarkReadForMailbox(host, thread, turnNumber);
     return null;
   }
   const { turn } = await busGetTurn(host, thread, turnNumber, false);
@@ -143,7 +156,7 @@ async function prepareTurn(
   }
   await markDelivered(host, thread, turnNumber);
   if (!shouldStartModelTurn()) {
-    await busGetTurn(host, thread, turnNumber, true);
+    await busMarkReadForMailbox(host, thread, turnNumber);
     await ingestTurnGated(host, thread, turnNumber, channelLogger);
     return null;
   }
@@ -179,7 +192,7 @@ async function deliverPrepared(
     );
   }
   await bumpThreadTurnCount(host, prep.thread);
-  await busGetTurn(host, prep.thread, prep.turnNumber, true);
+  await busMarkReadForMailbox(host, prep.thread, prep.turnNumber);
   return {
     coalesced: session.coalesced,
     continuationToken: session.continuationToken ?? undefined,
