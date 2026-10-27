@@ -16,6 +16,7 @@ import sys
 from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Literal
 
 _REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(_REPO_ROOT) not in sys.path:
@@ -36,8 +37,17 @@ from services.git_integration_worker.cursor_sdk_worktree_live_guard import (  # 
 _GIT_TIMEOUT_S = 60.0
 _PROTECTED_THREAD_IDS = frozenset({"20793", "11767"})
 _AGE_EXCLUSION_S = 48 * 3600
-_DEFAULT_LEDGER_REL = Path("tasks/specs/giw-worktree-reclaim-ledger.jsonl")
+_TRACKED_LEDGER_TEMPLATE_REL = Path("tasks/specs/giw-worktree-reclaim-ledger.jsonl")
+_RUNTIME_LEDGER_REL = Path("tmp/giw/giw-worktree-reclaim-ledger.jsonl")
 _WIP_COMMIT_PREFIX = "wip: pre-reclaim snapshot"
+_WIP_REF_PREFIX = "refs/giw-wip/"
+_RECLAIM_MISMATCH_HINT = (
+    "pass --execute --reclaim-mismatch to reclaim branch-mismatch lanes"
+)
+
+
+class LedgerUnavailableError(Exception):
+    """Ledger could not be read; every lane must be skipped fail-closed."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -48,9 +58,11 @@ class LedgerRow:
     branch_ref: str | None = None
     porcelain_empty: bool | None = None
     wip_commit_sha_or_none: str | None = None
+    wip_ref: str | None = None
     detached_head_or_none: str | None = None
     disposition: str | None = None  # removed | skipped
     reason: str | None = None
+    reclaim_hint: str | None = None
     orphan_lock_string: str | None = None
     locked_worktree_count: int | None = None
     lane_dir_count: int | None = None
@@ -127,8 +139,7 @@ def _orphan_lock_rows(
         )
     locked_blocks = _parse_locked_blocks(proc.stdout)
     lane_dir_paths = {
-        str(path.resolve())
-        for _name, path, _mtime in _list_lane_dirs(lane_root)
+        str(path.resolve()) for _name, path, _mtime in _list_lane_dirs(lane_root)
     }
     orphan_strings: list[str] = []
     for wt_path, lock_str in locked_blocks:
@@ -167,6 +178,10 @@ def _orphan_lock_rows(
     return rows, orphan_strings
 
 
+def _report_ledger_unavailable(exc: Exception) -> None:
+    print(f"ledger_unavailable: {exc.__class__.__name__}", file=sys.stderr)
+
+
 def _live_dispatch_thread_ids() -> set[str]:
     placeholders = ", ".join("?" for _ in _LIVE_LEDGER_STATUSES)
     open_restart = open_restart_park_sql("d")
@@ -179,8 +194,9 @@ def _live_dispatch_thread_ids() -> set[str]:
                 f"WHERE d.status IN ({placeholders}) OR {open_restart}",
                 (*_LIVE_LEDGER_STATUSES, now),
             ).fetchall()
-    except Exception:
-        return ids
+    except Exception as exc:
+        _report_ledger_unavailable(exc)
+        raise LedgerUnavailableError from exc
     for row in rows:
         tid = row["thread_id"]
         if tid:
@@ -188,8 +204,10 @@ def _live_dispatch_thread_ids() -> set[str]:
     return ids
 
 
-def _non_terminal_dispatch_for_thread(thread_id: str) -> tuple[str, str] | None:
-    """Return ``(dispatch_id, status)`` when the lane has a blocking ledger row."""
+def _non_terminal_dispatch_for_thread(
+    thread_id: str,
+) -> tuple[str, str] | None | Literal["ledger_unavailable"]:
+    """Return blocking dispatch, ``None`` when clear, or ``ledger_unavailable``."""
     placeholders = ", ".join("?" for _ in _LIVE_LEDGER_STATUSES)
     open_restart = open_restart_park_sql("d")
     now = datetime.now(UTC).isoformat()
@@ -201,8 +219,9 @@ def _non_terminal_dispatch_for_thread(thread_id: str) -> tuple[str, str] | None:
                 f"ORDER BY d.admitted_at DESC LIMIT 1",
                 (thread_id, *_LIVE_LEDGER_STATUSES, now),
             ).fetchone()
-    except Exception:
-        return None
+    except Exception as exc:
+        _report_ledger_unavailable(exc)
+        return "ledger_unavailable"
     if row is None:
         return None
     return str(row["dispatch_id"]), str(row["status"])
@@ -250,13 +269,30 @@ def _worktree_branch_from_list(source_repo: Path, lane_dir: Path) -> str | None:
     return None
 
 
-def _commit_wip_snapshot(*, lane_dir: Path, lane_name: str) -> str | None:
+def _wip_ref_name(lane_name: str) -> str:
+    return f"{_WIP_REF_PREFIX}{lane_name}"
+
+
+def _commit_wip_snapshot(
+    *,
+    source_repo: Path,
+    lane_dir: Path,
+    lane_name: str,
+) -> tuple[str | None, str | None]:
+    """Commit dirt, pin sha under ``refs/giw-wip/<lane>``; return ``(sha, ref)``."""
     _git("add", "-A", cwd=lane_dir)
     msg = f"{_WIP_COMMIT_PREFIX} {lane_name}"
     proc = _git("commit", "-m", msg, cwd=lane_dir)
     if proc.returncode != 0:
-        return None
-    return _head_sha(lane_dir)
+        return None, None
+    sha = _head_sha(lane_dir)
+    if not sha:
+        return None, None
+    ref = _wip_ref_name(lane_name)
+    update = _git("update-ref", ref, sha, cwd=source_repo)
+    if update.returncode != 0:
+        return sha, None
+    return sha, ref
 
 
 def _remove_worktree(*, source_repo: Path, lane_dir: Path) -> bool:
@@ -279,6 +315,34 @@ def _remove_worktree(*, source_repo: Path, lane_dir: Path) -> bool:
     return proc.returncode == 0
 
 
+def _lane_row(
+    *,
+    lane_name: str,
+    mtime_iso: str,
+    branch_ref: str | None,
+    porcelain_empty: bool,
+    detached_head: str | None,
+    disposition: str,
+    reason: str,
+    wip_sha: str | None = None,
+    wip_ref: str | None = None,
+    reclaim_hint: str | None = None,
+) -> LedgerRow:
+    return LedgerRow(
+        record_type="lane",
+        lane=lane_name,
+        dir_mtime=mtime_iso,
+        branch_ref=branch_ref,
+        porcelain_empty=porcelain_empty,
+        wip_commit_sha_or_none=wip_sha,
+        wip_ref=wip_ref,
+        detached_head_or_none=detached_head,
+        disposition=disposition,
+        reason=reason,
+        reclaim_hint=reclaim_hint,
+    )
+
+
 def _evaluate_lane(
     *,
     lane_name: str,
@@ -287,6 +351,8 @@ def _evaluate_lane(
     source_repo: Path,
     live_threads: set[str],
     execute: bool,
+    reclaim_mismatch: bool,
+    ledger_unavailable: bool,
 ) -> tuple[LedgerRow, str]:
     thread_id = _lane_thread_id(lane_name) or ""
     mtime_iso = datetime.fromtimestamp(mtime, tz=UTC).isoformat()
@@ -295,87 +361,145 @@ def _evaluate_lane(
     if branch_ref is None and detached_head is None:
         branch_ref = _worktree_branch_from_list(source_repo, lane_dir)
 
-    skip_reason: str | None = None
     if thread_id in _PROTECTED_THREAD_IDS:
         skip_reason = f"excluded_protected_lane-{thread_id}"
-    elif thread_id in live_threads:
+        line = f"{lane_name} skipped {skip_reason}"
+        return (
+            _lane_row(
+                lane_name=lane_name,
+                mtime_iso=mtime_iso,
+                branch_ref=branch_ref,
+                porcelain_empty=porcelain_empty,
+                detached_head=detached_head,
+                disposition="skipped",
+                reason=skip_reason,
+            ),
+            line,
+        )
+
+    if ledger_unavailable:
+        skip_reason = "ledger_unavailable"
+        line = f"{lane_name} skipped {skip_reason}"
+        return (
+            _lane_row(
+                lane_name=lane_name,
+                mtime_iso=mtime_iso,
+                branch_ref=branch_ref,
+                porcelain_empty=porcelain_empty,
+                detached_head=detached_head,
+                disposition="skipped",
+                reason=skip_reason,
+            ),
+            line,
+        )
+
+    skip_reason: str | None = None
+    reclaim_hint: str | None = None
+    branch_mismatch = not _branch_contains_head(lane_dir=lane_dir, thread_id=thread_id)
+
+    if thread_id in live_threads:
         skip_reason = f"excluded_live_dispatch thread={thread_id}"
     elif (datetime.now(tz=UTC).timestamp() - mtime) < _AGE_EXCLUSION_S:
         skip_reason = "excluded_dir_mtime_under_48h"
     else:
         blocking = _non_terminal_dispatch_for_thread(thread_id)
-        if blocking is not None:
+        if blocking == "ledger_unavailable":
+            skip_reason = "ledger_unavailable"
+        elif blocking is not None:
             dispatch_id, status = blocking
-            skip_reason = f"ledger_non_terminal dispatch_id={dispatch_id} status={status}"
-        elif not _branch_contains_head(lane_dir=lane_dir, thread_id=thread_id):
+            skip_reason = (
+                f"ledger_non_terminal dispatch_id={dispatch_id} status={status}"
+            )
+        elif branch_mismatch and not (reclaim_mismatch and execute):
             skip_reason = "branch_ref_does_not_contain_head"
+            reclaim_hint = _RECLAIM_MISMATCH_HINT
 
     if skip_reason:
         line = f"{lane_name} skipped {skip_reason}"
-        row = LedgerRow(
-            record_type="lane",
-            lane=lane_name,
-            dir_mtime=mtime_iso,
-            branch_ref=branch_ref,
-            porcelain_empty=porcelain_empty,
-            wip_commit_sha_or_none=None,
-            detached_head_or_none=detached_head,
-            disposition="skipped",
-            reason=skip_reason,
+        return (
+            _lane_row(
+                lane_name=lane_name,
+                mtime_iso=mtime_iso,
+                branch_ref=branch_ref,
+                porcelain_empty=porcelain_empty,
+                detached_head=detached_head,
+                disposition="skipped",
+                reason=skip_reason,
+                reclaim_hint=reclaim_hint,
+            ),
+            line,
         )
-        return row, line
 
     wip_sha: str | None = None
+    wip_ref: str | None = None
     if not porcelain_empty:
         if execute:
-            wip_sha = _commit_wip_snapshot(lane_dir=lane_dir, lane_name=lane_name)
+            wip_sha, wip_ref = _commit_wip_snapshot(
+                source_repo=source_repo,
+                lane_dir=lane_dir,
+                lane_name=lane_name,
+            )
             if wip_sha is None:
                 skip_reason = "wip_commit_failed"
                 line = f"{lane_name} skipped {skip_reason}"
                 return (
-                    LedgerRow(
-                        record_type="lane",
-                        lane=lane_name,
-                        dir_mtime=mtime_iso,
+                    _lane_row(
+                        lane_name=lane_name,
+                        mtime_iso=mtime_iso,
                         branch_ref=branch_ref,
                         porcelain_empty=False,
-                        wip_commit_sha_or_none=None,
-                        detached_head_or_none=detached_head,
+                        detached_head=detached_head,
                         disposition="skipped",
                         reason=skip_reason,
                     ),
                     line,
                 )
+            if wip_ref is None:
+                skip_reason = "wip_ref_create_failed"
+                line = f"{lane_name} skipped {skip_reason}"
+                return (
+                    _lane_row(
+                        lane_name=lane_name,
+                        mtime_iso=mtime_iso,
+                        branch_ref=branch_ref,
+                        porcelain_empty=False,
+                        detached_head=detached_head,
+                        disposition="skipped",
+                        reason=skip_reason,
+                        wip_sha=wip_sha,
+                    ),
+                    line,
+                )
         else:
+            hint = reclaim_hint if branch_mismatch else None
             line = f"{lane_name} would_reclaim dirty=1 porcelain_empty=0"
             return (
-                LedgerRow(
-                    record_type="lane",
-                    lane=lane_name,
-                    dir_mtime=mtime_iso,
+                _lane_row(
+                    lane_name=lane_name,
+                    mtime_iso=mtime_iso,
                     branch_ref=branch_ref,
                     porcelain_empty=False,
-                    wip_commit_sha_or_none=None,
-                    detached_head_or_none=detached_head,
+                    detached_head=detached_head,
                     disposition="skipped",
                     reason="dry_run_dirty_would_wip_then_remove",
+                    reclaim_hint=hint,
                 ),
                 line,
             )
 
     if not execute:
+        hint = reclaim_hint if branch_mismatch else None
         line = f"{lane_name} would_reclaim gates_pass porcelain_empty={int(porcelain_empty)}"
         return (
-            LedgerRow(
-                record_type="lane",
-                lane=lane_name,
-                dir_mtime=mtime_iso,
+            _lane_row(
+                lane_name=lane_name,
+                mtime_iso=mtime_iso,
                 branch_ref=branch_ref,
                 porcelain_empty=porcelain_empty,
-                wip_commit_sha_or_none=wip_sha,
-                detached_head_or_none=detached_head,
+                detached_head=detached_head,
                 disposition="skipped",
                 reason="dry_run_gates_pass",
+                reclaim_hint=hint,
             ),
             line,
         )
@@ -384,32 +508,32 @@ def _evaluate_lane(
         skip_reason = "worktree_remove_failed"
         line = f"{lane_name} skipped {skip_reason}"
         return (
-            LedgerRow(
-                record_type="lane",
-                lane=lane_name,
-                dir_mtime=mtime_iso,
+            _lane_row(
+                lane_name=lane_name,
+                mtime_iso=mtime_iso,
                 branch_ref=branch_ref,
                 porcelain_empty=porcelain_empty,
-                wip_commit_sha_or_none=wip_sha,
-                detached_head_or_none=detached_head,
+                detached_head=detached_head,
                 disposition="skipped",
                 reason=skip_reason,
+                wip_sha=wip_sha,
+                wip_ref=wip_ref,
             ),
             line,
         )
 
     line = f"{lane_name} removed gates_pass"
     return (
-        LedgerRow(
-            record_type="lane",
-            lane=lane_name,
-            dir_mtime=mtime_iso,
+        _lane_row(
+            lane_name=lane_name,
+            mtime_iso=mtime_iso,
             branch_ref=branch_ref,
             porcelain_empty=porcelain_empty,
-            wip_commit_sha_or_none=wip_sha,
-            detached_head_or_none=detached_head,
+            detached_head=detached_head,
             disposition="removed",
             reason="gates_pass",
+            wip_sha=wip_sha,
+            wip_ref=wip_ref,
         ),
         line,
     )
@@ -423,6 +547,7 @@ def _synthetic_skip_row(lane_name: str, reason: str) -> LedgerRow:
         branch_ref=None,
         porcelain_empty=None,
         wip_commit_sha_or_none=None,
+        wip_ref=None,
         detached_head_or_none=None,
         disposition="skipped",
         reason=reason,
@@ -435,10 +560,16 @@ def run_reclaim(
     worktree_root: Path,
     ledger_path: Path,
     execute: bool,
+    reclaim_mismatch: bool = False,
 ) -> list[LedgerRow]:
     lane_root = _repo_lane_root(source_repo, worktree_root)
     rows, _orphans = _orphan_lock_rows(source_repo=source_repo, lane_root=lane_root)
-    live_threads = _live_dispatch_thread_ids()
+    ledger_unavailable = False
+    try:
+        live_threads = _live_dispatch_thread_ids()
+    except LedgerUnavailableError:
+        ledger_unavailable = True
+        live_threads = set()
     seen_lanes: set[str] = set()
 
     for lane_name, lane_dir, mtime in _list_lane_dirs(lane_root):
@@ -450,25 +581,28 @@ def run_reclaim(
             source_repo=source_repo,
             live_threads=live_threads,
             execute=execute,
+            reclaim_mismatch=reclaim_mismatch,
+            ledger_unavailable=ledger_unavailable,
         )
         rows.append(row)
         print(line)
 
-    for tid in sorted(_PROTECTED_THREAD_IDS):
-        lane_name = f"lane-{tid}"
-        if lane_name in seen_lanes:
-            continue
-        reason = f"excluded_protected_lane-{tid}"
-        rows.append(_synthetic_skip_row(lane_name, reason))
-        print(f"{lane_name} skipped {reason}")
+    if not ledger_unavailable:
+        for tid in sorted(_PROTECTED_THREAD_IDS):
+            lane_name = f"lane-{tid}"
+            if lane_name in seen_lanes:
+                continue
+            reason = f"excluded_protected_lane-{tid}"
+            rows.append(_synthetic_skip_row(lane_name, reason))
+            print(f"{lane_name} skipped {reason}")
 
-    for tid in sorted(live_threads):
-        lane_name = f"lane-{tid}"
-        if lane_name in seen_lanes or tid in _PROTECTED_THREAD_IDS:
-            continue
-        reason = f"excluded_live_dispatch thread={tid}"
-        rows.append(_synthetic_skip_row(lane_name, reason))
-        print(f"{lane_name} skipped {reason}")
+        for tid in sorted(live_threads):
+            lane_name = f"lane-{tid}"
+            if lane_name in seen_lanes or tid in _PROTECTED_THREAD_IDS:
+                continue
+            reason = f"excluded_live_dispatch thread={tid}"
+            rows.append(_synthetic_skip_row(lane_name, reason))
+            print(f"{lane_name} skipped {reason}")
 
     ledger_path.parent.mkdir(parents=True, exist_ok=True)
     with ledger_path.open("w", encoding="utf-8") as handle:
@@ -482,7 +616,10 @@ def _default_ledger_path(source_repo: Path) -> Path:
     if override:
         path = Path(override)
         return path if path.is_absolute() else source_repo / path
-    return source_repo / _DEFAULT_LEDGER_REL
+    runtime_dir = os.environ.get("GIT_INTEGRATION_RUNTIME_DIR", "").strip()
+    if runtime_dir:
+        return Path(runtime_dir).expanduser() / "giw-worktree-reclaim-ledger.jsonl"
+    return source_repo / _RUNTIME_LEDGER_REL
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -491,6 +628,11 @@ def main(argv: list[str] | None = None) -> int:
         "--execute",
         action="store_true",
         help="Apply removals after gates pass (default is dry-run only)",
+    )
+    parser.add_argument(
+        "--reclaim-mismatch",
+        action="store_true",
+        help="With --execute, reclaim clean branch-mismatch lanes (R5)",
     )
     args = parser.parse_args(argv)
 
@@ -509,6 +651,7 @@ def main(argv: list[str] | None = None) -> int:
             worktree_root=worktree_root,
             ledger_path=ledger_path,
             execute=args.execute,
+            reclaim_mismatch=args.reclaim_mismatch,
         )
     except RuntimeError as exc:
         print(str(exc), file=sys.stderr)
