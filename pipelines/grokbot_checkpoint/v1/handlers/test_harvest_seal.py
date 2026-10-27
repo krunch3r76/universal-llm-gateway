@@ -1094,6 +1094,27 @@ async def test_short_overlapping_pages(fs: MemFs) -> None:
 
 
 @pytest.mark.asyncio
+@pytest.mark.asyncio
+async def test_n2_overlap_redundant_refused(fs: MemFs) -> None:
+    folder = _put_page(fs, 1, 0, 1, _page(0, 1, 2, ["a", "b"], start=True))
+    options = {
+        "mode": "harvest_seal",
+        "house": "bl1",
+        "n": 1,
+        "agent_id": _AGENT,
+        "l0_ref": folder,
+        "fallback": "electron",
+    }
+    norm = await run_harvest_normalise(options, fs)
+    adapter = await run_harvest_adapter(options, norm, fs)
+    await run_harvest_pour(options, adapter, fs, norm)
+    folder2 = _put_page(fs, 2, 1, 1, _page(1, 1, 2, ["b"], start=False))
+    options2 = {**options, "n": 2, "l0_ref": folder2}
+    norm2 = await run_harvest_normalise(options2, fs)
+    assert (norm2.get("refused") or {}).get("code") == "harvest.no_new_pages"
+
+
+@pytest.mark.asyncio
 async def test_short_pages_incremental_n2(fs: MemFs) -> None:
     folder = _put_page(fs, 1, 0, 2, _page(0, 2, 3, ["a", "b"], start=True))
     options = {

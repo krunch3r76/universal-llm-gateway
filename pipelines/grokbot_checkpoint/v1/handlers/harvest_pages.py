@@ -14,9 +14,9 @@ from typing import Any
 from continuity_tape.extract_grokbot_jsonl import (
     HEADER_RE,
     TranscriptPageError,
-    _longest_suffix_prefix,
     _physical_lines,
     reassemble_pages,
+    stitch_ordered_page_lines,
 )
 
 from ._clients import refuse
@@ -83,10 +83,12 @@ def _mapped(code: str, exc: TranscriptPageError) -> dict[str, Any]:
         return refuse("harvest.page_total", text)
     if "disagree on target" in text:
         return refuse("harvest.page_target", text)
-    if "overlapping pages differ" in text or "differ" in text:
+    if "overlapping pages differ" in text or "ambiguous overlap" in text:
         return refuse("harvest.page_overlap", text)
     if "gap" in text:
         return refuse("harvest.page_gap", text)
+    if "lines, expected" in text or "extend past" in text:
+        return refuse("harvest.page_header", text)
     return refuse(code, text)
 
 
@@ -133,13 +135,6 @@ def check_pages(
                 "harvest.not_prefix",
                 f"first page lo {earliest} > prior next {prior_next}",
             )
-    kept_flags: list[bool] = []
-    total_unrendered = 0
-    stitched: list[str] = list(prior_lines) if prior_lines is not None else []
-    if prior_lines is not None:
-        running_hi = (prior_next_pos - 1) if prior_next_pos is not None else len(prior_lines) - 1
-    else:
-        running_hi = -1
     for page in ordered:
         lo, hi = page["lo"], page["hi"]
         if lo > hi:
@@ -152,51 +147,29 @@ def check_pages(
                 f"page {lo}-{hi}: {got} lines, expected {expected}",
             )
         page["unrendered"] = expected - got
-        total_unrendered += page["unrendered"]
-        if running_hi < 0:
-            stitched = list(page["lines"])
-            running_hi = hi
-            kept_flags.append(True)
-            continue
-        if lo > running_hi + 1:
-            return refuse(
-                "harvest.page_gap",
-                f"gap in positions: first missing {running_hi + 1}",
-            )
-        before = len(stitched)
-        if lo <= running_hi:
-            overlap = _longest_suffix_prefix(stitched, page["lines"])
-            if overlap > 0:
-                stitched.extend(page["lines"][overlap:])
-            elif page["lines"]:
-                if (
-                    lo + len(page["lines"]) <= len(stitched)
-                    and stitched[lo : lo + len(page["lines"])] == page["lines"]
-                ):
-                    pass
-                else:
-                    return refuse(
-                        "harvest.page_overlap",
-                        f"page {lo}-{hi} overlaps with different bytes",
-                    )
-        else:
-            stitched.extend(page["lines"])
-        running_hi = max(running_hi, hi)
-        kept_flags.append(len(stitched) > before)
-    if not stitched:
+    tuples = [(p["lo"], p["hi"], p["lines"]) for p in ordered]
+    prior_running_hi = (prior_next - 1) if prior_next is not None else None
+    try:
+        stitched = stitch_ordered_page_lines(
+            tuples,
+            prior_lines=prior_lines,
+            prior_running_hi=prior_running_hi,
+        )
+    except TranscriptPageError as exc:
+        return _mapped("harvest.page_overlap", exc)
+    if not stitched.lines:
         return refuse("harvest.pages_missing", "no lines after stitch")
-    if running_hi < target_total - 1:
+    if stitched.running_hi < target_total - 1:
         return refuse(
             "harvest.page_gap",
-            f"coverage must reach position {target_total - 1}, got hi {running_hi}",
+            f"coverage must reach position {target_total - 1}, got hi {stitched.running_hi}",
         )
-    if prior_next is not None and running_hi < prior_next - 1:
-        return refuse("harvest.no_prior", "stitched lines shorter than prior window")
-    if prior_lines is not None and len(stitched) <= len(prior_lines):
+    if prior_lines is not None and not any(stitched.page_added):
         return refuse(
             "harvest.no_new_pages", "no page adds a line beyond the prior"
         )
-    for page, keep in zip(ordered, kept_flags, strict=True):
+    total_unrendered = stitched.unrendered_positions
+    for page, keep in zip(ordered, stitched.page_added, strict=True):
         page["keep"] = keep
         page["target_total"] = target_total
         page["total_unrendered"] = total_unrendered

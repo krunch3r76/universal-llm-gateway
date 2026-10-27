@@ -161,7 +161,7 @@ def test_short_page_accepted_long_page_raises() -> None:
     assert info["unrendered_positions"] == 1
     assert info["coverage"] == "full"
     needle = json.dumps(RECORDS[-1]) + "\n"
-    with pytest.raises(TranscriptPageError):
+    with pytest.raises(TranscriptPageError, match="expected"):
         reassemble_pages(_pages(RECORDS, 4).replace(needle, needle + needle, 1))
     short_overlap = (
         "Transcript of this conversation, positions 0\u20133 of 8:\n"
@@ -171,8 +171,8 @@ def test_short_page_accepted_long_page_raises() -> None:
         + "\n"
     )
     overlap_lines, overlap_info = reassemble_pages(short_overlap)
-    assert len(overlap_lines) == 5
-    assert overlap_info["unrendered_positions"] == 1
+    assert len(overlap_lines) == 8
+    assert overlap_info["unrendered_positions"] == 0
 
 
 NAME_FIX = "771821c5-de68-4b96-a914-edbb87a2e6bb"
@@ -796,6 +796,53 @@ def test_overlapping_short_pages_stitch_by_line_overlap() -> None:
     got, info = reassemble_pages(text)
     assert got == lines[:6]
     assert info["unrendered_positions"] == 0
+
+
+def _hdr(lo: int, hi: int, total: int, body: list[str], *, start: bool = False) -> str:
+    lines = [
+        f"Transcript of this conversation, positions {lo}\u2013{hi} of {total}:",
+        *body,
+    ]
+    if start:
+        lines.append("This is the start of the transcript.")
+    return "\n".join(lines) + "\n"
+
+
+def test_full_overlap_abcxxxxf_eight_lines() -> None:
+    text = _hdr(0, 4, 8, ["a", "b", "c", "x", "x"], start=True) + _hdr(
+        4, 7, 8, ["x", "x", "x", "f"]
+    )
+    got, info = reassemble_pages(text)
+    assert got == ["a", "b", "c", "x", "x", "x", "x", "f"]
+    assert info["unrendered_positions"] == 0
+
+
+def test_contained_page_does_not_duplicate() -> None:
+    text = _hdr(0, 5, 6, list("abcdef"), start=True) + _hdr(2, 3, 6, ["c", "d"])
+    got, _info = reassemble_pages(text)
+    assert got == list("abcdef")
+
+
+def test_shifted_page_refused() -> None:
+    prior = _hdr(0, 3, 10, list("abcd"), start=True)
+    shifted = _hdr(3, 7, 10, list("56789"))
+    with pytest.raises(TranscriptPageError, match="overlapping pages differ"):
+        reassemble_pages(prior + shifted)
+
+
+def test_repeated_lines_ambiguous_overlap_refused() -> None:
+    text = _hdr(0, 4, 9, ["x", "x", "x", "x", "x"], start=True) + _hdr(
+        4, 8, 9, ["x", "x", "x", "x"]
+    )
+    with pytest.raises(TranscriptPageError, match="ambiguous overlap"):
+        reassemble_pages(text)
+
+
+def test_contained_after_short_page() -> None:
+    text = _hdr(0, 3, 6, ["a", "b", "c"], start=True) + _hdr(1, 2, 6, ["b", "c"])
+    got, info = reassemble_pages(text)
+    assert got == ["a", "b", "c"]
+    assert info["unrendered_positions"] == 1
 
 
 def test_overlapping_pages_conflict_raises() -> None:
