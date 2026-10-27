@@ -117,7 +117,9 @@ def build_markdown_unwindowed_payload(
         first_raw = md_read_section(text, first_path)
     except SectionError:
         first_raw = text
-    first_body, first_truncated = _cap_utf8(first_raw, DEFAULT_UNWINDOWED_MAX_BYTES)
+    first_body, first_byte_limited, first_single_line_partial = _cap_utf8_on_line_boundary(
+        first_raw, DEFAULT_UNWINDOWED_MAX_BYTES
+    )
 
     section_reads = [
         _md_read_call(request_path, str(row["path"]))
@@ -148,9 +150,10 @@ def build_markdown_unwindowed_payload(
         payload["section_reads"].insert(
             0, f'fs(op="md_list", path="{_escape_path_for_fs_call(request_path)}")'
         )
-    if first_truncated:
+    if first_byte_limited:
         payload["truncated"] = True
         payload["first_section_truncated"] = True
+        payload["first_section_line_aligned"] = not first_single_line_partial
     return payload
 
 
@@ -226,7 +229,8 @@ def sidecar_section_listing(
         return {"error": str(exc), "sidecar_uri": sidecar_uri}
 
     sections = _normalize_section_rows(raw_sections)
-    listing_truncated = len(sections) > MAX_LISTED_SECTIONS
+    sections_total = len(sections)
+    listing_truncated = sections_total > MAX_LISTED_SECTIONS
     if listing_truncated:
         sections = sections[:MAX_LISTED_SECTIONS]
     section_reads = [
@@ -239,7 +243,7 @@ def sidecar_section_listing(
         "total_chars": len(text),
         "sections": sections,
         "section_reads": section_reads,
+        "sections_total": sections_total,
+        "listing_truncated": listing_truncated,
     }
-    if listing_truncated:
-        payload["listing_truncated"] = True
     return payload
