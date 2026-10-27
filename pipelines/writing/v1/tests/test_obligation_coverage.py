@@ -1491,6 +1491,64 @@ def test_standalone_dash_signature_line_is_pleasantry_not_acknowledge() -> None:
     assert rows[0]["obligation"] == "none"
 
 
+def test_bulleted_list_items_after_colon_stay_statement_acknowledge() -> None:
+    inbound = "Please send:\n- Transcript\n- References"
+    rows = source_obligations.fallback_obligations(inbound)
+    bullet_rows = [
+        row for row in rows if str(row.get("quoted_span", "")).lstrip().startswith("-")
+    ]
+    assert len(bullet_rows) == 2
+    for row in bullet_rows:
+        assert row["kind"] == "statement"
+        assert row["obligation"] == "acknowledge"
+        assert row["kind"] != "pleasantry"
+
+
+def test_parse_model_obligations_preserves_call_to_action_question() -> None:
+    quoted = "Would you apply through the portal at https://example.com/apply?"
+    source = f"Hi,\n\n{quoted}\n\nThanks"
+    parsed = source_obligations._parse_model_obligations(
+        json.dumps(
+            {
+                "obligations": [
+                    {
+                        "id": "O1",
+                        "quoted_span": quoted,
+                        "kind": "call_to_action",
+                        "obligation": "act_outside_message",
+                    }
+                ]
+            }
+        ),
+        source,
+    )
+    assert parsed is not None
+    assert parsed[0]["kind"] == "call_to_action"
+    assert parsed[0]["obligation"] == "act_outside_message"
+
+
+def test_parse_model_obligations_preserves_pleasantry_greeting_question() -> None:
+    quoted = "How are you?"
+    parsed = source_obligations._parse_model_obligations(
+        json.dumps(
+            {
+                "obligations": [
+                    {
+                        "id": "O1",
+                        "quoted_span": quoted,
+                        "kind": "pleasantry",
+                        "obligation": "none",
+                    }
+                ]
+            }
+        ),
+        quoted,
+    )
+    assert parsed is not None
+    assert parsed[0]["kind"] == "pleasantry"
+    assert parsed[0]["obligation"] == "none"
+
+
 def test_curly_apostrophe_past_intent_and_decline_regex_on_raw_text() -> None:
     past = "I\u2019ve applied for the role."
     intent = "I\u2019ll apply for the role."

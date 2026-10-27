@@ -115,7 +115,6 @@ def _strip_trailing_signature_and_courtesy(text: str) -> str:
         prev = tail
         tail = _strip_trailing_signature(tail).strip()
         tail = _COURTESY_TOKENS.sub("", tail).strip()
-        tail = _EDGE_PUNCT.sub("", tail).strip()
         sig = _SIGNATURE_ONLY.match(tail)
         if sig:
             token = sig.group(1).rstrip("'.-").lower()
@@ -126,10 +125,10 @@ def _strip_trailing_signature_and_courtesy(text: str) -> str:
         if dash_tail:
             fragment = dash_tail.group(1).strip()
             fragment = _COURTESY_TOKENS.sub("", fragment).strip()
-            fragment = _EDGE_PUNCT.sub("", fragment).strip()
             if not fragment or _SIGNATURE_ONLY.match(f"- {fragment}"):
                 tail = ""
                 continue
+        tail = _EDGE_PUNCT.sub("", tail).strip()
         if tail == prev:
             break
     return head if not tail else f"{head} {tail}".strip()
@@ -140,6 +139,52 @@ def _span_is_question(core: str) -> bool:
     if _QUESTION.search(core):
         return True
     return _QUESTION.search(_strip_trailing_signature_and_courtesy(core)) is not None
+
+
+def _span_starts_with_bullet(line: str) -> bool:
+    stripped = line.lstrip()
+    if stripped.startswith(("-", "–", "—")):
+        return True
+    return bool(re.match(r"^[-*•]\s+", stripped))
+
+
+def _is_trailing_signature_span(span: str, spans: list[str], index: int) -> bool:
+    """True when ``span`` is a final-line name signature, not a list item."""
+    sig = _SIGNATURE_ONLY.match(span.strip())
+    if not sig:
+        return False
+    token = sig.group(1).rstrip("'.-").lower()
+    if token in _NON_SIGNATURE_TOKENS:
+        return False
+    if index != len(spans):
+        return False
+    if index <= 1:
+        return True
+    prev = spans[index - 2].strip()
+    if prev.endswith(":"):
+        return False
+    return not _span_starts_with_bullet(prev)
+
+
+def _quoted_is_trailing_signature_in_message(quoted: str, source_message: str) -> bool:
+    """True when ``quoted`` is a trailing dash signature in ``source_message``."""
+    quoted_stripped = quoted.strip()
+    src = source_message.strip()
+    if not quoted_stripped or not src.endswith(quoted_stripped):
+        return False
+    sig = _SIGNATURE_ONLY.match(quoted_stripped)
+    if not sig:
+        return False
+    token = sig.group(1).rstrip("'.-").lower()
+    if token in _NON_SIGNATURE_TOKENS:
+        return False
+    prefix = src[: src.rfind(quoted_stripped)].rstrip()
+    if not prefix:
+        return True
+    prev_line = prefix.splitlines()[-1].strip()
+    if prev_line.endswith(":"):
+        return False
+    return not _span_starts_with_bullet(prev_line)
 
 
 def _split_spans(source_message: str) -> list[str]:
@@ -174,7 +219,10 @@ def _strip_greeting_prefix(span: str) -> str:
 
 def _is_courtesy_only_span(core: str) -> bool:
     """True when ``core`` is only courtesy tokens, edge punctuation, or a dash lead-in."""
-    text = _strip_trailing_signature(core).strip()
+    stripped_core = core.strip()
+    if _SIGNATURE_ONLY.match(stripped_core):
+        return False
+    text = _strip_trailing_signature(stripped_core).strip()
     while True:
         stripped = _COURTESY_TOKENS.sub("", text).strip()
         if stripped == text:
@@ -210,15 +258,6 @@ def _is_reply_closing_pleasantry(span: str) -> bool:
 def _classify_span(span: str) -> tuple[str, str, str]:
     """Return kind, obligation, and one-line semantic_reading for a span."""
     core = _strip_greeting_prefix(span) or span.strip()
-    sig_only = _SIGNATURE_ONLY.match(core.strip())
-    if sig_only:
-        token = sig_only.group(1).rstrip("'.-").lower()
-        if token not in _NON_SIGNATURE_TOKENS:
-            return (
-                "pleasantry",
-                "none",
-                "greeting or courtesy without a required reply action",
-            )
     if _APPLY_CTA.search(core) or _APPLY_CTA.search(span):
         return (
             "call_to_action",
@@ -264,6 +303,12 @@ def fallback_obligations(source_message: str) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
     for index, span in enumerate(spans, start=1):
         kind, obligation, reading = _classify_span(span)
+        if _is_trailing_signature_span(span, spans, index):
+            kind, obligation, reading = (
+                "pleasantry",
+                "none",
+                "greeting or courtesy without a required reply action",
+            )
         rows.append(
             {
                 "id": f"O{index}",
@@ -300,17 +345,23 @@ def _parse_model_obligations(raw: str, source_message: str) -> list[dict[str, An
         kind = str(item.get("kind") or "statement")
         obligation = str(item.get("obligation") or "none")
         quoted_core = _strip_greeting_prefix(quoted) or quoted.strip()
-        if quoted and _span_is_question(quoted_core):
+        if (
+            quoted
+            and _span_is_question(quoted_core)
+            and (kind == "statement" or obligation == "acknowledge")
+            and obligation != "act_outside_message"
+            and kind != "call_to_action"
+            and not _APPLY_CTA.search(quoted_core)
+            and not _APPLY_CTA.search(quoted)
+        ):
             kind = "question"
             obligation = "answer"
         elif quoted and _is_reply_closing_pleasantry(quoted):
             kind = "pleasantry"
             obligation = "none"
-        elif quoted_core and (sig := _SIGNATURE_ONLY.match(quoted_core.strip())):
-            token = sig.group(1).rstrip("'.-").lower()
-            if token not in _NON_SIGNATURE_TOKENS:
-                kind = "pleasantry"
-                obligation = "none"
+        elif quoted and _quoted_is_trailing_signature_in_message(quoted, source_message):
+            kind = "pleasantry"
+            obligation = "none"
         rows.append(
             {
                 "id": str(item.get("id") or f"O{index}"),
