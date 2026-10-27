@@ -9,6 +9,7 @@ import { resetFixtureCache } from "../bot/lib/bus-fixtures.js";
 import { LAST_LANE_TURN_KEY, readLaneCursor } from "../bot/lib/bus-lane.js";
 import {
   pollOnce,
+  resetPollGapForTest,
   resetPollLoopForTest,
   runPollLoop,
   setPollGapForTest,
@@ -216,7 +217,7 @@ describe("fix2 nits N3 pollOnce and runPollLoop", () => {
 
   afterEach(async () => {
     signalPollLoopStop();
-    setPollGapForTest(null);
+    resetPollGapForTest();
     for (const [k, v] of Object.entries(envRestore)) {
       if (v === undefined) {
         delete process.env[k];

@@ -3,6 +3,8 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, describe, it } from "node:test";
 
+import { resetPollGapForTest, setPollGapForTest } from "../bot/channels/bus.js";
+
 import { resetFixtureCache } from "../bot/lib/bus-fixtures.js";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -18,6 +20,24 @@ import { IMPRESARIO_LANE } from "../bot/lib/ulg.js";
 import { parseHostMcpJson } from "../bot/lib/mcp-result.js";
 import { findInFlightRow } from "../bot/lib/dispatch.js";
 import { WORK_KEY_ZOD_REGEX } from "../bot/lib/work-key.js";
+afterEach(() => {
+  resetPollGapForTest();
+});
+
+describe("fix2 poll gap N4", () => {
+  it("setPollGapForTest rejects 0, negative, and NaN", () => {
+    for (const bad of [0, -1, Number.NaN]) {
+      assert.throws(
+        () => setPollGapForTest(bad),
+        /positive finite number or null/,
+      );
+    }
+    setPollGapForTest(10);
+    resetPollGapForTest();
+    setPollGapForTest(null);
+  });
+});
+
 describe("fix2 bus lane cursor (AC1)", () => {
   it("persists lane turn N and busWait uses after_turn=N", async () => {
     const kv = new Map<string, unknown>();
