@@ -1,8 +1,8 @@
 """Tracked Cursor Glass window targets (:8, orion-node) for CDP and wake routing.
 
 Host and Stargate callers keep the loopback origins in ``cursor-windows.json``.
-A process on the mcp docker bridge rewrites ports 9338 and 9339 to the gateway
-forwarder. Orion-node stays on its own loopback port.
+A process on the mcp docker bridge rewrites ports 9338, 9339, and 19338 to the
+gateway forwarder (orion-node Glass CDP on the host).
 """
 
 from __future__ import annotations

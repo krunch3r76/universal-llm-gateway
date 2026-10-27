@@ -102,14 +102,37 @@ def test_off_bridge_probe_does_not_open_cdp_ports(
     assert container_cdp_origin("http://127.0.0.1:9339", addresses=host) == (
         "http://127.0.0.1:9339"
     )
-    assert bind_targets(host) == (("172.18.0.1", 9338), ("172.18.0.1", 9339))
+    assert container_cdp_origin("http://127.0.0.1:19338", addresses=host) == (
+        "http://127.0.0.1:19338"
+    )
+    assert bind_targets(host) == (
+        ("172.18.0.1", 9338),
+        ("172.18.0.1", 9339),
+        ("172.18.0.1", 19338),
+    )
     assert bind_targets(frozenset({"172.18.0.5", "10.0.0.67"})) == ()
     monkeypatch.setattr(
         "cursor_bridge.cdp_gateway_forwarder.local_ipv4_addresses",
         lambda: host,
     )
     assert normalize_target("8", "cursor")["origin"] == "http://127.0.0.1:9338"
+    assert normalize_target("orion-node", "cursor")["origin"] == (
+        "http://127.0.0.1:19338"
+    )
     assert cdp_origin_for_gui_host(":8") == "http://127.0.0.1:9338"
+
+
+def test_bridge_client_rewrites_orion_cdp(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        "cursor_bridge.cdp_gateway_forwarder.local_ipv4_addresses",
+        lambda: frozenset({"172.18.0.5"}),
+    )
+    assert normalize_target("orion-node", "cursor")["origin"] == (
+        "http://172.18.0.1:19338"
+    )
+    assert cdp_origin_for_gui_host("orion-node") == "http://172.18.0.1:19338"
 
 
 def test_open_listeners_skips_when_gateway_is_absent() -> None:
@@ -138,6 +161,7 @@ def test_open_listeners_binds_gateway_only() -> None:
     assert [sock.bound for sock in listeners] == [
         ("172.18.0.1", 9338),
         ("172.18.0.1", 9339),
+        ("172.18.0.1", 19338),
     ]
     assert all(sock.listening == 16 for sock in listeners)
     assert "0.0.0.0" not in {

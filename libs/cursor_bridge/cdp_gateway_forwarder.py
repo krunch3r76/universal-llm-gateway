@@ -26,7 +26,7 @@ logger = get_logger(__name__)
 
 GATEWAY_HOST = "172.18.0.1"
 LOOPBACK_HOST = "127.0.0.1"
-FORWARDED_PORTS = (9338, 9339)
+FORWARDED_PORTS = (9338, 9339, 19338)
 _BRIDGE = ipaddress.ip_network("172.18.0.0/16")
 _GATEWAY = ipaddress.ip_address(GATEWAY_HOST)
 _TRIE = Path("/proc/net/fib_trie")
@@ -187,8 +187,8 @@ def container_cdp_origin(
 ) -> str:
     """Rewrite loopback 9338/9339 to the gateway only for a bridge client.
 
-    Any other origin, including orion-node ``19338`` and grok display 10
-    ``9340``, is returned unchanged. When ``addresses`` is omitted the local
+    Any other origin, including grok display 10 ``9340``, is returned unchanged.
+    When ``addresses`` is omitted the local
     fib_trie is read. This function does not open 9338 or 9339.
     """
     rewritten = _gateway_origin(origin)

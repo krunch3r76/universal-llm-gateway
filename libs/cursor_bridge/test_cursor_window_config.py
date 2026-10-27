@@ -55,7 +55,7 @@ def test_cdp_origin_bridge_client_rewrites_display_8(
         lambda: frozenset({"172.18.0.5"}),
     )
     assert cursor_debug_url_for_gui_host(":8") == "http://172.18.0.1:9338"
-    assert cursor_debug_url_for_gui_host("orion-node") == "http://127.0.0.1:19338"
+    assert cursor_debug_url_for_gui_host("orion-node") == "http://172.18.0.1:19338"
 
 
 def test_cdp_origin_host_gateway_stays_loopback(

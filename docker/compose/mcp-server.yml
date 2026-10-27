@@ -42,6 +42,8 @@ services:
       - ~/.rag/store:/data/rag-store:ro
       - ~/.cortex:/data/cortex:rw
       - ~/.gateway:/home/mcp/.gateway:ro
+      # Live cursor_bridge CDP routing (orion 19338 gateway parity with :8 9338).
+      - ${MCP_PROJECT_DIR:?MCP_PROJECT_DIR required}/libs/cursor_bridge/cdp_gateway_forwarder.py:/app/libs/cursor_bridge/cdp_gateway_forwarder.py:ro
     environment:
       - MCP_AUTH_TOKEN=${MCP_AUTH_TOKEN:?MCP_AUTH_TOKEN required}
       - VORTEX_BEARER_TOKENS=${VORTEX_BEARER_TOKENS:-}
@@ -124,8 +126,8 @@ services:
       mcp-network: {}
     restart: unless-stopped
 
-  # Host-namespace listener: 172.18.0.1:9338 → 127.0.0.1:9338 and the same for
-  # 9339. mcp-server stays on the bridge (not host network). The process binds
+  # Host-namespace listener: 172.18.0.1:9338/9339/19338 → 127.0.0.1 on the host.
+  # mcp-server stays on the bridge (not host network). The process binds
   # only the gateway address; it does not publish 0.0.0.0. The module is mounted
   # from the project tree so this service does not need an image rebuild. Do not
   # compose up until that path is a file — a missing source becomes a directory.
