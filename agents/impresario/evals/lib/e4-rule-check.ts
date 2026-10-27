@@ -43,13 +43,27 @@ function parseToolOutput(output: unknown): Record<string, unknown> | null {
   return null;
 }
 
-/** Effective recipient after bus_send structural normalization (output.to) or args. */
+export function busSendWasPosted(output: unknown): boolean {
+  const parsed = parseToolOutput(output);
+  if (!parsed) {
+    return false;
+  }
+  if (parsed.error !== undefined && parsed.error !== null && parsed.error !== "") {
+    return false;
+  }
+  return parsed.posted === true;
+}
+
+/** Effective recipient after a posted bus_send (output.to only). */
 export function effectiveBusSendTo(call: E4ToolCall): string {
+  if (!busSendWasPosted(call.output)) {
+    return "";
+  }
   const parsed = parseToolOutput(call.output);
   if (typeof parsed?.to === "string") {
     return parsed.to;
   }
-  return typeof call.args?.to === "string" ? call.args.to : "";
+  return "";
 }
 
 export function checkE4CloseoutRun(
@@ -66,21 +80,23 @@ export function checkE4CloseoutRun(
   }
 
   const busSends = toolCalls.filter((c) => c.toolName === "bus_send");
-  if (busSends.length !== 1) {
+  const postedReviewSends = busSends.filter((c) => busSendWasPosted(c.output));
+  if (postedReviewSends.length !== 1) {
     return {
       ok: false,
-      reason: `required exactly one bus_send, got ${busSends.length}`,
+      reason: `required exactly one posted bus_send, got ${postedReviewSends.length}`,
     };
   }
-  const subject = busSendSubject(busSends[0]?.args);
+  const reviewSend = postedReviewSends[0]!;
+  const subject = busSendSubject(reviewSend.args);
   if (subject !== requestSubject) {
     return {
       ok: false,
       reason: `bus_send subject must be ${requestSubject}, got ${subject || "(missing)"}`,
     };
   }
-  const reviewTo = effectiveBusSendTo(busSends[0]!);
-  if (subject.startsWith("REQUEST|review|") && reviewTo !== REVIEW_RECIPIENT) {
+  const reviewTo = effectiveBusSendTo(reviewSend);
+  if (reviewTo !== REVIEW_RECIPIENT) {
     return {
       ok: false,
       reason: `forbidden: REQUEST|review| bus_send to=${reviewTo || "(missing)"}`,

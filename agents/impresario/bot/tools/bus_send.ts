@@ -4,6 +4,7 @@ import path from "node:path";
 import { defineTool } from "@grok/agent-sdk/tools";
 import { z } from "zod";
 
+import { gateToolCall } from "../lib/tool-call-cap.js";
 import {
   busMailbox,
   IMPRESARIO_MAILBOX,
@@ -13,18 +14,38 @@ import {
 
 export const REVIEW_REQUEST_RECIPIENT = "grok-bot-gc1";
 
+/** Threads allowed when turn.json is missing or has no thread (tests / explicit pins). */
+export const ALLOWLISTED_BUS_THREADS = new Set<string>();
+
+export type TurnJsonReadResult =
+  | { ok: true; thread: string | null }
+  | { ok: false; error: string };
+
 /** Read `thread` from seeded session workspace turn.json when present. */
-export function readTurnThreadFromWorkspace(workspaceDir: string): string | null {
+export function readTurnJsonThread(workspaceDir: string): TurnJsonReadResult {
+  const turnPath = path.join(workspaceDir, "turn.json");
+  let raw: string;
   try {
-    const raw = fs.readFileSync(path.join(workspaceDir, "turn.json"), "utf8");
-    const turn = JSON.parse(raw) as { thread?: unknown };
-    if (typeof turn.thread === "string" && turn.thread.trim() !== "") {
-      return turn.thread.trim();
-    }
+    raw = fs.readFileSync(turnPath, "utf8");
   } catch {
-    /* no turn.json or invalid JSON */
+    return { ok: true, thread: null };
   }
-  return null;
+  try {
+    const turn = JSON.parse(raw) as { thread?: unknown };
+    if (turn.thread === undefined || turn.thread === null) {
+      return { ok: true, thread: null };
+    }
+    if (typeof turn.thread !== "string" || turn.thread.trim() === "") {
+      return { ok: false, error: "turn.json thread must be a non-empty string" };
+    }
+    return { ok: true, thread: turn.thread.trim() };
+  } catch {
+    return { ok: false, error: "turn.json is not valid JSON" };
+  }
+}
+
+export function isReviewRequestSubject(subject: string): boolean {
+  return /^REQUEST\|review\|/i.test(subject.trim());
 }
 
 /** REQUEST|review| always posts to the stage manager mailbox. */
@@ -32,7 +53,7 @@ export function resolveReviewRequestRecipient(
   subject: string,
   to: string | undefined,
 ): { to: string; recipient_corrected: boolean } {
-  if (subject.startsWith("REQUEST|review|")) {
+  if (isReviewRequestSubject(subject)) {
     const resolved = to ?? REVIEW_REQUEST_RECIPIENT;
     if (to !== undefined && to !== REVIEW_REQUEST_RECIPIENT) {
       return { to: REVIEW_REQUEST_RECIPIENT, recipient_corrected: true };
@@ -52,8 +73,93 @@ export type ResolveBusSendResult =
       to: string;
       recipient_corrected: boolean;
       thread_defaulted: boolean;
+      thread_pinned: boolean;
     }
   | { ok: false; error: string };
+
+function resolveThreadForSend(input: {
+  subject: string;
+  thread?: string;
+  workspaceDir?: string;
+}): ResolveBusSendResult | { ok: false; error: string } {
+  const requested = input.thread?.trim();
+  let turnThread: string | null = null;
+  if (input.workspaceDir !== undefined) {
+    const fromTurn = readTurnJsonThread(input.workspaceDir);
+    if (!fromTurn.ok) {
+      return fromTurn;
+    }
+    turnThread = fromTurn.thread;
+  }
+
+  const review = isReviewRequestSubject(input.subject);
+
+  if (review) {
+    if (turnThread) {
+      return {
+        ok: true,
+        thread: turnThread,
+        to: "",
+        recipient_corrected: false,
+        thread_defaulted: !requested,
+        thread_pinned: Boolean(requested && requested !== turnThread),
+      };
+    }
+    if (requested && ALLOWLISTED_BUS_THREADS.has(requested)) {
+      return {
+        ok: true,
+        thread: requested,
+        to: "",
+        recipient_corrected: false,
+        thread_defaulted: false,
+        thread_pinned: false,
+      };
+    }
+    return {
+      ok: false,
+      error: "thread is required when turn.json is missing or has no thread",
+    };
+  }
+
+  if (!requested) {
+    if (turnThread) {
+      return {
+        ok: true,
+        thread: turnThread,
+        to: "",
+        recipient_corrected: false,
+        thread_defaulted: true,
+        thread_pinned: false,
+      };
+    }
+    return {
+      ok: false,
+      error: "thread is required when turn.json is missing or has no thread",
+    };
+  }
+
+  if (turnThread !== null && requested !== turnThread) {
+    return {
+      ok: false,
+      error: `thread ${requested} does not match turn.json thread ${turnThread}`,
+    };
+  }
+  if (turnThread === null && !ALLOWLISTED_BUS_THREADS.has(requested)) {
+    return {
+      ok: false,
+      error: `thread ${requested} is not allowed without turn.json`,
+    };
+  }
+
+  return {
+    ok: true,
+    thread: requested,
+    to: "",
+    recipient_corrected: false,
+    thread_defaulted: false,
+    thread_pinned: false,
+  };
+}
 
 export function resolveBusSendInput(input: {
   subject: string;
@@ -61,28 +167,29 @@ export function resolveBusSendInput(input: {
   to?: string;
   workspaceDir?: string;
 }): ResolveBusSendResult {
-  let thread = input.thread?.trim();
-  let thread_defaulted = false;
-  if (!thread) {
-    const fromTurn =
-      input.workspaceDir !== undefined
-        ? readTurnThreadFromWorkspace(input.workspaceDir)
-        : null;
-    if (fromTurn) {
-      thread = fromTurn;
-      thread_defaulted = true;
-    }
+  const threadPart = resolveThreadForSend(input);
+  if (!threadPart.ok) {
+    return threadPart;
   }
-  if (!thread) {
-    return { ok: false, error: "thread is required when turn.json is missing or has no thread" };
-  }
+  const {
+    thread,
+    thread_defaulted,
+    thread_pinned,
+  } = threadPart;
 
-  if (input.subject.startsWith("REQUEST|review|")) {
+  if (isReviewRequestSubject(input.subject)) {
     const { to, recipient_corrected } = resolveReviewRequestRecipient(
       input.subject,
       input.to,
     );
-    return { ok: true, thread, to, recipient_corrected, thread_defaulted };
+    return {
+      ok: true,
+      thread,
+      to,
+      recipient_corrected,
+      thread_defaulted,
+      thread_pinned,
+    };
   }
 
   if (input.to === undefined) {
@@ -94,6 +201,7 @@ export function resolveBusSendInput(input: {
     to: input.to,
     recipient_corrected: false,
     thread_defaulted,
+    thread_pinned,
   };
 }
 
@@ -106,7 +214,7 @@ export default defineTool({
     subject: z
       .string()
       .max(500)
-      .regex(/^(DONE|FAILED|REQUEST|QUESTION|STATUS|ACK|STOP)\|/),
+      .regex(/^(DONE|FAILED|REQUEST|QUESTION|STATUS|ACK|STOP)\|/i),
     body: z.string().max(2000),
     sidecar_content: z.string().max(256_000).optional(),
   }),
@@ -118,57 +226,62 @@ export default defineTool({
       to: input.to,
     });
     if (!resolved.ok) {
-      return { posted: false, error: resolved.error };
+      return { posted: false, error: resolved.error, workspaceDir: undefined };
     }
     return {
       posted: false,
       thread: resolved.thread,
       subject: input.subject,
+      workspaceDir: undefined,
     };
   },
   async execute(input, ctx) {
-    const resolvedFields = resolveBusSendInput({
-      subject: input.subject,
-      thread: input.thread,
-      to: input.to,
-      workspaceDir: ctx.workspaceDir,
-    });
-    if (!resolvedFields.ok) {
-      return { posted: false, error: resolvedFields.error };
-    }
-    const resolved = {
-      ...input,
-      thread: resolvedFields.thread,
-      to: resolvedFields.to,
-    };
-    if (isEvalOrFixture(ctx)) {
-      return {
-        posted: false,
-        stubbed: true,
+    return gateToolCall(ctx, async () => {
+      const resolvedFields = resolveBusSendInput({
+        subject: input.subject,
+        thread: input.thread,
+        to: input.to,
+        workspaceDir: ctx.workspaceDir,
+      });
+      if (!resolvedFields.ok) {
+        return { posted: false, error: resolvedFields.error };
+      }
+      const resolved = {
+        ...input,
+        thread: resolvedFields.thread,
+        to: resolvedFields.to,
+      };
+      if (isEvalOrFixture(ctx)) {
+        return {
+          posted: true,
+          stubbed: true,
+          from: IMPRESARIO_MAILBOX,
+          ...resolved,
+          recipient_corrected: resolvedFields.recipient_corrected,
+          thread_defaulted: resolvedFields.thread_defaulted,
+          thread_pinned: resolvedFields.thread_pinned,
+        };
+      }
+      const payload: Record<string, unknown> = {
+        thread: resolved.thread,
+        to: resolved.to,
+        subject: resolved.subject,
+        body: resolved.body,
         from: IMPRESARIO_MAILBOX,
-        ...resolved,
+      };
+      if (input.sidecar_content !== undefined) {
+        payload.sidecar_content = input.sidecar_content;
+      }
+      await callAgentBus(ctx, "send", payload);
+      return {
+        posted: true,
+        thread: resolved.thread,
+        subject: resolved.subject,
+        to: resolved.to,
         recipient_corrected: resolvedFields.recipient_corrected,
         thread_defaulted: resolvedFields.thread_defaulted,
+        thread_pinned: resolvedFields.thread_pinned,
       };
-    }
-    const payload: Record<string, unknown> = {
-      thread: resolved.thread,
-      to: resolved.to,
-      subject: resolved.subject,
-      body: resolved.body,
-      from: IMPRESARIO_MAILBOX,
-    };
-    if (input.sidecar_content !== undefined) {
-      payload.sidecar_content = input.sidecar_content;
-    }
-    await callAgentBus(ctx, "send", payload);
-    return {
-      posted: true,
-      thread: resolved.thread,
-      subject: resolved.subject,
-      to: resolved.to,
-      recipient_corrected: resolvedFields.recipient_corrected,
-      thread_defaulted: resolvedFields.thread_defaulted,
-    };
+    });
   },
 });

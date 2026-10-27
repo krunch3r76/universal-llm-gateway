@@ -9,6 +9,7 @@ import {
   shouldLiveDispatch,
   steerInject,
 } from "../lib/dispatch.js";
+import { gateToolCall } from "../lib/tool-call-cap.js";
 import { WORK_KEY_ZOD_REGEX } from "../lib/work-key.js";
 
 export default defineTool({
@@ -27,6 +28,7 @@ export default defineTool({
     posted: false,
   }),
   async execute(input, ctx) {
+    return gateToolCall(ctx, async () => {
     const row = await findDispatchRow(ctx, input.dispatch_id, input.work_key);
 
     if (!row) {
@@ -58,5 +60,6 @@ export default defineTool({
     const ticket = (await steerInject(ctx, input)) as { inject_state?: string };
     const inject_state = String(ticket.inject_state ?? "pending").slice(0, 500);
     return { ok: true, inject_state, posted: true };
+    });
   },
 });

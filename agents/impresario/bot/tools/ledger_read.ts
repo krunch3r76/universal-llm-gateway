@@ -2,6 +2,7 @@ import { defineTool } from "@grok/agent-sdk/tools";
 import { z } from "zod";
 
 import { readLedger } from "../lib/dispatch.js";
+import { gateToolCall } from "../lib/tool-call-cap.js";
 import { WORK_KEY_ZOD_REGEX } from "../lib/work-key.js";
 
 export default defineTool({
@@ -12,12 +13,14 @@ export default defineTool({
   }),
   effect: "read",
   async execute({ work_key }, ctx) {
-    const { rows, json } = await readLedger(ctx, work_key);
-    return {
-      work_key,
-      row_count: rows.length,
-      projection: json,
-      chars: json.length,
-    };
+    return gateToolCall(ctx, async () => {
+      const { rows, json } = await readLedger(ctx, work_key);
+      return {
+        work_key,
+        row_count: rows.length,
+        projection: json,
+        chars: json.length,
+      };
+    });
   },
 });

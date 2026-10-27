@@ -14,6 +14,7 @@ describe("closeout bus_send effective gate (stage 7 AC2)", () => {
         subject: "REQUEST|review|todo:reaper-amendment",
       },
       output: JSON.stringify({
+        posted: true,
         stubbed: true,
         to: CLOSEOUT_REVIEW_RECIPIENT,
         thread: "20901",
@@ -31,6 +32,7 @@ describe("closeout bus_send effective gate (stage 7 AC2)", () => {
         to: "maestro",
       },
       output: JSON.stringify({
+        posted: true,
         stubbed: true,
         to: "maestro",
         thread: "20901",
@@ -40,6 +42,25 @@ describe("closeout bus_send effective gate (stage 7 AC2)", () => {
     assert.equal(result.ok, false);
     if (!result.ok) {
       assert.match(result.reason, /effective recipient maestro/);
+    }
+  });
+
+  it("unposted output → fail even when args look valid", () => {
+    const result = checkEffectiveReviewBusSend({
+      toolName: "bus_send",
+      args: {
+        subject: "REQUEST|review|todo:reaper-amendment",
+        to: CLOSEOUT_REVIEW_RECIPIENT,
+      },
+      output: JSON.stringify({
+        posted: false,
+        to: CLOSEOUT_REVIEW_RECIPIENT,
+        thread: "20901",
+      }),
+    });
+    assert.equal(result.ok, false);
+    if (!result.ok) {
+      assert.match(result.reason, /not posted/);
     }
   });
 });

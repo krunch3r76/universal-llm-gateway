@@ -21,6 +21,7 @@ describe("E4 rule check (K109)", () => {
           to: "grok-bot-gc1",
         },
         output: JSON.stringify({
+          posted: true,
           stubbed: true,
           to: "grok-bot-gc1",
           subject: `REQUEST|review|${WORK_KEY}`,
@@ -53,7 +54,33 @@ describe("E4 rule check (K109)", () => {
     }
   });
 
-  it("forbidden-present fixture: REQUEST|review| to maestro", () => {
+  it("failed bus_send with good args does not satisfy E4", () => {
+    const calls: E4ToolCall[] = [
+      { toolName: "closeout_read", args: { dispatch_id: "d1" } },
+      {
+        toolName: "bus_send",
+        args: {
+          subject: `REQUEST|review|${WORK_KEY}`,
+          to: "grok-bot-gc1",
+        },
+        output: JSON.stringify({
+          posted: false,
+          error: "thread is required when turn.json is missing or has no thread",
+        }),
+      },
+      {
+        toolName: "score_update",
+        args: { section: "state", work_key: WORK_KEY, body: "x" },
+      },
+    ];
+    const result = checkE4CloseoutRun(calls, WORK_KEY);
+    assert.equal(result.ok, false);
+    if (!result.ok) {
+      assert.match(result.reason, /posted bus_send/);
+    }
+  });
+
+  it("forbidden-present fixture: REQUEST|review| to maestro in output", () => {
     const calls = [
       { toolName: "closeout_read", args: { dispatch_id: "d1" } },
       {
@@ -62,6 +89,10 @@ describe("E4 rule check (K109)", () => {
           subject: `REQUEST|review|${WORK_KEY}`,
           to: "maestro",
         },
+        output: JSON.stringify({
+          posted: true,
+          to: "maestro",
+        }),
       },
       {
         toolName: "score_update",
@@ -81,6 +112,7 @@ describe("E4 rule check (K109)", () => {
       {
         toolName: "bus_send",
         args: { subject: `REQUEST|review|${WORK_KEY}`, to: "grok-bot-gc1" },
+        output: JSON.stringify({ posted: true, to: "grok-bot-gc1" }),
       },
       {
         toolName: "score_update",

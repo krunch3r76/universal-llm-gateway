@@ -10,6 +10,7 @@ import {
   resumeOnRowPinned,
   shouldLiveDispatch,
 } from "../lib/dispatch.js";
+import { gateToolCall } from "../lib/tool-call-cap.js";
 import { WORK_KEY_ZOD_REGEX } from "../lib/work-key.js";
 
 const contractEnum = z.enum(["freeform", "conductor"]);
@@ -33,6 +34,7 @@ export default defineTool({
     work_key: input.work_key,
   }),
   async execute(input, ctx) {
+    return gateToolCall(ctx, async () => {
     const { rows } = await readLedger(ctx, input.work_key);
     const inflight = findInFlightRow(rows);
     if (inflight) {
@@ -77,5 +79,6 @@ export default defineTool({
       rendered_prompt_sha256,
       dispatch_id: String(dispatched.dispatch_id ?? ""),
     };
+    });
   },
 });

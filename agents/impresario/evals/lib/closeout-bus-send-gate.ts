@@ -1,4 +1,5 @@
 import {
+  busSendWasPosted,
   effectiveBusSendTo,
   type E4ToolCall,
 } from "./e4-rule-check.js";
@@ -24,12 +25,14 @@ function parseToolOutput(output: unknown): Record<string, unknown> | null {
 
 /** Thread actually sent (tool result wins over model args). */
 export function effectiveBusSendThread(call: E4ToolCall): string {
+  if (!busSendWasPosted(call.output)) {
+    return "";
+  }
   const parsed = parseToolOutput(call.output);
   if (typeof parsed?.thread === "string" && parsed.thread.trim() !== "") {
     return parsed.thread.trim();
   }
-  const fromArgs = call.args?.thread;
-  return typeof fromArgs === "string" ? fromArgs.trim() : "";
+  return "";
 }
 
 export type EffectiveBusSendGateResult =
@@ -38,6 +41,9 @@ export type EffectiveBusSendGateResult =
 
 /** E1 closeout: REQUEST|review| must reach grok-bot-gc1 with a thread id. */
 function effectiveBusSendSubject(call: E4ToolCall): string {
+  if (!busSendWasPosted(call.output)) {
+    return "";
+  }
   const parsed = parseToolOutput(call.output);
   if (typeof parsed?.subject === "string") {
     return parsed.subject;
@@ -48,8 +54,11 @@ function effectiveBusSendSubject(call: E4ToolCall): string {
 export function checkEffectiveReviewBusSend(
   call: E4ToolCall,
 ): EffectiveBusSendGateResult {
+  if (!busSendWasPosted(call.output)) {
+    return { ok: false, reason: "bus_send was not posted" };
+  }
   const subject = effectiveBusSendSubject(call);
-  if (!/^REQUEST\|review\|todo:/.test(subject)) {
+  if (!/^REQUEST\|review\|todo:/i.test(subject)) {
     return { ok: false, reason: `subject mismatch: ${subject || "(missing)"}` };
   }
   const to = effectiveBusSendTo(call);

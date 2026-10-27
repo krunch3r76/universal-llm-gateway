@@ -5,6 +5,7 @@ import {
   checkScoreSizeAfterUpdate,
   resolveScoreUri,
 } from "../lib/score-guards.js";
+import { gateToolCall } from "../lib/tool-call-cap.js";
 import { callAgentBus, callFs } from "../lib/ulg.js";
 import { WORK_KEY_ZOD_REGEX } from "../lib/work-key.js";
 
@@ -32,6 +33,7 @@ export default defineTool({
     dryRun: true,
   }),
   async execute(input, ctx) {
+    return gateToolCall(ctx, async () => {
     const resolved = resolveScoreUri(input.work_key);
     if (!resolved.ok) {
       return resolved;
@@ -67,5 +69,6 @@ export default defineTool({
       });
     }
     return { ok: true, ...input };
+    });
   },
 });
