@@ -175,3 +175,8 @@ async def startup_ledger_reconcile(app: FastAPI) -> None:
             controller=controller,
             request=None,
         )
+    from services.git_integration_worker.mechanical_land.reconcile import (
+        reconcile_mechanical_land_on_boot,
+    )
+
+    await reconcile_mechanical_land_on_boot()

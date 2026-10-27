@@ -1366,9 +1366,7 @@ def _run_sdk_sync(
                 is_density_harness_steer_row,
             )
 
-            if is_density_harness_steer_row(
-                {"contract": ctx.handoff_contract or ""}
-            ):
+            if is_density_harness_steer_row({"contract": ctx.handoff_contract or ""}):
                 from services.git_integration_worker.conductor_hop_watchdog import (
                     maybe_tick_density_harness_steer,
                 )
@@ -1751,6 +1749,17 @@ async def _mark_terminal_and_promote(
     except Exception:  # noqa: BLE001 — reactor is advisory; terminal path must proceed
         logger.exception(
             "conductor hop reactor failed dispatch_id=%s",
+            dispatch_id,
+        )
+    try:
+        from services.git_integration_worker.mechanical_land.reactor import (
+            maybe_fire_mechanical_land_reactor,
+        )
+
+        await maybe_fire_mechanical_land_reactor(dispatch_id=dispatch_id)
+    except Exception:  # noqa: BLE001 — advisory; terminal path must proceed
+        logger.exception(
+            "mechanical land reactor failed dispatch_id=%s",
             dispatch_id,
         )
     try:
@@ -2140,6 +2149,11 @@ async def reconcile_stale_leases(
 
     await asyncio.to_thread(sweep_density_harness_steers, ledger)
     await sweep_conductor_hop_watchdog(ledger)
+    from services.git_integration_worker.mechanical_land.sweep import (
+        sweep_mechanical_land_runs,
+    )
+
+    await asyncio.to_thread(sweep_mechanical_land_runs)
 
 
 async def stale_lease_sweeper(app: FastAPI) -> None:
