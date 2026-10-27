@@ -8,8 +8,8 @@ from cursor_bridge.cursor_agents_hop import (
     cursor_debug_url_for_gui_host,
     launch_cursor_agents_tab,
 )
-from cursor_bridge.spawn_house import spawn_house as spawn_house_impl
 from cursor_bridge.impresario_spawn_prompt import augment_spawn_prompt_for_impresario
+from cursor_bridge.spawn_house import spawn_house as spawn_house_impl
 from cursor_bridge.spawn_model_knobs import merge_spawn_model_knobs
 
 
@@ -29,9 +29,7 @@ def relay_spawn_tab(
     debug_url = cursor_debug_url_for_gui_host(gui_host)
     knobs = merge_spawn_model_knobs(model_knobs, effort=effort, fast=fast)
     requested = str(agent_id or "").strip() or None
-    hop_prompt = augment_spawn_prompt_for_impresario(
-        prompt, slug=slug, title=title
-    )
+    hop_prompt = augment_spawn_prompt_for_impresario(prompt, slug=slug, title=title)
     res = launch_cursor_agents_tab(
         hop_prompt,
         model_query=str(model or "").strip(),

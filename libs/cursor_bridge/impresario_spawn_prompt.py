@@ -2,13 +2,24 @@
 
 from __future__ import annotations
 
+import re
+
 IMPRESARIO_SKILL_USE_LINE = "Use the impresario skill."
+
+_IMPRESARIO_SLUG_SEGMENT = re.compile(r"(?:^|-)impresario(?:-|$)", re.IGNORECASE)
+_REVIEWISH_SLUG_SEGMENT = re.compile(r"(?:^|-)review(?:er)?(?:-|$)", re.IGNORECASE)
+_IMPRESARIO_TITLE = re.compile(r"\bimpresario\b", re.IGNORECASE)
+_REVIEWISH_TITLE = re.compile(r"\b(?:review|reviewer)\b", re.IGNORECASE)
 
 
 def _signals_impresario(*, slug: str | None, title: str | None) -> bool:
-    for part in (slug, title):
-        text = str(part or "").strip()
-        if text and "impresario" in text.casefold():
+    slug_text = str(slug or "").strip().replace("_", "-")
+    if slug_text and not _REVIEWISH_SLUG_SEGMENT.search(slug_text):
+        if _IMPRESARIO_SLUG_SEGMENT.search(slug_text):
+            return True
+    title_text = str(title or "").strip()
+    if title_text and not _REVIEWISH_TITLE.search(title_text):
+        if _IMPRESARIO_TITLE.search(title_text):
             return True
     return False
 
