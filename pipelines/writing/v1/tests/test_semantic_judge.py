@@ -235,6 +235,29 @@ async def test_semantic_judge_v2_quality_findings_without_candidate_id() -> None
 
 
 @pytest.mark.asyncio
+async def test_semantic_judge_all_omitted_when_ids_outside_eligible_set() -> None:
+    async def caller(**kwargs: Any) -> str:
+        if kwargs.get("which") == "pin":
+            return json.dumps(_pin_payload("drafter_openai"))
+        return json.dumps(_quality_payload("drafter_openai"))
+
+    handler = semantic_judge.WritingSemanticJudgeHandler(caller=caller)
+    published: list[Any] = []
+    handler._publish_bus_event = lambda _ctx, event: published.append(event)  # type: ignore[method-assign]
+    ctx = _Ctx(
+        {
+            "assemble": _Out({"pin_ledger": [], "intake": {}}),
+            "drafter_anthropic": _Out(None, raw="Backed."),
+        }
+    )
+    out = await handler.execute(_Step("candidates"), ctx)
+    assert out.json["judge_unavailable"] is True
+    assert out.json["reason"] == "all_omitted"
+    assert len(published) == 1
+    assert published[0].payload["reason"] == "all_omitted"
+
+
+@pytest.mark.asyncio
 async def test_semantic_judge_schema_invalid_unavailable() -> None:
     async def caller(**kwargs: Any) -> str:
         if kwargs.get("which") == "pin":

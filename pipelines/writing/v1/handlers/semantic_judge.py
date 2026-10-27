@@ -240,7 +240,8 @@ class WritingSemanticJudgeHandler(BaseHandler):
             }
             seen_ids |= {str(row.get("candidate_id") or "") for row in quality}
             seen_ids.discard("")
-            if eligible_ids and not seen_ids:
+            matched_ids = seen_ids & eligible_ids
+            if eligible_ids and not matched_ids:
                 self._publish_bus_event(
                     context,
                     WritingJudgeFailed(invocation=invocation, reason="all_omitted"),

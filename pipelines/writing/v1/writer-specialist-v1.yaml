@@ -148,6 +148,18 @@ steps:
     reads_from:
       - step: assemble
         fields: [json]
+      - step: drafter_openai
+        fields: [json, raw, model_id]
+      - step: drafter_google
+        fields: [json, raw, model_id]
+      - step: drafter_xai
+        fields: [json, raw, model_id]
+      - step: drafter_local_hermes
+        fields: [json, raw, model_id]
+      - step: drafter_local_ernie
+        fields: [json, raw, model_id]
+      - step: drafter_anthropic
+        fields: [json, raw, model_id]
     condition: "assemble.json.get('refused') is None and options.get('output', 'envelope') != 'packet'"
 
   - name: draft

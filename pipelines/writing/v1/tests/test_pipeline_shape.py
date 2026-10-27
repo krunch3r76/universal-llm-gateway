@@ -66,6 +66,11 @@ _CLOUD_DRAFTERS = (
     "drafter_xai",
     "drafter_anthropic",
 )
+_DRAFTER_STEPS = (
+    *_CLOUD_DRAFTERS,
+    "drafter_local_hermes",
+    "drafter_local_ernie",
+)
 
 
 class _Router:
@@ -88,6 +93,12 @@ def test_pipeline_shape() -> None:
     assert [step.name for step in spec.steps] == _STEP_ORDER
     by_name = {step.name: step for step in spec.steps}
     assert by_name["draft"].type == "writing_draft_selector_v1"
+    judge_candidates = by_name["semantic_judge_candidates"]
+    for name in _DRAFTER_STEPS:
+        assert name in judge_candidates.computed_depends_on
+        assert any(
+            entry.step == name for entry in (judge_candidates.reads_from or [])
+        )
     assert by_name["prompt_architect"].type == "writing_prompt_architect_v1"
     assert "source_obligations" in by_name["prompt_architect"].computed_depends_on
     assert any(
