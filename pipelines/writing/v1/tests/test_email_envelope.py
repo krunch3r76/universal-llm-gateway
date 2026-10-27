@@ -535,6 +535,7 @@ def test_email_restate_pin_provide_refusal_valid_and_false_positives_n3() -> Non
         ),
         "I did not think I can send a monthly open calendar.",
         "I can't currently commit to send a monthly open calendar.",
+        "There is no way I can send a monthly open calendar.",
     )
     for draft in valid_drafts:
         assert email_envelope.email_restate_pin_satisfied(
@@ -565,11 +566,23 @@ def test_email_restate_pin_provide_refusal_valid_and_false_positives_n3() -> Non
         (
             "I can not wait, so without delay I will send a monthly open calendar."
         ),
+        (
+            "I can not say for sure, but there is no doubt I will send "
+            "a monthly open calendar."
+        ),
     )
     for draft in false_drafts:
         assert not email_envelope.email_restate_pin_satisfied(
             draft, pin_provide, verbatim_required=False
         )
+    assert email_envelope._provide_refusal_window_is_genuine("never be able to provide")
+    assert email_envelope._provide_refusal_window_is_genuine("no way i can provide")
+    assert email_envelope._provide_refusal_window_is_genuine(
+        "unable currently to provide"
+    )
+    assert not email_envelope._provide_refusal_window_is_genuine(
+        "no doubt i will provide"
+    )
 
 
 def test_email_restate_pin_affirmative_schedule_polarity_n5() -> None:

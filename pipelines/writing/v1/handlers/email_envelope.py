@@ -464,6 +464,20 @@ def _restate_anchor_tokens(normalized_pin_text: str) -> set[str]:
     return anchors
 
 
+def _restate_draft_tokens_cover_anchors(
+    draft_tokens: set[str], anchors: set[str]
+) -> bool:
+    """True when draft tokens cover pin anchors, treating ``no`` and ``not`` as equivalent."""
+    if anchors <= draft_tokens:
+        return True
+    gap = anchors - draft_tokens
+    if gap == {"not"} and "no" in draft_tokens:
+        return (anchors - {"not"}) <= draft_tokens
+    if gap == {"no"} and "not" in draft_tokens:
+        return (anchors - {"no"}) <= draft_tokens
+    return False
+
+
 def _draft_clauses(text: str) -> list[str]:
     clauses: list[str] = []
     for sentence in re.split(r"[.!?]+", text):
@@ -652,13 +666,12 @@ def _modal_not_through_provide_genuine(window: str) -> bool:
     return False
 
 
-_UNABLE_SIBLING_THROUGH_PROVIDE = re.compile(
-    r"^unable\s+to\s+(?:(?P<adv>[a-z]+)\s+)?(?P<rest>provide|"
-    r"(?:commit|agree|promise|undertake|manage|afford)\s+to(?:\s+(?:or|and))?\s+provide)$",
-    re.I,
-)
 _NO_SIBLING_TO_PROVIDE = re.compile(
     r"^no\s+(?:way|ability|capacity|availability|plan|plans|intention|option|room|time)\s+to\s+provide$",
+    re.I,
+)
+_NO_WAY_PRONOUN_CAN_PROVIDE = re.compile(
+    r"^no\s+way\s+(?:i|we)\s+(?:can|could)\s+provide$",
     re.I,
 )
 _NO_LONGER_SIBLING_PROVIDE = re.compile(
@@ -672,7 +685,12 @@ _WITHOUT_SIBLING_TO_PROVIDE = re.compile(
 
 
 def _sibling_negator_through_provide_genuine(window: str) -> bool:
-    """True for closed ``never|no|unable|without`` … ``provide`` refusal shapes only."""
+    """True for closed ``never|no|unable|without`` … ``provide`` refusal shapes only.
+
+    Bare ``unable to`` never appears here: ``normalize_decline_ability_phrases``
+    rewrites ``\\bunable\\s+to\\b`` to ``can not`` before refusal windows are built.
+    Remaining ``unable … provide`` spans are adverb-inserted (e.g. ``unable currently to provide``).
+    """
     w = window.strip().lower()
     if re.match(r"^never\b", w):
         if w == "never provide":
@@ -681,7 +699,7 @@ def _sibling_negator_through_provide_genuine(window: str) -> bool:
         if not m:
             return False
         middle = m.group(1)
-        if re.fullmatch(r"(?:able|going)\s+to", middle):
+        if re.fullmatch(r"(?:be\s+)?(?:able|going)\s+to", middle):
             return True
         tokens = _TOKEN.findall(middle)
         if len(tokens) == 1:
@@ -693,15 +711,22 @@ def _sibling_negator_through_provide_genuine(window: str) -> bool:
             return bool(_MODAL_NOT_PROVIDE_COORD_REST.match(coord))
         return False
     if re.match(r"^unable\b", w):
-        m = _UNABLE_SIBLING_THROUGH_PROVIDE.match(w)
-        if not m:
+        if not w.endswith(" provide"):
             return False
-        adv = m.group("adv")
-        if adv and not _modal_not_provide_adverb_allowed(adv):
-            return False
-        return True
+        mid = w[len("unable ") : -len(" provide")]
+        if re.fullmatch(r"[a-z]+\s+to", mid):
+            adv = mid[: -len(" to")]
+            return _modal_not_provide_adverb_allowed(adv)
+        m = re.match(r"^([a-z]+)\s+to\s+(.+)$", mid)
+        if m and _modal_not_provide_adverb_allowed(m.group(1)):
+            return bool(_MODAL_NOT_PROVIDE_COORD_REST.match(m.group(2)))
+        return False
     if re.match(r"^no\b", w):
-        return bool(_NO_SIBLING_TO_PROVIDE.match(w) or _NO_LONGER_SIBLING_PROVIDE.match(w))
+        return bool(
+            _NO_SIBLING_TO_PROVIDE.match(w)
+            or _NO_WAY_PRONOUN_CAN_PROVIDE.match(w)
+            or _NO_LONGER_SIBLING_PROVIDE.match(w)
+        )
     if re.match(r"^without\b", w):
         return bool(_WITHOUT_SIBLING_TO_PROVIDE.match(w))
     return False
@@ -818,7 +843,7 @@ def email_restate_pin_satisfied(
     ):
         norm_variant = normalize_text_for_token_match(variant)
         anchors = _restate_anchor_tokens(norm_variant)
-        if anchors and anchors <= draft_tokens:
+        if anchors and _restate_draft_tokens_cover_anchors(draft_tokens, anchors):
             if _restate_negation_guard(draft_text, pin_excerpt):
                 return True
             continue
