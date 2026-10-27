@@ -13,6 +13,16 @@ async ({ limit, afterTurn }) => {
 
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
+  function sliceByLimit(rawTurns, limit) {
+    if (limit === null || limit === undefined || limit <= 0) {
+      return { turns: rawTurns, truncated: false };
+    }
+    return {
+      turns: rawTurns.slice(-limit),
+      truncated: rawTurns.length > limit,
+    };
+  }
+
   function authorFor(el) {
     const testid = (el.getAttribute('data-testid') || '').toLowerCase();
     if (testid === 'user-message' || testid === 'human-turn') return 'user';
@@ -209,8 +219,9 @@ async ({ limit, afterTurn }) => {
       rawTurns.push({ author, timestamp, text: t, ordinal });
     }
 
-    const turns = rawTurns.slice(-limit);
-    const truncated = rawTurns.length > limit;
+    const limited = sliceByLimit(rawTurns, limit);
+    const turns = limited.turns;
+    const truncated = limited.truncated;
     const hasUser = rawTurns.some((t) => t.author === 'user');
     const atTop = window.scrollY === 0 || document.documentElement.scrollTop === 0;
     let coverageReason;
@@ -369,8 +380,9 @@ async ({ limit, afterTurn }) => {
     }
   }
 
-  const turns = rawTurns.slice(-limit);
-  const truncated = rawTurns.length > limit;
+  const limited = sliceByLimit(rawTurns, limit);
+  const turns = limited.turns;
+  const truncated = limited.truncated;
   const hasUser = rawTurns.some((t) => t.author === 'user');
   const atTop = scroller ? scroller.scrollTop === 0 : false;
   // First blocker wins; 'converged' is the only value that yields 'full'.

@@ -6,10 +6,10 @@ from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from chat_harvest.cse_persist import CSE_HARVEST_NO_LIMIT
 from claude_bundles import cdp_registry
-from pydantic import ValidationError
 
-from cdp_ask.cse_session_harvest import HARVEST_HARD_CAP, execute_harvest
+from cdp_ask.cse_session_harvest import execute_harvest
 from cdp_ask.cse_session_models import CseSessionTurn, HarvestRequest, HarvestResponse
 from cdp_ask.execution_store import ExecutionStore
 from cdp_ask.followup_envelope import FollowupCandidate
@@ -28,13 +28,13 @@ async def test_cse_harvest_chat_url_refuses_use_chat_session() -> None:
 
 
 @pytest.mark.asyncio
-async def test_harvest_hard_cap_schema_refusal() -> None:
-    with pytest.raises(ValidationError):
-        HarvestRequest(registration_id="reg-x", limit=999)
+async def test_harvest_high_limit_accepted() -> None:
+    req = HarvestRequest(registration_id="reg-x", limit=999)
+    assert req.limit == 999
 
 
 @pytest.mark.asyncio
-async def test_harvest_hard_cap_clamp_forwards_limit_and_after_turn() -> None:
+async def test_harvest_default_limit_forwards_unlimited_and_after_turn() -> None:
     candidate = FollowupCandidate(
         registration_id="reg-x",
         chat_url="https://claude.ai/cowork/cse_x",
@@ -94,7 +94,6 @@ async def test_harvest_hard_cap_clamp_forwards_limit_and_after_turn() -> None:
         await execute_harvest(
             HarvestRequest(
                 registration_id="reg-x",
-                limit=HARVEST_HARD_CAP,
                 after_turn=after_turn,
                 source="chat",
             ),
@@ -102,8 +101,7 @@ async def test_harvest_hard_cap_clamp_forwards_limit_and_after_turn() -> None:
         )
     harvest_mock.assert_awaited_once()
     call_kwargs = harvest_mock.await_args.kwargs
-    assert call_kwargs["limit"] == HARVEST_HARD_CAP
-    assert call_kwargs["limit"] <= HARVEST_HARD_CAP
+    assert call_kwargs["limit"] == CSE_HARVEST_NO_LIMIT
     assert call_kwargs["after_turn"] == after_turn
 
 

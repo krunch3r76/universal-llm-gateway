@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import Any, Literal
 
+from chat_harvest.models import ConflictDetail
 from pydantic import BaseModel, Field
 
 AckClass = Literal["typed_ack", "ordinary_content", "no_proof"]
@@ -18,6 +19,7 @@ HarvestOutcome = Literal[
     "conflict",
     "unreachable",
     "refused",
+    "archive_conflict",
 ]
 HarvestSource = Literal["chat", "output-file", "auto"]
 TurnSource = Literal["cse-dom", "output-file", "archive", "bus-fallback"]
@@ -94,7 +96,7 @@ class HarvestRequest(BaseModel):
     chat_url: str | None = None
     registration_id: str | None = None
     execution_id: str | None = None
-    limit: int = Field(default=10, ge=1, le=50)
+    limit: int | None = Field(default=None, ge=1)
     after_turn: int | None = Field(default=None, ge=0)
     source: HarvestSource = "auto"
     metadata_only: bool = False
@@ -122,6 +124,14 @@ class HarvestResponse(BaseModel):
     waited_ms: int | None = None
     coverage: Literal["full", "tail"] | None = None
     identity: HarvestIdentity | None = None
+    archive_uri: str | None = None
+    archive_sha256: str | None = None
+    harvested_at: str | None = None
+    turn_count: int | None = None
+    message_count: int | None = None
+    alignment: str | None = None
+    existing_sha256: str | None = None
+    conflict: ConflictDetail | None = None
 
 
 class PasteRequest(BaseModel):

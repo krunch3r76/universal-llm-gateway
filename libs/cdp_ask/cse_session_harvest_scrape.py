@@ -9,7 +9,13 @@ import asyncio
 import time
 from typing import Any
 
+from chat_harvest.archive import ArchiveConflictError, ArchiveRefusalError
 from chat_harvest.chrome import is_chrome_only, substantive_reply_body
+from chat_harvest.cse_persist import (
+    archive_fields_from_conflict,
+    archive_fields_from_refusal,
+    persist_cse_dom_harvest,
+)
 from claude_bundles.cowork_output_download import resolve_harvest_body
 from claude_bundles.cse_turns_harvest import harvest_turns
 from claude_bundles.cse_url import normalize_cse_url
@@ -152,12 +158,85 @@ async def _try_body_harvest(
         return None
 
 
+def _dom_turn_dicts(dom: dict[str, Any]) -> list[dict[str, object]]:
+    return [
+        {
+            "author": row["author"],
+            "text": row["text"],
+            "ordinal": row.get("ordinal"),
+        }
+        for row in dom.get("turns") or []
+    ]
+
+
+def enrich_with_messages_archive(
+    response: HarvestResponse,
+    *,
+    chat_url: str | None,
+    page_url: str | None,
+    dom: dict[str, Any] | None = None,
+) -> HarvestResponse:
+    """Persist DOM turns to ``ulg.continuity.messages/1`` when harvest succeeded."""
+    if response.outcome != "harvested" or response.content_provenance != "cse-dom":
+        return response
+    if not response.turns:
+        return response
+    url = (chat_url or page_url or "").strip()
+    if not url:
+        return response
+    dom_turns = _dom_turn_dicts(dom) if dom is not None else _dom_turn_dicts(
+        {"turns": [t.model_dump() for t in response.turns]}
+    )
+    try:
+        archive_uri, archive_sha256, alignment, turn_count, message_count = (
+            persist_cse_dom_harvest(
+                chat_url=url,
+                page_url=page_url,
+                dom_turns=dom_turns,
+            )
+        )
+    except ArchiveConflictError as exc:
+        return response.model_copy(
+            update={
+                **archive_fields_from_conflict(exc),
+                "turns": response.turns,
+                "provenance": response.provenance,
+                "chat_url": response.chat_url,
+                "coverage": response.coverage,
+                "content_provenance": response.content_provenance,
+            }
+        )
+    except ArchiveRefusalError as exc:
+        return response.model_copy(
+            update={
+                **archive_fields_from_refusal(exc),
+                "turns": response.turns,
+                "provenance": response.provenance,
+                "chat_url": response.chat_url,
+                "coverage": response.coverage,
+                "content_provenance": response.content_provenance,
+            }
+        )
+    return response.model_copy(
+        update={
+            "archive_uri": archive_uri,
+            "archive_sha256": archive_sha256,
+            "alignment": alignment,
+            "turn_count": turn_count,
+            "message_count": message_count,
+        }
+    )
+
+
 def _dom_to_harvested(
     dom: dict[str, Any],
     req: HarvestRequest,
     provenance: dict[str, Any] | None,
     *,
     waited_ms: int = 0,
+    chat_url: str | None = None,
+    page_url: str | None = None,
+    persist_archive: bool = True,
 ) -> HarvestResponse:
     """Map an enriched DOM scrape to the appropriate harvest outcome."""
     if dom.get("in_flight"):
@@ -208,7 +287,7 @@ def _dom_to_harvested(
         marker=req.marker,
         successor_birth_id=req.successor_birth_id,
     )
-    return HarvestResponse(
+    response = HarvestResponse(
         outcome="harvested",
         ack_class=ack,
         turns=turns,
@@ -219,6 +298,14 @@ def _dom_to_harvested(
         waited_ms=waited_ms or None,
         coverage=dom.get("coverage"),
     )
+    if persist_archive and not req.metadata_only:
+        return enrich_with_messages_archive(
+            response,
+            chat_url=chat_url,
+            page_url=page_url,
+            dom=dom,
+        )
+    return response
 
 
 async def harvest_with_loading_wait(
@@ -227,6 +314,8 @@ async def harvest_with_loading_wait(
     provenance: dict[str, Any] | None,
     *,
     limit: int,
+    chat_url: str | None = None,
+    page_url: str | None = None,
 ) -> HarvestResponse:
     """Scrape once, optionally wait while loading, then classify the harvest outcome."""
     body_resp = await _try_body_harvest(page, req, provenance)
@@ -239,7 +328,13 @@ async def harvest_with_loading_wait(
         return HarvestResponse(outcome="unreachable", reason=str(exc))
 
     if not dom.get("loading"):
-        return _dom_to_harvested(dom, req, provenance)
+        return _dom_to_harvested(
+            dom,
+            req,
+            provenance,
+            chat_url=chat_url,
+            page_url=page_url or str(getattr(page, "url", None) or "") or None,
+        )
 
     waited_ms = 0
     deadline = time.monotonic() + OPEN_ON_DEMAND_INCOMPLETE_WAIT_S
@@ -273,6 +368,20 @@ async def harvest_with_loading_wait(
                 return body_resp
         last_loading = bool(dom.get("loading"))
         if loading_transition or not dom.get("loading"):
-            return _dom_to_harvested(dom, req, provenance, waited_ms=waited_ms)
+            return _dom_to_harvested(
+                dom,
+                req,
+                provenance,
+                waited_ms=waited_ms,
+                chat_url=chat_url,
+                page_url=page_url or str(getattr(page, "url", None) or "") or None,
+            )
 
-    return _dom_to_harvested(dom, req, provenance, waited_ms=waited_ms)
+    return _dom_to_harvested(
+        dom,
+        req,
+        provenance,
+        waited_ms=waited_ms,
+        chat_url=chat_url,
+        page_url=page_url or str(getattr(page, "url", None) or "") or None,
+    )

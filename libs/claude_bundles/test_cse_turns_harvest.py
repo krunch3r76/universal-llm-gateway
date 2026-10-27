@@ -34,6 +34,43 @@ def test_cse_turns_js_source_present() -> None:
 
 @pytest.mark.offline
 @pytest.mark.asyncio
+async def test_harvest_turns_unlimited_returns_more_than_fifty() -> None:
+    async def fake_evaluate(_js: str, args: dict[str, object]) -> dict[str, object]:
+        assert args["limit"] == 0
+        turns = []
+        for ordinal in range(1, 56):
+            turns.append(
+                {
+                    "author": "user" if ordinal % 2 else "assistant",
+                    "timestamp": None,
+                    "text": f"Turn {ordinal} body with enough text here.",
+                    "ordinal": ordinal,
+                }
+            )
+        return {
+            "turns": turns,
+            "coverage": "full",
+            "streaming": False,
+            "stop": False,
+            "tool_pause": False,
+            "title": "Session - Claude",
+            "spinner": False,
+            "aria_busy": False,
+            "truncated": False,
+        }
+
+    page = AsyncMock()
+    page.evaluate = fake_evaluate
+    from chat_harvest.cse_persist import CSE_HARVEST_NO_LIMIT
+
+    result = await harvest_turns(page, limit=CSE_HARVEST_NO_LIMIT)
+    assert len(result["turns"]) == 55
+    assert result["truncated"] is False
+    assert result["coverage"] == "full"
+
+
+@pytest.mark.offline
+@pytest.mark.asyncio
 async def test_harvest_turns_ordering_and_bounds_hermetic() -> None:
     captured: dict[str, object] = {}
 
