@@ -1016,6 +1016,7 @@ class WritingProvenanceCheckHandler(BaseHandler):
                 recipient=recipient,
                 signer=signer,
                 intake=intake_dict,
+                pin_ledger=ledger,
             )
         violations: list[dict[str, Any]] = []
         if parsed is None:
@@ -1116,6 +1117,7 @@ class WritingProvenanceCheckHandler(BaseHandler):
                         recipient=recipient,
                         signer=signer,
                         intake=intake_dict,
+                        pin_ledger=ledger,
                     )
                     prior_for_delta = prior_parsed
             if isinstance(v1_clauses, list) and v1_clauses and parsed is not None:

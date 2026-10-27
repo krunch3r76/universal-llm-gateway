@@ -22,8 +22,15 @@ if _PKG not in sys.modules:
     _spec.loader.exec_module(_mod)
 
 email_envelope = importlib.import_module("writing_v1_handlers.email_envelope")
+assemble = importlib.import_module("writing_v1_handlers.assemble")
 draft_selector = importlib.import_module("writing_v1_handlers.draft_selector")
+finalize = importlib.import_module("writing_v1_handlers.finalize")
 provenance = importlib.import_module("writing_v1_handlers.provenance_check")
+
+_PAT_VERBATIM_DECLARATION = (
+    "I, Pat Applicant, am submitting my signed declaration for "
+    "Assessment Appeals 99.0001 and 99.0002 during 7–3."
+)
 
 _gates_path = Path(__file__).resolve().parent / "test_channel_purpose_gates.py"
 _gates_spec = importlib.util.spec_from_file_location("_channel_gates", _gates_path)
@@ -432,3 +439,112 @@ def test_provenance_email_verbatim_pin_survives_email_polish() -> None:
     ).json
     bad_types = [row["type"] for row in bad_payload["violations"]]
     assert "verbatim_pin_modified" in bad_types
+
+
+def test_email_restate_pin_verbatim_truncated_mid_word_n1() -> None:
+    suffix = "calendar month end."
+    prefix_len = 1229 - len(suffix)
+    note = ("ok " * 500)[:prefix_len] + suffix
+    assert len(note) == 1229
+    truncated_excerpt = assemble._truncate(note)
+    assert truncated_excerpt.endswith(" [truncated]")
+    assert len(truncated_excerpt) == 1200
+    draft = f"Subject: Appeal\n\n{note}\n"
+    assert email_envelope.email_restate_pin_satisfied(
+        draft, truncated_excerpt, verbatim_required=True
+    )
+
+
+def test_polish_preserves_verbatim_required_span_n2() -> None:
+    body = (
+        "Subject: Assessment Appeals\n\n"
+        f"{_PAT_VERBATIM_DECLARATION}\n\nThank you,\nPat Applicant"
+    )
+    pin_ledger = [
+        {
+            "pin_id": "V1",
+            "attested": True,
+            "verbatim_required": True,
+            "excerpt": _PAT_VERBATIM_DECLARATION,
+        }
+    ]
+    intake: dict = {"objective": "submit declaration", "verbatim_notes": []}
+    polished = email_envelope.polish_email_draft(
+        body,
+        recipient="clerk@example.gov",
+        signer="Pat Applicant",
+        intake=intake,
+        pin_ledger=pin_ledger,
+    )
+    assert _PAT_VERBATIM_DECLARATION in polished
+
+    assemble_payload = {
+        "channel": "email",
+        "pin_ledger": pin_ledger,
+        "intake": {
+            "objective": "submit declaration",
+            "recipient": "clerk@example.gov",
+            "signer": "Pat Applicant",
+        },
+    }
+    finalized = finalize._polish_email_draft_if_needed(assemble_payload, body)
+    assert _PAT_VERBATIM_DECLARATION in finalized
+
+    intake_indexed: dict = {
+        "objective": "submit declaration",
+        "verbatim_notes": [_PAT_VERBATIM_DECLARATION],
+        "verbatim_required": [0],
+    }
+    polished_indexed = email_envelope.polish_email_draft(
+        body,
+        recipient="clerk@example.gov",
+        signer="Pat Applicant",
+        intake=intake_indexed,
+    )
+    assert _PAT_VERBATIM_DECLARATION in polished_indexed
+
+
+def test_email_restate_pin_wont_be_able_to_maps_n4() -> None:
+    pin_provide = "I am not able to provide a monthly open calendar."
+    draft = "I won't be able to send a monthly open calendar."
+    assert email_envelope.email_restate_pin_satisfied(
+        draft, pin_provide, verbatim_required=False
+    )
+
+
+def test_email_restate_pin_provide_refusal_false_positives_n3() -> None:
+    pin_provide = "I am not able to provide a monthly open calendar."
+    false_drafts = (
+        "I can't wait to send you a monthly open calendar.",
+        "I can not only send a monthly open calendar but also weekly updates.",
+        "I can't see why not, happy to send a monthly open calendar.",
+        "I can't think of a reason I couldn't send a monthly open calendar.",
+    )
+    for draft in false_drafts:
+        assert not email_envelope.email_restate_pin_satisfied(
+            draft, pin_provide, verbatim_required=False
+        )
+
+
+def test_email_restate_pin_affirmative_schedule_polarity_n5() -> None:
+    pin_currently = "Currently my schedule stays full most of the time."
+    for negated in (
+        "My schedule never stays full most of the time.",
+        "My schedule does not stay full most of the time.",
+    ):
+        assert not email_envelope.email_restate_pin_satisfied(
+            negated, pin_currently, verbatim_required=False
+        )
+
+    pin_provide = "I am not able to provide a monthly open calendar."
+    amanda_draft = (
+        "I don't have standing availability on any day of the week. "
+        "My schedule stays full most of the time, so I can't send a monthly open calendar."
+    )
+    amanda_pins = (
+        "I do not have standing availability on any day of the week.",
+        pin_currently,
+        pin_provide,
+    )
+    for pin in amanda_pins:
+        assert email_envelope.email_restate_pin_satisfied(amanda_draft, pin)

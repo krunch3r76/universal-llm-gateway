@@ -119,7 +119,11 @@ def _polish_email_draft_if_needed(assemble: dict[str, Any], text: str) -> str:
     recipient = str(intake_dict.get("recipient") or assemble.get("recipient") or "")
     signer = str(intake_dict.get("signer") or "")
     return polish_email_draft(
-        text, recipient=recipient, signer=signer, intake=intake_dict
+        text,
+        recipient=recipient,
+        signer=signer,
+        intake=intake_dict,
+        pin_ledger=list(assemble.get("pin_ledger") or []),
     )
 
 

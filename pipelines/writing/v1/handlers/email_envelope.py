@@ -69,7 +69,20 @@ _CONTRACTION_EXPANSIONS: tuple[tuple[str, str], ...] = (
     (r"\bi'd\b", "i would"),
 )
 _DECLINE_ABILITY_NOT_ABLE = re.compile(
-    r"\b(?:am|is|are)\s+not\s+able\s+to\b",
+    r"\b(?:(?:am|is|are|was|were)\s+not|will\s+not(?:\s+be)?)\s+able\s+to\b",
+    re.I,
+)
+_CAN_NOT_PROVIDE_FALSE_POSITIVE = re.compile(
+    r"\bcan\s+not\s+(?:only|wait\s+to)\b",
+    re.I,
+)
+_NEGATED_PROVIDE_GOVERNANCE = re.compile(
+    r"\b(?:no|not|never|unable|decline|declining|without)\b(?:\s+\w+){0,3}\s+\bprovide\b",
+    re.I,
+)
+_NEGATED_PROVIDE_GOVERNANCE_STRICT = re.compile(
+    r"\b(?:no|not|never|unable|without)\b"
+    r"(?:\s+(?!only\b|wait\b|see\b|think\b)\w+){0,2}\s+\bprovide\b",
     re.I,
 )
 _UNABLE_TO = re.compile(r"\bunable\s+to\b", re.I)
@@ -138,6 +151,18 @@ def _clean_verbatim_pin_excerpt(pin_excerpt: str) -> str:
     if cleaned.endswith(" [truncated]"):
         cleaned = cleaned[: -len(" [truncated]")]
     return cleaned
+
+
+def _verbatim_pin_tokens(pin_excerpt: str) -> tuple[str, list[str], bool]:
+    """Return lower stripped pin text, token list, and whether assemble truncated mid-word."""
+    was_truncated = pin_excerpt.endswith(" [truncated]")
+    cleaned = _clean_verbatim_pin_excerpt(pin_excerpt)
+    pin_stripped = cleaned.strip().lower()
+    pin_tokens = _token_list_lower(cleaned)
+    if was_truncated and len(pin_tokens) > 1:
+        pin_tokens = pin_tokens[:-1]
+        pin_stripped = re.sub(r"\S+\s*$", "", cleaned.strip()).strip().lower()
+    return pin_stripped, pin_tokens, was_truncated
 
 
 def normalize_supply_verbs(text: str) -> str:
@@ -303,19 +328,78 @@ def ensure_email_envelope(
     return body
 
 
+def _collect_verbatim_spans_for_polish(
+    intake: dict[str, Any],
+    pin_ledger: list[dict[str, Any]] | None,
+) -> list[str]:
+    """Verbatim-attested spans that must survive opening rewrite and dash normalization."""
+    spans: list[str] = []
+    seen: set[str] = set()
+    for pin in pin_ledger or []:
+        if not isinstance(pin, dict) or pin.get("verbatim_required") is not True:
+            continue
+        excerpt = _clean_verbatim_pin_excerpt(str(pin.get("excerpt") or ""))
+        if excerpt.strip() and excerpt not in seen:
+            seen.add(excerpt)
+            spans.append(excerpt)
+    verbatim_required = intake.get("verbatim_required")
+    verbatim_notes = intake.get("verbatim_notes")
+    if isinstance(verbatim_required, (list, tuple, set)) and isinstance(
+        verbatim_notes, list
+    ):
+        for idx in verbatim_required:
+            if isinstance(idx, int) and 0 <= idx < len(verbatim_notes):
+                note = str(verbatim_notes[idx] or "")
+                if note.strip() and note not in seen:
+                    seen.add(note)
+                    spans.append(note)
+    spans.sort(key=len, reverse=True)
+    return spans
+
+
+def _mask_verbatim_spans(
+    text: str, spans: list[str]
+) -> tuple[str, dict[str, str]]:
+    """Replace verbatim spans with placeholders before destructive polish passes."""
+    replacements: dict[str, str] = {}
+    masked = text
+    for idx, span in enumerate(spans):
+        if not span:
+            continue
+        token = f"__VERBATIM_SPAN_{idx}__"
+        replacements[token] = span
+        if span in masked:
+            masked = masked.replace(span, token, 1)
+            continue
+        stripped = span.strip()
+        if stripped and stripped in masked:
+            masked = masked.replace(stripped, token, 1)
+    return masked, replacements
+
+
+def _restore_verbatim_spans(text: str, replacements: dict[str, str]) -> str:
+    for token, span in replacements.items():
+        text = text.replace(token, span)
+    return text
+
+
 def polish_email_draft(
     text: str,
     *,
     recipient: str,
     signer: str,
     intake: dict[str, Any],
+    pin_ledger: list[dict[str, Any]] | None = None,
 ) -> str:
     """Rewrite opening, normalize dashes, and enforce email envelope lines."""
-    normalized = normalize_email_dashes(text)
+    verbatim_spans = _collect_verbatim_spans_for_polish(intake, pin_ledger)
+    working, verbatim_map = _mask_verbatim_spans(text, verbatim_spans)
+    normalized = normalize_email_dashes(working)
     rewritten = rewrite_email_opening(normalized)
     exhibit_normalized = _normalize_exhibit_lines(rewritten, intake)
+    restored = _restore_verbatim_spans(exhibit_normalized, verbatim_map)
     return ensure_email_envelope(
-        exhibit_normalized, recipient=recipient, signer=signer, intake=intake
+        restored, recipient=recipient, signer=signer, intake=intake
     )
 
 
@@ -388,33 +472,60 @@ def _restate_text_segments(text: str) -> list[str]:
     return segments if segments else [text]
 
 
+def _pin_segment_has_provide_verb(pin_segment: str) -> bool:
+    norm = normalize_text_for_token_match(pin_segment).lower()
+    return "provide" in _TOKEN.findall(norm)
+
+
+def _draft_segment_satisfies_provide_refusal(draft_segment: str) -> bool:
+    """True when normalized draft segment is a real supply refusal, not ``can not wait to``."""
+    norm_seg = normalize_text_for_token_match(draft_segment).lower()
+    if _CAN_NOT_PROVIDE_FALSE_POSITIVE.search(norm_seg):
+        return False
+    provide_at = norm_seg.find("provide")
+    if provide_at >= 0 and re.search(
+        r"\b(?:think|see)\b", norm_seg[:provide_at]
+    ):
+        return False
+    if re.search(r"\b(?:decline|declining)\b", norm_seg):
+        return True
+    if _NEGATED_PROVIDE_GOVERNANCE.search(norm_seg):
+        return True
+    return bool(_NEGATED_PROVIDE_GOVERNANCE_STRICT.search(norm_seg))
+
+
 def _restate_negation_guard(draft_text: str, pin_excerpt: str) -> bool:
     """Require negation on every draft span that carries a refusing pin's content."""
-    norm_pin = normalize_text_for_token_match(pin_excerpt)
-    pin_tokens = set(_TOKEN.findall(norm_pin.lower())) - _RESTATE_STOPWORDS
-    if not _negation_tokens(pin_tokens):
-        return True
-
     draft_segments = _restate_text_segments(draft_text)
+    draft_clauses = _draft_clauses(draft_text)
     for pin_segment in _restate_text_segments(pin_excerpt):
         pin_segment_tokens = _restate_clause_tokens(pin_segment)
-        if not _negation_tokens(pin_segment_tokens):
-            continue
         content_anchors = _restate_content_anchors(
             _restate_anchor_tokens(normalize_text_for_token_match(pin_segment))
         )
         if not content_anchors:
             continue
-        matched_any = False
-        for draft_segment in draft_segments:
-            draft_segment_tokens = _restate_clause_tokens(draft_segment)
-            if not content_anchors <= draft_segment_tokens:
-                continue
-            matched_any = True
-            if not _negation_tokens(draft_segment_tokens):
+        if _negation_tokens(pin_segment_tokens):
+            matched_any = False
+            for draft_segment in draft_segments:
+                draft_segment_tokens = _restate_clause_tokens(draft_segment)
+                if not content_anchors <= draft_segment_tokens:
+                    continue
+                matched_any = True
+                if not _negation_tokens(draft_segment_tokens):
+                    return False
+                if _pin_segment_has_provide_verb(pin_segment):
+                    if not _draft_segment_satisfies_provide_refusal(draft_segment):
+                        return False
+            if not matched_any:
                 return False
-        if not matched_any:
-            return False
+        else:
+            for clause in draft_clauses:
+                clause_tokens = _restate_clause_tokens(clause)
+                if not content_anchors <= clause_tokens:
+                    continue
+                if _negation_tokens(clause_tokens):
+                    return False
     return True
 
 
@@ -426,10 +537,8 @@ def email_restate_pin_satisfied(
 ) -> bool:
     """True when the draft satisfies a restate or verbatim-attested pin excerpt."""
     if verbatim_required:
-        cleaned_pin = _clean_verbatim_pin_excerpt(pin_excerpt)
-        pin_stripped = cleaned_pin.strip().lower()
+        pin_stripped, pin_tokens, _was_truncated = _verbatim_pin_tokens(pin_excerpt)
         draft_lower = draft_text.lower()
-        pin_tokens = _token_list_lower(cleaned_pin)
         draft_tokens = _token_list_lower(draft_text)
         draft_token_set = set(draft_tokens)
         if not pin_tokens or not all(token in draft_token_set for token in pin_tokens):
