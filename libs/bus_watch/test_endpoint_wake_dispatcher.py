@@ -3521,20 +3521,23 @@ def test_worker_closeout_to_composer_impresario_resolves_orion_binding() -> None
                 if agent == "cursor":
                     return {"subscriptions": [_ORION_SUBSCRIPTION]}
                 return {"subscriptions": []}
+            if (
+                method == "GET"
+                and path.startswith("/threads/")
+                and path.endswith("/lane-current")
+            ):
+                return {"parent_thread": None}
             raise AssertionError(f"unexpected bus call {method} {path}")
 
-    resolved = StubStore().subscription(to_agent, worker_thread)
+    stub = StubStore()
+    resolved = stub.subscription(to_agent, worker_thread)
     assert resolved is not None
     kind, row = resolved
     assert kind == "agent_id"
     assert row["display"] == "orion-node"
     assert row["agent_id"] == _ORION_AGENT_ID
 
-    class RouteStore:
-        def subscription(self, agent: str, thread_id: str):
-            return StubStore().subscription(agent, thread_id)
-
-    route = _resolve_delivery_route(RouteStore(), to_agent, worker_thread)  # type: ignore[arg-type]
+    route = _resolve_delivery_route(stub, to_agent, worker_thread)
     assert route is not None
     assert route[1]["display"] == "orion-node"
     assert route[1]["agent_id"] == _ORION_AGENT_ID
@@ -3545,8 +3548,9 @@ def test_scan_once_enqueues_composer_impresario_worker_closeout() -> None:
     to_agent = "composer-impresario-4ed020f2"
     subject = "CLOSEOUT|cursor-sdk CLOSEOUT lane-21015 contract=implement"
 
-    class Store:
+    class Store(StoreClient):
         def __init__(self) -> None:
+            super().__init__()
             self.pending: list[dict] = []
 
         def cursor(self) -> dict:
@@ -3564,16 +3568,22 @@ def test_scan_once_enqueues_composer_impresario_worker_closeout() -> None:
                 }
             ]
 
-        def subscription(self, agent: str, thread_id: str):
-            if agent == to_agent:
-                return (
-                    "agent_id",
-                    dict(_ORION_SUBSCRIPTION),
-                )
-            return None
-
         def scan(self, _high: int, new_hw: int, rows: list) -> None:
             self.pending = rows
+
+        def _bus(self, method: str, path: str, **kwargs: object) -> dict:
+            if method == "GET" and path == "/endpoint-subscriptions":
+                agent = (kwargs.get("params") or {}).get("agent")
+                if agent == "cursor":
+                    return {"subscriptions": [dict(_ORION_SUBSCRIPTION)]}
+                return {"subscriptions": []}
+            if (
+                method == "GET"
+                and path.startswith("/threads/")
+                and path.endswith("/lane-current")
+            ):
+                return {"parent_thread": None}
+            raise AssertionError(f"unexpected bus call {method} {path}")
 
     store = Store()
     scan_once(store)  # type: ignore[arg-type]
