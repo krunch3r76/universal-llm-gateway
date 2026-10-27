@@ -20,8 +20,10 @@ from services.git_integration_worker.mechanical_land.blocked import (
     _default_bus_post,
     emit_blocked,
 )
+from services.git_integration_worker.mechanical_land.hermetic import (
+    MechanicalLandHermeticViolation,
+)
 from services.git_integration_worker.mechanical_land.reactor import (
-    ReactorDeps,
     ingest_terminal_closeout,
     maybe_fire_mechanical_land_reactor,
     mechanical_land_stamp,
@@ -167,9 +169,9 @@ def test_stamped_appends_leg_closed_from_structured_closeout(
             ),
         )
         conn.commit()
-    deps = ReactorDeps(
-        store=store,
-        fetch_plan_fn=lambda **_k: None,
+    deps = reactor_deps(
+        store,
+        lambda **_k: None,
         post_admit_fn=lambda _b: (500, {}),
     )
     assert ingest_terminal_closeout(
@@ -198,11 +200,7 @@ def test_transition_fetched_via_mechanical_land_completions() -> None:
             }
         }
 
-    deps = ReactorDeps(
-        store=store,
-        fetch_plan_fn=_fetch,
-        post_admit_fn=lambda _b: (500, {}),
-    )
+    deps = reactor_deps(store, _fetch, post_admit_fn=lambda _b: (500, {}))
     run_reactor_loop(deps, run_id=run_id, max_sync_steps=1)
     assert captured.get("run_id") == run_id
     assert isinstance(captured.get("journal"), list)
@@ -228,7 +226,7 @@ def test_admit_command_posts_once_and_appends_leg_admitted() -> None:
         posts.append(body)
         return 201, {"dispatch_id": "d-fix-1", "execution_id": "e-fix-1"}
 
-    deps = ReactorDeps(store=store, fetch_plan_fn=_fetch, post_admit_fn=_post)
+    deps = reactor_deps(store, _fetch, post_admit_fn=_post)
     run_reactor_loop(deps, run_id=run_id, max_sync_steps=1)
     assert len(posts) == 1
     snap = store.get_run(run_id, event_limit=50)
@@ -257,9 +255,9 @@ def test_blocked_emits_event_and_bus_turn() -> None:
         bus_posts.append(dict(kwargs))
         return 42
 
-    deps = ReactorDeps(
-        store=store,
-        fetch_plan_fn=_fetch,
+    deps = reactor_deps(
+        store,
+        _fetch,
         post_admit_fn=lambda _b: (500, {}),
         bus_post_fn=_bus,
     )
@@ -329,31 +327,29 @@ def test_admit_transport_error_appends_leg_admit_failed_not_stuck() -> None:
     def _post(_body: dict) -> tuple[int, dict]:
         raise httpx.ReadTimeout("slow")
 
-    deps = ReactorDeps(store=store, fetch_plan_fn=_fetch, post_admit_fn=_post)
-    run_reactor_loop(deps, run_id=run_id, max_sync_steps=2)
+    deps = reactor_deps(store, _fetch, post_admit_fn=_post)
+    run_reactor_loop(deps, run_id=run_id, max_sync_steps=1)
     snap = store.get_run(run_id, event_limit=50)
     assert snap is not None
     events = [e["event"] for e in snap["events"]]
     assert "transition_decided" in events
     assert "leg_admit_failed" in events
     assert events.index("leg_admit_failed") > events.index("transition_decided")
+    failed = next(e for e in snap["events"] if e["event"] == "leg_admit_failed")
+    assert failed["payload"].get("recheck_ledger_before_admit") is True
     with store._connect() as conn:
         row = conn.execute(
             "SELECT status FROM mechanical_land_runs WHERE run_id=?",
             (run_id,),
         ).fetchone()
     assert row is not None
-    assert str(row["status"]) in ("admit_deferred", "blocked")
+    assert str(row["status"]) == "admit_deferred"
 
 
 def test_transition_failure_sets_admit_deferred() -> None:
     store = MechanicalLandStore()
     run_id = _seed_run(store)
-    deps = ReactorDeps(
-        store=store,
-        fetch_plan_fn=lambda **_k: None,
-        post_admit_fn=lambda _b: (500, {}),
-    )
+    deps = reactor_deps(store, lambda **_k: None, post_admit_fn=lambda _b: (500, {}))
     run_reactor_loop(deps, run_id=run_id, max_sync_steps=1)
     meta = store.get_run(run_id)
     assert meta is not None
@@ -379,9 +375,9 @@ def _block_run_with_bus_down(store: MechanicalLandStore, run_id: str) -> None:
             }
         }
 
-    deps = ReactorDeps(
-        store=store,
-        fetch_plan_fn=_fetch,
+    deps = reactor_deps(
+        store,
+        _fetch,
         post_admit_fn=lambda _b: (500, {}),
         bus_post_fn=lambda **_k: (_ for _ in ()).throw(OSError("bus down")),
     )
@@ -628,6 +624,83 @@ def test_read_timeout_ledger_recheck_admits_once_without_second_post() -> None:
     assert lane_thread_id  # used by lookup patch
 
 
+def test_read_timeout_sweep_recovers_from_ledger_without_lookup_patch() -> None:
+    store = MechanicalLandStore()
+    run_id = _seed_run(store)
+    meta = store.get_run(run_id)
+    assert meta is not None
+    lane_thread_id = str(meta["state"].get("lane_thread_id") or "9100")
+    dispatch_id = "d-real-ledger-recover"
+
+    def _post(_body: dict) -> tuple[int, dict]:
+        raise httpx.ReadTimeout("slow")
+
+    with patch(
+        "services.git_integration_worker.mechanical_land.store.cancel_unconfirmed_mechanical_leg_dispatches",
+    ) as cancel:
+        deps = reactor_deps(
+            store,
+            _admit_fix_transition_fetch,
+            post_admit_fn=_post,
+        )
+        run_reactor_loop(deps, run_id=run_id, max_sync_steps=1)
+        cancel.assert_not_called()
+    with store._connect() as conn:
+        row = conn.execute(
+            "SELECT status FROM mechanical_land_runs WHERE run_id=?",
+            (run_id,),
+        ).fetchone()
+    assert row is not None
+    assert str(row["status"]) == "admit_deferred"
+
+    ledger = CursorDispatchLedger.instance()
+    with ledger._connect() as conn:
+        conn.execute(
+            "INSERT INTO cursor_sdk_dispatches "
+            "(dispatch_id, fingerprint, thread_id, execution_id, resolved_model, "
+            "status, record_json, source_repo) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                dispatch_id,
+                "fp-real-ledger-recover",
+                lane_thread_id,
+                dispatch_id,
+                "cursor/composer-2.5",
+                "running",
+                json.dumps(
+                    {
+                        "generation_options": {
+                            "mechanical_land": {
+                                "run_id": run_id,
+                                "step_id": "fix",
+                                "attempt": 1,
+                            }
+                        }
+                    }
+                ),
+                str(Path("/tmp")),
+            ),
+        )
+        conn.commit()
+
+    deps = reactor_deps(
+        store,
+        _admit_fix_transition_fetch,
+        post_admit_fn=_post,
+    )
+    sweep_mechanical_land_runs(store=store, deps=deps)
+    snap = store.get_run(run_id, event_limit=50)
+    assert snap is not None
+    assert "leg_admitted" in [e["event"] for e in snap["events"]]
+    with store._connect() as conn:
+        row = conn.execute(
+            "SELECT status FROM mechanical_land_runs WHERE run_id=?",
+            (run_id,),
+        ).fetchone()
+    assert row is not None
+    assert str(row["status"]) == "awaiting_leg"
+
+
 def test_admit_non_httpx_exception_sets_admit_deferred() -> None:
     store = MechanicalLandStore()
     run_id = _seed_run(store)
@@ -656,7 +729,7 @@ def test_admit_non_httpx_exception_sets_admit_deferred() -> None:
 
 
 def test_offline_guard_blocks_default_bus_post_without_bus_post_fn() -> None:
-    with pytest.raises(AssertionError, match="create_turn"):
+    with pytest.raises(MechanicalLandHermeticViolation, match="create_turn"):
         _default_bus_post(
             thread_id="12286",
             to_agent="maestro",

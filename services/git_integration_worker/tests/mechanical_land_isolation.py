@@ -9,6 +9,9 @@ from typing import Any
 import httpx
 import pytest
 
+from services.git_integration_worker.mechanical_land.hermetic import (
+    MechanicalLandHermeticViolation,
+)
 from services.git_integration_worker.mechanical_land.reactor import ReactorDeps
 from services.git_integration_worker.mechanical_land.store import MechanicalLandStore
 
@@ -94,7 +97,7 @@ def _mechanical_land_offline_isolation(
     )
 
     def _forbidden_create_turn(*_a: object, **_k: object) -> None:
-        raise AssertionError(
+        raise MechanicalLandHermeticViolation(
             "agent_bus create_turn invoked from offline mechanical_land test"
         )
 
@@ -130,12 +133,14 @@ def _mechanical_land_offline_isolation(
             for token in (
                 "agent-bus",
                 "stargate",
+                ":8091",
                 ":8765",
                 "127.0.0.1:8765",
+                "127.0.0.1:8091",
                 "/tmp/universal-protocol/agent-bus",
             )
         ):
-            raise AssertionError(
+            raise MechanicalLandHermeticViolation(
                 f"offline mechanical_land test attempted live httpx to {url!r}"
             )
         return _orig_request(self, method, url, **kwargs)

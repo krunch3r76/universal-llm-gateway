@@ -511,13 +511,16 @@ class MechanicalLandStore:
                 recovered_from=error_class,
             )
             return True, dispatch_id, execution_id
-        cancel_unconfirmed_mechanical_leg_dispatches(
-            lane_thread_id=lane_thread_id,
-            run_id=run_id,
-            step_id=step_id,
-            attempt=attempt,
-            reason=f"admit_transport_error:{error_class}",
-        )
+        # ReadTimeout may still land on the ledger after the POST returns; defer cancel
+        # until the ambiguous recheck path is exhausted (sweep try_recover / retry cap).
+        if not ambiguous:
+            cancel_unconfirmed_mechanical_leg_dispatches(
+                lane_thread_id=lane_thread_id,
+                run_id=run_id,
+                step_id=step_id,
+                attempt=attempt,
+                reason=f"admit_transport_error:{error_class}",
+            )
         self.append_leg_admit_failed(
             run_id=run_id,
             prev_seq=prev_seq,

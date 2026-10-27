@@ -268,7 +268,7 @@ def test_stargate_timeout_appends_leg_admit_failed_503() -> None:
         result = store.birth_from_plan(_plan())
     assert result.http_status == 503
     assert result.admit_error_class == "ReadTimeout"
-    cancel.assert_called_once()
+    cancel.assert_not_called()
 
 
 def test_read_timeout_recovers_when_ledger_has_dispatch() -> None:
