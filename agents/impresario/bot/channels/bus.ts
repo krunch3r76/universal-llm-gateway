@@ -109,15 +109,18 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+const POLL_GAP_MS = 5000;
+let pollGapOverride: number | null = null;
+
+export function setPollGapForTest(ms: number | null): void {
+  pollGapOverride = ms;
+}
+
 function pollGapMs(): number {
-  const raw = process.env.ULG_BUS_POLL_GAP_MS;
-  if (raw) {
-    const n = Number(raw);
-    if (Number.isFinite(n) && n >= 0) {
-      return n;
-    }
+  if (pollGapOverride !== null) {
+    return pollGapOverride;
   }
-  return 5000;
+  return POLL_GAP_MS;
 }
 
 function deliveryId(thread: string, turnNumber: number): string {

@@ -11,6 +11,7 @@ import {
   pollOnce,
   resetPollLoopForTest,
   runPollLoop,
+  setPollGapForTest,
   signalPollLoopStop,
 } from "../bot/channels/bus.js";
 import { IMPRESARIO_LANE } from "../bot/lib/ulg.js";
@@ -206,7 +207,6 @@ describe("fix2 nits N3 pollOnce and runPollLoop", () => {
     envRestore.ULG_FIXTURE_SCENARIO = process.env.ULG_FIXTURE_SCENARIO;
     envRestore.ULG_MODEL_TURNS = process.env.ULG_MODEL_TURNS;
     envRestore.CURSOR_API_KEY = process.env.CURSOR_API_KEY;
-    envRestore.ULG_BUS_POLL_GAP_MS = process.env.ULG_BUS_POLL_GAP_MS;
     process.env.ULG_FIXTURE_DIR = fixtureDir;
     process.env.ULG_FIXTURE_SCENARIO = "poll-nits";
     delete process.env.ULG_MODEL_TURNS;
@@ -216,6 +216,7 @@ describe("fix2 nits N3 pollOnce and runPollLoop", () => {
 
   afterEach(async () => {
     signalPollLoopStop();
+    setPollGapForTest(null);
     for (const [k, v] of Object.entries(envRestore)) {
       if (v === undefined) {
         delete process.env[k];
@@ -241,7 +242,7 @@ describe("fix2 nits N3 pollOnce and runPollLoop", () => {
   });
 
   it("runPollLoop runs at least two iterations then exits on stop signal", async () => {
-    process.env.ULG_BUS_POLL_GAP_MS = "1";
+    setPollGapForTest(1);
     resetPollLoopForTest();
     const store = kvMap();
     const { kv: baseKv } = hostFromKv(store);
