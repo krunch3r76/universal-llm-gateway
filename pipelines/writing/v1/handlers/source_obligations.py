@@ -28,6 +28,22 @@ _PLEASANTRY = re.compile(
     r"^(?:hi|hello|thanks|thank you|best,|regards,|cheers,)\s*\.?\s*$",
     re.I,
 )
+_REPLY_CLOSING_LET_KNOW = re.compile(
+    r"^(?:please\s+)?let\s+(?:me|us)\s+know\s*$",
+    re.IGNORECASE,
+)
+_TRAILING_SIGNATURE = re.compile(
+    r"(?:^|\s)[—–-]+\s*[A-Za-z][\w'.-]*\s*$",
+)
+_COURTESY_TOKENS = re.compile(
+    r"\b(?:"
+    r"thank\s+you(?:\s+so\s+much|\s+very\s+much)?"
+    r"|thanks?(?:\s+so\s+much|\s+very\s+much|\s+a\s+lot|\s+again)?"
+    r"|please|many\s+thanks|appreciate\s+it"
+    r")\b",
+    re.IGNORECASE,
+)
+_EDGE_PUNCT = re.compile(r"^[,!.;:\s]+|[,!.;:\s]+$")
 _GREETING_PREFIX = re.compile(
     r"^(?:"
     r"hi(?:\s+[\w'.-]+)?\s*[,—–-]\s*|"
@@ -64,9 +80,23 @@ def _format_block(obligations: list[dict[str, Any]]) -> str:
     return "\n".join(lines)
 
 
+_SIGNATURE_ONLY = re.compile(r"^[—–-]+\s*[A-Z][\w'.-]*\s*$")
+
+
 def _split_spans(source_message: str) -> list[str]:
     chunks = re.split(r"(?<=[.!?])\s+|\n+", source_message.strip())
-    return [chunk.strip() for chunk in chunks if chunk.strip()]
+    spans = [chunk.strip() for chunk in chunks if chunk.strip()]
+    merged: list[str] = []
+    for span in spans:
+        if (
+            merged
+            and _SIGNATURE_ONLY.match(span)
+            and not merged[-1].rstrip().endswith(":")
+        ):
+            merged[-1] = f"{merged[-1]} {span}".strip()
+        else:
+            merged.append(span)
+    return merged
 
 
 def _strip_greeting_prefix(span: str) -> str:
@@ -77,6 +107,25 @@ def _strip_greeting_prefix(span: str) -> str:
             break
         text = text[match.end() :].strip()
     return text
+
+
+def _is_reply_closing_pleasantry(span: str) -> bool:
+    """True when span is only a bare let-me/us-know sign-off without substantive ask."""
+    text = _strip_greeting_prefix(span).strip()
+    text = _TRAILING_SIGNATURE.sub("", text).strip()
+    while True:
+        stripped = _COURTESY_TOKENS.sub("", text).strip()
+        if stripped == text:
+            break
+        text = stripped
+    while True:
+        stripped = _EDGE_PUNCT.sub("", text).strip()
+        if stripped == text:
+            break
+        text = stripped
+    if not text:
+        return False
+    return bool(_REPLY_CLOSING_LET_KNOW.match(text))
 
 
 def _classify_span(span: str) -> tuple[str, str, str]:
@@ -91,6 +140,12 @@ def _classify_span(span: str) -> tuple[str, str, str]:
         )
     if _QUESTION.search(core):
         return "question", "answer", f"answer the question: {core[:120]}"
+    if _is_reply_closing_pleasantry(span):
+        return (
+            "pleasantry",
+            "none",
+            "reply-closing courtesy without a required reply action",
+        )
     if _REQUEST.search(core):
         return "request", "answer", f"respond to the request: {core[:120]}"
     if _DEADLINE.search(core):
@@ -147,13 +202,18 @@ def _parse_model_obligations(raw: str, source_message: str) -> list[dict[str, An
         quoted = str(item.get("quoted_span") or "")
         if quoted and quoted not in source_message:
             quoted = quoted.strip()
+        kind = str(item.get("kind") or "statement")
+        obligation = str(item.get("obligation") or "none")
+        if quoted and _is_reply_closing_pleasantry(quoted):
+            kind = "pleasantry"
+            obligation = "none"
         rows.append(
             {
                 "id": str(item.get("id") or f"O{index}"),
                 "quoted_span": quoted or source_message[:200],
-                "kind": str(item.get("kind") or "statement"),
+                "kind": kind,
                 "semantic_reading": str(item.get("semantic_reading") or ""),
-                "obligation": str(item.get("obligation") or "none"),
+                "obligation": obligation,
             }
         )
     return rows or None

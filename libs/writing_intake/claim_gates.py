@@ -132,6 +132,10 @@ def purpose_content_tokens(text: str) -> frozenset[str]:
         tokens.add(token)
     if "leave" in tokens:
         tokens.add("away")
+    if "availability" in tokens or "available" in tokens:
+        tokens.add("schedule")
+    if "schedule" in tokens:
+        tokens.add("availability")
     return frozenset(tokens)
 
 

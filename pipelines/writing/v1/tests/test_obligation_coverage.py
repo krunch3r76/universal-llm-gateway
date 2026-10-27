@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import importlib
 import importlib.util
+import json
 import sys
 from pathlib import Path
 from typing import Any
@@ -1344,6 +1345,83 @@ def test_act_outside_b4_clause_openers_with_unattested_past_claim_fail() -> None
             draft, obligations, pin_ledger=pin_ledger
         )
         assert cov[0]["status"] == "missing", body
+
+
+_REPLY_CLOSING_PLEASANTRY_SPANS = (
+    "Let me know.",
+    "Please let me know.",
+    "Let me know, thank you! -Maria",
+    "Let me know, thanks! -Maria",
+    "Let me know!",
+)
+
+_REPLY_CLOSING_SUBSTANTIVE_SPANS = (
+    "Please confirm.",
+    "Please advise.",
+    "Let me know tomorrow.",
+    "Let me know Tuesday.",
+    "Let me know by Friday.",
+)
+
+
+def _model_obligation_row(span: str) -> dict[str, Any]:
+    parsed = source_obligations._parse_model_obligations(
+        json.dumps(
+            {
+                "obligations": [
+                    {
+                        "id": "O1",
+                        "quoted_span": span,
+                        "kind": "request",
+                        "obligation": "answer",
+                    }
+                ]
+            }
+        ),
+        span,
+    )
+    assert parsed is not None
+    return parsed[0]
+
+
+@pytest.mark.parametrize("span", _REPLY_CLOSING_PLEASANTRY_SPANS)
+def test_reply_closing_pleasantry_fallback_and_parse(span: str) -> None:
+    rows = source_obligations.fallback_obligations(span)
+    assert len(rows) == 1
+    assert rows[0]["kind"] == "pleasantry"
+    assert rows[0]["obligation"] == "none"
+    parsed = _model_obligation_row(span)
+    assert parsed["kind"] == "pleasantry"
+    assert parsed["obligation"] == "none"
+
+
+@pytest.mark.parametrize("span", _REPLY_CLOSING_SUBSTANTIVE_SPANS)
+def test_reply_closing_substantive_not_downgraded_to_pleasantry(span: str) -> None:
+    row = source_obligations.fallback_obligations(span)[0]
+    assert row["kind"] in {"request", "deadline"}
+    assert row["obligation"] == "answer"
+    assert row["kind"] != "pleasantry"
+    parsed = _model_obligation_row(span)
+    assert parsed["kind"] in {"request", "deadline"}
+    assert parsed["obligation"] == "answer"
+    assert parsed["kind"] != "pleasantry"
+
+
+def test_markdown_bullet_lines_not_merged_as_signature() -> None:
+    inbound = "Bring these:\n- passport\n- license"
+    rows = source_obligations.fallback_obligations(inbound)
+    quoted = [str(row["quoted_span"]) for row in rows]
+    assert any("- passport" in q for q in quoted)
+    passport = next(row for row in rows if "- passport" in str(row["quoted_span"]))
+    assert passport["kind"] != "pleasantry"
+    assert passport["obligation"] != "none"
+
+
+def test_substantive_let_me_know_availability_stays_request() -> None:
+    span = "Please let me know your availability for next month"
+    row = source_obligations.fallback_obligations(span)[0]
+    assert row["obligation"] == "answer"
+    assert row["kind"] != "pleasantry"
 
 
 def test_obligation_coverage_handler_emits_missing_block() -> None:
