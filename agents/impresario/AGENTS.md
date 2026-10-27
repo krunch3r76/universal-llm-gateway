@@ -18,6 +18,9 @@ Run the CLI under Node, never Bun.
 
 ## Layout
 
+- `bot/agent.ts` sets `tools: ["mcp"]` so `resolveHostHarnessToolOptions` grants MCP
+  for server tools. An empty allowlist stays `{ tools: [] }` with no MCP (see SDK
+  `docs/reference/agent-config.md` — non-empty lists get `"mcp"`; `[]` does not).
 - `bot/instructions.md` is the always-on prompt. Keep it short.
 - `bot/tools/<name>.ts` is one tool per file. The filename is the tool name.
 - `bot/lib/` is shared code. Never discovered.

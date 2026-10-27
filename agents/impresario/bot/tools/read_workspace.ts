@@ -10,6 +10,21 @@ export type WorkspaceReadResolve =
   | { ok: true; fullPath: string }
   | { ok: false; error: string };
 
+function realPathInsideRoot(root: string, candidate: string): boolean {
+  let realRoot: string;
+  let realCandidate: string;
+  try {
+    realRoot = fs.realpathSync.native(root);
+    realCandidate = fs.realpathSync.native(candidate);
+  } catch {
+    return false;
+  }
+  return (
+    realCandidate === realRoot ||
+    realCandidate.startsWith(`${realRoot}${path.sep}`)
+  );
+}
+
 /** Resolve a basename under workspaceDir; refuses paths that escape the workspace root. */
 export function resolveWorkspaceReadPath(
   workspaceDir: string,
@@ -25,6 +40,15 @@ export function resolveWorkspaceReadPath(
   const fullPath = path.resolve(root, relativePath);
   if (fullPath !== root && !fullPath.startsWith(`${root}${path.sep}`)) {
     return { ok: false, error: "read_workspace: path escapes workspace" };
+  }
+  if (!fs.existsSync(fullPath)) {
+    return { ok: true, fullPath };
+  }
+  if (!realPathInsideRoot(root, fullPath)) {
+    return {
+      ok: false,
+      error: "read_workspace: path escapes workspace (symlink target)",
+    };
   }
   return { ok: true, fullPath };
 }

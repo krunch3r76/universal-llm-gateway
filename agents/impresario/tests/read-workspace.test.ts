@@ -39,4 +39,26 @@ describe("read_workspace (R2)", () => {
     );
     assert.match(String((result as { content?: string }).content), /20901/);
   });
+
+  it("refuses turn.json symlinked to a file outside the workspace", async () => {
+    const outsideDir = fs.mkdtempSync(path.join(os.tmpdir(), "imp-read-out-"));
+    const outsideFile = path.join(outsideDir, "secret.json");
+    fs.writeFileSync(outsideFile, '{"leak":true}');
+    const linkWorkspace = fs.mkdtempSync(path.join(os.tmpdir(), "imp-read-link-"));
+    fs.symlinkSync(outsideFile, path.join(linkWorkspace, "turn.json"));
+    try {
+      const result = await readWorkspaceTool.execute!(
+        { path: "turn.json" },
+        { workspaceDir: linkWorkspace } as never,
+      );
+      assert.equal((result as { ok?: boolean }).ok, false);
+      assert.match(
+        String((result as { error?: string }).error),
+        /escapes workspace/,
+      );
+    } finally {
+      fs.rmSync(outsideDir, { recursive: true, force: true });
+      fs.rmSync(linkWorkspace, { recursive: true, force: true });
+    }
+  });
 });
