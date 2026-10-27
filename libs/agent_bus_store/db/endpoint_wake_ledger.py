@@ -9,6 +9,10 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from agent_seat.registry import STAGE_MANAGER_ADDRESSES, normalize_bus_address
+from cursor_bridge.cursor_window_config import (
+    cdp_origin_for_gui_host,
+    normalize_gui_host,
+)
 
 from ..recipients import MAESTRO_WEB_ALIAS_PAIR
 from .connection import connect, write_connect
@@ -466,6 +470,64 @@ def resolve_subscription_for_thread(
     else:
         route = "parent"
     return route, row
+
+
+_WAKE_DELIVERY_AGENT = "cursor"
+_DELIVERY_BINDING_SOURCE = "agent_bus_store.delivery_bindings_resolve"
+
+
+def _cursor_glass_actuation(row: dict[str, Any]) -> dict[str, Any] | None:
+    if str(row.get("surface") or "").strip().lower() != "cursor":
+        return None
+    display = str(row.get("display") or "")
+    gui_host = normalize_gui_host(display)
+    cdp_base = cdp_origin_for_gui_host(gui_host)
+    return {
+        "type": "cursor_glass",
+        "gui_host": gui_host,
+        "agent_id": str(row.get("agent_id") or ""),
+        "cdp_base": cdp_base,
+    }
+
+
+def resolve_wake_delivery_binding(*, house_id: str) -> dict[str, Any]:
+    """Resolve wake actuation from the subscribed endpoint row only (no CSE hop)."""
+    thread_id = str(house_id or "").strip()
+    as_of = datetime.now(UTC).isoformat().replace("+00:00", "Z")
+    scope = f"house:{thread_id}/intent:wake"
+    envelope: dict[str, Any] = {
+        "as_of": as_of,
+        "basis": "agent_endpoint_subscription",
+        "source": _DELIVERY_BINDING_SOURCE,
+        "scope": scope,
+        "stale": False,
+    }
+    if not thread_id:
+        envelope.update({"state": "unbound", "current": None})
+        return envelope
+    resolved = resolve_subscription_for_thread(_WAKE_DELIVERY_AGENT, thread_id)
+    if resolved is None:
+        envelope.update({"state": "unbound", "current": None})
+        return envelope
+    route, row = resolved
+    if str(row.get("state") or "") != "subscribed":
+        envelope.update({"state": "unbound", "current": None})
+        return envelope
+    actuation = _cursor_glass_actuation(row)
+    if actuation is None:
+        envelope.update({"state": "unbound", "current": None})
+        return envelope
+    envelope.update(
+        {
+            "state": "bound",
+            "current": {
+                "actuation": actuation,
+                "route": route,
+                "subscription_id": row.get("id"),
+            },
+        }
+    )
+    return envelope
 
 
 def claim_due_wakes(
