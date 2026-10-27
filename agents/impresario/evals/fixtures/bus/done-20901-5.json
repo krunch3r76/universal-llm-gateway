@@ -16,7 +16,7 @@
   "score_md": "## state\nimplementing · head deeaf19f9 · review —\n\n## dispatches\n\n## open_stops\n\n## rulings\n\n## log\n",
   "closeouts": {
     "02a33916-2134-48d3-b32a-c90abf29c85a": {
-      "raw": "VERDICT: PASS\n\nstatus: complete · 8 tests green\n\nCloseout envelope for dispatch 02a33916-2134-48d3-b32a-c90abf29c85a.\n\n## effects_manifest\n- files changed (not for impresario triage)\n"
+      "raw": "VERDICT: PASS\n\nstatus: complete · 8 tests green · head deeaf19f9843fd0b1dd588a8cec497fe34edb79a\n\n**work_key:** `todo:reaper-amendment`\n**land_disposition:** unlanded (LAND-3 by gc1 on APPROVE)\n\n### Changed files\n- scripts/giw_worktree_reclaim.py\n- tests/test_giw_worktree_reclaim.py\n\n### Verification\npytest tests/test_giw_worktree_reclaim.py -q → 8 passed\nruff check on changed files → clean\n\n**residue:** none — ready for REQUEST review.\n\n## effects_manifest\n"
     }
   }
 }
