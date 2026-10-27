@@ -117,8 +117,8 @@ def build_markdown_unwindowed_payload(
         first_raw = md_read_section(text, first_path)
     except SectionError:
         first_raw = text
-    first_body, first_byte_limited, first_single_line_partial = _cap_utf8_on_line_boundary(
-        first_raw, DEFAULT_UNWINDOWED_MAX_BYTES
+    first_body, first_byte_limited, first_single_line_partial = (
+        _cap_utf8_on_line_boundary(first_raw, DEFAULT_UNWINDOWED_MAX_BYTES)
     )
 
     section_reads = [

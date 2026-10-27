@@ -9,7 +9,9 @@ from tools._file_helpers import read_file_result
 from tools._line_range import DEFAULT_UNWINDOWED_MAX_BYTES, DEFAULT_UNWINDOWED_MAX_LINES
 
 _FIXTURE_PATH = (
-    Path(__file__).resolve().parents[1] / "testdata" / "unwindowed_small_markdown_fixture.json"
+    Path(__file__).resolve().parents[1]
+    / "testdata"
+    / "unwindowed_small_markdown_fixture.json"
 )
 
 
