@@ -114,8 +114,11 @@ let pollGapOverride: number | null = null;
 
 export function setPollGapForTest(ms: number | null): void {
   if (ms !== null) {
-    if (!Number.isFinite(ms) || ms <= 0) {
-      throw new Error("setPollGapForTest: gap must be a positive finite number or null");
+    const ok = Number.isFinite(ms) && ms > 0;
+    if (!ok) {
+      throw new Error(
+        "setPollGapForTest: gap must be a positive finite number or null",
+      );
     }
   }
   pollGapOverride = ms;
@@ -126,7 +129,7 @@ export function resetPollGapForTest(): void {
   pollGapOverride = null;
 }
 
-function pollGapMs(): number {
+export function pollGapMs(): number {
   if (pollGapOverride !== null) {
     return pollGapOverride;
   }
@@ -289,7 +292,7 @@ async function runPollLoop(args: ChannelStartArgs): Promise<void> {
     } catch (err) {
       const status = (err as { status?: number }).status;
       if (status === 503 || status === 500) {
-        if (backoffMs === POLL_GAP_MS) {
+        if (backoffMs === pollGapMs()) {
           channelLogger.warn("[bus] wait/fetch 5xx; backing off");
         }
         await sleep(backoffMs);

@@ -4,9 +4,54 @@ import path from "node:path";
 import { defineTool } from "@grok/agent-sdk/tools";
 import { z } from "zod";
 
-import { gateToolCall } from "../lib/tool-call-cap.js";
-
 const ALLOWED_BASENAMES = new Set(["turn.json", "score.md"]);
+
+export type WorkspaceReadResolve =
+  | { ok: true; fullPath: string }
+  | { ok: false; error: string };
+
+function realPathInsideRoot(root: string, candidate: string): boolean {
+  let realRoot: string;
+  let realCandidate: string;
+  try {
+    realRoot = fs.realpathSync.native(root);
+    realCandidate = fs.realpathSync.native(candidate);
+  } catch {
+    return false;
+  }
+  return (
+    realCandidate === realRoot ||
+    realCandidate.startsWith(`${realRoot}${path.sep}`)
+  );
+}
+
+/** Resolve a basename under workspaceDir; refuses paths that escape the workspace root. */
+export function resolveWorkspaceReadPath(
+  workspaceDir: string,
+  relativePath: string,
+): WorkspaceReadResolve {
+  if (!ALLOWED_BASENAMES.has(relativePath)) {
+    return {
+      ok: false,
+      error: `read_workspace: path not allowed: ${relativePath}`,
+    };
+  }
+  const root = path.resolve(workspaceDir);
+  const fullPath = path.resolve(root, relativePath);
+  if (fullPath !== root && !fullPath.startsWith(`${root}${path.sep}`)) {
+    return { ok: false, error: "read_workspace: path escapes workspace" };
+  }
+  if (!fs.existsSync(fullPath)) {
+    return { ok: true, fullPath };
+  }
+  if (!realPathInsideRoot(root, fullPath)) {
+    return {
+      ok: false,
+      error: "read_workspace: path escapes workspace (symlink target)",
+    };
+  }
+  return { ok: true, fullPath };
+}
 
 export default defineTool({
   description:
@@ -16,21 +61,15 @@ export default defineTool({
   }),
   effect: "read",
   async execute(input, ctx) {
-    return gateToolCall(ctx, async () => {
-      if (!ALLOWED_BASENAMES.has(input.path)) {
-        return { ok: false, error: `read_workspace: path not allowed: ${input.path}` };
-      }
-      const full = path.resolve(ctx.workspaceDir, input.path);
-      const root = path.resolve(ctx.workspaceDir);
-      if (!full.startsWith(`${root}${path.sep}`) && full !== root) {
-        return { ok: false, error: "read_workspace: path escapes workspace" };
-      }
-      try {
-        const content = fs.readFileSync(full, "utf8");
-        return { path: input.path, content };
-      } catch {
-        return { ok: false, error: `read_workspace: could not read ${input.path}` };
-      }
-    });
+    const resolved = resolveWorkspaceReadPath(ctx.workspaceDir, input.path);
+    if (!resolved.ok) {
+      return { ok: false, error: resolved.error };
+    }
+    try {
+      const content = fs.readFileSync(resolved.fullPath, "utf8");
+      return { path: input.path, content };
+    } catch {
+      return { ok: false, error: `read_workspace: could not read ${input.path}` };
+    }
   },
 });
