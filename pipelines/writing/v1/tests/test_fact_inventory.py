@@ -495,6 +495,18 @@ def test_prose_rhythm_prompt_does_not_strip_trailing_qualifiers() -> None:
     assert "I said" in text
 
 
+def test_prose_rhythm_correspondence_keeps_sentence_boundaries() -> None:
+    text = (
+        Path(__file__).resolve().parents[1] / "prompts" / "prose_rhythm.yaml"
+    ).read_text(encoding="utf-8")
+    assert "correspondence (email or sms)" in text
+    assert "keep separate sentences separate" in text
+    assert "four or more" in text
+    assert "Currently" in text
+    assert "because" in text
+    assert "missing_obligations" in text
+
+
 def test_filing_stitch_keeps_source_frame_and_fails_unnumbered_body() -> None:
     from writing_intake.inventory_drift import filing_frame
 

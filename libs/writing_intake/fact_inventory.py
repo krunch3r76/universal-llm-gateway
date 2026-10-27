@@ -535,7 +535,15 @@ def drift_check_sentence(
         if _EXHIBIT_LEDGER.search(sentence) and not _EXHIBIT_TAG.search(sentence):
             return "exhibit_fact_missing_inline_tag"
     if points and map_claim_to_purpose(sentence, points) is None:
-        return "not_purpose_relevant"
+        sentence_norm = sentence.strip().lower()
+        verbatim_exempt = any(
+            sentence_norm in str(excerpt).strip().lower()
+            or str(excerpt).strip().lower() in sentence_norm
+            for excerpt in verbatim_required_excerpts
+            if str(excerpt).strip()
+        )
+        if not verbatim_exempt:
+            return "not_purpose_relevant"
     return None
 
 

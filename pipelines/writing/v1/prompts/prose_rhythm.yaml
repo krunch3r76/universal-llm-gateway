@@ -22,8 +22,8 @@ template: |
   </missing_obligations>
   Revise the draft using these prose-rhythm steps (plain text only; preserve every attested fact and pin-backed token):
   (1) Mark each sentence length as long, medium, or short.
-  (2) Find runs of three or more consecutive sentences in the same length bucket.
-  (3) In each flat run, let one context or sequence sentence take a subordinate clause so the run breaks up.
+  (2) On correspondence (email or sms), keep separate sentences separate unless <missing_obligations> requires adding a clause; when <missing_obligations> is empty and no duplicate phrases occur across adjacent sentences, keep each sentence's boundaries and opening adverbs (such as Currently, Right now) intact. On long-form or filing runs only, find runs of four or more consecutive sentences in the same length bucket.
+  (3) On correspondence (email or sms), never combine sentences with causal connectives (because, since, so, therefore, as a result) or merge short sentences; do not drop sentence-initial temporal adverbs (Currently, Right now). On long-form/filing flat runs of four or more same-length sentences, let one context or sequence sentence take a subordinate clause so the run breaks up — without introducing new causal connectives.
   (4) Place the shortest sentence on the load-bearing number, date, or consequence.
   (5) End paragraphs on concrete nouns or facts.
   When <missing_obligations> is non-empty, incorporate those obligations while preserving attested pins and rhythm.

@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import importlib
 import importlib.util
+import json
 import sys
 from pathlib import Path
 from typing import Any
@@ -1344,6 +1345,36 @@ def test_act_outside_b4_clause_openers_with_unattested_past_claim_fail() -> None
             draft, obligations, pin_ledger=pin_ledger
         )
         assert cov[0]["status"] == "missing", body
+
+
+def test_reply_closing_let_me_know_is_pleasantry() -> None:
+    for span in ("Let me know, thanks! -Maria", "Let me know, thanks!"):
+        rows = source_obligations.fallback_obligations(span)
+        assert len(rows) == 1
+        assert rows[0]["kind"] == "pleasantry"
+        assert rows[0]["obligation"] == "none"
+    substantive = "Please let me know your availability for next month"
+    sub = source_obligations.fallback_obligations(substantive)[0]
+    assert sub["obligation"] == "answer"
+    assert sub["kind"] != "pleasantry"
+    parsed = source_obligations._parse_model_obligations(
+        json.dumps(
+            {
+                "obligations": [
+                    {
+                        "id": "O1",
+                        "quoted_span": "Let me know, thanks!",
+                        "kind": "request",
+                        "obligation": "answer",
+                    }
+                ]
+            }
+        ),
+        "Let me know, thanks!",
+    )
+    assert parsed is not None
+    assert parsed[0]["kind"] == "pleasantry"
+    assert parsed[0]["obligation"] == "none"
 
 
 def test_obligation_coverage_handler_emits_missing_block() -> None:
