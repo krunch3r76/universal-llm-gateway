@@ -2,10 +2,15 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 from tools._file_helpers import read_file_result
 from tools._line_range import DEFAULT_UNWINDOWED_MAX_BYTES, DEFAULT_UNWINDOWED_MAX_LINES
+
+_FIXTURE_PATH = (
+    Path(__file__).resolve().parents[1] / "testdata" / "unwindowed_small_markdown_fixture.json"
+)
 
 
 def test_large_unwindowed_plain_read_is_addressable(tmp_path: Path) -> None:
@@ -147,3 +152,55 @@ def test_under_threshold_markdown_unchanged(tmp_path: Path) -> None:
     result = read_file_result("tiny.md", root=root)
     assert result["content"] == text
     assert "unwindowed_oversized" not in result
+
+
+def test_small_unwindowed_markdown_matches_frozen_fixture(tmp_path: Path) -> None:
+    """AC4 — byte-identical small read vs master 8808519dc baseline."""
+    fixture = json.loads(_FIXTURE_PATH.read_text(encoding="utf-8"))
+    root = tmp_path / "sandbox"
+    root.mkdir()
+    (root / "tiny.md").write_text(fixture["content"], encoding="utf-8")
+    result = read_file_result("tiny.md", root=root)
+    comparable = {
+        "content": result["content"],
+        "path": "tiny.md",
+        "read_sha256": result["read_sha256"],
+    }
+    assert comparable == fixture
+
+
+def test_first_section_truncation_ends_on_line_boundary(tmp_path: Path) -> None:
+    root = tmp_path / "sandbox"
+    root.mkdir()
+    fill = ("row-" + ("x" * 600) + "\n") * 70
+    body = "\n\n".join(
+        [
+            "## Executive\n" + fill + "complete tail line\n",
+            "## Next\nshort\n",
+        ]
+    )
+    assert len(body.encode("utf-8")) > DEFAULT_UNWINDOWED_MAX_BYTES
+    rel = "wide-first.md"
+    (root / rel).write_text(body, encoding="utf-8")
+    result = read_file_result(rel, root=root)
+    assert result.get("first_section_truncated") is True
+    assert result.get("first_section_line_aligned") is True
+    content = result["content"]
+    assert content.endswith("\n")
+    assert "complete tail line" not in content
+    last_line = content.rstrip("\n").split("\n")[-1]
+    assert last_line.startswith("row-")
+    assert last_line.endswith("x" * 600)
+
+
+def test_first_section_single_long_line_not_line_aligned(tmp_path: Path) -> None:
+    root = tmp_path / "sandbox"
+    root.mkdir()
+    one_line = "z" * (DEFAULT_UNWINDOWED_MAX_BYTES + 500)
+    body = f"## Block\n{one_line}\n"
+    rel = "single-line-first.md"
+    (root / rel).write_text(body, encoding="utf-8")
+    result = read_file_result(rel, root=root)
+    assert result.get("first_section_truncated") is True
+    assert result.get("first_section_line_aligned") is False
+    assert result["content"]

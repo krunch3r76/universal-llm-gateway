@@ -12,6 +12,8 @@ from implement_admission.closeout_helpers import cortex_files_root
 from tools._line_range import DEFAULT_UNWINDOWED_MAX_BYTES
 from tools._unwindowed_read_projection import sidecar_section_listing
 
+_SIDECAR_LOAD_MAX_BYTES = DEFAULT_UNWINDOWED_MAX_BYTES
+
 _COMPACT_MAX_BYTES = 1500
 _COMPACT_BUDGET_BYTES = 1450
 _CDP_LINE_CAP = 45
@@ -229,31 +231,44 @@ def _compact_cdp_markdown(body: str) -> str:
     return out
 
 
-def _load_cortex_sidecar_text(sidecar_uri: str) -> str | None:
+def _load_cortex_sidecar_text(sidecar_uri: str) -> tuple[str | None, dict[str, Any]]:
+    """Load sidecar bytes from cortex, capped at :data:`_SIDECAR_LOAD_MAX_BYTES`.
+
+    Returns decoded text and load metadata (``sidecar_capped``, byte counts).
+    """
     uri = (sidecar_uri or "").strip()
     if not uri.startswith("cortex://"):
-        return None
+        return None, {}
     rel = uri.removeprefix("cortex://").lstrip("/")
     path = (cortex_files_root() / rel).resolve()
     try:
         path.relative_to(cortex_files_root().resolve())
     except ValueError:
-        return None
+        return None, {}
     if not path.is_file():
-        return None
+        return None, {}
     try:
         raw = path.read_bytes()
     except OSError:
-        return None
-    if len(raw) > DEFAULT_UNWINDOWED_MAX_BYTES:
-        raw = raw[:DEFAULT_UNWINDOWED_MAX_BYTES]
-    return raw.decode("utf-8", errors="replace")
+        return None, {}
+    sidecar_bytes_total = len(raw)
+    sidecar_capped = sidecar_bytes_total > _SIDECAR_LOAD_MAX_BYTES
+    if sidecar_capped:
+        raw = raw[:_SIDECAR_LOAD_MAX_BYTES]
+    sidecar_bytes_returned = len(raw)
+    text = raw.decode("utf-8", errors="replace")
+    load_meta: dict[str, Any] = {
+        "sidecar_capped": sidecar_capped,
+        "sidecar_bytes_total": sidecar_bytes_total,
+        "sidecar_bytes_returned": sidecar_bytes_returned,
+    }
+    return text, load_meta
 
 
 def _attach_sidecar_listing(
     projected: dict[str, Any], sidecar_uri: str
 ) -> dict[str, Any]:
-    text = _load_cortex_sidecar_text(sidecar_uri)
+    text, load_meta = _load_cortex_sidecar_text(sidecar_uri)
     if text is None:
         projected = projected.copy()
         projected["sidecar_listing_error"] = f"sidecar not readable: {sidecar_uri}"
@@ -267,6 +282,10 @@ def _attach_sidecar_listing(
     out["sidecar_sections"] = listing["sections"]
     out["sidecar_section_reads"] = listing["section_reads"]
     out["sidecar_total_chars"] = listing["total_chars"]
+    out["listing_truncated"] = bool(listing.get("listing_truncated"))
+    out["sections_total"] = int(listing.get("sections_total", len(listing["sections"])))
+    if load_meta:
+        out.update(load_meta)
     return out
 
 
