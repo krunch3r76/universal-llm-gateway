@@ -8,7 +8,12 @@ from typing import Any, override
 from systems.pipeline.core.handlers.builtin import BaseHandler
 from systems.pipeline.core.handlers.protocol import StepOutput
 
-GIW_RUNS_URL = "http://127.0.0.1:8765/api/v1/mechanical-land/runs"
+from services.git_integration_worker.config import load_config
+
+
+def giw_mechanical_land_runs_url() -> str:
+    cfg = load_config()
+    return f"http://{cfg.host}:{cfg.port}/api/v1/mechanical-land/runs"
 
 
 def post_mechanical_land_run(plan: dict[str, Any]) -> dict[str, Any]:
@@ -18,7 +23,7 @@ def post_mechanical_land_run(plan: dict[str, Any]) -> dict[str, Any]:
 
     body = json.dumps(plan).encode("utf-8")
     req = urllib.request.Request(
-        GIW_RUNS_URL,
+        giw_mechanical_land_runs_url(),
         data=body,
         headers={"Content-Type": "application/json"},
         method="POST",

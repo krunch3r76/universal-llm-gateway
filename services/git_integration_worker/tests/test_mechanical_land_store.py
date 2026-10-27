@@ -8,7 +8,7 @@ from unittest.mock import patch
 
 import httpx
 import pytest
-from mechanical_land.schema import JournalForkRefused
+from mechanical_land.schema import JournalForkRefused, UnknownJournalEvent
 
 from services.git_integration_worker.cursor_dispatch_ledger import (
     CursorDispatchLedger,
@@ -257,10 +257,82 @@ def test_stargate_timeout_appends_leg_admit_failed_503() -> None:
             "_post_admit",
             side_effect=httpx.ReadTimeout("slow"),
         ),
+        patch(
+            "services.git_integration_worker.mechanical_land.store.lookup_mechanical_leg_dispatch",
+            return_value=None,
+        ),
+        patch(
+            "services.git_integration_worker.mechanical_land.store.cancel_unconfirmed_mechanical_leg_dispatches",
+        ) as cancel,
     ):
         result = store.birth_from_plan(_plan())
     assert result.http_status == 503
     assert result.admit_error_class == "ReadTimeout"
+    cancel.assert_called_once()
+
+
+def test_read_timeout_recovers_when_ledger_has_dispatch() -> None:
+    store = MechanicalLandStore()
+    with (
+        patch.object(store, "_mint_lane_thread", return_value="9005"),
+        patch.object(
+            store,
+            "_post_admit",
+            side_effect=httpx.ReadTimeout("slow"),
+        ),
+        patch(
+            "services.git_integration_worker.mechanical_land.store.lookup_mechanical_leg_dispatch",
+            return_value={
+                "dispatch_id": "d-recovered",
+                "execution_id": "e-recovered",
+                "status": "running",
+            },
+        ),
+    ):
+        result = store.birth_from_plan(_plan())
+    assert result.admit_ok is True
+    assert result.dispatch_id == "d-recovered"
+    assert result.status == "awaiting_leg"
+    snap = store.get_run(result.run_id)
+    assert snap is not None
+    assert "leg_admitted" in [e["event"] for e in snap["events"]]
+
+
+def test_append_log_event_does_not_raise_after_commit(tmp_path: Path) -> None:
+    store = MechanicalLandStore()
+    run_id = _birth_run(store)
+    seq = store.append_event(
+        run_id=run_id,
+        prev_seq=3,
+        step_id="run",
+        attempt=1,
+        flow="main",
+        event="log",
+        payload={"message": "projection fold smoke"},
+        source="test",
+    )
+    assert seq == 4
+    snap = store.get_run(run_id, event_limit=10)
+    assert snap is not None
+    assert any(e["event"] == "log" for e in snap["events"])
+
+
+def test_append_unknown_fold_event_commits_without_raising() -> None:
+    store = MechanicalLandStore()
+    run_id = _birth_run(store)
+    seq = store.append_event(
+        run_id=run_id,
+        prev_seq=3,
+        step_id="run",
+        attempt=1,
+        flow="main",
+        event="after_blocked_marker",
+        payload={"marker": True},
+        source="test",
+    )
+    assert seq == 4
+    with pytest.raises(UnknownJournalEvent):
+        store.get_run(run_id)
 
 
 def test_create_thread_exception_leaves_run_blocked_not_birthing() -> None:

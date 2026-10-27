@@ -107,8 +107,8 @@ def test_get_run_returns_state_and_events(client: TestClient) -> None:
     assert len(body["events"]) == 1
 
 
-def test_route_handlers_are_sync_not_coroutines() -> None:
-    assert inspect.iscoroutinefunction(ml_routes.create_mechanical_land_run) is False
+def test_route_handlers_birth_async_get_sync() -> None:
+    assert inspect.iscoroutinefunction(ml_routes.create_mechanical_land_run) is True
     assert inspect.iscoroutinefunction(ml_routes.get_mechanical_land_run) is False
 
 

@@ -8,6 +8,7 @@ import pytest
 
 from pipelines.mechanical_land.v1.handlers.commit import (
     evaluate_commit,
+    giw_mechanical_land_runs_url,
 )
 from pipelines.mechanical_land.v1.handlers.validate import evaluate_validate
 
@@ -58,6 +59,16 @@ def test_commit_noop_when_op_transition_no_http() -> None:
         )
         post.assert_not_called()
     assert out.get("http") is False
+
+
+def test_giw_runs_url_uses_config_port_not_8765() -> None:
+    with mock.patch(
+        "pipelines.mechanical_land.v1.handlers.commit.load_config",
+        return_value=mock.Mock(host="127.0.0.1", port=8091),
+    ):
+        url = giw_mechanical_land_runs_url()
+    assert url == "http://127.0.0.1:8091/api/v1/mechanical-land/runs"
+    assert "8765" not in url
 
 
 def test_commit_posts_when_op_start() -> None:

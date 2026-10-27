@@ -361,6 +361,10 @@ def _apply_flow_joined(state: RunState, entry: JournalEntry) -> None:
     state.active_flows = {payload.survivor_flow}
 
 
+def _apply_log(state: RunState, entry: JournalEntry) -> None:
+    """Observability-only journal rows; no RunState mutation."""
+
+
 _FOLD_HANDLERS = {
     "run_birthed": _apply_run_birthed,
     "policy_stamped": _apply_policy_stamped,
@@ -384,4 +388,5 @@ _FOLD_HANDLERS = {
     "resumed": _apply_resumed,
     "flow_forked": _apply_flow_forked,
     "flow_joined": _apply_flow_joined,
+    "log": _apply_log,
 }

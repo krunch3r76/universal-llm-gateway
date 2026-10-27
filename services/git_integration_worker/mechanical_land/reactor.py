@@ -452,7 +452,39 @@ def _execute_admit(
     if isinstance(admit_body, dict) and admit_body.get("prompt"):
         body["contract"] = "freeform"
         body["prompt"] = str(admit_body.get("prompt"))
-    status_code, payload = deps.post_admit_fn(body)
+    state = _folded_state(deps.store, run_id)
+    if state is None:
+        return True
+    tip = int(state.get("tip_seq") or 0)
+    try:
+        status_code, payload = deps.post_admit_fn(body)
+    except httpx.HTTPError as exc:
+        recovered, _, _ = deps.store.recover_or_fail_admit_transport_error(
+            run_id=run_id,
+            lane_thread_id=lane_thread_id,
+            step_id=step_id,
+            attempt=attempt,
+            prev_seq=tip,
+            admit_body=body,
+            exc=exc,
+            packet_sha256=str(plan.get("packet_sha256") or ""),
+        )
+        if recovered:
+            return True
+        retries = _admit_retry_count(deps.store, run_id)
+        if retries >= _policy_retry_max(policy):
+            emit_blocked(
+                deps.store,
+                run_id=run_id,
+                step_id=step_id,
+                attempt=attempt,
+                reason_code="admit_failed",
+                detail=f"admit transport error after {retries} attempts",
+                bus_post_fn=deps.bus_post_fn,
+            )
+        else:
+            deps.store._set_run_status(run_id, "admit_deferred")
+        return True
     state = _folded_state(deps.store, run_id)
     if state is None:
         return True
@@ -705,17 +737,32 @@ def repost_blocked_if_needed(store: MechanicalLandStore, run_id: str) -> None:
     if payload.get("posted_turn") is not None:
         return
     repost_attempts = int(payload.get("repost_attempts") or 0)
-    if repost_attempts > 0 or payload.get("_repost_attempted"):
+    if repost_attempts > 0 or payload.get("_repost_in_flight"):
         return
+    payload["_repost_in_flight"] = True
+    with store._connect() as conn_preflight:
+        conn_preflight.execute(
+            "UPDATE mechanical_land_journal SET payload_json=? WHERE run_id=? AND seq=?",
+            (json.dumps(payload, sort_keys=True), run_id, blocked_seq),
+        )
+        conn_preflight.commit()
     posted_turn = _post_blocked_bus_only(
         store,
         run_id=run_id,
         payload=payload,
         lane_thread_id=str(meta.get("lane_thread_id") or ""),
     )
+    payload.pop("_repost_in_flight", None)
+    if posted_turn is None:
+        with store._connect() as conn_fail:
+            conn_fail.execute(
+                "UPDATE mechanical_land_journal SET payload_json=? WHERE run_id=? AND seq=?",
+                (json.dumps(payload, sort_keys=True), run_id, blocked_seq),
+            )
+            conn_fail.commit()
+        return
     payload["repost_attempts"] = repost_attempts + 1
     payload["posted_turn"] = posted_turn
-    payload.pop("_repost_attempted", None)
     with store._connect() as conn2:
         conn2.execute(
             "UPDATE mechanical_land_journal SET payload_json=? WHERE run_id=? AND seq=?",

@@ -6,6 +6,7 @@ import json
 from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
+import httpx
 import pytest
 from implement_admission.closeout_models import ImplementCloseout
 
@@ -299,6 +300,41 @@ async def test_reactor_exception_does_not_abort_caller() -> None:
         await maybe_fire_mechanical_land_reactor(dispatch_id="d-boom")
 
 
+def test_admit_transport_error_appends_leg_admit_failed_not_stuck() -> None:
+    store = MechanicalLandStore()
+    run_id = _seed_run(store)
+
+    def _fetch(**_k: object) -> dict:
+        return {
+            "transition": {
+                "command": "admit",
+                "step_id": "fix",
+                "attempt": 1,
+                "to_step": "fix",
+                "reason": "gate_red",
+            }
+        }
+
+    def _post(_body: dict) -> tuple[int, dict]:
+        raise httpx.ReadTimeout("slow")
+
+    deps = ReactorDeps(store=store, fetch_plan_fn=_fetch, post_admit_fn=_post)
+    run_reactor_loop(deps, run_id=run_id, max_sync_steps=2)
+    snap = store.get_run(run_id, event_limit=50)
+    assert snap is not None
+    events = [e["event"] for e in snap["events"]]
+    assert "transition_decided" in events
+    assert "leg_admit_failed" in events
+    assert events.index("leg_admit_failed") > events.index("transition_decided")
+    with store._connect() as conn:
+        row = conn.execute(
+            "SELECT status FROM mechanical_land_runs WHERE run_id=?",
+            (run_id,),
+        ).fetchone()
+    assert row is not None
+    assert str(row["status"]) in ("admit_deferred", "blocked")
+
+
 def test_transition_failure_sets_admit_deferred() -> None:
     store = MechanicalLandStore()
     run_id = _seed_run(store)
@@ -374,6 +410,28 @@ def test_bus_unreachable_blocked_still_writes_event_and_sweep_reposts() -> None:
     assert int(payload.get("repost_attempts") or 0) == 1
 
 
+def test_sweep_reposts_after_first_bus_failure() -> None:
+    store = MechanicalLandStore()
+    run_id = _seed_run(store)
+    _block_run_with_bus_down(store, run_id)
+    with patch(
+        "services.git_integration_worker.mechanical_land.reactor._post_blocked_bus_only",
+        side_effect=[None, 88],
+    ) as post_blocked:
+        sweep_mechanical_land_runs(store=store)
+        sweep_mechanical_land_runs(store=store)
+    assert post_blocked.call_count == 2
+    with store._connect() as conn:
+        row = conn.execute(
+            "SELECT payload_json FROM mechanical_land_journal "
+            "WHERE run_id=? AND event='blocked' ORDER BY seq DESC LIMIT 1",
+            (run_id,),
+        ).fetchone()
+    payload = json.loads(row["payload_json"])
+    assert payload.get("posted_turn") == 88
+    assert int(payload.get("repost_attempts") or 0) == 1
+
+
 def test_sweep_blocked_repost_second_pass_does_not_repost() -> None:
     store = MechanicalLandStore()
     run_id = _seed_run(store)
@@ -436,6 +494,21 @@ def test_repost_blocked_updates_latest_blocked_seq_not_journal_tip() -> None:
         ).fetchone()
     assert json.loads(tail["payload_json"]) == {"marker": "keep"}
     assert json.loads(blocked["payload_json"]).get("posted_turn") == 42
+
+
+def test_repost_blocked_get_run_fold_still_works() -> None:
+    store = MechanicalLandStore()
+    run_id = _seed_run(store)
+    _block_run_with_bus_down(store, run_id)
+    with patch(
+        "services.git_integration_worker.mechanical_land.reactor._post_blocked_bus_only",
+        return_value=55,
+    ):
+        repost_blocked_if_needed(store, run_id)
+    snap = store.get_run(run_id, event_limit=30)
+    assert snap is not None
+    blocked = next(e for e in snap["events"] if e["event"] == "blocked")
+    assert blocked["payload"].get("posted_turn") == 55
 
 
 @pytest.mark.asyncio

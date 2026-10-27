@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from typing import Any
 
 from fastapi import APIRouter, HTTPException, Response, status
@@ -16,6 +17,8 @@ from services.git_integration_worker.mechanical_land.store import (
 logger = get_logger(__name__)
 
 router = APIRouter(prefix="/api/v1/mechanical-land", tags=["mechanical-land"])
+_BIRTH_CONCURRENCY = 16
+_birth_semaphore = asyncio.Semaphore(_BIRTH_CONCURRENCY)
 
 
 class MechanicalLandPlanBody(BaseModel):
@@ -38,14 +41,19 @@ def _store() -> MechanicalLandStore:
 
 
 @router.post("/runs")
-def create_mechanical_land_run(
+async def create_mechanical_land_run(
     body: MechanicalLandPlanBody, response: Response
 ) -> dict[str, Any]:
     """Birth a mechanical-land run and admit the first implement leg."""
     plan = body.model_dump()
     store = _store()
     try:
-        result = store.birth_from_plan(plan, idempotency_key=body.idempotency_key)
+        async with _birth_semaphore:
+            result = await asyncio.to_thread(
+                store.birth_from_plan,
+                plan,
+                idempotency_key=body.idempotency_key,
+            )
     except MechanicalLandStoreError as exc:
         code = str(exc)
         if code == "lane_thread_unavailable":

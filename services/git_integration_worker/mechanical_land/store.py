@@ -18,8 +18,11 @@ from transport_utils import DEFAULT_STARGATE_URL, make_sync_client
 from universal_logging import get_logger
 
 from mechanical_land.fold import fold
-from mechanical_land.schema import JournalEntry, JournalForkRefused
-from services.git_integration_worker.cursor_dispatch_ledger import _connect
+from mechanical_land.schema import JournalEntry, JournalForkRefused, UnknownJournalEvent
+from services.git_integration_worker.cursor_dispatch_ledger import (
+    CursorDispatchLedger,
+    _connect,
+)
 from services.git_integration_worker.mechanical_land.migrations.migration_007_mechanical_land import (
     ensure_mechanical_land_schema,
 )
@@ -141,6 +144,119 @@ def build_implement_admit_body(
     }
 
 
+def _steer_cancel_dispatch(
+    dispatch_id: str,
+    *,
+    reason: str,
+    stargate_url: str | None = None,
+) -> None:
+    body = {
+        "op": "steer",
+        "steer": "cancel_discard",
+        "dispatch_id": dispatch_id,
+        "reason": reason,
+        "actor": "mechanical-land-store",
+    }
+    base = (stargate_url or DEFAULT_STARGATE_URL).rstrip("/")
+    try:
+        with make_sync_client(base, timeout=_STARGATE_TIMEOUT) as client:
+            client.post("/api/v1/team/dispatch", json=body)
+    except httpx.HTTPError as exc:
+        logger.warning(
+            "mechanical-land steer cancel failed dispatch_id=%s: %s",
+            dispatch_id,
+            exc,
+        )
+
+
+def _record_json_from_dispatch_row(record_json: str | None) -> dict[str, Any]:
+    try:
+        data = json.loads(record_json or "{}")
+    except json.JSONDecodeError:
+        data = {}
+    return data if isinstance(data, dict) else {}
+
+
+def lookup_mechanical_leg_dispatch(
+    *,
+    lane_thread_id: str,
+    run_id: str,
+    step_id: str,
+    attempt: int,
+) -> dict[str, Any] | None:
+    """Find a ledger dispatch stamped for this mechanical-land leg."""
+    if not lane_thread_id:
+        return None
+    ledger = CursorDispatchLedger.instance()
+    with ledger._connect() as conn:
+        rows = conn.execute(
+            "SELECT dispatch_id, execution_id, record_json, status "
+            "FROM cursor_sdk_dispatches WHERE thread_id=? "
+            "ORDER BY rowid DESC LIMIT 32",
+            (lane_thread_id,),
+        ).fetchall()
+    for row in rows:
+        rec = _record_json_from_dispatch_row(row["record_json"])
+        gen = rec.get("generation_options") or {}
+        if not isinstance(gen, dict):
+            continue
+        ml = gen.get("mechanical_land") or {}
+        if not isinstance(ml, dict):
+            continue
+        if str(ml.get("run_id") or "") != run_id:
+            continue
+        if str(ml.get("step_id") or "") != step_id:
+            continue
+        if int(ml.get("attempt") or 0) != attempt:
+            continue
+        return {
+            "dispatch_id": str(row["dispatch_id"] or ""),
+            "execution_id": str(row["execution_id"] or ""),
+            "status": str(row["status"] or ""),
+        }
+    return None
+
+
+def cancel_unconfirmed_mechanical_leg_dispatches(
+    *,
+    lane_thread_id: str,
+    run_id: str,
+    step_id: str,
+    attempt: int,
+    reason: str,
+) -> None:
+    """Cancel in-flight dispatches stamped for this leg when admit outcome is unknown."""
+    if not lane_thread_id:
+        return
+    ledger = CursorDispatchLedger.instance()
+    with ledger._connect() as conn:
+        rows = conn.execute(
+            "SELECT dispatch_id, record_json, status "
+            "FROM cursor_sdk_dispatches WHERE thread_id=? "
+            "ORDER BY rowid DESC LIMIT 32",
+            (lane_thread_id,),
+        ).fetchall()
+    terminal = frozenset({"completed", "failed", "cancelled", "canceled"})
+    for row in rows:
+        status = str(row["status"] or "").lower()
+        if status in terminal:
+            continue
+        rec = _record_json_from_dispatch_row(row["record_json"])
+        gen = rec.get("generation_options") or {}
+        ml = gen.get("mechanical_land") if isinstance(gen, dict) else None
+        if not isinstance(ml, dict):
+            continue
+        if str(ml.get("run_id") or "") != run_id:
+            continue
+        if str(ml.get("step_id") or "") != step_id:
+            continue
+        if int(ml.get("attempt") or 0) != attempt:
+            continue
+        dispatch_id = str(row["dispatch_id"] or "").strip()
+        if dispatch_id:
+            _steer_cancel_dispatch(dispatch_id, reason=reason)
+
+
 def post_stargate_team_dispatch(
     body: dict[str, Any],
     *,
@@ -210,6 +326,110 @@ class MechanicalLandStore:
             )
             conn.commit()
 
+    def recover_or_fail_admit_transport_error(
+        self,
+        *,
+        run_id: str,
+        lane_thread_id: str,
+        step_id: str,
+        attempt: int,
+        prev_seq: int,
+        admit_body: dict[str, Any],
+        exc: httpx.HTTPError,
+        packet_sha256: str = "",
+    ) -> tuple[bool, str | None, str | None]:
+        """After admit POST transport failure: ledger lookup, else cancel + leg_admit_failed."""
+        error_class = type(exc).__name__
+        found = lookup_mechanical_leg_dispatch(
+            lane_thread_id=lane_thread_id,
+            run_id=run_id,
+            step_id=step_id,
+            attempt=attempt,
+        )
+        if found:
+            dispatch_id = str(found.get("dispatch_id") or "").strip() or None
+            execution_id = str(found.get("execution_id") or "").strip() or None
+            model = str(admit_body.get("model") or "")
+            self.append_event(
+                run_id=run_id,
+                prev_seq=prev_seq,
+                step_id=step_id,
+                attempt=attempt,
+                flow="main",
+                event="leg_admitted",
+                payload={
+                    "step_id": step_id,
+                    "attempt": attempt,
+                    "dispatch_id": dispatch_id or "",
+                    "execution_id": execution_id or "",
+                    "model": model,
+                    "contract": str(admit_body.get("contract") or ""),
+                    "lane": str(admit_body.get("lane") or "B"),
+                    "sdk_mode": admit_body.get("sdk_mode"),
+                    "packet_sha256": packet_sha256,
+                    "recovered_from_transport_error": error_class,
+                },
+                source="reactor",
+            )
+            self._set_run_status(run_id, "awaiting_leg")
+            return True, dispatch_id, execution_id
+        cancel_unconfirmed_mechanical_leg_dispatches(
+            lane_thread_id=lane_thread_id,
+            run_id=run_id,
+            step_id=step_id,
+            attempt=attempt,
+            reason=f"admit_transport_error:{error_class}",
+        )
+        self.append_event(
+            run_id=run_id,
+            prev_seq=prev_seq,
+            step_id=step_id,
+            attempt=attempt,
+            flow="main",
+            event="leg_admit_failed",
+            payload={
+                "status_code": 0,
+                "error": error_class,
+            },
+            source="reactor",
+        )
+        return False, None, None
+
+    def _recover_or_block_admit_transport_error(
+        self,
+        *,
+        run_id: str,
+        lane_thread_id: str,
+        step_id: str,
+        attempt: int,
+        prev_seq: int,
+        admit_body: dict[str, Any],
+        exc: httpx.HTTPError,
+    ) -> BirthResult | None:
+        recovered, dispatch_id, execution_id = (
+            self.recover_or_fail_admit_transport_error(
+                run_id=run_id,
+                lane_thread_id=lane_thread_id,
+                step_id=step_id,
+                attempt=attempt,
+                prev_seq=prev_seq,
+                admit_body=admit_body,
+                exc=exc,
+            )
+        )
+        if recovered:
+            return BirthResult(
+                run_id=run_id,
+                lane_thread_id=lane_thread_id,
+                dispatch_id=dispatch_id,
+                execution_id=execution_id,
+                status="awaiting_leg",
+                admit_ok=True,
+                http_status=201,
+            )
+        self._set_run_status(run_id, "blocked")
+        return None
+
     def find_run_by_idempotency_key(self, key: str) -> str | None:
         with self._connect() as conn:
             row = conn.execute(
@@ -270,11 +490,26 @@ class MechanicalLandStore:
                 (ts, run_id),
             )
             conn.commit()
-        self.refresh_projection(run_id)
+        try:
+            self.refresh_projection(run_id)
+        except UnknownJournalEvent as exc:
+            logger.warning(
+                "mechanical-land projection fold skipped run_id=%s after append: %s",
+                run_id,
+                exc,
+            )
         return new_seq
 
     def refresh_projection(self, run_id: str) -> None:
-        snapshot = self.get_run(run_id, event_limit=20)
+        try:
+            snapshot = self.get_run(run_id, event_limit=20)
+        except UnknownJournalEvent as exc:
+            logger.warning(
+                "mechanical-land projection fold skipped run_id=%s: %s",
+                run_id,
+                exc,
+            )
+            return
         if snapshot is None:
             return
         _write_projection(
@@ -456,22 +691,19 @@ class MechanicalLandStore:
         )
         try:
             status_code, payload = self._post_admit(admit_body)
-        except (httpx.ConnectError, httpx.TimeoutException) as exc:
-            error_class = type(exc).__name__
-            self.append_event(
+        except httpx.HTTPError as exc:
+            recovered = self._recover_or_block_admit_transport_error(
                 run_id=run_id,
-                prev_seq=seq,
+                lane_thread_id=lane_thread_id,
                 step_id="implement",
                 attempt=1,
-                flow="main",
-                event="leg_admit_failed",
-                payload={
-                    "status_code": 0,
-                    "error": error_class,
-                },
-                source="reactor",
+                prev_seq=seq,
+                admit_body=admit_body,
+                exc=exc,
             )
-            self._set_run_status(run_id, "blocked")
+            if recovered is not None:
+                return recovered
+            error_class = type(exc).__name__
             return BirthResult(
                 run_id=run_id,
                 lane_thread_id=lane_thread_id,
