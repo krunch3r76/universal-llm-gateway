@@ -1445,6 +1445,62 @@ def test_substantive_let_me_know_availability_stays_request() -> None:
     assert row["kind"] != "pleasantry"
 
 
+_QUESTION_WITH_TRAILING_SIGNATURE = (
+    "What time works?\n- Thanks",
+    "What time works?\n- Bob",
+    "What time works? — Bob",
+    "What time works? - Thanks.",
+    "What time works? — thanks.",
+)
+
+
+@pytest.mark.parametrize("inbound", _QUESTION_WITH_TRAILING_SIGNATURE)
+def test_question_with_trailing_signature_stays_question_answer(inbound: str) -> None:
+    rows = source_obligations.fallback_obligations(inbound)
+    question_rows = [row for row in rows if row.get("kind") == "question"]
+    assert question_rows, rows
+    assert question_rows[0]["obligation"] == "answer"
+    assert not any(
+        row.get("kind") == "statement" and row.get("obligation") == "acknowledge"
+        for row in rows
+    )
+    parsed = source_obligations._parse_model_obligations(
+        json.dumps(
+            {
+                "obligations": [
+                    {
+                        "id": "O1",
+                        "quoted_span": inbound,
+                        "kind": "statement",
+                        "obligation": "acknowledge",
+                    }
+                ]
+            }
+        ),
+        inbound,
+    )
+    assert parsed is not None
+    assert parsed[0]["kind"] == "question"
+    assert parsed[0]["obligation"] == "answer"
+
+
+def test_standalone_dash_signature_line_is_pleasantry_not_acknowledge() -> None:
+    rows = source_obligations.fallback_obligations("- Bob")
+    assert len(rows) == 1
+    assert rows[0]["kind"] == "pleasantry"
+    assert rows[0]["obligation"] == "none"
+
+
+def test_curly_apostrophe_past_intent_and_decline_regex_on_raw_text() -> None:
+    past = "I\u2019ve applied for the role."
+    intent = "I\u2019ll apply for the role."
+    decline = "I can\u2019t start Monday."
+    assert _obligation._PAST_ACTION_CONFIRM.search(past) is not None
+    assert _obligation._INTENT_OR_ASK_BACK_CONFIRM.search(intent) is not None
+    assert _obligation._DECLINE.search(decline) is not None
+    assert _obligation._sentence_declines(decline)
+
+
 def test_obligation_coverage_handler_emits_missing_block() -> None:
     inbound = "Can you confirm the meeting time?"
     obligations = source_obligations.fallback_obligations(inbound)

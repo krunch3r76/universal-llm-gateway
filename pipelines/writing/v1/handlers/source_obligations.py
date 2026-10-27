@@ -103,6 +103,45 @@ def _strip_trailing_signature(text: str) -> str:
     return text[: match.start()].rstrip()
 
 
+def _strip_trailing_signature_and_courtesy(text: str) -> str:
+    """Strip trailing signatures and courtesy so a question ``?`` can sit at the end."""
+    out = _strip_trailing_signature(text.strip())
+    if "?" not in out:
+        return out
+    q_idx = out.rfind("?")
+    head = out[: q_idx + 1]
+    tail = out[q_idx + 1 :].strip()
+    while tail:
+        prev = tail
+        tail = _strip_trailing_signature(tail).strip()
+        tail = _COURTESY_TOKENS.sub("", tail).strip()
+        tail = _EDGE_PUNCT.sub("", tail).strip()
+        sig = _SIGNATURE_ONLY.match(tail)
+        if sig:
+            token = sig.group(1).rstrip("'.-").lower()
+            if token not in _NON_SIGNATURE_TOKENS:
+                tail = ""
+                continue
+        dash_tail = re.match(r"^[—–-]+\s*(.+)$", tail)
+        if dash_tail:
+            fragment = dash_tail.group(1).strip()
+            fragment = _COURTESY_TOKENS.sub("", fragment).strip()
+            fragment = _EDGE_PUNCT.sub("", fragment).strip()
+            if not fragment or _SIGNATURE_ONLY.match(f"- {fragment}"):
+                tail = ""
+                continue
+        if tail == prev:
+            break
+    return head if not tail else f"{head} {tail}".strip()
+
+
+def _span_is_question(core: str) -> bool:
+    """True when ``core`` is a question, ignoring trailing signature or courtesy."""
+    if _QUESTION.search(core):
+        return True
+    return _QUESTION.search(_strip_trailing_signature_and_courtesy(core)) is not None
+
+
 def _split_spans(source_message: str) -> list[str]:
     chunks = re.split(r"(?<=[.!?])\s+|\n+", source_message.strip())
     spans = [chunk.strip() for chunk in chunks if chunk.strip()]
@@ -133,6 +172,22 @@ def _strip_greeting_prefix(span: str) -> str:
     return text
 
 
+def _is_courtesy_only_span(core: str) -> bool:
+    """True when ``core`` is only courtesy tokens, edge punctuation, or a dash lead-in."""
+    text = _strip_trailing_signature(core).strip()
+    while True:
+        stripped = _COURTESY_TOKENS.sub("", text).strip()
+        if stripped == text:
+            break
+        text = stripped
+    while True:
+        stripped = _EDGE_PUNCT.sub("", text).strip()
+        if stripped == text:
+            break
+        text = stripped
+    return not text
+
+
 def _is_reply_closing_pleasantry(span: str) -> bool:
     """True when span is only a bare let-me/us-know sign-off without substantive ask."""
     text = _strip_greeting_prefix(span).strip()
@@ -155,6 +210,15 @@ def _is_reply_closing_pleasantry(span: str) -> bool:
 def _classify_span(span: str) -> tuple[str, str, str]:
     """Return kind, obligation, and one-line semantic_reading for a span."""
     core = _strip_greeting_prefix(span) or span.strip()
+    sig_only = _SIGNATURE_ONLY.match(core.strip())
+    if sig_only:
+        token = sig_only.group(1).rstrip("'.-").lower()
+        if token not in _NON_SIGNATURE_TOKENS:
+            return (
+                "pleasantry",
+                "none",
+                "greeting or courtesy without a required reply action",
+            )
     if _APPLY_CTA.search(core) or _APPLY_CTA.search(span):
         return (
             "call_to_action",
@@ -162,8 +226,9 @@ def _classify_span(span: str) -> tuple[str, str, str]:
             "sender wants an application submitted through the link; "
             "a reply email is not the application",
         )
-    if _QUESTION.search(core):
-        return "question", "answer", f"answer the question: {core[:120]}"
+    if _span_is_question(core):
+        question_core = _strip_trailing_signature_and_courtesy(core)
+        return "question", "answer", f"answer the question: {question_core[:120]}"
     if _is_reply_closing_pleasantry(span):
         return (
             "pleasantry",
@@ -177,6 +242,12 @@ def _classify_span(span: str) -> tuple[str, str, str]:
     if _ATTACHMENT.search(core):
         return "attachment", "acknowledge", f"acknowledge attachment reference: {core[:120]}"
     if _PLEASANTRY.match(core) or (not core.strip() and _PLEASANTRY.match(span.strip())):
+        return (
+            "pleasantry",
+            "none",
+            "greeting or courtesy without a required reply action",
+        )
+    if _is_courtesy_only_span(core):
         return (
             "pleasantry",
             "none",
@@ -228,9 +299,18 @@ def _parse_model_obligations(raw: str, source_message: str) -> list[dict[str, An
             quoted = quoted.strip()
         kind = str(item.get("kind") or "statement")
         obligation = str(item.get("obligation") or "none")
-        if quoted and _is_reply_closing_pleasantry(quoted):
+        quoted_core = _strip_greeting_prefix(quoted) or quoted.strip()
+        if quoted and _span_is_question(quoted_core):
+            kind = "question"
+            obligation = "answer"
+        elif quoted and _is_reply_closing_pleasantry(quoted):
             kind = "pleasantry"
             obligation = "none"
+        elif quoted_core and (sig := _SIGNATURE_ONLY.match(quoted_core.strip())):
+            token = sig.group(1).rstrip("'.-").lower()
+            if token not in _NON_SIGNATURE_TOKENS:
+                kind = "pleasantry"
+                obligation = "none"
         rows.append(
             {
                 "id": str(item.get("id") or f"O{index}"),

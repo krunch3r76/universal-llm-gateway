@@ -18,7 +18,7 @@ _FP_TARGET = (
 )
 _FP_APP_MIDDLE = r"(?:(?:my|the|this|that|your)\s+application\s+)?"
 _PAST_FP_ACTION = (
-    r"\b(?:i(?:'ve|\s+have)?\s+(?:applied|submitted|completed|registered|booked|"
+    r"\b(?:i(?:['\u2019]ve|\s+have)?\s+(?:applied|submitted|completed|registered|booked|"
     r"scheduled|uploaded|signed\s+up))"
     rf"(?:\s+online\b|\s+{_FP_APP_MIDDLE}(?:{_FP_PREP}\s+{_FP_TARGET}))"
 )
@@ -31,7 +31,7 @@ _PAST_ACTION_CONFIRM = re.compile(
     re.I,
 )
 _INTENT_FP_ACTION = (
-    r"\b(?:i(?:'ll|\s+will|\s+plan\s+to|\s+am\s+going\s+to)\s+(?:apply|submit|"
+    r"\b(?:i(?:['\u2019]ll|\s+will|\s+plan\s+to|\s+am\s+going\s+to)\s+(?:apply|submit|"
     r"complete|register|book|schedule|upload|sign\s+up))"
     rf"(?:\s+online\b|\s+{_FP_APP_MIDDLE}(?:{_FP_PREP}\s+{_FP_TARGET}))"
 )
@@ -57,10 +57,10 @@ _CTA_DECLINE_STEM = re.compile(
 )
 _DECLINE = re.compile(
     r"\b(?:i\s+(?:(?:also|still|currently|unfortunately)\s+)?"
-    r"(?:decline|cannot|can't|can\s+not|won't|will\s+not|am\s+(?:not\s+able|unable)|"
-    r"do\s+not\s+have|don't\s+have)|"
-    r"(?:can't|cannot|can\s+not)\s+(?:take|cover|provide|make|send|submit)|"
-    r"won't\s+be\s+able\s+to\s+(?:take|cover|provide|make|send|submit)|"
+    r"(?:decline|cannot|can['\u2019]t|can\s+not|won['\u2019]t|will\s+not|am\s+(?:not\s+able|unable)|"
+    r"do\s+not\s+have|don['\u2019]t\s+have)|"
+    r"(?:can['\u2019]t|cannot|can\s+not)\s+(?:take|cover|provide|make|send|submit)|"
+    r"won['\u2019]t\s+be\s+able\s+to\s+(?:take|cover|provide|make|send|submit)|"
     r"(?:not\s+able|unable)\s+to\s+(?:take|cover|provide|make|send|submit))\b",
     re.I,
 )
