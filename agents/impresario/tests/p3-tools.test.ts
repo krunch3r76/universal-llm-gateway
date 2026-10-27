@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { describe, it, beforeEach } from "node:test";
+import { afterEach, beforeEach, describe, it } from "node:test";
 
 import commissionTool from "../bot/tools/commission.js";
 import ledgerReadTool from "../bot/tools/ledger_read.js";
@@ -37,11 +37,22 @@ describe("AC1 commission schema", () => {
 });
 
 describe("AC2 commission fixture paths", () => {
+  let liveSteerBefore: string | undefined;
+
   beforeEach(() => {
+    liveSteerBefore = process.env.ULG_LIVE_STEER;
     process.env.ULG_FIXTURE_DIR = fixtureRoot;
     process.env.ULG_FIXTURE_SCENARIO = "stops-row-pinned";
     delete process.env.ULG_LIVE_STEER;
     resetFixtureCache();
+  });
+
+  afterEach(() => {
+    if (liveSteerBefore === undefined) {
+      delete process.env.ULG_LIVE_STEER;
+    } else {
+      process.env.ULG_LIVE_STEER = liveSteerBefore;
+    }
   });
 
   it("returns ROW_PINNED when ledger shows in-flight row", async () => {
@@ -80,36 +91,46 @@ describe("AC2 commission fixture paths", () => {
   });
 
   it("mocked live-shaped call when ULG_LIVE_STEER=1", async () => {
-    process.env.ULG_LIVE_STEER = "1";
-    delete process.env.ULG_FIXTURE_DIR;
-    resetFixtureCache();
-    let captured: Record<string, unknown> | undefined;
-    const ctx = {
-      session: { purpose: "tool_test" as const, id: "live-mock" },
-      host: {
-        mcp: {
-          callTool: async (_ns: string, tool: string, args: Record<string, unknown>) => {
-            if (tool === "team_dispatch") {
-              captured = args;
-            }
-            return { dispatch_id: "live-mock-id", posted: true };
+    const priorLiveSteer = process.env.ULG_LIVE_STEER;
+    try {
+      process.env.ULG_LIVE_STEER = "1";
+      delete process.env.ULG_FIXTURE_DIR;
+      resetFixtureCache();
+      let captured: Record<string, unknown> | undefined;
+      const ctx = {
+        session: { purpose: "tool_test" as const, id: "live-mock" },
+        host: {
+          mcp: {
+            callTool: async (_ns: string, tool: string, args: Record<string, unknown>) => {
+              if (tool === "team_dispatch") {
+                captured = args;
+              }
+              return { dispatch_id: "live-mock-id", posted: true };
+            },
           },
         },
-      },
-    } as never;
-    const result = await commissionTool.execute!(
-      {
-        work_key: workKey,
-        contract: "freeform",
-        scope: "live",
-        files_expected: ["a.ts"],
-        acceptance: ["pass"],
-      },
-      ctx,
-    );
-    assert.equal((result as { posted?: boolean }).posted, true);
-    assert.equal(captured?.op, "generate");
-    assert.equal(captured?.model, "cursor/composer-2.5");
+      } as never;
+      const result = await commissionTool.execute!(
+        {
+          work_key: workKey,
+          contract: "freeform",
+          scope: "live",
+          files_expected: ["a.ts"],
+          acceptance: ["pass"],
+        },
+        ctx,
+      );
+      assert.equal((result as { posted?: boolean }).posted, true);
+      assert.equal(captured?.op, "generate");
+      assert.equal(captured?.model, "cursor/composer-2.5");
+    } finally {
+      if (priorLiveSteer === undefined) {
+        delete process.env.ULG_LIVE_STEER;
+      } else {
+        process.env.ULG_LIVE_STEER = priorLiveSteer;
+      }
+    }
+    assert.equal(process.env.ULG_LIVE_STEER, undefined);
   });
 });
 

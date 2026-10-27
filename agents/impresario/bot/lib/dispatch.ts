@@ -1,6 +1,10 @@
 import { createHash } from "node:crypto";
 
-import { fixtureTeamDispatch, fixturesEnabled } from "./bus-fixtures.js";
+import {
+  fixtureFindDispatch,
+  fixtureTeamDispatch,
+  fixturesEnabled,
+} from "./bus-fixtures.js";
 import type { ToolCtx } from "./ulg.js";
 import {
   COMMISSION_MODEL,
@@ -64,6 +68,17 @@ export function promptSha256(prompt: string): string {
   return createHash("sha256").update(prompt, "utf8").digest("hex");
 }
 
+function slimDispatchRow(r: LedgerRow): LedgerRow {
+  return {
+    dispatch_id: r.dispatch_id,
+    status: r.status,
+    thread_id: r.thread_id,
+    contract: r.contract,
+    closeout_stop_tokens: r.closeout_stop_tokens,
+    work_key: r.work_key,
+  };
+}
+
 export function reduceLedgerForWorkKey(
   raw: unknown,
   workKey: string,
@@ -75,23 +90,28 @@ export function reduceLedgerForWorkKey(
   const rows = (payload.dispatches ?? []).filter(
     (r) => !r.work_key || r.work_key === workKey,
   );
+  const inflight = findInFlightRow(rows);
+  const slimRows = rows.map(slimDispatchRow);
+  const slimLive = (payload.house_rollup?.live_dispatches ?? []).filter(
+    (r) => !workKey || r.work_key === workKey,
+  );
   const slim = {
     work_key: workKey,
-    dispatches: rows.map((r) => ({
-      dispatch_id: r.dispatch_id,
-      status: r.status,
-      thread_id: r.thread_id,
-      contract: r.contract,
-      closeout_stop_tokens: r.closeout_stop_tokens,
-    })),
-    live: (payload.house_rollup?.live_dispatches ?? []).filter(
-      (r) => !workKey || r.work_key === workKey,
-    ),
+    dispatches: slimRows,
+    live: slimLive,
   };
   let json = JSON.stringify(slim);
   if (json.length > 2400) {
     slim.dispatches = slim.dispatches.slice(0, 3);
     slim.live = slim.live.slice(0, 3);
+    if (inflight) {
+      const pinned = slimDispatchRow(inflight);
+      if (
+        !slim.dispatches.some((d) => d.dispatch_id === pinned.dispatch_id)
+      ) {
+        slim.dispatches = [...slim.dispatches.slice(0, 2), pinned];
+      }
+    }
     json = JSON.stringify(slim);
   }
   return { rows: slim.dispatches, json };
@@ -129,6 +149,18 @@ export async function readLedger(
   const raw = await callTeamDispatchLedger(ctx, workKey);
   const { rows, json } = reduceLedgerForWorkKey(raw, workKey);
   return { rows, json, raw };
+}
+
+export async function findDispatchRow(
+  ctx: ToolCtx,
+  dispatchId: string,
+  workKey: string,
+): Promise<LedgerRow | undefined> {
+  if (fixturesEnabled()) {
+    return fixtureFindDispatch(dispatchId);
+  }
+  const { rows } = await readLedger(ctx, workKey);
+  return rows.find((r) => r.dispatch_id === dispatchId);
 }
 
 export async function callTeamDispatchLedger(
