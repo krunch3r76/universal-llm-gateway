@@ -585,6 +585,32 @@ def test_email_restate_pin_provide_refusal_valid_and_false_positives_n3() -> Non
     )
 
 
+def test_email_restate_pin_no_not_anchor_swap_non_supply_verb_f1() -> None:
+    """Non-supply-verb pins must not accept no/not anchor substitution (20607#238 F1)."""
+    probes = (
+        (
+            "I do not have standing availability on any day of the week.",
+            "No doubt I do have standing availability on any day of the week.",
+        ),
+        (
+            "I do not have standing availability on any day of the week.",
+            "No question I do have standing availability on any day of the week.",
+        ),
+        (
+            "I will not attend the Saturday meeting.",
+            "No doubt I will attend the Saturday meeting.",
+        ),
+        (
+            "I have no availability on Saturday.",
+            "Not only do I have availability on Saturday, I have Sunday too.",
+        ),
+    )
+    for pin, draft in probes:
+        assert not email_envelope.email_restate_pin_satisfied(
+            draft, pin, verbatim_required=False
+        )
+
+
 def test_email_restate_pin_affirmative_schedule_polarity_n5() -> None:
     pin_currently = "Currently my schedule stays full most of the time."
     for negated in (

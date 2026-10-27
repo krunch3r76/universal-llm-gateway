@@ -465,16 +465,22 @@ def _restate_anchor_tokens(normalized_pin_text: str) -> set[str]:
 
 
 def _restate_draft_tokens_cover_anchors(
-    draft_tokens: set[str], anchors: set[str]
+    anchors: set[str],
+    draft_tokens: set[str],
+    *,
+    allow_no_for_not: bool = False,
 ) -> bool:
-    """True when draft tokens cover pin anchors, treating ``no`` and ``not`` as equivalent."""
+    """True when draft tokens cover pin anchors.
+
+    Supply-verb pins (``allow_no_for_not``) may treat draft ``no`` as covering a
+    missing ``not`` anchor after ``_provide_refusal_window_is_genuine``; other
+    pins require exact token coverage with no ``no``/``not`` substitution.
+    """
     if anchors <= draft_tokens:
         return True
     gap = anchors - draft_tokens
-    if gap == {"not"} and "no" in draft_tokens:
+    if allow_no_for_not and gap == {"not"} and "no" in draft_tokens:
         return (anchors - {"not"}) <= draft_tokens
-    if gap == {"no"} and "not" in draft_tokens:
-        return (anchors - {"no"}) <= draft_tokens
     return False
 
 
@@ -843,7 +849,11 @@ def email_restate_pin_satisfied(
     ):
         norm_variant = normalize_text_for_token_match(variant)
         anchors = _restate_anchor_tokens(norm_variant)
-        if anchors and _restate_draft_tokens_cover_anchors(draft_tokens, anchors):
+        if anchors and _restate_draft_tokens_cover_anchors(
+            anchors,
+            draft_tokens,
+            allow_no_for_not=_pin_segment_has_provide_verb(norm_pin),
+        ):
             if _restate_negation_guard(draft_text, pin_excerpt):
                 return True
             continue
