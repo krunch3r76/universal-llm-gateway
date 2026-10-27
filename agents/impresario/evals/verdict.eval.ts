@@ -16,6 +16,7 @@ export default defineEval({
           },
         });
         t.succeeded();
+        t.calledTool("steer_conductor", { count: 1 });
         t.calledTool("score_update");
         t.notCalledTool("commission");
         t.check(t.reply, includes(/^ACTED\|/));

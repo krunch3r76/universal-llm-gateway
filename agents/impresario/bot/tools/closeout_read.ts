@@ -10,7 +10,7 @@ import {
 
 export default defineTool({
   description:
-    "Read the executive closeout envelope (≤60 lines, stops before effects_manifest).",
+    "Read one closeout executive envelope (≤60 lines, before effects_manifest). Call once per DONE/CLOSEOUT turn. Returns verdict_line and residue. Read-only; no stop.",
   inputSchema: z.object({
     dispatch_id: z
       .string()

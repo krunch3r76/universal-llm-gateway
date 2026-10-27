@@ -5,7 +5,7 @@ import { callAgentBusRead, truncateBody } from "../lib/ulg.js";
 
 export default defineTool({
   description:
-    "Read one bus turn (compact projection). Body is capped at 2000 characters.",
+    "Read one bus turn in compact projection when you need text beyond turn.json. Returns turn fields with body capped at 2000 characters. Read-only; no stop.",
   inputSchema: z.object({
     thread: z.string().min(1),
     turn_number: z.union([z.number().int().positive(), z.literal("latest")]),

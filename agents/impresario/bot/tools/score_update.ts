@@ -17,7 +17,7 @@ const section = z.enum([
 
 export default defineTool({
   description:
-    "Append or rewrite one score section. State updates also assert on the todo entity.",
+    "Rewrite one score section (state, dispatches, open_stops, rulings, log). Call after acting and on every designed stop (open_stops). Returns ok or size refusal. Idempotent; no stop.",
   inputSchema: z.object({
     work_key: z.string().regex(/^(todo|friction):/),
     section,

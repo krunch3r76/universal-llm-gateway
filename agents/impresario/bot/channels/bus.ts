@@ -240,6 +240,14 @@ export default defineChannel({
   auth: [
     bearerAuth(process.env.AGENT_SDK_BEARER_TOKEN ?? "dev-impresario-bearer"),
   ],
+  events: {
+    async "message.completed"(event, _channelCtx, _sessionCtx) {
+      const text = event.data.text?.trim() ?? "";
+      if (/^STOP\|/.test(text)) {
+        channelLogger.info("[bus] message.completed: no further bus post on STOP|");
+      }
+    },
+  },
   routes: [
     POST("/turn", {
       description: "Deliver one bus turn to the impresario (push fallback)",

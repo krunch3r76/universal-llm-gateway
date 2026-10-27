@@ -1,0 +1,20 @@
+{
+  "scenario": "stops-e5-concurrent",
+  "turn": {
+    "thread": "20908",
+    "turn_number": 9010,
+    "from": "maestro",
+    "to": "impresario-sdk",
+    "subject": "REQUEST|commission|todo:agent-sdk-impresario-probe",
+    "body": "Commission todo:agent-sdk-impresario-probe freeform scope 'e5 first' files ['README.md'] acceptance ['ok'].",
+    "work_key": "todo:agent-sdk-impresario-probe",
+    "status": "open"
+  },
+  "score_md": "## state\nimplement · head 81254646\n\n## dispatches\n\n## open_stops\n\n## rulings\n\n## log\n",
+  "closeouts": {},
+  "ledger": {
+    "todo:agent-sdk-impresario-probe": {
+      "dispatches": []
+    }
+  }
+}

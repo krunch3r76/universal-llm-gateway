@@ -10,7 +10,7 @@ import { callFs } from "../lib/ulg.js";
 
 export default defineTool({
   description:
-    "Read the impresario score for a work_key (≤4.5 KB). This is your only durable memory.",
+    "Read the impresario score for a work_key (≤4.5 KB window). Call at turn start for bearings. Returns markdown sections. Read-only; no stop.",
   inputSchema: z.object({
     work_key: z.string().regex(/^(todo|friction):/),
   }),

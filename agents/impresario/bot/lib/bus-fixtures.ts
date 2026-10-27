@@ -14,6 +14,8 @@ export type BusFixtureScenario = {
   scores?: Record<string, string>;
   closeouts: Record<string, { raw: string }>;
   bus_get?: Record<string, unknown>;
+  ledger?: Record<string, { dispatches: LedgerRow[] }>;
+  steer?: Record<string, { inject_state: string; ticket?: string }>;
   wait?: { status?: number; error?: string };
   flags?: {
     defer_mark_read?: boolean;
@@ -23,6 +25,17 @@ export type BusFixtureScenario = {
 
 let cached: BusFixtureScenario | null = null;
 const fixtureScoreOverrides = new Map<string, string>();
+const fixtureLedgerLive = new Map<string, LedgerRow[]>();
+const fixtureBusSendLog: Array<Record<string, unknown>> = [];
+
+export type LedgerRow = {
+  dispatch_id: string;
+  status: string;
+  thread_id?: string;
+  work_key?: string;
+  contract?: string;
+  closeout_stop_tokens?: string[];
+};
 let unreadQueue: BusFixtureTurn[] = [];
 let waitLogged503 = false;
 const markReadSkipped = new Set<string>();
@@ -68,6 +81,12 @@ export function resetFixtureCache(): void {
   waitLogged503 = false;
   markReadSkipped.clear();
   fixtureScoreOverrides.clear();
+  fixtureLedgerLive.clear();
+  fixtureBusSendLog.length = 0;
+}
+
+export function fixtureBusSendLogSnapshot(): Array<Record<string, unknown>> {
+  return [...fixtureBusSendLog];
 }
 
 export function fixtureScoreSnapshot(workKey: string): string {
@@ -172,13 +191,16 @@ export function fixtureBusOp(
   }
 
   if (op === "send") {
-    return {
+    const rec = {
       posted: true,
       stubbed: true,
       thread: payload.thread ?? scenario.turn.thread,
       subject: payload.subject,
       to: payload.to,
+      body: payload.body,
     };
+    fixtureBusSendLog.push(rec);
+    return rec;
   }
 
   if (op === "substrate_graph_write") {
@@ -264,6 +286,85 @@ export function fixtureMcpCall(
   }
 
   return { ok: true, stubbed: true };
+}
+
+function ledgerRowsForWorkKey(
+  scenario: BusFixtureScenario,
+  workKey: string,
+): LedgerRow[] {
+  const base = scenario.ledger?.[workKey]?.dispatches ?? [];
+  const live = fixtureLedgerLive.get(workKey) ?? [];
+  return [...base, ...live];
+}
+
+export function fixtureFindDispatch(dispatchId: string): LedgerRow | undefined {
+  const scenario = loadScenario();
+  for (const entry of Object.values(scenario.ledger ?? {})) {
+    const hit = entry.dispatches.find((d) => d.dispatch_id === dispatchId);
+    if (hit) {
+      return hit;
+    }
+  }
+  for (const rows of fixtureLedgerLive.values()) {
+    const hit = rows.find((d) => d.dispatch_id === dispatchId);
+    if (hit) {
+      return hit;
+    }
+  }
+  return undefined;
+}
+
+export function fixtureTeamDispatch(
+  payload: Record<string, unknown>,
+): unknown {
+  const scenario = loadScenario();
+  const op = String(payload.op ?? "");
+
+  if (op === "ledger") {
+    const workKey = String(payload.work_key ?? "");
+    const rows = ledgerRowsForWorkKey(scenario, workKey);
+    const live = rows.filter((r) =>
+      ["queued", "admitted", "running", "parked_waiting"].includes(
+        String(r.status),
+      ),
+    );
+    return {
+      work_key: workKey,
+      dispatches: rows,
+      house_rollup: { live_dispatches: live, live_count: live.length },
+    };
+  }
+
+  if (op === "generate") {
+    const workKey = String(payload.work_key ?? "");
+    const id = `fixture-${workKey}-${fixtureLedgerLive.size + 1}`;
+    const row: LedgerRow = {
+      dispatch_id: id,
+      status: "running",
+      thread_id: "worker-fixture",
+      work_key: workKey,
+      contract: String(payload.contract ?? "freeform"),
+    };
+    const prior = fixtureLedgerLive.get(workKey) ?? [];
+    fixtureLedgerLive.set(workKey, [...prior, row]);
+    return {
+      dispatch_id: id,
+      execution_id: `exec-${id}`,
+      stubbed: true,
+      posted: false,
+    };
+  }
+
+  if (op === "steer") {
+    const dispatchId = String(payload.dispatch_id ?? "");
+    const canned = scenario.steer?.[dispatchId];
+    if (canned) {
+      return { inject_state: canned.inject_state, ticket: canned.ticket };
+    }
+    return { inject_state: "pending", ticket: "fixture-steer-ticket" };
+  }
+
+  return { ok: true, stubbed: true, op };
 }
 
 export function closeoutFromFixture(dispatchId: string): ReturnType<

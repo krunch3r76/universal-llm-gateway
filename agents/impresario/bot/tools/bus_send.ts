@@ -2,24 +2,15 @@ import { defineTool } from "@grok/agent-sdk/tools";
 import { z } from "zod";
 
 import {
+  busMailbox,
   IMPRESARIO_MAILBOX,
   callAgentBus,
   isEvalOrFixture,
 } from "../lib/ulg.js";
 
-const busMailbox = z.enum([
-  "maestro",
-  "grok-bot-gc1",
-  "web-anthropic",
-  "cursor",
-  "impresario-sdk",
-  "cursor-sdk",
-  "grok-bot",
-]);
-
 export default defineTool({
   description:
-    "Post one bus turn from the impresario mailbox. Subject must use an approved head.",
+    "Post one bus turn from the impresario mailbox. Call to acknowledge work, request review, or ask questions. Returns posted thread and subject. Does not return a designed stop.",
   inputSchema: z.object({
     thread: z.string().min(1),
     to: busMailbox,

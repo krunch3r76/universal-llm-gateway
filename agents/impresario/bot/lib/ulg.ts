@@ -11,8 +11,16 @@ export const IMPRESARIO_MAILBOX =
   process.env.ULG_IMPRESARIO_MAILBOX ?? "impresario-sdk";
 export const IMPRESARIO_LANE = process.env.ULG_IMPRESARIO_LANE ?? "20908";
 export const COMMISSION_MODEL = "cursor/composer-2.5";
+export const MAESTRO_THREAD = "12286";
 
 const repoRoot = path.resolve(fileURLToPath(import.meta.url), "../../../..");
+
+export function liveSteerEnabled(): boolean {
+  const v = process.env.ULG_LIVE_STEER ?? "0";
+  return v === "1" || v.toLowerCase() === "true";
+}
+
+export { busMailbox, type BusMailbox } from "./mailbox.js";
 
 export function repoScriptsPath(rel: string): string {
   return path.join(repoRoot, rel);

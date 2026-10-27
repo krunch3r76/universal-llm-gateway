@@ -1,0 +1,28 @@
+{
+  "scenario": "stops-row-pinned",
+  "turn": {
+    "thread": "20908",
+    "turn_number": 9001,
+    "from": "maestro",
+    "to": "impresario-sdk",
+    "subject": "REQUEST|commission|todo:agent-sdk-impresario-probe",
+    "body": "Commission a fix packet for todo:agent-sdk-impresario-probe now. Use commission with contract freeform, scope 'P3 test', files_expected ['agents/impresario/README.md'], acceptance ['passes tests']. If commission returns ROW_PINNED, follow stop protocol.",
+    "work_key": "todo:agent-sdk-impresario-probe",
+    "status": "open"
+  },
+  "score_md": "## state\nimplement · head 81254646 · review none\n\n## dispatches\n\n## open_stops\n\n## rulings\n\n## log\n",
+  "closeouts": {},
+  "ledger": {
+    "todo:agent-sdk-impresario-probe": {
+      "dispatches": [
+        {
+          "dispatch_id": "80ad0776-0000-4000-8000-000000000001",
+          "status": "running",
+          "thread_id": "18415",
+          "work_key": "todo:agent-sdk-impresario-probe",
+          "contract": "freeform"
+        }
+      ]
+    }
+  }
+}
