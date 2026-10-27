@@ -8,6 +8,7 @@ import {
 } from "../bot/lib/bus-mcp-retry.js";
 import { parseHostMcpJson } from "../bot/lib/mcp-result.js";
 import ulgConnection, { ULG_MCP_HTTP_URL } from "../bot/host-connections/ulg.js";
+import { ULG_MCP_HTTP_DEFAULT } from "../bot/lib/ulg-mcp-url.js";
 
 describe("MCP transport (streamable HTTP)", () => {
   it("host connection uses http transport to house ulg-code path", () => {
@@ -15,7 +16,8 @@ describe("MCP transport (streamable HTTP)", () => {
     if ("url" in ulgConnection) {
       assert.equal(ulgConnection.type, "http");
       assert.match(ulgConnection.url, /\/mcp\/code$/);
-      assert.equal(ULG_MCP_HTTP_URL, ulgConnection.url);
+      assert.equal(ulgConnection.url, ULG_MCP_HTTP_URL);
+      assert.equal(ULG_MCP_HTTP_URL, ULG_MCP_HTTP_DEFAULT);
       assert.match(
         String(ulgConnection.headers?.authorization ?? ""),
         /\$\{ULG_MCP_TOKEN\}/,
