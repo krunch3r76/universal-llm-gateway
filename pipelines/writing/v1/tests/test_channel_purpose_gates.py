@@ -448,8 +448,16 @@ def test_short_verbatim_token_does_not_substring_exempt_unrelated_sentence() -> 
 
 
 def test_schedule_status_maps_to_availability_purpose() -> None:
+    assert map_claim_to_purpose(_SCHEDULE_SENTENCE, _AMANDA_PURPOSE) is None
+
+
+def test_literal_token_overlap_maps_amanda_availability_purpose() -> None:
     assert (
-        map_claim_to_purpose(_SCHEDULE_SENTENCE, _AMANDA_PURPOSE) == "purpose[0]"
+        map_claim_to_purpose(
+            "I am declining standing weekly availability and a monthly open calendar.",
+            _AMANDA_PURPOSE,
+        )
+        == "purpose[0]"
     )
 
 
