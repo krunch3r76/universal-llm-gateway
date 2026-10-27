@@ -74,19 +74,37 @@ _DECLINE_ABILITY_NOT_ABLE = re.compile(
     re.I,
 )
 _CAN_NOT_MODAL = re.compile(r"\bcan not\b", re.I)
-_DO_NOT_THINK = re.compile(r"\bdo(?:es|did)?\s+not\s+think\b", re.I)
+_DO_NOT_THINK = re.compile(r"\b(?:do|does|did)\s+not\s+think\b", re.I)
 _PROVIDE_WORD = re.compile(r"\bprovide\b", re.I)
 _DO_NOT_THINK_ABILITY_REFUSAL = re.compile(
-    r"^do(?:es|did)?\s+not\s+think\s+(?:that\s+)?"
-    r"(?:(?:i|we)\s+(?:can|will|am|are|is|would|could)\s+"
-    r"(?:(?:not|never)\s+)?(?:be\s+able\s+to\s+)?provide\b"
-    r"|(?:i|we)\s+(?:can|will)\s+not\s+(?:be\s+able\s+to\s+)?provide\b)",
+    r"^(?:do|does|did)\s+not\s+think\s+(?:that\s+)?"
+    r"(?:i|we)\s+(?:can|could|will|would|am|are|is)\s+"
+    r"(?!(?:not|never)\s)(?!(?:refuse|unable)\b)"
+    r"(?:be\s+able\s+to\s+)?provide\b",
     re.I,
 )
 _POLARITY_SUBCLAUSE_BOUNDARY = re.compile(r"\b(?:so|because|and)\b", re.I)
-_CAN_NOT_PROVIDE_FALSE_POSITIVE = re.compile(
-    r"\bcan\s+not\s+(?:only|wait\s+to)\b",
+_PROVIDE_REFUSAL_SCOPE_BOUNDARY = re.compile(
+    r"(?:[,;]|\b(?:but|so|because|and|though|although|while)\b)",
     re.I,
+)
+_PROVIDE_REFUSAL_FILLER_DISQUALIFIERS = frozenset(
+    {
+        "because",
+        "but",
+        "decline",
+        "help",
+        "never",
+        "not",
+        "only",
+        "refuse",
+        "see",
+        "so",
+        "think",
+        "unable",
+        "wait",
+        "why",
+    }
 )
 _NEGATED_PROVIDE_GOVERNANCE = re.compile(
     r"\b(?:no|not|never|unable|decline|declining|without)\b(?:\s+\w+){0,3}\s+\bprovide\b",
@@ -510,34 +528,121 @@ def _expand_can_not_provide_window(norm_seg: str, match: re.Match[str]) -> str:
     return window
 
 
-def _provide_refusal_windows(norm_seg: str) -> list[str]:
-    """Collect negator-through-``provide`` spans for per-window refusal validation."""
-    windows: list[str] = []
-    seen: set[str] = set()
+def _provide_refusal_windows(norm_seg: str) -> list[tuple[int, int, str]]:
+    """Collect negator-through-``provide`` spans as ``(start, end, text)`` for validation."""
+    windows: list[tuple[int, int, str]] = []
+    seen: set[tuple[int, int]] = set()
 
-    def _add(window: str) -> None:
+    def _add(start: int, end: int, window: str) -> None:
         window = window.strip()
-        if window and window not in seen:
-            seen.add(window)
-            windows.append(window)
+        key = (start, end)
+        if window and key not in seen:
+            seen.add(key)
+            windows.append((start, end, window))
 
     for cm in _CAN_NOT_MODAL.finditer(norm_seg):
         rest = norm_seg[cm.start() :]
         pm = _PROVIDE_WORD.search(rest)
         if pm:
-            _add(rest[: pm.end()])
+            end = cm.start() + pm.end()
+            _add(cm.start(), end, rest[: pm.end()])
 
     for tm in _DO_NOT_THINK.finditer(norm_seg):
         rest = norm_seg[tm.start() :]
         pm = _PROVIDE_WORD.search(rest)
         if pm:
-            _add(rest[: pm.end()])
+            end = tm.start() + pm.end()
+            _add(tm.start(), end, rest[: pm.end()])
 
     for matcher in (_NEGATED_PROVIDE_GOVERNANCE_STRICT, _NEGATED_PROVIDE_GOVERNANCE):
         for match in matcher.finditer(norm_seg):
-            _add(_expand_can_not_provide_window(norm_seg, match))
+            start = match.start()
+            rest = norm_seg[start:]
+            pm = _PROVIDE_WORD.search(rest)
+            if pm:
+                end = start + pm.end()
+                _add(start, end, rest[: pm.end()])
 
+    windows.sort(key=lambda item: (item[0], item[1]))
     return windows
+
+
+def _provide_refusal_outer_vetoes_inner(
+    norm_seg: str,
+    outer: tuple[int, int, str],
+    inner: tuple[int, int, str],
+) -> bool:
+    """True when a rejected outer negator governs the same clause as a nested inner window."""
+    start_outer, end_outer, w_outer = outer
+    start_inner, end_inner, _w_inner = inner
+    if end_inner != end_outer or start_inner <= start_outer:
+        return False
+    if _PROVIDE_REFUSAL_SCOPE_BOUNDARY.search(norm_seg[start_outer:start_inner]):
+        return False
+    return True
+
+
+def _provide_refusal_vetoed_windows(
+    norm_seg: str,
+    windows: list[tuple[int, int, str]],
+    genuine: dict[tuple[int, int], bool],
+) -> set[tuple[int, int]]:
+    """Inner windows vetoed when an outer rejected negator shares the same ``provide`` span."""
+    vetoed: set[tuple[int, int]] = set()
+    for outer in windows:
+        outer_key = (outer[0], outer[1])
+        if genuine.get(outer_key, False):
+            continue
+        for inner in windows:
+            inner_key = (inner[0], inner[1])
+            if inner_key == outer_key:
+                continue
+            if _provide_refusal_outer_vetoes_inner(norm_seg, outer, inner):
+                vetoed.add(inner_key)
+    return vetoed
+
+
+def _provide_refusal_see_path_genuine(window: str) -> bool:
+    """True for ``can not see how/a way … provide`` when the bridge is not another negation."""
+    w = window.strip()
+    if not re.match(r"^(?:can not|could not)\s+see\b", w):
+        return False
+    if re.search(r"\bwhy\s+(?:i|we)\s+would\s+not\b", w):
+        return False
+    path = re.search(r"\b(?:a way|how|any way)\b", w)
+    if not path:
+        return False
+    tail = w[path.end() :]
+    pm = _PROVIDE_WORD.search(tail)
+    if not pm:
+        return True
+    bridge = tail[: pm.start()]
+    if "," in bridge or ";" in bridge:
+        return False
+    if re.search(r"\b(?:not|never|unable|refuse|decline)\b", bridge):
+        return False
+    return True
+
+
+def _modal_not_through_provide_genuine(window: str) -> bool:
+    """True for modal ``not`` … ``provide`` with up to three non-disqualifying filler tokens."""
+    w = window.strip()
+    m = re.match(r"^(can not|could not|will not|would not)\s+(.+)$", w, re.I)
+    if not m:
+        return False
+    tail = m.group(2)
+    pm = _PROVIDE_WORD.search(tail)
+    if not pm or pm.end() != len(tail.rstrip()):
+        return False
+    middle = tail[: pm.start()].strip()
+    if "," in middle or ";" in middle:
+        return False
+    fillers = _TOKEN.findall(middle.lower())
+    if len(fillers) > 3:
+        return False
+    if set(fillers) & _PROVIDE_REFUSAL_FILLER_DISQUALIFIERS:
+        return False
+    return True
 
 
 def _provide_refusal_window_is_genuine(window: str) -> bool:
@@ -553,18 +658,16 @@ def _provide_refusal_window_is_genuine(window: str) -> bool:
         return False
     if re.search(r"\bwhy\s+(?:i|we)\s+would\s+not\b", w):
         return False
-    if re.match(r"^do(?:es|did)?\s+not\s+think\b", w):
+    if re.match(r"^(?:do|does|did)\s+not\s+think\b", w):
         if re.search(r"\bso\s+(?:i|we)\s+will\s+provide\b", w):
             return False
         return bool(_DO_NOT_THINK_ABILITY_REFUSAL.match(w))
     if re.match(r"^(?:can not|could not)\s+see\b", w):
-        if re.search(r"\bwhy\s+(?:i|we)\s+would\s+not\b", w):
-            return False
-        return bool(re.search(r"\b(?:a way|how|any way)\b", w))
-    if re.match(r"^(?:can not|could not)\s+provide\b", w):
-        return True
-    if re.match(r"^(?:would|will)\s+not\s+provide\b", w):
+        return _provide_refusal_see_path_genuine(w)
+    if re.match(r"^(?:will|would)\s+not\s+provide\b", w):
         return False
+    if re.match(r"^(?:can not|could not|will not|would not)\b", w):
+        return _modal_not_through_provide_genuine(w)
     if re.match(r"^not provide\b", w):
         return False
     if re.match(r"^(?:never|no|unable|without)\b", w):
@@ -578,7 +681,14 @@ def _draft_segment_satisfies_provide_refusal(draft_segment: str) -> bool:
     if re.search(r"\b(?:decline|declining)\b", norm_seg):
         return True
     windows = _provide_refusal_windows(norm_seg)
-    return any(_provide_refusal_window_is_genuine(window) for window in windows)
+    genuine = {
+        (start, end): _provide_refusal_window_is_genuine(window)
+        for start, end, window in windows
+    }
+    vetoed = _provide_refusal_vetoed_windows(norm_seg, windows, genuine)
+    return any(
+        ok and (start, end) not in vetoed for (start, end), ok in genuine.items()
+    )
 
 
 def _restate_negation_guard(draft_text: str, pin_excerpt: str) -> bool:
