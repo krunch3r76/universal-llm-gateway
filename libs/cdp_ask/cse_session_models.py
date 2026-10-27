@@ -97,6 +97,9 @@ class OutputCardSummary(BaseModel):
     filename: str
     file_uuid: str | None = None
     bytes: int = 0
+    raw_sha256: str | None = None
+    messages_path: str | None = None
+    messages_sha256: str | None = None
 
 
 class HarvestRequest(BaseModel):

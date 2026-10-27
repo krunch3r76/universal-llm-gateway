@@ -10,6 +10,7 @@ import hashlib
 import json
 import re
 import time
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -73,6 +74,16 @@ _HOUSE_PROVENANCE_KEYS = (
 _RAW_SOURCE = "claude-ai"
 _RAW_KIND = "raw"
 _MESSAGES_KIND = "messages"
+
+
+@dataclass(frozen=True)
+class CoworkOutputPersistResult:
+    """Raw + messages artifact digests after a Cowork Output persist."""
+
+    raw_uri: str
+    raw_sha256: str
+    messages_path: str
+    messages_sha256: str
 
 
 def _session_id_from_harvest_filename(filename: str | None) -> str:
@@ -162,7 +173,7 @@ def _persist_cowork_messages_projection(
     registration_id: str | None,
     route: str | None,
     prev_messages_manifest_rel: str | None,
-) -> None:
+) -> tuple[str, str]:
     """Project tool-stripped messages beside the raw Cowork transcript tree."""
     messages_dir = (
         root / "notes/system/transcripts" / house / _RAW_SOURCE / _MESSAGES_KIND / date_str
@@ -219,6 +230,10 @@ def _persist_cowork_messages_projection(
         json.dumps(messages_manifest, indent=2) + "\n",
         retain_store_root=root,
     )
+    return (
+        f"cortex://{messages_abs.relative_to(root).as_posix()}",
+        messages_sha256,
+    )
 
 
 def _merge_manifest_field(existing: object, new: object) -> object:
@@ -237,11 +252,11 @@ def persist_cowork_output_raw_transcript(
     registration_id: str | None,
     provenance: dict[str, Any] | None = None,
     cortex_root: Path | None = None,
-) -> tuple[str, str] | None:
+) -> CoworkOutputPersistResult | None:
     """Write Cowork Output bytes and a sidecar manifest under cortex raw transcripts.
 
     Layout: ``notes/system/transcripts/<house>/claude-ai/raw/<YYYY-MM-DD>/``.
-    Returns ``(cortex_uri, sha256_hex)`` when a files root is configured, else ``None``.
+    Returns raw and messages artifact digests when a files root is configured.
     """
     root = cortex_root or cortex_files_root_from_env()
     if root is None:
@@ -338,7 +353,7 @@ def persist_cowork_output_raw_transcript(
         / date_str
         / f"{native_id}.manifest.json"
     )
-    _persist_cowork_messages_projection(
+    messages_path, messages_sha256 = _persist_cowork_messages_projection(
         root=root,
         house=house,
         native_id=native_id,
@@ -353,7 +368,33 @@ def persist_cowork_output_raw_transcript(
         route=str(manifest_dict.get("route") or "") or None,
         prev_messages_manifest_rel=_manifest_rel(base_messages_manifest, root),
     )
-    return (f"cortex://{raw_abs.relative_to(root).as_posix()}", sha256_hex)
+    return CoworkOutputPersistResult(
+        raw_uri=f"cortex://{raw_abs.relative_to(root).as_posix()}",
+        raw_sha256=sha256_hex,
+        messages_path=messages_path,
+        messages_sha256=messages_sha256,
+    )
+
+
+def _selected_output_card_summary(
+    panel_filename: str,
+    body_result: HarvestBody,
+    persisted: CoworkOutputPersistResult,
+) -> OutputCardSummary:
+    """Build the post-harvest card row for the selected Outputs file."""
+    raw_bytes = (
+        body_result.content_bytes
+        if body_result.content_bytes is not None
+        else body_result.content.encode("utf-8")
+    )
+    return OutputCardSummary(
+        filename=panel_filename,
+        file_uuid=body_result.file_uuid,
+        bytes=len(raw_bytes),
+        raw_sha256=persisted.raw_sha256,
+        messages_path=persisted.messages_path,
+        messages_sha256=persisted.messages_sha256,
+    )
 
 
 def is_shell_title(title: str | None) -> bool:
@@ -539,8 +580,13 @@ async def _try_output_file_card_harvest(
         registration_id=resolved_registration_id,
         provenance=provenance,
     )
+    selected_cards: list[OutputCardSummary] = list(cards)
     if persisted is not None:
-        archive_uri, archive_sha256 = persisted
+        archive_uri = persisted.raw_uri
+        archive_sha256 = persisted.raw_sha256
+        selected_cards = [
+            _selected_output_card_summary(pool[0].filename, body_result, persisted)
+        ]
     return HarvestResponse(
         outcome="harvested",
         ack_class=ack,
@@ -555,7 +601,7 @@ async def _try_output_file_card_harvest(
         provenance=provenance,
         archive_uri=archive_uri,
         archive_sha256=archive_sha256,
-        cards=cards,
+        cards=selected_cards,
     )
 
 
@@ -625,6 +671,7 @@ async def _try_body_harvest(
         )
         archive_uri: str | None = None
         archive_sha256: str | None = None
+        selected_cards: list[OutputCardSummary] = []
         if body_result.provenance == "output-file":
             resolved_chat_url = (
                 chat_url
@@ -642,7 +689,18 @@ async def _try_body_harvest(
                 provenance=provenance,
             )
             if persisted is not None:
-                archive_uri, archive_sha256 = persisted
+                archive_uri = persisted.raw_uri
+                archive_sha256 = persisted.raw_sha256
+                panel_name = Path(body_result.filename or "").name or (
+                    body_result.filename or "cowork-output"
+                )
+                selected_cards = [
+                    _selected_output_card_summary(
+                        panel_name,
+                        body_result,
+                        persisted,
+                    )
+                ]
         return HarvestResponse(
             outcome="harvested",
             ack_class=ack,
@@ -657,6 +715,7 @@ async def _try_body_harvest(
             provenance=provenance,
             archive_uri=archive_uri,
             archive_sha256=archive_sha256,
+            cards=selected_cards,
         )
     except Exception:
         if req.source == "output-file":
