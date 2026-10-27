@@ -14,6 +14,7 @@ from typing import Any
 from continuity_tape.extract_grokbot_jsonl import (
     HEADER_RE,
     TranscriptPageError,
+    _longest_suffix_prefix,
     _physical_lines,
     reassemble_pages,
 )
@@ -94,6 +95,7 @@ def check_pages(
     *,
     prior_lines: list[str] | None,
     prior_total: int | None,
+    prior_next_pos: int | None = None,
 ) -> dict[str, Any] | None:
     """Return a refusal or None. Does not mutate page bytes."""
     if not pages:
@@ -117,15 +119,14 @@ def check_pages(
         return refuse(
             "harvest.page_target", f"pages disagree on target: {sorted(targets)}"
         )
-    covered: dict[int, str] = {}
-    if prior_lines is not None:
-        for offset, line in enumerate(prior_lines):
-            covered[offset] = line
-        prior_next = len(prior_lines)
-    else:
-        prior_next = None
     ordered = sorted(pages, key=lambda p: (p["lo"], p["hi"]))
-    if prior_next is not None:
+    prior_next: int | None = None
+    if prior_lines is not None:
+        prior_next = (
+            prior_next_pos
+            if prior_next_pos is not None
+            else len(prior_lines)
+        )
         earliest = ordered[0]["lo"]
         if earliest > prior_next:
             return refuse(
@@ -133,57 +134,72 @@ def check_pages(
                 f"first page lo {earliest} > prior next {prior_next}",
             )
     kept_flags: list[bool] = []
+    total_unrendered = 0
+    stitched: list[str] = list(prior_lines) if prior_lines is not None else []
+    if prior_lines is not None:
+        running_hi = (prior_next_pos - 1) if prior_next_pos is not None else len(prior_lines) - 1
+    else:
+        running_hi = -1
     for page in ordered:
         lo, hi = page["lo"], page["hi"]
         if lo > hi:
             return refuse("harvest.page_header", f"page {lo}-{hi} is not 0-based")
         expected = hi - lo + 1
         got = len(page["lines"])
-        if got != expected:
+        if got > expected:
             return refuse(
                 "harvest.page_header",
-                f"page {lo}-{hi}: {got} lines, expected {expected}; re-page that range",
+                f"page {lo}-{hi}: {got} lines, expected {expected}",
             )
-        mismatch = False
-        for offset, line in enumerate(page["lines"]):
-            pos = lo + offset
-            prior = covered.get(pos)
-            if prior is not None and prior != line:
-                mismatch = True
-                break
-        if mismatch:
+        page["unrendered"] = expected - got
+        total_unrendered += page["unrendered"]
+        if running_hi < 0:
+            stitched = list(page["lines"])
+            running_hi = hi
+            kept_flags.append(True)
+            continue
+        if lo > running_hi + 1:
             return refuse(
-                "harvest.page_overlap", f"page {lo}-{hi} overlaps with different bytes"
+                "harvest.page_gap",
+                f"gap in positions: first missing {running_hi + 1}",
             )
-        fully = expected == got and all(lo + offset in covered for offset in range(got))
-        kept_flags.append(not fully)
-        if not fully:
-            for offset, line in enumerate(page["lines"]):
-                covered.setdefault(lo + offset, line)
-    if not covered:
-        return refuse("harvest.pages_missing", "no positions after stitch")
-    start = 0 if prior_lines is not None else min(covered)
-    end = max(covered)
-    missing = [pos for pos in range(start, end + 1) if pos not in covered]
-    if missing:
-        return refuse(
-            "harvest.page_gap", f"gap in positions: first missing {missing[0]}"
-        )
-    prior_next = len(prior_lines) if prior_lines is not None else 0
-    if target_total - 1 not in covered or any(
-        pos not in covered for pos in range(prior_next, target_total)
-    ):
+        before = len(stitched)
+        if lo <= running_hi:
+            overlap = _longest_suffix_prefix(stitched, page["lines"])
+            if overlap > 0:
+                stitched.extend(page["lines"][overlap:])
+            elif page["lines"]:
+                if (
+                    lo + len(page["lines"]) <= len(stitched)
+                    and stitched[lo : lo + len(page["lines"])] == page["lines"]
+                ):
+                    pass
+                else:
+                    return refuse(
+                        "harvest.page_overlap",
+                        f"page {lo}-{hi} overlaps with different bytes",
+                    )
+        else:
+            stitched.extend(page["lines"])
+        running_hi = max(running_hi, hi)
+        kept_flags.append(len(stitched) > before)
+    if not stitched:
+        return refuse("harvest.pages_missing", "no lines after stitch")
+    if running_hi < target_total - 1:
         return refuse(
             "harvest.page_gap",
-            f"coverage must run {prior_next}..{target_total - 1}",
+            f"coverage must reach position {target_total - 1}, got hi {running_hi}",
         )
-    if prior_lines is not None and not any(pos >= prior_next for pos in covered):
+    if prior_next is not None and running_hi < prior_next - 1:
+        return refuse("harvest.no_prior", "stitched lines shorter than prior window")
+    if prior_lines is not None and len(stitched) <= len(prior_lines):
         return refuse(
-            "harvest.no_new_pages", "no page adds a position beyond the prior"
+            "harvest.no_new_pages", "no page adds a line beyond the prior"
         )
     for page, keep in zip(ordered, kept_flags, strict=True):
         page["keep"] = keep
         page["target_total"] = target_total
+        page["total_unrendered"] = total_unrendered
     return None
 
 

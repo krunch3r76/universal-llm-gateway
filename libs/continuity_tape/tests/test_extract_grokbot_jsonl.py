@@ -170,10 +170,9 @@ def test_short_page_accepted_long_page_raises() -> None:
         + "\n".join(_lines(RECORDS[:5]))
         + "\n"
     )
-    with pytest.raises(
-        TranscriptPageError, match="cannot align overlapping short page"
-    ):
-        reassemble_pages(short_overlap)
+    overlap_lines, overlap_info = reassemble_pages(short_overlap)
+    assert len(overlap_lines) == 5
+    assert overlap_info["unrendered_positions"] == 1
 
 
 NAME_FIX = "771821c5-de68-4b96-a914-edbb87a2e6bb"
@@ -785,16 +784,32 @@ def test_one_based_page_header_raises() -> None:
         reassemble_pages(text)
 
 
-def test_overlapping_page_missing_a_line_raises() -> None:
+def test_overlapping_short_pages_stitch_by_line_overlap() -> None:
     lines = _lines(RECORDS[:6])
     text = (
         "Transcript of this conversation, positions 0\u20133 of 6:\n"
         + "\n".join(lines[:4])
         + "\nTranscript of this conversation, positions 2\u20135 of 6:\n"
-        + "\n".join(lines[2:4])
+        + "\n".join(lines[2:6])
         + "\n"
     )
-    with pytest.raises(TranscriptPageError, match="overlapping short page"):
+    got, info = reassemble_pages(text)
+    assert got == lines[:6]
+    assert info["unrendered_positions"] == 0
+
+
+def test_overlapping_pages_conflict_raises() -> None:
+    lines = _lines(RECORDS[:4])
+    bad = list(_lines(RECORDS[2:6]))
+    bad[0] = json.dumps(_u("conflict"))
+    text = (
+        "Transcript of this conversation, positions 0\u20133 of 6:\n"
+        + "\n".join(lines[:4])
+        + "\nTranscript of this conversation, positions 2\u20135 of 6:\n"
+        + "\n".join(bad)
+        + "\n"
+    )
+    with pytest.raises(TranscriptPageError, match="overlapping pages differ"):
         reassemble_pages(text)
 
 

@@ -1051,7 +1051,7 @@ async def test_overlap_raw_differs_from_normalized(fs: MemFs) -> None:
 
 
 @pytest.mark.asyncio
-async def test_unrendered_position_refuses(fs: MemFs) -> None:
+async def test_short_page_without_overlap(fs: MemFs) -> None:
     folder = _put_page(fs, 1, 0, 2, _page(0, 2, 3, ["a", "b"], start=True))
     options = {
         "mode": "harvest_seal",
@@ -1061,7 +1061,68 @@ async def test_unrendered_position_refuses(fs: MemFs) -> None:
         "l0_ref": folder,
         "fallback": "electron",
     }
-    refused = await run_harvest_normalise(options, fs)
-    body = refused.get("refused") or {}
-    assert body.get("code") == "harvest.page_header"
-    assert "re-page" in body.get("message", "")
+    norm = await run_harvest_normalise(options, fs)
+    assert norm.get("refused") is None, norm
+    adapter = await run_harvest_adapter(options, norm, fs)
+    assert adapter.get("refused") is None, adapter
+    src = adapter["envelope"]["meta"]["sources"][0]
+    assert src["unrendered_positions"] == 1
+    assert src["unrendered_by_page"] == [{"lo": 0, "hi": 2, "unrendered": 1}]
+
+
+@pytest.mark.asyncio
+async def test_short_overlapping_pages(fs: MemFs) -> None:
+    first = _page(0, 1, 4, ["a", "b"], start=True)
+    second = _page(1, 3, 4, ["b", "c", "d"], start=False)
+    folder = _put_page(fs, 1, 0, 1, first)
+    _put_page(fs, 1, 1, 3, second)
+    options = {
+        "mode": "harvest_seal",
+        "house": "bl1",
+        "n": 1,
+        "agent_id": _AGENT,
+        "l0_ref": folder,
+        "fallback": "electron",
+    }
+    norm = await run_harvest_normalise(options, fs)
+    assert norm.get("refused") is None, norm
+    adapter = await run_harvest_adapter(options, norm, fs)
+    assert adapter.get("refused") is None, adapter
+    assert len(adapter["envelope"]["messages"]) == 4
+    src = adapter["envelope"]["meta"]["sources"][0]
+    assert src["unrendered_positions"] == 0
+
+
+@pytest.mark.asyncio
+async def test_short_pages_incremental_n2(fs: MemFs) -> None:
+    folder = _put_page(fs, 1, 0, 2, _page(0, 2, 3, ["a", "b"], start=True))
+    options = {
+        "mode": "harvest_seal",
+        "house": "bl1",
+        "n": 1,
+        "agent_id": _AGENT,
+        "l0_ref": folder,
+        "fallback": "electron",
+    }
+    norm = await run_harvest_normalise(options, fs)
+    adapter = await run_harvest_adapter(options, norm, fs)
+    await run_harvest_pour(options, adapter, fs, norm)
+    third = _page(3, 3, 4, ["c"], start=False)
+    folder2 = _put_page(fs, 2, 3, 3, third)
+    options2 = {
+        "mode": "harvest_seal",
+        "house": "bl1",
+        "n": 2,
+        "agent_id": _AGENT,
+        "l0_ref": folder2,
+        "fallback": "electron",
+    }
+    norm2 = await run_harvest_normalise(options2, fs)
+    assert norm2.get("refused") is None, norm2
+    adapter2 = await run_harvest_adapter(options2, norm2, fs)
+    assert adapter2.get("refused") is None, adapter2
+    pour2 = await run_harvest_pour(options2, adapter2, fs, norm2)
+    assert pour2.get("refused") is None, pour2
+    raw2 = fs.files[f"notes/system/checkpoints/grok/{_AGENT}/2.raw.json"]
+    raw1 = fs.files[f"notes/system/checkpoints/grok/{_AGENT}/1.raw.json"]
+    assert raw2.startswith(raw1)
