@@ -20,6 +20,7 @@ from cursor_bridge.cursor_agents_hop import (
     cursor_debug_url_for_gui_host,
     launch_cursor_agents_tab,
 )
+from cursor_bridge.impresario_spawn_prompt import augment_spawn_prompt_for_impresario
 from cursor_bridge.spawn_model_knobs import merge_spawn_model_knobs
 
 
@@ -176,7 +177,9 @@ def spawn_house(
             }
 
         launch = launch_cursor_agents_tab(
-            prompt_clean,
+            augment_spawn_prompt_for_impresario(
+                prompt_clean, slug=slug_clean, title=None
+            ),
             model_query=model_query,
             model_knobs=knobs,
             debug_url=debug_url,

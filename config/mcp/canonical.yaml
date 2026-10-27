@@ -2136,7 +2136,7 @@ tools:
         description: Mint a new bridge lane (open_tab only). Mutually exclusive with thread.
       slug:
         type: string
-        description: Short kebab-case Cursor tab name (open_tab). Tab title is '<thread> <slug>'.
+        description: Short kebab-case tab name (open_tab title '<thread> <slug>'; spawn_house mint; spawn_tab impresario skill pull when it contains impresario).
       cowork_url:
         type: string
         description: Optional originating claude.ai Cowork URL recorded in BRIDGE_OPEN.
@@ -2160,15 +2160,12 @@ tools:
       model:
         type: string
         description: Model catalog label for spawn_tab / spawn_house.
-      slug:
-        type: string
-        description: Kebab slug for spawn_house thread mint and subscription title.
       agent_id:
         type: string
         description: Glass composer id — spawn_tab/spawn_house mint, send_msg paste target, wake_tab/rename_tab/prune_sidebar scope.
       title:
         type: string
-        description: Sidebar rename title (rename_tab).
+        description: Sidebar title hint — rename_tab sets it; spawn_tab uses it for impresario skill pull when it contains impresario.
       effort:
         type: string
         description: Glass house effort knob (spawn_tab / spawn_house).

@@ -157,6 +157,8 @@ def _spawn_tab(
     fast: bool | str | None = None,
     model_knobs: dict[str, str] | None = None,
     agent_id: str | None = None,
+    title: str | None = None,
+    slug: str | None = None,
 ) -> dict[str, Any]:
     if not prompt or not str(prompt).strip():
         return _param_error("spawn_tab", "prompt_required", "spawn_tab requires prompt")
@@ -168,6 +170,8 @@ def _spawn_tab(
         fast=fast,
         model_knobs=model_knobs,
         agent_id=agent_id,
+        title=title,
+        slug=slug,
     )
     record(
         "mcp.cursor_bridge.spawn_tab",
@@ -396,6 +400,8 @@ def register_cursor_bridge_tools(mcp: FastMCP) -> None:
                     fast=fast,
                     model_knobs=model_knobs,
                     agent_id=agent_id,
+                    title=title,
+                    slug=slug,
                 )
             if op == "spawn_house":
                 return _spawn_house(
