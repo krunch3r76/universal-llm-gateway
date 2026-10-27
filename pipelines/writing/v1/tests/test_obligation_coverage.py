@@ -1353,6 +1353,8 @@ _REPLY_CLOSING_PLEASANTRY_SPANS = (
     "Let me know, thank you! -Maria",
     "Let me know, thanks! -Maria",
     "Let me know!",
+    "Please let me know - Thanks.",
+    "Let me know — thanks.",
 )
 
 _REPLY_CLOSING_SUBSTANTIVE_SPANS = (

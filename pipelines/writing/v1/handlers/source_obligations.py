@@ -39,7 +39,7 @@ _NON_SIGNATURE_TOKENS = frozenset({
     "january", "february", "march", "april", "may", "june", "july", "august",
     "september", "october", "november", "december",
     "jan", "feb", "mar", "apr", "jun", "jul", "aug", "sep", "sept", "oct", "nov", "dec",
-    "yes", "no", "ok", "okay", "please", "thanks",
+    "yes", "no", "ok", "okay",
 })
 _TRAILING_SIGNATURE = re.compile(
     r"(?:^|\s)[—–-]+\s*([A-Z][\w'.-]*)\s*$",
@@ -52,7 +52,7 @@ _COURTESY_TOKENS = re.compile(
     r")\b",
     re.IGNORECASE,
 )
-_EDGE_PUNCT = re.compile(r"^[,!.;:\s]+|[,!.;:\s]+$")
+_EDGE_PUNCT = re.compile(r"^[,!.;:\s—–-]+|[,!.;:\s—–-]+$")
 _GREETING_PREFIX = re.compile(
     r"^(?:"
     r"hi(?:\s+[\w'.-]+)?\s*[,—–-]\s*|"
