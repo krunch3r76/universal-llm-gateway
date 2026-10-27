@@ -24,6 +24,7 @@ from .seat_wait import (
     WritingSeatSelectHandler,
     WritingSeatWaitHandler,
 )
+from .semantic_judge import WritingSemanticJudgeHandler
 from .source_obligations import WritingSourceObligationsHandler
 
 if TYPE_CHECKING:
@@ -106,4 +107,9 @@ def register_handlers(router: DomainRouter) -> None:
         "writing",
         "writing_review_openai_wait_v1",
         WritingReviewOpenaiWaitHandler,
+    )
+    router.register_domain_handler_class(
+        "writing",
+        "writing_semantic_judge_v1",
+        WritingSemanticJudgeHandler,
     )

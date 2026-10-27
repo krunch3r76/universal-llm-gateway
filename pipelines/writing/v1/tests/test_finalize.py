@@ -423,3 +423,54 @@ def test_finalize_partial_independence_fails_gate() -> None:
         }
     )
     assert full["ship_gate"]["pass"] is True
+
+
+def test_finalize_semantic_judge_unavailable_in_initial_fails_gate() -> None:
+    payload = _run(
+        {
+            "assemble": _Out(_assemble()),
+            "draft": _Out(_draft(), model_id=_HERMES),
+            "provenance_check": _Out(
+                {
+                    "violations": [
+                        {
+                            "type": "semantic_judge_unavailable",
+                            "claim_id": None,
+                            "detail": "judge_unavailable",
+                        }
+                    ],
+                    "pass": False,
+                }
+            ),
+            "independence": _Out({"refused": None, "independence": "full"}),
+            "fact_ceiling_audit": _Out({"verdict": "ship", "findings": []}),
+        }
+    )
+    assert payload["ship_gate"]["pass"] is False
+
+
+def test_finalize_semantic_judge_unavailable_in_final_fails_after_revert() -> None:
+    payload = _run(
+        {
+            "assemble": _Out(_assemble()),
+            "draft": _Out(_draft(), model_id=_HERMES),
+            "provenance_check": _Out({"violations": [], "pass": True}),
+            "independence": _Out({"refused": None, "independence": "full"}),
+            "fact_ceiling_audit": _Out({"verdict": "ship", "findings": []}),
+            "prose_rhythm_pass": _Out(None, raw="Revised."),
+            "fact_ceiling_final": _Out(
+                {
+                    "violations": [
+                        {
+                            "type": "semantic_judge_unavailable",
+                            "claim_id": None,
+                            "detail": "judge_unavailable",
+                        }
+                    ],
+                    "pass": False,
+                }
+            ),
+        }
+    )
+    assert payload["ship_gate"]["selected"] == "draft_v1"
+    assert payload["ship_gate"]["pass"] is False

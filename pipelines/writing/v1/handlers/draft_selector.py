@@ -22,11 +22,7 @@ from ._obligation_coverage import (
     coverage_map_for_draft,
     obligation_coverage_score,
 )
-from .email_envelope import (
-    correspondence_register_penalty,
-    email_draft_penalty,
-    email_restate_pin_satisfied,
-)
+from .email_envelope import email_draft_penalty, email_restate_pin_satisfied
 from .finalize import _omit_with_reason_ids
 from .independence import load_writing_models, model_family
 from .seat_wait import sanitize_plain_text_draft
@@ -44,18 +40,6 @@ _TOKEN = re.compile(r"[a-z0-9]+")
 _NEED_TOKEN = re.compile(r"\[NEED:[^\]]*\]")
 _FIRST_PERSON = re.compile(r"\b(?:i|i'm|i've|i'd|i'll|my|me|mine|myself)\b", re.I)
 _DECLARANT = re.compile(r"\bI,\s+([^,\n]{2,80}),\s+state\b")
-_DECLINE_PIN_HINT = re.compile(
-    r"\b(?:declin(?:e|ing|ed)|not\s+available|unavailab)",
-    re.I,
-)
-_NATURAL_DECLINE = re.compile(
-    r"\b(?:i\s+)?(?:can't|cannot|won't|will\s+not)\s+(?:take|cover)\b"
-    r"|\b(?:i\s+)?(?:can't|cannot|won't|will\s+not)\s+be\s+able\s+to\s+(?:take|cover)\b"
-    r"|\bunable\s+to\s+(?:take|cover)\b",
-    re.I,
-)
-
-
 def _step(payload: dict[str, Any], *, model_id: str | None = None) -> StepOutput:
     return StepOutput(raw=json.dumps(payload), json=payload, model_id=model_id)
 
@@ -64,54 +48,51 @@ def _normalize_tokens(text: str) -> set[str]:
     return set(_TOKEN.findall(text.lower()))
 
 
-def _pin_tokens(pin: dict[str, Any]) -> set[str]:
-    excerpt = str(pin.get("excerpt") or "")
-    return _normalize_tokens(excerpt)
-
-
-def _draft_satisfies_decline_pin(draft_text: str, excerpt: str) -> bool:
-    """Match decline/unavailability pins via natural phrasing or literal anchors."""
-    if _NATURAL_DECLINE.search(draft_text):
-        return True
-    anchors = _pin_tokens({"excerpt": excerpt})
-    return bool(anchors and anchors <= _normalize_tokens(draft_text))
-
-
-def _score_draft(
-    draft_text: str,
+def _judge_pin_score(
+    candidate_id: str,
     attested_pins: list[dict[str, Any]],
+    judge_pins: list[dict[str, Any]],
     *,
-    channel: str = "",
-) -> int:
-    """Count attested pins whose anchor tokens are all present in the draft.
-
-    A pin with an empty excerpt does not score. The count is the fact
-    weight only: voice and signer are applied later. No I/O.
-    """
-    draft_tokens = _normalize_tokens(draft_text)
+    channel: str,
+    draft_text: str,
+) -> tuple[int, int]:
+    """Return (pin_score, pin_penalty) from semantic_judge rows for one candidate."""
+    rows = [
+        row
+        for row in judge_pins
+        if isinstance(row, dict) and str(row.get("candidate_id") or "") == candidate_id
+    ]
     score = 0
+    penalty = 0
     for pin in attested_pins:
-        excerpt = str(pin.get("excerpt") or "")
-        if (
-            channel == "email"
-            and (pin.get("restate") is True or pin.get("verbatim_required") is True)
-            and excerpt
-        ):
-            if email_restate_pin_satisfied(
-                draft_text,
-                excerpt,
-                verbatim_required=bool(pin.get("verbatim_required")),
-            ):
+        pin_id = str(pin.get("pin_id") or "")
+        if not pin_id:
+            continue
+        if pin.get("verbatim_required") is True and channel == "email":
+            excerpt = str(pin.get("excerpt") or "")
+            if excerpt and email_restate_pin_satisfied(draft_text, excerpt):
                 score += 1
             continue
-        if _DECLINE_PIN_HINT.search(excerpt):
-            if _draft_satisfies_decline_pin(draft_text, excerpt):
-                score += 1
+        match = next((row for row in rows if str(row.get("pin_id")) == pin_id), None)
+        if match is None:
+            penalty += 1
             continue
-        anchors = _pin_tokens(pin)
-        if anchors and anchors <= draft_tokens:
+        if match.get("satisfied") is True and match.get("polarity_match") is not False:
             score += 1
-    return score
+        else:
+            penalty += 1
+    return score, penalty
+
+
+def _quality_penalty(candidate_id: str, findings: list[dict[str, Any]]) -> int:
+    total = 0
+    for row in findings:
+        if not isinstance(row, dict):
+            continue
+        if str(row.get("candidate_id") or "") != candidate_id:
+            continue
+        total += int(row.get("penalty") or 0)
+    return total
 
 
 def _requested_signer(assemble_json: dict[str, Any]) -> str:
@@ -188,15 +169,16 @@ def _signer_band(
     return 0
 
 
-def _rank_key(pair: tuple[int, dict[str, Any]]) -> tuple[int, int, int, int, int]:
+def _rank_key(pair: tuple[int, dict[str, Any]]) -> tuple[int, int, int, int, int, int]:
     """Sort eligible drafts: obligation coverage, signer, voice, pins, order."""
     index, row = pair
-    pin_tier = int(row["score"]) - int(row["email_penalty"])
+    pin_tier = int(row["score"]) - int(row["email_penalty"]) - int(row["pin_penalty"])
     return (
         -int(row.get("obligation_coverage_score") or 0),
         -int(row["signer_band"]),
         -int(row["voice_bonus"]),
         -pin_tier,
+        int(row["pin_penalty"]),
         index,
     )
 
@@ -291,6 +273,25 @@ class WritingDraftSelectorHandler(BaseHandler):
             else getattr(arch, "json", None)
         )
         architect_brief = str((arch_json or {}).get("architect_brief") or "")
+        judge_out = outputs.get("semantic_judge_candidates")
+        judge_json = (
+            judge_out.get("json")
+            if isinstance(judge_out, dict)
+            else getattr(judge_out, "json", None)
+        )
+        judge_json = judge_json if isinstance(judge_json, dict) else {}
+        judge_pins = list(judge_json.get("pins") or [])
+        judge_quality = list(judge_json.get("quality_findings") or [])
+        seen_candidate_ids = {
+            str(row.get("candidate_id") or "")
+            for row in judge_pins
+            if isinstance(row, dict) and row.get("candidate_id")
+        } | {
+            str(row.get("candidate_id") or "")
+            for row in judge_quality
+            if isinstance(row, dict) and row.get("candidate_id")
+        }
+        seen_candidate_ids.discard("")
         omit_ids = _omit_with_reason_ids(architect_brief)
         actionable = [
             row
@@ -306,6 +307,8 @@ class WritingDraftSelectorHandler(BaseHandler):
                 else getattr(out, "error", None)
             )
             if err:
+                continue
+            if seen_candidate_ids and step_name not in seen_candidate_ids:
                 continue
             text = sanitize_plain_text_draft(_raw_text(out))
             if not text.strip():
@@ -339,6 +342,14 @@ class WritingDraftSelectorHandler(BaseHandler):
                 if actionable
                 else []
             )
+            pin_score, pin_penalty = _judge_pin_score(
+                step_name,
+                attested,
+                judge_pins,
+                channel=channel,
+                draft_text=text,
+            )
+            quality_penalty = _quality_penalty(step_name, judge_quality)
             candidates.append(
                 {
                     "role": role,
@@ -346,7 +357,8 @@ class WritingDraftSelectorHandler(BaseHandler):
                     "draft": text,
                     "model_id": model_id,
                     "family": model_family(str(model_id)),
-                    "score": _score_draft(text, attested, channel=channel),
+                    "score": pin_score,
+                    "pin_penalty": pin_penalty,
                     "obligation_coverage_score": obl_score,
                     "coverage_map": cov_map,
                     "voice_bonus": 1 if _FIRST_PERSON.search(text) else 0,
@@ -367,19 +379,7 @@ class WritingDraftSelectorHandler(BaseHandler):
                         objective=objective,
                         verbatim_notes=verbatim_notes_blob,
                     )
-                    + (
-                        correspondence_register_penalty(
-                            text,
-                            channel=channel,
-                            objective=objective,
-                            standing_limits=standing_limits,
-                            verbatim_notes=verbatim_notes_blob,
-                            signer=signer,
-                            signer_verbatim_required=signer_verbatim_required,
-                        )
-                        if channel != "email"
-                        else 0
-                    ),
+                    + quality_penalty,
                     "signer_band": _signer_band(
                         text,
                         signer,

@@ -39,12 +39,14 @@ _STEP_ORDER = [
     "drafter_local_hermes",
     "drafter_local_ernie",
     "drafter_anthropic",
+    "semantic_judge_candidates",
     "draft",
     "independence",
     "fact_ceiling_audit",
     "obligation_coverage",
     "provenance_check",
     "prose_rhythm_pass",
+    "semantic_judge_v2",
     "fact_ceiling_final",
     "finalize",
 ]
@@ -131,6 +133,7 @@ def test_pipeline_shape() -> None:
     assert "writing_obligation_coverage_v1" in registered
     assert "writing_prompt_architect_v1" in registered
     assert "writing_draft_selector_v1" in registered
+    assert "writing_semantic_judge_v1" in registered
     assert "writing_seat_dispatch_v1" in registered
 
 

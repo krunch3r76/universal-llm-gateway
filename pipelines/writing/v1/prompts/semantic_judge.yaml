@@ -1,0 +1,38 @@
+description: "Semantic pin and quality judgments for writer-specialist drafts."
+pin:
+  system_prompt: >
+    You judge whether draft text satisfies attested pins and segment the draft into
+    clauses with speech_act and attestation. Return only JSON matching the schema.
+  template: |
+    <pins>
+    {pins}
+    </pins>
+    <candidates>
+    {candidates}
+    </candidates>
+    <intake_directives>
+    {intake_directives}
+    </intake_directives>
+    For each candidate draft, return pins (satisfied, polarity_match, evidence_span)
+    and clauses (text, pin_ids, speech_act, attested). A causal clause is attested
+    only when cited pins state that causal relation. speech_act must be request,
+    assertion, or other.
+quality:
+  system_prompt: >
+    You score correspondence writing-quality rubric violations. Return only JSON.
+  template: |
+    <candidates>
+    {candidates}
+    </candidates>
+    <intake_directives>
+    {intake_directives}
+    </intake_directives>
+    Rubric (apply to each candidate_id):
+    - No cold HR-decline register (decline/unfortunately/not available tone) unless intake invites it.
+    - No unprompted future-shift or stay-on invitations unless intake directives allow them.
+    - No numbered or bulleted body on email/sms unless intake requests a list format.
+    - No throat-clearing openers ("Please note the following", "I am responding to your request").
+    - No narrative closer phrases on transactional correspondence.
+    - SMS must not use formal thank-you-plus-full-signer closings unless signer is verbatim-required.
+    The draft must obey the intake directives verbatim.
+    Return findings: candidate_id, rule, detail, penalty (integer 0-3 per hit).

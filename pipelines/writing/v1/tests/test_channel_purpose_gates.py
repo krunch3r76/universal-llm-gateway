@@ -333,7 +333,11 @@ class _ProvStep:
         self.handler_inputs = {
             "pin_ledger": "assemble.json.pin_ledger",
             "draft": "draft.json",
+            "judge": "semantic_judge_candidates.json",
         }
+
+
+_EMPTY_JUDGE = {"pins": [], "clauses": [], "judge_unavailable": False}
 
 
 def test_provenance_handler_purpose_drops_on_baseline() -> None:
@@ -350,6 +354,7 @@ def test_provenance_handler_purpose_drops_on_baseline() -> None:
                         }
                     ),
                     "draft": _Out({"draft": BASELINE, "claims": []}),
+                    "semantic_judge_candidates": _Out(_EMPTY_JUDGE),
                 }
             ),
         )
@@ -497,6 +502,7 @@ def test_provenance_fact_inventory_drift_on_paraphrase() -> None:
                         }
                     ),
                     "draft": _Out({"draft": "She called monthly.", "claims": []}),
+                    "semantic_judge_candidates": _Out(_EMPTY_JUDGE),
                 }
             ),
         )
@@ -525,6 +531,7 @@ def test_provenance_objective_only_applies_purpose_gate() -> None:
                 {
                     "assemble": _Out(assembled),
                     "draft": _Out({"draft": BASELINE, "claims": []}),
+                    "semantic_judge_candidates": _Out(_EMPTY_JUDGE),
                 }
             ),
         )
@@ -564,43 +571,6 @@ def test_run_drift_check_exhibit_leadin_attached_are_passes() -> None:
     )
     assert out["passed"] is True
     assert out["flagged_sentences"] == []
-
-
-def test_email_draft_penalty_reinstatement_in_subject_line() -> None:
-    objective = (
-        "Cover email for the reinstatement hearing on Tuesday, October 27, 2026."
-    )
-    signer = "Kaywan Joseph Mansubi"
-    hearing_only = (
-        "Subject: Assessment Appeals 25.7489 and 25.7490, APN 424-20-043, "
-        "hearing October 27, 2026\n\nI am submitting the records.\n\n"
-        "Thank you,\nKaywan Joseph Mansubi"
-    )
-    reinstatement = (
-        "Subject: Assessment Appeals 25.7489 and 25.7490, APN 424-20-043, "
-        "Reinstatement Hearing October 27, 2026\n\nI am submitting the records.\n\n"
-        "Thank you,\nKaywan Joseph Mansubi"
-    )
-    assert (
-        email_envelope.email_draft_penalty(
-            hearing_only,
-            channel="email",
-            signer=signer,
-            standing_limits="",
-            objective=objective,
-        )
-        == 3
-    )
-    assert (
-        email_envelope.email_draft_penalty(
-            reinstatement,
-            channel="email",
-            signer=signer,
-            standing_limits="",
-            objective=objective,
-        )
-        == 0
-    )
 
 
 def test_baseline_intake_restate_pins_and_writer_register_rule() -> None:

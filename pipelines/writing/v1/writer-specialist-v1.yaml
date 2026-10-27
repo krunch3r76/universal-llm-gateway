@@ -142,10 +142,20 @@ steps:
     generation_parameters:
       temperature: 0.4
 
+  - name: semantic_judge_candidates
+    type: writing_semantic_judge_v1
+    invocation: candidates
+    reads_from:
+      - step: assemble
+        fields: [json]
+    condition: "assemble.json.get('refused') is None and options.get('output', 'envelope') != 'packet'"
+
   - name: draft
     type: writing_draft_selector_v1
     reads_from:
       - step: assemble
+        fields: [json]
+      - step: semantic_judge_candidates
         fields: [json]
       - step: drafter_openai
         fields: [json, raw, model_id]
@@ -205,6 +215,7 @@ steps:
     handler_inputs:
       pin_ledger: assemble.json.pin_ledger
       draft: draft.json
+      judge: semantic_judge_candidates.json
 
   - name: prose_rhythm_pass
     type: generate
@@ -227,6 +238,16 @@ steps:
     generation_parameters:
       temperature: 0.3
 
+  - name: semantic_judge_v2
+    type: writing_semantic_judge_v1
+    invocation: v2
+    reads_from:
+      - step: assemble
+        fields: [json]
+      - step: prose_rhythm_pass
+        fields: [raw, error]
+    condition: "assemble.json.get('refused') is None and options.get('output', 'envelope') != 'packet' and draft.json.get('refused') is None and independence.json.get('refused') is None and fact_ceiling_audit.json.get('refused') is None and prose_rhythm_pass.error is None and bool(prose_rhythm_pass.raw)"
+
   - name: fact_ceiling_final
     type: writing_provenance_check_v1
     reads_from:
@@ -238,11 +259,14 @@ steps:
         fields: [json]
       - step: prose_rhythm_pass
         fields: [raw]
-    condition: "assemble.json.get('refused') is None and options.get('output', 'envelope') != 'packet' and draft.json.get('refused') is None and independence.json.get('refused') is None and fact_ceiling_audit.json.get('refused') is None"
+      - step: semantic_judge_v2
+        fields: [json]
+    condition: "assemble.json.get('refused') is None and options.get('output', 'envelope') != 'packet' and draft.json.get('refused') is None and independence.json.get('refused') is None and fact_ceiling_audit.json.get('refused') is None and prose_rhythm_pass.error is None and bool(prose_rhythm_pass.raw)"
     handler_inputs:
       pin_ledger: assemble.json.pin_ledger
       draft: prose_rhythm_pass.raw
       draft_v1: draft.json
+      judge: semantic_judge_v2.json
 
   - name: finalize
     type: writing_finalize_v1
@@ -273,6 +297,10 @@ steps:
         fields: [json]
       - step: prose_rhythm_pass
         fields: [json, raw, model_id, prompt_tokens, completion_tokens]
+      - step: semantic_judge_candidates
+        fields: [json, model_id, prompt_tokens, completion_tokens]
+      - step: semantic_judge_v2
+        fields: [json, model_id, prompt_tokens, completion_tokens]
       - step: fact_ceiling_final
         fields: [json]
       - step: source_obligations

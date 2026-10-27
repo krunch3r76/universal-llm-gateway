@@ -670,6 +670,12 @@ class WritingFinalizeHandler(BaseHandler):
         if obl_refusal is not None:
             passed = False
             unresolved.extend(obl_refusal["unresolved"])
+        judge_fail = any(
+            isinstance(row, dict) and row.get("type") == "semantic_judge_unavailable"
+            for row in (initial + list(final or []))
+        )
+        if judge_fail:
+            passed = False
         if str(assemble.get("channel") or "") == "email" and not has_email_subject(
             selected_body
         ):
