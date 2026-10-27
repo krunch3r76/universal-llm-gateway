@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import json
+
 from universal_logging import get_logger
 
 from services.git_integration_worker.mechanical_land.reactor import (
@@ -19,6 +21,37 @@ _SWEEP_STATUSES = (
     "blocked_hold",
     "admit_deferred",
 )
+
+
+def list_blocked_repost_run_ids(store: MechanicalLandStore) -> list[str]:
+    """``status=blocked`` runs whose latest ``blocked`` event still owes one bus repost."""
+    with store._connect() as conn:
+        rows = conn.execute(
+            """
+            SELECT j.run_id, j.payload_json
+            FROM mechanical_land_journal j
+            INNER JOIN mechanical_land_runs r ON r.run_id = j.run_id
+            WHERE r.status = 'blocked'
+              AND j.event = 'blocked'
+              AND j.seq = (
+                SELECT MAX(j2.seq) FROM mechanical_land_journal j2
+                WHERE j2.run_id = j.run_id AND j2.event = 'blocked'
+              )
+            """
+        ).fetchall()
+    out: list[str] = []
+    for row in rows:
+        try:
+            payload = json.loads(row["payload_json"] or "{}")
+        except json.JSONDecodeError:
+            continue
+        if payload.get("posted_turn") is not None:
+            continue
+        attempts = int(payload.get("repost_attempts") or 0)
+        if attempts > 0 or payload.get("_repost_attempted"):
+            continue
+        out.append(str(row["run_id"]))
+    return out
 
 
 def list_run_ids_by_status(
@@ -43,7 +76,12 @@ def sweep_mechanical_land_runs(
 ) -> int:
     """Run the reactor loop for sweep-eligible runs; return count touched."""
     use_store = store or MechanicalLandStore()
-    run_ids = list_run_ids_by_status(use_store, _SWEEP_STATUSES)
+    run_ids = list(
+        dict.fromkeys(
+            list_run_ids_by_status(use_store, _SWEEP_STATUSES)
+            + list_blocked_repost_run_ids(use_store)
+        )
+    )
     touched = 0
     for run_id in run_ids:
         try:

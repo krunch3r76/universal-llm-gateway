@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 from implement_admission.closeout_models import ImplementCloseout
@@ -20,7 +20,14 @@ from services.git_integration_worker.mechanical_land.reactor import (
     repost_blocked_if_needed,
     run_reactor_loop,
 )
+from services.git_integration_worker.mechanical_land.reconcile import (
+    reconcile_mechanical_land_on_boot,
+    reconcile_mechanical_land_on_boot_sync,
+)
 from services.git_integration_worker.mechanical_land.store import MechanicalLandStore
+from services.git_integration_worker.mechanical_land.sweep import (
+    sweep_mechanical_land_runs,
+)
 
 pytestmark = pytest.mark.offline
 
@@ -312,10 +319,7 @@ def test_transition_failure_sets_admit_deferred() -> None:
     assert str(row["status"]) == "admit_deferred"
 
 
-def test_bus_unreachable_blocked_still_writes_event_and_sweep_reposts() -> None:
-    store = MechanicalLandStore()
-    run_id = _seed_run(store)
-
+def _block_run_with_bus_down(store: MechanicalLandStore, run_id: str) -> None:
     def _fetch(**_k: object) -> dict:
         return {
             "transition": {
@@ -335,15 +339,30 @@ def test_bus_unreachable_blocked_still_writes_event_and_sweep_reposts() -> None:
         bus_post_fn=lambda **_k: (_ for _ in ()).throw(OSError("bus down")),
     )
     run_reactor_loop(deps, run_id=run_id, max_sync_steps=1)
+
+
+def test_bus_unreachable_blocked_still_writes_event_and_sweep_reposts() -> None:
+    store = MechanicalLandStore()
+    run_id = _seed_run(store)
+    _block_run_with_bus_down(store, run_id)
     snap = store.get_run(run_id, event_limit=20)
     assert snap is not None
+    with store._connect() as conn:
+        status_row = conn.execute(
+            "SELECT status FROM mechanical_land_runs WHERE run_id=?",
+            (run_id,),
+        ).fetchone()
+    assert status_row is not None
+    assert str(status_row["status"]) == "blocked"
     blocked = next(e for e in snap["events"] if e["event"] == "blocked")
     assert blocked["payload"]["posted_turn"] is None
     with patch(
         "services.git_integration_worker.mechanical_land.reactor._post_blocked_bus_only",
         return_value=99,
-    ):
-        repost_blocked_if_needed(store, run_id)
+    ) as post_blocked:
+        touched = sweep_mechanical_land_runs(store=store)
+    assert touched >= 1
+    post_blocked.assert_called_once()
     with store._connect() as conn:
         row = conn.execute(
             "SELECT payload_json FROM mechanical_land_journal "
@@ -352,3 +371,79 @@ def test_bus_unreachable_blocked_still_writes_event_and_sweep_reposts() -> None:
         ).fetchone()
     payload = json.loads(row["payload_json"])
     assert payload.get("posted_turn") == 99
+    assert int(payload.get("repost_attempts") or 0) == 1
+
+
+def test_sweep_blocked_repost_second_pass_does_not_repost() -> None:
+    store = MechanicalLandStore()
+    run_id = _seed_run(store)
+    _block_run_with_bus_down(store, run_id)
+    with patch(
+        "services.git_integration_worker.mechanical_land.reactor._post_blocked_bus_only",
+        return_value=99,
+    ) as post_blocked:
+        sweep_mechanical_land_runs(store=store)
+        post_blocked.reset_mock()
+        sweep_mechanical_land_runs(store=store)
+    post_blocked.assert_not_called()
+
+
+def test_repost_blocked_updates_latest_blocked_seq_not_journal_tip() -> None:
+    store = MechanicalLandStore()
+    run_id = _seed_run(store)
+    _block_run_with_bus_down(store, run_id)
+    with store._connect() as conn:
+        blocked_row = conn.execute(
+            "SELECT seq, prev_seq, step_id, attempt FROM mechanical_land_journal "
+            "WHERE run_id=? AND event='blocked' ORDER BY seq DESC LIMIT 1",
+            (run_id,),
+        ).fetchone()
+        assert blocked_row is not None
+        blocked_seq = int(blocked_row["seq"])
+        tail_seq = blocked_seq + 1
+        conn.execute(
+            "INSERT INTO mechanical_land_journal "
+            "(run_id, seq, prev_seq, step_id, attempt, flow, event, payload_json, source, written_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                run_id,
+                tail_seq,
+                blocked_seq,
+                str(blocked_row["step_id"]),
+                int(blocked_row["attempt"]),
+                "main",
+                "after_blocked_marker",
+                json.dumps({"marker": "keep"}),
+                "test",
+                "2026-01-01T00:00:00Z",
+            ),
+        )
+        conn.commit()
+    with patch(
+        "services.git_integration_worker.mechanical_land.reactor._post_blocked_bus_only",
+        return_value=42,
+    ):
+        repost_blocked_if_needed(store, run_id)
+    with store._connect() as conn:
+        tail = conn.execute(
+            "SELECT payload_json FROM mechanical_land_journal WHERE run_id=? AND seq=?",
+            (run_id, tail_seq),
+        ).fetchone()
+        blocked = conn.execute(
+            "SELECT payload_json FROM mechanical_land_journal "
+            "WHERE run_id=? AND event='blocked' ORDER BY seq DESC LIMIT 1",
+            (run_id,),
+        ).fetchone()
+    assert json.loads(tail["payload_json"]) == {"marker": "keep"}
+    assert json.loads(blocked["payload_json"]).get("posted_turn") == 42
+
+
+@pytest.mark.asyncio
+async def test_boot_reconcile_runs_sync_body_in_thread() -> None:
+    with patch(
+        "services.git_integration_worker.mechanical_land.reconcile.asyncio.to_thread",
+        new=AsyncMock(return_value=3),
+    ) as to_thread:
+        result = await reconcile_mechanical_land_on_boot()
+    assert result == 3
+    to_thread.assert_awaited_once_with(reconcile_mechanical_land_on_boot_sync)

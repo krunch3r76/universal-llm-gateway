@@ -691,19 +691,21 @@ def repost_blocked_if_needed(store: MechanicalLandStore, run_id: str) -> None:
         return
     with store._connect() as conn:
         row = conn.execute(
-            "SELECT payload_json FROM mechanical_land_journal "
+            "SELECT seq, payload_json FROM mechanical_land_journal "
             "WHERE run_id=? AND event='blocked' ORDER BY seq DESC LIMIT 1",
             (run_id,),
         ).fetchone()
     if row is None:
         return
+    blocked_seq = int(row["seq"])
     try:
         payload = json.loads(row["payload_json"] or "{}")
     except json.JSONDecodeError:
         payload = {}
     if payload.get("posted_turn") is not None:
         return
-    if payload.get("_repost_attempted"):
+    repost_attempts = int(payload.get("repost_attempts") or 0)
+    if repost_attempts > 0 or payload.get("_repost_attempted"):
         return
     posted_turn = _post_blocked_bus_only(
         store,
@@ -711,17 +713,13 @@ def repost_blocked_if_needed(store: MechanicalLandStore, run_id: str) -> None:
         payload=payload,
         lane_thread_id=str(meta.get("lane_thread_id") or ""),
     )
+    payload["repost_attempts"] = repost_attempts + 1
+    payload["posted_turn"] = posted_turn
+    payload.pop("_repost_attempted", None)
     with store._connect() as conn2:
-        tip = conn2.execute(
-            "SELECT COALESCE(MAX(seq),0) AS tip FROM mechanical_land_journal WHERE run_id=?",
-            (run_id,),
-        ).fetchone()
-        seq = int(tip["tip"]) if tip else 0
-        payload["_repost_attempted"] = True
-        payload["posted_turn"] = posted_turn
         conn2.execute(
             "UPDATE mechanical_land_journal SET payload_json=? WHERE run_id=? AND seq=?",
-            (json.dumps(payload, sort_keys=True), run_id, seq),
+            (json.dumps(payload, sort_keys=True), run_id, blocked_seq),
         )
         conn2.commit()
 
