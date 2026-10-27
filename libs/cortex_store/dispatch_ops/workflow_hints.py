@@ -72,7 +72,8 @@ _WORKFLOW_HINTS: dict[str, str] = {
         "check resolved_aliases in items when aliases were used"
     ),
     "entity_update": (
-        "next: entity_get(intent=card) to confirm the updated state is reflected"
+        "next: entity_get(entity_id=<id>) — same call as receipt card_call — "
+        "to confirm the updated state"
     ),
     "supersede": (
         "next: entity_get(intent=card) to confirm the new assertion is visible "
