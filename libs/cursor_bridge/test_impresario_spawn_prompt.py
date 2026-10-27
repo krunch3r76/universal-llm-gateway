@@ -13,23 +13,55 @@ pytestmark = pytest.mark.offline
 
 
 def test_augment_no_op_without_signal() -> None:
-    assert augment_spawn_prompt_for_impresario("hello", slug=None, title=None) == "hello"
+    assert (
+        augment_spawn_prompt_for_impresario("hello", slug=None, title=None) == "hello"
+    )
 
 
 def test_augment_prepends_on_impresario_slug() -> None:
-    out = augment_spawn_prompt_for_impresario("go", slug="composer-impresario", title=None)
+    out = augment_spawn_prompt_for_impresario(
+        "go", slug="composer-impresario", title=None
+    )
     assert out.startswith(IMPRESARIO_SKILL_USE_LINE)
     assert "go" in out
 
 
 def test_augment_prepends_on_impresario_title() -> None:
-    out = augment_spawn_prompt_for_impresario("go", slug=None, title="Composer impresario")
+    out = augment_spawn_prompt_for_impresario(
+        "go", slug=None, title="Composer impresario"
+    )
     assert IMPRESARIO_SKILL_USE_LINE in out
 
 
 def test_augment_idempotent_when_use_line_present() -> None:
     body = f"{IMPRESARIO_SKILL_USE_LINE}\n\nalready"
-    assert augment_spawn_prompt_for_impresario(body, slug="x-impresario", title=None) == body
+    assert (
+        augment_spawn_prompt_for_impresario(body, slug="x-impresario", title=None)
+        == body
+    )
+
+
+@pytest.mark.parametrize(
+    "slug",
+    [
+        "gc1-review-impresario-skill-pulls-238e0cf8",
+        "reviewer-impresario-tab",
+        "gc1-review-impresario-skill",
+    ],
+)
+def test_augment_no_op_for_reviewish_impresario_slug(slug: str) -> None:
+    assert augment_spawn_prompt_for_impresario("go", slug=slug, title=None) == "go"
+
+
+def test_augment_no_op_for_reviewish_impresario_title() -> None:
+    assert (
+        augment_spawn_prompt_for_impresario(
+            "go",
+            slug=None,
+            title="Review impresario skill pulls",
+        )
+        == "go"
+    )
 
 
 @pytest.mark.parametrize("gui_host", [":8"])

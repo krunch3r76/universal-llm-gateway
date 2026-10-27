@@ -8,6 +8,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from cursor_bridge.glass_services_js import launch_new_agent_tab_js
+from cursor_bridge.impresario_spawn_prompt import IMPRESARIO_SKILL_USE_LINE
 from cursor_bridge.spawn_house import spawn_house
 
 pytestmark = pytest.mark.offline
@@ -115,3 +116,47 @@ def test_bridge_op_enum_includes_spawn_house() -> None:
     from tools.cursor_bridge import BridgeOp as ToolBridgeOp
 
     assert "spawn_house" in get_args(ToolBridgeOp)
+
+
+def test_spawn_house_prepends_impresario_skill_for_impresario_slug(
+    tmp_path: Path,
+) -> None:
+    client = MagicMock()
+    client.post.return_value = MagicMock(
+        status_code=200,
+        json=lambda: {"thread": {"id": "21004"}},
+    )
+
+    class _BusCtx:
+        def __enter__(self) -> MagicMock:
+            return client
+
+        def __exit__(self, *args: object) -> None:
+            return None
+
+    captured_prompt: list[str] = []
+
+    def _launch(prompt: str, *args: object, **kwargs: object) -> dict[str, object]:
+        captured_prompt.append(prompt)
+        return {"ok": True}
+
+    with (
+        patch("bus_watch.digest_budget._bus", return_value=_BusCtx()),
+        patch(
+            "cursor_bridge.spawn_house.subscribe_cursor_xvfb_house",
+            return_value={"ok": True},
+        ),
+        patch(
+            "cursor_bridge.spawn_house.launch_cursor_agents_tab", side_effect=_launch
+        ),
+        patch("cursor_bridge.spawn_house.WATCH_DIR", tmp_path),
+    ):
+        out = spawn_house(
+            slug="composer-impresario",
+            prompt="TYPE: DIRECTIVE",
+            agent_id="aid-1",
+            watch_dir=tmp_path,
+        )
+    assert out["ok"] is True
+    assert captured_prompt
+    assert captured_prompt[0].startswith(IMPRESARIO_SKILL_USE_LINE)
