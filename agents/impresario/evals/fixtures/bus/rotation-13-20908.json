@@ -1,0 +1,147 @@
+{
+  "scenario": "rotation-13-20908",
+  "turns": [
+    {
+      "thread": "20908",
+      "turn_number": 301,
+      "from": "maestro",
+      "to": "impresario-sdk",
+      "subject": "STATUS|probe|rotation turn 1",
+      "body": "rotation fixture turn 1/13",
+      "work_key": "todo:agent-sdk-impresario-probe",
+      "status": "open"
+    },
+    {
+      "thread": "20908",
+      "turn_number": 302,
+      "from": "maestro",
+      "to": "impresario-sdk",
+      "subject": "STATUS|probe|rotation turn 2",
+      "body": "rotation fixture turn 2/13",
+      "work_key": "todo:agent-sdk-impresario-probe",
+      "status": "open"
+    },
+    {
+      "thread": "20908",
+      "turn_number": 303,
+      "from": "maestro",
+      "to": "impresario-sdk",
+      "subject": "STATUS|probe|rotation turn 3",
+      "body": "rotation fixture turn 3/13",
+      "work_key": "todo:agent-sdk-impresario-probe",
+      "status": "open"
+    },
+    {
+      "thread": "20908",
+      "turn_number": 304,
+      "from": "maestro",
+      "to": "impresario-sdk",
+      "subject": "STATUS|probe|rotation turn 4",
+      "body": "rotation fixture turn 4/13",
+      "work_key": "todo:agent-sdk-impresario-probe",
+      "status": "open"
+    },
+    {
+      "thread": "20908",
+      "turn_number": 305,
+      "from": "maestro",
+      "to": "impresario-sdk",
+      "subject": "STATUS|probe|rotation turn 5",
+      "body": "rotation fixture turn 5/13",
+      "work_key": "todo:agent-sdk-impresario-probe",
+      "status": "open"
+    },
+    {
+      "thread": "20908",
+      "turn_number": 306,
+      "from": "maestro",
+      "to": "impresario-sdk",
+      "subject": "STATUS|probe|rotation turn 6",
+      "body": "rotation fixture turn 6/13",
+      "work_key": "todo:agent-sdk-impresario-probe",
+      "status": "open"
+    },
+    {
+      "thread": "20908",
+      "turn_number": 307,
+      "from": "maestro",
+      "to": "impresario-sdk",
+      "subject": "STATUS|probe|rotation turn 7",
+      "body": "rotation fixture turn 7/13",
+      "work_key": "todo:agent-sdk-impresario-probe",
+      "status": "open"
+    },
+    {
+      "thread": "20908",
+      "turn_number": 308,
+      "from": "maestro",
+      "to": "impresario-sdk",
+      "subject": "STATUS|probe|rotation turn 8",
+      "body": "rotation fixture turn 8/13",
+      "work_key": "todo:agent-sdk-impresario-probe",
+      "status": "open"
+    },
+    {
+      "thread": "20908",
+      "turn_number": 309,
+      "from": "maestro",
+      "to": "impresario-sdk",
+      "subject": "STATUS|probe|rotation turn 9",
+      "body": "rotation fixture turn 9/13",
+      "work_key": "todo:agent-sdk-impresario-probe",
+      "status": "open"
+    },
+    {
+      "thread": "20908",
+      "turn_number": 310,
+      "from": "maestro",
+      "to": "impresario-sdk",
+      "subject": "STATUS|probe|rotation turn 10",
+      "body": "rotation fixture turn 10/13",
+      "work_key": "todo:agent-sdk-impresario-probe",
+      "status": "open"
+    },
+    {
+      "thread": "20908",
+      "turn_number": 311,
+      "from": "maestro",
+      "to": "impresario-sdk",
+      "subject": "STATUS|probe|rotation turn 11",
+      "body": "rotation fixture turn 11/13",
+      "work_key": "todo:agent-sdk-impresario-probe",
+      "status": "open"
+    },
+    {
+      "thread": "20908",
+      "turn_number": 312,
+      "from": "maestro",
+      "to": "impresario-sdk",
+      "subject": "STATUS|probe|rotation turn 12",
+      "body": "rotation fixture turn 12/13",
+      "work_key": "todo:agent-sdk-impresario-probe",
+      "status": "open"
+    },
+    {
+      "thread": "20908",
+      "turn_number": 313,
+      "from": "maestro",
+      "to": "impresario-sdk",
+      "subject": "STATUS|probe|rotation turn 13",
+      "body": "rotation fixture turn 13/13",
+      "work_key": "todo:agent-sdk-impresario-probe",
+      "status": "open"
+    }
+  ],
+  "turn": {
+    "thread": "20908",
+    "turn_number": 301,
+    "from": "maestro",
+    "to": "impresario-sdk",
+    "subject": "STATUS|probe|rotation turn 1",
+    "body": "rotation fixture turn 1/13",
+    "work_key": "todo:agent-sdk-impresario-probe",
+    "status": "open"
+  },
+  "score_md": "## state\nimplementing \u00b7 head d01635956 \u00b7 review \u2014\n\n## dispatches\n\n## open_stops\n\n## rulings\n\n## log\n",
+  "closeouts": {}
+}

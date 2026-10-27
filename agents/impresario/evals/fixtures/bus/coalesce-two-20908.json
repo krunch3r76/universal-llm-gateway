@@ -1,0 +1,37 @@
+{
+  "scenario": "coalesce-two-20908",
+  "turns": [
+    {
+      "thread": "20908",
+      "turn_number": 101,
+      "from": "maestro",
+      "to": "impresario-sdk",
+      "subject": "STATUS|probe|coalesce first",
+      "body": "first queued turn",
+      "work_key": "todo:agent-sdk-impresario-probe",
+      "status": "open"
+    },
+    {
+      "thread": "20908",
+      "turn_number": 102,
+      "from": "maestro",
+      "to": "impresario-sdk",
+      "subject": "STATUS|probe|coalesce second",
+      "body": "second queued turn — should coalesce",
+      "work_key": "todo:agent-sdk-impresario-probe",
+      "status": "open"
+    }
+  ],
+  "turn": {
+    "thread": "20908",
+    "turn_number": 101,
+    "from": "maestro",
+    "to": "impresario-sdk",
+    "subject": "STATUS|probe|coalesce first",
+    "body": "first queued turn",
+    "work_key": "todo:agent-sdk-impresario-probe",
+    "status": "open"
+  },
+  "score_md": "## state\nimplementing · head d01635956 · review —\n\n## dispatches\n\n## open_stops\n\n## rulings\n\n## log\n",
+  "closeouts": {}
+}

@@ -1,0 +1,16 @@
+{
+  "scenario": "wait-503",
+  "turn": {
+    "thread": "20908",
+    "turn_number": 1,
+    "from": "maestro",
+    "to": "impresario-sdk",
+    "subject": "STATUS|probe|should not deliver",
+    "body": "unreachable when wait 503",
+    "work_key": "todo:agent-sdk-impresario-probe",
+    "status": "open"
+  },
+  "score_md": "## state\nimplementing\n",
+  "closeouts": {},
+  "wait": { "status": 503 }
+}
