@@ -88,29 +88,27 @@ _PROVIDE_REFUSAL_SCOPE_BOUNDARY = re.compile(
     r"(?:[,;]|\b(?:but|so|because|and|though|although|while)\b)",
     re.I,
 )
-_MODAL_NOT_PROVIDE_SINGLE_ADVERBS = frozenset(
+_MODAL_NOT_PROVIDE_SINGLE_ADVERBS: frozenset[str] = frozenset(
     {
-        "actually",
-        "always",
         "currently",
-        "easily",
-        "ever",
-        "feasibly",
-        "honestly",
-        "just",
-        "now",
-        "possibly",
         "presently",
-        "readily",
-        "really",
         "reliably",
-        "simply",
-        "today",
+        "readily",
+        "feasibly",
+        "possibly",
+        "realistically",
+        "easily",
+        "really",
+        "actually",
+        "honestly",
+        "ever",
         "yet",
+        "now",
+        "today",
     }
 )
-_COORDINATED_INFINITIVE_BEFORE_PROVIDE = re.compile(
-    r"^(?:commit|agree|promise|undertake|manage|afford)\s+to\s+(?:or|and)$",
+_MODAL_NOT_PROVIDE_COORD_REST = re.compile(
+    r"^(?:commit|agree|promise|undertake|manage|afford)\s+to(?:\s+(?:or|and))?$",
     re.I,
 )
 _NEGATED_PROVIDE_GOVERNANCE = re.compile(
@@ -602,7 +600,7 @@ def _provide_refusal_vetoed_windows(
 def _provide_refusal_see_path_genuine(window: str) -> bool:
     """True for ``can not see how/a way … provide`` when the bridge is not another negation."""
     w = window.strip()
-    if not re.match(r"^(?:can not|could not)\s+see\b", w):
+    if not re.match(r"^can not\s+see\b", w):
         return False
     if re.search(r"\bwhy\s+(?:i|we)\s+would\s+not\b", w):
         return False
@@ -623,10 +621,7 @@ def _provide_refusal_see_path_genuine(window: str) -> bool:
 
 def _modal_not_provide_adverb_allowed(tok: str) -> bool:
     """True when one filler token is an allowed adverb before ``provide`` in a modal refusal."""
-    lower = tok.lower()
-    if lower in _MODAL_NOT_PROVIDE_SINGLE_ADVERBS:
-        return True
-    return lower.endswith("ly") and lower not in {"only"}
+    return tok.lower() in _MODAL_NOT_PROVIDE_SINGLE_ADVERBS
 
 
 def _modal_not_through_provide_genuine(window: str) -> bool:
@@ -649,7 +644,7 @@ def _modal_not_through_provide_genuine(window: str) -> bool:
     fillers = _TOKEN.findall(middle)
     if len(fillers) == 1:
         return _modal_not_provide_adverb_allowed(fillers[0])
-    if _COORDINATED_INFINITIVE_BEFORE_PROVIDE.match(middle):
+    if _MODAL_NOT_PROVIDE_COORD_REST.match(middle):
         return True
     if len(fillers) == 4:
         adverb, verb, to_tok, conj = fillers
@@ -658,7 +653,7 @@ def _modal_not_through_provide_genuine(window: str) -> bool:
         coord = " ".join(fillers[1:])
         return _modal_not_provide_adverb_allowed(
             adverb
-        ) and bool(_COORDINATED_INFINITIVE_BEFORE_PROVIDE.match(coord))
+        ) and bool(_MODAL_NOT_PROVIDE_COORD_REST.match(coord))
     return False
 
 
@@ -679,10 +674,10 @@ def _provide_refusal_window_is_genuine(window: str) -> bool:
         if re.search(r"\bso\s+(?:i|we)\s+will\s+provide\b", w):
             return False
         return bool(_DO_NOT_THINK_ABILITY_REFUSAL.match(w))
-    if re.match(r"^(?:can not|could not)\s+see\b", w):
+    if re.match(r"^can not\s+see\b", w):
         return _provide_refusal_see_path_genuine(w)
-    if re.match(r"^(?:will|would)\s+not\s+provide\b", w):
-        return False
+    if w == "never provide":
+        return True
     if re.match(r"^can not\b", w):
         return _modal_not_through_provide_genuine(w)
     if re.match(r"^not provide\b", w):
