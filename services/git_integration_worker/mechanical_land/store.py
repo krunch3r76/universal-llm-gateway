@@ -326,6 +326,147 @@ class MechanicalLandStore:
             )
             conn.commit()
 
+    def _append_leg_admitted_from_ledger(
+        self,
+        *,
+        run_id: str,
+        lane_thread_id: str,
+        step_id: str,
+        attempt: int,
+        prev_seq: int,
+        admit_body: dict[str, Any],
+        found: dict[str, Any],
+        packet_sha256: str = "",
+        recovered_from: str,
+    ) -> tuple[str | None, str | None]:
+        dispatch_id = str(found.get("dispatch_id") or "").strip() or None
+        execution_id = str(found.get("execution_id") or "").strip() or None
+        model = str(admit_body.get("model") or "")
+        self.append_event(
+            run_id=run_id,
+            prev_seq=prev_seq,
+            step_id=step_id,
+            attempt=attempt,
+            flow="main",
+            event="leg_admitted",
+            payload={
+                "step_id": step_id,
+                "attempt": attempt,
+                "dispatch_id": dispatch_id or "",
+                "execution_id": execution_id or "",
+                "model": model,
+                "contract": str(admit_body.get("contract") or ""),
+                "lane": str(admit_body.get("lane") or "B"),
+                "sdk_mode": admit_body.get("sdk_mode"),
+                "packet_sha256": packet_sha256,
+                "recovered_from_transport_error": recovered_from,
+            },
+            source="reactor",
+        )
+        self._set_run_status(run_id, "awaiting_leg")
+        return dispatch_id, execution_id
+
+    def needs_ledger_recover_before_admit(
+        self,
+        run_id: str,
+        *,
+        step_id: str,
+        attempt: int,
+    ) -> bool:
+        """True when a prior ambiguous timeout still owes a ledger confirm before re-POST."""
+        snap = self.get_run(run_id, event_limit=200)
+        if snap is None:
+            return False
+        last_failed: dict[str, Any] | None = None
+        for ev in snap["events"]:
+            if ev.get("event") != "leg_admit_failed":
+                continue
+            if str(ev.get("step_id") or "") != step_id:
+                continue
+            if int(ev.get("attempt") or 0) != attempt:
+                continue
+            last_failed = ev.get("payload") or {}
+        if not last_failed or not last_failed.get("recheck_ledger_before_admit"):
+            return False
+        for ev in snap["events"]:
+            if ev.get("event") != "leg_admitted":
+                continue
+            if str(ev.get("step_id") or "") != step_id:
+                continue
+            if int(ev.get("attempt") or 0) != attempt:
+                continue
+            payload = ev.get("payload") or {}
+            if str(payload.get("dispatch_id") or "").strip():
+                return False
+        return True
+
+    def try_recover_ambiguous_admit_before_post(
+        self,
+        *,
+        run_id: str,
+        lane_thread_id: str,
+        step_id: str,
+        attempt: int,
+        prev_seq: int,
+        admit_body: dict[str, Any],
+        packet_sha256: str = "",
+    ) -> bool:
+        if not self.needs_ledger_recover_before_admit(
+            run_id, step_id=step_id, attempt=attempt
+        ):
+            return False
+        found = lookup_mechanical_leg_dispatch(
+            lane_thread_id=lane_thread_id,
+            run_id=run_id,
+            step_id=step_id,
+            attempt=attempt,
+        )
+        if not found:
+            return False
+        self._append_leg_admitted_from_ledger(
+            run_id=run_id,
+            lane_thread_id=lane_thread_id,
+            step_id=step_id,
+            attempt=attempt,
+            prev_seq=prev_seq,
+            admit_body=admit_body,
+            found=found,
+            packet_sha256=packet_sha256,
+            recovered_from="ledger_recheck",
+        )
+        return True
+
+    def append_leg_admit_failed(
+        self,
+        *,
+        run_id: str,
+        prev_seq: int,
+        step_id: str,
+        attempt: int,
+        error_class: str,
+        recheck_ledger_before_admit: bool = False,
+        status_code: int = 0,
+    ) -> None:
+        payload: dict[str, Any] = {
+            "step_id": step_id,
+            "attempt": attempt,
+            "status_code": status_code,
+            "error": error_class,
+        }
+        if recheck_ledger_before_admit:
+            payload["recheck_ledger_before_admit"] = True
+            payload["transport_ambiguous"] = True
+        self.append_event(
+            run_id=run_id,
+            prev_seq=prev_seq,
+            step_id=step_id,
+            attempt=attempt,
+            flow="main",
+            event="leg_admit_failed",
+            payload=payload,
+            source="reactor",
+        )
+
     def recover_or_fail_admit_transport_error(
         self,
         *,
@@ -338,8 +479,19 @@ class MechanicalLandStore:
         exc: httpx.HTTPError,
         packet_sha256: str = "",
     ) -> tuple[bool, str | None, str | None]:
-        """After admit POST transport failure: ledger lookup, else cancel + leg_admit_failed."""
+        """After admit POST transport failure: ledger lookup when ambiguous, else fail."""
         error_class = type(exc).__name__
+        connect_failure = isinstance(exc, (httpx.ConnectError, httpx.ConnectTimeout))
+        ambiguous = isinstance(exc, httpx.ReadTimeout)
+        if connect_failure:
+            self.append_leg_admit_failed(
+                run_id=run_id,
+                prev_seq=prev_seq,
+                step_id=step_id,
+                attempt=attempt,
+                error_class=error_class,
+            )
+            return False, None, None
         found = lookup_mechanical_leg_dispatch(
             lane_thread_id=lane_thread_id,
             run_id=run_id,
@@ -347,31 +499,17 @@ class MechanicalLandStore:
             attempt=attempt,
         )
         if found:
-            dispatch_id = str(found.get("dispatch_id") or "").strip() or None
-            execution_id = str(found.get("execution_id") or "").strip() or None
-            model = str(admit_body.get("model") or "")
-            self.append_event(
+            dispatch_id, execution_id = self._append_leg_admitted_from_ledger(
                 run_id=run_id,
-                prev_seq=prev_seq,
+                lane_thread_id=lane_thread_id,
                 step_id=step_id,
                 attempt=attempt,
-                flow="main",
-                event="leg_admitted",
-                payload={
-                    "step_id": step_id,
-                    "attempt": attempt,
-                    "dispatch_id": dispatch_id or "",
-                    "execution_id": execution_id or "",
-                    "model": model,
-                    "contract": str(admit_body.get("contract") or ""),
-                    "lane": str(admit_body.get("lane") or "B"),
-                    "sdk_mode": admit_body.get("sdk_mode"),
-                    "packet_sha256": packet_sha256,
-                    "recovered_from_transport_error": error_class,
-                },
-                source="reactor",
+                prev_seq=prev_seq,
+                admit_body=admit_body,
+                found=found,
+                packet_sha256=packet_sha256,
+                recovered_from=error_class,
             )
-            self._set_run_status(run_id, "awaiting_leg")
             return True, dispatch_id, execution_id
         cancel_unconfirmed_mechanical_leg_dispatches(
             lane_thread_id=lane_thread_id,
@@ -380,18 +518,13 @@ class MechanicalLandStore:
             attempt=attempt,
             reason=f"admit_transport_error:{error_class}",
         )
-        self.append_event(
+        self.append_leg_admit_failed(
             run_id=run_id,
             prev_seq=prev_seq,
             step_id=step_id,
             attempt=attempt,
-            flow="main",
-            event="leg_admit_failed",
-            payload={
-                "status_code": 0,
-                "error": error_class,
-            },
-            source="reactor",
+            error_class=error_class,
+            recheck_ledger_before_admit=ambiguous,
         )
         return False, None, None
 
@@ -691,19 +824,30 @@ class MechanicalLandStore:
         )
         try:
             status_code, payload = self._post_admit(admit_body)
-        except httpx.HTTPError as exc:
-            recovered = self._recover_or_block_admit_transport_error(
-                run_id=run_id,
-                lane_thread_id=lane_thread_id,
-                step_id="implement",
-                attempt=1,
-                prev_seq=seq,
-                admit_body=admit_body,
-                exc=exc,
-            )
-            if recovered is not None:
-                return recovered
-            error_class = type(exc).__name__
+        except Exception as exc:
+            if isinstance(exc, httpx.HTTPError):
+                recovered = self._recover_or_block_admit_transport_error(
+                    run_id=run_id,
+                    lane_thread_id=lane_thread_id,
+                    step_id="implement",
+                    attempt=1,
+                    prev_seq=seq,
+                    admit_body=admit_body,
+                    exc=exc,
+                )
+                if recovered is not None:
+                    return recovered
+                error_class = type(exc).__name__
+            else:
+                self.append_leg_admit_failed(
+                    run_id=run_id,
+                    prev_seq=seq,
+                    step_id="implement",
+                    attempt=1,
+                    error_class=type(exc).__name__,
+                )
+                error_class = type(exc).__name__
+            self._set_run_status(run_id, "blocked")
             return BirthResult(
                 run_id=run_id,
                 lane_thread_id=lane_thread_id,

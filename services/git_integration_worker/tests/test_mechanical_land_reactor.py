@@ -511,6 +511,139 @@ def test_repost_blocked_get_run_fold_still_works() -> None:
     assert blocked["payload"].get("posted_turn") == 55
 
 
+def _admit_fix_transition_fetch(**_k: object) -> dict:
+    return {
+        "transition": {
+            "command": "admit",
+            "step_id": "fix",
+            "attempt": 1,
+            "to_step": "fix",
+            "reason": "gate_red",
+        }
+    }
+
+
+def test_connect_error_admit_deferred_sweep_retries_blocked_at_max() -> None:
+    store = MechanicalLandStore()
+    run_id = _seed_run(store)
+    post_calls = 0
+
+    def _post(_body: dict) -> tuple[int, dict]:
+        nonlocal post_calls
+        post_calls += 1
+        raise httpx.ConnectError("connection refused")
+
+    deps = ReactorDeps(
+        store=store,
+        fetch_plan_fn=_admit_fix_transition_fetch,
+        post_admit_fn=_post,
+    )
+    run_reactor_loop(deps, run_id=run_id, max_sync_steps=1)
+    with store._connect() as conn:
+        row = conn.execute(
+            "SELECT status FROM mechanical_land_runs WHERE run_id=?",
+            (run_id,),
+        ).fetchone()
+    assert row is not None
+    assert str(row["status"]) == "admit_deferred"
+    assert post_calls == 1
+    sweep_mechanical_land_runs(store=store, deps=deps)
+    assert post_calls == 2
+    with store._connect() as conn:
+        row = conn.execute(
+            "SELECT status FROM mechanical_land_runs WHERE run_id=?",
+            (run_id,),
+        ).fetchone()
+    assert row is not None
+    assert str(row["status"]) == "blocked"
+    snap = store.get_run(run_id, event_limit=50)
+    assert snap is not None
+    assert sum(1 for e in snap["events"] if e["event"] == "leg_admit_failed") == 2
+
+
+def test_read_timeout_ledger_recheck_admits_once_without_second_post() -> None:
+    store = MechanicalLandStore()
+    run_id = _seed_run(store)
+    meta = store.get_run(run_id)
+    assert meta is not None
+    lane_thread_id = str(meta["state"].get("lane_thread_id") or "9100")
+    post_calls = 0
+    ledger_row = {
+        "dispatch_id": "d-timeout-recover",
+        "execution_id": "e-timeout-recover",
+        "status": "running",
+    }
+
+    def _post(_body: dict) -> tuple[int, dict]:
+        nonlocal post_calls
+        post_calls += 1
+        raise httpx.ReadTimeout("slow")
+
+    with (
+        patch(
+            "services.git_integration_worker.mechanical_land.store.lookup_mechanical_leg_dispatch",
+            side_effect=[None, ledger_row],
+        ),
+        patch(
+            "services.git_integration_worker.mechanical_land.store.cancel_unconfirmed_mechanical_leg_dispatches",
+        ),
+    ):
+        deps = ReactorDeps(
+            store=store,
+            fetch_plan_fn=_admit_fix_transition_fetch,
+            post_admit_fn=_post,
+        )
+        run_reactor_loop(deps, run_id=run_id, max_sync_steps=1)
+        with store._connect() as conn:
+            row = conn.execute(
+                "SELECT status FROM mechanical_land_runs WHERE run_id=?",
+                (run_id,),
+            ).fetchone()
+        assert row is not None
+        assert str(row["status"]) == "admit_deferred"
+        assert post_calls == 1
+        sweep_mechanical_land_runs(store=store, deps=deps)
+    assert post_calls == 1
+    snap = store.get_run(run_id, event_limit=50)
+    assert snap is not None
+    assert "leg_admitted" in [e["event"] for e in snap["events"]]
+    with store._connect() as conn:
+        row = conn.execute(
+            "SELECT status FROM mechanical_land_runs WHERE run_id=?",
+            (run_id,),
+        ).fetchone()
+    assert row is not None
+    assert str(row["status"]) == "awaiting_leg"
+    assert lane_thread_id  # used by lookup patch
+
+
+def test_admit_non_httpx_exception_sets_admit_deferred() -> None:
+    store = MechanicalLandStore()
+    run_id = _seed_run(store)
+
+    def _post(_body: dict) -> tuple[int, dict]:
+        raise ValueError("wrapper decode failed")
+
+    deps = ReactorDeps(
+        store=store,
+        fetch_plan_fn=_admit_fix_transition_fetch,
+        post_admit_fn=_post,
+    )
+    run_reactor_loop(deps, run_id=run_id, max_sync_steps=1)
+    with store._connect() as conn:
+        row = conn.execute(
+            "SELECT status FROM mechanical_land_runs WHERE run_id=?",
+            (run_id,),
+        ).fetchone()
+    assert row is not None
+    assert str(row["status"]) == "admit_deferred"
+    snap = store.get_run(run_id, event_limit=30)
+    assert snap is not None
+    failed = [e for e in snap["events"] if e["event"] == "leg_admit_failed"]
+    assert failed
+    assert failed[-1]["payload"].get("error") == "ValueError"
+
+
 @pytest.mark.asyncio
 async def test_boot_reconcile_runs_sync_body_in_thread() -> None:
     with patch(

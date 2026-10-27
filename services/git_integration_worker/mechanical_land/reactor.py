@@ -353,6 +353,30 @@ def _admit_retry_count(store: MechanicalLandStore, run_id: str) -> int:
     return sum(1 for e in snap["events"] if e.get("event") == "leg_admit_failed")
 
 
+def _apply_admit_failure_retry_policy(
+    deps: ReactorDeps,
+    *,
+    run_id: str,
+    step_id: str,
+    attempt: int,
+    policy: dict[str, Any],
+    detail: str,
+) -> None:
+    retries = _admit_retry_count(deps.store, run_id)
+    if retries >= _policy_retry_max(policy):
+        emit_blocked(
+            deps.store,
+            run_id=run_id,
+            step_id=step_id,
+            attempt=attempt,
+            reason_code="admit_failed",
+            detail=detail,
+            bus_post_fn=deps.bus_post_fn,
+        )
+    else:
+        deps.store._set_run_status(run_id, "admit_deferred")
+
+
 def _policy_retry_max(policy: dict[str, Any]) -> int:
     retry = policy.get("retry") or {}
     if isinstance(retry, dict):
@@ -456,34 +480,51 @@ def _execute_admit(
     if state is None:
         return True
     tip = int(state.get("tip_seq") or 0)
+    packet_sha256 = str(plan.get("packet_sha256") or "")
+    if deps.store.try_recover_ambiguous_admit_before_post(
+        run_id=run_id,
+        lane_thread_id=lane_thread_id,
+        step_id=step_id,
+        attempt=attempt,
+        prev_seq=tip,
+        admit_body=body,
+        packet_sha256=packet_sha256,
+    ):
+        return True
     try:
         status_code, payload = deps.post_admit_fn(body)
-    except httpx.HTTPError as exc:
-        recovered, _, _ = deps.store.recover_or_fail_admit_transport_error(
-            run_id=run_id,
-            lane_thread_id=lane_thread_id,
-            step_id=step_id,
-            attempt=attempt,
-            prev_seq=tip,
-            admit_body=body,
-            exc=exc,
-            packet_sha256=str(plan.get("packet_sha256") or ""),
-        )
-        if recovered:
-            return True
-        retries = _admit_retry_count(deps.store, run_id)
-        if retries >= _policy_retry_max(policy):
-            emit_blocked(
-                deps.store,
+    except Exception as exc:
+        if isinstance(exc, httpx.HTTPError):
+            recovered, _, _ = deps.store.recover_or_fail_admit_transport_error(
                 run_id=run_id,
+                lane_thread_id=lane_thread_id,
                 step_id=step_id,
                 attempt=attempt,
-                reason_code="admit_failed",
-                detail=f"admit transport error after {retries} attempts",
-                bus_post_fn=deps.bus_post_fn,
+                prev_seq=tip,
+                admit_body=body,
+                exc=exc,
+                packet_sha256=packet_sha256,
             )
+            if recovered:
+                return True
+            error_class = type(exc).__name__
         else:
-            deps.store._set_run_status(run_id, "admit_deferred")
+            deps.store.append_leg_admit_failed(
+                run_id=run_id,
+                prev_seq=tip,
+                step_id=step_id,
+                attempt=attempt,
+                error_class=type(exc).__name__,
+            )
+            error_class = type(exc).__name__
+        _apply_admit_failure_retry_policy(
+            deps,
+            run_id=run_id,
+            step_id=step_id,
+            attempt=attempt,
+            policy=policy,
+            detail=f"admit error ({error_class}) after {_admit_retry_count(deps.store, run_id)} attempts",
+        )
         return True
     state = _folded_state(deps.store, run_id)
     if state is None:
@@ -503,19 +544,14 @@ def _execute_admit(
             },
             source="reactor",
         )
-        retries = _admit_retry_count(deps.store, run_id)
-        if retries >= _policy_retry_max(policy):
-            emit_blocked(
-                deps.store,
-                run_id=run_id,
-                step_id=step_id,
-                attempt=attempt,
-                reason_code="admit_failed",
-                detail=f"admit failed after {retries} attempts",
-                bus_post_fn=deps.bus_post_fn,
-            )
-        else:
-            deps.store._set_run_status(run_id, "admit_deferred")
+        _apply_admit_failure_retry_policy(
+            deps,
+            run_id=run_id,
+            step_id=step_id,
+            attempt=attempt,
+            policy=policy,
+            detail=f"admit failed after {_admit_retry_count(deps.store, run_id)} attempts",
+        )
         return True
     dispatch_id = (
         str(payload.get("dispatch_id") or payload.get("execution_id") or "").strip()
