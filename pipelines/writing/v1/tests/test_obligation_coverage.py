@@ -1562,9 +1562,9 @@ def test_ordinary_word_ms_suffix_does_not_block_sentence_split() -> None:
 
 
 def test_lowercase_ms_abbreviation_splits_sentences() -> None:
-    rows = source_obligations.fallback_obligations("We use ms. timing. Ok?")
+    rows = source_obligations.fallback_obligations("The latency is 5 ms. Ok?")
     assert len(rows) == 2
-    assert rows[0]["quoted_span"] == "We use ms. timing."
+    assert rows[0]["quoted_span"] == "The latency is 5 ms."
     assert rows[1]["quoted_span"] == "Ok?"
 
 

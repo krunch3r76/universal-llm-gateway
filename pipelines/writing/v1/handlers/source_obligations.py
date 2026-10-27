@@ -53,7 +53,7 @@ _HONORIFIC_PREFIX = r"(?:(?:Mr|Mrs|Ms|Dr|Prof)\.?[ \t]+)?"
 _NAME_ONE_OR_TWO = rf"{_HONORIFIC_PREFIX}{_NAME_WORD}(?:[ \t]+{_NAME_WORD})?"
 _HONORIFIC_TOKENS = frozenset({"mr", "mrs", "ms", "dr", "prof"})
 _SPAN_SPLIT = re.compile(
-    r"(?<=[.!?])(?<!\bMr\.)(?<!\bMrs\.)(?<!\bMs\.)(?<!\bDr\.)(?<!\bProf\.)(?<!\bms\.)\s+|\n+",
+    r"(?<=[.!?])(?<!\bMr\.)(?<!\bMrs\.)(?<!\bMs\.)(?<!\bDr\.)(?<!\bProf\.)\s+|\n+",
 )
 _TRAILING_SIGNATURE = re.compile(
     rf"(?:^|\s)[—–-]+\s*({_NAME_ONE_OR_TWO}|"
