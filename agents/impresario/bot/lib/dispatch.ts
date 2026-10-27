@@ -5,6 +5,7 @@ import {
   fixtureTeamDispatch,
   fixturesEnabled,
 } from "./bus-fixtures.js";
+import { parseHostMcpJson } from "./mcp-result.js";
 import type { ToolCtx } from "./ulg.js";
 import {
   COMMISSION_MODEL,
@@ -12,7 +13,11 @@ import {
   liveSteerEnabled,
 } from "./ulg.js";
 
-export type StopKind = "ROW_PINNED" | "CONSULT_PENDING" | "OPERATOR_GATE";
+export type StopKind =
+  | "ROW_PINNED"
+  | "CONSULT_PENDING"
+  | "OPERATOR_GATE"
+  | "NOT_FOUND";
 
 import type { LedgerRow } from "./bus-fixtures.js";
 
@@ -142,6 +147,10 @@ export function resumeOnConsultPending(row: LedgerRow): string {
   return `ANSWER| on ${thread}`;
 }
 
+export function resumeOnNotFound(dispatchId: string, workKey: string): string {
+  return `ledger_read ${workKey}; retry steer_conductor ${dispatchId} when row appears`;
+}
+
 export async function readLedger(
   ctx: ToolCtx,
   workKey: string,
@@ -191,7 +200,8 @@ export async function callTeamDispatch(
   if (isEvalOrFixture(ctx)) {
     return { stubbed: true, ...payload };
   }
-  return ctx.host.mcp.callTool("ulg", "team_dispatch", payload);
+  const raw = await ctx.host.mcp.callTool("ulg", "team_dispatch", payload);
+  return parseHostMcpJson(raw);
 }
 
 export async function commissionGenerate(

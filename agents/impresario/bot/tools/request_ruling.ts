@@ -8,12 +8,13 @@ import {
   MAESTRO_THREAD,
   truncateBody,
 } from "../lib/ulg.js";
+import { WORK_KEY_ZOD_REGEX } from "../lib/work-key.js";
 
 export default defineTool({
   description:
     "Escalate an unresolved worker question to Kaywan via maestro. Posts identical QUESTION turns on the impresario lane and thread 12286. Always returns stop OPERATOR_GATE; resume when a FACT arrives on 12286.",
   inputSchema: z.object({
-    work_key: z.string().regex(/^(todo|friction):/),
+    work_key: z.string().regex(WORK_KEY_ZOD_REGEX),
     question: z.string().max(600),
     recommended_default: z.string().max(300),
   }),

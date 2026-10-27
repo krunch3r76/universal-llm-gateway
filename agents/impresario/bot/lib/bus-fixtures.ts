@@ -263,8 +263,11 @@ export function fixtureMcpCall(
       const section = String(args.section ?? "");
       const content = String(args.content ?? "");
       const prior = fixtureScoreSnapshot(workKey);
-      const next = replaceScoreSectionBody(prior, section, content);
-      fixtureScoreOverrides.set(workKey, next);
+      const replaced = replaceScoreSectionBody(prior, section, content);
+      if (!replaced.ok) {
+        return replaced;
+      }
+      fixtureScoreOverrides.set(workKey, replaced.text);
       return { ok: true, rewritten: true };
     }
     if (op === "md_rewrite_section" || op === "md_insert") {

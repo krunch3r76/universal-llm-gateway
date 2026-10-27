@@ -5,16 +5,18 @@ import {
   findDispatchRow,
   isConsultParked,
   resumeOnConsultPending,
+  resumeOnNotFound,
   shouldLiveDispatch,
   steerInject,
 } from "../lib/dispatch.js";
+import { WORK_KEY_ZOD_REGEX } from "../lib/work-key.js";
 
 export default defineTool({
   description:
     "Inject a directive into a live conductor dispatch. Call when a verdict or ruling requires steering an admitted conductor. Returns the 202 inject ticket when accepted. May return stop CONSULT_PENDING when the dispatch is consult-parked.",
   inputSchema: z.object({
     dispatch_id: z.string().min(8),
-    work_key: z.string().regex(/^(todo|friction):/),
+    work_key: z.string().regex(WORK_KEY_ZOD_REGEX),
     directive: z.string().max(1200),
     reason: z.string().max(200),
   }),
@@ -32,6 +34,7 @@ export default defineTool({
         ok: false,
         stop: "NOT_FOUND" as const,
         dispatch_id: input.dispatch_id,
+        resume_on: resumeOnNotFound(input.dispatch_id, input.work_key),
       };
     }
 

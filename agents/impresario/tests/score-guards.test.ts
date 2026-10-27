@@ -7,7 +7,9 @@ import { describe, it } from "node:test";
 import scoreUpdateTool from "../bot/tools/score_update.js";
 import {
   checkScoreSizeAfterUpdate,
+  replaceScoreSectionBody,
   resolveScoreUri,
+  SCORE_READ_BYTE_CAP,
   SCORE_WRITE_BYTE_CAP,
   utf8ByteLength,
   windowScoreContent,
@@ -44,22 +46,44 @@ describe("resolveScoreUri", () => {
 });
 
 describe("score write byte cap", () => {
-  it("refuses a 4700-byte result and keeps fixture score unchanged", () => {
+  it("refuses a 4700-byte update via score_update.execute", async () => {
     process.env.ULG_FIXTURE_DIR = path.join(here, "../evals/fixtures");
     process.env.ULG_FIXTURE_SCENARIO = "done-20901-5";
     resetFixtureCache();
     const workKey = "todo:agent-sdk-impresario-probe";
     const before = fixtureScoreSnapshot(workKey);
     const body = "z".repeat(5000);
-    const check = checkScoreSizeAfterUpdate(scoreFixture, "state", body);
-    assert.equal(check.ok, false);
-    if (!check.ok) {
-      assert.equal(check.reason, "score_too_large");
-      assert.ok(check.bytes > SCORE_WRITE_BYTE_CAP);
-      assert.ok(check.bytes >= 4700);
-      assert.equal(check.cap, SCORE_WRITE_BYTE_CAP);
-    }
+    const ctx = {
+      session: { purpose: "tool_test" as const, id: "test" },
+      host: {
+        mcp: {
+          callTool: async (_ns: string, tool: string, args: Record<string, unknown>) => {
+            const { fixtureMcpCall } = await import("../bot/lib/bus-fixtures.js");
+            return fixtureMcpCall(tool as "fs", args);
+          },
+        },
+      },
+    };
+    const result = await scoreUpdateTool.execute!(
+      { work_key: workKey, section: "state", body },
+      ctx as never,
+    );
+    assert.equal((result as { ok?: boolean }).ok, false);
+    assert.equal((result as { reason?: string }).reason, "score_too_large");
     assert.equal(fixtureScoreSnapshot(workKey), before);
+  });
+
+  it("replaceScoreSectionBody returns section_not_found for a missing section", () => {
+    const r = replaceScoreSectionBody(scoreFixture, "missing_section", "x");
+    assert.equal(r.ok, false);
+    if (!r.ok) {
+      assert.equal(r.reason, "section_not_found");
+      assert.equal(r.section, "missing_section");
+    }
+  });
+
+  it("read and write caps share SCORE_BYTE_CAP", () => {
+    assert.equal(SCORE_READ_BYTE_CAP, SCORE_WRITE_BYTE_CAP);
   });
 
   it("allows a ~4400-byte result and writes under fixture mode", async () => {

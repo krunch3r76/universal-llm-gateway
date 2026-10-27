@@ -7,12 +7,13 @@ import {
   windowScoreContent,
 } from "../lib/score-guards.js";
 import { callFs } from "../lib/ulg.js";
+import { WORK_KEY_ZOD_REGEX } from "../lib/work-key.js";
 
 export default defineTool({
   description:
     "Read the impresario score for a work_key (≤4.5 KB window). Call at turn start for bearings. Returns markdown sections. Read-only; no stop.",
   inputSchema: z.object({
-    work_key: z.string().regex(/^(todo|friction):/),
+    work_key: z.string().regex(WORK_KEY_ZOD_REGEX),
   }),
   effect: "read",
   async execute({ work_key }, ctx) {

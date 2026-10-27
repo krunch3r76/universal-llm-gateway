@@ -1,25 +1,30 @@
 import type { HostContext } from "@grok/agent-sdk";
 
 import { fixtureMcpCall, fixturesEnabled } from "./bus-fixtures.js";
+import { parseHostMcpJson } from "./mcp-result.js";
+import { SCORE_READ_BYTE_CAP } from "./score-guards.js";
+import { isAcceptedWorkKey } from "./work-key.js";
 import { resolveScoreUri, truncateBody } from "./ulg.js";
 
-export const SCORE_CHAR_LIMIT = 4500;
+export const SCORE_CHAR_LIMIT = SCORE_READ_BYTE_CAP;
 
 export function workKeyFromTurn(turn: {
   subject?: string;
   work_key?: string;
   tags?: string[];
 }): string | undefined {
-  if (turn.work_key && /^(todo|friction):/.test(turn.work_key)) {
+  if (turn.work_key && isAcceptedWorkKey(turn.work_key)) {
     return turn.work_key;
   }
   const subject = turn.subject ?? "";
-  const m = subject.match(/\b((?:todo|friction):[a-z0-9-]+)\b/i);
+  const m = subject.match(
+    /\b((?:todo|friction|plan|plan_phase|packet|agent-bus|decision):[^\s|]+)\b/i,
+  );
   if (m) {
-    return m[1]!.toLowerCase();
+    return m[1]!;
   }
   for (const tag of turn.tags ?? []) {
-    if (/^(todo|friction):/.test(tag)) {
+    if (isAcceptedWorkKey(tag)) {
       return tag;
     }
   }
@@ -49,11 +54,12 @@ export async function readScoreMarkdown(
     return truncateBody(content, SCORE_CHAR_LIMIT);
   }
   try {
-    const result = (await host.mcp.callTool("ulg", "fs", {
+    const raw = await host.mcp.callTool("ulg", "fs", {
       op: "read",
       path,
       limit: 200,
-    })) as unknown as { content?: string };
+    });
+    const result = parseHostMcpJson(raw) as { content?: string };
     const content = result.content ?? fallbackScore;
     return truncateBody(content, SCORE_CHAR_LIMIT);
   } catch {

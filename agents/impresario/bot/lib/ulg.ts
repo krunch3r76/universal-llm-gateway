@@ -4,6 +4,7 @@ import { fileURLToPath } from "node:url";
 import type { ToolContext } from "@grok/agent-sdk/tools";
 
 import { fixtureMcpCall, fixturesEnabled } from "./bus-fixtures.js";
+import { parseHostMcpJson } from "./mcp-result.js";
 
 export type ToolCtx = ToolContext;
 
@@ -70,10 +71,11 @@ export async function callAgentBus(
   if (isEvalOrFixture(ctx) && op === "send") {
     return { posted: false, stubbed: true, op, ...payload };
   }
-  return ctx.host.mcp.callTool("ulg", "agent_bus", {
+  const raw = await ctx.host.mcp.callTool("ulg", "agent_bus", {
     tool: op,
     arguments: JSON.stringify(payload),
   });
+  return parseHostMcpJson(raw);
 }
 
 export async function callAgentBusRead(
@@ -84,10 +86,11 @@ export async function callAgentBusRead(
   if (fixturesEnabled()) {
     return fixtureMcpCall("agent_bus_read", { tool: op, payload });
   }
-  return ctx.host.mcp.callTool("ulg", "agent_bus_read", {
+  const raw = await ctx.host.mcp.callTool("ulg", "agent_bus_read", {
     tool: op,
     arguments: JSON.stringify(payload),
   });
+  return parseHostMcpJson(raw);
 }
 
 export async function callFs(
@@ -97,7 +100,8 @@ export async function callFs(
   if (fixturesEnabled()) {
     return fixtureMcpCall("fs", args);
   }
-  return ctx.host.mcp.callTool("ulg", "fs", args);
+  const raw = await ctx.host.mcp.callTool("ulg", "fs", args);
+  return parseHostMcpJson(raw);
 }
 
 export function parseCloseoutExcerpt(raw: string): {

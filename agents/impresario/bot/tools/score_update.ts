@@ -6,6 +6,7 @@ import {
   resolveScoreUri,
 } from "../lib/score-guards.js";
 import { callAgentBus, callFs } from "../lib/ulg.js";
+import { WORK_KEY_ZOD_REGEX } from "../lib/work-key.js";
 
 const section = z.enum([
   "state",
@@ -19,7 +20,7 @@ export default defineTool({
   description:
     "Rewrite one score section (state, dispatches, open_stops, rulings, log). Call after acting and on every designed stop (open_stops). Returns ok or size refusal. Idempotent; no stop.",
   inputSchema: z.object({
-    work_key: z.string().regex(/^(todo|friction):/),
+    work_key: z.string().regex(WORK_KEY_ZOD_REGEX),
     section,
     body: z.string().max(1500),
   }),

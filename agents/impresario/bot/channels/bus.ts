@@ -28,10 +28,15 @@ import {
   shouldStartModelTurn,
   turnAddressedToMailbox,
 } from "../lib/run-shape.js";
+import {
+  agentSdkBearerForAuth,
+  requireAgentSdkBearerToken,
+} from "../lib/bearer.js";
 import { IMPRESARIO_LANE, IMPRESARIO_MAILBOX } from "../lib/ulg.js";
 
+import { persistLaneCursor, readLaneCursor } from "../lib/bus-lane.js";
+
 const DELIVERED_PREFIX = "delivered:";
-const LAST_LANE_TURN_KEY = "bus:last_lane_turn";
 
 async function busCall(
   host: HostContext,
@@ -154,10 +159,11 @@ async function prepareTurn(
     );
     return null;
   }
-  await markDelivered(host, thread, turnNumber);
   if (!shouldStartModelTurn()) {
-    await busMarkReadForMailbox(host, thread, turnNumber);
     await ingestTurnGated(host, thread, turnNumber, channelLogger);
+    await markDelivered(host, thread, turnNumber);
+    await persistLaneCursor(host, thread, turnNumber);
+    await busMarkReadForMailbox(host, thread, turnNumber);
     return null;
   }
   const workKey = workKeyFromTurn(turn);
@@ -186,6 +192,8 @@ async function deliverPrepared(
       "score.md": prep.scoreMd,
     },
   });
+  await markDelivered(host, prep.thread, prep.turnNumber);
+  await persistLaneCursor(host, prep.thread, prep.turnNumber);
   if (session.coalesced) {
     channelLogger.info(
       `[bus] coalesced:true ${deliveryId(prep.thread, prep.turnNumber)}`,
@@ -217,10 +225,7 @@ async function pollOnce(args: ChannelStartArgs, fallbackScore: string): Promise<
   const host = args.host;
   const send = args.send;
   const lane = IMPRESARIO_LANE;
-  const afterTurn =
-    (typeof (await host.kv.get(LAST_LANE_TURN_KEY)) === "number"
-      ? (await host.kv.get(LAST_LANE_TURN_KEY))
-      : 0) as number;
+  const afterTurn = await readLaneCursor(host);
 
   if (afterTurn > 0) {
     try {
@@ -274,9 +279,7 @@ async function runPollLoop(args: ChannelStartArgs): Promise<void> {
 }
 
 export default defineChannel({
-  auth: [
-    bearerAuth(process.env.AGENT_SDK_BEARER_TOKEN ?? "dev-impresario-bearer"),
-  ],
+  auth: [bearerAuth(agentSdkBearerForAuth())],
   events: {
     async "message.completed"(event, _channelCtx, _sessionCtx) {
       const text = event.data.text?.trim() ?? "";
@@ -306,6 +309,7 @@ export default defineChannel({
   ],
   onStart(args: ChannelStartArgs) {
     pollStopped = false;
+    requireAgentSdkBearerToken();
     const stateRoot = impresarioStateRoot();
     args.waitUntil(
       (async () => {
@@ -325,3 +329,6 @@ export default defineChannel({
     pollStopped = true;
   },
 });
+
+export { deliverPrepared, prepareTurn, busWait };
+export { LAST_LANE_TURN_KEY } from "../lib/bus-lane.js";

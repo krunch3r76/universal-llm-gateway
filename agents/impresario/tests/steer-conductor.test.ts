@@ -95,6 +95,7 @@ describe("steer_conductor ledger lookup (AC1)", () => {
       ctx,
     );
     assert.equal((result as { stop?: string }).stop, "NOT_FOUND");
+    assert.match(String((result as { resume_on?: string }).resume_on), /ledger_read/);
   });
 });
 
