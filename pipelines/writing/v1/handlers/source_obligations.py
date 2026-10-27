@@ -104,6 +104,29 @@ _SIGNATURE_ONLY = re.compile(
 _COMMA_COURTESY_SIGNOFF = re.compile(
     rf"^(?i:thanks?|thank\s+you)\s*,?\s*({_NAME_ONE_OR_TWO})[!.]?\s*$",
 )
+_ACK_SINGLE_WORDS = frozenset({
+    "noted", "agreed", "understood", "received", "approved", "confirmed",
+    "acknowledged", "done", "sure", "perfect", "great", "awesome", "copy", "copied",
+})
+_ACK_TWO_WORD_PHRASES = frozenset({
+    "sounds good", "looks good", "all good", "got it", "will do", "on it",
+    "all set", "sure thing", "makes sense", "works great",
+})
+_ACK_CALL_ACTION = re.compile(r"^call\s+(?:me|[A-Z][\w'.-]*)$", re.IGNORECASE)
+
+
+def _is_acknowledgement_tail(text: str) -> bool:
+    """True when ``text`` is a 1–2 word acknowledgement or action reply, not a sign-off name."""
+    stripped = _EDGE_PUNCT.sub("", text.strip()).strip()
+    if not stripped:
+        return False
+    collapsed = " ".join(stripped.split())
+    lower = collapsed.lower()
+    if " " not in collapsed:
+        return lower in _ACK_SINGLE_WORDS
+    if lower in _ACK_TWO_WORD_PHRASES:
+        return True
+    return bool(_ACK_CALL_ACTION.match(collapsed))
 
 
 def _name_tokens(text: str) -> list[str]:
@@ -151,15 +174,23 @@ def _signature_fragment_is_name(fragment: str) -> bool:
     text = fragment.strip()
     if re.match(r"(?i)^thanks?\s*,\s*", text):
         name_part = re.sub(r"(?i)^thanks?\s*,\s*", "", text).strip()
+        if _is_acknowledgement_tail(name_part):
+            return False
         return _name_tokens_are_signature(name_part)
     if re.match(r"(?i)^thank\s+you\s*,\s*", text):
         name_part = re.sub(r"(?i)^thank\s+you\s*,\s*", "", text).strip()
+        if _is_acknowledgement_tail(name_part):
+            return False
         return _name_tokens_are_signature(name_part)
     if re.search(r"(?i)(?:thank\s+you|thanks?)[!.]?\s*$", text):
         name_part = re.sub(
             r"(?i),?\s*(?:thank\s+you|thanks?)[!.]?\s*$", "", text
         ).strip()
+        if _is_acknowledgement_tail(name_part):
+            return False
         return _name_tokens_are_signature(name_part)
+    if _is_acknowledgement_tail(text):
+        return False
     return _name_tokens_are_signature(text)
 
 
@@ -179,7 +210,10 @@ def _is_comma_courtesy_signoff(span: str) -> bool:
     match = _COMMA_COURTESY_SIGNOFF.match(normalized)
     if not match:
         return False
-    return _name_tokens_are_signature(match.group(1))
+    tail = match.group(1)
+    if _is_acknowledgement_tail(tail):
+        return False
+    return _name_tokens_are_signature(tail)
 
 
 def _is_dash_courtesy_signoff(span: str) -> bool:

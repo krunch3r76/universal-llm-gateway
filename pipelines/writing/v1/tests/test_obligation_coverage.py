@@ -1613,6 +1613,9 @@ _THANKS_TITLECASE_ACKS = (
     "Thanks, Sounds Good.",
     "Thanks, Got It.",
     "Thanks, Will Do.",
+    "Thanks, Looks Good.",
+    "Thanks, Perfect.",
+    "Thanks, Understood.",
 )
 
 
@@ -1631,6 +1634,7 @@ _QUESTION_TITLECASE_ACTION_TAILS = (
     ("What time works? - Call Me", "call me"),
     ("What time works? - Call Bob", "call bob"),
     ("Lunch? - Sure Thing", "sure thing"),
+    ("Works for you? - Sounds Good", "sounds good"),
 )
 
 
@@ -1650,6 +1654,7 @@ def test_question_titlecase_action_tail_preserved_in_semantic_reading(
     (
         "Thanks, Will",
         "Thanks, Will Smith",
+        "Thanks, Bob Good",
     ),
 )
 def test_thanks_comma_common_name_signoff_stays_pleasantry(inbound: str) -> None:
