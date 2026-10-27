@@ -5,6 +5,7 @@ import { defineEval, includes } from "@grok/agent-sdk/evals";
 
 import { resetFixtureCache } from "../bot/lib/bus-fixtures.js";
 import doneFixture from "./fixtures/bus/done-20901-5.json";
+import { reviewBusSendOutputMatches } from "./lib/closeout-bus-send-gate.js";
 import { skipWithoutCursorCredential } from "./lib/require-cursor-credential.js";
 
 const fixtureRoot = path.join(
@@ -33,10 +34,8 @@ export default defineEval({
     t.succeeded();
     t.calledTool("closeout_read", { count: 1 });
     t.calledTool("bus_send", {
-      input: {
-        subject: /^REQUEST\|review\|todo:/,
-        to: "grok-bot-gc1",
-      },
+      input: { subject: /^REQUEST\|review\|todo:/ },
+      output: reviewBusSendOutputMatches,
     });
     t.notCalledTool("commission");
     t.notCalledTool("bus_get");
