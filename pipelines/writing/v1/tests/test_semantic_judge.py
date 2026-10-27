@@ -2,13 +2,13 @@
 
 from __future__ import annotations
 
-import asyncio
 import importlib
 import importlib.util
 import json
 import sys
 from pathlib import Path
 from typing import Any
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -103,6 +103,10 @@ async def test_semantic_judge_two_calls_qwen_alias() -> None:
             return json.dumps(_pin_payload("drafter_anthropic"))
         return json.dumps(_quality_payload("drafter_anthropic"))
 
+    handler = semantic_judge.WritingSemanticJudgeHandler(caller=caller)
+    handler._call_model = AsyncMock(  # type: ignore[method-assign]
+        side_effect=AssertionError("_call_model must not run when caller is set")
+    )
     ctx = _Ctx(
         {
             "assemble": _Out(
@@ -114,12 +118,46 @@ async def test_semantic_judge_two_calls_qwen_alias() -> None:
             "drafter_anthropic": _Out(None, raw="Backed."),
         }
     )
-    out = await semantic_judge.WritingSemanticJudgeHandler(caller=caller).execute(
-        _Step("candidates"), ctx
-    )
+    published: list[Any] = []
+    handler._publish_bus_event = lambda _ctx, event: published.append(event)  # type: ignore[method-assign]
+    out = await handler.execute(_Step("candidates"), ctx)
     assert calls == ["pin", "quality"]
     assert out.json["ok"] is True
     assert out.model_id == "qwen3-5-9b"
+    assert len(published) == 1
+    assert published[0].signal == "writing.judge.completed"
+    assert published[0].payload["model_id"] == "qwen3-5-9b"
+
+
+@pytest.mark.asyncio
+async def test_semantic_judge_routes_qwen_through_call_model() -> None:
+    model_ids: list[str] = []
+
+    async def fake_call_model(model_id: str, *_args: Any, **_kwargs: Any) -> MagicMock:
+        model_ids.append(model_id)
+        content = (
+            json.dumps(_pin_payload("drafter_anthropic"))
+            if len(model_ids) == 1
+            else json.dumps(_quality_payload("drafter_anthropic"))
+        )
+        result = MagicMock()
+        result.content = content
+        return result
+
+    handler = semantic_judge.WritingSemanticJudgeHandler()
+    handler._call_model = fake_call_model  # type: ignore[method-assign]
+    published: list[Any] = []
+    handler._publish_bus_event = lambda _ctx, event: published.append(event)  # type: ignore[method-assign]
+    ctx = _Ctx(
+        {
+            "assemble": _Out({"pin_ledger": [], "intake": {}}),
+            "drafter_anthropic": _Out(None, raw="Backed."),
+        }
+    )
+    out = await handler.execute(_Step("candidates"), ctx)
+    assert model_ids == ["qwen3-5-9b", "qwen3-5-9b"]
+    assert out.model_id == "qwen3-5-9b"
+    assert published[0].signal == "writing.judge.completed"
 
 
 @pytest.mark.asyncio
@@ -129,16 +167,40 @@ async def test_semantic_judge_schema_invalid_unavailable() -> None:
             return json.dumps({"candidates": [{"candidate_id": "drafter_anthropic"}]})
         return json.dumps(_quality_payload("drafter_anthropic"))
 
+    handler = semantic_judge.WritingSemanticJudgeHandler(caller=caller)
+    published: list[Any] = []
+    handler._publish_bus_event = lambda _ctx, event: published.append(event)  # type: ignore[method-assign]
     ctx = _Ctx(
         {
             "assemble": _Out({"pin_ledger": [], "intake": {}}),
             "drafter_anthropic": _Out(None, raw="Backed."),
         }
     )
-    out = await semantic_judge.WritingSemanticJudgeHandler(caller=caller).execute(
-        _Step("candidates"), ctx
-    )
+    out = await handler.execute(_Step("candidates"), ctx)
     assert out.json["judge_unavailable"] is True
+    assert len(published) == 1
+    assert published[0].signal == "writing.judge.failed"
+
+
+@pytest.mark.asyncio
+async def test_semantic_judge_transport_failure_publishes_failed() -> None:
+    async def fake_call_model(*_args: Any, **_kwargs: Any) -> MagicMock:
+        raise RuntimeError("transport_down")
+
+    handler = semantic_judge.WritingSemanticJudgeHandler()
+    handler._call_model = fake_call_model  # type: ignore[method-assign]
+    published: list[Any] = []
+    handler._publish_bus_event = lambda _ctx, event: published.append(event)  # type: ignore[method-assign]
+    ctx = _Ctx(
+        {
+            "assemble": _Out({"pin_ledger": [], "intake": {}}),
+            "drafter_anthropic": _Out(None, raw="Backed."),
+        }
+    )
+    out = await handler.execute(_Step("candidates"), ctx)
+    assert out.json["judge_unavailable"] is True
+    assert published[0].signal == "writing.judge.failed"
+    assert published[0].payload["reason"] == "RuntimeError"
 
 
 def test_judge_event_signals() -> None:

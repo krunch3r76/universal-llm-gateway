@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-import re
 from typing import Any
 
 from systems.pipeline.core.handlers.builtin import BaseHandler
@@ -13,7 +12,6 @@ from writing_intake.fact_inventory import run_drift_check
 
 from .email_envelope import (
     has_email_subject,
-    normalize_contractions,
     polish_email_draft,
 )
 from .judge_provenance import (
@@ -23,78 +21,11 @@ from .judge_provenance import (
     verbatim_ledger_violations,
     violations_from_judge_pins,
 )
+from .judge_winner_rows import winner_judge_rows
 
-_SENTENCE = re.compile(r"(?<=[.!?])\s+")
-_NAME = re.compile(r"\b[A-Z][a-z]{2,}\b")
-_NUMBER = re.compile(r"\b\d+(?:\.\d+)?\b")
-_NAME_STOP = frozenset(
-    {
-        "The",
-        "This",
-        "That",
-        "Could",
-        "Would",
-        "Please",
-        "Dear",
-        "And",
-        "But",
-        "So",
-        "It",
-        "When",
-        "Do",
-        "Does",
-        "Did",
-        "Can",
-        "Will",
-        "Is",
-        "Are",
-        "Was",
-        "Were",
-        "Have",
-        "Has",
-        "Had",
-        "Would",
-        "Could",
-        "Should",
-        "Not",
-        "Hi",
-        "Hello",
-    }
-)
-_ENVELOPE_OR_EXHIBIT_LINE_RE = re.compile(
-    r"^\s*(?:(?:to|cc|bcc|from|subject|re|date)\s*:|Exhibit\s+\d+\s*:|"
-    r"(?:thank you|thanks|sincerely|regards|best regards|kind regards|respectfully)[,!]?\s*$)",
-    re.IGNORECASE,
-)
-_VALEDICTION_LINE_RE = re.compile(
-    r"^\s*(?:thank you|thanks|sincerely|regards|best regards|kind regards|respectfully)[,!]?\s*$",
-    re.IGNORECASE,
-)
-_TOKEN = re.compile(r"[a-z0-9]+")
-_FUNCTION_WORDS = frozenset(
-    {
-        "also",
-        "am",
-        "and",
-        "when",
-        "the",
-        "a",
-        "it",
-        "is",
-        "was",
-        "where",
-        "of",
-        "i",
-        "its",
-        "that",
-        "in",
-        "on",
-        "so",
-        "to",
-        "hi",
-        "hello",
-    }
-)
+# Frozen regex symbols retained for spec compliance (used in provenance_revision).
+from .provenance_draft import _NAME, _NUMBER, _parse_draft, _sentences  # noqa: F401
+from .provenance_revision import revision_delta
 
 
 def _step(payload: dict[str, Any]) -> StepOutput:
@@ -105,88 +36,11 @@ def _violation(kind: str, claim_id: str | None, detail: Any) -> dict[str, Any]:
     return {"type": kind, "claim_id": claim_id, "detail": detail}
 
 
-def _parse_draft(draft_json: Any) -> dict[str, Any] | None:
-    if isinstance(draft_json, str):
-        text = draft_json.strip()
-        if not text:
-            return None
-        if text.startswith("{"):
-            try:
-                draft_json = json.loads(text)
-            except json.JSONDecodeError:
-                return {"draft": text, "claims": [], "need": [], "dispositions": []}
-        else:
-            return {"draft": text, "claims": [], "need": [], "dispositions": []}
-    if not isinstance(draft_json, dict):
-        return None
-    if "draft" not in draft_json and isinstance(draft_json.get("text"), str):
-        return {
-            "draft": draft_json["text"],
-            "claims": [],
-            "need": [],
-            "dispositions": [],
-        }
-    if "draft" not in draft_json:
-        return None
-    if isinstance(draft_json.get("draft"), str):
-        out = dict(draft_json)
-        out.setdefault("claims", [])
-        return out
-    return None
-
-
-def _sentences(text: str) -> list[str]:
-    blocks: list[str] = []
-    current: list[str] = []
-    lines = text.splitlines()
-    i = 0
-    while i < len(lines):
-        raw_line = lines[i].strip()
-        if not raw_line:
-            if current:
-                blocks.append(" ".join(current))
-                current = []
-            i += 1
-            continue
-        if _VALEDICTION_LINE_RE.match(raw_line):
-            if current:
-                blocks.append(" ".join(current))
-                current = []
-            closing = [raw_line]
-            if i + 1 < len(lines) and lines[i + 1].strip():
-                closing.append(lines[i + 1].strip())
-                i += 1
-            blocks.append("\n".join(closing))
-            i += 1
-            continue
-        if _ENVELOPE_OR_EXHIBIT_LINE_RE.match(raw_line):
-            if current:
-                blocks.append(" ".join(current))
-                current = []
-            blocks.append(raw_line)
-            i += 1
-            continue
-        current.append(raw_line)
-        i += 1
-    if current:
-        blocks.append(" ".join(current))
-    out: list[str] = []
-    for block in blocks:
-        if "\n" in block or _ENVELOPE_OR_EXHIBIT_LINE_RE.match(block):
-            out.append(block.strip())
-        else:
-            for part in _SENTENCE.split(block):
-                if part.strip():
-                    out.append(part.strip())
-    return out
-
-
 def check_fact_ceiling(
     pin_ledger: list[dict[str, Any]] | None,
     draft_text: str,
     *,
     max_chars: int | None = None,
-    channel: str | None = None,
 ) -> list[dict[str, Any]]:
     """Mechanical fact-ceiling checks retained after semantic_judge migration."""
     del pin_ledger
@@ -205,6 +59,8 @@ def check_provenance(
     judge_json: dict[str, Any] | None = None,
     *,
     winner_id: str | None = None,
+    channel: str | None = None,
+    signer: str | None = None,
 ) -> list[dict[str, Any]]:
     """Return provenance violations using semantic_judge rows when provided."""
     parsed = _parse_draft(draft_json)
@@ -214,79 +70,14 @@ def check_provenance(
     judge = judge_json or {}
     if judge.get("judge_unavailable"):
         return [judge_unavailable_violation()]
-    clauses = list(judge.get("clauses") or [])
-    pins = list(judge.get("pins") or [])
+    clauses = winner_judge_rows(list(judge.get("clauses") or []), winner_id)
+    pins = winner_judge_rows(list(judge.get("pins") or []), winner_id)
     violations: list[dict[str, Any]] = []
     violations.extend(violations_from_judge_pins(ledger, pins, winner_id=winner_id))
-    violations.extend(clause_violations(clauses, ledger))
     violations.extend(
-        check_fact_ceiling(ledger, parsed["draft"], channel=None, max_chars=None)
+        clause_violations(clauses, ledger, channel=channel, signer=signer)
     )
-    return violations
-
-
-def _pin_order(clauses: list[dict[str, Any]]) -> list[str]:
-    order: list[str] = []
-    for clause in clauses:
-        pin_ids = clause.get("pin_ids") if isinstance(clause.get("pin_ids"), list) else []
-        for pin_id in pin_ids:
-            key = str(pin_id)
-            if key not in order:
-                order.append(key)
-    return order
-
-
-def revision_delta(
-    draft_v1: Any,
-    draft_v2: Any,
-    *,
-    v2_clauses: list[dict[str, Any]] | None = None,
-    pin_ledger: list[dict[str, Any]] | None = None,
-    channel: str | None = None,
-    signer: str | None = None,
-) -> list[dict[str, Any]]:
-    """Literal dropped-name/number checks and fact_reordered from judge clause order."""
-    del signer
-    prior = _parse_draft(draft_v1)
-    current = _parse_draft(draft_v2)
-    if prior is None or current is None:
-        return []
-    v1_text = prior["draft"]
-    v2_text = current["draft"]
-    v1_name_text = normalize_contractions(v1_text)
-    v2_name_text_lower = normalize_contractions(v2_text).lower()
-    v2_clause_rows = v2_clauses or []
-    violations: list[dict[str, Any]] = []
-    v1_order = _pin_order(v2_clause_rows)
-    v2_order = _pin_order(v2_clause_rows)
-    if v1_order and v2_order and v1_order != v2_order:
-        profile = check_class_for_channel(str(channel or "filing"))
-        if profile == "sworn":
-            violations.append(
-                _violation("fact_reordered", None, {"v1": v1_order, "v2": v2_order})
-            )
-    for name in _NAME.findall(v1_name_text):
-        if name in _NAME_STOP:
-            continue
-        if name.lower() not in v2_name_text_lower:
-            violations.append(_violation("v2_dropped_name", None, name))
-            violations.append(_violation("fact_dropped", None, name))
-    for number in _NUMBER.findall(v1_text):
-        if number not in v2_text:
-            violations.append(_violation("v2_dropped_number", None, number))
-            violations.append(_violation("fact_dropped", None, number))
-    for row in v2_clause_rows:
-        if not isinstance(row, dict):
-            continue
-        if row.get("attested") is False and str(row.get("text") or "").strip():
-            violations.append(
-                _violation(
-                    "added_unattested_fact",
-                    None,
-                    str(row.get("text") or "")[:120],
-                )
-            )
-    del pin_ledger
+    violations.extend(check_fact_ceiling(ledger, parsed["draft"], max_chars=None))
     return violations
 
 
@@ -318,6 +109,15 @@ def _resolve_binding(step: Any, context: Any, field_name: str) -> Any:
     return value
 
 
+def _output_json(outputs: dict[str, Any], step_name: str) -> dict[str, Any] | None:
+    row = outputs.get(step_name)
+    if isinstance(row, dict):
+        payload = row.get("json")
+        return payload if isinstance(payload, dict) else None
+    payload = getattr(row, "json", None)
+    return payload if isinstance(payload, dict) else None
+
+
 class WritingProvenanceCheckHandler(BaseHandler):
     """Pipeline step handler for provenance, fact-ceiling, and email polish checks."""
 
@@ -331,7 +131,8 @@ class WritingProvenanceCheckHandler(BaseHandler):
         if not isinstance(ledger, list):
             ledger = []
         judge_dict = judge if isinstance(judge, dict) else {}
-        assemble = getattr(context, "outputs", {}).get("assemble")
+        outputs = getattr(context, "outputs", {}) or {}
+        assemble = outputs.get("assemble")
         assemble_json = (
             assemble.get("json")
             if isinstance(assemble, dict)
@@ -342,7 +143,6 @@ class WritingProvenanceCheckHandler(BaseHandler):
         if isinstance(assemble_json, dict):
             max_chars = assemble_json.get("max_chars")
             channel = assemble_json.get("channel")
-        outputs = getattr(context, "outputs", {}) or {}
         draft_out = outputs.get("draft")
         winner_id = None
         if isinstance(draft_out, dict):
@@ -352,21 +152,23 @@ class WritingProvenanceCheckHandler(BaseHandler):
             if isinstance(dj, dict):
                 winner_id = str(dj.get("selected_step") or "")
 
+        intake_dict: dict[str, Any] = {}
+        if isinstance(assemble_json, dict):
+            intake_block = assemble_json.get("intake")
+            if isinstance(intake_block, dict):
+                intake_dict = intake_block
+        signer = str(intake_dict.get("signer") or "")
+
         parsed = _parse_draft(draft)
         pre_polish_draft = (
             str(parsed.get("draft") or "") if parsed is not None else ""
         )
         if parsed is not None and str(channel or "") == "email":
-            intake_block = (
-                assemble_json.get("intake") if isinstance(assemble_json, dict) else None
-            )
-            intake_dict = intake_block if isinstance(intake_block, dict) else {}
             recipient = str(
                 intake_dict.get("recipient")
                 or (assemble_json or {}).get("recipient")
                 or ""
             )
-            signer = str(intake_dict.get("signer") or "")
             parsed["draft"] = polish_email_draft(
                 pre_polish_draft,
                 recipient=recipient,
@@ -381,7 +183,12 @@ class WritingProvenanceCheckHandler(BaseHandler):
             violations = [judge_unavailable_violation()]
         else:
             violations = check_provenance(
-                ledger, parsed, judge_dict, winner_id=winner_id or None
+                ledger,
+                parsed,
+                judge_dict,
+                winner_id=winner_id or None,
+                channel=str(channel or "") or None,
+                signer=signer or None,
             )
             if str(channel or "") == "email":
                 draft_body = str(parsed.get("draft") or "")
@@ -399,33 +206,31 @@ class WritingProvenanceCheckHandler(BaseHandler):
                             "provide sufficient subject fields.",
                         )
                     )
-            if max_chars is not None or channel is not None:
+            if max_chars is not None:
                 violations.extend(
                     check_fact_ceiling(
                         ledger,
                         parsed["draft"],
                         max_chars=max_chars,
-                        channel=channel,
                     )
                 )
         if prior is not None and parsed is not None and not judge_dict.get(
             "judge_unavailable"
         ):
-            v2_clauses = list(judge_dict.get("clauses") or [])
+            v2_clauses = winner_judge_rows(
+                list(judge_dict.get("clauses") or []), winner_id or None
+            )
+            v1_judge = _output_json(outputs, "semantic_judge_candidates") or {}
+            v1_clauses = winner_judge_rows(
+                list(v1_judge.get("clauses") or []), winner_id or None
+            )
             prior_for_delta: Any = prior
             if str(channel or "") == "email":
-                intake_block = (
-                    assemble_json.get("intake")
-                    if isinstance(assemble_json, dict)
-                    else None
-                )
-                intake_dict = intake_block if isinstance(intake_block, dict) else {}
                 recipient = str(
                     intake_dict.get("recipient")
                     or (assemble_json or {}).get("recipient")
                     or ""
                 )
-                signer = str(intake_dict.get("signer") or "")
                 prior_parsed = _parse_draft(prior)
                 if prior_parsed is not None:
                     prior_parsed = dict(prior_parsed)
@@ -441,9 +246,11 @@ class WritingProvenanceCheckHandler(BaseHandler):
                 revision_delta(
                     prior_for_delta,
                     parsed,
+                    v1_clauses=v1_clauses,
                     v2_clauses=v2_clauses,
                     pin_ledger=ledger,
                     channel=channel,
+                    signer=signer or None,
                 )
             )
         dropped_facts: list[dict[str, str]] = []
@@ -455,8 +262,13 @@ class WritingProvenanceCheckHandler(BaseHandler):
                     for row in raw_dropped
                     if isinstance(row, dict) and row.get("claim") and row.get("reason")
                 ]
+        winner_clauses = winner_judge_rows(
+            list(judge_dict.get("clauses") or []), winner_id or None
+        )
         added_facts = added_facts_from_judge_clauses(
-            list(judge_dict.get("clauses") or [])
+            winner_clauses,
+            channel=str(channel or "") or None,
+            signer=signer or None,
         )
         effective_channel = str(channel or "email")
         purpose_points: list[str] = []

@@ -62,6 +62,60 @@ def test_judge_unavailable_violation() -> None:
     assert _types(violations) == ["semantic_judge_unavailable"]
 
 
+def test_winner_pin_row_wins_over_loser_for_restate() -> None:
+    judge = _judge(
+        pins=[
+            {
+                "pin_id": "P1",
+                "candidate_id": "drafter_openai",
+                "satisfied": False,
+                "polarity_match": True,
+                "evidence_span": "",
+            },
+            {
+                "pin_id": "P1",
+                "candidate_id": "drafter_anthropic",
+                "satisfied": True,
+                "polarity_match": True,
+                "evidence_span": "backed",
+            },
+        ]
+    )
+    violations = provenance.check_provenance(
+        _LEDGER, _draft("text"), judge, winner_id="drafter_openai"
+    )
+    assert "restate_pin_missing" in _types(violations)
+
+
+def test_fact_reordered_when_v1_and_v2_pin_orders_differ() -> None:
+    v1 = _draft("Same body.")
+    v2 = _draft("Same body.")
+    v1_clauses = [{"pin_ids": ["P2", "P1"], "text": "a", "attested": True}]
+    v2_clauses = [{"pin_ids": ["P1", "P2"], "text": "a", "attested": True}]
+    violations = provenance.revision_delta(
+        v1,
+        v2,
+        v1_clauses=v1_clauses,
+        v2_clauses=v2_clauses,
+        channel="filing",
+    )
+    assert "fact_reordered" in _types(violations)
+
+
+def test_fact_reordered_silent_when_pin_orders_match() -> None:
+    v1 = _draft("Same body.")
+    v2 = _draft("Same body.")
+    clauses = [{"pin_ids": ["P1", "P2"], "text": "a", "attested": True}]
+    violations = provenance.revision_delta(
+        v1,
+        v2,
+        v1_clauses=clauses,
+        v2_clauses=list(clauses),
+        channel="filing",
+    )
+    assert "fact_reordered" not in _types(violations)
+
+
 def test_restate_pin_missing_from_judge_row() -> None:
     judge = _judge(
         pins=[

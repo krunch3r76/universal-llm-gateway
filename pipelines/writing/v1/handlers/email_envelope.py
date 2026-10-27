@@ -32,49 +32,12 @@ _CONTRACTION_EXPANSIONS: tuple[tuple[str, str], ...] = (
     (r"\bi've\b", "i have"),
     (r"\bi'd\b", "i would"),
 )
-_DECLINE_ABILITY_NOT_ABLE = re.compile(
-    r"\b(?:(?:am|is|are)\s+not|will\s+not(?:\s+be)?|would\s+not\s+be|"
-    r"(?:am|are|is)\s+not\s+going\s+to\s+be)\s+able\s+to\b",
-    re.I,
-)
-_UNABLE_TO = re.compile(r"\bunable\s+to\b", re.I)
-_SUPPLY_VERBS = re.compile(
-    r"\b(?:provide|send|share|give|submit)\b",
-    re.I,
-)
-
-
 def normalize_contractions(text: str) -> str:
     """Expand apostrophe contractions so token overlap ignores style variants."""
     text = text.replace("\u2019", "'").replace("\u2018", "'")
     for pattern, replacement in _CONTRACTION_EXPANSIONS:
         text = re.sub(pattern, replacement, text, flags=re.I)
     return re.sub(r"\bcannot\b", "can not", text, flags=re.I)
-
-
-def normalize_decline_ability_phrases(text: str) -> str:
-    """Map inability phrasing to the same tokens as ``cannot`` / ``can't``."""
-    text = _DECLINE_ABILITY_NOT_ABLE.sub("can not", text)
-    return _UNABLE_TO.sub("can not", text)
-
-
-def normalize_temporal_monthly_synonyms(text: str) -> str:
-    """Align restate checks for ``right now`` vs ``currently`` without conflating monthly."""
-    return re.sub(r"\bright\s+now\b", "currently", text, flags=re.I)
-
-
-def normalize_supply_verbs(text: str) -> str:
-    """Map delivery/supply verbs to ``provide`` for token overlap in verbatim checks."""
-    return _SUPPLY_VERBS.sub("provide", text)
-
-
-def normalize_text_for_token_match(text: str) -> str:
-    """Normalize dashes, contractions, and decline phrasing before token extraction."""
-    text = normalize_email_dashes(text)
-    text = normalize_contractions(text)
-    text = normalize_decline_ability_phrases(text)
-    text = normalize_supply_verbs(text)
-    return normalize_temporal_monthly_synonyms(text)
 
 
 def normalize_email_dashes(text: str) -> str:
@@ -327,13 +290,9 @@ def email_draft_penalty(
     *,
     channel: str,
     signer: str,
-    standing_limits: str,
     recipient: str = "",
-    objective: str = "",
-    verbatim_notes: str = "",
 ) -> int:
     """Mechanical email envelope penalty (3 points each defect)."""
-    del objective, verbatim_notes, standing_limits
     if channel != "email":
         return 0
     penalty = 0
@@ -347,25 +306,3 @@ def email_draft_penalty(
         penalty += 3
     return penalty
 
-
-def correspondence_register_penalty(
-    text: str,
-    *,
-    channel: str,
-    objective: str = "",
-    standing_limits: str = "",
-    verbatim_notes: str = "",
-    signer: str = "",
-    signer_verbatim_required: bool = False,
-) -> int:
-    """Semantic register scoring moved to semantic_judge quality findings."""
-    del (
-        text,
-        channel,
-        objective,
-        standing_limits,
-        verbatim_notes,
-        signer,
-        signer_verbatim_required,
-    )
-    return 0

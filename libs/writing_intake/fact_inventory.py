@@ -15,7 +15,6 @@ from typing import Any
 from .claim_gates import (
     ClaimEvaluation,
     check_profile_for_channel,
-    detect_volunteered_negative_or_concession,
     evaluate_candidate_claim,
     is_declaration_register,
     map_claim_to_purpose,
@@ -40,18 +39,6 @@ _SIGNATURE_MARKERS = (
     "/s/",
 )
 _NON_LOAD_PATTERNS: list[tuple[re.Pattern[str], str]] = [
-    (
-        re.compile(
-            r"stamp reads|RECEIVED\s+(?:JAN|FEB|MAR|APR|MAY|JUN|JUL|AUG|SEP|OCT|NOV|DEC)\s+\d",
-            re.I,
-        ),
-        "clerical_intake_stamp",
-    ),
-    (
-        re.compile(r"which the Clerk stamped|Date Filed:\s*\d", re.I),
-        "clerical_intake_stamp",
-    ),
-    (re.compile(r"bill-created date", re.I), "unrequested_bill_created_date"),
     (re.compile(r"\b\d+\s+days after\b", re.I), "day_count_arithmetic"),
     (
         re.compile(
@@ -66,18 +53,6 @@ _NON_LOAD_PATTERNS: list[tuple[re.Pattern[str], str]] = [
             re.I,
         ),
         "self_referential_pointer",
-    ),
-    (
-        re.compile(
-            r"side office in the building|orally or in writing|envelope it came in",
-            re.I,
-        ),
-        "redundant_qualifier_recital",
-    ),
-    (re.compile(r"MANSUBI KAYWAN ETAL|MANSUBI, SHERWIN", re.I), "addressee_block"),
-    (
-        re.compile(r"At \d{1,2}:\d{2}\s+[AP]M that day, I emailed", re.I),
-        "redundant_qualifier_recital",
     ),
     (
         re.compile(r"\brev\s+\d|not legal advice|attorney review|\bdraft\b", re.I),
@@ -188,76 +163,6 @@ def extract_candidate_claims(prior_draft: str) -> list[str]:
     return chunks
 
 
-_SUBCLAUSE_TRIMS: list[tuple[re.Pattern[str], str, str]] = [
-    (
-        re.compile(
-            r",\s*addressed to\s+[“\"']?MANSUBI KAYWAN ETAL\s*/\s*MANSUBI,\s*SHERWIN[”\"']?\s+at\s+[^,]+,\s*[^,]+,\s*CA\s+\d{5},",
-            re.I,
-        ),
-        "",
-        "addressee_block",
-    ),
-    (
-        re.compile(r",\s*orally or in writing(?=[.,;])", re.I),
-        "",
-        "redundant_qualifier_recital",
-    ),
-    (
-        re.compile(r"(?<=side office)\s+in the building\b", re.I),
-        "",
-        "redundant_qualifier_recital",
-    ),
-    (
-        re.compile(
-            r",\s*which was stamped\s+['\"“”]?RECEIVED\s+(?:JAN|FEB|MAR|APR|MAY|JUN|JUL|AUG|SEP|OCT|NOV|DEC)\s+\d+[^'\"“”)]*['\"“”]?",
-            re.I,
-        ),
-        "",
-        "clerical_intake_stamp",
-    ),
-    (
-        re.compile(
-            r"\beach show a bill-created date of\s+[^;.]+(?:;\s*|.\s*)?",
-            re.I,
-        ),
-        "",
-        "unrequested_bill_created_date",
-    ),
-    (
-        re.compile(r"\b\d+\s+days after the\s+.+?\s+letter and\s+", re.I),
-        "",
-        "day_count_arithmetic",
-    ),
-    (
-        re.compile(r",\s*which the Clerk stamped that day\b", re.I),
-        "",
-        "clerical_intake_stamp",
-    ),
-]
-
-
-def _trim_non_load_subclauses(
-    claim: str,
-) -> tuple[str, list[dict[str, str]]]:
-    """Strip non-load-bearing subclauses from a load-bearing sentence and record drops."""
-    cleaned = claim
-    drops: list[dict[str, str]] = []
-    for pattern, repl, reason in _SUBCLAUSE_TRIMS:
-        match = pattern.search(cleaned)
-        if match:
-            dropped_span = (
-                match.group(2).strip()
-                if match.lastindex and match.lastindex >= 2
-                else match.group(0).strip(" ,;")
-            )
-            drops.append({"claim": dropped_span, "reason": reason})
-            cleaned = pattern.sub(repl, cleaned)
-    cleaned = re.sub(r"\s{2,}", " ", cleaned).strip()
-    if cleaned and cleaned[0].islower():
-        cleaned = cleaned[0].upper() + cleaned[1:]
-    return cleaned, drops
-
-
 def classify_claim_load_bearing(
     claim: str,
     *,
@@ -328,14 +233,9 @@ def build_fact_inventory(
     claim_ledger: list[dict[str, Any]] = []
     context_facts: list[dict[str, Any]] = []
     for claim in candidates:
-        trimmed_claim, sub_drops = _trim_non_load_subclauses(claim)
-        for drop in sub_drops:
-            dropped_facts.append(
-                {**drop, "provenance": "prior_draft_only", "claim": drop["claim"]}
-            )
         clerical_reason: str | None = None
         for pattern, reason in _NON_LOAD_PATTERNS:
-            if pattern.search(trimmed_claim):
+            if pattern.search(claim):
                 clerical_reason = reason
                 break
         if clerical_reason:
@@ -344,7 +244,7 @@ def build_fact_inventory(
             )
         else:
             evaluation = evaluate_candidate_claim(
-                trimmed_claim,
+                claim,
                 purpose_points=parsed_points,
                 verbatim_notes=notes,
                 attested_sources=attested_sources,
@@ -353,18 +253,18 @@ def build_fact_inventory(
                 strict_attestation=strict,
             )
         ledger_row = {
-            "claim": trimmed_claim,
+            "claim": claim,
             "provenance": evaluation.provenance,
             "purpose_point": evaluation.purpose_point,
         }
         if evaluation.load_bearing:
-            load_bearing.append(trimmed_claim)
+            load_bearing.append(claim)
             claim_ledger.append(ledger_row)
         elif evaluation.provenance == "prior_draft_only":
             claim_ledger.append(ledger_row)
         if not evaluation.load_bearing and evaluation.reason:
             row: dict[str, Any] = {
-                "claim": trimmed_claim,
+                "claim": claim,
                 "reason": evaluation.reason,
                 "provenance": evaluation.provenance,
             }
@@ -407,16 +307,6 @@ _DRIFT_PATTERNS: list[tuple[re.Pattern[str], str]] = [
     (
         re.compile(r"\brev\s+[56]|not legal advice|attorney review", re.I),
         "process_chat_residue",
-    ),
-    (
-        re.compile(
-            r"stamp reads|RECEIVED\s+(?:JAN|FEB|MAR|APR|MAY|JUN|JUL|AUG|SEP|OCT|NOV|DEC)\s+\d|"
-            r"which the Clerk stamped|Date Filed:\s*\d|bill-created date|\b\d+\s+days after|"
-            r"side office in the building|orally or in writing|envelope it came in|MANSUBI KAYWAN|"
-            r"At \d{1,2}:\d{2}\s+[AP]M that day, I emailed",
-            re.I,
-        ),
-        "clerical_recital",
     ),
 ]
 
@@ -543,9 +433,6 @@ def drift_check_sentence(
     for answer in intake_answers or []:
         if answer.strip() and answer.strip() in sentence:
             return "intake_answer_promoted"
-    neg, _ = detect_volunteered_negative_or_concession(sentence, points)
-    if neg:
-        return neg
     for pattern, reason in _DRIFT_PATTERNS:
         if pattern.search(sentence):
             return reason

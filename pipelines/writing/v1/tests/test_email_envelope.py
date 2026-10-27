@@ -92,28 +92,16 @@ def test_email_draft_penalty_missing_to_isolated() -> None:
         body,
         channel="email",
         signer=signer,
-        standing_limits="",
         recipient=recipient,
     )
     with_to = email_envelope.email_draft_penalty(
         f"To: {recipient}\n\n{body}",
         channel="email",
         signer=signer,
-        standing_limits="",
         recipient=recipient,
     )
     assert without_to == 3
     assert with_to == 0
-
-
-def test_correspondence_register_penalty_delegated_to_judge() -> None:
-    assert (
-        email_envelope.correspondence_register_penalty(
-            "Unfortunately I decline.",
-            channel="email",
-        )
-        == 0
-    )
 
 
 def test_provenance_email_verbatim_pin_survives_email_polish() -> None:

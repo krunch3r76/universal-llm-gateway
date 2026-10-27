@@ -28,6 +28,7 @@ quality:
     {intake_directives}
     </intake_directives>
     Rubric (apply to each candidate_id):
+    - No sworn/legalistic correspondence openings: "I, <Full Name>, am submitting...", "I, <Full Name>, declare...", jurats, or impersonal "This correspondence serves to submit..."; use plain first-person email phrasing when intake calls for first person.
     - No cold HR-decline register (decline/unfortunately/not available tone) unless intake invites it.
     - No unprompted future-shift or stay-on invitations unless intake directives allow them.
     - No numbered or bulleted body on email/sms unless intake requests a list format.

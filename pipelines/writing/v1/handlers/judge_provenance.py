@@ -5,6 +5,8 @@ from __future__ import annotations
 from typing import Any
 
 from .email_envelope import email_restate_pin_satisfied
+from .judge_winner_rows import winner_judge_rows
+from .provenance_envelope import _is_non_claim_envelope_unit
 
 
 def _violation(kind: str, claim_id: str | None, detail: Any) -> dict[str, Any]:
@@ -23,7 +25,12 @@ def violations_from_judge_pins(
 ) -> list[dict[str, Any]]:
     """Map judge pin rows to restate_pin_missing for the selected candidate."""
     violations: list[dict[str, Any]] = []
-    by_pin = {str(row.get("pin_id")): row for row in judge_pins if isinstance(row, dict)}
+    winner_pins = winner_judge_rows(judge_pins, winner_id)
+    by_pin = {
+        str(row.get("pin_id")): row
+        for row in winner_pins
+        if isinstance(row, dict) and row.get("pin_id")
+    }
     for pin in ledger:
         if not isinstance(pin, dict):
             continue
@@ -40,8 +47,6 @@ def violations_from_judge_pins(
                 _violation("restate_pin_missing", pin_id, str(pin.get("excerpt") or "")[:120])
             )
             continue
-        if winner_id and str(row.get("candidate_id") or "") not in {"", winner_id}:
-            continue
         if row.get("satisfied") is False or row.get("polarity_match") is False:
             violations.append(
                 _violation("restate_pin_missing", pin_id, str(pin.get("excerpt") or "")[:120])
@@ -49,7 +54,12 @@ def violations_from_judge_pins(
     return violations
 
 
-def added_facts_from_judge_clauses(clauses: list[dict[str, Any]]) -> list[str]:
+def added_facts_from_judge_clauses(
+    clauses: list[dict[str, Any]],
+    *,
+    channel: str | None = None,
+    signer: str | None = None,
+) -> list[str]:
     added: list[str] = []
     for row in clauses:
         if not isinstance(row, dict):
@@ -59,14 +69,18 @@ def added_facts_from_judge_clauses(clauses: list[dict[str, Any]]) -> list[str]:
         if row.get("speech_act") == "request":
             continue
         text = str(row.get("text") or "").strip()
-        if text and len(text) > 24:
-            added.append(text)
+        if not text or _is_non_claim_envelope_unit(text, channel=channel, signer=signer):
+            continue
+        added.append(text)
     return added
 
 
 def clause_violations(
     clauses: list[dict[str, Any]],
     ledger: list[dict[str, Any]],
+    *,
+    channel: str | None = None,
+    signer: str | None = None,
 ) -> list[dict[str, Any]]:
     """Flag unattested assertions and requests misclassified as assertions."""
     violations: list[dict[str, Any]] = []
@@ -82,7 +96,11 @@ def clause_violations(
         speech = str(row.get("speech_act") or "")
         if speech == "request":
             continue
-        if row.get("attested") is False and text.strip():
+        if (
+            row.get("attested") is False
+            and text.strip()
+            and not _is_non_claim_envelope_unit(text, channel=channel, signer=signer)
+        ):
             violations.append(
                 _violation("added_unattested_fact", f"c{index}", text[:120])
             )
