@@ -69,9 +69,21 @@ _CONTRACTION_EXPANSIONS: tuple[tuple[str, str], ...] = (
     (r"\bi'd\b", "i would"),
 )
 _DECLINE_ABILITY_NOT_ABLE = re.compile(
-    r"\b(?:(?:am|is|are|was|were)\s+not|will\s+not(?:\s+be)?)\s+able\s+to\b",
+    r"\b(?:(?:am|is|are)\s+not|will\s+not(?:\s+be)?|would\s+not\s+be|"
+    r"(?:am|are|is)\s+not\s+going\s+to\s+be)\s+able\s+to\b",
     re.I,
 )
+_CAN_NOT_MODAL = re.compile(r"\bcan not\b", re.I)
+_DO_NOT_THINK = re.compile(r"\bdo(?:es|did)?\s+not\s+think\b", re.I)
+_PROVIDE_WORD = re.compile(r"\bprovide\b", re.I)
+_DO_NOT_THINK_ABILITY_REFUSAL = re.compile(
+    r"^do(?:es|did)?\s+not\s+think\s+(?:that\s+)?"
+    r"(?:(?:i|we)\s+(?:can|will|am|are|is|would|could)\s+"
+    r"(?:(?:not|never)\s+)?(?:be\s+able\s+to\s+)?provide\b"
+    r"|(?:i|we)\s+(?:can|will)\s+not\s+(?:be\s+able\s+to\s+)?provide\b)",
+    re.I,
+)
+_POLARITY_SUBCLAUSE_BOUNDARY = re.compile(r"\b(?:so|because|and)\b", re.I)
 _CAN_NOT_PROVIDE_FALSE_POSITIVE = re.compile(
     r"\bcan\s+not\s+(?:only|wait\s+to)\b",
     re.I,
@@ -442,6 +454,17 @@ def _draft_clauses(text: str) -> list[str]:
     return clauses if clauses else [text]
 
 
+def _polarity_subclauses(text: str) -> list[str]:
+    """Split draft text for affirmative-pin polarity checks, including so/because/and."""
+    clauses: list[str] = []
+    for clause in _draft_clauses(text):
+        for piece in _POLARITY_SUBCLAUSE_BOUNDARY.split(clause):
+            piece = piece.strip()
+            if piece:
+                clauses.append(piece)
+    return clauses if clauses else [text]
+
+
 def _negation_tokens(token_set: set[str]) -> set[str]:
     return token_set & _RESTATE_NEGATION_TOKENS
 
@@ -477,27 +500,91 @@ def _pin_segment_has_provide_verb(pin_segment: str) -> bool:
     return "provide" in _TOKEN.findall(norm)
 
 
+def _expand_can_not_provide_window(norm_seg: str, match: re.Match[str]) -> str:
+    window = match.group(0)
+    if not window.startswith("not "):
+        return window
+    prefix = norm_seg[max(0, match.start() - 4) : match.start()]
+    if prefix.endswith("can "):
+        return f"can {window}"
+    return window
+
+
+def _provide_refusal_windows(norm_seg: str) -> list[str]:
+    """Collect negator-through-``provide`` spans for per-window refusal validation."""
+    windows: list[str] = []
+    seen: set[str] = set()
+
+    def _add(window: str) -> None:
+        window = window.strip()
+        if window and window not in seen:
+            seen.add(window)
+            windows.append(window)
+
+    for cm in _CAN_NOT_MODAL.finditer(norm_seg):
+        rest = norm_seg[cm.start() :]
+        pm = _PROVIDE_WORD.search(rest)
+        if pm:
+            _add(rest[: pm.end()])
+
+    for tm in _DO_NOT_THINK.finditer(norm_seg):
+        rest = norm_seg[tm.start() :]
+        pm = _PROVIDE_WORD.search(rest)
+        if pm:
+            _add(rest[: pm.end()])
+
+    for matcher in (_NEGATED_PROVIDE_GOVERNANCE_STRICT, _NEGATED_PROVIDE_GOVERNANCE):
+        for match in matcher.finditer(norm_seg):
+            _add(_expand_can_not_provide_window(norm_seg, match))
+
+    return windows
+
+
+def _provide_refusal_window_is_genuine(window: str) -> bool:
+    """True when one negator-through-``provide`` span is a real supply refusal."""
+    w = window.strip()
+    if not w:
+        return False
+    if re.match(r"^can not wait to\b", w):
+        return False
+    if re.match(r"^can not only\b", w):
+        return False
+    if re.match(r"^can not help but\b", w) or re.search(r"\bhelp but\b", w):
+        return False
+    if re.search(r"\bwhy\s+(?:i|we)\s+would\s+not\b", w):
+        return False
+    if re.match(r"^do(?:es|did)?\s+not\s+think\b", w):
+        if re.search(r"\bso\s+(?:i|we)\s+will\s+provide\b", w):
+            return False
+        return bool(_DO_NOT_THINK_ABILITY_REFUSAL.match(w))
+    if re.match(r"^(?:can not|could not)\s+see\b", w):
+        if re.search(r"\bwhy\s+(?:i|we)\s+would\s+not\b", w):
+            return False
+        return bool(re.search(r"\b(?:a way|how|any way)\b", w))
+    if re.match(r"^(?:can not|could not)\s+provide\b", w):
+        return True
+    if re.match(r"^(?:would|will)\s+not\s+provide\b", w):
+        return False
+    if re.match(r"^not provide\b", w):
+        return False
+    if re.match(r"^(?:never|no|unable|without)\b", w):
+        return True
+    return False
+
+
 def _draft_segment_satisfies_provide_refusal(draft_segment: str) -> bool:
-    """True when normalized draft segment is a real supply refusal, not ``can not wait to``."""
+    """True when normalized draft segment contains a genuine supply refusal of ``provide``."""
     norm_seg = normalize_text_for_token_match(draft_segment).lower()
-    if _CAN_NOT_PROVIDE_FALSE_POSITIVE.search(norm_seg):
-        return False
-    provide_at = norm_seg.find("provide")
-    if provide_at >= 0 and re.search(
-        r"\b(?:think|see)\b", norm_seg[:provide_at]
-    ):
-        return False
     if re.search(r"\b(?:decline|declining)\b", norm_seg):
         return True
-    if _NEGATED_PROVIDE_GOVERNANCE.search(norm_seg):
-        return True
-    return bool(_NEGATED_PROVIDE_GOVERNANCE_STRICT.search(norm_seg))
+    windows = _provide_refusal_windows(norm_seg)
+    return any(_provide_refusal_window_is_genuine(window) for window in windows)
 
 
 def _restate_negation_guard(draft_text: str, pin_excerpt: str) -> bool:
     """Require negation on every draft span that carries a refusing pin's content."""
     draft_segments = _restate_text_segments(draft_text)
-    draft_clauses = _draft_clauses(draft_text)
+    polarity_clauses = _polarity_subclauses(draft_text)
     for pin_segment in _restate_text_segments(pin_excerpt):
         pin_segment_tokens = _restate_clause_tokens(pin_segment)
         content_anchors = _restate_content_anchors(
@@ -520,7 +607,7 @@ def _restate_negation_guard(draft_text: str, pin_excerpt: str) -> bool:
             if not matched_any:
                 return False
         else:
-            for clause in draft_clauses:
+            for clause in polarity_clauses:
                 clause_tokens = _restate_clause_tokens(clause)
                 if not content_anchors <= clause_tokens:
                     continue

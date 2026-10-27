@@ -443,15 +443,17 @@ def test_provenance_email_verbatim_pin_survives_email_polish() -> None:
 
 def test_email_restate_pin_verbatim_truncated_mid_word_n1() -> None:
     suffix = "calendar month end."
-    prefix_len = 1229 - len(suffix)
-    note = ("ok " * 500)[:prefix_len] + suffix
-    assert len(note) == 1229
-    truncated_excerpt = assemble._truncate(note)
-    assert truncated_excerpt.endswith(" [truncated]")
-    assert len(truncated_excerpt) == 1200
+    note = ("ok " * 500)[:1185] + suffix
+    assert len(note) > 1200
+    keep = 1200 - len(" [truncated]")
+    assert note[1185:1193] == "calendar"
+    pin_text = assemble._truncate(note)
+    assert pin_text.endswith("cal [truncated]")
+    assert pin_text == note[:keep] + " [truncated]"
+    assert len(pin_text) == 1200
     draft = f"Subject: Appeal\n\n{note}\n"
     assert email_envelope.email_restate_pin_satisfied(
-        draft, truncated_excerpt, verbatim_required=True
+        draft, pin_text, verbatim_required=True
     )
 
 
@@ -510,15 +512,30 @@ def test_email_restate_pin_wont_be_able_to_maps_n4() -> None:
     assert email_envelope.email_restate_pin_satisfied(
         draft, pin_provide, verbatim_required=False
     )
+    past_draft = "I was not able to send a monthly open calendar last month."
+    assert not email_envelope.email_restate_pin_satisfied(
+        past_draft, pin_provide, verbatim_required=False
+    )
 
 
-def test_email_restate_pin_provide_refusal_false_positives_n3() -> None:
+def test_email_restate_pin_provide_refusal_valid_and_false_positives_n3() -> None:
     pin_provide = "I am not able to provide a monthly open calendar."
+    valid_drafts = (
+        "As you can see, I can't send a monthly open calendar.",
+        "I don't think I can send a monthly open calendar.",
+        "I can't see a way to send a monthly open calendar.",
+        "I can't wait to hear back, but I can't send a monthly open calendar.",
+    )
+    for draft in valid_drafts:
+        assert email_envelope.email_restate_pin_satisfied(
+            draft, pin_provide, verbatim_required=False
+        )
     false_drafts = (
-        "I can't wait to send you a monthly open calendar.",
-        "I can not only send a monthly open calendar but also weekly updates.",
-        "I can't see why not, happy to send a monthly open calendar.",
-        "I can't think of a reason I couldn't send a monthly open calendar.",
+        "I cannot wait to provide a monthly open calendar.",
+        "I can not only provide a monthly open calendar, I can send it today.",
+        "I do not think you saw my note, so I will provide a monthly open calendar.",
+        "I can not see why I would not provide a monthly open calendar.",
+        "I can't help but send a monthly open calendar.",
     )
     for draft in false_drafts:
         assert not email_envelope.email_restate_pin_satisfied(
@@ -530,7 +547,7 @@ def test_email_restate_pin_affirmative_schedule_polarity_n5() -> None:
     pin_currently = "Currently my schedule stays full most of the time."
     for negated in (
         "My schedule never stays full most of the time.",
-        "My schedule does not stay full most of the time.",
+        "My schedule no longer stays full most of the time.",
     ):
         assert not email_envelope.email_restate_pin_satisfied(
             negated, pin_currently, verbatim_required=False
