@@ -1551,6 +1551,16 @@ def test_honorific_in_body_stays_single_span_not_pleasantry() -> None:
     assert rows[0]["kind"] != "pleasantry"
 
 
+def test_ordinary_word_ms_suffix_does_not_block_sentence_split() -> None:
+    rows = source_obligations.fallback_obligations(
+        "I reviewed the terms. What time works?"
+    )
+    assert len(rows) == 2
+    assert rows[0]["kind"] == "statement"
+    assert rows[1]["kind"] == "question"
+    assert rows[1]["quoted_span"] == "What time works?"
+
+
 @pytest.mark.parametrize(
     "inbound",
     (

@@ -49,11 +49,11 @@ _NON_SIGNATURE_TOKENS = frozenset({
     "call", "me", "thing", "do", "all", "set",
 }) | _ACK_SINGLE_WORDS
 _NAME_WORD = r"[A-Z][\w'.-]*"
-_HONORIFIC_PREFIX = r"(?:(?:Mr|Mrs|Ms|Dr|Prof)\.?\s+)?"
+_HONORIFIC_PREFIX = r"(?:(?:Mr|Mrs|Ms|Dr|Prof)\.?[ \t]+)?"
 _NAME_ONE_OR_TWO = rf"{_HONORIFIC_PREFIX}{_NAME_WORD}(?:[ \t]+{_NAME_WORD})?"
 _HONORIFIC_TOKENS = frozenset({"mr", "mrs", "ms", "dr", "prof"})
 _SPAN_SPLIT = re.compile(
-    r"(?<=[.!?])(?<!Mr\.)(?<!Mrs\.)(?<!Ms\.)(?<!Dr\.)(?<!Prof\.)\s+|\n+",
+    r"(?<=[.!?])(?<!\bMr\.)(?<!\bMrs\.)(?<!\bMs\.)(?<!\bDr\.)(?<!\bProf\.)\s+|\n+",
     re.IGNORECASE,
 )
 _TRAILING_SIGNATURE = re.compile(
@@ -175,11 +175,9 @@ def _name_tokens_are_signature(text: str) -> bool:
     if not tokens or len(tokens) > 2:
         return False
     parts = [part for part in re.split(r"[ \t]+", text.strip()) if part.strip()]
-    name_parts = [
-        part
-        for part in parts
-        if part.rstrip("'.-").lower() not in _HONORIFIC_TOKENS
-    ]
+    name_parts = list(parts)
+    while name_parts and name_parts[0].rstrip("'.-").lower() in _HONORIFIC_TOKENS:
+        name_parts.pop(0)
     for part in name_parts:
         bare = part.rstrip(".!")
         if not re.match(r"^[A-Z][\w'.-]*$", bare):
