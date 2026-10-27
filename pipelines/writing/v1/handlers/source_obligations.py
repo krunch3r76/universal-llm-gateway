@@ -32,6 +32,10 @@ _REPLY_CLOSING_LET_KNOW = re.compile(
     r"^(?:please\s+)?let\s+(?:me|us)\s+know\s*$",
     re.IGNORECASE,
 )
+_ACK_SINGLE_WORDS = frozenset({
+    "noted", "agreed", "understood", "received", "approved", "confirmed",
+    "acknowledged", "done", "sure", "perfect", "great", "awesome", "copy", "copied",
+})
 _NON_SIGNATURE_TOKENS = frozenset({
     "today", "tomorrow", "tonight", "asap", "eod", "eow", "now", "soon", "later",
     "monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday",
@@ -41,9 +45,9 @@ _NON_SIGNATURE_TOKENS = frozenset({
     "jan", "feb", "mar", "apr", "jun", "jul", "aug", "sep", "sept", "oct", "nov", "dec",
     "yes", "no", "ok", "okay",
     "i", "a",
-    "noted", "agreed", "sounds", "got", "it", "done", "sure",
-    "call", "me", "thing", "do", "all", "set", "received", "approved", "confirmed",
-})
+    "sounds", "got", "it",
+    "call", "me", "thing", "do", "all", "set",
+}) | _ACK_SINGLE_WORDS
 _NAME_WORD = r"[A-Z][\w'.-]*"
 _NAME_ONE_OR_TWO = rf"{_NAME_WORD}(?:[ \t]+{_NAME_WORD})?"
 _TRAILING_SIGNATURE = re.compile(
@@ -64,8 +68,8 @@ _GREETING_PREFIX = re.compile(
     r"^(?:"
     r"hi(?:\s+[\w'.-]+)?\s*[,—–-]\s*|"
     r"hello\s*[,—–-]\s*|"
-    r"thanks?\s*,?\s*|"
-    r"thank you\s*,?\s*"
+    r"thank\s+you\s*,?\s*|"
+    r"thanks?\b\s*,?\s*"
     r")",
     re.I,
 )
@@ -104,13 +108,12 @@ _SIGNATURE_ONLY = re.compile(
 _COMMA_COURTESY_SIGNOFF = re.compile(
     rf"^(?i:thanks?|thank\s+you)\s*,?\s*({_NAME_ONE_OR_TWO})[!.]?\s*$",
 )
-_ACK_SINGLE_WORDS = frozenset({
-    "noted", "agreed", "understood", "received", "approved", "confirmed",
-    "acknowledged", "done", "sure", "perfect", "great", "awesome", "copy", "copied",
-})
 _ACK_TWO_WORD_PHRASES = frozenset({
     "sounds good", "looks good", "all good", "got it", "will do", "on it",
     "all set", "sure thing", "makes sense", "works great",
+})
+_ACK_TWO_WORD_PREFIXES = frozenset({
+    "looks", "sounds", "great", "perfect", "works", "makes", "all",
 })
 _ACK_CALL_ACTION = re.compile(r"^call\s+(?:me|[A-Z][\w'.-]*)$", re.IGNORECASE)
 
@@ -125,6 +128,9 @@ def _is_acknowledgement_tail(text: str) -> bool:
     if " " not in collapsed:
         return lower in _ACK_SINGLE_WORDS
     if lower in _ACK_TWO_WORD_PHRASES:
+        return True
+    words = lower.split()
+    if len(words) == 2 and words[0] in _ACK_TWO_WORD_PREFIXES:
         return True
     return bool(_ACK_CALL_ACTION.match(collapsed))
 

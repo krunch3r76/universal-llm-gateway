@@ -1618,9 +1618,44 @@ _THANKS_TITLECASE_ACKS = (
     "Thanks, Understood.",
 )
 
+_THANK_YOU_COMMA_ACKS = (
+    ("Thank you, Noted.", "acknowledge or reflect: Noted."),
+    ("Thank you, Perfect.", "acknowledge or reflect: Perfect."),
+)
+
+_THANKS_COMMA_ACK_TWO_WORD_STEMS = (
+    "Thanks, Looks Great.",
+    "Thanks, Great Work.",
+    "Thanks, Great Job.",
+    "Thanks, Perfect Timing.",
+)
+
 
 @pytest.mark.parametrize("inbound", _THANKS_TITLECASE_ACKS)
 def test_thanks_titlecase_acknowledgements_statement_not_pleasantry(
+    inbound: str,
+) -> None:
+    rows = source_obligations.fallback_obligations(inbound)
+    assert len(rows) == 1
+    assert rows[0]["kind"] == "statement"
+    assert rows[0]["obligation"] == "acknowledge"
+    assert rows[0]["kind"] != "pleasantry"
+
+
+@pytest.mark.parametrize("inbound,expected_reading", _THANK_YOU_COMMA_ACKS)
+def test_thank_you_comma_single_word_ack_semantic_reading(
+    inbound: str,
+    expected_reading: str,
+) -> None:
+    rows = source_obligations.fallback_obligations(inbound)
+    assert len(rows) == 1
+    assert rows[0]["semantic_reading"] == expected_reading
+    assert rows[0]["kind"] == "statement"
+    assert rows[0]["obligation"] == "acknowledge"
+
+
+@pytest.mark.parametrize("inbound", _THANKS_COMMA_ACK_TWO_WORD_STEMS)
+def test_thanks_comma_ack_two_word_stem_statement_not_pleasantry(
     inbound: str,
 ) -> None:
     rows = source_obligations.fallback_obligations(inbound)
