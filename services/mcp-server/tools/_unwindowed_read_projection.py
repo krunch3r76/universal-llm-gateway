@@ -41,11 +41,43 @@ def _is_markdown_file(request_path: str) -> bool:
     return lowered.endswith(".md") or lowered.endswith(".markdown")
 
 
-def _cap_utf8(text: str, max_bytes: int) -> str:
+def _cap_utf8(text: str, max_bytes: int) -> tuple[str, bool]:
     encoded = text.encode("utf-8")
     if len(encoded) <= max_bytes:
-        return text
-    return encoded[:max_bytes].decode("utf-8", errors="ignore")
+        return text, False
+    return encoded[:max_bytes].decode("utf-8", errors="ignore"), True
+
+
+def _lines_returned_in_window(window_text: str, *, single_line_partial: bool) -> int:
+    if not window_text or single_line_partial:
+        return 0
+    parts = window_text.split("\n")
+    if window_text.endswith("\n"):
+        return max(len(parts) - 1, 0)
+    return len(parts)
+
+
+def _cap_utf8_on_line_boundary(text: str, max_bytes: int) -> tuple[str, bool, bool]:
+    """Cap *text* to *max_bytes*, ending on a complete line when possible.
+
+    Returns ``(capped, byte_limited, single_line_partial)``. *single_line_partial*
+    is true when the cap falls on one long line with no interior newline.
+    """
+    encoded = text.encode("utf-8")
+    if len(encoded) <= max_bytes:
+        return text, False, False
+    partial = encoded[:max_bytes].decode("utf-8", errors="ignore")
+    last_nl = partial.rfind("\n")
+    if last_nl >= 0:
+        capped = partial[: last_nl + 1]
+        while capped and len(capped.encode("utf-8")) > max_bytes:
+            prev = capped.rfind("\n", 0, max(0, len(capped) - 1))
+            if prev < 0:
+                capped = ""
+                break
+            capped = capped[: prev + 1]
+        return capped, True, False
+    return partial, True, True
 
 
 def _normalize_section_rows(rows: list[dict[str, str | int]]) -> list[dict[str, Any]]:
@@ -82,11 +114,10 @@ def build_markdown_unwindowed_payload(
 
     first_path = sections[0]["path"]
     try:
-        first_body = _cap_utf8(
-            md_read_section(text, first_path), DEFAULT_UNWINDOWED_MAX_BYTES
-        )
+        first_raw = md_read_section(text, first_path)
     except SectionError:
-        first_body = _cap_utf8(text, DEFAULT_UNWINDOWED_MAX_BYTES)
+        first_raw = text
+    first_body, first_truncated = _cap_utf8(first_raw, DEFAULT_UNWINDOWED_MAX_BYTES)
 
     section_reads = [
         _md_read_call(request_path, str(row["path"]))
@@ -117,6 +148,9 @@ def build_markdown_unwindowed_payload(
         payload["section_reads"].insert(
             0, f'fs(op="md_list", path="{_escape_path_for_fs_call(request_path)}")'
         )
+    if first_truncated:
+        payload["truncated"] = True
+        payload["first_section_truncated"] = True
     return payload
 
 
@@ -127,9 +161,13 @@ def build_plain_unwindowed_payload(
 ) -> dict[str, Any]:
     """First line window plus the exact fs read call for the next window."""
     window_text, range_meta = apply_line_range(text, 0, DEFAULT_UNWINDOWED_MAX_LINES)
-    window_text = _cap_utf8(window_text, DEFAULT_UNWINDOWED_MAX_BYTES)
+    window_text, byte_limited, single_line_partial = _cap_utf8_on_line_boundary(
+        window_text, DEFAULT_UNWINDOWED_MAX_BYTES
+    )
     line_range = dict(range_meta.get("line_range") or {})
-    line_range["returned"] = len(window_text.split("\n")) if window_text else 0
+    line_range["returned"] = _lines_returned_in_window(
+        window_text, single_line_partial=single_line_partial
+    )
     range_meta = dict(range_meta)
     range_meta["line_range"] = line_range
 
@@ -140,7 +178,7 @@ def build_plain_unwindowed_payload(
     has_more = returned < total_lines or window_bytes < full_bytes
     next_offset: int | None = None
     if has_more:
-        next_offset = returned if returned < total_lines else max(returned - 1, 0)
+        next_offset = returned
 
     payload: dict[str, Any] = {
         "content": window_text,
@@ -153,12 +191,14 @@ def build_plain_unwindowed_payload(
             "Unwindowed read exceeded the default cap; use offset/limit for further lines."
         ),
     }
+    if has_more or byte_limited:
+        payload["truncated"] = True
     if has_more and next_offset is not None:
         payload["next_read"] = _read_call(
             request_path, next_offset, DEFAULT_UNWINDOWED_MAX_LINES
         )
         payload["next_offset"] = next_offset
-    if window_bytes < full_bytes and returned >= total_lines:
+    if single_line_partial or (window_bytes < full_bytes and returned >= total_lines):
         payload["byte_truncated"] = True
     return payload
 
@@ -186,16 +226,20 @@ def sidecar_section_listing(
         return {"error": str(exc), "sidecar_uri": sidecar_uri}
 
     sections = _normalize_section_rows(raw_sections)
-    if len(sections) > MAX_LISTED_SECTIONS:
+    listing_truncated = len(sections) > MAX_LISTED_SECTIONS
+    if listing_truncated:
         sections = sections[:MAX_LISTED_SECTIONS]
     section_reads = [
         _md_read_call(sidecar_uri, str(row["path"]))
         for row in sections
         if str(row.get("path", "")).strip()
     ]
-    return {
+    payload: dict[str, Any] = {
         "sidecar_uri": sidecar_uri,
         "total_chars": len(text),
         "sections": sections,
         "section_reads": section_reads,
     }
+    if listing_truncated:
+        payload["listing_truncated"] = True
+    return payload

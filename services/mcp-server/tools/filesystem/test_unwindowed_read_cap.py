@@ -17,7 +17,7 @@ def test_large_unwindowed_plain_read_is_addressable(tmp_path: Path) -> None:
     assert result["unwindowed_oversized"] is True
     assert result["kind"] == "line_window"
     assert result["total_lines"] == len(lines)
-    assert "truncated" not in result
+    assert result["truncated"] is True
     assert result["next_read"].startswith('fs(op="read", path="big.txt"')
     assert len(result["content"].encode("utf-8")) <= DEFAULT_UNWINDOWED_MAX_BYTES
 
@@ -64,7 +64,8 @@ def test_large_unwindowed_markdown_lists_sections(tmp_path: Path) -> None:
     result = read_file_result(rel, root=root)
     assert result["unwindowed_oversized"] is True
     assert result["kind"] == "markdown_sections"
-    assert "truncated" not in result
+    assert result["truncated"] is True
+    assert result.get("first_section_truncated") is True
     assert len(result["sections"]) >= 3
     assert result["first_section"]["heading"] in {"Doc", "[Preamble]"}
     assert result["section_reads"]
@@ -83,7 +84,7 @@ def test_minified_json_single_line_gets_next_read(tmp_path: Path) -> None:
     assert result["kind"] == "line_window"
     assert result.get("byte_truncated") is True
     assert "next_read" in result
-    assert "truncated" not in result
+    assert result["truncated"] is True
 
 
 def test_python_with_hash_comment_uses_line_window(tmp_path: Path) -> None:
@@ -94,6 +95,48 @@ def test_python_with_hash_comment_uses_line_window(tmp_path: Path) -> None:
     result = read_file_result("script.py", root=root)
     assert result["kind"] == "line_window"
     assert "markdown_sections" != result.get("kind")
+
+
+def _reassemble_line_windows(root: Path, rel: str) -> bytes:
+    chunks: list[str] = []
+    result = read_file_result(rel, root=root)
+    chunks.append(result.get("content") or "")
+    offset = result.get("next_offset")
+    while result.get("next_read") and offset is not None:
+        result = read_file_result(
+            rel, root=root, offset=int(offset), limit=DEFAULT_UNWINDOWED_MAX_LINES
+        )
+        chunks.append(result.get("content") or "")
+        if not result.get("truncated", False):
+            break
+        lr = result.get("line_range") or {}
+        offset = int(lr.get("offset", 0)) + int(lr.get("returned", 0))
+    return "".join(chunks).encode("utf-8")
+
+
+def test_multiline_byte_cap_ends_on_line_boundary_and_reassembles(
+    tmp_path: Path,
+) -> None:
+    """>32 KB and <800 lines: no silent mid-line cut; windows reassemble to source."""
+    root = tmp_path / "sandbox"
+    root.mkdir()
+    line_payload = "x" * 700
+    lines = [f"row-{i}-{line_payload}" for i in range(60)]
+    rel = "wide.txt"
+    (root / rel).write_text("\n".join(lines), encoding="utf-8")
+    source_bytes = (root / rel).read_bytes()
+    assert len(source_bytes) > DEFAULT_UNWINDOWED_MAX_BYTES
+    assert len(lines) < DEFAULT_UNWINDOWED_MAX_LINES
+
+    first = read_file_result(rel, root=root)
+    assert first["kind"] == "line_window"
+    assert first["truncated"] is True
+    assert "byte_truncated" not in first or first.get("byte_truncated") is not True
+    content = first["content"]
+    assert content
+    assert content.endswith("\n") or "\n" not in content[content.rfind("\n") + 1 :]
+
+    assert _reassemble_line_windows(root, rel) == source_bytes
 
 
 def test_under_threshold_markdown_unchanged(tmp_path: Path) -> None:

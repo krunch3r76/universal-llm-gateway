@@ -9,6 +9,7 @@ from typing import Any
 
 from implement_admission.closeout_helpers import cortex_files_root
 
+from tools._line_range import DEFAULT_UNWINDOWED_MAX_BYTES
 from tools._unwindowed_read_projection import sidecar_section_listing
 
 _COMPACT_MAX_BYTES = 1500
@@ -240,7 +241,13 @@ def _load_cortex_sidecar_text(sidecar_uri: str) -> str | None:
         return None
     if not path.is_file():
         return None
-    return path.read_text(encoding="utf-8", errors="replace")
+    try:
+        raw = path.read_bytes()
+    except OSError:
+        return None
+    if len(raw) > DEFAULT_UNWINDOWED_MAX_BYTES:
+        raw = raw[:DEFAULT_UNWINDOWED_MAX_BYTES]
+    return raw.decode("utf-8", errors="replace")
 
 
 def _attach_sidecar_listing(
