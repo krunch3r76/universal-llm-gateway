@@ -7,7 +7,10 @@ from unittest.mock import patch
 
 from tools._line_range import DEFAULT_UNWINDOWED_MAX_BYTES
 from tools._unwindowed_read_projection import MAX_LISTED_SECTIONS
-from tools.agent_bus._closeout_projection import project_turn_body
+from tools.agent_bus._closeout_projection import (
+    _load_cortex_sidecar_text,
+    project_turn_body,
+)
 from tools.agent_bus.fetch import _get_dispatch
 
 
@@ -68,7 +71,9 @@ def test_get_projection_full_omits_sidecar_listing(
     assert "sidecar_sections" not in out["turn"]
 
 
-def _sidecar_turn(tmp_path: Path, monkeypatch, sidecar_body: str, uri_suffix: str) -> dict:
+def _sidecar_turn(
+    tmp_path: Path, monkeypatch, sidecar_body: str, uri_suffix: str
+) -> dict:
     cortex_root = tmp_path / "cortex-files"
     cortex_root.mkdir()
     monkeypatch.setenv("CORTEX_FILES_ROOT", str(cortex_root))
@@ -114,7 +119,48 @@ def test_sidecar_load_cap_flags(tmp_path: Path, monkeypatch) -> None:
     projected = project_turn_body(turn, projection="compact")
     assert projected["sidecar_capped"] is True
     assert projected["sidecar_bytes_total"] > DEFAULT_UNWINDOWED_MAX_BYTES
-    assert projected["sidecar_bytes_returned"] == DEFAULT_UNWINDOWED_MAX_BYTES
+    assert projected["sidecar_bytes_returned"] <= DEFAULT_UNWINDOWED_MAX_BYTES
+    assert projected["cap_cut_mid_line"] is False
+
+
+def test_sidecar_load_cap_ends_at_previous_newline(tmp_path: Path, monkeypatch) -> None:
+    big = "x" * 40_000
+    body = f"# Doc\n\n## Only\n{big}\n"
+    turn = _sidecar_turn(tmp_path, monkeypatch, body, "sidecar-line-cut")
+    sidecar_uri = turn["sidecar_uri"]
+    text, meta = _load_cortex_sidecar_text(sidecar_uri)
+    assert meta["sidecar_capped"] is True
+    assert text is not None
+    assert text.endswith("\n")
+    assert not text.rstrip("\n").endswith("x")
+
+
+def test_sidecar_load_cap_avoids_utf8_replacement_on_straddle(
+    tmp_path: Path, monkeypatch
+) -> None:
+    cap = DEFAULT_UNWINDOWED_MAX_BYTES
+    emoji = "😀"
+    body = "a" * (cap - 2) + emoji + "tail\n"
+    turn = _sidecar_turn(tmp_path, monkeypatch, body, "sidecar-utf8")
+    text, meta = _load_cortex_sidecar_text(turn["sidecar_uri"])
+    assert meta["sidecar_capped"] is True
+    assert text is not None
+    assert "\ufffd" not in text
+
+
+@patch("tools.agent_bus._closeout_projection.sidecar_section_listing")
+def test_sidecar_listing_error_keeps_cap_flags(
+    mock_listing, tmp_path: Path, monkeypatch
+) -> None:
+    big = "x" * 40_000
+    body = f"# Doc\n\n## Only\n{big}\n"
+    turn = _sidecar_turn(tmp_path, monkeypatch, body, "sidecar-listing-err")
+    mock_listing.return_value = {"error": "listing failed"}
+    projected = project_turn_body(turn, projection="compact")
+    assert projected["sidecar_listing_error"] == "listing failed"
+    assert projected["sidecar_capped"] is True
+    assert projected["sidecar_bytes_total"] > DEFAULT_UNWINDOWED_MAX_BYTES
+    assert projected["sidecar_bytes_returned"] <= DEFAULT_UNWINDOWED_MAX_BYTES
 
 
 def test_sidecar_load_under_cap_reports_false(tmp_path: Path, monkeypatch) -> None:

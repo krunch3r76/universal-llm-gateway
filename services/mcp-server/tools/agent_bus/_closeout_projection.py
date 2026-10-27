@@ -231,6 +231,26 @@ def _compact_cdp_markdown(body: str) -> str:
     return out
 
 
+def _utf8_byte_prefix(data: bytes) -> bytes:
+    """Return the longest prefix of *data* that decodes as UTF-8 without replacement."""
+    while data:
+        try:
+            data.decode("utf-8")
+            return data
+        except UnicodeDecodeError:
+            data = data[:-1]
+    return b""
+
+
+def _cap_sidecar_bytes(raw: bytes) -> tuple[bytes, bool]:
+    """Cut *raw* at the last newline within the sidecar byte cap, else at a UTF-8-safe prefix."""
+    chunk = raw[:_SIDECAR_LOAD_MAX_BYTES]
+    last_nl = chunk.rfind(b"\n")
+    if last_nl >= 0:
+        return chunk[: last_nl + 1], False
+    return _utf8_byte_prefix(chunk), True
+
+
 def _load_cortex_sidecar_text(sidecar_uri: str) -> tuple[str | None, dict[str, Any]]:
     """Load sidecar bytes from cortex, capped at :data:`_SIDECAR_LOAD_MAX_BYTES`.
 
@@ -253,8 +273,9 @@ def _load_cortex_sidecar_text(sidecar_uri: str) -> tuple[str | None, dict[str, A
         return None, {}
     sidecar_bytes_total = len(raw)
     sidecar_capped = sidecar_bytes_total > _SIDECAR_LOAD_MAX_BYTES
+    cap_cut_mid_line = False
     if sidecar_capped:
-        raw = raw[:_SIDECAR_LOAD_MAX_BYTES]
+        raw, cap_cut_mid_line = _cap_sidecar_bytes(raw)
     sidecar_bytes_returned = len(raw)
     text = raw.decode("utf-8", errors="replace")
     load_meta: dict[str, Any] = {
@@ -262,6 +283,8 @@ def _load_cortex_sidecar_text(sidecar_uri: str) -> tuple[str | None, dict[str, A
         "sidecar_bytes_total": sidecar_bytes_total,
         "sidecar_bytes_returned": sidecar_bytes_returned,
     }
+    if sidecar_capped:
+        load_meta["cap_cut_mid_line"] = cap_cut_mid_line
     return text, load_meta
 
 
@@ -277,6 +300,8 @@ def _attach_sidecar_listing(
     if "error" in listing:
         projected = projected.copy()
         projected["sidecar_listing_error"] = listing["error"]
+        if load_meta:
+            projected.update(load_meta)
         return projected
     out = projected.copy()
     out["sidecar_sections"] = listing["sections"]
