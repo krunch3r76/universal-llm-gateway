@@ -317,3 +317,40 @@ def test_two_spills_one_thread_distinct_files(tmp_path, monkeypatch) -> None:
             )
         )
         assert len(spilled) == 2
+
+
+def test_auto_spill_sidecar_is_markdown_listable(tmp_path, monkeypatch) -> None:
+    """AC8 — spilled sidecar bodies stay ATX-sectioned for md_list consumers."""
+    from markdown_sections import list_sections
+
+    app, cortex_root = _app(tmp_path, monkeypatch)
+    body = "\n\n".join(
+        [
+            "## Executive envelope",
+            "brief " * 400,
+            "## Full payload",
+            "detail " * 1200,
+        ]
+    )
+    assert len(body) > MAX_TURN_BODY_CHARS
+    with TestClient(app) as client:
+        thread_id = _seed_thread(client, slug="listable-spill")
+        resp = client.post(
+            "/turns",
+            json={
+                "thread": thread_id,
+                "from": "cursor",
+                "to": "web",
+                "subject": "Listable spill",
+                "body": body,
+                "after_turn": 1,
+            },
+        )
+        assert resp.status_code == 201, resp.text
+        sidecar_uri = resp.json()["sidecar_uri"]
+        rel = sidecar_uri.removeprefix("cortex://")
+        sidecar_text = (cortex_root / rel).read_text(encoding="utf-8")
+        sections = list_sections(sidecar_text)
+        headings = {row["heading"] for row in sections}
+        assert "Executive envelope" in headings
+        assert "Full payload" in headings

@@ -10,11 +10,7 @@ from typing import Any
 from mcp_events import record
 
 from ._hashing import sha256_hex_of_file
-from ._line_range import (
-    apply_line_range,
-    apply_unwindowed_read_cap,
-    exceeds_unwindowed_read_cap,
-)
+from ._line_range import apply_line_range, exceeds_unwindowed_read_cap
 from ._operating_state_serve import apply_operating_state_serve
 from ._pdf_read import (
     PDF_LAYOUT_MAX_BYTES,
@@ -28,6 +24,7 @@ from ._pdf_read import (
     extract_pdf_plaintext_with_timeout,
     read_pdf,
 )
+from ._unwindowed_read_projection import build_unwindowed_oversized_payload
 
 # Method tags for search text loading (load_searchable_text). PDF routes reuse
 # PDF_METHOD_SIDECAR; the remaining tags are search-specific.
@@ -392,9 +389,12 @@ def read_file_result(
                 "Empty content ≠ missing file."
             )
     elif exceeds_unwindowed_read_cap(content):
-        content, cap_meta = apply_unwindowed_read_cap(content)
-        result["content"] = content
-        result.update(cap_meta)
+        projected = build_unwindowed_oversized_payload(
+            request_path=path,
+            text=content,
+        )
+        result.update(projected)
+        result["path"] = path
     elif content == "":
         result["observation"] = (
             "Read succeeded; file decoded to empty text (zero-byte or whitespace-only content)."
