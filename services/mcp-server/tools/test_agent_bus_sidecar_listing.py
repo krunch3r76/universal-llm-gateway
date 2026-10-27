@@ -42,7 +42,9 @@ def test_get_default_includes_sidecar_section_listing(
 
 
 @patch("tools.agent_bus.fetch.relay")
-def test_get_projection_full_omits_sidecar_listing(relay, tmp_path: Path, monkeypatch) -> None:
+def test_get_projection_full_omits_sidecar_listing(
+    relay, tmp_path: Path, monkeypatch
+) -> None:
     cortex_root = tmp_path / "cortex-files"
     cortex_root.mkdir()
     monkeypatch.setenv("CORTEX_FILES_ROOT", str(cortex_root))

@@ -94,7 +94,11 @@ def _hard_cap_json_envelope(envelope: dict[str, Any]) -> str:
         if not isinstance(value, str) or not value:
             continue
         text = value
-        while text and _body_bytes(json.dumps(env, indent=2, sort_keys=True)) >= _COMPACT_MAX_BYTES:
+        while (
+            text
+            and _body_bytes(json.dumps(env, indent=2, sort_keys=True))
+            >= _COMPACT_MAX_BYTES
+        ):
             next_len = len(text) // 2
             if next_len >= len(text):
                 env.pop(key, None)
@@ -130,13 +134,22 @@ def _fit_json_envelope(envelope: dict[str, Any]) -> str:
                 envelope[summary_key] = excerpt
                 continue
         envelope.pop("verification", None)
-        if _body_bytes(json.dumps(envelope, indent=2, sort_keys=True)) < _COMPACT_MAX_BYTES:
+        if (
+            _body_bytes(json.dumps(envelope, indent=2, sort_keys=True))
+            < _COMPACT_MAX_BYTES
+        ):
             return json.dumps(envelope, indent=2, sort_keys=True)
         envelope.pop("evidence_uris", None)
-        if _body_bytes(json.dumps(envelope, indent=2, sort_keys=True)) < _COMPACT_MAX_BYTES:
+        if (
+            _body_bytes(json.dumps(envelope, indent=2, sort_keys=True))
+            < _COMPACT_MAX_BYTES
+        ):
             return json.dumps(envelope, indent=2, sort_keys=True)
         envelope.pop(summary_key, None)
-        if _body_bytes(json.dumps(envelope, indent=2, sort_keys=True)) < _COMPACT_MAX_BYTES:
+        if (
+            _body_bytes(json.dumps(envelope, indent=2, sort_keys=True))
+            < _COMPACT_MAX_BYTES
+        ):
             return json.dumps(envelope, indent=2, sort_keys=True)
         return _hard_cap_json_envelope(envelope)
 
@@ -145,10 +158,14 @@ def _compact_json_closeout(body: str) -> str:
     try:
         data = json.loads(body)
     except json.JSONDecodeError:
-        raw = body.encode("utf-8")[:_COMPACT_BUDGET_BYTES].decode("utf-8", errors="ignore")
+        raw = body.encode("utf-8")[:_COMPACT_BUDGET_BYTES].decode(
+            "utf-8", errors="ignore"
+        )
         return raw
     if not isinstance(data, dict):
-        raw = body.encode("utf-8")[:_COMPACT_BUDGET_BYTES].decode("utf-8", errors="ignore")
+        raw = body.encode("utf-8")[:_COMPACT_BUDGET_BYTES].decode(
+            "utf-8", errors="ignore"
+        )
         return raw
     summary = data.get("summary") or data.get("work_outcome") or ""
     if isinstance(summary, dict):
@@ -226,7 +243,9 @@ def _load_cortex_sidecar_text(sidecar_uri: str) -> str | None:
     return path.read_text(encoding="utf-8", errors="replace")
 
 
-def _attach_sidecar_listing(projected: dict[str, Any], sidecar_uri: str) -> dict[str, Any]:
+def _attach_sidecar_listing(
+    projected: dict[str, Any], sidecar_uri: str
+) -> dict[str, Any]:
     text = _load_cortex_sidecar_text(sidecar_uri)
     if text is None:
         projected = projected.copy()

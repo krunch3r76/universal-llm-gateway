@@ -74,6 +74,28 @@ def test_large_unwindowed_markdown_lists_sections(tmp_path: Path) -> None:
     )
 
 
+def test_minified_json_single_line_gets_next_read(tmp_path: Path) -> None:
+    root = tmp_path / "sandbox"
+    root.mkdir()
+    blob = "{" + ("x" * (DEFAULT_UNWINDOWED_MAX_BYTES + 4096)) + "}"
+    (root / "data.json").write_text(blob, encoding="utf-8")
+    result = read_file_result("data.json", root=root)
+    assert result["kind"] == "line_window"
+    assert result.get("byte_truncated") is True
+    assert "next_read" in result
+    assert "truncated" not in result
+
+
+def test_python_with_hash_comment_uses_line_window(tmp_path: Path) -> None:
+    root = tmp_path / "sandbox"
+    root.mkdir()
+    lines = ["# comment\n" + ("pass\n" * 900)]
+    (root / "script.py").write_text("".join(lines), encoding="utf-8")
+    result = read_file_result("script.py", root=root)
+    assert result["kind"] == "line_window"
+    assert "markdown_sections" != result.get("kind")
+
+
 def test_under_threshold_markdown_unchanged(tmp_path: Path) -> None:
     root = tmp_path / "sandbox"
     root.mkdir()

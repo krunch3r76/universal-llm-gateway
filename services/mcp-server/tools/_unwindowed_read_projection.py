@@ -18,6 +18,8 @@ from ._line_range import (
     apply_line_range,
 )
 
+MAX_LISTED_SECTIONS = 200
+
 
 def _escape_path_for_fs_call(path: str) -> str:
     return path.replace("\\", "\\\\").replace('"', '\\"')
@@ -34,16 +36,16 @@ def _read_call(path: str, offset: int, limit: int) -> str:
     return f'fs(op="read", path="{escaped_path}", offset={offset}, limit={limit})'
 
 
-def _is_markdown_file(request_path: str, text: str) -> bool:
-    if request_path.lower().endswith(".md"):
-        return True
-    if not text.strip():
-        return False
-    try:
-        sections = md_list_sections(text)
-    except SectionError:
-        return False
-    return any(int(row.get("level", 0)) >= 1 for row in sections)
+def _is_markdown_file(request_path: str) -> bool:
+    lowered = request_path.lower()
+    return lowered.endswith(".md") or lowered.endswith(".markdown")
+
+
+def _cap_utf8(text: str, max_bytes: int) -> str:
+    encoded = text.encode("utf-8")
+    if len(encoded) <= max_bytes:
+        return text
+    return encoded[:max_bytes].decode("utf-8", errors="ignore")
 
 
 def _normalize_section_rows(rows: list[dict[str, str | int]]) -> list[dict[str, Any]]:
@@ -67,18 +69,24 @@ def build_markdown_unwindowed_payload(
     """Listing, first section body, and md_read calls — no truncated file body."""
     try:
         raw_sections = md_list_sections(text)
-    except SectionError as exc:
+    except SectionError:
         return build_plain_unwindowed_payload(request_path=request_path, text=text)
 
     sections = _normalize_section_rows(raw_sections)
     if not sections:
         return build_plain_unwindowed_payload(request_path=request_path, text=text)
 
+    sections_truncated = len(sections) > MAX_LISTED_SECTIONS
+    if sections_truncated:
+        sections = sections[:MAX_LISTED_SECTIONS]
+
     first_path = sections[0]["path"]
     try:
-        first_body = md_read_section(text, first_path)
+        first_body = _cap_utf8(
+            md_read_section(text, first_path), DEFAULT_UNWINDOWED_MAX_BYTES
+        )
     except SectionError:
-        first_body = text[: min(len(text), DEFAULT_UNWINDOWED_MAX_BYTES)]
+        first_body = _cap_utf8(text, DEFAULT_UNWINDOWED_MAX_BYTES)
 
     section_reads = [
         _md_read_call(request_path, str(row["path"]))
@@ -104,6 +112,11 @@ def build_markdown_unwindowed_payload(
             "Use section_reads (or fs md_list / md_read) for remaining sections."
         ),
     }
+    if sections_truncated:
+        payload["sections_truncated"] = True
+        payload["section_reads"].insert(
+            0, f'fs(op="md_list", path="{_escape_path_for_fs_call(request_path)}")'
+        )
     return payload
 
 
@@ -114,37 +127,39 @@ def build_plain_unwindowed_payload(
 ) -> dict[str, Any]:
     """First line window plus the exact fs read call for the next window."""
     window_text, range_meta = apply_line_range(text, 0, DEFAULT_UNWINDOWED_MAX_LINES)
-    encoded = window_text.encode("utf-8")
-    if len(encoded) > DEFAULT_UNWINDOWED_MAX_BYTES:
-        window_text = encoded[:DEFAULT_UNWINDOWED_MAX_BYTES].decode("utf-8", errors="ignore")
-        line_range = dict(range_meta.get("line_range") or {})
-        line_range["returned"] = len(window_text.split("\n")) if window_text else 0
-        range_meta = dict(range_meta)
-        range_meta["line_range"] = line_range
+    window_text = _cap_utf8(window_text, DEFAULT_UNWINDOWED_MAX_BYTES)
+    line_range = dict(range_meta.get("line_range") or {})
+    line_range["returned"] = len(window_text.split("\n")) if window_text else 0
+    range_meta = dict(range_meta)
+    range_meta["line_range"] = line_range
 
     total_lines = len(text.split("\n"))
-    returned = int((range_meta.get("line_range") or {}).get("returned") or 0)
-    next_offset = returned if returned < total_lines else None
-    next_read = (
-        _read_call(request_path, next_offset, DEFAULT_UNWINDOWED_MAX_LINES)
-        if next_offset is not None
-        else None
-    )
+    returned = int(line_range.get("returned") or 0)
+    window_bytes = len(window_text.encode("utf-8"))
+    full_bytes = len(text.encode("utf-8"))
+    has_more = returned < total_lines or window_bytes < full_bytes
+    next_offset: int | None = None
+    if has_more:
+        next_offset = returned if returned < total_lines else max(returned - 1, 0)
 
     payload: dict[str, Any] = {
         "content": window_text,
         "unwindowed_oversized": True,
         "kind": "line_window",
         "total_lines": total_lines,
-        "line_range": range_meta.get("line_range"),
+        "line_range": line_range,
         "prefer_windowed_reads": True,
         "_next": (
             "Unwindowed read exceeded the default cap; use offset/limit for further lines."
         ),
     }
-    if next_read:
-        payload["next_read"] = next_read
+    if has_more and next_offset is not None:
+        payload["next_read"] = _read_call(
+            request_path, next_offset, DEFAULT_UNWINDOWED_MAX_LINES
+        )
         payload["next_offset"] = next_offset
+    if window_bytes < full_bytes and returned >= total_lines:
+        payload["byte_truncated"] = True
     return payload
 
 
@@ -153,8 +168,8 @@ def build_unwindowed_oversized_payload(
     request_path: str,
     text: str,
 ) -> dict[str, Any]:
-    """Route markdown-shaped files to section listing; otherwise line windows."""
-    if _is_markdown_file(request_path, text):
+    """Route markdown file extensions to section listing; otherwise line windows."""
+    if _is_markdown_file(request_path):
         return build_markdown_unwindowed_payload(request_path=request_path, text=text)
     return build_plain_unwindowed_payload(request_path=request_path, text=text)
 
@@ -171,6 +186,8 @@ def sidecar_section_listing(
         return {"error": str(exc), "sidecar_uri": sidecar_uri}
 
     sections = _normalize_section_rows(raw_sections)
+    if len(sections) > MAX_LISTED_SECTIONS:
+        sections = sections[:MAX_LISTED_SECTIONS]
     section_reads = [
         _md_read_call(sidecar_uri, str(row["path"]))
         for row in sections

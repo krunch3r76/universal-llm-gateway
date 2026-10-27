@@ -11,7 +11,6 @@ from mcp_events import record
 
 from ._hashing import sha256_hex_of_file
 from ._line_range import apply_line_range, exceeds_unwindowed_read_cap
-from ._unwindowed_read_projection import build_unwindowed_oversized_payload
 from ._operating_state_serve import apply_operating_state_serve
 from ._pdf_read import (
     PDF_LAYOUT_MAX_BYTES,
@@ -25,6 +24,7 @@ from ._pdf_read import (
     extract_pdf_plaintext_with_timeout,
     read_pdf,
 )
+from ._unwindowed_read_projection import build_unwindowed_oversized_payload
 
 # Method tags for search text loading (load_searchable_text). PDF routes reuse
 # PDF_METHOD_SIDECAR; the remaining tags are search-specific.
