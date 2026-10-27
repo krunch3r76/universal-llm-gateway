@@ -263,15 +263,29 @@ export function fixtureMcpCall(
       const clipped = closeout.raw.split("\n").slice(0, limit).join("\n");
       return { content: clipped };
     }
-    if (op === "md_rewrite_section" && fsPath.includes("impresario-scores/")) {
+    if (
+      (op === "write" || op === "md_rewrite_section") &&
+      fsPath.includes("impresario-scores/")
+    ) {
       const workKey =
         fsPath.split("impresario-scores/").pop()?.replace(".md", "") ?? "";
+      if (op === "write") {
+        if (process.env.ULG_FIXTURE_DENY_SCORE_WRITE === "1") {
+          return { ok: false, reason: "fixture_write_denied" };
+        }
+        const content = String(args.content ?? "");
+        fixtureScoreOverrides.set(workKey, content);
+        return { ok: true, written: true };
+      }
       const section = String(args.section ?? "");
       const content = String(args.content ?? "");
       const prior = fixtureScoreSnapshot(workKey);
       const replaced = replaceScoreSectionBody(prior, section, content);
       if (!replaced.ok) {
-        return replaced;
+        const body = content.endsWith("\n") ? content : `${content}\n`;
+        const merged = `${prior.trimEnd()}\n\n## ${section}\n${body}`;
+        fixtureScoreOverrides.set(workKey, merged);
+        return { ok: true, rewritten: true, section_created: true };
       }
       fixtureScoreOverrides.set(workKey, replaced.text);
       return { ok: true, rewritten: true };

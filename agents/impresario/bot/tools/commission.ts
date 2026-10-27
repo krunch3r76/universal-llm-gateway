@@ -11,58 +11,17 @@ import {
   shouldLiveDispatch,
 } from "../lib/dispatch.js";
 import {
-  formatStageSection,
-  formatWorkerSection,
-  parseStageSection,
-  resolveResumeFromScore,
-  stageAfterCommission,
+  persistCommissionScoreMemory,
+  validateCommissionResumeFields,
 } from "../lib/score-memory.js";
 import { readScoreMarkdown } from "../lib/score.js";
-import { callFs, resolveScoreUri } from "../lib/ulg.js";
 import { WORK_KEY_ZOD_REGEX } from "../lib/work-key.js";
 
 const contractEnum = z.enum(["freeform", "conductor"]);
 
-async function persistCommissionScoreMemory(
-  ctx: Parameters<typeof callFs>[0],
-  workKey: string,
-  worker: {
-    dispatch_id: string;
-    thread_id: string;
-    execution_id: string;
-    state: string;
-  },
-): Promise<void> {
-  const resolved = resolveScoreUri(workKey);
-  if (!resolved.ok || ctx.session.purpose === "eval") {
-    return;
-  }
-  const path = resolved.uri;
-  const existing = (await callFs(ctx, {
-    op: "read",
-    path,
-    limit: 500,
-  })) as { content?: string };
-  const prior = existing.content ?? "";
-  const now = new Date().toISOString();
-  const stage = stageAfterCommission(parseStageSection(prior), now);
-  await callFs(ctx, {
-    op: "md_rewrite_section",
-    path,
-    section: "worker",
-    content: formatWorkerSection(worker),
-  });
-  await callFs(ctx, {
-    op: "md_rewrite_section",
-    path,
-    section: "stage",
-    content: formatStageSection(stage),
-  });
-}
-
 export default defineTool({
   description:
-    "Commission a cursor-sdk lane-B worker for a work_key. Call after ledger_read when starting new dispatch work. Returns dry-run dispatch metadata when live steer is off, or dispatch ids when live. May return stop ROW_PINNED when the ledger shows an in-flight row for the same work_key. When the score worker is terminal and stage verdict is REQUEST_CHANGES, passes resume_of and reuse_thread automatically.",
+    "Commission a cursor-sdk lane-B worker for a work_key. Call after ledger_read when starting new dispatch work. Returns dry-run dispatch metadata when live steer is off, or dispatch ids when live. May return stop ROW_PINNED when the ledger shows an in-flight row for the same work_key. When the score worker is terminal and stage verdict is REQUEST_CHANGES, passes resume_of and reuse_thread automatically. Rejects nest_under with resume_of and resume_of without reuse_thread.",
   inputSchema: z.object({
     work_key: z.string().regex(WORK_KEY_ZOD_REGEX),
     contract: contractEnum,
@@ -92,17 +51,17 @@ export default defineTool({
     }
 
     const scoreText = await readScoreMarkdown(ctx.host, input.work_key, "");
-    let resume_of = input.resume_of;
-    let reuse_thread = input.reuse_thread;
-    const resume = resolveResumeFromScore(scoreText);
-    if (resume.ok) {
-      if (!resume_of) {
-        resume_of = resume.dispatch_id;
-      }
-      if (!reuse_thread) {
-        reuse_thread = resume.thread_id;
-      }
+    const resumeCheck = validateCommissionResumeFields({
+      nest_under: input.nest_under,
+      resume_of: input.resume_of,
+      reuse_thread: input.reuse_thread,
+      scoreText,
+    });
+    if (!resumeCheck.ok) {
+      return { ok: false, reason: resumeCheck.reason };
     }
+    const resume_of = resumeCheck.resume_of;
+    const reuse_thread = resumeCheck.reuse_thread;
 
     const prompt = renderCommissionPrompt(input);
     const rendered_prompt_sha256 = promptSha256(prompt);
@@ -117,21 +76,33 @@ export default defineTool({
     };
 
     if (!shouldLiveDispatch(ctx)) {
-      let dispatched: Record<string, unknown> | undefined;
       if (process.env.ULG_FIXTURE_DIR) {
-        dispatched = (await commissionGenerate(ctx, generateArgs)) as Record<
+        const dispatched = (await commissionGenerate(ctx, generateArgs)) as Record<
           string,
           unknown
         >;
         if (dispatched?.dispatch_id) {
-          await persistCommissionScoreMemory(ctx, input.work_key, {
-            dispatch_id: String(dispatched.dispatch_id),
+          const dispatch_id = String(dispatched.dispatch_id);
+          const persist = await persistCommissionScoreMemory(ctx, input.work_key, {
+            dispatch_id,
             thread_id: String(
               dispatched.thread_id ?? reuse_thread ?? "worker-fixture",
             ),
             execution_id: String(dispatched.execution_id ?? ""),
             state: "running",
           });
+          if (!persist.ok) {
+            return {
+              would_dispatch: true,
+              rendered_prompt_sha256,
+              posted: false,
+              dispatch_id,
+              score_persist_ok: false,
+              score_persist_reason: persist.reason,
+              resume_of: resume_of ?? null,
+              reuse_thread: reuse_thread ?? null,
+            };
+          }
         }
       }
       return {
@@ -148,19 +119,33 @@ export default defineTool({
       unknown
     >;
     const dispatch_id = String(dispatched.dispatch_id ?? "");
-    if (dispatch_id) {
-      await persistCommissionScoreMemory(ctx, input.work_key, {
-        dispatch_id,
-        thread_id: String(dispatched.thread_id ?? reuse_thread ?? ""),
-        execution_id: String(dispatched.execution_id ?? ""),
-        state: "running",
-      });
+    if (!dispatch_id) {
+      return {
+        ok: false,
+        reason: "dispatch_id_missing",
+        rendered_prompt_sha256,
+      };
     }
+
+    const persist = await persistCommissionScoreMemory(ctx, input.work_key, {
+      dispatch_id,
+      thread_id: String(dispatched.thread_id ?? reuse_thread ?? ""),
+      execution_id: String(dispatched.execution_id ?? ""),
+      state: "running",
+    });
+
     return {
       ok: true,
       posted: true,
       rendered_prompt_sha256,
       dispatch_id,
+      score_persist_ok: persist.ok,
+      ...(persist.ok
+        ? {}
+        : {
+            score_persist_reason: persist.reason,
+            score_persist_detail: persist.detail,
+          }),
       resume_of: resume_of ?? null,
       reuse_thread: reuse_thread ?? null,
     };

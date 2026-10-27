@@ -1,4 +1,11 @@
-import { replaceScoreSectionBody } from "./score-guards.js";
+import {
+  replaceScoreSectionBody,
+  resolveScoreUri,
+  utf8ByteLength,
+  SCORE_WRITE_BYTE_CAP,
+} from "./score-guards.js";
+import { callFs } from "./ulg.js";
+import type { ToolCtx } from "./ulg.js";
 
 const TERMINAL_WORKER_STATES = new Set([
   "completed",
@@ -23,6 +30,19 @@ export type StageRecord = {
   next_commission_at?: string;
   composer_cost?: string;
 };
+
+export type PersistScoreResult =
+  | { ok: true }
+  | {
+      ok: false;
+      reason:
+        | "work_key_invalid"
+        | "score_too_large"
+        | "score_write_failed"
+        | "section_not_found";
+      detail?: string;
+      bytes?: number;
+    };
 
 export function parseKeyValueSection(body: string): Record<string, string> {
   const out: Record<string, string> = {};
@@ -196,4 +216,180 @@ export function stageAfterVerdict(
   verdict: string,
 ): StageRecord {
   return { ...prior, verdict_at: at, verdict };
+}
+
+export type CommissionResumeValidation =
+  | { ok: true; resume_of?: string; reuse_thread?: string }
+  | { ok: false; reason: string };
+
+export function validateCommissionResumeFields(input: {
+  nest_under?: string;
+  resume_of?: string;
+  reuse_thread?: string;
+  scoreText: string;
+}): CommissionResumeValidation {
+  const resume = resolveResumeFromScore(input.scoreText);
+  let resume_of = input.resume_of;
+  let reuse_thread = input.reuse_thread;
+
+  if (resume.ok) {
+    if (!resume_of) {
+      resume_of = resume.dispatch_id;
+    }
+    if (!reuse_thread) {
+      reuse_thread = resume.thread_id;
+    }
+  }
+
+  if (input.nest_under && resume_of) {
+    return { ok: false, reason: "nest_under_xor_resume_of" };
+  }
+
+  if (resume_of && !reuse_thread) {
+    return { ok: false, reason: "reuse_thread_required" };
+  }
+
+  if (resume_of && reuse_thread && resume.ok) {
+    if (resume_of !== resume.dispatch_id) {
+      return { ok: false, reason: "resume_of_mismatch" };
+    }
+    if (reuse_thread !== resume.thread_id) {
+      return { ok: false, reason: "reuse_thread_mismatch" };
+    }
+  } else if (resume_of && reuse_thread) {
+    const worker = parseWorkerSection(input.scoreText);
+    if (
+      worker.dispatch_id === resume_of &&
+      worker.thread_id &&
+      reuse_thread !== worker.thread_id
+    ) {
+      return { ok: false, reason: "reuse_thread_mismatch" };
+    }
+  }
+
+  return { ok: true, resume_of, reuse_thread };
+}
+
+async function readScoreContent(
+  ctx: ToolCtx,
+  workKey: string,
+): Promise<string | PersistScoreResult> {
+  const resolved = resolveScoreUri(workKey);
+  if (!resolved.ok) {
+    return { ok: false, reason: "work_key_invalid" };
+  }
+  const existing = (await callFs(ctx, {
+    op: "read",
+    path: resolved.uri,
+    limit: 500,
+  })) as { content?: string };
+  return existing.content ?? "";
+}
+
+export async function persistScoreMemory(
+  ctx: ToolCtx,
+  workKey: string,
+  updates: { worker?: WorkerRecord; stage?: StageRecord },
+): Promise<PersistScoreResult> {
+  if (ctx.session.purpose === "eval") {
+    return { ok: true };
+  }
+  const resolved = resolveScoreUri(workKey);
+  if (!resolved.ok) {
+    return { ok: false, reason: "work_key_invalid" };
+  }
+  const path = resolved.uri;
+  const priorRaw = await readScoreContent(ctx, workKey);
+  if (typeof priorRaw !== "string") {
+    return priorRaw;
+  }
+  const merged = mergeScoreSections(priorRaw, updates);
+  const bytes = utf8ByteLength(merged);
+  if (bytes > SCORE_WRITE_BYTE_CAP) {
+    return { ok: false, reason: "score_too_large", bytes };
+  }
+
+  const writeFull = (await callFs(ctx, {
+    op: "write",
+    path,
+    content: merged,
+  })) as { ok?: boolean; reason?: string; error?: string };
+  if (writeFull.ok === false || writeFull.reason || writeFull.error) {
+    return {
+      ok: false,
+      reason: "score_write_failed",
+      detail: String(writeFull.reason ?? writeFull.error ?? "write refused"),
+    };
+  }
+  return { ok: true };
+}
+
+export async function persistCommissionScoreMemory(
+  ctx: ToolCtx,
+  workKey: string,
+  worker: {
+    dispatch_id: string;
+    thread_id: string;
+    execution_id: string;
+    state: string;
+  },
+): Promise<PersistScoreResult> {
+  const now = new Date().toISOString();
+  const priorRaw = await readScoreContent(ctx, workKey);
+  if (typeof priorRaw !== "string") {
+    return priorRaw;
+  }
+  const stage = stageAfterCommission(parseStageSection(priorRaw), now);
+  return persistScoreMemory(ctx, workKey, { worker, stage });
+}
+
+export async function harvestCloseoutToScore(
+  ctx: ToolCtx,
+  workKey: string,
+  dispatchId: string,
+): Promise<PersistScoreResult & { harvested?: boolean }> {
+  if (ctx.session.purpose === "eval") {
+    return { ok: true, harvested: false };
+  }
+  const now = new Date().toISOString();
+  const priorRaw = await readScoreContent(ctx, workKey);
+  if (typeof priorRaw !== "string") {
+    return priorRaw;
+  }
+  const worker = parseWorkerSection(priorRaw);
+  const stage = stageAfterCloseout(parseStageSection(priorRaw), now);
+  const workerPatch: WorkerRecord = {
+    ...worker,
+    dispatch_id: worker.dispatch_id ?? dispatchId,
+    state: "completed",
+  };
+  const result = await persistScoreMemory(ctx, workKey, {
+    worker: workerPatch,
+    stage,
+  });
+  return { ...result, harvested: result.ok };
+}
+
+export async function harvestVerdictToScore(
+  ctx: ToolCtx,
+  workKey: string,
+  verdict: string,
+): Promise<PersistScoreResult & { harvested?: boolean }> {
+  if (ctx.session.purpose === "eval") {
+    return { ok: true, harvested: false };
+  }
+  const normalized = verdict.trim().toUpperCase();
+  const verdictToken = normalized.includes("REQUEST_CHANGES")
+    ? "REQUEST_CHANGES"
+    : normalized.includes("APPROVE")
+      ? "APPROVE"
+      : verdict.trim();
+  const now = new Date().toISOString();
+  const priorRaw = await readScoreContent(ctx, workKey);
+  if (typeof priorRaw !== "string") {
+    return priorRaw;
+  }
+  const stage = stageAfterVerdict(parseStageSection(priorRaw), now, verdictToken);
+  const result = await persistScoreMemory(ctx, workKey, { stage });
+  return { ...result, harvested: result.ok };
 }
