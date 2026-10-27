@@ -41,8 +41,13 @@ _NON_SIGNATURE_TOKENS = frozenset({
     "jan", "feb", "mar", "apr", "jun", "jul", "aug", "sep", "sept", "oct", "nov", "dec",
     "yes", "no", "ok", "okay",
 })
+_NAME_WORD = r"[A-Z][\w'.-]*"
+_NAME_ONE_OR_TWO = rf"{_NAME_WORD}(?:[ \t]+{_NAME_WORD})?"
 _TRAILING_SIGNATURE = re.compile(
-    r"(?:^|\s)[—–-]+\s*([A-Z][\w'.-]*)\s*$",
+    rf"(?:^|\s)[—–-]+\s*({_NAME_ONE_OR_TWO}|"
+    rf"Thanks?,?\s*{_NAME_WORD}|"
+    rf"{_NAME_WORD},?\s*(?:thank\s+you|thanks?)[!.]?)\s*$",
+    re.IGNORECASE,
 )
 _COURTESY_TOKENS = re.compile(
     r"\b(?:"
@@ -89,18 +94,109 @@ def _format_block(obligations: list[dict[str, Any]]) -> str:
     return "\n".join(lines)
 
 
-_SIGNATURE_ONLY = re.compile(r"^[—–-]+\s*([A-Z][\w'.-]*)\s*$")
+_SIGNATURE_ONLY = re.compile(
+    rf"^[—–-]+\s*({_NAME_ONE_OR_TWO}|"
+    rf"Thanks?,?\s*{_NAME_WORD}|"
+    rf"{_NAME_WORD},?\s*(?:thank\s+you|thanks?)[!.]?)\s*$",
+    re.IGNORECASE,
+)
+_COMMA_COURTESY_SIGNOFF = re.compile(
+    rf"^(?:thanks?|thank\s+you)\s*,?\s*({_NAME_ONE_OR_TWO})[!.]?\s*$",
+    re.IGNORECASE,
+)
+
+
+def _name_tokens(text: str) -> list[str]:
+    """Split a 1–2 word capitalized name span into normalized lookup tokens."""
+    return [
+        part.rstrip("'.-").lower()
+        for part in re.split(r"[ \t]+", text.strip())
+        if part.strip()
+    ]
+
+
+def _name_tokens_are_signature(text: str) -> bool:
+    """True when every token in ``text`` is a plausible sign-off name, not temporal noise."""
+    tokens = _name_tokens(text)
+    if not tokens or len(tokens) > 2:
+        return False
+    return all(token not in _NON_SIGNATURE_TOKENS for token in tokens)
+
+
+def _signature_fragment_is_name(fragment: str) -> bool:
+    """True when a dash-signature capture group is a name or courtesy+name tail."""
+    text = fragment.strip()
+    if re.match(r"(?i)^thanks?\s*,\s*", text):
+        name_part = re.sub(r"(?i)^thanks?\s*,\s*", "", text).strip()
+        return _name_tokens_are_signature(name_part)
+    if re.match(r"(?i)^thank\s+you\s*,\s*", text):
+        name_part = re.sub(r"(?i)^thank\s+you\s*,\s*", "", text).strip()
+        return _name_tokens_are_signature(name_part)
+    if re.search(r"(?i)(?:thank\s+you|thanks?)[!.]?\s*$", text):
+        name_part = re.sub(
+            r"(?i),?\s*(?:thank\s+you|thanks?)[!.]?\s*$", "", text
+        ).strip()
+        return _name_tokens_are_signature(name_part)
+    return _name_tokens_are_signature(text)
 
 
 def _strip_trailing_signature(text: str) -> str:
-    """Remove a trailing dash name-signature when the token is not temporal/urgency."""
+    """Remove a trailing dash name-signature when tokens are not temporal/urgency."""
     match = _TRAILING_SIGNATURE.search(text)
     if not match:
         return text
-    token = match.group(1).rstrip("'.-").lower()
-    if token in _NON_SIGNATURE_TOKENS:
+    if not _signature_fragment_is_name(match.group(1)):
         return text
     return text[: match.start()].rstrip()
+
+
+def _is_comma_courtesy_name_tail(rest: str) -> bool:
+    """True when ``rest`` is only a 1–2 word name with optional terminal punctuation."""
+    stripped = rest.strip().rstrip(".!")
+    return bool(stripped) and _name_tokens_are_signature(stripped)
+
+
+def _is_comma_courtesy_signoff(span: str) -> bool:
+    """True when ``span`` is solely ``Thanks, Name`` / ``Thank you, Name`` (one line)."""
+    normalized = " ".join(span.split())
+    return _COMMA_COURTESY_SIGNOFF.match(normalized) is not None
+
+
+def _is_dash_courtesy_signoff(span: str) -> bool:
+    """True when ``span`` is a dash lead-in followed only by courtesy tokens."""
+    match = re.match(r"^[—–-]+\s*(.+)$", span.strip())
+    if not match:
+        return False
+    remainder = match.group(1).strip()
+    if _signature_fragment_is_name(remainder):
+        return False
+    text = _COURTESY_TOKENS.sub("", remainder).strip()
+    text = _EDGE_PUNCT.sub("", text).strip()
+    return not text
+
+
+def _is_thanks_comma_substantive(span: str) -> bool:
+    """True when ``Thanks, …`` opens a clause, not a name-only courtesy sign-off."""
+    text = " ".join(span.split())
+    for prefix in (r"thanks?\s*,?\s*", r"thank\s+you\s*,?\s*"):
+        match = re.match(prefix, text, re.IGNORECASE)
+        if match:
+            rest = text[match.end() :].strip()
+            return bool(rest) and not _is_comma_courtesy_name_tail(rest)
+    return False
+
+
+def _fragment_is_signature_only(fragment: str) -> bool:
+    """True when a post-``?`` tail fragment is only dash-signature or courtesy+name."""
+    frag = fragment.strip()
+    if not frag:
+        return True
+    if _SIGNATURE_ONLY.match(frag):
+        return True
+    dash = re.match(r"^[—–-]+\s*(.+)$", frag)
+    if dash and _SIGNATURE_ONLY.match(f"- {dash.group(1).strip()}"):
+        return True
+    return _is_comma_courtesy_signoff(frag)
 
 
 def _strip_trailing_signature_and_courtesy(text: str) -> str:
@@ -115,17 +211,17 @@ def _strip_trailing_signature_and_courtesy(text: str) -> str:
         prev = tail
         tail = _strip_trailing_signature(tail).strip()
         tail = _COURTESY_TOKENS.sub("", tail).strip()
-        sig = _SIGNATURE_ONLY.match(tail)
-        if sig:
-            token = sig.group(1).rstrip("'.-").lower()
-            if token not in _NON_SIGNATURE_TOKENS:
-                tail = ""
-                continue
+        if _fragment_is_signature_only(tail):
+            tail = ""
+            continue
         dash_tail = re.match(r"^[—–-]+\s*(.+)$", tail)
         if dash_tail:
             fragment = dash_tail.group(1).strip()
+            if _fragment_is_signature_only(f"- {fragment}"):
+                tail = ""
+                continue
             fragment = _COURTESY_TOKENS.sub("", fragment).strip()
-            if not fragment or _SIGNATURE_ONLY.match(f"- {fragment}"):
+            if not fragment or _fragment_is_signature_only(f"- {fragment}"):
                 tail = ""
                 continue
         tail = _EDGE_PUNCT.sub("", tail).strip()
@@ -150,11 +246,20 @@ def _span_starts_with_bullet(line: str) -> bool:
 
 def _is_trailing_signature_span(span: str, spans: list[str], index: int) -> bool:
     """True when ``span`` is a final-line name signature, not a list item."""
-    sig = _SIGNATURE_ONLY.match(span.strip())
-    if not sig:
-        return False
-    token = sig.group(1).rstrip("'.-").lower()
-    if token in _NON_SIGNATURE_TOKENS:
+    stripped = span.strip()
+    if _is_comma_courtesy_signoff(stripped):
+        return index == len(spans)
+    if _is_dash_courtesy_signoff(stripped):
+        if index != len(spans):
+            return False
+        if index <= 1:
+            return True
+        prev = spans[index - 2].strip()
+        if prev.endswith(":"):
+            return False
+        return not _span_starts_with_bullet(prev)
+    sig = _SIGNATURE_ONLY.match(stripped)
+    if not sig or not _signature_fragment_is_name(sig.group(1)):
         return False
     if index != len(spans):
         return False
@@ -172,11 +277,13 @@ def _quoted_is_trailing_signature_in_message(quoted: str, source_message: str) -
     src = source_message.strip()
     if not quoted_stripped or not src.endswith(quoted_stripped):
         return False
+    if _is_comma_courtesy_signoff(quoted_stripped):
+        return True
     sig = _SIGNATURE_ONLY.match(quoted_stripped)
     if not sig:
         return False
-    token = sig.group(1).rstrip("'.-").lower()
-    if token in _NON_SIGNATURE_TOKENS:
+    fragment = sig.group(1).strip()
+    if not _signature_fragment_is_name(fragment):
         return False
     prefix = src[: src.rfind(quoted_stripped)].rstrip()
     if not prefix:
@@ -193,13 +300,13 @@ def _split_spans(source_message: str) -> list[str]:
     merged: list[str] = []
     for span in spans:
         sig_match = _SIGNATURE_ONLY.match(span)
-        token = sig_match.group(1).rstrip("'.-").lower() if sig_match else ""
+        fragment = sig_match.group(1).strip() if sig_match else ""
         if (
             merged
             and sig_match
+            and _signature_fragment_is_name(fragment)
             and not merged[-1].rstrip().endswith(":")
             and not merged[-1].lstrip().startswith(("-", "–", "—"))
-            and token not in _NON_SIGNATURE_TOKENS
         ):
             merged[-1] = f"{merged[-1]} {span}".strip()
         else:
@@ -209,6 +316,8 @@ def _split_spans(source_message: str) -> list[str]:
 
 def _strip_greeting_prefix(span: str) -> str:
     text = span.strip()
+    if _is_comma_courtesy_signoff(text) or _is_thanks_comma_substantive(text):
+        return text
     while text:
         match = _GREETING_PREFIX.match(text)
         if not match:
@@ -257,7 +366,14 @@ def _is_reply_closing_pleasantry(span: str) -> bool:
 
 def _classify_span(span: str) -> tuple[str, str, str]:
     """Return kind, obligation, and one-line semantic_reading for a span."""
-    core = _strip_greeting_prefix(span) or span.strip()
+    stripped = span.strip()
+    if _is_comma_courtesy_signoff(stripped) or _is_dash_courtesy_signoff(stripped):
+        return (
+            "pleasantry",
+            "none",
+            "greeting or courtesy without a required reply action",
+        )
+    core = _strip_greeting_prefix(span) or stripped
     if _APPLY_CTA.search(core) or _APPLY_CTA.search(span):
         return (
             "call_to_action",
@@ -273,6 +389,12 @@ def _classify_span(span: str) -> tuple[str, str, str]:
             "pleasantry",
             "none",
             "reply-closing courtesy without a required reply action",
+        )
+    if _is_thanks_comma_substantive(span):
+        return (
+            "statement",
+            "acknowledge",
+            f"acknowledge or reflect: {core[:120]}",
         )
     if _REQUEST.search(core):
         return "request", "answer", f"respond to the request: {core[:120]}"

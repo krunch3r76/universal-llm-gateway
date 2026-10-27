@@ -1491,6 +1491,82 @@ def test_standalone_dash_signature_line_is_pleasantry_not_acknowledge() -> None:
     assert rows[0]["obligation"] == "none"
 
 
+def _assert_question_answer_without_signature_spurious_ack(
+    rows: list[dict[str, Any]],
+) -> None:
+    question_rows = [row for row in rows if row.get("kind") == "question"]
+    assert question_rows, rows
+    assert question_rows[0]["obligation"] == "answer"
+    signature_markers = ("Bob Smith", "Bob, thanks", "Thanks, Bob", "- Bob")
+    for row in rows:
+        if row.get("kind") != "statement" or row.get("obligation") != "acknowledge":
+            continue
+        span = str(row.get("quoted_span", ""))
+        assert not any(marker in span for marker in signature_markers), row
+
+
+_MULTIWORD_AND_COMMA_SIGNATURE_QUESTIONS = (
+    "What time works? — Bob Smith",
+    "What time works?\n- Bob Smith",
+    "Sounds good. Is 3pm fine? - Bob, thanks!",
+    "What time works? - Thanks, Bob",
+)
+
+
+@pytest.mark.parametrize("inbound", _MULTIWORD_AND_COMMA_SIGNATURE_QUESTIONS)
+def test_multiword_and_comma_signature_questions_stay_answer(
+    inbound: str,
+) -> None:
+    rows = source_obligations.fallback_obligations(inbound)
+    _assert_question_answer_without_signature_spurious_ack(rows)
+
+
+def test_standalone_multiword_dash_signature_is_pleasantry() -> None:
+    rows = source_obligations.fallback_obligations("- Bob Smith")
+    assert len(rows) == 1
+    assert rows[0]["kind"] == "pleasantry"
+    assert rows[0]["obligation"] == "none"
+
+
+@pytest.mark.parametrize(
+    "inbound",
+    (
+        "Thanks, Bob",
+        "Thank you, Jane.",
+    ),
+)
+def test_comma_courtesy_signoff_is_pleasantry(inbound: str) -> None:
+    rows = source_obligations.fallback_obligations(inbound)
+    assert len(rows) == 1
+    assert rows[0]["kind"] == "pleasantry"
+    assert rows[0]["obligation"] == "none"
+
+
+def test_thanks_comma_substantive_clause_stays_statement_acknowledge() -> None:
+    rows = source_obligations.fallback_obligations(
+        "Thanks, Bob will send the file tomorrow."
+    )
+    assert len(rows) == 1
+    assert rows[0]["kind"] == "statement"
+    assert rows[0]["obligation"] == "acknowledge"
+    assert rows[0]["kind"] != "pleasantry"
+
+
+def test_two_word_bullet_items_after_colon_stay_statement_acknowledge() -> None:
+    inbound = "Please send:\n- Tax Return\n- Bank Statement"
+    rows = source_obligations.fallback_obligations(inbound)
+    bullet_rows = [
+        row
+        for row in rows
+        if str(row.get("quoted_span", "")).lstrip().startswith("-")
+    ]
+    assert len(bullet_rows) == 2
+    for row in bullet_rows:
+        assert row["kind"] == "statement"
+        assert row["obligation"] == "acknowledge"
+        assert row["kind"] != "pleasantry"
+
+
 def test_bulleted_list_items_after_colon_stay_statement_acknowledge() -> None:
     inbound = "Please send:\n- Transcript\n- References"
     rows = source_obligations.fallback_obligations(inbound)
