@@ -37,7 +37,6 @@ import json
 import re
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
-from itertools import pairwise
 from pathlib import Path
 from typing import Any
 
@@ -181,6 +180,152 @@ def _coverage(
     return "tail"
 
 
+def _unrendered_by_page(pages: list[_Page]) -> list[dict[str, int]]:
+    return [
+        {
+            "lo": page.lo,
+            "hi": page.hi,
+            "unrendered": (page.hi - page.lo + 1) - len(page.lines),
+        }
+        for page in pages
+    ]
+
+
+def _contained_in_tail(tail: list[str], lines: list[str]) -> bool:
+    if not lines:
+        return True
+    for start in range(len(tail) - len(lines) + 1):
+        if tail[start : start + len(lines)] == lines:
+            return True
+    return False
+
+
+def _largest_overlap_k(running: list[str], lines: list[str], shared: int) -> int:
+    cap = min(shared, len(running), len(lines))
+    for k in range(cap, -1, -1):
+        if k == 0 or lines[:k] == running[-k:]:
+            return k
+    return 0
+
+
+def _full_in_overlap(
+    last_lo: int,
+    last_hi: int,
+    last_lines: list[str],
+    lo: int,
+    hi: int,
+    lines: list[str],
+    running_hi: int,
+    shared: int,
+) -> tuple[bool, bool]:
+    prev_full = len(last_lines) == last_hi - last_lo + 1
+    curr_full = len(lines) == hi - lo + 1
+    overlap_exact = shared == (last_hi - lo + 1) and last_hi == running_hi
+    return prev_full and overlap_exact, curr_full and overlap_exact
+
+
+@dataclass
+class StitchResult:
+    lines: list[str]
+    running_hi: int
+    min_lo: int
+    unrendered_positions: int
+    page_added: list[bool]
+
+
+def stitch_ordered_page_lines(
+    pages: list[tuple[int, int, list[str]]],
+    *,
+    prior_lines: list[str] | None = None,
+    prior_running_hi: int | None = None,
+) -> StitchResult:
+    """Merge page bodies by content overlap bounded to shared position span."""
+    running: list[str] = list(prior_lines) if prior_lines else []
+    min_lo = 0
+    running_hi = -1
+    page_added: list[bool] = []
+    if prior_lines:
+        if prior_running_hi is None:
+            prior_running_hi = len(prior_lines) - 1
+        running_hi = prior_running_hi
+        min_lo = prior_running_hi + 1 - len(prior_lines)
+    ordered = sorted(pages, key=lambda item: (item[0], item[1]))
+    last_lo, last_hi, last_lines = 0, -1, []
+    for lo, hi, lines in ordered:
+        expected = hi - lo + 1
+        if len(lines) > expected:
+            raise TranscriptPageError(
+                f"page {lo}-{hi}: {len(lines)} lines, expected {expected}"
+            )
+        if running_hi < 0:
+            running = list(lines)
+            running_hi = hi
+            min_lo = lo
+            last_lo, last_hi, last_lines = lo, hi, lines
+            page_added.append(bool(lines))
+            continue
+        if lo > running_hi + 1:
+            raise TranscriptPageError(
+                f"gap in positions: first missing {running_hi + 1}"
+            )
+        before = len(running)
+        if hi <= running_hi:
+            shared = max(0, running_hi - lo + 1)
+            tail = running[-shared:] if shared else []
+            if not _contained_in_tail(tail, lines):
+                raise TranscriptPageError(
+                    f"overlapping pages differ at {lo}-{hi}"
+                )
+            page_added.append(False)
+        elif lo <= running_hi:
+            shared = max(0, running_hi - lo + 1)
+            prev_full, curr_full = _full_in_overlap(
+                last_lo, last_hi, last_lines, lo, hi, lines, running_hi, shared
+            )
+            if prev_full and curr_full and shared > 0:
+                if lines[:shared] != running[-shared:]:
+                    raise TranscriptPageError(
+                        f"overlapping pages differ at {lo}-{hi}"
+                    )
+                k = shared
+            else:
+                k = _largest_overlap_k(running, lines, shared)
+                matches = [
+                    cand
+                    for cand in range(1, min(shared, len(lines), len(running)) + 1)
+                    if lines[:cand] == running[-cand:]
+                ]
+                if len(matches) > 1:
+                    outputs = {tuple(running + lines[cand:]) for cand in matches}
+                    if len(outputs) > 1 and not (prev_full and curr_full):
+                        raise TranscriptPageError(
+                            f"ambiguous overlap at {lo}-{hi}: matches {matches}"
+                        )
+                if k == 0 and shared > 0 and lines:
+                    tail = running[-shared:] if shared else []
+                    if not _contained_in_tail(tail, lines[: min(len(lines), shared)]):
+                        raise TranscriptPageError(
+                            f"overlapping pages differ at {lo}-{hi}"
+                        )
+            running = running + lines[k:]
+            page_added.append(len(running) > before)
+        else:
+            running = running + lines
+            page_added.append(len(running) > before)
+        running_hi = max(running_hi, hi)
+        min_lo = min(min_lo, lo)
+        last_lo, last_hi, last_lines = lo, hi, lines
+    span = (running_hi - min_lo + 1) if running_hi >= 0 else 0
+    unrendered = span - len(running) if span else 0
+    return StitchResult(
+        lines=running,
+        running_hi=running_hi,
+        min_lo=min_lo,
+        unrendered_positions=unrendered,
+        page_added=page_added,
+    )
+
+
 def reassemble_pages(text: str) -> tuple[list[str], dict[str, Any]]:
     """Return JSONL lines oldest-first plus coverage info.
 
@@ -204,7 +349,6 @@ def reassemble_pages(text: str) -> tuple[list[str], dict[str, Any]]:
         raise TranscriptPageError(f"pages disagree on total N: {sorted(totals)}")
     total = totals.pop()
     ordered = sorted(pages, key=lambda p: (p.lo, p.hi))
-    unrendered = 0
     for page in ordered:
         if page.lo > page.hi or page.hi >= total:
             raise TranscriptPageError(
@@ -216,40 +360,10 @@ def reassemble_pages(text: str) -> tuple[list[str], dict[str, Any]]:
             raise TranscriptPageError(
                 f"page {page.lo}-{page.hi}: {got} lines, expected {expected}"
             )
-        unrendered += expected - got
-    running_hi = ordered[0].hi
-    for prev, nxt in pairwise(ordered):
-        if running_hi + 1 < nxt.lo:
-            raise TranscriptPageError(
-                f"gap in positions: first missing {running_hi + 1}"
-            )
-        running_hi = max(running_hi, nxt.hi)
-        if prev.hi >= nxt.lo:
-            prev_full = len(prev.lines) == prev.hi - prev.lo + 1
-            nxt_full = len(nxt.lines) == nxt.hi - nxt.lo + 1
-            if not prev_full or not nxt_full:
-                raise TranscriptPageError(
-                    f"cannot align overlapping short page {prev.lo}-{prev.hi}"
-                )
-    overlaps = any(prev.hi >= nxt.lo for prev, nxt in pairwise(ordered))
-    if overlaps:
-        by_pos: dict[int, str] = {}
-        for page in ordered:
-            for offset, line in enumerate(page.lines):
-                pos = page.lo + offset
-                prior = by_pos.get(pos)
-                if prior is not None and prior != line:
-                    raise TranscriptPageError(
-                        f"position {pos}: overlapping pages differ"
-                    )
-                by_pos[pos] = line
-        lo_r, hi_r = min(by_pos), max(by_pos)
-        missing = [p for p in range(lo_r, hi_r + 1) if p not in by_pos]
-        if missing:
-            raise TranscriptPageError(f"gap in positions: first missing {missing[0]}")
-        lines = [by_pos[p] for p in range(lo_r, hi_r + 1)]
-    else:
-        lines = [line for page in ordered for line in page.lines]
+    page_tuples = [(p.lo, p.hi, p.lines) for p in ordered]
+    stitched = stitch_ordered_page_lines(page_tuples)
+    lines = stitched.lines
+    unrendered = stitched.unrendered_positions
     min_lo = min(p.lo for p in ordered)
     max_hi = max(p.hi for p in ordered)
     coverage = _coverage(
@@ -266,6 +380,7 @@ def reassemble_pages(text: str) -> tuple[list[str], dict[str, Any]]:
         "header_target": pages[0].target,
         "header_agent_id": pages[0].header_agent_id,
         "unrendered_positions": unrendered,
+        "unrendered_by_page": _unrendered_by_page(ordered),
         "start_sentinel": start_sentinel,
     }
     return lines, info
@@ -475,6 +590,8 @@ def _source_dict(
         "unrendered_positions": cov.get("unrendered_positions", 0),
         **stats,
     }
+    if cov.get("unrendered_by_page"):
+        source["unrendered_by_page"] = cov["unrendered_by_page"]
     if cov["positions"] is not None:
         lo, hi = cov["positions"]
         source["window"] = {"lo": lo + 1, "hi": hi + 1, "total": cov["total"]}
@@ -923,4 +1040,6 @@ __all__ = [
     "extract_grokbot_pages_files",
     "extract_grokbot_transcript",
     "reassemble_pages",
+    "StitchResult",
+    "stitch_ordered_page_lines",
 ]

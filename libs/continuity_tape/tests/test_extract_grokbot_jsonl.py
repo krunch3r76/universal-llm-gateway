@@ -155,25 +155,24 @@ def test_gap_between_pages_raises() -> None:
 
 
 def test_short_page_accepted_long_page_raises() -> None:
-    """A short page is accepted; a long page and an overlapping short page raise."""
+    """Short page accepted; extra lines per span refused; overlap aligns on shared tail."""
     text = _pages(RECORDS, 4).replace(json.dumps(RECORDS[-1]) + "\n", "", 1)
     _lines_out, info = reassemble_pages(text)
     assert info["unrendered_positions"] == 1
     assert info["coverage"] == "full"
     needle = json.dumps(RECORDS[-1]) + "\n"
-    with pytest.raises(TranscriptPageError):
+    with pytest.raises(TranscriptPageError, match="expected"):
         reassemble_pages(_pages(RECORDS, 4).replace(needle, needle + needle, 1))
     short_overlap = (
         "Transcript of this conversation, positions 0\u20133 of 8:\n"
         + "\n".join(_lines(RECORDS[:3]))
         + "\nTranscript of this conversation, positions 3\u20137 of 8:\n"
-        + "\n".join(_lines(RECORDS[:5]))
+        + "\n".join(_lines(RECORDS[2:7]))
         + "\n"
     )
-    with pytest.raises(
-        TranscriptPageError, match="cannot align overlapping short page"
-    ):
-        reassemble_pages(short_overlap)
+    overlap_lines, overlap_info = reassemble_pages(short_overlap)
+    assert overlap_lines == _lines(RECORDS[:7])
+    assert overlap_info["unrendered_positions"] == 1
 
 
 NAME_FIX = "771821c5-de68-4b96-a914-edbb87a2e6bb"
@@ -785,16 +784,93 @@ def test_one_based_page_header_raises() -> None:
         reassemble_pages(text)
 
 
-def test_overlapping_page_missing_a_line_raises() -> None:
+def test_overlapping_short_pages_stitch_by_line_overlap() -> None:
     lines = _lines(RECORDS[:6])
     text = (
         "Transcript of this conversation, positions 0\u20133 of 6:\n"
         + "\n".join(lines[:4])
         + "\nTranscript of this conversation, positions 2\u20135 of 6:\n"
-        + "\n".join(lines[2:4])
+        + "\n".join(lines[2:6])
         + "\n"
     )
-    with pytest.raises(TranscriptPageError, match="overlapping short page"):
+    got, info = reassemble_pages(text)
+    assert got == lines[:6]
+    assert info["unrendered_positions"] == 0
+
+
+def _hdr(lo: int, hi: int, total: int, body: list[str], *, start: bool = False) -> str:
+    lines = [
+        f"Transcript of this conversation, positions {lo}\u2013{hi} of {total}:",
+        *body,
+    ]
+    if start:
+        lines.append("This is the start of the transcript.")
+    return "\n".join(lines) + "\n"
+
+
+def test_full_overlap_abcxxxxf_eight_lines() -> None:
+    text = _hdr(0, 4, 8, ["a", "b", "c", "x", "x"], start=True) + _hdr(
+        4, 7, 8, ["x", "x", "x", "f"]
+    )
+    got, info = reassemble_pages(text)
+    assert got == ["a", "b", "c", "x", "x", "x", "x", "f"]
+    assert info["unrendered_positions"] == 0
+
+
+def test_contained_page_does_not_duplicate() -> None:
+    text = _hdr(0, 5, 6, list("abcdef"), start=True) + _hdr(2, 3, 6, ["c", "d"])
+    got, _info = reassemble_pages(text)
+    assert got == list("abcdef")
+
+
+def test_shifted_page_refused() -> None:
+    prior = _hdr(0, 3, 10, list("abcd"), start=True)
+    shifted = _hdr(3, 7, 10, list("56789"))
+    with pytest.raises(TranscriptPageError, match="overlapping pages differ"):
+        reassemble_pages(prior + shifted)
+
+
+def test_repeated_lines_ambiguous_overlap_refused() -> None:
+    text = _hdr(0, 4, 9, ["x", "x", "x", "x"], start=True) + _hdr(
+        3, 6, 9, ["x", "x", "c"]
+    )
+    with pytest.raises(TranscriptPageError, match="ambiguous overlap"):
+        reassemble_pages(text)
+
+
+def test_mid_page_omission_stitches() -> None:
+    text = _hdr(0, 4, 6, ["a", "b", "d", "e"], start=True) + _hdr(3, 4, 6, ["d", "e"])
+    got, info = reassemble_pages(text)
+    assert got == ["a", "b", "d", "e"]
+    assert info["unrendered_positions"] == 1
+
+
+def test_short_page_after_full_prior() -> None:
+    text = _hdr(0, 4, 10, list("abcde"), start=True) + _hdr(3, 9, 10, list("defg"))
+    got, info = reassemble_pages(text)
+    assert got == list("abcdefg")
+    assert info["unrendered_positions"] == 3
+
+
+def test_contained_after_short_page() -> None:
+    text = _hdr(0, 3, 6, ["a", "b", "c"], start=True) + _hdr(1, 2, 6, ["b", "c"])
+    got, info = reassemble_pages(text)
+    assert got == ["a", "b", "c"]
+    assert info["unrendered_positions"] == 1
+
+
+def test_overlapping_pages_conflict_raises() -> None:
+    lines = _lines(RECORDS[:4])
+    bad = list(_lines(RECORDS[2:6]))
+    bad[0] = json.dumps(_u("conflict"))
+    text = (
+        "Transcript of this conversation, positions 0\u20133 of 6:\n"
+        + "\n".join(lines[:4])
+        + "\nTranscript of this conversation, positions 2\u20135 of 6:\n"
+        + "\n".join(bad)
+        + "\n"
+    )
+    with pytest.raises(TranscriptPageError, match="overlapping pages differ"):
         reassemble_pages(text)
 
 
@@ -816,6 +892,62 @@ def test_stray_line_before_header_raises() -> None:
     text = "not a header\n" + _pages(RECORDS[:1], 1)
     with pytest.raises(TranscriptPageError, match="stray non-blank line"):
         reassemble_pages(text)
+
+
+def test_all_unrendered_page_body_adds_nothing() -> None:
+    """N2: zero-line page over a valid span must not refuse or duplicate."""
+    from continuity_tape.extract_grokbot_jsonl import stitch_ordered_page_lines
+
+    truth = ["a", "b", "c", "d", "e"]
+    result = stitch_ordered_page_lines([(0, 4, truth), (2, 3, [])])
+    assert result.lines == truth
+    assert result.unrendered_positions == 0
+
+
+def test_nb1_real_sample_shape_stitches() -> None:
+    """Synthetic ~52-page 0..1490 shape: one content k per adjacent pair, ~1415 lines."""
+    import random
+
+    from continuity_tape.extract_grokbot_jsonl import stitch_ordered_page_lines
+
+    rng = random.Random(20981)
+    total = 1491
+    omitted = set(rng.sample(range(total), 76))
+    truth = [f"L{p}" for p in range(total) if p not in omitted]
+    assert len(truth) == 1415
+    page_specs: list[tuple[int, int, list[str]]] = []
+    hi = total - 1
+    while hi >= 0:
+        lo = max(0, hi - 28)
+        body = [f"L{p}" for p in range(lo, hi + 1) if p not in omitted]
+        page_specs.append((lo, hi, body))
+        if lo == 0:
+            break
+        hi = lo - 1
+    page_specs.sort(key=lambda item: (item[0], item[1]))
+    assert 50 <= len(page_specs) <= 55
+    result = stitch_ordered_page_lines([])
+    prefix: list[tuple[int, int, list[str]]] = []
+    for lo, hi, lines in page_specs:
+        if result.running_hi >= 0 and lo <= result.running_hi:
+            shared = result.running_hi - lo + 1
+            matches = [
+                k
+                for k in range(1, min(shared, len(lines), len(result.lines)) + 1)
+                if lines[:k] == result.lines[-k:]
+            ]
+            assert len(matches) == 1, (lo, hi, matches)
+        prefix.append((lo, hi, lines))
+        result = stitch_ordered_page_lines(prefix)
+    running = result.lines
+    assert running == truth
+    assert result.unrendered_positions == 76
+    chunks: list[str] = []
+    for lo, hi, body in reversed(page_specs):
+        chunks.append(_hdr(lo, hi, total, body, start=(lo == 0)))
+    got, info = reassemble_pages("\n".join(chunks))
+    assert got == truth
+    assert info["unrendered_positions"] == 76
 
 
 def test_zero_based_span_without_sentinel_is_tail() -> None:

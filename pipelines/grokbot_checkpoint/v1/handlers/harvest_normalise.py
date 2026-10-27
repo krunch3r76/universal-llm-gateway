@@ -80,6 +80,7 @@ async def _folder_bytes(
     prior_norm: bytes | None = None
     prior_lines: list[str] | None = None
     prior_total: int | None = None
+    prior_next_pos: int | None = None
     if n > 1:
         raw_uri = checkpoint_raw_uri(agent_id, n - 1)
         msg_uri = raw_uri.replace(".raw.json", ".messages.json")
@@ -111,12 +112,7 @@ async def _folder_bytes(
             return refuse("harvest.no_prior", str(exc))
         if window is None:
             return refuse("harvest.no_prior", "prior messages have no window")
-        _next, prior_total = window
-        if len(prior_lines) != _next:
-            return refuse(
-                "harvest.no_prior",
-                f"prior normalized lines {len(prior_lines)} != window.hi {_next}",
-            )
+        prior_next_pos, prior_total = window
         try:
             aligned, _stats = normalize_grokbot_l0_pages(
                 prior.decode("utf-8"), anchor_total=prior_total
@@ -129,7 +125,20 @@ async def _folder_bytes(
                 "harvest.no_prior",
                 "prior raw does not match the sealed normalized lines",
             )
-    refusal = check_pages(parsed, prior_lines=prior_lines, prior_total=prior_total)
+        positions = _info.get("positions")
+        if isinstance(positions, list) and len(positions) == 2:
+            expected_next = int(positions[1]) + 1
+            if prior_next_pos != expected_next:
+                return refuse(
+                    "harvest.no_prior",
+                    f"window.hi {prior_next_pos} != prior span next {expected_next}",
+                )
+    refusal = check_pages(
+        parsed,
+        prior_lines=prior_lines,
+        prior_total=prior_total,
+        prior_next_pos=prior_next_pos,
+    )
     if refusal:
         return refusal
     paired = list(zip(parsed, blobs, strict=True))
