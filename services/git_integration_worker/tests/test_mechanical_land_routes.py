@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import inspect
 from pathlib import Path
 from unittest.mock import patch
 
+import httpx
 import pytest
 from fastapi.testclient import TestClient
 
@@ -17,6 +19,7 @@ from services.git_integration_worker.mechanical_land.store import (
     MechanicalLandStore,
     MechanicalLandStoreError,
 )
+from services.git_integration_worker.routes import mechanical_land as ml_routes
 
 pytestmark = pytest.mark.offline
 
@@ -102,6 +105,89 @@ def test_get_run_returns_state_and_events(client: TestClient) -> None:
     body = resp.json()
     assert body["state"]["status"] == "awaiting_leg"
     assert len(body["events"]) == 1
+
+
+def test_route_handlers_are_sync_not_coroutines() -> None:
+    assert inspect.iscoroutinefunction(ml_routes.create_mechanical_land_run) is False
+    assert inspect.iscoroutinefunction(ml_routes.get_mechanical_land_run) is False
+
+
+def test_post_stargate_connect_error_503(client: TestClient) -> None:
+    store = MechanicalLandStore()
+    with (
+        patch.object(ml_routes, "_store", lambda: store),
+        patch.object(store, "_mint_lane_thread", return_value="8810"),
+        patch.object(
+            store,
+            "_post_admit",
+            side_effect=httpx.ConnectError("down"),
+        ),
+    ):
+        resp = client.post("/api/v1/mechanical-land/runs", json=_PLAN)
+    assert resp.status_code == 503
+    detail = resp.json()["detail"]
+    assert detail["error_class"] == "ConnectError"
+    assert detail["run_id"]
+
+
+def test_post_create_thread_raises_503_not_birthing(client: TestClient) -> None:
+    store = MechanicalLandStore()
+
+    def _boom(**_kwargs: object) -> str:
+        raise RuntimeError("thread db locked")
+
+    with (
+        patch.object(ml_routes, "_store", lambda: store),
+        patch.object(store, "_mint_lane_thread", side_effect=_boom),
+        patch.object(store, "_post_admit") as post,
+    ):
+        resp = client.post("/api/v1/mechanical-land/runs", json=_PLAN)
+        post.assert_not_called()
+    assert resp.status_code == 503
+    assert resp.json()["detail"]["reason_code"] == "lane_thread_unavailable"
+    with store._connect() as conn:
+        row = conn.execute(
+            "SELECT status FROM mechanical_land_runs ORDER BY created_at DESC LIMIT 1"
+        ).fetchone()
+    assert row is not None
+    assert row["status"] == "blocked"
+
+
+def test_get_run_many_events_via_http(client: TestClient) -> None:
+    store = MechanicalLandStore()
+    with (
+        patch.object(ml_routes, "_store", lambda: store),
+        patch.object(store, "_mint_lane_thread", return_value="8811"),
+        patch.object(
+            store,
+            "_post_admit",
+            return_value=(200, {"dispatch_id": "d", "execution_id": "e"}),
+        ),
+    ):
+        run_id = store.birth_from_plan(dict(_PLAN)).run_id
+    seq = 3
+    for _ in range(22):
+        store.append_event(
+            run_id=run_id,
+            prev_seq=seq,
+            step_id="run",
+            attempt=1,
+            flow="main",
+            event="transition_decided",
+            payload={
+                "from_step": "run",
+                "to_step": "run",
+                "attempt": 1,
+                "reason": "noop",
+            },
+            source="reactor",
+        )
+        seq += 1
+    resp = client.get(f"/api/v1/mechanical-land/runs/{run_id}")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["state"]["tip_seq"] == 25
+    assert len(body["events"]) == 20
 
 
 def test_openapi_lists_mechanical_land_get_route(client: TestClient) -> None:

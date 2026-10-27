@@ -38,7 +38,7 @@ def _store() -> MechanicalLandStore:
 
 
 @router.post("/runs")
-async def create_mechanical_land_run(
+def create_mechanical_land_run(
     body: MechanicalLandPlanBody, response: Response
 ) -> dict[str, Any]:
     """Birth a mechanical-land run and admit the first implement leg."""
@@ -67,16 +67,19 @@ async def create_mechanical_land_run(
         "journal": f"cortex://notes/system/runs/mechanical-land/{result.run_id}.md",
     }
     if not result.admit_ok:
+        detail: dict[str, Any] = dict(payload)
+        if result.admit_error_class:
+            detail["error_class"] = result.admit_error_class
         raise HTTPException(
-            status_code=status.HTTP_502_BAD_GATEWAY,
-            detail=payload,
+            status_code=result.http_status,
+            detail=detail,
         )
     response.status_code = result.http_status
     return payload
 
 
 @router.get("/runs/{run_id}")
-async def get_mechanical_land_run(run_id: str) -> dict[str, Any]:
+def get_mechanical_land_run(run_id: str) -> dict[str, Any]:
     """Return folded ``RunState`` and the tail of journal events."""
     store = _store()
     snapshot = store.get_run(run_id, event_limit=20)

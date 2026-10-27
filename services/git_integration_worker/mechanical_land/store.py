@@ -43,6 +43,7 @@ class BirthResult:
     status: str
     admit_ok: bool
     http_status: int
+    admit_error_class: str | None = None
 
 
 def _now_iso() -> str:
@@ -201,6 +202,14 @@ class MechanicalLandStore:
         conn.commit()
         return conn
 
+    def _set_run_status(self, run_id: str, status: str) -> None:
+        with self._connect() as conn:
+            conn.execute(
+                "UPDATE mechanical_land_runs SET status=?, updated_at=? WHERE run_id=?",
+                (status, _now_iso(), run_id),
+            )
+            conn.commit()
+
     def find_run_by_idempotency_key(self, key: str) -> str | None:
         with self._connect() as conn:
             row = conn.execute(
@@ -265,7 +274,7 @@ class MechanicalLandStore:
         return new_seq
 
     def refresh_projection(self, run_id: str) -> None:
-        snapshot = self.get_run(run_id, event_limit=200)
+        snapshot = self.get_run(run_id, event_limit=20)
         if snapshot is None:
             return
         _write_projection(
@@ -274,20 +283,14 @@ class MechanicalLandStore:
             events=snapshot["events"],
         )
 
-    def get_run(self, run_id: str, *, event_limit: int = 20) -> dict[str, Any] | None:
-        with self._connect() as conn:
-            run_row = conn.execute(
-                "SELECT * FROM mechanical_land_runs WHERE run_id=?",
-                (run_id,),
-            ).fetchone()
-            if run_row is None:
-                return None
-            rows = conn.execute(
-                "SELECT * FROM mechanical_land_journal WHERE run_id=? "
-                "ORDER BY seq DESC LIMIT ?",
-                (run_id, event_limit),
-            ).fetchall()
-        rows_chrono = list(reversed(rows))
+    def _snapshot_from_rows(
+        self,
+        run_row: sqlite3.Row,
+        rows_chrono: list[sqlite3.Row],
+        *,
+        event_limit: int,
+    ) -> dict[str, Any]:
+        run_id = str(run_row["run_id"])
         entries = _journal_entries_from_rows(run_id, rows_chrono)
         folded = fold(entries)
         folded.run_id = run_id
@@ -318,6 +321,22 @@ class MechanicalLandStore:
             "state": state,
             "events": tail,
         }
+
+    def get_run(self, run_id: str, *, event_limit: int = 20) -> dict[str, Any] | None:
+        with self._connect() as conn:
+            run_row = conn.execute(
+                "SELECT * FROM mechanical_land_runs WHERE run_id=?",
+                (run_id,),
+            ).fetchone()
+            if run_row is None:
+                return None
+            rows = conn.execute(
+                "SELECT * FROM mechanical_land_journal WHERE run_id=? ORDER BY seq ASC",
+                (run_id,),
+            ).fetchall()
+        return self._snapshot_from_rows(
+            run_row, list(rows), event_limit=event_limit
+        )
 
     def birth_from_plan(
         self,
@@ -414,14 +433,12 @@ class MechanicalLandStore:
         try:
             lane_thread_id = self._mint_lane_thread(run_id=run_id)
         except MechanicalLandStoreError:
-            with self._connect() as conn:
-                conn.execute(
-                    "UPDATE mechanical_land_runs SET status='blocked', updated_at=? "
-                    "WHERE run_id=?",
-                    (_now_iso(), run_id),
-                )
-                conn.commit()
+            self._set_run_status(run_id, "blocked")
             raise
+        except Exception as exc:
+            logger.warning("lane thread mint failed run_id=%s: %s", run_id, exc)
+            self._set_run_status(run_id, "blocked")
+            raise MechanicalLandStoreError("lane_thread_unavailable") from exc
 
         with self._connect() as conn:
             conn.execute(
@@ -439,7 +456,34 @@ class MechanicalLandStore:
             policy_sha256=policy_sha256,
             caller_agent=caller_agent,
         )
-        status_code, payload = self._post_admit(admit_body)
+        try:
+            status_code, payload = self._post_admit(admit_body)
+        except (httpx.ConnectError, httpx.TimeoutException) as exc:
+            error_class = type(exc).__name__
+            self.append_event(
+                run_id=run_id,
+                prev_seq=seq,
+                step_id="implement",
+                attempt=1,
+                flow="main",
+                event="leg_admit_failed",
+                payload={
+                    "status_code": 0,
+                    "error": error_class,
+                },
+                source="reactor",
+            )
+            self._set_run_status(run_id, "blocked")
+            return BirthResult(
+                run_id=run_id,
+                lane_thread_id=lane_thread_id,
+                dispatch_id=None,
+                execution_id=None,
+                status="blocked",
+                admit_ok=False,
+                http_status=503,
+                admit_error_class=error_class,
+            )
         if status_code >= 400:
             self.append_event(
                 run_id=run_id,
@@ -454,13 +498,7 @@ class MechanicalLandStore:
                 },
                 source="reactor",
             )
-            with self._connect() as conn:
-                conn.execute(
-                    "UPDATE mechanical_land_runs SET status='blocked', updated_at=? "
-                    "WHERE run_id=?",
-                    (_now_iso(), run_id),
-                )
-                conn.commit()
+            self._set_run_status(run_id, "blocked")
             return BirthResult(
                 run_id=run_id,
                 lane_thread_id=lane_thread_id,
