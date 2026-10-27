@@ -28,17 +28,22 @@ _PLEASANTRY = re.compile(
     r"^(?:hi|hello|thanks|thank you|best,|regards,|cheers,)\s*\.?\s*$",
     re.I,
 )
-_REPLY_CLOSING = re.compile(
-    r"^(?:please\s+)?let\s+(?:me|us)\s+know"
-    r"(?:\s+(?:if\s+that\s+works|what\s+works|either\s+way|soon|when\s+you\s+can))?"
-    r"[.!,\s]*$",
-    re.I,
+_REPLY_CLOSING_LET_KNOW = re.compile(
+    r"^(?:please\s+)?let\s+(?:me|us)\s+know\s*$",
+    re.IGNORECASE,
 )
-_TRAILING_SIGNATURE = re.compile(r"[\s—–-]+[\w'.-]+\s*$")
+_TRAILING_SIGNATURE = re.compile(
+    r"(?:^|\s)[—–-]+\s*[A-Za-z][\w'.-]*\s*$",
+)
 _COURTESY_TOKENS = re.compile(
-    r"\b(?:thanks?|thank\s+you|please)\b[.!,\s]*",
-    re.I,
+    r"\b(?:"
+    r"thank\s+you(?:\s+so\s+much|\s+very\s+much)?"
+    r"|thanks?(?:\s+so\s+much|\s+very\s+much|\s+a\s+lot|\s+again)?"
+    r"|please|many\s+thanks|appreciate\s+it"
+    r")\b",
+    re.IGNORECASE,
 )
+_EDGE_PUNCT = re.compile(r"^[,!.;:\s]+|[,!.;:\s]+$")
 _GREETING_PREFIX = re.compile(
     r"^(?:"
     r"hi(?:\s+[\w'.-]+)?\s*[,—–-]\s*|"
@@ -75,7 +80,7 @@ def _format_block(obligations: list[dict[str, Any]]) -> str:
     return "\n".join(lines)
 
 
-_SIGNATURE_ONLY = re.compile(r"^[\s—–-]+[\w'.-]+\s*$")
+_SIGNATURE_ONLY = re.compile(r"^[—–-]+\s*[A-Z][\w'.-]*\s*$")
 
 
 def _split_spans(source_message: str) -> list[str]:
@@ -83,7 +88,11 @@ def _split_spans(source_message: str) -> list[str]:
     spans = [chunk.strip() for chunk in chunks if chunk.strip()]
     merged: list[str] = []
     for span in spans:
-        if merged and _SIGNATURE_ONLY.match(span):
+        if (
+            merged
+            and _SIGNATURE_ONLY.match(span)
+            and not merged[-1].rstrip().endswith(":")
+        ):
             merged[-1] = f"{merged[-1]} {span}".strip()
         else:
             merged.append(span)
@@ -101,7 +110,7 @@ def _strip_greeting_prefix(span: str) -> str:
 
 
 def _is_reply_closing_pleasantry(span: str) -> bool:
-    """True when span is only a reply-invitation sign-off without substantive ask."""
+    """True when span is only a bare let-me/us-know sign-off without substantive ask."""
     text = _strip_greeting_prefix(span).strip()
     text = _TRAILING_SIGNATURE.sub("", text).strip()
     while True:
@@ -109,9 +118,14 @@ def _is_reply_closing_pleasantry(span: str) -> bool:
         if stripped == text:
             break
         text = stripped
+    while True:
+        stripped = _EDGE_PUNCT.sub("", text).strip()
+        if stripped == text:
+            break
+        text = stripped
     if not text:
-        return True
-    return bool(_REPLY_CLOSING.match(text))
+        return False
+    return bool(_REPLY_CLOSING_LET_KNOW.match(text))
 
 
 def _classify_span(span: str) -> tuple[str, str, str]:

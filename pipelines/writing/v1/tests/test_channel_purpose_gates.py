@@ -397,6 +397,31 @@ def test_verbatim_required_exempts_schedule_sentence_from_not_purpose_relevant()
     )
 
 
+def test_short_verbatim_token_does_not_substring_exempt_unrelated_sentence() -> None:
+    unrelated = ["Submit quarterly tax filings to the state board."]
+    sentence = "I do not know whether the booking is confirmed."
+    assert (
+        drift_check_sentence(
+            sentence,
+            channel="email",
+            exhibit_ids=set(),
+            purpose_points=unrelated,
+            verbatim_required_excerpts=["No"],
+        )
+        == "not_purpose_relevant"
+    )
+    assert (
+        drift_check_sentence(
+            "No",
+            channel="email",
+            exhibit_ids=set(),
+            purpose_points=unrelated,
+            verbatim_required_excerpts=["No"],
+        )
+        is None
+    )
+
+
 def test_schedule_status_maps_to_availability_purpose() -> None:
     assert (
         map_claim_to_purpose(_SCHEDULE_SENTENCE, _AMANDA_PURPOSE) == "purpose[0]"
