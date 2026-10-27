@@ -1528,6 +1528,29 @@ def test_standalone_multiword_dash_signature_is_pleasantry() -> None:
     assert rows[0]["obligation"] == "none"
 
 
+def test_honorific_comma_courtesy_signoff_single_row_pleasantry() -> None:
+    for inbound in ("Thank you, Mr. Smith.", "Thanks, Dr. Jane Doe"):
+        rows = source_obligations.fallback_obligations(inbound)
+        assert len(rows) == 1, inbound
+        assert rows[0]["kind"] == "pleasantry"
+        assert rows[0]["obligation"] == "none"
+
+
+def test_honorific_trailing_signature_question_semantic_reading() -> None:
+    rows = source_obligations.fallback_obligations("What time works? — Dr. Smith")
+    assert len(rows) == 1
+    assert rows[0]["kind"] == "question"
+    assert rows[0]["obligation"] == "answer"
+    assert rows[0]["semantic_reading"] == "answer the question: What time works?"
+
+
+def test_honorific_in_body_stays_single_span_not_pleasantry() -> None:
+    rows = source_obligations.fallback_obligations("Please contact Ms. Jones.")
+    assert len(rows) == 1
+    assert rows[0]["quoted_span"] == "Please contact Ms. Jones."
+    assert rows[0]["kind"] != "pleasantry"
+
+
 @pytest.mark.parametrize(
     "inbound",
     (

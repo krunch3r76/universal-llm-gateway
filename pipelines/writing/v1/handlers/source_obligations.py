@@ -49,7 +49,13 @@ _NON_SIGNATURE_TOKENS = frozenset({
     "call", "me", "thing", "do", "all", "set",
 }) | _ACK_SINGLE_WORDS
 _NAME_WORD = r"[A-Z][\w'.-]*"
-_NAME_ONE_OR_TWO = rf"{_NAME_WORD}(?:[ \t]+{_NAME_WORD})?"
+_HONORIFIC_PREFIX = r"(?:(?:Mr|Mrs|Ms|Dr|Prof)\.?\s+)?"
+_NAME_ONE_OR_TWO = rf"{_HONORIFIC_PREFIX}{_NAME_WORD}(?:[ \t]+{_NAME_WORD})?"
+_HONORIFIC_TOKENS = frozenset({"mr", "mrs", "ms", "dr", "prof"})
+_SPAN_SPLIT = re.compile(
+    r"(?<=[.!?])(?<!Mr\.)(?<!Mrs\.)(?<!Ms\.)(?<!Dr\.)(?<!Prof\.)\s+|\n+",
+    re.IGNORECASE,
+)
 _TRAILING_SIGNATURE = re.compile(
     rf"(?:^|\s)[—–-]+\s*({_NAME_ONE_OR_TWO}|"
     rf"(?i:thanks?),?\s*{_NAME_ONE_OR_TWO}|"
@@ -137,11 +143,14 @@ def _is_acknowledgement_tail(text: str) -> bool:
 
 def _name_tokens(text: str) -> list[str]:
     """Split a 1–2 word capitalized name span into normalized lookup tokens."""
-    return [
+    tokens = [
         part.rstrip("'.-").lower()
         for part in re.split(r"[ \t]+", text.strip())
         if part.strip()
     ]
+    while tokens and tokens[0] in _HONORIFIC_TOKENS:
+        tokens.pop(0)
+    return tokens
 
 
 def _token_is_plausible_signature_name(token: str) -> bool:
@@ -166,7 +175,12 @@ def _name_tokens_are_signature(text: str) -> bool:
     if not tokens or len(tokens) > 2:
         return False
     parts = [part for part in re.split(r"[ \t]+", text.strip()) if part.strip()]
-    for part in parts:
+    name_parts = [
+        part
+        for part in parts
+        if part.rstrip("'.-").lower() not in _HONORIFIC_TOKENS
+    ]
+    for part in name_parts:
         bare = part.rstrip(".!")
         if not re.match(r"^[A-Z][\w'.-]*$", bare):
             return False
@@ -383,7 +397,8 @@ def _quoted_is_trailing_signature_in_message(quoted: str, source_message: str) -
 
 
 def _split_spans(source_message: str) -> list[str]:
-    chunks = re.split(r"(?<=[.!?])\s+|\n+", source_message.strip())
+    """Split ``source_message`` into spans without breaking honorific abbreviations."""
+    chunks = _SPAN_SPLIT.split(source_message.strip())
     spans = [chunk.strip() for chunk in chunks if chunk.strip()]
     merged: list[str] = []
     for span in spans:
