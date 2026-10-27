@@ -1,7 +1,14 @@
 import { defineConnection } from "@grok/agent-sdk/connections";
 
-/** House ulg-code MCP endpoint (same as Cursor `vortex-code` in ~/.cursor/mcp.json). Path: /mcp/code */
-export const ULG_MCP_HTTP_URL = "https://mcp.k-1.me/mcp/code";
+import {
+  logUlgMcpStartupResolvedHost,
+  resolveUlgMcpHttpUrl,
+} from "../lib/ulg-mcp-url.js";
+
+/** Resolved at process start from ULG_MCP_HTTP_URL or loopback default. */
+export const ULG_MCP_HTTP_URL = resolveUlgMcpHttpUrl();
+
+logUlgMcpStartupResolvedHost(ULG_MCP_HTTP_URL);
 
 export default defineConnection({
   type: "http",
