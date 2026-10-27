@@ -69,3 +69,36 @@ def test_cursor_marker_send_to_user_has_no_body(tmp_path: Path) -> None:
             fh.write(json.dumps(rec) + "\n")
     envelope = extract_turns_from_jsonl(jsonl, tools="marker")
     assert envelope.messages[1]["content"] == "[tool call: SendToUser]"
+
+
+def test_extract_cowork_agent_sdk_jsonl_type_role_and_string_content(
+    tmp_path: Path,
+) -> None:
+    """Cowork SDK JSONL uses top-level type and string message content."""
+    jsonl = tmp_path / "cowork.jsonl"
+    records = [
+        {
+            "type": "user",
+            "message": {"role": "user", "content": "Plan the task."},
+        },
+        {
+            "type": "assistant",
+            "message": {
+                "role": "assistant",
+                "content": [
+                    {"type": "text", "text": "On it."},
+                    {"type": "tool_use", "name": "Write", "input": {"x": 1}},
+                ],
+            },
+        },
+    ]
+    with jsonl.open("w", encoding="utf-8") as fh:
+        for rec in records:
+            fh.write(json.dumps(rec) + "\n")
+    envelope = extract_turns_from_jsonl(
+        jsonl, tools="marker", surface="claude-ai", session_id="sess-1"
+    )
+    assert envelope.meta.surface == "claude_ai"
+    assert envelope.meta.turn_count == 1
+    assert envelope.messages[0]["content"] == "Plan the task."
+    assert envelope.messages[1]["content"] == "On it.\n\n[tool call: Write]"

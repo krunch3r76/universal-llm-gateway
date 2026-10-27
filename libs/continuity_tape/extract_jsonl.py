@@ -6,7 +6,7 @@ import hashlib
 import json
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from continuity_tape.events import continuity_messages_extracted
 from continuity_tape.messages import (
@@ -98,6 +98,18 @@ def _extract_assistant_blocks(
     return "\n\n".join(parts).strip()
 
 
+def _normalize_envelope_surface(surface: str) -> Literal["cursor", "claude_ai", "grok", "mixed"]:
+    """Map caller surface tokens to ``EnvelopeMeta.surface`` literals."""
+    token = (surface or "cursor").replace("-", "_")
+    if token == "claude_ai":
+        return "claude_ai"
+    if token == "cursor":
+        return "cursor"
+    if token == "grok":
+        return "grok"
+    return "mixed"
+
+
 def _walk_turns(
     records: list[dict[str, Any]],
     *,
@@ -107,9 +119,16 @@ def _walk_turns(
     turns: list[dict[str, str]] = []
     current: dict[str, list[str]] | None = None
     for record in records:
-        role = record.get("role")
         message = record.get("message") or {}
+        rec_type = record.get("type")
+        role = (
+            record.get("role")
+            or message.get("role")
+            or (rec_type if rec_type in ("user", "assistant") else None)
+        )
         content = message.get("content")
+        if isinstance(content, str):
+            content = [{"type": "text", "text": content}]
         if not isinstance(content, list):
             continue
         if role == "user":
@@ -177,16 +196,18 @@ def extract_turns_from_jsonl_bytes(
     transcript_id: str | None = None,
     session_id: str | None = None,
     observed_at: str | None = None,
+    surface: str = "cursor",
 ) -> ContinuityMessagesEnvelope:
-    """Parse Cursor JSONL bytes into a continuity messages envelope."""
+    """Parse agent-transcript JSONL bytes into a continuity messages envelope."""
     source_sha256 = hashlib.sha256(raw).hexdigest()
     records = _read_jsonl_bytes(raw)
     turns = _walk_turns(records, tools=tools)
     messages = _turns_to_messages(turns)
     now = observed_at or datetime.now(tz=UTC).isoformat()
     sha = seal_messages_sha256(messages)
+    meta_surface = _normalize_envelope_surface(surface)
     meta = EnvelopeMeta(
-        surface="cursor",
+        surface=meta_surface,
         tools=tools,
         tools_available=False,
         extras=False,
@@ -201,7 +222,7 @@ def extract_turns_from_jsonl_bytes(
     )
     envelope = ContinuityMessagesEnvelope(messages=messages, index=[], meta=meta)
     continuity_messages_extracted(
-        surface="cursor",
+        surface=meta_surface,
         transcript_id=transcript_id or "",
         message_count=len(messages),
         turn_count=len(turns),
@@ -220,14 +241,16 @@ def extract_turns_from_jsonl(
     transcript_id: str | None = None,
     session_id: str | None = None,
     observed_at: str | None = None,
+    surface: str = "cursor",
 ) -> ContinuityMessagesEnvelope:
-    """Parse a Cursor JSONL file into a continuity messages envelope."""
+    """Parse a JSONL transcript file into a continuity messages envelope."""
     return extract_turns_from_jsonl_bytes(
         path.read_bytes(),
         tools=tools,
         transcript_id=transcript_id,
         session_id=session_id,
         observed_at=observed_at,
+        surface=surface,
     )
 
 

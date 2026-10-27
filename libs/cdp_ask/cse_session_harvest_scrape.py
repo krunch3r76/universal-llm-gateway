@@ -29,6 +29,7 @@ from claude_bundles.cowork_output_download import (
 from claude_bundles.cse_turns_harvest import harvest_turns
 from claude_bundles.cse_url import normalize_cse_url
 from claude_bundles.overload_only_harvest import is_error_banner_only_harvest
+from continuity_tape.extract_jsonl import extract_turns_from_jsonl_bytes
 from durable_io.atomic import (
     PreImageMismatchError,
     durable_write_bytes,
@@ -66,6 +67,7 @@ _HOUSE_PROVENANCE_KEYS = (
 )
 _RAW_SOURCE = "claude-ai"
 _RAW_KIND = "raw"
+_MESSAGES_KIND = "messages"
 
 
 def _session_id_from_harvest_filename(filename: str | None) -> str:
@@ -138,6 +140,80 @@ def _cas_write_raw(
             if hashlib.sha256(raw_abs.read_bytes()).hexdigest() == sha256_hex:
                 return raw_abs, revision, True
     raise RuntimeError(f"Cowork raw transcript CAS exhausted revisions for {native_id}")
+
+
+def _persist_cowork_messages_projection(
+    *,
+    root: Path,
+    house: str,
+    native_id: str,
+    date_str: str,
+    raw_bytes: bytes,
+    raw_sha256: str,
+    raw_abs: Path,
+    revision: int | None,
+    captured_at: str,
+    chat_url: str | None,
+    registration_id: str | None,
+    route: str | None,
+    prev_messages_manifest_rel: str | None,
+) -> None:
+    """Project tool-stripped messages beside the raw Cowork transcript tree."""
+    messages_dir = (
+        root / "notes/system/transcripts" / house / _RAW_SOURCE / _MESSAGES_KIND / date_str
+    )
+    messages_dir.mkdir(parents=True, exist_ok=True)
+    if revision is None:
+        messages_abs = messages_dir / f"{native_id}.messages.json"
+        messages_manifest_abs = messages_dir / f"{native_id}.manifest.json"
+    else:
+        messages_abs = messages_dir / f"{native_id}__r{revision}.messages.json"
+        messages_manifest_abs = (
+            messages_dir / f"{native_id}__r{revision}.manifest.json"
+        )
+
+    envelope = extract_turns_from_jsonl_bytes(
+        raw_bytes,
+        tools="marker",
+        transcript_id=native_id,
+        session_id=native_id,
+        surface="claude_ai",
+    )
+    projection = envelope.model_dump(mode="json", by_alias=True)
+    meta = projection.setdefault("meta", {})
+    if isinstance(meta, dict):
+        meta["raw_sha256"] = raw_sha256
+    projection["raw_sha256"] = raw_sha256
+    messages_text = json.dumps(projection, indent=2) + "\n"
+    messages_bytes = messages_text.encode("utf-8")
+    messages_sha256 = hashlib.sha256(messages_bytes).hexdigest()
+    durable_write_text(messages_abs, messages_text, retain_store_root=root)
+
+    messages_supersedes: str | None = None
+    if revision is not None and prev_messages_manifest_rel:
+        messages_supersedes = prev_messages_manifest_rel
+
+    messages_manifest: dict[str, Any] = {
+        "sha256": messages_sha256,
+        "bytes": len(messages_bytes),
+        "captured_at": captured_at,
+        "house": house,
+        "source": _RAW_SOURCE,
+        "kind": _MESSAGES_KIND,
+        "native_id": native_id,
+        "sessionId": native_id,
+        "raw_sha256": raw_sha256,
+        "raw_rel_path": raw_abs.relative_to(root).as_posix(),
+        "chat_url": chat_url,
+        "registration_id": registration_id,
+        "route": route,
+        "supersedes": messages_supersedes,
+    }
+    durable_write_text(
+        messages_manifest_abs,
+        json.dumps(messages_manifest, indent=2) + "\n",
+        retain_store_root=root,
+    )
 
 
 def _merge_manifest_field(existing: object, new: object) -> object:
@@ -246,6 +322,31 @@ def persist_cowork_output_raw_transcript(
         manifest_abs,
         json.dumps(manifest_dict, indent=2) + "\n",
         retain_store_root=root,
+    )
+
+    base_messages_manifest = (
+        root
+        / "notes/system/transcripts"
+        / house
+        / _RAW_SOURCE
+        / _MESSAGES_KIND
+        / date_str
+        / f"{native_id}.manifest.json"
+    )
+    _persist_cowork_messages_projection(
+        root=root,
+        house=house,
+        native_id=native_id,
+        date_str=date_str,
+        raw_bytes=raw_bytes,
+        raw_sha256=sha256_hex,
+        raw_abs=raw_abs,
+        revision=revision,
+        captured_at=captured_at,
+        chat_url=str(manifest_dict.get("chat_url") or "") or None,
+        registration_id=str(manifest_dict.get("registration_id") or "") or None,
+        route=str(manifest_dict.get("route") or "") or None,
+        prev_messages_manifest_rel=_manifest_rel(base_messages_manifest, root),
     )
     return (f"cortex://{raw_abs.relative_to(root).as_posix()}", sha256_hex)
 

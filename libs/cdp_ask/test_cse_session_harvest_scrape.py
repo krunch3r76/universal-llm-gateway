@@ -19,6 +19,7 @@ from cdp_ask.cse_session_harvest_scrape import (
     harvest_with_loading_wait,
     is_loading,
     is_shell_title,
+    persist_cowork_output_raw_transcript,
     pick_page_for_chat_url,
 )
 from cdp_ask.cse_session_models import HarvestRequest
@@ -325,6 +326,84 @@ async def test_try_body_harvest_output_file_revision_on_changed_bytes(
         "notes/system/transcripts/_nohouse/claude-ai/raw/2026-10-27/"
         f"{_SESSION_ID}.manifest.json"
     )
+
+
+def _cowork_jsonl_bytes_with_large_tool_result() -> bytes:
+    tool_blob = "Z" * 60_000
+    records = [
+        {
+            "type": "user",
+            "message": {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": "Run the tool."},
+                    {"type": "tool_result", "content": tool_blob},
+                ],
+            },
+        },
+        {
+            "type": "assistant",
+            "message": {
+                "role": "assistant",
+                "content": [{"type": "text", "text": "Summary only. " * 30}],
+            },
+        },
+    ]
+    return ("".join(json.dumps(row) + "\n" for row in records)).encode("utf-8")
+
+
+def test_persist_projects_messages_dropping_tool_output(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Raw harvest also writes messages projection with tool payloads stripped."""
+    monkeypatch.setenv("CORTEX_FILES_ROOT", str(tmp_path))
+    _freeze_harvest_date(monkeypatch)
+    raw_bytes = _cowork_jsonl_bytes_with_large_tool_result()
+    raw_sha = hashlib.sha256(raw_bytes).hexdigest()
+    body = HarvestBody(
+        content=raw_bytes.decode("utf-8"),
+        provenance="output-file",
+        filename=_OUTPUT_FILENAME_COWORK,
+        content_bytes=raw_bytes,
+        route=_ROUTE,
+        file_uuid=_FILE_UUID,
+    )
+    result = persist_cowork_output_raw_transcript(
+        body,
+        chat_url=_CHAT_URL,
+        registration_id=_REGISTRATION_ID,
+        provenance={"lane_thread_proven": "12286"},
+    )
+    assert result is not None
+
+    day = "2026-10-27"
+    house = "12286"
+    raw_path = (
+        tmp_path
+        / f"notes/system/transcripts/{house}/claude-ai/raw/{day}/{_RAW_BASENAME}"
+    )
+    messages_path = (
+        tmp_path
+        / f"notes/system/transcripts/{house}/claude-ai/messages/{day}/{_SESSION_ID}.messages.json"
+    )
+    messages_manifest_path = (
+        tmp_path
+        / f"notes/system/transcripts/{house}/claude-ai/messages/{day}/{_SESSION_ID}.manifest.json"
+    )
+    assert raw_path.is_file()
+    assert messages_path.is_file()
+    assert messages_manifest_path.is_file()
+    messages_bytes = messages_path.read_bytes()
+    assert len(messages_bytes) < 0.10 * len(raw_bytes)
+    messages_manifest = json.loads(
+        messages_manifest_path.read_text(encoding="utf-8")
+    )
+    assert messages_manifest["kind"] == "messages"
+    assert messages_manifest["raw_sha256"] == raw_sha
+    assert hashlib.sha256(raw_path.read_bytes()).hexdigest() == raw_sha
+    projection = json.loads(messages_path.read_text(encoding="utf-8"))
+    assert projection.get("raw_sha256") == raw_sha
+    assert projection.get("meta", {}).get("raw_sha256") == raw_sha
 
 
 def _output_harvest_body(content: bytes) -> HarvestBody:
