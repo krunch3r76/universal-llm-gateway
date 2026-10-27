@@ -85,11 +85,23 @@ def transcript_artifact_rel_path(
 
 
 def raw_transcript_rel_path(
-    *, source: str, date_str: str, native_id: str, native_ext: str, house: str | None = None,
+    *,
+    source: str,
+    date_str: str,
+    native_id: str,
+    native_ext: str,
+    house: str | None = None,
+    kind: str = "raw",
     file_stem: bool = False,
 ) -> str:
     return transcript_artifact_rel_path(
-        house=house, source=source, date_str=date_str, native_id=native_id, ext=native_ext, file_stem=file_stem
+        house=house,
+        source=source,
+        kind=kind,
+        date_str=date_str,
+        native_id=native_id,
+        ext=native_ext,
+        file_stem=file_stem,
     )
 
 
@@ -236,9 +248,11 @@ def write_raw_transcript(
     )
     while True:
         stem = native_id if prev_manifest_rel is None else f"{native_id}__r{revision}"
-        stem_kw = dict(file_stem=True, house=house, source=source, date_str=date_str, native_id=stem)
+        stem_kw = dict(
+            file_stem=True, house=house, source=source, date_str=date_str, native_id=stem, kind=kind
+        )
         raw_rel = raw_transcript_rel_path(**stem_kw, native_ext=ext)
-        manifest_rel = raw_manifest_rel_path(**stem_kw, kind=kind)
+        manifest_rel = raw_manifest_rel_path(**stem_kw)
         raw_abs, manifest_abs = files_root / raw_rel, files_root / manifest_rel
 
         if not raw_abs.is_file():

@@ -148,6 +148,29 @@ def test_changed_bytes_write_revision_chain(tmp_path: Path) -> None:
     assert (tmp_path / r3.raw_rel_path).read_bytes() == v3
 
 
+def test_messages_kind_independent_of_raw_revision(tmp_path: Path) -> None:
+    raw_bytes, msg_bytes = b"raw-payload", b"messages-payload"
+    r_raw = _write(tmp_path, raw_bytes)
+    msg_prefix = f"notes/system/transcripts/{DEFAULT_NOHOUSE}/{SOURCE}/messages/{DATE}/{NATIVE_ID}"
+    r_msg = write_raw_transcript(
+        files_root=tmp_path,
+        source=SOURCE,
+        date_str=DATE,
+        native_id=NATIVE_ID,
+        native_ext=EXT,
+        raw_bytes=msg_bytes,
+        exporter="test-exporter",
+        kind="messages",
+    )
+    assert "/raw/" in r_raw.raw_rel_path
+    assert r_msg.raw_rel_path == f"{msg_prefix}.jsonl"
+    assert r_msg.manifest_rel_path == f"{msg_prefix}.manifest.json"
+    assert "__r2" not in r_msg.raw_rel_path
+    assert r_msg.manifest.supersedes is None
+    assert (tmp_path / r_raw.raw_rel_path).read_bytes() == raw_bytes
+    assert (tmp_path / r_msg.raw_rel_path).read_bytes() == msg_bytes
+
+
 def test_expected_sha256_mismatch_writes_nothing(tmp_path: Path) -> None:
     raw = b"payload"
     with pytest.raises(RawTranscriptDigestMismatchError):
