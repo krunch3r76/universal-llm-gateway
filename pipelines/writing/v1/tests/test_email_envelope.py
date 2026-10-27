@@ -171,6 +171,10 @@ def test_email_restate_pin_currently_requires_token_or_right_now_synonym() -> No
     for flipped in (
         "I can send a monthly open calendar.",
         "I am able to provide a monthly open calendar.",
+        (
+            "I don't have standing availability on any day of the week. "
+            "My schedule stays full most of the time, so I can send a monthly open calendar."
+        ),
     ):
         assert not email_envelope.email_restate_pin_satisfied(flipped, pin_provide)
 

@@ -89,6 +89,22 @@ _RESTATE_NEGATION_TOKENS = frozenset(
     }
 )
 _RESTATE_OPTIONAL_TOKENS = frozenset({"currently"})
+_NEGATION_GUARD_AUXILIARY = frozenset(
+    {
+        "able",
+        "can",
+        "could",
+        "did",
+        "do",
+        "does",
+        "had",
+        "has",
+        "have",
+        "should",
+        "will",
+        "would",
+    }
+)
 
 
 def normalize_contractions(text: str) -> str:
@@ -326,32 +342,65 @@ def _negation_tokens(token_set: set[str]) -> set[str]:
     return token_set & _RESTATE_NEGATION_TOKENS
 
 
+def _restate_content_anchors(anchors: set[str]) -> set[str]:
+    """Content-bearing pin tokens used to locate the clause that must keep refusal polarity."""
+    return anchors - _RESTATE_NEGATION_TOKENS - _NEGATION_GUARD_AUXILIARY
+
+
+def _restate_clause_tokens(clause: str) -> set[str]:
+    norm_clause = normalize_text_for_token_match(clause)
+    return set(_TOKEN.findall(norm_clause.lower())) - _RESTATE_STOPWORDS
+
+
+def _restate_text_segments(text: str) -> list[str]:
+    """Sentences plus comma clauses, deduped, for localized restate polarity checks."""
+    segments: list[str] = []
+    seen: set[str] = set()
+    for sentence in re.split(r"[.!?]+", text):
+        sentence = sentence.strip()
+        if sentence and sentence not in seen:
+            seen.add(sentence)
+            segments.append(sentence)
+    for clause in _draft_clauses(text):
+        if clause not in seen:
+            seen.add(clause)
+            segments.append(clause)
+    return segments if segments else [text]
+
+
 def _restate_negation_guard(
     draft_text: str,
     pin_excerpt: str,
     anchors: set[str],
 ) -> bool:
-    """Require negation in the draft clause that carries restate anchors when the pin refuses."""
+    """Require negation in the draft span that carries the pin's content anchors."""
+    del anchors
     norm_pin = normalize_text_for_token_match(pin_excerpt)
     pin_tokens = set(_TOKEN.findall(norm_pin.lower())) - _RESTATE_STOPWORDS
     if not _negation_tokens(pin_tokens):
         return True
-    if not anchors:
-        return True
-    for clause in _draft_clauses(draft_text):
-        norm_clause = normalize_text_for_token_match(clause)
-        clause_tokens = (
-            set(_TOKEN.findall(norm_clause.lower())) - _RESTATE_STOPWORDS
-        )
-        if not anchors <= clause_tokens:
+
+    draft_segments = _restate_text_segments(draft_text)
+    for pin_segment in _restate_text_segments(pin_excerpt):
+        pin_segment_tokens = _restate_clause_tokens(pin_segment)
+        if not _negation_tokens(pin_segment_tokens):
             continue
-        if _negation_tokens(clause_tokens):
-            return True
-        return False
-    norm_draft = normalize_text_for_token_match(draft_text)
-    draft_tokens = set(_TOKEN.findall(norm_draft.lower())) - _RESTATE_STOPWORDS
-    if anchors <= draft_tokens:
-        return bool(_negation_tokens(draft_tokens))
+        content_anchors = _restate_content_anchors(
+            _restate_anchor_tokens(normalize_text_for_token_match(pin_segment))
+        )
+        if not content_anchors:
+            continue
+        found_with_negation = False
+        for draft_segment in draft_segments:
+            draft_segment_tokens = _restate_clause_tokens(draft_segment)
+            if not content_anchors <= draft_segment_tokens:
+                continue
+            if _negation_tokens(draft_segment_tokens):
+                found_with_negation = True
+                break
+            return False
+        if not found_with_negation:
+            return False
     return True
 
 
@@ -388,7 +437,7 @@ def email_restate_pin_satisfied(
             if _restate_negation_guard(draft_text, pin_excerpt, anchors):
                 return True
             continue
-        if variant.strip().lower() in norm_draft.lower():
+        if variant.strip().lower() in normalize_email_dashes(draft_text).lower():
             if _restate_negation_guard(
                 draft_text,
                 pin_excerpt,
