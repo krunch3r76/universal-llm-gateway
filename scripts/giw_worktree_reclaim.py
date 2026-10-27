@@ -11,6 +11,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import subprocess
 import sys
 from dataclasses import asdict, dataclass
@@ -37,7 +38,6 @@ from services.git_integration_worker.cursor_sdk_worktree_live_guard import (  # 
 _GIT_TIMEOUT_S = 60.0
 _PROTECTED_THREAD_IDS = frozenset({"20793", "11767"})
 _AGE_EXCLUSION_S = 48 * 3600
-_TRACKED_LEDGER_TEMPLATE_REL = Path("tasks/specs/giw-worktree-reclaim-ledger.jsonl")
 _RUNTIME_LEDGER_REL = Path("tmp/giw/giw-worktree-reclaim-ledger.jsonl")
 _WIP_COMMIT_PREFIX = "wip: pre-reclaim snapshot"
 _WIP_REF_PREFIX = "refs/giw-wip/"
@@ -269,8 +269,35 @@ def _worktree_branch_from_list(source_repo: Path, lane_dir: Path) -> str | None:
     return None
 
 
+def _sanitize_lane_ref_suffix(lane_name: str) -> str:
+    """Map lane dir name to a safe ``refs/giw-wip/`` suffix (no ``..`` or slashes)."""
+    cleaned = re.sub(r"[^a-zA-Z0-9._-]", "_", lane_name)
+    while ".." in cleaned:
+        cleaned = cleaned.replace("..", "_")
+    if not cleaned or "/" in cleaned or "\\" in cleaned:
+        cleaned = "lane_invalid"
+    return cleaned
+
+
 def _wip_ref_name(lane_name: str) -> str:
-    return f"{_WIP_REF_PREFIX}{lane_name}"
+    return f"{_WIP_REF_PREFIX}{_sanitize_lane_ref_suffix(lane_name)}"
+
+
+def _pin_head_wip_ref(
+    *,
+    source_repo: Path,
+    lane_dir: Path,
+    lane_name: str,
+) -> tuple[str | None, str | None]:
+    """Point ``refs/giw-wip/<lane>`` at the lane worktree HEAD (no new commit)."""
+    sha = _head_sha(lane_dir)
+    if not sha:
+        return None, None
+    ref = _wip_ref_name(lane_name)
+    update = _git("update-ref", ref, sha, cwd=source_repo)
+    if update.returncode != 0:
+        return sha, None
+    return sha, ref
 
 
 def _commit_wip_snapshot(
@@ -413,6 +440,8 @@ def _evaluate_lane(
         elif branch_mismatch and not (reclaim_mismatch and execute):
             skip_reason = "branch_ref_does_not_contain_head"
             reclaim_hint = _RECLAIM_MISMATCH_HINT
+        elif branch_mismatch and reclaim_mismatch and execute and not porcelain_empty:
+            skip_reason = "mismatch_lane_not_clean"
 
     if skip_reason:
         line = f"{lane_name} skipped {skip_reason}"
@@ -489,7 +518,13 @@ def _evaluate_lane(
 
     if not execute:
         hint = reclaim_hint if branch_mismatch else None
-        line = f"{lane_name} would_reclaim gates_pass porcelain_empty={int(porcelain_empty)}"
+        pin_note = ""
+        if branch_mismatch and porcelain_empty:
+            pin_note = " would_pin_refs_giw_wip=1"
+        line = (
+            f"{lane_name} would_reclaim gates_pass porcelain_empty="
+            f"{int(porcelain_empty)}{pin_note}"
+        )
         return (
             _lane_row(
                 lane_name=lane_name,
@@ -503,6 +538,44 @@ def _evaluate_lane(
             ),
             line,
         )
+
+    if wip_ref is None:
+        wip_sha, wip_ref = _pin_head_wip_ref(
+            source_repo=source_repo,
+            lane_dir=lane_dir,
+            lane_name=lane_name,
+        )
+        if wip_sha is None:
+            skip_reason = "wip_head_unavailable"
+            line = f"{lane_name} skipped {skip_reason}"
+            return (
+                _lane_row(
+                    lane_name=lane_name,
+                    mtime_iso=mtime_iso,
+                    branch_ref=branch_ref,
+                    porcelain_empty=porcelain_empty,
+                    detached_head=detached_head,
+                    disposition="skipped",
+                    reason=skip_reason,
+                ),
+                line,
+            )
+        if wip_ref is None:
+            skip_reason = "wip_ref_pin_failed"
+            line = f"{lane_name} skipped {skip_reason}"
+            return (
+                _lane_row(
+                    lane_name=lane_name,
+                    mtime_iso=mtime_iso,
+                    branch_ref=branch_ref,
+                    porcelain_empty=porcelain_empty,
+                    detached_head=detached_head,
+                    disposition="skipped",
+                    reason=skip_reason,
+                    wip_sha=wip_sha,
+                ),
+                line,
+            )
 
     if not _remove_worktree(source_repo=source_repo, lane_dir=lane_dir):
         skip_reason = "worktree_remove_failed"
@@ -587,15 +660,15 @@ def run_reclaim(
         rows.append(row)
         print(line)
 
-    if not ledger_unavailable:
-        for tid in sorted(_PROTECTED_THREAD_IDS):
-            lane_name = f"lane-{tid}"
-            if lane_name in seen_lanes:
-                continue
-            reason = f"excluded_protected_lane-{tid}"
-            rows.append(_synthetic_skip_row(lane_name, reason))
-            print(f"{lane_name} skipped {reason}")
+    for tid in sorted(_PROTECTED_THREAD_IDS):
+        lane_name = f"lane-{tid}"
+        if lane_name in seen_lanes:
+            continue
+        reason = f"excluded_protected_lane-{tid}"
+        rows.append(_synthetic_skip_row(lane_name, reason))
+        print(f"{lane_name} skipped {reason}")
 
+    if not ledger_unavailable:
         for tid in sorted(live_threads):
             lane_name = f"lane-{tid}"
             if lane_name in seen_lanes or tid in _PROTECTED_THREAD_IDS:
@@ -632,7 +705,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--reclaim-mismatch",
         action="store_true",
-        help="With --execute, reclaim clean branch-mismatch lanes (R5)",
+        help=(
+            "With --execute, reclaim branch-mismatch or detached lanes only when "
+            "git status --porcelain is empty; pin HEAD to refs/giw-wip/<lane> "
+            "before removing the worktree (default dry-run only)"
+        ),
     )
     args = parser.parse_args(argv)
 

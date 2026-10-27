@@ -210,9 +210,11 @@ def test_ledger_unavailable_fail_closed(
 
 
 def test_reclaim_mismatch_flag(mismatch_lane: tuple[Path, Path, Path]) -> None:
-    """AC3 (c): mismatch lane skipped with hint; removed with --reclaim-mismatch."""
+    """AC1/AC3: mismatch lane skipped with hint; pin then remove with --reclaim-mismatch."""
     repo, worktree_root, lane_dir = mismatch_lane
     ledger_path = repo / "ledger.jsonl"
+    head_before = _git("rev-parse", "HEAD", cwd=lane_dir).stdout.strip()
+    wip_ref = giw_worktree_reclaim._wip_ref_name("lane-99903")
 
     skip_rows = run_reclaim(
         source_repo=repo,
@@ -225,6 +227,14 @@ def test_reclaim_mismatch_flag(mismatch_lane: tuple[Path, Path, Path]) -> None:
     assert skip_lane.reason == "branch_ref_does_not_contain_head"
     assert skip_lane.reclaim_hint
     assert lane_dir.is_dir()
+    assert (
+        subprocess.run(
+            ["git", "show-ref", "--verify", "--quiet", wip_ref],
+            cwd=repo,
+            check=False,
+        ).returncode
+        != 0
+    )
 
     exec_rows = run_reclaim(
         source_repo=repo,
@@ -235,7 +245,114 @@ def test_reclaim_mismatch_flag(mismatch_lane: tuple[Path, Path, Path]) -> None:
     )
     exec_lane = next(r for r in exec_rows if r.lane == "lane-99903")
     assert exec_lane.disposition == "removed"
+    assert exec_lane.wip_ref == wip_ref
+    pinned = _git("rev-parse", wip_ref, cwd=repo).stdout.strip()
+    assert pinned == head_before
+    assert pinned == exec_lane.wip_commit_sha_or_none
     assert not lane_dir.exists()
+
+
+def test_dirty_mismatch_lane_skipped(
+    mismatch_lane: tuple[Path, Path, Path],
+) -> None:
+    """AC2: dirty branch-mismatch lane is skipped; worktree untouched."""
+    repo, worktree_root, lane_dir = mismatch_lane
+    (lane_dir / "untracked-dirt.txt").write_text("dirty\n", encoding="utf-8")
+    old = time.time() - (49 * 3600)
+    os.utime(lane_dir, (old, old))
+    ledger_path = repo / "ledger.jsonl"
+
+    rows = run_reclaim(
+        source_repo=repo,
+        worktree_root=worktree_root,
+        ledger_path=ledger_path,
+        execute=True,
+        reclaim_mismatch=True,
+    )
+    lane_row = next(r for r in rows if r.lane == "lane-99903")
+    assert lane_row.disposition == "skipped"
+    assert lane_row.reason == "mismatch_lane_not_clean"
+    assert lane_dir.is_dir()
+    assert (lane_dir / "untracked-dirt.txt").is_file()
+
+
+def test_missing_lane_branch_pins_before_remove(tmp_path: Path) -> None:
+    """AC1: deleted lane branch still pins refs/giw-wip before worktree removal."""
+    repo = tmp_path / "universal-llm-gateway"
+    repo.mkdir()
+    _git("init", "-b", "master", cwd=repo)
+    _git("config", "user.email", "test@example.com", cwd=repo)
+    _git("config", "user.name", "test", cwd=repo)
+    (repo / "README.md").write_text("seed\n", encoding="utf-8")
+    _git("add", "README.md", cwd=repo)
+    _git("commit", "-m", "seed", cwd=repo)
+
+    worktree_root = tmp_path / "ulg-arc-worktrees"
+    lane_root = worktree_root / repo.name
+    lane_root.mkdir(parents=True)
+    branch = "cursor-sdk/lane-99904"
+    _git("branch", branch, "master", cwd=repo)
+    lane_dir = lane_root / "lane-99904"
+    _git("worktree", "add", "-B", branch, str(lane_dir), branch, cwd=repo)
+    head_before = _git("rev-parse", "HEAD", cwd=lane_dir).stdout.strip()
+    _git("worktree", "remove", "--force", str(lane_dir), cwd=repo)
+    _git("branch", "-D", branch, cwd=repo)
+    _git("worktree", "add", "--detach", str(lane_dir), head_before, cwd=repo)
+    old_mtime = time.time() - (49 * 3600)
+    os.utime(lane_dir, (old_mtime, old_mtime))
+    wip_ref = giw_worktree_reclaim._wip_ref_name("lane-99904")
+
+    rows = run_reclaim(
+        source_repo=repo,
+        worktree_root=worktree_root,
+        ledger_path=repo / "ledger.jsonl",
+        execute=True,
+        reclaim_mismatch=True,
+    )
+    lane_row = next(r for r in rows if r.lane == "lane-99904")
+    assert lane_row.disposition == "removed"
+    assert _git("rev-parse", wip_ref, cwd=repo).stdout.strip() == head_before
+    assert not lane_dir.exists()
+
+
+def test_dry_run_and_reclaim_mismatch_no_mutation(
+    mismatch_lane: tuple[Path, Path, Path],
+) -> None:
+    """AC5: default and --reclaim-mismatch without --execute leave repo unchanged."""
+    repo, worktree_root, lane_dir = mismatch_lane
+    ledger_path = repo / "ledger.jsonl"
+
+    def _snapshot() -> tuple[str, str, bytes]:
+        refs = _git("show-ref", cwd=repo).stdout
+        wt = _git("worktree", "list", "--porcelain", cwd=repo).stdout
+        blob = (repo / "README.md").read_bytes()
+        return refs, wt, blob
+
+    before = _snapshot()
+    run_reclaim(
+        source_repo=repo,
+        worktree_root=worktree_root,
+        ledger_path=ledger_path,
+        execute=False,
+    )
+    assert _snapshot() == before
+    run_reclaim(
+        source_repo=repo,
+        worktree_root=worktree_root,
+        ledger_path=ledger_path,
+        execute=False,
+        reclaim_mismatch=True,
+    )
+    assert _snapshot() == before
+    assert lane_dir.is_dir()
+
+
+def test_wip_ref_sanitizes_lane_name() -> None:
+    """AC1/F-3c: unsafe lane strings cannot escape refs/giw-wip/."""
+    ref = giw_worktree_reclaim._wip_ref_name("lane-evil/../../../x")
+    assert ref.startswith("refs/giw-wip/")
+    assert ".." not in ref
+    assert "/" not in ref.removeprefix("refs/giw-wip/")
 
 
 def test_default_ledger_runtime_path_not_tracked(
