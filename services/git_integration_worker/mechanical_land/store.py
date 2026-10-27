@@ -334,9 +334,7 @@ class MechanicalLandStore:
                 "SELECT * FROM mechanical_land_journal WHERE run_id=? ORDER BY seq ASC",
                 (run_id,),
             ).fetchall()
-        return self._snapshot_from_rows(
-            run_row, list(rows), event_limit=event_limit
-        )
+        return self._snapshot_from_rows(run_row, list(rows), event_limit=event_limit)
 
     def birth_from_plan(
         self,
