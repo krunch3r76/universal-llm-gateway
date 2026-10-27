@@ -214,8 +214,15 @@ async def test_a6655_frozen_same_thread_silent_no_event(
 
 
 class _ClientCtx:
-    def __init__(self, post_turn: AsyncMock) -> None:
+    def __init__(
+        self,
+        post_turn: AsyncMock,
+        *,
+        coord_subscriptions: list[dict] | None = None,
+    ) -> None:
         self._post_turn = post_turn
+        self._coord_subscriptions = list(coord_subscriptions or [])
+        self.subscription_posts: list[dict] = []
 
     async def __aenter__(self) -> _ClientCtx:
         return self
@@ -223,9 +230,154 @@ class _ClientCtx:
     async def __aexit__(self, *args: object) -> None:
         return None
 
+    async def get(self, path: str, **kwargs: object) -> object:
+        if path == "/endpoint-subscriptions":
+            subs = self._coord_subscriptions
+
+            class _Resp:
+                status_code = 200
+
+                def raise_for_status(self) -> None:
+                    return None
+
+                def json(self) -> dict:
+                    return {"subscriptions": subs}
+
+            return _Resp()
+        raise AssertionError(f"unexpected GET {path}")
+
     async def post(self, path: str, **kwargs: object) -> object:
         if path == "/turns":
             await self._post_turn(path, kwargs.get("json"))
+        elif path == "/endpoint-subscriptions":
+            payload = kwargs.get("json")
+            if isinstance(payload, dict):
+                self.subscription_posts.append(payload)
         return type(
-            "Resp", (), {"status_code": 200, "json": lambda self: {"turn_number": 1}}
+            "Resp",
+            (),
+            {
+                "status_code": 200,
+                "raise_for_status": lambda self: None,
+                "json": lambda self: {"turn_number": 1},
+            },
         )()
+
+
+@pytest.mark.asyncio
+async def test_coord_admit_mirrors_worker_scoped_subscription(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    post_turn = AsyncMock()
+    coord_row = {
+        "agent": "cursor",
+        "thread_scope": "20995",
+        "state": "subscribed",
+        "surface": "cursor",
+        "display": "orion-node",
+        "title": "20995 impresario",
+        "agent_id": "composer-impresario-dbbfc4c2",
+    }
+    ctx_holder: list[_ClientCtx] = []
+
+    def _factory(*_a: object, **_k: object) -> _ClientCtx:
+        ctx = _ClientCtx(post_turn, coord_subscriptions=[coord_row])
+        ctx_holder.append(ctx)
+        return ctx
+
+    monkeypatch.setattr(
+        "systems.frontier_consult.cursor_sdk_coord_notify.make_async_client",
+        _factory,
+    )
+    monkeypatch.setenv("AGENT_BUS_TOKEN", "test-token")
+    await post_coord_admit_pointer(
+        coord_thread_id="20995",
+        worker_thread_id="21015",
+        to_agent="composer-impresario-dbbfc4c2",
+        caller_agent="composer-impresario-dbbfc4c2",
+        contract="implement",
+    )
+    post_turn.assert_awaited_once()
+    posts = []
+    for ctx in ctx_holder:
+        posts.extend(ctx.subscription_posts)
+    assert len(posts) == 1
+    assert posts[0]["thread_scope"] == "21015"
+    assert posts[0]["agent"] == "cursor"
+    assert posts[0]["bound_by"] == "cursor-sdk-admit"
+    assert posts[0]["evidence"] == "parent:20995"
+    assert posts[0]["agent_id"] == coord_row["agent_id"]
+
+
+@pytest.mark.asyncio
+async def test_house_land_wake_budget_coord_admit_and_worker_closeout_qualify(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Admit posts once; subscription mirror; qualify budget on worker closeout path."""
+    from bus_watch.endpoint_wake_dispatcher import qualify
+
+    post_turn = AsyncMock()
+    imp = "composer-impresario-dbbfc4c2"
+    monkeypatch.setattr(
+        "systems.frontier_consult.cursor_sdk_coord_notify.make_async_client",
+        lambda *a, **k: _ClientCtx(
+            post_turn,
+            coord_subscriptions=[
+                {
+                    "agent": "cursor",
+                    "thread_scope": "20995",
+                    "state": "subscribed",
+                    "surface": "cursor",
+                    "display": "orion-node",
+                    "title": "house",
+                    "agent_id": imp,
+                }
+            ],
+        ),
+    )
+    monkeypatch.setenv("AGENT_BUS_TOKEN", "test-token")
+    await post_coord_admit_pointer(
+        coord_thread_id="20995",
+        worker_thread_id="21015",
+        to_agent=imp,
+        caller_agent=imp,
+        contract="implement",
+    )
+    admit_verdict = qualify(
+        {
+            "to_agent": imp,
+            "from_agent": imp,
+            "subject": "cursor-sdk generate admitted",
+            "thread": "20995",
+        },
+        cse=False,
+        store=None,
+    )
+    assert admit_verdict.wake is False
+    closeout_verdict = qualify(
+        {
+            "to_agent": imp,
+            "from_agent": "cursor-sdk",
+            "subject": "CLOSEOUT|cursor-sdk CLOSEOUT lane-21015 contract=implement",
+            "thread": "21015",
+        },
+        cse=False,
+        store=None,
+    )
+    assert closeout_verdict.wake is True
+    review_verdict = qualify(
+        {
+            "to_agent": imp,
+            "from_agent": "web-anthropic",
+            "subject": "VERDICT|PASS",
+            "thread": "20995",
+        },
+        cse=False,
+        store=None,
+    )
+    wakes = sum(
+        1
+        for v in (admit_verdict, closeout_verdict, review_verdict)
+        if v.wake
+    )
+    assert wakes <= 2

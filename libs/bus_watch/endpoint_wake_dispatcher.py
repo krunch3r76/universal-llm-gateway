@@ -256,6 +256,7 @@ def _maestro_direct_address_turn(
 _LANE_NAME_ALIASES = frozenset({"maestro", "web-anthropic", "claude-web"})
 _ADDRESS_WALK_HOPS = 8
 _CURSOR_SDK_CLOSEOUT_RE = re.compile(r"(?i)^(?:CLOSEOUT\|)?cursor-sdk CLOSEOUT\b")
+_CURSOR_SDK_GENERATE_ADMIT_HEAD = "cursor-sdk generate admitted"
 _MILESTONE_NONWAKE_TOKENS = frozenset(
     {"ACK", "ROUTE", "FACT", "PICKUP", "STATUS", "UPDATE", "HOP", "CLOSEOUT"}
 )
@@ -275,6 +276,15 @@ def _name_in_lane_alias(raw_to: str, normalized_to: str) -> bool:
     if raw in _LANE_NAME_ALIASES:
         return True
     return normalized_to in _LANE_NAME_ALIASES
+
+
+def _is_cursor_sdk_generate_admit_echo(subject: str) -> bool:
+    """Coord-thread admit pointer; worker ``CLOSEOUT|`` is the wake leg."""
+    text = (subject or "").strip()
+    if not text:
+        return False
+    head = _CURSOR_SDK_GENERATE_ADMIT_HEAD
+    return text == head or text.startswith(f"{head}|") or text.startswith(f"{head} ")
 
 
 def _subject_is_closeout(subject: str) -> bool:
@@ -737,6 +747,8 @@ def qualify(
         subject
     ):
         return RuleVerdict(False, "drop_dispatch_intermediate")
+    if _is_cursor_sdk_generate_admit_echo(subject):
+        return RuleVerdict(False, "drop_dispatch_intermediate")
     if peer_operator_wake_from(from_agent):
         return RuleVerdict(True, "wake_peer_sender")
     if _is_routine_conductor_hop_closeout(subject):
@@ -784,6 +796,8 @@ def _legacy_qualifies(
     if _maestro_cse_nonwake_head(
         to_agent=to_agent, from_agent=from_agent, subject=subject, head=head
     ):
+        return False
+    if _is_cursor_sdk_generate_admit_echo(subject):
         return False
     if not peer_operator_wake_from(from_agent) and not subject_allowed(
         subject, cse=cse, to_agent=to_agent
