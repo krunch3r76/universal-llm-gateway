@@ -272,6 +272,7 @@ Covered by § Seat stays 3. Same-turn: `friction()` → card row → swap NOW �
 | Stop | Trigger | Action |
 |---|---|---|
 | `HOUSE_CLOSE` | operator says close the house | LOAD `runbook:house-close` and execute. Not session-close. |
+| House digest | summarize house N, `/house-summary`, last 24h on thread | LOAD `runbook:house-summary` and execute. Not session-close. |
 | `OPERATOR_GATE` | credentials · irreversible · money · outbound/calendar committing others · fleet-wide restart — **only when armed** via `--operator-gate <row>` (`source=operator`) | CHECKPOINT + page + park **that row**. Clear with `--operator-gate clear`. Seat prose / `now_row` containing `OPERATOR_GATE` ≠ gate |
 | `HOLD_MERGE` | operator **explicitly** asked to hold merge | leave lane branch, row `LAND OWED`, page; ¬ hop. Silence / missing `auto_land` ≠ hold |
 | `CONSULT_PENDING` | independent check disagrees | row pinned, continue other rows |
