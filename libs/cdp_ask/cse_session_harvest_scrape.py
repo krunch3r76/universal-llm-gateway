@@ -37,7 +37,12 @@ from durable_io.atomic import (
 )
 
 from cdp_ask.cse_session_ack import classify_ack
-from cdp_ask.cse_session_models import CseSessionTurn, HarvestRequest, HarvestResponse
+from cdp_ask.cse_session_models import (
+    CseSessionTurn,
+    HarvestRequest,
+    HarvestResponse,
+    OutputCardSummary,
+)
 
 _CSE_PATH_MARKER = "/cowork/cse_"
 
@@ -398,6 +403,162 @@ async def pick_page_for_chat_url(ctx: Any, chat_url: str, *, fallback: Any) -> A
     return fallback
 
 
+async def _enumerate_output_cards(
+    page: Any,
+    *,
+    probe_bytes: bool,
+) -> list[OutputCardSummary]:
+    """List Outputs panel filenames; optionally download each row for byte counts."""
+    from claude_bundles.cowork_output_download import download_cowork_output_by_filename
+    from claude_bundles.cowork_output_preview import list_cowork_output_card_filenames
+
+    filenames = await list_cowork_output_card_filenames(page)
+    cards: list[OutputCardSummary] = []
+    for name in filenames:
+        if not probe_bytes:
+            cards.append(OutputCardSummary(filename=name))
+            continue
+        downloaded = await download_cowork_output_by_filename(page, name)
+        if downloaded is None:
+            cards.append(OutputCardSummary(filename=name, bytes=0))
+            continue
+        cards.append(
+            OutputCardSummary(
+                filename=downloaded.filename,
+                file_uuid=downloaded.file_uuid,
+                bytes=len(downloaded.content_bytes),
+            )
+        )
+    return cards
+
+
+def _cards_matching_marker(
+    cards: list[OutputCardSummary],
+    marker: str | None,
+) -> list[OutputCardSummary]:
+    token = (marker or "").strip()
+    if not token:
+        return list(cards)
+    return [card for card in cards if token in card.filename]
+
+
+def _harvest_body_from_download(downloaded: Any) -> HarvestBody:
+    from claude_bundles.cowork_output_download import CLASSIC_OUTPUT_DOWNLOAD_ROUTE
+
+    return HarvestBody(
+        content=downloaded.content,
+        provenance="output-file",
+        filename=downloaded.filename,
+        content_bytes=downloaded.content_bytes,
+        route=getattr(downloaded, "route", CLASSIC_OUTPUT_DOWNLOAD_ROUTE),
+        file_uuid=getattr(downloaded, "file_uuid", None),
+    )
+
+
+async def _try_output_file_card_harvest(
+    page: Any,
+    req: HarvestRequest,
+    provenance: dict[str, Any] | None,
+    *,
+    chat_url: str | None,
+    allow_miss_terminal: bool,
+) -> HarvestResponse | None:
+    """Outputs-panel card listing, marker selection, and optional metadata-only probe."""
+    cards = await _enumerate_output_cards(
+        page,
+        probe_bytes=req.metadata_only,
+    )
+    if req.metadata_only:
+        return HarvestResponse(
+            outcome="harvested",
+            content_provenance="metadata_only",
+            cards=cards,
+            provenance=provenance,
+        )
+    if not cards:
+        return None
+
+    marker = (req.marker or "").strip() or None
+    if len(cards) > 1 and not marker:
+        return HarvestResponse(
+            outcome="disambiguation",
+            reason="output_card_disambiguation",
+            cards=cards,
+            provenance=provenance,
+        )
+
+    pool = _cards_matching_marker(cards, marker) if marker else cards
+    if marker and not pool:
+        return HarvestResponse(
+            outcome="unreachable",
+            reason="output_marker_miss",
+            cards=cards,
+            provenance=provenance,
+        )
+    if len(pool) > 1:
+        return HarvestResponse(
+            outcome="disambiguation",
+            reason="output_card_disambiguation",
+            cards=pool,
+            provenance=provenance,
+        )
+
+    from claude_bundles.cowork_output_download import download_cowork_output_by_filename
+
+    downloaded = await download_cowork_output_by_filename(page, pool[0].filename)
+    if downloaded is None or not downloaded.content.strip():
+        if allow_miss_terminal:
+            return HarvestResponse(outcome="unreachable", reason="output_file_miss")
+        return None
+    body_result = _harvest_body_from_download(downloaded)
+    if not substantive_reply_body(body_result.content):
+        if allow_miss_terminal:
+            return HarvestResponse(outcome="unreachable", reason="output_file_miss")
+        return None
+
+    post = enrich_dom(await harvest_turns(page, limit=1))
+    if post.get("loading") or post.get("in_flight") or post.get("streaming"):
+        return None
+
+    ack = classify_ack(
+        body_result.content,
+        marker=req.marker,
+        successor_birth_id=req.successor_birth_id,
+    )
+    archive_uri: str | None = None
+    archive_sha256: str | None = None
+    resolved_chat_url = (
+        chat_url or req.chat_url or str((provenance or {}).get("chat_url") or "")
+    ).strip() or None
+    resolved_registration_id = (
+        req.registration_id or str((provenance or {}).get("registration_id") or "")
+    ).strip() or None
+    persisted = persist_cowork_output_raw_transcript(
+        body_result,
+        chat_url=resolved_chat_url,
+        registration_id=resolved_registration_id,
+        provenance=provenance,
+    )
+    if persisted is not None:
+        archive_uri, archive_sha256 = persisted
+    return HarvestResponse(
+        outcome="harvested",
+        ack_class=ack,
+        turns=[
+            CseSessionTurn(
+                author="assistant",
+                text=body_result.content,
+                source="output-file",
+            )
+        ],
+        content_provenance="output-file",
+        provenance=provenance,
+        archive_uri=archive_uri,
+        archive_sha256=archive_sha256,
+        cards=cards,
+    )
+
+
 async def scrape_once(
     page: Any,
     *,
@@ -428,6 +589,16 @@ async def _try_body_harvest(
             or preview.get("streaming")
         ):
             return None
+        if req.source == "output-file":
+            card_resp = await _try_output_file_card_harvest(
+                page,
+                req,
+                provenance,
+                chat_url=chat_url,
+                allow_miss_terminal=allow_miss_terminal,
+            )
+            if card_resp is not None:
+                return card_resp
         chat_body = ""
         if preview.get("turns"):
             chat_body = str(preview["turns"][-1].get("text") or "")

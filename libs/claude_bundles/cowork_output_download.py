@@ -248,6 +248,32 @@ async def _download_via_classic_affordance(
     )
 
 
+async def download_cowork_output_by_filename(
+    page: Page,
+    filename: str,
+    *,
+    timeout_ms: int = 15000,
+) -> OutputDownloadResult | None:
+    """Download one Outputs row identified by *filename* (panel label or substring)."""
+    from claude_bundles.cowork_output_preview import (
+        download_via_preview_menu,
+        tag_cowork_output_filename_button,
+    )
+
+    resolved = await tag_cowork_output_filename_button(page, filename)
+    if not resolved:
+        return None
+    menu_download = await download_via_preview_menu(page, timeout_ms=timeout_ms)
+    if menu_download is not None and menu_download.content_bytes:
+        if menu_download.route == CLASSIC_OUTPUT_DOWNLOAD_ROUTE:
+            return replace(menu_download, route="preview_menu_download")
+        return menu_download
+    classic = await _download_via_classic_affordance(page, timeout_ms=timeout_ms)
+    if classic is not None and classic.content.strip():
+        return classic
+    return None
+
+
 async def download_cowork_output(
     page: Page,
     *,

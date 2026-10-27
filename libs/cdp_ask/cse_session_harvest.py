@@ -212,7 +212,7 @@ async def harvest_page(
     current_reg = _registration_id_from_provenance(
         provenance, requested_registration_id
     )
-    if req.metadata_only:
+    if req.metadata_only and req.source != "output-file":
         response = HarvestResponse(
             outcome="harvested",
             provenance=provenance,

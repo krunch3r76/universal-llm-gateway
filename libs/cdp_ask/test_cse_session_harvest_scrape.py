@@ -9,7 +9,11 @@ from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from claude_bundles.cowork_output_download import HarvestBody, OutputDownloadError
+from claude_bundles.cowork_output_download import (
+    HarvestBody,
+    OutputDownloadError,
+    OutputDownloadResult,
+)
 
 from cdp_ask.cse_session_harvest_scrape import (
     _dom_to_harvested,
@@ -22,7 +26,7 @@ from cdp_ask.cse_session_harvest_scrape import (
     persist_cowork_output_raw_transcript,
     pick_page_for_chat_url,
 )
-from cdp_ask.cse_session_models import HarvestRequest
+from cdp_ask.cse_session_models import HarvestRequest, OutputCardSummary
 
 pytestmark = pytest.mark.offline
 
@@ -230,6 +234,10 @@ async def test_try_body_harvest_persists_output_file_raw_and_manifest(
     with (
         patch("cdp_ask.cse_session_harvest_scrape.harvest_turns", harvest_turns),
         patch(
+            "cdp_ask.cse_session_harvest_scrape._enumerate_output_cards",
+            AsyncMock(return_value=[]),
+        ),
+        patch(
             "cdp_ask.cse_session_harvest_scrape.resolve_harvest_body",
             AsyncMock(return_value=harvest_body),
         ),
@@ -301,6 +309,10 @@ async def test_try_body_harvest_output_file_revision_on_changed_bytes(
             patch(
                 "cdp_ask.cse_session_harvest_scrape.harvest_turns",
                 AsyncMock(return_value=_settled_turn_dom(body.content)),
+            ),
+            patch(
+                "cdp_ask.cse_session_harvest_scrape._enumerate_output_cards",
+                AsyncMock(return_value=[]),
             ),
             patch(
                 "cdp_ask.cse_session_harvest_scrape.resolve_harvest_body",
@@ -406,6 +418,151 @@ def test_persist_projects_messages_dropping_tool_output(
     assert projection.get("meta", {}).get("raw_sha256") == raw_sha
 
 
+@pytest.mark.asyncio
+async def test_output_file_multi_card_disambiguation_without_marker() -> None:
+    page = MagicMock()
+    req = HarvestRequest(source="output-file", chat_url=_CHAT_URL)
+    cards = [
+        OutputCardSummary(filename="prehop.jsonl", bytes=100),
+        OutputCardSummary(filename="posthop.jsonl", bytes=200),
+    ]
+    with (
+        patch(
+            "cdp_ask.cse_session_harvest_scrape.harvest_turns",
+            AsyncMock(return_value=_settled_turn_dom("x" * 200)),
+        ),
+        patch(
+            "cdp_ask.cse_session_harvest_scrape._enumerate_output_cards",
+            AsyncMock(return_value=cards),
+        ),
+    ):
+        resp = await _try_body_harvest(page, req, None, chat_url=_CHAT_URL)
+    assert resp is not None
+    assert resp.outcome == "disambiguation"
+    assert resp.reason == "output_card_disambiguation"
+    assert len(resp.cards) == 2
+    assert resp.turns == []
+
+
+@pytest.mark.asyncio
+async def test_output_file_metadata_only_lists_cards_without_bodies() -> None:
+    page = MagicMock()
+    req = HarvestRequest(
+        source="output-file",
+        chat_url=_CHAT_URL,
+        metadata_only=True,
+    )
+    cards = [
+        OutputCardSummary(filename="prehop.jsonl", file_uuid="266af9a8", bytes=1234),
+        OutputCardSummary(filename="other.jsonl", file_uuid="ed1596e0", bytes=5678),
+    ]
+    with (
+        patch(
+            "cdp_ask.cse_session_harvest_scrape.harvest_turns",
+            AsyncMock(return_value=_settled_turn_dom("x" * 200)),
+        ),
+        patch(
+            "cdp_ask.cse_session_harvest_scrape._enumerate_output_cards",
+            AsyncMock(return_value=cards),
+        ),
+    ):
+        resp = await _try_body_harvest(page, req, None, chat_url=_CHAT_URL)
+    assert resp is not None
+    assert resp.outcome == "harvested"
+    assert resp.content_provenance == "metadata_only"
+    assert resp.turns == []
+    assert len(resp.cards) == 2
+    assert resp.cards[0].filename == "prehop.jsonl"
+
+
+@pytest.mark.asyncio
+async def test_output_file_marker_miss_is_unreachable() -> None:
+    page = MagicMock()
+    req = HarvestRequest(source="output-file", chat_url=_CHAT_URL, marker="missing")
+    cards = [OutputCardSummary(filename="other.jsonl", bytes=1)]
+    with (
+        patch(
+            "cdp_ask.cse_session_harvest_scrape.harvest_turns",
+            AsyncMock(return_value=_settled_turn_dom("x" * 200)),
+        ),
+        patch(
+            "cdp_ask.cse_session_harvest_scrape._enumerate_output_cards",
+            AsyncMock(return_value=cards),
+        ),
+    ):
+        resp = await _try_body_harvest(page, req, None, chat_url=_CHAT_URL)
+    assert resp is not None
+    assert resp.outcome == "unreachable"
+    assert resp.reason == "output_marker_miss"
+
+
+@pytest.mark.asyncio
+async def test_output_file_marker_prehop_harvests_one_card_and_projects_messages(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """AC-d2a.7: marker selects the prehop card among two Outputs rows."""
+    monkeypatch.setenv("CORTEX_FILES_ROOT", str(tmp_path))
+    _freeze_harvest_date(monkeypatch)
+    prehop_raw = _cowork_jsonl_bytes_with_large_tool_result()
+    other_raw = b"W" * 80_000 + b"\n"
+    session_name = "claude-cowork-070d97ff-5df4-5b11-8181-6faafdf64608.jsonl"
+    prehop_file = "prehop.jsonl"
+    cards = [
+        OutputCardSummary(filename=prehop_file, bytes=len(prehop_raw)),
+        OutputCardSummary(filename="posthop.jsonl", bytes=len(other_raw)),
+    ]
+
+    def _download(_page: MagicMock, filename: str, **_kwargs: object) -> OutputDownloadResult:
+        if "prehop" in filename:
+            return OutputDownloadResult(
+                filename=session_name,
+                content=prehop_raw.decode("utf-8"),
+                content_bytes=prehop_raw,
+                route=_ROUTE,
+                file_uuid="266af9a8-c550-42af-99e9-1254657e7cb3",
+            )
+        return OutputDownloadResult(
+            filename="posthop.jsonl",
+            content=other_raw.decode("utf-8"),
+            content_bytes=other_raw,
+            route=_ROUTE,
+        )
+
+    page = MagicMock()
+    req = HarvestRequest(
+        source="output-file",
+        chat_url=_CHAT_URL,
+        registration_id=_REGISTRATION_ID,
+        marker="prehop",
+    )
+    with (
+        patch(
+            "cdp_ask.cse_session_harvest_scrape.harvest_turns",
+            AsyncMock(return_value=_settled_turn_dom("x" * 200)),
+        ),
+        patch(
+            "cdp_ask.cse_session_harvest_scrape._enumerate_output_cards",
+            AsyncMock(return_value=cards),
+        ),
+        patch(
+            "claude_bundles.cowork_output_download.download_cowork_output_by_filename",
+            side_effect=_download,
+        ),
+    ):
+        resp = await _try_body_harvest(page, req, None, chat_url=_CHAT_URL)
+
+    assert resp is not None
+    assert resp.outcome == "harvested"
+    assert resp.archive_sha256 == hashlib.sha256(prehop_raw).hexdigest()
+    messages_path = (
+        tmp_path
+        / "notes/system/transcripts/_nohouse/claude-ai/messages/2026-10-27/"
+        f"{_SESSION_ID}.messages.json"
+    )
+    assert messages_path.is_file()
+    assert messages_path.stat().st_size < 0.10 * len(prehop_raw)
+
+
 def _output_harvest_body(content: bytes) -> HarvestBody:
     return HarvestBody(
         content=content.decode("utf-8"),
@@ -445,6 +602,10 @@ async def test_output_file_loading_wait_succeeds_on_third_poll(
                 AsyncMock(return_value=_settled_turn_dom(body.content)),
             ),
             patch(
+                "cdp_ask.cse_session_harvest_scrape._enumerate_output_cards",
+                AsyncMock(return_value=[]),
+            ),
+            patch(
                 "cdp_ask.cse_session_harvest_scrape.resolve_harvest_body",
                 resolve_mock,
             ),
@@ -482,6 +643,10 @@ async def test_output_file_loading_wait_misses_at_deadline(
         patch(
             "cdp_ask.cse_session_harvest_scrape.harvest_turns",
             AsyncMock(return_value=_settled_turn_dom("x" * 200)),
+        ),
+        patch(
+            "cdp_ask.cse_session_harvest_scrape._enumerate_output_cards",
+            AsyncMock(return_value=[]),
         ),
         patch(
             "cdp_ask.cse_session_harvest_scrape.resolve_harvest_body",
