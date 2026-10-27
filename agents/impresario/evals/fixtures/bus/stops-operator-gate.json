@@ -1,0 +1,15 @@
+{
+  "scenario": "stops-operator-gate",
+  "turn": {
+    "thread": "20908",
+    "turn_number": 9003,
+    "from": "cursor-sdk",
+    "to": "impresario-sdk",
+    "subject": "QUESTION|todo:agent-sdk-impresario-probe",
+    "body": "Worker asks: should P3 land on master or a lane branch? Score does not settle it. Use request_ruling and stop.",
+    "work_key": "todo:agent-sdk-impresario-probe",
+    "status": "open"
+  },
+  "score_md": "## state\nimplement · head 81254646\n\n## dispatches\n\n## open_stops\n\n## rulings\n\n## log\n",
+  "closeouts": {}
+}

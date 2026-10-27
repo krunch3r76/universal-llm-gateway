@@ -1,0 +1,20 @@
+[Unit]
+Description=ULG impresario Agent SDK serve (127.0.0.1:3100)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+Restart=always
+RestartSec=5
+WorkingDirectory=/mnt/torus/projects/universal-llm-gateway-wt-agent-sdk-impresario-probe/agents/impresario
+Environment=PATH=/home/io/.nvm/versions/node/v24.14.0/bin:/home/io/.venvs/universal/bin:/usr/local/bin:/usr/bin:/bin
+Environment=HOME=/home/io
+EnvironmentFile=%h/.config/ulg-impresario/env
+EnvironmentFile=-%h/.gateway/secrets.env
+ExecStart=/home/io/.nvm/versions/node/v24.14.0/bin/agent-sdk serve --dir /mnt/torus/projects/universal-llm-gateway-wt-agent-sdk-impresario-probe/agents/impresario --mode single --host 127.0.0.1 --port 3100 --state-root %h/.local/state/ulg-impresario --bearer-token ${AGENT_SDK_BEARER_TOKEN}
+StandardOutput=append:%h/.local/state/ulg-impresario/serve.log
+StandardError=append:%h/.local/state/ulg-impresario/serve.log
+
+[Install]
+WantedBy=default.target

@@ -1,0 +1,29 @@
+{
+  "scenario": "stops-consult-pending",
+  "turn": {
+    "thread": "20908",
+    "turn_number": 9002,
+    "from": "maestro",
+    "to": "impresario-sdk",
+    "subject": "REQUEST|steer|todo:agent-sdk-impresario-probe",
+    "body": "Steer conductor dispatch 80ad0776-0000-4000-8000-000000000002 with directive 'Apply reviewer B1 fix' reason 'verdict'. If CONSULT_PENDING stop, follow stop protocol.",
+    "work_key": "todo:agent-sdk-impresario-probe",
+    "status": "open"
+  },
+  "score_md": "## state\nreview_requested · head 81254646\n\n## dispatches\ndispatch 80ad0776-0000-4000-8000-000000000002 · conductor · thread 18415\n\n## open_stops\n\n## rulings\n\n## log\n",
+  "closeouts": {},
+  "ledger": {
+    "todo:agent-sdk-impresario-probe": {
+      "dispatches": [
+        {
+          "dispatch_id": "80ad0776-0000-4000-8000-000000000002",
+          "status": "parked_waiting",
+          "thread_id": "18415",
+          "work_key": "todo:agent-sdk-impresario-probe",
+          "contract": "conductor",
+          "closeout_stop_tokens": ["CONSULT_PENDING"]
+        }
+      ]
+    }
+  }
+}

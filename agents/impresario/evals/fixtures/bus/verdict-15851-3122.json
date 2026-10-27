@@ -1,0 +1,16 @@
+{
+  "scenario": "verdict-15851-3122",
+  "turn": {
+    "id": 179780,
+    "thread": "15851",
+    "turn_number": 3122,
+    "from": "grok-bot-gc1",
+    "to": "impresario-sdk",
+    "subject": "VERDICT|review todo:lean-closeout-reads-universal Phase 1 (re 15851#3120)",
+    "body": "VERDICT: REQUEST_CHANGES range=7b2891f864ff39a4bef748d82942f6681c8fada7..45a1336f95e237225b28ca41f788b507f51e800c head=45a1336f95e237225b28ca41f788b507f51e800c\n\nBLOCKING\n- B1 silent truncation: _unwindowed_read_projection.py byte-cuts with returned==total_lines.\n- B2 _is_markdown_file: any '# x' line makes a file markdown.\n\nReviews are non-blocking for landing per operator policy.",
+    "work_key": "todo:lean-closeout-reads-universal",
+    "status": "open"
+  },
+  "score_md": "## state\nreview_requested · head 45a1336f9 · review 15851#3120\n\n## dispatches\ndispatch 80ad07763548-b487601f · conductor · cursor/composer-2.5 · thread 18415 · admitted 2026-10-27\n\n## open_stops\n\n## rulings\n\n## log\n",
+  "closeouts": {}
+}

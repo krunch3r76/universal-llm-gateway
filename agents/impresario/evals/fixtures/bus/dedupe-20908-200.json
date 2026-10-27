@@ -1,0 +1,18 @@
+{
+  "scenario": "dedupe-20908-200",
+  "turn": {
+    "thread": "20908",
+    "turn_number": 200,
+    "from": "maestro",
+    "to": "impresario-sdk",
+    "subject": "STATUS|probe|dedupe once",
+    "body": "dedupe AC3 — mark_read deferred once",
+    "work_key": "todo:agent-sdk-impresario-probe",
+    "status": "open"
+  },
+  "score_md": "## state\nimplementing · head d01635956 · review —\n\n## dispatches\n\n## open_stops\n\n## rulings\n\n## log\n",
+  "closeouts": {},
+  "flags": {
+    "defer_mark_read": true
+  }
+}
