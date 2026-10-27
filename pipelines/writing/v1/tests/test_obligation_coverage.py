@@ -1607,6 +1607,44 @@ def test_question_dash_call_me_not_stripped_from_semantic_reading() -> None:
     assert "call me" in str(question.get("semantic_reading", "")).lower()
 
 
+_THANKS_TITLECASE_ACKS = (
+    "Thanks, Noted.",
+    "Thanks, Agreed.",
+    "Thanks, Sounds Good.",
+    "Thanks, Got It.",
+    "Thanks, Will Do.",
+)
+
+
+@pytest.mark.parametrize("inbound", _THANKS_TITLECASE_ACKS)
+def test_thanks_titlecase_acknowledgements_statement_not_pleasantry(
+    inbound: str,
+) -> None:
+    rows = source_obligations.fallback_obligations(inbound)
+    assert len(rows) == 1
+    assert rows[0]["kind"] == "statement"
+    assert rows[0]["obligation"] == "acknowledge"
+    assert rows[0]["kind"] != "pleasantry"
+
+
+_QUESTION_TITLECASE_ACTION_TAILS = (
+    ("What time works? - Call Me", "call me"),
+    ("What time works? - Call Bob", "call bob"),
+    ("Lunch? - Sure Thing", "sure thing"),
+)
+
+
+@pytest.mark.parametrize("inbound,phrase", _QUESTION_TITLECASE_ACTION_TAILS)
+def test_question_titlecase_action_tail_preserved_in_semantic_reading(
+    inbound: str,
+    phrase: str,
+) -> None:
+    rows = source_obligations.fallback_obligations(inbound)
+    question = next(row for row in rows if row.get("kind") == "question")
+    assert question["obligation"] == "answer"
+    assert phrase in str(question.get("semantic_reading", "")).lower()
+
+
 def test_lowercase_bullet_after_notes_not_merged_as_signature() -> None:
     rows = source_obligations.fallback_obligations("Notes\n- send transcript")
     quoted = [str(row.get("quoted_span", "")) for row in rows]

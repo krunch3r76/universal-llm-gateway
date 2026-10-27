@@ -41,6 +41,8 @@ _NON_SIGNATURE_TOKENS = frozenset({
     "jan", "feb", "mar", "apr", "jun", "jul", "aug", "sep", "sept", "oct", "nov", "dec",
     "yes", "no", "ok", "okay",
     "i", "a",
+    "noted", "agreed", "sounds", "good", "got", "it", "will", "done", "sure",
+    "call", "me", "thing", "do", "all", "set", "received", "approved", "confirmed",
 })
 _NAME_WORD = r"[A-Z][\w'.-]*"
 _NAME_ONE_OR_TWO = rf"{_NAME_WORD}(?:[ \t]+{_NAME_WORD})?"
