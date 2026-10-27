@@ -8,6 +8,7 @@ import consultFixture from "./fixtures/bus/stops-consult-pending.json";
 import operatorFixture from "./fixtures/bus/stops-operator-gate.json";
 import rowPinnedFixture from "./fixtures/bus/stops-row-pinned.json";
 import e5Fixture from "./fixtures/bus/stops-e5-concurrent.json";
+import { skipWithoutCursorCredential } from "./lib/require-cursor-credential.js";
 
 const fixtureRoot = path.join(
   path.dirname(fileURLToPath(import.meta.url)),
@@ -28,6 +29,7 @@ export default defineEval({
       description: "E2 ROW_PINNED → STOP and score_update open_stops.",
       tags: ["e2"],
       async test(t) {
+        skipWithoutCursorCredential(t);
         armFixtures("stops-row-pinned");
         await t.send("Handle turn.json", {
           workspaceFiles: {
@@ -49,6 +51,7 @@ export default defineEval({
       description: "E2b CONSULT_PENDING steer → STOP.",
       tags: ["e2b"],
       async test(t) {
+        skipWithoutCursorCredential(t);
         armFixtures("stops-consult-pending");
         await t.send("Handle turn.json", {
           workspaceFiles: {
@@ -73,6 +76,7 @@ export default defineEval({
       description: "E3b OPERATOR_GATE request_ruling → STOP.",
       tags: ["e3b"],
       async test(t) {
+        skipWithoutCursorCredential(t);
         armFixtures("stops-operator-gate");
         await t.send("Handle turn.json", {
           workspaceFiles: {
@@ -98,6 +102,7 @@ export default defineEval({
       description: "E5 second commission on same work_key → ROW_PINNED STOP.",
       tags: ["e5"],
       async test(t) {
+        skipWithoutCursorCredential(t);
         armFixtures("stops-e5-concurrent");
         const files = {
           "turn.json": JSON.stringify(e5Fixture.turn, null, 2),

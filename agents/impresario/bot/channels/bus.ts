@@ -7,6 +7,7 @@ import type { ChannelStartArgs, SendMessageFn } from "@grok/agent-sdk/channels";
 import type { HostContext } from "@grok/agent-sdk";
 import { z } from "zod";
 
+import { hostBusCall } from "../lib/bus-host.js";
 import {
   fixtureBusOp,
   fixturesEnabled,
@@ -20,6 +21,13 @@ import {
   turnToJson,
   workKeyFromTurn,
 } from "../lib/score.js";
+import {
+  impresarioStateRoot,
+  ingestTurnGated,
+  maybePostSeatRegistration,
+  shouldStartModelTurn,
+  turnAddressedToMailbox,
+} from "../lib/run-shape.js";
 import { IMPRESARIO_LANE, IMPRESARIO_MAILBOX } from "../lib/ulg.js";
 
 const DELIVERED_PREFIX = "delivered:";
@@ -33,11 +41,7 @@ async function busCall(
   if (fixturesEnabled()) {
     return fixtureBusOp(tool, payload);
   }
-  const mcpTool = tool === "get" ? "agent_bus_read" : "agent_bus";
-  return host.mcp.callTool("ulg", mcpTool, {
-    tool,
-    arguments: JSON.stringify(payload),
-  });
+  return hostBusCall(host, tool, payload);
 }
 
 async function busWait(
@@ -56,10 +60,12 @@ async function busWait(
 async function busFetchUnread(
   host: HostContext,
   mailbox: string,
+  lane: string,
   compact = true,
 ): Promise<{ turns?: Record<string, unknown>[] }> {
   return busCall(host, "fetch_unread", {
     to: mailbox,
+    thread: lane,
     compact,
   }) as Promise<{ turns?: Record<string, unknown>[] }>;
 }
@@ -129,7 +135,18 @@ async function prepareTurn(
   if (!turn) {
     return null;
   }
+  if (!turnAddressedToMailbox(turn)) {
+    channelLogger.info(
+      `[bus] skip turn ${thread}#${turnNumber} to=${String(turn.to)} (not ${IMPRESARIO_MAILBOX})`,
+    );
+    return null;
+  }
   await markDelivered(host, thread, turnNumber);
+  if (!shouldStartModelTurn()) {
+    await busGetTurn(host, thread, turnNumber, true);
+    await ingestTurnGated(host, thread, turnNumber, channelLogger);
+    return null;
+  }
   const workKey = workKeyFromTurn(turn);
   const scoreMd = await readScoreMarkdown(host, workKey, fallbackScore);
   const rotation = await getThreadRotation(host, thread);
@@ -192,9 +209,15 @@ async function pollOnce(args: ChannelStartArgs, fallbackScore: string): Promise<
       ? (await host.kv.get(LAST_LANE_TURN_KEY))
       : 0) as number;
 
-  await busWait(host, lane, afterTurn, 60);
+  if (afterTurn > 0) {
+    try {
+      await busWait(host, lane, afterTurn, 30);
+    } catch (err) {
+      channelLogger.warn("[bus] wait failed; polling fetch_unread", err);
+    }
+  }
 
-  const unread = await busFetchUnread(host, IMPRESARIO_MAILBOX, true);
+  const unread = await busFetchUnread(host, IMPRESARIO_MAILBOX, lane, true);
   const items = unread.turns ?? [];
   const prepared: PreparedTurn[] = [];
   for (const item of items) {
@@ -220,6 +243,7 @@ async function runPollLoop(args: ChannelStartArgs): Promise<void> {
     try {
       await pollOnce(args, scenarioScore);
       backoffMs = 5000;
+      await sleep(5000);
     } catch (err) {
       const status = (err as { status?: number }).status;
       if (status === 503 || status === 500) {
@@ -269,10 +293,20 @@ export default defineChannel({
   ],
   onStart(args: ChannelStartArgs) {
     pollStopped = false;
-    if (process.env.ULG_BUS_MODE === "push") {
-      return;
-    }
-    args.waitUntil(runPollLoop(args));
+    const stateRoot = impresarioStateRoot();
+    args.waitUntil(
+      (async () => {
+        try {
+          await maybePostSeatRegistration(args.host, stateRoot);
+        } catch (err) {
+          channelLogger.warn("[bus] seat registration failed", err);
+        }
+        if (process.env.ULG_BUS_MODE === "push") {
+          return;
+        }
+        await runPollLoop(args);
+      })(),
+    );
   },
   onStop() {
     pollStopped = true;

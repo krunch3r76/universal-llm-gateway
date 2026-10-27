@@ -1,0 +1,13 @@
+{
+  "scenario": "turn-failed-mirror",
+  "turn": {
+    "thread": "20908",
+    "turn_number": 1,
+    "from": "maestro",
+    "to": "impresario-sdk",
+    "subject": "STATUS|probe",
+    "body": "fixture turn for eval"
+  },
+  "score_md": "# score\n",
+  "closeouts": {}
+}

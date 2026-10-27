@@ -1,6 +1,7 @@
 import { defineHook } from "@grok/agent-sdk/hooks";
 
 import { maybeRotateForTokens } from "../lib/score.js";
+import { recordModelUsage } from "../lib/usage-rollup.js";
 
 function threadFromContinuationToken(token: string | undefined): string | undefined {
   if (!token) {
@@ -22,6 +23,11 @@ export default defineHook({
         outputTokens: usage.outputTokens,
         at: event.at,
       });
+      await recordModelUsage(
+        ctx.host,
+        usage.inputTokens,
+        usage.outputTokens,
+      );
       const thread = threadFromContinuationToken(
         ctx.session.continuationKey ?? undefined,
       );

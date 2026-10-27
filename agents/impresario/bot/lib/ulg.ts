@@ -13,11 +13,23 @@ export const IMPRESARIO_LANE = process.env.ULG_IMPRESARIO_LANE ?? "20908";
 export const COMMISSION_MODEL = "cursor/composer-2.5";
 export const MAESTRO_THREAD = "12286";
 
-const repoRoot = path.resolve(fileURLToPath(import.meta.url), "../../../..");
+const repoRoot = path.resolve(
+  path.dirname(fileURLToPath(import.meta.url)),
+  "../../../../",
+);
 
 export function liveSteerEnabled(): boolean {
   const v = process.env.ULG_LIVE_STEER ?? "0";
   return v === "1" || v.toLowerCase() === "true";
+}
+
+/** Host gate: live model turns require ULG_MODEL_TURNS=1 and CURSOR_API_KEY. */
+export function modelTurnsEnabled(): boolean {
+  const v = process.env.ULG_MODEL_TURNS ?? "0";
+  if (v !== "1" && v.toLowerCase() !== "true") {
+    return false;
+  }
+  return Boolean(process.env.CURSOR_API_KEY?.trim());
 }
 
 export { busMailbox, type BusMailbox } from "./mailbox.js";

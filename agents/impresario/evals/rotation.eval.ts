@@ -1,11 +1,13 @@
 import { defineEval, includes } from "@grok/agent-sdk/evals";
 
 import doneFixture from "./fixtures/bus/done-20901-5.json";
+import { skipWithoutCursorCredential } from "./lib/require-cursor-credential.js";
 
 export default defineEval({
   tags: ["rotation", "e4"],
   description: "E4 same fixture twice — same tool order and ACTED shape.",
   async test(t) {
+    skipWithoutCursorCredential(t);
     const files = {
       "turn.json": JSON.stringify(doneFixture.turn, null, 2),
       "score.md": doneFixture.score_md,
