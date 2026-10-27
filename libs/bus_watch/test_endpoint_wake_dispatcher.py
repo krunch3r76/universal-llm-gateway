@@ -234,7 +234,7 @@ def test_cse_allowlist_not_display(db: None) -> None:
         {"to_agent": "grok-bot-gc1", "from_agent": "cursor", "subject": "STATUS|x"},
         cse=False,
     )
-    assert qualifies(
+    admit_echo = qualify(
         {
             "to_agent": "grok-bot-gc1",
             "from_agent": "cursor",
@@ -242,6 +242,8 @@ def test_cse_allowlist_not_display(db: None) -> None:
         },
         cse=False,
     )
+    assert admit_echo.wake is False
+    assert admit_echo.rule_id == "drop_dispatch_intermediate"
     assert qualifies(
         {
             "to_agent": "grok-bot-gc2",
@@ -3581,3 +3583,63 @@ def test_scan_once_enqueues_composer_impresario_worker_closeout() -> None:
     assert store.pending[0]["agent"] == to_agent
     assert store.pending[0]["thread_id"] == worker_thread
     assert store.pending[0]["decided_by_rule"] == "wake_gate_or_directive"
+
+
+def test_admit_echo_dropped_for_peer_sender_regardless_of_from_agent() -> None:
+    """Rec 4: coord admit pointer must not wake before worker CLOSEOUT."""
+    house = "20995"
+    imp = "composer-impresario-dbbfc4c2"
+    base = {
+        "to_agent": imp,
+        "subject": "cursor-sdk generate admitted",
+        "thread": house,
+        "id": 1,
+    }
+    for from_agent in ("cursor", imp, "composer-impresario-other"):
+        verdict = qualify({**base, "from_agent": from_agent}, cse=False, store=None)
+        assert verdict.wake is False, from_agent
+        if from_agent == imp:
+            assert verdict.rule_id == "drop_self_or_broadcast"
+        else:
+            assert verdict.rule_id == "drop_dispatch_intermediate"
+
+
+def test_house_land_wake_budget_admit_echo_zero_closeout_and_verdict_wake() -> None:
+    """Full land lifecycle: admit echo silent; worker closeout + review wake; total <= 2."""
+    house = "20995"
+    worker = "21015"
+    imp = "composer-impresario-dbbfc4c2"
+    wake_count = 0
+    lifecycle = (
+        {
+            "to_agent": imp,
+            "from_agent": imp,
+            "subject": "cursor-sdk generate admitted",
+            "thread": house,
+        },
+        {
+            "to_agent": imp,
+            "from_agent": "cursor-sdk",
+            "subject": "CLOSEOUT|cursor-sdk CLOSEOUT lane-21015 contract=implement",
+            "thread": worker,
+        },
+        {
+            "to_agent": imp,
+            "from_agent": "web-anthropic",
+            "subject": "VERDICT|PASS|wake-noise-reduction",
+            "thread": house,
+        },
+    )
+    for turn in lifecycle:
+        verdict = qualify(turn, cse=False, store=None)
+        if verdict.wake:
+            wake_count += 1
+        if turn["subject"] == "cursor-sdk generate admitted":
+            assert verdict.wake is False
+            assert verdict.rule_id in {
+                "drop_dispatch_intermediate",
+                "drop_self_or_broadcast",
+            }
+        if turn["thread"] == worker and "CLOSEOUT" in turn["subject"]:
+            assert verdict.wake is True
+    assert wake_count <= 2

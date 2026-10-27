@@ -142,6 +142,69 @@ def emit_loop_closure_admission(
     )
 
 
+async def _mirror_coord_subscriptions_to_worker(
+    *,
+    coord_thread_id: str,
+    worker_thread_id: str,
+) -> None:
+    """Copy active coord ``thread_scope`` subscriptions onto the worker lane (Rec 1)."""
+    if not _bus_token_configured() or not coord_thread_id or not worker_thread_id:
+        return
+    if coord_thread_id == worker_thread_id:
+        return
+    try:
+        async with make_async_client(DEFAULT_AGENT_BUS_URL, timeout=10.0) as client:
+            headers = _bus_headers()
+            resp = await client.get(
+                "/endpoint-subscriptions",
+                params={"thread_scope": coord_thread_id},
+                headers=headers,
+            )
+            resp.raise_for_status()
+            payload = resp.json()
+            rows = payload.get("subscriptions") if isinstance(payload, dict) else None
+            if not isinstance(rows, list):
+                return
+            for row in rows:
+                if not isinstance(row, dict):
+                    continue
+                if str(row.get("state") or "") != "subscribed":
+                    continue
+                agent = str(row.get("agent") or "").strip()
+                if not agent:
+                    continue
+                body: dict[str, Any] = {
+                    "agent": agent,
+                    "thread_scope": worker_thread_id,
+                    "surface": str(row.get("surface") or ""),
+                    "display": str(row.get("display") or ""),
+                    "title": row.get("title"),
+                    "agent_id": row.get("agent_id"),
+                    "bound_by": "cursor-sdk-admit",
+                    "evidence": f"parent:{coord_thread_id}",
+                }
+                try:
+                    sub_resp = await client.post(
+                        "/endpoint-subscriptions", json=body, headers=headers
+                    )
+                    sub_resp.raise_for_status()
+                except httpx.HTTPError as exc:
+                    logger.warning(
+                        "worker-scoped subscribe failed: coord=%s worker=%s agent=%s err=%s",
+                        coord_thread_id,
+                        worker_thread_id,
+                        agent,
+                        exc,
+                    )
+    except httpx.HTTPError as exc:
+        logger.warning(
+            "coord subscription mirror failed: coord=%s worker=%s err=%s",
+            coord_thread_id,
+            worker_thread_id,
+            exc,
+        )
+
+
 async def _post_coord_turn(
     *,
     coord_thread_id: str,
@@ -238,3 +301,7 @@ async def post_coord_admit_pointer(
             coord_thread_id,
             exc,
         )
+    await _mirror_coord_subscriptions_to_worker(
+        coord_thread_id=coord_thread_id,
+        worker_thread_id=worker_thread_id,
+    )
