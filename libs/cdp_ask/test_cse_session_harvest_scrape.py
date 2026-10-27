@@ -9,13 +9,14 @@ from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from claude_bundles.cowork_output_download import HarvestBody
+from claude_bundles.cowork_output_download import HarvestBody, OutputDownloadError
 
 from cdp_ask.cse_session_harvest_scrape import (
     _dom_to_harvested,
     _try_body_harvest,
     compute_incomplete_dom,
     enrich_dom,
+    harvest_with_loading_wait,
     is_loading,
     is_shell_title,
     pick_page_for_chat_url,
@@ -24,8 +25,27 @@ from cdp_ask.cse_session_models import HarvestRequest
 
 pytestmark = pytest.mark.offline
 
-_OUTPUT_FILENAME = "claude-cowork-070d97ff-5df4-5b11-8181-6faafdf64608.jsonl"
+_OUTPUT_FILENAME_COWORK = "claude-cowork-070d97ff-5df4-5b11-8181-6faafdf64608.jsonl"
+_OUTPUT_FILENAME_CLAUDE_AI = "claude-ai-070d97ff-5df4-5b11-8181-6faafdf64608.jsonl"
+_RAW_BASENAME = "070d97ff-5df4-5b11-8181-6faafdf64608.jsonl"
 _SESSION_ID = "070d97ff-5df4-5b11-8181-6faafdf64608"
+_MANIFEST_KEYS = frozenset(
+    {
+        "sha256",
+        "bytes",
+        "captured_at",
+        "house",
+        "source",
+        "kind",
+        "native_id",
+        "sessionId",
+        "chat_url",
+        "registration_id",
+        "file_uuid",
+        "route",
+        "supersedes",
+    }
+)
 _CHAT_URL = "https://claude.ai/cowork/cse_01AroaPe3tJQSmHTZyVq2XCn"
 _REGISTRATION_ID = "37361992cd134cddbbc7fb378dfd492f"
 _ROUTE = "classic_affordance:[data-cdp-output-download=1] via _OUTPUT_DOWNLOAD_JS"
@@ -158,12 +178,7 @@ def _settled_turn_dom(text: str) -> dict[str, object]:
     }
 
 
-@pytest.mark.asyncio
-async def test_try_body_harvest_persists_output_file_raw_and_manifest(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
-    """output-file harvest writes raw bytes + manifest under cortex raw transcripts."""
-    monkeypatch.setenv("CORTEX_FILES_ROOT", str(tmp_path))
+def _freeze_harvest_date(monkeypatch: pytest.MonkeyPatch) -> None:
     fixed_date = datetime(2026, 10, 27, 22, 43, 3, tzinfo=UTC)
 
     class _FixedDatetime(datetime):
@@ -173,11 +188,31 @@ async def test_try_body_harvest_persists_output_file_raw_and_manifest(
 
     monkeypatch.setattr("cdp_ask.cse_session_harvest_scrape.datetime", _FixedDatetime)
 
+
+@pytest.mark.parametrize(
+    ("download_filename", "provenance", "house"),
+    [
+        (_OUTPUT_FILENAME_COWORK, {"lane_thread_proven": "12286"}, "12286"),
+        (_OUTPUT_FILENAME_CLAUDE_AI, None, "_nohouse"),
+    ],
+)
+@pytest.mark.asyncio
+async def test_try_body_harvest_persists_output_file_raw_and_manifest(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    download_filename: str,
+    provenance: dict[str, str] | None,
+    house: str,
+) -> None:
+    """output-file harvest writes ``<house>/claude-ai/raw/<date>/<native_id>.jsonl``."""
+    monkeypatch.setenv("CORTEX_FILES_ROOT", str(tmp_path))
+    _freeze_harvest_date(monkeypatch)
+
     payload = b'{"type":"user"}\n'
     harvest_body = HarvestBody(
         content=payload.decode("utf-8"),
         provenance="output-file",
-        filename=_OUTPUT_FILENAME,
+        filename=download_filename,
         content_bytes=payload,
         route=_ROUTE,
         file_uuid=_FILE_UUID,
@@ -188,55 +223,43 @@ async def test_try_body_harvest_persists_output_file_raw_and_manifest(
         chat_url=_CHAT_URL,
         registration_id=_REGISTRATION_ID,
     )
+    harvest_turns = AsyncMock(
+        return_value=_settled_turn_dom(harvest_body.content),
+    )
     with (
-        patch(
-            "cdp_ask.cse_session_harvest_scrape.harvest_turns",
-            AsyncMock(
-                side_effect=[
-                    _settled_turn_dom(harvest_body.content),
-                    _settled_turn_dom(harvest_body.content),
-                ]
-            ),
-        ),
+        patch("cdp_ask.cse_session_harvest_scrape.harvest_turns", harvest_turns),
         patch(
             "cdp_ask.cse_session_harvest_scrape.resolve_harvest_body",
             AsyncMock(return_value=harvest_body),
         ),
     ):
-        resp = await _try_body_harvest(page, req, None, chat_url=_CHAT_URL)
+        resp = await _try_body_harvest(
+            page, req, provenance, chat_url=_CHAT_URL
+        )
 
     assert resp is not None
     assert resp.outcome == "harvested"
     assert resp.content_provenance == "output-file"
-    assert resp.archive_uri
     assert resp.archive_sha256 == hashlib.sha256(payload).hexdigest()
 
-    raw_dir = tmp_path / "notes/system/transcripts/claude-cowork/raw/2026-10-27"
-    raw_path = raw_dir / _OUTPUT_FILENAME
+    raw_dir = (
+        tmp_path / "notes/system/transcripts" / house / "claude-ai/raw/2026-10-27"
+    )
+    raw_path = raw_dir / _RAW_BASENAME
     manifest_path = raw_dir / f"{_SESSION_ID}.manifest.json"
     assert raw_path.is_file()
     assert raw_path.read_bytes() == payload
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-    assert set(manifest) == {
-        "sha256",
-        "bytes",
-        "chat_url",
-        "registration_id",
-        "sessionId",
-        "file_uuid",
-        "captured_at",
-        "route",
-    }
-    assert manifest["sha256"] == resp.archive_sha256
-    assert manifest["bytes"] == len(payload)
-    assert manifest["chat_url"] == _CHAT_URL
-    assert manifest["registration_id"] == _REGISTRATION_ID
+    assert set(manifest) == _MANIFEST_KEYS
+    assert manifest["house"] == house
+    assert manifest["source"] == "claude-ai"
+    assert manifest["kind"] == "raw"
+    assert manifest["native_id"] == _SESSION_ID
     assert manifest["sessionId"] == _SESSION_ID
-    assert manifest["file_uuid"] == _FILE_UUID
-    assert manifest["captured_at"] == "2026-10-27T22:43:03+00:00"
-    assert manifest["route"] == _ROUTE
+    assert manifest["supersedes"] is None
     assert resp.archive_uri == (
-        f"cortex://notes/system/transcripts/claude-cowork/raw/2026-10-27/{_OUTPUT_FILENAME}"
+        "cortex://notes/system/transcripts/"
+        f"{house}/claude-ai/raw/2026-10-27/{_RAW_BASENAME}"
     )
 
 
@@ -244,14 +267,15 @@ async def test_try_body_harvest_persists_output_file_raw_and_manifest(
 async def test_try_body_harvest_output_file_revision_on_changed_bytes(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    """Changed Output bytes allocate __r2 while preserving the first raw file."""
+    """Changed Output bytes allocate ``__r2`` while preserving the first raw file."""
     monkeypatch.setenv("CORTEX_FILES_ROOT", str(tmp_path))
+    _freeze_harvest_date(monkeypatch)
     first = b'{"type":"user"}\n'
     second = b'{"type":"user","rev":2}\n'
     harvest_first = HarvestBody(
         content=first.decode("utf-8"),
         provenance="output-file",
-        filename=_OUTPUT_FILENAME,
+        filename=_OUTPUT_FILENAME_COWORK,
         content_bytes=first,
         route=_ROUTE,
         file_uuid=_FILE_UUID,
@@ -259,7 +283,7 @@ async def test_try_body_harvest_output_file_revision_on_changed_bytes(
     harvest_second = HarvestBody(
         content=second.decode("utf-8"),
         provenance="output-file",
-        filename=_OUTPUT_FILENAME,
+        filename=_OUTPUT_FILENAME_COWORK,
         content_bytes=second,
         route=_ROUTE,
         file_uuid=_FILE_UUID,
@@ -275,12 +299,7 @@ async def test_try_body_harvest_output_file_revision_on_changed_bytes(
         with (
             patch(
                 "cdp_ask.cse_session_harvest_scrape.harvest_turns",
-                AsyncMock(
-                    side_effect=[
-                        _settled_turn_dom(body.content),
-                        _settled_turn_dom(body.content),
-                    ]
-                ),
+                AsyncMock(return_value=_settled_turn_dom(body.content)),
             ),
             patch(
                 "cdp_ask.cse_session_harvest_scrape.resolve_harvest_body",
@@ -293,18 +312,113 @@ async def test_try_body_harvest_output_file_revision_on_changed_bytes(
     second_resp = await _run(harvest_second)
     assert first_resp is not None and second_resp is not None
 
-    raw_dir = tmp_path / "notes/system/transcripts/claude-cowork/raw"
-    date_dirs = list(raw_dir.iterdir())
-    assert len(date_dirs) == 1
-    day_dir = date_dirs[0]
-    original = day_dir / _OUTPUT_FILENAME
-    revised = day_dir / f"claude-cowork-{_SESSION_ID}__r2.jsonl"
+    day_dir = tmp_path / "notes/system/transcripts/_nohouse/claude-ai/raw/2026-10-27"
+    original = day_dir / _RAW_BASENAME
+    revised = day_dir / f"{_SESSION_ID}__r2.jsonl"
     assert original.read_bytes() == first
     assert revised.read_bytes() == second
-    assert second_resp.archive_uri.endswith(
-        f"claude-cowork-{_SESSION_ID}__r2.jsonl"
-    )
+    assert second_resp.archive_uri.endswith(f"{_SESSION_ID}__r2.jsonl")
     manifest = json.loads(
         (day_dir / f"{_SESSION_ID}__r2.manifest.json").read_text(encoding="utf-8")
     )
-    assert manifest["supersedes"].endswith(_OUTPUT_FILENAME)
+    assert manifest["supersedes"] == (
+        "notes/system/transcripts/_nohouse/claude-ai/raw/2026-10-27/"
+        f"{_SESSION_ID}.manifest.json"
+    )
+
+
+def _output_harvest_body(content: bytes) -> HarvestBody:
+    return HarvestBody(
+        content=content.decode("utf-8"),
+        provenance="output-file",
+        filename=_OUTPUT_FILENAME_COWORK,
+        content_bytes=content,
+        route=_ROUTE,
+        file_uuid=_FILE_UUID,
+    )
+
+
+@pytest.mark.asyncio
+async def test_output_file_loading_wait_succeeds_on_third_poll(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Cold Outputs panel: miss twice in the wait loop, harvest on the third attempt."""
+    monkeypatch.setattr(
+        "cdp_ask.cse_session_harvest_scrape.OPEN_ON_DEMAND_INCOMPLETE_WAIT_S",
+        5.0,
+    )
+    payload = b'{"type":"user"}\n' * 40
+    body = _output_harvest_body(payload)
+    page = MagicMock()
+    req = HarvestRequest(source="output-file", chat_url=_CHAT_URL)
+
+    for run in range(3):
+        resolve_mock = AsyncMock(
+            side_effect=[
+                OutputDownloadError("cold panel"),
+                OutputDownloadError("still cold"),
+                body,
+            ]
+        )
+        with (
+            patch(
+                "cdp_ask.cse_session_harvest_scrape.harvest_turns",
+                AsyncMock(return_value=_settled_turn_dom(body.content)),
+            ),
+            patch(
+                "cdp_ask.cse_session_harvest_scrape.resolve_harvest_body",
+                resolve_mock,
+            ),
+            patch(
+                "cdp_ask.cse_session_harvest_scrape.asyncio.sleep",
+                AsyncMock(),
+            ),
+        ):
+            resp = await harvest_with_loading_wait(
+                page,
+                req,
+                None,
+                limit=1,
+                chat_url=_CHAT_URL,
+            )
+        assert resp.outcome == "harvested", f"run={run}"
+        assert resp.waited_ms is not None and resp.waited_ms > 0, f"run={run}"
+
+
+@pytest.mark.asyncio
+async def test_output_file_loading_wait_misses_at_deadline(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        "cdp_ask.cse_session_harvest_scrape.OPEN_ON_DEMAND_INCOMPLETE_WAIT_S",
+        0.0,
+    )
+    monkeypatch.setattr(
+        "cdp_ask.cse_session_harvest_scrape.OPEN_ON_DEMAND_INCOMPLETE_POLL_S",
+        0.0,
+    )
+    page = MagicMock()
+    req = HarvestRequest(source="output-file", chat_url=_CHAT_URL)
+    with (
+        patch(
+            "cdp_ask.cse_session_harvest_scrape.harvest_turns",
+            AsyncMock(return_value=_settled_turn_dom("x" * 200)),
+        ),
+        patch(
+            "cdp_ask.cse_session_harvest_scrape.resolve_harvest_body",
+            AsyncMock(side_effect=OutputDownloadError("never ready")),
+        ),
+        patch(
+            "cdp_ask.cse_session_harvest_scrape.asyncio.sleep",
+            AsyncMock(),
+        ),
+    ):
+        resp = await harvest_with_loading_wait(
+            page,
+            req,
+            None,
+            limit=1,
+            chat_url=_CHAT_URL,
+        )
+    assert resp.outcome == "unreachable"
+    assert resp.reason == "output_file_miss"

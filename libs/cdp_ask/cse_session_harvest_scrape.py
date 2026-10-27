@@ -29,7 +29,11 @@ from claude_bundles.cowork_output_download import (
 from claude_bundles.cse_turns_harvest import harvest_turns
 from claude_bundles.cse_url import normalize_cse_url
 from claude_bundles.overload_only_harvest import is_error_banner_only_harvest
-from durable_io.atomic import durable_write_bytes, durable_write_text
+from durable_io.atomic import (
+    PreImageMismatchError,
+    durable_write_bytes,
+    durable_write_text,
+)
 
 from cdp_ask.cse_session_ack import classify_ack
 from cdp_ask.cse_session_models import CseSessionTurn, HarvestRequest, HarvestResponse
@@ -53,6 +57,15 @@ _FULL_SCRAPE_INTERVAL_S = 2.0
 _SESSION_UUID_RE = re.compile(
     r"([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})"
 )
+_NATIVE_ID_REJECT_RE = re.compile(r"__r\d+$")
+_HOUSE_PROVENANCE_KEYS = (
+    "lane_thread_proven",
+    "lane_thread_claim",
+    "parent_thread_proven",
+    "parent_thread_claim",
+)
+_RAW_SOURCE = "claude-ai"
+_RAW_KIND = "raw"
 
 
 def _session_id_from_harvest_filename(filename: str | None) -> str:
@@ -63,6 +76,68 @@ def _session_id_from_harvest_filename(filename: str | None) -> str:
     if match:
         return match.group(1)
     return Path(filename).stem
+
+
+def _native_id_from_filename(filename: str | None) -> str | None:
+    """Return session UUID native_id or ``None`` when the token is rejected."""
+    native_id = _session_id_from_harvest_filename(filename)
+    if native_id in {"", "unknown"}:
+        return None
+    if _NATIVE_ID_REJECT_RE.search(native_id) or native_id.endswith(".manifest"):
+        return None
+    return native_id
+
+
+def _house_from_provenance(provenance: dict[str, Any] | None) -> str:
+    """Resolve transcript house from lane/parent thread provenance keys."""
+    for key in _HOUSE_PROVENANCE_KEYS:
+        raw = str((provenance or {}).get(key) or "").strip()
+        if not raw:
+            continue
+        token = raw.removeprefix("agent-bus:").strip()
+        if token:
+            return token
+    return "_nohouse"
+
+
+def _manifest_rel(manifest_abs: Path, root: Path) -> str:
+    return manifest_abs.relative_to(root).as_posix()
+
+
+def _raw_candidate_paths(target_dir: Path, native_id: str) -> list[tuple[Path, int | None]]:
+    """Base raw path plus ``__r{N}`` revision paths in allocation order."""
+    ordered: list[tuple[Path, int | None]] = [(target_dir / f"{native_id}.jsonl", None)]
+    rev = 2
+    while rev < 50:
+        ordered.append((target_dir / f"{native_id}__r{rev}.jsonl", rev))
+        rev += 1
+    return ordered
+
+
+def _cas_write_raw(
+    target_dir: Path,
+    native_id: str,
+    raw_bytes: bytes,
+    *,
+    root: Path,
+) -> tuple[Path, int | None, bool]:
+    """CAS write-once raw bytes; return path, revision, and whether bytes reconciled."""
+    sha256_hex = hashlib.sha256(raw_bytes).hexdigest()
+    for raw_abs, revision in _raw_candidate_paths(target_dir, native_id):
+        try:
+            durable_write_bytes(
+                raw_abs,
+                raw_bytes,
+                expected_pre_image="",
+                retain_store_root=root,
+            )
+            return raw_abs, revision, False
+        except PreImageMismatchError:
+            if not raw_abs.is_file():
+                continue
+            if hashlib.sha256(raw_abs.read_bytes()).hexdigest() == sha256_hex:
+                return raw_abs, revision, True
+    raise RuntimeError(f"Cowork raw transcript CAS exhausted revisions for {native_id}")
 
 
 def _merge_manifest_field(existing: object, new: object) -> object:
@@ -79,14 +154,20 @@ def persist_cowork_output_raw_transcript(
     *,
     chat_url: str | None,
     registration_id: str | None,
+    provenance: dict[str, Any] | None = None,
     cortex_root: Path | None = None,
 ) -> tuple[str, str] | None:
     """Write Cowork Output bytes and a sidecar manifest under cortex raw transcripts.
 
+    Layout: ``notes/system/transcripts/<house>/claude-ai/raw/<YYYY-MM-DD>/``.
     Returns ``(cortex_uri, sha256_hex)`` when a files root is configured, else ``None``.
     """
     root = cortex_root or cortex_files_root_from_env()
     if root is None:
+        return None
+
+    native_id = _native_id_from_filename(body_result.filename)
+    if native_id is None:
         return None
 
     raw_bytes = (
@@ -95,78 +176,71 @@ def persist_cowork_output_raw_transcript(
         else body_result.content.encode("utf-8")
     )
     sha256_hex = hashlib.sha256(raw_bytes).hexdigest()
-    session_id = _session_id_from_harvest_filename(body_result.filename)
-    raw_filename = (
-        Path(body_result.filename).name
-        if body_result.filename
-        else f"claude-cowork-{session_id}.jsonl"
-    )
+    house = _house_from_provenance(provenance)
     date_str = datetime.now(UTC).strftime("%Y-%m-%d")
-    target_dir = root / "notes/system/transcripts/claude-cowork/raw" / date_str
+    target_dir = (
+        root / "notes/system/transcripts" / house / _RAW_SOURCE / _RAW_KIND / date_str
+    )
     target_dir.mkdir(parents=True, exist_ok=True)
 
-    raw_abs = target_dir / raw_filename
-    revision: int | None = None
-    supersedes_uri: str | None = None
+    base_manifest_abs = target_dir / f"{native_id}.manifest.json"
+    prev_manifest_rel = _manifest_rel(base_manifest_abs, root)
 
-    if raw_abs.is_file():
-        existing_sha = hashlib.sha256(raw_abs.read_bytes()).hexdigest()
-        if existing_sha == sha256_hex:
-            pass
-        else:
-            supersedes_uri = f"cortex://{raw_abs.relative_to(root).as_posix()}"
-            revision = 2
-            while True:
-                rev_raw = target_dir / f"claude-cowork-{session_id}__r{revision}.jsonl"
-                if not rev_raw.is_file():
-                    raw_abs = rev_raw
-                    break
-                rev_sha = hashlib.sha256(rev_raw.read_bytes()).hexdigest()
-                if rev_sha == sha256_hex:
-                    raw_abs = rev_raw
-                    break
-                revision += 1
-            durable_write_bytes(raw_abs, raw_bytes, retain_store_root=root)
+    raw_abs, revision, reconciled = _cas_write_raw(
+        target_dir,
+        native_id,
+        raw_bytes,
+        root=root,
+    )
+    if revision is None:
+        manifest_abs = base_manifest_abs
     else:
-        durable_write_bytes(raw_abs, raw_bytes, retain_store_root=root)
-
-    if revision is not None:
-        manifest_abs = target_dir / f"{session_id}__r{revision}.manifest.json"
-    else:
-        manifest_abs = target_dir / f"{session_id}.manifest.json"
+        manifest_abs = target_dir / f"{native_id}__r{revision}.manifest.json"
 
     existing_manifest: dict[str, Any] = {}
+    manifest_corrupt = not manifest_abs.is_file()
     if manifest_abs.is_file():
         try:
             existing_manifest = json.loads(manifest_abs.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError):
             existing_manifest = {}
+            manifest_corrupt = True
 
     captured_at = datetime.now(UTC).isoformat()
     if (
-        existing_manifest.get("sha256") == sha256_hex
+        reconciled
+        and existing_manifest.get("sha256") == sha256_hex
         and existing_manifest.get("captured_at")
     ):
         captured_at = str(existing_manifest["captured_at"])
 
+    supersedes: str | None = None
+    if revision is not None:
+        supersedes = prev_manifest_rel
+    elif reconciled and (manifest_corrupt or not manifest_abs.is_file()):
+        supersedes = prev_manifest_rel
+
     manifest_dict: dict[str, Any] = {
         "sha256": sha256_hex,
         "bytes": len(raw_bytes),
+        "captured_at": captured_at,
+        "house": house,
+        "source": _RAW_SOURCE,
+        "kind": _RAW_KIND,
+        "native_id": native_id,
+        "sessionId": native_id,
         "chat_url": _merge_manifest_field(existing_manifest.get("chat_url"), chat_url),
         "registration_id": _merge_manifest_field(
             existing_manifest.get("registration_id"),
             registration_id,
         ),
-        "sessionId": session_id,
         "file_uuid": _merge_manifest_field(
             existing_manifest.get("file_uuid"),
             body_result.file_uuid,
         ),
-        "captured_at": captured_at,
         "route": _merge_manifest_field(existing_manifest.get("route"), body_result.route),
+        "supersedes": _merge_manifest_field(existing_manifest.get("supersedes"), supersedes),
     }
-    if supersedes_uri is not None:
-        manifest_dict["supersedes"] = supersedes_uri
 
     durable_write_text(
         manifest_abs,
@@ -240,6 +314,7 @@ async def _try_body_harvest(
     provenance: dict[str, Any] | None,
     *,
     chat_url: str | None = None,
+    allow_miss_terminal: bool = True,
 ) -> HarvestResponse | None:
     """Attempt auto/output-file harvest; refuse while loading or on banner-only auto."""
     if req.source not in {"output-file", "auto"}:
@@ -292,6 +367,7 @@ async def _try_body_harvest(
                 body_result,
                 chat_url=resolved_chat_url,
                 registration_id=resolved_registration_id,
+                provenance=provenance,
             )
             if persisted is not None:
                 archive_uri, archive_sha256 = persisted
@@ -312,7 +388,9 @@ async def _try_body_harvest(
         )
     except Exception:
         if req.source == "output-file":
-            return HarvestResponse(outcome="unreachable", reason="output_file_miss")
+            if allow_miss_terminal:
+                return HarvestResponse(outcome="unreachable", reason="output_file_miss")
+            return None
         return None
 
 
@@ -476,9 +554,53 @@ async def harvest_with_loading_wait(
     page_url: str | None = None,
 ) -> HarvestResponse:
     """Scrape once, optionally wait while loading, then classify the harvest outcome."""
-    body_resp = await _try_body_harvest(page, req, provenance, chat_url=chat_url)
+    body_resp = await _try_body_harvest(
+        page,
+        req,
+        provenance,
+        chat_url=chat_url,
+        allow_miss_terminal=False,
+    )
     if body_resp is not None:
         return body_resp
+
+    if req.source == "output-file":
+        waited_ms = 0
+        deadline = time.monotonic() + OPEN_ON_DEMAND_INCOMPLETE_WAIT_S
+        while time.monotonic() < deadline:
+            await asyncio.sleep(OPEN_ON_DEMAND_INCOMPLETE_POLL_S)
+            waited_ms += int(OPEN_ON_DEMAND_INCOMPLETE_POLL_S * 1000)
+            try:
+                dom = await scrape_once(page, limit=limit, after_turn=req.after_turn)
+            except Exception as exc:
+                return HarvestResponse(outcome="unreachable", reason=str(exc))
+            if dom.get("in_flight") or dom.get("streaming"):
+                continue
+            body_resp = await _try_body_harvest(
+                page,
+                req,
+                provenance,
+                chat_url=chat_url,
+                allow_miss_terminal=False,
+            )
+            if body_resp is not None:
+                body_resp.waited_ms = waited_ms
+                return body_resp
+        body_resp = await _try_body_harvest(
+            page,
+            req,
+            provenance,
+            chat_url=chat_url,
+            allow_miss_terminal=True,
+        )
+        if body_resp is not None:
+            body_resp.waited_ms = waited_ms
+            return body_resp
+        return HarvestResponse(
+            outcome="unreachable",
+            reason="output_file_miss",
+            waited_ms=waited_ms or None,
+        )
 
     try:
         dom = await scrape_once(page, limit=limit, after_turn=req.after_turn)
@@ -508,7 +630,11 @@ async def harvest_with_loading_wait(
         do_full = (now - last_full) >= _FULL_SCRAPE_INTERVAL_S
         if do_full:
             body_resp = await _try_body_harvest(
-                page, req, provenance, chat_url=chat_url
+                page,
+                req,
+                provenance,
+                chat_url=chat_url,
+                allow_miss_terminal=False,
             )
             if body_resp is not None:
                 body_resp.waited_ms = waited_ms
@@ -523,7 +649,11 @@ async def harvest_with_loading_wait(
         if last_loading and not dom.get("loading"):
             loading_transition = True
             body_resp = await _try_body_harvest(
-                page, req, provenance, chat_url=chat_url
+                page,
+                req,
+                provenance,
+                chat_url=chat_url,
+                allow_miss_terminal=False,
             )
             if body_resp is not None:
                 body_resp.waited_ms = waited_ms

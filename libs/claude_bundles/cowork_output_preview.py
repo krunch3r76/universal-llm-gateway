@@ -180,6 +180,7 @@ async def extract_cowork_output_preview(
         filename=filename,
         content=content,
         content_bytes=raw,
+        route="preview_innerText_extract",
     )
 
 
@@ -244,6 +245,7 @@ async def download_via_preview_menu(
             filename=_filename_from_outputs_row(raw_label, suggested),
             content=text,
             content_bytes=raw,
+            route="preview_menu_download",
         )
     except Exception:
         return None
