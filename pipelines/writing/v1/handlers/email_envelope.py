@@ -126,6 +126,20 @@ def normalize_temporal_monthly_synonyms(text: str) -> str:
     return re.sub(r"\bright\s+now\b", "currently", text, flags=re.I)
 
 
+_CLAUSE_BOUNDARY = re.compile(
+    r"(?:[,;:\n]|\s*[\u2014\u2013-]\s*|\b(?:but|yet|however|though)\b)\s*",
+    re.I,
+)
+
+
+def _clean_verbatim_pin_excerpt(pin_excerpt: str) -> str:
+    """Unfence assemble truncation markers for verbatim pin comparison."""
+    cleaned = pin_excerpt.replace("&lt;", "<")
+    if cleaned.endswith(" [truncated]"):
+        cleaned = cleaned[: -len(" [truncated]")]
+    return cleaned
+
+
 def normalize_supply_verbs(text: str) -> str:
     """Map delivery/supply verbs to ``provide`` for non-verbatim restate overlap.
 
@@ -337,7 +351,7 @@ def _draft_clauses(text: str) -> list[str]:
         sentence = sentence.strip()
         if not sentence:
             continue
-        for piece in re.split(r",\s*", sentence):
+        for piece in _CLAUSE_BOUNDARY.split(sentence):
             piece = piece.strip()
             if piece:
                 clauses.append(piece)
@@ -412,9 +426,10 @@ def email_restate_pin_satisfied(
 ) -> bool:
     """True when the draft satisfies a restate or verbatim-attested pin excerpt."""
     if verbatim_required:
-        pin_stripped = pin_excerpt.strip().lower()
+        cleaned_pin = _clean_verbatim_pin_excerpt(pin_excerpt)
+        pin_stripped = cleaned_pin.strip().lower()
         draft_lower = draft_text.lower()
-        pin_tokens = _token_list_lower(pin_excerpt)
+        pin_tokens = _token_list_lower(cleaned_pin)
         draft_tokens = _token_list_lower(draft_text)
         draft_token_set = set(draft_tokens)
         if not pin_tokens or not all(token in draft_token_set for token in pin_tokens):

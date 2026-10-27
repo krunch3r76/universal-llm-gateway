@@ -601,7 +601,9 @@ def _pin_matches_text(
         (row for row in (pin_ledger or []) if str(row.get("pin_id")) == pin_id),
         None,
     )
-    if isinstance(pin, dict) and pin.get("restate") is True:
+    if isinstance(pin, dict) and (
+        pin.get("restate") is True or pin.get("verbatim_required") is True
+    ):
         excerpt = str(pin.get("excerpt") or "")
         if excerpt and email_restate_pin_satisfied(
             text,
@@ -995,6 +997,9 @@ class WritingProvenanceCheckHandler(BaseHandler):
                 verifier_clauses = raw_clauses
 
         parsed = _parse_draft(draft)
+        pre_polish_draft = (
+            str(parsed.get("draft") or "") if parsed is not None else ""
+        )
         if parsed is not None and str(channel or "") == "email":
             intake_block = (
                 assemble_json.get("intake") if isinstance(assemble_json, dict) else None
@@ -1007,7 +1012,7 @@ class WritingProvenanceCheckHandler(BaseHandler):
             )
             signer = str(intake_dict.get("signer") or "")
             parsed["draft"] = polish_email_draft(
-                str(parsed.get("draft") or ""),
+                pre_polish_draft,
                 recipient=recipient,
                 signer=signer,
                 intake=intake_dict,
@@ -1027,11 +1032,23 @@ class WritingProvenanceCheckHandler(BaseHandler):
                     verbatim = pin.get("verbatim_required") is True
                     restate = pin.get("restate") is True
                     if attested and excerpt and (restate or verbatim):
-                        if not email_restate_pin_satisfied(
-                            draft_body,
-                            excerpt,
-                            verbatim_required=verbatim,
-                        ):
+                        if verbatim:
+                            pin_ok = email_restate_pin_satisfied(
+                                pre_polish_draft,
+                                excerpt,
+                                verbatim_required=True,
+                            ) or email_restate_pin_satisfied(
+                                draft_body,
+                                excerpt,
+                                verbatim_required=True,
+                            )
+                        else:
+                            pin_ok = email_restate_pin_satisfied(
+                                draft_body,
+                                excerpt,
+                                verbatim_required=False,
+                            )
+                        if not pin_ok:
                             violations.append(
                                 _violation(
                                     "verbatim_pin_modified"

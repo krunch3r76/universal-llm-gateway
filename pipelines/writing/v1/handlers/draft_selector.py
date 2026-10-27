@@ -92,7 +92,11 @@ def _score_draft(
     score = 0
     for pin in attested_pins:
         excerpt = str(pin.get("excerpt") or "")
-        if channel == "email" and pin.get("restate") is True and excerpt:
+        if (
+            channel == "email"
+            and (pin.get("restate") is True or pin.get("verbatim_required") is True)
+            and excerpt
+        ):
             if email_restate_pin_satisfied(
                 draft_text,
                 excerpt,

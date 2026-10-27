@@ -184,6 +184,22 @@ def test_email_restate_pin_currently_requires_token_or_right_now_synonym() -> No
         ),
         "I can't send a monthly open calendar. I can send a monthly open calendar.",
         "I can send a monthly open calendar. I can't send a monthly open calendar.",
+        (
+            "I don't have standing availability on any day of the week "
+            "but I can send a monthly open calendar."
+        ),
+        (
+            "I don't have standing availability on any day of the week; "
+            "I can send a monthly open calendar."
+        ),
+        (
+            "I don't have standing availability on any day of the week \u2014 "
+            "I can send a monthly open calendar."
+        ),
+        (
+            "I don't have standing availability on any day of the week\n"
+            "I can send a monthly open calendar."
+        ),
     ):
         assert not email_envelope.email_restate_pin_satisfied(flipped, pin_provide)
 
@@ -191,6 +207,16 @@ def test_email_restate_pin_currently_requires_token_or_right_now_synonym() -> No
     assert not email_envelope.email_restate_pin_satisfied(
         "I don't mind, I have standing availability on any day of the week.",
         pin_standing,
+    )
+    assert not email_envelope.email_restate_pin_satisfied(
+        "I don't mind but I have standing availability on any day of the week.",
+        pin_standing,
+    )
+
+    assert email_envelope.email_restate_pin_satisfied(
+        "See <brief> section.",
+        "See &lt;brief> section. [truncated]",
+        verbatim_required=True,
     )
 
 
@@ -200,7 +226,6 @@ def test_score_draft_verbatim_required_email_restate_pin() -> None:
         {
             "pin_id": "P1",
             "attested": True,
-            "restate": True,
             "verbatim_required": True,
             "excerpt": pin_provide,
         }
@@ -338,3 +363,72 @@ def test_provenance_email_subject_missing_unresolved() -> None:
     ).json
     types = [row["type"] for row in payload["violations"]]
     assert "email_subject_missing" in types
+
+
+def test_provenance_email_verbatim_pin_survives_email_polish() -> None:
+    class _Out:
+        def __init__(self, payload: dict) -> None:
+            self.json = payload
+
+    class _Ctx:
+        def __init__(self, outputs: dict) -> None:
+            self.outputs = outputs
+
+    class _Step:
+        handler_inputs = {
+            "pin_ledger": "assemble.json.pin_ledger",
+            "draft": "draft.json",
+        }
+
+    verbatim_excerpt = (
+        "I, Pat Applicant, am submitting my signed declaration for "
+        "Assessment Appeals 99.0001 and 99.0002 during 7–3."
+    )
+    good_draft = (
+        "Subject: Assessment Appeals\n\n"
+        f"{verbatim_excerpt}"
+    )
+    pin_ledger = [
+        {
+            "pin_id": "V1",
+            "attested": True,
+            "verbatim_required": True,
+            "excerpt": verbatim_excerpt,
+        }
+    ]
+    ctx = _Ctx(
+        {
+            "assemble": _Out(
+                {
+                    "channel": "email",
+                    "pin_ledger": pin_ledger,
+                    "intake": {"objective": "submit declaration"},
+                }
+            ),
+            "draft": _Out({"draft": good_draft, "claims": []}),
+        }
+    )
+    good_payload = asyncio.run(
+        provenance.WritingProvenanceCheckHandler().execute(_Step(), ctx)
+    ).json
+    good_types = [row["type"] for row in good_payload["violations"]]
+    assert "verbatim_pin_modified" not in good_types
+
+    bad_draft = good_draft.replace("signed", "updated")
+    bad_ctx = _Ctx(
+        {
+            "assemble": _Out(
+                {
+                    "channel": "email",
+                    "pin_ledger": pin_ledger,
+                    "intake": {"objective": "submit declaration"},
+                }
+            ),
+            "draft": _Out({"draft": bad_draft, "claims": []}),
+        }
+    )
+    bad_payload = asyncio.run(
+        provenance.WritingProvenanceCheckHandler().execute(_Step(), bad_ctx)
+    ).json
+    bad_types = [row["type"] for row in bad_payload["violations"]]
+    assert "verbatim_pin_modified" in bad_types
