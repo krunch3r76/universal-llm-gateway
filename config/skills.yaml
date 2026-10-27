@@ -291,6 +291,10 @@ skills:
   image-video-generation:
     surface_class: cursor_only
     mcp_surface_required: code
+  impresario:
+    # Cursor Glass impresario tab posture (K85/K92); pulled via spawn Use-line.
+    surface_class: cursor_only
+    mcp_surface_required: code
   implement-todo:
     surface_class: cursor_only
     mcp_surface_required: code

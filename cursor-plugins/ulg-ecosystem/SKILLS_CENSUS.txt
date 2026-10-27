@@ -33,6 +33,7 @@ friction-review
 git-posture
 handoff-packet-authoring
 hypothesize-simulate
+impresario
 implement-todo
 multi-model-review
 mission-operator
