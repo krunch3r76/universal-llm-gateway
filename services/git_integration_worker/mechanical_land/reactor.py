@@ -45,6 +45,7 @@ class ReactorDeps:
     post_admit_fn: Callable[..., tuple[int, dict[str, Any]]]
     post_steer_cancel_fn: Callable[..., tuple[bool, dict[str, Any]]] | None = None
     bus_post_fn: Callable[..., int | None] | None = None
+    get_turns_fn: Callable[..., list[dict[str, Any]]] | None = None
 
 
 def _default_fetch_plan(
@@ -648,6 +649,7 @@ def run_reactor_loop(
         run_id=run_id,
         lane_thread_id=lane_thread_id,
         ruling_authors=ruling_authors,
+        get_turns_fn=deps.get_turns_fn,
     )
     state = _folded_state(deps.store, run_id)
     if state is not None:
@@ -752,7 +754,12 @@ def run_reactor_for_run_id(run_id: str, *, deps: ReactorDeps | None = None) -> N
     run_reactor_loop(use_deps, run_id=run_id)
 
 
-def repost_blocked_if_needed(store: MechanicalLandStore, run_id: str) -> None:
+def repost_blocked_if_needed(
+    store: MechanicalLandStore,
+    run_id: str,
+    *,
+    bus_post_fn: Callable[..., int | None] | None = None,
+) -> None:
     """Sweep: re-post BLOCKED bus turns once when ``posted_turn`` was null."""
     meta = _load_run_meta(store, run_id)
     if meta is None or str(meta.get("status") or "") != "blocked":
@@ -782,20 +789,23 @@ def repost_blocked_if_needed(store: MechanicalLandStore, run_id: str) -> None:
             (json.dumps(payload, sort_keys=True), run_id, blocked_seq),
         )
         conn_preflight.commit()
-    posted_turn = _post_blocked_bus_only(
-        store,
-        run_id=run_id,
-        payload=payload,
-        lane_thread_id=str(meta.get("lane_thread_id") or ""),
-    )
-    payload.pop("_repost_in_flight", None)
-    if posted_turn is None:
-        with store._connect() as conn_fail:
-            conn_fail.execute(
+    try:
+        posted_turn = _post_blocked_bus_only(
+            store,
+            run_id=run_id,
+            payload=payload,
+            lane_thread_id=str(meta.get("lane_thread_id") or ""),
+            bus_post_fn=bus_post_fn,
+        )
+    finally:
+        payload.pop("_repost_in_flight", None)
+        with store._connect() as conn_clear:
+            conn_clear.execute(
                 "UPDATE mechanical_land_journal SET payload_json=? WHERE run_id=? AND seq=?",
                 (json.dumps(payload, sort_keys=True), run_id, blocked_seq),
             )
-            conn_fail.commit()
+            conn_clear.commit()
+    if posted_turn is None:
         return
     payload["repost_attempts"] = repost_attempts + 1
     payload["posted_turn"] = posted_turn
@@ -813,6 +823,7 @@ def _post_blocked_bus_only(
     run_id: str,
     payload: dict[str, Any],
     lane_thread_id: str,
+    bus_post_fn: Callable[..., int | None] | None = None,
 ) -> int | None:
     from services.git_integration_worker.mechanical_land import blocked as blocked_mod
 
@@ -845,5 +856,5 @@ def _post_blocked_bus_only(
         to_agent=blocked_mod._BLOCKED_AGENT,
         subject=subject,
         body=body,
-        bus_post_fn=None,
+        bus_post_fn=bus_post_fn,
     )

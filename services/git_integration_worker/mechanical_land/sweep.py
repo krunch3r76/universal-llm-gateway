@@ -86,7 +86,11 @@ def sweep_mechanical_land_runs(
     for run_id in run_ids:
         try:
             run_reactor_for_run_id(run_id, deps=deps)
-            repost_blocked_if_needed(use_store, run_id)
+            repost_blocked_if_needed(
+                use_store,
+                run_id,
+                bus_post_fn=deps.bus_post_fn if deps is not None else None,
+            )
             touched += 1
         except Exception:  # noqa: BLE001
             logger.exception("mechanical_land sweep failed run_id=%s", run_id)

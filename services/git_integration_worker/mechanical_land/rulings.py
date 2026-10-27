@@ -54,15 +54,17 @@ def ingest_rulings_for_run(
     lane_thread_id: str,
     ruling_authors: list[str],
     post_notice_fn: Callable[..., tuple[int, str]] | None = None,
+    get_turns_fn: Callable[..., list[dict[str, Any]]] | None = None,
 ) -> int:
     """Fetch unread turns, fold canonical RULING lines, reply NOTICE on prose."""
     post_notice = post_notice_fn or _default_post_notice
+    fetch_turns = get_turns_fn or get_turns
     appended = 0
     threads = [lane_thread_id, *_RULING_THREADS]
     seen: set[tuple[str, int]] = set()
     for thread_id in threads:
         try:
-            turns = get_turns(
+            turns = fetch_turns(
                 thread=thread_id,
                 to="git-integration-worker",
                 unread=True,
@@ -123,7 +125,7 @@ def ingest_rulings_for_run(
                             payload={"by_ruling_seq": tip + 1},
                             source="bus_ruling",
                         )
-                get_turns(
+                fetch_turns(
                     thread=thread_id,
                     to="git-integration-worker",
                     unread=True,
@@ -153,7 +155,7 @@ def ingest_rulings_for_run(
                     run_id=run_id,
                     turn_number=turn_no,
                 )
-                get_turns(
+                fetch_turns(
                     thread=thread_id,
                     to="git-integration-worker",
                     unread=True,

@@ -1,6 +1,9 @@
 """Mechanical-land RULING ingest and sweep tests (§13 stage 4)."""
 
+# ruff: noqa: E402
 from __future__ import annotations
+
+pytest_plugins = ("services.git_integration_worker.tests.mechanical_land_isolation",)
 
 from pathlib import Path
 from unittest.mock import patch
@@ -10,10 +13,7 @@ import pytest
 from services.git_integration_worker.cursor_dispatch_ledger import (
     CursorDispatchLedger,
 )
-from services.git_integration_worker.mechanical_land.reactor import (
-    ReactorDeps,
-    run_reactor_loop,
-)
+from services.git_integration_worker.mechanical_land.reactor import run_reactor_loop
 from services.git_integration_worker.mechanical_land.rulings import (
     ingest_rulings_for_run,
     parse_ruling_line,
@@ -22,8 +22,13 @@ from services.git_integration_worker.mechanical_land.store import MechanicalLand
 from services.git_integration_worker.mechanical_land.sweep import (
     sweep_mechanical_land_runs,
 )
+from services.git_integration_worker.tests.mechanical_land_isolation import (
+    empty_get_turns,
+    reactor_deps,
+)
 
 pytestmark = pytest.mark.offline
+
 
 _POLICY = {
     "models": {"implement": {"model": "cursor/composer-2.5", "knobs": {}}},
@@ -84,17 +89,18 @@ def test_canonical_ruling_folded() -> None:
             "body": "RULING: HOLD run=" + run_id,
         }
     ]
-    with patch(
-        "services.git_integration_worker.mechanical_land.rulings.get_turns",
-        return_value=turns,
-    ):
-        count = ingest_rulings_for_run(
-            store,
-            run_id=run_id,
-            lane_thread_id=lane_thread,
-            ruling_authors=["web-anthropic"],
-            post_notice_fn=lambda **_k: (0, ""),
-        )
+
+    def _get_turns(**_kwargs: object) -> list[dict]:
+        return turns
+
+    count = ingest_rulings_for_run(
+        store,
+        run_id=run_id,
+        lane_thread_id=lane_thread,
+        ruling_authors=["web-anthropic"],
+        post_notice_fn=lambda **_k: (0, ""),
+        get_turns_fn=_get_turns,
+    )
     assert count >= 1
     snap = store.get_run(run_id, event_limit=30)
     assert snap is not None
@@ -123,17 +129,14 @@ def test_prose_ruling_gets_ruling_ignored_and_notice() -> None:
             return turns
         return []
 
-    with patch(
-        "services.git_integration_worker.mechanical_land.rulings.get_turns",
-        side_effect=_turns_for_lane,
-    ):
-        ingest_rulings_for_run(
-            store,
-            run_id=run_id,
-            lane_thread_id=lane_thread,
-            ruling_authors=["web-anthropic"],
-            post_notice_fn=_notice,
-        )
+    ingest_rulings_for_run(
+        store,
+        run_id=run_id,
+        lane_thread_id=lane_thread,
+        ruling_authors=["web-anthropic"],
+        post_notice_fn=_notice,
+        get_turns_fn=_turns_for_lane,
+    )
     snap = store.get_run(run_id, event_limit=30)
     assert snap is not None
     assert "ruling_ignored" in [e["event"] for e in snap["events"]]
@@ -143,23 +146,22 @@ def test_prose_ruling_gets_ruling_ignored_and_notice() -> None:
 def test_hold_stops_transition_admit() -> None:
     store = MechanicalLandStore()
     run_id, lane_thread = _seed_run(store)
-    with patch(
-        "services.git_integration_worker.mechanical_land.rulings.get_turns",
-        return_value=[
-            {
-                "turn_number": 1,
-                "from_agent": "web-anthropic",
-                "body": f"RULING: HOLD run={run_id}",
-            }
-        ],
-    ):
-        ingest_rulings_for_run(
-            store,
-            run_id=run_id,
-            lane_thread_id=lane_thread,
-            ruling_authors=["web-anthropic"],
-            post_notice_fn=lambda **_k: (0, ""),
-        )
+    hold_turns = [
+        {
+            "turn_number": 1,
+            "from_agent": "web-anthropic",
+            "body": f"RULING: HOLD run={run_id}",
+        }
+    ]
+
+    ingest_rulings_for_run(
+        store,
+        run_id=run_id,
+        lane_thread_id=lane_thread,
+        ruling_authors=["web-anthropic"],
+        post_notice_fn=lambda **_k: (0, ""),
+        get_turns_fn=lambda **_k: hold_turns,
+    )
 
     admits: list[dict] = []
 
@@ -173,10 +175,11 @@ def test_hold_stops_transition_admit() -> None:
             }
         }
 
-    deps = ReactorDeps(
-        store=store,
-        fetch_plan_fn=_fetch,
+    deps = reactor_deps(
+        store,
+        _fetch,
         post_admit_fn=lambda body: admits.append(body) or (201, {"dispatch_id": "d2"}),
+        get_turns_fn=empty_get_turns,
     )
     run_reactor_loop(deps, run_id=run_id, max_sync_steps=1)
     assert admits == []
@@ -189,23 +192,24 @@ def test_resume_after_hold_allows_loop() -> None:
 
     def _ingest(body: str) -> None:
         nonlocal seq
-        with patch(
-            "services.git_integration_worker.mechanical_land.rulings.get_turns",
-            return_value=[
+
+        def _get_turns(**_kwargs: object) -> list[dict]:
+            return [
                 {
                     "turn_number": seq + 1,
                     "from_agent": "web-anthropic",
                     "body": body,
                 }
-            ],
-        ):
-            ingest_rulings_for_run(
-                store,
-                run_id=run_id,
-                lane_thread_id=lane_thread,
-                ruling_authors=["web-anthropic"],
-                post_notice_fn=lambda **_k: (0, ""),
-            )
+            ]
+
+        ingest_rulings_for_run(
+            store,
+            run_id=run_id,
+            lane_thread_id=lane_thread,
+            ruling_authors=["web-anthropic"],
+            post_notice_fn=lambda **_k: (0, ""),
+            get_turns_fn=_get_turns,
+        )
         seq += 1
 
     _ingest(f"RULING: HOLD run={run_id}")
@@ -220,34 +224,32 @@ def test_block_ruling_calls_steer_cancel() -> None:
     store = MechanicalLandStore()
     run_id, lane_thread = _seed_run(store)
     steers: list[str] = []
-    with patch(
-        "services.git_integration_worker.mechanical_land.rulings.get_turns",
-        return_value=[
+    ingest_rulings_for_run(
+        store,
+        run_id=run_id,
+        lane_thread_id=lane_thread,
+        ruling_authors=["web-anthropic"],
+        post_notice_fn=lambda **_k: (0, ""),
+        get_turns_fn=lambda **_k: [
             {
                 "turn_number": 2,
                 "from_agent": "web-anthropic",
                 "body": f"RULING: BLOCK run={run_id} reason=stop",
             }
         ],
-    ):
-        ingest_rulings_for_run(
-            store,
-            run_id=run_id,
-            lane_thread_id=lane_thread,
-            ruling_authors=["web-anthropic"],
-            post_notice_fn=lambda **_k: (0, ""),
-        )
+    )
     with patch(
         "services.git_integration_worker.mechanical_land.reactor._live_leg_dispatch_id",
         return_value="d1",
     ):
-        deps = ReactorDeps(
-            store=store,
-            fetch_plan_fn=lambda **_k: {"transition": {"command": "wait"}},
+        deps = reactor_deps(
+            store,
+            lambda **_k: {"transition": {"command": "wait"}},
             post_admit_fn=lambda _b: (500, {}),
             post_steer_cancel_fn=lambda *, dispatch_id, reason: (
                 steers.append(dispatch_id) or (True, {})
             ),
+            get_turns_fn=empty_get_turns,
         )
         run_reactor_loop(deps, run_id=run_id, max_sync_steps=1)
     assert steers == ["d1"]
@@ -259,23 +261,20 @@ def test_sweep_hold_resume_without_terminal() -> None:
     store._set_run_status(run_id, "blocked_hold")
 
     def _ingest(body: str, turn_number: int) -> None:
-        with patch(
-            "services.git_integration_worker.mechanical_land.rulings.get_turns",
-            return_value=[
+        ingest_rulings_for_run(
+            store,
+            run_id=run_id,
+            lane_thread_id=lane_thread,
+            ruling_authors=["web-anthropic"],
+            post_notice_fn=lambda **_k: (0, ""),
+            get_turns_fn=lambda **_k: [
                 {
                     "turn_number": turn_number,
                     "from_agent": "web-anthropic",
                     "body": body,
                 }
             ],
-        ):
-            ingest_rulings_for_run(
-                store,
-                run_id=run_id,
-                lane_thread_id=lane_thread,
-                ruling_authors=["web-anthropic"],
-                post_notice_fn=lambda **_k: (0, ""),
-            )
+        )
 
     _ingest(f"RULING: HOLD run={run_id}", 1)
     sweep_mechanical_land_runs(store=store)
@@ -303,10 +302,11 @@ def test_reconcile_skips_re_admit_when_leg_exists() -> None:
             }
         }
 
-    deps = ReactorDeps(
-        store=store,
-        fetch_plan_fn=_fetch,
+    deps = reactor_deps(
+        store,
+        _fetch,
         post_admit_fn=lambda body: posts.append(body) or (201, {"dispatch_id": "d2"}),
+        get_turns_fn=empty_get_turns,
     )
     run_reactor_loop(deps, run_id=run_id, max_sync_steps=1)
     assert posts == []

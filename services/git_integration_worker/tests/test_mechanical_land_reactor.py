@@ -1,6 +1,9 @@
 """Mechanical-land reactor tests (§13 stage 4)."""
 
+# ruff: noqa: E402
 from __future__ import annotations
+
+pytest_plugins = ("services.git_integration_worker.tests.mechanical_land_isolation",)
 
 import json
 from pathlib import Path
@@ -12,6 +15,10 @@ from implement_admission.closeout_models import ImplementCloseout
 
 from services.git_integration_worker.cursor_dispatch_ledger import (
     CursorDispatchLedger,
+)
+from services.git_integration_worker.mechanical_land.blocked import (
+    _default_bus_post,
+    emit_blocked,
 )
 from services.git_integration_worker.mechanical_land.reactor import (
     ReactorDeps,
@@ -28,6 +35,10 @@ from services.git_integration_worker.mechanical_land.reconcile import (
 from services.git_integration_worker.mechanical_land.store import MechanicalLandStore
 from services.git_integration_worker.mechanical_land.sweep import (
     sweep_mechanical_land_runs,
+)
+from services.git_integration_worker.tests.mechanical_land_isolation import (
+    offline_bus_post,
+    reactor_deps,
 )
 
 pytestmark = pytest.mark.offline
@@ -523,7 +534,7 @@ def _admit_fix_transition_fetch(**_k: object) -> dict:
     }
 
 
-def test_connect_error_admit_deferred_sweep_retries_blocked_at_max() -> None:
+def test_connect_error_leaves_admit_deferred_then_blocked_without_ledger() -> None:
     store = MechanicalLandStore()
     run_id = _seed_run(store)
     post_calls = 0
@@ -533,9 +544,9 @@ def test_connect_error_admit_deferred_sweep_retries_blocked_at_max() -> None:
         post_calls += 1
         raise httpx.ConnectError("connection refused")
 
-    deps = ReactorDeps(
-        store=store,
-        fetch_plan_fn=_admit_fix_transition_fetch,
+    deps = reactor_deps(
+        store,
+        _admit_fix_transition_fetch,
         post_admit_fn=_post,
     )
     run_reactor_loop(deps, run_id=run_id, max_sync_steps=1)
@@ -588,9 +599,9 @@ def test_read_timeout_ledger_recheck_admits_once_without_second_post() -> None:
             "services.git_integration_worker.mechanical_land.store.cancel_unconfirmed_mechanical_leg_dispatches",
         ),
     ):
-        deps = ReactorDeps(
-            store=store,
-            fetch_plan_fn=_admit_fix_transition_fetch,
+        deps = reactor_deps(
+            store,
+            _admit_fix_transition_fetch,
             post_admit_fn=_post,
         )
         run_reactor_loop(deps, run_id=run_id, max_sync_steps=1)
@@ -624,9 +635,9 @@ def test_admit_non_httpx_exception_sets_admit_deferred() -> None:
     def _post(_body: dict) -> tuple[int, dict]:
         raise ValueError("wrapper decode failed")
 
-    deps = ReactorDeps(
-        store=store,
-        fetch_plan_fn=_admit_fix_transition_fetch,
+    deps = reactor_deps(
+        store,
+        _admit_fix_transition_fetch,
         post_admit_fn=_post,
     )
     run_reactor_loop(deps, run_id=run_id, max_sync_steps=1)
@@ -642,6 +653,49 @@ def test_admit_non_httpx_exception_sets_admit_deferred() -> None:
     failed = [e for e in snap["events"] if e["event"] == "leg_admit_failed"]
     assert failed
     assert failed[-1]["payload"].get("error") == "ValueError"
+
+
+def test_offline_guard_blocks_default_bus_post_without_bus_post_fn() -> None:
+    with pytest.raises(AssertionError, match="create_turn"):
+        _default_bus_post(
+            thread_id="12286",
+            to_agent="maestro",
+            subject="BLOCKED|specimen",
+            body="offline guard",
+        )
+    store = MechanicalLandStore()
+    run_id = _seed_run(store)
+    seq = emit_blocked(
+        store,
+        run_id=run_id,
+        step_id="fix",
+        attempt=1,
+        reason_code="admit_failed",
+        detail="offline guard with injected bus_post_fn",
+        bus_post_fn=offline_bus_post,
+    )
+    assert seq is not None
+
+
+def test_repost_blocked_sweep_uses_injected_bus_post_fn() -> None:
+    store = MechanicalLandStore()
+    run_id = _seed_run(store)
+    _block_run_with_bus_down(store, run_id)
+    posts: list[dict] = []
+
+    def _bus_post(**kwargs: object) -> int:
+        posts.append(dict(kwargs))
+        return 77
+
+    deps = reactor_deps(
+        store, lambda **_k: {"transition": {"command": "wait"}}, bus_post_fn=_bus_post
+    )
+    sweep_mechanical_land_runs(store=store, deps=deps)
+    assert posts
+    snap = store.get_run(run_id, event_limit=30)
+    assert snap is not None
+    blocked = next(e for e in snap["events"] if e["event"] == "blocked")
+    assert blocked["payload"].get("posted_turn") == 77
 
 
 @pytest.mark.asyncio
