@@ -1353,6 +1353,8 @@ _REPLY_CLOSING_PLEASANTRY_SPANS = (
     "Let me know, thank you! -Maria",
     "Let me know, thanks! -Maria",
     "Let me know!",
+    "Please let me know - Thanks.",
+    "Let me know — thanks.",
 )
 
 _REPLY_CLOSING_SUBSTANTIVE_SPANS = (
@@ -1361,6 +1363,10 @@ _REPLY_CLOSING_SUBSTANTIVE_SPANS = (
     "Let me know tomorrow.",
     "Let me know Tuesday.",
     "Let me know by Friday.",
+    "Let me know — tomorrow.",
+    "Let me know - Tuesday.",
+    "Let me know -ASAP.",
+    "Please let me know – today.",
 )
 
 
@@ -1415,6 +1421,21 @@ def test_markdown_bullet_lines_not_merged_as_signature() -> None:
     passport = next(row for row in rows if "- passport" in str(row["quoted_span"]))
     assert passport["kind"] != "pleasantry"
     assert passport["obligation"] != "none"
+
+    cap_inbound = "Bring these:\n- Passport\n- License"
+    cap_rows = source_obligations.fallback_obligations(cap_inbound)
+    assert len(cap_rows) == 3
+    cap_quoted = [str(row["quoted_span"]) for row in cap_rows]
+    assert cap_quoted[0] == "Bring these:"
+    assert "- Passport" in cap_quoted[1]
+    assert "- License" in cap_quoted[2]
+
+    tuesday_inbound = "Let me know\n- Tuesday"
+    tuesday_rows = source_obligations.fallback_obligations(tuesday_inbound)
+    assert len(tuesday_rows) == 2
+    assert tuesday_rows[0]["quoted_span"] == "Let me know"
+    assert "- Tuesday" in str(tuesday_rows[1]["quoted_span"])
+    assert tuesday_rows[1]["kind"] != "pleasantry"
 
 
 def test_substantive_let_me_know_availability_stays_request() -> None:

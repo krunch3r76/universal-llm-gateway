@@ -515,9 +515,11 @@ def _verbatim_required_exempts_sentence(
         ex_norm = str(excerpt).strip().lower()
         if not ex_norm:
             continue
-        if s_norm == ex_norm:
+        s_cmp = s_norm.rstrip(".!?").strip()
+        ex_cmp = ex_norm.rstrip(".!?").strip()
+        if s_cmp == ex_cmp:
             return True
-        if len(ex_norm) < 10:
+        if len(ex_cmp) < 10:
             continue
         if s_norm in ex_norm or ex_norm in s_norm:
             return True

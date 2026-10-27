@@ -32,8 +32,17 @@ _REPLY_CLOSING_LET_KNOW = re.compile(
     r"^(?:please\s+)?let\s+(?:me|us)\s+know\s*$",
     re.IGNORECASE,
 )
+_NON_SIGNATURE_TOKENS = frozenset({
+    "today", "tomorrow", "tonight", "asap", "eod", "eow", "now", "soon", "later",
+    "monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday",
+    "mon", "tue", "tues", "wed", "thu", "thur", "thurs", "fri", "sat", "sun",
+    "january", "february", "march", "april", "may", "june", "july", "august",
+    "september", "october", "november", "december",
+    "jan", "feb", "mar", "apr", "jun", "jul", "aug", "sep", "sept", "oct", "nov", "dec",
+    "yes", "no", "ok", "okay",
+})
 _TRAILING_SIGNATURE = re.compile(
-    r"(?:^|\s)[—–-]+\s*[A-Za-z][\w'.-]*\s*$",
+    r"(?:^|\s)[—–-]+\s*([A-Z][\w'.-]*)\s*$",
 )
 _COURTESY_TOKENS = re.compile(
     r"\b(?:"
@@ -43,7 +52,7 @@ _COURTESY_TOKENS = re.compile(
     r")\b",
     re.IGNORECASE,
 )
-_EDGE_PUNCT = re.compile(r"^[,!.;:\s]+|[,!.;:\s]+$")
+_EDGE_PUNCT = re.compile(r"^[,!.;:\s—–-]+|[,!.;:\s—–-]+$")
 _GREETING_PREFIX = re.compile(
     r"^(?:"
     r"hi(?:\s+[\w'.-]+)?\s*[,—–-]\s*|"
@@ -80,7 +89,18 @@ def _format_block(obligations: list[dict[str, Any]]) -> str:
     return "\n".join(lines)
 
 
-_SIGNATURE_ONLY = re.compile(r"^[—–-]+\s*[A-Z][\w'.-]*\s*$")
+_SIGNATURE_ONLY = re.compile(r"^[—–-]+\s*([A-Z][\w'.-]*)\s*$")
+
+
+def _strip_trailing_signature(text: str) -> str:
+    """Remove a trailing dash name-signature when the token is not temporal/urgency."""
+    match = _TRAILING_SIGNATURE.search(text)
+    if not match:
+        return text
+    token = match.group(1).rstrip("'.-").lower()
+    if token in _NON_SIGNATURE_TOKENS:
+        return text
+    return text[: match.start()].rstrip()
 
 
 def _split_spans(source_message: str) -> list[str]:
@@ -88,10 +108,14 @@ def _split_spans(source_message: str) -> list[str]:
     spans = [chunk.strip() for chunk in chunks if chunk.strip()]
     merged: list[str] = []
     for span in spans:
+        sig_match = _SIGNATURE_ONLY.match(span)
+        token = sig_match.group(1).rstrip("'.-").lower() if sig_match else ""
         if (
             merged
-            and _SIGNATURE_ONLY.match(span)
+            and sig_match
             and not merged[-1].rstrip().endswith(":")
+            and not merged[-1].lstrip().startswith(("-", "–", "—"))
+            and token not in _NON_SIGNATURE_TOKENS
         ):
             merged[-1] = f"{merged[-1]} {span}".strip()
         else:
@@ -112,7 +136,7 @@ def _strip_greeting_prefix(span: str) -> str:
 def _is_reply_closing_pleasantry(span: str) -> bool:
     """True when span is only a bare let-me/us-know sign-off without substantive ask."""
     text = _strip_greeting_prefix(span).strip()
-    text = _TRAILING_SIGNATURE.sub("", text).strip()
+    text = _strip_trailing_signature(text).strip()
     while True:
         stripped = _COURTESY_TOKENS.sub("", text).strip()
         if stripped == text:

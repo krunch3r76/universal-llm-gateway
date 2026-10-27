@@ -412,7 +412,27 @@ def test_short_verbatim_token_does_not_substring_exempt_unrelated_sentence() -> 
     )
     assert (
         drift_check_sentence(
+            "I do not know.",
+            channel="email",
+            exhibit_ids=set(),
+            purpose_points=unrelated,
+            verbatim_required_excerpts=["No"],
+        )
+        == "not_purpose_relevant"
+    )
+    assert (
+        drift_check_sentence(
             "No",
+            channel="email",
+            exhibit_ids=set(),
+            purpose_points=unrelated,
+            verbatim_required_excerpts=["No"],
+        )
+        is None
+    )
+    assert (
+        drift_check_sentence(
+            "No.",
             channel="email",
             exhibit_ids=set(),
             purpose_points=unrelated,
