@@ -38,7 +38,10 @@ from ._write_validation import (
     resolve_mutually_exclusive_aliases,
     validation_error_response,
 )
-from .entity_update_receipt import build_entity_update_receipt
+from .entity_update_receipt import (
+    build_entity_update_receipt,
+    collect_entity_update_warnings,
+)
 
 _TRAIT_VOCAB: dict[str, frozenset[str]] = {
     "confidence_band": CONFIDENCE_BAND_VALUES,
@@ -774,7 +777,7 @@ def _op_entity_update(
                     entity_type=entity_type,
                     attrs=attrs if isinstance(attrs, dict) else result.get("attributes"),
                 )
-                if birth_warning is not None and echo_card:
+                if birth_warning is not None:
                     attach_endeavor_birth_warning(result, birth_warning)
             except Exception:  # noqa: BLE001 — advisory warning must never block update
                 logger.warning(
@@ -782,17 +785,15 @@ def _op_entity_update(
                     entity_id,
                     exc_info=True,
                 )
+            resolved = canonical_id if not raw_id else entity_id
+            full_card = get_entity_impl(conn, entity_id=resolved, source="boot")
             if echo_card:
                 return result
-            resolved = canonical_id if not raw_id else entity_id
-            if impl_intent == "full":
-                full_card = result
-            else:
-                full_card = get_entity_impl(
-                    conn, entity_id=resolved, source="boot"
-                )
+            advisory = collect_entity_update_warnings(result)
             return build_entity_update_receipt(
-                card=full_card, changed_keys=changed_keys
+                card=full_card,
+                changed_keys=changed_keys,
+                warnings=advisory or None,
             )
         return result
 
