@@ -1,11 +1,13 @@
-import { defineEval } from "@grok/agent-sdk/evals";
+import { defineEval, includes } from "@grok/agent-sdk/evals";
 
 export default defineEval({
   tags: ["smoke"],
-  description: "The echo tool returns the message it was given.",
+  description: "One-line identity; no tools.",
   async test(t) {
-    await t.send('Use the echo tool to echo "hello".');
+    await t.send("Introduce yourself in one line.");
     t.succeeded();
-    t.calledTool("echo");
+    t.usedNoTools();
+    t.check(t.reply, includes("impresario-sdk"));
+    t.check(t.reply, includes("20908"));
   },
 });

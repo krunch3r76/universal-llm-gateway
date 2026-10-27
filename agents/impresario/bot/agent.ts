@@ -1,11 +1,9 @@
 import { defineAgent } from "@grok/agent-sdk";
 
 export default defineAgent({
-  model: {
-    id: "grok-4.5",
-    params: [
-      { id: "effort", value: "high" },
-      { id: "fast", value: "true" },
-    ],
-  },
+  name: "impresario-sdk",
+  model: "composer-2.5",
+  tools: ["read", "grep", "glob", "ls"],
+  concurrency: { maxRunningTurns: 2 },
+  local: { sandbox: false },
 });

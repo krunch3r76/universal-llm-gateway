@@ -1,0 +1,22 @@
+{
+  "scenario": "done-20901-5",
+  "turn": {
+    "id": 179803,
+    "thread": "20901",
+    "turn_number": 5,
+    "from": "cursor-sdk:dispatch:02a33916-2134-48d3-b32a-c90abf29c85a",
+    "to": "impresario-sdk",
+    "subject": "DONE| reaper amendment ready for review",
+    "body": "status: complete · head deeaf19f9 · REQUEST on agent-bus:15851#3125 to=grok-bot-gc1 · land_disposition: unlanded deeaf19f9",
+    "status": "open",
+    "created_at": "2026-10-27T06:53:56Z",
+    "dispatch_id": "02a33916-2134-48d3-b32a-c90abf29c85a",
+    "work_key": "todo:reaper-amendment"
+  },
+  "score_md": "## state\nimplementing · head deeaf19f9 · review —\n\n## dispatches\n\n## open_stops\n\n## rulings\n\n## log\n",
+  "closeouts": {
+    "02a33916-2134-48d3-b32a-c90abf29c85a": {
+      "raw": "VERDICT: PASS\n\nstatus: complete · 8 tests green\n\nCloseout envelope for dispatch 02a33916-2134-48d3-b32a-c90abf29c85a.\n\n## effects_manifest\n- files changed (not for impresario triage)\n"
+    }
+  }
+}
