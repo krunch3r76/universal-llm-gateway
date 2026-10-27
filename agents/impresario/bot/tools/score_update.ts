@@ -1,7 +1,11 @@
 import { defineTool } from "@grok/agent-sdk/tools";
 import { z } from "zod";
 
-import { callAgentBus, callFs, isEvalOrFixture, scoreUri } from "../lib/ulg.js";
+import {
+  checkScoreSizeAfterUpdate,
+  resolveScoreUri,
+} from "../lib/score-guards.js";
+import { callAgentBus, callFs } from "../lib/ulg.js";
 
 const section = z.enum([
   "state",
@@ -27,10 +31,28 @@ export default defineTool({
     dryRun: true,
   }),
   async execute(input, ctx) {
-    if (isEvalOrFixture(ctx)) {
+    const resolved = resolveScoreUri(input.work_key);
+    if (!resolved.ok) {
+      return resolved;
+    }
+    const path = resolved.uri;
+    if (ctx.session.purpose === "eval") {
       return { ok: true, stubbed: true, ...input };
     }
-    const path = scoreUri(input.work_key);
+    const existing = (await callFs(ctx, {
+      op: "read",
+      path,
+      limit: 500,
+    })) as { content?: string };
+    const prior = existing.content ?? "";
+    const sizeCheck = checkScoreSizeAfterUpdate(
+      prior,
+      input.section,
+      input.body,
+    );
+    if (!sizeCheck.ok) {
+      return sizeCheck;
+    }
     await callFs(ctx, {
       op: "md_rewrite_section",
       path,

@@ -1,7 +1,7 @@
 import type { HostContext } from "@grok/agent-sdk";
 
 import { fixtureMcpCall, fixturesEnabled } from "./bus-fixtures.js";
-import { scoreUri, truncateBody } from "./ulg.js";
+import { resolveScoreUri, truncateBody } from "./ulg.js";
 
 export const SCORE_CHAR_LIMIT = 4500;
 
@@ -34,7 +34,11 @@ export async function readScoreMarkdown(
   if (!workKey) {
     return truncateBody(fallbackScore, SCORE_CHAR_LIMIT);
   }
-  const path = scoreUri(workKey);
+  const resolved = resolveScoreUri(workKey);
+  if (!resolved.ok) {
+    return truncateBody(fallbackScore, SCORE_CHAR_LIMIT);
+  }
+  const path = resolved.uri;
   if (fixturesEnabled()) {
     const result = fixtureMcpCall("fs", {
       op: "read",

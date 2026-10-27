@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 
+import { replaceScoreSectionBody } from "./score-guards.js";
 import { parseCloseoutExcerpt, truncateBody } from "./ulg.js";
 
 export type BusFixtureTurn = Record<string, unknown>;
@@ -21,6 +22,7 @@ export type BusFixtureScenario = {
 };
 
 let cached: BusFixtureScenario | null = null;
+const fixtureScoreOverrides = new Map<string, string>();
 let unreadQueue: BusFixtureTurn[] = [];
 let waitLogged503 = false;
 const markReadSkipped = new Set<string>();
@@ -65,6 +67,15 @@ export function resetFixtureCache(): void {
   unreadQueue = [];
   waitLogged503 = false;
   markReadSkipped.clear();
+  fixtureScoreOverrides.clear();
+}
+
+export function fixtureScoreSnapshot(workKey: string): string {
+  const scenario = loadScenario();
+  if (fixtureScoreOverrides.has(workKey)) {
+    return fixtureScoreOverrides.get(workKey)!;
+  }
+  return scoreForWorkKey(scenario, workKey);
 }
 
 function turnKey(turn: BusFixtureTurn): string {
@@ -190,7 +201,7 @@ export function fixtureMcpCall(
     if (op === "read" && fsPath.includes("impresario-scores/")) {
       const workKey =
         fsPath.split("impresario-scores/").pop()?.replace(".md", "") ?? "";
-      const md = scoreForWorkKey(scenario, workKey);
+      const md = fixtureScoreSnapshot(workKey);
       const limit = (args.limit as number | undefined) ?? 200;
       const lines = md.split("\n").slice(0, limit);
       return {
@@ -223,6 +234,16 @@ export function fixtureMcpCall(
       const limit = (args.limit as number | undefined) ?? 60;
       const clipped = closeout.raw.split("\n").slice(0, limit).join("\n");
       return { content: clipped };
+    }
+    if (op === "md_rewrite_section" && fsPath.includes("impresario-scores/")) {
+      const workKey =
+        fsPath.split("impresario-scores/").pop()?.replace(".md", "") ?? "";
+      const section = String(args.section ?? "");
+      const content = String(args.content ?? "");
+      const prior = fixtureScoreSnapshot(workKey);
+      const next = replaceScoreSectionBody(prior, section, content);
+      fixtureScoreOverrides.set(workKey, next);
+      return { ok: true, rewritten: true };
     }
     if (op === "md_rewrite_section" || op === "md_insert") {
       return { ok: true, stubbed: true };

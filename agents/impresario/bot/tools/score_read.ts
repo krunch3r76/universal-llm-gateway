@@ -1,7 +1,12 @@
 import { defineTool } from "@grok/agent-sdk/tools";
 import { z } from "zod";
 
-import { callFs, scoreUri } from "../lib/ulg.js";
+import {
+  resolveScoreUri,
+  SCORE_READ_LINE_LIMIT,
+  windowScoreContent,
+} from "../lib/score-guards.js";
+import { callFs } from "../lib/ulg.js";
 
 export default defineTool({
   description:
@@ -11,17 +16,21 @@ export default defineTool({
   }),
   effect: "read",
   async execute({ work_key }, ctx) {
-    const path = scoreUri(work_key);
-    const limit = 200;
+    const resolved = resolveScoreUri(work_key);
+    if (!resolved.ok) {
+      return resolved;
+    }
+    const path = resolved.uri;
     const result = (await callFs(ctx, {
       op: "read",
       path,
-      limit,
+      limit: SCORE_READ_LINE_LIMIT,
     })) as { content?: string };
-    const content = result.content ?? "";
-    if (content.length > 4500) {
-      return { content: content.slice(0, 4500), truncated: true, path };
-    }
-    return { content, truncated: false, path };
+    const raw = result.content ?? "";
+    const { content, truncated } = windowScoreContent(
+      raw,
+      SCORE_READ_LINE_LIMIT,
+    );
+    return { content, truncated, path };
   },
 });

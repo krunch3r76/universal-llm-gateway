@@ -7,3 +7,5 @@ Validate: `agent-sdk validate --dir agents/impresario`
 Run one turn (fixtures, no live MCP): `ULG_FIXTURE_DIR=evals/fixtures agent-sdk run --dir agents/impresario --message "Handle turn.json" --json`
 
 Smoke eval: `agent-sdk eval --dir agents/impresario --tag smoke`
+
+Env: `ULG_IMPRESARIO_LANE` — agent-bus thread id for the impresario lane (default `20908`).

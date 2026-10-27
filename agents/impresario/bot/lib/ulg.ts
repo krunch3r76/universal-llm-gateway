@@ -22,9 +22,11 @@ export function isEvalOrFixture(ctx: ToolCtx): boolean {
   return ctx.session.purpose === "eval" || fixturesEnabled();
 }
 
-export function scoreUri(workKey: string): string {
-  return `cortex://notes/system/threads/impresario-scores/${workKey}.md`;
-}
+export {
+  resolveScoreUri,
+  scoreUri,
+  SCORE_WRITE_BYTE_CAP,
+} from "./score-guards.js";
 
 export function closeoutUri(dispatchId: string): string {
   return `workspaces://universal-llm-gateway/tmp/reviews/closeouts/${dispatchId}.md`;
