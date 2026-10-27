@@ -116,6 +116,80 @@ def test_fact_reordered_silent_when_pin_orders_match() -> None:
     assert "fact_reordered" not in _types(violations)
 
 
+def test_v2_judge_pin_rows_without_candidate_id_kept_at_winner_filter() -> None:
+    """fact_ceiling_final: v2 semantic_judge rows omit candidate_id."""
+    judge = _judge(
+        pins=[
+            {
+                "pin_id": "P1",
+                "satisfied": True,
+                "polarity_match": True,
+                "evidence_span": "backed",
+            }
+        ]
+    )
+    violations = provenance.check_provenance(
+        _LEDGER, _draft("text"), judge, winner_id="drafter_anthropic"
+    )
+    assert "restate_pin_missing" not in _types(violations)
+
+
+def test_fact_ceiling_final_handler_honors_v2_judge_pins() -> None:
+    class _Out:
+        def __init__(self, payload: dict | None, *, raw: str = "") -> None:
+            self.json = payload
+            self.raw = raw
+
+    class _Ctx:
+        def __init__(self, outputs: dict) -> None:
+            self.outputs = outputs
+
+    class _Step:
+        handler_inputs = {
+            "pin_ledger": "assemble.json.pin_ledger",
+            "draft": "prose_rhythm_pass.raw",
+            "draft_v1": "draft.json",
+            "judge": "semantic_judge_v2.json",
+        }
+
+    v2_judge = _judge(
+        pins=[
+            {
+                "pin_id": "P1",
+                "satisfied": True,
+                "polarity_match": True,
+                "evidence_span": "backed",
+            }
+        ]
+    )
+    payload = asyncio.run(
+        provenance.WritingProvenanceCheckHandler().execute(
+            _Step(),
+            _Ctx(
+                {
+                    "assemble": _Out(
+                        {
+                            "channel": "filing",
+                            "pin_ledger": _LEDGER,
+                            "intake": {},
+                        }
+                    ),
+                    "draft": _Out(
+                        {
+                            "selected_step": "drafter_anthropic",
+                            "draft": "text",
+                            "claims": [],
+                        }
+                    ),
+                    "prose_rhythm_pass": _Out(None, raw='{"draft": "text"}'),
+                    "semantic_judge_v2": _Out(v2_judge),
+                }
+            ),
+        )
+    ).json
+    assert "restate_pin_missing" not in _types(payload["violations"])
+
+
 def test_restate_pin_missing_from_judge_row() -> None:
     judge = _judge(
         pins=[

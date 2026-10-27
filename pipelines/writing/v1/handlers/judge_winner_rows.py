@@ -11,8 +11,12 @@ def winner_judge_rows(
 ) -> list[dict[str, Any]]:
     if not winner_id:
         return [row for row in rows if isinstance(row, dict)]
-    return [
-        row
-        for row in rows
-        if isinstance(row, dict) and str(row.get("candidate_id") or "") == winner_id
-    ]
+    wid = str(winner_id)
+    kept: list[dict[str, Any]] = []
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        cid = str(row.get("candidate_id") or "")
+        if not cid or cid == wid:
+            kept.append(row)
+    return kept

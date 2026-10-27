@@ -119,19 +119,6 @@ QUALITY_JUDGMENT_SCHEMA: dict[str, Any] = {
                     "detail": {"type": "string"},
                     "penalty": {"type": "integer"},
                 },
-                "required": ["candidate_id", "rule", "detail", "penalty"],
-            },
-        },
-        "v2_findings": {
-            "type": "array",
-            "items": {
-                "type": "object",
-                "additionalProperties": False,
-                "properties": {
-                    "rule": {"type": "string"},
-                    "detail": {"type": "string"},
-                    "penalty": {"type": "integer"},
-                },
                 "required": ["rule", "detail", "penalty"],
             },
         },
@@ -222,46 +209,35 @@ def pin_judgment_error(obj: Any, *, multi_candidate: bool) -> str | None:
     return None
 
 
+def _quality_row_ok(row: Any, *, require_candidate: bool) -> str | None:
+    if not isinstance(row, dict):
+        return "finding_not_object"
+    if set(row) - _QUALITY_ROW_KEYS:
+        return "finding_extra_keys"
+    if require_candidate and not isinstance(row.get("candidate_id"), str):
+        return "finding_candidate_id"
+    cid = row.get("candidate_id")
+    if cid is not None and not isinstance(cid, str):
+        return "finding_candidate_id"
+    if not isinstance(row.get("rule"), str) or not isinstance(row.get("detail"), str):
+        return "finding_fields"
+    if not isinstance(row.get("penalty"), int):
+        return "finding_penalty"
+    return None
+
+
 def quality_judgment_error(obj: Any, *, multi_candidate: bool) -> str | None:
     if not isinstance(obj, dict):
         return "not_object"
-    allowed = {"findings", "v2_findings"}
-    if set(obj) - allowed:
+    if set(obj) - {"findings"}:
         return "additional_properties"
-    if multi_candidate:
-        findings = obj.get("findings")
-        if not isinstance(findings, list):
-            return "findings"
-        for row in findings:
-            if not isinstance(row, dict):
-                return "finding_not_object"
-            if set(row) - _QUALITY_ROW_KEYS:
-                return "finding_extra_keys"
-            if not isinstance(row.get("candidate_id"), str):
-                return "finding_candidate_id"
-            if not isinstance(row.get("rule"), str) or not isinstance(
-                row.get("detail"), str
-            ):
-                return "finding_fields"
-            if not isinstance(row.get("penalty"), int):
-                return "finding_penalty"
-        return None
-    v2 = obj.get("v2_findings")
-    if not isinstance(v2, list):
-        return "v2_findings"
-    if obj.get("findings"):
-        return "v2_has_findings"
-    for row in v2:
-        if not isinstance(row, dict):
-            return "finding_not_object"
-        if set(row) - {"rule", "detail", "penalty"}:
-            return "finding_extra_keys"
-        if not isinstance(row.get("rule"), str) or not isinstance(
-            row.get("detail"), str
-        ):
-            return "finding_fields"
-        if not isinstance(row.get("penalty"), int):
-            return "finding_penalty"
+    findings = obj.get("findings")
+    if not isinstance(findings, list):
+        return "findings"
+    for row in findings:
+        err = _quality_row_ok(row, require_candidate=multi_candidate)
+        if err:
+            return err
     return None
 
 
@@ -295,6 +271,5 @@ def flatten_pin_judgment(
 def flatten_quality_judgment(
     obj: dict[str, Any], *, multi_candidate: bool
 ) -> list[dict[str, Any]]:
-    if multi_candidate:
-        return [dict(row) for row in obj.get("findings") or [] if isinstance(row, dict)]
-    return [dict(row) for row in obj.get("v2_findings") or [] if isinstance(row, dict)]
+    _ = multi_candidate
+    return [dict(row) for row in obj.get("findings") or [] if isinstance(row, dict)]

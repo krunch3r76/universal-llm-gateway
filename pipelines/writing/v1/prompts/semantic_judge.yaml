@@ -36,4 +36,7 @@ quality:
     - No narrative closer phrases on transactional correspondence.
     - SMS must not use formal thank-you-plus-full-signer closings unless signer is verbatim-required.
     The draft must obey the intake directives verbatim.
-    Return findings: candidate_id, rule, detail, penalty (integer 0-3 per hit).
+    Return a findings array. When candidates include candidate_id, each finding must
+    include candidate_id, rule, detail, and penalty (integer 0-3 per hit). For a
+    single revised draft without candidate_id, return findings with rule, detail,
+    and penalty only (use an empty findings array when there are no violations).

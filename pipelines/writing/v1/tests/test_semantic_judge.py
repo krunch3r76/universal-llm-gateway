@@ -92,6 +92,37 @@ def _quality_payload(candidate_id: str) -> dict[str, Any]:
     }
 
 
+def _v2_pin_payload() -> dict[str, Any]:
+    return {
+        "pins": [
+            {
+                "pin_id": "P1",
+                "satisfied": True,
+                "polarity_match": True,
+                "evidence_span": "backed",
+            }
+        ],
+        "clauses": [
+            {
+                "text": "Backed.",
+                "pin_ids": ["P1"],
+                "speech_act": "assertion",
+                "attested": True,
+            }
+        ],
+    }
+
+
+def _v2_quality_payload(*, empty: bool = False) -> dict[str, Any]:
+    if empty:
+        return {"findings": []}
+    return {
+        "findings": [
+            {"rule": "register", "detail": "clean", "penalty": 0},
+        ]
+    }
+
+
 @pytest.mark.asyncio
 async def test_semantic_judge_two_calls_qwen_alias() -> None:
     calls: list[str] = []
@@ -158,6 +189,49 @@ async def test_semantic_judge_routes_qwen_through_call_model() -> None:
     assert model_ids == ["qwen3-5-9b", "qwen3-5-9b"]
     assert out.model_id == "qwen3-5-9b"
     assert published[0].signal == "writing.judge.completed"
+
+
+@pytest.mark.asyncio
+async def test_semantic_judge_v2_empty_findings_not_unavailable() -> None:
+    async def caller(**kwargs: Any) -> str:
+        if kwargs.get("which") == "pin":
+            return json.dumps(_v2_pin_payload())
+        return json.dumps(_v2_quality_payload(empty=True))
+
+    handler = semantic_judge.WritingSemanticJudgeHandler(caller=caller)
+    published: list[Any] = []
+    handler._publish_bus_event = lambda _ctx, event: published.append(event)  # type: ignore[method-assign]
+    ctx = _Ctx(
+        {
+            "assemble": _Out({"pin_ledger": [], "intake": {}}),
+            "prose_rhythm_pass": _Out(None, raw="Revised draft body."),
+        }
+    )
+    out = await handler.execute(_Step("v2"), ctx)
+    assert out.json["judge_unavailable"] is False
+    assert out.json["quality_findings"] == []
+    assert published[0].signal == "writing.judge.completed"
+
+
+@pytest.mark.asyncio
+async def test_semantic_judge_v2_quality_findings_without_candidate_id() -> None:
+    async def caller(**kwargs: Any) -> str:
+        if kwargs.get("which") == "pin":
+            return json.dumps(_v2_pin_payload())
+        return json.dumps(_v2_quality_payload())
+
+    handler = semantic_judge.WritingSemanticJudgeHandler(caller=caller)
+    ctx = _Ctx(
+        {
+            "assemble": _Out({"pin_ledger": [], "intake": {}}),
+            "prose_rhythm_pass": _Out(None, raw="Revised draft body."),
+        }
+    )
+    out = await handler.execute(_Step("v2"), ctx)
+    assert out.json["ok"] is True
+    assert out.json["quality_findings"] == [
+        {"rule": "register", "detail": "clean", "penalty": 0}
+    ]
 
 
 @pytest.mark.asyncio
