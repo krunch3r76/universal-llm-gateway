@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import pytest
-
 from writing_intake.source_premise import (
     source_message_has_url,
     unsupported_source_claims,

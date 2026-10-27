@@ -503,6 +503,27 @@ def _correspondence_units(text: str) -> list[str]:
     return units
 
 
+def _verbatim_required_exempts_sentence(
+    sentence: str,
+    verbatim_required_excerpts: Sequence[str],
+) -> bool:
+    """True when a verbatim-required excerpt legitimately covers this sentence."""
+    s_norm = sentence.strip().lower()
+    if not s_norm:
+        return False
+    for excerpt in verbatim_required_excerpts:
+        ex_norm = str(excerpt).strip().lower()
+        if not ex_norm:
+            continue
+        if s_norm == ex_norm:
+            return True
+        if len(ex_norm) < 10:
+            continue
+        if s_norm in ex_norm or ex_norm in s_norm:
+            return True
+    return False
+
+
 def drift_check_sentence(
     sentence: str,
     *,
@@ -528,14 +549,19 @@ def drift_check_sentence(
             return reason
     profile = check_profile_for_channel(channel)
     if profile == "correspondence" and is_declaration_register(sentence):
-        exempt = any(sentence in str(excerpt) for excerpt in verbatim_required_excerpts)
+        exempt = _verbatim_required_exempts_sentence(
+            sentence, verbatim_required_excerpts
+        )
         if not exempt:
             return "declaration_register_in_correspondence"
     if profile == "sworn" and exhibit_ids:
         if _EXHIBIT_LEDGER.search(sentence) and not _EXHIBIT_TAG.search(sentence):
             return "exhibit_fact_missing_inline_tag"
     if points and map_claim_to_purpose(sentence, points) is None:
-        return "not_purpose_relevant"
+        if not _verbatim_required_exempts_sentence(
+            sentence, verbatim_required_excerpts
+        ):
+            return "not_purpose_relevant"
     return None
 
 

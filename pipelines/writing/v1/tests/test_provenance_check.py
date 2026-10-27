@@ -320,6 +320,77 @@ def test_provenance_revision_catches_new_clause_and_dropped_name() -> None:
     assert dropped[0]["detail"] == "Jennifer"
 
 
+def test_revision_delta_unattested_pin_sentence_raises_fact_added() -> None:
+    pin_ledger = [
+        {
+            "pin_id": "P1",
+            "attested": True,
+            "excerpt": "I can cover Monday.",
+        },
+        {
+            "pin_id": "P2",
+            "attested": False,
+            "excerpt": "Unattested secret detail.",
+        },
+    ]
+    v1 = {"draft": "I can cover Monday."}
+    v2 = {"draft": "I can cover Monday. Unattested secret detail."}
+    kinds = _types(
+        provenance.revision_delta(v1, v2, pin_ledger=pin_ledger, channel="sms")
+    )
+    assert "fact_added" in kinds
+    assert "v2_new_unpinned_clause" in kinds
+
+
+def test_revision_delta_unrelated_attested_pin_tokens_not_borrowed() -> None:
+    pin_ledger = [
+        {
+            "pin_id": "P1",
+            "attested": True,
+            "excerpt": "I cannot cover the PHC Petaluma shifts on 11/3",
+        },
+        {
+            "pin_id": "P3",
+            "attested": True,
+            "excerpt": "Fill was 251 when I opened Saturday",
+        },
+    ]
+    v1 = {"draft": "Hi Maria, I can't cover PHC Petaluma on 11/3. Thanks."}
+    v2 = {
+        "draft": (
+            "Hi Maria, I cannot cover the PHC Petaluma shifts on 11/3 "
+            "and Fill was 251. Thanks."
+        )
+    }
+    kinds = _types(
+        provenance.revision_delta(
+            v1, v2, pin_ledger=pin_ledger, channel="sms"
+        )
+    )
+    assert "fact_added" in kinds
+    assert "v2_new_unpinned_clause" in kinds
+
+
+def test_revision_delta_restores_attested_pin_token_no_fact_added() -> None:
+    pin_ledger = [
+        {
+            "pin_id": "P1",
+            "attested": True,
+            "excerpt": "I cannot cover the PHC Petaluma shifts on 11/3",
+        },
+    ]
+    v1 = {"draft": "Hi Maria, I can't cover PHC Petaluma on 11/3. Thanks."}
+    v2 = {
+        "draft": "Hi Maria, I cannot cover the PHC Petaluma shifts on 11/3. Thanks."
+    }
+    assert (
+        provenance.revision_delta(
+            v1, v2, pin_ledger=pin_ledger, channel="sms"
+        )
+        == []
+    )
+
+
 def test_revision_delta_contraction_expansion_no_false_drops() -> None:
     draft_v1 = (
         "Hi Maria, I can't cover the PHC Petaluma shifts on 11/3. Thanks."

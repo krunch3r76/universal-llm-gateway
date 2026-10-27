@@ -64,21 +64,34 @@ def mcp_cse_session_harvested(
     reason: str | None = None,
     waited_ms: int | None = None,
     identity_check: str | None = None,
+    archive_uri: str | None = None,
+    archive_sha256: str | None = None,
+    alignment: str | None = None,
+    message_count: int | None = None,
 ) -> Event:
     """Emit when harvest completes or reports an incomplete outcome."""
+    payload: dict[str, object] = {
+        "registration_id": registration_id,
+        "outcome": outcome,
+        "ack_class": ack_class,
+        "turn_count": turn_count,
+        "reason": reason,
+        "waited_ms": waited_ms,
+        "identity_check": identity_check,
+    }
+    if archive_uri is not None:
+        payload["archive_uri"] = archive_uri
+    if archive_sha256 is not None:
+        payload["archive_sha256"] = archive_sha256
+    if alignment is not None:
+        payload["alignment"] = alignment
+    if message_count is not None:
+        payload["message_count"] = message_count
     return Event(
         signal="mcp.cse.session.harvested",
         role="observation",
         scope="node",
-        payload={
-            "registration_id": registration_id,
-            "outcome": outcome,
-            "ack_class": ack_class,
-            "turn_count": turn_count,
-            "reason": reason,
-            "waited_ms": waited_ms,
-            "identity_check": identity_check,
-        },
+        payload=payload,
     )
 
 

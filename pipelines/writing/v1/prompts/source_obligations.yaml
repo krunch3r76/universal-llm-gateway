@@ -6,3 +6,4 @@ template: |
   </source_message>
   Read the inbound message and emit JSON: {"obligations": [{"id":"O1","quoted_span":"verbatim substring","kind":"statement|question|request|call_to_action|deadline|attachment|pleasantry","semantic_reading":"one line","obligation":"answer|acknowledge|act_outside_message|decline_with_reason|none"}]}.
   Every quoted_span must be a verbatim substring of source_message. Classify apply-here links and application CTAs as kind call_to_action with obligation act_outside_message.
+  Standalone conversational reply-closing sign-offs (such as "Let me know, thanks!", "Let me know!", "Please let me know.", "Let me know, thank you! -Name") that only invite a reply to the preceding message without a new topic or external action must be kind pleasantry with obligation none.

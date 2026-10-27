@@ -10,6 +10,8 @@ from cdp_ask.followup_reattach import _teardown_attempt, ensure_cse_attached
 
 HARVEST_HOLDER = "cse-session-harvest"
 
+_ATTACH_RETRY_ERRORS = frozenset({"attachment.refused", "not_attached"})
+
 
 class _LaneHold:
     """In-flight mark hygiene already consults via ``lane_in_flight``."""
@@ -65,19 +67,41 @@ async def harvest_by_opening_url(
     requested_chat_url: str | None = None,
 ) -> HarvestResponse:
     """Goto *chat_url* on a registry host and harvest. The tab stays open."""
-    outcome = await ensure_cse_attached(
-        chat_url,
-        holder=HARVEST_HOLDER,
-        allow_mint=True,
-    )
+    attach_attempts: list[dict[str, Any]] = []
+    outcome = None
+    for attempt_idx in range(2):
+        outcome = await ensure_cse_attached(
+            chat_url,
+            holder=HARVEST_HOLDER,
+            allow_mint=True,
+        )
+        attach_attempts.append(
+            {
+                "attempt": attempt_idx + 1,
+                "ok": outcome.ok,
+                "error": outcome.error,
+                "reattach": attempt_idx == 1,
+            }
+        )
+        if outcome.ok and outcome.page is not None:
+            break
+        err = (outcome.error or "").strip()
+        if attempt_idx == 0 and err in _ATTACH_RETRY_ERRORS:
+            continue
+        break
+
     opened_prov = _with_opened(
         provenance,
-        registration_id=outcome.registration_id,
+        registration_id=outcome.registration_id if outcome is not None else None,
     )
-    if not outcome.ok or outcome.page is None:
+    opened_prov["attach_attempts"] = attach_attempts
+    if len(attach_attempts) > 1:
+        opened_prov["reattach"] = True
+    if outcome is None or not outcome.ok or outcome.page is None:
+        reason = (outcome.error if outcome is not None else None) or "open_failed"
         return HarvestResponse(
             outcome="not_attached",
-            reason=outcome.error or "open_failed",
+            reason=reason,
             provenance=opened_prov,
         )
     response: HarvestResponse | None = None
@@ -90,6 +114,10 @@ async def harvest_by_opening_url(
                 requested_registration_id=requested_registration_id,
                 requested_chat_url=requested_chat_url or chat_url,
             )
+            merged = dict(opened_prov)
+            if response.provenance:
+                merged.update(response.provenance)
+            response.provenance = merged
             return response
         finally:
             await _teardown_opened(outcome, response)

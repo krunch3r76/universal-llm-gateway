@@ -11,7 +11,7 @@ from typing import Any
 
 import pytest
 from writing_intake.fact_inventory import build_fact_inventory, run_drift_check
-from writing_intake.schema import validate_intake_payload
+from writing_intake.schema import OutboundWriteIntake, validate_intake_payload
 
 _PKG = "writing_v1_handlers"
 if _PKG not in sys.modules:
@@ -48,6 +48,33 @@ rev 5 — not legal advice — draft.
 At 5:10 PM that day, I emailed her a list of repairs (Exhibit 7).
 The reinstatement request was filed May 27, 2026 (Exhibit 8).
 """
+
+
+def test_outbound_write_intake_accepts_recipient_role() -> None:
+    intake, refusal = validate_intake_payload(
+        {
+            "intake": {
+                "verbatim_notes": ["Decline standing availability."],
+                "recipient": "Maria",
+                "objective": "Reply to VMS",
+                "channel": "email",
+                "recipient_role": "VMS scheduler",
+            }
+        }
+    )
+    assert refusal is None
+    assert intake is not None
+    assert intake.recipient_role == "VMS scheduler"
+    model = OutboundWriteIntake.model_validate(
+        {
+            "verbatim_notes": ["Note."],
+            "recipient": "Clerk",
+            "objective": "Notify",
+            "channel": "sms",
+            "recipient_role": "  intake coordinator  ",
+        }
+    )
+    assert model.recipient_role == "intake coordinator"
 
 
 def test_validate_intake_refusal_enrichment() -> None:
@@ -466,6 +493,18 @@ def test_prose_rhythm_prompt_does_not_strip_trailing_qualifiers() -> None:
     assert "pin-backed content word" in text
     assert "I stated" in text
     assert "I said" in text
+
+
+def test_prose_rhythm_correspondence_keeps_sentence_boundaries() -> None:
+    text = (
+        Path(__file__).resolve().parents[1] / "prompts" / "prose_rhythm.yaml"
+    ).read_text(encoding="utf-8")
+    assert "correspondence (email or sms)" in text
+    assert "keep separate sentences separate" in text
+    assert "four or more" in text
+    assert "Currently" in text
+    assert "because" in text
+    assert "missing_obligations" in text
 
 
 def test_filing_stitch_keeps_source_frame_and_fails_unnumbered_body() -> None:

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from chat_harvest.cse_persist import resolve_cse_harvest_limit
 from chat_harvest.models import ClassifyRefuse, classify_chat_url
 from claude_bundles import cdp_registry
 from claude_bundles.cse_identity_drift import evaluate_harvest_identity
@@ -33,8 +34,6 @@ from cdp_ask.cse_session_models import (
 from cdp_ask.cse_session_tape_seal import seal_predecessor_cse_to_tape
 from cdp_ask.execution_store import ExecutionStore
 from cdp_ask.followup_resolve import discover_candidates
-
-HARVEST_HARD_CAP = 50
 
 _DETACH_SWALLOW = frozenset(
     {"attachment.not_attached", "seat.open_on_detach", "standdown.missing"}
@@ -188,10 +187,14 @@ def _emit(registration_id: str | None, response: HarvestResponse) -> HarvestResp
             registration_id=registration_id,
             outcome=response.outcome,
             ack_class=response.ack_class,
-            turn_count=len(response.turns),
+            turn_count=response.turn_count or len(response.turns),
             reason=response.reason,
             waited_ms=response.waited_ms,
             identity_check=identity_check,
+            archive_uri=response.archive_uri,
+            archive_sha256=response.archive_sha256,
+            alignment=response.alignment,
+            message_count=response.message_count,
         )
     )
     return response
@@ -222,9 +225,16 @@ async def harvest_page(
             observed_chat_url=None,
             current_registration_id=current_reg,
         )
-    limit = min(int(req.limit), HARVEST_HARD_CAP)
-    response = await harvest_with_loading_wait(page, req, provenance, limit=limit)
+    limit = resolve_cse_harvest_limit(req.limit)
     page_url = str(getattr(page, "url", None) or "").strip() or None
+    response = await harvest_with_loading_wait(
+        page,
+        req,
+        provenance,
+        limit=limit,
+        chat_url=requested_chat_url,
+        page_url=page_url,
+    )
     return _apply_harvest_identity(
         response,
         requested_registration_id=requested_registration_id,

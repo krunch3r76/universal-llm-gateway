@@ -15,10 +15,11 @@ from cdp_ask.followup_reattach import ReattachOutcome
 async def test_open_failed_stays_not_attached() -> None:
     failed = ReattachOutcome(ok=False, error="reattach_navigate_failed")
     harvest_page = AsyncMock()
+    ensure = AsyncMock(return_value=failed)
     with (
         patch(
             "cdp_ask.cse_session_harvest_open.ensure_cse_attached",
-            AsyncMock(return_value=failed),
+            ensure,
         ),
         patch(
             "cdp_ask.cse_session_harvest_open._teardown_opened",
@@ -31,10 +32,72 @@ async def test_open_failed_stays_not_attached() -> None:
             None,
             harvest_page,
         )
+    ensure.assert_awaited_once()
     harvest_page.assert_not_awaited()
     teardown.assert_not_awaited()
     assert result.outcome == "not_attached"
     assert result.reason == "reattach_navigate_failed"
+    assert len(result.provenance["attach_attempts"]) == 1
+
+
+@pytest.mark.asyncio
+async def test_attachment_refused_retries_once_then_harvests() -> None:
+    page = MagicMock()
+    refused = ReattachOutcome(ok=False, error="attachment.refused")
+    opened = ReattachOutcome(
+        ok=True,
+        page=page,
+        pw=MagicMock(),
+        registration_id="reg-r",
+    )
+    ensure = AsyncMock(side_effect=[refused, opened])
+    harvest_page = AsyncMock(
+        return_value=HarvestResponse(outcome="harvested", provenance={})
+    )
+    with (
+        patch(
+            "cdp_ask.cse_session_harvest_open.ensure_cse_attached",
+            ensure,
+        ),
+        patch(
+            "cdp_ask.cse_session_harvest_open._teardown_attempt",
+            AsyncMock(),
+        ),
+    ):
+        result = await harvest_by_opening_url(
+            "https://claude.ai/cowork/cse_x",
+            HarvestRequest(chat_url="https://claude.ai/cowork/cse_x"),
+            None,
+            harvest_page,
+        )
+    assert ensure.await_count == 2
+    assert result.outcome == "harvested"
+    attempts = result.provenance["attach_attempts"]
+    assert len(attempts) == 2
+    assert attempts[0]["error"] == "attachment.refused"
+    assert attempts[1]["reattach"] is True
+    assert result.provenance.get("reattach") is True
+
+
+@pytest.mark.asyncio
+async def test_attachment_refused_twice_returns_not_attached_with_attempts() -> None:
+    refused = ReattachOutcome(ok=False, error="attachment.refused")
+    ensure = AsyncMock(return_value=refused)
+    harvest_page = AsyncMock()
+    with patch(
+        "cdp_ask.cse_session_harvest_open.ensure_cse_attached",
+        ensure,
+    ):
+        result = await harvest_by_opening_url(
+            "https://claude.ai/cowork/cse_x",
+            HarvestRequest(chat_url="https://claude.ai/cowork/cse_x"),
+            None,
+            harvest_page,
+        )
+    assert ensure.await_count == 2
+    assert result.outcome == "not_attached"
+    assert result.reason == "attachment.refused"
+    assert len(result.provenance["attach_attempts"]) == 2
 
 
 @pytest.mark.asyncio

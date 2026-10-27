@@ -124,10 +124,10 @@ async def _scrape_predecessor_turns(
     When *match_chat_url_only* is true (shared listener port), only a tab whose
     URL normalizes to *chat_url* is used; if none exists, returns ``None``.
     """
+    from chat_harvest.cse_persist import CSE_HARVEST_NO_LIMIT
     from claude_bundles.cse_turns_harvest import harvest_turns
     from claude_bundles.skills_ui_panel import connect_cdp
 
-    from cdp_ask.cse_session_harvest import HARVEST_HARD_CAP
     from cdp_ask.cse_session_harvest_scrape import pick_page_for_chat_url
 
     pw, _browser, ctx, page = await connect_cdp(f"http://127.0.0.1:{port}")
@@ -136,7 +136,7 @@ async def _scrape_predecessor_turns(
         page = await pick_page_for_chat_url(ctx, chat_url, fallback=fallback)
         if page is None:
             return None
-        raw = await harvest_turns(page, limit=HARVEST_HARD_CAP)
+        raw = await harvest_turns(page, limit=CSE_HARVEST_NO_LIMIT)
     finally:
         await pw.stop()
     turns = raw.get("turns") if isinstance(raw, dict) else None

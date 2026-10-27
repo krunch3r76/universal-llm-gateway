@@ -11,7 +11,7 @@ from typing import Any
 
 import pytest
 from writing_intake.claim_gates import map_claim_to_purpose, parse_purpose_points
-from writing_intake.fact_inventory import run_drift_check
+from writing_intake.fact_inventory import drift_check_sentence, run_drift_check
 from writing_intake.schema import validate_intake_payload
 
 _PKG = "writing_v1_handlers"
@@ -365,6 +365,67 @@ def test_provenance_handler_purpose_drops_on_baseline() -> None:
 
 def test_not_purpose_relevant_in_finding_types() -> None:
     assert "not_purpose_relevant" in review_schema.FINDING_TYPES
+
+
+_SCHEDULE_SENTENCE = "Currently my schedule stays full most of the time."
+_AMANDA_PURPOSE = [
+    "Reply to Amanda declining standing weekly availability and a monthly open calendar",
+]
+
+
+def test_verbatim_required_exempts_schedule_sentence_from_not_purpose_relevant() -> None:
+    unrelated = ["Submit quarterly tax filings to the state board."]
+    assert (
+        drift_check_sentence(
+            _SCHEDULE_SENTENCE,
+            channel="email",
+            exhibit_ids=set(),
+            purpose_points=unrelated,
+            verbatim_required_excerpts=[_SCHEDULE_SENTENCE],
+        )
+        != "not_purpose_relevant"
+    )
+    assert (
+        drift_check_sentence(
+            _SCHEDULE_SENTENCE,
+            channel="email",
+            exhibit_ids=set(),
+            purpose_points=unrelated,
+            verbatim_required_excerpts=(),
+        )
+        == "not_purpose_relevant"
+    )
+
+
+def test_short_verbatim_token_does_not_substring_exempt_unrelated_sentence() -> None:
+    unrelated = ["Submit quarterly tax filings to the state board."]
+    sentence = "I do not know whether the booking is confirmed."
+    assert (
+        drift_check_sentence(
+            sentence,
+            channel="email",
+            exhibit_ids=set(),
+            purpose_points=unrelated,
+            verbatim_required_excerpts=["No"],
+        )
+        == "not_purpose_relevant"
+    )
+    assert (
+        drift_check_sentence(
+            "No",
+            channel="email",
+            exhibit_ids=set(),
+            purpose_points=unrelated,
+            verbatim_required_excerpts=["No"],
+        )
+        is None
+    )
+
+
+def test_schedule_status_maps_to_availability_purpose() -> None:
+    assert (
+        map_claim_to_purpose(_SCHEDULE_SENTENCE, _AMANDA_PURPOSE) == "purpose[0]"
+    )
 
 
 BASELINE_INTAKE = {

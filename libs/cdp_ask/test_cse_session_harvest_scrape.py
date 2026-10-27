@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 from unittest.mock import MagicMock
 
 import pytest
@@ -83,7 +84,10 @@ async def test_pick_page_for_chat_url_prefers_matching_cse_tab() -> None:
     assert picked is match
 
 
-def test_dom_to_harvested_maps_coverage_full() -> None:
+def test_dom_to_harvested_maps_coverage_full(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setenv("CORTEX_FILES_ROOT", str(tmp_path))
     dom = {
         "turns": [
             {
@@ -100,11 +104,22 @@ def test_dom_to_harvested_maps_coverage_full() -> None:
         "truncated": False,
         "coverage": "full",
     }
-    resp = _dom_to_harvested(dom, HarvestRequest(), None)
+    chat = "https://claude.ai/cowork/cse_archive_test"
+    resp = _dom_to_harvested(
+        dom,
+        HarvestRequest(chat_url=chat),
+        None,
+        chat_url=chat,
+        page_url=chat,
+    )
     assert resp.outcome == "harvested"
     assert resp.coverage == "full"
     assert resp.turns[0].author == "user"
     assert resp.turns[0].source == "cse-dom"
+    assert resp.archive_uri
+    assert resp.archive_sha256
+    assert resp.message_count == 2
+    assert resp.turn_count == 1
 
 
 @pytest.mark.asyncio
