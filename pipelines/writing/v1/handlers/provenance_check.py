@@ -500,6 +500,40 @@ def _clause_pinned(sentence: str, claims: list[Any]) -> bool:
     return False
 
 
+def _sentence_attested_pin_excerpt_tokens(
+    sentence: str,
+    *,
+    pin_ledger: list[dict[str, Any]] | None,
+    v1_clauses: list[dict[str, Any]],
+    row_pins: list[Any] | None,
+    v2_clauses_from_derive: bool,
+) -> set[str]:
+    """Excerpt tokens from attested pins linked to this sentence only."""
+    tokens: set[str] = set()
+    ledger = pin_ledger or []
+    if v2_clauses_from_derive:
+        allowed_ids = {str(item) for item in (row_pins or [])}
+        for row in ledger:
+            if not isinstance(row, dict) or row.get("attested") is not True:
+                continue
+            pin_id = str(row.get("pin_id"))
+            if pin_id not in allowed_ids:
+                continue
+            excerpt = str(row.get("excerpt") or "")
+            if excerpt.strip():
+                tokens |= _tokens(excerpt)
+        return tokens
+    for row in ledger:
+        if not isinstance(row, dict) or row.get("attested") is not True:
+            continue
+        pin_id = str(row.get("pin_id"))
+        if _pin_matches_text(sentence, pin_id, pin_ledger, v1_clauses):
+            excerpt = str(row.get("excerpt") or "")
+            if excerpt.strip():
+                tokens |= _tokens(excerpt)
+    return tokens
+
+
 def _pin_order(clauses: list[dict[str, Any]]) -> list[str]:
     order: list[str] = []
     for clause in clauses:
@@ -856,10 +890,10 @@ def revision_delta(
                 sentence, channel=channel, signer=signer
             ):
                 continue
+            row_pins: list[Any] = []
             if not v2_clauses_from_derive and _clause_pinned(sentence, v2_clause_rows):
                 continue
             if v2_clauses_from_derive:
-                row_pins: list[Any] = []
                 for row in v2_clause_rows:
                     if not isinstance(row, dict):
                         continue
@@ -869,7 +903,16 @@ def revision_delta(
                         break
                 if not row_pins:
                     continue
-            sent_new = _tokens(sentence) - v1_tokens - join_words
+            sentence_pin_tokens = _sentence_attested_pin_excerpt_tokens(
+                sentence,
+                pin_ledger=pin_ledger,
+                v1_clauses=v1_clause_rows,
+                row_pins=row_pins,
+                v2_clauses_from_derive=v2_clauses_from_derive,
+            )
+            sent_new = (
+                _tokens(sentence) - v1_tokens - sentence_pin_tokens - join_words
+            )
             if not sent_new:
                 continue
             detail = sentence

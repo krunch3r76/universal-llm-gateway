@@ -89,11 +89,17 @@ def normalize_decline_ability_phrases(text: str) -> str:
     return _UNABLE_TO.sub("can not", text)
 
 
+def normalize_temporal_monthly_synonyms(text: str) -> str:
+    """Align restate checks for ``right now`` vs ``currently`` without conflating monthly."""
+    return re.sub(r"\bright\s+now\b", "currently", text, flags=re.I)
+
+
 def normalize_text_for_token_match(text: str) -> str:
     """Normalize dashes, contractions, and decline phrasing before token extraction."""
     text = normalize_email_dashes(text)
     text = normalize_contractions(text)
-    return normalize_decline_ability_phrases(text)
+    text = normalize_decline_ability_phrases(text)
+    return normalize_temporal_monthly_synonyms(text)
 
 
 def normalize_email_dashes(text: str) -> str:
