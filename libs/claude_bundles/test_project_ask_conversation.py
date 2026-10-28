@@ -670,6 +670,16 @@ async def test_code_surface_model_mismatch_fails_before_send_prompt() -> None:
     assert "sonnet-5-5" in (results[0].error or "")
 
 
+def test_assert_code_surface_skips_unknown_compose_label() -> None:
+    """Compose ``unknown`` sentinel is not treated as a model mismatch (CDP REVISE)."""
+    from claude_bundles.project_ask import _assert_code_surface_model_before_send
+
+    _assert_code_surface_model_before_send(
+        "opus-5.5-medium",
+        {"model_ran": "unknown", "current_model": "unknown"},
+    )
+
+
 @pytest.mark.asyncio
 async def test_code_surface_model_match_calls_send_prompt_once() -> None:
     """R23: matched /code label proceeds to send_prompt."""
