@@ -85,6 +85,17 @@ def test_resolve_submit_strategy_bare_new() -> None:
     )
 
 
+def test_resolve_submit_strategy_code_surface() -> None:
+    assert (
+        resolve_submit_strategy(
+            "https://claude.ai/code",
+            {"mode": None, "approval": {"text": "Auto"}},
+            surface="code",
+        )
+        == "live_discover"
+    )
+
+
 def test_is_excluded_submit_control_model_and_approval() -> None:
     assert is_excluded_submit_control(aria="Model: Sonnet 5 High")
     assert is_excluded_submit_control(aria="Automatically approve")
@@ -456,10 +467,6 @@ async def test_code_surface_never_awaits_ensure_approval_auto(
     monkeypatch.setattr(
         "claude_bundles.project_ask.compose_mode_fingerprint",
         fake_fingerprint,
-    )
-    monkeypatch.setattr(
-        "claude_bundles.project_ask.resolve_submit_strategy",
-        lambda _url, _fp: "live_discover",
     )
     monkeypatch.setattr(
         "claude_bundles.composer_submit.submit_composer_content",

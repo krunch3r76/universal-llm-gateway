@@ -319,10 +319,20 @@ async def await_submit_visible(
 
 
 def resolve_submit_strategy(
-    url: str, fp: dict[str, Any] | None = None
+    url: str,
+    fp: dict[str, Any] | None = None,
+    *,
+    surface: str | None = None,
 ) -> SubmitStrategy:
-    """Return ``live_discover`` on warm chat/CSE URLs; ``mode_locked`` on bare ``/new``."""
+    """Pick submit path from URL lifecycle and compose surface.
+
+    Warm chat/CSE URLs and ``surface='code'`` use live DOM submit discovery;
+    bare ``/new`` Cowork first-send keeps mode-locked re-attest + Start task.
+    """
     _ = fp  # reserved — URL is the lifecycle signal (tier1-anchors / A bind)
+    surf = (surface or "").strip().lower() or None
+    if surf == "code":
+        return "live_discover"
     if in_active_chat(url or ""):
         return "live_discover"
     return "mode_locked"
