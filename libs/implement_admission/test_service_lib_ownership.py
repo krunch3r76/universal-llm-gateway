@@ -7,6 +7,7 @@ from pathlib import Path
 
 import pytest
 from charter_runner_store.archive_pkg import import_archived
+from maestro_landed.serving_map import load_serving_map
 
 from implement_admission.consumer_import_blinds import measure_import_grammar_blinds
 from implement_admission.consumer_import_verify import (
@@ -22,7 +23,6 @@ from implement_admission.service_lib_ownership import (
     serving_services_for_lib,
     serving_services_for_lib_path,
 )
-from maestro_landed.serving_map import load_serving_map
 
 _propagation_execute = import_archived("propagation_execute")
 _propagation_libs_closure = import_archived("propagation_libs_closure")
