@@ -17,7 +17,7 @@ About to fire a dispatch, withhold one, assert a lane's state, or author or amen
 
 - Withhold `job=conductor` because `implement_ready` is unstamped.
 - Assert idle, absent, or not-running without a read of that work thread on this turn.
-- Compose a prompt, packet, or memorandum another model will act on.
+- Compose a prompt, packet, memorandum or ruling another model will act on before `retrieval-before-authoring` ran this leg, or on file:line claims across more than one module this seat has not read.
 - Edit another author's packet or acceptance criterion.
 - Choose the act from a printed `NEXT_ADMIT` line, or from its absence.
 
@@ -29,8 +29,8 @@ About to fire a dispatch, withhold one, assert a lane's state, or author or amen
 2. **Read before a negative.** A withhold or "not running" is a claim about a lane. Read that work thread this turn (`agent_bus_read` `get`, `turn_number=latest`). Quote the turn time. An admit with no closeout on that thread means it is running. No work thread in hand means you have not shown the lane is empty — do not announce the negative.
    Falsifier: the running job is first learned from `409 CURSOR_SOURCE_REF_IN_FLIGHT` (`holder_dispatch_id`, `holder_thread_id`). Specimen: holder `dbcfa81246f2-ac9ffde6` on thread 13261, running since 00:55:37Z.
 
-3. **Consequential text is a route.** A memorandum, prompt, or packet another model will act on goes to a cursor-sdk author via `team_dispatch` (`seat=cursor-sdk`). The commission names the target surface and requires `retrieval-before-authoring`. This seat does not draft the body.
-   Falsifier: the text is a turn this seat composed, with no author dispatch and no named target surface. Specimen: thread 13259.
+3. **Consequential text is authored after retrieval.** A memorandum, prompt, packet or ruling another model will act on is authored only after `retrieval-before-authoring` ran this leg, and cites its report. This seat authors rulings and bounded packets itself (facts as data, numbered steps, a stop step, constraints last). A packet resting on file:line claims across more than one module that this seat has not read goes to a cursor-sdk author via `team_dispatch`, with the target surface named.
+   Falsifier: a composed turn citing no report this leg, or unread multi-module file:line claims. Specimen: thread 13259.
 
 4. **Amendment is authoring.** Return a packet or acceptance criterion to its author. A count that changed because master moved is still an amendment.
    Falsifier: an acceptance criterion differs from the author's text and this seat made the diff. Specimen: thread 13257, expected commit count 2→3.
@@ -40,4 +40,4 @@ About to fire a dispatch, withhold one, assert a lane's state, or author or amen
 
 ## Falsifier
 
-This body failed to bind if a later leg withholds a conductor for an unstamped `implement_ready`, announces a lane empty and then meets `409 CURSOR_SOURCE_REF_IN_FLIGHT`, composes or amends a packet on this seat, or treats `NEXT_ADMIT` text as the gate.
+This body failed to bind if a later leg withholds a conductor for an unstamped `implement_ready`, announces a lane empty and then meets `409 CURSOR_SOURCE_REF_IN_FLIGHT`, composes a prompt, packet, memorandum or ruling another model will act on before `retrieval-before-authoring` ran this leg, or on file:line claims across more than one module this seat has not read, or amends a packet on this seat, or treats `NEXT_ADMIT` text as the gate.
