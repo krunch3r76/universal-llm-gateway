@@ -34,6 +34,7 @@ from .finalize_support import (
     _stitch_filing,
     _usage_of,
     build_finalize_payload,
+    filter_ship_gate_unresolved,
 )
 from .independence import (
     _allow_partial,
@@ -174,10 +175,14 @@ class WritingFinalizeHandler(BaseHandler):
             raw_v2_drift = final_payload.get("drift_check")
             if isinstance(raw_v2_drift, dict):
                 v2_drift = raw_v2_drift
-        drift_check = _merge_drift(drift_check, v2_drift)
+        if selected == "draft_v2" and not rhythm_reverted:
+            drift_check = _merge_drift(drift_check, v2_drift)
         if _drift_failed(v2_drift) and selected == "draft_v2":
             selected = "draft_v1"
             rhythm_reverted = True
+        revision_discarded: list[Any] = []
+        if rhythm_reverted and final:
+            revision_discarded = list(final)
         if held_review or not review_ok:
             passed = False
         elif selected == "draft_v2":
@@ -211,8 +216,6 @@ class WritingFinalizeHandler(BaseHandler):
                     "detail": review_reason,
                 }
             )
-        if rhythm_reverted:
-            unresolved.extend(list(final or []))
         if not revision_ran and review_ok and review.get("verdict") == "revise":
             unresolved.extend(list(review.get("findings") or []))
         options = getattr(context, "options", {}) or {}
@@ -330,6 +333,12 @@ class WritingFinalizeHandler(BaseHandler):
                     }
                 )
         selected_body = _selected_body(selected, draft, revision)
+        unresolved = filter_ship_gate_unresolved(
+            unresolved,
+            selected_body=selected_body,
+            selected=selected,
+            rhythm_reverted=rhythm_reverted,
+        )
         src_json = _json_of(outputs, "source_obligations") or {}
         obligations = list(src_json.get("obligations") or [])
         architect_json = _json_of(outputs, "prompt_architect") or {}
@@ -354,9 +363,14 @@ class WritingFinalizeHandler(BaseHandler):
         if obl_refusal is not None:
             passed = False
             unresolved.extend(obl_refusal["unresolved"])
+        judge_source = (
+            initial
+            if selected == "draft_v1"
+            else (initial + list(final or []))
+        )
         judge_fail = any(
             isinstance(row, dict) and row.get("type") == "semantic_judge_unavailable"
-            for row in (initial + list(final or []))
+            for row in judge_source
         )
         if judge_fail:
             passed = False
@@ -398,6 +412,7 @@ class WritingFinalizeHandler(BaseHandler):
             selected=selected,
             rhythm_reverted=rhythm_reverted,
             outputs=outputs,
+            revision_discarded=revision_discarded,
             models=models,
             revision_ran=revision_ran,
             reviewer_live=reviewer_live,

@@ -387,8 +387,17 @@ class WritingProvenanceCheckHandler(BaseHandler):
                 intake_answers=intake_answers or None,
                 load_bearing_claims=load_bearing_claims,
             )
-            if purpose_points:
-                drift = _scrub_purpose_restatement_flags(drift, purpose_points)
+            scrub_points = list(purpose_points)
+            if purpose_text:
+                scrub_points.append(purpose_text)
+            if isinstance(intake_block, dict):
+                raw_notes = intake_block.get("verbatim_notes") or []
+                if isinstance(raw_notes, list):
+                    scrub_points.extend(
+                        str(note) for note in raw_notes if str(note).strip()
+                    )
+            if scrub_points:
+                drift = _scrub_purpose_restatement_flags(drift, scrub_points)
         flagged = drift.get("flagged_sentences") or []
         purpose_drops = [
             {"sentence": row["sentence"], "reason": "not_purpose_relevant"}

@@ -57,6 +57,11 @@ _APPLY_LINK_ASK = re.compile(
     r"\b(?:share|send|provide)\b.{0,50}\b(?:apply|link|portal|url|https?://)\b",
     re.I,
 )
+_NEXT_STEPS_ASK = re.compile(
+    r"\b(?:next steps?|what happens next|how to proceed|what are the next steps|"
+    r"let me know what the next steps)\b",
+    re.I,
+)
 _ACTION_CONFIRM = re.compile(
     rf"(?:{_PAST_FP_ACTION}|{_INTENT_FP_ACTION}|{_PAST_LINK_CONFIRM}|"
     rf"\bsubmitting\s+my\s+application\b|"
@@ -242,6 +247,10 @@ def _sentence_asks_back_for_cta(sentence: str, quoted_span: str) -> bool:
         return True
     if _ASK_BACK_REQUEST.search(norm) and re.search(
         r"\b(?:apply|application|link|portal|url|https?://)\b", norm, re.I
+    ):
+        return True
+    if _NEXT_STEPS_ASK.search(norm) and (
+        "?" in norm or _ASK_BACK_REQUEST.search(norm)
     ):
         return True
     return False

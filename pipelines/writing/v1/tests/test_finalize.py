@@ -449,7 +449,14 @@ def test_finalize_semantic_judge_unavailable_in_initial_fails_gate() -> None:
     assert payload["ship_gate"]["pass"] is False
 
 
-def test_finalize_semantic_judge_unavailable_in_final_fails_after_revert() -> None:
+def test_finalize_v2_judge_unavailable_discarded_when_rhythm_reverted() -> None:
+    v2_judge_fail = [
+        {
+            "type": "semantic_judge_unavailable",
+            "claim_id": None,
+            "detail": "judge_unavailable",
+        }
+    ]
     payload = _run(
         {
             "assemble": _Out(_assemble()),
@@ -459,18 +466,13 @@ def test_finalize_semantic_judge_unavailable_in_final_fails_after_revert() -> No
             "fact_ceiling_audit": _Out({"verdict": "ship", "findings": []}),
             "prose_rhythm_pass": _Out(None, raw="Revised."),
             "fact_ceiling_final": _Out(
-                {
-                    "violations": [
-                        {
-                            "type": "semantic_judge_unavailable",
-                            "claim_id": None,
-                            "detail": "judge_unavailable",
-                        }
-                    ],
-                    "pass": False,
-                }
+                {"violations": v2_judge_fail, "pass": False}
             ),
         }
     )
     assert payload["ship_gate"]["selected"] == "draft_v1"
-    assert payload["ship_gate"]["pass"] is False
+    assert payload["ship_gate"]["pass"] is True
+    assert payload["ship_gate"]["revision_discarded"] == v2_judge_fail
+    assert "semantic_judge_unavailable" not in {
+        row.get("type") for row in payload["ship_gate"]["unresolved"]
+    }
