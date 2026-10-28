@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+CONSUMERS: tuple[str, ...] = ("mcp",)
+
 import json
 from datetime import UTC, datetime
 from pathlib import Path
