@@ -721,9 +721,7 @@ async def _compose_model_selected(
     if composer is not None:
         await composer.click(force=True)
         await page.wait_for_timeout(800)
-    if _is_code_compose_surface(
-        claude_surface=claude_surface, compose_url=compose_url
-    ):
+    if _is_code_compose_surface(claude_surface=claude_surface, compose_url=compose_url):
         model_ran = await _read_code_surface_model_label(page) or "unknown"
         return {
             "ok": True,

@@ -72,7 +72,11 @@ async def test_cowork_surface_still_calls_select_model() -> None:
         patch(
             "claude_bundles.project_ask.select_model",
             new=AsyncMock(
-                return_value={"ok": True, "step": "already_selected", "requested": "opus-5"}
+                return_value={
+                    "ok": True,
+                    "step": "already_selected",
+                    "requested": "opus-5",
+                }
             ),
         ) as select_mock,
     ):

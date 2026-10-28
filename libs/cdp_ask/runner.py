@@ -67,6 +67,8 @@ def _compose_args_for_surface(
     if (req.claude_surface or "cowork").strip().lower() == "code":
         return _CLAUDE_CODE_COMPOSE_URL, False
     return None, req.ensure_cowork_auto
+
+
 _TMP_FALLBACK_HARVEST_ROOT = Path("/tmp/cdp-ask-files")
 _NFS_CORTEX_FILES_ROOT = Path("/mnt/torus/mcp-data/files")
 
