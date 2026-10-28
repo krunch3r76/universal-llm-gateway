@@ -40,6 +40,22 @@ def test_spawn_tab_calls_launch_with_debug_url(
     assert out["ok"] is True
 
 
+def test_cursor_bridge_spawn_tab_does_not_append_ledger(tmp_path) -> None:
+    from pathlib import Path
+
+    from cursor_bridge.spawn_endpoint_house_ledger import ledger_path
+
+    watch = Path(tmp_path)
+    with patch("cursor_bridge.bridge_spawn_relay.launch_cursor_agents_tab") as launch:
+        launch.return_value = {"ok": True, "editor_agent_id": "a-1"}
+        with patch(
+            "cursor_bridge.spawn_endpoint_house_ledger.ledger_path",
+            return_value=ledger_path(watch),
+        ):
+            _spawn_tab(gui_host=":8", prompt="hello", model="Grok 4.7")
+    assert not ledger_path(watch).exists()
+
+
 def test_send_msg_bus_only_without_agent_id() -> None:
     with patch("tools.cursor_bridge._send_impl") as send_impl:
         send_impl.return_value = {"thread": {"id": "1"}, "turn_number": 2}

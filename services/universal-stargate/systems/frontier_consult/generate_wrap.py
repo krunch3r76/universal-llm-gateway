@@ -295,41 +295,8 @@ async def dispatch_cursor_sdk_generate_route(
     except FrontierEndpointError as exc:
         return JSONResponse(status_code=exc.status_code, content=exc.to_dict())
 
-    from cursor_bridge.spawn_endpoint_house_ledger import (
-        mint_row_id,
-        patch_spawn_row,
-        record_spawn,
-    )
-
-    house_thread = str(getattr(body, "dispatch_thread_id", "") or "").strip()
-    if not house_thread:
-        house_thread = str(getattr(body, "reuse_thread", "") or "").strip()
-    sdk_row_id = mint_row_id()
-    spine = record_spawn(
-        surface="cursor_sdk",
-        thread=house_thread,
-        purpose="(unstated)",
-        purpose_unstated=True,
-        row_id=sdk_row_id,
-        dispatch_id=getattr(body, "dispatch_id", None),
-        parent={
-            "agent": str(getattr(body, "caller_agent", "") or "").strip(),
-            "thread": house_thread,
-        },
-    )
-    if not spine.get("ok"):
-        return JSONResponse(
-            status_code=500,
-            content=FrontierEndpointError(
-                request_id=request_id,
-                field="ledger",
-                reason=str(spine.get("error") or "spawn_spine_failed"),
-                status_code=500,
-                code="spawn_spine_failed",
-            ).to_dict(),
-        )
-
     role = seat
+    sdk_row_id: str | None = None
     try:
         operator_lane_summon_warning: str | None = None
         source_ref = getattr(body, "source_ref", None)
@@ -453,6 +420,10 @@ async def dispatch_cursor_sdk_generate_route(
             )
 
             conductor_opts = conductor_opts_from_generation_options(gen_opts)
+            from cursor_bridge.spawn_endpoint_house_ledger import mint_row_id
+
+            if sdk_row_id is None:
+                sdk_row_id = mint_row_id()
             wrap = await loop.run_in_executor(
                 None,
                 partial(
@@ -578,6 +549,40 @@ async def dispatch_cursor_sdk_generate_route(
             contract=body.job,
             request_id=request_id,
         )
+        from cursor_bridge.spawn_endpoint_house_ledger import (
+            mint_row_id,
+            patch_spawn_row,
+            record_spawn,
+        )
+
+        house_thread = str(getattr(body, "dispatch_thread_id", "") or "").strip()
+        if not house_thread:
+            house_thread = str(reuse_thread or "").strip()
+        if sdk_row_id is None:
+            sdk_row_id = mint_row_id()
+        spine = record_spawn(
+            surface="cursor_sdk",
+            thread=house_thread,
+            purpose="(unstated)",
+            purpose_unstated=True,
+            row_id=sdk_row_id,
+            dispatch_id=getattr(body, "dispatch_id", None),
+            parent={
+                "agent": str(getattr(body, "caller_agent", "") or "").strip(),
+                "thread": house_thread,
+            },
+        )
+        if not spine.get("ok"):
+            return JSONResponse(
+                status_code=500,
+                content=FrontierEndpointError(
+                    request_id=request_id,
+                    field="ledger",
+                    reason=str(spine.get("error") or "spawn_spine_failed"),
+                    status_code=500,
+                    code="spawn_spine_failed",
+                ).to_dict(),
+            )
         result = await dispatch_cursor_sdk_generate(
             request_id=request_id,
             role=role,
@@ -664,7 +669,7 @@ async def dispatch_cursor_sdk_generate_route(
                 ]
         if isinstance(result, dict):
             dispatch_id = str(result.get("dispatch_id") or "").strip()
-            if dispatch_id:
+            if dispatch_id and sdk_row_id:
                 patch_spawn_row(sdk_row_id, dispatch_id=dispatch_id)
             from job_vocab import job_record
 

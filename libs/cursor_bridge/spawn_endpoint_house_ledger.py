@@ -7,7 +7,8 @@ import re
 import uuid
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, Callable
+from collections.abc import Callable
+from typing import Any
 
 from bus_watch.fable_lock import WATCH_DIR
 
@@ -500,6 +501,8 @@ def last_successful_wake(
     return last
 
 
+read_all_rows = _read_rows
+
 __all__ = [
     "LEDGER_FILENAME",
     "format_ledger_prompt_prefix",
@@ -510,6 +513,7 @@ __all__ = [
     "mint_row_id",
     "patch_spawn_row",
     "project_row_status",
+    "read_all_rows",
     "read_house_ledger",
     "record_cse_wake",
     "record_report_row",
