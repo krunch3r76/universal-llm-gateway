@@ -20,3 +20,9 @@ rows:
     cite: >-
       journal 152 (agent_bus host serves the lib; mcp only calls it) and journal
       153 (both restarted for that prefix; fleet_liveness descendant-of-observed on both)
+  - prefix: libs/writing_intake/
+    services:
+      - stargate
+      - mcp
+    cite: >-
+      handler imports fact_inventory (assemble/provenance/review_local)
