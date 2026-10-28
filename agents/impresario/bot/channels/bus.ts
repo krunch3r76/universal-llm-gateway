@@ -268,7 +268,7 @@ function busChannelToolCtx(host: HostContext): ToolContext {
   return {
     session: { purpose: "channel", id: "impresario-bus" },
     host,
-  } as ToolContext;
+  } as unknown as ToolContext;
 }
 
 async function pollOnce(args: ChannelStartArgs, fallbackScore: string): Promise<void> {
