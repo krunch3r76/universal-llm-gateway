@@ -280,7 +280,7 @@ def rebuild_hop_state(entries: list[dict[str, object]]) -> ContextHopState:
     for entry in entries:
         agent_id = entry.get("agent_id")
         until = entry.get("cooldown_until")
-        if isinstance(agent_id, str) and isinstance(until, (int, float)):
+        if isinstance(agent_id, str) and isinstance(until, int | float):
             state.cooldown_until[agent_id] = float(until)
     return state
 
