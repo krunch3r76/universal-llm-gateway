@@ -53,7 +53,10 @@ from cdp_ask.unverifiable import (
 )
 
 _CSE_URL_MARKER = "claude.ai/cowork/cse_"
-_CODE_SESSION_MARKER = "/code/session"
+_CODE_SESSION_URL = re.compile(
+    r"https://claude\.ai/code/session_[A-Za-z0-9]+(?:\?|#|$)",
+    re.I,
+)
 _CLAUDE_CODE_COMPOSE_URL = "https://claude.ai/code"
 
 
@@ -253,10 +256,8 @@ def _persist_session_address(
     raw = (url or "").strip()
     if not raw:
         return
-    path_lower = raw.lower()
-    if _CSE_URL_MARKER not in raw and _CODE_SESSION_MARKER not in path_lower:
-        if "/claude.ai/code" not in path_lower:
-            return
+    if _CSE_URL_MARKER not in raw and not _CODE_SESSION_URL.match(raw):
+        return
     from claude_bundles.cdp_registry.models import STATUS_TAB
 
     row = cdp_registry._load_active().get(registration_id)
