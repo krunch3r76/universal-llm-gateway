@@ -593,6 +593,53 @@ def resolve_steer_delivery_binding(*, house_id: str) -> dict[str, Any]:
     return envelope
 
 
+def _cdp_registry_lane_thread_for_house(house_id: str) -> str | None:
+    """Poll lane from the open CDP registry seat bound to *house_id*."""
+    from claude_bundles.cdp_registry.session_address import current_seat_for_lane
+
+    house = str(house_id or "").strip()
+    if not house:
+        return None
+    seat = current_seat_for_lane(house)
+    if seat is None:
+        return None
+    lane = (seat.parent_thread or "").strip()
+    return lane or house
+
+
+def resolve_inform_delivery_binding(*, house_id: str) -> dict[str, Any]:
+    """Resolve bus poll lane from the current CDP registry seat on this house."""
+    thread_id = str(house_id or "").strip()
+    as_of = datetime.now(UTC).isoformat().replace("+00:00", "Z")
+    scope = f"house:{thread_id}/intent:inform"
+    envelope: dict[str, Any] = {
+        "as_of": as_of,
+        "basis": "cdp_registry_lane_holder",
+        "source": _DELIVERY_BINDING_SOURCE,
+        "scope": scope,
+        "stale": False,
+    }
+    if not thread_id:
+        envelope.update({"state": "unbound", "current": None})
+        return envelope
+    lane_thread = _cdp_registry_lane_thread_for_house(thread_id)
+    if lane_thread is None:
+        envelope.update({"state": "unbound", "current": None})
+        return envelope
+    envelope.update(
+        {
+            "state": "bound",
+            "current": {
+                "actuation": {
+                    "type": "bus_poll",
+                    "thread_id": lane_thread,
+                },
+            },
+        }
+    )
+    return envelope
+
+
 def claim_due_wakes(
     debounce_s: int = 600,
     claim_ttl_s: int = 300,
