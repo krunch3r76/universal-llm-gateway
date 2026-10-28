@@ -155,7 +155,12 @@ async def _resolve_page(
         return None, "use_cse_session", False
     if not paste:
         for page in non_cse:
-            if conversation_id and f"/chat/{conversation_id}" in (page.url or ""):
+            page_url = page.url or ""
+            if conversation_id and (
+                f"/chat/{conversation_id}" in page_url
+                or f"/code/session_{conversation_id}" in page_url
+                or f"/code/session/{conversation_id}" in page_url
+            ):
                 await page.bring_to_front()
                 return page, None, False
         if not open_url:
@@ -173,7 +178,12 @@ async def _resolve_page(
         u = p.url or ""
         s = (
             100
-            if ("/chat/" in u or u.rstrip("/").endswith("/new") or "/new?" in u)
+            if (
+                "/chat/" in u
+                or u.rstrip("/").endswith("/new")
+                or "/new?" in u
+                or "/code" in u.lower()
+            )
             else 0
         ) + (50 if conversation_id and conversation_id in u else 0)
         if s >= 100:

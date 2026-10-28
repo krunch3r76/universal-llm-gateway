@@ -138,7 +138,9 @@ def _send_msg(
         out["gui_host"] = gui_host
         if not paste.get("ok"):
             out["ok"] = False
-            out["error"] = str(paste.get("error") or paste.get("reason") or "glass_paste_failed")
+            out["error"] = str(
+                paste.get("error") or paste.get("reason") or "glass_paste_failed"
+            )
     record(
         "mcp.cursor_bridge.send_msg",
         thread=thread,
@@ -237,7 +239,11 @@ def _wake_tab(
 
 
 def _rename_tab(
-    *, gui_host: str, agent_id: str | None, title: str | None
+    *,
+    gui_host: str,
+    agent_id: str | None,
+    title: str | None,
+    thread: str | None = None,
 ) -> dict[str, Any]:
     if not agent_id or not str(agent_id).strip():
         return _param_error(
@@ -249,6 +255,7 @@ def _rename_tab(
         gui_host=gui_host,
         agent_id=str(agent_id).strip(),
         title=str(title).strip(),
+        thread=str(thread).strip() if thread else None,
     )
     record("mcp.cursor_bridge.rename_tab", gui_host=gui_host, ok=bool(res.get("ok")))
     return res
@@ -418,7 +425,12 @@ def register_cursor_bridge_tools(mcp: FastMCP) -> None:
             if op == "wake_tab":
                 return _wake_tab(gui_host=gui_host, agent_id=agent_id, body=body)
             if op == "rename_tab":
-                return _rename_tab(gui_host=gui_host, agent_id=agent_id, title=title)
+                return _rename_tab(
+                    gui_host=gui_host,
+                    agent_id=agent_id,
+                    title=title,
+                    thread=thread,
+                )
             if op == "prune_sidebar":
                 return _prune_sidebar(
                     gui_host=gui_host, thread=thread, agent_id=agent_id

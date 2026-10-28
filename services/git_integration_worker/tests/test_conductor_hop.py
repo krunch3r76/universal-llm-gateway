@@ -642,7 +642,9 @@ async def test_inherit_fail_open_copy_lost_no_retry(
     )
     assert ok is True
     assert calls["n"] == 1
-    child_paths = [p for p in spool.glob("*.json") if p.name != "pred-hop-copyfail.json"]
+    child_paths = [
+        p for p in spool.glob("*.json") if p.name != "pred-hop-copyfail.json"
+    ]
     assert child_paths == []
     assert any(ev.signal == "frontier.sdk.steer.inject.inherit_failed" for ev in events)
 
@@ -758,11 +760,17 @@ async def test_hop_inherit_copies_pending_on_post_success(
     assert pending.directive == "successor sees"
 
 
-def test_build_hop_team_dispatch_body_carries_model_knobs() -> None:
+def test_build_hop_team_dispatch_body_carries_hop_reactor_override() -> None:
     ledger = CursorDispatchLedger.instance()
     knobs = {"effort": "low", "fast": "true"}
     row = _terminal_row(ledger, closeout_tokens=["ROW_HOP"])
-    ledger.merge_record_json(dispatch_id="pred-hop-1", patch={"model_knobs": knobs})
+    ledger.merge_record_json(
+        dispatch_id="pred-hop-1",
+        patch={
+            "hop_reactor_model": "cursor/grok-4.7",
+            "hop_reactor_model_knobs": knobs,
+        },
+    )
     with ledger._connect() as conn:
         refreshed = conn.execute(
             "SELECT * FROM cursor_sdk_dispatches WHERE dispatch_id='pred-hop-1'"
@@ -770,7 +778,31 @@ def test_build_hop_team_dispatch_body_carries_model_knobs() -> None:
     row = {k: refreshed[k] for k in refreshed.keys()}
     body = build_hop_team_dispatch_body(row)
     assert body is not None
+    assert body["model"] == "cursor/grok-4.7"
     assert body["model_knobs"] == knobs
+
+
+def test_build_hop_team_dispatch_body_k97_recipe_default_not_predecessor_clone() -> (
+    None
+):
+    ledger = CursorDispatchLedger.instance()
+    row = _terminal_row(ledger, closeout_tokens=["ROW_HOP"])
+    ledger.merge_record_json(
+        dispatch_id="pred-hop-1",
+        patch={
+            "model": "cursor/grok-4.7",
+            "model_knobs": {"effort": "xhigh", "fast": "false"},
+        },
+    )
+    with ledger._connect() as conn:
+        refreshed = conn.execute(
+            "SELECT * FROM cursor_sdk_dispatches WHERE dispatch_id='pred-hop-1'"
+        ).fetchone()
+    row = {k: refreshed[k] for k in refreshed.keys()}
+    body = build_hop_team_dispatch_body(row)
+    assert body is not None
+    assert body["model"] == "cursor/composer-2.5"
+    assert body["model_knobs"] == {"fast": "false"}
 
 
 def test_admit_record_json_stores_policy_filled_effort() -> None:
@@ -790,7 +822,7 @@ def test_admit_record_json_stores_policy_filled_effort() -> None:
             "SELECT record_json FROM cursor_sdk_dispatches WHERE dispatch_id='pred-hop-1'"
         ).fetchone()[0]
     assert json.loads(raw)["model_knobs"]["effort"] == "low"
-    assert json.loads(raw)["model_knobs"]["fast"] == "true"
+    assert json.loads(raw)["model_knobs"]["fast"] == "false"
 
 
 def test_park_resume_request_carries_model_knobs() -> None:
@@ -832,21 +864,28 @@ def test_park_resume_request_carries_model_knobs() -> None:
     assert child.model_knobs == knobs
 
 
-def test_build_hop_team_dispatch_body_routing_model_from_record_json() -> None:
+def test_build_hop_team_dispatch_body_todo_attrs_hop_model() -> None:
     ledger = CursorDispatchLedger.instance()
     row = _terminal_row(ledger, closeout_tokens=["ROW_HOP"])
-    ledger.merge_record_json(
-        dispatch_id="pred-hop-1",
-        patch={"model": "cursor/composer-2.5"},
-    )
-    with ledger._connect() as conn:
-        refreshed = conn.execute(
-            "SELECT * FROM cursor_sdk_dispatches WHERE dispatch_id='pred-hop-1'"
-        ).fetchone()
-    row = {k: refreshed[k] for k in refreshed.keys()}
-    body = build_hop_team_dispatch_body(row)
+
+    class _TodoHopCortex:
+        def dispatch(self, op: str, payload: dict[str, Any]) -> dict[str, Any]:
+            assert op == "entity_get"
+            return {
+                "attributes": {
+                    "conductor_hop_model": "cursor/gemini-4-argon",
+                    "conductor_hop_model_knobs": {"effort": "high"},
+                }
+            }
+
+    with patch(
+        "implement_admission.closeout_runtime.get_runtime",
+        return_value=_TodoHopCortex(),
+    ):
+        body = build_hop_team_dispatch_body(row)
     assert body is not None
-    assert body["model"] == "cursor/composer-2.5"
+    assert body["model"] == "cursor/gemini-4-argon"
+    assert body["model_knobs"] == {"effort": "high"}
 
 
 def test_build_hop_team_dispatch_body_source_ref_from_record_json_only() -> None:
@@ -1729,9 +1768,7 @@ async def test_14915_reply_lifts_when_harvest_registry_watermark_missing() -> No
 
     def _reply(thread_id: str, after_turn: int, from_agent: str) -> bool:
         return (
-            thread_id == "14915"
-            and after_turn == 133
-            and from_agent == "web-anthropic"
+            thread_id == "14915" and after_turn == 133 and from_agent == "web-anthropic"
         )
 
     with (
@@ -1788,9 +1825,7 @@ async def test_14901_registry_watermark_still_admits_once() -> None:
 
     def _reply(thread_id: str, after_turn: int, from_agent: str) -> bool:
         return (
-            thread_id == "14901"
-            and after_turn == 144
-            and from_agent == "web-anthropic"
+            thread_id == "14901" and after_turn == 144 and from_agent == "web-anthropic"
         )
 
     with (
@@ -3367,8 +3402,8 @@ def test_hop_body_not_refused_terminal_nest_when_prose_done_only(
     ledger = CursorDispatchLedger.instance()
     row = _stamp_g2_row(ledger)
     rec = json.loads(row["record_json"])
-    rec["closeout_body"] = (
-        "G1 and G2 stay DONE.\n" + str(rec.get("closeout_body") or "")
+    rec["closeout_body"] = "G1 and G2 stay DONE.\n" + str(
+        rec.get("closeout_body") or ""
     )
     row["record_json"] = json.dumps(rec)
     rec = json.loads(row["record_json"])
@@ -3579,8 +3614,8 @@ async def test_path_c_sweep_admits_once_prose_done_parent_nest_terminal(
     )
     row = _stamp_g2_row(ledger)
     rec = json.loads(row["record_json"])
-    rec["closeout_body"] = (
-        "G1 and G2 stay DONE.\n" + str(rec.get("closeout_body") or "")
+    rec["closeout_body"] = "G1 and G2 stay DONE.\n" + str(
+        rec.get("closeout_body") or ""
     )
     ledger.merge_record_json(
         dispatch_id="pred-hop-1",

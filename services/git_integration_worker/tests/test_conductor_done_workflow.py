@@ -147,6 +147,13 @@ class _Ctl:
     def is_draining(self) -> bool:
         return False
 
+    def is_armed(self) -> bool:
+        return False
+
+    def maybe_activate_armed_drain(self, *, dispatch_id: str) -> bool:
+        del dispatch_id
+        return False
+
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
