@@ -3653,3 +3653,133 @@ def test_house_land_wake_budget_admit_echo_zero_closeout_and_verdict_wake() -> N
         if turn["thread"] == worker and "CLOSEOUT" in turn["subject"]:
             assert verdict.wake is True
     assert wake_count <= 2
+
+
+def test_scan_once_ignores_threads_below_cursor(tmp_path, monkeypatch) -> None:
+    """Break: scan_once writes a ledger row for turns at or below the high water."""
+    from pathlib import Path
+
+    ledger = Path(tmp_path) / "cursor-bridge-tab-wake-ledger.jsonl"
+    monkeypatch.setattr(
+        "cursor_bridge.spawn_endpoint_house_ledger.ledger_path",
+        lambda watch_dir=None: ledger,
+    )
+    monkeypatch.setattr(
+        "bus_watch.endpoint_wake_dispatcher.expire_overdue_hops",
+        lambda store: None,
+    )
+
+    class _Store:
+        def cursor(self) -> dict:
+            return {"high_water_turn_id": 50}
+
+        def since(self, high: int) -> list:
+            assert high == 50
+            return []
+
+    scan_once(_Store())  # type: ignore[arg-type]
+    assert not ledger.exists()
+
+
+def test_fire_cse_followup_dry_run_writes_nothing(tmp_path, monkeypatch) -> None:
+    """Break: dry_run=True still appends a CSE wake row."""
+    from pathlib import Path
+    from unittest.mock import patch
+
+    from bus_watch.cse_followup import fire_cse_followup
+
+    ledger = Path(tmp_path) / "cursor-bridge-tab-wake-ledger.jsonl"
+    monkeypatch.setattr(
+        "cursor_bridge.spawn_endpoint_house_ledger.ledger_path",
+        lambda watch_dir=None: ledger,
+    )
+    with (
+        patch(
+            "bus_watch.cse_followup.resolve_cse_identity",
+            return_value={
+                "chat_url": "https://claude.ai/chat/abc",
+                "registration_id": "reg-1",
+                "url": "https://claude.ai/chat/abc",
+            },
+        ),
+        patch(
+            "bus_watch.cse_followup.project_ask_base_url",
+            return_value="http://127.0.0.1:9191",
+        ),
+    ):
+        out = fire_cse_followup("WAKE", "10479", dry_run=True)
+    assert out["dry_run"] is True
+    assert not ledger.exists()
+
+
+def test_fire_cse_followup_appends_wake_when_not_dry_run(tmp_path, monkeypatch) -> None:
+    """Break: a live CSE followup returns ok and writes no kind=wake row."""
+    import json
+    from pathlib import Path
+    from unittest.mock import MagicMock, patch
+
+    from bus_watch.cse_followup import fire_cse_followup
+
+    ledger = Path(tmp_path) / "cursor-bridge-tab-wake-ledger.jsonl"
+    monkeypatch.setattr(
+        "cursor_bridge.spawn_endpoint_house_ledger.ledger_path",
+        lambda watch_dir=None: ledger,
+    )
+
+    def _post(method: str, url: str, *, json=None, timeout: float):
+        resp = MagicMock()
+        resp.status_code = 200
+        resp.content = b'{"ok": true, "send_verified": true}'
+        resp.json.return_value = {"ok": True, "send_verified": True}
+        return resp
+
+    with (
+        patch(
+            "bus_watch.cse_followup.resolve_cse_identity",
+            return_value={
+                "chat_url": "https://claude.ai/chat/abc",
+                "registration_id": "reg-1",
+                "url": "https://claude.ai/chat/abc",
+            },
+        ),
+        patch(
+            "bus_watch.cse_followup.project_ask_base_url",
+            return_value="http://127.0.0.1:9191",
+        ),
+    ):
+        out = fire_cse_followup("WAKE", "10479", dry_run=False, post=_post)
+    assert out["ok"] is True
+    rows = [json.loads(line) for line in ledger.read_text().splitlines() if line.strip()]
+    wakes = [r for r in rows if r.get("kind") == "wake"]
+    assert len(wakes) == 1
+    assert wakes[0]["op"] == "cse_followup"
+
+
+def test_deliver_cse_writes_no_ledger_row(tmp_path, monkeypatch) -> None:
+    """Break: _deliver_cse appends a ledger row itself instead of only calling fire."""
+    from pathlib import Path
+    from unittest.mock import patch
+
+    from bus_watch.endpoint_wake_dispatcher import _deliver_cse
+
+    ledger = Path(tmp_path) / "cursor-bridge-tab-wake-ledger.jsonl"
+    monkeypatch.setattr(
+        "cursor_bridge.spawn_endpoint_house_ledger.ledger_path",
+        lambda watch_dir=None: ledger,
+    )
+    calls: list[bool] = []
+
+    def _fire(*args, **kwargs):
+        calls.append(bool(kwargs.get("dry_run")))
+        return {"ok": True, "registration_id": "reg-1", "send_verified": True, "source": "local"}
+
+    with patch("bus_watch.cse_followup.fire_cse_followup", _fire):
+        state, reason, reg = _deliver_cse(
+            [{"thread_id": "10479", "turn_number": 3}],
+            {"chat_url": "https://claude.ai/chat/abc", "registration_id": "reg-1"},
+        )
+    assert state
+    assert calls == [True, False]
+    assert reg == "reg-1"
+    assert reason is not None
+    assert not ledger.exists()

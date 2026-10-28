@@ -56,6 +56,64 @@ def test_cursor_bridge_spawn_tab_does_not_append_ledger(tmp_path) -> None:
     assert not ledger_path(watch).exists()
 
 
+def test_relay_wake_tab_appends_wake(tmp_path) -> None:
+    """Break: relay_wake_tab returns ok and writes no kind=wake row."""
+    import json
+    from pathlib import Path
+
+    from cursor_bridge.bridge_glass_relay import relay_wake_tab
+
+    ledger = Path(tmp_path) / "cursor-bridge-tab-wake-ledger.jsonl"
+
+    async def _paste(*args, **kwargs):
+        return {"ok": True, "reason": ""}
+
+    with (
+        patch(
+            "cursor_bridge.bridge_glass_relay.subscription_display_for_gui_host",
+            return_value="display",
+        ),
+        patch(
+            "cursor_bridge.bridge_glass_relay.normalize_target",
+            return_value={"ok": True, "origin": "http://glass"},
+        ),
+        patch(
+            "cursor_bridge.cdp_pages.list_pages",
+            return_value=[{"web_socket_debugger_url": "ws://glass"}],
+        ),
+        patch(
+            "cursor_bridge.wake_delivery._pick_page",
+            return_value={"web_socket_debugger_url": "ws://glass"},
+        ),
+        patch("cursor_bridge.bridge_glass_relay._paste_cursor_services", _paste),
+        patch(
+            "cursor_bridge.spawn_endpoint_house_ledger.ledger_path",
+            return_value=ledger,
+        ),
+    ):
+        out = relay_wake_tab(gui_host=":8", agent_id="agent-1", body="wake line")
+    assert out["ok"] is True
+    rows = [json.loads(line) for line in ledger.read_text().splitlines() if line.strip()]
+    wakes = [r for r in rows if r.get("kind") == "wake"]
+    assert len(wakes) == 1
+    assert wakes[0]["op"] == "wake_tab"
+    assert wakes[0]["agent_id"] == "agent-1"
+
+
+def test_send_msg_does_not_call_record_tab_wake_directly() -> None:
+    """Break: _send_msg calls record_tab_wake instead of relay_wake_tab."""
+    with (
+        patch("tools.cursor_bridge._send_impl") as send_impl,
+        patch("tools.cursor_bridge.relay_wake_tab") as wake,
+        patch("cursor_bridge.spawn_endpoint_house_ledger.record_tab_wake") as record,
+    ):
+        send_impl.return_value = {"thread": {"id": "1"}, "turn_number": 2}
+        wake.return_value = {"ok": True, "op": "wake_tab"}
+        _send_msg(thread="1", body="hello", after_turn=0, agent_id="agent-9")
+    wake.assert_called_once()
+    record.assert_not_called()
+
+
 def test_send_msg_bus_only_without_agent_id() -> None:
     with patch("tools.cursor_bridge._send_impl") as send_impl:
         send_impl.return_value = {"thread": {"id": "1"}, "turn_number": 2}
