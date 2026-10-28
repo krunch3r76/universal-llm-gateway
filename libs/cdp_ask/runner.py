@@ -53,6 +53,20 @@ from cdp_ask.unverifiable import (
 )
 
 _CSE_URL_MARKER = "claude.ai/cowork/cse_"
+_CODE_SESSION_URL = re.compile(
+    r"https://claude\.ai/code/session_[A-Za-z0-9]+(?:\?|#|$)",
+    re.I,
+)
+_CLAUDE_CODE_COMPOSE_URL = "https://claude.ai/code"
+
+
+def _compose_args_for_surface(
+    req: SubmitProjectAskRequest,
+) -> tuple[str | None, bool]:
+    """Return (compose_url, ensure_cowork_auto) for no_project_uuid consult."""
+    if (req.claude_surface or "cowork").strip().lower() == "code":
+        return _CLAUDE_CODE_COMPOSE_URL, False
+    return None, req.ensure_cowork_auto
 _TMP_FALLBACK_HARVEST_ROOT = Path("/tmp/cdp-ask-files")
 _NFS_CORTEX_FILES_ROOT = Path("/mnt/torus/mcp-data/files")
 
@@ -240,7 +254,9 @@ def _persist_session_address(
 ) -> None:
     """Record CSE chat_url on the registry row as soon as it is observed."""
     raw = (url or "").strip()
-    if not raw or _CSE_URL_MARKER not in raw:
+    if not raw:
+        return
+    if _CSE_URL_MARKER not in raw and not _CODE_SESSION_URL.match(raw):
         return
     from claude_bundles.cdp_registry.models import STATUS_TAB
 
@@ -808,17 +824,20 @@ async def run_execution(
             )
             stargate_execution_id = resolve_stargate_execution_id(req)
 
+            compose_url, ensure_cowork = _compose_args_for_surface(req)
+
             async def _converse_once(model: str):
                 return await run_project_conversation(
                     prompts,
                     project_uuid="" if req.no_project_uuid else req.project_uuid,
+                    compose_url=compose_url,
                     model=model,
                     delete_after=delete_after,
                     cdp_url=reg.cdp_url,
                     timeout_s=max(req.timeout_s, 600),
                     min_growth=req.min_growth,
                     min_body=req.min_body,
-                    ensure_cowork_auto=req.ensure_cowork_auto,
+                    ensure_cowork_auto=ensure_cowork,
                     on_harvest=on_harvest,
                     expected_size=req.expected_size,
                     harvest_source=req.harvest_source,

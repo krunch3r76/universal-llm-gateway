@@ -143,6 +143,7 @@ class TeamDispatchGenerateBody(_DispatchCommon):
     # The external-gate check excludes that seat's live generate and still
     # refuses any other live gate on the lane. Ignored unless mission_kind=hop.
     predecessor_registration_id: str | None = None
+    claude_surface: Literal["cowork", "code"] | None = None
     # Caller-reserved worker dispatch_id (seat=cursor-sdk). GIW hop and bus-watch
     # play callers claim a stop's one admit slot under this id before POSTing, so
     # the admitted ledger row must carry the same id. Omit to let the server mint.

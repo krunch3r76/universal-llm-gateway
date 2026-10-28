@@ -18,6 +18,7 @@ from services.git_integration_worker.cursor_dispatch_ledger import (
 
 _ORION_AGENT_ID = "4ed020f2-f0b2-4f3d-b49c-89aa34930f19"
 _HOUSE_ID = "20995"
+_MAESTRO_HOUSE = "12286"
 
 
 @pytest.fixture()
@@ -148,3 +149,85 @@ def test_delivery_bindings_resolve_steer_terminal_does_not_beat_subscription(
     assert current is None or current.get("actuation", {}).get("dispatch_id") != (
         "disp-terminal-only"
     )
+
+
+def _cdp_registry_seat_row(
+    registration_id: str,
+    *,
+    parent_thread: str,
+    seat_bound_at: float,
+    seat_closed_at: float | None = None,
+) -> dict[str, object]:
+    return {
+        "registration_id": registration_id,
+        "port": 9222,
+        "profile_suffix": registration_id,
+        "holder": "holder",
+        "status": "active",
+        "parent_thread": parent_thread,
+        "purpose": "operator-proxy",
+        "seat_lane": _MAESTRO_HOUSE,
+        "seat_bound_at": seat_bound_at,
+        "seat_closed_at": seat_closed_at,
+        "started_at": seat_bound_at,
+    }
+
+
+def test_delivery_bindings_resolve_inform_maestro_lane_holder_hops(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Case 2: house 12286 inform follows the current CDP registry lane holder."""
+    first_lane = "21062"
+    second_lane = "21097"
+    first_reg = "reg-inform-first-aaaa"
+    second_reg = "reg-inform-second-bbbb"
+
+    active: dict[str, dict[str, object]] = {
+        first_reg: _cdp_registry_seat_row(
+            first_reg,
+            parent_thread=first_lane,
+            seat_bound_at=1.0,
+        ),
+    }
+    monkeypatch.setattr(
+        "claude_bundles.cdp_registry.session_address._store.load_active",
+        lambda: active,
+    )
+
+    resp = client.get(
+        "/delivery-bindings/resolve",
+        params={"house_id": _MAESTRO_HOUSE, "intent": "inform"},
+    )
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["state"] == "bound"
+    assert body["basis"] == "cdp_registry_lane_holder"
+    assert body["scope"] == f"house:{_MAESTRO_HOUSE}/intent:inform"
+    assert body["current"]["actuation"] == {
+        "type": "bus_poll",
+        "thread_id": first_lane,
+    }
+    assert "registration_id" not in body["current"]["actuation"]
+
+    active[first_reg] = _cdp_registry_seat_row(
+        first_reg,
+        parent_thread=first_lane,
+        seat_bound_at=1.0,
+        seat_closed_at=2.0,
+    )
+    active[second_reg] = _cdp_registry_seat_row(
+        second_reg,
+        parent_thread=second_lane,
+        seat_bound_at=3.0,
+    )
+
+    resp2 = client.get(
+        "/delivery-bindings/resolve",
+        params={"house_id": _MAESTRO_HOUSE, "intent": "inform"},
+    )
+    assert resp2.status_code == 200, resp2.text
+    body2 = resp2.json()
+    assert body2["state"] == "bound"
+    assert body2["current"]["actuation"]["thread_id"] == second_lane
+    assert body2["current"]["actuation"]["thread_id"] != first_lane

@@ -1,13 +1,24 @@
 import assert from "node:assert/strict";
-import { describe, it } from "node:test";
+import { beforeEach, describe, it } from "node:test";
 
+import { primeImpresarioDeliveryRegistry } from "../bot/lib/ulg.js";
+import { reviewRequestRecipient } from "../bot/tools/bus_send.js";
 import {
   checkEffectiveReviewBusSend,
-  CLOSEOUT_REVIEW_RECIPIENT,
+  closeoutReviewRecipient,
 } from "../evals/lib/closeout-bus-send-gate.js";
 
+const REGISTRY_REVIEW_MAILBOX = "grok-bot-gc1";
+
 describe("closeout bus_send effective gate (stage 7 AC2)", () => {
-  it("input to omitted + effective grok-bot-gc1 in output → pass", () => {
+  beforeEach(() => {
+    primeImpresarioDeliveryRegistry({
+      lane: "20901",
+      reviewMailbox: REGISTRY_REVIEW_MAILBOX,
+    });
+  });
+
+  it("input to omitted + effective registry review mailbox in output → pass", () => {
     const result = checkEffectiveReviewBusSend({
       toolName: "bus_send",
       args: {
@@ -16,11 +27,12 @@ describe("closeout bus_send effective gate (stage 7 AC2)", () => {
       output: JSON.stringify({
         posted: true,
         stubbed: true,
-        to: CLOSEOUT_REVIEW_RECIPIENT,
+        to: closeoutReviewRecipient(),
         thread: "20901",
         subject: "REQUEST|review|todo:reaper-amendment",
       }),
     });
+    assert.equal(closeoutReviewRecipient(), reviewRequestRecipient());
     assert.deepEqual(result, { ok: true });
   });
 
@@ -50,11 +62,11 @@ describe("closeout bus_send effective gate (stage 7 AC2)", () => {
       toolName: "bus_send",
       args: {
         subject: "REQUEST|review|todo:reaper-amendment",
-        to: CLOSEOUT_REVIEW_RECIPIENT,
+        to: closeoutReviewRecipient(),
       },
       output: JSON.stringify({
         posted: false,
-        to: CLOSEOUT_REVIEW_RECIPIENT,
+        to: closeoutReviewRecipient(),
         thread: "20901",
       }),
     });

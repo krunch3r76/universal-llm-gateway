@@ -18,6 +18,7 @@ GROK_ID = "47794c69-9fcc-4481-b1a6-f6c9cbf8b768"
 GROK_URL = f"https://grok.com/c/{GROK_ID}"
 CSE_URL = "https://claude.ai/cowork/cse_abc123"
 CLAUDE_CHAT_URL = "https://claude.ai/chat/thread-uuid"
+CLAUDE_CODE_SESSION_URL = "https://claude.ai/code/session_abc123"
 
 
 @pytest.fixture
@@ -242,6 +243,42 @@ def test_claude_chat_harvest_200_emits_event(
     assert len(harvested) == 1
     assert harvested[0]["payload"]["site"] == "claude"
     assert harvested[0]["payload"]["conversation_id"] == "thread-uuid"
+
+
+def test_claude_code_session_harvest_200_emits_event(
+    client: TestClient,
+    emitted_events: list,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    harvest_response = ChatHarvestResponse(
+        outcome="harvested",
+        site="claude",
+        conversation_id="abc123",
+        url=CLAUDE_CODE_SESSION_URL,
+        archive_uri="cortex://notes/system/threads/chat-harvest-claude-code-abc123.messages.json",
+        archive_sha256="d" * 64,
+        turn_count=1,
+    )
+
+    async def _fake_harvest(**_kwargs: object) -> ChatHarvestResponse:
+        return harvest_response
+
+    monkeypatch.setattr(
+        "cdp_ask.chat_session_harvest.execute_claude_harvest",
+        _fake_harvest,
+    )
+
+    resp = client.post(
+        "/v1/chat-session/harvest",
+        json={"url": CLAUDE_CODE_SESSION_URL},
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["conversation_id"] == "abc123"
+    harvested = [
+        e for e in emitted_events if e["signal"] == "mcp.chat.session.harvested"
+    ]
+    assert len(harvested) == 1
 
 
 def test_claude_new_harvest_no_conversation_no_event(

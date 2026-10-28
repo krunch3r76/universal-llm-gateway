@@ -8,10 +8,15 @@ import {
   busMailbox,
   IMPRESARIO_MAILBOX,
   callAgentBus,
+  impresarioReviewMailbox,
   isEvalOrFixture,
+  resolveImpresarioReviewMailbox,
 } from "../lib/ulg.js";
 
-export const REVIEW_REQUEST_RECIPIENT = "grok-bot-gc1";
+/** Resolved review mailbox from delivery-bindings (set by registry bootstrap / test prime). */
+export function reviewRequestRecipient(): string {
+  return impresarioReviewMailbox();
+}
 
 /** Threads allowed when turn.json is missing or has no thread (tests / explicit pins). */
 export const ALLOWLISTED_BUS_THREADS = new Set<string>();
@@ -129,18 +134,28 @@ export function busSendDryRunResult(
 export function resolveReviewRequestRecipient(
   subject: string,
   to: string | undefined,
-): { to: string; recipient_corrected: boolean } {
+):
+  | { ok: true; to: string; recipient_corrected: boolean }
+  | { ok: false; error: string } {
   if (isReviewRequestSubject(subject)) {
-    const resolved = to ?? REVIEW_REQUEST_RECIPIENT;
-    if (to !== undefined && to !== REVIEW_REQUEST_RECIPIENT) {
-      return { to: REVIEW_REQUEST_RECIPIENT, recipient_corrected: true };
+    const mailbox = resolveImpresarioReviewMailbox();
+    if (!mailbox.ok) {
+      return mailbox;
     }
-    return { to: resolved, recipient_corrected: false };
+    const registryRecipient = mailbox.mailbox;
+    const resolved = to ?? registryRecipient;
+    if (to !== undefined && to !== registryRecipient) {
+      return { ok: true, to: registryRecipient, recipient_corrected: true };
+    }
+    return { ok: true, to: resolved, recipient_corrected: false };
   }
   if (to === undefined) {
-    throw new Error("resolveReviewRequestRecipient: to required for non-review subject");
+    return {
+      ok: false,
+      error: "resolveReviewRequestRecipient: to required for non-review subject",
+    };
   }
-  return { to, recipient_corrected: false };
+  return { ok: true, to, recipient_corrected: false };
 }
 
 export type ResolveBusSendResult =
@@ -255,15 +270,15 @@ export function resolveBusSendInput(input: {
   } = threadPart;
 
   if (isReviewRequestSubject(input.subject)) {
-    const { to, recipient_corrected } = resolveReviewRequestRecipient(
-      input.subject,
-      input.to,
-    );
+    const recipient = resolveReviewRequestRecipient(input.subject, input.to);
+    if (!recipient.ok) {
+      return recipient;
+    }
     return {
       ok: true,
       thread,
-      to,
-      recipient_corrected,
+      to: recipient.to,
+      recipient_corrected: recipient.recipient_corrected,
       thread_defaulted,
       thread_pinned,
     };

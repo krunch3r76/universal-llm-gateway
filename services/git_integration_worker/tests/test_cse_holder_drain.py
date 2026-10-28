@@ -20,7 +20,10 @@ _CSE_URL = "https://claude.ai/cowork/cse_drain1"
 
 @pytest.fixture(autouse=True)
 def _reset_ledger(tmp_path, monkeypatch: pytest.MonkeyPatch):
+    repo = tmp_path / "repo"
+    repo.mkdir(parents=True, exist_ok=True)
     monkeypatch.setenv("DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("GIT_INTEGRATION_SOURCE_REPO", str(repo))
     CursorDispatchLedger._instance = None
     yield
     CursorDispatchLedger._instance = None
@@ -63,15 +66,34 @@ def test_holder_only_occupancy_does_not_block_drain(
     assert "cowork_cse" not in op_kinds
 
 
-def test_active_work_exposes_cse_holder_sibling() -> None:
+async def _empty_lane_fields(**_kwargs: object) -> dict[str, object]:
+    return {"lane_b": {"pending": False, "stale": False}}
+
+
+def test_active_work_exposes_cse_holder_sibling(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Hermetic /active-work read: skip GIW lifespan (a:39996 hang under TestClient)."""
+    monkeypatch.setattr(
+        "services.git_integration_worker.cursor_sdk_concurrency_meter.active_work_lane_fields_bounded",
+        _empty_lane_fields,
+    )
+    monkeypatch.setattr(
+        "services.git_integration_worker.app.schedule_startup_persistence",
+        lambda _app: None,
+    )
+    monkeypatch.setattr(
+        "services.git_integration_worker.app.supervise",
+        lambda *_a, **_k: None,
+    )
     app = create_app()
     ledger = CursorDispatchLedger.instance()
     with ledger._connect() as conn:
         ensure_schema(conn)
         upsert_holder(conn, chat_url=_CSE_URL, lane_thread_id="11667")
         conn.commit()
-    with TestClient(app) as tc:
-        resp = tc.get("/api/v1/git/active-work")
+    client = TestClient(app)
+    resp = client.get("/api/v1/git/active-work")
     assert resp.status_code == 200
     data = resp.json()
     holders = data.get("cse_holders") or []

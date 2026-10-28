@@ -700,7 +700,11 @@ async def _compose_model_selected(
     if not model_info.get("ok"):
         return model_info
     # Model picker clicks can land on settings / scheduled-task — re-land + re-pick.
-    if "/new" not in (page.url or "") and "/cowork/" not in (page.url or ""):
+    if (
+        "/new" not in (page.url or "")
+        and "/cowork/" not in (page.url or "")
+        and "/code" not in (page.url or "")
+    ):
         if project_uuid:
             await goto_fresh_compose(page, project_uuid=project_uuid, **compose_kw)
         else:

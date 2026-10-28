@@ -724,7 +724,7 @@ def _harvest_execution_started_at_iso(token: str) -> str | None:
         ):
             continue
         started = entry.get("started_at") if entry else None
-        if isinstance(started, (int, float)):
+        if isinstance(started, int | float):
             started_at.append(float(started))
     if len(started_at) != 1:
         return None
@@ -1475,6 +1475,7 @@ def build_conductor_hop_idempotency_key(predecessor_dispatch_id: str) -> str:
 
 
 from .conductor_hop_body import build_hop_team_dispatch_body  # noqa: E402
+from .conductor_hop_model import resolve_hop_successor_model_fields  # noqa: E402
 
 
 def mint_hop_successor_dispatch_id() -> str:
@@ -1810,4 +1811,5 @@ __all__ = [
     "maybe_fire_conductor_hop_reactor",
     "mission_open_for_row",
     "post_conductor_hop_team_dispatch",
+    "resolve_hop_successor_model_fields",
 ]

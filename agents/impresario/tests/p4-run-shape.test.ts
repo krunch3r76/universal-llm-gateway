@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { describe, it, beforeEach } from "node:test";
+import { afterEach, beforeEach, describe, it } from "node:test";
 
 import {
   fixtureBusSendLogSnapshot,
@@ -14,7 +14,11 @@ import {
   seatRegistrationBody,
   turnAddressedToMailbox,
 } from "../bot/lib/run-shape.js";
-import { modelTurnsEnabled } from "../bot/lib/ulg.js";
+import {
+  modelTurnsEnabled,
+  primeImpresarioDeliveryRegistry,
+  resetImpresarioDeliveryRegistryForTest,
+} from "../bot/lib/ulg.js";
 import { readUsageRollup, recordGatedTurn } from "../bot/lib/usage-rollup.js";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -78,9 +82,17 @@ describe("AC4 seat registration cap", () => {
 
 describe("AC6 failure mirror and daily usage fixtures", () => {
   beforeEach(() => {
+    primeImpresarioDeliveryRegistry({
+      lane: "20908",
+      reviewMailbox: "impresario-sdk",
+    });
     process.env.ULG_FIXTURE_DIR = fixtureRoot;
     process.env.ULG_FIXTURE_SCENARIO = "channel-turn-20908";
     resetFixtureCache();
+  });
+
+  afterEach(() => {
+    resetImpresarioDeliveryRegistryForTest();
   });
 
   it("mirrors FAILED| to lane and maestro thread", async () => {

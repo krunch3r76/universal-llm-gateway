@@ -6,7 +6,7 @@ import type { HostContext } from "@grok/agent-sdk";
 import { hostBusSend } from "./bus-host.js";
 import { recordGatedTurn } from "./usage-rollup.js";
 import {
-  IMPRESARIO_LANE,
+  getImpresarioLane,
   IMPRESARIO_MAILBOX,
   modelTurnsEnabled,
 } from "./ulg.js";
@@ -26,7 +26,7 @@ export function seatRegistrationBody(stateRoot: string): string {
   const pid = process.pid;
   return [
     "TYPE: SEAT_REGISTRATION",
-    `name = impresario-sdk · address = lane ${IMPRESARIO_LANE} · mailbox ${IMPRESARIO_MAILBOX} · host io pid ${pid} · state-root ${stateRoot} · sdk @grok/agent-sdk@0.3.0`,
+    `name = impresario-sdk · address = lane ${getImpresarioLane()} · mailbox ${IMPRESARIO_MAILBOX} · host io pid ${pid} · state-root ${stateRoot} · sdk @grok/agent-sdk@0.3.0`,
   ].join("\n");
 }
 
@@ -39,8 +39,9 @@ export async function maybePostSeatRegistration(
   if (typeof last === "number" && now - last < SEAT_REG_MIN_MS) {
     return false;
   }
+  const lane = getImpresarioLane();
   await hostBusSend(host, {
-    thread: IMPRESARIO_LANE,
+    thread: lane,
     to: IMPRESARIO_MAILBOX,
     from: IMPRESARIO_MAILBOX,
     subject: "STATUS|seat-registration",

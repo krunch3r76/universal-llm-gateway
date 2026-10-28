@@ -43,7 +43,10 @@ _NAV_AWAY_URL = re.compile(
     re.I,
 )
 
-_COMPOSE_URL = re.compile(r"/new(?:\?|$|#)|/cowork/cse_|/chat/", re.I)
+_COMPOSE_URL = re.compile(
+    r"/new(?:\?|$|#)|/cowork/cse_|/chat/|/code(?:/|$|\?|#)",
+    re.I,
+)
 _MIN_PLUS_SCORE = 30
 _MAX_PLUS_LABEL_CHARS = 28
 
@@ -53,7 +56,7 @@ def require_compose_surface(page: Page) -> str:
     url = page.url or ""
     if not _COMPOSE_URL.search(url):
         raise SkillDeliveryError(
-            f"Skills attach requires /new|/cowork/cse_|/chat/ compose — on {url!r}"
+            f"Skills attach requires /new|/cowork/cse_|/chat/|/code compose — on {url!r}"
         )
     return url
 

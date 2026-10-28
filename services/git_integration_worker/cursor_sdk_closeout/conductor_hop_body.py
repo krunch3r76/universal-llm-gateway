@@ -106,7 +106,10 @@ def build_hop_team_dispatch_body(
         generation_options["summoning_thread_id"] = summoning_thread_id
     else:
         generation_options["summoning_thread_id_unresolved"] = True
-    routing_model = rec.get("model") or row.get("resolved_model")
+    from .conductor_hop_model import resolve_hop_successor_model_fields
+
+    hop_model_fields = resolve_hop_successor_model_fields(row, rec)
+    routing_model = hop_model_fields.get("model")
     raw_contract = str(rec.get("contract") or row.get("contract") or "conductor")
     job = {"none": "freeform", "pure-mechanical": "mechanical"}.get(
         raw_contract, raw_contract
@@ -124,8 +127,9 @@ def build_hop_team_dispatch_body(
     }
     if summoning_thread_id:
         body["dispatch_thread_id"] = summoning_thread_id
-    if rec.get("model_knobs"):
-        body["model_knobs"] = rec.get("model_knobs")
+    hop_knobs = hop_model_fields.get("model_knobs")
+    if hop_knobs:
+        body["model_knobs"] = hop_knobs
     wake_lane = row.get("wake_lane") or rec.get("wake_lane")
     if wake_lane:
         body["wake_lane"] = wake_lane

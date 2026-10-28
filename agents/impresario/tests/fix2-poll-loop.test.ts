@@ -15,7 +15,14 @@ import {
   setPollGapForTest,
   signalPollLoopStop,
 } from "../bot/channels/bus.js";
-import { IMPRESARIO_LANE } from "../bot/lib/ulg.js";
+import {
+  IMPRESARIO_LANE,
+  primeImpresarioDeliveryRegistry,
+  resetImpresarioDeliveryRegistryForTest,
+} from "../bot/lib/ulg.js";
+
+/** Fixture poll lane (not a production default). */
+const FIXTURE_LANE = "20908";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 
@@ -99,6 +106,10 @@ describe("fix2 nits N1 lane cursor get guard", () => {
   const envRestore: Record<string, string | undefined> = {};
 
   beforeEach(() => {
+    primeImpresarioDeliveryRegistry({
+      lane: FIXTURE_LANE,
+      reviewMailbox: "impresario-sdk",
+    });
     fixtureDir = fs.mkdtempSync(path.join(os.tmpdir(), "imp-poll-"));
     writePollFixture(fixtureDir, [{ turn_number: 7 }]);
     envRestore.ULG_FIXTURE_DIR = process.env.ULG_FIXTURE_DIR;
@@ -121,6 +132,7 @@ describe("fix2 nits N1 lane cursor get guard", () => {
       }
     }
     resetFixtureCache();
+    resetImpresarioDeliveryRegistryForTest();
     fs.rmSync(fixtureDir, { recursive: true, force: true });
   });
 
@@ -153,6 +165,10 @@ describe("fix2 nits N2 lane cursor put guard", () => {
   const envRestore: Record<string, string | undefined> = {};
 
   beforeEach(() => {
+    primeImpresarioDeliveryRegistry({
+      lane: FIXTURE_LANE,
+      reviewMailbox: "impresario-sdk",
+    });
     fixtureDir = fs.mkdtempSync(path.join(os.tmpdir(), "imp-poll-"));
     writePollFixture(fixtureDir, [{ turn_number: 8 }]);
     envRestore.ULG_FIXTURE_DIR = process.env.ULG_FIXTURE_DIR;
@@ -175,6 +191,7 @@ describe("fix2 nits N2 lane cursor put guard", () => {
       }
     }
     resetFixtureCache();
+    resetImpresarioDeliveryRegistryForTest();
     fs.rmSync(fixtureDir, { recursive: true, force: true });
   });
 
@@ -202,6 +219,10 @@ describe("fix2 nits N3 pollOnce and runPollLoop", () => {
   const envRestore: Record<string, string | undefined> = {};
 
   beforeEach(() => {
+    primeImpresarioDeliveryRegistry({
+      lane: FIXTURE_LANE,
+      reviewMailbox: "impresario-sdk",
+    });
     fixtureDir = fs.mkdtempSync(path.join(os.tmpdir(), "imp-poll-"));
     writePollFixture(fixtureDir, [{ turn_number: 7 }, { turn_number: 9 }]);
     envRestore.ULG_FIXTURE_DIR = process.env.ULG_FIXTURE_DIR;
@@ -226,6 +247,7 @@ describe("fix2 nits N3 pollOnce and runPollLoop", () => {
       }
     }
     resetFixtureCache();
+    resetImpresarioDeliveryRegistryForTest();
     fs.rmSync(fixtureDir, { recursive: true, force: true });
   });
 
