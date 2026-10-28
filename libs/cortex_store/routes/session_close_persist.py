@@ -286,6 +286,15 @@ def try_idempotent_session_close(
     )
 
 
+def manifest_source_uri_from_relocate(
+    relocate_result: SourceRelocateResult | None,
+) -> str | None:
+    """Return ``files://`` manifest URI when session-close relocate succeeded."""
+    if relocate_result is not None and relocate_result.manifest_rel_path:
+        return f"files://{relocate_result.manifest_rel_path}"
+    return None
+
+
 def persist_session_close(
     body: SessionCloseRequest,
     ctx: ValidatedCloseContext,
@@ -506,28 +515,6 @@ def persist_session_close(
                 )
                 + "\n"
             )
-            if ctx.source_jsonl_bytes is not None and ctx.envelope is not None:
-                source_rel = transcript_source_path(ctx.transcript_path or "")
-                source_abs_path = _FILES_ROOT / source_rel
-                expected = ctx.envelope.meta.source_sha256 or ""
-                house_for_raw = (
-                    (_dominant_lane_from_entity_ids(body.entity_ids) or "")
-                    .removeprefix("agent-bus:")
-                    .strip()
-                    or None
-                )
-                relocate_result = relocate_transcript_source(
-                    source_abs_path=source_abs_path,
-                    raw_bytes=ctx.source_jsonl_bytes,
-                    expected_sha256=expected,
-                    session_id=body.session_id,
-                    transcript_id=conversation_uuid,
-                    files_root=_FILES_ROOT,
-                    house=house_for_raw,
-                )
-                prior_source_snapshot = relocate_result.prior_snapshot
-                source_jsonl_uri_persist = f"files://{source_rel}"
-                source_jsonl_sha256_persist = relocate_result.written_sha256
             try:
                 durable_write_text(
                     seal_abs_path, seal_payload, retain_store_root=_FILES_ROOT
@@ -616,6 +603,28 @@ def persist_session_close(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                 detail=f"Transcript file write failed: {exc}",
             ) from exc
+        if ctx.source_jsonl_bytes is not None and ctx.envelope is not None:
+            source_rel = transcript_source_path(ctx.transcript_path or "")
+            source_abs_path = _FILES_ROOT / source_rel
+            expected = ctx.envelope.meta.source_sha256 or ""
+            house_for_raw = (
+                (_dominant_lane_from_entity_ids(body.entity_ids) or "")
+                .removeprefix("agent-bus:")
+                .strip()
+                or None
+            )
+            relocate_result = relocate_transcript_source(
+                source_abs_path=source_abs_path,
+                raw_bytes=ctx.source_jsonl_bytes,
+                expected_sha256=expected,
+                session_id=body.session_id,
+                transcript_id=conversation_uuid,
+                files_root=_FILES_ROOT,
+                house=house_for_raw,
+            )
+            prior_source_snapshot = relocate_result.prior_snapshot
+            source_jsonl_uri_persist = f"files://{source_rel}"
+            source_jsonl_sha256_persist = relocate_result.written_sha256
 
     name_words = body.summary.split()[:6]
     entity_name = " ".join(name_words)
@@ -683,11 +692,11 @@ def persist_session_close(
                 tx_attributes["source_jsonl_uri"] = source_jsonl_uri_persist
             if source_jsonl_sha256_persist:
                 tx_attributes["source_jsonl_sha256"] = source_jsonl_sha256_persist
-            entity_source_uri = ctx.source_uri
-            if relocate_result is not None and relocate_result.manifest_rel_path:
-                entity_source_uri = f"files://{relocate_result.manifest_rel_path}"
+            manifest_source_uri = manifest_source_uri_from_relocate(relocate_result)
+            entity_source_uri = manifest_source_uri or ctx.source_uri
+            if manifest_source_uri and relocate_result is not None:
                 tx_attributes["raw_transcript_uri"] = f"files://{relocate_result.raw_rel_path}"
-                tx_attributes["raw_manifest_uri"] = entity_source_uri
+                tx_attributes["raw_manifest_uri"] = manifest_source_uri
                 tx_attributes["raw_sha256"] = relocate_result.written_sha256
             existing_row = conn.execute(
                 "SELECT attributes FROM entities WHERE id = ?",
@@ -719,10 +728,16 @@ def persist_session_close(
                 f"VALUES ({tx_ph})",
                 tuple(tx_vals),
             )
-            conn.execute(
-                "UPDATE entities SET source_uri = ?, attributes = ?, updated_at = ? WHERE id = ?",
-                (entity_source_uri, tx_attributes_json, ctx.now, ctx.transcript_entity_id),
-            )
+            if manifest_source_uri:
+                conn.execute(
+                    "UPDATE entities SET source_uri = ?, attributes = ?, updated_at = ? WHERE id = ?",
+                    (manifest_source_uri, tx_attributes_json, ctx.now, ctx.transcript_entity_id),
+                )
+            else:
+                conn.execute(
+                    "UPDATE entities SET attributes = ?, updated_at = ? WHERE id = ?",
+                    (tx_attributes_json, ctx.now, ctx.transcript_entity_id),
+                )
         journal_source_ref = (
             source_ref_resolution.stamped_ref if source_ref_resolution else None
         )
