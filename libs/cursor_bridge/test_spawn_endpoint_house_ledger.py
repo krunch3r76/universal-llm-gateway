@@ -199,7 +199,6 @@ _GOLDEN_21088 = (
         "DONE| shipped",
         "done",
         "DONE|",
-        xfail_f="F1",
     ),
     _golden(
         "F2",
@@ -216,7 +215,6 @@ _GOLDEN_21088 = (
         "body",
         "unknown",
         "QUESTION|",
-        xfail_f="F3",
     ),
     _golden("F4", "21088#162", "PARKED|", "body", "unknown", "PARKED|"),
     _golden(
@@ -234,7 +232,6 @@ _GOLDEN_21088 = (
         "body",
         "live",
         "CHECKPOINT|",
-        xfail_f="F6",
     ),
     _golden(
         "F6-bare-done",
@@ -243,7 +240,6 @@ _GOLDEN_21088 = (
         "body",
         "unknown",
         None,
-        xfail_f="F6",
     ),
     _golden(
         "F6-bare-status",
@@ -252,7 +248,6 @@ _GOLDEN_21088 = (
         "body",
         "unknown",
         None,
-        xfail_f="F6",
     ),
     _golden(
         "F6-incomplete-json",
@@ -261,7 +256,6 @@ _GOLDEN_21088 = (
         '{"status":"incomplete"}',
         "unknown",
         "CLOSEOUT incomplete",
-        xfail_f="F6",
     ),
 )
 

@@ -422,6 +422,8 @@ def _closeout_marker_from_json(body: str) -> str | None:
         return f"CLOSEOUT partial:{sic}"
     if status == "gated":
         return "CLOSEOUT gated"
+    if status == "incomplete":
+        return "CLOSEOUT incomplete"
     if status:
         return f"CLOSEOUT {status}"
     return None
@@ -454,6 +456,8 @@ def _status_from_closeout_marker(marker: str) -> str:
         return "parked"
     if "gated" in ml:
         return "failed"
+    if re.search(r"\bincomplete\b", ml):
+        return "unknown"
     if "complete" in ml:
         return "done"
     if "failed" in ml or "blocked" in ml:
@@ -477,20 +481,23 @@ def _report_marker(subject: str, body: str) -> tuple[str, str | None]:
             return _status_from_closeout_marker(marker), marker
         return "unknown", _token_source_label(token, had_pipe)
 
-    if _GIW_PARK_SUBJECT.search(subj):
-        return "parked", "PARKED"
-
     if token == "DONE":
-        return "done", _token_source_label(token, had_pipe)
+        if had_pipe:
+            return "done", _token_source_label(token, had_pipe)
+        return "unknown", None
     if token == "CHECKPOINT":
-        return "live", "CHECKPOINT"
-    if token == "STATUS":
         return "live", _token_source_label(token, had_pipe)
+    if token == "STATUS":
+        if had_pipe:
+            return "live", _token_source_label(token, had_pipe)
+        return "unknown", None
     if token in ("QUESTION", "RULING", "STEER"):
         return "unknown", _token_source_label(token, had_pipe)
-
     if token is not None:
         return "unknown", _token_source_label(token, had_pipe)
+
+    if _GIW_PARK_SUBJECT.search(subj):
+        return "parked", "PARKED"
 
     for line in (body or "").splitlines():
         stripped = line.strip()
@@ -500,6 +507,9 @@ def _report_marker(subject: str, body: str) -> tuple[str, str | None]:
             continue
         if _GIW_PARK_BODY_LINE.match(stripped):
             return "parked", "PARKED"
+        line_m = _SUBJECT_LEADING_TOKEN.match(stripped)
+        if line_m and line_m.group(1) == "DONE" and line_m.group(2):
+            return "done", "DONE|"
         return "unknown", None
     return "unknown", None
 
