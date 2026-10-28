@@ -160,7 +160,9 @@ def test_guarded_object_fails_schema_additional_properties() -> None:
         "findings": [],
         "verdict": "ship",
         "clauses": [],
-        "suppressed_findings": [_promoted_row() | {"reason": "intake_answer_uncorroborated"}],
+        "suppressed_findings": [
+            _promoted_row() | {"reason": "intake_answer_uncorroborated"}
+        ],
         "reviewer_model": "qwen",
     }
     assert review_schema.review_result_error(sample) == "additional_properties"
@@ -169,8 +171,15 @@ def test_guarded_object_fails_schema_additional_properties() -> None:
 
 def test_reviewer_yaml_single_template_and_f1_bullet() -> None:
     prompts = seat_dispatch._prompts()
-    assert list(prompts.get("reviewer") or {})  # single reviewer entry in yaml load
+    prompt_dir = Path(__file__).resolve().parents[1] / "prompts"
+    assert len(list(prompt_dir.glob("reviewer*.yaml"))) == 1
+    assert "reviewer" in prompts
     template = str((prompts.get("reviewer") or {}).get("template") or "")
     assert 'provenance="intake_answer"' in template
-    assert "never use this type" in template.lower() or "never use this type" in template
-    assert "copied exactly from the" in template.lower() or "copied exactly from" in template
+    assert (
+        "never use this type" in template.lower() or "never use this type" in template
+    )
+    assert (
+        "copied exactly from the" in template.lower()
+        or "copied exactly from" in template
+    )

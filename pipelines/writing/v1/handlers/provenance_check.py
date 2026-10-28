@@ -27,11 +27,7 @@ from .judge_winner_rows import winner_judge_rows
 # Frozen regex symbols retained for spec compliance (used in provenance_revision).
 from .provenance_draft import _NAME, _NUMBER, _parse_draft, _sentences  # noqa: F401
 from .provenance_revision import revision_delta
-from .purpose_scrub import (  # noqa: F401 — re-export for offline ship-gate fixtures
-    _scrub_purpose_restatement_flags,
-    scrub_purpose_restatement_flags,
-    sentence_restates_purpose_point,
-)
+from .purpose_scrub import scrub_purpose_restatement_flags
 
 
 def _step(payload: dict[str, Any]) -> StepOutput:
@@ -83,12 +79,8 @@ def check_provenance(
     violations.extend(
         clause_violations(clauses, ledger, channel=channel, signer=signer)
     )
-    quality = winner_judge_rows(
-        list(judge.get("quality_findings") or []), winner_id
-    )
-    violations.extend(
-        violations_from_quality_findings(quality, winner_id=winner_id)
-    )
+    quality = winner_judge_rows(list(judge.get("quality_findings") or []), winner_id)
+    violations.extend(violations_from_quality_findings(quality, winner_id=winner_id))
     violations.extend(check_fact_ceiling(ledger, parsed["draft"], max_chars=None))
     return violations
 
@@ -172,9 +164,7 @@ class WritingProvenanceCheckHandler(BaseHandler):
         signer = str(intake_dict.get("signer") or "")
 
         parsed = _parse_draft(draft)
-        pre_polish_draft = (
-            str(parsed.get("draft") or "") if parsed is not None else ""
-        )
+        pre_polish_draft = str(parsed.get("draft") or "") if parsed is not None else ""
         if parsed is not None and str(channel or "") == "email":
             recipient = str(
                 intake_dict.get("recipient")
@@ -226,8 +216,10 @@ class WritingProvenanceCheckHandler(BaseHandler):
                         max_chars=max_chars,
                     )
                 )
-        if prior is not None and parsed is not None and not judge_dict.get(
-            "judge_unavailable"
+        if (
+            prior is not None
+            and parsed is not None
+            and not judge_dict.get("judge_unavailable")
         ):
             v2_clauses = winner_judge_rows(
                 list(judge_dict.get("clauses") or []), winner_id or None
@@ -306,7 +298,9 @@ class WritingProvenanceCheckHandler(BaseHandler):
                     intake_answers = [str(item) for item in raw_answers]
                 raw_notes = intake_block.get("verbatim_notes")
                 if isinstance(raw_notes, list):
-                    verbatim_notes = [str(note) for note in raw_notes if str(note).strip()]
+                    verbatim_notes = [
+                        str(note) for note in raw_notes if str(note).strip()
+                    ]
         load_bearing_claims = [
             str(i)
             for i in (assemble_json or {}).get("load_bearing_claims") or []

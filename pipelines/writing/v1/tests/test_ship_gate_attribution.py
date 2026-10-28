@@ -27,6 +27,7 @@ if _PKG not in sys.modules:
 finalize = importlib.import_module("writing_v1_handlers.finalize")
 finalize_support = importlib.import_module("writing_v1_handlers.finalize_support")
 provenance = importlib.import_module("writing_v1_handlers.provenance_check")
+purpose_scrub = importlib.import_module("writing_v1_handlers.purpose_scrub")
 _obligation = importlib.import_module("writing_v1_handlers._obligation_coverage")
 source_obligations = importlib.import_module("writing_v1_handlers.source_obligations")
 
@@ -105,7 +106,11 @@ def test_rhythm_reverted_does_not_leak_v2_violations_into_unresolved() -> None:
             ),
             "draft": _Out({"draft": draft_v1, "ok": True}),
             "independence": _Out(
-                {"refused": None, "writer_model": "openai/a", "reviewer_model": "qwen/b"}
+                {
+                    "refused": None,
+                    "writer_model": "openai/a",
+                    "reviewer_model": "qwen/b",
+                }
             ),
             "provenance_check": _Out(
                 {
@@ -162,7 +167,11 @@ def test_false_quality_violation_dropped_for_clean_correspondence_body() -> None
             ),
             "draft": _Out({"draft": body, "ok": True}),
             "independence": _Out(
-                {"refused": None, "writer_model": "openai/a", "reviewer_model": "qwen/b"}
+                {
+                    "refused": None,
+                    "writer_model": "openai/a",
+                    "reviewer_model": "qwen/b",
+                }
             ),
             "provenance_check": _Out(
                 {
@@ -181,22 +190,22 @@ def test_false_quality_violation_dropped_for_clean_correspondence_body() -> None
 
 
 def test_hardship_sentences_not_scrubbed_as_purpose_drift() -> None:
-    objective = (
-        "Request property tax hardship review; explain affordability; ask Assessor next steps."
-    )
+    objective = "Request property tax hardship review; explain affordability; ask Assessor next steps."
     notes = [
         "We cannot afford the current tax burden after the reassessment.",
     ]
     sentence = "Our household cannot afford the current tax burden after the recent reassessment."
-    scrub_points = [objective, *notes]
-    drift = provenance._scrub_purpose_restatement_flags(
+    drift = purpose_scrub.scrub_purpose_restatement_flags(
         {
             "passed": False,
             "flagged_sentences": [
                 {"sentence": sentence, "reason": "not_purpose_relevant"}
             ],
         },
-        scrub_points,
+        ["Parking instructions."],
+        pin_ledger=[],
+        purpose_text=objective,
+        verbatim_notes=notes,
     )
     assert drift["passed"] is True
     assert drift["flagged_sentences"] == []
@@ -213,7 +222,9 @@ def test_meridial_next_steps_question_addresses_o1() -> None:
         )
     }
     src = asyncio.run(
-        source_obligations.WritingSourceObligationsHandler().execute(None, _Ctx(outputs))
+        source_obligations.WritingSourceObligationsHandler().execute(
+            None, _Ctx(outputs)
+        )
     ).json
     assert src is not None
     draft = (

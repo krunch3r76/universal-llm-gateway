@@ -104,32 +104,3 @@ def scrub_purpose_restatement_flags(
     out["flagged_sentences"] = kept
     out["passed"] = not kept
     return out
-
-
-def _scrub_purpose_restatement_flags(
-    drift: dict[str, Any], purpose_points: list[str]
-) -> dict[str, Any]:
-    """Legacy two-argument entry used by ship-gate offline fixtures."""
-    if not purpose_points:
-        return scrub_purpose_restatement_flags(
-            drift,
-            [],
-            pin_ledger=[],
-            purpose_text="",
-            verbatim_notes=[],
-        )
-    if len(purpose_points) > 1:
-        return scrub_purpose_restatement_flags(
-            drift,
-            [],
-            pin_ledger=[],
-            purpose_text=str(purpose_points[0]),
-            verbatim_notes=[str(x) for x in purpose_points[1:] if str(x).strip()],
-        )
-    return scrub_purpose_restatement_flags(
-        drift,
-        list(purpose_points),
-        pin_ledger=[],
-        purpose_text="",
-        verbatim_notes=[],
-    )

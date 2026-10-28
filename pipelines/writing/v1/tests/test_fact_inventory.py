@@ -173,6 +173,7 @@ def test_drift_check_flags_bad_draft() -> None:
     out = run_drift_check(bad, channel="filing", pin_ledger=[])
     assert out["passed"] is False
     assert out["flagged_sentences"]
+    assert out["passed"] == (not out["flagged_sentences"])
 
     clean_numbered = (
         "I, Kaywan Joseph Mansubi, state:\n\n"
@@ -205,6 +206,39 @@ def test_drift_check_flags_bad_draft() -> None:
     assert drift_clean["sentence_count"] == 4
     assert drift_clean["check_profile"] == "sworn"
     assert drift_clean["flagged_sentences"] == []
+    assert drift_clean["passed"] == (not drift_clean["flagged_sentences"])
+
+
+def test_run_drift_check_passed_equals_not_flagged_on_objective_restatement() -> None:
+    sentence = "The Assessor received the supplemental increase request."
+    out = run_drift_check(
+        sentence,
+        channel="email",
+        pin_ledger=[],
+        purpose_points=["Parking instructions."],
+        purpose="Ask the Assessor to review the supplemental increase.",
+    )
+    assert out["passed"] is False
+    assert any(
+        row.get("reason") == "not_purpose_relevant" for row in out["flagged_sentences"]
+    )
+    assert out["passed"] == (not out["flagged_sentences"])
+
+
+def test_run_drift_check_passed_equals_not_flagged_on_verbatim_restatement() -> None:
+    note = "The property is at 669 Second Street."
+    out = run_drift_check(
+        note,
+        channel="email",
+        pin_ledger=[],
+        purpose_points=["Unrelated point."],
+        purpose="Confirm the hearing date.",
+    )
+    assert out["passed"] is False
+    assert any(
+        row.get("reason") == "not_purpose_relevant" for row in out["flagged_sentences"]
+    )
+    assert out["passed"] == (not out["flagged_sentences"])
 
 
 class _Out:
