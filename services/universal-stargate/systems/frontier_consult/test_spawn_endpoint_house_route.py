@@ -121,10 +121,14 @@ def test_ide_launch_error_marks_failed_after_spine(tmp_path: Path) -> None:
     ):
         resp = client.post("/api/v1/team/dispatch", json=_spawn_body())
     assert resp.status_code == 502
-    from cursor_bridge.spawn_endpoint_house_ledger import ledger_path, read_all_rows
+    from cursor_bridge.spawn_endpoint_house_ledger import (
+        _fold_spawn_rows,
+        ledger_path,
+        read_all_rows,
+    )
 
     rows = read_all_rows(ledger_path(tmp_path))
-    spawns = [r for r in rows if r.get("kind") == "spawn"]
+    spawns = list(_fold_spawn_rows(rows).values())
     assert len(spawns) == 1
     assert spawns[0]["state"] == "failed"
 
@@ -163,11 +167,12 @@ def test_ide_spawn_row_launching_before_relay(tmp_path: Path) -> None:
 def test_op_ledger_house_trims_to_5120(tmp_path: Path) -> None:
     from cursor_bridge.spawn_endpoint_house_ledger import record_spawn
 
-    for i in range(20):
+    blob = "x" * 480
+    for i in range(12):
         record_spawn(
             surface="cursor_ide",
             thread="house-thread",
-            purpose=f"p{i}",
+            purpose=f"{blob}-{i}",
             purpose_unstated=False,
             watch_dir=tmp_path,
         )
@@ -186,6 +191,10 @@ def test_op_ledger_house_trims_to_5120(tmp_path: Path) -> None:
         )
     assert resp.status_code == 200
     assert len(resp.content) <= 5120
+    body = resp.json()
+    assert body["budget"]["max_bytes"] == 5120
+    assert body["budget"]["actual_bytes"] <= 5120
+    assert body["budget"]["truncated"] is True
 
 
 def _rows(path: Path) -> list[dict]:
@@ -194,6 +203,12 @@ def _rows(path: Path) -> list[dict]:
     if not path.exists():
         return []
     return [json.loads(line) for line in path.read_text().splitlines() if line.strip()]
+
+
+def _folded_spawns(path: Path) -> list[dict]:
+    from cursor_bridge.spawn_endpoint_house_ledger import _fold_spawn_rows, read_all_rows
+
+    return list(_fold_spawn_rows(read_all_rows(path)).values())
 
 
 def test_glass_first_message_prefix(tmp_path: Path) -> None:
@@ -217,7 +232,7 @@ def test_glass_first_message_prefix(tmp_path: Path) -> None:
     ):
         resp = client.post("/api/v1/team/dispatch", json=_spawn_body())
     assert resp.status_code == 200, resp.text
-    spawns = [r for r in _rows(ledger) if r.get("kind") == "spawn"]
+    spawns = _folded_spawns(ledger)
     assert len(spawns) == 1
     row_id = spawns[0]["row_id"]
     prompt = captured["prompt"]
@@ -243,7 +258,7 @@ def test_ide_spawn_row_agent_id_from_spawn_tab(tmp_path: Path) -> None:
     ):
         resp = client.post("/api/v1/team/dispatch", json=_spawn_body())
     assert resp.status_code == 200, resp.text
-    spawns = [r for r in _rows(ledger) if r.get("kind") == "spawn"]
+    spawns = _folded_spawns(ledger)
     assert len(spawns) == 1
     assert spawns[0]["state"] == "live"
     assert spawns[0]["agent_id"] == "from-relay"
@@ -271,7 +286,7 @@ def test_spawn_purpose_not_cdp_purpose_tag(tmp_path: Path) -> None:
     assert resp.status_code == 200, resp.text
     body = resp.json()
     assert body.get("purpose") != "one line purpose"
-    spawns = [r for r in _rows(ledger) if r.get("kind") == "spawn"]
+    spawns = _folded_spawns(ledger)
     assert spawns[0]["purpose"] == "one line purpose"
     assert spawns[0]["purpose_unstated"] is False
 
@@ -389,7 +404,7 @@ async def test_generate_wrap_admit_appends_sdk_spine(
     result, response, ledger = await _admit_sdk(tmp_path, monkeypatch)
     assert response.status_code == 202
     assert result["dispatch_id"] == "disp-late"
-    spawns = [r for r in _rows(ledger) if r.get("kind") == "spawn"]
+    spawns = _folded_spawns(ledger)
     assert len(spawns) == 1
     assert spawns[0]["surface"] == "cursor_sdk"
 
@@ -400,7 +415,7 @@ async def test_generate_unstated_purpose_flag(
 ) -> None:
     """Break: op=generate copies a purpose field onto the sdk spine."""
     _, _, ledger = await _admit_sdk(tmp_path, monkeypatch)
-    spawns = [r for r in _rows(ledger) if r.get("kind") == "spawn"]
+    spawns = _folded_spawns(ledger)
     assert len(spawns) == 1
     assert spawns[0]["purpose"] == "(unstated)"
     assert spawns[0]["purpose_unstated"] is True
@@ -412,7 +427,7 @@ async def test_generate_wrap_late_dispatch_id_patches_one_row(
 ) -> None:
     """Break: late dispatch_id appends a second spawn row."""
     _, _, ledger = await _admit_sdk(tmp_path, monkeypatch)
-    spawns = [r for r in _rows(ledger) if r.get("kind") == "spawn"]
+    spawns = _folded_spawns(ledger)
     assert len(spawns) == 1
     assert spawns[0]["dispatch_id"] == "disp-late"
     assert spawns[0]["row_id"]
@@ -490,7 +505,7 @@ async def test_cdp_generate_spine_keyed_by_execution_id(
             body=body,
             response=Response(),
         )
-    spawns = [r for r in _rows(ledger) if r.get("kind") == "spawn"]
+    spawns = _folded_spawns(ledger)
     assert len(spawns) == 1
     row = spawns[0]
     assert row["surface"] == "cdp"

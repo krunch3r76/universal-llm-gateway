@@ -265,19 +265,28 @@ class TeamDispatchOccupancyBody(_DispatchCommon):
     work_key: str
 
 
+class TeamDispatchLedgerParent(BaseModel):
+    agent: str
+    thread: str
+
+
 class TeamDispatchLedgerBody(_DispatchCommon):
     """``team_dispatch`` op ``ledger`` returns recent dispatches for one work_key."""
 
     op: Literal["ledger"]
     work_key: str | None = None
     house: str | None = None
-    parent: str | None = None
+    parent: TeamDispatchLedgerParent | None = None
     limit: int = Field(default=5, ge=1, le=10)
     window_hours: int = Field(default=24, ge=1, le=168)
 
     @model_validator(mode="after")
     def _ledger_target_required(self) -> Self:
-        if self.house or self.parent:
+        has_house = bool(str(self.house or "").strip())
+        has_parent = self.parent is not None
+        if has_house and has_parent:
+            raise ValueError("house and parent are mutually exclusive")
+        if has_house or has_parent:
             return self
         if not self.work_key or not str(self.work_key).strip():
             raise ValueError("work_key is required when house and parent are omitted")

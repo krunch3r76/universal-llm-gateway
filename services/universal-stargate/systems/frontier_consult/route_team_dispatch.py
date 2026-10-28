@@ -100,9 +100,15 @@ async def team_dispatch(
     ):
         from cursor_bridge.spawn_endpoint_house_ledger import read_house_ledger
 
+        parent_raw = getattr(body, "parent", None)
+        parent_sel = (
+            parent_raw.model_dump()
+            if parent_raw is not None and hasattr(parent_raw, "model_dump")
+            else None
+        )
         detail = read_house_ledger(
             house=getattr(body, "house", None),
-            parent=getattr(body, "parent", None),
+            parent=parent_sel,
             limit=getattr(body, "limit", 5) or 5,
         )
         response.status_code = 200

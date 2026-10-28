@@ -60,10 +60,13 @@ def _compact_payload(row: dict[str, Any]) -> str:
 
 
 def _read_rows(path: Path) -> list[dict[str, Any]]:
-    if not path.is_file():
+    try:
+        if not path.is_file():
+            return []
+        rows: list[dict[str, Any]] = []
+        raw = path.read_text(encoding="utf-8")
+    except OSError:
         return []
-    rows: list[dict[str, Any]] = []
-    raw = path.read_text(encoding="utf-8")
     if raw and not raw.endswith("\n"):
         raw = raw[: raw.rfind("\n") + 1] if "\n" in raw else ""
     for line in raw.splitlines():
@@ -79,10 +82,28 @@ def _read_rows(path: Path) -> list[dict[str, Any]]:
     return rows
 
 
-def _rewrite_rows(path: Path, rows: list[dict[str, Any]]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    text = "".join(_compact_payload(row) + "\n" for row in rows)
-    path.write_text(text, encoding="utf-8")
+def _fold_spawn_rows(rows: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
+    """Merge ``kind=patch`` event rows into their ``kind=spawn`` spine by ``row_id``."""
+    folded: dict[str, dict[str, Any]] = {}
+    for row in rows:
+        kind = _row_kind(row)
+        rid = str(row.get("row_id") or "").strip()
+        if kind == "spawn" and _ROW_ID_RE.match(rid):
+            folded[rid] = dict(row)
+            continue
+        if kind != "patch" or not _ROW_ID_RE.match(rid):
+            continue
+        base = folded.get(rid)
+        if base is None:
+            continue
+        for key, val in row.items():
+            if key in ("kind", "row_id", "at"):
+                continue
+            if val is None:
+                base.pop(key, None)
+            else:
+                base[key] = val
+    return folded
 
 
 def _append_row(row: dict[str, Any], *, watch_dir: Path | None = None) -> dict[str, Any]:
@@ -90,15 +111,18 @@ def _append_row(row: dict[str, Any], *, watch_dir: Path | None = None) -> dict[s
     if len(payload.encode("utf-8")) >= _LINE_BUDGET_BYTES:
         return {"ok": False, "error": "line_too_long"}
     path = ledger_path(watch_dir)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    prefix = ""
-    if path.is_file() and path.stat().st_size > 0:
-        with path.open("rb") as fh:
-            fh.seek(-1, 2)
-            if fh.read(1) != b"\n":
-                prefix = "\n"
-    with path.open("a", encoding="utf-8") as fh:
-        fh.write(prefix + payload + "\n")
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        prefix = ""
+        if path.is_file() and path.stat().st_size > 0:
+            with path.open("rb") as fh:
+                fh.seek(-1, 2)
+                if fh.read(1) != b"\n":
+                    prefix = "\n"
+        with path.open("a", encoding="utf-8") as fh:
+            fh.write(prefix + payload + "\n")
+    except OSError as exc:
+        return {"ok": False, "error": "io_error", "detail": type(exc).__name__}
     return {"ok": True}
 
 
@@ -234,28 +258,21 @@ def patch_spawn_row(
     watch_dir: Path | None = None,
     **fields: Any,
 ) -> dict[str, Any]:
-    """Update fields on an existing spawn row (same ``row_id``, one spawn row)."""
+    """Append a ``kind=patch`` event for ``row_id``; folded into the spawn at read."""
     rid = str(row_id or "").strip()
     if not _ROW_ID_RE.match(rid):
         return {"ok": False, "error": "row_not_found"}
-    path = ledger_path(watch_dir)
-    rows = _read_rows(path)
-    updated = False
-    for row in rows:
-        if _row_kind(row) != "spawn":
-            continue
-        if str(row.get("row_id") or "").strip() != rid:
-            continue
-        for key, val in fields.items():
-            if val is None and key in row:
-                row.pop(key, None)
-            elif val is not None:
-                row[key] = val
-        updated = True
-        break
-    if not updated:
+    if rid not in _fold_spawn_rows(_read_rows(ledger_path(watch_dir))):
         return {"ok": False, "error": "row_not_found"}
-    _rewrite_rows(path, rows)
+    patch: dict[str, Any] = {"kind": "patch", "row_id": rid, "at": _utcnow()}
+    for key, val in fields.items():
+        if val is None:
+            patch[key] = None
+        else:
+            patch[key] = val
+    out = _append_row(patch, watch_dir=watch_dir)
+    if not out.get("ok"):
+        return out
     return {"ok": True, "row_id": rid}
 
 
@@ -297,10 +314,13 @@ def record_report_row(
     rid = str(row_id or "").strip()
     if not _ROW_ID_RE.match(rid):
         return {"ok": False, "error": "report_invalid"}
+    st = str(status or "").strip()
+    if st not in _STATUS_VALUES:
+        return {"ok": False, "error": "status_invalid"}
     row: dict[str, Any] = {
         "kind": "report",
         "row_id": rid,
-        "status": str(status or "").strip(),
+        "status": st,
         "source_status": source_status,
         "thread": str(thread or "").strip(),
         "turn": turn,
@@ -338,10 +358,7 @@ def map_source_status(raw: str | None) -> str:
 
 def _spawn_row_exists(row_id: str, *, watch_dir: Path | None = None) -> bool:
     rid = str(row_id or "").strip()
-    for row in _read_rows(ledger_path(watch_dir)):
-        if _row_kind(row) == "spawn" and str(row.get("row_id") or "").strip() == rid:
-            return True
-    return False
+    return rid in _fold_spawn_rows(_read_rows(ledger_path(watch_dir)))
 
 
 def _find_spawn_row_id(
@@ -356,16 +373,13 @@ def _find_spawn_row_id(
         if _spawn_row_exists(rid, watch_dir=watch_dir):
             return rid
     subj = str(subject or "")
-    for row in reversed(_read_rows(ledger_path(watch_dir))):
-        if _row_kind(row) != "spawn":
-            continue
+    folded = _fold_spawn_rows(_read_rows(ledger_path(watch_dir)))
+    for row in reversed(list(folded.values())):
         for key in ("dispatch_id", "execution_id"):
             val = str(row.get(key) or "").strip()
             if val and val in subj:
                 return str(row.get("row_id") or "").strip() or None
-    for row in reversed(_read_rows(ledger_path(watch_dir))):
-        if _row_kind(row) != "spawn":
-            continue
+    for row in reversed(list(folded.values())):
         if str(row.get("thread") or "").strip() == str(thread or "").strip():
             return str(row.get("row_id") or "").strip() or None
     return None
@@ -386,9 +400,16 @@ def ingest_report_turn(
         body=body, subject=subject, thread=thread, watch_dir=watch_dir
     )
     if not rid:
-        return {"ok": False, "error": "no_match"}
-    mapped = map_source_status(source_status or status)
-    proj = mapped if mapped != "unknown" else str(status or "live")
+        return {"ok": False, "error": "no_matching_spawn"}
+    raw_marker = source_status if source_status is not None else status
+    mapped = map_source_status(raw_marker)
+    if mapped != "unknown":
+        proj = mapped
+    elif source_status is not None and str(source_status).strip():
+        proj = "unknown"
+    else:
+        caller = str(status or "").strip()
+        proj = caller if caller in _STATUS_VALUES else "unknown"
     return record_report_row(
         row_id=rid,
         status=proj,
@@ -443,40 +464,108 @@ def project_row_status(
     return {"status": "unknown", "source_status": None}
 
 
+def _spawn_matches_parent(spawn: dict[str, Any], parent: dict[str, str]) -> bool:
+    obj = spawn.get("parent")
+    if not isinstance(obj, dict):
+        return False
+    return (
+        str(obj.get("agent") or "").strip()
+        == str(parent.get("agent") or "").strip()
+        and str(obj.get("thread") or "").strip()
+        == str(parent.get("thread") or "").strip()
+    )
+
+
+def _serve_row_with_status(
+    spawn: dict[str, Any], *, watch_dir: Path | None
+) -> dict[str, Any]:
+    rid = str(spawn.get("row_id") or "").strip()
+    proj = project_row_status(rid, watch_dir=watch_dir)
+    out = dict(spawn)
+    out["status"] = proj["status"]
+    out["source_status"] = proj.get("source_status")
+    return out
+
+
 def read_house_ledger(
     *,
     house: str | None = None,
-    parent: str | None = None,
+    parent: dict[str, str] | None = None,
     limit: int = 5,
     watch_dir: Path | None = None,
 ) -> dict[str, Any]:
-    """Serve JSONL rows for ``op=ledger`` house/parent reads (trimmed to budget)."""
+    """Serve folded spawn rows for ``op=ledger`` house/parent reads (trimmed)."""
     lim = max(1, min(10, int(limit)))
     key_house = str(house or "").strip()
-    key_parent = str(parent or "").strip()
-    rows = _read_rows(ledger_path(watch_dir))
-    matched: list[dict[str, Any]] = []
-    for row in reversed(rows):
-        if key_house and str(row.get("thread") or "").strip() != key_house:
+    parent_sel = parent if isinstance(parent, dict) else None
+    folded = _fold_spawn_rows(_read_rows(ledger_path(watch_dir)))
+    candidates: list[dict[str, Any]] = []
+    for spawn in folded.values():
+        if key_house and str(spawn.get("thread") or "").strip() != key_house:
             continue
-        if key_parent:
-            parent_obj = row.get("parent")
-            if not isinstance(parent_obj, dict):
-                continue
-            if str(parent_obj.get("thread") or "").strip() != key_parent:
-                continue
-        matched.append(row)
-        if len(matched) >= lim:
-            break
-    matched.reverse()
-    payload = {"rows": matched, "limit": lim}
-    text = json.dumps(payload, sort_keys=True)
-    while len(text.encode("utf-8")) > _SERVE_BUDGET_BYTES and matched:
+        if parent_sel and not _spawn_matches_parent(spawn, parent_sel):
+            continue
+        candidates.append(spawn)
+    candidates.sort(
+        key=lambda r: str(r.get("spawned_at") or r.get("at") or ""),
+        reverse=True,
+    )
+    matched = [
+        _serve_row_with_status(row, watch_dir=watch_dir) for row in candidates[:lim]
+    ]
+    head_status = (
+        project_row_status(
+            str(matched[0].get("row_id") or ""), watch_dir=watch_dir
+        )
+        if matched
+        else {"status": "unknown", "source_status": None}
+    )
+    budget = {
+        "max_bytes": _SERVE_BUDGET_BYTES,
+        "actual_bytes": 0,
+        "truncated": False,
+    }
+    payload: dict[str, Any] = {
+        "house": key_house or None,
+        "parent": parent_sel,
+        "rows": matched,
+        "status": head_status["status"],
+        "source_status": head_status.get("source_status"),
+        "limit": lim,
+        "budget": budget,
+    }
+
+    def _compact_bytes(body: dict[str, Any]) -> int:
+        return len(
+            json.dumps(body, sort_keys=True, separators=(",", ":")).encode("utf-8")
+        )
+
+    while _compact_bytes(payload) > _SERVE_BUDGET_BYTES and matched:
         matched.pop()
-        payload = {"rows": matched, "limit": lim}
-        text = json.dumps(payload, sort_keys=True)
-    if len(text.encode("utf-8")) > _SERVE_BUDGET_BYTES:
-        payload = {"rows": [], "limit": lim, "trimmed": True}
+        budget["truncated"] = True
+        head_status = (
+            project_row_status(
+                str(matched[0].get("row_id") or ""), watch_dir=watch_dir
+            )
+            if matched
+            else {"status": "unknown", "source_status": None}
+        )
+        payload = {
+            "house": key_house or None,
+            "parent": parent_sel,
+            "rows": matched,
+            "status": head_status["status"],
+            "source_status": head_status.get("source_status"),
+            "limit": lim,
+            "budget": budget,
+        }
+    budget["actual_bytes"] = _compact_bytes(payload)
+    payload["budget"] = budget
+    if budget["actual_bytes"] > _SERVE_BUDGET_BYTES:
+        budget["truncated"] = True
+        payload["rows"] = []
+        budget["actual_bytes"] = _compact_bytes(payload)
+        payload["budget"] = budget
     return payload
 
 

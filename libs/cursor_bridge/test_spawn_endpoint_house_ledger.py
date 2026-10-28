@@ -235,6 +235,82 @@ def test_ingest_report_turn_from_caller(tmp_path: Path) -> None:
     assert out["turn"] == 7
 
 
+def test_append_row_oserror_returns_dict(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Break: OSError on append escapes to fire_cse_followup / relay_wake_tab."""
+    path = ledger.ledger_path(tmp_path)
+
+    def _boom(*args: object, **kwargs: object) -> None:
+        raise OSError("disk full")
+
+    monkeypatch.setattr(path.__class__, "open", _boom)
+    out = ledger.record_tab_wake(
+        gui_host=":8",
+        agent_id="a",
+        op="wake_tab",
+        ok=True,
+        watch_dir=tmp_path,
+    )
+    assert out == {"ok": False, "error": "io_error", "detail": "OSError"}
+
+
+def test_patch_spawn_row_appends_without_rewrite(tmp_path: Path) -> None:
+    """Break: patch_spawn_row rewrites the file and drops concurrent appends."""
+    rid = uuid.uuid4().hex
+    ledger.record_spawn(
+        surface="cursor_sdk",
+        thread="t",
+        purpose="p",
+        purpose_unstated=True,
+        row_id=rid,
+        watch_dir=tmp_path,
+    )
+    ledger.record_tab_wake(
+        gui_host=":8",
+        agent_id="a",
+        op="wake_tab",
+        ok=True,
+        watch_dir=tmp_path,
+    )
+    out = ledger.patch_spawn_row(rid, dispatch_id="disp-1", watch_dir=tmp_path)
+    assert out["ok"] is True
+    raw = ledger.read_all_rows(ledger.ledger_path(tmp_path))
+    assert sum(1 for r in raw if r.get("kind") == "spawn") == 1
+    assert any(r.get("kind") == "patch" for r in raw)
+    assert len([r for r in raw if r.get("kind") == "wake"]) == 1
+    folded = ledger._fold_spawn_rows(raw)
+    assert folded[rid]["dispatch_id"] == "disp-1"
+
+
+def test_ingest_report_no_matching_spawn(tmp_path: Path) -> None:
+    out = ledger.ingest_report_turn("body", "subj", "t-none", watch_dir=tmp_path)
+    assert out == {"ok": False, "error": "no_matching_spawn"}
+
+
+def test_ingest_report_unmapped_marker_stored_unknown(tmp_path: Path) -> None:
+    rid = uuid.uuid4().hex
+    ledger.record_spawn(
+        surface="cursor_sdk",
+        thread="t",
+        purpose="p",
+        purpose_unstated=True,
+        row_id=rid,
+        watch_dir=tmp_path,
+    )
+    out = ledger.ingest_report_turn(
+        f"ledger_row: {rid}\n",
+        "",
+        "t",
+        status="live",
+        source_status="NOT_A_KNOWN_MARKER",
+        watch_dir=tmp_path,
+    )
+    assert out["status"] == "unknown"
+    proj = ledger.project_row_status(rid, watch_dir=tmp_path)
+    assert proj["status"] == "unknown"
+
+
 def test_ingest_report_turn_null_when_omitted(tmp_path: Path) -> None:
     rid = uuid.uuid4().hex
     ledger.record_spawn(
