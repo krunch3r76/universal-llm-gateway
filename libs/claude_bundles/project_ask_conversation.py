@@ -29,6 +29,7 @@ from claude_bundles.cowork_output_download import (
 from claude_bundles.cowork_skill_delivery import SkillReceiptUnverifiedError
 from claude_bundles.project_ask import (
     ProjectAskResult,
+    _assert_code_surface_model_before_send,
     _attest_model,
     _compose_model_selected,
     _harvest_after_skill_receipt_unverified,
@@ -524,6 +525,24 @@ async def run_project_conversation(
                         error=f"model select failed: {model_info}",
                     )
                 ]
+            if (claude_surface or "").strip().lower() == "code":
+                try:
+                    _assert_code_surface_model_before_send(model, model_info)
+                except RuntimeError as exc:
+                    await _emit_page_url(on_harvest, page)
+                    return [
+                        ProjectAskResult(
+                            ok=False,
+                            body="",
+                            url=page.url,
+                            project_uuid="",
+                            project_url=url,
+                            model=model_info,
+                            body_len=0,
+                            delete_after=None,
+                            error=str(exc),
+                        )
+                    ]
             probe = ReplyAnchor(anchor_marker(prompts[0]))
             anchor = probe.after(
                 await harvest_assistant(page, min_msg_chars=10, anchor=probe)
