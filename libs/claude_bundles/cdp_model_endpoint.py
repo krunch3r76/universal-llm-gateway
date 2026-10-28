@@ -1023,6 +1023,7 @@ def run_cdp_generate(
     on_submitted: Callable[[str], None] | None = None,
     on_url_bound: Callable[[str, str | None, int], None] | None = None,
     contract: str | None = None,
+    claude_surface: Literal["cowork", "code"] | None = None,
 ) -> CdpGenerateResult:
     """Stage → native CDP submit → poll-to-proof (or stall/fail).
 
@@ -1117,6 +1118,7 @@ def run_cdp_generate(
         expected_size=expected_size,
         download_output=download_output,
         stargate_execution_id=execution_id,
+        claude_surface=claude_surface or "cowork",
     )
     try:
         submitted = _submit_with_overload_retry(
