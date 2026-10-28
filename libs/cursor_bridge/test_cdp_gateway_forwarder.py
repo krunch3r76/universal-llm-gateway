@@ -21,6 +21,7 @@ from cursor_bridge.cdp_gateway_forwarder import (
     container_cdp_origin,
     is_allowed_cdp_peer,
     local_ipv4_addresses_from_trie,
+    main,
     mcp_server_peers_from_inspect,
     on_docker_bridge,
     open_listeners,
@@ -74,6 +75,11 @@ class _BusySecond(_FakeSocket):
         if addr[1] == 9339:
             raise OSError("address in use")
         self.bound = addr
+
+
+class _AlwaysBindFail(_FakeSocket):
+    def bind(self, addr: tuple[str, int]) -> None:
+        raise OSError("permission denied")
 
 
 def test_trie_parser_keeps_host_local_32_only() -> None:
@@ -190,6 +196,64 @@ def test_bind_failure_on_one_port_keeps_other_listeners() -> None:
     ]
     assert listeners[0] is created[0]
     assert listeners[1] is created[2]
+
+
+def test_main_gateway_absent_parks_without_exit(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    parked: list[str] = []
+
+    def record_park() -> None:
+        parked.append("parked")
+
+    with caplog.at_level("ERROR"):
+        main(
+            addresses=frozenset({"172.18.0.5"}),
+            park=record_park,
+        )
+    assert parked == ["parked"]
+    assert "is not local" in caplog.text
+    assert "all binds failed" not in caplog.text
+
+
+def test_main_gateway_local_all_binds_fail_exits_nonzero(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    def factory(*_args: object, **_kwargs: object) -> _AlwaysBindFail:
+        return _AlwaysBindFail()
+
+    with caplog.at_level("ERROR"):
+        with pytest.raises(SystemExit) as exc:
+            main(
+                addresses=frozenset({"172.18.0.1"}),
+                socket_factory=factory,
+            )
+    assert exc.value.code == 1
+    assert "all binds failed" in caplog.text
+    assert "9338" in caplog.text and "9339" in caplog.text and "19338" in caplog.text
+    assert "is not local" not in caplog.text
+
+
+def test_main_partial_bind_logs_only_bound_ports(
+    caplog: pytest.LogCaptureFixture,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def factory(*_args: object, **_kwargs: object) -> _BusySecond:
+        return _BusySecond()
+
+    monkeypatch.setattr(threading.Thread, "start", lambda self: None)
+    monkeypatch.setattr(threading.Thread, "join", lambda self, timeout=None: None)
+
+    with caplog.at_level("INFO"):
+        main(
+            addresses=frozenset({"172.18.0.1"}),
+            socket_factory=factory,
+        )
+    info_lines = [r.message for r in caplog.records if r.levelname == "INFO"]
+    assert len(info_lines) == 1
+    assert "9338" in info_lines[0]
+    assert "19338" in info_lines[0]
+    assert "9339" not in info_lines[0]
 
 
 def test_allowed_peers_only_mcp_server_container() -> None:
