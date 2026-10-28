@@ -1087,6 +1087,15 @@ def _tick_hm1_false(
     return decide_grokbot_tick(now=t, state=state, snapshot=snap)
 
 
+def test_hm1_false_untrusted_event_rows_do_not_count() -> None:
+    state = GrokbotEgressLoopState()
+    snap = _hm1_false_connected_snapshot(event_rows_trusted=False)
+    for _ in range(_HM1_FALSE_RECOVERY_CONSECUTIVE_N + 2):
+        decision = decide_grokbot_tick(now=time.time(), state=state, snapshot=snap)
+        assert decision.run_hm1_recovery_chain is False
+    assert state.hm1_false_consecutive == 0
+
+
 def test_hm1_false_n_minus_one_does_not_run_recovery_chain() -> None:
     state = GrokbotEgressLoopState()
     n = _HM1_FALSE_RECOVERY_CONSECUTIVE_N

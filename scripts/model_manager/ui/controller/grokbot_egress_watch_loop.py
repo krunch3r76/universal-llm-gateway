@@ -151,6 +151,7 @@ class GrokbotEgressWatchLoop:
             self._health_probe_failed = True
             logger.debug("grokbot egress health probe failed: %s", exc)
         floor_ms = now_ms - 900_000
+        event_rows_trusted = True
         try:
             rows = await asyncio.to_thread(
                 query_events_rows,
@@ -162,6 +163,7 @@ class GrokbotEgressWatchLoop:
         except Exception as exc:
             logger.warning("grokbot egress event query failed: %s", exc)
             rows = []
+            event_rows_trusted = False
         else:
             if len(rows) >= _EVENT_QUERY_ROW_LIMIT:
                 logger.warning(
@@ -169,7 +171,7 @@ class GrokbotEgressWatchLoop:
                     "newest rows retained (ORDER BY ts_unix_ms DESC)",
                     _EVENT_QUERY_ROW_LIMIT,
                 )
-        return build_snapshot_from_inputs(
+        snap = build_snapshot_from_inputs(
             now_ms=now_ms,
             desktop_running=running,
             desktop_pid=pid,
@@ -177,6 +179,24 @@ class GrokbotEgressWatchLoop:
             health_http_status=health_status,
             event_rows=rows,
         )
+        if not event_rows_trusted:
+            return GrokbotEgressSnapshot(
+                desktop_running=snap.desktop_running,
+                desktop_pid=snap.desktop_pid,
+                watch_connected=snap.watch_connected,
+                watch_disconnected_s=snap.watch_disconnected_s,
+                daemon_log_readable=snap.daemon_log_readable,
+                health_http_status=snap.health_http_status,
+                tunnel_stale=snap.tunnel_stale,
+                loader_stuck=snap.loader_stuck,
+                loader_stuck_s=snap.loader_stuck_s,
+                hm1_tools_call_ok=snap.hm1_tools_call_ok,
+                undici_idle_s=snap.undici_idle_s,
+                in_flight_gc1_mcp=snap.in_flight_gc1_mcp,
+                open_gc1_bus_turn=snap.open_gc1_bus_turn,
+                event_rows_trusted=False,
+            )
+        return snap
 
     async def _default_restart_desktop(self) -> None:
         binary = DEFAULT_DESKTOP_BINARY

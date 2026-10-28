@@ -98,6 +98,7 @@ class GrokbotEgressSnapshot:
     undici_idle_s: float | None
     in_flight_gc1_mcp: bool
     open_gc1_bus_turn: bool
+    event_rows_trusted: bool = True
 
 
 @dataclass
@@ -327,7 +328,11 @@ def decide_grokbot_tick(
     ):
         decision.warn_undici_gap = True
 
-    if snapshot.hm1_tools_call_ok:
+    if not snapshot.event_rows_trusted:
+        state.hm1_false_consecutive = 0
+        state.hm1_false_sustained_since = None
+        state.hm1_recovery_chain_ran = False
+    elif snapshot.hm1_tools_call_ok:
         state.hm1_false_consecutive = 0
         state.hm1_false_sustained_since = None
         state.hm1_recovery_chain_ran = False
@@ -380,7 +385,8 @@ def decide_grokbot_tick(
         else 0.0
     )
     wants_hm1_backstop = (
-        state.hm1_false_consecutive >= _HM1_FALSE_RECOVERY_CONSECUTIVE_N
+        snapshot.event_rows_trusted
+        and state.hm1_false_consecutive >= _HM1_FALSE_RECOVERY_CONSECUTIVE_N
         and hm1_sustained_age >= _LOADER_DESKTOP_BACKSTOP_S
     )
     wants_restart = wants_tunnel_restart or wants_loader_backstop or wants_hm1_backstop
