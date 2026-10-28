@@ -29,7 +29,7 @@ systemctl --user daemon-reload && systemctl --user enable --now ulg-impresario
 
 **Log:** `~/.local/state/ulg-impresario/serve.log` (and journald for the user unit)
 
-**MCP:** host connection `ulg` uses streamable HTTP (`type: http`) to the house ulg-code endpoint (`/mcp/code`), bearer `${ULG_MCP_TOKEN}` — not the stdio bridge (stdio closes after one in-process call).
+**MCP:** host connection `ulg` uses streamable HTTP to `https://mcp.k-1.me/mcp/code` by default (override `ULG_MCP_HTTP_URL`; not Cursor CDP `:9338`), bearer `${ULG_MCP_TOKEN}` — same house endpoint as cursor-sdk `MCP_URL` / `scripts/mcp-fastmcp-remote-bridge.py`.
 
 **HTTP probe:** `curl -s -H "Authorization: Bearer $AGENT_SDK_BEARER_TOKEN" http://127.0.0.1:3100/v1/info`
 
