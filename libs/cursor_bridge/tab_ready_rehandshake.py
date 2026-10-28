@@ -2,11 +2,11 @@
 
 from __future__ import annotations
 
-CONSUMERS: tuple[str, ...] = ("mcp",)
-
 from typing import Any
 
 from cursor_bridge.chat_target import name_instruction
+
+CONSUMERS: tuple[str, ...] = ("mcp",)
 
 
 def tab_ready_instruction(title: str) -> str:

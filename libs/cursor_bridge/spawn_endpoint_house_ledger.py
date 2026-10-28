@@ -2,14 +2,14 @@
 
 from __future__ import annotations
 
-CONSUMERS: tuple[str, ...] = ("mcp",)
-
 import json
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
 from bus_watch.fable_lock import WATCH_DIR
+
+CONSUMERS: tuple[str, ...] = ("mcp",)
 
 LEDGER_FILENAME = "cursor-bridge-tab-wake-ledger.jsonl"
 

@@ -11,8 +11,14 @@ from cursor_bridge.cursor_agents_hop import (
     rename_agent_row_in_sidebar,
 )
 from cursor_bridge.cursor_window_config import subscription_display_for_gui_host
-from cursor_bridge.spawn_endpoint_house_ledger import last_successful_wake, record_tab_wake
-from cursor_bridge.tab_ready_rehandshake import post_tab_gone_for_lane, tab_ready_instruction
+from cursor_bridge.spawn_endpoint_house_ledger import (
+    last_successful_wake,
+    record_tab_wake,
+)
+from cursor_bridge.tab_ready_rehandshake import (
+    post_tab_gone_for_lane,
+    tab_ready_instruction,
+)
 from cursor_bridge.wake_delivery import _paste_cursor_services, normalize_target
 
 
