@@ -82,3 +82,13 @@ def _subscriptions_dispatch(
     if params:
         path = f"{path}?{urlencode(params)}"
     return _relay_result(relay("agent-bus", "GET", path), "subscriptions")
+
+
+def _delivery_bindings_resolve_dispatch(
+    *,
+    house_id: str,
+    intent: str,
+) -> dict[str, Any]:
+    params = urlencode({"house_id": house_id, "intent": intent})
+    path = f"/delivery-bindings/resolve?{params}"
+    return _relay_result(relay("agent-bus", "GET", path), "delivery_bindings_resolve")

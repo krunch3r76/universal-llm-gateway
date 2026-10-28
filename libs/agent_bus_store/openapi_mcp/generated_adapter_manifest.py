@@ -7,7 +7,7 @@ Regenerate:
 
 from __future__ import annotations
 
-OPENAPI_SHA256 = "ce2cb1be7ea037e701f47f1d47ffbf22e8d7f75830386f2754710b8fd62db36f"
+OPENAPI_SHA256 = "5f06b55321ff09ad814bf91dfbcc472abf37ce3888f76c4cf7aef0f015098260"
 FACADE_TOOL = "agent-bus"
 SERVED_OPS: dict[str, dict[str, str]] = {
     "branch_associate": {
@@ -39,6 +39,11 @@ SERVED_OPS: dict[str, dict[str, str]] = {
         "method": "DELETE",
         "path": "/turns/{turn_id}",
         "operation_id": "delete_turn_route_turns__turn_id__delete",
+    },
+    "delivery_bindings_resolve": {
+        "method": "GET",
+        "path": "/delivery-bindings/resolve",
+        "operation_id": "delivery_bindings_resolve_route_delivery_bindings_resolve_get",
     },
     "fetch": {
         "method": "GET",
@@ -152,11 +157,12 @@ SERVED_OPS: dict[str, dict[str, str]] = {
     },
 }
 NON_BINDING_PATH_FINGERPRINTS: dict[str, str] = {
-    "@components": "a0892dc26aee61b96481b3d4b9c1180fed4f2531e176603c025346e2df11506f",
+    "@components": "eeb5c1f4b1ab0ba1482b80bec19c4e1e30747e74f870122d693a86021edd66ee",
     "@info": "a8986fa23eba4ccbefb9d1d606b05ebcfa8474d790ceb9a8d83b4b3be5c8e983",
     "GET /dispatch-links/{execution_id}": "bec5bf28fc7e55d2aaae6fdd2f4af55a177f74f7030987e27c7bd9d73ebe86a3",
     "GET /endpoint-wake/cursor": "2f6669d44f555a5e11f50ae4a1e39ee8dd234cb433d2173616b8c067d983d2c6",
     "GET /health": "1863eebbca661a08d0f2f879e48af294a3e3619e30ff42052a2ffdb33010d20c",
+    "GET /house-actions": "3755f56f54751408e86380e1ad1de6a97930a066632ec5bfe0f4d598cd75fe08",
     "GET /messages": "dfa9edc6b95121bb35b9ecca22260b564c40e4a8c4c180950101cb75619b0aa5",
     "GET /resume-fences/{fence_id}": "faa8db7e13d971df64761d456de2b49efdfca13983139ff6d363a38e63671603",
     "GET /threads/{thread_id}/cse-current": "2f461416fdaf2260253067b60ddd42037cb95af90e91cea3726b23bff64c31d2",
@@ -164,11 +170,12 @@ NON_BINDING_PATH_FINGERPRINTS: dict[str, str] = {
     "GET /threads/{thread_id}/resume-fence": "9111adec1e5af49c6a2778f36ca005164511929b63dbe16cf93ea36e0344165c",
     "GET /threads/{thread_id}/summary": "417a68f81d68bf2bc3d782fa38b0e437fe498480b1814bebddc34190be955f74",
     "GET /turns/since": "93c587e9bae1612a749ddd982824e1fa1500da5e59554770b207dbec20659924",
-    "PATCH /turns/{turn_id}/read": "d0c7fd2d62a6d60b88d62147bbe83cb63699716a9af07258f124e4a03794ad83",
+    "PATCH /turns/{turn_id}/read": "fbc5092a653a58379b7b1a0317b69f9bdbaf31ff6bba8c539f7445af035e5a3b",
     "PATCH /turns/{turn_id}/status": "b072109a07a08292a0b2047561d1162fd5be53eea6dd69e123d44f2ddf352d3f",
     "POST /endpoint-wake/claim": "d2949781ebc9a2540d3da8fcc1823bf6d2b6f0577613bd4544c4e0dd697dfdee",
     "POST /endpoint-wake/result": "f1310a12b0da564f30d80686e279e0031eef1731f4406eabbc8a85afc2ce4dfc",
     "POST /endpoint-wake/scan": "53b666a90966c49959bbeac18f2896f65ba4fa2d410960ba513d43cf265f8453",
+    "POST /house-actions": "c4059eb6e4641ef0e5efd5db87a7e758cc3ca6bd8af337caf09acb17ccd135d5",
     "POST /messages": "8eb6200e7a4c6230aedbd411e976dff308399638011d2c871377267df36cdcb6",
     "POST /messages/{message_id}/read": "83761673ef954dc5a7199d0edad08a0e6efde98f66f8b0a65a0f6e7fe1a8257e",
     "POST /resume-fences/{fence_id}/denied": "dc85bdb04fa8d904fbca7730155eaf58384e998d5f73fa12401b772395d2cda7",
@@ -176,9 +183,9 @@ NON_BINDING_PATH_FINGERPRINTS: dict[str, str] = {
     "POST /resume-fences/{fence_id}/release": "b463ab4100730d82c76dfa638508dbd703991c128faec0266fbbba884e323204",
     "POST /threads/{thread_id}/cse-associate": "53b29011b1b08907286ffff3e9a3f7907ba3cd643bd1ac9f032521193ce01d5a",
     "POST /threads/{thread_id}/dispatch-admit": "27aad9c96e97de4adbe40143028f8c440509ac92d8aff28b7f21e75c86c2ed82",
-    "POST /threads/{thread_id}/dispatch-admit-and-post": "6ee71424874e9320e084e1b913d528615e4f1848259f10c3bb7aad68036761a9",
-    "POST /threads/{thread_id}/dispatch-claim-and-post": "4451b725f714794ab82d68c1654f4b46441122bd4ad9f6624853fa0e0b04002e",
-    "POST /threads/{thread_id}/dispatch-terminate": "7d0134029e2ebb637b6f3c1e7fd4c9ff991a366149b806cbb927e17f6f324ff4",
+    "POST /threads/{thread_id}/dispatch-admit-and-post": "cee9ef0730afeff1baa883e4be65414ce54de11ba36acd1ac76ab83ce750f389",
+    "POST /threads/{thread_id}/dispatch-claim-and-post": "6debd6c60e85ee2f80877d84e66f884583e53b67c87fc8cfb8fe96961837b6dd",
+    "POST /threads/{thread_id}/dispatch-terminate": "69e03b187a84e46cbbd0057a9efeae059892b6fcb6ab176bd53322ca37c87da5",
     "POST /threads/{thread_id}/rename": "b324915b8c6a73f4ce1d6baec4d71b6e0ec21e65a7e5fef3f217ad508540353d",
     "POST /threads/{thread_id}/resume-fence/arm": "59cf0c063d4f918c72af8f0ed45ffa6688cba2f84d82400ffa1086e8f7d9842a",
 }

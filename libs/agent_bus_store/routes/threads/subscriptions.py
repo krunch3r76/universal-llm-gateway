@@ -14,6 +14,7 @@ from ...db.endpoint_subscriptions import (
     subscribe_endpoint,
     unsubscribe_endpoint,
 )
+from ...db.endpoint_wake_ledger import resolve_wake_delivery_binding
 from ...events.endpoint_subscribed import (
     emit_endpoint_subscribed,
     emit_endpoint_unsubscribed,
@@ -109,3 +110,20 @@ async def subscriptions_route(
 ) -> dict[str, Any]:
     """List the current subscription row per (agent, thread_scope)."""
     return {"subscriptions": list_subscriptions(agent, thread_scope)}
+
+
+@router.get(
+    "/delivery-bindings/resolve",
+    openapi_extra=x_mcp("delivery_bindings_resolve", tool="agent_bus"),
+)
+async def delivery_bindings_resolve_route(
+    house_id: str,
+    intent: str,
+) -> dict[str, Any]:
+    """Resolve wake delivery actuation from the endpoint subscription journal."""
+    if str(intent or "").strip().lower() != "wake":
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={"code": "delivery_binding_intent_unsupported"},
+        )
+    return resolve_wake_delivery_binding(house_id=house_id)
