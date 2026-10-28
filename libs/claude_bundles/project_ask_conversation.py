@@ -308,10 +308,12 @@ async def project_followup_on_page(
     stargate_execution_id: str = "",
     satellite_execution_id: str = "",
     purpose: str = "ask",
+    claude_surface: str | None = None,
 ) -> ProjectAskResult:
     """Send another turn on the current chat. No navigate.
 
     Correlation ids thread into ``send_prompt`` → skill-delivery attest.
+    ``claude_surface`` must match the first-turn compose surface (e.g. ``code``).
     """
     dest = project_url(project_uuid) if project_uuid else "https://claude.ai/new"
     require_review_verdict = (purpose or "").strip().lower() == "review"
@@ -327,6 +329,7 @@ async def project_followup_on_page(
             stargate_execution_id=stargate_execution_id,
             satellite_execution_id=satellite_execution_id,
             await_induction_reply=True,
+            claude_surface=claude_surface,
         )
         state = await wait_assistant_reply(
             page,
@@ -658,6 +661,7 @@ async def run_project_conversation(
                 stargate_execution_id=stargate_execution_id,
                 satellite_execution_id=satellite_execution_id,
                 purpose=purpose,
+                claude_surface=claude_surface,
             )
             results.append(nxt)
             if not nxt.ok:

@@ -442,7 +442,7 @@ async def _submit_composer_draft(
     if refuse:
         raise RuntimeError(refuse)
 
-    strategy = resolve_submit_strategy(page.url or "", fp)
+    strategy = resolve_submit_strategy(page.url or "", fp, surface=claude_surface)
 
     from claude_bundles.composer_submit import submit_composer_content
 

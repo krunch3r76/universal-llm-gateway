@@ -503,3 +503,114 @@ async def test_compose_skill_receipt_unverified_harvests_body() -> None:
     assert (
         converse_stall_stage(results[0].error, conv_ok=False) == "observer_unverified"
     )
+
+
+@pytest.mark.asyncio
+async def test_code_surface_two_turn_conversation_passes_every_approval_check(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """R21 /code submit: both turns use code approval gate + live_discover submit."""
+    page = AsyncMock()
+    page.url = "https://claude.ai/code"
+    page.title = AsyncMock(return_value="Claude Code")
+    page.evaluate = AsyncMock(
+        return_value={"aria": "", "text": "Auto", "via": "text"}
+    )
+
+    seen_surfaces: list[str | None] = []
+    submit_mock = AsyncMock()
+    model_info: dict = {
+        "ok": True,
+        "step": "code_surface_page_model",
+        "current_model": "Model: Opus 5.5 Medium",
+        "model_ran": "Model: Opus 5.5 Medium",
+    }
+
+    async def send_shim(
+        pg,
+        text: str,
+        *,
+        stargate_execution_id: str = "",
+        satellite_execution_id: str = "",
+        await_induction_reply: bool = False,
+        on_harvest=None,
+        claude_surface: str | None = None,
+        compose_receipt: dict | None = None,
+    ) -> None:
+        seen_surfaces.append(claude_surface)
+        from claude_bundles.project_ask import _submit_composer_draft
+
+        await _submit_composer_draft(
+            pg,
+            composer=AsyncMock(),
+            draft_text=text,
+            claude_surface=claude_surface,
+            compose_receipt=compose_receipt,
+        )
+
+    monkeypatch.setattr(
+        "claude_bundles.chat_cowork_mode.ensure_approval_auto",
+        AsyncMock(side_effect=AssertionError("ensure_approval_auto must not run")),
+    )
+    monkeypatch.setattr(
+        "claude_bundles.chat_cowork_mode.set_approval_mode",
+        AsyncMock(side_effect=AssertionError("set_approval_mode must not run")),
+    )
+    monkeypatch.setattr(
+        "claude_bundles.composer_submit.submit_composer_content",
+        submit_mock,
+    )
+
+    state = {
+        "body": "code surface reply prose. " + ("z" * 120),
+        "url": page.url,
+        "model_label": "Model: Opus 5.5 Medium",
+    }
+    harvest = HarvestBody(content=state["body"], provenance="chat")
+
+    with (
+        patch(
+            "claude_bundles.project_ask_conversation.connect_cdp",
+            new=AsyncMock(return_value=(AsyncMock(), None, None, None)),
+        ),
+        patch(
+            "claude_bundles.project_ask_conversation.pick_chat_page",
+            new=AsyncMock(return_value=page),
+        ),
+        patch(
+            "claude_bundles.project_ask_conversation._compose_model_selected",
+            new=AsyncMock(return_value=model_info),
+        ),
+        patch(
+            "claude_bundles.project_ask_conversation.harvest_assistant",
+            new=AsyncMock(return_value={"count": 0}),
+        ),
+        patch(
+            "claude_bundles.project_ask_conversation.send_prompt",
+            new=AsyncMock(side_effect=send_shim),
+        ),
+        patch(
+            "claude_bundles.project_ask_conversation.wait_assistant_reply",
+            new=AsyncMock(return_value=state),
+        ),
+        patch(
+            "claude_bundles.project_ask_conversation.resolve_harvest_body",
+            new=AsyncMock(return_value=harvest),
+        ),
+        patch(
+            "claude_bundles.project_ask_conversation._attest_model",
+            return_value="Model: Opus 5.5 Medium",
+        ),
+    ):
+        results = await run_project_conversation(
+            ["first", "second"],
+            compose_url="https://claude.ai/code",
+            claude_surface="code",
+            delete_after=False,
+        )
+
+    assert len(results) == 2
+    assert all(r.ok for r in results)
+    assert seen_surfaces == ["code", "code"]
+    assert submit_mock.await_count == 2
+    assert model_info["approval_mode"] == "auto"
