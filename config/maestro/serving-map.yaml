@@ -16,10 +16,12 @@ rows:
   - prefix: libs/agent_bus_store/
     services:
       - agent_bus
+      - git_integration_worker
       - mcp
+      - stargate
     cite: >-
-      journal 152 (agent_bus host serves the lib; mcp only calls it) and journal
-      153 (both restarted for that prefix; fleet_liveness descendant-of-observed on both)
+      RULING 24 Part C: runtime imports in agent_bus (host), mcp tools, stargate
+      frontier_consult/continuity/proxy, git_integration_worker cursor-sdk routes
   - prefix: libs/writing_intake/
     services:
       - stargate
