@@ -325,24 +325,46 @@ def _accept_loop(
         _handle_accepted_client(client, port, allowed=peers)
 
 
-def main() -> None:
+def main(
+    *,
+    addresses: frozenset[str] | None = None,
+    socket_factory: Callable[..., socket.socket] = socket.socket,
+    park: Callable[[], None] | None = None,
+) -> None:
     """Listen on the docker gateway, or wait without binding when it is absent.
 
     The wait path is for a process that is not the bridge host. Exiting would
     restart-loop under compose and must not be how a missing gateway is handled.
+    When the gateway is local but every bind fails, exit nonzero so compose
+    surfaces a restart loop instead of a silent no-op process.
     """
-    listeners = open_listeners(local_ipv4_addresses())
-    if not listeners:
+    addrs = local_ipv4_addresses() if addresses is None else addresses
+    targets = bind_targets(addrs)
+    listeners = open_listeners(addrs, socket_factory=socket_factory)
+    if not targets:
         logger.error(
             "cdp gateway forwarder: %s is not local; not binding %s",
             GATEWAY_HOST,
             ",".join(str(port) for port in FORWARDED_PORTS),
         )
-        threading.Event().wait()
+        if park is not None:
+            park()
+        else:
+            threading.Event().wait()
         return
+    if not listeners:
+        failed_ports = ",".join(str(port) for _host, port in targets)
+        logger.error(
+            "cdp gateway forwarder: gateway %s present but all binds failed on %s",
+            GATEWAY_HOST,
+            failed_ports,
+        )
+        raise SystemExit(1)
     threads: list[threading.Thread] = []
+    bound_ports: list[int] = []
     for sock in listeners:
         port = int(sock.getsockname()[1])
+        bound_ports.append(port)
         thread = threading.Thread(
             target=_accept_loop,
             args=(sock, port),
@@ -354,7 +376,7 @@ def main() -> None:
     logger.info(
         "cdp gateway forwarder listening on %s:%s",
         GATEWAY_HOST,
-        ",".join(str(port) for port in FORWARDED_PORTS),
+        ",".join(str(port) for port in bound_ports),
     )
     for thread in threads:
         thread.join()
