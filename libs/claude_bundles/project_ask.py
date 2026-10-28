@@ -30,6 +30,7 @@ from claude_bundles.chat_model_match import (
     sealed_ask_default_effort,
 )
 from claude_bundles.chat_model_select import (
+    current_model_label,
     label_satisfies_request,
     parse_model_request,
     picker_attests_request,
@@ -667,6 +668,29 @@ async def send_prompt(
     return reply_baseline
 
 
+def _is_code_compose_surface(
+    *,
+    claude_surface: str | None,
+    compose_url: str | None,
+) -> bool:
+    if (claude_surface or "").strip().lower() == "code":
+        return True
+    url = (compose_url or "").lower()
+    return "/claude.ai/code" in url or url.rstrip("/").endswith("/code")
+
+
+async def _read_code_surface_model_label(page: Page) -> str:
+    """Read the model the /code UI exposes (no chat picker dropdown on this surface)."""
+    btn = page.locator('button[aria-label*="Model"]')
+    if await btn.count():
+        label = (
+            await btn.first.get_attribute("aria-label") or await btn.first.inner_text()
+        ).strip()
+        if label:
+            return label
+    return (await current_model_label(page)).strip()
+
+
 async def _compose_model_selected(
     page: Page,
     model: str,
@@ -674,6 +698,7 @@ async def _compose_model_selected(
     compose_url: str | None = None,
     project_uuid: str | None = None,
     ensure_cowork_auto: bool = True,
+    claude_surface: str | None = None,
     stargate_execution_id: str = "",
     satellite_execution_id: str = "",
 ) -> dict:
@@ -696,6 +721,17 @@ async def _compose_model_selected(
     if composer is not None:
         await composer.click(force=True)
         await page.wait_for_timeout(800)
+    if _is_code_compose_surface(
+        claude_surface=claude_surface, compose_url=compose_url
+    ):
+        model_ran = await _read_code_surface_model_label(page) or "unknown"
+        return {
+            "ok": True,
+            "step": "code_surface_page_model",
+            "requested": model,
+            "model_ran": model_ran,
+            "current_model": model_ran,
+        }
     model_info = await select_model(page, model)
     if not model_info.get("ok"):
         return model_info

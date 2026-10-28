@@ -825,6 +825,7 @@ async def run_execution(
             stargate_execution_id = resolve_stargate_execution_id(req)
 
             compose_url, ensure_cowork = _compose_args_for_surface(req)
+            surface = (req.claude_surface or "cowork").strip().lower()
 
             async def _converse_once(model: str):
                 return await run_project_conversation(
@@ -838,6 +839,7 @@ async def run_execution(
                     min_growth=req.min_growth,
                     min_body=req.min_body,
                     ensure_cowork_auto=ensure_cowork,
+                    claude_surface=surface if surface == "code" else None,
                     on_harvest=on_harvest,
                     expected_size=req.expected_size,
                     harvest_source=req.harvest_source,

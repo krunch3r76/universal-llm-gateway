@@ -86,4 +86,5 @@ async def test_run_execution_passes_code_compose_to_conversation() -> None:
     kwargs = converse.await_args.kwargs
     assert kwargs["compose_url"] == "https://claude.ai/code"
     assert kwargs["ensure_cowork_auto"] is False
+    assert kwargs["claude_surface"] == "code"
     assert result["url"] == "https://claude.ai/code/session_testid"
