@@ -367,14 +367,14 @@ export default defineChannel({
     args.waitUntil(
       (async () => {
         try {
-          await maybePostSeatRegistration(args.host, stateRoot);
-        } catch (err) {
-          channelLogger.warn("[bus] seat registration failed", err);
-        }
-        try {
           await bootstrapImpresarioRegistry(busChannelToolCtx(args.host));
         } catch (err) {
           channelLogger.warn("[bus] delivery-bindings bootstrap failed", err);
+        }
+        try {
+          await maybePostSeatRegistration(args.host, stateRoot);
+        } catch (err) {
+          channelLogger.warn("[bus] seat registration failed", err);
         }
         if (process.env.ULG_BUS_MODE === "push") {
           return;

@@ -152,18 +152,15 @@ function fixtureDeliveryBindingResolve(params: {
 
 export async function resolveDeliveryBinding(
   ctx: ToolCtx,
-  params: { house_id: string; intent: string; agent?: string },
+  params: { house_id: string; intent: string },
 ): Promise<DeliveryBindingEnvelope> {
   if (fixturesEnabled()) {
     return fixtureDeliveryBindingResolve(params);
   }
-  const payload: Record<string, unknown> = {
+  const payload = {
     house_id: params.house_id,
     intent: params.intent,
   };
-  if (params.agent !== undefined) {
-    payload.agent = params.agent;
-  }
   const raw = await callAgentBusRead(ctx, "delivery_bindings_resolve", payload);
   return raw as DeliveryBindingEnvelope;
 }
@@ -196,7 +193,6 @@ export async function bootstrapImpresarioRegistry(ctx: ToolCtx): Promise<void> {
     const laneEnvelope = await resolveDeliveryBinding(ctx, {
       house_id: house,
       intent: "inform",
-      agent: IMPRESARIO_MAILBOX,
     });
     lane = actuationThreadId(laneEnvelope) ?? "";
     if (!lane && fixturesEnabled()) {
@@ -223,7 +219,6 @@ export async function bootstrapImpresarioRegistry(ctx: ToolCtx): Promise<void> {
   const reviewEnvelope = await resolveDeliveryBinding(ctx, {
     house_id: reviewHouse,
     intent: "paste",
-    agent: "stage-manager",
   });
   const mailbox = actuationMailbox(reviewEnvelope);
   if (!mailbox || !isBoundDelivery(reviewEnvelope)) {

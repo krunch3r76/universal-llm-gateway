@@ -3,7 +3,7 @@ import { z } from "zod";
 
 import {
   callAgentBus,
-  IMPRESARIO_LANE,
+  getImpresarioLane,
   isEvalOrFixture,
   MAESTRO_THREAD,
   truncateBody,
@@ -49,7 +49,7 @@ export default defineTool({
       });
     };
 
-    await sendOne(IMPRESARIO_LANE);
+    await sendOne(getImpresarioLane());
     await sendOne(MAESTRO_THREAD);
 
     return {
