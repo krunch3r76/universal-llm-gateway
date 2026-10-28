@@ -1,6 +1,8 @@
-"""GET /delivery-bindings/resolve — wake intent from endpoint subscription rows."""
+"""GET /delivery-bindings/resolve — wake and steer delivery actuation."""
 
 from __future__ import annotations
+
+import json
 
 import pytest
 from agent_bus_store.auth import require_token
@@ -8,6 +10,11 @@ from agent_bus_store.db import create_thread, init_db
 from agent_bus_store.db.endpoint_subscriptions import subscribe_endpoint
 from agent_bus_store.server import create_app
 from fastapi.testclient import TestClient
+
+from services.git_integration_worker.cursor_dispatch_ledger import (
+    CURSOR_SDK_DISPATCH_LEDGER_ENV,
+    CursorDispatchLedger,
+)
 
 _ORION_AGENT_ID = "4ed020f2-f0b2-4f3d-b49c-89aa34930f19"
 _HOUSE_ID = "20995"
@@ -17,10 +24,44 @@ _HOUSE_ID = "20995"
 def client(tmp_path, monkeypatch: pytest.MonkeyPatch) -> TestClient:
     monkeypatch.setenv("AGENT_BUS_DB_PATH", str(tmp_path / "bus.db"))
     monkeypatch.delenv("AGENT_BUS_ENDPOINT_WAKE_DISPATCHER", raising=False)
+    ledger_path = tmp_path / "cursor-sdk-dispatch.db"
+    monkeypatch.setenv(CURSOR_SDK_DISPATCH_LEDGER_ENV, str(ledger_path))
+    CursorDispatchLedger._instance = None
     init_db()
+    CursorDispatchLedger.instance()
     app = create_app()
     app.dependency_overrides[require_token] = lambda: None
     return TestClient(app)
+
+
+def _insert_dispatch_row(
+    *,
+    dispatch_id: str,
+    thread_id: str,
+    status: str,
+    execution_id: str = "exec-1",
+    resume_of: str | None = None,
+) -> None:
+    ledger = CursorDispatchLedger.instance()
+    with ledger._connect() as conn:
+        conn.execute(
+            """
+            INSERT INTO cursor_sdk_dispatches (
+                dispatch_id, fingerprint, thread_id, execution_id, resolved_model,
+                message_present, status, record_json, resume_of
+            ) VALUES (?, ?, ?, ?, ?, 1, ?, ?, ?)
+            """,
+            (
+                dispatch_id,
+                f"fp-{dispatch_id}",
+                thread_id,
+                execution_id,
+                "composer-2.5",
+                status,
+                json.dumps({}),
+                resume_of,
+            ),
+        )
 
 
 def test_delivery_bindings_resolve_wake_orion_cursor_glass(client: TestClient) -> None:
@@ -50,3 +91,60 @@ def test_delivery_bindings_resolve_wake_orion_cursor_glass(client: TestClient) -
     assert actuation["gui_host"] == "orion-node"
     assert actuation["agent_id"] == _ORION_AGENT_ID
     assert actuation["cdp_base"] == "http://127.0.0.1:19338"
+
+
+def test_delivery_bindings_resolve_steer_active_resume_of(client: TestClient) -> None:
+    """Case 3: active dispatch with resume_of → cursor_sdk_dispatch / dispatch_ledger_active."""
+    _insert_dispatch_row(
+        dispatch_id="disp-steer-live",
+        thread_id=_HOUSE_ID,
+        status="running",
+        execution_id="exec-steer-live",
+        resume_of="parent-exec",
+    )
+    resp = client.get(
+        "/delivery-bindings/resolve",
+        params={"house_id": _HOUSE_ID, "intent": "steer"},
+    )
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["state"] == "bound"
+    assert body["basis"] == "dispatch_ledger_active"
+    actuation = body["current"]["actuation"]
+    assert actuation["type"] == "cursor_sdk_dispatch"
+    assert actuation["dispatch_id"] == "disp-steer-live"
+    assert actuation["execution_id"] == "exec-steer-live"
+    assert actuation["resume_of"] == "parent-exec"
+
+
+def test_delivery_bindings_resolve_steer_terminal_does_not_beat_subscription(
+    client: TestClient,
+) -> None:
+    """Terminal ledger row must not win over a live cursor UI subscription."""
+    assert create_thread(thread_id=_HOUSE_ID, slug="orion-dispatch") is not None
+    subscribe_endpoint(
+        agent="cursor",
+        thread_scope=_HOUSE_ID,
+        surface="cursor",
+        display="orion-node",
+        title="orion-node",
+        agent_id=_ORION_AGENT_ID,
+    )
+    _insert_dispatch_row(
+        dispatch_id="disp-terminal-only",
+        thread_id=_HOUSE_ID,
+        status="completed",
+        execution_id="exec-terminal",
+        resume_of="parent-done",
+    )
+    resp = client.get(
+        "/delivery-bindings/resolve",
+        params={"house_id": _HOUSE_ID, "intent": "steer"},
+    )
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["state"] == "unbound"
+    current = body.get("current")
+    assert current is None or current.get("actuation", {}).get("dispatch_id") != (
+        "disp-terminal-only"
+    )
