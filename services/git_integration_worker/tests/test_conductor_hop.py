@@ -758,11 +758,17 @@ async def test_hop_inherit_copies_pending_on_post_success(
     assert pending.directive == "successor sees"
 
 
-def test_build_hop_team_dispatch_body_carries_model_knobs() -> None:
+def test_build_hop_team_dispatch_body_carries_hop_reactor_override() -> None:
     ledger = CursorDispatchLedger.instance()
     knobs = {"effort": "low", "fast": "true"}
     row = _terminal_row(ledger, closeout_tokens=["ROW_HOP"])
-    ledger.merge_record_json(dispatch_id="pred-hop-1", patch={"model_knobs": knobs})
+    ledger.merge_record_json(
+        dispatch_id="pred-hop-1",
+        patch={
+            "hop_reactor_model": "cursor/grok-4.7",
+            "hop_reactor_model_knobs": knobs,
+        },
+    )
     with ledger._connect() as conn:
         refreshed = conn.execute(
             "SELECT * FROM cursor_sdk_dispatches WHERE dispatch_id='pred-hop-1'"
@@ -770,7 +776,29 @@ def test_build_hop_team_dispatch_body_carries_model_knobs() -> None:
     row = {k: refreshed[k] for k in refreshed.keys()}
     body = build_hop_team_dispatch_body(row)
     assert body is not None
+    assert body["model"] == "cursor/grok-4.7"
     assert body["model_knobs"] == knobs
+
+
+def test_build_hop_team_dispatch_body_k97_recipe_default_not_predecessor_clone() -> None:
+    ledger = CursorDispatchLedger.instance()
+    row = _terminal_row(ledger, closeout_tokens=["ROW_HOP"])
+    ledger.merge_record_json(
+        dispatch_id="pred-hop-1",
+        patch={
+            "model": "cursor/grok-4.7",
+            "model_knobs": {"effort": "xhigh", "fast": "false"},
+        },
+    )
+    with ledger._connect() as conn:
+        refreshed = conn.execute(
+            "SELECT * FROM cursor_sdk_dispatches WHERE dispatch_id='pred-hop-1'"
+        ).fetchone()
+    row = {k: refreshed[k] for k in refreshed.keys()}
+    body = build_hop_team_dispatch_body(row)
+    assert body is not None
+    assert body["model"] == "cursor/composer-2.5"
+    assert body["model_knobs"] == {"fast": "false"}
 
 
 def test_admit_record_json_stores_policy_filled_effort() -> None:
@@ -832,21 +860,28 @@ def test_park_resume_request_carries_model_knobs() -> None:
     assert child.model_knobs == knobs
 
 
-def test_build_hop_team_dispatch_body_routing_model_from_record_json() -> None:
+def test_build_hop_team_dispatch_body_todo_attrs_hop_model() -> None:
     ledger = CursorDispatchLedger.instance()
     row = _terminal_row(ledger, closeout_tokens=["ROW_HOP"])
-    ledger.merge_record_json(
-        dispatch_id="pred-hop-1",
-        patch={"model": "cursor/composer-2.5"},
-    )
-    with ledger._connect() as conn:
-        refreshed = conn.execute(
-            "SELECT * FROM cursor_sdk_dispatches WHERE dispatch_id='pred-hop-1'"
-        ).fetchone()
-    row = {k: refreshed[k] for k in refreshed.keys()}
-    body = build_hop_team_dispatch_body(row)
+
+    class _TodoHopCortex:
+        def dispatch(self, op: str, payload: dict[str, Any]) -> dict[str, Any]:
+            assert op == "entity_get"
+            return {
+                "attributes": {
+                    "conductor_hop_model": "cursor/gemini-4-argon",
+                    "conductor_hop_model_knobs": {"effort": "high"},
+                }
+            }
+
+    with patch(
+        "implement_admission.closeout_runtime.get_runtime",
+        return_value=_TodoHopCortex(),
+    ):
+        body = build_hop_team_dispatch_body(row)
     assert body is not None
-    assert body["model"] == "cursor/composer-2.5"
+    assert body["model"] == "cursor/gemini-4-argon"
+    assert body["model_knobs"] == {"effort": "high"}
 
 
 def test_build_hop_team_dispatch_body_source_ref_from_record_json_only() -> None:
