@@ -790,7 +790,7 @@ def test_admit_record_json_stores_policy_filled_effort() -> None:
             "SELECT record_json FROM cursor_sdk_dispatches WHERE dispatch_id='pred-hop-1'"
         ).fetchone()[0]
     assert json.loads(raw)["model_knobs"]["effort"] == "low"
-    assert json.loads(raw)["model_knobs"]["fast"] == "true"
+    assert json.loads(raw)["model_knobs"]["fast"] == "false"
 
 
 def test_park_resume_request_carries_model_knobs() -> None:

@@ -578,6 +578,38 @@ def test_concurrency_stats_exposes_lane_dimension(
     closeout_root.mkdir(parents=True, exist_ok=True)
     monkeypatch.setenv("GIT_INTEGRATION_SOURCE_REPO", str(source_repo))
     _freeze_meter_now(monkeypatch, "2026-08-15T12:00:00+00:00")
+    from services.git_integration_worker import (
+        cursor_sdk_concurrency_meter as meter_mod,
+    )
+
+    _empty_lane_b = {
+        "worktrees_live": 0,
+        "branches_unlanded": 0,
+        "oldest_unlanded_age_s": None,
+        "aged_orphans": [],
+        "lane_hygiene": {},
+    }
+    monkeypatch.setattr(
+        meter_mod,
+        "lane_b_inventory_snapshot",
+        lambda *, source_repo: dict(_empty_lane_b),
+    )
+    meter_mod._lane_b_refresh.clear()
+    meter_mod._lane_b_cache.clear()
+    # a:37853: /active-work does not await inventory; seed cache so bounded
+    # path serves inventory keys (cold cache would be lane_b pending only).
+    meter_mod._lane_b_cache[source_repo.resolve()] = (
+        dict(_empty_lane_b),
+        "2026-08-15T12:00:00+00:00",
+    )
+    monkeypatch.setattr(
+        "services.git_integration_worker.app.schedule_startup_persistence",
+        lambda _app: None,
+    )
+    monkeypatch.setattr(
+        "services.git_integration_worker.app.supervise",
+        lambda *_a, **_k: None,
+    )
 
     meter = concurrency_stats(closeout_root=closeout_root, source_repo=source_repo)
     assert "peak_concurrent_write_implement_by_lane" in meter
