@@ -237,6 +237,7 @@ _SERVICE_OWNERSHIP: dict[str, ServiceOwnership] = {
                 "job_vocab",
                 "stargate_chat",
                 "work_key_grammar",
+                "writing_intake",
             }
         ),
     ),
@@ -422,6 +423,7 @@ _SERVICE_OWNERSHIP: dict[str, ServiceOwnership] = {
                 "job_grammar",
                 "job_vocab",
                 "prompt_expand_consume",
+                "writing_intake",
             }
         ),
     ),
