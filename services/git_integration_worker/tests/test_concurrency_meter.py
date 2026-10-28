@@ -414,11 +414,35 @@ def test_concurrency_stats_route_and_active_work(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """AC4: /concurrency-stats exposes telemetry; /active-work omits historical census."""
+    from services.git_integration_worker import cursor_sdk_concurrency_meter as meter_mod
+
     source_repo = tmp_path / "repo"
     closeout_root = source_repo / "tmp" / "reviews" / "closeouts"
     closeout_root.mkdir(parents=True, exist_ok=True)
     monkeypatch.setenv("GIT_INTEGRATION_SOURCE_REPO", str(source_repo))
     _freeze_meter_now(monkeypatch, "2026-08-15T12:00:00+00:00")
+    _empty_lane_b = {
+        "worktrees_live": 0,
+        "branches_unlanded": 0,
+        "oldest_unlanded_age_s": None,
+        "aged_orphans": [],
+        "lane_hygiene": {},
+    }
+    monkeypatch.setattr(
+        meter_mod,
+        "lane_b_inventory_snapshot",
+        lambda *, source_repo: dict(_empty_lane_b),
+    )
+    meter_mod._lane_b_refresh.clear()
+    meter_mod._lane_b_cache.clear()
+    monkeypatch.setattr(
+        "services.git_integration_worker.app.schedule_startup_persistence",
+        lambda _app: None,
+    )
+    monkeypatch.setattr(
+        "services.git_integration_worker.app.supervise",
+        lambda *_a, **_k: None,
+    )
 
     app = create_app()
     client = TestClient(app)
