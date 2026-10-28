@@ -32,11 +32,8 @@ from claude_bundles.cse_turns_harvest import harvest_turns
 from claude_bundles.cse_url import normalize_cse_url
 from claude_bundles.overload_only_harvest import is_error_banner_only_harvest
 from continuity_tape.extract_jsonl import extract_turns_from_jsonl_bytes
-from durable_io.atomic import (
-    PreImageMismatchError,
-    durable_write_bytes,
-    durable_write_text,
-)
+from cortex_store.raw_transcript_store import write_raw_transcript
+from durable_io.atomic import durable_write_text
 
 from cdp_ask.cse_session_ack import classify_ack
 from cdp_ask.cse_session_models import (
@@ -77,6 +74,8 @@ _HOUSE_PROVENANCE_KEYS = (
 _RAW_SOURCE = "claude-ai"
 _RAW_KIND = "raw"
 _MESSAGES_KIND = "messages"
+_COWORK_OUTPUT_EXPORTER = "cowork.output-file"
+_COWORK_OUTPUT_EXPORTER_VERSION = "1.0"
 
 
 @dataclass(frozen=True)
@@ -124,44 +123,22 @@ def _house_from_provenance(provenance: dict[str, Any] | None) -> str:
     return "_nohouse"
 
 
-def _manifest_rel(manifest_abs: Path, root: Path) -> str:
-    return manifest_abs.relative_to(root).as_posix()
-
-
-def _raw_candidate_paths(target_dir: Path, native_id: str) -> list[tuple[Path, int | None]]:
-    """Base raw path plus ``__r{N}`` revision paths in allocation order."""
-    ordered: list[tuple[Path, int | None]] = [(target_dir / f"{native_id}.jsonl", None)]
-    rev = 2
-    while rev < 50:
-        ordered.append((target_dir / f"{native_id}__r{rev}.jsonl", rev))
-        rev += 1
-    return ordered
-
-
-def _cas_write_raw(
-    target_dir: Path,
-    native_id: str,
-    raw_bytes: bytes,
+def _merge_transcript_manifest_extras(
     *,
     root: Path,
-) -> tuple[Path, int | None, bool]:
-    """CAS write-once raw bytes; return path, revision, and whether bytes reconciled."""
-    sha256_hex = hashlib.sha256(raw_bytes).hexdigest()
-    for raw_abs, revision in _raw_candidate_paths(target_dir, native_id):
-        try:
-            durable_write_bytes(
-                raw_abs,
-                raw_bytes,
-                expected_pre_image="",
-                retain_store_root=root,
-            )
-            return raw_abs, revision, False
-        except PreImageMismatchError:
-            if not raw_abs.is_file():
-                continue
-            if hashlib.sha256(raw_abs.read_bytes()).hexdigest() == sha256_hex:
-                return raw_abs, revision, True
-    raise RuntimeError(f"Cowork raw transcript CAS exhausted revisions for {native_id}")
+    manifest_abs: Path,
+    extras: dict[str, Any],
+) -> None:
+    """Append Cowork-specific manifest keys after canonical ``write_raw_transcript``."""
+    data = json.loads(manifest_abs.read_text(encoding="utf-8"))
+    for key, value in extras.items():
+        if value not in (None, ""):
+            data[key] = value
+    durable_write_text(
+        manifest_abs,
+        json.dumps(data, indent=2, ensure_ascii=False) + "\n",
+        retain_store_root=root,
+    )
 
 
 def _persist_cowork_messages_projection(
@@ -173,27 +150,12 @@ def _persist_cowork_messages_projection(
     raw_bytes: bytes,
     raw_sha256: str,
     raw_abs: Path,
-    revision: int | None,
     captured_at: str,
     chat_url: str | None,
     registration_id: str | None,
     route: str | None,
-    prev_messages_manifest_rel: str | None,
 ) -> tuple[str, str]:
     """Project tool-stripped messages beside the raw Cowork transcript tree."""
-    messages_dir = (
-        root / "notes/system/transcripts" / house / _RAW_SOURCE / _MESSAGES_KIND / date_str
-    )
-    messages_dir.mkdir(parents=True, exist_ok=True)
-    if revision is None:
-        messages_abs = messages_dir / f"{native_id}.messages.json"
-        messages_manifest_abs = messages_dir / f"{native_id}.manifest.json"
-    else:
-        messages_abs = messages_dir / f"{native_id}__r{revision}.messages.json"
-        messages_manifest_abs = (
-            messages_dir / f"{native_id}__r{revision}.manifest.json"
-        )
-
     envelope = extract_turns_from_jsonl_bytes(
         raw_bytes,
         tools="none",
@@ -201,6 +163,7 @@ def _persist_cowork_messages_projection(
         session_id=native_id,
         observed_at=captured_at,
         surface="claude_ai",
+        strict_dialogue=True,
     )
     projection = envelope.model_dump(mode="json", by_alias=True)
     meta = projection.setdefault("meta", {})
@@ -210,46 +173,37 @@ def _persist_cowork_messages_projection(
     messages_text = json.dumps(projection, indent=2) + "\n"
     messages_bytes = messages_text.encode("utf-8")
     messages_sha256 = hashlib.sha256(messages_bytes).hexdigest()
-    durable_write_text(messages_abs, messages_text, retain_store_root=root)
 
-    messages_supersedes: str | None = None
-    if revision is not None and prev_messages_manifest_rel:
-        messages_supersedes = prev_messages_manifest_rel
-
-    messages_manifest: dict[str, Any] = {
-        "sha256": messages_sha256,
-        "bytes": len(messages_bytes),
-        "captured_at": captured_at,
-        "house": house,
-        "source": _RAW_SOURCE,
-        "kind": _MESSAGES_KIND,
-        "native_id": native_id,
-        "sessionId": native_id,
-        "raw_sha256": raw_sha256,
-        "raw_rel_path": raw_abs.relative_to(root).as_posix(),
-        "chat_url": chat_url,
-        "registration_id": registration_id,
-        "route": route,
-        "supersedes": messages_supersedes,
-    }
-    durable_write_text(
-        messages_manifest_abs,
-        json.dumps(messages_manifest, indent=2) + "\n",
-        retain_store_root=root,
+    msg_result = write_raw_transcript(
+        files_root=root,
+        source=_RAW_SOURCE,
+        date_str=date_str,
+        native_id=native_id,
+        native_ext="jsonl",
+        raw_bytes=messages_bytes,
+        exporter=_COWORK_OUTPUT_EXPORTER,
+        exporter_version=_COWORK_OUTPUT_EXPORTER_VERSION,
+        captured_at=captured_at,
+        house=house,
+        kind=_MESSAGES_KIND,
+        chat_url=chat_url,
+        registration_id=registration_id,
+        route=route,
+        expected_sha256=messages_sha256,
+    )
+    _merge_transcript_manifest_extras(
+        root=root,
+        manifest_abs=msg_result.manifest_abs_path,
+        extras={
+            "sessionId": native_id,
+            "raw_sha256": raw_sha256,
+            "raw_rel_path": raw_abs.relative_to(root).as_posix(),
+        },
     )
     return (
-        f"cortex://{messages_abs.relative_to(root).as_posix()}",
+        f"cortex://{msg_result.raw_rel_path}",
         messages_sha256,
     )
-
-
-def _merge_manifest_field(existing: object, new: object) -> object:
-    """Keep a prior manifest value when the new harvest omitted it."""
-    if new not in (None, ""):
-        return new
-    if existing not in (None, ""):
-        return existing
-    return new
 
 
 def persist_cowork_output_raw_transcript(
@@ -281,85 +235,36 @@ def persist_cowork_output_raw_transcript(
     sha256_hex = hashlib.sha256(raw_bytes).hexdigest()
     house = _house_from_provenance(provenance)
     date_str = datetime.now(UTC).strftime("%Y-%m-%d")
-    target_dir = (
-        root / "notes/system/transcripts" / house / _RAW_SOURCE / _RAW_KIND / date_str
-    )
-    target_dir.mkdir(parents=True, exist_ok=True)
-
-    base_manifest_abs = target_dir / f"{native_id}.manifest.json"
-    prev_manifest_rel = _manifest_rel(base_manifest_abs, root)
-
-    raw_abs, revision, reconciled = _cas_write_raw(
-        target_dir,
-        native_id,
-        raw_bytes,
-        root=root,
-    )
-    if revision is None:
-        manifest_abs = base_manifest_abs
-    else:
-        manifest_abs = target_dir / f"{native_id}__r{revision}.manifest.json"
-
-    existing_manifest: dict[str, Any] = {}
-    manifest_corrupt = not manifest_abs.is_file()
-    if manifest_abs.is_file():
-        try:
-            existing_manifest = json.loads(manifest_abs.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError):
-            existing_manifest = {}
-            manifest_corrupt = True
-
     captured_at = datetime.now(UTC).isoformat()
-    if (
-        reconciled
-        and existing_manifest.get("sha256") == sha256_hex
-        and existing_manifest.get("captured_at")
-    ):
-        captured_at = str(existing_manifest["captured_at"])
 
-    supersedes: str | None = None
-    if revision is not None:
-        supersedes = prev_manifest_rel
-    elif reconciled and (manifest_corrupt or not manifest_abs.is_file()):
-        supersedes = prev_manifest_rel
-
-    manifest_dict: dict[str, Any] = {
-        "sha256": sha256_hex,
-        "bytes": len(raw_bytes),
-        "captured_at": captured_at,
-        "house": house,
-        "source": _RAW_SOURCE,
-        "kind": _RAW_KIND,
-        "native_id": native_id,
-        "sessionId": native_id,
-        "chat_url": _merge_manifest_field(existing_manifest.get("chat_url"), chat_url),
-        "registration_id": _merge_manifest_field(
-            existing_manifest.get("registration_id"),
-            registration_id,
-        ),
-        "file_uuid": _merge_manifest_field(
-            existing_manifest.get("file_uuid"),
-            body_result.file_uuid,
-        ),
-        "route": _merge_manifest_field(existing_manifest.get("route"), body_result.route),
-        "supersedes": _merge_manifest_field(existing_manifest.get("supersedes"), supersedes),
-    }
-
-    durable_write_text(
-        manifest_abs,
-        json.dumps(manifest_dict, indent=2) + "\n",
-        retain_store_root=root,
+    raw_result = write_raw_transcript(
+        files_root=root,
+        source=_RAW_SOURCE,
+        date_str=date_str,
+        native_id=native_id,
+        native_ext="jsonl",
+        raw_bytes=raw_bytes,
+        exporter=_COWORK_OUTPUT_EXPORTER,
+        exporter_version=_COWORK_OUTPUT_EXPORTER_VERSION,
+        captured_at=captured_at,
+        house=house,
+        kind=_RAW_KIND,
+        chat_url=chat_url,
+        registration_id=registration_id,
+        route=body_result.route,
+        expected_sha256=sha256_hex,
     )
-
-    base_messages_manifest = (
-        root
-        / "notes/system/transcripts"
-        / house
-        / _RAW_SOURCE
-        / _MESSAGES_KIND
-        / date_str
-        / f"{native_id}.manifest.json"
+    captured_at = raw_result.manifest.captured_at
+    _merge_transcript_manifest_extras(
+        root=root,
+        manifest_abs=raw_result.manifest_abs_path,
+        extras={
+            "sessionId": native_id,
+            "file_uuid": body_result.file_uuid,
+        },
     )
+    raw_abs = raw_result.raw_abs_path
+
     messages_path, messages_sha256 = _persist_cowork_messages_projection(
         root=root,
         house=house,
@@ -368,15 +273,13 @@ def persist_cowork_output_raw_transcript(
         raw_bytes=raw_bytes,
         raw_sha256=sha256_hex,
         raw_abs=raw_abs,
-        revision=revision,
         captured_at=captured_at,
-        chat_url=str(manifest_dict.get("chat_url") or "") or None,
-        registration_id=str(manifest_dict.get("registration_id") or "") or None,
-        route=str(manifest_dict.get("route") or "") or None,
-        prev_messages_manifest_rel=_manifest_rel(base_messages_manifest, root),
+        chat_url=chat_url,
+        registration_id=registration_id,
+        route=body_result.route,
     )
     return CoworkOutputPersistResult(
-        raw_uri=f"cortex://{raw_abs.relative_to(root).as_posix()}",
+        raw_uri=f"cortex://{raw_result.raw_rel_path}",
         raw_sha256=sha256_hex,
         messages_path=messages_path,
         messages_sha256=messages_sha256,
@@ -581,12 +484,20 @@ async def _try_output_file_card_harvest(
     resolved_registration_id = (
         req.registration_id or str((provenance or {}).get("registration_id") or "")
     ).strip() or None
-    persisted = persist_cowork_output_raw_transcript(
-        body_result,
-        chat_url=resolved_chat_url,
-        registration_id=resolved_registration_id,
-        provenance=provenance,
-    )
+    persisted: CoworkOutputPersistResult | None = None
+    try:
+        persisted = persist_cowork_output_raw_transcript(
+            body_result,
+            chat_url=resolved_chat_url,
+            registration_id=resolved_registration_id,
+            provenance=provenance,
+        )
+    except Exception:
+        logger.warning(
+            "Cowork output-file persist failed; harvest continues without archive",
+            exc_info=True,
+        )
+        persisted = None
     selected_cards: list[OutputCardSummary] = list(cards)
     if persisted is not None:
         archive_uri = persisted.raw_uri

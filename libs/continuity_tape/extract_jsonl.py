@@ -137,10 +137,10 @@ def _walk_turns(
     *,
     tools: Tools,
     render_operator_tool_bodies: bool = False,
+    strict_dialogue: bool = False,
 ) -> list[dict[str, str]]:
     turns: list[dict[str, str]] = []
     current: dict[str, list[str]] | None = None
-    strict_dialogue = tools == "none"
     for record in records:
         message = record.get("message") or {}
         rec_type = record.get("type")
@@ -257,12 +257,17 @@ def extract_turns_from_jsonl_bytes(
     session_id: str | None = None,
     observed_at: str | None = None,
     surface: str = "cursor",
+    strict_dialogue: bool = False,
 ) -> ContinuityMessagesEnvelope:
     """Parse agent-transcript JSONL bytes into a continuity messages envelope."""
     source_sha256 = hashlib.sha256(raw).hexdigest()
     records = _read_jsonl_bytes(raw)
-    turns = _walk_turns(records, tools=tools)
-    messages = _turns_to_messages(turns, omit_empty=tools == "none")
+    turns = _walk_turns(
+        records,
+        tools=tools,
+        strict_dialogue=strict_dialogue,
+    )
+    messages = _turns_to_messages(turns, omit_empty=strict_dialogue)
     now = observed_at or datetime.now(tz=UTC).isoformat()
     sha = seal_messages_sha256(messages)
     meta_surface = _normalize_envelope_surface(surface)
@@ -302,6 +307,7 @@ def extract_turns_from_jsonl(
     session_id: str | None = None,
     observed_at: str | None = None,
     surface: str = "cursor",
+    strict_dialogue: bool = False,
 ) -> ContinuityMessagesEnvelope:
     """Parse a JSONL transcript file into a continuity messages envelope."""
     return extract_turns_from_jsonl_bytes(
@@ -311,6 +317,7 @@ def extract_turns_from_jsonl(
         session_id=session_id,
         observed_at=observed_at,
         surface=surface,
+        strict_dialogue=strict_dialogue,
     )
 
 

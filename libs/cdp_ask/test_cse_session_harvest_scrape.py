@@ -43,6 +43,11 @@ _MANIFEST_KEYS = frozenset(
         "source",
         "kind",
         "native_id",
+        "raw_rel_path",
+        "aliases",
+        "exporter",
+        "exporter_version",
+        "status",
         "sessionId",
         "chat_url",
         "registration_id",
@@ -51,6 +56,7 @@ _MANIFEST_KEYS = frozenset(
         "supersedes",
     }
 )
+_MESSAGES_BASENAME = f"{_SESSION_ID}.jsonl"
 _CHAT_URL = "https://claude.ai/cowork/cse_01AroaPe3tJQSmHTZyVq2XCn"
 _REGISTRATION_ID = "37361992cd134cddbbc7fb378dfd492f"
 _ROUTE = "classic_affordance:[data-cdp-output-download=1] via _OUTPUT_DOWNLOAD_JS"
@@ -396,7 +402,7 @@ def test_persist_projects_messages_dropping_tool_output(
     )
     messages_path = (
         tmp_path
-        / f"notes/system/transcripts/{house}/claude-ai/messages/{day}/{_SESSION_ID}.messages.json"
+        / f"notes/system/transcripts/{house}/claude-ai/messages/{day}/{_MESSAGES_BASENAME}"
     )
     messages_manifest_path = (
         tmp_path
@@ -504,7 +510,7 @@ def test_messages_projection_strips_system_preamble_and_tools(
     messages_path = (
         tmp_path
         / "notes/system/transcripts/12286/claude-ai/messages/2026-10-27/"
-        f"{_SESSION_ID}.messages.json"
+        f"{_MESSAGES_BASENAME}"
     )
     assert raw_path.read_bytes() == raw_bytes
     projection = json.loads(messages_path.read_text(encoding="utf-8"))
@@ -652,6 +658,61 @@ async def test_output_file_marker_miss_is_unreachable() -> None:
 
 
 @pytest.mark.asyncio
+async def test_output_file_card_persist_failure_still_harvested() -> None:
+    """Outputs-card path: persist errors must not trigger resolve/re-download miss loop."""
+    cards = [OutputCardSummary(filename="solo.jsonl", bytes=500)]
+    payload = b'{"type":"user","message":{"role":"user","content":"done"}}\n' + b"y" * 300
+    session_name = _OUTPUT_FILENAME_COWORK
+
+    page = MagicMock()
+    req = HarvestRequest(
+        source="output-file",
+        chat_url=_CHAT_URL,
+        registration_id=_REGISTRATION_ID,
+    )
+    resolve_mock = AsyncMock()
+    with (
+        patch(
+            "cdp_ask.cse_session_harvest_scrape.harvest_turns",
+            AsyncMock(return_value=_settled_turn_dom("z" * 300)),
+        ),
+        patch(
+            "cdp_ask.cse_session_harvest_scrape._enumerate_output_cards",
+            AsyncMock(return_value=cards),
+        ),
+        patch(
+            "claude_bundles.cowork_output_download.download_cowork_output_by_filename",
+            AsyncMock(
+                return_value=OutputDownloadResult(
+                    filename=session_name,
+                    content=payload.decode("utf-8"),
+                    content_bytes=payload,
+                    route=_ROUTE,
+                    file_uuid=_FILE_UUID,
+                )
+            ),
+        ),
+        patch(
+            "cdp_ask.cse_session_harvest_scrape.persist_cowork_output_raw_transcript",
+            side_effect=RuntimeError("persist failed"),
+        ),
+        patch(
+            "cdp_ask.cse_session_harvest_scrape.resolve_harvest_body",
+            resolve_mock,
+        ),
+    ):
+        resp = await _try_body_harvest(page, req, None, chat_url=_CHAT_URL)
+
+    assert resp is not None
+    assert resp.outcome == "harvested"
+    assert resp.content_provenance == "output-file"
+    assert resp.archive_uri is None
+    assert resp.archive_sha256 is None
+    assert resp.turns and resp.turns[0].text
+    resolve_mock.assert_not_called()
+
+
+@pytest.mark.asyncio
 async def test_output_file_marker_prehop_harvests_one_card_and_projects_messages(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
@@ -717,7 +778,7 @@ async def test_output_file_marker_prehop_harvests_one_card_and_projects_messages
     messages_path = (
         tmp_path
         / "notes/system/transcripts/_nohouse/claude-ai/messages/2026-10-27/"
-        f"{_SESSION_ID}.messages.json"
+        f"{_MESSAGES_BASENAME}"
     )
     assert messages_path.is_file()
     assert messages_path.stat().st_size < 0.10 * len(prehop_raw)
@@ -727,7 +788,7 @@ async def test_output_file_marker_prehop_harvests_one_card_and_projects_messages
     assert card.raw_sha256 == hashlib.sha256(raw_path.read_bytes()).hexdigest()
     assert card.messages_path == (
         "cortex://notes/system/transcripts/_nohouse/claude-ai/messages/"
-        f"2026-10-27/{_SESSION_ID}.messages.json"
+        f"2026-10-27/{_MESSAGES_BASENAME}"
     )
     assert card.messages_sha256 == hashlib.sha256(messages_path.read_bytes()).hexdigest()
 
