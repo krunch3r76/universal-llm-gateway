@@ -32,7 +32,10 @@ from claude_bundles.cse_turns_harvest import harvest_turns
 from claude_bundles.cse_url import normalize_cse_url
 from claude_bundles.overload_only_harvest import is_error_banner_only_harvest
 from continuity_tape.extract_jsonl import extract_turns_from_jsonl_bytes
-from cortex_store.raw_transcript_store import write_raw_transcript
+from cortex_store.raw_transcript_store import (
+    raw_manifest_rel_path,
+    write_raw_transcript,
+)
 from durable_io.atomic import durable_write_text
 
 from cdp_ask.cse_session_ack import classify_ack
@@ -123,17 +126,59 @@ def _house_from_provenance(provenance: dict[str, Any] | None) -> str:
     return "_nohouse"
 
 
+_COWORK_MANIFEST_CARRY_FORWARD = frozenset(
+    {
+        "file_uuid",
+        "sessionId",
+        "chat_url",
+        "registration_id",
+        "route",
+        "source_raw_rel_path",
+        "raw_sha256",
+    }
+)
+
+
+def _manifest_dict_from_prior(prior_manifest_bytes: bytes | None) -> dict[str, Any]:
+    if not prior_manifest_bytes:
+        return {}
+    try:
+        parsed = json.loads(prior_manifest_bytes.decode("utf-8"))
+    except (json.JSONDecodeError, UnicodeDecodeError):
+        return {}
+    return parsed if isinstance(parsed, dict) else {}
+
+
+def _effective_manifest_field(
+    new_value: Any,
+    prior: dict[str, Any],
+    key: str,
+) -> Any:
+    if new_value not in (None, ""):
+        return new_value
+    old = prior.get(key)
+    if old not in (None, ""):
+        return old
+    return new_value
+
+
 def _merge_transcript_manifest_extras(
     *,
     root: Path,
     manifest_abs: Path,
     extras: dict[str, Any],
+    prior_manifest: dict[str, Any] | None = None,
 ) -> None:
     """Append Cowork-specific manifest keys after canonical ``write_raw_transcript``."""
     data = json.loads(manifest_abs.read_text(encoding="utf-8"))
+    prior = prior_manifest or {}
     for key, value in extras.items():
         if value not in (None, ""):
             data[key] = value
+        elif key in _COWORK_MANIFEST_CARRY_FORWARD:
+            carried = prior.get(key)
+            if carried not in (None, ""):
+                data[key] = carried
     durable_write_text(
         manifest_abs,
         json.dumps(data, indent=2, ensure_ascii=False) + "\n",
@@ -174,31 +219,56 @@ def _persist_cowork_messages_projection(
     messages_bytes = messages_text.encode("utf-8")
     messages_sha256 = hashlib.sha256(messages_bytes).hexdigest()
 
+    msg_manifest_abs = root / raw_manifest_rel_path(
+        house=house,
+        source=_RAW_SOURCE,
+        date_str=date_str,
+        native_id=native_id,
+        kind=_MESSAGES_KIND,
+    )
+    prior_msg_manifest = _manifest_dict_from_prior(
+        msg_manifest_abs.read_bytes() if msg_manifest_abs.is_file() else None
+    )
+    chat_url_eff = _effective_manifest_field(chat_url, prior_msg_manifest, "chat_url")
+    registration_id_eff = _effective_manifest_field(
+        registration_id, prior_msg_manifest, "registration_id"
+    )
+    route_eff = _effective_manifest_field(route, prior_msg_manifest, "route")
+    raw_sha256_eff = _effective_manifest_field(
+        raw_sha256, prior_msg_manifest, "raw_sha256"
+    )
+    source_raw_rel = raw_abs.relative_to(root).as_posix()
+    source_raw_eff = _effective_manifest_field(
+        source_raw_rel, prior_msg_manifest, "source_raw_rel_path"
+    )
+
     msg_result = write_raw_transcript(
         files_root=root,
         source=_RAW_SOURCE,
         date_str=date_str,
         native_id=native_id,
-        native_ext="jsonl",
+        native_ext="json",
         raw_bytes=messages_bytes,
         exporter=_COWORK_OUTPUT_EXPORTER,
         exporter_version=_COWORK_OUTPUT_EXPORTER_VERSION,
         captured_at=captured_at,
         house=house,
         kind=_MESSAGES_KIND,
-        chat_url=chat_url,
-        registration_id=registration_id,
-        route=route,
+        chat_url=chat_url_eff,
+        registration_id=registration_id_eff,
+        route=route_eff,
         expected_sha256=messages_sha256,
     )
+    prior_msg = _manifest_dict_from_prior(msg_result.prior_manifest_bytes)
     _merge_transcript_manifest_extras(
         root=root,
         manifest_abs=msg_result.manifest_abs_path,
         extras={
             "sessionId": native_id,
-            "raw_sha256": raw_sha256,
-            "raw_rel_path": raw_abs.relative_to(root).as_posix(),
+            "raw_sha256": raw_sha256_eff,
+            "source_raw_rel_path": source_raw_eff,
         },
+        prior_manifest={**prior_msg_manifest, **prior_msg},
     )
     return (
         f"cortex://{msg_result.raw_rel_path}",
@@ -237,6 +307,24 @@ def persist_cowork_output_raw_transcript(
     date_str = datetime.now(UTC).strftime("%Y-%m-%d")
     captured_at = datetime.now(UTC).isoformat()
 
+    raw_manifest_abs = root / raw_manifest_rel_path(
+        house=house,
+        source=_RAW_SOURCE,
+        date_str=date_str,
+        native_id=native_id,
+        kind=_RAW_KIND,
+    )
+    prior_raw_manifest = _manifest_dict_from_prior(
+        raw_manifest_abs.read_bytes() if raw_manifest_abs.is_file() else None
+    )
+    chat_url_eff = _effective_manifest_field(chat_url, prior_raw_manifest, "chat_url")
+    registration_id_eff = _effective_manifest_field(
+        registration_id, prior_raw_manifest, "registration_id"
+    )
+    route_eff = _effective_manifest_field(
+        body_result.route, prior_raw_manifest, "route"
+    )
+
     raw_result = write_raw_transcript(
         files_root=root,
         source=_RAW_SOURCE,
@@ -249,19 +337,24 @@ def persist_cowork_output_raw_transcript(
         captured_at=captured_at,
         house=house,
         kind=_RAW_KIND,
-        chat_url=chat_url,
-        registration_id=registration_id,
-        route=body_result.route,
+        chat_url=chat_url_eff,
+        registration_id=registration_id_eff,
+        route=route_eff,
         expected_sha256=sha256_hex,
     )
     captured_at = raw_result.manifest.captured_at
+    prior_raw = _manifest_dict_from_prior(raw_result.prior_manifest_bytes)
+    file_uuid_eff = _effective_manifest_field(
+        body_result.file_uuid, {**prior_raw_manifest, **prior_raw}, "file_uuid"
+    )
     _merge_transcript_manifest_extras(
         root=root,
         manifest_abs=raw_result.manifest_abs_path,
         extras={
             "sessionId": native_id,
-            "file_uuid": body_result.file_uuid,
+            "file_uuid": file_uuid_eff,
         },
+        prior_manifest={**prior_raw_manifest, **prior_raw},
     )
     raw_abs = raw_result.raw_abs_path
 
@@ -677,8 +770,10 @@ def enrich_with_messages_archive(
     url = (chat_url or page_url or "").strip()
     if not url:
         return response
-    dom_turns = _dom_turn_dicts(dom) if dom is not None else _dom_turn_dicts(
-        {"turns": [t.model_dump() for t in response.turns]}
+    dom_turns = (
+        _dom_turn_dicts(dom)
+        if dom is not None
+        else _dom_turn_dicts({"turns": [t.model_dump() for t in response.turns]})
     )
     try:
         archive_uri, archive_sha256, alignment, turn_count, message_count = (

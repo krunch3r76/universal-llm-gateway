@@ -56,7 +56,7 @@ _MANIFEST_KEYS = frozenset(
         "supersedes",
     }
 )
-_MESSAGES_BASENAME = f"{_SESSION_ID}.jsonl"
+_MESSAGES_BASENAME = f"{_SESSION_ID}.json"
 _CHAT_URL = "https://claude.ai/cowork/cse_01AroaPe3tJQSmHTZyVq2XCn"
 _REGISTRATION_ID = "37361992cd134cddbbc7fb378dfd492f"
 _ROUTE = "classic_affordance:[data-cdp-output-download=1] via _OUTPUT_DOWNLOAD_JS"
@@ -248,18 +248,14 @@ async def test_try_body_harvest_persists_output_file_raw_and_manifest(
             AsyncMock(return_value=harvest_body),
         ),
     ):
-        resp = await _try_body_harvest(
-            page, req, provenance, chat_url=_CHAT_URL
-        )
+        resp = await _try_body_harvest(page, req, provenance, chat_url=_CHAT_URL)
 
     assert resp is not None
     assert resp.outcome == "harvested"
     assert resp.content_provenance == "output-file"
     assert resp.archive_sha256 == hashlib.sha256(payload).hexdigest()
 
-    raw_dir = (
-        tmp_path / "notes/system/transcripts" / house / "claude-ai/raw/2026-10-27"
-    )
+    raw_dir = tmp_path / "notes/system/transcripts" / house / "claude-ai/raw/2026-10-27"
     raw_path = raw_dir / _RAW_BASENAME
     manifest_path = raw_dir / f"{_SESSION_ID}.manifest.json"
     assert raw_path.is_file()
@@ -413,14 +409,20 @@ def test_persist_projects_messages_dropping_tool_output(
     assert messages_manifest_path.is_file()
     messages_bytes = messages_path.read_bytes()
     assert len(messages_bytes) < 0.10 * len(raw_bytes)
-    messages_manifest = json.loads(
-        messages_manifest_path.read_text(encoding="utf-8")
-    )
+    messages_manifest = json.loads(messages_manifest_path.read_text(encoding="utf-8"))
     assert messages_manifest["kind"] == "messages"
     assert messages_manifest["raw_sha256"] == raw_sha
+    rel = messages_manifest["raw_rel_path"]
+    assert rel.endswith(_MESSAGES_BASENAME)
+    on_disk_sha = hashlib.sha256((tmp_path / rel).read_bytes()).hexdigest()
+    assert on_disk_sha == messages_manifest["sha256"] == result.messages_sha256
+    raw_rel = messages_manifest["source_raw_rel_path"]
+    assert hashlib.sha256((tmp_path / raw_rel).read_bytes()).hexdigest() == raw_sha
     assert hashlib.sha256(raw_path.read_bytes()).hexdigest() == raw_sha
     assert result.raw_sha256 == raw_sha
-    assert result.messages_sha256 == hashlib.sha256(messages_path.read_bytes()).hexdigest()
+    assert (
+        result.messages_sha256 == hashlib.sha256(messages_path.read_bytes()).hexdigest()
+    )
     projection = json.loads(messages_path.read_text(encoding="utf-8"))
     assert projection.get("raw_sha256") == raw_sha
     assert projection.get("meta", {}).get("raw_sha256") == raw_sha
@@ -503,13 +505,11 @@ def test_messages_projection_strips_system_preamble_and_tools(
     assert result is not None
 
     raw_path = (
-        tmp_path
-        / "notes/system/transcripts/12286/claude-ai/raw/2026-10-27/"
+        tmp_path / "notes/system/transcripts/12286/claude-ai/raw/2026-10-27/"
         f"{_RAW_BASENAME}"
     )
     messages_path = (
-        tmp_path
-        / "notes/system/transcripts/12286/claude-ai/messages/2026-10-27/"
+        tmp_path / "notes/system/transcripts/12286/claude-ai/messages/2026-10-27/"
         f"{_MESSAGES_BASENAME}"
     )
     assert raw_path.read_bytes() == raw_bytes
@@ -532,6 +532,66 @@ def test_messages_projection_strips_system_preamble_and_tools(
         assert forbidden not in joined
     assert messages[0]["content"] == "Hello"
     assert messages[1]["content"] == "Here is the answer."
+
+
+def test_reharvest_none_ids_carries_forward_manifest_fields(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Second harvest with null file_uuid/chat_url/route keeps first manifest values."""
+    monkeypatch.setenv("CORTEX_FILES_ROOT", str(tmp_path))
+    _freeze_harvest_date(monkeypatch)
+    raw_bytes = _cowork_jsonl_bytes_with_large_tool_result()
+    body_first = HarvestBody(
+        content=raw_bytes.decode("utf-8"),
+        provenance="output-file",
+        filename=_OUTPUT_FILENAME_COWORK,
+        content_bytes=raw_bytes,
+        route=_ROUTE,
+        file_uuid=_FILE_UUID,
+    )
+    first = persist_cowork_output_raw_transcript(
+        body_first,
+        chat_url=_CHAT_URL,
+        registration_id=_REGISTRATION_ID,
+        provenance={"lane_thread_proven": "12286"},
+    )
+    assert first is not None
+    day = "2026-10-27"
+    house = "12286"
+    raw_manifest_path = (
+        tmp_path
+        / f"notes/system/transcripts/{house}/claude-ai/raw/{day}/{_SESSION_ID}.manifest.json"
+    )
+    messages_manifest_path = (
+        tmp_path
+        / f"notes/system/transcripts/{house}/claude-ai/messages/{day}/{_SESSION_ID}.manifest.json"
+    )
+    body_second = HarvestBody(
+        content=raw_bytes.decode("utf-8"),
+        provenance="output-file",
+        filename=_OUTPUT_FILENAME_COWORK,
+        content_bytes=raw_bytes,
+        route=None,
+        file_uuid=None,
+    )
+    second = persist_cowork_output_raw_transcript(
+        body_second,
+        chat_url=None,
+        registration_id=None,
+        provenance={"lane_thread_proven": "12286"},
+    )
+    assert second is not None
+    raw_manifest = json.loads(raw_manifest_path.read_text(encoding="utf-8"))
+    messages_manifest = json.loads(messages_manifest_path.read_text(encoding="utf-8"))
+    assert raw_manifest["file_uuid"] == _FILE_UUID
+    assert raw_manifest["chat_url"] == _CHAT_URL
+    assert raw_manifest["registration_id"] == _REGISTRATION_ID
+    assert raw_manifest["route"] == _ROUTE
+    assert messages_manifest["chat_url"] == _CHAT_URL
+    assert messages_manifest["registration_id"] == _REGISTRATION_ID
+    assert messages_manifest["route"] == _ROUTE
+    assert messages_manifest["raw_sha256"] == first.raw_sha256
+    assert messages_manifest["source_raw_rel_path"]
 
 
 @pytest.mark.asyncio
@@ -661,7 +721,9 @@ async def test_output_file_marker_miss_is_unreachable() -> None:
 async def test_output_file_card_persist_failure_still_harvested() -> None:
     """Outputs-card path: persist errors must not trigger resolve/re-download miss loop."""
     cards = [OutputCardSummary(filename="solo.jsonl", bytes=500)]
-    payload = b'{"type":"user","message":{"role":"user","content":"done"}}\n' + b"y" * 300
+    payload = (
+        b'{"type":"user","message":{"role":"user","content":"done"}}\n' + b"y" * 300
+    )
     session_name = _OUTPUT_FILENAME_COWORK
 
     page = MagicMock()
@@ -728,7 +790,9 @@ async def test_output_file_marker_prehop_harvests_one_card_and_projects_messages
         OutputCardSummary(filename="posthop.jsonl", bytes=len(other_raw)),
     ]
 
-    def _download(_page: MagicMock, filename: str, **_kwargs: object) -> OutputDownloadResult:
+    def _download(
+        _page: MagicMock, filename: str, **_kwargs: object
+    ) -> OutputDownloadResult:
         if "prehop" in filename:
             return OutputDownloadResult(
                 filename=session_name,
@@ -771,13 +835,11 @@ async def test_output_file_marker_prehop_harvests_one_card_and_projects_messages
     assert resp.outcome == "harvested"
     assert resp.archive_sha256 == hashlib.sha256(prehop_raw).hexdigest()
     raw_path = (
-        tmp_path
-        / "notes/system/transcripts/_nohouse/claude-ai/raw/2026-10-27/"
+        tmp_path / "notes/system/transcripts/_nohouse/claude-ai/raw/2026-10-27/"
         f"{_RAW_BASENAME}"
     )
     messages_path = (
-        tmp_path
-        / "notes/system/transcripts/_nohouse/claude-ai/messages/2026-10-27/"
+        tmp_path / "notes/system/transcripts/_nohouse/claude-ai/messages/2026-10-27/"
         f"{_MESSAGES_BASENAME}"
     )
     assert messages_path.is_file()
@@ -790,7 +852,9 @@ async def test_output_file_marker_prehop_harvests_one_card_and_projects_messages
         "cortex://notes/system/transcripts/_nohouse/claude-ai/messages/"
         f"2026-10-27/{_MESSAGES_BASENAME}"
     )
-    assert card.messages_sha256 == hashlib.sha256(messages_path.read_bytes()).hexdigest()
+    assert (
+        card.messages_sha256 == hashlib.sha256(messages_path.read_bytes()).hexdigest()
+    )
 
 
 def _output_harvest_body(content: bytes) -> HarvestBody:

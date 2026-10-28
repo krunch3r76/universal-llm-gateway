@@ -62,23 +62,27 @@ def _read_jsonl(path: Path) -> list[dict[str, Any]]:
     return _read_jsonl_bytes(path.read_bytes(), path_hint=str(path))
 
 
-def _extract_user_text(content: list[dict[str, Any]]) -> str:
+def _extract_user_text(
+    content: list[dict[str, Any]], *, strict_dialogue: bool = False
+) -> str:
     parts: list[str] = []
     for block in content:
         if not isinstance(block, dict):
             continue
-        if block.get("type") != "text":
-            continue
-        text = block.get("text", "")
-        if not isinstance(text, str):
-            continue
-        text = re.sub(
-            r"<system-reminder>[\s\S]*?</system-reminder>",
-            "",
-            text,
-        ).strip()
-        if text:
-            parts.append(text)
+        if block.get("type") == "text":
+            text = block.get("text", "")
+            if not isinstance(text, str):
+                continue
+            if strict_dialogue:
+                text = re.sub(
+                    r"<system-reminder>[\s\S]*?</system-reminder>",
+                    "",
+                    text,
+                ).strip()
+                if text:
+                    parts.append(text)
+            elif text.strip():
+                parts.append(text)
     return "\n\n".join(parts).strip()
 
 
@@ -120,7 +124,9 @@ def _dialogue_content_blocks(content: list[dict[str, Any]]) -> list[dict[str, An
     return blocks
 
 
-def _normalize_envelope_surface(surface: str) -> Literal["cursor", "claude_ai", "grok", "mixed"]:
+def _normalize_envelope_surface(
+    surface: str,
+) -> Literal["cursor", "claude_ai", "grok", "mixed"]:
     """Map caller surface tokens to ``EnvelopeMeta.surface`` literals."""
     token = (surface or "cursor").replace("-", "_")
     if token == "claude_ai":
@@ -132,41 +138,23 @@ def _normalize_envelope_surface(surface: str) -> Literal["cursor", "claude_ai", 
     return "mixed"
 
 
-def _walk_turns(
+def _walk_turns_legacy(
     records: list[dict[str, Any]],
     *,
     tools: Tools,
     render_operator_tool_bodies: bool = False,
-    strict_dialogue: bool = False,
 ) -> list[dict[str, str]]:
+    """Pre-strict master turn walk (``510e1ca6d`` behavior)."""
     turns: list[dict[str, str]] = []
     current: dict[str, list[str]] | None = None
     for record in records:
+        role = record.get("role")
         message = record.get("message") or {}
-        rec_type = record.get("type")
-        if strict_dialogue:
-            if bool(record.get("isMeta")) or bool(record.get("isSidechain")):
-                continue
-            if rec_type in ("system", "tool_result", "queue-operation", "attachment"):
-                continue
-        role = (
-            record.get("role")
-            or message.get("role")
-            or (rec_type if rec_type in ("user", "assistant") else None)
-        )
-        if strict_dialogue and role not in ("user", "assistant"):
-            continue
         content = message.get("content")
-        if isinstance(content, str):
-            content = [{"type": "text", "text": content}]
         if not isinstance(content, list):
             continue
-        if strict_dialogue:
-            content = _dialogue_content_blocks(content)
-            if not content:
-                continue
         if role == "user":
-            user_text = _extract_user_text(content)
+            user_text = _extract_user_text(content, strict_dialogue=False)
             if not user_text:
                 continue
             if current is not None:
@@ -179,11 +167,76 @@ def _walk_turns(
             current = {"user": [user_text], "assistant": []}
         elif role == "assistant":
             if current is None:
-                current = (
-                    {"user": [], "assistant": []}
-                    if strict_dialogue
-                    else {"user": ["(no user message)"], "assistant": []}
+                current = {"user": ["(no user message)"], "assistant": []}
+            asst = _extract_assistant_blocks(
+                content,
+                tools=tools,
+                render_operator_tool_bodies=render_operator_tool_bodies,
+            )
+            if asst:
+                current["assistant"].append(asst)
+    if current is not None:
+        turns.append(
+            {
+                "user": "\n\n".join(current["user"]).strip(),
+                "assistant": "\n\n".join(current["assistant"]).strip(),
+            }
+        )
+    return turns
+
+
+def _walk_turns(
+    records: list[dict[str, Any]],
+    *,
+    tools: Tools,
+    render_operator_tool_bodies: bool = False,
+    strict_dialogue: bool = False,
+) -> list[dict[str, str]]:
+    if not strict_dialogue:
+        return _walk_turns_legacy(
+            records,
+            tools=tools,
+            render_operator_tool_bodies=render_operator_tool_bodies,
+        )
+    turns: list[dict[str, str]] = []
+    current: dict[str, list[str]] | None = None
+    for record in records:
+        message = record.get("message") or {}
+        rec_type = record.get("type")
+        if bool(record.get("isMeta")) or bool(record.get("isSidechain")):
+            continue
+        if rec_type in ("system", "tool_result", "queue-operation", "attachment"):
+            continue
+        role = (
+            record.get("role")
+            or message.get("role")
+            or (rec_type if rec_type in ("user", "assistant") else None)
+        )
+        if role not in ("user", "assistant"):
+            continue
+        content = message.get("content")
+        if isinstance(content, str):
+            content = [{"type": "text", "text": content}]
+        if not isinstance(content, list):
+            continue
+        content = _dialogue_content_blocks(content)
+        if not content:
+            continue
+        if role == "user":
+            user_text = _extract_user_text(content, strict_dialogue=True)
+            if not user_text:
+                continue
+            if current is not None:
+                turns.append(
+                    {
+                        "user": "\n\n".join(current["user"]).strip(),
+                        "assistant": "\n\n".join(current["assistant"]).strip(),
+                    }
                 )
+            current = {"user": [user_text], "assistant": []}
+        elif role == "assistant":
+            if current is None:
+                current = {"user": [], "assistant": []}
             asst = _extract_assistant_blocks(
                 content,
                 tools=tools,
