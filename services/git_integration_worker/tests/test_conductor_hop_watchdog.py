@@ -125,12 +125,17 @@ def _terminal_row(
 
 @pytest.mark.asyncio
 async def test_watchdog_successor_body_carries_model_knobs() -> None:
+    """Hop reactor reads ``hop_reactor_*`` overrides, not predecessor admit knobs."""
     ledger = CursorDispatchLedger.instance()
     knobs = {"effort": "low", "fast": "true"}
     _terminal_row(
         ledger,
         closeout_tokens=["ROW_HOP"],
-        record_patch={"model_knobs": knobs},
+        record_patch={
+            "model_knobs": {"effort": "xhigh", "fast": "false"},
+            "hop_reactor_model": "cursor/grok-4.7",
+            "hop_reactor_model_knobs": knobs,
+        },
         terminal_at_offset_s=-200.0,
     )
     with (
