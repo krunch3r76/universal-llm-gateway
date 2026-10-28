@@ -130,6 +130,13 @@ async def test_terminal_parent_child_mark_terminal_fires_parent_reactor() -> Non
         def is_draining(self) -> bool:
             return False
 
+        def is_armed(self) -> bool:
+            return False
+
+        def maybe_activate_armed_drain(self, *, dispatch_id: str) -> bool:
+            del dispatch_id
+            return False
+
     with patch(
         "services.git_integration_worker.cursor_sdk_closeout.conductor_hop.maybe_fire_conductor_hop_reactor",
         hop_mock,
@@ -298,8 +305,12 @@ class _PromoteCtl:
     def is_draining(self) -> bool:
         return False
 
-    def maybe_activate_armed_drain(self, *, dispatch_id: str) -> None:
-        return None
+    def is_armed(self) -> bool:
+        return False
+
+    def maybe_activate_armed_drain(self, *, dispatch_id: str) -> bool:
+        del dispatch_id
+        return False
 
 
 def _miss_closeout(execution_id: str) -> str:
