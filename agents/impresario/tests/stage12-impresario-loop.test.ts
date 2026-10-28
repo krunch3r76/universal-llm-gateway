@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, describe, it } from "node:test";
@@ -13,8 +14,10 @@ import {
   resetFixtureCache,
 } from "../bot/lib/bus-fixtures.js";
 import {
+  harvestVerdictToScore,
   mergeScoreSections,
   parseStageSection,
+  parseVerdictTokenFromLine,
   parseWorkerSection,
   resolveResumeFromScore,
   validateCommissionResumeFields,
@@ -97,6 +100,58 @@ describe("AC1 commission resume_of and reuse_thread on REQUEST_CHANGES", () => {
     assert.match(after, /## stage\n/);
     assert.match(after, /dispatch_id: fixture-/);
     assert.match(after, /commission_at:/);
+  });
+
+  it("AC1 (M1) live steer keeps dispatch_id when score persist throws", async () => {
+    delete process.env.ULG_FIXTURE_DIR;
+    process.env.ULG_LIVE_STEER = "1";
+    resetFixtureCache();
+    const ctx = {
+      session: { purpose: "tool_test" as const, id: "live-persist-fail" },
+      host: {
+        mcp: {
+          callTool: async (_ns: string, tool: string, args: Record<string, unknown>) => {
+            const op = args.op as string | undefined;
+            if (tool === "team_dispatch" && op === "ledger") {
+              return { dispatches: [], house_rollup: { live_dispatches: [] } };
+            }
+            if (tool === "team_dispatch" && op === "generate") {
+              return {
+                dispatch_id: "live-disp-99",
+                execution_id: "exec-99",
+                thread_id: "20996",
+              };
+            }
+            if (tool === "fs" && op === "read") {
+              return { content: "## state\nimplementing\n\n## log\n" };
+            }
+            if (tool === "fs" && op === "write") {
+              throw new Error("score fs unavailable");
+            }
+            return {};
+          },
+        },
+      },
+    } as never;
+
+    const result = await commissionTool.execute!(
+      {
+        work_key: workKey,
+        contract: "freeform",
+        scope: "live",
+        files_expected: ["a.ts"],
+        acceptance: ["ok"],
+      },
+      ctx,
+    );
+    assert.equal((result as { ok?: boolean }).ok, true);
+    assert.equal((result as { posted?: boolean }).posted, true);
+    assert.equal((result as { dispatch_id?: string }).dispatch_id, "live-disp-99");
+    assert.equal((result as { score_persist_ok?: boolean }).score_persist_ok, false);
+    assert.equal(
+      (result as { score_persist_reason?: string }).score_persist_reason,
+      "score_write_failed",
+    );
   });
 
   it("AC1 (M1) returns dispatch_id when score persist fails after fixture dispatch", async () => {
@@ -188,6 +243,19 @@ describe("AC2 production harvest writes stage timestamps", () => {
     assert.equal(worker.dispatch_id, dispatchId);
   });
 
+  it("AC2 (M2) instructions wire closeout_read work_key and harvest_verdict before commission", () => {
+    const instructions = fs.readFileSync(
+      path.join(here, "../bot/instructions.md"),
+      "utf8",
+    );
+    assert.match(instructions, /closeout_read\(dispatch_id,\s*work_key\)/);
+    assert.match(instructions, /harvest_verdict\(work_key,\s*verdict_line\)/);
+    const step4 = instructions.slice(instructions.indexOf("4. Verdict:"));
+    const harvestAt = step4.indexOf("harvest_verdict");
+    const packetAt = step4.indexOf("packet_author");
+    assert.ok(harvestAt >= 0 && packetAt > harvestAt);
+  });
+
   it("AC2 (M2) harvest_verdict sets verdict_at and verdict", async () => {
     await harvestVerdictTool.execute!(
       {
@@ -256,6 +324,45 @@ describe("AC3 commission resume validation", () => {
       toolCtx(),
     );
     assert.equal((result as { reason?: string }).reason, "nest_under_xor_resume_of");
+  });
+});
+
+describe("N1 verdict token parse guard", () => {
+  beforeEach(() => {
+    process.env.ULG_FIXTURE_DIR = fixtureRoot;
+    process.env.ULG_FIXTURE_SCENARIO = "done-20901-5";
+    resetFixtureCache();
+  });
+
+  afterEach(() => {
+    delete process.env.ULG_FIXTURE_DIR;
+    delete process.env.ULG_FIXTURE_SCENARIO;
+    resetFixtureCache();
+  });
+
+  it("N1 parseVerdictTokenFromLine reads VERDICT head only", () => {
+    assert.equal(
+      parseVerdictTokenFromLine("VERDICT: REQUEST_CHANGES range=abc..def"),
+      "REQUEST_CHANGES",
+    );
+    assert.equal(
+      parseVerdictTokenFromLine(
+        "Notes: landing APPROVE is operator policy\nVERDICT: REQUEST_CHANGES head=x",
+      ),
+      "REQUEST_CHANGES",
+    );
+    assert.equal(parseVerdictTokenFromLine("policy says APPROVE without VERDICT head"), undefined);
+  });
+
+  it("N1 harvestVerdictToScore ignores APPROVE substring without VERDICT line", async () => {
+    const before = fixtureScoreSnapshot(reaperKey);
+    const harvest = await harvestVerdictToScore(
+      toolCtx(),
+      reaperKey,
+      "Reviews are non-blocking for landing APPROVE per operator policy.",
+    );
+    assert.equal(harvest.ok, false);
+    assert.equal(fixtureScoreSnapshot(reaperKey), before);
   });
 });
 

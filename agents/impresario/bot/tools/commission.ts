@@ -127,25 +127,48 @@ export default defineTool({
       };
     }
 
-    const persist = await persistCommissionScoreMemory(ctx, input.work_key, {
+    const workerPatch = {
       dispatch_id,
       thread_id: String(dispatched.thread_id ?? reuse_thread ?? ""),
       execution_id: String(dispatched.execution_id ?? ""),
       state: "running",
-    });
+    };
+    let persist;
+    try {
+      persist = await persistCommissionScoreMemory(ctx, input.work_key, workerPatch);
+    } catch (err) {
+      return {
+        ok: true,
+        posted: true,
+        rendered_prompt_sha256,
+        dispatch_id,
+        score_persist_ok: false,
+        score_persist_reason: "score_write_failed",
+        score_persist_detail: err instanceof Error ? err.message : String(err),
+        resume_of: resume_of ?? null,
+        reuse_thread: reuse_thread ?? null,
+      };
+    }
+    if (!persist.ok) {
+      return {
+        ok: true,
+        posted: true,
+        rendered_prompt_sha256,
+        dispatch_id,
+        score_persist_ok: false,
+        score_persist_reason: persist.reason,
+        score_persist_detail: persist.detail,
+        resume_of: resume_of ?? null,
+        reuse_thread: reuse_thread ?? null,
+      };
+    }
 
     return {
       ok: true,
       posted: true,
       rendered_prompt_sha256,
       dispatch_id,
-      score_persist_ok: persist.ok,
-      ...(persist.ok
-        ? {}
-        : {
-            score_persist_reason: persist.reason,
-            score_persist_detail: persist.detail,
-          }),
+      score_persist_ok: true,
       resume_of: resume_of ?? null,
       reuse_thread: reuse_thread ?? null,
     };

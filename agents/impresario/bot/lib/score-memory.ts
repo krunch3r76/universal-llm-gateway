@@ -370,6 +370,19 @@ export async function harvestCloseoutToScore(
   return { ...result, harvested: result.ok };
 }
 
+const VERDICT_LINE = /^VERDICT:\s*(APPROVE|REQUEST_CHANGES)\b/i;
+
+/** Token from the VERDICT: head line only (no substring fallback). */
+export function parseVerdictTokenFromLine(verdict: string): string | undefined {
+  for (const line of verdict.split("\n")) {
+    const m = line.trim().match(VERDICT_LINE);
+    if (m) {
+      return m[1]!.toUpperCase();
+    }
+  }
+  return undefined;
+}
+
 export async function harvestVerdictToScore(
   ctx: ToolCtx,
   workKey: string,
@@ -378,12 +391,10 @@ export async function harvestVerdictToScore(
   if (ctx.session.purpose === "eval") {
     return { ok: true, harvested: false };
   }
-  const normalized = verdict.trim().toUpperCase();
-  const verdictToken = normalized.includes("REQUEST_CHANGES")
-    ? "REQUEST_CHANGES"
-    : normalized.includes("APPROVE")
-      ? "APPROVE"
-      : verdict.trim();
+  const verdictToken = parseVerdictTokenFromLine(verdict);
+  if (!verdictToken) {
+    return { ok: false, reason: "score_write_failed", detail: "verdict_line_unrecognized" };
+  }
   const now = new Date().toISOString();
   const priorRaw = await readScoreContent(ctx, workKey);
   if (typeof priorRaw !== "string") {
