@@ -243,7 +243,7 @@ def test_event_service_entrypoint_is_measured_for_blinds() -> None:
     assert "service_relative" in blinds
 
 
-_SERVES_LIBS_VERIFY_XFAIL = frozenset(
+_SERVES_LIBS_VERIFY_XFAIL_PAIRS = frozenset(
     {
         # writing_intake reaches stargate via pipelines/writing handlers (dynamic load);
         # static verify walks services/universal-stargate/ only (21170 finding 3).
@@ -252,15 +252,33 @@ _SERVES_LIBS_VERIFY_XFAIL = frozenset(
 )
 
 
-@pytest.mark.offline
-def test_serves_libs_entries_reach_their_package() -> None:
-    """Authorship gate: every serves_libs pair must import-verify the package."""
-    root = repo_root()
+def _serves_libs_pair_cases() -> list[object]:
+    cases: list[object] = []
     for slug, own in service_ownership().items():
         for lib in sorted(own.serves_libs):
-            init = root / "libs" / lib / "__init__.py"
-            path = f"libs/{lib}/__init__.py" if init.is_file() else f"libs/{lib}.py"
-            status = verify_consumer_import(slug, path)
-            if (slug, lib) in _SERVES_LIBS_VERIFY_XFAIL and status == "contradicted":
-                pytest.xfail(f"{slug}/{lib}: static import verify misses pipeline load")
-            assert status == "verified", (slug, lib, path)
+            pair = (slug, lib)
+            if pair in _SERVES_LIBS_VERIFY_XFAIL_PAIRS:
+                cases.append(
+                    pytest.param(
+                        slug,
+                        lib,
+                        marks=pytest.mark.xfail(
+                            strict=True,
+                            reason="static import verify misses pipeline load",
+                        ),
+                    )
+                )
+            else:
+                cases.append(pytest.param(slug, lib))
+    return cases
+
+
+@pytest.mark.offline
+@pytest.mark.parametrize("slug,lib", _serves_libs_pair_cases())
+def test_serves_libs_entry_reaches_its_package(slug: str, lib: str) -> None:
+    """Authorship gate: each serves_libs pair must import-verify the package."""
+    root = repo_root()
+    init = root / "libs" / lib / "__init__.py"
+    path = f"libs/{lib}/__init__.py" if init.is_file() else f"libs/{lib}.py"
+    status = verify_consumer_import(slug, path)
+    assert status == "verified", (slug, lib, path)
