@@ -212,6 +212,7 @@ export async function commissionGenerate(
     prompt: string;
     nest_under?: string;
     resume_of?: string;
+    reuse_thread?: string;
   },
 ): Promise<unknown> {
   const body: Record<string, unknown> = {
@@ -229,6 +230,9 @@ export async function commissionGenerate(
   }
   if (args.resume_of) {
     body.resume_of = args.resume_of;
+  }
+  if (args.reuse_thread) {
+    body.reuse_thread = args.reuse_thread;
   }
   return callTeamDispatch(ctx, body);
 }
