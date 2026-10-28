@@ -503,6 +503,7 @@ async def ensure_cse_attached(
     mission_kind: str | None = None,
     allow_mint: bool = True,
     restrict_to_registration_id: str | None = None,
+    allow_k44_superseded_page_only: bool = False,
 ) -> ReattachOutcome:
     """Attach a registry Chrome host and navigate to *chat_url* when needed.
 
@@ -511,6 +512,9 @@ async def ensure_cse_attached(
     false, an unbound URL is refused instead of minting a fresh host.
     ``restrict_to_registration_id`` limits navigation to that host after wake —
     auto-resume must not ``goto`` a lane that already holds a different CSE.
+    When *allow_k44_superseded_page_only* is true, a superseded dormant predecessor
+    may open *chat_url* on its live successor host without registry seat/url writes;
+    followup and harvest attach opt in; resume and poll recovery do not.
 
     Chat URL is bound without seating. The lane seat snapshot is taken before
     navigation so a later commit can refuse if that holder moved.
@@ -579,7 +583,7 @@ async def ensure_cse_attached(
         )
 
     dormant = cdp_registry.dormant_for_chat_url(chat_url)
-    if dormant is not None:
+    if allow_k44_superseded_page_only and dormant is not None:
         k44_successor = superseded_dormant_k44_successor_host(dormant.registration_id)
         if k44_successor:
             if (

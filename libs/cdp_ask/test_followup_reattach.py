@@ -1267,6 +1267,7 @@ async def test_k44_superseded_dormant_attach_page_only_on_successor(
         purpose="operator-proxy",
         parent_thread=K44_LANE,
         restrict_to_registration_id=succ_id,
+        allow_k44_superseded_page_only=True,
     )
 
     assert outcome.ok is True
@@ -1367,7 +1368,7 @@ async def test_k44_parent_thread_followup_resolves_successor_after_predecessor_p
     isolated_registry: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Acceptance 2: lane-routed followup still targets successor chat_url."""
+    """Acceptance 2: K44 paste to pred URL, then lane-only followup hits successor."""
     from claude_bundles import cdp_registry as reg
 
     _pred_id, succ_id = _seed_k44_superseded_dormant_predecessor()
@@ -1405,36 +1406,64 @@ async def test_k44_parent_thread_followup_resolves_successor_after_predecessor_p
     )
     monkeypatch.setattr(
         "cdp_ask.followup_resolve.scan_lane_cse_urls",
-        AsyncMock(return_value=[CSE_K44_SUCC]),
+        AsyncMock(side_effect=[[], [CSE_A], [CSE_K44_SUCC]]),
     )
-    monkeypatch.setattr(
-        "cdp_ask.followup.send_followup_paste_half",
-        AsyncMock(
-            return_value={
+    paste_page = _FakePage()
+    paste_page.url = CSE_A
+    succ_page = _FakePage()
+    succ_page.url = CSE_K44_SUCC
+    paste = AsyncMock(
+        side_effect=[
+            {
+                "send_verified": True,
+                "receipt": "dom_paste",
+                "streaming_at_paste": False,
+                "url": CSE_A,
+                "pasted_at": 1.0,
+            },
+            {
                 "send_verified": True,
                 "receipt": "dom_paste",
                 "streaming_at_paste": False,
                 "url": CSE_K44_SUCC,
-                "pasted_at": 1.0,
-            }
-        ),
+                "pasted_at": 2.0,
+            },
+        ]
     )
+    monkeypatch.setattr("cdp_ask.followup.send_followup_paste_half", paste)
     monkeypatch.setattr("cdp_ask.followup.emit_followup_event", lambda _e: None)
-    page = _FakePage()
-    page.url = CSE_K44_SUCC
+    async def _find_page(_cdp: str, url: str) -> tuple[Any, Any]:
+        from claude_bundles.cse_url import normalize_cse_url
+
+        if normalize_cse_url(url) == normalize_cse_url(CSE_A):
+            return paste_page, _FakePw()
+        return succ_page, _FakePw()
+
     monkeypatch.setattr(
         "cdp_ask.followup.find_page_on_lane",
-        AsyncMock(return_value=(page, _FakePw())),
+        AsyncMock(side_effect=_find_page),
     )
 
-    resp = await execute_followup(
+    first = await execute_followup(
+        FollowupProjectAskRequest(
+            chat_url=CSE_A,
+            prompt_text="k44 pred paste",
+            parent_thread=K44_LANE,
+        ),
+        store,
+    )
+    assert first.ok is True, f"first error={first.error!r} detail={first.detail!r}"
+    assert first.url == CSE_A
+
+    second = await execute_followup(
         FollowupProjectAskRequest(prompt_text="lane-only", parent_thread=K44_LANE),
         store,
     )
-
-    assert resp.ok is True, f"error={resp.error!r}"
-    assert resp.url == CSE_K44_SUCC
+    assert second.ok is True, f"second error={second.error!r}"
+    assert second.url == CSE_K44_SUCC
+    assert paste.await_count == 2
     _assert_k44_successor_row_unchanged(succ_id)
+    del reg
 
 
 @pytest.mark.asyncio
@@ -1526,7 +1555,7 @@ async def test_k44_attach_never_borrows_unrelated_host(
     outcome = await ensure_cse_attached(
         CSE_A,
         holder="h",
-        restrict_to_registration_id=succ_id,
+        allow_k44_superseded_page_only=True,
     )
 
     assert outcome.ok is True
@@ -1564,6 +1593,183 @@ async def test_k44_harvest_page_only_preserves_successor_row(
     relaunch.assert_not_called()
     harvest_page.assert_awaited_once()
     _assert_k44_successor_row_unchanged(succ_id)
+
+
+def _succ_row_snapshot(succ_id: str) -> dict[str, Any]:
+    from claude_bundles import cdp_registry as reg
+
+    row = reg._store.load_active()[succ_id]
+    return {
+        "status": row.get("status"),
+        "chat_url": row.get("chat_url"),
+        "seat_closed_at": row.get("seat_closed_at"),
+    }
+
+
+@pytest.mark.asyncio
+async def test_k44_opt_in_off_skips_page_only_uses_dormant_wake(
+    isolated_registry: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Default attach must not K44 page-only; superseded wake fails closed."""
+    from claude_bundles.cdp_registry.models import RegistryError
+
+    _seed_k44_superseded_dormant_predecessor()
+    _restore_dormant_for_chat_url(monkeypatch)
+    relaunch = MagicMock(
+        side_effect=RegistryError(
+            "registration has seat_closed_at set; "
+            "refusing relaunch of a superseded seat"
+        )
+    )
+    monkeypatch.setattr(
+        "cdp_ask.followup_reattach.cdp_registry.relaunch_dormant", relaunch
+    )
+    monkeypatch.setattr(
+        "claude_bundles.cdp_registry.tab_rows.inflight_row_for_chat_url",
+        lambda _url: None,
+    )
+
+    outcome = await ensure_cse_attached(CSE_A, holder="h")
+
+    assert outcome.ok is False
+    assert outcome.error == "dormant_relaunch_failed"
+    assert outcome.page_only_borrow is False
+    relaunch.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_k44_opt_in_refused_when_successor_seat_not_open(
+    isolated_registry: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """F4: successor row present but seat closed → no K44 attach or writes."""
+    from claude_bundles import cdp_registry as reg
+    from claude_bundles.cdp_registry.models import RegistryError
+
+    pred_id, succ_id = _seed_k44_superseded_dormant_predecessor()
+    active = reg._store.load_active()
+    active[succ_id]["seat_closed_at"] = 99.0
+    reg._store.write_active(active)
+    before = _succ_row_snapshot(succ_id)
+    _restore_dormant_for_chat_url(monkeypatch)
+    relaunch = MagicMock(
+        side_effect=RegistryError("seat_closed_at set; refusing relaunch")
+    )
+    monkeypatch.setattr(
+        "cdp_ask.followup_reattach.cdp_registry.relaunch_dormant", relaunch
+    )
+    bind = MagicMock(wraps=reg.bind_chat_url_only)
+    monkeypatch.setattr(
+        "cdp_ask.followup_reattach.cdp_registry.bind_chat_url_only", bind
+    )
+    monkeypatch.setattr(
+        "claude_bundles.cdp_registry.tab_rows.inflight_row_for_chat_url",
+        lambda _url: None,
+    )
+
+    outcome = await ensure_cse_attached(
+        CSE_A,
+        holder="h",
+        allow_k44_superseded_page_only=True,
+    )
+
+    assert outcome.ok is False
+    assert outcome.error == "dormant_relaunch_failed"
+    bind.assert_not_called()
+    assert _succ_row_snapshot(succ_id) == before
+    del pred_id
+
+
+@pytest.mark.asyncio
+async def test_k44_opt_in_refused_when_successor_host_not_listable(
+    isolated_registry: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """F4: successor not host-listable → no K44 attach or writes."""
+    from claude_bundles import cdp_registry as reg
+    from claude_bundles.cdp_registry.models import RegistryError
+
+    pred_id, succ_id = _seed_k44_superseded_dormant_predecessor()
+    active = reg._store.load_active()
+    active[succ_id]["status"] = "released"
+    reg._store.write_active(active)
+    before = _succ_row_snapshot(succ_id)
+    _restore_dormant_for_chat_url(monkeypatch)
+    relaunch = MagicMock(
+        side_effect=RegistryError("seat_closed_at set; refusing relaunch")
+    )
+    monkeypatch.setattr(
+        "cdp_ask.followup_reattach.cdp_registry.relaunch_dormant", relaunch
+    )
+    monkeypatch.setattr(
+        "claude_bundles.cdp_registry.tab_rows.inflight_row_for_chat_url",
+        lambda _url: None,
+    )
+
+    outcome = await ensure_cse_attached(
+        CSE_A,
+        holder="h",
+        allow_k44_superseded_page_only=True,
+    )
+
+    assert outcome.ok is False
+    assert outcome.error == "dormant_relaunch_failed"
+    assert _succ_row_snapshot(succ_id) == before
+    del pred_id
+
+
+@pytest.mark.asyncio
+async def test_k44_resume_host_lost_leaves_successor_unchanged(
+    isolated_registry: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """N1 falsifier: resume on K44 pred row must not touch live successor host."""
+    from claude_bundles import cdp_registry as reg
+    from claude_bundles.cdp_registry.models import RegistryError
+
+    from cdp_ask.execution_resume import resume_execution
+
+    pred_id, succ_id = _seed_k44_superseded_dormant_predecessor()
+    before = _succ_row_snapshot(succ_id)
+    _restore_dormant_for_chat_url(monkeypatch)
+    relaunch = MagicMock(
+        side_effect=RegistryError(
+            "registration has seat_closed_at set; "
+            "refusing relaunch of a superseded seat"
+        )
+    )
+    monkeypatch.setattr(
+        "cdp_ask.followup_reattach.cdp_registry.relaunch_dormant", relaunch
+    )
+    monkeypatch.setattr(
+        "claude_bundles.cdp_registry.tab_rows.inflight_row_for_chat_url",
+        lambda _url: None,
+    )
+    dispose = MagicMock()
+    monkeypatch.setattr("cdp_ask.execution_resume._dispose_host", dispose)
+
+    store = ExecutionStore()
+    record = await store.adopt(
+        execution_id="k44-resume-falsifier",
+        registration_id=pred_id,
+        holder="cdp-ask-satellite",
+        purpose="operator-proxy",
+        parent_thread=K44_LANE,
+        mission_kind=None,
+        started_at=1.0,
+        durable_state="streaming",
+    )
+
+    await resume_execution(store, record, trigger="host_lost")
+
+    assert _succ_row_snapshot(succ_id) == before
+    assert record.registration_id == pred_id
+    dispose.assert_not_called()
+    failed = await store.get("k44-resume-falsifier")
+    assert failed is not None
+    assert failed.status == "failed"
+    assert "dormant_relaunch_failed" in (failed.error or "")
 
 
 @pytest.mark.asyncio
