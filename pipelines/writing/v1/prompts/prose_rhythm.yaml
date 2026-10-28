@@ -4,6 +4,7 @@ optional_placeholders:
   - missing_obligations
   - source_obligations
   - brief
+  - review_findings
 template: |
   <draft>
   {draft}
@@ -20,6 +21,10 @@ template: |
   <missing_obligations>
   {missing_obligations}
   </missing_obligations>
+  <review_findings>
+  {review_findings}
+  </review_findings>
+  When <review_findings> is non-empty, apply every listed finding fix to the draft before prose-rhythm polish; do not leave draft_v2 identical to the input when fixes are actionable.
   Revise the draft using these prose-rhythm steps (plain text only; preserve every attested fact and pin-backed token):
   (1) Mark each sentence length as long, medium, or short.
   (2) On correspondence (email or sms), keep separate sentences separate unless <missing_obligations> requires adding a clause; when <missing_obligations> is empty and no duplicate phrases occur across adjacent sentences, keep each sentence's boundaries and opening adverbs (such as Currently, Right now) intact. On long-form or filing runs only, find runs of four or more consecutive sentences in the same length bucket.

@@ -43,6 +43,16 @@ _INTENT_OR_ASK_BACK_CONFIRM = re.compile(
     rf")",
     re.I,
 )
+_ASK_BACK_QUESTION = re.compile(
+    r"\?(?:\s|$)|\b(?:could you|can you|would you|please (?:send|share|confirm)|"
+    r"is (?:the|this) (?:role|position|opening)|"
+    r"(?:still )?(?:open|available|accepting applications))\b",
+    re.I,
+)
+_ASK_BACK_TARGET = re.compile(
+    r"\b(?:apply|application|link|portal|url|https?://|role|position|opening)\b",
+    re.I,
+)
 _ACTION_CONFIRM = re.compile(
     rf"(?:{_PAST_FP_ACTION}|{_INTENT_FP_ACTION}|{_PAST_LINK_CONFIRM}|"
     rf"\bsubmitting\s+my\s+application\b|"
@@ -216,6 +226,14 @@ def _effective_act_attested(pin_ledger: list[dict[str, Any]] | None) -> bool:
     return has_attested_external_act(pin_ledger)
 
 
+def _sentence_asks_back_for_cta(sentence: str, quoted_span: str) -> bool:
+    """True when the draft asks the counterpart for the off-message action."""
+    if not _ASK_BACK_QUESTION.search(sentence):
+        return False
+    combined = f"{sentence} {quoted_span}"
+    return _ASK_BACK_TARGET.search(combined) is not None
+
+
 def _act_outside_sentence_covers(sentence: str, *, act_attested: bool) -> bool:
     if not act_attested and _draft_sentence_has_past_action_claim(sentence):
         return False
@@ -386,6 +404,9 @@ def verify_obligation(
             for sentence in body_sentences:
                 if _draft_sentence_has_past_action_claim(sentence):
                     return "missing", ""
+            for sentence in body_sentences:
+                if _sentence_asks_back_for_cta(sentence, quoted):
+                    return "addressed", sentence
         for sentence in body_sentences:
             if _act_outside_sentence_covers(sentence, act_attested=act_attested):
                 return "addressed", sentence

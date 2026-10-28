@@ -230,7 +230,7 @@ steps:
       judge: semantic_judge_candidates.json
 
   - name: prose_rhythm_pass
-    type: generate
+    type: writing_prose_rhythm_v1
     model_ref: reviser
     prompt_ref: writing.v1.prose_rhythm
     reads_from:
@@ -239,6 +239,8 @@ steps:
       - step: obligation_coverage
         fields: [json]
       - step: source_obligations
+        fields: [json]
+      - step: fact_ceiling_audit
         fields: [json]
     condition: "assemble.json.get('refused') is None and options.get('output', 'envelope') != 'packet' and draft.json.get('refused') is None and independence.json.get('refused') is None and fact_ceiling_audit.json.get('refused') is None"
     handler_inputs:

@@ -382,6 +382,23 @@ def test_handler_email_subject_missing() -> None:
     assert "email_subject_missing" in _types(payload["violations"])
 
 
+def test_phone_purpose_line_not_flagged_as_drift() -> None:
+    sentence = "You can reach me at (669) 871-3234."
+    points = ["Phone number for reply."]
+    assert provenance.sentence_restates_purpose_point(sentence, points)
+    drift = provenance._scrub_purpose_restatement_flags(
+        {
+            "passed": False,
+            "flagged_sentences": [
+                {"sentence": sentence, "reason": "not_purpose_relevant"}
+            ],
+        },
+        points,
+    )
+    assert drift["passed"] is True
+    assert drift["flagged_sentences"] == []
+
+
 def test_em_dash_retained() -> None:
     violations = provenance.check_provenance(
         _LEDGER,

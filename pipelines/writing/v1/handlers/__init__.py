@@ -16,6 +16,7 @@ from .finalize import WritingFinalizeHandler
 from .independence import WritingIndependenceHandler
 from .obligation_coverage import WritingObligationCoverageHandler
 from .prompt_architect import WritingPromptArchitectHandler
+from .prose_rhythm import WritingProseRhythmHandler
 from .provenance_check import WritingProvenanceCheckHandler
 from .review_local import WritingReviewLocalHandler
 from .seat_dispatch import WritingReviewOpenaiHandler, WritingSeatDispatchHandler
@@ -112,4 +113,9 @@ def register_handlers(router: DomainRouter) -> None:
         "writing",
         "writing_semantic_judge_v1",
         WritingSemanticJudgeHandler,
+    )
+    router.register_domain_handler_class(
+        "writing",
+        "writing_prose_rhythm_v1",
+        WritingProseRhythmHandler,
     )

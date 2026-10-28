@@ -160,10 +160,10 @@ async def test_semantic_judge_two_calls_qwen_alias() -> None:
     out = await handler.execute(_Step("candidates"), ctx)
     assert calls == ["pin", "quality"]
     assert out.json["ok"] is True
-    assert out.model_id == "qwen3-5-9b"
+    assert out.model_id == "qwen3-5-9b-q8-0-131072"
     assert len(published) == 1
     assert published[0].signal == "writing.judge.completed"
-    assert published[0].payload["model_id"] == "qwen3-5-9b"
+    assert published[0].payload["model_id"] == "qwen3-5-9b-q8-0-131072"
 
 
 @pytest.mark.asyncio
@@ -192,8 +192,8 @@ async def test_semantic_judge_routes_qwen_through_call_model() -> None:
         }
     )
     out = await handler.execute(_Step("candidates"), ctx)
-    assert model_ids == ["qwen3-5-9b", "qwen3-5-9b"]
-    assert out.model_id == "qwen3-5-9b"
+    assert model_ids == ["qwen3-5-9b-q8-0-131072", "qwen3-5-9b-q8-0-131072"]
+    assert out.model_id == "qwen3-5-9b-q8-0-131072"
     assert published[0].signal == "writing.judge.completed"
 
 
@@ -362,7 +362,7 @@ def test_quality_judgment_rejects_out_of_range_penalty() -> None:
 
 def test_judge_event_signals() -> None:
     completed = judge_events.WritingJudgeCompleted(
-        invocation="candidates", model_id="qwen3-5-9b"
+        invocation="candidates", model_id="qwen3-5-9b-q8-0-131072"
     )
     failed = judge_events.WritingJudgeFailed(invocation="v2", reason="transport")
     assert completed.signal == "writing.judge.completed"
@@ -529,3 +529,12 @@ async def test_semantic_judge_quality_json_schema_v2_invocation() -> None:
     item = findings.get("items") or {}
     assert set(item.get("required") or []) == {"rule", "detail", "penalty"}
     assert "candidate_id" not in (item.get("properties") or {})
+
+
+def test_semantic_judge_source_has_no_bare_qwen_alias() -> None:
+    source = (
+        Path(__file__).resolve().parents[1] / "handlers" / "semantic_judge.py"
+    ).read_text(encoding="utf-8")
+    assert 'ModelId.parse("qwen3-5-9b")' not in source
+    assert '"qwen3-5-9b"' not in source
+    assert "load_writing_models" in source

@@ -5,12 +5,12 @@ from __future__ import annotations
 import json
 from typing import Any
 
-from model_id import ModelId
 from systems.pipeline.core.handlers.builtin import BaseHandler
 from systems.pipeline.core.handlers.protocol import StepOutput
 from systems.pipeline.core.prompts import PromptBuilder
 from writing_pipeline.events import WritingJudgeCompleted, WritingJudgeFailed
 
+from .independence import load_writing_models
 from .judge_schema import (
     PIN_CANDIDATES_SCHEMA,
     PIN_SINGLE_SCHEMA,
@@ -175,8 +175,10 @@ class WritingSemanticJudgeHandler(BaseHandler):
         quality_system = str(quality_row.get("system_prompt") or "")
         pin_schema = PIN_CANDIDATES_SCHEMA if multi else PIN_SINGLE_SCHEMA
         quality_schema = QUALITY_CANDIDATES_SCHEMA if multi else QUALITY_SINGLE_SCHEMA
-        parsed_id = ModelId.parse("qwen3-5-9b")
-        model_id = str(parsed_id)
+        models = load_writing_models()
+        model_id = str(models.get("verifier") or "")
+        if not model_id:
+            return self._unavailable(context, invocation, "verifier_model_missing")
 
         try:
             if self._caller is not None:
