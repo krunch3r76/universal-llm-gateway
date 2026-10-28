@@ -22,7 +22,7 @@ from typing import Any, Literal
 
 from claude_bundles.chat_session_hygiene import in_active_chat
 
-ApprovalMode = Literal["skip", "auto", "manual", "absent"]
+ApprovalMode = Literal["skip", "auto", "manual", "unknown", "absent"]
 ComposeMode = Literal["chat", "cowork"]
 SubmitStrategy = Literal["mode_locked", "live_discover"]
 
@@ -128,7 +128,7 @@ def _approval_is_skip(fp: dict[str, Any]) -> bool:
 
 
 def approval_mode_chip(fp: dict[str, Any]) -> ApprovalMode:
-    """Classify the approval chip for receipts (skip | auto | manual | absent)."""
+    """Classify the approval chip for pass receipts (skip | auto | manual | unknown | absent)."""
     aria = _approval_aria(fp)
     if not aria:
         return "absent"
@@ -138,22 +138,7 @@ def approval_mode_chip(fp: dict[str, Any]) -> ApprovalMode:
         return "manual"
     if _AUTO_ARIA_RE.search(aria):
         return "auto"
-    return "absent"
-
-
-class ComposeDispatchRefusedError(RuntimeError):
-    """Submit blocked by approval policy; carries receipt fields for callers."""
-
-    def __init__(
-        self,
-        message: str,
-        *,
-        approval_mode: ApprovalMode,
-        surface: str | None = None,
-    ) -> None:
-        super().__init__(message)
-        self.approval_mode = approval_mode
-        self.surface = surface
+    return "unknown"
 
 
 def dispatch_approval_refuse_reason(
@@ -181,13 +166,12 @@ def dispatch_approval_refuse_reason(
     if chip in ("skip", "auto"):
         return None
     if chip == "manual":
+        seen = str(fp.get("approval", {}).get("text") or aria).strip() or aria
         return (
-            f"code dispatch refused: approval aria {aria!r} (code accepts skip, auto)"
+            f"code dispatch refused: surface=code approval {seen!r} "
+            "(code accepts skip, auto)"
         )
-    return (
-        "code dispatch refused: Skip all approvals not attested "
-        f"(mode={mode!r} approval={fp.get('approval')!r})"
-    )
+    return cowork_auto_refuse_reason(fp)
 
 
 def cowork_auto_refuse_reason(fp: dict[str, Any]) -> str | None:

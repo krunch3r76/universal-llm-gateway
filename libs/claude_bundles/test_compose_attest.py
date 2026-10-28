@@ -11,7 +11,6 @@ from playwright.async_api import async_playwright  # noqa: E402
 
 from claude_bundles.chat_cowork_mode import select_compose_mode
 from claude_bundles.compose_attest import (
-    ComposeDispatchRefusedError,
     _compose_attested,
     approval_label,
     approval_mode_chip,
@@ -337,13 +336,26 @@ def test_cowork_auto_refuse_reason_text_only_manual_still_refuses() -> None:
     assert "Skip all approvals" in reason
 
 
-def _approval_fp(*, text: str, mode: str = "cowork") -> dict:
+def _approval_fp(
+    *,
+    text: str | None,
+    mode: str | None = "cowork",
+    url: str = "https://claude.ai/new",
+) -> dict:
+    approval = None
+    if text is not None:
+        approval = {"aria": "", "text": text, "via": "text"}
+    title = "Code - Claude" if "/code" in url else f"New {mode or 'task'} - Claude"
     return {
-        "title": f"New {mode} - Claude",
+        "title": title,
         "mode": mode,
-        "approval": {"aria": "", "text": text, "via": "text"},
-        "url": "https://claude.ai/new",
+        "approval": approval,
+        "url": url,
     }
+
+
+def _code_fp(*, text: str | None) -> dict:
+    return _approval_fp(text=text, mode=None, url="https://claude.ai/code")
 
 
 @pytest.mark.parametrize(
@@ -352,15 +364,18 @@ def _approval_fp(*, text: str, mode: str = "cowork") -> dict:
         ("cowork", "Skip", "cowork", False),
         ("cowork", "Auto", "cowork", True),
         ("cowork", "Manual", "cowork", True),
-        ("code", "Skip", "cowork", False),
-        ("code", "Auto", "cowork", False),
-        ("code", "Manual", "cowork", True),
+        ("code", "Skip", None, False),
+        ("code", "Auto", None, False),
+        ("code", "Manual", None, True),
     ],
 )
 def test_dispatch_approval_refuse_table_cowork_and_code(
-    surface: str, chip_text: str, mode: str, expect_refuse: bool
+    surface: str, chip_text: str, mode: str | None, expect_refuse: bool
 ) -> None:
-    fp = _approval_fp(text=chip_text, mode=mode)
+    if surface == "code":
+        fp = _code_fp(text=chip_text)
+    else:
+        fp = _approval_fp(text=chip_text, mode=mode or "cowork")
     reason = dispatch_approval_refuse_reason(fp, surface=surface)
     if expect_refuse:
         assert reason is not None
@@ -374,36 +389,73 @@ def test_dispatch_approval_refuse_table_cowork_and_code(
 
 
 def test_dispatch_approval_refuse_code_no_chip_passes() -> None:
-    fp = {
-        "title": "Code - Claude",
-        "mode": None,
-        "approval": None,
-        "url": "https://claude.ai/code",
-    }
+    fp = _code_fp(text=None)
     assert dispatch_approval_refuse_reason(fp, surface="code") is None
     assert approval_mode_chip(fp) == "absent"
 
 
+def test_approval_mode_chip_unknown_vs_absent() -> None:
+    assert approval_mode_chip(_code_fp(text=None)) == "absent"
+    fp = _code_fp(text="Prompt me")
+    assert approval_mode_chip(fp) == "unknown"
+    reason = dispatch_approval_refuse_reason(fp, surface="code")
+    assert reason is not None
+    assert "Skip all approvals not attested" in reason
+
+
+def test_code_manual_refusal_message_names_surface_and_chip() -> None:
+    reason = dispatch_approval_refuse_reason(_code_fp(text="Manual"), surface="code")
+    assert reason is not None
+    assert "surface=code" in reason
+    assert "'Manual'" in reason
+    assert "code accepts skip, auto" in reason
+
+
 @pytest.mark.asyncio
-async def test_submit_receipt_records_approval_mode_on_pass_and_refusal(
+async def test_cowork_auto_refusal_raises_runtime_error_with_legacy_message(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Receipt carries approval_mode beside model_ran on pass and on refusal."""
-    auto_fp = _approval_fp(text="Auto", mode="cowork")
-
-    async def fake_fingerprint(_page) -> dict:
-        return auto_fp
+    fp = _approval_fp(text="Auto", mode="cowork")
 
     async def fake_ensure(_page) -> dict:
-        return {"after": auto_fp}
+        return {"after": fp}
 
-    monkeypatch.setattr(
-        "claude_bundles.project_ask.compose_mode_fingerprint",
-        fake_fingerprint,
-    )
     monkeypatch.setattr(
         "claude_bundles.chat_cowork_mode.ensure_approval_auto",
         fake_ensure,
+    )
+    from claude_bundles.project_ask import _submit_composer_draft
+
+    with pytest.raises(
+        RuntimeError, match="cowork dispatch refused: approval aria 'Auto'"
+    ):
+        await _submit_composer_draft(
+            AsyncMock(),
+            composer=AsyncMock(),
+            draft_text="hi",
+            claude_surface="cowork",
+        )
+
+
+@pytest.mark.asyncio
+async def test_code_surface_never_awaits_ensure_approval_auto(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fp = _code_fp(text="Auto")
+
+    async def fail_if_called(_page) -> dict:
+        raise AssertionError("ensure_approval_auto must not run on code surface")
+
+    async def fake_fingerprint(_page) -> dict:
+        return fp
+
+    monkeypatch.setattr(
+        "claude_bundles.chat_cowork_mode.ensure_approval_auto",
+        fail_if_called,
+    )
+    monkeypatch.setattr(
+        "claude_bundles.project_ask.compose_mode_fingerprint",
+        fake_fingerprint,
     )
     monkeypatch.setattr(
         "claude_bundles.project_ask.resolve_submit_strategy",
@@ -421,19 +473,33 @@ async def test_submit_receipt_records_approval_mode_on_pass_and_refusal(
         composer=AsyncMock(),
         draft_text="hi",
         claude_surface="code",
-        submit_receipt=receipt,
+        compose_receipt=receipt,
     )
     assert receipt["approval_mode"] == "auto"
 
-    receipt_refuse: dict = {}
-    with pytest.raises(ComposeDispatchRefusedError) as raised:
+
+@pytest.mark.asyncio
+async def test_compose_receipt_approval_mode_only_on_pass_not_refusal(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fp = _approval_fp(text="Auto", mode="cowork")
+
+    async def fake_ensure(_page) -> dict:
+        return {"after": fp}
+
+    monkeypatch.setattr(
+        "claude_bundles.chat_cowork_mode.ensure_approval_auto",
+        fake_ensure,
+    )
+    from claude_bundles.project_ask import _submit_composer_draft
+
+    receipt: dict = {"model_ran": "Sonnet"}
+    with pytest.raises(RuntimeError):
         await _submit_composer_draft(
             AsyncMock(),
             composer=AsyncMock(),
             draft_text="hi",
             claude_surface="cowork",
-            submit_receipt=receipt_refuse,
+            compose_receipt=receipt,
         )
-    assert receipt_refuse["approval_mode"] == "auto"
-    assert raised.value.approval_mode == "auto"
-    assert "cowork dispatch refused" in str(raised.value)
+    assert receipt == {"model_ran": "Sonnet"}
