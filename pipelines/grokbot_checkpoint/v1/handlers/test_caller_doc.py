@@ -123,7 +123,10 @@ def test_caller_doc_paths() -> None:
     assert "meta.provenance` `raw" in text
     assert "tape/pours/<surface>/<transcript_id>.messages.json" not in text
     assert "houseless: true" in text
-    assert "notes/system/transcripts/" not in text
+    assert "notes/system/transcripts/<house|_nohouse>/grok-bot/raw/" in text
+    assert "notes/system/transcripts/<house|_nohouse>/grok-bot/messages/" in text
+    assert "status=partial" in text
+    assert "transcript_store" in text
 
 
 def test_caller_doc_raw_pour_capture_consistency() -> None:

@@ -143,11 +143,29 @@ async def run_harvest_pour(
     )
     if transcribed.get("refused"):
         return transcribed
-    return {
+    from .transcript_store import maybe_persist_canonical_transcript
+
+    transcript_store = await maybe_persist_canonical_transcript(
+        fs,
+        options=options,
+        raw_bytes=raw_bytes,
+        raw_envelope=raw_envelope,
+        l0_ref=l0_ref,
+    )
+    out: dict[str, Any] = {
         **transcribed,
         "raw_messages_ref": raw_uri,
         "raw_messages_sha256": raw_stats.get("messages_sha256"),
+        "transcript_store": transcript_store,
     }
+    if transcript_store.get("status") == "error":
+        out.setdefault("warnings", [])
+        if isinstance(out["warnings"], list):
+            out["warnings"] = list(out["warnings"])
+            out["warnings"].append(
+                f"transcript_store: {transcript_store.get('error', 'unknown')}"
+            )
+    return out
 
 
 class GrokbotCheckpointHarvestPourHandler(BaseHandler):

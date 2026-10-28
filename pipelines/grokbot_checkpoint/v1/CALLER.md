@@ -60,6 +60,8 @@ Window `transcript_id` = pour `meta.transcript_id` = journal `conversation_uuid`
 
 Canonical checkpoint transcription: `notes/system/checkpoints/grok/<agent>/<n>.messages.json`. Raw transcript sibling (harvest `extract_grokbot_transcript`, `meta.provenance` `raw`): `notes/system/checkpoints/grok/<agent>/<n>.raw.messages.json`. Authority tape: `notes/system/seals/<sid>.messages.json`. `raw_ref` is the seal-mode slot for a pour whose `meta.provenance` is `raw`. It is not the verbatim export.
 
+Canonical raw transcript store (additive on successful `harvest_seal` pour; legacy checkpoint paths unchanged): `notes/system/transcripts/<house|_nohouse>/grok-bot/raw/<YYYY-MM-DD>/<agent_id>.txt` plus sibling `.manifest.json` (`source=grok-bot`, `status=partial`, `known_gap_assertion_id` 38940 — assertion a:38940, not byte-exact ReadTranscript harvest). Messages projection: `notes/system/transcripts/<house|_nohouse>/grok-bot/messages/<YYYY-MM-DD>/<agent_id>.messages.json` plus `.manifest.json` (`raw_sha256`, `raw_rel_path` pointer). `native_id` = `agent_id` (uuid). Houseless runs use `_nohouse`. Later checkpoints with longer L0 bytes may write `__r2` revisions with `supersedes`. Result field `transcript_store` reports paths or `skipped` when no share files root is configured.
+
 Raw pour capture consistency (validated before any checkpoint write): for `capture.kind` `jsonl`, `capture.sha256` must equal `meta.source_sha256`; for `capture.kind` `grok_export`, `capture.sha256` must equal `meta.sources[0].pages_sha256` and `meta.sources[0].reassembled_jsonl_sha256` must equal `meta.source_sha256`. Any mismatch or missing `pages_sha256` / `reassembled_jsonl_sha256` refuses `pour.capture_inconsistent`.
 
 ## Writing the handoff letter
