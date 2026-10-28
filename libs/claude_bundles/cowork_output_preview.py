@@ -85,6 +85,66 @@ _OUTPUT_FILENAME_BUTTON_JS = """
 }
 """
 
+_OUTPUT_LIST_CARDS_JS = """
+() => {
+  const FILE_RE = /\\.(md|txt|json|ya?ml|toml|csv|py|html?|pdf|ts|tsx|js|jsx|rs|go|sh)$/i;
+  const root = document.body;
+  if (!root) return [];
+
+  const scopes = [];
+  for (const el of root.querySelectorAll(
+    'aside, nav, section, [role="complementary"], [role="navigation"], div'
+  )) {
+    const head = (el.textContent || '').slice(0, 800);
+    if (!/\\boutputs?\\b/i.test(head)) continue;
+    if (head.length > 12000) continue;
+    scopes.push(el);
+  }
+  if (!scopes.length) scopes.push(root);
+
+  const seen = new Set();
+  const out = [];
+  for (const scope of scopes) {
+    for (const el of scope.querySelectorAll('button, [role="button"], a')) {
+      if (el.hasAttribute('download')) continue;
+      const aria = (el.getAttribute('aria-label') || '').toLowerCase();
+      if (aria.includes('download')) continue;
+      const label = (el.innerText || el.textContent || '')
+        .trim().replace(/\\s+/g, ' ');
+      if (!label || label.length > 200) continue;
+      if (!FILE_RE.test(label)) continue;
+      if (/^(download|copy|open|delete)\\b/i.test(label)) continue;
+      if (seen.has(label)) continue;
+      seen.add(label);
+      out.push({ filename: label });
+    }
+  }
+  out.sort((a, b) => a.filename.localeCompare(b.filename));
+  return out;
+}
+"""
+
+_TAG_OUTPUT_FILENAME_JS = """
+(filename) => {
+  const target = (filename || '').trim();
+  if (!target) return false;
+  for (const el of document.querySelectorAll('[data-cdp-output-filename]')) {
+    el.removeAttribute('data-cdp-output-filename');
+  }
+  const FILE_RE = /\\.(md|txt|json|ya?ml|toml|csv|py|html?|pdf|ts|tsx|js|jsx|rs|go|sh)$/i;
+  for (const el of document.querySelectorAll('button, [role="button"], a')) {
+    const label = (el.innerText || el.textContent || '')
+      .trim().replace(/\\s+/g, ' ');
+    if (!label || !FILE_RE.test(label)) continue;
+    if (label === target || label.includes(target) || target.includes(label)) {
+      el.setAttribute('data-cdp-output-filename', '1');
+      return { tagged: true, filename: label };
+    }
+  }
+  return null;
+}
+"""
+
 _OUTPUT_PREVIEW_EXTRACT_JS = """
 () => {
   const MIN = 120;
@@ -180,6 +240,7 @@ async def extract_cowork_output_preview(
         filename=filename,
         content=content,
         content_bytes=raw,
+        route="preview_innerText_extract",
     )
 
 
@@ -190,6 +251,30 @@ def _filename_from_outputs_row(label: str, suggested: str) -> str:
         return stripped
     fallback = (suggested or "").strip()
     return fallback or "cowork-output"
+
+
+async def list_cowork_output_card_filenames(page: Page) -> list[str]:
+    """Return sorted unique Output filenames visible in the Outputs panel."""
+    raw = await page.evaluate(_OUTPUT_LIST_CARDS_JS)
+    if not isinstance(raw, list):
+        return []
+    names: list[str] = []
+    for row in raw:
+        if not isinstance(row, dict):
+            continue
+        name = str(row.get("filename") or "").strip()
+        if name:
+            names.append(name)
+    return names
+
+
+async def tag_cowork_output_filename_button(page: Page, filename: str) -> str | None:
+    """Tag the Outputs row matching *filename*; return the resolved panel label."""
+    tagged = await page.evaluate(_TAG_OUTPUT_FILENAME_JS, filename)
+    if not isinstance(tagged, dict):
+        return None
+    label = str(tagged.get("filename") or "").strip()
+    return label or None
 
 
 async def download_via_preview_menu(
@@ -244,6 +329,7 @@ async def download_via_preview_menu(
             filename=_filename_from_outputs_row(raw_label, suggested),
             content=text,
             content_bytes=raw,
+            route="preview_menu_download",
         )
     except Exception:
         return None
@@ -254,5 +340,7 @@ __all__ = [
     "download_via_preview_menu",
     "extract_cowork_output_preview",
     "is_thin_or_chrome_preview",
+    "list_cowork_output_card_filenames",
     "looks_like_output_filename",
+    "tag_cowork_output_filename_button",
 ]

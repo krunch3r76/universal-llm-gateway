@@ -20,6 +20,7 @@ HarvestOutcome = Literal[
     "unreachable",
     "refused",
     "archive_conflict",
+    "disambiguation",
 ]
 HarvestSource = Literal["chat", "output-file", "auto"]
 TurnSource = Literal["cse-dom", "output-file", "archive", "bus-fallback"]
@@ -90,6 +91,17 @@ class HarvestIdentity(BaseModel):
     identity_check: IdentityCheck
 
 
+class OutputCardSummary(BaseModel):
+    """One Cowork Outputs panel file row (filename affordance)."""
+
+    filename: str
+    file_uuid: str | None = None
+    bytes: int = 0
+    raw_sha256: str | None = None
+    messages_path: str | None = None
+    messages_sha256: str | None = None
+
+
 class HarvestRequest(BaseModel):
     """Bounded harvest — no paste or submit. Opens chat_url when no lane is live."""
 
@@ -132,6 +144,7 @@ class HarvestResponse(BaseModel):
     alignment: str | None = None
     existing_sha256: str | None = None
     conflict: ConflictDetail | None = None
+    cards: list[OutputCardSummary] = Field(default_factory=list)
 
 
 class PasteRequest(BaseModel):
