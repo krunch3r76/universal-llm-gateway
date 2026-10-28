@@ -296,6 +296,7 @@ async def team_dispatch(
                 format_ledger_prompt_prefix,
                 patch_spawn_row,
                 record_spawn,
+                record_status_row,
             )
 
             purpose = str(getattr(body, "spawn_purpose", "") or "").strip()
@@ -341,10 +342,16 @@ async def team_dispatch(
                     ),
                 )
             except Exception as exc:
+                reason = type(exc).__name__
                 patch_spawn_row(
                     row_id,
                     state="failed",
-                    reason=type(exc).__name__,
+                    reason=reason,
+                )
+                record_status_row(
+                    row_id=row_id,
+                    status="failed",
+                    source_status=reason,
                 )
                 response.status_code = 502
                 return {
@@ -365,10 +372,16 @@ async def team_dispatch(
                     agent_id=agent_id or None,
                 )
             else:
+                reason = str(spawn_res.get("error") or spawn_res.get("reason") or "")
                 patch_spawn_row(
                     row_id,
                     state="failed",
-                    reason=str(spawn_res.get("error") or spawn_res.get("reason") or ""),
+                    reason=reason,
+                )
+                record_status_row(
+                    row_id=row_id,
+                    status="failed",
+                    source_status=reason or None,
                 )
             response.status_code = 200 if spawn_res.get("ok") else 502
             return {

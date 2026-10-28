@@ -101,6 +101,36 @@ def test_op_spawn_cursor_ide_prepends_prefix_before_relay() -> None:
     assert prompt.endswith("Do the work.")
 
 
+def test_ide_launch_error_projects_failed_status_row(tmp_path: Path) -> None:
+    """B3: relay failure writes kind=status failed visible to project_row_status."""
+    client = _client()
+
+    def _relay_fail(**kwargs: object) -> dict[str, object]:
+        return {"ok": False, "error": "no_page"}
+
+    proxy = MagicMock(event_bus=None)
+    with (
+        patch("systems.proxy.dependencies.get_proxy", return_value=proxy),
+        patch(
+            "cursor_bridge.bridge_spawn_relay.relay_spawn_tab",
+            side_effect=_relay_fail,
+        ),
+        patch(
+            "cursor_bridge.spawn_endpoint_house_ledger.ledger_path",
+            return_value=tmp_path / "cursor-bridge-tab-wake-ledger.jsonl",
+        ),
+    ):
+        resp = client.post("/api/v1/team/dispatch", json=_spawn_body())
+    assert resp.status_code == 502
+    payload = resp.json()
+    row_id = str(payload.get("ledger_row_id") or "")
+    from cursor_bridge.spawn_endpoint_house_ledger import project_row_status
+
+    proj = project_row_status(row_id, watch_dir=tmp_path)
+    assert proj["status"] == "failed"
+    assert proj["source_status"] == "no_page"
+
+
 def test_ide_launch_error_marks_failed_after_spine(tmp_path: Path) -> None:
     client = _client()
 
