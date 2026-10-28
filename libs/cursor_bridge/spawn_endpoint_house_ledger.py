@@ -385,6 +385,21 @@ def _find_spawn_row_id(
     return None
 
 
+def _extract_report_marker(subject: str, body: str) -> str | None:
+    """First status-bearing marker from bus subject, else a non-ledger body line."""
+    subj = str(subject or "").strip()
+    if subj:
+        return subj
+    for line in (body or "").splitlines():
+        stripped = line.strip()
+        if not stripped:
+            continue
+        if stripped.startswith("ledger_row:") or stripped.startswith("purpose:"):
+            continue
+        return stripped
+    return None
+
+
 def ingest_report_turn(
     body: str,
     subject: str,
@@ -392,8 +407,6 @@ def ingest_report_turn(
     turn: int | None = None,
     *,
     watch_dir: Path | None = None,
-    status: str = "live",
-    source_status: str | None = None,
 ) -> dict[str, Any]:
     """Match a house spawn row and append ``kind=report`` (S5)."""
     rid = _find_spawn_row_id(
@@ -401,19 +414,17 @@ def ingest_report_turn(
     )
     if not rid:
         return {"ok": False, "error": "no_matching_spawn"}
-    raw_marker = source_status if source_status is not None else status
-    mapped = map_source_status(raw_marker)
-    if mapped != "unknown":
-        proj = mapped
-    elif source_status is not None and str(source_status).strip():
+    raw_marker = _extract_report_marker(subject, body)
+    if raw_marker is None:
         proj = "unknown"
+        stored_source: str | None = None
     else:
-        caller = str(status or "").strip()
-        proj = caller if caller in _STATUS_VALUES else "unknown"
+        stored_source = raw_marker
+        proj = map_source_status(raw_marker)
     return record_report_row(
         row_id=rid,
         status=proj,
-        source_status=source_status or status,
+        source_status=stored_source,
         thread=thread,
         turn=turn,
         watch_dir=watch_dir,
@@ -487,21 +498,48 @@ def _serve_row_with_status(
     return out
 
 
+def _normalize_house_selector(
+    house: str | dict[str, Any] | None,
+) -> dict[str, str] | None:
+    if house is None:
+        return None
+    if isinstance(house, str):
+        thread = str(house).strip()
+        return {"thread": thread} if thread else None
+    if isinstance(house, dict):
+        out: dict[str, str] = {}
+        for key, val in house.items():
+            if val is None:
+                continue
+            text = str(val).strip()
+            if text:
+                out[str(key)] = text
+        return out or None
+    return None
+
+
+def _spawn_matches_house(spawn: dict[str, Any], house_sel: dict[str, str]) -> bool:
+    for key, want in house_sel.items():
+        if str(spawn.get(key) or "").strip() != want:
+            return False
+    return True
+
+
 def read_house_ledger(
     *,
-    house: str | None = None,
+    house: str | dict[str, Any] | None = None,
     parent: dict[str, str] | None = None,
     limit: int = 5,
     watch_dir: Path | None = None,
 ) -> dict[str, Any]:
     """Serve folded spawn rows for ``op=ledger`` house/parent reads (trimmed)."""
     lim = max(1, min(10, int(limit)))
-    key_house = str(house or "").strip()
+    house_sel = _normalize_house_selector(house)
     parent_sel = parent if isinstance(parent, dict) else None
     folded = _fold_spawn_rows(_read_rows(ledger_path(watch_dir)))
     candidates: list[dict[str, Any]] = []
     for spawn in folded.values():
-        if key_house and str(spawn.get("thread") or "").strip() != key_house:
+        if house_sel and not _spawn_matches_house(spawn, house_sel):
             continue
         if parent_sel and not _spawn_matches_parent(spawn, parent_sel):
             continue
@@ -526,7 +564,7 @@ def read_house_ledger(
         "truncated": False,
     }
     payload: dict[str, Any] = {
-        "house": key_house or None,
+        "house": house_sel,
         "parent": parent_sel,
         "rows": matched,
         "status": head_status["status"],
@@ -551,7 +589,7 @@ def read_house_ledger(
             else {"status": "unknown", "source_status": None}
         )
         payload = {
-            "house": key_house or None,
+            "house": house_sel,
             "parent": parent_sel,
             "rows": matched,
             "status": head_status["status"],

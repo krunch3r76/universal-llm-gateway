@@ -133,6 +133,73 @@ def test_ide_launch_error_marks_failed_after_spine(tmp_path: Path) -> None:
     assert spawns[0]["state"] == "failed"
 
 
+def test_ide_launch_relay_exception_marks_failed_not_500(tmp_path: Path) -> None:
+    client = _client()
+
+    def _relay_boom(**kwargs: object) -> dict[str, object]:
+        raise RuntimeError("relay exploded")
+
+    proxy = MagicMock(event_bus=None)
+    with (
+        patch("systems.proxy.dependencies.get_proxy", return_value=proxy),
+        patch(
+            "cursor_bridge.bridge_spawn_relay.relay_spawn_tab",
+            side_effect=_relay_boom,
+        ),
+        patch(
+            "cursor_bridge.spawn_endpoint_house_ledger.ledger_path",
+            return_value=tmp_path / "cursor-bridge-tab-wake-ledger.jsonl",
+        ),
+    ):
+        resp = client.post("/api/v1/team/dispatch", json=_spawn_body())
+    assert resp.status_code == 502, resp.text
+    spawns = _folded_spawns(tmp_path / "cursor-bridge-tab-wake-ledger.jsonl")
+    assert len(spawns) == 1
+    assert spawns[0]["state"] == "failed"
+
+
+def test_op_ledger_house_object_disambiguates(tmp_path: Path) -> None:
+    from cursor_bridge.spawn_endpoint_house_ledger import record_spawn
+
+    record_spawn(
+        surface="cursor_ide",
+        thread="house-thread",
+        purpose="first",
+        purpose_unstated=False,
+        dispatch_id="disp-one",
+        watch_dir=tmp_path,
+    )
+    record_spawn(
+        surface="cursor_ide",
+        thread="house-thread",
+        purpose="second",
+        purpose_unstated=False,
+        dispatch_id="disp-two",
+        watch_dir=tmp_path,
+    )
+    client = _client()
+    proxy = MagicMock(event_bus=None)
+    with (
+        patch("systems.proxy.dependencies.get_proxy", return_value=proxy),
+        patch(
+            "cursor_bridge.spawn_endpoint_house_ledger.ledger_path",
+            return_value=tmp_path / "cursor-bridge-tab-wake-ledger.jsonl",
+        ),
+    ):
+        resp = client.post(
+            "/api/v1/team/dispatch",
+            json={
+                "op": "ledger",
+                "house": {"thread": "house-thread", "dispatch_id": "disp-two"},
+                "limit": 5,
+            },
+        )
+    assert resp.status_code == 200, resp.text
+    rows = resp.json()["rows"]
+    assert len(rows) == 1
+    assert rows[0]["dispatch_id"] == "disp-two"
+
+
 def test_ide_spawn_row_launching_before_relay(tmp_path: Path) -> None:
     client = _client()
     order: list[str] = []

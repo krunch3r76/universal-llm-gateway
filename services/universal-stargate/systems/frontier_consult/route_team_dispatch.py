@@ -106,8 +106,15 @@ async def team_dispatch(
             if parent_raw is not None and hasattr(parent_raw, "model_dump")
             else None
         )
+        house_raw = getattr(body, "house", None)
+        if house_raw is not None and hasattr(house_raw, "model_dump"):
+            house_arg: str | dict[str, str] | None = house_raw.model_dump(
+                exclude_none=True
+            )
+        else:
+            house_arg = house_raw
         detail = read_house_ledger(
-            house=getattr(body, "house", None),
+            house=house_arg,
             parent=parent_sel,
             limit=getattr(body, "limit", 5) or 5,
         )
@@ -318,20 +325,34 @@ async def team_dispatch(
             prefixed = format_ledger_prompt_prefix(row_id=row_id, purpose=purpose)
             hop_prompt = prefixed + str(body.prompt)
             loop = asyncio.get_running_loop()
-            spawn_res = await loop.run_in_executor(
-                None,
-                partial(
-                    relay_spawn_tab,
-                    gui_host=str(body.gui_host),
-                    prompt=hop_prompt,
-                    model=getattr(body, "model", None),
-                    effort=getattr(body, "effort", None),
-                    fast=getattr(body, "fast", None),
-                    model_knobs=getattr(body, "model_knobs", None),
-                    title=getattr(body, "title", None),
-                    slug=getattr(body, "slug", None),
-                ),
-            )
+            try:
+                spawn_res = await loop.run_in_executor(
+                    None,
+                    partial(
+                        relay_spawn_tab,
+                        gui_host=str(body.gui_host),
+                        prompt=hop_prompt,
+                        model=getattr(body, "model", None),
+                        effort=getattr(body, "effort", None),
+                        fast=getattr(body, "fast", None),
+                        model_knobs=getattr(body, "model_knobs", None),
+                        title=getattr(body, "title", None),
+                        slug=getattr(body, "slug", None),
+                    ),
+                )
+            except Exception as exc:
+                patch_spawn_row(
+                    row_id,
+                    state="failed",
+                    reason=type(exc).__name__,
+                )
+                response.status_code = 502
+                return {
+                    "ok": False,
+                    "error": type(exc).__name__,
+                    "ledger_row_id": row_id,
+                    "thread": thread,
+                }
             if spawn_res.get("ok"):
                 agent_id = str(
                     spawn_res.get("editor_agent_id")

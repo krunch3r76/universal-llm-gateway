@@ -270,19 +270,52 @@ class TeamDispatchLedgerParent(BaseModel):
     thread: str
 
 
+class TeamDispatchLedgerHouse(BaseModel):
+    """Spawn row house address: ``thread`` plus one disambiguator group."""
+
+    model_config = {"extra": "forbid"}
+
+    thread: str
+    dispatch_id: str | None = None
+    execution_id: str | None = None
+    gui_host: str | None = None
+    agent_id: str | None = None
+
+    @model_validator(mode="after")
+    def _house_disambiguator(self) -> Self:
+        thread = str(self.thread or "").strip()
+        if not thread:
+            raise ValueError("house.thread is required")
+        has_dispatch = bool(str(self.dispatch_id or "").strip())
+        has_execution = bool(str(self.execution_id or "").strip())
+        gui = str(self.gui_host or "").strip()
+        agent = str(self.agent_id or "").strip()
+        has_gui_pair = bool(gui and agent)
+        groups = sum((has_dispatch, has_execution, has_gui_pair))
+        if groups != 1:
+            raise ValueError(
+                "house requires exactly one of dispatch_id, execution_id, "
+                "or gui_host+agent_id"
+            )
+        return self
+
+
 class TeamDispatchLedgerBody(_DispatchCommon):
     """``team_dispatch`` op ``ledger`` returns recent dispatches for one work_key."""
 
     op: Literal["ledger"]
     work_key: str | None = None
-    house: str | None = None
+    house: str | TeamDispatchLedgerHouse | None = None
     parent: TeamDispatchLedgerParent | None = None
     limit: int = Field(default=5, ge=1, le=10)
     window_hours: int = Field(default=24, ge=1, le=168)
 
     @model_validator(mode="after")
     def _ledger_target_required(self) -> Self:
-        has_house = bool(str(self.house or "").strip())
+        has_house = self.house is not None and (
+            isinstance(self.house, TeamDispatchLedgerHouse)
+            or bool(str(self.house).strip())
+        )
         has_parent = self.parent is not None
         if has_house and has_parent:
             raise ValueError("house and parent are mutually exclusive")

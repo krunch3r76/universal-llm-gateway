@@ -116,7 +116,7 @@ def evaluate_conductor_defaults(
         seat="cursor-sdk",
         model=model,
         job="conductor",
-        workflow="auto_judgment",
+        workflow=None,
         to_agent="cursor-sdk",
         family="cursor",
         platform="sdk",

@@ -288,7 +288,28 @@ def test_ingest_report_no_matching_spawn(tmp_path: Path) -> None:
     assert out == {"ok": False, "error": "no_matching_spawn"}
 
 
-def test_ingest_report_unmapped_marker_stored_unknown(tmp_path: Path) -> None:
+def test_ingest_report_closeout_complete_subject_maps_done(tmp_path: Path) -> None:
+    rid = uuid.uuid4().hex
+    ledger.record_spawn(
+        surface="cursor_sdk",
+        thread="t",
+        purpose="p",
+        purpose_unstated=True,
+        row_id=rid,
+        watch_dir=tmp_path,
+    )
+    out = ledger.ingest_report_turn(
+        f"ledger_row: {rid}\n",
+        "CLOSEOUT complete",
+        "t",
+        turn=4,
+        watch_dir=tmp_path,
+    )
+    assert out["status"] == "done"
+    assert out["source_status"] == "CLOSEOUT complete"
+
+
+def test_ingest_report_no_marker_stores_unknown_not_live(tmp_path: Path) -> None:
     rid = uuid.uuid4().hex
     ledger.record_spawn(
         surface="cursor_sdk",
@@ -302,13 +323,61 @@ def test_ingest_report_unmapped_marker_stored_unknown(tmp_path: Path) -> None:
         f"ledger_row: {rid}\n",
         "",
         "t",
-        status="live",
-        source_status="NOT_A_KNOWN_MARKER",
         watch_dir=tmp_path,
     )
     assert out["status"] == "unknown"
+    assert out.get("source_status") is None
+
+
+def test_ingest_report_unmapped_marker_stored_unknown(tmp_path: Path) -> None:
+    rid = uuid.uuid4().hex
+    ledger.record_spawn(
+        surface="cursor_sdk",
+        thread="t",
+        purpose="p",
+        purpose_unstated=True,
+        row_id=rid,
+        watch_dir=tmp_path,
+    )
+    out = ledger.ingest_report_turn(
+        f"ledger_row: {rid}\n",
+        "NOT_A_KNOWN_MARKER",
+        "t",
+        watch_dir=tmp_path,
+    )
+    assert out["status"] == "unknown"
+    assert out["source_status"] == "NOT_A_KNOWN_MARKER"
     proj = ledger.project_row_status(rid, watch_dir=tmp_path)
     assert proj["status"] == "unknown"
+
+
+def test_read_house_ledger_object_disambiguates_same_thread(tmp_path: Path) -> None:
+    rid_a = uuid.uuid4().hex
+    rid_b = uuid.uuid4().hex
+    ledger.record_spawn(
+        surface="cursor_ide",
+        thread="shared-thread",
+        purpose="a",
+        purpose_unstated=False,
+        row_id=rid_a,
+        dispatch_id="disp-a",
+        watch_dir=tmp_path,
+    )
+    ledger.record_spawn(
+        surface="cursor_ide",
+        thread="shared-thread",
+        purpose="b",
+        purpose_unstated=False,
+        row_id=rid_b,
+        dispatch_id="disp-b",
+        watch_dir=tmp_path,
+    )
+    detail = ledger.read_house_ledger(
+        house={"thread": "shared-thread", "dispatch_id": "disp-b"},
+        watch_dir=tmp_path,
+    )
+    assert len(detail["rows"]) == 1
+    assert detail["rows"][0]["row_id"] == rid_b
 
 
 def test_ingest_report_turn_null_when_omitted(tmp_path: Path) -> None:
