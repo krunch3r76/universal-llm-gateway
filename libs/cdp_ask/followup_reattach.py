@@ -300,10 +300,42 @@ async def _teardown_attempt(
             await pw.stop()
 
 
+def superseded_dormant_k44_skip_wake(registration_id: str) -> bool:
+    """True when a closed dormant predecessor may attach via its live successor.
+
+    K44 induction: the hop successor keeps the lane seat while the predecessor
+    CSE URL may still need followup/harvest. Relaunching the closed registration
+    would re-seat it; skip wake and attach on the successor host instead.
+    """
+    from claude_bundles import cdp_registry_store as store
+    from claude_bundles.cdp_registry.models import seat_open
+
+    active = store.load_active()
+    row = active.get(registration_id)
+    if not isinstance(row, dict) or row.get("status") != "dormant":
+        return False
+    if row.get("seat_closed_at") is None:
+        return False
+    successor_id = str(row.get("superseded_by") or "").strip()
+    if not successor_id:
+        return False
+    lane = str(row.get("seat_lane") or row.get("parent_thread") or "").strip()
+    if not lane:
+        return False
+    successor = active.get(successor_id)
+    if not isinstance(successor, dict):
+        return False
+    if str(successor.get("status") or "") == "dormant":
+        return False
+    return seat_open(successor, lane)
+
+
 async def _wake_dormant_seat(chat_url: str, *, holder: str) -> ReattachOutcome | None:
     """Relaunch the dormant seat bound to *chat_url* and open the CSE on it."""
     seat = cdp_registry.dormant_for_chat_url(chat_url)
     if seat is None:
+        return None
+    if superseded_dormant_k44_skip_wake(seat.registration_id):
         return None
     try:
         reg = cdp_registry.relaunch_dormant(seat.registration_id, holder=holder)

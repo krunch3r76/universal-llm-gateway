@@ -11,6 +11,8 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from cdp_ask.cse_session_harvest_open import harvest_by_opening_url
+from cdp_ask.cse_session_models import HarvestRequest, HarvestResponse
 from cdp_ask.execution_store import LANE_HARD_LIMIT, ExecutionStore
 from cdp_ask.followup import execute_followup
 from cdp_ask.followup_reattach import ReattachOutcome, ensure_cse_attached
@@ -21,6 +23,8 @@ pytestmark = pytest.mark.offline
 CSE_A = "https://claude.ai/cowork/cse_abc123"
 CSE_PRIOR_38282 = "https://claude.ai/cowork/cse_prior38282"
 CSE_TARGET_38282 = "https://claude.ai/cowork/cse_target38282"
+CSE_K44_SUCC = "https://claude.ai/cowork/cse_k44_successor"
+K44_LANE = "12286"
 
 
 @dataclass(frozen=True)
@@ -1170,6 +1174,228 @@ async def test_dormant_relaunch_failure_is_reported_not_swallowed(
 
     assert outcome.ok is False
     assert outcome.error == "dormant_relaunch_failed"
+
+
+def _seed_k44_superseded_dormant_predecessor(
+    *,
+    successor_live: bool = True,
+) -> tuple[str, str]:
+    """Predecessor dormant+closed; successor holds open seat on K44_LANE."""
+    from claude_bundles import cdp_registry as reg
+
+    pred = reg.register_lane(
+        holder="pred-chrome",
+        purpose="operator-proxy",
+        mission_kind="hop",
+        parent_thread=K44_LANE,
+        launch_chrome=_noop_launch,
+        is_listening=lambda _p: False,
+    )
+    assert reg.bind_chat_url_only(pred.registration_id, chat_url=CSE_A)
+    reg.bind_driving_seat(pred.registration_id)
+    succ = reg.register_lane(
+        holder="succ-chrome",
+        purpose="operator-proxy",
+        mission_kind="hop",
+        parent_thread=K44_LANE,
+        launch_chrome=_noop_launch,
+        is_listening=lambda _p: False,
+    )
+    assert reg.bind_chat_url_only(succ.registration_id, chat_url=CSE_K44_SUCC)
+    reg.bind_driving_seat(succ.registration_id)
+    assert reg.make_dormant(pred.registration_id, reason="idle_exit") is not None
+    if not successor_live:
+        active = reg._store.load_active()
+        active[succ.registration_id]["status"] = "dormant"
+        active[succ.registration_id]["seat_closed_at"] = 1.0
+        reg._store.write_active(active)
+    return pred.registration_id, succ.registration_id
+
+
+def _restore_dormant_for_chat_url(monkeypatch: pytest.MonkeyPatch) -> None:
+    from claude_bundles.cdp_registry.dormant import dormant_for_chat_url
+
+    for target in (
+        "claude_bundles.cdp_registry.dormant_for_chat_url",
+        "cdp_ask.followup_dormant.cdp_registry.dormant_for_chat_url",
+        "cdp_ask.followup_reattach.cdp_registry.dormant_for_chat_url",
+    ):
+        monkeypatch.setattr(target, dormant_for_chat_url)
+
+
+def _k44_attach_patches(monkeypatch: pytest.MonkeyPatch) -> MagicMock:
+    relaunch = MagicMock()
+    monkeypatch.setattr(
+        "cdp_ask.followup_reattach.cdp_registry.relaunch_dormant", relaunch
+    )
+    monkeypatch.setattr(
+        "cdp_ask.followup_reattach.find_page_on_lane", AsyncMock(return_value=None)
+    )
+    monkeypatch.setattr(
+        "claude_bundles.cdp_registry.tab_rows.inflight_row_for_chat_url",
+        lambda _url: None,
+    )
+    monkeypatch.setattr("cdp_ask.followup_reattach.connect_cdp", _connect_factory())
+    return relaunch
+
+
+@pytest.mark.asyncio
+async def test_k44_superseded_dormant_attach_via_successor_host(
+    isolated_registry: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Acceptance 1/2: reach predecessor URL on successor Chrome; no relaunch."""
+    pred_id, succ_id = _seed_k44_superseded_dormant_predecessor()
+    relaunch = _k44_attach_patches(monkeypatch)
+
+    outcome = await ensure_cse_attached(
+        CSE_A,
+        holder="followup-test",
+        purpose="operator-proxy",
+        parent_thread=K44_LANE,
+    )
+
+    assert outcome.ok is True
+    assert outcome.registration_id == succ_id
+    assert outcome.relaunched is False
+    relaunch.assert_not_called()
+    from claude_bundles.cdp_registry.session_address import open_lane_seat_holder
+
+    holder_id, _ = open_lane_seat_holder(K44_LANE)
+    assert holder_id == succ_id
+    del pred_id, isolated_registry
+
+
+@pytest.mark.no_bind_mock
+@pytest.mark.asyncio
+async def test_k44_followup_paste_targets_predecessor_chat_url(
+    isolated_registry: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Acceptance 1: followup delivers to predecessor chat_url; seat stays successor."""
+    pred_id, succ_id = _seed_k44_superseded_dormant_predecessor()
+    _restore_dormant_for_chat_url(monkeypatch)
+    relaunch = _k44_attach_patches(monkeypatch)
+    store = ExecutionStore()
+
+    async def _snap() -> dict[str, Any]:
+        return {
+            "seat_rows": [
+                {
+                    "registration_id": succ_id,
+                    "parent_thread": K44_LANE,
+                    "purpose": "operator-proxy",
+                    "seat_bound_at": 1.0,
+                }
+            ],
+            "rows": [],
+            "observed_at": "t",
+        }
+
+    monkeypatch.setattr(store, "active_work_snapshot", _snap)
+    monkeypatch.setattr(
+        "cdp_ask.followup_resolve.scan_lane_cse_urls",
+        AsyncMock(return_value=[CSE_A]),
+    )
+    paste = AsyncMock(
+        return_value={
+            "send_verified": True,
+            "receipt": "dom_paste",
+            "streaming_at_paste": False,
+            "url": CSE_A,
+            "pasted_at": 1.0,
+        }
+    )
+    monkeypatch.setattr("cdp_ask.followup.send_followup_paste_half", paste)
+    monkeypatch.setattr("cdp_ask.followup.emit_followup_event", lambda _e: None)
+    paste_page = _FakePage()
+    paste_page.url = CSE_A
+    paste_pw = _FakePw()
+    monkeypatch.setattr(
+        "cdp_ask.followup.find_page_on_lane",
+        AsyncMock(return_value=(paste_page, paste_pw)),
+    )
+
+    resp = await execute_followup(
+        FollowupProjectAskRequest(
+            chat_url=CSE_A,
+            prompt_text="k44 walk-back",
+            parent_thread=K44_LANE,
+        ),
+        store,
+    )
+
+    assert resp.ok is True, f"error={resp.error!r} detail={resp.detail!r}"
+    relaunch.assert_not_called()
+    paste.assert_awaited_once()
+    assert paste.await_args.args[0] is paste_page
+    assert paste_page.url == CSE_A
+    from claude_bundles.cdp_registry.session_address import open_lane_seat_holder
+
+    holder_id, _ = open_lane_seat_holder(K44_LANE)
+    assert holder_id == succ_id
+    del pred_id, isolated_registry
+
+
+@pytest.mark.asyncio
+async def test_k44_superseded_dormant_without_live_successor_still_fails(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Acceptance 3: closed dormant with no live successor → dormant_relaunch_failed."""
+    from claude_bundles.cdp_registry.models import RegistryError
+
+    monkeypatch.setattr(
+        "cdp_ask.followup_reattach.superseded_dormant_k44_skip_wake",
+        lambda _rid: False,
+    )
+    monkeypatch.setattr("claude_bundles.cdp_registry.list_active", lambda: [])
+    relaunch = MagicMock(
+        side_effect=RegistryError(
+            "registration 'pred' has seat_closed_at set; "
+            "refusing relaunch of a superseded seat"
+        )
+    )
+    _patch_dormant(
+        monkeypatch,
+        seat=_FakeSeat("reg-parked", CSE_A),
+        relaunch=relaunch,
+    )
+    monkeypatch.setattr(
+        "claude_bundles.cdp_registry.tab_rows.inflight_row_for_chat_url",
+        lambda _url: None,
+    )
+
+    outcome = await ensure_cse_attached(CSE_A, holder="h")
+
+    assert outcome.ok is False
+    assert outcome.error == "dormant_relaunch_failed"
+    relaunch.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_k44_harvest_reaches_superseded_dormant_predecessor_url(
+    isolated_registry: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Acceptance 2: harvest returns harvested, not dormant_relaunch_failed."""
+    _seed_k44_superseded_dormant_predecessor()
+    relaunch = _k44_attach_patches(monkeypatch)
+    harvest_page = AsyncMock(
+        return_value=HarvestResponse(outcome="harvested", provenance={})
+    )
+    monkeypatch.setattr(
+        "cdp_ask.cse_session_harvest_open._teardown_opened",
+        AsyncMock(),
+    )
+    result = await harvest_by_opening_url(
+        CSE_A,
+        HarvestRequest(chat_url=CSE_A),
+        None,
+        harvest_page,
+    )
+    assert result.outcome == "harvested"
+    relaunch.assert_not_called()
+    harvest_page.assert_awaited_once()
 
 
 @pytest.mark.asyncio

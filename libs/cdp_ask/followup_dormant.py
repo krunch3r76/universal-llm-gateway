@@ -14,7 +14,11 @@ import contextlib
 from claude_bundles import cdp_registry
 from claude_bundles.cse_url import normalize_cse_url
 
-from cdp_ask.followup_reattach import ReattachOutcome, _teardown_attempt
+from cdp_ask.followup_reattach import (
+    ReattachOutcome,
+    _teardown_attempt,
+    superseded_dormant_k44_skip_wake,
+)
 from cdp_ask.models import FollowupProjectAskRequest, FollowupProjectAskResponse
 
 __all__ = [
@@ -73,7 +77,11 @@ def restrict_registration_id(reason: str | None, chat_url: str | None) -> str | 
         return None
     if reason == "dormant_seat":
         seat = cdp_registry.dormant_for_chat_url(chat_url)
-        return None if seat is None else seat.registration_id
+        if seat is None:
+            return None
+        if superseded_dormant_k44_skip_wake(seat.registration_id):
+            return None
+        return seat.registration_id
     if reason == "bound_seat":
         return unique_bound_registration(chat_url)
     return None
