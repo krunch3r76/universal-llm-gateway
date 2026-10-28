@@ -1,5 +1,5 @@
-/** Default house MCP when ULG_MCP_HTTP_URL is unset (host loopback forwarder). */
-export const ULG_MCP_HTTP_DEFAULT = "http://127.0.0.1:9338/mcp/code";
+/** Default house MCP when ULG_MCP_HTTP_URL is unset (same as cursor-sdk bridge MCP_URL default). */
+export const ULG_MCP_HTTP_DEFAULT = "https://mcp.k-1.me/mcp/code";
 
 const MCP_CODE_PATH = "/mcp/code";
 

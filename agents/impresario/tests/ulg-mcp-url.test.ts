@@ -11,9 +11,15 @@ import {
 } from "../bot/lib/ulg-mcp-url.js";
 
 describe("ULG MCP HTTP URL (internal endpoint slice)", () => {
-  it("AC4 env unset → loopback default", () => {
+  it("AC1 env unset → house MCP default (not Cursor CDP :9338)", () => {
     assert.equal(resolveUlgMcpHttpUrl({}), ULG_MCP_HTTP_DEFAULT);
-    assert.equal(ulgMcpResolvedHost(ULG_MCP_HTTP_DEFAULT), "127.0.0.1:9338");
+    assert.equal(ulgMcpResolvedHost(ULG_MCP_HTTP_DEFAULT), "mcp.k-1.me");
+    assert.match(ULG_MCP_HTTP_DEFAULT, /^https:\/\//);
+    assert.doesNotMatch(ULG_MCP_HTTP_DEFAULT, /9338/);
+  });
+
+  it("AC4 env unset → documented default constant", () => {
+    assert.equal(resolveUlgMcpHttpUrl({}), ULG_MCP_HTTP_DEFAULT);
   });
 
   it("AC4 env set → that value", () => {
