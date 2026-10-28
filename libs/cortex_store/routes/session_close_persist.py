@@ -46,6 +46,7 @@ from ..verbatim_succession import (
 )
 from .session_close_helpers import _ensure_continues_edge, _ensure_transcript_entity
 from .session_close_source_relocate import (
+    SourceRelocateResult,
     relocate_transcript_source,
     restore_transcript_source,
 )
@@ -405,6 +406,7 @@ def persist_session_close(
     source_abs_path: Path | None = None
     source_jsonl_uri_persist: str | None = None
     source_jsonl_sha256_persist: str | None = None
+    relocate_result: SourceRelocateResult | None = None
     prior_codec: str | None = None
     letter_status: str | None = None
     seal_letter_sha12: str | None = None
@@ -508,6 +510,12 @@ def persist_session_close(
                 source_rel = transcript_source_path(ctx.transcript_path or "")
                 source_abs_path = _FILES_ROOT / source_rel
                 expected = ctx.envelope.meta.source_sha256 or ""
+                house_for_raw = (
+                    (_dominant_lane_from_entity_ids(body.entity_ids) or "")
+                    .removeprefix("agent-bus:")
+                    .strip()
+                    or None
+                )
                 relocate_result = relocate_transcript_source(
                     source_abs_path=source_abs_path,
                     raw_bytes=ctx.source_jsonl_bytes,
@@ -515,6 +523,7 @@ def persist_session_close(
                     session_id=body.session_id,
                     transcript_id=conversation_uuid,
                     files_root=_FILES_ROOT,
+                    house=house_for_raw,
                 )
                 prior_source_snapshot = relocate_result.prior_snapshot
                 source_jsonl_uri_persist = f"files://{source_rel}"
@@ -674,6 +683,12 @@ def persist_session_close(
                 tx_attributes["source_jsonl_uri"] = source_jsonl_uri_persist
             if source_jsonl_sha256_persist:
                 tx_attributes["source_jsonl_sha256"] = source_jsonl_sha256_persist
+            entity_source_uri = ctx.source_uri
+            if relocate_result is not None and relocate_result.manifest_rel_path:
+                entity_source_uri = f"files://{relocate_result.manifest_rel_path}"
+                tx_attributes["raw_transcript_uri"] = f"files://{relocate_result.raw_rel_path}"
+                tx_attributes["raw_manifest_uri"] = entity_source_uri
+                tx_attributes["raw_sha256"] = relocate_result.written_sha256
             existing_row = conn.execute(
                 "SELECT attributes FROM entities WHERE id = ?",
                 (ctx.transcript_entity_id,),
@@ -691,7 +706,7 @@ def persist_session_close(
                 "transcript",
                 entity_name,
                 body.summary,
-                ctx.source_uri,
+                entity_source_uri,
                 tx_attributes_json,
                 ctx.now,
                 ctx.now,
@@ -705,8 +720,8 @@ def persist_session_close(
                 tuple(tx_vals),
             )
             conn.execute(
-                "UPDATE entities SET attributes = ?, updated_at = ? WHERE id = ?",
-                (tx_attributes_json, ctx.now, ctx.transcript_entity_id),
+                "UPDATE entities SET source_uri = ?, attributes = ?, updated_at = ? WHERE id = ?",
+                (entity_source_uri, tx_attributes_json, ctx.now, ctx.transcript_entity_id),
             )
         journal_source_ref = (
             source_ref_resolution.stamped_ref if source_ref_resolution else None
@@ -869,6 +884,9 @@ def persist_session_close(
                     source_abs_path,
                     prior_source_snapshot,
                     files_root=_FILES_ROOT,
+                    raw_write_result=(
+                        relocate_result.raw_write_result if relocate_result else None
+                    ),
                 )
             except OSError:
                 logger.warning(
