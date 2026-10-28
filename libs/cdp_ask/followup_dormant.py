@@ -17,7 +17,7 @@ from claude_bundles.cse_url import normalize_cse_url
 from cdp_ask.followup_reattach import (
     ReattachOutcome,
     _teardown_attempt,
-    superseded_dormant_k44_skip_wake,
+    superseded_dormant_k44_successor_host,
 )
 from cdp_ask.models import FollowupProjectAskRequest, FollowupProjectAskResponse
 
@@ -79,8 +79,9 @@ def restrict_registration_id(reason: str | None, chat_url: str | None) -> str | 
         seat = cdp_registry.dormant_for_chat_url(chat_url)
         if seat is None:
             return None
-        if superseded_dormant_k44_skip_wake(seat.registration_id):
-            return None
+        k44_host = superseded_dormant_k44_successor_host(seat.registration_id)
+        if k44_host:
+            return k44_host
         return seat.registration_id
     if reason == "bound_seat":
         return unique_bound_registration(chat_url)

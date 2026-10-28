@@ -300,42 +300,92 @@ async def _teardown_attempt(
             await pw.stop()
 
 
-def superseded_dormant_k44_skip_wake(registration_id: str) -> bool:
-    """True when a closed dormant predecessor may attach via its live successor.
+def superseded_dormant_k44_successor_host(registration_id: str) -> str | None:
+    """Return the live successor registration id for K44 page-only reach, else None.
 
-    K44 induction: the hop successor keeps the lane seat while the predecessor
-    CSE URL may still need followup/harvest. Relaunching the closed registration
-    would re-seat it; skip wake and attach on the successor host instead.
+    Predecessor must be dormant with ``seat_closed_at``; successor must hold an
+    open seat on the same lane and be a host-listable registration row.
     """
     from claude_bundles import cdp_registry_store as store
-    from claude_bundles.cdp_registry.models import seat_open
+    from claude_bundles.cdp_registry.models import _HOST_LISTABLE_STATUSES, seat_open
 
     active = store.load_active()
     row = active.get(registration_id)
     if not isinstance(row, dict) or row.get("status") != "dormant":
-        return False
+        return None
     if row.get("seat_closed_at") is None:
-        return False
+        return None
     successor_id = str(row.get("superseded_by") or "").strip()
     if not successor_id:
-        return False
+        return None
     lane = str(row.get("seat_lane") or row.get("parent_thread") or "").strip()
     if not lane:
-        return False
+        return None
     successor = active.get(successor_id)
     if not isinstance(successor, dict):
-        return False
-    if str(successor.get("status") or "") == "dormant":
-        return False
-    return seat_open(successor, lane)
+        return None
+    status = str(successor.get("status") or "")
+    if status == "dormant" or status not in _HOST_LISTABLE_STATUSES:
+        return None
+    if not seat_open(successor, lane):
+        return None
+    if not any(
+        lane.registration_id == successor_id for lane in cdp_registry.list_active()
+    ):
+        return None
+    return successor_id
+
+
+async def _attach_k44_predecessor_page_only(
+    successor_id: str,
+    chat_url: str,
+) -> ReattachOutcome:
+    """Open *chat_url* on the successor host without registry seat/url writes."""
+    lanes = [
+        lane
+        for lane in cdp_registry.list_active()
+        if lane.registration_id == successor_id
+    ]
+    if len(lanes) != 1:
+        return ReattachOutcome(
+            ok=False,
+            error="reattach_no_host_available",
+            registration_id=successor_id,
+        )
+    lane = lanes[0]
+    prior = (
+        cdp_registry.chat_url_for_registration(successor_id) or ""
+    ).strip() or None
+    found = await find_page_on_lane(lane.cdp_url, chat_url)
+    if found is not None:
+        page, pw = found
+    else:
+        opened = await _navigate_new_page(lane, chat_url)
+        if opened is None:
+            return ReattachOutcome(
+                ok=False,
+                error="reattach_navigate_failed",
+                registration_id=successor_id,
+            )
+        page, pw = opened
+    return ReattachOutcome(
+        ok=True,
+        registration_id=successor_id,
+        cdp_url=lane.cdp_url,
+        lane_created=False,
+        relaunched=False,
+        page=page,
+        pw=pw,
+        prior_chat_url=prior,
+        reattach_bound_chat_url=None,
+        page_only_borrow=True,
+    )
 
 
 async def _wake_dormant_seat(chat_url: str, *, holder: str) -> ReattachOutcome | None:
     """Relaunch the dormant seat bound to *chat_url* and open the CSE on it."""
     seat = cdp_registry.dormant_for_chat_url(chat_url)
     if seat is None:
-        return None
-    if superseded_dormant_k44_skip_wake(seat.registration_id):
         return None
     try:
         reg = cdp_registry.relaunch_dormant(seat.registration_id, holder=holder)
@@ -527,6 +577,24 @@ async def ensure_cse_attached(
             seat_snapshot_holder_id=holder_id,
             seat_snapshot_bound_at=bound_at,
         )
+
+    dormant = cdp_registry.dormant_for_chat_url(chat_url)
+    if dormant is not None:
+        k44_successor = superseded_dormant_k44_successor_host(dormant.registration_id)
+        if k44_successor:
+            if (
+                restrict_to_registration_id
+                and restrict_to_registration_id != k44_successor
+            ):
+                return ReattachOutcome(
+                    ok=False,
+                    error="reattach_no_host_available",
+                    registration_id=k44_successor,
+                )
+            k44_outcome = await _attach_k44_predecessor_page_only(
+                k44_successor, chat_url
+            )
+            return _done(k44_outcome, refresh_seat=False)
 
     woken = await _wake_dormant_seat(chat_url, holder=holder)
     if woken is not None:
