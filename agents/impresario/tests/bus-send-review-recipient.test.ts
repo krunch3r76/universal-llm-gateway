@@ -4,6 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, it } from "node:test";
 
+import { primeImpresarioDeliveryRegistry } from "../bot/lib/ulg.js";
 import busSendTool, {
   busSendDryRunResult,
   busSendResponsePosted,
@@ -11,7 +12,11 @@ import busSendTool, {
   parseSubjectTokens,
   resolveBusSendInput,
   resolveReviewRequestRecipient,
+  reviewRequestRecipient,
 } from "../bot/tools/bus_send.js";
+
+/** Registry resolve fixture (delivery-bindings intent=paste), not a production default. */
+const REGISTRY_REVIEW_MAILBOX = "grok-bot-gc1";
 
 function evalCtx(workspaceDir: string) {
   return {
@@ -29,21 +34,29 @@ function evalCtx(workspaceDir: string) {
 }
 
 describe("bus_send REQUEST|review| recipient (stage 5)", () => {
-  it("resolveReviewRequestRecipient corrects maestro to grok-bot-gc1", () => {
+  beforeEach(() => {
+    primeImpresarioDeliveryRegistry({
+      lane: "20901",
+      reviewMailbox: REGISTRY_REVIEW_MAILBOX,
+    });
+  });
+
+  it("resolveReviewRequestRecipient corrects maestro to registry review mailbox", () => {
     const r = resolveReviewRequestRecipient(
       "REQUEST|review|todo:reaper-amendment",
       "maestro",
     );
-    assert.equal(r.to, "grok-bot-gc1");
+    assert.equal(r.to, reviewRequestRecipient());
+    assert.equal(r.to, REGISTRY_REVIEW_MAILBOX);
     assert.equal(r.recipient_corrected, true);
   });
 
-  it("resolveReviewRequestRecipient defaults omitted to to grok-bot-gc1", () => {
+  it("resolveReviewRequestRecipient defaults omitted to to registry review mailbox", () => {
     const r = resolveReviewRequestRecipient(
       "REQUEST|review|todo:reaper-amendment",
       undefined,
     );
-    assert.equal(r.to, "grok-bot-gc1");
+    assert.equal(r.to, reviewRequestRecipient());
     assert.equal(r.recipient_corrected, false);
   });
 
@@ -64,6 +77,10 @@ describe("bus_send defaults (stage 6 AC2)", () => {
   let workspaceDir: string;
 
   beforeEach(() => {
+    primeImpresarioDeliveryRegistry({
+      lane: "20901",
+      reviewMailbox: REGISTRY_REVIEW_MAILBOX,
+    });
     workspaceDir = fs.mkdtempSync(path.join(os.tmpdir(), "imp-bus-send-"));
     fs.writeFileSync(
       path.join(workspaceDir, "turn.json"),
@@ -122,7 +139,7 @@ describe("bus_send defaults (stage 6 AC2)", () => {
     }
   });
 
-  it("to omitted on review → grok-bot-gc1", async () => {
+  it("to omitted on review → registry review mailbox", async () => {
     const result = await busSendTool.execute!(
       {
         thread: "20901",
@@ -131,7 +148,7 @@ describe("bus_send defaults (stage 6 AC2)", () => {
       },
       evalCtx(workspaceDir),
     );
-    assert.equal((result as { to: string }).to, "grok-bot-gc1");
+    assert.equal((result as { to: string }).to, reviewRequestRecipient());
     assert.equal((result as { recipient_corrected?: boolean }).recipient_corrected, false);
   });
 
@@ -162,6 +179,10 @@ describe("bus_send thread validation (stage 8)", () => {
   let workspaceDir: string;
 
   beforeEach(() => {
+    primeImpresarioDeliveryRegistry({
+      lane: "20901",
+      reviewMailbox: REGISTRY_REVIEW_MAILBOX,
+    });
     workspaceDir = fs.mkdtempSync(path.join(os.tmpdir(), "imp-bus-send-"));
   });
 

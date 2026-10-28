@@ -1,6 +1,7 @@
 import {
   isReviewRequestSubject,
   parseSubjectTokens,
+  reviewRequestRecipient,
 } from "../../bot/tools/bus_send.js";
 import {
   busSendWasPosted,
@@ -8,7 +9,9 @@ import {
   type E4ToolCall,
 } from "./e4-rule-check.js";
 
-export const CLOSEOUT_REVIEW_RECIPIENT = "grok-bot-gc1";
+export function closeoutReviewRecipient(): string {
+  return reviewRequestRecipient();
+}
 
 function parseToolOutput(output: unknown): Record<string, unknown> | null {
   if (output === undefined || output === null) {
@@ -70,10 +73,11 @@ export function checkEffectiveReviewBusSend(
     return { ok: false, reason: `subject work_key mismatch: ${workKey || "(missing)"}` };
   }
   const to = effectiveBusSendTo(call);
-  if (to !== CLOSEOUT_REVIEW_RECIPIENT) {
+  const expectedReview = closeoutReviewRecipient();
+  if (to !== expectedReview) {
     return {
       ok: false,
-      reason: `effective recipient ${to || "(missing)"}, expected ${CLOSEOUT_REVIEW_RECIPIENT}`,
+      reason: `effective recipient ${to || "(missing)"}, expected ${expectedReview}`,
     };
   }
   const thread = effectiveBusSendThread(call);

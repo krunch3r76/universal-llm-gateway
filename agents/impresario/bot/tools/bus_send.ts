@@ -8,10 +8,14 @@ import {
   busMailbox,
   IMPRESARIO_MAILBOX,
   callAgentBus,
+  impresarioReviewMailbox,
   isEvalOrFixture,
 } from "../lib/ulg.js";
 
-export const REVIEW_REQUEST_RECIPIENT = "grok-bot-gc1";
+/** Resolved review mailbox from delivery-bindings (set by registry bootstrap / test prime). */
+export function reviewRequestRecipient(): string {
+  return impresarioReviewMailbox();
+}
 
 /** Threads allowed when turn.json is missing or has no thread (tests / explicit pins). */
 export const ALLOWLISTED_BUS_THREADS = new Set<string>();
@@ -131,9 +135,10 @@ export function resolveReviewRequestRecipient(
   to: string | undefined,
 ): { to: string; recipient_corrected: boolean } {
   if (isReviewRequestSubject(subject)) {
-    const resolved = to ?? REVIEW_REQUEST_RECIPIENT;
-    if (to !== undefined && to !== REVIEW_REQUEST_RECIPIENT) {
-      return { to: REVIEW_REQUEST_RECIPIENT, recipient_corrected: true };
+    const registryRecipient = reviewRequestRecipient();
+    const resolved = to ?? registryRecipient;
+    if (to !== undefined && to !== registryRecipient) {
+      return { to: registryRecipient, recipient_corrected: true };
     }
     return { to: resolved, recipient_corrected: false };
   }
