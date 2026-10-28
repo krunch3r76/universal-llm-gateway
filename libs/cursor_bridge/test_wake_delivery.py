@@ -371,6 +371,7 @@ def test_submit_wake_line_js_no_input_events() -> None:
 def test_submit_wake_line_js_resolves_workspace_scoped_services() -> None:
     js = submit_wake_line_js("BRIDGE_WAKE thread=1 turn=2", "agent-1")
     assert "resolveWorkspaceServices" in js
+    assert "resolveComposerForAgent" in js
     assert "getAgentHeader" in js
     assert "workspaceCollectionService" in js
     assert "getWorkspaceInstance" in js

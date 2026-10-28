@@ -11,6 +11,8 @@ from cursor_bridge.cursor_agents_hop import (
     rename_agent_row_in_sidebar,
 )
 from cursor_bridge.cursor_window_config import subscription_display_for_gui_host
+from cursor_bridge.spawn_endpoint_house_ledger import last_successful_wake, record_tab_wake
+from cursor_bridge.tab_ready_rehandshake import post_tab_gone_for_lane, tab_ready_instruction
 from cursor_bridge.wake_delivery import _paste_cursor_services, normalize_target
 
 
@@ -53,6 +55,14 @@ def relay_wake_tab(*, gui_host: str, agent_id: str | None, body: str) -> dict[st
     try:
         paste_res = asyncio.run(_paste_cursor_services(ws_url, body, agent_id=aid))
     except (TimeoutError, RuntimeError, OSError) as exc:
+        record_tab_wake(
+            gui_host=gui_host,
+            agent_id=aid,
+            op="wake_tab",
+            ok=False,
+            reason="paste_failed",
+            detail={"detail": type(exc).__name__},
+        )
         return {
             "ok": False,
             "error": "paste_failed",
@@ -60,13 +70,48 @@ def relay_wake_tab(*, gui_host: str, agent_id: str | None, body: str) -> dict[st
             "op": "wake_tab",
             "gui_host": gui_host,
         }
-    return {**paste_res, "op": "wake_tab", "gui_host": gui_host, "display": display}
+    record_tab_wake(
+        gui_host=gui_host,
+        agent_id=aid,
+        op="wake_tab",
+        ok=bool(paste_res.get("ok")),
+        reason=str(paste_res.get("reason") or ""),
+    )
+    out = {**paste_res, "op": "wake_tab", "gui_host": gui_host, "display": display}
+    prior = last_successful_wake(aid)
+    if prior:
+        out["last_successful_wake_at"] = prior.get("at")
+    return out
 
 
-def relay_rename_tab(*, gui_host: str, agent_id: str, title: str) -> dict[str, Any]:
+def relay_rename_tab(
+    *,
+    gui_host: str,
+    agent_id: str,
+    title: str,
+    thread: str | None = None,
+) -> dict[str, Any]:
     debug_url = cursor_debug_url_for_gui_host(gui_host)
     res = rename_agent_row_in_sidebar(agent_id, title, debug_url=debug_url)
-    return {**res, "op": "rename_tab", "gui_host": gui_host}
+    record_tab_wake(
+        gui_host=gui_host,
+        agent_id=agent_id,
+        op="rename_tab",
+        ok=bool(res.get("ok")),
+        reason=str(res.get("reason") or ""),
+        detail={"title": title, "thread": thread},
+    )
+    out = {**res, "op": "rename_tab", "gui_host": gui_host}
+    if res.get("ok"):
+        out["tab_ready_instruction"] = tab_ready_instruction(title)
+        tid = str(thread or "").strip()
+        if tid:
+            gone = post_tab_gone_for_lane(tid, reason="bridge_rename")
+            out["tab_gone"] = gone
+    prior = last_successful_wake(agent_id)
+    if prior:
+        out["last_successful_wake_at"] = prior.get("at")
+    return out
 
 
 def relay_prune_sidebar(*, gui_host: str, thread: str, agent_id: str) -> dict[str, Any]:
