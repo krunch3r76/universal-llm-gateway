@@ -414,7 +414,9 @@ def test_concurrency_stats_route_and_active_work(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """AC4: /concurrency-stats exposes telemetry; /active-work omits historical census."""
-    from services.git_integration_worker import cursor_sdk_concurrency_meter as meter_mod
+    from services.git_integration_worker import (
+        cursor_sdk_concurrency_meter as meter_mod,
+    )
 
     source_repo = tmp_path / "repo"
     closeout_root = source_repo / "tmp" / "reviews" / "closeouts"
