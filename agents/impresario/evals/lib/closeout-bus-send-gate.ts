@@ -1,3 +1,4 @@
+import { resolveImpresarioReviewMailbox } from "../../bot/lib/ulg.js";
 import {
   isReviewRequestSubject,
   parseSubjectTokens,
@@ -73,11 +74,14 @@ export function checkEffectiveReviewBusSend(
     return { ok: false, reason: `subject work_key mismatch: ${workKey || "(missing)"}` };
   }
   const to = effectiveBusSendTo(call);
-  const expectedReview = closeoutReviewRecipient();
-  if (to !== expectedReview) {
+  const expectedReview = resolveImpresarioReviewMailbox();
+  if (!expectedReview.ok) {
+    return { ok: false, reason: expectedReview.error };
+  }
+  if (to !== expectedReview.mailbox) {
     return {
       ok: false,
-      reason: `effective recipient ${to || "(missing)"}, expected ${expectedReview}`,
+      reason: `effective recipient ${to || "(missing)"}, expected ${expectedReview.mailbox}`,
     };
   }
   const thread = effectiveBusSendThread(call);

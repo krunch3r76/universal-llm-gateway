@@ -24,13 +24,32 @@ export type DeliveryBindingEnvelope = {
 
 let registryReviewMailbox = "";
 
-export function impresarioReviewMailbox(): string {
-  if (registryReviewMailbox) {
-    return registryReviewMailbox;
+export type ResolvedReviewMailbox =
+  | { ok: true; mailbox: string }
+  | { ok: false; error: string };
+
+/** Registry primed, or non-empty ULG_IMPRESARIO_REVIEW_MAILBOX env override. */
+export function resolveImpresarioReviewMailbox(): ResolvedReviewMailbox {
+  const envMailbox = process.env.ULG_IMPRESARIO_REVIEW_MAILBOX?.trim();
+  if (envMailbox) {
+    return { ok: true, mailbox: envMailbox };
   }
-  throw new Error(
-    "review recipient unresolved; call bootstrapImpresarioRegistry or primeImpresarioDeliveryRegistry",
-  );
+  if (registryReviewMailbox) {
+    return { ok: true, mailbox: registryReviewMailbox };
+  }
+  return {
+    ok: false,
+    error:
+      "review recipient unresolved; call bootstrapImpresarioRegistry or primeImpresarioDeliveryRegistry",
+  };
+}
+
+export function impresarioReviewMailbox(): string {
+  const resolved = resolveImpresarioReviewMailbox();
+  if (!resolved.ok) {
+    throw new Error(resolved.error);
+  }
+  return resolved.mailbox;
 }
 
 /** Hermetic tests: apply registry resolve results without live agent-bus. */
@@ -40,6 +59,12 @@ export function primeImpresarioDeliveryRegistry(opts: {
 }): void {
   IMPRESARIO_LANE = opts.lane.trim();
   registryReviewMailbox = opts.reviewMailbox.trim();
+}
+
+/** Reset module registry state between hermetic tests. */
+export function resetImpresarioDeliveryRegistryForTest(): void {
+  IMPRESARIO_LANE = process.env.ULG_IMPRESARIO_LANE?.trim() || "";
+  registryReviewMailbox = "";
 }
 
 export function impresarioDeliveryHouse(): string {
@@ -170,7 +195,7 @@ export async function bootstrapImpresarioRegistry(ctx: ToolCtx): Promise<void> {
     intent: "inform",
     agent: IMPRESARIO_MAILBOX,
   });
-  let lane = envLane ?? actuationThreadId(laneEnvelope) ?? "";
+  let lane = envLane || actuationThreadId(laneEnvelope) || "";
   if (!lane && fixturesEnabled()) {
     const turn = loadScenario().turn;
     if (typeof turn.thread === "string") {

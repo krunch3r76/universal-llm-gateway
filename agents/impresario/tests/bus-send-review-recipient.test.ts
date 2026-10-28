@@ -4,7 +4,10 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, it } from "node:test";
 
-import { primeImpresarioDeliveryRegistry } from "../bot/lib/ulg.js";
+import {
+  primeImpresarioDeliveryRegistry,
+  resetImpresarioDeliveryRegistryForTest,
+} from "../bot/lib/ulg.js";
 import busSendTool, {
   busSendDryRunResult,
   busSendResponsePosted,
@@ -46,9 +49,12 @@ describe("bus_send REQUEST|review| recipient (stage 5)", () => {
       "REQUEST|review|todo:reaper-amendment",
       "maestro",
     );
-    assert.equal(r.to, reviewRequestRecipient());
-    assert.equal(r.to, REGISTRY_REVIEW_MAILBOX);
-    assert.equal(r.recipient_corrected, true);
+    assert.equal(r.ok, true);
+    if (r.ok) {
+      assert.equal(r.to, reviewRequestRecipient());
+      assert.equal(r.to, REGISTRY_REVIEW_MAILBOX);
+      assert.equal(r.recipient_corrected, true);
+    }
   });
 
   it("resolveReviewRequestRecipient defaults omitted to to registry review mailbox", () => {
@@ -56,8 +62,11 @@ describe("bus_send REQUEST|review| recipient (stage 5)", () => {
       "REQUEST|review|todo:reaper-amendment",
       undefined,
     );
-    assert.equal(r.to, reviewRequestRecipient());
-    assert.equal(r.recipient_corrected, false);
+    assert.equal(r.ok, true);
+    if (r.ok) {
+      assert.equal(r.to, reviewRequestRecipient());
+      assert.equal(r.recipient_corrected, false);
+    }
   });
 
   it("isReviewRequestSubject uses trimmed pipe tokens", () => {
@@ -303,5 +312,56 @@ describe("bus_send posted ack (stage 9 N2)", () => {
     } finally {
       fs.rmSync(workspaceDir, { recursive: true, force: true });
     }
+  });
+});
+
+describe("bus_send unprimed review recipient (15851#3431)", () => {
+  let workspaceDir: string;
+  const envSnapshot: Record<string, string | undefined> = {};
+
+  beforeEach(() => {
+    for (const key of [
+      "ULG_IMPRESARIO_REVIEW_MAILBOX",
+      "ULG_IMPRESARIO_LANE",
+    ] as const) {
+      envSnapshot[key] = process.env[key];
+      delete process.env[key];
+    }
+    resetImpresarioDeliveryRegistryForTest();
+    workspaceDir = fs.mkdtempSync(path.join(os.tmpdir(), "imp-bus-unprimed-"));
+    fs.writeFileSync(
+      path.join(workspaceDir, "turn.json"),
+      JSON.stringify({ thread: "20901", work_key: "todo:x" }),
+    );
+  });
+
+  afterEach(() => {
+    fs.rmSync(workspaceDir, { recursive: true, force: true });
+    for (const key of Object.keys(envSnapshot) as (keyof typeof envSnapshot)[]) {
+      if (envSnapshot[key] === undefined) {
+        delete process.env[key];
+      } else {
+        process.env[key] = envSnapshot[key];
+      }
+    }
+    primeImpresarioDeliveryRegistry({
+      lane: "20901",
+      reviewMailbox: REGISTRY_REVIEW_MAILBOX,
+    });
+  });
+
+  it("unprimed review execute returns posted:false and does not throw", async () => {
+    const result = await busSendTool.execute!(
+      {
+        subject: "REQUEST|review|todo:reaper-amendment",
+        body: "review please",
+      },
+      evalCtx(workspaceDir),
+    );
+    assert.equal((result as { posted: boolean }).posted, false);
+    assert.match(
+      String((result as { error?: string }).error),
+      /review recipient unresolved/,
+    );
   });
 });
