@@ -132,6 +132,24 @@ def artifact_cards_from_state(state: dict[str, Any]) -> list[dict[str, str]]:
     return cards
 
 
+def _assert_code_surface_model_before_send(requested: str, model_info: dict[str, Any]) -> None:
+    """Fail closed on /code when the page model label does not match the request.
+
+    Runs after ``code_surface_page_model`` and before ``send_prompt`` so a mismatch
+    does not burn a full generation (friction:40648 / trial-4).
+    """
+    label = (model_info.get("model_ran") or model_info.get("current_model") or "").strip()
+    if not label:
+        req = normalize_picker_request(requested or "")
+        raise RuntimeError(f"model attestation mismatch: wanted {req!r}, got {label!r}")
+    req = normalize_picker_request(requested or "")
+    family, effort = parse_model_request(req)
+    if effort is None:
+        effort = sealed_ask_default_effort(family)
+    if not label_satisfies_request(req, label, effort=effort):
+        raise RuntimeError(f"model attestation mismatch: wanted {req!r}, got {label!r}")
+
+
 def _attest_model(
     requested: str, state: dict[str, Any], selected: dict[str, Any]
 ) -> str | None:
