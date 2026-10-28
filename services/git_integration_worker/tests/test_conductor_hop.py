@@ -642,7 +642,9 @@ async def test_inherit_fail_open_copy_lost_no_retry(
     )
     assert ok is True
     assert calls["n"] == 1
-    child_paths = [p for p in spool.glob("*.json") if p.name != "pred-hop-copyfail.json"]
+    child_paths = [
+        p for p in spool.glob("*.json") if p.name != "pred-hop-copyfail.json"
+    ]
     assert child_paths == []
     assert any(ev.signal == "frontier.sdk.steer.inject.inherit_failed" for ev in events)
 
@@ -780,7 +782,9 @@ def test_build_hop_team_dispatch_body_carries_hop_reactor_override() -> None:
     assert body["model_knobs"] == knobs
 
 
-def test_build_hop_team_dispatch_body_k97_recipe_default_not_predecessor_clone() -> None:
+def test_build_hop_team_dispatch_body_k97_recipe_default_not_predecessor_clone() -> (
+    None
+):
     ledger = CursorDispatchLedger.instance()
     row = _terminal_row(ledger, closeout_tokens=["ROW_HOP"])
     ledger.merge_record_json(
@@ -1752,9 +1756,7 @@ async def test_14915_reply_lifts_when_harvest_registry_watermark_missing() -> No
 
     def _reply(thread_id: str, after_turn: int, from_agent: str) -> bool:
         return (
-            thread_id == "14915"
-            and after_turn == 133
-            and from_agent == "web-anthropic"
+            thread_id == "14915" and after_turn == 133 and from_agent == "web-anthropic"
         )
 
     with (
@@ -1811,9 +1813,7 @@ async def test_14901_registry_watermark_still_admits_once() -> None:
 
     def _reply(thread_id: str, after_turn: int, from_agent: str) -> bool:
         return (
-            thread_id == "14901"
-            and after_turn == 144
-            and from_agent == "web-anthropic"
+            thread_id == "14901" and after_turn == 144 and from_agent == "web-anthropic"
         )
 
     with (
@@ -3386,8 +3386,8 @@ def test_hop_body_not_refused_terminal_nest_when_prose_done_only(
     ledger = CursorDispatchLedger.instance()
     row = _stamp_g2_row(ledger)
     rec = json.loads(row["record_json"])
-    rec["closeout_body"] = (
-        "G1 and G2 stay DONE.\n" + str(rec.get("closeout_body") or "")
+    rec["closeout_body"] = "G1 and G2 stay DONE.\n" + str(
+        rec.get("closeout_body") or ""
     )
     row["record_json"] = json.dumps(rec)
     rec = json.loads(row["record_json"])
@@ -3598,8 +3598,8 @@ async def test_path_c_sweep_admits_once_prose_done_parent_nest_terminal(
     )
     row = _stamp_g2_row(ledger)
     rec = json.loads(row["record_json"])
-    rec["closeout_body"] = (
-        "G1 and G2 stay DONE.\n" + str(rec.get("closeout_body") or "")
+    rec["closeout_body"] = "G1 and G2 stay DONE.\n" + str(
+        rec.get("closeout_body") or ""
     )
     ledger.merge_record_json(
         dispatch_id="pred-hop-1",

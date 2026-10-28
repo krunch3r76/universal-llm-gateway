@@ -1474,7 +1474,9 @@ def test_operational_error_defers_without_park_or_post() -> None:
     )
 
     ledger = CursorDispatchLedger.instance()
-    row = _terminal_row(ledger, closeout_tokens=["ROW_HOP"], terminal_at_offset_s=-200.0)
+    row = _terminal_row(
+        ledger, closeout_tokens=["ROW_HOP"], terminal_at_offset_s=-200.0
+    )
     with patch(
         "services.git_integration_worker.cursor_sdk_closeout.conductor_hop_budget.list_mission_terminal_chain",
         side_effect=sqlite3.OperationalError("locked"),
