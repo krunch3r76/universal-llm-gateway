@@ -26,6 +26,7 @@ _GENERATE_STEPS = (
     ("prose_rhythm_pass", "reviser"),
 )
 
+
 def _step(payload: dict[str, Any]) -> StepOutput:
     return StepOutput(raw=json.dumps(payload), json=payload)
 
@@ -296,7 +297,9 @@ _OMIT_WITH_REASON_PROXIMITY = re.compile(
 
 
 def _omit_with_reason_ids(architect_brief: str) -> set[str]:
-    ids = {match.group(1).upper() for match in _OMIT_WITH_REASON.finditer(architect_brief)}
+    ids = {
+        match.group(1).upper() for match in _OMIT_WITH_REASON.finditer(architect_brief)
+    }
     ids |= {
         match.group(1).upper()
         for match in _OMIT_WITH_REASON_PROXIMITY.finditer(architect_brief)
@@ -337,4 +340,3 @@ from .finalize_payload import (  # noqa: E402, F401
     _obligation_coverage_gate,
     build_finalize_payload,
 )
-

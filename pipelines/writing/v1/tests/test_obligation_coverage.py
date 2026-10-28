@@ -84,7 +84,9 @@ def _run_source(message: str) -> dict[str, Any]:
         )
     }
     payload = asyncio.run(
-        source_obligations.WritingSourceObligationsHandler().execute(None, _Ctx(outputs))
+        source_obligations.WritingSourceObligationsHandler().execute(
+            None, _Ctx(outputs)
+        )
     ).json
     assert payload is not None
     return payload
@@ -105,7 +107,9 @@ def test_meridial_apply_here_classified_as_act_outside_message() -> None:
 
 
 def test_meridial_before_after_drafter_calls_and_tokens_saved() -> None:
-    raw = yaml.safe_load((_V1 / "writer-specialist-v1.yaml").read_text(encoding="utf-8"))
+    raw = yaml.safe_load(
+        (_V1 / "writer-specialist-v1.yaml").read_text(encoding="utf-8")
+    )
     by_name = {step.name: step for step in PipelineSpec(**raw).steps}
     evaluator = ConditionEvaluator()
 
@@ -139,7 +143,9 @@ def test_meridial_before_after_drafter_calls_and_tokens_saved() -> None:
     tokens_per_drafter = 500
     usage_before = {name: tokens_per_drafter for name in all_drafters}
     usage_after = {name: tokens_per_drafter for name in active}
-    assert sum(usage_before.values()) - sum(usage_after.values()) == 5 * tokens_per_drafter
+    assert (
+        sum(usage_before.values()) - sum(usage_after.values()) == 5 * tokens_per_drafter
+    )
 
     src = _run_source(_MERIDIAL)
     draft_text = (
@@ -258,9 +264,7 @@ def _omit_with_reason_finalize(
 def test_correspondence_omit_with_reason_proximity_passes_ship_gate(
     channel: str,
 ) -> None:
-    body = (
-        "Maria, I can't take those Petaluma shifts. Thanks for sending them. Kaywan"
-    )
+    body = "Maria, I can't take those Petaluma shifts. Thanks for sending them. Kaywan"
     if channel == "email":
         draft = f"To: Maria\nSubject: Petaluma shifts\n\n{body}"
     else:
@@ -366,7 +370,9 @@ def test_architect_omit_o2_answered_o1_passes_coverage_gate() -> None:
 
 
 def test_decline_phrasing_natural_sms_covers_obligation() -> None:
-    draft = "Maria, I won't be able to cover the Petaluma dates you sent. Thank you, Kaywan"
+    draft = (
+        "Maria, I won't be able to cover the Petaluma dates you sent. Thank you, Kaywan"
+    )
     cov = _obligation.coverage_map_for_draft(
         draft,
         [
@@ -443,9 +449,7 @@ def test_meridial_ask_back_false_positive_availability_only() -> None:
         "Best,\nPat"
     )
     obligations = _obligation.actionable_obligations(src["obligations"])
-    cov = _obligation.coverage_map_for_draft(
-        draft, obligations, pin_ledger=[]
-    )
+    cov = _obligation.coverage_map_for_draft(draft, obligations, pin_ledger=[])
     apply_cov = next(
         (row for row in cov if row.get("obligation") == "act_outside_message"),
         None,
@@ -463,9 +467,7 @@ def test_meridial_ask_back_false_positive_generic_greeting() -> None:
         "Best,\nPat"
     )
     obligations = _obligation.actionable_obligations(src["obligations"])
-    cov = _obligation.coverage_map_for_draft(
-        draft, obligations, pin_ledger=[]
-    )
+    cov = _obligation.coverage_map_for_draft(draft, obligations, pin_ledger=[])
     apply_cov = next(
         (row for row in cov if row.get("obligation") == "act_outside_message"),
         None,
@@ -483,9 +485,7 @@ def test_meridial_ask_back_next_steps_addressed() -> None:
         "Best,\nPat"
     )
     obligations = _obligation.actionable_obligations(src["obligations"])
-    cov = _obligation.coverage_map_for_draft(
-        draft, obligations, pin_ledger=[]
-    )
+    cov = _obligation.coverage_map_for_draft(draft, obligations, pin_ledger=[])
     apply_cov = next(
         (row for row in cov if row.get("obligation") == "act_outside_message"),
         None,
@@ -505,9 +505,7 @@ def test_meridial_ask_back_apply_link_addressed() -> None:
         "Best,\nPat"
     )
     obligations = _obligation.actionable_obligations(src["obligations"])
-    cov = _obligation.coverage_map_for_draft(
-        draft, obligations, pin_ledger=[]
-    )
+    cov = _obligation.coverage_map_for_draft(draft, obligations, pin_ledger=[])
     apply_cov = next(
         (row for row in cov if row.get("obligation") == "act_outside_message"),
         None,
@@ -538,12 +536,18 @@ def test_meridial_finalize_coverage_map_addresses_application_action() -> None:
     assert apply_cov is not None
     assert apply_cov["kind"] == "call_to_action"
     assert apply_cov["status"] in {"addressed", "declined_with_reason"}
-    assert apply_cov["reply_mode"] in {"act_then_confirm", "ask_back", "answer_in_message"}
+    assert apply_cov["reply_mode"] in {
+        "act_then_confirm",
+        "ask_back",
+        "answer_in_message",
+    }
     assert apply_cov.get("covering_sentence")
 
 
 def test_two_drafter_default_vs_six_on_correspondence() -> None:
-    raw = yaml.safe_load((_V1 / "writer-specialist-v1.yaml").read_text(encoding="utf-8"))
+    raw = yaml.safe_load(
+        (_V1 / "writer-specialist-v1.yaml").read_text(encoding="utf-8")
+    )
     by_name = {step.name: step for step in PipelineSpec(**raw).steps}
     evaluator = ConditionEvaluator()
 
@@ -607,7 +611,9 @@ def test_three_ask_missing_one_refuses_finalize() -> None:
         ),
         "source_obligations": _Out({"obligations": obligations}),
         "draft": _Out({"ok": True, "draft": draft_v1}),
-        "independence": _Out({"refused": None, "writer_model": "local/a", "reviewer_model": "local/b"}),
+        "independence": _Out(
+            {"refused": None, "writer_model": "local/a", "reviewer_model": "local/b"}
+        ),
         "fact_ceiling_audit": _Out({"verdict": "ship", "findings": []}),
         "provenance_check": _Out({"violations": []}),
         "prose_rhythm_pass": _Out(None, raw=draft_v1),
@@ -720,7 +726,9 @@ def test_s1_audit_cannot_override_missing_act_outside_message() -> None:
     assert payload.get("refused") == "obligation_coverage_failed"
 
 
-def test_s1_audit_declined_with_reason_cannot_override_missing_without_decline_phrase() -> None:
+def test_s1_audit_declined_with_reason_cannot_override_missing_without_decline_phrase() -> (
+    None
+):
     src = _run_source(_MERIDIAL)
     act_id = next(
         o["id"]
@@ -780,7 +788,9 @@ def test_s1_audit_declined_with_reason_cannot_override_missing_without_decline_p
     assert payload.get("refused") == "obligation_coverage_failed"
 
 
-def test_s1_audit_declined_with_reason_passes_when_sentence_explicitly_declines() -> None:
+def test_s1_audit_declined_with_reason_passes_when_sentence_explicitly_declines() -> (
+    None
+):
     act_id = "O-act"
     obligations = [
         {
@@ -873,10 +883,7 @@ def test_action_confirm_rejects_unrelated_booked_completed_phrases() -> None:
     for sentence in negatives:
         assert _obligation._ACTION_CONFIRM.search(sentence) is None
         draft = (
-            "To: recruiter@meridial.ai\n"
-            "Subject: Re: role\n\n"
-            f"{sentence}\n\n"
-            "Best,\nPat"
+            f"To: recruiter@meridial.ai\nSubject: Re: role\n\n{sentence}\n\nBest,\nPat"
         )
         cov = _obligation.coverage_map_for_draft(draft, obligations)
         assert cov[0]["status"] == "missing", sentence
@@ -888,10 +895,7 @@ def test_action_confirm_rejects_unrelated_booked_completed_phrases() -> None:
     for sentence in positives:
         assert _obligation._ACTION_CONFIRM.search(sentence) is not None, sentence
         draft = (
-            "To: recruiter@meridial.ai\n"
-            "Subject: Re: role\n\n"
-            f"{sentence}\n\n"
-            "Best,\nPat"
+            f"To: recruiter@meridial.ai\nSubject: Re: role\n\n{sentence}\n\nBest,\nPat"
         )
         cov = _obligation.coverage_map_for_draft(draft, obligations)
         assert cov[0]["status"] == "addressed", sentence
@@ -901,8 +905,7 @@ def test_curly_apostrophe_action_and_decline_matching() -> None:
     obligations = _meridial_act_obligation()
     applied = "I\u2019ve applied through the link today."
     draft_applied = (
-        "To: recruiter@meridial.ai\nSubject: Re: role\n\n"
-        f"{applied}\n\nBest,\nPat"
+        f"To: recruiter@meridial.ai\nSubject: Re: role\n\n{applied}\n\nBest,\nPat"
     )
     pin_ledger = [
         {
@@ -930,9 +933,12 @@ def test_curly_apostrophe_action_and_decline_matching() -> None:
     assert covering == decline_sentence
     assert not _obligation._sentence_declines("I can\u2019t wait to talk.")
     assert _obligation._sentence_declines("I can\u2019t start Monday.")
-    assert _obligation._CTA_DECLINE_STEM.search(
-        "I cannot share details about my current role."
-    ) is None
+    assert (
+        _obligation._CTA_DECLINE_STEM.search(
+            "I cannot share details about my current role."
+        )
+        is None
+    )
 
 
 def test_act_outside_message_declined_availability_passes_coverage_gate() -> None:
@@ -1100,7 +1106,8 @@ def test_s2_three_ask_portfolio_missing_not_declined() -> None:
     portfolio_rows = [
         row
         for row in cov
-        if "portfolio" in str(
+        if "portfolio"
+        in str(
             next(
                 (
                     o.get("quoted_span")
@@ -1135,7 +1142,9 @@ def test_s3_shared_stopwords_do_not_count_as_answer() -> None:
     assert payload.get("refused") == "obligation_coverage_failed"
 
 
-def test_act_outside_message_unattested_past_claim_refuses_and_degrades_reply_mode_to_ask_back() -> None:
+def test_act_outside_message_unattested_past_claim_refuses_and_degrades_reply_mode_to_ask_back() -> (
+    None
+):
     src = _run_source(_MERIDIAL)
     obligations = _obligation.actionable_obligations(src["obligations"])
     pin_ledger = [
@@ -1253,9 +1262,7 @@ def test_act_outside_message_attested_past_claim_allows_act_then_confirm() -> No
         "I submitted my application through https://meridial.ai/apply today.\n\n"
         "Best,\nPat"
     )
-    cov = _obligation.coverage_map_for_draft(
-        draft, obligations, pin_ledger=pin_ledger
-    )
+    cov = _obligation.coverage_map_for_draft(draft, obligations, pin_ledger=pin_ledger)
     act_row = next(r for r in cov if r.get("obligation") == "act_outside_message")
     assert act_row["status"] == "addressed"
     assert act_row["reply_mode"] == "act_then_confirm"
@@ -1309,8 +1316,7 @@ def test_act_outside_b1_mixed_sentence_unattested_past_fails() -> None:
     ]
     for sentence in mixed_sentences:
         draft = (
-            "To: recruiter@meridial.ai\nSubject: Re: role\n\n"
-            f"{sentence}\n\nBest,\nPat"
+            f"To: recruiter@meridial.ai\nSubject: Re: role\n\n{sentence}\n\nBest,\nPat"
         )
         cov = _obligation.coverage_map_for_draft(
             draft, obligations, pin_ledger=pin_ledger
@@ -1332,9 +1338,7 @@ def test_act_outside_b2_body_wide_unattested_past_fails_finalize() -> None:
         "I'll apply through the link for the second role.\n\n"
         "Best,\nPat"
     )
-    cov = _obligation.coverage_map_for_draft(
-        draft, obligations, pin_ledger=pin_ledger
-    )
+    cov = _obligation.coverage_map_for_draft(draft, obligations, pin_ledger=pin_ledger)
     act_row = next(r for r in cov if r.get("obligation") == "act_outside_message")
     assert act_row["status"] == "missing"
     outputs = {
@@ -1372,7 +1376,13 @@ def test_act_outside_b2_body_wide_unattested_past_fails_finalize() -> None:
 
 def test_act_outside_b3_negated_pin_excerpt_not_attested_act() -> None:
     negated_ledgers = [
-        [{"pin_id": "P1", "attested": True, "excerpt": "I haven't applied through the link."}],
+        [
+            {
+                "pin_id": "P1",
+                "attested": True,
+                "excerpt": "I haven't applied through the link.",
+            }
+        ],
         [
             {
                 "pin_id": "P1",
@@ -1380,7 +1390,13 @@ def test_act_outside_b3_negated_pin_excerpt_not_attested_act() -> None:
                 "excerpt": "I have not applied through the portal yet.",
             }
         ],
-        [{"pin_id": "P1", "attested": True, "excerpt": "I never applied through the portal."}],
+        [
+            {
+                "pin_id": "P1",
+                "attested": True,
+                "excerpt": "I never applied through the portal.",
+            }
+        ],
     ]
     obligations = _meridial_act_obligation()
     draft = (
@@ -1421,10 +1437,7 @@ def test_act_outside_b4_clause_openers_with_unattested_past_claim_fail() -> None
         ),
     ]
     for body in bodies:
-        draft = (
-            "To: recruiter@meridial.ai\nSubject: Re: role\n\n"
-            f"{body}\n\nBest,\nPat"
-        )
+        draft = f"To: recruiter@meridial.ai\nSubject: Re: role\n\n{body}\n\nBest,\nPat"
         cov = _obligation.coverage_map_for_draft(
             draft, obligations, pin_ledger=pin_ledger
         )
@@ -1730,9 +1743,7 @@ def test_two_word_bullet_items_after_colon_stay_statement_acknowledge() -> None:
     inbound = "Please send:\n- Tax Return\n- Bank Statement"
     rows = source_obligations.fallback_obligations(inbound)
     bullet_rows = [
-        row
-        for row in rows
-        if str(row.get("quoted_span", "")).lstrip().startswith("-")
+        row for row in rows if str(row.get("quoted_span", "")).lstrip().startswith("-")
     ]
     assert len(bullet_rows) == 2
     for row in bullet_rows:
@@ -1966,12 +1977,17 @@ def test_obligation_coverage_handler_emits_missing_block() -> None:
     outputs = {
         "assemble": _Out({"ok": True, "refused": None}),
         "source_obligations": _Out(
-            {"obligations": obligations, "source_obligations_block": "<source_obligations/>"}
+            {
+                "obligations": obligations,
+                "source_obligations_block": "<source_obligations/>",
+            }
         ),
         "draft": _Out({"ok": True, "draft": "To: x\nSubject: y\n\nNo answer here.\n"}),
     }
     payload = asyncio.run(
-        obligation_coverage.WritingObligationCoverageHandler().execute(None, _Ctx(outputs))
+        obligation_coverage.WritingObligationCoverageHandler().execute(
+            None, _Ctx(outputs)
+        )
     ).json
     assert payload is not None
     assert payload.get("missing_count", 0) >= 1

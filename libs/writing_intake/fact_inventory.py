@@ -482,9 +482,7 @@ def run_drift_check(
         parsed_points = parse_purpose_points(str(purpose).strip(), None)
     else:
         parsed_points = []
-    purpose_gate = (
-        "applied" if parsed_points else "skipped_no_purpose_points"
-    )
+    purpose_gate = "applied" if parsed_points else "skipped_no_purpose_points"
     verbatim_required_excerpts = [
         str(pin["excerpt"])
         for pin in (pin_ledger or [])

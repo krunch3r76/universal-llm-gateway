@@ -331,7 +331,9 @@ async def test_semantic_judge_schema_invalid_unavailable() -> None:
 
 
 @pytest.mark.asyncio
-async def test_semantic_judge_empty_verifier_unavailable(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_semantic_judge_empty_verifier_unavailable(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     handler = semantic_judge.WritingSemanticJudgeHandler()
     published: list[Any] = []
     handler._publish_bus_event = lambda _ctx, event: published.append(event)  # type: ignore[method-assign]
@@ -398,9 +400,7 @@ def test_judge_event_signals() -> None:
 async def test_semantic_judge_pin_json_schema_candidates_invocation() -> None:
     pin_schemas: list[dict[str, Any]] = []
 
-    async def fake_call_model(
-        _model_id: str, *_args: Any, **kwargs: Any
-    ) -> MagicMock:
+    async def fake_call_model(_model_id: str, *_args: Any, **kwargs: Any) -> MagicMock:
         schema = kwargs.get("json_schema")
         if len(pin_schemas) == 0:
             pin_schemas.append(schema)
@@ -436,9 +436,7 @@ async def test_semantic_judge_pin_json_schema_candidates_invocation() -> None:
 async def test_semantic_judge_pin_json_schema_v2_invocation() -> None:
     pin_schemas: list[dict[str, Any]] = []
 
-    async def fake_call_model(
-        _model_id: str, *_args: Any, **kwargs: Any
-    ) -> MagicMock:
+    async def fake_call_model(_model_id: str, *_args: Any, **kwargs: Any) -> MagicMock:
         schema = kwargs.get("json_schema")
         if len(pin_schemas) == 0:
             pin_schemas.append(schema)
@@ -475,9 +473,7 @@ async def test_semantic_judge_quality_json_schema_candidates_invocation() -> Non
     quality_schemas: list[dict[str, Any]] = []
     call_count = 0
 
-    async def fake_call_model(
-        _model_id: str, *_args: Any, **kwargs: Any
-    ) -> MagicMock:
+    async def fake_call_model(_model_id: str, *_args: Any, **kwargs: Any) -> MagicMock:
         nonlocal call_count
         call_count += 1
         if call_count == 2:
@@ -521,9 +517,7 @@ async def test_semantic_judge_quality_json_schema_v2_invocation() -> None:
     quality_schemas: list[dict[str, Any]] = []
     call_count = 0
 
-    async def fake_call_model(
-        _model_id: str, *_args: Any, **kwargs: Any
-    ) -> MagicMock:
+    async def fake_call_model(_model_id: str, *_args: Any, **kwargs: Any) -> MagicMock:
         nonlocal call_count
         call_count += 1
         if call_count == 2:

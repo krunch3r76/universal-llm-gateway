@@ -295,7 +295,9 @@ class WritingFinalizeHandler(BaseHandler):
             if isinstance(draft_v2_text, str):
                 draft_v2_text = _polish_email_draft_if_needed(assemble, draft_v2_text)
             dispositions: list[Any] = []
-            if isinstance(rhythm, dict) and isinstance(rhythm.get("dispositions"), list):
+            if isinstance(rhythm, dict) and isinstance(
+                rhythm.get("dispositions"), list
+            ):
                 dispositions = list(rhythm["dispositions"])
             revision = {
                 "draft_v2": draft_v2_text,
@@ -352,9 +354,7 @@ class WritingFinalizeHandler(BaseHandler):
             passed = False
             unresolved.extend(obl_refusal["unresolved"])
         judge_source = (
-            initial
-            if selected == "draft_v1"
-            else (initial + list(final or []))
+            initial if selected == "draft_v1" else (initial + list(final or []))
         )
         judge_fail = any(
             isinstance(row, dict) and row.get("type") == "semantic_judge_unavailable"

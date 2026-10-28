@@ -261,7 +261,9 @@ def test_finalize_short_path_guarded_review_passes_ship_gate() -> None:
                 {
                     "findings": [],
                     "verdict": "ship",
-                    "suppressed_findings": [promoted | {"reason": "intake_answer_uncorroborated"}],
+                    "suppressed_findings": [
+                        promoted | {"reason": "intake_answer_uncorroborated"}
+                    ],
                     "clauses": [],
                 },
                 model_id=_QWEN,
@@ -510,9 +512,7 @@ def test_finalize_v2_judge_unavailable_discarded_when_rhythm_reverted() -> None:
             "independence": _Out({"refused": None, "independence": "full"}),
             "fact_ceiling_audit": _Out({"verdict": "ship", "findings": []}),
             "prose_rhythm_pass": _Out(None, raw="Revised."),
-            "fact_ceiling_final": _Out(
-                {"violations": v2_judge_fail, "pass": False}
-            ),
+            "fact_ceiling_final": _Out({"violations": v2_judge_fail, "pass": False}),
         }
     )
     assert payload["ship_gate"]["selected"] == "draft_v1"
