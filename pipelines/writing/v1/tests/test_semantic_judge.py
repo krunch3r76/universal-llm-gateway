@@ -32,9 +32,15 @@ pytestmark = pytest.mark.offline
 
 
 class _Out:
-    def __init__(self, payload: dict[str, Any] | None, *, raw: str = "") -> None:
+    def __init__(
+        self,
+        payload: dict[str, Any] | None,
+        *,
+        raw: str = "",
+        error: str | None = None,
+    ) -> None:
         self.json = payload
-        self.error = None
+        self.error = error
         self.raw = raw
 
 
@@ -258,6 +264,51 @@ async def test_semantic_judge_all_omitted_when_ids_outside_eligible_set() -> Non
 
 
 @pytest.mark.asyncio
+async def test_semantic_judge_no_candidates_publishes_failed() -> None:
+    handler = semantic_judge.WritingSemanticJudgeHandler()
+    published: list[Any] = []
+    handler._publish_bus_event = lambda _ctx, event: published.append(event)  # type: ignore[method-assign]
+    ctx = _Ctx({"assemble": _Out({"pin_ledger": [], "intake": {}})})
+    out = await handler.execute(_Step("candidates"), ctx)
+    assert out.json["reason"] == "no_candidates"
+    assert len(published) == 1
+    assert published[0].signal == "writing.judge.failed"
+    assert published[0].payload["reason"] == "no_candidates"
+
+
+@pytest.mark.asyncio
+async def test_semantic_judge_reviser_failed_publishes_failed() -> None:
+    handler = semantic_judge.WritingSemanticJudgeHandler()
+    published: list[Any] = []
+    handler._publish_bus_event = lambda _ctx, event: published.append(event)  # type: ignore[method-assign]
+    ctx = _Ctx(
+        {
+            "assemble": _Out({"pin_ledger": [], "intake": {}}),
+            "prose_rhythm_pass": _Out(None, raw="", error="reviser_error"),
+        }
+    )
+    out = await handler.execute(_Step("v2"), ctx)
+    assert out.json["reason"] == "reviser_failed"
+    assert published[0].signal == "writing.judge.failed"
+
+
+@pytest.mark.asyncio
+async def test_semantic_judge_empty_draft_publishes_failed() -> None:
+    handler = semantic_judge.WritingSemanticJudgeHandler()
+    published: list[Any] = []
+    handler._publish_bus_event = lambda _ctx, event: published.append(event)  # type: ignore[method-assign]
+    ctx = _Ctx(
+        {
+            "assemble": _Out({"pin_ledger": [], "intake": {}}),
+            "prose_rhythm_pass": _Out(None, raw="   "),
+        }
+    )
+    out = await handler.execute(_Step("v2"), ctx)
+    assert out.json["reason"] == "empty_draft"
+    assert published[0].signal == "writing.judge.failed"
+
+
+@pytest.mark.asyncio
 async def test_semantic_judge_schema_invalid_unavailable() -> None:
     async def caller(**kwargs: Any) -> str:
         if kwargs.get("which") == "pin":
@@ -298,6 +349,15 @@ async def test_semantic_judge_transport_failure_publishes_failed() -> None:
     assert out.json["judge_unavailable"] is True
     assert published[0].signal == "writing.judge.failed"
     assert published[0].payload["reason"] == "RuntimeError"
+
+
+def test_quality_judgment_rejects_out_of_range_penalty() -> None:
+    judge_schema = importlib.import_module("writing_v1_handlers.judge_schema")
+    err = judge_schema.quality_judgment_error(
+        {"findings": [{"rule": "r", "detail": "d", "penalty": -1}]},
+        multi_candidate=False,
+    )
+    assert err == "finding_penalty_range"
 
 
 def test_judge_event_signals() -> None:

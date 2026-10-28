@@ -39,19 +39,17 @@ def _step(payload: dict[str, Any], *, model_id: str | None = None) -> StepOutput
     return StepOutput(raw=json.dumps(payload), json=payload, model_id=model_id)
 
 
-def _unavailable(invocation: str, reason: str) -> StepOutput:
-    return _step(
-        {
-            "ok": False,
-            "judge_unavailable": True,
-            "refused": "judge_unavailable",
-            "reason": reason,
-            "invocation": invocation,
-            "pins": [],
-            "clauses": [],
-            "quality_findings": [],
-        }
-    )
+def _unavailable_payload(invocation: str, reason: str) -> dict[str, Any]:
+    return {
+        "ok": False,
+        "judge_unavailable": True,
+        "refused": "judge_unavailable",
+        "reason": reason,
+        "invocation": invocation,
+        "pins": [],
+        "clauses": [],
+        "quality_findings": [],
+    }
 
 
 def _raw_text(step: Any) -> str:
@@ -111,6 +109,15 @@ class WritingSemanticJudgeHandler(BaseHandler):
         super().__init__()
         self._caller = caller
 
+    def _unavailable(
+        self, context: Any, invocation: str, reason: str
+    ) -> StepOutput:
+        self._publish_bus_event(
+            context,
+            WritingJudgeFailed(invocation=invocation, reason=reason),
+        )
+        return _step(_unavailable_payload(invocation, reason))
+
     async def execute(self, step: Any, context: Any) -> StepOutput:
         invocation = str(step.get_domain_field("invocation") or "candidates")
         outputs = getattr(context, "outputs", {}) or {}
@@ -131,7 +138,7 @@ class WritingSemanticJudgeHandler(BaseHandler):
         if multi:
             candidates = _eligible_candidates(outputs)
             if not candidates:
-                return _unavailable(invocation, "no_candidates")
+                return self._unavailable(context, invocation, "no_candidates")
             candidates_block = json.dumps(candidates, ensure_ascii=False)
         else:
             rhythm = outputs.get("prose_rhythm_pass")
@@ -141,10 +148,10 @@ class WritingSemanticJudgeHandler(BaseHandler):
                 else getattr(rhythm, "error", None)
             )
             if err:
-                return _unavailable(invocation, "reviser_failed")
+                return self._unavailable(context, invocation, "reviser_failed")
             draft = _raw_text(rhythm)
             if not draft.strip():
-                return _unavailable(invocation, "empty_draft")
+                return self._unavailable(context, invocation, "empty_draft")
             candidates_block = json.dumps([{"draft": draft}], ensure_ascii=False)
 
         pin_prompt = PromptBuilder().render(
@@ -168,8 +175,8 @@ class WritingSemanticJudgeHandler(BaseHandler):
         quality_system = str(quality_row.get("system_prompt") or "")
         pin_schema = PIN_CANDIDATES_SCHEMA if multi else PIN_SINGLE_SCHEMA
         quality_schema = QUALITY_CANDIDATES_SCHEMA if multi else QUALITY_SINGLE_SCHEMA
-        ModelId.parse("qwen3-5-9b")
-        model_id = "qwen3-5-9b"
+        parsed_id = ModelId.parse("qwen3-5-9b")
+        model_id = str(parsed_id)
 
         try:
             if self._caller is not None:
@@ -201,11 +208,7 @@ class WritingSemanticJudgeHandler(BaseHandler):
                 pin_content = pin_result.content
                 quality_content = quality_result.content
         except Exception as exc:  # noqa: BLE001
-            self._publish_bus_event(
-                context,
-                WritingJudgeFailed(invocation=invocation, reason=type(exc).__name__),
-            )
-            return _unavailable(invocation, type(exc).__name__)
+            return self._unavailable(context, invocation, type(exc).__name__)
 
         try:
             pin_parsed = json.loads(pin_content) if isinstance(pin_content, str) else {}
@@ -213,23 +216,14 @@ class WritingSemanticJudgeHandler(BaseHandler):
                 json.loads(quality_content) if isinstance(quality_content, str) else {}
             )
         except json.JSONDecodeError:
-            self._publish_bus_event(
-                context,
-                WritingJudgeFailed(invocation=invocation, reason="json_decode"),
-            )
-            return _unavailable(invocation, "json_decode")
+            return self._unavailable(context, invocation, "json_decode")
 
         pin_err = pin_judgment_error(pin_parsed, multi_candidate=multi)
         quality_err = quality_judgment_error(quality_parsed, multi_candidate=multi)
         if pin_err or quality_err:
-            self._publish_bus_event(
-                context,
-                WritingJudgeFailed(
-                    invocation=invocation,
-                    reason=pin_err or quality_err or "schema_invalid",
-                ),
+            return self._unavailable(
+                context, invocation, pin_err or quality_err or "schema_invalid"
             )
-            return _unavailable(invocation, pin_err or quality_err or "schema_invalid")
 
         flat_pins, flat_clauses = flatten_pin_judgment(pin_parsed, multi_candidate=multi)
         quality = flatten_quality_judgment(quality_parsed, multi_candidate=multi)
@@ -242,11 +236,7 @@ class WritingSemanticJudgeHandler(BaseHandler):
             seen_ids.discard("")
             matched_ids = seen_ids & eligible_ids
             if eligible_ids and not matched_ids:
-                self._publish_bus_event(
-                    context,
-                    WritingJudgeFailed(invocation=invocation, reason="all_omitted"),
-                )
-                return _unavailable(invocation, "all_omitted")
+                return self._unavailable(context, invocation, "all_omitted")
 
         self._publish_bus_event(
             context,

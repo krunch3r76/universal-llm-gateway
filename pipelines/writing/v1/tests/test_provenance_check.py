@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import importlib
 import importlib.util
+import json
 import sys
 from pathlib import Path
 from typing import Any
@@ -42,12 +43,14 @@ def _judge(
     *,
     pins: list[dict[str, Any]] | None = None,
     clauses: list[dict[str, Any]] | None = None,
+    quality_findings: list[dict[str, Any]] | None = None,
     unavailable: bool = False,
 ) -> dict[str, Any]:
     return {
         "judge_unavailable": unavailable,
         "pins": pins or [],
         "clauses": clauses or [],
+        "quality_findings": quality_findings or [],
     }
 
 
@@ -188,6 +191,94 @@ def test_fact_ceiling_final_handler_honors_v2_judge_pins() -> None:
         )
     ).json
     assert "restate_pin_missing" not in _types(payload["violations"])
+
+
+def test_v2_quality_finding_surfaces_quality_violation() -> None:
+    legalistic = (
+        "I, Jane Doe, am submitting this correspondence regarding the matter."
+    )
+    judge = _judge(
+        pins=[
+            {
+                "pin_id": "P1",
+                "satisfied": True,
+                "polarity_match": True,
+                "evidence_span": "ok",
+            }
+        ],
+        quality_findings=[
+            {
+                "rule": "legalistic_opening",
+                "detail": "sworn-style opening",
+                "penalty": 2,
+            }
+        ],
+    )
+    violations = provenance.check_provenance(
+        _LEDGER, _draft(legalistic), judge, winner_id="drafter_anthropic"
+    )
+    assert "quality_violation" in _types(violations)
+
+
+def test_fact_ceiling_final_handler_surfaces_v2_quality_violation() -> None:
+    class _Out:
+        def __init__(self, payload: dict | None, *, raw: str = "") -> None:
+            self.json = payload
+            self.raw = raw
+
+    class _Ctx:
+        def __init__(self, outputs: dict) -> None:
+            self.outputs = outputs
+
+    class _Step:
+        handler_inputs = {
+            "pin_ledger": "assemble.json.pin_ledger",
+            "draft": "prose_rhythm_pass.raw",
+            "draft_v1": "draft.json",
+            "judge": "semantic_judge_v2.json",
+        }
+
+    body = "- item one\n- item two"
+    v2_judge = _judge(
+        pins=[
+            {
+                "pin_id": "P1",
+                "satisfied": True,
+                "polarity_match": True,
+                "evidence_span": "ok",
+            }
+        ],
+        quality_findings=[
+            {"rule": "bulleted_body", "detail": "unordered list in email body", "penalty": 1}
+        ],
+    )
+    payload = asyncio.run(
+        provenance.WritingProvenanceCheckHandler().execute(
+            _Step(),
+            _Ctx(
+                {
+                    "assemble": _Out(
+                        {
+                            "channel": "email",
+                            "pin_ledger": _LEDGER,
+                            "intake": {"signer": "Jane"},
+                        }
+                    ),
+                    "draft": _Out(
+                        {
+                            "selected_step": "drafter_anthropic",
+                            "draft": body,
+                            "claims": [],
+                        }
+                    ),
+                    "prose_rhythm_pass": _Out(None, raw=json.dumps({"draft": body})),
+                    "semantic_judge_v2": _Out(v2_judge),
+                }
+            ),
+        )
+    ).json
+    assert payload["pass"] is False
+    assert "quality_violation" in _types(payload["violations"])
 
 
 def test_restate_pin_missing_from_judge_row() -> None:

@@ -13,8 +13,34 @@ def _violation(kind: str, claim_id: str | None, detail: Any) -> dict[str, Any]:
     return {"type": kind, "claim_id": claim_id, "detail": detail}
 
 
+QUALITY_VIOLATION_MIN_PENALTY = 1
+
+
 def judge_unavailable_violation() -> dict[str, Any]:
     return _violation("semantic_judge_unavailable", None, "judge_unavailable")
+
+
+def violations_from_quality_findings(
+    findings: list[dict[str, Any]],
+    *,
+    winner_id: str | None = None,
+    min_penalty: int = QUALITY_VIOLATION_MIN_PENALTY,
+) -> list[dict[str, Any]]:
+    """Map semantic_judge quality rows at/above min_penalty to ship-gate violations."""
+    violations: list[dict[str, Any]] = []
+    for row in winner_judge_rows(findings, winner_id):
+        if not isinstance(row, dict):
+            continue
+        try:
+            penalty = int(row.get("penalty") or 0)
+        except (TypeError, ValueError):
+            continue
+        if penalty < min_penalty:
+            continue
+        rule = str(row.get("rule") or "quality")
+        detail = str(row.get("detail") or rule)[:120]
+        violations.append(_violation("quality_violation", rule, detail))
+    return violations
 
 
 def violations_from_judge_pins(
@@ -26,11 +52,13 @@ def violations_from_judge_pins(
     """Map judge pin rows to restate_pin_missing for the selected candidate."""
     violations: list[dict[str, Any]] = []
     winner_pins = winner_judge_rows(judge_pins, winner_id)
-    by_pin = {
-        str(row.get("pin_id")): row
-        for row in winner_pins
-        if isinstance(row, dict) and row.get("pin_id")
-    }
+    by_pin: dict[str, dict[str, Any]] = {}
+    for row in winner_pins:
+        if not isinstance(row, dict):
+            continue
+        pin_id = str(row.get("pin_id") or "")
+        if pin_id:
+            by_pin[pin_id] = row
     for pin in ledger:
         if not isinstance(pin, dict):
             continue

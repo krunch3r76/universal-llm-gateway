@@ -20,6 +20,7 @@ from .judge_provenance import (
     judge_unavailable_violation,
     verbatim_ledger_violations,
     violations_from_judge_pins,
+    violations_from_quality_findings,
 )
 from .judge_winner_rows import winner_judge_rows
 
@@ -76,6 +77,12 @@ def check_provenance(
     violations.extend(violations_from_judge_pins(ledger, pins, winner_id=winner_id))
     violations.extend(
         clause_violations(clauses, ledger, channel=channel, signer=signer)
+    )
+    quality = winner_judge_rows(
+        list(judge.get("quality_findings") or []), winner_id
+    )
+    violations.extend(
+        violations_from_quality_findings(quality, winner_id=winner_id)
     )
     violations.extend(check_fact_ceiling(ledger, parsed["draft"], max_chars=None))
     return violations
@@ -317,7 +324,9 @@ class WritingProvenanceCheckHandler(BaseHandler):
             for row in flagged
             if isinstance(row, dict) and row.get("reason") == "not_purpose_relevant"
         ]
-        if added_facts:
+        if added_facts and not any(
+            v.get("type") == "added_unattested_fact" for v in violations
+        ):
             violations.append(
                 _violation("added_unattested_fact", None, added_facts[0][:120])
             )
