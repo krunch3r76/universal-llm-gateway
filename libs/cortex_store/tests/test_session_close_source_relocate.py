@@ -101,6 +101,60 @@ def test_restore_rolls_back_seal_and_raw(tmp_path: Path) -> None:
     assert not (tmp_path / result.manifest_rel_path).exists()
 
 
+def test_relocate_rejects_invalid_native_id_before_source_write(tmp_path: Path) -> None:
+    raw = b"{}\n"
+    expected = hashlib.sha256(raw).hexdigest()
+    dest = tmp_path / f"notes/system/seals/{SESSION_ID}.source.jsonl"
+    prior = b"prior-bytes\n"
+    dest.parent.mkdir(parents=True)
+    dest.write_bytes(prior)
+    with (
+        patch(
+            "cortex_store.routes.session_close_source_relocate.transcript_source_relocated",
+        ),
+        pytest.raises(HTTPException) as exc,
+    ):
+        relocate_transcript_source(
+            source_abs_path=dest,
+            raw_bytes=raw,
+            expected_sha256=expected,
+            session_id=SESSION_ID,
+            transcript_id="bad__r2",
+            files_root=tmp_path,
+        )
+    assert exc.value.status_code == 422
+    assert dest.read_bytes() == prior
+    assert not (tmp_path / "notes/system/transcripts").exists()
+
+
+def test_relocate_restores_source_when_raw_write_fails(tmp_path: Path) -> None:
+    raw = b"{}\n"
+    expected = hashlib.sha256(raw).hexdigest()
+    dest = tmp_path / f"notes/system/seals/{SESSION_ID}.source.jsonl"
+    prior = b"keep-me\n"
+    dest.parent.mkdir(parents=True)
+    dest.write_bytes(prior)
+    with (
+        patch(
+            "cortex_store.routes.session_close_source_relocate.transcript_source_relocated",
+        ),
+        patch(
+            "cortex_store.routes.session_close_source_relocate.write_raw_transcript",
+            side_effect=RuntimeError("raw store down"),
+        ),
+        pytest.raises(RuntimeError, match="raw store down"),
+    ):
+        relocate_transcript_source(
+            source_abs_path=dest,
+            raw_bytes=raw,
+            expected_sha256=expected,
+            session_id=SESSION_ID,
+            transcript_id=TRANSCRIPT_ID,
+            files_root=tmp_path,
+        )
+    assert dest.read_bytes() == prior
+
+
 def test_relocate_refuses_digest_mismatch(tmp_path: Path) -> None:
     raw = b"{}\n"
     dest = tmp_path / "notes/system/seals/sid.source.jsonl"

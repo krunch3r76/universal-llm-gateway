@@ -17,6 +17,8 @@ from ..events_tape import (
 )
 from ..raw_transcript_store import (
     WriteRawTranscriptResult,
+    raw_manifest_rel_path,
+    raw_transcript_rel_path,
     restore_raw_transcript,
     write_raw_transcript,
 )
@@ -41,6 +43,46 @@ def _date_str_from_session_id(session_id: str) -> str:
     if match:
         return match.group(1)
     return datetime.now(UTC).strftime("%Y-%m-%d")
+
+
+def _restore_source_snapshot(
+    source_abs_path: Path,
+    prior_snapshot: bytes | None,
+    *,
+    files_root: Path,
+) -> None:
+    if prior_snapshot is not None:
+        durable_write_bytes(
+            source_abs_path,
+            prior_snapshot,
+            retain_store_root=files_root,
+        )
+    elif source_abs_path.is_file():
+        source_abs_path.unlink(missing_ok=True)
+
+
+def _validate_relocate_paths(
+    *,
+    session_id: str,
+    transcript_id: str | None,
+    house: str | None,
+) -> tuple[str, str]:
+    native_id = (transcript_id or session_id).strip()
+    date_str = _date_str_from_session_id(session_id)
+    raw_transcript_rel_path(
+        source="cursor",
+        date_str=date_str,
+        native_id=native_id,
+        native_ext="jsonl",
+        house=house,
+    )
+    raw_manifest_rel_path(
+        source="cursor",
+        date_str=date_str,
+        native_id=native_id,
+        house=house,
+    )
+    return native_id, date_str
 
 
 def relocate_transcript_source(
@@ -76,32 +118,47 @@ def relocate_transcript_source(
         )
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=conflict)
 
+    try:
+        native_id, date_str = _validate_relocate_paths(
+            session_id=session_id, transcript_id=transcript_id, house=house
+        )
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=str(exc),
+        ) from exc
+
     prior_snapshot: bytes | None = None
     if source_abs_path.is_file():
         prior_snapshot = source_abs_path.read_bytes()
 
-    written_sha256 = durable_write_bytes(
-        source_abs_path,
-        raw_bytes,
-        retain_store_root=files_root,
-    )
-    native_id = (transcript_id or session_id).strip()
-    date_str = _date_str_from_session_id(session_id)
-    aliases = [a for a in (f"transcript:{session_id}", session_id, transcript_id) if a]
-    raw_write_result = write_raw_transcript(
-        files_root=files_root,
-        house=house,
-        source="cursor",
-        kind="raw",
-        date_str=date_str,
-        native_id=native_id,
-        native_ext="jsonl",
-        raw_bytes=raw_bytes,
-        exporter="cortex_store.session_close",
-        exporter_version="1.0",
-        aliases=aliases,
-        expected_sha256=expected_sha256,
-    )
+    try:
+        written_sha256 = durable_write_bytes(
+            source_abs_path,
+            raw_bytes,
+            retain_store_root=files_root,
+        )
+        aliases = [a for a in (f"transcript:{session_id}", session_id, transcript_id) if a]
+        raw_write_result = write_raw_transcript(
+            files_root=files_root,
+            house=house,
+            source="cursor",
+            kind="raw",
+            date_str=date_str,
+            native_id=native_id,
+            native_ext="jsonl",
+            raw_bytes=raw_bytes,
+            exporter="cortex_store.session_close",
+            exporter_version="1.0",
+            aliases=aliases,
+            expected_sha256=expected_sha256,
+        )
+    except Exception:
+        _restore_source_snapshot(
+            source_abs_path, prior_snapshot, files_root=files_root
+        )
+        raise
+
     transcript_source_relocated(
         session_id=session_id,
         transcript_id=transcript_id or "",
@@ -127,14 +184,7 @@ def restore_transcript_source(
     """Rollback helper: restore prior bytes or unlink when no prior file existed."""
     if raw_write_result is not None:
         restore_raw_transcript(raw_write_result, files_root=files_root)
-    if prior_snapshot is not None:
-        durable_write_bytes(
-            source_abs_path,
-            prior_snapshot,
-            retain_store_root=files_root,
-        )
-    elif source_abs_path.is_file():
-        source_abs_path.unlink(missing_ok=True)
+    _restore_source_snapshot(source_abs_path, prior_snapshot, files_root=files_root)
 
 
 __all__ = ["SourceRelocateResult", "relocate_transcript_source", "restore_transcript_source"]
