@@ -95,6 +95,18 @@ async def team_dispatch(
     admit_provenance = build_team_dispatch_admit_provenance(body, request_id=request_id)
     if admit_provenance is not None:
         emit_admit_provenance_missing_event(admit_provenance)
+    if body.op == "ledger" and (
+        getattr(body, "house", None) or getattr(body, "parent", None)
+    ):
+        from cursor_bridge.spawn_endpoint_house_ledger import read_house_ledger
+
+        detail = read_house_ledger(
+            house=getattr(body, "house", None),
+            parent=getattr(body, "parent", None),
+            limit=getattr(body, "limit", 5) or 5,
+        )
+        response.status_code = 200
+        return detail
     if body.op in ("claim", "claim_release", "occupancy", "ledger"):
         from .cursor_sdk_claim_dispatch import relay_house_claim
 
@@ -269,10 +281,34 @@ async def team_dispatch(
             from cursor_bridge.bridge_spawn_relay import relay_spawn_tab
             from cursor_bridge.spawn_endpoint_house_ledger import (
                 format_ledger_prompt_prefix,
+                patch_spawn_row,
+                record_spawn,
             )
 
-            row_id = uuid.uuid4().hex
             purpose = str(getattr(body, "spawn_purpose", "") or "").strip()
+            thread = str(getattr(body, "thread", "") or "").strip()
+            spawn_row = record_spawn(
+                surface="cursor_ide",
+                thread=thread,
+                purpose=purpose,
+                purpose_unstated=False,
+                gui_host=str(body.gui_host),
+                state="launching",
+                parent={
+                    "agent": str(getattr(body, "caller_agent", "") or "").strip(),
+                    "thread": thread,
+                },
+            )
+            if not spawn_row.get("ok"):
+                return JSONResponse(
+                    status_code=500,
+                    content={
+                        "ok": False,
+                        "error": spawn_row.get("error"),
+                        "request_id": request_id,
+                    },
+                )
+            row_id = str(spawn_row["row_id"])
             prefixed = format_ledger_prompt_prefix(row_id=row_id, purpose=purpose)
             hop_prompt = prefixed + str(body.prompt)
             loop = asyncio.get_running_loop()
@@ -290,11 +326,28 @@ async def team_dispatch(
                     slug=getattr(body, "slug", None),
                 ),
             )
+            if spawn_res.get("ok"):
+                agent_id = str(
+                    spawn_res.get("editor_agent_id")
+                    or spawn_res.get("agent_id")
+                    or ""
+                ).strip()
+                patch_spawn_row(
+                    row_id,
+                    state="live",
+                    agent_id=agent_id or None,
+                )
+            else:
+                patch_spawn_row(
+                    row_id,
+                    state="failed",
+                    reason=str(spawn_res.get("error") or spawn_res.get("reason") or ""),
+                )
             response.status_code = 200 if spawn_res.get("ok") else 502
             return {
                 **spawn_res,
                 "ledger_row_id": row_id,
-                "thread": getattr(body, "thread", None),
+                "thread": thread,
             }
 
         backend = plan.get("backend")
