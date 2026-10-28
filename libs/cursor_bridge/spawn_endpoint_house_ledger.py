@@ -5,9 +5,9 @@ from __future__ import annotations
 import json
 import re
 import uuid
+from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
-from collections.abc import Callable
 from typing import Any
 
 from bus_watch.fable_lock import WATCH_DIR
@@ -385,19 +385,123 @@ def _find_spawn_row_id(
     return None
 
 
-def _extract_report_marker(subject: str, body: str) -> str | None:
-    """First status-bearing marker from bus subject, else a non-ledger body line."""
+_SUBJECT_LEADING_TOKEN = re.compile(r"^([A-Z][A-Z_]*)(\|)?")
+_GIW_PARK_SUBJECT = re.compile(r"cursor-sdk dispatch .+ PARKED\b", re.IGNORECASE)
+_GIW_PARK_BODY_LINE = re.compile(r"^stop:\s*PARKED_TRANSPORT\b", re.IGNORECASE)
+
+
+def _skip_ledger_prefix_lines(body: str) -> str:
+    """Body text after leading ``ledger_row:`` / ``purpose:`` lines (F3a JSON parse)."""
+    lines = (body or "").splitlines()
+    while lines:
+        stripped = lines[0].strip()
+        if stripped.startswith("ledger_row:") or stripped.startswith("purpose:"):
+            lines.pop(0)
+            continue
+        break
+    return "\n".join(lines).strip()
+
+
+def _token_source_label(token: str, had_pipe: bool) -> str:
+    return f"{token}|" if had_pipe else token
+
+
+def _closeout_marker_from_json(body: str) -> str | None:
+    stripped = _skip_ledger_prefix_lines(body)
+    if not stripped.startswith("{"):
+        return None
+    try:
+        obj = json.loads(stripped)
+    except json.JSONDecodeError:
+        return None
+    if not isinstance(obj, dict):
+        return None
+    status = str(obj.get("status") or "").strip().lower()
+    sic = str(obj.get("status_incomplete_class") or "").strip().lower()
+    if status == "partial" and sic:
+        return f"CLOSEOUT partial:{sic}"
+    if status == "gated":
+        return "CLOSEOUT gated"
+    if status:
+        return f"CLOSEOUT {status}"
+    return None
+
+
+def _closeout_marker_from_subject(subject: str) -> str | None:
     subj = str(subject or "").strip()
-    if subj:
-        return subj
+    upper = subj.upper()
+    if upper.startswith("CLOSEOUT|"):
+        tail = subj[len("CLOSEOUT|") :]
+    elif upper.startswith("CLOSEOUT"):
+        tail = subj[len("CLOSEOUT") :].lstrip()
+    else:
+        return None
+    if tail.lower().startswith("complete"):
+        return "CLOSEOUT complete"
+    for word in ("gated", "failed", "blocked", "partial", "complete"):
+        if re.search(rf"\b{word}\b", subj, re.IGNORECASE):
+            return f"CLOSEOUT {word.lower()}"
+    return None
+
+
+def _status_from_closeout_marker(marker: str) -> str:
+    ml = marker.lower()
+    if "partial:capture" in ml or "partial:consult" in ml:
+        return "done"
+    if "partial:work" in ml or "partial:park" in ml:
+        return "parked"
+    if re.fullmatch(r"closeout partial", ml):
+        return "parked"
+    if "gated" in ml:
+        return "failed"
+    if "complete" in ml:
+        return "done"
+    if "failed" in ml or "blocked" in ml:
+        return "failed"
+    if "partial" in ml:
+        return "parked"
+    return "unknown"
+
+
+def _report_marker(subject: str, body: str) -> tuple[str, str | None]:
+    """Map a bus turn to ``(status, source_status)`` using typed fields only (F3a)."""
+    subj = str(subject or "")
+    stripped_subj = subj.lstrip()
+    m = _SUBJECT_LEADING_TOKEN.match(stripped_subj)
+    token = m.group(1) if m else None
+    had_pipe = bool(m and m.group(2))
+
+    if token == "CLOSEOUT":
+        marker = _closeout_marker_from_json(body) or _closeout_marker_from_subject(subj)
+        if marker:
+            return _status_from_closeout_marker(marker), marker
+        return "unknown", _token_source_label(token, had_pipe)
+
+    if _GIW_PARK_SUBJECT.search(subj):
+        return "parked", "PARKED"
+
+    if token == "DONE":
+        return "done", _token_source_label(token, had_pipe)
+    if token == "CHECKPOINT":
+        return "live", "CHECKPOINT"
+    if token == "STATUS":
+        return "live", _token_source_label(token, had_pipe)
+    if token in ("QUESTION", "RULING", "STEER"):
+        return "unknown", _token_source_label(token, had_pipe)
+
+    if token is not None:
+        return "unknown", _token_source_label(token, had_pipe)
+
     for line in (body or "").splitlines():
         stripped = line.strip()
         if not stripped:
             continue
         if stripped.startswith("ledger_row:") or stripped.startswith("purpose:"):
             continue
-        return stripped
-    return None
+        if _GIW_PARK_BODY_LINE.match(stripped):
+            return "parked", "PARKED"
+        return "unknown", None
+    return "unknown", None
 
 
 def ingest_report_turn(
@@ -414,13 +518,7 @@ def ingest_report_turn(
     )
     if not rid:
         return {"ok": False, "error": "no_matching_spawn"}
-    raw_marker = _extract_report_marker(subject, body)
-    if raw_marker is None:
-        proj = "unknown"
-        stored_source: str | None = None
-    else:
-        stored_source = raw_marker
-        proj = map_source_status(raw_marker)
+    proj, stored_source = _report_marker(subject, body)
     return record_report_row(
         row_id=rid,
         status=proj,

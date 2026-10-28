@@ -3,11 +3,124 @@
 from __future__ import annotations
 
 import json
+import re
 import uuid
 from pathlib import Path
 
-import cursor_bridge.spawn_endpoint_house_ledger as ledger
 import pytest
+
+import cursor_bridge.spawn_endpoint_house_ledger as ledger
+
+_DISPATCH_IN_SUBJECT = re.compile(r"([0-9a-f]{12}-[0-9a-f]{8}(?:-r\d+)?)")
+
+_BODY_151 = (
+    '{"schema_version":1,"status":"partial","status_incomplete_class":"capture",'
+    '"capture_status":"partial","work_outcome":"unverified"}'
+)
+_BODY_128 = (
+    '{"schema_version":1,"status":"partial","status_incomplete_class":"consult",'
+    '"capture_status":"complete","work_outcome":"unverified"}'
+)
+_BODY_97 = (
+    '{"schema_version":1,"status":"partial","status_incomplete_class":"capture",'
+    '"capture_status":"partial","work_outcome":"unverified"}'
+)
+_BODY_156 = (
+    '{"schema_version":1,"status":"partial","status_incomplete_class":"capture",'
+    '"capture_status":"partial","work_outcome":"unverified"}'
+)
+_SUBJ_151 = (
+    "CLOSEOUT|cursor-sdk CLOSEOUT 887d997ebee5-4d67618c "
+    "contract=conductor caller=web-anthropic"
+)
+_SUBJ_128 = (
+    "CLOSEOUT|cursor-sdk CLOSEOUT e2e3e6515bee-ba27b08f "
+    "contract=conductor caller=conductor-hop"
+)
+_SUBJ_97 = (
+    "CLOSEOUT|cursor-sdk CLOSEOUT e58592b9923f-5b5ed39e-r1 "
+    "contract=conductor admitted_via=giw_park_resume caller=web-anthropic"
+)
+_SUBJ_156 = (
+    "CLOSEOUT|cursor-sdk CLOSEOUT 2633980ced39-5cb91fc5 "
+    "contract=conductor caller=web-anthropic"
+)
+_BODY_11 = (
+    "DONE| gate=G1 witness only, not land.\n"
+    "todo:spawn-endpoint-house-ledger\n"
+    "Next: G2.\n"
+)
+_BODY_92 = (
+    "stop: PARKED_TRANSPORT\n"
+    "PARKED_TRANSPORT wake=giw_restart:419cbca1\n\n"
+    '{"status":"parked"}\n'
+)
+_BODY_3 = (
+    "## Derived (projected at post — do not hand-edit)\n\n"
+    "### Child lanes\n_none substantiated_\n\n"
+    "### In-flight producers\nproducers: 2 in_flight\n"
+)
+_BODY_155 = (
+    "## Derived (projected at post — do not hand-edit)\n\n"
+    "### Child lanes\n- agent-bus:21183\n\n"
+    "### In-flight producers\nproducers: 1 in_flight\n"
+)
+_BODY_154 = (
+    "QUESTION (ruling 21088#145 §4). G6 r4 harvested.\n"
+    "AC12 fails again.\n"
+    "stop: ROW_PINNED.\n"
+)
+_BODY_113 = (
+    "RULING|todo:spawn-endpoint-house-ledger — G6 (maestro seat)\n"
+    "data: CLOSEOUT … partial\n"
+    "ruling:\n1. G6 reviewer\n"
+)
+_BODY_152 = (
+    "execution_id: `647ddc5e-de39-4f04-92bb-50c7eba747e8`\n"
+    "execution_id: `c9a27e916c2c49e7857392f32063de51`\n"
+    "# CDP generate result (opus-5.5-high)\n"
+)
+
+_GOLDEN_21088: tuple[tuple[str, str, str, str, str | None], ...] = (
+    ("151", _SUBJ_151, _BODY_151, "done", "CLOSEOUT partial:capture"),
+    ("151-by-dispatch-id", _SUBJ_151, _BODY_151, "done", "CLOSEOUT partial:capture"),
+    ("128", _SUBJ_128, _BODY_128, "done", "CLOSEOUT partial:consult"),
+    ("97", _SUBJ_97, _BODY_97, "done", "CLOSEOUT partial:capture"),
+    ("156", _SUBJ_156, _BODY_156, "done", "CLOSEOUT partial:capture"),
+    ("11", "DONE| G1 witness todo:spawn-endpoint-house-ledger", _BODY_11, "done", "DONE|"),
+    (
+        "92",
+        "cursor-sdk dispatch e58592b9923f-5b5ed39e PARKED (for GIW restart)",
+        _BODY_92,
+        "parked",
+        "PARKED",
+    ),
+    ("3", "CHECKPOINT — hop 1", _BODY_3, "live", "CHECKPOINT"),
+    (
+        "155",
+        "CHECKPOINT spawn-endpoint-house-ledger hop 33 ROW_PINNED",
+        _BODY_155,
+        "live",
+        "CHECKPOINT",
+    ),
+    (
+        "154",
+        "QUESTION|todo:spawn-endpoint-house-ledger — G6 r4 red on AC12 again",
+        _BODY_154,
+        "unknown",
+        "QUESTION|",
+    ),
+    (
+        "113",
+        "RULING|todo:spawn-endpoint-house-ledger — G6 reviewer anthropic/claude-sonnet-5-5",
+        _BODY_113,
+        "unknown",
+        "RULING|",
+    ),
+    ("37", "STEER directive", "x" * 1200, "unknown", "STEER"),
+    ("152", "cdp reply — 647ddc5e", _BODY_152, "unknown", None),
+    ("r3-falsifier", "CLOSEOUT complete", "", "done", "CLOSEOUT complete"),
+)
 
 pytestmark = pytest.mark.offline
 
@@ -378,6 +491,50 @@ def test_read_house_ledger_object_disambiguates_same_thread(tmp_path: Path) -> N
     )
     assert len(detail["rows"]) == 1
     assert detail["rows"][0]["row_id"] == rid_b
+
+
+@pytest.mark.parametrize(
+    ("case_id", "subject", "case_body", "expected_status", "expected_source_status"),
+    _GOLDEN_21088,
+    ids=[c[0] for c in _GOLDEN_21088],
+)
+def test_ingest_report_marker_golden_21088(
+    tmp_path: Path,
+    case_id: str,
+    subject: str,
+    case_body: str,
+    expected_status: str,
+    expected_source_status: str | None,
+) -> None:
+    """F3a golden rows from agent-bus:21088 (design §3)."""
+    rid = uuid.uuid4().hex
+    dispatch_id = _DISPATCH_IN_SUBJECT.search(subject)
+    dispatch_id = dispatch_id.group(1) if dispatch_id else None
+    ledger.record_spawn(
+        surface="cursor_sdk",
+        thread="21088",
+        purpose="p",
+        purpose_unstated=True,
+        row_id=rid,
+        dispatch_id=dispatch_id,
+        watch_dir=tmp_path,
+    )
+    if case_id == "151-by-dispatch-id":
+        body = case_body
+    else:
+        body = f"ledger_row: {rid}\n{case_body}"
+    out = ledger.ingest_report_turn(
+        body,
+        subject,
+        "21088",
+        turn=1,
+        watch_dir=tmp_path,
+    )
+    assert out["kind"] == "report"
+    assert out["status"] == expected_status
+    assert out["source_status"] == expected_source_status
+    proj = ledger.project_row_status(rid, watch_dir=tmp_path)
+    assert proj["status"] == expected_status
 
 
 def test_ingest_report_turn_null_when_omitted(tmp_path: Path) -> None:
