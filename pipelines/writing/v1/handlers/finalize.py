@@ -297,20 +297,8 @@ class WritingFinalizeHandler(BaseHandler):
             dispositions: list[Any] = []
             if isinstance(rhythm, dict) and isinstance(rhythm.get("dispositions"), list):
                 dispositions = list(rhythm["dispositions"])
-            changed_claims: list[str] = []
-            draft_v1_text = ""
-            if isinstance(draft, dict):
-                draft_v1_text = str(draft.get("draft") or "")
-            elif isinstance(draft, str):
-                draft_v1_text = draft
-            if (
-                isinstance(draft_v2_text, str)
-                and draft_v2_text.strip() != draft_v1_text.strip()
-            ):
-                changed_claims = ["draft_body"]
             revision = {
                 "draft_v2": draft_v2_text,
-                "changed_claims": changed_claims,
                 "dispositions": dispositions,
                 "rhythm_reverted": rhythm_reverted,
             }

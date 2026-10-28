@@ -383,10 +383,14 @@ def test_handler_email_subject_missing() -> None:
 
 
 def test_phone_purpose_line_not_flagged_as_drift() -> None:
+    purpose_scrub = importlib.import_module("writing_v1_handlers.purpose_scrub")
     sentence = "You can reach me at (669) 871-3234."
     points = ["Phone number for reply."]
-    assert provenance.sentence_restates_purpose_point(sentence, points)
-    drift = provenance._scrub_purpose_restatement_flags(
+    ledger = [{"excerpt": "669-871-3234"}]
+    assert purpose_scrub.sentence_restates_purpose_point(
+        sentence, points, pin_ledger=ledger
+    )
+    drift = purpose_scrub.scrub_purpose_restatement_flags(
         {
             "passed": False,
             "flagged_sentences": [
@@ -394,9 +398,105 @@ def test_phone_purpose_line_not_flagged_as_drift() -> None:
             ],
         },
         points,
+        pin_ledger=ledger,
+        purpose_text="",
+        verbatim_notes=[],
     )
     assert drift["passed"] is True
     assert drift["flagged_sentences"] == []
+
+
+def test_phone_without_ledger_stays_flagged() -> None:
+    purpose_scrub = importlib.import_module("writing_v1_handlers.purpose_scrub")
+    sentence = "You can reach me at (669) 871-3234."
+    points = ["Phone number for reply."]
+    assert not purpose_scrub.sentence_restates_purpose_point(
+        sentence, points, pin_ledger=[]
+    )
+    drift = purpose_scrub.scrub_purpose_restatement_flags(
+        {
+            "passed": False,
+            "flagged_sentences": [
+                {"sentence": sentence, "reason": "not_purpose_relevant"}
+            ],
+        },
+        points,
+        pin_ledger=[],
+        purpose_text="",
+        verbatim_notes=[],
+    )
+    assert drift["passed"] is False
+    assert drift["flagged_sentences"]
+
+
+def test_scrub_drops_objective_restatement() -> None:
+    purpose_scrub = importlib.import_module("writing_v1_handlers.purpose_scrub")
+    sentence = "The Assessor received the supplemental increase request."
+    drift = purpose_scrub.scrub_purpose_restatement_flags(
+        {
+            "passed": False,
+            "flagged_sentences": [
+                {"sentence": sentence, "reason": "not_purpose_relevant"}
+            ],
+        },
+        ["Parking instructions."],
+        pin_ledger=[],
+        purpose_text="Ask the Assessor to review the supplemental increase.",
+        verbatim_notes=[],
+    )
+    assert drift["passed"] is True
+    assert drift["flagged_sentences"] == []
+
+
+def test_scrub_drops_verbatim_note_restatement() -> None:
+    purpose_scrub = importlib.import_module("writing_v1_handlers.purpose_scrub")
+    note = "The property is at 669 Second Street."
+    drift = purpose_scrub.scrub_purpose_restatement_flags(
+        {
+            "passed": False,
+            "flagged_sentences": [{"sentence": note, "reason": "not_purpose_relevant"}],
+        },
+        ["Unrelated point."],
+        pin_ledger=[],
+        purpose_text="Confirm the hearing date.",
+        verbatim_notes=[note],
+    )
+    assert drift["passed"] is True
+    assert drift["flagged_sentences"] == []
+
+
+def test_scrub_skipped_when_no_purpose_context() -> None:
+    purpose_scrub = importlib.import_module("writing_v1_handlers.purpose_scrub")
+    note = "The property is at 669 Second Street."
+    drift_in = {
+        "passed": False,
+        "flagged_sentences": [{"sentence": note, "reason": "not_purpose_relevant"}],
+    }
+    drift = purpose_scrub.scrub_purpose_restatement_flags(
+        drift_in,
+        [],
+        pin_ledger=[],
+        purpose_text="",
+        verbatim_notes=[note],
+    )
+    assert drift is drift_in
+
+
+def test_scrub_passed_equals_not_flagged() -> None:
+    purpose_scrub = importlib.import_module("writing_v1_handlers.purpose_scrub")
+    drift = purpose_scrub.scrub_purpose_restatement_flags(
+        {
+            "passed": False,
+            "flagged_sentences": [
+                {"sentence": "Leftover.", "reason": "declaration_register_in_correspondence"}
+            ],
+        },
+        ["Parking instructions."],
+        pin_ledger=[],
+        purpose_text="",
+        verbatim_notes=[],
+    )
+    assert drift["passed"] == (not drift["flagged_sentences"])
 
 
 def test_em_dash_retained() -> None:

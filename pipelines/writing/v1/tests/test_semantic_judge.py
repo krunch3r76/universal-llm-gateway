@@ -331,6 +331,31 @@ async def test_semantic_judge_schema_invalid_unavailable() -> None:
 
 
 @pytest.mark.asyncio
+async def test_semantic_judge_empty_verifier_unavailable(monkeypatch: pytest.MonkeyPatch) -> None:
+    handler = semantic_judge.WritingSemanticJudgeHandler()
+    published: list[Any] = []
+    handler._publish_bus_event = lambda _ctx, event: published.append(event)  # type: ignore[method-assign]
+    monkeypatch.setattr(
+        semantic_judge,
+        "load_writing_models",
+        lambda: {"verifier": ""},
+    )
+    ctx = _Ctx(
+        {
+            "assemble": _Out({"pin_ledger": [], "intake": {}}),
+            "drafter_anthropic": _Out(None, raw="Backed."),
+        }
+    )
+    out = await handler.execute(_Step("candidates"), ctx)
+    assert out.json["judge_unavailable"] is True
+    assert out.json["reason"] == "verifier_model_missing"
+    assert out.json["refused"] == "judge_unavailable"
+    assert len(published) == 1
+    assert published[0].signal == "writing.judge.failed"
+    assert published[0].payload["reason"] == "verifier_model_missing"
+
+
+@pytest.mark.asyncio
 async def test_semantic_judge_transport_failure_publishes_failed() -> None:
     async def fake_call_model(*_args: Any, **_kwargs: Any) -> MagicMock:
         raise RuntimeError("transport_down")

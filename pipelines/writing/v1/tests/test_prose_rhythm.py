@@ -103,3 +103,12 @@ def test_revision_dispositions_names_each_finding() -> None:
     rows = prose_rhythm.revision_dispositions(_DRAFT_V1, draft_v2, _FOUR_FINDINGS)
     assert len(rows) == 4
     assert all(row["ref"] in {"s1", "s2", "s3", "s4"} for row in rows)
+
+
+def test_unrelated_draft_change_declines_nonmatching_findings() -> None:
+    draft_v2 = _DRAFT_V1 + "\n\nAn unrelated sentence with no fix overlap."
+    rows = prose_rhythm.revision_dispositions(_DRAFT_V1, draft_v2, _FOUR_FINDINGS)
+    assert len(rows) == 4
+    for row in rows:
+        assert row["status"] == "declined"
+        assert row["reason"] == "fix_not_reflected_in_draft_v2"

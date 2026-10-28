@@ -84,9 +84,11 @@ def _draft() -> dict[str, Any]:
     return {"draft": "Backed.", "claims": [], "need": [], "dispositions": []}
 
 
-def _run(outputs: dict[str, Any]) -> dict[str, Any]:
+def _run(
+    outputs: dict[str, Any], *, options: dict[str, Any] | None = None
+) -> dict[str, Any]:
     payload = asyncio.run(
-        finalize.WritingFinalizeHandler().execute(None, _Ctx(outputs))
+        finalize.WritingFinalizeHandler().execute(None, _Ctx(outputs, options))
     ).json
     assert payload["unsent"] is True
     return payload
@@ -174,6 +176,8 @@ def test_finalize_revision_happy_path() -> None:
     assert payload["ship_gate"]["pass"] is True
     assert payload["ship_gate"]["selected"] == "draft_v2"
     assert payload["revision"]["draft_v2"] == "Shorter."
+    assert payload["revision"]["dispositions"] == []
+    assert "changed_claims" not in payload["revision"]
     assert payload["provenance"]["final"] == []
     assert payload["review"]["status"] == "ok"
 
@@ -233,6 +237,47 @@ def test_finalize_live_reviewer_same_family_fails_gate() -> None:
         "claim_id": None,
         "detail": f"{_HERMES}->{_HERMES}",
     } in payload["ship_gate"]["unresolved"]
+
+
+def test_finalize_short_path_guarded_review_passes_ship_gate() -> None:
+    promoted = {
+        "ref": "s2",
+        "type": "intake_answer_promoted",
+        "fix": "Remove.",
+    }
+    payload = _run(
+        {
+            "assemble": _Out(_assemble()),
+            "draft": _Out(_draft(), model_id=_HERMES, model_call_count=1),
+            "provenance_check": _Out(
+                {
+                    "violations": [],
+                    "pass": True,
+                    "drift_check": {"passed": True, "flagged_sentences": []},
+                }
+            ),
+            "independence": _Out({"refused": None, "independence": "full"}),
+            "fact_ceiling_audit": _Out(
+                {
+                    "findings": [],
+                    "verdict": "ship",
+                    "suppressed_findings": [promoted | {"reason": "intake_answer_uncorroborated"}],
+                    "clauses": [],
+                },
+                model_id=_QWEN,
+                model_call_count=1,
+            ),
+        },
+        options={"full_drafter_fanout": False},
+    )
+    assert payload["ship_gate"]["pass"] is True
+    assert payload["revision"] is None
+    assert "suppressed_findings" not in payload["ship_gate"]
+    assert not any(
+        row.get("type") == "intake_answer_promoted"
+        for row in payload["ship_gate"]["unresolved"]
+        if isinstance(row, dict)
+    )
 
 
 def test_finalize_ship_without_revision() -> None:

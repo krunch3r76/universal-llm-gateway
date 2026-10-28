@@ -10,7 +10,13 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from writing_intake.fact_inventory import build_fact_inventory, run_drift_check
+from writing_intake.claim_gates import parse_purpose_points
+from writing_intake.fact_inventory import (
+    build_fact_inventory,
+    drift_check_sentence,
+    intake_answer_in_text,
+    run_drift_check,
+)
 from writing_intake.schema import OutboundWriteIntake, validate_intake_payload
 
 _PKG = "writing_v1_handlers"
@@ -126,6 +132,37 @@ def test_aab_inventory_drops_recitals_keeps_exhibits() -> None:
     joined = " ".join(inv["load_bearing_claims"])
     for n in (2, 3, 4, 5, 8):
         assert f"Exhibit {n}" in joined
+
+
+def test_intake_answer_in_text_matches_stripped_substring() -> None:
+    assert intake_answer_in_text("Body mentions answer42 here.", ["answer42"])
+    assert not intake_answer_in_text("Body.", [])
+    assert not intake_answer_in_text("Body.", ["   "])
+    assert not intake_answer_in_text("Body mentions Answer42.", ["answer42"])
+
+
+def test_drift_producer_flags_objective_restatement() -> None:
+    sentence = "The Assessor received the supplemental increase request."
+    parsed = parse_purpose_points("", ["Parking instructions."])
+    reason = drift_check_sentence(
+        sentence,
+        channel="email",
+        exhibit_ids=set(),
+        parsed_purpose_points=parsed,
+    )
+    assert reason == "not_purpose_relevant"
+
+
+def test_drift_producer_flags_verbatim_note_restatement() -> None:
+    sentence = "The property is at 669 Second Street."
+    parsed = parse_purpose_points("", ["Unrelated point."])
+    reason = drift_check_sentence(
+        sentence,
+        channel="email",
+        exhibit_ids=set(),
+        parsed_purpose_points=parsed,
+    )
+    assert reason == "not_purpose_relevant"
 
 
 def test_drift_check_flags_bad_draft() -> None:

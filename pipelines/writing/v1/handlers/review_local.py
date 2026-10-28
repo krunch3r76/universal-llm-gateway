@@ -17,6 +17,7 @@ from typing import Any
 from systems.pipeline.core.handlers.builtin import BaseHandler
 from systems.pipeline.core.handlers.protocol import StepOutput
 from systems.pipeline.core.prompts import PromptBuilder
+from writing_intake.fact_inventory import intake_answer_in_text
 
 from .independence import (
     is_independent,
@@ -31,6 +32,55 @@ _JSON_ONLY = "Return only the JSON object, with no prose before or after it."
 
 def _step(payload: dict[str, Any]) -> StepOutput:
     return StepOutput(raw=json.dumps(payload), json=payload)
+
+
+def _intake_answers_from_assemble(assemble: dict[str, Any]) -> list[str]:
+    intake_block = assemble.get("intake") or {}
+    if not isinstance(intake_block, dict):
+        return []
+    raw_answers = intake_block.get("intake_answers")
+    if isinstance(raw_answers, list):
+        return [str(item) for item in raw_answers]
+    return []
+
+
+def _guard_intake_answer_promoted(
+    parsed: dict[str, Any], *, draft_text: str, intake_answers: list[str]
+) -> dict[str, Any]:
+    findings_in = parsed.get("findings") or []
+    kept: list[Any] = []
+    suppressed: list[dict[str, str]] = []
+    for row in findings_in:
+        if not isinstance(row, dict):
+            kept.append(row)
+            continue
+        if row.get("type") != "intake_answer_promoted":
+            kept.append(row)
+            continue
+        ref = row.get("ref")
+        if isinstance(ref, str) and ref.strip() and ref.strip() in draft_text:
+            haystack = ref.strip()
+        else:
+            haystack = draft_text
+        if intake_answer_in_text(haystack, intake_answers):
+            kept.append(row)
+            continue
+        suppressed.append(
+            {
+                "ref": str(row.get("ref") or ""),
+                "type": str(row.get("type") or ""),
+                "fix": str(row.get("fix") or ""),
+                "reason": "intake_answer_uncorroborated",
+            }
+        )
+    verdict = parsed.get("verdict")
+    if verdict == "revise" and suppressed and not kept:
+        verdict = "ship"
+    out = dict(parsed)
+    out["findings"] = kept
+    out["verdict"] = verdict
+    out["suppressed_findings"] = suppressed
+    return out
 
 
 def _refusal(exc: BaseException) -> StepOutput:
@@ -164,6 +214,10 @@ class WritingReviewLocalHandler(BaseHandler):
         if "clauses" not in parsed:
             parsed = dict(parsed)
             parsed["clauses"] = []
+        intake_answers = _intake_answers_from_assemble(assemble)
+        parsed = _guard_intake_answer_promoted(
+            parsed, draft_text=draft_text, intake_answers=intake_answers
+        )
         if used_model:
             parsed = dict(parsed)
             parsed["reviewer_model"] = used_model
