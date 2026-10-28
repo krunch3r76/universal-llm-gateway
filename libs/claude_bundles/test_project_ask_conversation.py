@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -604,6 +604,7 @@ async def test_code_surface_two_turn_conversation_passes_every_approval_check(
     ):
         results = await run_project_conversation(
             ["first", "second"],
+            model="opus-5.5-medium",
             compose_url="https://claude.ai/code",
             claude_surface="code",
             delete_after=False,
@@ -614,3 +615,180 @@ async def test_code_surface_two_turn_conversation_passes_every_approval_check(
     assert seen_surfaces == ["code", "code"]
     assert submit_mock.await_count == 2
     assert model_info["approval_mode"] == "auto"
+
+
+@pytest.mark.asyncio
+async def test_code_surface_model_mismatch_fails_before_send_prompt() -> None:
+    """R23: /code mismatch raises before send_prompt (no harvest burn)."""
+    page = AsyncMock()
+    page.url = "https://claude.ai/code"
+    model_info = {
+        "ok": True,
+        "step": "code_surface_page_model",
+        "model_ran": "Model: Opus 5.5 Medium",
+        "current_model": "Model: Opus 5.5 Medium",
+    }
+    send_prompt = AsyncMock()
+    wait_reply = AsyncMock()
+
+    with (
+        patch(
+            "claude_bundles.project_ask_conversation.connect_cdp",
+            new=AsyncMock(return_value=(AsyncMock(), None, None, None)),
+        ),
+        patch(
+            "claude_bundles.project_ask_conversation.pick_chat_page",
+            new=AsyncMock(return_value=page),
+        ),
+        patch(
+            "claude_bundles.project_ask_conversation._compose_model_selected",
+            new=AsyncMock(return_value=model_info),
+        ),
+        patch(
+            "claude_bundles.project_ask_conversation.send_prompt",
+            new=send_prompt,
+        ),
+        patch(
+            "claude_bundles.project_ask_conversation.wait_assistant_reply",
+            new=wait_reply,
+        ),
+    ):
+        results = await run_project_conversation(
+            ["diagnose only"],
+            model="sonnet-5-5",
+            compose_url="https://claude.ai/code",
+            claude_surface="code",
+            delete_after=False,
+        )
+
+    send_prompt.assert_not_awaited()
+    wait_reply.assert_not_awaited()
+    assert len(results) == 1
+    assert results[0].ok is False
+    assert results[0].body_len == 0
+    assert "model attestation mismatch" in (results[0].error or "")
+    assert "sonnet-5-5" in (results[0].error or "")
+
+
+@pytest.mark.asyncio
+async def test_code_surface_model_match_calls_send_prompt_once() -> None:
+    """R23: matched /code label proceeds to send_prompt."""
+    page = AsyncMock()
+    page.url = "https://claude.ai/code"
+    model_info = {
+        "ok": True,
+        "step": "code_surface_page_model",
+        "model_ran": "Model: Opus 5.5 Medium",
+        "current_model": "Model: Opus 5.5 Medium",
+    }
+    send_prompt = AsyncMock()
+    state = {
+        "body": "ok " + ("x" * 120),
+        "url": page.url,
+        "model_label": "Model: Opus 5.5 Medium",
+    }
+    harvest = HarvestBody(content=state["body"], provenance="chat")
+
+    with (
+        patch(
+            "claude_bundles.project_ask_conversation.connect_cdp",
+            new=AsyncMock(return_value=(AsyncMock(), None, None, None)),
+        ),
+        patch(
+            "claude_bundles.project_ask_conversation.pick_chat_page",
+            new=AsyncMock(return_value=page),
+        ),
+        patch(
+            "claude_bundles.project_ask_conversation._compose_model_selected",
+            new=AsyncMock(return_value=model_info),
+        ),
+        patch(
+            "claude_bundles.project_ask_conversation.harvest_assistant",
+            new=AsyncMock(return_value={"count": 0}),
+        ),
+        patch(
+            "claude_bundles.project_ask_conversation.send_prompt",
+            new=send_prompt,
+        ),
+        patch(
+            "claude_bundles.project_ask_conversation.wait_assistant_reply",
+            new=AsyncMock(return_value=state),
+        ),
+        patch(
+            "claude_bundles.project_ask_conversation.resolve_harvest_body",
+            new=AsyncMock(return_value=harvest),
+        ),
+    ):
+        results = await run_project_conversation(
+            ["work"],
+            model="opus-5.5-medium",
+            compose_url="https://claude.ai/code",
+            claude_surface="code",
+            delete_after=False,
+        )
+
+    send_prompt.assert_awaited_once()
+    assert len(results) == 1
+    assert results[0].ok is True
+
+
+@pytest.mark.asyncio
+async def test_compose_new_path_skips_code_surface_pre_send_assert() -> None:
+    """Chat/cowork first compose does not run the /code pre-send model gate."""
+    page = AsyncMock()
+    page.url = "https://claude.ai/new"
+    model_info = {"ok": True, "step": "selected", "current_model": "Opus 4.6"}
+    pre_assert = MagicMock(side_effect=AssertionError("must not run on /new"))
+
+    with (
+        patch(
+            "claude_bundles.project_ask_conversation.connect_cdp",
+            new=AsyncMock(return_value=(AsyncMock(), None, None, None)),
+        ),
+        patch(
+            "claude_bundles.project_ask_conversation.pick_chat_page",
+            new=AsyncMock(return_value=page),
+        ),
+        patch(
+            "claude_bundles.project_ask_conversation._compose_model_selected",
+            new=AsyncMock(return_value=model_info),
+        ),
+        patch(
+            "claude_bundles.project_ask_conversation._assert_code_surface_model_before_send",
+            new=pre_assert,
+        ),
+        patch(
+            "claude_bundles.project_ask_conversation.harvest_assistant",
+            new=AsyncMock(return_value={"count": 0}),
+        ),
+        patch(
+            "claude_bundles.project_ask_conversation.send_prompt",
+            new=AsyncMock(),
+        ),
+        patch(
+            "claude_bundles.project_ask_conversation.wait_assistant_reply",
+            new=AsyncMock(
+                return_value={
+                    "body": "reply " + ("y" * 120),
+                    "url": page.url,
+                    "model_label": "Opus 4.6",
+                }
+            ),
+        ),
+        patch(
+            "claude_bundles.project_ask_conversation.resolve_harvest_body",
+            new=AsyncMock(return_value=HarvestBody(content="reply", provenance="chat")),
+        ),
+        patch(
+            "claude_bundles.project_ask_conversation._attest_model",
+            return_value="Opus 4.6",
+        ),
+    ):
+        results = await run_project_conversation(
+            ["hi"],
+            compose_url="https://claude.ai/new",
+            delete_after=False,
+        )
+
+    pre_assert.assert_not_called()
+    assert results[0].ok is True
