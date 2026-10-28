@@ -74,6 +74,7 @@ async def harvest_by_opening_url(
             chat_url,
             holder=HARVEST_HOLDER,
             allow_mint=True,
+            allow_k44_superseded_page_only=True,
         )
         attach_attempts.append(
             {

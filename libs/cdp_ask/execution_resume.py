@@ -205,6 +205,17 @@ async def resume_execution(
             code=outcome.error or "attach_failed",
         )
         return
+    if outcome.page_only_borrow:
+        with contextlib.suppress(Exception):
+            await _teardown_opened(outcome)
+        await _fail(
+            store,
+            record,
+            trigger=trigger,
+            chat_url=chat_url,
+            code="dormant_relaunch_failed",
+        )
+        return
 
     attached_url = str(getattr(outcome.page, "url", "") or "")
     if _cse_id(attached_url) != _cse_id(chat_url):
