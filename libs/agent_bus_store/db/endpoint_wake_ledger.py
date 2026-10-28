@@ -530,6 +530,69 @@ def resolve_wake_delivery_binding(*, house_id: str) -> dict[str, Any]:
     return envelope
 
 
+_STEER_DELIVERY_AGENT = "cursor"
+_STEER_TERMINAL_STATUSES = frozenset({"completed", "failed", "cancelled"})
+
+
+def _live_cursor_subscription_for_steer(thread_id: str) -> bool:
+    resolved = resolve_subscription_for_thread(_STEER_DELIVERY_AGENT, thread_id)
+    if resolved is None:
+        return False
+    _, row = resolved
+    return str(row.get("state") or "") == "subscribed"
+
+
+def resolve_steer_delivery_binding(*, house_id: str) -> dict[str, Any]:
+    """Resolve steer actuation from the cursor-sdk dispatch ledger (GIW store)."""
+    from services.git_integration_worker.cursor_dispatch_ledger import (
+        read_active_resume_steer_dispatch,
+        read_latest_dispatch_for_thread,
+    )
+
+    thread_id = str(house_id or "").strip()
+    as_of = datetime.now(UTC).isoformat().replace("+00:00", "Z")
+    scope = f"house:{thread_id}/intent:steer"
+    envelope: dict[str, Any] = {
+        "as_of": as_of,
+        "basis": "dispatch_ledger_active",
+        "source": _DELIVERY_BINDING_SOURCE,
+        "scope": scope,
+        "stale": False,
+    }
+    if not thread_id:
+        envelope.update({"state": "unbound", "current": None})
+        return envelope
+
+    active = read_active_resume_steer_dispatch(thread_id=thread_id)
+    if active is not None:
+        envelope.update(
+            {
+                "state": "bound",
+                "current": {
+                    "actuation": {
+                        "type": "cursor_sdk_dispatch",
+                        "dispatch_id": active["dispatch_id"],
+                        "execution_id": active["execution_id"],
+                        "resume_of": active["resume_of"],
+                    },
+                },
+            }
+        )
+        return envelope
+
+    latest = read_latest_dispatch_for_thread(thread_id=thread_id)
+    if (
+        latest is not None
+        and str(latest["status"]) in _STEER_TERMINAL_STATUSES
+        and _live_cursor_subscription_for_steer(thread_id)
+    ):
+        envelope.update({"state": "unbound", "current": None})
+        return envelope
+
+    envelope.update({"state": "unbound", "current": None})
+    return envelope
+
+
 def claim_due_wakes(
     debounce_s: int = 600,
     claim_ttl_s: int = 300,

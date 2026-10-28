@@ -342,6 +342,92 @@ def _connect(path: Path | None = None) -> sqlite3.Connection:
     raise last_err
 
 
+_STEER_DELIVERY_ACTIVE_STATUSES = (
+    _STATUS_QUEUED,
+    _STATUS_ADMITTED,
+    _STATUS_RUNNING,
+    _STATUS_PARKED_WAITING,
+)
+
+
+def _read_only_ledger_connect() -> sqlite3.Connection | None:
+    """Open the dispatch ledger read-only; None when the file does not exist yet."""
+    path = _ledger_path()
+    if not path.is_file():
+        return None
+    conn = sqlite3.connect(f"file:{path}?mode=ro", uri=True, timeout=5.0)
+    conn.row_factory = sqlite3.Row
+    return conn
+
+
+def read_active_resume_steer_dispatch(
+    *, thread_id: str
+) -> dict[str, Any] | None:
+    """Newest non-terminal cursor-sdk row on ``thread_id`` with ``resume_of`` set."""
+    house = str(thread_id or "").strip()
+    if not house:
+        return None
+    conn = _read_only_ledger_connect()
+    if conn is None:
+        return None
+    try:
+        placeholders = ",".join("?" * len(_STEER_DELIVERY_ACTIVE_STATUSES))
+        row = conn.execute(
+            f"""
+            SELECT dispatch_id, execution_id, resume_of, status
+            FROM cursor_sdk_dispatches
+            WHERE thread_id = ?
+              AND resume_of IS NOT NULL
+              AND trim(resume_of) != ''
+              AND status IN ({placeholders})
+            ORDER BY COALESCE(started_at, queued_at) DESC, rowid DESC
+            LIMIT 1
+            """,
+            (house, *_STEER_DELIVERY_ACTIVE_STATUSES),
+        ).fetchone()
+    finally:
+        conn.close()
+    if row is None:
+        return None
+    return {
+        "dispatch_id": row["dispatch_id"],
+        "execution_id": row["execution_id"],
+        "resume_of": row["resume_of"],
+        "status": row["status"],
+    }
+
+
+def read_latest_dispatch_for_thread(*, thread_id: str) -> dict[str, Any] | None:
+    """Latest ledger row for ``thread_id`` by insert order (any status)."""
+    house = str(thread_id or "").strip()
+    if not house:
+        return None
+    conn = _read_only_ledger_connect()
+    if conn is None:
+        return None
+    try:
+        row = conn.execute(
+            """
+            SELECT dispatch_id, execution_id, resume_of, status
+            FROM cursor_sdk_dispatches
+            WHERE thread_id = ?
+            ORDER BY rowid DESC
+            LIMIT 1
+            """,
+            (house,),
+        ).fetchone()
+    finally:
+        conn.close()
+    if row is None:
+        return None
+    return {
+        "dispatch_id": row["dispatch_id"],
+        "execution_id": row["execution_id"],
+        "resume_of": row["resume_of"],
+        "status": row["status"],
+    }
+
+
 @dataclass(frozen=True, slots=True)
 class LedgerRow:
     dispatch_id: str
