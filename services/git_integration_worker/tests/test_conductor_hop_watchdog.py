@@ -370,7 +370,7 @@ async def test_cdp_probe_indeterminate_admits_once_after_double_grace() -> None:
             (dispatch_id,),
         ).fetchone()
     record = json.loads(stored["record_json"])
-    assert isinstance(record.get("hop_cdp_probe_indeterminate_at"), (int, float))
+    assert isinstance(record.get("hop_cdp_probe_indeterminate_at"), int | float)
 
 
 @pytest.mark.asyncio
@@ -501,7 +501,7 @@ async def test_cdp_probe_indeterminate_failed_post_does_not_burn_shot() -> None:
     assert retried is True
     assert post.await_count == 2
     record = _record(ledger, dispatch_id)
-    assert isinstance(record.get("hop_cdp_probe_indeterminate_at"), (int, float))
+    assert isinstance(record.get("hop_cdp_probe_indeterminate_at"), int | float)
     assert record.get("hop_successor") == "succ-after-503"
 
 
@@ -533,7 +533,7 @@ async def test_cdp_probe_indeterminate_permanent_error_stamps_and_drops() -> Non
     assert post.await_count == 1
     record = _record(ledger, dispatch_id)
     assert record["hop_admit_error"]["retryable"] is False
-    assert isinstance(record.get("hop_cdp_probe_indeterminate_at"), (int, float))
+    assert isinstance(record.get("hop_cdp_probe_indeterminate_at"), int | float)
     with snap:
         assert conductor_hop_watchdog_candidates(ledger, grace_s=_GRACE_S) == []
 
@@ -572,7 +572,7 @@ async def test_cdp_probe_indeterminate_crash_cap_pages_not_parks(
     record = _record(ledger, dispatch_id)
     assert record.get("hop_parked") is not True
     page_mock.assert_awaited_once()
-    assert isinstance(record.get("hop_cdp_probe_indeterminate_at"), (int, float))
+    assert isinstance(record.get("hop_cdp_probe_indeterminate_at"), int | float)
 
 
 def test_cdp_probe_due_checks_grace_before_network() -> None:
@@ -1016,8 +1016,8 @@ async def test_no_progress_park_terminal_nest_admits_producer_harvest_once() -> 
     record = _record(ledger, dispatch_id)
     assert record.get("hop_successor") == "succ-producer-1"
     assert record.get("hop_park_reason") == "hop_budget_no_progress_cap"
-    assert isinstance(record.get("hop_park_released_at"), (int, float))
-    assert isinstance(record.get("hop_no_progress_producer_continued_at"), (int, float))
+    assert isinstance(record.get("hop_park_released_at"), int | float)
+    assert isinstance(record.get("hop_no_progress_producer_continued_at"), int | float)
 
 
 @pytest.mark.asyncio
@@ -1139,7 +1139,7 @@ async def test_claimed_successor_backfill_does_not_post_again() -> None:
     post_mock.assert_not_called()
     record = _record(ledger, dispatch_id)
     assert record.get("hop_successor") == "succ-already-landed"
-    assert isinstance(record.get("hop_no_progress_producer_continued_at"), (int, float))
+    assert isinstance(record.get("hop_no_progress_producer_continued_at"), int | float)
 
 
 @pytest.mark.asyncio
@@ -1237,7 +1237,7 @@ async def test_no_progress_park_backtick_harvest_reply_admits_once() -> None:
     assert post_mock.await_args.args[0]["hop_reason"] == "producer_harvest"
     record = _record(ledger, dispatch_id)
     assert record.get("hop_successor") == "succ-harvest-reply"
-    assert isinstance(record.get("hop_park_released_at"), (int, float))
+    assert isinstance(record.get("hop_park_released_at"), int | float)
 
 
 @pytest.mark.asyncio
