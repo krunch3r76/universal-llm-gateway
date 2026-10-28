@@ -4,7 +4,30 @@ export const ULG_MCP_HTTP_DEFAULT = "http://127.0.0.1:9338/mcp/code";
 const MCP_CODE_PATH = "/mcp/code";
 
 function hasUrlScheme(raw: string): boolean {
-  return /^[a-zA-Z][a-zA-Z0-9+.-]*:/.test(raw);
+  return /^[a-zA-Z][a-zA-Z0-9+.-]*:\/\//.test(raw);
+}
+
+function throwInvalidUlgMcpHttpUrl(raw: string): never {
+  throw new Error(
+    `Invalid ULG_MCP_HTTP_URL "${raw}": expected http(s)://host[:port][/path] or host:port`,
+  );
+}
+
+function parseAndValidateUlgMcpHttpUrl(trimmed: string): URL {
+  let parsed: URL;
+  try {
+    const withScheme = hasUrlScheme(trimmed) ? trimmed : `http://${trimmed}`;
+    parsed = new URL(withScheme);
+  } catch {
+    throwInvalidUlgMcpHttpUrl(trimmed);
+  }
+  if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+    throwInvalidUlgMcpHttpUrl(trimmed);
+  }
+  if (!parsed.hostname) {
+    throwInvalidUlgMcpHttpUrl(trimmed);
+  }
+  return parsed;
 }
 
 /** Accept host:port[/path] or full http(s) URL; always returns a parseable absolute URL. */
@@ -13,8 +36,7 @@ export function normalizeUlgMcpHttpUrl(raw: string): string {
   if (!trimmed) {
     return ULG_MCP_HTTP_DEFAULT;
   }
-  const withScheme = hasUrlScheme(trimmed) ? trimmed : `http://${trimmed}`;
-  const url = new URL(withScheme);
+  const url = parseAndValidateUlgMcpHttpUrl(trimmed);
   if (url.pathname === "" || url.pathname === "/") {
     url.pathname = MCP_CODE_PATH;
   }
