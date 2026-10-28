@@ -8,6 +8,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
+import logging
 import re
 import time
 from dataclasses import dataclass
@@ -44,6 +45,8 @@ from cdp_ask.cse_session_models import (
     HarvestResponse,
     OutputCardSummary,
 )
+
+logger = logging.getLogger(__name__)
 
 _CSE_PATH_MARKER = "/cowork/cse_"
 
@@ -98,9 +101,12 @@ def _session_id_from_harvest_filename(filename: str | None) -> str:
 
 def _native_id_from_filename(filename: str | None) -> str | None:
     """Return session UUID native_id or ``None`` when the token is rejected."""
-    native_id = _session_id_from_harvest_filename(filename)
-    if native_id in {"", "unknown"}:
+    if not filename or not filename.lower().endswith(".jsonl"):
         return None
+    match = _SESSION_UUID_RE.search(filename)
+    if not match:
+        return None
+    native_id = match.group(1)
     if _NATIVE_ID_REJECT_RE.search(native_id) or native_id.endswith(".manifest"):
         return None
     return native_id
@@ -190,9 +196,10 @@ def _persist_cowork_messages_projection(
 
     envelope = extract_turns_from_jsonl_bytes(
         raw_bytes,
-        tools="marker",
+        tools="none",
         transcript_id=native_id,
         session_id=native_id,
+        observed_at=captured_at,
         surface="claude_ai",
     )
     projection = envelope.model_dump(mode="json", by_alias=True)
@@ -682,12 +689,20 @@ async def _try_body_harvest(
                 req.registration_id
                 or str((provenance or {}).get("registration_id") or "")
             ).strip() or None
-            persisted = persist_cowork_output_raw_transcript(
-                body_result,
-                chat_url=resolved_chat_url,
-                registration_id=resolved_registration_id,
-                provenance=provenance,
-            )
+            persisted: CoworkOutputPersistResult | None = None
+            try:
+                persisted = persist_cowork_output_raw_transcript(
+                    body_result,
+                    chat_url=resolved_chat_url,
+                    registration_id=resolved_registration_id,
+                    provenance=provenance,
+                )
+            except Exception:
+                logger.warning(
+                    "Cowork output-file persist failed; harvest continues without archive",
+                    exc_info=True,
+                )
+                persisted = None
             if persisted is not None:
                 archive_uri = persisted.raw_uri
                 archive_sha256 = persisted.raw_sha256

@@ -420,6 +420,159 @@ def test_persist_projects_messages_dropping_tool_output(
     assert projection.get("meta", {}).get("raw_sha256") == raw_sha
 
 
+def _fixture_jsonl_system_preamble_and_tools() -> bytes:
+    records = [
+        {
+            "type": "system",
+            "message": {
+                "role": "system",
+                "content": "Long preamble on who Claude is and what the model must do.",
+            },
+        },
+        {
+            "type": "user",
+            "message": {
+                "role": "user",
+                "content": "<system-reminder>System preamble reminder</system-reminder>",
+            },
+        },
+        {
+            "type": "user",
+            "isMeta": True,
+            "message": {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "text",
+                        "text": "Base directory for this skill: /root/.claude/skills/example",
+                    }
+                ],
+            },
+        },
+        {
+            "type": "user",
+            "message": {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": "Hello"},
+                    {"type": "tool_result", "content": "secret tool output"},
+                ],
+            },
+        },
+        {
+            "type": "assistant",
+            "message": {
+                "role": "assistant",
+                "content": [
+                    {"type": "tool_use", "name": "Bash", "input": {"cmd": "ls"}},
+                    {"type": "text", "text": "Here is the answer."},
+                ],
+            },
+        },
+    ]
+    return ("".join(json.dumps(row) + "\n" for row in records)).encode("utf-8")
+
+
+def test_messages_projection_strips_system_preamble_and_tools(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Messages projection keeps user/assistant dialogue only; raw JSONL stays byte-intact."""
+    monkeypatch.setenv("CORTEX_FILES_ROOT", str(tmp_path))
+    _freeze_harvest_date(monkeypatch)
+    raw_bytes = _fixture_jsonl_system_preamble_and_tools()
+    body = HarvestBody(
+        content=raw_bytes.decode("utf-8"),
+        provenance="output-file",
+        filename=_OUTPUT_FILENAME_COWORK,
+        content_bytes=raw_bytes,
+        route=_ROUTE,
+        file_uuid=_FILE_UUID,
+    )
+    result = persist_cowork_output_raw_transcript(
+        body,
+        chat_url=_CHAT_URL,
+        registration_id=_REGISTRATION_ID,
+        provenance={"lane_thread_proven": "12286"},
+    )
+    assert result is not None
+
+    raw_path = (
+        tmp_path
+        / "notes/system/transcripts/12286/claude-ai/raw/2026-10-27/"
+        f"{_RAW_BASENAME}"
+    )
+    messages_path = (
+        tmp_path
+        / "notes/system/transcripts/12286/claude-ai/messages/2026-10-27/"
+        f"{_SESSION_ID}.messages.json"
+    )
+    assert raw_path.read_bytes() == raw_bytes
+    projection = json.loads(messages_path.read_text(encoding="utf-8"))
+    messages = projection["messages"]
+    assert len(messages) == 2
+    assert {m["role"] for m in messages} == {"user", "assistant"}
+    for entry in messages:
+        assert isinstance(entry["content"], str)
+        assert entry["content"].strip()
+    joined = json.dumps(messages)
+    for forbidden in (
+        "who Claude is",
+        "System preamble reminder",
+        "Base directory for this skill",
+        "Bash",
+        "tool call",
+        "secret tool output",
+    ):
+        assert forbidden not in joined
+    assert messages[0]["content"] == "Hello"
+    assert messages[1]["content"] == "Here is the answer."
+
+
+@pytest.mark.asyncio
+async def test_try_body_harvest_md_output_file_harvested_without_archive(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Non-JSONL ``.md`` deliverables harvest chat text but skip raw transcript persist."""
+    monkeypatch.setenv("CORTEX_FILES_ROOT", str(tmp_path))
+    _freeze_harvest_date(monkeypatch)
+    md_text = "# Deliverable\n\nShort markdown body for the operator."
+    harvest_body = HarvestBody(
+        content=md_text,
+        provenance="output-file",
+        filename="report-070d97ff-5df4-5b11-8181-6faafdf64608.md",
+        content_bytes=md_text.encode("utf-8"),
+        route=_ROUTE,
+        file_uuid=_FILE_UUID,
+    )
+    page = MagicMock()
+    req = HarvestRequest(
+        source="output-file",
+        chat_url=_CHAT_URL,
+        registration_id=_REGISTRATION_ID,
+    )
+    with (
+        patch(
+            "cdp_ask.cse_session_harvest_scrape.harvest_turns",
+            AsyncMock(return_value=_settled_turn_dom(md_text)),
+        ),
+        patch(
+            "cdp_ask.cse_session_harvest_scrape._enumerate_output_cards",
+            AsyncMock(return_value=[]),
+        ),
+        patch(
+            "cdp_ask.cse_session_harvest_scrape.resolve_harvest_body",
+            AsyncMock(return_value=harvest_body),
+        ),
+    ):
+        resp = await _try_body_harvest(page, req, None, chat_url=_CHAT_URL)
+
+    assert resp is not None
+    assert resp.outcome == "harvested"
+    assert resp.archive_uri is None
+    assert resp.archive_sha256 is None
+
+
 @pytest.mark.asyncio
 async def test_output_file_multi_card_disambiguation_without_marker() -> None:
     page = MagicMock()

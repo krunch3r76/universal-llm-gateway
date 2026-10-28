@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Literal
@@ -66,10 +67,18 @@ def _extract_user_text(content: list[dict[str, Any]]) -> str:
     for block in content:
         if not isinstance(block, dict):
             continue
-        if block.get("type") == "text":
-            text = block.get("text", "")
-            if isinstance(text, str) and text.strip():
-                parts.append(text)
+        if block.get("type") != "text":
+            continue
+        text = block.get("text", "")
+        if not isinstance(text, str):
+            continue
+        text = re.sub(
+            r"<system-reminder>[\s\S]*?</system-reminder>",
+            "",
+            text,
+        ).strip()
+        if text:
+            parts.append(text)
     return "\n\n".join(parts).strip()
 
 
@@ -98,6 +107,19 @@ def _extract_assistant_blocks(
     return "\n\n".join(parts).strip()
 
 
+def _dialogue_content_blocks(content: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Drop system, tool_result, and non-text blocks from a message content list."""
+    blocks: list[dict[str, Any]] = []
+    for block in content:
+        if not isinstance(block, dict):
+            continue
+        btype = block.get("type")
+        if btype in ("system", "tool_result") or block.get("role") == "system":
+            continue
+        blocks.append(block)
+    return blocks
+
+
 def _normalize_envelope_surface(surface: str) -> Literal["cursor", "claude_ai", "grok", "mixed"]:
     """Map caller surface tokens to ``EnvelopeMeta.surface`` literals."""
     token = (surface or "cursor").replace("-", "_")
@@ -118,19 +140,31 @@ def _walk_turns(
 ) -> list[dict[str, str]]:
     turns: list[dict[str, str]] = []
     current: dict[str, list[str]] | None = None
+    strict_dialogue = tools == "none"
     for record in records:
         message = record.get("message") or {}
         rec_type = record.get("type")
+        if strict_dialogue:
+            if bool(record.get("isMeta")) or bool(record.get("isSidechain")):
+                continue
+            if rec_type in ("system", "tool_result", "queue-operation", "attachment"):
+                continue
         role = (
             record.get("role")
             or message.get("role")
             or (rec_type if rec_type in ("user", "assistant") else None)
         )
+        if strict_dialogue and role not in ("user", "assistant"):
+            continue
         content = message.get("content")
         if isinstance(content, str):
             content = [{"type": "text", "text": content}]
         if not isinstance(content, list):
             continue
+        if strict_dialogue:
+            content = _dialogue_content_blocks(content)
+            if not content:
+                continue
         if role == "user":
             user_text = _extract_user_text(content)
             if not user_text:
@@ -145,7 +179,11 @@ def _walk_turns(
             current = {"user": [user_text], "assistant": []}
         elif role == "assistant":
             if current is None:
-                current = {"user": ["(no user message)"], "assistant": []}
+                current = (
+                    {"user": [], "assistant": []}
+                    if strict_dialogue
+                    else {"user": ["(no user message)"], "assistant": []}
+                )
             asst = _extract_assistant_blocks(
                 content,
                 tools=tools,
@@ -165,11 +203,33 @@ def _walk_turns(
 
 def _turns_to_messages(
     turns: list[dict[str, str]],
+    *,
+    omit_empty: bool = False,
 ) -> list[dict[str, Any]]:
     messages: list[dict[str, Any]] = []
     for idx, turn in enumerate(turns, start=1):
-        user_content = turn["user"] or None
-        asst_content = turn["assistant"] or None
+        user_content = turn.get("user") or None
+        asst_content = turn.get("assistant") or None
+        if omit_empty:
+            if isinstance(user_content, str) and user_content.strip():
+                messages.append(
+                    {
+                        "role": "user",
+                        "content": user_content.strip(),
+                        "turn_index": idx,
+                        "source": _SOURCE,
+                    }
+                )
+            if isinstance(asst_content, str) and asst_content.strip():
+                messages.append(
+                    {
+                        "role": "assistant",
+                        "content": asst_content.strip(),
+                        "turn_index": idx,
+                        "source": _SOURCE,
+                    }
+                )
+            continue
         messages.append(
             {
                 "role": "user",
@@ -202,7 +262,7 @@ def extract_turns_from_jsonl_bytes(
     source_sha256 = hashlib.sha256(raw).hexdigest()
     records = _read_jsonl_bytes(raw)
     turns = _walk_turns(records, tools=tools)
-    messages = _turns_to_messages(turns)
+    messages = _turns_to_messages(turns, omit_empty=tools == "none")
     now = observed_at or datetime.now(tz=UTC).isoformat()
     sha = seal_messages_sha256(messages)
     meta_surface = _normalize_envelope_surface(surface)
