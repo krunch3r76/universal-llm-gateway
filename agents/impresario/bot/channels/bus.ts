@@ -375,7 +375,6 @@ export default defineChannel({
           await bootstrapImpresarioRegistry(busChannelToolCtx(args.host));
         } catch (err) {
           channelLogger.warn("[bus] delivery-bindings bootstrap failed", err);
-          return;
         }
         if (process.env.ULG_BUS_MODE === "push") {
           return;

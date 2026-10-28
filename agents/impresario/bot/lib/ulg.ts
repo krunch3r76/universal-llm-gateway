@@ -188,27 +188,36 @@ async function registerImpresarioLaneSubscription(
 /** Register the seat and resolve poll lane + review mailbox via GET /delivery-bindings/resolve. */
 export async function bootstrapImpresarioRegistry(ctx: ToolCtx): Promise<void> {
   const envLane = process.env.ULG_IMPRESARIO_LANE?.trim();
+  const envReviewMailbox = process.env.ULG_IMPRESARIO_REVIEW_MAILBOX?.trim();
   const house = impresarioDeliveryHouse();
 
-  const laneEnvelope = await resolveDeliveryBinding(ctx, {
-    house_id: house,
-    intent: "inform",
-    agent: IMPRESARIO_MAILBOX,
-  });
-  let lane = envLane || actuationThreadId(laneEnvelope) || "";
-  if (!lane && fixturesEnabled()) {
-    const turn = loadScenario().turn;
-    if (typeof turn.thread === "string") {
-      lane = turn.thread.trim();
-    }
-  }
+  let lane = envLane ?? "";
   if (!lane) {
-    throw new Error(
-      `delivery-bindings lane unresolved for house=${house} intent=inform`,
-    );
+    const laneEnvelope = await resolveDeliveryBinding(ctx, {
+      house_id: house,
+      intent: "inform",
+      agent: IMPRESARIO_MAILBOX,
+    });
+    lane = actuationThreadId(laneEnvelope) ?? "";
+    if (!lane && fixturesEnabled()) {
+      const turn = loadScenario().turn;
+      if (typeof turn.thread === "string") {
+        lane = turn.thread.trim();
+      }
+    }
+    if (!lane) {
+      throw new Error(
+        `delivery-bindings lane unresolved for house=${house} intent=inform`,
+      );
+    }
   }
   IMPRESARIO_LANE = lane;
   await registerImpresarioLaneSubscription(ctx, lane);
+
+  if (envReviewMailbox) {
+    registryReviewMailbox = envReviewMailbox;
+    return;
+  }
 
   const reviewHouse = process.env.ULG_IMPRESARIO_REVIEW_HOUSE?.trim() ?? MAESTRO_THREAD;
   const reviewEnvelope = await resolveDeliveryBinding(ctx, {
