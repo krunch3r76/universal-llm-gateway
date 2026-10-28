@@ -265,6 +265,9 @@ class GrokbotEgressWatchLoop:
         now = time.time()
         decision = decide_grokbot_tick(now=now, state=self._state, snapshot=snapshot)
 
+        if decision.run_hm1_recovery_chain:
+            await self._run_hm1_recovery_chain()
+
         if self._health_probe_failed:
             self._last_watch_ok_emitted_at = None
 
@@ -327,6 +330,15 @@ class GrokbotEgressWatchLoop:
                 )
             except Exception:
                 logger.exception("grokbot context hop tick failed")
+
+    async def _run_hm1_recovery_chain(self) -> None:
+        """Wake Grok Bot presence and repoint gc1 when hm1 tools/call stays absent."""
+        await asyncio.to_thread(keep_alive_grokbot_presence)
+        try:
+            rows = await probe_grok_agent_context()
+            await asyncio.to_thread(run_gc1_repoint, rows)
+        except Exception:
+            logger.exception("grokbot hm1-false recovery chain failed")
 
     async def _context_hop(
         self, *, now: float, now_ms: int, snapshot: GrokbotEgressSnapshot
