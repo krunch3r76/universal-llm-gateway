@@ -263,6 +263,21 @@ def classify_chat_url(
         if len(parts) >= 2 and parts[0] == "chat" and parts[1]:
             inferred_site = "claude"
             conversation_id = parts[1]
+        elif parts and parts[0] == "code":
+            if len(parts) == 1 or path_lower in ("/code", "/code/"):
+                inferred_site = "claude"
+                conversation_id = ""
+            elif len(parts) >= 2 and parts[1].startswith("session_"):
+                inferred_site = "claude"
+                conversation_id = parts[1].removeprefix("session_")
+            elif len(parts) >= 3 and parts[1] == "session" and parts[2]:
+                inferred_site = "claude"
+                conversation_id = parts[2]
+            else:
+                return ClassifyRefuse(
+                    code="unknown_claude_path",
+                    reason=f"unsupported claude.ai/code path: {path!r}",
+                )
         elif parts == ["new"] or path_lower in ("/new", "/new/"):
             inferred_site = "claude"
             conversation_id = ""
