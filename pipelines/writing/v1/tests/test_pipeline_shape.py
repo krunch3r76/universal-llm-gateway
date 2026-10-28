@@ -113,7 +113,10 @@ def test_pipeline_shape() -> None:
     )
     for name in _no_max_tokens:
         step = by_name[name]
-        assert step.type == "generate"
+        if name == "prose_rhythm_pass":
+            assert step.type == "writing_prose_rhythm_v1"
+        else:
+            assert step.type == "generate"
         params = getattr(step, "generation_parameters", None) or {}
         assert "max_tokens" not in params
         assert "response_format" not in params
@@ -145,6 +148,7 @@ def test_pipeline_shape() -> None:
     assert "writing_prompt_architect_v1" in registered
     assert "writing_draft_selector_v1" in registered
     assert "writing_semantic_judge_v1" in registered
+    assert "writing_prose_rhythm_v1" in registered
     assert "writing_seat_dispatch_v1" in registered
 
 

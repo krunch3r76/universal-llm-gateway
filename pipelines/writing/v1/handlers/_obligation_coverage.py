@@ -43,6 +43,20 @@ _INTENT_OR_ASK_BACK_CONFIRM = re.compile(
     rf")",
     re.I,
 )
+_ASK_BACK_REQUEST = re.compile(
+    r"\b(?:could you|can you|would you|please (?:send|share|confirm|provide))\b",
+    re.I,
+)
+_ROLE_OPEN_ASK = re.compile(
+    r"\b(?:role|position|opening)\b.{0,80}\b(?:still\s+)?(?:open|available)\b|"
+    r"\b(?:still\s+)?(?:open|available)\b.{0,80}\b(?:role|position|opening)\b",
+    re.I,
+)
+_APPLY_LINK_ASK = re.compile(
+    r"\b(?:apply|application)\s+(?:link|url|portal|page)\b|"
+    r"\b(?:share|send|provide)\b.{0,50}\b(?:apply|link|portal|url|https?://)\b",
+    re.I,
+)
 _ACTION_CONFIRM = re.compile(
     rf"(?:{_PAST_FP_ACTION}|{_INTENT_FP_ACTION}|{_PAST_LINK_CONFIRM}|"
     rf"\bsubmitting\s+my\s+application\b|"
@@ -216,6 +230,23 @@ def _effective_act_attested(pin_ledger: list[dict[str, Any]] | None) -> bool:
     return has_attested_external_act(pin_ledger)
 
 
+def _sentence_asks_back_for_cta(sentence: str, quoted_span: str) -> bool:
+    """True when a body sentence asks the counterpart for the CTA (not span alone)."""
+    del quoted_span
+    norm = _normalize_apostrophes(sentence)
+    if not _ASK_BACK_REQUEST.search(norm) and "?" not in norm:
+        return False
+    if _ROLE_OPEN_ASK.search(norm):
+        return True
+    if _APPLY_LINK_ASK.search(norm):
+        return True
+    if _ASK_BACK_REQUEST.search(norm) and re.search(
+        r"\b(?:apply|application|link|portal|url|https?://)\b", norm, re.I
+    ):
+        return True
+    return False
+
+
 def _act_outside_sentence_covers(sentence: str, *, act_attested: bool) -> bool:
     if not act_attested and _draft_sentence_has_past_action_claim(sentence):
         return False
@@ -386,6 +417,9 @@ def verify_obligation(
             for sentence in body_sentences:
                 if _draft_sentence_has_past_action_claim(sentence):
                     return "missing", ""
+            for sentence in body_sentences:
+                if _sentence_asks_back_for_cta(sentence, quoted):
+                    return "addressed", sentence
         for sentence in body_sentences:
             if _act_outside_sentence_covers(sentence, act_attested=act_attested):
                 return "addressed", sentence

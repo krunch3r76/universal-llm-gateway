@@ -434,6 +434,69 @@ def test_filing_omit_with_reason_never_obligation_refuses() -> None:
     assert row.get("status") == "declined_with_reason"
 
 
+def test_meridial_ask_back_false_positive_availability_only() -> None:
+    src = _run_source(_MERIDIAL)
+    draft = (
+        "To: recruiter@meridial.ai\n"
+        "Subject: Re: role\n\n"
+        "Thanks for reaching out. I am available to start in May.\n\n"
+        "Best,\nPat"
+    )
+    obligations = _obligation.actionable_obligations(src["obligations"])
+    cov = _obligation.coverage_map_for_draft(
+        draft, obligations, pin_ledger=[]
+    )
+    apply_cov = next(
+        (row for row in cov if row.get("obligation") == "act_outside_message"),
+        None,
+    )
+    assert apply_cov is not None
+    assert apply_cov["status"] == "missing"
+
+
+def test_meridial_ask_back_false_positive_generic_greeting() -> None:
+    src = _run_source(_MERIDIAL)
+    draft = (
+        "To: recruiter@meridial.ai\n"
+        "Subject: Re: role\n\n"
+        "How are you? I hope your week is going well.\n\n"
+        "Best,\nPat"
+    )
+    obligations = _obligation.actionable_obligations(src["obligations"])
+    cov = _obligation.coverage_map_for_draft(
+        draft, obligations, pin_ledger=[]
+    )
+    apply_cov = next(
+        (row for row in cov if row.get("obligation") == "act_outside_message"),
+        None,
+    )
+    assert apply_cov is not None
+    assert apply_cov["status"] == "missing"
+
+
+def test_meridial_ask_back_apply_link_addressed() -> None:
+    src = _run_source(_MERIDIAL)
+    draft = (
+        "To: recruiter@meridial.ai\n"
+        "Subject: AI Trust and Safety application\n\n"
+        "Thanks for reaching out. Could you confirm whether the AI Trust and Safety "
+        "role is still open and share the apply link?\n\n"
+        "Best,\nPat"
+    )
+    obligations = _obligation.actionable_obligations(src["obligations"])
+    cov = _obligation.coverage_map_for_draft(
+        draft, obligations, pin_ledger=[]
+    )
+    apply_cov = next(
+        (row for row in cov if row.get("obligation") == "act_outside_message"),
+        None,
+    )
+    assert apply_cov is not None
+    assert apply_cov["status"] == "addressed"
+    assert apply_cov["reply_mode"] == "ask_back"
+    assert apply_cov.get("covering_sentence")
+
+
 def test_meridial_finalize_coverage_map_addresses_application_action() -> None:
     src = _run_source(_MERIDIAL)
     draft_text = (
