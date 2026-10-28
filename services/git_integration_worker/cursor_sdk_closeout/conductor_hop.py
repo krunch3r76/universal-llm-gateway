@@ -724,7 +724,7 @@ def _harvest_execution_started_at_iso(token: str) -> str | None:
         ):
             continue
         started = entry.get("started_at") if entry else None
-        if isinstance(started, (int, float)):
+        if isinstance(started, int | float):
             started_at.append(float(started))
     if len(started_at) != 1:
         return None
