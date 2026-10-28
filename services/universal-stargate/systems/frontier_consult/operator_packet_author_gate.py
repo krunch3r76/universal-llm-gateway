@@ -10,7 +10,10 @@ FIX_HINT = (
     "retrieval-before-authoring, "
     "or open the file with 'authored_by: operator · reason: "
     "<why the author route was skipped>'. "
-    "lane-act-gates step 3: this seat does not draft the body."
+    "lane-act-gates step 3: this seat may author a packet itself when a "
+    "column-0 retrieval: line cites this leg's retrieval report; a packet "
+    "resting on unread multi-module file:line claims goes to a cursor-sdk "
+    "author via team_dispatch."
 )
 
 
