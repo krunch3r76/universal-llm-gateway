@@ -20,6 +20,14 @@ _REPO_ROOT = Path(__file__).resolve().parents[3]
 if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 
+from services.git_integration_worker.tests.skill_tree_test_bootstrap import (  # noqa: E402
+    maybe_materialize_skill_trees_for_pytest,
+)
+
+# Before any test imports ``get_skill_catalog()``, mirror hub gitignored skill SOTs
+# into git-clean worktrees (land gate / detached digest trees). Hook: conftest import.
+maybe_materialize_skill_trees_for_pytest(_REPO_ROOT)
+
 
 def _ctx(
     hub: Path,
