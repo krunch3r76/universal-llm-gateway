@@ -474,6 +474,27 @@ def test_meridial_ask_back_false_positive_generic_greeting() -> None:
     assert apply_cov["status"] == "missing"
 
 
+def test_meridial_ask_back_next_steps_addressed() -> None:
+    src = _run_source(_MERIDIAL)
+    draft = (
+        "To: recruiter@meridial.ai\n"
+        "Subject: AI Trust and Safety role\n\n"
+        "Thanks for reaching out. Could you let me know what the next steps are?\n\n"
+        "Best,\nPat"
+    )
+    obligations = _obligation.actionable_obligations(src["obligations"])
+    cov = _obligation.coverage_map_for_draft(
+        draft, obligations, pin_ledger=[]
+    )
+    apply_cov = next(
+        (row for row in cov if row.get("obligation") == "act_outside_message"),
+        None,
+    )
+    assert apply_cov is not None
+    assert apply_cov["status"] == "addressed"
+    assert apply_cov["reply_mode"] == "ask_back"
+
+
 def test_meridial_ask_back_apply_link_addressed() -> None:
     src = _run_source(_MERIDIAL)
     draft = (

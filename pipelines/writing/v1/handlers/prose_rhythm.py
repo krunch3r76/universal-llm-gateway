@@ -46,10 +46,10 @@ def _normalize_draft(text: str) -> str:
     return re.sub(r"\s+", " ", text.strip())
 
 
-def _finding_applied(draft_v2: str, fix: str, *, draft_changed: bool) -> bool:
+def _finding_applied(draft_v2: str, fix: str) -> bool:
     fix_text = fix.strip()
     if not fix_text:
-        return draft_changed
+        return False
     lower = draft_v2.lower()
     if fix_text.lower() in lower:
         return True
@@ -57,7 +57,7 @@ def _finding_applied(draft_v2: str, fix: str, *, draft_changed: bool) -> bool:
         piece = fragment.strip()
         if len(piece) >= 12 and piece.lower() in lower:
             return True
-    return draft_changed
+    return False
 
 
 def revision_dispositions(
@@ -70,7 +70,7 @@ def revision_dispositions(
         if not isinstance(row, dict):
             continue
         fix = str(row.get("fix") or "")
-        applied = _finding_applied(draft_v2, fix, draft_changed=changed)
+        applied = _finding_applied(draft_v2, fix)
         if not changed:
             rows.append(
                 {

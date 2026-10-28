@@ -119,6 +119,7 @@ def build_finalize_payload(
     selected: str,
     rhythm_reverted: bool,
     outputs: dict[str, Any],
+    revision_discarded: list[Any] | None,
     models: dict[str, str],
     revision_ran: bool,
     reviewer_live: str,
@@ -160,6 +161,7 @@ def build_finalize_payload(
             "unresolved": unresolved,
             "selected": selected,
             "rhythm_reverted": rhythm_reverted,
+            "revision_discarded": revision_discarded or None,
         },
         "seats_used": {
             "writer": _model_of(_raw_step(outputs, "draft")) or models.get("writer"),
