@@ -57,6 +57,11 @@ _APPLY_LINK_ASK = re.compile(
     r"\b(?:share|send|provide)\b.{0,50}\b(?:apply|link|portal|url|https?://)\b",
     re.I,
 )
+_NEXT_STEPS_ASK = re.compile(
+    r"\b(?:next steps?|what happens next|how to proceed|what are the next steps|"
+    r"let me know what the next steps)\b",
+    re.I,
+)
 _ACTION_CONFIRM = re.compile(
     rf"(?:{_PAST_FP_ACTION}|{_INTENT_FP_ACTION}|{_PAST_LINK_CONFIRM}|"
     rf"\bsubmitting\s+my\s+application\b|"
@@ -192,9 +197,7 @@ def _has_affirmative_past_action(text: str) -> bool:
 
 def _draft_sentence_has_past_action_claim(sentence: str) -> bool:
     """Raw past-action regex on draft text; no negation window (fail closed)."""
-    return (
-        _PAST_ACTION_CONFIRM.search(_normalize_apostrophes(sentence)) is not None
-    )
+    return _PAST_ACTION_CONFIRM.search(_normalize_apostrophes(sentence)) is not None
 
 
 def _has_affirmative_intent_action(text: str) -> bool:
@@ -244,6 +247,8 @@ def _sentence_asks_back_for_cta(sentence: str, quoted_span: str) -> bool:
         r"\b(?:apply|application|link|portal|url|https?://)\b", norm, re.I
     ):
         return True
+    if _NEXT_STEPS_ASK.search(norm) and ("?" in norm or _ASK_BACK_REQUEST.search(norm)):
+        return True
     return False
 
 
@@ -264,11 +269,7 @@ def _body_has_unattested_past_claim(body: str, *, act_attested: bool) -> bool:
 
 
 def _tokens(text: str) -> set[str]:
-    return {
-        token
-        for token in _TOKEN.findall(text.lower())
-        if token not in _STOPWORDS
-    }
+    return {token for token in _TOKEN.findall(text.lower()) if token not in _STOPWORDS}
 
 
 def _is_envelope_or_closing(line: str) -> bool:
@@ -310,7 +311,9 @@ def apply_audit_overlay(
     obligation = str(base.get("obligation") or audit.get("obligation") or "")
     det_status = str(base.get("status") or "missing")
     status = str(audit.get("status") or det_status)
-    covering = str(audit.get("covering_sentence") or base.get("covering_sentence") or "")
+    covering = str(
+        audit.get("covering_sentence") or base.get("covering_sentence") or ""
+    )
 
     if status == "missing":
         row = {**base, **audit, "status": "missing", "covering_sentence": covering}
@@ -334,9 +337,7 @@ def apply_audit_overlay(
                 or (quoted_tokens and quoted_tokens & _tokens(covering))
             ):
                 return dict(base)
-        elif not (
-            quoted_tokens and quoted_tokens & _tokens(covering)
-        ):
+        elif not (quoted_tokens and quoted_tokens & _tokens(covering)):
             return dict(base)
 
     if obligation == "act_outside_message":
@@ -521,7 +522,8 @@ def obligation_coverage_score(
     return sum(
         1
         for row in cov
-        if row.get("status") in {"addressed", "declined_with_reason", "omit_with_reason"}
+        if row.get("status")
+        in {"addressed", "declined_with_reason", "omit_with_reason"}
     )
 
 

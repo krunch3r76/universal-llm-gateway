@@ -331,6 +331,33 @@ async def test_semantic_judge_schema_invalid_unavailable() -> None:
 
 
 @pytest.mark.asyncio
+async def test_semantic_judge_empty_verifier_unavailable(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    handler = semantic_judge.WritingSemanticJudgeHandler()
+    published: list[Any] = []
+    handler._publish_bus_event = lambda _ctx, event: published.append(event)  # type: ignore[method-assign]
+    monkeypatch.setattr(
+        semantic_judge,
+        "load_writing_models",
+        lambda: {"verifier": ""},
+    )
+    ctx = _Ctx(
+        {
+            "assemble": _Out({"pin_ledger": [], "intake": {}}),
+            "drafter_anthropic": _Out(None, raw="Backed."),
+        }
+    )
+    out = await handler.execute(_Step("candidates"), ctx)
+    assert out.json["judge_unavailable"] is True
+    assert out.json["reason"] == "verifier_model_missing"
+    assert out.json["refused"] == "judge_unavailable"
+    assert len(published) == 1
+    assert published[0].signal == "writing.judge.failed"
+    assert published[0].payload["reason"] == "verifier_model_missing"
+
+
+@pytest.mark.asyncio
 async def test_semantic_judge_transport_failure_publishes_failed() -> None:
     async def fake_call_model(*_args: Any, **_kwargs: Any) -> MagicMock:
         raise RuntimeError("transport_down")
@@ -373,9 +400,7 @@ def test_judge_event_signals() -> None:
 async def test_semantic_judge_pin_json_schema_candidates_invocation() -> None:
     pin_schemas: list[dict[str, Any]] = []
 
-    async def fake_call_model(
-        _model_id: str, *_args: Any, **kwargs: Any
-    ) -> MagicMock:
+    async def fake_call_model(_model_id: str, *_args: Any, **kwargs: Any) -> MagicMock:
         schema = kwargs.get("json_schema")
         if len(pin_schemas) == 0:
             pin_schemas.append(schema)
@@ -411,9 +436,7 @@ async def test_semantic_judge_pin_json_schema_candidates_invocation() -> None:
 async def test_semantic_judge_pin_json_schema_v2_invocation() -> None:
     pin_schemas: list[dict[str, Any]] = []
 
-    async def fake_call_model(
-        _model_id: str, *_args: Any, **kwargs: Any
-    ) -> MagicMock:
+    async def fake_call_model(_model_id: str, *_args: Any, **kwargs: Any) -> MagicMock:
         schema = kwargs.get("json_schema")
         if len(pin_schemas) == 0:
             pin_schemas.append(schema)
@@ -450,9 +473,7 @@ async def test_semantic_judge_quality_json_schema_candidates_invocation() -> Non
     quality_schemas: list[dict[str, Any]] = []
     call_count = 0
 
-    async def fake_call_model(
-        _model_id: str, *_args: Any, **kwargs: Any
-    ) -> MagicMock:
+    async def fake_call_model(_model_id: str, *_args: Any, **kwargs: Any) -> MagicMock:
         nonlocal call_count
         call_count += 1
         if call_count == 2:
@@ -496,9 +517,7 @@ async def test_semantic_judge_quality_json_schema_v2_invocation() -> None:
     quality_schemas: list[dict[str, Any]] = []
     call_count = 0
 
-    async def fake_call_model(
-        _model_id: str, *_args: Any, **kwargs: Any
-    ) -> MagicMock:
+    async def fake_call_model(_model_id: str, *_args: Any, **kwargs: Any) -> MagicMock:
         nonlocal call_count
         call_count += 1
         if call_count == 2:

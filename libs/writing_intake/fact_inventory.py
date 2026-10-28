@@ -416,6 +416,15 @@ def _verbatim_required_exempts_sentence(
     return False
 
 
+def intake_answer_in_text(text: str, intake_answers: Sequence[str]) -> bool:
+    """True when a stripped non-empty intake answer is a substring of text."""
+    for answer in intake_answers or []:
+        stripped = answer.strip()
+        if stripped and stripped in text:
+            return True
+    return False
+
+
 def drift_check_sentence(
     sentence: str,
     *,
@@ -430,9 +439,8 @@ def drift_check_sentence(
     points = parsed_purpose_points or (
         parse_purpose_points("", list(purpose_points or [])) if purpose_points else []
     )
-    for answer in intake_answers or []:
-        if answer.strip() and answer.strip() in sentence:
-            return "intake_answer_promoted"
+    if intake_answer_in_text(sentence, intake_answers or []):
+        return "intake_answer_promoted"
     for pattern, reason in _DRIFT_PATTERNS:
         if pattern.search(sentence):
             return reason
@@ -474,9 +482,7 @@ def run_drift_check(
         parsed_points = parse_purpose_points(str(purpose).strip(), None)
     else:
         parsed_points = []
-    purpose_gate = (
-        "applied" if parsed_points else "skipped_no_purpose_points"
-    )
+    purpose_gate = "applied" if parsed_points else "skipped_no_purpose_points"
     verbatim_required_excerpts = [
         str(pin["excerpt"])
         for pin in (pin_ledger or [])

@@ -194,9 +194,7 @@ def test_fact_ceiling_final_handler_honors_v2_judge_pins() -> None:
 
 
 def test_v2_quality_finding_surfaces_quality_violation() -> None:
-    legalistic = (
-        "I, Jane Doe, am submitting this correspondence regarding the matter."
-    )
+    legalistic = "I, Jane Doe, am submitting this correspondence regarding the matter."
     judge = _judge(
         pins=[
             {
@@ -249,7 +247,11 @@ def test_fact_ceiling_final_handler_surfaces_v2_quality_violation() -> None:
             }
         ],
         quality_findings=[
-            {"rule": "bulleted_body", "detail": "unordered list in email body", "penalty": 1}
+            {
+                "rule": "bulleted_body",
+                "detail": "unordered list in email body",
+                "penalty": 1,
+            }
         ],
     )
     payload = asyncio.run(
@@ -382,11 +384,95 @@ def test_handler_email_subject_missing() -> None:
     assert "email_subject_missing" in _types(payload["violations"])
 
 
+class _HandlerOut:
+    def __init__(self, payload: dict[str, Any]) -> None:
+        self.json = payload
+
+
+class _HandlerCtx:
+    def __init__(self, outputs: dict[str, Any]) -> None:
+        self.outputs = outputs
+
+
+class _HandlerStep:
+    handler_inputs = {
+        "pin_ledger": "assemble.json.pin_ledger",
+        "draft": "draft.json",
+        "judge": "semantic_judge_candidates.json",
+    }
+
+
+_EMPTY_JUDGE = {"pins": [], "clauses": [], "judge_unavailable": False}
+
+
+def test_handler_scrubs_objective_restatement_from_drift_check() -> None:
+    sentence = "The Assessor received the supplemental increase request."
+    payload = asyncio.run(
+        provenance.WritingProvenanceCheckHandler().execute(
+            _HandlerStep(),
+            _HandlerCtx(
+                {
+                    "assemble": _HandlerOut(
+                        {
+                            "channel": "email",
+                            "pin_ledger": [],
+                            "purpose_points": ["Parking instructions."],
+                            "intake": {
+                                "objective": (
+                                    "Ask the Assessor to review the supplemental increase."
+                                ),
+                            },
+                        }
+                    ),
+                    "draft": _HandlerOut({"draft": sentence, "claims": []}),
+                    "semantic_judge_candidates": _HandlerOut(_EMPTY_JUDGE),
+                }
+            ),
+        )
+    ).json
+    drift = payload["drift_check"]
+    assert drift["passed"] is True
+    assert drift["flagged_sentences"] == []
+
+
+def test_handler_scrubs_verbatim_note_restatement_from_drift_check() -> None:
+    note = "The property is at 669 Second Street."
+    payload = asyncio.run(
+        provenance.WritingProvenanceCheckHandler().execute(
+            _HandlerStep(),
+            _HandlerCtx(
+                {
+                    "assemble": _HandlerOut(
+                        {
+                            "channel": "email",
+                            "pin_ledger": [],
+                            "purpose_points": ["Unrelated point."],
+                            "intake": {
+                                "objective": "Confirm the hearing date.",
+                                "verbatim_notes": [note],
+                            },
+                        }
+                    ),
+                    "draft": _HandlerOut({"draft": note, "claims": []}),
+                    "semantic_judge_candidates": _HandlerOut(_EMPTY_JUDGE),
+                }
+            ),
+        )
+    ).json
+    drift = payload["drift_check"]
+    assert drift["passed"] is True
+    assert drift["flagged_sentences"] == []
+
+
 def test_phone_purpose_line_not_flagged_as_drift() -> None:
+    purpose_scrub = importlib.import_module("writing_v1_handlers.purpose_scrub")
     sentence = "You can reach me at (669) 871-3234."
     points = ["Phone number for reply."]
-    assert provenance.sentence_restates_purpose_point(sentence, points)
-    drift = provenance._scrub_purpose_restatement_flags(
+    ledger = [{"excerpt": "669-871-3234"}]
+    assert purpose_scrub.sentence_restates_purpose_point(
+        sentence, points, pin_ledger=ledger
+    )
+    drift = purpose_scrub.scrub_purpose_restatement_flags(
         {
             "passed": False,
             "flagged_sentences": [
@@ -394,6 +480,121 @@ def test_phone_purpose_line_not_flagged_as_drift() -> None:
             ],
         },
         points,
+        pin_ledger=ledger,
+        purpose_text="",
+        verbatim_notes=[],
+    )
+    assert drift["passed"] is True
+    assert drift["flagged_sentences"] == []
+
+
+def test_phone_without_ledger_stays_flagged() -> None:
+    purpose_scrub = importlib.import_module("writing_v1_handlers.purpose_scrub")
+    sentence = "You can reach me at (669) 871-3234."
+    points = ["Phone number for reply."]
+    assert not purpose_scrub.sentence_restates_purpose_point(
+        sentence, points, pin_ledger=[]
+    )
+    drift = purpose_scrub.scrub_purpose_restatement_flags(
+        {
+            "passed": False,
+            "flagged_sentences": [
+                {"sentence": sentence, "reason": "not_purpose_relevant"}
+            ],
+        },
+        points,
+        pin_ledger=[],
+        purpose_text="",
+        verbatim_notes=[],
+    )
+    assert drift["passed"] is False
+    assert drift["flagged_sentences"]
+
+
+def test_scrub_drops_objective_restatement() -> None:
+    purpose_scrub = importlib.import_module("writing_v1_handlers.purpose_scrub")
+    sentence = "The Assessor received the supplemental increase request."
+    drift = purpose_scrub.scrub_purpose_restatement_flags(
+        {
+            "passed": False,
+            "flagged_sentences": [
+                {"sentence": sentence, "reason": "not_purpose_relevant"}
+            ],
+        },
+        ["Parking instructions."],
+        pin_ledger=[],
+        purpose_text="Ask the Assessor to review the supplemental increase.",
+        verbatim_notes=[],
+    )
+    assert drift["passed"] is True
+    assert drift["flagged_sentences"] == []
+
+
+def test_scrub_drops_verbatim_note_restatement() -> None:
+    purpose_scrub = importlib.import_module("writing_v1_handlers.purpose_scrub")
+    note = "The property is at 669 Second Street."
+    drift = purpose_scrub.scrub_purpose_restatement_flags(
+        {
+            "passed": False,
+            "flagged_sentences": [{"sentence": note, "reason": "not_purpose_relevant"}],
+        },
+        ["Unrelated point."],
+        pin_ledger=[],
+        purpose_text="Confirm the hearing date.",
+        verbatim_notes=[note],
+    )
+    assert drift["passed"] is True
+    assert drift["flagged_sentences"] == []
+
+
+def test_scrub_skipped_when_no_purpose_context() -> None:
+    purpose_scrub = importlib.import_module("writing_v1_handlers.purpose_scrub")
+    note = "The property is at 669 Second Street."
+    drift_in = {
+        "passed": False,
+        "flagged_sentences": [{"sentence": note, "reason": "not_purpose_relevant"}],
+    }
+    drift = purpose_scrub.scrub_purpose_restatement_flags(
+        drift_in,
+        [],
+        pin_ledger=[],
+        purpose_text="",
+        verbatim_notes=[note],
+    )
+    assert drift is drift_in
+
+
+def test_scrub_passed_equals_not_flagged() -> None:
+    purpose_scrub = importlib.import_module("writing_v1_handlers.purpose_scrub")
+    drift = purpose_scrub.scrub_purpose_restatement_flags(
+        {
+            "passed": False,
+            "flagged_sentences": [
+                {
+                    "sentence": "Leftover.",
+                    "reason": "declaration_register_in_correspondence",
+                }
+            ],
+        },
+        ["Parking instructions."],
+        pin_ledger=[],
+        purpose_text="",
+        verbatim_notes=[],
+    )
+    assert drift["passed"] == (not drift["flagged_sentences"])
+
+
+def test_scrub_recomputes_passed_when_all_not_purpose_rows_dropped() -> None:
+    purpose_scrub = importlib.import_module("writing_v1_handlers.purpose_scrub")
+    drift = purpose_scrub.scrub_purpose_restatement_flags(
+        {
+            "passed": False,
+            "flagged_sentences": [],
+        },
+        ["Parking instructions."],
+        pin_ledger=[],
+        purpose_text="Ask the Assessor to review the supplemental increase.",
+        verbatim_notes=[],
     )
     assert drift["passed"] is True
     assert drift["flagged_sentences"] == []

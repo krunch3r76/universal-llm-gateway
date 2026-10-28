@@ -18,7 +18,7 @@ def render_induction_k44_block(*, lane: str) -> str:
 
 ### Successor (this seat)
 1. After act 6 ``TYPE: SEAT_REGISTRATION`` on this lane, do not send a bare stand-down first.
-2. Before the opener, ``cse_session(op=harvest, chat_url=<predecessor chat_url>, source=chat, limit=12)`` and read the tail; aim the three opening questions at gaps between that tail and the handoff. Then ``cse_session(op=followup)`` to the predecessor ``chat_url`` only, ``envelope=free``, ``min_receipt=dom_committed``, with this opener (verbatim): ``{INDUCTION_OPENER_TEXT}``
+2. Before the opener, ``cse_session(op=harvest, chat_url=<predecessor chat_url>, source=chat, limit=12, after_turn=1)`` (or ``after_turn=<predecessor first reply turn>`` when that is not turn 1) and read the tail; aim the three opening questions at gaps between that tail and the handoff. Then ``cse_session(op=followup)`` to the predecessor ``chat_url`` only, ``envelope=free``, ``min_receipt=dom_committed``, with this opener (verbatim): ``{INDUCTION_OPENER_TEXT}``
 3. Ask at most three opening questions a file cannot answer (events after this handoff; other holders of the same work; Kaywan words not yet written). There is no cap on follow-ups; the three-question limit covers opening questions only.
 4. 10 minutes of silence after a paste ends the exchange as ``no induction``. Passing one million input tokens in one exchange means stop and ask maestro (19627#74).
 5. If the predecessor is mid-stream when the opener lands, the opener queues as its next user turn; a reply after the stream ends counts as live. The predecessor's walk and answers arrive in this chat as a pasted turn; harvest its window only if nothing arrives within 10 minutes.
