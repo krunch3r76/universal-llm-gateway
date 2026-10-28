@@ -135,11 +135,13 @@ def _assert_code_surface_model_before_send(requested: str, model_info: dict[str,
 
     Runs after ``code_surface_page_model`` and before ``send_prompt`` so a mismatch
     does not burn a full generation (friction:40648 / trial-4).
+
+    Unreadable labels (empty or the compose ``unknown`` sentinel) defer to post-harvest
+    ``_attest_model``, matching its soft ``None`` when no label is available.
     """
     label = (model_info.get("model_ran") or model_info.get("current_model") or "").strip()
-    if not label:
-        req = normalize_picker_request(requested or "")
-        raise RuntimeError(f"model attestation mismatch: wanted {req!r}, got {label!r}")
+    if not label or label.lower() == "unknown":
+        return
     req = normalize_picker_request(requested or "")
     family, effort = parse_model_request(req)
     if effort is None:

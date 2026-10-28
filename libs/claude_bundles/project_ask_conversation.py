@@ -517,7 +517,7 @@ async def run_project_conversation(
                         error=f"model select failed: {model_info}",
                     )
                 ]
-            if (claude_surface or "").strip().lower() == "code":
+            if model_info.get("step") == "code_surface_page_model":
                 try:
                     _assert_code_surface_model_before_send(model, model_info)
                 except RuntimeError as exc:
