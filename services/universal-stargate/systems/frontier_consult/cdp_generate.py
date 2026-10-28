@@ -822,6 +822,9 @@ async def dispatch_cdp_generate(
                 worker_kwargs["download_output"] = opts["download_output"]
         if project_uuid:
             worker_kwargs["project_uuid"] = project_uuid
+        surface_raw = getattr(body, "claude_surface", None)
+        if isinstance(surface_raw, str) and surface_raw.strip() in {"cowork", "code"}:
+            worker_kwargs["claude_surface"] = surface_raw.strip()
         worker_task = asyncio.create_task(
             run_cdp_worker(**worker_kwargs),
             name=f"cdp-worker-{execution_id[:8]}",

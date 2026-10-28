@@ -15,6 +15,7 @@ from ...db.endpoint_subscriptions import (
     unsubscribe_endpoint,
 )
 from ...db.endpoint_wake_ledger import (
+    resolve_inform_delivery_binding,
     resolve_steer_delivery_binding,
     resolve_wake_delivery_binding,
 )
@@ -123,12 +124,14 @@ async def delivery_bindings_resolve_route(
     house_id: str,
     intent: str,
 ) -> dict[str, Any]:
-    """Resolve delivery actuation for a house and intent (wake or steer)."""
+    """Resolve delivery actuation for a house and intent (wake, steer, or inform)."""
     intent_norm = str(intent or "").strip().lower()
     if intent_norm == "wake":
         return resolve_wake_delivery_binding(house_id=house_id)
     if intent_norm == "steer":
         return resolve_steer_delivery_binding(house_id=house_id)
+    if intent_norm == "inform":
+        return resolve_inform_delivery_binding(house_id=house_id)
     raise HTTPException(
         status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
         detail={"code": "delivery_binding_intent_unsupported"},

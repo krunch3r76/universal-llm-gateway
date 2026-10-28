@@ -359,7 +359,8 @@ def _operator_sidecar_without_escape() -> str:
 
 
 def test_operator_packet_author_refusal_direct() -> None:
-    assert operator_packet_author_refusal(_operator_sidecar_without_escape()) == FIX_HINT
+    sidecar = _operator_sidecar_without_escape()
+    assert operator_packet_author_refusal(sidecar) == FIX_HINT
     assert operator_packet_author_refusal("from_agent: cursor-sdk\n\nDo work.") is None
 
 
@@ -381,7 +382,10 @@ async def test_operator_packet_sidecar_refused_without_escape() -> None:
     assert excinfo.value.code == "operator_packet_author_route"
     assert excinfo.value.field == "sidecar_ref"
     assert excinfo.value.details is not None
-    assert "lane-act-gates step 3" in excinfo.value.details["fix_hint"]
+    fix_hint = excinfo.value.details["fix_hint"]
+    assert "lane-act-gates step 3" in fix_hint
+    assert "column-0 retrieval:" in fix_hint
+    assert "does not draft the body" not in fix_hint
 
 
 @pytest.mark.asyncio

@@ -1,7 +1,7 @@
 import { defineHook } from "@grok/agent-sdk/hooks";
 
 import { hostBusSend } from "../lib/bus-host.js";
-import { IMPRESARIO_LANE, MAESTRO_THREAD } from "../lib/ulg.js";
+import { getImpresarioLane, MAESTRO_THREAD } from "../lib/ulg.js";
 
 export async function mirrorTurnFailed(
   host: Parameters<typeof hostBusSend>[0],
@@ -10,14 +10,15 @@ export async function mirrorTurnFailed(
 ): Promise<void> {
   const subject = `FAILED|impresario|${sessionId}`;
   const body = message.slice(0, 2000);
+  const lane = getImpresarioLane();
   const payload = {
-    thread: IMPRESARIO_LANE,
+    thread: lane,
     to: "maestro",
     from: "impresario-sdk",
     subject,
     body,
   };
-  await hostBusSend(host, { ...payload, thread: IMPRESARIO_LANE });
+  await hostBusSend(host, { ...payload, thread: lane });
   await hostBusSend(host, { ...payload, thread: MAESTRO_THREAD });
 }
 

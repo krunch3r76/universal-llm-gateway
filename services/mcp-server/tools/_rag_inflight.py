@@ -52,6 +52,8 @@ from mcp_events import record
 WAIT_BUDGET_S = float(os.environ.get("MCP_RAG_SEARCH_WAIT_S", "90"))
 RESULT_TTL_S = float(os.environ.get("MCP_RAG_SEARCH_RESULT_TTL_S", "600"))
 FAILED_RESULT_TTL_S = 30.0
+# Pipeline wall (model load + rerank) is ~240s; default max wall adds client buffer.
+MAX_WALL_S = float(os.environ.get("MCP_RAG_SEARCH_MAX_WALL_S", "270"))
 MAX_WORKERS = max(1, int(os.environ.get("MCP_RAG_SEARCH_WORKERS", "8")))
 
 POLL_HINT = (
@@ -143,12 +145,20 @@ class SearchTicket:
         """Return the backend result, re-raising its exception for every waiter.
 
         Raises ``SearchInFlightError`` when ``wait_s`` (default ``WAIT_BUDGET_S``)
-        elapses first; records ``mcp.rag.search.wait.exceeded``.
+        elapses first; records ``mcp.rag.search.wait.exceeded``. When total wall
+        time exceeds ``MAX_WALL_S``, returns a terminal ``status: timeout`` envelope
+        instead of ``in_flight`` forever.
         """
         budget = WAIT_BUDGET_S if wait_s is None else wait_s
+        timed_out = _expire_wall_if_overdue(self._entry)
+        if timed_out is not None:
+            return timed_out
         try:
             return self._entry.future.result(timeout=budget)
         except FutureTimeout:
+            timed_out = _expire_wall_if_overdue(self._entry)
+            if timed_out is not None:
+                return timed_out
             elapsed = time.monotonic() - self._entry.admitted_at
             record(
                 "mcp.rag.search.wait.exceeded",
@@ -179,6 +189,8 @@ def _retryable_failure(result: Any) -> bool:
     """True for envelopes that must not be cached as a successful retrieval."""
     if not isinstance(result, dict):
         return False
+    if result.get("status") == "timeout":
+        return True
     if result.get("retryable") is True:
         return True
     retrieval = result.get("retrieval")
@@ -187,6 +199,43 @@ def _retryable_failure(result: Any) -> bool:
     if retrieval.get("scope_rejection_reason") == "scope_catalog_unavailable":
         return True
     return retrieval.get("retrieval_rejection_reason") == "retrieval_unavailable"
+
+
+def _wall_timeout_envelope(entry: _Entry, elapsed: float) -> dict[str, Any]:
+    return {
+        "status": "timeout",
+        "pipeline": "rag-search",
+        "error": f"RAG search exceeded {MAX_WALL_S:.0f}s wall limit",
+        "search_id": entry.search_id,
+        "elapsed_s": round(elapsed, 1),
+        "max_wall_s": MAX_WALL_S,
+        "retryable": True,
+    }
+
+
+def _expire_wall_if_overdue(entry: _Entry) -> dict[str, Any] | None:
+    """Publish a terminal timeout when *entry* has exceeded ``MAX_WALL_S``."""
+    now = time.monotonic()
+    elapsed = now - entry.admitted_at
+    if elapsed < MAX_WALL_S:
+        return None
+    with _lock:
+        if entry.future.done():
+            try:
+                return entry.future.result()
+            except Exception:
+                return None
+        envelope = _wall_timeout_envelope(entry, elapsed)
+        entry.finished_at = now
+        entry.future.set_result(envelope)
+    record(
+        "mcp.rag.search.wall.exceeded",
+        search_id=entry.search_id,
+        elapsed_s=round(elapsed, 1),
+        max_wall_s=MAX_WALL_S,
+        waiters=entry.waiters,
+    )
+    return envelope
 
 
 def search_key(query: str, pipeline_options: dict[str, Any]) -> str:
@@ -290,10 +339,12 @@ def _run(entry: _Entry, start: Callable[[], Any]) -> None:
             result = start()
         except BaseException as exc:  # noqa: BLE001 — every waiter must see the failure
             entry.finished_at = time.monotonic()
-            entry.future.set_exception(exc)
+            if not entry.future.done():
+                entry.future.set_exception(exc)
             return
         entry.finished_at = time.monotonic()
-        entry.future.set_result(result)
+        if not entry.future.done():
+            entry.future.set_result(result)
 
 
 def _prune_locked(now: float) -> None:

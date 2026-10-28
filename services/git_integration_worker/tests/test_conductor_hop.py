@@ -822,7 +822,7 @@ def test_admit_record_json_stores_policy_filled_effort() -> None:
             "SELECT record_json FROM cursor_sdk_dispatches WHERE dispatch_id='pred-hop-1'"
         ).fetchone()[0]
     assert json.loads(raw)["model_knobs"]["effort"] == "low"
-    assert json.loads(raw)["model_knobs"]["fast"] == "true"
+    assert json.loads(raw)["model_knobs"]["fast"] == "false"
 
 
 def test_park_resume_request_carries_model_knobs() -> None:
@@ -1507,6 +1507,10 @@ async def test_next_admit_blocked_releases_when_reply_on_summoning_thread() -> N
 
     with (
         patch(
+            "services.git_integration_worker.cursor_sdk_closeout.conductor_exit_reasons.read_external_gate_lane_snapshot",
+            return_value=_TRUTHY_SNAP,
+        ),
+        patch(
             "claude_bundles.cdp_registry_store.load_active",
             return_value=_live_harvest_registry(harvest_id),
         ),
@@ -1606,6 +1610,10 @@ async def test_row_hop_backtick_harvest_reply_admits_one_successor() -> None:
 
     with (
         patch(
+            "services.git_integration_worker.cursor_sdk_closeout.conductor_exit_reasons.read_external_gate_lane_snapshot",
+            return_value=_TRUTHY_SNAP,
+        ),
+        patch(
             "claude_bundles.cdp_registry_store.load_active",
             return_value=_live_harvest_registry(harvest_id),
         ),
@@ -1674,6 +1682,10 @@ async def test_next_admit_blocked_releases_when_reply_precedes_closeout() -> Non
         return state["reply"] and after_turn == 2 and from_agent == "web-anthropic"
 
     with (
+        patch(
+            "services.git_integration_worker.cursor_sdk_closeout.conductor_exit_reasons.read_external_gate_lane_snapshot",
+            return_value=_TRUTHY_SNAP,
+        ),
         patch(
             "claude_bundles.cdp_registry_store.load_active",
             return_value=_live_harvest_registry(harvest_id),
@@ -2519,11 +2531,15 @@ def test_g2_terminal_id_other_nest_live_no_post(
         status="running",
         work_key="todo:nest-live-nest-1",
     )
-    row = _refresh_row(ledger, "pred-hop-1")
-    assert hop_owed(row, closeout_tokens=frozenset({"ROW_HOP"})) is False
-    skip = _hop_skip_gate(row, closeout_tokens=frozenset({"ROW_HOP"}))
-    assert skip == "live_nested"
-    assert build_hop_team_dispatch_body(row) is None
+    with patch(
+        "services.git_integration_worker.cursor_sdk_closeout.conductor_exit_reasons.read_external_gate_lane_snapshot",
+        return_value=_TRUTHY_SNAP,
+    ):
+        row = _refresh_row(ledger, "pred-hop-1")
+        assert hop_owed(row, closeout_tokens=frozenset({"ROW_HOP"})) is False
+        skip = _hop_skip_gate(row, closeout_tokens=frozenset({"ROW_HOP"}))
+        assert skip == "live_nested"
+        assert build_hop_team_dispatch_body(row) is None
 
 
 @pytest.mark.asyncio

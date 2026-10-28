@@ -36,7 +36,7 @@ _SLUG_RE = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)+$")
 # ``/cowork/local_<uuid>`` is the session Cowork opens after the induction
 # submit (thread 12831). ``cse_`` is the older session id. Both are compose.
 _COMPOSE_URL = re.compile(
-    r"/new(?:\?|$|#)|/cowork/(?:cse_|local_)|/chat/",
+    r"/new(?:\?|$|#)|/cowork/(?:cse_|local_)|/chat/|/code(?:/|$|\?|#)",
     re.I,
 )
 

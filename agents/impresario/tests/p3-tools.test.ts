@@ -10,6 +10,10 @@ import {
   fixtureBusSendLogSnapshot,
   resetFixtureCache,
 } from "../bot/lib/bus-fixtures.js";
+import {
+  primeImpresarioDeliveryRegistry,
+  resetImpresarioDeliveryRegistryForTest,
+} from "../bot/lib/ulg.js";
 import { reduceLedgerForWorkKey } from "../bot/lib/dispatch.js";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -169,9 +173,17 @@ describe("AC4 ledger_read truncation", () => {
 
 describe("AC5 request_ruling", () => {
   beforeEach(() => {
+    primeImpresarioDeliveryRegistry({
+      lane: "20908",
+      reviewMailbox: "impresario-sdk",
+    });
     process.env.ULG_FIXTURE_DIR = fixtureRoot;
     process.env.ULG_FIXTURE_SCENARIO = "stops-operator-gate";
     resetFixtureCache();
+  });
+
+  afterEach(() => {
+    resetImpresarioDeliveryRegistryForTest();
   });
 
   it("posts QUESTION to lane and 12286 with identical bodies", async () => {

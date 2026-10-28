@@ -5,6 +5,7 @@ import {
 } from "@grok/agent-sdk/channels";
 import type { ChannelStartArgs, SendMessageFn } from "@grok/agent-sdk/channels";
 import type { HostContext } from "@grok/agent-sdk";
+import type { ToolContext } from "@grok/agent-sdk/tools";
 import { z } from "zod";
 
 import { hostBusCall } from "../lib/bus-host.js";
@@ -32,7 +33,11 @@ import {
   agentSdkBearerForAuth,
   requireAgentSdkBearerToken,
 } from "../lib/bearer.js";
-import { IMPRESARIO_LANE, IMPRESARIO_MAILBOX } from "../lib/ulg.js";
+import {
+  bootstrapImpresarioRegistry,
+  getImpresarioLane,
+  IMPRESARIO_MAILBOX,
+} from "../lib/ulg.js";
 import {
   resolveUlgMcpHttpUrl,
   ulgMcpResolvedHost,
@@ -259,10 +264,17 @@ async function ingestTurn(
   return deliverPrepared(host, send, prep);
 }
 
+function busChannelToolCtx(host: HostContext): ToolContext {
+  return {
+    session: { purpose: "channel", id: "impresario-bus" },
+    host,
+  } as unknown as ToolContext;
+}
+
 async function pollOnce(args: ChannelStartArgs, fallbackScore: string): Promise<void> {
   const host = args.host;
   const send = args.send;
-  const lane = IMPRESARIO_LANE;
+  const lane = getImpresarioLane();
   const afterTurn = await readLaneCursor(host);
 
   if (afterTurn > 0) {
@@ -354,6 +366,11 @@ export default defineChannel({
     const stateRoot = impresarioStateRoot();
     args.waitUntil(
       (async () => {
+        try {
+          await bootstrapImpresarioRegistry(busChannelToolCtx(args.host));
+        } catch (err) {
+          channelLogger.warn("[bus] delivery-bindings bootstrap failed", err);
+        }
         try {
           await maybePostSeatRegistration(args.host, stateRoot);
         } catch (err) {

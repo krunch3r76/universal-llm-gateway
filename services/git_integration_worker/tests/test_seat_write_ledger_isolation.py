@@ -14,6 +14,7 @@ from implement_admission.closeout_models import (
 )
 
 from services.git_integration_worker.config import WorkerConfig
+from services.git_integration_worker.cursor_home import operator_real_home
 from services.git_integration_worker.cursor_sdk_closeout import (
     SdkRunOutcome,
     capture_wt_baseline_with_hashes,
@@ -26,7 +27,7 @@ from services.git_integration_worker.seat_write_ledger import (
 
 pytestmark = pytest.mark.offline
 
-_LIVE_DB = Path.home() / ".gateway" / "seat-write-ledger.db"
+_LIVE_DB = operator_real_home() / ".gateway" / "seat-write-ledger.db"
 _PROBE_ARC = "d-isolation-probe"
 
 
@@ -71,7 +72,7 @@ def test_seat_write_ledger_path_refuses_the_live_gateway_dir(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Fail the suite if ``_ledger_path`` would open ``~/.gateway`` under pytest."""
-    monkeypatch.setenv("DATA_DIR", str(Path.home() / ".gateway"))
+    monkeypatch.setenv("DATA_DIR", str(operator_real_home() / ".gateway"))
     monkeypatch.setenv("PYTEST_CURRENT_TEST", "test_seat_write_ledger_isolation")
     SeatWriteLedger.reset_instance()
     with pytest.raises(
@@ -143,7 +144,7 @@ def test_prepare_closeout_delivery_does_not_insert_into_live_seat_write_ledger(
     after = _count_live_d_arcs()
     assert after == before
     assert SeatWriteLedger.instance().has_paths_for_arc(arc_id=_PROBE_ARC) is True
-    live_path = (Path.home() / ".gateway").resolve()
+    live_path = (operator_real_home() / ".gateway").resolve()
     bound = SeatWriteLedger.instance()._db_path.resolve()
     assert bound != live_path / "seat-write-ledger.db"
     assert not bound.is_relative_to(live_path)
