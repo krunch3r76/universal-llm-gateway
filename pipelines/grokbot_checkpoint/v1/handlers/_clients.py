@@ -92,6 +92,12 @@ def _share_path(uri: str) -> Path:
 class RootFs:
     """File sandbox via cortex_files_root / workspaces_root. Not a cortex tool."""
 
+    @property
+    def files_root(self) -> Path:
+        from implement_admission.closeout_helpers import cortex_files_root
+
+        return cortex_files_root().resolve()
+
     async def read(self, rel: str) -> bytes | None:
         return await self.read_uri(rel if "://" in rel else f"cortex://{rel}")
 
@@ -132,7 +138,11 @@ class RootFs:
         except (ValueError, OSError) as exc:
             raise FsClientMissingError(str(exc)) from exc
         if if_absent and path.is_file():
-            return {"ok": False, "conflict": True, "sha256": file_sha256(path.read_bytes())}
+            return {
+                "ok": False,
+                "conflict": True,
+                "sha256": file_sha256(path.read_bytes()),
+            }
         if expected_sha256 and path.is_file():
             live = file_sha256(path.read_bytes())
             if live != expected_sha256:

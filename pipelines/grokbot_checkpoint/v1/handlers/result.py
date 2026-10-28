@@ -39,8 +39,9 @@ def assemble(options: dict[str, Any], outputs: dict[str, Any]) -> dict[str, Any]
             break
     admit = step_output_json(outputs, "admit")
     source = step_output_json(outputs, "source")
+    harvest_pour = step_output_json(outputs, "harvest_pour")
     if (not source or source.get("_skipped")) and options.get("mode") == "harvest_seal":
-        source = step_output_json(outputs, "harvest_pour")
+        source = harvest_pour
     harvest_normalise = step_output_json(outputs, "harvest_normalise")
     harvest_adapter = step_output_json(outputs, "harvest_adapter")
     envelope = step_output_json(outputs, "envelope")
@@ -144,6 +145,9 @@ def assemble(options: dict[str, Any], outputs: dict[str, Any]) -> dict[str, Any]
         "warnings": warnings,
         "notices": notices,
         "harvest_record": harvest_record,
+        "transcript_store": harvest_pour.get("transcript_store")
+        if options.get("mode") == "harvest_seal"
+        else None,
         "houseless": bool(admit.get("houseless")),
         "skipped_steps": (
             [
