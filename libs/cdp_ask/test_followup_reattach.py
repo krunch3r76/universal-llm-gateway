@@ -1290,8 +1290,6 @@ async def test_k44_followup_reattach_paste_preserves_successor_seat_row(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Acceptance 1+5: reattach runs; paste to pred URL; successor row unchanged."""
-    from claude_bundles import cdp_registry as reg
-
     pred_id, succ_id = _seed_k44_superseded_dormant_predecessor()
     _restore_dormant_for_chat_url(monkeypatch)
     relaunch = _k44_attach_patches(monkeypatch)
@@ -1725,7 +1723,6 @@ async def test_k44_resume_host_lost_leaves_successor_unchanged(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """N1 falsifier: resume on K44 pred row must not touch live successor host."""
-    from claude_bundles import cdp_registry as reg
     from claude_bundles.cdp_registry.models import RegistryError
 
     from cdp_ask.execution_resume import resume_execution
