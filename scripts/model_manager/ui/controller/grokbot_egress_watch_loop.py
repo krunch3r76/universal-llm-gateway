@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import time
 from collections.abc import Awaitable, Callable
+from dataclasses import replace
 from pathlib import Path
 
 from deploy_identity.mcp_edge_events import (
@@ -171,6 +172,7 @@ class GrokbotEgressWatchLoop:
                     "newest rows retained (ORDER BY ts_unix_ms DESC)",
                     _EVENT_QUERY_ROW_LIMIT,
                 )
+                event_rows_trusted = False
         snap = build_snapshot_from_inputs(
             now_ms=now_ms,
             desktop_running=running,
@@ -180,22 +182,7 @@ class GrokbotEgressWatchLoop:
             event_rows=rows,
         )
         if not event_rows_trusted:
-            return GrokbotEgressSnapshot(
-                desktop_running=snap.desktop_running,
-                desktop_pid=snap.desktop_pid,
-                watch_connected=snap.watch_connected,
-                watch_disconnected_s=snap.watch_disconnected_s,
-                daemon_log_readable=snap.daemon_log_readable,
-                health_http_status=snap.health_http_status,
-                tunnel_stale=snap.tunnel_stale,
-                loader_stuck=snap.loader_stuck,
-                loader_stuck_s=snap.loader_stuck_s,
-                hm1_tools_call_ok=snap.hm1_tools_call_ok,
-                undici_idle_s=snap.undici_idle_s,
-                in_flight_gc1_mcp=snap.in_flight_gc1_mcp,
-                open_gc1_bus_turn=snap.open_gc1_bus_turn,
-                event_rows_trusted=False,
-            )
+            return replace(snap, event_rows_trusted=False)
         return snap
 
     async def _default_restart_desktop(self) -> None:
@@ -353,8 +340,8 @@ class GrokbotEgressWatchLoop:
 
     async def _run_hm1_recovery_chain(self) -> None:
         """Wake Grok Bot presence and repoint gc1 when hm1 tools/call stays absent."""
-        await asyncio.to_thread(keep_alive_grokbot_presence)
         try:
+            await asyncio.to_thread(keep_alive_grokbot_presence)
             rows = await probe_grok_agent_context()
             await asyncio.to_thread(run_gc1_repoint, rows)
         except Exception:

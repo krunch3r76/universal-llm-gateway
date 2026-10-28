@@ -1170,6 +1170,39 @@ def test_hm1_false_loop_invokes_recovery_io_once(
     assert len(repoints) == 1
 
 
+def test_hm1_backstop_requires_desktop_running() -> None:
+    state = GrokbotEgressLoopState()
+    n = _HM1_FALSE_RECOVERY_CONSECUTIVE_N
+    snap = _hm1_false_connected_snapshot(desktop_running=False)
+    for i in range(n):
+        decide_grokbot_tick(now=17_100_000.0 + i * 30.0, state=state, snapshot=snap)
+    state.hm1_false_sustained_since = 17_100_000.0 - _LOADER_DESKTOP_BACKSTOP_S - 1.0
+    decision = decide_grokbot_tick(now=17_100_600.0, state=state, snapshot=snap)
+    assert decision.restart_desktop is False
+
+
+def test_event_query_row_limit_marks_snapshot_untrusted(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import scripts.model_manager.ui.controller.grokbot_egress_watch_loop as loop_mod
+
+    limit = loop_mod._EVENT_QUERY_ROW_LIMIT
+    rows = [
+        {"ts_unix_ms": 1_700_000_000_000 - i, "signal": "x", "payload": {}}
+        for i in range(limit)
+    ]
+
+    monkeypatch.setattr(loop_mod, "read_desktop_status", lambda _path: {"pid": 1})
+    monkeypatch.setattr(loop_mod, "desktop_pid_alive", lambda _status: (True, 1))
+    monkeypatch.setattr(loop_mod, "read_daemon_log", lambda _path: _CONNECTED_LOG)
+    monkeypatch.setattr(loop_mod, "external_probe_hostname", lambda: None)
+    monkeypatch.setattr(loop_mod, "query_events_rows", lambda *_a, **_k: rows)
+
+    loop = GrokbotEgressWatchLoop(workspace_root=Path("/tmp"))
+    snap = _run(loop._default_snapshot())
+    assert snap.event_rows_trusted is False
+
+
 def test_hm1_false_backstop_rate_limited_second_episode() -> None:
     snap_false = _hm1_false_connected_snapshot(
         tunnel_stale=False,

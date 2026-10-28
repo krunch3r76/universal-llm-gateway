@@ -385,7 +385,8 @@ def decide_grokbot_tick(
         else 0.0
     )
     wants_hm1_backstop = (
-        snapshot.event_rows_trusted
+        snapshot.desktop_running
+        and snapshot.event_rows_trusted
         and state.hm1_false_consecutive >= _HM1_FALSE_RECOVERY_CONSECUTIVE_N
         and hm1_sustained_age >= _LOADER_DESKTOP_BACKSTOP_S
     )
