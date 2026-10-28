@@ -40,6 +40,11 @@ async def run_team_dispatch_admit_for_route_tests(
         "dispatch_id": getattr(body, "dispatch_id", None),
         "request_id": request_id,
     }
+    if getattr(body, "op", None) == "spawn":
+        opts["backend"] = getattr(body, "backend", None)
+        opts["thread"] = getattr(body, "thread", None)
+        opts["gui_host"] = getattr(body, "gui_host", None)
+        opts["spawn_purpose"] = getattr(body, "spawn_purpose", None)
     plan = run_full_admit(opts)
     if plan.get("admitted") is False:
         raise FrontierEndpointError(
@@ -236,6 +241,39 @@ def test_model_only_cdp_admits() -> None:
     )
     assert plan.get("admitted") is True
     assert plan.get("backend") == "cdp"
+
+
+@pytest.mark.offline
+def test_validate_op_spawn_runs_not_skipped() -> None:
+    skipped = evaluate_validate({"op": "to_thread", "request_id": "t-skip"})
+    assert skipped.get("skipped") is True
+    ok = evaluate_validate(
+        {
+            "op": "spawn",
+            "backend": "cursor_ide",
+            "thread": "house-1",
+            "spawn_purpose": "one line",
+            "request_id": "t-spawn",
+        }
+    )
+    assert ok.get("skipped") is not True
+    assert ok.get("admitted") is True
+
+
+@pytest.mark.offline
+def test_op_spawn_plan_backend_cursor_ide() -> None:
+    plan = run_full_admit(
+        {
+            "op": "spawn",
+            "backend": "cursor_ide",
+            "thread": "house-1",
+            "gui_host": ":8",
+            "spawn_purpose": "ship the slice",
+            "request_id": "t-spawn-plan",
+        }
+    )
+    assert plan.get("admitted") is True, plan
+    assert plan.get("backend") == "cursor_ide"
 
 
 @pytest.mark.offline

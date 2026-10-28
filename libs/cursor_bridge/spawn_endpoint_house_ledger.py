@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -11,7 +12,20 @@ from bus_watch.fable_lock import WATCH_DIR
 
 CONSUMERS: tuple[str, ...] = ("mcp",)
 
+_ROW_ID_RE = re.compile(r"^[0-9a-f]{32}$")
+
 LEDGER_FILENAME = "cursor-bridge-tab-wake-ledger.jsonl"
+
+
+def format_ledger_prompt_prefix(*, row_id: str, purpose: str) -> str:
+    """Two-line ledger header for spawned first messages and conductor packets."""
+    rid = str(row_id or "").strip()
+    if not _ROW_ID_RE.match(rid):
+        return ""
+    line = str(purpose or "").strip() or "(unstated)"
+    if "\n" in line:
+        line = "(unstated)"
+    return f"ledger_row: {rid}\npurpose: {line}\n"
 
 
 def ledger_path(watch_dir: Path | None = None) -> Path:
@@ -82,4 +96,10 @@ def last_successful_wake(
     return last
 
 
-__all__ = ["LEDGER_FILENAME", "last_successful_wake", "ledger_path", "record_tab_wake"]
+__all__ = [
+    "LEDGER_FILENAME",
+    "format_ledger_prompt_prefix",
+    "last_successful_wake",
+    "ledger_path",
+    "record_tab_wake",
+]

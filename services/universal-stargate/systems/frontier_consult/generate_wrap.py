@@ -8,8 +8,9 @@ from functools import partial
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from cursor_bridge.spawn_endpoint_house_ledger import format_ledger_prompt_prefix
 from fastapi.responses import JSONResponse
-from implement_admission.admission_read import frontmatter_value
+from implement_admission.admission_read import compute_packet_sha256, frontmatter_value
 from implement_admission.preflight import (
     DecisionNotAssertedError,
     RouteContractContradictionError,
@@ -93,6 +94,8 @@ def prepare_conductor_packet(
     summoning_turn_count: int | None = None,
     rematerialize: Any | None = None,
     conductor_opts: dict[str, Any] | None = None,
+    row_id: str | None = None,
+    ledger_purpose: str | None = None,
 ) -> GenerateWrapResult:
     """Materialize a conductor six-block packet from ``source_ref=todo:``."""
     del request_id, role, transport
@@ -130,14 +133,23 @@ def prepare_conductor_packet(
             scoreboard_uri = extract_scoreboard_uri(
                 materialized_file.read_text(encoding="utf-8", errors="replace")
             )
+    packet_sha256 = bridge.packet_sha256
+    if packet_text:
+        prefix = format_ledger_prompt_prefix(
+            row_id=str(row_id or ""),
+            purpose=str(ledger_purpose or "(unstated)"),
+        )
+        if prefix:
+            packet_text = prefix + packet_text
+            packet_sha256 = compute_packet_sha256(packet_text)
     return GenerateWrapResult(
         packet_path=bridge.packet_path,
-        packet_markdown=bridge.packet_markdown,
+        packet_markdown=packet_text,
         packet_rel_path=bridge.packet_rel_path,
         birth_scoreboard_markdown=bridge.birth_scoreboard_markdown,
         materialized=bool(bridge.packet_path or bridge.packet_markdown),
         warnings=list(bridge.warnings),
-        packet_sha256=bridge.packet_sha256,
+        packet_sha256=packet_sha256,
         materialization_present=bridge.materialization_present,
         route_contract=bridge.route_contract,
         scoreboard_uri=scoreboard_uri,

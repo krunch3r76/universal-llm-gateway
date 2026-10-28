@@ -294,6 +294,23 @@ class TeamDispatchSteerBody(BaseModel):
         return self
 
 
+class TeamDispatchSpawnBody(_DispatchCommon):
+    """``team_dispatch`` with ``op=spawn`` — IDE Glass tab launch (cursor_ide only)."""
+
+    op: Literal["spawn"]
+    backend: str
+    gui_host: str
+    thread: str | None = None
+    spawn_purpose: str | None = None
+    prompt: str
+    model: str | None = None
+    effort: str | None = None
+    fast: bool | str | None = None
+    model_knobs: dict[str, str] | None = None
+    title: str | None = None
+    slug: str | None = None
+
+
 class TeamDispatchToThreadBody(_DispatchCommon):
     """``team_dispatch`` with ``op="to_thread"`` — result posted to agent-bus thread.
 
@@ -344,6 +361,7 @@ class TeamDispatchToThreadBody(_DispatchCommon):
 TeamDispatchBody = Annotated[
     TeamDispatchGenerateBody
     | TeamDispatchToThreadBody
+    | TeamDispatchSpawnBody
     | TeamDispatchSteerBody
     | TeamDispatchClaimBody
     | TeamDispatchClaimReleaseBody

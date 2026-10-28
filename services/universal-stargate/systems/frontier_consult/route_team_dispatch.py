@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import threading
 import uuid
+from functools import partial
 from typing import Any
 
 from fastapi import Response
@@ -195,7 +196,7 @@ async def team_dispatch(
             await validate_wake_lane(body.wake_lane, request_id=request_id)
         except FrontierEndpointError as exc:
             return JSONResponse(status_code=exc.status_code, content=exc.to_dict())
-    if body.op in ("generate", "to_thread"):
+    if body.op in ("generate", "to_thread", "spawn"):
         from systems.proxy.dependencies import get_proxy
 
         from .team_dispatch_admit_client import run_team_dispatch_admit
@@ -263,6 +264,38 @@ async def team_dispatch(
             )
             result = await _dispatch(req, response)
             return finalize_team_dispatch_admit_response(result, admit_provenance)
+
+        if body.op == "spawn":
+            from cursor_bridge.bridge_spawn_relay import relay_spawn_tab
+            from cursor_bridge.spawn_endpoint_house_ledger import (
+                format_ledger_prompt_prefix,
+            )
+
+            row_id = uuid.uuid4().hex
+            purpose = str(getattr(body, "spawn_purpose", "") or "").strip()
+            prefixed = format_ledger_prompt_prefix(row_id=row_id, purpose=purpose)
+            hop_prompt = prefixed + str(body.prompt)
+            loop = asyncio.get_running_loop()
+            spawn_res = await loop.run_in_executor(
+                None,
+                partial(
+                    relay_spawn_tab,
+                    gui_host=str(body.gui_host),
+                    prompt=hop_prompt,
+                    model=getattr(body, "model", None),
+                    effort=getattr(body, "effort", None),
+                    fast=getattr(body, "fast", None),
+                    model_knobs=getattr(body, "model_knobs", None),
+                    title=getattr(body, "title", None),
+                    slug=getattr(body, "slug", None),
+                ),
+            )
+            response.status_code = 200 if spawn_res.get("ok") else 502
+            return {
+                **spawn_res,
+                "ledger_row_id": row_id,
+                "thread": getattr(body, "thread", None),
+            }
 
         backend = plan.get("backend")
         if backend == "cdp":

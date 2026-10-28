@@ -64,6 +64,21 @@ def evaluate_defaults(
             workflow=None,
         )
 
+    if op == "spawn":
+        plan = admit_envelope(
+            backend="cursor_ide",
+            role=None,
+            seat=None,
+            model=model,
+            job=None,
+            workflow=None,
+        )
+        plan["backend"] = str(opts.get("backend") or "")
+        plan["thread"] = opts.get("thread")
+        plan["gui_host"] = opts.get("gui_host")
+        plan["spawn_purpose"] = opts.get("spawn_purpose")
+        return plan
+
     check_review_workflow: str | None = None
     if (
         role
