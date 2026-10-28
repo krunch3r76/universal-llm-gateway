@@ -48,10 +48,12 @@ from claude_bundles.chat_session_hygiene import (
     pick_chat_page,
 )
 from claude_bundles.compose_attest import (
+    ComposeDispatchRefusedError,
+    approval_mode_chip,
     await_compose_attest,
     await_submit_visible,
     compose_mode_fingerprint,
-    cowork_auto_refuse_reason,
+    dispatch_approval_refuse_reason,
     resolve_submit_strategy,
 )
 from claude_bundles.cowork_output_download import (
@@ -433,15 +435,24 @@ async def _submit_composer_draft(
     *,
     composer,
     draft_text: str,
+    claude_surface: str | None = None,
+    submit_receipt: dict | None = None,
 ) -> None:
     """Submit the current composer draft; fail-closed when controls are missing."""
     from claude_bundles.chat_cowork_mode import ensure_approval_auto
 
-    auto = await ensure_approval_auto(page)
-    fp = auto.get("after") or await compose_mode_fingerprint(page)
-    refuse = cowork_auto_refuse_reason(fp)
+    surf = (claude_surface or "").strip().lower() or None
+    if surf == "code":
+        fp = await compose_mode_fingerprint(page)
+    else:
+        auto = await ensure_approval_auto(page)
+        fp = auto.get("after") or await compose_mode_fingerprint(page)
+    chip = approval_mode_chip(fp)
+    if submit_receipt is not None:
+        submit_receipt["approval_mode"] = chip
+    refuse = dispatch_approval_refuse_reason(fp, surface=claude_surface)
     if refuse:
-        raise RuntimeError(refuse)
+        raise ComposeDispatchRefusedError(refuse, approval_mode=chip, surface=surf)
 
     strategy = resolve_submit_strategy(page.url or "", fp)
 
@@ -498,6 +509,7 @@ async def send_prompt(
     satellite_execution_id: str = "",
     await_induction_reply: bool = False,
     on_harvest: Callable[[dict], Awaitable[None]] | None = None,
+    claude_surface: str | None = None,
 ) -> dict | None:
     """Clear the composer, attach leading slash skills, then click submit.
 
@@ -569,6 +581,7 @@ async def send_prompt(
 
     induction_observed: list[str] = []
     reply_baseline: dict | None = None
+    submit_receipt: dict = {}
     marked = required_authority is not None
     if induction_slugs and marked:
         # One submitted message so the first turn has Use-lines and the work
@@ -594,7 +607,13 @@ async def send_prompt(
             induction=induction_slugs,
         )
         await page.wait_for_timeout(600)
-        await _submit_composer_draft(page, composer=composer, draft_text=draft)
+        await _submit_composer_draft(
+            page,
+            composer=composer,
+            draft_text=draft,
+            claude_surface=claude_surface,
+            submit_receipt=submit_receipt,
+        )
         try:
             panel = await wait_for_induction_panel(
                 page, induction_slugs, on_harvest=on_harvest
@@ -624,7 +643,11 @@ async def send_prompt(
             await page.keyboard.insert_text(induction_text)
             await page.wait_for_timeout(600)
             await _submit_composer_draft(
-                page, composer=composer, draft_text=induction_text
+                page,
+                composer=composer,
+                draft_text=induction_text,
+                claude_surface=claude_surface,
+                submit_receipt=submit_receipt,
             )
             panel = await wait_for_induction_panel(
                 page, induction_slugs, on_harvest=on_harvest
@@ -650,7 +673,13 @@ async def send_prompt(
             induction_observed=induction_observed,
         )
         await page.wait_for_timeout(600)
-        await _submit_composer_draft(page, composer=composer, draft_text=text)
+        await _submit_composer_draft(
+            page,
+            composer=composer,
+            draft_text=text,
+            claude_surface=claude_surface,
+            submit_receipt=submit_receipt,
+        )
 
     required_authority = extract_cdp_required_authority(text)
     attach_slugs, inline_slugs, _rest = parse_cdp_sealed_skill_channels(text)
@@ -665,6 +694,10 @@ async def send_prompt(
         satellite_execution_id=str(satellite_execution_id or ""),
     )
     del missing, attach_notes
+    if submit_receipt:
+        if reply_baseline is None:
+            return submit_receipt
+        return {**reply_baseline, **submit_receipt}
     return reply_baseline
 
 

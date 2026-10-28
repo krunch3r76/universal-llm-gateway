@@ -13,6 +13,7 @@ from claude_bundles.chat_session_hygiene import (
     delete_chat_if_active,
     pick_chat_page,
 )
+from claude_bundles.compose_attest import ComposeDispatchRefusedError
 from claude_bundles.composer_submit import (
     composer_holds_draft,
     marker_survives_settle,
@@ -526,14 +527,33 @@ async def run_project_conversation(
                 await harvest_assistant(page, min_msg_chars=10, anchor=probe)
             )
             try:
-                await send_prompt(
+                submit_extra = await send_prompt(
                     page,
                     prompts[0],
                     stargate_execution_id=stargate_execution_id,
                     satellite_execution_id=satellite_execution_id,
                     await_induction_reply=True,
                     on_harvest=on_harvest,
+                    claude_surface=claude_surface,
                 )
+                if submit_extra and "approval_mode" in submit_extra:
+                    model_info = {**model_info, **submit_extra}
+            except ComposeDispatchRefusedError as exc:
+                model_info = {**model_info, "approval_mode": exc.approval_mode}
+                await _emit_page_url(on_harvest, page)
+                return [
+                    ProjectAskResult(
+                        ok=False,
+                        body="",
+                        url=page.url,
+                        project_uuid="",
+                        project_url=url,
+                        model=model_info,
+                        body_len=0,
+                        delete_after=None,
+                        error=str(exc),
+                    )
+                ]
             except SkillReceiptUnverifiedError as exc:
                 if not exc.submitted:
                     raise
