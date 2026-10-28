@@ -258,7 +258,9 @@ class WritingFinalizeHandler(BaseHandler):
                     "detail": f"{writer_live}->{reviewer_live}",
                 }
             )
-        if added_facts:
+        if added_facts and not any(
+            row.get("type") == "added_unattested_fact" for row in unresolved
+        ):
             passed = False
             unresolved.append(
                 {

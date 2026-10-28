@@ -76,7 +76,7 @@ _QUALITY_FINDING_CANDIDATES_ROW: dict[str, Any] = {
         "candidate_id": {"type": "string", "minLength": 1},
         "rule": {"type": "string"},
         "detail": {"type": "string"},
-        "penalty": {"type": "integer"},
+        "penalty": {"type": "integer", "minimum": 0, "maximum": 3},
     },
     "required": ["candidate_id", "rule", "detail", "penalty"],
 }
@@ -87,10 +87,13 @@ _QUALITY_FINDING_SINGLE_ROW: dict[str, Any] = {
     "properties": {
         "rule": {"type": "string"},
         "detail": {"type": "string"},
-        "penalty": {"type": "integer"},
+        "penalty": {"type": "integer", "minimum": 0, "maximum": 3},
     },
     "required": ["rule", "detail", "penalty"],
 }
+
+_QUALITY_PENALTY_MIN = 0
+_QUALITY_PENALTY_MAX = 3
 
 QUALITY_CANDIDATES_SCHEMA: dict[str, Any] = {
     "type": "object",
@@ -211,8 +214,11 @@ def _quality_row_ok(row: Any, *, require_candidate: bool) -> str | None:
         return "finding_candidate_id"
     if not isinstance(row.get("rule"), str) or not isinstance(row.get("detail"), str):
         return "finding_fields"
-    if not isinstance(row.get("penalty"), int):
+    penalty = row.get("penalty")
+    if not isinstance(penalty, int):
         return "finding_penalty"
+    if penalty < _QUALITY_PENALTY_MIN or penalty > _QUALITY_PENALTY_MAX:
+        return "finding_penalty_range"
     return None
 
 

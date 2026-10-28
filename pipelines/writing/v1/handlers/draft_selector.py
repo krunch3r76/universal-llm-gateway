@@ -1,8 +1,8 @@
 """Deterministic multi-weight draft selector for writer-specialist-v1.
 
-Assemble and the six drafter steps are the callers. Ranking is requested
-signer band, then pin coverage minus email penalty,
-then earlier drafter order. Drafts that still contain an unresolved
+Assemble and the six drafter steps are the callers. Ranking is obligation
+coverage, then requested signer band, then pin coverage minus email and quality
+penalties, then earlier drafter order. Drafts that still contain an unresolved
 ``[NEED:]`` token are ineligible. The handler does not call a model or write
 a file.
 """
@@ -34,6 +34,7 @@ from .draft_selector_signer import (
 from .email_envelope import email_draft_penalty, email_restate_pin_satisfied
 from .finalize_support import _omit_with_reason_ids
 from .independence import load_writing_models, model_family
+from .judge_schema import _QUALITY_PENALTY_MAX, _QUALITY_PENALTY_MIN
 from .seat_wait import sanitize_plain_text_draft
 
 _DRAFTER_STEPS: tuple[tuple[str, str], ...] = (
@@ -69,6 +70,11 @@ def _judge_pin_score(
         for row in judge_pins
         if isinstance(row, dict) and str(row.get("candidate_id") or "") == candidate_id
     ]
+    by_pin: dict[str, dict[str, Any]] = {}
+    for row in rows:
+        pid = str(row.get("pin_id") or "")
+        if pid:
+            by_pin[pid] = row
     score = 0
     penalty = 0
     for pin in attested_pins:
@@ -80,7 +86,7 @@ def _judge_pin_score(
             if excerpt and email_restate_pin_satisfied(draft_text, excerpt):
                 score += 1
             continue
-        match = next((row for row in rows if str(row.get("pin_id")) == pin_id), None)
+        match = by_pin.get(pin_id)
         if match is None:
             penalty += 1
             continue
@@ -98,7 +104,12 @@ def _quality_penalty(candidate_id: str, findings: list[dict[str, Any]]) -> int:
             continue
         if str(row.get("candidate_id") or "") != candidate_id:
             continue
-        total += int(row.get("penalty") or 0)
+        try:
+            raw = int(row.get("penalty") or 0)
+        except (TypeError, ValueError):
+            raw = _QUALITY_PENALTY_MAX
+        clamped = max(_QUALITY_PENALTY_MIN, min(_QUALITY_PENALTY_MAX, raw))
+        total += clamped
     return total
 
 
@@ -139,8 +150,8 @@ class WritingDraftSelectorHandler(BaseHandler):
 
     Candidates come from context outputs in fixed drafter order. An
     unresolved ``[NEED:]`` token removes a candidate. The winner is the
-    highest signer band, then first-person voice, then pin coverage minus
-    email penalty, then the earlier drafter. If every candidate is ineligible
+    highest obligation coverage and signer band, then pin coverage minus email
+    and quality penalties, then the earlier drafter. If every candidate is ineligible
     the step refuses
     and does not emit a bus event.
     """

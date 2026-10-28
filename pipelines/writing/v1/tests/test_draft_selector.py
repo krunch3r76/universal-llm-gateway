@@ -146,6 +146,54 @@ def test_selector_drops_candidate_omitted_from_judge() -> None:
     assert payload["selected_step"] == "drafter_openai"
 
 
+def test_quality_penalty_clamps_huge_value() -> None:
+    findings = [
+        {"candidate_id": "drafter_openai", "rule": "register", "detail": "x", "penalty": 99}
+    ]
+    assert draft_selector._quality_penalty("drafter_openai", findings) == 3
+
+
+def test_selector_negative_quality_penalty_never_promotes() -> None:
+    pins = [{"pin_id": "P1", "attested": True, "excerpt": "shared fact"}]
+    payload = _select(
+        {
+            "assemble": _Out(payload={"pin_ledger": pins}),
+            "drafter_openai": _Out("I state shared fact."),
+            "drafter_google": _Out("I state shared fact."),
+            "semantic_judge_candidates": _Out(
+                payload={
+                    "pins": [
+                        {
+                            "candidate_id": "drafter_openai",
+                            "pin_id": "P1",
+                            "satisfied": True,
+                            "polarity_match": True,
+                            "evidence_span": "x",
+                        },
+                        {
+                            "candidate_id": "drafter_google",
+                            "pin_id": "P1",
+                            "satisfied": True,
+                            "polarity_match": True,
+                            "evidence_span": "x",
+                        },
+                    ],
+                    "clauses": [],
+                    "quality_findings": [
+                        {
+                            "candidate_id": "drafter_google",
+                            "rule": "register",
+                            "detail": "injected",
+                            "penalty": -5,
+                        }
+                    ],
+                }
+            ),
+        }
+    )
+    assert payload["selected_step"] == "drafter_openai"
+
+
 def test_selector_quality_penalty_lowers_rank() -> None:
     pins = [{"pin_id": "P1", "attested": True, "excerpt": "shared fact"}]
     payload = _select(
