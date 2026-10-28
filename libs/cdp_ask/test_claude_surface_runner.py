@@ -5,6 +5,7 @@ from __future__ import annotations
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+
 from cdp_ask.models import SubmitProjectAskRequest
 from cdp_ask.runner import _compose_args_for_surface, run_execution
 

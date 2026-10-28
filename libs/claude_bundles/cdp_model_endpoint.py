@@ -627,7 +627,7 @@ def _bound_borne_grade_trace(
     """Copy a snapshot-borne trace without promoting it to grader inputs."""
     clean: dict[str, Any] = {}
     for key, value in borne.items():
-        if isinstance(value, (list, dict, tuple, set)):
+        if isinstance(value, list | dict | tuple | set):
             continue
         name = str(key)[:_GRADE_TRACE_SHORT_CAP]
         if isinstance(value, str):
@@ -652,7 +652,7 @@ def _bound_borne_grade_trace(
             }:
                 text = text[:_GRADE_TRACE_SHORT_CAP]
             clean[name] = text
-        elif isinstance(value, (int, float, bool)) or value is None:
+        elif isinstance(value, int | float | bool) or value is None:
             if name == "banner_text_truncated" and "banner_text" in clean:
                 continue
             clean[name] = value

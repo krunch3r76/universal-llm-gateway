@@ -139,7 +139,7 @@ def relay_lock_fresh(
     updated_at = payload.get("updated_at")
     if updated_at is None:
         return False
-    if isinstance(updated_at, (int, float)):
+    if isinstance(updated_at, int | float):
         age = time.time() - float(updated_at)
     else:
         from datetime import UTC, datetime
