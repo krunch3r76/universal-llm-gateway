@@ -33,8 +33,19 @@ import {
   requireAgentSdkBearerToken,
 } from "../lib/bearer.js";
 import { IMPRESARIO_LANE, IMPRESARIO_MAILBOX } from "../lib/ulg.js";
+import {
+  resolveUlgMcpHttpUrl,
+  ulgMcpResolvedHost,
+} from "../lib/ulg-mcp-url.js";
 
 import { persistLaneCursor, readLaneCursor } from "../lib/bus-lane.js";
+
+function busTransportLogMeta(phase: string, err: unknown): string {
+  const configured = ulgMcpResolvedHost(resolveUlgMcpHttpUrl());
+  const e = err as { code?: string; hostname?: string; host?: string };
+  const errHost = e.hostname ?? e.host ?? "?";
+  return `${new Date().toISOString()} configured_host=${configured} err_host=${errHost} phase=${phase} code=${e.code ?? "?"}`;
+}
 
 const DELIVERED_PREFIX = "delivered:";
 
@@ -258,7 +269,10 @@ async function pollOnce(args: ChannelStartArgs, fallbackScore: string): Promise<
     try {
       await busWait(host, lane, afterTurn, 30);
     } catch (err) {
-      channelLogger.warn("[bus] wait failed; polling fetch_unread", err);
+      channelLogger.warn(
+        `[bus] ${busTransportLogMeta("wait", err)} wait failed; polling fetch_unread`,
+        err,
+      );
     }
   }
 
@@ -299,7 +313,7 @@ async function runPollLoop(args: ChannelStartArgs): Promise<void> {
         backoffMs = Math.min(backoffMs * 2, 60_000);
         continue;
       }
-      channelLogger.warn("[bus] poll error", err);
+      channelLogger.warn(`[bus] ${busTransportLogMeta("poll", err)} poll error`, err);
       await sleep(backoffMs);
     }
   }

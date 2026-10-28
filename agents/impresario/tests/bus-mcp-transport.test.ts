@@ -7,8 +7,11 @@ import {
   isMcpConnectionClosedError,
 } from "../bot/lib/bus-mcp-retry.js";
 import { parseHostMcpJson } from "../bot/lib/mcp-result.js";
-import ulgConnection, { ULG_MCP_HTTP_URL } from "../bot/host-connections/ulg.js";
-import { ULG_MCP_HTTP_DEFAULT } from "../bot/lib/ulg-mcp-url.js";
+import ulgConnection from "../bot/host-connections/ulg.js";
+import {
+  ULG_MCP_HTTP_DEFAULT,
+  resolveUlgMcpHttpUrl,
+} from "../bot/lib/ulg-mcp-url.js";
 
 describe("MCP transport (streamable HTTP)", () => {
   it("host connection uses http transport to house ulg-code path", () => {
@@ -16,13 +19,15 @@ describe("MCP transport (streamable HTTP)", () => {
     if ("url" in ulgConnection) {
       assert.equal(ulgConnection.type, "http");
       assert.match(ulgConnection.url, /\/mcp\/code$/);
-      assert.equal(ulgConnection.url, ULG_MCP_HTTP_URL);
-      assert.equal(ULG_MCP_HTTP_URL, ULG_MCP_HTTP_DEFAULT);
-      assert.match(
-        String(ulgConnection.headers?.authorization ?? ""),
-        /\$\{ULG_MCP_TOKEN\}/,
+      assert.equal(
+        ulgConnection.url,
+        resolveUlgMcpHttpUrl(process.env),
       );
     }
+  });
+
+  it("default URL when env unset (isolates process.env)", () => {
+    assert.equal(resolveUlgMcpHttpUrl({}), ULG_MCP_HTTP_DEFAULT);
   });
 
   it("isMcpConnectionClosedError recognizes stdio bridge failures", () => {

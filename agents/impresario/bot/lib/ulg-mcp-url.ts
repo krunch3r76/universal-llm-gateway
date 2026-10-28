@@ -1,18 +1,45 @@
 /** Default house MCP when ULG_MCP_HTTP_URL is unset (host loopback forwarder). */
 export const ULG_MCP_HTTP_DEFAULT = "http://127.0.0.1:9338/mcp/code";
 
+const MCP_CODE_PATH = "/mcp/code";
+
+function hasUrlScheme(raw: string): boolean {
+  return /^[a-zA-Z][a-zA-Z0-9+.-]*:/.test(raw);
+}
+
+/** Accept host:port[/path] or full http(s) URL; always returns a parseable absolute URL. */
+export function normalizeUlgMcpHttpUrl(raw: string): string {
+  const trimmed = raw.trim();
+  if (!trimmed) {
+    return ULG_MCP_HTTP_DEFAULT;
+  }
+  const withScheme = hasUrlScheme(trimmed) ? trimmed : `http://${trimmed}`;
+  const url = new URL(withScheme);
+  if (url.pathname === "" || url.pathname === "/") {
+    url.pathname = MCP_CODE_PATH;
+  }
+  return url.href.endsWith("/") && url.pathname !== "/"
+    ? url.href.slice(0, -1)
+    : url.href;
+}
+
 export function resolveUlgMcpHttpUrl(
   env: { ULG_MCP_HTTP_URL?: string } = process.env,
 ): string {
   const raw = env.ULG_MCP_HTTP_URL?.trim();
-  return raw && raw.length > 0 ? raw : ULG_MCP_HTTP_DEFAULT;
+  if (!raw) {
+    return ULG_MCP_HTTP_DEFAULT;
+  }
+  return normalizeUlgMcpHttpUrl(raw);
 }
 
 export function ulgMcpResolvedHost(url: string): string {
-  return new URL(url).host;
+  return new URL(normalizeUlgMcpHttpUrl(url)).host;
 }
 
 /** One-line startup: host only (never log token or full URL with secrets). */
 export function logUlgMcpStartupResolvedHost(url: string): void {
-  console.log(`[impresario/ulg-mcp] resolved host=${ulgMcpResolvedHost(url)}`);
+  console.log(
+    `[impresario/ulg-mcp] resolved host=${ulgMcpResolvedHost(url)}`,
+  );
 }

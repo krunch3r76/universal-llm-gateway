@@ -4,6 +4,7 @@ import { describe, it } from "node:test";
 import ulgConnection from "../bot/host-connections/ulg.js";
 import {
   ULG_MCP_HTTP_DEFAULT,
+  normalizeUlgMcpHttpUrl,
   resolveUlgMcpHttpUrl,
   ulgMcpResolvedHost,
 } from "../bot/lib/ulg-mcp-url.js";
@@ -21,6 +22,18 @@ describe("ULG MCP HTTP URL (internal endpoint slice)", () => {
       custom,
     );
     assert.equal(ulgMcpResolvedHost(custom), "172.18.0.1:9338");
+  });
+
+  it("15851#3388 scheme-less host:port normalizes without Invalid URL", () => {
+    assert.equal(
+      normalizeUlgMcpHttpUrl("172.18.0.1:9338"),
+      "http://172.18.0.1:9338/mcp/code",
+    );
+    assert.equal(
+      resolveUlgMcpHttpUrl({ ULG_MCP_HTTP_URL: "172.18.0.1:9338/mcp/code" }),
+      "http://172.18.0.1:9338/mcp/code",
+    );
+    assert.equal(ulgMcpResolvedHost("172.18.0.1:9338"), "172.18.0.1:9338");
   });
 
   it("AC2 AC4 Bearer ULG_MCP_TOKEN header on connection for loopback and custom URL", () => {
