@@ -71,7 +71,7 @@ class _Step:
     generation_parameters = {"temperature": 0.3}
 
 
-def test_prose_rhythm_applies_findings_when_model_unchanged() -> None:
+def test_prose_rhythm_no_op_preserves_draft_and_declines_findings() -> None:
     caller = AsyncMock(return_value=_DRAFT_V1)
     handler = prose_rhythm.WritingProseRhythmHandler(caller=caller)
     outputs = {
@@ -84,14 +84,18 @@ def test_prose_rhythm_applies_findings_when_model_unchanged() -> None:
         ),
     }
     out = asyncio.run(handler.execute(_Step(), _Ctx(outputs)))
-    assert out.raw.strip() != _DRAFT_V1.strip()
+    assert out.raw.strip() == _DRAFT_V1.strip()
     assert out.json is not None
+    body_lower = out.raw.lower()
+    for row in _FOUR_FINDINGS:
+        fix = str(row["fix"]).lower()
+        assert fix not in body_lower
     assert len(out.json["dispositions"]) == 4
     refs = {row["ref"] for row in out.json["dispositions"]}
     assert refs == {"s1", "s2", "s3", "s4"}
     for row in out.json["dispositions"]:
-        assert row["status"] in {"applied", "declined"}
-        assert row.get("reason") is not None or row["status"] == "applied"
+        assert row["status"] == "declined"
+        assert row["reason"] == "reviser_no_op"
 
 
 def test_revision_dispositions_names_each_finding() -> None:

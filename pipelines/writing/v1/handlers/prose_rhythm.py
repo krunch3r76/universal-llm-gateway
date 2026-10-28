@@ -71,6 +71,16 @@ def revision_dispositions(
             continue
         fix = str(row.get("fix") or "")
         applied = _finding_applied(draft_v2, fix, draft_changed=changed)
+        if not changed:
+            rows.append(
+                {
+                    "ref": row.get("ref"),
+                    "type": row.get("type"),
+                    "status": "declined",
+                    "reason": "reviser_no_op",
+                }
+            )
+            continue
         rows.append(
             {
                 "ref": row.get("ref"),
@@ -80,37 +90,6 @@ def revision_dispositions(
             }
         )
     return rows
-
-
-def _insert_before_closing(draft: str, addition: str) -> str:
-    text = addition.strip()
-    if not text:
-        return draft
-    if not text.endswith((".", "!", "?")):
-        text = text.rstrip(".") + "."
-    parts = draft.rsplit("\n\n", 1)
-    if len(parts) == 2 and re.match(
-        r"^(?:best|sincerely|thanks|thank you|regards|cheers)",
-        parts[1].strip(),
-        re.I,
-    ):
-        return f"{parts[0].rstrip()}\n\n{text}\n\n{parts[1]}"
-    return f"{draft.rstrip()}\n\n{text}"
-
-
-def apply_actionable_findings(draft_v1: str, findings: list[dict[str, Any]]) -> str:
-    """Deterministic fallback when the reviser model returns unchanged text."""
-    body = draft_v1
-    for row in findings:
-        if not isinstance(row, dict):
-            continue
-        fix = str(row.get("fix") or "").strip()
-        if not fix:
-            continue
-        if fix.lower() in body.lower():
-            continue
-        body = _insert_before_closing(body, fix)
-    return body
 
 
 class WritingProseRhythmHandler(BaseHandler):
@@ -184,12 +163,6 @@ class WritingProseRhythmHandler(BaseHandler):
         draft_v2 = sanitize_plain_text_draft(
             content if isinstance(content, str) else str(content or "")
         )
-        if (
-            str(review.get("verdict") or "") == "revise"
-            and findings
-            and _normalize_draft(draft_v2) == _normalize_draft(draft_v1)
-        ):
-            draft_v2 = apply_actionable_findings(draft_v1, findings)
 
         dispositions = revision_dispositions(draft_v1, draft_v2, findings)
         payload = {

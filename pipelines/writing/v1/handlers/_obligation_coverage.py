@@ -43,14 +43,18 @@ _INTENT_OR_ASK_BACK_CONFIRM = re.compile(
     rf")",
     re.I,
 )
-_ASK_BACK_QUESTION = re.compile(
-    r"\?(?:\s|$)|\b(?:could you|can you|would you|please (?:send|share|confirm)|"
-    r"is (?:the|this) (?:role|position|opening)|"
-    r"(?:still )?(?:open|available|accepting applications))\b",
+_ASK_BACK_REQUEST = re.compile(
+    r"\b(?:could you|can you|would you|please (?:send|share|confirm|provide))\b",
     re.I,
 )
-_ASK_BACK_TARGET = re.compile(
-    r"\b(?:apply|application|link|portal|url|https?://|role|position|opening)\b",
+_ROLE_OPEN_ASK = re.compile(
+    r"\b(?:role|position|opening)\b.{0,80}\b(?:still\s+)?(?:open|available)\b|"
+    r"\b(?:still\s+)?(?:open|available)\b.{0,80}\b(?:role|position|opening)\b",
+    re.I,
+)
+_APPLY_LINK_ASK = re.compile(
+    r"\b(?:apply|application)\s+(?:link|url|portal|page)\b|"
+    r"\b(?:share|send|provide)\b.{0,50}\b(?:apply|link|portal|url|https?://)\b",
     re.I,
 )
 _ACTION_CONFIRM = re.compile(
@@ -227,11 +231,20 @@ def _effective_act_attested(pin_ledger: list[dict[str, Any]] | None) -> bool:
 
 
 def _sentence_asks_back_for_cta(sentence: str, quoted_span: str) -> bool:
-    """True when the draft asks the counterpart for the off-message action."""
-    if not _ASK_BACK_QUESTION.search(sentence):
+    """True when a body sentence asks the counterpart for the CTA (not span alone)."""
+    del quoted_span
+    norm = _normalize_apostrophes(sentence)
+    if not _ASK_BACK_REQUEST.search(norm) and "?" not in norm:
         return False
-    combined = f"{sentence} {quoted_span}"
-    return _ASK_BACK_TARGET.search(combined) is not None
+    if _ROLE_OPEN_ASK.search(norm):
+        return True
+    if _APPLY_LINK_ASK.search(norm):
+        return True
+    if _ASK_BACK_REQUEST.search(norm) and re.search(
+        r"\b(?:apply|application|link|portal|url|https?://)\b", norm, re.I
+    ):
+        return True
+    return False
 
 
 def _act_outside_sentence_covers(sentence: str, *, act_attested: bool) -> bool:
