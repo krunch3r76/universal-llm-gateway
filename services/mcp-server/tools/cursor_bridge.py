@@ -138,7 +138,9 @@ def _send_msg(
         out["gui_host"] = gui_host
         if not paste.get("ok"):
             out["ok"] = False
-            out["error"] = str(paste.get("error") or paste.get("reason") or "glass_paste_failed")
+            out["error"] = str(
+                paste.get("error") or paste.get("reason") or "glass_paste_failed"
+            )
     record(
         "mcp.cursor_bridge.send_msg",
         thread=thread,

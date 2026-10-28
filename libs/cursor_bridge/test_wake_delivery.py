@@ -24,7 +24,9 @@ from cursor_bridge.wake_delivery import (
     normalize_target,
 )
 
-_FIXTURE_PATH = Path(__file__).resolve().parent / "fixtures" / "cursor_agents_9338_probe.json"
+_FIXTURE_PATH = (
+    Path(__file__).resolve().parent / "fixtures" / "cursor_agents_9338_probe.json"
+)
 
 pytestmark = pytest.mark.offline
 
@@ -109,8 +111,14 @@ def test_stale_wake_draft_recognized_and_allowed() -> None:
 
 def test_wake_line_single_and_multi_turn() -> None:
     assert wake_line("15851", 1647) == "BRIDGE_WAKE thread=15851 turn=1647"
-    assert wake_line("15851", "1647,1648,1649") == "BRIDGE_WAKE thread=15851 turn=1647,1648,1649"
-    assert wake_line("15851", [1649, 1647, 1648]) == "BRIDGE_WAKE thread=15851 turn=1647,1648,1649"
+    assert (
+        wake_line("15851", "1647,1648,1649")
+        == "BRIDGE_WAKE thread=15851 turn=1647,1648,1649"
+    )
+    assert (
+        wake_line("15851", [1649, 1647, 1648])
+        == "BRIDGE_WAKE thread=15851 turn=1647,1648,1649"
+    )
 
 
 def test_stale_wake_draft_multi_turn() -> None:
@@ -152,7 +160,9 @@ class _FakeWS:
 
 
 @pytest.mark.asyncio
-async def test_paste_send_button_fallback_when_enter_leaves_composer(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_paste_send_button_fallback_when_enter_leaves_composer(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     line = "BRIDGE_WAKE thread=15851 turn=290"
     inbox = [
         _cdp_msg(1, {"ok": True}),
@@ -180,7 +190,9 @@ async def test_paste_send_button_fallback_when_enter_leaves_composer(monkeypatch
 
 
 @pytest.mark.asyncio
-async def test_deliver_wake_pastes_over_stale_bridge_wake_draft(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_deliver_wake_pastes_over_stale_bridge_wake_draft(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     stale = "BRIDGE_WAKE thread=15851 turn=289"
     expected_title = "15851 slug"
     surface_match = classify_surface(
@@ -196,7 +208,11 @@ async def test_deliver_wake_pastes_over_stale_bridge_wake_draft(monkeypatch: pyt
         _probe.n += 1
         return surface_match if _probe.n == 1 else surface_post
 
-    monkeypatch.setattr(wd, "list_pages", lambda _origin: [{"title": "Grok Bot", "web_socket_debugger_url": "ws://x"}])
+    monkeypatch.setattr(
+        wd,
+        "list_pages",
+        lambda _origin: [{"title": "Grok Bot", "web_socket_debugger_url": "ws://x"}],
+    )
     monkeypatch.setattr(wd, "probe_surface", _probe)
     monkeypatch.setattr(
         wd,
@@ -275,7 +291,10 @@ def test_composer_witness_match_count_and_same_node() -> None:
     assert "prompt_selector_matches_same_node = el === promptNode" in guard_body
     assert "attributes = {}" in guard_body
     assert "outer_html = el.outerHTML" in guard_body
-    assert "resolved_selector = promptSel" in guard_body or "resolved_selector = built" in guard_body
+    assert (
+        "resolved_selector = promptSel" in guard_body
+        or "resolved_selector = built" in guard_body
+    )
 
 
 def test_cursor_composer_js_clears_stale_wake_draft() -> None:
@@ -287,7 +306,9 @@ def test_cursor_composer_js_clears_stale_wake_draft() -> None:
 
 
 @pytest.mark.asyncio
-async def test_deliver_wake_cursor_pastes_on_agents_page(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_deliver_wake_cursor_pastes_on_agents_page(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     stale = "BRIDGE_WAKE thread=15851 turn=289"
     expected_title = "15851 slug"
     surface_match = classify_surface(
@@ -306,7 +327,9 @@ async def test_deliver_wake_cursor_pastes_on_agents_page(monkeypatch: pytest.Mon
     monkeypatch.setattr(
         wd,
         "list_pages",
-        lambda _origin: [{"title": "Cursor Agents", "web_socket_debugger_url": "ws://x"}],
+        lambda _origin: [
+            {"title": "Cursor Agents", "web_socket_debugger_url": "ws://x"}
+        ],
     )
     monkeypatch.setattr(wd, "probe_surface", _probe)
     monkeypatch.setattr(
@@ -343,7 +366,9 @@ def test_normalize_target_bridge_client_rewrites_only_9338_and_9339(
     )
     assert normalize_target("8", "cursor")["origin"] == "http://172.18.0.1:9338"
     assert normalize_target(":9", "grok-bot")["origin"] == "http://172.18.0.1:9339"
-    assert normalize_target("orion-node", "cursor")["origin"] == "http://127.0.0.1:19338"
+    assert (
+        normalize_target("orion-node", "cursor")["origin"] == "http://127.0.0.1:19338"
+    )
     assert normalize_target("10", "grok")["origin"] == "http://127.0.0.1:9340"
     assert normalize_target("99", "cursor")["reason"] == "unknown_target"
 
@@ -385,7 +410,9 @@ def test_submit_wake_line_js_race_reports_winner_not_timer_as_delivered() -> Non
 
 
 @pytest.mark.asyncio
-async def test_paste_cursor_services_evaluates_glass_js(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_paste_cursor_services_evaluates_glass_js(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     line = "BRIDGE_WAKE thread=15851 turn=290"
     inbox = [_cdp_msg(1, {"ok": True, "agent_id": "agent-1"})]
     fake = _FakeWS(inbox)
@@ -404,11 +431,15 @@ async def test_paste_cursor_services_evaluates_glass_js(monkeypatch: pytest.Monk
 def test_cursor_stale_draft_same_treatment_as_grok() -> None:
     stale = "BRIDGE_WAKE thread=15851 turn=289"
     assert _busy_or_draft_reason({"composer_draft": stale}) is None
-    assert _busy_or_draft_reason({"composer_draft": "please hold"}) == "composer_not_empty"
+    assert (
+        _busy_or_draft_reason({"composer_draft": "please hold"}) == "composer_not_empty"
+    )
 
 
 @pytest.mark.asyncio
-async def test_cursor_human_draft_blocks_selection(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_cursor_human_draft_blocks_selection(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     human = "operator draft text"
     surface = classify_surface(
         [],
@@ -423,7 +454,9 @@ async def test_cursor_human_draft_blocks_selection(monkeypatch: pytest.MonkeyPat
     monkeypatch.setattr(
         wd,
         "list_pages",
-        lambda _origin: [{"title": "Cursor Agents", "web_socket_debugger_url": "ws://x"}],
+        lambda _origin: [
+            {"title": "Cursor Agents", "web_socket_debugger_url": "ws://x"}
+        ],
     )
     monkeypatch.setattr(wd, "probe_surface", AsyncMock(return_value=surface))
     monkeypatch.setattr(wd, "select_sidebar_target", select_mock)
@@ -448,7 +481,9 @@ async def test_deliver_wake_exchange_text_refuses_non_stage_manager_thread(
     monkeypatch.setattr(
         wd,
         "list_pages",
-        lambda _origin: (_ for _ in ()).throw(AssertionError("must not open debug socket")),
+        lambda _origin: (_ for _ in ()).throw(
+            AssertionError("must not open debug socket")
+        ),
     )
     out = await deliver_wake(
         display="8",
@@ -531,7 +566,9 @@ async def test_deliver_wake_timer_win_classifies_unknown_not_refused(
     monkeypatch.setattr(
         wd,
         "list_pages",
-        lambda _origin: [{"title": "Cursor Agents", "web_socket_debugger_url": "ws://x"}],
+        lambda _origin: [
+            {"title": "Cursor Agents", "web_socket_debugger_url": "ws://x"}
+        ],
     )
     monkeypatch.setattr(wd, "probe_surface", _probe)
     monkeypatch.setattr(wd.asyncio, "sleep", AsyncMock())

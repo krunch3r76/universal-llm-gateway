@@ -20,7 +20,9 @@ from cursor_bridge.tab_ready_rehandshake import tab_ready_instruction
 def test_submit_wake_line_js_uses_resolve_composer_for_agent() -> None:
     js = submit_wake_line_js("BRIDGE_WAKE thread=1 turn=2", "agent-1")
     assert "resolveComposerForAgent" in js
-    assert RESOLVE_COMPOSER_FOR_AGENT_FN.strip() in js or "resolveComposerForAgent" in js
+    assert (
+        RESOLVE_COMPOSER_FOR_AGENT_FN.strip() in js or "resolveComposerForAgent" in js
+    )
     assert "setActiveAgentId" in js
     assert "composerId" in js
 

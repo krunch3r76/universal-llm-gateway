@@ -14,7 +14,9 @@ def tab_ready_instruction(title: str) -> str:
     return name_instruction(title)
 
 
-def post_tab_gone_for_lane(thread_id: str, *, reason: str = "bridge_rename") -> dict[str, Any]:
+def post_tab_gone_for_lane(
+    thread_id: str, *, reason: str = "bridge_rename"
+) -> dict[str, Any]:
     """Post TAB_GONE from cursor so lane readiness epoch advances before a fresh TAB_READY."""
     tid = str(thread_id or "").strip()
     if not tid:
