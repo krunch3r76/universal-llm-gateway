@@ -72,7 +72,9 @@ async def test_run_execution_passes_code_compose_to_conversation() -> None:
     with (
         patch("cdp_ask.runner.resolve_prompt", return_value=["probe"]),
         patch("cdp_ask.runner.bind_execution_lane", return_value=reg),
-        patch("cdp_ask.runner.run_with_overlay_retry", new=AsyncMock(side_effect=_overlay)),
+        patch(
+            "cdp_ask.runner.run_with_overlay_retry", new=AsyncMock(side_effect=_overlay)
+        ),
         patch("cdp_ask.runner.run_project_conversation", new=converse),
         patch("cdp_ask.runner.archive_harvest", return_value="cortex://x"),
     ):
@@ -86,4 +88,5 @@ async def test_run_execution_passes_code_compose_to_conversation() -> None:
     kwargs = converse.await_args.kwargs
     assert kwargs["compose_url"] == "https://claude.ai/code"
     assert kwargs["ensure_cowork_auto"] is False
+    assert kwargs["claude_surface"] == "code"
     assert result["url"] == "https://claude.ai/code/session_testid"

@@ -228,6 +228,7 @@ async def _maybe_reattach(
         mission_kind=req.mission_kind,
         allow_mint=bool(req.reattach),
         restrict_to_registration_id=restrict_registration_id(reason, chat_url),
+        allow_k44_superseded_page_only=True,
     )
     emit_followup_event(
         cdp_ask_followup_reattach_result(

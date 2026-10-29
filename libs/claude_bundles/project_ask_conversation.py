@@ -29,6 +29,7 @@ from claude_bundles.cowork_output_download import (
 from claude_bundles.cowork_skill_delivery import SkillReceiptUnverifiedError
 from claude_bundles.project_ask import (
     ProjectAskResult,
+    _assert_code_surface_model_before_send,
     _attest_model,
     _compose_model_selected,
     _harvest_after_skill_receipt_unverified,
@@ -308,10 +309,12 @@ async def project_followup_on_page(
     stargate_execution_id: str = "",
     satellite_execution_id: str = "",
     purpose: str = "ask",
+    claude_surface: str | None = None,
 ) -> ProjectAskResult:
     """Send another turn on the current chat. No navigate.
 
     Correlation ids thread into ``send_prompt`` → skill-delivery attest.
+    ``claude_surface`` must match the first-turn compose surface (e.g. ``code``).
     """
     dest = project_url(project_uuid) if project_uuid else "https://claude.ai/new"
     require_review_verdict = (purpose or "").strip().lower() == "review"
@@ -327,6 +330,7 @@ async def project_followup_on_page(
             stargate_execution_id=stargate_execution_id,
             satellite_execution_id=satellite_execution_id,
             await_induction_reply=True,
+            claude_surface=claude_surface,
         )
         state = await wait_assistant_reply(
             page,
@@ -449,6 +453,7 @@ async def run_project_conversation(
     satellite_execution_id: str = "",
     purpose: str = "ask",
     target_id: str | None = None,
+    claude_surface: str | None = None,
 ) -> list[ProjectAskResult]:
     """N-turn consult on one chat. First opens compose; later turns follow up.
 
@@ -469,7 +474,13 @@ async def run_project_conversation(
 
             page = await select_page_by_target_id(ctx, target_id)
         else:
-            page = await pick_chat_page(ctx, prefer_url_substr="/new")
+            prefer = (
+                "/code"
+                if (claude_surface or "").strip().lower() == "code"
+                or (compose_url and "claude.ai/code" in compose_url)
+                else "/new"
+            )
+            page = await pick_chat_page(ctx, prefer_url_substr=prefer)
         if project_uuid:
             first = await project_ask_on_page(
                 page,
@@ -495,6 +506,7 @@ async def run_project_conversation(
                 model,
                 compose_url=url,
                 ensure_cowork_auto=ensure_cowork_auto,
+                claude_surface=claude_surface,
                 stargate_execution_id=stargate_execution_id,
                 satellite_execution_id=satellite_execution_id,
             )
@@ -513,6 +525,24 @@ async def run_project_conversation(
                         error=f"model select failed: {model_info}",
                     )
                 ]
+            if model_info.get("step") == "code_surface_page_model":
+                try:
+                    _assert_code_surface_model_before_send(model, model_info)
+                except RuntimeError as exc:
+                    await _emit_page_url(on_harvest, page)
+                    return [
+                        ProjectAskResult(
+                            ok=False,
+                            body="",
+                            url=page.url,
+                            project_uuid="",
+                            project_url=url,
+                            model=model_info,
+                            body_len=0,
+                            delete_after=None,
+                            error=str(exc),
+                        )
+                    ]
             probe = ReplyAnchor(anchor_marker(prompts[0]))
             anchor = probe.after(
                 await harvest_assistant(page, min_msg_chars=10, anchor=probe)
@@ -525,6 +555,8 @@ async def run_project_conversation(
                     satellite_execution_id=satellite_execution_id,
                     await_induction_reply=True,
                     on_harvest=on_harvest,
+                    claude_surface=claude_surface,
+                    compose_receipt=model_info,
                 )
             except SkillReceiptUnverifiedError as exc:
                 if not exc.submitted:
@@ -658,6 +690,7 @@ async def run_project_conversation(
                 stargate_execution_id=stargate_execution_id,
                 satellite_execution_id=satellite_execution_id,
                 purpose=purpose,
+                claude_surface=claude_surface,
             )
             results.append(nxt)
             if not nxt.ok:

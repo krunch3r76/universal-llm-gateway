@@ -30,6 +30,7 @@ from claude_bundles.chat_model_match import (
     sealed_ask_default_effort,
 )
 from claude_bundles.chat_model_select import (
+    current_model_label,
     label_satisfies_request,
     parse_model_request,
     picker_attests_request,
@@ -47,10 +48,11 @@ from claude_bundles.chat_session_hygiene import (
     pick_chat_page,
 )
 from claude_bundles.compose_attest import (
+    approval_mode_chip,
     await_compose_attest,
     await_submit_visible,
     compose_mode_fingerprint,
-    cowork_auto_refuse_reason,
+    dispatch_approval_refuse_reason,
     resolve_submit_strategy,
 )
 from claude_bundles.cowork_output_download import (
@@ -128,6 +130,26 @@ def artifact_cards_from_state(state: dict[str, Any]) -> list[dict[str, str]]:
         if title:
             cards.append({"title": title, "kind": kind})
     return cards
+
+
+def _assert_code_surface_model_before_send(requested: str, model_info: dict[str, Any]) -> None:
+    """Fail closed on /code when the page model label does not match the request.
+
+    Runs after ``code_surface_page_model`` and before ``send_prompt`` so a mismatch
+    does not burn a full generation (friction:40648 / trial-4).
+
+    Unreadable labels (empty or the compose ``unknown`` sentinel) defer to post-harvest
+    ``_attest_model``, matching its soft ``None`` when no label is available.
+    """
+    label = (model_info.get("model_ran") or model_info.get("current_model") or "").strip()
+    if not label or label.lower() == "unknown":
+        return
+    req = normalize_picker_request(requested or "")
+    family, effort = parse_model_request(req)
+    if effort is None:
+        effort = sealed_ask_default_effort(family)
+    if not label_satisfies_request(req, label, effort=effort):
+        raise RuntimeError(f"model attestation mismatch: wanted {req!r}, got {label!r}")
 
 
 def _attest_model(
@@ -432,17 +454,23 @@ async def _submit_composer_draft(
     *,
     composer,
     draft_text: str,
+    claude_surface: str | None = None,
+    compose_receipt: dict | None = None,
 ) -> None:
     """Submit the current composer draft; fail-closed when controls are missing."""
     from claude_bundles.chat_cowork_mode import ensure_approval_auto
 
-    auto = await ensure_approval_auto(page)
-    fp = auto.get("after") or await compose_mode_fingerprint(page)
-    refuse = cowork_auto_refuse_reason(fp)
+    surf = (claude_surface or "").strip().lower() or None
+    if surf == "code":
+        fp = await compose_mode_fingerprint(page)
+    else:
+        auto = await ensure_approval_auto(page)
+        fp = auto.get("after") or await compose_mode_fingerprint(page)
+    refuse = dispatch_approval_refuse_reason(fp, surface=claude_surface)
     if refuse:
         raise RuntimeError(refuse)
 
-    strategy = resolve_submit_strategy(page.url or "", fp)
+    strategy = resolve_submit_strategy(page.url or "", fp, surface=claude_surface)
 
     from claude_bundles.composer_submit import submit_composer_content
 
@@ -488,6 +516,9 @@ async def _submit_composer_draft(
 
             await prove_composer_submitted(page, draft_text)
 
+    if compose_receipt is not None and surf == "code":
+        compose_receipt["approval_mode"] = approval_mode_chip(fp)
+
 
 async def send_prompt(
     page: Page,
@@ -497,6 +528,8 @@ async def send_prompt(
     satellite_execution_id: str = "",
     await_induction_reply: bool = False,
     on_harvest: Callable[[dict], Awaitable[None]] | None = None,
+    claude_surface: str | None = None,
+    compose_receipt: dict | None = None,
 ) -> dict | None:
     """Clear the composer, attach leading slash skills, then click submit.
 
@@ -593,7 +626,13 @@ async def send_prompt(
             induction=induction_slugs,
         )
         await page.wait_for_timeout(600)
-        await _submit_composer_draft(page, composer=composer, draft_text=draft)
+        await _submit_composer_draft(
+            page,
+            composer=composer,
+            draft_text=draft,
+            claude_surface=claude_surface,
+            compose_receipt=compose_receipt,
+        )
         try:
             panel = await wait_for_induction_panel(
                 page, induction_slugs, on_harvest=on_harvest
@@ -623,7 +662,11 @@ async def send_prompt(
             await page.keyboard.insert_text(induction_text)
             await page.wait_for_timeout(600)
             await _submit_composer_draft(
-                page, composer=composer, draft_text=induction_text
+                page,
+                composer=composer,
+                draft_text=induction_text,
+                claude_surface=claude_surface,
+                compose_receipt=compose_receipt,
             )
             panel = await wait_for_induction_panel(
                 page, induction_slugs, on_harvest=on_harvest
@@ -649,7 +692,13 @@ async def send_prompt(
             induction_observed=induction_observed,
         )
         await page.wait_for_timeout(600)
-        await _submit_composer_draft(page, composer=composer, draft_text=text)
+        await _submit_composer_draft(
+            page,
+            composer=composer,
+            draft_text=text,
+            claude_surface=claude_surface,
+            compose_receipt=compose_receipt,
+        )
 
     required_authority = extract_cdp_required_authority(text)
     attach_slugs, inline_slugs, _rest = parse_cdp_sealed_skill_channels(text)
@@ -667,6 +716,29 @@ async def send_prompt(
     return reply_baseline
 
 
+def _is_code_compose_surface(
+    *,
+    claude_surface: str | None,
+    compose_url: str | None,
+) -> bool:
+    if (claude_surface or "").strip().lower() == "code":
+        return True
+    url = (compose_url or "").lower()
+    return "/claude.ai/code" in url or url.rstrip("/").endswith("/code")
+
+
+async def _read_code_surface_model_label(page: Page) -> str:
+    """Read the model the /code UI exposes (no chat picker dropdown on this surface)."""
+    btn = page.locator('button[aria-label*="Model"]')
+    if await btn.count():
+        label = (
+            await btn.first.get_attribute("aria-label") or await btn.first.inner_text()
+        ).strip()
+        if label:
+            return label
+    return (await current_model_label(page)).strip()
+
+
 async def _compose_model_selected(
     page: Page,
     model: str,
@@ -674,6 +746,7 @@ async def _compose_model_selected(
     compose_url: str | None = None,
     project_uuid: str | None = None,
     ensure_cowork_auto: bool = True,
+    claude_surface: str | None = None,
     stargate_execution_id: str = "",
     satellite_execution_id: str = "",
 ) -> dict:
@@ -696,6 +769,15 @@ async def _compose_model_selected(
     if composer is not None:
         await composer.click(force=True)
         await page.wait_for_timeout(800)
+    if _is_code_compose_surface(claude_surface=claude_surface, compose_url=compose_url):
+        model_ran = await _read_code_surface_model_label(page) or "unknown"
+        return {
+            "ok": True,
+            "step": "code_surface_page_model",
+            "requested": model,
+            "model_ran": model_ran,
+            "current_model": model_ran,
+        }
     model_info = await select_model(page, model)
     if not model_info.get("ok"):
         return model_info
