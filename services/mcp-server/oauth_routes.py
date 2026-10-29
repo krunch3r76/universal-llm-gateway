@@ -117,15 +117,32 @@ def build_oauth_routes(oauth_service: OAuthService) -> list[Route]:
         _record_oauth_route("token_exchange", request)
         form = await request.form()
         try:
-            exchange_req = oauth_service.validate_token_exchange(
-                grant_type=str(form.get("grant_type", "")),
-                code=str(form.get("code", "")),
-                redirect_uri=str(form.get("redirect_uri", "")),
-                client_id=str(form.get("client_id", "")),
-                code_verifier=str(form.get("code_verifier", "")),
-                client_secret=str(form.get("client_secret", "")) or None,
-            )
-            token_resp = oauth_service.exchange_authorization_code(exchange_req)
+            grant_type = str(form.get("grant_type", ""))
+            client_id = str(form.get("client_id", ""))
+            client_secret = str(form.get("client_secret", "")) or None
+            if grant_type == "authorization_code":
+                exchange_req = oauth_service.validate_token_exchange(
+                    grant_type=grant_type,
+                    code=str(form.get("code", "")),
+                    redirect_uri=str(form.get("redirect_uri", "")),
+                    client_id=client_id,
+                    code_verifier=str(form.get("code_verifier", "")),
+                    client_secret=client_secret,
+                )
+                token_resp = oauth_service.exchange_authorization_code(exchange_req)
+            elif grant_type == "refresh_token":
+                refresh_req = oauth_service.validate_refresh_exchange(
+                    grant_type=grant_type,
+                    refresh_token=str(form.get("refresh_token", "")),
+                    client_id=client_id,
+                    client_secret=client_secret,
+                )
+                token_resp = oauth_service.exchange_refresh_token(refresh_req)
+            else:
+                raise OAuthError(
+                    "unsupported_grant_type",
+                    "grant_type must be authorization_code or refresh_token",
+                )
             return JSONResponse(token_resp)
         except OAuthError as exc:
             return JSONResponse(

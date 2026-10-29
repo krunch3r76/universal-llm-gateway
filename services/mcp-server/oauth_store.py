@@ -19,7 +19,12 @@ import time
 from pathlib import Path
 
 from mcp_events import record
-from oauth_models import AccessTokenRecord, AuthorizationCodeRecord, RegisteredClient
+from oauth_models import (
+    AccessTokenRecord,
+    AuthorizationCodeRecord,
+    RefreshTokenRecord,
+    RegisteredClient,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -36,6 +41,15 @@ CREATE TABLE IF NOT EXISTS clients (
     client_secret TEXT,
     redirect_uris TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS refresh_tokens (
+    refresh_token TEXT PRIMARY KEY,
+    client_id     TEXT NOT NULL,
+    scope         TEXT NOT NULL,
+    expires_at    REAL NOT NULL,
+    issued_at     REAL NOT NULL,
+    family_id     TEXT NOT NULL,
+    used          INTEGER NOT NULL DEFAULT 0
+);
 """
 
 
@@ -50,6 +64,7 @@ class OAuthStore:
     def __init__(self, *, db_path: str | None = None) -> None:
         self._authorization_codes: dict[str, AuthorizationCodeRecord] = {}
         self._access_tokens: dict[str, AccessTokenRecord] = {}
+        self._refresh_tokens: dict[str, RefreshTokenRecord] = {}
         self._clients: dict[str, RegisteredClient] = {}
         self._db: sqlite3.Connection | None = None
         if db_path is not None:
@@ -66,6 +81,11 @@ class OAuthStore:
         }
         if "client_name" not in columns:
             self._db.execute("ALTER TABLE clients ADD COLUMN client_name TEXT")
+        access_columns = {
+            row[1] for row in self._db.execute("PRAGMA table_info(access_tokens)")
+        }
+        if "family_id" not in access_columns:
+            self._db.execute("ALTER TABLE access_tokens ADD COLUMN family_id TEXT")
         logger.info("OAuth store: SQLite persistence at %s", db_path)
 
     def _warm_from_db(self) -> None:
@@ -74,10 +94,11 @@ class OAuthStore:
         now = time.time()
         # Purge expired tokens before loading
         self._db.execute("DELETE FROM access_tokens WHERE expires_at <= ?", (now,))
+        self._db.execute("DELETE FROM refresh_tokens WHERE expires_at <= ?", (now,))
         self._db.commit()
 
         cur = self._db.execute(
-            "SELECT access_token, client_id, scope, expires_at, issued_at "
+            "SELECT access_token, client_id, scope, expires_at, issued_at, family_id "
             "FROM access_tokens"
         )
         token_count = 0
@@ -88,9 +109,28 @@ class OAuthStore:
                 scope=row[2],
                 expires_at=row[3],
                 issued_at=row[4],
+                family_id=row[5],
             )
             self._access_tokens[rec.access_token] = rec
             token_count += 1
+
+        cur = self._db.execute(
+            "SELECT refresh_token, client_id, scope, expires_at, issued_at, "
+            "family_id, used FROM refresh_tokens"
+        )
+        refresh_count = 0
+        for row in cur:
+            rec = RefreshTokenRecord(
+                refresh_token=row[0],
+                client_id=row[1],
+                scope=row[2],
+                expires_at=row[3],
+                issued_at=row[4],
+                family_id=row[5],
+                used=bool(row[6]),
+            )
+            self._refresh_tokens[rec.refresh_token] = rec
+            refresh_count += 1
 
         cur = self._db.execute(
             "SELECT client_id, client_secret, redirect_uris, client_name FROM clients"
@@ -107,10 +147,12 @@ class OAuthStore:
             self._clients[client.client_id] = client
             client_count += 1
 
-        if token_count or client_count:
+        if token_count or refresh_count or client_count:
             logger.info(
-                "OAuth store: warmed %d tokens, %d clients from SQLite",
+                "OAuth store: warmed %d access tokens, %d refresh tokens, "
+                "%d clients from SQLite",
                 token_count,
+                refresh_count,
                 client_count,
             )
 
@@ -162,16 +204,92 @@ class OAuthStore:
         if self._db is not None:
             self._db.execute(
                 "INSERT OR REPLACE INTO access_tokens "
-                "(access_token, client_id, scope, expires_at, issued_at) "
-                "VALUES (?, ?, ?, ?, ?)",
+                "(access_token, client_id, scope, expires_at, issued_at, family_id) "
+                "VALUES (?, ?, ?, ?, ?, ?)",
                 (
                     token_record.access_token,
                     token_record.client_id,
                     token_record.scope,
                     token_record.expires_at,
                     token_record.issued_at,
+                    token_record.family_id,
                 ),
             )
+            self._db.commit()
+
+    def save_refresh_token(self, token_record: RefreshTokenRecord) -> None:
+        self._refresh_tokens[token_record.refresh_token] = token_record
+        if self._db is not None:
+            self._db.execute(
+                "INSERT OR REPLACE INTO refresh_tokens "
+                "(refresh_token, client_id, scope, expires_at, issued_at, "
+                "family_id, used) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (
+                    token_record.refresh_token,
+                    token_record.client_id,
+                    token_record.scope,
+                    token_record.expires_at,
+                    token_record.issued_at,
+                    token_record.family_id,
+                    int(token_record.used),
+                ),
+            )
+            self._db.commit()
+
+    def fetch_refresh_token(self, refresh_token: str) -> RefreshTokenRecord | None:
+        token_record = self._refresh_tokens.get(refresh_token)
+        if token_record is None:
+            return None
+        if token_record.expires_at <= time.time():
+            self._refresh_tokens.pop(refresh_token, None)
+            if self._db is not None:
+                self._db.execute(
+                    "DELETE FROM refresh_tokens WHERE refresh_token = ?",
+                    (refresh_token,),
+                )
+                self._db.commit()
+            return None
+        return token_record
+
+    def mark_refresh_token_used(self, refresh_token: str) -> None:
+        token_record = self._refresh_tokens.get(refresh_token)
+        if token_record is not None:
+            token_record.used = True
+            if self._db is not None:
+                self._db.execute(
+                    "UPDATE refresh_tokens SET used = 1 WHERE refresh_token = ?",
+                    (refresh_token,),
+                )
+                self._db.commit()
+
+    def revoke_token_family(self, family_id: str) -> None:
+        access_remove = [
+            tok
+            for tok, rec in self._access_tokens.items()
+            if rec.family_id == family_id
+        ]
+        for tok in access_remove:
+            self._access_tokens.pop(tok, None)
+
+        refresh_remove = [
+            tok
+            for tok, rec in self._refresh_tokens.items()
+            if rec.family_id == family_id
+        ]
+        for tok in refresh_remove:
+            self._refresh_tokens.pop(tok, None)
+
+        if self._db is not None and (access_remove or refresh_remove):
+            if access_remove:
+                self._db.executemany(
+                    "DELETE FROM access_tokens WHERE access_token = ?",
+                    [(tok,) for tok in access_remove],
+                )
+            if refresh_remove:
+                self._db.executemany(
+                    "DELETE FROM refresh_tokens WHERE refresh_token = ?",
+                    [(tok,) for tok in refresh_remove],
+                )
             self._db.commit()
 
     def fetch_access_token(self, access_token: str) -> AccessTokenRecord | None:
@@ -207,8 +325,23 @@ class OAuthStore:
         for tok in expired_tokens:
             self._access_tokens.pop(tok, None)
 
-        if self._db is not None and expired_tokens:
-            self._db.execute("DELETE FROM access_tokens WHERE expires_at <= ?", (now,))
+        expired_refresh = [
+            tok
+            for tok, rec in self._refresh_tokens.items()
+            if rec.expires_at <= now
+        ]
+        for tok in expired_refresh:
+            self._refresh_tokens.pop(tok, None)
+
+        if self._db is not None and (expired_tokens or expired_refresh):
+            if expired_tokens:
+                self._db.execute(
+                    "DELETE FROM access_tokens WHERE expires_at <= ?", (now,)
+                )
+            if expired_refresh:
+                self._db.execute(
+                    "DELETE FROM refresh_tokens WHERE expires_at <= ?", (now,)
+                )
             self._db.commit()
 
     def close(self) -> None:

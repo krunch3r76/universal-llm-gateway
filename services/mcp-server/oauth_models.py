@@ -39,6 +39,20 @@ class AccessTokenRecord:
     scope: str
     expires_at: float
     issued_at: float = field(default_factory=time.time)
+    family_id: str | None = None
+
+
+@dataclass(slots=True, kw_only=True)
+class RefreshTokenRecord:
+    """Rotating refresh token bound to a token family for reuse detection."""
+
+    refresh_token: str
+    client_id: str
+    scope: str
+    expires_at: float
+    family_id: str
+    issued_at: float = field(default_factory=time.time)
+    used: bool = False
 
 
 @dataclass(slots=True, kw_only=True)
