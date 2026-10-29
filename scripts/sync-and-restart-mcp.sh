@@ -13,25 +13,31 @@
 # so the process that stays up seals the new line 2. That extra stop/start is required
 # because code_version caches stamp line 2 at import; it adds a second restart on rebuild.
 # ¬ compose up -d after sync — recreate wipes docker cp (friction 6538).
-# Usage: ./scripts/sync-and-restart-mcp.sh [--no-cache] [from repo root or any subdir]
+# Usage: ./scripts/sync-and-restart-mcp.sh [--no-cache] [--dry-run] [from repo root or any subdir]
 
 set -euo pipefail
 
 usage() {
   cat <<'EOF'
-Usage: ./scripts/sync-and-restart-mcp.sh [--no-cache]
+Usage: ./scripts/sync-and-restart-mcp.sh [--no-cache] [--dry-run]
 
 Options:
   --no-cache   Full image rebuild (pip/Dockerfile/base-image changes — rare).
+  --dry-run    Print copy set, /app bind-mount exclusions, and hub vs container
+               hashes; do not copy, restart, or write the sync stamp.
   -h, --help   Show this help text.
 EOF
 }
 
 NO_CACHE=false
+DRY_RUN=false
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --no-cache)
       NO_CACHE=true
+      ;;
+    --dry-run)
+      DRY_RUN=true
       ;;
     -h|--help)
       usage
@@ -429,6 +435,145 @@ _candidates_hit_mount() {
   return 1
 }
 
+_APP_MOUNT_DESTINATIONS=""
+
+_load_app_mount_destinations() {
+  local raw
+  if ! raw="$(
+    docker inspect -f '{{range .Mounts}}{{.Destination}}{{"\n"}}{{end}}' mcp-server 2>/dev/null
+  )"; then
+    mcp_sync_error "ERROR: docker inspect mounts failed for mcp-server." >&2
+    return 1
+  fi
+  _APP_MOUNT_DESTINATIONS="$(printf '%s\n' "$raw" | awk '/^\/app\// { print }')"
+}
+
+_container_path_hits_mount() {
+  local cpath="$1" dest
+  cpath="${cpath%/}"
+  while IFS= read -r dest; do
+    [[ -z "$dest" ]] && continue
+    dest="${dest%/}"
+    if [[ "$cpath" == "$dest" || "$cpath" == "$dest"/* || "$dest" == "$cpath"/* ]]; then
+      return 0
+    fi
+  done <<< "${_APP_MOUNT_DESTINATIONS}"
+  return 1
+}
+
+_report_mount_hash_comparisons() {
+  local c=mcp-server dest rel hub hub_hash cont_hash
+  while IFS= read -r dest; do
+    [[ -z "$dest" ]] && continue
+    [[ "$dest" != /app/* ]] && continue
+    rel="${dest#/app/}"
+    hub="${WORKSPACE_ROOT}/${rel}"
+    if [[ ! -f "$hub" ]]; then
+      echo "MOUNT_HASH ${rel}: container-only (no hub file to compare)"
+      continue
+    fi
+    if [[ -d "$hub" ]]; then
+      echo "MOUNT_HASH ${rel}: skip (directory bind mount)"
+      continue
+    fi
+    hub_hash="$(sha256sum "$hub" | awk '{print $1}')"
+    cont_hash="$(docker exec "$c" sha256sum "$dest" 2>/dev/null | awk '{print $1}')"
+    if [[ -z "$cont_hash" ]]; then
+      echo "MOUNT_HASH ${rel}: DIFF (container unreadable)"
+    elif [[ "$hub_hash" == "$cont_hash" ]]; then
+      echo "MOUNT_HASH ${rel}: MATCH"
+    else
+      echo "MOUNT_HASH ${rel}: DIFF"
+    fi
+  done <<< "${_APP_MOUNT_DESTINATIONS}"
+}
+
+_enumerate_sync_copy_paths() {
+  local root rel
+  for root in libs services config pipelines; do
+    [[ -d "${WORKSPACE_ROOT}/${root}" ]] || continue
+    while IFS= read -r rel; do
+      [[ -z "$rel" ]] && continue
+      if ! _container_path_hits_mount "/app/${rel}"; then
+        printf '%s\n' "$rel"
+      fi
+    done < <(_list_root "$WORKSPACE_ROOT" "$root")
+  done
+  if [[ -f "${WORKSPACE_ROOT}/sitecustomize.py" ]] \
+    && ! _container_path_hits_mount "/app/sitecustomize.py"; then
+    printf '%s\n' sitecustomize.py
+  fi
+  if [[ -d "${WORKSPACE_ROOT}/pipelines.local" ]]; then
+    while IFS= read -r rel; do
+      [[ -z "$rel" ]] && continue
+      if ! _container_path_hits_mount "/app/${rel}"; then
+        printf '%s\n' "$rel"
+      fi
+    done < <(_list_root "$WORKSPACE_ROOT" pipelines.local)
+  fi
+  if [[ -d "${WORKSPACE_ROOT}/services/mcp-server/tools/local" ]]; then
+    while IFS= read -r rel; do
+      [[ -z "$rel" ]] && continue
+      if ! _container_path_hits_mount "/app/${rel}"; then
+        printf '%s\n' "$rel"
+      fi
+    done < <(_list_root "$WORKSPACE_ROOT" "services/mcp-server/tools/local")
+  fi
+}
+
+mcp_sync_dry_run() {
+  if ! docker ps -a --format '{{.Names}}' 2>/dev/null | grep -qx 'mcp-server'; then
+    mcp_sync_error "ERROR: mcp-server container required for --dry-run." >&2
+    exit 1
+  fi
+  _load_app_mount_destinations || exit 1
+  local mount_count copy_count excluded_under_app
+  mount_count="$(printf '%s\n' "${_APP_MOUNT_DESTINATIONS}" | awk 'NF { c++ } END { print c+0 }')"
+  copy_count="$(_enumerate_sync_copy_paths | awk 'NF { c++ } END { print c+0 }')"
+  excluded_under_app="$(printf '%s\n' "${_APP_MOUNT_DESTINATIONS}" | sed '/^$/d')"
+  echo "MCP_SYNC_DRY_RUN"
+  echo "Excluded /app bind-mount destinations (count=${mount_count}):"
+  if [[ -n "$excluded_under_app" ]]; then
+    printf '%s\n' "$excluded_under_app" | sed 's/^/  /'
+  else
+    echo "  (none)"
+  fi
+  echo "Mount hash comparison:"
+  _report_mount_hash_comparisons
+  echo "Copy set paths (count=${copy_count}):"
+  set +o pipefail
+  _enumerate_sync_copy_paths | head -20 | sed 's/^/  /'
+  set -o pipefail
+  if [[ "$copy_count" -gt 20 ]]; then
+    echo "  ... (${copy_count} total paths; first 20 shown)"
+  fi
+}
+
+_sync_tree_root_via_tar() {
+  local c=mcp-server root="$1" dest rel
+  [[ -d "${WORKSPACE_ROOT}/${root}" ]] || return 0
+  local -a tar_args=(-C "$WORKSPACE_ROOT" -cf -)
+  while IFS= read -r dest; do
+    [[ -z "$dest" ]] && continue
+    rel="${dest#/app/}"
+    if [[ "$rel" == "$root" || "$rel" == "$root"/* ]]; then
+      tar_args+=(--exclude="$rel")
+    fi
+  done <<< "${_APP_MOUNT_DESTINATIONS}"
+  tar_args+=(--exclude='*/__pycache__' --exclude='*.pyc' "$root")
+  echo "SYNC_TAR_ROOT ${root}"
+  tar "${tar_args[@]}" | docker exec -i -u 0 "$c" tar -xf - -C /app
+}
+
+_sync_single_file_unless_mount() {
+  local c=mcp-server rel="$1"
+  [[ -f "${WORKSPACE_ROOT}/${rel}" ]] || return 0
+  if _container_path_hits_mount "/app/${rel}"; then
+    return 0
+  fi
+  docker cp "${WORKSPACE_ROOT}/${rel}" "${c}:/app/${rel}"
+}
+
 _write_delete_stream() {
   local cand="$1" rel files dirs
   files="$(mktemp)"
@@ -648,24 +793,25 @@ sync_source_into_container() {
   local c=mcp-server
   arm_restore_window
   _TREE_CHANGED=1
-  echo "Syncing MCP source into ${c} (docker cp — no image rebuild)..."
+  _load_app_mount_destinations || return 1
+  echo "Syncing MCP source into ${c} (tar into /app — bind mounts excluded)..."
+  _report_mount_hash_comparisons
   _note_synced_root libs
-  docker cp "$WORKSPACE_ROOT/libs/." "${c}:/app/libs/"
+  _sync_tree_root_via_tar libs
   _note_synced_root services
-  docker cp "$WORKSPACE_ROOT/services/." "${c}:/app/services/"
+  _sync_tree_root_via_tar services
   _note_synced_root config
-  docker cp "$WORKSPACE_ROOT/config/." "${c}:/app/config/"
-  docker cp "$WORKSPACE_ROOT/sitecustomize.py" "${c}:/app/sitecustomize.py"
+  _sync_tree_root_via_tar config
+  _sync_single_file_unless_mount sitecustomize.py
   _note_synced_root pipelines
-  docker cp "$WORKSPACE_ROOT/pipelines/." "${c}:/app/pipelines/"
+  _sync_tree_root_via_tar pipelines
   if [[ -d "$WORKSPACE_ROOT/pipelines.local" ]]; then
     _note_synced_root pipelines.local
-    docker cp "$WORKSPACE_ROOT/pipelines.local/." "${c}:/app/pipelines.local/"
+    _sync_tree_root_via_tar pipelines.local
   fi
   if [[ -d "$WORKSPACE_ROOT/services/mcp-server/tools/local" ]]; then
     _note_synced_root "services/mcp-server/tools/local"
-    docker cp "$WORKSPACE_ROOT/services/mcp-server/tools/local/." \
-      "${c}:/app/services/mcp-server/tools/local/"
+    _sync_tree_root_via_tar "services/mcp-server/tools/local"
   fi
   _chown_mcp_app_tree
   if _mcp_container_running; then
@@ -765,6 +911,11 @@ run_import_probe_or_refuse() {
     exit 1
   fi
 }
+
+if [[ "$DRY_RUN" == "true" ]]; then
+  mcp_sync_dry_run
+  exit 0
+fi
 
 mkdir -p "$MCP_DATA_DIR"
 exec 9>"${MCP_DATA_DIR}/sync-and-restart-mcp.lock"
