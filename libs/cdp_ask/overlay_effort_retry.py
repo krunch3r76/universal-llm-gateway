@@ -1,9 +1,10 @@
-"""Opus High picker retry then Fable fallback (a:31534).
+"""Opus High picker retry then Opus 5.5 at same effort (a:31534, friction:40692).
 
 After-ship ``cdp/opus-5`` overlays were dying on the first
 ``model select failed`` and leaving ``observer_unverified`` / unread harvest.
 Retry the same Opus High request once; if the picker still misses, one
-``fable-5.1`` attempt marked ``family_substituted``.
+``opus-5.5`` attempt at the request's effort, recorded as ``model_substituted``.
+Never substitute ``fable-5.1`` unless the dispatch named Fable (K22/K53).
 """
 
 from __future__ import annotations
@@ -12,8 +13,6 @@ from collections.abc import Awaitable, Callable
 from typing import Any, TypeVar
 
 T = TypeVar("T")
-
-FABLE_FALLBACK_MODEL = "fable-5.1"
 
 
 def is_model_select_error(error: str | None) -> bool:
@@ -39,6 +38,24 @@ def is_opus_high_request(model: str) -> bool:
     return family.startswith("opus") and effort == "high"
 
 
+def substitute_opus_55_at_request_effort(requested_model: str) -> str:
+    """Map a failed Opus picker request to ``opus-5.5`` at the same effort."""
+    from claude_bundles.chat_model_match import (
+        compose_cdp_model_with_effort,
+        normalize_picker_request,
+        parse_model_request,
+        sealed_ask_default_effort,
+    )
+
+    raw = (requested_model or "").strip()
+    wire = normalize_picker_request(raw)
+    family, effort = parse_model_request(wire)
+    if effort is None:
+        effort = sealed_ask_default_effort(family)
+    base = "cdp/opus-5.5" if raw.startswith("cdp/") else "opus-5.5"
+    return compose_cdp_model_with_effort(base, effort)
+
+
 async def run_with_overlay_retry(
     *,
     requested_model: str,
@@ -47,15 +64,16 @@ async def run_with_overlay_retry(
     ok_of: Callable[[T], bool],
     allow_family_substitution: bool = True,
 ) -> tuple[T, dict[str, Any]]:
-    """Run ``run_once``; on Opus High picker miss, retry once then Fable.
+    """Run ``run_once``; on Opus High picker miss, retry once then Opus 5.5.
 
     The first failure is never the terminal result while a retry remains.
-    ``allow_family_substitution=False`` (``claude_surface=code``) skips Fable.
+    ``allow_family_substitution=False`` (``claude_surface=code``) skips the
+    Opus 5.5 substitution and returns the second picker error.
     """
     result = await run_once(requested_model)
     extras: dict[str, Any] = {
         "overlay_select_attempts": [requested_model],
-        "family_substituted": False,
+        "model_substituted": False,
     }
     if ok_of(result) or not is_model_select_error(error_of(result)):
         return result, extras
@@ -72,10 +90,11 @@ async def run_with_overlay_retry(
         extras["overlay_retry"] = "opus_high"
         return retry, extras
 
-    fallback = await run_once(FABLE_FALLBACK_MODEL)
-    extras["overlay_select_attempts"].append(FABLE_FALLBACK_MODEL)
-    extras["family_substituted"] = True
-    extras["overlay_retry"] = "fable"
+    resolved = substitute_opus_55_at_request_effort(requested_model)
+    fallback = await run_once(resolved)
+    extras["overlay_select_attempts"].append(resolved)
+    extras["model_substituted"] = True
+    extras["overlay_retry"] = "opus_5_5"
     extras["requested_model"] = requested_model
-    extras["resolved_model"] = FABLE_FALLBACK_MODEL
+    extras["resolved_model"] = resolved
     return fallback, extras
