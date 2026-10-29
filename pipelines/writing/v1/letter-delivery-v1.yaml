@@ -1,0 +1,29 @@
+# letter-delivery-v1 — single Hermes rewrite pass on a finished letter.
+#
+# Invoke:
+#   pipeline(op="run", pipeline_id="letter-delivery-v1",
+#            messages=[{"role":"user","content":"<finished letter>"}])
+
+schema_version: 6
+id: letter-delivery-v1
+version: "1.0"
+type: writing
+category: writing
+description: >
+  Delivery polish for a finished formal letter: one local Hermes generate step
+  that re-voices the draft for warmth and eloquence without changing facts.
+output: deliver
+
+options:
+  timeout_seconds: 600
+
+steps:
+  - name: deliver
+    type: generate
+    model_ref: drafter_local_hermes
+    prompt_ref: writing.v1.letter_delivery
+    handler_inputs:
+      letter: sourceNs.text
+    generation_parameters:
+      temperature: 0.75
+      max_tokens: 2048

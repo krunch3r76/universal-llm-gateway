@@ -2410,36 +2410,57 @@ async def test_closeout_exception_marks_terminal_and_delivers(
     )
 
 
-def test_active_work_busy_with_running_dispatch(client: TestClient) -> None:
-    ledger = CursorDispatchLedger.instance()
-    req = CursorDispatchRequest(
-        thread_id="1",
-        model="cursor/composer-2.5",
-        dispatch_id="disp-1",
-        execution_id="exec-active-1",
-        message="hello",
+def test_active_work_busy_with_running_dispatch(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir(parents=True)
+    monkeypatch.setenv("GIT_INTEGRATION_SOURCE_REPO", str(repo))
+    monkeypatch.setattr(
+        "services.git_integration_worker.app.schedule_startup_persistence",
+        lambda _app: None,
     )
-    ledger.admit(
-        req=req,
-        fingerprint=ledger.fingerprint(req),
-        execution_id=req.execution_id,
-        caller_agent=None,
-        resolved_model="composer-2.5",
-        admission=CursorDispatchResponse(
-            admitted=True,
-            dispatch_id="disp-1",
-            thread_id="1",
-            model_id="composer-2.5",
-        ),
+    monkeypatch.setattr(
+        "services.git_integration_worker.app.supervise",
+        lambda *_a, **_k: None,
     )
-    ledger.mark_running(dispatch_id="disp-1")
-    ledger.register_task("disp-1", MagicMock(done=lambda: False))
+    task_live = {"done": False}
+    mock_task = MagicMock()
+    mock_task.done = lambda: task_live["done"]
 
-    resp = client.get("/api/v1/git/active-work")
-    assert resp.status_code == 200
-    data = resp.json()
-    assert data["cursor_dispatches"]["running"] == 1
-    assert data["busy"] is True
+    with TestClient(create_app()) as client:
+        ledger = CursorDispatchLedger.instance()
+        req = CursorDispatchRequest(
+            thread_id="1",
+            model="cursor/composer-2.5",
+            dispatch_id="disp-1",
+            execution_id="exec-active-1",
+            message="hello",
+        )
+        ledger.admit(
+            req=req,
+            fingerprint=ledger.fingerprint(req),
+            execution_id=req.execution_id,
+            caller_agent=None,
+            resolved_model="composer-2.5",
+            admission=CursorDispatchResponse(
+                admitted=True,
+                dispatch_id="disp-1",
+                thread_id="1",
+                model_id="composer-2.5",
+            ),
+        )
+        ledger.mark_running(dispatch_id="disp-1")
+        ledger.register_task("disp-1", mock_task)
+
+        resp = client.get("/api/v1/git/active-work")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["cursor_dispatches"]["running"] == 1
+        assert data["busy"] is True
+
+        task_live["done"] = True
+        ledger.mark_terminal(dispatch_id="disp-1", terminal_status="completed")
 
 
 def _route_writer_lease() -> str:

@@ -35,7 +35,7 @@ def _conductor_opts_from_gen(gen: object) -> dict[str, Any]:
 def _body_to_options(body: Any, *, request_id: str) -> dict[str, Any]:
     gen = getattr(body, "generation_options", None) or {}
     pipeline_opts = gen.get("pipeline_options") if isinstance(gen, dict) else None
-    return {
+    opts: dict[str, Any] = {
         "op": getattr(body, "op", None),
         "role": getattr(body, "role", None),
         "seat": getattr(body, "seat", None),
@@ -53,6 +53,12 @@ def _body_to_options(body: Any, *, request_id: str) -> dict[str, Any]:
         "pipeline_options": pipeline_opts if isinstance(pipeline_opts, dict) else {},
         "conductor": _conductor_opts_from_gen(gen),
     }
+    if getattr(body, "op", None) == "spawn":
+        opts["backend"] = getattr(body, "backend", None)
+        opts["thread"] = getattr(body, "thread", None)
+        opts["gui_host"] = getattr(body, "gui_host", None)
+        opts["spawn_purpose"] = getattr(body, "spawn_purpose", None)
+    return opts
 
 
 def _parse_plan_content(content: str) -> tuple[dict[str, Any] | None, str | None]:

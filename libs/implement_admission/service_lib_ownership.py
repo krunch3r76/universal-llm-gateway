@@ -168,6 +168,7 @@ _SERVICE_OWNERSHIP: dict[str, ServiceOwnership] = {
         ),
         serves_libs=frozenset(
             {
+                "agent_bus_store",
                 "charter_runner_store",
                 "consult_substrate_notice",
                 "git_integrate",
@@ -231,12 +232,14 @@ _SERVICE_OWNERSHIP: dict[str, ServiceOwnership] = {
         ),
         serves_libs=frozenset(
             {
+                "agent_bus_store",
                 "continuity_tape",
                 "cursor_bridge",
                 "job_grammar",
                 "job_vocab",
                 "stargate_chat",
                 "work_key_grammar",
+                "writing_intake",
             }
         ),
     ),
@@ -414,6 +417,7 @@ _SERVICE_OWNERSHIP: dict[str, ServiceOwnership] = {
         ),
         serves_libs=frozenset(
             {
+                "agent_bus_store",
                 "capability_tree",
                 "consult_substrate_notice",
                 "continuity_tape",
@@ -422,6 +426,7 @@ _SERVICE_OWNERSHIP: dict[str, ServiceOwnership] = {
                 "job_grammar",
                 "job_vocab",
                 "prompt_expand_consume",
+                "writing_intake",
             }
         ),
     ),

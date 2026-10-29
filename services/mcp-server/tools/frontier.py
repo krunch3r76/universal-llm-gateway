@@ -425,6 +425,16 @@ def register_frontier_tools(mcp: FastMCP) -> None:
                 ),
             ),
         ] = None,
+        claude_surface: Annotated[
+            Literal["cowork", "code"] | None,
+            Field(
+                description=(
+                    "Claude product compose surface for model=cdp/… generate "
+                    "(cowork default). code opens https://claude.ai/code for "
+                    "project-ask submit; ignored on cursor-sdk and non-CDP."
+                ),
+            ),
+        ] = None,
         parent_thread: Annotated[
             str | None,
             Field(
@@ -1070,6 +1080,8 @@ def register_frontier_tools(mcp: FastMCP) -> None:
                 body["workspace"] = workspace
             if purpose is not None:
                 body["purpose"] = purpose
+            if claude_surface is not None:
+                body["claude_surface"] = claude_surface
             if parent_thread is not None:
                 body["parent_thread"] = parent_thread
             if wake_lane is not None:

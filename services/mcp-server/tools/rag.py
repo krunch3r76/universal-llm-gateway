@@ -319,7 +319,7 @@ def register_rag_tools(mcp: FastMCP) -> None:
 
     @mcp.tool(title="RAG: Search")
     def rag_search(
-        query: str,
+        query: str | None = None,
         top_k: int = 20,
         limit: int | None = None,
         scope: str | list[str] | None = None,
@@ -402,6 +402,10 @@ def register_rag_tools(mcp: FastMCP) -> None:
         """
         if search_id:
             return _attach_rag_search(search_id, projection=projection)
+        if not query or not str(query).strip():
+            return {
+                "error": "query is required unless search_id is set for polling"
+            }
         if mapped:
             hit = resolve_mapped_pack(query, scope)
             if hit is not None:

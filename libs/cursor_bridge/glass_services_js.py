@@ -125,6 +125,60 @@ function resolveWorkspaceServices(rootMap, agentId) {
 """
 
 
+RESOLVE_COMPOSER_FOR_AGENT_FN = r"""
+async function resolveComposerForAgent(byId, agentId) {
+  const target = String(agentId || '').trim();
+  if (!target) return {ok: false, reason: 'no_agent_id'};
+  let rowFound = false;
+  for (const el of document.querySelectorAll('[data-perf-id="glass-sidebar-agent-row"]')) {
+    const id = (el.getAttribute('data-sidebar-file-drop-agent-id')
+      || el.getAttribute('data-agent-id') || '').trim();
+    if (id !== target) continue;
+    rowFound = true;
+    const active = el.getAttribute('data-active') === 'true'
+      || el.querySelector('[aria-current="page"]');
+    if (!active) el.click();
+    break;
+  }
+  const glassActive = byId.get('glassActiveAgentService');
+  if (glassActive && typeof glassActive.setActiveAgentId === 'function') {
+    try { await glassActive.setActiveAgentId(target); } catch (e) {}
+  }
+  const idsToTry = [target];
+  let { services } = resolveWorkspaceServices(byId, target);
+  const repo = services.get('agentRepositoryService') || byId.get('agentRepositoryService');
+  if (repo && typeof repo.getAgentHeader === 'function') {
+    try {
+      const h = repo.getAgentHeader(target);
+      for (const key of ['composerId', 'id', 'agentId']) {
+        const alt = String((h && h[key]) || '').trim();
+        if (alt && !idsToTry.includes(alt)) idsToTry.push(alt);
+      }
+      ({ services } = resolveWorkspaceServices(byId, target));
+    } catch (e) {}
+  }
+  const composerDataService = services.get('composerDataService');
+  const composerChatService = services.get('composerChatService');
+  const composerUtilsService = services.get('composerUtilsService');
+  if (!composerDataService || !composerChatService) {
+    return {ok: false, reason: 'missing_services', agent_id: target, row_found: rowFound};
+  }
+  for (const id of idsToTry) {
+    try {
+      const handle = await composerDataService.getComposerHandleById(id);
+      if (handle) {
+        return {
+          ok: true, handle, agent_id: id, composerDataService, composerChatService,
+          composerUtilsService, services, row_found: rowFound, tried_ids: idsToTry,
+        };
+      }
+    } catch (e) {}
+  }
+  return {ok: false, reason: 'no_handle', agent_id: target, row_found: rowFound, tried_ids: idsToTry};
+}
+"""
+
+
 def _resolve_catalog_js() -> str:
     return r"""
 async function resolveCatalog(modelConfigService, label) {
@@ -466,6 +520,7 @@ def submit_wake_line_js(line: str, agent_id: str = "") -> str:
         "(async () => {\n"
         f"{GLASS_SERVICE_MAP_FN}\n"
         f"{RESOLVE_WORKSPACE_SERVICES_FN}\n"
+        f"{RESOLVE_COMPOSER_FOR_AGENT_FN}\n"
         f"  const text = {text};\n"
         f"  const scopedId = {aid};\n"
         "  let agentId = scopedId;\n"
@@ -489,16 +544,13 @@ def submit_wake_line_js(line: str, agent_id: str = "") -> str:
         "  if (!agentId && prompt) {\n"
         "    agentId = (prompt.getAttribute('data-sidebar-file-drop-editor-agent-id') || '').trim();\n"
         "  }\n"
-        "  const { services } = resolveWorkspaceServices(byId, agentId);\n"
-        "  const composerDataService = services.get('composerDataService');\n"
-        "  const composerChatService = services.get('composerChatService');\n"
-        "  const composerUtilsService = services.get('composerUtilsService');\n"
-        "  if (!composerDataService || !composerChatService) {\n"
-        "    return {ok: false, reason: 'missing_services'};\n"
-        "  }\n"
         "  if (!agentId) return {ok: false, reason: 'no_agent_id'};\n"
-        "  const handle = await composerDataService.getComposerHandleById(agentId);\n"
-        "  if (!handle) return {ok: false, reason: 'no_handle'};\n"
+        "  const resolved = await resolveComposerForAgent(byId, agentId);\n"
+        "  if (!resolved.ok) return resolved;\n"
+        "  agentId = resolved.agent_id;\n"
+        "  const handle = resolved.handle;\n"
+        "  const composerChatService = resolved.composerChatService;\n"
+        "  const composerUtilsService = resolved.composerUtilsService;\n"
         "  const status = (handle.data && handle.data.status) || '';\n"
         "  const clearDraft = () => {\n"
         "    try {\n"
@@ -556,6 +608,7 @@ def rename_composer_title_js(agent_id: str, title: str) -> str:
         "(async () => {\n"
         f"{GLASS_SERVICE_MAP_FN}\n"
         f"{RESOLVE_WORKSPACE_SERVICES_FN}\n"
+        f"{RESOLVE_COMPOSER_FOR_AGENT_FN}\n"
         f"  const target = {aid};\n"
         f"  const newTitle = {new_title};\n"
         "  const row = Array.from(document.querySelectorAll('[data-perf-id=\"glass-sidebar-agent-row\"]'))\n"
@@ -565,26 +618,28 @@ def rename_composer_title_js(agent_id: str, title: str) -> str:
         "  if (!anchor) return {ok: false, reason: 'row_not_found'};\n"
         "  const byId = glassServiceMap(anchor);\n"
         "  if (!byId) return {ok: false, reason: 'no_services'};\n"
-        "  const { services } = resolveWorkspaceServices(byId, target);\n"
+        "  const resolved = await resolveComposerForAgent(byId, target);\n"
+        "  if (!resolved.ok) return resolved;\n"
+        "  const composerId = resolved.agent_id;\n"
+        "  const handle = resolved.handle;\n"
+        "  const services = resolved.services;\n"
         "  const composerService = services.get('composerService');\n"
-        "  const composerDataService = services.get('composerDataService');\n"
+        "  const composerDataService = resolved.composerDataService;\n"
         "  if (!composerService || !composerDataService) {\n"
         "    return {ok: false, reason: 'missing_services'};\n"
         "  }\n"
-        "  const handle = await composerDataService.getComposerHandleById(target);\n"
-        "  if (!handle) return {ok: false, reason: 'no_handle'};\n"
         "  const labelEl = row && row.querySelector('[class*=\"agent-item__title\"]');\n"
         "  const prevTitle = labelEl ? (labelEl.textContent || '').trim() : '';\n"
         "  handle.setData('name', newTitle);\n"
         "  composerDataService.setAllComposersData(\n"
         "    'allComposers',\n"
-        "    (rowData) => rowData.composerId === target,\n"
+        "    (rowData) => rowData.composerId === composerId,\n"
         "    { name: newTitle },\n"
         "  );\n"
-        "  await composerService.renameComposer(target, newTitle, { throwOnFailure: true });\n"
-        "  await composerDataService.manuallyPersistComposerOrThrow(target);\n"
+        "  await composerService.renameComposer(composerId, newTitle, { throwOnFailure: true });\n"
+        "  await composerDataService.manuallyPersistComposerOrThrow(composerId);\n"
         "  await composerDataService.saveComposers();\n"
-        "  return {ok: true, id: target, previous_title: prevTitle, new_title: newTitle,\n"
-        "    persist_path: 'glass_services'};\n"
+        "  return {ok: true, id: composerId, editor_agent_id: target, previous_title: prevTitle,\n"
+        "    new_title: newTitle, persist_path: 'glass_services', tab_ready_rehandshake: true};\n"
         "})()"
     )

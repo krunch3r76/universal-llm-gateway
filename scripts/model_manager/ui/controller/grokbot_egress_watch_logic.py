@@ -10,6 +10,8 @@ _TUNNEL_STALE_S = 60.0
 _LOADER_STUCK_AFTER_TOOLS_LIST_S = 180.0
 _LOADER_DESKTOP_BACKSTOP_S = 600.0
 _DESKTOP_RESTART_CAP_S = 1800.0
+# Consecutive watch ticks with hm1_tools_call_ok=false before recovery (30s interval).
+_HM1_FALSE_RECOVERY_CONSECUTIVE_N = 3
 _DEFERRAL_CEILING_S = 600.0
 _CONNECTED_UNDICI_GAP_WARN_S = 1200.0
 
@@ -96,6 +98,7 @@ class GrokbotEgressSnapshot:
     undici_idle_s: float | None
     in_flight_gc1_mcp: bool
     open_gc1_bus_turn: bool
+    event_rows_trusted: bool = True
 
 
 @dataclass
@@ -105,6 +108,9 @@ class GrokbotEgressLoopState:
     loader_stuck_emitted_at: float | None = None
     loader_stuck_first_at: float | None = None
     deferral_started_at: float | None = None
+    hm1_false_consecutive: int = 0
+    hm1_false_sustained_since: float | None = None
+    hm1_recovery_chain_ran: bool = False
 
 
 @dataclass
@@ -118,6 +124,7 @@ class GrokbotTickDecision:
     warn_undici_gap: bool = False
     clear_tunnel_episode: bool = False
     clear_loader_episode: bool = False
+    run_hm1_recovery_chain: bool = False
 
 
 def _restart_cap_blocks(now: float, state: GrokbotEgressLoopState) -> bool:
@@ -273,7 +280,7 @@ def rebuild_hop_state(entries: list[dict[str, object]]) -> ContextHopState:
     for entry in entries:
         agent_id = entry.get("agent_id")
         until = entry.get("cooldown_until")
-        if isinstance(agent_id, str) and isinstance(until, (int, float)):
+        if isinstance(agent_id, str) and isinstance(until, int | float):
             state.cooldown_until[agent_id] = float(until)
     return state
 
@@ -297,6 +304,9 @@ def decide_grokbot_tick(
         decision.emit_probe_failed = True
         decision.probe_error_class = "unreadable_log"
         decision.probe_detail = "local-exec-daemon.log not readable"
+        state.hm1_false_consecutive = 0
+        state.hm1_false_sustained_since = None
+        state.hm1_recovery_chain_ran = False
         return decision
 
     if snapshot.health_http_status is not None and snapshot.health_http_status != 200:
@@ -306,6 +316,9 @@ def decide_grokbot_tick(
         state.loader_stuck_emitted_at = None
         state.loader_stuck_first_at = None
         state.deferral_started_at = None
+        state.hm1_false_consecutive = 0
+        state.hm1_false_sustained_since = None
+        state.hm1_recovery_chain_ran = False
         return decision
 
     if (
@@ -314,6 +327,23 @@ def decide_grokbot_tick(
         and snapshot.undici_idle_s >= _CONNECTED_UNDICI_GAP_WARN_S
     ):
         decision.warn_undici_gap = True
+
+    if not snapshot.event_rows_trusted:
+        state.hm1_false_consecutive = 0
+        state.hm1_false_sustained_since = None
+        state.hm1_recovery_chain_ran = False
+    elif snapshot.hm1_tools_call_ok:
+        state.hm1_false_consecutive = 0
+        state.hm1_false_sustained_since = None
+        state.hm1_recovery_chain_ran = False
+    else:
+        state.hm1_false_consecutive += 1
+        if state.hm1_false_consecutive >= _HM1_FALSE_RECOVERY_CONSECUTIVE_N:
+            if state.hm1_false_sustained_since is None:
+                state.hm1_false_sustained_since = now
+            if not state.hm1_recovery_chain_ran:
+                decision.run_hm1_recovery_chain = True
+                state.hm1_recovery_chain_ran = True
 
     if snapshot.tunnel_stale:
         if state.tunnel_stale_emitted_at is None:
@@ -349,7 +379,18 @@ def decide_grokbot_tick(
         and snapshot.hm1_tools_call_ok
         and loader_age >= _LOADER_DESKTOP_BACKSTOP_S
     )
-    wants_restart = wants_tunnel_restart or wants_loader_backstop
+    hm1_sustained_age = (
+        (now - state.hm1_false_sustained_since)
+        if state.hm1_false_sustained_since is not None
+        else 0.0
+    )
+    wants_hm1_backstop = (
+        snapshot.desktop_running
+        and snapshot.event_rows_trusted
+        and state.hm1_false_consecutive >= _HM1_FALSE_RECOVERY_CONSECUTIVE_N
+        and hm1_sustained_age >= _LOADER_DESKTOP_BACKSTOP_S
+    )
+    wants_restart = wants_tunnel_restart or wants_loader_backstop or wants_hm1_backstop
 
     if not wants_restart:
         state.deferral_started_at = None
@@ -395,6 +436,7 @@ __all__ = [
     "roster_name_allowed",
     "step_index_due_threshold",
     "watch_connection_state",
+    "_HM1_FALSE_RECOVERY_CONSECUTIVE_N",
     "_LOADER_DESKTOP_BACKSTOP_S",
     "_LOADER_STUCK_AFTER_TOOLS_LIST_S",
     "_TUNNEL_STALE_S",

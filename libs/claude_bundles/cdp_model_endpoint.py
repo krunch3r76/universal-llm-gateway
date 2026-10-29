@@ -627,7 +627,7 @@ def _bound_borne_grade_trace(
     """Copy a snapshot-borne trace without promoting it to grader inputs."""
     clean: dict[str, Any] = {}
     for key, value in borne.items():
-        if isinstance(value, (list, dict, tuple, set)):
+        if isinstance(value, list | dict | tuple | set):
             continue
         name = str(key)[:_GRADE_TRACE_SHORT_CAP]
         if isinstance(value, str):
@@ -652,7 +652,7 @@ def _bound_borne_grade_trace(
             }:
                 text = text[:_GRADE_TRACE_SHORT_CAP]
             clean[name] = text
-        elif isinstance(value, (int, float, bool)) or value is None:
+        elif isinstance(value, int | float | bool) or value is None:
             if name == "banner_text_truncated" and "banner_text" in clean:
                 continue
             clean[name] = value
@@ -1023,6 +1023,7 @@ def run_cdp_generate(
     on_submitted: Callable[[str], None] | None = None,
     on_url_bound: Callable[[str, str | None, int], None] | None = None,
     contract: str | None = None,
+    claude_surface: Literal["cowork", "code"] | None = None,
 ) -> CdpGenerateResult:
     """Stage → native CDP submit → poll-to-proof (or stall/fail).
 
@@ -1117,6 +1118,7 @@ def run_cdp_generate(
         expected_size=expected_size,
         download_output=download_output,
         stargate_execution_id=execution_id,
+        claude_surface=claude_surface or "cowork",
     )
     try:
         submitted = _submit_with_overload_retry(

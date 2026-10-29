@@ -415,6 +415,7 @@ async def run_cdp_worker(
     project_uuid: str | None = None,
     contract: str | None = None,
     impresario_role: str | None = None,
+    claude_surface: str | None = None,
 ) -> None:
     """Stage already done at admit; run adapter and post proof/failure turn."""
     from .cdp_generate_reconcile import (
@@ -555,6 +556,7 @@ async def run_cdp_worker(
             contract=contract,
             on_submitted=_on_submitted,
             on_url_bound=_on_url_bound,
+            claude_surface=claude_surface,  # type: ignore[arg-type]
         )
     except asyncio.CancelledError:
         leg_satellite: str | None = None

@@ -3,17 +3,11 @@
 from __future__ import annotations
 
 import json
-import re
 from typing import Any
 
 from systems.pipeline.core.handlers.builtin import BaseHandler
 from systems.pipeline.core.handlers.protocol import StepOutput
-from writing_intake.claim_gates import (
-    check_class_for_channel,
-    map_claim_to_purpose,
-    parse_purpose_points,
-    purpose_content_tokens,
-)
+from writing_intake.claim_gates import check_class_for_channel
 from writing_intake.fact_inventory import run_drift_check
 
 from .email_envelope import (
@@ -33,6 +27,7 @@ from .judge_winner_rows import winner_judge_rows
 # Frozen regex symbols retained for spec compliance (used in provenance_revision).
 from .provenance_draft import _NAME, _NUMBER, _parse_draft, _sentences  # noqa: F401
 from .provenance_revision import revision_delta
+from .purpose_scrub import scrub_purpose_restatement_flags
 
 
 def _step(payload: dict[str, Any]) -> StepOutput:
@@ -41,69 +36,6 @@ def _step(payload: dict[str, Any]) -> StepOutput:
 
 def _violation(kind: str, claim_id: str | None, detail: Any) -> dict[str, Any]:
     return {"type": kind, "claim_id": claim_id, "detail": detail}
-
-
-def _digits_only(text: str) -> str:
-    return re.sub(r"\D", "", text)
-
-
-def sentence_restates_purpose_point(sentence: str, purpose_points: list[str]) -> bool:
-    """True when the sentence carries a stated purpose point (incl. contact digits)."""
-    if not purpose_points:
-        return False
-    parsed = parse_purpose_points("", purpose_points)
-    if map_claim_to_purpose(sentence, parsed) is not None:
-        return True
-    sent_lower = sentence.lower()
-    sent_digits = _digits_only(sentence)
-    for point in purpose_points:
-        text = str(point).strip()
-        if not text:
-            continue
-        point_lower = text.lower()
-        if point_lower in sent_lower or sent_lower in point_lower:
-            return True
-        point_digits = _digits_only(text)
-        if len(point_digits) >= 7 and point_digits in sent_digits:
-            return True
-        if len(sent_digits) >= 10 and re.search(
-            r"\b(?:phone|number|reach|call|reply|contact)\b", text, re.I
-        ):
-            return True
-        sent_tokens = purpose_content_tokens(sentence)
-        point_tokens = purpose_content_tokens(text)
-        if sent_tokens and point_tokens:
-            overlap = len(sent_tokens & point_tokens)
-            if overlap >= min(2, len(point_tokens)):
-                return True
-    return False
-
-
-def _scrub_purpose_restatement_flags(
-    drift: dict[str, Any], purpose_points: list[str]
-) -> dict[str, Any]:
-    """Drop not_purpose_relevant flags when the sentence restates a purpose point."""
-    if not purpose_points:
-        return drift
-    flagged = drift.get("flagged_sentences") or []
-    if not isinstance(flagged, list):
-        return drift
-    kept: list[Any] = []
-    for row in flagged:
-        if not isinstance(row, dict):
-            kept.append(row)
-            continue
-        if row.get("reason") != "not_purpose_relevant":
-            kept.append(row)
-            continue
-        sentence = str(row.get("sentence") or "")
-        if sentence_restates_purpose_point(sentence, purpose_points):
-            continue
-        kept.append(row)
-    out = dict(drift)
-    out["flagged_sentences"] = kept
-    out["passed"] = not kept
-    return out
 
 
 def check_fact_ceiling(
@@ -147,12 +79,8 @@ def check_provenance(
     violations.extend(
         clause_violations(clauses, ledger, channel=channel, signer=signer)
     )
-    quality = winner_judge_rows(
-        list(judge.get("quality_findings") or []), winner_id
-    )
-    violations.extend(
-        violations_from_quality_findings(quality, winner_id=winner_id)
-    )
+    quality = winner_judge_rows(list(judge.get("quality_findings") or []), winner_id)
+    violations.extend(violations_from_quality_findings(quality, winner_id=winner_id))
     violations.extend(check_fact_ceiling(ledger, parsed["draft"], max_chars=None))
     return violations
 
@@ -236,9 +164,7 @@ class WritingProvenanceCheckHandler(BaseHandler):
         signer = str(intake_dict.get("signer") or "")
 
         parsed = _parse_draft(draft)
-        pre_polish_draft = (
-            str(parsed.get("draft") or "") if parsed is not None else ""
-        )
+        pre_polish_draft = str(parsed.get("draft") or "") if parsed is not None else ""
         if parsed is not None and str(channel or "") == "email":
             recipient = str(
                 intake_dict.get("recipient")
@@ -290,8 +216,10 @@ class WritingProvenanceCheckHandler(BaseHandler):
                         max_chars=max_chars,
                     )
                 )
-        if prior is not None and parsed is not None and not judge_dict.get(
-            "judge_unavailable"
+        if (
+            prior is not None
+            and parsed is not None
+            and not judge_dict.get("judge_unavailable")
         ):
             v2_clauses = winner_judge_rows(
                 list(judge_dict.get("clauses") or []), winner_id or None
@@ -350,6 +278,7 @@ class WritingProvenanceCheckHandler(BaseHandler):
         purpose_points: list[str] = []
         purpose_text = ""
         intake_answers: list[str] = []
+        verbatim_notes: list[str] = []
         if isinstance(assemble_json, dict):
             raw_points = assemble_json.get("purpose_points")
             intake_block = assemble_json.get("intake") or {}
@@ -367,6 +296,11 @@ class WritingProvenanceCheckHandler(BaseHandler):
                 raw_answers = intake_block.get("intake_answers")
                 if isinstance(raw_answers, list):
                     intake_answers = [str(item) for item in raw_answers]
+                raw_notes = intake_block.get("verbatim_notes")
+                if isinstance(raw_notes, list):
+                    verbatim_notes = [
+                        str(note) for note in raw_notes if str(note).strip()
+                    ]
         load_bearing_claims = [
             str(i)
             for i in (assemble_json or {}).get("load_bearing_claims") or []
@@ -387,8 +321,14 @@ class WritingProvenanceCheckHandler(BaseHandler):
                 intake_answers=intake_answers or None,
                 load_bearing_claims=load_bearing_claims,
             )
-            if purpose_points:
-                drift = _scrub_purpose_restatement_flags(drift, purpose_points)
+            if purpose_points or purpose_text.strip():
+                drift = scrub_purpose_restatement_flags(
+                    drift,
+                    list(purpose_points),
+                    pin_ledger=ledger,
+                    purpose_text=purpose_text,
+                    verbatim_notes=verbatim_notes,
+                )
         flagged = drift.get("flagged_sentences") or []
         purpose_drops = [
             {"sentence": row["sentence"], "reason": "not_purpose_relevant"}

@@ -79,6 +79,14 @@ def _grok_bare_id(model: str) -> bool:
     return bare == "grok-4.7"
 
 
+def conductor_hop_recipe_model_fields() -> dict[str, Any]:
+    """K97 composer-conductor trial — default hop reactor + manual admit recipe."""
+    return {
+        "model": "cursor/composer-2.5",
+        "model_knobs": {"fast": "false"},
+    }
+
+
 def play_conductor_model_fields(policy: dict[str, Any]) -> dict[str, Any]:
     """Play / ROW_HOP conductor model — ``play_conductor_model`` when set."""
     play = str(policy.get("play_conductor_model") or "").strip()

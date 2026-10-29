@@ -7,6 +7,7 @@ from pathlib import Path
 
 import pytest
 from charter_runner_store.archive_pkg import import_archived
+from maestro_landed.serving_map import load_serving_map
 
 from implement_admission.consumer_import_blinds import measure_import_grammar_blinds
 from implement_admission.consumer_import_verify import (
@@ -19,6 +20,7 @@ from implement_admission.service_lib_ownership import (
     declared_services_for_lib_path,
     path_prefixes,
     service_ownership,
+    serving_services_for_lib,
     serving_services_for_lib_path,
 )
 
@@ -55,7 +57,7 @@ def test_wait_status_plan_nominates_agent_bus_not_seven_owners() -> None:
     services = set(plan.sync_restart_services)
     owned = set(declared_services_for_lib("agent_bus_store"))
     assert "agent_bus" in services
-    assert services <= {"agent_bus", "mcp"}
+    assert services <= {"agent_bus", "git_integration_worker", "mcp", "stargate"}
     assert not owned <= services
 
 
@@ -114,6 +116,7 @@ def test_giw_serves_worker_hosted_libs_not_owned_libs() -> None:
     own = service_ownership()["git_integration_worker"]
     assert own.serves_libs == frozenset(
         {
+            "agent_bus_store",
             "charter_runner_store",
             "consult_substrate_notice",
             "git_integrate",
@@ -124,15 +127,49 @@ def test_giw_serves_worker_hosted_libs_not_owned_libs() -> None:
         }
     )
     assert own.serves_libs < own.owned_libs
-    assert "agent_bus_store" not in own.serves_libs
     assert "foo" not in own.serves_libs
 
 
-def test_wait_status_serving_slug_is_agent_bus_not_owned_libs_blast() -> None:
-    """Replay 33083d61: serving-process set is {agent_bus}, not the seven owners."""
+def test_writing_intake_serving_services_match_serving_map() -> None:
+    """RULING 22: harvest/charter nominate stargate+mcp for writing_intake lands."""
+    got = serving_services_for_lib_path("libs/writing_intake/fact_inventory.py")
+    assert got == serving_services_for_lib("writing_intake")
+    assert set(got) == {"mcp", "stargate"}
+
+
+def _serving_map_row_ids(row: object) -> str:
+    from maestro_landed.serving_map import ServingRow
+
+    assert isinstance(row, ServingRow)
+    return row.prefix.strip("/").replace("/", "_")
+
+
+@pytest.mark.offline
+@pytest.mark.parametrize(
+    "row",
+    load_serving_map().rows,
+    ids=_serving_map_row_ids,
+)
+def test_serving_map_prefix_matches_serves_libs_field(row) -> None:
+    """Each serving-map.yaml prefix must match ``serving_services_for_lib_path``."""
+    probe = f"{row.prefix}__serving_map_probe__.py"
+    got = set(serving_services_for_lib_path(probe))
+    want = set(row.services)
+    assert got == want, (
+        f"{row.prefix}: serves_libs={sorted(got)!r} serving-map={sorted(want)!r}"
+    )
+
+
+def test_wait_status_serving_slug_is_job_set_not_owned_libs_blast() -> None:
+    """Replay 33083d61: serving-process set is serves_libs job slugs, not all owners."""
     serving = serving_services_for_lib_path("libs/agent_bus_store/wait_status.py")
     owned = set(declared_services_for_lib("agent_bus_store"))
-    assert serving == ("agent_bus",)
+    assert set(serving) == {
+        "agent_bus",
+        "git_integration_worker",
+        "mcp",
+        "stargate",
+    }
     assert owned == {
         "agent_bus",
         "cloud_proxy",
@@ -199,12 +236,42 @@ def test_event_service_entrypoint_is_measured_for_blinds() -> None:
     assert "service_relative" in blinds
 
 
-@pytest.mark.offline
-def test_serves_libs_entries_reach_their_package() -> None:
-    """Authorship gate: every serves_libs pair must import-verify the package."""
-    root = repo_root()
+_SERVES_LIBS_VERIFY_XFAIL_PAIRS = frozenset(
+    {
+        # writing_intake reaches stargate via pipelines/writing handlers (dynamic load);
+        # static verify walks services/universal-stargate/ only (21170 finding 3).
+        ("stargate", "writing_intake"),
+    }
+)
+
+
+def _serves_libs_pair_cases() -> list[object]:
+    cases: list[object] = []
     for slug, own in service_ownership().items():
         for lib in sorted(own.serves_libs):
-            init = root / "libs" / lib / "__init__.py"
-            path = f"libs/{lib}/__init__.py" if init.is_file() else f"libs/{lib}.py"
-            assert verify_consumer_import(slug, path) == "verified", (slug, lib, path)
+            pair = (slug, lib)
+            if pair in _SERVES_LIBS_VERIFY_XFAIL_PAIRS:
+                cases.append(
+                    pytest.param(
+                        slug,
+                        lib,
+                        marks=pytest.mark.xfail(
+                            strict=True,
+                            reason="static import verify misses pipeline load",
+                        ),
+                    )
+                )
+            else:
+                cases.append(pytest.param(slug, lib))
+    return cases
+
+
+@pytest.mark.offline
+@pytest.mark.parametrize("slug,lib", _serves_libs_pair_cases())
+def test_serves_libs_entry_reaches_its_package(slug: str, lib: str) -> None:
+    """Authorship gate: each serves_libs pair must import-verify the package."""
+    root = repo_root()
+    init = root / "libs" / lib / "__init__.py"
+    path = f"libs/{lib}/__init__.py" if init.is_file() else f"libs/{lib}.py"
+    status = verify_consumer_import(slug, path)
+    assert status == "verified", (slug, lib, path)

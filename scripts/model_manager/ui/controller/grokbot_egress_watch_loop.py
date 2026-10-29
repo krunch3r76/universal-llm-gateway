@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import time
 from collections.abc import Awaitable, Callable
+from dataclasses import replace
 from pathlib import Path
 
 from deploy_identity.mcp_edge_events import (
@@ -151,6 +152,7 @@ class GrokbotEgressWatchLoop:
             self._health_probe_failed = True
             logger.debug("grokbot egress health probe failed: %s", exc)
         floor_ms = now_ms - 900_000
+        event_rows_trusted = True
         try:
             rows = await asyncio.to_thread(
                 query_events_rows,
@@ -162,6 +164,7 @@ class GrokbotEgressWatchLoop:
         except Exception as exc:
             logger.warning("grokbot egress event query failed: %s", exc)
             rows = []
+            event_rows_trusted = False
         else:
             if len(rows) >= _EVENT_QUERY_ROW_LIMIT:
                 logger.warning(
@@ -169,7 +172,8 @@ class GrokbotEgressWatchLoop:
                     "newest rows retained (ORDER BY ts_unix_ms DESC)",
                     _EVENT_QUERY_ROW_LIMIT,
                 )
-        return build_snapshot_from_inputs(
+                event_rows_trusted = False
+        snap = build_snapshot_from_inputs(
             now_ms=now_ms,
             desktop_running=running,
             desktop_pid=pid,
@@ -177,6 +181,9 @@ class GrokbotEgressWatchLoop:
             health_http_status=health_status,
             event_rows=rows,
         )
+        if not event_rows_trusted:
+            return replace(snap, event_rows_trusted=False)
+        return snap
 
     async def _default_restart_desktop(self) -> None:
         binary = DEFAULT_DESKTOP_BINARY
@@ -265,6 +272,9 @@ class GrokbotEgressWatchLoop:
         now = time.time()
         decision = decide_grokbot_tick(now=now, state=self._state, snapshot=snapshot)
 
+        if decision.run_hm1_recovery_chain:
+            await self._run_hm1_recovery_chain()
+
         if self._health_probe_failed:
             self._last_watch_ok_emitted_at = None
 
@@ -327,6 +337,15 @@ class GrokbotEgressWatchLoop:
                 )
             except Exception:
                 logger.exception("grokbot context hop tick failed")
+
+    async def _run_hm1_recovery_chain(self) -> None:
+        """Wake Grok Bot presence and repoint gc1 when hm1 tools/call stays absent."""
+        try:
+            await asyncio.to_thread(keep_alive_grokbot_presence)
+            rows = await probe_grok_agent_context()
+            await asyncio.to_thread(run_gc1_repoint, rows)
+        except Exception:
+            logger.exception("grokbot hm1-false recovery chain failed")
 
     async def _context_hop(
         self, *, now: float, now_ms: int, snapshot: GrokbotEgressSnapshot

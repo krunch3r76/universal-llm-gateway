@@ -28,6 +28,8 @@ from scripts.model_manager.ui.controller.grokbot_egress_watch_io import (
     query_events_rows,
 )
 from scripts.model_manager.ui.controller.grokbot_egress_watch_logic import (
+    _HM1_FALSE_RECOVERY_CONSECUTIVE_N,
+    _LOADER_DESKTOP_BACKSTOP_S,
     GrokbotEgressLoopState,
     GrokbotEgressSnapshot,
     decide_grokbot_tick,
@@ -841,7 +843,9 @@ def test_checked_health_200_sets_health_checked_true(
         capture,
     )
     loop = GrokbotEgressWatchLoop(workspace_root=Path("/tmp"))
-    _run(_tick_with_snapshot(loop, _healthy_snapshot(), monkeypatch, now_s=10_000_000.0))
+    _run(
+        _tick_with_snapshot(loop, _healthy_snapshot(), monkeypatch, now_s=10_000_000.0)
+    )
     payloads = _ok_payloads(capture.events)
     assert len(payloads) == 1
     assert payloads[0]["health_checked"] is True
@@ -949,9 +953,7 @@ def test_probe_failed_clears_window_and_emits_no_ok(
             raise item
         return int(item)
 
-    _patch_default_snapshot_io(
-        monkeypatch, fetch=_fetch, addresses=["73.189.160.136"]
-    )
+    _patch_default_snapshot_io(monkeypatch, fetch=_fetch, addresses=["73.189.160.136"])
     clock = {"now": 12_000_000.0}
     monkeypatch.setattr(loop_mod.time, "time", lambda: clock["now"])
     loop = GrokbotEgressWatchLoop(
@@ -975,7 +977,8 @@ def test_unpatched_restart_raises(
     loop = GrokbotEgressWatchLoop(workspace_root=Path("/tmp"))
     snap = _base_snapshot()
     with pytest.raises(
-        RuntimeError, match="unpatched grokbot egress watch reached _default_restart_desktop"
+        RuntimeError,
+        match="unpatched grokbot egress watch reached _default_restart_desktop",
     ):
         _run(_tick_with_snapshot(loop, snap, monkeypatch, now_s=14_000_000.0))
     assert any(
@@ -1022,9 +1025,7 @@ def test_probe_failure_clears_window_when_same_tick_emit_raises(
             raise TimeoutError("timed out")
         return 200
 
-    _patch_default_snapshot_io(
-        monkeypatch, fetch=_fetch, addresses=["73.189.160.136"]
-    )
+    _patch_default_snapshot_io(monkeypatch, fetch=_fetch, addresses=["73.189.160.136"])
     monkeypatch.setattr(loop_mod, "read_daemon_log", lambda _path: phase["log"])
     monkeypatch.setattr(loop_mod, "_emit", _emit)
     clock = {"now": 15_000_000.0}
@@ -1072,6 +1073,196 @@ def test_unstubbed_tick_refuses_desktop_pid_alive(
         _run(loop._tick())
 
 
+def _hm1_false_connected_snapshot(**overrides: object) -> GrokbotEgressSnapshot:
+    return _healthy_snapshot(hm1_tools_call_ok=False, **overrides)
+
+
+def _tick_hm1_false(
+    state: GrokbotEgressLoopState,
+    *,
+    now: float | None = None,
+) -> object:
+    snap = _hm1_false_connected_snapshot()
+    t = now if now is not None else time.time()
+    return decide_grokbot_tick(now=t, state=state, snapshot=snap)
+
+
+def test_hm1_false_untrusted_event_rows_do_not_count() -> None:
+    state = GrokbotEgressLoopState()
+    snap = _hm1_false_connected_snapshot(event_rows_trusted=False)
+    for _ in range(_HM1_FALSE_RECOVERY_CONSECUTIVE_N + 2):
+        decision = decide_grokbot_tick(now=time.time(), state=state, snapshot=snap)
+        assert decision.run_hm1_recovery_chain is False
+    assert state.hm1_false_consecutive == 0
+
+
+def test_hm1_false_n_minus_one_does_not_run_recovery_chain() -> None:
+    state = GrokbotEgressLoopState()
+    n = _HM1_FALSE_RECOVERY_CONSECUTIVE_N
+    for _ in range(n - 1):
+        decision = _tick_hm1_false(state)
+        assert decision.run_hm1_recovery_chain is False
+    assert state.hm1_false_consecutive == n - 1
+    assert state.hm1_recovery_chain_ran is False
+
+
+def test_hm1_false_nth_tick_runs_recovery_chain_once() -> None:
+    state = GrokbotEgressLoopState()
+    n = _HM1_FALSE_RECOVERY_CONSECUTIVE_N
+    decision = None
+    for _ in range(n):
+        decision = _tick_hm1_false(state)
+    assert decision is not None
+    assert decision.run_hm1_recovery_chain is True
+    assert state.hm1_recovery_chain_ran is True
+    decision = _tick_hm1_false(state)
+    assert decision.run_hm1_recovery_chain is False
+
+
+def test_hm1_true_resets_false_streak(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    state = GrokbotEgressLoopState()
+    for _ in range(_HM1_FALSE_RECOVERY_CONSECUTIVE_N - 1):
+        _tick_hm1_false(state)
+    snap_ok = _healthy_snapshot(hm1_tools_call_ok=True)
+    decide_grokbot_tick(now=time.time(), state=state, snapshot=snap_ok)
+    assert state.hm1_false_consecutive == 0
+    assert state.hm1_false_sustained_since is None
+    assert state.hm1_recovery_chain_ran is False
+
+
+def test_hm1_false_loop_invokes_recovery_io_once(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import scripts.model_manager.ui.controller.grokbot_egress_watch_loop as loop_mod
+
+    wakes: list[int] = []
+    repoints: list[int] = []
+
+    def _wake(**_kwargs: object) -> dict[str, object]:
+        wakes.append(1)
+        return {"ok": True}
+
+    async def _probe() -> list[dict[str, object]]:
+        return []
+
+    def _repoint(_rows: list[dict[str, object]]) -> dict[str, object]:
+        repoints.append(1)
+        return {"wrote": False}
+
+    monkeypatch.setattr(loop_mod, "keep_alive_grokbot_presence", _wake)
+    monkeypatch.setattr(loop_mod, "probe_grok_agent_context", _probe)
+    monkeypatch.setattr(loop_mod, "run_gc1_repoint", _repoint)
+    capture = _CaptureEmit()
+    monkeypatch.setattr(loop_mod, "_emit", capture)
+
+    loop = GrokbotEgressWatchLoop(
+        workspace_root=Path("/tmp"), restart_desktop_fn=_noop_restart
+    )
+    snap = _hm1_false_connected_snapshot(desktop_running=False)
+    t0 = 16_000_000.0
+    for i in range(_HM1_FALSE_RECOVERY_CONSECUTIVE_N):
+        _run(_tick_with_snapshot(loop, snap, monkeypatch, now_s=t0 + i * 30.0))
+    assert len(repoints) == 1
+    assert len(wakes) >= 1
+    _run(_tick_with_snapshot(loop, snap, monkeypatch, now_s=t0 + 120.0))
+    assert len(repoints) == 1
+
+
+def test_hm1_backstop_requires_desktop_running() -> None:
+    state = GrokbotEgressLoopState()
+    n = _HM1_FALSE_RECOVERY_CONSECUTIVE_N
+    snap = _hm1_false_connected_snapshot(desktop_running=False)
+    for i in range(n):
+        decide_grokbot_tick(now=17_100_000.0 + i * 30.0, state=state, snapshot=snap)
+    state.hm1_false_sustained_since = 17_100_000.0 - _LOADER_DESKTOP_BACKSTOP_S - 1.0
+    decision = decide_grokbot_tick(now=17_100_600.0, state=state, snapshot=snap)
+    assert decision.restart_desktop is False
+
+
+def test_event_query_row_limit_marks_snapshot_untrusted(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import scripts.model_manager.ui.controller.grokbot_egress_watch_loop as loop_mod
+
+    limit = loop_mod._EVENT_QUERY_ROW_LIMIT
+    rows = [
+        {"ts_unix_ms": 1_700_000_000_000 - i, "signal": "x", "payload": {}}
+        for i in range(limit)
+    ]
+
+    monkeypatch.setattr(loop_mod, "read_desktop_status", lambda _path: {"pid": 1})
+    monkeypatch.setattr(loop_mod, "desktop_pid_alive", lambda _status: (True, 1))
+    monkeypatch.setattr(loop_mod, "read_daemon_log", lambda _path: _CONNECTED_LOG)
+    monkeypatch.setattr(loop_mod, "external_probe_hostname", lambda: None)
+    monkeypatch.setattr(loop_mod, "query_events_rows", lambda *_a, **_k: rows)
+
+    loop = GrokbotEgressWatchLoop(workspace_root=Path("/tmp"))
+    snap = _run(loop._default_snapshot())
+    assert snap.event_rows_trusted is False
+
+
+def test_hm1_false_backstop_rate_limited_second_episode() -> None:
+    snap_false = _hm1_false_connected_snapshot(
+        tunnel_stale=False,
+        watch_connected=True,
+        watch_disconnected_s=None,
+    )
+    snap_ok = _healthy_snapshot(hm1_tools_call_ok=True)
+    state = GrokbotEgressLoopState()
+    now = 17_000_000.0
+    n = _HM1_FALSE_RECOVERY_CONSECUTIVE_N
+
+    def _sustain_false(t_base: float) -> None:
+        for i in range(n):
+            decide_grokbot_tick(now=t_base + i * 30.0, state=state, snapshot=snap_false)
+
+    _sustain_false(now)
+    state.hm1_false_sustained_since = now - _LOADER_DESKTOP_BACKSTOP_S - 1.0
+    first_restart = decide_grokbot_tick(
+        now=now + 600.0, state=state, snapshot=snap_false
+    )
+    assert first_restart.restart_desktop is True
+    restart_at = now + 600.0
+    state.last_desktop_restart_at = restart_at
+
+    decide_grokbot_tick(now=restart_at + 30.0, state=state, snapshot=snap_ok)
+    assert state.hm1_false_consecutive == 0
+
+    _sustain_false(restart_at + 60.0)
+    state.hm1_false_sustained_since = (
+        restart_at + 60.0 - _LOADER_DESKTOP_BACKSTOP_S - 1.0
+    )
+    blocked = decide_grokbot_tick(
+        now=restart_at + 700.0, state=state, snapshot=snap_false
+    )
+    assert blocked.restart_desktop is False
+
+
+def test_tunnel_stale_and_loader_stuck_unchanged_after_hm1_work() -> None:
+    """Regression: prior tunnel/loader paths still decide restart as before."""
+    state = GrokbotEgressLoopState()
+    decision = decide_grokbot_tick(
+        now=time.time(), state=state, snapshot=_base_snapshot()
+    )
+    assert decision.restart_desktop is True
+    assert decision.emit_tunnel_stale is True
+
+    stuck_snap = _healthy_snapshot(loader_stuck=True, loader_stuck_s=200.0)
+    state2 = GrokbotEgressLoopState()
+    first_loader = decide_grokbot_tick(
+        now=time.time(), state=state2, snapshot=stuck_snap
+    )
+    assert first_loader.emit_loader_stuck is True
+    state2.loader_stuck_first_at = time.time() - 300.0
+    state2.loader_stuck_emitted_at = state2.loader_stuck_first_at
+    before_backstop = decide_grokbot_tick(
+        now=time.time(), state=state2, snapshot=stuck_snap
+    )
+    assert before_backstop.restart_desktop is False
+
+
 def test_watch_ok_catalog_keys_match_factory() -> None:
     catalog = Path("docs/event-contracts.md").read_text(encoding="utf-8")
     row = next(
@@ -1081,9 +1272,7 @@ def test_watch_ok_catalog_keys_match_factory() -> None:
     )
     payload_cell = row.split("|")[2]
     catalog_keys = [
-        part.strip().strip("`")
-        for part in payload_cell.split(",")
-        if part.strip()
+        part.strip().strip("`") for part in payload_cell.split(",") if part.strip()
     ]
     event = mcp_edge_grokbot_watch_ok(
         watch_connected=True,

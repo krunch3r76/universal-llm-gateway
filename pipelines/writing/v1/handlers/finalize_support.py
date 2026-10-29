@@ -26,6 +26,7 @@ _GENERATE_STEPS = (
     ("prose_rhythm_pass", "reviser"),
 )
 
+
 def _step(payload: dict[str, Any]) -> StepOutput:
     return StepOutput(raw=json.dumps(payload), json=payload)
 
@@ -71,10 +72,68 @@ def _step_ok(step: Any) -> bool:
 
 
 _NUMBERED_PARAGRAPH = re.compile(r"(?m)^\d+\.\s")
+_NUMBERED_LIST_BODY = re.compile(r"(?m)^\s*(?:\d+\.\s+|[-*•]\s+)\S")
+_BRACKET_PLACEHOLDER = re.compile(r"\[\s*\d+\s*/\s*\d+\s*\]")
+
+_V2_DISCARDED_VIOLATION_TYPES = frozenset(
+    {
+        "v2_dropped_name",
+        "v2_dropped_number",
+        "fact_reordered",
+    }
+)
 
 
 def _drift_failed(row: Any) -> bool:
     return isinstance(row, dict) and row.get("passed") is False
+
+
+def _quality_violation_applies_to_body(body: str, row: dict[str, Any]) -> bool:
+    """Drop quality rows that allege structure absent from the selected draft body."""
+    if str(row.get("type") or "") != "quality_violation":
+        return True
+    blob = f"{row.get('claim_id') or ''} {row.get('detail') or ''}".lower()
+    if "numbered" in blob or "bullet" in blob:
+        return _NUMBERED_LIST_BODY.search(body) is not None
+    if "placeholder" in blob or "bracket" in blob or "[3" in blob:
+        return _BRACKET_PLACEHOLDER.search(body) is not None
+    return True
+
+
+def _ship_gate_violation_for_selected(
+    row: dict[str, Any], *, selected: str, rhythm_reverted: bool
+) -> bool:
+    """True when a provenance row should block ship for the selected draft."""
+    del rhythm_reverted
+    if selected != "draft_v1":
+        return True
+    vtype = str(row.get("type") or "")
+    if vtype in _V2_DISCARDED_VIOLATION_TYPES:
+        return False
+    return True
+
+
+def filter_ship_gate_unresolved(
+    rows: list[Any],
+    *,
+    selected_body: str,
+    selected: str,
+    rhythm_reverted: bool,
+) -> list[Any]:
+    """Keep only violations attributable to ``selected_body`` for the ship gate."""
+    kept: list[Any] = []
+    for row in rows:
+        if not isinstance(row, dict):
+            kept.append(row)
+            continue
+        if not _ship_gate_violation_for_selected(
+            row, selected=selected, rhythm_reverted=rhythm_reverted
+        ):
+            continue
+        if not _quality_violation_applies_to_body(selected_body, row):
+            continue
+        kept.append(row)
+    return kept
 
 
 def _merge_drift(v1: dict[str, Any], v2: dict[str, Any] | None) -> dict[str, Any]:
@@ -238,7 +297,9 @@ _OMIT_WITH_REASON_PROXIMITY = re.compile(
 
 
 def _omit_with_reason_ids(architect_brief: str) -> set[str]:
-    ids = {match.group(1).upper() for match in _OMIT_WITH_REASON.finditer(architect_brief)}
+    ids = {
+        match.group(1).upper() for match in _OMIT_WITH_REASON.finditer(architect_brief)
+    }
     ids |= {
         match.group(1).upper()
         for match in _OMIT_WITH_REASON_PROXIMITY.finditer(architect_brief)
@@ -279,4 +340,3 @@ from .finalize_payload import (  # noqa: E402, F401
     _obligation_coverage_gate,
     build_finalize_payload,
 )
-

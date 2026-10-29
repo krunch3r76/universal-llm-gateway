@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import threading
 import uuid
+from functools import partial
 from typing import Any
 
 from fastapi import Response
@@ -94,6 +95,31 @@ async def team_dispatch(
     admit_provenance = build_team_dispatch_admit_provenance(body, request_id=request_id)
     if admit_provenance is not None:
         emit_admit_provenance_missing_event(admit_provenance)
+    if body.op == "ledger" and (
+        getattr(body, "house", None) or getattr(body, "parent", None)
+    ):
+        from cursor_bridge.spawn_endpoint_house_ledger import read_house_ledger
+
+        parent_raw = getattr(body, "parent", None)
+        parent_sel = (
+            parent_raw.model_dump()
+            if parent_raw is not None and hasattr(parent_raw, "model_dump")
+            else None
+        )
+        house_raw = getattr(body, "house", None)
+        if house_raw is not None and hasattr(house_raw, "model_dump"):
+            house_arg: str | dict[str, str] | None = house_raw.model_dump(
+                exclude_none=True
+            )
+        else:
+            house_arg = house_raw
+        detail = read_house_ledger(
+            house=house_arg,
+            parent=parent_sel,
+            limit=getattr(body, "limit", 5) or 5,
+        )
+        response.status_code = 200
+        return detail
     if body.op in ("claim", "claim_release", "occupancy", "ledger"):
         from .cursor_sdk_claim_dispatch import relay_house_claim
 
@@ -195,7 +221,7 @@ async def team_dispatch(
             await validate_wake_lane(body.wake_lane, request_id=request_id)
         except FrontierEndpointError as exc:
             return JSONResponse(status_code=exc.status_code, content=exc.to_dict())
-    if body.op in ("generate", "to_thread"):
+    if body.op in ("generate", "to_thread", "spawn"):
         from systems.proxy.dependencies import get_proxy
 
         from .team_dispatch_admit_client import run_team_dispatch_admit
@@ -263,6 +289,106 @@ async def team_dispatch(
             )
             result = await _dispatch(req, response)
             return finalize_team_dispatch_admit_response(result, admit_provenance)
+
+        if body.op == "spawn":
+            from cursor_bridge.bridge_spawn_relay import relay_spawn_tab
+            from cursor_bridge.spawn_endpoint_house_ledger import (
+                format_ledger_prompt_prefix,
+                patch_spawn_row,
+                record_spawn,
+                record_status_row,
+            )
+
+            purpose = str(getattr(body, "spawn_purpose", "") or "").strip()
+            thread = str(getattr(body, "thread", "") or "").strip()
+            spawn_row = record_spawn(
+                surface="cursor_ide",
+                thread=thread,
+                purpose=purpose,
+                purpose_unstated=False,
+                gui_host=str(body.gui_host),
+                state="launching",
+                parent={
+                    "agent": str(getattr(body, "caller_agent", "") or "").strip(),
+                    "thread": thread,
+                },
+            )
+            if not spawn_row.get("ok"):
+                return JSONResponse(
+                    status_code=500,
+                    content={
+                        "ok": False,
+                        "error": spawn_row.get("error"),
+                        "request_id": request_id,
+                    },
+                )
+            row_id = str(spawn_row["row_id"])
+            prefixed = format_ledger_prompt_prefix(row_id=row_id, purpose=purpose)
+            hop_prompt = prefixed + str(body.prompt)
+            loop = asyncio.get_running_loop()
+            try:
+                spawn_res = await loop.run_in_executor(
+                    None,
+                    partial(
+                        relay_spawn_tab,
+                        gui_host=str(body.gui_host),
+                        prompt=hop_prompt,
+                        model=getattr(body, "model", None),
+                        effort=getattr(body, "effort", None),
+                        fast=getattr(body, "fast", None),
+                        model_knobs=getattr(body, "model_knobs", None),
+                        title=getattr(body, "title", None),
+                        slug=getattr(body, "slug", None),
+                    ),
+                )
+            except Exception as exc:
+                reason = type(exc).__name__
+                patch_spawn_row(
+                    row_id,
+                    state="failed",
+                    reason=reason,
+                )
+                record_status_row(
+                    row_id=row_id,
+                    status="failed",
+                    source_status=reason,
+                )
+                response.status_code = 502
+                return {
+                    "ok": False,
+                    "error": type(exc).__name__,
+                    "ledger_row_id": row_id,
+                    "thread": thread,
+                }
+            if spawn_res.get("ok"):
+                agent_id = str(
+                    spawn_res.get("editor_agent_id")
+                    or spawn_res.get("agent_id")
+                    or ""
+                ).strip()
+                patch_spawn_row(
+                    row_id,
+                    state="live",
+                    agent_id=agent_id or None,
+                )
+            else:
+                reason = str(spawn_res.get("error") or spawn_res.get("reason") or "")
+                patch_spawn_row(
+                    row_id,
+                    state="failed",
+                    reason=reason,
+                )
+                record_status_row(
+                    row_id=row_id,
+                    status="failed",
+                    source_status=reason or None,
+                )
+            response.status_code = 200 if spawn_res.get("ok") else 502
+            return {
+                **spawn_res,
+                "ledger_row_id": row_id,
+                "thread": thread,
+            }
 
         backend = plan.get("backend")
         if backend == "cdp":

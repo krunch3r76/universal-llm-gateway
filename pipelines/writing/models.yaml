@@ -4,9 +4,9 @@ models:
   writer:
     model: qwen3-5-9b-q8-0-131072
   drafter_local_hermes:
-    model: qwen3-5-9b-q8-0-131072
+    model: hermes-3-llama-3-1-70b-uncensored-q4-k-m-32768-hybrid
   drafter_local_ernie:
-    model: qwen3-5-9b-q8-0-131072
+    model: ernie-4-5-21b-a3b-pt-q8-0-65536
   drafter_openai:
     model: openai/gpt-5.4
   drafter_google:
