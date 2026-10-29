@@ -1,26 +1,10 @@
-"""Durable Orion hop receipts and wake-target persistence (fcntl-serialised JSON)."""
+"""Hop attempt records (not wake-ledger authority — see orion_wake_owner.py)."""
 
 from __future__ import annotations
 
-import json
-import os
 import secrets
-import time
 from dataclasses import asdict, dataclass
-from pathlib import Path
-from typing import Any
-
-from durable_io.atomic import path_flock
-
-_DEFAULT_ROOT = Path(os.environ.get("ULG_STATE_DIR", Path.home() / ".gateway")) / "orion"
-_RECEIPTS_NAME = "wake_receipts.json"
-_WAKE_TARGET_NAME = "wake_target_url.json"
-_PENDING_ATTEMPT_NAME = "pending_hop_attempt.json"
-_INFLIGHT_TTL_S = 120.0
-
-
-def default_orion_state_dir() -> Path:
-    return _DEFAULT_ROOT
+from typing import Any, Protocol
 
 
 @dataclass(frozen=True)
@@ -66,174 +50,44 @@ def new_attempt_id() -> str:
     return secrets.token_hex(16)
 
 
-class OrionHopStorage:
-    """File-backed hop attempt, wake target, and delivery receipt store."""
+class HopAttemptStore(Protocol):
+    """Optional in-process hop metadata (attempt + smoke), not durable wake state."""
 
-    def __init__(self, root: Path | None = None) -> None:
-        self.root = (root or default_orion_state_dir()).resolve()
-        self.root.mkdir(parents=True, exist_ok=True)
-        self.receipts_path = self.root / _RECEIPTS_NAME
-        self.wake_target_path = self.root / _WAKE_TARGET_NAME
-        self.pending_attempt_path = self.root / _PENDING_ATTEMPT_NAME
+    def save_pending_attempt(self, attempt: OrionHopAttempt) -> None: ...
 
-    def _read_json(self, path: Path) -> dict[str, Any]:
-        if not path.is_file():
-            return {}
-        try:
-            raw = json.loads(path.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError, TypeError, ValueError):
-            return {}
-        return raw if isinstance(raw, dict) else {}
+    def load_pending_attempt(self) -> OrionHopAttempt | None: ...
 
-    def _write_json(self, path: Path, payload: dict[str, Any]) -> None:
-        path.parent.mkdir(parents=True, exist_ok=True)
-        text = json.dumps(payload, sort_keys=True, indent=2) + "\n"
-        with path_flock(path):
-            path.write_text(text, encoding="utf-8")
+    def clear_pending_attempt(self, attempt_id: str) -> None: ...
+
+    def save_smoke_receipt(self, attempt_id: str, receipt: dict[str, Any]) -> None: ...
+
+    def load_smoke_receipt(self, attempt_id: str) -> dict[str, Any] | None: ...
+
+
+class InMemoryHopAttemptStore:
+    """Tests and offline hop flows only."""
+
+    def __init__(self) -> None:
+        self._pending: OrionHopAttempt | None = None
+        self._smoke: dict[str, dict[str, Any]] = {}
 
     def save_pending_attempt(self, attempt: OrionHopAttempt) -> None:
-        self._write_json(self.pending_attempt_path, attempt.to_dict())
+        self._pending = attempt
 
     def load_pending_attempt(self) -> OrionHopAttempt | None:
-        return OrionHopAttempt.from_dict(self._read_json(self.pending_attempt_path))
+        return self._pending
 
     def clear_pending_attempt(self, attempt_id: str) -> None:
-        with path_flock(self.pending_attempt_path):
-            current = self._read_json(self.pending_attempt_path)
-            if str(current.get("attempt_id") or "") != attempt_id:
-                return
-            self.pending_attempt_path.unlink(missing_ok=True)
-
-    def read_wake_target_url(self, *, default: str) -> str:
-        raw = self._read_json(self.wake_target_path)
-        url = str(raw.get("url") or "").strip()
-        return url.split("?", 1)[0] if url else default.split("?", 1)[0]
-
-    def compare_and_set_wake_target(
-        self,
-        *,
-        expected_old: str,
-        new_url: str,
-    ) -> dict[str, Any]:
-        expected = expected_old.split("?", 1)[0]
-        candidate = new_url.split("?", 1)[0]
-        with path_flock(self.wake_target_path):
-            current_raw = self._read_json(self.wake_target_path)
-            current = str(current_raw.get("url") or "").strip().split("?", 1)[0]
-            if not current:
-                current = expected
-            if current != expected:
-                return {
-                    "ok": False,
-                    "reason": "wake_target_cas_conflict",
-                    "expected_old_url": expected,
-                    "current_wake_target_url": current,
-                }
-            payload = {"url": candidate, "updated_at": time.time()}
-            text = json.dumps(payload, sort_keys=True, indent=2) + "\n"
-            self.wake_target_path.write_text(text, encoding="utf-8")
-            read_back = self._read_json(self.wake_target_path)
-            committed = str(read_back.get("url") or "").split("?", 1)[0]
-            if committed != candidate:
-                return {
-                    "ok": False,
-                    "reason": "wake_target_readback_mismatch",
-                    "expected_new_url": candidate,
-                    "read_back_url": committed,
-                }
-            return {
-                "ok": True,
-                "reason": "wake_target_committed",
-                "previous_wake_target_url": current,
-                "wake_target_url": committed,
-            }
-
-    @staticmethod
-    def _receipt_key(
-        *,
-        thread: str,
-        turn: int | str,
-        endpoint_url: str,
-        kind: str,
-    ) -> str:
-        endpoint = endpoint_url.split("?", 1)[0]
-        return f"{thread}|{turn}|{endpoint}|{kind}"
-
-    def claim_delivery(
-        self,
-        *,
-        thread: str,
-        turn: int | str,
-        endpoint_url: str,
-        kind: str = "pointer_wake",
-    ) -> tuple[str, dict[str, Any] | None]:
-        """Return (claim_status, first_receipt). status ∈ claim|duplicate|in_flight."""
-        key = self._receipt_key(
-            thread=thread, turn=turn, endpoint_url=endpoint_url, kind=kind
-        )
-        now = time.time()
-        with path_flock(self.receipts_path):
-            store = self._read_json(self.receipts_path)
-            row = store.get(key)
-            if isinstance(row, dict):
-                state = str(row.get("state") or "")
-                if state == "completed":
-                    return "duplicate", dict(row.get("receipt") or {})
-                if state == "in_flight":
-                    started = float(row.get("started_at") or 0)
-                    if now - started < _INFLIGHT_TTL_S:
-                        return "in_flight", None
-                    row = {
-                        **row,
-                        "state": "ambiguous",
-                        "reason": "in_flight_expired",
-                    }
-                    store[key] = row
-            store[key] = {
-                "state": "in_flight",
-                "started_at": now,
-                "thread": str(thread),
-                "turn": str(turn),
-                "endpoint_url": endpoint_url.split("?", 1)[0],
-                "kind": kind,
-            }
-            text = json.dumps(store, sort_keys=True, indent=2) + "\n"
-            self.receipts_path.write_text(text, encoding="utf-8")
-            return "claim", None
-
-    def finish_delivery(
-        self,
-        *,
-        thread: str,
-        turn: int | str,
-        endpoint_url: str,
-        kind: str,
-        receipt: dict[str, Any],
-        ambiguous: bool = False,
-    ) -> None:
-        key = self._receipt_key(
-            thread=thread, turn=turn, endpoint_url=endpoint_url, kind=kind
-        )
-        state = "ambiguous" if ambiguous else "completed"
-        with path_flock(self.receipts_path):
-            store = self._read_json(self.receipts_path)
-            store[key] = {
-                "state": state,
-                "finished_at": time.time(),
-                "receipt": receipt,
-                "thread": str(thread),
-                "turn": str(turn),
-                "endpoint_url": endpoint_url.split("?", 1)[0],
-                "kind": kind,
-            }
-            text = json.dumps(store, sort_keys=True, indent=2) + "\n"
-            self.receipts_path.write_text(text, encoding="utf-8")
+        if self._pending and self._pending.attempt_id == attempt_id:
+            self._pending = None
 
     def save_smoke_receipt(self, attempt_id: str, receipt: dict[str, Any]) -> None:
-        path = self.root / f"smoke_{attempt_id}.json"
-        self._write_json(path, receipt)
+        self._smoke[attempt_id] = dict(receipt)
 
     def load_smoke_receipt(self, attempt_id: str) -> dict[str, Any] | None:
-        path = self.root / f"smoke_{attempt_id}.json"
-        raw = self._read_json(path)
-        return raw if raw else None
+        row = self._smoke.get(attempt_id)
+        return dict(row) if row else None
+
+
+class OrionHopStorage(InMemoryHopAttemptStore):
+    """Compatibility alias — in-memory hop metadata only (not wake ledger storage)."""

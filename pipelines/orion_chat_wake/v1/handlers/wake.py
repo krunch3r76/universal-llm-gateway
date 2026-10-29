@@ -23,5 +23,6 @@ class OrionChatWakeHandler(BaseHandler):
             from_agent=str(opts.get("from_agent") or ""),
             conversation_url=str(opts.get("conversation_url") or "") or None,
             cdp_url=str(opts.get("cdp_url") or "") or DEFAULT_ORION_CDP_URL,
+            pipeline_options=opts,
         )
         return StepOutput(raw=json.dumps(result), json=result)

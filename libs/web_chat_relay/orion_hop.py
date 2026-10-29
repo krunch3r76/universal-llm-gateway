@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import re
 from collections.abc import Awaitable, Callable
 from typing import Any, Protocol
@@ -10,8 +9,8 @@ from typing import Any, Protocol
 from agent_seat.registry import normalize_bus_address
 
 from web_chat_relay.orion_hop_storage import (
+    HopAttemptStore,
     OrionHopAttempt,
-    OrionHopStorage,
     new_attempt_id,
 )
 from web_chat_relay.orion_wake import (
@@ -23,6 +22,13 @@ from web_chat_relay.orion_wake import (
     _handle_approvals,
     _paste_and_send,
     conversation_id_from_url,
+)
+from web_chat_relay.orion_wake_owner import (
+    OrionWakeDeliveryOwner,
+    WakeClaimContext,
+    enrich_delivery_receipt,
+    load_shared_wake_delivery_owner,
+    wake_claim_from_options,
 )
 
 STANDING_HANDOFF_URI = "cortex://notes/system/threads/21207-standing-handoff.md"
@@ -306,116 +312,6 @@ class WakeTargetReader(Protocol):
     async def read_wake_target(self) -> str: ...
 
 
-class OrionWakeDedupeLedger:
-    """At-most-once delivery per (thread, turn, endpoint) with durable receipts."""
-
-    def __init__(self, storage: OrionHopStorage | None = None) -> None:
-        self._storage = storage or OrionHopStorage()
-        self._mem_first: dict[tuple[str, str, str], dict[str, Any]] = {}
-
-    @staticmethod
-    def _mem_key(thread: str, turn: int | str, endpoint_url: str) -> tuple[str, str, str]:
-        return (str(thread or "").strip(), str(turn), endpoint_url.split("?", 1)[0])
-
-    def _claim_sync(
-        self,
-        *,
-        thread: str,
-        turn: int | str,
-        endpoint_url: str,
-        kind: str,
-    ) -> tuple[str, dict[str, Any] | None]:
-        return self._storage.claim_delivery(
-            thread=thread, turn=turn, endpoint_url=endpoint_url, kind=kind
-        )
-
-    def _finish_sync(
-        self,
-        *,
-        thread: str,
-        turn: int | str,
-        endpoint_url: str,
-        kind: str,
-        receipt: dict[str, Any],
-        ambiguous: bool,
-    ) -> None:
-        self._storage.finish_delivery(
-            thread=thread,
-            turn=turn,
-            endpoint_url=endpoint_url,
-            kind=kind,
-            receipt=receipt,
-            ambiguous=ambiguous,
-        )
-
-    async def deliver(
-        self,
-        *,
-        thread: str,
-        turn: int | str,
-        endpoint_url: str,
-        deliver_fn: Callable[[], Awaitable[dict[str, Any]]],
-        kind: str = "pointer_wake",
-    ) -> dict[str, Any]:
-        mem_key = self._mem_key(thread, turn, endpoint_url)
-        if mem_key in self._mem_first:
-            return {
-                "ok": True,
-                "reason": "duplicate_suppressed",
-                "delivered": False,
-                "pasted": False,
-                "first_receipt": self._mem_first[mem_key],
-            }
-        status, first = await asyncio.to_thread(
-            self._claim_sync,
-            thread=thread,
-            turn=turn,
-            endpoint_url=endpoint_url,
-            kind=kind,
-        )
-        if status == "duplicate":
-            return {
-                "ok": True,
-                "reason": "duplicate_suppressed",
-                "delivered": False,
-                "pasted": False,
-                "first_receipt": first or {},
-            }
-        if status == "in_flight":
-            return {
-                "ok": False,
-                "reason": "delivery_in_flight",
-                "delivered": False,
-                "pasted": False,
-            }
-        ambiguous = False
-        try:
-            receipt = await deliver_fn()
-        except Exception as exc:
-            receipt = _refuse("deliver_fn_failed", error=type(exc).__name__)
-            ambiguous = True
-        if receipt.get("pasted") or receipt.get("delivered"):
-            self._mem_first[mem_key] = receipt
-        if receipt.get("reason") == "deferred_streaming":
-            ambiguous = True
-        await asyncio.to_thread(
-            self._finish_sync,
-            thread=thread,
-            turn=turn,
-            endpoint_url=endpoint_url,
-            kind=kind,
-            receipt=receipt,
-            ambiguous=ambiguous,
-        )
-        if ambiguous and receipt.get("pasted"):
-            receipt = {
-                **receipt,
-                "ok": False,
-                "reason": "delivery_ambiguous",
-            }
-        return receipt
-
-
 async def _open_new_conversation_in_project(page: OrionPage) -> dict[str, Any]:
     before_id = conversation_id_from_url(page.url or "")
     btn = page.locator(_NEW_CHAT_SELECTOR).first
@@ -520,7 +416,7 @@ async def orion_hop(
     birth_prompt: bytes,
     *,
     read_handoff: HandoffRead | None = None,
-    storage: OrionHopStorage | None = None,
+    attempt_store: HopAttemptStore | None = None,
 ) -> dict[str, Any]:
     """Open a new project conversation, select effort, paste hop prompt, approve connectors."""
     handoff = await preflight_standing_handoff(read_handoff)
@@ -598,8 +494,8 @@ async def orion_hop(
         new_url=new_url,
         handoff_read_sha256=handoff_sha,
     )
-    if storage is not None:
-        storage.save_pending_attempt(attempt)
+    if attempt_store is not None:
+        attempt_store.save_pending_attempt(attempt)
     return {
         "ok": True,
         "reason": "hopped",
@@ -619,17 +515,28 @@ async def orion_hop(
     }
 
 
-def resolve_orion_wake_conversation_url(
-    subscription: dict[str, Any] | None,
-    *,
-    storage: OrionHopStorage | None = None,
-) -> str:
-    """Production wake target: persisted hop commit overrides subscription holder."""
+def resolve_orion_wake_conversation_url(subscription: dict[str, Any] | None) -> str:
+    """Frozen delivery target from subscription binding (owner persists commits)."""
     from web_chat_relay.orion_wake import holder_conversation_url
 
-    default = holder_conversation_url(subscription)
-    store = storage or OrionHopStorage()
-    return store.read_wake_target_url(default=default)
+    return holder_conversation_url(subscription)
+
+
+def _claim_from_call(
+    *,
+    thread: str,
+    turn: int | str,
+    conversation_url: str | None,
+    wake_claim: WakeClaimContext | None,
+    pipeline_options: dict[str, Any] | None,
+) -> WakeClaimContext | None:
+    if wake_claim is not None:
+        return wake_claim
+    if pipeline_options:
+        parsed = wake_claim_from_options(pipeline_options)
+        if parsed is not None:
+            return parsed
+    return None
 
 
 async def deliver_orion_chat_wake(
@@ -641,36 +548,47 @@ async def deliver_orion_chat_wake(
     cdp_url: str | None = None,
     page: OrionPage | None = None,
     connect_cdp=None,
-    storage: OrionHopStorage | None = None,
     subscription: dict[str, Any] | None = None,
+    wake_claim: WakeClaimContext | None = None,
+    pipeline_options: dict[str, Any] | None = None,
+    delivery_owner: OrionWakeDeliveryOwner | None = None,
 ) -> dict[str, Any]:
-    """Production entry: durable dedupe ledger + ``deliver_orion_wake`` paste gate."""
+    """Paste gate under an existing dispatcher wake claim — does not re-claim."""
     from web_chat_relay.orion_wake import DEFAULT_ORION_CDP_URL, deliver_orion_wake
 
-    store = storage or OrionHopStorage()
-    target = conversation_url or resolve_orion_wake_conversation_url(
-        subscription, storage=store
-    )
-    ledger = OrionWakeDedupeLedger(store)
-
-    async def _paste() -> dict[str, Any]:
-        return await deliver_orion_wake(
-            thread=thread,
-            turn=turn,
-            from_agent=from_agent,
-            conversation_url=target,
-            cdp_url=cdp_url or DEFAULT_ORION_CDP_URL,
-            page=page,
-            connect_cdp=connect_cdp,
-        )
-
-    return await ledger.deliver(
+    opts = dict(pipeline_options or {})
+    opts.setdefault("thread", thread)
+    opts.setdefault("turn", turn)
+    if conversation_url:
+        opts.setdefault("conversation_url", conversation_url)
+    claim = _claim_from_call(
         thread=thread,
         turn=turn,
-        endpoint_url=target,
-        deliver_fn=_paste,
-        kind="pointer_wake",
+        conversation_url=conversation_url,
+        wake_claim=wake_claim,
+        pipeline_options=opts,
     )
+    if claim is None:
+        return _refuse("wake_claim_required")
+    owner = delivery_owner
+    if owner is None:
+        owner = load_shared_wake_delivery_owner()
+    gate = owner.validate_claim_for_delivery(claim)
+    if not gate.get("ok"):
+        return _refuse(str(gate.get("reason") or "wake_claim_invalid"))
+    target = claim.normalized_endpoint()
+    receipt = await deliver_orion_wake(
+        thread=thread,
+        turn=turn,
+        from_agent=from_agent,
+        conversation_url=target,
+        cdp_url=cdp_url or DEFAULT_ORION_CDP_URL,
+        page=page,
+        connect_cdp=connect_cdp,
+    )
+    if receipt.get("reason") == "deferred_streaming":
+        receipt = {**receipt, "ok": False, "retry_eligible": True}
+    return enrich_delivery_receipt(receipt, claim)
 
 
 async def record_orion_smoke_receipt(
@@ -678,19 +596,23 @@ async def record_orion_smoke_receipt(
     attempt: OrionHopAttempt,
     candidate_url: str,
     wake_result: dict[str, Any],
-    storage: OrionHopStorage | None = None,
+    attempt_store: HopAttemptStore | None = None,
 ) -> dict[str, Any]:
-    """Bind a successful smoke wake to a hop attempt (required before repin)."""
-    store = storage or OrionHopStorage()
+    """Bind smoke to hop attempt; does not commit candidate as current wake target."""
     receipt = {
         **wake_result,
+        "purpose": "hop_smoke",
         "attempt_id": attempt.attempt_id,
         "candidate_url": candidate_url.split("?", 1)[0],
         "identity": attempt.identity,
         "handoff_read_sha256": attempt.handoff_read_sha256,
     }
-    if wake_result.get("delivered") is True and wake_result.get("ok") is True:
-        store.save_smoke_receipt(attempt.attempt_id, receipt)
+    if (
+        attempt_store is not None
+        and wake_result.get("delivered") is True
+        and wake_result.get("ok") is True
+    ):
+        attempt_store.save_smoke_receipt(attempt.attempt_id, receipt)
     return receipt
 
 
@@ -700,22 +622,26 @@ async def repin_orion_wake_conversation(
     registration: dict[str, Any] | None,
     attempt: OrionHopAttempt | None = None,
     smoke_receipt: dict[str, Any] | None = None,
-    storage: OrionHopStorage | None = None,
+    attempt_store: HopAttemptStore | None = None,
     writer: WakeTargetWriter | None = None,
     reader: WakeTargetReader | None = None,
     apply_repin: Callable[[OrionPage, str], Awaitable[None]] | None = None,
 ) -> dict[str, Any]:
-    """Repin wake holder after validated registration + attempt-bound smoke receipt."""
+    """Repin via registry writer/reader CAS — no parallel wake-target file store."""
     parsed = parse_orion_seat_registration(registration)
     if not parsed:
         return _refuse("registration_invalid")
-    store = storage or OrionHopStorage()
-    bound_attempt = attempt or store.load_pending_attempt()
+    store = attempt_store
+    bound_attempt = attempt
+    if bound_attempt is None and store is not None:
+        bound_attempt = store.load_pending_attempt()
     if bound_attempt is None:
         return _refuse("attempt_missing")
     if not registration_matches_attempt(parsed, bound_attempt):
         return _refuse("attempt_registration_mismatch")
-    smoke = smoke_receipt or store.load_smoke_receipt(bound_attempt.attempt_id)
+    smoke = smoke_receipt
+    if smoke is None and store is not None:
+        smoke = store.load_smoke_receipt(bound_attempt.attempt_id)
     if smoke is None:
         return _refuse("smoke_receipt_missing")
     new_url = parsed["conversation_url"]
@@ -723,6 +649,8 @@ async def repin_orion_wake_conversation(
         smoke, attempt=bound_attempt, candidate_url=new_url
     ):
         return _refuse("smoke_not_bound")
+    if writer is None and apply_repin is None:
+        return _refuse("wake_target_writer_missing")
     expected_old = bound_attempt.normalized_old()
     if reader is not None:
         current = (await reader.read_wake_target()).split("?", 1)[0]
@@ -732,41 +660,38 @@ async def repin_orion_wake_conversation(
                 current_wake_target_url=current,
                 expected_old_url=expected_old,
             )
-    wrote = False
     if writer is not None:
         cas = await writer.write_wake_target(expected_old=expected_old, new_url=new_url)
         if not cas.get("ok"):
+            reason = str(cas.get("reason") or "wake_target_write_failed")
+            if reason == "wake_target_readback_mismatch":
+                return {
+                    **cas,
+                    "ok": False,
+                    "reason": "wake_target_unknown_after_write",
+                    "pasted": False,
+                }
             return {**cas, "ok": False, "pasted": False}
-        wrote = True
-    elif apply_repin is not None:
-        await apply_repin(page, new_url)
-        wrote = True
-    elif hasattr(page, "repin_conversation"):
-        await page.repin_conversation(new_url)  # type: ignore[attr-defined]
-        wrote = True
+        committed = str(cas.get("wake_target_url") or new_url).split("?", 1)[0]
     else:
-        return _refuse("wake_target_writer_missing")
-    persist = await asyncio.to_thread(
-        lambda: store.compare_and_set_wake_target(
-            expected_old=expected_old,
-            new_url=new_url,
-        )
-    )
-    if not persist.get("ok"):
-        if wrote:
-            return {
-                **persist,
-                "ok": False,
-                "reason": "wake_target_uncertain_after_write",
-                "pasted": False,
-            }
-        return {**persist, "ok": False, "pasted": False}
-    store.clear_pending_attempt(bound_attempt.attempt_id)
+        assert apply_repin is not None
+        await apply_repin(page, new_url)
+        if reader is None:
+            return _refuse("wake_target_readback_missing")
+        committed = (await reader.read_wake_target()).split("?", 1)[0]
+        if committed != new_url.split("?", 1)[0]:
+            return _refuse(
+                "wake_target_unknown_after_write",
+                read_back_url=committed,
+                expected_new_url=new_url,
+            )
+    if store is not None:
+        store.clear_pending_attempt(bound_attempt.attempt_id)
     return {
         "ok": True,
         "reason": "repinned",
         "conversation_url": new_url,
         "conversation_id": parsed["conversation_id"],
         "attempt_id": bound_attempt.attempt_id,
-        "wake_target_url": persist.get("wake_target_url"),
+        "wake_target_url": committed,
     }

@@ -23,18 +23,18 @@ from agent_seat.registry import STAGE_MANAGER_ADDRESSES, normalize_bus_address
 from claude_bundles.holder_strings import holder_id_from_chat_url
 from cursor_bridge.chat_target import exchange_lines
 from transport_utils import DEFAULT_STARGATE_URL, make_sync_client
-from web_chat_relay.orion_hop import resolve_orion_wake_conversation_url
-from web_chat_relay.orion_wake import (
-    DEFAULT_ORION_CDP_URL,
-    PINNED_CONVERSATION_ID,
-    PINNED_CONVERSATION_URL,
-)
 
 from bus_watch.endpoint_wake_transport import (
     StoreClient,
     classify_cse,
     classify_display,
     classify_orion,
+)
+from web_chat_relay.orion_wake import (
+    DEFAULT_ORION_CDP_URL,
+    PINNED_CONVERSATION_ID,
+    PINNED_CONVERSATION_URL,
+    holder_conversation_url,
 )
 from bus_watch.ide_hop_land import expire_overdue_hop, expire_overdue_hops
 
@@ -1156,7 +1156,7 @@ def _orion_post(
         "thread": row["thread_id"],
         "turn": turn,
         "from_agent": from_agent,
-        "conversation_url": resolve_orion_wake_conversation_url(sub),
+        "conversation_url": holder_conversation_url(sub),
         "cdp_url": DEFAULT_ORION_CDP_URL,
     }
     body = {
