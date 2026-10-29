@@ -415,6 +415,8 @@ def _stage_inputs(
     contract: str | None = None,
     request_id: str | None = None,
     dispatch_thread_id: str | None = None,
+    ledger_row_id: str | None = None,
+    ledger_purpose: str | None = None,
 ) -> Any:
     """Stage prompt; ``skills`` → slash manifest for + → Skills attach at runtime.
 
@@ -442,6 +444,17 @@ def _stage_inputs(
             web_mcp_stamped=True,
         )
     staged_prompt = stamp.body if stamp.stamped else staged_prompt
+    if ledger_row_id and ledger_purpose is not None:
+        from cursor_bridge.spawn_endpoint_house_ledger import (
+            format_ledger_prompt_prefix,
+        )
+
+        prefix = format_ledger_prompt_prefix(
+            row_id=str(ledger_row_id),
+            purpose=str(ledger_purpose),
+        )
+        if prefix:
+            staged_prompt = prefix + staged_prompt
     staged_uri = None if stamp.stamped else cortex_uri
     staged_packet = None if stamp.stamped else packet_non_cortex
     staged_sidecar = None if stamp.stamped else sidecar_non_cortex
@@ -549,6 +562,30 @@ async def dispatch_cdp_generate(
         )
 
     execution_id = str(uuid.uuid4())
+    from cursor_bridge.spawn_endpoint_house_ledger import mint_row_id, record_spawn
+
+    cdp_row_id = mint_row_id()
+    cdp_thread = str(getattr(body, "dispatch_thread_id", "") or "").strip()
+    spine = record_spawn(
+        surface="cdp",
+        thread=cdp_thread,
+        purpose="(unstated)",
+        purpose_unstated=True,
+        execution_id=execution_id,
+        row_id=cdp_row_id,
+        parent={
+            "agent": str(getattr(body, "caller_agent", "") or "").strip(),
+            "thread": cdp_thread,
+        },
+    )
+    if not spine.get("ok"):
+        raise FrontierEndpointError(
+            request_id=request_id,
+            field="ledger",
+            reason=str(spine.get("error") or "spawn_spine_failed"),
+            status_code=500,
+            code="spawn_spine_failed",
+        )
     skills = getattr(body, "skills", None)
     purpose_raw = getattr(body, "purpose", None)
     session_raw = getattr(body, "session", None)
@@ -580,6 +617,8 @@ async def dispatch_cdp_generate(
             contract=contract,
             request_id=request_id,
             dispatch_thread_id=getattr(body, "dispatch_thread_id", None),
+            ledger_row_id=cdp_row_id,
+            ledger_purpose="(unstated)",
         )
         staged_digest = staged_prompt_digest(staged.prompt_uri)
     except CdpStagingError as exc:

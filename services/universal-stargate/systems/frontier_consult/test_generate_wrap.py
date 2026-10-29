@@ -337,3 +337,43 @@ def test_ac_p1_5_prepare_conductor_packet_rematerialize_roundtrip(
     assert result.materialized is True
     assert captured.get("rematerialize") == rematerialize
     assert captured.get("summoning_thread_id") == "9638"
+
+
+@pytest.mark.offline
+def test_prepare_conductor_packet_row_id_recomputes_packet_sha256(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """R3 — packet_sha256 digests markdown after the ledger_row prefix."""
+    from implement_admission.admission_read import compute_packet_sha256
+
+    markdown = "---\nsource_ref: todo:row-id-sha\n---\n\n# Body\n"
+    row_id = "a" * 32
+
+    def _bridge(source_ref: str, **kwargs: object) -> BridgeResult:
+        del source_ref, kwargs
+        return BridgeResult(
+            gated=False,
+            packet_markdown=markdown,
+            packet_sha256="stale-digest",
+        )
+
+    monkeypatch.setattr(
+        "systems.frontier_consult.generate_wrap.resolve_source_ref_to_packet",
+        _bridge,
+    )
+    from systems.frontier_consult.generate_wrap import prepare_conductor_packet
+
+    result = prepare_conductor_packet(
+        request_id="req-row-id",
+        source_ref="todo:row-id-sha",
+        caller_agent="cursor",
+        cortex=MagicMock(),
+        workspaces_root=tmp_path,
+        row_id=row_id,
+        ledger_purpose="conductor purpose",
+    )
+    assert result.packet_markdown is not None
+    assert result.packet_markdown.startswith(f"ledger_row: {row_id}\n")
+    assert result.packet_sha256 == compute_packet_sha256(result.packet_markdown)
+    assert result.packet_sha256 != "stale-digest"

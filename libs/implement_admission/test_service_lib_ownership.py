@@ -57,7 +57,7 @@ def test_wait_status_plan_nominates_agent_bus_not_seven_owners() -> None:
     services = set(plan.sync_restart_services)
     owned = set(declared_services_for_lib("agent_bus_store"))
     assert "agent_bus" in services
-    assert services <= {"agent_bus", "mcp"}
+    assert services <= {"agent_bus", "git_integration_worker", "mcp", "stargate"}
     assert not owned <= services
 
 
@@ -116,6 +116,7 @@ def test_giw_serves_worker_hosted_libs_not_owned_libs() -> None:
     own = service_ownership()["git_integration_worker"]
     assert own.serves_libs == frozenset(
         {
+            "agent_bus_store",
             "charter_runner_store",
             "consult_substrate_notice",
             "git_integrate",
@@ -126,7 +127,6 @@ def test_giw_serves_worker_hosted_libs_not_owned_libs() -> None:
         }
     )
     assert own.serves_libs < own.owned_libs
-    assert "agent_bus_store" not in own.serves_libs
     assert "foo" not in own.serves_libs
 
 
@@ -135,14 +135,6 @@ def test_writing_intake_serving_services_match_serving_map() -> None:
     got = serving_services_for_lib_path("libs/writing_intake/fact_inventory.py")
     assert got == serving_services_for_lib("writing_intake")
     assert set(got) == {"mcp", "stargate"}
-
-
-_SERVING_MAP_DRIFT_XFAIL_PREFIXES = frozenset(
-    {
-        # yaml lists mcp; serves_libs only lists agent_bus (RULING 22 — proposal, not fixed here).
-        "libs/agent_bus_store/",
-    }
-)
 
 
 def _serving_map_row_ids(row: object) -> str:
@@ -163,20 +155,21 @@ def test_serving_map_prefix_matches_serves_libs_field(row) -> None:
     probe = f"{row.prefix}__serving_map_probe__.py"
     got = set(serving_services_for_lib_path(probe))
     want = set(row.services)
-    if row.prefix in _SERVING_MAP_DRIFT_XFAIL_PREFIXES and got != want:
-        pytest.xfail(
-            f"{row.prefix}: serves_libs={sorted(got)!r} yaml={sorted(want)!r}"
-        )
     assert got == want, (
         f"{row.prefix}: serves_libs={sorted(got)!r} serving-map={sorted(want)!r}"
     )
 
 
-def test_wait_status_serving_slug_is_agent_bus_not_owned_libs_blast() -> None:
-    """Replay 33083d61: serving-process set is {agent_bus}, not the seven owners."""
+def test_wait_status_serving_slug_is_job_set_not_owned_libs_blast() -> None:
+    """Replay 33083d61: serving-process set is serves_libs job slugs, not all owners."""
     serving = serving_services_for_lib_path("libs/agent_bus_store/wait_status.py")
     owned = set(declared_services_for_lib("agent_bus_store"))
-    assert serving == ("agent_bus",)
+    assert set(serving) == {
+        "agent_bus",
+        "git_integration_worker",
+        "mcp",
+        "stargate",
+    }
     assert owned == {
         "agent_bus",
         "cloud_proxy",

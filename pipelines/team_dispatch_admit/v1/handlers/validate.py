@@ -56,8 +56,41 @@ def _sdk_admission_raw(
     return is_cursor_substrate_model(model)
 
 
+def _spawn_purpose_reject(sp: Any) -> dict[str, Any] | None:
+    text = str(sp or "")
+    if not text.strip() or "\n" in text:
+        return reject_envelope(
+            status_code=422,
+            code="spawn_purpose_required",
+            field="spawn_purpose",
+            reason="spawn_purpose is required and must be exactly one line",
+        )
+    return None
+
+
 def evaluate_validate(opts: dict[str, Any]) -> dict[str, Any]:
     op = str(opts.get("op") or "")
+    if op == "spawn":
+        backend = str(opts.get("backend") or "")
+        if backend != "cursor_ide":
+            return reject_envelope(
+                status_code=422,
+                code="spawn_backend_unsupported",
+                field="backend",
+                reason="op=spawn admits backend=cursor_ide only",
+            )
+        thread = opts.get("thread")
+        if thread is None or not str(thread).strip():
+            return reject_envelope(
+                status_code=422,
+                code="spawn_thread_required",
+                field="thread",
+                reason="thread is required for op=spawn",
+            )
+        reject = _spawn_purpose_reject(opts.get("spawn_purpose"))
+        if reject is not None:
+            return reject
+        return {"admitted": True, "phase": "validate"}
     if op != "generate":
         return {"admitted": True, "phase": "validate", "skipped": True}
 

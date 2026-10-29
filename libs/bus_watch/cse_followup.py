@@ -176,6 +176,15 @@ def fire_cse_followup(
     response_url = data.get("url") or url
     response_reg = data.get("registration_id") or registration_id
     ok = bool(data.get("ok", True))
+    from cursor_bridge.spawn_endpoint_house_ledger import record_cse_wake
+
+    record_cse_wake(
+        chat_url=str(response_url or chat_url or ""),
+        op="cse_followup",
+        ok=ok and send_verified,
+        execution_id=registration_id,
+        reason=str(data.get("error") or ""),
+    )
     return {
         **result,
         **{k: v for k, v in data.items() if k not in result},

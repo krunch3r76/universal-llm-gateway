@@ -8,8 +8,9 @@ from functools import partial
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from cursor_bridge.spawn_endpoint_house_ledger import format_ledger_prompt_prefix
 from fastapi.responses import JSONResponse
-from implement_admission.admission_read import frontmatter_value
+from implement_admission.admission_read import compute_packet_sha256, frontmatter_value
 from implement_admission.preflight import (
     DecisionNotAssertedError,
     RouteContractContradictionError,
@@ -93,6 +94,8 @@ def prepare_conductor_packet(
     summoning_turn_count: int | None = None,
     rematerialize: Any | None = None,
     conductor_opts: dict[str, Any] | None = None,
+    row_id: str | None = None,
+    ledger_purpose: str | None = None,
 ) -> GenerateWrapResult:
     """Materialize a conductor six-block packet from ``source_ref=todo:``."""
     del request_id, role, transport
@@ -130,14 +133,23 @@ def prepare_conductor_packet(
             scoreboard_uri = extract_scoreboard_uri(
                 materialized_file.read_text(encoding="utf-8", errors="replace")
             )
+    packet_sha256 = bridge.packet_sha256
+    if packet_text:
+        prefix = format_ledger_prompt_prefix(
+            row_id=str(row_id or ""),
+            purpose=str(ledger_purpose or "(unstated)"),
+        )
+        if prefix:
+            packet_text = prefix + packet_text
+            packet_sha256 = compute_packet_sha256(packet_text)
     return GenerateWrapResult(
         packet_path=bridge.packet_path,
-        packet_markdown=bridge.packet_markdown,
+        packet_markdown=packet_text,
         packet_rel_path=bridge.packet_rel_path,
         birth_scoreboard_markdown=bridge.birth_scoreboard_markdown,
         materialized=bool(bridge.packet_path or bridge.packet_markdown),
         warnings=list(bridge.warnings),
-        packet_sha256=bridge.packet_sha256,
+        packet_sha256=packet_sha256,
         materialization_present=bridge.materialization_present,
         route_contract=bridge.route_contract,
         scoreboard_uri=scoreboard_uri,
@@ -284,6 +296,7 @@ async def dispatch_cursor_sdk_generate_route(
         return JSONResponse(status_code=exc.status_code, content=exc.to_dict())
 
     role = seat
+    sdk_row_id: str | None = None
     try:
         operator_lane_summon_warning: str | None = None
         source_ref = getattr(body, "source_ref", None)
@@ -407,6 +420,10 @@ async def dispatch_cursor_sdk_generate_route(
             )
 
             conductor_opts = conductor_opts_from_generation_options(gen_opts)
+            from cursor_bridge.spawn_endpoint_house_ledger import mint_row_id
+
+            if sdk_row_id is None:
+                sdk_row_id = mint_row_id()
             wrap = await loop.run_in_executor(
                 None,
                 partial(
@@ -426,6 +443,8 @@ async def dispatch_cursor_sdk_generate_route(
                     summoning_turn_count=summoning_turn_count,
                     rematerialize=rematerialize,
                     conductor_opts=conductor_opts or None,
+                    row_id=sdk_row_id,
+                    ledger_purpose="(unstated)",
                 ),
             )
         elif (
@@ -530,6 +549,40 @@ async def dispatch_cursor_sdk_generate_route(
             contract=body.job,
             request_id=request_id,
         )
+        from cursor_bridge.spawn_endpoint_house_ledger import (
+            mint_row_id,
+            patch_spawn_row,
+            record_spawn,
+        )
+
+        house_thread = str(getattr(body, "dispatch_thread_id", "") or "").strip()
+        if not house_thread:
+            house_thread = str(reuse_thread or "").strip()
+        if sdk_row_id is None:
+            sdk_row_id = mint_row_id()
+        spine = record_spawn(
+            surface="cursor_sdk",
+            thread=house_thread,
+            purpose="(unstated)",
+            purpose_unstated=True,
+            row_id=sdk_row_id,
+            dispatch_id=getattr(body, "dispatch_id", None),
+            parent={
+                "agent": str(getattr(body, "caller_agent", "") or "").strip(),
+                "thread": house_thread,
+            },
+        )
+        if not spine.get("ok"):
+            return JSONResponse(
+                status_code=500,
+                content=FrontierEndpointError(
+                    request_id=request_id,
+                    field="ledger",
+                    reason=str(spine.get("error") or "spawn_spine_failed"),
+                    status_code=500,
+                    code="spawn_spine_failed",
+                ).to_dict(),
+            )
         result = await dispatch_cursor_sdk_generate(
             request_id=request_id,
             role=role,
@@ -615,6 +668,9 @@ async def dispatch_cursor_sdk_generate_route(
                     split_warning
                 ]
         if isinstance(result, dict):
+            dispatch_id = str(result.get("dispatch_id") or "").strip()
+            if dispatch_id and sdk_row_id:
+                patch_spawn_row(sdk_row_id, dispatch_id=dispatch_id)
             from job_vocab import job_record
 
             record = job_record(body.job or "")

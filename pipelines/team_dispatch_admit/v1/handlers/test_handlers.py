@@ -40,6 +40,11 @@ async def run_team_dispatch_admit_for_route_tests(
         "dispatch_id": getattr(body, "dispatch_id", None),
         "request_id": request_id,
     }
+    if getattr(body, "op", None) == "spawn":
+        opts["backend"] = getattr(body, "backend", None)
+        opts["thread"] = getattr(body, "thread", None)
+        opts["gui_host"] = getattr(body, "gui_host", None)
+        opts["spawn_purpose"] = getattr(body, "spawn_purpose", None)
     plan = run_full_admit(opts)
     if plan.get("admitted") is False:
         raise FrontierEndpointError(
@@ -239,6 +244,39 @@ def test_model_only_cdp_admits() -> None:
 
 
 @pytest.mark.offline
+def test_validate_op_spawn_runs_not_skipped() -> None:
+    skipped = evaluate_validate({"op": "to_thread", "request_id": "t-skip"})
+    assert skipped.get("skipped") is True
+    ok = evaluate_validate(
+        {
+            "op": "spawn",
+            "backend": "cursor_ide",
+            "thread": "house-1",
+            "spawn_purpose": "one line",
+            "request_id": "t-spawn",
+        }
+    )
+    assert ok.get("skipped") is not True
+    assert ok.get("admitted") is True
+
+
+@pytest.mark.offline
+def test_op_spawn_plan_backend_cursor_ide() -> None:
+    plan = run_full_admit(
+        {
+            "op": "spawn",
+            "backend": "cursor_ide",
+            "thread": "house-1",
+            "gui_host": ":8",
+            "spawn_purpose": "ship the slice",
+            "request_id": "t-spawn-plan",
+        }
+    )
+    assert plan.get("admitted") is True, plan
+    assert plan.get("backend") == "cursor_ide"
+
+
+@pytest.mark.offline
 def test_to_thread_frontier_default_role() -> None:
     plan = run_full_admit(
         {"op": "to_thread", "request_id": "t-tt"},
@@ -277,6 +315,98 @@ def test_judgment_role_mechanical_cursor_profile_mismatch() -> None:
 
 
 @pytest.mark.offline
+def test_assemble_prefixes_ledger_row() -> None:
+    """Break: conductor assemble leaves packet_markdown without ledger_row."""
+    row_id = "cd" * 16
+    packet = "hello packet"
+    out = evaluate_assemble(
+        {"admitted": True},
+        {
+            "admitted": True,
+            "job": "conductor",
+            "row_id": row_id,
+            "ledger_purpose": "ship it",
+            "packet_markdown": packet,
+            "packet_sha256": "old",
+        },
+    )
+    assert out["packet_markdown"].startswith(f"ledger_row: {row_id}\npurpose: ship it\n")
+    assert out["packet_markdown"].endswith(packet)
+
+
+def test_assemble_recomputes_packet_sha256() -> None:
+    """Break: packet_sha256 still digests the unprefixed markdown."""
+    from implement_admission.admission_read import compute_packet_sha256
+
+    row_id = "ef" * 16
+    out = evaluate_assemble(
+        {"admitted": True},
+        {
+            "admitted": True,
+            "job": "conductor",
+            "row_id": row_id,
+            "packet_markdown": "body",
+            "packet_sha256": "stale",
+        },
+    )
+    assert out["packet_sha256"] == compute_packet_sha256(out["packet_markdown"])
+    assert out["packet_sha256"] != "stale"
+
+
+def test_assemble_without_row_id_unchanged() -> None:
+    """Break: a plan with no row_id is rewritten or its sha changes."""
+    out = evaluate_assemble(
+        {"admitted": True},
+        {
+            "admitted": True,
+            "job": "conductor",
+            "packet_markdown": "body",
+            "packet_sha256": "kept",
+        },
+    )
+    assert out["packet_markdown"] == "body"
+    assert out["packet_sha256"] == "kept"
+
+
+@pytest.mark.asyncio
+async def test_enrich_does_not_set_row_id_on_plan() -> None:
+    """Break: enrich writes row_id onto the conductor plan."""
+    from types import SimpleNamespace
+    from unittest.mock import patch
+
+    from systems.frontier_consult.conductor_admit_enrich import (
+        enrich_conductor_admit_plan,
+    )
+
+    wrap = SimpleNamespace(
+        packet_markdown="pkt",
+        packet_sha256="sha",
+        packet_rel_path="rel",
+        birth_scoreboard_markdown=None,
+        gated=False,
+    )
+    body = SimpleNamespace(
+        job="conductor",
+        source_ref="todo:house",
+        packet_path=None,
+        hop_seq=0,
+        hop_from=None,
+        generation_options={},
+        dispatch_thread_id=None,
+        caller_agent=None,
+        prompt=None,
+    )
+    with patch(
+        "systems.frontier_consult.conductor_admit_enrich.prepare_conductor_packet",
+        return_value=wrap,
+    ):
+        out = await enrich_conductor_admit_plan(
+            body=body, plan={"admitted": True}, request_id="r-enrich"
+        )
+    assert "row_id" not in out
+    assert out["packet_markdown"] == "pkt"
+
+
 def test_handler_modules_do_not_import_frontier_consult() -> None:
     import importlib
     from pathlib import Path
