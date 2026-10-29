@@ -368,15 +368,17 @@ _last_healthy_copy_set_present() {
 
 _rollback_running_tree_from_last_healthy() {
   local base="${MCP_DATA_DIR}/last-healthy"
-  local c=mcp-server
+  _load_app_mount_destinations || return 1
   local name
   for name in libs services config pipelines; do
-    docker cp "${base}/${name}/." "${c}:/app/${name}/" || return 1
+    _tar_stream_tree "$base" "$name" "ROLLBACK_TAR_ROOT" || return 1
   done
   if [[ -d "${base}/pipelines.local" ]]; then
-    docker cp "${base}/pipelines.local/." "${c}:/app/pipelines.local/" || return 1
+    _tar_stream_tree "$base" pipelines.local "ROLLBACK_TAR_ROOT" || return 1
   fi
-  docker cp "${base}/sitecustomize.py" "${c}:/app/sitecustomize.py"
+  if [[ -f "${base}/sitecustomize.py" ]] && ! _container_path_hits_mount "/app/sitecustomize.py"; then
+    docker cp "${base}/sitecustomize.py" "mcp-server:/app/sitecustomize.py" || return 1
+  fi
 }
 
 _note_synced_root() {
@@ -549,20 +551,35 @@ mcp_sync_dry_run() {
   fi
 }
 
-_sync_tree_root_via_tar() {
-  local c=mcp-server root="$1" dest rel
-  [[ -d "${WORKSPACE_ROOT}/${root}" ]] || return 0
-  local -a tar_args=(-C "$WORKSPACE_ROOT" -cf -)
+_tar_stream_tree() {
+  local src_base="$1" root="$2" log_label="${3:-SYNC_TAR_ROOT}"
+  local c=mcp-server dest rel
+  [[ -d "${src_base}/${root}" ]] || return 0
+  local -a tar_create=(-C "$src_base" -cf -)
+  local -a tar_extract=(-xf - -C /app --no-same-owner --no-overwrite-dir)
   while IFS= read -r dest; do
     [[ -z "$dest" ]] && continue
     rel="${dest#/app/}"
     if [[ "$rel" == "$root" || "$rel" == "$root"/* ]]; then
-      tar_args+=(--exclude="$rel")
+      tar_create+=(--exclude="$rel")
+      tar_extract+=(--exclude="$rel")
     fi
   done <<< "${_APP_MOUNT_DESTINATIONS}"
-  tar_args+=(--exclude='*/__pycache__' --exclude='*.pyc' "$root")
-  echo "SYNC_TAR_ROOT ${root}"
-  tar "${tar_args[@]}" | docker exec -i -u 0 "$c" tar -xf - -C /app
+  tar_create+=(--exclude='*/__pycache__' --exclude='*.pyc' "$root")
+  tar_extract+=(--exclude='*/__pycache__' --exclude='*.pyc')
+  echo "${log_label} ${root}"
+  set +e
+  tar "${tar_create[@]}" | docker exec -i -u 0 "$c" tar "${tar_extract[@]}"
+  local rc_create=${PIPESTATUS[0]} rc_extract=${PIPESTATUS[1]}
+  set -e
+  if [[ "$rc_create" != 0 || "$rc_extract" != 0 ]]; then
+    mcp_sync_error "ERROR: ${log_label} ${root} failed (create=${rc_create} extract=${rc_extract})." >&2
+    return 1
+  fi
+}
+
+_sync_tree_root_via_tar() {
+  _tar_stream_tree "$WORKSPACE_ROOT" "$1" "SYNC_TAR_ROOT"
 }
 
 _sync_single_file_unless_mount() {
@@ -768,24 +785,35 @@ _mcp_container_running() {
 }
 
 _chown_mcp_app_tree() {
-  local c=mcp-server img
+  local c=mcp-server img dest prune_script
+  _load_app_mount_destinations || return 1
   img="$(docker inspect -f '{{.Config.Image}}' "$c" 2>/dev/null || true)"
   if [[ -z "$img" ]]; then
     mcp_sync_error "ERROR: cannot resolve image for ${c} chown." >&2
     return 1
   fi
-  if _mcp_container_running; then
-    docker exec -u 0 "$c" chown -R mcp:mcp \
-      /app/libs /app/services /app/config /app/pipelines /app/sitecustomize.py \
-      /app/pipelines.local /app/services/mcp-server/tools/local 2>/dev/null || \
-    docker exec -u 0 "$c" chown -R mcp:mcp \
-      /app/libs /app/services /app/config /app/pipelines /app/sitecustomize.py
-  else
-    docker run --rm --volumes-from "$c" --user 0 "$img" chown -R mcp:mcp \
-      /app/libs /app/services /app/config /app/pipelines /app/sitecustomize.py \
-      /app/pipelines.local /app/services/mcp-server/tools/local 2>/dev/null || \
-    docker run --rm --volumes-from "$c" --user 0 "$img" chown -R mcp:mcp \
-      /app/libs /app/services /app/config /app/pipelines /app/sitecustomize.py
+  prune_script=''
+  while IFS= read -r dest; do
+    [[ -z "$dest" ]] && continue
+    [[ "$dest" == /app/* ]] || continue
+    prune_script+=" \\( -path ${dest} \\) -prune -o"
+  done <<< "${_APP_MOUNT_DESTINATIONS}"
+  local -a runner=(docker exec -u 0 "$c")
+  if ! _mcp_container_running; then
+    runner=(docker run --rm --volumes-from "$c" --user 0 "$img")
+  fi
+  if ! "${runner[@]}" sh -c "
+      set -e
+      for root in libs services config pipelines pipelines.local services/mcp-server/tools/local; do
+        [[ -e \"/app/\${root}\" ]] || continue
+        find \"/app/\${root}\" ${prune_script} -exec chown mcp:mcp {} +
+      done
+      if [[ -f /app/sitecustomize.py ]]; then
+        find /app/sitecustomize.py ${prune_script} -exec chown mcp:mcp {} +
+      fi
+    "; then
+    mcp_sync_error "ERROR: chown of synced /app tree failed (bind mounts are pruned)." >&2
+    return 1
   fi
 }
 
@@ -1021,10 +1049,11 @@ else
   if [[ -n "$img" ]]; then
     if gate restore --firer script --checked-image-id "$img"; then
       echo "MCP_SYNC_GATE_RESTORE" >&2
+      wait_for_mcp_healthy || exit 1
     else
       echo "MCP_SYNC_TREE_STAMP_DISAGREE" >&2
+      exit 1
     fi
-    wait_for_mcp_healthy || exit 1
   else
     exit 1
   fi

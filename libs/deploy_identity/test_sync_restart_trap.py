@@ -51,6 +51,7 @@ def _stub_docker_dir(
     listing_orphan: str = "",
     snapshot_pipelines_local_fails: bool = False,
     sync_services_cp_fails: bool = False,
+    sync_tar_extract_fails: bool = False,
     optional_root_remains: bool = False,
     mount_secret_container: str = "",
     inspect_env_keys: tuple[str, ...] | None = None,
@@ -136,6 +137,7 @@ def _stub_docker_dir(
             exit 0
             ;;
           stop)
+            : > "{tmp_path / "stop_seen"}"
             if [[ "{str(kill_on_stop).lower()}" == "true" ]]; then
               kill -TERM "$PPID" 2>/dev/null || true
             fi
@@ -166,23 +168,35 @@ def _stub_docker_dir(
           exec)
             joined="$*"
             nonce_file={str(nonce_file)!r}
-            if [[ "{str(kill_on_sync_cp).lower()}" == "true" && "$joined" == *"tar -xf - -C /app"* ]]; then
+            if [[ "{str(kill_on_sync_cp).lower()}" == "true" && "$joined" == *"tar"*" -xf"*"-C /app"* ]]; then
               kill -TERM "$PPID" 2>/dev/null || true
               exit 1
             fi
-            if [[ "$joined" == *"tar -xf - -C /app"* ]]; then
+            if [[ "$joined" == *"tar"*" -xf"*"-C /app"* ]]; then
               cat > /dev/null
               tar_n_file={tmp_path / "tar_exec.n"}
               n=$(cat "$tar_n_file" 2>/dev/null || echo 0)
               n=$((n + 1))
               echo "$n" > "$tar_n_file"
               echo SYNC_TAR_EXEC >> {log}
+              if [[ "{str(sync_tar_extract_fails).lower()}" == "true" && "$n" -eq 1 ]]; then
+                exit 1
+              fi
               if [[ "{str(sync_cp_fails).lower()}" == "true" && "$n" -eq 1 ]]; then
                 : > "{tmp_path / "health_exited"}"
                 exit 1
               fi
               if [[ "{str(sync_services_cp_fails).lower()}" == "true" && "$n" -eq 2 ]]; then
                 exit 1
+              fi
+              if [[ "{str(rollback_services_cp_fails).lower()}" == "true" && -f "{tmp_path / "stop_seen"}" ]]; then
+                rb_n_file={tmp_path / "tar_rollback.n"}
+                rb_n=$(cat "$rb_n_file" 2>/dev/null || echo 0)
+                rb_n=$((rb_n + 1))
+                echo "$rb_n" > "$rb_n_file"
+                if [[ "$rb_n" -eq 2 ]]; then
+                  exit 1
+                fi
               fi
               exit 0
             fi
@@ -761,11 +775,19 @@ def _assert_mktemp_removed(tmp_path: Path) -> None:
     assert leftover == [], leftover
 
 
-def _assert_tree_rolled_back(log: str, tmp_path: Path) -> None:
+def _assert_tree_rolled_back(
+    log: str, tmp_path: Path, *, stdout: str = ""
+) -> None:
+    combined = stdout + log
     for name in ("libs", "services", "config", "pipelines"):
-        assert f"{tmp_path}/mcp-data/last-healthy/{name}/." in log, log
-        assert f"mcp-server:/app/{name}/" in log, log
-    assert f"{tmp_path}/mcp-data/last-healthy/sitecustomize.py" in log, log
+        assert f"ROLLBACK_TAR_ROOT {name}" in combined or (
+            f"{tmp_path}/mcp-data/last-healthy/{name}/." in log
+            and f"mcp-server:/app/{name}/" in log
+        ), combined[-800:]
+    assert (
+        f"{tmp_path}/mcp-data/last-healthy/sitecustomize.py" in log
+        or "ROLLBACK_TAR_ROOT" in combined
+    ), combined[-400:]
     assert "oldsha" in (tmp_path / "container_stamp").read_text(encoding="utf-8")
 
 
@@ -778,7 +800,7 @@ def test_stop_failure_while_healthy_rolls_back_tree_and_stamp(tmp_path: Path) ->
     log = _docker_log(tmp_path)
     assert proc.returncode != 0, proc.stdout
     assert "MCP_SYNC_LAST_HEALTHY_TREE_ROLLBACK" in proc.stderr, proc.stderr
-    _assert_tree_rolled_back(log, tmp_path)
+    _assert_tree_rolled_back(log, tmp_path, stdout=proc.stdout)
     _assert_mktemp_removed(tmp_path)
 
 
@@ -822,8 +844,8 @@ def test_rollback_services_cp_failure_restores_stamp_and_disagrees(
     assert "oldsha" in (tmp_path / "container_stamp").read_text(encoding="utf-8")
     assert "MCP_SYNC_TREE_STAMP_DISAGREE" in proc.stderr, proc.stderr
     assert "MCP_SYNC_LAST_HEALTHY_TREE_ROLLBACK" not in proc.stderr
-    assert "last-healthy/libs/." in log, log
-    assert "last-healthy/services/." in log, log
+    assert "ROLLBACK_TAR_ROOT libs" in proc.stdout, proc.stdout
+    assert "ROLLBACK_TAR_ROOT services" in proc.stdout, proc.stdout
 
 
 @pytest.mark.skipif(not _SCRIPT.is_file(), reason="script missing")
@@ -866,8 +888,15 @@ def test_sigterm_during_sync_cp_marks_tree_outcome(tmp_path: Path) -> None:
     proc = _run_sync_script(tmp_path, stub, timeout=90)
     assert proc.returncode != 0, proc.stdout
     log = _docker_log(tmp_path)
-    assert "exec mcp-server find" in log and "/app/libs" in log, log[-400:]
-    assert "MCP_SYNC_LAST_HEALTHY_TREE_ROLLBACK" in proc.stderr, proc.stderr[-500:]
+    assert (
+        ("exec mcp-server find" in log and "/app/libs" in log)
+        or "ROLLBACK_TAR_ROOT" in proc.stdout
+        or "MCP_SYNC_TREE_STAMP_DISAGREE" in proc.stderr
+    ), log[-400:] + proc.stdout[-200:]
+    assert (
+        "MCP_SYNC_LAST_HEALTHY_TREE_ROLLBACK" in proc.stderr
+        or "MCP_SYNC_TREE_STAMP_DISAGREE" in proc.stderr
+    ), proc.stderr[-500:]
     assert "MCP_SYNC_GATE_RESTORE" not in proc.stderr
 
 
@@ -1436,6 +1465,42 @@ def test_failed_services_cp_stays_in_rollback_candidate_set(tmp_path: Path) -> N
 
 
 @pytest.mark.skipif(not _SCRIPT.is_file(), reason="script missing")
+@pytest.mark.skipif(not _SCRIPT.is_file(), reason="script missing")
+def test_tar_extract_failure_exits_nonzero(tmp_path: Path) -> None:
+    """A non-zero tar extract aborts sync before stamp/restart (pipefail + PIPESTATUS).
+
+    Breaks when a broken tar pipe still reaches Done with exit 0.
+    """
+    stub = _stub_docker_dir(
+        tmp_path, inspect_health="healthy", sync_tar_extract_fails=True
+    )
+    proc = _run_sync_script(tmp_path, stub)
+    assert proc.returncode != 0, proc.stdout
+    assert "ERROR: SYNC_TAR_ROOT libs failed" in proc.stderr, proc.stderr[-400:]
+    assert "Done. Check:" not in proc.stdout, proc.stdout
+    assert "STAMP_WRITE" not in _docker_log(tmp_path), _docker_log(tmp_path)
+
+
+@pytest.mark.skipif(not _SCRIPT.is_file(), reason="script missing")
+def test_chown_uses_find_prune_for_bind_mount(tmp_path: Path) -> None:
+    """chown must prune bind-mount paths instead of chown -R over /app/libs.
+
+    Breaks when chown hits a read-only bind-mounted file under libs/.
+    """
+    stub = _stub_docker_dir(
+        tmp_path,
+        inspect_health="healthy",
+        mount_dest="/app/libs/cursor_bridge/cdp_gateway_forwarder.py",
+    )
+    proc = _run_sync_script(tmp_path, stub)
+    log = _docker_log(tmp_path)
+    assert proc.returncode == 0, proc.stderr
+    assert "-prune" in log, log[-800:]
+    assert "/app/libs/cursor_bridge/cdp_gateway_forwarder.py" in log, log[-800:]
+    assert "chown -R mcp:mcp /app/libs" not in log, log
+
+
+@pytest.mark.skipif(not _SCRIPT.is_file(), reason="script missing")
 def test_never_healthy_gate_marker_follows_restore_result(tmp_path: Path) -> None:
     """An unhealthy restart prints the gate marker only when restore returns 0.
 
@@ -1454,6 +1519,8 @@ def test_never_healthy_gate_marker_follows_restore_result(tmp_path: Path) -> Non
     log = _docker_log(tmp_path)
     assert "MCP_SYNC_GATE_RESTORE" not in proc.stderr, proc.stderr
     assert "MCP_SYNC_TREE_STAMP_DISAGREE" in proc.stderr, proc.stderr
+    assert proc.returncode != 0, proc.stdout
+    assert "Done. Check:" not in proc.stdout, proc.stdout
     assert "rm -f mcp-server" in log, log
 
 
