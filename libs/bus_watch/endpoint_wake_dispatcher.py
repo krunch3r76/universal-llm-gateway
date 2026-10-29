@@ -28,6 +28,13 @@ from bus_watch.endpoint_wake_transport import (
     StoreClient,
     classify_cse,
     classify_display,
+    classify_orion,
+)
+from web_chat_relay.orion_wake import (
+    DEFAULT_ORION_CDP_URL,
+    PINNED_CONVERSATION_ID,
+    PINNED_CONVERSATION_URL,
+    holder_conversation_url,
 )
 from bus_watch.ide_hop_land import expire_overdue_hop, expire_overdue_hops
 
@@ -704,6 +711,8 @@ def qualify(
 
     if to_agent in {"all", "team"} or not to_agent or to_agent == from_agent:
         return RuleVerdict(False, "drop_self_or_broadcast")
+    if to_agent == "orion" and from_agent == "orion":
+        return RuleVerdict(False, "drop_orion_echo")
     if to_agent in STAGE_MANAGER_ADDRESSES and from_agent in STAGE_MANAGER_ADDRESSES:
         return RuleVerdict(False, "drop_stage_mgr_echo")
     if (
@@ -875,6 +884,28 @@ def _apply_grok_window_overlay(
     return route, merged
 
 
+_ORION_HOUSE_THREAD = "21207"
+
+
+def _orion_synthetic_route(
+    agent: str, thread: str
+) -> tuple[str, dict[str, Any]] | None:
+    if normalize_bus_address(agent) != "orion":
+        return None
+    if str(thread).strip() != _ORION_HOUSE_THREAD:
+        return None
+    return (
+        "orion-house",
+        {
+            "surface": "chatgpt",
+            "display": "12",
+            "title": PINNED_CONVERSATION_URL,
+            "agent_id": PINNED_CONVERSATION_ID,
+            "state": "subscribed",
+        },
+    )
+
+
 def _window_binding_route(agent: str) -> tuple[str, dict[str, Any]] | None:
     """Synthetic grok subscription from the runtime routing file."""
     row = _grok_binding_row(agent)
@@ -924,6 +955,9 @@ def _resolve_delivery_route(
         bound = _window_binding_route(str(candidate))
         if bound is not None:
             return bound
+    bound = _orion_synthetic_route(agent, thread)
+    if bound is not None:
+        return bound
     return None
 
 
@@ -1058,6 +1092,48 @@ def _display_post(
     except httpx.ConnectError as exc:
         return classify_display(0, None, exc)
     except Exception as exc:  # noqa: BLE001 — table classifies; never raise
+        return "unknown", type(exc).__name__
+
+
+def _orion_post(
+    row: dict[str, Any],
+    sub: dict[str, Any],
+    turn: int | str,
+    *,
+    from_agent: str,
+) -> tuple[str, str]:
+    options = {
+        "thread": row["thread_id"],
+        "turn": turn,
+        "from_agent": from_agent,
+        "conversation_url": holder_conversation_url(sub),
+        "cdp_url": DEFAULT_ORION_CDP_URL,
+    }
+    body = {
+        "model": "orion-chat-wake",
+        "messages": [{"role": "user", "content": "wake"}],
+        "pipeline_options": options,
+    }
+    try:
+        with make_sync_client(DEFAULT_STARGATE_URL, timeout=45.0) as client:
+            response = client.post(
+                "/v1/chat/completions",
+                json=body,
+                headers={"X-ULG-Surface": "code"},
+            )
+        parsed: Any
+        try:
+            payload = response.json()
+            content = payload["choices"][0]["message"]["content"]
+            parsed = json.loads(content) if isinstance(content, str) else content
+        except (KeyError, IndexError, TypeError, json.JSONDecodeError, ValueError):
+            parsed = None
+        if response.status_code >= 400:
+            return classify_orion(parsed if isinstance(parsed, dict) else None)
+        return classify_orion(parsed)
+    except httpx.ConnectError:
+        return "pending", "connect"
+    except Exception as exc:  # noqa: BLE001
         return "unknown", type(exc).__name__
 
 
@@ -1608,8 +1684,34 @@ def fire_due_wakes(store: StoreClient) -> dict[str, Any] | None:
                 stamp_chat_url=stamp_url,
             )
         return claimed
+    if agent == "orion" or str(sub.get("surface") or "") == "chatgpt":
+        from_agent = str(rows[0].get("from_agent") or "")
+        if normalize_bus_address(from_agent) == "orion":
+            return _finish(
+                outcome="skipped",
+                reason="orion_echo_drop",
+                route="chatgpt",
+                subscription_id=sub.get("id"),
+                cse_registration_id=None,
+            )
+        turn_numbers = sorted({int(r["turn_number"]) for r in rows})
+        turn_arg: int | str = (
+            turn_numbers[0]
+            if len(turn_numbers) == 1
+            else ",".join(str(n) for n in turn_numbers)
+        )
+        state, reason = _orion_post(
+            rows[0], sub, turn_arg, from_agent=from_agent
+        )
+        return _finish(
+            outcome=state,
+            reason=reason,
+            route="chatgpt",
+            subscription_id=sub.get("id"),
+            cse_registration_id=None,
+        )
     turn_numbers = sorted({int(r["turn_number"]) for r in rows})
-    turn_arg: int | str = (
+    turn_arg = (
         turn_numbers[0]
         if len(turn_numbers) == 1
         else ",".join(str(n) for n in turn_numbers)

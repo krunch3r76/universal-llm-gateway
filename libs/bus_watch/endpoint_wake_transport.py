@@ -45,6 +45,28 @@ def agent_id_matches_composer_suffix(agent_id: str, suffix: str) -> bool:
     return aid.replace("-", "").startswith(suf.replace("-", ""))
 
 
+def classify_orion(body: Any) -> tuple[str, str]:
+    """Map an orion-chat-wake pipeline result onto delivery outcomes."""
+    if not isinstance(body, dict):
+        return "unknown", "unparseable"
+    reason = str(body.get("reason") or "")
+    if body.get("ok") and body.get("delivered"):
+        return "delivered", reason or "delivered"
+    if reason == "deferred_streaming":
+        return "pending", reason
+    if reason in {"cdp_unreachable", "conversation_missing"}:
+        return "pending", reason
+    if reason == "orion_echo_drop":
+        return "skipped", reason
+    if reason == "approval_unrecognized":
+        return "refused", reason
+    if body.get("pasted") and not body.get("delivered"):
+        return "unknown", reason or "delivery_unconfirmed"
+    if body.get("ok") is False:
+        return "refused", reason or "refused"
+    return "unknown", reason or "unnamed"
+
+
 def classify_display(
     status_code: int, body: Any, error: BaseException | None
 ) -> tuple[str, str]:
