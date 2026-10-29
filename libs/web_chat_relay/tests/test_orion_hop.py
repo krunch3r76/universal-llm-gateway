@@ -3,20 +3,28 @@
 from __future__ import annotations
 
 import re
+import threading
+from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
 import pytest
 from web_chat_relay.orion_hop import (
     ORION_IDENTITY_TOKEN,
+    ORION_REGISTRATION_SUBJECT,
     STANDING_HANDOFF_URI,
     OrionWakeDedupeLedger,
     OrionWakeTargetRollback,
+    build_hop_attempt,
     build_hop_paste_text,
     build_identity_pointer_line,
+    deliver_orion_chat_wake,
     orion_hop,
     parse_orion_seat_registration,
     preflight_standing_handoff,
+    repin_orion_wake_conversation,
+    resolve_orion_wake_conversation_url,
 )
+from web_chat_relay.orion_hop_storage import OrionHopStorage
 from web_chat_relay.orion_wake import PINNED_CONVERSATION_URL
 
 pytestmark = pytest.mark.offline
@@ -433,21 +441,48 @@ async def test_seat_registration_requires_identity_old_new_and_handoff_sha() -> 
     assert parsed["old_conversation_url"] == PINNED_CONVERSATION_URL
     assert parse_orion_seat_registration({**reg, "from": "maestro"}) is None
     assert parse_orion_seat_registration({**reg, "body": body.replace(HANDOFF_SHA, "")}) is None
+    assert (
+        parse_orion_seat_registration(
+            {**reg, "subject": "SEAT_REGISTRATION|different-seat"}
+        )
+        is None
+    )
 
 
-def test_wake_target_commits_only_after_smoke_delivered() -> None:
+def test_wake_target_commits_only_after_bound_smoke() -> None:
+    attempt = build_hop_attempt(
+        old_url=PINNED_CONVERSATION_URL,
+        new_url=NEW_URL,
+        handoff_read_sha256=HANDOFF_SHA,
+    )
     holder = OrionWakeTargetRollback(PINNED_CONVERSATION_URL)
-    fail = holder.commit_after_smoke(candidate_url=NEW_URL, smoke={"delivered": False})
-    assert fail["reason"] == "smoke_not_delivered"
+    fail = holder.commit_after_smoke(
+        candidate_url=NEW_URL,
+        smoke={"ok": True, "delivered": True},
+        attempt=attempt,
+    )
+    assert fail["reason"] == "smoke_not_bound"
     assert holder.wake_target_url == PINNED_CONVERSATION_URL
-    ok = holder.commit_after_smoke(candidate_url=NEW_URL, smoke={"delivered": True})
+    ok = holder.commit_after_smoke(
+        candidate_url=NEW_URL,
+        smoke={
+            "ok": True,
+            "delivered": True,
+            "attempt_id": attempt.attempt_id,
+            "candidate_url": NEW_URL,
+        },
+        attempt=attempt,
+    )
     assert ok["ok"] is True
     assert holder.wake_target_url == NEW_URL
 
 
 @pytest.mark.asyncio
-async def test_wake_dedupe_duplicate_suppressed_returns_first_receipt() -> None:
-    ledger = OrionWakeDedupeLedger()
+async def test_wake_dedupe_duplicate_suppressed_returns_first_receipt(
+    tmp_path: Path,
+) -> None:
+    store = OrionHopStorage(root=tmp_path / "orion-a")
+    ledger = OrionWakeDedupeLedger(store)
     calls = 0
 
     async def _deliver() -> dict:
@@ -461,6 +496,218 @@ async def test_wake_dedupe_duplicate_suppressed_returns_first_receipt() -> None:
     assert second["reason"] == "duplicate_suppressed"
     assert second["first_receipt"]["n"] == 1
     assert calls == 1
+
+
+@pytest.mark.asyncio
+async def test_wake_dedupe_survives_storage_reopen(tmp_path: Path) -> None:
+    root = tmp_path / "orion-reopen"
+    store = OrionHopStorage(root=root)
+    ledger = OrionWakeDedupeLedger(store)
+    calls = 0
+
+    async def _deliver() -> dict:
+        nonlocal calls
+        calls += 1
+        return {"ok": True, "delivered": True, "pasted": True}
+
+    await ledger.deliver(thread="21207", turn=3, endpoint_url=NEW_URL, deliver_fn=_deliver)
+    ledger2 = OrionWakeDedupeLedger(OrionHopStorage(root=root))
+    second = await ledger2.deliver(
+        thread="21207", turn=3, endpoint_url=NEW_URL, deliver_fn=_deliver
+    )
+    assert second["reason"] == "duplicate_suppressed"
+    assert calls == 1
+
+
+def test_concurrent_claim_allows_one_delivery(tmp_path: Path) -> None:
+    store = OrionHopStorage(root=tmp_path / "orion-conc")
+    barrier = threading.Barrier(2)
+    statuses: list[str] = []
+
+    def _worker() -> None:
+        barrier.wait()
+        status, _first = store.claim_delivery(
+            thread="21207", turn=5, endpoint_url=NEW_URL
+        )
+        statuses.append(status)
+
+    t1 = threading.Thread(target=_worker)
+    t2 = threading.Thread(target=_worker)
+    t1.start()
+    t2.start()
+    t1.join()
+    t2.join()
+    assert statuses.count("claim") == 1
+    assert len(statuses) == 2
+    assert "duplicate" in statuses or "in_flight" in statuses
+
+
+@pytest.mark.asyncio
+async def test_repin_without_writer_fails_closed() -> None:
+    body = (
+        f"TYPE: SEAT_REGISTRATION\n"
+        f"identity: {ORION_IDENTITY_TOKEN}\n"
+        f"old: {PINNED_CONVERSATION_URL}\n"
+        f"new: {NEW_URL}\n"
+        f"fs read {STANDING_HANDOFF_URI} read_sha256 {HANDOFF_SHA}\n"
+    )
+    reg = {"from": "orion", "subject": ORION_REGISTRATION_SUBJECT, "body": body}
+    attempt = build_hop_attempt(
+        old_url=PINNED_CONVERSATION_URL,
+        new_url=NEW_URL,
+        handoff_read_sha256=HANDOFF_SHA,
+    )
+    smoke = {
+        "ok": True,
+        "delivered": True,
+        "attempt_id": attempt.attempt_id,
+        "candidate_url": NEW_URL,
+    }
+    out = await repin_orion_wake_conversation(
+        object(),
+        registration=reg,
+        attempt=attempt,
+        smoke_receipt=smoke,
+    )
+    assert out["ok"] is False
+    assert out["reason"] == "wake_target_writer_missing"
+
+
+@pytest.mark.asyncio
+async def test_repin_cas_conflict_and_readback(tmp_path: Path) -> None:
+    store = OrionHopStorage(root=tmp_path / "orion-cas")
+    store.compare_and_set_wake_target(
+        expected_old=PINNED_CONVERSATION_URL,
+        new_url=SECOND_URL,
+    )
+    body = (
+        f"TYPE: SEAT_REGISTRATION\n"
+        f"identity: {ORION_IDENTITY_TOKEN}\n"
+        f"old: {PINNED_CONVERSATION_URL}\n"
+        f"new: {NEW_URL}\n"
+        f"fs read {STANDING_HANDOFF_URI} read_sha256 {HANDOFF_SHA}\n"
+    )
+    reg = {"from": "orion", "subject": ORION_REGISTRATION_SUBJECT, "body": body}
+    attempt = build_hop_attempt(
+        old_url=PINNED_CONVERSATION_URL,
+        new_url=NEW_URL,
+        handoff_read_sha256=HANDOFF_SHA,
+    )
+    smoke = {
+        "ok": True,
+        "delivered": True,
+        "attempt_id": attempt.attempt_id,
+        "candidate_url": NEW_URL,
+    }
+
+    class _Writer:
+        async def write_wake_target(self, *, expected_old: str, new_url: str) -> dict:
+            return {"ok": True, "wake_target_url": new_url}
+
+    class _Reader:
+        async def read_wake_target(self) -> str:
+            return SECOND_URL
+
+    out = await repin_orion_wake_conversation(
+        object(),
+        registration=reg,
+        attempt=attempt,
+        smoke_receipt=smoke,
+        storage=store,
+        writer=_Writer(),
+        reader=_Reader(),
+    )
+    assert out["reason"] == "wake_target_stale"
+
+
+@pytest.mark.asyncio
+async def test_repin_commits_with_writer_and_smoke(tmp_path: Path) -> None:
+    store = OrionHopStorage(root=tmp_path / "orion-repin")
+    body = (
+        f"TYPE: SEAT_REGISTRATION\n"
+        f"identity: {ORION_IDENTITY_TOKEN}\n"
+        f"old: {PINNED_CONVERSATION_URL}\n"
+        f"new: {NEW_URL}\n"
+        f"fs read {STANDING_HANDOFF_URI} read_sha256 {HANDOFF_SHA}\n"
+    )
+    reg = {"from": "orion", "subject": ORION_REGISTRATION_SUBJECT, "body": body}
+    attempt = build_hop_attempt(
+        old_url=PINNED_CONVERSATION_URL,
+        new_url=NEW_URL,
+        handoff_read_sha256=HANDOFF_SHA,
+    )
+    smoke = {
+        "ok": True,
+        "delivered": True,
+        "attempt_id": attempt.attempt_id,
+        "candidate_url": NEW_URL,
+    }
+    written: list[str] = []
+
+    class _Writer:
+        async def write_wake_target(self, *, expected_old: str, new_url: str) -> dict:
+            written.append(new_url)
+            return {"ok": True, "wake_target_url": new_url}
+
+    out = await repin_orion_wake_conversation(
+        object(),
+        registration=reg,
+        attempt=attempt,
+        smoke_receipt=smoke,
+        storage=store,
+        writer=_Writer(),
+    )
+    assert out["ok"] is True, out
+    assert written == [NEW_URL]
+    assert resolve_orion_wake_conversation_url(None, storage=store) == NEW_URL
+
+
+@pytest.mark.asyncio
+async def test_deliver_orion_chat_wake_integration_uses_ledger(tmp_path: Path) -> None:
+    from web_chat_relay.tests.test_orion_wake import _FakePage
+
+    store = OrionHopStorage(root=tmp_path / "orion-prod")
+    page = _FakePage(url=PINNED_CONVERSATION_URL)
+    first = await deliver_orion_chat_wake(
+        thread="21207",
+        turn=12,
+        from_agent="maestro",
+        page=page,
+        storage=store,
+    )
+    assert first["ok"] is True, first
+    calls = 0
+
+    async def _should_not_run() -> dict:
+        nonlocal calls
+        calls += 1
+        return {"ok": True, "delivered": True}
+
+    ledger = OrionWakeDedupeLedger(store)
+    second = await ledger.deliver(
+        thread="21207",
+        turn=12,
+        endpoint_url=PINNED_CONVERSATION_URL,
+        deliver_fn=_should_not_run,
+    )
+    assert second["reason"] == "duplicate_suppressed"
+    assert calls == 0
+
+
+@pytest.mark.asyncio
+async def test_orion_chat_wake_handler_calls_production_entry(tmp_path: Path) -> None:
+    from pipelines.orion_chat_wake.v1.handlers.wake import OrionChatWakeHandler
+
+    with patch(
+        "pipelines.orion_chat_wake.v1.handlers.wake.deliver_orion_chat_wake",
+        new_callable=AsyncMock,
+    ) as mocked:
+        mocked.return_value = {"ok": True, "reason": "delivered"}
+        handler = OrionChatWakeHandler()
+        ctx = type("Ctx", (), {"options": {"thread": "21207", "turn": 4, "from_agent": "maestro"}})()
+        out = await handler.execute(None, ctx)
+        mocked.assert_awaited_once()
+        assert out.json["reason"] == "delivered"
 
 
 @pytest.mark.asyncio
