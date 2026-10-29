@@ -10,6 +10,7 @@ A click on an already-open header closes it, so this module reads
 
 from __future__ import annotations
 
+import re
 from typing import Any
 
 from playwright.async_api import Page
@@ -104,6 +105,27 @@ async def _require_disclosure_open(page: Page, label: str) -> None:
     )
 
 
+def _is_code_compose_url(url: str) -> bool:
+    low = (url or "").lower()
+    return "/claude.ai/code" in low or low.rstrip("/").endswith("/code")
+
+
+async def _try_expand_code_context_rail(page: Page) -> bool:
+    """Click a /code sidebar Context control when Cowork headers are absent."""
+    locators = (
+        page.locator('[data-section-header][role="button"]').filter(
+            has_text=re.compile(r"^Context$", re.I)
+        ),
+        page.get_by_role("button", name=re.compile(r"^Context$", re.I)),
+    )
+    for loc in locators:
+        if await loc.count():
+            await loc.first.click(force=True)
+            await page.wait_for_timeout(400)
+            return True
+    return False
+
+
 async def expand_context_frame(page: Page) -> bool:
     """Confirm the Context section header is expanded before the scrape.
 
@@ -112,6 +134,19 @@ async def expand_context_frame(page: Page) -> bool:
     already-open header is not clicked, because the control toggles
     shut. Returns true when the section is open. Raises
     ``ChatContextSkillsError`` when the header stays closed.
+
+    On ``claude.ai/code``, Cowork ``data-section-header`` nodes may be
+    absent until a Playwright Context toggle is clicked once.
     """
+    state = await _read_disclosure(page, "Context")
+    if state.get("found"):
+        await _require_disclosure_open(page, "Context")
+        return True
+    if _is_code_compose_url(page.url or ""):
+        if await _try_expand_code_context_rail(page):
+            state = await _read_disclosure(page, "Context")
+            if state.get("found"):
+                await _require_disclosure_open(page, "Context")
+                return True
     await _require_disclosure_open(page, "Context")
     return True

@@ -19,6 +19,24 @@ from claude_bundles.events_skill_delivery import emit_skill_context_loaded
 logger = logging.getLogger(__name__)
 
 
+def _merge_compose_receipt(out: dict[str, Any], compose_receipt: dict[str, Any] | None) -> None:
+    if not compose_receipt:
+        return
+    for key in ("model_ran", "approval_mode", "current_model"):
+        val = compose_receipt.get(key)
+        if val:
+            out[key] = val
+
+
+def _code_rail_scrape_optional(exc: BaseException) -> bool:
+    from claude_bundles.chat_context_skills import ChatContextSkillsError
+
+    if not isinstance(exc, ChatContextSkillsError):
+        return False
+    msg = str(exc)
+    return "not on the rail" in msg or "still collapsed" in msg or "no toggle" in msg
+
+
 async def record_post_submit_skills_receipt(
     page: Page,
     *,
@@ -26,6 +44,8 @@ async def record_post_submit_skills_receipt(
     execution_id: str = "",
     satellite_execution_id: str = "",
     settle_ms: int = 1500,
+    claude_surface: str | None = None,
+    compose_receipt: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Best-effort scrape Context → Skills; emit observation; never raise.
 
@@ -44,6 +64,7 @@ async def record_post_submit_skills_receipt(
         "skipped": False,
         "error": None,
     }
+    _merge_compose_receipt(out, compose_receipt)
     if not req:
         out["skipped"] = True
         return out
@@ -52,6 +73,29 @@ async def record_post_submit_skills_receipt(
             await page.wait_for_timeout(settle_ms)
         report: LoadedSkillsReport = await scrape_loaded_skills(page)
     except Exception as exc:  # noqa: BLE001 — receipt must never fail submit
+        if (claude_surface or "").strip().lower() == "code" and _code_rail_scrape_optional(
+            exc
+        ):
+            logger.info(
+                "post-submit skills receipt skipped on /code (Context rail unavailable): %s",
+                exc,
+            )
+            out["ok"] = True
+            out["skipped"] = True
+            out["rail_unavailable"] = True
+            out["observed"] = []
+            out["missing"] = []
+            emit_skill_context_loaded(
+                ok=True,
+                required=req,
+                observed=[],
+                missing=[],
+                execution_id=execution_id,
+                satellite_execution_id=satellite_execution_id,
+                context_found=False,
+                skills_heading_found=False,
+            )
+            return out
         logger.info(
             "post-submit skills receipt scrape failed closed-soft: %s",
             exc,

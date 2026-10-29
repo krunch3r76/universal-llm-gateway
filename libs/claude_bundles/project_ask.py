@@ -574,6 +574,15 @@ async def _submit_composer_draft(
         compose_receipt["approval_mode"] = approval_mode_chip(fp)
 
 
+def _code_rail_induction_fallback(exc: BaseException) -> bool:
+    from claude_bundles.chat_context_skills import ChatContextSkillsError
+
+    if not isinstance(exc, ChatContextSkillsError):
+        return False
+    msg = str(exc)
+    return "not on the rail" in msg or "still collapsed" in msg or "no toggle" in msg
+
+
 async def send_prompt(
     page: Page,
     text: str,
@@ -627,6 +636,7 @@ async def send_prompt(
         partition_cdp_skills,
         render_skill_induction,
     )
+    from claude_bundles.chat_context_skills import ChatContextSkillsError
     from claude_bundles.skill_context_receipt import (
         record_post_submit_skills_receipt,
     )
@@ -652,6 +662,22 @@ async def send_prompt(
 
     await clear_composer_verified(page, composer)
     await page.wait_for_timeout(180)
+
+    async def _induction_observed_after_submit(
+        induction_slugs: list[str],
+        attached_out: list[str],
+    ) -> list[str]:
+        try:
+            panel = await wait_for_induction_panel(
+                page, induction_slugs, on_harvest=on_harvest
+            )
+            return list(panel.skills)
+        except ChatContextSkillsError as exc:
+            if (claude_surface or "").strip().lower() != "code":
+                raise
+            if _code_rail_induction_fallback(exc):
+                return list(attached_out or induction_slugs)
+            raise
 
     induction_observed: list[str] = []
     reply_baseline: dict | None = None
@@ -688,10 +714,9 @@ async def send_prompt(
             compose_receipt=compose_receipt,
         )
         try:
-            panel = await wait_for_induction_panel(
-                page, induction_slugs, on_harvest=on_harvest
+            induction_observed = await _induction_observed_after_submit(
+                induction_slugs, attached_out
             )
-            induction_observed = list(panel.skills)
             attest_delivery_channels(
                 required_for_induction,
                 attached=attached_out,
@@ -700,7 +725,7 @@ async def send_prompt(
                 execution_id=str(stargate_execution_id or ""),
                 satellite_execution_id=str(satellite_execution_id or ""),
             )
-        except (SkillDeliveryError, RuntimeError) as exc:
+        except SkillDeliveryError as exc:
             raise SkillReceiptUnverifiedError(str(exc), submitted=True) from exc
     else:
         if induction_slugs:
@@ -722,10 +747,9 @@ async def send_prompt(
                 claude_surface=claude_surface,
                 compose_receipt=compose_receipt,
             )
-            panel = await wait_for_induction_panel(
-                page, induction_slugs, on_harvest=on_harvest
+            induction_observed = await _induction_observed_after_submit(
+                induction_slugs, []
             )
-            induction_observed = list(panel.skills)
             if await_induction_reply:
                 from claude_bundles.induction_reply_baseline import (
                     capture_induction_reply_baseline,
@@ -765,6 +789,8 @@ async def send_prompt(
         required=required,
         execution_id=str(stargate_execution_id or ""),
         satellite_execution_id=str(satellite_execution_id or ""),
+        claude_surface=claude_surface,
+        compose_receipt=compose_receipt,
     )
     del missing, attach_notes
     return reply_baseline
