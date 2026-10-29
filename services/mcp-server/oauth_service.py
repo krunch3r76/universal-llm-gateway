@@ -21,6 +21,15 @@ from urllib.parse import urlencode, urlparse
 from mcp_events import record
 from oauth_config import OAuthServerConfig
 from oauth_models import AccessTokenRecord, AuthorizationCodeRecord, RegisteredClient
+from oauth_refresh import (
+    OAuthRefreshError,
+    RefreshExchangeRequest,
+    exchange_refresh_token as _exchange_refresh_token,
+    mint_access_and_refresh_tokens,
+    new_family_id,
+    token_response,
+    validate_refresh_exchange as _validate_refresh_exchange,
+)
 from oauth_store import OAuthStore
 
 logger = logging.getLogger(__name__)
@@ -144,13 +153,20 @@ class OAuthService:
         base = f"{self._config.issuer}{self._config.resource_metadata_path}"
         return f"{base}/{suffix}" if suffix else base
 
+    def resource_metadata_url_for_request_path(self, request_path: str) -> str:
+        """Map an incoming HTTP path to the protected-resource metadata URL."""
+        path = request_path.strip()
+        if path.startswith("/mcp/"):
+            return self.resource_metadata_url_for(path)
+        return f"{self._config.issuer}{self._config.resource_metadata_path}"
+
     def build_authorization_server_metadata(self) -> dict[str, object]:
         return {
             "issuer": self._config.issuer,
             "authorization_endpoint": self.authorization_endpoint,
             "token_endpoint": self.token_endpoint,
             "response_types_supported": ["code"],
-            "grant_types_supported": ["authorization_code"],
+            "grant_types_supported": ["authorization_code", "refresh_token"],
             "code_challenge_methods_supported": ["S256"],
             "token_endpoint_auth_methods_supported": ["none", "client_secret_post"],
             "registration_endpoint": self.registration_endpoint,
@@ -431,14 +447,12 @@ class OAuthService:
         # All validations passed — now consume the code
         self._store.mark_code_used(request.code)
 
-        access_token = secrets.token_urlsafe(48)
-        self._store.save_access_token(
-            AccessTokenRecord(
-                access_token=access_token,
-                client_id=request.client_id,
-                scope=code_record.scope,
-                expires_at=time.time() + _ACCESS_TOKEN_TTL_SECONDS,
-            )
+        family_id = new_family_id()
+        access_token, refresh_token = mint_access_and_refresh_tokens(
+            self._store,
+            client_id=request.client_id,
+            scope=code_record.scope,
+            family_id=family_id,
         )
         record(
             "mcp.oauth.token.issued",
@@ -446,12 +460,38 @@ class OAuthService:
             scope=code_record.scope,
             expires_in=_ACCESS_TOKEN_TTL_SECONDS,
         )
-        return {
-            "access_token": access_token,
-            "token_type": "Bearer",
-            "expires_in": _ACCESS_TOKEN_TTL_SECONDS,
-            "scope": code_record.scope,
-        }
+        return token_response(
+            access_token=access_token,
+            refresh_token=refresh_token,
+            scope=code_record.scope,
+        )
+
+    def validate_refresh_exchange(
+        self,
+        *,
+        grant_type: str,
+        refresh_token: str,
+        client_id: str,
+        client_secret: str | None,
+    ) -> RefreshExchangeRequest:
+        try:
+            return _validate_refresh_exchange(
+                self._store.fetch_client(client_id),
+                grant_type=grant_type,
+                refresh_token=refresh_token,
+                client_id=client_id,
+                client_secret=client_secret,
+            )
+        except OAuthRefreshError as exc:
+            raise OAuthError(exc.error, exc.description) from exc
+
+    def exchange_refresh_token(
+        self, request: RefreshExchangeRequest
+    ) -> dict[str, object]:
+        try:
+            return _exchange_refresh_token(self._store, request)
+        except OAuthRefreshError as exc:
+            raise OAuthError(exc.error, exc.description) from exc
 
     def validate_access_token(
         self,
@@ -501,10 +541,8 @@ def _granted_dynamic_grant_types(value: object) -> list[str]:
 def _valid_dynamic_grant_types(value: object) -> bool:
     """Return True for DCR grant metadata compatible with this server.
 
-    Some MCP clients register both authorization_code and refresh_token even
-    when the initial connection only needs the authorization-code flow.  We do
-    not issue refresh tokens, but accepting this metadata lets the client reach
-    the consent + token exchange path and rely on the returned grant_types.
+    MCP clients may register both authorization_code and refresh_token; the
+    token endpoint issues rotating refresh tokens for authorization-code grants.
     """
     if not isinstance(value, list):
         return False
