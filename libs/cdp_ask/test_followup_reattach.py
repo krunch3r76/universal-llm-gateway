@@ -1240,9 +1240,12 @@ def _k44_attach_patches(monkeypatch: pytest.MonkeyPatch) -> MagicMock:
 
 
 def _assert_k44_successor_row_unchanged(succ_id: str) -> None:
-    from claude_bundles import cdp_registry as reg
-
-    assert reg.chat_url_for_registration(succ_id) == CSE_K44_SUCC
+    snap = _succ_row_snapshot(succ_id)
+    assert snap["chat_url"] == CSE_K44_SUCC
+    assert snap["holder"] == "succ-chrome"
+    assert snap["seat_lane"] == K44_LANE
+    assert snap.get("seat_bound_at") is not None
+    assert snap.get("seat_closed_at") is None
 
 
 @pytest.mark.asyncio
@@ -1601,6 +1604,9 @@ def _succ_row_snapshot(succ_id: str) -> dict[str, Any]:
         "status": row.get("status"),
         "chat_url": row.get("chat_url"),
         "seat_closed_at": row.get("seat_closed_at"),
+        "holder": row.get("holder"),
+        "seat_lane": row.get("seat_lane") or row.get("parent_thread"),
+        "seat_bound_at": row.get("seat_bound_at"),
     }
 
 
@@ -1730,6 +1736,7 @@ async def test_k44_resume_host_lost_leaves_successor_unchanged(
     pred_id, succ_id = _seed_k44_superseded_dormant_predecessor()
     before = _succ_row_snapshot(succ_id)
     _restore_dormant_for_chat_url(monkeypatch)
+    _k44_attach_patches(monkeypatch)
     relaunch = MagicMock(
         side_effect=RegistryError(
             "registration has seat_closed_at set; "
@@ -1738,10 +1745,6 @@ async def test_k44_resume_host_lost_leaves_successor_unchanged(
     )
     monkeypatch.setattr(
         "cdp_ask.followup_reattach.cdp_registry.relaunch_dormant", relaunch
-    )
-    monkeypatch.setattr(
-        "claude_bundles.cdp_registry.tab_rows.inflight_row_for_chat_url",
-        lambda _url: None,
     )
     dispose = MagicMock()
     monkeypatch.setattr("cdp_ask.execution_resume._dispose_host", dispose)
@@ -1767,6 +1770,112 @@ async def test_k44_resume_host_lost_leaves_successor_unchanged(
     assert failed is not None
     assert failed.status == "failed"
     assert "dormant_relaunch_failed" in (failed.error or "")
+
+
+@pytest.mark.asyncio
+async def test_resume_refuses_page_only_borrow_guard(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """m1 guard 2: resume fails with resume_page_only_refused, not attach success."""
+    from cdp_ask.execution_resume import resume_execution
+    from cdp_ask.followup_reattach import ReattachOutcome
+
+    store = ExecutionStore()
+    record = await store.adopt(
+        execution_id="page-only-guard",
+        registration_id="pred-reg",
+        holder="h",
+        purpose="operator-proxy",
+        parent_thread=K44_LANE,
+        mission_kind=None,
+        started_at=1.0,
+        durable_state="streaming",
+    )
+    page = _FakePage()
+    page.url = CSE_A
+
+    async def _ensure(*_a: Any, **_k: Any) -> ReattachOutcome:
+        return ReattachOutcome(
+            ok=True,
+            registration_id="succ-reg",
+            page=page,
+            pw=_FakePw(),
+            page_only_borrow=True,
+            page_only_close_tab=True,
+        )
+
+    monkeypatch.setattr("cdp_ask.followup_reattach.ensure_cse_attached", _ensure)
+    monkeypatch.setattr(
+        "cdp_ask.execution_resume._row_for",
+        lambda _rid: {"chat_url": CSE_A, "status": "active"},
+    )
+    teardown = AsyncMock()
+    monkeypatch.setattr("cdp_ask.cse_session_harvest_open._teardown_opened", teardown)
+
+    await resume_execution(store, record, trigger="host_lost")
+
+    teardown.assert_awaited_once()
+    failed = await store.get("page-only-guard")
+    assert failed is not None
+    assert failed.status == "failed"
+    assert "resume_page_only_refused" in (failed.error or "")
+
+
+@pytest.mark.asyncio
+async def test_k44_page_only_teardown_closes_tab_opened_by_navigate(
+    isolated_registry: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """m4: K44 navigate path sets page_only_close_tab; harvest teardown closes it."""
+    from cdp_ask.cse_session_harvest_open import _teardown_opened
+    from cdp_ask.followup_reattach import ReattachOutcome
+
+    _pred_id, succ_id = _seed_k44_superseded_dormant_predecessor()
+    _restore_dormant_for_chat_url(monkeypatch)
+    relaunch = _k44_attach_patches(monkeypatch)
+    page = _FakePage()
+    page.url = CSE_A
+    outcome = ReattachOutcome(
+        ok=True,
+        registration_id=succ_id,
+        page=page,
+        pw=_FakePw(),
+        page_only_borrow=True,
+        page_only_close_tab=True,
+    )
+    await _teardown_opened(outcome)
+    assert page.closed is True
+    relaunch.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_k44_page_only_teardown_preserves_preexisting_tab(
+    isolated_registry: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """m4: K44 find_page reuse must not close the operator's existing tab."""
+    from cdp_ask.cse_session_harvest_open import _teardown_opened
+
+    _pred_id, succ_id = _seed_k44_superseded_dormant_predecessor()
+    _restore_dormant_for_chat_url(monkeypatch)
+    _k44_attach_patches(monkeypatch)
+    page = _FakePage()
+    page.url = CSE_A
+    monkeypatch.setattr(
+        "cdp_ask.followup_reattach.find_page_on_lane",
+        AsyncMock(return_value=(page, _FakePw())),
+    )
+    outcome = await ensure_cse_attached(
+        CSE_A,
+        holder="h",
+        allow_k44_superseded_page_only=True,
+    )
+    assert outcome.ok is True
+    assert outcome.page_only_borrow is True
+    assert outcome.page_only_close_tab is False
+    assert outcome.page is page
+    await _teardown_opened(outcome)
+    assert page.closed is False
 
 
 @pytest.mark.asyncio
@@ -3649,7 +3758,7 @@ async def test_followup_reattach_live_tab_is_page_only_borrow(
     host = registry._store.load_active()["pool-h"]
     assert not str(host.get("chat_url") or "").strip()
     await _reattach_teardown(outcome, retain_lane=False)
-    assert page.closed is True
+    assert page.closed is False
 
 
 @pytest.mark.asyncio

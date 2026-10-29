@@ -213,7 +213,7 @@ async def resume_execution(
             record,
             trigger=trigger,
             chat_url=chat_url,
-            code="dormant_relaunch_failed",
+            code="resume_page_only_refused",
         )
         return
 

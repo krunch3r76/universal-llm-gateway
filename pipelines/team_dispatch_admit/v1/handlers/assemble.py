@@ -3,10 +3,15 @@
 from __future__ import annotations
 
 import json
+import re
 from typing import Any, override
 
+from cursor_bridge.spawn_endpoint_house_ledger import format_ledger_prompt_prefix
+from implement_admission.admission_read import compute_packet_sha256
 from systems.pipeline.core.handlers.builtin import BaseHandler
 from systems.pipeline.core.handlers.protocol import StepOutput
+
+_ROW_ID_RE = re.compile(r"^[0-9a-f]{32}$")
 
 
 def _turn0_budget_from_plan(plan: dict[str, Any]) -> dict[str, Any]:
@@ -46,6 +51,18 @@ def evaluate_assemble(
     plan = dict(defaults_out)
     plan["skill_rows"] = []
     plan["admitted"] = True
+    row_id = str(plan.get("row_id") or "").strip()
+    packet = str(plan.get("packet_markdown") or "")
+    if (
+        plan.get("job") == "conductor"
+        and packet
+        and _ROW_ID_RE.match(row_id)
+    ):
+        purpose = str(plan.get("ledger_purpose") or "(unstated)")
+        prefix = format_ledger_prompt_prefix(row_id=row_id, purpose=purpose)
+        if prefix:
+            plan["packet_markdown"] = prefix + packet
+            plan["packet_sha256"] = compute_packet_sha256(plan["packet_markdown"])
     if plan.get("job") == "conductor" and plan.get("packet_markdown"):
         plan["turn0_budget"] = _turn0_budget_from_plan(plan)
     return plan

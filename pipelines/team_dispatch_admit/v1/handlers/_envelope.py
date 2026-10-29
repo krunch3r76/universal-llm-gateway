@@ -6,7 +6,7 @@ from typing import Any, Literal
 
 from model_id import ModelId
 
-Backend = Literal["cdp", "cursor_sdk", "api_role", "frontier"]
+Backend = Literal["cdp", "cursor_sdk", "api_role", "frontier", "cursor_ide"]
 
 
 def is_cdp_model(model: str | None) -> bool:

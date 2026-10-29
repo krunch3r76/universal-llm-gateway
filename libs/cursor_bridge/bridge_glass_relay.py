@@ -99,14 +99,6 @@ def relay_rename_tab(
 ) -> dict[str, Any]:
     debug_url = cursor_debug_url_for_gui_host(gui_host)
     res = rename_agent_row_in_sidebar(agent_id, title, debug_url=debug_url)
-    record_tab_wake(
-        gui_host=gui_host,
-        agent_id=agent_id,
-        op="rename_tab",
-        ok=bool(res.get("ok")),
-        reason=str(res.get("reason") or ""),
-        detail={"title": title, "thread": thread},
-    )
     out = {**res, "op": "rename_tab", "gui_host": gui_host}
     if res.get("ok"):
         out["tab_ready_instruction"] = tab_ready_instruction(title)

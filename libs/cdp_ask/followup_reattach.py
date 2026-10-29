@@ -51,6 +51,7 @@ class ReattachOutcome:
     seat_snapshot_holder_id: str | None = None
     seat_snapshot_bound_at: float | None = None
     page_only_borrow: bool = False
+    page_only_close_tab: bool = False
 
 
 def _lane_order(
@@ -359,6 +360,7 @@ async def _attach_k44_predecessor_page_only(
     found = await find_page_on_lane(lane.cdp_url, chat_url)
     if found is not None:
         page, pw = found
+        close_tab = False
     else:
         opened = await _navigate_new_page(lane, chat_url)
         if opened is None:
@@ -368,6 +370,7 @@ async def _attach_k44_predecessor_page_only(
                 registration_id=successor_id,
             )
         page, pw = opened
+        close_tab = True
     return ReattachOutcome(
         ok=True,
         registration_id=successor_id,
@@ -379,6 +382,7 @@ async def _attach_k44_predecessor_page_only(
         prior_chat_url=prior,
         reattach_bound_chat_url=None,
         page_only_borrow=True,
+        page_only_close_tab=close_tab,
     )
 
 
@@ -631,6 +635,7 @@ async def ensure_cse_attached(
                     prior_chat_url=prior,
                     reattach_bound_chat_url=bound,
                     page_only_borrow=page_only,
+                    page_only_close_tab=False,
                 )
             )
         opened = await _navigate_new_page(lane, chat_url)
@@ -653,6 +658,7 @@ async def ensure_cse_attached(
                 prior_chat_url=prior,
                 reattach_bound_chat_url=bound,
                 page_only_borrow=page_only,
+                page_only_close_tab=page_only,
             )
         )
 
@@ -687,5 +693,6 @@ async def ensure_cse_attached(
             prior_chat_url=prior,
             reattach_bound_chat_url=bound,
             page_only_borrow=page_only,
+            page_only_close_tab=page_only,
         )
     )
