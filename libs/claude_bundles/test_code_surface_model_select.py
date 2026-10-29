@@ -8,7 +8,9 @@ import pytest
 
 from claude_bundles.project_ask import (
     _apply_code_surface_model_picker,
+    _assert_code_surface_model_before_send,
     _compose_model_selected,
+    _effort_token_from_code_toolbar,
 )
 
 pytestmark = pytest.mark.offline
@@ -113,15 +115,36 @@ async def test_apply_code_surface_model_picker_clicks_menuitemradio() -> None:
     sonnet_radio.first.click = AsyncMock(side_effect=_pick_sonnet)
     page.get_by_role = MagicMock(return_value=sonnet_radio)
 
-    with patch(
-        "claude_bundles.project_ask.current_model_label",
-        new=AsyncMock(return_value=""),
+    set_effort = AsyncMock(return_value=True)
+    with (
+        patch(
+            "claude_bundles.project_ask.current_model_label",
+            new=AsyncMock(return_value=""),
+        ),
+        patch(
+            "claude_bundles.project_ask._code_surface_set_effort_from_menu",
+            new=set_effort,
+        ),
     ):
         result = await _apply_code_surface_model_picker(page, "sonnet-5.5-medium")
 
     assert result["ok"] is True
     assert result["step"] == "code_surface_model_picked"
     sonnet_radio.first.click.assert_awaited_once()
+    set_effort.assert_awaited_once_with(page, "medium")
+
+
+def test_effort_token_from_code_toolbar() -> None:
+    assert _effort_token_from_code_toolbar("Model: Opus 5.5 Medium") == "medium"
+    assert _effort_token_from_code_toolbar("Model: Sonnet 5.5 High") == "high"
+
+
+def test_assert_code_surface_uses_toolbar_effort_token() -> None:
+    """R25: gate matches Effort submenu text (Medium), not sealed default (High) alone."""
+    _assert_code_surface_model_before_send(
+        "opus-5.5-medium",
+        {"model_ran": "Model: Opus 5.5 Medium", "current_model": "Model: Opus 5.5 Medium"},
+    )
 
 
 @pytest.mark.asyncio

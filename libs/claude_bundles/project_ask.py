@@ -133,6 +133,15 @@ def artifact_cards_from_state(state: dict[str, Any]) -> list[dict[str, str]]:
     return cards
 
 
+def _effort_token_from_code_toolbar(label: str) -> str | None:
+    """Parse effort word from /code toolbar ``Model: … Medium`` (R24 Effort submenu)."""
+    tail = (label or "").split(":", 1)[-1].lower()
+    for tok in ("extra", "high", "medium", "low"):
+        if re.search(rf"\b{re.escape(tok)}\b", tail):
+            return tok
+    return None
+
+
 def _assert_code_surface_model_before_send(requested: str, model_info: dict[str, Any]) -> None:
     """Fail closed on /code when the page model label does not match the request.
 
@@ -149,7 +158,9 @@ def _assert_code_surface_model_before_send(requested: str, model_info: dict[str,
     family, effort = parse_model_request(req)
     if effort is None:
         effort = sealed_ask_default_effort(family)
-    if not label_satisfies_request(req, label, effort=effort):
+    toolbar_effort = _effort_token_from_code_toolbar(label)
+    check_effort = toolbar_effort if toolbar_effort is not None else effort
+    if not label_satisfies_request(req, label, effort=check_effort):
         raise RuntimeError(f"model attestation mismatch: wanted {req!r}, got {label!r}")
 
 
@@ -838,11 +849,12 @@ async def _apply_code_surface_model_picker(page: Page, requested: str) -> dict[s
     await page.wait_for_timeout(500)
     await page.keyboard.press("Escape")
     await page.wait_for_timeout(300)
-    after = await _read_code_surface_model_label(page) or ""
-    if not label_satisfies_request(req, after, effort=effort) and effort:
+    if effort:
         await _code_surface_set_effort_from_menu(page, effort)
-        after = await _read_code_surface_model_label(page) or ""
-    if not label_satisfies_request(req, after, effort=effort):
+    after = await _read_code_surface_model_label(page) or ""
+    toolbar_effort = _effort_token_from_code_toolbar(after)
+    check_effort = toolbar_effort if toolbar_effort is not None else effort
+    if not label_satisfies_request(req, after, effort=check_effort):
         return {
             "ok": False,
             "step": "code_surface_model_pick_unverified",
