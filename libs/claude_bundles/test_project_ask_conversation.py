@@ -667,7 +667,7 @@ async def test_code_surface_model_mismatch_fails_before_send_prompt() -> None:
     assert results[0].ok is False
     assert results[0].body_len == 0
     assert "model attestation mismatch" in (results[0].error or "")
-    assert "sonnet-5-5" in (results[0].error or "")
+    assert "sonnet-5.5" in (results[0].error or "")
 
 
 def test_assert_code_surface_skips_unknown_compose_label() -> None:

@@ -453,6 +453,7 @@ async def run_project_conversation(
     satellite_execution_id: str = "",
     purpose: str = "ask",
     target_id: str | None = None,
+    claude_surface: str | None = None,
 ) -> list[ProjectAskResult]:
     """N-turn consult on one chat. First opens compose; later turns follow up.
 
@@ -473,7 +474,13 @@ async def run_project_conversation(
 
             page = await select_page_by_target_id(ctx, target_id)
         else:
-            page = await pick_chat_page(ctx, prefer_url_substr="/new")
+            prefer = (
+                "/code"
+                if (claude_surface or "").strip().lower() == "code"
+                or (compose_url and "claude.ai/code" in compose_url)
+                else "/new"
+            )
+            page = await pick_chat_page(ctx, prefer_url_substr=prefer)
         if project_uuid:
             first = await project_ask_on_page(
                 page,
@@ -499,6 +506,7 @@ async def run_project_conversation(
                 model,
                 compose_url=url,
                 ensure_cowork_auto=ensure_cowork_auto,
+                claude_surface=claude_surface,
                 stargate_execution_id=stargate_execution_id,
                 satellite_execution_id=satellite_execution_id,
             )
@@ -547,6 +555,8 @@ async def run_project_conversation(
                     satellite_execution_id=satellite_execution_id,
                     await_induction_reply=True,
                     on_harvest=on_harvest,
+                    claude_surface=claude_surface,
+                    compose_receipt=model_info,
                 )
             except SkillReceiptUnverifiedError as exc:
                 if not exc.submitted:

@@ -26,10 +26,15 @@ if TYPE_CHECKING:
 from chat_harvest.chrome import strip_chrome
 
 from claude_bundles.chat_model_match import (
+    index_for_named_radio,
+    match_model_request,
     normalize_picker_request,
+    prefer_model_name_index,
+    radio_own_name,
     sealed_ask_default_effort,
 )
 from claude_bundles.chat_model_select import (
+    current_model_label,
     label_satisfies_request,
     parse_model_request,
     picker_attests_request,
@@ -47,10 +52,11 @@ from claude_bundles.chat_session_hygiene import (
     pick_chat_page,
 )
 from claude_bundles.compose_attest import (
+    approval_mode_chip,
     await_compose_attest,
     await_submit_visible,
     compose_mode_fingerprint,
-    cowork_auto_refuse_reason,
+    dispatch_approval_refuse_reason,
     resolve_submit_strategy,
 )
 from claude_bundles.cowork_output_download import (
@@ -130,7 +136,51 @@ def artifact_cards_from_state(state: dict[str, Any]) -> list[dict[str, str]]:
     return cards
 
 
-def _assert_code_surface_model_before_send(requested: str, model_info: dict[str, Any]) -> None:
+def _effort_token_from_code_toolbar(label: str) -> str | None:
+    """Parse effort word from /code toolbar ``Model: … Medium`` (R24 Effort submenu)."""
+    tail = (label or "").split(":", 1)[-1].lower()
+    for tok in ("extra", "max", "high", "medium", "low"):
+        if re.search(rf"\b{re.escape(tok)}\b", tail):
+            return tok
+    return None
+
+
+def _code_menu_family_for_match(family: str) -> str:
+    """Map wire families like ``sonnet-5-5`` to menu dots ``sonnet-5.5`` for UI labels."""
+    fam = (family or "").strip().lower()
+    m = re.match(r"^(.*)-(\d+)-(\d+)$", fam)
+    if m:
+        return f"{m.group(1)}-{m.group(2)}.{m.group(3)}"
+    return fam
+
+
+def _code_surface_normalize_request(requested: str) -> tuple[str, str | None, str]:
+    """Return ``(verify_req, parsed_effort, menu_family)`` for /code attestation."""
+    req = normalize_picker_request(requested or "")
+    family, parsed_effort = parse_model_request(req)
+    menu_family = _code_menu_family_for_match(family)
+    verify_req = f"{menu_family}-{parsed_effort}" if parsed_effort else menu_family
+    return verify_req, parsed_effort, menu_family
+
+
+def _code_surface_check_effort(
+    *,
+    menu_family: str,
+    parsed_effort: str | None,
+    label: str,
+) -> str | None:
+    """Effort for ``label_satisfies_request``: explicit request wins, else toolbar, else sealed default."""
+    if parsed_effort is not None:
+        return parsed_effort
+    toolbar = _effort_token_from_code_toolbar(label)
+    if toolbar is not None:
+        return toolbar
+    return sealed_ask_default_effort(menu_family)
+
+
+def _assert_code_surface_model_before_send(
+    requested: str, model_info: dict[str, Any]
+) -> None:
     """Fail closed on /code when the page model label does not match the request.
 
     Runs after ``code_surface_page_model`` and before ``send_prompt`` so a mismatch
@@ -139,15 +189,19 @@ def _assert_code_surface_model_before_send(requested: str, model_info: dict[str,
     Unreadable labels (empty or the compose ``unknown`` sentinel) defer to post-harvest
     ``_attest_model``, matching its soft ``None`` when no label is available.
     """
-    label = (model_info.get("model_ran") or model_info.get("current_model") or "").strip()
+    label = (
+        model_info.get("model_ran") or model_info.get("current_model") or ""
+    ).strip()
     if not label or label.lower() == "unknown":
         return
-    req = normalize_picker_request(requested or "")
-    family, effort = parse_model_request(req)
-    if effort is None:
-        effort = sealed_ask_default_effort(family)
-    if not label_satisfies_request(req, label, effort=effort):
-        raise RuntimeError(f"model attestation mismatch: wanted {req!r}, got {label!r}")
+    verify_req, parsed_effort, menu_family = _code_surface_normalize_request(requested)
+    check_effort = _code_surface_check_effort(
+        menu_family=menu_family, parsed_effort=parsed_effort, label=label
+    )
+    if not label_satisfies_request(verify_req, label, effort=check_effort):
+        raise RuntimeError(
+            f"model attestation mismatch: wanted {verify_req!r}, got {label!r}"
+        )
 
 
 def _attest_model(
@@ -161,12 +215,14 @@ def _attest_model(
     label = (state.get("model_label") or selected.get("current_model") or "").strip()
     if not label:
         return None
-    req = normalize_picker_request(requested or "")
-    family, effort = parse_model_request(req)
-    if effort is None:
-        effort = sealed_ask_default_effort(family)
-    if not label_satisfies_request(req, label, effort=effort):
-        raise RuntimeError(f"model attestation mismatch: wanted {req!r}, got {label!r}")
+    verify_req, parsed_effort, menu_family = _code_surface_normalize_request(requested)
+    check_effort = _code_surface_check_effort(
+        menu_family=menu_family, parsed_effort=parsed_effort, label=label
+    )
+    if not label_satisfies_request(verify_req, label, effort=check_effort):
+        raise RuntimeError(
+            f"model attestation mismatch: wanted {verify_req!r}, got {label!r}"
+        )
     return label
 
 
@@ -452,13 +508,19 @@ async def _submit_composer_draft(
     *,
     composer,
     draft_text: str,
+    claude_surface: str | None = None,
+    compose_receipt: dict | None = None,
 ) -> None:
     """Submit the current composer draft; fail-closed when controls are missing."""
     from claude_bundles.chat_cowork_mode import ensure_approval_auto
 
-    auto = await ensure_approval_auto(page)
-    fp = auto.get("after") or await compose_mode_fingerprint(page)
-    refuse = cowork_auto_refuse_reason(fp)
+    surf = (claude_surface or "").strip().lower() or None
+    if surf == "code":
+        fp = await compose_mode_fingerprint(page)
+    else:
+        auto = await ensure_approval_auto(page)
+        fp = auto.get("after") or await compose_mode_fingerprint(page)
+    refuse = dispatch_approval_refuse_reason(fp, surface=claude_surface)
     if refuse:
         raise RuntimeError(refuse)
 
@@ -508,6 +570,9 @@ async def _submit_composer_draft(
 
             await prove_composer_submitted(page, draft_text)
 
+    if compose_receipt is not None and surf == "code":
+        compose_receipt["approval_mode"] = approval_mode_chip(fp)
+
 
 async def send_prompt(
     page: Page,
@@ -517,6 +582,8 @@ async def send_prompt(
     satellite_execution_id: str = "",
     await_induction_reply: bool = False,
     on_harvest: Callable[[dict], Awaitable[None]] | None = None,
+    claude_surface: str | None = None,
+    compose_receipt: dict | None = None,
 ) -> dict | None:
     """Clear the composer, attach leading slash skills, then click submit.
 
@@ -613,7 +680,13 @@ async def send_prompt(
             induction=induction_slugs,
         )
         await page.wait_for_timeout(600)
-        await _submit_composer_draft(page, composer=composer, draft_text=draft)
+        await _submit_composer_draft(
+            page,
+            composer=composer,
+            draft_text=draft,
+            claude_surface=claude_surface,
+            compose_receipt=compose_receipt,
+        )
         try:
             panel = await wait_for_induction_panel(
                 page, induction_slugs, on_harvest=on_harvest
@@ -643,7 +716,11 @@ async def send_prompt(
             await page.keyboard.insert_text(induction_text)
             await page.wait_for_timeout(600)
             await _submit_composer_draft(
-                page, composer=composer, draft_text=induction_text
+                page,
+                composer=composer,
+                draft_text=induction_text,
+                claude_surface=claude_surface,
+                compose_receipt=compose_receipt,
             )
             panel = await wait_for_induction_panel(
                 page, induction_slugs, on_harvest=on_harvest
@@ -669,7 +746,13 @@ async def send_prompt(
             induction_observed=induction_observed,
         )
         await page.wait_for_timeout(600)
-        await _submit_composer_draft(page, composer=composer, draft_text=text)
+        await _submit_composer_draft(
+            page,
+            composer=composer,
+            draft_text=text,
+            claude_surface=claude_surface,
+            compose_receipt=compose_receipt,
+        )
 
     required_authority = extract_cdp_required_authority(text)
     attach_slugs, inline_slugs, _rest = parse_cdp_sealed_skill_channels(text)
@@ -687,6 +770,203 @@ async def send_prompt(
     return reply_baseline
 
 
+def _is_code_compose_surface(
+    *,
+    claude_surface: str | None,
+    compose_url: str | None,
+) -> bool:
+    if (claude_surface or "").strip().lower() == "code":
+        return True
+    url = (compose_url or "").lower()
+    return "/claude.ai/code" in url or url.rstrip("/").endswith("/code")
+
+
+async def _read_code_surface_model_label(page: Page) -> str:
+    """Read the model the /code UI exposes (no chat picker dropdown on this surface)."""
+    btn = page.locator('button[aria-label*="Model"]')
+    if await btn.count():
+        label = (
+            await btn.first.get_attribute("aria-label") or await btn.first.inner_text()
+        ).strip()
+        if label:
+            return label
+    return (await current_model_label(page)).strip()
+
+
+_CODE_SURFACE_MENU_LIST_RADIOS_JS = """() => {
+  const menu = document.querySelector('[role="menu"]');
+  if (!menu) return [];
+  function ownLabel(el) {
+    const aria = (el.getAttribute('aria-label') || '').trim();
+    if (aria) return aria;
+    const clone = el.cloneNode(true);
+    clone.querySelectorAll('[role="menuitemradio"]').forEach((n) => n.remove());
+    const raw = (clone.innerText || clone.textContent || '').trim();
+    return raw.split(/\\n/).map((s) => s.trim()).filter(Boolean)[0] || '';
+  }
+  return [...menu.querySelectorAll('[role="menuitemradio"]')].map((el) => ({
+    own: ownLabel(el),
+    full: ((el.getAttribute('aria-label') || el.textContent || '')).trim(),
+  }));
+}"""
+
+_CODE_SURFACE_MENU_CLICK_RADIO_JS = """(index) => {
+  const menu = document.querySelector('[role="menu"]');
+  if (!menu) return false;
+  const radios = [...menu.querySelectorAll('[role="menuitemradio"]')];
+  const el = radios[index];
+  if (!el) return false;
+  el.click();
+  return true;
+}"""
+
+
+async def _code_surface_menu_radio_rows(page: Page) -> list[dict[str, str]]:
+    """``menuitemradio`` rows scoped to the open /code ``role=menu`` flyout."""
+    raw = await page.evaluate(_CODE_SURFACE_MENU_LIST_RADIOS_JS)
+    rows: list[dict[str, str]] = []
+    for item in raw or []:
+        if not isinstance(item, dict):
+            continue
+        rows.append(
+            {
+                "own": str(item.get("own") or "").strip(),
+                "full": str(item.get("full") or "").strip(),
+            }
+        )
+    return rows
+
+
+async def _code_surface_set_effort_from_menu(page: Page, effort: str) -> bool:
+    """Use the /code model flyout ``Effort`` row (R24 probe: menuitem + submenu)."""
+    token = (effort or "").strip().title()
+    if not token:
+        return False
+    if not await _open_code_surface_model_menu(page):
+        return False
+    item = page.get_by_role("menuitem", name="Effort", exact=False)
+    if not await item.count():
+        await page.keyboard.press("Escape")
+        return False
+    await item.first.click()
+    await page.wait_for_timeout(400)
+    opt = page.get_by_role("menuitemradio", name=token, exact=False)
+    if not await opt.count():
+        await page.keyboard.press("Escape")
+        return False
+    await opt.first.click(force=True)
+    await page.wait_for_timeout(400)
+    await page.keyboard.press("Escape")
+    return True
+
+
+async def _open_code_surface_model_menu(page: Page) -> bool:
+    btn = page.locator('button[aria-label*="Model"]')
+    if not await btn.count():
+        return False
+    await btn.first.click()
+    await page.wait_for_timeout(600)
+    return await page.locator('[role="menu"]').count() > 0
+
+
+async def _apply_code_surface_model_picker(
+    page: Page, requested: str
+) -> dict[str, Any]:
+    """Open the /code model menu and pick a ``menuitemradio`` for *requested*."""
+    verify_req, parsed_effort, menu_family = _code_surface_normalize_request(
+        requested or ""
+    )
+    menu_effort = (
+        parsed_effort
+        if parsed_effort is not None
+        else sealed_ask_default_effort(menu_family)
+    )
+
+    def _label_ok(label: str) -> bool:
+        check = _code_surface_check_effort(
+            menu_family=menu_family, parsed_effort=parsed_effort, label=label
+        )
+        return label_satisfies_request(verify_req, label, effort=check)
+
+    before = await _read_code_surface_model_label(page) or ""
+    if before and _label_ok(before):
+        return {
+            "ok": True,
+            "step": "code_surface_already_selected",
+            "requested": verify_req,
+            "current_model": before,
+        }
+    if not await _open_code_surface_model_menu(page):
+        return {
+            "ok": False,
+            "step": "code_surface_model_button_missing",
+            "requested": verify_req,
+            "before": before,
+        }
+    rows = await _code_surface_menu_radio_rows(page)
+    available = [
+        radio_own_name(str(row.get("own") or ""))
+        for row in rows
+        if radio_own_name(str(row.get("own") or ""))
+    ]
+    matched = match_model_request(menu_family, available)
+    if not matched:
+        await page.keyboard.press("Escape")
+        return {
+            "ok": False,
+            "step": "code_surface_model_not_in_menu",
+            "requested": verify_req,
+            "available_models": available,
+        }
+    radio_index = index_for_named_radio(rows, matched)
+    if radio_index is None:
+        radio_index = prefer_model_name_index(menu_family, rows)
+    if radio_index is None:
+        await page.keyboard.press("Escape")
+        return {
+            "ok": False,
+            "step": "code_surface_model_radio_missing",
+            "requested": verify_req,
+            "matched": matched,
+        }
+    clicked = await page.evaluate(_CODE_SURFACE_MENU_CLICK_RADIO_JS, radio_index)
+    if clicked is not True:
+        await page.keyboard.press("Escape")
+        return {
+            "ok": False,
+            "step": "code_surface_model_radio_missing",
+            "requested": verify_req,
+            "matched": matched,
+        }
+    await page.wait_for_timeout(500)
+    await page.keyboard.press("Escape")
+    await page.wait_for_timeout(300)
+    if menu_effort:
+        if not await _code_surface_set_effort_from_menu(page, menu_effort):
+            return {
+                "ok": False,
+                "step": "code_surface_effort_menu_failed",
+                "requested": verify_req,
+                "effort": menu_effort,
+            }
+    after = await _read_code_surface_model_label(page) or ""
+    if not _label_ok(after):
+        return {
+            "ok": False,
+            "step": "code_surface_model_pick_unverified",
+            "requested": verify_req,
+            "before": before,
+            "after": after,
+        }
+    return {
+        "ok": True,
+        "step": "code_surface_model_picked",
+        "requested": verify_req,
+        "current_model": after,
+        "matched": matched,
+    }
+
+
 async def _compose_model_selected(
     page: Page,
     model: str,
@@ -694,6 +974,7 @@ async def _compose_model_selected(
     compose_url: str | None = None,
     project_uuid: str | None = None,
     ensure_cowork_auto: bool = True,
+    claude_surface: str | None = None,
     stargate_execution_id: str = "",
     satellite_execution_id: str = "",
 ) -> dict:
@@ -716,11 +997,28 @@ async def _compose_model_selected(
     if composer is not None:
         await composer.click(force=True)
         await page.wait_for_timeout(800)
+    if _is_code_compose_surface(claude_surface=claude_surface, compose_url=compose_url):
+        pick = await _apply_code_surface_model_picker(page, model)
+        if not pick.get("ok"):
+            return pick
+        model_ran = await _read_code_surface_model_label(page) or "unknown"
+        return {
+            "ok": True,
+            "step": "code_surface_page_model",
+            "requested": model,
+            "model_ran": model_ran,
+            "current_model": model_ran,
+            "code_surface_pick": pick.get("step"),
+        }
     model_info = await select_model(page, model)
     if not model_info.get("ok"):
         return model_info
     # Model picker clicks can land on settings / scheduled-task — re-land + re-pick.
-    if "/new" not in (page.url or "") and "/cowork/" not in (page.url or ""):
+    if (
+        "/new" not in (page.url or "")
+        and "/cowork/" not in (page.url or "")
+        and "/code" not in (page.url or "")
+    ):
         if project_uuid:
             await goto_fresh_compose(page, project_uuid=project_uuid, **compose_kw)
         else:

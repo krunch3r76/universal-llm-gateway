@@ -13,9 +13,11 @@ from claude_bundles.chat_cowork_mode import select_compose_mode
 from claude_bundles.compose_attest import (
     _compose_attested,
     approval_label,
+    approval_mode_chip,
     compose_mode_fingerprint,
     cowork_auto_refuse_reason,
     discover_live_submit,
+    dispatch_approval_refuse_reason,
     is_excluded_submit_control,
     is_positive_submit_match,
     pick_submit_candidate,
