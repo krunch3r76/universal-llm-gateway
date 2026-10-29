@@ -7,8 +7,10 @@ Two free functions consumed by ``GenericGenerateHandler._invoke_model``:
   config dict (resolved model_id, system_prompt rendered through the same
   template context as the user prompt, temperature, max_tokens,
   json_schema, wants_json flag). Honors the step > prompt > "" system
-  prompt hierarchy and the step > token_defaults > dynamic max_tokens
-  hierarchy via ``handler._resolve_max_tokens`` (inherited from
+  prompt hierarchy and the run override > step > token_defaults > dynamic
+  temperature hierarchy (run override via ``pipeline_options.step_generation_parameters``).
+  Max tokens use step > token_defaults > dynamic via
+  ``handler._resolve_max_tokens`` (inherited from
   ``BaseHandler``). Takes ``handler`` as first arg so subclass override
   of ``_build_prompt_context`` propagates.
 
@@ -41,6 +43,75 @@ if TYPE_CHECKING:
 
 logger = get_logger(__name__)
 
+_ALLOWED_RUN_STEP_GENERATION_KEYS: frozenset[str] = frozenset({"temperature"})
+
+
+def _generate_step_ids(pipeline: Any) -> list[str]:
+    """Return sorted ids of steps whose ``type`` is ``generate``."""
+    return sorted(s.id for s in pipeline.steps if s.type == "generate")
+
+
+def _resolve_temperature(
+    step: StepConfig,
+    context: PipelineContext,
+) -> Any:
+    """Apply per-run ``step_generation_parameters`` override for this step.
+
+    When ``context.runtime_options`` omits ``step_generation_parameters``,
+    returns ``step.generation_parameters.get("temperature")`` unchanged.
+    When present, validates every named step id and parameter key before
+    applying an override for ``step.id`` only.
+    """
+    base = step.generation_parameters.get("temperature")
+    runtime = getattr(context, "runtime_options", None) or {}
+    raw = runtime.get("step_generation_parameters")
+    if raw is None:
+        return base
+    if not isinstance(raw, dict):
+        raise ValueError(
+            "step_generation_parameters must be a dict mapping step id to "
+            f"parameter objects, got {type(raw).__name__}"
+        )
+
+    valid_ids = _generate_step_ids(context.pipeline)
+    valid_set = frozenset(valid_ids)
+
+    for step_id, params in raw.items():
+        if step_id not in valid_set:
+            raise ValueError(
+                f"Unknown step id {step_id!r} in step_generation_parameters. "
+                f"Valid generate step ids: {valid_ids}"
+            )
+        if not isinstance(params, dict):
+            raise ValueError(
+                f"step_generation_parameters[{step_id!r}] must be a dict, "
+                f"got {type(params).__name__}"
+            )
+        unknown_keys = sorted(set(params.keys()) - _ALLOWED_RUN_STEP_GENERATION_KEYS)
+        if unknown_keys:
+            raise ValueError(
+                f"Unsupported keys in step_generation_parameters[{step_id!r}]: "
+                f"{unknown_keys}. Only 'temperature' is allowed."
+            )
+        if "temperature" not in params:
+            continue
+        temp = params["temperature"]
+        if isinstance(temp, bool) or not isinstance(temp, (int, float)):
+            raise ValueError(
+                f"step_generation_parameters[{step_id!r}]['temperature'] must be "
+                f"a number in [0, 2], got {temp!r}"
+            )
+        if not 0 <= float(temp) <= 2:
+            raise ValueError(
+                f"step_generation_parameters[{step_id!r}]['temperature'] must be "
+                f"in [0, 2], got {temp!r}"
+            )
+
+    step_params = raw.get(step.id)
+    if isinstance(step_params, dict) and "temperature" in step_params:
+        return step_params["temperature"]
+    return base
+
 
 def resolve_execution_config_for_model(
     handler: Any,
@@ -54,7 +125,10 @@ def resolve_execution_config_for_model(
     System prompt hierarchy: step > prompt > "".
     System prompt is rendered with the same template context as the user prompt
     so placeholders (e.g. {corpus_hints}, {scope_options}) are substituted.
-    Generation parameters hierarchy: step > token_defaults > dynamic.
+    Generation parameters hierarchy (temperature): run override >
+    step > token_defaults > dynamic. Run override is supplied via
+    ``pipeline_options.step_generation_parameters`` on the HTTP request
+    (surfaced on ``context.runtime_options``).
 
     Takes ``handler`` so calls to the documented ``_build_prompt_context``
     override hook (and the ``_prompt_builder`` / ``_resolve_max_tokens``
@@ -68,7 +142,7 @@ def resolve_execution_config_for_model(
         )
     else:
         system_prompt = ""
-    temperature = step.generation_parameters.get("temperature")
+    temperature = _resolve_temperature(step, context)
     max_tokens = handler._resolve_max_tokens(step, context)
 
     json_schema = None
