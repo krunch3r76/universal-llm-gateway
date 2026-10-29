@@ -316,7 +316,9 @@ async def _reattach_teardown(
     if outcome is None or not outcome.ok:
         return
     if outcome.page_only_borrow:
-        await _teardown_attempt(outcome.page, outcome.pw, close_page=True)
+        await _teardown_attempt(
+            outcome.page, outcome.pw, close_page=outcome.page_only_close_tab
+        )
         return
     if restore_borrowed_chat_url and not (
         skip_inflight_restore and _skip_borrow_restore_for_inflight_paste(outcome)
