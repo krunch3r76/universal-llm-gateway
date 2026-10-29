@@ -923,30 +923,78 @@ def _window_binding_route(agent: str) -> tuple[str, dict[str, Any]] | None:
     )
 
 
-def _pending_item(turn: dict[str, Any], *, decided_by_rule: str) -> dict[str, Any]:
+def _pending_item(
+    turn: dict[str, Any],
+    *,
+    decided_by_rule: str,
+    route: tuple[str, dict[str, Any]] | None = None,
+) -> dict[str, Any]:
     subject = str(turn.get("subject") or "")
-    return {
+    item: dict[str, Any] = {
         "agent": _effective_to_agent(turn.get("to_agent"), subject),
         "thread_id": str(turn["thread"]),
         "turn_id": int(turn["id"]),
         "turn_number": int(turn["turn_number"]),
         "decided_by_rule": decided_by_rule,
     }
+    if route is not None:
+        _, sub = route
+        display = str(sub.get("display") or "").strip()
+        agent_id = str(sub.get("agent_id") or "").strip()
+        if display:
+            item["display"] = display
+        if agent_id:
+            item["delivery_agent_id"] = agent_id
+    return item
+
+
+def _store_subscription(
+    store: StoreClient,
+    agent: str,
+    thread: str,
+    *,
+    raw_to: str | None = None,
+) -> tuple[str, dict[str, Any]] | None:
+    try:
+        return store.subscription(agent, thread, raw_to=raw_to)
+    except TypeError:
+        return store.subscription(agent, thread)
 
 
 def _resolve_delivery_route(
     store: StoreClient, agent: str, thread: str, *, raw_to: str | None = None
 ) -> tuple[str, dict[str, Any]] | None:
     """Subscription row, else legacy alias, else synthetic grok window binding."""
-    resolved = store.subscription(agent, thread)
+    resolved = _store_subscription(store, agent, thread, raw_to=raw_to)
     if resolved is not None:
         return _apply_grok_window_overlay(agent, resolved)
+    try:
+        address = resolve_turn_address(thread, store)
+    except Exception:
+        logger.exception(
+            "endpoint_wake_dispatcher: holder walk failed thread=%s agent=%s",
+            thread,
+            agent,
+        )
+        address = None
+    if address is not None:
+        house_lane = address.lane_thread
+        if house_lane and house_lane != thread:
+            resolved = _store_subscription(
+                store, agent, house_lane, raw_to=raw_to
+            )
+            if resolved is None and normalize_bus_address(agent) != "cursor":
+                resolved = _store_subscription(
+                    store, "cursor", house_lane, raw_to=raw_to
+                )
+            if resolved is not None:
+                return _apply_grok_window_overlay(agent, resolved)
     from cursor_bridge.grok_window_bindings import mailbox_members
 
     for member in mailbox_members(agent):
         if member == agent:
             continue
-        resolved = store.subscription(member, thread)
+        resolved = _store_subscription(store, member, thread, raw_to=raw_to)
         if resolved is not None:
             return _apply_grok_window_overlay(agent, resolved)
     for candidate in (raw_to, agent):
@@ -1041,7 +1089,9 @@ def scan_once(store: StoreClient, *, idle_mark: dict[str, float] | None = None) 
                     subject=subject,
                 )
             continue
-        pending.append(_pending_item(turn, decided_by_rule=verdict.rule_id))
+        pending.append(
+            _pending_item(turn, decided_by_rule=verdict.rule_id, route=resolved)
+        )
     new_hw = int(turns[-1]["id"])
     if not pending:
         mark = idle_mark if idle_mark is not None else {}

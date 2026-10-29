@@ -3483,9 +3483,20 @@ def test_fire_due_wakes_delivers_worker_closeout_to_parent_lane(
     assert delivered == [("12286", "R")]
 
 
+_GLASS_IMPRESARIO_AGENT_ID = "f907a88b-6310-4b66-9de0-edd12be89898"
+_GLASS_IMPRESARIO_SUBSCRIPTION = {
+    "id": 42,
+    "agent": "cursor",
+    "thread_scope": "20995",
+    "state": "subscribed",
+    "surface": "cursor",
+    "display": "8",
+    "title": "20995 impresario",
+    "agent_id": _GLASS_IMPRESARIO_AGENT_ID,
+}
 _ORION_AGENT_ID = "4ed020f2-f0b2-4f3d-b49c-89aa34930f19"
 _ORION_SUBSCRIPTION = {
-    "id": 42,
+    "id": 43,
     "agent": "cursor",
     "thread_scope": "20995",
     "state": "subscribed",
@@ -3496,13 +3507,13 @@ _ORION_SUBSCRIPTION = {
 }
 
 
-def test_worker_closeout_to_composer_impresario_resolves_orion_binding() -> None:
-    """Worker CLOSEOUT to composer-impresario-<id> wakes the Glass row by agent_id."""
+def test_worker_closeout_to_composer_impresario_resolves_glass_binding() -> None:
+    """Worker CLOSEOUT to composer-impresario-<id> wakes the Glass :8 row by agent_id."""
     from bus_watch.endpoint_wake_dispatcher import _resolve_delivery_route, qualify
     from bus_watch.endpoint_wake_transport import StoreClient
 
-    worker_thread = "21015"
-    to_agent = "composer-impresario-4ed020f2"
+    worker_thread = "21235"
+    to_agent = "composer-impresario-f907a88b"
     subject = "cursor-sdk CLOSEOUT d5b2 contract=implement"
     turn = {
         "to_agent": to_agent,
@@ -3521,7 +3532,43 @@ def test_worker_closeout_to_composer_impresario_resolves_orion_binding() -> None
             if method == "GET" and path == "/endpoint-subscriptions":
                 agent = (kwargs.get("params") or {}).get("agent")
                 if agent == "cursor":
-                    return {"subscriptions": [_ORION_SUBSCRIPTION]}
+                    return {"subscriptions": [dict(_GLASS_IMPRESARIO_SUBSCRIPTION)]}
+                return {"subscriptions": []}
+            if (
+                method == "GET"
+                and path.startswith("/threads/")
+                and path.endswith("/lane-current")
+            ):
+                return {"parent_thread": "20995"}
+            raise AssertionError(f"unexpected bus call {method} {path}")
+
+    stub = StubStore()
+    resolved = stub.subscription(to_agent, worker_thread, raw_to=to_agent)
+    assert resolved is not None
+    kind, row = resolved
+    assert kind == "parent"
+    assert row["display"] == "8"
+    assert row["agent_id"] == _GLASS_IMPRESARIO_AGENT_ID
+
+    route = _resolve_delivery_route(stub, to_agent, worker_thread, raw_to=to_agent)
+    assert route is not None
+    assert route[1]["display"] == "8"
+    assert route[1]["agent_id"] == _GLASS_IMPRESARIO_AGENT_ID
+
+
+def test_worker_closeout_stale_uuid_to_resolves_glass_binding() -> None:
+    """Mis-addressed to=<uuid-prefix> still binds the Glass row on the worker thread."""
+    from bus_watch.endpoint_wake_dispatcher import _resolve_delivery_route
+
+    worker_thread = "21228"
+    raw_to = "4ed020f2"
+    subject = "CLOSEOUT|cursor-sdk CLOSEOUT lane-21228 contract=implement"
+
+    class StubStore(StoreClient):
+        def _bus(self, method: str, path: str, **kwargs: object) -> dict:
+            if method == "GET" and path == "/endpoint-subscriptions":
+                if (kwargs.get("params") or {}).get("agent") == "cursor":
+                    return {"subscriptions": [dict(_ORION_SUBSCRIPTION)]}
                 return {"subscriptions": []}
             if (
                 method == "GET"
@@ -3531,24 +3578,18 @@ def test_worker_closeout_to_composer_impresario_resolves_orion_binding() -> None
                 return {"parent_thread": None}
             raise AssertionError(f"unexpected bus call {method} {path}")
 
-    stub = StubStore()
-    resolved = stub.subscription(to_agent, worker_thread)
-    assert resolved is not None
-    kind, row = resolved
-    assert kind == "agent_id"
-    assert row["display"] == "orion-node"
-    assert row["agent_id"] == _ORION_AGENT_ID
-
-    route = _resolve_delivery_route(stub, to_agent, worker_thread)
+    route = _resolve_delivery_route(
+        StubStore(), raw_to, worker_thread, raw_to=raw_to
+    )
     assert route is not None
-    assert route[1]["display"] == "orion-node"
+    assert route[0] == "agent_id"
     assert route[1]["agent_id"] == _ORION_AGENT_ID
 
 
 def test_scan_once_enqueues_composer_impresario_worker_closeout() -> None:
-    worker_thread = "21015"
-    to_agent = "composer-impresario-4ed020f2"
-    subject = "CLOSEOUT|cursor-sdk CLOSEOUT lane-21015 contract=implement"
+    worker_thread = "21235"
+    to_agent = "composer-impresario-f907a88b"
+    subject = "CLOSEOUT|cursor-sdk CLOSEOUT lane-21235 contract=implement"
 
     class Store(StoreClient):
         def __init__(self) -> None:
@@ -3577,13 +3618,16 @@ def test_scan_once_enqueues_composer_impresario_worker_closeout() -> None:
             if method == "GET" and path == "/endpoint-subscriptions":
                 agent = (kwargs.get("params") or {}).get("agent")
                 if agent == "cursor":
-                    return {"subscriptions": [dict(_ORION_SUBSCRIPTION)]}
+                    return {"subscriptions": [dict(_GLASS_IMPRESARIO_SUBSCRIPTION)]}
                 return {"subscriptions": []}
             if (
                 method == "GET"
                 and path.startswith("/threads/")
                 and path.endswith("/lane-current")
             ):
+                tid = path.split("/")[2]
+                if tid == worker_thread:
+                    return {"parent_thread": "20995"}
                 return {"parent_thread": None}
             raise AssertionError(f"unexpected bus call {method} {path}")
 
@@ -3593,6 +3637,59 @@ def test_scan_once_enqueues_composer_impresario_worker_closeout() -> None:
     assert store.pending[0]["agent"] == to_agent
     assert store.pending[0]["thread_id"] == worker_thread
     assert store.pending[0]["decided_by_rule"] == "wake_gate_or_directive"
+    assert store.pending[0]["display"] == "8"
+    assert store.pending[0]["delivery_agent_id"] == _GLASS_IMPRESARIO_AGENT_ID
+
+
+def test_scan_once_enqueues_dispatch_to_worker_closeout_on_house_scope() -> None:
+    """21221#2 shape: to=dispatch on worker thread resolves house Glass subscription."""
+    worker_thread = "21221"
+    subject = "CLOSEOUT|cursor-sdk CLOSEOUT lane-21221 contract=implement"
+
+    class Store(StoreClient):
+        def __init__(self) -> None:
+            super().__init__()
+            self.pending: list[dict] = []
+
+        def cursor(self) -> dict:
+            return {"high_water_turn_id": 0}
+
+        def since(self, _high: int) -> list:
+            return [
+                {
+                    "id": 88,
+                    "to_agent": "dispatch",
+                    "from_agent": "cursor-sdk",
+                    "thread": worker_thread,
+                    "turn_number": 2,
+                    "subject": subject,
+                }
+            ]
+
+        def scan(self, _high: int, new_hw: int, rows: list) -> None:
+            self.pending = rows
+
+        def _bus(self, method: str, path: str, **kwargs: object) -> dict:
+            if method == "GET" and path == "/endpoint-subscriptions":
+                if (kwargs.get("params") or {}).get("agent") == "cursor":
+                    return {"subscriptions": [dict(_GLASS_IMPRESARIO_SUBSCRIPTION)]}
+                return {"subscriptions": []}
+            if (
+                method == "GET"
+                and path.startswith("/threads/")
+                and path.endswith("/lane-current")
+            ):
+                tid = path.split("/")[2]
+                if tid == worker_thread:
+                    return {"parent_thread": "20995"}
+                return {"parent_thread": None}
+            raise AssertionError(f"unexpected bus call {method} {path}")
+
+    store = Store()
+    scan_once(store)  # type: ignore[arg-type]
+    assert len(store.pending) == 1
+    assert store.pending[0]["agent"] == "cursor"
+    assert store.pending[0]["display"] == "8"
 
 
 def test_admit_echo_dropped_for_peer_sender_regardless_of_from_agent() -> None:

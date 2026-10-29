@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import re
 from typing import Any
 
 import httpx
@@ -32,6 +33,33 @@ def composer_impresario_suffix(agent: str) -> str | None:
         return None
     suffix = raw[len(_COMPOSER_IMPRESARIO_PREFIX) :].strip()
     return suffix or None
+
+
+_BARE_GLASS_AGENT_ID_SUFFIX = re.compile(r"^[0-9a-f]{8}(?:-[0-9a-f]{4}){0,4}[0-9a-f]{0,12}$")
+
+
+def glass_agent_id_suffix_candidates(
+    agent: str | None, *, raw_to: str | None = None
+) -> list[str]:
+    """Suffix tokens for Glass ``agent_id`` lookup (impresario alias or bare uuid prefix)."""
+    seen: set[str] = set()
+    out: list[str] = []
+    for value in (agent, raw_to):
+        if value is None:
+            continue
+        text = str(value).strip()
+        if not text:
+            continue
+        imp = composer_impresario_suffix(text)
+        if imp is not None and imp not in seen:
+            seen.add(imp)
+            out.append(imp)
+            continue
+        lowered = text.lower()
+        if _BARE_GLASS_AGENT_ID_SUFFIX.fullmatch(lowered) and lowered not in seen:
+            seen.add(lowered)
+            out.append(lowered)
+    return out
 
 
 def agent_id_matches_composer_suffix(agent_id: str, suffix: str) -> bool:
@@ -177,19 +205,26 @@ class StoreClient:
             return None
         return parent.strip()
 
-    def subscription(
-        self, agent: str, thread_id: str
-    ) -> tuple[str, dict[str, Any]] | None:
+    def _subscribed_rows(self, agent: str) -> list[dict[str, Any]]:
         payload = self._bus(
             "GET",
             "/endpoint-subscriptions",
             params={"agent": agent},
         )
-        rows = [
+        return [
             row
             for row in payload.get("subscriptions") or []
             if row.get("state") == "subscribed"
         ]
+
+    def subscription(
+        self, agent: str, thread_id: str, *, raw_to: str | None = None
+    ) -> tuple[str, dict[str, Any]] | None:
+        rows = self._subscribed_rows(agent)
+        if composer_impresario_suffix(agent) is not None or (
+            not rows and agent != "cursor"
+        ):
+            rows = self._subscribed_rows("cursor")
         ancestors: list[str] = []
         seen: set[str] = {thread_id}
         cur: str | None = thread_id
@@ -230,9 +265,10 @@ class StoreClient:
             or str(r.get("thread_scope") or "") in ancestor_rank
         ]
         if not candidates:
-            impresario_suffix = composer_impresario_suffix(agent)
-            if impresario_suffix is not None:
-                return self._subscription_by_cursor_agent_id_suffix(impresario_suffix)
+            for suffix in glass_agent_id_suffix_candidates(agent, raw_to=raw_to):
+                resolved = self._subscription_by_cursor_agent_id_suffix(suffix)
+                if resolved is not None:
+                    return resolved
             return None
         best = min(
             candidates,
