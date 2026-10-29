@@ -385,19 +385,164 @@ def _find_spawn_row_id(
     return None
 
 
-def _extract_report_marker(subject: str, body: str) -> str | None:
-    """First status-bearing marker from bus subject, else a non-ledger body line."""
+_GIW_PARK_SUBJECT = re.compile(r"^cursor-sdk dispatch \S+ PARKED\b")
+_GIW_PARK_BODY_LINE = re.compile(r"^stop:\s*PARKED_TRANSPORT\b")
+
+
+def _skip_ledger_prefix_lines(body: str) -> str:
+    """Body text after leading ``ledger_row:`` / ``purpose:`` lines (F3a JSON parse)."""
+    lines = (body or "").splitlines()
+    while lines:
+        stripped = lines[0].strip()
+        if stripped.startswith("ledger_row:") or stripped.startswith("purpose:"):
+            lines.pop(0)
+            continue
+        break
+    return "\n".join(lines).strip()
+
+
+def _token_source_label(token: str, had_pipe: bool) -> str:
+    return f"{token}|" if had_pipe else token
+
+
+def _closeout_marker_from_json(body: str) -> str | None:
+    stripped = _skip_ledger_prefix_lines(body)
+    if not stripped.startswith("{"):
+        return None
+    try:
+        obj = json.loads(stripped)
+    except json.JSONDecodeError:
+        return None
+    if not isinstance(obj, dict):
+        return None
+    status = str(obj.get("status") or "").strip().lower()
+    sic = str(obj.get("status_incomplete_class") or "").strip().lower()
+    if status == "partial" and sic:
+        return f"CLOSEOUT partial:{sic}"
+    if status == "gated":
+        return "CLOSEOUT gated"
+    if status == "incomplete":
+        return "CLOSEOUT incomplete"
+    if status:
+        return f"CLOSEOUT {status}"
+    return None
+
+
+def _closeout_marker_from_subject(subject: str) -> str | None:
     subj = str(subject or "").strip()
-    if subj:
-        return subj
+    upper = subj.upper()
+    if upper.startswith("CLOSEOUT|"):
+        tail = subj[len("CLOSEOUT|") :].lstrip()
+    elif upper.startswith("CLOSEOUT"):
+        tail = subj[len("CLOSEOUT") :].lstrip()
+    else:
+        return None
+    if not tail:
+        return None
+    first = tail.split()[0]
+    fl = first.lower()
+    if fl.startswith("partial:"):
+        return f"CLOSEOUT {fl}"
+    if fl in ("complete", "gated", "failed", "blocked", "partial", "incomplete"):
+        return f"CLOSEOUT {fl}"
+    return None
+
+
+def _status_from_closeout_marker(marker: str) -> str:
+    ml = marker.lower()
+    if "partial:capture" in ml or "partial:consult" in ml:
+        return "done"
+    if "partial:work" in ml or "partial:park" in ml:
+        return "parked"
+    if re.fullmatch(r"closeout partial", ml):
+        return "parked"
+    if "gated" in ml:
+        return "failed"
+    if re.search(r"\bincomplete\b", ml):
+        return "unknown"
+    if "complete" in ml:
+        return "done"
+    if "failed" in ml or "blocked" in ml:
+        return "failed"
+    if "partial" in ml:
+        return "parked"
+    return "unknown"
+
+
+def _parse_leading_token(text: str) -> tuple[str, bool] | None:
+    """R3: ``[A-Z][A-Z_]*`` then ``|``, ``:``, whitespace, or end (not Title-case noise)."""
+    stripped = str(text or "").lstrip()
+    m = re.match(r"^([A-Z][A-Z_]*)", stripped)
+    if not m:
+        return None
+    token = m.group(1)
+    rest = stripped[len(token) :]
+    if not rest:
+        return token, False
+    head = rest[0]
+    if head == "|":
+        return token, True
+    if head == ":" or head.isspace():
+        return token, False
+    return None
+
+
+def _map_leading_token(
+    token: str,
+    had_pipe: bool,
+    *,
+    subject: str,
+    body: str,
+) -> tuple[str, str | None]:
+    if token == "CLOSEOUT":
+        marker = _closeout_marker_from_json(body) or _closeout_marker_from_subject(
+            subject
+        )
+        if marker:
+            return _status_from_closeout_marker(marker), marker
+        return "unknown", _token_source_label(token, had_pipe)
+    if token == "DONE":
+        if had_pipe:
+            return "done", _token_source_label(token, had_pipe)
+        return "unknown", _token_source_label(token, had_pipe)
+    if token == "CHECKPOINT":
+        return "live", _token_source_label(token, had_pipe)
+    if token == "STATUS":
+        if had_pipe:
+            return "live", _token_source_label(token, had_pipe)
+        return "unknown", _token_source_label(token, had_pipe)
+    if token == "PARKED":
+        return "parked", _token_source_label(token, had_pipe)
+    if token in ("QUESTION", "RULING", "STEER"):
+        return "unknown", _token_source_label(token, had_pipe)
+    return "unknown", _token_source_label(token, had_pipe)
+
+
+def _report_marker(subject: str, body: str) -> tuple[str, str | None]:
+    """Map a bus turn to ``(status, source_status)`` using typed fields only (F3a)."""
+    subj = str(subject or "")
+    parsed = _parse_leading_token(subj)
+    if parsed is not None:
+        token, had_pipe = parsed
+        return _map_leading_token(token, had_pipe, subject=subj, body=body)
+
+    if _GIW_PARK_SUBJECT.match(subj.strip()):
+        return "parked", "PARKED"
+
     for line in (body or "").splitlines():
         stripped = line.strip()
         if not stripped:
             continue
         if stripped.startswith("ledger_row:") or stripped.startswith("purpose:"):
             continue
-        return stripped
-    return None
+        if _GIW_PARK_BODY_LINE.match(stripped):
+            return "parked", "PARKED"
+        line_parsed = _parse_leading_token(stripped)
+        if line_parsed is not None:
+            token, had_pipe = line_parsed
+            return _map_leading_token(token, had_pipe, subject=stripped, body=body)
+        return "unknown", None
+    return "unknown", None
 
 
 def ingest_report_turn(
@@ -414,13 +559,7 @@ def ingest_report_turn(
     )
     if not rid:
         return {"ok": False, "error": "no_matching_spawn"}
-    raw_marker = _extract_report_marker(subject, body)
-    if raw_marker is None:
-        proj = "unknown"
-        stored_source: str | None = None
-    else:
-        stored_source = raw_marker
-        proj = map_source_status(raw_marker)
+    proj, stored_source = _report_marker(subject, body)
     return record_report_row(
         row_id=rid,
         status=proj,
