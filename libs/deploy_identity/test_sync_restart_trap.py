@@ -166,6 +166,36 @@ def _stub_docker_dir(
           exec)
             joined="$*"
             nonce_file={str(nonce_file)!r}
+            if [[ "{str(kill_on_sync_cp).lower()}" == "true" && "$joined" == *"tar -xf - -C /app"* ]]; then
+              kill -TERM "$PPID" 2>/dev/null || true
+              exit 1
+            fi
+            if [[ "$joined" == *"tar -xf - -C /app"* ]]; then
+              cat > /dev/null
+              tar_n_file={tmp_path / "tar_exec.n"}
+              n=$(cat "$tar_n_file" 2>/dev/null || echo 0)
+              n=$((n + 1))
+              echo "$n" > "$tar_n_file"
+              echo SYNC_TAR_EXEC >> {log}
+              if [[ "{str(sync_cp_fails).lower()}" == "true" && "$n" -eq 1 ]]; then
+                : > "{tmp_path / "health_exited"}"
+                exit 1
+              fi
+              if [[ "{str(sync_services_cp_fails).lower()}" == "true" && "$n" -eq 2 ]]; then
+                exit 1
+              fi
+              exit 0
+            fi
+            if [[ "$joined" == *"sha256sum /app/"* ]]; then
+              path="${{joined#*sha256sum }}"
+              path="${{path%% *}}"
+              if [[ -f "{tmp_path / "mount_secret"}" && "{mount_secret_container}" == "$path" ]]; then
+                printf '%s  secret\\n' "$(sha256sum "{tmp_path / "mount_secret"}" | awk '{{print $1}}')"
+              else
+                printf '%s  stub\\n' "$(printf stub | sha256sum | awk '{{print $1}}')"
+              fi
+              exit 0
+            fi
             if [[ "$joined" == *" true" ]]; then
               if [[ "{str(exec_true_fails).lower()}" == "true" ]]; then
                 exit 1
@@ -491,8 +521,11 @@ def test_env_key_name_diff_recreates_before_sync(
     assert "fixture-token-not-secret" not in combined
     assert "envkey-sentinel" not in combined
     rm_at = log.find("rm -f mcp-server")
-    first_cp_after_rm = log.find("mcp-server:/app/libs/", rm_at)
+    first_cp_after_rm = log.find("SYNC_TAR_EXEC", rm_at)
+    if first_cp_after_rm < 0:
+        first_cp_after_rm = log.find("mcp-server:/app/libs/", rm_at)
     up_no_start = log.find("up -d --no-start mcp-server", rm_at)
+    assert "SYNC_TAR_ROOT libs" in proc.stdout, proc.stdout
     stop_tail = log[first_cp_after_rm:] if first_cp_after_rm >= 0 else log
     stop_match = re.search(r"^stop ", stop_tail, re.MULTILINE)
     assert rm_at >= 0, log
@@ -1511,3 +1544,36 @@ def test_mount_name_prefix_sibling_is_not_an_ancestor(tmp_path: Path) -> None:
         assert "MCP_SYNC_LAST_HEALTHY_TREE_ROLLBACK" in proc.stderr, proc.stderr[-400:]
     finally:
         shutil.rmtree(sibling, ignore_errors=True)
+
+
+@pytest.mark.skipif(not _SCRIPT.is_file(), reason="script missing")
+def test_dry_run_reports_mount_inside_synced_tree(tmp_path: Path) -> None:
+    """A bind mount under /app/libs is excluded from the copy set (--dry-run).
+
+    Breaks when wholesale docker cp overwrites a busy single-file bind mount.
+    """
+    mount_rel = "libs/cursor_bridge/cdp_gateway_forwarder.py"
+    hub_file = _REPO_ROOT / mount_rel
+    hub_file.parent.mkdir(parents=True, exist_ok=True)
+    hub_file.write_text("hub-forwarder\n", encoding="utf-8")
+    secret = tmp_path / "mount_secret"
+    secret.write_text("hub-forwarder\n", encoding="utf-8")
+    try:
+        stub = _stub_docker_dir(
+            tmp_path,
+            inspect_health="healthy",
+            mount_dest="/app/libs/cursor_bridge/cdp_gateway_forwarder.py",
+            mount_secret_container="/app/libs/cursor_bridge/cdp_gateway_forwarder.py",
+        )
+        proc = _run_sync_script(tmp_path, stub, "--dry-run")
+        log = _docker_log(tmp_path)
+        combined = proc.stdout + proc.stderr
+        assert proc.returncode == 0, combined
+        assert "MCP_SYNC_DRY_RUN" in combined, combined
+        assert "/app/libs/cursor_bridge/cdp_gateway_forwarder.py" in combined, combined
+        assert "MOUNT_HASH libs/cursor_bridge/cdp_gateway_forwarder.py: MATCH" in combined
+        assert "Copy set paths" in combined
+        assert "STAMP_WRITE" not in log, log
+        assert "stop " not in log, log
+    finally:
+        hub_file.unlink(missing_ok=True)
