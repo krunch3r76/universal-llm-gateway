@@ -399,6 +399,7 @@ class AgentBusConfig:
 
     db_path: str = "~/.agent-bus/messages.db"
     checkpoint_auto_supersede: bool = False
+    project_ask_url: str = ""
 
 
 @dataclass(slots=True, kw_only=True)
@@ -455,6 +456,11 @@ _AGENT_BUS_CONFIG_TEMPLATE = """\
 #
 # Auto-derive supersedes_turn on standing-root CHECKPOINT send/reply (G2 rollout).
 # checkpoint_auto_supersede: true
+#
+# cdp-ask base for inform delivery-bindings (seat_rows). Agent-bus runs on io;
+# registry lives on Jupiter — use http://jupiter:8770 (not localhost). Falls back
+# to ~/.gateway/mcp.yaml project_ask_url when unset here.
+# project_ask_url: http://jupiter:8770
 """
 
 
@@ -571,10 +577,28 @@ def load_agent_bus_config() -> AgentBusConfig:
     checkpoint_auto_supersede = _parse_bool(
         raw.get("checkpoint_auto_supersede"), default=default.checkpoint_auto_supersede
     )
+    project_ask_url = (
+        str(raw.get("project_ask_url", default.project_ask_url)).strip()
+        or default.project_ask_url
+    )
     return AgentBusConfig(
         db_path=db_path,
         checkpoint_auto_supersede=checkpoint_auto_supersede,
+        project_ask_url=project_ask_url,
     )
+
+
+def agent_bus_project_ask_url_for_runtime(
+    agent_bus_cfg: AgentBusConfig,
+    mcp_cfg: McpConfig | None,
+) -> str:
+    """Resolve PROJECT_ASK_URL for the host agent-bus process (yaml then mcp.yaml)."""
+    url = agent_bus_cfg.project_ask_url.strip()
+    if url:
+        return url
+    if mcp_cfg is not None and mcp_cfg.project_ask_url.strip():
+        return mcp_cfg.project_ask_url.strip()
+    return ""
 
 
 def _parse_bool(value: object, *, default: bool = False) -> bool:
