@@ -17,7 +17,6 @@ import time
 from typing import Any
 
 from cdp_ask.client import CdpAskClient
-from chat_harvest.chrome import strip_chrome
 
 DEFAULT_PROJECT_ASK_URL = "http://127.0.0.1:8770"
 _ADVANCE_PHASES = frozenset({"content_proof", "archiving", "terminal"})

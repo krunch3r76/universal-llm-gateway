@@ -3,10 +3,8 @@
 from __future__ import annotations
 
 import re
-from unittest.mock import AsyncMock, MagicMock
 
 import pytest
-
 from bus_watch.endpoint_wake_transport import classify_orion
 from web_chat_relay.orion_wake import (
     PINNED_CONVERSATION_ID,
@@ -66,17 +64,17 @@ class _FakeKeyboard:
 
 
 class _FakeLocator:
-    def __init__(self, page: "_FakePage", *, visible: bool = True, count: int = 1) -> None:
+    def __init__(self, page: _FakePage, *, visible: bool = True, count: int = 1) -> None:
         self._page = page
         self._visible = visible
         self._count = count
 
     @property
-    def last(self) -> "_FakeLocator":
+    def last(self) -> _FakeLocator:
         return self
 
     @property
-    def first(self) -> "_FakeLocator":
+    def first(self) -> _FakeLocator:
         return self
 
     async def count(self) -> int:
@@ -100,11 +98,11 @@ class _FakeLocator:
     async def press(self, key: str) -> None:
         await self._page.keyboard.press(key)
 
-    def locator(self, _sel: str) -> "_FakeLocator":
+    def locator(self, _sel: str) -> _FakeLocator:
         n = len(self._page._active_labels()) or 1
         return _FakeLocator(self._page, visible=bool(n), count=n)
 
-    def nth(self, index: int) -> "_FakeLocator":
+    def nth(self, index: int) -> _FakeLocator:
         self._page.approval_click_index = index
         self._page._active_dialog_index = index
         return self
