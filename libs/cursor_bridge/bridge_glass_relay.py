@@ -22,10 +22,62 @@ from cursor_bridge.tab_ready_rehandshake import (
 from cursor_bridge.wake_delivery import _paste_cursor_services, normalize_target
 
 
-def relay_wake_tab(*, gui_host: str, agent_id: str | None, body: str) -> dict[str, Any]:
+def _pick_page_for_wake(
+    pages: list[dict[str, str]], app: str, *, agent_id: str
+) -> dict[str, str] | None:
+    """Select CDP page for wake_tab; never fall back to the focused tab when agent_id is set."""
+    from cursor_bridge.wake_delivery import _pick_page
+
+    if not agent_id:
+        return _pick_page(pages, app)
+    from cursor_bridge.wake_delivery import _WINDOW_TITLE
+
+    wanted = _WINDOW_TITLE.get(app, "")
+    named = [
+        p for p in pages if p.get("title") == wanted and p.get("web_socket_debugger_url")
+    ]
+    if len(named) == 1:
+        return named[0]
+    return None
+
+
+def relay_wake_tab(
+    *,
+    gui_host: str,
+    agent_id: str | None,
+    body: str,
+    thread: str | None = None,
+) -> dict[str, Any]:
     """Paste a wake line into a Glass Cursor Agents tab."""
     from cursor_bridge.cdp_pages import list_pages
-    from cursor_bridge.wake_delivery import _pick_page
+
+    if thread:
+        from agent_bus_store.db.endpoint_wake_ledger import (
+            resolve_wake_delivery_binding,
+        )
+
+        binding = resolve_wake_delivery_binding(house_id=str(thread).strip())
+        if str(binding.get("state") or "") != "bound":
+            return {
+                "ok": False,
+                "error": "unbound",
+                "detail": str(binding.get("reason") or "unbound"),
+                "op": "wake_tab",
+                "gui_host": gui_host,
+                "thread": thread,
+            }
+        actuation = dict((binding.get("current") or {}).get("actuation") or {})
+        if str(actuation.get("type") or "") != "cursor_glass":
+            return {
+                "ok": False,
+                "error": "unbound",
+                "detail": "actuation_not_cursor_glass",
+                "op": "wake_tab",
+                "gui_host": gui_host,
+                "thread": thread,
+            }
+        gui_host = str(actuation.get("gui_host") or gui_host)
+        agent_id = str(actuation.get("agent_id") or agent_id or "")
 
     display = subscription_display_for_gui_host(gui_host)
     target = normalize_target(display, "cursor")
@@ -47,7 +99,8 @@ def relay_wake_tab(*, gui_host: str, agent_id: str | None, body: str) -> dict[st
             "op": "wake_tab",
             "gui_host": gui_host,
         }
-    page = _pick_page(pages, "cursor")
+    aid = str(agent_id or "").strip()
+    page = _pick_page_for_wake(pages, "cursor", agent_id=aid)
     if page is None:
         return {
             "ok": False,
@@ -57,7 +110,6 @@ def relay_wake_tab(*, gui_host: str, agent_id: str | None, body: str) -> dict[st
             "pages": len(pages),
         }
     ws_url = page["web_socket_debugger_url"]
-    aid = str(agent_id or "").strip()
     try:
         paste_res = asyncio.run(_paste_cursor_services(ws_url, body, agent_id=aid))
     except (TimeoutError, RuntimeError, OSError) as exc:

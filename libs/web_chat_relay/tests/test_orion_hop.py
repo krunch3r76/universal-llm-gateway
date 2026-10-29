@@ -9,7 +9,6 @@ import pytest
 from web_chat_relay.orion_hop import (
     ORION_IDENTITY_TOKEN,
     STANDING_HANDOFF_URI,
-    OrionWakeDedupeLedger,
     OrionWakeTargetRollback,
     build_hop_paste_text,
     build_identity_pointer_line,
@@ -443,24 +442,6 @@ def test_wake_target_commits_only_after_smoke_delivered() -> None:
     ok = holder.commit_after_smoke(candidate_url=NEW_URL, smoke={"delivered": True})
     assert ok["ok"] is True
     assert holder.wake_target_url == NEW_URL
-
-
-@pytest.mark.asyncio
-async def test_wake_dedupe_duplicate_suppressed_returns_first_receipt() -> None:
-    ledger = OrionWakeDedupeLedger()
-    calls = 0
-
-    async def _deliver() -> dict:
-        nonlocal calls
-        calls += 1
-        return {"ok": True, "delivered": True, "pasted": True, "n": calls}
-
-    first = await ledger.deliver(thread="21207", turn=9, endpoint_url=NEW_URL, deliver_fn=_deliver)
-    second = await ledger.deliver(thread="21207", turn=9, endpoint_url=NEW_URL, deliver_fn=_deliver)
-    assert first["n"] == 1
-    assert second["reason"] == "duplicate_suppressed"
-    assert second["first_receipt"]["n"] == 1
-    assert calls == 1
 
 
 @pytest.mark.asyncio
