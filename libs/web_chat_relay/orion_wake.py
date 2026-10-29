@@ -14,9 +14,7 @@ from typing import Any, Protocol
 from urllib.parse import urlparse
 
 DEFAULT_ORION_CDP_URL = os.environ.get("ORION_CDP_URL", "http://127.0.0.1:9342")
-PINNED_CONVERSATION_URL = (
-    "https://chatgpt.com/c/6ae2e1bc-0c94-83e8-9f21-62467c4935d5"
-)
+PINNED_CONVERSATION_URL = "https://chatgpt.com/c/6ae2e1bc-0c94-83e8-9f21-62467c4935d5"
 PINNED_CONVERSATION_ID = "6ae2e1bc-0c94-83e8-9f21-62467c4935d5"
 
 _STREAMING_JS = """
@@ -99,12 +97,61 @@ def holder_conversation_url(sub: dict[str, Any] | None) -> str:
     return PINNED_CONVERSATION_URL
 
 
+def parse_turn_numbers(raw: Any) -> list[int] | None:
+    """Parse turn: int, numeric str, comma-separated str, or list of those."""
+    if raw is None or raw is True or raw is False:
+        return None
+    if isinstance(raw, int):
+        return [raw] if raw > 0 else None
+    if isinstance(raw, str):
+        text = raw.strip()
+        if not text or text == "0":
+            return None
+        parts = (
+            [p.strip() for p in text.split(",") if p.strip()] if "," in text else [text]
+        )
+        out: list[int] = []
+        for part in parts:
+            try:
+                num = int(part)
+            except ValueError:
+                return None
+            if num <= 0:
+                return None
+            out.append(num)
+        return out or None
+    if isinstance(raw, (list, tuple)):
+        out: list[int] = []
+        for item in raw:
+            parsed = parse_turn_numbers(item)
+            if parsed is None or len(parsed) != 1:
+                return None
+            out.append(parsed[0])
+        return out or None
+    return None
+
+
+def format_turn_pointer_label(turn_numbers: list[int]) -> str:
+    """Human batch label for pointer text, e.g. 69–73 for a contiguous run."""
+    nums = sorted(set(int(n) for n in turn_numbers))
+    if not nums:
+        return ""
+    if len(nums) == 1:
+        return str(nums[0])
+    if nums == list(range(nums[0], nums[-1] + 1)):
+        return f"{nums[0]}–{nums[-1]}"
+    return ", ".join(str(n) for n in nums)
+
+
 def build_wake_pointer(*, thread: str, turn: int | str, from_agent: str) -> str:
     sender = (from_agent or "unknown").strip()
+    turn_s = str(turn)
+    multi = "–" in turn_s or "," in turn_s
+    turn_word = "turns" if multi else "turn"
     return (
-        f"WAKE — agent-bus thread {thread} turn {turn} (from {sender}). "
+        f"WAKE — agent-bus thread {thread} {turn_word} {turn_s} (from {sender}). "
         f"Use your ulg-code connector: agent_bus_read fetch thread {thread}, "
-        f"read turn {turn} only. Reply on thread {thread} to=maestro with "
+        f"read {turn_word} {turn_s} only. Reply on thread {thread} to=maestro with "
         f"subject ANSWER|… per that turn. Do not paste letter drafts."
     )
 
@@ -241,7 +288,7 @@ async def _handle_approvals(
                 "buttons": buttons,
             }
         idx = int(last.get("index") or 0)
-        dlg = page.locator('[role=dialog], [role=alertdialog]').nth(idx)
+        dlg = page.locator("[role=dialog], [role=alertdialog]").nth(idx)
         opts = dlg.locator("button, [role=button]")
         await opts.nth(1).click()
         dialogs.append(
@@ -330,7 +377,9 @@ async def deliver_orion_wake(
     layout_receipt = await _prepare_composer(page)
     line = build_wake_pointer(thread=thread_s, turn=turn, from_agent=from_agent)
     try:
-        await _paste_and_send(page, line, layout=str(layout_receipt.get("layout") or "docked"))
+        await _paste_and_send(
+            page, line, layout=str(layout_receipt.get("layout") or "docked")
+        )
         await page.wait_for_timeout(400)
         approval = await _handle_approvals(page)
     except Exception as exc:
@@ -395,10 +444,10 @@ async def deliver_orion_chat_wake(
     if claim is None:
         thread_s = str(thread or "").strip()
         endpoint = (conversation_url or PINNED_CONVERSATION_URL).split("?", 1)[0]
-        try:
-            turn_n = int(turn)
-        except (TypeError, ValueError):
-            return _refuse("bad_options")
+        turn_list = parse_turn_numbers(turn)
+        if turn_list is None or len(turn_list) != 1:
+            return _refuse("bad_turn")
+        turn_n = turn_list[0]
         turn_id = resolve_turn_id_for_wake(thread_id=thread_s, turn_number=turn_n)
         if turn_id is None:
             return _refuse("turn_id_unresolved")
@@ -422,9 +471,10 @@ async def deliver_orion_chat_wake(
     if prepared.get("reason") == "duplicate_suppressed":
         return prepared
 
+    pointer_turn = format_turn_pointer_label(list(claim.turn_numbers))
     receipt = await deliver_orion_wake(
         thread=thread,
-        turn=turn,
+        turn=pointer_turn or turn,
         from_agent=from_agent,
         conversation_url=claim.normalized_endpoint(),
         cdp_url=cdp_url,

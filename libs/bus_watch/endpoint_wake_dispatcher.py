@@ -980,9 +980,7 @@ def _resolve_delivery_route(
     if address is not None:
         house_lane = address.lane_thread
         if house_lane and house_lane != thread:
-            resolved = _store_subscription(
-                store, agent, house_lane, raw_to=raw_to
-            )
+            resolved = _store_subscription(store, agent, house_lane, raw_to=raw_to)
             if resolved is None and normalize_bus_address(agent) != "cursor":
                 resolved = _store_subscription(
                     store, "cursor", house_lane, raw_to=raw_to
@@ -1176,21 +1174,38 @@ def _orion_post(
     }
     try:
         with make_sync_client(DEFAULT_STARGATE_URL, timeout=45.0) as client:
-            response = client.post(
-                "/v1/chat/completions",
-                json=body,
-                headers={"X-ULG-Surface": "code"},
-            )
-        parsed: Any
-        try:
-            payload = response.json()
-            content = payload["choices"][0]["message"]["content"]
-            parsed = json.loads(content) if isinstance(content, str) else content
-        except (KeyError, IndexError, TypeError, json.JSONDecodeError, ValueError):
-            parsed = None
-        if response.status_code >= 400:
-            return classify_orion(parsed if isinstance(parsed, dict) else None)
-        return classify_orion(parsed)
+            last_status = 0
+            parsed: Any = None
+            for attempt in range(2):
+                response = client.post(
+                    "/v1/chat/completions",
+                    json=body,
+                    headers={"X-ULG-Surface": "code"},
+                )
+                last_status = int(response.status_code)
+                try:
+                    payload = response.json()
+                    content = payload["choices"][0]["message"]["content"]
+                    parsed = (
+                        json.loads(content) if isinstance(content, str) else content
+                    )
+                except (
+                    KeyError,
+                    IndexError,
+                    TypeError,
+                    json.JSONDecodeError,
+                    ValueError,
+                ):
+                    parsed = None
+                if last_status < 400 and isinstance(parsed, dict):
+                    return classify_orion(parsed)
+                if attempt == 0:
+                    continue
+                return classify_orion(
+                    parsed if isinstance(parsed, dict) else None,
+                    http_status=last_status,
+                )
+            return classify_orion(None, http_status=last_status or 500)
     except httpx.ConnectError:
         return "pending", "connect"
     except Exception as exc:  # noqa: BLE001
