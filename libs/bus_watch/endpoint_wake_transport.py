@@ -7,6 +7,7 @@ import re
 from typing import Any
 
 import httpx
+from agent_bus_store.db.endpoint_wake_ledger import ENDPOINT_WAKE_DEBOUNCE_S_ORION_CHAT
 from transport_utils import DEFAULT_AGENT_BUS_URL, make_sync_client
 
 _RETRIABLE_DISPLAY = {
@@ -183,7 +184,11 @@ class StoreClient:
         return self._bus(
             "POST",
             "/endpoint-wake/claim",
-            json={"debounce_s": 600, "claim_ttl_s": 300, "limit": 1},
+            json={
+                "debounce_s": ENDPOINT_WAKE_DEBOUNCE_S_ORION_CHAT,
+                "claim_ttl_s": 300,
+                "limit": 1,
+            },
         )
 
     def result(self, **payload: Any) -> Any:

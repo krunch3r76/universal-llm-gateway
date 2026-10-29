@@ -99,12 +99,17 @@ def test_classify_orion_non_dict_is_pipeline_error_not_unparseable() -> None:
 
 
 def test_claim_debounce_latency_setting() -> None:
-    """Observed ~8m claim delay: debounce_s=600 coalesces pending groups before claim."""
-    from agent_bus_store.db.endpoint_wake_ledger import claim_due_wakes
+    """Dispatcher claim body uses orion floor; server applies per-kind debounce windows."""
+    from agent_bus_store.db.endpoint_wake_ledger import (
+        ENDPOINT_WAKE_DEBOUNCE_S_DEFAULT,
+        ENDPOINT_WAKE_DEBOUNCE_S_ORION_CHAT,
+        claim_due_wakes,
+    )
 
     assert claim_due_wakes.__defaults__ is not None
     debounce_default = claim_due_wakes.__defaults__[0]
-    assert debounce_default == 600
+    assert debounce_default == ENDPOINT_WAKE_DEBOUNCE_S_DEFAULT
+    assert ENDPOINT_WAKE_DEBOUNCE_S_ORION_CHAT == 30
     assert _POLL_S == 2.0
     captured: dict = {}
 
@@ -122,4 +127,4 @@ def test_claim_debounce_latency_setting() -> None:
         ctx.__exit__.return_value = None
         msc.return_value = ctx
         StoreClient().claim()
-    assert captured.get("debounce_s") == 600
+    assert captured.get("debounce_s") == ENDPOINT_WAKE_DEBOUNCE_S_ORION_CHAT
