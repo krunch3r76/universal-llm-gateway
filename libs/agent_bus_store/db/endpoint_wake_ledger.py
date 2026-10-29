@@ -593,22 +593,20 @@ def resolve_steer_delivery_binding(*, house_id: str) -> dict[str, Any]:
     return envelope
 
 
-def _cdp_registry_lane_thread_for_house(house_id: str) -> str | None:
-    """Poll lane from the open CDP registry seat bound to *house_id*."""
+def _cdp_registry_seat_for_house(house_id: str):
+    """Open CDP registry seat on *house_id*, or None when the house has no holder."""
     from claude_bundles.cdp_registry.session_address import current_seat_for_lane
 
     house = str(house_id or "").strip()
     if not house:
         return None
-    seat = current_seat_for_lane(house)
-    if seat is None:
-        return None
-    lane = (seat.parent_thread or "").strip()
-    return lane or house
+    return current_seat_for_lane(house)
 
 
 def resolve_inform_delivery_binding(*, house_id: str) -> dict[str, Any]:
     """Resolve bus poll lane from the current CDP registry seat on this house."""
+    from claude_bundles.cdp_registry.session_address import chat_url_for_registration
+
     thread_id = str(house_id or "").strip()
     as_of = datetime.now(UTC).isoformat().replace("+00:00", "Z")
     scope = f"house:{thread_id}/intent:inform"
@@ -622,21 +620,22 @@ def resolve_inform_delivery_binding(*, house_id: str) -> dict[str, Any]:
     if not thread_id:
         envelope.update({"state": "unbound", "current": None})
         return envelope
-    lane_thread = _cdp_registry_lane_thread_for_house(thread_id)
-    if lane_thread is None:
+    seat = _cdp_registry_seat_for_house(thread_id)
+    if seat is None:
         envelope.update({"state": "unbound", "current": None})
         return envelope
-    envelope.update(
-        {
-            "state": "bound",
-            "current": {
-                "actuation": {
-                    "type": "bus_poll",
-                    "thread_id": lane_thread,
-                },
-            },
-        }
-    )
+    lane_thread = (seat.parent_thread or "").strip() or thread_id
+    current: dict[str, Any] = {
+        "actuation": {
+            "type": "bus_poll",
+            "thread_id": lane_thread,
+        },
+        "registration_id": seat.registration_id,
+    }
+    chat_url = chat_url_for_registration(seat.registration_id)
+    if chat_url:
+        current["chat_url"] = chat_url
+    envelope.update({"state": "bound", "current": current})
     return envelope
 
 

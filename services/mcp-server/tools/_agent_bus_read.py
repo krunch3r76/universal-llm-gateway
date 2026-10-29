@@ -90,6 +90,7 @@ def register_agent_bus_read_tool(mcp: FastMCP) -> None:
           Established threads: get turn_number="latest", then fetch compact=true over ~20-30 turn windows, and open only LANDED/VERDICT/RULING/CHECKPOINT/closeout turns (agent_skill:agent-bus-discipline).
           wait         (thread, after_turn?, wait_seconds?, completion?, from_agent?, mark_read?)  — mark_read is advisory-only; use get/fetch with mark_read to update read pointers
           lane_current (thread) — derived current lane parentage (state=none when unbound)
+          delivery_bindings_resolve (house_id, intent) — wake/steer/inform actuation resolve; state bound or unbound (current null when unbound)
           tape           (thread, budget_bytes?, harvest?, max_seals?, scope?, transcript_id?, prior_cells?, include_extras?, tools?, channel?) — continuity dump; messages[] + cells[] + index[] (index = budget-degrade metadata only). scope=window requires transcript_id; tail = open cell (bus_turn_id null).
 
         Note: mark_read=true on get/fetch mutates per-turn read pointers for the

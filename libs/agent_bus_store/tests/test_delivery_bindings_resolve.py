@@ -170,6 +170,7 @@ def _cdp_registry_seat_row(
         "seat_bound_at": seat_bound_at,
         "seat_closed_at": seat_closed_at,
         "started_at": seat_bound_at,
+        "chat_url": f"https://claude.ai/cowork/cse_{registration_id}",
     }
 
 
@@ -208,7 +209,10 @@ def test_delivery_bindings_resolve_inform_maestro_lane_holder_hops(
         "type": "bus_poll",
         "thread_id": first_lane,
     }
-    assert "registration_id" not in body["current"]["actuation"]
+    assert body["current"]["registration_id"] == first_reg
+    assert body["current"]["chat_url"] == (
+        f"https://claude.ai/cowork/cse_{first_reg}"
+    )
 
     active[first_reg] = _cdp_registry_seat_row(
         first_reg,
@@ -231,3 +235,7 @@ def test_delivery_bindings_resolve_inform_maestro_lane_holder_hops(
     assert body2["state"] == "bound"
     assert body2["current"]["actuation"]["thread_id"] == second_lane
     assert body2["current"]["actuation"]["thread_id"] != first_lane
+    assert body2["current"]["registration_id"] == second_reg
+    assert body2["current"]["chat_url"] == (
+        f"https://claude.ai/cowork/cse_{second_reg}"
+    )
