@@ -19,6 +19,10 @@ from services.git_integration_worker.cursor_dispatch_ledger import (
 _ORION_AGENT_ID = "4ed020f2-f0b2-4f3d-b49c-89aa34930f19"
 _HOUSE_ID = "20995"
 _MAESTRO_HOUSE = "12286"
+_21220_AGENT_ID = "723224a2-ea2a-5b32-a19c-70e2ae09430e"
+_21220_HOUSE = "21220"
+_ORION_HOUSE = "21207"
+_PINNED_CONVERSATION_ID = "6ae2e1bc-0c94-83e8-9f21-62467c4935d5"
 
 
 @pytest.fixture()
@@ -63,6 +67,57 @@ def _insert_dispatch_row(
                 resume_of,
             ),
         )
+
+
+def test_delivery_bindings_resolve_wake_21220_cursor_glass(client: TestClient) -> None:
+    """21220 wake binds cursor Glass :8 tab per 21207#51."""
+    assert create_thread(thread_id=_21220_HOUSE, slug="mediator") is not None
+    subscribe_endpoint(
+        agent="cursor",
+        thread_scope=_21220_HOUSE,
+        surface="cursor",
+        display=":8",
+        title="20995 delivery-bindings",
+        agent_id=_21220_AGENT_ID,
+    )
+    resp = client.get(
+        "/delivery-bindings/resolve",
+        params={"house_id": _21220_HOUSE, "intent": "wake"},
+    )
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["state"] == "bound"
+    actuation = body["current"]["actuation"]
+    assert actuation["type"] == "cursor_glass"
+    assert actuation["gui_host"] == ":8"
+    assert actuation["agent_id"] == _21220_AGENT_ID
+    assert actuation["cdp_base"] == "http://127.0.0.1:9338"
+
+
+def test_delivery_bindings_resolve_wake_21207_orion_chat(client: TestClient) -> None:
+    """21207 to=orion resolves orion_chat actuation (pinned conversation)."""
+    resp = client.get(
+        "/delivery-bindings/resolve",
+        params={"house_id": _ORION_HOUSE, "intent": "wake"},
+    )
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["state"] == "bound"
+    actuation = body["current"]["actuation"]
+    assert actuation["type"] == "orion_chat"
+    assert actuation["conversation_id"] == _PINNED_CONVERSATION_ID
+
+
+def test_delivery_bindings_resolve_wake_unbound_unknown_house(client: TestClient) -> None:
+    resp = client.get(
+        "/delivery-bindings/resolve",
+        params={"house_id": "99999", "intent": "wake"},
+    )
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["state"] == "unbound"
+    assert body["current"] is None
+    assert body["reason"] == "unbound"
 
 
 def test_delivery_bindings_resolve_wake_orion_cursor_glass(client: TestClient) -> None:

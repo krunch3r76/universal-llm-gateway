@@ -23,13 +23,6 @@ from web_chat_relay.orion_wake import (
     _paste_and_send,
     conversation_id_from_url,
 )
-from web_chat_relay.orion_wake_owner import (
-    OrionWakeDeliveryOwner,
-    WakeClaimContext,
-    enrich_delivery_receipt,
-    load_shared_wake_delivery_owner,
-    wake_claim_from_options,
-)
 
 STANDING_HANDOFF_URI = "cortex://notes/system/threads/21207-standing-handoff.md"
 ORION_IDENTITY_TOKEN = "ai_agent:orion"
@@ -157,11 +150,13 @@ def _registration_body_fields(body: str) -> dict[str, str]:
             fields["old_url"] = stripped.split(":", 1)[1].strip().split("?", 1)[0]
         elif low.startswith("new:"):
             fields["new_url"] = stripped.split(":", 1)[1].strip().split("?", 1)[0]
+        elif low.startswith("attempt_id:"):
+            fields["attempt_id"] = stripped.split(":", 1)[1].strip()
     return fields
 
 
 def parse_orion_seat_registration(record: dict[str, Any] | None) -> dict[str, str] | None:
-    """Validate exact ``SEAT_REGISTRATION|orion`` from Orion with bound old/new + digest."""
+    """Validate explicit ``SEAT_REGISTRATION|orion`` fields — no URL scraping."""
     if not record:
         return None
     if normalize_bus_address(str(record.get("from") or "")) != "orion":
@@ -172,30 +167,22 @@ def parse_orion_seat_registration(record: dict[str, Any] | None) -> dict[str, st
     body = str(record.get("body") or "")
     fields = _registration_body_fields(body)
     identity = fields.get("identity", "")
+    attempt_id = fields.get("attempt_id", "")
+    old_url = fields.get("old_url", "")
+    new_url = fields.get("new_url", "")
     if identity != ORION_IDENTITY_TOKEN:
+        return None
+    if not attempt_id or not old_url or not new_url:
         return None
     sha_match = re.search(r"read_sha256\s+([0-9a-f]{64})", body, re.I)
     if not sha_match:
         return None
-    old_url = fields.get("old_url", "")
-    new_url = fields.get("new_url", "")
-    if not old_url or not new_url:
-        urls = _urls_in_body(body)
-        if len(urls) < 2:
-            return None
-        new_candidates = [
-            u for u in urls if conversation_id_from_url(u) != PINNED_CONVERSATION_ID
-        ]
-        if not new_candidates:
-            return None
-        new_url = new_candidates[-1]
-        old_candidates = [u for u in urls if u != new_url]
-        if not old_candidates:
-            return None
-        old_url = old_candidates[0]
     old_url = old_url.split("?", 1)[0]
     new_url = new_url.split("?", 1)[0]
     if old_url == new_url:
+        return None
+    scraped = set(_urls_in_body(body))
+    if scraped and scraped != {old_url, new_url}:
         return None
     if STANDING_HANDOFF_URI not in body and "21207-standing-handoff" not in body:
         return None
@@ -207,6 +194,7 @@ def parse_orion_seat_registration(record: dict[str, Any] | None) -> dict[str, st
         "conversation_id": cid,
         "old_conversation_url": old_url,
         "identity_token": ORION_IDENTITY_TOKEN,
+        "attempt_id": attempt_id,
         "handoff_read_sha256": sha_match.group(1).lower(),
     }
 
@@ -216,6 +204,7 @@ def registration_matches_attempt(
 ) -> bool:
     return (
         parsed.get("identity_token") == attempt.identity
+        and parsed.get("attempt_id") == attempt.attempt_id
         and parsed.get("old_conversation_url") == attempt.normalized_old()
         and parsed.get("conversation_url") == attempt.normalized_new()
         and parsed.get("handoff_read_sha256") == attempt.handoff_read_sha256.lower()
@@ -229,12 +218,20 @@ def smoke_receipt_binds_attempt(
     candidate_url: str,
 ) -> bool:
     candidate = candidate_url.split("?", 1)[0]
+    expected_new = attempt.normalized_new()
+    if candidate != expected_new:
+        return False
     if smoke.get("ok") is not True or smoke.get("delivered") is not True:
         return False
     if str(smoke.get("attempt_id") or "") != attempt.attempt_id:
         return False
+    if str(smoke.get("identity") or "") not in ("", attempt.identity):
+        return False
+    digest = str(smoke.get("handoff_read_sha256") or "").lower()
+    if digest and digest != attempt.handoff_read_sha256.lower():
+        return False
     bound = str(smoke.get("candidate_url") or smoke.get("conversation_url") or "")
-    return bound.split("?", 1)[0] == candidate
+    return bound.split("?", 1)[0] == expected_new
 
 
 def build_hop_attempt(
@@ -283,6 +280,20 @@ class OrionWakeTargetRollback:
         attempt: OrionHopAttempt,
     ) -> dict[str, Any]:
         candidate = candidate_url.split("?", 1)[0]
+        if self.wake_target_url != attempt.normalized_old():
+            return {
+                "ok": False,
+                "reason": "wake_target_not_at_attempt_old",
+                "wake_target_url": self.wake_target_url,
+                "expected_old_url": attempt.normalized_old(),
+            }
+        if candidate != attempt.normalized_new():
+            return {
+                "ok": False,
+                "reason": "smoke_candidate_mismatch",
+                "candidate_url": candidate,
+                "expected_new_url": attempt.normalized_new(),
+            }
         if not smoke_receipt_binds_attempt(
             smoke, attempt=attempt, candidate_url=candidate
         ):
@@ -522,75 +533,6 @@ def resolve_orion_wake_conversation_url(subscription: dict[str, Any] | None) -> 
     return holder_conversation_url(subscription)
 
 
-def _claim_from_call(
-    *,
-    thread: str,
-    turn: int | str,
-    conversation_url: str | None,
-    wake_claim: WakeClaimContext | None,
-    pipeline_options: dict[str, Any] | None,
-) -> WakeClaimContext | None:
-    if wake_claim is not None:
-        return wake_claim
-    if pipeline_options:
-        parsed = wake_claim_from_options(pipeline_options)
-        if parsed is not None:
-            return parsed
-    return None
-
-
-async def deliver_orion_chat_wake(
-    *,
-    thread: str,
-    turn: int | str,
-    from_agent: str,
-    conversation_url: str | None = None,
-    cdp_url: str | None = None,
-    page: OrionPage | None = None,
-    connect_cdp=None,
-    subscription: dict[str, Any] | None = None,
-    wake_claim: WakeClaimContext | None = None,
-    pipeline_options: dict[str, Any] | None = None,
-    delivery_owner: OrionWakeDeliveryOwner | None = None,
-) -> dict[str, Any]:
-    """Paste gate under an existing dispatcher wake claim — does not re-claim."""
-    from web_chat_relay.orion_wake import DEFAULT_ORION_CDP_URL, deliver_orion_wake
-
-    opts = dict(pipeline_options or {})
-    opts.setdefault("thread", thread)
-    opts.setdefault("turn", turn)
-    if conversation_url:
-        opts.setdefault("conversation_url", conversation_url)
-    claim = _claim_from_call(
-        thread=thread,
-        turn=turn,
-        conversation_url=conversation_url,
-        wake_claim=wake_claim,
-        pipeline_options=opts,
-    )
-    if claim is None:
-        return _refuse("wake_claim_required")
-    owner = delivery_owner
-    if owner is None:
-        owner = load_shared_wake_delivery_owner()
-    gate = owner.validate_claim_for_delivery(claim)
-    if not gate.get("ok"):
-        return _refuse(str(gate.get("reason") or "wake_claim_invalid"))
-    target = claim.normalized_endpoint()
-    receipt = await deliver_orion_wake(
-        thread=thread,
-        turn=turn,
-        from_agent=from_agent,
-        conversation_url=target,
-        cdp_url=cdp_url or DEFAULT_ORION_CDP_URL,
-        page=page,
-        connect_cdp=connect_cdp,
-    )
-    if receipt.get("reason") == "deferred_streaming":
-        receipt = {**receipt, "ok": False, "retry_eligible": True}
-    return enrich_delivery_receipt(receipt, claim)
-
-
 async def record_orion_smoke_receipt(
     *,
     attempt: OrionHopAttempt,
@@ -651,18 +593,20 @@ async def repin_orion_wake_conversation(
         return _refuse("smoke_not_bound")
     if writer is None and apply_repin is None:
         return _refuse("wake_target_writer_missing")
+    if reader is None:
+        return _refuse("wake_target_readback_missing")
     expected_old = bound_attempt.normalized_old()
-    if reader is not None:
-        current = (await reader.read_wake_target()).split("?", 1)[0]
-        if current != expected_old:
-            return _refuse(
-                "wake_target_stale",
-                current_wake_target_url=current,
-                expected_old_url=expected_old,
-            )
+    expected_new = new_url.split("?", 1)[0]
+    current = (await reader.read_wake_target()).split("?", 1)[0]
+    if current != expected_old:
+        return _refuse(
+            "wake_target_stale",
+            current_wake_target_url=current,
+            expected_old_url=expected_old,
+        )
     if writer is not None:
         cas = await writer.write_wake_target(expected_old=expected_old, new_url=new_url)
-        if not cas.get("ok"):
+        if cas.get("ok") is not True:
             reason = str(cas.get("reason") or "wake_target_write_failed")
             if reason == "wake_target_readback_mismatch":
                 return {
@@ -672,19 +616,23 @@ async def repin_orion_wake_conversation(
                     "pasted": False,
                 }
             return {**cas, "ok": False, "pasted": False}
-        committed = str(cas.get("wake_target_url") or new_url).split("?", 1)[0]
+        committed_raw = cas.get("wake_target_url")
+        if not committed_raw:
+            return _refuse(
+                "wake_target_unknown_after_write",
+                expected_new_url=expected_new,
+            )
+        committed = str(committed_raw).split("?", 1)[0]
     else:
         assert apply_repin is not None
         await apply_repin(page, new_url)
-        if reader is None:
-            return _refuse("wake_target_readback_missing")
         committed = (await reader.read_wake_target()).split("?", 1)[0]
-        if committed != new_url.split("?", 1)[0]:
-            return _refuse(
-                "wake_target_unknown_after_write",
-                read_back_url=committed,
-                expected_new_url=new_url,
-            )
+    if committed != expected_new:
+        return _refuse(
+            "wake_target_unknown_after_write",
+            read_back_url=committed,
+            expected_new_url=expected_new,
+        )
     if store is not None:
         store.clear_pending_attempt(bound_attempt.attempt_id)
     return {

@@ -474,6 +474,70 @@ def resolve_subscription_for_thread(
 
 _WAKE_DELIVERY_AGENT = "cursor"
 _DELIVERY_BINDING_SOURCE = "agent_bus_store.delivery_bindings_resolve"
+_ORION_WAKE_HOUSE = "21207"
+_PINNED_ORION_CONVERSATION_ID = "6ae2e1bc-0c94-83e8-9f21-62467c4935d5"
+ENDPOINT_WAKE_DEBOUNCE_S_DEFAULT = 600
+ENDPOINT_WAKE_DEBOUNCE_S_ORION_CHAT = 30
+
+
+def _is_orion_chat_wake_group(agent: str, thread_id: str) -> bool:
+    """True for pinned-house Orion chat wakes (actuation type orion_chat)."""
+    if str(thread_id) != _ORION_WAKE_HOUSE:
+        return False
+    return normalize_bus_address(agent) == "orion"
+
+
+def endpoint_wake_debounce_s(agent: str, thread_id: str) -> int:
+    """Post-delivery debounce and pending coalesce window per endpoint kind."""
+    if _is_orion_chat_wake_group(agent, thread_id):
+        return ENDPOINT_WAKE_DEBOUNCE_S_ORION_CHAT
+    return ENDPOINT_WAKE_DEBOUNCE_S_DEFAULT
+
+
+def _orion_pending_coalesce_blocks(
+    conn: sqlite3.Connection,
+    *,
+    agent: str,
+    thread_id: str,
+    debounce_before: str,
+) -> bool:
+    """Hold Orion claims until the burst coalesce window elapses (fresh batches only)."""
+    if not _is_orion_chat_wake_group(agent, thread_id):
+        return False
+    row = conn.execute(
+        "SELECT MIN(datetime(created_at)) AS oldest FROM endpoint_wake_ledger "
+        "WHERE agent=? AND thread_id=? AND state='pending'",
+        (agent, thread_id),
+    ).fetchone()
+    oldest = row["oldest"] if row else None
+    if oldest is None or oldest <= debounce_before:
+        return False
+    prior = conn.execute(
+        "SELECT 1 FROM endpoint_wake_ledger "
+        "WHERE lower(trim(agent))=lower(trim(?)) AND thread_id=? "
+        "AND state='delivered' AND datetime(finished_at) < ? LIMIT 1",
+        (agent, thread_id, oldest),
+    ).fetchone()
+    return prior is None
+
+
+def _wake_unbound_envelope(envelope: dict[str, Any]) -> dict[str, Any]:
+    envelope.update({"state": "unbound", "current": None, "reason": "unbound"})
+    return envelope
+
+
+def _orion_chat_actuation_for_house(thread_id: str) -> dict[str, Any] | None:
+    if thread_id != _ORION_WAKE_HOUSE:
+        return None
+    from web_chat_relay.orion_wake import DEFAULT_ORION_CDP_URL, PINNED_CONVERSATION_URL
+
+    url = PINNED_CONVERSATION_URL.split("?", 1)[0]
+    return {
+        "type": "orion_chat",
+        "conversation_id": _PINNED_ORION_CONVERSATION_ID,
+        "conversation_url": url,
+        "cdp_url": DEFAULT_ORION_CDP_URL,
+    }
 
 
 def _cursor_glass_actuation(row: dict[str, Any]) -> dict[str, Any] | None:
@@ -503,31 +567,38 @@ def resolve_wake_delivery_binding(*, house_id: str) -> dict[str, Any]:
         "stale": False,
     }
     if not thread_id:
-        envelope.update({"state": "unbound", "current": None})
-        return envelope
+        return _wake_unbound_envelope(envelope)
     resolved = resolve_subscription_for_thread(_WAKE_DELIVERY_AGENT, thread_id)
-    if resolved is None:
-        envelope.update({"state": "unbound", "current": None})
+    if resolved is not None:
+        route, row = resolved
+        if str(row.get("state") or "") == "subscribed":
+            actuation = _cursor_glass_actuation(row)
+            if actuation is not None:
+                envelope.update(
+                    {
+                        "state": "bound",
+                        "current": {
+                            "actuation": actuation,
+                            "route": route,
+                            "subscription_id": row.get("id"),
+                        },
+                    }
+                )
+                return envelope
+    orion_actuation = _orion_chat_actuation_for_house(thread_id)
+    if orion_actuation is not None:
+        envelope.update(
+            {
+                "state": "bound",
+                "basis": "orion_pinned_conversation",
+                "current": {
+                    "actuation": orion_actuation,
+                    "route": "orion-house",
+                },
+            }
+        )
         return envelope
-    route, row = resolved
-    if str(row.get("state") or "") != "subscribed":
-        envelope.update({"state": "unbound", "current": None})
-        return envelope
-    actuation = _cursor_glass_actuation(row)
-    if actuation is None:
-        envelope.update({"state": "unbound", "current": None})
-        return envelope
-    envelope.update(
-        {
-            "state": "bound",
-            "current": {
-                "actuation": actuation,
-                "route": route,
-                "subscription_id": row.get("id"),
-            },
-        }
-    )
-    return envelope
+    return _wake_unbound_envelope(envelope)
 
 
 _STEER_DELIVERY_AGENT = "cursor"
@@ -745,15 +816,17 @@ def resolve_inform_delivery_binding(*, house_id: str) -> dict[str, Any]:
 
 
 def claim_due_wakes(
-    debounce_s: int = 600,
+    debounce_s: int = ENDPOINT_WAKE_DEBOUNCE_S_DEFAULT,
     claim_ttl_s: int = 300,
     limit: int = 1,
     *,
     now: str | None = None,
 ) -> dict[str, Any]:
     """Claim one (agent, thread) group, skipping NF2 rows in the same write."""
+    _ = debounce_s  # dispatcher passes a floor; per-kind windows are server-side
     stamp = _now(now)
-    debounce_before = _shift(stamp, -debounce_s)
+    debounce_before_default = _shift(stamp, -ENDPOINT_WAKE_DEBOUNCE_S_DEFAULT)
+    debounce_before_orion = _shift(stamp, -ENDPOINT_WAKE_DEBOUNCE_S_ORION_CHAT)
     ttl_before = _shift(stamp, -claim_ttl_s)
     retry_before = _shift(stamp, -60)
     with write_connect() as conn:
@@ -772,7 +845,11 @@ def claim_due_wakes(
                   AND NOT EXISTS (
                     SELECT 1 FROM endpoint_wake_ledger d
                     WHERE {_mailbox_agent_sql("d", "p")} AND d.thread_id=p.thread_id
-                      AND d.state='delivered' AND d.finished_at>?
+                      AND d.state='delivered' AND d.finished_at> CASE
+                        WHEN lower(trim(p.agent))='orion' AND p.thread_id=?
+                        THEN ?
+                        ELSE ?
+                      END
                       AND NOT EXISTS (
                         SELECT 1 FROM turns t
                         WHERE datetime(t.created_at) > datetime(d.finished_at)
@@ -820,7 +897,11 @@ def claim_due_wakes(
                   AND NOT EXISTS (
                     SELECT 1 FROM endpoint_wake_ledger u
                     WHERE {_mailbox_agent_sql("u", "p")} AND u.thread_id=p.thread_id
-                      AND u.state='unknown' AND u.claimed_at>?
+                      AND u.state='unknown' AND u.claimed_at> CASE
+                        WHEN lower(trim(p.agent))='orion' AND p.thread_id=?
+                        THEN ?
+                        ELSE ?
+                      END
                   )
                   AND NOT EXISTS (
                     SELECT 1 FROM endpoint_wake_ledger c
@@ -831,10 +912,27 @@ def claim_due_wakes(
                 ORDER BY MIN(COALESCE(p.finished_at, '')), MIN(p.id)
                 LIMIT ?
                 """,
-                (retry_before, debounce_before, debounce_before, ttl_before, limit),
+                (
+                    retry_before,
+                    _ORION_WAKE_HOUSE,
+                    debounce_before_orion,
+                    debounce_before_default,
+                    _ORION_WAKE_HOUSE,
+                    debounce_before_orion,
+                    debounce_before_default,
+                    ttl_before,
+                    limit,
+                ),
             ).fetchone()
             if group is None:
                 return {"wake_id": None, "rows": all_skipped}
+            if _orion_pending_coalesce_blocks(
+                conn,
+                agent=str(group["agent"]),
+                thread_id=str(group["thread_id"]),
+                debounce_before=debounce_before_orion,
+            ):
+                continue
             rows = _group_pending_rows(conn, group, retry_before)
             skipped: list[dict[str, Any]] = []
             claimable: list[sqlite3.Row] = []

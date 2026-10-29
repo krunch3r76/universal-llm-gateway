@@ -14,14 +14,14 @@ from web_chat_relay.orion_hop import (
     build_hop_attempt,
     build_hop_paste_text,
     build_identity_pointer_line,
-    deliver_orion_chat_wake,
     orion_hop,
     parse_orion_seat_registration,
     preflight_standing_handoff,
     repin_orion_wake_conversation,
     resolve_orion_wake_conversation_url,
 )
-from web_chat_relay.orion_wake import PINNED_CONVERSATION_URL
+from web_chat_relay.orion_hop_storage import InMemoryHopAttemptStore
+from web_chat_relay.orion_wake import PINNED_CONVERSATION_URL, deliver_orion_chat_wake
 from web_chat_relay.orion_wake_owner import (
     FailClosedWakeDeliveryOwner,
     InMemoryWakeDeliveryOwner,
@@ -37,6 +37,25 @@ NEW_CONVERSATION_ID = "11111111-2222-3333-4444-555555555555"
 NEW_URL = f"https://chatgpt.com/c/{NEW_CONVERSATION_ID}"
 SECOND_CONVERSATION_ID = "22222222-3333-4444-5555-666666666666"
 SECOND_URL = f"https://chatgpt.com/c/{SECOND_CONVERSATION_ID}"
+
+
+def _registration_body(
+    attempt_id: str,
+    *,
+    old_url: str = PINNED_CONVERSATION_URL,
+    new_url: str = NEW_URL,
+    sha: str = HANDOFF_SHA,
+    extra: str = "",
+) -> str:
+    return (
+        f"TYPE: SEAT_REGISTRATION\n"
+        f"attempt_id: {attempt_id}\n"
+        f"identity: {ORION_IDENTITY_TOKEN}\n"
+        f"old: {old_url}\n"
+        f"new: {new_url}\n"
+        f"fs read {STANDING_HANDOFF_URI} read_sha256 {sha}\n"
+        f"{extra}"
+    )
 
 
 async def _handoff_ok() -> dict:
@@ -429,18 +448,18 @@ async def test_handoff_missing_refuses_before_new_chat() -> None:
 
 @pytest.mark.asyncio
 async def test_seat_registration_requires_identity_old_new_and_handoff_sha() -> None:
-    body = (
-        f"TYPE: SEAT_REGISTRATION\n"
-        f"identity: {ORION_IDENTITY_TOKEN}\n"
-        f"old: {PINNED_CONVERSATION_URL}\n"
-        f"new: {NEW_URL}\n"
-        f"fs read {STANDING_HANDOFF_URI} read_sha256 {HANDOFF_SHA}\n"
+    attempt = build_hop_attempt(
+        old_url=PINNED_CONVERSATION_URL,
+        new_url=NEW_URL,
+        handoff_read_sha256=HANDOFF_SHA,
     )
+    body = _registration_body(attempt.attempt_id)
     reg = {"from": "orion", "subject": "SEAT_REGISTRATION|orion", "body": body}
     parsed = parse_orion_seat_registration(reg)
     assert parsed is not None
     assert parsed["handoff_read_sha256"] == HANDOFF_SHA
     assert parsed["old_conversation_url"] == PINNED_CONVERSATION_URL
+    assert parsed["attempt_id"] == attempt.attempt_id
     assert parse_orion_seat_registration({**reg, "from": "maestro"}) is None
     assert parse_orion_seat_registration({**reg, "body": body.replace(HANDOFF_SHA, "")}) is None
     assert (
@@ -449,6 +468,31 @@ async def test_seat_registration_requires_identity_old_new_and_handoff_sha() -> 
         )
         is None
     )
+
+
+def test_registration_rejects_partial_old_without_new() -> None:
+    attempt = build_hop_attempt(
+        old_url=PINNED_CONVERSATION_URL,
+        new_url=NEW_URL,
+        handoff_read_sha256=HANDOFF_SHA,
+    )
+    body = _registration_body(attempt.attempt_id).replace(f"new: {NEW_URL}\n", "")
+    reg = {"from": "orion", "subject": ORION_REGISTRATION_SUBJECT, "body": body}
+    assert parse_orion_seat_registration(reg) is None
+
+
+def test_registration_rejects_unrelated_urls_in_body() -> None:
+    attempt = build_hop_attempt(
+        old_url=PINNED_CONVERSATION_URL,
+        new_url=NEW_URL,
+        handoff_read_sha256=HANDOFF_SHA,
+    )
+    body = _registration_body(
+        attempt.attempt_id,
+        extra=f"bootstrap pointer mentions {SECOND_URL}\n",
+    )
+    reg = {"from": "orion", "subject": ORION_REGISTRATION_SUBJECT, "body": body}
+    assert parse_orion_seat_registration(reg) is None
 
 
 def test_wake_target_commits_only_after_bound_smoke() -> None:
@@ -477,6 +521,27 @@ def test_wake_target_commits_only_after_bound_smoke() -> None:
     )
     assert ok["ok"] is True
     assert holder.wake_target_url == NEW_URL
+
+
+def test_commit_after_smoke_rejects_wrong_candidate_for_attempt_id() -> None:
+    attempt = build_hop_attempt(
+        old_url=PINNED_CONVERSATION_URL,
+        new_url=NEW_URL,
+        handoff_read_sha256=HANDOFF_SHA,
+    )
+    holder = OrionWakeTargetRollback(PINNED_CONVERSATION_URL)
+    out = holder.commit_after_smoke(
+        candidate_url=SECOND_URL,
+        smoke={
+            "ok": True,
+            "delivered": True,
+            "attempt_id": attempt.attempt_id,
+            "candidate_url": SECOND_URL,
+        },
+        attempt=attempt,
+    )
+    assert out["reason"] == "smoke_candidate_mismatch"
+    assert holder.wake_target_url == PINNED_CONVERSATION_URL
 
 
 def _wake_claim(**overrides: object) -> WakeClaimContext:
@@ -509,24 +574,35 @@ def test_wake_claim_from_options_parses_dispatcher_fields() -> None:
 
 
 @pytest.mark.asyncio
-async def test_deliver_without_wake_claim_fails_closed() -> None:
+async def test_deliver_without_turn_id_resolves_fail_closed() -> None:
+    with patch(
+        "agent_bus_store.db.orion_wake_owner_adapter.resolve_turn_id_for_wake",
+        return_value=None,
+    ):
+        out = await deliver_orion_chat_wake(
+            thread="21207",
+            turn=9,
+            from_agent="maestro",
+            conversation_url=PINNED_CONVERSATION_URL,
+        )
+    assert out["reason"] == "turn_id_unresolved"
+
+
+@pytest.mark.asyncio
+async def test_deliver_with_unconfigured_owner_fails_closed() -> None:
     out = await deliver_orion_chat_wake(
         thread="21207",
         turn=9,
         from_agent="maestro",
         conversation_url=PINNED_CONVERSATION_URL,
-    )
-    assert out["reason"] == "wake_claim_required"
-
-
-@pytest.mark.asyncio
-async def test_deliver_with_unconfigured_owner_fails_closed() -> None:
-    claim = _wake_claim()
-    out = await deliver_orion_chat_wake(
-        thread="21207",
-        turn=9,
-        from_agent="maestro",
-        wake_claim=claim,
+        pipeline_options={
+            "wake_id": "wake-x",
+            "thread": "21207",
+            "turn_id": 901,
+            "turn": 9,
+            "conversation_url": PINNED_CONVERSATION_URL,
+            "agent": "orion",
+        },
         delivery_owner=FailClosedWakeDeliveryOwner(),
     )
     assert out["reason"] == "wake_owner_unconfigured"
@@ -537,32 +613,57 @@ async def test_finished_claim_rejected_no_double_delivery() -> None:
     owner = InMemoryWakeDeliveryOwner()
     claim = _wake_claim()
     owner.register_claim(claim)
-    owner.finish_claim(claim.wake_id)
+    owner.delivered.add(claim.wake_id)
     out = await deliver_orion_chat_wake(
         thread="21207",
         turn=9,
         from_agent="maestro",
-        wake_claim=claim,
+        conversation_url=PINNED_CONVERSATION_URL,
+        pipeline_options={
+            "wake_id": claim.wake_id,
+            "thread": claim.thread_id,
+            "turn_id": 901,
+            "turn": 9,
+            "conversation_url": PINNED_CONVERSATION_URL,
+            "agent": "orion",
+        },
         delivery_owner=owner,
     )
-    assert out["reason"] == "wake_already_finished"
+    assert out["reason"] == "duplicate_suppressed"
+
+
+@pytest.mark.asyncio
+async def test_deliver_rejects_call_args_inconsistent_with_claim() -> None:
+    owner = InMemoryWakeDeliveryOwner()
+    claim = _wake_claim()
+    owner.register_claim(claim)
+    out = await deliver_orion_chat_wake(
+        thread="21207",
+        turn=99,
+        from_agent="maestro",
+        conversation_url=PINNED_CONVERSATION_URL,
+        pipeline_options={
+            "wake_id": claim.wake_id,
+            "thread": claim.thread_id,
+            "turn_id": 901,
+            "turn": 9,
+            "conversation_url": PINNED_CONVERSATION_URL,
+            "agent": "orion",
+        },
+        delivery_owner=owner,
+    )
+    assert out["reason"] == "wake_claim_turn_mismatch"
 
 
 @pytest.mark.asyncio
 async def test_repin_without_writer_fails_closed() -> None:
-    body = (
-        f"TYPE: SEAT_REGISTRATION\n"
-        f"identity: {ORION_IDENTITY_TOKEN}\n"
-        f"old: {PINNED_CONVERSATION_URL}\n"
-        f"new: {NEW_URL}\n"
-        f"fs read {STANDING_HANDOFF_URI} read_sha256 {HANDOFF_SHA}\n"
-    )
-    reg = {"from": "orion", "subject": ORION_REGISTRATION_SUBJECT, "body": body}
     attempt = build_hop_attempt(
         old_url=PINNED_CONVERSATION_URL,
         new_url=NEW_URL,
         handoff_read_sha256=HANDOFF_SHA,
     )
+    body = _registration_body(attempt.attempt_id)
+    reg = {"from": "orion", "subject": ORION_REGISTRATION_SUBJECT, "body": body}
     smoke = {
         "ok": True,
         "delivered": True,
@@ -580,20 +681,51 @@ async def test_repin_without_writer_fails_closed() -> None:
 
 
 @pytest.mark.asyncio
-async def test_repin_cas_conflict_and_readback() -> None:
-    body = (
-        f"TYPE: SEAT_REGISTRATION\n"
-        f"identity: {ORION_IDENTITY_TOKEN}\n"
-        f"old: {PINNED_CONVERSATION_URL}\n"
-        f"new: {NEW_URL}\n"
-        f"fs read {STANDING_HANDOFF_URI} read_sha256 {HANDOFF_SHA}\n"
-    )
-    reg = {"from": "orion", "subject": ORION_REGISTRATION_SUBJECT, "body": body}
+async def test_repin_apply_repin_requires_reader_before_mutation() -> None:
     attempt = build_hop_attempt(
         old_url=PINNED_CONVERSATION_URL,
         new_url=NEW_URL,
         handoff_read_sha256=HANDOFF_SHA,
     )
+    reg = {
+        "from": "orion",
+        "subject": ORION_REGISTRATION_SUBJECT,
+        "body": _registration_body(attempt.attempt_id),
+    }
+    smoke = {
+        "ok": True,
+        "delivered": True,
+        "attempt_id": attempt.attempt_id,
+        "candidate_url": NEW_URL,
+    }
+    calls: list[str] = []
+
+    async def _apply(_page: object, _url: str) -> None:
+        calls.append(_url)
+
+    out = await repin_orion_wake_conversation(
+        object(),
+        registration=reg,
+        attempt=attempt,
+        smoke_receipt=smoke,
+        apply_repin=_apply,
+    )
+    assert out["reason"] == "wake_target_readback_missing"
+    assert calls == []
+
+
+@pytest.mark.asyncio
+async def test_repin_cas_conflict_and_readback() -> None:
+    attempt = build_hop_attempt(
+        old_url=PINNED_CONVERSATION_URL,
+        new_url=NEW_URL,
+        handoff_read_sha256=HANDOFF_SHA,
+    )
+    reg = {
+        "from": "orion",
+        "subject": ORION_REGISTRATION_SUBJECT,
+        "body": _registration_body(attempt.attempt_id),
+    }
     smoke = {
         "ok": True,
         "delivered": True,
@@ -621,20 +753,59 @@ async def test_repin_cas_conflict_and_readback() -> None:
 
 
 @pytest.mark.asyncio
-async def test_repin_commits_with_writer_and_smoke() -> None:
-    body = (
-        f"TYPE: SEAT_REGISTRATION\n"
-        f"identity: {ORION_IDENTITY_TOKEN}\n"
-        f"old: {PINNED_CONVERSATION_URL}\n"
-        f"new: {NEW_URL}\n"
-        f"fs read {STANDING_HANDOFF_URI} read_sha256 {HANDOFF_SHA}\n"
-    )
-    reg = {"from": "orion", "subject": ORION_REGISTRATION_SUBJECT, "body": body}
+async def test_repin_writer_truthy_ok_without_url_is_unknown() -> None:
     attempt = build_hop_attempt(
         old_url=PINNED_CONVERSATION_URL,
         new_url=NEW_URL,
         handoff_read_sha256=HANDOFF_SHA,
     )
+    reg = {
+        "from": "orion",
+        "subject": ORION_REGISTRATION_SUBJECT,
+        "body": _registration_body(attempt.attempt_id),
+    }
+    smoke = {
+        "ok": True,
+        "delivered": True,
+        "attempt_id": attempt.attempt_id,
+        "candidate_url": NEW_URL,
+    }
+    store = InMemoryHopAttemptStore()
+    store.save_pending_attempt(attempt)
+
+    class _Writer:
+        async def write_wake_target(self, *, expected_old: str, new_url: str) -> dict:
+            return {"ok": True}
+
+    class _Reader:
+        async def read_wake_target(self) -> str:
+            return PINNED_CONVERSATION_URL
+
+    out = await repin_orion_wake_conversation(
+        object(),
+        registration=reg,
+        attempt=attempt,
+        smoke_receipt=smoke,
+        attempt_store=store,
+        writer=_Writer(),
+        reader=_Reader(),
+    )
+    assert out["reason"] == "wake_target_unknown_after_write"
+    assert store.load_pending_attempt() is not None
+
+
+@pytest.mark.asyncio
+async def test_repin_commits_with_writer_and_smoke() -> None:
+    attempt = build_hop_attempt(
+        old_url=PINNED_CONVERSATION_URL,
+        new_url=NEW_URL,
+        handoff_read_sha256=HANDOFF_SHA,
+    )
+    reg = {
+        "from": "orion",
+        "subject": ORION_REGISTRATION_SUBJECT,
+        "body": _registration_body(attempt.attempt_id),
+    }
     smoke = {
         "ok": True,
         "delivered": True,
@@ -648,12 +819,22 @@ async def test_repin_commits_with_writer_and_smoke() -> None:
             written.append(new_url)
             return {"ok": True, "wake_target_url": new_url}
 
+    class _Reader:
+        def __init__(self) -> None:
+            self.url = PINNED_CONVERSATION_URL
+
+        async def read_wake_target(self) -> str:
+            return self.url
+
+    reader = _Reader()
+
     out = await repin_orion_wake_conversation(
         object(),
         registration=reg,
         attempt=attempt,
         smoke_receipt=smoke,
         writer=_Writer(),
+        reader=reader,
     )
     assert out["ok"] is True, out
     assert written == [NEW_URL]
@@ -668,27 +849,36 @@ async def test_deliver_orion_chat_wake_under_claim_does_not_reclaim() -> None:
     claim = _wake_claim(turn_numbers=(12,), turn_ids=(912,))
     owner.register_claim(claim)
     page = _FakePage(url=PINNED_CONVERSATION_URL)
+    opts = {
+        "wake_id": claim.wake_id,
+        "thread": claim.thread_id,
+        "turn_id": 912,
+        "turn": 12,
+        "conversation_url": PINNED_CONVERSATION_URL,
+        "agent": "orion",
+    }
     first = await deliver_orion_chat_wake(
         thread="21207",
         turn=12,
         from_agent="maestro",
         page=page,
-        wake_claim=claim,
+        conversation_url=PINNED_CONVERSATION_URL,
+        pipeline_options=opts,
         delivery_owner=owner,
     )
     assert first["ok"] is True, first
     assert first["wake_id"] == claim.wake_id
     assert first["covered_turn_ids"] == [912]
-    owner.finish_claim(claim.wake_id)
     second = await deliver_orion_chat_wake(
         thread="21207",
         turn=12,
         from_agent="maestro",
         page=page,
-        wake_claim=claim,
+        conversation_url=PINNED_CONVERSATION_URL,
+        pipeline_options=opts,
         delivery_owner=owner,
     )
-    assert second["reason"] == "wake_already_finished"
+    assert second["reason"] == "duplicate_suppressed"
 
 
 @pytest.mark.asyncio
