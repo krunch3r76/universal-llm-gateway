@@ -35,7 +35,9 @@ def composer_impresario_suffix(agent: str) -> str | None:
     return suffix or None
 
 
-_BARE_GLASS_AGENT_ID_SUFFIX = re.compile(r"^[0-9a-f]{8}(?:-[0-9a-f]{4}){0,4}[0-9a-f]{0,12}$")
+_BARE_GLASS_AGENT_ID_SUFFIX = re.compile(
+    r"^[0-9a-f]{8}(?:-[0-9a-f]{4}){0,4}[0-9a-f]{0,12}$"
+)
 
 
 def glass_agent_id_suffix_candidates(
@@ -73,11 +75,15 @@ def agent_id_matches_composer_suffix(agent_id: str, suffix: str) -> bool:
     return aid.replace("-", "").startswith(suf.replace("-", ""))
 
 
-def classify_orion(body: Any) -> tuple[str, str]:
+def classify_orion(body: Any, *, http_status: int | None = None) -> tuple[str, str]:
     """Map an orion-chat-wake pipeline result onto delivery outcomes."""
+    if http_status is not None and http_status >= 400:
+        return "pending", f"pipeline_error:{http_status}"
     if not isinstance(body, dict):
-        return "unknown", "unparseable"
+        return "pending", "pipeline_error"
     reason = str(body.get("reason") or "")
+    if reason == "bad_turn":
+        return "refused", "bad_turn"
     if body.get("ok") and body.get("delivered"):
         return "delivered", reason or "delivered"
     if reason == "deferred_streaming":
@@ -299,9 +305,7 @@ class StoreClient:
             row
             for row in payload.get("subscriptions") or []
             if row.get("state") == "subscribed"
-            and agent_id_matches_composer_suffix(
-                str(row.get("agent_id") or ""), suffix
-            )
+            and agent_id_matches_composer_suffix(str(row.get("agent_id") or ""), suffix)
         ]
         if not rows:
             return None
