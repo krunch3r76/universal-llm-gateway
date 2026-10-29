@@ -26,6 +26,7 @@ if TYPE_CHECKING:
 from chat_harvest.chrome import strip_chrome
 
 from claude_bundles.chat_model_match import (
+    match_model_request,
     normalize_picker_request,
     sealed_ask_default_effort,
 )
@@ -739,6 +740,125 @@ async def _read_code_surface_model_label(page: Page) -> str:
     return (await current_model_label(page)).strip()
 
 
+def _code_menu_family_for_match(family: str) -> str:
+    """Map wire families like ``sonnet-5-5`` to menu dots ``sonnet-5.5`` for UI labels."""
+    fam = (family or "").strip().lower()
+    m = re.match(r"^(.*)-(\d+)-(\d+)$", fam)
+    if m:
+        return f"{m.group(1)}-{m.group(2)}.{m.group(3)}"
+    return fam
+
+
+async def _code_surface_set_effort_from_menu(page: Page, effort: str) -> bool:
+    """Use the /code model flyout ``Effort`` row (R24 probe: menuitem + submenu)."""
+    token = (effort or "").strip().title()
+    if not token:
+        return False
+    if not await _open_code_surface_model_menu(page):
+        return False
+    item = page.get_by_role("menuitem", name="Effort", exact=False)
+    if not await item.count():
+        await page.keyboard.press("Escape")
+        return False
+    await item.first.click()
+    await page.wait_for_timeout(400)
+    opt = page.get_by_role("menuitemradio", name=token, exact=False)
+    if not await opt.count():
+        await page.keyboard.press("Escape")
+        return False
+    await opt.first.click(force=True)
+    await page.wait_for_timeout(400)
+    await page.keyboard.press("Escape")
+    return True
+
+
+async def _list_code_surface_menu_model_labels(page: Page) -> list[str]:
+    """Model names from the /code ``button[aria-label*=Model]`` flyout (R24 probe)."""
+    labels: list[str] = []
+    loc = page.locator('[role="menuitemradio"]')
+    count = await loc.count()
+    for i in range(count):
+        raw = (await loc.nth(i).inner_text() or "").strip()
+        line = raw.split("\n", 1)[0].strip()
+        if line and line not in labels:
+            labels.append(line)
+    return labels
+
+
+async def _open_code_surface_model_menu(page: Page) -> bool:
+    btn = page.locator('button[aria-label*="Model"]')
+    if not await btn.count():
+        return False
+    await btn.first.click()
+    await page.wait_for_timeout(600)
+    return await page.locator('[role="menu"]').count() > 0
+
+
+async def _apply_code_surface_model_picker(page: Page, requested: str) -> dict[str, Any]:
+    """Open the /code model menu and pick a ``menuitemradio`` for *requested*."""
+    req = normalize_picker_request(requested or "")
+    family, effort = parse_model_request(req)
+    if effort is None:
+        effort = sealed_ask_default_effort(family)
+    before = await _read_code_surface_model_label(page) or ""
+    if before and label_satisfies_request(req, before, effort=effort):
+        return {
+            "ok": True,
+            "step": "code_surface_already_selected",
+            "requested": req,
+            "current_model": before,
+        }
+    if not await _open_code_surface_model_menu(page):
+        return {
+            "ok": False,
+            "step": "code_surface_model_button_missing",
+            "requested": req,
+            "before": before,
+        }
+    available = await _list_code_surface_menu_model_labels(page)
+    matched = match_model_request(_code_menu_family_for_match(family), available)
+    if not matched:
+        await page.keyboard.press("Escape")
+        return {
+            "ok": False,
+            "step": "code_surface_model_not_in_menu",
+            "requested": req,
+            "available_models": available,
+        }
+    opt = page.get_by_role("menuitemradio", name=matched, exact=False)
+    if not await opt.count():
+        await page.keyboard.press("Escape")
+        return {
+            "ok": False,
+            "step": "code_surface_model_radio_missing",
+            "requested": req,
+            "matched": matched,
+        }
+    await opt.first.click(force=True)
+    await page.wait_for_timeout(500)
+    await page.keyboard.press("Escape")
+    await page.wait_for_timeout(300)
+    after = await _read_code_surface_model_label(page) or ""
+    if not label_satisfies_request(req, after, effort=effort) and effort:
+        await _code_surface_set_effort_from_menu(page, effort)
+        after = await _read_code_surface_model_label(page) or ""
+    if not label_satisfies_request(req, after, effort=effort):
+        return {
+            "ok": False,
+            "step": "code_surface_model_pick_unverified",
+            "requested": req,
+            "before": before,
+            "after": after,
+        }
+    return {
+        "ok": True,
+        "step": "code_surface_model_picked",
+        "requested": req,
+        "current_model": after,
+        "matched": matched,
+    }
+
+
 async def _compose_model_selected(
     page: Page,
     model: str,
@@ -770,6 +890,9 @@ async def _compose_model_selected(
         await composer.click(force=True)
         await page.wait_for_timeout(800)
     if _is_code_compose_surface(claude_surface=claude_surface, compose_url=compose_url):
+        pick = await _apply_code_surface_model_picker(page, model)
+        if not pick.get("ok"):
+            return pick
         model_ran = await _read_code_surface_model_label(page) or "unknown"
         return {
             "ok": True,
@@ -777,6 +900,7 @@ async def _compose_model_selected(
             "requested": model,
             "model_ran": model_ran,
             "current_model": model_ran,
+            "code_surface_pick": pick.get("step"),
         }
     model_info = await select_model(page, model)
     if not model_info.get("ok"):
