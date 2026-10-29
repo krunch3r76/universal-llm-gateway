@@ -293,6 +293,25 @@ def test_delivery_bindings_resolve_inform_seat_fields_absent(
     assert "seat_fields_absent" in current["receipt"]
 
 
+def test_delivery_bindings_resolve_inform_ask_owner_unconfigured(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Unset PROJECT_ASK_URL → inform unbound with ask_owner_unconfigured."""
+    monkeypatch.delenv("PROJECT_ASK_URL", raising=False)
+    resp = client.get(
+        "/delivery-bindings/resolve",
+        params={"house_id": _MAESTRO_HOUSE, "intent": "inform"},
+    )
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["state"] == "unbound"
+    current = body["current"]
+    assert current is not None
+    assert current["reason"] == "ask_owner_unconfigured"
+    assert "ask_owner_unconfigured" in current["receipt"]
+
+
 def test_delivery_bindings_resolve_inform_seat_ambiguous(
     client: TestClient,
     monkeypatch: pytest.MonkeyPatch,

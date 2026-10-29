@@ -14,6 +14,7 @@ from pathlib import Path
 from ...model.service_state import ServiceState
 from ..service_config import (
     GATEWAY_DIR,
+    agent_bus_project_ask_url_for_runtime,
     ensure_agent_bus_config,
     load_agent_bus_config,
     load_mcp_config,
@@ -56,6 +57,9 @@ def _agent_bus_runtime_env() -> tuple[dict[str, str], str | None]:
     mcp_cfg = load_mcp_config()
     if mcp_cfg is not None and mcp_cfg.agent_bus_token:
         env["AGENT_BUS_TOKEN"] = mcp_cfg.agent_bus_token
+    project_ask_url = agent_bus_project_ask_url_for_runtime(cfg, mcp_cfg)
+    if project_ask_url:
+        env["PROJECT_ASK_URL"] = project_ask_url
     return env, None
 
 
