@@ -1855,7 +1855,6 @@ async def test_k44_page_only_teardown_preserves_preexisting_tab(
 ) -> None:
     """m4: K44 find_page reuse must not close the operator's existing tab."""
     from cdp_ask.cse_session_harvest_open import _teardown_opened
-    from cdp_ask.followup_reattach import ReattachOutcome
 
     _pred_id, succ_id = _seed_k44_superseded_dormant_predecessor()
     _restore_dormant_for_chat_url(monkeypatch)
