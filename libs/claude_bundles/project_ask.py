@@ -915,7 +915,7 @@ async def _apply_code_surface_model_picker(
         return {
             "ok": False,
             "step": "code_surface_model_not_in_menu",
-            "requested": verify_req,
+            "requested": menu_family,
             "available_models": available,
         }
     radio_index = index_for_named_radio(rows, matched)

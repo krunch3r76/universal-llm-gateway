@@ -45,10 +45,12 @@ async def run_with_overlay_retry(
     run_once: Callable[[str], Awaitable[T]],
     error_of: Callable[[T], str | None],
     ok_of: Callable[[T], bool],
+    allow_family_substitution: bool = True,
 ) -> tuple[T, dict[str, Any]]:
     """Run ``run_once``; on Opus High picker miss, retry once then Fable.
 
     The first failure is never the terminal result while a retry remains.
+    ``allow_family_substitution=False`` (``claude_surface=code``) skips Fable.
     """
     result = await run_once(requested_model)
     extras: dict[str, Any] = {
@@ -63,6 +65,10 @@ async def run_with_overlay_retry(
     retry = await run_once(requested_model)
     extras["overlay_select_attempts"].append(requested_model)
     if ok_of(retry) or not is_model_select_error(error_of(retry)):
+        extras["overlay_retry"] = "opus_high"
+        return retry, extras
+
+    if not allow_family_substitution:
         extras["overlay_retry"] = "opus_high"
         return retry, extras
 

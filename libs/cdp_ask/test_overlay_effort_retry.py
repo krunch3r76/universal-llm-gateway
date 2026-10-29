@@ -81,3 +81,25 @@ async def test_non_picker_error_does_not_retry() -> None:
     assert result["error"] == "wait_assistant_reply timed out"
     assert extras["family_substituted"] is False
     assert run_once.await_count == 1
+
+
+@pytest.mark.offline
+@pytest.mark.asyncio
+async def test_code_surface_skips_fable_after_two_opus_fails() -> None:
+    run_once = AsyncMock(
+        side_effect=[
+            {"ok": False, "error": "model select failed: a"},
+            {"ok": False, "error": "model select failed: b"},
+        ]
+    )
+    result, extras = await run_with_overlay_retry(
+        requested_model="cdp/opus-5",
+        run_once=run_once,
+        error_of=lambda r: r.get("error"),
+        ok_of=lambda r: bool(r.get("ok")),
+        allow_family_substitution=False,
+    )
+    assert result["ok"] is False
+    assert extras["family_substituted"] is False
+    assert run_once.await_count == 2
+    assert FABLE_FALLBACK_MODEL not in extras["overlay_select_attempts"]

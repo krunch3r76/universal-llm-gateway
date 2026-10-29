@@ -6,6 +6,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from claude_bundles.chat_model_match import match_model_request
 from claude_bundles.project_ask import (
     _apply_code_surface_model_picker,
     _assert_code_surface_model_before_send,
@@ -264,6 +265,103 @@ async def test_apply_code_surface_picker_hyphenated_sonnet_wire() -> None:
 
     assert result["ok"] is True
     assert result["step"] == "code_surface_model_picked"
+
+
+@pytest.mark.offline
+def test_code_surface_opus_5_does_not_match_opus_5_5_menu() -> None:
+    """AC2/AC3 — /code menu is 5.x SKUs; opus-5 must not alias to Opus 5.5."""
+    menu = ["Opus 5.51", "Fable 5.12", "Sonnet 5.5", "Haiku 5.54"]
+    assert match_model_request("opus-5", menu) is None
+    assert match_model_request("opus-5.5", menu) == "Opus 5.51"
+
+
+@pytest.mark.asyncio
+async def test_apply_code_surface_opus_5_fails_on_four_item_menu() -> None:
+    """cdp/opus-5 on /code fails fast (AC2) when menu lacks Opus 5."""
+    page = MagicMock()
+    page.wait_for_timeout = AsyncMock()
+    page.keyboard = MagicMock()
+    page.keyboard.press = AsyncMock()
+    toolbar = {"label": "Model: Sonnet 5.5 Medium"}
+
+    def _locator(sel: str):
+        loc = MagicMock()
+        if 'aria-label*="Model"' in sel:
+            loc.count = AsyncMock(return_value=1)
+            loc.first.get_attribute = AsyncMock(side_effect=lambda _n: toolbar["label"])
+            loc.first.inner_text = AsyncMock(return_value="")
+            loc.first.click = AsyncMock()
+            return loc
+        if sel == '[role="menu"]':
+            loc.count = AsyncMock(return_value=1)
+            return loc
+        loc.count = AsyncMock(return_value=0)
+        return loc
+
+    page.locator = MagicMock(side_effect=_locator)
+    menu = ["Opus 5.51", "Fable 5.12", "Sonnet 5.5", "Haiku 5.54"]
+    menu_rows = [{"own": name, "full": name} for name in menu]
+
+    async def _evaluate(script: str, arg: object | None = None) -> object:
+        if arg is None:
+            return menu_rows
+        return False
+
+    page.evaluate = AsyncMock(side_effect=_evaluate)
+
+    with patch(
+        "claude_bundles.project_ask.current_model_label",
+        new=AsyncMock(return_value=""),
+    ):
+        result = await _apply_code_surface_model_picker(page, "cdp/opus-5-high")
+
+    assert result["ok"] is False
+    assert result["step"] == "code_surface_model_not_in_menu"
+    assert result["requested"] == "opus-5"
+    assert result["available_models"] == menu
+
+
+@pytest.mark.asyncio
+async def test_apply_code_surface_fails_not_in_menu_names_opus_not_fable() -> None:
+    page = MagicMock()
+    page.wait_for_timeout = AsyncMock()
+    page.keyboard = MagicMock()
+    page.keyboard.press = AsyncMock()
+    toolbar = {"label": "Model: Sonnet 5.5 Medium"}
+
+    def _locator(sel: str):
+        loc = MagicMock()
+        if 'aria-label*="Model"' in sel:
+            loc.count = AsyncMock(return_value=1)
+            loc.first.get_attribute = AsyncMock(side_effect=lambda _n: toolbar["label"])
+            loc.first.inner_text = AsyncMock(return_value="")
+            loc.first.click = AsyncMock()
+            return loc
+        if sel == '[role="menu"]':
+            loc.count = AsyncMock(return_value=1)
+            return loc
+        loc.count = AsyncMock(return_value=0)
+        return loc
+
+    page.locator = MagicMock(side_effect=_locator)
+    menu_rows = [{"own": "Sonnet 5.5", "full": "Sonnet 5.5"}]
+
+    async def _evaluate(script: str, arg: object | None = None) -> object:
+        if arg is None:
+            return menu_rows
+        return False
+
+    page.evaluate = AsyncMock(side_effect=_evaluate)
+
+    with patch(
+        "claude_bundles.project_ask.current_model_label",
+        new=AsyncMock(return_value=""),
+    ):
+        result = await _apply_code_surface_model_picker(page, "cdp/opus-5-high")
+
+    assert result["ok"] is False
+    assert result["step"] == "code_surface_model_not_in_menu"
+    assert result["requested"] == "opus-5"
 
 
 @pytest.mark.asyncio

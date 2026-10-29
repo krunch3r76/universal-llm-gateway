@@ -856,11 +856,13 @@ async def run_execution(
                     ),
                 )
 
+            code_surface = surface == "code"
             results, retry_meta = await run_with_overlay_retry(
                 requested_model=req.model,
                 run_once=_converse_once,
                 error_of=lambda rs: rs[-1].error if rs else None,
                 ok_of=lambda rs: bool(rs) and all(r.ok for r in rs),
+                allow_family_substitution=not code_surface,
             )
             if await abort_check():
                 abort_cleanup(reg, purpose=req.purpose)

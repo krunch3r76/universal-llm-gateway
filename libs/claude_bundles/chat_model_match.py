@@ -148,14 +148,17 @@ def match_model_request(family_request: str, labels: list[str]) -> str | None:
     pat = family_pattern(family_request)
     scored: list[tuple[int, str]] = []
     for label in labels:
-        text = (label or "").strip()
+        raw = (label or "").strip()
+        if not raw:
+            continue
+        text = strip_picker_menu_shortcut(raw)
         if not text:
             continue
         m = pat.search(text)
         if not m:
             continue
         # Prefer longer match spans, then shorter labels (tighter family radio).
-        scored.append((m.end() - m.start(), text))
+        scored.append((m.end() - m.start(), raw))
     if not scored:
         return None
     scored.sort(key=lambda t: (-t[0], len(t[1])))
@@ -244,6 +247,22 @@ _OTHER_FAMILY_WORDS = ("opus", "sonnet", "haiku", "fable")
 _CHIP_FAMILY = re.compile(r"\b(fable|opus|sonnet|haiku)\b", re.I)
 _CHIP_EFFORT = re.compile(r"\b(max|extra|high|medium|low)\b", re.I)
 _GLUED_SUBTITLE = re.compile(r"\d(?:\.\d+)?(?=[A-Za-z])")
+# /code and chat pickers append a keyboard shortcut (ASCII digit or PUA glyph)
+# after the dotted version token, e.g. ``Opus 5.51`` → ``Opus 5.5``.
+_MENU_SHORTCUT_SUFFIX = re.compile(r"^(?P<prefix>.*\d\.\d)(?P<shortcut>\d)$")
+_PUA_TRAILING = re.compile(r"[\uE000-\uF8FF]+$")
+
+
+def strip_picker_menu_shortcut(label: str) -> str:
+    """Remove /code or chat menu keyboard-shortcut suffix from a radio label."""
+    text = (label or "").strip()
+    if not text:
+        return ""
+    text = _PUA_TRAILING.sub("", text)
+    m = _MENU_SHORTCUT_SUFFIX.match(text)
+    if m:
+        return m.group("prefix")
+    return text
 
 
 def radio_own_name(label: str) -> str:
@@ -293,7 +312,12 @@ def prefer_model_name_index(family: str, rows: list[dict[str, str]]) -> int | No
     candidates: list[int] = []
     for index, row in enumerate(rows):
         own = radio_own_name(str(row.get("own") or ""))
-        if not own or _names_other_family(family, own) or not pat.search(own):
+        own_for_match = strip_picker_menu_shortcut(own)
+        if (
+            not own
+            or _names_other_family(family, own)
+            or not pat.search(own_for_match)
+        ):
             continue
         candidates.append(index)
     if not candidates:

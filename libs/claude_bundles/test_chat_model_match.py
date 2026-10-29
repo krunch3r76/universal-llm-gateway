@@ -12,11 +12,13 @@ from claude_bundles.chat_model_match import (
     family_pattern,
     label_satisfies_request,
     match_effort_qualified_radio,
+    match_model_request,
     menu_label_glued,
     normalize_picker_request,
     parse_model_request,
     prefer_model_name_index,
     sealed_ask_default_effort,
+    strip_picker_menu_shortcut,
 )
 
 
@@ -216,6 +218,32 @@ def test_opus_5_does_not_satisfy_opus_5_5(effort: str | None) -> None:
     assert family_pattern("fable-5").search("Fable 5.1") is None
     assert family_pattern("fable-5").search("Fable 5")
     assert family_pattern("fable-5.1").search("Fable 5.1")
+
+
+@pytest.mark.offline
+@pytest.mark.parametrize(
+    ("raw", "stripped"),
+    [
+        ("Opus 5.51", "Opus 5.5"),
+        ("Fable 5.12", "Fable 5.1"),
+        ("Haiku 5.54", "Haiku 5.5"),
+        ("Sonnet 5.5", "Sonnet 5.5"),
+        ("Opus 5.5", "Opus 5.5"),
+    ],
+)
+def test_strip_picker_menu_shortcut(raw: str, stripped: str) -> None:
+    assert strip_picker_menu_shortcut(raw) == stripped
+
+
+@pytest.mark.offline
+def test_match_model_request_code_menu_shortcut_labels() -> None:
+    """Friction 40692 — /code menu labels carry keyboard shortcut digits."""
+    menu = ["Opus 5.51", "Fable 5.12", "Sonnet 5.5\uE000", "Haiku 5.54"]
+    assert match_model_request("opus-5", menu) is None
+    assert match_model_request("fable-5.1", menu) == "Fable 5.12"
+    assert match_model_request("sonnet-5.5", menu) == "Sonnet 5.5\uE000"
+    assert match_model_request("haiku-5.5", menu) == "Haiku 5.54"
+    assert match_model_request("opus-5.5", menu) == "Opus 5.51"
 
 
 @pytest.mark.offline
