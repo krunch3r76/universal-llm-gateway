@@ -53,7 +53,7 @@ def test_deferred_streaming_second_attempt_refused(db: None) -> None:
         ],
         now="2020-01-01 00:00:00",
     )
-    first_claim = claim_due_wakes(now="2020-01-01 00:00:01")
+    first_claim = claim_due_wakes(now="2020-01-01 00:00:30")
     wake_id = str(first_claim["wake_id"])
     record_wake_result(
         wake_id,

@@ -57,7 +57,7 @@ def _claim_orion_turn(
         ],
         now="2020-01-01 00:00:00",
     )
-    claimed = claim_due_wakes(now="2020-01-01 00:00:01")
+    claimed = claim_due_wakes(now="2020-01-01 00:00:30")
     assert claimed["wake_id"]
     return str(claimed["wake_id"]), [turn_id], int(number)
 
