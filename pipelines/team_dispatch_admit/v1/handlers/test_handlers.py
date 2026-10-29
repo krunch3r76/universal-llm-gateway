@@ -374,7 +374,9 @@ async def test_enrich_does_not_set_row_id_on_plan() -> None:
     from types import SimpleNamespace
     from unittest.mock import patch
 
-    from systems.frontier_consult.conductor_admit_enrich import enrich_conductor_admit_plan
+    from systems.frontier_consult.conductor_admit_enrich import (
+        enrich_conductor_admit_plan,
+    )
 
     wrap = SimpleNamespace(
         packet_markdown="pkt",

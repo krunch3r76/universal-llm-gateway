@@ -56,7 +56,11 @@ def _assert_422(response, *, code: str, field: str) -> None:
 
 def test_op_spawn_requires_spawn_purpose() -> None:
     client = _client()
-    for bad in ({"spawn_purpose": None}, {"spawn_purpose": ""}, {"spawn_purpose": "a\nb"}):
+    for bad in (
+        {"spawn_purpose": None},
+        {"spawn_purpose": ""},
+        {"spawn_purpose": "a\nb"},
+    ):
         resp = _post(client, _spawn_body(**bad))
         _assert_422(resp, code="spawn_purpose_required", field="spawn_purpose")
 
@@ -76,7 +80,7 @@ def test_op_spawn_rejects_non_ide_backend() -> None:
 
 
 def test_op_spawn_cursor_ide_prepends_prefix_before_relay() -> None:
-    """R4: route prepends ledger_row + purpose lines to prompt before relay_spawn_tab."""
+    """R4: route prepends ledger_row + purpose before relay_spawn_tab."""
     client = _client()
     captured: dict[str, str] = {}
 
@@ -303,13 +307,16 @@ def _rows(path: Path) -> list[dict]:
 
 
 def _folded_spawns(path: Path) -> list[dict]:
-    from cursor_bridge.spawn_endpoint_house_ledger import _fold_spawn_rows, read_all_rows
+    from cursor_bridge.spawn_endpoint_house_ledger import (
+        _fold_spawn_rows,
+        read_all_rows,
+    )
 
     return list(_fold_spawn_rows(read_all_rows(path)).values())
 
 
 def test_glass_first_message_prefix(tmp_path: Path) -> None:
-    """Break: IDE first message omits the minted row_id or the persisted spawn_purpose."""
+    """Break: IDE first message omits minted row_id or persisted spawn_purpose."""
     client = _client()
     captured: dict[str, str] = {}
 
@@ -438,22 +445,34 @@ def test_generate_does_not_require_spawn_purpose() -> None:
         )
 
 
-async def _admit_sdk(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, **body_kw: object):
+async def _admit_sdk(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, **body_kw: object
+):
     from types import SimpleNamespace
 
     from starlette.responses import Response
 
-    from systems.frontier_consult.generate_wrap import dispatch_cursor_sdk_generate_route
+    from systems.frontier_consult.generate_wrap import (
+        dispatch_cursor_sdk_generate_route,
+    )
     from systems.frontier_consult.route_models import TeamDispatchGenerateBody
 
     async def _prompt(**kwargs: object) -> SimpleNamespace:
-        return SimpleNamespace(text="findings", prompt_turn_number=None, prompt_bind_mode=None)
+        return SimpleNamespace(
+            text="findings",
+            prompt_turn_number=None,
+            prompt_bind_mode=None,
+        )
 
     async def _threads(**kwargs: object) -> tuple[None, None, bool]:
         return None, None, False
 
     async def _generate(**kwargs: object) -> dict[str, str]:
-        return {"dispatch_id": "disp-late", "execution_id": "exec-1", "status": "running"}
+        return {
+            "dispatch_id": "disp-late",
+            "execution_id": "exec-1",
+            "status": "running",
+        }
 
     monkeypatch.setattr(
         "systems.frontier_consult.generate_wrap.resolve_generate_prompt_resolution",
@@ -537,7 +556,9 @@ async def test_generate_wrap_pre_admit_failure_writes_nothing(
     """Break: a lane-gate failure still appends a spine."""
     from starlette.responses import Response
 
-    from systems.frontier_consult.generate_wrap import dispatch_cursor_sdk_generate_route
+    from systems.frontier_consult.generate_wrap import (
+        dispatch_cursor_sdk_generate_route,
+    )
     from systems.frontier_consult.route_models import TeamDispatchGenerateBody
 
     ledger = tmp_path / "cursor-bridge-tab-wake-ledger.jsonl"
