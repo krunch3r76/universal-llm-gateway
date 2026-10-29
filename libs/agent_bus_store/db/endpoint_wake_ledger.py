@@ -593,18 +593,94 @@ def resolve_steer_delivery_binding(*, house_id: str) -> dict[str, Any]:
     return envelope
 
 
-def _cdp_registry_seat_for_house(house_id: str):
-    """Open CDP registry seat on *house_id*, or None when the house has no holder."""
-    from claude_bundles.cdp_registry.session_address import current_seat_for_lane
+def _read_inform_seat_rows_from_ask_owner() -> tuple[list[Any] | None, str | None]:
+    """Return ask-owner ``seat_rows`` or ``(None, failure_reason)`` on miss."""
+    from cdp_ask.client import CdpAskClient, CdpAskClientError, project_ask_base_url
+    from cdp_ask.lane_snapshot import CONTROL_PLANE_TIMEOUT_S
 
-    house = str(house_id or "").strip()
-    if not house:
-        return None
-    return current_seat_for_lane(house)
+    if not project_ask_base_url():
+        return None, "ask_owner_unconfigured"
+    try:
+        client = CdpAskClient(timeout_s=CONTROL_PLANE_TIMEOUT_S)
+        snap = client._request("GET", "/v1/project-ask/active-work")
+    except CdpAskClientError:
+        return None, "ask_owner_unreachable"
+    if not isinstance(snap, dict):
+        return None, "ask_owner_invalid_response"
+    seat_rows = snap.get("seat_rows")
+    if not isinstance(seat_rows, list):
+        return None, "ask_owner_seat_rows_absent"
+    return seat_rows, None
+
+
+def _inform_unbound_current(
+    *,
+    reason: str,
+    candidate_ids: list[str],
+    house_id: str,
+) -> dict[str, Any]:
+    ids_text = ", ".join(candidate_ids) if candidate_ids else "(none)"
+    return {
+        "reason": reason,
+        "candidates": list(candidate_ids),
+        "receipt": (
+            f"inform delivery binding for house {house_id}: unbound ({reason}); "
+            f"candidate registration_ids: {ids_text}"
+        ),
+    }
+
+
+def _select_inform_seat_row(
+    seat_rows: list[Any],
+    house_id: str,
+) -> tuple[dict[str, Any] | None, str | None, list[str]]:
+    """Pick the open seat row on *house_id* with max ``seat_bound_at``."""
+    house = house_id.strip()
+    open_rows: list[dict[str, Any]] = []
+    for row in seat_rows:
+        if not isinstance(row, dict):
+            continue
+        if str(row.get("seat_lane") or "").strip() != house:
+            continue
+        if row.get("seat_closed_at") is not None:
+            continue
+        open_rows.append(row)
+    if not open_rows:
+        return None, None, []
+    candidate_ids = [
+        str(row.get("registration_id") or "").strip()
+        for row in open_rows
+        if str(row.get("registration_id") or "").strip()
+    ]
+    scored: list[tuple[dict[str, Any], float]] = []
+    fields_absent = False
+    for row in open_rows:
+        bound_raw = row.get("seat_bound_at")
+        if bound_raw is None:
+            fields_absent = True
+            continue
+        try:
+            bound = float(bound_raw)
+        except (TypeError, ValueError):
+            fields_absent = True
+            continue
+        scored.append((row, bound))
+    if fields_absent or not scored:
+        return None, "seat_fields_absent", candidate_ids
+    max_bound = max(bound for _, bound in scored)
+    winners = [row for row, bound in scored if bound == max_bound]
+    if len(winners) > 1:
+        tied_ids = [
+            str(row.get("registration_id") or "").strip()
+            for row in winners
+            if str(row.get("registration_id") or "").strip()
+        ]
+        return None, "seat_ambiguous", tied_ids
+    return winners[0], None, []
 
 
 def resolve_inform_delivery_binding(*, house_id: str) -> dict[str, Any]:
-    """Resolve bus poll lane from the current CDP registry seat on this house."""
+    """Resolve bus poll lane from ask-owner active-work ``seat_rows``."""
     from claude_bundles.cdp_registry.session_address import chat_url_for_registration
 
     thread_id = str(house_id or "").strip()
@@ -620,19 +696,48 @@ def resolve_inform_delivery_binding(*, house_id: str) -> dict[str, Any]:
     if not thread_id:
         envelope.update({"state": "unbound", "current": None})
         return envelope
-    seat = _cdp_registry_seat_for_house(thread_id)
-    if seat is None:
-        envelope.update({"state": "unbound", "current": None})
+    seat_rows, fetch_reason = _read_inform_seat_rows_from_ask_owner()
+    if fetch_reason is not None:
+        envelope.update(
+            {
+                "state": "unbound",
+                "current": _inform_unbound_current(
+                    reason=fetch_reason,
+                    candidate_ids=[],
+                    house_id=thread_id,
+                ),
+            }
+        )
         return envelope
-    lane_thread = (seat.parent_thread or "").strip() or thread_id
+    assert seat_rows is not None
+    row, unbound_reason, candidate_ids = _select_inform_seat_row(seat_rows, thread_id)
+    if row is None:
+        if unbound_reason is None:
+            envelope.update({"state": "unbound", "current": None})
+            return envelope
+        envelope.update(
+            {
+                "state": "unbound",
+                "current": _inform_unbound_current(
+                    reason=unbound_reason,
+                    candidate_ids=candidate_ids,
+                    house_id=thread_id,
+                ),
+            }
+        )
+        return envelope
+    registration_id = str(row.get("registration_id") or "").strip()
+    lane_thread = str(row.get("parent_thread") or "").strip() or thread_id
     current: dict[str, Any] = {
         "actuation": {
             "type": "bus_poll",
             "thread_id": lane_thread,
         },
-        "registration_id": seat.registration_id,
+        "registration_id": registration_id,
     }
-    chat_url = chat_url_for_registration(seat.registration_id)
+    chat_url = str(row.get("chat_url") or "").strip() or None
+    if not chat_url and registration_id:
+        chat_url = chat_url_for_registration(registration_id)
     if chat_url:
         current["chat_url"] = chat_url
     envelope.update({"state": "bound", "current": current})

@@ -148,6 +148,9 @@ def seated_row_from_registry_record(
         "seat_state": status,
         "stream_state": project_stream_state(exec_for_row, stream_index=stream_index),
         "source": SEATED_SOURCE,
+        "seat_lane": record.get("seat_lane"),
+        "seat_bound_at": record.get("seat_bound_at"),
+        "seat_closed_at": record.get("seat_closed_at"),
     }
 
 
@@ -265,6 +268,7 @@ def seat_row_from_registry_record(
         "host_status": host_status,
         "seat_lane": record.get("seat_lane"),
         "seat_bound_at": record.get("seat_bound_at"),
+        "seat_closed_at": record.get("seat_closed_at"),
     }
     if observed_at:
         row["observed_at"] = observed_at

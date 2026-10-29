@@ -155,8 +155,9 @@ def _cdp_registry_seat_row(
     registration_id: str,
     *,
     parent_thread: str,
-    seat_bound_at: float,
+    seat_bound_at: float | None,
     seat_closed_at: float | None = None,
+    seat_lane: str = _MAESTRO_HOUSE,
 ) -> dict[str, object]:
     return {
         "registration_id": registration_id,
@@ -166,12 +167,31 @@ def _cdp_registry_seat_row(
         "status": "active",
         "parent_thread": parent_thread,
         "purpose": "operator-proxy",
-        "seat_lane": _MAESTRO_HOUSE,
+        "seat_lane": seat_lane,
         "seat_bound_at": seat_bound_at,
         "seat_closed_at": seat_closed_at,
-        "started_at": seat_bound_at,
+        "started_at": seat_bound_at or 0.0,
         "chat_url": f"https://claude.ai/cowork/cse_{registration_id}",
     }
+
+
+def _patch_inform_ask_owner_seat_rows(
+    monkeypatch: pytest.MonkeyPatch,
+    active: dict[str, dict[str, object]],
+) -> None:
+    from claude_bundles.hop_cadence_seat_snap import seat_rows_from_registry_records
+
+    def _read() -> tuple[list[dict[str, object]], None]:
+        return seat_rows_from_registry_records(active), None
+
+    monkeypatch.setattr(
+        "agent_bus_store.db.endpoint_wake_ledger._read_inform_seat_rows_from_ask_owner",
+        _read,
+    )
+    monkeypatch.setattr(
+        "claude_bundles.cdp_registry.session_address.chat_url_for_registration",
+        lambda rid: f"https://claude.ai/cowork/cse_{rid}" if rid else None,
+    )
 
 
 def test_delivery_bindings_resolve_inform_maestro_lane_holder_hops(
@@ -179,6 +199,8 @@ def test_delivery_bindings_resolve_inform_maestro_lane_holder_hops(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Case 2: house 12286 inform follows the current CDP registry lane holder."""
+    from claude_bundles.hop_cadence_seat_snap import seat_rows_from_registry_records
+
     first_lane = "21062"
     second_lane = "21097"
     first_reg = "reg-inform-first-aaaa"
@@ -191,10 +213,7 @@ def test_delivery_bindings_resolve_inform_maestro_lane_holder_hops(
             seat_bound_at=1.0,
         ),
     }
-    monkeypatch.setattr(
-        "claude_bundles.cdp_registry.session_address._store.load_active",
-        lambda: active,
-    )
+    _patch_inform_ask_owner_seat_rows(monkeypatch, active)
 
     resp = client.get(
         "/delivery-bindings/resolve",
@@ -225,6 +244,10 @@ def test_delivery_bindings_resolve_inform_maestro_lane_holder_hops(
         parent_thread=second_lane,
         seat_bound_at=3.0,
     )
+    closed_rows = seat_rows_from_registry_records(active)
+    assert all(
+        row.get("registration_id") != first_reg for row in closed_rows
+    ), "closed predecessor must not appear in seat_rows projection"
 
     resp2 = client.get(
         "/delivery-bindings/resolve",
@@ -239,3 +262,67 @@ def test_delivery_bindings_resolve_inform_maestro_lane_holder_hops(
     assert body2["current"]["chat_url"] == (
         f"https://claude.ai/cowork/cse_{second_reg}"
     )
+
+
+def test_delivery_bindings_resolve_inform_seat_fields_absent(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Open seat row without seat_bound_at → unbound seat_fields_absent."""
+    reg = "reg-inform-no-bound"
+    active = {
+        reg: _cdp_registry_seat_row(
+            reg,
+            parent_thread="21062",
+            seat_bound_at=None,
+        ),
+    }
+    _patch_inform_ask_owner_seat_rows(monkeypatch, active)
+
+    resp = client.get(
+        "/delivery-bindings/resolve",
+        params={"house_id": _MAESTRO_HOUSE, "intent": "inform"},
+    )
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["state"] == "unbound"
+    current = body["current"]
+    assert current is not None
+    assert current["reason"] == "seat_fields_absent"
+    assert reg in current["candidates"]
+    assert "seat_fields_absent" in current["receipt"]
+
+
+def test_delivery_bindings_resolve_inform_seat_ambiguous(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Two open rows with equal seat_bound_at → unbound seat_ambiguous."""
+    reg_a = "reg-inform-tie-aaaa"
+    reg_b = "reg-inform-tie-bbbb"
+    active = {
+        reg_a: _cdp_registry_seat_row(
+            reg_a,
+            parent_thread="21062",
+            seat_bound_at=5.0,
+        ),
+        reg_b: _cdp_registry_seat_row(
+            reg_b,
+            parent_thread="21097",
+            seat_bound_at=5.0,
+        ),
+    }
+    _patch_inform_ask_owner_seat_rows(monkeypatch, active)
+
+    resp = client.get(
+        "/delivery-bindings/resolve",
+        params={"house_id": _MAESTRO_HOUSE, "intent": "inform"},
+    )
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["state"] == "unbound"
+    current = body["current"]
+    assert current is not None
+    assert current["reason"] == "seat_ambiguous"
+    assert set(current["candidates"]) == {reg_a, reg_b}
+    assert "seat_ambiguous" in current["receipt"]
