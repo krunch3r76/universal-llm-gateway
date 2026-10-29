@@ -58,7 +58,7 @@ def classify_orion(body: Any) -> tuple[str, str]:
         return "pending", reason
     if reason == "orion_echo_drop":
         return "skipped", reason
-    if reason == "approval_unrecognized":
+    if reason in {"approval_unrecognized", "non_connector_dialog"}:
         return "refused", reason
     if body.get("pasted") and not body.get("delivered"):
         return "unknown", reason or "delivery_unconfirmed"

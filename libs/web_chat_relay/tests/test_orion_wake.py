@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -20,6 +21,36 @@ pytestmark = pytest.mark.offline
 PINNED = PINNED_CONVERSATION_URL
 
 
+def _dialog_meta(
+    *,
+    text: str = "",
+    aria: str = "",
+    labels: list[str] | None = None,
+    floating: bool | None = None,
+    connector: bool | None = None,
+    composers_in_dlg: int = 0,
+) -> dict:
+    labels = list(labels or [])
+    hay = f"{text} {aria}".lower()
+    if floating is None:
+        floating = "join ulg council" in hay or any(
+            re.search(r"floating chat|dock chat|minimize chat", lb, re.I) for lb in labels
+        )
+    if connector is None:
+        connector = (
+            bool(re.search(r"ulg-code|\bulg code\b|\blife\b", hay, re.I))
+            or any(re.search(r"ulg-code|\blife\b", lb, re.I) for lb in labels)
+        ) and len(labels) >= 2
+    return {
+        "text": text,
+        "aria": aria,
+        "labels": labels,
+        "floating": floating,
+        "connector": connector,
+        "composersInDlg": composers_in_dlg,
+    }
+
+
 class _FakeKeyboard:
     def __init__(self) -> None:
         self.pressed: list[str] = []
@@ -30,6 +61,8 @@ class _FakeKeyboard:
 
     async def insert_text(self, text: str) -> None:
         self.inserted.append(text)
+        if hasattr(self, "_page"):
+            self._page.pasted = True
 
 
 class _FakeLocator:
@@ -60,20 +93,25 @@ class _FakeLocator:
         ):
             self._page._dialog_i += 1
             self._page.approval_click_index = None
+        if self._page._dock_target:
+            self._page.docked = True
+            self._page._dock_target = False
 
     async def press(self, key: str) -> None:
         await self._page.keyboard.press(key)
 
     def locator(self, _sel: str) -> "_FakeLocator":
-        return _FakeLocator(self._page, visible=True, count=len(self._page.approval_buttons))
+        n = len(self._page._active_labels()) or 1
+        return _FakeLocator(self._page, visible=bool(n), count=n)
 
     def nth(self, index: int) -> "_FakeLocator":
         self._page.approval_click_index = index
+        self._page._active_dialog_index = index
         return self
 
     async def inner_text(self) -> str:
         idx = self._page.approval_click_index
-        buttons = self._page.approval_buttons
+        buttons = self._page._active_labels()
         if idx is not None and idx < len(buttons):
             return buttons[idx]
         return ""
@@ -85,57 +123,117 @@ class _FakePage:
         *,
         url: str = PINNED,
         streaming: bool = False,
-        approval_buttons: list[str] | None = None,
+        preflight_dialogs: list[dict] | None = None,
         approval_dialogs: list[list[str]] | None = None,
         fail_paste: bool = False,
+        dock_visible: bool = False,
     ) -> None:
         self.url = url
         self.streaming = streaming
-        if approval_dialogs is not None:
-            self.approval_dialogs = approval_dialogs
-        elif approval_buttons:
-            self.approval_dialogs = [approval_buttons]
-        else:
-            self.approval_dialogs = []
+        self.preflight_dialogs = list(preflight_dialogs or [])
+        self.approval_dialogs = list(approval_dialogs or [])
         self._dialog_i = 0
         self.fail_paste = fail_paste
         self.keyboard = _FakeKeyboard()
+        self.keyboard._page = self  # noqa: SLF001 — test double
         self.clicked: list[str] = []
         self.approval_click_index: int | None = None
+        self._active_dialog_index = 0
+        self.pasted = False
+        self.docked = False
+        self.dock_visible = dock_visible
+        self._dock_target = False
 
-    @property
-    def approval_buttons(self) -> list[str]:
+    def _active_labels(self) -> list[str]:
+        if not self.pasted:
+            if self.preflight_dialogs:
+                return list(self.preflight_dialogs[0].get("labels") or [])
+            return []
         if self._dialog_i < len(self.approval_dialogs):
-            return self.approval_dialogs[self._dialog_i]
+            return list(self.approval_dialogs[self._dialog_i])
         return []
 
+    def _scan_dialogs(self) -> list[dict]:
+        if not self.pasted:
+            specs = list(self.preflight_dialogs)
+        elif self.approval_dialogs:
+            specs = [
+                _dialog_meta(labels=labels)
+                for labels in self.approval_dialogs[self._dialog_i :]
+            ]
+        else:
+            specs = list(self.preflight_dialogs)
+        entries = []
+        for i, spec in enumerate(specs):
+            meta = _dialog_meta(
+                text=str(spec.get("text") or ""),
+                aria=str(spec.get("aria") or ""),
+                labels=list(spec.get("labels") or []),
+                floating=spec.get("floating"),
+                connector=spec.get("connector"),
+                composers_in_dlg=int(spec.get("composersInDlg") or 0),
+            )
+            entries.append({"index": i, **meta})
+        return entries
+
     def locator(self, selector: str) -> _FakeLocator:
+        self._dock_target = False
+        if "Dock Chat" in selector:
+            self._dock_target = True
+            return _FakeLocator(self, visible=self.dock_visible, count=1 if self.dock_visible else 0)
         if "dialog" in selector:
-            n = len(self.approval_buttons)
+            n = len(self._active_labels()) or len(self.preflight_dialogs) or 1
             return _FakeLocator(self, visible=bool(n), count=max(n, 1))
         if "button" in selector and "Send" not in selector:
-            n = len(self.approval_buttons) or 1
+            n = len(self._active_labels()) or 1
             return _FakeLocator(self, count=n)
         return _FakeLocator(self)
 
     async def evaluate(self, expression: str) -> object:
-        if "stop" in expression.lower():
+        if "stop" in expression.lower() and "streaming" not in expression:
             return self.streaming
-        if "dialog" in expression:
-            buttons = self.approval_buttons
-            if not buttons:
+        if "dialogs.find" in expression and "d.connector" in expression:
+            entries = self._scan_dialogs()
+            for ent in entries:
+                if ent.get("connector"):
+                    return {
+                        "present": True,
+                        "buttons": ent["labels"],
+                        "index": ent["index"],
+                    }
+            return {"present": False, "buttons": []}
+        if "composersInDlg" in expression:
+            entries = []
+            for i, ent in enumerate(self._scan_dialogs()):
+                entries.append({"index": i, **ent})
+            return {"dialogs": entries}
+        if "return dlg.querySelectorAll" in expression:
+            if self.preflight_dialogs:
+                return int(self.preflight_dialogs[0].get("composersInDlg") or 0)
+            return 0
+        if (
+            "dialog" in expression
+            and "dialogs.find" not in expression
+            and "composersInDlg" not in expression
+        ):
+            labels = self._active_labels()
+            if not labels:
                 return {"present": False, "buttons": []}
-            return {"present": True, "buttons": buttons}
+            return {"present": True, "buttons": labels}
         return {}
 
     async def wait_for_timeout(self, _ms: int) -> None:
+        if self.keyboard.inserted:
+            self.pasted = True
         return None
 
 
 @pytest.mark.asyncio
 async def test_happy_path_paste_and_second_approval() -> None:
     page = _FakePage(
-        approval_buttons=["Deny", "Allow for this conversation", "Always allow"],
+        approval_dialogs=[
+            ["Deny", "Allow ulg-code for this conversation", "Always allow"],
+        ],
     )
     out = await deliver_orion_wake(
         thread="21207",
@@ -146,10 +244,56 @@ async def test_happy_path_paste_and_second_approval() -> None:
     assert out["ok"] is True, out
     assert out["delivered"] is True
     assert out["approval"]["outcome"] == "approval_complete"
-    assert out["approval"]["dialogs"][0]["clicked_text"] == "Allow for this conversation"
+    assert out["approval"]["dialogs"][0]["clicked_text"] == "Allow ulg-code for this conversation"
     assert "21207" in page.keyboard.inserted[0]
     assert "turn 7" in page.keyboard.inserted[0]
     assert "maestro" in page.keyboard.inserted[0].lower() or "web-anthropic" in page.keyboard.inserted[0]
+
+
+@pytest.mark.asyncio
+async def test_floating_layout_delivers_with_floating_dialog_open() -> None:
+    page = _FakePage(
+        preflight_dialogs=[
+            _dialog_meta(
+                aria="Join ULG Council",
+                labels=[
+                    "Restore floating chat: Join ULG Council",
+                    "Expand floating chat",
+                    "Minimize chat",
+                    "Dock Chat",
+                ],
+            ),
+        ],
+        approval_dialogs=[],
+    )
+    out = await deliver_orion_wake(
+        thread="21207",
+        turn=99,
+        from_agent="web-anthropic",
+        page=page,
+    )
+    assert out["ok"] is True, out
+    assert out["delivered"] is True
+    assert out.get("layout") == "floating"
+    assert page.keyboard.inserted
+
+
+@pytest.mark.asyncio
+async def test_non_connector_dialog_refuses_before_paste() -> None:
+    page = _FakePage(
+        preflight_dialogs=[
+            _dialog_meta(text="Delete this project?", labels=["Cancel", "OK"]),
+        ],
+    )
+    out = await deliver_orion_wake(
+        thread="21207",
+        turn=2,
+        from_agent="maestro",
+        page=page,
+    )
+    assert out["reason"] == "non_connector_dialog"
+    assert out["pasted"] is False
+    assert not page.keyboard.inserted
 
 
 @pytest.mark.asyncio
@@ -183,7 +327,7 @@ async def test_orion_echo_drop() -> None:
 
 @pytest.mark.asyncio
 async def test_approval_absent() -> None:
-    page = _FakePage(approval_buttons=[])
+    page = _FakePage(approval_dialogs=[])
     out = await deliver_orion_wake(
         thread="21207", turn=2, from_agent="maestro", page=page
     )
@@ -192,14 +336,16 @@ async def test_approval_absent() -> None:
 
 
 @pytest.mark.asyncio
-async def test_approval_unrecognized_stops() -> None:
-    page = _FakePage(approval_buttons=["Only one button"])
+async def test_single_connector_label_not_enough_for_approval() -> None:
+    page = _FakePage(
+        approval_dialogs=[["Only one ulg-code button"]],
+    )
     out = await deliver_orion_wake(
         thread="21207", turn=2, from_agent="maestro", page=page
     )
-    assert out["reason"] == "approval_unrecognized"
-    assert out["pasted"] is True
-    assert out["delivered"] is False
+    assert out["ok"] is True
+    assert out["delivered"] is True
+    assert out["approval"]["outcome"] == "approval_absent"
 
 
 @pytest.mark.asyncio
@@ -211,12 +357,37 @@ async def test_two_connector_dialogs_ulg_code_then_life() -> None:
         ],
     )
     out = await deliver_orion_wake(
-        thread="21207", turn=10, from_agent="web-anthropic", page=page
+        thread="21207", turn=10, from_agent="web-anthropic",
+        page=page,
     )
     assert out["ok"] is True
     assert len(out["approval"]["dialogs"]) == 2
     assert "ulg-code" in out["approval"]["dialogs"][0]["clicked_text"]
     assert "life" in out["approval"]["dialogs"][1]["clicked_text"]
+
+
+@pytest.mark.asyncio
+async def test_floating_layout_docks_when_no_inner_composer() -> None:
+    page = _FakePage(
+        preflight_dialogs=[
+            _dialog_meta(
+                aria="Join ULG Council",
+                labels=["Restore floating chat", "Dock Chat"],
+                composers_in_dlg=0,
+            ),
+        ],
+        approval_dialogs=[],
+        dock_visible=True,
+    )
+    out = await deliver_orion_wake(
+        thread="21207",
+        turn=3,
+        from_agent="maestro",
+        page=page,
+    )
+    assert out["ok"] is True, out
+    assert out["delivered"] is True
+    assert out.get("docked") is True
 
 
 @pytest.mark.asyncio
@@ -238,6 +409,7 @@ def test_classify_orion_outcomes() -> None:
     assert classify_orion({"ok": False, "reason": "deferred_streaming"})[0] == "pending"
     assert classify_orion({"ok": False, "reason": "orion_echo_drop"})[0] == "skipped"
     assert classify_orion({"ok": False, "reason": "approval_unrecognized", "pasted": True})[0] == "refused"
+    assert classify_orion({"ok": False, "reason": "non_connector_dialog", "pasted": False})[0] == "refused"
 
 
 def test_holder_conversation_url_from_subscription() -> None:

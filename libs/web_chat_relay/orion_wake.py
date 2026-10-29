@@ -24,14 +24,50 @@ _STREAMING_JS = """
 )
 """
 
-_APPROVAL_DIALOG_JS = """
+_DIALOG_SCAN_JS = """
 () => {
-  const dlg = document.querySelector('[role=dialog],[role=alertdialog]');
-  if (!dlg) return {present: false, buttons: []};
-  const buttons = [...dlg.querySelectorAll('button,[role=button]')]
-    .map(b => (b.innerText || '').trim())
-    .filter(Boolean);
-  return {present: true, buttons};
+  const norm = (s) => (s || '').trim();
+  const label = (b) => norm(b.innerText) || norm(b.getAttribute('aria-label'));
+  const dialogs = [...document.querySelectorAll('[role=dialog],[role=alertdialog]')].map((dlg, index) => {
+    const text = norm(dlg.innerText);
+    const aria = norm(dlg.getAttribute('aria-label'));
+    const hay = (text + ' ' + aria).toLowerCase();
+    const buttons = [...dlg.querySelectorAll('button,[role=button]')]
+      .map(b => ({ label: label(b), disabled: !!(b.disabled || b.getAttribute('aria-disabled') === 'true') }))
+      .filter(b => b.label && !b.disabled);
+    const labels = buttons.map(b => b.label);
+    const floating = hay.includes('join ulg council') ||
+      labels.some(l => /floating chat|dock chat|minimize chat/i.test(l));
+    const connector = (/ulg-code|\\bulg code\\b|\\blife\\b/.test(hay) ||
+      labels.some(l => /ulg-code|\\blife\\b/i.test(l))) && labels.length >= 2;
+    const composersInDlg = dlg.querySelectorAll('[contenteditable="true"]').length;
+    return { index, text: text.slice(0, 200), aria, labels, floating, connector, composersInDlg };
+  });
+  return { dialogs };
+}
+"""
+
+_CONNECTOR_DIALOG_JS = """
+() => {
+  const norm = (s) => (s || '').trim();
+  const label = (b) => norm(b.innerText) || norm(b.getAttribute('aria-label'));
+  const dialogs = [...document.querySelectorAll('[role=dialog],[role=alertdialog]')].map((dlg, index) => {
+    const text = norm(dlg.innerText);
+    const aria = norm(dlg.getAttribute('aria-label'));
+    const hay = (text + ' ' + aria).toLowerCase();
+    const buttons = [...dlg.querySelectorAll('button,[role=button]')]
+      .map(b => ({ label: label(b), disabled: !!(b.disabled || b.getAttribute('aria-disabled') === 'true') }))
+      .filter(b => b.label && !b.disabled);
+    const labels = buttons.map(b => b.label);
+    const floating = hay.includes('join ulg council') ||
+      labels.some(l => /floating chat|dock chat|minimize chat/i.test(l));
+    const connector = (/ulg-code|\\bulg code\\b|\\blife\\b/.test(hay) ||
+      labels.some(l => /ulg-code|\\blife\\b/i.test(l))) && labels.length >= 2;
+    return { index, labels, floating, connector };
+  });
+  const hit = dialogs.find(d => d.connector);
+  if (!hit) return { present: false, buttons: [] };
+  return { present: true, buttons: hit.labels, index: hit.index };
 }
 """
 
@@ -92,8 +128,66 @@ async def _is_streaming(page: OrionPage) -> bool:
     return bool(await page.evaluate(_STREAMING_JS))
 
 
-async def _paste_and_send(page: OrionPage, text: str) -> None:
-    comp = page.locator('[contenteditable="true"]').last
+def _blocking_dialog(scan: dict[str, Any]) -> dict[str, Any] | None:
+    for dlg in scan.get("dialogs") or []:
+        if dlg.get("connector") or dlg.get("floating"):
+            continue
+        return dlg
+    return None
+
+
+async def _prepare_composer(page: OrionPage) -> dict[str, Any]:
+    """Resolve composer for floating chat; dock as a receipted fallback."""
+    receipt: dict[str, Any] = {"docked": False, "layout": "docked"}
+    raw = await page.evaluate(_DIALOG_SCAN_JS)
+    scan = raw if isinstance(raw, dict) else {"dialogs": []}
+    floating_open = any(d.get("floating") for d in scan.get("dialogs") or [])
+    if not floating_open:
+        return receipt
+
+    inner_ce = await page.evaluate(
+        """
+() => {
+  const dlg = [...document.querySelectorAll('[role=dialog],[role=alertdialog]')].find(d => {
+    const hay = ((d.innerText || '') + ' ' + (d.getAttribute('aria-label') || '')).toLowerCase();
+    const labels = [...d.querySelectorAll('button,[role=button]')].map(
+      b => (b.getAttribute('aria-label') || b.innerText || '').toLowerCase()
+    );
+    return hay.includes('join ulg council') ||
+      labels.some(l => l.includes('floating chat') || l.includes('dock chat'));
+  });
+  if (!dlg) return 0;
+  return dlg.querySelectorAll('[contenteditable="true"]').length;
+}
+"""
+    )
+    if int(inner_ce or 0) > 0:
+        receipt["layout"] = "floating"
+        return receipt
+
+    dock = page.locator('button[aria-label="Dock Chat"]').first
+    if await dock.count() and await dock.is_visible():
+        await dock.click()
+        receipt["docked"] = True
+        receipt["layout"] = "docked"
+        await page.wait_for_timeout(500)
+        return receipt
+
+    receipt["layout"] = "floating"
+    return receipt
+
+
+async def _paste_and_send(
+    page: OrionPage, text: str, *, layout: str = "docked"
+) -> None:
+    if layout == "floating":
+        comp = page.locator(
+            '[role=dialog] [contenteditable="true"], [role=alertdialog] [contenteditable="true"]'
+        ).first
+        if not await comp.count():
+            comp = page.locator('[contenteditable="true"]').last
+    else:
+        comp = page.locator('[contenteditable="true"]').last
     await comp.click()
     kb = page.keyboard
     await kb.press("Control+A")
@@ -105,6 +199,20 @@ async def _paste_and_send(page: OrionPage, text: str) -> None:
     await comp.press("Enter")
 
 
+async def _approval_surface(page: OrionPage) -> str:
+    """Classify open dialogs while waiting for connector approval modals."""
+    raw = await page.evaluate(_DIALOG_SCAN_JS)
+    scan = raw if isinstance(raw, dict) else {"dialogs": []}
+    dlgs = scan.get("dialogs") or []
+    if not dlgs:
+        return "empty"
+    if any(d.get("connector") for d in dlgs):
+        return "connector"
+    if all(d.get("floating") for d in dlgs):
+        return "floating_only"
+    return "other"
+
+
 async def _handle_approvals(
     page: OrionPage, *, max_dialogs: int = 2, timeout_s: float = 10.0
 ) -> dict[str, Any]:
@@ -112,11 +220,14 @@ async def _handle_approvals(
     deadline = asyncio.get_event_loop().time() + timeout_s
     dialogs: list[dict[str, Any]] = []
     while asyncio.get_event_loop().time() < deadline and len(dialogs) < max_dialogs:
-        raw = await page.evaluate(_APPROVAL_DIALOG_JS)
+        raw = await page.evaluate(_CONNECTOR_DIALOG_JS)
         last = raw if isinstance(raw, dict) else {"present": False, "buttons": []}
         if not last.get("present"):
             if dialogs:
                 break
+            surface = await _approval_surface(page)
+            if surface == "floating_only":
+                return {"outcome": "approval_absent", "dialogs": dialogs}
             await page.wait_for_timeout(200)
             if asyncio.get_event_loop().time() >= deadline:
                 return {"outcome": "approval_absent", "dialogs": dialogs}
@@ -128,7 +239,8 @@ async def _handle_approvals(
                 "dialogs": dialogs,
                 "buttons": buttons,
             }
-        dlg = page.locator('[role=dialog], [role=alertdialog]').first
+        idx = int(last.get("index") or 0)
+        dlg = page.locator('[role=dialog], [role=alertdialog]').nth(idx)
         opts = dlg.locator("button, [role=button]")
         await opts.nth(1).click()
         dialogs.append(
@@ -202,9 +314,22 @@ async def deliver_orion_wake(
             await pw.stop()
         return _refuse("deferred_streaming", pasted=False)
 
+    scan_raw = await page.evaluate(_DIALOG_SCAN_JS)
+    scan = scan_raw if isinstance(scan_raw, dict) else {"dialogs": []}
+    blocking = _blocking_dialog(scan)
+    if blocking is not None:
+        if owns_cdp and pw is not None:
+            await pw.stop()
+        return _refuse(
+            "non_connector_dialog",
+            pasted=False,
+            dialog=blocking,
+        )
+
+    layout_receipt = await _prepare_composer(page)
     line = build_wake_pointer(thread=thread_s, turn=turn, from_agent=from_agent)
     try:
-        await _paste_and_send(page, line)
+        await _paste_and_send(page, line, layout=str(layout_receipt.get("layout") or "docked"))
         await page.wait_for_timeout(400)
         approval = await _handle_approvals(page)
     except Exception as exc:
@@ -223,6 +348,7 @@ async def deliver_orion_wake(
             "delivered": False,
             "approval": approval,
             "pointer_len": len(line),
+            **layout_receipt,
         }
 
     return {
@@ -233,4 +359,5 @@ async def deliver_orion_wake(
         "approval": approval,
         "pointer_len": len(line),
         "conversation_id": target_id,
+        **layout_receipt,
     }
