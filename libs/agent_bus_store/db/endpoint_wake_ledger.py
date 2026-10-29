@@ -474,6 +474,27 @@ def resolve_subscription_for_thread(
 
 _WAKE_DELIVERY_AGENT = "cursor"
 _DELIVERY_BINDING_SOURCE = "agent_bus_store.delivery_bindings_resolve"
+_ORION_WAKE_HOUSE = "21207"
+_PINNED_ORION_CONVERSATION_ID = "6ae2e1bc-0c94-83e8-9f21-62467c4935d5"
+
+
+def _wake_unbound_envelope(envelope: dict[str, Any]) -> dict[str, Any]:
+    envelope.update({"state": "unbound", "current": None, "reason": "unbound"})
+    return envelope
+
+
+def _orion_chat_actuation_for_house(thread_id: str) -> dict[str, Any] | None:
+    if thread_id != _ORION_WAKE_HOUSE:
+        return None
+    from web_chat_relay.orion_wake import DEFAULT_ORION_CDP_URL, PINNED_CONVERSATION_URL
+
+    url = PINNED_CONVERSATION_URL.split("?", 1)[0]
+    return {
+        "type": "orion_chat",
+        "conversation_id": _PINNED_ORION_CONVERSATION_ID,
+        "conversation_url": url,
+        "cdp_url": DEFAULT_ORION_CDP_URL,
+    }
 
 
 def _cursor_glass_actuation(row: dict[str, Any]) -> dict[str, Any] | None:
@@ -503,31 +524,38 @@ def resolve_wake_delivery_binding(*, house_id: str) -> dict[str, Any]:
         "stale": False,
     }
     if not thread_id:
-        envelope.update({"state": "unbound", "current": None})
-        return envelope
+        return _wake_unbound_envelope(envelope)
     resolved = resolve_subscription_for_thread(_WAKE_DELIVERY_AGENT, thread_id)
-    if resolved is None:
-        envelope.update({"state": "unbound", "current": None})
+    if resolved is not None:
+        route, row = resolved
+        if str(row.get("state") or "") == "subscribed":
+            actuation = _cursor_glass_actuation(row)
+            if actuation is not None:
+                envelope.update(
+                    {
+                        "state": "bound",
+                        "current": {
+                            "actuation": actuation,
+                            "route": route,
+                            "subscription_id": row.get("id"),
+                        },
+                    }
+                )
+                return envelope
+    orion_actuation = _orion_chat_actuation_for_house(thread_id)
+    if orion_actuation is not None:
+        envelope.update(
+            {
+                "state": "bound",
+                "basis": "orion_pinned_conversation",
+                "current": {
+                    "actuation": orion_actuation,
+                    "route": "orion-house",
+                },
+            }
+        )
         return envelope
-    route, row = resolved
-    if str(row.get("state") or "") != "subscribed":
-        envelope.update({"state": "unbound", "current": None})
-        return envelope
-    actuation = _cursor_glass_actuation(row)
-    if actuation is None:
-        envelope.update({"state": "unbound", "current": None})
-        return envelope
-    envelope.update(
-        {
-            "state": "bound",
-            "current": {
-                "actuation": actuation,
-                "route": route,
-                "subscription_id": row.get("id"),
-            },
-        }
-    )
-    return envelope
+    return _wake_unbound_envelope(envelope)
 
 
 _STEER_DELIVERY_AGENT = "cursor"

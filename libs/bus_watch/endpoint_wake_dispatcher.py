@@ -23,18 +23,18 @@ from agent_seat.registry import STAGE_MANAGER_ADDRESSES, normalize_bus_address
 from claude_bundles.holder_strings import holder_id_from_chat_url
 from cursor_bridge.chat_target import exchange_lines
 from transport_utils import DEFAULT_STARGATE_URL, make_sync_client
+from web_chat_relay.orion_wake import (
+    DEFAULT_ORION_CDP_URL,
+    PINNED_CONVERSATION_ID,
+    PINNED_CONVERSATION_URL,
+    holder_conversation_url,
+)
 
 from bus_watch.endpoint_wake_transport import (
     StoreClient,
     classify_cse,
     classify_display,
     classify_orion,
-)
-from web_chat_relay.orion_wake import (
-    DEFAULT_ORION_CDP_URL,
-    PINNED_CONVERSATION_ID,
-    PINNED_CONVERSATION_URL,
-    holder_conversation_url,
 )
 from bus_watch.ide_hop_land import expire_overdue_hop, expire_overdue_hops
 
@@ -895,7 +895,7 @@ def _orion_synthetic_route(
     if str(thread).strip() != _ORION_HOUSE_THREAD:
         return None
     return (
-        "orion-house",
+        "exact",
         {
             "surface": "chatgpt",
             "display": "12",
@@ -1146,18 +1146,28 @@ def _display_post(
 
 
 def _orion_post(
-    row: dict[str, Any],
+    rows: list[dict[str, Any]],
     sub: dict[str, Any],
     turn: int | str,
     *,
     from_agent: str,
+    wake_id: str | None,
 ) -> tuple[str, str]:
-    options = {
+    row = rows[0]
+    turn_ids = sorted({int(r["turn_id"]) for r in rows})
+    turn_numbers = sorted({int(r["turn_number"]) for r in rows})
+    options: dict[str, Any] = {
         "thread": row["thread_id"],
         "turn": turn,
         "from_agent": from_agent,
         "conversation_url": holder_conversation_url(sub),
         "cdp_url": DEFAULT_ORION_CDP_URL,
+        "wake_id": wake_id,
+        "agent": row.get("agent") or "orion",
+        "turn_ids": turn_ids,
+        "covered_turn_ids": turn_ids,
+        "turn_numbers": turn_numbers,
+        "binding_reference": str(sub.get("id") or "") or None,
     }
     body = {
         "model": "orion-chat-wake",
@@ -1740,7 +1750,7 @@ def fire_due_wakes(store: StoreClient) -> dict[str, Any] | None:
             return _finish(
                 outcome="skipped",
                 reason="orion_echo_drop",
-                route="chatgpt",
+                route=route,
                 subscription_id=sub.get("id"),
                 cse_registration_id=None,
             )
@@ -1751,12 +1761,19 @@ def fire_due_wakes(store: StoreClient) -> dict[str, Any] | None:
             else ",".join(str(n) for n in turn_numbers)
         )
         state, reason = _orion_post(
-            rows[0], sub, turn_arg, from_agent=from_agent
+            rows,
+            sub,
+            turn_arg,
+            from_agent=from_agent,
+            wake_id=str(wake_id) if wake_id else None,
         )
+        if state == "pending" and reason == "deferred_streaming":
+            if any(str(r.get("reason") or "") == "deferred_streaming" for r in rows):
+                state, reason = "refused", "deferred_streaming"
         return _finish(
             outcome=state,
             reason=reason,
-            route="chatgpt",
+            route=route,
             subscription_id=sub.get("id"),
             cse_registration_id=None,
         )
