@@ -105,29 +105,43 @@ async def _paste_and_send(page: OrionPage, text: str) -> None:
     await comp.press("Enter")
 
 
-async def _handle_approval(page: OrionPage) -> dict[str, Any]:
-    deadline = asyncio.get_event_loop().time() + 3.0
-    last: dict[str, Any] = {"present": False, "buttons": []}
-    while asyncio.get_event_loop().time() < deadline:
+async def _handle_approvals(
+    page: OrionPage, *, max_dialogs: int = 2, timeout_s: float = 10.0
+) -> dict[str, Any]:
+    """Click the second option on each connector dialog (ulg-code, then life)."""
+    deadline = asyncio.get_event_loop().time() + timeout_s
+    dialogs: list[dict[str, Any]] = []
+    while asyncio.get_event_loop().time() < deadline and len(dialogs) < max_dialogs:
         raw = await page.evaluate(_APPROVAL_DIALOG_JS)
-        last = raw if isinstance(raw, dict) else last
-        if last.get("present"):
-            break
-        await page.wait_for_timeout(200)
-    buttons = list(last.get("buttons") or [])
-    if not last.get("present"):
-        return {"outcome": "approval_absent", "buttons": buttons}
-    if len(buttons) < 2:
-        return {"outcome": "approval_unrecognized", "buttons": buttons}
-    dlg = page.locator('[role=dialog], [role=alertdialog]').first
-    opts = dlg.locator("button, [role=button]")
-    await opts.nth(1).click()
-    return {
-        "outcome": "approval_clicked",
-        "buttons": buttons,
-        "clicked_index": 1,
-        "clicked_text": buttons[1],
-    }
+        last = raw if isinstance(raw, dict) else {"present": False, "buttons": []}
+        if not last.get("present"):
+            if dialogs:
+                break
+            await page.wait_for_timeout(200)
+            if asyncio.get_event_loop().time() >= deadline:
+                return {"outcome": "approval_absent", "dialogs": dialogs}
+            continue
+        buttons = list(last.get("buttons") or [])
+        if len(buttons) < 2:
+            return {
+                "outcome": "approval_unrecognized",
+                "dialogs": dialogs,
+                "buttons": buttons,
+            }
+        dlg = page.locator('[role=dialog], [role=alertdialog]').first
+        opts = dlg.locator("button, [role=button]")
+        await opts.nth(1).click()
+        dialogs.append(
+            {
+                "buttons": buttons,
+                "clicked_index": 1,
+                "clicked_text": buttons[1],
+            }
+        )
+        await page.wait_for_timeout(600)
+    if not dialogs:
+        return {"outcome": "approval_absent", "dialogs": dialogs}
+    return {"outcome": "approval_complete", "dialogs": dialogs}
 
 
 async def deliver_orion_wake(
@@ -156,7 +170,7 @@ async def deliver_orion_wake(
         return _refuse("bad_conversation_url", conversation_url=target_url)
 
     owns_cdp = False
-    pw = browser = None
+    pw = None
     if page is None:
         connect = connect_cdp
         if connect is None:
@@ -192,7 +206,7 @@ async def deliver_orion_wake(
     try:
         await _paste_and_send(page, line)
         await page.wait_for_timeout(400)
-        approval = await _handle_approval(page)
+        approval = await _handle_approvals(page)
     except Exception as exc:
         if owns_cdp and pw is not None:
             await pw.stop()

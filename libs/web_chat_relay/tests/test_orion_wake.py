@@ -54,6 +54,12 @@ class _FakeLocator:
 
     async def click(self) -> None:
         self._page.clicked.append("click")
+        if (
+            self._page.approval_click_index is not None
+            and self._page._dialog_i < len(self._page.approval_dialogs)
+        ):
+            self._page._dialog_i += 1
+            self._page.approval_click_index = None
 
     async def press(self, key: str) -> None:
         await self._page.keyboard.press(key)
@@ -80,15 +86,28 @@ class _FakePage:
         url: str = PINNED,
         streaming: bool = False,
         approval_buttons: list[str] | None = None,
+        approval_dialogs: list[list[str]] | None = None,
         fail_paste: bool = False,
     ) -> None:
         self.url = url
         self.streaming = streaming
-        self.approval_buttons = approval_buttons or []
+        if approval_dialogs is not None:
+            self.approval_dialogs = approval_dialogs
+        elif approval_buttons:
+            self.approval_dialogs = [approval_buttons]
+        else:
+            self.approval_dialogs = []
+        self._dialog_i = 0
         self.fail_paste = fail_paste
         self.keyboard = _FakeKeyboard()
         self.clicked: list[str] = []
         self.approval_click_index: int | None = None
+
+    @property
+    def approval_buttons(self) -> list[str]:
+        if self._dialog_i < len(self.approval_dialogs):
+            return self.approval_dialogs[self._dialog_i]
+        return []
 
     def locator(self, selector: str) -> _FakeLocator:
         if "dialog" in selector:
@@ -103,9 +122,10 @@ class _FakePage:
         if "stop" in expression.lower():
             return self.streaming
         if "dialog" in expression:
-            if not self.approval_buttons:
+            buttons = self.approval_buttons
+            if not buttons:
                 return {"present": False, "buttons": []}
-            return {"present": True, "buttons": self.approval_buttons}
+            return {"present": True, "buttons": buttons}
         return {}
 
     async def wait_for_timeout(self, _ms: int) -> None:
@@ -125,7 +145,8 @@ async def test_happy_path_paste_and_second_approval() -> None:
     )
     assert out["ok"] is True, out
     assert out["delivered"] is True
-    assert out["approval"]["clicked_text"] == "Allow for this conversation"
+    assert out["approval"]["outcome"] == "approval_complete"
+    assert out["approval"]["dialogs"][0]["clicked_text"] == "Allow for this conversation"
     assert "21207" in page.keyboard.inserted[0]
     assert "turn 7" in page.keyboard.inserted[0]
     assert "maestro" in page.keyboard.inserted[0].lower() or "web-anthropic" in page.keyboard.inserted[0]
@@ -179,6 +200,23 @@ async def test_approval_unrecognized_stops() -> None:
     assert out["reason"] == "approval_unrecognized"
     assert out["pasted"] is True
     assert out["delivered"] is False
+
+
+@pytest.mark.asyncio
+async def test_two_connector_dialogs_ulg_code_then_life() -> None:
+    page = _FakePage(
+        approval_dialogs=[
+            ["Deny", "Allow ulg-code for this conversation", "Always"],
+            ["Deny", "Allow life for this conversation", "Always"],
+        ],
+    )
+    out = await deliver_orion_wake(
+        thread="21207", turn=10, from_agent="web-anthropic", page=page
+    )
+    assert out["ok"] is True
+    assert len(out["approval"]["dialogs"]) == 2
+    assert "ulg-code" in out["approval"]["dialogs"][0]["clicked_text"]
+    assert "life" in out["approval"]["dialogs"][1]["clicked_text"]
 
 
 @pytest.mark.asyncio
