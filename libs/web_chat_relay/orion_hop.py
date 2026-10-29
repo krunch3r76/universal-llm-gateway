@@ -219,39 +219,6 @@ class OrionWakeTargetRollback:
         }
 
 
-class OrionWakeDedupeLedger:
-    """Paste at most once per (thread, turn, endpoint_url)."""
-
-    def __init__(self) -> None:
-        self._first_receipt: dict[tuple[str, str, str], dict[str, Any]] = {}
-
-    @staticmethod
-    def _key(thread: str, turn: int | str, endpoint_url: str) -> tuple[str, str, str]:
-        return (str(thread or "").strip(), str(turn), endpoint_url.split("?", 1)[0])
-
-    async def deliver(
-        self,
-        *,
-        thread: str,
-        turn: int | str,
-        endpoint_url: str,
-        deliver_fn: Callable[[], Awaitable[dict[str, Any]]],
-    ) -> dict[str, Any]:
-        key = self._key(thread, turn, endpoint_url)
-        if key in self._first_receipt:
-            return {
-                "ok": True,
-                "reason": "duplicate_suppressed",
-                "delivered": False,
-                "pasted": False,
-                "first_receipt": self._first_receipt[key],
-            }
-        receipt = await deliver_fn()
-        if receipt.get("pasted") or receipt.get("delivered"):
-            self._first_receipt[key] = receipt
-        return receipt
-
-
 async def _open_new_conversation_in_project(page: OrionPage) -> dict[str, Any]:
     before_id = conversation_id_from_url(page.url or "")
     btn = page.locator(_NEW_CHAT_SELECTOR).first

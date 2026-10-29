@@ -9,6 +9,7 @@ from __future__ import annotations
 import asyncio
 import os
 import re
+import uuid
 from typing import Any, Protocol
 from urllib.parse import urlparse
 
@@ -361,3 +362,76 @@ async def deliver_orion_wake(
         "conversation_id": target_id,
         **layout_receipt,
     }
+
+
+async def deliver_orion_chat_wake(
+    *,
+    thread: str,
+    turn: int | str,
+    from_agent: str,
+    conversation_url: str | None = None,
+    cdp_url: str = DEFAULT_ORION_CDP_URL,
+    page: OrionPage | None = None,
+    connect_cdp=None,
+    pipeline_options: dict[str, Any] | None = None,
+    delivery_owner: Any | None = None,
+) -> dict[str, Any]:
+    """Orion-chat-wake entry: shared owner claim/dedupe, then CDP paste (no re-claim)."""
+    from agent_bus_store.db.orion_wake_owner_adapter import (
+        LedgerWakeDeliveryOwner,
+        WakeClaimContext,
+        enrich_delivery_receipt,
+        resolve_turn_id_for_wake,
+        shared_wake_delivery_owner,
+        wake_claim_from_options,
+    )
+
+    opts = dict(pipeline_options or {})
+    opts.setdefault("thread", thread)
+    opts.setdefault("turn", turn)
+    if conversation_url:
+        opts.setdefault("conversation_url", conversation_url)
+    claim = wake_claim_from_options(opts)
+    if claim is None:
+        thread_s = str(thread or "").strip()
+        endpoint = (conversation_url or PINNED_CONVERSATION_URL).split("?", 1)[0]
+        try:
+            turn_n = int(turn)
+        except (TypeError, ValueError):
+            return _refuse("bad_options")
+        turn_id = resolve_turn_id_for_wake(thread_id=thread_s, turn_number=turn_n)
+        if turn_id is None:
+            return _refuse("turn_id_unresolved")
+        claim = WakeClaimContext(
+            wake_id=str(opts.get("wake_id") or "").strip() or uuid.uuid4().hex,
+            agent=str(opts.get("agent") or "orion"),
+            thread_id=thread_s,
+            turn_ids=(turn_id,),
+            turn_numbers=(turn_n,),
+            endpoint_url=endpoint,
+        )
+    owner: LedgerWakeDeliveryOwner
+    if delivery_owner is None:
+        owner = shared_wake_delivery_owner()
+    else:
+        owner = delivery_owner
+
+    prepared = owner.prepare_paste_delivery(claim)
+    if not prepared.get("ok"):
+        return prepared
+    if prepared.get("reason") == "duplicate_suppressed":
+        return prepared
+
+    receipt = await deliver_orion_wake(
+        thread=thread,
+        turn=turn,
+        from_agent=from_agent,
+        conversation_url=claim.normalized_endpoint(),
+        cdp_url=cdp_url,
+        page=page,
+        connect_cdp=connect_cdp,
+    )
+    if receipt.get("reason") == "deferred_streaming":
+        receipt = {**receipt, "ok": False, "retry_eligible": True}
+    owner.record_paste_receipt(claim, receipt)
+    return enrich_delivery_receipt(receipt, claim)
