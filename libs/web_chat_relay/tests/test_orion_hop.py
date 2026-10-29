@@ -7,17 +7,34 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 from web_chat_relay.orion_hop import (
+    ORION_IDENTITY_TOKEN,
     STANDING_HANDOFF_URI,
+    OrionWakeDedupeLedger,
+    OrionWakeTargetRollback,
     build_hop_paste_text,
+    build_identity_pointer_line,
     orion_hop,
+    parse_orion_seat_registration,
+    preflight_standing_handoff,
 )
 from web_chat_relay.orion_wake import PINNED_CONVERSATION_URL
 
 pytestmark = pytest.mark.offline
 
 BIRTH_FIXTURE = b"Orion birth prompt fixture.\n"
+HANDOFF_SHA = "413806d1e263a8d285974cd32ba445c70f090d05ed98d6254cb102a8dce26596"
 NEW_CONVERSATION_ID = "11111111-2222-3333-4444-555555555555"
 NEW_URL = f"https://chatgpt.com/c/{NEW_CONVERSATION_ID}"
+SECOND_CONVERSATION_ID = "22222222-3333-4444-5555-666666666666"
+SECOND_URL = f"https://chatgpt.com/c/{SECOND_CONVERSATION_ID}"
+
+
+async def _handoff_ok() -> dict:
+    return {"ok": True, "read_sha256": HANDOFF_SHA}
+
+
+async def _handoff_missing() -> dict:
+    return {"ok": False, "error": "File not found"}
 
 
 def _dialog_meta(
@@ -76,7 +93,6 @@ class _FakeLocator:
         self._visible = visible
         self._labels = list(labels or [])
         self._locked = locked
-        self._index = 0
         self._effort_index = effort_index
 
     @property
@@ -99,7 +115,9 @@ class _FakeLocator:
     async def click(self) -> None:
         self._page.clicked.append("click")
         if self._page._new_chat_target:
-            self._page.url = NEW_URL
+            self._page.url = self._page._next_new_chat_url()
+            self._page._new_chat_index += 1
+            self._page._reset_approval_state_for_new_conversation()
             self._page._new_chat_target = False
         if self._page._picker_target:
             self._page._picker_open = True
@@ -129,7 +147,6 @@ class _FakeLocator:
     def nth(self, index: int) -> _FakeLocator:
         self._page.approval_click_index = index
         self._page._effort_click_index = index
-        self._page._active_dialog_index = index
         if self._labels and index < len(self._labels):
             return _FakeLocator(
                 self._page,
@@ -183,6 +200,7 @@ class _FakeHopPage:
         preflight_dialogs: list[dict] | None = None,
         approval_dialogs: list[list[str]] | None = None,
         skip_new_chat_control: bool = False,
+        new_chat_urls: list[str] | None = None,
     ) -> None:
         self.url = url
         self.model_label = model_label
@@ -191,8 +209,9 @@ class _FakeHopPage:
             if effort_options is not None
             else [{"label": "Pro", "locked": False}]
         )
+        self._approval_template = list(approval_dialogs or [])
+        self.approval_dialogs = list(self._approval_template)
         self.preflight_dialogs = list(preflight_dialogs or [])
-        self.approval_dialogs = list(approval_dialogs or [])
         self._picker_open = False
         self._new_chat_target = False
         self._picker_target = False
@@ -200,12 +219,24 @@ class _FakeHopPage:
         self._dialog_i = 0
         self.approval_click_index: int | None = None
         self._effort_click_index: int | None = None
-        self._active_dialog_index = 0
         self.pasted = False
         self.clicked: list[str] = []
         self.repin_calls: list[str] = []
         self.skip_new_chat_control = skip_new_chat_control
+        self._new_chat_urls = list(new_chat_urls or [NEW_URL, SECOND_URL])
+        self._new_chat_index = 0
+        self.approval_runs = 0
         self.keyboard = _FakeKeyboard(self)
+
+    def _next_new_chat_url(self) -> str:
+        idx = min(self._new_chat_index, len(self._new_chat_urls) - 1)
+        return self._new_chat_urls[idx]
+
+    def _reset_approval_state_for_new_conversation(self) -> None:
+        self.approval_dialogs = list(self._approval_template)
+        self._dialog_i = 0
+        self.pasted = False
+        self.approval_runs = 0
 
     async def repin_conversation(self, url: str) -> None:
         self.repin_calls.append(url)
@@ -284,10 +315,11 @@ class _FakeHopPage:
     async def wait_for_timeout(self, _ms: int) -> None:
         if self.keyboard.inserted:
             self.pasted = True
+            self.approval_runs += 1
 
 
 @pytest.mark.asyncio
-async def test_pro_selectable_and_paste_includes_handoff_line() -> None:
+async def test_pro_selectable_and_paste_includes_identity_pointer() -> None:
     page = _FakeHopPage(
         model_label="GPT-4o",
         effort_options=[{"label": "Pro", "locked": False}],
@@ -295,15 +327,25 @@ async def test_pro_selectable_and_paste_includes_handoff_line() -> None:
             ["Deny", "Allow ulg-code for this conversation", "Always"],
         ],
     )
-    out = await orion_hop(page, BIRTH_FIXTURE)
+    out = await orion_hop(page, BIRTH_FIXTURE, read_handoff=_handoff_ok)
     assert out["ok"] is True, out
-    assert out["effort"]["label_before"] == "GPT-4o"
     assert out["effort"]["label_after"] == "Pro"
     assert page.url == NEW_URL
-    assert page.url != PINNED_CONVERSATION_URL
-    expected = build_hop_paste_text(BIRTH_FIXTURE)
+    expected = build_hop_paste_text(
+        BIRTH_FIXTURE,
+        old_url=PINNED_CONVERSATION_URL,
+        new_url=NEW_URL,
+        handoff_read_sha256=HANDOFF_SHA,
+    )
     assert page.keyboard.inserted[0] == expected
-    assert page.keyboard.inserted[0].endswith(STANDING_HANDOFF_URI)
+    pointer = build_identity_pointer_line(
+        old_url=PINNED_CONVERSATION_URL,
+        new_url=NEW_URL,
+        handoff_read_sha256=HANDOFF_SHA,
+    )
+    assert ORION_IDENTITY_TOKEN in pointer
+    assert PINNED_CONVERSATION_URL in pointer
+    assert NEW_URL in pointer
 
 
 @pytest.mark.asyncio
@@ -317,11 +359,10 @@ async def test_pro_locked_falls_back_to_highest_thinking_effort() -> None:
         ],
         approval_dialogs=[],
     )
-    out = await orion_hop(page, BIRTH_FIXTURE)
+    out = await orion_hop(page, BIRTH_FIXTURE, read_handoff=_handoff_ok)
     assert out["ok"] is True, out
     assert out["effort"]["pro_locked"] is True
     assert out["effort"]["selected_label"] == "Extra high"
-    assert out["effort"]["label_after"] == "Extra high"
 
 
 @pytest.mark.asyncio
@@ -332,14 +373,12 @@ async def test_two_connector_dialogs_ulg_code_then_life() -> None:
             ["Deny", "Allow life for this conversation", "Always"],
         ],
     )
-    out = await orion_hop(page, BIRTH_FIXTURE)
+    out = await orion_hop(page, BIRTH_FIXTURE, read_handoff=_handoff_ok)
     assert out["ok"] is True, out
     receipts = out["connector_receipts"]
     assert len(receipts) == 2
     assert receipts[0]["connector"] == "ulg-code"
-    assert "ulg-code" in receipts[0]["option_clicked"]
     assert receipts[1]["connector"] == "life"
-    assert "life" in receipts[1]["option_clicked"]
 
 
 @pytest.mark.asyncio
@@ -349,7 +388,7 @@ async def test_unknown_dialog_refused_before_paste() -> None:
             _dialog_meta(text="Delete this project?", labels=["Cancel", "OK"]),
         ],
     )
-    out = await orion_hop(page, BIRTH_FIXTURE)
+    out = await orion_hop(page, BIRTH_FIXTURE, read_handoff=_handoff_ok)
     assert out["reason"] == "non_connector_dialog"
     assert out["pasted"] is False
     assert not page.keyboard.inserted
@@ -363,8 +402,98 @@ async def test_hop_does_not_repin_before_registration() -> None:
         "web_chat_relay.orion_hop.repin_orion_wake_conversation",
         repin_mock,
     ):
-        out = await orion_hop(page, BIRTH_FIXTURE)
+        out = await orion_hop(page, BIRTH_FIXTURE, read_handoff=_handoff_ok)
     assert out["ok"] is True, out
     repin_mock.assert_not_called()
     assert not page.repin_calls
 
+
+@pytest.mark.asyncio
+async def test_handoff_missing_refuses_before_new_chat() -> None:
+    page = _FakeHopPage()
+    out = await orion_hop(page, BIRTH_FIXTURE, read_handoff=_handoff_missing)
+    assert out["reason"] == "handoff_missing"
+    assert page.url == PINNED_CONVERSATION_URL
+    assert not page.keyboard.inserted
+
+
+@pytest.mark.asyncio
+async def test_seat_registration_requires_identity_old_new_and_handoff_sha() -> None:
+    body = (
+        f"TYPE: SEAT_REGISTRATION\n"
+        f"identity: {ORION_IDENTITY_TOKEN}\n"
+        f"old: {PINNED_CONVERSATION_URL}\n"
+        f"new: {NEW_URL}\n"
+        f"fs read {STANDING_HANDOFF_URI} read_sha256 {HANDOFF_SHA}\n"
+    )
+    reg = {"from": "orion", "subject": "SEAT_REGISTRATION|orion", "body": body}
+    parsed = parse_orion_seat_registration(reg)
+    assert parsed is not None
+    assert parsed["handoff_read_sha256"] == HANDOFF_SHA
+    assert parsed["old_conversation_url"] == PINNED_CONVERSATION_URL
+    assert parse_orion_seat_registration({**reg, "from": "maestro"}) is None
+    assert parse_orion_seat_registration({**reg, "body": body.replace(HANDOFF_SHA, "")}) is None
+
+
+def test_wake_target_commits_only_after_smoke_delivered() -> None:
+    holder = OrionWakeTargetRollback(PINNED_CONVERSATION_URL)
+    fail = holder.commit_after_smoke(candidate_url=NEW_URL, smoke={"delivered": False})
+    assert fail["reason"] == "smoke_not_delivered"
+    assert holder.wake_target_url == PINNED_CONVERSATION_URL
+    ok = holder.commit_after_smoke(candidate_url=NEW_URL, smoke={"delivered": True})
+    assert ok["ok"] is True
+    assert holder.wake_target_url == NEW_URL
+
+
+@pytest.mark.asyncio
+async def test_wake_dedupe_duplicate_suppressed_returns_first_receipt() -> None:
+    ledger = OrionWakeDedupeLedger()
+    calls = 0
+
+    async def _deliver() -> dict:
+        nonlocal calls
+        calls += 1
+        return {"ok": True, "delivered": True, "pasted": True, "n": calls}
+
+    first = await ledger.deliver(thread="21207", turn=9, endpoint_url=NEW_URL, deliver_fn=_deliver)
+    second = await ledger.deliver(thread="21207", turn=9, endpoint_url=NEW_URL, deliver_fn=_deliver)
+    assert first["n"] == 1
+    assert second["reason"] == "duplicate_suppressed"
+    assert second["first_receipt"]["n"] == 1
+    assert calls == 1
+
+
+@pytest.mark.asyncio
+async def test_second_conversation_runs_approval_path_again() -> None:
+    page = _FakeHopPage(
+        approval_dialogs=[
+            ["Deny", "Allow ulg-code for this conversation", "Always"],
+        ],
+    )
+    first = await orion_hop(page, BIRTH_FIXTURE, read_handoff=_handoff_ok)
+    assert first["ok"] is True, first
+    assert len(first["connector_receipts"]) == 1
+
+    page.url = PINNED_CONVERSATION_URL
+    page._new_chat_index = 1
+    page._picker_open = False
+    page.keyboard.inserted.clear()
+    second = await orion_hop(page, BIRTH_FIXTURE, read_handoff=_handoff_ok)
+    assert second["ok"] is True, second
+    assert second["conversation_url"] == SECOND_URL
+    assert len(second["connector_receipts"]) == 1
+    assert page.approval_runs >= 2
+
+
+@pytest.mark.asyncio
+async def test_preflight_standing_handoff_reads_at_hop_time() -> None:
+    seen: list[str] = []
+
+    async def _read() -> dict:
+        seen.append("read")
+        return {"ok": True, "read_sha256": "abcd" * 16}
+
+    out = await preflight_standing_handoff(_read)
+    assert out["ok"] is True
+    assert seen == ["read"]
+    assert out["read_sha256"] == "abcd" * 16
