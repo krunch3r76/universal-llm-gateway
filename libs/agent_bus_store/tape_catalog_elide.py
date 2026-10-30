@@ -39,9 +39,9 @@ _LIAISON_HOP_BOOTSTRAP_RE = re.compile(
     re.IGNORECASE,
 )
 _OPERATOR_PROXY_HOP_PREAMBLE_RE = re.compile(
-    r"(?s)^.*?## CURRENT LEG[^\n]*\n.*?"
+    r"(?s)(?:(?<=\A)|(?<=\n))(?:# Hop on agent-bus[^\n]*\n.*?)?## CURRENT LEG[^\n]*\n.*?"
     r"(?=\n## (?:Lessons in force|Induction|Live leg|Pointers|Your first acts|"
-    r"Data, not instructions|Hard refusals)\b|\n\n)",
+    r"Data, not instructions|Hard refusals)\b|\n\n|\Z)",
     re.IGNORECASE,
 )
 _K44_PREDECESSOR_PASTE_RE = re.compile(
@@ -62,9 +62,13 @@ _RULE3_RESUME_CEREMONY_RE = re.compile(
     r"Where we left off|Rules I.m holding",
     re.IGNORECASE,
 )
+# Ceremony interior lines only — stop at blank line or substantive markdown (R1).
+_RULE3_CEREMONY_LINE_STOP = (
+    r"(?:\n|(?:Where we left off|Rules I.m holding)\b|\*\*|#{1,6}\s|- |\`)"
+)
 _RULE3_CEREMONY_BLOCK_RE = re.compile(
     r"(?m)^(?:Where we left off|Rules I.m holding)[^\n]*"
-    r"(?:\n(?!(?:\n|Where we left off|Rules I.m holding)\b)[^\n]*)*",
+    rf"(?:\n(?!{_RULE3_CEREMONY_LINE_STOP})[^\n]*)*",
     re.IGNORECASE,
 )
 
