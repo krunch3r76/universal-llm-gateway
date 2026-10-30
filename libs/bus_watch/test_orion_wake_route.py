@@ -56,12 +56,12 @@ def test_orion_synthetic_route_seat_registration_hop06(bus_db: None) -> None:
 
             with connect() as conn:
                 rows = conn.execute(
-                    "SELECT subject, body, turn_number FROM turns "
-                    "WHERE thread=? AND turn_number>? ORDER BY turn_number ASC LIMIT ?",
+                    "SELECT subject, body, turn_number, from_agent FROM turns "
+                    "WHERE thread=? AND turn_number>? ORDER BY turn_number DESC LIMIT ?",
                     (thread, after_turn, last),
                 ).fetchall()
             return {
-                "turns": [dict(row) for row in rows],
+                "turns": [dict(row) for row in reversed(rows)],
                 "truncated": False,
             }
 
@@ -77,6 +77,46 @@ def test_orion_synthetic_route_seat_registration_hop06(bus_db: None) -> None:
     route, row = resolve_target(store, "orion", _ORION_HOUSE)  # type: ignore[arg-type]
     assert route == "exact"
     assert row["agent_id"] == _HOP06_CONV_ID
+
+
+def test_orion_seat_registration_scan_ignores_quoted_mention(bus_db: None) -> None:
+    create_thread(thread_id=_ORION_HOUSE, slug="orion-route-quoted")
+    insert_turn(
+        thread=_ORION_HOUSE,
+        from_agent="orion",
+        to_agent="maestro",
+        subject="FACT|quoted",
+        body='Earlier thread cited "TYPE: SEAT_REGISTRATION" without a stamp.\n',
+    )
+    insert_turn(
+        thread=_ORION_HOUSE,
+        from_agent="orion",
+        to_agent="maestro",
+        subject="SEAT_REGISTRATION|orion-HOP06",
+        body=(f"TYPE: SEAT_REGISTRATION\nNew exact URL: {_HOP06_NEW_URL}\n"),
+    )
+
+    class Store:
+        def turns(self, thread: str, *, after_turn: int = 0, last: int = 100):
+            from agent_bus_store.db.connection import connect
+
+            with connect() as conn:
+                rows = conn.execute(
+                    "SELECT subject, body, turn_number, from_agent FROM turns "
+                    "WHERE thread=? AND turn_number>? ORDER BY turn_number DESC LIMIT ?",
+                    (thread, after_turn, last),
+                ).fetchall()
+            return {
+                "turns": [dict(row) for row in reversed(rows)],
+                "truncated": False,
+            }
+
+        def subscription(self, agent: str, thread_id: str, raw_to=None):
+            return None
+
+    bound = _orion_synthetic_route("orion", _ORION_HOUSE, store=Store())
+    assert bound is not None
+    assert bound[1]["title"] == _HOP06_NEW_URL
 
 
 def test_qualify_drops_orion_echo() -> None:

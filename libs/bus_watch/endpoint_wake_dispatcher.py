@@ -28,7 +28,6 @@ from web_chat_relay.orion_wake import (
     PINNED_CONVERSATION_ID,
     PINNED_CONVERSATION_URL,
     conversation_id_from_url,
-    extract_orion_seat_registration_url,
     holder_conversation_url,
 )
 
@@ -893,18 +892,16 @@ def _orion_seat_registration_url_for_route(
     thread: str, store: StoreClient | None
 ) -> str | None:
     """Latest Orion ``SEAT_REGISTRATION`` URL on the house lane before pinned fallback."""
+    from web_chat_relay.orion_wake import latest_orion_seat_registration_url_from_turns
+
     thread_id = str(thread).strip()
     if store is not None:
         try:
             payload = store.turns(thread_id, after_turn=0, last=100)
             turns = list(payload.get("turns") or [])
-            for row in reversed(turns):
-                url = extract_orion_seat_registration_url(
-                    str(row.get("body") or ""),
-                    str(row.get("subject") or ""),
-                )
-                if url:
-                    return url
+            url = latest_orion_seat_registration_url_from_turns(turns)
+            if url:
+                return url
         except Exception:
             logger.debug(
                 "endpoint_wake_dispatcher: seat registration scan failed thread=%s",
@@ -1051,56 +1048,14 @@ def _resolve_delivery_route(
             return bound
     if normalize_bus_address(agent) == "orion":
         from agent_bus_store.db.endpoint_wake_ledger import (
-            _latest_orion_seat_registration_on_thread,
-            _orion_chat_actuation_from_row,
-            _seat_registration_wins_over_subscription,
+            _orion_chat_actuation_for_house,
+            _orion_exact_route_from_actuation,
         )
 
-        seat_url = _orion_seat_registration_url_for_route(thread, store)
-        seat_pair = (
-            _latest_orion_seat_registration_on_thread(str(thread)) if seat_url else None
-        )
-        resolved_orion: tuple[str, dict[str, Any]] | None = None
-        for sub_agent in ("orion", "cursor"):
-            resolved = _store_subscription(store, sub_agent, thread, raw_to=raw_to)
-            if resolved is None:
-                continue
-            _, row = resolved
-            if str(row.get("state") or "") != "subscribed":
-                continue
-            if sub_agent == "orion":
-                if _orion_chat_actuation_from_row(row) is None:
-                    continue
-                resolved_orion = resolved
-                break
-            surface = str(row.get("surface") or "").strip().lower()
-            if surface == "chatgpt":
-                resolved_orion = resolved
-                break
-            url = holder_conversation_url(row)
-            if "chatgpt.com" in url and conversation_id_from_url(url):
-                resolved_orion = resolved
-                break
-        if seat_url and seat_pair is not None and resolved_orion is not None:
-            _, sub_row = resolved_orion
-            sub_actuation = _orion_chat_actuation_from_row(sub_row)
-            if sub_actuation is not None and _seat_registration_wins_over_subscription(
-                seat_pair, sub_row, sub_actuation
-            ):
-                conv_id = conversation_id_from_url(seat_url)
-                if conv_id:
-                    return (
-                        "exact",
-                        {
-                            "surface": "chatgpt",
-                            "display": "12",
-                            "title": seat_url,
-                            "agent_id": conv_id,
-                            "state": "subscribed",
-                        },
-                    )
-        if resolved_orion is not None:
-            return _apply_grok_window_overlay(agent, resolved_orion)
+        if str(thread).strip() == _ORION_HOUSE_THREAD:
+            actuation = _orion_chat_actuation_for_house(str(thread).strip())
+            if actuation is not None:
+                return _orion_exact_route_from_actuation(actuation)
     bound = _orion_synthetic_route(agent, thread, store=store)
     if bound is not None:
         return bound

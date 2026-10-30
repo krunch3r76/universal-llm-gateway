@@ -653,17 +653,19 @@ def _latest_orion_seat_registration_on_thread(
     thread_id: str,
 ) -> tuple[str, str] | None:
     """Latest ``SEAT_REGISTRATION`` ChatGPT URL on ``thread_id`` (url, created_at)."""
-    from web_chat_relay.orion_wake import extract_orion_seat_registration_url
+    from web_chat_relay.orion_wake import (
+        extract_orion_seat_registration_url,
+        is_orion_seat_registration_turn,
+    )
 
     with connect() as conn:
         rows = conn.execute(
             """
-            SELECT subject, body, created_at
+            SELECT subject, body, created_at, from_agent
             FROM turns
             WHERE thread=?
               AND (
                 subject LIKE 'SEAT_REGISTRATION%'
-                OR body LIKE '%New exact URL:%'
                 OR body LIKE 'TYPE: SEAT_REGISTRATION%'
               )
             ORDER BY turn_number DESC, id DESC
@@ -672,6 +674,12 @@ def _latest_orion_seat_registration_on_thread(
             (thread_id,),
         ).fetchall()
     for row in rows:
+        if not is_orion_seat_registration_turn(
+            subject=str(row["subject"] or ""),
+            body=str(row["body"] or ""),
+            from_agent=str(row["from_agent"] or ""),
+        ):
+            continue
         url = extract_orion_seat_registration_url(
             str(row["body"] or ""),
             str(row["subject"] or ""),
@@ -679,6 +687,24 @@ def _latest_orion_seat_registration_on_thread(
         if url:
             return url, str(row["created_at"] or "")
     return None
+
+
+def _orion_exact_route_from_actuation(
+    actuation: dict[str, Any],
+) -> tuple[str, dict[str, Any]]:
+    """Synthetic ``exact`` subscription row shape for Orion chat actuation."""
+    url = str(actuation.get("conversation_url") or "").split("?", 1)[0]
+    conv_id = str(actuation.get("conversation_id") or "")
+    return (
+        "exact",
+        {
+            "surface": "chatgpt",
+            "display": "12",
+            "title": url,
+            "agent_id": conv_id,
+            "state": "subscribed",
+        },
+    )
 
 
 def _seat_registration_wins_over_subscription(
@@ -774,6 +800,22 @@ def resolve_wake_delivery_binding(*, house_id: str) -> dict[str, Any]:
     }
     if not thread_id:
         return _wake_unbound_envelope(envelope)
+    if thread_id == _ORION_WAKE_HOUSE:
+        orion_house_actuation = _orion_chat_actuation_for_house(thread_id)
+        if orion_house_actuation is not None:
+            envelope.update(
+                {
+                    "state": "bound",
+                    "basis": _orion_house_actuation_basis(
+                        thread_id, orion_house_actuation
+                    ),
+                    "current": {
+                        "actuation": orion_house_actuation,
+                        "route": "orion-house",
+                    },
+                }
+            )
+            return envelope
     resolved_orion = resolve_subscription_for_thread("orion", thread_id)
     if resolved_orion is not None:
         route, row = resolved_orion

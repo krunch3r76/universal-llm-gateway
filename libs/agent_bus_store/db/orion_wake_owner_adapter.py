@@ -9,6 +9,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 from agent_seat.registry import normalize_bus_address
+from bus_watch.endpoint_wake_transport import classify_orion
 
 from .connection import connect, write_connect
 from .endpoint_wake_ledger import (
@@ -384,8 +385,27 @@ class LedgerWakeDeliveryOwner:
             outcome = "unknown"
             reason = str(receipt.get("reason") or "delivery_unconfirmed")
         elif receipt.get("ok") is False:
-            outcome = "refused"
-            reason = str(receipt.get("reason") or "refused")
+            outcome, reason = classify_orion(receipt)
+            if outcome == "pending" and reason != "deferred_streaming":
+                record_wake_result(
+                    claim.wake_id,
+                    "pending",
+                    reason,
+                    "exact",
+                    None,
+                    None,
+                )
+                return
+            if outcome == "skipped":
+                record_wake_result(
+                    claim.wake_id,
+                    "skipped",
+                    reason,
+                    "exact",
+                    None,
+                    None,
+                )
+                return
         else:
             outcome = "unknown"
             reason = str(receipt.get("reason") or "unnamed")

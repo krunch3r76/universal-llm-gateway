@@ -22,7 +22,8 @@ PINNED_CONVERSATION_ID = "6ae44d27-06cc-83e8-8b8a-df9b819755bd"
 
 _STREAMING_JS = """
 () => [...document.querySelectorAll('button')].some(
-  b => (b.getAttribute('aria-label') || '').toLowerCase() === 'stop'
+  b => b.getAttribute('data-testid') === 'stop-button'
+    || ((b.getAttribute('aria-label') || '').toLowerCase().startsWith('stop'))
 )
 """
 
@@ -106,15 +107,55 @@ _CHAT_URL_LINE_RE = re.compile(r"chat_url:\s*(https://chatgpt\.com/\S+)", re.I)
 _CHATGPT_CONVERSATION_RE = re.compile(r"https://chatgpt\.com/\S+/c/[0-9a-fA-F-]{36}")
 
 
+def is_orion_seat_registration_turn(
+    *,
+    subject: str = "",
+    body: str = "",
+    from_agent: str = "",
+) -> bool:
+    """True when ``from_agent`` is Orion and subject/body match a seat-registration stamp."""
+    from agent_seat.registry import normalize_bus_address
+
+    if normalize_bus_address(from_agent) != "orion":
+        return False
+    subj = str(subject or "").strip()
+    text = str(body or "")
+    if subj.upper().startswith("SEAT_REGISTRATION"):
+        return True
+    return text.startswith("TYPE: SEAT_REGISTRATION")
+
+
+def latest_orion_seat_registration_url_from_turns(
+    turns: list[dict[str, Any]],
+) -> str | None:
+    """Latest ChatGPT URL from Orion ``SEAT_REGISTRATION`` turns (newest ``turn_number`` wins)."""
+    ordered = sorted(
+        turns,
+        key=lambda row: int(row.get("turn_number") or 0),
+        reverse=True,
+    )
+    for row in ordered:
+        if not is_orion_seat_registration_turn(
+            subject=str(row.get("subject") or ""),
+            body=str(row.get("body") or ""),
+            from_agent=str(row.get("from_agent") or ""),
+        ):
+            continue
+        url = extract_orion_seat_registration_url(
+            str(row.get("body") or ""),
+            str(row.get("subject") or ""),
+        )
+        if url:
+            return url
+    return None
+
+
 def extract_orion_seat_registration_url(body: str, subject: str = "") -> str | None:
     """ChatGPT conversation URL from an Orion hop ``SEAT_REGISTRATION`` turn body."""
     text = str(body or "")
     subj = str(subject or "").strip()
     if not subj.upper().startswith("SEAT_REGISTRATION"):
-        if (
-            not text.startswith("TYPE: SEAT_REGISTRATION")
-            and "SEAT_REGISTRATION" not in text
-        ):
+        if not text.startswith("TYPE: SEAT_REGISTRATION"):
             return None
 
     match = _NEW_EXACT_URL_RE.search(text)
@@ -417,9 +458,7 @@ async def _steer_submit_button(page: OrionPage) -> Any | None:
     return None
 
 
-async def _paste_and_send(
-    page: OrionPage, text: str, *, layout: str = "docked"
-) -> None:
+async def _paste_and_send(page: OrionPage, text: str, *, layout: str = "docked") -> str:
     if layout == "floating":
         comp = page.locator(
             '[role=dialog] [contenteditable="true"], [role=alertdialog] [contenteditable="true"]'
@@ -432,17 +471,18 @@ async def _paste_and_send(
     kb = page.keyboard
     await kb.press("Control+A")
     await kb.insert_text(text)
-    steer = None
     if await _is_streaming(page):
         steer = await _steer_submit_button(page)
-    if steer is not None:
-        await steer.click()
-        return
+        if steer is not None:
+            await steer.click()
+            return "submitted"
+        return "deferred_streaming"
     send = page.locator('form button[aria-label="Send"]').first
     if await send.count() and await send.is_visible():
         await send.click()
-        return
+        return "submitted"
     await comp.press("Enter")
+    return "submitted"
 
 
 async def _approval_surface(page: OrionPage) -> str:
@@ -584,15 +624,39 @@ async def deliver_orion_wake(
         if paste_text is not None
         else build_wake_pointer(thread=thread_s, turn=turn, from_agent=from_agent)
     )
+    pasted_sent = False
     try:
-        await _paste_and_send(
+        submit = await _paste_and_send(
             page, line, layout=str(layout_receipt.get("layout") or "docked")
         )
+        if submit == "deferred_streaming":
+            if owns_cdp and pw is not None:
+                await pw.stop()
+            return {
+                "ok": False,
+                "reason": "deferred_streaming",
+                "pasted": False,
+                "delivered": False,
+                "brought_to_front": tab_sync["brought_to_front"],
+                "tab_reloaded": tab_sync["tab_reloaded"],
+                **layout_receipt,
+            }
+        pasted_sent = True
         await page.wait_for_timeout(400)
         approval = await _handle_approvals(page)
     except Exception as exc:
         if owns_cdp and pw is not None:
             await pw.stop()
+        if pasted_sent:
+            return {
+                "ok": False,
+                "reason": "paste_failed",
+                "pasted": True,
+                "delivered": False,
+                "error": type(exc).__name__,
+                "brought_to_front": tab_sync["brought_to_front"],
+                "tab_reloaded": tab_sync["tab_reloaded"],
+            }
         return _refuse(
             "paste_failed",
             error=type(exc).__name__,

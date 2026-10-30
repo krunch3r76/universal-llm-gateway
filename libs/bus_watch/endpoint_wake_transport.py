@@ -91,7 +91,11 @@ def classify_orion(body: Any, *, http_status: int | None = None) -> tuple[str, s
         return "pending", reason
     if reason == "deferred_exhausted":
         return "refused", reason
-    if reason in {"cdp_unreachable", "conversation_missing"}:
+    if reason in {
+        "cdp_unreachable",
+        "conversation_missing",
+        "non_empty_composer",
+    }:
         return "pending", reason
     if reason == "orion_echo_drop":
         return "skipped", reason
