@@ -185,18 +185,30 @@ def build_manifest(
         eid = v.get("entity_id", "")
         if not eid:
             continue
-        manifest.append(
-            {
-                "section": f"views/{eid}",
-                "entity_id": eid,
-                "entity_count": v.get("entity_count", 0),
-                "edge_count": v.get("edge_count", 0),
-                "hint": (
-                    "cortex(tool='render_subgraph', arguments='"
-                    f'{{"root": "{eid}", "hops": 1}}\')'
-                ),
-            }
-        )
+        entry: dict[str, Any] = {
+            "section": f"views/{eid}",
+            "entity_id": eid,
+            "hint": (
+                "cortex(tool='render_subgraph', arguments='"
+                f'{{"root": "{eid}", "hops": 1}}\')'
+            ),
+        }
+        fetch_status = v.get("fetch_status")
+        if fetch_status == "failed":
+            entry["entity_count"] = None
+            entry["edge_count"] = None
+            entry["fetch_status"] = "failed"
+            ferr = v.get("fetch_error")
+            if ferr in ("fetch_failed", "invalid_response"):
+                entry["fetch_error"] = ferr
+        elif fetch_status == "ok":
+            entry["entity_count"] = v.get("entity_count", 0)
+            entry["edge_count"] = v.get("edge_count", 0)
+            entry["fetch_status"] = "ok"
+        else:
+            entry["entity_count"] = v.get("entity_count", 0)
+            entry["edge_count"] = v.get("edge_count", 0)
+        manifest.append(entry)
 
     # §C.4: render_subgraph hint for plan/project entities surfaced via plan_phases.
     # Enables agents to drill into a roadmap subgraph from the manifest entry.

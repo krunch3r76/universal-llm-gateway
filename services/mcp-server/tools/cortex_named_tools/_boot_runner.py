@@ -278,15 +278,59 @@ def _build_artifacts(
     return artifacts
 
 
+def _subgraph_count_value(raw: Any) -> int | None:
+    """Return a nonnegative int count from a subgraph render field, or None if invalid."""
+    if raw is None or isinstance(raw, bool):
+        return None
+    if isinstance(raw, int):
+        return raw if raw >= 0 else None
+    if isinstance(raw, str):
+        if not raw.isdigit():
+            return None
+        return int(raw)
+    if isinstance(raw, float):
+        if raw < 0 or raw != int(raw):
+            return None
+        return int(raw)
+    return None
+
+
+def _subgraph_response_has_error(resp: dict[str, Any]) -> bool:
+    err = resp.get("error")
+    if err is None:
+        return False
+    if isinstance(err, str):
+        return bool(err.strip())
+    return bool(err)
+
+
+def _view_retrieval_hint(entity_id: str) -> str:
+    return (
+        "cortex(tool='render_subgraph', arguments='"
+        f'{{"root": "{entity_id}", "hops": 1}}\')'
+    )
+
+
+def _failed_view_row(entity_id: str, *, fetch_error: str) -> dict[str, Any]:
+    return {
+        "entity_id": entity_id,
+        "entity_count": None,
+        "edge_count": None,
+        "retrieval_hint": _view_retrieval_hint(entity_id),
+        "fetch_status": "failed",
+        "fetch_error": fetch_error,
+    }
+
+
 def _materialize_views(
     views: list[str],
 ) -> list[dict[str, Any]]:
     """Fetch structural subgraph data for each view entity.
 
     Calls GET /subgraph/render?root=<entity_id>&hops=1 for each view and
-    extracts entity_count + edge_count.  All failures degrade gracefully to a
-    zero-count entry so the manifest entry still appears (retrieval hint is
-    always accurate).  Returns no prose — structural IDs/counts only (§C.3).
+    extracts entity_count + edge_count.  Per-view relay failures are isolated;
+    failed rows carry fetch_status/fetch_error instead of zero counts.
+    Returns no prose — structural IDs/counts only (§C.3).
     """
     from urllib.parse import urlencode
 
@@ -294,19 +338,37 @@ def _materialize_views(
 
     results: list[dict[str, Any]] = []
     for entity_id in views:
-        qs = urlencode({"root": entity_id, "hops": 1})
-        resp = cx("GET", f"/subgraph/render?{qs}")
-        entity_count = int(resp.get("entity_count", 0)) if "entity_count" in resp else 0
-        edge_count = int(resp.get("edge_count", 0)) if "edge_count" in resp else 0
+        hint = _view_retrieval_hint(entity_id)
+        try:
+            qs = urlencode({"root": entity_id, "hops": 1})
+            resp = cx("GET", f"/subgraph/render?{qs}")
+        except Exception:
+            results.append(_failed_view_row(entity_id, fetch_error="fetch_failed"))
+            continue
+
+        if not isinstance(resp, dict):
+            results.append(_failed_view_row(entity_id, fetch_error="invalid_response"))
+            continue
+        if _subgraph_response_has_error(resp):
+            results.append(_failed_view_row(entity_id, fetch_error="fetch_failed"))
+            continue
+
+        if "entity_count" not in resp or "edge_count" not in resp:
+            results.append(_failed_view_row(entity_id, fetch_error="invalid_response"))
+            continue
+        entity_count = _subgraph_count_value(resp.get("entity_count"))
+        edge_count = _subgraph_count_value(resp.get("edge_count"))
+        if entity_count is None or edge_count is None:
+            results.append(_failed_view_row(entity_id, fetch_error="invalid_response"))
+            continue
+
         results.append(
             {
                 "entity_id": entity_id,
                 "entity_count": entity_count,
                 "edge_count": edge_count,
-                "retrieval_hint": (
-                    "cortex(tool='render_subgraph', arguments='"
-                    f'{{"root": "{entity_id}", "hops": 1}}\')'
-                ),
+                "retrieval_hint": hint,
+                "fetch_status": "ok",
             }
         )
     return results

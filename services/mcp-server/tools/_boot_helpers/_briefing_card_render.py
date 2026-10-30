@@ -176,9 +176,16 @@ def render_views_section(views_data: list[dict[str, Any]]) -> list[str]:
     lines: list[str] = ["\n## Views"]
     for v in views_data:
         eid = v.get("entity_id", "?")
+        hint = v.get("retrieval_hint", "")
+        status = v.get("fetch_status")
+        if status == "failed":
+            ferr = v.get("fetch_error")
+            if ferr not in ("fetch_failed", "invalid_response"):
+                ferr = "fetch_failed"
+            lines.append(f"- `{eid}` — unavailable ({ferr}) | `{hint}`")
+            continue
         ec = v.get("entity_count", 0)
         eg = v.get("edge_count", 0)
-        hint = v.get("retrieval_hint", "")
         lines.append(f"- `{eid}` — {ec} entities, {eg} edges | `{hint}`")
     return lines
 
@@ -228,9 +235,7 @@ def deadline_line(d: dict[str, Any], today: datetime) -> str:
             if delta >= 0:
                 remaining = f" ({delta}d)"
             elif abs(delta) >= 14:
-                remaining = (
-                    f" (**STALE?** — {abs(delta)}d past — verify still owed)"
-                )
+                remaining = f" (**STALE?** — {abs(delta)}d past — verify still owed)"
             else:
                 remaining = f" (**{abs(delta)}d OVERDUE**)"
         except ValueError:
