@@ -224,6 +224,36 @@ def test_elides_operator_proxy_hop_preamble() -> None:
     assert "tail speech" in out
 
 
+def test_operator_proxy_elision_preserves_leading_operator_line() -> None:
+    content = (
+        "do not touch prod\n"
+        + _mini_operator_proxy_preamble()
+    )
+    out = elide_ide_catalog_blocks([{"role": "user", "content": content}])[0]["content"]
+    assert out.startswith("do not touch prod\n")
+    assert "[elided operator_proxy_hop_preamble:" in out
+    assert "tail speech" in out
+
+
+@pytest.mark.parametrize(
+    "following",
+    [
+        "**substantive work**",
+        "## Section heading",
+        "- list item",
+        "`inline code`",
+    ],
+)
+def test_rule3_ceremony_elision_stops_before_substantive_paragraph(following: str) -> None:
+    from agent_bus_store.tape_catalog_elide import _elide_rule3_ceremony_spans
+
+    content = f"Where we left off: recap line.\n\n{following}\n"
+    out = _elide_rule3_ceremony_spans(content)
+    assert following in out
+    assert "Where we left off" not in out
+    assert "[elided rule3_resume_ceremony:" in out
+
+
 def test_elides_k44_predecessor_paste() -> None:
     content = "prefix\nK44 from predecessor \nlong paste " + ("x" * 200)
     out = elide_ide_catalog_blocks([{"role": "user", "content": content}])[0]["content"]
@@ -263,7 +293,8 @@ def test_overlapping_handoff_spans_preserve_prefix() -> None:
 
 
 def test_k44_starting_inside_hop_span_preserves_outer_prefix() -> None:
-    prefix = "outer operator prefix\n"
+    prefix = "outer operator prefix " + ("x" * 180) + "\n"
+    assert len(prefix.encode("utf-8")) >= 200
     hop = (
         "Liaison IDE hop (attended) tip_cp=1.\n"
         "K44 from predecessor \ninner paste line\n"
