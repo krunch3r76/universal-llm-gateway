@@ -473,10 +473,9 @@ def test_emitter_raise_still_returns_none(
 def test_committed_scope_membership_adds_small_llm_prefix() -> None:
     path = Path(loader.__file__).with_name("scope_membership.yaml")
     loaded = yaml.safe_load(path.read_text(encoding="utf-8"))
-    assert loaded == {
-        "scopes": {
-            "llm_prompting": {
-                "prefixes": [SMALL_PREFIX],
-            }
-        }
-    }
+    scopes = loaded["scopes"]
+    assert scopes["llm_prompting"] == {"prefixes": [SMALL_PREFIX]}
+    student = scopes["student_loans"]
+    assert student["prefixes"] == ["/mnt/torus/mcp-data/files/legal/student-loans"]
+    assert student.get("vocab_mode") == "frontier"
+    assert "StudentAid.gov" in student.get("description", "")

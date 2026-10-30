@@ -2,3 +2,14 @@ scopes:
   llm_prompting:
     prefixes:
       - /mnt/torus/projects/universal-llm-gateway/docs/research/small_llm/prompting
+  student_loans:
+    prefixes:
+      - /mnt/torus/mcp-data/files/legal/student-loans
+    description: >-
+      Federal student loan corpus — StudentAid.gov repayment plans (IDR/SAVE),
+      forbearance and deferment, delinquency/default and collections (Treasury
+      offset, wage garnishment), servicer borrower rights, recertification,
+      consolidation, PSLF, FSA Ombudsman/complaints; 34 CFR Parts 682/685;
+      CFPB student-loan pages; Edfinancial public borrower pages; Federal
+      Register and statute context (2025–2026 reconciliation).
+    vocab_mode: frontier
