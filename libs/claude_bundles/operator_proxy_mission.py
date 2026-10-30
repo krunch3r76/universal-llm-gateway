@@ -426,6 +426,7 @@ def _substitute_hop_template_part(
 
 
 _CHECKPOINT_RENDER_PREFIX = "## CURRENT LEG (rendered checkpoint)\n"
+HOP_LEG_FLOOR_B = 2048
 
 
 def _enforce_hop_render_max(
@@ -461,7 +462,7 @@ def _enforce_hop_render_max(
     protected_floor = (
         CHECKPOINT_BUDGET_B
         if leg_bytes is not None and leg_bytes <= CHECKPOINT_BUDGET_B
-        else 0
+        else HOP_LEG_FLOOR_B
     )
 
     initial_size: int | None = None
@@ -513,11 +514,11 @@ def _enforce_hop_render_max(
                 if body.endswith(flag_suffix):
                     body = body[: -len(flag_suffix)]
                 size = len(body.encode("utf-8"))
-                if size <= 0:
+                if size <= protected_floor:
                     break
                 over = _total_bytes() - HOP_RENDER_MAX_B
                 trim = max(64, min(size, int(over) + 32))
-                target = max(0, size - trim)
+                target = max(protected_floor, size - trim)
                 if target >= size:
                     break
                 trimmed = _CHECKPOINT_RENDER_PREFIX + _truncate_utf8(body, target)
@@ -526,6 +527,25 @@ def _enforce_hop_render_max(
                     lane=fields["lane"],
                     checkpoint_block=fields["checkpoint_block"],
                 )
+
+        checkpoint = fields.get("checkpoint_block") or ""
+        if checkpoint.startswith(_CHECKPOINT_RENDER_PREFIX) and checkpoint.endswith(
+            flag_suffix
+        ):
+            body = checkpoint[len(_CHECKPOINT_RENDER_PREFIX) : -len(flag_suffix)]
+            measured = len(body.encode("utf-8"))
+            flag = (
+                f"[budget_exceeded checkpoint {initial_size}/{measured} "
+                f"\u2014 read {uri}]"
+            )
+            flag_suffix = "\n" + flag
+            fields["checkpoint_block"] = (
+                _CHECKPOINT_RENDER_PREFIX + body + flag_suffix
+            )
+            fields["first_act_call1_line"] = first_act_call1_line(
+                lane=fields["lane"],
+                checkpoint_block=fields["checkpoint_block"],
+            )
 
 
 def render_hop_successor_briefing(

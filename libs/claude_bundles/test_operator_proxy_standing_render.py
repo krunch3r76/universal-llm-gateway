@@ -712,7 +712,9 @@ def test_hop_inline_in_cap_checkpoint_includes_handoff_sha256() -> None:
 
 
 def test_hop_inline_over_8192_current_leg_keeps_checkpoint_budget_flag() -> None:
-    sidecar = "## CURRENT LEG\n" + ("p" * 9000) + "\n### OWED / NEXT\nx\n"
+    sidecar = (
+        "## CURRENT LEG\nLEG 1\n### OWED / NEXT\nx\n### NOTES\n" + ("p" * 9000) + "\n"
+    )
     body, meta = render_checkpoint_block(
         sidecar,
         lane="12286",
