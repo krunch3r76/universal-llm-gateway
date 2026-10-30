@@ -626,13 +626,105 @@ def _orion_chat_actuation_from_row(row: dict[str, Any]) -> dict[str, Any] | None
     }
 
 
+def _orion_actuation_from_conversation_url(url: str) -> dict[str, Any] | None:
+    from web_chat_relay.orion_wake import (
+        DEFAULT_ORION_CDP_URL,
+        _strip_conversation_url,
+        conversation_id_from_url,
+    )
+
+    clean = _strip_conversation_url(url)
+    conv_id = conversation_id_from_url(clean)
+    if not conv_id:
+        return None
+    return {
+        "type": "orion_chat",
+        "conversation_id": conv_id,
+        "conversation_url": clean,
+        "cdp_url": DEFAULT_ORION_CDP_URL,
+    }
+
+
+def _latest_orion_seat_registration_on_thread(
+    thread_id: str,
+) -> tuple[str, str] | None:
+    """Latest ``SEAT_REGISTRATION`` ChatGPT URL on ``thread_id`` (url, created_at)."""
+    from web_chat_relay.orion_wake import extract_orion_seat_registration_url
+
+    with connect() as conn:
+        rows = conn.execute(
+            """
+            SELECT subject, body, created_at
+            FROM turns
+            WHERE thread=?
+              AND (
+                subject LIKE 'SEAT_REGISTRATION%'
+                OR body LIKE '%New exact URL:%'
+                OR body LIKE 'TYPE: SEAT_REGISTRATION%'
+              )
+            ORDER BY turn_number DESC, id DESC
+            LIMIT 20
+            """,
+            (thread_id,),
+        ).fetchall()
+    for row in rows:
+        url = extract_orion_seat_registration_url(
+            str(row["body"] or ""),
+            str(row["subject"] or ""),
+        )
+        if url:
+            return url, str(row["created_at"] or "")
+    return None
+
+
+def _seat_registration_wins_over_subscription(
+    seat: tuple[str, str],
+    sub_row: dict[str, Any],
+    sub_actuation: dict[str, Any],
+) -> bool:
+    seat_url, seat_ts = seat
+    sub_ts = str(sub_row.get("created_at") or "")
+    sub_url = str(sub_actuation.get("conversation_url") or "").split("?", 1)[0]
+    if sub_url != seat_url:
+        return True
+    return seat_ts > sub_ts
+
+
+def _orion_house_actuation_basis(thread_id: str, actuation: dict[str, Any]) -> str:
+    from web_chat_relay.orion_wake import PINNED_CONVERSATION_ID
+
+    conv_id = str(actuation.get("conversation_id") or "")
+    if conv_id == PINNED_CONVERSATION_ID:
+        return "orion_pinned_conversation"
+    seat = _latest_orion_seat_registration_on_thread(thread_id)
+    if seat is not None and seat[0] == str(actuation.get("conversation_url") or ""):
+        return "orion_seat_registration"
+    if _orion_subscription_for_thread(thread_id) is not None:
+        return "agent_endpoint_subscription"
+    return "orion_seat_registration"
+
+
 def _orion_chat_actuation_for_house(thread_id: str) -> dict[str, Any] | None:
     live = _orion_subscription_for_thread(thread_id)
+    seat = _latest_orion_seat_registration_on_thread(thread_id)
+
+    sub_actuation: dict[str, Any] | None = None
+    sub_row: dict[str, Any] | None = None
     if live is not None:
-        _, row = live
-        actuation = _orion_chat_actuation_from_row(row)
-        if actuation is not None:
-            return actuation
+        _, sub_row = live
+        sub_actuation = _orion_chat_actuation_from_row(sub_row)
+
+    if seat is not None:
+        seat_actuation = _orion_actuation_from_conversation_url(seat[0])
+        if seat_actuation is not None and (
+            sub_actuation is None
+            or sub_row is None
+            or _seat_registration_wins_over_subscription(seat, sub_row, sub_actuation)
+        ):
+            return seat_actuation
+
+    if sub_actuation is not None:
+        return sub_actuation
     if thread_id != _ORION_WAKE_HOUSE:
         return None
     from web_chat_relay.orion_wake import (
@@ -749,7 +841,7 @@ def resolve_wake_delivery_binding(*, house_id: str) -> dict[str, Any]:
         envelope.update(
             {
                 "state": "bound",
-                "basis": "orion_pinned_conversation",
+                "basis": _orion_house_actuation_basis(thread_id, orion_actuation),
                 "current": {
                     "actuation": orion_actuation,
                     "route": "orion-house",

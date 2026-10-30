@@ -585,6 +585,24 @@ def test_conversation_id_from_url_project_path() -> None:
     assert conversation_id_from_url(PINNED_CONVERSATION_URL) == PINNED_CONVERSATION_ID
 
 
+def test_extract_orion_seat_registration_url_hop06_specimen() -> None:
+    from web_chat_relay.orion_wake import extract_orion_seat_registration_url
+
+    body = (
+        "TYPE: SEAT_REGISTRATION\n"
+        "Old exact URL: https://chatgpt.com/g/g-p-6ae3debfee8481918ff3fa45b7d18d3a-ulg-orion"
+        "/c/6ae44d27-06cc-83e8-8b8a-df9b819755bd\n"
+        "New exact URL: https://chatgpt.com/g/g-p-6ae3debfee8481918ff3fa45b7d18d3a-ulg-orion"
+        "/c/6ae4cfde-151c-83e8-8966-fdd8893f472d\n"
+    )
+    url = extract_orion_seat_registration_url(
+        body, subject="SEAT_REGISTRATION|orion-HOP06"
+    )
+    assert url is not None
+    assert url.endswith("/c/6ae4cfde-151c-83e8-8966-fdd8893f472d")
+    assert "6ae44d27" not in url
+
+
 def test_holder_conversation_url_from_subscription() -> None:
     sub = {"agent_id": PINNED_CONVERSATION_ID}
     assert PINNED_CONVERSATION_ID in holder_conversation_url(sub)

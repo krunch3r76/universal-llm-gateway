@@ -6,6 +6,7 @@ import pytest
 from agent_bus_store.db import create_thread, init_db, insert_turn
 from agent_bus_store.db.connection import connect, write_connect
 from agent_bus_store.db.endpoint_wake_ledger import (
+    _latest_orion_seat_registration_on_thread,
     advance_scan,
     claim_due_wakes,
     get_cursor,
@@ -295,6 +296,83 @@ def test_orion_subscription_for_thread_ignores_orion_row_without_valid_url(
     assert binding["state"] == "bound"
     assert binding["basis"] == "orion_pinned_conversation"
     assert binding["current"]["actuation"]["conversation_id"] == PINNED_CONVERSATION_ID
+
+
+_HOP06_OLD_URL = (
+    "https://chatgpt.com/g/g-p-6ae3debfee8481918ff3fa45b7d18d3a-ulg-orion"
+    "/c/6ae44d27-06cc-83e8-8b8a-df9b819755bd"
+)
+_HOP06_NEW_URL = (
+    "https://chatgpt.com/g/g-p-6ae3debfee8481918ff3fa45b7d18d3a-ulg-orion"
+    "/c/6ae4cfde-151c-83e8-8966-fdd8893f472d"
+)
+_HOP06_CONV_ID = "6ae4cfde-151c-83e8-8966-fdd8893f472d"
+
+
+def _hop06_seat_registration_body() -> str:
+    return (
+        "TYPE: SEAT_REGISTRATION\n"
+        f"Old exact URL: {_HOP06_OLD_URL}\n"
+        f"New exact URL: {_HOP06_NEW_URL}\n"
+    )
+
+
+def test_resolve_wake_binding_seat_registration_hop06_over_pinned(db: None) -> None:
+    """Break: hop posts SEAT_REGISTRATION before agent_endpoint_subscriptions upsert."""
+    wake_id, turn_ids, number = _claim_orion_turn(db)
+    insert_turn(
+        thread=_ORION_HOUSE,
+        from_agent="orion",
+        to_agent="maestro",
+        subject="SEAT_REGISTRATION|orion-HOP06",
+        body=_hop06_seat_registration_body(),
+    )
+    binding = resolve_wake_delivery_binding(house_id=_ORION_HOUSE)
+    assert binding["state"] == "bound"
+    assert binding["basis"] == "orion_seat_registration"
+    actuation = binding["current"]["actuation"]
+    assert actuation["conversation_id"] == _HOP06_CONV_ID
+    assert actuation["conversation_url"] == _HOP06_NEW_URL
+
+    owner = shared_wake_delivery_owner()
+    stale = WakeClaimContext(
+        wake_id=wake_id,
+        agent="orion",
+        thread_id=_ORION_HOUSE,
+        turn_ids=tuple(turn_ids),
+        turn_numbers=(number,),
+        endpoint_url=_HOP06_OLD_URL,
+    )
+    assert (
+        owner.validate_claim_for_delivery(stale)["reason"]
+        == "wake_claim_endpoint_mismatch"
+    )
+    fresh = WakeClaimContext(
+        wake_id=wake_id,
+        agent="orion",
+        thread_id=_ORION_HOUSE,
+        turn_ids=tuple(turn_ids),
+        turn_numbers=(number,),
+        endpoint_url=_HOP06_NEW_URL,
+    )
+    assert owner.validate_claim_for_delivery(fresh) == {
+        "ok": True,
+        "reason": "claim_valid",
+    }
+
+
+def test_latest_orion_seat_registration_ignores_old_exact_url(db: None) -> None:
+    create_thread(thread_id=_ORION_HOUSE, slug="seat-reg-scan")
+    insert_turn(
+        thread=_ORION_HOUSE,
+        from_agent="orion",
+        to_agent="maestro",
+        subject="SEAT_REGISTRATION|orion-HOP06",
+        body=_hop06_seat_registration_body(),
+    )
+    hit = _latest_orion_seat_registration_on_thread(_ORION_HOUSE)
+    assert hit is not None
+    assert hit[0] == _HOP06_NEW_URL
 
 
 def test_ledger_identity_unique_per_turn(db: None) -> None:

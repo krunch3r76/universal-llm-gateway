@@ -101,6 +101,48 @@ def _strip_conversation_url(url: str) -> str:
     return url.split("?", 1)[0]
 
 
+_NEW_EXACT_URL_RE = re.compile(r"New exact URL:\s*(https://chatgpt\.com/\S+)", re.I)
+_CHAT_URL_LINE_RE = re.compile(r"chat_url:\s*(https://chatgpt\.com/\S+)", re.I)
+_CHATGPT_CONVERSATION_RE = re.compile(r"https://chatgpt\.com/\S+/c/[0-9a-fA-F-]{36}")
+
+
+def extract_orion_seat_registration_url(body: str, subject: str = "") -> str | None:
+    """ChatGPT conversation URL from an Orion hop ``SEAT_REGISTRATION`` turn body."""
+    text = str(body or "")
+    subj = str(subject or "").strip()
+    if not subj.upper().startswith("SEAT_REGISTRATION"):
+        if (
+            not text.startswith("TYPE: SEAT_REGISTRATION")
+            and "SEAT_REGISTRATION" not in text
+        ):
+            return None
+
+    match = _NEW_EXACT_URL_RE.search(text)
+    if match is not None:
+        return _seat_registration_url_from_raw(match.group(1))
+
+    match = _CHAT_URL_LINE_RE.search(text)
+    if match is not None:
+        return _seat_registration_url_from_raw(match.group(1))
+
+    for line in text.splitlines():
+        if line.strip().startswith("Old exact URL:"):
+            continue
+        for hit in _CHATGPT_CONVERSATION_RE.finditer(line):
+            cleaned = _seat_registration_url_from_raw(hit.group(0))
+            if cleaned:
+                return cleaned
+    return None
+
+
+def _seat_registration_url_from_raw(raw: str) -> str | None:
+    trimmed = raw.rstrip(".,;)")
+    url = _strip_conversation_url(trimmed)
+    if conversation_id_from_url(url):
+        return url
+    return None
+
+
 def _explicit_holder_url(raw: str) -> str | None:
     if raw.startswith("http") and "/c/" in raw:
         return _strip_conversation_url(raw)
