@@ -16,6 +16,8 @@ from claude_bundles.runbook_excerpt import extract_sections
 _KB = 1024
 CHECKPOINT_BUDGET_B = 8 * _KB
 CHECKPOINT_HOP_INLINE_B = CHECKPOINT_BUDGET_B
+SHA_RESERVE_B = 81  # handoff sha256 line + blank line after (15 + 64 hex + 2)
+PREAMBLE_WINDOW_MIN_B = 1024
 HOP_RENDER_MAX_B = 12_000
 HOP_RUNNING_NOW_CAP_B = 200
 HOP_INFLIGHT_CAP_B = 400
@@ -210,7 +212,11 @@ def hop_boundary_turn_from_header(header: str) -> int:
     return max(refs) if refs else 0
 
 
-_INFLIGHT_PLAIN_LINE_RE = re.compile(r"^IN FLIGHT:\s*$", re.IGNORECASE)
+_LEG_BLOCK_START_RE = re.compile(r"^LEG \d+ ~\d{2}:\d{2}Z")
+_INFLIGHT_HEAD_RE = re.compile(
+    r"^IN FLIGHT(?:\s*\([^)\n]*\))?\s*:(?P<rest>.*)$",
+    re.IGNORECASE,
+)
 _PLAIN_LEG_LABEL_RE = re.compile(
     r"^(?:OPEN|FRICTION|CARRIED|NEXT|Traps)\b(?:\s*\([^)\n]*\))?\s*:",
     re.IGNORECASE,
@@ -224,13 +230,7 @@ def _normalize_inflight_work_key(key: str) -> str:
 
 def current_leg_has_inflight_section(current_leg_block: str) -> bool:
     """True when CURRENT LEG has a structured IN FLIGHT section (not prose mention)."""
-    block = current_leg_block or ""
-    if re.search(r"^###\s+IN FLIGHT\s*$", block, re.MULTILINE):
-        return True
-    for line in block.splitlines():
-        if _INFLIGHT_PLAIN_LINE_RE.match(line.strip()):
-            return True
-    return False
+    return "IN FLIGHT" in _parse_h3_sections(current_leg_block or "")
 
 
 def inflight_section_from_sidecar(sidecar: str) -> str:
@@ -278,6 +278,136 @@ def _extract_current_leg_block(sidecar: str) -> str | None:
     return "\n".join(lines[:end]).rstrip()
 
 
+def _neutralize_budget_literals(sections: dict[str, str]) -> dict[str, str]:
+    return {
+        key: value.replace("[budget_exceeded", "(budget_exceeded")
+        for key, value in sections.items()
+        if value
+    }
+
+
+def _elided_preamble_range_line(k: int, m: int, n: int) -> str:
+    return (
+        f"[elided preamble bytes {k}..{m} of {m} (UTF-8); {n} LEG blocks omitted]"
+    )
+
+
+def _range_line_reserve(m: int, num_blocks: int) -> int:
+    digit_m = max(1, len(str(max(m, 1))))
+    digit_n = max(1, len(str(max(num_blocks, 1))))
+    k_hi = int("9" * digit_m)
+    n_hi = int("9" * digit_n)
+    return _utf8_len(_elided_preamble_range_line(k_hi, m, n_hi)) + 1
+
+
+def _split_leg_blocks(lines: list[str]) -> list[list[str]]:
+    blocks: list[list[str]] = []
+    current: list[str] = []
+    for line in lines:
+        if _LEG_BLOCK_START_RE.match(line):
+            if current:
+                blocks.append(current)
+            current = [line]
+        else:
+            current.append(line)
+    if current:
+        blocks.append(current)
+    return blocks
+
+
+def _join_leg_blocks(blocks: list[list[str]]) -> str:
+    return "\n".join("\n".join(block) for block in blocks)
+
+
+def tip_window_preamble(text: str, budget_b: int = CHECKPOINT_BUDGET_B) -> str:
+    """Keep the longest prefix of whole leading LEG blocks within *budget_b*."""
+    body = (text or "").strip()
+    if not body:
+        return body
+    m = _utf8_len(body)
+    if m <= budget_b:
+        return body
+
+    lines = body.splitlines()
+    blocks = _split_leg_blocks(lines)
+    num_blocks = len(blocks)
+    reserve = _range_line_reserve(m, num_blocks)
+    room = max(1, budget_b - reserve)
+
+    kept_blocks: list[list[str]] = []
+    used = 0
+    for block in blocks:
+        block_text = "\n".join(block)
+        blen = _utf8_len(block_text)
+        sep = 1 if kept_blocks else 0
+        if used + sep + blen <= room:
+            kept_blocks.append(block)
+            used += sep + blen
+        else:
+            break
+
+    n_omitted: int
+    if kept_blocks and len(kept_blocks) == num_blocks:
+        kept_text = _join_leg_blocks(kept_blocks)
+        n_omitted = 0
+    elif kept_blocks:
+        kept_text = _join_leg_blocks(kept_blocks)
+        n_omitted = num_blocks - len(kept_blocks)
+    else:
+        first = blocks[0] if blocks else lines
+        kept_lines: list[str] = []
+        used = 0
+        for line in first:
+            sep = 1 if kept_lines else 0
+            extra = _utf8_len(line) + sep
+            if used + extra <= room:
+                kept_lines.append(line)
+                used += extra
+            else:
+                break
+        if kept_lines:
+            kept_text = "\n".join(kept_lines)
+        elif first:
+            kept_text = _truncate_utf8(first[0], room)
+        else:
+            kept_text = _truncate_utf8(body, room)
+        n_omitted = max(0, num_blocks - 1)
+
+    k = _utf8_len(kept_text)
+    range_line = _elided_preamble_range_line(k, m, n_omitted)
+    result = f"{kept_text}\n{range_line}" if kept_text else range_line
+    if _utf8_len(result) > budget_b:
+        over = _utf8_len(result) - budget_b
+        kept_text = _truncate_utf8(kept_text, max(1, _utf8_len(kept_text) - over))
+        k = _utf8_len(kept_text)
+        range_line = _elided_preamble_range_line(k, m, n_omitted)
+        result = f"{kept_text}\n{range_line}" if kept_text else range_line
+    return result
+
+
+def _window_sections(
+    working: dict[str, str], max_budget: int
+) -> dict[str, str]:
+    if "__preamble__" not in working:
+        return working
+    other = _utf8_len(
+        _assemble_checkpoint(
+            {
+                k: v
+                for k, v in working.items()
+                if k not in ("__preamble__", "IN FLIGHT")
+            }
+        )
+    )
+    sep = 2 if other else 0
+    budget_pre = max(
+        PREAMBLE_WINDOW_MIN_B, max_budget - SHA_RESERVE_B - other - sep
+    )
+    out = dict(working)
+    out["__preamble__"] = tip_window_preamble(working["__preamble__"], budget_pre)
+    return out
+
+
 def _parse_h3_sections(block: str) -> dict[str, str]:
     """Parse ### sections inside ## CURRENT LEG."""
     lines = (block or "").splitlines()
@@ -289,25 +419,47 @@ def _parse_h3_sections(block: str) -> dict[str, str]:
     preamble_lines: list[str] = []
     sections: dict[str, list[str]] = {}
     current_key: str | None = None
-    inflight_plain_active = False
+    boundaries = 0
+    mode: str | None = None  # None | "bare" | "text"
     for line in lines:
+        if _LEG_BLOCK_START_RE.match(line):
+            boundaries += 1
+            if mode is not None:
+                mode = None
+                current_key = None
+
         m = re.match(r"^###\s+(.+?)\s*$", line)
         if m:
-            inflight_plain_active = False
+            mode = None
             current_key = m.group(1).strip()
-            sections[current_key] = [line]
+            sections.setdefault(current_key, []).append(line)
             continue
-        if _INFLIGHT_PLAIN_LINE_RE.match(line.strip()):
-            inflight_plain_active = True
+
+        head = _INFLIGHT_HEAD_RE.match(line.strip())
+        if (
+            head
+            and boundaries <= 1
+            and (current_key is None or mode is not None)
+        ):
+            mode = "text" if head.group("rest").strip() else "bare"
             current_key = "IN FLIGHT"
-            sections[current_key] = [line]
+            sections.setdefault("IN FLIGHT", []).append(line)
             continue
-        if inflight_plain_active and current_key == "IN FLIGHT":
-            if _PLAIN_LEG_LABEL_RE.match(line.strip()) or _ATX_HEADING_RE.match(line):
-                inflight_plain_active = False
-                current_key = None
-                preamble_lines.append(line)
-                continue
+
+        if mode == "bare" and (
+            _PLAIN_LEG_LABEL_RE.match(line.strip()) or _ATX_HEADING_RE.match(line)
+        ):
+            mode = None
+            current_key = None
+            preamble_lines.append(line)
+            continue
+
+        if mode == "text" and not line.strip().startswith("- "):
+            mode = None
+            current_key = None
+            preamble_lines.append(line)
+            continue
+
         if current_key is None:
             preamble_lines.append(line)
         else:
@@ -440,7 +592,6 @@ def _apply_checkpoint_budget(
             flags.append(flag.replace("standing handoff", uri))
         working["FIRST ACTS"] = capped
 
-    exceeded = _checkpoint_budget_body_len(working) > max_budget
     caps = {
         "LAST LEG": SECTION_LAST_CAP_B,
         "OWED / NEXT": SECTION_OWED_CAP_B,
@@ -456,6 +607,9 @@ def _apply_checkpoint_budget(
             flag = f"[budget_exceeded {name} {sec_size}/{cap} — read {uri}]"
             flags.append(flag)
             working[name] = _truncate_utf8(sec, cap) + "\n" + flag
+
+    working = _window_sections(working, max_budget)
+    exceeded = _checkpoint_budget_body_len(working) > max_budget
 
     while _checkpoint_budget_body_len(working) > max_budget:
         exceeded = True
@@ -516,19 +670,22 @@ def parse_inflight_rows(inflight_section: str) -> list[InflightRow]:
     rows: list[InflightRow] = []
     for line in (inflight_section or "").splitlines():
         stripped = line.strip()
-        if not stripped.startswith("- "):
+        if stripped.startswith("- "):
+            row = InflightRow(raw_line=line)
+            hint = _POLL_HINT_RE.search(stripped)
+            if hint:
+                row.poll_hint_json = hint.group(1)
+            worker_m = re.search(r"worker\s+(\d+)", stripped)
+            if worker_m:
+                row.worker = worker_m.group(1)
+            exec_m = re.search(r"exec(?:ution_id)?\s+(\S+)", stripped)
+            if exec_m:
+                row.execution_id = exec_m.group(1)
+            rows.append(row)
             continue
-        row = InflightRow(raw_line=line)
-        hint = _POLL_HINT_RE.search(stripped)
-        if hint:
-            row.poll_hint_json = hint.group(1)
-        worker_m = re.search(r"worker\s+(\d+)", stripped)
-        if worker_m:
-            row.worker = worker_m.group(1)
-        exec_m = re.search(r"exec(?:ution_id)?\s+(\S+)", stripped)
-        if exec_m:
-            row.execution_id = exec_m.group(1)
-        rows.append(row)
+        head = _INFLIGHT_HEAD_RE.match(stripped)
+        if head and head.group("rest").strip():
+            rows.append(InflightRow(raw_line=stripped))
     return rows
 
 
@@ -798,7 +955,7 @@ def render_checkpoint_block(
     }
     current = _extract_current_leg_block(sidecar)
     if current:
-        sections = _parse_h3_sections(current)
+        sections = _neutralize_budget_literals(_parse_h3_sections(current))
     else:
         legacy = _legacy_checkpoint_body(sidecar, house_rules_body=inline_house_rules)
         sections = {"__legacy__": legacy} if legacy else {}
@@ -1019,8 +1176,9 @@ def measure_checkpoint_budget_bytes(
     if not current:
         legacy = _legacy_checkpoint_body(sidecar, house_rules_body=inline_house_rules)
         return _utf8_len(legacy) if legacy else None
-    sections = _parse_h3_sections(current)
+    sections = _neutralize_budget_literals(_parse_h3_sections(current))
     working = {k: v for k, v in sections.items() if "HOUSE RULES" not in k}
+    working = _window_sections(working, CHECKPOINT_BUDGET_B)
     return _checkpoint_budget_body_len(working)
 
 

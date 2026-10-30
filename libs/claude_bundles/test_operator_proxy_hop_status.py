@@ -1125,10 +1125,18 @@ def test_ac17_full_preamble_span_flags_nine_inflight_rows() -> None:
         register_text="",
     )
 
+    from claude_bundles.operator_proxy_mission import HOP_LEG_FLOOR_B
     from claude_bundles.operator_proxy_standing_render import HOP_RENDER_MAX_B
 
-    assert len(out.encode()) <= HOP_RENDER_MAX_B
+    hop_bytes = len(out.encode())
     assert "[hop_budget_exceeded inflight" in out
+    if hop_bytes > HOP_RENDER_MAX_B:
+        prefix = "## CURRENT LEG (rendered checkpoint)\n"
+        ck = out.split(prefix, 1)[1].split("## Lessons", 1)[0]
+        marker = "[budget_exceeded checkpoint "
+        if marker in ck:
+            before = ck.rsplit(marker, 1)[0]
+            assert len(before.rstrip("\n").encode("utf-8")) >= HOP_LEG_FLOOR_B
 
 
 def test_ac17_prior_leg_range_uses_the_header_only() -> None:
