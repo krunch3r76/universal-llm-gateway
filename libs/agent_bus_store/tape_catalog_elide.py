@@ -110,18 +110,17 @@ def _elide_incoming_handoff_spans(content: str) -> str:
     if not replacements:
         return content
     replacements.sort()
-    out = content
-    offset = 0
+    pieces: list[str] = []
+    cursor = 0
     for start, end, marker_tpl in replacements:
-        adj_start = start - offset
-        adj_end = end - offset
-        if adj_start < 0:
+        if start < cursor:
             continue
-        byte_count = len(out[adj_start:adj_end].encode("utf-8"))
-        repl = marker_tpl.format(byte_count)
-        out = out[:adj_start] + repl + out[adj_end:]
-        offset += (adj_end - adj_start) - len(repl)
-    return out
+        pieces.append(content[cursor:start])
+        byte_count = len(content[start:end].encode("utf-8"))
+        pieces.append(marker_tpl.format(byte_count))
+        cursor = end
+    pieces.append(content[cursor:])
+    return "".join(pieces)
 
 
 def is_resume_hop_bootstrap_user_content(content: str) -> bool:

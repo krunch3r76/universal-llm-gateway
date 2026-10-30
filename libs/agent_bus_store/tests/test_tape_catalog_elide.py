@@ -230,6 +230,25 @@ def test_elides_k44_predecessor_paste() -> None:
     assert content.startswith("prefix")
 
 
+def test_overlapping_handoff_spans_preserve_prefix() -> None:
+    """K44 paste runs to EOF and overlaps liaison hop; operator prefix must survive."""
+    prefix = "operator speech keep this prefix intact\n"
+    k44_tail = "K44 from predecessor \nhandoff body " + ("p" * 80) + "\n"
+    hop = _mini_liaison_hop_block()
+    content = prefix + k44_tail + hop
+    out = elide_ide_catalog_blocks([{"role": "user", "content": content}])[0]["content"]
+    assert out.startswith(prefix)
+    assert "keep this prefix intact" in out
+    assert "Liaison IDE hop" not in out
+    assert "handoff body" not in out
+    marker_count = out.count("[elided ")
+    assert marker_count >= 1
+    assert (
+        "[elided k44_predecessor_paste:" in out
+        or "[elided liaison_hop_bootstrap:" in out
+    )
+
+
 def test_subagent_tags_elided_outside_user_query() -> None:
     content = (
         "<available_subagent_types>types</available_subagent_types>"
