@@ -5,12 +5,25 @@ from __future__ import annotations
 from unittest.mock import MagicMock, patch
 
 import pytest
+from agent_bus_store.tape_catalog_elide import (
+    elide_ide_catalog_blocks,
+    excise_turn_one_resume_bootstrap,
+)
 from agent_bus_store.tape_cells import _narrow_last_session_pour_cells
 from agent_bus_store.tape_pour import pour_lane_messages
 
 pytestmark = pytest.mark.offline
 
 _TID = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
+
+
+def _liaison_bootstrap_user() -> str:
+    return (
+        "resume 10479\n\n"
+        "Liaison IDE hop (attended register) tip_cp=1. LOAD skill.\n"
+        "OPERATOR LOOP: close with a situation report to the operator. "
+        "A finished watch with no next leg is not a situation report."
+    )
 
 
 def test_pour_reads_only_cell_referenced_segments() -> None:
@@ -164,6 +177,61 @@ def test_narrow_pour_ignores_superseded_historical_open_cells() -> None:
     sealed = [c for c in narrowed if c.get("bus_turn_id") is not None]
     assert len(sealed) == 1
     assert sealed[0]["cp_ordinal"] == 55
+
+
+def test_last_session_drops_turn_one_bootstrap_when_turn_two_present() -> None:
+    messages = [
+        {
+            "role": "user",
+            "content": _liaison_bootstrap_user(),
+            "transcript_id": _TID,
+            "turn_index": 1,
+        },
+        {
+            "role": "assistant",
+            "content": "Where we left off: prior state. Rules I'm holding: K1.",
+            "transcript_id": _TID,
+            "turn_index": 1,
+        },
+        {
+            "role": "user",
+            "content": "<user_query>post-resume work</user_query>",
+            "transcript_id": _TID,
+            "turn_index": 2,
+        },
+        {
+            "role": "assistant",
+            "content": "done",
+            "transcript_id": _TID,
+            "turn_index": 2,
+        },
+    ]
+    out = excise_turn_one_resume_bootstrap(messages)
+    assert all(int(m.get("turn_index") or 0) != 1 for m in out)
+    assert any("post-resume work" in str(m.get("content") or "") for m in out)
+
+
+def test_one_turn_hop_keeps_elided_turn_one_bootstrap() -> None:
+    messages = [
+        {
+            "role": "user",
+            "content": _liaison_bootstrap_user(),
+            "transcript_id": _TID,
+            "turn_index": 1,
+        },
+        {
+            "role": "assistant",
+            "content": "Where we left off: only turn.",
+            "transcript_id": _TID,
+            "turn_index": 1,
+        },
+    ]
+    excised = excise_turn_one_resume_bootstrap(messages)
+    assert len(excised) == 2
+    elided = elide_ide_catalog_blocks(excised)
+    user = elided[0]["content"]
+    assert "[elided liaison_hop_bootstrap:" in user
+    assert "Liaison IDE hop" not in user
 
 
 def test_narrow_pour_minimal_tail_when_fully_sealed() -> None:

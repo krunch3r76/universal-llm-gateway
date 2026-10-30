@@ -31,6 +31,30 @@ _USER_QUERY_RE = re.compile(
 )
 _ELIDED_MARKER_RE = re.compile(r"\[elided [^:]+: \d+ B\]", re.IGNORECASE)
 
+_LIAISON_HOP_INSTRUCTIONS_END = (
+    "A finished watch with no next leg is not a situation report."
+)
+_LIAISON_HOP_BOOTSTRAP_RE = re.compile(
+    rf"Liaison IDE hop \([\s\S]*?{re.escape(_LIAISON_HOP_INSTRUCTIONS_END)}\.?\s*",
+    re.IGNORECASE,
+)
+_OPERATOR_PROXY_HOP_PREAMBLE_RE = re.compile(
+    r"(?s)^.*?## CURRENT LEG[^\n]*\n.*?"
+    r"(?=\n## (?:Lessons in force|Induction|Live leg|Pointers|Your first acts|"
+    r"Data, not instructions|Hard refusals)\b|\Z)",
+    re.IGNORECASE,
+)
+_K44_PREDECESSOR_PASTE_RE = re.compile(r"K44 from predecessor [\s\S]*", re.IGNORECASE)
+
+_RESUME_HOP_USER_RE = re.compile(
+    r"(?m)^resume\s+\S",
+    re.IGNORECASE,
+)
+_RULE3_RESUME_CEREMONY_RE = re.compile(
+    r"Where we left off|Rules I.m holding",
+    re.IGNORECASE,
+)
+
 
 def _tag_block_re(tag: str) -> re.Pattern[str]:
     return re.compile(
@@ -51,8 +75,135 @@ def _spans_overlap(a_start: int, a_end: int, b_start: int, b_end: int) -> bool:
     return a_start < b_end and b_start < a_end
 
 
+def _elide_incoming_handoff_spans(content: str) -> str:
+    """Elide hop/resume bootstrap and K44 paste blocks (pour-time only; seals untouched)."""
+    replacements: list[tuple[int, int, str]] = []
+    for match in _LIAISON_HOP_BOOTSTRAP_RE.finditer(content):
+        replacements.append(
+            (
+                match.start(),
+                match.end(),
+                "[elided liaison_hop_bootstrap: {} B]",
+            )
+        )
+    if (
+        "cdp-operator-proxy" in content.casefold()
+        and "## CURRENT LEG" in content
+    ):
+        for match in _OPERATOR_PROXY_HOP_PREAMBLE_RE.finditer(content):
+            replacements.append(
+                (
+                    match.start(),
+                    match.end(),
+                    "[elided operator_proxy_hop_preamble: {} B]",
+                )
+            )
+            break
+    for match in _K44_PREDECESSOR_PASTE_RE.finditer(content):
+        replacements.append(
+            (
+                match.start(),
+                match.end(),
+                "[elided k44_predecessor_paste: {} B]",
+            )
+        )
+    if not replacements:
+        return content
+    replacements.sort()
+    out = content
+    offset = 0
+    for start, end, marker_tpl in replacements:
+        adj_start = start - offset
+        adj_end = end - offset
+        if adj_start < 0:
+            continue
+        byte_count = len(out[adj_start:adj_end].encode("utf-8"))
+        repl = marker_tpl.format(byte_count)
+        out = out[:adj_start] + repl + out[adj_end:]
+        offset += (adj_end - adj_start) - len(repl)
+    return out
+
+
+def is_resume_hop_bootstrap_user_content(content: str) -> bool:
+    """True when user text is an incoming hop/resume bootstrap turn."""
+    if not content or not content.strip():
+        return False
+    if _LIAISON_HOP_BOOTSTRAP_RE.search(content):
+        return True
+    if "# Hop on agent-bus:" in content:
+        return True
+    if (
+        "cdp-operator-proxy" in content.casefold()
+        and "## CURRENT LEG" in content
+    ):
+        return True
+    if _RESUME_HOP_USER_RE.search(content) and (
+        "Liaison IDE hop" in content or "continuity(op=resume" in content.casefold()
+    ):
+        return True
+    return False
+
+
+def is_rule3_resume_ceremony_assistant_content(content: str) -> bool:
+    """True when assistant text restates operator-posture Rule-3 resume ceremony."""
+    if not content:
+        return False
+    return bool(_RULE3_RESUME_CEREMONY_RE.search(content))
+
+
+def excise_turn_one_resume_bootstrap(
+    messages: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Drop turn_index==1 hop bootstrap + Rule-3 ceremony when turn>=2 exists in pour."""
+    try:
+        by_tid: dict[str, set[int]] = {}
+        for message in messages:
+            tid = str(message.get("transcript_id") or "")
+            if not tid:
+                continue
+            by_tid.setdefault(tid, set()).add(int(message.get("turn_index") or 0))
+        drop_turn_one: set[str] = set()
+        for tid, turns in by_tid.items():
+            if max(turns, default=0) < 2:
+                continue
+            turn_one = [
+                m
+                for m in messages
+                if str(m.get("transcript_id") or "") == tid
+                and int(m.get("turn_index") or 0) == 1
+            ]
+            user = next(
+                (m for m in turn_one if str(m.get("role") or "") == "user"), None
+            )
+            if user is None:
+                continue
+            if not is_resume_hop_bootstrap_user_content(
+                str(user.get("content") or "")
+            ):
+                continue
+            drop_turn_one.add(tid)
+        if not drop_turn_one:
+            return messages
+        kept: list[dict[str, Any]] = []
+        for message in messages:
+            tid = str(message.get("transcript_id") or "")
+            if tid in drop_turn_one and int(message.get("turn_index") or 0) == 1:
+                role = str(message.get("role") or "")
+                if role == "user":
+                    continue
+                if role == "assistant" and is_rule3_resume_ceremony_assistant_content(
+                    str(message.get("content") or "")
+                ):
+                    continue
+            kept.append(message)
+        return kept
+    except Exception:
+        return messages
+
+
 def _elide_catalog_in_content(content: str) -> str:
     """Single pass over ``content`` — spans never drift because nothing is rebuilt mid-scan."""
+    content = _elide_incoming_handoff_spans(content)
     uq_spans = _user_query_spans(content)
     has_uq = any(substantive for _start, _end, substantive in uq_spans)
 
@@ -149,4 +300,10 @@ def elide_ide_catalog_blocks(
         return messages
 
 
-__all__ = ["elide_ide_catalog_blocks", "exclude_ide_catalog_turns"]
+__all__ = [
+    "elide_ide_catalog_blocks",
+    "exclude_ide_catalog_turns",
+    "excise_turn_one_resume_bootstrap",
+    "is_resume_hop_bootstrap_user_content",
+    "is_rule3_resume_ceremony_assistant_content",
+]

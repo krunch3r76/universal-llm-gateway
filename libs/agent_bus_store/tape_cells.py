@@ -54,7 +54,10 @@ def _wall_ordinal_from_cells(cells: list[dict[str, Any]]) -> int | None:
 
 
 def _last_sealed_cp_ordinal_for_transcript(
-    cells: list[dict[str, Any]], *, transcript_id: str
+    cells: list[dict[str, Any]],
+    *,
+    transcript_id: str,
+    ignore_window_whole_at_cp: int | None = None,
 ) -> int | None:
     best: int | None = None
     for cell in cells:
@@ -63,6 +66,12 @@ def _last_sealed_cp_ordinal_for_transcript(
         if str(cell.get("transcript_id") or "") != transcript_id:
             continue
         ordinal = int(cell.get("cp_ordinal") or 0)
+        if (
+            ignore_window_whole_at_cp is not None
+            and ordinal == ignore_window_whole_at_cp
+            and cell.get("boundary") == "window_whole"
+        ):
+            continue
         if best is None or ordinal > best:
             best = ordinal
     return best
@@ -171,8 +180,16 @@ def _cells_for_lane(
     last_cp, tip_anchors = cp_anchors[-1]
     tip_transcript_ids = _transcript_ids_in_anchors(tip_anchors)
     for transcript_id in sorted(seen_transcript_ids):
-        if tip_transcript_ids and transcript_id not in tip_transcript_ids:
+        last_sealed = _last_sealed_cp_ordinal_for_transcript(
+            cells,
+            transcript_id=transcript_id,
+            ignore_window_whole_at_cp=last_cp.cp_ordinal,
+        )
+        if last_sealed is not None and last_sealed < last_cp.cp_ordinal:
             continue
+        if tip_transcript_ids:
+            if transcript_id not in tip_transcript_ids and last_sealed is not None:
+                continue
         turn_lo = _last_turns_at_cp(cp_anchors, transcript_id=transcript_id)
         turn_hi = max_turn_by_tid.get(transcript_id, turn_lo)
         if turn_hi <= turn_lo:

@@ -175,6 +175,61 @@ def test_dynamic_tool_catalog_only_turn_excluded() -> None:
     assert exclude_ide_catalog_turns(messages) == []
 
 
+def _mini_liaison_hop_block() -> str:
+    return (
+        "Liaison IDE hop (attended register) tip_cp=17. LOAD skill.\n"
+        "HOP: hop now.\n"
+        "OPERATOR LOOP: close with a situation report to the operator. "
+        "A finished watch with no next leg is not a situation report."
+    )
+
+
+def _mini_operator_proxy_preamble() -> str:
+    return (
+        "# Hop on agent-bus:12286: you are the operator seat\n"
+        "Use the cdp-operator-proxy skill at trigger.\n\n"
+        "## CURRENT LEG (rendered checkpoint)\n"
+        "handoff sha256 abc\n"
+        "### OWED / NEXT\n"
+        "fixture owed\n"
+        "## Lessons in force\n"
+        "(none)\n"
+        "tail speech"
+    )
+
+
+def test_elides_liaison_hop_bootstrap_outside_user_query() -> None:
+    content = _mini_liaison_hop_block() + "\n<user_query>real work</user_query>"
+    out = elide_ide_catalog_blocks([{"role": "user", "content": content}])[0]["content"]
+    assert "[elided liaison_hop_bootstrap:" in out
+    assert "Liaison IDE hop" not in out
+    assert "real work" in out
+
+
+def test_elides_liaison_hop_bootstrap_inside_user_query() -> None:
+    hop = _mini_liaison_hop_block()
+    content = f"<user_query>{hop}\nreal work</user_query>"
+    out = elide_ide_catalog_blocks([{"role": "user", "content": content}])[0]["content"]
+    assert "[elided liaison_hop_bootstrap:" in out
+    assert "real work" in out
+
+
+def test_elides_operator_proxy_hop_preamble() -> None:
+    content = _mini_operator_proxy_preamble()
+    out = elide_ide_catalog_blocks([{"role": "user", "content": content}])[0]["content"]
+    assert "[elided operator_proxy_hop_preamble:" in out
+    assert "## CURRENT LEG" not in out
+    assert "tail speech" in out
+
+
+def test_elides_k44_predecessor_paste() -> None:
+    content = "prefix\nK44 from predecessor \nlong paste " + ("x" * 200)
+    out = elide_ide_catalog_blocks([{"role": "user", "content": content}])[0]["content"]
+    assert "[elided k44_predecessor_paste:" in out
+    assert "long paste" not in out
+    assert content.startswith("prefix")
+
+
 def test_subagent_tags_elided_outside_user_query() -> None:
     content = (
         "<available_subagent_types>types</available_subagent_types>"
