@@ -567,7 +567,9 @@ def _orion_subscription_for_thread(
         if str(row.get("state") or "") != "subscribed":
             continue
         if agent_name == "orion":
-            return route, row
+            if _orion_chat_actuation_from_row(row) is not None:
+                return route, row
+            continue
         surface = str(row.get("surface") or "").strip().lower()
         if surface == "chatgpt":
             return route, row
@@ -577,14 +579,42 @@ def _orion_subscription_for_thread(
     return None
 
 
+def _explicit_orion_conversation_url(row: dict[str, Any]) -> str | None:
+    """ChatGPT /c/ URL from row fields only (no pinned-conversation fallback)."""
+    from web_chat_relay.orion_wake import (
+        _explicit_holder_url,
+        _matching_explicit_url_for_uuid,
+        conversation_id_from_url,
+    )
+
+    for key in ("agent_id", "title", "chat_url"):
+        raw = str(row.get(key) or "").strip()
+        if not raw:
+            continue
+        explicit = _explicit_holder_url(raw)
+        if explicit is not None:
+            return explicit.split("?", 1)[0]
+        if re.fullmatch(r"[0-9a-f-]{36}", raw, flags=re.I):
+            if key == "agent_id":
+                matched = _matching_explicit_url_for_uuid(row, raw)
+                if matched is not None:
+                    return matched.split("?", 1)[0]
+            return f"https://chatgpt.com/c/{raw}".split("?", 1)[0]
+        cid = conversation_id_from_url(raw)
+        if cid:
+            return f"https://chatgpt.com/c/{cid}".split("?", 1)[0]
+    return None
+
+
 def _orion_chat_actuation_from_row(row: dict[str, Any]) -> dict[str, Any] | None:
     from web_chat_relay.orion_wake import (
         DEFAULT_ORION_CDP_URL,
         conversation_id_from_url,
-        holder_conversation_url,
     )
 
-    url = holder_conversation_url(row).split("?", 1)[0]
+    url = _explicit_orion_conversation_url(row)
+    if url is None:
+        return None
     conv_id = conversation_id_from_url(url)
     if not conv_id:
         return None
@@ -648,6 +678,23 @@ def resolve_wake_delivery_binding(*, house_id: str) -> dict[str, Any]:
     }
     if not thread_id:
         return _wake_unbound_envelope(envelope)
+    resolved_orion = resolve_subscription_for_thread("orion", thread_id)
+    if resolved_orion is not None:
+        route, row = resolved_orion
+        if str(row.get("state") or "") == "subscribed":
+            orion_actuation = _orion_chat_actuation_from_row(row)
+            if orion_actuation is not None:
+                envelope.update(
+                    {
+                        "state": "bound",
+                        "current": {
+                            "actuation": orion_actuation,
+                            "route": route,
+                            "subscription_id": row.get("id"),
+                        },
+                    }
+                )
+                return envelope
     resolved = resolve_subscription_for_thread(_WAKE_DELIVERY_AGENT, thread_id)
     if resolved is not None:
         route, row = resolved
@@ -669,7 +716,7 @@ def resolve_wake_delivery_binding(*, house_id: str) -> dict[str, Any]:
                 )
                 return envelope
             actuation = _cursor_glass_actuation(row)
-            if actuation is not None:
+            if actuation is not None and thread_id != _ORION_WAKE_HOUSE:
                 envelope.update(
                     {
                         "state": "bound",

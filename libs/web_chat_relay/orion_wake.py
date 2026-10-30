@@ -289,6 +289,13 @@ async def _sync_tab_before_paste(page: OrionPage, *, target_id: str) -> dict[str
                 ),
             }
 
+        post_raw = await page.evaluate(_TAB_SYNC_STATE_JS)
+        if isinstance(post_raw, dict):
+            composer_empty_raw = post_raw.get("composerEmpty")
+            composer_empty = (
+                True if composer_empty_raw is None else bool(composer_empty_raw)
+            )
+
     if not composer_empty:
         return {
             "brought_to_front": brought_to_front,
@@ -383,7 +390,9 @@ async def _paste_and_send(
     kb = page.keyboard
     await kb.press("Control+A")
     await kb.insert_text(text)
-    steer = await _steer_submit_button(page)
+    steer = None
+    if await _is_streaming(page):
+        steer = await _steer_submit_button(page)
     if steer is not None:
         await steer.click()
         return
@@ -695,6 +704,8 @@ async def deliver_orion_chat_wake(
         connect_cdp=connect_cdp,
         paste_text=paste_text,
     )
+    # Why: live deliver_orion_wake steers during streaming; deferred_streaming receipts
+    # remain for legacy in-flight ledger retry rows and injected pipeline responses.
     if receipt.get("reason") == "deferred_streaming":
         receipt = {**receipt, "ok": False, "retry_eligible": True}
     owner.record_paste_receipt(claim, receipt)

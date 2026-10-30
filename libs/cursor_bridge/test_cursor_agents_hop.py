@@ -86,6 +86,22 @@ def test_probe_glass_composer_budget_js_reads_composer_fields() -> None:
     assert "summarized_conversation" in js
 
 
+def test_submit_wake_line_js_idle_tab_submits_with_steer_and_ignore_queuing() -> None:
+    """Idle tab (not generating): steerIntent and ignoreQueuing without status gate."""
+    for js in (
+        submit_wake_line_js("BRIDGE_WAKE thread=1 turn=2", "agent-1"),
+        launch_new_agent_tab_js("hello", ""),
+    ):
+        assert "status === 'generating'" not in js
+        assert "steerIntent: true" in js
+        assert "ignoreQueuing: true" in js
+        opts_start = js.index("const submitOpts")
+        opts_end = js.index("const submitCall")
+        opts_block = js[opts_start:opts_end]
+        assert "steerIntent: true" in opts_block
+        assert "ignoreQueuing: true" in opts_block
+
+
 def test_submit_wake_line_js_always_steers_and_clears_draft() -> None:
     js = submit_wake_line_js("BRIDGE_WAKE thread=1 turn=2", "agent-1")
     assert "steerIntent: true" in js

@@ -256,6 +256,47 @@ def test_resolve_target_orion_uses_live_subscription_row(db: None) -> None:
     assert holder_conversation_url(row) == live_url
 
 
+def test_resolve_wake_binding_dual_subscription_prefers_orion_over_cursor(
+    db: None,
+) -> None:
+    """Break: cursor row wins when both cursor and orion subscribe on 21207."""
+    orion_url = _HOP_PROJECT_URL.split("?", 1)[0]
+    with write_connect() as conn:
+        conn.execute(
+            "INSERT INTO agent_endpoint_subscriptions "
+            "(agent, thread_scope, agent_id, state, surface, display, title) "
+            "VALUES ('cursor', ?, 'glass-agent', 'subscribed', 'cursor', '12', 'Cursor tab')",
+            (_ORION_HOUSE,),
+        )
+        conn.execute(
+            "INSERT INTO agent_endpoint_subscriptions "
+            "(agent, thread_scope, agent_id, state, surface, display, title) "
+            "VALUES ('orion', ?, ?, 'subscribed', 'cursor', '12', ?)",
+            (_ORION_HOUSE, _HOP_CONV_ID, _HOP_PROJECT_URL),
+        )
+    binding = resolve_wake_delivery_binding(house_id=_ORION_HOUSE)
+    assert binding["state"] == "bound"
+    assert binding["current"]["actuation"]["type"] == "orion_chat"
+    assert binding["current"]["actuation"]["conversation_url"] == orion_url
+
+
+def test_orion_subscription_for_thread_ignores_orion_row_without_valid_url(
+    db: None,
+) -> None:
+    """Break: invalid orion subscription blocks pinned fallback."""
+    with write_connect() as conn:
+        conn.execute(
+            "INSERT INTO agent_endpoint_subscriptions "
+            "(agent, thread_scope, agent_id, state, surface, display, title) "
+            "VALUES ('orion', ?, 'not-a-uuid', 'subscribed', 'cursor', '12', 'invalid')",
+            (_ORION_HOUSE,),
+        )
+    binding = resolve_wake_delivery_binding(house_id=_ORION_HOUSE)
+    assert binding["state"] == "bound"
+    assert binding["basis"] == "orion_pinned_conversation"
+    assert binding["current"]["actuation"]["conversation_id"] == PINNED_CONVERSATION_ID
+
+
 def test_ledger_identity_unique_per_turn(db: None) -> None:
     """UNIQUE(agent, thread_id, turn_id) — second insert for same turn is ignored."""
     create_thread(thread_id="21220", slug="dup")

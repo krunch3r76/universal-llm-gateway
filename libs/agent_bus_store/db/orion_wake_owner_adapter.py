@@ -29,7 +29,14 @@ def _now() -> str:
 def _encode_paste_receipt(receipt: dict[str, Any]) -> str:
     payload = {
         k: receipt[k]
-        for k in ("ok", "delivered", "pasted", "reason", "pointer_len", "conversation_id")
+        for k in (
+            "ok",
+            "delivered",
+            "pasted",
+            "reason",
+            "pointer_len",
+            "conversation_id",
+        )
         if k in receipt
     }
     return f"{_RECEIPT_PREFIX}{json.dumps(payload, sort_keys=True)}"
@@ -82,7 +89,9 @@ def wake_claim_from_options(opts: dict[str, Any] | None) -> WakeClaimContext | N
     wake_id = str(opts.get("wake_id") or "").strip()
     thread_id = str(opts.get("thread") or "").strip()
     agent = str(opts.get("agent") or opts.get("wake_agent") or _DEFAULT_AGENT).strip()
-    endpoint = str(opts.get("conversation_url") or opts.get("endpoint_url") or "").strip()
+    endpoint = str(
+        opts.get("conversation_url") or opts.get("endpoint_url") or ""
+    ).strip()
     raw_turn_ids = opts.get("turn_ids") or opts.get("covered_turn_ids") or []
     if not raw_turn_ids and opts.get("turn_id") is not None:
         raw_turn_ids = [opts.get("turn_id")]
@@ -122,7 +131,9 @@ def wake_claim_from_options(opts: dict[str, Any] | None) -> WakeClaimContext | N
             if opts.get("binding_reference")
             else None
         ),
-        attempt_id=str(opts.get("attempt_id")).strip() if opts.get("attempt_id") else None,
+        attempt_id=str(opts.get("attempt_id")).strip()
+        if opts.get("attempt_id")
+        else None,
     )
 
 
@@ -237,7 +248,9 @@ class LedgerWakeDeliveryOwner:
         """Claim (thread, turn_id, endpoint) or refuse before paste."""
         agent = claim.normalized_agent()
         for turn_id in claim.turn_ids:
-            row = self._ledger_row(agent=agent, thread_id=claim.thread_id, turn_id=turn_id)
+            row = self._ledger_row(
+                agent=agent, thread_id=claim.thread_id, turn_id=turn_id
+            )
             if row is not None and str(row.get("state") or "") == "delivered":
                 return self._duplicate_suppressed(row)
 
@@ -279,7 +292,10 @@ class LedgerWakeDeliveryOwner:
                     state = str(row["state"])
                     if state == "delivered":
                         return self._duplicate_suppressed(dict(row))
-                    if state == "claimed" and str(row["wake_id"] or "") != claim.wake_id:
+                    if (
+                        state == "claimed"
+                        and str(row["wake_id"] or "") != claim.wake_id
+                    ):
                         return {
                             "ok": False,
                             "reason": "paste_in_flight",
@@ -346,6 +362,7 @@ class LedgerWakeDeliveryOwner:
             outcome = "delivered"
             reason = _encode_paste_receipt(receipt)
         elif str(receipt.get("reason") or "") == "deferred_streaming":
+            # Why: live paste steers by default; deferral is for legacy ledger retries only.
             sched = record_orion_deferred_streaming(
                 claim.wake_id,
                 "exact",
