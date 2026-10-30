@@ -22,10 +22,12 @@ from endpoint_surface import (  # noqa: E402
 IMPLEMENT_ALLOW = frozenset(
     {
         "cortex",
+        "cortex_read",
         "cortex_brief",
         "agent_bus",
         "agent_bus_read",
         "fs",
+        "fs_read",
         "tool_search",
         "dispatch",
         "manage",

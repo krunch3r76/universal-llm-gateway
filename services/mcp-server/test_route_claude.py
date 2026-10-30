@@ -2,7 +2,7 @@
 
 Three concerns:
   1. tools/list on code surface matches ``surface_primary_domains`` binding
-  2. Primary tool count ≤ 24 (D3 P10 probe)
+  2. Primary tool count ≤ 26 (D3 P10 probe)
   3. Code-only domains are primary on /mcp/code
 """
 
@@ -58,12 +58,14 @@ def test_code_primary_tools_match_surface_binding(main_server_state: dict) -> No
 
 
 def test_code_primary_tools_count(main_server_state: dict) -> None:
-    """D-T2: code primary count tracks derive; cap ≤ 24 (D3/P10)."""
+    """D-T2: code primary count tracks derive; cap ≤ 26 (D3/P10)."""
     primary = main_server_state["primary_tools"]
     # Magic 19 drifted (a:33073: live 21). Do not hand-maintain — consult-routing
     # § Surface gate; sibling test already equality-checks surface_primary.
     assert len(primary) == len(main_server_state["surface_primary"])
-    assert len(primary) <= 24
+    assert len(primary) <= 26
+    assert "fs_read" in primary
+    assert "cortex_read" in primary
     assert "skill_suggest" not in primary
 
 

@@ -27,27 +27,27 @@ def test_derive_claude_manifest_count() -> None:
     """D1: derived Claude manifest returns exactly one entry per domain."""
     manifest = derive_claude_manifest(_CANONICAL_YAML)
     assert (
-        len(manifest) == 24
+        len(manifest) == 25
     )  # update if domains change. dispatch overflow-only; team_dispatch standalone.
     tool_names = [e["tool_name"] for e in manifest]
     assert len(tool_names) == len(set(tool_names)), "duplicate tool_names in manifest"
 
 
 def test_derive_claude_manifest_cap() -> None:
-    """D3: cap enforcement — ≤ 24 domains. Uses real canonical.yaml; should pass."""
+    """D3: cap enforcement — ≤ 26 domains. Uses real canonical.yaml; should pass."""
     manifest = derive_claude_manifest(_CANONICAL_YAML)
-    assert len(manifest) <= 24, f"Cap exceeded: {len(manifest)} > 24"
+    assert len(manifest) <= 26, f"Cap exceeded: {len(manifest)} > 26"
 
 
 def test_derive_claude_manifest_cap_raise() -> None:
-    """D3: cap enforcement — raises RuntimeError when > 24 domains."""
+    """D3: cap enforcement — raises RuntimeError when > 26 domains."""
     import tempfile
 
     import yaml  # type: ignore[import]
 
     # Floor domains must be present to bypass floor assertion and hit cap check.
     floor_domains = ["cortex", "agent_bus", "fs", "dispatch"]
-    extra_domains = [f"domain_{i}" for i in range(25 - len(floor_domains))]
+    extra_domains = [f"domain_{i}" for i in range(27 - len(floor_domains))]
     all_domains = floor_domains + extra_domains
     fake_tools = [
         {

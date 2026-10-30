@@ -303,6 +303,9 @@ def _build_server(
     overflow_registry: dict[str, Callable[..., Any]] = _prune_to_primary(
         mcp, primary_tools
     )
+    from tools._fs_read import bind_fs_read_overflow  # noqa: PLC0415
+
+    bind_fs_read_overflow(overflow_registry)
     register_tool_search_tool(mcp, overflow_metadata, surface=surface)
 
     _fs_tool_description = build_fs_tool_description(surface)
