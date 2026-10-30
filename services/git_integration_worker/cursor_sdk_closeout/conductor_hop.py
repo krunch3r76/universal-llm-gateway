@@ -268,6 +268,34 @@ def _next_admit_guard_text(row: dict[str, Any], rec: dict[str, Any]) -> str:
     return "\n".join(parts)
 
 
+def _park_harvest_guard_text(row: dict[str, Any], rec: dict[str, Any]) -> str:
+    """Harvest guard: line-anchored NEXT_ADMIT from stamp or JSON closeout."""
+    from services.git_integration_worker.cursor_sdk_closeout.conductor_hop_progress import (
+        next_admit_in_closeout,
+    )
+    from services.git_integration_worker.cursor_sdk_closeout.conductor_park_harvest import (
+        _park_harvest_target_token,
+    )
+
+    base = _next_admit_guard_text(row, rec)
+    if _park_harvest_target_token(base) is not None:
+        return base
+    admit: str | None = None
+    stamped = rec.get(HOP_NEXT_ADMIT_KEY)
+    if isinstance(stamped, str) and stamped.strip():
+        admit = stamped.strip()
+    else:
+        parsed = next_admit_in_closeout(base or "")
+        if parsed:
+            admit = parsed
+    if not admit:
+        return base
+    line = f"NEXT_ADMIT: {admit}"
+    if line in base:
+        return base
+    return f"{line}\n{base}" if base else line
+
+
 _TERMINAL_EXECUTION_STATES = frozenset({"finished", "failed", "aborted"})
 # One harvest id, anchored at the payload start. A date (``2026-10-03``),
 # a second id, and ``none`` / ``land`` prose stay unrecognized.
