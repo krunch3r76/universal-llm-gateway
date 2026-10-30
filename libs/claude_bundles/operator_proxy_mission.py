@@ -467,19 +467,11 @@ def _enforce_hop_render_max(
 
     leg_bytes = measure_checkpoint_budget_bytes(standing_handoff_text or "")
     if leg_bytes is not None and leg_bytes <= CHECKPOINT_BUDGET_B:
-        flag_floor = CHECKPOINT_BUDGET_B
         hop_trim_floor = CHECKPOINT_BUDGET_B
     elif rendered_ck_bytes is not None and rendered_ck_bytes <= CHECKPOINT_BUDGET_B:
-        flag_floor = HOP_LEG_FLOOR_B
-        hop_trim_floor = 0
-    else:
-        flag_floor = HOP_LEG_FLOOR_B
         hop_trim_floor = HOP_LEG_FLOOR_B
-
-    def _flag_target(value: int) -> int:
-        if leg_bytes is not None and leg_bytes > CHECKPOINT_BUDGET_B:
-            return max(value, flag_floor)
-        return value
+    else:
+        hop_trim_floor = HOP_LEG_FLOOR_B
 
     initial_size: int | None = None
     last_target: int | None = None
@@ -510,9 +502,8 @@ def _enforce_hop_render_max(
 
     if last_target is not None and initial_size is not None:
         uri = standing_handoff_uri(fields["lane"])
-        flag_target = _flag_target(last_target)
         flag = (
-            f"[budget_exceeded checkpoint {initial_size}/{flag_target} "
+            f"[budget_exceeded checkpoint {initial_size}/{last_target} "
             f"\u2014 read {uri}]"
         )
         flag_suffix = "\n" + flag
@@ -552,7 +543,7 @@ def _enforce_hop_render_max(
             body = checkpoint[len(_CHECKPOINT_RENDER_PREFIX) : -len(flag_suffix)]
             measured = len(body.encode("utf-8"))
             flag = (
-                f"[budget_exceeded checkpoint {initial_size}/{_flag_target(measured)} "
+                f"[budget_exceeded checkpoint {initial_size}/{measured} "
                 f"\u2014 read {uri}]"
             )
             flag_suffix = "\n" + flag
