@@ -102,6 +102,37 @@ def _journal_activity_instant(journal: dict[str, Any]) -> datetime | None:
     return max(ts, sealed)
 
 
+def _open_cell_turn_lo_floor(
+    chain_segments: list[dict[str, Any]],
+    lane_journals: list[dict[str, Any]],
+    *,
+    transcript_id: str,
+    last_cp_created_at: str,
+) -> int:
+    """Max turn_hi among pre-tip segments for one transcript (journal activity <= tip CP)."""
+    cp_ts = timestamp_to_utc_instant(last_cp_created_at)
+    if cp_ts is None:
+        return 0
+    journals_by_session = {
+        str(journal["session_id"]): journal
+        for journal in lane_journals
+        if journal.get("session_id") is not None
+    }
+    floor = 0
+    for seg in chain_segments:
+        if str(seg.get("transcript_id") or "") != transcript_id:
+            continue
+        session_id = str(seg.get("session_id") or "")
+        journal = journals_by_session.get(session_id)
+        if journal is None:
+            continue
+        instant = _journal_activity_instant(journal)
+        if instant is None or instant > cp_ts:
+            continue
+        floor = max(floor, int(seg["turn_hi"]))
+    return floor
+
+
 def _last_activity_for_transcript(
     lane_journals: list[dict[str, Any]], *, transcript_id: str
 ) -> datetime | None:
@@ -304,7 +335,15 @@ def _cells_for_lane(
         elif tip_transcript_ids:
             if transcript_id not in tip_transcript_ids and last_sealed is not None:
                 continue
-        turn_lo = _last_turns_at_cp(cp_anchors, transcript_id=transcript_id)
+        turn_lo = max(
+            _last_turns_at_cp(cp_anchors, transcript_id=transcript_id),
+            _open_cell_turn_lo_floor(
+                chain_segments,
+                lane_journals,
+                transcript_id=transcript_id,
+                last_cp_created_at=str(getattr(last_cp, "created_at", "") or ""),
+            ),
+        )
         turn_hi = max_turn_by_tid.get(transcript_id, turn_lo)
         if turn_hi <= turn_lo:
             continue

@@ -280,7 +280,70 @@ def test_extended_transcript_admitted_via_sealed_on_path(
     mock_cps,
     mock_uuid_lookup,
 ) -> None:
-    """Production journal row: first-seal timestamp before tip, sealed_on after."""
+    """Two-session chain: pre-tip floor from first segment; gate admits via sealed_on."""
+    mock_uuid_lookup.return_value = None
+    mock_chain.return_value = [
+        {"transcript_id": _UUID_OLD, "turn_lo": 0, "turn_hi": 5, "session_id": "old"},
+        {"transcript_id": _UUID_OLD, "turn_lo": 5, "turn_hi": 8, "session_id": "old2"},
+    ]
+    cp_tip_body = "Window: boundary=window_whole\n"
+    cps = [
+        type(
+            "CP",
+            (),
+            {
+                "turn_number": 20,
+                "cp_ordinal": 55,
+                "created_at": "2026-10-30T22:48:00+00:00",
+            },
+        )()
+    ]
+    mock_cps.return_value = cps
+    conn = mock_connect.return_value.__enter__.return_value
+    conn.execute.return_value.fetchone.side_effect = [{"body": cp_tip_body}]
+    lane_journals = [
+        {
+            "session_id": "old",
+            "conversation_uuid": _UUID_OLD,
+            "timestamp": "2026-10-29T13:24:00+00:00",
+            "sealed_on": "2026-10-30T22:00:00+00:00",
+            "id": 100,
+        },
+        {
+            "session_id": "old2",
+            "conversation_uuid": _UUID_OLD,
+            "prior_session_id": "old",
+            "timestamp": "2026-10-30T22:30:00+00:00",
+            "sealed_on": "2026-10-30T23:00:00+00:00",
+            "id": 101,
+        },
+    ]
+    cells = _cells_for_lane(
+        thread_id=_ROOT,
+        lane_journals=lane_journals,
+        files_root=MagicMock(),
+    )
+    open_by_tid = {
+        str(c["transcript_id"]): c
+        for c in cells
+        if c.get("bus_turn_id") is None
+    }
+    assert _UUID_OLD in open_by_tid
+    assert open_by_tid[_UUID_OLD]["turn_lo"] == 5
+    assert open_by_tid[_UUID_OLD]["turn_hi"] == 8
+
+
+@patch("agent_bus_store.tape_membership.lookup_dominant_lane_by_uuid")
+@patch("agent_bus_store.tape_cells.list_checkpoint_turns")
+@patch("agent_bus_store.tape_cells.connect")
+@patch("agent_bus_store.tape_cells.build_chain_segments")
+def test_single_segment_extended_transcript_admitted_turn_lo_zero(
+    mock_chain,
+    mock_connect,
+    mock_cps,
+    mock_uuid_lookup,
+) -> None:
+    """Single chain segment: no pre-tip floor; sealed_on still admits with turn_lo 0."""
     mock_uuid_lookup.return_value = None
     mock_chain.return_value = [
         {"transcript_id": _UUID_OLD, "turn_lo": 0, "turn_hi": 8, "session_id": "old"},
@@ -320,6 +383,7 @@ def test_extended_transcript_admitted_via_sealed_on_path(
         if c.get("bus_turn_id") is None
     }
     assert _UUID_OLD in open_by_tid
+    assert open_by_tid[_UUID_OLD]["turn_lo"] == 0
 
 
 @patch("agent_bus_store.tape_membership.lookup_dominant_lane_by_uuid")
