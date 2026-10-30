@@ -426,6 +426,7 @@ def _substitute_hop_template_part(
 
 
 _CHECKPOINT_RENDER_PREFIX = "## CURRENT LEG (rendered checkpoint)\n"
+HOP_LEG_FLOOR_B = 2048
 
 
 def _enforce_hop_render_max(
@@ -457,12 +458,20 @@ def _enforce_hop_render_max(
     if _total_bytes() <= HOP_RENDER_MAX_B:
         return
 
+    checkpoint_pref = fields.get("checkpoint_block") or ""
+    rendered_ck_bytes: int | None = None
+    if checkpoint_pref.startswith(_CHECKPOINT_RENDER_PREFIX):
+        rendered_ck_bytes = len(
+            checkpoint_pref[len(_CHECKPOINT_RENDER_PREFIX) :].encode("utf-8")
+        )
+
     leg_bytes = measure_checkpoint_budget_bytes(standing_handoff_text or "")
-    protected_floor = (
-        CHECKPOINT_BUDGET_B
-        if leg_bytes is not None and leg_bytes <= CHECKPOINT_BUDGET_B
-        else 0
-    )
+    if leg_bytes is not None and leg_bytes <= CHECKPOINT_BUDGET_B:
+        hop_trim_floor = CHECKPOINT_BUDGET_B
+    elif rendered_ck_bytes is not None and rendered_ck_bytes <= CHECKPOINT_BUDGET_B:
+        hop_trim_floor = HOP_LEG_FLOOR_B
+    else:
+        hop_trim_floor = HOP_LEG_FLOOR_B
 
     initial_size: int | None = None
     last_target: int | None = None
@@ -473,10 +482,10 @@ def _enforce_hop_render_max(
             break
         body = checkpoint[len(_CHECKPOINT_RENDER_PREFIX) :]
         size = len(body.encode("utf-8"))
-        if size <= protected_floor:
+        if size <= hop_trim_floor:
             break
-        shrink = max(128, (size - protected_floor) // 5)
-        target = max(protected_floor, size - shrink)
+        shrink = max(128, (size - hop_trim_floor) // 5)
+        target = max(hop_trim_floor, size - shrink)
         if target >= size:
             break
         if target < size:
@@ -513,11 +522,11 @@ def _enforce_hop_render_max(
                 if body.endswith(flag_suffix):
                     body = body[: -len(flag_suffix)]
                 size = len(body.encode("utf-8"))
-                if size <= 0:
+                if size <= hop_trim_floor:
                     break
                 over = _total_bytes() - HOP_RENDER_MAX_B
                 trim = max(64, min(size, int(over) + 32))
-                target = max(0, size - trim)
+                target = max(hop_trim_floor, size - trim)
                 if target >= size:
                     break
                 trimmed = _CHECKPOINT_RENDER_PREFIX + _truncate_utf8(body, target)
@@ -526,6 +535,25 @@ def _enforce_hop_render_max(
                     lane=fields["lane"],
                     checkpoint_block=fields["checkpoint_block"],
                 )
+
+        checkpoint = fields.get("checkpoint_block") or ""
+        if checkpoint.startswith(_CHECKPOINT_RENDER_PREFIX) and checkpoint.endswith(
+            flag_suffix
+        ):
+            body = checkpoint[len(_CHECKPOINT_RENDER_PREFIX) : -len(flag_suffix)]
+            measured = len(body.encode("utf-8"))
+            flag = (
+                f"[budget_exceeded checkpoint {initial_size}/{measured} "
+                f"\u2014 read {uri}]"
+            )
+            flag_suffix = "\n" + flag
+            fields["checkpoint_block"] = (
+                _CHECKPOINT_RENDER_PREFIX + body + flag_suffix
+            )
+            fields["first_act_call1_line"] = first_act_call1_line(
+                lane=fields["lane"],
+                checkpoint_block=fields["checkpoint_block"],
+            )
 
 
 def render_hop_successor_briefing(

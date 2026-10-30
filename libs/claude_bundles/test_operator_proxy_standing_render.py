@@ -712,7 +712,9 @@ def test_hop_inline_in_cap_checkpoint_includes_handoff_sha256() -> None:
 
 
 def test_hop_inline_over_8192_current_leg_keeps_checkpoint_budget_flag() -> None:
-    sidecar = "## CURRENT LEG\n" + ("p" * 9000) + "\n### OWED / NEXT\nx\n"
+    sidecar = (
+        "## CURRENT LEG\nLEG 1\n### OWED / NEXT\nx\n### NOTES\n" + ("p" * 9000) + "\n"
+    )
     body, meta = render_checkpoint_block(
         sidecar,
         lane="12286",
@@ -721,3 +723,235 @@ def test_hop_inline_over_8192_current_leg_keeps_checkpoint_budget_flag() -> None
     )
     assert "[budget_exceeded checkpoint" in body
     assert meta["budget"] == "exceeded"
+
+
+# --- standing-handoff preamble tip window (G3/G4/R5) ---
+
+
+def _current_leg(block: str) -> str:
+    if block.startswith("## CURRENT LEG"):
+        return block
+    return f"## CURRENT LEG\n{block}"
+
+
+@pytest.mark.parametrize(
+    "line",
+    [
+        "IN FLIGHT: trailing colon text",
+        "IN FLIGHT (wake-harvest only): paren text",
+    ],
+)
+def test_inflight_paren_and_colon_form_is_section(line: str) -> None:
+    from claude_bundles.operator_proxy_standing_render import _parse_h3_sections
+
+    block = _current_leg(f"LEG 615 ~12:00Z\n{line}\n")
+    sections = _parse_h3_sections(block)
+    assert line in sections["IN FLIGHT"]
+
+
+def test_inflight_trailing_text_is_section() -> None:
+    from claude_bundles.operator_proxy_standing_render import _parse_h3_sections
+
+    block = _current_leg("LEG 615 ~12:00Z\nIN FLIGHT: wake row one\n")
+    sections = _parse_h3_sections(block)
+    assert "IN FLIGHT" in sections
+    assert "wake row one" in sections["IN FLIGHT"]
+    assert "IN FLIGHT" not in sections.get("__preamble__", "")
+
+
+@pytest.mark.parametrize(
+    "line",
+    [
+        "STILL IN FLIGHT from LEG 613: prose",
+        "IN FLIGHT items elsewhere",
+        "IN FLIGHT (1) friction prose",
+        "IN FLIGHT (a (b)): x",
+    ],
+)
+def test_inflight_prefix_not_matching_prose(line: str) -> None:
+    from claude_bundles.operator_proxy_standing_render import _parse_h3_sections
+
+    sections = _parse_h3_sections(_current_leg(f"LEG 615 ~12:00Z\n{line}\n"))
+    assert "IN FLIGHT" not in sections
+
+
+def test_inflight_bare_line_unchanged() -> None:
+    from claude_bundles.operator_proxy_standing_render import _parse_h3_sections
+
+    block = _current_leg("IN FLIGHT:\n- row a\nOPEN: done\n")
+    sections = _parse_h3_sections(block)
+    assert "IN FLIGHT" in sections
+    assert "- row a" in sections["IN FLIGHT"]
+    assert "OPEN: done" in sections.get("__preamble__", "")
+
+
+def test_inflight_only_first_leg_block_counts() -> None:
+    from claude_bundles.operator_proxy_standing_render import _parse_h3_sections
+
+    block = _current_leg(
+        "LEG 615 ~12:00Z\nIN FLIGHT:\n- a\n"
+        "LEG 614 ~11:00Z\nIN FLIGHT: tail\n"
+    )
+    sections = _parse_h3_sections(block)
+    assert "IN FLIGHT" in sections
+    assert "- a" in sections["IN FLIGHT"]
+    assert "IN FLIGHT: tail" in sections.get("__preamble__", "")
+
+
+def test_inflight_text_form_parse_rows_prose_row() -> None:
+    from claude_bundles.operator_proxy_standing_render import parse_inflight_rows
+
+    line = "IN FLIGHT (wake): exec abc, worker 12;"
+    rows = parse_inflight_rows(line)
+    assert len(rows) == 1
+    assert rows[0].raw_line == line
+    assert rows[0].worker is None and rows[0].execution_id is None
+
+
+def test_inflight_hop_inline_header_prose_not_lost() -> None:
+    from claude_bundles.operator_proxy_standing_render import (
+        render_checkpoint_block,
+        render_inflight_block,
+    )
+
+    sidecar = _current_leg("LEG 1 ~12:00Z\nIN FLIGHT (only): hop prose\n")
+    body, meta = render_checkpoint_block(
+        sidecar, lane="12286", inline_house_rules=None, hop_inline=True
+    )
+    assert meta["inflight_rows"]
+    assert "hop prose" in render_inflight_block(meta["inflight_rows"])
+    assert "hop prose" not in body.split("(rendered checkpoint)\n", 1)[1]
+
+
+def test_inflight_head_inside_owed_section_stays_put() -> None:
+    from claude_bundles.operator_proxy_standing_render import _parse_h3_sections
+
+    for head in (
+        "IN FLIGHT: quoted",
+        "IN FLIGHT (wake): quoted",
+        "IN FLIGHT:",
+    ):
+        block = _current_leg(f"LEG 615 ~12:00Z\n### OWED / NEXT\n{head}\nstill owed\n")
+        sections = _parse_h3_sections(block)
+        assert "IN FLIGHT" not in sections
+        owed = sections["OWED / NEXT"]
+        assert head in owed
+        assert "still owed" in owed
+        assert head not in sections.get("__preamble__", "")
+
+
+def test_inflight_head_inside_explicit_inflight_heading_stays_put() -> None:
+    from claude_bundles.operator_proxy_standing_render import _parse_h3_sections
+
+    block = _current_leg(
+        "### IN FLIGHT\nIN FLIGHT (wake-harvest only): prose\nOPEN: tail\n"
+    )
+    sections = _parse_h3_sections(block)
+    assert sections["IN FLIGHT"].count("IN FLIGHT") >= 1
+    assert "OPEN: tail" in sections["IN FLIGHT"]
+    assert "OPEN: tail" not in sections.get("__preamble__", "")
+
+
+def test_window_head_keep_newest_first() -> None:
+    from claude_bundles.operator_proxy_standing_render import (
+        CHECKPOINT_BUDGET_B,
+        tip_window_preamble,
+    )
+
+    def _utf8_len(text: str) -> int:
+        return len(text.encode("utf-8"))
+
+    blocks = [f"LEG {n} ~12:00Z\n{'x' * 400}\n" for n in range(620, 610, -1)]
+    text = "".join(blocks)
+    out = tip_window_preamble(text, budget_b=900)
+    assert "LEG 620 ~" in out
+    assert "LEG 610 ~" not in out
+    assert _utf8_len(out) <= 900
+
+
+def test_neutralize_budget_literal_in_budget_preamble() -> None:
+    from claude_bundles.operator_proxy_standing_render import (
+        _neutralize_budget_literals,
+        render_checkpoint_block,
+    )
+
+    sidecar = "## CURRENT LEG\n[budget_exceeded checkpoint 1/1\n"
+    body, _meta = render_checkpoint_block(
+        sidecar, lane="12286", inline_house_rules=None, hop_inline=True
+    )
+    assert "(budget_exceeded" in body
+    assert "[budget_exceeded" not in body.split("handoff sha256", 1)[-1]
+    assert _neutralize_budget_literals({"__preamble__": "[budget_exceeded x"})
+
+
+def test_window_no_preamble_is_noop() -> None:
+    from claude_bundles.operator_proxy_standing_render import _window_sections
+
+    working = {"OWED / NEXT": "### OWED / NEXT\nx\n"}
+    assert _window_sections(working, CHECKPOINT_BUDGET_B) == working
+
+
+def _specimen_preamble_sidecar(*, head_hit: bool = False) -> str:
+    lines = ["## CURRENT LEG"]
+    for n in range(615, 598, -1):
+        lines.append(f"LEG {n} ~{(615 - n) % 24:02d}:00Z")
+        if n == 615:
+            lines.extend(f"615-{i}" for i in range(9))
+            if head_hit:
+                lines.append("IN FLIGHT (wake-harvest only): head-hit prose")
+            lines.append("(budget_exceeded checkpoint 8405/0 quoted")
+        elif n == 614:
+            lines.extend(f"614-{i}" for i in range(44))
+        else:
+            lines.append("IN FLIGHT: (1) older colon")
+            lines.append("IN FLIGHT (wake-harvest only): older paren")
+            lines.append("(budget_exceeded checkpoint 8405/0 older")
+            lines.extend("pad " + ("z" * 200) for _ in range(8))
+    return "\n".join(lines) + "\n"
+
+
+def test_window_specimen_shape_head_le_budget() -> None:
+    from claude_bundles.operator_proxy_standing_render import (
+        CHECKPOINT_BUDGET_B,
+        render_checkpoint_block,
+    )
+
+    sidecar = _specimen_preamble_sidecar()
+    body, meta = render_checkpoint_block(
+        sidecar, lane="12286", inline_house_rules=None, hop_inline=True
+    )
+    ck = body.split("(rendered checkpoint)\n", 1)[1]
+    assert "LEG 615 ~" in ck
+    assert "LEG 599 ~" not in ck
+    assert ck.count("[elided preamble bytes ") == 1
+    assert len(ck.encode()) <= CHECKPOINT_BUDGET_B + 200
+    assert meta["budget"] == "ok"
+
+
+def test_specimen_faithful_render_e2e() -> None:
+    from claude_bundles.operator_proxy_standing_render import (
+        CHECKPOINT_BUDGET_B,
+        checkpoint_in_budget,
+        current_leg_has_inflight_section,
+        first_act_call1_line,
+        measure_checkpoint_budget_bytes,
+        render_checkpoint_block,
+    )
+
+    sidecar = _specimen_preamble_sidecar()
+    assert not current_leg_has_inflight_section(sidecar)
+    body, meta = render_checkpoint_block(
+        sidecar, lane="12286", inline_house_rules=None, hop_inline=True
+    )
+    prefix = "## CURRENT LEG (rendered checkpoint)\n"
+    ck = body[len(prefix) :]
+    assert ck.startswith("handoff sha256 ")
+    assert "[budget_exceeded" not in ck
+    assert len(ck.encode()) <= CHECKPOINT_BUDGET_B
+    assert meta["budget"] == "ok"
+    assert meta["flags"] == []
+    assert meta["inflight_rows"] == []
+    acts = first_act_call1_line(lane="12286", checkpoint_block=body)
+    assert '`12286-standing-handoff.md`; quote' not in acts
+    assert checkpoint_in_budget(sidecar, None, body)
+    assert measure_checkpoint_budget_bytes(sidecar) <= CHECKPOINT_BUDGET_B
