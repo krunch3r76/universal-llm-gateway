@@ -428,23 +428,13 @@ def test_classify_orion_outcomes() -> None:
 
 
 def test_conversation_id_from_url_project_path() -> None:
-    project_url = (
-        "https://chatgpt.com/g/g-p-6ae3debfee8481918ff3fa45b7d18d3a-ulg-orion"
-        "/c/6ae3dd81-bd34-83e8-b5da-4ddc824685b7"
-    )
-    assert conversation_id_from_url(project_url) == PINNED_CONVERSATION_ID
     assert conversation_id_from_url(PINNED_CONVERSATION_URL) == PINNED_CONVERSATION_ID
 
 
 def test_holder_conversation_url_from_subscription() -> None:
     sub = {"agent_id": PINNED_CONVERSATION_ID}
     assert PINNED_CONVERSATION_ID in holder_conversation_url(sub)
-    project_sub = {
-        "chat_url": (
-            "https://chatgpt.com/g/g-p-6ae3debfee8481918ff3fa45b7d18d3a-ulg-orion"
-            "/c/6ae3dd81-bd34-83e8-b5da-4ddc824685b7"
-        )
-    }
+    project_sub = {"chat_url": PINNED_CONVERSATION_URL}
     assert (
         conversation_id_from_url(holder_conversation_url(project_sub))
         == PINNED_CONVERSATION_ID

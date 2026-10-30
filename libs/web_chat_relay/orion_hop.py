@@ -132,7 +132,7 @@ def _enrich_approval_receipts(approval: dict[str, Any]) -> list[dict[str, str]]:
 
 def _urls_in_body(body: str) -> list[str]:
     found = re.findall(
-        r"https://chatgpt\.com/c/[0-9a-f-]{36}",
+        r"https://chatgpt\.com/(?:g/[^\s]+/)?c/[0-9a-f-]{36}",
         body,
         flags=re.I,
     )
