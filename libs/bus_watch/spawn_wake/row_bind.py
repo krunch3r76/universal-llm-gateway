@@ -86,15 +86,15 @@ def friction_night_key(friction_id: str, *, role: str | None = None) -> str:
 
 
 def trio_sketch_model(policy: dict[str, Any]) -> str | None:
-    """TRIO sketch consult when no ``todo:{slug}`` — default ``cdp/opus-5.5``.
+    """TRIO sketch consult when no ``todo:{slug}`` — default Pattern A critic.
 
     When the default is paused and ``trio_sketch_model`` is not overridden,
     fall back to ``critic_model`` if unpaused. Otherwise a paused model yields
     None and the caller holds.
     """
     raw = str(policy.get("trio_sketch_model") or "").strip()
-    overridden = bool(raw.startswith(("cursor/", "cdp/")))
-    model = raw if overridden else "cdp/opus-5.5"
+    overridden = bool(raw.startswith(("cursor/", "cdp/", "anthropic/")))
+    model = raw if overridden else "anthropic/claude-sonnet-5-5"
     if model_paused(policy, model):
         if not overridden:
             critic = str(policy.get("critic_model") or "").strip()

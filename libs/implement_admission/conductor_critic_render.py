@@ -8,13 +8,25 @@ from implement_admission.impresario_policy import ResolvedRoles, SeatSpec, resol
 WIDTH_SEAT_MARKER_START = "<!-- width-seat:v1:start -->"
 WIDTH_SEAT_MARKER_END = "<!-- width-seat:v1:end -->"
 
-_CHANNEL_BY_FAMILY = {"opus": "Opus", "fable": "Fable", "gemini": "Cursor", "muse": "Cursor", "grok": "Cursor", "composer": "Cursor"}
+_CHANNEL_BY_FAMILY = {
+    "opus": "Opus",
+    "fable": "Fable",
+    "sonnet": "Sonnet",
+    "haiku": "Haiku",
+    "gemini": "Cursor",
+    "muse": "Cursor",
+    "grok": "Cursor",
+    "composer": "Cursor",
+}
 
 
 def _usage_channel(model: str) -> str:
     if model.startswith("cursor/"):
         return "Cursor"
-    cli_id = model.removeprefix("cdp/")
+    if model.startswith("anthropic/"):
+        cli_id = model.removeprefix("anthropic/claude-")
+    else:
+        cli_id = model.removeprefix("cdp/")
     family = cli_id.split("-", 1)[0]
     channel = _CHANNEL_BY_FAMILY.get(family)
     if channel is None:

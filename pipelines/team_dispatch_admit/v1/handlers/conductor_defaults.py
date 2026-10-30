@@ -5,13 +5,13 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from implement_admission.conductor_materialize import (
-    G_ROWS,
-    validate_conductor_opts_seeds,
-)
 from implement_admission.conductor_admit_model import (
     resolve_conductor_admit_model,
     resolve_hop_successor_default_from_pipeline,
+)
+from implement_admission.conductor_materialize import (
+    G_ROWS,
+    validate_conductor_opts_seeds,
 )
 from implement_admission.conductor_policy_snapshot import (
     default_knobs_from_route_policy,

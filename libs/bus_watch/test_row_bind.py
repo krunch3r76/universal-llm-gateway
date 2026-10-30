@@ -49,10 +49,10 @@ def test_sit_forcing_friction_is_row_bind_not_house_successor() -> None:
     )
     assert body is not None
     assert body.get("_row_bind") is True
-    assert body.get("model") == "cursor/grok-4.7"
+    assert body.get("model") == "cursor/composer-2.5"
     assert body.get("seat") == "cursor-sdk"
-    assert body.get("model_knobs") == {"effort": "high", "fast": "false"}
-    assert body.get("model") != digest["policy"]["successor_model"]
+    assert body.get("model_knobs") is None
+    assert body.get("model") == digest["policy"]["successor_model"]
 
 
 def test_sit_forcing_without_friction_in_successor_row() -> None:
@@ -135,7 +135,7 @@ def test_build_row_bind_body_shape() -> None:
             "note": "probe",
         },
     )
-    assert body["model"] == "cursor/grok-4.7"
+    assert body["model"] == "cursor/composer-2.5"
     assert body["seat"] == "cursor-sdk"
     assert "ROW_CLASS:" in body["prompt"]
     assert "do not fire remaining hops" in body["prompt"].lower()
@@ -179,7 +179,7 @@ def test_fired_fid_does_not_re_fire_low() -> None:
     assert body.get("_refused") == "row_class_fired"
 
 
-def test_trio_sketch_default_cdp() -> None:
+def test_trio_sketch_default_anthropic_sonnet() -> None:
     body = build_trio_sketch_body(
         "11960",
         {"max_hop_minutes": 60, "row_bind_model": "cursor/grok-4.7"},
@@ -190,7 +190,7 @@ def test_trio_sketch_default_cdp() -> None:
             "note": "probe",
         },
     )
-    assert body["model"] == "cdp/opus-5.5"
+    assert body["model"] == "anthropic/claude-sonnet-5-5"
     assert "seat" not in body
 
 
@@ -203,7 +203,11 @@ def test_trio_sketch_paused_opus_holds() -> None:
         "10479",
         {
             "max_hop_minutes": 60,
-            "paused_models": ["cdp/opus-5.5", "cursor/claude-opus-5-5"],
+            "paused_models": [
+                "anthropic/claude-sonnet-5-5",
+                "cdp/opus-5.5",
+                "cursor/claude-opus-5-5",
+            ],
         },
         {
             "id": "a:36249",
@@ -227,7 +231,11 @@ def test_trio_sketch_paused_opus_falls_back_to_critic() -> None:
         "17934",
         {
             "max_hop_minutes": 60,
-            "paused_models": ["cdp/opus-5.5", "cursor/claude-opus-5-5"],
+            "paused_models": [
+                "anthropic/claude-sonnet-5-5",
+                "cdp/opus-5.5",
+                "cursor/claude-opus-5-5",
+            ],
             "critic_model": "cursor/gemini-4-argon",
             "critic_model_knobs": {"effort": "high", "fast": "false"},
         },

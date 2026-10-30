@@ -20,7 +20,7 @@ def render_knobs(seat: SeatSpec) -> dict[str, Any]:
     model = seat.model
     rung = seat.effort_rung
     _validate_effort_for_model(model, rung)
-    if model.startswith("cdp/"):
+    if model.startswith(("cdp/", "anthropic/")):
         return {"reasoning_effort": rung}
     wire = rung
     if rung == "extra":

@@ -20,7 +20,7 @@ impresario:
     - hybrid
   driver: {model: cursor/composer-2.5, fast: false}
   mechanical: {model: cursor/composer-2.5, effort: medium}
-  critic: {model: cdp/opus-5.5, effort: high}
+  critic: {model: anthropic/claude-sonnet-5-5, effort: high}
   critic_roles:
     sketch: {}
     skeptic: {}
@@ -38,6 +38,9 @@ impresario:
       - an open fork
       - a stuck leg
   allowed_critics:
+    - anthropic/claude-sonnet-5-5
+    - anthropic/claude-opus-5-5
+    - anthropic/claude-fable-5-1
     - cdp/opus-5.5
     - cdp/opus-5.1
     - cdp/opus-5

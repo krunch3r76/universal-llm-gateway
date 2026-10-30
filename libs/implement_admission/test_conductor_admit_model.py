@@ -5,8 +5,9 @@ from __future__ import annotations
 import pytest
 
 from implement_admission.conductor_admit_model import resolve_conductor_admit_model
-from implement_admission.conductor_policy_snapshot import default_knobs_from_route_policy
-
+from implement_admission.conductor_policy_snapshot import (
+    default_knobs_from_route_policy,
+)
 from pipelines.team_dispatch_admit.v1.handlers.conductor_defaults import (
     evaluate_conductor_defaults,
 )
