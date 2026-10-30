@@ -451,9 +451,10 @@ def resolve_subscription_for_thread(
             """
             SELECT s.* FROM agent_endpoint_subscriptions s
             WHERE s.agent = ?
+              AND s.actuation IS NULL
               AND s.id IN (
                 SELECT MAX(id) FROM agent_endpoint_subscriptions
-                WHERE agent = ?
+                WHERE agent = ? AND actuation IS NULL
                 GROUP BY thread_scope
               )
               AND s.state = 'subscribed'
@@ -514,6 +515,8 @@ def _is_orion_chat_wake_group(agent: str, thread_id: str) -> bool:
 def endpoint_wake_debounce_s(agent: str, thread_id: str) -> int:
     """Post-delivery debounce and pending coalesce window per endpoint kind."""
     if _is_orion_chat_wake_group(agent, thread_id):
+        return ENDPOINT_WAKE_DEBOUNCE_S_ORION_CHAT
+    if _is_chatgpt_work_wake_group(agent, thread_id):
         return ENDPOINT_WAKE_DEBOUNCE_S_ORION_CHAT
     return ENDPOINT_WAKE_DEBOUNCE_S_DEFAULT
 
@@ -652,20 +655,18 @@ def _orion_actuation_from_conversation_url(url: str) -> dict[str, Any] | None:
 def _latest_orion_seat_registration_on_thread(
     thread_id: str,
 ) -> tuple[str, str] | None:
-    """Latest ``SEAT_REGISTRATION`` ChatGPT URL on ``thread_id`` (url, created_at)."""
-    from web_chat_relay.orion_wake import (
-        extract_orion_seat_registration_url,
-        is_orion_seat_registration_turn,
-    )
+    """SHADOW (non-routing): scan bus text only; never used for wake delivery."""
+    from web_chat_relay.orion_wake import extract_orion_seat_registration_url
 
     with connect() as conn:
         rows = conn.execute(
             """
-            SELECT subject, body, created_at, from_agent
+            SELECT subject, body, created_at
             FROM turns
             WHERE thread=?
               AND (
                 subject LIKE 'SEAT_REGISTRATION%'
+                OR body LIKE '%New exact URL:%'
                 OR body LIKE 'TYPE: SEAT_REGISTRATION%'
               )
             ORDER BY turn_number DESC, id DESC
@@ -674,12 +675,6 @@ def _latest_orion_seat_registration_on_thread(
             (thread_id,),
         ).fetchall()
     for row in rows:
-        if not is_orion_seat_registration_turn(
-            subject=str(row["subject"] or ""),
-            body=str(row["body"] or ""),
-            from_agent=str(row["from_agent"] or ""),
-        ):
-            continue
         url = extract_orion_seat_registration_url(
             str(row["body"] or ""),
             str(row["subject"] or ""),
@@ -689,69 +684,25 @@ def _latest_orion_seat_registration_on_thread(
     return None
 
 
-def _orion_exact_route_from_actuation(
-    actuation: dict[str, Any],
-) -> tuple[str, dict[str, Any]]:
-    """Synthetic ``exact`` subscription row shape for Orion chat actuation."""
-    url = str(actuation.get("conversation_url") or "").split("?", 1)[0]
-    conv_id = str(actuation.get("conversation_id") or "")
-    return (
-        "exact",
-        {
-            "surface": "chatgpt",
-            "display": "12",
-            "title": url,
-            "agent_id": conv_id,
-            "state": "subscribed",
-        },
-    )
-
-
-def _seat_registration_wins_over_subscription(
-    seat: tuple[str, str],
-    sub_row: dict[str, Any],
-    sub_actuation: dict[str, Any],
-) -> bool:
-    seat_url, seat_ts = seat
-    sub_ts = str(sub_row.get("created_at") or "")
-    sub_url = str(sub_actuation.get("conversation_url") or "").split("?", 1)[0]
-    if sub_url != seat_url:
-        return True
-    return seat_ts > sub_ts
-
-
 def _orion_house_actuation_basis(thread_id: str, actuation: dict[str, Any]) -> str:
     from web_chat_relay.orion_wake import PINNED_CONVERSATION_ID
 
     conv_id = str(actuation.get("conversation_id") or "")
     if conv_id == PINNED_CONVERSATION_ID:
         return "orion_pinned_conversation"
-    seat = _latest_orion_seat_registration_on_thread(thread_id)
-    if seat is not None and seat[0] == str(actuation.get("conversation_url") or ""):
-        return "orion_seat_registration"
     if _orion_subscription_for_thread(thread_id) is not None:
         return "agent_endpoint_subscription"
-    return "orion_seat_registration"
+    return "unresolved"
 
 
 def _orion_chat_actuation_for_house(thread_id: str) -> dict[str, Any] | None:
     live = _orion_subscription_for_thread(thread_id)
-    seat = _latest_orion_seat_registration_on_thread(thread_id)
 
     sub_actuation: dict[str, Any] | None = None
     sub_row: dict[str, Any] | None = None
     if live is not None:
         _, sub_row = live
         sub_actuation = _orion_chat_actuation_from_row(sub_row)
-
-    if seat is not None:
-        seat_actuation = _orion_actuation_from_conversation_url(seat[0])
-        if seat_actuation is not None and (
-            sub_actuation is None
-            or sub_row is None
-            or _seat_registration_wins_over_subscription(seat, sub_row, sub_actuation)
-        ):
-            return seat_actuation
 
     if sub_actuation is not None:
         return sub_actuation
@@ -772,6 +723,122 @@ def _orion_chat_actuation_for_house(thread_id: str) -> dict[str, Any] | None:
     }
 
 
+def _chatgpt_work_actuation_from_row(row: dict[str, Any]) -> dict[str, Any] | None:
+    from web_chat_relay.orion_wake import (
+        DEFAULT_ORION_CDP_URL,
+        conversation_id_from_url,
+    )
+
+    if str(row.get("actuation") or "") != "chatgpt_work":
+        return None
+    url = str(row.get("title") or "").split("?", 1)[0].strip()
+    conv_id = conversation_id_from_url(url)
+    if not url or not conv_id:
+        return None
+    instance_id = str(row.get("agent") or "")
+    if instance_id == "main-wake":
+        instance_id = ""
+    return {
+        "type": "chatgpt_work",
+        "conversation_id": conv_id,
+        "conversation_url": url,
+        "cdp_url": DEFAULT_ORION_CDP_URL,
+        "mode": "work",
+        "instance_id": instance_id or None,
+    }
+
+
+def _envelope_from_work_row(
+    envelope: dict[str, Any],
+    row: dict[str, Any],
+    *,
+    route: str = "chatgpt-work",
+) -> dict[str, Any]:
+    actuation = _chatgpt_work_actuation_from_row(row)
+    if actuation is None:
+        return _wake_unbound_envelope(envelope)
+    envelope.update(
+        {
+            "state": "bound",
+            "basis": "chatgpt_work",
+            "current": {
+                "actuation": actuation,
+                "route": route,
+                "subscription_id": row.get("id"),
+            },
+        }
+    )
+    return envelope
+
+
+def resolve_orion_chat_wake(
+    house_id: str, *, agent: str | None = None
+) -> dict[str, Any]:
+    """Sole journal authority for Orion / ChatGPT Work wake URLs."""
+    from agent_bus_store.db.endpoint_subscriptions import (
+        instance_wake_latest,
+        main_wake_latest,
+    )
+
+    thread_id = str(house_id or "").strip()
+    as_of = datetime.now(UTC).isoformat().replace("+00:00", "Z")
+    scope = f"house:{thread_id}/intent:wake"
+    envelope: dict[str, Any] = {
+        "as_of": as_of,
+        "basis": "unbound",
+        "source": _DELIVERY_BINDING_SOURCE,
+        "scope": scope,
+        "stale": False,
+    }
+    if not thread_id:
+        return _wake_unbound_envelope(envelope)
+
+    if agent is not None and str(thread_id) != _ORION_WAKE_HOUSE:
+        inst_row = instance_wake_latest(thread_id)
+        if inst_row is not None:
+            if str(inst_row.get("state") or "") != "subscribed":
+                envelope.update({"state": "unbound", "current": None, "reason": "terminal_head"})
+                return envelope
+            if _chatgpt_work_actuation_from_row(inst_row) is None:
+                envelope.update(
+                    {"state": "unbound", "current": None, "reason": "terminal_head"}
+                )
+                return envelope
+            return _envelope_from_work_row(envelope, inst_row)
+
+    if str(thread_id) == _ORION_WAKE_HOUSE:
+        main_row = main_wake_latest()
+        if main_row is not None:
+            if str(main_row.get("state") or "") != "subscribed":
+                envelope.update(
+                    {"state": "unbound", "current": None, "reason": "terminal_head"}
+                )
+                return envelope
+            if _chatgpt_work_actuation_from_row(main_row) is None:
+                envelope.update(
+                    {"state": "unbound", "current": None, "reason": "terminal_head"}
+                )
+                return envelope
+            return _envelope_from_work_row(envelope, main_row)
+        pin = _orion_chat_actuation_for_house(thread_id)
+        if pin is not None:
+            envelope.update(
+                {
+                    "state": "bound",
+                    "basis": "orion_pinned_conversation",
+                    "current": {"actuation": pin, "route": "orion-house"},
+                }
+            )
+            return envelope
+
+    return _wake_unbound_envelope(envelope)
+
+
+def _is_chatgpt_work_wake_group(agent: str, thread_id: str) -> bool:
+    binding = resolve_orion_chat_wake(thread_id, agent=agent)
+    return str(binding.get("basis") or "") == "chatgpt_work"
+
+
 def _cursor_glass_actuation(row: dict[str, Any]) -> dict[str, Any] | None:
     if str(row.get("surface") or "").strip().lower() != "cursor":
         return None
@@ -786,7 +853,24 @@ def _cursor_glass_actuation(row: dict[str, Any]) -> dict[str, Any] | None:
     }
 
 
-def resolve_wake_delivery_binding(*, house_id: str) -> dict[str, Any]:
+def _authoritative_chatgpt_journal_row(
+    thread_id: str, agent: str | None
+) -> dict[str, Any] | None:
+    from agent_bus_store.db.endpoint_subscriptions import (
+        instance_wake_latest,
+        main_wake_latest,
+    )
+
+    if thread_id == _ORION_WAKE_HOUSE:
+        return main_wake_latest()
+    if agent is not None:
+        return instance_wake_latest(thread_id)
+    return None
+
+
+def resolve_wake_delivery_binding(
+    *, house_id: str, agent: str | None = None
+) -> dict[str, Any]:
     """Resolve wake actuation from the subscribed endpoint row only (no CSE hop)."""
     thread_id = str(house_id or "").strip()
     as_of = datetime.now(UTC).isoformat().replace("+00:00", "Z")
@@ -800,22 +884,8 @@ def resolve_wake_delivery_binding(*, house_id: str) -> dict[str, Any]:
     }
     if not thread_id:
         return _wake_unbound_envelope(envelope)
-    if thread_id == _ORION_WAKE_HOUSE:
-        orion_house_actuation = _orion_chat_actuation_for_house(thread_id)
-        if orion_house_actuation is not None:
-            envelope.update(
-                {
-                    "state": "bound",
-                    "basis": _orion_house_actuation_basis(
-                        thread_id, orion_house_actuation
-                    ),
-                    "current": {
-                        "actuation": orion_house_actuation,
-                        "route": "orion-house",
-                    },
-                }
-            )
-            return envelope
+    if _authoritative_chatgpt_journal_row(thread_id, agent) is not None:
+        return resolve_orion_chat_wake(thread_id, agent=agent)
     resolved_orion = resolve_subscription_for_thread("orion", thread_id)
     if resolved_orion is not None:
         route, row = resolved_orion
@@ -882,19 +952,11 @@ def resolve_wake_delivery_binding(*, house_id: str) -> dict[str, Any]:
                 }
             )
             return envelope
-    orion_actuation = _orion_chat_actuation_for_house(thread_id)
-    if orion_actuation is not None:
-        envelope.update(
-            {
-                "state": "bound",
-                "basis": _orion_house_actuation_basis(thread_id, orion_actuation),
-                "current": {
-                    "actuation": orion_actuation,
-                    "route": "orion-house",
-                },
-            }
-        )
-        return envelope
+    journal = resolve_orion_chat_wake(thread_id, agent=agent)
+    if str(journal.get("state") or "") == "bound":
+        return journal
+    if journal.get("reason") == "terminal_head":
+        return journal
     return _wake_unbound_envelope(envelope)
 
 

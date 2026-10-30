@@ -88,7 +88,11 @@ def _delivery_bindings_resolve_dispatch(
     *,
     house_id: str,
     intent: str,
+    agent: str | None = None,
 ) -> dict[str, Any]:
-    params = urlencode({"house_id": house_id, "intent": intent})
+    query: dict[str, str] = {"house_id": house_id, "intent": intent}
+    if agent is not None:
+        query["agent"] = agent
+    params = urlencode(query)
     path = f"/delivery-bindings/resolve?{params}"
     return _relay_result(relay("agent-bus", "GET", path), "delivery_bindings_resolve")
