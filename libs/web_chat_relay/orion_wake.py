@@ -313,6 +313,7 @@ async def deliver_orion_wake(
     cdp_url: str = DEFAULT_ORION_CDP_URL,
     page: OrionPage | None = None,
     connect_cdp=None,
+    paste_text: str | None = None,
 ) -> dict[str, Any]:
     """Attach to pinned chat, paste a pointer wake, optional MCP approval click."""
     from agent_seat.registry import normalize_bus_address
@@ -375,7 +376,11 @@ async def deliver_orion_wake(
         )
 
     layout_receipt = await _prepare_composer(page)
-    line = build_wake_pointer(thread=thread_s, turn=turn, from_agent=from_agent)
+    line = (
+        paste_text
+        if paste_text is not None
+        else build_wake_pointer(thread=thread_s, turn=turn, from_agent=from_agent)
+    )
     try:
         await _paste_and_send(
             page, line, layout=str(layout_receipt.get("layout") or "docked")
@@ -502,6 +507,21 @@ async def deliver_orion_chat_wake(
         return prepared
 
     pointer_turn = format_turn_pointer_label(list(claim.turn_numbers))
+    from web_chat_relay.orion_evidence_card import (
+        compose_orion_chat_wake_paste,
+        load_wake_turns_for_claim,
+    )
+
+    wake_turns = load_wake_turns_for_claim(
+        thread_id=str(claim.thread_id),
+        turn_numbers=list(claim.turn_numbers),
+    )
+    paste_text = compose_orion_chat_wake_paste(
+        thread=str(claim.thread_id),
+        turn=pointer_turn or turn,
+        from_agent=from_agent,
+        turns=wake_turns,
+    )
     receipt = await deliver_orion_wake(
         thread=thread,
         turn=pointer_turn or turn,
@@ -510,6 +530,7 @@ async def deliver_orion_chat_wake(
         cdp_url=cdp_url,
         page=page,
         connect_cdp=connect_cdp,
+        paste_text=paste_text,
     )
     if receipt.get("reason") == "deferred_streaming":
         receipt = {**receipt, "ok": False, "retry_eligible": True}
