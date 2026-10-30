@@ -119,26 +119,56 @@ def parse_model_request(requested: str) -> tuple[str, str | None]:
     return family, effort
 
 
+_VERSION_COMPONENT_SEP = r"[\s\-_.]*(?:\.[\s\-_.]*)?"
+_VERSION_BEFORE = r"(?<!\d)"
+_VERSION_AFTER_LAST = r"(?!\d)(?!\.\d)"
+
+
+def _version_components_pattern(components: list[str]) -> str:
+    """Regex for one or more version components with UI separator flexibility."""
+    if not components:
+        return ""
+    out: list[str] = []
+    last = len(components) - 1
+    for i, comp in enumerate(components):
+        piece = _VERSION_BEFORE + re.escape(comp)
+        if i == last:
+            piece += _VERSION_AFTER_LAST
+        else:
+            piece += _VERSION_COMPONENT_SEP
+        out.append(piece)
+    return "".join(out)
+
+
 def family_pattern(family_request: str) -> re.Pattern[str]:
     """Build a UI-label regex from a short name (``sonnet-5`` → Sonnet 5).
 
-    A version chunk is a whole token. ``opus-5`` matches ``Opus 5`` and not
-    ``Opus 5.5``; ``fable-5`` matches ``Fable 5`` and not ``Fable 5.1``.
-    The dotted wire (``opus-5.5``, ``fable-5.1``) still matches that label.
-    ``.`` stays a separator between chunks, so the version also refuses a
-    match that reached its digits by consuming the minor-version dot.
+    Wire ``claude-sonnet-5-5`` and ``sonnet-5.5`` both match ``Sonnet 5.5``
+    labels; the ``claude`` vendor prefix is optional on either side.
+    ``opus-5`` matches ``Opus 5`` and not ``Opus 5.5``; dotted minors use
+    per-component boundaries so ``5.5For`` glued subtitles still match.
     """
     s = (family_request or "").strip().lower().replace("_", "-")
     chunks = re.findall(r"[a-z]+|\d+(?:\.\d+)*", s)
     if not chunks:
         return re.compile(re.escape(s), re.I)
-    parts: list[str] = []
-    for i, chunk in enumerate(chunks):
+    if chunks[0] == "claude":
+        chunks = chunks[1:]
+    parts: list[str] = [r"(?:claude[\s\-_.]*)?"]
+    i = 0
+    while i < len(chunks):
+        chunk = chunks[i]
         if re.fullmatch(r"\d+(?:\.\d+)*", chunk):
-            parts.append(rf"(?<![\d.]){re.escape(chunk)}(?![\d.])")
-        else:
-            parts.append(re.escape(chunk))
-        if i < len(chunks) - 1:
+            version_parts: list[str] = []
+            while i < len(chunks) and re.fullmatch(r"\d+(?:\.\d+)*", chunks[i]):
+                numeric = chunks[i]
+                version_parts.extend(numeric.split("."))
+                i += 1
+            parts.append(_version_components_pattern(version_parts))
+            continue
+        parts.append(re.escape(chunk))
+        i += 1
+        if i < len(chunks):
             parts.append(r"[\s\-_.]*")
     return re.compile("".join(parts), re.I)
 

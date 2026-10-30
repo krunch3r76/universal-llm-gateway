@@ -247,6 +247,50 @@ def test_match_model_request_code_menu_shortcut_labels() -> None:
 
 
 @pytest.mark.offline
+def test_match_model_request_live_chat_picker_labels_specimen_20() -> None:
+    """Friction 40857 — dotted wire families against glued chat menu labels."""
+    labels = [
+        "Fable 5.1For your toughest challenges",
+        "Opus 5.5For complex work and everyday tasks",
+        "Sonnet 5.5Most efficient for simpler tasks\ue03b",
+        "Haiku 5.5Fastest for quick answers",
+        "Fable 5",
+        "Opus 5",
+        "Opus 4.8",
+        "Opus 4.7",
+        "Opus 4.6",
+        "Sonnet 5",
+        "Sonnet 4.6",
+    ]
+    assert (
+        match_model_request("claude-sonnet-5-5", labels)
+        == "Sonnet 5.5Most efficient for simpler tasks\ue03b"
+    )
+    assert (
+        match_model_request("claude-opus-5-5", labels)
+        == "Opus 5.5For complex work and everyday tasks"
+    )
+    assert (
+        match_model_request("claude-fable-5-1", labels)
+        == "Fable 5.1For your toughest challenges"
+    )
+    assert match_model_request("claude-haiku-5-5", labels) == "Haiku 5.5Fastest for quick answers"
+    assert match_model_request("claude-opus-5", labels) == "Opus 5"
+    assert match_model_request("claude-fable-5", labels) == "Fable 5"
+    assert match_model_request("claude-sonnet-5", labels) == "Sonnet 5"
+    assert match_model_request("claude-opus-4-8", labels) == "Opus 4.8"
+
+
+@pytest.mark.offline
+def test_family_pattern_claude_prefix_optional_and_version_boundaries() -> None:
+    assert family_pattern("claude-sonnet-5-5").search("Sonnet 5.5Most")
+    assert family_pattern("sonnet-5.5").search("claude Sonnet 5.5")
+    assert family_pattern("opus-5-5").search("Opus 5.55") is None
+    assert family_pattern("opus-5-5").search("Opus 15.5") is None
+    assert family_pattern("opus-5").search("Opus 5.5For") is None
+
+
+@pytest.mark.offline
 def test_family_attest_ignores_effort_only_opus_change() -> None:
     assert family_attested("fable-5.1", "Model: Opus 5.5 High") is False
     assert family_attested("fable-5.1", "Model: Fable 5.1") is True
