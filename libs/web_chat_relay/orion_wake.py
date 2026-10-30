@@ -14,8 +14,11 @@ from typing import Any, Protocol
 from urllib.parse import urlparse
 
 DEFAULT_ORION_CDP_URL = os.environ.get("ORION_CDP_URL", "http://127.0.0.1:9342")
-PINNED_CONVERSATION_URL = "https://chatgpt.com/c/6ae3dd81-bd34-83e8-b5da-4ddc824685b7"
-PINNED_CONVERSATION_ID = "6ae3dd81-bd34-83e8-b5da-4ddc824685b7"
+PINNED_CONVERSATION_URL = (
+    "https://chatgpt.com/g/g-p-6ae3debfee8481918ff3fa45b7d18d3a-ulg-orion"
+    "/c/6ae43253-47b8-83e8-a0c4-431fb3cb49c0"
+)
+PINNED_CONVERSATION_ID = "6ae43253-47b8-83e8-a0c4-431fb3cb49c0"
 
 _STREAMING_JS = """
 () => [...document.querySelectorAll('button')].some(

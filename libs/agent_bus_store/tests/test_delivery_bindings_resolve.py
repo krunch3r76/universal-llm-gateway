@@ -10,6 +10,7 @@ from agent_bus_store.db import create_thread, init_db
 from agent_bus_store.db.endpoint_subscriptions import subscribe_endpoint
 from agent_bus_store.server import create_app
 from fastapi.testclient import TestClient
+from web_chat_relay.orion_wake import PINNED_CONVERSATION_ID, PINNED_CONVERSATION_URL
 
 from services.git_integration_worker.cursor_dispatch_ledger import (
     CURSOR_SDK_DISPATCH_LEDGER_ENV,
@@ -22,7 +23,6 @@ _MAESTRO_HOUSE = "12286"
 _21220_AGENT_ID = "723224a2-ea2a-5b32-a19c-70e2ae09430e"
 _21220_HOUSE = "21220"
 _ORION_HOUSE = "21207"
-_PINNED_CONVERSATION_ID = "6ae3dd81-bd34-83e8-b5da-4ddc824685b7"
 
 
 @pytest.fixture()
@@ -105,7 +105,8 @@ def test_delivery_bindings_resolve_wake_21207_orion_chat(client: TestClient) -> 
     assert body["state"] == "bound"
     actuation = body["current"]["actuation"]
     assert actuation["type"] == "orion_chat"
-    assert actuation["conversation_id"] == _PINNED_CONVERSATION_ID
+    assert actuation["conversation_id"] == PINNED_CONVERSATION_ID
+    assert actuation["conversation_url"] == PINNED_CONVERSATION_URL.split("?", 1)[0]
 
 
 def test_delivery_bindings_resolve_wake_unbound_unknown_house(client: TestClient) -> None:

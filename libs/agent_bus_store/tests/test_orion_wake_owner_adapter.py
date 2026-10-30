@@ -15,7 +15,7 @@ from agent_bus_store.db.orion_wake_owner_adapter import (
     WakeClaimContext,
     shared_wake_delivery_owner,
 )
-from web_chat_relay.orion_wake import PINNED_CONVERSATION_URL
+from web_chat_relay.orion_wake import PINNED_CONVERSATION_ID, PINNED_CONVERSATION_URL
 
 pytestmark = pytest.mark.offline
 
@@ -124,7 +124,8 @@ def test_resolve_orion_house_wake_binding(db: None) -> None:
     assert binding["state"] == "bound"
     actuation = binding["current"]["actuation"]
     assert actuation["type"] == "orion_chat"
-    assert actuation["conversation_id"] == "6ae3dd81-bd34-83e8-b5da-4ddc824685b7"
+    assert actuation["conversation_id"] == PINNED_CONVERSATION_ID
+    assert actuation["conversation_url"] == PINNED_CONVERSATION_URL.split("?", 1)[0]
 
 
 def test_resolve_unbound_house(db: None) -> None:

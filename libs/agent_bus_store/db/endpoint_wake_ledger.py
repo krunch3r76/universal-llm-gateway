@@ -495,7 +495,6 @@ def resolve_subscription_for_thread(
 _WAKE_DELIVERY_AGENT = "cursor"
 _DELIVERY_BINDING_SOURCE = "agent_bus_store.delivery_bindings_resolve"
 _ORION_WAKE_HOUSE = "21207"
-_PINNED_ORION_CONVERSATION_ID = "6ae3dd81-bd34-83e8-b5da-4ddc824685b7"
 ENDPOINT_WAKE_DEBOUNCE_S_DEFAULT = 600
 ENDPOINT_WAKE_DEBOUNCE_S_ORION_CHAT = 30
 ORION_DEFERRED_STREAMING_MAX_ATTEMPTS = 25
@@ -553,12 +552,16 @@ def _wake_unbound_envelope(envelope: dict[str, Any]) -> dict[str, Any]:
 def _orion_chat_actuation_for_house(thread_id: str) -> dict[str, Any] | None:
     if thread_id != _ORION_WAKE_HOUSE:
         return None
-    from web_chat_relay.orion_wake import DEFAULT_ORION_CDP_URL, PINNED_CONVERSATION_URL
+    from web_chat_relay.orion_wake import (
+        DEFAULT_ORION_CDP_URL,
+        PINNED_CONVERSATION_ID,
+        PINNED_CONVERSATION_URL,
+    )
 
     url = PINNED_CONVERSATION_URL.split("?", 1)[0]
     return {
         "type": "orion_chat",
-        "conversation_id": _PINNED_ORION_CONVERSATION_ID,
+        "conversation_id": PINNED_CONVERSATION_ID,
         "conversation_url": url,
         "cdp_url": DEFAULT_ORION_CDP_URL,
     }
