@@ -1,4 +1,4 @@
-"""In-process owner API for Orion / shared endpoint wake claims (20995 ledger)."""
+"""In-process owner API for Orion and shared endpoint wake claims on the agent_bus ledger."""
 
 from __future__ import annotations
 
@@ -55,6 +55,7 @@ def _decode_paste_receipt(reason: str | None) -> dict[str, Any] | None:
 
 
 def resolve_turn_id_for_wake(*, thread_id: str, turn_number: int) -> int | None:
+    """Map a bus ``turn_number`` on ``thread_id`` to the durable ``turns.id`` row."""
     with connect() as conn:
         row = conn.execute(
             "SELECT id FROM turns WHERE thread=? AND turn_number=? LIMIT 1",
@@ -85,6 +86,7 @@ class WakeClaimContext:
 
 
 def wake_claim_from_options(opts: dict[str, Any] | None) -> WakeClaimContext | None:
+    """Build a ``WakeClaimContext`` from Stargate pipeline options, or None when incomplete."""
     if not opts:
         return None
     wake_id = str(opts.get("wake_id") or "").strip()
@@ -141,6 +143,7 @@ def wake_claim_from_options(opts: dict[str, Any] | None) -> WakeClaimContext | N
 def enrich_delivery_receipt(
     receipt: dict[str, Any], claim: WakeClaimContext
 ) -> dict[str, Any]:
+    """Attach wake claim identifiers and covered turn metadata to a paste delivery receipt."""
     return {
         **receipt,
         "wake_id": claim.wake_id,
@@ -165,7 +168,7 @@ def _endpoint_from_actuation(actuation: dict[str, Any]) -> str:
 
 
 class LedgerWakeDeliveryOwner:
-    """Shared ledger owner: validate dispatcher claims, dedupe paste, record receipts."""
+    """Shared ledger owner that validates dispatcher claims, dedupes paste, and records receipts."""
 
     def validate_claim_for_delivery(self, claim: WakeClaimContext) -> dict[str, Any]:
         if not str(claim.wake_id or "").strip():
@@ -420,7 +423,7 @@ class LedgerWakeDeliveryOwner:
 
 
 def shared_wake_delivery_owner() -> LedgerWakeDeliveryOwner:
-    """Factory for agent_bus_store-mounted processes (Orion hop seam)."""
+    """Return the process-wide ``LedgerWakeDeliveryOwner`` used by Orion hop and wake pipelines."""
     return LedgerWakeDeliveryOwner()
 
 
