@@ -1782,6 +1782,7 @@ def fire_due_wakes(store: StoreClient) -> dict[str, Any] | None:
             from_agent=from_agent,
             wake_id=str(wake_id) if wake_id else None,
         )
+        # Legacy ledger retries may still surface deferred_streaming; live delivery steers.
         if state == "pending" and reason == "deferred_streaming":
             return claimed
         if state == "refused" and reason == "deferred_exhausted":

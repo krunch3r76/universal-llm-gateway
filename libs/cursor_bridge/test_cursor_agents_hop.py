@@ -61,7 +61,9 @@ def test_is_cursor_xvfb_host(host: str) -> None:
 def test_cursor_debug_url_for_orion_and_eight() -> None:
     assert cursor_debug_url_for_gui_host("orion-node") == "http://127.0.0.1:19338"
     assert cursor_debug_url_for_gui_host(":8") == "http://127.0.0.1:9338"
-    assert normalize_target("orion-node", "cursor")["origin"] == "http://127.0.0.1:19338"
+    assert (
+        normalize_target("orion-node", "cursor")["origin"] == "http://127.0.0.1:19338"
+    )
     assert normalize_target("8", "cursor")["origin"] == "http://127.0.0.1:9338"
 
 
@@ -84,9 +86,11 @@ def test_probe_glass_composer_budget_js_reads_composer_fields() -> None:
     assert "summarized_conversation" in js
 
 
-def test_submit_wake_line_js_generating_clears_draft() -> None:
+def test_submit_wake_line_js_always_steers_and_clears_draft() -> None:
     js = submit_wake_line_js("BRIDGE_WAKE thread=1 turn=2", "agent-1")
-    assert "status === 'generating'" in js
+    assert "steerIntent: true" in js
+    assert "ignoreQueuing: true" in js
+    assert "status === 'generating'" not in js
     assert "clearContent" in js
     assert "composerUtilsService.clearText" in js
     assert "setContent" not in js
@@ -94,9 +98,12 @@ def test_submit_wake_line_js_generating_clears_draft() -> None:
     assert "skipClearInput: true" not in js
     assert "richText: text" in js
     assert " finally {" in js
-    idle = js.split("} else {", 1)[1]
-    assert "submitChatMaybeAbortCurrent" in idle
-    assert idle.index("clearContent") > idle.index("submitChatMaybeAbortCurrent")
+    assert "submitChatMaybeAbortCurrent" in js
+    opts_start = js.index("const submitOpts")
+    opts_end = js.index("const submitCall")
+    opts_block = js[opts_start:opts_end]
+    assert "steerIntent: true" in opts_block
+    assert "ignoreQueuing: true" in opts_block
 
 
 def test_launch_tab_js_extracts_created_header_id() -> None:
@@ -130,7 +137,8 @@ def test_launch_tab_js_uses_glass_services_not_input() -> None:
     assert "createComposer" in js
     assert "setModelConfigForComposer" in js
     assert "submitChatMaybeAbortCurrent" in js
-    assert "steerIntent" in js
+    assert "steerIntent: true" in js
+    assert "ignoreQueuing: true" in js
     assert "prompt.editor.commands.setContent" not in js
     assert "updateComposerData(handle, { text, richText: text })" not in js
     assert "hasDomEditor" in js
@@ -253,7 +261,9 @@ async def test_launch_async_recovers_after_promise_collected() -> None:
 
     with (
         patch("websockets.connect", return_value=_WsCtx()),
-        patch("cursor_bridge.cursor_agents_hop._eval_await", side_effect=fake_eval_await),
+        patch(
+            "cursor_bridge.cursor_agents_hop._eval_await", side_effect=fake_eval_await
+        ),
     ):
         out = await _launch_async(
             "ws://fake",
@@ -293,7 +303,9 @@ async def test_launch_async_skips_recovery_on_composer_not_empty() -> None:
 
     with (
         patch("websockets.connect", return_value=_WsCtx()),
-        patch("cursor_bridge.cursor_agents_hop._eval_await", side_effect=fake_eval_await),
+        patch(
+            "cursor_bridge.cursor_agents_hop._eval_await", side_effect=fake_eval_await
+        ),
     ):
         out = await _launch_async(
             "ws://fake",
@@ -347,7 +359,9 @@ async def test_launch_async_timer_win_is_unconfirmed_not_keystroke() -> None:
 
     with (
         patch("websockets.connect", return_value=_WsCtx()),
-        patch("cursor_bridge.cursor_agents_hop._eval_await", side_effect=fake_eval_await),
+        patch(
+            "cursor_bridge.cursor_agents_hop._eval_await", side_effect=fake_eval_await
+        ),
     ):
         out = await _launch_async(
             "ws://fake",
@@ -742,7 +756,11 @@ def test_archive_agent_js_relookup_fake_dom(tmp_path: Path) -> None:
 
     reused = by_name["id_reused"]
     assert reused["error"] is None
-    assert reused["result"] == {"ok": True, "archived": "agent-x", "method": "archiveAgent"}
+    assert reused["result"] == {
+        "ok": True,
+        "archived": "agent-x",
+        "method": "archiveAgent",
+    }
     assert reused["clicks"] == [
         {"id": "agent-y", "clicks": 0},
         {"id": "neighbor", "clicks": 0},
@@ -759,7 +777,11 @@ def test_archive_agent_js_relookup_fake_dom(tmp_path: Path) -> None:
 
     thrown = by_name["throw_then_click"]
     assert thrown["error"] is None
-    assert thrown["result"] == {"ok": True, "archived": "agent-x", "method": "dom_click"}
+    assert thrown["result"] == {
+        "ok": True,
+        "archived": "agent-x",
+        "method": "dom_click",
+    }
     assert thrown["clicks"] == [{"id": "agent-x", "clicks": 1}]
     assert thrown["elapsed"] < 150
 
@@ -771,7 +793,11 @@ def test_archive_agent_js_relookup_fake_dom(tmp_path: Path) -> None:
 
     delayed = by_name["delayed_click_removal"]
     assert delayed["error"] is None
-    assert delayed["result"] == {"ok": True, "archived": "agent-x", "method": "dom_click"}
+    assert delayed["result"] == {
+        "ok": True,
+        "archived": "agent-x",
+        "method": "dom_click",
+    }
     assert delayed["clicks"] == [{"id": "agent-x", "clicks": 1}]
     assert delayed["elapsed"] >= 30
 
@@ -845,8 +871,9 @@ async def test_archive_async_streaming_timeout() -> None:
         async def __aexit__(self, *args):  # type: ignore[no-untyped-def]
             return None
 
-    with patch("websockets.connect", return_value=_WsCtx()), patch(
-        "cursor_bridge.cursor_agents_hop._eval_await", side_effect=fake_eval
+    with (
+        patch("websockets.connect", return_value=_WsCtx()),
+        patch("cursor_bridge.cursor_agents_hop._eval_await", side_effect=fake_eval),
     ):
         out = await _archive_async(
             "ws://fake",
@@ -861,10 +888,30 @@ async def test_archive_async_streaming_timeout() -> None:
 @pytest.mark.asyncio
 async def test_prune_keeps_departing_archives_older() -> None:
     list_result = [
-        {"agent_id": "new-active", "title": "10479 slug", "active": True, "streaming": False},
-        {"agent_id": "n-1", "title": ". 10479 foo", "active": False, "streaming": False},
-        {"agent_id": "n-2", "title": ". 10479 old", "active": False, "streaming": False},
-        {"agent_id": "n-3", "title": "resume 10479", "active": False, "streaming": False},
+        {
+            "agent_id": "new-active",
+            "title": "10479 slug",
+            "active": True,
+            "streaming": False,
+        },
+        {
+            "agent_id": "n-1",
+            "title": ". 10479 foo",
+            "active": False,
+            "streaming": False,
+        },
+        {
+            "agent_id": "n-2",
+            "title": ". 10479 old",
+            "active": False,
+            "streaming": False,
+        },
+        {
+            "agent_id": "n-3",
+            "title": "resume 10479",
+            "active": False,
+            "streaming": False,
+        },
     ]
     archived: list[str] = []
 
@@ -885,7 +932,9 @@ async def test_prune_keeps_departing_archives_older() -> None:
     with (
         patch("websockets.connect", return_value=_WsCtx()),
         patch("cursor_bridge.cursor_agents_hop._eval", side_effect=fake_eval),
-        patch("cursor_bridge.cursor_agents_hop._archive_on_ws", side_effect=fake_archive),
+        patch(
+            "cursor_bridge.cursor_agents_hop._archive_on_ws", side_effect=fake_archive
+        ),
     ):
         out = await _prune_predecessors_async(
             "ws://fake",
@@ -904,15 +953,36 @@ async def test_prune_keeps_departing_archives_older() -> None:
 
 
 def test_prune_cursor_agents_predecessors_empty_root() -> None:
-    assert prune_cursor_agents_predecessors("") == {"ok": False, "reason": "empty_root_id"}
+    assert prune_cursor_agents_predecessors("") == {
+        "ok": False,
+        "reason": "empty_root_id",
+    }
 
 
 @pytest.mark.asyncio
 async def test_prune_skips_streaming_without_archive() -> None:
     list_result = [
-        {"agent_id": "active", "title": ". 10479 x", "active": True, "streaming": False, "created_at": 0},
-        {"agent_id": "keep", "title": ". 10479 y", "active": False, "streaming": False, "created_at": 100},
-        {"agent_id": "busy", "title": ". 10479 z", "active": False, "streaming": True, "created_at": 50},
+        {
+            "agent_id": "active",
+            "title": ". 10479 x",
+            "active": True,
+            "streaming": False,
+            "created_at": 0,
+        },
+        {
+            "agent_id": "keep",
+            "title": ". 10479 y",
+            "active": False,
+            "streaming": False,
+            "created_at": 100,
+        },
+        {
+            "agent_id": "busy",
+            "title": ". 10479 z",
+            "active": False,
+            "streaming": True,
+            "created_at": 50,
+        },
     ]
     archive_calls: list[str] = []
 
@@ -933,7 +1003,9 @@ async def test_prune_skips_streaming_without_archive() -> None:
     with (
         patch("websockets.connect", return_value=_WsCtx()),
         patch("cursor_bridge.cursor_agents_hop._eval", side_effect=fake_eval),
-        patch("cursor_bridge.cursor_agents_hop._archive_on_ws", side_effect=fake_archive),
+        patch(
+            "cursor_bridge.cursor_agents_hop._archive_on_ws", side_effect=fake_archive
+        ),
     ):
         out = await _prune_predecessors_async(
             "ws://fake",
@@ -958,10 +1030,34 @@ async def test_prune_skips_streaming_without_archive() -> None:
 @pytest.mark.asyncio
 async def test_prune_sorts_by_created_at_desc() -> None:
     list_result = [
-        {"agent_id": "active", "title": ". 10479 a", "active": True, "streaming": False, "created_at": 300},
-        {"agent_id": "old", "title": ". 10479 old", "active": False, "streaming": False, "created_at": 10},
-        {"agent_id": "mid", "title": ". 10479 mid", "active": False, "streaming": False, "created_at": 100},
-        {"agent_id": "new", "title": ". 10479 new", "active": False, "streaming": False, "created_at": 200},
+        {
+            "agent_id": "active",
+            "title": ". 10479 a",
+            "active": True,
+            "streaming": False,
+            "created_at": 300,
+        },
+        {
+            "agent_id": "old",
+            "title": ". 10479 old",
+            "active": False,
+            "streaming": False,
+            "created_at": 10,
+        },
+        {
+            "agent_id": "mid",
+            "title": ". 10479 mid",
+            "active": False,
+            "streaming": False,
+            "created_at": 100,
+        },
+        {
+            "agent_id": "new",
+            "title": ". 10479 new",
+            "active": False,
+            "streaming": False,
+            "created_at": 200,
+        },
     ]
     archived: list[str] = []
 
@@ -987,7 +1083,9 @@ async def test_prune_sorts_by_created_at_desc() -> None:
     with (
         patch("websockets.connect", return_value=_WsCtx()),
         patch("cursor_bridge.cursor_agents_hop._eval", side_effect=fake_eval),
-        patch("cursor_bridge.cursor_agents_hop._archive_on_ws", side_effect=fake_archive),
+        patch(
+            "cursor_bridge.cursor_agents_hop._archive_on_ws", side_effect=fake_archive
+        ),
     ):
         out = await _prune_predecessors_async(
             "ws://fake",
@@ -1109,7 +1207,9 @@ async def test_prune_resolves_departing_index_by_agent_id() -> None:
     with (
         patch("websockets.connect", return_value=_WsCtx()),
         patch("cursor_bridge.cursor_agents_hop._eval", side_effect=fake_eval),
-        patch("cursor_bridge.cursor_agents_hop._archive_on_ws", side_effect=fake_archive),
+        patch(
+            "cursor_bridge.cursor_agents_hop._archive_on_ws", side_effect=fake_archive
+        ),
     ):
         out = await _prune_predecessors_async(
             "ws://fake",
@@ -1128,7 +1228,9 @@ async def test_prune_resolves_departing_index_by_agent_id() -> None:
         s.get("id") == "lock-holder" and s.get("reason") == "lock_holder"
         for s in out["skipped"]
     )
-    assert "depart-id" not in archived or "depart-id" in out.get("kept_predecessors", [])
+    assert "depart-id" not in archived or "depart-id" in out.get(
+        "kept_predecessors", []
+    )
 
 
 def test_prune_cursor_agents_predecessors_timeout_returns_cleanup_failed() -> None:
@@ -1212,7 +1314,9 @@ async def test_prune_only_retired_skips_unmarked_and_no_select() -> None:
     with (
         patch("websockets.connect", return_value=_WsCtx()),
         patch("cursor_bridge.cursor_agents_hop._eval", side_effect=fake_eval),
-        patch("cursor_bridge.cursor_agents_hop._archive_on_ws", side_effect=fake_archive),
+        patch(
+            "cursor_bridge.cursor_agents_hop._archive_on_ws", side_effect=fake_archive
+        ),
     ):
         out = await _prune_predecessors_async(
             "ws://fake",
@@ -1279,7 +1383,9 @@ async def test_prune_skips_unknown_busy_state() -> None:
     with (
         patch("websockets.connect", return_value=_WsCtx()),
         patch("cursor_bridge.cursor_agents_hop._eval", side_effect=fake_eval),
-        patch("cursor_bridge.cursor_agents_hop._archive_on_ws", side_effect=fake_archive),
+        patch(
+            "cursor_bridge.cursor_agents_hop._archive_on_ws", side_effect=fake_archive
+        ),
     ):
         out = await _prune_predecessors_async(
             "ws://fake",
@@ -1345,7 +1451,9 @@ async def test_prune_skips_newer_than_departing_by_sidebar_index() -> None:
     with (
         patch("websockets.connect", return_value=_WsCtx()),
         patch("cursor_bridge.cursor_agents_hop._eval", side_effect=fake_eval),
-        patch("cursor_bridge.cursor_agents_hop._archive_on_ws", side_effect=fake_archive),
+        patch(
+            "cursor_bridge.cursor_agents_hop._archive_on_ws", side_effect=fake_archive
+        ),
     ):
         out = await _prune_predecessors_async(
             "ws://fake",
@@ -1383,10 +1491,19 @@ def test_finalize_xvfb_hop_sidebar_prune_before_rename() -> None:
         return {"ok": True}
 
     with (
-        patch("bus_watch.cursor_xvfb_subscription.subscribe_cursor_xvfb_house", fake_sub),
-        patch("cursor_bridge.cursor_agents_hop.prune_cursor_agents_predecessors", fake_prune),
-        patch("cursor_bridge.cursor_agents_hop.rename_agent_row_in_sidebar", fake_rename),
-        patch("bus_watch.ide_hop.read_lock", return_value={"holder": "ide:holder-uuid"}),
+        patch(
+            "bus_watch.cursor_xvfb_subscription.subscribe_cursor_xvfb_house", fake_sub
+        ),
+        patch(
+            "cursor_bridge.cursor_agents_hop.prune_cursor_agents_predecessors",
+            fake_prune,
+        ),
+        patch(
+            "cursor_bridge.cursor_agents_hop.rename_agent_row_in_sidebar", fake_rename
+        ),
+        patch(
+            "bus_watch.ide_hop.read_lock", return_value={"holder": "ide:holder-uuid"}
+        ),
     ):
         ide_hop.finalize_xvfb_hop_sidebar(
             "10479",
@@ -1439,7 +1556,9 @@ async def test_prune_only_retired_accepts_paren_retired_suffix() -> None:
     with (
         patch("websockets.connect", return_value=_WsCtx()),
         patch("cursor_bridge.cursor_agents_hop._eval", side_effect=fake_eval),
-        patch("cursor_bridge.cursor_agents_hop._archive_on_ws", side_effect=fake_archive),
+        patch(
+            "cursor_bridge.cursor_agents_hop._archive_on_ws", side_effect=fake_archive
+        ),
     ):
         await _prune_predecessors_async(
             "ws://fake",

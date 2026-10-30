@@ -233,7 +233,7 @@ def _blocking_dialog(scan: dict[str, Any]) -> dict[str, Any] | None:
 
 
 async def _sync_tab_before_paste(page: OrionPage, *, target_id: str) -> dict[str, Any]:
-    """Foreground a background tab and reload when stale (hidden, empty composer)."""
+    """Foreground a background tab; reload only when hidden, empty, and not streaming."""
     brought_to_front = False
     tab_reloaded = False
 
@@ -254,7 +254,13 @@ async def _sync_tab_before_paste(page: OrionPage, *, target_id: str) -> dict[str
         brought_to_front = True
 
     reload_fn = getattr(page, "reload", None)
-    if visibility == "hidden" and composer_empty and callable(reload_fn):
+    tab_streaming = await _is_streaming(page)
+    if (
+        visibility == "hidden"
+        and composer_empty
+        and not tab_streaming
+        and callable(reload_fn)
+    ):
         await reload_fn(wait_until="domcontentloaded")
         await page.wait_for_timeout(300)
         tab_reloaded = True
@@ -264,13 +270,6 @@ async def _sync_tab_before_paste(page: OrionPage, *, target_id: str) -> dict[str
                 "brought_to_front": brought_to_front,
                 "tab_reloaded": tab_reloaded,
                 "refuse": _refuse("conversation_missing", conversation_id=target_id),
-            }
-
-        if await _is_streaming(page):
-            return {
-                "brought_to_front": brought_to_front,
-                "tab_reloaded": tab_reloaded,
-                "refuse": _refuse("deferred_streaming", pasted=False),
             }
 
         scan_raw = await page.evaluate(_DIALOG_SCAN_JS)
@@ -463,11 +462,6 @@ async def deliver_orion_wake(
         if owns_cdp and pw is not None:
             await pw.stop()
         return _refuse("conversation_missing", conversation_id=target_id)
-
-    if await _is_streaming(page):
-        if owns_cdp and pw is not None:
-            await pw.stop()
-        return _refuse("deferred_streaming", pasted=False)
 
     scan_raw = await page.evaluate(_DIALOG_SCAN_JS)
     scan = scan_raw if isinstance(scan_raw, dict) else {"dialogs": []}

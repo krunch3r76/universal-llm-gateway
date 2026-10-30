@@ -61,7 +61,9 @@ def _composer_focus_js(selector: str) -> str:
 
 
 def _cursor_composer_selector() -> str:
-    path = Path(__file__).resolve().parent / "fixtures" / "cursor_agents_9338_probe.json"
+    path = (
+        Path(__file__).resolve().parent / "fixtures" / "cursor_agents_9338_probe.json"
+    )
     payload = json.loads(path.read_text(encoding="utf-8"))
     return str(payload["composer_selector"])
 
@@ -131,7 +133,9 @@ def _refuse(reason: str, **extra: Any) -> dict[str, Any]:
 def _pick_page(pages: list[dict[str, str]], app: str) -> dict[str, str] | None:
     wanted = _WINDOW_TITLE.get(app, "")
     named = [
-        p for p in pages if p.get("title") == wanted and p.get("web_socket_debugger_url")
+        p
+        for p in pages
+        if p.get("title") == wanted and p.get("web_socket_debugger_url")
     ]
     if len(named) == 1:
         return named[0]
@@ -162,7 +166,7 @@ def _send_fallback_js(line: str) -> str:
         'button[aria-label="Send"]:not([disabled]),button[type="submit"]:not([disabled])'
     )
     return (
-        "(()=>{const el=document.querySelector('[aria-label=\"Prompt\"][contenteditable=\"true\"]');"
+        '(()=>{const el=document.querySelector(\'[aria-label="Prompt"][contenteditable="true"]\');'
         "if(!el)return{ok:true,send_fallback_clicked:false};"
         f"const text=(el.innerText||'').trim(),line={lj};"
         "if(!text||(text!==line.trim()&&!/^BRIDGE_WAKE\\s+thread=\\S+\\s+turn=\\d+(?:,\\d+)*$/.test(text)))"
@@ -187,7 +191,8 @@ async def deliver_wake(
 ) -> dict[str, Any]:
     """Paste one wake into the target sidebar chat and report whether it landed.
 
-    Cursor submits through Glass. When the submit race is won by the timer,
+    Cursor submits through Glass with steerIntent and ignoreQueuing on every
+    submit (not gated on handle status). When the submit race is won by the timer,
     the return keeps ``pasted`` true, ``delivered`` false, and
     ``race_winner`` ``timer`` so callers do not treat the in-flight submit
     as never sent. ``classify_display`` then records unknown. Other failures
@@ -196,7 +201,9 @@ async def deliver_wake(
     """
     target = normalize_target(display, app)
     if not target.get("ok"):
-        return _refuse("unknown_target", display=target.get("display"), app=target.get("app"))
+        return _refuse(
+            "unknown_target", display=target.get("display"), app=target.get("app")
+        )
     number = _turn(turn)
     thread_s = str(thread or "").strip()
     slug_s = str(slug or "").strip()
@@ -245,7 +252,9 @@ async def _deliver_locked(
     try:
         pages = list_pages(target["origin"])
     except URLError as exc:
-        return _refuse("debug_unreachable", display=disp, app=app, detail=type(exc).__name__)
+        return _refuse(
+            "debug_unreachable", display=disp, app=app, detail=type(exc).__name__
+        )
     page = _pick_page(pages, app)
     if page is None:
         return _refuse("no_page", display=disp, app=app, pages=len(pages))
@@ -253,10 +262,16 @@ async def _deliver_locked(
     try:
         surface = await probe_surface(ws_url)
     except (TimeoutError, RuntimeError, OSError) as exc:
-        return _refuse("surface_probe_failed", display=disp, app=app, detail=type(exc).__name__)
+        return _refuse(
+            "surface_probe_failed", display=disp, app=app, detail=type(exc).__name__
+        )
     try:
         verdict = wake_decision(
-            surface, thread=thread_s, slug=slug_s, title=title_s or None, agent_id=aid_s or None
+            surface,
+            thread=thread_s,
+            slug=slug_s,
+            title=title_s or None,
+            agent_id=aid_s or None,
         )
     except ValueError:
         return _refuse("bad_options", display=disp, app=app)
@@ -292,11 +307,22 @@ async def _deliver_locked(
             await asyncio.sleep(0.25)
             surface = await probe_surface(ws_url)
             verdict = wake_decision(
-                surface, thread=thread_s, slug=slug_s, title=title_s or None, agent_id=aid_s or None
+                surface,
+                thread=thread_s,
+                slug=slug_s,
+                title=title_s or None,
+                agent_id=aid_s or None,
             )
 
     if not verdict.get("ok"):
-        return {**verdict, "pasted": False, "delivered": False, "selected": selected, "display": disp, "app": app}
+        return {
+            **verdict,
+            "pasted": False,
+            "delivered": False,
+            "selected": selected,
+            "display": disp,
+            "app": app,
+        }
 
     guard = _busy_or_draft_reason(surface)
     if guard:
@@ -310,13 +336,24 @@ async def _deliver_locked(
         )
     composer = _COMPOSER_JS.get(app)
     if composer is None:
-        return {**verdict, "ok": False, "reason": "composer_unconfirmed", "pasted": False, "delivered": False, "selected": selected}
+        return {
+            **verdict,
+            "ok": False,
+            "reason": "composer_unconfirmed",
+            "pasted": False,
+            "delivered": False,
+            "selected": selected,
+        }
     try:
         if app == "cursor":
             paste_res = await _paste_cursor_services(
                 ws_url,
                 line,
-                agent_id=str(verdict.get("expected_agent_id") or surface.get("active_agent_id") or ""),
+                agent_id=str(
+                    verdict.get("expected_agent_id")
+                    or surface.get("active_agent_id")
+                    or ""
+                ),
             )
         else:
             paste_res = await _paste(ws_url, composer, line)
@@ -366,7 +403,9 @@ async def _deliver_locked(
     return {
         **verdict,
         "ok": delivered,
-        "reason": verdict.get("reason", "match") if delivered else "delivery_unconfirmed",
+        "reason": verdict.get("reason", "match")
+        if delivered
+        else "delivery_unconfirmed",
         "pasted": True,
         "delivered": delivered,
         "selected": selected,
@@ -420,7 +459,13 @@ async def _paste_cursor_services(
         if not isinstance(value, dict):
             return {"ok": False, "reason": "paste_failed"}
         raw_reason = str(value.get("reason") or "").strip()
-        if raw_reason in {"", "no_composer", "no_handle", "no_agent_id", "no_composer_id"}:
+        if raw_reason in {
+            "",
+            "no_composer",
+            "no_handle",
+            "no_agent_id",
+            "no_composer_id",
+        }:
             reason = "no_composer"
         else:
             reason = raw_reason
@@ -433,14 +478,28 @@ async def _paste(ws_url: str, focus_js: str, line: str) -> dict[str, Any]:
 
     async with websockets.connect(ws_url, max_size=2_000_000) as ws:
         await ws.send(
-            json.dumps({"id": 1, "method": "Runtime.evaluate", "params": {"expression": focus_js, "returnByValue": True}})
+            json.dumps(
+                {
+                    "id": 1,
+                    "method": "Runtime.evaluate",
+                    "params": {"expression": focus_js, "returnByValue": True},
+                }
+            )
         )
         focused = await asyncio.wait_for(_response(ws, 1), 5.0)
         value = ((focused.get("result") or {}).get("result") or {}).get("value")
         if not isinstance(value, dict) or not value.get("ok"):
-            reason = value.get("reason") if isinstance(value, dict) and value.get("reason") else "no_composer"
+            reason = (
+                value.get("reason")
+                if isinstance(value, dict) and value.get("reason")
+                else "no_composer"
+            )
             return {"ok": False, "reason": reason}
-        await ws.send(json.dumps({"id": 2, "method": "Input.insertText", "params": {"text": line}}))
+        await ws.send(
+            json.dumps(
+                {"id": 2, "method": "Input.insertText", "params": {"text": line}}
+            )
+        )
         await asyncio.wait_for(_response(ws, 2), 5.0)
         for mid, phase in ((3, "keyDown"), (4, "keyUp")):
             await ws.send(
@@ -465,7 +524,10 @@ async def _paste(ws_url: str, focus_js: str, line: str) -> dict[str, Any]:
                 {
                     "id": 5,
                     "method": "Runtime.evaluate",
-                    "params": {"expression": _send_fallback_js(line), "returnByValue": True},
+                    "params": {
+                        "expression": _send_fallback_js(line),
+                        "returnByValue": True,
+                    },
                 }
             )
         )

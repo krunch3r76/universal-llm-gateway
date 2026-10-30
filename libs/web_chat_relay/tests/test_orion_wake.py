@@ -337,13 +337,15 @@ async def test_conversation_missing_wrong_tab() -> None:
 
 
 @pytest.mark.asyncio
-async def test_deferred_streaming() -> None:
+async def test_streaming_tab_steers_without_defer() -> None:
     page = _FakePage(streaming=True)
     out = await deliver_orion_wake(
         thread="21207", turn=1, from_agent="maestro", page=page
     )
-    assert out["reason"] == "deferred_streaming"
-    assert out["pasted"] is False
+    assert out["ok"] is True, out
+    assert out["reason"] == "delivered"
+    assert out["delivered"] is True
+    assert page.pasted is True
 
 
 @pytest.mark.asyncio
@@ -384,11 +386,11 @@ async def test_hidden_tab_with_composer_draft_skips_reload() -> None:
 
 
 @pytest.mark.asyncio
-async def test_hidden_tab_streaming_after_reload_defers() -> None:
+async def test_hidden_tab_streaming_skips_reload_and_delivers() -> None:
     page = _FakePage(
         visibility_state="hidden",
         composer_draft="",
-        streaming_after_reload=True,
+        streaming=True,
     )
     out = await deliver_orion_wake(
         thread="21207",
@@ -396,26 +398,11 @@ async def test_hidden_tab_streaming_after_reload_defers() -> None:
         from_agent="maestro",
         page=page,
     )
-    assert out["reason"] == "deferred_streaming"
-    assert out["pasted"] is False
-    assert out["tab_reloaded"] is True
-    assert not page.keyboard.inserted
-
-
-@pytest.mark.asyncio
-async def test_streaming_then_idle_delivers_on_redelivery() -> None:
-    page = _FakePage(streaming=True)
-    deferred = await deliver_orion_wake(
-        thread="21207", turn=5, from_agent="maestro", page=page
-    )
-    assert deferred["reason"] == "deferred_streaming"
-    page.streaming = False
-    delivered = await deliver_orion_wake(
-        thread="21207", turn=5, from_agent="maestro", page=page
-    )
-    assert delivered["ok"] is True
-    assert delivered["delivered"] is True
-    assert page.pasted is True
+    assert out["ok"] is True, out
+    assert out["reason"] == "delivered"
+    assert out["tab_reloaded"] is False
+    assert page.reloaded == 0
+    assert page.keyboard.inserted
 
 
 @pytest.mark.asyncio
