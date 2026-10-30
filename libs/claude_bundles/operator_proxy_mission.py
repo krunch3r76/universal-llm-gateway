@@ -458,12 +458,21 @@ def _enforce_hop_render_max(
     if _total_bytes() <= HOP_RENDER_MAX_B:
         return
 
+    checkpoint_pref = fields.get("checkpoint_block") or ""
+    rendered_ck_bytes: int | None = None
+    if checkpoint_pref.startswith(_CHECKPOINT_RENDER_PREFIX):
+        rendered_ck_bytes = len(
+            checkpoint_pref[len(_CHECKPOINT_RENDER_PREFIX) :].encode("utf-8")
+        )
+
     leg_bytes = measure_checkpoint_budget_bytes(standing_handoff_text or "")
-    protected_floor = (
-        CHECKPOINT_BUDGET_B
-        if leg_bytes is not None and leg_bytes <= CHECKPOINT_BUDGET_B
-        else HOP_LEG_FLOOR_B
-    )
+    if leg_bytes is not None and leg_bytes <= CHECKPOINT_BUDGET_B:
+        protected_floor = CHECKPOINT_BUDGET_B
+    elif rendered_ck_bytes is not None and rendered_ck_bytes <= CHECKPOINT_BUDGET_B:
+        # Measured leg can exceed cap while render already fit; trim for hop only.
+        protected_floor = 0
+    else:
+        protected_floor = HOP_LEG_FLOOR_B
 
     initial_size: int | None = None
     last_target: int | None = None

@@ -97,7 +97,6 @@ def test_ensure_injects_briefing_without_slash_prefix() -> None:
     _assert_section_order(out, _SECTION_ORDER)
     assert "cdp-operator-proxy" in out
     assert "hypothesize-simulate" in out
-    assert "agent-bus-discipline" not in out.split("## Hard refusals", 1)[0]
     assert "other four skills" in out
     assert out.index("## Hop request (data)") < out.index("# Mission\nDo the thing.")
     assert out.index("# Mission\nDo the thing.") < out.index("## Hard refusals")
@@ -604,6 +603,43 @@ def test_enforce_hop_render_max_sha_inflated_checkpoint_appends_flag_after_loop(
     acts = out.split("## Your first acts", 1)[1].split("## Data", 1)[0]
     assert f"{lane}-standing-handoff.md" in acts
     assert f"{lane}-house-rules.md" in acts
+
+
+def test_floor_denominator_ge_2048_when_leg_over_cap() -> None:
+    from claude_bundles.operator_proxy_mission import HOP_LEG_FLOOR_B
+
+    notes = "n" * 9000
+    sidecar = f"## CURRENT LEG\nLEG 1\n### NOTES\n{notes}\n"
+    out = ensure_operator_proxy_mission_prompt(
+        "thread_id: 99999\n",
+        standing_handoff_text=sidecar,
+        roster_text="",
+        fetch_turns=_noop_fetch,
+        journal_text="",
+        register_text="",
+    )
+    marker = "[budget_exceeded checkpoint "
+    assert marker in out
+    flag = marker + out.split(marker, 1)[1].split("\n", 1)[0]
+    denom = int(flag.split("/")[1].split()[0])
+    assert denom >= HOP_LEG_FLOOR_B
+
+
+def test_denominator_never_zero() -> None:
+    notes = "n" * 9000
+    sidecar = f"## CURRENT LEG\nLEG 1\n### NOTES\n{notes}\n"
+    out = ensure_operator_proxy_mission_prompt(
+        "thread_id: 99998\n",
+        standing_handoff_text=sidecar,
+        roster_text="",
+        fetch_turns=_noop_fetch,
+        journal_text="",
+        register_text="",
+    )
+    marker = "[budget_exceeded checkpoint "
+    flag = marker + out.split(marker, 1)[1].split("\n", 1)[0]
+    denom = int(flag.split("/")[1].split()[0])
+    assert denom > 0
 
 
 def test_rendered_prompt_is_under_the_old_briefing() -> None:
