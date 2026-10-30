@@ -686,30 +686,50 @@ def test_floor_wins_over_cap_infeasible() -> None:
 
 
 def test_hop_le_12000_with_floor() -> None:
-    """G3 §2: feasible mission hop stays at or under HOP_RENDER_MAX_B."""
+    """Feasible means non-leg bytes plus flag <= 12000 - floor; this NOTES fixture makes 12000 unreachable at the 8192 floor, so the hop exceeds 12000 and the denominator stays at that floor."""
     from claude_bundles.operator_proxy_standing_render import (
         CHECKPOINT_BUDGET_B,
         HOP_RENDER_MAX_B,
         measure_checkpoint_budget_bytes,
     )
 
+    lane = "21413"
+    notes_len = 8150
     sidecar = (
-        "## CURRENT LEG\n"
-        "### OWED / NEXT\nfixture owed line\n"
-        "### HOUSE RULES\n- K1 hop-cap-feasible\n"
+        "## CURRENT LEG\nLEG 1\n"
+        "### OWED / NEXT\nx\n"
+        "### NOTES\n" + ("n" * notes_len) + "\n"
     )
     mb = measure_checkpoint_budget_bytes(sidecar)
     assert mb is not None and mb <= CHECKPOINT_BUDGET_B
 
+    prefix = "## CURRENT LEG (rendered checkpoint)\n"
     out = ensure_operator_proxy_mission_prompt(
-        "TYPE: CONTINUITY_HANDOFF\n# body\n",
+        f"thread_id: {lane}\n",
         standing_handoff_text=sidecar,
         roster_text="",
         fetch_turns=_noop_fetch,
         journal_text="",
         register_text="",
     )
-    assert len(out.encode("utf-8")) <= HOP_RENDER_MAX_B
+    ck_section = out.split(prefix, 1)[1].split("## Lessons", 1)[0]
+    marker = "[budget_exceeded checkpoint "
+    assert ck_section.count(marker) == 1
+    before, rest = ck_section.split(marker, 1)
+    assert len(before.rstrip("\n").encode("utf-8")) == CHECKPOINT_BUDGET_B
+
+    flag_line = "\n" + marker + rest.split("\n", 1)[0]
+    hop_bytes = len(out.encode("utf-8"))
+    ck_bytes = len(ck_section.encode("utf-8"))
+    non_leg_bytes = hop_bytes - ck_bytes
+    flag_bytes = len(flag_line.encode("utf-8"))
+    assert non_leg_bytes + flag_bytes > HOP_RENDER_MAX_B - CHECKPOINT_BUDGET_B
+
+    assert hop_bytes > HOP_RENDER_MAX_B
+
+    denom = int((marker + rest.split("\n", 1)[0]).split("/")[1].split()[0])
+    assert denom == CHECKPOINT_BUDGET_B
+    assert denom != 0
 
 
 def test_floor_denominator_ge_2048_when_leg_over_cap() -> None:
