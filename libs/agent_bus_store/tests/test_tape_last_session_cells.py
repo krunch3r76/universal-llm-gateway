@@ -5,7 +5,11 @@ from __future__ import annotations
 from unittest.mock import MagicMock, patch
 
 import pytest
-from agent_bus_store.tape_cells import _cells_for_lane, _last_session_cells
+from agent_bus_store.tape_cells import (
+    _cells_for_lane,
+    _last_session_cells,
+    _unanchored_open_cell_allowed_after_tip,
+)
 from agent_bus_store.tape_pour import pour_lane_messages
 
 pytestmark = pytest.mark.offline
@@ -213,6 +217,109 @@ def test_f2_window_whole_tip_excludes_older_sealed_transcript(
     }
     assert _UUID_OLD not in open_by_tid
     assert _UUID_NEW in open_by_tid
+
+
+def test_gate_admits_when_sealed_on_after_tip() -> None:
+    lane_journals = [
+        {
+            "conversation_uuid": _UUID_OLD,
+            "timestamp": "2026-10-29T13:24:00+00:00",
+            "sealed_on": "2026-10-30T23:00:00+00:00",
+            "id": 100,
+        }
+    ]
+    assert _unanchored_open_cell_allowed_after_tip(
+        transcript_id=_UUID_OLD,
+        lane_journals=lane_journals,
+        tip_transcript_ids=set(),
+        last_cp_created_at="2026-10-30T22:48:00+00:00",
+    )
+
+
+def test_gate_excludes_when_sealed_on_on_or_before_tip() -> None:
+    lane_journals = [
+        {
+            "conversation_uuid": _UUID_OLD,
+            "timestamp": "2026-10-29T13:24:00+00:00",
+            "sealed_on": "2026-10-30T22:48:00+00:00",
+            "id": 100,
+        }
+    ]
+    assert not _unanchored_open_cell_allowed_after_tip(
+        transcript_id=_UUID_OLD,
+        lane_journals=lane_journals,
+        tip_transcript_ids=set(),
+        last_cp_created_at="2026-10-30T22:48:00+00:00",
+    )
+
+
+def test_gate_excludes_unparseable_clocks_under_window_whole_tip() -> None:
+    lane_journals = [
+        {
+            "conversation_uuid": _UUID_OLD,
+            "timestamp": "not-a-date",
+            "sealed_on": None,
+            "id": 100,
+        }
+    ]
+    assert not _unanchored_open_cell_allowed_after_tip(
+        transcript_id=_UUID_OLD,
+        lane_journals=lane_journals,
+        tip_transcript_ids=set(),
+        last_cp_created_at="also-not-a-date",
+    )
+
+
+@patch("agent_bus_store.tape_membership.lookup_dominant_lane_by_uuid")
+@patch("agent_bus_store.tape_cells.list_checkpoint_turns")
+@patch("agent_bus_store.tape_cells.connect")
+@patch("agent_bus_store.tape_cells.build_chain_segments")
+def test_extended_transcript_admitted_via_sealed_on_path(
+    mock_chain,
+    mock_connect,
+    mock_cps,
+    mock_uuid_lookup,
+) -> None:
+    """Production journal row: first-seal timestamp before tip, sealed_on after."""
+    mock_uuid_lookup.return_value = None
+    mock_chain.return_value = [
+        {"transcript_id": _UUID_OLD, "turn_lo": 0, "turn_hi": 8, "session_id": "old"},
+    ]
+    cp_tip_body = "Window: boundary=window_whole\n"
+    cps = [
+        type(
+            "CP",
+            (),
+            {
+                "turn_number": 20,
+                "cp_ordinal": 55,
+                "created_at": "2026-10-30T22:48:00+00:00",
+            },
+        )()
+    ]
+    mock_cps.return_value = cps
+    conn = mock_connect.return_value.__enter__.return_value
+    conn.execute.return_value.fetchone.side_effect = [{"body": cp_tip_body}]
+    lane_journals = [
+        {
+            "session_id": "old",
+            "conversation_uuid": _UUID_OLD,
+            "timestamp": "2026-10-29T13:24:00+00:00",
+            "sealed_on": "2026-10-30T23:00:00+00:00",
+            "id": 100,
+        }
+    ]
+    cells = _cells_for_lane(
+        thread_id=_ROOT,
+        lane_journals=lane_journals,
+        files_root=MagicMock(),
+    )
+    open_by_tid = {
+        str(c["transcript_id"]): c
+        for c in cells
+        if c.get("bus_turn_id") is None
+    }
+    assert _UUID_OLD in open_by_tid
 
 
 @patch("agent_bus_store.tape_membership.lookup_dominant_lane_by_uuid")

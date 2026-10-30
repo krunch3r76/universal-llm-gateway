@@ -208,8 +208,11 @@ def test_last_session_elides_turn_one_bootstrap_when_turn_two_present() -> None:
     ]
     out = excise_turn_one_resume_bootstrap(messages)
     turn_one = [m for m in out if int(m.get("turn_index") or 0) == 1]
-    assert len(turn_one) == 1
-    assert "[elided liaison_hop_bootstrap:" in str(turn_one[0].get("content") or "")
+    user_one = next(m for m in turn_one if m.get("role") == "user")
+    assert "[elided liaison_hop_bootstrap:" in str(user_one.get("content") or "")
+    assert "Liaison IDE hop" not in str(user_one.get("content") or "")
+    assistant_one = next(m for m in turn_one if m.get("role") == "assistant")
+    assert "[elided rule3_resume_ceremony:" in str(assistant_one.get("content") or "")
     assert any("post-resume work" in str(m.get("content") or "") for m in out)
 
 
@@ -234,6 +237,95 @@ def test_one_turn_hop_keeps_elided_turn_one_bootstrap() -> None:
     user = elided[0]["content"]
     assert "[elided liaison_hop_bootstrap:" in user
     assert "Liaison IDE hop" not in user
+
+
+@pytest.mark.parametrize("scope", ["last_session", "window", "full"])
+def test_handoff_elision_preserves_operator_text_all_scopes(scope: str) -> None:
+    content = (
+        "prefix\nK44 from predecessor \npaste body\n\n"
+        "operator after k44 survives"
+    )
+    lane_journals = [
+        {
+            "session_id": "sid-a",
+            "conversation_uuid": _TID,
+            "verbatim_codec": "md-v1",
+            "file_path": "notes/system/transcripts/sid-a.md",
+        },
+    ]
+    segments = [
+        {
+            "session_id": "sid-a",
+            "transcript_id": _TID,
+            "turn_lo": 0,
+            "turn_hi": 1,
+            "turn_count": 1,
+            "verbatim_codec": "md-v1",
+            "from_sealed": True,
+        },
+    ]
+    cells = [
+        {
+            "cp_ordinal": 1,
+            "transcript_id": _TID,
+            "turn_lo": 0,
+            "turn_hi": 1,
+            "bus_turn_id": 10,
+            "channel": "continuity",
+        }
+    ]
+    files_root = MagicMock()
+    read_mock = MagicMock(return_value="# Session\n")
+    files_root.__truediv__ = MagicMock(return_value=MagicMock(read_text=read_mock))
+    journals = [{**lane_journals[0], "entity_ids": ["agent-bus:10479"]}]
+    row_messages = [{"role": "user", "content": content, "transcript_id": _TID, "turn_index": 1}]
+
+    with (
+        patch("agent_bus_store.tape_pour._cells_for_lane", return_value=cells),
+        patch(
+            "agent_bus_store.tape_pour.messages_from_sealed_row",
+            return_value=(row_messages, "md-v1"),
+        ),
+        patch(
+            "agent_bus_store.tape_pour._last_session_cells",
+            return_value=(cells, 0, 0, 0),
+        ),
+        patch("agent_bus_store.tape_pour._window_cells", return_value=cells),
+        patch("agent_bus_store.tape_pour._window_segments", return_value=segments),
+    ):
+        messages, *_rest = pour_lane_messages(
+            thread_id="10479",
+            journals=journals,
+            segments=segments,
+            lane_journals=lane_journals,
+            files_root=files_root,
+            scope=scope,
+            transcript_id=_TID if scope == "window" else None,
+            budget_bytes=512_000,
+            tools="none",
+            include_extras=False,
+        )
+    assert messages
+    body = str(messages[0].get("content") or "")
+    assert "operator after k44 survives" in body
+    assert "paste body" not in body
+
+
+def test_pour_empty_segments_yields_empty_messages() -> None:
+    lane_journals: list[dict] = []
+    with patch("agent_bus_store.tape_pour._cells_for_lane", return_value=[]):
+        messages, *_rest = pour_lane_messages(
+            thread_id="10479",
+            journals=[],
+            segments=[],
+            lane_journals=lane_journals,
+            files_root=MagicMock(),
+            scope="full",
+            budget_bytes=512_000,
+            tools="none",
+            include_extras=False,
+        )
+    assert messages == []
 
 
 def test_narrow_pour_minimal_tail_when_fully_sealed() -> None:

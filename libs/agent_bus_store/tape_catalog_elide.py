@@ -64,7 +64,7 @@ _RULE3_RESUME_CEREMONY_RE = re.compile(
 )
 _RULE3_CEREMONY_BLOCK_RE = re.compile(
     r"(?m)^(?:Where we left off|Rules I.m holding)[^\n]*"
-    r"(?:\n(?!(?:Where we left off|Rules I.m holding)\b)[^\n]*)*",
+    r"(?:\n(?!(?:\n|Where we left off|Rules I.m holding)\b)[^\n]*)*",
     re.IGNORECASE,
 )
 

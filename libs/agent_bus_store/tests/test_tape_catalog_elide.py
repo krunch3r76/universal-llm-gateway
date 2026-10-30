@@ -5,7 +5,9 @@ from __future__ import annotations
 import pytest
 from agent_bus_store.tape_catalog_elide import (
     elide_ide_catalog_blocks,
+    excise_turn_one_resume_bootstrap,
     exclude_ide_catalog_turns,
+    is_resume_hop_bootstrap_user_content,
 )
 from agent_bus_store.tape_degrade import payload_bytes
 from agent_bus_store.tape_verbal import project_role_content_list
@@ -230,8 +232,19 @@ def test_elides_k44_predecessor_paste() -> None:
     assert content.startswith("prefix")
 
 
+def test_k44_elision_stops_before_operator_text() -> None:
+    content = (
+        "prefix\nK44 from predecessor \nlong paste\n\n"
+        "operator speech after k44 must survive"
+    )
+    out = elide_ide_catalog_blocks([{"role": "user", "content": content}])[0]["content"]
+    assert "[elided k44_predecessor_paste:" in out
+    assert "operator speech after k44 must survive" in out
+    assert "long paste" not in out
+
+
 def test_overlapping_handoff_spans_preserve_prefix() -> None:
-    """K44 paste runs to EOF and overlaps liaison hop; operator prefix must survive."""
+    """Overlapping K44/hop spans must not swallow operator prefix text."""
     prefix = "operator speech keep this prefix intact\n"
     k44_tail = "K44 from predecessor \nhandoff body " + ("p" * 80) + "\n"
     hop = _mini_liaison_hop_block()
@@ -247,6 +260,78 @@ def test_overlapping_handoff_spans_preserve_prefix() -> None:
         "[elided k44_predecessor_paste:" in out
         or "[elided liaison_hop_bootstrap:" in out
     )
+
+
+def test_k44_starting_inside_hop_span_preserves_outer_prefix() -> None:
+    prefix = "outer operator prefix\n"
+    hop = (
+        "Liaison IDE hop (attended) tip_cp=1.\n"
+        "K44 from predecessor \ninner paste line\n"
+        "OPERATOR LOOP: close with a situation report to the operator. "
+        "A finished watch with no next leg is not a situation report."
+    )
+    content = prefix + hop
+    out = elide_ide_catalog_blocks([{"role": "user", "content": content}])[0]["content"]
+    assert out.startswith(prefix)
+    assert "outer operator prefix" in out
+    assert "inner paste line" not in out
+
+
+def test_bare_hop_on_agent_bus_line_is_not_bootstrap() -> None:
+    content = "# Hop on agent-bus:12286: you are the operator seat\n<user_query>ask</user_query>"
+    assert not is_resume_hop_bootstrap_user_content(content)
+
+
+def test_excise_turn_one_preserves_user_query_after_bootstrap() -> None:
+    tid = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
+    hop = _mini_liaison_hop_block()
+    messages = [
+        {
+            "role": "user",
+            "content": f"{hop}\n<user_query>keep this ask</user_query>",
+            "transcript_id": tid,
+            "turn_index": 1,
+        },
+        {
+            "role": "user",
+            "content": "<user_query>turn two</user_query>",
+            "transcript_id": tid,
+            "turn_index": 2,
+        },
+    ]
+    out = excise_turn_one_resume_bootstrap(messages)
+    assert any("keep this ask" in str(m.get("content") or "") for m in out)
+    assert "[elided liaison_hop_bootstrap:" in str(out[0].get("content") or "")
+
+
+def test_excise_turn_one_keeps_assistant_work_beyond_ceremony() -> None:
+    tid = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
+    messages = [
+        {
+            "role": "user",
+            "content": _mini_liaison_hop_block(),
+            "transcript_id": tid,
+            "turn_index": 1,
+        },
+        {
+            "role": "assistant",
+            "content": "Where we left off: recap.\n\nShipped the fix in turn one.",
+            "transcript_id": tid,
+            "turn_index": 1,
+        },
+        {
+            "role": "user",
+            "content": "<user_query>turn two</user_query>",
+            "transcript_id": tid,
+            "turn_index": 2,
+        },
+    ]
+    out = excise_turn_one_resume_bootstrap(messages)
+    assistant = next(
+        m for m in out if m.get("role") == "assistant" and int(m.get("turn_index") or 0) == 1
+    )
+    assert "Shipped the fix in turn one." in str(assistant.get("content") or "")
+    assert "Where we left off" not in str(assistant.get("content") or "")
 
 
 def test_subagent_tags_elided_outside_user_query() -> None:
