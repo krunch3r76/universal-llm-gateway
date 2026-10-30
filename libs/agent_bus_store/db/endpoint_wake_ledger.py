@@ -280,14 +280,19 @@ def _owed_wake_covers_turn(*, agent: str, thread_id: str, turn_number: int) -> b
 def _seat_superseded_skip_reason(
     conn: sqlite3.Connection, *, agent: str, thread_id: str
 ) -> str | None:
-    """Skip when the resolved subscription route's CSE seat is superseded."""
+    """Skip when the resolved subscription route's CSE seat is superseded.
+
+    Tombstone subscriptions (state != subscribed) suppress wakes only for
+    surface ``cse``. Other surfaces (grok, display, …) may be retired without
+    blocking synthetic routes (e.g. Orion chat) that do not use that row.
+    """
     _ = conn
     resolved = resolve_subscription_for_thread(agent, thread_id)
     if resolved is None:
         with connect() as sub_conn:
             row = sub_conn.execute(
                 """
-                SELECT state FROM agent_endpoint_subscriptions
+                SELECT state, surface FROM agent_endpoint_subscriptions
                 WHERE agent = ?
                   AND id IN (
                     SELECT MAX(id) FROM agent_endpoint_subscriptions
@@ -303,7 +308,8 @@ def _seat_superseded_skip_reason(
                 (agent, agent, thread_id, thread_id),
             ).fetchone()
         if row is not None and str(row["state"] or "") != "subscribed":
-            return "seat_superseded"
+            if str(row["surface"] or "") == "cse":
+                return "seat_superseded"
         return None
     _route, sub = resolved
     if str(sub.get("surface") or "") != "cse":

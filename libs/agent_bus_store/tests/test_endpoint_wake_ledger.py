@@ -1425,6 +1425,70 @@ def test_seat_superseded_skip_reason_tombstone_only_subscription(
         )
 
 
+def test_seat_superseded_skip_reason_grok_tombstone_does_not_block_orion(
+    db: TestClient,
+) -> None:
+    """Retired grok subscription must not seat_supersede Orion synthetic delivery."""
+    from agent_bus_store.db.endpoint_subscriptions import (
+        subscribe_endpoint,
+        unsubscribe_endpoint,
+    )
+    from agent_bus_store.db.endpoint_wake_ledger import (
+        _seat_superseded_skip_reason,
+        _skip_reason,
+    )
+
+    detail = create_thread(thread_id="21207", slug="orion-grok-tombstone")
+    assert detail is not None
+    thread = "21207"
+    subscribe_endpoint(
+        agent="orion",
+        thread_scope=thread,
+        surface="grok",
+        display="9",
+        title="wrong-surface retire",
+    )
+    unsubscribe_endpoint(agent="orion", thread_scope=thread)
+    t_id, _ts, t_n, _c = insert_turn(
+        thread=thread,
+        from_agent="maestro",
+        to_agent="orion",
+        subject="WAKE|specimen",
+        body="b",
+    )
+    get_cursor()
+    with connect() as conn:
+        conn.execute("UPDATE endpoint_wake_cursor SET high_water_turn_id=0")
+    advance_scan(
+        "endpoint-wake-dispatcher",
+        0,
+        t_id,
+        [
+            {
+                "agent": "orion",
+                "thread_id": thread,
+                "turn_id": t_id,
+                "turn_number": t_n,
+            }
+        ],
+        now="2020-01-01 18:30:00",
+    )
+    with connect() as conn:
+        assert (
+            _seat_superseded_skip_reason(conn, agent="orion", thread_id=thread) is None
+        )
+        row = conn.execute(
+            "SELECT * FROM endpoint_wake_ledger WHERE thread_id=? AND turn_id=?",
+            (thread, t_id),
+        ).fetchone()
+        assert row is not None
+        assert _skip_reason(conn, row) is None
+    # Orion house coalesce debounce is 30s; claim after the window elapses.
+    claimed = claim_due_wakes(now="2020-01-01 18:31:00")
+    assert claimed["wake_id"] is not None
+    assert claimed["rows"][0]["state"] == "claimed"
+
+
 def test_seat_superseded_skip_reason_when_cse_holder_superseded(
     db: TestClient, monkeypatch: pytest.MonkeyPatch
 ) -> None:
