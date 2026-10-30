@@ -543,3 +543,46 @@ def test_holder_conversation_url_from_subscription() -> None:
         == PINNED_CONVERSATION_ID
     )
     assert build_wake_pointer(thread="1", turn=2, from_agent="x").startswith("WAKE —")
+
+
+_NEUTRAL_CONV_ID = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
+_NEUTRAL_PROJECT_URL = "https://chatgpt.com/g/g-p-neutral-project-slug/c/aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
+_NEUTRAL_FLAT_URL = f"https://chatgpt.com/c/{_NEUTRAL_CONV_ID}"
+
+
+def test_holder_conversation_url_mixed_synthetic_preserves_project_url() -> None:
+    """Break: bare agent_id scanned first → flat URL vs ledger project-qualified endpoint."""
+    sub = {
+        "title": _NEUTRAL_PROJECT_URL,
+        "agent_id": _NEUTRAL_CONV_ID,
+    }
+    assert holder_conversation_url(sub) == _NEUTRAL_PROJECT_URL
+
+
+def test_holder_conversation_url_explicit_url_strips_query() -> None:
+    sub = {
+        "title": _NEUTRAL_PROJECT_URL + "?model=gpt-4",
+        "agent_id": _NEUTRAL_CONV_ID,
+    }
+    assert holder_conversation_url(sub) == _NEUTRAL_PROJECT_URL
+
+
+def test_holder_conversation_url_bare_id_only_flat_fallback() -> None:
+    sub = {"agent_id": _NEUTRAL_CONV_ID}
+    assert holder_conversation_url(sub) == _NEUTRAL_FLAT_URL
+
+
+def test_holder_conversation_url_mismatched_title_not_candidate() -> None:
+    other_id = "11111111-2222-3333-4444-555555555555"
+    other_url = f"https://chatgpt.com/g/g-p-other/c/{other_id}"
+    sub = {"title": other_url, "agent_id": _NEUTRAL_CONV_ID}
+    assert holder_conversation_url(sub) == _NEUTRAL_FLAT_URL
+
+
+def test_holder_conversation_url_full_agent_id_url_precedence() -> None:
+    flat_other = "https://chatgpt.com/c/11111111-2222-3333-4444-555555555555"
+    sub = {
+        "agent_id": _NEUTRAL_PROJECT_URL,
+        "title": flat_other,
+    }
+    assert holder_conversation_url(sub) == _NEUTRAL_PROJECT_URL

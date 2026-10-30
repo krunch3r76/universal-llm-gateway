@@ -97,6 +97,31 @@ def conversation_id_from_url(url: str) -> str:
     return ""
 
 
+def _strip_conversation_url(url: str) -> str:
+    return url.split("?", 1)[0]
+
+
+def _explicit_holder_url(raw: str) -> str | None:
+    if raw.startswith("http") and "/c/" in raw:
+        return _strip_conversation_url(raw)
+    return None
+
+
+def _matching_explicit_url_for_uuid(sub: dict[str, Any], conv_uuid: str) -> str | None:
+    """Project-qualified URL in title/chat_url when it matches bare agent_id."""
+    want = conv_uuid.lower()
+    for key in ("title", "chat_url"):
+        raw = str(sub.get(key) or "").strip()
+        if not raw:
+            continue
+        explicit = _explicit_holder_url(raw)
+        if explicit is None:
+            continue
+        if conversation_id_from_url(explicit).lower() == want:
+            return explicit
+    return None
+
+
 def holder_conversation_url(sub: dict[str, Any] | None) -> str:
     """Resolve pinned /c/ URL from subscription holder fields."""
     if not sub:
@@ -105,9 +130,14 @@ def holder_conversation_url(sub: dict[str, Any] | None) -> str:
         raw = str(sub.get(key) or "").strip()
         if not raw:
             continue
-        if raw.startswith("http") and "/c/" in raw:
-            return raw.split("?", 1)[0]
+        explicit = _explicit_holder_url(raw)
+        if explicit is not None:
+            return explicit
         if re.fullmatch(r"[0-9a-f-]{36}", raw, flags=re.I):
+            if key == "agent_id":
+                matched = _matching_explicit_url_for_uuid(sub, raw)
+                if matched is not None:
+                    return matched
             return f"https://chatgpt.com/c/{raw}"
         cid = conversation_id_from_url(raw)
         if cid:
