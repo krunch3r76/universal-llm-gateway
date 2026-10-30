@@ -9,9 +9,12 @@ from implement_admission.conductor_materialize import (
     G_ROWS,
     validate_conductor_opts_seeds,
 )
+from implement_admission.conductor_admit_model import (
+    resolve_conductor_admit_model,
+    resolve_hop_successor_default_from_pipeline,
+)
 from implement_admission.conductor_policy_snapshot import (
     default_knobs_from_route_policy,
-    model_for_seat_role,
     plan_scoreboard_birth,
     resolve_conductor_knobs,
     selected_seat_for_hop,
@@ -67,7 +70,10 @@ def evaluate_conductor_defaults(
         next_admit_verb=opts.get("next_admit_verb"),
         hop_reason=opts.get("hop_reason"),
     )
-    model = model_for_seat_role(snapshot, seat_role)
+    model, model_knobs, model_warnings = resolve_conductor_admit_model(
+        opts, snapshot=snapshot, seat_role=seat_role
+    )
+    hop_successor_default = resolve_hop_successor_default_from_pipeline()
     source_ref = str(opts.get("source_ref") or "").strip()
     scoreboard_root = _scoreboard_files_root(opts)
     slug = todo_slug_from_ref(source_ref) if source_ref.startswith("todo:") else ""
@@ -121,29 +127,38 @@ def evaluate_conductor_defaults(
         family="cursor",
         platform="sdk",
     )
-    plan.update(
-        {
-            "packet_markdown": "",
-            "packet_sha256": "",
-            "packet_rel_path": "",
-            "birth_scoreboard_markdown": birth_md,
-            "selected_seat_role": seat_role,
-            "birth_seed_ignored": birth_plan.birth_seed_ignored,
-            "policy_sha256": snapshot.policy_sha256,
-            "policy_epoch": snapshot.policy_epoch,
-            "entry_gate": birth_plan.entry_gate,
-            "hop_seq": hop_seq,
-            "hop_from": opts.get("hop_from"),
-            "hop_reason": opts.get("hop_reason"),
-            "work_key": source_ref,
-            "tip_mutated": opts.get("tip_mutated"),
-            "child_dispatched": opts.get("child_dispatched"),
-            "hop_class_defaulted": not (
-                opts.get("next_admit_verb") or opts.get("hop_reason")
-            )
-            and hop_seq >= 1,
-        }
-    )
+    extra: dict[str, Any] = {
+        "packet_markdown": "",
+        "packet_sha256": "",
+        "packet_rel_path": "",
+        "birth_scoreboard_markdown": birth_md,
+        "selected_seat_role": seat_role,
+        "birth_seed_ignored": birth_plan.birth_seed_ignored,
+        "policy_sha256": snapshot.policy_sha256,
+        "policy_epoch": snapshot.policy_epoch,
+        "entry_gate": birth_plan.entry_gate,
+        "hop_seq": hop_seq,
+        "hop_from": opts.get("hop_from"),
+        "hop_reason": opts.get("hop_reason"),
+        "work_key": source_ref,
+        "tip_mutated": opts.get("tip_mutated"),
+        "child_dispatched": opts.get("child_dispatched"),
+        "hop_class_defaulted": not (
+            opts.get("next_admit_verb") or opts.get("hop_reason")
+        )
+        and hop_seq >= 1,
+    }
+    if model_knobs:
+        extra["model_knobs"] = model_knobs
+    if model_warnings:
+        extra["model_defaults_warnings"] = model_warnings
+    if hop_seq == 0 and hop_successor_default:
+        extra["hop_successor_default"] = hop_successor_default.get("model")
+        if hop_successor_default.get("model_knobs"):
+            extra["hop_successor_default_knobs"] = hop_successor_default[
+                "model_knobs"
+            ]
+    plan.update(extra)
     return plan
 
 

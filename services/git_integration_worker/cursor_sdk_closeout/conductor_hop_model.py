@@ -41,9 +41,10 @@ def resolve_hop_successor_model_fields(
 
     Precedence: ``hop_reactor_model`` / ``hop_reactor_model_knobs`` on the
     predecessor ledger record, then todo attrs ``conductor_hop_model`` /
-    ``conductor_hop_model_knobs``, then the K97 conductor-admit recipe.
+    ``conductor_hop_model_knobs``, then ledger ``hop_successor_default`` stamp,
+    then the K97 conductor-admit recipe.
     """
-    recipe = conductor_hop_recipe_model_fields()
+    recipe = conductor_hop_recipe_model_fields(rec)
 
     reactor_model = str(rec.get("hop_reactor_model") or "").strip() or None
     reactor_knobs = _normalize_knobs(rec.get("hop_reactor_model_knobs"))

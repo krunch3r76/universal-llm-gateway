@@ -30,7 +30,7 @@ def test_live_file_conformance() -> None:
 
 
 def test_load_auto_judgment_default_model_live() -> None:
-    assert load_auto_judgment_default_model(load_route_policy()) == "cursor/grok-4.7"
+    assert load_auto_judgment_default_model(load_route_policy()) == "cursor/composer-2.5"
 
 
 def test_assert_workflow_registry_boot_conformance_passes() -> None:
@@ -42,8 +42,11 @@ def test_committed_skill_block_is_drift_free() -> None:
         Path(__file__).resolve().parents[2]
         / "cursor-plugins/ulg-ecosystem/skills/consult-routing/SKILL.md"
     )
+    policy_path = (
+        Path(__file__).resolve().parents[2] / "config/routing/route_policy.yaml"
+    )
     assert skill.is_file()
-    assert verify_workflow_registry_drift(skill) is True
+    assert verify_workflow_registry_drift(skill, policy_path=policy_path) is True
 
 
 def test_valid_models_block_rejects_composer_fast_wire_id() -> None:

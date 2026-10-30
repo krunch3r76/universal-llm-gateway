@@ -68,7 +68,7 @@ def row_bind_model(policy: dict[str, Any]) -> str:
     raw = str(policy.get("row_bind_model") or "").strip()
     if raw.startswith(("cursor/", "cdp/")):
         return raw
-    return "cursor/grok-4.7"
+    return "cursor/composer-2.5"
 
 
 def friction_night_key(friction_id: str, *, role: str | None = None) -> str:
