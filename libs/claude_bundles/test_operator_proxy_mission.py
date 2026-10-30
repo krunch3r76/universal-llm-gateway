@@ -641,10 +641,11 @@ def test_enforce_hop_render_max_last_leg_overage_denominator_ge_floor() -> None:
 
 
 def test_floor_wins_over_cap_infeasible() -> None:
-    """OWED over cap with rendered checkpoint in-budget: floor stops trim; label matches body."""
+    """Leg over cap: trim stops at 2048 B floor; hop cannot reach 12_000 B."""
     from claude_bundles.operator_proxy_mission import HOP_LEG_FLOOR_B
     from claude_bundles.operator_proxy_standing_render import (
         CHECKPOINT_BUDGET_B,
+        HOP_RENDER_MAX_B,
         measure_checkpoint_budget_bytes,
     )
 
@@ -657,24 +658,58 @@ def test_floor_wins_over_cap_infeasible() -> None:
     mb = measure_checkpoint_budget_bytes(sidecar)
     assert mb is not None and mb > CHECKPOINT_BUDGET_B
 
+    house_rules = "## HOUSE RULES\n" + ("r" * 6000) + "\n"
+    journal = "# journal\n" + ("j" * 4000) + "\n"
+    caller = "thread_id: 18588\n" + ("C" * 2000) + "\n"
+
     prefix = "## CURRENT LEG (rendered checkpoint)\n"
     out = ensure_operator_proxy_mission_prompt(
-        "thread_id: 18588\n",
+        caller,
+        standing_handoff_text=sidecar,
+        house_rules_text=house_rules,
+        roster_text="",
+        fetch_turns=_noop_fetch,
+        journal_text=journal,
+        register_text="",
+    )
+    assert len(out.encode("utf-8")) > HOP_RENDER_MAX_B
+    ck = out.split(prefix, 1)[1].split("## Lessons", 1)[0]
+    marker = "[budget_exceeded checkpoint "
+    assert marker in ck
+    before, rest = ck.rsplit(marker, 1)
+    body_bytes = len(before.rstrip("\n").encode("utf-8"))
+    assert body_bytes == HOP_LEG_FLOOR_B
+    flag_line = marker + rest.split("\n", 1)[0]
+    denom = int(flag_line.split("/")[1].split()[0])
+    assert denom == body_bytes == HOP_LEG_FLOOR_B
+    assert denom != 0
+
+
+def test_hop_le_12000_with_floor() -> None:
+    """G3 §2: feasible mission hop stays at or under HOP_RENDER_MAX_B."""
+    from claude_bundles.operator_proxy_standing_render import (
+        CHECKPOINT_BUDGET_B,
+        HOP_RENDER_MAX_B,
+        measure_checkpoint_budget_bytes,
+    )
+
+    sidecar = (
+        "## CURRENT LEG\n"
+        "### OWED / NEXT\nfixture owed line\n"
+        "### HOUSE RULES\n- K1 hop-cap-feasible\n"
+    )
+    mb = measure_checkpoint_budget_bytes(sidecar)
+    assert mb is not None and mb <= CHECKPOINT_BUDGET_B
+
+    out = ensure_operator_proxy_mission_prompt(
+        "TYPE: CONTINUITY_HANDOFF\n# body\n",
         standing_handoff_text=sidecar,
         roster_text="",
         fetch_turns=_noop_fetch,
         journal_text="",
         register_text="",
     )
-    ck = out.split(prefix, 1)[1].split("## Lessons", 1)[0]
-    marker = "[budget_exceeded checkpoint "
-    assert marker in ck
-    before, rest = ck.rsplit(marker, 1)
-    body_bytes = len(before.rstrip("\n").encode("utf-8"))
-    assert body_bytes >= HOP_LEG_FLOOR_B
-    flag_line = marker + rest.split("\n", 1)[0]
-    denom = int(flag_line.split("/")[1].split()[0])
-    assert denom == body_bytes
+    assert len(out.encode("utf-8")) <= HOP_RENDER_MAX_B
 
 
 def test_floor_denominator_ge_2048_when_leg_over_cap() -> None:
