@@ -313,8 +313,15 @@ def menu_label_glued(label: str) -> bool:
 
 
 def _family_word(family: str) -> str:
-    match = re.match(r"[a-z]+", (family or "").strip().lower())
-    return match.group(0) if match else ""
+    """First model-family token, with optional ``claude`` vendor prefix stripped."""
+    s = (family or "").strip().lower().replace("_", "-")
+    chunks = re.findall(r"[a-z]+|\d+(?:\.\d+)*", s)
+    if chunks and chunks[0] == "claude":
+        chunks = chunks[1:]
+    for chunk in chunks:
+        if re.fullmatch(r"[a-z]+", chunk):
+            return chunk
+    return ""
 
 
 def _names_other_family(family: str, label: str) -> bool:

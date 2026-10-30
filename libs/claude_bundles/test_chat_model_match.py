@@ -291,6 +291,29 @@ def test_family_pattern_claude_prefix_optional_and_version_boundaries() -> None:
 
 
 @pytest.mark.offline
+def test_prefer_model_name_index_claude_prefixed_wire_families_specimen_40857() -> None:
+    """Friction 40864 — claude- wire families must click, not reject as other-family."""
+    labels = [
+        "Fable 5.1For your toughest challenges",
+        "Opus 5.5For complex work and everyday tasks",
+        "Sonnet 5.5Most efficient for simpler tasks\ue03b",
+        "Haiku 5.5Fastest for quick answers",
+        "Fable 5",
+        "Opus 5",
+        "Opus 4.8",
+        "Opus 4.7",
+        "Opus 4.6",
+        "Sonnet 5",
+        "Sonnet 4.6",
+    ]
+    rows = [{"own": label, "full": label} for label in labels]
+    assert prefer_model_name_index("claude-sonnet-5-5", rows) == 2
+    assert prefer_model_name_index("claude-opus-5-5", rows) == 1
+    assert prefer_model_name_index("claude-fable-5-1", rows) == 0
+    assert prefer_model_name_index("claude-haiku-5-5", rows) == 3
+
+
+@pytest.mark.offline
 def test_family_attest_ignores_effort_only_opus_change() -> None:
     assert family_attested("fable-5.1", "Model: Opus 5.5 High") is False
     assert family_attested("fable-5.1", "Model: Fable 5.1") is True

@@ -239,6 +239,11 @@ async def _discover_and_click(
             },
         )
     clicked = await _click_family_radio(page, family)
+    if clicked is None and matched:
+        rows = await _radio_rows(page)
+        index = index_for_named_radio(rows, matched)
+        if index is not None and await _click_radio_index(page, index):
+            clicked = str(rows[index].get("own") or matched).strip() or matched
     if clicked is None:
         return (
             matched,

@@ -9,6 +9,7 @@ import pytest
 from claude_bundles.chat_model_select import (
     PREDICTED_MODEL_LABELS,
     _click_family_radio,
+    _discover_and_click,
     family_pattern,
     label_satisfies_request,
     match_model_request,
@@ -255,3 +256,64 @@ async def test_click_family_radio_picks_name_not_parent() -> None:
     label = await _click_family_radio(page, "fable-5.1")
     assert label == "Fable 5.1"
     assert clicks == [2]
+
+
+_SPECIMEN_40857_SONNET = (
+    "Sonnet 5.5Most efficient for simpler tasks\ue03b"
+)
+
+
+@pytest.mark.offline
+@pytest.mark.asyncio
+async def test_discover_and_click_named_radio_when_family_prefer_misses() -> None:
+    """Friction 40864 — fall back to exact matched label when prefer index is None."""
+    rows = [
+        {"own": "Opus 5.5For complex work", "full": "Opus 5.5For complex work"},
+        {"own": _SPECIMEN_40857_SONNET, "full": _SPECIMEN_40857_SONNET},
+    ]
+    clicks: list[int] = []
+
+    async def _evaluate(script: str, arg: int | None = None) -> object:
+        if arg is None:
+            return rows
+        if isinstance(arg, int):
+            clicks.append(arg)
+            return True
+        return True
+
+    page = AsyncMock()
+    page.keyboard.press = AsyncMock()
+    page.wait_for_timeout = AsyncMock()
+    page.evaluate = AsyncMock(side_effect=_evaluate)
+    with (
+        patch(
+            "claude_bundles.chat_model_select._open_picker",
+            new_callable=AsyncMock,
+        ),
+        patch(
+            "claude_bundles.chat_model_select._expand_more_models",
+            new_callable=AsyncMock,
+        ),
+        patch(
+            "claude_bundles.chat_model_select.list_picker_radios",
+            new_callable=AsyncMock,
+            return_value=[row["full"] for row in rows],
+        ),
+        patch(
+            "claude_bundles.chat_model_select._click_family_radio",
+            new_callable=AsyncMock,
+            return_value=None,
+        ),
+    ):
+        clicked, available, err = await _discover_and_click(
+            page,
+            family="claude-sonnet-5-5",
+            before="Model: Opus 5",
+            requested="claude-sonnet-5-5",
+            predicted=None,
+            effort=None,
+        )
+    assert err is None
+    assert clicked == _SPECIMEN_40857_SONNET
+    assert _SPECIMEN_40857_SONNET in available
+    assert clicks == [1]
