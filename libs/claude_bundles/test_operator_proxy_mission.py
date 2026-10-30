@@ -625,6 +625,27 @@ def test_floor_denominator_ge_2048_when_leg_over_cap() -> None:
     assert denom >= HOP_LEG_FLOOR_B
 
 
+def test_flag_label_equals_applied_target() -> None:
+    notes = "n" * 9000
+    sidecar = f"## CURRENT LEG\nLEG 1\n### NOTES\n{notes}\n"
+    prefix = "## CURRENT LEG (rendered checkpoint)\n"
+    out = ensure_operator_proxy_mission_prompt(
+        "thread_id: 99997\n",
+        standing_handoff_text=sidecar,
+        roster_text="",
+        fetch_turns=_noop_fetch,
+        journal_text="",
+        register_text="",
+    )
+    marker = "[budget_exceeded checkpoint "
+    ck = out.split(prefix, 1)[1].split("## Lessons", 1)[0]
+    assert marker in ck
+    before, rest = ck.rsplit(marker, 1)
+    flag_line = marker + rest.split("\n", 1)[0]
+    denom = int(flag_line.split("/")[1].split()[0])
+    assert denom == len(before.rstrip("\n").encode("utf-8"))
+
+
 def test_denominator_never_zero() -> None:
     notes = "n" * 9000
     sidecar = f"## CURRENT LEG\nLEG 1\n### NOTES\n{notes}\n"

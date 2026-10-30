@@ -734,6 +734,21 @@ def _current_leg(block: str) -> str:
     return f"## CURRENT LEG\n{block}"
 
 
+@pytest.mark.parametrize(
+    "line",
+    [
+        "IN FLIGHT: trailing colon text",
+        "IN FLIGHT (wake-harvest only): paren text",
+    ],
+)
+def test_inflight_paren_and_colon_form_is_section(line: str) -> None:
+    from claude_bundles.operator_proxy_standing_render import _parse_h3_sections
+
+    block = _current_leg(f"LEG 615 ~12:00Z\n{line}\n")
+    sections = _parse_h3_sections(block)
+    assert line in sections["IN FLIGHT"]
+
+
 def test_inflight_trailing_text_is_section() -> None:
     from claude_bundles.operator_proxy_standing_render import _parse_h3_sections
 
@@ -744,6 +759,22 @@ def test_inflight_trailing_text_is_section() -> None:
     assert "IN FLIGHT" not in sections.get("__preamble__", "")
 
 
+@pytest.mark.parametrize(
+    "line",
+    [
+        "STILL IN FLIGHT from LEG 613: prose",
+        "IN FLIGHT items elsewhere",
+        "IN FLIGHT (1) friction prose",
+        "IN FLIGHT (a (b)): x",
+    ],
+)
+def test_inflight_prefix_not_matching_prose(line: str) -> None:
+    from claude_bundles.operator_proxy_standing_render import _parse_h3_sections
+
+    sections = _parse_h3_sections(_current_leg(f"LEG 615 ~12:00Z\n{line}\n"))
+    assert "IN FLIGHT" not in sections
+
+
 def test_inflight_bare_line_unchanged() -> None:
     from claude_bundles.operator_proxy_standing_render import _parse_h3_sections
 
@@ -752,6 +783,44 @@ def test_inflight_bare_line_unchanged() -> None:
     assert "IN FLIGHT" in sections
     assert "- row a" in sections["IN FLIGHT"]
     assert "OPEN: done" in sections.get("__preamble__", "")
+
+
+def test_inflight_only_first_leg_block_counts() -> None:
+    from claude_bundles.operator_proxy_standing_render import _parse_h3_sections
+
+    block = _current_leg(
+        "LEG 615 ~12:00Z\nIN FLIGHT:\n- a\n"
+        "LEG 614 ~11:00Z\nIN FLIGHT: tail\n"
+    )
+    sections = _parse_h3_sections(block)
+    assert "IN FLIGHT" in sections
+    assert "- a" in sections["IN FLIGHT"]
+    assert "IN FLIGHT: tail" in sections.get("__preamble__", "")
+
+
+def test_inflight_text_form_parse_rows_prose_row() -> None:
+    from claude_bundles.operator_proxy_standing_render import parse_inflight_rows
+
+    line = "IN FLIGHT (wake): exec abc, worker 12;"
+    rows = parse_inflight_rows(line)
+    assert len(rows) == 1
+    assert rows[0].raw_line == line
+    assert rows[0].worker is None and rows[0].execution_id is None
+
+
+def test_inflight_hop_inline_header_prose_not_lost() -> None:
+    from claude_bundles.operator_proxy_standing_render import (
+        render_checkpoint_block,
+        render_inflight_block,
+    )
+
+    sidecar = _current_leg("LEG 1 ~12:00Z\nIN FLIGHT (only): hop prose\n")
+    body, meta = render_checkpoint_block(
+        sidecar, lane="12286", inline_house_rules=None, hop_inline=True
+    )
+    assert meta["inflight_rows"]
+    assert "hop prose" in render_inflight_block(meta["inflight_rows"])
+    assert "hop prose" not in body.split("(rendered checkpoint)\n", 1)[1]
 
 
 def test_inflight_head_inside_owed_section_stays_put() -> None:
