@@ -6,10 +6,67 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from bus_watch.endpoint_wake_dispatcher import _POLL_S, _orion_post
+from bus_watch.endpoint_wake_dispatcher import _POLL_S, _orion_post, fire_due_wakes
 from bus_watch.endpoint_wake_transport import StoreClient, classify_orion
 
 pytestmark = pytest.mark.offline
+
+
+def test_fire_due_wakes_consolidates_multi_sender_from_agent() -> None:
+    claimed = {
+        "wake_id": "w-multi",
+        "rows": [
+            {
+                "thread_id": "21207",
+                "turn_id": 1,
+                "turn_number": 302,
+                "agent": "orion",
+                "from_agent": "maestro",
+                "state": "claimed",
+            },
+            {
+                "thread_id": "21207",
+                "turn_id": 2,
+                "turn_number": 303,
+                "agent": "orion",
+                "from_agent": "cursor",
+                "state": "claimed",
+            },
+        ],
+    }
+    sub = {
+        "surface": "chatgpt",
+        "title": "https://chatgpt.com/c/6ae3dd81-bd34-83e8-b5da-4ddc824685b7",
+        "id": 1,
+        "state": "subscribed",
+    }
+
+    class Store:
+        def claim(self) -> dict:
+            return claimed
+
+        def subscription(self, agent: str, thread_id: str, *, raw_to=None):
+            if agent == "orion" and thread_id == "21207":
+                return ("exact", sub)
+            return None
+
+        def result(self, **payload: object) -> int:
+            return 0
+
+    captured: dict = {}
+
+    def _capture_orion_post(rows, subscription, turn_arg, *, from_agent, wake_id=None):
+        captured["from_agent"] = from_agent
+        captured["turn_arg"] = turn_arg
+        return ("delivered", "delivered")
+
+    with patch(
+        "bus_watch.endpoint_wake_dispatcher._orion_post",
+        side_effect=_capture_orion_post,
+    ):
+        fire_due_wakes(Store())  # type: ignore[arg-type]
+    assert captured["turn_arg"] == "302,303"
+    assert captured["from_agent"] == "maestro, cursor"
 
 
 def test_orion_post_pipeline_error_retries_once_then_pending() -> None:

@@ -135,6 +135,7 @@ class _FakePage:
         streaming: bool = False,
         visibility_state: str = "visible",
         composer_draft: str = "",
+        composer_draft_after_reload: str | None = None,
         streaming_after_reload: bool = False,
         preflight_dialogs: list[dict] | None = None,
         approval_dialogs: list[list[str]] | None = None,
@@ -150,6 +151,7 @@ class _FakePage:
         self._steer_target = False
         self.visibility_state = visibility_state
         self.composer_draft = composer_draft
+        self.composer_draft_after_reload = composer_draft_after_reload
         self.streaming_after_reload = streaming_after_reload
         self.brought_to_front = False
         self.reloaded = 0
@@ -235,9 +237,13 @@ class _FakePage:
 
     async def evaluate(self, expression: str) -> object:
         if "visibilityState" in expression and "composerEmpty" in expression:
+            if self.reloaded > 0 and self.composer_draft_after_reload is not None:
+                draft = self.composer_draft_after_reload
+            else:
+                draft = self.composer_draft
             return {
                 "visibilityState": self.visibility_state,
-                "composerEmpty": not (self.composer_draft or "").strip(),
+                "composerEmpty": not (draft or "").strip(),
             }
         if "stop" in expression.lower() and "streaming" not in expression:
             return self.streaming
@@ -391,6 +397,26 @@ async def test_hidden_tab_with_empty_composer_brings_to_front_and_reloads_before
 
 
 @pytest.mark.asyncio
+async def test_hidden_tab_draft_restored_after_reload_refuses_non_empty() -> None:
+    page = _FakePage(
+        visibility_state="hidden",
+        composer_draft="",
+        composer_draft_after_reload="restored after reload",
+    )
+    out = await deliver_orion_wake(
+        thread="21207",
+        turn=4,
+        from_agent="maestro",
+        page=page,
+    )
+    assert out["reason"] == "non_empty_composer"
+    assert out["pasted"] is False
+    assert out["tab_reloaded"] is True
+    assert page.reloaded == 1
+    assert not page.keyboard.inserted
+
+
+@pytest.mark.asyncio
 async def test_hidden_tab_with_composer_draft_refuses_non_empty() -> None:
     page = _FakePage(
         visibility_state="hidden",
@@ -410,9 +436,17 @@ async def test_hidden_tab_with_composer_draft_refuses_non_empty() -> None:
 
 @pytest.mark.asyncio
 async def test_paste_and_send_clicks_steer_when_visible() -> None:
-    page = _FakePage(steer_visible=True, send_visible=False)
+    page = _FakePage(streaming=True, steer_visible=True, send_visible=False)
     await _paste_and_send(page, "wake line", layout="docked")
     assert "steer" in page.clicked
+
+
+@pytest.mark.asyncio
+async def test_paste_and_send_ignores_steer_button_when_not_streaming() -> None:
+    page = _FakePage(streaming=False, steer_visible=True, send_visible=True)
+    await _paste_and_send(page, "wake line", layout="docked")
+    assert "steer" not in page.clicked
+    assert page.clicked
 
 
 @pytest.mark.asyncio
@@ -549,6 +583,24 @@ def test_classify_orion_outcomes() -> None:
 
 def test_conversation_id_from_url_project_path() -> None:
     assert conversation_id_from_url(PINNED_CONVERSATION_URL) == PINNED_CONVERSATION_ID
+
+
+def test_extract_orion_seat_registration_url_hop06_specimen() -> None:
+    from web_chat_relay.orion_wake import extract_orion_seat_registration_url
+
+    body = (
+        "TYPE: SEAT_REGISTRATION\n"
+        "Old exact URL: https://chatgpt.com/g/g-p-6ae3debfee8481918ff3fa45b7d18d3a-ulg-orion"
+        "/c/6ae44d27-06cc-83e8-8b8a-df9b819755bd\n"
+        "New exact URL: https://chatgpt.com/g/g-p-6ae3debfee8481918ff3fa45b7d18d3a-ulg-orion"
+        "/c/6ae4cfde-151c-83e8-8966-fdd8893f472d\n"
+    )
+    url = extract_orion_seat_registration_url(
+        body, subject="SEAT_REGISTRATION|orion-HOP06"
+    )
+    assert url is not None
+    assert url.endswith("/c/6ae4cfde-151c-83e8-8966-fdd8893f472d")
+    assert "6ae44d27" not in url
 
 
 def test_holder_conversation_url_from_subscription() -> None:
