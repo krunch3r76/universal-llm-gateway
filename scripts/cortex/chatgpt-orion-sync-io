@@ -1,0 +1,19 @@
+#!/usr/bin/env bash
+# Orion (chatgpt.com) on io display :12 — CDP 9342, VNC 5912 (view-only on orion-node).
+#
+# Secrets (operator → ~/.gateway/secrets/chatgpt.env only; never chat or argv):
+#   CHATGPT_USERNAME=
+#   CHATGPT_PASSWORD=
+# Email 2FA is read from the mailbox when the login page asks for a code.
+#
+# Subscription: operator chooses Plus/Pro/Business on chatgpt.com (not automated).
+#
+# Usage:
+#   scripts/cortex/chatgpt-orion-sync-io preflight
+#   scripts/cortex/chatgpt-orion-sync-io login
+#   scripts/cortex/chatgpt-orion-sync-io refresh-connectors   # stub until MCP UI automated
+#
+set -euo pipefail
+REPO="$(cd "$(dirname "$0")/../.." && pwd)"
+export PYTHONPATH="${REPO}/libs${PYTHONPATH:+:$PYTHONPATH}"
+exec "$HOME/.venvs/universal/bin/python" -m web_chat_relay.orion_cli "$@"

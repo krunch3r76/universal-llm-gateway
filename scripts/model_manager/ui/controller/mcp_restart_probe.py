@@ -1,25 +1,15 @@
-"""Busy probes that keep MCP restarts from cutting live Cowork / life sessions.
+"""Busy probe for MCP restarts.
 
-MCP's container drain only counts open HTTP requests. A Cowork turn spends most
-of its wall time between POSTs (model thinking, tool planning), so
-``in_flight=0`` is the normal state of a live life session — and a manage
-``NullBusyProbe`` treated that as permission to stop the container.
+No active MCP work permits a restart. Active work is an MCP request still
+inside ``/active-work`` ``in_flight``, other than the single manage call that
+is asking for the restart (a:36950). A Cowork turn between POSTs
+(``life_hot`` with ``in_flight`` 0) and a ``cdp_ask`` execution that is not
+inside an MCP request are not MCP work. The container SIGTERM drain
+(``middleware/drain.py``) still finishes whatever HTTP requests are open.
 
-This module gates MCP (and reports honest busy for ``busy_status``) on:
-1. ``cdp_ask`` drain-state — recorded executions
-2. MCP ``/active-work`` ``life_hot`` — a short life-tools activity TTL
-
-Either signal alone is enough to defer. MCP probe failure is best-effort when
-cdp_ask answered; when cdp_ask is unconfigured, MCP failure fails closed.
-
-MCP's own ``busy`` bit (``in_flight > 0 or life_hot``) is **not** consumed.
-``in_flight`` is the target's request state, and the request asking to restart
-is one of those requests: a seat calling ``manage(sync_restart, mcp)`` through
-the MCP tool held the gate ``busy`` on an idle server and had to force
-(a:36950). Open HTTP requests are already the container's SIGTERM drain's job
-(``middleware/drain.py``); the gate covers what that drain cannot see —
-recorded CDP work and a Cowork turn between POSTs. ``in_flight`` stays in the
-payload as a diagnostic.
+``cdp_ask`` is recorded on the detail for diagnosis and does not set
+``busy``. MCP probe failure is best-effort when cdp_ask answered; when
+cdp_ask is unconfigured, MCP failure fails closed.
 """
 
 from __future__ import annotations
@@ -56,31 +46,32 @@ def mcp_active_work_base_url() -> str:
     return _origin_from_health_url(resolve_mcp_health_probe_url())
 
 
-def _cdp_busy(detail: dict[str, Any]) -> bool:
-    """True when cdp_ask reports a recorded pending or running execution."""
-    try:
-        return int(detail["running_count"]) > 0
-    except KeyError:
-        return True
-    except (TypeError, ValueError):
-        return True
+def _mcp_has_active_work(detail: dict[str, Any]) -> bool:
+    """True when MCP still has a request that is not the lone restart call.
 
-
-def _mcp_session_hot(detail: dict[str, Any]) -> bool:
-    """True when a life-surface ``tools/call`` landed inside the activity TTL.
-
-    Reads ``life_hot`` only — never ``busy`` / ``in_flight`` (request state that
-    counts the caller's own restart request; a:36950). A payload without
-    ``life_hot`` is an older MCP build: fail closed on its ``busy`` bit.
+    ``in_flight`` 0 is idle, including when ``life_hot`` is still inside its
+    TTL. ``in_flight`` 1 with ``life_hot`` false is the manage self-call
+    (a:36950). ``in_flight`` 1 with ``life_hot`` true is one live life call.
+    A payload with no ``in_flight`` fails closed on its ``busy`` bit.
     """
-    life_hot = detail.get("life_hot")
-    if isinstance(life_hot, bool):
-        return life_hot
-    return bool(detail.get("busy", True))
+    if "in_flight" not in detail:
+        life_hot = detail.get("life_hot")
+        if isinstance(life_hot, bool):
+            return life_hot
+        return bool(detail.get("busy", True))
+    try:
+        in_flight = int(detail["in_flight"])
+    except (TypeError, ValueError):
+        return bool(detail.get("busy", True))
+    if in_flight <= 0:
+        return False
+    if in_flight == 1 and detail.get("life_hot") is False:
+        return False
+    return True
 
 
 class McpBusyProbe:
-    """Composite busy probe for recorded CDP work and MCP activity."""
+    """Busy when MCP has an in-flight request that is not the restart call."""
 
     def __init__(
         self,
@@ -103,9 +94,6 @@ class McpBusyProbe:
             cdp_work = await self._cdp.snapshot()
             cdp_seen = True
             detail["cdp_ask"] = cdp_work.detail
-            if _cdp_busy(cdp_work.detail):
-                busy = True
-                detail["busy_reasons"].append("cdp_ask_live")
 
         if self._mcp is not None:
             try:
@@ -118,22 +106,15 @@ class McpBusyProbe:
                     raise
             else:
                 detail["mcp"] = mcp_work.detail
-                if _mcp_session_hot(mcp_work.detail):
+                if _mcp_has_active_work(mcp_work.detail):
                     busy = True
-                    detail["busy_reasons"].append("mcp_session_hot")
+                    detail["busy_reasons"].append("mcp_in_flight")
 
         detail["busy"] = busy
         summary_bits: list[str] = []
-        if "cdp_ask_live" in detail["busy_reasons"]:
-            cdp = detail.get("cdp_ask") or {}
-            summary_bits.append(f"cdp_ask running={cdp.get('running_count')}")
-        if "mcp_session_hot" in detail["busy_reasons"]:
+        if "mcp_in_flight" in detail["busy_reasons"]:
             mcp = detail.get("mcp") or {}
-            summary_bits.append(
-                f"mcp life_idle_s={mcp.get('life_idle_s')} "
-                f"ttl_s={mcp.get('life_activity_ttl_s')} "
-                f"(in_flight={mcp.get('in_flight')} diagnostic)"
-            )
+            summary_bits.append(f"mcp in_flight={mcp.get('in_flight')}")
         if summary_bits:
             detail["active_count"] = 1
             detail["active_ops"] = [

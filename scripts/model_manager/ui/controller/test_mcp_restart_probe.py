@@ -69,7 +69,7 @@ def test_mcp_probe_ignores_live_cse_when_mcp_idle() -> None:
     assert "cdp_ask_live" not in work.detail["busy_reasons"]
 
 
-def test_mcp_probe_defers_on_life_activity_when_cdp_idle() -> None:
+def test_mcp_probe_permits_restart_when_life_hot_but_no_request() -> None:
     probe = McpBusyProbe(
         cdp_probe=_StaticBusyProbe(
             ActiveWork(
@@ -95,8 +95,8 @@ def test_mcp_probe_defers_on_life_activity_when_cdp_idle() -> None:
         ),
     )
     work = _run(probe.snapshot())
-    assert work.busy is True
-    assert "mcp_session_hot" in work.detail["busy_reasons"]
+    assert work.busy is False
+    assert work.detail["busy_reasons"] == []
 
 
 def test_mcp_probe_ignores_own_restart_request_in_flight() -> None:
@@ -136,7 +136,7 @@ def test_mcp_probe_fails_closed_on_payload_without_life_hot() -> None:
     )
     work = _run(probe.snapshot())
     assert work.busy is True
-    assert "mcp_session_hot" in work.detail["busy_reasons"]
+    assert "mcp_in_flight" in work.detail["busy_reasons"]
 
 
 def test_mcp_probe_ignores_live_cse_when_endpoint_busy_flag_stale() -> None:
@@ -182,7 +182,7 @@ def test_mcp_probe_ignores_open_attachment_when_no_execution_is_running() -> Non
     assert work.busy is False
 
 
-def test_evaluate_defers_mcp_when_composite_busy() -> None:
+def test_evaluate_permits_mcp_when_only_cdp_execution_is_running() -> None:
     gate = RestartDrainGate(
         probes={
             "mcp": McpBusyProbe(
@@ -197,9 +197,7 @@ def test_evaluate_defers_mcp_when_composite_busy() -> None:
         }
     )
     outcome = _run(gate.evaluate("mcp", force=False))
-    assert outcome is not None
-    assert outcome.state == "busy"
-    assert outcome.service == "mcp"
+    assert outcome is None
 
 
 def test_mcp_probe_soft_fails_unreachable_mcp_when_cdp_ok() -> None:

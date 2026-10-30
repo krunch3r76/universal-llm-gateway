@@ -316,7 +316,7 @@ propagate_plugin_copies() {
   [[ -f "$roster" ]] || { echo "  copies: SKIP (no PLUGIN_INSTALL_DESTS.txt)"; return 0; }
   local this_host
   this_host="$(hostname -s 2>/dev/null || hostname)"
-  local copied=0 skipped=0
+  local copied=0 skipped=0 failed=0
   local -a lines=()
   # Load roster first — rsync/ssh must not consume the dest list on stdin.
   mapfile -t lines < "$roster"
@@ -334,14 +334,27 @@ propagate_plugin_copies() {
       skipped=$((skipped + 1))
       continue
     fi
-    ssh -n -o BatchMode=yes -o ConnectTimeout=8 "$host" "mkdir -p $(printf '%q' "$(dirname "$path")")"
-    rsync -a --delete --no-acls --no-xattrs --no-perms \
+    if ! ssh -n -o BatchMode=yes -o ConnectTimeout=8 "$host" \
+      "mkdir -p $(printf '%q' "$(dirname "$path")")"; then
+      echo "  WARN: copy SKIP (host unreachable): $dest" >&2
+      failed=$((failed + 1))
+      continue
+    fi
+    if ! rsync -a --delete --no-acls --no-xattrs --no-perms \
       -e 'ssh -o BatchMode=yes -o ConnectTimeout=8' \
-      "$INSTALL_DIR/" "$host:$path/"
+      "$INSTALL_DIR/" "$host:$path/"; then
+      echo "  WARN: copy FAILED (rsync): $dest" >&2
+      failed=$((failed + 1))
+      continue
+    fi
     echo "  copy: $dest"
     copied=$((copied + 1))
   done
-  echo "  copies: $copied synced, $skipped skipped"
+  echo "  copies: $copied synced, $skipped skipped, $failed failed"
+  if [[ "$failed" -gt 0 ]]; then
+    echo "WARN: $failed PLUGIN_INSTALL_DESTS host(s) did not sync (e.g. orion-node offline)." >&2
+    echo "      Local install at $INSTALL_DIR succeeded — re-run this script when hosts are reachable." >&2
+  fi
 }
 
 if [[ "$LOCAL_ONLY" -eq 1 ]]; then
