@@ -4648,6 +4648,15 @@ async def admit_cursor_dispatch(
         )
         if summoning_thread_id:
             conductor_patch["summoning_thread_id"] = summoning_thread_id
+        gen_opts = req.generation_options if isinstance(req.generation_options, dict) else {}
+        hop_default = gen_opts.get("hop_successor_default")
+        if hop_default:
+            conductor_patch["hop_successor_default"] = str(hop_default).strip()
+        hop_knobs = gen_opts.get("hop_successor_default_knobs")
+        if isinstance(hop_knobs, dict) and hop_knobs:
+            conductor_patch["hop_successor_default_knobs"] = {
+                str(k): str(v) for k, v in hop_knobs.items()
+            }
         ledger.merge_record_json(
             dispatch_id=req.dispatch_id,
             patch=conductor_patch,

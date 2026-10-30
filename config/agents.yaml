@@ -133,7 +133,7 @@ profiles:
 
   grok/cursor:
     provider: xai
-    default_model: xai/grok-4.7
+    default_model: xai/grok-4.20-0309-reasoning
     tool_surface: mcp
     mcp_surface: code
     delivery: manual
@@ -152,7 +152,7 @@ profiles:
 
   grok/api:
     provider: xai
-    default_model: xai/grok-4.7
+    default_model: xai/grok-4.20-0309-reasoning
     tool_surface: mcp
     mcp_surface: code
     delivery: auto
@@ -170,7 +170,7 @@ profiles:
   # standard (tool-loop) card — no multi-agent / inline-only variant exists.
   grok/api-multi:
     provider: xai
-    default_model: xai/grok-4.7
+    default_model: xai/grok-4.20-0309-reasoning
     tool_surface: mcp
     mcp_surface: code
     delivery: auto
@@ -448,7 +448,7 @@ roles:
     description: "Inline reasoning specialist; structured execution at frontier-grade reasoning. Engineering default Grok; PROHIBITED for writing/correspondence — see decision:writing-consult-model-routing."
     default_family: grok
     default_platform: api
-    default_model: xai/grok-4.7
+    default_model: xai/grok-4.20-0309-reasoning
     allowed_models:
       - xai/grok-4.7
 
@@ -462,7 +462,7 @@ roles:
       this role. MCP-on is inherent to grok/api."
     default_family: grok
     default_platform: api
-    default_model: xai/grok-4.7
+    default_model: xai/grok-4.20-0309-reasoning
     allowed_models:
       - xai/grok-4.7
       - xai/grok-4.20-0309-reasoning

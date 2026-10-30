@@ -372,6 +372,17 @@ async def dispatch_cursor_sdk_generate_route(
         wrap = GenerateWrapResult(packet_path=getattr(body, "packet_path", None))
         source_ref = getattr(body, "source_ref", None)
         plan = admit_plan or {}
+        if body.job == "conductor" and plan:
+            gen_raw = getattr(body, "generation_options", None) or {}
+            gen_opts = dict(gen_raw) if isinstance(gen_raw, dict) else {}
+            hop_default = plan.get("hop_successor_default")
+            if hop_default:
+                gen_opts["hop_successor_default"] = hop_default
+            hop_knobs = plan.get("hop_successor_default_knobs")
+            if isinstance(hop_knobs, dict) and hop_knobs:
+                gen_opts["hop_successor_default_knobs"] = hop_knobs
+            if hop_default or hop_knobs:
+                body.generation_options = gen_opts
         if body.job == "conductor" and plan.get("packet_markdown"):
             wrap = GenerateWrapResult(
                 packet_path=None,

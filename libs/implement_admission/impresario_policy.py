@@ -26,7 +26,7 @@ _HYBRID_MECHANICAL_SEAT = "cursor-sdk"
 _HYBRID_MECHANICAL_EFFORT = "medium"
 ADVISOR_MODEL = "cursor/gemini-4-argon"
 ADVISOR_LEAN_DISPATCH_LINE = "Use the lean-dispatch skill"
-ADVISOR_FALLBACK_MODEL = "cursor/grok-4.7"
+ADVISOR_FALLBACK_MODEL = "cursor/composer-2.5"
 _ARGON_BARRED_IMPRESARIO_ROLES = frozenset(
     {
         "critic",
@@ -194,7 +194,7 @@ def parse_impresario_policy(policy: dict[str, Any]) -> ImpresarioPolicy:
     mech_raw = raw.get("mechanical") or {}
     critic_raw = raw.get("critic") or {}
     driver = _parse_seat_entry(
-        driver_raw, default_model="cursor/grok-4.7", default_effort="high"
+        driver_raw, default_model="cursor/composer-2.5", default_effort="medium"
     )
     mechanical = _parse_seat_entry(
         mech_raw,

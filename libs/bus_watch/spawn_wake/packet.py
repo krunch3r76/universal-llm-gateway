@@ -79,8 +79,20 @@ def _grok_bare_id(model: str) -> bool:
     return bare == "grok-4.7"
 
 
-def conductor_hop_recipe_model_fields() -> dict[str, Any]:
-    """K97 composer-conductor trial — default hop reactor + manual admit recipe."""
+def conductor_hop_recipe_model_fields(
+    rec: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """K97 composer-conductor trial — ledger stamp, then hard-coded composer recipe."""
+    if rec:
+        stamped = str(rec.get("hop_successor_default") or "").strip()
+        if stamped:
+            knobs = rec.get("hop_successor_default_knobs")
+            fields: dict[str, Any] = {"model": stamped}
+            if isinstance(knobs, dict):
+                fields["model_knobs"] = {str(k): str(v) for k, v in knobs.items()}
+            elif stamped.rsplit("/", 1)[-1] == "composer-2.5":
+                fields["model_knobs"] = {"fast": "false"}
+            return fields
     return {
         "model": "cursor/composer-2.5",
         "model_knobs": {"fast": "false"},

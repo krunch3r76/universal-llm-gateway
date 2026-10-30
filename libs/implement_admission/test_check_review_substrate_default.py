@@ -21,14 +21,14 @@ from implement_admission.workflow_registry import (
 pytestmark = pytest.mark.offline
 
 
-def test_standing_default_is_judgment_grok() -> None:
+def test_standing_default_is_composer() -> None:
     policy = load_route_policy()
-    assert load_check_review_default_model(policy) == "cursor/grok-4.7"
+    assert load_check_review_default_model(policy) == "cursor/composer-2.5"
     assert (
         CHECK_REVIEW_DECISION_CITATION in "decision:code-review-panel-cursor-substrate"
     )
     entry = policy["workflows"][CHECK_REVIEW_WORKFLOW]
-    assert entry["model"] == "cursor/grok-4.7"
+    assert entry["model"] == "cursor/composer-2.5"
     assert entry["seat"] == "cursor-sdk"
     assert "cursor/muse-spark-1.3" not in entry["model"]
     assert "cursor/gpt-5.6-terra" not in entry["model"]
@@ -42,7 +42,7 @@ def test_cursor_check_review_allowlist_is_six_ids_without_argon() -> None:
             "cursor/gpt-5.6-terra",
             "cursor/gpt-5.6-sol",
             "cursor/gpt-5.6-luna",
-            "cursor/grok-4.7",
+            "cursor/composer-2.5",
         }
     )
     assert "cursor/gemini-4-argon" not in CURSOR_CHECK_REVIEW_MODELS
@@ -56,7 +56,7 @@ def test_route_policy_conformance() -> None:
 
 def test_resolve_reviewer_omit_uses_cursor_default() -> None:
     resolution = resolve_check_review_model("reviewer", None)
-    assert resolution.resolved_model == "cursor/grok-4.7"
+    assert resolution.resolved_model == "cursor/composer-2.5"
     assert resolution.substrate == "cursor-sdk"
     assert resolution.delivery_from_role == "reviewer"
 
@@ -68,7 +68,7 @@ def test_coerce_omit_reviewer_to_cursor_seat() -> None:
     assert coerced is True
     assert role is None
     assert seat == "cursor-sdk"
-    assert model == "cursor/grok-4.7"
+    assert model == "cursor/composer-2.5"
 
 
 def test_coerce_skips_when_explicit_openai() -> None:
