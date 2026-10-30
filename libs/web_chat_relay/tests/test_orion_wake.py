@@ -33,7 +33,8 @@ def _dialog_meta(
     hay = f"{text} {aria}".lower()
     if floating is None:
         floating = "join ulg council" in hay or any(
-            re.search(r"floating chat|dock chat|minimize chat", lb, re.I) for lb in labels
+            re.search(r"floating chat|dock chat|minimize chat", lb, re.I)
+            for lb in labels
         )
     if connector is None:
         connector = (
@@ -65,7 +66,9 @@ class _FakeKeyboard:
 
 
 class _FakeLocator:
-    def __init__(self, page: _FakePage, *, visible: bool = True, count: int = 1) -> None:
+    def __init__(
+        self, page: _FakePage, *, visible: bool = True, count: int = 1
+    ) -> None:
         self._page = page
         self._visible = visible
         self._count = count
@@ -86,9 +89,8 @@ class _FakeLocator:
 
     async def click(self) -> None:
         self._page.clicked.append("click")
-        if (
-            self._page.approval_click_index is not None
-            and self._page._dialog_i < len(self._page.approval_dialogs)
+        if self._page.approval_click_index is not None and self._page._dialog_i < len(
+            self._page.approval_dialogs
         ):
             self._page._dialog_i += 1
             self._page.approval_click_index = None
@@ -122,6 +124,9 @@ class _FakePage:
         *,
         url: str = PINNED,
         streaming: bool = False,
+        visibility_state: str = "visible",
+        composer_draft: str = "",
+        streaming_after_reload: bool = False,
         preflight_dialogs: list[dict] | None = None,
         approval_dialogs: list[list[str]] | None = None,
         fail_paste: bool = False,
@@ -129,6 +134,11 @@ class _FakePage:
     ) -> None:
         self.url = url
         self.streaming = streaming
+        self.visibility_state = visibility_state
+        self.composer_draft = composer_draft
+        self.streaming_after_reload = streaming_after_reload
+        self.brought_to_front = False
+        self.reloaded = 0
         self.preflight_dialogs = list(preflight_dialogs or [])
         self.approval_dialogs = list(approval_dialogs or [])
         self._dialog_i = 0
@@ -179,7 +189,9 @@ class _FakePage:
         self._dock_target = False
         if "Dock Chat" in selector:
             self._dock_target = True
-            return _FakeLocator(self, visible=self.dock_visible, count=1 if self.dock_visible else 0)
+            return _FakeLocator(
+                self, visible=self.dock_visible, count=1 if self.dock_visible else 0
+            )
         if "dialog" in selector:
             n = len(self._active_labels()) or len(self.preflight_dialogs) or 1
             return _FakeLocator(self, visible=bool(n), count=max(n, 1))
@@ -188,7 +200,21 @@ class _FakePage:
             return _FakeLocator(self, count=n)
         return _FakeLocator(self)
 
+    async def bring_to_front(self) -> None:
+        self.brought_to_front = True
+
+    async def reload(self, wait_until: str = "domcontentloaded") -> None:
+        _ = wait_until
+        self.reloaded += 1
+        if self.streaming_after_reload:
+            self.streaming = True
+
     async def evaluate(self, expression: str) -> object:
+        if "visibilityState" in expression and "composerEmpty" in expression:
+            return {
+                "visibilityState": self.visibility_state,
+                "composerEmpty": not (self.composer_draft or "").strip(),
+            }
         if "stop" in expression.lower() and "streaming" not in expression:
             return self.streaming
         if "dialogs.find" in expression and "d.connector" in expression:
@@ -243,10 +269,16 @@ async def test_happy_path_paste_and_second_approval() -> None:
     assert out["ok"] is True, out
     assert out["delivered"] is True
     assert out["approval"]["outcome"] == "approval_complete"
-    assert out["approval"]["dialogs"][0]["clicked_text"] == "Allow ulg-code for this conversation"
+    assert (
+        out["approval"]["dialogs"][0]["clicked_text"]
+        == "Allow ulg-code for this conversation"
+    )
     assert "21207" in page.keyboard.inserted[0]
     assert "turn 7" in page.keyboard.inserted[0]
-    assert "maestro" in page.keyboard.inserted[0].lower() or "web-anthropic" in page.keyboard.inserted[0]
+    assert (
+        "maestro" in page.keyboard.inserted[0].lower()
+        or "web-anthropic" in page.keyboard.inserted[0]
+    )
 
 
 @pytest.mark.asyncio
@@ -315,6 +347,62 @@ async def test_deferred_streaming() -> None:
 
 
 @pytest.mark.asyncio
+async def test_hidden_tab_with_empty_composer_brings_to_front_and_reloads_before_paste() -> (
+    None
+):
+    page = _FakePage(visibility_state="hidden", composer_draft="")
+    out = await deliver_orion_wake(
+        thread="21207",
+        turn=4,
+        from_agent="maestro",
+        page=page,
+    )
+    assert out["ok"] is True, out
+    assert out["brought_to_front"] is True
+    assert out["tab_reloaded"] is True
+    assert page.reloaded == 1
+    assert page.keyboard.inserted
+
+
+@pytest.mark.asyncio
+async def test_hidden_tab_with_composer_draft_skips_reload() -> None:
+    page = _FakePage(
+        visibility_state="hidden",
+        composer_draft="unsent user text",
+    )
+    out = await deliver_orion_wake(
+        thread="21207",
+        turn=4,
+        from_agent="maestro",
+        page=page,
+    )
+    assert out["ok"] is True, out
+    assert out["brought_to_front"] is True
+    assert out["tab_reloaded"] is False
+    assert page.reloaded == 0
+    assert page.keyboard.inserted
+
+
+@pytest.mark.asyncio
+async def test_hidden_tab_streaming_after_reload_defers() -> None:
+    page = _FakePage(
+        visibility_state="hidden",
+        composer_draft="",
+        streaming_after_reload=True,
+    )
+    out = await deliver_orion_wake(
+        thread="21207",
+        turn=4,
+        from_agent="maestro",
+        page=page,
+    )
+    assert out["reason"] == "deferred_streaming"
+    assert out["pasted"] is False
+    assert out["tab_reloaded"] is True
+    assert not page.keyboard.inserted
+
+
+@pytest.mark.asyncio
 async def test_streaming_then_idle_delivers_on_redelivery() -> None:
     page = _FakePage(streaming=True)
     deferred = await deliver_orion_wake(
@@ -372,7 +460,9 @@ async def test_two_connector_dialogs_ulg_code_then_life() -> None:
         ],
     )
     out = await deliver_orion_wake(
-        thread="21207", turn=10, from_agent="web-anthropic",
+        thread="21207",
+        turn=10,
+        from_agent="web-anthropic",
         page=page,
     )
     assert out["ok"] is True
@@ -420,11 +510,24 @@ async def test_cdp_down() -> None:
 
 
 def test_classify_orion_outcomes() -> None:
-    assert classify_orion({"ok": True, "delivered": True, "reason": "delivered"})[0] == "delivered"
+    assert (
+        classify_orion({"ok": True, "delivered": True, "reason": "delivered"})[0]
+        == "delivered"
+    )
     assert classify_orion({"ok": False, "reason": "deferred_streaming"})[0] == "pending"
     assert classify_orion({"ok": False, "reason": "orion_echo_drop"})[0] == "skipped"
-    assert classify_orion({"ok": False, "reason": "approval_unrecognized", "pasted": True})[0] == "refused"
-    assert classify_orion({"ok": False, "reason": "non_connector_dialog", "pasted": False})[0] == "refused"
+    assert (
+        classify_orion(
+            {"ok": False, "reason": "approval_unrecognized", "pasted": True}
+        )[0]
+        == "refused"
+    )
+    assert (
+        classify_orion(
+            {"ok": False, "reason": "non_connector_dialog", "pasted": False}
+        )[0]
+        == "refused"
+    )
 
 
 def test_conversation_id_from_url_project_path() -> None:

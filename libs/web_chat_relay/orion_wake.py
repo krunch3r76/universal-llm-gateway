@@ -16,14 +16,22 @@ from urllib.parse import urlparse
 DEFAULT_ORION_CDP_URL = os.environ.get("ORION_CDP_URL", "http://127.0.0.1:9342")
 PINNED_CONVERSATION_URL = (
     "https://chatgpt.com/g/g-p-6ae3debfee8481918ff3fa45b7d18d3a-ulg-orion"
-    "/c/6ae43253-47b8-83e8-a0c4-431fb3cb49c0"
+    "/c/6ae44d27-06cc-83e8-8b8a-df9b819755bd"
 )
-PINNED_CONVERSATION_ID = "6ae43253-47b8-83e8-a0c4-431fb3cb49c0"
+PINNED_CONVERSATION_ID = "6ae44d27-06cc-83e8-8b8a-df9b819755bd"
 
 _STREAMING_JS = """
 () => [...document.querySelectorAll('button')].some(
   b => (b.getAttribute('aria-label') || '').toLowerCase() === 'stop'
 )
+"""
+
+_TAB_SYNC_STATE_JS = """
+() => {
+  const composers = [...document.querySelectorAll('[contenteditable="true"]')];
+  const composerEmpty = composers.every(el => !(el.innerText || '').trim());
+  return { visibilityState: document.visibilityState, composerEmpty };
+}
 """
 
 _DIALOG_SCAN_JS = """
@@ -192,6 +200,64 @@ def _blocking_dialog(scan: dict[str, Any]) -> dict[str, Any] | None:
             continue
         return dlg
     return None
+
+
+async def _sync_tab_before_paste(page: OrionPage, *, target_id: str) -> dict[str, Any]:
+    """Foreground a background tab and reload when stale (hidden, empty composer)."""
+    brought_to_front = False
+    tab_reloaded = False
+
+    raw = await page.evaluate(_TAB_SYNC_STATE_JS)
+    if isinstance(raw, dict):
+        visibility = str(raw.get("visibilityState") or "visible")
+        composer_empty_raw = raw.get("composerEmpty")
+        composer_empty = (
+            True if composer_empty_raw is None else bool(composer_empty_raw)
+        )
+    else:
+        visibility = "visible"
+        composer_empty = True
+
+    bring_fn = getattr(page, "bring_to_front", None)
+    if callable(bring_fn):
+        await bring_fn()
+        brought_to_front = True
+
+    reload_fn = getattr(page, "reload", None)
+    if visibility == "hidden" and composer_empty and callable(reload_fn):
+        await reload_fn(wait_until="domcontentloaded")
+        await page.wait_for_timeout(300)
+        tab_reloaded = True
+
+        if target_id not in (page.url or ""):
+            return {
+                "brought_to_front": brought_to_front,
+                "tab_reloaded": tab_reloaded,
+                "refuse": _refuse("conversation_missing", conversation_id=target_id),
+            }
+
+        if await _is_streaming(page):
+            return {
+                "brought_to_front": brought_to_front,
+                "tab_reloaded": tab_reloaded,
+                "refuse": _refuse("deferred_streaming", pasted=False),
+            }
+
+        scan_raw = await page.evaluate(_DIALOG_SCAN_JS)
+        scan = scan_raw if isinstance(scan_raw, dict) else {"dialogs": []}
+        blocking = _blocking_dialog(scan)
+        if blocking is not None:
+            return {
+                "brought_to_front": brought_to_front,
+                "tab_reloaded": tab_reloaded,
+                "refuse": _refuse(
+                    "non_connector_dialog",
+                    pasted=False,
+                    dialog=blocking,
+                ),
+            }
+
+    return {"brought_to_front": brought_to_front, "tab_reloaded": tab_reloaded}
 
 
 async def _prepare_composer(page: OrionPage) -> dict[str, Any]:
@@ -385,6 +451,16 @@ async def deliver_orion_wake(
             dialog=blocking,
         )
 
+    tab_sync = await _sync_tab_before_paste(page, target_id=target_id)
+    if tab_sync.get("refuse") is not None:
+        if owns_cdp and pw is not None:
+            await pw.stop()
+        return {
+            **tab_sync["refuse"],
+            "brought_to_front": tab_sync["brought_to_front"],
+            "tab_reloaded": tab_sync["tab_reloaded"],
+        }
+
     layout_receipt = await _prepare_composer(page)
     line = (
         paste_text
@@ -400,11 +476,20 @@ async def deliver_orion_wake(
     except Exception as exc:
         if owns_cdp and pw is not None:
             await pw.stop()
-        return _refuse("paste_failed", error=type(exc).__name__)
+        return _refuse(
+            "paste_failed",
+            error=type(exc).__name__,
+            brought_to_front=tab_sync["brought_to_front"],
+            tab_reloaded=tab_sync["tab_reloaded"],
+        )
 
     if owns_cdp and pw is not None:
         await pw.stop()
 
+    sync_flags = {
+        "brought_to_front": tab_sync["brought_to_front"],
+        "tab_reloaded": tab_sync["tab_reloaded"],
+    }
     if approval.get("outcome") == "approval_unrecognized":
         return {
             "ok": False,
@@ -414,6 +499,7 @@ async def deliver_orion_wake(
             "approval": approval,
             "pointer_len": len(line),
             **layout_receipt,
+            **sync_flags,
         }
 
     return {
@@ -425,6 +511,7 @@ async def deliver_orion_wake(
         "pointer_len": len(line),
         "conversation_id": target_id,
         **layout_receipt,
+        **sync_flags,
     }
 
 
