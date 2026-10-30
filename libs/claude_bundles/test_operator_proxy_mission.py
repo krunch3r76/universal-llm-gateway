@@ -605,6 +605,41 @@ def test_enforce_hop_render_max_sha_inflated_checkpoint_appends_flag_after_loop(
     assert f"{lane}-house-rules.md" in acts
 
 
+def test_enforce_hop_render_max_last_leg_overage_denominator_ge_floor() -> None:
+    """Truncatable ### LAST LEG (not NOTES) over cap: hop trim floor stays >= 2048, never /0."""
+    from claude_bundles.operator_proxy_mission import HOP_LEG_FLOOR_B
+    from claude_bundles.operator_proxy_standing_render import measure_checkpoint_budget_bytes
+
+    sidecar = (
+        "## CURRENT LEG\nLEG 1\n"
+        "### LAST LEG\n" + ("L" * 1600) + "\n"
+        "### OWED / NEXT\n" + ("O" * 8000) + "\n"
+        "### NOTES\nn\n"
+    )
+    mb = measure_checkpoint_budget_bytes(sidecar)
+    assert mb is not None and mb > HOP_LEG_FLOOR_B
+
+    out = ensure_operator_proxy_mission_prompt(
+        "thread_id: 18587\n",
+        standing_handoff_text=sidecar,
+        roster_text="",
+        fetch_turns=_noop_fetch,
+        journal_text="",
+        register_text="",
+    )
+    ck = out.split("## CURRENT LEG (rendered checkpoint)\n", 1)[1].split(
+        "## Lessons", 1
+    )[0]
+    assert "[budget_exceeded LAST LEG " in ck
+    assert "[budget_exceeded NOTES" not in ck
+    marker = "[budget_exceeded checkpoint "
+    assert marker in ck
+    flag = marker + ck.split(marker, 1)[1].split("\n", 1)[0]
+    assert "/0 " not in flag
+    denom = int(flag.split("/")[1].split()[0])
+    assert denom >= HOP_LEG_FLOOR_B
+
+
 def test_floor_denominator_ge_2048_when_leg_over_cap() -> None:
     from claude_bundles.operator_proxy_mission import HOP_LEG_FLOOR_B
 
