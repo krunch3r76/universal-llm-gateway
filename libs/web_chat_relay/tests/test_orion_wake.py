@@ -449,8 +449,26 @@ async def test_streaming_without_steer_button_defers() -> None:
     assert out["reason"] == "deferred_streaming"
     assert out["delivered"] is False
     assert out["pasted"] is False
+    assert not page.keyboard.inserted
     assert "send" not in page.clicked
     assert "steer" not in page.clicked
+
+
+@pytest.mark.asyncio
+async def test_deferred_streaming_retry_delivers_when_idle() -> None:
+    page = _FakePage(streaming=True, steer_visible=False, send_visible=True)
+    defer = await deliver_orion_wake(
+        thread="21207", turn=1, from_agent="maestro", page=page
+    )
+    assert defer["reason"] == "deferred_streaming"
+    assert not page.keyboard.inserted
+    page.streaming = False
+    retry = await deliver_orion_wake(
+        thread="21207", turn=1, from_agent="maestro", page=page
+    )
+    assert retry["ok"] is True, retry
+    assert retry["delivered"] is True
+    assert page.keyboard.inserted
 
 
 @pytest.mark.asyncio

@@ -469,14 +469,17 @@ async def _paste_and_send(page: OrionPage, text: str, *, layout: str = "docked")
         comp = page.locator('[contenteditable="true"]').last
     await comp.click()
     kb = page.keyboard
-    await kb.press("Control+A")
-    await kb.insert_text(text)
     if await _is_streaming(page):
         steer = await _steer_submit_button(page)
         if steer is not None:
+            await kb.press("Control+A")
+            await kb.insert_text(text)
             await steer.click()
             return "submitted"
+        # Why: defer without mutating the composer so ledger retries see an empty field.
         return "deferred_streaming"
+    await kb.press("Control+A")
+    await kb.insert_text(text)
     send = page.locator('form button[aria-label="Send"]').first
     if await send.count() and await send.is_visible():
         await send.click()
