@@ -187,7 +187,8 @@ def test_window_keeps_memos_and_drops_noise(bus_db) -> None:
     assert counts["shown"] == 4
     assert counts["truncated"] == 0
     assert counts["dropped_notice"] == 7
-    assert counts["dropped_own"] == 8
+    # Own-seat generate noise is stamped read_at on insert (L21 self-read reroute).
+    assert counts["dropped_own"] == 0
     assert counts["not_addressed"] == 1
     assert (
         counts["addressed"]

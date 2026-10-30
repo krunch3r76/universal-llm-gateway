@@ -587,6 +587,7 @@ def _explicit_orion_conversation_url(row: dict[str, Any]) -> str | None:
         conversation_id_from_url,
     )
 
+    surface = str(row.get("surface") or "").strip().lower()
     for key in ("agent_id", "title", "chat_url"):
         raw = str(row.get(key) or "").strip()
         if not raw:
@@ -595,6 +596,9 @@ def _explicit_orion_conversation_url(row: dict[str, Any]) -> str | None:
         if explicit is not None:
             return explicit.split("?", 1)[0]
         if re.fullmatch(r"[0-9a-f-]{36}", raw, flags=re.I):
+            if key == "agent_id" and surface == "cursor":
+                # Cursor Glass tab ids are UUIDs — not ChatGPT /c/ conversation ids.
+                continue
             if key == "agent_id":
                 matched = _matching_explicit_url_for_uuid(row, raw)
                 if matched is not None:

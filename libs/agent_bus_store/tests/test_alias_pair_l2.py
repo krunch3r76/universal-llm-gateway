@@ -86,7 +86,7 @@ def test_maestro_mark_read_does_not_clear_cursor_or_grok_inbox(tmp_path) -> None
             "/threads/with-turn",
             json={
                 "slug": "l2-isolation",
-                "from": "cursor",
+                "from": "grok-bot-gc1",
                 "to": "cursor",
                 "subject": "inbox-cursor",
                 "body": "u1",
