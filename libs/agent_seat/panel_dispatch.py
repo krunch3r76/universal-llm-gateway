@@ -27,7 +27,7 @@ DEFAULT_PANEL_MEMBERS: tuple[tuple[str, str | None], ...] = (
     ("skeptic", None),
     # Out-of-roster cursor/claude-fable-5-1 and cursor/gpt-5.6-terra are not
     # spent. cursor/grok-4.7 is the in-use cursor reviewer on the role allowlist.
-    ("reviewer", "cursor/grok-4.7"),
+    ("reviewer", "cursor/composer-2.5"),
 )
 
 TIEBREAKER_ROLE = "synthesizer"

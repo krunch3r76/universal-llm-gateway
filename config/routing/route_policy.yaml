@@ -18,9 +18,9 @@ impresario:
     - cursor-sdk
     - grok-bot
     - hybrid
-  driver: {model: cursor/grok-4.7, effort: xhigh, fast: false}
+  driver: {model: cursor/composer-2.5, fast: false}
   mechanical: {model: cursor/composer-2.5, effort: medium}
-  critic: {model: cdp/opus-5.5, effort: high}
+  critic: {model: anthropic/claude-sonnet-5-5, effort: high}
   critic_roles:
     sketch: {}
     skeptic: {}
@@ -38,15 +38,19 @@ impresario:
       - an open fork
       - a stuck leg
   allowed_critics:
+    - anthropic/claude-sonnet-5-5
+    - anthropic/claude-opus-5-5
+    - anthropic/claude-fable-5-1
     - cdp/opus-5.5
     - cdp/opus-5.1
     - cdp/opus-5
     - cdp/fable-5.1
     - cdp/fable-5
     - cursor/muse-wonder-1.0
+    - cursor/composer-2.5
     - cursor/grok-4.7
   cdp_reroute_for_critic: false
-  ear: {model: cursor/grok-4.7, effort: high}
+  ear: {model: cursor/composer-2.5, fast: false}
   ear_patrol: {model: cursor/composer-2.5, effort: low, fast: true}
 
 # Auto-dispatch default seat for code-lane generate (seat= selector, not role=).
@@ -136,25 +140,21 @@ workflows:
     jobs: [implement]
   investigate:
     # investigate omit-effort is high; seed is low; recon stays medium.
-    # Omitted knobs, including fast, follow the grok-4.7 card.
     seat: cursor-sdk
-    model: cursor/grok-4.7
+    model: cursor/composer-2.5
     jobs: [investigate, recon, seed]
   auto_judgment:
-    # Judgment omit-model. Never Composer. Effort for these jobs is
-    # contract_effort (conductor low; answer/ask/confer/verify/execute/propagate high).
-    # Omitted knobs, including fast, follow the grok-4.7 card
-    # (compose_model_knobs / build_model_selection).
+    # Judgment omit-model defaults to composer-2.5 for cursor-sdk conductor
+    # and judgment-class jobs. Effort for these jobs is contract_effort
+    # (conductor low; answer/ask/confer/verify/execute/propagate high).
     seat: cursor-sdk
-    model: cursor/grok-4.7
+    model: cursor/composer-2.5
     jobs: [answer, confer, ask, verify, execute, propagate, sketch, none, conductor]
   check_review:
-    # Reviewer omit-model is judgment, so it uses the same model as
-    # workflows.auto_judgment. Second-pool ids (muse, fable, terra, sol, luna)
-    # stay explicit pins. job=freeform omit-model coerces to seat=cursor-sdk
-    # + this model. Grok's bus delivery role is skeptic.
+    # Reviewer omit-model follows workflows.check_review (composer-2.5).
+    # Second-pool ids (muse, fable, terra, sol, luna) stay explicit pins.
     seat: cursor-sdk
-    model: cursor/grok-4.7
+    model: cursor/composer-2.5
     contracts: []
 
 # Per-model policy keyed by bare cursor id (CURSOR_MODEL_CAPABILITIES key).

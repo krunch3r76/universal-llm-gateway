@@ -5,7 +5,7 @@ description: "On dispatch-routing — team_dispatch op/role/contract, cursor-sdk
 
 # Consult Routing
 <!-- width-seat:v1:start -->
-> **Width seat** (generated from `libs/implement_admission/conductor_critic_render.py`; do not hand-edit): critic = `cdp/opus-5.5` · `reasoning_effort=high` · usage channel **Opus**. SKETCH (G1) = `cdp/opus-5.5` · `reasoning_effort=high`. SKEPTIC (G4) = `cdp/opus-5.5` · `reasoning_effort=high` (cross-family review). RESTORE = `cdp/fable-5.1` · `reasoning_effort=high` (operator restore preset).
+> **Width seat** (generated from `libs/implement_admission/conductor_critic_render.py`; do not hand-edit): critic = `anthropic/claude-sonnet-5-5` · `reasoning_effort=high` · usage channel **Sonnet**. SKETCH (G1) = `anthropic/claude-sonnet-5-5` · `reasoning_effort=high`. SKEPTIC (G4) = `anthropic/claude-sonnet-5-5` · `reasoning_effort=high` (cross-family review). RESTORE = `anthropic/claude-fable-5-1` · `reasoning_effort=high` (operator restore preset).
 <!-- width-seat:v1:end -->
 
 
@@ -233,9 +233,9 @@ GIW Auto lane `resolve_desired_model(auto)` for judgment contracts).
 
 | workflow | seat | model | contracts |
 |---|---|---|---|
-| auto_judgment | cursor-sdk | cursor/grok-4.7 | answer, confer, ask, verify, execute, propagate, sketch, none, conductor |
-| check_review | cursor-sdk | cursor/grok-4.7 | — |
-| investigate | cursor-sdk | cursor/grok-4.7 | investigate, recon, seed |
+| auto_judgment | cursor-sdk | cursor/composer-2.5 | answer, confer, ask, verify, execute, propagate, sketch, none, conductor |
+| check_review | cursor-sdk | cursor/composer-2.5 | — |
+| investigate | cursor-sdk | cursor/composer-2.5 | investigate, recon, seed |
 | mechanical_implement | cursor-sdk | cursor/composer-2.5 | implement |
 
 **Roaming bare ids:** `composer-2.5`, `grok-4.7`

@@ -20,13 +20,13 @@ Transport = Literal["cdp_parked", "cursor_nested", "grok_bot_window"]
 
 ALLOWED_UNDER_SUBSTRATES = frozenset({"cursor-sdk", "grok-bot", "hybrid"})
 ALLOWED_SURFACES = frozenset({"cursor-ide", "grokbot", "maestro"})
-RESTORE_MODEL = "cdp/fable-5.1"
+RESTORE_MODEL = "anthropic/claude-fable-5-1"
 _HYBRID_MECHANICAL_MODEL = "cursor/composer-2.5"
 _HYBRID_MECHANICAL_SEAT = "cursor-sdk"
 _HYBRID_MECHANICAL_EFFORT = "medium"
 ADVISOR_MODEL = "cursor/gemini-4-argon"
 ADVISOR_LEAN_DISPATCH_LINE = "Use the lean-dispatch skill"
-ADVISOR_FALLBACK_MODEL = "cursor/grok-4.7"
+ADVISOR_FALLBACK_MODEL = "cursor/composer-2.5"
 _ARGON_BARRED_IMPRESARIO_ROLES = frozenset(
     {
         "critic",
@@ -112,7 +112,7 @@ class ResolvedRoles:
 
 
 def _derive_transport(model: str) -> Transport:
-    if model.startswith("cdp/"):
+    if model.startswith(("cdp/", "anthropic/")):
         return "cdp_parked"
     if model.startswith("cursor/"):
         return "cursor_nested"
@@ -194,7 +194,7 @@ def parse_impresario_policy(policy: dict[str, Any]) -> ImpresarioPolicy:
     mech_raw = raw.get("mechanical") or {}
     critic_raw = raw.get("critic") or {}
     driver = _parse_seat_entry(
-        driver_raw, default_model="cursor/grok-4.7", default_effort="high"
+        driver_raw, default_model="cursor/composer-2.5", default_effort="medium"
     )
     mechanical = _parse_seat_entry(
         mech_raw,
@@ -203,7 +203,7 @@ def parse_impresario_policy(policy: dict[str, Any]) -> ImpresarioPolicy:
     )
     critic = _parse_seat_entry(
         critic_raw,
-        default_model="cdp/opus-5.5",
+        default_model="anthropic/claude-sonnet-5-5",
         default_effort="high",
         allowed_critics=frozenset(),  # set below after allowed_critics parsed
         require_allowed_critic=False,
@@ -356,7 +356,7 @@ def impresario_registry_errors(policy: dict[str, Any]) -> list[str]:
     for model in parsed.allowed_critics:
         if model not in parsed.allowed_critics:
             continue
-        if model.startswith("cdp/") or model.startswith("cursor/"):
+        if model.startswith(("cdp/", "anthropic/", "cursor/")):
             continue
         errors.append(f"impresario allowed critic {model!r} has unknown prefix")
     if parsed.critic.model not in parsed.allowed_critics:

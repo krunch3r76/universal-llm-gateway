@@ -88,9 +88,9 @@ def _validate_schema_version(pipeline) -> list[str]:
     schema_version = (
         pipeline.model_extra.get("schema_version") if pipeline.model_extra else None
     )
-    if schema_version != 6:
+    if schema_version not in (6, 7):
         errors.append(
-            f"Expected schema_version: 6, got {schema_version}. "
+            f"Expected schema_version: 6 or 7, got {schema_version}. "
             f"See: services/universal-stargate/systems/pipeline/"
             f"README.md#v6-schema-specification"
         )

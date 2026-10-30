@@ -5,7 +5,7 @@
 #   model: team-dispatch-admit
 #   pipeline_options: { op, role, seat, model, job, dispatch_id, request_id, ... }
 
-schema_version: 6
+schema_version: 7
 id: team-dispatch-admit
 version: "1.0"
 type: team_dispatch_admit
@@ -14,6 +14,13 @@ description: >
   Validate, default-select, and assemble an AdmitPlan for team_dispatch
   op=generate and op=to_thread. No model calls.
 output: assemble
+
+model_defaults:
+  conductor:
+    driver: {model: cursor/composer-2.5, fast: false}
+    mechanical: {model: cursor/composer-2.5, fast: false}
+    hop_successor: {model: cursor/composer-2.5, fast: false}
+    allowed_models: [cursor/composer-2.5]
 
 options:
   timeout_seconds: 30

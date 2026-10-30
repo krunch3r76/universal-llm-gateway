@@ -88,7 +88,7 @@ def test_provider_error_falls_back_to_grok_with_event() -> None:
     err = "You've hit your usage limit ... reset when your monthly cycle ends on 11/13/2026"
     result = resolve_advisor_provider_fallback(provider_error=err)
     assert result.admitted is True
-    assert result.resolved_model == "cursor/grok-4.7"
+    assert result.resolved_model == "cursor/composer-2.5"
     assert result.provider_fallback is True
     assert result.event_signal == "impresario.advisor.provider_fallback"
     assert result.event_payload is not None
@@ -101,4 +101,4 @@ def test_omitted_critic_model_defaults_to_opus_not_argon() -> None:
     imp.pop("critic", None)
     policy["impresario"] = imp
     pol = parse_impresario_policy(policy)
-    assert pol.critic.model == "cdp/opus-5.5"
+    assert pol.critic.model == "anthropic/claude-sonnet-5-5"

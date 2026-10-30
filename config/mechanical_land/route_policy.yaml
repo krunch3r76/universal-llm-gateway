@@ -25,7 +25,7 @@ review:
       - cdp/opus-5.5
     bound_s: 1800
   check_review:
-    model: cursor/grok-4.7
+    model: cursor/composer-2.5
     seat: cursor-sdk
     contract: check-review
     lane: B
