@@ -5,7 +5,7 @@ from __future__ import annotations
 from unittest.mock import MagicMock, patch
 
 import pytest
-from agent_bus_store.tape_cells import _last_session_cells
+from agent_bus_store.tape_cells import _cells_for_lane, _last_session_cells
 from agent_bus_store.tape_pour import pour_lane_messages
 
 pytestmark = pytest.mark.offline
@@ -80,15 +80,21 @@ def test_no_checkpoint_returns_all_cells() -> None:
 
 def test_wall_ordinal_includes_all_cells_at_wall_not_only_last() -> None:
     cells = [
-        _sealed(cp_ordinal=4, bus_turn_id=40, turn_lo=0, turn_hi=3),
+        _sealed(
+            cp_ordinal=4,
+            bus_turn_id=40,
+            turn_lo=0,
+            turn_hi=3,
+            transcript_id="c",
+        ),
         _sealed(cp_ordinal=5, bus_turn_id=50, turn_lo=3, turn_hi=6),
         _sealed(cp_ordinal=5, bus_turn_id=51, turn_lo=6, turn_hi=9, transcript_id="b"),
         _open(cp_ordinal=7),
         _open(cp_ordinal=100, transcript_id="c"),
     ]
     scoped, skipped, foreign, unresolved = _last_session_cells(cells, thread_id=_ROOT)
-    assert [c["cp_ordinal"] for c in scoped] == [5, 5, 7, 100]
-    assert skipped == 0
+    assert [c["cp_ordinal"] for c in scoped] == [5, 5, 7]
+    assert skipped >= 1
     assert foreign == 0
     assert unresolved == 0
 
@@ -161,6 +167,92 @@ def test_hop_cells_skipped_zero_without_hop_anchors() -> None:
     cells = [_channel_cell(cp_ordinal=1), _open(cp_ordinal=2)]
     _, skipped, _, _ = _last_session_cells(cells, thread_id=_ROOT, channel="continuity")
     assert skipped == 0
+
+
+_UUID_OLD = "11111111-1111-1111-1111-111111111111"
+_UUID_NEW = "22222222-2222-2222-2222-222222222222"
+
+
+@patch("agent_bus_store.tape_membership.lookup_dominant_lane_by_uuid")
+@patch("agent_bus_store.tape_cells.list_checkpoint_turns")
+@patch("agent_bus_store.tape_cells.connect")
+@patch("agent_bus_store.tape_cells.build_chain_segments")
+def test_superseded_historical_open_cell_dropped_at_emit(
+    mock_chain,
+    mock_connect,
+    mock_cps,
+    mock_uuid_lookup,
+) -> None:
+    mock_uuid_lookup.return_value = None
+    """Older transcript tail after its CP must not become a post-wall open cell."""
+    mock_chain.return_value = [
+        {"transcript_id": _UUID_OLD, "turn_lo": 0, "turn_hi": 21, "session_id": "old"},
+        {"transcript_id": _UUID_NEW, "turn_lo": 0, "turn_hi": 5, "session_id": "new"},
+    ]
+    cp_old_body = f"Window: transcript_id={_UUID_OLD} · turns@cp=18\n"
+    cp_new_body = f"Window: transcript_id={_UUID_NEW} · turns@cp=2\n"
+    cps = [
+        type("CP", (), {"turn_number": 10, "cp_ordinal": 5})(),
+        type("CP", (), {"turn_number": 20, "cp_ordinal": 55})(),
+    ]
+    mock_cps.return_value = cps
+    conn = mock_connect.return_value.__enter__.return_value
+    conn.execute.return_value.fetchone.side_effect = [
+        {"body": cp_old_body},
+        {"body": cp_new_body},
+    ]
+    cells = _cells_for_lane(
+        thread_id=_ROOT,
+        lane_journals=[],
+        files_root=MagicMock(),
+    )
+    open_by_tid = {
+        str(c["transcript_id"]): c
+        for c in cells
+        if c.get("bus_turn_id") is None
+    }
+    assert _UUID_OLD not in open_by_tid
+    assert _UUID_NEW in open_by_tid
+    assert open_by_tid[_UUID_NEW]["turn_lo"] == 2
+    assert open_by_tid[_UUID_NEW]["turn_hi"] == 5
+
+
+def test_last_session_scoping_drops_superseded_historical_open() -> None:
+    cells = [
+        _sealed(
+            cp_ordinal=5,
+            bus_turn_id=10,
+            transcript_id=_UUID_OLD,
+            turn_lo=0,
+            turn_hi=18,
+        ),
+        _sealed(
+            cp_ordinal=55,
+            bus_turn_id=20,
+            transcript_id=_UUID_NEW,
+            turn_lo=0,
+            turn_hi=2,
+        ),
+        _open(
+            cp_ordinal=56,
+            transcript_id=_UUID_OLD,
+            turn_lo=18,
+            turn_hi=21,
+        ),
+        _open(
+            cp_ordinal=56,
+            transcript_id=_UUID_NEW,
+            turn_lo=2,
+            turn_hi=5,
+        ),
+    ]
+    scoped, skipped, foreign, unresolved = _last_session_cells(cells, thread_id=_ROOT)
+    tids = [c["transcript_id"] for c in scoped if c.get("bus_turn_id") is None]
+    assert _UUID_OLD not in tids
+    assert _UUID_NEW in tids
+    assert skipped >= 1
+    assert foreign == 0
+    assert unresolved == 0
 
 
 def test_drops_foreign_dominant_lane_open_cell() -> None:

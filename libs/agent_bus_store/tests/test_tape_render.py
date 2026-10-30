@@ -369,6 +369,88 @@ def test_b8_cells_join_chain_segments_and_bus_turn_id(tmp_path: Path) -> None:
     assert keys[(3, _UUID, 15, 25)] is None
 
 
+def test_multi_transcript_tip_checkpoint_no_historical_open_cells(tmp_path: Path) -> None:
+    """AC-4: stale September/October open tails stay out of last_session render cells."""
+    files_root = tmp_path / "files"
+    files_root.mkdir()
+    uuid_old = "11111111-1111-1111-1111-111111111111"
+    uuid_new = "22222222-2222-2222-2222-222222222222"
+    s_old = "cursor-2026-09-07-100000-old"
+    s_new = "cursor-2026-10-30-100000-new"
+    p_old = files_root / "notes/system/transcripts" / f"{s_old}.md"
+    p_new = files_root / "notes/system/transcripts" / f"{s_new}.md"
+    p_old.parent.mkdir(parents=True)
+    p_old.write_text(_verbatim_md(21, s_old), encoding="utf-8")
+    p_new.write_text(_verbatim_md(5, s_new), encoding="utf-8")
+
+    journals = [
+        {
+            "id": 1,
+            "session_id": s_old,
+            "conversation_uuid": uuid_old,
+            "prior_session_id": None,
+            "file_path": f"notes/system/transcripts/{s_old}.md",
+            "entity_ids": ["agent-bus:9732"],
+        },
+        {
+            "id": 2,
+            "session_id": s_new,
+            "conversation_uuid": uuid_new,
+            "prior_session_id": s_old,
+            "file_path": f"notes/system/transcripts/{s_new}.md",
+            "entity_ids": ["agent-bus:9732"],
+        },
+    ]
+
+    cp1 = CheckpointTurnRow(turn_number=5, cp_ordinal=5, created_at="", subject="CHECKPOINT")
+    cp2 = CheckpointTurnRow(turn_number=12, cp_ordinal=55, created_at="", subject="CHECKPOINT")
+    cp_bodies = {
+        5: f"Window: transcript_id={uuid_old} · turns@cp=18\n",
+        12: f"Window: transcript_id={uuid_new} · turns@cp=2\n",
+    }
+
+    class _Result:
+        def __init__(self, turn_number: int) -> None:
+            self._turn_number = turn_number
+
+        def fetchone(self) -> dict[str, str]:
+            return {"body": cp_bodies[self._turn_number]}
+
+    class _Conn:
+        def execute(self, _sql: str, params: tuple[str, int]) -> _Result:
+            return _Result(int(params[1]))
+
+    class _Connect:
+        def __enter__(self) -> _Conn:
+            return _Conn()
+
+        def __exit__(self, *_args: object) -> None:
+            return None
+
+    with (
+        patch(
+            "agent_bus_store.tape_cells.list_checkpoint_turns",
+            return_value=(cp1, cp2),
+        ),
+        patch("agent_bus_store.tape_cells.connect", return_value=_Connect()),
+        patch(
+            "agent_bus_store.tape_membership.lookup_dominant_lane_by_uuid",
+            return_value=None,
+        ),
+    ):
+        cells = _cells_for_lane(
+            thread_id="9732",
+            lane_journals=journals,
+            files_root=files_root,
+        )
+
+    open_cells = [c for c in cells if c["bus_turn_id"] is None]
+    assert len(open_cells) == 1
+    assert open_cells[0]["transcript_id"] == uuid_new
+    assert open_cells[0]["turn_lo"] == 2
+    assert open_cells[0]["turn_hi"] == 5
+
+
 def test_b12_post_lid_turns_on_segment(tmp_path: Path) -> None:
     """B-12 / AC-5: sealed segment reports live JSONL tail as post_lid_turns."""
     files_root = tmp_path / "files"

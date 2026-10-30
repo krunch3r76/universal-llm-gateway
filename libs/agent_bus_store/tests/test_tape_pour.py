@@ -112,9 +112,58 @@ def test_narrow_pour_open_interval_only() -> None:
         },
     ]
     narrowed = _narrow_last_session_pour_cells(cells)
-    assert len(narrowed) == 1
-    assert narrowed[0]["bus_turn_id"] is None
-    assert narrowed[0]["turn_lo"] == 7
+    assert len(narrowed) == 2
+    open_only = [c for c in narrowed if c.get("bus_turn_id") is None]
+    assert len(open_only) == 1
+    assert open_only[0]["turn_lo"] == 7
+
+
+_UUID_OLD = "11111111-1111-1111-1111-111111111111"
+_UUID_NEW = "22222222-2222-2222-2222-222222222222"
+
+
+def test_narrow_pour_ignores_superseded_historical_open_cells() -> None:
+    cells = [
+        {
+            "cp_ordinal": 5,
+            "transcript_id": _UUID_OLD,
+            "turn_lo": 0,
+            "turn_hi": 18,
+            "bus_turn_id": 10,
+        },
+        {
+            "cp_ordinal": 55,
+            "transcript_id": _UUID_NEW,
+            "turn_lo": 0,
+            "turn_hi": 2,
+            "bus_turn_id": 20,
+        },
+        {
+            "cp_ordinal": 56,
+            "transcript_id": _UUID_OLD,
+            "turn_lo": 18,
+            "turn_hi": 21,
+            "bus_turn_id": None,
+        },
+        {
+            "cp_ordinal": 56,
+            "transcript_id": _UUID_NEW,
+            "turn_lo": 2,
+            "turn_hi": 5,
+            "bus_turn_id": None,
+        },
+    ]
+    narrowed = _narrow_last_session_pour_cells(cells)
+    open_tids = {
+        str(c["transcript_id"])
+        for c in narrowed
+        if c.get("bus_turn_id") is None
+    }
+    assert _UUID_OLD not in open_tids
+    assert _UUID_NEW in open_tids
+    sealed = [c for c in narrowed if c.get("bus_turn_id") is not None]
+    assert len(sealed) == 1
+    assert sealed[0]["cp_ordinal"] == 55
 
 
 def test_narrow_pour_minimal_tail_when_fully_sealed() -> None:

@@ -36,6 +36,54 @@ def _max_turn_hi_by_transcript(chain_segments: list[dict[str, Any]]) -> dict[str
     return out
 
 
+def _transcript_ids_in_anchors(anchors: list[dict[str, Any]]) -> set[str]:
+    return {
+        str(anchor["transcript_id"])
+        for anchor in anchors
+        if anchor.get("transcript_id")
+    }
+
+
+def _wall_ordinal_from_cells(cells: list[dict[str, Any]]) -> int | None:
+    wall: int | None = None
+    for cell in cells:
+        if cell.get("bus_turn_id") is None:
+            continue
+        wall = int(cell.get("cp_ordinal") or 0)
+    return wall
+
+
+def _last_sealed_cp_ordinal_for_transcript(
+    cells: list[dict[str, Any]], *, transcript_id: str
+) -> int | None:
+    best: int | None = None
+    for cell in cells:
+        if cell.get("bus_turn_id") is None:
+            continue
+        if str(cell.get("transcript_id") or "") != transcript_id:
+            continue
+        ordinal = int(cell.get("cp_ordinal") or 0)
+        if best is None or ordinal > best:
+            best = ordinal
+    return best
+
+
+def _open_cell_is_superseded(
+    cell: dict[str, Any],
+    *,
+    cells: list[dict[str, Any]],
+    wall_ordinal: int | None,
+) -> bool:
+    """True when a post-wall open cell belongs to a transcript sealed before the wall."""
+    if wall_ordinal is None:
+        return False
+    tid = str(cell.get("transcript_id") or "")
+    last_sealed = _last_sealed_cp_ordinal_for_transcript(cells, transcript_id=tid)
+    if last_sealed is None:
+        return False
+    return last_sealed < wall_ordinal
+
+
 def _cells_for_lane(
     *,
     thread_id: str,
@@ -120,8 +168,11 @@ def _cells_for_lane(
                     "channel": anchor.get("channel") or "continuity",
                 }
             )
-    last_cp = cp_anchors[-1][0]
+    last_cp, tip_anchors = cp_anchors[-1]
+    tip_transcript_ids = _transcript_ids_in_anchors(tip_anchors)
     for transcript_id in sorted(seen_transcript_ids):
+        if tip_transcript_ids and transcript_id not in tip_transcript_ids:
+            continue
         turn_lo = _last_turns_at_cp(cp_anchors, transcript_id=transcript_id)
         turn_hi = max_turn_by_tid.get(transcript_id, turn_lo)
         if turn_hi <= turn_lo:
@@ -233,12 +284,22 @@ def _last_session_cells(
     )
     scoped: list[dict[str, Any]] = []
     foreign_cells_excluded = 0
+    superseded_open_excluded = 0
     for cell in filtered:
+        if (
+            cell.get("bus_turn_id") is None
+            and _open_cell_is_superseded(
+                cell, cells=cells, wall_ordinal=wall_ordinal
+            )
+        ):
+            superseded_open_excluded += 1
+            continue
         dl = cell.get("dominant_lane")
         if dl is not None and str(dl) != thread_id:
             foreign_cells_excluded += 1
             continue
         scoped.append(cell)
+    skipped += superseded_open_excluded
     return scoped, skipped, foreign_cells_excluded, ownership_unresolved
 
 
@@ -264,25 +325,39 @@ def _narrow_last_session_pour_cells(
     cells: list[dict[str, Any]],
 ) -> list[dict[str, Any]]:
     """Pour post-checkpoint open tail only, or a minimal sealed tail when fully sealed."""
-    open_cells = [c for c in cells if c.get("bus_turn_id") is None]
+    wall_ordinal = _wall_ordinal_from_cells(cells)
+    open_cells = [
+        c
+        for c in cells
+        if c.get("bus_turn_id") is None
+        and not _open_cell_is_superseded(
+            c, cells=cells, wall_ordinal=wall_ordinal
+        )
+    ]
     open_turns = sum(
         max(0, int(c.get("turn_hi") or 0) - int(c.get("turn_lo") or 0))
         for c in open_cells
     )
-    if open_turns > 0:
-        return open_cells
     sealed = [c for c in cells if c.get("bus_turn_id") is not None]
-    if not sealed:
-        return cells
-    narrowed: list[dict[str, Any]] = []
+    if wall_ordinal is not None:
+        sealed = [
+            c
+            for c in sealed
+            if int(c.get("cp_ordinal") or 0) == wall_ordinal
+        ]
+    narrowed_sealed: list[dict[str, Any]] = []
     for cell in sealed:
         copy = dict(cell)
         turn_lo = int(copy.get("turn_lo") or 0)
         turn_hi = int(copy.get("turn_hi") or 0)
         if turn_hi - turn_lo > 2:
             copy["turn_lo"] = turn_hi - 2
-        narrowed.append(copy)
-    return narrowed
+        narrowed_sealed.append(copy)
+    if open_turns > 0:
+        return narrowed_sealed + open_cells
+    if not narrowed_sealed:
+        return cells
+    return narrowed_sealed
 
 
 __all__ = [
