@@ -89,6 +89,32 @@ def _max_journal_id_for_transcripts(
     return best
 
 
+def _journal_activity_instant(journal: dict[str, Any]) -> datetime | None:
+    """Last activity for one journal row: max(timestamp, sealed_on) when parseable."""
+    ts = timestamp_to_utc_instant(str(journal.get("timestamp") or ""))
+    sealed = timestamp_to_utc_instant(str(journal.get("sealed_on") or ""))
+    if ts is None and sealed is None:
+        return None
+    if ts is None:
+        return sealed
+    if sealed is None:
+        return ts
+    return max(ts, sealed)
+
+
+def _last_activity_for_transcript(
+    lane_journals: list[dict[str, Any]], *, transcript_id: str
+) -> datetime | None:
+    best: datetime | None = None
+    for journal in _journals_for_transcript(lane_journals, transcript_id=transcript_id):
+        instant = _journal_activity_instant(journal)
+        if instant is None:
+            continue
+        if best is None or instant > best:
+            best = instant
+    return best
+
+
 def _unanchored_open_cell_allowed_after_tip(
     *,
     transcript_id: str,
@@ -100,21 +126,25 @@ def _unanchored_open_cell_allowed_after_tip(
     matching = _journals_for_transcript(lane_journals, transcript_id=transcript_id)
     if not matching:
         return True
+    cp_ts = timestamp_to_utc_instant(last_cp_created_at)
+    last_activity = _last_activity_for_transcript(
+        lane_journals, transcript_id=transcript_id
+    )
+    if cp_ts is not None and last_activity is not None:
+        return last_activity > cp_ts
+    if not tip_transcript_ids:
+        return False
+    tip_max_id = _max_journal_id_for_transcripts(lane_journals, tip_transcript_ids)
     latest = _latest_journal_for_transcript(
         lane_journals, transcript_id=transcript_id
     )
     if latest is None:
         return False
-    cp_ts = timestamp_to_utc_instant(last_cp_created_at)
-    journal_ts = timestamp_to_utc_instant(str(latest.get("timestamp") or ""))
-    if cp_ts is not None and journal_ts is not None:
-        return journal_ts > cp_ts
-    tip_max_id = _max_journal_id_for_transcripts(lane_journals, tip_transcript_ids)
     row_id = latest.get("id")
     if row_id is None:
-        return tip_max_id is None
+        return False
     if tip_max_id is None:
-        return True
+        return False
     return int(row_id) > tip_max_id
 
 

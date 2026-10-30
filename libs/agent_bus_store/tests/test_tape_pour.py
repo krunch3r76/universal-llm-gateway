@@ -179,7 +179,7 @@ def test_narrow_pour_ignores_superseded_historical_open_cells() -> None:
     assert sealed[0]["cp_ordinal"] == 55
 
 
-def test_last_session_drops_turn_one_bootstrap_when_turn_two_present() -> None:
+def test_last_session_elides_turn_one_bootstrap_when_turn_two_present() -> None:
     messages = [
         {
             "role": "user",
@@ -207,7 +207,9 @@ def test_last_session_drops_turn_one_bootstrap_when_turn_two_present() -> None:
         },
     ]
     out = excise_turn_one_resume_bootstrap(messages)
-    assert all(int(m.get("turn_index") or 0) != 1 for m in out)
+    turn_one = [m for m in out if int(m.get("turn_index") or 0) == 1]
+    assert len(turn_one) == 1
+    assert "[elided liaison_hop_bootstrap:" in str(turn_one[0].get("content") or "")
     assert any("post-resume work" in str(m.get("content") or "") for m in out)
 
 

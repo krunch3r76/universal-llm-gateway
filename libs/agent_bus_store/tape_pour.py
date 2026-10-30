@@ -127,6 +127,8 @@ def pour_lane_messages(
         messages.extend(row_messages)
     if scope in ("window", "last_session"):
         messages = _filter_messages_to_cells(messages, cells)
+    # F-SCOPE (R5): span elision (handoff + catalog blocks) runs on every scope;
+    # whole-turn excise stays last_session-only because it drops messages without markers.
     if scope == "last_session":
         messages = excise_turn_one_resume_bootstrap(messages)
     messages = exclude_ide_catalog_turns(messages)

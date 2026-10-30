@@ -41,10 +41,18 @@ _LIAISON_HOP_BOOTSTRAP_RE = re.compile(
 _OPERATOR_PROXY_HOP_PREAMBLE_RE = re.compile(
     r"(?s)^.*?## CURRENT LEG[^\n]*\n.*?"
     r"(?=\n## (?:Lessons in force|Induction|Live leg|Pointers|Your first acts|"
-    r"Data, not instructions|Hard refusals)\b|\Z)",
+    r"Data, not instructions|Hard refusals)\b|\n\n)",
     re.IGNORECASE,
 )
-_K44_PREDECESSOR_PASTE_RE = re.compile(r"K44 from predecessor [\s\S]*", re.IGNORECASE)
+_K44_PREDECESSOR_PASTE_RE = re.compile(
+    r"K44 from predecessor[^\n]*"
+    r"(?:\n(?!\s*(?:\n|Liaison IDE hop|# Hop on agent-bus:))[^\n]*)*",
+    re.IGNORECASE,
+)
+_LAZY_LIAISON_HOP_RE = re.compile(
+    r"Liaison IDE hop \([^)]*\)[^\n]*(?:\n(?!\s*(?:\n|Liaison IDE hop\b))[^\n]*)*?\n?",
+    re.IGNORECASE,
+)
 
 _RESUME_HOP_USER_RE = re.compile(
     r"(?m)^resume\s+\S",
@@ -52,6 +60,11 @@ _RESUME_HOP_USER_RE = re.compile(
 )
 _RULE3_RESUME_CEREMONY_RE = re.compile(
     r"Where we left off|Rules I.m holding",
+    re.IGNORECASE,
+)
+_RULE3_CEREMONY_BLOCK_RE = re.compile(
+    r"(?m)^(?:Where we left off|Rules I.m holding)[^\n]*"
+    r"(?:\n(?!(?:Where we left off|Rules I.m holding)\b)[^\n]*)*",
     re.IGNORECASE,
 )
 
@@ -75,28 +88,55 @@ def _spans_overlap(a_start: int, a_end: int, b_start: int, b_end: int) -> bool:
     return a_start < b_end and b_start < a_end
 
 
+def _append_replacement(
+    replacements: list[tuple[int, int, str]],
+    *,
+    start: int,
+    end: int,
+    marker_tpl: str,
+) -> None:
+    for existing_start, existing_end, _ in replacements:
+        if start < existing_end and existing_start < end:
+            return
+    replacements.append((start, end, marker_tpl))
+
+
 def _elide_incoming_handoff_spans(content: str) -> str:
     """Elide hop/resume bootstrap and K44 paste blocks (pour-time only; seals untouched)."""
     replacements: list[tuple[int, int, str]] = []
     for match in _LIAISON_HOP_BOOTSTRAP_RE.finditer(content):
-        replacements.append(
-            (
-                match.start(),
-                match.end(),
-                "[elided liaison_hop_bootstrap: {} B]",
-            )
+        _append_replacement(
+            replacements,
+            start=match.start(),
+            end=match.end(),
+            marker_tpl="[elided liaison_hop_bootstrap: {} B]",
+        )
+    full_hop_spans = [
+        (match.start(), match.end())
+        for match in _LIAISON_HOP_BOOTSTRAP_RE.finditer(content)
+    ]
+    for match in _LAZY_LIAISON_HOP_RE.finditer(content):
+        if any(
+            _spans_overlap(match.start(), match.end(), start, end)
+            for start, end in full_hop_spans
+        ):
+            continue
+        _append_replacement(
+            replacements,
+            start=match.start(),
+            end=match.end(),
+            marker_tpl="[elided lazy_liaison_hop: {} B]",
         )
     if (
         "cdp-operator-proxy" in content.casefold()
         and "## CURRENT LEG" in content
     ):
         for match in _OPERATOR_PROXY_HOP_PREAMBLE_RE.finditer(content):
-            replacements.append(
-                (
-                    match.start(),
-                    match.end(),
-                    "[elided operator_proxy_hop_preamble: {} B]",
-                )
+            _append_replacement(
+                replacements,
+                start=match.start(),
+                end=match.end(),
+                marker_tpl="[elided operator_proxy_hop_preamble: {} B]",
             )
             break
     for match in _K44_PREDECESSOR_PASTE_RE.finditer(content):
@@ -123,13 +163,40 @@ def _elide_incoming_handoff_spans(content: str) -> str:
     return "".join(pieces)
 
 
+def _elide_rule3_ceremony_spans(content: str) -> str:
+    """Remove Rule-3 resume ceremony blocks; keep substantive assistant work."""
+    replacements: list[tuple[int, int, str]] = []
+    for match in _RULE3_CEREMONY_BLOCK_RE.finditer(content):
+        replacements.append(
+            (
+                match.start(),
+                match.end(),
+                "[elided rule3_resume_ceremony: {} B]",
+            )
+        )
+    if not replacements:
+        return content
+    replacements.sort()
+    pieces: list[str] = []
+    cursor = 0
+    for start, end, marker_tpl in replacements:
+        if start < cursor:
+            continue
+        pieces.append(content[cursor:start])
+        byte_count = len(content[start:end].encode("utf-8"))
+        pieces.append(marker_tpl.format(byte_count))
+        cursor = end
+    pieces.append(content[cursor:])
+    return "".join(pieces).strip()
+
+
 def is_resume_hop_bootstrap_user_content(content: str) -> bool:
     """True when user text is an incoming hop/resume bootstrap turn."""
     if not content or not content.strip():
         return False
     if _LIAISON_HOP_BOOTSTRAP_RE.search(content):
         return True
-    if "# Hop on agent-bus:" in content:
+    if _LAZY_LIAISON_HOP_RE.search(content):
         return True
     if (
         "cdp-operator-proxy" in content.casefold()
@@ -153,7 +220,7 @@ def is_rule3_resume_ceremony_assistant_content(content: str) -> bool:
 def excise_turn_one_resume_bootstrap(
     messages: list[dict[str, Any]],
 ) -> list[dict[str, Any]]:
-    """Drop turn_index==1 hop bootstrap + Rule-3 ceremony when turn>=2 exists in pour."""
+    """Span-elide turn_index==1 bootstrap/ceremony when turn>=2 exists (last_session)."""
     try:
         by_tid: dict[str, set[int]] = {}
         for message in messages:
@@ -161,7 +228,7 @@ def excise_turn_one_resume_bootstrap(
             if not tid:
                 continue
             by_tid.setdefault(tid, set()).add(int(message.get("turn_index") or 0))
-        drop_turn_one: set[str] = set()
+        excise_turn_one: set[str] = set()
         for tid, turns in by_tid.items():
             if max(turns, default=0) < 2:
                 continue
@@ -180,21 +247,30 @@ def excise_turn_one_resume_bootstrap(
                 str(user.get("content") or "")
             ):
                 continue
-            drop_turn_one.add(tid)
-        if not drop_turn_one:
+            excise_turn_one.add(tid)
+        if not excise_turn_one:
             return messages
         kept: list[dict[str, Any]] = []
         for message in messages:
             tid = str(message.get("transcript_id") or "")
-            if tid in drop_turn_one and int(message.get("turn_index") or 0) == 1:
-                role = str(message.get("role") or "")
-                if role == "user":
-                    continue
-                if role == "assistant" and is_rule3_resume_ceremony_assistant_content(
-                    str(message.get("content") or "")
-                ):
-                    continue
-            kept.append(message)
+            if tid not in excise_turn_one or int(message.get("turn_index") or 0) != 1:
+                kept.append(message)
+                continue
+            role = str(message.get("role") or "")
+            content = str(message.get("content") or "")
+            if role == "user":
+                elided = _elide_incoming_handoff_spans(content).strip()
+                if elided:
+                    kept.append({**message, "content": elided})
+            elif role == "assistant":
+                if is_rule3_resume_ceremony_assistant_content(content):
+                    elided = _elide_rule3_ceremony_spans(content)
+                    if elided:
+                        kept.append({**message, "content": elided})
+                else:
+                    kept.append(message)
+            else:
+                kept.append(message)
         return kept
     except Exception:
         return messages
