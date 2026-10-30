@@ -1010,6 +1010,16 @@ def _resolve_delivery_route(
     store: StoreClient, agent: str, thread: str, *, raw_to: str | None = None
 ) -> tuple[str, dict[str, Any]] | None:
     """Subscription row, else legacy alias, else synthetic grok window binding."""
+    if normalize_bus_address(agent) == "orion":
+        from agent_bus_store.db.endpoint_wake_ledger import (
+            _orion_chat_actuation_for_house,
+            _orion_exact_route_from_actuation,
+        )
+
+        if str(thread).strip() == _ORION_HOUSE_THREAD:
+            actuation = _orion_chat_actuation_for_house(str(thread).strip())
+            if actuation is not None:
+                return _orion_exact_route_from_actuation(actuation)
     resolved = _store_subscription(store, agent, thread, raw_to=raw_to)
     if resolved is not None:
         return _apply_grok_window_overlay(agent, resolved)
@@ -1046,16 +1056,6 @@ def _resolve_delivery_route(
         bound = _window_binding_route(str(candidate))
         if bound is not None:
             return bound
-    if normalize_bus_address(agent) == "orion":
-        from agent_bus_store.db.endpoint_wake_ledger import (
-            _orion_chat_actuation_for_house,
-            _orion_exact_route_from_actuation,
-        )
-
-        if str(thread).strip() == _ORION_HOUSE_THREAD:
-            actuation = _orion_chat_actuation_for_house(str(thread).strip())
-            if actuation is not None:
-                return _orion_exact_route_from_actuation(actuation)
     bound = _orion_synthetic_route(agent, thread, store=store)
     if bound is not None:
         return bound

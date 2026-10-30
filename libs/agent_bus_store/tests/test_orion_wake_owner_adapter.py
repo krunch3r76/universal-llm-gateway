@@ -426,7 +426,18 @@ def test_resolve_target_matches_binding_with_seat_reg_and_cursor_chatgpt_sub(
 
     class Store:
         def subscription(self, agent: str, thread_id: str, raw_to=None):
-            return None
+            if str(thread_id) != _ORION_HOUSE:
+                return None
+            return (
+                "exact",
+                {
+                    "surface": "cursor",
+                    "display": "12",
+                    "title": PINNED_CONVERSATION_URL,
+                    "agent_id": PINNED_CONVERSATION_ID,
+                    "state": "subscribed",
+                },
+            )
 
         def turns(self, thread: str, *, after_turn: int = 0, last: int = 100):
             with connect() as conn:
