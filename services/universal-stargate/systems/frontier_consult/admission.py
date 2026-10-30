@@ -312,6 +312,7 @@ def enforce_check_review_substrate_admission(
     model: str | None,
     *,
     request_id: str,
+    job: str | None = None,
 ) -> None:
     """Role×substrate matrix for check/review dispatches (F3/F4)."""
     from implement_admission.check_review_substrate import (
@@ -326,6 +327,7 @@ def enforce_check_review_substrate_admission(
         role,
         model,
         api_role_with_cursor_on_api_profile=not is_sdk_substrate_profile(profile),
+        job=job,
     )
     if isinstance(verdict, CheckReviewAdmissionReject):
         raise FrontierEndpointError(

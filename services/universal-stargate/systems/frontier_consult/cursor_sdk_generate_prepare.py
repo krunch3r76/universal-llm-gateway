@@ -202,7 +202,6 @@ async def prepare_cursor_sdk_generate(
 
     from .admission import enforce_check_review_substrate_admission
 
-    enforce_check_review_substrate_admission(role, model, request_id=request_id)
     effective_contract = (contract or "").strip().lower() or None
     if early_packet_text and not effective_contract:
         effective_contract = extract_contract_from_body(early_packet_text)
@@ -235,6 +234,9 @@ async def prepare_cursor_sdk_generate(
             status_code=422,
             code="sdk_generate_model_invalid",
         )
+    enforce_check_review_substrate_admission(
+        role, resolved_model, request_id=request_id, job=effective_contract
+    )
     if is_cursor_model_denied(resolved_model):
         raise FrontierEndpointError(
             request_id=request_id,

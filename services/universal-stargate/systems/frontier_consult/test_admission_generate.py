@@ -83,6 +83,78 @@ def _admit_client_mock(*, status_code: int, plan: dict[str, object]) -> MagicMoc
     return client
 
 
+@pytest.mark.parametrize("job", ["freeform", "implement", "mechanical", "conductor"])
+def test_composer_non_review_job_passes_substrate_gate(job: str) -> None:
+    from .admission import enforce_check_review_substrate_admission
+
+    enforce_check_review_substrate_admission(
+        "cursor-sdk",
+        "cursor/composer-2.5",
+        request_id="req-composer-ordinary",
+        job=job,
+    )
+
+
+@pytest.mark.parametrize("job", ["check-review", "code-review", "delivery-review"])
+def test_composer_review_job_retains_profile_rejection(job: str) -> None:
+    from .admission import enforce_check_review_substrate_admission
+
+    with pytest.raises(FrontierEndpointError) as exc_info:
+        enforce_check_review_substrate_admission(
+            "cursor-sdk",
+            "cursor/composer-2.5",
+            request_id="req-composer-review",
+            job=job,
+        )
+    assert exc_info.value.code == "profile_mismatch"
+    assert exc_info.value.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_composer_freeform_prepare_reaches_next_admission_gate(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from . import cursor_sdk_model_pin, densify_triage, generate_lane_ac_observer
+
+    monkeypatch.setattr(
+        generate_lane_ac_observer,
+        "prepare_lb_auto_review_for_generate",
+        lambda **_kwargs: (False, False, None),
+    )
+    monkeypatch.setattr(
+        generate_lane_ac_observer,
+        "stamp_lb_review_spawn_fields",
+        lambda **_kwargs: (None, None, False),
+    )
+    monkeypatch.setattr(
+        densify_triage, "validate_generate_density_intake", lambda **_kwargs: None
+    )
+
+    class ReachedModelPinGateError(Exception):
+        pass
+
+    def stop_at_model_pin(**kwargs: object) -> None:
+        assert kwargs["contract"] == "freeform"
+        assert kwargs["resolved_model"] == "cursor/composer-2.5"
+        raise ReachedModelPinGateError
+
+    monkeypatch.setattr(
+        cursor_sdk_model_pin, "refuse_code_contract_model_mismatch", stop_at_model_pin
+    )
+    with pytest.raises(ReachedModelPinGateError):
+        await prepare_mod.prepare_cursor_sdk_generate(
+            request_id="req-composer-freeform",
+            role="cursor-sdk",
+            model="cursor/composer-2.5",
+            subject="ordinary implementation",
+            caller_agent="test-lead",
+            contract="freeform",
+            packet_path=None,
+            message_text="bounded edit",
+            lane="B",
+        )
+
+
 def test_g1_claude_web_seat_rejected() -> None:
     with pytest.raises(FrontierEndpointError) as exc_info:
         enforce_team_dispatch_generate_admit("claude-web", request_id="req-g1")

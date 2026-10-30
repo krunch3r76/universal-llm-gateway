@@ -313,9 +313,18 @@ def evaluate_check_review_admission(
     model: str | None,
     *,
     api_role_with_cursor_on_api_profile: bool,
+    job: str | None = None,
 ) -> CheckReviewAdmissionReject | CheckReviewResolution | None:
     """Pure admission matrix; caller raises FrontierEndpointError when reject."""
     canonical = role.strip().lower()
+    # An executor seat does not imply a review job. Ordinary implementation
+    # dispatches must not inherit the reviewer profile or delivery identity.
+    if canonical == "cursor-sdk" and (job or "").strip().lower() not in {
+        "check-review",
+        "code-review",
+        "delivery-review",
+    }:
+        return None
 
     if (
         canonical == SYNTHESIZER_ROLE
