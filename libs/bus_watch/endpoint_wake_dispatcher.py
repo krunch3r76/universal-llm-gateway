@@ -1001,6 +1001,27 @@ def _resolve_delivery_route(
         bound = _window_binding_route(str(candidate))
         if bound is not None:
             return bound
+    if normalize_bus_address(agent) == "orion":
+        from web_chat_relay.orion_wake import (
+            conversation_id_from_url,
+            holder_conversation_url,
+        )
+
+        for sub_agent in ("orion", "cursor"):
+            resolved = _store_subscription(store, sub_agent, thread, raw_to=raw_to)
+            if resolved is None:
+                continue
+            _, row = resolved
+            if str(row.get("state") or "") != "subscribed":
+                continue
+            if sub_agent == "orion":
+                return _apply_grok_window_overlay(agent, resolved)
+            surface = str(row.get("surface") or "").strip().lower()
+            if surface == "chatgpt":
+                return _apply_grok_window_overlay(agent, resolved)
+            url = holder_conversation_url(row)
+            if "chatgpt.com" in url and conversation_id_from_url(url):
+                return _apply_grok_window_overlay(agent, resolved)
     bound = _orion_synthetic_route(agent, thread)
     if bound is not None:
         return bound
@@ -1760,8 +1781,15 @@ def fire_due_wakes(store: StoreClient) -> dict[str, Any] | None:
             )
         return claimed
     if agent == "orion" or str(sub.get("surface") or "") == "chatgpt":
-        from_agent = str(rows[0].get("from_agent") or "")
-        if normalize_bus_address(from_agent) == "orion":
+        senders = list(
+            dict.fromkeys(
+                str(r.get("from_agent") or "").strip()
+                for r in rows
+                if str(r.get("from_agent") or "").strip()
+            )
+        )
+        non_orion = [s for s in senders if normalize_bus_address(s) != "orion"]
+        if senders and not non_orion:
             return _finish(
                 outcome="skipped",
                 reason="orion_echo_drop",
@@ -1769,6 +1797,7 @@ def fire_due_wakes(store: StoreClient) -> dict[str, Any] | None:
                 subscription_id=sub.get("id"),
                 cse_registration_id=None,
             )
+        from_agent = ", ".join(non_orion) if non_orion else "unknown"
         turn_numbers = sorted({int(r["turn_number"]) for r in rows})
         turn_arg: int | str = (
             turn_numbers[0]

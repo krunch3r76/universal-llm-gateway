@@ -9,6 +9,7 @@ from bus_watch.endpoint_wake_transport import classify_orion
 from web_chat_relay.orion_wake import (
     PINNED_CONVERSATION_ID,
     PINNED_CONVERSATION_URL,
+    _paste_and_send,
     build_wake_pointer,
     conversation_id_from_url,
     deliver_orion_wake,
@@ -89,6 +90,8 @@ class _FakeLocator:
 
     async def click(self) -> None:
         self._page.clicked.append("click")
+        if getattr(self._page, "_steer_target", False):
+            self._page.clicked.append("steer")
         if self._page.approval_click_index is not None and self._page._dialog_i < len(
             self._page.approval_dialogs
         ):
@@ -117,6 +120,12 @@ class _FakeLocator:
             return buttons[idx]
         return ""
 
+    def filter(self, *, has_text: str = "") -> _FakeLocator:
+        if has_text == "Steer" and self._page.steer_visible:
+            self._page._steer_target = True
+            return _FakeLocator(self._page, visible=True, count=1)
+        return _FakeLocator(self._page, visible=False, count=0)
+
 
 class _FakePage:
     def __init__(
@@ -131,9 +140,14 @@ class _FakePage:
         approval_dialogs: list[list[str]] | None = None,
         fail_paste: bool = False,
         dock_visible: bool = False,
+        steer_visible: bool = False,
+        send_visible: bool = False,
     ) -> None:
         self.url = url
         self.streaming = streaming
+        self.steer_visible = steer_visible
+        self.send_visible = send_visible
+        self._steer_target = False
         self.visibility_state = visibility_state
         self.composer_draft = composer_draft
         self.streaming_after_reload = streaming_after_reload
@@ -195,6 +209,16 @@ class _FakePage:
         if "dialog" in selector:
             n = len(self._active_labels()) or len(self.preflight_dialogs) or 1
             return _FakeLocator(self, visible=bool(n), count=max(n, 1))
+        if "Steer" in selector:
+            return _FakeLocator(
+                self, visible=self.steer_visible, count=1 if self.steer_visible else 0
+            )
+        if 'aria-label="Send"' in selector:
+            return _FakeLocator(
+                self, visible=self.send_visible, count=1 if self.send_visible else 0
+            )
+        if selector.strip() == "button":
+            return _FakeLocator(self, visible=self.steer_visible, count=1)
         if "button" in selector and "Send" not in selector:
             n = len(self._active_labels()) or 1
             return _FakeLocator(self, count=n)
@@ -367,7 +391,7 @@ async def test_hidden_tab_with_empty_composer_brings_to_front_and_reloads_before
 
 
 @pytest.mark.asyncio
-async def test_hidden_tab_with_composer_draft_skips_reload() -> None:
+async def test_hidden_tab_with_composer_draft_refuses_non_empty() -> None:
     page = _FakePage(
         visibility_state="hidden",
         composer_draft="unsent user text",
@@ -378,11 +402,17 @@ async def test_hidden_tab_with_composer_draft_skips_reload() -> None:
         from_agent="maestro",
         page=page,
     )
-    assert out["ok"] is True, out
-    assert out["brought_to_front"] is True
-    assert out["tab_reloaded"] is False
+    assert out["reason"] == "non_empty_composer"
+    assert out["pasted"] is False
     assert page.reloaded == 0
-    assert page.keyboard.inserted
+    assert not page.keyboard.inserted
+
+
+@pytest.mark.asyncio
+async def test_paste_and_send_clicks_steer_when_visible() -> None:
+    page = _FakePage(steer_visible=True, send_visible=False)
+    await _paste_and_send(page, "wake line", layout="docked")
+    assert "steer" in page.clicked
 
 
 @pytest.mark.asyncio

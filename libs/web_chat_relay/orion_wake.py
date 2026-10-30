@@ -123,7 +123,7 @@ def _matching_explicit_url_for_uuid(sub: dict[str, Any], conv_uuid: str) -> str 
 
 
 def holder_conversation_url(sub: dict[str, Any] | None) -> str:
-    """Resolve pinned /c/ URL from subscription holder fields."""
+    """Resolve chatgpt.com /c/ URL from subscription holder title, chat_url, or agent_id."""
     if not sub:
         return PINNED_CONVERSATION_URL
     for key in ("agent_id", "title", "chat_url"):
@@ -192,6 +192,7 @@ def format_turn_pointer_label(turn_numbers: list[int]) -> str:
 
 
 def build_wake_pointer(*, thread: str, turn: int | str, from_agent: str) -> str:
+    """Format the short Orion pointer line pasted into the chatgpt.com composer."""
     sender = (from_agent or "unknown").strip()
     turn_s = str(turn)
     multi = "–" in turn_s or "," in turn_s
@@ -209,6 +210,8 @@ def _refuse(reason: str, **extra: Any) -> dict[str, Any]:
 
 
 class OrionPage(Protocol):
+    """Minimal Playwright page surface used by Orion wake paste helpers (offline unit tests use fakes)."""
+
     url: str
 
     async def evaluate(self, expression: str) -> Any: ...
@@ -286,6 +289,13 @@ async def _sync_tab_before_paste(page: OrionPage, *, target_id: str) -> dict[str
                 ),
             }
 
+    if not composer_empty:
+        return {
+            "brought_to_front": brought_to_front,
+            "tab_reloaded": tab_reloaded,
+            "refuse": _refuse("non_empty_composer", pasted=False),
+        }
+
     return {"brought_to_front": brought_to_front, "tab_reloaded": tab_reloaded}
 
 
@@ -330,6 +340,34 @@ async def _prepare_composer(page: OrionPage) -> dict[str, Any]:
     return receipt
 
 
+async def _visible_submit_button(page: OrionPage, selector: str) -> Any | None:
+    loc = page.locator(selector).first
+    if await loc.count() and await loc.is_visible():
+        return loc
+    return None
+
+
+async def _steer_submit_button(page: OrionPage) -> Any | None:
+    root = page.locator("button")
+    filter_fn = getattr(root, "filter", None)
+    if callable(filter_fn):
+        try:
+            steer = filter_fn(has_text="Steer").first
+            if await steer.count() and await steer.is_visible():
+                return steer
+        except TypeError:
+            pass
+    for selector in (
+        'form button[aria-label="Steer"]',
+        'button[aria-label="Steer"]',
+        'button[aria-label*="Steer"]',
+    ):
+        hit = await _visible_submit_button(page, selector)
+        if hit is not None:
+            return hit
+    return None
+
+
 async def _paste_and_send(
     page: OrionPage, text: str, *, layout: str = "docked"
 ) -> None:
@@ -345,6 +383,10 @@ async def _paste_and_send(
     kb = page.keyboard
     await kb.press("Control+A")
     await kb.insert_text(text)
+    steer = await _steer_submit_button(page)
+    if steer is not None:
+        await steer.click()
+        return
     send = page.locator('form button[aria-label="Send"]').first
     if await send.count() and await send.is_visible():
         await send.click()

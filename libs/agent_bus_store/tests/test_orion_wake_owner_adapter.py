@@ -15,7 +15,7 @@ from agent_bus_store.db.orion_wake_owner_adapter import (
     WakeClaimContext,
     shared_wake_delivery_owner,
 )
-from bus_watch.endpoint_wake_dispatcher import _orion_synthetic_route
+from bus_watch.endpoint_wake_dispatcher import _orion_synthetic_route, resolve_target
 from web_chat_relay.orion_wake import (
     PINNED_CONVERSATION_ID,
     PINNED_CONVERSATION_URL,
@@ -183,6 +183,77 @@ def test_resolve_unbound_house(db: None) -> None:
     assert binding["state"] == "unbound"
     assert binding["current"] is None
     assert binding["reason"] == "unbound"
+
+
+_HOP_CONV_ID = "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"
+_HOP_PROJECT_URL = (
+    "https://chatgpt.com/g/g-p-hop-after-queue/c/bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"
+)
+
+
+def test_resolve_wake_binding_live_orion_subscription_over_pinned(db: None) -> None:
+    """Break: queued wake pins stale URL — delivery must read live agent_endpoint_subscriptions."""
+    wake_id, turn_ids, number = _claim_orion_turn(db)
+    with write_connect() as conn:
+        conn.execute(
+            "INSERT INTO agent_endpoint_subscriptions "
+            "(agent, thread_scope, agent_id, state, surface, display, title) "
+            "VALUES ('orion', ?, ?, 'subscribed', 'cursor', '12', ?)",
+            (_ORION_HOUSE, _HOP_CONV_ID, _HOP_PROJECT_URL),
+        )
+    binding = resolve_wake_delivery_binding(house_id=_ORION_HOUSE)
+    live_url = _HOP_PROJECT_URL.split("?", 1)[0]
+    assert binding["state"] == "bound"
+    assert binding["current"]["actuation"]["conversation_url"] == live_url
+    assert binding["basis"] == "agent_endpoint_subscription"
+    owner = shared_wake_delivery_owner()
+    stale = WakeClaimContext(
+        wake_id=wake_id,
+        agent="orion",
+        thread_id=_ORION_HOUSE,
+        turn_ids=tuple(turn_ids),
+        turn_numbers=(number,),
+        endpoint_url=PINNED_CONVERSATION_URL.split("?", 1)[0],
+    )
+    assert (
+        owner.validate_claim_for_delivery(stale)["reason"]
+        == "wake_claim_endpoint_mismatch"
+    )
+    fresh = WakeClaimContext(
+        wake_id=wake_id,
+        agent="orion",
+        thread_id=_ORION_HOUSE,
+        turn_ids=tuple(turn_ids),
+        turn_numbers=(number,),
+        endpoint_url=live_url,
+    )
+    assert owner.validate_claim_for_delivery(fresh) == {
+        "ok": True,
+        "reason": "claim_valid",
+    }
+
+
+def test_resolve_target_orion_uses_live_subscription_row(db: None) -> None:
+    create_thread(thread_id=_ORION_HOUSE, slug="orion-route-hop")
+    live_url = _HOP_PROJECT_URL.split("?", 1)[0]
+    sub_row = {
+        "id": 99,
+        "surface": "chatgpt",
+        "display": "12",
+        "title": _HOP_PROJECT_URL,
+        "agent_id": _HOP_CONV_ID,
+        "state": "subscribed",
+    }
+
+    class Store:
+        def subscription(self, agent: str, thread_id: str, raw_to=None):
+            if agent == "orion" and thread_id == _ORION_HOUSE:
+                return ("exact", dict(sub_row))
+            return None
+
+    route, row = resolve_target(Store(), "orion", _ORION_HOUSE)  # type: ignore[arg-type]
+    assert route == "exact"
+    assert holder_conversation_url(row) == live_url
 
 
 def test_ledger_identity_unique_per_turn(db: None) -> None:

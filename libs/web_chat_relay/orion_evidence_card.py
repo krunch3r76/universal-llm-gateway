@@ -58,6 +58,7 @@ def _default_assertion_get(**kwargs: Any) -> dict[str, Any]:
 
 
 def load_blocked_read_ids(*, uri: str = BLOCKED_READS_URI) -> set[str]:
+    """Load blocked entity/assertion ids from cortex JSON; empty set when missing or unreadable."""
     try:
         from claude_bundles.nested_cdp_prompt_gate import resolve_cortex_uri
 
@@ -77,9 +78,7 @@ def extract_reference_ids(turns: Sequence[WakeTurn]) -> list[tuple[str, str]]:
     seen: set[tuple[str, str]] = set()
     ordered: list[tuple[str, str]] = []
     for turn in turns:
-        blob = " ".join(
-            str(turn.get(k) or "") for k in ("subject", "body")
-        )
+        blob = " ".join(str(turn.get(k) or "") for k in ("subject", "body"))
         for match in _ENTITY_ID_RE.finditer(blob):
             eid = match.group(1)
             key = ("entity", eid)
@@ -191,7 +190,10 @@ def _assertion_line(row: dict[str, Any], *, note: str = "") -> str:
     elif rs == "staged":
         flags.append("staged")
     attrs = row.get("attributes") or {}
-    if isinstance(attrs, dict) and str(attrs.get("revision_type") or "") == "correction":
+    if (
+        isinstance(attrs, dict)
+        and str(attrs.get("revision_type") or "") == "correction"
+    ):
         flags.append("correction")
     return _format_item_line(item_id, summary, date, _flags_label(flags), note=note)
 
@@ -200,9 +202,10 @@ def _bus_ref_line(ref: str, turns: Sequence[WakeTurn]) -> str:
     thread_s, _, turn_s = ref.partition("#")
     summary = ref
     for turn in turns:
-        if str(turn.get("thread") or "") == thread_s and str(
-            turn.get("turn_number") or ""
-        ) == turn_s:
+        if (
+            str(turn.get("thread") or "") == thread_s
+            and str(turn.get("turn_number") or "") == turn_s
+        ):
             summary = _one_line(
                 str(turn.get("subject") or "") or str(turn.get("body") or ref)
             )
@@ -327,6 +330,7 @@ def build_evidence_card(
 
 
 def evidence_card_enabled() -> bool:
+    """True when ``ORION_EVIDENCE_CARD=1`` enables deterministic card append on wake paste."""
     return os.environ.get("ORION_EVIDENCE_CARD", "").strip() == "1"
 
 
@@ -348,7 +352,10 @@ def maybe_append_evidence_card(pointer: str, turns: Sequence[WakeTurn]) -> str:
     return pointer + "\n" + card
 
 
-def load_wake_turns_for_claim(*, thread_id: str, turn_numbers: Sequence[int]) -> list[dict[str, Any]]:
+def load_wake_turns_for_claim(
+    *, thread_id: str, turn_numbers: Sequence[int]
+) -> list[dict[str, Any]]:
+    """Load bus turn subject/body rows (plus sender) for consolidated Orion wake evidence."""
     from agent_bus_store.db import get_turn_by_number
 
     turns: list[dict[str, Any]] = []
@@ -362,6 +369,7 @@ def load_wake_turns_for_claim(*, thread_id: str, turn_numbers: Sequence[int]) ->
                 "turn_number": int(num),
                 "subject": row.get("subject") or "",
                 "body": row.get("body") or "",
+                "from_agent": row.get("from_agent") or "",
             }
         )
     return turns
@@ -374,7 +382,20 @@ def compose_orion_chat_wake_paste(
     from_agent: str,
     turns: Sequence[WakeTurn],
 ) -> str:
+    """Build pointer text (and optional evidence card) for a claimed Orion wake batch."""
     from web_chat_relay.orion_wake import build_wake_pointer
 
-    pointer = build_wake_pointer(thread=thread, turn=turn, from_agent=from_agent)
+    senders = list(
+        dict.fromkeys(
+            str(t.get("from_agent") or "").strip()
+            for t in turns
+            if str(t.get("from_agent") or "").strip()
+        )
+    )
+    pointer_from = from_agent
+    if len(senders) > 1:
+        pointer_from = ", ".join(senders)
+    elif len(senders) == 1 and not str(from_agent or "").strip():
+        pointer_from = senders[0]
+    pointer = build_wake_pointer(thread=thread, turn=turn, from_agent=pointer_from)
     return maybe_append_evidence_card(pointer, turns)

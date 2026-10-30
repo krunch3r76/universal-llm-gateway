@@ -28,9 +28,7 @@ from web_chat_relay.orion_wake import (
 pytestmark = pytest.mark.offline
 
 _ORION_HOUSE = "21207"
-_GOLDEN_POINTER = build_wake_pointer(
-    thread=_ORION_HOUSE, turn=74, from_agent="maestro"
-)
+_GOLDEN_POINTER = build_wake_pointer(thread=_ORION_HOUSE, turn=74, from_agent="maestro")
 
 
 @pytest.fixture()
@@ -38,6 +36,32 @@ def db(tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("AGENT_BUS_DB_PATH", str(tmp_path / "bus.db"))
     monkeypatch.delenv("ORION_EVIDENCE_CARD", raising=False)
     init_db()
+
+
+def test_compose_wake_paste_joins_distinct_senders_in_order() -> None:
+    turns = [
+        {
+            "thread": _ORION_HOUSE,
+            "turn_number": 302,
+            "subject": "A",
+            "body": "b",
+            "from_agent": "maestro",
+        },
+        {
+            "thread": _ORION_HOUSE,
+            "turn_number": 303,
+            "subject": "B",
+            "body": "b",
+            "from_agent": "cursor",
+        },
+    ]
+    paste = compose_orion_chat_wake_paste(
+        thread=_ORION_HOUSE,
+        turn="302–303",
+        from_agent="maestro",
+        turns=turns,
+    )
+    assert "(from maestro, cursor)" in paste
 
 
 def test_ac1_flag_off_paste_byte_identical_to_pointer(db: None) -> None:
@@ -122,7 +146,9 @@ def test_ac2_flag_on_appends_card_with_markers_and_byte_cap(
 
 
 @pytest.mark.asyncio
-async def test_ac2_batch_wake_one_paste_one_card(db: None, monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_ac2_batch_wake_one_paste_one_card(
+    db: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """Break: per-turn pastes → two cards; expect one paste with one card."""
     monkeypatch.setenv("ORION_EVIDENCE_CARD", "1")
     create_thread(thread_id=_ORION_HOUSE, slug="orion-evidence-batch")
@@ -237,7 +263,12 @@ def test_ac4_blocked_superseded_flagged_and_conflict() -> None:
                     "summary_row": "Ok entity",
                     "name": "ok",
                     "top_k_assertions": [
-                        {"id": 9, "claim": "x", "confidence": "confirmed", "epistemic_state": "flagged"}
+                        {
+                            "id": 9,
+                            "claim": "x",
+                            "confidence": "confirmed",
+                            "epistemic_state": "flagged",
+                        }
                     ],
                     "assertion_counts": {"active": 1, "superseded": 2},
                 }
@@ -365,7 +396,9 @@ async def test_deliver_orion_wake_unchanged_without_paste_text(db: None) -> None
     async def _paste(_page: object, text: str, **kwargs: object) -> None:
         pasted.append(text)
 
-    with patch("web_chat_relay.orion_wake._paste_and_send", new=AsyncMock(side_effect=_paste)):
+    with patch(
+        "web_chat_relay.orion_wake._paste_and_send", new=AsyncMock(side_effect=_paste)
+    ):
         out = await deliver_orion_wake(
             thread=_ORION_HOUSE,
             turn=74,

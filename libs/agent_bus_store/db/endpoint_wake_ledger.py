@@ -419,6 +419,7 @@ def _group_pending_rows(
     stamp: str,
     retry_before: str,
 ) -> list[sqlite3.Row]:
+    """All pending ledger rows for the (agent, thread_id) group eligible to claim together."""
     ga, tid = str(group["agent"]), group["thread_id"]
     filt = f"AND state='pending' AND {_pending_retry_ready_sql()}"
     if normalize_bus_address(ga) in STAGE_MANAGER_ADDRESSES:
@@ -549,7 +550,59 @@ def _wake_unbound_envelope(envelope: dict[str, Any]) -> dict[str, Any]:
     return envelope
 
 
+def _orion_subscription_for_thread(
+    thread_id: str,
+) -> tuple[str, dict[str, Any]] | None:
+    """Live orion or chatgpt-surface subscription on the house thread (or parent scope)."""
+    from web_chat_relay.orion_wake import (
+        conversation_id_from_url,
+        holder_conversation_url,
+    )
+
+    for agent_name in ("orion", "cursor"):
+        resolved = resolve_subscription_for_thread(agent_name, thread_id)
+        if resolved is None:
+            continue
+        route, row = resolved
+        if str(row.get("state") or "") != "subscribed":
+            continue
+        if agent_name == "orion":
+            return route, row
+        surface = str(row.get("surface") or "").strip().lower()
+        if surface == "chatgpt":
+            return route, row
+        url = holder_conversation_url(row)
+        if "chatgpt.com" in url and conversation_id_from_url(url):
+            return route, row
+    return None
+
+
+def _orion_chat_actuation_from_row(row: dict[str, Any]) -> dict[str, Any] | None:
+    from web_chat_relay.orion_wake import (
+        DEFAULT_ORION_CDP_URL,
+        conversation_id_from_url,
+        holder_conversation_url,
+    )
+
+    url = holder_conversation_url(row).split("?", 1)[0]
+    conv_id = conversation_id_from_url(url)
+    if not conv_id:
+        return None
+    return {
+        "type": "orion_chat",
+        "conversation_id": conv_id,
+        "conversation_url": url,
+        "cdp_url": DEFAULT_ORION_CDP_URL,
+    }
+
+
 def _orion_chat_actuation_for_house(thread_id: str) -> dict[str, Any] | None:
+    live = _orion_subscription_for_thread(thread_id)
+    if live is not None:
+        _, row = live
+        actuation = _orion_chat_actuation_from_row(row)
+        if actuation is not None:
+            return actuation
     if thread_id != _ORION_WAKE_HOUSE:
         return None
     from web_chat_relay.orion_wake import (
@@ -599,6 +652,22 @@ def resolve_wake_delivery_binding(*, house_id: str) -> dict[str, Any]:
     if resolved is not None:
         route, row = resolved
         if str(row.get("state") or "") == "subscribed":
+            orion_from_cursor = _orion_chat_actuation_from_row(row)
+            if orion_from_cursor is not None and (
+                str(row.get("surface") or "").strip().lower() == "chatgpt"
+                or "chatgpt.com" in orion_from_cursor.get("conversation_url", "")
+            ):
+                envelope.update(
+                    {
+                        "state": "bound",
+                        "current": {
+                            "actuation": orion_from_cursor,
+                            "route": route,
+                            "subscription_id": row.get("id"),
+                        },
+                    }
+                )
+                return envelope
             actuation = _cursor_glass_actuation(row)
             if actuation is not None:
                 envelope.update(
@@ -612,6 +681,22 @@ def resolve_wake_delivery_binding(*, house_id: str) -> dict[str, Any]:
                     }
                 )
                 return envelope
+    live_orion = _orion_subscription_for_thread(thread_id)
+    if live_orion is not None:
+        route, row = live_orion
+        orion_actuation = _orion_chat_actuation_from_row(row)
+        if orion_actuation is not None:
+            envelope.update(
+                {
+                    "state": "bound",
+                    "current": {
+                        "actuation": orion_actuation,
+                        "route": route,
+                        "subscription_id": row.get("id"),
+                    },
+                }
+            )
+            return envelope
     orion_actuation = _orion_chat_actuation_for_house(thread_id)
     if orion_actuation is not None:
         envelope.update(
@@ -868,7 +953,7 @@ def claim_due_wakes(
                 f"""
                 SELECT agent, thread_id FROM endpoint_wake_ledger p
                 WHERE p.state='pending'
-                  AND {_pending_retry_ready_sql('p')}
+                  AND {_pending_retry_ready_sql("p")}
                   AND NOT EXISTS (
                     SELECT 1 FROM endpoint_wake_ledger d
                     WHERE {_mailbox_agent_sql("d", "p")} AND d.thread_id=p.thread_id
@@ -961,7 +1046,9 @@ def claim_due_wakes(
                 debounce_before=debounce_before_orion,
             ):
                 continue
-            rows = _group_pending_rows(conn, group, stamp=stamp, retry_before=retry_before)
+            rows = _group_pending_rows(
+                conn, group, stamp=stamp, retry_before=retry_before
+            )
             skipped: list[dict[str, Any]] = []
             claimable: list[sqlite3.Row] = []
             for row in rows:
@@ -1064,7 +1151,9 @@ def record_orion_deferred_streaming(
         eligible = [r for r in rows if r["state"] in _CLAIM_STATES]
         if not eligible:
             raise WakeConflictError("wake_not_claimed")
-        prior = max(parse_orion_deferred_attempt(r["decided_by_rule"]) for r in eligible)
+        prior = max(
+            parse_orion_deferred_attempt(r["decided_by_rule"]) for r in eligible
+        )
         attempt = prior + 1
         thread_id = str(eligible[0]["thread_id"])
         turn_numbers = sorted({int(r["turn_number"]) for r in eligible})
