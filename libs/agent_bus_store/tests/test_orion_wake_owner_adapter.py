@@ -124,7 +124,7 @@ def test_resolve_orion_house_wake_binding(db: None) -> None:
     assert binding["state"] == "bound"
     actuation = binding["current"]["actuation"]
     assert actuation["type"] == "orion_chat"
-    assert actuation["conversation_id"] == "6ae2e1bc-0c94-83e8-9f21-62467c4935d5"
+    assert actuation["conversation_id"] == "6ae3dd81-bd34-83e8-b5da-4ddc824685b7"
 
 
 def test_resolve_unbound_house(db: None) -> None:

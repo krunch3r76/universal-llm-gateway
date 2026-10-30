@@ -30,8 +30,8 @@ def test_orion_post_includes_wake_id_and_covered_turns() -> None:
     ]
     sub = {
         "surface": "chatgpt",
-        "title": "https://chatgpt.com/c/6ae2e1bc-0c94-83e8-9f21-62467c4935d5",
-        "agent_id": "6ae2e1bc-0c94-83e8-9f21-62467c4935d5",
+        "title": "https://chatgpt.com/c/6ae3dd81-bd34-83e8-b5da-4ddc824685b7",
+        "agent_id": "6ae3dd81-bd34-83e8-b5da-4ddc824685b7",
         "id": 42,
     }
     captured: dict = {}

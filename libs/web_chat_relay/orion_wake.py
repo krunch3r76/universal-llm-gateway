@@ -14,8 +14,8 @@ from typing import Any, Protocol
 from urllib.parse import urlparse
 
 DEFAULT_ORION_CDP_URL = os.environ.get("ORION_CDP_URL", "http://127.0.0.1:9342")
-PINNED_CONVERSATION_URL = "https://chatgpt.com/c/6ae2e1bc-0c94-83e8-9f21-62467c4935d5"
-PINNED_CONVERSATION_ID = "6ae2e1bc-0c94-83e8-9f21-62467c4935d5"
+PINNED_CONVERSATION_URL = "https://chatgpt.com/c/6ae3dd81-bd34-83e8-b5da-4ddc824685b7"
+PINNED_CONVERSATION_ID = "6ae3dd81-bd34-83e8-b5da-4ddc824685b7"
 
 _STREAMING_JS = """
 () => [...document.querySelectorAll('button')].some(
@@ -72,10 +72,17 @@ _CONNECTOR_DIALOG_JS = """
 
 
 def conversation_id_from_url(url: str) -> str:
+    """Extract chatgpt.com conversation UUID from flat ``/c/{id}`` or project ``/g/.../c/{id}`` paths."""
     path = urlparse(url).path
     parts = [p for p in path.split("/") if p]
     if len(parts) >= 2 and parts[0] == "c":
         return parts[1]
+    if "c" in parts:
+        idx = parts.index("c")
+        if idx + 1 < len(parts) and re.fullmatch(
+            r"[0-9a-f-]{36}", parts[idx + 1], flags=re.I
+        ):
+            return parts[idx + 1]
     return ""
 
 

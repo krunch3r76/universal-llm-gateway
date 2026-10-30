@@ -24,7 +24,7 @@ def test_orion_post_pipeline_error_retries_once_then_pending() -> None:
     ]
     sub = {
         "surface": "chatgpt",
-        "title": "https://chatgpt.com/c/6ae2e1bc-0c94-83e8-9f21-62467c4935d5",
+        "title": "https://chatgpt.com/c/6ae3dd81-bd34-83e8-b5da-4ddc824685b7",
         "id": 1,
     }
     calls: list[int] = []
