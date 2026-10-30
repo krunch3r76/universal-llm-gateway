@@ -73,24 +73,17 @@ line; the ladder still names the default reviewer duty.
 
 ## Cursor IDE tabs — `team_dispatch` (`seat=cursor-sdk`), not native `Task` subagents
 
-In a Cursor IDE tab, use `team_dispatch` (`seat="cursor-sdk"`, `lane="B"`, or a `cdp/*` / `cursor/*` wire per § Duty → wire) instead of native Cursor `Task` subagents (`explore`, `generalPurpose`, etc.). Native `Task` calls in a Cursor tab are noisy, costly in tab context, and lack GIW worktree isolation, `resolve_prompt_preamble` harness injection, and closeout sidecars; `team_dispatch` also expands executor choices across `cursor/*` (`cursor/composer-2.5`, `cursor/grok-4.7`, `cursor/gemini-4-argon`, `cursor/muse-wonder-1.0`) and `cdp/*` (`cdp/opus-5.5`, `cdp/opus-5`, `cdp/fable-5.1`). Reserve native `Task` only for explicit operator requests (`bugbot`, `security-review`, `cursor-guide`, `browser-use`) or when `stargate`/`giw` are down.
+In a Cursor IDE tab, use `team_dispatch` (`seat="cursor-sdk"`, `lane="B"`, or a `cdp/*` / `cursor/*` wire per § Duty → wire) instead of native Cursor `Task` subagents (`explore`, `generalPurpose`, etc.). Native `Task` is noisy, costly in tab context, and lacks GIW worktree isolation, harness injection, and closeout sidecars; `team_dispatch` expands across `cursor/*` and `cdp/*`. Reserve native `Task` for explicit operator requests (`bugbot`, `security-review`, `cursor-guide`, `browser-use`) or when `stargate`/`giw` are down.
 
 ## Grok Bot seats
 
-Lean context binds Grok Bot seats as it binds Cursor agents (Kaywan
-2026-10-08 09:21 PT and 23:02 PT; 2026-10-09 09:22 PT), as a balance of
-workload across Maestro (claude.ai), the Grok Bot seat, cursor-sdk and CDP,
-not a rule to outsource everything (Kaywan 2026-10-09 10:00 PT). A bot keeps
-its OWN context lean and leans toward `team_dispatch` seat=`cursor-sdk`
-lane=B for sizable legs (a large read sweep, a multi-file change, a long run
-or land): `cursor/composer-2.5` for well-specified runs and lands,
-`cursor/grok-4.7` for judgment and reviews, or CDP per § Duty → wire. The
-seat still does judgment, coordination, and legs that need a tool only a bot
-has (browser/desktop, SendToAgent/CreateAgent wake path, connected apps, a
-user's registered machine). It does not implement and does not sweep; those
-leave as packets. Hand a leg to a bot subagent or peer bot only for a
-bot-only tool.
-Weekly Grok Bot usage is capped; spread load across pools.
+Grok Bot seats stay lean like Cursor agents: balance load across maestro, bot,
+cursor-sdk, and CDP — not outsource everything. Keep **this** context lean;
+sizeable legs (`team_dispatch` `seat=cursor-sdk` `lane=B`: `cursor/composer-2.5`
+implement/land, `cursor/grok-4.7` judgment/review, CDP per § Duty → wire). Keep
+judgment, coordination, and bot-only tools (browser/desktop, SendToAgent wake,
+connected apps, registered machine) here; implement and sweep leave as packets.
+Peer-bot handoff only for bot-only tools. Weekly Grok Bot usage is capped — spread pools.
 
 ## Duty → wire
 

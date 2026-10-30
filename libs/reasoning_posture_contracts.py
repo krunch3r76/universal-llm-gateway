@@ -20,7 +20,7 @@ from job_vocab.records import BY_NAME
 DelegationTier = Literal["A", "B", "C"]
 
 _CDP_ORCHESTRATOR_PURPOSES = frozenset({"operator-proxy", "mission"})
-_COMPOSER_LEAF_MODEL = "cursor/composer-2.5"
+_COMPOSER_LEAF_MODELS = frozenset({"cursor/composer-2.5", "composer-2.5"})
 
 # Harvest nominates these manage slugs when this lib lands (package-grain).
 CONSUMERS: tuple[str, ...] = ("git_integration_worker", "stargate")
@@ -94,12 +94,12 @@ def resolve_delegation_tier(
     c = (contract or "").strip().lower()
     m = (model or "").strip().lower()
     nested = bool((nest_under or "").strip())
-    if c == "freeform" and (m == _COMPOSER_LEAF_MODEL or nested):
+    if c == "freeform" and (m in _COMPOSER_LEAF_MODELS or nested):
         return "C"
     record = BY_NAME.get(c)
     if record is not None:
         return record.delegation_tier
-    if m == _COMPOSER_LEAF_MODEL or nested:
+    if m in _COMPOSER_LEAF_MODELS or nested:
         return "C"
     return "B"
 

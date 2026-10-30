@@ -54,6 +54,8 @@ _DEFAULT_ROOTS: tuple[tuple[str, Path], ...] = (
     ("parent", _REPO.parent / ".cursor" / "rules"),
 )
 _SEATS_ROOT = _REPO / "cursor-plugins" / "ulg-ecosystem-seats" / "cursor-sdk" / "rules"
+_PLUGIN_SKILLS_ROOT = _REPO / "cursor-plugins" / "ulg-ecosystem" / "skills"
+_HOME_SKILLS_ROOT = Path.home() / ".cursor" / "skills"
 
 _RESIDENT_TARGET = 8000
 _RESIDENT_HARD = 10000
@@ -92,6 +94,18 @@ class RuleFile:
     @property
     def name(self) -> str:
         return self.path.name
+
+
+@dataclass(frozen=True)
+class SkillFile:
+    """One ``SKILL.md`` under a skills tree with always-apply frontmatter."""
+
+    tree: str
+    path: Path
+    slug: str
+    always_apply: bool
+    tokens: int
+    lines: int
 
 
 def estimate_tokens(text: str) -> int:
@@ -139,6 +153,37 @@ def scan_roots(roots: tuple[tuple[str, Path], ...]) -> list[RuleFile]:
     return files
 
 
+def _scan_skills_tree(tree: str, root: Path) -> list[SkillFile]:
+    if not root.is_dir():
+        return []
+    out: list[SkillFile] = []
+    for skill_dir in sorted(p for p in root.iterdir() if p.is_dir()):
+        path = skill_dir / "SKILL.md"
+        if not path.is_file():
+            continue
+        text = path.read_text(encoding="utf-8")
+        always_apply, _tier = _parse_frontmatter(text)
+        out.append(
+            SkillFile(
+                tree=tree,
+                path=path,
+                slug=skill_dir.name,
+                always_apply=always_apply,
+                tokens=estimate_tokens(text),
+                lines=text.count("\n") + 1,
+            )
+        )
+    return out
+
+
+def scan_promoted_skills() -> list[SkillFile]:
+    """``alwaysApply: true`` skills under plugin SoT and the operator ``~/.cursor/skills`` tree."""
+    files: list[SkillFile] = []
+    files.extend(_scan_skills_tree("plugin-skills", _PLUGIN_SKILLS_ROOT))
+    files.extend(_scan_skills_tree("home-skills", _HOME_SKILLS_ROOT))
+    return files
+
+
 def _always(files: list[RuleFile]) -> list[RuleFile]:
     return sorted(
         (f for f in files if f.always_apply), key=lambda f: f.tokens, reverse=True
@@ -164,7 +209,11 @@ def seat_effective_tokens(resident: list[RuleFile], seats: list[RuleFile]) -> in
     return total
 
 
-def render_report(files: list[RuleFile], seats: list[RuleFile] | None = None) -> str:
+def render_report(
+    files: list[RuleFile],
+    seats: list[RuleFile] | None = None,
+    skills: list[SkillFile] | None = None,
+) -> str:
     always = _always(files)
     lines = [
         "# AlwaysApply rule census",
@@ -220,6 +269,32 @@ def render_report(files: list[RuleFile], seats: list[RuleFile] | None = None) ->
         for f in s_always:
             lines.append(
                 f"| {f.tokens} | {f.lines} | {f.tree} | {f.apply_tier or '—'} | `{f.name}` |"
+            )
+    if skills is not None:
+        s_always = sorted(
+            (s for s in skills if s.always_apply),
+            key=lambda s: s.tokens,
+            reverse=True,
+        )
+        lines.extend(
+            [
+                "",
+                "## alwaysApply:true promoted skills (informational)",
+                "",
+                "Not counted in resident/seat-effective totals — visibility for "
+                "`alwaysApply: true` SKILL.md under plugin SoT and `~/.cursor/skills`.",
+                "",
+                f"- trees scanned: plugin-skills, home-skills",
+                f"- alwaysApply:true: {len(s_always)}",
+                f"- tokens (chars/4): **{sum(s.tokens for s in s_always)}**",
+                "",
+                "| tok≈ | lines | tree | slug |",
+                "|---:|---:|---|---|",
+            ]
+        )
+        for s in s_always:
+            lines.append(
+                f"| {s.tokens} | {s.lines} | {s.tree} | `{s.slug}` |"
             )
     return "\n".join(lines) + "\n"
 
@@ -389,8 +464,9 @@ def main(argv: list[str] | None = None) -> int:
 
     resident = scan_roots(_DEFAULT_ROOTS)
     seats = _scan_tree("seats", _SEATS_ROOT)
+    skills = scan_promoted_skills()
     if not args.quiet:
-        print(render_report(resident, seats=seats))
+        print(render_report(resident, seats=seats, skills=skills))
     if args.check is None:
         return 0
     return _run_policy(resident, seats, _SEATS_ROOT, args)

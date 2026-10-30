@@ -17,6 +17,8 @@ def test_resolve_delegation_tier_freeform_composer_or_nested() -> None:
         )
         == "C"
     )
+    assert resolve_delegation_tier("freeform", model="composer-2.5") == "C"
+    assert resolve_delegation_tier("implement", model="composer-2.5") == "C"
     assert resolve_delegation_tier("freeform", model="cursor/grok-4.7", nest_under="p") == "C"
 
 

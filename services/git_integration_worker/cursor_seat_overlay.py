@@ -104,6 +104,11 @@ HEADLESS_NON_CODE_PLUGIN_DIRNAMES: tuple[str, ...] = (
     "plugin-gmail-gmail",
     "plugin-outlook-outlook",
 )
+HEADLESS_CURSOR_PUBLIC_CACHE_DIRNAMES: tuple[str, ...] = (
+    "gmail",
+    "google-calendar",
+    "outlook",
+)
 
 TIER_B_PRUNED_PLUGIN_PATHS: tuple[Path, ...] = (Path("skills") / "lean-dispatch",)
 TIER_C_LEAF_PRUNED_PLUGIN_PATHS: tuple[Path, ...] = (
@@ -266,21 +271,31 @@ def apply_cursor_sdk_seat_overlay(
     return pruned, grafted
 
 
+def _prune_plugins_child(target: Path, label: str, removed: list[str]) -> None:
+    if target.is_dir():
+        shutil.rmtree(target)
+    elif target.exists():
+        target.unlink()
+    else:
+        return
+    if target.exists():
+        raise SeatOverlayConfigError(
+            f"non-code plugin cache prune failed, still present: {target}"
+        )
+    removed.append(label)
+
+
 def prune_headless_non_code_plugin_caches(cursor_dir: Path) -> list[str]:
     """Remove mail plugin copies from a dispatch HOME ``.cursor/plugins`` tree."""
     plugins_root = cursor_dir / "plugins"
     removed: list[str] = []
     for name in HEADLESS_NON_CODE_PLUGIN_DIRNAMES:
-        target = plugins_root / name
-        if target.is_dir():
-            shutil.rmtree(target)
-        elif target.exists():
-            target.unlink()
-        else:
-            continue
-        if target.exists():
-            raise SeatOverlayConfigError(
-                f"non-code plugin cache prune failed, still present: {target}"
-            )
-        removed.append(name)
+        _prune_plugins_child(plugins_root / name, name, removed)
+    cache_public = plugins_root / "cache" / "cursor-public"
+    for name in HEADLESS_CURSOR_PUBLIC_CACHE_DIRNAMES:
+        _prune_plugins_child(
+            cache_public / name, f"cache/cursor-public/{name}", removed
+        )
+    if cache_public.is_dir() and not any(cache_public.iterdir()):
+        cache_public.rmdir()
     return removed

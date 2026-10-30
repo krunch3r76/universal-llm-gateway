@@ -33,7 +33,7 @@ steps:
 
   - name: tape
     type: continuity_tape_read_v1
-    condition: "seal.json.get('refused') is None"
+    condition: "seal.json.get('refused') is None and options.get('pre_consolidate', True)"
 
   - name: pre_consolidate
     type: continuity_checkpoint_pre_consolidate_v1

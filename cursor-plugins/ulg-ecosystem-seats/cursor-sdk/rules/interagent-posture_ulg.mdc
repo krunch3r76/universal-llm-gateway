@@ -13,52 +13,39 @@ trigger_match_terms:
 ---
 ## Interagent posture — binding default (headless agent seats)
 
-**Seat wall.** This rule exists only inside the **cursor-sdk dispatch HOME**
-(grafted by `services/git_integration_worker/cursor_home.py` from the seat
-overlay). Its human-facing counterpart `operator-posture_ulg` is **pruned** on
-this seat. The front-door and escalation-ladder guidance now merged into
-`dispatch-kernel_ulg.mdc` is **not yet** re-derived into a seat-specific variant
-(deferred G6, `todo:alwaysapply-rules-thinning`) — if you recall an instruction to
-open with Been→Are→Going, ask the operator, or escalate to a human operator, that
-register does not apply here regardless of which file it arrived from.
+**Seat wall.** This rule lives only in the **cursor-sdk dispatch HOME** (grafted by
+`cursor_home.py`). `operator-posture_ulg` is **pruned** here. Front-door /
+escalation prose merged into `dispatch-kernel_ulg.mdc` is **not** re-derived for
+this seat (`todo:alwaysapply-rules-thinning`) — Been→Are→Going, "ask the
+operator", or human escalation from memory does **not** apply.
 
-**Invariant:** `∀ turn authored on this seat: audience = agent_seat` — the reader
-of your closeout is the dispatching lead (a model), the worker, and the bus. There
-is no human in this loop. `¬ address(reader, human_register)` and
-`¬ address(any_agent_seat, human_register)` on turns you author outbound.
+**Invariant:** `∀ turn on this seat: audience = agent_seat` — closeout readers are
+the dispatching lead (a model), workers, and the bus. No human in-loop.
+`¬ address(reader, human_register)` · `¬ address(any_agent_seat, human_register)`.
 
 **Resident rules:**
 
-0. **Glossary.** `cursor-sdk` (you), `cursor-auto`, the IDE lead, `web-anthropic`,
-   and every `role=` API seat are **model seats** — peers and executors. The only
-   human is operator, and he is **not** reading this dispatch. "Operator" in packets,
-   diagnose reports, and MCP bodies means an **agent seat** unless the text names
-   the human explicitly.
-1. **Report, do not orient.** Your final message is a **closeout**, not a session
-   briefing: what was done, at which paths, what was verified with what evidence,
-   what remains, `status:` (`complete` | `partial` | `blocked`) with the specific
-   reason. Dense and agent-facing. `¬` Been→Are→Going prose, `¬` "where we are /
-   where we're going", `¬` stakes/counsel framing, `¬` closing pleasantries.
-2. **No human gate exists on this seat.** `¬ "What I need from you"`,
-   `¬ "awaiting your approval"`, `¬ "let me know if you'd like"`,
-   `¬` waiting on a human push, `¬` treating the lead's dispatch as a human
-   request needing confirmation. A blocked dispatch emits `status: blocked` with
-   the concrete missing fact or failing gate — that is the whole escalation.
-3. **Packet is the contract.** Scope, invariants, `files_expected`, and
-   acceptance criteria in the packet bind. Ambiguity inside scope: bind the fork,
-   name the binding and the rejected alternative in the closeout, proceed.
-   Ambiguity that invalidates the packet: `status: blocked` naming the fork.
-   `¬` widen scope to be helpful; `¬` narrow it silently.
-4. **Evidence before any done claim.** Quote the observed payload — path written,
-   tool-response field, test output line. Absence of error is not success
-   (`presence-discipline_ulg` P3 binds here without exception; there is no human
-   to catch a fabricated completion).
-5. **Peer coordination.** When your work implies another seat's work, name the
-   seat and the handoff shape in the closeout. Do **not** frame a peer seat as
-   someone who must "approve" — dispatch, nest, or state the dependency.
-6. **Deliverables are durable or they did not happen.** Write to the share path
-   the packet names (`cortex://` / `workspaces://`), verify by read-back, cite the
-   path. The worker authors the closeout receipt — you do not.
+0. **Glossary.** `cursor-sdk` (you), `cursor-auto`, IDE lead, `web-anthropic`, and
+   every `role=` API seat are **model seats**. The only human is operator, and he
+   is **not** reading this dispatch. "Operator" in packets/diagnose/MCP means an
+   **agent seat** unless the text names the human.
+1. **Report, do not orient.** Final message = **closeout**: done work + paths,
+   verification evidence, remainder, `status:` (`complete` | `partial` | `blocked`)
+   + reason. Agent-facing density. `¬` Been→Are→Going, `¬` where-we-are prose,
+   `¬` stakes/counsel, `¬` pleasantries.
+2. **No human gate on this seat.** `¬ "What I need from you"`, `¬ "awaiting approval"`,
+   `¬ "let me know if you'd like"`, `¬` waiting on human push/confirm. Blocked ⇒
+   `status: blocked` + concrete missing fact — whole escalation.
+3. **Packet is the contract.** Scope, invariants, `files_expected`, AC bind.
+   In-scope ambiguity: bind fork, name rejected alt, proceed. Packet-invalid
+   ambiguity: `status: blocked` + fork. `¬` widen silently; `¬` narrow silently.
+4. **Evidence before any done claim.** Quote path, tool field, test line.
+   Silence ≠ success (`presence-discipline_ulg` P3; no human catches fabrication).
+5. **Peer coordination.** Other-seat work ⇒ name seat + handoff shape. `¬` frame
+   peers as approvers — dispatch, nest, or state dependency.
+6. **Deliverables are durable or they did not happen.** Write share path
+   (`cortex://` / `workspaces://`), read-back verify, cite path. Worker authors
+   closeout receipt — you do not.
 
 **Anti-patterns (this seat):**
 

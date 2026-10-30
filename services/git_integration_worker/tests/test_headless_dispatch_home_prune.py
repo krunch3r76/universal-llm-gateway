@@ -40,6 +40,10 @@ def _fake_real_home(tmp_path: Path) -> Path:
     (cursor / "plugins" / "plugin-gmail-gmail").mkdir(parents=True)
     (cursor / "plugins" / "plugin-gmail-gmail" / "CACHE").write_text("x", encoding="utf-8")
     (cursor / "plugins" / "plugin-outlook-outlook").mkdir(parents=True)
+    cache_public = cursor / "plugins" / "cache" / "cursor-public"
+    for name in ("gmail", "google-calendar", "outlook"):
+        (cache_public / name).mkdir(parents=True)
+        (cache_public / name / "CACHE").write_text("x", encoding="utf-8")
     (cursor / "mcp.json").write_text(json.dumps({"mcpServers": {}}), encoding="utf-8")
     (real / ".gateway").mkdir(parents=True)
     (real / ".gateway" / "mcp.yaml").write_text("auth_token: t\n", encoding="utf-8")
@@ -85,6 +89,7 @@ def test_setup_prunes_user_rules_and_plugin_caches(
     assert not (rules_dir / "python312.mdc").exists()
     assert not (rules_dir / "php-laravel.mdc").exists()
     assert not (home / ".cursor" / "plugins" / "plugin-gmail-gmail").exists()
+    assert not (home / ".cursor" / "plugins" / "cache" / "cursor-public").exists()
     plugin_root = home / ".cursor" / ECOSYSTEM_PLUGIN_RELPATH
     assert not (plugin_root / "rules" / "event-only-seat-wake_ulg.mdc").exists()
 

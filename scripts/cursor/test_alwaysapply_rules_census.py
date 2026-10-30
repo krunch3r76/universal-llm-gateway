@@ -9,6 +9,8 @@ import pytest
 from scripts.cursor.alwaysapply_rules_census import (
     _REMOVED_PLUGIN_RULES,
     RuleFile,
+    render_report,
+    scan_promoted_skills,
     seat_effective_tokens,
 )
 from services.git_integration_worker.cursor_seat_overlay import (
@@ -60,4 +62,13 @@ def test_removed_plugin_rules_tracks_overlay_lists() -> None:
             assert relpath in _REMOVED_PLUGIN_RULES
     for relpath in LEAD_ONLY_PLUGIN_PATHS:
         assert relpath in _REMOVED_PLUGIN_RULES
+
+
+@pytest.mark.offline
+def test_render_report_includes_promoted_skills_section() -> None:
+    skills = scan_promoted_skills()
+    report = render_report([], seats=[], skills=skills)
+    assert "## alwaysApply:true promoted skills (informational)" in report
+    if any(s.always_apply for s in skills):
+        assert "| slug |" in report
 
