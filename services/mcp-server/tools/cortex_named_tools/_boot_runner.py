@@ -284,14 +284,15 @@ def _subgraph_count_value(raw: Any) -> int | None:
         return None
     if isinstance(raw, int):
         return raw if raw >= 0 else None
-    if isinstance(raw, str):
-        if not raw.isdigit():
-            return None
-        return int(raw)
     if isinstance(raw, float):
-        if raw < 0 or raw != int(raw):
+        return None
+    if isinstance(raw, str):
+        if not raw or not raw.isascii() or not raw.isdigit():
             return None
-        return int(raw)
+        try:
+            return int(raw)
+        except ValueError:
+            return None
     return None
 
 

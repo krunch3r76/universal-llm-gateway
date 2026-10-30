@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 import sys
 from pathlib import Path
 from typing import Any
@@ -102,6 +103,63 @@ def test_materialize_invalid_response_shapes(
     assert row["fetch_status"] == "failed"
     assert row["fetch_error"] == "invalid_response"
     assert row["entity_count"] is None
+
+
+@pytest.mark.parametrize(
+    "entity_count",
+    [
+        float("nan"),
+        float("inf"),
+        float("-inf"),
+        1.0,
+        "²",
+    ],
+)
+def test_exotic_entity_counts_invalid_without_aborting_sibling(
+    monkeypatch: pytest.MonkeyPatch, entity_count: Any
+) -> None:
+    def cx(_method: str, path: str, **_kw: Any) -> dict[str, Any]:
+        if "view-a" in path:
+            return {"entity_count": entity_count, "edge_count": 0}
+        return {"entity_count": 0, "edge_count": 0}
+
+    monkeypatch.setattr("tools._cortex_relay.cx", cx)
+    rows = boot_runner._materialize_views([_VIEW_A, _VIEW_B])
+    assert rows[0]["fetch_status"] == "failed"
+    assert rows[0]["fetch_error"] == "invalid_response"
+    assert rows[1]["fetch_status"] == "ok"
+
+
+def test_overlong_ascii_digit_string_invalid_response(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    if not hasattr(sys, "set_int_max_str_digits"):
+        pytest.skip("set_int_max_str_digits unavailable")
+    prior = sys.get_int_max_str_digits()
+    try:
+        sys.set_int_max_str_digits(641)
+        overlong = "9" * 700
+
+        def cx(_method: str, path: str, **_kw: Any) -> dict[str, Any]:
+            if "view-a" in path:
+                return {"entity_count": overlong, "edge_count": 0}
+            return {"entity_count": 1, "edge_count": 0}
+
+        monkeypatch.setattr("tools._cortex_relay.cx", cx)
+        rows = boot_runner._materialize_views([_VIEW_A, _VIEW_B])
+    finally:
+        sys.set_int_max_str_digits(prior)
+
+    assert rows[0]["fetch_status"] == "failed"
+    assert rows[0]["fetch_error"] == "invalid_response"
+    assert rows[1]["fetch_status"] == "ok"
+    assert rows[1]["entity_count"] == 1
+
+
+def test_subgraph_count_value_rejects_non_integer_floats() -> None:
+    assert boot_runner._subgraph_count_value(1.0) is None
+    assert boot_runner._subgraph_count_value(math.nan) is None
+    assert boot_runner._subgraph_count_value(math.inf) is None
 
 
 def test_digit_string_counts_normalize(monkeypatch: pytest.MonkeyPatch) -> None:
