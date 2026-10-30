@@ -396,23 +396,37 @@ def _skip_reason(conn: sqlite3.Connection, row: sqlite3.Row) -> str | None:
     return None
 
 
+def _pending_retry_ready_sql(alias: str = "") -> str:
+    """Orion deferred_streaming uses finished_at as next-attempt time (wall clock)."""
+    prefix = f"{alias}." if alias else ""
+    return f"""(
+      {prefix}finished_at IS NULL
+      OR ({prefix}reason='deferred_streaming' AND {prefix}finished_at<=?)
+      OR (COALESCE({prefix}reason,'')!='deferred_streaming' AND {prefix}finished_at<=?)
+    )"""
+
+
 def _group_pending_rows(
-    conn: sqlite3.Connection, group: sqlite3.Row, retry_before: str
+    conn: sqlite3.Connection,
+    group: sqlite3.Row,
+    *,
+    stamp: str,
+    retry_before: str,
 ) -> list[sqlite3.Row]:
     ga, tid = str(group["agent"]), group["thread_id"]
-    filt = "AND state='pending' AND (finished_at IS NULL OR finished_at<=?)"
+    filt = f"AND state='pending' AND {_pending_retry_ready_sql()}"
     if normalize_bus_address(ga) in STAGE_MANAGER_ADDRESSES:
         q = (
             f"SELECT * FROM endpoint_wake_ledger WHERE thread_id=? {filt} "
             f"AND (agent=? OR lower(trim(agent)) IN ({_STAGE_MANAGER_SQL})) "
             "ORDER BY turn_id"
         )
-        return conn.execute(q, (tid, retry_before, ga)).fetchall()
+        return conn.execute(q, (tid, stamp, retry_before, ga)).fetchall()
     q = (
         f"SELECT * FROM endpoint_wake_ledger WHERE agent=? AND thread_id=? {filt} "
         "ORDER BY turn_id"
     )
-    return conn.execute(q, (ga, tid, retry_before)).fetchall()
+    return conn.execute(q, (ga, tid, stamp, retry_before)).fetchall()
 
 
 def resolve_subscription_for_thread(
@@ -478,6 +492,10 @@ _ORION_WAKE_HOUSE = "21207"
 _PINNED_ORION_CONVERSATION_ID = "6ae2e1bc-0c94-83e8-9f21-62467c4935d5"
 ENDPOINT_WAKE_DEBOUNCE_S_DEFAULT = 600
 ENDPOINT_WAKE_DEBOUNCE_S_ORION_CHAT = 30
+ORION_DEFERRED_STREAMING_MAX_ATTEMPTS = 25
+ORION_DEFERRED_RETRY_BASE_S = 30
+ORION_DEFERRED_RETRY_MAX_S = 300
+_ORION_DEFERRED_ATTEMPT_PREFIX = "orion_deferred_attempt:"
 
 
 def _is_orion_chat_wake_group(agent: str, thread_id: str) -> bool:
@@ -841,7 +859,7 @@ def claim_due_wakes(
                 f"""
                 SELECT agent, thread_id FROM endpoint_wake_ledger p
                 WHERE p.state='pending'
-                  AND (p.finished_at IS NULL OR p.finished_at<=?)
+                  AND {_pending_retry_ready_sql('p')}
                   AND NOT EXISTS (
                     SELECT 1 FROM endpoint_wake_ledger d
                     WHERE {_mailbox_agent_sql("d", "p")} AND d.thread_id=p.thread_id
@@ -913,6 +931,7 @@ def claim_due_wakes(
                 LIMIT ?
                 """,
                 (
+                    stamp,
                     retry_before,
                     _ORION_WAKE_HOUSE,
                     debounce_before_orion,
@@ -933,7 +952,7 @@ def claim_due_wakes(
                 debounce_before=debounce_before_orion,
             ):
                 continue
-            rows = _group_pending_rows(conn, group, retry_before)
+            rows = _group_pending_rows(conn, group, stamp=stamp, retry_before=retry_before)
             skipped: list[dict[str, Any]] = []
             claimable: list[sqlite3.Row] = []
             for row in rows:
@@ -977,6 +996,115 @@ def claim_due_wakes(
             ]
             return {"wake_id": wake_id, "rows": claimed}
         return {"wake_id": None, "rows": all_skipped}
+
+
+def parse_orion_deferred_attempt(decided_by_rule: str | None) -> int:
+    """Return the stored deferred-streaming attempt count (0 when unset)."""
+    text = str(decided_by_rule or "")
+    if not text.startswith(_ORION_DEFERRED_ATTEMPT_PREFIX):
+        return 0
+    try:
+        return max(0, int(text[len(_ORION_DEFERRED_ATTEMPT_PREFIX) :]))
+    except ValueError:
+        return 0
+
+
+def orion_deferred_retry_delay_s(attempt: int) -> int:
+    """Backoff before the next Orion deferred-streaming claim (bounded)."""
+    n = max(1, int(attempt))
+    return min(ORION_DEFERRED_RETRY_MAX_S, ORION_DEFERRED_RETRY_BASE_S * n)
+
+
+def post_orion_wake_undelivered_notices(
+    *,
+    thread_id: str,
+    turn_numbers: list[int],
+) -> None:
+    """Post one exhaustion NOTICE per maestro lane (12286 + 21220)."""
+    from .turns import insert_turn
+
+    turns_s = ",".join(str(n) for n in sorted({int(t) for t in turn_numbers}))
+    body = f"thread={thread_id} turns={turns_s} receipt=deferred_exhausted"
+    subject = "NOTICE|orion wake undelivered"
+    for lane in ("12286", "21220"):
+        insert_turn(
+            thread=lane,
+            from_agent="agent_bus",
+            to_agent="maestro",
+            subject=subject,
+            body=body,
+        )
+
+
+def record_orion_deferred_streaming(
+    wake_id: str,
+    route: str | None,
+    subscription_id: int | None,
+    cse_registration_id: str | None,
+    *,
+    now: str | None = None,
+) -> dict[str, Any]:
+    """Schedule a ledger retry for streaming deferral, or exhaust with NOTICE."""
+    stamp = _now(now)
+    with write_connect() as conn:
+        rows = conn.execute(
+            "SELECT id, state, thread_id, turn_number, decided_by_rule "
+            "FROM endpoint_wake_ledger WHERE wake_id=?",
+            (wake_id,),
+        ).fetchall()
+        eligible = [r for r in rows if r["state"] in _CLAIM_STATES]
+        if not eligible:
+            raise WakeConflictError("wake_not_claimed")
+        prior = max(parse_orion_deferred_attempt(r["decided_by_rule"]) for r in eligible)
+        attempt = prior + 1
+        thread_id = str(eligible[0]["thread_id"])
+        turn_numbers = sorted({int(r["turn_number"]) for r in eligible})
+        ids = [int(r["id"]) for r in eligible]
+        if attempt > ORION_DEFERRED_STREAMING_MAX_ATTEMPTS:
+            conn.execute(
+                f"UPDATE endpoint_wake_ledger SET state='refused', reason='deferred_exhausted', "
+                f"route=?, subscription_id=?, cse_registration_id=?, finished_at=?, "
+                f"decided_by_rule=? WHERE id IN ({','.join('?' * len(ids))})",
+                (
+                    route,
+                    subscription_id,
+                    cse_registration_id,
+                    stamp,
+                    f"{_ORION_DEFERRED_ATTEMPT_PREFIX}{attempt}",
+                    *ids,
+                ),
+            )
+            post_orion_wake_undelivered_notices(
+                thread_id=thread_id, turn_numbers=turn_numbers
+            )
+            return {
+                "exhausted": True,
+                "attempt": attempt,
+                "thread_id": thread_id,
+                "turn_numbers": turn_numbers,
+            }
+        retry_at = _shift(stamp, orion_deferred_retry_delay_s(attempt))
+        conn.execute(
+            f"UPDATE endpoint_wake_ledger SET state='pending', reason='deferred_streaming', "
+            f"route=?, subscription_id=?, cse_registration_id=?, finished_at=?, "
+            f"decided_by_rule=?, wake_id=NULL, claimed_at=NULL "
+            f"WHERE id IN ({','.join('?' * len(ids))})",
+            (
+                route,
+                subscription_id,
+                cse_registration_id,
+                retry_at,
+                f"{_ORION_DEFERRED_ATTEMPT_PREFIX}{attempt}",
+                *ids,
+            ),
+        )
+    return {
+        "exhausted": False,
+        "attempt": attempt,
+        "thread_id": thread_id,
+        "turn_numbers": turn_numbers,
+        "retry_at": retry_at,
+    }
 
 
 def record_wake_result(

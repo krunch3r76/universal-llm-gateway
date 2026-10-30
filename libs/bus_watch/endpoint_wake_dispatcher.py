@@ -1783,8 +1783,9 @@ def fire_due_wakes(store: StoreClient) -> dict[str, Any] | None:
             wake_id=str(wake_id) if wake_id else None,
         )
         if state == "pending" and reason == "deferred_streaming":
-            if any(str(r.get("reason") or "") == "deferred_streaming" for r in rows):
-                state, reason = "refused", "deferred_streaming"
+            return claimed
+        if state == "refused" and reason == "deferred_exhausted":
+            return claimed
         return _finish(
             outcome=state,
             reason=reason,

@@ -11,7 +11,11 @@ from typing import Any
 from agent_seat.registry import normalize_bus_address
 
 from .connection import connect, write_connect
-from .endpoint_wake_ledger import record_wake_result, resolve_wake_delivery_binding
+from .endpoint_wake_ledger import (
+    record_orion_deferred_streaming,
+    record_wake_result,
+    resolve_wake_delivery_binding,
+)
 
 _ORION_WAKE_HOUSE = "21207"
 _RECEIPT_PREFIX = "paste_receipt:"
@@ -342,8 +346,23 @@ class LedgerWakeDeliveryOwner:
             outcome = "delivered"
             reason = _encode_paste_receipt(receipt)
         elif str(receipt.get("reason") or "") == "deferred_streaming":
-            outcome = "pending"
-            reason = "deferred_streaming"
+            sched = record_orion_deferred_streaming(
+                claim.wake_id,
+                "exact",
+                None,
+                None,
+            )
+            if sched.get("exhausted"):
+                receipt.update(
+                    {
+                        "ok": False,
+                        "reason": "deferred_exhausted",
+                        "retry_eligible": False,
+                    }
+                )
+            return
+        elif str(receipt.get("reason") or "") == "deferred_exhausted":
+            return
         elif receipt.get("pasted") and not receipt.get("delivered"):
             outcome = "unknown"
             reason = str(receipt.get("reason") or "delivery_unconfirmed")

@@ -314,6 +314,22 @@ async def test_deferred_streaming() -> None:
 
 
 @pytest.mark.asyncio
+async def test_streaming_then_idle_delivers_on_redelivery() -> None:
+    page = _FakePage(streaming=True)
+    deferred = await deliver_orion_wake(
+        thread="21207", turn=5, from_agent="maestro", page=page
+    )
+    assert deferred["reason"] == "deferred_streaming"
+    page.streaming = False
+    delivered = await deliver_orion_wake(
+        thread="21207", turn=5, from_agent="maestro", page=page
+    )
+    assert delivered["ok"] is True
+    assert delivered["delivered"] is True
+    assert page.pasted is True
+
+
+@pytest.mark.asyncio
 async def test_orion_echo_drop() -> None:
     page = _FakePage()
     out = await deliver_orion_wake(
