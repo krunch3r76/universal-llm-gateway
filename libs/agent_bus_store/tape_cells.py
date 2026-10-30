@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from typing import Any
 
+from .checkpoint_windows_join import timestamp_to_utc_instant
 from .checkpoint_windows_render import list_checkpoint_turns
 from .db.connection import connect
 from .tape_membership import (
@@ -42,6 +44,78 @@ def _transcript_ids_in_anchors(anchors: list[dict[str, Any]]) -> set[str]:
         for anchor in anchors
         if anchor.get("transcript_id")
     }
+
+
+def _journals_for_transcript(
+    lane_journals: list[dict[str, Any]], *, transcript_id: str
+) -> list[dict[str, Any]]:
+    return [
+        journal
+        for journal in lane_journals
+        if str(journal.get("conversation_uuid") or "") == transcript_id
+    ]
+
+
+def _latest_journal_for_transcript(
+    lane_journals: list[dict[str, Any]], *, transcript_id: str
+) -> dict[str, Any] | None:
+    matching = _journals_for_transcript(lane_journals, transcript_id=transcript_id)
+    if not matching:
+        return None
+
+    def _sort_key(journal: dict[str, Any]) -> tuple[Any, ...]:
+        ts = timestamp_to_utc_instant(str(journal.get("timestamp") or ""))
+        row_id = journal.get("id")
+        return (
+            ts or datetime.min.replace(tzinfo=UTC),
+            int(row_id) if row_id is not None else -1,
+        )
+
+    return max(matching, key=_sort_key)
+
+
+def _max_journal_id_for_transcripts(
+    lane_journals: list[dict[str, Any]], transcript_ids: set[str]
+) -> int | None:
+    best: int | None = None
+    for tid in transcript_ids:
+        for journal in _journals_for_transcript(lane_journals, transcript_id=tid):
+            row_id = journal.get("id")
+            if row_id is None:
+                continue
+            val = int(row_id)
+            if best is None or val > best:
+                best = val
+    return best
+
+
+def _unanchored_open_cell_allowed_after_tip(
+    *,
+    transcript_id: str,
+    lane_journals: list[dict[str, Any]],
+    tip_transcript_ids: set[str],
+    last_cp_created_at: str,
+) -> bool:
+    """True when an unanchored transcript's journals prove activity strictly after the tip CP."""
+    matching = _journals_for_transcript(lane_journals, transcript_id=transcript_id)
+    if not matching:
+        return True
+    latest = _latest_journal_for_transcript(
+        lane_journals, transcript_id=transcript_id
+    )
+    if latest is None:
+        return False
+    cp_ts = timestamp_to_utc_instant(last_cp_created_at)
+    journal_ts = timestamp_to_utc_instant(str(latest.get("timestamp") or ""))
+    if cp_ts is not None and journal_ts is not None:
+        return journal_ts > cp_ts
+    tip_max_id = _max_journal_id_for_transcripts(lane_journals, tip_transcript_ids)
+    row_id = latest.get("id")
+    if row_id is None:
+        return tip_max_id is None
+    if tip_max_id is None:
+        return True
+    return int(row_id) > tip_max_id
 
 
 def _wall_ordinal_from_cells(cells: list[dict[str, Any]]) -> int | None:
@@ -187,7 +261,17 @@ def _cells_for_lane(
         )
         if last_sealed is not None and last_sealed < last_cp.cp_ordinal:
             continue
-        if tip_transcript_ids:
+        if last_sealed is None and (
+            not tip_transcript_ids or transcript_id not in tip_transcript_ids
+        ):
+            if not _unanchored_open_cell_allowed_after_tip(
+                transcript_id=transcript_id,
+                lane_journals=lane_journals,
+                tip_transcript_ids=tip_transcript_ids,
+                last_cp_created_at=str(getattr(last_cp, "created_at", "") or ""),
+            ):
+                continue
+        elif tip_transcript_ids:
             if transcript_id not in tip_transcript_ids and last_sealed is not None:
                 continue
         turn_lo = _last_turns_at_cp(cp_anchors, transcript_id=transcript_id)

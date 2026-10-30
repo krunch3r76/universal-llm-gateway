@@ -219,6 +219,57 @@ def test_f2_window_whole_tip_excludes_older_sealed_transcript(
 @patch("agent_bus_store.tape_cells.list_checkpoint_turns")
 @patch("agent_bus_store.tape_cells.connect")
 @patch("agent_bus_store.tape_cells.build_chain_segments")
+def test_f2_excludes_stale_unanchored_journal_by_timestamp(
+    mock_chain,
+    mock_connect,
+    mock_cps,
+    mock_uuid_lookup,
+) -> None:
+    """F2: pre-tip unanchored journal must not reopen when lane_journals carry timestamps."""
+    mock_uuid_lookup.return_value = None
+    mock_chain.return_value = [
+        {"transcript_id": _UUID_OLD, "turn_lo": 0, "turn_hi": 5, "session_id": "old"},
+    ]
+    cp_tip_body = "Window: boundary=window_whole\n"
+    cps = [
+        type(
+            "CP",
+            (),
+            {
+                "turn_number": 20,
+                "cp_ordinal": 55,
+                "created_at": "2026-10-30T22:48:00+00:00",
+            },
+        )()
+    ]
+    mock_cps.return_value = cps
+    conn = mock_connect.return_value.__enter__.return_value
+    conn.execute.return_value.fetchone.side_effect = [{"body": cp_tip_body}]
+    lane_journals = [
+        {
+            "session_id": "old",
+            "conversation_uuid": _UUID_OLD,
+            "timestamp": "2026-10-29T13:24:00+00:00",
+            "id": 100,
+        }
+    ]
+    cells = _cells_for_lane(
+        thread_id=_ROOT,
+        lane_journals=lane_journals,
+        files_root=MagicMock(),
+    )
+    open_by_tid = {
+        str(c["transcript_id"]): c
+        for c in cells
+        if c.get("bus_turn_id") is None
+    }
+    assert _UUID_OLD not in open_by_tid
+
+
+@patch("agent_bus_store.tape_membership.lookup_dominant_lane_by_uuid")
+@patch("agent_bus_store.tape_cells.list_checkpoint_turns")
+@patch("agent_bus_store.tape_cells.connect")
+@patch("agent_bus_store.tape_cells.build_chain_segments")
 def test_f1_brand_new_transcript_admitted_post_tip(
     mock_chain,
     mock_connect,
