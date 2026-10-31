@@ -168,15 +168,16 @@ def is_cursor_sdk_generate_admission(
 
 # contract | expected_model | workflow_slot (route_policy.yaml workflows block)
 _COMPOSER = "cursor/composer-2.5"
+_AUTO_JUDGMENT = "cursor/grok-4.7"
 _GOLDEN_OMIT_TABLE: tuple[tuple[str, str, str], ...] = (
-    ("answer", _COMPOSER, "auto_judgment"),
-    ("ask", _COMPOSER, "auto_judgment"),
-    ("confer", _COMPOSER, "auto_judgment"),
-    ("verify", _COMPOSER, "auto_judgment"),
-    ("execute", _COMPOSER, "auto_judgment"),
-    ("propagate", _COMPOSER, "auto_judgment"),
-    ("sketch", _COMPOSER, "auto_judgment"),
-    ("none", _COMPOSER, "auto_judgment"),
+    ("answer", _AUTO_JUDGMENT, "auto_judgment"),
+    ("ask", _AUTO_JUDGMENT, "auto_judgment"),
+    ("confer", _AUTO_JUDGMENT, "auto_judgment"),
+    ("verify", _AUTO_JUDGMENT, "auto_judgment"),
+    ("execute", _AUTO_JUDGMENT, "auto_judgment"),
+    ("propagate", _AUTO_JUDGMENT, "auto_judgment"),
+    ("sketch", _AUTO_JUDGMENT, "auto_judgment"),
+    ("none", _AUTO_JUDGMENT, "auto_judgment"),
     ("conductor", _COMPOSER, "auto_judgment"),
     ("implement", "cursor/composer-2.5", "mechanical_implement"),
     ("mechanical", "cursor/composer-2.5", "mechanical_implement"),
@@ -289,17 +290,32 @@ def test_to_thread_frontier_default_role() -> None:
 
 
 @pytest.mark.offline
-@pytest.mark.parametrize("role", ["reviewer", "skeptic"])
-def test_check_review_role_omit_model_coerces_cursor_sdk(role: str) -> None:
+def test_reviewer_omit_model_admits_api_role_not_cursor_sdk_seat() -> None:
+    """Break: omit-model reviewer on generate lands seat=cursor-sdk instead of API."""
     reg = load_workflow_registry()
     check_review = reg.workflows[CHECK_REVIEW_WORKFLOW]
     plan = run_full_admit(
-        {"op": "generate", "role": role, "request_id": f"t-{role}"},
+        {"op": "generate", "role": "reviewer", "request_id": "t-reviewer-omit"},
     )
     assert plan.get("admitted") is True, plan
-    assert plan.get("seat") == "cursor-sdk"
+    assert plan.get("backend") == "api_role"
+    assert plan.get("role") == "reviewer"
+    assert plan.get("seat") != "cursor-sdk"
     assert plan.get("model") == check_review.model
-    assert plan.get("workflow") == CHECK_REVIEW_WORKFLOW
+
+
+@pytest.mark.offline
+def test_skeptic_omit_model_admits_api_role_with_role_default_model() -> None:
+    from agent_seat.registry import resolve_agent_model
+
+    plan = run_full_admit(
+        {"op": "generate", "role": "skeptic", "request_id": "t-skeptic-omit"},
+    )
+    assert plan.get("admitted") is True, plan
+    assert plan.get("backend") == "api_role"
+    assert plan.get("role") == "skeptic"
+    assert plan.get("seat") != "cursor-sdk"
+    assert plan.get("model") == resolve_agent_model("skeptic")
 
 
 @pytest.mark.offline

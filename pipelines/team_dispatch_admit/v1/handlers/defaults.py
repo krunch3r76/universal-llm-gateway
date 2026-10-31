@@ -11,7 +11,7 @@ from implement_admission.check_review_substrate import (
     coerce_check_review_omit_to_cursor_seat,
     evaluate_check_review_admission,
     is_check_review_api_role,
-    load_check_review_default_model,
+    resolve_check_review_model,
 )
 from implement_admission.routing import load_route_policy
 from implement_admission.workflow_registry import CHECK_REVIEW_WORKFLOW
@@ -86,8 +86,11 @@ def evaluate_defaults(
         and not (seat and str(seat).strip())
         and not model
     ):
-        model = load_check_review_default_model(load_route_policy())
-        role, seat = None, "cursor-sdk"
+        policy = load_route_policy()
+        resolution = resolve_check_review_model(str(role), None, policy=policy)
+        model = resolution.resolved_model
+        if resolution.substrate == "cursor-sdk":
+            role, seat = None, "cursor-sdk"
         check_review_workflow = CHECK_REVIEW_WORKFLOW
     else:
         role, seat, model, coerced = coerce_check_review_omit_to_cursor_seat(
