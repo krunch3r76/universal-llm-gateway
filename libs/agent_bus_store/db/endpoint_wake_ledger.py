@@ -793,11 +793,17 @@ def resolve_orion_chat_wake(
     if not thread_id:
         return _wake_unbound_envelope(envelope)
 
-    if agent is not None and str(thread_id) != _ORION_WAKE_HOUSE:
+    if (
+        agent is not None
+        and normalize_bus_address(agent) == "orion"
+        and str(thread_id) != _ORION_WAKE_HOUSE
+    ):
         inst_row = instance_wake_latest(thread_id)
         if inst_row is not None:
             if str(inst_row.get("state") or "") != "subscribed":
-                envelope.update({"state": "unbound", "current": None, "reason": "terminal_head"})
+                envelope.update(
+                    {"state": "unbound", "current": None, "reason": "terminal_head"}
+                )
                 return envelope
             if _chatgpt_work_actuation_from_row(inst_row) is None:
                 envelope.update(
@@ -835,6 +841,8 @@ def resolve_orion_chat_wake(
 
 
 def _is_chatgpt_work_wake_group(agent: str, thread_id: str) -> bool:
+    if normalize_bus_address(agent) != "orion":
+        return False
     binding = resolve_orion_chat_wake(thread_id, agent=agent)
     return str(binding.get("basis") or "") == "chatgpt_work"
 
@@ -863,7 +871,7 @@ def _authoritative_chatgpt_journal_row(
 
     if thread_id == _ORION_WAKE_HOUSE:
         return main_wake_latest()
-    if agent is not None:
+    if agent is not None and normalize_bus_address(agent) == "orion":
         return instance_wake_latest(thread_id)
     return None
 

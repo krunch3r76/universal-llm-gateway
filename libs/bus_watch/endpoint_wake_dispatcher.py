@@ -886,23 +886,45 @@ def _apply_grok_window_overlay(
 _ORION_HOUSE_THREAD = "21207"
 
 
-def _orion_synthetic_route(
-    agent: str,
-    thread: str,
-    store: StoreClient | None = None,
-) -> tuple[str, dict[str, Any]] | None:
-    if normalize_bus_address(agent) != "orion":
-        return None
-    if str(thread).strip() != _ORION_HOUSE_THREAD:
-        return None
-    from agent_bus_store.db.endpoint_wake_ledger import resolve_orion_chat_wake
+def _orion_seat_registration_url_for_route(
+    thread: str, store: StoreClient | None
+) -> str | None:
+    """Latest Orion ``SEAT_REGISTRATION`` URL on the house lane (delivery-only scan)."""
+    from web_chat_relay.orion_wake import extract_orion_seat_registration_url
 
-    binding = resolve_orion_chat_wake(str(thread).strip(), agent=agent)
-    if str(binding.get("state") or "") != "bound":
-        return None
-    actuation = dict((binding.get("current") or {}).get("actuation") or {})
+    thread_id = str(thread).strip()
+    if store is not None:
+        try:
+            payload = store.turns(thread_id, after_turn=0, last=100)
+            turns = list(payload.get("turns") or [])
+            for row in reversed(turns):
+                url = extract_orion_seat_registration_url(
+                    str(row.get("body") or ""),
+                    str(row.get("subject") or ""),
+                )
+                if url:
+                    return url
+        except Exception:
+            logger.debug(
+                "endpoint_wake_dispatcher: seat registration scan failed thread=%s",
+                thread_id,
+                exc_info=True,
+            )
+    from agent_bus_store.db.endpoint_wake_ledger import (
+        _latest_orion_seat_registration_on_thread,
+    )
+
+    hit = _latest_orion_seat_registration_on_thread(thread_id)
+    return hit[0] if hit is not None else None
+
+
+def _orion_synthetic_route_from_actuation(
+    actuation: dict[str, Any],
+) -> tuple[str, dict[str, Any]] | None:
     url = str(actuation.get("conversation_url") or "").split("?", 1)[0]
-    conv_id = conversation_id_from_url(url) or str(actuation.get("conversation_id") or "")
+    conv_id = conversation_id_from_url(url) or str(
+        actuation.get("conversation_id") or ""
+    )
     if not url or not conv_id:
         return None
     return (
@@ -917,9 +939,51 @@ def _orion_synthetic_route(
     )
 
 
-def _chatgpt_work_route(
-    agent: str, thread: str
+def _orion_synthetic_route(
+    agent: str,
+    thread: str,
+    store: StoreClient | None = None,
 ) -> tuple[str, dict[str, Any]] | None:
+    if normalize_bus_address(agent) != "orion":
+        return None
+    thread_id = str(thread).strip()
+    if thread_id != _ORION_HOUSE_THREAD:
+        return None
+    from agent_bus_store.db.endpoint_wake_ledger import resolve_orion_chat_wake
+
+    binding = resolve_orion_chat_wake(thread_id, agent=agent)
+    basis = str(binding.get("basis") or "")
+    if basis == "chatgpt_work" and str(binding.get("state") or "") == "bound":
+        actuation = dict((binding.get("current") or {}).get("actuation") or {})
+        routed = _orion_synthetic_route_from_actuation(actuation)
+        if routed is not None:
+            return routed
+
+    reg_url = _orion_seat_registration_url_for_route(thread_id, store)
+    if reg_url:
+        conv_id = conversation_id_from_url(reg_url)
+        if conv_id:
+            return (
+                "exact",
+                {
+                    "surface": "chatgpt",
+                    "display": "12",
+                    "title": reg_url,
+                    "agent_id": conv_id,
+                    "state": "subscribed",
+                },
+            )
+
+    if str(binding.get("state") or "") == "bound":
+        actuation = dict((binding.get("current") or {}).get("actuation") or {})
+        return _orion_synthetic_route_from_actuation(actuation)
+    return None
+
+
+def _chatgpt_work_route(agent: str, thread: str) -> tuple[str, dict[str, Any]] | None:
+    """Instance-scope chatgpt_work delivery applies only to ``orion`` wakes."""
+    if normalize_bus_address(agent) != "orion":
+        return None
     from agent_bus_store.db.endpoint_wake_ledger import resolve_orion_chat_wake
 
     binding = resolve_orion_chat_wake(str(thread).strip(), agent=agent)
@@ -927,7 +991,9 @@ def _chatgpt_work_route(
         return None
     actuation = dict((binding.get("current") or {}).get("actuation") or {})
     url = str(actuation.get("conversation_url") or "").split("?", 1)[0]
-    conv_id = conversation_id_from_url(url) or str(actuation.get("conversation_id") or "")
+    conv_id = conversation_id_from_url(url) or str(
+        actuation.get("conversation_id") or ""
+    )
     if not url or not conv_id:
         return None
     return (
