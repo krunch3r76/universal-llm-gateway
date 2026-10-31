@@ -129,7 +129,7 @@ def run_startup_tool_coherence_checks(
 # ── Claude /mcp dispatcher manifest (Phase D) ─────────────────────────────────
 
 _CLAUDE_TOKEN = "mcp_claude"
-_CLAUDE_CAP = 24
+_CLAUDE_CAP = 26
 _CLAUDE_FLOOR: frozenset[str] = frozenset({"cortex", "agent_bus", "fs", "dispatch"})
 
 _ClaudeManifestCache: list[DispatcherManifestEntry] | None = None
@@ -157,7 +157,7 @@ def derive_claude_manifest(
     prompt cache.
 
     Floor assertion: {cortex, agent_bus, fs, dispatch} ⊆ derived_domains ∨ RuntimeError.
-    Cap assertion: len(manifest) ≤ 24 ∨ raises RuntimeError at init time (D3).
+    Cap assertion: len(manifest) ≤ _CLAUDE_CAP ∨ raises RuntimeError at init time (D3).
     Pure function. Init-time / module-load only. ¬per-request.
     """
     data = _load_registry(canonical_yaml_path)

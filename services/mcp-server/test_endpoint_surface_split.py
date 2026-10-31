@@ -33,11 +33,13 @@ LIFE_PRIMARY = frozenset(
 SHARED_ON_CODE = frozenset(
     {
         "cortex",
+        "cortex_read",
         "cortex_brief",
         "agent_bus",
         "agent_bus_read",
         "cursor_bridge",
         "fs",
+        "fs_read",
         "rag",
         "retrieve",
         "tool_search",
