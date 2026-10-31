@@ -717,6 +717,23 @@ def test_park_harvest_continue_rejects_done_in_body() -> None:
         emit_refused.assert_not_called()
 
 
+def test_park_harvest_continue_owed_row_pinned_execution_on_reply() -> None:
+    """ROW_PINNED prose that names an execution id continues on the reply."""
+    ledger = CursorDispatchLedger.instance()
+    req = _req(dispatch_id="park-row-pinned-exec")
+    row = _production_parked_row(ledger, req)
+    exec_id = "0b01b479-9a64-4c31-8e10-bbbbbbbbbbbb"
+    record = json.loads(row["record_json"])
+    record["closeout_stop_tokens"] = ["ROW_PINNED"]
+    record["closeout_body"] = (
+        "status: partial\nstop: ROW_PINNED\n" f"execution_id: {exec_id}\n"
+    )
+    record["closeout_harvest_owed"] = True
+    row["record_json"] = json.dumps(record)
+    assert park_harvest_continue_owed(row, reply_fn=lambda *_a, **_k: True)
+    assert not park_harvest_continue_owed(row, reply_fn=lambda *_a, **_k: False)
+
+
 def test_park_harvest_continue_owed_false_when_row_pinned() -> None:
     """R-2: operator stop tokens must not trigger continue."""
     ledger = CursorDispatchLedger.instance()
@@ -1706,3 +1723,75 @@ async def test_consult_pending_identical_signatures_park() -> None:
     assert park_mock.await_args.kwargs["reason"] == _PARK_REASON_NO_PROGRESS_CAP
     page_mock.assert_not_awaited()
     post_mock.assert_not_awaited()
+
+
+def test_parked_transport_nest_child_not_refused_no_harvest_token() -> None:
+    """Terminal nest with no NEXT_ADMIT harvest line continues; no refusal."""
+    from services.git_integration_worker.cursor_sdk_closeout.conductor_hop import (
+        hop_owed,
+    )
+
+    ledger = CursorDispatchLedger.instance()
+    req = _req(dispatch_id="park-nest-no-token")
+    _admit_conductor(ledger, req)
+    ledger.merge_record_json(
+        dispatch_id=req.dispatch_id,
+        patch={
+            "closeout_stop_tokens": ["PARKED_TRANSPORT"],
+            "closeout_body": "status: partial\nstop: PARKED_TRANSPORT\n",
+            "closeout_turn": 4,
+            "closeout_harvest_owed": True,
+            "hop_park_harvest_fired_at": 1.0,
+        },
+    )
+    ledger.mark_terminal(dispatch_id=req.dispatch_id, terminal_status="completed")
+    row = _reload_row(ledger, req.dispatch_id)
+    with (
+        patch(
+            "services.git_integration_worker.cursor_sdk_closeout.conductor_hop."
+            "_terminal_nested_producers_only",
+            return_value=True,
+        ),
+        patch(
+            "services.git_integration_worker.cursor_sdk_closeout.conductor_hop."
+            "conductor_has_live_nested",
+            return_value=False,
+        ),
+        patch(
+            "services.git_integration_worker.cursor_sdk_closeout.conductor_park_harvest."
+            "emit_frontier_sdk_conductor_hop_park_harvest_continue_refused"
+        ) as emit_refused,
+        patch(
+            "services.git_integration_worker.cursor_sdk_closeout.conductor_exit_reasons."
+            "read_external_gate_lane_snapshot",
+            return_value={},
+        ),
+    ):
+        assert park_harvest_continue_owed(row)
+        assert hop_owed(row, closeout_tokens=frozenset({"PARKED_TRANSPORT"}))
+    emit_refused.assert_not_called()
+
+
+def test_continue_refusal_stamps_predicate() -> None:
+    ledger = CursorDispatchLedger.instance()
+    req = _req(dispatch_id="park-refusal-stamp")
+    _admit_conductor(ledger, req)
+    ledger.merge_record_json(
+        dispatch_id=req.dispatch_id,
+        patch={
+            "closeout_stop_tokens": ["PARKED_TRANSPORT"],
+            "closeout_body": "stop: PARKED_TRANSPORT\nNEXT_ADMIT: harvest none\n",
+            "closeout_turn": 4,
+            "closeout_harvest_owed": True,
+            "hop_park_harvest_fired_at": 1.0,
+        },
+    )
+    ledger.mark_terminal(dispatch_id=req.dispatch_id, terminal_status="completed")
+    row = _reload_row(ledger, req.dispatch_id)
+    with patch(
+        "services.git_integration_worker.cursor_sdk_closeout.conductor_park_harvest."
+        "emit_frontier_sdk_conductor_hop_park_harvest_continue_refused"
+    ) as emit_refused:
+        assert not park_harvest_continue_owed(row)
+    emit_refused.assert_called_once()
+    assert emit_refused.call_args.kwargs["predicate"] == "no_harvest_token"

@@ -2381,6 +2381,67 @@ class CursorDispatchLedger:
                 child_ids.append(dispatch_id)
         return child_ids
 
+    def _nest_under_from_row(self, row: Any) -> str | None:
+        nested = str(row["nest_under"] or "").strip()
+        if nested:
+            return nested
+        try:
+            data = json.loads(row["record_json"] or "{}")
+        except json.JSONDecodeError:
+            return None
+        if isinstance(data, dict):
+            text = str(data.get("nest_under") or "").strip()
+            return text or None
+        return None
+
+    def nest_under_parent_for_child(self, *, child_dispatch_id: str) -> str | None:
+        """Terminal conductor parent for a nest child (``nest_under``, not park pointer)."""
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT nest_under, record_json FROM cursor_sdk_dispatches "
+                "WHERE dispatch_id=?",
+                (child_dispatch_id,),
+            ).fetchone()
+        if row is None:
+            return None
+        parent_id = self._nest_under_from_row(row)
+        if not parent_id:
+            return None
+        return self._resolve_conductor_nest_parent_lineage(parent_id)
+
+    def _resolve_conductor_nest_parent_lineage(self, dispatch_id: str) -> str | None:
+        """Follow ``park_resumed_by`` on cancelled rows toward the conductor anchor."""
+        current = dispatch_id
+        seen: set[str] = set()
+        for _ in range(8):
+            if not current or current in seen:
+                return None
+            seen.add(current)
+            with self._connect() as conn:
+                row = conn.execute(
+                    "SELECT dispatch_id, contract, status, park_resumed_by "
+                    "FROM cursor_sdk_dispatches WHERE dispatch_id=?",
+                    (current,),
+                ).fetchone()
+            if row is None:
+                return None
+            contract = str(row["contract"] or "").lower()
+            status = str(row["status"] or "")
+            if contract == "conductor" and status in (
+                "completed",
+                "failed",
+                "cancelled",
+            ):
+                return str(row["dispatch_id"])
+            resumed = str(row["park_resumed_by"] or "").strip()
+            if status == "cancelled" and resumed:
+                current = resumed
+                continue
+            if contract == "conductor":
+                return str(row["dispatch_id"])
+            return None
+        return None
+
     def has_parked_parent(
         self, *, lease_key: str | None = None, source_repo: str | None = None
     ) -> bool:

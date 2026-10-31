@@ -1712,7 +1712,18 @@ async def _mark_terminal_and_promote(
     from services.git_integration_worker.cursor_sdk_closeout.conductor_hop import (
         _is_conductor_row,
         maybe_fire_conductor_hop_reactor,
+        maybe_wake_conductor_on_nest_child_terminal,
     )
+
+    try:
+        await maybe_wake_conductor_on_nest_child_terminal(
+            child_dispatch_id=dispatch_id
+        )
+    except Exception:  # noqa: BLE001 — nest wake is advisory
+        logger.exception(
+            "conductor nest-child wake failed child dispatch_id=%s",
+            dispatch_id,
+        )
 
     parked_parent = await asyncio.to_thread(
         ledger.find_park_parent_any_status, child_id=dispatch_id
@@ -1737,13 +1748,22 @@ async def _mark_terminal_and_promote(
                 and _is_conductor_row(parent_dict)
                 and not conductor_has_live_nested(dispatch_id=parent_id)
             ):
-                try:
-                    await maybe_fire_conductor_hop_reactor(dispatch_id=parent_id)
-                except Exception:  # noqa: BLE001
-                    logger.exception(
-                        "conductor hop reactor failed parent dispatch_id=%s",
-                        parent_id,
-                    )
+                record_json = str(parent_dict.get("record_json") or "")
+                from services.git_integration_worker.cursor_sdk_ledger_hop import (
+                    hop_fields_from_record_json,
+                )
+
+                if not hop_fields_from_record_json(record_json).get("hop_successor"):
+                    try:
+                        await maybe_fire_conductor_hop_reactor(
+                            dispatch_id=parent_id,
+                            producer_completion_wake=True,
+                        )
+                    except Exception:  # noqa: BLE001
+                        logger.exception(
+                            "conductor hop reactor failed parent dispatch_id=%s",
+                            parent_id,
+                        )
                 await asyncio.to_thread(ledger.clear_park_child, parent_id=parent_id)
 
     try:

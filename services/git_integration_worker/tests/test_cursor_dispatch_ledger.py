@@ -1449,6 +1449,33 @@ def test_unstarted_claims_returns_orphan_after_claim() -> None:
     ]
 
 
+def test_nest_under_parent_for_child_resolves_terminal_conductor() -> None:
+    ledger = CursorDispatchLedger.instance()
+    _admit(
+        ledger,
+        _req(dispatch_id="parent-nest-ledger"),
+        source_repo=_REPO,
+        contract="conductor",
+        work_key="todo:nest-ledger-parent",
+    )
+    _admit(
+        ledger,
+        _req(dispatch_id="child-nest-ledger"),
+        source_repo=_REPO,
+        contract="implement",
+        work_key="todo:nest-ledger-child",
+        nest_under="parent-nest-ledger",
+    )
+    ledger.mark_terminal(
+        dispatch_id="parent-nest-ledger",
+        terminal_status="completed",
+    )
+    assert (
+        ledger.nest_under_parent_for_child(child_dispatch_id="child-nest-ledger")
+        == "parent-nest-ledger"
+    )
+
+
 def test_unstarted_claims_empty_when_dispatch_row_exists() -> None:
     ledger = CursorDispatchLedger.instance()
     stop_id = "started-stop-1"

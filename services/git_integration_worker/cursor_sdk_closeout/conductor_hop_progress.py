@@ -54,6 +54,9 @@ _NEXT_ADMIT_RE = re.compile(
 _INLINE_NEXT_ADMIT_RE = re.compile(
     r"(?i)`NEXT_ADMIT[^\S\n]*:[^\S\n]*([^`\n]+)`"
 )
+_JSON_NEXT_ADMIT_RE = re.compile(
+    r'(?i)"NEXT_ADMIT"\s*:\s*"(?P<payload>[^"\\]*(?:\\.[^"\\]*)*)"'
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -262,7 +265,11 @@ def next_admit_in_closeout(body: str) -> str | None:
     if match is None:
         match = _INLINE_NEXT_ADMIT_RE.search(text)
     if match is None:
-        return None
+        json_match = _JSON_NEXT_ADMIT_RE.search(text)
+        if json_match is None:
+            return None
+        payload = json_match.group("payload").replace('\\"', '"').strip()
+        return payload or None
     return match.group(1).strip() or None
 
 

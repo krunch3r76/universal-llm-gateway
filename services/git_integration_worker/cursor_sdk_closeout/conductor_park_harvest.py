@@ -15,7 +15,7 @@ from datetime import datetime
 from typing import Any
 
 import httpx
-from bus_watch.park_harvest import harvest_still_owed, mission_open
+from bus_watch.park_harvest import mission_open
 from claude_bundles.conductor_stop import EXIT_PERSIST_STOPS
 from transport_utils import DEFAULT_AGENT_BUS_URL, make_sync_client
 from universal_logging import get_logger
@@ -126,14 +126,11 @@ def _scoreboard_body_for_row(row: dict[str, Any]) -> str:
 
 def harvest_owed_at_terminal(row: dict[str, Any]) -> bool:
     """Whether harvest is still owed on a terminal row (body, bool stamp, or empty)."""
-    body = _closeout_body_from_row(row)
-    if body.strip():
-        return harvest_still_owed(body=body)
-    rec = _record_data(row)
-    rec_harvest = rec.get("closeout_harvest_owed")
-    if isinstance(rec_harvest, bool):
-        return rec_harvest
-    return harvest_still_owed(body=body)
+    from services.git_integration_worker.cursor_sdk_closeout.conductor_exit_reasons import (
+        closeout_harvest_owed_from_row,
+    )
+
+    return closeout_harvest_owed_from_row(row)
 
 
 def _body_grades_park_harvest_owed(row: dict[str, Any]) -> bool:
@@ -813,7 +810,8 @@ def consult_pending_continue_owed(
         _nested_harvest_head,
     )
 
-    if _nested_harvest_head(row, rec) is not None:
+    head = _nested_harvest_head(row, rec)
+    if head is not None and not head[1]:
         return False
     from services.git_integration_worker.cursor_sdk_park import _successor_admitted
 
@@ -1000,7 +998,12 @@ def park_harvest_continue_owed(
     if _closeout_declares_done(row, tokens):
         return False
     body_park = _body_grades_park_harvest_owed(row)
-    if "PARKED_TRANSPORT" not in tokens and not body_park:
+    from services.git_integration_worker.cursor_sdk_closeout.conductor_exit_reasons import (
+        row_pinned_stored_harvest,
+    )
+
+    pinned_harvest = row_pinned_stored_harvest(row)
+    if "PARKED_TRANSPORT" not in tokens and not body_park and not pinned_harvest:
         return False
     rec = _record_data(row)
     if not harvest_owed_at_terminal(row):
@@ -1027,22 +1030,42 @@ def park_harvest_continue_owed(
         return False
     from services.git_integration_worker.cursor_sdk_closeout.conductor_hop import (
         _nested_harvest_head,
-        _next_admit_guard_text,
+        _park_harvest_guard_text,
         conductor_has_live_nested,
         live_conductor_row_on_thread,
         mission_open_for_row,
     )
 
-    if _nested_harvest_head(row, rec) is not None:
-        return False
-    guard = _next_admit_guard_text(row, rec)
-    harvest_token = _park_harvest_target_token(guard)
-    if harvest_token is None:
+    head = _nested_harvest_head(row, rec)
+    if head is not None and not head[1]:
         _maybe_record_park_harvest_continue_refused(
-            row, predicate="no_harvest_token", harvest_token=None
+            row, predicate="nested_harvest_live", harvest_token=None
         )
         return False
-    matched, refusal_predicate = _evaluate_harvest_reply_execution(row, harvest_token)
+    guard = _park_harvest_guard_text(row, rec)
+    harvest_token = _park_harvest_target_token(guard)
+    if harvest_token is None and not pinned_harvest:
+        from services.git_integration_worker.cursor_sdk_closeout.conductor_hop import (
+            _terminal_nested_producers_only,
+        )
+
+        if not _terminal_nested_producers_only(dispatch_id):
+            _maybe_record_park_harvest_continue_refused(
+                row, predicate="no_harvest_token", harvest_token=None
+            )
+            return False
+        # Nest children are terminal and the closeout named no NEXT_ADMIT
+        # harvest id. That is the continue. A later false return still stamps
+        # a predicate (live nest, mission, budget).
+        matched, refusal_predicate = True, None
+    elif harvest_token is None and pinned_harvest:
+        # ROW_PINNED prose named the execution id. The reply, not a
+        # NEXT_ADMIT harvest line, is the continue signal.
+        matched, refusal_predicate = True, None
+    else:
+        matched, refusal_predicate = _evaluate_harvest_reply_execution(
+            row, harvest_token
+        )
     if not matched:
         _maybe_record_park_harvest_continue_refused(
             row,
@@ -1053,6 +1076,9 @@ def park_harvest_continue_owed(
     if reply_fn is not None and not reply_fn(
         thread_id, closeout_turn, "web-anthropic"
     ):
+        _maybe_record_park_harvest_continue_refused(
+            row, predicate="reply_absent", harvest_token=harvest_token
+        )
         return False
     from services.git_integration_worker.cursor_sdk_closeout.conductor_hop_budget import (
         evaluate_hop_budget,
@@ -1061,13 +1087,25 @@ def park_harvest_continue_owed(
     if live_conductor_row_on_thread(
         thread_id=thread_id, exclude_dispatch_id=dispatch_id
     ):
+        _maybe_record_park_harvest_continue_refused(
+            row, predicate="live_sibling_conductor", harvest_token=harvest_token
+        )
         return False
     if conductor_has_live_nested(dispatch_id=dispatch_id):
+        _maybe_record_park_harvest_continue_refused(
+            row, predicate="live_nested", harvest_token=harvest_token
+        )
         return False
     if not mission_open_for_row(row, closeout_tokens=tokens):
+        _maybe_record_park_harvest_continue_refused(
+            row, predicate="mission_closed", harvest_token=harvest_token
+        )
         return False
     verdict = evaluate_hop_budget(row, closeout_tokens=tokens)
     if not verdict.ok or verdict.park:
+        _maybe_record_park_harvest_continue_refused(
+            row, predicate="budget", harvest_token=harvest_token
+        )
         return False
     return True
 
