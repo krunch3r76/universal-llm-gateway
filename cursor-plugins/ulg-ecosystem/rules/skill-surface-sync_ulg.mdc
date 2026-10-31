@@ -24,9 +24,12 @@ does not install. ¬ install on every Glass restart — install after SoT change
     ∧ ¬ ask operator to install or "sync the plugin"
 ```
 
-Hub seat (IDE on `io`) runs the script **without** `--local-only` so Glass
-homes on `orion-node` / `jupiter` (`krunch3r`) receive the assembled tree.
-`cursor-sdk` uses `--local-only`. `cmp` MATCH on `$HOME` alone is not Glass-live.
+Every seat runs the script with no dest-skip flag. It rsyncs
+`PLUGIN_INSTALL_DESTS.txt` (Glass homes on `orion-node` / `jupiter`) and warns
+if a host is unreachable; the local install still succeeds. `cursor-sdk`
+prefixes `HOME="$(getent passwd "$(id -un)" | cut -d: -f6)"` so
+`dispatch_home_host_guard` does not refuse an overlay HOME. `cmp` MATCH on
+`$HOME` alone is not Glass-live.
 
 | SoT path | Install required? |
 |---|---|
@@ -35,7 +38,7 @@ homes on `orion-node` / `jupiter` (`krunch3r`) receive the assembled tree.
 | `…/rules/*_ulg.mdc` (+ RULES_ULG_CENSUS) | **Yes** (same script; placement detail: `cursor-rule-placement_ulg`) |
 | `{repo}/.cursor/skills/` or `*_ws.mdc` | No (checkout-local) |
 
-¬ claim "skill/command is live in Cursor" until this session's install has been run and `cmp` MATCH is quoted for `$HOME` **and** each `PLUGIN_INSTALL_DESTS.txt` dest (or `--local-only` with that limit named).
+¬ claim "skill/command is live in Cursor" until this session's install has been run and `cmp` MATCH is quoted for `$HOME` **and** each `PLUGIN_INSTALL_DESTS.txt` dest.
 
 **Reload Window:** IDE discovery cache only — optional one-line note if the picker is stale after install. **¬** an operator sync duty; **¬** a substitute for install; **¬** "please sync / please Reload so the skill is live."
 

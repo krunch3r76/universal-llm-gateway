@@ -5,18 +5,22 @@
 # Usage:
 #   ./scripts/cursor/install-ecosystem-plugin.sh
 #   ./scripts/cursor/install-ecosystem-plugin.sh --dry-run
-#   ./scripts/cursor/install-ecosystem-plugin.sh --local-only
+#
+# Roster dests in PLUGIN_INSTALL_DESTS.txt are always synced. An unreachable
+# host warns and the local install still succeeds. There is no dest-skip flag.
 #
 # After install: Developer → Reload Window (or restart Cursor).
 
 set -euo pipefail
 
 DRY_RUN=0
-LOCAL_ONLY=0
 for _arg in "$@"; do
   case "$_arg" in
     --dry-run) DRY_RUN=1 ;;
-    --local-only) LOCAL_ONLY=1 ;;
+    --local-only)
+      echo "ERROR: --local-only was removed. This script always syncs PLUGIN_INSTALL_DESTS and warns if a host is unreachable." >&2
+      exit 1
+      ;;
     *) echo "ERROR: unknown arg: $_arg" >&2; exit 1 ;;
   esac
 done
@@ -357,12 +361,8 @@ propagate_plugin_copies() {
   fi
 }
 
-if [[ "$LOCAL_ONLY" -eq 1 ]]; then
-  echo "==> Skipping extra plugin dests (--local-only)"
-else
-  echo "==> Copying assembled plugin to PLUGIN_INSTALL_DESTS.txt"
-  propagate_plugin_copies
-fi
+echo "==> Copying assembled plugin to PLUGIN_INSTALL_DESTS.txt"
+propagate_plugin_copies
 
 echo
 echo "Installed ulg-ecosystem → $INSTALL_DIR"

@@ -20,10 +20,10 @@ trigger_match_terms:
 ```
 edit(cursor-plugins/ulg-ecosystem/{skills,commands,rules}/ ∨ census)
   ⇒ HOME="$(getent passwd "$(id -un)" | cut -d: -f6)" \
-       scripts/cursor/install-ecosystem-plugin.sh --local-only
+       scripts/cursor/install-ecosystem-plugin.sh
 ```
 
-Bare `scripts/cursor/install-ecosystem-plugin.sh` exits 1 here: `REFUSED` from `dispatch_home_host_guard` (overlay HOME). The prefix above is the run; `--local-only` skips Glass dest rsync. Copies land in `~/.cursor/plugins/local/ulg-ecosystem/`. `¬install ⇒ landed, not live`. Do not hand-copy.
+Bare invocation without that HOME prefix exits 1: `REFUSED` from `dispatch_home_host_guard` (overlay HOME). The script always rsyncs Glass dests and warns if a host is unreachable. Copies land in `~/.cursor/plugins/local/ulg-ecosystem/`. `¬install ⇒ landed, not live`. Do not hand-copy. Do not pass `--local-only`.
 
 | SoT path you touched | Install required? |
 |---|---|
