@@ -1059,9 +1059,18 @@ def park_harvest_continue_owed(
         # a predicate (live nest, mission, budget).
         matched, refusal_predicate = True, None
     elif harvest_token is None and pinned_harvest:
-        # ROW_PINNED prose named the execution id. The reply, not a
-        # NEXT_ADMIT harvest line, is the continue signal.
-        matched, refusal_predicate = True, None
+        from services.git_integration_worker.cursor_sdk_closeout.conductor_exit_reasons import (
+            prose_harvest_execution_id,
+        )
+
+        prose_token = prose_harvest_execution_id(str(rec.get("closeout_body") or ""))
+        if prose_token is None:
+            matched, refusal_predicate = False, "no_harvest_token"
+        else:
+            harvest_token = prose_token
+            matched, refusal_predicate = _evaluate_harvest_reply_execution(
+                row, prose_token
+            )
     else:
         matched, refusal_predicate = _evaluate_harvest_reply_execution(
             row, harvest_token

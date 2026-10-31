@@ -101,6 +101,14 @@ def prose_names_execution_id(body: str) -> bool:
     return _PROSE_EXECUTION_ID_RE.search(body or "") is not None
 
 
+def prose_harvest_execution_id(body: str) -> str | None:
+    """First execution-id-shaped token in closeout prose, if any."""
+    match = _PROSE_EXECUTION_ID_RE.search(body or "")
+    if match is None:
+        return None
+    return match.group(1)
+
+
 def row_pinned_stored_harvest(row: dict[str, Any]) -> bool:
     """ROW_PINNED row whose stored harvest flag names an execution id.
 

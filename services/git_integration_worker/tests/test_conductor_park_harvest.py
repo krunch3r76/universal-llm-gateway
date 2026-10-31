@@ -730,8 +730,13 @@ def test_park_harvest_continue_owed_row_pinned_execution_on_reply() -> None:
     )
     record["closeout_harvest_owed"] = True
     row["record_json"] = json.dumps(record)
-    assert park_harvest_continue_owed(row, reply_fn=lambda *_a, **_k: True)
-    assert not park_harvest_continue_owed(row, reply_fn=lambda *_a, **_k: False)
+    with patch(
+        "services.git_integration_worker.cursor_sdk_closeout.conductor_park_harvest."
+        "_evaluate_harvest_reply_execution",
+        side_effect=[(True, None), (False, "reply_absent")],
+    ):
+        assert park_harvest_continue_owed(row, reply_fn=lambda *_a, **_k: True)
+        assert not park_harvest_continue_owed(row, reply_fn=lambda *_a, **_k: False)
 
 
 def test_park_harvest_continue_owed_false_when_row_pinned() -> None:
