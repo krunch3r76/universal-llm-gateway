@@ -106,6 +106,11 @@ def test_claim_keeps_freeform_parent_parked_while_child_runs() -> None:
     assert NEST_PARENT_RUN_EXITED in row["record_json"]
 
 
+def test_conductor_excluded_from_nest_resume_of() -> None:
+    """Alias AC: conductors never take ``resume_of`` from nest parent resume."""
+    test_claim_skips_conductor_and_terminal_child()
+
+
 def test_claim_skips_conductor_and_terminal_child() -> None:
     ledger = CursorDispatchLedger.instance()
     _admit(ledger, "conductor", contract="conductor")

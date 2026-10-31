@@ -891,6 +891,7 @@ def _hop_skip_gate(
     row: dict[str, Any],
     *,
     closeout_tokens: frozenset[str],
+    producer_completion_wake: bool = False,
 ) -> str | None:
     """Return skip gate name when hop reactor must not POST successor."""
     if _cancel_discard_blocks_hop(row):
@@ -899,10 +900,22 @@ def _hop_skip_gate(
     if ext_gate == SKIP_GATE_LIVE_EXTERNAL:
         return SKIP_GATE_LIVE_EXTERNAL
     if ext_gate == SKIP_GATE_PROBE_INDETERMINATE:
-        # Stay fail-closed on this pass. The watchdog admits once the row has
-        # been terminal longer than twice the reactor grace.
-        return SKIP_GATE_PROBE_INDETERMINATE
-    if not hop_owed(row, closeout_tokens=closeout_tokens):
+        if producer_completion_wake:
+            dispatch_id = str(row.get("dispatch_id") or "")
+            head = _nested_harvest_head(row, _record_data(row))
+            if (head is not None and head[1]) or _terminal_nested_producers_only(
+                dispatch_id
+            ):
+                ext_gate = None
+            else:
+                return SKIP_GATE_PROBE_INDETERMINATE
+        else:
+            return SKIP_GATE_PROBE_INDETERMINATE
+    if not hop_owed(
+        row,
+        closeout_tokens=closeout_tokens,
+        ignore_probe_indeterminate=producer_completion_wake,
+    ):
         status = str(row.get("status") or "")
         if status not in ("completed", "failed", "cancelled"):
             return "mission_closed"
@@ -1176,7 +1189,12 @@ def hop_owed(
         return False
     if conductor_has_live_nested(dispatch_id=dispatch_id):
         return False
-    if not mission_open_for_row(row, closeout_tokens=tokens):
+    rec = _record_data(row)
+    nested_head = _nested_harvest_head(row, rec)
+    nested_producer_terminal = nested_head is not None and nested_head[1]
+    if not nested_producer_terminal and not mission_open_for_row(
+        row, closeout_tokens=tokens
+    ):
         return False
     if not budget_ok_for_hop(row, closeout_tokens=tokens):
         return False
@@ -1426,6 +1444,12 @@ def _merge_conductor_closeout_hop_authority(
     if closeout_turn is not None:
         data["closeout_turn"] = int(closeout_turn)
     data["closeout_harvest_owed"] = harvest_still_owed(body=closeout_body)
+    if "ROW_PINNED" in tokens and not data["closeout_harvest_owed"]:
+        guard_row = row
+        guard = _next_admit_guard_text(guard_row, data)
+        pinned_token = _harvest_target_token(guard)
+        if pinned_token is not None and not _named_target_is_terminal(pinned_token):
+            data["closeout_harvest_owed"] = True
     next_admit = next_admit_in_closeout(closeout_body)
     if next_admit:
         data[HOP_NEXT_ADMIT_KEY] = next_admit
@@ -1687,6 +1711,77 @@ def _deferred_hop_dispatch_ids() -> list[str]:
     return found
 
 
+def _terminal_nested_producers_only(parent_dispatch_id: str) -> bool:
+    """True when the parent has nest children and none are live."""
+    if not parent_dispatch_id:
+        return False
+    try:
+        children = CursorDispatchLedger.instance().list_nested_children(
+            parent_dispatch_id=parent_dispatch_id
+        )
+    except Exception:
+        return False
+    if not children:
+        return False
+    return not conductor_has_live_nested(dispatch_id=parent_dispatch_id)
+
+
+async def maybe_wake_conductor_on_nest_child_terminal(
+    *, child_dispatch_id: str
+) -> None:
+    """Producer-completion wake: terminal nest child → parent conductor hop reactor."""
+    ledger = CursorDispatchLedger.instance()
+    parent_id = await asyncio.to_thread(
+        ledger.nest_under_parent_for_child, child_dispatch_id=child_dispatch_id
+    )
+    if not parent_id:
+        return
+
+    def _load_parent() -> dict[str, Any] | None:
+        with ledger._connect() as conn:
+            row = conn.execute(
+                "SELECT * FROM cursor_sdk_dispatches WHERE dispatch_id=?",
+                (parent_id,),
+            ).fetchone()
+        if row is None:
+            return None
+        return {k: row[k] for k in row.keys()}
+
+    parent_row = await asyncio.to_thread(_load_parent)
+    if parent_row is None or not _is_conductor_row(parent_row):
+        return
+    parent_status = str(parent_row.get("status") or "")
+    if parent_status not in ("completed", "failed", "cancelled"):
+        return
+    closeout_tokens = _closeout_tokens_from_row(parent_row)
+    from services.git_integration_worker.cursor_sdk_closeout.conductor_park_harvest import (
+        _closeout_declares_done,
+    )
+
+    if _closeout_declares_done(parent_row, closeout_tokens):
+        _emit_hop_skipped(parent_row, gate="nest_child_wake_done")
+        return
+    from services.git_integration_worker.cursor_sdk_nest_resume import (
+        _other_live_nested,
+    )
+    from services.git_integration_worker.cursor_sdk_park import _successor_admitted
+
+    if _other_live_nested(parent_id, except_child=child_dispatch_id):
+        _emit_hop_skipped(parent_row, gate="nest_child_wake_live_sibling")
+        return
+    record_json = str(parent_row.get("record_json") or "")
+    with ledger._connect() as conn:
+        if _successor_admitted(
+            conn, predecessor_id=parent_id, record_json=record_json
+        ):
+            return
+        if hop_fields_from_record_json(record_json).get("hop_successor"):
+            return
+    await maybe_fire_conductor_hop_reactor(
+        dispatch_id=parent_id, producer_completion_wake=True
+    )
+
+
 async def release_deferred_conductor_hops() -> int:
     """Re-run admit for hops deferred on a gate that has since cleared.
 
@@ -1706,7 +1801,11 @@ async def release_deferred_conductor_hops() -> int:
     return admitted
 
 
-async def maybe_fire_conductor_hop_reactor(*, dispatch_id: str) -> None:
+async def maybe_fire_conductor_hop_reactor(
+    *,
+    dispatch_id: str,
+    producer_completion_wake: bool = False,
+) -> None:
     """Evaluate ``hop_owed`` and POST successor admit when due (after terminal)."""
     row = _load_row(dispatch_id)
     if row is None:
@@ -1736,7 +1835,11 @@ async def maybe_fire_conductor_hop_reactor(*, dispatch_id: str) -> None:
     if park_harvest_owed(row, closeout_tokens=closeout_tokens):
         await maybe_fire_conductor_park_harvest(dispatch_id=dispatch_id)
         return
-    skip_gate = _hop_skip_gate(row, closeout_tokens=closeout_tokens)
+    skip_gate = _hop_skip_gate(
+        row,
+        closeout_tokens=closeout_tokens,
+        producer_completion_wake=producer_completion_wake,
+    )
     if skip_gate is not None:
         if skip_gate == "budget":
             verdict = evaluate_hop_budget(row, closeout_tokens=closeout_tokens)
@@ -1804,15 +1907,19 @@ async def maybe_fire_conductor_hop_reactor(*, dispatch_id: str) -> None:
             )
         return
     error_text = json.dumps(detail, sort_keys=True)[:500]
-    merged = merge_hop_patch(
-        record_json,
+    from services.git_integration_worker.cursor_sdk_ledger_hop import (
+        merge_hop_admit_error,
+    )
+
+    prior_err = hop_fields_from_record_json(record_json).get("hop_admit_error")
+    merged_err = merge_hop_admit_error(
+        prior_err if isinstance(prior_err, dict) else None,
         {
-            "hop_admit_error": {
-                "last_error": error_text,
-                "last_status_code": detail.get("status_code"),
-            }
+            "last_error": error_text,
+            "last_status_code": detail.get("status_code"),
         },
     )
+    merged = merge_hop_patch(record_json, {"hop_admit_error": merged_err})
     _write_record_json(dispatch_id, merged)
     emit_frontier_sdk_conductor_hop_admit_failed(
         dispatch_id=dispatch_id,
@@ -1837,7 +1944,9 @@ __all__ = [
     "live_conductor_row_on_thread",
     "merge_conductor_closeout_hop_authority",
     "maybe_fire_conductor_hop_reactor",
+    "maybe_wake_conductor_on_nest_child_terminal",
     "mission_open_for_row",
+    "_terminal_nested_producers_only",
     "post_conductor_hop_team_dispatch",
     "resolve_hop_successor_model_fields",
 ]

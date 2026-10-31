@@ -175,6 +175,17 @@ def test_next_admit_in_closeout(body: str, expected: str | None) -> None:
     assert next_admit_in_closeout(body) == expected
 
 
+def test_next_admit_in_closeout_json_harvest_field() -> None:
+    body = (
+        '{"status": "partial", "stop": "PARKED_TRANSPORT", '
+        '"NEXT_ADMIT": "harvest 8c02d5d3-a6bd-4aab-8314-2fae67d91143"}'
+    )
+    assert (
+        next_admit_in_closeout(body)
+        == "harvest 8c02d5d3-a6bd-4aab-8314-2fae67d91143"
+    )
+
+
 def test_signature_for_row_reads_stamps_without_touching_the_fold() -> None:
     row = {
         "work_key": "todo:conductor-hop-wait-protocol",

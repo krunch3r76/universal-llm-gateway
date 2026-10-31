@@ -147,7 +147,9 @@ async def test_terminal_parent_child_mark_terminal_fires_parent_reactor() -> Non
             controller=_Ctl(),
             emit_tag="TEST",
         )
-    hop_mock.assert_any_call(dispatch_id=parent_id)
+    hop_mock.assert_any_call(
+        dispatch_id=parent_id, producer_completion_wake=True
+    )
     with ledger._connect() as conn:
         row = conn.execute(
             "SELECT park_child_dispatch_id FROM cursor_sdk_dispatches WHERE dispatch_id=?",
@@ -837,3 +839,160 @@ def test_summoning_retry_stamps_closeout_anchored_watermark() -> None:
             ).fetchone()[0]
         )
     assert data.get("consult_summoning_after_turn") == 0
+
+
+def _arm_terminal_parent_null_park(
+    ledger: CursorDispatchLedger,
+    *,
+    parent_id: str,
+    nest_id: str,
+    nest_execution_id: str,
+    closeout: str,
+    extra_patch: dict | None = None,
+) -> None:
+    _admit(
+        ledger,
+        _req(dispatch_id=parent_id, execution_id=f"exec-{parent_id}"),
+        contract="conductor",
+    )
+    _admit(
+        ledger,
+        _req(dispatch_id=nest_id, execution_id=nest_execution_id),
+        nest_under=parent_id,
+    )
+    patch = {
+        "closeout_body": closeout,
+        "closeout_stop_tokens": [],
+        "summoning_thread_id": "14901",
+        "closeout_harvest_owed": True,
+    }
+    if extra_patch:
+        patch.update(extra_patch)
+    ledger.merge_record_json(dispatch_id=parent_id, patch=patch)
+    with ledger._connect() as conn:
+        conn.execute(
+            "UPDATE cursor_sdk_dispatches SET status=?, park_child_dispatch_id=NULL "
+            "WHERE dispatch_id=?",
+            ("completed", parent_id),
+        )
+
+
+@pytest.mark.asyncio
+async def test_nest_under_child_terminal_fires_hop_when_park_child_null() -> None:
+    from services.git_integration_worker.cursor_sdk_closeout.conductor_hop import (
+        maybe_wake_conductor_on_nest_child_terminal,
+    )
+
+    ledger = CursorDispatchLedger.instance()
+    parent_id = "parent-null-park-b"
+    nest_id = "nest-null-park-b"
+    _arm_terminal_parent_null_park(
+        ledger,
+        parent_id=parent_id,
+        nest_id=nest_id,
+        nest_execution_id=_NEST_EXEC,
+        closeout=_miss_closeout(_NEST_EXEC),
+    )
+    ledger.mark_terminal(dispatch_id=nest_id, terminal_status="completed")
+    assert (
+        ledger.nest_under_parent_for_child(child_dispatch_id=nest_id) == parent_id
+    )
+    import services.git_integration_worker.cursor_sdk_closeout.conductor_hop as hop_mod
+
+    reactor = AsyncMock()
+    with patch.object(hop_mod, "maybe_fire_conductor_hop_reactor", reactor):
+        await maybe_wake_conductor_on_nest_child_terminal(
+            child_dispatch_id=nest_id
+        )
+    reactor.assert_awaited_once_with(
+        dispatch_id=parent_id, producer_completion_wake=True
+    )
+
+
+@pytest.mark.asyncio
+async def test_live_sibling_nest_holds_wake() -> None:
+    ledger = CursorDispatchLedger.instance()
+    parent_id = "parent-sib-b"
+    nest_id = "nest-sib-a-b"
+    _arm_terminal_parent_null_park(
+        ledger,
+        parent_id=parent_id,
+        nest_id=nest_id,
+        nest_execution_id=_NEST_EXEC,
+        closeout=_miss_closeout(_NEST_EXEC),
+    )
+    _admit(
+        ledger,
+        _req(dispatch_id="nest-sib-b-b", execution_id="exec-sib-b"),
+        nest_under=parent_id,
+    )
+    with ledger._connect() as conn:
+        conn.execute(
+            "UPDATE cursor_sdk_dispatches SET status=? WHERE dispatch_id=?",
+            ("running", "nest-sib-b-b"),
+        )
+    post = AsyncMock(return_value=(True, {"dispatch_id": "no-sib"}))
+    with ExitStack() as stack:
+        _promote_contexts(stack, post)
+        await _promote_nest(nest_id)
+    assert post.await_count == 0
+
+
+@pytest.mark.asyncio
+async def test_done_token_does_not_hop_on_nest_terminal() -> None:
+    ledger = CursorDispatchLedger.instance()
+    parent_id = "parent-done-b"
+    nest_id = "nest-done-b"
+    _arm_terminal_parent_null_park(
+        ledger,
+        parent_id=parent_id,
+        nest_id=nest_id,
+        nest_execution_id=_NEST_EXEC,
+        closeout="status: complete\nstop: DONE\n",
+    )
+    ledger.merge_record_json(
+        dispatch_id=parent_id,
+        patch={"closeout_stop_tokens": ["DONE"]},
+    )
+    post = AsyncMock(return_value=(True, {"dispatch_id": "no-done"}))
+    with ExitStack() as stack:
+        _promote_contexts(stack, post)
+        await _promote_nest(nest_id)
+    assert post.await_count == 0
+
+
+@pytest.mark.asyncio
+async def test_retryable_503_retried_once_on_child_terminal() -> None:
+    from services.git_integration_worker.cursor_sdk_closeout.conductor_hop import (
+        maybe_wake_conductor_on_nest_child_terminal,
+    )
+
+    ledger = CursorDispatchLedger.instance()
+    parent_id = "parent-503-b"
+    nest_id = "nest-503-b"
+    _arm_terminal_parent_null_park(
+        ledger,
+        parent_id=parent_id,
+        nest_id=nest_id,
+        nest_execution_id=_NEST_EXEC,
+        closeout=_miss_closeout(_NEST_EXEC),
+        extra_patch={
+            "hop_admit_error": {
+                "retryable": True,
+                "attempts": 1,
+                "last_status_code": 503,
+                "last_error": "GIT_WORKER_DRAINING",
+            }
+        },
+    )
+    ledger.mark_terminal(dispatch_id=nest_id, terminal_status="completed")
+    import services.git_integration_worker.cursor_sdk_closeout.conductor_hop as hop_mod
+
+    reactor = AsyncMock()
+    with patch.object(hop_mod, "maybe_fire_conductor_hop_reactor", reactor):
+        await maybe_wake_conductor_on_nest_child_terminal(
+            child_dispatch_id=nest_id
+        )
+    reactor.assert_awaited_once_with(
+        dispatch_id=parent_id, producer_completion_wake=True
+    )

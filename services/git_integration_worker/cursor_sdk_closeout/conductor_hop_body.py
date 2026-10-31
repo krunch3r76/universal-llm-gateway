@@ -80,7 +80,7 @@ def build_hop_team_dispatch_body(
         return None
     next_seq = resolve_next_hop_seq_from_row(row, rec, ledger_rows=ledger_rows)
     if next_seq is None:
-        return None
+        next_seq = hop._successor_hop_seq(row, rec)
     hop_reason = hop_reason_override or hop._infer_hop_reason(
         closeout_tokens=closeout_tokens,
         terminal_status=str(row.get("terminal_status") or row.get("status") or ""),

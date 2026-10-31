@@ -1706,3 +1706,59 @@ async def test_consult_pending_identical_signatures_park() -> None:
     assert park_mock.await_args.kwargs["reason"] == _PARK_REASON_NO_PROGRESS_CAP
     page_mock.assert_not_awaited()
     post_mock.assert_not_awaited()
+
+
+def test_parked_transport_nest_child_not_refused_no_harvest_token() -> None:
+    ledger = CursorDispatchLedger.instance()
+    req = _req(dispatch_id="park-nest-no-token")
+    _admit_conductor(ledger, req)
+    ledger.merge_record_json(
+        dispatch_id=req.dispatch_id,
+        patch={
+            "closeout_stop_tokens": ["PARKED_TRANSPORT"],
+            "closeout_body": "status: partial\nstop: PARKED_TRANSPORT\n",
+            "closeout_turn": 4,
+            "closeout_harvest_owed": True,
+            "hop_park_harvest_fired_at": 1.0,
+        },
+    )
+    ledger.mark_terminal(dispatch_id=req.dispatch_id, terminal_status="completed")
+    row = _reload_row(ledger, req.dispatch_id)
+    with (
+        patch(
+            "services.git_integration_worker.cursor_sdk_closeout.conductor_hop."
+            "_terminal_nested_producers_only",
+            return_value=True,
+        ),
+        patch(
+            "services.git_integration_worker.cursor_sdk_closeout.conductor_park_harvest."
+            "emit_frontier_sdk_conductor_hop_park_harvest_continue_refused"
+        ) as emit_refused,
+    ):
+        assert not park_harvest_continue_owed(row)
+    emit_refused.assert_not_called()
+
+
+def test_continue_refusal_stamps_predicate() -> None:
+    ledger = CursorDispatchLedger.instance()
+    req = _req(dispatch_id="park-refusal-stamp")
+    _admit_conductor(ledger, req)
+    ledger.merge_record_json(
+        dispatch_id=req.dispatch_id,
+        patch={
+            "closeout_stop_tokens": ["PARKED_TRANSPORT"],
+            "closeout_body": "stop: PARKED_TRANSPORT\nNEXT_ADMIT: harvest none\n",
+            "closeout_turn": 4,
+            "closeout_harvest_owed": True,
+            "hop_park_harvest_fired_at": 1.0,
+        },
+    )
+    ledger.mark_terminal(dispatch_id=req.dispatch_id, terminal_status="completed")
+    row = _reload_row(ledger, req.dispatch_id)
+    with patch(
+        "services.git_integration_worker.cursor_sdk_closeout.conductor_park_harvest."
+        "emit_frontier_sdk_conductor_hop_park_harvest_continue_refused"
+    ) as emit_refused:
+        assert not park_harvest_continue_owed(row)
+    emit_refused.assert_called_once()
+    assert emit_refused.call_args.kwargs["predicate"] == "no_harvest_token"
