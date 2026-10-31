@@ -3729,8 +3729,71 @@ def test_row_pinned_inflight_execution_arms_harvest() -> None:
     assert rec.get("closeout_harvest_owed") is True
 
 
-def test_row_pinned_stored_harvest_without_next_admit_hops() -> None:
-    """Stored ROW_PINNED harvest flag plus an execution id continues."""
+@pytest.mark.asyncio
+async def test_row_pinned_next_admit_harvest_no_hop_until_reply() -> None:
+    """NEXT_ADMIT harvest on ROW_PINNED: hop_owed false, one continue after reply."""
+    ledger = CursorDispatchLedger.instance()
+    dispatch_id = "pred-row-pinned-next-admit"
+    harvest_id = "19596a4d-891c-48ad-9692-ef3ac1d932a1"
+    _admit_conductor(ledger, _req(dispatch_id=dispatch_id))
+    with patch(
+        "services.git_integration_worker.cursor_sdk_closeout.conductor_hop."
+        "_named_target_is_terminal",
+        return_value=False,
+    ):
+        merge_conductor_closeout_hop_authority(
+            dispatch_id=dispatch_id,
+            closeout_body=(
+                "status: partial\nstop: ROW_PINNED\n"
+                f"NEXT_ADMIT: harvest {harvest_id}\n"
+            ),
+            thread_id="10065",
+            closeout_turn=5,
+        )
+    ledger.merge_record_json(
+        dispatch_id=dispatch_id,
+        patch={"hop_park_harvest_fired_at": time.time()},
+    )
+    ledger.mark_terminal(dispatch_id=dispatch_id, terminal_status="completed")
+    with ledger._connect() as conn:
+        row = conn.execute(
+            "SELECT * FROM cursor_sdk_dispatches WHERE dispatch_id=?",
+            (dispatch_id,),
+        ).fetchone()
+    parent_row = {k: row[k] for k in row.keys()}
+    assert hop_owed(parent_row, closeout_tokens=frozenset({"ROW_PINNED"})) is False
+    post = AsyncMock(return_value=(True, {"dispatch_id": "succ-next-admit-pinned"}))
+    eval_state = {"matched": False}
+
+    def _eval(_row: dict, _token: str) -> tuple[bool, str | None]:
+        return eval_state["matched"], None if eval_state["matched"] else "reply_absent"
+
+    with (
+        patch(
+            "services.git_integration_worker.cursor_sdk_closeout.conductor_park_harvest."
+            "_evaluate_harvest_reply_execution",
+            side_effect=_eval,
+        ),
+        patch(
+            "services.git_integration_worker.cursor_sdk_closeout.conductor_hop."
+            "post_conductor_hop_team_dispatch",
+            post,
+        ),
+        patch(
+            "services.git_integration_worker.cursor_sdk_closeout.conductor_exit_reasons."
+            "read_external_gate_lane_snapshot",
+            return_value=_TRUTHY_SNAP,
+        ),
+    ):
+        await maybe_fire_conductor_hop_reactor(dispatch_id=dispatch_id)
+        assert post.await_count == 0
+        eval_state["matched"] = True
+        await maybe_fire_conductor_hop_reactor(dispatch_id=dispatch_id)
+        assert post.await_count == 1
+
+
+def test_row_pinned_stored_harvest_does_not_hop_owed() -> None:
+    """Stored ROW_PINNED harvest waits for park-harvest continue, not hop_owed."""
     ledger = CursorDispatchLedger.instance()
     dispatch_id = "pred-row-pinned-stored"
     _admit_conductor(ledger, _req(dispatch_id=dispatch_id))
@@ -3757,9 +3820,193 @@ def test_row_pinned_stored_harvest_without_next_admit_hops() -> None:
     with patch(
         "services.git_integration_worker.cursor_sdk_closeout.conductor_exit_reasons."
         "read_external_gate_lane_snapshot",
+        return_value=_TRUTHY_SNAP,
+    ):
+        assert hop_owed(parent_row, closeout_tokens=frozenset({"ROW_PINNED"})) is False
+
+
+def _row_pinned_stored_harvest_terminal_row(
+    ledger: CursorDispatchLedger,
+    *,
+    dispatch_id: str = "pred-row-pinned-gate",
+    exec_id: str = "0b01b479-9a64-4c31-8e10-cccccccccccc",
+    summoning_thread_id: str = "9638",
+) -> dict[str, Any]:
+    _admit_conductor(ledger, _req(dispatch_id=dispatch_id))
+    ledger.merge_record_json(
+        dispatch_id=dispatch_id,
+        patch={
+            "closeout_stop_tokens": ["ROW_PINNED"],
+            "closeout_body": (
+                "status: partial\nstop: ROW_PINNED\n"
+                f"execution_id: {exec_id}\n"
+            ),
+            "closeout_harvest_owed": True,
+            "closeout_turn": 7,
+            "summoning_thread_id": summoning_thread_id,
+            "hop_park_harvest_fired_at": time.time(),
+        },
+    )
+    ledger.mark_terminal(dispatch_id=dispatch_id, terminal_status="completed")
+    with ledger._connect() as conn:
+        row = conn.execute(
+            "SELECT * FROM cursor_sdk_dispatches WHERE dispatch_id=?",
+            (dispatch_id,),
+        ).fetchone()
+    return {k: row[k] for k in row.keys()}
+
+
+def test_hop_owed_false_row_pinned_stored_harvest_under_block_gates() -> None:
+    """21452#17: stored ROW_PINNED harvest must not bypass hop_owed withhold gates."""
+    ledger = CursorDispatchLedger.instance()
+    row = _row_pinned_stored_harvest_terminal_row(ledger)
+    tokens = frozenset({"ROW_PINNED"})
+    with patch(
+        "services.git_integration_worker.cursor_sdk_closeout.conductor_hop."
+        "consult_pending_blocks_progression",
+        return_value=True,
+    ):
+        assert hop_owed(row, closeout_tokens=tokens) is False
+    with patch(
+        "services.git_integration_worker.cursor_sdk_closeout.conductor_hop."
+        "mission_open_for_row",
+        return_value=False,
+    ):
+        assert hop_owed(row, closeout_tokens=tokens) is False
+    with patch(
+        "services.git_integration_worker.cursor_sdk_closeout.conductor_exit_reasons."
+        "read_external_gate_lane_snapshot",
         return_value={},
     ):
-        assert hop_owed(parent_row, closeout_tokens=frozenset({"ROW_PINNED"})) is True
+        assert hop_owed(row, closeout_tokens=tokens) is False
+    assert hop_owed(row, closeout_tokens=tokens) is False
+
+
+def test_merge_row_pinned_prose_uuid_stamps_closeout_harvest_owed() -> None:
+    """ROW_PINNED merge arms harvest from prose execution id without NEXT_ADMIT."""
+    ledger = CursorDispatchLedger.instance()
+    dispatch_id = "pred-row-pinned-prose"
+    exec_id = "19596a4d-891c-48ad-9692-ef3ac1d932a1"
+    _admit_conductor(ledger, _req(dispatch_id=dispatch_id))
+    with patch(
+        "services.git_integration_worker.cursor_sdk_closeout.conductor_hop."
+        "_named_target_is_terminal",
+        return_value=False,
+    ):
+        merge_conductor_closeout_hop_authority(
+            dispatch_id=dispatch_id,
+            closeout_body=(
+                "status: partial\nstop: ROW_PINNED\n"
+                f"execution_id: {exec_id}\n"
+            ),
+            thread_id="10065",
+            closeout_turn=3,
+        )
+    with ledger._connect() as conn:
+        rec = json.loads(
+            conn.execute(
+                "SELECT record_json FROM cursor_sdk_dispatches WHERE dispatch_id=?",
+                (dispatch_id,),
+            ).fetchone()[0]
+        )
+    assert rec.get("closeout_harvest_owed") is True
+
+
+@pytest.mark.asyncio
+async def test_row_pinned_stored_harvest_21452_16_no_post_until_reply() -> None:
+    """21452#16: live ask on summoning lane + absent reply ⇒ 0 POSTs, then 1 on reply."""
+    ledger = CursorDispatchLedger.instance()
+    dispatch_id = "pred-row-pinned-21452-16"
+    summoning = "9638"
+    exec_id = "8c02d5d3-a6bd-4aab-8314-2fae67d91143"
+    parent_row = _row_pinned_stored_harvest_terminal_row(
+        ledger,
+        dispatch_id=dispatch_id,
+        exec_id=exec_id,
+        summoning_thread_id=summoning,
+    )
+
+    def _ask_lane_snap() -> dict:
+        return {
+            "observed_at": "2026-10-02T00:00:00+00:00",
+            "rows": [
+                {
+                    "execution_id": "exec-ask-live",
+                    "parent_thread": summoning,
+                    "status": "running",
+                    "stream_state": "running",
+                    "purpose": "ask",
+                }
+            ],
+        }
+
+    post_mock = AsyncMock(return_value=(True, {"dispatch_id": "succ-row-pinned-harvest"}))
+    eval_state = {"matched": False}
+
+    def _eval_harvest(_row: dict, _token: str) -> tuple[bool, str | None]:
+        return eval_state["matched"], None if eval_state["matched"] else "reply_absent"
+
+    with (
+        patch(
+            "services.git_integration_worker.cursor_sdk_closeout.conductor_exit_reasons."
+            "read_external_gate_lane_snapshot",
+            side_effect=_ask_lane_snap,
+        ),
+        patch(
+            "services.git_integration_worker.cursor_sdk_closeout.conductor_hop."
+            "post_conductor_hop_team_dispatch",
+            post_mock,
+        ),
+        patch(
+            "services.git_integration_worker.cursor_sdk_closeout.conductor_park_harvest."
+            "_evaluate_harvest_reply_execution",
+            side_effect=_eval_harvest,
+        ),
+        patch(
+            "services.git_integration_worker.cursor_sdk_closeout.conductor_hop."
+            "mission_open_for_row",
+            return_value=True,
+        ),
+    ):
+        await maybe_fire_conductor_hop_reactor(dispatch_id=dispatch_id)
+        assert post_mock.await_count == 0
+        eval_state["matched"] = True
+        await maybe_fire_conductor_hop_reactor(dispatch_id=dispatch_id)
+        assert post_mock.await_count == 1
+        await maybe_fire_conductor_hop_watchdog(dispatch_id=dispatch_id)
+        assert post_mock.await_count == 1
+
+
+@pytest.mark.asyncio
+async def test_row_pinned_without_execution_zero_posts_reactor_and_watchdog() -> None:
+    ledger = CursorDispatchLedger.instance()
+    dispatch_id = "pred-row-pinned-only"
+    _admit_conductor(ledger, _req(dispatch_id=dispatch_id))
+    ledger.merge_record_json(
+        dispatch_id=dispatch_id,
+        patch={
+            "closeout_stop_tokens": ["ROW_PINNED"],
+            "closeout_body": "status: partial\nstop: ROW_PINNED\n",
+            "closeout_turn": 2,
+        },
+    )
+    ledger.mark_terminal(dispatch_id=dispatch_id, terminal_status="completed")
+    post_mock = AsyncMock(return_value=(True, {"dispatch_id": "should-not-fire"}))
+    with (
+        patch(
+            "services.git_integration_worker.cursor_sdk_closeout.conductor_exit_reasons."
+            "read_external_gate_lane_snapshot",
+            return_value=_TRUTHY_SNAP,
+        ),
+        patch(
+            "services.git_integration_worker.cursor_sdk_closeout.conductor_hop."
+            "post_conductor_hop_team_dispatch",
+            post_mock,
+        ),
+    ):
+        await maybe_fire_conductor_hop_reactor(dispatch_id=dispatch_id)
+        await maybe_fire_conductor_hop_watchdog(dispatch_id=dispatch_id)
+    post_mock.assert_not_called()
 
 
 def test_row_pinned_without_execution_does_not_hop() -> None:

@@ -717,6 +717,28 @@ def test_park_harvest_continue_rejects_done_in_body() -> None:
         emit_refused.assert_not_called()
 
 
+def test_park_harvest_continue_candidates_includes_row_pinned_stored_harvest() -> None:
+    """Sweep selector includes ROW_PINNED stored-harvest rows (21469 AC4)."""
+    ledger = CursorDispatchLedger.instance()
+    req = _req(dispatch_id="park-row-pinned-candidate")
+    exec_id = "0b01b479-9a64-4c31-8e10-dddddddddddd"
+    _admit_conductor(ledger, req)
+    ledger.merge_record_json(
+        dispatch_id=req.dispatch_id,
+        patch={
+            "closeout_stop_tokens": ["ROW_PINNED"],
+            "closeout_body": (
+                "status: partial\nstop: ROW_PINNED\n"
+                f"execution_id: {exec_id}\n"
+            ),
+            "closeout_harvest_owed": True,
+            "closeout_turn": 9,
+        },
+    )
+    ledger.mark_terminal(dispatch_id=req.dispatch_id, terminal_status="completed")
+    assert req.dispatch_id in conductor_park_harvest_continue_candidates(ledger)
+
+
 def test_park_harvest_continue_owed_row_pinned_execution_on_reply() -> None:
     """ROW_PINNED prose that names an execution id continues on the reply."""
     ledger = CursorDispatchLedger.instance()
@@ -730,8 +752,9 @@ def test_park_harvest_continue_owed_row_pinned_execution_on_reply() -> None:
     )
     record["closeout_harvest_owed"] = True
     row["record_json"] = json.dumps(record)
-    assert park_harvest_continue_owed(row, reply_fn=lambda *_a, **_k: True)
-    assert not park_harvest_continue_owed(row, reply_fn=lambda *_a, **_k: False)
+    with _stub_shape_b_reply_match():
+        assert park_harvest_continue_owed(row, reply_fn=lambda *_a, **_k: True)
+        assert not park_harvest_continue_owed(row, reply_fn=lambda *_a, **_k: False)
 
 
 def test_park_harvest_continue_owed_false_when_row_pinned() -> None:

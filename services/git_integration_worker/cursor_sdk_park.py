@@ -361,6 +361,13 @@ def conductor_hop_watchdog_candidates(
                     ignore_probe_indeterminate=True,
                 ):
                     candidates.append(dispatch_id)
+                    continue
+                from services.git_integration_worker.cursor_sdk_closeout.conductor_exit_reasons import (
+                    row_pinned_stored_harvest,
+                )
+
+                if row_pinned_stored_harvest(mapped):
+                    candidates.append(dispatch_id)
             except Exception as exc:  # noqa: BLE001
                 logger.warning(
                     "hop watchdog candidate row failed dispatch=%s err=%s",
@@ -461,8 +468,14 @@ def conductor_park_harvest_continue_candidates(
             ):
                 continue
             closeout_tokens = _closeout_tokens_from_row(mapped)
-            if "PARKED_TRANSPORT" not in closeout_tokens and not _body_grades_park_harvest_owed(
-                mapped
+            from services.git_integration_worker.cursor_sdk_closeout.conductor_exit_reasons import (
+                row_pinned_stored_harvest,
+            )
+
+            if (
+                "PARKED_TRANSPORT" not in closeout_tokens
+                and not _body_grades_park_harvest_owed(mapped)
+                and not row_pinned_stored_harvest(mapped)
             ):
                 continue
             try:
