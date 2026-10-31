@@ -1,4 +1,4 @@
-"""In-process owner API for Orion and shared endpoint wake claims on the agent_bus ledger."""
+"""In-process owner API for Orion / shared endpoint wake claims (20995 ledger)."""
 
 from __future__ import annotations
 
@@ -9,13 +9,12 @@ from datetime import UTC, datetime
 from typing import Any
 
 from agent_seat.registry import normalize_bus_address
-from bus_watch.endpoint_wake_transport import classify_orion
 
 from .connection import connect, write_connect
 from .endpoint_wake_ledger import (
     record_orion_deferred_streaming,
     record_wake_result,
-    resolve_wake_delivery_binding,
+    resolve_orion_chat_wake,
 )
 
 _ORION_WAKE_HOUSE = "21207"
@@ -55,7 +54,6 @@ def _decode_paste_receipt(reason: str | None) -> dict[str, Any] | None:
 
 
 def resolve_turn_id_for_wake(*, thread_id: str, turn_number: int) -> int | None:
-    """Map a bus ``turn_number`` on ``thread_id`` to the durable ``turns.id`` row."""
     with connect() as conn:
         row = conn.execute(
             "SELECT id FROM turns WHERE thread=? AND turn_number=? LIMIT 1",
@@ -86,7 +84,6 @@ class WakeClaimContext:
 
 
 def wake_claim_from_options(opts: dict[str, Any] | None) -> WakeClaimContext | None:
-    """Build a ``WakeClaimContext`` from Stargate pipeline options, or None when incomplete."""
     if not opts:
         return None
     wake_id = str(opts.get("wake_id") or "").strip()
@@ -143,7 +140,6 @@ def wake_claim_from_options(opts: dict[str, Any] | None) -> WakeClaimContext | N
 def enrich_delivery_receipt(
     receipt: dict[str, Any], claim: WakeClaimContext
 ) -> dict[str, Any]:
-    """Attach wake claim identifiers and covered turn metadata to a paste delivery receipt."""
     return {
         **receipt,
         "wake_id": claim.wake_id,
@@ -160,7 +156,7 @@ def enrich_delivery_receipt(
 
 def _endpoint_from_actuation(actuation: dict[str, Any]) -> str:
     atype = str(actuation.get("type") or "")
-    if atype == "orion_chat":
+    if atype in ("orion_chat", "chatgpt_work"):
         return str(actuation.get("conversation_url") or "").split("?", 1)[0].strip()
     if atype == "cursor_glass":
         return str(actuation.get("agent_id") or "").strip()
@@ -168,7 +164,7 @@ def _endpoint_from_actuation(actuation: dict[str, Any]) -> str:
 
 
 class LedgerWakeDeliveryOwner:
-    """Shared ledger owner that validates dispatcher claims, dedupes paste, and records receipts."""
+    """Shared ledger owner: validate dispatcher claims, dedupe paste, record receipts."""
 
     def validate_claim_for_delivery(self, claim: WakeClaimContext) -> dict[str, Any]:
         if not str(claim.wake_id or "").strip():
@@ -207,13 +203,19 @@ class LedgerWakeDeliveryOwner:
             if normalize_bus_address(str(row["agent"])) != want_agent:
                 return {"ok": False, "reason": "wake_claim_agent_mismatch"}
 
-        binding = resolve_wake_delivery_binding(house_id=claim.thread_id)
+        binding = resolve_orion_chat_wake(
+            claim.thread_id, agent=want_agent
+        )
         if str(binding.get("state") or "") != "bound":
             return {"ok": False, "reason": "delivery_unbound"}
 
         actuation = dict((binding.get("current") or {}).get("actuation") or {})
         bound_endpoint = _endpoint_from_actuation(actuation)
-        if claim.thread_id == _ORION_WAKE_HOUSE:
+        act_type = str(actuation.get("type") or "")
+        if act_type == "chatgpt_work":
+            if not bound_endpoint or want_endpoint != bound_endpoint:
+                return {"ok": False, "reason": "wake_claim_endpoint_mismatch"}
+        elif claim.thread_id == _ORION_WAKE_HOUSE:
             if bound_endpoint and want_endpoint != bound_endpoint:
                 return {"ok": False, "reason": "wake_claim_endpoint_mismatch"}
         elif bound_endpoint and want_endpoint and want_endpoint != bound_endpoint:
@@ -388,27 +390,8 @@ class LedgerWakeDeliveryOwner:
             outcome = "unknown"
             reason = str(receipt.get("reason") or "delivery_unconfirmed")
         elif receipt.get("ok") is False:
-            outcome, reason = classify_orion(receipt)
-            if outcome == "pending" and reason != "deferred_streaming":
-                record_wake_result(
-                    claim.wake_id,
-                    "pending",
-                    reason,
-                    "exact",
-                    None,
-                    None,
-                )
-                return
-            if outcome == "skipped":
-                record_wake_result(
-                    claim.wake_id,
-                    "skipped",
-                    reason,
-                    "exact",
-                    None,
-                    None,
-                )
-                return
+            outcome = "refused"
+            reason = str(receipt.get("reason") or "refused")
         else:
             outcome = "unknown"
             reason = str(receipt.get("reason") or "unnamed")
@@ -423,7 +406,7 @@ class LedgerWakeDeliveryOwner:
 
 
 def shared_wake_delivery_owner() -> LedgerWakeDeliveryOwner:
-    """Return the process-wide ``LedgerWakeDeliveryOwner`` used by Orion hop and wake pipelines."""
+    """Factory for agent_bus_store-mounted processes (Orion hop seam)."""
     return LedgerWakeDeliveryOwner()
 
 

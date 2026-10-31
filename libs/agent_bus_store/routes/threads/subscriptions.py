@@ -123,11 +123,12 @@ async def subscriptions_route(
 async def delivery_bindings_resolve_route(
     house_id: str,
     intent: str,
+    agent: str | None = None,
 ) -> dict[str, Any]:
     """Resolve delivery actuation for a house and intent (wake, steer, or inform)."""
     intent_norm = str(intent or "").strip().lower()
     if intent_norm == "wake":
-        return resolve_wake_delivery_binding(house_id=house_id)
+        return resolve_wake_delivery_binding(house_id=house_id, agent=agent)
     if intent_norm == "steer":
         return resolve_steer_delivery_binding(house_id=house_id)
     if intent_norm == "inform":

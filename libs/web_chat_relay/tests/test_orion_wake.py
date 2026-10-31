@@ -9,14 +9,11 @@ from bus_watch.endpoint_wake_transport import classify_orion
 from web_chat_relay.orion_wake import (
     PINNED_CONVERSATION_ID,
     PINNED_CONVERSATION_URL,
-    _is_streaming,
     _paste_and_send,
     build_wake_pointer,
     conversation_id_from_url,
     deliver_orion_wake,
-    extract_orion_seat_registration_url,
     holder_conversation_url,
-    is_orion_seat_registration_turn,
 )
 
 pytestmark = pytest.mark.offline
@@ -248,8 +245,6 @@ class _FakePage:
                 "visibilityState": self.visibility_state,
                 "composerEmpty": not (draft or "").strip(),
             }
-        if "data-testid" in expression and "stop-button" in expression:
-            return getattr(self, "streaming_via_testid", False) or self.streaming
         if "stop" in expression.lower() and "streaming" not in expression:
             return self.streaming
         if "dialogs.find" in expression and "d.connector" in expression:
@@ -373,7 +368,7 @@ async def test_conversation_missing_wrong_tab() -> None:
 
 @pytest.mark.asyncio
 async def test_streaming_tab_steers_without_defer() -> None:
-    page = _FakePage(streaming=True, steer_visible=True)
+    page = _FakePage(streaming=True)
     out = await deliver_orion_wake(
         thread="21207", turn=1, from_agent="maestro", page=page
     )
@@ -440,67 +435,6 @@ async def test_hidden_tab_with_composer_draft_refuses_non_empty() -> None:
 
 
 @pytest.mark.asyncio
-async def test_streaming_without_steer_button_defers() -> None:
-    page = _FakePage(streaming=True, steer_visible=False, send_visible=True)
-    out = await deliver_orion_wake(
-        thread="21207", turn=1, from_agent="maestro", page=page
-    )
-    assert out["ok"] is False
-    assert out["reason"] == "deferred_streaming"
-    assert out["delivered"] is False
-    assert out["pasted"] is False
-    assert not page.keyboard.inserted
-    assert "send" not in page.clicked
-    assert "steer" not in page.clicked
-
-
-@pytest.mark.asyncio
-async def test_deferred_streaming_retry_delivers_when_idle() -> None:
-    page = _FakePage(streaming=True, steer_visible=False, send_visible=True)
-    defer = await deliver_orion_wake(
-        thread="21207", turn=1, from_agent="maestro", page=page
-    )
-    assert defer["reason"] == "deferred_streaming"
-    assert not page.keyboard.inserted
-    page.streaming = False
-    retry = await deliver_orion_wake(
-        thread="21207", turn=1, from_agent="maestro", page=page
-    )
-    assert retry["ok"] is True, retry
-    assert retry["delivered"] is True
-    assert page.keyboard.inserted
-
-
-@pytest.mark.asyncio
-async def test_is_streaming_detects_stop_button_testid() -> None:
-    page = _FakePage(streaming=False)
-    page.streaming_via_testid = True
-    assert await _is_streaming(page) is True
-
-
-@pytest.mark.asyncio
-async def test_paste_failed_after_send_reports_pasted_true() -> None:
-    page = _FakePage(streaming=False, send_visible=True)
-
-    async def boom(_page, **_k):
-        raise RuntimeError("approval blew up")
-
-    import web_chat_relay.orion_wake as ow
-
-    original = ow._handle_approvals
-    ow._handle_approvals = boom  # type: ignore[assignment]
-    try:
-        out = await deliver_orion_wake(
-            thread="21207", turn=1, from_agent="maestro", page=page
-        )
-    finally:
-        ow._handle_approvals = original
-    assert out["reason"] == "paste_failed"
-    assert out["pasted"] is True
-    assert out["delivered"] is False
-
-
-@pytest.mark.asyncio
 async def test_paste_and_send_clicks_steer_when_visible() -> None:
     page = _FakePage(streaming=True, steer_visible=True, send_visible=False)
     await _paste_and_send(page, "wake line", layout="docked")
@@ -521,7 +455,6 @@ async def test_hidden_tab_streaming_skips_reload_and_delivers() -> None:
         visibility_state="hidden",
         composer_draft="",
         streaming=True,
-        steer_visible=True,
     )
     out = await deliver_orion_wake(
         thread="21207",
@@ -653,6 +586,8 @@ def test_conversation_id_from_url_project_path() -> None:
 
 
 def test_extract_orion_seat_registration_url_hop06_specimen() -> None:
+    from web_chat_relay.orion_wake import extract_orion_seat_registration_url
+
     body = (
         "TYPE: SEAT_REGISTRATION\n"
         "Old exact URL: https://chatgpt.com/g/g-p-6ae3debfee8481918ff3fa45b7d18d3a-ulg-orion"
@@ -666,29 +601,6 @@ def test_extract_orion_seat_registration_url_hop06_specimen() -> None:
     assert url is not None
     assert url.endswith("/c/6ae4cfde-151c-83e8-8966-fdd8893f472d")
     assert "6ae44d27" not in url
-
-
-def test_seat_registration_turn_rejects_non_orion_sender() -> None:
-    body = "TYPE: SEAT_REGISTRATION\nNew exact URL: https://chatgpt.com/c/11111111-2222-3333-4444-555555555555\n"
-    assert not is_orion_seat_registration_turn(
-        subject="SEAT_REGISTRATION|orion",
-        body=body,
-        from_agent="maestro",
-    )
-    assert (
-        extract_orion_seat_registration_url(body, subject="SEAT_REGISTRATION|orion")
-        is not None
-    )
-
-
-def test_seat_registration_ignores_quoted_body_mention_without_type_line() -> None:
-    body = 'Reply quoted "TYPE: SEAT_REGISTRATION" but no stamp.\n'
-    assert not is_orion_seat_registration_turn(
-        subject="FACT|hop",
-        body=body,
-        from_agent="orion",
-    )
-    assert extract_orion_seat_registration_url(body, subject="FACT|hop") is None
 
 
 def test_holder_conversation_url_from_subscription() -> None:

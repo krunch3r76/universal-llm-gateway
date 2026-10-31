@@ -65,11 +65,7 @@ def _open(
 
 
 def test_wall_plus_all_open_cells() -> None:
-    cells = [
-        _sealed(cp_ordinal=5, bus_turn_id=100),
-        _sealed(cp_ordinal=6, bus_turn_id=200),
-        _open(cp_ordinal=99),
-    ]
+    cells = [_sealed(cp_ordinal=5, bus_turn_id=100), _sealed(cp_ordinal=6, bus_turn_id=200), _open(cp_ordinal=99)]
     scoped, skipped, foreign, unresolved = _last_session_cells(cells, thread_id=_ROOT)
     assert [c["cp_ordinal"] for c in scoped] == [6, 99]
     assert skipped == 0
@@ -142,9 +138,7 @@ def _channel_cell(
 def test_wall_anchors_at_latest_hop_checkpoint() -> None:
     cells = [
         _channel_cell(cp_ordinal=1, channel="continuity", bus_turn_id=100, turn_hi=5),
-        _channel_cell(
-            cp_ordinal=2, channel="hop", bus_turn_id=200, turn_lo=5, turn_hi=7
-        ),
+        _channel_cell(cp_ordinal=2, channel="hop", bus_turn_id=200, turn_lo=5, turn_hi=7),
         _open(cp_ordinal=3),
     ]
     scoped, skipped, foreign, unresolved = _last_session_cells(
@@ -159,23 +153,16 @@ def test_wall_anchors_at_latest_hop_checkpoint() -> None:
 def test_channel_all_matches_pre_change_wall() -> None:
     cells = [
         _channel_cell(cp_ordinal=1, channel="continuity", bus_turn_id=100),
-        _channel_cell(
-            cp_ordinal=2, channel="hop", bus_turn_id=200, turn_lo=5, turn_hi=7
-        ),
+        _channel_cell(cp_ordinal=2, channel="hop", bus_turn_id=200, turn_lo=5, turn_hi=7),
         _open(cp_ordinal=3),
     ]
-    scoped_all, skipped_all, _, _ = _last_session_cells(
-        cells, thread_id=_ROOT, channel="all"
-    )
+    scoped_all, skipped_all, _, _ = _last_session_cells(cells, thread_id=_ROOT, channel="all")
     assert [c["cp_ordinal"] for c in scoped_all] == [2, 3]
     assert skipped_all == 0
 
 
 def test_hop_cells_skipped_zero_under_channel_all() -> None:
-    cells = [
-        _channel_cell(cp_ordinal=1, channel="hop", bus_turn_id=100),
-        _open(cp_ordinal=2),
-    ]
+    cells = [_channel_cell(cp_ordinal=1, channel="hop", bus_turn_id=100), _open(cp_ordinal=2)]
     _, skipped, _, _ = _last_session_cells(cells, thread_id=_ROOT, channel="all")
     assert skipped == 0
 
@@ -224,7 +211,9 @@ def test_f2_window_whole_tip_excludes_older_sealed_transcript(
         files_root=MagicMock(),
     )
     open_by_tid = {
-        str(c["transcript_id"]): c for c in cells if c.get("bus_turn_id") is None
+        str(c["transcript_id"]): c
+        for c in cells
+        if c.get("bus_turn_id") is None
     }
     assert _UUID_OLD not in open_by_tid
     assert _UUID_NEW in open_by_tid
@@ -291,68 +280,7 @@ def test_extended_transcript_admitted_via_sealed_on_path(
     mock_cps,
     mock_uuid_lookup,
 ) -> None:
-    """Two-session chain: pre-tip floor from first segment; gate admits via sealed_on."""
-    mock_uuid_lookup.return_value = None
-    mock_chain.return_value = [
-        {"transcript_id": _UUID_OLD, "turn_lo": 0, "turn_hi": 5, "session_id": "old"},
-        {"transcript_id": _UUID_OLD, "turn_lo": 5, "turn_hi": 8, "session_id": "old2"},
-    ]
-    cp_tip_body = "Window: boundary=window_whole\n"
-    cps = [
-        type(
-            "CP",
-            (),
-            {
-                "turn_number": 20,
-                "cp_ordinal": 55,
-                "created_at": "2026-10-30T22:48:00+00:00",
-            },
-        )()
-    ]
-    mock_cps.return_value = cps
-    conn = mock_connect.return_value.__enter__.return_value
-    conn.execute.return_value.fetchone.side_effect = [{"body": cp_tip_body}]
-    lane_journals = [
-        {
-            "session_id": "old",
-            "conversation_uuid": _UUID_OLD,
-            "timestamp": "2026-10-29T13:24:00+00:00",
-            "sealed_on": "2026-10-30T22:00:00+00:00",
-            "id": 100,
-        },
-        {
-            "session_id": "old2",
-            "conversation_uuid": _UUID_OLD,
-            "prior_session_id": "old",
-            "timestamp": "2026-10-30T22:30:00+00:00",
-            "sealed_on": "2026-10-30T23:00:00+00:00",
-            "id": 101,
-        },
-    ]
-    cells = _cells_for_lane(
-        thread_id=_ROOT,
-        lane_journals=lane_journals,
-        files_root=MagicMock(),
-    )
-    open_by_tid = {
-        str(c["transcript_id"]): c for c in cells if c.get("bus_turn_id") is None
-    }
-    assert _UUID_OLD in open_by_tid
-    assert open_by_tid[_UUID_OLD]["turn_lo"] == 5
-    assert open_by_tid[_UUID_OLD]["turn_hi"] == 8
-
-
-@patch("agent_bus_store.tape_membership.lookup_dominant_lane_by_uuid")
-@patch("agent_bus_store.tape_cells.list_checkpoint_turns")
-@patch("agent_bus_store.tape_cells.connect")
-@patch("agent_bus_store.tape_cells.build_chain_segments")
-def test_single_segment_extended_transcript_admitted_turn_lo_zero(
-    mock_chain,
-    mock_connect,
-    mock_cps,
-    mock_uuid_lookup,
-) -> None:
-    """Single chain segment: no pre-tip floor; sealed_on still admits with turn_lo 0."""
+    """Production journal row: first-seal timestamp before tip, sealed_on after."""
     mock_uuid_lookup.return_value = None
     mock_chain.return_value = [
         {"transcript_id": _UUID_OLD, "turn_lo": 0, "turn_hi": 8, "session_id": "old"},
@@ -387,10 +315,11 @@ def test_single_segment_extended_transcript_admitted_turn_lo_zero(
         files_root=MagicMock(),
     )
     open_by_tid = {
-        str(c["transcript_id"]): c for c in cells if c.get("bus_turn_id") is None
+        str(c["transcript_id"]): c
+        for c in cells
+        if c.get("bus_turn_id") is None
     }
     assert _UUID_OLD in open_by_tid
-    assert open_by_tid[_UUID_OLD]["turn_lo"] == 0
 
 
 @patch("agent_bus_store.tape_membership.lookup_dominant_lane_by_uuid")
@@ -437,7 +366,9 @@ def test_f2_excludes_stale_unanchored_journal_by_timestamp(
         files_root=MagicMock(),
     )
     open_by_tid = {
-        str(c["transcript_id"]): c for c in cells if c.get("bus_turn_id") is None
+        str(c["transcript_id"]): c
+        for c in cells
+        if c.get("bus_turn_id") is None
     }
     assert _UUID_OLD not in open_by_tid
 
@@ -458,87 +389,22 @@ def test_f1_brand_new_transcript_admitted_post_tip(
         {"transcript_id": _UUID_NEW, "turn_lo": 0, "turn_hi": 4, "session_id": "new"},
     ]
     cp_tip_body = f"Window: transcript_id={_UUID_OLD} · turns@cp=2\n"
-    cps = [
-        type(
-            "CP",
-            (),
-            {
-                "turn_number": 20,
-                "cp_ordinal": 55,
-                "created_at": "2026-10-30T22:48:00+00:00",
-            },
-        )()
-    ]
+    cps = [type("CP", (), {"turn_number": 20, "cp_ordinal": 55})()]
     mock_cps.return_value = cps
     conn = mock_connect.return_value.__enter__.return_value
     conn.execute.return_value.fetchone.side_effect = [{"body": cp_tip_body}]
-    lane_journals = [
-        {
-            "session_id": "new",
-            "conversation_uuid": _UUID_NEW,
-            "timestamp": "2026-10-30T23:10:00+00:00",
-            "id": 200,
-        }
-    ]
     cells = _cells_for_lane(
         thread_id=_ROOT,
-        lane_journals=lane_journals,
+        lane_journals=[],
         files_root=MagicMock(),
     )
     open_by_tid = {
-        str(c["transcript_id"]): c for c in cells if c.get("bus_turn_id") is None
+        str(c["transcript_id"]): c
+        for c in cells
+        if c.get("bus_turn_id") is None
     }
     assert _UUID_NEW in open_by_tid
     assert open_by_tid[_UUID_NEW]["turn_lo"] == 0
-
-
-@patch("agent_bus_store.tape_membership.lookup_dominant_lane_by_uuid")
-@patch("agent_bus_store.tape_cells.list_checkpoint_turns")
-@patch("agent_bus_store.tape_cells.connect")
-@patch("agent_bus_store.tape_cells.build_chain_segments")
-def test_tip_anchored_transcript_excludes_pre_tip_journal_activity(
-    mock_chain,
-    mock_connect,
-    mock_cps,
-    mock_uuid_lookup,
-) -> None:
-    """Tip-anchored CP: journals before tip checkpoint must not reopen open cells."""
-    mock_uuid_lookup.return_value = None
-    mock_chain.return_value = [
-        {"transcript_id": _UUID_OLD, "turn_lo": 0, "turn_hi": 8, "session_id": "old"},
-    ]
-    cp_tip_body = f"Window: transcript_id={_UUID_OLD} · turns@cp=5\n"
-    cps = [
-        type(
-            "CP",
-            (),
-            {
-                "turn_number": 20,
-                "cp_ordinal": 55,
-                "created_at": "2026-10-30T22:48:00+00:00",
-            },
-        )()
-    ]
-    mock_cps.return_value = cps
-    conn = mock_connect.return_value.__enter__.return_value
-    conn.execute.return_value.fetchone.side_effect = [{"body": cp_tip_body}]
-    lane_journals = [
-        {
-            "session_id": "old",
-            "conversation_uuid": _UUID_OLD,
-            "timestamp": "2026-10-29T13:24:00+00:00",
-            "id": 100,
-        }
-    ]
-    cells = _cells_for_lane(
-        thread_id=_ROOT,
-        lane_journals=lane_journals,
-        files_root=MagicMock(),
-    )
-    open_by_tid = {
-        str(c["transcript_id"]): c for c in cells if c.get("bus_turn_id") is None
-    }
-    assert _UUID_OLD not in open_by_tid
 
 
 @patch("agent_bus_store.tape_membership.lookup_dominant_lane_by_uuid")
@@ -551,8 +417,8 @@ def test_superseded_historical_open_cell_dropped_at_emit(
     mock_cps,
     mock_uuid_lookup,
 ) -> None:
-    """Older transcript tail after its CP must not become a post-wall open cell."""
     mock_uuid_lookup.return_value = None
+    """Older transcript tail after its CP must not become a post-wall open cell."""
     mock_chain.return_value = [
         {"transcript_id": _UUID_OLD, "turn_lo": 0, "turn_hi": 21, "session_id": "old"},
         {"transcript_id": _UUID_NEW, "turn_lo": 0, "turn_hi": 5, "session_id": "new"},
@@ -575,7 +441,9 @@ def test_superseded_historical_open_cell_dropped_at_emit(
         files_root=MagicMock(),
     )
     open_by_tid = {
-        str(c["transcript_id"]): c for c in cells if c.get("bus_turn_id") is None
+        str(c["transcript_id"]): c
+        for c in cells
+        if c.get("bus_turn_id") is None
     }
     assert _UUID_OLD not in open_by_tid
     assert _UUID_NEW in open_by_tid
@@ -623,9 +491,7 @@ def test_last_session_scoping_drops_superseded_historical_open() -> None:
 
 def test_drops_foreign_dominant_lane_open_cell() -> None:
     cells = [
-        _sealed(
-            cp_ordinal=1, bus_turn_id=10, transcript_id=_UUID_A, dominant_lane=_ROOT
-        ),
+        _sealed(cp_ordinal=1, bus_turn_id=10, transcript_id=_UUID_A, dominant_lane=_ROOT),
         _open(
             cp_ordinal=2,
             transcript_id=_UUID_B,

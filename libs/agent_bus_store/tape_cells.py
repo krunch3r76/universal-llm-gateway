@@ -25,10 +25,7 @@ def _last_turns_at_cp(
     last = 0
     for idx in range(limit):
         for anchor in cp_anchors[idx][1]:
-            if (
-                anchor.get("transcript_id") == transcript_id
-                and anchor.get("turns_at_cp") is not None
-            ):
+            if anchor.get("transcript_id") == transcript_id and anchor.get("turns_at_cp") is not None:
                 last = int(anchor["turns_at_cp"])
     return last
 
@@ -105,37 +102,6 @@ def _journal_activity_instant(journal: dict[str, Any]) -> datetime | None:
     return max(ts, sealed)
 
 
-def _open_cell_turn_lo_floor(
-    chain_segments: list[dict[str, Any]],
-    lane_journals: list[dict[str, Any]],
-    *,
-    transcript_id: str,
-    last_cp_created_at: str,
-) -> int:
-    """Max turn_hi among pre-tip segments for one transcript (journal activity <= tip CP)."""
-    cp_ts = timestamp_to_utc_instant(last_cp_created_at)
-    if cp_ts is None:
-        return 0
-    journals_by_session = {
-        str(journal["session_id"]): journal
-        for journal in lane_journals
-        if journal.get("session_id") is not None
-    }
-    floor = 0
-    for seg in chain_segments:
-        if str(seg.get("transcript_id") or "") != transcript_id:
-            continue
-        session_id = str(seg.get("session_id") or "")
-        journal = journals_by_session.get(session_id)
-        if journal is None:
-            continue
-        instant = _journal_activity_instant(journal)
-        if instant is None or instant > cp_ts:
-            continue
-        floor = max(floor, int(seg["turn_hi"]))
-    return floor
-
-
 def _last_activity_for_transcript(
     lane_journals: list[dict[str, Any]], *, transcript_id: str
 ) -> datetime | None:
@@ -166,12 +132,12 @@ def _unanchored_open_cell_allowed_after_tip(
     )
     if cp_ts is not None and last_activity is not None:
         return last_activity > cp_ts
-    # Fail closed under window_whole tips when journal clocks do not parse: without
-    # comparable timestamps we refuse unanchored open cells rather than admit stale tails.
     if not tip_transcript_ids:
         return False
     tip_max_id = _max_journal_id_for_transcripts(lane_journals, tip_transcript_ids)
-    latest = _latest_journal_for_transcript(lane_journals, transcript_id=transcript_id)
+    latest = _latest_journal_for_transcript(
+        lane_journals, transcript_id=transcript_id
+    )
     if latest is None:
         return False
     row_id = latest.get("id")
@@ -275,11 +241,7 @@ def _cells_for_lane(
             if anchor.get("boundary") == "window_whole":
                 tid = anchor.get("transcript_id")
                 targets = (
-                    [
-                        seg
-                        for seg in chain_segments
-                        if str(seg["transcript_id"]) == str(tid)
-                    ]
+                    [seg for seg in chain_segments if str(seg["transcript_id"]) == str(tid)]
                     if tid
                     else chain_segments
                 )
@@ -342,15 +304,7 @@ def _cells_for_lane(
         elif tip_transcript_ids:
             if transcript_id not in tip_transcript_ids and last_sealed is not None:
                 continue
-        turn_lo = max(
-            _last_turns_at_cp(cp_anchors, transcript_id=transcript_id),
-            _open_cell_turn_lo_floor(
-                chain_segments,
-                lane_journals,
-                transcript_id=transcript_id,
-                last_cp_created_at=str(getattr(last_cp, "created_at", "") or ""),
-            ),
-        )
+        turn_lo = _last_turns_at_cp(cp_anchors, transcript_id=transcript_id)
         turn_hi = max_turn_by_tid.get(transcript_id, turn_lo)
         if turn_hi <= turn_lo:
             continue
@@ -383,7 +337,9 @@ def _window_cells(
     transcript_id: str,
     prior_cells: int,
 ) -> list[dict[str, Any]]:
-    window = [c for c in cells if str(c.get("transcript_id") or "") == transcript_id]
+    window = [
+        c for c in cells if str(c.get("transcript_id") or "") == transcript_id
+    ]
     if not window:
         return []
     first_idx = next(
@@ -422,7 +378,11 @@ def _window_segments(
     cells: list[dict[str, Any]],
 ) -> list[dict[str, Any]]:
     cell_tids = {str(c.get("transcript_id") or "") for c in cells}
-    return [s for s in segments if str(s.get("transcript_id") or "") in cell_tids]
+    return [
+        s
+        for s in segments
+        if str(s.get("transcript_id") or "") in cell_tids
+    ]
 
 
 def _last_session_cells(
@@ -457,8 +417,11 @@ def _last_session_cells(
     foreign_cells_excluded = 0
     superseded_open_excluded = 0
     for cell in filtered:
-        if cell.get("bus_turn_id") is None and _open_cell_is_superseded(
-            cell, cells=cells, wall_ordinal=wall_ordinal
+        if (
+            cell.get("bus_turn_id") is None
+            and _open_cell_is_superseded(
+                cell, cells=cells, wall_ordinal=wall_ordinal
+            )
         ):
             superseded_open_excluded += 1
             continue
@@ -486,9 +449,7 @@ def _filter_messages_to_cells(
 ) -> list[dict[str, Any]]:
     if not cells:
         return []
-    return [
-        msg for msg in messages if any(_message_in_cell(msg, cell) for cell in cells)
-    ]
+    return [msg for msg in messages if any(_message_in_cell(msg, cell) for cell in cells)]
 
 
 def _narrow_last_session_pour_cells(
@@ -500,7 +461,9 @@ def _narrow_last_session_pour_cells(
         c
         for c in cells
         if c.get("bus_turn_id") is None
-        and not _open_cell_is_superseded(c, cells=cells, wall_ordinal=wall_ordinal)
+        and not _open_cell_is_superseded(
+            c, cells=cells, wall_ordinal=wall_ordinal
+        )
     ]
     open_turns = sum(
         max(0, int(c.get("turn_hi") or 0) - int(c.get("turn_lo") or 0))
@@ -508,7 +471,11 @@ def _narrow_last_session_pour_cells(
     )
     sealed = [c for c in cells if c.get("bus_turn_id") is not None]
     if wall_ordinal is not None:
-        sealed = [c for c in sealed if int(c.get("cp_ordinal") or 0) == wall_ordinal]
+        sealed = [
+            c
+            for c in sealed
+            if int(c.get("cp_ordinal") or 0) == wall_ordinal
+        ]
     narrowed_sealed: list[dict[str, Any]] = []
     for cell in sealed:
         copy = dict(cell)

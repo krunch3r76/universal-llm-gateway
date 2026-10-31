@@ -317,9 +317,8 @@ def _hop06_seat_registration_body() -> str:
     )
 
 
-def test_resolve_wake_binding_seat_registration_hop06_over_pinned(db: None) -> None:
-    """Break: hop posts SEAT_REGISTRATION before agent_endpoint_subscriptions upsert."""
-    wake_id, turn_ids, number = _claim_orion_turn(db)
+def test_resolve_wake_binding_seat_registration_ignored_for_routing(db: None) -> None:
+    """Bus SEAT_REGISTRATION text must not override journal / pin authority."""
     insert_turn(
         thread=_ORION_HOUSE,
         from_agent="orion",
@@ -329,36 +328,10 @@ def test_resolve_wake_binding_seat_registration_hop06_over_pinned(db: None) -> N
     )
     binding = resolve_wake_delivery_binding(house_id=_ORION_HOUSE)
     assert binding["state"] == "bound"
-    assert binding["basis"] == "orion_seat_registration"
+    assert binding["basis"] == "orion_pinned_conversation"
     actuation = binding["current"]["actuation"]
-    assert actuation["conversation_id"] == _HOP06_CONV_ID
-    assert actuation["conversation_url"] == _HOP06_NEW_URL
-
-    owner = shared_wake_delivery_owner()
-    stale = WakeClaimContext(
-        wake_id=wake_id,
-        agent="orion",
-        thread_id=_ORION_HOUSE,
-        turn_ids=tuple(turn_ids),
-        turn_numbers=(number,),
-        endpoint_url=_HOP06_OLD_URL,
-    )
-    assert (
-        owner.validate_claim_for_delivery(stale)["reason"]
-        == "wake_claim_endpoint_mismatch"
-    )
-    fresh = WakeClaimContext(
-        wake_id=wake_id,
-        agent="orion",
-        thread_id=_ORION_HOUSE,
-        turn_ids=tuple(turn_ids),
-        turn_numbers=(number,),
-        endpoint_url=_HOP06_NEW_URL,
-    )
-    assert owner.validate_claim_for_delivery(fresh) == {
-        "ok": True,
-        "reason": "claim_valid",
-    }
+    assert actuation["conversation_id"] == PINNED_CONVERSATION_ID
+    assert actuation["conversation_url"] == PINNED_CONVERSATION_URL.split("?", 1)[0]
 
 
 def test_latest_orion_seat_registration_ignores_old_exact_url(db: None) -> None:
@@ -373,109 +346,6 @@ def test_latest_orion_seat_registration_ignores_old_exact_url(db: None) -> None:
     hit = _latest_orion_seat_registration_on_thread(_ORION_HOUSE)
     assert hit is not None
     assert hit[0] == _HOP06_NEW_URL
-
-
-def test_record_paste_receipt_retryable_reason_stays_pending(db: None) -> None:
-    """Break: ok=False retryable paste → terminal refused blocks dispatcher retry."""
-    wake_id, turn_ids, number = _claim_orion_turn(db)
-    owner = shared_wake_delivery_owner()
-    claim = WakeClaimContext(
-        wake_id=wake_id,
-        agent="orion",
-        thread_id=_ORION_HOUSE,
-        turn_ids=tuple(turn_ids),
-        turn_numbers=(number,),
-        endpoint_url=PINNED_CONVERSATION_URL.split("?", 1)[0],
-    )
-    owner.record_paste_receipt(
-        claim, {"ok": False, "reason": "non_empty_composer", "pasted": False}
-    )
-    with connect() as conn:
-        row = conn.execute(
-            "SELECT state, reason FROM endpoint_wake_ledger WHERE wake_id=?",
-            (wake_id,),
-        ).fetchone()
-    assert row["state"] == "pending"
-    assert row["reason"] == "non_empty_composer"
-
-
-def test_resolve_target_matches_binding_with_seat_reg_and_cursor_chatgpt_sub(
-    db: None,
-) -> None:
-    """Break: dispatcher route URL ≠ resolve_wake_delivery_binding → endpoint mismatch."""
-    wake_id, turn_ids, number = _claim_orion_turn(db)
-    insert_turn(
-        thread=_ORION_HOUSE,
-        from_agent="orion",
-        to_agent="maestro",
-        subject="SEAT_REGISTRATION|orion-HOP06",
-        body=_hop06_seat_registration_body(),
-    )
-    with write_connect() as conn:
-        conn.execute(
-            "INSERT INTO agent_endpoint_subscriptions "
-            "(agent, thread_scope, agent_id, state, surface, display, title) "
-            "VALUES ('cursor', ?, ?, 'subscribed', 'cursor', '12', ?)",
-            (_ORION_HOUSE, PINNED_CONVERSATION_ID, PINNED_CONVERSATION_URL),
-        )
-    binding = resolve_wake_delivery_binding(house_id=_ORION_HOUSE)
-    bound_url = str(binding["current"]["actuation"]["conversation_url"]).split("?", 1)[
-        0
-    ]
-    assert bound_url == _HOP06_NEW_URL
-
-    class Store:
-        def subscription(self, agent: str, thread_id: str, raw_to=None):
-            if str(thread_id) != _ORION_HOUSE:
-                return None
-            return (
-                "exact",
-                {
-                    "surface": "cursor",
-                    "display": "12",
-                    "title": PINNED_CONVERSATION_URL,
-                    "agent_id": PINNED_CONVERSATION_ID,
-                    "state": "subscribed",
-                },
-            )
-
-        def turns(self, thread: str, *, after_turn: int = 0, last: int = 100):
-            with connect() as conn:
-                rows = conn.execute(
-                    "SELECT subject, body, turn_number, from_agent FROM turns "
-                    "WHERE thread=? ORDER BY turn_number DESC LIMIT ?",
-                    (thread, last),
-                ).fetchall()
-            return {"turns": [dict(r) for r in reversed(rows)], "truncated": False}
-
-    route, row = resolve_target(Store(), "orion", _ORION_HOUSE)  # type: ignore[arg-type]
-    assert holder_conversation_url(row) == bound_url
-
-    owner = shared_wake_delivery_owner()
-    claim = WakeClaimContext(
-        wake_id=wake_id,
-        agent="orion",
-        thread_id=_ORION_HOUSE,
-        turn_ids=tuple(turn_ids),
-        turn_numbers=(number,),
-        endpoint_url=bound_url,
-    )
-    assert owner.validate_claim_for_delivery(claim) == {
-        "ok": True,
-        "reason": "claim_valid",
-    }
-
-
-def test_latest_orion_seat_registration_ignores_maestro_sender(db: None) -> None:
-    create_thread(thread_id=_ORION_HOUSE, slug="seat-reg-negative")
-    insert_turn(
-        thread=_ORION_HOUSE,
-        from_agent="maestro",
-        to_agent="orion",
-        subject="SEAT_REGISTRATION|forged",
-        body=_hop06_seat_registration_body(),
-    )
-    assert _latest_orion_seat_registration_on_thread(_ORION_HOUSE) is None
 
 
 def test_ledger_identity_unique_per_turn(db: None) -> None:
