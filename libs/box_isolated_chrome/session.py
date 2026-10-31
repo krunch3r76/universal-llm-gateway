@@ -341,6 +341,8 @@ def start_session(
             "-shared",
             "-forever",
             "-noxdamage",
+            "-skip_lockkeys",
+            "-clear_all",
         ]
         vnc_proc = popen_factory(
             vnc_args,

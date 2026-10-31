@@ -41,7 +41,7 @@ After=io-agent-xvfb-12.service
 Requires=io-agent-xvfb-12.service
 
 [Service]
-ExecStart=/usr/bin/x11vnc -display :12 -localhost -no6 -rfbport 5912 -nopw -shared -forever -noxdamage
+ExecStart=/usr/bin/x11vnc -display :12 -localhost -no6 -rfbport 5912 -nopw -shared -forever -noxdamage -skip_lockkeys -clear_all
 Restart=on-failure
 RestartSec=2
 
