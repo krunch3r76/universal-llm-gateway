@@ -100,6 +100,12 @@ def review_leg_transport_hint(seat: SeatSpec) -> str:
             "After G6 admit, write poll_hint and execution_id into the CHECKPOINT, "
             "and write `NEXT_ADMIT: harvest <execution_id>` before `stop: PARKED_TRANSPORT`."
         )
+    if seat.transport == "api":
+        return (
+            "After G6 admit, read the frontier result in this hop. "
+            "Do not retarget the model to `cdp/` and do not use "
+            "`stop: PARKED_TRANSPORT` for an anthropic/* critic."
+        )
     return (
         "After G6 admit, poll the nested cursor-sdk closeout in-hop; "
         "do not use `stop: PARKED_TRANSPORT` for cursor/* critics."

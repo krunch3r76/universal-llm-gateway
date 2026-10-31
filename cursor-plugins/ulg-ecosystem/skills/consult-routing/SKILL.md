@@ -33,13 +33,15 @@ gap: `life-to-code-request-lane` (`lane:life-to-code`).
 
 ### CDP transport (MCP `project_ask` removed)
 
-Product = `team_dispatch(model=cdp/opus-5.5|cdp/fable-5.1|cdp/sonnet|cdp/sonnet-5.5)` → poll `poll_hint`. `cdp/sonnet` is Sonnet 5.5. `cdp/sonnet-5` remains the older generation.
+This section is the `cdp/` substrate (web-anthropic-cdp). It is not the conductor or review default. Those defaults are `impresario.critic` (`anthropic/claude-sonnet-5-5`) and `workflows.*.model` in `config/routing/route_policy.yaml`. Do not rewrite an `anthropic/` critic to `cdp/`.
+
+`cdp/` wires, only when the caller already chose that substrate: `cdp/opus-5.5`, `cdp/fable-5.1`, `cdp/sonnet`, `cdp/sonnet-5.5` → poll `poll_hint`. `cdp/sonnet` is Sonnet 5.5. `cdp/sonnet-5` remains the older generation.
 
 Reasoning strength, low → high. Walk effort `high` → `extra` → `max` inside a rung before the next wire. Opus 5 reasons harder than Opus 5.5. Fable 5 reasons harder than Fable 5.1. Opus versions share one usage channel. Fable versions share the other. Fable can exhaust while Opus remains. Name the full wire. Bare `cdp/opus` aliases to `cdp/opus-5.5`. Bare `cdp/fable` aliases to `cdp/fable-5.1`.
 
 | Rung | Wire |
 |---|---|
-| 1 default | `cdp/opus-5.5` |
+| 1 (cdp substrate only) | `cdp/opus-5.5` |
 | 2 | `cdp/opus-5` |
 | 3 | `cdp/fable-5.1` |
 | 4 strongest | `cdp/fable-5` |
@@ -65,14 +67,14 @@ guard). Consults about claude.ai / Cowork / the picker itself prime
 | G1 / Mode B | SKETCH | reasoning_effort per SKETCH; effort_when_bind_gates_wave per SKETCH when a bind gates a wave. | fresh `/new`; followup only into a live op-proxy CSE | `ask` |
 | path-sim Q / hop-5 check | ACTIVE | reasoning_effort per ACTIVE | fresh `/new`; followup only into a live op-proxy CSE | `ask` |
 | G2 frame | ACTIVE. Follow up into the live G1 CSE when that CSE ran on SKETCH.model. Fresh `team_dispatch` of ACTIVE only when no live G1 CSE exists. `conductor_profile=fable-scarce` does not name a different width model. | reasoning_effort per ACTIVE; effort_when_bind_gates_wave per ACTIVE when a bind gates a wave. | followup into the live G1 CSE when that CSE ran on SKETCH.model; fresh ACTIVE only when no live G1 CSE exists. | inherit `ask` |
-| BIND (score-play M1) | ACTIVE if architecture-open / ≥2 rivals / invariant-touching; else `cdp/opus-5.5`. | reasoning_effort per ACTIVE on the ACTIVE branch; effort_when_bind_gates_wave per ACTIVE when a bind gates a wave. | fresh; 0 turns when zero forks ∧ G1 edge resolves ∧ mechanical | `ask` |
-| SKEPTIC@BIND (score-play M2) | SKEPTIC, one effort rung above ACTIVE. `ACTIVE = RESTORE` returns the cross-family skeptic. Under `conductor_profile=fable-scarce` the width model stays ACTIVE, and the ≤1 `cdp/fable-5.1` leg allowance is removed. | see picker | 2nd CDP, identity ≠ binder; `panel_dispatch` when M2 known pre-dispatch. | `ask` or `review` |
+| BIND (score-play M1) | ACTIVE if architecture-open / ≥2 rivals / invariant-touching; else width-seat critic `anthropic/claude-sonnet-5-5`. Do not substitute `cdp/`. | reasoning_effort per ACTIVE on the ACTIVE branch; effort_when_bind_gates_wave per ACTIVE when a bind gates a wave. | fresh; 0 turns when zero forks ∧ G1 edge resolves ∧ mechanical | `ask` |
+| SKEPTIC@BIND (score-play M2) | SKEPTIC, one effort rung above ACTIVE. `ACTIVE = RESTORE` returns the cross-family skeptic. Under `conductor_profile=fable-scarce` the width model stays ACTIVE, and the ≤1 `anthropic/claude-fable-5-1` leg allowance is removed. | see picker | second critic on the same provider prefix, identity ≠ binder; `panel_dispatch` when M2 known pre-dispatch. Do not substitute `cdp/`. | `ask` or `review` |
 
-| GATED REVIEW pre-go-live (score-play M3) | `cdp/opus-5.5` | xhigh — pin `reasoning_effort="high"` minimum; xhigh on critical path | pre-LAND gate; fires on M3 predicates only. Transport fail ≡ stop past gate (`conductor` a:32226) | `review` |
-| R-admit / verifier / mission / M-Arch | `cdp/opus-5.5` | high | fresh (R); mission followup | `review` or `mission` |
-| G6 pre-land arc review (score-play M4) | `cdp/opus-5` (lesser-sensitive / non-critical default) or `cdp/opus-5.5` (general default); `cdp/fable-5.1` for expanding detent / sensitive-critical only | **House default:** high — pin `reasoning_effort="high"` (do not inherit conductor admit `effort:max`). **Under `conductor_profile=fable-scarce`:** floor **`extra`/`xhigh`**; **`max` when invariant-touching** (M2/M3 attr meaning) | **default-on at G6 — after G5 implement, before any land or DONE claim** — **review harvest ≺ land ≺ DONE** (`conductor` stronger-model gates · a:32146). CDP consult refused or failed (with an eligible host, tab asks open a tab instead of waiting on pool mint) ≡ escalate at once. Conductor records `cdp_fail_route` on the scoreboard: `nested-grok` (`cursor/grok-4.7` effort xhigh) or `operator` (worker thread and `parent_thread` pointer, both `to=web-anthropic`; the operator answers on the worker thread). Do not wait and do not retry the CDP pool. A consult already admitted and still healthy: poll until harvest. Stage closeout + modules (`files_expected`) + live-tree expansion via `fs(sandbox="workspaces")`; ¬ raw diff dumps or diff-only prompts. Skip only under full-skip (runbook:score-play § Explicit skip). ¬ a silent G4 | `review` |
-| Docs / closeouts / spec polish / office I/O / dashboards | `cdp/sonnet` | **Extra** default; **Max** via `reasoning_effort=max` | pipeline or fresh; office → `harvest_source=output-file` | `produce` |
-| Skill authoring | `cdp/opus-5.5` draft · `cdp/sonnet` revise | high / Extra | fresh, output-file → cortex staging | `produce` |
+| GATED REVIEW pre-go-live (score-play M3) | `anthropic/claude-sonnet-5-5` (`impresario.critic`; do not substitute `cdp/`) | xhigh — pin `reasoning_effort="high"` minimum; xhigh on critical path | pre-LAND gate; fires on M3 predicates only. Transport fail ≡ stop past gate (`conductor` a:32226) | `review` |
+| R-admit / verifier / mission / M-Arch | `anthropic/claude-sonnet-5-5` (`impresario.critic`; do not substitute `cdp/`) | high | fresh (R); mission followup | `review` or `mission` |
+| G6 pre-land arc review (score-play M4) | `anthropic/claude-sonnet-5-5` (`impresario.critic`; do not substitute `cdp/`). Escalate on that prefix only: `anthropic/claude-opus-5-5`, then `anthropic/claude-fable-5-1` | **House default:** high — pin `reasoning_effort="high"` (do not inherit conductor admit `effort:max`). **Under `conductor_profile=fable-scarce`:** floor **`extra`/`xhigh`**; **`max` when invariant-touching** (M2/M3 attr meaning) | **default-on at G6 — after G5 implement, before any land or DONE claim** — **review harvest ≺ land ≺ DONE** (`conductor` stronger-model gates · a:32146). Do not retarget this row onto `cdp/`. A `cdp/` admit (only if that prefix was what was admitted) refused or failed (with an eligible host, tab asks open a tab instead of waiting on pool mint) ≡ escalate at once. Conductor records `cdp_fail_route` on the scoreboard: `nested-grok` (`cursor/grok-4.7` effort xhigh) or `operator` (worker thread and `parent_thread` pointer, both `to=web-anthropic`; the operator answers on the worker thread). Do not wait and do not retry the CDP pool. A consult already admitted and still healthy: poll until harvest. Stage closeout + modules (`files_expected`) + live-tree expansion via `fs(sandbox="workspaces")`; ¬ raw diff dumps or diff-only prompts. Skip only under full-skip (runbook:score-play § Explicit skip). ¬ a silent G4 | `review` |
+| Docs / closeouts / spec polish / office I/O / dashboards | `anthropic/claude-sonnet-5-5` | **Extra** default; **Max** via `reasoning_effort=max` | pipeline or fresh; office → `harvest_source=output-file` | `produce` |
+| Skill authoring | `anthropic/claude-sonnet-5-5` draft · `anthropic/claude-sonnet-5-5` revise | high / Extra | fresh, output-file → cortex staging | `produce` |
 | Haiku | `cdp/haiku-4.5` | — | **no recipe** until Sonnet caps | — |
 
 Standing: verifier ≠ producer; independent check ≠ author; Other Models /
@@ -315,11 +317,11 @@ guidance that table has no room for — the two are read together.
 | Treat every consult as operator-gated | CDP consult is **autonomous** under the dispatch-kernel CDP trigger |
 | Skip CDP and go straight to human on judgment forks | `cursor/grok-4.7` checkout, then `cdp/opus-5.5`; human only on an operator-only gate |
 | CDP consult refused or failed → wait, retry the CDP pool, or Cowork Ask | Conductor chooses `cdp_fail_route` at once: `nested-grok` (`cursor/grok-4.7` effort xhigh) or `operator` (worker thread + `parent_thread` pointer, both `to=web-anthropic`). Record it on the scoreboard (`cdp-operator-proxy` 2b) |
-| Treat a cursor Claude seat as ladder-top | `cdp/opus-5.5` binds; `cursor/grok-4.7` holds the checkout |
+| Treat a cursor Claude seat as ladder-top | `anthropic/claude-sonnet-5-5` binds; `cursor/composer-2.5` holds the checkout |
 | `cdp/opus-5.5` ratifies its own output at the same tier | Escalate that artifact to **Fable** (2b) — weight-class independence |
 | Treat any two Anthropic seats as self-review and skip straight to GPT | Opus→**Fable** is a genuine check; 2b precedes explicit Other Models (2c) |
-| A second-pool cursor model as the next binder | After `cdp/opus-5.5`, the checkout seat is `cursor/grok-4.7` |
-| Pin `cursor/claude-fable-5` or `cursor/claude-fable-5-1` because Fable is wanted, with no operator availability statement | Standing default stays off that pin. Operator-named availability wins (§ Cursor-sdk generate shape). `cdp/fable` only when Kaywan asks. |
+| A second-pool cursor model as the next binder | After `anthropic/claude-sonnet-5-5`, the checkout seat is `cursor/composer-2.5` |
+| Pin `cursor/claude-fable-5` or `cursor/claude-fable-5-1` because Fable is wanted, with no operator availability statement | Standing default stays off that pin. Operator-named availability wins (§ Cursor-sdk generate shape). `anthropic/claude-fable-5-1` only when Kaywan asks. Do not substitute `cdp/fable`. |
 | Rebind a hollow ~5s Fable SDK turn by swapping the effort knob | History a:32403. Operator-named availability still wins (§ Cursor-sdk generate shape). |
 | A bare second-pool slug on a code-lane bind | `seat=cursor-sdk` + `model=cursor/grok-4.7` |
 
@@ -331,18 +333,18 @@ Rationale for the independence axis (weight class vs family, self-review definit
 |---|---|
 | `anthropic/*` on `team_dispatch` | **Admitted** when the credit gate is healthy. Standard: `anthropic/claude-sonnet-5-5`, `anthropic/claude-haiku-5-5`. High-cost: `anthropic/claude-opus-5-5`, `anthropic/claude-fable-5-1` need `cost_intent=deliberate_high_cost` plus a reason. Standing prohibition retired 2026-10-18. |
 | `cursor/*` on `cursor-sdk` | In use: `cursor/grok-4.7`, `cursor/composer-2.5`. `cursor/claude-*` only when operator-named (§ Cursor-sdk generate shape). |
-| Anthropic consult / binder / R-admit | **`team_dispatch(model=cdp/opus-5.5\|cdp/fable-5.1)`** + `cortex://` staging — poll `poll_hint` |
+| Anthropic consult / binder / R-admit | **`team_dispatch(model=anthropic/claude-sonnet-5-5)`** (`impresario.critic`; do not substitute `cdp/`) + `cortex://` staging |
 | IF6 / satellite-direct submit | **CLI** — `scripts/cortex/claude-ai-sync-jupiter project-ask`. Operator-proxy: `team_dispatch(model=cdp/…, purpose=operator-proxy, contract=freeform)`. Warm paste: `cse_session(op=followup)` |
 | Live checkout | `cursor/grok-4.7` |
 
 
-Rule: `anthropic-dispatch-authorization_ulg.mdc`. Standing Fable consult is CDP (`cdp/fable-5.1` / picker). Operator-named `cursor/claude-fable-5{,-1}` follows § Cursor-sdk generate shape.
+Rule: `anthropic-dispatch-authorization_ulg.mdc`. Standing critic is `impresario.critic` (`anthropic/claude-sonnet-5-5`). `cdp/` is a different substrate, not this default. Operator-named `cursor/claude-fable-5{,-1}` follows § Cursor-sdk generate shape.
 
 ## xAI coding-substrate
 
 | Path | Default |
 |---|---|
-| Path-sim **A** (L1+L2) / closed-detent light consult | `cursor/grok-4.7` investigate → **`cdp/opus-5.5` bind** (`cdp/fable` only when Kaywan asks) |
+| Path-sim **A** (L1+L2) / closed-detent light consult | `cursor/composer-2.5` investigate (`workflows.investigate`) → **`anthropic/claude-sonnet-5-5` bind** (`impresario.critic`; `anthropic/claude-fable-5-1` only when Kaywan asks; do not substitute `cdp/`) |
 | Path-sim bundled **Q** (L0) | ACTIVE — `team_dispatch(model=<ACTIVE.model>, reasoning_effort=<ACTIVE.reasoning_effort>)` |
 | Recon+investigate judgment residual | **`seat=cursor-sdk` + `contract=investigate`** (facts + `OPEN FORK:` — never binds) |
 | API `xai/grok-4.7` on coding work | **PROHIBITED** |

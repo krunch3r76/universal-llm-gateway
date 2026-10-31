@@ -119,9 +119,13 @@ def _missing_witness_message(
             )
         return "nest implement commits or hang L1==HEAD (away G5; a:37198)"
     if row_id == "G6":
+        from implement_admission.impresario_policy import load_impresario_policy
+
+        model = load_impresario_policy().critic.model
         return (
             "hang R1 pre-land review URI (team_dispatch op=generate, "
-            "contract=delivery-review, model=cdp/opus-5 or cdp/opus-5.5, …; "
+            f"contract=delivery-review, model={model} (impresario.critic; "
+            "do not substitute cdp/), …; "
             "put job=delivery-review on a prompt line, not as a dispatch argument)"
         )
     if row_id == "G7":

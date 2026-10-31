@@ -49,6 +49,14 @@ def test_build_wake_pointer_batch_wording() -> None:
     line = build_wake_pointer(thread=_ORION_HOUSE, turn="69–73", from_agent="maestro")
     assert f"thread {_ORION_HOUSE} turns 69–73" in line
     assert "read turns 69–73 only" in line
+    assert "to=maestro" in line
+
+
+def test_build_wake_pointer_reply_to_waking_sender_not_hardcoded_maestro() -> None:
+    line = build_wake_pointer(thread=_ORION_HOUSE, turn=321, from_agent="cursor")
+    assert "from cursor" in line
+    assert "to=cursor" in line
+    assert "to=maestro" not in line
 
 
 def test_classify_orion_pipeline_error_and_bad_turn() -> None:

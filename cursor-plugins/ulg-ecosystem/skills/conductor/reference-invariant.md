@@ -57,7 +57,7 @@ matches the mission lane (`summoning_thread_id`, else worker `thread_id`).
 
 **Fire-time 409.** Stargate refuses a second external gate on the same lane
 while one is still streaming: `cdp_external_gate_live` (409). Harvest the
-in-flight gate before firing another `cdp/opus-5.5` review / operator-proxy gate
+in-flight gate before firing another `anthropic/claude-sonnet-5-5` review / operator-proxy gate
 on that lane.
 
 **Conductor posture.** After `ROW_HOP` with a CDP gate still in flight on the

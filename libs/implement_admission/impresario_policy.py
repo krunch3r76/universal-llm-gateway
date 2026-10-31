@@ -16,7 +16,7 @@ from universal_protocol.errors import ProtocolError
 
 from implement_admission.routing import default_policy_path, load_route_policy
 
-Transport = Literal["cdp_parked", "cursor_nested", "grok_bot_window"]
+Transport = Literal["cdp_parked", "api", "cursor_nested", "grok_bot_window"]
 
 ALLOWED_UNDER_SUBSTRATES = frozenset({"cursor-sdk", "grok-bot", "hybrid"})
 ALLOWED_SURFACES = frozenset({"cursor-ide", "grokbot", "maestro"})
@@ -112,8 +112,10 @@ class ResolvedRoles:
 
 
 def _derive_transport(model: str) -> Transport:
-    if model.startswith(("cdp/", "anthropic/")):
+    if model.startswith("cdp/"):
         return "cdp_parked"
+    if model.startswith("anthropic/"):
+        return "api"
     if model.startswith("cursor/"):
         return "cursor_nested"
     msg = f"impresario model {model!r} has no derived transport"

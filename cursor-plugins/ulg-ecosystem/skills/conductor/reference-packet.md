@@ -43,7 +43,7 @@ Required in `<scope>` / `<invariants>`:
 - **G-row contract honesty** — do not mark a G-row conductor-direct / `owner: cursor-sdk` when `files_expected` includes production code+tests. Conductor binds; Composer implements.
 - **Class reservation (A1 §13′ #2)** — under `work_key=todo:{slug}`, only a seated conductor (`job=conductor`, cursor-sdk) may author G-rows and mutate the scoreboard. An Impresario admits that conductor for a played todo (§ Play in `ide-continuity`) and does not author G-rows, Sketch, or `job=implement`. The conductor nests Composer implement after its own Compose.
 - **Scoreboard G6/G7 (binding)** — **`review harvest ≺ land ≺ DONE`**. After G5
-  implement, **G6** = `team_dispatch(op=generate, model=cdp/opus-5.5, contract=delivery-review, reasoning_effort="high", …)` with prompt line `job=delivery-review`
+  implement, **G6** = `team_dispatch(op=generate, model=anthropic/claude-sonnet-5-5, contract=delivery-review, reasoning_effort="high", …)` with prompt line `job=delivery-review` (`impresario.critic`; do not substitute `cdp/`)
   (**`extra`/`xhigh` floor, `max` if invariant-touching, under
   `conductor_profile=fable-scarce`**) on the **lane branch diff** (sidecar **R1**).
   **G7** = merge/land (sidecar **L1**).
@@ -108,7 +108,7 @@ tip and continuity sidecar. Values: **`plan`** · **`agent`** · **`—`** (CDP 
 |---|---|---|---|
 | G3 recon / bind (pre-ready) | `plan` | `none` \| `recon` \| `seed` \| `consult` | `plan:closeout_verdict=PLAN_COMPLETE` or `PARTIAL` + artifact URIs — **no** land |
 | G5 implement | `agent` | `implement` \| `pure-mechanical` | **Attended:** `SCORE_RESURFACE` (slug in subject; body cites CDP exec + review sha when the tip recorded them) **∧** implement (`ledger:nested_implement` ∨ `git:lane_head`). ¬ tip `DONE` · ¬ steer-inject · ¬ harvest alone · ¬ nested_implement without resurface. **Away:** implement only. Path-explicit commit / `land_disposition` are G7 |
-| G1 · G2 · G4 · G6 | `—` | CDP transport | harvest URI (G6 = one `team_dispatch(op=generate, model=cdp/opus-5.5, contract=delivery-review, dispatch_thread_id=<worker>, parent_thread=<this worker thread id>, prompt=<body>)`; prompt body includes a line `job=delivery-review` plus `retrieval_report:` lines; stamp `poll_hint`, `NEXT_ADMIT: harvest <execution_id>`; if live, `stop: PARKED_TRANSPORT` — ¬ block MCP wait; distinct from the attended G5 closer) |
+| G1 · G2 · G4 · G6 | `—` | width-seat critic | harvest URI (G6 = one `team_dispatch(op=generate, model=anthropic/claude-sonnet-5-5, contract=delivery-review, dispatch_thread_id=<worker>, parent_thread=<this worker thread id>, prompt=<body>)`; `impresario.critic`; do not substitute `cdp/`. Prompt body includes a line `job=delivery-review` plus `retrieval_report:` lines. `stop: PARKED_TRANSPORT` applies only when the admitted model prefix is `cdp/`. Distinct from the attended G5 closer) |
 | Conductor (top-level) | `agent` | `conductor` | scoreboard drive |
 
 **Scoreboard tip template (worked example — sparse birth):**
@@ -259,8 +259,9 @@ Plan closeout **forbids** `landed` / path-explicit commit claims
 
   Score journal appends require real UTC timestamps (`datetime.now(UTC)` on
   write — authority: `implement_admission.conductor_score_io`).
-- G3→G5 default: in-process CDP score-ratify (do-not-fight / likely-optimal) via
-  `team_dispatch(op=generate, model=cdp/opus-5.5, contract=freeform, purpose=ask, dispatch_thread_id=<this worker thread id>)`.
+- G3→G5 default: in-process width-seat critic score-ratify (do-not-fight / likely-optimal) via
+  `team_dispatch(op=generate, model=anthropic/claude-sonnet-5-5, contract=freeform, dispatch_thread_id=<this worker thread id>)`.
+  Do not substitute `cdp/`.
   Explicit see-score → `ROW_PINNED` + ping.
 - **Stronger-model gates (a:32146 · a:32226):** Conductor **MUST break** (halt /
   refuse nest of the next gated G-row · refuse land · refuse terminal `DONE`)
@@ -268,9 +269,9 @@ Plan closeout **forbids** `landed` / path-explicit commit claims
   **G4 Skeptic** (pre-implement, on the G3 **spec**) = ACTIVE (reasoning_effort
   and effort_when_bind_gates_wave per ACTIVE when a bind gates a wave).
   **Under `conductor_profile=fable-scarce`:**
-  G4 still reads ACTIVE, and the ≤1 `cdp/fable-5.1` leg-per-arc allowance is
+  G4 still reads ACTIVE, and the ≤1 `anthropic/claude-fable-5-1` leg-per-arc allowance is
   removed. **After-ship code review**
-  (post-implement, on the **lane branch**, before land) = `cdp/opus-5.5`
+  (post-implement, on the **lane branch**, before land) = `anthropic/claude-sonnet-5-5` (`impresario.critic`; do not substitute `cdp/`)
   (xhigh/Extra). Skeptic ≠ code review. Composer cannot self-certify either.
   Same-family effort bumps are **not** the gate.
   **Transport failure ≡ missing harvest (BINDING):** `cdp-ask` down · Chrome

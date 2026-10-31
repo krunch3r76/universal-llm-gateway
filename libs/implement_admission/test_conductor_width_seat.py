@@ -169,3 +169,35 @@ def test_width_seat_named_files_carry_block() -> None:
         "ACTIVE named outside block without _NON_WIDTH_ACTIVE entry:\n"
         + "\n".join(missing)
     )
+
+
+_HARNESS_CRITIC_FILES = (
+    "cursor-plugins/ulg-ecosystem/rules/dispatch-kernel_ulg.mdc",
+    "cursor-plugins/ulg-ecosystem/skills/lean-dispatch/SKILL.md",
+    "cursor-plugins/ulg-ecosystem/skills/consult-routing/SKILL.md",
+    "cursor-plugins/ulg-ecosystem/skills/conductor/SKILL.md",
+    "cursor-plugins/ulg-ecosystem/skills/conductor/reference-run-to-completion.md",
+    "cursor-plugins/ulg-ecosystem/skills/conductor/reference-model-tier.md",
+    "cursor-plugins/ulg-ecosystem/skills/conductor/reference-packet.md",
+    "cursor-plugins/ulg-ecosystem/commands/conductor.md",
+)
+
+
+@pytest.mark.offline
+def test_harness_critic_matches_route_policy() -> None:
+    """Copy-paste dispatch recipes follow impresario.critic, not cdp/."""
+    critic = resolve_roles().critic.model
+    assert critic.startswith("anthropic/"), critic
+    missing: list[str] = []
+    contradicted: list[str] = []
+    for rel in _HARNESS_CRITIC_FILES:
+        text = (_REPO_ROOT / rel).read_text(encoding="utf-8")
+        if critic not in text:
+            missing.append(rel)
+        if "model=cdp/opus" in text or "model=cdp/fable" in text:
+            contradicted.append(rel)
+    assert missing == [], "harness omits impresario.critic:\n" + "\n".join(missing)
+    assert contradicted == [], (
+        "harness still teaches model=cdp/ as a dispatch recipe:\n"
+        + "\n".join(contradicted)
+    )

@@ -36,7 +36,7 @@ Prose before `## effects_manifest` is the executive envelope (≤60 lines); the 
 
 ## Cursor IDE tabs — `team_dispatch`, not native `Task`
 
-In a Cursor IDE tab use `team_dispatch` (`seat="cursor-sdk"`, `lane="B"`, or a `cdp/*` / `cursor/*` wire per § Duty → wire), ¬ native Cursor `Task` subagents (`explore`, `generalPurpose`, …): `Task` is noisy, costly in tab context, and lacks GIW worktree isolation, harness injection, and closeout sidecars; `team_dispatch` expands the pool. Reserve native `Task` for operator-named `bugbot` / `security-review` / `cursor-guide` / `browser-use`, or when `stargate` / `giw` are down.
+In a Cursor IDE tab use `team_dispatch` (`seat="cursor-sdk"`, `lane="B"`, or an `anthropic/*` / `cursor/*` wire per § Duty → wire), ¬ native Cursor `Task` subagents (`explore`, `generalPurpose`, …): `Task` is noisy, costly in tab context, and lacks GIW worktree isolation, harness injection, and closeout sidecars; `team_dispatch` expands the pool. Reserve native `Task` for operator-named `bugbot` / `security-review` / `cursor-guide` / `browser-use`, or when `stargate` / `giw` are down.
 
 ## Grok Bot seats
 
@@ -51,9 +51,9 @@ Labels are routing shorthand. Address a child with its **packet**, never its lab
 | ripieno | `cursor/composer-2.5` | sweeps, renames, test scaffolds, repetitive edits — mechanical, spec in hand |
 | continuo | `cursor/grok-4.7` low **or** `cursor/composer-2.5` | bug-class sweep across a service; applying a reviewed diff pattern |
 | concertino | `cursor/grok-4.7` high+ | two plausible root causes; a fix shape to choose |
-| critic | `cdp/opus-5.5` high | independent review (default reviewer; Fix-loop step 4) |
+| critic | `anthropic/claude-sonnet-5-5` high | independent review (default reviewer; `impresario.critic`; do not substitute `cdp/`; Fix-loop step 4) |
 | advisor | `cursor/gemini-4-argon` high | `todo:{slug}` seeding (`decision:argon-advisor-todo-seeding`), intent-to-plan, open fork, stuck leg; packet carries `Use the lean-dispatch skill` |
-| dramaturg | `cdp/fable-5.1` | architecture-open / stack-killing **consult only**; never an implement leg |
+| dramaturg | `anthropic/claude-fable-5-1` | architecture-open / stack-killing **consult only**; never an implement leg; do not substitute `cdp/fable` |
 
 Lowest sufficient tier first. ¬ paste this table into system prompts or Grok Bot profile descriptions.
 

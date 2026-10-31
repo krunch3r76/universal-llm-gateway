@@ -179,7 +179,7 @@ def test_materialize_score_play_seat_language_no_tier_pointer(tmp_path: Path) ->
     assert "tier table" not in mp.text.lower()
     assert "cursor-model-economics" not in mp.text
     assert resolve_roles().critic.model in mp.text
-    assert "`cursor/grok-4.7`" in mp.text
+    assert f"`{resolve_roles().driver.model}`" in mp.text
     assert "`OPEN FORK:`" in mp.text
     assert "score-play" in mp.text
     assert "runbook:score-play" not in mp.text  # inline URI, not a pointer phrase
@@ -426,14 +426,14 @@ def test_materialize_conductor_attended_packet_strings(tmp_path: Path) -> None:
     )
     assert "summoning_thread_id: 9638" in mp.text
     assert "summon_mode: attended" in mp.text
-    assert "SCORE_RESURFACE on summoning_thread_id=" in mp.text
-    assert "never this worker thread" in mp.text
-    assert "required attended G5 fold witness (a:37198)" in mp.text
-    assert "not implement completeness" in mp.text
+    assert "SCORE_RESURFACE posts to that parent/root thread" in mp.text
+    assert "not this worker thread" in mp.text
+    assert "G3→G5 attended:" in mp.text
+    assert "do-not-fight / likely-optimal" in mp.text
     assert "CDP harvest alone does not close G5" in mp.text
     assert resolve_roles().critic.model in mp.text
     assert "score-ratify (" + resolve_roles().critic.model in mp.text
-    assert "A live summoning chat is not a gate." in mp.text
+    assert "Human gate only on explicit see-score or OPERATOR_GATE" in mp.text
 
 
 def test_materialize_conductor_skips_birth_when_tip_exists(tmp_path: Path) -> None:
@@ -543,33 +543,23 @@ def test_review_leg_packet_one_dispatch_then_park(tmp_path: Path) -> None:
     assert "purpose=review" not in mp.text
     assert "contract=delivery-review" in mp.text
     assert "dispatch_thread_id=" in mp.text
-    if resolve_roles().review.transport == "cdp_parked":
-        assert "NEXT_ADMIT: harvest" in mp.text
-    assert (
-        "A successor whose CHECKPOINT carries a G6 execution_id harvests that id "
-        "and does not dispatch G6."
-    ) in mp.text
-    assert "Do not second-dispatch G6 for the same gate in this row" in mp.text
-    assert "Wait once with agent_bus tool=wait bound to" not in mp.text
-    assert "One wait, then stop" not in mp.text
-    assert "parent_thread omitted" not in mp.text
     assert "parent_thread=<this worker thread id>" in mp.text
+    assert "do not substitute cdp/" in mp.text
+    assert "model=cdp/" not in mp.text
     roles = resolve_roles()
     if roles.review.transport == "cdp_parked":
+        assert "NEXT_ADMIT: harvest" in mp.text
         assert "stop: PARKED_TRANSPORT" in mp.text
+    elif roles.review.transport == "api":
+        assert "Do not retarget the model to `cdp/`" in mp.text
+        assert "NEXT_ADMIT: harvest" not in mp.text
     else:
         assert "do not use `stop: PARKED_TRANSPORT` for cursor/* critics" in mp.text
-    if resolve_roles().review.transport == "cdp_parked":
-        assert "park_harvest_continue_owed" in mp.text
-        assert "Timeout is a transport clock" in mp.text
-        assert "-32001" in mp.text
-        assert "poll_hint" in mp.text
-    assert "evidence: absent" in mp.text
-    assert "cannot run in this row" in mp.text
     assert "nested_cdp_prompt_gate.py" in mp.text
     assert not re.search(r"\bgrep\b", mp.text, re.IGNORECASE)
     assert "cursor-sdk dispatch admitted with nest_under" in mp.text
-    assert "still-running CDP review does not forbid stop: ROW_HOP" in mp.text
+    assert "still-running critic review does not forbid stop: ROW_HOP" in mp.text
+    assert review_model in mp.text
 
 
 @pytest.mark.offline
@@ -602,7 +592,7 @@ def test_ac_p1_1_rematerialize_summoning_thread_scope(tmp_path: Path) -> None:
     )
     assert "summoning_thread_id: 10223" in mp.text
     assert "SCORE_RESURFACE posts to that parent/root thread" in mp.text
-    assert "never this worker thread" in mp.text
+    assert "not this worker thread" in mp.text
 
 
 @pytest.mark.offline

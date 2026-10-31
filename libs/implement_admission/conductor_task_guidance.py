@@ -114,11 +114,16 @@ def _render_task_guidance_inner(
     hop_seq: int,
     tip_body: str | None,
 ) -> str:
-    from implement_admission.conductor_critic_render import g3_g5_score_ratify_clause
+    from implement_admission.conductor_critic_render import (
+        g3_g5_score_ratify_clause,
+        review_leg_transport_hint,
+    )
     from implement_admission.conductor_materialize import (
         attended_g3_g5_task_sentence,
         hop_invariant_g3_g5_fragment,
     )
+
+    review_hint = review_leg_transport_hint(resolve_roles().review)
 
     if summon_mode == "attended":
         g3_g5_lines = [
@@ -131,7 +136,8 @@ def _render_task_guidance_inner(
     else:
         g3_g5_lines = [
             "G3→G5 default: in-process score-ratify "
-            f"({g3_g5_score_ratify_clause()}) via "
+            f"({g3_g5_score_ratify_clause()}) "
+            "(do-not-fight / likely-optimal) via "
             f"team_dispatch(op=generate, model={seats.critic_model}, contract=freeform, "
             "session=ask, dispatch_thread_id=<this worker thread id>).",
             "Explicit see-score: ROW_PINNED at G3 + ping.",
@@ -141,7 +147,12 @@ def _render_task_guidance_inner(
         f"Resume at persisted row (entry gate {entry_gate}).",
         *g3_g5_lines,
         (
-            f"G6 review: team_dispatch model={seats.review_model}; "
+            "G6 review: "
+            f"team_dispatch(op=generate, model={seats.review_model}, contract=delivery-review, "
+            "dispatch_thread_id=<this worker thread id>, "
+            "parent_thread=<this worker thread id>). "
+            "impresario.critic; do not substitute cdp/. "
+            f"{review_hint} "
             f"{hop_invariant_g3_g5_fragment()}."
         ),
         f"stop_after={stop_after!r}: run bound leg before ROW_PINNED when set.",

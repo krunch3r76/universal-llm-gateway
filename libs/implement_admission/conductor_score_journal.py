@@ -43,13 +43,19 @@ _G_LABELS: dict[str, str] = {
     "G6": "Pre-land review",
     "G7": "Ship / land",
 }
-_G6_PRE_LAND_REVIEW = (
-    "G6 pre-land review witness — team_dispatch op=generate "
-    "contract=delivery-review model in "
-    "{cdp/opus-5, cdp/opus-5.5, cdp/fable} on the lane branch diff before merge; "
-    "harvest ≺ land (a:32226 · a:32146). job=delivery-review is the prompt genre "
-    "line inside the body, not a separate call argument."
-)
+def g6_pre_land_review_text() -> str:
+    """G6 witness text. Model id is impresario.critic, not a cdp/ literal."""
+    from implement_admission.impresario_policy import load_impresario_policy
+
+    model = load_impresario_policy().critic.model
+    return (
+        "G6 pre-land review witness — team_dispatch op=generate "
+        "contract=delivery-review model="
+        f"{model} (impresario.critic; do not substitute cdp/) "
+        "on the lane branch diff before merge; "
+        "harvest ≺ land (a:32226 · a:32146). job=delivery-review is the prompt genre "
+        "line inside the body, not a separate call argument."
+    )
 _WITNESS_KIND_BIND = "BIND"
 _WITNESS_KIND_LAND = "LAND"
 
@@ -122,7 +128,7 @@ def _witness_sidecar_lines(
             "| S4b | (pending) | G3 spec witness slot |",
             "| S9 | (pending) | G3 spec witness slot |",
             "| G4 | (pending) | G4 skeptic verdict slot |",
-            f"| R1 | (pending) | {_G6_PRE_LAND_REVIEW} |",
+            f"| R1 | (pending) | {g6_pre_land_review_text()} |",
             "| L1 | (pending) | G7 land sha slot |",
         ]
     lines: list[str] = []

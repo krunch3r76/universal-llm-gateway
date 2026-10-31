@@ -39,7 +39,8 @@ def score_play_seat_lines(roles: ResolvedRoles | None = None) -> tuple[str, ...]
         f"G6 delivery-review reads `{resolved.review.model}`.",
         "- The house driver enumerates and does not rank rival designs — write "
         "`OPEN FORK:` and stop.",
-        "- BIND is one CDP turn; a second CDP turn on one row means ENUMERATE "
+        "- BIND is one width-seat critic turn (impresario.critic; not a cdp/ "
+        "substitute); a second critic turn on one row means ENUMERATE "
         "was underspecified.",
     )
 
@@ -144,7 +145,8 @@ def _render_invariants(ctx: ConductorMaterializeContext) -> str:
         f"- {NO_RESTART_LINE}",
         f"- {G7_RESTART_OWED_RULE}",
         (
-            "- Before authoring the FIRST nested CDP width prompt (G1/G2/G4/G6) when no "
+            "- Before authoring the FIRST nested width prompt (G1/G2/G4/G6; model is "
+            "the width-seat critic, not a cdp/ substitute) when no "
             "mission retrieval report exists yet, Use the retrieval-before-authoring "
             "skill once (`target: todo:<slug>` in the report sidecar) and reuse that "
             "`retrieval_report: cortex://…` URI across later G4/G6 gates without "
@@ -169,9 +171,10 @@ def _render_invariants(ctx: ConductorMaterializeContext) -> str:
             "is a cursor-sdk dispatch admitted with nest_under equal to this "
             "conductor dispatch_id (status queued, admitted, running, or "
             "parked_waiting), including its nested descendants — harvest that "
-            "child before the hop. A team_dispatch(model=cdp/…) review is not "
+            "child before the hop. A team_dispatch review on the width-seat "
+            f"critic (`{resolve_roles().review.model}`) is not "
             "that child: nest_under is refused unless seat=cursor-sdk, so a "
-            "still-running CDP review does not forbid stop: ROW_HOP; the "
+            "still-running critic review does not forbid stop: ROW_HOP; the "
             "substrate defers the successor while that review streams on the "
             "mission lane (P1.2, live_external_gate); that is not a stall."
         ),
@@ -225,7 +228,7 @@ def _render_mcp_capabilities(ctx: ConductorMaterializeContext) -> str:
             "Use the `architecture-invariants` skill",
             "Use the `ulg-architecture` skill",
             "Use the `retrieval-before-authoring` skill (before authoring a nested prompt)",
-            "Nested CDP width prompts: cite `retrieval_report: cortex://…` (Queries/Yields/Choice-to-evidence); contract path libs/claude_bundles/nested_cdp_prompt_gate.py (the row does not search the repo for it); ¬ delivery chrome on G4/SKEPTIC (a:37183)",
+            "Nested width prompts use the width-seat critic (impresario.critic; do not substitute cdp/): cite `retrieval_report: cortex://…` (Queries/Yields/Choice-to-evidence); contract path libs/claude_bundles/nested_cdp_prompt_gate.py (the row does not search the repo for it); ¬ delivery chrome on G4/SKEPTIC (a:37183)",
             f'Scoreboard tip: fs(op="read", path="{scoreboard_tip_uri(ctx.slug)}")',
             f'Journal: fs(op="read", path="cortex://notes/system/scoreboards/{ctx.slug}-score-journal.md")',
         ]

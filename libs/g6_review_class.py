@@ -12,12 +12,9 @@ from __future__ import annotations
 from typing import Any
 
 REVIEW_CONTRACT = "delivery-review"
+# CDP-worker retry only. Not the conductor default — that is impresario.critic.
 FALLBACK_MODEL = "cdp/fable"
-PRIMARY_REVIEW_MODELS = frozenset({"cdp/opus-5", "cdp/opus-5.5"})
 _PRIMARY_REVIEW_FAMILIES = frozenset({"opus-5", "opus-5.5"})
-# ``cdp/fable`` is an allowed entry model when the seat already knows Opus
-# returned without proof. Automatic retry does not chain: fable is not primary.
-REVIEW_MODELS = PRIMARY_REVIEW_MODELS | {FALLBACK_MODEL}
 STALL_COMPLETED_WITHOUT_PROOF = "completed_without_proof"
 # After the inflight clock is reset, keep the fable leg inside the 3600s horizon.
 FALLBACK_WALL_CAP_S = 1200.0
@@ -35,14 +32,39 @@ ALLOWED_ARGUMENT_KEYS = frozenset(
     }
 )
 
-_REFUSAL_MESSAGE = (
-    "team_dispatch on a filtered cursor-sdk seat is review-class only "
-    "(op=generate, contract=delivery-review, "
-    "model in {cdp/opus-5, cdp/opus-5.5, cdp/fable}, prompt set, "
-    "dispatch_thread_id = this seat's thread, parent_thread omitted or equal; "
-    "omit purpose and role — put job=delivery-review on a prompt line). "
-    "seat, role, nest_under, lane, packet_path, and source_ref are refused."
-)
+def policy_review_models() -> frozenset[str]:
+    """Delivery-review models for a filtered seat.
+
+    Authority is ``impresario.critic`` plus same-prefix ``allowed_critics``
+    in ``config/routing/route_policy.yaml``. A ``cdp/`` id is admitted only
+    when that prefix is the configured critic.
+    """
+    from implement_admission.impresario_policy import load_impresario_policy
+
+    policy = load_impresario_policy()
+    critic = policy.critic.model
+    prefix, sep, _rest = critic.partition("/")
+    prefix = f"{prefix}/" if sep else critic
+    models = {model for model in policy.allowed_critics if model.startswith(prefix)}
+    models.add(critic)
+    return frozenset(models)
+
+
+def refusal_message() -> str:
+    """Name the configured critic. Do not teach a ``cdp/`` substitute."""
+    from implement_admission.impresario_policy import load_impresario_policy
+
+    critic = load_impresario_policy().critic.model
+    admitted = ", ".join(sorted(policy_review_models()))
+    return (
+        "team_dispatch on a filtered cursor-sdk seat is review-class only "
+        "(op=generate, contract=delivery-review, "
+        f"model default {critic} (impresario.critic; do not substitute cdp/), "
+        f"also admitted {{{admitted}}}, prompt set, "
+        "dispatch_thread_id = this seat's thread, parent_thread omitted or equal; "
+        "omit purpose and role — put job=delivery-review on a prompt line). "
+        "seat, role, nest_under, lane, packet_path, and source_ref are refused."
+    )
 
 
 def _present(value: Any) -> bool:
@@ -92,7 +114,7 @@ def is_review_class_call(
         return False
     if _present(args.get("purpose")):
         return False
-    if args.get("model") not in REVIEW_MODELS:
+    if args.get("model") not in policy_review_models():
         return False
     if args.get("contract") != REVIEW_CONTRACT:
         return False
@@ -151,15 +173,15 @@ def refuse_filtered_team_dispatch(
         return None
     arguments = params.get("arguments")
     if isinstance(arguments, str):
-        return _refusal(message, _REFUSAL_MESSAGE)
+        return _refusal(message, refusal_message())
     if arguments is not None and not isinstance(arguments, dict):
-        return _refusal(message, _REFUSAL_MESSAGE)
+        return _refusal(message, refusal_message())
     if is_review_class_call(
         arguments if isinstance(arguments, dict) else {},
         seat_thread=seat_thread,
     ):
         return None
-    return _refusal(message, _REFUSAL_MESSAGE)
+    return _refusal(message, refusal_message())
 
 
 def refuse_filtered_tools_call(

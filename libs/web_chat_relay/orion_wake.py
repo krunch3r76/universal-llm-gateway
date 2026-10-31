@@ -233,16 +233,29 @@ def format_turn_pointer_label(turn_numbers: list[int]) -> str:
     return ", ".join(str(n) for n in nums)
 
 
-def build_wake_pointer(*, thread: str, turn: int | str, from_agent: str) -> str:
+def build_wake_pointer(
+    *,
+    thread: str,
+    turn: int | str,
+    from_agent: str,
+    reply_to: str | None = None,
+) -> str:
     """Format the short Orion pointer line pasted into the chatgpt.com composer."""
+    from agent_seat.registry import normalize_bus_address
+
     sender = (from_agent or "unknown").strip()
     turn_s = str(turn)
     multi = "–" in turn_s or "," in turn_s
     turn_word = "turns" if multi else "turn"
+    if reply_to is not None and str(reply_to).strip():
+        reply_target = normalize_bus_address(str(reply_to).strip())
+    else:
+        first_sender = sender.split(",")[0].strip() or "unknown"
+        reply_target = normalize_bus_address(first_sender)
     return (
         f"WAKE — agent-bus thread {thread} {turn_word} {turn_s} (from {sender}). "
         f"Use your ulg-code connector: agent_bus_read fetch thread {thread}, "
-        f"read {turn_word} {turn_s} only. Reply on thread {thread} to=maestro with "
+        f"read {turn_word} {turn_s} only. Reply on thread {thread} to={reply_target} with "
         f"subject ANSWER|… per that turn. Do not paste letter drafts."
     )
 
