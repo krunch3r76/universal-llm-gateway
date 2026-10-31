@@ -1469,12 +1469,6 @@ def _merge_conductor_closeout_hop_authority(
         guard_row = row
         guard = _next_admit_guard_text(guard_row, data)
         pinned_token = _harvest_target_token(guard)
-        if pinned_token is None:
-            from services.git_integration_worker.cursor_sdk_closeout.conductor_exit_reasons import (
-                prose_harvest_execution_id,
-            )
-
-            pinned_token = prose_harvest_execution_id(closeout_body)
         if pinned_token is not None and not _named_target_is_terminal(pinned_token):
             data["closeout_harvest_owed"] = True
     next_admit = next_admit_in_closeout(closeout_body)
