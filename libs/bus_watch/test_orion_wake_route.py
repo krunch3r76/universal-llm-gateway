@@ -26,7 +26,7 @@ _HOP06_NEW_URL = (
 _HOP06_CONV_ID = "6ae4cfde-151c-83e8-8966-fdd8893f472d"
 
 
-def test_orion_synthetic_route_house_only() -> None:
+def test_orion_synthetic_route_house_only(bus_db: None) -> None:
     bound = _orion_synthetic_route("orion", "21207")
     assert bound is not None
     assert bound[1]["surface"] == "chatgpt"
