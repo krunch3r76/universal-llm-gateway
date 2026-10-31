@@ -6,7 +6,8 @@ exact op whitelist, delegation to ``fs_impl`` after permission checks.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, Callable
+from collections.abc import Callable
+from typing import TYPE_CHECKING, Any
 
 from endpoint_surface import Surface
 from fs_impl import fs_impl

@@ -14,15 +14,48 @@ from fastmcp import FastMCP
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from cortex_store.dispatch_ops import _OPS as DISPATCH_OPS  # noqa: E402
+
 from tools._cortex_read import (  # noqa: E402
-    CORTEX_READ_OPS_CODE,
-    CORTEX_READ_OPS_LIFE,
     cortex_read_admitted_ops,
     register_cortex_read_tool,
 )
 
-GOLDEN_LIFE = CORTEX_READ_OPS_LIFE
-GOLDEN_CODE = CORTEX_READ_OPS_CODE
+# Literal pins (G6 AC5): must match tools._cortex_read admission; do not import impl constants.
+GOLDEN_LIFE: frozenset[str] = frozenset(
+    {
+        "activate",
+        "analyze_impact",
+        "assertion_get",
+        "assertion_state",
+        "assertions",
+        "case_audit",
+        "deadlines",
+        "edge_traverse",
+        "edge_types",
+        "edges",
+        "entities",
+        "entities_by_content_hash",
+        "entity_get",
+        "fill_gaps",
+        "frictions",
+        "impact",
+        "journal_read",
+        "relationships",
+        "render_subgraph",
+        "resolve",
+        "resolve_assertion_chunk",
+        "review_queue",
+        "rj_list",
+        "rj_read",
+        "search",
+        "stats",
+        "surface_forms",
+        "tag_list",
+        "todo_candidates",
+        "walk_subgraph",
+    }
+)
+GOLDEN_CODE: frozenset[str] = frozenset(GOLDEN_LIFE)
 
 
 @pytest.fixture

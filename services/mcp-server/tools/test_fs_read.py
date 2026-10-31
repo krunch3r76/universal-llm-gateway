@@ -5,7 +5,6 @@ from __future__ import annotations
 import asyncio
 import sys
 from pathlib import Path
-from unittest.mock import patch
 
 import pytest
 from fastmcp import FastMCP
@@ -87,6 +86,30 @@ def test_fs_read_life_workspaces_respects_read_grant(
         content="abc",
     )
     assert out.get("reason") == "not_a_read_op"
+
+    monkeypatch.setattr("tools._fs_read.fs_impl", lambda **k: {"ok": True})
+    granted = fs_read_fn(
+        op="read",
+        sandbox="workspaces",
+        path="workspaces://universal-llm-gateway/README.md",
+    )
+    assert granted.get("ok") is True
+
+    def _refuse_ungranted(**kwargs):
+        if kwargs.get("surface") == "life" and kwargs.get("sandbox") == "workspaces":
+            return {
+                "error": "op=read not permitted for path on life workspaces",
+                "reason": "op_not_permitted",
+            }
+        return {"ok": True}
+
+    monkeypatch.setattr("tools._fs_read.fs_impl", _refuse_ungranted)
+    denied = fs_read_fn(
+        op="read",
+        sandbox="workspaces",
+        path="workspaces://universal-llm-gateway/.env",
+    )
+    assert denied.get("reason") == "op_not_permitted"
 
 
 def test_fs_read_thread_with_read_delegates(
