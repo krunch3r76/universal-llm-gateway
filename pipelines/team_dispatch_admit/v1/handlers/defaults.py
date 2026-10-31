@@ -8,7 +8,6 @@ from typing import Any, override
 from agent_seat.registry import normalize_agent_slug
 from implement_admission.check_review_substrate import (
     CheckReviewAdmissionReject,
-    coerce_check_review_omit_to_cursor_seat,
     evaluate_check_review_admission,
     is_check_review_api_role,
     resolve_check_review_model,
@@ -89,15 +88,7 @@ def evaluate_defaults(
         policy = load_route_policy()
         resolution = resolve_check_review_model(str(role), None, policy=policy)
         model = resolution.resolved_model
-        if resolution.substrate == "cursor-sdk":
-            role, seat = None, "cursor-sdk"
         check_review_workflow = CHECK_REVIEW_WORKFLOW
-    else:
-        role, seat, model, coerced = coerce_check_review_omit_to_cursor_seat(
-            role, seat, model
-        )
-        if coerced:
-            check_review_workflow = CHECK_REVIEW_WORKFLOW
 
     sdk_admit = _sdk_admission(role=role, seat=seat, model=model)
     if dispatch_id and not sdk_admit:

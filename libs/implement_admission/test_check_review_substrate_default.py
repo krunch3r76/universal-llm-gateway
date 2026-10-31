@@ -7,7 +7,6 @@ import pytest
 from implement_admission.check_review_substrate import (
     CHECK_REVIEW_DECISION_CITATION,
     CURSOR_CHECK_REVIEW_MODELS,
-    coerce_check_review_omit_to_cursor_seat,
     is_cursor_check_review_model,
     load_check_review_default_model,
     resolve_check_review_model,
@@ -59,25 +58,6 @@ def test_resolve_reviewer_omit_uses_anthropic_default_on_api() -> None:
     assert resolution.resolved_model == "anthropic/claude-sonnet-5-5"
     assert resolution.substrate == "api"
     assert resolution.delivery_from_role == "reviewer"
-
-
-def test_coerce_does_not_force_cursor_sdk_when_default_is_anthropic() -> None:
-    role, seat, model, coerced = coerce_check_review_omit_to_cursor_seat(
-        "reviewer", None, None
-    )
-    assert coerced is False
-    assert role == "reviewer"
-    assert seat is None
-    assert model is None
-
-
-def test_coerce_skips_when_explicit_openai() -> None:
-    role, seat, model, coerced = coerce_check_review_omit_to_cursor_seat(
-        "reviewer", None, "openai/gpt-5.6-terra"
-    )
-    assert coerced is False
-    assert role == "reviewer"
-    assert model == "openai/gpt-5.6-terra"
 
 
 def test_load_check_review_default_model_requires_workflow_slot() -> None:

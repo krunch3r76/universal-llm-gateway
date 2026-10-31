@@ -106,31 +106,6 @@ def is_check_review_api_role(role: str) -> bool:
     return role.strip().lower() in CHECK_REVIEW_API_ROLES
 
 
-def coerce_check_review_omit_to_cursor_seat(
-    role: str | None,
-    seat: str | None,
-    model: str | None,
-    *,
-    policy: dict[str, Any] | None = None,
-) -> tuple[str | None, str | None, str | None, bool]:
-    """When check/review role omits model= and default is cursor/, coerce to seat=.
-
-    ``job=check-review`` + omit model must not land on the API path with a cursor
-    default (substrate_model_role_conflict / broken API transport). Returns
-    ``(role, seat, model, coerced)``.
-    """
-    if seat is not None and str(seat).strip():
-        return role, seat, model, False
-    if model is not None:
-        return role, seat, model, False
-    if role is None or not is_check_review_api_role(role):
-        return role, seat, model, False
-    resolution = resolve_check_review_model(role, None, policy=policy)
-    if resolution.substrate != "cursor-sdk":
-        return role, seat, model, False
-    return None, "cursor-sdk", resolution.resolved_model, True
-
-
 def _bare_and_backend(model: str) -> tuple[str, str | None]:
     """Return ``(bare_wire_id, backend_type)`` or ``("", None)`` on failure."""
     raw = (model or "").strip()
