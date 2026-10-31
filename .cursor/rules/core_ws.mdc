@@ -1,35 +1,25 @@
 ---
-description: Core workspace kernel — environment, tmp/ ephemerality, durable shares, fleet-service lifecycle authority (manage sole substrate), approval boundaries. Hub-local remainder; portable slice is rule:engineering-conduct.
+description: Core workspace kernel — environment, tmp/ ephemerality, fleet lifecycle via manage, approval boundaries.
 alwaysApply: true
 rule_category: engineering
 apply_tier: always
 ---
 # Core (workspace)
 
-Extends `engineering-kernel.mdc`. Portable slice (logging invariant, code style, workflow
-gates): `rule:engineering-conduct`. This file is the hub-environment remainder.
+Extends `engineering-kernel.mdc`; portable slice is `rule:engineering-conduct`. This file is the hub-environment remainder.
 
-| Venv | PYTHONPATH | Import |
-|---|---|---|
-| `$HOME/.venvs/universal` (3.12) | `libs/` via `sitecustomize.py` | `from process_ipc.core import ...` |
+Venv `$HOME/.venvs/universal` (3.12); `libs/` on PYTHONPATH via `sitecustomize.py` (`from process_ipc.core import ...`).
 
-**`tmp/` is ephemeral** — ¬ persist, ¬ commit. `tmp/prompts/` specs/handoffs; `tmp/summaries/` + `/tmp/summaries/`
-lead-seat scratch only, never a cursor-sdk deliverable. Durable knowledge → `cortex://` or `workspaces://` shares.
+**`tmp/` is ephemeral** — ¬ persist, ¬ commit. `tmp/prompts/` holds specs/handoffs; `tmp/summaries/` and `/tmp/summaries/` are lead-seat scratch, never a cursor-sdk deliverable. Durable knowledge → `cortex://` or `workspaces://`.
 
-**Observability:** Event Service first (`scripts/query-events --op <name>`; MCP `observability(...)`); logs are
-fallback (`services_ws.mdc`). Sole maintainers: gateway, stargate, inference_djinn, process_ipc, event_bus,
-logging, transport, protocol.
+**Observability:** Event Service first (`scripts/query-events --op <name>`; MCP `observability(...)`); logs are fallback. Sole maintainers: gateway, stargate, inference_djinn, process_ipc, event_bus, logging, transport, protocol.
 
-## Lifecycle authority — by WHAT and SCOPE, not tool name
+## Lifecycle authority — by WHAT and SCOPE, ¬ tool name
 
-**Fleet service** = anything `manage(action="status")` lists (gateway, stargate, mcp, rag, cortex_api,
-agent_bus, event_service, cloud_proxy, git_integration_worker, email_bridge, cdp_ask, …). `manage` is their
-**sole** lifecycle substrate; bypassing it can truncate an in-flight dispatch or drop the fleet.
-**Auxiliary** = a `--user` unit the seat authored for non-core work that `manage` does not list — seat installs
-and manages it itself. **Unsure ⇒ fleet ⇒ `manage`.** Basis: `decision:ulg-scheduling-substrate-manage-over-systemd`.
+`fleet_service ⇔ listed by manage(action="status")` (gateway, stargate, mcp, rag, cortex_api, agent_bus, event_service, cloud_proxy, git_integration_worker, email_bridge, cdp_ask, …) ⇒ `manage` is their **sole** lifecycle substrate; bypassing it can truncate an in-flight dispatch. `auxiliary ⇔ a --user unit the seat authored that manage does not list` ⇒ the seat manages it. **Unsure ⇒ fleet ⇒ `manage`.**
 
 | Allowed | Forbidden | Gated |
 |---|---|---|
-| read / analyze / search / propose; fleet lifecycle via `manage`; routine in-tree commits; `systemctl --user` on auxiliary units | `systemctl` at system scope; `systemctl` / `pkill` / `docker restart|stop` against any fleet service; shell mutations outside edit/commit flow | `git_integrate` / `git_land` (`decision:lead-agent-git-integration`) |
+| read / analyze / search / propose; fleet lifecycle via `manage`; routine in-tree commits; `systemctl --user` on auxiliary units | `systemctl` at system scope; `systemctl` / `pkill` / `docker restart|stop` against any fleet service; shell mutations outside the edit/commit flow | `git_integrate` / `git_land` |
 
 Output: artifacts (code, UML, verification), ¬ summaries unless asked. Close: `session-close.mdc`.

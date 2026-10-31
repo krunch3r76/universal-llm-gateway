@@ -1,5 +1,5 @@
 ---
-description: Load when a Playwright download times out or an authenticated PDF/binary is needed — Playwright timeout is not unreachable; browse save_to on Jupiter, then xxd
+description: When a Playwright download times out or an authenticated PDF or binary is needed.
 alwaysApply: false
 rule_category: workflow
 apply_tier: catalog

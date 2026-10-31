@@ -1,5 +1,5 @@
 ---
-description: Cloud model routing through Stargate — model ID formats, provider surfaces, agent inference rules
+description: On cloud model routing through Stargate — model ID formats and provider surfaces.
 alwaysApply: false
 rule_category: domain-ulg
 apply_tier: catalog

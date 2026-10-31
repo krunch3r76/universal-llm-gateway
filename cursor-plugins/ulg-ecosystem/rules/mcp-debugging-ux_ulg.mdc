@@ -1,5 +1,5 @@
 ---
-description: MCP debugging UX — use Event Service / observability internally, do not dump raw event SQL or commands to user unless explicitly asked. Load before MCP/event-driven debugging work.
+description: Before MCP or event-driven debugging — do not dump raw event SQL to the user.
 alwaysApply: false
 trigger_match_terms:
   - verify-tool-execution

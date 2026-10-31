@@ -1,5 +1,5 @@
 ---
-description: "When creating or editing a Cursor rule for all ULG workspaces, ecosystem-shared guidance, satellite sharing, or choosing _ulg vs _ws filename — placement + plugin census + install."
+description: When creating or editing a Cursor rule, or choosing between a _ulg and a _ws filename.
 alwaysApply: false
 rule_category: workflow
 apply_tier: catalog

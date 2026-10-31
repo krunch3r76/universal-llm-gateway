@@ -18,7 +18,7 @@ A verdict that means something.
 
 | Surface | Mechanism |
 |---|---|
-| Cursor IDE | this skill `alwaysApply: true` (Cursor global-rule promotion). Thin stub `ulg-for-llms_ulg.mdc` retired — a pointer rule does not load this body (`a:36111`). Fresh tab or Reload Window for an already-open chat |
+| Cursor IDE | **`alwaysApply: false`** — retired from the resident plane (`todo:alwaysapply-fol-compression-and-ulg-for-llms-retire`); the body now loads on description match or an explicit `Use the ulg-for-llms skill`. Thin stub `ulg-for-llms_ulg.mdc` stays retired — a pointer rule does not load this body (`a:36111`) |
 | Continuity stance | First-class trait of `orchestrator_continuity` roots; substrate check `root_missing_stance` fires on birth/bootstrap when either half is missing. Reader-side obligation is resident in `SKILL.md` |
 | `cortex_brief` / web boot | Short opcontext block; `SKILL.md` is the full body |
 | CDP `model=cdp/…` | Staging merges this slug into `skills=` (with `reasoning-posture`) — Customize chip + floor |

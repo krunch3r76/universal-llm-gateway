@@ -1,5 +1,5 @@
 ---
-description: Status-basis invariant — no bare boolean crosses a boundary; a status carries {value, as_of, source, scope, epoch}. Load when emitting, consuming, or reviewing any ok/ready/mismatch/stale flag, readiness gate, TTL, validity window, freshness envelope, or success response across a process, bus, HTTP, or file boundary.
+description: When emitting or reviewing any ok, ready, or stale flag or readiness gate across a boundary.
 alwaysApply: false
 rule_category: engineering
 apply_tier: required_gate

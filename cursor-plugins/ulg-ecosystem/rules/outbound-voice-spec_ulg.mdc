@@ -1,5 +1,5 @@
 ---
-description: Load when the deliverable is outbound text the operator will send — ghostwriting, replies, emails, correspondence, workplace comments, or life-representation / Impresario liaison on vortex-life / personal matters. Use outbound-voice-spec; pair prose-discipline. Hard gate: OUTBOUND SPEC in-turn before draft.
+description: When the deliverable is outbound text the operator will send — reply, email, or comment.
 alwaysApply: false
 rule_category: workflow
 apply_tier: catalog

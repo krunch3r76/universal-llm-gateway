@@ -1,5 +1,5 @@
 ---
-description: Event system query reference — event paths, bash queries, multi-node debugging, forensics, investigate, debug, events, stargate events, pipeline events, RAG events, cloud proxy events, gateway issues, request failures, routing, federation events
+description: When debugging gateway, stargate, pipeline, RAG, or federation issues via event queries.
 alwaysApply: false
 rule_category: domain-ulg
 apply_tier: catalog

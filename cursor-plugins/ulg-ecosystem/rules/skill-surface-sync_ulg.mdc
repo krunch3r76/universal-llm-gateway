@@ -1,5 +1,5 @@
 ---
-description: Load after editing any plugin skill/command/rule under cursor-plugins/ulg-ecosystem/ or a Claude Customize Skills body — exact install/upload steps and verification.
+description: After editing a plugin skill, command, or rule, or a Claude Customize Skills body.
 alwaysApply: false
 rule_category: workflow
 apply_tier: catalog

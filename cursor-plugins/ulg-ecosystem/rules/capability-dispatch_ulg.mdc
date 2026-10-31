@@ -1,5 +1,5 @@
 ---
-description: Per-model frontier dispatch descriptors (CapabilityDispatch) — shared rule; load docs/agent-guides/rules/capability-dispatch.md for substance
+description: Before choosing a per-model frontier dispatch descriptor (CapabilityDispatch).
 alwaysApply: false
 rule_category: domain-ulg
 apply_tier: catalog

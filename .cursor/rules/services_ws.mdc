@@ -1,5 +1,5 @@
 ---
-description: Load when manage.sock is down, manage quit/start or charter_reload/charter_runner recycle is needed, or any service start/stop/sync_restart/wait_healthy via manage MCP or ./manage TUI (tmux 0:0).
+description: When manage.sock is down, or on any service start, stop, sync_restart, or wait_healthy.
 alwaysApply: false
 rule_category: domain-ulg
 apply_tier: catalog

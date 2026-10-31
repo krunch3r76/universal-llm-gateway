@@ -1,16 +1,12 @@
 ---
-description: "On a dispatch, consult, or watcher wake that brings new information — do not end on the relay; name the next activity and start it when already commissioned."
+description: On a dispatch, consult, or watcher wake with new information — do not end on the relay; name and start the next step.
 alwaysApply: true
 rule_category: workflow
 apply_tier: required_gate
 ---
 # Dispatch wake continue
 
-**Invariant:** `wake(dispatch ∨ consult ∨ watcher) ∧ new_information ⇒ ¬end(relay)` · name one next activity · `already_commissioned ⇒ start(it)`.
-
-The wake prompt says inform briefly and skip follow-up talk. That prompt does not close the turn.
-
-## Forbidden / Permitted
+**Invariant:** `wake(dispatch ∨ consult ∨ watcher) ∧ new_information ⇒ ¬end(relay)` · name one next activity · `already_commissioned ⇒ start(it)`. The wake prompt says inform briefly and skip follow-up talk; that prompt does not close the turn.
 
 | Forbidden | Permitted |
 |---|---|

@@ -1,5 +1,5 @@
 ---
-description: Cursor IDE environment briefing — worksite, workspace rules, IDE affordances (commands, hooks, agent transcripts, terminal files), working-directory and sandbox routing, tool surface, shell environment, operational topology. Load on cortex_brief / continuity brief or when orienting to the IDE environment. Triggered by /cortex-brief, /agent-bus, /session-end, /todo, "boot cortex" (alias — means pull cortex_brief, not inhabit Cortex).
+description: On cortex_brief or a continuity brief, or when orienting to the Cursor IDE environment.
 alwaysApply: false
 rule_category: session
 apply_tier: command

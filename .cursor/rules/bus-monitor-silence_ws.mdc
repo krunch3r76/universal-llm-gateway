@@ -1,5 +1,5 @@
 ---
-description: Load when MONITOR / monitoring-only / watch seat — mint a sibling MONITOR thread (¬ the operator/orchestrator bus); stay silent on the watched thread; report in chat or MONITOR CHECKPOINTs only.
+description: On a MONITOR, monitoring-only, or watch seat — stay silent on the watched thread.
 alwaysApply: false
 rule_category: workflow
 apply_tier: catalog

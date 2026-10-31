@@ -1,5 +1,5 @@
 ---
-description: ULG workspace extension for Plan mode — cross-links Cursor IDE Plan mode with cursor-sdk sdk_mode plan (read-only plan-first dispatches). Load with parent plan-mode.mdc on Plan-mode entry or sdk_mode routing.
+description: On Plan-mode entry in this workspace, or when routing a cursor-sdk sdk_mode plan dispatch.
 alwaysApply: false
 rule_category: workflow
 apply_tier: command

@@ -1,5 +1,5 @@
 ---
-description: Load when web-anthropic, Jupiter CDP (Cowork, project-ask), or a stopped CSE stream is in scope — before advising manual operator push. Also when CSE stream stops / poller retain vs operator self-stop.
+description: When web-anthropic, Jupiter CDP, or a stopped CSE stream is in scope.
 alwaysApply: false
 rule_category: cortex-bus
 apply_tier: catalog

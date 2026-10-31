@@ -1,5 +1,5 @@
 ---
-description: Dispatch kernel — dispatch-first ladder, binder order, front door. Procedure lives in consult-routing / conductor / cdp-operator-proxy.
+description: Dispatch kernel — dispatch-first ladder, binder order, front door. Procedure lives in consult-routing / conductor.
 alwaysApply: true
 rule_category: workflow
 apply_tier: required_gate
@@ -7,38 +7,34 @@ apply_tier: required_gate
 # Dispatch kernel
 
 **Invariant:** `lean_context ⇒ dispatch(heavy read | author | implement) off-seat; lead orchestrates`.
-**Tier A** (`conductor`): ≤2 targeted reads to packetize; 0 in-seat edits, ssh/host ops, pytest; hop ≤35–40 turns or 2–3 milestones.
-**Tier B** (investigate/confer/sketch/review): scoped recon/Explore when ≥3 unknown loci; 0 implement writes or service mutations; split remainder via `nest_under` or parent return.
-**Tier C** leaf homes omit this rule.
+**Tier A** (`conductor`): ≤2 targeted reads to packetize; 0 in-seat edits, ssh/host ops, pytest; hop ≤35–40 turns or 2–3 milestones. **Tier B** (investigate/confer/sketch/review): scoped recon when ≥3 unknown loci; 0 implement writes or service mutations; split the remainder via `nest_under` or parent return. **Tier C** leaf homes omit this rule.
 
 ## Read side — `team_dispatch` over `Task`
 
-`loci_unknown ∨ ≥3_files ∨ 2nd_speculative_grep ⇒ team_dispatch(op="generate", seat="cursor-sdk", lane="B")`. Per `lean-dispatch`, use `team_dispatch` (`seat=cursor-sdk`, `cdp/*`, `cursor/*`), ¬ Cursor `Task` subagents (`team_dispatch` expands pool).
-Sparse work item (`density_triage` unset or `recon_pending`) ⇒ recon before **implement**
-(`require_implement_ready` guards implement, not conductor). Exempt: `mechanical`/`trivial`, or dense spec with `files_expected` + AC. Bugfix on pattern P ⇒ sweep (`[quality:bug-class-sweep]`).
+`loci_unknown ∨ ≥3_files ∨ 2nd_speculative_grep ⇒ team_dispatch(op="generate", seat="cursor-sdk", lane="B")` — ¬ Cursor `Task` subagents (`team_dispatch` expands the pool).
+`sparse(work_item) ⇒ recon ≺ implement` (`require_implement_ready` guards implement, ¬ conductor). Exempt: `mechanical`/`trivial`, or a dense spec with `files_expected` + AC. Bugfix on pattern P ⇒ sweep (`[quality:bug-class-sweep]`).
 
 ## Ladder + binder order
 
-Mechanical implement: `team_dispatch` `lane="B"` `contract=implement` `model=cursor/composer-2.5` (omit `model=` ⇒ `cursor/grok-4.7`); throwaway worktree per top-level generate; `lane="A"` only on scope refusal or explicit shared-master request. Autonomous.
-Investigate / conductor: investigate `cursor/grok-4.7` xhigh; conductor `cursor/grok-4.7` high; card defaults; `OPEN FORK:` only. Autonomous.
-Independent check: **ACTIVE** width · **`cdp/opus-5.5`** — announce `CDP: <trigger> — <why>`, proceed. Autonomous on trigger.
+Mechanical implement: `lane="B"` `contract=implement` `model=cursor/composer-2.5` (omit `model=` ⇒ `cursor/grok-4.7`); throwaway worktree per top-level generate; `lane="A"` only on scope refusal or explicit shared-master request. Autonomous.
+Investigate `cursor/grok-4.7` xhigh; conductor `cursor/grok-4.7` high; `OPEN FORK:` only. Autonomous.
+Independent check: **ACTIVE** width · **`cdp/opus-5.5`** — announce `CDP: <trigger> — <why>`, proceed.
 Live checkout: `cursor/grok-4.7` `contract=freeform` on cursor-sdk.
-Binder: `cdp/opus-5.5` → `cdp/opus-5` → **`cdp/fable-5.1`** → `cdp/fable-5` (no bare `cdp/fable` unless Kaywan asks). `seat_unsure ⇒ consult(independent_binder)`; `binder_unsure ⇒ human`. CDP fail ⇒ no wait/retry. `cdp_fail_route`: `nested-grok` or `operator` (worker + `parent_thread` → web-anthropic). ¬ Cowork Ask.
+Binder: `cdp/opus-5.5` → `cdp/opus-5` → **`cdp/fable-5.1`** → `cdp/fable-5` (no bare `cdp/fable` unless Kaywan asks). `seat_unsure ⇒ consult(independent_binder)`; `binder_unsure ⇒ human`. CDP fail ⇒ no wait/retry; `cdp_fail_route`: `nested-grok` or `operator` (worker + `parent_thread` → web-anthropic). ¬ Cowork Ask.
 detail: skill `consult-routing` § Dispatch kernel.
 
 ## Hard walls
 
-- `anthropic/*` API admitted when credit-healthy. Detail: `consult-routing` § Anthropic-family substrate.
+- `anthropic/*` API admitted when credit-healthy.
 - Non-primary `cursor/*` bind ⇒ **operator-gated** unless a standing rule/skill names the default.
 - `judgment_closed ∧ mechanical_remainder ⇒ split`: bind (`none`) → nested `cursor-sdk` implement (`nest_under` lease holder).
-- Before **any** `team_dispatch`: consult-routing gate; `busy_status` shows `agent_bus`+`stargate`+`git_integration_worker` up.
-- Same input failed twice ⇒ no retry; one different-kind attempt before REPEATED_FAILURE; third same-input retry forbidden.
+- Before **any** `team_dispatch`: consult-routing gate; `busy_status` shows `agent_bus` + `stargate` + `git_integration_worker` up.
+- Same input failed twice ⇒ no more retries of that input; one attempt of a different kind (replace the input) is allowed before REPEATED_FAILURE; a third retry of the same input is forbidden.
 - `operator_names(param) ∧ ¬admits(param) ⇒ report(failure) ∧ wait`.
 
 ## Runbook binding
 
-**Invariant:** `cite(runbook:<id>) ⇒ load(section*) ∧ execute(seat-bound_steps)` before turn end.
-Partial cite ⇒ that section only. Skills/rules say *when*; runbook owns *how*. Cite-from-memory = arm-without-relay.
+`cite(runbook:<id>) ⇒ load(section*) ∧ execute(seat-bound_steps)` before turn end. Partial cite ⇒ that section only. Skills/rules say *when*; the runbook owns *how*. Cite-from-memory = arm-without-relay.
 
 ## Front door
 
@@ -46,9 +42,8 @@ Partial cite ⇒ that section only. Skills/rules say *when*; runbook owns *how*.
 ∀ operator_request:
   explicit override (/path-sim · /layer · root id · belt) ≺ tree
   mutates_durable_state ⇒ conductor session, bound to exactly one todo: work item
-  else (answer · review · judgment, attended) ⇒ in-seat, threadless — reasoning-posture aperture; threadless ⇒ ¬mint work lane for the answer (`/orchestrate` births role:root; `checkpoint` = lean fire, ¬ birth)
+  else (answer · review · judgment, attended) ⇒ in-seat, threadless — reasoning-posture
+    aperture; threadless ⇒ ¬mint work lane (`/orchestrate` births role:root; `checkpoint` = lean fire)
 ```
 
-B legs spawn T0 conductor; materializer refuses non-todo `source_ref`. CHECKPOINT = reconstitution index only.
-`seat=cursor-sdk` closeout is silent SOP; operator-only ⇒ `status:needs-attended` + one recommended answer.
-Mutating Task prompts ⇒ inject kernel (`task-subagent-parity_ulg`). Native IDE Task (¬ `team_dispatch`) ⇒ `/reasoning-posture` + Use-line unless closed procedure (`native-subagent-reasoning-posture_ulg`).
+B legs spawn T0 conductor; the materializer refuses a non-todo `source_ref`. CHECKPOINT = reconstitution index only. `seat=cursor-sdk` closeout is silent SOP; operator-only ⇒ `status:needs-attended` + one recommended answer. Mutating Task prompts ⇒ inject kernel (`task-subagent-parity_ulg`). Native IDE Task ⇒ `/reasoning-posture` + Use-line unless closed procedure.

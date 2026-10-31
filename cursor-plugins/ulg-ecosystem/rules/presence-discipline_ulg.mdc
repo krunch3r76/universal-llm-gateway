@@ -1,51 +1,28 @@
 ---
 name: presence-discipline
-description: Presence and determinacy discipline — bind forks before acting, one determinate step, evidence before any done signal, status-word provenance, never pin the turn on long waits. Always-on for every Cursor-surface model.
+description: Presence and determinacy — bind forks, one step, evidence before done, status provenance, no long waits.
 alwaysApply: true
 ---
 # Presence discipline
 
-**P1 — Bind forks before acting.** Design choice or ambiguity mid-turn ⇒ name it, commit to a value, state the
-rejected alternative + reason, then act. An implicit fork does not bind itself later.
+**P1 — Bind forks before acting.** `design_choice ∨ ambiguity mid-turn ⇒ name(it) ∧ commit(value) ∧ state(rejected_alt + reason) ≺ act`. An implicit fork does not bind itself later.
 
-**P2 — One determinate step.** Execute one named bounded step → verify it completed → next. Never bundle
-"write A, write B, check C" into one conceptual action; bundling hides which step failed.
+**P2 — One determinate step.** One named bounded step → verify it completed → next. ¬ bundle "write A, write B, check C" into one conceptual action; bundling hides which step failed.
 
-**P3 — Evidence before any "done".** Before "done / complete / committed / passes / deployed": quote the
-observable (path, tool-response field, test line). No evidence ⇒ "unverified — check X" and halt. Silence ≠ success.
+**P3 — Evidence before any "done".** Before "done / complete / committed / passes / deployed", quote the observable (path, tool-response field, test line). `¬evidence ⇒ "unverified — check X" ∧ halt`. Silence ≠ success.
 
-**P3.1 — Status-word provenance.** `ratified`, `bound`, `dispatched`, `closed`, `corpus-*` appear only as
-`<status>(by=<seat|operator>, ref=<checkable artifact>)`; a seat is never a valid `by=` for ratification-class
-status on its own artifact; absent provenance write `interim` / `proposed` / `pending <binder>`.
+**P3.1 — Status-word provenance.** `ratified`, `bound`, `dispatched`, `closed`, `corpus-*` appear only as `<status>(by=<seat|operator>, ref=<checkable artifact>)`; a seat is never a valid `by=` for ratification-class status on its own artifact; absent provenance write `interim` / `proposed` / `pending <binder>`.
 
-**P3.2 — Work-complete ∈ L(x) only with quoted finish.** A `work_complete` / shipped / done sentence on
-served work is invalid unless the same turn quotes path-explicit commit proof **and** serving-process
-recycle proof. Recycle-without-commit is not finishing. Seat self-report ("I should commit") is not evidence.
+**P3.2 — Work-complete needs a quoted finish.** A `work_complete` / shipped / done sentence on served work is invalid unless the same turn quotes path-explicit commit proof **and** serving-process recycle proof. Recycle-without-commit is not finishing. Seat self-report ("I should commit") is not evidence.
 
-**P4 — Do not hold the turn on long waits.** Shell expected >~30s ⇒ `block_until_ms: 0` or a short smoke wait;
-never sit in `AwaitShell` / multi-minute polling. Exception: a CDP harvest that blocks the next action polls on
-**short** slices (≤5–10s once idle), not bare long sleeps.
+**P4 — Do not hold the turn on long waits.** Shell expected >~30s ⇒ `block_until_ms: 0` or a short smoke wait; never sit in `AwaitShell` / multi-minute polling. Exception: a CDP harvest blocking the next action polls on short slices (≤5–10s once idle), ¬ bare long sleeps.
 
-**P4.1 — Dispatch admit.** After `team_dispatch` admit: **no** foreground long `wait`. **Jupiter attended IDE:**
-watcher legs 1–2 same turn (`dispatch-kernel_ulg` § Admit turn; `runbook:bus-consult-watcher`) with bg `tail`
-`block_until_ms:0`. **Cursor-on-Xvfb `:8` push-wake houses:** no watcher shells — end the turn idle for
-`BRIDGE_WAKE` push delivery. ¬ sleep loops / “in flight” prose without a declared wait primitive.
+**P4.1 — Dispatch admit.** After `team_dispatch` admit: **no** foreground long `wait`. **Jupiter attended IDE:** watcher legs 1–2 same turn (`runbook:bus-consult-watcher`) with bg `tail` `block_until_ms:0`. **Cursor-on-Xvfb `:8` push-wake houses:** no watcher shells — end the turn idle for `BRIDGE_WAKE` delivery. ¬ sleep loops · ¬ "in flight" prose without a declared wait primitive.
 
-Applies to all Cursor-surface models; Opus-class makes these implicit, below Opus they are explicit obligations.
-Out of scope: headless dispatch trust (`todo:cursor-sdk-dispatch-report-verification`) · durable completion
-provenance at close (`provenance-discipline.mdc`). Shell cap hook + AwaitShell residual: `decision:` on the
-shell-timeout-cap (ref friction a:26348 · agent-bus:5352).
-
-**P5 — Finishing order (last).** Default: land → path-explicit commit of session paths → recycle serving
-processes. Recycle-from-dirty-tree is exceptional, not the ordinary-live default. "Only commit when
-requested" = no opportunistic or unrelated commits; it is not a veto of P3.2.
+**P5 — Finishing order (last).** land → path-explicit commit of session paths → recycle serving processes. Recycle-from-dirty-tree is exceptional. "Only commit when requested" = no opportunistic or unrelated commits; it is not a veto of P3.2.
 
 ## Change record (K42)
 
-Commit subject states the outcome. Commit body is three parts in this order:
+Commit subject states the outcome. Body is three parts in order — **Problem** (what was wrong and how it showed: symptom, root cause, specimen), **Change** (what changed and why that fixes it: commit, paths), **Verified** (the observable that shows it works: test line, live probe, liveness answer — or `unverified:` naming what was not checked). Same three parts in a `friction_close` resolution_note (the open filing is the Problem), journal entries, and outside PRs.
 
-Problem: what was wrong and how it showed (symptom, root cause, specimen).
-Change: what changed and why that fixes it (commit, paths).
-Verified: the observable that shows it works (test line, live probe, liveness answer), or "unverified:" naming what was not checked.
-
-Same three parts in a friction_close resolution_note (the open filing is the Problem), in journal entries, and in outside PRs. No new friction_close field.
+Applies to all Cursor-surface models.

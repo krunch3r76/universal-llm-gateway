@@ -1,5 +1,5 @@
 ---
-description: "When the operator says talk to grok.com, message grok.com, paste into grok, communicate with grok.com, or open grok.com — execute runbook:grok-com-communicate (CDP paste into a signed-in grok.com/c/<id> tab). Not cursor/grok-4.7, not xAI API, not Cowork dispatch."
+description: When the operator says talk to, message, paste into, or open grok.com.
 alwaysApply: false
 ---
 # grok.com communicate (on demand)

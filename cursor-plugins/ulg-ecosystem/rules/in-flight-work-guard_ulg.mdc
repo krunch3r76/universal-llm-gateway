@@ -1,21 +1,15 @@
 ---
-description: In-flight work guard — never implement a slice a live cursor-sdk dispatch or conductor owns, never abort/cancel/kill a session, dispatch, or CSE without the operator's explicit words; tab ⟂ session. Always-on guardrail for the sole shared checkout.
+description: Never implement a slice a live dispatch owns; never abort, cancel, or kill a session without the operator's words.
 alwaysApply: true
 rule_category: workflow
 apply_tier: required_gate
 ---
 # In-flight work guard
 
-**Invariant:** `dispatch_active(work) ∧ overlap(in_seat_work, work) ⇒ halt(in_seat)` ·
-`¬abort(session) ∧ ¬cancel(dispatch) ∧ ¬kill(execution)` — unless the operator **names** the override
-("abort the dispatch", "cancel 6488", "implement in IDE, don't wait for SDK"). Tier change, urgency,
-slow polls, "session looked stale", and CHECKPOINT next-step changes are **not** authorization.
+**Invariant:** `dispatch_active(work) ∧ overlap(in_seat_work, work) ⇒ halt(in_seat)` · `¬abort(session) ∧ ¬cancel(dispatch) ∧ ¬kill(execution)` unless the operator **names** the override ("abort the dispatch", "cancel 6488", "implement in IDE, don't wait for SDK"). Tier change, urgency, slow polls, "session looked stale", and CHECKPOINT next-step changes are **not** authorization.
 
-Active = `execution_id` / `dispatch_id` returned and not terminal · `poll_hint` open for `from_agent=cursor-sdk` ·
-thread shows admit without terminal closeout · scoreboard marks the slice IN FLIGHT. Overlap = same **work
-identity** (`work_key` = `todo:{slug}`; `source_ref` fallback — conductor rows carry none), `packet_path`, or
-`files_expected` loci; the live conductor `dispatch_id` is the **holder** named in the 409, not the key. Lane B
-worktrees do not lift the guard on the same paths.
+`active ⇔` `execution_id` / `dispatch_id` returned and not terminal · `poll_hint` open for `from_agent=cursor-sdk` · thread shows admit without terminal closeout · scoreboard marks the slice IN FLIGHT.
+`overlap ⇔` same work identity (`work_key = todo:{slug}`; `source_ref` fallback), `packet_path`, or `files_expected` loci; the live conductor `dispatch_id` is the **holder** named in the 409, ¬ the key. Lane B worktrees do not lift the guard on the same paths.
 
 ## Forbidden / Permitted
 
@@ -23,5 +17,5 @@ Do not edit paths the dispatch owns or "head start while SDK runs" — poll `age
 Do not cancel queued cursor-sdk "as cleanup" or tear down a converse lane / live CSE — author the packet **before** firing; lead verify **after** terminal closeout.
 Do not infer "no active CDP" from empty `active_work` while the private request lane runs — read that thread; transport idle ≠ bus idle.
 Do not hop, re-stream, or refuse PARK to "keep the tab alive" — PARK; tab ⟂ session.
-Closing an agent-bus thread ≠ aborting substrate work. Abort of a transport handle ≢ abort of the operator-proxy arc (commission lives on the private request lane). Dead `execution_id` is not reopenable — continuity is the request thread; `cse_session(op=followup)` may reattach.
-detail: skill `conductor` § In-flight guard — relocated table.
+Closing an agent-bus thread ≠ aborting substrate work. A dead `execution_id` is not reopenable — continuity is the request thread; `cse_session(op=followup)` may reattach.
+detail: skill `conductor` § In-flight guard.

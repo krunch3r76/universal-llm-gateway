@@ -1,30 +1,19 @@
 ---
-description: "Shared checkout pin — attended IDE stays on master (or current tip); side/review work uses a clean git worktree; sole maintainer never push/PR unless named."
+description: Attended IDE stays on master; side or review work uses a clean worktree; never push or open a PR unnamed.
 alwaysApply: true
 rule_category: workflow
 apply_tier: required_gate
 ---
 # Shared checkout · clean worktree
 
-**Invariant:** `shared_attended_checkout ⇒ branch ∈ {master, current_unchanged}` ·
-`needs(feature_branch ∨ review_branch ∨ land_isolate) ⇒ git worktree add (clean)` ·
-`¬git checkout(other_branch) on the shared tree` ·
-`sole_maintainer_local ⇒ ¬push ∧ ¬pr` unless the operator names push / PR / publish ·
-`forward_only ⇒ ¬move(shared_branch, backward)` — full rule: Use the `git-posture` skill § Forward only.
+**Invariant:** `shared_attended_checkout ⇒ branch ∈ {master, current_unchanged}` · `needs(feature_branch ∨ review_branch ∨ land_isolate) ⇒ git worktree add (clean)` · `¬git checkout(other_branch) on the shared tree` · `sole_maintainer_local ⇒ ¬push ∧ ¬pr` unless the operator names push / PR / publish · `forward_only ⇒ ¬move(shared_branch, backward)`.
 
-Switching the shared tip for side work steals it from peer WIP. Lane B already
-worktrees; attended seats owe the same. "Submit for review" ⇒ local branch +
-`git diff --stat <base>..HEAD` — not `git push` / `gh pr create`.
-
-## Forbidden / Required
-
-`¬ git checkout/switch` a side branch on the shared tree — `git worktree add` and work there. `¬ stash` to free the tip. `¬ push` / `¬ pr` unless the operator names it — local `@sha` + diffstat; land when told.
-detail: skill `git-posture` § Shared checkout — relocated tables.
+Switching the shared tip for side work steals it from peer WIP. "Submit for review" ⇒ local branch + `git diff --stat <base>..HEAD`, ¬ `git push` / `gh pr create`. `¬ stash` to free the tip.
 
 ## Detents
 
 - Tip already not `master`: ¬ force-switch mid-turn unless named; ¬ switch further for new side work — worktree from the start-point.
-- Trivial same-tip edit on current shared branch: stay; worktree optional.
+- Trivial same-tip edit on the current shared branch: stay; worktree optional.
 - `lane=B`: substrate worktrees suffice; ¬ move the shared IDE checkout.
 
 ## Land (attended)
@@ -33,9 +22,11 @@ detail: skill `git-posture` § Shared checkout — relocated tables.
 shared tip stays master → worktree -b land/<slug> → commit → merge into master → remove worktree
 ```
 
-No-PR removes the remote step, not the worktree.
+No-PR removes the remote step, ¬ the worktree.
 
-## Anti-patterns
+| Bad | Good |
+|---|---|
+| Switch the shared tip to a side branch, amend, switch back | `git worktree add` and work there |
+| Push or open a PR because a brief said "submit for review" | Local `@sha` + diffstat; land when told |
 
-`¬` switch the shared tip to a side branch, amend, and switch back. `¬` push or open a PR because a brief said "submit for review."
-detail: skill `git-posture` § Shared checkout — relocated tables.
+detail: skill `git-posture` § Shared checkout.

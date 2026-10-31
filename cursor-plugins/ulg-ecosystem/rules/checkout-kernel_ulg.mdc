@@ -1,5 +1,5 @@
 ---
-description: Checkout kernel — load on git checkout/land/lane= decisions, shared master hygiene, or deleting/reverting unattributed paths. Lane= on cursor-sdk generate; commit/deploy/live vocabulary; land is merge never copy; personal helpers in ignored nested-git trees. Playbook is the git-posture skill.
+description: On git checkout, land, or lane= decisions, shared master hygiene, or reverting unattributed paths.
 alwaysApply: false
 rule_category: engineering
 apply_tier: required_gate

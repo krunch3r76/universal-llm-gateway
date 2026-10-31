@@ -1,5 +1,5 @@
 ---
-description: Load before any Jupiter project-ask --converse bus-nudge or multi-stop agent-bus ping-pong with web-anthropic — standing ≤3 turns per converse session (friction 24831).
+description: Before a Jupiter project-ask converse nudge or multi-stop bus ping-pong with web-anthropic.
 alwaysApply: false
 rule_category: cortex-bus
 apply_tier: catalog

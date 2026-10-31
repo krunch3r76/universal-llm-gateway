@@ -1,20 +1,19 @@
 ---
-name: resume-fence
-description: Structural resume fence — when the operator says resume <thread>, the sole admitted first tool hop is continuity(op=resume). Load on resume N utterances in a fresh IDE tab.
+description: On a `resume <thread>` utterance, the sole admitted first tool hop is continuity(op=resume).
 alwaysApply: true
 ---
 # Resume fence — first-hop arming
 
-When the operator message matches `^resume \d+`:
+`operator_message ~ ^resume \d+ ⇒`
 
-1. **First ULG hop:** `continuity(op=resume, thread=T)` where `T` is the thread id from the utterance. On `user-vortex-code` it is **overflow**: call `dispatch(tool="continuity", arguments='{"op":"resume","thread":"T"}')` (direct `continuity` ⇒ not found). Prefer not to `GetDynamicTools` / `tool_search` first — the hook **nudges** those bleed tools while `armed`, and never denies.
-2. Pour is one `tape` call (or the inline bundle). `tape`, `get`, `cortex`, `rename_chat`, `retrieve`, and file reads stay **undenied**. If you receive an `rs_*` handle, `retrieve` it exactly once — it pops.
-3. Cite ids from the returned `read_set.citable` when the bundle landed. Durable `agent_bus send` may carry the bundle's `fence_id` (from `fence.fence_id` or `fence_carriage.fence_id`); pass `transcript_id` on `continuity(op=resume)` when the tab id is known (FIX-15).
+1. **First ULG hop:** `continuity(op=resume, thread=T)`. On `user-vortex-code` it is **overflow**: `dispatch(tool="continuity", arguments='{"op":"resume","thread":"T"}')` (direct `continuity` ⇒ not found). ¬ `GetDynamicTools` / `tool_search` first — the hook nudges those bleed tools while `armed`, and never denies.
+2. Pour is one `tape` call (or the inline bundle). `tape`, `get`, `cortex`, `rename_chat`, `retrieve`, and file reads stay undenied. An `rs_*` handle is `retrieve`d exactly once — it pops.
+3. Cite ids from the returned `read_set.citable` when the bundle landed. A durable `agent_bus send` may carry the bundle's `fence_id`; pass `transcript_id` on `continuity(op=resume)` when the tab id is known (FIX-15).
 
-The IDE hook is a first-hop nudge, not a lock. `permission` is never `deny`. `sessionStart` drops the local marker so a Cursor restart unfences the tab. `checkpoint-discipline` pickup prose is guidance.
+The IDE hook is a first-hop nudge, ¬ a lock; `permission` is never `deny`. `sessionStart` drops the local marker so a Cursor restart unfences the tab.
 
 ## Bundle pickup — verbatim before paraphrase
 
-Read the bundle top-down before any sketchboard, card, or prior-tab prose. A lower row does not outrank the tip. Row 1.5 orients intent; it does not override the tip's facts. Spoken reply: `operator-posture` Rule 3, which starts at the aim. This block does not open that reply. Fence id and head sha join the receipts line. `open_line: null` is normal — never fill that gap from a sketchboard.
+Read the bundle top-down before any sketchboard, card, or prior-tab prose. A lower row does not outrank the tip; row 1.5 orients intent and does not override the tip's facts. Spoken reply is `operator-posture` Rule 3, starting at the aim — this block does not open it. Fence id and head sha join the receipts line. `open_line: null` is normal — never fill that gap from a sketchboard.
 
-detail: skill checkpoint-discipline § Resume fence bundle rows
+detail: skill `checkpoint-discipline` § Resume fence bundle rows.

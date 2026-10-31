@@ -1,5 +1,5 @@
 ---
-description: Anthropic-family dispatch substrate — before any anthropic/* model=, Opus/Fable consult, or team_dispatch that would hit Stargate Anthropic API. Standing prohibition retired 2026-10-18 (credits funded); standard models admit when the credit gate is healthy; high-cost Opus/Fable API needs deliberate_high_cost; CDP remains the default judgment wire; operator-named cursor/claude-* follows consult-routing § Cursor-sdk generate shape.
+description: Before any anthropic/* model=, Opus/Fable consult, or dispatch hitting the Stargate Anthropic API.
 alwaysApply: false
 rule_category: workflow
 apply_tier: description

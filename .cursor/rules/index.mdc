@@ -1,5 +1,5 @@
 ---
-description: Workspace rule catalog — rule placement, always-apply rules, glob-matched rules, commands, workflow, architecture docs, where to find rules, rule discovery
+description: When looking for where a workspace rule lives or which rules exist.
 alwaysApply: false
 ---
 # Rules

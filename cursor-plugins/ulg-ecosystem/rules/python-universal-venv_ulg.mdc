@@ -1,13 +1,10 @@
 ---
-description: Python in any ULG workspace runs on $HOME/.venvs/universal — bare python/pip/pytest/ruff fail sitecustomize + libs. Agent shells are fresh; verify with which.
+description: Python, pip, pytest, and ruff run from $HOME/.venvs/universal in every ULG workspace; verify with which.
 alwaysApply: true
 rule_category: workflow
 apply_tier: required_gate
 ---
 # Python — universal venv
 
-`python | pip | pytest | ruff ≡ "$HOME/.venvs/universal/bin/<tool>"` in hub **and** every satellite; no private
-project venvs. Bare names only after `which python` resolves inside `.venvs/universal` **in this shell**
-(agent/Glass terminals do not auto-activate; a prior terminal's activation does not carry).
-Why: the shared venv's `sitecustomize.py` injects `universal-llm-gateway/libs/` onto `sys.path`.
+`python | pip | pytest | ruff ≡ "$HOME/.venvs/universal/bin/<tool>"` in hub **and** every satellite; no private project venvs. Bare names only after `which python` resolves inside `.venvs/universal` **in this shell** — agent/Glass terminals do not auto-activate and a prior terminal's activation does not carry. The shared venv's `sitecustomize.py` injects `universal-llm-gateway/libs/` onto `sys.path`.
 Pins/roster: `install-ecosystem-plugin.sh` · `SATELLITES.txt` · Use the `satellite-workspace` skill.

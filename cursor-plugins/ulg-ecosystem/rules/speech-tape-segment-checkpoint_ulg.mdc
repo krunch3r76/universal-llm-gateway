@@ -1,6 +1,6 @@
 ---
 name: speech-tape-segment-checkpoint
-description: Load when authoring CHECKPOINT on role:root continuity houses, before fresh-tab resume handoff, or when attended orchestrator dialogue must persist across tabs via speech tape — segment CP cadence distinct from bus-residue CP.
+description: When authoring a CHECKPOINT on a role:root continuity house, or before a fresh-tab handoff.
 alwaysApply: false
 rule_category: workflow
 apply_tier: catalog

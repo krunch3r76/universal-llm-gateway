@@ -1,5 +1,5 @@
 ---
-description: Model catalog dual-write architecture and synthetic ID resolution — how context variants map to available model IDs on the gateway
+description: On model catalog dual-write or synthetic context-variant ID resolution.
 alwaysApply: false
 rule_category: domain-ulg
 apply_tier: catalog

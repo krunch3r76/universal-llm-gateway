@@ -1,5 +1,5 @@
 ---
-description: MCP integration — agent tools, pipeline iteration, observability. Triggers on MCP, pipeline iteration, tool calls, observability, pipeline
+description: On MCP agent tools, pipeline iteration, or observability work.
 alwaysApply: false
 rule_category: domain-ulg
 apply_tier: catalog

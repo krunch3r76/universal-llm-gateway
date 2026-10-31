@@ -1,5 +1,5 @@
 ---
-description: Agent-bus push reminder — load on turn close after agent_bus post/reply to web/web-anthropic OR team_dispatch handoff with push_reminder/open web thread. Default CDP autonomous wake; emit human push reminder only when CDP wake is unavailable or broken.
+description: On turn close after an agent_bus post to web-anthropic or a handoff with an open web thread.
 alwaysApply: false
 rule_category: cortex-bus
 apply_tier: catalog

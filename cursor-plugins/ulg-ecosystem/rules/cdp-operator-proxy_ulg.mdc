@@ -1,5 +1,5 @@
 ---
-description: Load CDP operator-proxy protocol when Cowork web-anthropic holds the operator seat via ulg-code team_dispatch — co-developer posture, DIRECTIVE/CLOSEOUT/DISPOSITION discipline. Also load when diagnosing CSE stream stop / mid-mission idle.
+description: When Cowork web-anthropic holds the operator seat, or when diagnosing a stopped CSE stream.
 alwaysApply: false
 rule_category: workflow
 apply_tier: catalog

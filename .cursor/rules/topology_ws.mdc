@@ -1,5 +1,5 @@
 ---
-description: Deployment topology reference — roles, architecture, nodes, federation, SSH, ports, edge, master, relay, gateway, stargate, investigation, /v1/models, empty models, config files, topology snapshot
+description: On deployment topology questions — nodes, federation, ports, edge, master, relay, gateway.
 alwaysApply: false
 rule_category: domain-ulg
 apply_tier: catalog

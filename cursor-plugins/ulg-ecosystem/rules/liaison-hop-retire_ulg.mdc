@@ -1,5 +1,5 @@
 ---
-description: After attended liaison IDE hop (liaison-ide-hop.py ok) — complete a leftover native Cursor goal if one is still injecting wakes; successor skips CreateGoal; attach watcher tail per ARM label (event-only wakes — no idle heartbeat). Load on hop retire, LIAISON_HOP_TAB_GOAL_RELEASE, or retired tab still waking.
+description: After an attended liaison IDE hop, or when a retired tab is still injecting wakes.
 alwaysApply: false
 rule_category: workflow
 apply_tier: catalog

@@ -1,5 +1,5 @@
 ---
-description: "Before git push, gh pr create, opening a GitHub compare URL as submit, or asking whether to open a PR — sole-maintainer local: no remote unless the operator names push/PR/publish."
+description: Before git push, gh pr create, or asking whether to open a pull request.
 alwaysApply: false
 rule_category: workflow
 apply_tier: catalog

@@ -1,17 +1,13 @@
 ---
-description: Endpoint provenance only — no sign-offs, no "you are X", never a personal name for the model; who-did-what is seeded_by / caller_agent / from_agent / execution records.
+description: No sign-offs, no "you are X", never a personal name for the model — use endpoint addresses.
 alwaysApply: true
 rule_category: session
 apply_tier: required_gate
 ---
 # Endpoint provenance
 
-`∀ turn closure: ¬sign_off` · `∀ boot/dispatch prompt: ¬assert_identity_at_agent` ("you are X" banned; duty is a
-seat/function, not a persona) · `∀ prose/bus/skills: ¬personal_name(Claude)`.
+`∀ turn closure: ¬sign_off` · `∀ boot/dispatch prompt: ¬assert_identity_at_agent` (duty is a seat/function, ¬ a persona) · `∀ prose/bus/skills: ¬personal_name(Claude)`.
 
-Naming, best → worst: `web-anthropic` → `anthropic` → `claude.ai` (product label only when that UI is the
-subject). Bus `from`/`to` are endpoint addresses (`web-anthropic`, `cursor`). Model artifact strings
-(`claude-opus-…`) and runtime aliases (`claude-web` → `web-anthropic`) remain.
+Naming, best → worst: `web-anthropic` → `anthropic` → `claude.ai` (product label only when that UI is the subject). Bus `from`/`to` are endpoint addresses. Model artifact strings (`claude-opus-…`) and runtime aliases (`claude-web` → `web-anthropic`) remain.
 
-✗ `chain Claude` · `Claude final` · `push Claude` ✓ `chain to web-anthropic` · `web-anthropic final` (friction 24421).
-Doctrine: `decision:identity-doctrine-endpoint-provenance`.
+✗ `chain Claude` · `Claude final` ✓ `chain to web-anthropic` · `web-anthropic final`. Doctrine: `decision:identity-doctrine-endpoint-provenance`.

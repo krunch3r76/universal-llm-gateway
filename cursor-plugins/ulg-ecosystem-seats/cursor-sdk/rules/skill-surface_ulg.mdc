@@ -1,5 +1,5 @@
 ---
-description: Skill/rule surface for the cursor-sdk seat — if you edit ecosystem SoT, run the install script in the same dispatch. Claude.ai Customize upload and IDE picker hygiene are lead duties, pruned here.
+description: cursor-sdk skill surface — edit ecosystem SoT, run the install script in the same dispatch.
 alwaysApply: true
 rule_category: workflow
 apply_tier: required_gate
@@ -13,45 +13,25 @@ trigger_match_terms:
 ---
 # Skill Surface — cursor-sdk seat
 
-**Seat wall.** The IDE rule is pruned from this dispatch HOME. You have no skill
-picker to refresh, no Reload Window, and no claude.ai Customize session — those are
-lead duties. One obligation survives, and it is a real one.
+**Seat wall.** The IDE rule is pruned here: no skill picker, no Reload Window, no Customize session — lead duties. One obligation survives.
 
 ## Invariant
 
 ```
 edit(cursor-plugins/ulg-ecosystem/{skills,commands,rules}/ ∨ census)
   ⇒ HOME="$(getent passwd "$(id -un)" | cut -d: -f6)" \
-      scripts/cursor/install-ecosystem-plugin.sh --local-only
+       scripts/cursor/install-ecosystem-plugin.sh --local-only
 ```
 
-Bare `scripts/cursor/install-ecosystem-plugin.sh` exits 1 here: `REFUSED` from
-`dispatch_home_host_guard` (overlay HOME). The prefix above is the run. `--local-only`
-skips Glass dest rsync (lead/hub install without that flag lands those copies).
-Copies land in `~/.cursor/plugins/local/ulg-ecosystem/`. No install ⇒ landed, not live.
-Do not hand-copy.
+Bare `scripts/cursor/install-ecosystem-plugin.sh` exits 1 here: `REFUSED` from `dispatch_home_host_guard` (overlay HOME). The prefix above is the run; `--local-only` skips Glass dest rsync. Copies land in `~/.cursor/plugins/local/ulg-ecosystem/`. `¬install ⇒ landed, not live`. Do not hand-copy.
 
 | SoT path you touched | Install required? |
 |---|---|
-| `cursor-plugins/ulg-ecosystem/skills/` (census) | **Yes** |
-| `cursor-plugins/ulg-ecosystem/commands/` | **Yes** |
+| `cursor-plugins/ulg-ecosystem/{skills,commands}/` | **Yes** |
 | `cursor-plugins/ulg-ecosystem/rules/*_ulg.mdc` (+ `RULES_ULG_CENSUS`) | **Yes** |
 | `{repo}/.cursor/skills/` or `*_ws.mdc` | No — checkout-local, read live |
 | `cursor-plugins/ulg-ecosystem-seats/` | No — read from SoT at dispatch setup |
 
-## Not yours
+**Not yours.** Claude-slug bundle regeneration and Customize upload, `SKILLS_CENSUS` membership decisions, picker-staleness notes: do not attempt — name it in the closeout and let the lead route it.
 
-Claude-slug bundle regeneration and Customize upload, `SKILLS_CENSUS` membership
-decisions, and picker-staleness notes: **do not attempt**. If your work implies one,
-name it in the closeout and let the lead route it.
-
-## Skill bodies
-
-Say `Use the `{slug}` skill` and let the harness fetch it. Do **not** `fs`-read a
-`SKILL.md` into context to "load" a skill — that is the authoring path, not the
-consumption path, and it burns the budget the skill layer exists to save.
-
-## Composes with
-
-- `interagent-posture_ulg` — closeout register
-- `restart-drain-discipline_ulg` — the same landed≠live distinction for services
+**Skill bodies.** Say `Use the `{slug}` skill` and let the harness fetch it. Do **not** `fs`-read a `SKILL.md` into context to "load" a skill — that is the authoring path, and it burns the budget the skill layer exists to save.

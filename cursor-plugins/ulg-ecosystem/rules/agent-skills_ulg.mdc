@@ -1,5 +1,5 @@
 ---
-description: Agent skills registry — check before any non-standard document or tool pattern the team may have solved before (PDF/image extraction, financial/legal/insurance docs, frontier dispatch, browser sessions). Resolve by canonical skill slug / agent_skill entity — do not fs-read skill bodies.
+description: Before advising on a non-standard document or tool pattern — resolve by canonical skill slug.
 alwaysApply: false
 rule_category: cortex-bus
 apply_tier: catalog

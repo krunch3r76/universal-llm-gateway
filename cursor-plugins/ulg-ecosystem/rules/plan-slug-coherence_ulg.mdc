@@ -1,5 +1,5 @@
 ---
-description: Plan slug coherence — one name binds entity / spec / phase_dir / plan / plan_phase across the plannable-work lifecycle. Load when authoring specs, creating plan or todo entities, or running /create-implementation-plan or /implement-plan.
+description: When authoring a spec, creating a plan or todo entity, or running /create-implementation-plan.
 ---
 # Plan Slug Coherence (Workspace)
 

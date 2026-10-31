@@ -1,5 +1,5 @@
 ---
-description: Project awareness — todos (Cortex entities), vision (three-doc taxonomy — MAP / essay / cognitive-platform), discoveries (tasks/discoveries/). Load when discussing priorities, next-steps, "what should we work on", todo lifecycle, or before creating/closing todo entities.
+description: When discussing priorities or next steps, or before creating or closing a todo entity.
 alwaysApply: false
 rule_category: cortex-bus
 apply_tier: command

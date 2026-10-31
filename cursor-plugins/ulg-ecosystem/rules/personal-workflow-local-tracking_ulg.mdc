@@ -1,5 +1,5 @@
 ---
-description: "Load when authoring a personal helper script, life runbook (ingest/pharmacy/bills/tax), or deciding whether a path is git-tracked — personal-life helpers and employer/matter workflows stay in ignored local trees with nested git, never on the public remote."
+description: When authoring a personal helper or life runbook, or deciding whether a path is git-tracked.
 alwaysApply: false
 rule_category: engineering
 apply_tier: required_gate

@@ -1,5 +1,5 @@
 ---
-description: Before any Cursor IDE native Task/subagent dispatch (explore, generalPurpose, shell, cursor-guide, ci-investigator, bugbot, security-review, best-of-n-runner) — not team_dispatch — open the prompt with /reasoning-posture and Use the reasoning-posture skill unless the dispatch is purely mechanical.
+description: Before any Cursor IDE native Task or subagent dispatch that is not purely mechanical.
 alwaysApply: false
 rule_category: workflow
 apply_tier: required_gate

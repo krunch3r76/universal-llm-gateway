@@ -1,5 +1,5 @@
 ---
-description: Restart posture for the cursor-sdk seat — landed is not live; arm the drain-gated restart, report the intent id, exit. Never kill a process; never force git_integration_worker. MCP/CSE window classification is a lead duty, pruned here.
+description: cursor-sdk restart posture — landed is not live; arm the drain, report the intent id, exit; never kill or force GIW.
 alwaysApply: true
 rule_category: engineering
 apply_tier: required_gate
@@ -14,64 +14,33 @@ trigger_match_terms:
 ---
 # Restart Drain — cursor-sdk seat
 
-**Seat wall.** The IDE rule is pruned from this dispatch HOME. MCP/CSE window
-classification, `cdp_ask` recovery, and continuity hops are **lead** concerns.
-Three things bind on you.
+**Seat wall.** The IDE rule is pruned here; MCP/CSE window classification, `cdp_ask` recovery, and continuity hops are **lead** concerns. Three things bind on you.
 
 ## 1. Landed ≠ live
 
-`edit(service_source) ⇒ ¬live(change)` until that service restarts. A commit is not a
-deployment. Do not report a source change as in effect, and do not verify against a
-process that predates your commit.
+`edit(service_source) ⇒ ¬live(change)` until that service restarts. A commit is not a deployment. Do not report a source change as in effect, and do not verify against a process that predates your commit.
 
-`live` and `live@<sha>` are different claims. A `live@<sha>` claim additionally
-requires a path-explicit commit before restart, equal-or-ancestor
-`code_ref_satisfied` proof, process identity movement, and dirty-path disclosure.
-Dirty-checkout restarts remain legal for **mid-arc needed restart** (never withhold
-because the tree is dirty). They are not work_complete. Report `live` plus tree
-state, never exact `live@<sha>`. This ordering binds the claim, not the restart.
+`live` and `live@<sha>` are different claims. `live@<sha>` additionally requires a path-explicit commit before restart, equal-or-ancestor `code_ref_satisfied` proof, process identity movement, and dirty-path disclosure. Dirty-checkout restarts remain legal for a **mid-arc needed restart** (never withhold because the tree is dirty) but are not work_complete — report `live` plus tree state, never exact `live@<sha>`.
 
 ## 2. Arm the restart, then exit
 
-`manage(action="sync_restart", service=…)` is **drain-gated** at a shared chokepoint:
-in-flight work runs to completion and the process is signalled only once it is idle.
-A `status=deferred, state=draining` response with a `restart_intent_id` is **success**,
-not a failure to act.
+`manage(action="sync_restart", service=…)` is **drain-gated**: in-flight work runs to completion and the process is signalled only once idle. `status=deferred, state=draining` with a `restart_intent_id` is **success**, not a failure to act.
 
 ```
 you hold the write lease ⇒ exit(now) ∧ ¬poll_in_window
 ```
 
-This is the load-bearing one. Your own dispatch **is** the in-flight work the drain is
-waiting on, so polling `wait_healthy` while you hold the lease can never converge —
-you would be waiting on yourself. Arm it, put the `restart_intent_id` in your closeout,
-and finish. The drain converges after you exit.
+Your own dispatch **is** the in-flight work the drain waits on, so polling `wait_healthy` while you hold the lease can never converge. Arm it, put the `restart_intent_id` in your closeout, finish. The drain converges after you exit.
 
 ## 3. Never kill — and never force GIW
 
-- `pkill` / `kill` / `docker stop` for lifecycle: **forbidden**. Use `manage`.
-- `force=true` on **`git_integration_worker`**: **forbidden.** A forced stop can
-  truncate a dispatch mid-commit — quite possibly your own. Arm the drain and exit.
-- No service is forced by default (K48). Busy G1 ⇒ wait for the drain. A force needs a coordinator force_reason announced to Kaywan or maestro first; manage refuses caller force over busy G1 without one (409); mcp force is allowed only when busy is life_hot only (a:39670).
+- `pkill` / `kill` / `docker stop` for lifecycle: **forbidden.** Use `manage`.
+- `force=true` on **`git_integration_worker`**: **forbidden.** A forced stop can truncate a dispatch mid-commit — quite possibly your own.
+- No service is forced by default (K48). `busy(G1) ⇒ wait(drain)`. A force needs a coordinator `force_reason` announced to Kaywan or maestro first; `manage` refuses caller force over busy G1 without one (409); mcp force is allowed only when busy is life_hot only (`a:39670`).
 - Do not skip a needed restart because the service is busy. Arm it and report.
 
 ## Closeout duty
 
-Touched service source? Say so explicitly: which service, whether a restart was armed,
-the `restart_intent_id` (WIP until the lead proves it), and claim class
-`live` | `live@sha` | `not_live` | `drain_pending`. Edit a served path after arm
-⇒ stale intent — re-arm. Claiming live requires a post-restart probe you almost
-certainly cannot run — say `landed` / `drain_pending` and let the lead verify.
+Touched service source ⇒ say which service, whether a restart was armed, the `restart_intent_id`, and the claim class `live` | `live@sha` | `not_live` | `drain_pending`. `edit(served_path) ≻ arm ⇒ stale intent ⇒ re-arm`. Claiming live requires a post-restart probe you almost certainly cannot run — say `landed` / `drain_pending` and let the lead verify.
 
-## Composes with
-
-- `interagent-posture_ulg` — closeout register
-- `presence-discipline_ulg` — evidence before done; landed vs live is exactly this
-- `commit-and-git-scope_ulg` — shared checkout posture
-
-## Work-complete finishing (last)
-
-Default: land → path-explicit commit of session/lane paths → arm recycle.
-Recycle-from-dirty-tree is exceptional, not the ordinary-live default.
-`status: complete` without quoted commit + `restart_intent_id` (or named skip)
-is invalid. Commit is not a human permission gate; do not skip it.
+**Work-complete finishing (last).** land → path-explicit commit of session/lane paths → arm recycle. `status: complete` without a quoted commit + `restart_intent_id` (or a named skip) is invalid; commit is not a human permission gate.
