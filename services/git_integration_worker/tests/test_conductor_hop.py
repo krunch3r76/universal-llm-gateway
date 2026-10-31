@@ -3729,6 +3729,39 @@ def test_row_pinned_inflight_execution_arms_harvest() -> None:
     assert rec.get("closeout_harvest_owed") is True
 
 
+def test_row_pinned_stored_harvest_without_next_admit_hops() -> None:
+    """Stored ROW_PINNED harvest flag plus an execution id continues."""
+    ledger = CursorDispatchLedger.instance()
+    dispatch_id = "pred-row-pinned-stored"
+    _admit_conductor(ledger, _req(dispatch_id=dispatch_id))
+    exec_id = "0b01b479-9a64-4c31-8e10-aaaaaaaaaaaa"
+    ledger.merge_record_json(
+        dispatch_id=dispatch_id,
+        patch={
+            "closeout_stop_tokens": ["ROW_PINNED"],
+            "closeout_body": (
+                "status: partial\nstop: ROW_PINNED\n"
+                f"execution_id: {exec_id}\n"
+            ),
+            "closeout_harvest_owed": True,
+            "closeout_turn": 4,
+        },
+    )
+    ledger.mark_terminal(dispatch_id=dispatch_id, terminal_status="completed")
+    with ledger._connect() as conn:
+        row = conn.execute(
+            "SELECT * FROM cursor_sdk_dispatches WHERE dispatch_id=?",
+            (dispatch_id,),
+        ).fetchone()
+    parent_row = {k: row[k] for k in row.keys()}
+    with patch(
+        "services.git_integration_worker.cursor_sdk_closeout.conductor_exit_reasons."
+        "read_external_gate_lane_snapshot",
+        return_value={},
+    ):
+        assert hop_owed(parent_row, closeout_tokens=frozenset({"ROW_PINNED"})) is True
+
+
 def test_row_pinned_without_execution_does_not_hop() -> None:
     ledger = CursorDispatchLedger.instance()
     dispatch_id = "pred-row-pinned-only"

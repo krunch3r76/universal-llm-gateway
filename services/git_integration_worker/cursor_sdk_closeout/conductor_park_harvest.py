@@ -15,7 +15,7 @@ from datetime import datetime
 from typing import Any
 
 import httpx
-from bus_watch.park_harvest import harvest_still_owed, mission_open
+from bus_watch.park_harvest import mission_open
 from claude_bundles.conductor_stop import EXIT_PERSIST_STOPS
 from transport_utils import DEFAULT_AGENT_BUS_URL, make_sync_client
 from universal_logging import get_logger
@@ -998,7 +998,12 @@ def park_harvest_continue_owed(
     if _closeout_declares_done(row, tokens):
         return False
     body_park = _body_grades_park_harvest_owed(row)
-    if "PARKED_TRANSPORT" not in tokens and not body_park:
+    from services.git_integration_worker.cursor_sdk_closeout.conductor_exit_reasons import (
+        row_pinned_stored_harvest,
+    )
+
+    pinned_harvest = row_pinned_stored_harvest(row)
+    if "PARKED_TRANSPORT" not in tokens and not body_park and not pinned_harvest:
         return False
     rec = _record_data(row)
     if not harvest_owed_at_terminal(row):
@@ -1039,7 +1044,7 @@ def park_harvest_continue_owed(
         return False
     guard = _park_harvest_guard_text(row, rec)
     harvest_token = _park_harvest_target_token(guard)
-    if harvest_token is None:
+    if harvest_token is None and not pinned_harvest:
         from services.git_integration_worker.cursor_sdk_closeout.conductor_hop import (
             _terminal_nested_producers_only,
         )
@@ -1048,8 +1053,19 @@ def park_harvest_continue_owed(
             _maybe_record_park_harvest_continue_refused(
                 row, predicate="no_harvest_token", harvest_token=None
             )
-        return False
-    matched, refusal_predicate = _evaluate_harvest_reply_execution(row, harvest_token)
+            return False
+        # Nest children are terminal and the closeout named no NEXT_ADMIT
+        # harvest id. That is the continue. A later false return still stamps
+        # a predicate (live nest, mission, budget).
+        matched, refusal_predicate = True, None
+    elif harvest_token is None and pinned_harvest:
+        # ROW_PINNED prose named the execution id. The reply, not a
+        # NEXT_ADMIT harvest line, is the continue signal.
+        matched, refusal_predicate = True, None
+    else:
+        matched, refusal_predicate = _evaluate_harvest_reply_execution(
+            row, harvest_token
+        )
     if not matched:
         _maybe_record_park_harvest_continue_refused(
             row,
@@ -1060,6 +1076,9 @@ def park_harvest_continue_owed(
     if reply_fn is not None and not reply_fn(
         thread_id, closeout_turn, "web-anthropic"
     ):
+        _maybe_record_park_harvest_continue_refused(
+            row, predicate="reply_absent", harvest_token=harvest_token
+        )
         return False
     from services.git_integration_worker.cursor_sdk_closeout.conductor_hop_budget import (
         evaluate_hop_budget,

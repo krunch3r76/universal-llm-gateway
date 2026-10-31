@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 import time
 from typing import Any
 
@@ -89,9 +90,48 @@ def read_external_gate_lane_snapshot() -> dict[str, Any]:
     return read_cdp_lane_snapshot_brief()
 
 
-def closeout_harvest_owed_from_row(row: dict[str, Any]) -> bool:
-    """True when the closeout body or stamp still owes a CDP harvest."""
+# Execution id in closeout prose. A date or a bare ``harvest`` word does not match.
+_PROSE_EXECUTION_ID_RE = re.compile(
+    r"(?i)(?<![0-9a-f])([0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12})(?![0-9a-f])"
+)
+
+
+def prose_names_execution_id(body: str) -> bool:
+    """True when closeout prose contains an execution-id-shaped token."""
+    return _PROSE_EXECUTION_ID_RE.search(body or "") is not None
+
+
+def row_pinned_stored_harvest(row: dict[str, Any]) -> bool:
+    """ROW_PINNED row whose stored harvest flag names an execution id.
+
+    ``harvest_still_owed`` only sees ``NEXT_ADMIT: harvest``. A pinned reply
+    can name the execution id in prose and store ``closeout_harvest_owed``
+    without that line. A pin with no execution id does not continue.
+    """
     rec = _record_data_from_row(row)
+    raw = rec.get("closeout_stop_tokens")
+    tokens = (
+        frozenset(str(token).upper() for token in raw)
+        if isinstance(raw, list)
+        else frozenset()
+    )
+    if "ROW_PINNED" not in tokens:
+        return False
+    if rec.get("closeout_harvest_owed") is not True:
+        return False
+    return prose_names_execution_id(str(rec.get("closeout_body") or ""))
+
+
+def closeout_harvest_owed_from_row(row: dict[str, Any]) -> bool:
+    """True when the closeout body or stamp still owes a CDP harvest.
+
+    A body recomputes ``harvest_still_owed`` except for a stored ROW_PINNED
+    harvest flag that names an execution id. That flag is the pin; prose
+    without ``NEXT_ADMIT: harvest`` must not clear it.
+    """
+    rec = _record_data_from_row(row)
+    if row_pinned_stored_harvest(row):
+        return True
     closeout_body = str(rec.get("closeout_body") or "").strip()
     if closeout_body:
         from bus_watch.park_harvest import harvest_still_owed

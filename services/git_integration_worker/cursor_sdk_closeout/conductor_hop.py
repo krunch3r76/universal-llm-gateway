@@ -494,17 +494,25 @@ def _parked_transport_nested_lift(
     closeout_tokens: frozenset[str],
     head: tuple[str, bool] | None = None,
 ) -> bool:
-    """Shape A: terminal nested harvest head lifts ``PARKED_TRANSPORT`` hop."""
-    if head is None:
-        head = _nested_harvest_head(row)
-    if head is None or not head[1]:
-        return False
+    """Shape A: a terminal nest lifts ``PARKED_TRANSPORT``.
+
+    A parsed ``NEXT_ADMIT: harvest`` head that is terminal lifts. So does a
+    parent whose nest children are all terminal when the closeout names no
+    harvest token (specimen b5b684aec63d). A live child, or a harvest head
+    that is still running, does not lift.
+    """
     if not exit_persist_hold_is_parked_transport_only(closeout_tokens):
         return False
     dispatch_id = str(row.get("dispatch_id") or "")
     if not dispatch_id:
         return False
-    return not conductor_has_live_nested(dispatch_id=dispatch_id)
+    if conductor_has_live_nested(dispatch_id=dispatch_id):
+        return False
+    if head is None:
+        head = _nested_harvest_head(row)
+    if head is not None:
+        return head[1]
+    return _terminal_nested_producers_only(dispatch_id)
 
 
 def _registry_rows_for_exact_execution_id(
@@ -1172,12 +1180,17 @@ def hop_owed(
         return False
     tokens = closeout_tokens or _closeout_tokens_from_row(row)
     nested_lift = _parked_transport_nested_lift(row, closeout_tokens=tokens)
+    from services.git_integration_worker.cursor_sdk_closeout.conductor_exit_reasons import (
+        row_pinned_stored_harvest,
+    )
+
+    pinned_harvest = row_pinned_stored_harvest(row)
     if "DONE" in tokens:
         return False
-    if tokens & EXIT_PERSIST_STOPS and not nested_lift:
+    if tokens & EXIT_PERSIST_STOPS and not nested_lift and not pinned_harvest:
         return False
     if consult_pending_blocks_progression(_closeout_body_from_row(row)):
-        if not nested_lift:
+        if not nested_lift and not pinned_harvest:
             return False
     thread_id = str(row.get("thread_id") or "")
     dispatch_id = str(row.get("dispatch_id") or "")
@@ -1192,8 +1205,11 @@ def hop_owed(
     rec = _record_data(row)
     nested_head = _nested_harvest_head(row, rec)
     nested_producer_terminal = nested_head is not None and nested_head[1]
-    if not nested_producer_terminal and not mission_open_for_row(
-        row, closeout_tokens=tokens
+    if (
+        not nested_producer_terminal
+        and not nested_lift
+        and not pinned_harvest
+        and not mission_open_for_row(row, closeout_tokens=tokens)
     ):
         return False
     if not budget_ok_for_hop(row, closeout_tokens=tokens):
@@ -1201,7 +1217,12 @@ def hop_owed(
     ext_verdict, _ext_gate = external_gate_hop_verdict(row)
     if ext_verdict == "live":
         return False
-    if ext_verdict == "indeterminate_closed" and not ignore_probe_indeterminate:
+    if (
+        ext_verdict == "indeterminate_closed"
+        and not ignore_probe_indeterminate
+        and not nested_lift
+        and not pinned_harvest
+    ):
         return False
     hop_fields = hop_fields_from_record_json(str(row.get("record_json") or ""))
     if hop_fields.get("hop_successor"):
@@ -1538,6 +1559,22 @@ def mint_hop_successor_dispatch_id() -> str:
     admitted under a UUID still go through the ledger check.
     """
     return f"{uuid.uuid4().hex[:12]}-{uuid.uuid4().hex[:8]}"
+
+
+def _admit_detail_retryable_once(detail: dict[str, Any]) -> bool:
+    """True for one in-pass retry after a 429 or 5xx admit.
+
+    ``stop_not_claimed`` is a slot conflict, not a transport retry. A later
+    success in the same pass must not post a third time.
+    """
+    if str(detail.get("reason") or "") == "stop_not_claimed":
+        return False
+    if detail.get("retryable") is True:
+        return True
+    status = detail.get("status_code")
+    if isinstance(status, int) and (status == 429 or status >= 500):
+        return True
+    return False
 
 
 async def post_conductor_hop_team_dispatch(
@@ -1878,6 +1915,9 @@ async def maybe_fire_conductor_hop_reactor(
     hop_seq = int(body.get("hop_seq") or 1)
     hop_reason = str(body.get("hop_reason") or "planned")
     ok, detail = await post_conductor_hop_team_dispatch(body)
+    if not ok and _admit_detail_retryable_once(detail):
+        # One retry in this terminal pass. A 200 does not post again.
+        ok, detail = await post_conductor_hop_team_dispatch(body)
     record_json = str((_load_row(dispatch_id) or row).get("record_json") or "")
     if ok:
         successor = str(detail.get("dispatch_id") or "") or str(

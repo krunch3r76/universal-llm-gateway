@@ -879,10 +879,6 @@ def _arm_terminal_parent_null_park(
 
 @pytest.mark.asyncio
 async def test_nest_under_child_terminal_fires_hop_when_park_child_null() -> None:
-    from services.git_integration_worker.cursor_sdk_closeout.conductor_hop import (
-        maybe_wake_conductor_on_nest_child_terminal,
-    )
-
     ledger = CursorDispatchLedger.instance()
     parent_id = "parent-null-park-b"
     nest_id = "nest-null-park-b"
@@ -893,20 +889,39 @@ async def test_nest_under_child_terminal_fires_hop_when_park_child_null() -> Non
         nest_execution_id=_NEST_EXEC,
         closeout=_miss_closeout(_NEST_EXEC),
     )
-    ledger.mark_terminal(dispatch_id=nest_id, terminal_status="completed")
-    assert (
-        ledger.nest_under_parent_for_child(child_dispatch_id=nest_id) == parent_id
-    )
-    import services.git_integration_worker.cursor_sdk_closeout.conductor_hop as hop_mod
+    post = AsyncMock(return_value=(True, {"dispatch_id": "succ-null-park"}))
+    with ExitStack() as stack:
+        _promote_contexts(stack, post)
+        await _promote_nest(nest_id)
+    assert post.await_count == 1
+    assert post.await_args.args[0]["hop_from"] == parent_id
 
-    reactor = AsyncMock()
-    with patch.object(hop_mod, "maybe_fire_conductor_hop_reactor", reactor):
-        await maybe_wake_conductor_on_nest_child_terminal(
-            child_dispatch_id=nest_id
-        )
-    reactor.assert_awaited_once_with(
-        dispatch_id=parent_id, producer_completion_wake=True
+
+@pytest.mark.asyncio
+async def test_parked_transport_no_harvest_token_nest_terminal_posts_once() -> None:
+    """Specimen b5b684aec63d: PARKED_TRANSPORT, no NEXT_ADMIT, null park child."""
+    ledger = CursorDispatchLedger.instance()
+    parent_id = "parent-park-no-token"
+    nest_id = "nest-park-no-token"
+    _arm_terminal_parent_null_park(
+        ledger,
+        parent_id=parent_id,
+        nest_id=nest_id,
+        nest_execution_id=_NEST_EXEC,
+        closeout="status: partial\nstop: PARKED_TRANSPORT\n",
+        extra_patch={
+            "closeout_stop_tokens": ["PARKED_TRANSPORT"],
+            "closeout_turn": 4,
+            "closeout_harvest_owed": True,
+            "hop_park_harvest_fired_at": 1.0,
+        },
     )
+    post = AsyncMock(return_value=(True, {"dispatch_id": "succ-park-no-token"}))
+    with ExitStack() as stack:
+        _promote_contexts(stack, post)
+        await _promote_nest(nest_id)
+    assert post.await_count == 1
+    assert post.await_args.args[0]["hop_from"] == parent_id
 
 
 @pytest.mark.asyncio
@@ -963,10 +978,6 @@ async def test_done_token_does_not_hop_on_nest_terminal() -> None:
 
 @pytest.mark.asyncio
 async def test_retryable_503_retried_once_on_child_terminal() -> None:
-    from services.git_integration_worker.cursor_sdk_closeout.conductor_hop import (
-        maybe_wake_conductor_on_nest_child_terminal,
-    )
-
     ledger = CursorDispatchLedger.instance()
     parent_id = "parent-503-b"
     nest_id = "nest-503-b"
@@ -985,14 +996,29 @@ async def test_retryable_503_retried_once_on_child_terminal() -> None:
             }
         },
     )
-    ledger.mark_terminal(dispatch_id=nest_id, terminal_status="completed")
-    import services.git_integration_worker.cursor_sdk_closeout.conductor_hop as hop_mod
+    calls = {"n": 0}
 
-    reactor = AsyncMock()
-    with patch.object(hop_mod, "maybe_fire_conductor_hop_reactor", reactor):
-        await maybe_wake_conductor_on_nest_child_terminal(
-            child_dispatch_id=nest_id
+    async def _post(_body, **_kwargs):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            return False, {
+                "status_code": 503,
+                "error": "GIT_WORKER_DRAINING",
+                "retryable": True,
+            }
+        return True, {"dispatch_id": "succ-503"}
+
+    post = AsyncMock(side_effect=_post)
+    with ExitStack() as stack:
+        _promote_contexts(stack, post)
+        await _promote_nest(nest_id)
+    assert calls["n"] == 2
+    assert post.await_count == 2
+    with ledger._connect() as conn:
+        rec = json.loads(
+            conn.execute(
+                "SELECT record_json FROM cursor_sdk_dispatches WHERE dispatch_id=?",
+                (parent_id,),
+            ).fetchone()[0]
         )
-    reactor.assert_awaited_once_with(
-        dispatch_id=parent_id, producer_completion_wake=True
-    )
+    assert rec.get("hop_successor") == "succ-503"
