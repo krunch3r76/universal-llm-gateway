@@ -1,4 +1,9 @@
-"""Budget envelope, bus client, and liaison policy gears for digest assembly."""
+"""Budget envelope, bus client, and liaison policy gears for digest assembly.
+
+Liaison tick and spawn-on-wake call ``effective_policy`` to merge these defaults
+with the house gear preset. The judging successor default is cursor/grok-4.7
+at effort high and non-fast. Row-bind and critic stay on cursor/composer-2.5.
+"""
 
 from __future__ import annotations
 
@@ -28,15 +33,20 @@ _IDE_BUDGET_RATIO_THRESHOLD = 0.55
 _IDE_TOOL_CALLS_THRESHOLD = 35
 
 # Gear-3 preset successors allowed to spawn without an operator --set override.
-# 10534 blocked implicit *premium* models. Grok 4.7 xhigh / non-fast is the
-# Impresario driver (f44e71b1); Composer stays off this list until a mechanical hop exists.
-GEAR3_SPAWNABLE_PRESET_SUCCESSORS: frozenset[str] = frozenset({"cursor/composer-2.5"})
+# 10534 blocks implicit premium models: anything outside this set. The judging
+# default is cursor/grok-4.7 at effort high, non-fast. cursor/composer-2.5 stays
+# allowlisted so a stored gear-preset that still names Composer keeps spawning.
+# Composer is not the judging successor.
+GEAR3_SPAWNABLE_PRESET_SUCCESSORS: frozenset[str] = frozenset(
+    {"cursor/grok-4.7", "cursor/composer-2.5"}
+)
 
 POLICY_DEFAULTS: dict[str, Any] = {
     "gear": "1-fable-mvp",
-    # House successor still judges (STAY / classify / dispatch). xhigh, non-fast.
-    "successor_model": "cursor/composer-2.5",
-    "successor_model_knobs": {"effort": "xhigh", "fast": "false"},
+    # Judging successor (STAY / classify / dispatch). Grok 4.7 high, non-fast.
+    # Composer is not the judging successor; it stays on row-bind and critic.
+    "successor_model": "cursor/grok-4.7",
+    "successor_model_knobs": {"effort": "high", "fast": "false"},
     "row_bind_model": "cursor/composer-2.5",
     "row_bind_model_knobs": {"effort": "high", "fast": "false"},
     "successor_cost_intent": None,
@@ -80,17 +90,19 @@ POLICY_DEFAULTS: dict[str, Any] = {
 RETIRED_GEARS: dict[str, str] = {
     "2-opus-hops": (
         "gear 2-opus-hops successor cursor/claude-opus-5-5 is not in use; "
-        "pick 3-wake-on-attention (cursor/composer-2.5)"
+        "pick 3-wake-on-attention (cursor/grok-4.7 high; "
+        "Composer is not the judging successor)"
     ),
 }
 
 GEAR_PRESETS: dict[str, dict[str, Any]] = {
     "1-fable-mvp": {},
     "3-wake-on-attention": {
-        # Judgment hop. Premium presets stay blocked (10534). Composer is not
-        # allowlisted until a mechanical hop exists.
-        "successor_model": "cursor/composer-2.5",
-        "successor_model_knobs": {"effort": "xhigh", "fast": "false"},
+        # Judgment hop. Successor is cursor/grok-4.7 high, non-fast. Composer
+        # is not the judging successor. Premium models outside
+        # GEAR3_SPAWNABLE_PRESET_SUCCESSORS stay blocked (10534).
+        "successor_model": "cursor/grok-4.7",
+        "successor_model_knobs": {"effort": "high", "fast": "false"},
         "successor_cost_intent": None,
         "wake_on_attention_only": True,
         "poll_seconds": 120,
@@ -99,8 +111,8 @@ GEAR_PRESETS: dict[str, dict[str, Any]] = {
     },
     "4-cdp-liaison": {
         "successor_seat": "cursor-sdk",
-        "successor_model": "cursor/composer-2.5",
-        "successor_model_knobs": {"effort": "xhigh", "fast": "false"},
+        "successor_model": "cursor/grok-4.7",
+        "successor_model_knobs": {"effort": "high", "fast": "false"},
         "successor_cost_intent": None,
         "successor_job": "conductor",
         "ready": False,

@@ -362,8 +362,8 @@ def test_live_transcript_probe_allows_idle_forfeit(tmp_path: Path) -> None:
 def test_policy_defaults_grok_successor_and_row_bind() -> None:
     policy = effective_policy({"policy": {}})
     assert policy["successor_model"] == POLICY_DEFAULTS["successor_model"]
-    assert policy["successor_model"] == "cursor/composer-2.5"
-    assert policy["successor_model_knobs"] == {"effort": "xhigh", "fast": "false"}
+    assert policy["successor_model"] == "cursor/grok-4.7"
+    assert policy["successor_model_knobs"] == {"effort": "high", "fast": "false"}
     assert policy["critic_model"] == "cursor/composer-2.5"
     assert policy["critic_model_knobs"] == {"effort": "high"}
     assert policy["hop_model_query"] == "Grok 4.7"
@@ -375,11 +375,11 @@ def test_policy_defaults_grok_successor_and_row_bind() -> None:
 
 def test_gear_three_presets_grok_successor() -> None:
     assert (
-        GEAR_PRESETS["3-wake-on-attention"]["successor_model"] == "cursor/composer-2.5"
+        GEAR_PRESETS["3-wake-on-attention"]["successor_model"] == "cursor/grok-4.7"
     )
     preset_only = effective_policy({"policy": {"gear": "3-wake-on-attention"}})
-    assert preset_only["successor_model"] == "cursor/composer-2.5"
-    assert preset_only["successor_model_knobs"] == {"effort": "xhigh", "fast": "false"}
+    assert preset_only["successor_model"] == "cursor/grok-4.7"
+    assert preset_only["successor_model_knobs"] == {"effort": "high", "fast": "false"}
     assert preset_only["successor_model_source"] == "gear_preset"
     bound = effective_policy(
         {
@@ -391,6 +391,20 @@ def test_gear_three_presets_grok_successor() -> None:
     )
     assert bound["successor_model_source"] == "override"
     assert bound["ide_window_tokens"] == 256_000
+
+
+def test_gear_four_presets_grok_successor() -> None:
+    assert GEAR_PRESETS["4-cdp-liaison"]["successor_model"] == "cursor/grok-4.7"
+    assert GEAR_PRESETS["4-cdp-liaison"]["successor_model_knobs"] == {
+        "effort": "high",
+        "fast": "false",
+    }
+    preset = effective_policy({"policy": {"gear": "4-cdp-liaison"}})
+    assert preset["successor_model"] == "cursor/grok-4.7"
+    assert preset["successor_model_knobs"] == {"effort": "high", "fast": "false"}
+    assert preset["successor_model_source"] == "gear_preset"
+    assert preset["row_bind_model"] == "cursor/composer-2.5"
+    assert preset["critic_model"] == "cursor/composer-2.5"
 
 
 def test_tip_cp_needle_requires_resume_root_and_digit_boundary(tmp_path: Path) -> None:

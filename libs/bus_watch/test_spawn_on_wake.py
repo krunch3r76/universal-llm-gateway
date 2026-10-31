@@ -64,14 +64,19 @@ def test_predicate_allows_grok_gear_preset() -> None:
     assert ev["clauses"]["successor_model_bound"] is True
 
 
-def test_predicate_refuses_composer_gear_preset() -> None:
-    """Composer is not a preset successor until a mechanical hop exists."""
+def test_predicate_allows_stored_composer_gear_preset() -> None:
+    """A stored gear-preset that still names Composer stays spawnable.
+
+    Composer is not the judging default. It remains on
+    GEAR3_SPAWNABLE_PRESET_SUCCESSORS so an old preset source does not
+    fail closed the way an implicit premium model does (10534).
+    """
     digest = _digest(attention=[{"id": "1", "unread": 1}])
     digest["policy"]["successor_model"] = "cursor/composer-2.5"
     digest["policy"]["successor_model_source"] = "gear_preset"
     digest["policy"]["ready"] = True
     ev = evaluate_spawn_predicate(digest, {}, lock={})
-    assert ev["clauses"]["successor_model_bound"] is False
+    assert ev["clauses"]["successor_model_bound"] is True
 
 
 def test_predicate_refuses_unset_successor_model() -> None:
