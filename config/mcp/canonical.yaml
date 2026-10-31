@@ -30,6 +30,7 @@ domains:
 - operator_request
 - cse_session
 - chat_session
+- web_tab_read
 - recycle_giw
 - life_dispatch
 tools:
@@ -5594,6 +5595,92 @@ tools:
   skill_uri: agent_skill:web-automation-discipline
   cache_priority: on_demand
   introduced: '2026-08-25'
+  endpoint_visibility:
+  - life
+  - code
+- canonical_name: web_tab_read_status
+  domain: web_tab_read
+  operation: status
+  dispatcher_call_shape:
+    tool: web_tab_read
+    dispatch_key: op
+    dispatch_value: status
+  flat_call_shape:
+    tool: web_tab_read_status
+    substrate_qualified: user-vortex__web_tab_read_status
+  fol_descriptor: "Read-only web-tab status — connector vs actuation planes with value/as_of/source/scope/epoch. Relays to pipeline web-tab-status; no bind or navigation.\n"
+  json_schema:
+    type: object
+    properties:
+      op:
+        type: string
+        enum:
+        - status
+      house_id:
+        type: string
+      agent:
+        type: string
+      target_id:
+        type: string
+      cdp_url:
+        type: string
+      surface:
+        type: string
+      connector_alive:
+        type: boolean
+      last_attested_turn:
+        type: integer
+      attestation_source:
+        type: string
+    required:
+    - op
+  mandate_safety: read_only
+  seat_visibility:
+  - mcp
+  - mcp_claude
+  skill_uri: agent_skill:web-automation-discipline
+  cache_priority: on_demand
+  introduced: '2026-10-31'
+  endpoint_visibility:
+  - life
+  - code
+- canonical_name: web_tab_read_probe
+  domain: web_tab_read
+  operation: probe
+  dispatcher_call_shape:
+    tool: web_tab_read
+    dispatch_key: op
+    dispatch_value: probe
+  flat_call_shape:
+    tool: web_tab_read_probe
+    substrate_qualified: user-vortex__web_tab_read_probe
+  fol_descriptor: "Read-only target-scoped CDP probe — never goto/click/repair. Relays to pipeline web-tab-probe.\n"
+  json_schema:
+    type: object
+    properties:
+      op:
+        type: string
+        enum:
+        - probe
+      house_id:
+        type: string
+      agent:
+        type: string
+      target_id:
+        type: string
+      cdp_url:
+        type: string
+      surface:
+        type: string
+    required:
+    - op
+  mandate_safety: read_only
+  seat_visibility:
+  - mcp
+  - mcp_claude
+  skill_uri: agent_skill:web-automation-discipline
+  cache_priority: on_demand
+  introduced: '2026-10-31'
   endpoint_visibility:
   - life
   - code

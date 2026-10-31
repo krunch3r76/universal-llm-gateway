@@ -55,3 +55,5 @@ categories:
     description: Host-bound operator jobs (bounded registry; operator-only)
   writing:
     description: writing
+  web_tab:
+    description: Web-tab observation and actuation (status, probe, bind, …)

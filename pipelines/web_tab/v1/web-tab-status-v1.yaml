@@ -1,0 +1,15 @@
+schema_version: 6
+id: web-tab-status
+version: "1.0"
+type: web_tab
+category: web_tab
+description: >
+  Read-only web-tab status — connector and actuation planes with qualified scalars.
+output: report
+
+options:
+  timeout_seconds: 45
+
+steps:
+  - name: report
+    type: web_tab_status_v1
