@@ -39,9 +39,9 @@ CURSOR_CHECK_REVIEW_MODELS = frozenset(
         "cursor/gpt-5.6-terra",
         "cursor/gpt-5.6-sol",
         "cursor/gpt-5.6-luna",
-        "cursor/composer-2.5",
     }
 )
+_COMPOSER_REVIEW_MODEL = "cursor/composer-2.5"
 MECHANICAL_CURSOR_MODELS = frozenset(
     {"cursor/gemini-3.5-flash", "cursor/gemini-3.6-flash"}
 )
@@ -349,6 +349,16 @@ def evaluate_check_review_admission(
             )
 
     if canonical in CHECK_REVIEW_API_ROLES and model:
+        if model.strip().lower() == _COMPOSER_REVIEW_MODEL:
+            return CheckReviewAdmissionReject(
+                field="model",
+                reason=(
+                    f"{model!r} is barred as a standing check/review pin; "
+                    "use anthropic/* for omit-model review or an explicit "
+                    "second-pool cursor id"
+                ),
+                code="profile_mismatch",
+            )
         if (
             ModelId.parse(model).backend_type == "cursor_sdk"
             and api_role_with_cursor_on_api_profile

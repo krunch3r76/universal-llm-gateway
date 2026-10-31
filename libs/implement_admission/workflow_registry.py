@@ -14,6 +14,7 @@ from effort_vocabulary import WIRE_LADDER
 from job_vocab import CURSOR_AUTO_ADMITTED_JOBS, GENERATE_ADMITTED_JOBS
 from model_id import ModelId
 
+from implement_admission.check_review_substrate import CHECK_REVIEW_API_ROLES
 from implement_admission.impresario_policy import impresario_registry_errors
 from implement_admission.routing import default_policy_path, load_route_policy
 
@@ -108,6 +109,7 @@ def _valid_seats(policy: dict[str, Any]) -> frozenset[str]:
         for entries in routes.values():
             if isinstance(entries, dict):
                 seats.update(str(k) for k in entries)
+    seats.update(CHECK_REVIEW_API_ROLES)
     return frozenset(seats)
 
 
@@ -156,7 +158,13 @@ def registry_errors(policy: dict[str, Any]) -> list[str]:
             errors.append(f"workflows.{slug}.model={model!r} invalid: {exc}")
             continue
 
-        if seat.strip() == "cursor-sdk" and parsed.backend_type == "cursor_sdk":
+        if slug == CHECK_REVIEW_WORKFLOW and parsed.backend_type == "cloud_api":
+            if seat.strip() not in CHECK_REVIEW_API_ROLES:
+                errors.append(
+                    f"workflows.{slug} with cloud_api model requires seat in "
+                    f"{sorted(CHECK_REVIEW_API_ROLES)!r}, got {seat!r}"
+                )
+        elif seat.strip() == "cursor-sdk" and parsed.backend_type == "cursor_sdk":
             try:
                 bare = canonical_cursor_bare_id(model.strip())
             except ValueError as exc:

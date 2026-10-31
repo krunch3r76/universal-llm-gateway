@@ -30,7 +30,7 @@ def test_live_file_conformance() -> None:
 
 
 def test_load_auto_judgment_default_model_live() -> None:
-    assert load_auto_judgment_default_model(load_route_policy()) == "cursor/composer-2.5"
+    assert load_auto_judgment_default_model(load_route_policy()) == "cursor/grok-4.7"
 
 
 def test_assert_workflow_registry_boot_conformance_passes() -> None:

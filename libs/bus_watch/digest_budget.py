@@ -2,7 +2,8 @@
 
 Liaison tick and spawn-on-wake call ``effective_policy`` to merge these defaults
 with the house gear preset. The judging successor default is cursor/grok-4.7
-at effort high and non-fast. Row-bind and critic stay on cursor/composer-2.5.
+at effort high and non-fast. Row-bind uses the same grok-4.7 high non-fast
+profile; Pattern A critic defaults to anthropic/claude-sonnet-5-5 at effort high.
 """
 
 from __future__ import annotations
@@ -44,10 +45,10 @@ GEAR3_SPAWNABLE_PRESET_SUCCESSORS: frozenset[str] = frozenset(
 POLICY_DEFAULTS: dict[str, Any] = {
     "gear": "1-fable-mvp",
     # Judging successor (STAY / classify / dispatch). Grok 4.7 high, non-fast.
-    # Composer is not the judging successor; it stays on row-bind and critic.
+    # Row-bind uses the same grok profile; critic is anthropic sonnet high.
     "successor_model": "cursor/grok-4.7",
     "successor_model_knobs": {"effort": "high", "fast": "false"},
-    "row_bind_model": "cursor/composer-2.5",
+    "row_bind_model": "cursor/grok-4.7",
     "row_bind_model_knobs": {"effort": "high", "fast": "false"},
     "successor_cost_intent": None,
     "max_ticks_per_hop": 5,
@@ -76,7 +77,7 @@ POLICY_DEFAULTS: dict[str, Any] = {
     # Closed-park re-admits per row. Gear presets do not override this.
     "max_readmits": 2,
     # Pattern A critic when cdp/opus-5.5 is paused (liaison policy key: critic_model).
-    "critic_model": "cursor/composer-2.5",
+    "critic_model": "anthropic/claude-sonnet-5-5",
     "critic_model_knobs": {"effort": "high"},
     "hop_model_query": "Grok 4.7",
     # Glass createAgent: extra-high (xhigh) and fast. Per-house tick overrides merge on top.

@@ -144,17 +144,17 @@ workflows:
     model: cursor/composer-2.5
     jobs: [investigate, recon, seed]
   auto_judgment:
-    # Judgment omit-model defaults to composer-2.5 for cursor-sdk conductor
-    # and judgment-class jobs. Effort for these jobs is contract_effort
-    # (conductor low; answer/ask/confer/verify/execute/propagate high).
+    # Judgment omit-model defaults to grok-4.7 for cursor-sdk judgment-class
+    # jobs. Effort for these jobs is contract_effort (conductor low;
+    # answer/ask/confer/verify/execute/propagate high).
     seat: cursor-sdk
-    model: cursor/composer-2.5
+    model: cursor/grok-4.7
     jobs: [answer, confer, ask, verify, execute, propagate, sketch, none, conductor]
   check_review:
-    # Reviewer omit-model follows workflows.check_review (composer-2.5).
-    # Second-pool ids (muse, fable, terra, sol, luna) stay explicit pins.
-    seat: cursor-sdk
-    model: cursor/composer-2.5
+    # Reviewer omit-model follows workflows.check_review (anthropic sonnet).
+    # Second-pool cursor ids (muse, fable, terra, sol, luna) stay explicit pins.
+    seat: reviewer
+    model: anthropic/claude-sonnet-5-5
     contracts: []
 
 # Per-model policy keyed by bare cursor id (CURSOR_MODEL_CAPABILITIES key).

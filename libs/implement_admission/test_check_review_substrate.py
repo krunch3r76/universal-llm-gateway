@@ -12,12 +12,11 @@ from implement_admission.routing import load_route_policy
 from implement_admission.workflow_registry import verify_workflow_registry_conformance
 
 
-def test_omit_model_resolves_reviewer_to_terra() -> None:
+def test_omit_model_resolves_reviewer_to_standing_default() -> None:
     default_model = load_check_review_default_model(load_route_policy())
     resolution = resolve_check_review_model("reviewer", None)
     assert resolution.resolved_model == default_model
-    # decision:code-review-panel-cursor-substrate — omit model lands on cursor-sdk, not API.
-    assert resolution.substrate == "cursor-sdk"
+    assert resolution.substrate == "api"
 
 
 def test_cursor_luna_resolves_sdk_substrate() -> None:
@@ -54,6 +53,16 @@ def test_synthesizer_with_cursor_rejects_substrate_unsupported() -> None:
     )
     assert isinstance(verdict, CheckReviewAdmissionReject)
     assert verdict.code == "substrate_unsupported_for_role"
+
+
+def test_reviewer_composer_pin_is_refused() -> None:
+    verdict = evaluate_check_review_admission(
+        "reviewer",
+        "cursor/composer-2.5",
+        api_role_with_cursor_on_api_profile=True,
+    )
+    assert isinstance(verdict, CheckReviewAdmissionReject)
+    assert verdict.code == "profile_mismatch"
 
 
 def test_workflow_registry_conformance_passes_on_bound_policy() -> None:
