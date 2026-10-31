@@ -1180,17 +1180,12 @@ def hop_owed(
         return False
     tokens = closeout_tokens or _closeout_tokens_from_row(row)
     nested_lift = _parked_transport_nested_lift(row, closeout_tokens=tokens)
-    from services.git_integration_worker.cursor_sdk_closeout.conductor_exit_reasons import (
-        row_pinned_stored_harvest,
-    )
-
-    pinned_harvest = row_pinned_stored_harvest(row)
     if "DONE" in tokens:
         return False
-    if tokens & EXIT_PERSIST_STOPS and not nested_lift and not pinned_harvest:
+    if tokens & EXIT_PERSIST_STOPS and not nested_lift:
         return False
     if consult_pending_blocks_progression(_closeout_body_from_row(row)):
-        if not nested_lift and not pinned_harvest:
+        if not nested_lift:
             return False
     thread_id = str(row.get("thread_id") or "")
     dispatch_id = str(row.get("dispatch_id") or "")
@@ -1208,7 +1203,6 @@ def hop_owed(
     if (
         not nested_producer_terminal
         and not nested_lift
-        and not pinned_harvest
         and not mission_open_for_row(row, closeout_tokens=tokens)
     ):
         return False
@@ -1221,7 +1215,6 @@ def hop_owed(
         ext_verdict == "indeterminate_closed"
         and not ignore_probe_indeterminate
         and not nested_lift
-        and not pinned_harvest
     ):
         return False
     hop_fields = hop_fields_from_record_json(str(row.get("record_json") or ""))
@@ -1469,6 +1462,12 @@ def _merge_conductor_closeout_hop_authority(
         guard_row = row
         guard = _next_admit_guard_text(guard_row, data)
         pinned_token = _harvest_target_token(guard)
+        if pinned_token is None:
+            from services.git_integration_worker.cursor_sdk_closeout.conductor_exit_reasons import (
+                prose_harvest_execution_id,
+            )
+
+            pinned_token = prose_harvest_execution_id(closeout_body)
         if pinned_token is not None and not _named_target_is_terminal(pinned_token):
             data["closeout_harvest_owed"] = True
     next_admit = next_admit_in_closeout(closeout_body)
