@@ -260,6 +260,13 @@ GIW Auto lane `resolve_desired_model(auto)` for judgment contracts).
 | verify | high |
 <!-- workflow-registry:v1:end -->
 
+**`check_review` wire (`team_dispatch` `op=generate`):** `model=` `impresario.critic`
+(`anthropic/claude-sonnet-5-5` from `config/routing/route_policy.yaml`); `contract=code-review`
+(or `check-review` / `delivery-review`); `dispatch_thread_id`; one of
+`prompt`|`packet_path`|`sidecar_ref`; `reasoning_effort=high`. Omit `purpose` and **`role`**
+— `role=reviewer` → 422 `job_unknown`. The registry **seat** column is omit-model routing,
+not a `team_dispatch` `role=` argument.
+
 ## Non-primary model gate — discriminator
 
 | Term | Meaning |
@@ -354,13 +361,14 @@ Rule: `anthropic-dispatch-authorization_ulg.mdc`. Standing critic is `impresario
 
 ### Skeptic / reviewer substrate matrix (codework, R2)
 
-Judgment slots are **CDP-default**; mechanical code-lane check is `cursor/grok-4.7` (`workflows.check_review.model`). Composer is never a checker.
+Judgment slots are **CDP-default**; mechanical code-lane check is
+`anthropic/claude-sonnet-5-5` (`impresario.critic`; `workflows.check_review.model`). Composer is never a checker.
 
 | Slot | CDP (opus/fable) | cursor-sdk `cursor/grok-4.7` | cursor-sdk Composer | panel_dispatch | API skeptic (Grok) |
 |---|---|---|---|---|---|
 | SKEPTIC@BIND (judgment on spec/forks) | eligible, default | checkout facts, not the binder | **never** — producer-class, barred from ranking | eligible when M2 known pre-dispatch | **dormant on codework** |
 | GATED REVIEW pre-go-live (M3) | eligible, default | checkout facts, not the binder | never | — | no |
-| Code-lane diff check (`check_review`) | not this slot | **default** (`cursor/grok-4.7`) | never | — | no |
+| Code-lane diff check (`check_review`) | not this slot | checkout facts, not the checker | never | **`team_dispatch` generate** (`anthropic/claude-sonnet-5-5`, `impresario.critic`; omit `role=`) | no |
 | S1 background arc review (M4) | eligible, default | checkout facts, not the binder | never | — | no |
 | Non-code adversarial (life/analysis) | eligible | no | no | eligible | per non-code row above |
 
@@ -592,9 +600,10 @@ authors implement-ready at Gate-2; cite `spec_sha256:<hex>`. `density_triage` �
 
 Default `judgment_required` code lane (`decision:autonomous-work-item-spine`):
 
-`recon → settle → densify → check_review (cursor/grok-4.7, mechanical) → Composer`
+`recon → settle → densify → check_review (anthropic/claude-sonnet-5-5, mechanical) → Composer`
 
-One merged mechanical check via `workflows.check_review` (`cursor/grok-4.7`). CDP judgment
+One merged mechanical check via `workflows.check_review` (`anthropic/claude-sonnet-5-5`;
+`team_dispatch` omit `role=`). CDP judgment
 (M1–M4, batched S1) per `runbook:score-play` (R2, agent-bus:9956). Gate-6 substrate, zoom-out,
 seeding ladder, overhaul, `authority_fork`: L3 annex § spine extensions.
 
