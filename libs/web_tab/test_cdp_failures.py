@@ -5,9 +5,8 @@ from __future__ import annotations
 import asyncio
 from typing import Any
 
-import pytest
-
 import playwright.async_api as pw_async
+import pytest
 
 from web_tab import cdp_port as cdp_port_mod
 from web_tab.cdp_port import HttpListCdpPort

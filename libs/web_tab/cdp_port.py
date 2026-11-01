@@ -113,7 +113,7 @@ class HttpListCdpPort:
 
         try:
             return await asyncio.wait_for(_attach_evaluate(), timeout=timeout_s)
-        except asyncio.TimeoutError:
+        except TimeoutError:
             return {"error": {"code": "cdp_timeout"}}
         except asyncio.CancelledError:
             raise
