@@ -10,6 +10,7 @@ from universal_protocol.status_basis import status_basis
 
 from web_tab.cdp_port import CdpObservationPort
 from web_tab.conversation_id import conversation_id_from_url
+from web_tab.surface_adapter import url_in_surface_scope
 
 
 def _coerce_signed_in(val: Any) -> bool | None:
@@ -45,6 +46,7 @@ async def observe_actuation_plane(
     probe_js: str,
     house_id: str | None = None,
     binding_conversation_id: str | None = None,
+    surface: str = "chatgpt",
 ) -> dict[str, Any]:
     """CDP actuation plane — list tabs and optional target-scoped evaluate."""
     now = datetime.now(tz=UTC).isoformat()
@@ -67,9 +69,11 @@ async def observe_actuation_plane(
             target_id=target_id,
             binding_conversation_id=binding_conversation_id,
         )
+        and url_in_surface_scope(surface, t.get("url") or "")
     ]
     other_count = max(0, len(pages) - len(visible_tabs))
 
+    out_of_scope = False
     if target_id:
         match = next((t for t in pages if t.get("id") == target_id), None)
         if match is None:
@@ -77,15 +81,25 @@ async def observe_actuation_plane(
         else:
             scoped_url = match.get("url") or ""
             conv_id = conversation_id_from_url(scoped_url)
-            raw = await port.evaluate_on_target(
-                cdp_url=cdp_url,
-                target_id=target_id,
-                expression=probe_js,
-            )
-            if raw.get("stale"):
+            if not scoped_url:
                 stale = True
+            elif not url_in_surface_scope(surface, scoped_url):
+                out_of_scope = True
             else:
-                signed_in = _coerce_signed_in(raw.get("signed_in"))
+                raw = await port.evaluate_on_target(
+                    cdp_url=cdp_url,
+                    target_id=target_id,
+                    expression=probe_js,
+                    tab_row=match,
+                )
+                err = raw.get("error")
+                err_code = err.get("code") if isinstance(err, dict) else None
+                if err_code == "target_out_of_scope":
+                    out_of_scope = True
+                elif raw.get("stale"):
+                    stale = True
+                else:
+                    signed_in = _coerce_signed_in(raw.get("signed_in"))
 
     cdp_reachable_val: bool | None
     if reachable is False:
@@ -115,11 +129,16 @@ async def observe_actuation_plane(
             "signed_in",
             signed_in,
             as_of=now,
-            source="cdp.evaluate" if target_id else "cdp.unscoped",
+            source=(
+                "cdp.refused"
+                if out_of_scope
+                else ("cdp.evaluate" if target_id else "cdp.unscoped")
+            ),
             scope=f"target:{target_id or 'none'}",
             epoch={"url": scoped_url, "conversation_id": conv_id},
             stale=stale,
         ),
+        **({"error": {"code": "target_out_of_scope"}} if out_of_scope else {}),
         "tabs": [
             {
                 "target_id": t.get("id"),

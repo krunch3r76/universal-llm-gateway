@@ -39,6 +39,7 @@ def _closeout_turn(*, files_modified: list[str] | None = None) -> dict:
 
 
 def test_cortex_store_main_resolves_to_cortex_api_via_declared_manifest() -> None:
+    """cortex_store main.py propagation nominates cortex_api from the declared manifest."""
     plan = plan_propagation(
         [_closeout_turn(files_modified=["libs/cortex_store/main.py"])]
     )
@@ -62,6 +63,7 @@ def test_wait_status_plan_nominates_agent_bus_not_seven_owners() -> None:
 
 
 def test_inferred_fanout_ge_two_defers_without_restart(monkeypatch) -> None:
+    """Inferred fan-out of two or more services defers instead of restarting them."""
     monkeypatch.setattr(
         _propagation_execute,
         "serving_services_for_lib_path",
@@ -107,6 +109,7 @@ def test_audit_fails_when_declared_entry_removed() -> None:
 
 
 def test_declared_cortex_store_path() -> None:
+    """The cortex_store main path declares cortex_api among its owning services."""
     owners = declared_services_for_lib_path("libs/cortex_store/main.py")
     assert "cortex_api" in owners
 
@@ -241,6 +244,9 @@ _SERVES_LIBS_VERIFY_XFAIL_PAIRS = frozenset(
         # writing_intake reaches stargate via pipelines/writing handlers (dynamic load);
         # static verify walks services/universal-stargate/ only (21170 finding 3).
         ("stargate", "writing_intake"),
+        # web_tab reaches stargate via pipelines/web_tab handlers (dynamic load);
+        # static verify walks services/universal-stargate/ only.
+        ("stargate", "web_tab"),
     }
 )
 
@@ -264,6 +270,39 @@ def _serves_libs_pair_cases() -> list[object]:
             else:
                 cases.append(pytest.param(slug, lib))
     return cases
+
+
+@pytest.mark.offline
+def test_stargate_web_tab_handler_load_imports_package() -> None:
+    """Dynamic pipeline load is the stargate consumer of libs/web_tab.
+
+    Static ``verify_consumer_import`` only walks ``services/universal-stargate``.
+    Loading ``pipelines/web_tab/v1/handlers`` must import ``web_tab.status_report``
+    through the handler module, which is the real consumer edge.
+    """
+    import sys
+
+    from systems.pipeline.core.domain_router import get_domain_router
+    from systems.pipeline.user_handlers import (
+        _load_handlers_package,
+        _make_package_name,
+    )
+
+    handlers = repo_root() / "pipelines" / "web_tab" / "v1" / "handlers"
+    package_name = _make_package_name("web_tab", "v1")
+    sys.modules.pop(package_name, None)
+    for key in list(sys.modules):
+        if key.startswith(package_name + "."):
+            sys.modules.pop(key, None)
+    loaded = _load_handlers_package(
+        handlers_dir=handlers,
+        package_name=package_name,
+        display_path="web_tab/v1/handlers",
+        router=get_domain_router(),
+    )
+    assert loaded == 1
+    status_mod = sys.modules[f"{package_name}.status"]
+    assert status_mod.build_status_report.__module__ == "web_tab.status_report"
 
 
 @pytest.mark.offline

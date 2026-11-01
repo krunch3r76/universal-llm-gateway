@@ -2,13 +2,16 @@
 
 from __future__ import annotations
 
+import os
+import sqlite3
+from collections.abc import Callable
 from typing import Any
 
 from web_tab.binding_snapshot import read_binding_head
 from web_tab.cdp_port import CdpObservationPort, default_cdp_port
 from web_tab.config import resolve_cdp_url
 from web_tab.connector_plane import (
-    latest_bus_attestation,
+    default_attestation_reader,
     observe_connector_plane_from_server,
 )
 from web_tab.conversation_id import conversation_id_from_url
@@ -32,13 +35,20 @@ def _binding_conversation_id(resolve_payload: dict[str, Any] | None) -> str | No
 
 
 def _resolve_binding(house_id: str, agent: str) -> dict[str, Any] | None:
+    """Read the wake binding. A missing bus file stays missing (no create)."""
     try:
+        from agent_bus_store.db.connection import _db_path
         from agent_bus_store.db.endpoint_wake_ledger import (
             resolve_wake_delivery_binding,
         )
     except ImportError:
         return None
-    return resolve_wake_delivery_binding(house_id=house_id, agent=agent)
+    if not os.path.isfile(_db_path()):
+        return None
+    try:
+        return resolve_wake_delivery_binding(house_id=house_id, agent=agent)
+    except (sqlite3.Error, OSError):
+        return None
 
 
 async def build_status_report(
@@ -48,11 +58,18 @@ async def build_status_report(
     cdp_url: str | None = None,
     target_id: str | None = None,
     surface: str = "chatgpt",
-    caller_identity: str | None = None,
-    oauth_client_id: str | None = None,
     port: CdpObservationPort | None = None,
+    attestation_reader: Callable[[str, str], dict[str, Any]] | None = None,
+    binding_resolver: Callable[[str, str], dict[str, Any] | None] | None = None,
+    authenticated_principal: str | None = None,
 ) -> dict[str, Any]:
-    """Status for connector + actuation + read-only binding head."""
+    """Status for connector + actuation + read-only binding head.
+
+    Pipeline option identity is not a parameter. Pass *authenticated_principal*
+    only from a caller that already authenticated it outside the option bag.
+    *attestation_reader* and *binding_resolver* default to the server stores
+    and must not create a missing database.
+    """
     try:
         resolved_cdp = resolve_cdp_url(cdp_url)
     except ValueError:
@@ -65,8 +82,10 @@ async def build_status_report(
             return unsupported_surface_error(surface)
         raise
 
-    turn_no, attested = latest_bus_attestation(house_id)
-    binding_payload = _resolve_binding(house_id, agent)
+    reader = attestation_reader or default_attestation_reader
+    resolver = binding_resolver or _resolve_binding
+    attestation = reader(house_id, agent)
+    binding_payload = resolver(house_id, agent)
     binding_conv = _binding_conversation_id(binding_payload)
 
     cdp = port or default_cdp_port()
@@ -78,10 +97,8 @@ async def build_status_report(
         "connector": observe_connector_plane_from_server(
             house_id=house_id,
             agent=agent,
-            caller_identity=caller_identity,
-            oauth_client_id=oauth_client_id,
-            last_attested_turn=turn_no,
-            attestation_source=attested,
+            attestation=attestation,
+            authenticated_principal=authenticated_principal,
         ),
         "actuation": await observe_actuation_plane(
             cdp_url=resolved_cdp,
@@ -90,6 +107,7 @@ async def build_status_report(
             probe_js=js,
             house_id=house_id,
             binding_conversation_id=binding_conv,
+            surface=surface,
         ),
         "binding": read_binding_head(
             house_id=house_id,

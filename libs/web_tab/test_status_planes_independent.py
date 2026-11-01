@@ -12,17 +12,25 @@ from web_tab.observation import observe_actuation_plane
 from web_tab.status_report import build_status_report
 
 
+def _attestation(turn_no: int) -> dict:
+    return {
+        "available": True,
+        "turn": {
+            "turn_number": turn_no,
+            "attested_by": "oauth:test@code",
+            "created_at": "2026-10-31T00:00:00Z",
+        },
+    }
+
+
 @pytest.mark.asyncio
 async def test_status_planes_independent() -> None:
-    """Connector alive with CDP down yields independent unknown/stale actuation."""
+    """Stored attestation does not make connector_alive true while CDP is down."""
     port = RecordingCdpPort(tabs=[], reachable=False, list_error="URLError")
     connector = observe_connector_plane_from_server(
         house_id="21207",
         agent="orion",
-        caller_identity="oauth:test",
-        oauth_client_id="oauth:test",
-        last_attested_turn=375,
-        attestation_source="bus.attestation",
+        attestation=_attestation(375),
     )
     actuation = await observe_actuation_plane(
         cdp_url="http://127.0.0.1:9342",
@@ -30,7 +38,8 @@ async def test_status_planes_independent() -> None:
         port=port,
         probe_js="() => ({ signed_in: false })",
     )
-    assert connector["connector_alive"]["connector_alive"] is True
+    assert connector["connector_alive"]["connector_alive"] is None
+    assert connector["last_attested_turn"]["last_attested_turn"] == 375
     assert actuation["signed_in"]["signed_in"] is None
     assert actuation["signed_in"].get("stale") is True
     assert actuation["cdp_reachable"]["cdp_reachable"] is False
@@ -40,11 +49,11 @@ async def test_status_planes_independent() -> None:
         agent="orion",
         target_id="tgt-a",
         cdp_url="http://127.0.0.1:9342",
-        caller_identity="oauth:test",
-        oauth_client_id="oauth:test",
         port=port,
+        attestation_reader=lambda house_id, agent: _attestation(375),  # noqa: ARG005
+        binding_resolver=lambda house_id, agent: None,  # noqa: ARG005
     )
-    assert report["connector"]["connector_alive"]["connector_alive"] is True
+    assert report["connector"]["connector_alive"]["connector_alive"] is None
     assert report["actuation"]["signed_in"]["signed_in"] is None
 
 
@@ -53,7 +62,11 @@ def test_logged_out_actuation_plane() -> None:
     port = RecordingCdpPort(
         tabs=[{"id": "t1", "url": "https://chatgpt.com/c/abc", "title": "x"}],
         evaluate_results={
-            "t1": {"signed_in": False, "login_wall": True, "url": "https://chatgpt.com/"},
+            "t1": {
+                "signed_in": False,
+                "login_wall": True,
+                "url": "https://chatgpt.com/",
+            },
         },
     )
     actuation = asyncio.run(
@@ -68,23 +81,18 @@ def test_logged_out_actuation_plane() -> None:
     conn = observe_connector_plane_from_server(
         house_id="21207",
         agent="orion",
-        caller_identity="oauth:test",
-        oauth_client_id=None,
-        last_attested_turn=400,
-        attestation_source="bus",
+        attestation=_attestation(400),
     )
-    assert conn["connector_alive"]["connector_alive"] is True
+    assert conn["connector_alive"]["connector_alive"] is None
 
 
 @pytest.mark.asyncio
 async def test_connector_plane_ignores_absent_caller_claims() -> None:
-    """Without server stamps, connector_alive is false — not caller-supplied booleans."""
+    """No stored attestation leaves connector_alive unknown, not a caller boolean."""
     conn = observe_connector_plane_from_server(
         house_id="21207",
         agent="orion",
-        caller_identity=None,
-        oauth_client_id=None,
-        last_attested_turn=None,
-        attestation_source=None,
+        attestation={"available": True, "turn": None},
     )
-    assert conn["connector_alive"]["connector_alive"] is False
+    assert conn["connector_alive"]["connector_alive"] is None
+    assert conn["principal_matches_attested_turn"] is None

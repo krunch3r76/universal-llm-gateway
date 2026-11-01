@@ -11,6 +11,7 @@ from web_tab.events import emit_probe_completed
 
 
 def test_webtab_event_reaches_ingest_sock(tmp_path: Path, monkeypatch) -> None:
+    """Probe completion ingest uses source web-tab on the local socket envelope."""
     sock_path = tmp_path / "events.sock"
     monkeypatch.setenv("EVENTS_INGEST_SOCK", str(sock_path))
     received: list[dict] = []
@@ -36,4 +37,4 @@ def test_webtab_event_reaches_ingest_sock(tmp_path: Path, monkeypatch) -> None:
     line = received[0]
     assert line["signal"] == "webtab.probe.completed"
     assert line["payload"]["house_id"] == "21207"
-    assert "source" in line
+    assert line["source"] == "web-tab"

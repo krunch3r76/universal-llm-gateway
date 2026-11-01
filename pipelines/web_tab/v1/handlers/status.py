@@ -11,6 +11,12 @@ from web_tab.status_report import build_status_report
 
 
 class WebTabStatusHandler(BaseHandler):
+    """Build the read-only web-tab status report for one house and agent.
+
+    Caller identity in pipeline options is ignored. Connector evidence comes
+    from the server-stored attestation read, not from the request body.
+    """
+
     step_type = "web_tab_status_v1"
 
     @override
@@ -31,11 +37,5 @@ class WebTabStatusHandler(BaseHandler):
             cdp_url=(str(opts["cdp_url"]) if opts.get("cdp_url") else None),
             target_id=(str(opts["target_id"]) if opts.get("target_id") else None),
             surface=str(opts.get("surface") or "chatgpt"),
-            caller_identity=(
-                str(opts["caller_identity"]) if opts.get("caller_identity") else None
-            ),
-            oauth_client_id=(
-                str(opts["oauth_client_id"]) if opts.get("oauth_client_id") else None
-            ),
         )
         return StepOutput(raw=json.dumps(report), json=report)

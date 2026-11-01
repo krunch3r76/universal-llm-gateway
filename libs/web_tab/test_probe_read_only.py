@@ -9,6 +9,28 @@ from web_tab.probe import probe_target
 
 
 @pytest.mark.asyncio
+async def test_probe_emits_off_the_event_loop(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Ingest runs in a worker thread so the socket wait cannot block the loop."""
+    scheduled: list[str] = []
+
+    async def _to_thread(fn, /, *args, **kwargs):  # noqa: ANN001
+        scheduled.append(getattr(fn, "__name__", ""))
+        return fn(*args, **kwargs)
+
+    monkeypatch.setattr("web_tab.probe.asyncio.to_thread", _to_thread)
+    port = RecordingCdpPort(
+        tabs=[{"id": "a", "url": "https://chatgpt.com/c/1", "title": ""}],
+        evaluate_results={"a": {"signed_in": True}},
+    )
+    result = await probe_target(
+        cdp_url="http://127.0.0.1:9342", target_id="a", port=port
+    )
+    assert result["ok"] is True
+    assert "emit_probe_completed" in scheduled
+    assert scheduled[-1] == "emit_probe_completed"
+
+
+@pytest.mark.asyncio
 async def test_probe_never_navigates_or_clicks() -> None:
     port = RecordingCdpPort(
         tabs=[{"id": "a", "url": "https://chatgpt.com/c/1", "title": ""}],
@@ -34,19 +56,17 @@ async def test_probe_scoped_to_target() -> None:
             "b": {"signed_in": False},
         },
     )
-    one = await probe_target(
-        cdp_url="http://127.0.0.1:9342", target_id="a", port=port
-    )
-    two = await probe_target(
-        cdp_url="http://127.0.0.1:9342", target_id="b", port=port
-    )
+    one = await probe_target(cdp_url="http://127.0.0.1:9342", target_id="a", port=port)
+    two = await probe_target(cdp_url="http://127.0.0.1:9342", target_id="b", port=port)
     assert one["actuation"]["signed_in"]["signed_in"] is True
     assert two["actuation"]["signed_in"]["signed_in"] is False
 
 
 @pytest.mark.asyncio
 async def test_probe_target_closed_or_changed() -> None:
-    port = RecordingCdpPort(tabs=[{"id": "other", "url": "https://chatgpt.com/", "title": ""}])
+    port = RecordingCdpPort(
+        tabs=[{"id": "other", "url": "https://chatgpt.com/", "title": ""}]
+    )
     result = await probe_target(
         cdp_url="http://127.0.0.1:9342", target_id="missing", port=port
     )

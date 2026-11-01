@@ -3,9 +3,12 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from typing import Any, Protocol
 from urllib.error import URLError
+
+from web_tab.surface_adapter import canonical_page_url, url_in_surface_scope
 
 
 class CdpObservationPort(Protocol):
@@ -20,8 +23,9 @@ class CdpObservationPort(Protocol):
         cdp_url: str,
         target_id: str,
         expression: str,
+        tab_row: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
-        """Run *expression* on the page identified by *target_id*."""
+        """Run *expression* on the listed page that matches *target_id* and URL."""
 
 
 @dataclass
@@ -32,6 +36,7 @@ class RecordingCdpPort:
     evaluate_results: dict[str, dict[str, Any]] = field(default_factory=dict)
     navigated: list[str] = field(default_factory=list)
     clicks: list[str] = field(default_factory=list)
+    evaluated_targets: list[str] = field(default_factory=list)
     reachable: bool = True
     list_error: str | None = None
     new_page_calls: int = 0
@@ -49,14 +54,28 @@ class RecordingCdpPort:
         cdp_url: str,  # noqa: ARG002
         target_id: str,
         expression: str,  # noqa: ARG002
+        tab_row: dict[str, Any] | None = None,  # noqa: ARG002
     ) -> dict[str, Any]:
+        self.evaluated_targets.append(target_id)
         if target_id in self.evaluate_results:
             return dict(self.evaluate_results[target_id])
         return {"url": "", "signed_in": None, "login_wall": None, "composer": None}
 
 
 class HttpListCdpPort:
-    """Production port: tab list via ``/json/list``; evaluate via Playwright attach."""
+    """Production port: tab list via ``/json/list``; evaluate via Playwright attach.
+
+    *connect* replaces ``connect_over_cdp`` in tests. Evaluate uses the listed
+    *tab_row* and does not call ``list_tabs`` again. It refuses hosts outside
+    the ChatGPT surface, does not create pages, and does not close the browser.
+    """
+
+    def __init__(
+        self,
+        *,
+        connect: Callable[[str], Awaitable[Any]] | None = None,
+    ) -> None:
+        self._connect = connect
 
     async def evaluate_on_target(
         self,
@@ -64,32 +83,18 @@ class HttpListCdpPort:
         cdp_url: str,
         target_id: str,
         expression: str,
+        tab_row: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
-        listed = self.list_tabs(cdp_url=cdp_url)
-        if not listed.get("reachable"):
-            return {"stale": True, "error": listed.get("error") or "cdp_unreachable"}
-        tabs = listed.get("pages") or []
-        tab_row = next((t for t in tabs if t.get("id") == target_id), None)
-        if tab_row is None:
-            return {"stale": True}
-
-        want_url = (tab_row.get("url") or "").rstrip("/")
+        if not isinstance(tab_row, dict) or str(tab_row.get("id") or "") != target_id:
+            return {"stale": True, "error": "listing_mismatch"}
+        want_url = str(tab_row.get("url") or "")
         if not want_url:
             return {"stale": True}
-
-        from playwright.async_api import async_playwright
-
-        pw = await async_playwright().start()
+        if not url_in_surface_scope("chatgpt", want_url):
+            return {"error": {"code": "target_out_of_scope"}, "url": want_url}
+        browser, playwright = await self._open(cdp_url)
         try:
-            browser = await pw.chromium.connect_over_cdp(cdp_url)
-            page = None
-            for ctx in browser.contexts:
-                for candidate in ctx.pages:
-                    if candidate.url.rstrip("/") == want_url:
-                        page = candidate
-                        break
-                if page is not None:
-                    break
+            page = await _page_matching_target(browser, want_url, target_id)
             if page is None:
                 return {"stale": True}
             raw = await page.evaluate(expression)
@@ -97,7 +102,17 @@ class HttpListCdpPort:
                 return raw
             return {"raw": raw}
         finally:
-            await pw.stop()
+            if playwright is not None:
+                await playwright.stop()
+
+    async def _open(self, cdp_url: str) -> tuple[Any, Any]:
+        if self._connect is not None:
+            return await self._connect(cdp_url), None
+        from playwright.async_api import async_playwright
+
+        playwright = await async_playwright().start()
+        browser = await playwright.chromium.connect_over_cdp(cdp_url)
+        return browser, playwright
 
     def list_tabs(self, *, cdp_url: str) -> dict[str, Any]:
         from cursor_bridge.cdp_pages import list_pages
@@ -113,8 +128,43 @@ class HttpListCdpPort:
             }
 
 
+async def _target_id_of(page: Any) -> str | None:
+    session = await page.context.new_cdp_session(page)
+    info = await session.send("Target.getTargetInfo")
+    if not isinstance(info, dict):
+        return None
+    target_info = info.get("targetInfo")
+    if not isinstance(target_info, dict):
+        return None
+    target_id = target_info.get("targetId")
+    return str(target_id) if isinstance(target_id, str) and target_id else None
+
+
+async def _page_matching_target(
+    browser: Any, want_url: str, target_id: str
+) -> Any | None:
+    """Return the page whose canonical URL and CDP target id both match.
+
+    Same-URL twin tabs stay distinct. A target id that moved off the listed
+    URL is not attached. DOM evaluation is the caller's next step.
+    """
+    want = canonical_page_url(want_url)
+    for ctx in browser.contexts:
+        for candidate in ctx.pages:
+            if canonical_page_url(getattr(candidate, "url", "") or "") != want:
+                continue
+            try:
+                found = await _target_id_of(candidate)
+            except Exception:
+                continue
+            if found == target_id:
+                return candidate
+    return None
+
+
 _DEFAULT_PORT = HttpListCdpPort()
 
 
 def default_cdp_port() -> CdpObservationPort:
+    """Return the process-wide production CDP port used when callers omit one."""
     return _DEFAULT_PORT

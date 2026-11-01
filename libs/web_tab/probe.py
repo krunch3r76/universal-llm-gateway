@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from typing import Any
 
 from web_tab.cdp_port import CdpObservationPort, default_cdp_port
@@ -41,6 +42,7 @@ async def probe_target(
         probe_js=js,
         house_id=house_id,
         binding_conversation_id=binding_conversation_id,
+        surface=surface,
     )
     result = {
         "ok": True,
@@ -50,7 +52,8 @@ async def probe_target(
         "actuation": actuation,
         "_next": "web_tab_read(op=status) for both planes; bind is a later write slice.",
     }
-    emit_probe_completed(
+    await asyncio.to_thread(
+        emit_probe_completed,
         house_id=house_id or "",
         target_id=target_id or "",
         tab_count=len(actuation.get("tabs") or []),
