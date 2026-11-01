@@ -86,14 +86,75 @@ async def _cdp_response(ws: Any, mid: int) -> dict[str, Any]:
             return msg
 
 
-def _readback_ok(
+_READBACK_POLL_TIMEOUT_S = 20.0
+_READBACK_POLL_INTERVAL_S = 0.4
+
+
+def _assistant_began(
     post: dict[str, Any], *, watermark: str, pre_messages: list[str]
 ) -> bool:
+    """True when streaming is active or assistant prose appears after the watermark turn."""
+    if bool(post.get("generating")):
+        return True
+    messages = [str(m) for m in (post.get("recent_messages") or [])]
+    wm_idx = -1
+    for i, msg in enumerate(messages):
+        if watermark in msg:
+            wm_idx = i
+    if wm_idx >= 0 and wm_idx < len(messages) - 1:
+        return True
+    if messages != pre_messages and wm_idx >= 0:
+        for msg in messages[wm_idx + 1 :]:
+            if msg.strip() and watermark not in msg:
+                return True
+    return False
+
+
+def _readback_fields(
+    post: dict[str, Any], *, watermark: str, pre_messages: list[str]
+) -> dict[str, bool]:
     composer_empty = not str(post.get("composer_draft") or "").strip()
     messages = [str(m) for m in (post.get("recent_messages") or [])]
     watermark_visible = any(watermark in m for m in messages)
-    assistant_began = bool(post.get("generating")) or len(messages) > len(pre_messages)
-    return composer_empty and watermark_visible and assistant_began
+    assistant_began = _assistant_began(
+        post, watermark=watermark, pre_messages=pre_messages
+    )
+    readback_ok = composer_empty and watermark_visible and assistant_began
+    return {
+        "composer_empty_after": composer_empty,
+        "watermark_visible": watermark_visible,
+        "assistant_began": assistant_began,
+        "readback_ok": readback_ok,
+    }
+
+
+def _readback_ok(
+    post: dict[str, Any], *, watermark: str, pre_messages: list[str]
+) -> bool:
+    return _readback_fields(post, watermark=watermark, pre_messages=pre_messages)[
+        "readback_ok"
+    ]
+
+
+async def _poll_readback(
+    ws_url: str,
+    *,
+    watermark: str,
+    pre_messages: list[str],
+    timeout_s: float = _READBACK_POLL_TIMEOUT_S,
+    interval_s: float = _READBACK_POLL_INTERVAL_S,
+) -> tuple[dict[str, Any], dict[str, bool]]:
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + timeout_s
+    post: dict[str, Any] = {}
+    fields = _readback_fields(post, watermark=watermark, pre_messages=pre_messages)
+    while loop.time() <= deadline:
+        post = await probe_surface(ws_url)
+        fields = _readback_fields(post, watermark=watermark, pre_messages=pre_messages)
+        if fields["readback_ok"]:
+            return post, fields
+        await asyncio.sleep(interval_s)
+    return post, fields
 
 
 async def deliver_operator_paste(
@@ -252,9 +313,10 @@ async def _deliver_operator_locked(
             expected_agent_id=verdict.get("expected_agent_id"),
             active_agent_id=verdict.get("active_agent_id"),
         )
-    await asyncio.sleep(0.35)
-    post = await probe_surface(ws_url)
-    readback_ok = _readback_ok(post, watermark=WATERMARK, pre_messages=pre_messages)
+    post, rb = await _poll_readback(
+        ws_url, watermark=WATERMARK, pre_messages=pre_messages
+    )
+    readback_ok = rb["readback_ok"]
     delivered = readback_ok
     artifacts = await _capture_artifacts(ws_url)
     return {
@@ -264,12 +326,9 @@ async def _deliver_operator_locked(
         "pasted": True,
         "delivered": delivered,
         "readback_ok": readback_ok,
-        "composer_empty_after": not str(post.get("composer_draft") or "").strip(),
-        "assistant_began": bool(post.get("generating"))
-        or len(post.get("recent_messages") or []) > len(pre_messages),
-        "watermark_visible": any(
-            WATERMARK in str(m) for m in (post.get("recent_messages") or [])
-        ),
+        "composer_empty_after": rb["composer_empty_after"],
+        "assistant_began": rb["assistant_began"],
+        "watermark_visible": rb["watermark_visible"],
         "selected": selected,
         "display": disp,
         "app": app,
