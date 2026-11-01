@@ -13,7 +13,7 @@ from typing import Any
 from urllib.error import URLError
 
 from cursor_bridge.cdp_composer_input import (
-    cdp_dispatch_enter,
+    cdp_dispatch_enter_guarded,
     cdp_insert_text,
     clear_our_composer_draft,
 )
@@ -240,8 +240,19 @@ async def _submit_composer_send_button(
     }
 
 
-async def _submit_composer_enter(ws_url: str) -> dict[str, Any]:
-    return await cdp_dispatch_enter(ws_url)
+async def _submit_composer_enter(
+    ws_url: str,
+    *,
+    selector: str,
+    expected_agent_id: str,
+    nonce_needle: str,
+) -> dict[str, Any]:
+    return await cdp_dispatch_enter_guarded(
+        ws_url,
+        selector=selector,
+        expected_agent_id=expected_agent_id,
+        nonce_needle=nonce_needle,
+    )
 
 
 def _surface_agent_id(surface: dict[str, Any]) -> str:
@@ -480,15 +491,23 @@ async def _guarded_insert_and_submit(
                         submit_methods,
                     )
                 try:
-                    enter = await _submit_composer_enter(ws_url)
-                    submit_methods.append("cdp_enter")
+                    enter = await _submit_composer_enter(
+                        ws_url,
+                        selector=prompt_sel,
+                        expected_agent_id=aid_s,
+                        nonce_needle=run_nonce,
+                    )
                     if enter.get("ok"):
+                        submit_methods.append("cdp_enter")
                         post_submit, submitted = await _poll_submit_verified(
                             ws_url,
                             watermark=wm_line,
                             body_snippet=body_snippet,
                             run_nonce=run_nonce,
                         )
+                    else:
+                        reason = str(enter.get("reason") or "enter_refused")
+                        submit_methods.append(f"cdp_enter_refused:{reason}")
                 except (TimeoutError, RuntimeError, OSError):
                     submitted = False
 
@@ -821,8 +840,44 @@ async def _deliver_operator_session(
         )
     pre_messages = [str(m) for m in (surface.get("recent_messages") or [])]
     restore_agent_id = str(surface.get("active_agent_id") or "").strip()
-    did_switch = False
+    switch_ctx: dict[str, bool] = {"did_switch": False}
     locate_method: str | None = None
+
+    try:
+        return await _deliver_operator_session_body(
+            ws_url=ws_url,
+            aid_s=aid_s,
+            select=select,
+            line=line,
+            disp=disp,
+            app=app,
+            surface=surface,
+            pre_messages=pre_messages,
+            restore_agent_id=restore_agent_id,
+            switch_ctx=switch_ctx,
+            locate_method=locate_method,
+        )
+    finally:
+        if switch_ctx["did_switch"] and restore_agent_id:
+            await select_sidebar_target(
+                ws_url, expected_agent_id=restore_agent_id
+            )
+
+
+async def _deliver_operator_session_body(
+    *,
+    ws_url: str,
+    aid_s: str,
+    select: bool,
+    line: str,
+    disp: str,
+    app: str,
+    surface: dict[str, Any],
+    pre_messages: list[str],
+    restore_agent_id: str,
+    switch_ctx: dict[str, bool],
+    locate_method: str | None,
+) -> dict[str, Any]:
     try:
         visible_ids = await visible_sidebar_agent_ids(ws_url)
     except (TimeoutError, RuntimeError, OSError) as exc:
@@ -887,7 +942,7 @@ async def _deliver_operator_session(
         if click_res.get("clicked"):
             selected = True
             if restore_agent_id and restore_agent_id != aid_s:
-                did_switch = True
+                switch_ctx["did_switch"] = True
             await asyncio.sleep(0.25)
             surface = await probe_surface(ws_url)
             verdict = wake_decision(surface, agent_id=aid_s)
@@ -912,7 +967,7 @@ async def _deliver_operator_session(
         if located.get("ok"):
             locate_method = str(located.get("locate_method") or "")
             if restore_agent_id and restore_agent_id != aid_s:
-                did_switch = True
+                switch_ctx["did_switch"] = True
             await asyncio.sleep(0.2)
             surface = await probe_surface(ws_url)
             verdict = wake_decision(surface, agent_id=aid_s)
@@ -1071,8 +1126,6 @@ async def _deliver_operator_session(
         body_snippet=body_snippet,
         run_nonce=run_nonce,
     )
-    if did_switch and restore_agent_id:
-        await select_sidebar_target(ws_url, expected_agent_id=restore_agent_id)
     readback_ok = rb["readback_ok"]
     delivered = readback_ok
     dom_conclusive = _dom_verification_conclusive(
@@ -1109,7 +1162,7 @@ async def _deliver_operator_session(
         "locate_method": locate_method,
         "message": line,
         "submit_methods": submit_methods,
-        "restore_agent_id": restore_agent_id if did_switch else None,
+        "restore_agent_id": restore_agent_id if switch_ctx["did_switch"] else None,
         "run_nonce": run_nonce,
         **artifacts,
     }
