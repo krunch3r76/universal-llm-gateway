@@ -4,15 +4,18 @@ from __future__ import annotations
 
 import os
 import re
+import types
 from dataclasses import dataclass
-from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
 import yaml
+from yaml.nodes import MappingNode
 
-from .profiles import family_anchor, get_profile
+from .profiles import family_anchor, get_profile, known_families, load_roles
 from .registry import (
+    STAGE_MANAGER_ADDRESSES,
+    _dispatch_aliases,
     normalize_agent_slug,
     normalize_bus_address,
     resolve_capability_cell_from_bus_address,
@@ -21,6 +24,12 @@ from .session_id import SESSION_ID_RE
 
 _CANONICAL_KEY_RE = re.compile(r"^[a-z]+(-[a-z]+)*$")
 _SUPPORTED_SCHEMA_VERSION = 1
+_INSPECT_PREFIX = "inspect"
+_HOUSE_RE = re.compile(r"^[0-9]+$")
+_ALLOWED_ROOT_KEYS = frozenset({"schema_version", "seats"})
+_ALLOWED_SEAT_KEYS = frozenset(
+    {"aliases", "family", "platform", "house", "surface", "inbox_recipient"}
+)
 
 
 class BootIdentityConfigError(Exception):
@@ -56,13 +65,25 @@ class BootIdentity:
 
 
 @dataclass(frozen=True, slots=True)
+class _SeatEntry:
+    family: str
+    platform: str
+    house: str | None
+    surface: str | None
+    inbox_recipient: str | None
+
+
+@dataclass(frozen=True, slots=True)
 class _BootIdentityRegistry:
-    by_alias: dict[str, str]
-    seats: dict[str, dict[str, Any]]
+    by_alias: types.MappingProxyType[str, str]
+    seats: types.MappingProxyType[str, _SeatEntry]
 
     @classmethod
     def empty(cls) -> _BootIdentityRegistry:
-        return cls(by_alias={}, seats={})
+        return cls(
+            by_alias=types.MappingProxyType({}),
+            seats=types.MappingProxyType({}),
+        )
 
     def lookup(self, query: str) -> BootIdentity | None:
         key = _normalize_query(query)
@@ -94,29 +115,38 @@ def legacy_boot_identity(family: str, platform: str) -> BootIdentity:
     )
 
 
-def _logical_boot_identity(canonical_key: str, entry: dict[str, Any]) -> BootIdentity:
-    family = str(entry["family"])
-    platform = str(entry["platform"])
-    inbox = entry.get("inbox_recipient")
-    inbox_recipient = str(inbox).strip() if inbox else canonical_key
+def _logical_boot_identity(canonical_key: str, entry: _SeatEntry) -> BootIdentity:
+    inbox = entry.inbox_recipient
+    inbox_recipient = inbox.strip() if inbox else canonical_key
     return BootIdentity(
-        family=family,
-        platform=platform,
+        family=entry.family,
+        platform=entry.platform,
         agent=canonical_key,
         session_prefix=canonical_key,
         inbox_recipient=inbox_recipient,
         self_entity_id=f"seat:{canonical_key}",
         logical_seat_id=canonical_key,
-        house=str(entry["house"]) if entry.get("house") is not None else None,
-        surface=str(entry["surface"]) if entry.get("surface") is not None else None,
+        house=entry.house,
+        surface=entry.surface,
     )
 
 
 def _validate_canonical_key(key: str, *, context: str) -> None:
+    if not isinstance(key, str):
+        raise BootIdentityConfigError(
+            "noncanonical_key",
+            f"{context}: canonical key must be a string, got {type(key).__name__}",
+        )
     if not _CANONICAL_KEY_RE.fullmatch(key):
         raise BootIdentityConfigError(
-            "invalid_canonical_key",
+            "noncanonical_key",
             f"{context}: canonical key {key!r} must be lowercase alphabetic hyphen components",
+        )
+    first = key.split("-", 1)[0]
+    if first == _INSPECT_PREFIX:
+        raise BootIdentityConfigError(
+            "reserved_key",
+            f"{context}: first component {first!r} is reserved",
         )
     prefix_probe = f"{key}-2026-01-01-010101-abc"
     if not SESSION_ID_RE.fullmatch(prefix_probe):
@@ -134,10 +164,87 @@ def _reject_traversal(path: Path) -> None:
         )
 
 
+def _strict_load_yaml(text: str, *, source: str) -> Any:
+    class _StrictLoader(yaml.SafeLoader):
+        pass
+
+    def _mapping(loader: yaml.SafeLoader, node: MappingNode, deep: bool = False) -> dict:
+        mapping: dict[Any, Any] = {}
+        for key_node, value_node in node.value:
+            key = loader.construct_object(key_node, deep=deep)
+            if key in mapping:
+                raise BootIdentityConfigError(
+                    "duplicate_yaml_key",
+                    f"{source}: duplicate YAML key {key!r}",
+                )
+            mapping[key] = loader.construct_object(value_node, deep=deep)
+        return mapping
+
+    _StrictLoader.add_constructor(
+        yaml.resolver.BaseResolver.DEFAULT_MAPPING_TAG,
+        _mapping,
+    )
+    try:
+        return yaml.load(text, Loader=_StrictLoader)
+    except BootIdentityConfigError:
+        raise
+    except yaml.YAMLError as exc:
+        raise BootIdentityConfigError("malformed_yaml", f"{source}: {exc}") from exc
+
+
+def _check_runtime_collision(name: str, *, context: str) -> None:
+    probe = name.strip()
+    if resolve_legacy_boot_identity(probe) is not None:
+        raise BootIdentityConfigError(
+            "alias_collision",
+            f"{context}: {name!r} collides with legacy boot resolution",
+        )
+    if normalize_bus_address(probe) != probe:
+        raise BootIdentityConfigError(
+            "alias_collision",
+            f"{context}: {name!r} collides with a normalized bus address",
+        )
+    norm = _normalize_query(probe)
+    if norm in _dispatch_aliases():
+        raise BootIdentityConfigError(
+            "alias_collision",
+            f"{context}: {name!r} collides with dispatch alias {norm!r}",
+        )
+    if probe in STAGE_MANAGER_ADDRESSES or norm in {
+        _normalize_query(x) for x in STAGE_MANAGER_ADDRESSES
+    }:
+        raise BootIdentityConfigError(
+            "alias_collision",
+            f"{context}: {name!r} collides with stage-manager address",
+        )
+    if probe in known_families():
+        raise BootIdentityConfigError(
+            "alias_collision",
+            f"{context}: {name!r} collides with known family name",
+        )
+    for role in load_roles():
+        if role == probe or _normalize_query(role) == norm:
+            raise BootIdentityConfigError(
+                "alias_collision",
+                f"{context}: {name!r} collides with role {role!r}",
+            )
+
+
 def _parse_registry_document(raw: Any, *, source: str) -> _BootIdentityRegistry:
     if not isinstance(raw, dict):
         raise BootIdentityConfigError("malformed_yaml", f"{source}: root must be a mapping")
+    unknown_root = set(raw) - _ALLOWED_ROOT_KEYS
+    if unknown_root:
+        raise BootIdentityConfigError(
+            "unknown_fields",
+            f"{source}: unknown root fields {sorted(unknown_root)}",
+        )
     version = raw.get("schema_version")
+    if isinstance(version, bool) or not isinstance(version, int):
+        raise BootIdentityConfigError(
+            "unsupported_schema_version",
+            f"{source}: schema_version must be integer {_SUPPORTED_SCHEMA_VERSION}, got {version!r}",
+        )
     if version != _SUPPORTED_SCHEMA_VERSION:
         raise BootIdentityConfigError(
             "unsupported_schema_version",
@@ -147,40 +254,19 @@ def _parse_registry_document(raw: Any, *, source: str) -> _BootIdentityRegistry:
     if not isinstance(seats_raw, dict):
         raise BootIdentityConfigError("malformed_yaml", f"{source}: seats must be a mapping")
 
-    from .profiles import load_profiles, load_roles
-
-    reserved: dict[str, str] = {}
-    for family, platform in load_profiles():
-        slug = f"{family}-{platform}"
-        reserved[_normalize_query(slug)] = f"capability:{slug}"
-        reserved[_normalize_query(normalize_bus_address(slug))] = f"bus:{slug}"
-    for role in load_roles():
-        reserved[_normalize_query(role)] = f"role:{role}"
-
-    seats: dict[str, dict[str, Any]] = {}
+    seats: dict[str, _SeatEntry] = {}
     by_alias: dict[str, str] = {}
 
     for canonical_key, entry in seats_raw.items():
+        ctx = f"{source} seats[{canonical_key!r}]"
+        _validate_canonical_key(canonical_key, context=ctx)
+        _check_runtime_collision(canonical_key, context=ctx)
         if not isinstance(entry, dict):
             raise BootIdentityConfigError(
                 "malformed_seat",
                 f"{source}: seat {canonical_key!r} must be a mapping",
             )
-        norm_key = _normalize_query(str(canonical_key))
-        _validate_canonical_key(norm_key, context=f"{source} seats[{canonical_key!r}]")
-        if norm_key in by_alias:
-            raise BootIdentityConfigError(
-                "duplicate_canonical_key",
-                f"{source}: duplicate seat key {canonical_key!r}",
-            )
-        unknown = set(entry) - {
-            "aliases",
-            "family",
-            "platform",
-            "house",
-            "surface",
-            "inbox_recipient",
-        }
+        unknown = set(entry) - _ALLOWED_SEAT_KEYS
         if unknown:
             raise BootIdentityConfigError(
                 "unknown_fields",
@@ -202,15 +288,53 @@ def _parse_registry_document(raw: Any, *, source: str) -> _BootIdentityRegistry:
                 f"({family!r}, {platform!r})",
             ) from exc
 
+        house_val = entry.get("house")
+        house: str | None
+        if house_val is None:
+            house = None
+        elif isinstance(house_val, str) and _HOUSE_RE.fullmatch(house_val):
+            house = house_val
+        else:
+            raise BootIdentityConfigError(
+                "bad_field_type",
+                f"{source}: seat {canonical_key!r} house must be a digit string",
+            )
+
+        surface_val = entry.get("surface")
+        if surface_val is not None and (
+            not isinstance(surface_val, str) or not surface_val.strip()
+        ):
+            raise BootIdentityConfigError(
+                "bad_field_type",
+                f"{source}: seat {canonical_key!r} surface must be a nonblank string",
+            )
+        surface = surface_val.strip() if isinstance(surface_val, str) else None
+
+        inbox_val = entry.get("inbox_recipient")
+        if inbox_val is not None and (
+            not isinstance(inbox_val, str) or not inbox_val.strip()
+        ):
+            raise BootIdentityConfigError(
+                "bad_field_type",
+                f"{source}: seat {canonical_key!r} inbox_recipient must be a nonblank string",
+            )
+        inbox_recipient = inbox_val.strip() if isinstance(inbox_val, str) else None
+
         aliases_raw = entry.get("aliases") or []
         if not isinstance(aliases_raw, list):
             raise BootIdentityConfigError(
                 "malformed_aliases",
                 f"{source}: seat {canonical_key!r} aliases must be a list",
             )
-        alias_keys = [_normalize_query(str(canonical_key))] + [
-            _normalize_query(str(a)) for a in aliases_raw
-        ]
+        alias_keys = [_normalize_query(canonical_key)] + []
+        for item in aliases_raw:
+            if not isinstance(item, str) or not item.strip():
+                raise BootIdentityConfigError(
+                    "malformed_aliases",
+                    f"{source}: seat {canonical_key!r} aliases must be nonblank strings",
+                )
+            alias_keys.append(_normalize_query(item))
+
         seen: set[str] = set()
         for alias in alias_keys:
             if not alias:
@@ -221,27 +345,27 @@ def _parse_registry_document(raw: Any, *, source: str) -> _BootIdentityRegistry:
                     f"{source}: seat {canonical_key!r} lists duplicate alias {alias!r}",
                 )
             seen.add(alias)
-            if alias in reserved:
-                raise BootIdentityConfigError(
-                    "alias_collision",
-                    f"{source}: alias {alias!r} collides with {reserved[alias]}",
-                )
-            if alias in by_alias and by_alias[alias] != norm_key:
+            _check_runtime_collision(alias, context=f"{source} alias {alias!r}")
+            if alias in by_alias and by_alias[alias] != canonical_key:
                 raise BootIdentityConfigError(
                     "alias_collision",
                     f"{source}: alias {alias!r} maps to both "
-                    f"{by_alias[alias]!r} and {norm_key!r}",
+                    f"{by_alias[alias]!r} and {canonical_key!r}",
                 )
-            by_alias[alias] = norm_key
-        seats[norm_key] = {
-            "family": family,
-            "platform": platform,
-            "house": entry.get("house"),
-            "surface": entry.get("surface"),
-            "inbox_recipient": entry.get("inbox_recipient"),
-        }
+            by_alias[alias] = canonical_key
 
-    return _BootIdentityRegistry(by_alias=by_alias, seats=seats)
+        seats[canonical_key] = _SeatEntry(
+            family=family,
+            platform=platform,
+            house=house,
+            surface=surface,
+            inbox_recipient=inbox_recipient,
+        )
+
+    return _BootIdentityRegistry(
+        by_alias=types.MappingProxyType(by_alias),
+        seats=types.MappingProxyType(seats),
+    )
 
 
 def load_boot_identity_registry(path: Path | None = None) -> _BootIdentityRegistry:
@@ -268,30 +392,17 @@ def load_boot_identity_registry(path: Path | None = None) -> _BootIdentityRegist
             "unreadable_configured_file",
             f"cannot read boot identities file {path}: {exc}",
         ) from exc
-    try:
-        raw = yaml.safe_load(text)
-    except yaml.YAMLError as exc:
-        raise BootIdentityConfigError("malformed_yaml", f"{path}: {exc}") from exc
+    raw = _strict_load_yaml(text, source=str(path))
     return _parse_registry_document(raw, source=str(path))
 
 
-def clear_boot_identity_registry_cache() -> None:
-    """Test helper — drop cached env-path registry loads."""
-    _load_boot_identity_registry_cached.cache_clear()
-
-
-@lru_cache(maxsize=4)
-def _load_boot_identity_registry_cached(env_path: str) -> _BootIdentityRegistry:
-    if not env_path:
-        return _BootIdentityRegistry.empty()
-    return load_boot_identity_registry(Path(env_path))
-
-
 def _registry_for_lookup() -> _BootIdentityRegistry:
-    env_path = os.environ.get("CORTEX_BOOT_IDENTITIES_PATH", "").strip()
-    if not env_path:
-        return _BootIdentityRegistry.empty()
-    return _load_boot_identity_registry_cached(env_path)
+    return load_boot_identity_registry()
+
+
+def resolve_legacy_boot_identity(seat: str) -> BootIdentity | None:
+    """Resolve legacy capability-cell identity only (no private registry)."""
+    return _legacy_from_capability_cell(seat)
 
 
 def _legacy_from_capability_cell(seat: str) -> BootIdentity | None:
@@ -322,6 +433,17 @@ def seat_unresolved_error(seat: str) -> dict[str, Any]:
             "capability cell, or registered logical seat."
         ),
         "reason": "seat_unresolved",
+        "missing_fields": ["seat"],
+    }
+
+
+def logical_seat_requires_identity_error(seat: str) -> dict[str, Any]:
+    return {
+        "error": (
+            f"seat={seat!r} is a registered logical seat; "
+            "use resolve_boot_identity / cortex_brief with seat= for full identity."
+        ),
+        "reason": "logical_seat_requires_identity",
         "missing_fields": ["seat"],
     }
 

@@ -28,17 +28,15 @@ def test_build_futures_spec_logical_inbox_and_filters() -> None:
         house="9999",
     )
     profile = {
-        "logical_session_agent_filter": logical.agent,
         "session_limit": 3,
         "include_deadlines": True,
         "include_review_queue": True,
     }
     spec = build_futures_spec(
-        logical.agent,
+        logical.capability_slug,
         profile,
         _Recorder(),
-        inbox_recipient=logical.inbox_recipient,
-        skills_for_agent=logical.capability_slug,
+        identity=logical,
     )
     unread_path = spec["unread_toc"][-1]
     assert "to=alpha-inbox" in unread_path

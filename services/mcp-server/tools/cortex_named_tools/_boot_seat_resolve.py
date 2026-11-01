@@ -6,8 +6,11 @@ from typing import Any
 
 from agent_seat.boot_identity import (
     BootIdentity,
+    boot_identity_config_error,
     legacy_boot_identity,
+    logical_seat_requires_identity_error,
     resolve_boot_identity_for_seat,
+    resolve_legacy_boot_identity,
 )
 from agent_seat.registry import (
     normalize_bus_address,
@@ -110,7 +113,27 @@ def resolve_boot_family_platform(
     ``seat`` or the mount. ``mount_surface`` is the FastMCP instance's
     registration-time surface (life|code) when request metadata omits it.
     """
-    resolved = resolve_boot_identity(seat=seat, mount_surface=mount_surface)
-    if isinstance(resolved, dict):
-        return resolved
-    return resolved.family, resolved.platform
+    if not seat:
+        resolved = resolve_boot_identity(seat=seat, mount_surface=mount_surface)
+        if isinstance(resolved, dict):
+            return resolved
+        return resolved.family, resolved.platform
+
+    legacy = resolve_legacy_boot_identity(seat)
+    if legacy is not None:
+        return legacy.family, legacy.platform
+
+    from agent_seat.boot_identity import (
+        BootIdentityConfigError,
+        load_boot_identity_registry,
+    )
+
+    try:
+        logical = load_boot_identity_registry().lookup(seat)
+    except BootIdentityConfigError as exc:
+        return boot_identity_config_error(exc)
+    if logical is not None:
+        return logical_seat_requires_identity_error(seat)
+    from agent_seat.boot_identity import seat_unresolved_error
+
+    return seat_unresolved_error(seat)

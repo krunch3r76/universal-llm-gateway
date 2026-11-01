@@ -4,8 +4,11 @@ from __future__ import annotations
 
 import re
 from datetime import UTC, datetime
-from typing import Any
+from typing import TYPE_CHECKING, Any
 from zoneinfo import ZoneInfo
+
+if TYPE_CHECKING:
+    from agent_seat.boot_identity import BootIdentity
 
 from ._briefing_card_render import (
     _NOTES_PREVIEW_MAX_CHARS,
@@ -66,6 +69,7 @@ def render_briefing_card(
     principal_context: dict[str, Any] | None = None,
     family: str | None = None,
     agent: str | None = None,
+    identity: BootIdentity | None = None,
     capability_slug: str | None = None,
     logical_seat_id: str | None = None,
     house: str | None = None,
@@ -95,7 +99,7 @@ def render_briefing_card(
     parts: list[str] = [
         f"# Briefing — {local_now.strftime('%Y-%m-%dT%H:%M:%S%z')}"
     ]
-    if logical_seat_id or house or capability_slug or inbox_recipient:
+    if identity is not None and identity.is_logical:
         parts.append("\n## Identity")
         if logical_seat_id:
             parts.append(f"- logical seat: `{logical_seat_id}`")
@@ -457,5 +461,6 @@ def render_briefing_card(
         async_dispatches=async_dispatches,
         audit_counters=audit_counters,
         agent=agent,
+        identity=identity,
     )
     return card, manifest

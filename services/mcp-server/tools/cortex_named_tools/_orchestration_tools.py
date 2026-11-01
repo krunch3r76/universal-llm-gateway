@@ -7,7 +7,6 @@ from typing import TYPE_CHECKING, Any
 from ._boot_diff import build_boot_diff
 from ._boot_runner import BootMode, run_cortex_brief
 from ._boot_seat_resolve import (
-    parse_seat_slug,
     resolve_boot_family_platform,
     resolve_boot_identity,
 )
@@ -167,10 +166,18 @@ def register_orchestration_tools(
         if not diff_with:
             return primary
 
-        diff_family, diff_platform = parse_seat_slug(diff_with)
+        secondary_resolved = resolve_boot_identity(
+            seat=diff_with,
+            mount_surface=surface,
+        )
+        if isinstance(secondary_resolved, dict):
+            return {
+                "primary": primary,
+                "secondary": secondary_resolved,
+                "diff": None,
+            }
         secondary = run_cortex_brief(
-            family=diff_family,
-            platform=diff_platform,
+            identity=secondary_resolved,
             transcript_id="",
             mode=BootMode.INSPECT,
         )

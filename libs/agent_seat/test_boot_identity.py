@@ -9,7 +9,6 @@ import pytest
 from agent_seat.boot_identity import (
     BootIdentity,
     BootIdentityConfigError,
-    clear_boot_identity_registry_cache,
     legacy_boot_identity,
     load_boot_identity_registry,
     resolve_boot_identity_for_seat,
@@ -89,7 +88,6 @@ def test_malformed_registry_does_not_break_legacy(
     cfg = tmp_path / "boot-seats.yaml"
     cfg.write_text("schema_version: 2\nseats: {}\n", encoding="utf-8")
     monkeypatch.setenv("CORTEX_BOOT_IDENTITIES_PATH", str(cfg))
-    clear_boot_identity_registry_cache()
     ident = resolve_boot_identity_for_seat("web-anthropic")
     assert ident.agent == "claude-web"
     err = resolve_boot_identity_for_seat("not-a-registered-logical-seat")
@@ -110,7 +108,64 @@ seats:
         encoding="utf-8",
     )
     monkeypatch.setenv("CORTEX_BOOT_IDENTITIES_PATH", str(cfg))
-    clear_boot_identity_registry_cache()
     ident = resolve_boot_identity_for_seat("beta")
     assert isinstance(ident, BootIdentity)
     assert ident.logical_seat_id == "beta-work"
+
+
+def test_registry_no_cache_sequence(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    cfg = tmp_path / "boot-seats.yaml"
+    cfg.write_text(
+        """
+schema_version: 1
+seats:
+  alpha-work:
+    aliases: [alpha]
+    family: gpt
+    platform: web
+""".strip(),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("CORTEX_BOOT_IDENTITIES_PATH", str(cfg))
+    assert isinstance(resolve_boot_identity_for_seat("alpha"), BootIdentity)
+    cfg.write_text(
+        "schema_version: 1\nseats:\n  Alpha_Work:\n    family: gpt\n    platform: web\n",
+        encoding="utf-8",
+    )
+    err = resolve_boot_identity_for_seat("alpha")
+    assert err.get("reason") == "noncanonical_key"
+    cfg.unlink()
+    missing = resolve_boot_identity_for_seat("alpha")
+    assert missing.get("reason") == "missing_configured_file"
+    cfg.write_text(
+        """
+schema_version: 1
+seats:
+  alpha-work:
+    family: gpt
+    platform: web
+""".strip(),
+        encoding="utf-8",
+    )
+    unresolved = resolve_boot_identity_for_seat("alpha")
+    assert unresolved.get("reason") == "seat_unresolved"
+
+
+@pytest.mark.parametrize(
+    ("yaml_text", "code"),
+    [
+        ("schema_version: 1\nseats:\n  alpha-work:\n    family: gpt\n    platform: web\n  alpha-work:\n    family: claude\n    platform: cursor\n", "duplicate_yaml_key"),
+        ("schema_version: 1\nprincipals: {}\nseats: {}\n", "unknown_fields"),
+        ("schema_version: 1\nseats:\n  Alpha_Work:\n    family: gpt\n    platform: web\n", "noncanonical_key"),
+        ("schema_version: 1\nseats:\n  inspect-alpha:\n    family: gpt\n    platform: web\n", "reserved_key"),
+        ("schema_version: 1\nseats:\n  alpha-work:\n    family: gpt\n    platform: web\n    aliases: [\"\"]\n", "malformed_aliases"),
+        ("schema_version: 1\nseats:\n  web:\n    family: gpt\n    platform: web\n", "alias_collision"),
+        ("schema_version: 1\nseats:\n  gpt:\n    family: gpt\n    platform: web\n", "alias_collision"),
+    ],
+)
+def test_registry_loader_rejects(tmp_path: Path, yaml_text: str, code: str) -> None:
+    cfg = tmp_path / "boot-seats.yaml"
+    cfg.write_text(yaml_text, encoding="utf-8")
+    with pytest.raises(BootIdentityConfigError) as exc:
+        load_boot_identity_registry(cfg)
+    assert exc.value.code == code

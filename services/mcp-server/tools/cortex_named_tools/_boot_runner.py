@@ -214,19 +214,22 @@ def _resolve_last_session(
     extracted: dict[str, Any],
 ) -> dict[str, Any] | None:
     """Pick last-session continuity without cross-agent fallback for logical seats."""
+    if not identity.is_logical:
+        return (extracted.get("continuity") or {}).get("last_session") or (
+            extracted["sessions"][0] if extracted.get("sessions") else None
+        )
     continuity = extracted.get("continuity") or {}
+    if isinstance(continuity, dict) and continuity.get("error"):
+        continuity = {}
     last_from_continuity = continuity.get("last_session")
     if isinstance(last_from_continuity, dict):
         if str(last_from_continuity.get("agent", "")) == identity.agent:
             return last_from_continuity
-        return None
     sessions = extracted.get("sessions") or []
-    if identity.is_logical:
-        for row in sessions:
-            if isinstance(row, dict) and str(row.get("agent", "")) == identity.agent:
-                return row
-        return None
-    return sessions[0] if sessions else None
+    for row in sessions:
+        if isinstance(row, dict) and str(row.get("agent", "")) == identity.agent:
+            return row
+    return None
 
 
 def _build_artifacts(
@@ -514,7 +517,7 @@ def run_cortex_brief(
         "include_review_queue": capability_profile.include_review_queue,
         "session_limit": capability_profile.session_limit,
         "self_reflections_limit": capability_profile.self_reflections_limit,
-        "logical_session_agent_filter": identity.agent,
+        "session_agent_filter": None,
         # Cursor is a code seat: default an unset domain to coding (friction 25727).
         "domain": normalize_boot_domain(default_boot_domain(domain, resolved_platform)),
     }
@@ -524,11 +527,10 @@ def run_cortex_brief(
 
     recorder = FetchRecorder()
     futures_spec = build_futures_spec(
-        context_agent,
+        capability_slug,
         profile_dict,
         recorder,
-        inbox_recipient=identity.inbox_recipient,
-        skills_for_agent=capability_slug,
+        identity=identity,
     )
     with ThreadPoolExecutor(max_workers=8) as pool:
         submitted = {k: pool.submit(*spec) for k, spec in futures_spec.items()}
@@ -537,7 +539,7 @@ def run_cortex_brief(
         for future in as_completed(submitted.values()):
             raw[future_to_key[future]] = future.result()
 
-    extracted = extract_boot_results(context_agent, raw, profile_dict)
+    extracted = extract_boot_results(capability_slug, raw, profile_dict)
 
     op_ctx_path = f"notes/system/shared/operational-context-{context_agent}.md"
     ops_context = render_operational_context(
@@ -675,7 +677,8 @@ def run_cortex_brief(
         # Surface-aware dispatch block: grok → flat direct-call; claude/gpt/gemini
         # → dispatch-route (OVERFLOW). See _orientation_blocks (thread 1167).
         family=resolved_family,
-        agent=context_agent,
+        agent=capability_slug,
+        identity=identity,
         capability_slug=capability_slug,
         logical_seat_id=identity.logical_seat_id,
         house=identity.house,
@@ -697,12 +700,13 @@ def run_cortex_brief(
             f"\n\n⚠ Card over budget: {card_bytes}B > {ceiling}B ceiling — "
             "per-block ledger in the boot audit dump; trim per thread 1427 spec."
         )
-        record(
-            "mcp.cortex.boot.card.overbudget",
-            agent=context_agent,
-            bytes=card_bytes,
-            ceiling=ceiling,
-        )
+        if mode == BootMode.LIVE:
+            record(
+                "mcp.cortex.boot.card.overbudget",
+                agent=context_agent,
+                bytes=card_bytes,
+                ceiling=ceiling,
+            )
 
     artifacts = _build_artifacts(
         agent=context_agent,

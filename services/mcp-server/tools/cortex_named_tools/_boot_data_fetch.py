@@ -85,8 +85,7 @@ def build_futures_spec(
     profile: dict[str, Any],
     recorder: Any,
     *,
-    inbox_recipient: str | None = None,
-    skills_for_agent: str | None = None,
+    identity: Any | None = None,
 ) -> dict[str, tuple[Any, ...]]:
     """Build the parallel-fetch spec for a boot briefing.
 
@@ -97,18 +96,18 @@ def build_futures_spec(
     wrapped_cx = recorder.wrap("cortex", cortex_cx)
     relay = recorder.wrap("agent-bus", _relay)
 
-    unread_to = inbox_recipient or agent
+    continuity_agent = identity.agent if identity is not None else agent
+    unread_to = identity.inbox_recipient if identity is not None else agent
     unread_toc_qs = urlencode(
         {"to": unread_to, "active_since": "14d", "limit": 10}
     )
     # Boot card uses windowed unread-toc sample + unwindowed totals (Q6).
     threads_qs = urlencode({"status": "active", "has_unread": "true", "limit": 10})
     session_qs_parts: dict[str, str | int] = {"limit": profile.get("session_limit", 3)}
-    session_filter = profile.get("logical_session_agent_filter") or profile.get(
-        "session_agent_filter"
-    )
-    if session_filter:
-        session_qs_parts["agent"] = session_filter
+    if identity is not None and identity.is_logical:
+        session_qs_parts["agent"] = identity.agent
+    elif profile.get("session_agent_filter"):
+        session_qs_parts["agent"] = str(profile["session_agent_filter"])
     session_qs = urlencode(session_qs_parts)
 
     # Read-only fetch-graph audit (blocking contract for BootMode.INSPECT):
@@ -135,7 +134,7 @@ def build_futures_spec(
         "continuity": (
             wrapped_cx,
             "GET",
-            f"/boot-continuity?{urlencode({'agent': agent})}",
+            f"/boot-continuity?{urlencode({'agent': continuity_agent})}",
         ),
         # read-only: compact attention list — has_unread=true&limit=10
         "threads": (relay, "agent-bus", "GET", f"/threads?{threads_qs}"),
@@ -189,7 +188,7 @@ def build_futures_spec(
     futures_spec["reflective_journal"] = (
         wrapped_cx,
         "GET",
-        f"/boot-reflective?{urlencode({'agent': agent, 'limit': 5})}",
+        f"/boot-reflective?{urlencode({'agent': continuity_agent, 'limit': 5})}",
     )
 
     # read-only: fetch recent mentions for salience rendering
@@ -200,11 +199,10 @@ def build_futures_spec(
     )
     # read-only: boot skill projection via canonical GET /skills?view=boot.
     # render=concise,card ships server-side sidecar + card section markdown.
-    skills_agent = skills_for_agent or agent
     futures_spec["skills"] = (
         wrapped_cx,
         "GET",
-        f"/skills?{urlencode({'limit': 120, 'for_agent': skills_agent, 'view': 'boot', 'render': 'concise,card'})}",
+        f"/skills?{urlencode({'limit': 120, 'for_agent': agent, 'view': 'boot', 'render': 'concise,card'})}",
     )
     # read-only: fetch recent plan/todo activity summary
     futures_spec["recent_work"] = (wrapped_cx, "GET", "/boot-recent-work")
@@ -213,7 +211,7 @@ def build_futures_spec(
     # read-only: in-flight async dispatches for this agent from event service
     futures_spec["async_dispatches"] = (
         _fetch_async_dispatches_from_events,
-        agent,
+        continuity_agent,
     )
 
     self_entity_id = profile.get("self_entity_id")
