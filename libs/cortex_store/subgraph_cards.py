@@ -230,7 +230,13 @@ def _override_top_k_with_superseded(
     top_k_assertions: int,
     entity_id: str,
 ) -> None:
-    """Re-fetch top-K assertions including superseded rows for one entity."""
+    """Replace top-K with rows selected by the explicit historical override.
+
+    Every selected row is ``projection_role='history'``, including a claim
+    whose text looks like an archive summary. Tombstone substitution is the
+    path that still marks ``archive_summary``. Stored bounds and
+    ``superseded_by`` are copied and are not a new validity judgement.
+    """
     rows = query(
         conn,
         "SELECT id, claim, confidence, derivation_type, valid_from, valid_until, "
@@ -242,12 +248,7 @@ def _override_top_k_with_superseded(
     )
     out: list[dict[str, Any]] = []
     for row in rows:
-        claim = str(row["claim"] or "")
         superseded = row.get("superseded_by")
-        if claim.lower().startswith("archive summary"):
-            role = "archive_summary"
-        else:
-            role = "history"
         out.append(
             {
                 "id": int(row["id"]),
@@ -259,7 +260,7 @@ def _override_top_k_with_superseded(
                 "observed_at": row.get("observed_at"),
                 "evidence_uris": json_decode(row.get("evidence_uris")),
                 "superseded_by": int(superseded) if superseded is not None else None,
-                "projection_role": role,
+                "projection_role": "history",
             }
         )
     cards[entity_id]["top_k_assertions"] = out
