@@ -58,6 +58,7 @@ async def test_open_reuses_tab_by_url() -> None:
     out = await execute_open(
         cdp_url="http://127.0.0.1:9342",
         url="https://chatgpt.com/c/abc",
+        grant="explicit",
         port=port,
     )
     assert out["ok"] is True
@@ -82,6 +83,7 @@ async def test_bind_persists_session(tmp_path: Path) -> None:
         cdp_url="http://127.0.0.1:9342",
         conversation_url="https://chatgpt.com/c/abc",
         target_id="t1",
+        grant="explicit",
         store_path=store,
         port=port,
     )
@@ -153,8 +155,7 @@ async def test_paste_dom_paste_receipt() -> None:
             cdp_url="http://127.0.0.1:9222",
             target_id="t1",
             text="hello",
-            grant="operator",
-            surface="grok",
+            grant="explicit",
             port=port,
         )
     assert out["ok"] is True
@@ -174,15 +175,18 @@ async def test_verify_committed_receipt_from_dom() -> None:
     )
     port.evaluate_script["ws://fake/t1"] = {
         "ok": True,
+        "user_count": 0,
+        "user_texts": [],
+        "assistant_count": 0,
+        "last_assistant_text": "",
         "receipt": "dom_committed",
         "has_user_turn": True,
         "composer_empty": True,
     }
     out = await execute_verify_committed(
-        cdp_url="http://127.0.0.1:9222",
+        cdp_url="http://127.0.0.1:9342",
         target_id="t1",
         prompt_text="hello",
-        surface="grok",
         port=port,
     )
     assert out["receipt"] == "dom_committed"
@@ -190,14 +194,14 @@ async def test_verify_committed_receipt_from_dom() -> None:
 
 
 @pytest.mark.asyncio
-async def test_target_lock_refuses_nonblocking_fcntl() -> None:
+async def test_target_lock_refuses_nonblocking_fcntl(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """Second fcntl acquire on the same target id fails without blocking."""
-    import os
-
     from web_tab.target_lock import _FcntlFileLock, _lock_path
 
     tid = "lock-test-target-fcntl"
-    os.environ["ULG_WEB_TAB_LOCK_DIR"] = "/tmp/web-tab-test-locks"
+    monkeypatch.setenv("ULG_WEB_TAB_LOCK_DIR", "/tmp/web-tab-test-locks")
     path = _lock_path(tid)
     first = _FcntlFileLock(path)
     assert first.acquire(blocking=False) is True

@@ -8,6 +8,7 @@ import threading
 from pathlib import Path
 from typing import Any
 
+from web_tab.config import normalize_cdp_store_key
 from web_tab.surface_adapter import canonical_page_url
 from web_tab.tab_session import TabSession
 
@@ -44,7 +45,7 @@ def _write(path: Path, data: dict[str, Any]) -> None:
 
 
 def binding_key(*, cdp_url: str, conversation_url: str) -> str:
-    return f"{cdp_url.rstrip('/')}|{canonical_page_url(conversation_url)}"
+    return f"{normalize_cdp_store_key(cdp_url)}|{canonical_page_url(conversation_url)}"
 
 
 def save_binding(session: TabSession, *, path: Path | None = None) -> TabSession:

@@ -67,6 +67,56 @@ def emit(event: Event) -> None:
             sock.sendall(line)
 
 
+@event_factory
+def webtab_write_outcome(
+    *,
+    op: str,
+    ok: bool,
+    grant: str | None,
+    authorization_source: str | None,
+    target_id: str,
+    code: str | None = None,
+    receipt: str | None = None,
+) -> Event:
+    return Event(
+        signal="webtab.write.outcome",
+        role="observation",
+        scope="node",
+        payload={
+            "op": op,
+            "ok": ok,
+            "grant": grant,
+            "authorization_source": authorization_source,
+            "target_id": target_id,
+            "code": code,
+            "receipt": receipt,
+        },
+    )
+
+
+def emit_write_outcome(
+    *,
+    op: str,
+    ok: bool,
+    grant: str | None,
+    authorization_source: str | None,
+    target_id: str,
+    code: str | None = None,
+    receipt: str | None = None,
+) -> None:
+    emit(
+        webtab_write_outcome(
+            op=op,
+            ok=ok,
+            grant=grant,
+            authorization_source=authorization_source,
+            target_id=target_id,
+            code=code,
+            receipt=receipt,
+        )
+    )
+
+
 def emit_probe_completed(*, house_id: str, target_id: str, tab_count: int) -> None:
     """Best-effort bus emit; never raises into probe callers."""
     emit(

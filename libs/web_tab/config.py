@@ -71,6 +71,20 @@ def _validate_cdp_url(url: str) -> str:
     return f"http://{host_literal}:{port}"
 
 
+def normalize_cdp_store_key(cdp_url: str) -> str:
+    """Canonical CDP URL for binding-store keys (localhost → 127.0.0.1)."""
+    validated = _validate_cdp_url(str(cdp_url).strip())
+    parts = _safe_urlsplit(validated)
+    if parts is None:
+        return validated.rstrip("/")
+    host = (parts.hostname or "").lower()
+    port = parts.port
+    if host in {"localhost", "::1"}:
+        host = "127.0.0.1"
+    host_literal = f"[{host}]" if ":" in host else host
+    return f"http://{host_literal}:{port}"
+
+
 def resolve_cdp_url(explicit: str | None) -> str:
     """Return configured CDP endpoint URL; explicit wins over env."""
     if explicit and str(explicit).strip():

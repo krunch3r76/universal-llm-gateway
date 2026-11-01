@@ -76,6 +76,21 @@ def _inproc(target_id: str) -> asyncio.Lock:
 
 
 @asynccontextmanager
+async def cdp_open_bind_lock(cdp_url: str) -> AsyncIterator[None]:
+    """Serialize open/bind for one CDP endpoint (avoid duplicate background tabs)."""
+    key = _safe_token(cdp_url or "default")
+    async with _inproc(f"open:{key}"):
+        lock = _FcntlFileLock(_lock_path(f"open-{key}"))
+        acquired = await asyncio.to_thread(lock.acquire, blocking=False)
+        if not acquired:
+            raise TargetLockBusyError(f"open:{key}")
+        try:
+            yield
+        finally:
+            await asyncio.to_thread(lock.release)
+
+
+@asynccontextmanager
 async def target_write_lock(target_id: str) -> AsyncIterator[None]:
     """Serialize paste/submit/bind mutations for one CDP target."""
     tid = str(target_id or "").strip()

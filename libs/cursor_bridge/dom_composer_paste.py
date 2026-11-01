@@ -52,15 +52,17 @@ READ_OPERATOR_BUSY_JS = r"""
     operator_active: operatorActive,
     foreign_draft: foreignDraft,
     document_has_focus: document.hasFocus(),
+    document_visibility: document.visibilityState || '',
     draft_len: draft.length,
   };
 })()
 """
 
-_SEND_BTN_SEL = (
-    'button[aria-label="Send message"]:not([disabled]),'
-    'button[aria-label="Send"]:not([disabled]),'
-    'button[type="submit"]:not([disabled])'
+_SEND_BTN_SELECTORS = (
+    'button[aria-label="Send message"]:not([disabled])',
+    'button[aria-label="Send"]:not([disabled])',
+    'button[data-testid="send-button"]:not([disabled])',
+    'button[type="submit"]:not([disabled])',
 )
 
 
@@ -74,14 +76,27 @@ def composer_selector(*, app: str, agent_id: str = "") -> str:
     return GROK_PROMPT_SELECTOR
 
 
+def _flatten_paste_line(text: str) -> str:
+    return " ".join((text or "").splitlines()).strip()
+
+
+def _selector_list(selector: str) -> list[str]:
+    return [s.strip() for s in selector.split(",") if s.strip()]
+
+
+def _find_composer_js(selector: str) -> str:
+    sels = json.dumps(_selector_list(selector) or [selector])
+    return f"(()=>{{const sels={sels};for(const s of sels){{const el=document.querySelector(s);if(el)return el;}}return null;}})()"
+
+
 def _set_composer_body(selector: str, text: str) -> str:
-    sel = json.dumps(selector)
-    msg = json.dumps(text)
+    find = _find_composer_js(selector)
+    msg = json.dumps(_flatten_paste_line(text))
     return (
-        f"(()=>{{const el=document.querySelector({sel});"
+        f"(()=>{{const el=({find});"
         "if(!el)return{ok:false,reason:'no_composer'};"
         f"const line={msg};"
-        "const draft=(el.innerText||'').trim();"
+        "const draft=(el.innerText||el.value||'').trim();"
         "const stale=/^BRIDGE_WAKE\\s+thread=\\S+\\s+turn=\\d+(?:,\\d+)*$/.test(draft);"
         "if(draft.length>0&&!stale&&draft!==line.trim())"
         "return{ok:false,reason:'composer_not_empty',draft};"
@@ -90,29 +105,30 @@ def _set_composer_body(selector: str, text: str) -> str:
         "if(el.editor&&el.editor.commands&&typeof el.editor.commands.setContent==='function'){"
         "try{el.editor.commands.setContent(line);}catch(e){"
         "el.textContent=line;el.dispatchEvent(new InputEvent('input',{bubbles:true,data:line}));}"
+        "}else if(el.tagName==='TEXTAREA'||el.tagName==='INPUT'){"
+        "el.value=line;el.dispatchEvent(new Event('input',{bubbles:true}));"
         "}else{"
-        "const proto=Object.getPrototypeOf(el);"
-        "const desc=Object.getOwnPropertyDescriptor(proto,'value')"
-        "||Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype,'value');"
-        "if(desc&&typeof desc.set==='function'){desc.set.call(el,line);"
-        "el.dispatchEvent(new Event('input',{bubbles:true}));"
-        "}else{el.textContent=line;"
-        "el.dispatchEvent(new InputEvent('input',{bubbles:true,inputType:'insertText',data:line}));}"
+        "el.textContent=line;"
+        "el.dispatchEvent(new InputEvent('input',{bubbles:true,inputType:'insertText',data:line}));"
         "}"
         "return{ok:true,sig:line};})()"
     )
 
 
 def _click_send_body(selector: str, line: str) -> str:
-    sel = json.dumps(selector)
-    lj = json.dumps(line)
+    find = _find_composer_js(selector)
+    lj = json.dumps(_flatten_paste_line(line))
+    btn_sels = json.dumps(list(_SEND_BTN_SELECTORS))
     return (
-        f"(()=>{{const el=document.querySelector({sel});"
+        f"(()=>{{const el=({find});"
         "if(!el)return{ok:false,reason:'no_composer',send_clicked:false};"
-        f"const text=(el.innerText||'').trim(),line={lj};"
+        f"const text=(el.innerText||el.value||'').trim(),line={lj};"
         "if(!text||(text!==line.trim()&&!/^BRIDGE_WAKE\\s+thread=\\S+\\s+turn=\\d+(?:,\\d+)*$/.test(text)))"
         "return{ok:false,reason:'composer_text_mismatch',send_clicked:false};"
-        f"const btn=document.querySelector('{_SEND_BTN_SEL}');"
+        f"const root=el.closest('form')||el.parentElement||document;"
+        f"const btnSels={btn_sels};"
+        "let btn=null;"
+        "for(const sel of btnSels){btn=root.querySelector(sel);if(btn)break;}"
         "if(!btn)return{ok:false,reason:'no_send_button',send_clicked:false};"
         "btn.click();"
         "return{ok:true,send_clicked:true};})()"
@@ -198,7 +214,8 @@ async def wait_for_operator_idle(
 async def dom_set_composer_text(
     ws_url: str, *, selector: str, text: str
 ) -> dict[str, Any]:
-    value = await _cdp_eval(ws_url, _set_composer_body(selector, text))
+    flat = _flatten_paste_line(text)
+    value = await _cdp_eval(ws_url, _set_composer_body(selector, flat))
     if not isinstance(value, dict):
         return {"ok": False, "reason": "paste_failed"}
     if not value.get("ok"):
@@ -207,7 +224,8 @@ async def dom_set_composer_text(
 
 
 async def dom_click_send(ws_url: str, *, selector: str, line: str) -> dict[str, Any]:
-    value = await _cdp_eval(ws_url, _click_send_body(selector, line))
+    flat = _flatten_paste_line(line)
+    value = await _cdp_eval(ws_url, _click_send_body(selector, flat))
     if not isinstance(value, dict):
         return {"ok": False, "send_clicked": False}
     return value
@@ -217,10 +235,11 @@ async def dom_insert_and_send(
     ws_url: str, *, selector: str, line: str
 ) -> dict[str, Any]:
     """Insert once via DOM; send via send-button click (no Enter, no focus())."""
-    ins = await dom_set_composer_text(ws_url, selector=selector, text=line)
+    flat = _flatten_paste_line(line)
+    ins = await dom_set_composer_text(ws_url, selector=selector, text=flat)
     if not ins.get("ok"):
         return ins
-    send = await dom_click_send(ws_url, selector=selector, line=line)
+    send = await dom_click_send(ws_url, selector=selector, line=flat)
     if not send.get("ok"):
         return {
             "ok": False,

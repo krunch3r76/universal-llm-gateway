@@ -5701,9 +5701,16 @@ tools:
         type: string
       surface:
         type: string
+      conversation_url:
+        type: string
+      grant:
+        type: string
+      authorization_source:
+        type: string
     required:
     - op
     - cdp_url
+    - grant
   mandate_safety: write
   seat_visibility:
   - mcp
@@ -5739,9 +5746,16 @@ tools:
         type: string
       rebind:
         type: boolean
+      surface:
+        type: string
+      grant:
+        type: string
+      authorization_source:
+        type: string
     required:
     - op
     - cdp_url
+    - grant
   mandate_safety: write
   seat_visibility:
   - mcp
@@ -5777,11 +5791,20 @@ tools:
         type: string
       grant:
         type: string
+      authorization_source:
+        type: string
+      surface:
+        type: string
+      conversation_url:
+        type: string
       submit:
         type: boolean
     required:
     - op
     - cdp_url
+    - target_id
+    - text
+    - grant
   mandate_safety: write
   seat_visibility:
   - mcp
@@ -5815,9 +5838,19 @@ tools:
         type: string
       grant:
         type: string
+      authorization_source:
+        type: string
+      text:
+        type: string
+      surface:
+        type: string
+      conversation_url:
+        type: string
     required:
     - op
     - cdp_url
+    - target_id
+    - grant
   mandate_safety: write
   seat_visibility:
   - mcp
@@ -5851,9 +5884,15 @@ tools:
         type: string
       text:
         type: string
+      surface:
+        type: string
+      conversation_url:
+        type: string
     required:
     - op
     - cdp_url
+    - target_id
+    - text
   mandate_safety: write
   seat_visibility:
   - mcp
@@ -5885,9 +5924,14 @@ tools:
         type: string
       target_id:
         type: string
+      surface:
+        type: string
+      conversation_url:
+        type: string
     required:
     - op
     - cdp_url
+    - target_id
   mandate_safety: write
   seat_visibility:
   - mcp

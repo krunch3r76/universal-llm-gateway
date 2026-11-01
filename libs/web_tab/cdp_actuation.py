@@ -90,8 +90,36 @@ def _browser_ws_url(cdp_url: str) -> str:
     return ws
 
 
+def _close_target(cdp_url: str, target_id: str) -> None:
+    import websocket
+
+    port = cdp_port_int(cdp_url)
+    browser_ws = _browser_ws_url(cdp_url)
+    conn = websocket.create_connection(
+        browser_ws,
+        timeout=8,
+        header=[f"Origin: http://127.0.0.1:{port}"],
+    )
+    try:
+        conn.send(
+            json.dumps(
+                {
+                    "id": 2,
+                    "method": "Target.closeTarget",
+                    "params": {"targetId": target_id},
+                }
+            )
+        )
+        while True:
+            msg = json.loads(conn.recv())
+            if msg.get("id") == 2:
+                break
+    finally:
+        conn.close()
+
+
 def create_background_target(cdp_url: str, url: str) -> dict[str, Any]:
-    """Target.createTarget with background=true, then navigate to *url*."""
+    """Target.createTarget with background=true and initial *url* (no existing-tab nav)."""
     import websocket
 
     port = cdp_port_int(cdp_url)
@@ -107,7 +135,7 @@ def create_background_target(cdp_url: str, url: str) -> dict[str, Any]:
                 {
                     "id": 1,
                     "method": "Target.createTarget",
-                    "params": {"url": "about:blank", "background": True},
+                    "params": {"url": url, "background": True},
                 }
             )
         )
@@ -129,37 +157,34 @@ def create_background_target(cdp_url: str, url: str) -> dict[str, Any]:
     pages = list_pages(cdp_url, timeout_s=8.0)
     row = next((p for p in pages if str(p.get("id")) == tid), None)
     if row is None:
-        row = next(
-            (p for p in pages if url.split("?", 1)[0] in str(p.get("url") or "")),
-            None,
-        )
-    if row is None:
+        _close_target(cdp_url, tid)
         return {"ok": False, "error": {"code": "target_not_listed"}, "target_id": tid}
 
     ws_url = str(row.get("web_socket_debugger_url") or "")
     if not ws_url:
+        _close_target(cdp_url, tid)
         return {"ok": False, "error": {"code": "no_ws_url"}, "target_id": tid}
 
-    nav = _sync_evaluate(
-        ws_url,
-        f"window.location.href = {json.dumps(url)}; true",
-        port=port,
-    )
-    if nav.get("error"):
-        return {
-            "ok": False,
-            "error": nav["error"],
-            "target_id": tid,
-            "web_socket_debugger_url": ws_url,
-        }
-    refreshed = list_pages(cdp_url, timeout_s=8.0)
-    row2 = next((p for p in refreshed if str(p.get("id")) == tid), row)
     return {
         "ok": True,
         "target_id": tid,
-        "url": str(row2.get("url") or url),
-        "web_socket_debugger_url": str(row2.get("web_socket_debugger_url") or ws_url),
+        "url": str(row.get("url") or url),
+        "web_socket_debugger_url": ws_url,
     }
+
+
+def evaluate_transport_error(raw: dict[str, Any]) -> dict[str, Any] | None:
+    if raw.get("error"):
+        err = raw["error"]
+        code = err.get("code") if isinstance(err, dict) else "evaluate_failed"
+        return {
+            "ok": False,
+            "code": "cdp_transport_error",
+            "reason": str(code),
+            "retryable": True,
+            "transport": err,
+        }
+    return None
 
 
 class HttpCdpActuationPort:
@@ -210,7 +235,12 @@ class HttpCdpActuationPort:
                 ws_url, expression, await_promise=await_promise, timeout_s=15.0
             )
         except Exception as exc:
-            return {"error": {"code": "evaluate_failed", "type": type(exc).__name__}}
+            return {
+                "ok": False,
+                "code": "cdp_transport_error",
+                "reason": type(exc).__name__,
+                "retryable": True,
+            }
         if isinstance(raw, dict):
             return raw
         return {"raw": raw}
