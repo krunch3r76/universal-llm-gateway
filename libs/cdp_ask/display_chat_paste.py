@@ -57,6 +57,11 @@ def _to_response(
 async def execute_display_chat_paste(
     req: DisplayChatPasteRequest,
 ) -> DisplayChatPasteResponse:
+    from cdp_ask.grok_operator_actuation import relay_grok_operator_paste_if_needed
+
+    relayed = await relay_grok_operator_paste_if_needed(req)
+    if relayed is not None:
+        return relayed
     raw = await deliver_operator_paste(
         display=req.display,
         app=req.app,

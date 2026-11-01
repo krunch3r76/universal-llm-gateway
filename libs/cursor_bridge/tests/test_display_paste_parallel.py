@@ -8,28 +8,51 @@ from typing import Any
 from unittest.mock import AsyncMock
 
 import pytest
-from cursor_bridge.display_interaction_locks import agent_paste_lock
+from cursor_bridge.display_interaction_locks import agent_paste_lock, display_switch_lock
 from cursor_bridge.operator_paste import WATERMARK, deliver_operator_paste
 
 pytestmark = pytest.mark.offline
 
 
 @pytest.mark.asyncio
-async def test_different_agent_ids_hold_locks_concurrently(
+async def test_different_agents_same_display_serialize_on_switch_lock(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("ULG_DISPLAY_LOCK_DIR", str(tmp_path))
+    order: list[str] = []
+    gate = asyncio.Event()
+
+    async def hold_a() -> None:
+        async with display_switch_lock("10"):
+            order.append("a-in")
+            gate.set()
+            await asyncio.sleep(0.05)
+            order.append("a-out")
+
+    task = asyncio.create_task(hold_a())
+    await asyncio.wait_for(gate.wait(), 2.0)
+    async with display_switch_lock("10"):
+        order.append("b-in")
+    await asyncio.wait_for(task, 2.0)
+    assert order.index("a-out") < order.index("b-in")
+
+
+@pytest.mark.asyncio
+async def test_different_displays_may_overlap_switch_locks(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setenv("ULG_DISPLAY_LOCK_DIR", str(tmp_path))
     started = asyncio.Event()
     release = asyncio.Event()
 
-    async def hold_a() -> None:
-        async with agent_paste_lock("10", "agent-a"):
+    async def hold_nine() -> None:
+        async with display_switch_lock("9"):
             started.set()
             await release.wait()
 
-    task = asyncio.create_task(hold_a())
+    task = asyncio.create_task(hold_nine())
     await asyncio.wait_for(started.wait(), 2.0)
-    async with agent_paste_lock("10", "agent-b"):
+    async with display_switch_lock("10"):
         pass
     release.set()
     await asyncio.wait_for(task, 2.0)
@@ -86,6 +109,10 @@ async def test_deliver_operator_paste_operator_busy(
         AsyncMock(return_value=surface),
     )
     monkeypatch.setattr(
+        "cursor_bridge.dom_composer_paste.install_operator_activity_probe",
+        AsyncMock(return_value=None),
+    )
+    monkeypatch.setattr(
         "cursor_bridge.operator_paste.wait_for_operator_idle",
         AsyncMock(return_value={"ok": False, "reason": "operator_busy", "idle": False}),
     )
@@ -103,6 +130,62 @@ async def test_deliver_operator_paste_operator_busy(
     assert out["reason"] == "operator_busy"
     assert out["submitted"] is False
     assert out["pasted"] is False
+    insert.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_synthetic_keydown_yields_operator_busy_before_insert(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    surface = {
+        "state": "chat_list",
+        "active_title": "Test Grok",
+        "active_agent_id": "agent-1",
+        "titles": ["Test Grok"],
+        "title_counts": {"Test Grok": 1},
+        "agent_ids": {"agent-1": "Test Grok"},
+        "composer_draft": "",
+        "generating": False,
+        "recent_messages": [],
+    }
+    monkeypatch.setattr(
+        "cursor_bridge.operator_paste.list_pages",
+        lambda _o: [{"title": "Grok Bot", "web_socket_debugger_url": "ws://x"}],
+    )
+    monkeypatch.setattr(
+        "cursor_bridge.operator_paste.visible_sidebar_agent_ids",
+        AsyncMock(return_value={"agent-1"}),
+    )
+    monkeypatch.setattr(
+        "cursor_bridge.operator_paste.probe_surface",
+        AsyncMock(return_value=surface),
+    )
+    monkeypatch.setattr(
+        "cursor_bridge.dom_composer_paste.install_operator_activity_probe",
+        AsyncMock(return_value=None),
+    )
+    monkeypatch.setattr(
+        "cursor_bridge.operator_paste.wait_for_operator_idle",
+        AsyncMock(return_value={"ok": True, "idle": True}),
+    )
+    monkeypatch.setattr(
+        "cursor_bridge.operator_paste.read_operator_busy",
+        AsyncMock(
+            return_value={"ok": True, "operator_active": True, "foreign_draft": False}
+        ),
+    )
+    insert = AsyncMock(return_value={"ok": True})
+    monkeypatch.setattr("cursor_bridge.operator_paste._insert_composer_text", insert)
+
+    out = await deliver_operator_paste(
+        display="10",
+        app="grok",
+        agent_id="agent-1",
+        text="hi",
+        grant="operator",
+        authorization_source="agent-bus:1#1",
+    )
+    assert out["reason"] == "operator_busy"
     insert.assert_not_called()
 
 
@@ -166,8 +249,26 @@ async def test_deliver_operator_paste_restores_chat_after_hidden_switch(
         AsyncMock(side_effect=_probe),
     )
     monkeypatch.setattr(
+        "cursor_bridge.dom_composer_paste.install_operator_activity_probe",
+        AsyncMock(return_value=None),
+    )
+    monkeypatch.setattr(
         "cursor_bridge.operator_paste.wait_for_operator_idle",
         AsyncMock(return_value={"ok": True, "idle": True}),
+    )
+    monkeypatch.setattr(
+        "cursor_bridge.operator_paste._poll_readback",
+        AsyncMock(
+            return_value=(
+                post,
+                {
+                    "readback_ok": True,
+                    "composer_empty_after": True,
+                    "assistant_began": True,
+                    "watermark_visible": True,
+                },
+            )
+        ),
     )
     monkeypatch.setattr(
         "cursor_bridge.operator_paste.read_operator_busy",

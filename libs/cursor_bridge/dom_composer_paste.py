@@ -15,6 +15,17 @@ def _is_stale_wake_draft(draft: str) -> bool:
     return bool(_STALE_WAKE_DRAFT.match(str(draft or "").strip()))
 
 
+DISPATCH_OPERATOR_KEYDOWN_JS = r"""
+(() => {
+  const g = window.__ulgOperatorActivity = window.__ulgOperatorActivity || { lastInputMs: 0 };
+  const target = document.querySelector('[aria-label="Prompt"][contenteditable="true"]')
+    || document.activeElement
+    || document.body;
+  target.dispatchEvent(new KeyboardEvent('keydown', { bubbles: true, cancelable: true, key: 'a' }));
+  return { ok: true, lastInputMs: g.lastInputMs };
+})()
+"""
+
 INSTALL_OPERATOR_ACTIVITY_PROBE_JS = r"""
 (() => {
   const g = window.__ulgOperatorActivity = window.__ulgOperatorActivity || {
@@ -199,6 +210,13 @@ async def _cdp_response(ws: Any, mid: int) -> dict[str, Any]:
             return msg
 
 
+async def dispatch_operator_keydown(ws_url: str) -> dict[str, Any]:
+    """Fire a bubbling keydown so the activity probe sees operator input (tests)."""
+    await install_operator_activity_probe(ws_url)
+    raw = await _cdp_eval(ws_url, DISPATCH_OPERATOR_KEYDOWN_JS)
+    return raw if isinstance(raw, dict) else {"ok": False}
+
+
 async def install_operator_activity_probe(ws_url: str) -> None:
     await _cdp_eval(ws_url, INSTALL_OPERATOR_ACTIVITY_PROBE_JS)
 
@@ -221,6 +239,7 @@ async def wait_for_operator_idle(
     idle_ms: int = 10_000,
     poll_s: float = 0.5,
     refuse_if_active: bool = False,
+    refuse_if_foreign_draft: bool = False,
 ) -> dict[str, Any]:
     """Backoff until operator idle and no foreign draft, or timeout."""
     await install_operator_activity_probe(ws_url)
@@ -232,6 +251,8 @@ async def wait_for_operator_idle(
         active = bool(probe.get("operator_active"))
         foreign = bool(probe.get("foreign_draft"))
         if active and refuse_if_active:
+            return {"ok": False, "reason": "operator_busy", "idle": False}
+        if foreign and refuse_if_foreign_draft:
             return {"ok": False, "reason": "operator_busy", "idle": False}
         if not active and not foreign:
             return {"ok": True, "idle": True}
@@ -304,6 +325,7 @@ __all__ = [
     "dom_insert_and_send",
     "dom_set_composer_text",
     "foreign_draft_guard",
+    "dispatch_operator_keydown",
     "install_operator_activity_probe",
     "operator_busy_probe_js",
     "read_operator_busy",
