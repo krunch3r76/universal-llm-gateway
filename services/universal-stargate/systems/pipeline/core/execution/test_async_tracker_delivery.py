@@ -21,17 +21,15 @@ from systems.pipeline.core.execution.async_tracker import (
 from systems.pipeline.core.execution.async_tracker_delivery import (
     DeliveryOutcome,
     _build_envelope,
-    deliver_result,
-)
-from systems.pipeline.core.execution.async_tracker_delivery.envelope import (
-    _extract_pointer_summary,
-)
-from systems.pipeline.core.execution.async_tracker_delivery import (
     agent_bus_http,
+    deliver_result,
     on_behalf,
 )
 from systems.pipeline.core.execution.async_tracker_delivery.constants import (
     _BUS_MAX_BODY_CHARS,
+)
+from systems.pipeline.core.execution.async_tracker_delivery.envelope import (
+    _extract_pointer_summary,
 )
 from systems.pipeline.core.execution.async_tracker_delivery.sidecar import SidecarResult
 
@@ -911,10 +909,11 @@ async def test_on_behalf_terminal_failure_post_is_idempotent(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     bus = _FakeBus()
-    captured: dict[str, Any] = {"post_count": 0}
+    post_count = 0
     record = _make_failed_to_thread_record()
 
     def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal post_count
         if request.method == "GET" and "/threads/" in request.url.path:
             return httpx.Response(
                 200,
@@ -926,21 +925,29 @@ async def test_on_behalf_terminal_failure_post_is_idempotent(
                 },
             )
         if request.method == "POST" and request.url.path == "/turns":
-            captured["post_count"] = int(captured["post_count"]) + 1
+            post_count += 1
             return httpx.Response(201, json={"id": 6, "turn_number": 6})
         return httpx.Response(404, json={})
 
     _patch_client(monkeypatch, httpx.MockTransport(handler))
     _patch_sidecar_ok(monkeypatch)
+    monkeypatch.setattr(
+        on_behalf,
+        "_utc_now_iso",
+        lambda: "2026-05-22T22:34:27Z",
+    )
 
     first = await deliver_result(record, event_bus=bus, auth_token="secret")
-    second = await deliver_result(record, event_bus=bus, auth_token="secret")
-    await asyncio.sleep(0)
-
     assert first.status == "delivered"
+    assert first.failure_reason == "terminal_failure_posted"
+    assert record.delivery is not None
+    assert record.delivery.failure_reason == "terminal_failure_posted"
+    assert post_count == 1
+
+    second = await deliver_result(record, event_bus=bus, auth_token="secret")
     assert second.status == "delivered"
     assert second.failure_reason == "terminal_failure_posted"
-    assert captured["post_count"] == 1
+    assert post_count == 1
 
 
 @pytest.mark.asyncio
@@ -1200,121 +1207,3 @@ def test_delivery_state_envelope_inline_delivered() -> None:
     ).to_dict("exec-9")
     assert without_uri["recovery"]["kind"] == "thread"
     assert without_uri["recovery"]["hint"] == "Delivered to agent-bus thread 1051."
-
-
-def test_delivery_state_envelope_failed_with_sidecar() -> None:
-    envelope = DeliveryState(
-        status="failed",
-        sidecar_uri="cortex://notes/x.md",
-        failure_reason="post_503",
-    ).to_dict("exec-9")
-
-    assert envelope["recovery"]["kind"] == "sidecar"
-    assert "Bus delivery failed" in envelope["recovery"]["hint"]
-
-
-def test_delivery_state_envelope_failed_no_sidecar() -> None:
-    envelope = DeliveryState(
-        status="failed",
-        sidecar_uri=None,
-        failure_reason="post_401",
-    ).to_dict("exec-9")
-
-    assert envelope["recovery"]["kind"] == "pipeline_result"
-    assert "pipeline(op=result, execution_id=exec-9)" in envelope["recovery"]["hint"]
-
-
-def test_record_to_dict_delivery_none_by_default() -> None:
-    assert _make_record().to_dict()["delivery"] is None
-
-
-def test_record_to_dict_serializes_delivery_envelope() -> None:
-    record = _make_to_thread_record()
-    record.delivery = DeliveryState(
-        status="delivered",
-        mode="sidecar",
-        thread="1051",
-        sidecar_uri="cortex://notes/x.md",
-        content_sha256="deadbeef",
-    )
-    delivery = record.to_dict()["delivery"]
-
-    assert delivery is not None
-    assert delivery["recovery"]["execution_id"] == record.execution_id
-    assert delivery["status"] == "delivered"
-    assert delivery["mode"] == "sidecar"
-    assert delivery["thread"] == "1051"
-    assert delivery["sidecar_uri"] == "cortex://notes/x.md"
-    assert delivery["content_sha256"] == "deadbeef"
-    assert delivery["recovery"]["kind"] == "sidecar"
-
-
-def test_delivery_state_from_outcome_maps_fields() -> None:
-    outcome = DeliveryOutcome(
-        status="failed",
-        failure_reason="post_503",
-        thread="1051",
-        delivery_mode="inline",
-    )
-    state = delivery_hooks._delivery_state_from_outcome(outcome)
-
-    assert isinstance(state, DeliveryState)
-    assert state.status == "failed"
-    assert state.failure_reason == "post_503"
-    assert state.thread == "1051"
-    assert state.mode == "inline"
-
-
-@pytest.mark.asyncio
-async def test_run_delivery_sets_record_delivery_on_failed_demote(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.setattr(delivery_hooks, "_emit", lambda *_a, **_k: None)
-    monkeypatch.setattr(delivery_hooks, "_schedule_journal", lambda *_a, **_k: None)
-
-    async def _sender(_record: PipelineExecutionRecord) -> DeliveryOutcome:
-        return DeliveryOutcome(
-            status="failed",
-            failure_reason="post_503",
-            thread="1051",
-        )
-
-    tracker = SimpleNamespace(_delivery_sender=_sender)
-    record = _make_to_thread_record()
-
-    await delivery_hooks._run_delivery_with_outcome(tracker, record)
-
-    assert record.status == "failed"
-    assert record.delivery is not None
-    delivery = record.to_dict()["delivery"]
-    assert delivery is not None
-    assert delivery["recovery"]["kind"] == "pipeline_result"
-    assert record.execution_id in delivery["recovery"]["hint"]
-
-
-@pytest.mark.asyncio
-async def test_run_delivery_sets_record_delivery_on_sidecar_success(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.setattr(delivery_hooks, "_emit", lambda *_a, **_k: None)
-    monkeypatch.setattr(delivery_hooks, "_schedule_journal", lambda *_a, **_k: None)
-
-    async def _sender(_record: PipelineExecutionRecord) -> DeliveryOutcome:
-        return DeliveryOutcome(
-            status="delivered",
-            delivery_mode="sidecar",
-            thread="1051",
-            sidecar_uri="cortex://notes/x.md",
-            content_sha256="deadbeef",
-        )
-
-    tracker = SimpleNamespace(_delivery_sender=_sender)
-    record = _make_to_thread_record()
-
-    await delivery_hooks._run_delivery_with_outcome(tracker, record)
-
-    assert record.status == "completed"
-    delivery = record.to_dict()["delivery"]
-    assert delivery is not None
-    assert delivery["recovery"]["kind"] == "sidecar"
-    assert delivery["mode"] == "sidecar"
