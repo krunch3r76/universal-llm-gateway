@@ -44,6 +44,28 @@ _ANTHROPIC_BETA_FAST = "fast-mode-2026-02-01"
 _ANTHROPIC_BETA_CODE_EXEC = "code-execution-2025-08-25"
 _ANTHROPIC_BETA_SKILLS = "skills-2025-10-02"
 _CODE_EXEC_TOOL = {"type": "code_execution_20250825", "name": "code_execution"}
+_THINKING_BLOCK_TYPES = frozenset({"thinking", "redacted_thinking"})
+
+
+def _join_content_text_segments(content: list[Any] | None) -> str:
+    """Join text blocks, splitting at non-thinking non-text blocks with blank lines."""
+    segments: list[str] = []
+    current: list[str] = []
+    for block in content or []:
+        if not isinstance(block, dict):
+            continue
+        btype = block.get("type")
+        if btype == "text":
+            current.append(str(block.get("text", "")))
+        elif btype in _THINKING_BLOCK_TYPES:
+            continue
+        else:
+            if current:
+                segments.append("".join(current))
+                current = []
+    if current:
+        segments.append("".join(current))
+    return "\n\n".join(part for part in segments if part)
 
 
 class AnthropicAdapter:
@@ -263,7 +285,6 @@ class AnthropicAdapter:
         return url, headers, body
 
     def parse_frontier_response(self, response_data: dict[str, Any]) -> dict[str, Any]:
-        content_parts: list[str] = []
         thinking_parts: list[str] = []
         thinking_blocks: list[dict[str, Any]] = []
         tool_calls: list[dict[str, Any]] = []
@@ -273,9 +294,7 @@ class AnthropicAdapter:
             if not isinstance(block, dict):
                 continue
             btype = block.get("type")
-            if btype == "text":
-                content_parts.append(str(block.get("text", "")))
-            elif btype == "thinking":
+            if btype == "thinking":
                 thinking_blocks.append(block)
                 thinking_parts.append(str(block.get("thinking", "")))
             elif btype == "redacted_thinking":
@@ -353,7 +372,7 @@ class AnthropicAdapter:
             container_id = str(cid) if cid else None
 
         return {
-            "content": "".join(content_parts),
+            "content": _join_content_text_segments(response_data.get("content")),
             "model": str(response_data.get("model", "")),
             "provider": "anthropic",
             "usage": usage,
@@ -433,11 +452,7 @@ class AnthropicAdapter:
         messages.append({"role": "user", "content": text})
 
     def extract_text(self, response_data: dict[str, Any]) -> str:
-        parts: list[str] = []
-        for block in response_data.get("content") or []:
-            if isinstance(block, dict) and block.get("type") == "text":
-                parts.append(str(block.get("text", "")))
-        return "".join(parts)
+        return _join_content_text_segments(response_data.get("content"))
 
     def extract_usage(self, response_data: dict[str, Any]) -> dict[str, int]:
         u = response_data.get("usage") or {}
