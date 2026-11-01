@@ -11,23 +11,18 @@ from __future__ import annotations
 import re
 from typing import Any
 
+from claude_bundles.composer_locate import (
+    COMPOSER_DRAFT_FROM_ELEMENT_JS,
+    COMPOSER_DRAFT_FROM_PAGE_JS,
+)
+
 _UNIQUE_MARKER_RE = re.compile(r"#\d+-unique:\s*\S+")
 _RELEASE_POLL_MS = 200
 _RELEASE_TIMEOUT_S = 3.0
 _SETTLE_MS = 1200
 _CLICK_TIMEOUT_MS = 2500
-
-_COMPOSER_DRAFT_JS = """() => {
-  const composer = document.querySelector('[data-testid="chat-input"]')
-    || document.querySelector('[contenteditable="true"][data-testid]')
-    || document.querySelector('[contenteditable="true"]')
-    || document.querySelector('[role="textbox"]');
-  if (!composer) {
-    return { ok: false, text: '', len: 0 };
-  }
-  const t = (composer.innerText || composer.value || '').trim();
-  return { ok: true, text: t.slice(0, 800), len: t.length };
-}"""
+_COMMIT_POLL_MS = 150
+_COMMIT_TIMEOUT_S = 3.0
 
 
 def verification_marker(prompt: str) -> str:
@@ -53,9 +48,7 @@ def composer_holds_needle(draft: dict[str, Any], needle: str) -> bool:
     return needle in str(draft.get("text") or "")
 
 
-async def read_composer_draft(page) -> dict[str, Any]:
-    """Return a composer inner-text snapshot as ``{ok, text, len}``."""
-    raw = await page.evaluate(_COMPOSER_DRAFT_JS)
+def _normalize_draft(raw: object) -> dict[str, Any]:
     if not isinstance(raw, dict):
         return {"ok": False, "text": "", "len": 0}
     return {
@@ -63,6 +56,15 @@ async def read_composer_draft(page) -> dict[str, Any]:
         "text": str(raw.get("text") or ""),
         "len": int(raw.get("len") or 0),
     }
+
+
+async def read_composer_draft(page, *, composer=None) -> dict[str, Any]:
+    """Return a composer inner-text snapshot as ``{ok, text, len}``."""
+    if composer is not None:
+        raw = await composer.evaluate(COMPOSER_DRAFT_FROM_ELEMENT_JS)
+        return _normalize_draft(raw)
+    raw = await page.evaluate(COMPOSER_DRAFT_FROM_PAGE_JS)
+    return _normalize_draft(raw)
 
 
 def normalize_committed_turn(text: str) -> str:
@@ -77,12 +79,12 @@ async def clear_composer_verified(page, composer) -> None:
     await page.keyboard.press("Control+A")
     await page.keyboard.press("Backspace")
     await page.wait_for_timeout(120)
-    draft = await read_composer_draft(page)
+    draft = await read_composer_draft(page, composer=composer)
     if int(draft.get("len") or 0) > 0:
         await page.keyboard.press("Control+A")
         await page.keyboard.press("Backspace")
         await page.wait_for_timeout(120)
-        draft = await read_composer_draft(page)
+        draft = await read_composer_draft(page, composer=composer)
     if int(draft.get("len") or 0) > 0:
         snippet = str(draft.get("text") or "")[:120]
         raise RuntimeError(
@@ -90,11 +92,11 @@ async def clear_composer_verified(page, composer) -> None:
         )
 
 
-async def composer_holds_draft(page, needle: str) -> bool:
+async def composer_holds_draft(page, needle: str, *, composer=None) -> bool:
     """True when the submit needle is still in the composer."""
     if not needle:
         return False
-    draft = await read_composer_draft(page)
+    draft = await read_composer_draft(page, composer=composer)
     return composer_holds_needle(draft, needle)
 
 
@@ -102,6 +104,7 @@ async def await_composer_released(
     page,
     needle: str,
     *,
+    composer=None,
     timeout_s: float = _RELEASE_TIMEOUT_S,
     poll_ms: int = _RELEASE_POLL_MS,
 ) -> bool:
@@ -110,12 +113,12 @@ async def await_composer_released(
         return True
     elapsed = 0.0
     limit_ms = int(timeout_s * 1000)
-    if not await composer_holds_draft(page, needle):
+    if not await composer_holds_draft(page, needle, composer=composer):
         return True
     while elapsed < limit_ms:
         await page.wait_for_timeout(poll_ms)
         elapsed += poll_ms
-        if not await composer_holds_draft(page, needle):
+        if not await composer_holds_draft(page, needle, composer=composer):
             return True
     return False
 
@@ -136,13 +139,13 @@ async def click_submit_button(btn) -> bool:
         return True
 
 
-async def press_send_chords(page, needle: str = "") -> None:
+async def press_send_chords(page, needle: str = "", *, composer=None) -> None:
     """Legacy send shortcuts when Enter alone did not commit the draft.
 
     Control+Enter then Meta+Enter cover pre-stream-break-in compose surfaces.
     """
     await page.keyboard.press("Control+Enter")
-    if needle and not await composer_holds_draft(page, needle):
+    if needle and not await composer_holds_draft(page, needle, composer=composer):
         return
     await page.wait_for_timeout(250)
     await page.keyboard.press("Meta+Enter")
@@ -185,10 +188,10 @@ async def submit_composer_content(page, prompt: str, *, composer) -> None:
     if not clicked:
         await composer.click(force=True)
         await page.wait_for_timeout(120)
-    await prove_composer_submitted(page, prompt)
+    await prove_composer_submitted(page, prompt, composer=composer)
 
 
-async def prove_composer_submitted(page, prompt: str) -> None:
+async def prove_composer_submitted(page, prompt: str, *, composer=None) -> None:
     """Fail closed unless the prompt needle leaves the composer.
 
     After the caller has clicked Send (or not, on stream break-in), wait for
@@ -198,16 +201,51 @@ async def prove_composer_submitted(page, prompt: str) -> None:
     needle = verification_marker(prompt)
     if not needle:
         return
-    if await await_composer_released(page, needle):
+    if await await_composer_released(page, needle, composer=composer):
         return
     await page.keyboard.press("Enter")
-    if await await_composer_released(page, needle):
+    if await await_composer_released(page, needle, composer=composer):
         return
-    await press_send_chords(page, needle)
-    if await await_composer_released(page, needle):
+    await press_send_chords(page, needle, composer=composer)
+    if await await_composer_released(page, needle, composer=composer):
         return
     raise RuntimeError(
         "submit did not clear composer: Send click/chords left the draft in the box"
+    )
+
+
+async def assert_committed_user_turn(
+    page,
+    prompt: str,
+    *,
+    composer=None,
+    timeout_s: float = _COMMIT_TIMEOUT_S,
+    poll_ms: int = _COMMIT_POLL_MS,
+) -> None:
+    """Fail at submit time when the marker is not in committed-turn DOM.
+
+    Used on ``claude_surface=code`` so a paste-only false success does not
+    burn the idle budget as ``observer_unverified``.
+    """
+    needle = verification_marker(prompt)
+    if not needle:
+        return
+    elapsed = 0.0
+    limit_ms = int(timeout_s * 1000)
+    while elapsed < limit_ms:
+        if await marker_survives_settle(page, needle, settle_ms=0):
+            return
+        if not await composer_holds_draft(page, needle, composer=composer):
+            if await marker_survives_settle(page, needle, settle_ms=_COMMIT_POLL_MS):
+                return
+        await page.wait_for_timeout(poll_ms)
+        elapsed += poll_ms
+    draft = await read_composer_draft(page, composer=composer)
+    committed = await marker_survives_settle(page, needle, settle_ms=0)
+    raise RuntimeError(
+        "submit_unverified: prompt marker absent from committed user turns "
+        f"(committed={committed}, composer_len={draft.get('len')}, "
+        f"composer_text={str(draft.get('text') or '')[:120]!r}, needle={needle!r})"
     )
 
 
@@ -240,7 +278,9 @@ _MARKER_IN_COMMITTED_JS = """
   const selectors = [
     '[data-testid="user-message"]',
     '[data-testid="human-turn"]',
+    '[data-testid="user-turn"]',
     'div[class*="font-user"]',
+    '[class*="UserMessage"]',
   ];
   for (const sel of selectors) {
     for (const el of document.querySelectorAll(sel)) {

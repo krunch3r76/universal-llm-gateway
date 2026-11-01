@@ -13,7 +13,9 @@ _UNIQUE_LINE_RE = re.compile(r"#\d+-unique:\s*\S+")
 USER_TURN_SELECTORS: tuple[str, ...] = (
     '[data-testid="user-message"]',
     '[data-testid="human-turn"]',
+    '[data-testid="user-turn"]',
     'div[class*="font-user"]',
+    '[class*="UserMessage"]',
 )
 
 

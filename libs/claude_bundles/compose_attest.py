@@ -21,6 +21,9 @@ import re
 from typing import Any, Literal
 
 from claude_bundles.chat_session_hygiene import in_active_chat
+from claude_bundles.composer_locate import (
+    COLLECT_COMPOSER_SUBMIT_JS as _COLLECT_COMPOSER_SUBMIT_JS,
+)
 
 ApprovalMode = Literal["skip", "auto", "manual", "unknown", "absent"]
 ComposeMode = Literal["chat", "cowork"]
@@ -383,51 +386,6 @@ def pick_submit_candidate(candidates: list[dict[str, Any]]) -> dict[str, Any] | 
     if len(eligible) == 1:
         return {**eligible[0], "pick": "unique_candidate"}
     return None
-
-
-_COLLECT_COMPOSER_SUBMIT_JS = """() => {
-  const composer = document.querySelector('[data-testid="chat-input"]')
-    || document.querySelector('[contenteditable="true"][data-testid]')
-    || document.querySelector('[contenteditable="true"]');
-  if (!composer) {
-    return { ok: false, step: 'composer_missing', candidates: [] };
-  }
-  const rect = composer.getBoundingClientRect();
-  const pad = 140;
-  const region = {
-    left: rect.left - 24,
-    top: rect.top - 24,
-    right: rect.right + pad,
-    bottom: rect.bottom + pad,
-  };
-  const inRegion = (el) => {
-    const r = el.getBoundingClientRect();
-    if (r.width <= 0 || r.height <= 0) return false;
-    const cx = r.left + r.width / 2;
-    const cy = r.top + r.height / 2;
-    return cx >= region.left && cx <= region.right
-      && cy >= region.top && cy <= region.bottom;
-  };
-  const candidates = [];
-  for (const btn of document.querySelectorAll('button, [role="button"]')) {
-    if (btn.disabled || btn.getAttribute('aria-disabled') === 'true') continue;
-    const style = window.getComputedStyle(btn);
-    if (style.display === 'none' || style.visibility === 'hidden') continue;
-    if (parseFloat(style.opacity || '1') === 0) continue;
-    if (!inRegion(btn)) continue;
-    const aria = (btn.getAttribute('aria-label') || '').trim();
-    const text = (btn.innerText || '').trim().replace(/\\s+/g, ' ');
-    const name = aria || text;
-    if (!name) continue;
-    candidates.push({
-      aria,
-      text,
-      name,
-      role: btn.getAttribute('role') || 'button',
-    });
-  }
-  return { ok: true, step: 'collected', candidates };
-}"""
 
 
 async def discover_live_submit(page, *, composer=None) -> dict[str, Any]:

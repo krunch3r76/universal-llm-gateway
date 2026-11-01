@@ -366,9 +366,11 @@ async def find_composer(page: Page):
             if await el.is_visible():
                 return el
     for sel in (
+        "[contenteditable='true'][role='textbox']",
+        "textarea[aria-label*='Prompt' i]",
+        "textarea",
         "[contenteditable='true'][data-testid]",
         "[contenteditable='true']",
-        "textarea",
         "[role='textbox']",
     ):
         loc = page.locator(sel)
@@ -530,6 +532,10 @@ async def _submit_composer_draft(
 
     if strategy == "live_discover":
         await submit_composer_content(page, draft_text, composer=composer)
+        if surf == "code":
+            from claude_bundles.composer_submit import assert_committed_user_turn
+
+            await assert_committed_user_turn(page, draft_text, composer=composer)
     else:
         mode: str = fp.get("mode") or ("cowork" if fp.get("approval") else "chat")
         if mode not in ("chat", "cowork"):

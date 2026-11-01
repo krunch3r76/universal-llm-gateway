@@ -118,7 +118,9 @@ _MARKER_IN_COMMITTED_JS = """
   const selectors = [
     '[data-testid="user-message"]',
     '[data-testid="human-turn"]',
+    '[data-testid="user-turn"]',
     'div[class*="font-user"]',
+    '[class*="UserMessage"]',
   ];
   for (const sel of selectors) {
     for (const el of document.querySelectorAll(sel)) {

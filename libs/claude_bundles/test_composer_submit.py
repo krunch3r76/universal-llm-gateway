@@ -94,7 +94,7 @@ async def test_clear_composer_verified_raises_when_draft_persists() -> None:
     composer = AsyncMock()
     page.wait_for_timeout = AsyncMock()
     page.keyboard.press = AsyncMock()
-    page.evaluate = AsyncMock(
+    composer.evaluate = AsyncMock(
         side_effect=[
             {"ok": True, "text": "leftover draft", "len": 15},
             {"ok": True, "text": "leftover draft", "len": 15},

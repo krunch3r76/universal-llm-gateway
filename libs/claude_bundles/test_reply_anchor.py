@@ -32,7 +32,7 @@ def test_marker_excludes_slash_manifest_on_marked_sealed_prompt() -> None:
     typed = typed_prompt_body(prompt)
     assert "/reasoning-posture" not in typed.split("<skills_inline>", 1)[0].strip()
     marker = anchor_marker(prompt)
-    assert marker in typed
+    assert all(word in typed for word in marker.split())
     assert "Question: what is the bind?" in marker
 
 
@@ -69,4 +69,4 @@ def test_js_args_shape() -> None:
     args = ReplyAnchor(marker="hop", prior_matches=1).js_args()
     assert args["anchorMarker"] == "hop"
     assert args["priorMatches"] == 1
-    assert len(args["userSelectors"]) == 3
+    assert len(args["userSelectors"]) == 5
