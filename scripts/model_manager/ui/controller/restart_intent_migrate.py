@@ -10,6 +10,7 @@ from .restart_intent_states import (
     STATUS_CANCELLED,
     STATUS_COMPLETED,
     STATUS_DRAINED_RESTARTING,
+    STATUS_EXPIRED,
     STATUS_FAILED,
     STATUS_FORCE_REQUESTED,
     STATUS_PENDING_DRAIN,
@@ -30,7 +31,7 @@ CREATE TABLE IF NOT EXISTS restart_intents (
     status               TEXT NOT NULL CHECK (status IN (
         'pending_drain','drained_restarting','verifying_activation',
         'completed','activation_unverified',
-        'failed','timeout','force_requested','cancelled')),
+        'failed','timeout','force_requested','cancelled','expired')),
     drain_epoch          INTEGER,
     worker_id            TEXT,
     worker_started_at    TEXT,
@@ -159,6 +160,91 @@ def apply_restart_intent_schema(conn: sqlite3.Connection) -> None:
     _ensure_kill_cas_indexes(conn)
     _ensure_arming_lanes_column(conn)
     _ensure_owed_wake_attempt_columns(conn)
+    _ensure_expired_status(conn)
+
+
+def _ensure_expired_status(conn: sqlite3.Connection) -> None:
+    """Widen CHECK to allow terminal ``expired`` (friction:41247)."""
+    row = conn.execute(
+        "SELECT sql FROM sqlite_master WHERE type='table' AND name='restart_intents'"
+    ).fetchone()
+    if row is None or row[0] is None:
+        return
+    if f"'{STATUS_EXPIRED}'" in str(row[0]):
+        return
+    old_cols = [
+        r[1]
+        for r in conn.execute("PRAGMA table_info(restart_intents)").fetchall()
+    ]
+    new_cols = [
+        "intent_id",
+        "service",
+        "action",
+        "status",
+        "drain_epoch",
+        "worker_id",
+        "worker_started_at",
+        "deadline_at",
+        "last_seen_event_seq",
+        "reason",
+        "kill_boundary_at",
+        "caller_agent",
+        "armed_at",
+        "expires_at",
+        "park_live",
+        "park_summary",
+        "wait_for_boundary",
+        "status_reason",
+        "status_changed_at",
+        "transitions",
+        "arming_lanes",
+        "caller_thread_id",
+        "created_at",
+        "updated_at",
+    ]
+    shared = [c for c in new_cols if c in old_cols]
+    col_csv = ", ".join(shared)
+    conn.executescript(
+        f"""
+        CREATE TABLE restart_intents_expired_v1 (
+            intent_id            TEXT PRIMARY KEY,
+            service              TEXT NOT NULL,
+            action               TEXT NOT NULL DEFAULT 'restart',
+            status               TEXT NOT NULL CHECK (status IN (
+                '{STATUS_PENDING_DRAIN}','{STATUS_DRAINED_RESTARTING}',
+                '{STATUS_VERIFYING_ACTIVATION}',
+                '{STATUS_COMPLETED}','{STATUS_ACTIVATION_UNVERIFIED}',
+                '{STATUS_FAILED}','{STATUS_TIMEOUT}',
+                '{STATUS_FORCE_REQUESTED}','{STATUS_CANCELLED}',
+                '{STATUS_EXPIRED}')),
+            drain_epoch          INTEGER,
+            worker_id            TEXT,
+            worker_started_at    TEXT,
+            deadline_at          TEXT,
+            last_seen_event_seq  INTEGER NOT NULL DEFAULT 0,
+            reason               TEXT,
+            kill_boundary_at     TEXT,
+            caller_agent         TEXT,
+            armed_at             TEXT,
+            expires_at           TEXT,
+            park_live            INTEGER NOT NULL DEFAULT 0,
+            park_summary         TEXT,
+            wait_for_boundary    INTEGER NOT NULL DEFAULT 0,
+            status_reason        TEXT,
+            status_changed_at    TEXT,
+            transitions          TEXT NOT NULL DEFAULT '[]',
+            arming_lanes         TEXT,
+            caller_thread_id     TEXT,
+            created_at           TEXT NOT NULL,
+            updated_at           TEXT NOT NULL
+        );
+        INSERT INTO restart_intents_expired_v1 ({col_csv})
+        SELECT {col_csv} FROM restart_intents;
+        DROP TABLE restart_intents;
+        ALTER TABLE restart_intents_expired_v1 RENAME TO restart_intents;
+        """
+    )
+    _ensure_kill_cas_indexes(conn)
 
 
 def _ensure_arming_lanes_column(conn: sqlite3.Connection) -> None:

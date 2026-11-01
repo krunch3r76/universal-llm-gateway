@@ -99,8 +99,8 @@ def project_restart_intent_last(intent: Intent) -> dict[str, Any] | None:
     projected = TERMINAL_STATUS_PROJECTION.get(intent.status)
     if projected is None:
         return None
-    # Expiry cancels the row (expire_via_cancel) and records ttl_expired.
-    # Project that as expired so a TTL end is not shown as an operator cancel.
+    # Legacy expiry used cancel+ttl_expired; new rows use status=expired.
+    # Project cancel+ttl_expired as expired so a TTL end is not operator cancel.
     reason = intent.status_reason or ""
     executed = projected == "fired"
     if projected in {"failed", "activation_unverified", "cancelled"} and (

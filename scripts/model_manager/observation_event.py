@@ -261,6 +261,27 @@ async def emit_manage_restart_deferred(
     )
 
 
+async def emit_manage_restart_expired(
+    *,
+    intent_id: str,
+    service: str,
+    armed_at: str | None,
+    expires_at: str | None,
+    last_status_reason: str,
+) -> None:
+    """A pending arm passed ``expires_at`` without beginning drain."""
+    await _emit(
+        "manage.restart.expired",
+        {
+            "intent_id": intent_id,
+            "service": service,
+            "armed_at": armed_at,
+            "expires_at": expires_at,
+            "last_status_reason": last_status_reason,
+        },
+    )
+
+
 async def emit_manage_restart_draining(
     *,
     intent_id: str,

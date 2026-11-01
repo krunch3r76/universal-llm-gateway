@@ -611,7 +611,11 @@ def test_ttl_expiry_projects_as_expired(tmp_path: Any) -> None:
     assert _run(_expire()) is True
     row = store.get(intent.intent_id)
     assert row is not None
-    assert row.status == STATUS_CANCELLED
+    from scripts.model_manager.ui.controller.restart_intent_states import (
+        STATUS_EXPIRED,
+    )
+
+    assert row.status == STATUS_EXPIRED
     projected = project_restart_intent_last(row)
     assert projected is not None
     assert projected["status"] == "expired"
