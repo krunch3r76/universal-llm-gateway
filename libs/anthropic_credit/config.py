@@ -41,8 +41,9 @@ class AvailableBalanceConfig:
 class CreditConfig:
     cycle: CycleConfig
     grant_usd: Decimal
-    hard_stop_usd: Decimal
-    mcp_connector_stop_usd: Decimal
+    # None means no local dollar ceiling. Anthropic's balance is the spend limit.
+    hard_stop_usd: Decimal | None
+    mcp_connector_stop_usd: Decimal | None
     mcp_connector_allowance_usd: Decimal
     reservation_ttl_minutes: int
     count_tokens_margin: Decimal
@@ -73,6 +74,12 @@ def _decimal(value: Any, *, field: str) -> Decimal:
         return Decimal(str(value))
     except Exception as exc:
         raise CreditConfigInvalid(f"{field} must be a number") from exc
+
+
+def _optional_decimal(payload: dict[str, Any], field: str) -> Decimal | None:
+    if field not in payload or payload[field] is None:
+        return None
+    return _decimal(payload[field], field=field)
 
 
 def _int_nonneg(value: Any, *, field: str) -> int:
@@ -171,15 +178,19 @@ def load_credit_config(path: Path | None = None) -> CreditConfig:
         raise CreditConfigInvalid("cycle.owner must be non-empty")
 
     grant_usd = _decimal(payload.get("grant_usd"), field="grant_usd")
-    hard_stop_usd = _decimal(payload.get("hard_stop_usd"), field="hard_stop_usd")
-    if hard_stop_usd >= grant_usd:
-        raise CreditConfigInvalid("hard_stop_usd must be < grant_usd")
-
-    mcp_stop = _decimal(
-        payload.get("mcp_connector_stop_usd"), field="mcp_connector_stop_usd"
-    )
-    if mcp_stop > hard_stop_usd:
-        raise CreditConfigInvalid("mcp_connector_stop_usd must be <= hard_stop_usd")
+    hard_stop_usd = _optional_decimal(payload, "hard_stop_usd")
+    mcp_stop = _optional_decimal(payload, "mcp_connector_stop_usd")
+    if (hard_stop_usd is None) != (mcp_stop is None):
+        raise CreditConfigInvalid(
+            "hard_stop_usd and mcp_connector_stop_usd must both be set or both omitted"
+        )
+    if hard_stop_usd is not None and mcp_stop is not None:
+        if hard_stop_usd >= grant_usd:
+            raise CreditConfigInvalid("hard_stop_usd must be < grant_usd")
+        if mcp_stop > hard_stop_usd:
+            raise CreditConfigInvalid(
+                "mcp_connector_stop_usd must be <= hard_stop_usd"
+            )
 
     mcp_allowance = _decimal(
         payload.get("mcp_connector_allowance_usd"),

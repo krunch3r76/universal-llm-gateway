@@ -27,10 +27,26 @@ pytestmark = pytest.mark.offline
 _T0 = datetime(2026, 10, 17, 15, 0, 0, tzinfo=UTC)
 
 
+def _with_test_ceilings(base: CreditConfig, **overrides: Any) -> CreditConfig:
+    """Restore the former stops when the shipped config omits them.
+
+    Callers that pass ``hard_stop_usd=None`` keep the unbounded shipped policy.
+    """
+    fill: dict[str, Any] = {}
+    if base.hard_stop_usd is None and "hard_stop_usd" not in overrides:
+        fill["hard_stop_usd"] = Decimal("185")
+    if (
+        base.mcp_connector_stop_usd is None
+        and "mcp_connector_stop_usd" not in overrides
+    ):
+        fill["mcp_connector_stop_usd"] = Decimal("170")
+    return dataclasses.replace(base, **fill, **overrides)
+
+
 def _make_cfg(tmp_path: Path, **overrides: Any) -> CreditConfig:
     base = load_credit_config()
     ledger_path = tmp_path / "state" / "anthropic_credit.sqlite"
-    replaced = dataclasses.replace(base, ledger_path=ledger_path, **overrides)
+    replaced = _with_test_ceilings(base, ledger_path=ledger_path, **overrides)
     init_ledger(replaced)
     return replaced
 
@@ -80,7 +96,7 @@ def _mp_worker_admit(args: tuple[str, str, int]) -> bool:
     db_path_str, req_id, index = args
     _ = index
     base = load_credit_config()
-    cfg = dataclasses.replace(base, ledger_path=Path(db_path_str))
+    cfg = _with_test_ceilings(base, ledger_path=Path(db_path_str))
     policy = CreditPolicy(cfg, busy_timeout_ms=5000)
     res = policy.admit(
         req_id,
@@ -513,3 +529,29 @@ def test_cap_zero_refuses_every_admit_and_available_balance_as_of(
     assert isinstance(r2, Admit)
     assert isinstance(r3, Refuse)
     assert r3.code == "anthropic_cycle_budget_exhausted"
+
+
+def test_omitted_ceilings_admit_past_former_mcp_stop(tmp_path: Path) -> None:
+    """Credits on the account are spendable. Omitted local stops do not refuse."""
+    cfg = _make_cfg(
+        tmp_path / "open",
+        hard_stop_usd=None,
+        mcp_connector_stop_usd=None,
+    )
+    policy = CreditPolicy(cfg)
+    _seed_committed_usd(policy, Decimal("200"))
+    admitted = policy.admit(
+        "past-former-stop",
+        "anthropic/claude-sonnet-5",
+        {
+            "model": "claude-sonnet-5",
+            "max_tokens": 1024,
+            "mcp_servers": [
+                {"type": "url", "url": "https://example.com/mcp", "name": "fleet"}
+            ],
+            "messages": [{"role": "user", "content": "x"}],
+        },
+        token_count=100,
+        now=_T0,
+    )
+    assert isinstance(admitted, Admit)

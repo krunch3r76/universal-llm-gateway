@@ -46,7 +46,7 @@ class Admit:
     request_id: str
     model: str
     reservation_usd: Decimal
-    headroom_usd: Decimal
+    headroom_usd: Decimal | None
     window_start: datetime
     reset_at: datetime
     mcp_class: bool
@@ -181,9 +181,23 @@ class CreditPolicy:
         committed_usd: Decimal,
         open_usd: Decimal,
         spend_since_as_of_usd: Decimal,
-    ) -> tuple[Decimal, Decimal, Decimal]:
-        """Return ``(cap_usd, hard_stop_headroom_usd, mcp_headroom_usd)``."""
+    ) -> tuple[Decimal | None, Decimal | None, Decimal | None]:
+        """Return ``(cap_usd, hard_stop_headroom_usd, mcp_headroom_usd)``.
+
+        ``None`` means no local dollar ceiling. A dated available-balance
+        snapshot still caps. Anthropic's balance is the spend limit otherwise.
+        """
         window_total = committed_usd + open_usd
+        if cfg.hard_stop_usd is None or cfg.mcp_connector_stop_usd is None:
+            if cfg.available_balance.as_of is None:
+                return None, None, None
+            balance_cap = window_total + (
+                cfg.available_balance.usd - spend_since_as_of_usd
+            )
+            cap_usd = max(Decimal("0"), balance_cap)
+            headroom = max(Decimal("0"), cap_usd - window_total)
+            return cap_usd, headroom, headroom
+
         if cfg.available_balance.as_of is not None:
             balance_cap = window_total + (
                 cfg.available_balance.usd - spend_since_as_of_usd
@@ -334,19 +348,21 @@ class CreditPolicy:
                     )
 
                 window_total = snap.committed_usd + snap.open_reservations_usd
-                if reservation.mcp_class:
-                    if snap.open_mcp_count > 0:
-                        return Refuse(
-                            code="anthropic_cycle_budget_exhausted",
-                            http_status=429,
-                            reservation_usd=reservation.usd,
-                            headroom_usd=mcp_headroom,
-                            detail=(
-                                "MCP-connector requests are serialized one at a time; "
-                                "another MCP reservation is open"
-                            ),
-                        )
-                    mcp_cap = min(cap_usd, cfg.mcp_connector_stop_usd)
+                if reservation.mcp_class and snap.open_mcp_count > 0:
+                    return Refuse(
+                        code="anthropic_cycle_budget_exhausted",
+                        http_status=429,
+                        reservation_usd=reservation.usd,
+                        headroom_usd=mcp_headroom,
+                        detail=(
+                            "MCP-connector requests are serialized one at a time; "
+                            "another MCP reservation is open"
+                        ),
+                    )
+                if cap_usd is None:
+                    remaining_headroom = None
+                elif reservation.mcp_class:
+                    mcp_cap = min(cap_usd, cfg.mcp_connector_stop_usd or cap_usd)
                     if window_total + reservation.usd > mcp_cap:
                         return Refuse(
                             code="anthropic_cycle_budget_exhausted",

@@ -7,8 +7,8 @@ cycle:
   owner: kaywan                 # only he can see Max renewal / Console Promotional-credit expiry
   steward: grok-bot-cc1         # house 12797 applies an edit only on Kaywan's word, with a K42 record
 grant_usd: 200
-hard_stop_usd: 185              # ULG never admits past this in any true cycle
-mcp_connector_stop_usd: 170     # requests whose input can grow server-side stop earlier (see § 2.4 step 3)
+# hard_stop_usd and mcp_connector_stop_usd omitted: no local dollar ceiling.
+# Anthropic's balance is the spend limit. The ledger still records use.
 mcp_connector_allowance_usd: 5.0
 reservation_ttl_minutes: 15
 count_tokens_margin: 1.10

@@ -13,7 +13,8 @@ from anthropic_credit.config import CreditConfigInvalid, load_credit_config
 
 def test_shipped_yaml_loads() -> None:
     cfg = load_credit_config()
-    assert cfg.hard_stop_usd == 185
+    assert cfg.hard_stop_usd is None
+    assert cfg.mcp_connector_stop_usd is None
     assert cfg.grant_usd == 200
     assert cfg.fail_mode == "closed"
     assert "anthropic/claude-sonnet-5" in cfg.metered_models
