@@ -72,8 +72,13 @@ async def build_status_report(
     """
     try:
         resolved_cdp = resolve_cdp_url(cdp_url)
-    except ValueError:
-        return {"ok": False, "error": {"code": "missing_cdp_url"}}
+    except ValueError as exc:
+        msg = str(exc)
+        if msg == "missing_cdp_url":
+            return {"ok": False, "error": {"code": "missing_cdp_url"}}
+        if msg.startswith("invalid_cdp_url"):
+            return {"ok": False, "error": {"code": "invalid_cdp_url", "message": msg}}
+        raise
 
     try:
         js = probe_js_for_surface(surface)
