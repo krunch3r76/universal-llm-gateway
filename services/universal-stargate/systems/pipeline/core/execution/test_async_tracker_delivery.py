@@ -852,6 +852,120 @@ async def test_on_behalf_post_skips_empty_content(
     assert "post_path" not in captured
 
 
+def _make_failed_to_thread_record(
+    *,
+    execution_id: str = "94a57b30-fail",
+    error_code: str = "anthropic_cycle_budget_exhausted",
+    error_message: str = "0.2s after admission, zero tokens",
+) -> PipelineExecutionRecord:
+    return PipelineExecutionRecord(
+        execution_id=execution_id,
+        pipeline="frontier-dispatch",
+        status="failed",
+        started_at="2026-05-22T22:34:26Z",
+        started_at_monotonic=0.0,
+        completed_at="2026-05-22T22:34:27Z",
+        completed_at_monotonic=0.2,
+        result=None,
+        error=PipelineExecutionError(code=error_code, message=error_message),
+        result_delivery=None,
+        caller_agent="claude-web",
+        output_contract="thread",
+        target_thread="21520",
+        op="to_thread",
+        from_agent="reviewer",
+    )
+
+
+@pytest.mark.asyncio
+async def test_on_behalf_failed_thread_contract_posts_terminal_failed_turn(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Provider failure with no result posts one FAILED turn (friction a:41045)."""
+    bus = _FakeBus()
+    captured: dict[str, Any] = {}
+    record = _make_failed_to_thread_record()
+
+    _patch_client(monkeypatch, _make_thread_aware_transport(captured))
+    _patch_sidecar_ok(monkeypatch)
+
+    outcome = await deliver_result(record, event_bus=bus, auth_token="secret")
+    await asyncio.sleep(0)
+
+    assert outcome.status == "delivered"
+    assert outcome.failure_reason == "terminal_failure_posted"
+    assert captured["post_path"] == "/turns"
+    subject = captured["post_body"]["subject"]
+    body = captured["post_body"]["body"]
+    assert subject.startswith("FAILED ")
+    assert "94a57b30-fail" in body
+    assert "anthropic_cycle_budget_exhausted" in body
+    assert "provider_failure" in body
+    assert record.thread_reply_observed_at is not None
+    signals = [getattr(e, "signal", None) for e in bus.events]
+    assert "pipeline.dispatch.delivery.sent" in signals
+
+
+@pytest.mark.asyncio
+async def test_on_behalf_terminal_failure_post_is_idempotent(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    bus = _FakeBus()
+    captured: dict[str, Any] = {"post_count": 0}
+    record = _make_failed_to_thread_record()
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.method == "GET" and "/threads/" in request.url.path:
+            return httpx.Response(
+                200,
+                json={
+                    "id": "21520",
+                    "status": "active",
+                    "turn_count": 5,
+                    "last_turn_from": "claude-web",
+                },
+            )
+        if request.method == "POST" and request.url.path == "/turns":
+            captured["post_count"] = int(captured["post_count"]) + 1
+            return httpx.Response(201, json={"id": 6, "turn_number": 6})
+        return httpx.Response(404, json={})
+
+    _patch_client(monkeypatch, httpx.MockTransport(handler))
+    _patch_sidecar_ok(monkeypatch)
+
+    first = await deliver_result(record, event_bus=bus, auth_token="secret")
+    second = await deliver_result(record, event_bus=bus, auth_token="secret")
+    await asyncio.sleep(0)
+
+    assert first.status == "delivered"
+    assert second.status == "delivered"
+    assert second.failure_reason == "terminal_failure_posted"
+    assert captured["post_count"] == 1
+
+
+@pytest.mark.asyncio
+async def test_on_behalf_terminal_failure_post_non_2xx_records_delivery_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    bus = _FakeBus()
+    captured: dict[str, Any] = {}
+    record = _make_failed_to_thread_record()
+
+    _patch_client(
+        monkeypatch, _make_thread_aware_transport(captured, post_status=503)
+    )
+    _patch_sidecar_ok(monkeypatch)
+
+    outcome = await deliver_result(record, event_bus=bus, auth_token="secret")
+    await asyncio.sleep(0)
+
+    assert outcome.status == "failed"
+    assert outcome.failure_reason == "post_503"
+    assert record.thread_reply_observed_at is None
+    signals = [getattr(e, "signal", None) for e in bus.events]
+    assert "pipeline.dispatch.delivery.failed" in signals
+
+
 @pytest.mark.asyncio
 async def test_on_behalf_post_falls_back_to_last_turn_from(
     monkeypatch: pytest.MonkeyPatch,

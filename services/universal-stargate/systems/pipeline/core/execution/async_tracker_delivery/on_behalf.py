@@ -40,6 +40,7 @@ distinct ``DeliveryOutcome``):
 
 from __future__ import annotations
 
+import json
 from typing import TYPE_CHECKING
 
 from universal_logging import get_logger
@@ -80,6 +81,176 @@ if TYPE_CHECKING:
 
 logger = get_logger(__name__)
 
+_TERMINAL_FAILURE_POSTED = "terminal_failure_posted"
+
+
+def _terminal_failure_post_already_delivered(
+    record: PipelineExecutionRecord,
+) -> bool:
+    delivery = record.delivery
+    return (
+        delivery is not None
+        and delivery.status == "delivered"
+        and delivery.failure_reason == _TERMINAL_FAILURE_POSTED
+    )
+
+
+def _needs_terminal_failure_post(record: PipelineExecutionRecord) -> bool:
+    if _terminal_failure_post_already_delivered(record):
+        return True
+    if record.output_contract != "thread" or not record.target_thread:
+        return False
+    if record.status != "failed" or record.error is None:
+        return False
+    raw_content = record.result.content if record.result is not None else ""
+    content = enrich_on_behalf_sidecar_content(record, raw_content)
+    return not content or not content.strip()
+
+
+def _build_terminal_failure_subject(record: PipelineExecutionRecord) -> str:
+    error = record.error
+    code = error.code if error is not None else "unknown"
+    short_id = record.execution_id[:8]
+    return f"FAILED {record.pipeline} ({code}) — {short_id}"
+
+
+def _build_terminal_failure_body(record: PipelineExecutionRecord) -> str:
+    error = record.error
+    assert error is not None
+    payload = {
+        "execution_id": record.execution_id,
+        "pipeline": record.pipeline,
+        "status": record.status,
+        "error": {"code": error.code, "message": error.message},
+        "failure_kind": "provider_failure",
+    }
+    return json.dumps(payload, indent=2, default=str)
+
+
+async def _post_terminal_failure_on_behalf(
+    record: PipelineExecutionRecord,
+    *,
+    event_bus: _EventBusProtocol | None,
+    auth_token: str,
+    url: str,
+) -> DeliveryOutcome:
+    """Post one terminal FAILED turn when the pipeline failed with no reply body."""
+    thread = record.target_thread
+    assert thread is not None
+
+    if _terminal_failure_post_already_delivered(record):
+        return DeliveryOutcome(
+            status="delivered",
+            failure_reason=_TERMINAL_FAILURE_POSTED,
+            thread=thread,
+            delivery_mode="inline",
+        )
+
+    from_agent = record.from_agent or "dispatch"
+    last_turn_from = await _fetch_thread_last_turn_from(
+        thread, url=url, auth_token=auth_token
+    )
+    to_agent = _resolve_to_agent(record, last_turn_from=last_turn_from)
+    if not to_agent:
+        logger.error(
+            "Terminal failure delivery missing to_agent: execution_id=%s thread=%s "
+            "caller_agent=%r from_agent=%r last_turn_from=%r",
+            record.execution_id,
+            thread,
+            record.caller_agent,
+            from_agent,
+            last_turn_from,
+        )
+        _emit(
+            event_bus,
+            _build_failed_event(
+                pipeline_id=record.pipeline,
+                execution_id=record.execution_id,
+                thread=thread,
+                status_code=0,
+                error_preview="unresolved_to_agent",
+                op=record.op or "",
+                output_contract=record.output_contract,
+            ),
+        )
+        return DeliveryOutcome(
+            status="failed", failure_reason="unresolved_to_agent", thread=thread
+        )
+
+    subject = _build_terminal_failure_subject(record)
+    body = _build_terminal_failure_body(record)
+
+    status_code, response_text = await _post_turn(
+        url=url,
+        auth_token=auth_token,
+        thread=thread,
+        from_agent=from_agent,
+        to_agent=to_agent,
+        subject=subject,
+        body=body,
+        allow_long_body=False,
+    )
+
+    if 200 <= status_code < 300:
+        record.thread_reply_observed_at = _utc_now_iso()
+        from ..async_tracker.records import DeliveryState
+
+        record.delivery = DeliveryState(
+            status="delivered",
+            mode="inline",
+            thread=thread,
+            failure_reason=_TERMINAL_FAILURE_POSTED,
+        )
+        _emit(
+            event_bus,
+            _build_sent_event(
+                pipeline_id=record.pipeline,
+                execution_id=record.execution_id,
+                thread=thread,
+                to_agent=to_agent,
+                from_agent=from_agent,
+                op=record.op or "",
+                output_contract=record.output_contract,
+                delivery_mode="inline",
+                sidecar_uri=None,
+                content_sha256=None,
+                sidecar_status="failed",
+            ),
+        )
+        return DeliveryOutcome(
+            status="delivered",
+            failure_reason=_TERMINAL_FAILURE_POSTED,
+            thread=thread,
+            delivery_mode="inline",
+        )
+
+    logger.error(
+        "Terminal failure delivery POST failed: execution_id=%s thread=%s "
+        "status=%d body=%s",
+        record.execution_id,
+        thread,
+        status_code,
+        response_text[:300],
+    )
+    _emit(
+        event_bus,
+        _build_failed_event(
+            pipeline_id=record.pipeline,
+            execution_id=record.execution_id,
+            thread=thread,
+            status_code=status_code,
+            error_preview=response_text[:300],
+            op=record.op or "",
+            output_contract=record.output_contract,
+        ),
+    )
+    return DeliveryOutcome(
+        status="failed",
+        failure_reason=f"post_{status_code}",
+        thread=thread,
+        delivery_mode="inline",
+    )
+
 
 async def _post_content_on_behalf(
     record: PipelineExecutionRecord,
@@ -112,6 +283,13 @@ async def _post_content_on_behalf(
     raw_content = record.result.content if record.result is not None else ""
     content = enrich_on_behalf_sidecar_content(record, raw_content)
     if not content or not content.strip():
+        if _needs_terminal_failure_post(record):
+            return await _post_terminal_failure_on_behalf(
+                record,
+                event_bus=event_bus,
+                auth_token=auth_token,
+                url=url,
+            )
         _emit(
             event_bus,
             _build_skipped_event(
