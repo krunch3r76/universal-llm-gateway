@@ -112,7 +112,9 @@ def build_subgraph_markdown(
     parts.extend(_render_root(root_id, cards, descriptions, statuses))
     parts.extend(
         _render_root_assertions(
-            cards[root_id], top_k_assertions, include_observed=(neighbor_fidelity == "full")
+            cards[root_id],
+            top_k_assertions,
+            include_observed=(neighbor_fidelity == "full"),
         )
     )
     parts.extend(
@@ -203,6 +205,48 @@ def _render_root(
     return lines
 
 
+def _assertion_role_prefix(assertion: dict[str, Any]) -> str:
+    role = assertion.get("projection_role") or "current"
+    if role == "archive_summary":
+        return "[archive summary] "
+    if role == "history":
+        return "[history] "
+    return ""
+
+
+def _assertion_bounds_suffix(assertion: dict[str, Any]) -> str:
+    vf = assertion.get("valid_from")
+    vu = assertion.get("valid_until")
+    if vf is None and vu is None:
+        return ""
+    parts: list[str] = []
+    if vf is not None:
+        parts.append(f"valid_from={_escape_md(str(vf))}")
+    if vu is not None:
+        parts.append(f"valid_until={_escape_md(str(vu))}")
+    return f" ({', '.join(parts)})"
+
+
+def _assertions_section_heading(
+    assertions: list[dict[str, Any]], top_k_assertions: int
+) -> str:
+    if assertions and any(
+        (a.get("projection_role") or "current") != "current" for a in assertions
+    ):
+        return f"## Assertions (top {top_k_assertions})"
+    return f"## Active Assertions (top {top_k_assertions})"
+
+
+def _format_top_assertion_line(top: dict[str, Any]) -> str:
+    flag = _provenance_flag(top)
+    role_prefix = _assertion_role_prefix(top)
+    bounds = _assertion_bounds_suffix(top)
+    return (
+        f"**Top assertion:** {role_prefix}[{top.get('confidence', '')}]{flag} "
+        f"{_escape_md(str(top.get('claim', '')))}{bounds}"
+    )
+
+
 def _render_root_assertions(
     root_card: dict[str, Any],
     top_k_assertions: int,
@@ -210,8 +254,8 @@ def _render_root_assertions(
     include_observed: bool = True,
     include_assertion_id: bool = False,
 ) -> list[str]:
-    parts: list[str] = [f"## Active Assertions (top {top_k_assertions})"]
     assertions = root_card.get("top_k_assertions") or []
+    parts: list[str] = [_assertions_section_heading(assertions, top_k_assertions)]
     if not assertions:
         parts.append("_(no active assertions)_")
         return parts
@@ -221,10 +265,14 @@ def _render_root_assertions(
         conf = a.get("confidence", "")
         observed = a.get("observed_at") or ""
         flag = _provenance_flag(a)
+        role_prefix = _assertion_role_prefix(a)
+        bounds = _assertion_bounds_suffix(a)
         id_suffix = ""
         if include_assertion_id and a.get("id") is not None:
             id_suffix = f" (id: {a['id']})"
-        assertion_lines.append(f"- **[{conf}]**{flag} {claim}{id_suffix}")
+        assertion_lines.append(
+            f"- {role_prefix}**[{conf}]**{flag} {claim}{bounds}{id_suffix}"
+        )
         if include_observed and observed:
             assertion_lines.append(f"  - *Observed:* {observed}")
     parts.append("\n".join(assertion_lines))
@@ -397,12 +445,7 @@ def _render_full_entity_block(
         block_lines.append(tdesc)
     t_assertions = tcard.get("top_k_assertions") or []
     if t_assertions:
-        top = t_assertions[0]
-        flag = _provenance_flag(top)
-        block_lines.append(
-            f"**Top assertion:** [{top.get('confidence', '')}]{flag} "
-            f"{_escape_md(str(top.get('claim', '')))}"
-        )
+        block_lines.append(_format_top_assertion_line(t_assertions[0]))
     block_lines.append("---")
     return "\n\n".join(block_lines)
 
@@ -478,12 +521,7 @@ def _render_hub_promoted_block(
         block_lines.append(_escape_md(str(summary)[:120]))
     t_assertions = tcard.get("top_k_assertions") or []
     if t_assertions:
-        top = t_assertions[0]
-        flag = _provenance_flag(top)
-        block_lines.append(
-            f"**Top assertion:** [{top.get('confidence', '')}]{flag} "
-            f"{_escape_md(str(top.get('claim', '')))}"
-        )
+        block_lines.append(_format_top_assertion_line(t_assertions[0]))
     block_lines.append("---")
     return "\n\n".join(block_lines)
 

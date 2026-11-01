@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import sqlite3
 from datetime import datetime
+from typing import Literal
 
 from fastapi import HTTPException, status
 from predicate_form.parser import parse as parse_predicate
@@ -28,6 +29,11 @@ from predicate_form.registry import (
 from universal_logging import get_logger
 
 from .card_adapters import CardAdapterCounts, get_adapter
+from .card_temporal import (
+    CURRENT_TEMPORAL_WHERE,
+    card_as_of_utc,
+    install_card_temporal_function,
+)
 from .compaction import (
     POINTER_SQL_LIKE,
     SUMMARY_SQL_LIKE,
@@ -59,8 +65,8 @@ CARD_TOP_K_DEFAULT = 7
 CARD_INTENTS_DEFERRED = frozenset({"cluster", "impact"})
 
 _CARD_ASSERTION_COLS = (
-    "id, claim, confidence, derivation_type, valid_from, "
-    "observed_at, predicate_form, evidence_uris, entrenchment_score, "
+    "id, claim, confidence, derivation_type, valid_from, valid_until, "
+    "superseded_by, observed_at, predicate_form, evidence_uris, entrenchment_score, "
     "prospective_summary, created_at, review_status"
 )
 
@@ -95,13 +101,16 @@ def _fetch_main_top_k(
     *,
     entity_id: str,
     top_k: int,
+    as_of: str | None = None,
 ) -> list[dict[str, object]]:
+    as_of_iso = card_as_of_utc() if as_of is None else as_of
+    install_card_temporal_function(conn)
     return query(
         conn,
         f"SELECT {_CARD_ASSERTION_COLS} FROM assertions WHERE entity_id = ? "
-        "AND superseded_by IS NULL "
+        f"AND {CURRENT_TEMPORAL_WHERE} "
         f"ORDER BY {_CARD_ORDER_BY} LIMIT ?",
-        (entity_id, SUMMARY_SQL_LIKE, POINTER_SQL_LIKE, top_k),
+        (entity_id, as_of_iso, SUMMARY_SQL_LIKE, POINTER_SQL_LIKE, top_k),
     )
 
 
@@ -109,14 +118,17 @@ def _fetch_status_current_rows(
     conn: sqlite3.Connection,
     *,
     entity_id: str,
+    as_of: str | None = None,
 ) -> list[dict[str, object]]:
+    as_of_iso = card_as_of_utc() if as_of is None else as_of
+    install_card_temporal_function(conn)
     return query(
         conn,
         f"SELECT {_CARD_ASSERTION_COLS}, review_notes FROM assertions "
-        "WHERE entity_id = ? AND superseded_by IS NULL "
+        f"WHERE entity_id = ? AND {CURRENT_TEMPORAL_WHERE} "
         f"AND {_STATUS_CURRENT_PREDICATE_WHERE} "
         "ORDER BY created_at DESC",
-        (entity_id,),
+        (entity_id, as_of_iso),
     )
 
 
@@ -144,9 +156,10 @@ def _fetch_qualified_current_status(
     conn: sqlite3.Connection,
     *,
     entity_id: str,
+    as_of: str | None = None,
 ) -> CurrentStatus:
     """Qualified pin: serve best unflagged row; disclose newer flagged rows."""
-    rows = _fetch_status_current_rows(conn, entity_id=entity_id)
+    rows = _fetch_status_current_rows(conn, entity_id=entity_id, as_of=as_of)
     served_row: dict[str, object] | None = None
     for row in rows:
         if row.get("review_status") != "flagged":
@@ -198,12 +211,13 @@ def _fetch_current_status_row(
     conn: sqlite3.Connection,
     *,
     entity_id: str,
+    as_of: str | None = None,
 ) -> dict[str, object] | None:
     """Legacy helper — returns the raw served row dict for merge injection."""
-    qualified = _fetch_qualified_current_status(conn, entity_id=entity_id)
+    qualified = _fetch_qualified_current_status(conn, entity_id=entity_id, as_of=as_of)
     if qualified.served is None:
         return None
-    rows = _fetch_status_current_rows(conn, entity_id=entity_id)
+    rows = _fetch_status_current_rows(conn, entity_id=entity_id, as_of=as_of)
     served_id = int(qualified.served.id)
     for row in rows:
         if int(row["id"]) == served_id:  # type: ignore[arg-type]
@@ -262,9 +276,12 @@ def get_entity_card(
     agent: str = "web",
     session_id: str | None = None,
     include_body: bool | None = None,
+    as_of: str | None = None,
 ) -> dict[str, object]:
     """Build the Card v0 payload via projection-aware fetch + adapter dispatch."""
     rows_materialized = 0
+    as_of_iso = card_as_of_utc() if as_of is None else as_of
+    install_card_temporal_function(conn)
 
     table_cols = {
         row[1] for row in conn.execute("PRAGMA table_info(entities)").fetchall()
@@ -300,19 +317,25 @@ def get_entity_card(
     # predicate_form included for Slice 4 aggregate_predicate_summary (§6.7).
     # Option A: entrenchment_score breaks ties after buckets (cross-surface
     # consistency with boot/_render.py).
-    a_rows = _fetch_main_top_k(conn, entity_id=entity_id, top_k=top_k)
+    a_rows = _fetch_main_top_k(conn, entity_id=entity_id, top_k=top_k, as_of=as_of_iso)
     rows_materialized += len(a_rows)
 
     count_rows = query(
         conn,
         "SELECT "
-        "  SUM(CASE WHEN superseded_by IS NULL THEN 1 ELSE 0 END) AS active_n, "
+        "  SUM(CASE WHEN superseded_by IS NULL "
+        "    AND assertion_interval_contains(valid_from, valid_until, ?) "
+        "    THEN 1 ELSE 0 END) AS active_n, "
+        "  SUM(CASE WHEN superseded_by IS NULL "
+        "    AND NOT assertion_interval_contains(valid_from, valid_until, ?) "
+        "    THEN 1 ELSE 0 END) AS inactive_n, "
         "  SUM(CASE WHEN superseded_by IS NOT NULL THEN 1 ELSE 0 END) AS superseded_n "
         "FROM assertions WHERE entity_id = ?",
-        (entity_id,),
+        (as_of_iso, as_of_iso, entity_id),
     )
     rows_materialized += len(count_rows)
     active_n = int(count_rows[0]["active_n"] or 0) if count_rows else 0
+    inactive_n = int(count_rows[0]["inactive_n"] or 0) if count_rows else 0
     superseded_n = int(count_rows[0]["superseded_n"] or 0) if count_rows else 0
 
     et_rows = query(
@@ -375,22 +398,29 @@ def get_entity_card(
     if active_n > 0 and is_tombstone_only(all_active_claims):
         summary_rows = query(
             conn,
-            "SELECT id, claim, confidence, derivation_type, valid_from, observed_at, evidence_uris "
+            "SELECT id, claim, confidence, derivation_type, valid_from, valid_until, "
+            "superseded_by, observed_at, evidence_uris "
             "FROM assertions WHERE entity_id = ? "
             "AND LOWER(claim) LIKE LOWER(?) ORDER BY created_at DESC LIMIT 1",
             (entity_id, SUMMARY_SQL_LIKE),
         )
         rows_materialized += len(summary_rows)
-        top_k_for_card = [_card_assertion(r) for r in summary_rows]
+        top_k_for_card = [
+            _card_assertion(r, projection_role="archive_summary") for r in summary_rows
+        ]
         predicate_summary: str = (
             f"archived → see children [{', '.join(archives_to_children)}]"
             if archives_to_children
             else "tombstoned"
         )
     else:
-        current_status = _fetch_qualified_current_status(conn, entity_id=entity_id)
-        rows_materialized += len(_fetch_status_current_rows(conn, entity_id=entity_id))
-        e_row = _fetch_current_status_row(conn, entity_id=entity_id)
+        current_status = _fetch_qualified_current_status(
+            conn, entity_id=entity_id, as_of=as_of_iso
+        )
+        rows_materialized += len(
+            _fetch_status_current_rows(conn, entity_id=entity_id, as_of=as_of_iso)
+        )
+        e_row = _fetch_current_status_row(conn, entity_id=entity_id, as_of=as_of_iso)
         surfaced_rows = _merge_current_status_slot(a_rows, e_row, top_k=top_k)
         top_k_for_card = [_card_assertion(r) for r in surfaced_rows]
         predicate_summary, _summary_withheld = aggregate_predicate_summary(
@@ -428,6 +458,7 @@ def get_entity_card(
         current_status=current_status,
         assertion_counts=CardAssertionCounts(
             active=active_n,
+            inactive=inactive_n,
             superseded=superseded_n,
         ),
         edge_type_summary=[
@@ -474,17 +505,26 @@ def get_entity_card(
     return payload
 
 
-def _card_assertion(r: dict[str, object]) -> CardAssertion:
+def _card_assertion(
+    r: dict[str, object],
+    *,
+    projection_role: Literal["current", "archive_summary", "history"] = "current",
+) -> CardAssertion:
     review_status = r.get("review_status")
     epistemic: str | None = None
     if review_status == "flagged":
         epistemic = "flagged"
+    superseded = r.get("superseded_by")
+    role: Literal["current", "archive_summary", "history"] = projection_role
+    if role == "current" and superseded is not None:
+        role = "history"
     return CardAssertion(
         id=int(r["id"]),  # type: ignore[arg-type]
         claim=_truncate_claim(str(r["claim"])),
         confidence=r["confidence"],  # type: ignore[arg-type]
         derivation_type=r.get("derivation_type"),  # type: ignore[arg-type]
         valid_from=r.get("valid_from"),  # type: ignore[arg-type]
+        valid_until=r.get("valid_until"),  # type: ignore[arg-type]
         observed_at=r.get("observed_at"),  # type: ignore[arg-type]
         evidence_uris=json_decode(r.get("evidence_uris")),  # type: ignore[arg-type]
         entrenchment_score=(
@@ -493,4 +533,6 @@ def _card_assertion(r: dict[str, object]) -> CardAssertion:
             else None
         ),
         epistemic_state=epistemic,
+        superseded_by=int(superseded) if superseded is not None else None,  # type: ignore[arg-type]
+        projection_role=role,
     )

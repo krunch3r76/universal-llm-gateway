@@ -16,6 +16,11 @@ from typing import Any
 
 from .card import get_entity_card
 from .card_adapters import get_adapter
+from .card_temporal import (
+    CURRENT_TEMPORAL_WHERE,
+    card_as_of_utc,
+    install_card_temporal_function,
+)
 from .confidence_field import confidence_field
 from .db import json_decode, query
 from .status_trait_read import synthesize_status_display
@@ -50,11 +55,14 @@ def build_cards(
     neighbor_fidelity: NeighborFidelity = "full",
     hub_rel_threshold: int = 20,
     rel_counts: dict[str, int] | None = None,
+    as_of: str | None = None,
 ) -> dict[str, dict[str, Any]]:
     """Build Card v0 (or sparse projection) payloads per visited entity."""
+    as_of_iso = card_as_of_utc() if as_of is None else as_of
+    install_card_temporal_function(conn)
     hop_map = visited or {eid: 0 for eid in visited_ids}
     rel_map = rel_counts or _batch_relationship_counts(conn, visited_ids)
-    assn_map = _batch_assertion_counts(conn, visited_ids)
+    assn_map = _batch_assertion_counts(conn, visited_ids, as_of=as_of_iso)
     entity_meta = _fetch_entity_meta(conn, visited_ids)
 
     cards: dict[str, dict[str, Any]] = {}
@@ -74,7 +82,11 @@ def build_cards(
         try:
             if neighbor_fidelity == "full" or top_k > 0:
                 cards[eid] = get_entity_card(
-                    conn, entity_id=eid, top_k=top_k, source="boot"
+                    conn,
+                    entity_id=eid,
+                    top_k=top_k,
+                    source="boot",
+                    as_of=as_of_iso,
                 )
             else:
                 cards[eid] = sparse_card_shell(
@@ -154,16 +166,21 @@ def _fetch_entity_meta(
 
 
 def _batch_assertion_counts(
-    conn: sqlite3.Connection, entity_ids: list[str]
+    conn: sqlite3.Connection,
+    entity_ids: list[str],
+    *,
+    as_of: str | None = None,
 ) -> dict[str, int]:
     if not entity_ids:
         return {}
+    as_of_iso = card_as_of_utc() if as_of is None else as_of
+    install_card_temporal_function(conn)
     ph = ",".join("?" for _ in entity_ids)
     rows = query(
         conn,
         f"SELECT entity_id, COUNT(*) AS n FROM assertions "
-        f"WHERE entity_id IN ({ph}) AND superseded_by IS NULL GROUP BY entity_id",
-        tuple(entity_ids),
+        f"WHERE entity_id IN ({ph}) AND {CURRENT_TEMPORAL_WHERE} GROUP BY entity_id",
+        (*entity_ids, as_of_iso),
     )
     return {str(row["entity_id"]): int(row["n"]) for row in rows}
 
@@ -213,24 +230,37 @@ def _override_top_k_with_superseded(
     top_k_assertions: int,
     entity_id: str,
 ) -> None:
-    """Re-fetch top-K assertions including superseded rows for one entity."""
+    """Replace top-K with rows selected by the explicit historical override.
+
+    Every selected row is ``projection_role='history'``, including a claim
+    whose text looks like an archive summary. Tombstone substitution is the
+    path that still marks ``archive_summary``. Stored bounds and
+    ``superseded_by`` are copied and are not a new validity judgement.
+    """
     rows = query(
         conn,
-        "SELECT id, claim, confidence, derivation_type, valid_from, observed_at, evidence_uris "
+        "SELECT id, claim, confidence, derivation_type, valid_from, valid_until, "
+        "superseded_by, observed_at, evidence_uris "
         "FROM assertions WHERE entity_id = ? "
         "ORDER BY COALESCE(entrenchment_score,0) DESC, "
         "  COALESCE(observed_at,'') DESC, id DESC LIMIT ?",
         (entity_id, top_k_assertions),
     )
-    cards[entity_id]["top_k_assertions"] = [
-        {
-            "id": int(row["id"]),
-            "claim": row["claim"],
-            "confidence": row["confidence"],
-            "derivation_type": row.get("derivation_type"),
-            "valid_from": row.get("valid_from"),
-            "observed_at": row.get("observed_at"),
-            "evidence_uris": json_decode(row.get("evidence_uris")),
-        }
-        for row in rows
-    ]
+    out: list[dict[str, Any]] = []
+    for row in rows:
+        superseded = row.get("superseded_by")
+        out.append(
+            {
+                "id": int(row["id"]),
+                "claim": row["claim"],
+                "confidence": row["confidence"],
+                "derivation_type": row.get("derivation_type"),
+                "valid_from": row.get("valid_from"),
+                "valid_until": row.get("valid_until"),
+                "observed_at": row.get("observed_at"),
+                "evidence_uris": json_decode(row.get("evidence_uris")),
+                "superseded_by": int(superseded) if superseded is not None else None,
+                "projection_role": "history",
+            }
+        )
+    cards[entity_id]["top_k_assertions"] = out

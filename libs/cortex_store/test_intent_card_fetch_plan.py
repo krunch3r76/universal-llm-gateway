@@ -52,7 +52,8 @@ def test_card_fetch_plan_row_volume_smaller_than_full(
     # plus relationship + edge rows. With 56 assertions seeded, the full
     # path materializes ≥56 rows; card budget for top_k=7 is bounded by
     # 1 entity + 7 assertions + 1 count-row + edge-aggregate rows ≪ 56.
-    full = get_entity_impl(conn, entity_id="todo:bulk")
+    full = get_entity_impl(conn, entity_id="todo:bulk", include_superseded=True)
+    assert len(full["assertions"]) == 56
     full_min_rows = 1 + len(full["assertions"])
     assert full_min_rows >= 50
 

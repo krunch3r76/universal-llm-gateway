@@ -13,6 +13,7 @@ import sqlite3
 import pytest
 from fastapi.testclient import TestClient
 
+from . import test_subgraph_render_fixtures as _render_fixtures
 from .dispatch_ops.ops_subgraph import _op_render_subgraph
 from .main import create_app
 from .subgraph_renderer import SubgraphRenderError, render_subgraph
@@ -20,10 +21,47 @@ from .test_subgraph_render_fixtures import (
     add_assertion,
     add_edge,
     add_entity,
-    init_temp_db,
-    make_test_conn,
     seed_grokbuild_graph,
 )
+
+_orig_make_test_conn = _render_fixtures.make_test_conn
+_orig_init_temp_db = _render_fixtures.init_temp_db
+
+
+def _ensure_card_projection_columns(conn: sqlite3.Connection) -> None:
+    """Add card-read columns the hand-built render schema does not create.
+
+    Card projection selects ``valid_until`` and ``review_status``, and the
+    current-status query also selects ``review_notes``. The fixture module
+    stays untouched; this aligns each connection the suite already opens.
+    """
+    present = {row[1] for row in conn.execute("PRAGMA table_info(assertions)")}
+    for column, decl in (
+        ("valid_until", "TEXT"),
+        ("review_status", "TEXT"),
+        ("review_notes", "TEXT"),
+    ):
+        if column not in present:
+            conn.execute(f"ALTER TABLE assertions ADD COLUMN {column} {decl}")
+
+
+def make_test_conn(path: str = ":memory:") -> sqlite3.Connection:
+    """Open the render fixture, then add the card projection columns."""
+    conn = _orig_make_test_conn(path)
+    _ensure_card_projection_columns(conn)
+    return conn
+
+
+def init_temp_db(db_path: str) -> None:
+    """Create the route-test DB, then add the card projection columns."""
+    _orig_init_temp_db(db_path)
+    conn = sqlite3.connect(db_path)
+    try:
+        _ensure_card_projection_columns(conn)
+        conn.commit()
+    finally:
+        conn.close()
+
 
 _ROOT = "decision:grokbuild-cursor-alternative"
 _FULL = {"neighbor_fidelity": "full"}
@@ -542,7 +580,12 @@ def test_depth_aware_hop1_omits_neighbor_description_and_top_assertion():
     conn = make_test_conn()
     add_entity(conn, "decision:root", "decision", "Root", "r")
     add_entity(
-        conn, "todo:child", "todo", "Child", "Long neighbor description.", workflow_state="open"
+        conn,
+        "todo:child",
+        "todo",
+        "Child",
+        "Long neighbor description.",
+        workflow_state="open",
     )
     add_edge(conn, "decision:root", "todo:child", "depends_on")
     add_assertion(
@@ -589,11 +632,15 @@ def test_full_fidelity_regression_byte_identical_to_legacy():
 def test_depth_aware_default_is_not_full():
     conn = make_test_conn()
     add_entity(conn, "decision:root", "decision", "Root", "r")
-    add_entity(conn, "todo:child", "todo", "Child", "neighbor desc", workflow_state="open")
+    add_entity(
+        conn, "todo:child", "todo", "Child", "neighbor desc", workflow_state="open"
+    )
     add_edge(conn, "decision:root", "todo:child", "depends_on")
     conn.commit()
     default_md = render_subgraph(conn, "decision:root", hops=1).rendered
-    full_md = render_subgraph(conn, "decision:root", hops=1, neighbor_fidelity="full").rendered
+    full_md = render_subgraph(
+        conn, "decision:root", hops=1, neighbor_fidelity="full"
+    ).rendered
     assert default_md != full_md
     assert "neighbor desc" not in default_md
     conn.close()

@@ -176,10 +176,13 @@ class CardAssertion(BaseModel):
     confidence: AssertionConfidence
     derivation_type: str | None = None
     valid_from: str | None = None
+    valid_until: str | None = None
     observed_at: str | None = None
     evidence_uris: list[str] | None = None
     entrenchment_score: float | None = None
     epistemic_state: str | None = None
+    superseded_by: int | None = None
+    projection_role: Literal["current", "archive_summary", "history"] = "current"
 
 
 class WithheldStatusEntry(BaseModel):
@@ -224,6 +227,7 @@ class CardAssertionCounts(BaseModel):
     """First-class active/superseded assertion totals on Card v0."""
 
     active: int = 0
+    inactive: int = 0
     superseded: int = 0
 
 
