@@ -29,5 +29,8 @@
   "initial_state": {
     "default_window": "9",
     "insyncerator_window": "10"
+  },
+  "operator_actuation": {
+    "url": "http://10.0.0.67:8770/v1/display-chat/paste"
   }
 }

@@ -312,9 +312,42 @@ def _paste_as_operator(
             "grant_or_source_required",
             "grant (operator|explicit) and authorization_source are required",
         )
+    app_s = (app or "grok").strip().lower().replace("_", "-")
+    if app_s in {"grok", "grok-bot", "grokbot"}:
+        import asyncio
+
+        from cdp_ask.display_chat_models import DisplayChatPasteRequest
+        from cdp_ask.display_chat_paste import execute_display_chat_paste
+
+        req = DisplayChatPasteRequest(
+            display=disp.lstrip(":"),
+            app="grok",
+            agent_id=aid,
+            text=text,
+            grant=grant_s,  # type: ignore[arg-type]
+            authorization_source=auth,
+            scope=str(scope or "").strip(),
+            select=True,
+        )
+        resp = asyncio.run(execute_display_chat_paste(req))
+        result = resp.model_dump(exclude_none=True)
+        if not resp.ok:
+            result["code"] = str(resp.code or resp.reason or "refused")
+            result["message"] = str(resp.reason or result["code"])
+            result["source"] = "gateway"
+            result["retryable"] = False
+        record(
+            "mcp.cursor_bridge.paste_as_operator",
+            display=req.display,
+            ok=bool(resp.ok),
+            agent_id=aid,
+            route="local:execute_display_chat_paste",
+        )
+        return {**result, "op": "paste_as_operator"}
+
     payload = {
         "display": disp.lstrip(":"),
-        "app": (app or "grok").strip().lower(),
+        "app": app_s,
         "agent_id": aid,
         "text": text,
         "grant": grant_s,
@@ -327,6 +360,7 @@ def _paste_as_operator(
         display=payload["display"],
         ok=bool(result.get("ok")),
         agent_id=aid,
+        route="relay:cdp_ask",
     )
     return {**result, "op": "paste_as_operator"}
 

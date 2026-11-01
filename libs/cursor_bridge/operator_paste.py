@@ -710,6 +710,20 @@ async def _deliver_operator_locked(
     select: bool,
     line: str,
 ) -> dict[str, Any]:
+    disp = str(target["display"])
+    async with display_switch_lock(disp):
+        return await _deliver_operator_session(
+            target=target, aid_s=aid_s, select=select, line=line
+        )
+
+
+async def _deliver_operator_session(
+    *,
+    target: dict[str, Any],
+    aid_s: str,
+    select: bool,
+    line: str,
+) -> dict[str, Any]:
     disp, app = target["display"], target["app"]
     try:
         pages = list_pages(target["origin"])
@@ -721,6 +735,9 @@ async def _deliver_operator_locked(
     if page is None:
         return _grant_refuse("no_page", display=disp, app=app, pages=len(pages))
     ws_url = page["web_socket_debugger_url"]
+    from cursor_bridge.dom_composer_paste import install_operator_activity_probe
+
+    await install_operator_activity_probe(ws_url)
     try:
         surface = await probe_surface(ws_url)
     except (TimeoutError, RuntimeError, OSError) as exc:
@@ -931,10 +948,6 @@ async def _deliver_operator_locked(
     if early is not None:
         return early
 
-    if did_switch and restore_agent_id and submitted:
-        async with display_switch_lock(disp):
-            await select_sidebar_target(ws_url, expected_agent_id=restore_agent_id)
-
     if not submitted:
         artifacts = await _finalize_verification_artifacts(
             ws_url,
@@ -976,6 +989,8 @@ async def _deliver_operator_locked(
         body_snippet=body_snippet,
         submit_verified=True,
     )
+    if did_switch and restore_agent_id:
+        await select_sidebar_target(ws_url, expected_agent_id=restore_agent_id)
     readback_ok = rb["readback_ok"]
     delivered = readback_ok
     dom_conclusive = _dom_verification_conclusive(
@@ -1011,6 +1026,7 @@ async def _deliver_operator_locked(
         "locate_method": locate_method,
         "message": line,
         "submit_methods": submit_methods,
+        "restore_agent_id": restore_agent_id if did_switch else None,
         **artifacts,
     }
 
