@@ -1,0 +1,7 @@
+# propagation_residue — friction 41247 fix-forward (lane-21684)
+# Operator/conductor: guarded_manage_reexec after hub master land (not from Lane B).
+restart_owed:
+  - gateway
+reason: >-
+  restart_intent_migrate _ensure_expired_status idempotent txn; manage must reload
+  controller code so intent DB reopen clears restart_intents_expired_v1 (41247).
