@@ -30,6 +30,10 @@ from reasoning_posture_contracts import (
 from work_key_grammar import WORK_ITEM_SCHEMES as _WORK_ITEM_SCHEMES
 from work_key_grammar import is_valid_work_key_scheme
 
+from services.git_integration_worker.cursor_sdk_work_registry_admit import (
+    WORK_REGISTRY_RULE,
+)
+
 _LARGE_CONTENT_CHUNK_CHARS = 40_000
 
 _TRANSCRIPT_READ_PREAMBLE = (
@@ -793,6 +797,21 @@ def _packet_is_conductor(
     )
 
 
+def _append_work_registry_rule(
+    parts: list[str],
+    *,
+    existing_text: str | None,
+    prompt_preamble: str | None = None,
+) -> None:
+    if WORK_REGISTRY_RULE in (prompt_preamble or ""):
+        return
+    if WORK_REGISTRY_RULE in (existing_text or ""):
+        return
+    if any(WORK_REGISTRY_RULE in part for part in parts):
+        return
+    parts.append(WORK_REGISTRY_RULE)
+
+
 def _append_failure_paths_block(
     parts: list[str],
     *,
@@ -981,6 +1000,11 @@ def resolve_prompt_preamble(
             prompt_preamble=prompt_preamble,
             allow_restate=allow_fixed_restate,
         )
+        _append_work_registry_rule(
+            parts_bare,
+            existing_text=existing_text,
+            prompt_preamble=prompt_preamble,
+        )
         _append_bare_refusal_line(parts_bare, existing_text=existing_text)
         parts_bare = _tier_prefix() + parts_bare
         if not parts_bare:
@@ -1028,6 +1052,11 @@ def resolve_prompt_preamble(
             has_packet_path=has_packet_path,
             prompt_preamble=prompt_preamble,
             allow_restate=allow_fixed_restate,
+        )
+        _append_work_registry_rule(
+            parts,
+            existing_text=existing_text,
+            prompt_preamble=prompt_preamble,
         )
         if not parts:
             return ""
@@ -1169,4 +1198,9 @@ def resolve_prompt_preamble(
     if contract in {"check-review", "code-review"}:
         parts.append(_REVIEW_VERDICT_CONTRACT)
     parts = _prefix_reasoning_posture(contract, parts, prompt_preamble, existing_text)
+    _append_work_registry_rule(
+        parts,
+        existing_text=existing_text,
+        prompt_preamble=prompt_preamble,
+    )
     return "\n\n".join(parts) + "\n\n"

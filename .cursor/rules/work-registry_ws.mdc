@@ -1,0 +1,6 @@
+---
+description: Work registry — read before acting on a work_key; claim and keep current
+alwaysApply: true
+---
+
+WORK REGISTRY RULE: Before acting on a work_key, read team_dispatch(op="registry", work_key_prefix=<key>). If another live row holds it, coordinate on its thread instead of duplicating. If you are not already auto-recorded (team_dispatch generate auto-records with an address), claim it: team_dispatch(op="claim", work_key, thread, seat_name, address). Keep it current with op="claim_update" (work_status, address_patch, note); finish with work_status=landed or abandoned.

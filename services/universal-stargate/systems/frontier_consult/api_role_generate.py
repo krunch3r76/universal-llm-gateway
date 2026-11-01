@@ -352,6 +352,29 @@ async def dispatch_api_role_generate(
     )
     if split_warning:
         result["warnings"] = list(result.get("warnings") or []) + [split_warning]
+    exec_id = str(dispatch_result.get("execution_id") or request_id).strip()
+    from services.git_integration_worker.cursor_sdk_work_registry_admit import (
+        build_api_registry_address,
+        resolve_registry_seat_name,
+    )
+
+    from .work_registry_admit_relay import attach_registry_next, relay_registry_record
+
+    relay_body = await relay_registry_record(
+        request_id=request_id,
+        dispatch_id=exec_id,
+        thread_id=thread_id,
+        caller_agent=body.caller_agent,
+        seat_name=resolve_registry_seat_name(
+            caller_agent=body.caller_agent,
+            role=role,
+        ),
+        address=build_api_registry_address(thread_id=thread_id),
+        work_key=getattr(body, "work_key", None),
+        resolved_model=resolved_model or None,
+        contract=contract,
+    )
+    attach_registry_next(result, relay_body)
     return result
 
 

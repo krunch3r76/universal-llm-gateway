@@ -726,3 +726,90 @@ def test_registry_s1_abandoned_releases_withdrawn() -> None:
     row = claim("todo:registry-abandon", "seat-a", "L1", ledger=ledger)
     out = update(row["claim_id"], "seat-a", work_status="abandoned", ledger=ledger)
     assert out["released"]["status"] == "cancelled"
+
+
+def test_registry_state_all_includes_terminal_rows() -> None:
+    ledger = _ledger()
+    client = _client()
+    _admit(ledger, dispatch_id="disp-live-all", thread_id="T1", work_key="todo:reg-all-live")
+    with ledger._connect() as conn:
+        conn.execute(
+            "UPDATE cursor_sdk_dispatches SET status='completed', "
+            "terminal_status='completed', terminal_at=? WHERE dispatch_id=?",
+            (datetime.now(UTC).isoformat(), "disp-live-all"),
+        )
+    live = registry(ledger=ledger, state="live", work_key_prefix="todo:reg-all")
+    assert live["state"] == "live"
+    assert live["entries"] == []
+    all_rows = registry(ledger=ledger, state="all", work_key_prefix="todo:reg-all")
+    assert all_rows["state"] == "all"
+    assert len(all_rows["entries"]) == 1
+    assert all_rows["entries"][0]["status"] == "completed"
+    bad = client.get("/api/v1/cursor/registry", params={"state": "released"})
+    assert bad.status_code == 422
+
+
+def test_registry_auto_record_stamps_dispatch_row() -> None:
+    from services.git_integration_worker.cursor_sdk_work_registry_admit import (
+        build_cursor_sdk_registry_address,
+        record_dispatch_registry_best_effort,
+    )
+
+    ledger = _ledger()
+    _admit(
+        ledger,
+        dispatch_id="disp-auto-reg",
+        thread_id="21650",
+        work_key="todo:work-registry-s3",
+    )
+    with ledger._connect() as conn:
+        before = conn.execute(
+            "SELECT caller_agent, record_json FROM cursor_sdk_dispatches "
+            "WHERE dispatch_id='disp-auto-reg'"
+        ).fetchone()
+    before_rec = json.loads(before["record_json"])
+    assert before_rec.get("seat_name") is None
+    assert before_rec.get("address") is None
+    row_id = record_dispatch_registry_best_effort(
+        dispatch_id="disp-auto-reg",
+        thread_id="21650",
+        caller_agent="cursor-sdk",
+        seat_name="cursor-sdk",
+        address=build_cursor_sdk_registry_address(
+            dispatch_id="disp-auto-reg",
+            worker_thread="21650",
+            worktree="/tmp/lane-21650",
+        ),
+        work_key="todo:work-registry-s3",
+        ledger=ledger,
+    )
+    assert row_id == "disp-auto-reg"
+    with ledger._connect() as conn:
+        after = conn.execute(
+            "SELECT caller_agent, record_json FROM cursor_sdk_dispatches "
+            "WHERE dispatch_id='disp-auto-reg'"
+        ).fetchone()
+    rec = json.loads(after["record_json"])
+    assert rec["seat_name"] == "cursor-sdk"
+    assert rec["address"]["kind"] == "cursor_sdk"
+    assert rec["address"]["worktree"] == "/tmp/lane-21650"
+
+
+def test_registry_next_hint_and_cursor_sdk_address_kind() -> None:
+    from services.git_integration_worker.cursor_sdk_claim_address import normalize_address
+    from services.git_integration_worker.cursor_sdk_work_registry_admit import (
+        registry_next_hint,
+    )
+
+    norm = normalize_address(
+        {
+            "kind": "cursor_sdk",
+            "dispatch_id": "d1",
+            "worker_thread": "15851",
+            "worktree": "/wt/lane",
+        }
+    )
+    assert norm["dispatch_id"] == "d1"
+    hint = registry_next_hint(row_id="disp-abc")
+    assert "disp-abc" in hint
+    assert "team_dispatch(op=registry" in hint

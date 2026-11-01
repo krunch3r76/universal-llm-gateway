@@ -396,11 +396,38 @@ async def team_dispatch(
                     source_status=reason or None,
                 )
             response.status_code = 200 if spawn_res.get("ok") else 502
-            return {
+            spawn_payload = {
                 **spawn_res,
                 "ledger_row_id": row_id,
                 "thread": thread,
             }
+            if spawn_res.get("ok"):
+                from services.git_integration_worker.cursor_sdk_work_registry_admit import (
+                    build_cursor_ide_registry_address,
+                    resolve_registry_seat_name,
+                )
+
+                from .work_registry_admit_relay import (
+                    attach_registry_next,
+                    relay_registry_record,
+                )
+
+                relay_body = await relay_registry_record(
+                    request_id=request_id,
+                    dispatch_id=row_id,
+                    thread_id=thread,
+                    caller_agent=getattr(body, "caller_agent", None),
+                    seat_name=resolve_registry_seat_name(
+                        caller_agent=getattr(body, "caller_agent", None),
+                    ),
+                    address=build_cursor_ide_registry_address(
+                        gui_host=str(body.gui_host),
+                        tab=str(getattr(body, "title", None) or agent_id or ""),
+                        agent_id=agent_id or None,
+                    ),
+                )
+                attach_registry_next(spawn_payload, relay_body)
+            return spawn_payload
 
         backend = plan.get("backend")
         if backend == "cdp":

@@ -279,10 +279,10 @@ class TeamDispatchClaimUpdateBody(_DispatchCommon):
 
 
 class TeamDispatchRegistryBody(_DispatchCommon):
-    """``team_dispatch`` op ``registry`` lists live claims and acting dispatches."""
+    """``team_dispatch`` op ``registry`` lists claims and dispatches (live or all)."""
 
     op: Literal["registry"]
-    state: str = "live"
+    state: str = "live"  # live | all
     window_hours: int = Field(default=24, ge=1, le=168)
     work_key_prefix: str | None = None
 

@@ -2814,6 +2814,16 @@ class CursorDispatchLedger:
                 "(stop_id, serviced_admit) VALUES (?, NULL)",
                 (dispatch_id,),
             )
+            conn.commit()
+        from services.git_integration_worker.cursor_sdk_work_registry_admit import (
+            stamp_registry_terminal_work_status,
+        )
+
+        stamp_registry_terminal_work_status(
+            dispatch_id=dispatch_id,
+            terminal_status=terminal_status,
+            ledger=self,
+        )
         return lease_key
 
     def _inherit_resume_wake_lane(self, req: CursorDispatchRequest) -> None:
