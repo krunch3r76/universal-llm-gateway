@@ -7,6 +7,7 @@ from pathlib import Path
 import pytest
 
 from implement_admission.conductor_score_journal import (
+    G_ROWS,
     WITNESS_CLEAR_REASON,
     JournalRecord,
     _tip_path,
@@ -22,6 +23,7 @@ from implement_admission.conductor_score_journal import (
     walk_journal_to_tip,
     witnessed_done_from_journal,
 )
+from implement_admission.conductor_witness_table import G5_NEST_PIN_JOURNAL_REASON
 
 pytestmark = pytest.mark.offline
 
@@ -447,6 +449,26 @@ def test_retract_clear_retract_latest_wins() -> None:
         },
     ]
     assert retract_state_from_journal(records) == frozenset({"G4"})
+
+
+@pytest.mark.offline
+def test_nest_pin_with_live_g4_witness_does_not_lift_retract() -> None:
+    """G5 nest pin lists G4 but fold retract stays until witness_clear."""
+    records = [
+        {
+            "reason": "witness_retract",
+            "rows": ["G4"],
+            "written_at": "2026-10-01T10:00:00+00:00",
+        },
+        {
+            "reason": G5_NEST_PIN_JOURNAL_REASON,
+            "rows": list(G_ROWS),
+            "written_at": "2026-10-01T11:00:00+00:00",
+        },
+    ]
+    assert effective_retracted_rows_from_journal(
+        records, live_witnessed=frozenset({"G4"})
+    ) == frozenset({"G4"})
 
 
 @pytest.mark.offline

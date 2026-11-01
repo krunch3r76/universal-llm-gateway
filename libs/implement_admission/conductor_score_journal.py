@@ -398,40 +398,19 @@ def retracted_rows_from_journal(records: list[dict[str, Any]]) -> frozenset[str]
     return retract_state_from_journal(records)
 
 
-def _row_touched_after_retract(record: dict[str, Any], row: str) -> bool:
-    reason = str(record.get("reason") or "")
-    if reason in {
-        "witness_retract",
-        WITNESS_CLEAR_REASON,
-        "conductor spawn birth",
-    }:
-        return False
-    if reason == "witness_fold":
-        raw = record.get("witnessed_done")
-        if not isinstance(raw, list):
-            return False
-        return row in {str(r).strip().upper() for r in raw if str(r).strip()}
-    return row in _journal_rows(record)
-
-
 def effective_retracted_rows_from_journal(
     records: list[dict[str, Any]],
     *,
     live_witnessed: frozenset[str],
 ) -> frozenset[str]:
-    """Retract set minus rows with a live witness and post-retract journal activity."""
-    retracted, retract_at = _scan_retract_clear_state(records)
-    out = set(retracted)
-    for row in retracted:
-        if row not in live_witnessed:
-            continue
-        cut = retract_at.get(row, "")
-        if any(
-            _journal_written_at(rec) > cut and _row_touched_after_retract(rec, row)
-            for rec in records
-        ):
-            out.discard(row)
-    return frozenset(out)
+    """Retract set for fold from journal ``witness_retract`` / ``witness_clear`` only.
+
+    A row stays retracted until ``witness_clear`` names it with ``written_at``
+    strictly after the latest ``witness_retract`` for that row. Live witnesses
+    and other journal reasons (e.g. G5 nest pin listing G4) do not lift retract.
+    """
+    _ = live_witnessed
+    return retract_state_from_journal(records)
 
 
 def witnessed_done_from_journal(

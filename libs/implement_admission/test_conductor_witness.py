@@ -1799,8 +1799,10 @@ def test_pre_retract_pass_stays_retracted_on_fold(tmp_path: Path) -> None:
 
 
 @pytest.mark.offline
-def test_post_retract_pass_hang_lifts_without_explicit_clear(tmp_path: Path) -> None:
-    """Temporal lift — post-retract PASS hang + live witness lifts retract."""
+def test_post_retract_pass_hang_stays_retracted_without_witness_clear(
+    tmp_path: Path,
+) -> None:
+    """Post-retract PASS sidecar alone does not lift retract (prior test encoded defect)."""
     from implement_admission.conductor_score_journal import (
         JournalRecord,
         append_journal_record,
@@ -1859,5 +1861,90 @@ def test_post_retract_pass_hang_lifts_without_explicit_clear(tmp_path: Path) -> 
     )
     fold = fold_scoreboard(slug, deps=deps, files_root=files_root, write_journal=False)
     assert fold is not None
-    assert fold.row_status["G4"] == "DONE"
-    assert "G4" in fold.witnessed_done
+    assert fold.row_status["G4"] == "RETRACTED"
+    assert "G4" not in fold.witnessed_done
+
+
+@pytest.mark.offline
+def test_nest_pin_after_retract_keeps_g4_retracted_and_g5_closed(
+    tmp_path: Path,
+) -> None:
+    """G5 nest pin after retract must not lift pre-retract G4 PASS; G5 stays closed."""
+    from implement_admission.conductor_score_journal import (
+        G_ROWS,
+        JournalRecord,
+        append_journal_record,
+        birth_scoreboard,
+    )
+    from implement_admission.conductor_witness_table import G5_NEST_PIN_JOURNAL_REASON
+
+    files_root = tmp_path / "cortex"
+    slug = "nest-pin-after-retract"
+    clear_uri, _ = _sha_file(
+        files_root, "notes/system/reviews/g4-pre-retract-pass.md", _G4_CLEAR
+    )
+    tip = _gated_tip(
+        g4_stops="",
+        g6_stops="",
+        sidecars=_sidecar("G4", clear_uri, "abc"),
+    )
+    birth_scoreboard(slug, scoreboard_body=tip, files_root=files_root)
+    prior = read_tip(slug, files_root=files_root)
+    assert prior is not None
+    append_journal_record(
+        slug,
+        JournalRecord(
+            prior_tip_sha=prior[1],
+            tip_sha=prior[1],
+            tip_body=prior[0],
+            seat="conductor",
+            dispatch_id=None,
+            reason="G4 PASS hung pre-retract",
+            rows=("G4",),
+            delta="sidecar hung",
+            written_at="2099-01-01T09:00:00+00:00",
+        ),
+        files_root=files_root,
+    )
+    append_journal_record(
+        slug,
+        JournalRecord(
+            prior_tip_sha=prior[1],
+            tip_sha=prior[1],
+            tip_body=prior[0],
+            seat="conductor",
+            dispatch_id=None,
+            reason="witness_retract",
+            rows=("G4",),
+            delta="false fold",
+            written_at="2099-01-01T10:00:00+00:00",
+        ),
+        files_root=files_root,
+    )
+    append_journal_record(
+        slug,
+        JournalRecord(
+            prior_tip_sha=prior[1],
+            tip_sha=prior[1],
+            tip_body=prior[0],
+            seat="giw",
+            dispatch_id="12345678-abcd-1234-abcd-123456789abc",
+            reason=G5_NEST_PIN_JOURNAL_REASON,
+            rows=G_ROWS,
+            delta="conductor dispatch_id pin",
+            written_at="2099-01-01T11:00:00+00:00",
+        ),
+        files_root=files_root,
+    )
+    deps = FoldDeps(
+        cortex=_StubCortex(),
+        bus=_StubBus(resurface=True),
+        git=_StubGit(),
+        source_ref=f"todo:{slug}",
+        repo=tmp_path / "repo",
+    )
+    fold = fold_scoreboard(slug, deps=deps, files_root=files_root, write_journal=False)
+    assert fold is not None
+    assert fold.row_status["G4"] == "RETRACTED"
+    assert "G4" not in fold.witnessed_done
+    assert fold.row_status["G5"] == "OPEN"
