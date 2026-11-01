@@ -178,7 +178,7 @@ _GOLDEN_OMIT_TABLE: tuple[tuple[str, str, str], ...] = (
     ("propagate", _AUTO_JUDGMENT, "auto_judgment"),
     ("sketch", _AUTO_JUDGMENT, "auto_judgment"),
     ("none", _AUTO_JUDGMENT, "auto_judgment"),
-    ("conductor", _COMPOSER, "auto_judgment"),
+    ("conductor", _AUTO_JUDGMENT, "auto_judgment"),
     ("implement", "cursor/composer-2.5", "mechanical_implement"),
     ("mechanical", "cursor/composer-2.5", "mechanical_implement"),
     ("investigate", _COMPOSER, "investigate"),
