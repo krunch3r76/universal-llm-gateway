@@ -12,7 +12,12 @@ from bus_watch.cursor_xvfb_subscription import (
     sync_policy_gui_host,
 )
 from bus_watch.fable_lock import claim_fable_lock
+from bus_watch.hop_rebind import (
+    current_root_subscription_agent_id,
+    rebind_predecessor_subscriptions,
+)
 from bus_watch.ide_hop import cleanup_xvfb_sidebar_on_holder_claim
+from bus_watch.ide_hop_retire import retire_departing_tab
 from bus_watch.liaison_continuity import liaison_ide_hop, liaison_tick_once
 from cursor_bridge.cursor_agents_hop import is_cursor_xvfb_host
 
@@ -70,6 +75,11 @@ def maybe_subscribe_cursor_xvfb_on_resume(
             "ok": False,
             "reason": f"claim_failed:{type(exc).__name__}",
         }
+    prior_root_agent_id: str | None = None
+    try:
+        prior_root_agent_id = current_root_subscription_agent_id(thread)
+    except (Exception, SystemExit):
+        prior_root_agent_id = None
     sub = _subscribe_xvfb_tab(
         thread,
         tid,
@@ -77,6 +87,30 @@ def maybe_subscribe_cursor_xvfb_on_resume(
         evidence="continuity(op=resume)",
     )
     out["xvfb_subscription"] = sub
+    try:
+        out["child_lane_rebind"] = rebind_predecessor_subscriptions(
+            thread,
+            tid,
+            prior_agent_id=prior_root_agent_id,
+        )
+    except (Exception, SystemExit) as exc:
+        out["child_lane_rebind"] = {
+            "ok": False,
+            "reason": f"rebind_failed:{type(exc).__name__}",
+        }
+    prior = str(prior_root_agent_id or "").strip()
+    if prior and prior != tid:
+        try:
+            out["predecessor_retire"] = retire_departing_tab(
+                thread,
+                f"ide:{prior}",
+                transcript_id=prior,
+            )
+        except (Exception, SystemExit) as exc:
+            out["predecessor_retire"] = {
+                "ok": False,
+                "reason": f"retire_failed:{type(exc).__name__}",
+            }
     try:
         out["xvfb_sidebar_cleanup"] = cleanup_xvfb_sidebar_on_holder_claim(
             thread, holder_id

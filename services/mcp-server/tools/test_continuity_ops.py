@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from contextlib import contextmanager
 from unittest.mock import ANY, patch
 
 import pytest
@@ -14,6 +15,20 @@ from tools.continuity_ops import (
 pytestmark = pytest.mark.offline
 
 _TID = "db36e9f8-e76f-49e7-bd57-c9c4ffa88195"
+
+@contextmanager
+def _rebind_noop():
+    with (
+        patch(
+            "tools.continuity_ops.current_root_subscription_agent_id",
+            return_value=None,
+        ),
+        patch(
+            "tools.continuity_ops.rebind_predecessor_subscriptions",
+            return_value={"ok": True, "repointed": []},
+        ),
+    ):
+        yield
 
 
 def test_maybe_subscribe_skips_without_transcript_id() -> None:
@@ -55,6 +70,7 @@ def test_maybe_subscribe_on_resume() -> None:
             "tools.continuity_ops.subscribe_cursor_xvfb_house",
             side_effect=_sub,
         ) as mock_sub,
+        _rebind_noop(),
     ):
         out = maybe_subscribe_cursor_xvfb_on_resume(
             thread="18374",
@@ -83,6 +99,7 @@ def test_maybe_subscribe_display_orion_node() -> None:
             "tools.continuity_ops.subscribe_cursor_xvfb_house",
             return_value={"ok": True},
         ) as mock_sub,
+        _rebind_noop(),
     ):
         maybe_subscribe_cursor_xvfb_on_resume(
             thread="18528",
@@ -109,6 +126,7 @@ def test_maybe_subscribe_claim_failure_still_subscribes() -> None:
             "tools.continuity_ops.subscribe_cursor_xvfb_house",
             return_value={"ok": True},
         ),
+        _rebind_noop(),
     ):
         out = maybe_subscribe_cursor_xvfb_on_resume(
             thread="18374",
@@ -139,6 +157,7 @@ def test_maybe_subscribe_claim_fable_lock_args() -> None:
             "tools.continuity_ops.subscribe_cursor_xvfb_house",
             return_value={"ok": True},
         ),
+        _rebind_noop(),
     ):
         maybe_subscribe_cursor_xvfb_on_resume(
             thread="18528",
@@ -177,6 +196,7 @@ def test_maybe_subscribe_cleanup_failure_still_subscribes() -> None:
             "tools.continuity_ops.subscribe_cursor_xvfb_house",
             side_effect=_sub,
         ),
+        _rebind_noop(),
     ):
         out = maybe_subscribe_cursor_xvfb_on_resume(
             thread="18374",
