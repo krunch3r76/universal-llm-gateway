@@ -258,6 +258,22 @@ def load_conductor_context(
         summon_text=summon_text,
         summoning_turn_count=summoning_turn_count,
     )
+    from implement_admission.house_policy import read_house_policy
+
+    if rematerialize is not None:
+        eff_id, eff_unres = rematerialize.effective_summoning(
+            top_level_summoning_thread_id=summoning_thread_id
+        )
+    else:
+        eff_id, eff_unres = summoning_thread_id, False
+    eff_unres = eff_unres or summoning_thread_id_unresolved
+    if eff_unres:
+        eff_id = None
+    hp = read_house_policy(
+        eff_id,
+        summoning_thread_id_unresolved=eff_unres,
+        rematerialize=rematerialize,
+    )
     return ConductorMaterializeContext(
         source_ref=source_ref,
         slug=slug,
@@ -271,12 +287,18 @@ def load_conductor_context(
         scope=attrs.get("scope") or attrs.get("Scope"),
         acceptance=attrs.get("acceptance") or attrs.get("Acceptance"),
         fold_missing_witnesses=fold_missing_witnesses,
-        summoning_thread_id=summoning_thread_id,
-        summoning_thread_id_unresolved=summoning_thread_id_unresolved,
+        summoning_thread_id=eff_id,
+        summoning_thread_id_unresolved=eff_unres,
         rematerialize=rematerialize,
         rows=rows,
         row_labels=row_labels,
         birth_seed_ignored=birth_seed_ignored,
+        house_induction_binds=hp.binds,
+        house_critic_model=hp.critic_model,
+        house_critic_model_knobs=hp.critic_model_knobs,
+        house_policy_source=hp.source,
+        house_policy_as_of=hp.as_of,
+        house_policy_thread_id=hp.thread_id,
     )
 
 

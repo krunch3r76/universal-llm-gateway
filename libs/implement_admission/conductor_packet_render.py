@@ -16,6 +16,7 @@ from implement_admission.conductor_score_journal import (
     is_g_ladder_rows,
     scoreboard_tip_uri,
 )
+from implement_admission.house_policy import render_house_lines, roles_for_ctx
 from implement_admission.impresario_policy import ResolvedRoles, resolve_roles
 from implement_admission.materialize import _extract_block
 
@@ -24,14 +25,21 @@ _CONDUCTOR_USE_LINE = (
 )
 
 
-def score_play_seat_lines(roles: ResolvedRoles | None = None) -> tuple[str, ...]:
+def score_play_seat_lines(
+    roles: ResolvedRoles | None = None,
+    *,
+    house_override: bool = False,
+) -> tuple[str, ...]:
     """Seat lines for packet invariants, filled from Pattern A at render time."""
     resolved = roles or resolve_roles()
     critic = resolved.critic
+    intel_prefix = (
+        "- (default) Intelligence:" if house_override else "- Intelligence:"
+    )
     return (
         f"- Enumerate · implement · drive: `{resolved.driver.model}` — omitted knobs "
         "follow the card; same slug as the ticker successor.",
-        "- Intelligence: G2 and G3→G5 read "
+        f"{intel_prefix} G2 and G3→G5 read "
         f"`{critic.model}` ({critic.transport}). "
         f"G1 sketcher reads `{resolved.sketch.model}`. "
         f"G4 skeptic reads `{resolved.skeptic.model}` "
@@ -123,9 +131,12 @@ def _render_scope(ctx: ConductorMaterializeContext) -> str:
 
 
 def _render_invariants(ctx: ConductorMaterializeContext) -> str:
+    roles = roles_for_ctx(ctx)
+    house_override = ctx.house_critic_model is not None
     lines = [
         _CONDUCTOR_USE_LINE,
-        *list(score_play_seat_lines()),
+        *list(render_house_lines(ctx)),
+        *list(score_play_seat_lines(roles, house_override=house_override)),
         "- DONE is rendered from witnesses; you hang witnesses, you do not write DONE.",
         (
             "- The continuity card ## Skills lists slugs. After resume, read that section "
@@ -167,12 +178,12 @@ def _render_invariants(ctx: ConductorMaterializeContext) -> str:
             "row goes terminal. ROW_HOP is not a pause and not a page; the mission "
             "continues under this admit. Owed stops win: stop_after ⇒ ROW_PINNED; "
             "explicit see-score or OPERATOR_GATE ⇒ ROW_PINNED; "
-            f"{hop_invariant_g3_g5_fragment()}; a live nested child "
+            f"{hop_invariant_g3_g5_fragment(roles)}; a live nested child "
             "is a cursor-sdk dispatch admitted with nest_under equal to this "
             "conductor dispatch_id (status queued, admitted, running, or "
             "parked_waiting), including its nested descendants — harvest that "
             "child before the hop. A team_dispatch review on the width-seat "
-            f"critic (`{resolve_roles().review.model}`) is not "
+            f"critic (`{roles.review.model}`) is not "
             "that child: nest_under is refused unless seat=cursor-sdk, so a "
             "still-running critic review does not forbid stop: ROW_HOP; the "
             "substrate defers the successor while that review streams on the "
@@ -212,11 +223,14 @@ def _render_task_guidance(
         seats_from_roles,
     )
 
-    resolved = seats or seats_from_roles()
+    roles = roles_for_ctx(ctx)
+    resolved = seats or seats_from_roles(roles)
     seq = hop_seq
     if ctx.rematerialize is not None and ctx.rematerialize.hop_seq is not None:
         seq = int(ctx.rematerialize.hop_seq)
-    return render_task_guidance(ctx, seats=resolved, hop_seq=seq, tip_body=tip_body)
+    return render_task_guidance(
+        ctx, seats=resolved, roles=roles, hop_seq=seq, tip_body=tip_body
+    )
 
 
 def _render_mcp_capabilities(ctx: ConductorMaterializeContext) -> str:

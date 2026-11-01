@@ -24,6 +24,9 @@ class RematerializeContext:
     scoreboard_entry_gate: str | None = None
     summoning_thread_id: str | None = None
     summoning_thread_id_unresolved: bool = False
+    house_induction_binds: tuple[str, ...] = ()
+    house_critic_model: str | None = None
+    house_critic_model_knobs: dict[str, Any] | None = None
 
     def effective_summoning(
         self, *, top_level_summoning_thread_id: str | None
@@ -55,6 +58,19 @@ def rematerialize_context_from_dispatch(
     tip_sha = str(opts.get("scoreboard_tip_sha") or "").strip() or None
     entry_gate_meta = str(opts.get("scoreboard_entry_gate") or "").strip() or None
     predecessor = str(hop_from or "").strip() or None
+    house_binds: tuple[str, ...] = ()
+    raw_binds = opts.get("house_induction_binds")
+    if isinstance(raw_binds, list) and all(isinstance(x, str) for x in raw_binds):
+        house_binds = tuple(str(x) for x in raw_binds)
+    house_critic: str | None = None
+    raw_critic = opts.get("house_critic_model")
+    if isinstance(raw_critic, str) and raw_critic.strip():
+        house_critic = raw_critic.strip()
+    house_knobs: dict[str, Any] | None = None
+    raw_knobs = opts.get("house_critic_model_knobs")
+    if isinstance(raw_knobs, dict):
+        house_knobs = dict(raw_knobs)
+    carriers_nonempty = bool(house_binds or house_critic or house_knobs)
     has_any = (
         hop_seq is not None
         or predecessor is not None
@@ -63,6 +79,7 @@ def rematerialize_context_from_dispatch(
         or gen_summoning is not None
         or top_summoning is not None
         or unresolved
+        or carriers_nonempty
     )
     if not has_any:
         return None
@@ -73,6 +90,9 @@ def rematerialize_context_from_dispatch(
         scoreboard_entry_gate=entry_gate_meta,
         summoning_thread_id=gen_summoning,
         summoning_thread_id_unresolved=unresolved,
+        house_induction_binds=house_binds,
+        house_critic_model=house_critic,
+        house_critic_model_knobs=house_knobs,
     )
 
 
@@ -98,3 +118,9 @@ class ConductorMaterializeContext:
     rows: tuple[str, ...] = G_ROWS
     row_labels: dict[str, str] | None = None
     birth_seed_ignored: bool = False
+    house_induction_binds: tuple[str, ...] = ()
+    house_critic_model: str | None = None
+    house_critic_model_knobs: dict[str, Any] | None = None
+    house_policy_source: str = "none"
+    house_policy_as_of: str | None = None
+    house_policy_thread_id: str | None = None

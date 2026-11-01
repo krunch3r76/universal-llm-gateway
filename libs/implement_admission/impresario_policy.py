@@ -122,6 +122,32 @@ def _derive_transport(model: str) -> Transport:
     raise ValueError(msg)
 
 
+def seat_transport_for_model(model: str) -> Transport | None:
+    """Transport for a model id; None when the prefix is not cdp/, anthropic/ or cursor/."""
+    if model.startswith("cdp/"):
+        return "cdp_parked"
+    if model.startswith("anthropic/"):
+        return "api"
+    if model.startswith("cursor/"):
+        return "cursor_nested"
+    return None
+
+
+def with_seat_model(seat: SeatSpec, model: str) -> SeatSpec:
+    """Copy seat with a new model and a re-derived transport; effort_rung, seat, fast kept."""
+    transport = seat_transport_for_model(model)
+    if transport is None:
+        msg = f"impresario model {model!r} has no derived transport"
+        raise ValueError(msg)
+    return SeatSpec(
+        model=model.strip(),
+        effort_rung=seat.effort_rung,
+        transport=transport,
+        seat=seat.seat,
+        fast=seat.fast,
+    )
+
+
 def _seat(model: str, effort: str, *, seat: str = "cursor-sdk") -> SeatSpec:
     rung = normalize_effort(effort) or effort.strip().lower()
     return SeatSpec(

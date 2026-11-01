@@ -113,6 +113,7 @@ def _render_task_guidance_inner(
     seats: ResolvedConductorSeats,
     hop_seq: int,
     tip_body: str | None,
+    roles: ResolvedRoles | None = None,
 ) -> str:
     from implement_admission.conductor_critic_render import (
         g3_g5_score_ratify_clause,
@@ -123,12 +124,13 @@ def _render_task_guidance_inner(
         hop_invariant_g3_g5_fragment,
     )
 
-    review_hint = review_leg_transport_hint(resolve_roles().review)
+    resolved_roles = roles or resolve_roles()
+    review_hint = review_leg_transport_hint(resolved_roles.review)
 
     if summon_mode == "attended":
         g3_g5_lines = [
             (
-                f"{attended_g3_g5_task_sentence()} "
+                f"{attended_g3_g5_task_sentence(resolved_roles)} "
                 "CDP harvest alone does not close G5."
             ),
             "Human gate only on explicit see-score or OPERATOR_GATE: ROW_PINNED.",
@@ -136,7 +138,7 @@ def _render_task_guidance_inner(
     else:
         g3_g5_lines = [
             "G3→G5 default: in-process score-ratify "
-            f"({g3_g5_score_ratify_clause()}) "
+            f"({g3_g5_score_ratify_clause(resolved_roles)}) "
             "(do-not-fight / likely-optimal) via "
             f"team_dispatch(op=generate, model={seats.critic_model}, contract=freeform, "
             "session=ask, dispatch_thread_id=<this worker thread id>).",
@@ -153,7 +155,7 @@ def _render_task_guidance_inner(
             "parent_thread=<this worker thread id>). "
             "impresario.critic; do not substitute cdp/. "
             f"{review_hint} "
-            f"{hop_invariant_g3_g5_fragment()}."
+            f"{hop_invariant_g3_g5_fragment(resolved_roles)}."
         ),
         f"stop_after={stop_after!r}: run bound leg before ROW_PINNED when set.",
     ]
@@ -191,11 +193,15 @@ def render_task_guidance(
     ctx: Any,
     *,
     seats: ResolvedConductorSeats | None = None,
+    roles: ResolvedRoles | None = None,
     hop_seq: int = 0,
     tip_body: str | None = None,
 ) -> str:
     """Public entry replacing ``conductor_materialize._render_task_guidance``."""
-    resolved_seats = seats or seats_from_roles()
+    from implement_admission.house_policy import roles_for_ctx
+
+    resolved_roles = roles or roles_for_ctx(ctx)
+    resolved_seats = seats or seats_from_roles(resolved_roles)
     rm = getattr(ctx, "rematerialize", None)
     seq = hop_seq
     if rm is not None and getattr(rm, "hop_seq", None) is not None:
@@ -211,6 +217,7 @@ def render_task_guidance(
         seats=resolved_seats,
         hop_seq=seq,
         tip_body=tip_body,
+        roles=resolved_roles,
     )
 
 

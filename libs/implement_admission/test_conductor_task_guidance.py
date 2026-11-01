@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 from unittest.mock import patch
 
 import pytest
@@ -64,3 +65,47 @@ def test_compact_view_hop() -> None:
         )
     assert "tip_sha256:" in body
     assert closed_row_stop_paragraph_absent_in(body)
+
+
+@pytest.mark.offline
+def test_render_task_guidance_uses_house_roles(
+    pinned_cdp_roles,
+    house_watch_dir,
+    tmp_path: Path,
+) -> None:
+    import re
+
+    from implement_admission.house_testing import (
+        HOUSE_MODEL,
+        PIN_MODELS,
+        strip_r2_stamps,
+        write_tick,
+    )
+
+    write_tick(
+        house_watch_dir,
+        "21382",
+        {"critic_model": HOUSE_MODEL},
+    )
+    ctx = ConductorMaterializeContext(
+        source_ref="todo:house-tg",
+        slug="house-tg",
+        name="n",
+        density_triage=None,
+        derived_from=None,
+        stop_after=None,
+        entry_gate="G1",
+        summon_mode="confer_and_finish",
+        problem=None,
+        scope=None,
+        acceptance=None,
+        summoning_thread_id="21382",
+        house_critic_model=HOUSE_MODEL,
+        house_policy_source="tick",
+    )
+    body = render_task_guidance(ctx, hop_seq=0)
+    assert HOUSE_MODEL in body
+    rem = strip_r2_stamps(body)[0]
+    assert re.search(r"cdp/[A-Za-z0-9]", rem) is None
+    for pin in PIN_MODELS:
+        assert pin not in rem

@@ -813,3 +813,217 @@ def test_hop_render_uses_cortex_tip_not_checkout_root(
     assert "## Gated deliverables (open)" in rendered.text
     assert "Do not fs-read this tip" in rendered.text
     assert "| G1 | Architecture | recon | OPEN | |" not in rendered.text
+
+
+def test_house_block_in_materialized_packet(
+    pinned_cdp_roles,
+    house_watch_dir,
+    tmp_path: Path,
+) -> None:
+    from implement_admission.house_testing import (
+        HOUSE_MODEL,
+        assert_house_packet_clean,
+        write_tick,
+    )
+
+    write_tick(
+        house_watch_dir,
+        "21382",
+        {"induction_binds": ["NO cdp/*"], "critic_model": HOUSE_MODEL},
+    )
+    mp = materialize_conductor(
+        "todo:house-mat",
+        cortex=_StubCortex(),
+        out_dir=tmp_path / "out",
+        files_root=tmp_path,
+        summoning_thread_id="21382",
+    )
+    assert "summoning_thread_id: 21382" in mp.text
+    assert_house_packet_clean(mp.text)
+
+
+def test_hop_rematerialize_rereads_tick(
+    pinned_cdp_roles,
+    house_watch_dir,
+    tmp_path: Path,
+) -> None:
+    from implement_admission.house_testing import HOUSE_MODEL, write_tick
+
+    rem = RematerializeContext(hop_seq=1, summoning_thread_id="hop-tid")
+    write_tick(
+        house_watch_dir,
+        "hop-tid",
+        {"induction_binds": ["BIND-A"], "critic_model": HOUSE_MODEL},
+    )
+    out = tmp_path / "out"
+    mp1 = materialize_conductor(
+        "todo:hop-reread",
+        cortex=_StubCortex(),
+        out_dir=out,
+        files_root=tmp_path,
+        summoning_thread_id="hop-tid",
+        rematerialize=rem,
+    )
+    assert "BIND-A" in mp1.text
+    write_tick(
+        house_watch_dir,
+        "hop-tid",
+        {"induction_binds": ["BIND-B"], "critic_model": HOUSE_MODEL},
+    )
+    mp2 = materialize_conductor(
+        "todo:hop-reread",
+        cortex=_StubCortex(),
+        out_dir=out,
+        files_root=tmp_path,
+        summoning_thread_id="hop-tid",
+        rematerialize=rem,
+    )
+    assert "BIND-B" in mp2.text
+    assert "BIND-A" not in mp2.text
+
+
+def test_materialize_unresolved_hop_scope_and_marker(
+    pinned_cdp_roles,
+    tmp_path: Path,
+) -> None:
+    from implement_admission.house_testing import assert_house_packet_clean
+
+    rem = RematerializeContext(summoning_thread_id_unresolved=True, hop_seq=1)
+    mp = materialize_conductor(
+        "todo:unresolved-hop",
+        cortex=_StubCortex(),
+        out_dir=tmp_path / "out",
+        files_root=tmp_path,
+        rematerialize=rem,
+    )
+    assert "summoning_thread_id: unresolved" in mp.text
+    assert "House policy unresolved for summoning thread" in mp.text
+
+
+def test_hop_tip_r1_stamp_is_excluded_not_leaked(
+    pinned_cdp_roles,
+    house_watch_dir,
+    tmp_path: Path,
+) -> None:
+    from implement_admission.house_testing import (
+        HOUSE_MODEL,
+        R2_STAMP_RE,
+        assert_house_packet_clean,
+        write_tick,
+    )
+
+    write_tick(
+        house_watch_dir,
+        "21382",
+        {"induction_binds": ["NO cdp/*"], "critic_model": HOUSE_MODEL},
+    )
+    slug = "hop-r1-stamp"
+    from implement_admission.house_testing import PIN_CRITIC
+
+    tip_body = (
+        "## Gated deliverables (open)\n\n"
+        "| G2 | Frame | plan | OPEN | |\n\n"
+        "## Sidecars\n\n"
+        f"| R1 | (pending) | model={PIN_CRITIC.model} (impresario.critic; do not substitute cdp/) |\n"
+    )
+    rem = RematerializeContext(hop_seq=1, summoning_thread_id="21382")
+    ctx = load_conductor_context(
+        f"todo:{slug}",
+        cortex=_StubCortex(),
+        summoning_thread_id="21382",
+        rematerialize=rem,
+    )
+    rendered = render_conductor_packet(
+        ctx,
+        out_dir=tmp_path / "out",
+        repo_root=tmp_path,
+        scoreboard_files_root=tmp_path,
+        hop_seq=1,
+        write_birth_scoreboard=False,
+        tip_body=tip_body,
+    )
+    tip_span = rendered.text.split("<scoreboard_tip")[1].split("</scoreboard_tip>")[0]
+    assert len(R2_STAMP_RE.findall(tip_span)) == 1
+    assert_house_packet_clean(rendered.text)
+    assert "| R1 |" in tip_body
+
+
+def test_hop_scope_claimed_g6_stamp_excluded(
+    pinned_cdp_roles,
+    house_watch_dir,
+    tmp_path: Path,
+) -> None:
+    import re
+
+    from implement_admission.house_testing import (
+        HOUSE_MODEL,
+        PIN_CRITIC,
+        assert_house_packet_clean,
+        strip_binds_block,
+        strip_r2_stamps,
+        write_tick,
+    )
+
+    write_tick(
+        house_watch_dir,
+        "21382",
+        {"critic_model": HOUSE_MODEL},
+    )
+    hint = (
+        "hang R1 pre-land review URI (team_dispatch op=generate, "
+        f"contract=delivery-review, model={PIN_CRITIC.model} (impresario.critic; "
+        "do not substitute cdp/), …; "
+        "put job=delivery-review on a prompt line, not as a dispatch argument)"
+    )
+    rem = RematerializeContext(hop_seq=1, summoning_thread_id="21382")
+    ctx = load_conductor_context(
+        "todo:g6-claimed",
+        cortex=_StubCortex(),
+        summoning_thread_id="21382",
+        rematerialize=rem,
+        fold_missing_witnesses={"G6": hint},
+    )
+    text = render_conductor_packet(
+        ctx,
+        out_dir=tmp_path / "out",
+        repo_root=tmp_path,
+        scoreboard_files_root=tmp_path,
+        hop_seq=1,
+        write_birth_scoreboard=False,
+        tip_body=(
+            "## Gated deliverables (open)\n\n"
+            "| G1 | Architecture | recon | OPEN | |\n\n"
+            "## Sidecars\n\n"
+            f"| R1 | (pending) | model={PIN_CRITIC.model} (impresario.critic; do not substitute cdp/) |\n"
+        ),
+    ).text
+    scope = text.split("<scope>")[1].split("</scope>")[0]
+    assert "- G6 CLAIMED:" in scope
+    assert PIN_CRITIC.model in scope
+    assert re.search(r"cdp/[A-Za-z0-9]", strip_binds_block(text)) is not None
+    _, n_scope = strip_r2_stamps(strip_binds_block(text))[1:]
+    assert n_scope == 1
+    assert_house_packet_clean(text)
+    ctx2 = load_conductor_context(
+        "todo:g6-claimed",
+        cortex=_StubCortex(),
+        summoning_thread_id="21382",
+        rematerialize=rem,
+    )
+    text2 = render_conductor_packet(
+        ctx2,
+        out_dir=tmp_path / "out2",
+        repo_root=tmp_path,
+        scoreboard_files_root=tmp_path,
+        hop_seq=1,
+        write_birth_scoreboard=False,
+        tip_body=(
+            "## Gated deliverables (open)\n\n"
+            "| G1 | Architecture | recon | OPEN | |\n\n"
+            "## Sidecars\n\n"
+            f"| R1 | (pending) | model={PIN_CRITIC.model} (impresario.critic; do not substitute cdp/) |\n"
+        ),
+    ).text
+    _, n0 = strip_r2_stamps(strip_binds_block(text2))[1:]
+    assert n0 == 0
+    assert_house_packet_clean(text2)
