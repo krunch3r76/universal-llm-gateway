@@ -132,6 +132,12 @@ def test_derive_claude_manifest_op_skills_absent_when_no_divergence() -> None:
     assert "op_skills" not in fs_entry
 
 
+def test_web_tab_read_is_primary_on_code() -> None:
+    from endpoint_surface import derive_surface_primary_tools
+
+    assert "web_tab_read" in derive_surface_primary_tools("code")
+
+
 def test_team_dispatch_json_schema_includes_server_tools() -> None:
     """Both team_dispatch generate/to_thread entries expose server_tools."""
     import yaml

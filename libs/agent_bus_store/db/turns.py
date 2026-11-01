@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import sqlite3
 from datetime import datetime
 from typing import Any
@@ -14,7 +15,7 @@ from ..recipients import (
     sender_auto_mark_clause,
     turn_mark_read_eligible,
 )
-from .connection import connect, now, write_connect
+from .connection import _db_path, connect, now, write_connect
 from .endpoint_wake_ledger import skip_pending_wakes_on_pair_mark_read
 from .threads import _next_auto_id
 
@@ -505,9 +506,7 @@ def get_turns(
             ts = now()
             # Probe rows past mark_read_limit are returned but not stamped.
             mark_window = (
-                rows
-                if mark_read_limit is None
-                else rows[: max(mark_read_limit, 0)]
+                rows if mark_read_limit is None else rows[: max(mark_read_limit, 0)]
             )
             unread_ids = [
                 r["id"]
@@ -702,6 +701,36 @@ def get_latest_turn(thread: str) -> dict[str, Any] | None:
     if latest < 1:
         return None
     return get_turn_by_number(thread, latest)
+
+
+def get_latest_attested_turn(thread: str, from_agent: str) -> dict[str, Any] | None:
+    """Return the newest stored attestation for this house and agent.
+
+    The row must be server-stored, nonempty ``attested_by``, and not
+    ``superseded``. An unattested head, another agent's turn, or a blank
+    attestation     does not count. The database file is opened only when it already exists;
+    a missing path raises ``FileNotFoundError`` and is not created. Other
+    ``sqlite3.Error`` and ``OSError`` values propagate so the caller can mark
+    the source unavailable.
+    """
+    house = str(thread or "").strip()
+    agent = str(from_agent or "").strip()
+    if not house or not agent:
+        return None
+    path = _db_path()
+    if not os.path.isfile(path):
+        raise FileNotFoundError(path)
+    with connect() as conn:
+        row = conn.execute(
+            "SELECT * FROM turns WHERE thread = ? AND from_agent = ? "
+            "AND attested_by IS NOT NULL AND length(trim(attested_by)) > 0 "
+            "AND status != 'superseded' "
+            "ORDER BY turn_number DESC LIMIT 1",
+            (house, agent),
+        ).fetchone()
+    if row is None:
+        return None
+    return dict(row)
 
 
 def mark_sender_unread_in_thread(

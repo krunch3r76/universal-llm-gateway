@@ -57,6 +57,7 @@ from tools.topology import register_topology_tools
 from tools.trigger import register_trigger_tool
 from tools.vision_digest import register_vision_digest_tools
 from tools.web import register_web_tools
+from tools.web_tab_read import register_web_tab_read_tool
 from tools.x_dm import register_x_dm_tools
 from universal_logging import get_logger
 
@@ -103,6 +104,7 @@ def register_tools_for_surface(mcp: FastMCP, surface: Surface) -> None:
     register_cortex_read_tool(mcp, surface=surface)
     register_cse_session_tool(mcp)
     register_chat_session_tool(mcp)
+    register_web_tab_read_tool(mcp)
     if surface == "life":
         register_operator_request_tool(mcp)
     register_fleet_liveness_tools(mcp)

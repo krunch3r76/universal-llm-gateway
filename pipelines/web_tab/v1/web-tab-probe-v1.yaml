@@ -1,0 +1,15 @@
+schema_version: 6
+id: web-tab-probe
+version: "1.0"
+type: web_tab
+category: web_tab
+description: >
+  Read-only web-tab probe — target-scoped CDP observation; never navigates.
+output: report
+
+options:
+  timeout_seconds: 45
+
+steps:
+  - name: report
+    type: web_tab_probe_v1
