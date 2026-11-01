@@ -14,6 +14,10 @@ from cursor_bridge.chat_surface import (
     select_sidebar_target,
     wake_decision,
 )
+from cursor_bridge.operator_agent_locate import (
+    locate_off_sidebar,
+    visible_sidebar_agent_ids,
+)
 from cursor_bridge.wake_delivery import (
     _COMPOSER_JS,
     _busy_or_draft_reason,
@@ -228,6 +232,18 @@ async def _deliver_operator_locked(
             "surface_probe_failed", display=disp, app=app, detail=type(exc).__name__
         )
     pre_messages = [str(m) for m in (surface.get("recent_messages") or [])]
+    locate_method: str | None = None
+    try:
+        visible_ids = await visible_sidebar_agent_ids(ws_url)
+    except (TimeoutError, RuntimeError, OSError) as exc:
+        return _grant_refuse(
+            "surface_probe_failed",
+            display=disp,
+            app=app,
+            detail=type(exc).__name__,
+        )
+    if aid_s in visible_ids:
+        locate_method = "sidebar"
     try:
         verdict = wake_decision(surface, agent_id=aid_s)
     except ValueError:
@@ -243,7 +259,12 @@ async def _deliver_operator_locked(
         )
 
     selected = False
-    if not verdict.get("ok") and select and verdict.get("state") == "chat_list":
+    if (
+        not verdict.get("ok")
+        and select
+        and verdict.get("state") == "chat_list"
+        and aid_s in visible_ids
+    ):
         guard = _busy_or_draft_reason(surface)
         if guard:
             return _grant_refuse(
@@ -264,7 +285,34 @@ async def _deliver_operator_locked(
             surface = await probe_surface(ws_url)
             verdict = wake_decision(surface, agent_id=aid_s)
 
+    if not verdict.get("ok") and select and aid_s not in visible_ids:
+        located = await locate_off_sidebar(ws_url, aid_s)
+        if located.get("ok"):
+            locate_method = str(located.get("locate_method") or "")
+            await asyncio.sleep(0.2)
+            surface = await probe_surface(ws_url)
+            verdict = wake_decision(surface, agent_id=aid_s)
+        else:
+            return _grant_refuse(
+                "agent_not_found",
+                display=disp,
+                app=app,
+                agent_id=aid_s,
+                selected=selected,
+            )
+
     if not verdict.get("ok"):
+        reason = str(verdict.get("reason") or "refused")
+        if reason == "agent_id_mismatch":
+            return _grant_refuse(
+                "agent_id_mismatch",
+                display=disp,
+                app=app,
+                selected=selected,
+                active_agent_id=verdict.get("active_agent_id"),
+                expected_agent_id=aid_s,
+                locate_method=locate_method,
+            )
         return {
             **verdict,
             "pasted": False,
@@ -273,7 +321,22 @@ async def _deliver_operator_locked(
             "selected": selected,
             "display": disp,
             "app": app,
+            "locate_method": locate_method,
         }
+
+    active_aid = str(verdict.get("active_agent_id") or "").strip()
+    if active_aid and active_aid != aid_s:
+        return _grant_refuse(
+            "agent_id_mismatch",
+            display=disp,
+            app=app,
+            selected=selected,
+            active_agent_id=active_aid,
+            expected_agent_id=aid_s,
+            locate_method=locate_method,
+        )
+    if locate_method is None and aid_s in visible_ids:
+        locate_method = "sidebar"
 
     guard = _busy_or_draft_reason(surface)
     if guard:
@@ -333,6 +396,7 @@ async def _deliver_operator_locked(
         "display": disp,
         "app": app,
         "agent_id": aid_s,
+        "locate_method": locate_method,
         "message": line,
         **artifacts,
     }

@@ -31,6 +31,7 @@ def _to_response(
         composer_empty_after=raw.get("composer_empty_after"),  # type: ignore[arg-type]
         assistant_began=raw.get("assistant_began"),  # type: ignore[arg-type]
         watermark_visible=raw.get("watermark_visible"),  # type: ignore[arg-type]
+        locate_method=str(raw.get("locate_method") or "") or None,
     )
 
 

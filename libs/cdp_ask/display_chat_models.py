@@ -32,3 +32,4 @@ class DisplayChatPasteResponse(BaseModel):
     composer_empty_after: bool | None = None
     assistant_began: bool | None = None
     watermark_visible: bool | None = None
+    locate_method: str | None = None
