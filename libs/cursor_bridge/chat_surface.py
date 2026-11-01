@@ -108,7 +108,20 @@ _PROBE_JS = r"""
     const lbl = (b.getAttribute('aria-label') || b.getAttribute('title') || '').trim().toLowerCase();
     return lbl === 'stop' || lbl.startsWith('stop ') || lbl.includes('stop generating') || lbl.includes('stop response');
   });
-  const proseEls = Array.from(document.querySelectorAll('.sand-message-prose')).slice(-40);
+  const composerRoots = Array.from(document.querySelectorAll(
+    '[aria-label="Prompt"][contenteditable="true"], textarea, form'
+  ));
+  const insideComposer = (el) => {
+    if (!el) return false;
+    for (const root of composerRoots) {
+      if (root === el || root.contains(el)) return true;
+    }
+    const ce = el.closest('[contenteditable="true"], textarea, form');
+    return !!(ce && (ce.getAttribute('aria-label') === 'Prompt' || ce.tagName === 'TEXTAREA'));
+  };
+  const proseEls = Array.from(document.querySelectorAll('.sand-message-prose'))
+    .filter((el) => !insideComposer(el))
+    .slice(-40);
   const proseUser = (el) => {
     const cls = el.className || '';
     const parent = el.parentElement;
