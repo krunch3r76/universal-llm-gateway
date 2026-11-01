@@ -6,7 +6,32 @@ import json
 from pathlib import Path
 from typing import Any
 
+from work_key_grammar import is_valid_work_key_scheme
+
 from .conductor_hop_seq import resolve_next_hop_seq_from_row
+
+
+def _resolve_hop_work_key(
+    row: dict[str, Any],
+    rec: dict[str, Any],
+    *,
+    source_ref: str,
+) -> str | None:
+    """Successor work_key: row column, record_json, then D4-valid source_ref."""
+    for raw in (row.get("work_key"), rec.get("work_key"), source_ref):
+        if raw is None:
+            continue
+        key = str(raw).strip()
+        if key and is_valid_work_key_scheme(key):
+            return key
+    return None
+
+
+def _normalize_predecessor_knobs(raw: Any) -> dict[str, str] | None:
+    if not isinstance(raw, dict):
+        return None
+    out = {str(k): str(v) for k, v in raw.items()}
+    return out or None
 
 
 def _fold_closeout_delta(row: dict[str, Any], rec: dict[str, Any]) -> str | None:
@@ -127,7 +152,12 @@ def build_hop_team_dispatch_body(
     }
     if summoning_thread_id:
         body["dispatch_thread_id"] = summoning_thread_id
+    hop_work_key = _resolve_hop_work_key(row, rec, source_ref=source_ref)
+    if hop_work_key:
+        body["work_key"] = hop_work_key
     hop_knobs = hop_model_fields.get("model_knobs")
+    if not hop_knobs:
+        hop_knobs = _normalize_predecessor_knobs(rec.get("model_knobs"))
     if hop_knobs:
         body["model_knobs"] = hop_knobs
     wake_lane = row.get("wake_lane") or rec.get("wake_lane")

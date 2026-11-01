@@ -15,6 +15,7 @@ from typing import Any
 from universal_logging import get_logger
 
 from .busy_work_summary import _active_count, format_active_work_summary
+from .restart_intent_expiry import expire_pending_intent, intent_expired
 from .restart_intent_lookup import note_waiting_reason
 from .restart_intent_reason_codes import (
     BLOCKED_BY_JOB,
@@ -26,7 +27,6 @@ from .restart_intent_reason_codes import (
     SUPERVISOR_EXCEPTION,
     reason_code,
 )
-from .restart_intent_expiry import expire_pending_intent, intent_expired
 from .restart_intent_states import (
     STATUS_CANCELLED,
     STATUS_COMPLETED,
