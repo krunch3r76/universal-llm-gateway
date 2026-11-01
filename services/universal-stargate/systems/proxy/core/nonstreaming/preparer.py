@@ -42,6 +42,11 @@ from .request_extraction import extract_original_request  # noqa: E402,I001
 from .sticky_routing import resolve_model_sticky  # noqa: E402,I001
 from .transformer import RequestTransformer  # noqa: E402,I001
 from .mode_transforms import prepare_normal_mode  # noqa: E402,I001
+from src.core.gateway.request_inflight_meta import (  # noqa: E402
+    bind_request_inflight_meta,
+    infer_inflight_kind,
+    meta_from_http_request,
+)
 
 logger = get_logger(__name__)
 
@@ -285,6 +290,25 @@ class RequestPreparer:
         ):
             effective_skip_token_counting = chat_request.skip_token_counting
 
+        is_pipeline_internal_header = request.headers.get("X-Pipeline-Internal") == "true"
+        client_stream = bool(
+            original_request.get("stream") if isinstance(original_request, dict) else False
+        )
+        inflight_kind = infer_inflight_kind(
+            is_pipeline_internal=is_pipeline_internal_header,
+            is_pipeline_model=is_pipeline,
+            client_wants_stream=client_stream,
+            model_id=str(selected_model),
+            request_path=str(request.url.path),
+        )
+        bind_request_inflight_meta(
+            meta_from_http_request(
+                request,
+                original_request if isinstance(original_request, dict) else None,
+                kind=inflight_kind,
+            )
+        )
+
         context = RequestContext(
             request_id=request_id,
             start_time=start_time,
@@ -311,7 +335,7 @@ class RequestPreparer:
             context.request_profile = request_profile
             context.middleware_actions.append(f"request_profile:{request_profile}")
 
-        is_pipeline_internal = request.headers.get("X-Pipeline-Internal") == "true"
+        is_pipeline_internal = is_pipeline_internal_header
 
         # X-Request-Timeout applies to all clients, not just pipeline-internal.
         timeout_hint_raw = request.headers.get("X-Request-Timeout")

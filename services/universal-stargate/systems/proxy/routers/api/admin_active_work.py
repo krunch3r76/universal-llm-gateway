@@ -102,12 +102,23 @@ async def get_active_work(
     """
     tracker = getattr(proxy, "pipeline_dispatch_tracker", None)
     async_running = 0
+    async_pipelines_items: list[dict[str, object]] = []
     if tracker is not None:
-        async_running = sum(
-            1 for record in tracker.records.values() if record.status == "running"
-        )
+        for record in tracker.records.values():
+            if record.status != "running":
+                continue
+            async_running += 1
+            item: dict[str, object] = {
+                "execution_id": record.execution_id,
+                "pipeline": record.pipeline,
+                "started_at": record.started_at,
+            }
+            if record.caller_agent:
+                item["caller_agent"] = record.caller_agent
+            async_pipelines_items.append(item)
 
     requests_in_flight = in_flight_tracker.get_total_in_flight()
+    in_flight_items = in_flight_tracker.list_in_flight(limit=32)
     cdp_non_operator_open = 0
     cdp_legs_orphaned: list[dict[str, str]] = []
     cdp_legs_past_horizon: list[dict[str, str]] = []
@@ -132,7 +143,9 @@ async def get_active_work(
 
     content: dict[str, object] = {
         "async_pipelines_running": async_running,
+        "async_pipelines_items": async_pipelines_items,
         "requests_in_flight": requests_in_flight,
+        "in_flight_items": in_flight_items,
         "cdp_non_operator_open": cdp_non_operator_open,
         "cdp_legs_orphaned": cdp_legs_orphaned,
         "cdp_legs_past_horizon": cdp_legs_past_horizon,

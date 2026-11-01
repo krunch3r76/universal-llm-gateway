@@ -18,8 +18,8 @@ from universal_logging import get_logger
 
 from src.core.gateway_tracker import gateway_tracker
 
-from ..model_tracker import ModelUsageTracker
 from ...step_config.model_resolution import get_pipeline_model_override
+from ..model_tracker import ModelUsageTracker
 
 if TYPE_CHECKING:
     from ...dag import StepNode
@@ -259,10 +259,16 @@ class StepModelCoordinator:
             or "localhost"
         )
 
+        exec_id = getattr(self._executor.context, "execution_id", None)
         gateway_tracker.track_request(
             gateway_id=gateway_name,
             request_id=pipeline_request_id,
             routing_key=routing_key,
+            meta={
+                "kind": "pipeline_sync",
+                "execution_id": exec_id if isinstance(exec_id, str) else None,
+                "thread": getattr(self._executor.context, "dispatch_thread_id", None),
+            },
         )
 
         logger.debug(

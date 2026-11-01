@@ -30,6 +30,10 @@ def format_active_work_summary(active_work: dict[str, Any] | None) -> str:
         parts.append(holder)
     elif ops and not busy:
         parts.append(ops)
+    else:
+        stargate_items = _stargate_items_clause(active_work)
+        if stargate_items:
+            parts.append(stargate_items)
     orphan = _lane_b_orphan_clause(active_work)
     if orphan:
         parts.append(orphan)
@@ -166,6 +170,43 @@ def _format_aged_orphan_line(entry: dict[str, Any]) -> str:
         f"lane_b_orphan branch={branch} tip={tip_short} {age_part} "
         f"origin={origin_short}"
     )
+
+
+def _stargate_items_clause(work: dict[str, Any]) -> str:
+    """Render Stargate in-flight / async pipeline rows when no GIW-style holder."""
+    items: list[dict[str, Any]] = []
+    for key in ("in_flight_items", "async_pipelines_items"):
+        chunk = work.get(key)
+        if isinstance(chunk, list):
+            for row in chunk:
+                if isinstance(row, dict):
+                    items.append(row)
+    if not items:
+        return ""
+    rendered: list[str] = []
+    for row in items[:3]:
+        kind = str(row.get("kind") or "pipeline")
+        req_id = row.get("request_id") or row.get("execution_id")
+        piece = f"{kind}:{_short_id(str(req_id))}" if req_id else kind
+        routing_key = row.get("routing_key") or row.get("pipeline")
+        if isinstance(routing_key, str) and routing_key.strip():
+            piece += f"/{routing_key.strip()}"
+        thread = row.get("thread")
+        if isinstance(thread, str) and thread.strip():
+            piece += f" thread={_short_id(thread.strip())}"
+        else:
+            piece += " thread=?"
+        age = row.get("age_s")
+        if isinstance(age, (int, float)):
+            piece += f" age={int(age)}s"
+        elif isinstance(row.get("started_at"), str):
+            piece += " age=?"
+        rendered.append(piece)
+    more = len(items) - len(rendered)
+    out = "items=[" + ", ".join(rendered) + "]"
+    if more > 0:
+        out += f" +{more}"
+    return out
 
 
 def _ops_clause(work: dict[str, Any]) -> str:
