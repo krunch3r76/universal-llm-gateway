@@ -558,6 +558,54 @@ def extract_summoning_thread_id_from_packet(text: str) -> str | None:
     return match.group(1)
 
 
+def _conductor_width_roles_for_summoning_thread(summoning_thread_id: str | None):
+    """House tick ``policy.critic_model`` for G3→G5 preamble width seat, if set."""
+    from implement_admission.impresario_policy import resolve_roles
+
+    tid = str(summoning_thread_id or "").strip()
+    if not tid:
+        return None
+    try:
+        from bus_watch.digest_budget import effective_policy
+        from bus_watch.fable_lock import WATCH_DIR
+        from bus_watch.model_pause import model_paused
+        from bus_watch.tick_state import load_state
+
+        state = load_state(WATCH_DIR / f"liaison-{tid}.tick.json")
+        if not state:
+            return None
+        overrides = state.get("policy")
+        if not isinstance(overrides, dict):
+            return None
+        critic_model = str(overrides.get("critic_model") or "").strip()
+        if not critic_model:
+            return None
+        policy = effective_policy(state)
+        if model_paused(policy, critic_model):
+            return None
+        knobs = overrides.get("critic_model_knobs")
+        if not isinstance(knobs, dict):
+            merged_knobs = policy.get("critic_model_knobs")
+            knobs = merged_knobs if isinstance(merged_knobs, dict) else {}
+        effort_raw = knobs.get("effort")
+        critic_effort = str(effort_raw).strip() if effort_raw is not None else None
+        if critic_effort == "":
+            critic_effort = None
+        return resolve_roles(
+            critic_model=critic_model,
+            critic_effort=critic_effort,
+        )
+    except Exception:
+        return None
+
+
+def _conductor_width_roles_from_packet(packet_text: str):
+    """Resolve width-seat roles from the summoning house tick named in *packet_text*."""
+    return _conductor_width_roles_for_summoning_thread(
+        extract_summoning_thread_id_from_packet(packet_text)
+    )
+
+
 def extract_source_ref_from_packet(text: str) -> str | None:
     """Canonical work-item source_ref from packet frontmatter, or None.
 
@@ -1035,6 +1083,8 @@ def resolve_prompt_preamble(
             _CONDUCTOR_RUN_TO_COMPLETION_TEMPLATE.format(dispatch_id=dispatch_id)
         )
         parts.append(_CONDUCTOR_CONSULT_PENDING_TEMPLATE)
+        width_roles = _conductor_width_roles_from_packet(existing_text or "")
+        width_clause = g3_g5_score_ratify_clause(width_roles)
         if extract_summon_mode_from_packet(existing_text or "") == "attended":
             summoning = extract_summoning_thread_id_from_packet(
                 existing_text or ""
@@ -1046,13 +1096,13 @@ def resolve_prompt_preamble(
                 _CONDUCTOR_ATTENDED_RESURFACE_TEMPLATE.format(
                     caller_agent=caller_agent or "cursor",
                     summoning_thread_id=summoning,
-                    width_clause=g3_g5_score_ratify_clause(),
+                    width_clause=width_clause,
                 )
             )
         else:
             parts.append(
                 _CONDUCTOR_AWAY_SCORE_RATIFY_PREAMBLE.format(
-                    width_clause=g3_g5_score_ratify_clause(),
+                    width_clause=width_clause,
                 )
             )
         parts.append(NESTED_PROMPT_RULE)
@@ -1073,7 +1123,7 @@ def resolve_prompt_preamble(
                     hop_seq=effective_hop_seq,
                     thread_id=thread_id,
                     lineage=lineage,
-                    width_clause=g3_g5_score_ratify_clause(),
+                    width_clause=width_clause,
                 )
             )
             if hop_reason == "park_harvest" and hop_from:
