@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+from pathlib import Path
 from unittest.mock import AsyncMock, create_autospec
 
 import pytest
@@ -88,3 +89,17 @@ def _stub_team_dispatch_admit_pipeline(monkeypatch: pytest.MonkeyPatch) -> None:
         "systems.frontier_consult.team_dispatch_admit_client.run_team_dispatch_admit",
         run_team_dispatch_admit_for_route_tests,
     )
+
+
+@pytest.fixture(autouse=True)
+def house_watch_dir(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Path:
+    from implement_admission.house_testing import isolate_watch_dir
+
+    return isolate_watch_dir(monkeypatch, tmp_path)
+
+
+@pytest.fixture
+def pinned_cdp_roles(monkeypatch: pytest.MonkeyPatch):
+    from implement_admission.house_testing import pin_cdp_roles
+
+    return pin_cdp_roles(monkeypatch)

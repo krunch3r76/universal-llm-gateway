@@ -49,7 +49,8 @@ _G4_BLOCKS_DONE_RE = re.compile(
     r"|AC-\d+\s*\|\s*\*\*FAIL\*\*"
 )
 _G4_VERDICT_WITHHOLD_RE = re.compile(
-    r"(?m)^##\s*(?i:verdict)\s*$[^*]{0,400}?\*\*\s*(?:VERDICT:\s*)?(AMEND|REVISE|REJECT|BLOCK)\b"
+    r"(?m)^##\s*(?:\d+\.\s*)?(?i:verdict)\s*$[^*]{0,400}?\*\*\s*"
+    r"(?:VERDICT:\s*)?(AMEND|REVISE|REJECT|BLOCK|WITHHOLD|FAIL)\b"
 )
 _CITED_SHA_RE = re.compile(
     r"(?:`(?:sha256:)?([0-9a-f]{7,64})`|read_sha256[=:]([0-9a-f]{7,64}))",

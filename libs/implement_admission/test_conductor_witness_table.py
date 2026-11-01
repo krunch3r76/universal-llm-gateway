@@ -25,6 +25,7 @@ from implement_admission.conductor_witness_g5 import (
 from implement_admission.conductor_witness_table import (
     _G2_ARTIFACT_IDS,
     _G3_ARTIFACT_IDS,
+    _G4_VERDICT_WITHHOLD_RE,
     _artifact_map,
     _conductor_dispatch_id,
     _first_resolving_artifact,
@@ -1449,3 +1450,27 @@ def test_g5_cortex_only_attended_without_resurface_returns_none(
         )
         is None
     )
+
+
+@pytest.mark.offline
+def test_g4_verdict_numbered_header_withhold_blocks() -> None:
+    body = "## 1. verdict\n\n**WITHHOLD**\n"
+    assert _G4_VERDICT_WITHHOLD_RE.search(body) is not None
+
+
+@pytest.mark.offline
+def test_g4_verdict_numbered_header_fail_blocks() -> None:
+    body = "## 1. verdict\n\n**FAIL**\n"
+    assert _G4_VERDICT_WITHHOLD_RE.search(body) is not None
+
+
+@pytest.mark.offline
+def test_g4_verdict_numbered_header_pass_clears() -> None:
+    body = "## 1. verdict\n\n**PASS**\n"
+    assert _G4_VERDICT_WITHHOLD_RE.search(body) is None
+
+
+@pytest.mark.offline
+def test_g4_verdict_prefixed_withhold_blocks() -> None:
+    body = "## 1. verdict\n\n**VERDICT: WITHHOLD**\n"
+    assert _G4_VERDICT_WITHHOLD_RE.search(body) is not None
