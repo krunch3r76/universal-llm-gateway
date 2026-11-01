@@ -84,6 +84,9 @@ def build_futures_spec(
     agent: str,
     profile: dict[str, Any],
     recorder: Any,
+    *,
+    inbox_recipient: str | None = None,
+    skills_for_agent: str | None = None,
 ) -> dict[str, tuple[Any, ...]]:
     """Build the parallel-fetch spec for a boot briefing.
 
@@ -94,14 +97,18 @@ def build_futures_spec(
     wrapped_cx = recorder.wrap("cortex", cortex_cx)
     relay = recorder.wrap("agent-bus", _relay)
 
+    unread_to = inbox_recipient or agent
     unread_toc_qs = urlencode(
-        {"to": agent, "active_since": "14d", "limit": 10}
+        {"to": unread_to, "active_since": "14d", "limit": 10}
     )
     # Boot card uses windowed unread-toc sample + unwindowed totals (Q6).
     threads_qs = urlencode({"status": "active", "has_unread": "true", "limit": 10})
     session_qs_parts: dict[str, str | int] = {"limit": profile.get("session_limit", 3)}
-    if profile.get("session_agent_filter"):
-        session_qs_parts["agent"] = profile["session_agent_filter"]
+    session_filter = profile.get("logical_session_agent_filter") or profile.get(
+        "session_agent_filter"
+    )
+    if session_filter:
+        session_qs_parts["agent"] = session_filter
     session_qs = urlencode(session_qs_parts)
 
     # Read-only fetch-graph audit (blocking contract for BootMode.INSPECT):
@@ -193,10 +200,11 @@ def build_futures_spec(
     )
     # read-only: boot skill projection via canonical GET /skills?view=boot.
     # render=concise,card ships server-side sidecar + card section markdown.
+    skills_agent = skills_for_agent or agent
     futures_spec["skills"] = (
         wrapped_cx,
         "GET",
-        f"/skills?{urlencode({'limit': 120, 'for_agent': agent, 'view': 'boot', 'render': 'concise,card'})}",
+        f"/skills?{urlencode({'limit': 120, 'for_agent': skills_agent, 'view': 'boot', 'render': 'concise,card'})}",
     )
     # read-only: fetch recent plan/todo activity summary
     futures_spec["recent_work"] = (wrapped_cx, "GET", "/boot-recent-work")

@@ -10,8 +10,12 @@ from pathlib import Path
 from typing import Any
 from zoneinfo import ZoneInfo
 
+from agent_seat.boot_identity import (
+    BootIdentity,
+    boot_identity_to_wire,
+    legacy_boot_identity,
+)
 from agent_seat.profiles import get_profile, resolve_seat
-from agent_seat.registry import normalize_bus_address
 from agent_seat.session_id import SessionMintMode, mint_session_id
 from durable_io.atomic import durable_write_text
 from mcp_events import record
@@ -205,6 +209,26 @@ class BootMode(Enum):
     INSPECT = "inspect"
 
 
+def _resolve_last_session(
+    identity: BootIdentity,
+    extracted: dict[str, Any],
+) -> dict[str, Any] | None:
+    """Pick last-session continuity without cross-agent fallback for logical seats."""
+    continuity = extracted.get("continuity") or {}
+    last_from_continuity = continuity.get("last_session")
+    if isinstance(last_from_continuity, dict):
+        if str(last_from_continuity.get("agent", "")) == identity.agent:
+            return last_from_continuity
+        return None
+    sessions = extracted.get("sessions") or []
+    if identity.is_logical:
+        for row in sessions:
+            if isinstance(row, dict) and str(row.get("agent", "")) == identity.agent:
+                return row
+        return None
+    return sessions[0] if sessions else None
+
+
 def _build_artifacts(
     *,
     agent: str,
@@ -386,6 +410,7 @@ def run_cortex_brief(
     profile: str | None = None,
     packet_text: str | None = None,
     domain: str | None = None,
+    identity: BootIdentity | None = None,
 ) -> dict[str, Any]:
     """Build a Cortex boot briefing for internal callers and MCP.
 
@@ -416,10 +441,26 @@ def run_cortex_brief(
     Returns a slim briefing card (~25-35KB typical) with a section manifest pointing
     to existing MCP tools for deeper pulls. Heavy data is NOT inlined — pull on demand.
     """
-    # Resolve (family, platform). Blank axes still fill via resolve_seat for
-    # internal callers; MCP cortex_brief applies mount-aware defaults first.
-    resolved_family, resolved_platform = resolve_seat(family=family, platform=platform)
+    if identity is not None:
+        if family is not None and family != identity.family:
+            return {
+                "error": "identity family contradicts explicit family axis",
+                "reason": "identity_axis_conflict",
+                "missing_fields": ["family"],
+            }
+        if platform is not None and platform != identity.platform:
+            return {
+                "error": "identity platform contradicts explicit platform axis",
+                "reason": "identity_axis_conflict",
+                "missing_fields": ["platform"],
+            }
+        resolved_family, resolved_platform = identity.family, identity.platform
+    else:
+        resolved_family, resolved_platform = resolve_seat(family=family, platform=platform)
+        identity = legacy_boot_identity(resolved_family, resolved_platform)
     capability_profile = get_profile(resolved_family, resolved_platform)
+    capability_slug = identity.capability_slug
+    context_agent = identity.agent
 
     inject_profile: str | None = profile
     if views and "dispatch" in views:
@@ -443,8 +484,7 @@ def run_cortex_brief(
     if inject_profile == "dispatch" and packet_text:
         packet_invariant_ids = parse_packet_invariant_skill_ids(packet_text)
 
-    # Seat slug for session IDs, op_ctx paths, and events — new {family}-{platform} format.
-    seat_slug = f"{resolved_family}-{resolved_platform}"
+    seat_slug = capability_slug
 
     transcript_continuation = resolve_transcript(transcript_id)
     _tc_warning: str | None = None
@@ -463,7 +503,7 @@ def run_cortex_brief(
 
     t_boot = datetime.now(UTC)
     session_id = mint_session_id(
-        normalize_bus_address(seat_slug),
+        identity.session_prefix,
         mode=SessionMintMode.LIVE if mode == BootMode.LIVE else SessionMintMode.INSPECT,
         at=t_boot,
     )
@@ -474,21 +514,22 @@ def run_cortex_brief(
         "include_review_queue": capability_profile.include_review_queue,
         "session_limit": capability_profile.session_limit,
         "self_reflections_limit": capability_profile.self_reflections_limit,
-        "session_agent_filter": None,
+        "logical_session_agent_filter": identity.agent,
         # Cursor is a code seat: default an unset domain to coding (friction 25727).
         "domain": normalize_boot_domain(default_boot_domain(domain, resolved_platform)),
     }
-    # Family anchor replaces the old self_entity_id (persona role entity).
-    # The boot data fetch uses this to scope self-reflection assertions.
-    from agent_seat.profiles import family_anchor
-
-    self_entity_id = family_anchor(resolved_family)
-    profile_dict["self_entity_id"] = self_entity_id
+    profile_dict["self_entity_id"] = identity.self_entity_id
     if principal:
         profile_dict["principal"] = principal
 
     recorder = FetchRecorder()
-    futures_spec = build_futures_spec(seat_slug, profile_dict, recorder)
+    futures_spec = build_futures_spec(
+        context_agent,
+        profile_dict,
+        recorder,
+        inbox_recipient=identity.inbox_recipient,
+        skills_for_agent=capability_slug,
+    )
     with ThreadPoolExecutor(max_workers=8) as pool:
         submitted = {k: pool.submit(*spec) for k, spec in futures_spec.items()}
         future_to_key = {f: k for k, f in submitted.items()}
@@ -496,12 +537,11 @@ def run_cortex_brief(
         for future in as_completed(submitted.values()):
             raw[future_to_key[future]] = future.result()
 
-    extracted = extract_boot_results(seat_slug, raw, profile_dict)
+    extracted = extract_boot_results(context_agent, raw, profile_dict)
 
-    # One canonical file per seat; role affects render inputs only (not path).
-    op_ctx_path = f"notes/system/shared/operational-context-{seat_slug}.md"
+    op_ctx_path = f"notes/system/shared/operational-context-{context_agent}.md"
     ops_context = render_operational_context(
-        agent=seat_slug,
+        agent=context_agent,
         family=resolved_family,
         platform=resolved_platform,
         unread_count=extracted["unread_turn_total"],
@@ -512,7 +552,7 @@ def run_cortex_brief(
         try:
             _OPS_CONTEXT_DIR.mkdir(parents=True, exist_ok=True)
             durable_write_text(
-                _OPS_CONTEXT_DIR / f"operational-context-{seat_slug}.md",
+                _OPS_CONTEXT_DIR / f"operational-context-{context_agent}.md",
                 ops_context,
                 retain_store_root=Path("/data/files"),
             )
@@ -523,7 +563,7 @@ def run_cortex_brief(
             )
             record(
                 "mcp.cortex.boot.opcontext.writefailed",
-                agent=seat_slug,
+                agent=context_agent,
                 path=op_ctx_path,
                 error=str(exc),
             )
@@ -601,8 +641,7 @@ def run_cortex_brief(
         unread_threads=unread_threads,
         review_total=card_review_total,
         review_top=card_review_top,
-        last_session=(extracted.get("continuity") or {}).get("last_session")
-        or (extracted["sessions"][0] if extracted["sessions"] else None),
+        last_session=_resolve_last_session(identity, extracted),
         continuity=extracted.get("continuity") or None,
         self_reflections=extracted["self_reflections"] or None,
         todos=card_todos,
@@ -636,7 +675,11 @@ def run_cortex_brief(
         # Surface-aware dispatch block: grok → flat direct-call; claude/gpt/gemini
         # → dispatch-route (OVERFLOW). See _orientation_blocks (thread 1167).
         family=resolved_family,
-        agent=seat_slug,
+        agent=context_agent,
+        capability_slug=capability_slug,
+        logical_seat_id=identity.logical_seat_id,
+        house=identity.house,
+        inbox_recipient=identity.inbox_recipient,
         domain=boot_domain,
         principal_context=extracted.get("principal_context") or None,
         cross_domain_sentinel=(
@@ -656,13 +699,13 @@ def run_cortex_brief(
         )
         record(
             "mcp.cortex.boot.card.overbudget",
-            agent=seat_slug,
+            agent=context_agent,
             bytes=card_bytes,
             ceiling=ceiling,
         )
 
     artifacts = _build_artifacts(
-        agent=seat_slug,
+        agent=context_agent,
         card=card,
         ops_context=ops_context,
         manifest=manifest,
@@ -707,7 +750,7 @@ def run_cortex_brief(
     if mode == BootMode.LIVE:
         audit_dump_path = write_audit_dump(
             session_id=session_id,
-            agent=seat_slug,
+            agent=context_agent,
             boot_time=t_boot,
             card=card,
             ops_context=ops_context,
@@ -717,20 +760,22 @@ def run_cortex_brief(
 
         logger.info(
             "cortex_brief: seat=%s card_size=%d manifest_sections=%d",
-            seat_slug,
+            context_agent,
             len(card),
             len(manifest),
         )
-        record("mcp.cortex.boot", agent=seat_slug)
+        record("mcp.cortex.boot", agent=context_agent)
         record(
             "mcp.cortex.boot.manifest.assembled",
-            agent=seat_slug,
+            agent=context_agent,
             artifact_count=len(artifacts),
             total_bytes=sum(a.bytes for a in artifacts if a.bytes >= 0),
         )
 
     result: dict[str, Any] = {
         "session_id": session_id,
+        "session_identity": {"session_id": session_id, "agent": identity.agent},
+        "boot_identity": boot_identity_to_wire(identity),
         "mode": mode.value,
         "utc_now": t_boot.strftime("%Y-%m-%dT%H:%M:%SZ"),
         "local_time": t_boot.astimezone(_LA).strftime("%Y-%m-%dT%H:%M:%S%z"),

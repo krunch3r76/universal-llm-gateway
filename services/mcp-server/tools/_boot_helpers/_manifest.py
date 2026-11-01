@@ -98,10 +98,18 @@ def build_manifest(
         }
     )
     if continuity:
+        from urllib.parse import urlencode
+
+        cont_qs = urlencode({"agent": agent}) if agent else ""
+        cont_hint = (
+            f"GET /boot-continuity?{cont_qs} via cortex-api"
+            if cont_qs
+            else "GET /boot-continuity via cortex-api"
+        )
         manifest.append(
             {
                 "section": "continuity",
-                "hint": "GET /boot-continuity via cortex-api",
+                "hint": cont_hint,
             }
         )
     if unread_count > 0:

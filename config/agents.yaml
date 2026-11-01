@@ -107,6 +107,19 @@ profiles:
       - session-close-markdown-audit
       - session-close-transcript
 
+  gpt/web:
+    # Generic GPT web capability cell — logical seats share this profile; no
+    # assumed model, dispatch grant, or lead_seats entry.
+    provider: openai
+    default_model: null
+    tool_surface: mcp
+    mcp_surface: code
+    delivery: manual
+    include_deadlines: true
+    include_review_queue: true
+    confirm_and_proceed: true
+    addenda: []
+
   gpt/api:
     # Default for automated team_dispatch roles assigned to GPT when on API.
     # Code-lane standing check/review default is route_policy.yaml workflows.check_review.

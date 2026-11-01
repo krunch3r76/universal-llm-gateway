@@ -39,7 +39,7 @@ def test_boot_inspect_has_no_live_side_effects(
     monkeypatch.setattr(
         boot_runner,
         "build_futures_spec",
-        lambda _agent, _profile, _recorder: {"placeholder": (lambda: {},)},
+        lambda _agent, _profile, _recorder, **_kw: {"placeholder": (lambda: {},)},
     )
     monkeypatch.setattr(
         boot_runner,
@@ -108,7 +108,7 @@ def test_boot_operational_context_ref_ignores_role_suffix(
     monkeypatch.setattr(
         boot_runner,
         "build_futures_spec",
-        lambda _agent, _profile, _recorder: {"placeholder": (lambda: {},)},
+        lambda _agent, _profile, _recorder, **_kw: {"placeholder": (lambda: {},)},
     )
     monkeypatch.setattr(
         boot_runner,
@@ -163,7 +163,7 @@ def test_view_materialization_path(monkeypatch: Any, tmp_path: Path) -> None:
     monkeypatch.setattr(
         boot_runner,
         "build_futures_spec",
-        lambda _agent, _profile, _recorder: {"placeholder": (lambda: {},)},
+        lambda _agent, _profile, _recorder, **_kw: {"placeholder": (lambda: {},)},
     )
     monkeypatch.setattr(
         boot_runner,

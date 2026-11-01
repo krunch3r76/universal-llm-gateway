@@ -66,6 +66,10 @@ def render_briefing_card(
     principal_context: dict[str, Any] | None = None,
     family: str | None = None,
     agent: str | None = None,
+    capability_slug: str | None = None,
+    logical_seat_id: str | None = None,
+    house: str | None = None,
+    inbox_recipient: str | None = None,
     domain: str | None = None,
     cross_domain_sentinel: str | None = None,
     life_suppressed: bool = False,
@@ -91,6 +95,16 @@ def render_briefing_card(
     parts: list[str] = [
         f"# Briefing — {local_now.strftime('%Y-%m-%dT%H:%M:%S%z')}"
     ]
+    if logical_seat_id or house or capability_slug or inbox_recipient:
+        parts.append("\n## Identity")
+        if logical_seat_id:
+            parts.append(f"- logical seat: `{logical_seat_id}`")
+        if house:
+            parts.append(f"- house: `{house}`")
+        if capability_slug:
+            parts.append(f"- capability: `{capability_slug}`")
+        if inbox_recipient:
+            parts.append(f"- inbox: `{inbox_recipient}`")
 
     compact_dedup_ids: set[int] = set()
     if principal_context:

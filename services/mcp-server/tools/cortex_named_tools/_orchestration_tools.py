@@ -6,7 +6,11 @@ from typing import TYPE_CHECKING, Any
 
 from ._boot_diff import build_boot_diff
 from ._boot_runner import BootMode, run_cortex_brief
-from ._boot_seat_resolve import parse_seat_slug, resolve_boot_family_platform
+from ._boot_seat_resolve import (
+    parse_seat_slug,
+    resolve_boot_family_platform,
+    resolve_boot_identity,
+)
 
 if TYPE_CHECKING:
     from fastmcp import FastMCP
@@ -104,16 +108,14 @@ def register_orchestration_tools(
           sections_available     — manifest of deeper-pull sections with fetch hints
           operational_context_ref — path to operational context file (read on demand)
         """
-        resolved = resolve_boot_family_platform(
+        resolved = resolve_boot_identity(
             seat=seat,
             mount_surface=surface,
         )
         if isinstance(resolved, dict):
             return resolved
-        boot_family, boot_platform = resolved
         return run_cortex_brief(
-            family=boot_family,
-            platform=boot_platform,
+            identity=resolved,
             role=role,
             transcript_id=transcript_id,
             views=views,
@@ -148,16 +150,14 @@ def register_orchestration_tools(
           diff_with     — optional secondary seat slug ({family}-{platform}, e.g.
                           "claude-web", "grok-api") to diff against primary
         """
-        resolved = resolve_boot_family_platform(
+        resolved = resolve_boot_identity(
             seat=seat,
             mount_surface=surface,
         )
         if isinstance(resolved, dict):
             return resolved
-        boot_family, boot_platform = resolved
         primary = run_cortex_brief(
-            family=boot_family,
-            platform=boot_platform,
+            identity=resolved,
             role=role,
             transcript_id=transcript_id,
             mode=BootMode.INSPECT,
