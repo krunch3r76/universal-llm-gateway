@@ -1,0 +1,9 @@
+{
+  "message_turns": [
+    {"role": "assistant", "text": "prior assistant prose"},
+    {"role": "user", "text": "Operator request — Kaywan, relayed on his behalf Source: agent-bus:21614#2 Scope: F1 relay Falsifier F1 Pasted on Kaywan's behalf by gc1 — AI-assisted"},
+    {"role": "assistant", "text": "F1 relay came through once, with its header and watermark intact."}
+  ],
+  "composer_draft": "",
+  "generating": false
+}

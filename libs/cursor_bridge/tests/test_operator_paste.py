@@ -9,6 +9,7 @@ import pytest
 from cursor_bridge.operator_paste import (
     WATERMARK,
     _assistant_began,
+    _readback_fields,
     _dom_verification_conclusive,
     _sha256_dom_from_surface,
     _submit_verified,
@@ -25,6 +26,18 @@ def _operator_idle(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(
         "cursor_bridge.operator_paste.wait_for_operator_idle",
         AsyncMock(return_value={"ok": True, "idle": True}),
+    )
+    monkeypatch.setattr(
+        "cursor_bridge.operator_paste.read_operator_busy",
+        AsyncMock(return_value={"ok": True, "operator_active": False}),
+    )
+    monkeypatch.setattr(
+        "cursor_bridge.operator_paste.clear_our_composer_draft",
+        AsyncMock(return_value={"ok": True, "cleared": False}),
+    )
+    monkeypatch.setattr(
+        "cursor_bridge.operator_paste._submit_composer_enter",
+        AsyncMock(return_value={"ok": True, "method": "cdp_enter"}),
     )
 
 
@@ -171,6 +184,36 @@ def test_assistant_began_after_watermark_in_rolling_six_message_window() -> None
     assert len(post) == len(pre)
 
 
+def test_assistant_began_from_grok_message_turns_fixture() -> None:
+    import json
+    from pathlib import Path
+
+    fixture = json.loads(
+        (
+            Path(__file__).parent / "fixtures" / "grok_operator_chat_turns.json"
+        ).read_text(encoding="utf-8")
+    )
+    pre = ["prior assistant prose"]
+    assert (
+        _assistant_began(
+            fixture,
+            watermark=WATERMARK,
+            pre_messages=pre,
+            body_snippet="Falsifier F1",
+        )
+        is True
+    )
+    fields = _readback_fields(
+        fixture,
+        watermark=WATERMARK,
+        pre_messages=pre,
+        body_snippet="Falsifier F1",
+    )
+    assert fields["watermark_visible"] is True
+    assert fields["assistant_began"] is True
+    assert fields["readback_ok"] is True
+
+
 @pytest.mark.asyncio
 async def test_deliver_operator_paste_polls_until_assistant_generating(
     monkeypatch: pytest.MonkeyPatch,
@@ -229,13 +272,6 @@ async def test_deliver_operator_paste_polls_until_assistant_generating(
     monkeypatch.setattr(
         "cursor_bridge.operator_paste._capture_screenshot_artifact", screenshot
     )
-    sleeps: list[float] = []
-
-    async def _fast_sleep(delay: float) -> None:
-        sleeps.append(delay)
-
-    monkeypatch.setattr("cursor_bridge.operator_paste.asyncio.sleep", _fast_sleep)
-
     out = await deliver_operator_paste(
         display="10",
         app="grok",
@@ -246,7 +282,6 @@ async def test_deliver_operator_paste_polls_until_assistant_generating(
         scope="test",
     )
     assert idx["n"] >= 3
-    assert sleeps
     assert out["watermark_visible"] is True
     assert out["composer_empty_after"] is True
     assert out["assistant_began"] is True
@@ -597,12 +632,8 @@ async def test_deliver_operator_paste_submit_retry_once_without_repaste(
         return submitted, True
 
     insert = AsyncMock(return_value={"ok": True})
-    send_btn = AsyncMock(
-        side_effect=[
-            {"ok": True, "send_fallback_clicked": True},
-            {"ok": True, "send_fallback_clicked": True},
-        ]
-    )
+    send_btn = AsyncMock(return_value={"ok": True, "send_fallback_clicked": True})
+    enter = AsyncMock(return_value={"ok": True, "method": "cdp_enter"})
     monkeypatch.setattr(
         "cursor_bridge.operator_paste.list_pages",
         lambda _o: [{"title": "Grok Bot", "web_socket_debugger_url": "ws://x"}],
@@ -622,6 +653,7 @@ async def test_deliver_operator_paste_submit_retry_once_without_repaste(
     monkeypatch.setattr(
         "cursor_bridge.operator_paste._submit_composer_send_button", send_btn
     )
+    monkeypatch.setattr("cursor_bridge.operator_paste._submit_composer_enter", enter)
     monkeypatch.setattr(
         "cursor_bridge.operator_paste._capture_screenshot_artifact",
         AsyncMock(return_value={"sha256_png": None, "screenshot_path": None}),
@@ -651,10 +683,101 @@ async def test_deliver_operator_paste_submit_retry_once_without_repaste(
         scope="test",
     )
     assert insert.call_count == 1
-    assert send_btn.call_count == 2
+    assert send_btn.call_count == 1
+    enter.assert_awaited_once()
     assert poll_calls["n"] == 2
     assert out["submitted"] is True
     assert out["ok"] is True
+
+
+@pytest.mark.asyncio
+async def test_submit_retry_skips_cdp_enter_when_transcript_has_watermark(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    line = "Operator relay Scope: F1 skip-enter test"
+    flat = " ".join(line.splitlines())
+    surface = {
+        "state": "chat_list",
+        "active_title": "Test Grok",
+        "active_agent_id": "agent-1",
+        "titles": ["Test Grok"],
+        "title_counts": {"Test Grok": 1},
+        "agent_ids": {"agent-1": "Test Grok"},
+        "composer_draft": "",
+        "generating": False,
+        "recent_messages": [],
+    }
+    verified_surface = {
+        **surface,
+        "composer_draft": "",
+        "recent_messages": [f"{flat} {WATERMARK}"],
+        "message_turns": [
+            {"role": "user", "text": f"{flat} {WATERMARK}"},
+        ],
+    }
+
+    async def _poll_submit(_ws: str, **_: Any) -> tuple[dict[str, Any], bool]:
+        return {**surface, "composer_draft": "draft"}, False
+
+    probe_calls = {"n": 0}
+
+    async def _probe(_ws: str) -> dict[str, Any]:
+        probe_calls["n"] += 1
+        if probe_calls["n"] == 1:
+            return surface
+        return verified_surface
+
+    insert = AsyncMock(return_value={"ok": True})
+    send_btn = AsyncMock(return_value={"ok": True, "send_fallback_clicked": True})
+    enter = AsyncMock(return_value={"ok": True, "method": "cdp_enter"})
+    monkeypatch.setattr(
+        "cursor_bridge.operator_paste.list_pages",
+        lambda _o: [{"title": "Grok Bot", "web_socket_debugger_url": "ws://x"}],
+    )
+    monkeypatch.setattr(
+        "cursor_bridge.operator_paste.visible_sidebar_agent_ids",
+        AsyncMock(return_value={"agent-1"}),
+    )
+    monkeypatch.setattr("cursor_bridge.operator_paste.probe_surface", _probe)
+    monkeypatch.setattr(
+        "cursor_bridge.operator_paste._poll_submit_verified", _poll_submit
+    )
+    monkeypatch.setattr("cursor_bridge.operator_paste._insert_composer_text", insert)
+    monkeypatch.setattr(
+        "cursor_bridge.operator_paste._submit_composer_send_button", send_btn
+    )
+    monkeypatch.setattr("cursor_bridge.operator_paste._submit_composer_enter", enter)
+    monkeypatch.setattr(
+        "cursor_bridge.operator_paste._capture_screenshot_artifact",
+        AsyncMock(return_value={"sha256_png": None, "screenshot_path": None}),
+    )
+    monkeypatch.setattr(
+        "cursor_bridge.operator_paste._poll_readback",
+        AsyncMock(
+            return_value=(
+                verified_surface,
+                {
+                    "readback_ok": True,
+                    "composer_empty_after": True,
+                    "assistant_began": True,
+                    "watermark_visible": True,
+                },
+            )
+        ),
+    )
+
+    out = await deliver_operator_paste(
+        display="10",
+        app="grok",
+        agent_id="agent-1",
+        text=line,
+        grant="operator",
+        authorization_source="agent-bus:21614#2",
+        scope="test",
+    )
+    enter.assert_not_awaited()
+    assert out["submitted"] is True
+    assert out["submit_methods"] == ["send_button"]
 
 
 @pytest.mark.asyncio
@@ -698,12 +821,11 @@ async def test_deliver_operator_paste_submitted_false_after_retry(
     )
     monkeypatch.setattr(
         "cursor_bridge.operator_paste._submit_composer_send_button",
-        AsyncMock(
-            side_effect=[
-                {"ok": True, "send_fallback_clicked": True},
-                {"ok": False, "send_fallback_clicked": False},
-            ]
-        ),
+        AsyncMock(return_value={"ok": True, "send_fallback_clicked": True}),
+    )
+    monkeypatch.setattr(
+        "cursor_bridge.operator_paste._submit_composer_enter",
+        AsyncMock(return_value={"ok": True, "method": "cdp_enter"}),
     )
     screenshot = AsyncMock(
         return_value={
@@ -726,6 +848,7 @@ async def test_deliver_operator_paste_submitted_false_after_retry(
     )
     assert out["submitted"] is False
     assert out["reason"] == "submit_unverified"
+    assert out["submit_methods"] == ["send_button", "cdp_enter"]
     assert out["verify_method"] == "screenshot_fallback"
     assert out["screenshot_path"] == "/tmp/submit-fail.png"
     screenshot.assert_awaited_once()

@@ -193,6 +193,7 @@ async def wait_for_operator_idle(
     max_wait_s: float = 30.0,
     idle_ms: int = 10_000,
     poll_s: float = 0.5,
+    refuse_if_active: bool = False,
 ) -> dict[str, Any]:
     """Backoff until operator idle and no foreign draft, or timeout."""
     await install_operator_activity_probe(ws_url)
@@ -203,6 +204,8 @@ async def wait_for_operator_idle(
         probe = await read_operator_busy(ws_url, selector=selector, watermark=watermark)
         active = bool(probe.get("operator_active"))
         foreign = bool(probe.get("foreign_draft"))
+        if active and refuse_if_active:
+            return {"ok": False, "reason": "operator_busy", "idle": False}
         if not active and not foreign:
             return {"ok": True, "idle": True}
         remaining = max(0.0, deadline - loop.time())
