@@ -438,6 +438,10 @@ def _admit(
     work_key: str | None = None,
     force: bool = False,
     nest_under: str | None = None,
+    hop_seq: int | None = None,
+    hop_from: str | None = None,
+    hop_reason: str | None = None,
+    identity_class: str = "declared",
 ) -> CursorDispatchResponse | None:
     return ledger.admit(
         req=req,
@@ -454,6 +458,10 @@ def _admit(
         work_key=work_key,
         force=force,
         nest_under=nest_under,
+        hop_seq=hop_seq,
+        hop_from=hop_from,
+        hop_reason=hop_reason,
+        identity_class=identity_class,
     )
 
 
@@ -1413,6 +1421,119 @@ def test_should_block_top_level_implement_not_nested() -> None:
         nest_under="parent-dispatch",
         work_key=_CONDUCTOR_WORK_KEY,
     )
+
+
+_HOP_LINEAGE_WORK_KEY = "todo:conductor-packet-house-induction-binds"
+
+
+def test_hop_successor_refused_when_unrelated_peer_holds_work_key() -> None:
+    """a:41046: terminal hop parent must not exempt an unrelated live holder."""
+    ledger = CursorDispatchLedger.instance()
+    _admit(
+        ledger,
+        _req(dispatch_id="hop-parent-f28a", thread_id="21520"),
+        contract="implement",
+        work_key=_HOP_LINEAGE_WORK_KEY,
+        source_ref=_HOP_LINEAGE_WORK_KEY,
+        hop_seq=1,
+        hop_from="spawn-parent",
+        hop_reason="spawn",
+    )
+    ledger.mark_terminal(dispatch_id="hop-parent-f28a", terminal_status="completed")
+    _admit(
+        ledger,
+        _req(dispatch_id="fresh-seat-349017", thread_id="21522"),
+        contract="implement",
+        work_key=_HOP_LINEAGE_WORK_KEY,
+        source_ref=_HOP_LINEAGE_WORK_KEY,
+    )
+    ledger.mark_running(dispatch_id="fresh-seat-349017")
+    successor = _req(dispatch_id="hop-succ-41046", thread_id="21521")
+    with pytest.raises(SourceRefConflict) as exc_info:
+        _admit(
+            ledger,
+            successor,
+            contract="implement",
+            work_key=_HOP_LINEAGE_WORK_KEY,
+            source_ref=_HOP_LINEAGE_WORK_KEY,
+            hop_seq=2,
+            hop_from="hop-parent-f28a",
+            hop_reason="planned",
+        )
+    assert exc_info.value.holder_dispatch_id == "fresh-seat-349017"
+    with _connect() as conn:
+        row = conn.execute(
+            "SELECT COUNT(*) AS n FROM cursor_sdk_dispatches WHERE dispatch_id=?",
+            ("hop-succ-41046",),
+        ).fetchone()
+    assert row["n"] == 0
+
+
+def test_hop_successor_admitted_with_lineage_peer_or_none() -> None:
+    """Hop successor admits when no peer, or the only live peer shares hop lineage."""
+    ledger = CursorDispatchLedger.instance()
+    _admit(
+        ledger,
+        _req(dispatch_id="solo-parent", thread_id="21530"),
+        contract="implement",
+        work_key="todo:hop-solo-mission",
+        source_ref="todo:hop-solo-mission",
+        hop_seq=1,
+        hop_from="spawn-parent",
+        hop_reason="spawn",
+    )
+    ledger.mark_terminal(dispatch_id="solo-parent", terminal_status="completed")
+    solo_succ = _req(dispatch_id="solo-succ", thread_id="21531")
+    assert (
+        _admit(
+            ledger,
+            solo_succ,
+            contract="implement",
+            work_key="todo:hop-solo-mission",
+            source_ref="todo:hop-solo-mission",
+            hop_seq=2,
+            hop_from="solo-parent",
+            hop_reason="planned",
+        )
+        is None
+    )
+
+    _admit(
+        ledger,
+        _req(dispatch_id="hop-parent-parked", thread_id="21511"),
+        contract="implement",
+        work_key=_HOP_LINEAGE_WORK_KEY,
+        source_ref=_HOP_LINEAGE_WORK_KEY,
+        hop_seq=1,
+        hop_from="spawn-parent",
+        hop_reason="spawn",
+    )
+    ledger.mark_terminal(dispatch_id="hop-parent-parked", terminal_status="cancelled")
+    with _connect() as conn:
+        conn.execute(
+            "UPDATE cursor_sdk_dispatches SET park_kind='park_for_restart', "
+            "park_expires_at=datetime('now', '+1 hour') "
+            "WHERE dispatch_id=?",
+            ("hop-parent-parked",),
+        )
+    successor = _req(dispatch_id="hop-succ-lineage", thread_id="21512")
+    lineage_result = _admit(
+        ledger,
+        successor,
+        contract="implement",
+        work_key=_HOP_LINEAGE_WORK_KEY,
+        source_ref=_HOP_LINEAGE_WORK_KEY,
+        hop_seq=2,
+        hop_from="hop-parent-parked",
+        hop_reason="planned",
+    )
+    assert lineage_result is None or lineage_result.status in ("admitted", "queued")
+    with _connect() as conn:
+        row = conn.execute(
+            "SELECT COUNT(*) AS n FROM cursor_sdk_dispatches WHERE dispatch_id=?",
+            ("hop-succ-lineage",),
+        ).fetchone()
+    assert row["n"] == 1
 
 
 def test_nested_implement_same_work_key_under_conductor_allowed() -> None:

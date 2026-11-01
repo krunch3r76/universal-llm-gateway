@@ -1114,6 +1114,53 @@ def _merge_record_json_subobject_conn(
     )
 
 
+_HOP_LINEAGE_WALK_MAX = 32
+
+
+def _ledger_row_hop_from(conn: sqlite3.Connection, dispatch_id: str) -> str | None:
+    """``hop_from`` carrier for one dispatch (column, then ``record_json``)."""
+    row = conn.execute(
+        "SELECT hop_from, record_json FROM cursor_sdk_dispatches WHERE dispatch_id=?",
+        (dispatch_id,),
+    ).fetchone()
+    if row is None:
+        return None
+    from services.git_integration_worker.cursor_sdk_work_key_gate import (
+        lineage_carriers_from_record,
+    )
+
+    column = str(row["hop_from"] or "").strip() or None
+    _nest, hop_json = lineage_carriers_from_record(row["record_json"])
+    return column or hop_json
+
+
+def _hop_lineage_shares_anchor(
+    conn: sqlite3.Connection, *, peer_id: str, hop_anchor: str
+) -> bool:
+    """True when ``peer_id`` and ``hop_anchor`` are on the same conductor hop chain."""
+    if not peer_id or not hop_anchor:
+        return False
+    if peer_id == hop_anchor:
+        return True
+
+    def _reaches(start: str, target: str) -> bool:
+        current = start
+        seen: set[str] = set()
+        for _ in range(_HOP_LINEAGE_WALK_MAX):
+            if not current or current in seen:
+                return False
+            if current == target:
+                return True
+            seen.add(current)
+            parent = _ledger_row_hop_from(conn, current)
+            if not parent or parent == "spawn-parent":
+                return False
+            current = parent
+        return False
+
+    return _reaches(peer_id, hop_anchor) or _reaches(hop_anchor, peer_id)
+
+
 def _resume_parent_work_key_exempt(conn: sqlite3.Connection, *, resume_of: str) -> bool:
     """True when the ``resume_of`` parent is a lineage the child may re-enter.
 
@@ -1897,7 +1944,13 @@ class CursorDispatchLedger:
                             and term["terminal_status"] is not None
                             and term["work_key"] == effective_work_key
                         ):
-                            exempt = True
+                            peer_id = str(peer["dispatch_id"] or "")
+                            if peer_id == effective_hop or _hop_lineage_shares_anchor(
+                                conn,
+                                peer_id=peer_id,
+                                hop_anchor=effective_hop,
+                            ):
+                                exempt = True
                     if not exempt:
                         raise SourceRefConflict(
                             source_ref=source_ref,
