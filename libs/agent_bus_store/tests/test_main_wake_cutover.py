@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import pytest
+from agent_bus_store.db import endpoint_subscriptions as subs
 from agent_bus_store.db import init_db
 from agent_bus_store.db.endpoint_subscriptions import (
     ChatgptWorkCasError,
@@ -94,6 +95,48 @@ def test_cas_signature_is_path_only(db: None, tmp_path) -> None:
     with pytest.raises(ChatgptWorkCasError) as exc:
         cas_main_wake_head(bad)
     assert exc.value.code == "target_refused"
+
+
+def test_main_cas_happy_path(db: None, tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Hash-pinned CAS replaces subscribed main head when expected_old matches."""
+    insert_main_wake_row_for_test(conversation_url=_SYN_MAIN_OLD, state="subscribed")
+    monkeypatch.setattr(subs, "_file_sha256", lambda _p: subs.MAIN_TARGET_SHA256)
+    target = tmp_path / "main-target.md"
+    target.write_text(
+        f"expected_old_url={_SYN_MAIN_OLD}\n"
+        f"new_url={_SYN_MAIN_NEW}\n"
+        "attempt_id=test-main-cas\n"
+        "handoff_sha256=abc123\n",
+        encoding="utf-8",
+    )
+    out = subs.cas_main_wake_head(target)
+    assert out["appended"] is True
+    binding = resolve_orion_chat_wake(_ORION_HOUSE)
+    assert binding["basis"] == "chatgpt_work"
+    assert binding["current"]["actuation"]["conversation_url"] == _SYN_MAIN_NEW
+    head = main_wake_latest()
+    assert head is not None
+    assert head["state"] == "subscribed"
+    assert str(head["title"]).split("?", 1)[0] == _SYN_MAIN_NEW
+
+
+def test_main_cas_stale_expected_old(db: None, tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """CAS refuses when expected_old_url does not match the subscribed head."""
+    insert_main_wake_row_for_test(conversation_url=_SYN_MAIN_NEW, state="subscribed")
+    monkeypatch.setattr(subs, "_file_sha256", lambda _p: subs.MAIN_TARGET_SHA256)
+    target = tmp_path / "main-stale.md"
+    target.write_text(
+        f"expected_old_url={_SYN_MAIN_OLD}\n"
+        f"new_url={_SYN_MAIN_NEW}\n"
+        "attempt_id=test-stale\n"
+        "handoff_sha256=def456\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(ChatgptWorkCasError) as exc:
+        subs.cas_main_wake_head(target)
+    assert exc.value.code == "seat_cas_conflict"
+    binding = resolve_orion_chat_wake(_ORION_HOUSE)
+    assert binding["current"]["actuation"]["conversation_url"] == _SYN_MAIN_NEW
 
 
 def test_interim_main_not_pin_regression(db: None) -> None:
