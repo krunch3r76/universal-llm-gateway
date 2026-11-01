@@ -3775,7 +3775,6 @@ def test_worker_closeout_stale_uuid_to_resolves_glass_binding() -> None:
 
     worker_thread = "21228"
     raw_to = "4ed020f2"
-    subject = "CLOSEOUT|cursor-sdk CLOSEOUT lane-21228 contract=implement"
 
     class StubStore(StoreClient):
         def _bus(self, method: str, path: str, **kwargs: object) -> dict:
@@ -4146,7 +4145,6 @@ def test_agent_id_mismatch_records_refused_not_pending(db: None) -> None:
 
 def test_composer_defer_sweep_escalates_once_to_maestro(db: None) -> None:
     from bus_watch.endpoint_wake_composer_defer import (
-        COMPOSER_DEFER_ARMED,
         COMPOSER_DEFER_ESCALATED,
         COMPOSER_DEFER_SWEEP,
         escalate_composer_deferred_on_sweep,
