@@ -174,6 +174,63 @@ async def test_paste_operator_active_retryable() -> None:
 
 
 @pytest.mark.asyncio
+async def test_open_then_paste_reports_created_by_agent(tmp_path: Path) -> None:
+    """Paste without conversation_url still resolves agent-open binding by target_id."""
+    store = tmp_path / "bindings.json"
+    port = RecordingActuationPort(
+        tabs=[
+            {
+                "id": "new-tab",
+                "url": "https://grok.com/",
+                "web_socket_debugger_url": "ws://fake/new-tab",
+            }
+        ]
+    )
+    opened = await execute_open(
+        cdp_url="http://127.0.0.1:9342",
+        url="https://grok.com/",
+        grant="explicit",
+        authorization_source=_AUTH,
+        store_path=store,
+        port=port,
+    )
+    assert opened["created_by_agent"] is True
+    tid = str(opened["target_id"])
+    with (
+        patch(
+            "web_tab.write_ops.operator_active_probe",
+            AsyncMock(return_value={"ok": True}),
+        ),
+        patch(
+            "web_tab.write_ops.dom_set_composer_text",
+            AsyncMock(return_value={"ok": True}),
+        ),
+        patch(
+            "web_tab.write_ops.capture_dom_baseline",
+            AsyncMock(
+                return_value={
+                    "ok": True,
+                    "user_count": 0,
+                    "assistant_count": 0,
+                    "last_assistant_text": "",
+                }
+            ),
+        ),
+    ):
+        pasted = await execute_paste(
+            cdp_url="http://127.0.0.1:9342",
+            target_id=tid,
+            text="hello",
+            grant="explicit",
+            authorization_source=_AUTH,
+            store_path=store,
+            port=port,
+        )
+    assert pasted["ok"] is True
+    assert pasted["created_by_agent"] is True
+
+
+@pytest.mark.asyncio
 async def test_paste_dom_paste_receipt() -> None:
     port = RecordingActuationPort(
         tabs=[

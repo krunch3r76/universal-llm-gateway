@@ -9,7 +9,10 @@ from web_tab.config import _safe_urlsplit
 CHATGPT_PROBE_JS = """
 () => {
   const url = location.href;
-  const composer = document.querySelector("#prompt-textarea, textarea[data-id], textarea");
+  const composer = document.querySelector(
+    "#prompt-textarea, div.ProseMirror[contenteditable='true'], "
+    + "[contenteditable='true'][role='textbox'], textarea[data-id], textarea"
+  );
   const loginWall = /auth\\.openai\\.com/i.test(url)
     || !!document.querySelector('button[data-testid="login-button"]');
   return {

@@ -40,3 +40,40 @@ async def test_read_reply_requires_stable_text_twice() -> None:
     )
     assert out["ok"] is True
     assert out["text"] == "final answer"
+
+
+@pytest.mark.asyncio
+async def test_read_reply_waits_through_grok_activity_chip() -> None:
+    port = _SeqPort(
+        [
+            {
+                "complete": False,
+                "text": "",
+                "raw_text": "Working for 4s",
+                "streaming": True,
+            },
+            {
+                "complete": True,
+                "text": "final grok answer",
+                "raw_text": "Worked for 4s\nfinal grok answer",
+                "streaming": False,
+            },
+            {
+                "complete": True,
+                "text": "final grok answer",
+                "raw_text": "Worked for 4s\nfinal grok answer",
+                "streaming": False,
+            },
+        ]
+    )
+    out = await poll_read_reply(
+        port,
+        ws_url="ws://fake",
+        site="grok",
+        baseline_assistant_count=0,
+        baseline_assistant_text="",
+        timeout_s=2.0,
+        poll_s=0.01,
+    )
+    assert out["ok"] is True
+    assert out["text"] == "final grok answer"

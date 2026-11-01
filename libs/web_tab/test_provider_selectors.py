@@ -34,6 +34,21 @@ def test_verify_committed_js_references_prompt() -> None:
     assert "dom_committed" in js
 
 
+def test_chatgpt_composer_js_includes_prosemirror() -> None:
+    from web_tab.provider_selectors import composer_selectors_for_site
+
+    sels = composer_selectors_for_site("chatgpt")
+    assert "div.ProseMirror[contenteditable='true']" in sels
+
+
+def test_read_reply_js_grok_strips_activity_chip() -> None:
+    from web_tab.provider_selectors import read_reply_js
+
+    js = read_reply_js(site="grok", baseline_assistant_count=0)
+    assert "Working|Worked" in js
+    assert "stripGrokChip" in js
+
+
 def test_fixtures_exist_on_disk() -> None:
     root = Path(__file__).resolve().parent / "fixtures"
     for name in ("chatgpt_composer.html", "grok_chat.html", "claude_chat.html"):

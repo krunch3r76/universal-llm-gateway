@@ -29,7 +29,12 @@ from web_tab.provider_selectors import (
     site_from_url,
     surface_for_site,
 )
-from web_tab.tab_binding_store import load_binding, save_binding
+from web_tab.surface_adapter import canonical_page_url
+from web_tab.tab_binding_store import (
+    load_binding,
+    load_binding_for_target,
+    save_binding,
+)
 from web_tab.tab_session import tab_session_from_row
 from web_tab.target_lock import (
     TargetLockBusyError,
@@ -83,17 +88,31 @@ def _created_by_agent_for_target(
     cdp_url: str,
     target_id: str,
     conversation_url: str | None,
+    tab_url: str | None = None,
     store_path: Path | None = None,
 ) -> bool:
     """True when binding marks this target as agent-opened; conservative when unknown."""
-    conv = (conversation_url or "").strip()
-    if not conv:
+    try:
+        cdp_norm = normalize_cdp_store_key(cdp_url)
+    except ValueError:
         return False
-    cdp_norm = normalize_cdp_store_key(cdp_url)
-    row = load_binding(cdp_url=cdp_norm, conversation_url=conv, path=store_path)
-    if row is None or row.target_id != target_id:
-        return False
-    return bool(row.created_by_agent)
+    conv_candidates: list[str] = []
+    for raw in (conversation_url, tab_url):
+        if not raw:
+            continue
+        canon = canonical_page_url(str(raw).strip())
+        if canon and canon not in conv_candidates:
+            conv_candidates.append(canon)
+    for conv in conv_candidates:
+        row = load_binding(cdp_url=cdp_norm, conversation_url=conv, path=store_path)
+        if row is not None and row.target_id == target_id:
+            return bool(row.created_by_agent)
+    row = load_binding_for_target(
+        cdp_url=cdp_norm, target_id=target_id, path=store_path
+    )
+    if row is not None:
+        return bool(row.created_by_agent)
+    return False
 
 
 def _cdp_refusal(raw: dict[str, Any]) -> dict[str, Any] | None:
@@ -283,6 +302,7 @@ async def execute_paste(
         cdp_url=cdp_url,
         target_id=target_id,
         conversation_url=conversation_url,
+        tab_url=str(row.get("url") or ""),
         store_path=store_path,
     )
     try:
@@ -388,6 +408,7 @@ async def execute_submit(
         cdp_url=cdp_url,
         target_id=target_id,
         conversation_url=conversation_url,
+        tab_url=str(row.get("url") or ""),
         store_path=store_path,
     )
     try:
@@ -531,7 +552,9 @@ async def execute_read_reply(
     }
 
 
-def _resolve_write_cdp_url(options: dict[str, Any]) -> tuple[str | None, dict[str, Any] | None]:
+def _resolve_write_cdp_url(
+    options: dict[str, Any],
+) -> tuple[str | None, dict[str, Any] | None]:
     try:
         return (
             resolve_cdp_for_web_tab_options(
