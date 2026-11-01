@@ -58,10 +58,18 @@ def _schedule_delivery(
     """
     if tracker._delivery_sender is None:
         return
-    # For bus-mode records, reply observation only makes sense when the model
-    # itself completed. If the model failed, there is no agent reply to observe.
+    # For bus-mode records, on-behalf content delivery applies when the model
+    # completed. When the model failed before producing reply content, still
+    # schedule delivery so a terminal FAILED turn can wake the target thread.
     if record.op == "to_thread" and record.status != "completed":
-        return
+        terminal_thread_failure = (
+            record.status == "failed"
+            and record.output_contract == "thread"
+            and record.target_thread is not None
+            and record.error is not None
+        )
+        if not terminal_thread_failure:
+            return
     has_delivery_config = record.result_delivery is not None or (
         record.op == "to_thread" and record.target_thread is not None
     )
