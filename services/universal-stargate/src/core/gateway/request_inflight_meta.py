@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import contextvars
+from collections.abc import Iterator
+from contextlib import contextmanager
 from typing import Any
 
 from universal_logging import get_logger
@@ -24,6 +26,34 @@ def bind_request_inflight_meta(meta: dict[str, Any] | None) -> None:
         _current_request_meta.set(None)
         return
     _current_request_meta.set(normalize_request_meta(meta))
+
+
+@contextmanager
+def inflight_meta_scope(meta: dict[str, Any] | None) -> Iterator[None]:
+    """Bind meta for this scope and reset the contextvar token on exit."""
+    if meta is None:
+        token = _current_request_meta.set(None)
+    else:
+        token = _current_request_meta.set(normalize_request_meta(meta))
+    try:
+        yield
+    finally:
+        _current_request_meta.reset(token)
+
+
+_CDP_ASK_ROUTE_PREFIXES = (
+    "/api/v1/providers/cdp/ask",
+    "/providers/cdp/ask",
+)
+
+
+def _path_is_cdp_ask_route(request_path: str) -> bool:
+    path = (request_path or "").lower().split("?", 1)[0].rstrip("/")
+    for prefix in _CDP_ASK_ROUTE_PREFIXES:
+        normalized = prefix.lower().rstrip("/")
+        if path == normalized or path.startswith(f"{normalized}/"):
+            return True
+    return False
 
 
 def current_request_inflight_meta() -> dict[str, Any] | None:
@@ -111,8 +141,7 @@ def infer_inflight_kind(
     request_path: str = "",
 ) -> str:
     """Classify in-flight work for admin observability."""
-    path = (request_path or "").lower()
-    if "/cdp" in path or ("/frontier" in path and "ask" in path):
+    if _path_is_cdp_ask_route(request_path):
         return "cdp_ask"
     if is_pipeline_internal or is_pipeline_model:
         return "pipeline_sync"

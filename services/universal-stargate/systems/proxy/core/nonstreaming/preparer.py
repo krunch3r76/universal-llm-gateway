@@ -43,8 +43,8 @@ from .sticky_routing import resolve_model_sticky  # noqa: E402,I001
 from .transformer import RequestTransformer  # noqa: E402,I001
 from .mode_transforms import prepare_normal_mode  # noqa: E402,I001
 from src.core.gateway.request_inflight_meta import (  # noqa: E402
-    bind_request_inflight_meta,
     infer_inflight_kind,
+    inflight_meta_scope,
     meta_from_http_request,
 )
 
@@ -301,14 +301,52 @@ class RequestPreparer:
             model_id=str(selected_model),
             request_path=str(request.url.path),
         )
-        bind_request_inflight_meta(
-            meta_from_http_request(
-                request,
-                original_request if isinstance(original_request, dict) else None,
-                kind=inflight_kind,
-            )
+        request_meta = meta_from_http_request(
+            request,
+            original_request if isinstance(original_request, dict) else None,
+            kind=inflight_kind,
         )
 
+        with inflight_meta_scope(request_meta):
+            return await self._prepare_request_inflight_scoped(
+                request=request,
+                chat_request=chat_request,
+                request_id=request_id,
+                start_time=start_time,
+                selected_model=selected_model,
+                original_request=original_request,
+                raw_client_fields=raw_client_fields,
+                user_params=user_params,
+                middleware_actions=middleware_actions,
+                bypass_transformations=bypass_transformations,
+                disable_profile=disable_profile,
+                effective_skip_token_counting=effective_skip_token_counting,
+                requested_model_str=requested_model_str,
+                profile_override=profile_override,
+                is_pipeline=is_pipeline,
+                is_pipeline_internal_header=is_pipeline_internal_header,
+            )
+
+    async def _prepare_request_inflight_scoped(
+        self,
+        *,
+        request: Request,
+        chat_request: ChatCompletionRequest,
+        request_id: str,
+        start_time: float,
+        selected_model: str,
+        original_request: dict,
+        raw_client_fields: dict,
+        user_params: dict,
+        middleware_actions: list,
+        bypass_transformations: bool,
+        disable_profile: bool,
+        effective_skip_token_counting: bool,
+        requested_model_str: str,
+        profile_override: str | None,
+        is_pipeline: bool,
+        is_pipeline_internal_header: bool,
+    ) -> RequestContext:
         context = RequestContext(
             request_id=request_id,
             start_time=start_time,

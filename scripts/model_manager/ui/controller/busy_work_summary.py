@@ -185,7 +185,7 @@ def _stargate_items_clause(work: dict[str, Any]) -> str:
         return ""
     rendered: list[str] = []
     for row in items[:3]:
-        kind = str(row.get("kind") or "pipeline")
+        kind = str(row.get("kind") or "unknown")
         req_id = row.get("request_id") or row.get("execution_id")
         piece = f"{kind}:{_short_id(str(req_id))}" if req_id else kind
         routing_key = row.get("routing_key") or row.get("pipeline")
