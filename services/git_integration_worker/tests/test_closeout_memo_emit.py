@@ -32,6 +32,7 @@ def _admit(
     contract: str = "implement",
     resume_of: str | None = None,
     nest_under: str | None = None,
+    parent_dispatch_thread_id: str | None = "12286",
 ) -> None:
     req = CursorDispatchRequest(
         thread_id=str(15000 + (abs(hash(dispatch_id)) % 1000)),
@@ -43,7 +44,7 @@ def _admit(
         wake_lane=wake_lane,
         resume_of=resume_of,
         nest_under=nest_under,
-        parent_dispatch_thread_id="12286",
+        parent_dispatch_thread_id=parent_dispatch_thread_id,
     )
     ledger.admit(
         req=req,
@@ -64,7 +65,12 @@ def _admit(
 def test_mark_terminal_owes_only_when_wake_lane_set() -> None:
     ledger = CursorDispatchLedger.instance()
     _admit(ledger, dispatch_id="memo-owed", wake_lane="12286")
-    _admit(ledger, dispatch_id="memo-silent", wake_lane=None)
+    _admit(
+        ledger,
+        dispatch_id="memo-silent",
+        wake_lane=None,
+        parent_dispatch_thread_id=None,
+    )
     ledger.mark_terminal(dispatch_id="memo-owed", terminal_status="completed")
     ledger.mark_terminal(dispatch_id="memo-silent", terminal_status="completed")
     owed = ledger.memo_row("memo-owed")
@@ -109,8 +115,9 @@ def test_claim_is_single_winner() -> None:
         thread.start()
     for thread in threads:
         thread.join()
-    assert results.count(True) == 1
-    assert results.count(False) == 1
+    winners = [gen for gen in results if gen is not None]
+    assert len(winners) == 1
+    assert len(results) - len(winners) == 1
 
 
 def test_hop_successor_suppresses_before_post(monkeypatch: pytest.MonkeyPatch) -> None:
