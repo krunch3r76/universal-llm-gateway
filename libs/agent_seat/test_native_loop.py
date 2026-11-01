@@ -1124,3 +1124,54 @@ async def test_native_loop_credit_cap_on_turn_two_preserves_turn_one(
     assert result.finish_reason == "credit_cap"
     assert result.turns_used == 2
     assert result.tool_calls
+    assert result.block_reason == "anthropic_cycle_budget_exhausted"
+    assert "code=anthropic_cycle_budget_exhausted" in (result.content or "")
+
+
+@pytest.mark.asyncio
+async def test_native_loop_mcp_serialized_on_turn_two_preserves_turn_one(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import httpx
+
+    calls = {"n": 0}
+
+    async def send(path: str, json_body: dict[str, Any]) -> dict[str, Any]:
+        calls["n"] += 1
+        if calls["n"] == 1:
+            return _anthropic_tool_use("search", {"q": "x"})
+        raise httpx.HTTPStatusError(
+            "serialized",
+            request=httpx.Request("POST", "http://test"),
+            response=httpx.Response(
+                429,
+                json={
+                    "error": {
+                        "type": "anthropic_mcp_serialized",
+                        "message": "1 MCP reservation(s) open",
+                    }
+                },
+            ),
+        )
+
+    async def _exec_tool(*_a: object, **_k: object) -> str:
+        return "ok"
+
+    monkeypatch.setattr(_nl_tools_mod, "execute_tool", _exec_tool)
+    req = FrontierRequest(
+        messages=[{"role": "user", "content": "hi"}],
+        model="claude-sonnet-4-6",
+        max_tokens=100,
+        system="",
+        mcp_tool_loop=True,
+    )
+    result = await run_native_tool_loop(
+        model="anthropic/claude-sonnet-4-6",
+        req=req,
+        send_native=send,
+        max_turns=5,
+    )
+    assert result.finish_reason == "credit_cap"
+    assert result.block_reason == "anthropic_mcp_serialized"
+    assert "code=anthropic_mcp_serialized" in (result.content or "")
+    assert "1 MCP reservation(s) open" in (result.content or "")

@@ -20,6 +20,15 @@ from .usage_cost import usage_cost_usd_for_config
 
 EventEmitter = Callable[[str, dict[str, Any]], None]
 
+CREDIT_REFUSAL_429_CODES: frozenset[str] = frozenset(
+    {
+        "anthropic_credit_latched",
+        "anthropic_mcp_serialized",
+        "anthropic_mcp_cap_exceeded",
+        "anthropic_cycle_budget_exhausted",
+    }
+)
+
 
 def _noop_emit(_name: str, _payload: dict[str, Any]) -> None:
     """Default no-op event emitter when no service EventBus hook is registered."""
@@ -337,7 +346,7 @@ class CreditPolicy:
 
                 if snap.latch_active:
                     return Refuse(
-                        code="anthropic_cycle_budget_exhausted",
+                        code="anthropic_credit_latched",
                         http_status=429,
                         reservation_usd=reservation.usd,
                         headroom_usd=Decimal("0"),
@@ -350,13 +359,13 @@ class CreditPolicy:
                 window_total = snap.committed_usd + snap.open_reservations_usd
                 if reservation.mcp_class and snap.open_mcp_count > 0:
                     return Refuse(
-                        code="anthropic_cycle_budget_exhausted",
+                        code="anthropic_mcp_serialized",
                         http_status=429,
                         reservation_usd=reservation.usd,
                         headroom_usd=mcp_headroom,
                         detail=(
                             "MCP-connector requests are serialized one at a time; "
-                            "another MCP reservation is open"
+                            f"{snap.open_mcp_count} MCP reservation(s) open"
                         ),
                     )
                 if cap_usd is None:
@@ -365,7 +374,7 @@ class CreditPolicy:
                     mcp_cap = min(cap_usd, cfg.mcp_connector_stop_usd or cap_usd)
                     if window_total + reservation.usd > mcp_cap:
                         return Refuse(
-                            code="anthropic_cycle_budget_exhausted",
+                            code="anthropic_mcp_cap_exceeded",
                             http_status=429,
                             reservation_usd=reservation.usd,
                             headroom_usd=mcp_headroom,

@@ -439,7 +439,10 @@ class McpToolExecutor:
         client_id: str | None = None,
     ) -> dict[str, Any]:
         from anthropic_credit.loop_refusal import credit_cap_notice, emit_loop_refused
-        from anthropic_credit.policy import AnthropicCreditRefused
+        from anthropic_credit.policy import (
+            CREDIT_REFUSAL_429_CODES,
+            AnthropicCreditRefused,
+        )
 
         response: dict[str, Any] = {}
         for iteration in range(max_iterations):
@@ -452,10 +455,10 @@ class McpToolExecutor:
             try:
                 response = await forward_fn(body)
             except AnthropicCreditRefused as exc:
-                if iteration == 0 or exc.code != "anthropic_cycle_budget_exhausted":
+                if iteration == 0 or exc.code not in CREDIT_REFUSAL_429_CODES:
                     raise
                 emit_loop_refused(iteration + 1)
-                notice = credit_cap_notice()
+                notice = credit_cap_notice(code=exc.code, detail=exc.detail)
                 choices = response.get("choices", [])
                 if choices:
                     message = choices[0].get("message", {})

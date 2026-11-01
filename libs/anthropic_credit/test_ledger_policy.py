@@ -289,7 +289,7 @@ def test_latch_refuses_until_reset_at_then_clears(tmp_path: Path) -> None:
         now=before_reset,
     )
     assert isinstance(refused, Refuse)
-    assert refused.code == "anthropic_cycle_budget_exhausted"
+    assert refused.code == "anthropic_credit_latched"
     assert refused.http_status == 429
 
     # At reset_at (2026-11-06T00:00:00Z): latch clears for the new cycle
@@ -446,8 +446,9 @@ def test_mcp_stop_at_170_and_serialization(tmp_path: Path) -> None:
     # While mcp-1 is open, a second MCP request is refused (serialized + at $170 cap)
     mcp2 = policy.admit("mcp-2", "claude-sonnet-5", mcp_body, token_count=100, now=_T0)
     assert isinstance(mcp2, Refuse)
-    assert mcp2.code == "anthropic_cycle_budget_exhausted"
+    assert mcp2.code == "anthropic_mcp_serialized"
     assert mcp2.http_status == 429
+    assert "1 MCP reservation" in mcp2.detail
 
     # Release mcp-1 and commit $1.00 plain request so committed = $166.00
     policy.release("mcp-1", now=_T0)
@@ -464,7 +465,7 @@ def test_mcp_stop_at_170_and_serialization(tmp_path: Path) -> None:
     # At $166 committed, $5 MCP request would reach $171 > $170 -> refused
     mcp3 = policy.admit("mcp-3", "claude-sonnet-5", mcp_body, token_count=100, now=_T0)
     assert isinstance(mcp3, Refuse)
-    assert mcp3.code == "anthropic_cycle_budget_exhausted"
+    assert mcp3.code == "anthropic_mcp_cap_exceeded"
     assert mcp3.headroom_usd == Decimal("4.000000")
 
 

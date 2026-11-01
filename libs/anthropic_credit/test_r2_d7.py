@@ -154,6 +154,7 @@ def test_mcp_serialization_across_window_roll(tmp_path: Path) -> None:
         now=post_roll,
     )
     assert isinstance(second, Refuse)
+    assert second.code == "anthropic_mcp_serialized"
     assert "serialized" in (second.detail or "").lower()
 
 

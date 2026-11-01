@@ -288,7 +288,7 @@ async def test_workbench_payload_refused_at_mcp_stop_after_169_99(
     )
     status, body = await _post_native(_workbench_payload(), adapter)
     assert status == 429
-    assert body["error"]["type"] == "anthropic_cycle_budget_exhausted"
+    assert body["error"]["type"] == "anthropic_mcp_cap_exceeded"
     assert counts["messages"] == 0
 
 
@@ -313,7 +313,7 @@ async def test_workbench_payload_refused_at_zero_cap(tmp_path: Path) -> None:
     adapter, counts = _make_adapter(tmp_path)
     status, body = await _post_native(_workbench_payload(), adapter)
     assert status == 429
-    assert body["error"]["type"] == "anthropic_cycle_budget_exhausted"
+    assert body["error"]["type"] == "anthropic_mcp_cap_exceeded"
     assert counts["messages"] == 0
 
 
