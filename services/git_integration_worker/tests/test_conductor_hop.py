@@ -166,10 +166,39 @@ def _partial_open_mission_row(
     ledger: CursorDispatchLedger,
     *,
     closeout_tokens: list[str] | None = None,
+    dispatch_id: str = "pred-hop-1",
+    work_key: str = _WORK_KEY,
+    thread_id: str = "9964",
 ) -> dict:
-    req = _req()
-    _admit_conductor(
-        ledger, req, record_patch={"closeout_stop_tokens": closeout_tokens or []}
+    req = _req(dispatch_id=dispatch_id, thread_id=thread_id)
+    ledger.admit(
+        req=req,
+        fingerprint=ledger.fingerprint(req),
+        execution_id=req.execution_id,
+        caller_agent="cursor",
+        resolved_model="composer-2.5",
+        admission=CursorDispatchResponse(
+            admitted=True,
+            dispatch_id=req.dispatch_id,
+            thread_id=req.thread_id,
+            model_id="composer-2.5",
+        ),
+        contract="conductor",
+        source_repo="/repo",
+        lease_key="/repo",
+        work_key=work_key,
+        source_ref=work_key,
+        hop_seq=1,
+        hop_from="spawn-parent",
+        hop_reason="spawn",
+    )
+    ledger.merge_record_json(
+        dispatch_id=req.dispatch_id,
+        patch={
+            "contract": "conductor",
+            "lane": "B",
+            "closeout_stop_tokens": closeout_tokens or [],
+        },
     )
     with ledger._connect() as conn:
         row = conn.execute(
@@ -205,6 +234,72 @@ def test_hop_skip_gate_partial_open_mission_no_row_hop_returns_none() -> None:
     ):
         assert hop_owed(row, closeout_tokens=frozenset()) is False
         assert _hop_skip_gate(row, closeout_tokens=frozenset()) is None
+
+
+def test_hop_owed_partial_row_hop_mission_open() -> None:
+    """Partial terminal + ROW_HOP with mission open must owe a hop successor."""
+    ledger = CursorDispatchLedger.instance()
+    row = _partial_open_mission_row(ledger, closeout_tokens=["ROW_HOP"])
+    with (
+        patch(
+            "services.git_integration_worker.cursor_sdk_closeout.conductor_hop.mission_open_for_row",
+            return_value=True,
+        ),
+        patch(
+            "services.git_integration_worker.cursor_sdk_closeout.conductor_hop.budget_ok_for_hop",
+            return_value=True,
+        ),
+        patch(
+            "services.git_integration_worker.cursor_sdk_closeout.conductor_hop.live_conductor_row_on_thread",
+            return_value=False,
+        ),
+        patch(
+            "services.git_integration_worker.cursor_sdk_closeout.conductor_hop.conductor_has_live_nested",
+            return_value=False,
+        ),
+        patch(
+            "services.git_integration_worker.cursor_sdk_closeout.conductor_hop.external_gate_hop_verdict",
+            return_value=("closed", None),
+        ),
+    ):
+        assert hop_owed(row, closeout_tokens=frozenset({"ROW_HOP"})) is True
+        assert _hop_skip_gate(row, closeout_tokens=frozenset({"ROW_HOP"})) is None
+
+
+def test_hop_owed_partial_done_and_exit_persist_block_successor() -> None:
+    ledger = CursorDispatchLedger.instance()
+    row_done = _partial_open_mission_row(
+        ledger,
+        closeout_tokens=["DONE"],
+        dispatch_id="pred-hop-partial-done",
+        work_key="todo:conductor-hop-fixture-done",
+        thread_id="9966",
+    )
+    row_pinned = _partial_open_mission_row(
+        ledger,
+        closeout_tokens=["ROW_PINNED"],
+        dispatch_id="pred-hop-partial-pin",
+        work_key="todo:conductor-hop-fixture-pin",
+        thread_id="9965",
+    )
+    with (
+        patch(
+            "services.git_integration_worker.cursor_sdk_closeout.conductor_hop.mission_open_for_row",
+            return_value=True,
+        ),
+        patch(
+            "services.git_integration_worker.cursor_sdk_closeout.conductor_hop.budget_ok_for_hop",
+            return_value=True,
+        ),
+    ):
+        assert hop_owed(row_done, closeout_tokens=frozenset({"DONE"})) is False
+        assert _hop_skip_gate(row_done, closeout_tokens=frozenset({"DONE"})) == (
+            "mission_closed"
+        )
+        assert hop_owed(row_pinned, closeout_tokens=frozenset({"ROW_PINNED"})) is False
+        assert _hop_skip_gate(row_pinned, closeout_tokens=frozenset({"ROW_PINNED"})) == (
+            "mission_closed"
+        )
 
 
 def test_hop_skip_gate_partial_exit_persist_stop_blocks() -> None:

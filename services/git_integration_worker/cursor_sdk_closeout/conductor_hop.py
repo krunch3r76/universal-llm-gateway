@@ -1177,7 +1177,7 @@ def hop_owed(
     via resume. Restart blocks hop via ``PARKED_TRANSPORT``; discard blocks here.
     """
     status = str(row.get("status") or "")
-    if status not in ("completed", "failed", "cancelled"):
+    if status not in ("completed", "failed", "cancelled", "partial"):
         return False
     if _cancel_discard_blocks_hop(row):
         return False
@@ -1222,6 +1222,8 @@ def hop_owed(
         return False
     hop_fields = hop_fields_from_record_json(str(row.get("record_json") or ""))
     if hop_fields.get("hop_successor"):
+        return False
+    if status == "partial" and "ROW_HOP" not in tokens:
         return False
     return True
 
