@@ -10,10 +10,10 @@ import httpx
 from agent_bus_store.db.endpoint_wake_ledger import ENDPOINT_WAKE_DEBOUNCE_S_ORION_CHAT
 from transport_utils import DEFAULT_AGENT_BUS_URL, make_sync_client
 
+_COMPOSER_DEFER_DISPLAY = frozenset(
+    {"active_chat_busy", "composer_busy", "composer_not_empty"}
+)
 _RETRIABLE_DISPLAY = {
-    "active_chat_busy",
-    "agent_id_mismatch",
-    "composer_not_empty",
     "debug_unreachable",
     "no_active_chat",
     "no_composer",
@@ -119,6 +119,10 @@ def classify_display(
         return "unknown", reason or "delivery_unconfirmed"
     if body.get("ok") and body.get("delivered"):
         return "delivered", reason or "delivered"
+    if reason == "agent_id_mismatch":
+        return "refused", reason
+    if reason in _COMPOSER_DEFER_DISPLAY:
+        return "pending", reason
     if reason in _RETRIABLE_DISPLAY:
         return "pending", reason
     if body.get("ok") is False and not body.get("pasted"):

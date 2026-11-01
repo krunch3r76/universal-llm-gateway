@@ -1110,8 +1110,13 @@ def test_degraded_conductor_hop_closeout_routes_to_cursor() -> None:
     )
 
 
-def test_retry_pending_and_paste_failed_unknown(db: None) -> None:
-    detail = create_thread(thread_id=None, slug="retry")
+def test_composer_defer_blocks_wall_clock_reclaim_until_empty_event(db: None) -> None:
+    from bus_watch.endpoint_wake_composer_defer import (
+        COMPOSER_DEFER_ARMED,
+        notify_composer_empty_for_target,
+    )
+
+    detail = create_thread(thread_id=None, slug="composer-defer-reclaim")
     assert detail is not None
     thread = str(detail["id"])
     turn_id, _ts, number, _c = insert_turn(
@@ -1137,19 +1142,21 @@ def test_retry_pending_and_paste_failed_unknown(db: None) -> None:
     record_wake_result(
         wake, "pending", "active_chat_busy", "exact", 1, None, now="2020-01-01 00:00:02"
     )
-    assert claim_due_wakes(now="2020-01-01 00:00:30")["wake_id"] is None
-    again = claim_due_wakes(now="2020-01-01 00:01:03")
-    assert again["wake_id"]
-    record_wake_result(
-        again["wake_id"],
-        "unknown",
-        "paste_failed",
-        "exact",
-        1,
-        None,
-        now="2020-01-01 00:01:04",
+    with connect() as conn:
+        row = conn.execute(
+            "SELECT decided_by_rule FROM endpoint_wake_ledger WHERE wake_id=?",
+            (wake,),
+        ).fetchone()
+    assert row["decided_by_rule"] == COMPOSER_DEFER_ARMED
+    assert claim_due_wakes(now="2020-01-01 00:01:03")["wake_id"] is None
+    notify_composer_empty_for_target(
+        display="9",
+        surface="grok",
+        agent_id="agent-grok",
+        thread_scope=thread,
     )
-    assert claim_due_wakes(now="2020-01-01 00:20:00")["wake_id"] is None
+    again = claim_due_wakes(now="2020-01-01 00:01:04")
+    assert again["wake_id"]
 
 
 def test_debounce_cleared_after_target_reply(db: None) -> None:
@@ -1463,11 +1470,14 @@ def test_outcome_table() -> None:
 
 def test_classify_display_hydration_reasons_stay_pending() -> None:
     pending_body = {"ok": False, "pasted": False}
-    for reason in ("unknown", "no_active_chat", "agent_id_mismatch"):
+    for reason in ("unknown", "no_active_chat"):
         assert classify_display(200, {**pending_body, "reason": reason}, None) == (
             "pending",
             reason,
         )
+    assert classify_display(
+        200, {**pending_body, "reason": "agent_id_mismatch"}, None
+    ) == ("refused", "agent_id_mismatch")
     assert classify_display(
         200, {"ok": False, "reason": "debug_unreachable", "pasted": False}, None
     ) == ("pending", "debug_unreachable")
@@ -4083,3 +4093,199 @@ def test_deliver_cse_writes_no_ledger_row(tmp_path, monkeypatch) -> None:
     assert reg == "reg-1"
     assert reason is not None
     assert not ledger.exists()
+
+
+def test_agent_id_mismatch_records_refused_not_pending(db: None) -> None:
+    detail = create_thread(thread_id=None, slug="aid-mismatch")
+    assert detail is not None
+    thread = str(detail["id"])
+    turn_id, _ts, number, _c = insert_turn(
+        thread=thread,
+        from_agent="cursor",
+        to_agent="grok-bot-gc1",
+        subject="FACT|x",
+        body="b",
+    )
+    get_cursor()
+    with connect() as conn:
+        conn.execute("UPDATE endpoint_wake_cursor SET high_water_turn_id=0")
+    advance_scan(
+        "endpoint-wake-dispatcher",
+        0,
+        turn_id,
+        [
+            {
+                "agent": "grok-bot-gc1",
+                "thread_id": thread,
+                "turn_id": turn_id,
+                "turn_number": number,
+            }
+        ],
+        now="2020-01-01 00:00:00",
+    )
+    wake = claim_due_wakes(now="2020-01-01 00:00:01")["wake_id"]
+    assert wake
+    record_wake_result(
+        wake,
+        "refused",
+        "agent_id_mismatch",
+        "exact",
+        1,
+        None,
+        now="2020-01-01 00:00:02",
+    )
+    with connect() as conn:
+        row = conn.execute(
+            "SELECT state, reason FROM endpoint_wake_ledger WHERE wake_id=?",
+            (wake,),
+        ).fetchone()
+    assert row["state"] == "refused"
+    assert row["reason"] == "agent_id_mismatch"
+    assert claim_due_wakes(now="2020-01-01 00:00:30")["wake_id"] is None
+
+
+def test_composer_defer_sweep_escalates_once_to_maestro(db: None) -> None:
+    from bus_watch.endpoint_wake_composer_defer import (
+        COMPOSER_DEFER_ARMED,
+        COMPOSER_DEFER_ESCALATED,
+        COMPOSER_DEFER_SWEEP,
+        escalate_composer_deferred_on_sweep,
+        finalize_composer_defer_pass,
+    )
+
+    detail = create_thread(thread_id=None, slug="composer-sweep")
+    assert detail is not None
+    thread = str(detail["id"])
+    turn_id, _ts, number, _c = insert_turn(
+        thread=thread,
+        from_agent="cursor",
+        to_agent="grok-bot-gc1",
+        subject="FACT|x",
+        body="b",
+    )
+    get_cursor()
+    with connect() as conn:
+        conn.execute("UPDATE endpoint_wake_cursor SET high_water_turn_id=0")
+    advance_scan(
+        "endpoint-wake-dispatcher",
+        0,
+        turn_id,
+        [
+            {
+                "agent": "grok-bot-gc1",
+                "thread_id": thread,
+                "turn_id": turn_id,
+                "turn_number": number,
+            }
+        ],
+        now="2020-01-01 00:00:00",
+    )
+    wake = claim_due_wakes(now="2020-01-01 00:00:01")["wake_id"]
+    assert wake
+    record_wake_result(
+        wake,
+        "pending",
+        "composer_not_empty",
+        "exact",
+        1,
+        None,
+        now="2020-01-01 00:00:02",
+    )
+    finalize_composer_defer_pass()
+    with connect() as conn:
+        row = conn.execute(
+            "SELECT decided_by_rule FROM endpoint_wake_ledger WHERE id IN "
+            "(SELECT id FROM endpoint_wake_ledger WHERE thread_id=? LIMIT 1)",
+            (thread,),
+        ).fetchone()
+    assert row["decided_by_rule"] == COMPOSER_DEFER_SWEEP
+
+    class _Store:
+        posts: list[dict] = []
+
+        def create_turn(self, **kwargs: object) -> dict:
+            _Store.posts.append(dict(kwargs))
+            return {"ok": True}
+
+    store = _Store()
+    assert escalate_composer_deferred_on_sweep(store) == 1
+    assert len(_Store.posts) == 1
+    assert _Store.posts[0]["to_agent"] == "maestro"
+    with connect() as conn:
+        row = conn.execute(
+            "SELECT state, decided_by_rule FROM endpoint_wake_ledger WHERE thread_id=?",
+            (thread,),
+        ).fetchone()
+    assert row["state"] == "refused"
+    assert row["decided_by_rule"] == COMPOSER_DEFER_ESCALATED
+    assert escalate_composer_deferred_on_sweep(store) == 0
+    assert len(_Store.posts) == 1
+
+
+def test_falsifier_no_pending_agent_id_mismatch_or_composer_not_empty_after_sweep(
+    db: None,
+) -> None:
+    from bus_watch.endpoint_wake_composer_defer import (
+        escalate_composer_deferred_on_sweep,
+        finalize_composer_defer_pass,
+    )
+
+    detail = create_thread(thread_id=None, slug="falsifier-sweep")
+    assert detail is not None
+    thread = str(detail["id"])
+    get_cursor()
+    with connect() as conn:
+        conn.execute("UPDATE endpoint_wake_cursor SET high_water_turn_id=0")
+    high = 0
+    for idx, reason in enumerate(("agent_id_mismatch", "composer_not_empty")):
+        turn_id, _ts, number, _c = insert_turn(
+            thread=thread,
+            from_agent="cursor",
+            to_agent="grok-bot-gc1",
+            subject=f"FACT|{idx}",
+            body="b",
+        )
+        advance_scan(
+            "endpoint-wake-dispatcher",
+            high,
+            turn_id,
+            [
+                {
+                    "agent": "grok-bot-gc1",
+                    "thread_id": thread,
+                    "turn_id": turn_id,
+                    "turn_number": number,
+                }
+            ],
+            now=f"2020-01-01 00:0{idx}:00",
+        )
+        high = turn_id
+        wake = claim_due_wakes(now=f"2020-01-01 00:0{idx}:01")["wake_id"]
+        assert wake
+        outcome = "refused" if reason == "agent_id_mismatch" else "pending"
+        record_wake_result(
+            wake,
+            outcome,
+            reason,
+            "exact",
+            1,
+            None,
+            now=f"2020-01-01 00:0{idx}:02",
+        )
+        if outcome == "pending":
+            finalize_composer_defer_pass()
+            escalate_composer_deferred_on_sweep(
+                type("_S", (), {"create_turn": lambda *a, **k: {}})()
+            )
+    with connect() as conn:
+        bad = conn.execute(
+            "SELECT COUNT(*) AS n FROM endpoint_wake_ledger "
+            "WHERE state='pending' AND reason IN ('agent_id_mismatch','composer_not_empty')"
+        ).fetchone()
+    assert int(bad["n"]) == 0
+
+
+def test_composer_defer_decision_does_not_use_wall_clock() -> None:
+    from bus_watch.endpoint_wake_composer_defer import defer_path_avoids_wall_clock
+
+    assert defer_path_avoids_wall_clock() is True

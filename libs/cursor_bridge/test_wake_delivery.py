@@ -457,6 +457,58 @@ async def test_cursor_human_draft_blocks_selection(
 
 
 @pytest.mark.asyncio
+async def test_composer_empty_probe_notifies_wake_redrive(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    surface = classify_surface(
+        [],
+        [
+            {
+                "text": "15851 slug",
+                "selected": True,
+                "agent_id": "agent-1",
+            }
+        ],
+        composer_draft="",
+    )
+    notified: list[dict] = []
+
+    def _notify(**kwargs: object) -> int:
+        notified.append(dict(kwargs))
+        return 1
+
+    monkeypatch.setattr(
+        "bus_watch.endpoint_wake_composer_defer.notify_composer_empty_for_target",
+        _notify,
+    )
+    monkeypatch.setattr(
+        wd,
+        "list_pages",
+        lambda _origin: [
+            {"title": "Cursor Agents", "web_socket_debugger_url": "ws://x"}
+        ],
+    )
+    monkeypatch.setattr(wd, "probe_surface", AsyncMock(return_value=surface))
+    monkeypatch.setattr(
+        wd,
+        "_paste_cursor_services",
+        AsyncMock(return_value={"ok": True, "delivered": True}),
+    )
+
+    out = await deliver_wake(
+        display="8",
+        app="cursor",
+        thread="15851",
+        slug="slug",
+        agent_id="agent-1",
+        turn=290,
+    )
+    assert out.get("delivered") is True
+    assert len(notified) == 1
+    assert notified[0]["thread_scope"] == "15851"
+
+
+@pytest.mark.asyncio
 async def test_deliver_wake_exchange_text_refuses_non_stage_manager_thread(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

@@ -290,6 +290,17 @@ async def test_coord_admit_mirrors_worker_scoped_subscription(
         _factory,
     )
     monkeypatch.setenv("AGENT_BUS_TOKEN", "test-token")
+    serving_uuid = "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
+
+    async def _resolve(_client, *, worker_thread_id, serving_to_agent, headers):
+        assert worker_thread_id == "21015"
+        assert serving_to_agent == "composer-impresario-dbbfc4c2"
+        return serving_uuid, f"serving_to_agent:{serving_uuid}"
+
+    monkeypatch.setattr(
+        "systems.frontier_consult.cursor_sdk_coord_notify.resolve_worker_subscription_agent_id",
+        _resolve,
+    )
     await post_coord_admit_pointer(
         coord_thread_id="20995",
         worker_thread_id="21015",
@@ -305,8 +316,9 @@ async def test_coord_admit_mirrors_worker_scoped_subscription(
     assert posts[0]["thread_scope"] == "21015"
     assert posts[0]["agent"] == "cursor"
     assert posts[0]["bound_by"] == "cursor-sdk-admit"
-    assert posts[0]["evidence"] == "parent:20995"
-    assert posts[0]["agent_id"] == coord_row["agent_id"]
+    assert posts[0]["evidence"] == f"serving_to_agent:{serving_uuid}"
+    assert posts[0]["agent_id"] == serving_uuid
+    assert posts[0]["agent_id"] != coord_row["agent_id"]
 
 
 @pytest.mark.asyncio
@@ -318,6 +330,15 @@ async def test_house_land_wake_budget_coord_admit_and_worker_closeout_qualify(
 
     post_turn = AsyncMock()
     imp = "composer-impresario-dbbfc4c2"
+    serving_uuid = "f907a88b-1111-2222-3333-444455556666"
+
+    async def _resolve(_client, *, worker_thread_id, serving_to_agent, headers):
+        return serving_uuid, f"serving_to_agent:{serving_uuid}"
+
+    monkeypatch.setattr(
+        "systems.frontier_consult.cursor_sdk_coord_notify.resolve_worker_subscription_agent_id",
+        _resolve,
+    )
     monkeypatch.setattr(
         "systems.frontier_consult.cursor_sdk_coord_notify.make_async_client",
         lambda *a, **k: _ClientCtx(

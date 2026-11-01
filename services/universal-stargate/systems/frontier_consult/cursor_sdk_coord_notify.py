@@ -19,6 +19,7 @@ from .cursor_sdk_admit_loop import (
     increment_admit_pointer_would_have_refused,
 )
 from .cursor_sdk_generate_signals import publish_frontier_event
+from .cursor_sdk_lane_subscription import resolve_worker_subscription_agent_id
 from .events import FrontierAdmitPointerLoopClosure
 
 logger = get_logger(__name__)
@@ -146,6 +147,7 @@ async def _mirror_coord_subscriptions_to_worker(
     *,
     coord_thread_id: str,
     worker_thread_id: str,
+    serving_to_agent: str | None = None,
 ) -> None:
     """Copy active coord ``thread_scope`` subscriptions onto the worker lane (Rec 1)."""
     if not _bus_token_configured() or not coord_thread_id or not worker_thread_id:
@@ -173,16 +175,34 @@ async def _mirror_coord_subscriptions_to_worker(
                 agent = str(row.get("agent") or "").strip()
                 if not agent:
                     continue
+                resolved_aid, bind_evidence = (
+                    await resolve_worker_subscription_agent_id(
+                        client,
+                        worker_thread_id=worker_thread_id,
+                        serving_to_agent=serving_to_agent,
+                        headers=headers,
+                    )
+                )
                 body: dict[str, Any] = {
                     "agent": agent,
                     "thread_scope": worker_thread_id,
                     "surface": str(row.get("surface") or ""),
                     "display": str(row.get("display") or ""),
                     "title": row.get("title"),
-                    "agent_id": row.get("agent_id"),
                     "bound_by": "cursor-sdk-admit",
-                    "evidence": f"parent:{coord_thread_id}",
+                    "evidence": bind_evidence,
                 }
+                if resolved_aid:
+                    body["agent_id"] = resolved_aid
+                elif row.get("agent_id"):
+                    logger.info(
+                        "worker subscription mirror skipped parent agent_id: "
+                        "coord=%s worker=%s parent_agent_id=%s evidence=%s",
+                        coord_thread_id,
+                        worker_thread_id,
+                        row.get("agent_id"),
+                        bind_evidence,
+                    )
                 try:
                     sub_resp = await client.post(
                         "/endpoint-subscriptions", json=body, headers=headers
@@ -190,7 +210,8 @@ async def _mirror_coord_subscriptions_to_worker(
                     sub_resp.raise_for_status()
                 except httpx.HTTPError as exc:
                     logger.warning(
-                        "worker-scoped subscribe failed: coord=%s worker=%s agent=%s err=%s",
+                        "worker-scoped subscribe failed: coord=%s worker=%s "
+                        "agent=%s err=%s",
                         coord_thread_id,
                         worker_thread_id,
                         agent,
@@ -304,4 +325,5 @@ async def post_coord_admit_pointer(
     await _mirror_coord_subscriptions_to_worker(
         coord_thread_id=coord_thread_id,
         worker_thread_id=worker_thread_id,
+        serving_to_agent=to_agent,
     )
