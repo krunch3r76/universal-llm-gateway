@@ -82,7 +82,7 @@ def _grok_bare_id(model: str) -> bool:
 def conductor_hop_recipe_model_fields(
     rec: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """K97 composer-conductor trial — ledger stamp, then hard-coded composer recipe."""
+    """K97 conductor hop recipe — ledger stamp, then pipeline ``hop_successor`` default."""
     if rec:
         stamped = str(rec.get("hop_successor_default") or "").strip()
         if stamped:
@@ -93,10 +93,18 @@ def conductor_hop_recipe_model_fields(
             elif stamped.rsplit("/", 1)[-1] == "composer-2.5":
                 fields["model_knobs"] = {"fast": "false"}
             return fields
-    return {
-        "model": "cursor/composer-2.5",
-        "model_knobs": {"fast": "false"},
-    }
+    from implement_admission.conductor_admit_model import (
+        resolve_hop_successor_default_from_pipeline,
+    )
+
+    pipeline = resolve_hop_successor_default_from_pipeline()
+    if not pipeline:
+        return {}
+    fields = {"model": str(pipeline["model"])}
+    knobs = pipeline.get("model_knobs")
+    if isinstance(knobs, dict):
+        fields["model_knobs"] = {str(k): str(v) for k, v in knobs.items()}
+    return fields
 
 
 def play_conductor_model_fields(policy: dict[str, Any]) -> dict[str, Any]:
