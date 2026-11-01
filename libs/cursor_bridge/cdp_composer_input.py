@@ -155,6 +155,9 @@ def _enter_preflight_js(*, selector: str, expected_agent_id: str, nonce_needle: 
         f"const el=document.querySelector({sel});"
         "if(!el)return{ok:false,reason:'enter_no_composer'};"
         "if(!activeAgentId){activeAgentId=(el.getAttribute('data-sidebar-file-drop-editor-agent-id')||'').trim();}"
+        "if(expected&&!activeAgentId){"
+        "return{ok:false,reason:'enter_active_agent_unreadable'};"
+        "}"
         "if(expected&&activeAgentId&&activeAgentId!==expected){"
         "return{ok:false,reason:'enter_wrong_active_agent',active_agent_id:activeAgentId};"
         "}"
@@ -207,6 +210,13 @@ async def cdp_dispatch_enter_guarded(
 ) -> dict[str, Any]:
     """Preflight composer/agent/nonce, in-page focus if idle, then CDP Enter."""
     import websockets
+
+    if not str(nonce_needle or "").strip():
+        return {
+            "ok": False,
+            "reason": "enter_nonce_empty",
+            "method": "cdp_enter",
+        }
 
     async with websockets.connect(ws_url, max_size=2_000_000) as ws:
         pre = await _runtime_eval(

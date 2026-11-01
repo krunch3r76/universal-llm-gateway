@@ -73,6 +73,20 @@ def extract_run_nonce_from_line(line: str) -> str:
     return ""
 
 
+def operator_message_already_wrapped(text: str) -> bool:
+    """True when ``text`` already carries operator provenance (do not wrap again)."""
+    body = (text or "").strip()
+    if not body:
+        return False
+    if OPERATOR_HEADER in body:
+        return True
+    if extract_run_nonce_from_line(body):
+        return True
+    if WATERMARK in body and "Source:" in body:
+        return True
+    return False
+
+
 def wrap_operator_message(
     *,
     text: str,
@@ -82,6 +96,8 @@ def wrap_operator_message(
 ) -> str:
     """Format one operator relay body with header, source, scope, watermark, and run nonce."""
     body = (text or "").strip()
+    if operator_message_already_wrapped(body):
+        return body
     src = (authorization_source or "").strip()
     scope_s = (scope or "").strip()
     nonce = str(run_nonce or "").strip() or make_run_nonce()
@@ -843,8 +859,9 @@ async def _deliver_operator_session(
     switch_ctx: dict[str, bool] = {"did_switch": False}
     locate_method: str | None = None
 
+    result: dict[str, Any] | None = None
     try:
-        return await _deliver_operator_session_body(
+        result = await _deliver_operator_session_body(
             ws_url=ws_url,
             aid_s=aid_s,
             select=select,
@@ -857,11 +874,19 @@ async def _deliver_operator_session(
             switch_ctx=switch_ctx,
             locate_method=locate_method,
         )
+        return result
     finally:
         if switch_ctx["did_switch"] and restore_agent_id:
-            await select_sidebar_target(
-                ws_url, expected_agent_id=restore_agent_id
-            )
+            try:
+                await select_sidebar_target(
+                    ws_url, expected_agent_id=restore_agent_id
+                )
+                if result is not None:
+                    result["restore_ok"] = True
+            except (TimeoutError, RuntimeError, OSError) as exc:
+                if result is not None:
+                    result["restore_ok"] = False
+                    result["restore_error"] = type(exc).__name__
 
 
 async def _deliver_operator_session_body(
@@ -1174,6 +1199,7 @@ __all__ = [
     "OPERATOR_HEADER",
     "deliver_operator_paste",
     "make_run_nonce",
+    "operator_message_already_wrapped",
     "wrap_operator_message",
     "extract_run_nonce_from_line",
     "watermark_with_nonce",

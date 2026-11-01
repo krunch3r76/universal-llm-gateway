@@ -7,6 +7,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 from cursor_bridge.operator_paste import (
+    OPERATOR_HEADER,
     RELAY_NONCE_LABEL,
     WATERMARK,
     _assistant_began,
@@ -61,6 +62,107 @@ def test_wrap_operator_message_includes_header_source_watermark() -> None:
     assert WATERMARK in msg
     assert RELAY_NONCE_LABEL in msg
     assert "hello" in msg
+
+
+def test_wrap_operator_message_idempotent_when_already_wrapped() -> None:
+    once = wrap_operator_message(
+        text="payload",
+        authorization_source="agent-bus:21614#2",
+        scope="s",
+    )
+    twice = wrap_operator_message(
+        text=once,
+        authorization_source="other",
+        scope="other",
+    )
+    assert twice == once
+    assert twice.count(OPERATOR_HEADER) == 1
+    assert twice.count(WATERMARK) == 1
+    assert twice.count(RELAY_NONCE_LABEL) == 1
+
+
+def _provenance_counts(text: str) -> tuple[int, int, int]:
+    return (
+        text.count(OPERATOR_HEADER),
+        text.count(WATERMARK),
+        text.count(RELAY_NONCE_LABEL),
+    )
+
+
+@pytest.mark.asyncio
+async def test_deliver_operator_paste_single_header_footer_on_insert(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Break: pre-wrapped MCP/route body must not nest another header+footer."""
+    pre_wrapped = wrap_operator_message(
+        text="agent body",
+        authorization_source="agent-bus:21614#2",
+        scope="scope-a",
+    )
+    surface = {
+        "state": "chat_list",
+        "active_title": "Test Grok",
+        "active_agent_id": "agent-1",
+        "titles": ["Test Grok"],
+        "title_counts": {"Test Grok": 1},
+        "agent_ids": {"agent-1": "Test Grok"},
+        "composer_draft": "",
+        "generating": False,
+        "recent_messages": [],
+    }
+    surface_post = {
+        **surface,
+        "generating": True,
+        "recent_messages": [pre_wrapped],
+    }
+    probe_n = {"n": 0}
+
+    async def _probe(_ws: str) -> dict[str, Any]:
+        probe_n["n"] += 1
+        return surface if probe_n["n"] <= 2 else surface_post
+
+    inserted: list[str] = []
+
+    async def _insert(_ws: str, *, selector: str, line: str) -> dict[str, Any]:
+        inserted.append(line)
+        return {"ok": True}
+
+    monkeypatch.setattr(
+        "cursor_bridge.operator_paste.list_pages",
+        lambda _o: [{"title": "Grok Bot", "web_socket_debugger_url": "ws://x"}],
+    )
+    monkeypatch.setattr(
+        "cursor_bridge.operator_paste.visible_sidebar_agent_ids",
+        AsyncMock(return_value={"agent-1"}),
+    )
+    monkeypatch.setattr(
+        "cursor_bridge.operator_paste.probe_surface", AsyncMock(side_effect=_probe)
+    )
+    monkeypatch.setattr("cursor_bridge.operator_paste._insert_composer_text", _insert)
+    monkeypatch.setattr(
+        "cursor_bridge.operator_paste._submit_composer_send_button",
+        AsyncMock(return_value={"ok": True, "send_fallback_clicked": True}),
+    )
+    monkeypatch.setattr(
+        "cursor_bridge.operator_paste._capture_screenshot_artifact",
+        AsyncMock(return_value={"sha256_png": None, "screenshot_path": None}),
+    )
+
+    await deliver_operator_paste(
+        display="10",
+        app="grok",
+        agent_id="agent-1",
+        text=pre_wrapped,
+        grant="operator",
+        authorization_source="agent-bus:21614#2",
+        scope="scope-a",
+    )
+    assert len(inserted) == 1
+    flat = inserted[0]
+    h, f, n = _provenance_counts(flat)
+    assert h == 1
+    assert f == 1
+    assert n == 1
 
 
 @pytest.mark.asyncio

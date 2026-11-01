@@ -19,6 +19,7 @@ pytestmark = pytest.mark.offline
     "reason_fragment",
     [
         "enter_wrong_active_agent",
+        "enter_active_agent_unreadable",
         "enter_nonce_missing",
         "enter_operator_active",
         "enter_composer_not_focused_operator_active",
@@ -31,6 +32,46 @@ def test_enter_preflight_js_declares_refusal_reasons(reason_fragment: str) -> No
         nonce_needle="abc123",
     )
     assert reason_fragment in js
+
+
+@pytest.mark.asyncio
+async def test_cdp_dispatch_enter_guarded_refuses_empty_nonce() -> None:
+    out = await cdp_dispatch_enter_guarded(
+        "ws://x",
+        selector='[aria-label="Prompt"]',
+        expected_agent_id="agent-1",
+        nonce_needle="",
+    )
+    assert out["ok"] is False
+    assert out["reason"] == "enter_nonce_empty"
+
+
+@pytest.mark.asyncio
+async def test_cdp_dispatch_enter_guarded_refuses_unreadable_active_agent() -> None:
+    pre = {"ok": False, "reason": "enter_active_agent_unreadable"}
+
+    async def _fake_eval(_ws: Any, _mid: int, _expr: str) -> Any:
+        return pre
+
+    mock_ws = MagicMock()
+    mock_ws.send = AsyncMock()
+    mock_cm = MagicMock()
+    mock_cm.__aenter__ = AsyncMock(return_value=mock_ws)
+    mock_cm.__aexit__ = AsyncMock(return_value=None)
+
+    with patch("websockets.connect", return_value=mock_cm):
+        with patch(
+            "cursor_bridge.cdp_composer_input._runtime_eval", side_effect=_fake_eval
+        ):
+            out = await cdp_dispatch_enter_guarded(
+                "ws://x",
+                selector='[aria-label="Prompt"]',
+                expected_agent_id="agent-1",
+                nonce_needle="abc123",
+            )
+    assert out["ok"] is False
+    assert out["reason"] == "enter_active_agent_unreadable"
+    mock_ws.send.assert_not_awaited()
 
 
 @pytest.mark.asyncio
