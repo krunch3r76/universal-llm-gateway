@@ -353,38 +353,98 @@ def forward_mutate_tip(
     )
 
 
+WITNESS_CLEAR_REASON = "witness_clear"
+
+
+def _journal_rows(record: dict[str, Any]) -> tuple[str, ...]:
+    return tuple(
+        str(row).strip().upper()
+        for row in (record.get("rows") or [])
+        if str(row).strip()
+    )
+
+
+def _journal_written_at(record: dict[str, Any]) -> str:
+    return str(record.get("written_at") or "")
+
+
+def _scan_retract_clear_state(
+    records: list[dict[str, Any]],
+) -> tuple[set[str], dict[str, str]]:
+    """Journal retract set and latest ``witness_retract`` timestamp per row."""
+    retracted: set[str] = set()
+    retract_at: dict[str, str] = {}
+    for record in records:
+        reason = str(record.get("reason") or "")
+        when = _journal_written_at(record)
+        for row in _journal_rows(record):
+            if reason == "witness_retract":
+                retracted.add(row)
+                retract_at[row] = when
+            elif reason == WITNESS_CLEAR_REASON and row in retracted:
+                if when > retract_at.get(row, ""):
+                    retracted.discard(row)
+    return retracted, retract_at
+
+
+def retract_state_from_journal(records: list[dict[str, Any]]) -> frozenset[str]:
+    """Rows still retracted after ordered ``witness_retract`` / ``witness_clear``."""
+    retracted, _ = _scan_retract_clear_state(records)
+    return frozenset(retracted)
+
+
+def retracted_rows_from_journal(records: list[dict[str, Any]]) -> frozenset[str]:
+    """Alias for :func:`retract_state_from_journal` (journal-only; no fold lift)."""
+    return retract_state_from_journal(records)
+
+
+def effective_retracted_rows_from_journal(
+    records: list[dict[str, Any]],
+    *,
+    live_witnessed: frozenset[str],
+) -> frozenset[str]:
+    """Retract set for fold from journal ``witness_retract`` / ``witness_clear`` only.
+
+    A row stays retracted until ``witness_clear`` names it with ``written_at``
+    strictly after the latest ``witness_retract`` for that row. Live witnesses
+    and other journal reasons (e.g. G5 nest pin listing G4) do not lift retract.
+    """
+    _ = live_witnessed
+    return retract_state_from_journal(records)
+
+
 def witnessed_done_from_journal(
     records: list[dict[str, Any]],
 ) -> frozenset[str]:
-    """Union ``witnessed_done`` from post-upgrade witness folds, minus retracts."""
+    """Union ``witnessed_done`` from witness folds, respecting retract/clear order."""
     done: set[str] = set()
-    retracted: set[str] = set()
+    retracted_set: set[str] = set()
+    retract_at: dict[str, str] = {}
     for record in records:
         reason = str(record.get("reason") or "")
+        when = _journal_written_at(record)
+        rows = _journal_rows(record)
         if reason == "witness_retract":
-            for row in record.get("rows") or []:
-                retracted.add(str(row).strip().upper())
+            for row in rows:
+                retracted_set.add(row)
+                retract_at[row] = when
+                done.discard(row)
+            continue
+        if reason == WITNESS_CLEAR_REASON:
+            for row in rows:
+                if row in retracted_set and when > retract_at.get(row, ""):
+                    retracted_set.discard(row)
             continue
         if reason != "witness_fold":
             continue
         raw = record.get("witnessed_done")
         if isinstance(raw, list):
-            done.update(str(row).strip().upper() for row in raw if str(row).strip())
-    done.difference_update(retracted)
+            done.update(
+                str(r).strip().upper()
+                for r in raw
+                if str(r).strip() and str(r).strip().upper() not in retracted_set
+            )
     return frozenset(done)
-
-
-def retracted_rows_from_journal(
-    records: list[dict[str, Any]],
-) -> frozenset[str]:
-    """Row ids demoted by explicit ``witness_retract`` journal records."""
-    retracted: set[str] = set()
-    for record in records:
-        if str(record.get("reason") or "") != "witness_retract":
-            continue
-        for row in record.get("rows") or []:
-            retracted.add(str(row).strip().upper())
-    return frozenset(retracted)
 
 
 def walk_journal_to_tip(

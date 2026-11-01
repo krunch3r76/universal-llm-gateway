@@ -7,17 +7,23 @@ from pathlib import Path
 import pytest
 
 from implement_admission.conductor_score_journal import (
+    G_ROWS,
+    WITNESS_CLEAR_REASON,
     JournalRecord,
     _tip_path,
     append_journal_record,
     birth_scoreboard,
+    effective_retracted_rows_from_journal,
     forward_mutate_tip,
     load_journal,
     read_tip,
     reject_rewind_closed_row,
+    retract_state_from_journal,
     tip_sha256,
     walk_journal_to_tip,
+    witnessed_done_from_journal,
 )
+from implement_admission.conductor_witness_table import G5_NEST_PIN_JOURNAL_REASON
 
 pytestmark = pytest.mark.offline
 
@@ -381,3 +387,112 @@ def test_charter_locus_does_not_reject_bolded_status(tmp_path: Path) -> None:
         delta="emphasis",
     )
     assert result.rejected_reason is None
+
+
+@pytest.mark.offline
+def test_retract_clear_lifts_retract_state() -> None:
+    """AC1 — witness_clear after retract removes G4 from retract set."""
+    records = [
+        {
+            "reason": "witness_retract",
+            "rows": ["G4"],
+            "written_at": "2026-10-01T10:00:00+00:00",
+        },
+        {
+            "reason": WITNESS_CLEAR_REASON,
+            "rows": ["G4"],
+            "written_at": "2026-10-01T11:00:00+00:00",
+        },
+    ]
+    assert retract_state_from_journal(records) == frozenset()
+    assert effective_retracted_rows_from_journal(
+        records, live_witnessed=frozenset({"G4"})
+    ) == frozenset()
+
+
+@pytest.mark.offline
+def test_stale_witness_clear_leaves_retract() -> None:
+    """AC2 — clear before latest retract is ignored."""
+    records = [
+        {
+            "reason": WITNESS_CLEAR_REASON,
+            "rows": ["G4"],
+            "written_at": "2026-10-01T09:00:00+00:00",
+        },
+        {
+            "reason": "witness_retract",
+            "rows": ["G4"],
+            "written_at": "2026-10-01T10:00:00+00:00",
+        },
+    ]
+    assert retract_state_from_journal(records) == frozenset({"G4"})
+
+
+@pytest.mark.offline
+def test_retract_clear_retract_latest_wins() -> None:
+    """AC3 — second retract after clear re-sticks the row."""
+    records = [
+        {
+            "reason": "witness_retract",
+            "rows": ["G4"],
+            "written_at": "2026-10-01T10:00:00+00:00",
+        },
+        {
+            "reason": WITNESS_CLEAR_REASON,
+            "rows": ["G4"],
+            "written_at": "2026-10-01T11:00:00+00:00",
+        },
+        {
+            "reason": "witness_retract",
+            "rows": ["G4"],
+            "written_at": "2026-10-01T12:00:00+00:00",
+        },
+    ]
+    assert retract_state_from_journal(records) == frozenset({"G4"})
+
+
+@pytest.mark.offline
+def test_nest_pin_with_live_g4_witness_does_not_lift_retract() -> None:
+    """G5 nest pin lists G4 but fold retract stays until witness_clear."""
+    records = [
+        {
+            "reason": "witness_retract",
+            "rows": ["G4"],
+            "written_at": "2026-10-01T10:00:00+00:00",
+        },
+        {
+            "reason": G5_NEST_PIN_JOURNAL_REASON,
+            "rows": list(G_ROWS),
+            "written_at": "2026-10-01T11:00:00+00:00",
+        },
+    ]
+    assert effective_retracted_rows_from_journal(
+        records, live_witnessed=frozenset({"G4"})
+    ) == frozenset({"G4"})
+
+
+@pytest.mark.offline
+def test_witnessed_done_respects_retract_clear_order() -> None:
+    records = [
+        {
+            "reason": "witness_fold",
+            "witnessed_done": ["G4"],
+            "written_at": "2026-10-01T08:00:00+00:00",
+        },
+        {
+            "reason": "witness_retract",
+            "rows": ["G4"],
+            "written_at": "2026-10-01T10:00:00+00:00",
+        },
+        {
+            "reason": WITNESS_CLEAR_REASON,
+            "rows": ["G4"],
+            "written_at": "2026-10-01T11:00:00+00:00",
+        },
+        {
+            "reason": "witness_fold",
+            "witnessed_done": ["G4"],
+            "written_at": "2026-10-01T12:00:00+00:00",
+        },
+    ]
+    assert witnessed_done_from_journal(records) == frozenset({"G4"})
