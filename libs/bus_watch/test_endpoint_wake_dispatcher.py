@@ -383,6 +383,106 @@ def test_cse_allowlist_not_display(db: None) -> None:
         },
         cse=False,
     )
+
+
+def test_compound_ack_route_coord_fallthrough_a41157() -> None:
+    """Friction a:41157 — ACK| + REQUEST| (and siblings) must not drop_ack_route_coord."""
+    base = {
+        "to_agent": "grok-bot-gc1",
+        "from_agent": "web-anthropic",
+        "thread": "41157",
+        "id": 1,
+    }
+    v_ack_req = qualify({**base, "subject": "ACK|x + REQUEST|y"}, cse=False)
+    assert v_ack_req.wake is True
+    assert v_ack_req.rule_id != "drop_ack_route_coord"
+    v_route_q = qualify({**base, "subject": "ROUTE|a + QUESTION|b"}, cse=False)
+    assert v_route_q.wake is True
+    assert v_route_q.rule_id != "drop_ack_route_coord"
+    v_ack_blocked = qualify({**base, "subject": "ACK|a + BLOCKED|b"}, cse=False)
+    assert v_ack_blocked.wake is True
+    assert v_ack_blocked.rule_id != "drop_ack_route_coord"
+    v_plain_ack = qualify({**base, "subject": "ACK|x"}, cse=False)
+    assert v_plain_ack.wake is False
+    assert v_plain_ack.rule_id == "drop_ack_route_coord"
+
+
+def test_scan_once_emits_endpoint_wake_suppressed_for_subscribed_thread(
+    db: None,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from agent_bus_store.db.endpoint_subscriptions import subscribe_endpoint
+
+    suppressed: list[dict[str, object]] = []
+    monkeypatch.setattr(
+        "bus_watch.events.emit_endpoint_wake_suppressed",
+        lambda **kwargs: suppressed.append(kwargs),
+    )
+    detail = create_thread(thread_id=None, slug="41157-suppress-emit")
+    assert detail is not None
+    thread = str(detail["id"])
+    subscribe_endpoint(
+        agent="grok-bot-gc1",
+        thread_scope=thread,
+        surface="cursor",
+        display="8",
+        title="t",
+        agent_id="gc1-id",
+        bound_by="test",
+    )
+    insert_turn(
+        thread=thread,
+        from_agent="grok-bot-bl1",
+        to_agent="grok-bot-gc1",
+        subject="ACK|plain-only",
+        body="ack",
+    )
+    get_cursor()
+    with connect() as conn:
+        conn.execute("UPDATE endpoint_wake_cursor SET high_water_turn_id=0")
+
+    class Store:
+        def cursor(self) -> dict:
+            return get_cursor()
+
+        def since(self, after_id: int, limit: int = 50) -> list[dict]:
+            with connect() as c:
+                rows = c.execute(
+                    "SELECT id, thread, turn_number, from_agent, to_agent, subject, "
+                    "body, read_at FROM turns WHERE id>? ORDER BY id LIMIT ?",
+                    (after_id, limit),
+                ).fetchall()
+            return [dict(r) for r in rows]
+
+        def scan(self, expected: int, new_hw: int, rows: list[dict]) -> dict:
+            return advance_scan(
+                "endpoint-wake-dispatcher",
+                expected,
+                new_hw,
+                rows,
+                now="2020-01-01 20:00:00",
+            )
+
+        def subscription(self, agent: str, thread_id: str, raw_to: str | None = None):
+            from agent_bus_store.db.endpoint_subscriptions import current_subscription
+
+            row = current_subscription(agent, thread_id)
+            if row and row.get("state") == "subscribed":
+                return ("display", row)
+            return None
+
+        def holder(self, lane: str) -> dict | None:
+            return None
+
+        def lane_parent(self, lane: str) -> str | None:
+            return None
+
+    scan_once(Store())  # type: ignore[arg-type]
+    assert len(suppressed) == 1
+    assert suppressed[0]["rule_id"] == "drop_ack_route_coord"
+    assert suppressed[0]["to_agent"] == "grok-bot-gc1"
+    assert suppressed[0]["thread_id"] == thread
+    assert suppressed[0]["subject_head"] == "ACK"
     assert not qualifies(
         {
             "to_agent": "cursor",

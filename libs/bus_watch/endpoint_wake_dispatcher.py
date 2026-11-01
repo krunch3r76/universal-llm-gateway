@@ -405,6 +405,53 @@ def _observe_maestro_wake_drop(
     )
 
 
+def _observe_endpoint_wake_suppressed(
+    *,
+    thread_id: str,
+    turn_id: int | None,
+    to_agent: str,
+    rule_id: str,
+    subject_head: str,
+) -> None:
+    try:
+        from bus_watch.events import emit_endpoint_wake_suppressed
+
+        emit_endpoint_wake_suppressed(
+            thread_id=thread_id,
+            turn_id=turn_id,
+            to_agent=to_agent,
+            rule_id=rule_id,
+            subject_head=subject_head,
+        )
+    except Exception:
+        logger.exception(
+            "endpoint_wake_dispatcher: suppressed emit failed thread=%s rule=%s",
+            thread_id,
+            rule_id,
+        )
+
+
+def _subscribed_for_wake_scan(
+    store: StoreClient,
+    agent: str,
+    thread: str,
+    *,
+    resolved: tuple[str, dict[str, Any]] | None,
+) -> bool:
+    if resolved is not None:
+        return str(resolved[1].get("state") or "") == "subscribed"
+    if agent != "web-anthropic":
+        return False
+    try:
+        if store.holder(thread):
+            return True
+    except Exception:
+        logger.exception(
+            "endpoint_wake_dispatcher: holder probe failed thread=%s", thread
+        )
+    return resolve_turn_address(thread, store) is not None
+
+
 def _turn_id_of(turn: dict[str, Any]) -> int | None:
     raw = turn.get("id")
     if raw is None:
@@ -575,6 +622,41 @@ def subject_allowed(
     return False
 
 
+_COMPOUND_ACTIONABLE_HEADS = frozenset(
+    {"REQUEST", "QUESTION", "DIRECTIVE", "BLOCKED"}
+)
+
+
+def _segment_subject_head(segment: str) -> str:
+    segment = (segment or "").strip()
+    if not segment:
+        return ""
+    first = segment.split("|", 1)[0].strip()
+    if not first:
+        return ""
+    return first.split()[0].upper()
+
+
+def _compound_actionable_tail(subject: str) -> bool:
+    """True when a compound subject carries REQUEST/QUESTION/DIRECTIVE/BLOCKED after ACK|/ROUTE|."""
+    text = subject or ""
+    plus_parts = text.split("+")
+    heads: list[str] = []
+    for tail in plus_parts[1:]:
+        heads.append(_segment_subject_head(tail))
+    if "|" in plus_parts[0]:
+        pipe_tail = plus_parts[0].split("|", 1)[1]
+        for seg in pipe_tail.split("|"):
+            heads.append(_segment_subject_head(seg))
+    return any(h in _COMPOUND_ACTIONABLE_HEADS for h in heads if h)
+
+
+def _drop_ack_route_coord_applies(subject: str, head: str) -> bool:
+    if head not in {"ACK", "ROUTE"}:
+        return False
+    return not _compound_actionable_tail(subject)
+
+
 @dataclass(frozen=True)
 class RuleVerdict:
     """First-match-wins wake qualification outcome."""
@@ -714,11 +796,13 @@ def qualify(
         return RuleVerdict(False, "drop_orion_echo")
     if to_agent in STAGE_MANAGER_ADDRESSES and from_agent in STAGE_MANAGER_ADDRESSES:
         return RuleVerdict(False, "drop_stage_mgr_echo")
-    if (
-        to_agent in STAGE_MANAGER_ADDRESSES
-        or to_agent in {"grok-bot", "web-anthropic", "maestro"}
-    ) and head in {"ACK", "ROUTE"}:
-        return RuleVerdict(False, "drop_ack_route_coord")
+    if to_agent in STAGE_MANAGER_ADDRESSES or to_agent in {
+        "grok-bot",
+        "web-anthropic",
+        "maestro",
+    }:
+        if _drop_ack_route_coord_applies(subject, head):
+            return RuleVerdict(False, "drop_ack_route_coord")
     if (
         from_agent == "grok-bot-gc1"
         and effective_to == "web-anthropic"
@@ -784,11 +868,13 @@ def _legacy_qualifies(
         return False
     subject = str(turn.get("subject") or "")
     head = subject.split("|", 1)[0].strip().upper()
-    if (
-        to_agent in STAGE_MANAGER_ADDRESSES
-        or to_agent in {"grok-bot", "web-anthropic", "maestro"}
-    ) and head in {"ACK", "ROUTE"}:
-        return False
+    if to_agent in STAGE_MANAGER_ADDRESSES or to_agent in {
+        "grok-bot",
+        "web-anthropic",
+        "maestro",
+    }:
+        if _drop_ack_route_coord_applies(subject, head):
+            return False
     if _maestro_direct_address_turn(turn, store):
         return True
     routed = _address_route_verdict(
@@ -1132,6 +1218,7 @@ def scan_once(store: StoreClient, *, idle_mark: dict[str, float] | None = None) 
     for turn in turns:
         raw_to = str(turn.get("to_agent") or "")
         subject = str(turn.get("subject") or "")
+        head = subject.split("|", 1)[0].strip().upper()
         agent = _effective_to_agent(raw_to, subject)
         thread = str(turn["thread"])
         if agent == "web-anthropic":
@@ -1160,6 +1247,14 @@ def scan_once(store: StoreClient, *, idle_mark: dict[str, float] | None = None) 
                     reason="subject_unmatched",
                     rule_id=verdict.rule_id,
                     subject=subject,
+                )
+            if _subscribed_for_wake_scan(store, agent, thread, resolved=resolved):
+                _observe_endpoint_wake_suppressed(
+                    thread_id=thread,
+                    turn_id=_turn_id_of(turn),
+                    to_agent=agent,
+                    rule_id=verdict.rule_id,
+                    subject_head=head,
                 )
             continue
         if turn.get("read_at"):

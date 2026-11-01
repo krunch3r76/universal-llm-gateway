@@ -5,6 +5,8 @@ rules:
     action: suppress
   - id: drop_stage_mgr_echo
     action: suppress
+  # Pure ACK|/ROUTE| to stage mgr / grok-bot / web-anthropic / maestro only; compound
+  # tails (+ REQUEST|… or pipe segments after the first clause) fall through below.
   - id: drop_ack_route_coord
     action: suppress
   - id: wake_maestro_ack_batch
