@@ -112,7 +112,9 @@ def build_subgraph_markdown(
     parts.extend(_render_root(root_id, cards, descriptions, statuses))
     parts.extend(
         _render_root_assertions(
-            cards[root_id], top_k_assertions, include_observed=(neighbor_fidelity == "full")
+            cards[root_id],
+            top_k_assertions,
+            include_observed=(neighbor_fidelity == "full"),
         )
     )
     parts.extend(

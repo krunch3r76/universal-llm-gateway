@@ -12,8 +12,7 @@ from datetime import UTC, date, datetime
 from typing import Final
 
 CURRENT_TEMPORAL_WHERE: Final[str] = (
-    "superseded_by IS NULL AND "
-    "assertion_interval_contains(valid_from, valid_until, ?)"
+    "superseded_by IS NULL AND assertion_interval_contains(valid_from, valid_until, ?)"
 )
 
 _UDF_NAME: Final[str] = "assertion_interval_contains"

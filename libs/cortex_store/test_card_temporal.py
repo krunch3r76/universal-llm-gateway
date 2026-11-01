@@ -104,13 +104,17 @@ def test_expired_high_rank_absent_from_top_k(migrated_conn: sqlite3.Connection) 
         valid_until="2027-01-01T00:00:00+00:00",
     )
     with patch("cortex_store.card.card_as_of_utc", return_value=_FROZEN_AS_OF):
-        main = _fetch_main_top_k(conn, entity_id=entity_id, top_k=7, as_of=_FROZEN_AS_OF)
+        main = _fetch_main_top_k(
+            conn, entity_id=entity_id, top_k=7, as_of=_FROZEN_AS_OF
+        )
     ids = [int(r["id"]) for r in main]
     assert valid_id in ids
     assert len(main) == 1
 
 
-def test_expired_does_not_crowd_valid_before_limit(migrated_conn: sqlite3.Connection) -> None:
+def test_expired_does_not_crowd_valid_before_limit(
+    migrated_conn: sqlite3.Connection,
+) -> None:
     conn = migrated_conn
     entity_id = "todo:temporal-limit"
     insert_entity(conn, entity_id=entity_id, entity_type="todo")
@@ -140,7 +144,9 @@ def test_expired_does_not_crowd_valid_before_limit(migrated_conn: sqlite3.Connec
     assert card["assertion_counts"]["inactive"] == 8
 
 
-def test_malformed_bounds_inactive_not_current(migrated_conn: sqlite3.Connection) -> None:
+def test_malformed_bounds_inactive_not_current(
+    migrated_conn: sqlite3.Connection,
+) -> None:
     conn = migrated_conn
     entity_id = "todo:temporal-malformed"
     insert_entity(conn, entity_id=entity_id, entity_type="todo")
@@ -158,7 +164,9 @@ def test_malformed_bounds_inactive_not_current(migrated_conn: sqlite3.Connection
     assert card["assertion_counts"]["inactive"] == 1
 
 
-def test_card_md_omits_expired_from_active_section(migrated_conn: sqlite3.Connection) -> None:
+def test_card_md_omits_expired_from_active_section(
+    migrated_conn: sqlite3.Connection,
+) -> None:
     conn = migrated_conn
     entity_id = "todo:temporal-card-md"
     insert_entity(conn, entity_id=entity_id, entity_type="todo", name="Temporal MD")
@@ -196,7 +204,9 @@ def test_unsupported_bound_type_inactive(migrated_conn: sqlite3.Connection) -> N
     assert assertion_interval_contains(42, None, _FROZEN_AS_OF) is False
 
 
-def test_sqlite_udf_extreme_date_no_exception(migrated_conn: sqlite3.Connection) -> None:
+def test_sqlite_udf_extreme_date_no_exception(
+    migrated_conn: sqlite3.Connection,
+) -> None:
     conn = migrated_conn
     install_card_temporal_function(conn)
     row = conn.execute(
@@ -206,7 +216,9 @@ def test_sqlite_udf_extreme_date_no_exception(migrated_conn: sqlite3.Connection)
     assert row is not None and row[0] == 0
 
 
-def test_sqlite_udf_function_list_deterministic(migrated_conn: sqlite3.Connection) -> None:
+def test_sqlite_udf_function_list_deterministic(
+    migrated_conn: sqlite3.Connection,
+) -> None:
     conn = migrated_conn
     install_card_temporal_function(conn)
     rows = conn.execute("PRAGMA function_list").fetchall()
@@ -241,7 +253,9 @@ def test_expired_status_predicate_absent_from_current_surfaces(
     )
     with patch("cortex_store.card.card_as_of_utc", return_value=_FROZEN_AS_OF):
         card = get_entity_card(conn, entity_id=entity_id, top_k=7)
-        status_rows = _fetch_status_current_rows(conn, entity_id=entity_id, as_of=_FROZEN_AS_OF)
+        status_rows = _fetch_status_current_rows(
+            conn, entity_id=entity_id, as_of=_FROZEN_AS_OF
+        )
     assert not status_rows
     assert card["current_status"]["served"] is None
     assert card["current_status"]["withheld_count"] == 0
@@ -304,7 +318,9 @@ def test_explicit_empty_as_of_not_replaced_with_now(
     assert card["assertion_counts"]["active"] == 0
 
 
-def test_build_cards_single_as_of_across_batch(migrated_conn: sqlite3.Connection) -> None:
+def test_build_cards_single_as_of_across_batch(
+    migrated_conn: sqlite3.Connection,
+) -> None:
     conn = migrated_conn
     entity_id = "todo:temporal-build-cards-as-of"
     insert_entity(conn, entity_id=entity_id, entity_type="todo")
@@ -323,7 +339,9 @@ def test_build_cards_single_as_of_across_batch(migrated_conn: sqlite3.Connection
             calls.append("2026-11-02T00:00:00+00:00")
         return calls[-1]
 
-    with patch("cortex_store.subgraph_cards.card_as_of_utc", side_effect=_as_of_sequence):
+    with patch(
+        "cortex_store.subgraph_cards.card_as_of_utc", side_effect=_as_of_sequence
+    ):
         cards_before = build_cards(
             conn=conn,
             visited_ids=[entity_id],
@@ -332,7 +350,9 @@ def test_build_cards_single_as_of_across_batch(migrated_conn: sqlite3.Connection
         )
     assert cards_before[entity_id]["assertion_counts"]["active"] == 1
 
-    with patch("cortex_store.subgraph_cards.card_as_of_utc", side_effect=_as_of_sequence):
+    with patch(
+        "cortex_store.subgraph_cards.card_as_of_utc", side_effect=_as_of_sequence
+    ):
         cards_after = build_cards(
             conn=conn,
             visited_ids=[entity_id],
