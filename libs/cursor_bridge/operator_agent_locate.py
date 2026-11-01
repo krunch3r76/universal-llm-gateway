@@ -34,11 +34,17 @@ _VISIBLE_AGENT_IDS_JS = r"""
 })()
 """
 
-_CMD_K_OPEN_JS = r"""
-(async () => {
+_OPEN_SEARCH_JS = r"""
+(() => {
   const inp = document.querySelector('input[aria-label="Search"], input[placeholder="Search"]');
   if (inp) return {ok: true, already_open: true};
-  return {ok: false, reason: 'search_not_open'};
+  const btn = Array.from(document.querySelectorAll('button, [role=button]')).find((b) => {
+    const t = (b.getAttribute('aria-label') || b.innerText || '').trim().toLowerCase();
+    return t === 'search' || t.includes('search bots') || t.includes('search chats');
+  });
+  if (!btn) return {ok: false, reason: 'no_search_button'};
+  btn.click();
+  return {ok: true, opened: true};
 })()
 """
 
@@ -46,10 +52,12 @@ _LOCATE_CMD_K_JS = r"""
 (async (target) => {
   const inp = document.querySelector('input[aria-label="Search"], input[placeholder="Search"]');
   if (!inp) return {ok: false, reason: 'no_search_input'};
-  inp.focus();
-  if (inp.select) inp.select();
-  inp.value = target;
+  const desc = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(inp), 'value')
+    || Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value');
+  if (desc && typeof desc.set === 'function') desc.set.call(inp, target);
+  else inp.value = target;
   inp.dispatchEvent(new Event('input', {bubbles: true}));
+  inp.dispatchEvent(new Event('change', {bubbles: true}));
   await new Promise((r) => setTimeout(r, 450));
   for (const el of document.querySelectorAll('[role=option], button[data-agent-id]')) {
     const aid = (el.getAttribute('data-agent-id') || '').trim();
@@ -115,37 +123,10 @@ async def _response(ws: Any, mid: int) -> dict[str, Any]:
             return msg
 
 
-async def _dispatch_ctrl_k(ws_url: str) -> None:
-    import websockets
-
-    seq = (
-        ("keyDown", "Control", "ControlLeft", 17, 2),
-        ("keyDown", "k", "KeyK", 75, 2),
-        ("keyUp", "k", "KeyK", 75, 2),
-        ("keyUp", "Control", "ControlLeft", 17, 0),
-    )
-    async with websockets.connect(ws_url, max_size=2_000_000) as ws:
-        mid = 1
-        for typ, key, code, vk, mod in seq:
-            await ws.send(
-                json.dumps(
-                    {
-                        "id": mid,
-                        "method": "Input.dispatchKeyEvent",
-                        "params": {
-                            "type": typ,
-                            "key": key,
-                            "code": code,
-                            "windowsVirtualKeyCode": vk,
-                            "nativeVirtualKeyCode": vk,
-                            "modifiers": mod,
-                        },
-                    }
-                )
-            )
-            await asyncio.wait_for(_response(ws, mid), 5.0)
-            mid += 1
+async def _open_search_panel(ws_url: str) -> dict[str, Any]:
+    value = await _cdp_eval(ws_url, _OPEN_SEARCH_JS)
     await asyncio.sleep(0.25)
+    return value if isinstance(value, dict) else {"ok": False}
 
 
 async def visible_sidebar_agent_ids(ws_url: str) -> set[str]:
@@ -157,18 +138,24 @@ async def visible_sidebar_agent_ids(ws_url: str) -> set[str]:
 
 
 async def locate_via_cmd_k(ws_url: str, agent_id: str) -> dict[str, Any]:
-    """Open search with Ctrl+K and select the row matching ``agent_id``."""
-    await _dispatch_ctrl_k(ws_url)
-    expr = f"({ _LOCATE_CMD_K_JS })({json.dumps(agent_id)})"
+    """Open search via DOM and select the row matching ``agent_id``."""
+    opened = await _open_search_panel(ws_url)
+    if not opened.get("ok") and not opened.get("already_open"):
+        return {"ok": False, "locate_method": "cmd_k", **opened}
+    expr = f"({_LOCATE_CMD_K_JS})({json.dumps(agent_id)})"
     value = await _cdp_eval(ws_url, expr, await_promise=True)
     if isinstance(value, dict) and value.get("ok"):
         return {"ok": True, "locate_method": "cmd_k", **value}
-    return {"ok": False, "locate_method": "cmd_k", **(value if isinstance(value, dict) else {})}
+    return {
+        "ok": False,
+        "locate_method": "cmd_k",
+        **(value if isinstance(value, dict) else {}),
+    }
 
 
 async def locate_via_hidden_chats(ws_url: str, agent_id: str) -> dict[str, Any]:
     """Open Hidden Bots and click the row for ``agent_id``."""
-    expr = f"({ _LOCATE_HIDDEN_JS })({json.dumps(agent_id)})"
+    expr = f"({_LOCATE_HIDDEN_JS})({json.dumps(agent_id)})"
     value = await _cdp_eval(ws_url, expr, await_promise=True)
     if isinstance(value, dict) and value.get("ok"):
         return {"ok": True, "locate_method": "hidden_chats", **value}
@@ -179,9 +166,7 @@ async def locate_via_hidden_chats(ws_url: str, agent_id: str) -> dict[str, Any]:
     }
 
 
-async def locate_off_sidebar(
-    ws_url: str, agent_id: str
-) -> dict[str, Any]:
+async def locate_off_sidebar(ws_url: str, agent_id: str) -> dict[str, Any]:
     """Try Cmd-K search, then Hidden Bots manager."""
     cmd = await locate_via_cmd_k(ws_url, agent_id)
     if cmd.get("ok"):

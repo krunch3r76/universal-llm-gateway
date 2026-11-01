@@ -555,6 +555,11 @@ def create_app(*, store: ExecutionStore | None = None) -> FastAPI:
         req = DisplayChatPasteRequest.model_validate(body)
         result = await execute_display_chat_paste(req)
         if not result.ok:
+            if result.status == "operator_busy":
+                return JSONResponse(
+                    status_code=409,
+                    content=result.model_dump(exclude_none=True),
+                )
             return JSONResponse(
                 status_code=409,
                 content=_chat_session_refuse_body(

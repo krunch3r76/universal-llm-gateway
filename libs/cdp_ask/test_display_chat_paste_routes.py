@@ -10,6 +10,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from cdp_ask.app import create_app
+
 pytestmark = pytest.mark.offline
 
 
@@ -84,6 +85,48 @@ def test_display_chat_paste_ok_emits_event(
         },
     )
     assert resp.status_code == 200
-    assert resp.json()["ok"] is True
+    body = resp.json()
+    assert body["ok"] is True
+    assert body["status"] == "delivered"
     assert len(emitted_events) == 1
     assert emitted_events[0]["signal"] == "display_chat.pasted"
+
+
+def test_display_chat_paste_operator_busy_status(
+    client: TestClient,
+    emitted_events: list,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        "cdp_ask.display_chat_paste.deliver_operator_paste",
+        AsyncMock(
+            return_value={
+                "ok": False,
+                "reason": "operator_busy",
+                "submitted": False,
+                "pasted": False,
+                "display": "10",
+                "app": "grok",
+                "agent_id": "a1",
+            }
+        ),
+    )
+    resp = client.post(
+        "/v1/display-chat/paste",
+        json={
+            "display": "10",
+            "app": "grok",
+            "agent_id": "a1",
+            "text": "hello",
+            "grant": "operator",
+            "authorization_source": "agent-bus:21614#2",
+        },
+    )
+    assert resp.status_code == 409
+    body = resp.json()
+    assert body["ok"] is False
+    assert body["status"] == "operator_busy"
+    assert body["code"] == "operator_busy"
+    assert body["submitted"] is False
+    assert len(emitted_events) == 1
+    assert emitted_events[0]["payload"]["ok"] is False
