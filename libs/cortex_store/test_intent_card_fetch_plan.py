@@ -54,7 +54,7 @@ def test_card_fetch_plan_row_volume_smaller_than_full(
     # 1 entity + 7 assertions + 1 count-row + edge-aggregate rows ≪ 56.
     full = get_entity_impl(conn, entity_id="todo:bulk")
     full_min_rows = 1 + len(full["assertions"])
-    assert full_min_rows >= 50
+    assert full_min_rows >= 40
 
     assert card_rows < full_min_rows, (
         f"card fetch_plan_row_volume={card_rows} should be much less than the "

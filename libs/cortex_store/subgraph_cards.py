@@ -16,6 +16,11 @@ from typing import Any
 
 from .card import get_entity_card
 from .card_adapters import get_adapter
+from .card_temporal import (
+    CURRENT_TEMPORAL_WHERE,
+    card_as_of_utc,
+    install_card_temporal_function,
+)
 from .confidence_field import confidence_field
 from .db import json_decode, query
 from .status_trait_read import synthesize_status_display
@@ -158,12 +163,14 @@ def _batch_assertion_counts(
 ) -> dict[str, int]:
     if not entity_ids:
         return {}
+    as_of_iso = card_as_of_utc()
+    install_card_temporal_function(conn)
     ph = ",".join("?" for _ in entity_ids)
     rows = query(
         conn,
         f"SELECT entity_id, COUNT(*) AS n FROM assertions "
-        f"WHERE entity_id IN ({ph}) AND superseded_by IS NULL GROUP BY entity_id",
-        tuple(entity_ids),
+        f"WHERE entity_id IN ({ph}) AND {CURRENT_TEMPORAL_WHERE} GROUP BY entity_id",
+        (*entity_ids, as_of_iso),
     )
     return {str(row["entity_id"]): int(row["n"]) for row in rows}
 
@@ -216,21 +223,35 @@ def _override_top_k_with_superseded(
     """Re-fetch top-K assertions including superseded rows for one entity."""
     rows = query(
         conn,
-        "SELECT id, claim, confidence, derivation_type, valid_from, observed_at, evidence_uris "
+        "SELECT id, claim, confidence, derivation_type, valid_from, valid_until, "
+        "superseded_by, observed_at, evidence_uris "
         "FROM assertions WHERE entity_id = ? "
         "ORDER BY COALESCE(entrenchment_score,0) DESC, "
         "  COALESCE(observed_at,'') DESC, id DESC LIMIT ?",
         (entity_id, top_k_assertions),
     )
-    cards[entity_id]["top_k_assertions"] = [
-        {
-            "id": int(row["id"]),
-            "claim": row["claim"],
-            "confidence": row["confidence"],
-            "derivation_type": row.get("derivation_type"),
-            "valid_from": row.get("valid_from"),
-            "observed_at": row.get("observed_at"),
-            "evidence_uris": json_decode(row.get("evidence_uris")),
-        }
-        for row in rows
-    ]
+    out: list[dict[str, Any]] = []
+    for row in rows:
+        claim = str(row["claim"] or "")
+        superseded = row.get("superseded_by")
+        if claim.lower().startswith("archive summary"):
+            role = "archive_summary"
+        elif superseded is not None:
+            role = "history"
+        else:
+            role = "current"
+        out.append(
+            {
+                "id": int(row["id"]),
+                "claim": row["claim"],
+                "confidence": row["confidence"],
+                "derivation_type": row.get("derivation_type"),
+                "valid_from": row.get("valid_from"),
+                "valid_until": row.get("valid_until"),
+                "observed_at": row.get("observed_at"),
+                "evidence_uris": json_decode(row.get("evidence_uris")),
+                "superseded_by": int(superseded) if superseded is not None else None,
+                "projection_role": role,
+            }
+        )
+    cards[entity_id]["top_k_assertions"] = out

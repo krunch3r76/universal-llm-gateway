@@ -203,6 +203,28 @@ def _render_root(
     return lines
 
 
+def _assertion_role_prefix(assertion: dict[str, Any]) -> str:
+    role = assertion.get("projection_role") or "current"
+    if role == "archive_summary":
+        return "[archive summary] "
+    if role == "history":
+        return "[history] "
+    return ""
+
+
+def _assertion_bounds_suffix(assertion: dict[str, Any]) -> str:
+    vf = assertion.get("valid_from")
+    vu = assertion.get("valid_until")
+    if vf is None and vu is None:
+        return ""
+    parts: list[str] = []
+    if vf is not None:
+        parts.append(f"valid_from={vf}")
+    if vu is not None:
+        parts.append(f"valid_until={vu}")
+    return f" ({', '.join(parts)})"
+
+
 def _render_root_assertions(
     root_card: dict[str, Any],
     top_k_assertions: int,
@@ -221,10 +243,14 @@ def _render_root_assertions(
         conf = a.get("confidence", "")
         observed = a.get("observed_at") or ""
         flag = _provenance_flag(a)
+        role_prefix = _assertion_role_prefix(a)
+        bounds = _assertion_bounds_suffix(a)
         id_suffix = ""
         if include_assertion_id and a.get("id") is not None:
             id_suffix = f" (id: {a['id']})"
-        assertion_lines.append(f"- **[{conf}]**{flag} {claim}{id_suffix}")
+        assertion_lines.append(
+            f"- {role_prefix}**[{conf}]**{flag} {claim}{bounds}{id_suffix}"
+        )
         if include_observed and observed:
             assertion_lines.append(f"  - *Observed:* {observed}")
     parts.append("\n".join(assertion_lines))
