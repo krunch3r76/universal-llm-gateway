@@ -6,10 +6,10 @@ import asyncio
 import json
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
-from typing import Any, Protocol
+from typing import Any, Literal, Protocol
 from urllib.error import URLError
 
-from web_tab.config import resolve_cdp_evaluate_timeout_s
+from web_tab.config import resolve_cdp_cleanup_timeout_s, resolve_cdp_evaluate_timeout_s
 from web_tab.surface_adapter import canonical_page_url, url_in_surface_scope
 
 
@@ -96,9 +96,13 @@ class HttpListCdpPort:
             return {"error": {"code": "target_out_of_scope"}, "url": want_url}
 
         timeout_s = resolve_cdp_evaluate_timeout_s()
+        cleanup_s = resolve_cdp_cleanup_timeout_s()
+        cleanup_state: dict[str, str | None] = {"outcome": None}
 
         async def _attach_evaluate() -> dict[str, Any]:
-            browser, playwright = await self._open(cdp_url)
+            browser, playwright = await self._open(
+                cdp_url, cleanup_s=cleanup_s, cleanup_state=cleanup_state
+            )
             try:
                 page = await _page_matching_target(browser, want_url, target_id)
                 if page is None:
@@ -109,32 +113,53 @@ class HttpListCdpPort:
                 return {"raw": raw}
             finally:
                 if playwright is not None:
-                    await playwright.stop()
+                    cleanup_state["outcome"] = await _bounded_playwright_stop(
+                        playwright, timeout_s=cleanup_s
+                    )
 
         try:
             return await asyncio.wait_for(_attach_evaluate(), timeout=timeout_s)
         except TimeoutError:
-            return {"error": {"code": "cdp_timeout"}}
+            err: dict[str, Any] = {"code": "cdp_timeout"}
+            outcome = cleanup_state.get("outcome")
+            if outcome is not None and outcome != "ok":
+                err["cleanup"] = outcome
+            return {"error": err}
         except asyncio.CancelledError:
             raise
         except Exception as exc:
-            return {
-                "error": {
-                    "code": "cdp_attach_failed",
-                    "type": type(exc).__name__,
-                }
+            err = {
+                "code": "cdp_attach_failed",
+                "type": type(exc).__name__,
             }
+            outcome = cleanup_state.get("outcome")
+            if outcome is not None and outcome != "ok":
+                err["cleanup"] = outcome
+            return {"error": err}
 
-    async def _open(self, cdp_url: str) -> tuple[Any, Any]:
+    async def _open(
+        self,
+        cdp_url: str,
+        *,
+        cleanup_s: float | None = None,
+        cleanup_state: dict[str, str | None] | None = None,
+    ) -> tuple[Any, Any]:
         if self._connect is not None:
             return await self._connect(cdp_url), None
         from playwright.async_api import async_playwright
 
+        stop_timeout = (
+            cleanup_s if cleanup_s is not None else resolve_cdp_cleanup_timeout_s()
+        )
         playwright = await async_playwright().start()
         try:
             browser = await playwright.chromium.connect_over_cdp(cdp_url)
         except BaseException:
-            await playwright.stop()
+            outcome = await _bounded_playwright_stop(
+                playwright, timeout_s=stop_timeout
+            )
+            if cleanup_state is not None:
+                cleanup_state["outcome"] = outcome
             raise
         return browser, playwright
 
@@ -150,6 +175,38 @@ class HttpListCdpPort:
                 "reachable": False,
                 "error": type(exc).__name__,
             }
+
+
+def _consume_stop_task(task: asyncio.Task[Any]) -> None:
+    try:
+        task.result()
+    except (asyncio.CancelledError, Exception):
+        pass
+
+
+async def _bounded_playwright_stop(
+    playwright: Any,
+    *,
+    timeout_s: float,
+) -> Literal["ok", "timeout", "error"]:
+    """Stop Playwright within *timeout_s* without blocking on uncooperative cleanup."""
+    if playwright is None:
+        return "ok"
+    stop_task = asyncio.create_task(playwright.stop())
+    try:
+        done, pending = await asyncio.wait({stop_task}, timeout=timeout_s)
+    except asyncio.CancelledError:
+        if not stop_task.done():
+            stop_task.add_done_callback(_consume_stop_task)
+        raise
+    if stop_task in pending:
+        stop_task.add_done_callback(_consume_stop_task)
+        return "timeout"
+    try:
+        stop_task.result()
+    except Exception:
+        return "error"
+    return "ok"
 
 
 async def _target_id_of(page: Any) -> str | None:

@@ -23,32 +23,66 @@ class _FakeChromium:
 
 
 class _FakePlaywrightDriver:
-    def __init__(self, *, connect: Any) -> None:
+    def __init__(
+        self,
+        *,
+        connect: Any,
+        stop_gate: asyncio.Event | None = None,
+        stop_raises: BaseException | None = None,
+    ) -> None:
         self.chromium = _FakeChromium(connect)
         self.stop_awaited = False
+        self._stop_gate = stop_gate
+        self._stop_raises = stop_raises
+        self.stop_entered = asyncio.Event()
 
     async def stop(self) -> None:
+        self.stop_entered.set()
+        if self._stop_gate is not None:
+            await self._stop_gate.wait()
+        if self._stop_raises is not None:
+            raise self._stop_raises
         self.stop_awaited = True
 
 
 class _FakePlaywrightFactory:
-    def __init__(self, *, connect: Any) -> None:
+    def __init__(
+        self,
+        *,
+        connect: Any,
+        stop_gate: asyncio.Event | None = None,
+        stop_raises: BaseException | None = None,
+    ) -> None:
         self._connect = connect
+        self._stop_gate = stop_gate
+        self._stop_raises = stop_raises
         self.last_driver: _FakePlaywrightDriver | None = None
 
     def __call__(self) -> _FakePlaywrightFactory:
         return self
 
     async def start(self) -> _FakePlaywrightDriver:
-        driver = _FakePlaywrightDriver(connect=self._connect)
+        driver = _FakePlaywrightDriver(
+            connect=self._connect,
+            stop_gate=self._stop_gate,
+            stop_raises=self._stop_raises,
+        )
         self.last_driver = driver
         return driver
 
 
 def _patch_playwright(
-    monkeypatch: pytest.MonkeyPatch, connect: Any
+    monkeypatch: pytest.MonkeyPatch,
+    connect: Any,
+    *,
+    stop_gate: asyncio.Event | None = None,
+    stop_raises: BaseException | None = None,
 ) -> _FakePlaywrightFactory:
-    factory = _FakePlaywrightFactory(connect=connect)
+    factory = _FakePlaywrightFactory(
+        connect=connect,
+        stop_gate=stop_gate,
+        stop_raises=stop_raises,
+    )
 
     class _Shim:
         def __call__(self) -> _FakePlaywrightFactory:
@@ -56,6 +90,18 @@ def _patch_playwright(
 
     monkeypatch.setattr(pw_async, "async_playwright", _Shim())
     return factory
+
+
+def _patch_short_timeouts(
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    op_s: float = 0.05,
+    cleanup_s: float = 0.02,
+) -> None:
+    monkeypatch.setattr(cdp_port_mod, "resolve_cdp_evaluate_timeout_s", lambda: op_s)
+    monkeypatch.setattr(
+        cdp_port_mod, "resolve_cdp_cleanup_timeout_s", lambda: cleanup_s
+    )
 
 
 _TAB = {
@@ -96,7 +142,7 @@ async def test_connect_blocks_times_out_and_stops(
         return None
 
     factory = _patch_playwright(monkeypatch, _connect)
-    monkeypatch.setattr(cdp_port_mod, "resolve_cdp_evaluate_timeout_s", lambda: 0.05)  # noqa: E501
+    _patch_short_timeouts(monkeypatch)
     port = HttpListCdpPort()
     raw = await port.evaluate_on_target(
         cdp_url="http://127.0.0.1:9342",
@@ -135,7 +181,7 @@ async def test_evaluate_blocks_times_out_and_stops(
 
     factory = _patch_playwright(monkeypatch, _connect)
     monkeypatch.setattr(cdp_port_mod, "_target_id_of", _target_id_of)
-    monkeypatch.setattr(cdp_port_mod, "resolve_cdp_evaluate_timeout_s", lambda: 0.05)  # noqa: E501
+    _patch_short_timeouts(monkeypatch)
     port = HttpListCdpPort()
     raw = await port.evaluate_on_target(
         cdp_url="http://127.0.0.1:9342",
@@ -190,7 +236,7 @@ async def test_external_cancellation_cleans_playwright(
         return None
 
     factory = _patch_playwright(monkeypatch, _connect)
-    monkeypatch.setattr(cdp_port_mod, "resolve_cdp_evaluate_timeout_s", lambda: 30.0)
+    _patch_short_timeouts(monkeypatch, op_s=30.0, cleanup_s=0.02)
     port = HttpListCdpPort()
 
     async def _run() -> None:
@@ -208,6 +254,101 @@ async def test_external_cancellation_cleans_playwright(
         await task
     assert factory.last_driver is not None
     assert factory.last_driver.stop_awaited is True
+
+
+@pytest.mark.asyncio
+async def test_timeout_with_blocking_stop_bounded(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    gate = asyncio.Event()
+    stop_release = asyncio.Event()
+
+    async def _connect(cdp_url: str) -> Any:  # noqa: ARG001
+        await gate.wait()
+        return None
+
+    factory = _patch_playwright(monkeypatch, _connect, stop_gate=stop_release)
+    _patch_short_timeouts(monkeypatch, op_s=0.05, cleanup_s=0.02)
+    port = HttpListCdpPort()
+    loop = asyncio.get_running_loop()
+    started = loop.time()
+    raw = await port.evaluate_on_target(
+        cdp_url="http://127.0.0.1:9342",
+        target_id="t1",
+        expression="() => ({})",
+        tab_row=dict(_TAB),
+    )
+    elapsed = loop.time() - started
+    assert raw["error"]["code"] == "cdp_timeout"
+    assert raw["error"].get("cleanup") == "timeout"
+    assert elapsed < 0.25
+    assert factory.last_driver is not None
+    await factory.last_driver.stop_entered.wait()
+    stop_release.set()
+    for _ in range(50):
+        if factory.last_driver.stop_awaited:
+            break
+        await asyncio.sleep(0.01)
+    assert factory.last_driver.stop_awaited is True
+
+
+@pytest.mark.asyncio
+async def test_external_cancel_stop_exception_still_cancelled(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    entered = asyncio.Event()
+
+    async def _connect(cdp_url: str) -> Any:  # noqa: ARG001
+        entered.set()
+        await asyncio.sleep(3600)
+        return None
+
+    factory = _patch_playwright(
+        monkeypatch,
+        _connect,
+        stop_raises=RuntimeError("stop failed"),
+    )
+    _patch_short_timeouts(monkeypatch, op_s=30.0, cleanup_s=0.05)
+    port = HttpListCdpPort()
+
+    async def _run() -> None:
+        await port.evaluate_on_target(
+            cdp_url="http://127.0.0.1:9342",
+            target_id="t1",
+            expression="() => ({})",
+            tab_row=dict(_TAB),
+        )
+
+    task = asyncio.create_task(_run())
+    await entered.wait()
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    assert factory.last_driver is not None
+
+
+@pytest.mark.asyncio
+async def test_connect_error_stop_failure_keeps_primary_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def _connect(cdp_url: str) -> Any:  # noqa: ARG001
+        raise ConnectionError("ws rejected")
+
+    factory = _patch_playwright(
+        monkeypatch,
+        _connect,
+        stop_raises=RuntimeError("stop failed"),
+    )
+    port = HttpListCdpPort()
+    raw = await port.evaluate_on_target(
+        cdp_url="http://127.0.0.1:9342",
+        target_id="t1",
+        expression="() => ({})",
+        tab_row=dict(_TAB),
+    )
+    assert raw["error"]["code"] == "cdp_attach_failed"
+    assert raw["error"]["type"] == "ConnectionError"
+    assert factory.last_driver is not None
 
 
 @pytest.mark.asyncio
