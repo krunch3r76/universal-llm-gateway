@@ -27,7 +27,7 @@ def test_derive_claude_manifest_count() -> None:
     """D1: derived Claude manifest returns exactly one entry per domain."""
     manifest = derive_claude_manifest(_CANONICAL_YAML)
     assert (
-        len(manifest) == 26
+        len(manifest) == 25
     )  # update if domains change. dispatch overflow-only; team_dispatch standalone.
     tool_names = [e["tool_name"] for e in manifest]
     assert len(tool_names) == len(set(tool_names)), "duplicate tool_names in manifest"
@@ -130,6 +130,12 @@ def test_derive_claude_manifest_op_skills_absent_when_no_divergence() -> None:
     manifest = derive_claude_manifest(_CANONICAL_YAML)
     fs_entry = next(e for e in manifest if e["domain"] == "fs")
     assert "op_skills" not in fs_entry
+
+
+def test_web_tab_read_is_primary_on_code() -> None:
+    from endpoint_surface import derive_surface_primary_tools
+
+    assert "web_tab_read" in derive_surface_primary_tools("code")
 
 
 def test_team_dispatch_json_schema_includes_server_tools() -> None:

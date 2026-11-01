@@ -5626,18 +5626,11 @@ tools:
         type: string
       surface:
         type: string
-      connector_alive:
-        type: boolean
-      last_attested_turn:
-        type: integer
-      attestation_source:
-        type: string
     required:
     - op
   mandate_safety: read_only
   seat_visibility:
   - mcp
-  - mcp_claude
   skill_uri: agent_skill:web-automation-discipline
   cache_priority: on_demand
   introduced: '2026-10-31'
@@ -5677,7 +5670,6 @@ tools:
   mandate_safety: read_only
   seat_visibility:
   - mcp
-  - mcp_claude
   skill_uri: agent_skill:web-automation-discipline
   cache_priority: on_demand
   introduced: '2026-10-31'
@@ -7116,6 +7108,7 @@ surface_primary_domains:
   - chat_session
   - ingest_dropbox
   - claudeburst
+  - web_tab_read
 cortex_families:
   defaults:
     read:

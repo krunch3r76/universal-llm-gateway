@@ -283,3 +283,6 @@ def _load_handlers_package(
 
     logger.info(f"✅ Loaded handlers: {display_path}")
     return 1
+
+
+import web_tab as _web_tab_category_lib  # noqa: F401 — pipeline handlers consume libs/web_tab

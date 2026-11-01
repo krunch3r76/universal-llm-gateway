@@ -163,6 +163,7 @@ _SERVICE_OWNERSHIP: dict[str, ServiceOwnership] = {
                 "universal_protocol",
                 "universal_transport",
                 "universal_workspace",
+                "web_tab",
                 "work_key_grammar",
             }
         ),
@@ -226,6 +227,7 @@ _SERVICE_OWNERSHIP: dict[str, ServiceOwnership] = {
                 "universal_event_bus",
                 "universal_logging",
                 "universal_workspace",
+                "web_tab",
                 "work_key_grammar",
                 "writing_intake",
             }
@@ -238,6 +240,7 @@ _SERVICE_OWNERSHIP: dict[str, ServiceOwnership] = {
                 "job_grammar",
                 "job_vocab",
                 "stargate_chat",
+                "web_tab",
                 "work_key_grammar",
                 "writing_intake",
             }
@@ -413,6 +416,7 @@ _SERVICE_OWNERSHIP: dict[str, ServiceOwnership] = {
                 "universal_logging",
                 "universal_protocol",
                 "universal_transport",
+                "web_tab",
             }
         ),
         serves_libs=frozenset(
@@ -426,6 +430,7 @@ _SERVICE_OWNERSHIP: dict[str, ServiceOwnership] = {
                 "job_grammar",
                 "job_vocab",
                 "prompt_expand_consume",
+                "web_tab",
                 "writing_intake",
             }
         ),

@@ -7,14 +7,12 @@ from dataclasses import dataclass, field
 from typing import Any, Protocol
 from urllib.error import URLError
 
-from cursor_bridge.cdp_pages import list_pages
-
 
 class CdpObservationPort(Protocol):
     """Read-only CDP surface used by probe/status."""
 
-    def list_tabs(self, *, cdp_url: str) -> list[dict[str, str]]:
-        """Return page targets (id, title, url)."""
+    def list_tabs(self, *, cdp_url: str) -> dict[str, Any]:
+        """Return ``{pages, reachable, error}`` for page targets."""
 
     async def evaluate_on_target(
         self,
@@ -34,9 +32,16 @@ class RecordingCdpPort:
     evaluate_results: dict[str, dict[str, Any]] = field(default_factory=dict)
     navigated: list[str] = field(default_factory=list)
     clicks: list[str] = field(default_factory=list)
+    reachable: bool = True
+    list_error: str | None = None
+    new_page_calls: int = 0
 
-    def list_tabs(self, *, cdp_url: str) -> list[dict[str, str]]:  # noqa: ARG002
-        return list(self.tabs)
+    def list_tabs(self, *, cdp_url: str) -> dict[str, Any]:  # noqa: ARG002
+        return {
+            "pages": list(self.tabs),
+            "reachable": self.reachable,
+            "error": self.list_error,
+        }
 
     async def evaluate_on_target(
         self,
@@ -60,37 +65,52 @@ class HttpListCdpPort:
         target_id: str,
         expression: str,
     ) -> dict[str, Any]:
-        from claude_bundles.skills_ui_panel import connect_cdp
+        listed = self.list_tabs(cdp_url=cdp_url)
+        if not listed.get("reachable"):
+            return {"stale": True, "error": listed.get("error") or "cdp_unreachable"}
+        tabs = listed.get("pages") or []
+        tab_row = next((t for t in tabs if t.get("id") == target_id), None)
+        if tab_row is None:
+            return {"stale": True}
 
-        tab_row = next(
-            (t for t in self.list_tabs(cdp_url=cdp_url) if t.get("id") == target_id),
-            None,
-        )
-        pw, browser, _ctx, _default_page = await connect_cdp(cdp_url)
+        want_url = (tab_row.get("url") or "").rstrip("/")
+        if not want_url:
+            return {"stale": True}
+
+        from playwright.async_api import async_playwright
+
+        pw = await async_playwright().start()
         try:
-            page = _default_page
-            want_url = (tab_row or {}).get("url") or ""
-            if want_url:
-                for ctx in browser.contexts:
-                    for candidate in ctx.pages:
-                        if candidate.url == want_url or (
-                            want_url and want_url.rstrip("/") in candidate.url
-                        ):
-                            page = candidate
-                            break
+            browser = await pw.chromium.connect_over_cdp(cdp_url)
+            page = None
+            for ctx in browser.contexts:
+                for candidate in ctx.pages:
+                    if candidate.url.rstrip("/") == want_url:
+                        page = candidate
+                        break
+                if page is not None:
+                    break
+            if page is None:
+                return {"stale": True}
             raw = await page.evaluate(expression)
             if isinstance(raw, dict):
                 return raw
             return {"raw": raw}
         finally:
-            await browser.close()
             await pw.stop()
 
-    def list_tabs(self, *, cdp_url: str) -> list[dict[str, str]]:
+    def list_tabs(self, *, cdp_url: str) -> dict[str, Any]:
+        from cursor_bridge.cdp_pages import list_pages
+
         try:
-            return list_pages(cdp_url)
-        except (URLError, OSError, TimeoutError, json.JSONDecodeError):
-            return []
+            pages = list_pages(cdp_url)
+            return {"pages": pages, "reachable": True, "error": None}
+        except (URLError, OSError, TimeoutError, json.JSONDecodeError) as exc:
+            return {
+                "pages": [],
+                "reachable": False,
+                "error": type(exc).__name__,
+            }
 
 
 _DEFAULT_PORT = HttpListCdpPort()

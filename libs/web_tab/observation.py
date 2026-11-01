@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+import asyncio
 from datetime import UTC, datetime
 from typing import Any
 
@@ -12,46 +12,29 @@ from web_tab.cdp_port import CdpObservationPort
 from web_tab.conversation_id import conversation_id_from_url
 
 
-@dataclass(frozen=True)
-class ConnectorPlaneInput:
-    """Caller-supplied connector-plane facts (OAuth attestation path)."""
+def _coerce_signed_in(val: Any) -> bool | None:
+    if isinstance(val, bool):
+        return val
+    if val is None:
+        return None
+    return None
 
-    connector_alive: bool | None
-    last_attested_turn: int | None
-    attestation_source: str | None
 
-
-def observe_connector_plane(
+def _tab_in_scope(
+    tab: dict[str, str],
     *,
-    house_id: str,
-    agent: str,
-    conn: ConnectorPlaneInput,
-) -> dict[str, Any]:
-    """Report MCP connector plane separately from browser actuation."""
-    now = datetime.now(tz=UTC).isoformat()
-    alive = conn.connector_alive
-    turn = conn.last_attested_turn
-    return {
-        "plane": "connector",
-        "house_id": house_id,
-        "agent": agent,
-        "connector_alive": status_basis(
-            "connector_alive",
-            alive,
-            as_of=now,
-            source=conn.attestation_source or "connector.unobserved",
-            scope=f"house:{house_id}/agent:{agent}",
-            epoch={"last_attested_turn": turn},
-        ),
-        "last_attested_turn": status_basis(
-            "last_attested_turn",
-            turn,
-            as_of=now,
-            source=conn.attestation_source or "connector.unobserved",
-            scope=f"house:{house_id}/agent:{agent}",
-            epoch={},
-        ),
-    }
+    house_id: str | None,
+    target_id: str | None,
+    binding_conversation_id: str | None,
+) -> bool:
+    tid = tab.get("id") or ""
+    if target_id and tid == target_id:
+        return True
+    if binding_conversation_id:
+        cid = conversation_id_from_url(tab.get("url") or "")
+        if cid == binding_conversation_id:
+            return True
+    return False
 
 
 async def observe_actuation_plane(
@@ -60,18 +43,35 @@ async def observe_actuation_plane(
     target_id: str | None,
     port: CdpObservationPort,
     probe_js: str,
+    house_id: str | None = None,
+    binding_conversation_id: str | None = None,
 ) -> dict[str, Any]:
     """CDP actuation plane — list tabs and optional target-scoped evaluate."""
     now = datetime.now(tz=UTC).isoformat()
-    tabs = port.list_tabs(cdp_url=cdp_url)
-    cdp_reachable: bool | None = True if tabs else None
+    listed = await asyncio.to_thread(port.list_tabs, cdp_url=cdp_url)
+    pages: list[dict[str, str]] = listed.get("pages") or []
+    reachable: bool | None = listed.get("reachable")
+    list_error = listed.get("error")
+
     signed_in: bool | None = None
     stale = False
     scoped_url = ""
     conv_id: str | None = None
 
+    visible_tabs = [
+        t
+        for t in pages
+        if _tab_in_scope(
+            t,
+            house_id=house_id,
+            target_id=target_id,
+            binding_conversation_id=binding_conversation_id,
+        )
+    ]
+    other_count = max(0, len(pages) - len(visible_tabs))
+
     if target_id:
-        match = next((t for t in tabs if t.get("id") == target_id), None)
+        match = next((t for t in pages if t.get("id") == target_id), None)
         if match is None:
             stale = True
         else:
@@ -82,13 +82,18 @@ async def observe_actuation_plane(
                 target_id=target_id,
                 expression=probe_js,
             )
-            val = raw.get("signed_in")
-            if isinstance(val, bool):
-                signed_in = val
-            elif val is None:
-                signed_in = None
+            if raw.get("stale"):
+                stale = True
             else:
-                signed_in = bool(val)
+                signed_in = _coerce_signed_in(raw.get("signed_in"))
+
+    cdp_reachable_val: bool | None
+    if reachable is False:
+        cdp_reachable_val = False
+    elif reachable is True:
+        cdp_reachable_val = True
+    else:
+        cdp_reachable_val = None
 
     return {
         "plane": "actuation",
@@ -96,11 +101,15 @@ async def observe_actuation_plane(
         "target_id": target_id,
         "cdp_reachable": status_basis(
             "cdp_reachable",
-            cdp_reachable if tabs else None,
+            cdp_reachable_val,
             as_of=now,
             source="cdp.json_list",
             scope=f"cdp:{cdp_url}",
-            epoch={"tab_count": len(tabs)},
+            epoch={
+                "tab_count": len(pages),
+                "list_error": list_error,
+                "other_tab_count": other_count,
+            },
         ),
         "signed_in": status_basis(
             "signed_in",
@@ -118,6 +127,7 @@ async def observe_actuation_plane(
                 "conversation_id": conversation_id_from_url(t.get("url") or ""),
                 "title": t.get("title"),
             }
-            for t in tabs
+            for t in visible_tabs
         ],
+        "other_tab_count": other_count,
     }

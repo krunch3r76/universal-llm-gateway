@@ -4,7 +4,10 @@ from __future__ import annotations
 
 import re
 
-_CHATGPT_CONV = re.compile(r"chatgpt\.com/c/(?:[a-f0-9-]{36}|[^/?#]+)", re.I)
+_CHATGPT_CONV = re.compile(
+    r"chatgpt\.com/(?:g/[^/]+/)?c/([^/?#]+)",
+    re.I,
+)
 
 
 def conversation_id_from_url(url: str) -> str | None:
@@ -14,6 +17,5 @@ def conversation_id_from_url(url: str) -> str | None:
     match = _CHATGPT_CONV.search(url)
     if not match:
         return None
-    tail = url.split("/c/", 1)[-1]
-    slug = tail.split("?")[0].split("#")[0].strip("/")
+    slug = match.group(1).strip("/")
     return slug or None
