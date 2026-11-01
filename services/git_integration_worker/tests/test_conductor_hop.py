@@ -20,6 +20,7 @@ from services.git_integration_worker.cursor_sdk_closeout.conductor_exit_reasons 
 )
 from services.git_integration_worker.cursor_sdk_closeout.conductor_hop import (
     SKIP_GATE_NEXT_ADMIT_BLOCKED,
+    SKIP_GATE_NO_HOP_TOKEN,
     _hop_skip_gate,
     _scoreboard_entry_gate,
     _utc_closeout_instant,
@@ -159,6 +160,90 @@ def test_hop_owed_false_when_done_token() -> None:
     ledger = CursorDispatchLedger.instance()
     row = _terminal_row(ledger, closeout_tokens=["DONE"])
     assert hop_owed(row, closeout_tokens=frozenset({"DONE"})) is False
+
+
+def _partial_open_mission_row(
+    ledger: CursorDispatchLedger,
+    *,
+    closeout_tokens: list[str] | None = None,
+) -> dict:
+    req = _req()
+    _admit_conductor(
+        ledger, req, record_patch={"closeout_stop_tokens": closeout_tokens or []}
+    )
+    with ledger._connect() as conn:
+        row = conn.execute(
+            "SELECT * FROM cursor_sdk_dispatches WHERE dispatch_id=?",
+            (req.dispatch_id,),
+        ).fetchone()
+    out = {k: row[k] for k in row.keys()}
+    out["status"] = "partial"
+    return out
+
+
+def test_hop_skip_gate_partial_open_mission_no_row_hop_returns_none() -> None:
+    """Partial closeout row without ROW_HOP may still owe a successor."""
+    ledger = CursorDispatchLedger.instance()
+    row = _partial_open_mission_row(ledger, closeout_tokens=[])
+    with (
+        patch(
+            "services.git_integration_worker.cursor_sdk_closeout.conductor_hop.mission_open_for_row",
+            return_value=True,
+        ),
+        patch(
+            "services.git_integration_worker.cursor_sdk_closeout.conductor_hop.budget_ok_for_hop",
+            return_value=True,
+        ),
+        patch(
+            "services.git_integration_worker.cursor_sdk_closeout.conductor_hop.live_conductor_row_on_thread",
+            return_value=False,
+        ),
+        patch(
+            "services.git_integration_worker.cursor_sdk_closeout.conductor_hop.conductor_has_live_nested",
+            return_value=False,
+        ),
+    ):
+        assert hop_owed(row, closeout_tokens=frozenset()) is False
+        assert _hop_skip_gate(row, closeout_tokens=frozenset()) is None
+
+
+def test_hop_skip_gate_partial_exit_persist_stop_blocks() -> None:
+    ledger = CursorDispatchLedger.instance()
+    row = _partial_open_mission_row(ledger, closeout_tokens=["ROW_PINNED"])
+    with (
+        patch(
+            "services.git_integration_worker.cursor_sdk_closeout.conductor_hop.mission_open_for_row",
+            return_value=True,
+        ),
+        patch(
+            "services.git_integration_worker.cursor_sdk_closeout.conductor_hop.budget_ok_for_hop",
+            return_value=True,
+        ),
+    ):
+        assert _hop_skip_gate(row, closeout_tokens=frozenset({"ROW_PINNED"})) == (
+            "mission_closed"
+        )
+
+
+def test_hop_skip_gate_terminal_fallthrough_no_hop_token() -> None:
+    """Terminal row without hop authority falls through to no_hop_token."""
+    ledger = CursorDispatchLedger.instance()
+    row = _terminal_row(ledger, closeout_tokens=[])
+    row = {**row, "thread_id": ""}
+    with (
+        patch(
+            "services.git_integration_worker.cursor_sdk_closeout.conductor_hop.mission_open_for_row",
+            return_value=True,
+        ),
+        patch(
+            "services.git_integration_worker.cursor_sdk_closeout.conductor_hop.budget_ok_for_hop",
+            return_value=True,
+        ),
+    ):
+        assert hop_owed(row, closeout_tokens=frozenset()) is False
+        assert (
+            _hop_skip_gate(row, closeout_tokens=frozenset()) == SKIP_GATE_NO_HOP_TOKEN
+        )
 
 
 def test_hop_owed_true_when_spurious_table_done_excluded_from_designed() -> None:
@@ -3658,8 +3743,7 @@ async def test_json_next_admit_continues_after_reply_without_row_hop() -> None:
         patch={
             "closeout_stop_tokens": ["PARKED_TRANSPORT"],
             "closeout_body": (
-                '{"stop": "PARKED_TRANSPORT", '
-                f'"NEXT_ADMIT": "harvest {harvest_id}"}}'
+                f'{{"stop": "PARKED_TRANSPORT", "NEXT_ADMIT": "harvest {harvest_id}"}}'
             ),
             "closeout_turn": 6,
             "closeout_harvest_owed": True,
@@ -3719,8 +3803,7 @@ def test_row_pinned_inflight_execution_arms_harvest() -> None:
         merge_conductor_closeout_hop_authority(
             dispatch_id=dispatch_id,
             closeout_body=(
-                "status: partial\nstop: ROW_PINNED\n"
-                f"NEXT_ADMIT: harvest {harvest_id}\n"
+                f"status: partial\nstop: ROW_PINNED\nNEXT_ADMIT: harvest {harvest_id}\n"
             ),
             thread_id="10065",
             closeout_turn=3,
@@ -3750,8 +3833,7 @@ async def test_row_pinned_next_admit_harvest_no_hop_until_reply() -> None:
         merge_conductor_closeout_hop_authority(
             dispatch_id=dispatch_id,
             closeout_body=(
-                "status: partial\nstop: ROW_PINNED\n"
-                f"NEXT_ADMIT: harvest {harvest_id}\n"
+                f"status: partial\nstop: ROW_PINNED\nNEXT_ADMIT: harvest {harvest_id}\n"
             ),
             thread_id="10065",
             closeout_turn=5,
@@ -3809,8 +3891,7 @@ def test_row_pinned_stored_harvest_does_not_hop_owed() -> None:
         patch={
             "closeout_stop_tokens": ["ROW_PINNED"],
             "closeout_body": (
-                "status: partial\nstop: ROW_PINNED\n"
-                f"execution_id: {exec_id}\n"
+                f"status: partial\nstop: ROW_PINNED\nexecution_id: {exec_id}\n"
             ),
             "closeout_harvest_owed": True,
             "closeout_turn": 4,
@@ -3844,8 +3925,7 @@ def _row_pinned_stored_harvest_terminal_row(
         patch={
             "closeout_stop_tokens": ["ROW_PINNED"],
             "closeout_body": (
-                "status: partial\nstop: ROW_PINNED\n"
-                f"execution_id: {exec_id}\n"
+                f"status: partial\nstop: ROW_PINNED\nexecution_id: {exec_id}\n"
             ),
             "closeout_harvest_owed": True,
             "closeout_turn": 7,
@@ -3902,8 +3982,7 @@ def test_merge_row_pinned_prose_uuid_stamps_closeout_harvest_owed() -> None:
         merge_conductor_closeout_hop_authority(
             dispatch_id=dispatch_id,
             closeout_body=(
-                "status: partial\nstop: ROW_PINNED\n"
-                f"execution_id: {exec_id}\n"
+                f"status: partial\nstop: ROW_PINNED\nexecution_id: {exec_id}\n"
             ),
             thread_id="10065",
             closeout_turn=3,
@@ -3946,7 +4025,9 @@ async def test_row_pinned_stored_harvest_21452_16_no_post_until_reply() -> None:
             ],
         }
 
-    post_mock = AsyncMock(return_value=(True, {"dispatch_id": "succ-row-pinned-harvest"}))
+    post_mock = AsyncMock(
+        return_value=(True, {"dispatch_id": "succ-row-pinned-harvest"})
+    )
     eval_state = {"matched": False}
 
     def _eval_harvest(_row: dict, _token: str) -> tuple[bool, str | None]:

@@ -83,6 +83,7 @@ _CLOSEOUT_TOKENS_KEY = "closeout_stop_tokens"
 _HOP_SEQ_LINE_RE = re.compile(r"(?im)^(?:\*\*)?hop_seq(?:\*\*)?:\s*(\d+)\s*$")
 _RELAY_TIMEOUT = httpx.Timeout(connect=5.0, read=30.0, write=15.0, pool=5.0)
 SKIP_GATE_NEXT_ADMIT_BLOCKED = "next_admit_blocked"
+SKIP_GATE_NO_HOP_TOKEN = "no_hop_token"
 HOP_DEFERRAL_GATE_KEY = "hop_deferral_gate"
 _LIFT_HOLD_TOKENS = EXIT_PERSIST_STOPS | frozenset(
     {"DONE", "CONFIRM_PENDING", "CONSULT_PENDING"}
@@ -925,7 +926,7 @@ def _hop_skip_gate(
         ignore_probe_indeterminate=producer_completion_wake,
     ):
         status = str(row.get("status") or "")
-        if status not in ("completed", "failed", "cancelled"):
+        if status not in ("completed", "failed", "cancelled", "partial"):
             return "mission_closed"
         tokens = closeout_tokens
         head = _nested_harvest_head(row, _record_data(row))
@@ -960,7 +961,9 @@ def _hop_skip_gate(
             return "already_hopped"
         if not budget_ok_for_hop(row, closeout_tokens=tokens):
             return "budget"
-        return "mission_closed"
+        if status == "partial":
+            return None
+        return SKIP_GATE_NO_HOP_TOKEN
     return None
 
 
@@ -1807,9 +1810,7 @@ async def maybe_wake_conductor_on_nest_child_terminal(
         return
     record_json = str(parent_row.get("record_json") or "")
     with ledger._connect() as conn:
-        if _successor_admitted(
-            conn, predecessor_id=parent_id, record_json=record_json
-        ):
+        if _successor_admitted(conn, predecessor_id=parent_id, record_json=record_json):
             return
         if hop_fields_from_record_json(record_json).get("hop_successor"):
             return
@@ -1973,6 +1974,7 @@ async def maybe_fire_conductor_hop_reactor(
 __all__ = [
     "HOP_DEFERRAL_GATE_KEY",
     "SKIP_GATE_NEXT_ADMIT_BLOCKED",
+    "SKIP_GATE_NO_HOP_TOKEN",
     "release_deferred_conductor_hops",
     "build_conductor_hop_idempotency_key",
     "build_hop_team_dispatch_body",
