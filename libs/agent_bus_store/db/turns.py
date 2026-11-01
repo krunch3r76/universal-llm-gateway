@@ -190,6 +190,19 @@ def _get_attachments_for_turns(
 # ── Turn CRUD ────────────────────────────────────────────────────────
 
 
+def get_turn_by_notice_closeout_key(
+    *, thread: str, from_agent: str, notice_closeout_key: str
+) -> dict[str, Any] | None:
+    """Fetch the durable closeout turn for idempotent replay."""
+    with connect() as conn:
+        row = conn.execute(
+            "SELECT * FROM turns WHERE thread=? AND from_agent=? "
+            "AND notice_closeout_key=? LIMIT 1",
+            (thread, from_agent, notice_closeout_key),
+        ).fetchone()
+    return dict(row) if row is not None else None
+
+
 def _existing_first_turn(
     row: sqlite3.Row, *, thread: str, from_agent: str
 ) -> tuple[int, str, int, bool]:
@@ -319,6 +332,22 @@ def insert_turn(
 
         turn_number = 1 if idempotent_first_turn else latest_turn_number + 1
 
+        from ..notice_closeout_dedupe import notice_closeout_key_for_send
+
+        notice_key = notice_closeout_key_for_send(
+            from_agent=from_agent, subject=subject, body=body
+        )
+        if notice_key is not None:
+            existing_closeout = conn.execute(
+                "SELECT id, created_at, turn_number, from_agent FROM turns "
+                "WHERE thread=? AND from_agent=? AND notice_closeout_key=? LIMIT 1",
+                (thread, from_agent, notice_key),
+            ).fetchone()
+            if existing_closeout is not None:
+                return _existing_first_turn(
+                    existing_closeout, thread=thread, from_agent=from_agent
+                )
+
         read_at: str | None = None
         if normalize_bus_address(from_agent) == normalize_bus_address(to_agent):
             if not is_same_seat_memo_note(
@@ -333,8 +362,9 @@ def insert_turn(
             cur = conn.execute(
                 "INSERT INTO turns "
                 "(thread, turn_number, from_agent, to_agent, subject, body, "
-                "status, supersedes_turn, created_at, read_at, attested_by, user_agent) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                "status, supersedes_turn, created_at, read_at, attested_by, user_agent, "
+                "notice_closeout_key) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     thread,
                     turn_number,
@@ -348,9 +378,20 @@ def insert_turn(
                     read_at,
                     attested_by,
                     user_agent,
+                    notice_key,
                 ),
             )
         except sqlite3.IntegrityError:
+            if notice_key is not None:
+                raced_closeout = conn.execute(
+                    "SELECT id, created_at, turn_number, from_agent FROM turns "
+                    "WHERE thread=? AND from_agent=? AND notice_closeout_key=? LIMIT 1",
+                    (thread, from_agent, notice_key),
+                ).fetchone()
+                if raced_closeout is not None:
+                    return _existing_first_turn(
+                        raced_closeout, thread=thread, from_agent=from_agent
+                    )
             if not idempotent_first_turn:
                 raise
             raced = conn.execute(
@@ -1058,8 +1099,10 @@ def create_turn(
     mark_read: bool = False,
     attested_by: str | None = None,
     user_agent: str | None = None,
-) -> tuple[dict[str, Any], int, str, int]:
+) -> tuple[dict[str, Any], int, str, int, int, bool]:
     """Post a turn to an existing thread for POST /threads/send continue path.
+
+    Returns ``(thread_row, turn_id, ts, turn_number, marked_read, claimed_existing)``.
 
     Raises KeyError when thread_id does not exist.
     """
@@ -1071,7 +1114,7 @@ def create_turn(
         raise KeyError(thread_id)
 
     effective_after = after_turn if after_turn and after_turn > 0 else None
-    turn_id, ts, turn_number, _claimed_existing = insert_turn(
+    turn_id, ts, turn_number, claimed_existing = insert_turn(
         thread=thread_id,
         from_agent=from_agent,
         to_agent=to_agent,
@@ -1084,6 +1127,12 @@ def create_turn(
         attested_by=attested_by,
         user_agent=user_agent,
     )
+
+    if claimed_existing:
+        thread_row = get_thread_with_links(thread_id)
+        if thread_row is None:
+            raise KeyError(thread_id)
+        return thread_row, turn_id, ts, turn_number, 0, True
 
     marked_read = 0
     if mark_read:
@@ -1100,4 +1149,4 @@ def create_turn(
     thread_row = get_thread_with_links(thread_id)
     if thread_row is None:
         raise KeyError(thread_id)
-    return thread_row, turn_id, ts, turn_number, marked_read
+    return thread_row, turn_id, ts, turn_number, marked_read, False

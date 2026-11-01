@@ -55,7 +55,7 @@ def _turn(
     body: str = "body",
     supersedes_turn: int | None = None,
 ) -> int:
-    _thread, turn_id, _ts, _number, _marked = create_turn(
+    _thread, turn_id, _ts, _number, _marked, _claimed = create_turn(
         thread_id=thread,
         from_agent=sender,
         to_agent=to,

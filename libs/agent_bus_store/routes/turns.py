@@ -177,7 +177,7 @@ async def create_turn(turn: TurnCreate) -> TurnCreated:
         return json_turn_replay(duplicate)
     att_dicts = [a.model_dump() for a in turn.attachments] if turn.attachments else None
     try:
-        turn_id, ts, turn_number, _claimed_existing = await asyncio.to_thread(
+        turn_id, ts, turn_number, claimed_existing = await asyncio.to_thread(
             insert_turn,
             thread=turn.thread,
             from_agent=turn.from_agent,
@@ -193,6 +193,24 @@ async def create_turn(turn: TurnCreate) -> TurnCreated:
             attested_by=turn.attested_by,
             user_agent=turn.user_agent,
         )
+        if claimed_existing:
+            from ..db.turns import get_turn_by_notice_closeout_key
+            from ..notice_closeout_dedupe import notice_closeout_key_for_send
+
+            closeout_key = notice_closeout_key_for_send(
+                from_agent=turn.from_agent,
+                subject=turn.subject,
+                body=prepared.body,
+            )
+            if closeout_key is not None:
+                duplicate_row = await asyncio.to_thread(
+                    get_turn_by_notice_closeout_key,
+                    thread=turn.thread,
+                    from_agent=turn.from_agent,
+                    notice_closeout_key=closeout_key,
+                )
+                if duplicate_row is not None:
+                    return json_turn_replay(duplicate_row)
     except UnreadTurnsExist as e:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,

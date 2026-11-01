@@ -2768,25 +2768,43 @@ class CursorDispatchLedger:
         lease_key: str | None = None
         with self._connect() as conn:
             row = conn.execute(
-                "SELECT lease_key, source_repo FROM cursor_sdk_dispatches WHERE dispatch_id=?",
+                "SELECT lease_key, source_repo, wake_lane, thread_id, record_json, "
+                "caller_agent, memo_state FROM cursor_sdk_dispatches WHERE dispatch_id=?",
                 (dispatch_id,),
             ).fetchone()
             if row is not None:
                 lease_key = _resolve_lease_key(
                     lease_key=row["lease_key"], source_repo=row["source_repo"]
                 )
+            owe_memo = False
+            if row is not None and row["memo_state"] is None:
+                from services.git_integration_worker.cursor_sdk_closeout.closeout_memo_emit import (
+                    memo_owe_on_terminal,
+                )
+
+                try:
+                    rec = json.loads(row["record_json"] or "{}")
+                except json.JSONDecodeError:
+                    rec = {}
+                if not isinstance(rec, dict):
+                    rec = {}
+                row_dict = {key: row[key] for key in row.keys()}
+                owe_memo = memo_owe_on_terminal(row_dict, rec)
+            next_at = time.time() + 30 if owe_memo else None
             conn.execute(
                 "UPDATE cursor_sdk_dispatches SET status=?, terminal_status=?, terminal_at=?, "
-                "memo_state=CASE WHEN wake_lane IS NOT NULL AND memo_state IS NULL "
+                "memo_state=CASE WHEN ? AND memo_state IS NULL "
                 "THEN 'owed' ELSE memo_state END, "
-                "memo_next_at=CASE WHEN wake_lane IS NOT NULL AND memo_state IS NULL "
+                "memo_next_at=CASE WHEN ? AND memo_state IS NULL "
                 "THEN ? ELSE memo_next_at END "
                 "WHERE dispatch_id=?",
                 (
                     terminal_status,
                     terminal_status,
                     _now(),
-                    time.time() + 30,
+                    1 if owe_memo else 0,
+                    1 if owe_memo else 0,
+                    next_at,
                     dispatch_id,
                 ),
             )
@@ -2817,14 +2835,54 @@ class CursorDispatchLedger:
 
     def claim_memo(self, dispatch_id: str) -> bool:
         """One winner for an owed memo. Lost races return False."""
+        from services.git_integration_worker.cursor_sdk_closeout.closeout_memo_emit import (
+            parent_bus_target,
+        )
+
+        now = time.time()
         with self._connect() as conn:
             conn.execute("BEGIN IMMEDIATE")
-            cur = conn.execute(
-                "UPDATE cursor_sdk_dispatches SET memo_state='claimed' "
-                "WHERE dispatch_id=? AND memo_state='owed'",
+            row = conn.execute(
+                "SELECT memo_state, wake_lane, record_json, caller_agent, thread_id, "
+                "memo_next_at FROM cursor_sdk_dispatches WHERE dispatch_id=?",
                 (dispatch_id,),
-            )
-            claimed = cur.rowcount == 1
+            ).fetchone()
+            if row is None:
+                conn.commit()
+                return False
+            try:
+                rec = json.loads(row["record_json"] or "{}")
+            except json.JSONDecodeError:
+                rec = {}
+            if not isinstance(rec, dict):
+                rec = {}
+            row_dict = {key: row[key] for key in row.keys()}
+            wake_lane = str(row_dict.get("wake_lane") or "")
+            is_parent_bus = parent_bus_target(row_dict, rec) is not None and not wake_lane
+            lease_until = (now + 300) if is_parent_bus else None
+            state = str(row_dict.get("memo_state") or "")
+            claimed = False
+            if state == "owed":
+                cur = conn.execute(
+                    "UPDATE cursor_sdk_dispatches SET memo_state='claimed', "
+                    "memo_next_at=? "
+                    "WHERE dispatch_id=? AND memo_state='owed'",
+                    (lease_until, dispatch_id),
+                )
+                claimed = cur.rowcount == 1
+            elif (
+                is_parent_bus
+                and state == "claimed"
+                and row_dict.get("memo_next_at") is not None
+                and float(row_dict["memo_next_at"]) <= now
+            ):
+                cur = conn.execute(
+                    "UPDATE cursor_sdk_dispatches SET memo_next_at=? "
+                    "WHERE dispatch_id=? AND memo_state='claimed' "
+                    "AND memo_next_at IS NOT NULL AND memo_next_at<=?",
+                    (now + 300, dispatch_id, now),
+                )
+                claimed = cur.rowcount == 1
             conn.commit()
             return claimed
 
@@ -2842,7 +2900,7 @@ class CursorDispatchLedger:
                 "UPDATE cursor_sdk_dispatches SET memo_state=?, "
                 "memo_next_at=COALESCE(?, memo_next_at), "
                 "memo_attempts=COALESCE(?, memo_attempts) "
-                "WHERE dispatch_id=?",
+                "WHERE dispatch_id=? AND memo_state IN ('claimed', 'owed')",
                 (state, next_at, attempts, dispatch_id),
             )
 
@@ -2860,7 +2918,10 @@ class CursorDispatchLedger:
         with self._connect() as conn:
             rows = conn.execute(
                 "SELECT dispatch_id FROM cursor_sdk_dispatches "
-                "WHERE memo_state='owed' AND memo_next_at IS NOT NULL AND memo_next_at<=?",
+                "WHERE memo_next_at IS NOT NULL AND memo_next_at<=? AND ("
+                "memo_state='owed' OR ("
+                "memo_state='claimed' AND (wake_lane IS NULL OR wake_lane='')"
+                "))",
                 (now,),
             ).fetchall()
         return [str(row["dispatch_id"]) for row in rows]

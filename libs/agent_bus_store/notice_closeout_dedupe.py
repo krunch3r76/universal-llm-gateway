@@ -51,6 +51,22 @@ def _lane_closeout_fingerprint(subject: str, body: str) -> tuple[str, str, str] 
     return (lane, settled, landed)
 
 
+def notice_closeout_key_for_send(
+    *, from_agent: str, subject: str, body: str
+) -> str | None:
+    """Stable insert key for atomic sdk closeout dedupe (thread, from_agent, key)."""
+    if not _is_dedupe_candidate(from_agent=from_agent, subject=subject):
+        return None
+    sdk_id = _sdk_dispatch_id(subject)
+    if sdk_id is not None:
+        return f"sdk:{sdk_id}"
+    lane_fp = _lane_closeout_fingerprint(subject, body)
+    if lane_fp is None:
+        return None
+    lane, settled, landed = lane_fp
+    return f"lane:{lane}:{settled}:{landed}"
+
+
 def _is_dedupe_candidate(*, from_agent: str, subject: str) -> bool:
     subj = subject or ""
     if _SDK_CLOSEOUT_SUBJECT_RE.match(subj):
@@ -71,6 +87,20 @@ def find_duplicate_notice_closeout(
     """Return an existing turn row when this send would duplicate a closeout notice."""
     if not _is_dedupe_candidate(from_agent=from_agent, subject=subject):
         return None
+    key = notice_closeout_key_for_send(
+        from_agent=from_agent, subject=subject, body=body
+    )
+    if key is not None:
+        from .db.turns import get_turn_by_notice_closeout_key
+
+        keyed = get_turn_by_notice_closeout_key(
+            thread=thread_id, from_agent=from_agent, notice_closeout_key=key
+        )
+        if keyed is not None:
+            return keyed
+        sdk_id = _sdk_dispatch_id(subject)
+        if sdk_id is not None:
+            return None
     sdk_id = _sdk_dispatch_id(subject)
     lane_fp = None if sdk_id else _lane_closeout_fingerprint(subject, body)
     if sdk_id is None and lane_fp is None:
@@ -118,5 +148,6 @@ def json_turn_replay(row: dict[str, Any]) -> JSONResponse:
 __all__ = [
     "find_duplicate_notice_closeout",
     "json_turn_replay",
+    "notice_closeout_key_for_send",
     "turn_created_from_row",
 ]
