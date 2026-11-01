@@ -58,50 +58,110 @@ def _screenshot_dir() -> Path:
     return dest
 
 
-async def _capture_artifacts(
+_DOM_FINGERPRINT_KEYS = (
+    "state",
+    "active_agent_id",
+    "active_title",
+    "composer_draft",
+    "generating",
+    "recent_messages",
+)
+
+
+def _sha256_dom_from_surface(surface: dict[str, Any]) -> str:
+    """Fingerprint probe-visible chat surface (Electron DOM read), not full page HTML."""
+    payload = {k: surface.get(k) for k in _DOM_FINGERPRINT_KEYS}
+    dom_bytes = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    return hashlib.sha256(dom_bytes).hexdigest()
+
+
+def _dom_artifacts_from_surface(surface: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "sha256_dom": _sha256_dom_from_surface(surface),
+        "sha256_png": None,
+        "screenshot_path": None,
+    }
+
+
+async def _capture_screenshot_artifact(
     ws_url: str, *, agent_id: str, phase: str
-) -> dict[str, str]:
+) -> dict[str, str | None]:
     import websockets
 
-    dom_js = (
-        "(()=>{const el=document.documentElement;return el?el.outerHTML||'':'';})()"
-    )
     async with websockets.connect(ws_url, max_size=8_000_000) as ws:
         await ws.send(
             json.dumps(
                 {
                     "id": 1,
-                    "method": "Runtime.evaluate",
-                    "params": {"expression": dom_js, "returnByValue": True},
-                }
-            )
-        )
-        raw_dom = await asyncio.wait_for(_cdp_response(ws, 1), 8.0)
-        dom_val = ((raw_dom.get("result") or {}).get("result") or {}).get("value") or ""
-        await ws.send(
-            json.dumps(
-                {
-                    "id": 2,
                     "method": "Page.captureScreenshot",
                     "params": {"format": "png"},
                 }
             )
         )
-        raw_png = await asyncio.wait_for(_cdp_response(ws, 2), 8.0)
+        raw_png = await asyncio.wait_for(_cdp_response(ws, 1), 8.0)
     png_b64_str = (raw_png.get("result") or {}).get("data") or ""
     png_b64 = png_b64_str.encode("ascii")
-    dom_bytes = str(dom_val).encode("utf-8", errors="replace")
-    png_path = ""
+    png_path: str | None = None
+    sha256_png: str | None = None
     if png_b64_str:
         fname = f"{agent_id[:8]}-{phase}-{uuid.uuid4().hex[:12]}.png"
         out = _screenshot_dir() / fname
         out.write_bytes(base64.standard_b64decode(png_b64_str))
         png_path = str(out)
+        sha256_png = hashlib.sha256(png_b64).hexdigest()
+    return {"sha256_png": sha256_png, "screenshot_path": png_path}
+
+
+async def _finalize_verification_artifacts(
+    ws_url: str,
+    *,
+    surface: dict[str, Any],
+    agent_id: str,
+    phase: str,
+    dom_conclusive: bool,
+) -> dict[str, Any]:
+    """DOM probe fingerprint always; PNG only when DOM verification is inconclusive."""
+    artifacts = _dom_artifacts_from_surface(surface)
+    if dom_conclusive:
+        return {**artifacts, "verify_method": "dom"}
+    png = await _capture_screenshot_artifact(ws_url, agent_id=agent_id, phase=phase)
     return {
-        "sha256_dom": hashlib.sha256(dom_bytes).hexdigest(),
-        "sha256_png": hashlib.sha256(png_b64).hexdigest() if png_b64 else "",
-        "screenshot_path": png_path,
+        **artifacts,
+        **png,
+        "verify_method": "screenshot_fallback",
     }
+
+
+def _transcript_ambiguous(
+    post: dict[str, Any], *, watermark: str, body_snippet: str
+) -> bool:
+    """True when transcript/composer state does not decisively show submit/readback."""
+    composer_draft = str(post.get("composer_draft") or "").strip()
+    messages = [str(m) for m in (post.get("recent_messages") or [])]
+    watermark_visible = any(watermark in m for m in messages)
+    snippet = body_snippet.strip()
+    snippet_visible = bool(snippet) and any(snippet in m for m in messages)
+    if composer_draft and not watermark_visible and not snippet_visible:
+        return True
+    if not watermark_visible and not snippet_visible and not composer_draft:
+        return True
+    return False
+
+
+def _dom_verification_conclusive(
+    post: dict[str, Any],
+    *,
+    expected_agent_id: str,
+    watermark: str,
+    body_snippet: str,
+    readback_ok: bool,
+) -> bool:
+    active = str(post.get("active_agent_id") or "").strip()
+    if not active or active != expected_agent_id:
+        return False
+    if _transcript_ambiguous(post, watermark=watermark, body_snippet=body_snippet):
+        return False
+    return readback_ok
 
 
 async def _insert_composer_text(
@@ -568,11 +628,14 @@ async def _deliver_operator_locked(
         except (TimeoutError, RuntimeError, OSError):
             submitted = False
 
-    artifacts = await _capture_artifacts(
-        ws_url, agent_id=aid_s, phase="submit" if submitted else "submit_failed"
-    )
-
     if not submitted:
+        artifacts = await _finalize_verification_artifacts(
+            ws_url,
+            surface=post_submit,
+            agent_id=aid_s,
+            phase="submit_failed",
+            dom_conclusive=False,
+        )
         return {
             **verdict,
             "ok": False,
@@ -604,11 +667,20 @@ async def _deliver_operator_locked(
     )
     readback_ok = rb["readback_ok"]
     delivered = readback_ok
-    if delivered:
-        post_artifacts = await _capture_artifacts(
-            ws_url, agent_id=aid_s, phase="delivered"
-        )
-        artifacts = post_artifacts
+    dom_conclusive = _dom_verification_conclusive(
+        post,
+        expected_agent_id=aid_s,
+        watermark=WATERMARK,
+        body_snippet=body_snippet,
+        readback_ok=readback_ok,
+    )
+    artifacts = await _finalize_verification_artifacts(
+        ws_url,
+        surface=post,
+        agent_id=aid_s,
+        phase="delivered" if delivered else "readback_inconclusive",
+        dom_conclusive=dom_conclusive,
+    )
     return {
         **verdict,
         "ok": delivered,

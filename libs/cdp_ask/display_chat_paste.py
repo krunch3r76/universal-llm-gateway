@@ -35,6 +35,7 @@ def _to_response(
         target_verified=raw.get("target_verified"),  # type: ignore[arg-type]
         submitted=raw.get("submitted"),  # type: ignore[arg-type]
         screenshot_path=str(raw.get("screenshot_path") or "") or None,
+        verify_method=raw.get("verify_method"),  # type: ignore[arg-type]
     )
 
 
