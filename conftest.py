@@ -124,27 +124,31 @@ def _isolate_dispatch_ledger(tmp_path_factory: pytest.TempPathFactory):
     os.environ[CURSOR_SDK_DISPATCH_LEDGER_ENV] = str(isolated_ledger)
     SeatWriteLedger.reset_instance()
     CursorDispatchLedger._instance = None
-    yield data_dir
-    if prior_data_dir is None:
-        os.environ.pop("DATA_DIR", None)
-    else:
-        os.environ["DATA_DIR"] = prior_data_dir
-    if prior_dispatch_ledger is None:
-        os.environ.pop(CURSOR_SDK_DISPATCH_LEDGER_ENV, None)
-    else:
-        os.environ[CURSOR_SDK_DISPATCH_LEDGER_ENV] = prior_dispatch_ledger
-    SeatWriteLedger.reset_instance()
-    CursorDispatchLedger._instance = None
+    try:
+        yield data_dir
+    finally:
+        if prior_data_dir is None:
+            os.environ.pop("DATA_DIR", None)
+        else:
+            os.environ["DATA_DIR"] = prior_data_dir
+        if prior_dispatch_ledger is None:
+            os.environ.pop(CURSOR_SDK_DISPATCH_LEDGER_ENV, None)
+        else:
+            os.environ[CURSOR_SDK_DISPATCH_LEDGER_ENV] = prior_dispatch_ledger
+        SeatWriteLedger.reset_instance()
+        CursorDispatchLedger._instance = None
 
 
 @pytest.fixture(autouse=True)
 def _pin_isolated_dispatch_ledger_per_test(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+):
     """Override inherited ``CURSOR_SDK_DISPATCH_LEDGER`` with a per-test tmp ledger.
 
     A dispatch-shell export of the live path still wins unless each test
     monkeypatches it away. Function scope keeps holder/ledger rows from leaking.
+    Singletons are reset before and after each test so no instance cached on a
+    test's tmp path survives into the next test or past the last one.
     """
     from services.git_integration_worker.cursor_dispatch_ledger import (
         CURSOR_SDK_DISPATCH_LEDGER_ENV,
@@ -160,6 +164,11 @@ def _pin_isolated_dispatch_ledger_per_test(
     )
     SeatWriteLedger.reset_instance()
     CursorDispatchLedger._instance = None
+    try:
+        yield root
+    finally:
+        SeatWriteLedger.reset_instance()
+        CursorDispatchLedger._instance = None
 
 
 @pytest.fixture(autouse=True)

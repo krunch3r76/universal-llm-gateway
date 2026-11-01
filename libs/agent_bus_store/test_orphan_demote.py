@@ -111,6 +111,74 @@ def test_dispatch_ledger_resolves_under_pytest_tmp_not_live_gateway(
     assert os.environ[CURSOR_SDK_DISPATCH_LEDGER_ENV] == str(expected)
 
 
+_LEDGER_REGRESSION_NODE = (
+    "libs/agent_bus_store/test_orphan_demote.py"
+    "::test_dispatch_ledger_resolves_under_pytest_tmp_not_live_gateway"
+)
+
+
+def _run_ledger_regression_child(*extra_args: str):
+    """Run the path regression in a fresh pytest that inherits a live-ledger export.
+
+    The child env carries ``DATA_DIR`` and ``CURSOR_SDK_DISPATCH_LEDGER`` aimed
+    at the operator's real ``~/.gateway``, as a dispatch shell would. The
+    regression only resolves a path, and the pytest refuse guard stays on, so no
+    live database is opened or written.
+    """
+    import os
+    import subprocess
+    import sys
+
+    from services.git_integration_worker.cursor_dispatch_ledger import (
+        CURSOR_SDK_DISPATCH_LEDGER_ENV,
+    )
+    from services.git_integration_worker.cursor_home import operator_real_home
+
+    repo = Path(__file__).resolve().parents[2]
+    live_gateway = operator_real_home() / ".gateway"
+    env = dict(os.environ)
+    env.pop("PYTEST_CURRENT_TEST", None)
+    env.pop("PYTEST_ADDOPTS", None)
+    env["PAGER_NOTIFY_ENABLED"] = "0"
+    env["ULG_EVENTS_DISABLED"] = "1"
+    env["DATA_DIR"] = str(live_gateway)
+    env[CURSOR_SDK_DISPATCH_LEDGER_ENV] = str(live_gateway / "cursor-sdk-dispatch.db")
+    argv = [
+        sys.executable,
+        "-m",
+        "pytest",
+        _LEDGER_REGRESSION_NODE,
+        "-q",
+        "-p",
+        "no:cacheprovider",
+        *extra_args,
+    ]
+    return subprocess.run(
+        argv,
+        cwd=repo,
+        env=env,
+        shell=False,
+        text=True,
+        capture_output=True,
+        timeout=300,
+        check=False,
+    )
+
+
+def test_root_conftest_isolates_inherited_live_ledger_env_in_child_pytest() -> None:
+    """A child pytest inheriting the live ledger export still resolves a tmp ledger."""
+    proc = _run_ledger_regression_child()
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert "1 passed" in proc.stdout, proc.stdout
+
+
+def test_child_without_root_conftest_hits_live_ledger_guard() -> None:
+    """Negative control: without conftest fixtures the inherited export reaches the guard."""
+    proc = _run_ledger_regression_child("--noconftest")
+    assert proc.returncode != 0, proc.stdout + proc.stderr
+    assert "refusing to open the live dispatch ledger" in proc.stdout, proc.stdout
+
+
 def test_late_closeout_demotes_orphan(bus_db) -> None:
     thread_id = _seed_orphan_thread(bus_db)
     orphan = _orphan_turns(thread_id)[0]

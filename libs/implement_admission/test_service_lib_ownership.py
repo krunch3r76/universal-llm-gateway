@@ -134,6 +134,31 @@ def test_giw_serves_worker_hosted_libs_not_owned_libs() -> None:
     assert "foo" not in own.serves_libs
 
 
+def test_stargate_may_import_libs_stay_out_of_serves_libs() -> None:
+    """Closure-measured stargate imports widen ``owned_libs`` only, not the job set."""
+    own = service_ownership()["stargate"]
+    added = {"bus_watch", "cursor_bridge", "dispatch_economics", "hop_handoff"}
+    assert added <= own.owned_libs
+    assert not added & own.serves_libs
+    assert own.serves_libs == frozenset(
+        {
+            "agent_bus_store",
+            "capability_tree",
+            "consult_substrate_notice",
+            "continuity_tape",
+            "g6_review_class",
+            "implement_admission",
+            "job_grammar",
+            "job_vocab",
+            "prompt_expand_consume",
+            "web_tab",
+            "writing_intake",
+        }
+    )
+    for lib in sorted(added):
+        assert "stargate" not in serving_services_for_lib(lib), lib
+
+
 def test_writing_intake_serving_services_match_serving_map() -> None:
     """RULING 22: harvest/charter nominate stargate+mcp for writing_intake lands."""
     got = serving_services_for_lib_path("libs/writing_intake/fact_inventory.py")
