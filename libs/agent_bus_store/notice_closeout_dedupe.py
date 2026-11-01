@@ -14,6 +14,7 @@ from bus_watch.lane_closeout_parse import parse_closeout_turn
 from fastapi.responses import JSONResponse
 
 from .db.turns import get_turns
+from .notice_closeout_sdk_key import sdk_closeout_dispatch_id, sdk_notice_closeout_key
 from .turns_models import TurnCreated
 
 _SDK_CLOSEOUT_SUBJECT_RE = re.compile(
@@ -27,8 +28,7 @@ _LANE_CLOSEOUT_SUBJECT_RE = re.compile(
 
 
 def _sdk_dispatch_id(subject: str) -> str | None:
-    match = _SDK_CLOSEOUT_SUBJECT_RE.match(subject.strip())
-    return None if match is None else match.group("dispatch_id")
+    return sdk_closeout_dispatch_id(subject)
 
 
 def _lane_id_from_subject(subject: str) -> str | None:
@@ -51,6 +51,13 @@ def _lane_closeout_fingerprint(subject: str, body: str) -> tuple[str, str, str] 
     return (lane, settled, landed)
 
 
+def notice_closeout_key_for_send(
+    *, from_agent: str, subject: str, body: str
+) -> str | None:
+    """Stable insert key for atomic sdk closeout dedupe (thread, from_agent, key)."""
+    return sdk_notice_closeout_key(from_agent=from_agent, subject=subject)
+
+
 def _is_dedupe_candidate(*, from_agent: str, subject: str) -> bool:
     subj = subject or ""
     if _SDK_CLOSEOUT_SUBJECT_RE.match(subj):
@@ -71,6 +78,20 @@ def find_duplicate_notice_closeout(
     """Return an existing turn row when this send would duplicate a closeout notice."""
     if not _is_dedupe_candidate(from_agent=from_agent, subject=subject):
         return None
+    key = notice_closeout_key_for_send(
+        from_agent=from_agent, subject=subject, body=body
+    )
+    if key is not None:
+        from .db.turns import get_turn_by_notice_closeout_key
+
+        keyed = get_turn_by_notice_closeout_key(
+            thread=thread_id, from_agent=from_agent, notice_closeout_key=key
+        )
+        if keyed is not None:
+            return keyed
+        sdk_id = _sdk_dispatch_id(subject)
+        if sdk_id is not None:
+            return None
     sdk_id = _sdk_dispatch_id(subject)
     lane_fp = None if sdk_id else _lane_closeout_fingerprint(subject, body)
     if sdk_id is None and lane_fp is None:
@@ -118,5 +139,6 @@ def json_turn_replay(row: dict[str, Any]) -> JSONResponse:
 __all__ = [
     "find_duplicate_notice_closeout",
     "json_turn_replay",
+    "notice_closeout_key_for_send",
     "turn_created_from_row",
 ]

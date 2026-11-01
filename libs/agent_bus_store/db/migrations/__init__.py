@@ -32,6 +32,7 @@ from . import (
     migration_021,
     migration_022,
     migration_023,
+    migration_024,  # noqa: F401 — registry import
 )
 
 # Ordered list — append new migration modules here.
@@ -59,6 +60,7 @@ MIGRATIONS = [
     migration_021,
     migration_022,
     migration_023,
+    migration_024,
 ]
 
 

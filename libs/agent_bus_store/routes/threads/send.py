@@ -325,7 +325,14 @@ async def send_route(body: TurnSendCreate) -> TurnSendCreated:
             thread_dump["idempotent_replay"] = True
         return JSONResponse(status_code=status.HTTP_200_OK, content=content)
     try:
-        thread_row, turn_id, ts, turn_number, marked_read = await asyncio.to_thread(
+        (
+            thread_row,
+            turn_id,
+            ts,
+            turn_number,
+            marked_read,
+            claimed_existing,
+        ) = await asyncio.to_thread(
             create_turn,
             thread_id=thread_id,
             from_agent=body.from_agent,
@@ -341,6 +348,45 @@ async def send_route(body: TurnSendCreate) -> TurnSendCreated:
             attested_by=body.attested_by,
             user_agent=body.user_agent,
         )
+        if claimed_existing:
+            from ...db.turns import get_turn_by_notice_closeout_key
+            from ...notice_closeout_dedupe import (
+                notice_closeout_key_for_send,
+                turn_created_from_row,
+            )
+
+            closeout_key = notice_closeout_key_for_send(
+                from_agent=body.from_agent,
+                subject=body.subject,
+                body=prepared.body,
+            )
+            duplicate_row = None
+            if closeout_key is not None:
+                duplicate_row = await asyncio.to_thread(
+                    get_turn_by_notice_closeout_key,
+                    thread=thread_id,
+                    from_agent=body.from_agent,
+                    notice_closeout_key=closeout_key,
+                )
+            if duplicate_row is not None:
+                thread_row = await asyncio.to_thread(get_thread, thread_id)
+                if thread_row is None:
+                    raise HTTPException(
+                        status_code=status.HTTP_404_NOT_FOUND,
+                        detail=f"Thread {thread_id} not found",
+                    )
+                payload = TurnSendCreated(
+                    send_path="continue",
+                    thread=_thread_detail(thread_row),
+                    turn=turn_created_from_row(duplicate_row),
+                    idempotent_replay=True,
+                )
+                content = payload.model_dump(mode="json")
+                content["idempotent_replay"] = True
+                thread_dump = content.get("thread")
+                if isinstance(thread_dump, dict):
+                    thread_dump["idempotent_replay"] = True
+                return JSONResponse(status_code=status.HTTP_200_OK, content=content)
     except UnreadTurnsExist as e:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
