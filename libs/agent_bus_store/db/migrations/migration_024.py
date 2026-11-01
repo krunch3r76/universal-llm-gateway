@@ -2,27 +2,11 @@
 
 from __future__ import annotations
 
-import re
 import sqlite3
 
+from agent_bus_store.notice_closeout_sdk_key import sdk_notice_closeout_key
+
 MIGRATION_ID = "migration_024"
-
-_SDK_CLOSEOUT_SUBJECT_RE = re.compile(
-    r"^(?:CLOSEOUT\|)?cursor-sdk CLOSEOUT (?P<dispatch_id>\S+)",
-    re.IGNORECASE,
-)
-
-
-def _sdk_closeout_key(*, from_agent: str, subject: str) -> str | None:
-    if from_agent != "cursor-sdk":
-        return None
-    match = _SDK_CLOSEOUT_SUBJECT_RE.match((subject or "").strip())
-    if match is None:
-        return None
-    dispatch_id = match.group("dispatch_id").split("|", 1)[0].strip()
-    if not dispatch_id:
-        return None
-    return f"sdk:{dispatch_id}"
 
 
 def run(conn: sqlite3.Connection) -> None:
@@ -41,7 +25,7 @@ def run(conn: sqlite3.Connection) -> None:
         "WHERE notice_closeout_key IS NULL"
     ).fetchall()
     for row in rows:
-        key = _sdk_closeout_key(
+        key = sdk_notice_closeout_key(
             from_agent=str(row["from_agent"]),
             subject=str(row["subject"]),
         )

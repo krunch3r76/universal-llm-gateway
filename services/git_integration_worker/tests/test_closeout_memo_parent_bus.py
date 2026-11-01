@@ -74,6 +74,7 @@ def test_parent_bus_target_eligibility() -> None:
     rec = {"parent_dispatch_thread_id": _PARENT}
     assert parent_bus_target(row, rec) == (_PARENT, _CALLER)
     assert parent_bus_target({**row, "wake_lane": "12286"}, rec) is None
+    assert parent_bus_target({**row, "wake_lane": "cse"}, rec) is None
     assert parent_bus_target(row, {"parent_dispatch_thread_id": _WORKER}) is None
     assert parent_bus_target(row, {"parent_dispatch_thread_id": "abc"}) is None
     assert parent_bus_target({**row, "caller_agent": ""}, rec) is None
@@ -269,7 +270,7 @@ async def test_stale_parent_claim_reclaimed_by_sweep(
     dispatch_id = "pb-stale-claim"
     _admit_parent_bus(ledger, dispatch_id=dispatch_id)
     ledger.mark_terminal(dispatch_id=dispatch_id, terminal_status="completed")
-    assert ledger.claim_memo(dispatch_id)
+    assert ledger.claim_memo(dispatch_id) is not None
     with ledger._connect() as conn:
         conn.execute(
             "UPDATE cursor_sdk_dispatches SET memo_next_at=? WHERE dispatch_id=?",
@@ -321,14 +322,12 @@ def _concurrent_insert_worker(db_path: str, queue: Queue) -> None:
     queue.put(results)
 
 
-def test_sdk_closeout_atomic_dedupe_across_connections(tmp_path) -> None:
+def test_sdk_closeout_atomic_dedupe_across_connections(tmp_path, monkeypatch) -> None:
     from agent_bus_store.db import create_thread, init_db
 
     db_path = str(tmp_path / "dedupe.db")
-    import os
-
-    os.environ["AGENT_BUS_DB_PATH"] = db_path
-    os.environ["AGENT_BUS_EVENTS_ENABLED"] = "false"
+    monkeypatch.setenv("AGENT_BUS_DB_PATH", db_path)
+    monkeypatch.setenv("AGENT_BUS_EVENTS_ENABLED", "false")
     init_db()
     create_thread(thread_id="300", slug="parent")
     for turn in range(260):
@@ -351,7 +350,9 @@ def test_sdk_closeout_atomic_dedupe_across_connections(tmp_path) -> None:
     assert first.exitcode == 0 and second.exitcode == 0
     batch_a = queue.get(timeout=5)
     batch_b = queue.get(timeout=5)
-    assert batch_a.count(True) + batch_b.count(True) >= 1
+    claimed = batch_a + batch_b
+    assert claimed.count(True) == 3
+    assert claimed.count(False) == 1
     with sqlite3.connect(db_path) as conn:
         count = conn.execute(
             "SELECT COUNT(*) FROM turns WHERE notice_closeout_key=?",
@@ -365,8 +366,117 @@ def test_finish_memo_stale_claimant_cannot_clobber_emitted() -> None:
     dispatch_id = "pb-finish-cas"
     _admit_parent_bus(ledger, dispatch_id=dispatch_id)
     ledger.mark_terminal(dispatch_id=dispatch_id, terminal_status="completed")
-    assert ledger.claim_memo(dispatch_id)
-    ledger.finish_memo(dispatch_id, state="emitted")
+    gen = ledger.claim_memo(dispatch_id)
+    assert gen is not None
+    ledger.finish_memo(dispatch_id, state="emitted", claim_gen=gen)
     ledger.finish_memo(dispatch_id, state="owed", next_at=time.time() + 30)
+    row = ledger.memo_row(dispatch_id)
+    assert row is not None and row["memo_state"] == "emitted"
+
+
+def test_malformed_nonempty_wake_owes_cse_route_not_parent_bus() -> None:
+    ledger = CursorDispatchLedger.instance()
+    dispatch_id = "pb-cse-owed"
+    _admit_parent_bus(ledger, dispatch_id=dispatch_id, wake_lane="cse")
+    ledger.mark_terminal(dispatch_id=dispatch_id, terminal_status="completed")
+    row = ledger.memo_row(dispatch_id)
+    assert row is not None
+    assert row["memo_state"] == "owed"
+    rec = {"parent_dispatch_thread_id": _PARENT}
+    assert parent_bus_target(row, rec) is None
+
+
+def test_expired_claimant_cannot_reset_replacement_claim() -> None:
+    ledger = CursorDispatchLedger.instance()
+    dispatch_id = "pb-stale-reset"
+    _admit_parent_bus(ledger, dispatch_id=dispatch_id)
+    ledger.mark_terminal(dispatch_id=dispatch_id, terminal_status="completed")
+    gen_a = ledger.claim_memo(dispatch_id)
+    assert gen_a is not None
+    past = time.time() - 100
+    with ledger._connect() as conn:
+        conn.execute(
+            "UPDATE cursor_sdk_dispatches SET memo_next_at=? WHERE dispatch_id=?",
+            (past, dispatch_id),
+        )
+    gen_b = ledger.claim_memo(dispatch_id)
+    assert gen_b is not None and gen_b > gen_a
+    ledger.finish_memo(
+        dispatch_id, state="owed", next_at=past, claim_gen=gen_a
+    )
+    row = ledger.memo_row(dispatch_id)
+    assert row is not None
+    assert row["memo_state"] == "claimed"
+    assert int(row["memo_claim_gen"]) == gen_b
+    assert ledger.claim_memo(dispatch_id) is None
+
+
+@pytest.mark.asyncio
+async def test_stale_4xx_cannot_suppress_replacement_success(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    ledger = CursorDispatchLedger.instance()
+    dispatch_id = "pb-stale-4xx"
+    _admit_parent_bus(ledger, dispatch_id=dispatch_id)
+    ledger.mark_terminal(dispatch_id=dispatch_id, terminal_status="completed")
+    gen_a = ledger.claim_memo(dispatch_id)
+    assert gen_a is not None
+    past = time.time() - 100
+    with ledger._connect() as conn:
+        conn.execute(
+            "UPDATE cursor_sdk_dispatches SET memo_next_at=? WHERE dispatch_id=?",
+            (past, dispatch_id),
+        )
+    gen_b = ledger.claim_memo(dispatch_id)
+    assert gen_b is not None
+    ledger.finish_memo(dispatch_id, state="suppressed", claim_gen=gen_a)
+    row = ledger.memo_row(dispatch_id)
+    assert row is not None and row["memo_state"] == "claimed"
+    ledger.finish_memo(dispatch_id, state="emitted", claim_gen=gen_b)
+    row = ledger.memo_row(dispatch_id)
+    assert row is not None and row["memo_state"] == "emitted"
+
+
+@pytest.mark.asyncio
+async def test_try_emit_stale_attempt_reopens_inflight_replacement(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    ledger = CursorDispatchLedger.instance()
+    dispatch_id = "pb-stale-e2e"
+    _admit_parent_bus(ledger, dispatch_id=dispatch_id)
+    ledger.mark_terminal(dispatch_id=dispatch_id, terminal_status="completed")
+    calls: list[int] = []
+    gate = asyncio.Event()
+
+    async def _bus_send(**_kwargs: object) -> tuple[dict[str, object], int]:
+        calls.append(1)
+        if len(calls) == 1:
+            return {"error": {"code": "down"}}, 503
+        if len(calls) == 2:
+            await gate.wait()
+            return {}, 201
+        return {}, 201
+
+    monkeypatch.setattr(
+        "services.git_integration_worker.cursor_sdk_closeout.closeout_memo_emit.bus_send",
+        _bus_send,
+    )
+    await try_emit(dispatch_id)
+    row = ledger.memo_row(dispatch_id)
+    assert row is not None and row["memo_state"] == "owed"
+    ledger.finish_memo(dispatch_id, state="owed", next_at=time.time() - 1)
+    task_b = asyncio.create_task(try_emit(dispatch_id))
+    await asyncio.sleep(0.05)
+    row = ledger.memo_row(dispatch_id)
+    assert row is not None and row["memo_state"] == "claimed"
+    gen_b = int(row["memo_claim_gen"])
+    gen_a = gen_b - 1
+    ledger.finish_memo(
+        dispatch_id, state="owed", next_at=time.time() - 1, claim_gen=gen_a
+    )
+    assert ledger.claim_memo(dispatch_id) is None
+    gate.set()
+    await task_b
+    assert len(calls) == 2
     row = ledger.memo_row(dispatch_id)
     assert row is not None and row["memo_state"] == "emitted"

@@ -63,8 +63,7 @@ def parent_bus_target(
     row: dict[str, Any], rec: dict[str, Any]
 ) -> tuple[str, str] | None:
     """Parent thread and caller when null-wake terminal delivery is owed."""
-    wake_lane = str(row.get("wake_lane") or "")
-    if _THREAD_RE.fullmatch(wake_lane):
+    if str(row.get("wake_lane") or ""):
         return None
     parent = str(rec.get("parent_dispatch_thread_id") or "").strip()
     worker = str(row.get("thread_id") or "").strip()
@@ -76,8 +75,7 @@ def parent_bus_target(
 
 def memo_owe_on_terminal(row: dict[str, Any], rec: dict[str, Any]) -> bool:
     """True when mark_terminal should seed the memo outbox for this row."""
-    wake_lane = str(row.get("wake_lane") or "")
-    if _THREAD_RE.fullmatch(wake_lane):
+    if str(row.get("wake_lane") or ""):
         return True
     return parent_bus_target(row, rec) is not None
 
@@ -247,10 +245,14 @@ async def try_emit(dispatch_id: str) -> None:
 
         row = CursorDispatchLedger.instance().memo_row(dispatch_id)
         if row is not None and row.get("memo_state") == "claimed":
-            _reschedule_after_crash(dispatch_id)
+            gen = row.get("memo_claim_gen")
+            claim_gen = int(gen) if gen is not None else None
+            _reschedule_after_crash(dispatch_id, claim_gen=claim_gen)
 
 
-def _reschedule_after_crash(dispatch_id: str) -> None:
+def _reschedule_after_crash(
+    dispatch_id: str, *, claim_gen: int | None
+) -> None:
     """Return a claimed row to owed so the sweep can retry. Terminal stays."""
     from services.git_integration_worker.cursor_dispatch_ledger import (
         CursorDispatchLedger,
@@ -260,7 +262,9 @@ def _reschedule_after_crash(dispatch_id: str) -> None:
     row = ledger.memo_row(dispatch_id)
     attempts = int((row or {}).get("memo_attempts") or 0) + 1
     if attempts >= _GAVE_UP_AFTER:
-        ledger.finish_memo(dispatch_id, state="emitted", attempts=attempts)
+        ledger.finish_memo(
+            dispatch_id, state="emitted", attempts=attempts, claim_gen=claim_gen
+        )
         emit_closeout_memo(
             "producer_gave_up", dispatch_id=dispatch_id, attempts=attempts
         )
@@ -271,6 +275,7 @@ def _reschedule_after_crash(dispatch_id: str) -> None:
         state="owed",
         next_at=time.time() + delay,
         attempts=attempts,
+        claim_gen=claim_gen,
     )
 
 
@@ -327,7 +332,8 @@ async def _try_emit(dispatch_id: str) -> bool:
             next_at=time.time() + max(_CONDUCTOR_HOP_GRACE_S - age, 1.0),
         )
         return False
-    if not ledger.claim_memo(dispatch_id):
+    claim_gen = ledger.claim_memo(dispatch_id)
+    if claim_gen is None:
         return False
     row = ledger.memo_row(dispatch_id)
     if row is None:
@@ -335,7 +341,7 @@ async def _try_emit(dispatch_id: str) -> bool:
     rec = _record(row)
     _kind, _status, _nxt, suppress = classify_memo(row, rec)
     if suppress:
-        ledger.finish_memo(dispatch_id, state="suppressed")
+        ledger.finish_memo(dispatch_id, state="suppressed", claim_gen=claim_gen)
         emit_closeout_memo(
             "suppressed",
             dispatch_id=dispatch_id,
@@ -351,13 +357,18 @@ async def _try_emit(dispatch_id: str) -> bool:
             )
         result = await post_closeout_memo(request)
         await _finish_post_result(
-            ledger, dispatch_id=dispatch_id, row=row, result=result, memo_key=request.memo_key
+            ledger,
+            dispatch_id=dispatch_id,
+            row=row,
+            result=result,
+            memo_key=request.memo_key,
+            claim_gen=claim_gen,
         )
         return True
     kind, status, _nxt, _suppress = classify_memo(row, rec)
     parent_send = build_parent_bus_pointer(row, rec, kind=kind, status=status)
     if parent_send is None:
-        ledger.finish_memo(dispatch_id, state="suppressed")
+        ledger.finish_memo(dispatch_id, state="suppressed", claim_gen=claim_gen)
         emit_closeout_memo(
             "field_rejected",
             dispatch_id=dispatch_id,
@@ -372,10 +383,10 @@ async def _try_emit(dispatch_id: str) -> bool:
         body=body,
     )
     if result.accepted:
-        ledger.finish_memo(dispatch_id, state="emitted")
+        ledger.finish_memo(dispatch_id, state="emitted", claim_gen=claim_gen)
         return True
     if 400 <= result.status_code < 500:
-        ledger.finish_memo(dispatch_id, state="suppressed")
+        ledger.finish_memo(dispatch_id, state="suppressed", claim_gen=claim_gen)
         emit_closeout_memo(
             "field_rejected",
             dispatch_id=dispatch_id,
@@ -388,6 +399,7 @@ async def _try_emit(dispatch_id: str) -> bool:
         row=row,
         result=result,
         memo_key=f"parent:{dispatch_id}",
+        claim_gen=claim_gen,
     )
     return True
 
@@ -426,13 +438,16 @@ async def _finish_post_result(
     row: dict[str, Any],
     result: PostResult,
     memo_key: str,
+    claim_gen: int,
 ) -> None:
     if result.accepted:
-        ledger.finish_memo(dispatch_id, state="emitted")
+        ledger.finish_memo(dispatch_id, state="emitted", claim_gen=claim_gen)
         return
     attempts = int(row.get("memo_attempts") or 0) + 1
     if attempts >= _GAVE_UP_AFTER:
-        ledger.finish_memo(dispatch_id, state="emitted", attempts=attempts)
+        ledger.finish_memo(
+            dispatch_id, state="emitted", attempts=attempts, claim_gen=claim_gen
+        )
         emit_closeout_memo(
             "producer_gave_up",
             dispatch_id=dispatch_id,
@@ -447,6 +462,7 @@ async def _finish_post_result(
         state="owed",
         next_at=time.time() + delay,
         attempts=attempts,
+        claim_gen=claim_gen,
     )
 
 

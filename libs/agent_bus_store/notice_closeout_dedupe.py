@@ -14,6 +14,7 @@ from bus_watch.lane_closeout_parse import parse_closeout_turn
 from fastapi.responses import JSONResponse
 
 from .db.turns import get_turns
+from .notice_closeout_sdk_key import sdk_closeout_dispatch_id, sdk_notice_closeout_key
 from .turns_models import TurnCreated
 
 _SDK_CLOSEOUT_SUBJECT_RE = re.compile(
@@ -27,8 +28,7 @@ _LANE_CLOSEOUT_SUBJECT_RE = re.compile(
 
 
 def _sdk_dispatch_id(subject: str) -> str | None:
-    match = _SDK_CLOSEOUT_SUBJECT_RE.match(subject.strip())
-    return None if match is None else match.group("dispatch_id")
+    return sdk_closeout_dispatch_id(subject)
 
 
 def _lane_id_from_subject(subject: str) -> str | None:
@@ -55,16 +55,7 @@ def notice_closeout_key_for_send(
     *, from_agent: str, subject: str, body: str
 ) -> str | None:
     """Stable insert key for atomic sdk closeout dedupe (thread, from_agent, key)."""
-    if not _is_dedupe_candidate(from_agent=from_agent, subject=subject):
-        return None
-    sdk_id = _sdk_dispatch_id(subject)
-    if sdk_id is not None:
-        return f"sdk:{sdk_id}"
-    lane_fp = _lane_closeout_fingerprint(subject, body)
-    if lane_fp is None:
-        return None
-    lane, settled, landed = lane_fp
-    return f"lane:{lane}:{settled}:{landed}"
+    return sdk_notice_closeout_key(from_agent=from_agent, subject=subject)
 
 
 def _is_dedupe_candidate(*, from_agent: str, subject: str) -> bool:

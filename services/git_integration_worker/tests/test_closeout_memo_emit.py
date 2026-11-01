@@ -115,8 +115,9 @@ def test_claim_is_single_winner() -> None:
         thread.start()
     for thread in threads:
         thread.join()
-    assert results.count(True) == 1
-    assert results.count(False) == 1
+    winners = [gen for gen in results if gen is not None]
+    assert len(winners) == 1
+    assert len(results) - len(winners) == 1
 
 
 def test_hop_successor_suppresses_before_post(monkeypatch: pytest.MonkeyPatch) -> None:
