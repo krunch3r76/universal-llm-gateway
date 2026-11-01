@@ -11,6 +11,9 @@ from tools.cortex_named_tools import (
     _boot_audit_dump as boot_audit_dump,
 )
 from tools.cortex_named_tools import (
+    _boot_data_fetch as data_fetch,
+)
+from tools.cortex_named_tools import (
     _boot_runner as boot_runner,
 )
 from tools.cortex_named_tools import (
@@ -207,9 +210,7 @@ def test_view_materialization_path(monkeypatch: Any, tmp_path: Path) -> None:
 
     mcp = _DummyMcp()
     orchestration_tools.register_orchestration_tools(mcp)
-    result = mcp.tools["cortex_brief"](
-        seat="cursor", views=[view_entity]
-    )
+    result = mcp.tools["cortex_brief"](seat="cursor", views=[view_entity])
 
     sections = {s["section"]: s for s in result.get("sections_available", [])}
     view_section_key = f"views/{view_entity}"
@@ -221,3 +222,208 @@ def test_view_materialization_path(monkeypatch: Any, tmp_path: Path) -> None:
     assert section["edge_count"] == _stub_edge_count
     assert "render_subgraph" in section["hint"]
     assert view_entity in result["briefing_card"]
+
+
+def _logical_registry(tmp_path: Path, monkeypatch: Any) -> None:
+    cfg = tmp_path / "boot-seats.yaml"
+    cfg.write_text(
+        """
+schema_version: 1
+seats:
+  alpha-work:
+    aliases: [alpha]
+    family: gpt
+    platform: web
+    inbox_recipient: alpha-inbox
+""".strip()
+        + "\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("CORTEX_BOOT_IDENTITIES_PATH", str(cfg))
+
+
+def _isolate_boot_io(
+    monkeypatch: Any, tmp_path: Path, events: list[tuple[str, dict]]
+) -> None:
+    def _capture(signal: str, **kwargs: Any) -> None:
+        events.append((signal, kwargs))
+
+    def _cx(method: str, path: str, *_a: Any, **_k: Any) -> dict:
+        assert method == "GET"
+        if path.startswith("/skills"):
+            return {
+                "items": [{"id": "agent_skill:demo"}],
+                "rendered": {"concise_markdown": "# skills index\n"},
+                "unpartitioned_count": 0,
+            }
+        if path.startswith("/threads") or path.startswith("/turns/"):
+            return {
+                "threads": [],
+                "total_unread_threads": 0,
+                "total_unread_turns": 0,
+                "active_since": "14d",
+            }
+        if path.startswith("/boot-continuity"):
+            return {
+                "last_session": None,
+                "continuity_chain": [],
+                "continuations": [],
+                "hints": [],
+            }
+        return {"items": []}
+
+    def _relay(_sandbox: str, method: str, path: str, *_a: Any, **_k: Any) -> dict:
+        return _cx(method, path)
+
+    monkeypatch.setattr(data_fetch, "cortex_cx", _cx)
+    monkeypatch.setattr(data_fetch, "_relay", _relay)
+    monkeypatch.setattr(
+        data_fetch, "_fetch_async_dispatches_from_events", lambda _agent: []
+    )
+    monkeypatch.setattr(boot_runner, "_list_files", lambda _prefix: {"files": []})
+    monkeypatch.setattr(boot_runner, "resolve_transcript", lambda _tid: None)
+    monkeypatch.setattr(boot_runner, "record", _capture)
+    monkeypatch.setattr(boot_audit_dump, "record", _capture)
+    ops = tmp_path / "ops"
+    skills = tmp_path / "skills"
+    audit = tmp_path / "audit"
+    ops.mkdir()
+    skills.mkdir()
+    audit.mkdir()
+    monkeypatch.setattr(boot_runner, "_OPS_CONTEXT_DIR", ops)
+    monkeypatch.setattr(boot_runner, "_SKILLS_INDEX_DIR", skills)
+    monkeypatch.setattr(boot_audit_dump, "AUDIT_DIR", audit)
+
+
+def test_inspect_ceiling_plus_one_emits_warning_without_events(
+    monkeypatch: Any, tmp_path: Path
+) -> None:
+    """Breaks when an over-ceiling INSPECT card writes events or omits the warning."""
+    events: list[tuple[str, dict]] = []
+    _isolate_boot_io(monkeypatch, tmp_path, events)
+    _logical_registry(tmp_path, monkeypatch)
+
+    def _over_ceiling(**kwargs: Any) -> tuple[str, list]:
+        ceiling = boot_runner._card_ceiling_for(kwargs["agent"], kwargs.get("domain"))
+        return ("x" * (ceiling + 1), [])
+
+    monkeypatch.setattr(boot_runner, "render_briefing_card", _over_ceiling)
+    writes: list[str] = []
+
+    def _no_write(*_a: Any, **_k: Any) -> None:
+        writes.append("durable_write_text")
+        raise AssertionError("INSPECT must not write operational or skills files")
+
+    monkeypatch.setattr(boot_runner, "durable_write_text", _no_write)
+    monkeypatch.setattr(
+        boot_runner,
+        "write_audit_dump",
+        lambda **_k: (_ for _ in ()).throw(
+            AssertionError("INSPECT must not write an audit dump")
+        ),
+    )
+
+    mcp = _DummyMcp()
+    orchestration_tools.register_orchestration_tools(mcp)
+    cursor = mcp.tools["boot_inspect"](seat="cursor")
+    logical = mcp.tools["boot_inspect"](seat="alpha-work")
+    for result in (cursor, logical):
+        assert "Card over budget" in result["briefing_card"]
+        assert result["mode"] == "inspect"
+        assert result["audit_dump_path"] is None
+    assert events == []
+    assert writes == []
+
+
+def test_live_overbudget_event_and_skills_index_failure_attribution(
+    monkeypatch: Any, tmp_path: Path
+) -> None:
+    """Breaks when LIVE drops the overbudget event or attributes a skills-index failure to the capability slug."""
+    events: list[tuple[str, dict]] = []
+    _isolate_boot_io(monkeypatch, tmp_path, events)
+    _logical_registry(tmp_path, monkeypatch)
+
+    def _over_ceiling(**kwargs: Any) -> tuple[str, list]:
+        ceiling = boot_runner._card_ceiling_for(kwargs["agent"], kwargs.get("domain"))
+        return ("x" * (ceiling + 1), [])
+
+    monkeypatch.setattr(boot_runner, "render_briefing_card", _over_ceiling)
+
+    def _disk_full(*_a: Any, **_k: Any) -> None:
+        raise OSError("disk full")
+
+    monkeypatch.setattr(boot_runner, "durable_write_text", _disk_full)
+    monkeypatch.setattr(boot_runner, "write_audit_dump", lambda **_k: None)
+
+    mcp = _DummyMcp()
+    orchestration_tools.register_orchestration_tools(mcp)
+    result = mcp.tools["cortex_brief"](seat="alpha-work")
+    assert "Card over budget" in result["briefing_card"]
+    overbudget = [
+        kw for signal, kw in events if signal == "mcp.cortex.boot.card.overbudget"
+    ]
+    assert overbudget
+    assert overbudget[0]["agent"] == "alpha-work"
+    failed = [
+        kw
+        for signal, kw in events
+        if signal == "mcp.cortex.boot.skills_index.writefailed"
+    ]
+    assert failed
+    assert failed[0]["agent"] == "alpha-work"
+    assert failed[0]["agent"] != "gpt-web"
+
+
+def _fake_brief(**kwargs: Any) -> dict[str, Any]:
+    identity = kwargs["identity"]
+    return {
+        "mode": kwargs["mode"].value,
+        "briefing_card": f"card:{identity.agent}",
+        "sections_available": [],
+        "injected_artifacts": [],
+        "session_identity": {"session_id": "inspect", "agent": identity.agent},
+        "audit_dump_path": None,
+    }
+
+
+def test_boot_inspect_diff_with_matrix(monkeypatch: Any, tmp_path: Path) -> None:
+    """Breaks when diff_with falls through to a default seat or raises on unknown hyphenated text."""
+    calls: list[str] = []
+
+    def _run(**kwargs: Any) -> dict[str, Any]:
+        calls.append(kwargs["identity"].agent)
+        return _fake_brief(**kwargs)
+
+    monkeypatch.setattr(orchestration_tools, "run_cortex_brief", _run)
+    mcp = _DummyMcp()
+    orchestration_tools.register_orchestration_tools(mcp)
+    inspect = mcp.tools["boot_inspect"]
+
+    unknown_plain = inspect(seat="cursor", diff_with="orion")
+    assert unknown_plain["diff"] is None
+    assert unknown_plain["secondary"]["reason"] == "seat_unresolved"
+    assert calls == ["claude-cursor"]
+    assert "claude-cursor" not in str(unknown_plain["secondary"])
+
+    calls.clear()
+    unknown_hyphen = inspect(seat="cursor", diff_with="no-such-seat")
+    assert unknown_hyphen["diff"] is None
+    assert unknown_hyphen["secondary"]["reason"] == "seat_unresolved"
+    assert calls == ["claude-cursor"]
+
+    _logical_registry(tmp_path, monkeypatch)
+    calls.clear()
+    logical = inspect(seat="cursor", diff_with="alpha")
+    assert calls == ["claude-cursor", "alpha-work"]
+    assert logical["diff"] is not None
+    assert logical["secondary"]["session_identity"]["agent"] == "alpha-work"
+    assert logical["secondary"]["briefing_card"] == "card:alpha-work"
+
+    bad = tmp_path / "bad-seats.yaml"
+    bad.write_text("schema_version: 9\nseats: {}\n", encoding="utf-8")
+    monkeypatch.setenv("CORTEX_BOOT_IDENTITIES_PATH", str(bad))
+    calls.clear()
+    malformed = inspect(seat="cursor", diff_with="alpha-work")
+    assert malformed["diff"] is None
+    assert malformed["secondary"]["reason"] == "unsupported_schema_version"
+    assert calls == ["claude-cursor"]

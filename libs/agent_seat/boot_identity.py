@@ -168,7 +168,9 @@ def _strict_load_yaml(text: str, *, source: str) -> Any:
     class _StrictLoader(yaml.SafeLoader):
         pass
 
-    def _mapping(loader: yaml.SafeLoader, node: MappingNode, deep: bool = False) -> dict:
+    def _mapping(
+        loader: yaml.SafeLoader, node: MappingNode, deep: bool = False
+    ) -> dict:
         mapping: dict[Any, Any] = {}
         for key_node, value_node in node.value:
             key = loader.construct_object(key_node, deep=deep)
@@ -238,7 +240,9 @@ def _check_runtime_collision(name: str, *, context: str) -> None:
 
 def _parse_registry_document(raw: Any, *, source: str) -> _BootIdentityRegistry:
     if not isinstance(raw, dict):
-        raise BootIdentityConfigError("malformed_yaml", f"{source}: root must be a mapping")
+        raise BootIdentityConfigError(
+            "malformed_yaml", f"{source}: root must be a mapping"
+        )
     unknown_root = set(raw) - _ALLOWED_ROOT_KEYS
     if unknown_root:
         raise BootIdentityConfigError(
@@ -258,13 +262,27 @@ def _parse_registry_document(raw: Any, *, source: str) -> _BootIdentityRegistry:
         )
     seats_raw = raw.get("seats")
     if not isinstance(seats_raw, dict):
-        raise BootIdentityConfigError("malformed_yaml", f"{source}: seats must be a mapping")
+        raise BootIdentityConfigError(
+            "malformed_yaml", f"{source}: seats must be a mapping"
+        )
 
     seats: dict[str, _SeatEntry] = {}
     by_alias: dict[str, str] = {}
 
     for canonical_key, entry in seats_raw.items():
         ctx = f"{source} seats[{canonical_key!r}]"
+        # Stage-manager addresses are rejected even when the token is not a
+        # canonical key (for example a trailing generation digit). Canonical
+        # shape is checked next so non-strings still report noncanonical_key.
+        if isinstance(canonical_key, str) and (
+            canonical_key in STAGE_MANAGER_ADDRESSES
+            or _normalize_query(canonical_key)
+            in {_normalize_query(item) for item in STAGE_MANAGER_ADDRESSES}
+        ):
+            raise BootIdentityConfigError(
+                "alias_collision",
+                f"{ctx}: {canonical_key!r} collides with stage-manager address",
+            )
         _validate_canonical_key(canonical_key, context=ctx)
         _check_runtime_collision(canonical_key, context=ctx)
         if not isinstance(entry, dict):
@@ -313,7 +331,11 @@ def _parse_registry_document(raw: Any, *, source: str) -> _BootIdentityRegistry:
 
         if "surface" in entry:
             surface_val = entry["surface"]
-            if surface_val is None or not isinstance(surface_val, str) or not surface_val.strip():
+            if (
+                surface_val is None
+                or not isinstance(surface_val, str)
+                or not surface_val.strip()
+            ):
                 raise BootIdentityConfigError(
                     "bad_field_type",
                     f"{source}: seat {canonical_key!r} surface must be a nonblank string",
@@ -324,7 +346,11 @@ def _parse_registry_document(raw: Any, *, source: str) -> _BootIdentityRegistry:
 
         if "inbox_recipient" in entry:
             inbox_val = entry["inbox_recipient"]
-            if inbox_val is None or not isinstance(inbox_val, str) or not inbox_val.strip():
+            if (
+                inbox_val is None
+                or not isinstance(inbox_val, str)
+                or not inbox_val.strip()
+            ):
                 raise BootIdentityConfigError(
                     "bad_field_type",
                     f"{source}: seat {canonical_key!r} inbox_recipient must be a nonblank string",
