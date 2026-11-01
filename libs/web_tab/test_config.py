@@ -4,7 +4,11 @@ from __future__ import annotations
 
 import pytest
 
-from web_tab.config import resolve_cdp_url
+from web_tab.config import (
+    load_web_tab_houses,
+    resolve_cdp_url,
+    resolve_cdp_url_for_surface,
+)
 
 
 def test_resolve_cdp_url_accepts_default_provision_ports() -> None:
@@ -83,6 +87,49 @@ def test_resolve_cdp_url_malformed_via_env(monkeypatch: pytest.MonkeyPatch) -> N
     monkeypatch.setenv("WEB_TAB_CDP_URL", "http://127.0.0.1:9343")
     with pytest.raises(ValueError, match="invalid_cdp_url:malformed"):
         resolve_cdp_url("http://[")
+
+
+def test_houses_yaml_maps_chatgpt_and_claude() -> None:
+    houses = load_web_tab_houses()
+    assert houses["chatgpt"].cdp_url == "http://127.0.0.1:9342"
+    assert houses["chatgpt"].display == ":12"
+    assert houses["claude"].cdp_url == "http://127.0.0.1:9343"
+    assert houses["claude"].display == ":13"
+    assert "grok" not in houses
+
+
+def test_resolve_cdp_url_for_surface_defaults_by_surface() -> None:
+    assert (
+        resolve_cdp_url_for_surface("chatgpt", None) == "http://127.0.0.1:9342"
+    )
+    assert resolve_cdp_url_for_surface("claude", None) == "http://127.0.0.1:9343"
+    assert resolve_cdp_url_for_surface("openai", None) == "http://127.0.0.1:9342"
+
+
+def test_resolve_cdp_url_for_surface_mismatch_refuses_wrong_house() -> None:
+    with pytest.raises(ValueError, match="cdp_surface_mismatch"):
+        resolve_cdp_url_for_surface("claude", "http://127.0.0.1:9342")
+
+
+def test_resolve_cdp_url_for_surface_grok_requires_explicit_or_env(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("WEB_TAB_CDP_URL", raising=False)
+    with pytest.raises(ValueError, match="missing_cdp_url"):
+        resolve_cdp_url_for_surface("grok", None)
+    monkeypatch.setenv("WEB_TAB_CDP_URL", "http://127.0.0.1:9225")
+    assert resolve_cdp_url_for_surface("grok", None) == "http://127.0.0.1:9225"
+
+
+def test_resolve_cdp_url_for_surface_env_override_per_house(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("WEB_TAB_CDP_URL_CHATGPT", "http://127.0.0.1:9342")
+    assert (
+        resolve_cdp_url_for_surface("chatgpt", None) == "http://127.0.0.1:9342"
+    )
+    monkeypatch.setenv("WEB_TAB_CDP_URL_CHATGPT", "http://127.0.0.1:9225")
+    assert resolve_cdp_url_for_surface("chatgpt", None) == "http://127.0.0.1:9225"
 
 
 def test_resolve_cdp_url_host_error_truncates_long_host() -> None:

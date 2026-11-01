@@ -9,7 +9,7 @@ from typing import Any
 
 from web_tab.binding_snapshot import read_binding_head
 from web_tab.cdp_port import CdpObservationPort, default_cdp_port
-from web_tab.config import resolve_cdp_url
+from web_tab.config import resolve_cdp_for_web_tab_options
 from web_tab.connector_plane import (
     default_attestation_reader,
     observe_connector_plane_from_server,
@@ -71,11 +71,11 @@ async def build_status_report(
     and must not create a missing database.
     """
     try:
-        resolved_cdp = resolve_cdp_url(cdp_url)
+        resolved_cdp = resolve_cdp_for_web_tab_options(surface=surface, cdp_url=cdp_url)
     except ValueError as exc:
         msg = str(exc)
-        if msg == "missing_cdp_url":
-            return {"ok": False, "error": {"code": "missing_cdp_url"}}
+        if msg in {"missing_cdp_url", "cdp_surface_mismatch"}:
+            return {"ok": False, "error": {"code": msg}}
         if msg.startswith("invalid_cdp_url"):
             return {"ok": False, "error": {"code": "invalid_cdp_url", "message": msg}}
         raise

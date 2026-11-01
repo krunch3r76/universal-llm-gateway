@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import asyncio
+from pathlib import Path
 from unittest.mock import patch
 
+import yaml
 from fastmcp import FastMCP
 from request_profile import bind_request
 
@@ -111,6 +113,52 @@ def test_production_listing_includes_web_tab_write() -> None:
     assert _ids_from_production_listing(_LISTING) == frozenset(
         {"web-tab-status", "web-tab-write"}
     )
+
+
+def test_canonical_write_schemas_cdp_url_optional() -> None:
+    root = Path(__file__).resolve().parents[3]
+    entries = yaml.safe_load((root / "config/mcp/canonical.yaml").read_text())
+    write_names = {
+        f"web_tab_write_{op}"
+        for op in ("open", "bind", "paste", "submit", "verify_committed", "read_reply")
+    }
+    for entry in entries:
+        if not isinstance(entry, dict):
+            continue
+        name = entry.get("canonical_name")
+        if name not in write_names:
+            continue
+        required = entry.get("json_schema", {}).get("required") or []
+        assert "cdp_url" not in required, f"{name} must not require cdp_url"
+        if name in {"web_tab_write_open", "web_tab_write_bind", "web_tab_write_paste"}:
+            assert "grant" in required
+            assert "authorization_source" in required
+
+
+def test_write_resolves_cdp_from_surface_when_omitted() -> None:
+    clear_installed_pipeline_cache()
+    fn = _registered_tool()
+    captured: dict = {}
+
+    def _run(pipeline_id, messages, options, timeout):  # noqa: ANN001
+        captured["options"] = options
+        return {"content": "{}"}
+
+    with (
+        patch("tools.pipeline._pipeline_list", return_value=_LISTING),
+        patch("tools.web_tab_write._pipeline_run", side_effect=_run),
+        bind_request("default", surface="code", caller_identity="oauth:real"),
+    ):
+        result = fn(
+            op="open",
+            surface="claude",
+            url="https://claude.ai/chat/x",
+            grant="explicit",
+            authorization_source="agent-bus:21642#13",
+        )
+    assert "error" not in result
+    assert captured["options"]["surface"] == "claude"
+    assert "cdp_url" not in captured["options"]
 
 
 def test_list_shaped_members_are_unavailable() -> None:

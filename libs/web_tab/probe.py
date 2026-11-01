@@ -6,7 +6,7 @@ import asyncio
 from typing import Any
 
 from web_tab.cdp_port import CdpObservationPort, default_cdp_port
-from web_tab.config import resolve_cdp_url
+from web_tab.config import resolve_cdp_for_web_tab_options
 from web_tab.events import emit_probe_completed
 from web_tab.observation import observe_actuation_plane
 from web_tab.surface_adapter import probe_js_for_surface, unsupported_surface_error
@@ -23,11 +23,11 @@ async def probe_target(
 ) -> dict[str, Any]:
     """Read-only probe for one CDP target (or list-only when *target_id* omitted)."""
     try:
-        resolved_cdp = resolve_cdp_url(cdp_url)
+        resolved_cdp = resolve_cdp_for_web_tab_options(surface=surface, cdp_url=cdp_url)
     except ValueError as exc:
         msg = str(exc)
-        if msg == "missing_cdp_url":
-            return {"ok": False, "error": {"code": "missing_cdp_url"}}
+        if msg in {"missing_cdp_url", "cdp_surface_mismatch"}:
+            return {"ok": False, "error": {"code": msg}}
         if msg.startswith("invalid_cdp_url"):
             return {"ok": False, "error": {"code": "invalid_cdp_url", "message": msg}}
         raise

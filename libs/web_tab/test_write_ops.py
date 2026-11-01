@@ -11,6 +11,8 @@ from web_tab.cdp_actuation import RecordingActuationPort
 from web_tab.grants import require_grant
 from web_tab.tab_binding_store import load_binding
 from web_tab.write_ops import (
+    _resolve_write_cdp_url,
+    dispatch_write_op,
     execute_bind,
     execute_open,
     execute_paste,
@@ -293,3 +295,25 @@ async def test_target_lock_refuses_nonblocking_fcntl(
     second = _FcntlFileLock(path)
     assert second.acquire(blocking=False) is False
     first.release()
+
+
+def test_resolve_write_cdp_url_maps_surface_without_explicit() -> None:
+    url, err = _resolve_write_cdp_url({"surface": "claude"})
+    assert err is None
+    assert url == "http://127.0.0.1:9343"
+
+
+@pytest.mark.asyncio
+async def test_dispatch_refuses_claude_on_chatgpt_cdp_port() -> None:
+    result = await dispatch_write_op(
+        "bind",
+        {
+            "surface": "claude",
+            "cdp_url": "http://127.0.0.1:9342",
+            "conversation_url": "https://claude.ai/chat/x",
+            "target_id": "t1",
+            "grant": "explicit",
+            "authorization_source": _AUTH,
+        },
+    )
+    assert result == {"ok": False, "code": "cdp_surface_mismatch"}

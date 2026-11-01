@@ -1,0 +1,10 @@
+# Io-agent browser houses — keep in sync with scripts/io-agent-*-provision.py
+surfaces:
+  chatgpt:
+    cdp_url: http://127.0.0.1:9342
+    display: ":12"
+    profile: ~/.gateway/chatgpt-io
+  claude:
+    cdp_url: http://127.0.0.1:9343
+    display: ":13"
+    profile: ~/.gateway/claude-ai-io
