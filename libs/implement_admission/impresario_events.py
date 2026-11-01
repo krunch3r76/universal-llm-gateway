@@ -141,6 +141,18 @@ def ImpresarioWitnessRetracted(  # noqa: N802
 
 
 @event_factory
+def ImpresarioWitnessCleared(  # noqa: N802
+    work_key: str,
+    row: str,
+    reason: str = "witness_clear",
+) -> Event:
+    return Event(
+        signal="impresario.witness.cleared",
+        payload={"work_key": work_key, "row": row, "reason": reason},
+    )
+
+
+@event_factory
 def ImpresarioPromotionAppended(  # noqa: N802
     work_key: str,
     next_row: str,

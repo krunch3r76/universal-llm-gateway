@@ -20,11 +20,11 @@ from typing import Any
 from implement_admission.closeout_helpers import cortex_files_root
 from implement_admission.conductor_score_journal import (
     G_ROWS,
+    effective_retracted_rows_from_journal,
     forward_mutate_tip,
     load_journal,
     read_tip,
     resolve_scoreboard_rows,
-    retracted_rows_from_journal,
     tip_sha256,
     witnessed_done_from_journal,
 )
@@ -332,10 +332,13 @@ def fold_scoreboard(
             exc=exc,
         )
     journal_records = load_journal(slug, files_root=root)
-    retracted_rows = retracted_rows_from_journal(journal_records)
     prior_witnessed = witnessed_done_from_journal(journal_records)
     current_witnessed = frozenset(
         row_id for row_id, w in witnesses.items() if w is not None
+    )
+    retracted_rows = effective_retracted_rows_from_journal(
+        journal_records,
+        live_witnessed=current_witnessed,
     )
     witnessed_done = (prior_witnessed | current_witnessed) - retracted_rows
     work_key = deps.source_ref or f"todo:{slug}"
@@ -352,11 +355,11 @@ def fold_scoreboard(
     for row_id in rows:
         raw_status = (row_status_in_tip(raw_body, row_id) or "OPEN").upper()
         stops = stops_block_reason(raw_body, row_id) if row_id == "G4" else None
-        if row_id in retracted_rows:
+        if witnesses.get(row_id) is not None and row_id not in retracted_rows:
+            row_status[row_id] = "DONE"
+        elif row_id in retracted_rows:
             row_status[row_id] = "RETRACTED"
             missing[row_id] = "witness retracted"
-        elif witnesses.get(row_id) is not None:
-            row_status[row_id] = "DONE"
         elif raw_status in {"DONE", "CLAIMED"}:
             row_status[row_id] = raw_status
             if raw_status == "CLAIMED":
