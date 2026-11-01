@@ -4,12 +4,30 @@ from __future__ import annotations
 
 import math
 import os
-from urllib.parse import urlsplit
+from urllib.parse import SplitResult, urlsplit
 
 _DEFAULT_CDP_EVALUATE_TIMEOUT_S = 10.0
 _DEFAULT_CDP_CLEANUP_TIMEOUT_S = 1.0
 _DEFAULT_CDP_PORTS = frozenset({9342, 9343})
 _LOOPBACK_HOSTS = frozenset({"127.0.0.1", "localhost", "::1"})
+_HOST_ERROR_MAX_LEN = 64
+
+
+def _safe_urlsplit(url: str) -> SplitResult | None:
+    """Parse *url* without raising on malformed IPv6/bracket forms."""
+    try:
+        return urlsplit(url)
+    except ValueError:
+        return None
+
+
+def _host_error_suffix(host: str) -> str:
+    """Host fragment for errors; truncate long caller-controlled strings."""
+    if not host:
+        return "missing"
+    if len(host) > _HOST_ERROR_MAX_LEN:
+        return host[:_HOST_ERROR_MAX_LEN]
+    return host
 
 
 def _allowed_cdp_ports() -> frozenset[int]:
@@ -17,10 +35,13 @@ def _allowed_cdp_ports() -> frozenset[int]:
     ports = set(_DEFAULT_CDP_PORTS)
     env_url = os.environ.get("WEB_TAB_CDP_URL", "").strip()
     if env_url:
-        try:
-            env_port = urlsplit(env_url).port
-        except ValueError:
-            env_port = None
+        env_parts = _safe_urlsplit(env_url)
+        env_port = None
+        if env_parts is not None:
+            try:
+                env_port = env_parts.port
+            except ValueError:
+                env_port = None
         if env_port is not None:
             ports.add(env_port)
     return frozenset(ports)
@@ -29,13 +50,15 @@ def _allowed_cdp_ports() -> frozenset[int]:
 def _validate_cdp_url(url: str) -> str:
     """Require loopback HTTP CDP on an allowlisted port."""
     raw = str(url).strip()
-    parts = urlsplit(raw)
+    parts = _safe_urlsplit(raw)
+    if parts is None:
+        raise ValueError("invalid_cdp_url:malformed")
     scheme = (parts.scheme or "").lower()
     if scheme != "http":
         raise ValueError(f"invalid_cdp_url:scheme:{scheme or 'missing'}")
     host = (parts.hostname or "").lower()
     if host not in _LOOPBACK_HOSTS:
-        raise ValueError(f"invalid_cdp_url:host:{host or 'missing'}")
+        raise ValueError(f"invalid_cdp_url:host:{_host_error_suffix(host)}")
     try:
         port = parts.port
     except ValueError as exc:

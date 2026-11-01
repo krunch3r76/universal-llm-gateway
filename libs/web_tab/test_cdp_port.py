@@ -191,6 +191,44 @@ async def test_observe_actuation_out_of_scope_clears_url_epoch() -> None:
 
 
 @pytest.mark.asyncio
+async def test_observe_actuation_http_tab_out_of_scope_without_connect() -> None:
+    """Cleartext tab URLs are filtered before CDP attach (same as evaluate path)."""
+    port = RecordingCdpPort(
+        tabs=[{"id": "http-tab", "url": "http://claude.ai/", "title": "cleartext"}],
+        evaluate_results={"http-tab": {"signed_in": True}},
+    )
+    plane = await observe_actuation_plane(
+        cdp_url="http://127.0.0.1:9343",
+        target_id="http-tab",
+        port=port,
+        probe_js="() => ({})",
+        surface="claude",
+    )
+    assert plane["error"]["code"] == "target_out_of_scope"
+    assert port.evaluated_targets == []
+
+
+@pytest.mark.asyncio
+async def test_malformed_bracket_tab_in_list_does_not_fail_probe() -> None:
+    port = RecordingCdpPort(
+        tabs=[
+            {"id": "ok", "url": "https://claude.ai/", "title": "ok"},
+            {"id": "garbage", "url": "https://[claude.ai/", "title": "bad"},
+        ],
+        evaluate_results={"ok": {"signed_in": True}},
+    )
+    plane = await observe_actuation_plane(
+        cdp_url="http://127.0.0.1:9343",
+        target_id="ok",
+        port=port,
+        probe_js="() => ({})",
+        surface="claude",
+    )
+    assert plane["signed_in"]["signed_in"] is True
+    assert port.evaluated_targets == ["ok"]
+
+
+@pytest.mark.asyncio
 async def test_malformed_port_tab_in_list_does_not_fail_probe() -> None:
     port = RecordingCdpPort(
         tabs=[

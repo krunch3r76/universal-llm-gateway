@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
-from urllib.parse import urlsplit
+from urllib.parse import SplitResult
+
+from web_tab.config import _safe_urlsplit
 
 CHATGPT_PROBE_JS = """
 () => {
@@ -53,7 +55,7 @@ def signed_in_from_signals(*, login_wall: bool, composer: bool) -> bool | None:
     return None
 
 
-def _parsed_port(parts) -> int | None:
+def _parsed_port(parts: SplitResult) -> int | None:
     """Return URL port or None; invalid port strings do not raise."""
     try:
         return parts.port
@@ -67,7 +69,9 @@ def canonical_page_url(url: str) -> str:
     Query strings are kept so two tabs that differ only by query stay distinct
     when their paths match.
     """
-    parts = urlsplit((url or "").strip())
+    parts = _safe_urlsplit((url or "").strip())
+    if parts is None:
+        return ""
     scheme = (parts.scheme or "").lower()
     host = (parts.hostname or "").lower()
     port = _parsed_port(parts)
@@ -80,7 +84,7 @@ def canonical_page_url(url: str) -> str:
     )
 
 
-def _url_https_default_port(parts) -> bool:
+def _url_https_default_port(parts: SplitResult) -> bool:
     """Refuse cleartext and non-default HTTPS ports before host matching."""
     if (parts.scheme or "").lower() != "https":
         return False
@@ -92,8 +96,8 @@ def _url_https_default_port(parts) -> bool:
 
 
 def _chatgpt_url_in_scope(url: str) -> bool:
-    parts = urlsplit((url or "").strip())
-    if not _url_https_default_port(parts):
+    parts = _safe_urlsplit((url or "").strip())
+    if parts is None or not _url_https_default_port(parts):
         return False
     host = (parts.hostname or "").lower()
     if host not in _CHATGPT_HOSTS:
@@ -118,8 +122,8 @@ def url_in_surface_scope(surface: str, url: str) -> bool:
     """
     if surface not in _SUPPORTED_SURFACES:
         return False
-    parts = urlsplit((url or "").strip())
-    if not _url_https_default_port(parts):
+    parts = _safe_urlsplit((url or "").strip())
+    if parts is None or not _url_https_default_port(parts):
         return False
     if surface in _CHATGPT_SURFACES:
         return _chatgpt_url_in_scope(url)
