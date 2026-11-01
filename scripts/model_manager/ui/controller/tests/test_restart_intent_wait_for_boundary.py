@@ -330,7 +330,7 @@ async def test_wait_for_boundary_caller_ttl_expires_after_arm(tmp_path) -> None:
     assert released == [(intent.intent_id, 1)]
     stored = store.get(intent.intent_id)
     assert stored is not None
-    assert stored.status == "cancelled"
+    assert stored.status == "expired"
 
 
 def test_resolve_drain_arm_helpers() -> None:
@@ -951,7 +951,7 @@ async def test_wait_for_boundary_park_live_expires_ttl_while_armed(
         assert released, "TTL expiry must release the armed drain"
         stored = store.get(intent.intent_id)
         assert stored is not None
-        assert stored.status == "cancelled"
+        assert stored.status == "expired"
     finally:
         if not task.done():
             task.cancel()

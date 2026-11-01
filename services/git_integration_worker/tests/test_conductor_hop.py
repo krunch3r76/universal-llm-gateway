@@ -429,6 +429,7 @@ def test_build_hop_team_dispatch_body_clones_predecessor() -> None:
     assert "dispatch_thread_id" not in body
     assert body["generation_options"]["summoning_thread_id_unresolved"] is True
     assert body["source_ref"] == _WORK_KEY
+    assert body["work_key"] == _WORK_KEY
     assert "packet_kind" not in body
     assert body["lane"] == "B"
     assert str(body["model"]).startswith("cursor/")
@@ -3924,7 +3925,7 @@ async def test_row_pinned_stored_harvest_21452_16_no_post_until_reply() -> None:
     dispatch_id = "pred-row-pinned-21452-16"
     summoning = "9638"
     exec_id = "8c02d5d3-a6bd-4aab-8314-2fae67d91143"
-    parent_row = _row_pinned_stored_harvest_terminal_row(
+    _row_pinned_stored_harvest_terminal_row(
         ledger,
         dispatch_id=dispatch_id,
         exec_id=exec_id,

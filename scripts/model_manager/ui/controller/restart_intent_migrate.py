@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import sqlite3
+from collections.abc import Iterator
+from contextlib import contextmanager
 from datetime import UTC, datetime, timedelta
 
 from .restart_intent_states import (
@@ -163,50 +165,57 @@ def apply_restart_intent_schema(conn: sqlite3.Connection) -> None:
     _ensure_expired_status(conn)
 
 
-def _ensure_expired_status(conn: sqlite3.Connection) -> None:
-    """Widen CHECK to allow terminal ``expired`` (friction:41247)."""
+_EXPIRED_MIGRATION_TEMP = "restart_intents_expired_v1"
+
+_EXPIRED_MIGRATION_TARGET_COLS = (
+    "intent_id",
+    "service",
+    "action",
+    "status",
+    "drain_epoch",
+    "worker_id",
+    "worker_started_at",
+    "deadline_at",
+    "last_seen_event_seq",
+    "reason",
+    "kill_boundary_at",
+    "caller_agent",
+    "armed_at",
+    "expires_at",
+    "park_live",
+    "park_summary",
+    "wait_for_boundary",
+    "status_reason",
+    "status_changed_at",
+    "transitions",
+    "arming_lanes",
+    "caller_thread_id",
+    "created_at",
+    "updated_at",
+)
+
+
+def _table_exists(conn: sqlite3.Connection, name: str) -> bool:
+    row = conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name=? LIMIT 1",
+        (name,),
+    ).fetchone()
+    return row is not None
+
+
+def _restart_intents_allows_expired(conn: sqlite3.Connection) -> bool:
     row = conn.execute(
         "SELECT sql FROM sqlite_master WHERE type='table' AND name='restart_intents'"
     ).fetchone()
     if row is None or row[0] is None:
-        return
-    if f"'{STATUS_EXPIRED}'" in str(row[0]):
-        return
-    old_cols = [
-        r[1]
-        for r in conn.execute("PRAGMA table_info(restart_intents)").fetchall()
-    ]
-    new_cols = [
-        "intent_id",
-        "service",
-        "action",
-        "status",
-        "drain_epoch",
-        "worker_id",
-        "worker_started_at",
-        "deadline_at",
-        "last_seen_event_seq",
-        "reason",
-        "kill_boundary_at",
-        "caller_agent",
-        "armed_at",
-        "expires_at",
-        "park_live",
-        "park_summary",
-        "wait_for_boundary",
-        "status_reason",
-        "status_changed_at",
-        "transitions",
-        "arming_lanes",
-        "caller_thread_id",
-        "created_at",
-        "updated_at",
-    ]
-    shared = [c for c in new_cols if c in old_cols]
-    col_csv = ", ".join(shared)
-    conn.executescript(
+        return False
+    return f"'{STATUS_EXPIRED}'" in str(row[0])
+
+
+def _create_expired_migration_temp(conn: sqlite3.Connection) -> None:
+    conn.execute(
         f"""
-        CREATE TABLE restart_intents_expired_v1 (
+        CREATE TABLE {_EXPIRED_MIGRATION_TEMP} (
             intent_id            TEXT PRIMARY KEY,
             service              TEXT NOT NULL,
             action               TEXT NOT NULL DEFAULT 'restart',
@@ -237,14 +246,77 @@ def _ensure_expired_status(conn: sqlite3.Connection) -> None:
             caller_thread_id     TEXT,
             created_at           TEXT NOT NULL,
             updated_at           TEXT NOT NULL
-        );
-        INSERT INTO restart_intents_expired_v1 ({col_csv})
-        SELECT {col_csv} FROM restart_intents;
-        DROP TABLE restart_intents;
-        ALTER TABLE restart_intents_expired_v1 RENAME TO restart_intents;
+        )
         """
     )
-    _ensure_kill_cas_indexes(conn)
+
+
+@contextmanager
+def _expired_status_migration_txn(conn: sqlite3.Connection) -> Iterator[None]:
+    """One explicit txn for the expired CHECK rebuild (IMMEDIATE when alone)."""
+    if conn.in_transaction:
+        conn.execute("SAVEPOINT restart_intents_expired_migration")
+        try:
+            yield
+        except Exception:
+            conn.execute("ROLLBACK TO SAVEPOINT restart_intents_expired_migration")
+            raise
+        finally:
+            conn.execute("RELEASE SAVEPOINT restart_intents_expired_migration")
+    else:
+        conn.execute("BEGIN IMMEDIATE")
+        try:
+            yield
+        except Exception:
+            conn.execute("ROLLBACK")
+            raise
+        else:
+            conn.execute("COMMIT")
+
+
+def _ensure_expired_status(conn: sqlite3.Connection) -> None:
+    """Widen CHECK to allow terminal ``expired`` (friction:41247).
+
+    Idempotent and atomic: ``executescript`` implicit commits left
+    ``restart_intents_expired_v1`` behind on crash (41247). Other table-rebuild
+    paths in this module still use ``executescript`` (``restart_intents_v2`` in
+    ``apply_restart_intent_schema``) and share that risk if interrupted mid-run.
+    """
+    with _expired_status_migration_txn(conn):
+        has_main = _table_exists(conn, "restart_intents")
+        has_temp = _table_exists(conn, _EXPIRED_MIGRATION_TEMP)
+
+        if has_main and _restart_intents_allows_expired(conn):
+            if has_temp:
+                conn.execute(f"DROP TABLE IF EXISTS {_EXPIRED_MIGRATION_TEMP}")
+            return
+
+        if not has_main and has_temp:
+            conn.execute(
+                f"ALTER TABLE {_EXPIRED_MIGRATION_TEMP} RENAME TO restart_intents"
+            )
+            _ensure_kill_cas_indexes(conn)
+            return
+
+        if not has_main:
+            return
+
+        conn.execute(f"DROP TABLE IF EXISTS {_EXPIRED_MIGRATION_TEMP}")
+        old_cols = {
+            r[1] for r in conn.execute("PRAGMA table_info(restart_intents)").fetchall()
+        }
+        shared = [c for c in _EXPIRED_MIGRATION_TARGET_COLS if c in old_cols]
+        col_csv = ", ".join(shared)
+        _create_expired_migration_temp(conn)
+        conn.execute(
+            f"INSERT INTO {_EXPIRED_MIGRATION_TEMP} ({col_csv}) "
+            f"SELECT {col_csv} FROM restart_intents"
+        )
+        conn.execute("DROP TABLE restart_intents")
+        conn.execute(
+            f"ALTER TABLE {_EXPIRED_MIGRATION_TEMP} RENAME TO restart_intents"
+        )
+        _ensure_kill_cas_indexes(conn)
 
 
 def _ensure_arming_lanes_column(conn: sqlite3.Connection) -> None:

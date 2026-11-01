@@ -357,7 +357,12 @@ class CreditPolicy:
                     )
 
                 window_total = snap.committed_usd + snap.open_reservations_usd
-                if reservation.mcp_class and snap.open_mcp_count > 0:
+                # maestro 15851#3919 — per-root-lease serialization deferred until a cap returns.
+                if (
+                    cap_usd is not None
+                    and reservation.mcp_class
+                    and snap.open_mcp_count > 0
+                ):
                     return Refuse(
                         code="anthropic_mcp_serialized",
                         http_status=429,

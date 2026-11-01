@@ -86,8 +86,7 @@ from .restart_intent_reason_codes import (
     TARGET_GONE,
     reason_code,
 )
-from .restart_intent_states import LIVE_STATUSES
-from .restart_intent_states import STATUS_EXPIRED
+from .restart_intent_states import LIVE_STATUSES, STATUS_EXPIRED
 from .restart_intent_store import (
     STATUS_CANCELLED,
     STATUS_COMPLETED,

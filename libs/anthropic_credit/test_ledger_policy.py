@@ -556,3 +556,40 @@ def test_omitted_ceilings_admit_past_former_mcp_stop(tmp_path: Path) -> None:
         now=_T0,
     )
     assert isinstance(admitted, Admit)
+
+
+def test_mcp_parallel_admitted_when_cap_none_skips_global_serialization(
+    tmp_path: Path,
+) -> None:
+    """Break covered: cap=None must not take global MCP serialization (nested synthesizer deadlock)."""
+    cfg = _make_cfg(
+        tmp_path / "no-cap-parallel-mcp",
+        hard_stop_usd=None,
+        mcp_connector_stop_usd=None,
+    )
+    policy = CreditPolicy(cfg)
+    mcp_body = {
+        "model": "claude-sonnet-5",
+        "max_tokens": 1024,
+        "mcp_servers": [
+            {"type": "url", "url": "https://example.com/mcp", "name": "nested"}
+        ],
+        "messages": [{"role": "user", "content": "x"}],
+    }
+    first = policy.admit(
+        "mcp-open-1",
+        "anthropic/claude-sonnet-5",
+        mcp_body,
+        token_count=100,
+        now=_T0,
+    )
+    assert isinstance(first, Admit)
+    second = policy.admit(
+        "mcp-open-2",
+        "anthropic/claude-sonnet-5",
+        mcp_body,
+        token_count=100,
+        now=_T0,
+    )
+    assert isinstance(second, Admit)
+    assert second.mcp_class is True

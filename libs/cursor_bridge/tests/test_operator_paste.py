@@ -563,6 +563,10 @@ async def test_deliver_operator_paste_refuses_agent_id_mismatch(
         "cursor_bridge.operator_paste.probe_surface",
         AsyncMock(return_value=surface),
     )
+    monkeypatch.setattr(
+        "cursor_bridge.operator_paste.select_sidebar_target",
+        AsyncMock(return_value={"clicked": True}),
+    )
 
     out = await deliver_operator_paste(
         display="10",
@@ -868,6 +872,81 @@ async def test_submit_retry_skips_cdp_enter_when_transcript_has_watermark(
     enter.assert_not_awaited()
     assert out["submitted"] is True
     assert out["submit_methods"] == ["send_button"]
+
+
+@pytest.mark.parametrize(
+    "enter_reason",
+    [
+        "enter_wrong_active_agent",
+        "enter_nonce_missing",
+        "enter_operator_active",
+        "enter_composer_not_focused_operator_active",
+    ],
+)
+@pytest.mark.asyncio
+async def test_enter_retry_refused_without_cdp_enter_success(
+    monkeypatch: pytest.MonkeyPatch, enter_reason: str
+) -> None:
+    surface = {
+        "state": "chat_list",
+        "active_title": "Test Grok",
+        "active_agent_id": "agent-1",
+        "titles": ["Test Grok"],
+        "title_counts": {"Test Grok": 1},
+        "agent_ids": {"agent-1": "Test Grok"},
+        "composer_draft": "",
+        "generating": False,
+        "recent_messages": [],
+    }
+    stuck = {**surface, "composer_draft": "stuck draft"}
+
+    async def _poll_submit(_ws: str, **_: Any) -> tuple[dict[str, Any], bool]:
+        return stuck, False
+
+    enter = AsyncMock(
+        return_value={"ok": False, "reason": enter_reason, "method": "cdp_enter"}
+    )
+    monkeypatch.setattr(
+        "cursor_bridge.operator_paste.list_pages",
+        lambda _o: [{"title": "Grok Bot", "web_socket_debugger_url": "ws://x"}],
+    )
+    monkeypatch.setattr(
+        "cursor_bridge.operator_paste.visible_sidebar_agent_ids",
+        AsyncMock(return_value={"agent-1"}),
+    )
+    monkeypatch.setattr(
+        "cursor_bridge.operator_paste.probe_surface",
+        AsyncMock(return_value=surface),
+    )
+    monkeypatch.setattr(
+        "cursor_bridge.operator_paste._poll_submit_verified", _poll_submit
+    )
+    monkeypatch.setattr(
+        "cursor_bridge.operator_paste._insert_composer_text",
+        AsyncMock(return_value={"ok": True}),
+    )
+    monkeypatch.setattr(
+        "cursor_bridge.operator_paste._submit_composer_send_button",
+        AsyncMock(return_value={"ok": True, "send_fallback_clicked": True}),
+    )
+    monkeypatch.setattr("cursor_bridge.operator_paste._submit_composer_enter", enter)
+    monkeypatch.setattr(
+        "cursor_bridge.operator_paste._capture_screenshot_artifact",
+        AsyncMock(return_value={"sha256_png": None, "screenshot_path": None}),
+    )
+
+    out = await deliver_operator_paste(
+        display="10",
+        app="grok",
+        agent_id="agent-1",
+        text="Operator relay test",
+        grant="operator",
+        authorization_source="agent-bus:21614#2",
+        scope="test",
+    )
+    assert out["submitted"] is False
+    assert f"cdp_enter_refused:{enter_reason}" in out["submit_methods"]
+    enter.assert_awaited_once()
 
 
 @pytest.mark.asyncio
