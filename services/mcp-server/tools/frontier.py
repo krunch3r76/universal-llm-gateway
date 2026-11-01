@@ -70,6 +70,19 @@ if TYPE_CHECKING:
 
 logger = get_logger(__name__)
 
+_REGISTRY_NEXT_TEMPLATE = (
+    "Work registry: read team_dispatch(op=registry, work_key_prefix=<key>) before starting "
+    "work on a work_key; claim with op=claim (seat_name, address) and keep it current with "
+    "op=claim_update; this dispatch was auto-recorded as {row_id}."
+)
+
+
+def _registry_next_hint(*, row_id: str) -> str:
+    """Operator-facing _next line after generate/to_thread admit (MCP-local copy of GIW wording)."""
+    rid = str(row_id or "").strip() or "(unknown)"
+    return _REGISTRY_NEXT_TEMPLATE.format(row_id=rid)
+
+
 # Docstring placeholders — filled from job_vocab so the orientation surface
 # cannot teach a set that admit refuses (friction a:37159).
 _GENERATE_JOBS_PLACEHOLDER = "GENERATE_JOBS"
@@ -1291,11 +1304,12 @@ def register_frontier_tools(mcp: FastMCP) -> None:
         ):
             row_id = result.get("registry_row_id") or result.get("dispatch_id")
             if row_id:
-                from services.git_integration_worker.cursor_sdk_work_registry_admit import (
-                    registry_next_hint,
-                )
-
-                result["_next"] = registry_next_hint(row_id=str(row_id))
+                try:
+                    result["_next"] = _registry_next_hint(row_id=str(row_id))
+                except Exception:
+                    logger.exception(
+                        "team_dispatch: failed to attach work-registry _next hint"
+                    )
         return result
 
     description = _format_team_dispatch_description(team_dispatch.__doc__ or "")
