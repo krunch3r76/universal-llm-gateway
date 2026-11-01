@@ -265,6 +265,8 @@ def forward_mutate_tip_at(
     )
     if reason == "witness_retract":
         _emit_impresario_witness_retracted(locus, rows)
+    elif reason == "witness_clear":
+        _emit_impresario_witness_cleared(locus, rows)
     return JournalAppendResult(
         tip_sha=new_sha,
         record_count=len(load_journal_at(locus)),
@@ -299,3 +301,26 @@ def _emit_impresario_witness_retracted(
             )
         except Exception:  # noqa: BLE001 — observation must not fail the mutate
             logger.debug("impresario.witness.retracted emit skipped", exc_info=True)
+
+
+def _emit_impresario_witness_cleared(
+    locus: ScoreboardLocus, rows: tuple[str, ...]
+) -> None:
+    import logging
+
+    from implement_admission.impresario_events import ImpresarioWitnessCleared
+
+    logger = logging.getLogger(__name__)
+    work_key = _work_key_from_locus(locus)
+    for row_id in rows:
+        try:
+            from scripts.model_manager.observation_event import _emit_sync
+
+            event = ImpresarioWitnessCleared(work_key=work_key, row=row_id)
+            _emit_sync(
+                event.signal,
+                dict(event.payload),
+                source="implement_admission",
+            )
+        except Exception:  # noqa: BLE001 — observation must not fail the mutate
+            logger.debug("impresario.witness.cleared emit skipped", exc_info=True)

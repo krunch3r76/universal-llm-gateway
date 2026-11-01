@@ -1663,3 +1663,201 @@ def test_g6_reroute_requires_cdp_reroute_for_critic(tmp_path: Path) -> None:
         files_root=files_root,
     )
     assert witnesses.get("G6") is None
+
+
+@pytest.mark.offline
+def test_retract_clear_then_fold_lifts_g4_to_done(tmp_path: Path) -> None:
+    """AC1 — retract, witness_clear, clearing G4 witness => DONE and G5 gate."""
+    from implement_admission.conductor_score_journal import (
+        WITNESS_CLEAR_REASON,
+        JournalRecord,
+        append_journal_record,
+        birth_scoreboard,
+        forward_mutate_tip,
+    )
+
+    files_root = tmp_path / "cortex"
+    slug = "retract-clear-fold"
+    clear_uri, _ = _sha_file(
+        files_root, "notes/system/reviews/g4-pass.md", _G4_CLEAR
+    )
+    tip = _gated_tip(
+        g4_stops="",
+        g6_stops="",
+        sidecars=_sidecar("G4", clear_uri, "abc"),
+    ).replace("| G1 | frame | OPEN |", "| G1 | frame | DONE |").replace(
+        "| G2 | rival | OPEN |", "| G2 | rival | DONE |"
+    ).replace("| G3 | spec | OPEN |", "| G3 | spec | DONE |")
+    birth_scoreboard(slug, scoreboard_body=tip, files_root=files_root)
+    prior = read_tip(slug, files_root=files_root)
+    assert prior is not None
+    retract_at = "2026-10-01T10:00:00+00:00"
+    append_journal_record(
+        slug,
+        JournalRecord(
+            prior_tip_sha=prior[1],
+            tip_sha=prior[1],
+            tip_body=prior[0],
+            seat="conductor",
+            dispatch_id=None,
+            reason="witness_retract",
+            rows=("G4",),
+            delta="false fold",
+            written_at=retract_at,
+        ),
+        files_root=files_root,
+    )
+    forward_mutate_tip(
+        slug,
+        next_body=prior[0],
+        seat="conductor",
+        dispatch_id=None,
+        reason=WITNESS_CLEAR_REASON,
+        rows=("G4",),
+        delta="clear after r7 PASS",
+        files_root=files_root,
+    )
+    deps = FoldDeps(
+        cortex=_StubCortex(),
+        bus=_StubBus(resurface=True),
+        nested_implement=_StubNestedImplement(has_commits=True),
+        git=_StubGit(),
+        source_ref=f"todo:{slug}",
+        summon_mode="attended",
+        summoning_thread_id="1",
+        repo=tmp_path / "repo",
+    )
+    fold = fold_scoreboard(slug, deps=deps, files_root=files_root, write_journal=False)
+    assert fold is not None
+    assert fold.row_status["G4"] == "DONE"
+    assert "G4" in fold.witnessed_done
+
+
+@pytest.mark.offline
+def test_pre_retract_pass_stays_retracted_on_fold(tmp_path: Path) -> None:
+    """AC2 — PASS sidecar hung before retract; fold keeps G4 RETRACTED."""
+    from implement_admission.conductor_score_journal import (
+        JournalRecord,
+        append_journal_record,
+        birth_scoreboard,
+    )
+
+    files_root = tmp_path / "cortex"
+    slug = "stale-pass-retract"
+    clear_uri, _ = _sha_file(
+        files_root, "notes/system/reviews/g4-stale-pass.md", _G4_CLEAR
+    )
+    tip = _gated_tip(
+        g4_stops="",
+        g6_stops="",
+        sidecars=_sidecar("G4", clear_uri, "def"),
+    )
+    birth_scoreboard(slug, scoreboard_body=tip, files_root=files_root)
+    prior = read_tip(slug, files_root=files_root)
+    assert prior is not None
+    append_journal_record(
+        slug,
+        JournalRecord(
+            prior_tip_sha=prior[1],
+            tip_sha=prior[1],
+            tip_body=prior[0],
+            seat="conductor",
+            dispatch_id=None,
+            reason="G4 PASS hung pre-retract",
+            rows=("G4",),
+            delta="sidecar hung",
+            written_at="2099-01-01T09:00:00+00:00",
+        ),
+        files_root=files_root,
+    )
+    append_journal_record(
+        slug,
+        JournalRecord(
+            prior_tip_sha=prior[1],
+            tip_sha=prior[1],
+            tip_body=prior[0],
+            seat="conductor",
+            dispatch_id=None,
+            reason="witness_retract",
+            rows=("G4",),
+            delta="withhold",
+            written_at="2099-01-01T10:00:00+00:00",
+        ),
+        files_root=files_root,
+    )
+    deps = FoldDeps(
+        cortex=_StubCortex(),
+        bus=_StubBus(resurface=True),
+        git=_StubGit(),
+        source_ref=f"todo:{slug}",
+        repo=tmp_path / "repo",
+    )
+    fold = fold_scoreboard(slug, deps=deps, files_root=files_root, write_journal=False)
+    assert fold is not None
+    assert fold.row_status["G4"] == "RETRACTED"
+    assert "G4" not in fold.witnessed_done
+
+
+@pytest.mark.offline
+def test_post_retract_pass_hang_lifts_without_explicit_clear(tmp_path: Path) -> None:
+    """Temporal lift — post-retract PASS hang + live witness lifts retract."""
+    from implement_admission.conductor_score_journal import (
+        JournalRecord,
+        append_journal_record,
+        birth_scoreboard,
+    )
+
+    files_root = tmp_path / "cortex"
+    slug = "temporal-lift-g4"
+    clear_uri, _ = _sha_file(
+        files_root, "notes/system/reviews/g4-post-retract.md", _G4_CLEAR
+    )
+    tip = _gated_tip(
+        g4_stops="",
+        g6_stops="",
+        sidecars=_sidecar("G4", clear_uri, "fed"),
+    )
+    birth_scoreboard(slug, scoreboard_body=tip, files_root=files_root)
+    prior = read_tip(slug, files_root=files_root)
+    assert prior is not None
+    append_journal_record(
+        slug,
+        JournalRecord(
+            prior_tip_sha=prior[1],
+            tip_sha=prior[1],
+            tip_body=prior[0],
+            seat="conductor",
+            dispatch_id=None,
+            reason="witness_retract",
+            rows=("G4",),
+            delta="false fold",
+            written_at="2099-01-01T10:00:00+00:00",
+        ),
+        files_root=files_root,
+    )
+    append_journal_record(
+        slug,
+        JournalRecord(
+            prior_tip_sha=prior[1],
+            tip_sha=prior[1],
+            tip_body=prior[0],
+            seat="conductor",
+            dispatch_id=None,
+            reason="G4 r7 PASS artifact hung",
+            rows=("G4",),
+            delta="PASS sidecar",
+            written_at="2099-01-01T11:00:00+00:00",
+        ),
+        files_root=files_root,
+    )
+    deps = FoldDeps(
+        cortex=_StubCortex(),
+        bus=_StubBus(resurface=True),
+        git=_StubGit(),
+        source_ref=f"todo:{slug}",
+        repo=tmp_path / "repo",
+    )
+    fold = fold_scoreboard(slug, deps=deps, files_root=files_root, write_journal=False)
+    assert fold is not None
+    assert fold.row_status["G4"] == "DONE"
+    assert "G4" in fold.witnessed_done
