@@ -76,9 +76,7 @@ class ReleaseBody(BaseModel):
 
 
 def _invalid(code: str, message: str) -> JSONResponse:
-    return JSONResponse(
-        status_code=422, content={"code": code, "message": message}
-    )
+    return JSONResponse(status_code=422, content={"code": code, "message": message})
 
 
 @router.post("/claim", response_model=None)

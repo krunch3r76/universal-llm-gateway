@@ -328,7 +328,9 @@ def test_t6_expire_posts_fact_and_poster_failure_sticks() -> None:
     past = (datetime.now(UTC) - timedelta(minutes=1)).isoformat()
     claim(_KEY, "seat-a", "L1", ledger=ledger, now=past, ttl_s=60)
     calls: list[dict] = []
-    rows = expire_claims(datetime.now(UTC).isoformat(), ledger=ledger, poster=calls.append)
+    rows = expire_claims(
+        datetime.now(UTC).isoformat(), ledger=ledger, poster=calls.append
+    )
     assert len(rows) == 1
     assert len(calls) == 1
     assert calls[0]["fact_thread"] == "15851"
@@ -367,11 +369,15 @@ def test_t7_claimed_invisible_to_open_holder_consumers() -> None:
     assert envelope["active_holder"] is None
     assert envelope["queue_depth"] == 0
     assert _active_by_lane() == before
-    assert ledger.stale_writers(
-        threshold_s=1,
-        dead_run_grace_s=1,
-        worker_instance="t",
-    ) == [] or first["claim_id"] not in ledger.orphan_holders()
+    assert (
+        ledger.stale_writers(
+            threshold_s=1,
+            dead_run_grace_s=1,
+            worker_instance="t",
+        )
+        == []
+        or first["claim_id"] not in ledger.orphan_holders()
+    )
     assert first["claim_id"] not in ledger.orphan_holders()
     assert ledger.release_stale_writer(dispatch_id=first["claim_id"]) is None
     assert _status(ledger, first["claim_id"]) == "claimed"
@@ -385,7 +391,9 @@ def test_t7_claimed_invisible_to_open_holder_consumers() -> None:
         )
     # The claim row is not a park parent. Seed a separate parked parent whose
     # child id is the claim, then boot-reconcile. The child must stay claimed.
-    _admit(ledger, work_key="todo:park-parent", dispatch_id="parent-park", thread_id="P1")
+    _admit(
+        ledger, work_key="todo:park-parent", dispatch_id="parent-park", thread_id="P1"
+    )
     with ledger._connect() as conn:
         conn.execute(
             "UPDATE cursor_sdk_dispatches SET status='parked_waiting', "
@@ -518,9 +526,7 @@ def test_t9_check_migration_preserves_rows_and_is_idempotent(tmp_path) -> None:
     conn = sqlite3.connect(db)
     conn.row_factory = sqlite3.Row
     conn.executescript(_OLD_DDL)
-    conn.execute(
-        "CREATE INDEX idx_custom_fp ON cursor_sdk_dispatches(fingerprint)"
-    )
+    conn.execute("CREATE INDEX idx_custom_fp ON cursor_sdk_dispatches(fingerprint)")
     conn.execute(
         "INSERT INTO cursor_sdk_dispatches "
         "(dispatch_id, fingerprint, thread_id, resolved_model, status, record_json) "
@@ -577,7 +583,7 @@ def test_registry_s1_claim_address_occupancy_and_renew_merge() -> None:
     client = _client()
     key_a = "todo:registry-s1-a"
     key_b = "todo:registry-s1-b"
-    first = claim(
+    claim(
         key_a,
         "seat-a",
         "L1",

@@ -318,9 +318,7 @@ def claim(
         work_key=work_key, holder_agent=holder_agent, thread_id=thread_id
     )
     try:
-        normalized_address = (
-            normalize_address(address) if address is not None else None
-        )
+        normalized_address = normalize_address(address) if address is not None else None
     except AddressValidationError as exc:
         raise ClaimError(
             code=exc.code,
@@ -329,9 +327,7 @@ def claim(
         ) from exc
     with led._connect() as conn:
         conn.execute("BEGIN IMMEDIATE")
-        blocker = _find_blocker(
-            conn, work_key=work_key, exclude_id=claim_id, now=stamp
-        )
+        blocker = _find_blocker(conn, work_key=work_key, exclude_id=claim_id, now=stamp)
         if blocker is not None:
             raise WorkKeyHeld(work_key=work_key, holder=_conflict_holder(blocker))
         own = conn.execute(
@@ -685,7 +681,9 @@ def _stop_token(record_json: str | None) -> str | None:
 def _projection_holder(row: Any) -> dict[str, Any]:
     status = str(row["status"])
     kind = "claim" if status == CLAIM_STATUS else "dispatch"
-    expires = row["claim_expires_at"] if status == CLAIM_STATUS else row["park_expires_at"]
+    expires = (
+        row["claim_expires_at"] if status == CLAIM_STATUS else row["park_expires_at"]
+    )
     holder: dict[str, Any] = {
         "id": row["dispatch_id"],
         "kind": kind,
@@ -744,7 +742,11 @@ def update(
     now: str | None = None,
 ) -> dict[str, Any]:
     """Patch claim metadata; ``landed`` / ``abandoned`` release the row."""
-    if work_status is None and address_patch is None and not (note and str(note).strip()):
+    if (
+        work_status is None
+        and address_patch is None
+        and not (note and str(note).strip())
+    ):
         raise ClaimError(
             code="INVALID_UPDATE",
             http_status=422,
@@ -954,8 +956,7 @@ def occupancy(
     stamp = now or _now_iso()
     with led._connect() as conn:
         rows = conn.execute(
-            "SELECT * FROM cursor_sdk_dispatches WHERE work_key=? "
-            "ORDER BY rowid ASC",
+            "SELECT * FROM cursor_sdk_dispatches WHERE work_key=? ORDER BY rowid ASC",
             (work_key,),
         ).fetchall()
         budget = open_parks(

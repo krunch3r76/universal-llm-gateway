@@ -376,9 +376,7 @@ async def team_dispatch(
                 }
             if spawn_res.get("ok"):
                 agent_id = str(
-                    spawn_res.get("editor_agent_id")
-                    or spawn_res.get("agent_id")
-                    or ""
+                    spawn_res.get("editor_agent_id") or spawn_res.get("agent_id") or ""
                 ).strip()
                 patch_spawn_row(
                     row_id,
@@ -483,4 +481,3 @@ async def team_dispatch(
     req = FrontierGenerateRequest(**_normalize_op_body(body, source_text=source_text))
     result = await _dispatch(req, response)
     return finalize_team_dispatch_admit_response(result, admit_provenance)
-

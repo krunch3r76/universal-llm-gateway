@@ -168,7 +168,9 @@ async def test_generate_forwards_top_level_claim_id_into_generation_options() ->
 
 
 @pytest.mark.asyncio
-async def test_generate_top_level_claim_id_does_not_override_generation_options() -> None:
+async def test_generate_top_level_claim_id_does_not_override_generation_options() -> (
+    None
+):
     fn = _tool()
     relay = AsyncMock(return_value={"dispatch_id": "d1"})
     with patch("tools.frontier._relay", relay):

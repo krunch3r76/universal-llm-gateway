@@ -16,9 +16,9 @@ from .route_models import (
     TeamDispatchClaimBody,
     TeamDispatchClaimReleaseBody,
     TeamDispatchClaimUpdateBody,
-    TeamDispatchRegistryBody,
     TeamDispatchGenerateBody,
     TeamDispatchOccupancyBody,
+    TeamDispatchRegistryBody,
     TeamDispatchSteerBody,
     TeamDispatchToThreadBody,
 )
