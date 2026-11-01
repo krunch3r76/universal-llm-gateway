@@ -16,7 +16,12 @@ from agent_seat.boot_identity import (
     legacy_boot_identity,
 )
 from agent_seat.profiles import get_profile, resolve_seat
-from agent_seat.session_id import SessionMintMode, mint_session_id
+from agent_seat.session_id import (
+    SESSION_ID_RE,
+    SessionMintMode,
+    agent_slug_from_session_id,
+    mint_session_id,
+)
 from durable_io.atomic import durable_write_text
 from mcp_events import record
 from universal_logging import get_logger
@@ -251,9 +256,14 @@ def _continuity_for_briefing_card(
         out.pop("last_session", None)
     chain = out.get("continuity_chain")
     if isinstance(chain, list):
-        prefix = f"{identity.session_prefix}-"
+        # Exact canonical ownership: a bare prefix test lets seat ``alpha`` claim
+        # ``alpha-beta-…`` sessions and malformed tails.
         out["continuity_chain"] = [
-            sid for sid in chain if isinstance(sid, str) and sid.startswith(prefix)
+            sid
+            for sid in chain
+            if isinstance(sid, str)
+            and SESSION_ID_RE.fullmatch(sid)
+            and agent_slug_from_session_id(sid) == identity.session_prefix
         ]
     return out or None
 

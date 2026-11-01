@@ -399,7 +399,7 @@ def test_boot_inspect_diff_with_matrix(monkeypatch: Any, tmp_path: Path) -> None
     orchestration_tools.register_orchestration_tools(mcp)
     inspect = mcp.tools["boot_inspect"]
 
-    unknown_plain = inspect(seat="cursor", diff_with="orion")
+    unknown_plain = inspect(seat="cursor", diff_with="unregistered")
     assert unknown_plain["diff"] is None
     assert unknown_plain["secondary"]["reason"] == "seat_unresolved"
     assert calls == ["claude-cursor"]

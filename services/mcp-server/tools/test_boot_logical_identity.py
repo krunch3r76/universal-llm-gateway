@@ -470,6 +470,103 @@ def test_runner_rejected_foreign_chain_never_reaches_card(
     assert "other-seat-2026-01-01-010101-abc" not in card
 
 
+_NESTED_REGISTRY = """
+schema_version: 1
+seats:
+  alpha:
+    family: gpt
+    platform: web
+    house: "9997"
+    surface: chatgpt
+  alpha-beta:
+    family: gpt
+    platform: web
+    house: "9996"
+    surface: chatgpt
+"""
+_NESTED_SIDS = {
+    "alpha": "alpha-2026-06-03-010101-a0a",
+    "alpha-beta": "alpha-beta-2026-06-04-010101-b0b",
+}
+
+
+@pytest.mark.parametrize(
+    ("seat", "other"), [("alpha", "alpha-beta"), ("alpha-beta", "alpha")]
+)
+@pytest.mark.parametrize("state", ["matching", "mismatched", "missing", "error"])
+def test_runner_nested_seat_chain_requires_exact_session_ownership(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, seat: str, other: str, state: str
+) -> None:
+    """Breaks when a longer nested seat's session or a malformed tail passes a bare seat prefix."""
+    cfg = tmp_path / "boot-seats-nested.yaml"
+    cfg.write_text(_NESTED_REGISTRY.strip() + "\n", encoding="utf-8")
+    monkeypatch.setenv("CORTEX_BOOT_IDENTITIES_PATH", str(cfg))
+    own = _NESTED_SIDS[seat]
+    foreign = _NESTED_SIDS[other]
+    malformed = [f"{seat}-2026-06-05-010101-zzz", f"{seat}-not-a-session"]
+    continuity: dict[str, Any] = {
+        "continuity_chain": [own, foreign, *malformed],
+        "continuations": [],
+        "hints": [],
+    }
+    if state == "matching":
+        continuity["last_session"] = {
+            "agent": seat,
+            "session_id": own,
+            "summary": "own-summary",
+        }
+    elif state == "mismatched":
+        continuity["last_session"] = {
+            "agent": other,
+            "session_id": foreign,
+            "summary": "foreign-summary",
+        }
+    elif state == "error":
+        continuity["error"] = "continuity_down"
+        continuity["last_session"] = {
+            "agent": other,
+            "session_id": foreign,
+            "summary": "foreign-summary",
+        }
+
+    def cx(_method: str, path: str) -> Any:
+        if path.startswith("/boot-continuity"):
+            return continuity
+        if path.startswith("/session-journals") and state == "error":
+            return {
+                "items": [
+                    {
+                        "agent": other,
+                        "session_id": foreign,
+                        "summary": "foreign-summary",
+                    },
+                    {
+                        "agent": seat,
+                        "session_id": own,
+                        "summary": "own-fallback-summary",
+                        "timestamp": "2026-06-03T00:00:00Z",
+                    },
+                ]
+            }
+        if path.startswith("/session-journals"):
+            return {"items": []}
+        return _empty_payload(path)
+
+    _patch_runner(monkeypatch, tmp_path, cx=cx)
+    result = run_cortex_brief(identity=_identity(seat), mode=BootMode.INSPECT)
+    card = result["briefing_card"]
+    assert result["session_identity"]["agent"] == seat
+    assert foreign not in card
+    assert "foreign-summary" not in card
+    for bad in malformed:
+        assert bad not in card
+    if state == "error":
+        assert "own-fallback-summary" in card
+        assert " → here" not in card
+    else:
+        assert f"{own} → here" in card
+
+
 def test_foreign_transcript_does_not_retarget_session_identity(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
