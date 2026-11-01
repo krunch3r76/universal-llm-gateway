@@ -36,3 +36,4 @@ class DisplayChatPasteResponse(BaseModel):
     target_verified: bool | None = None
     submitted: bool | None = None
     screenshot_path: str | None = None
+    verify_method: Literal["dom", "screenshot_fallback"] | None = None

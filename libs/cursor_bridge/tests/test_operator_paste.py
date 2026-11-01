@@ -9,6 +9,8 @@ import pytest
 from cursor_bridge.operator_paste import (
     WATERMARK,
     _assistant_began,
+    _dom_verification_conclusive,
+    _sha256_dom_from_surface,
     _submit_verified,
     _target_verified,
     deliver_operator_paste,
@@ -110,15 +112,11 @@ async def test_deliver_operator_paste_grok_ok_readback(
         "cursor_bridge.operator_paste._submit_composer_enter",
         AsyncMock(return_value={"ok": True}),
     )
+    screenshot = AsyncMock(
+        return_value={"sha256_png": "p" * 64, "screenshot_path": "/tmp/x.png"}
+    )
     monkeypatch.setattr(
-        "cursor_bridge.operator_paste._capture_artifacts",
-        AsyncMock(
-            return_value={
-                "sha256_dom": "d" * 64,
-                "sha256_png": "p" * 64,
-                "screenshot_path": "/tmp/x.png",
-            }
-        ),
+        "cursor_bridge.operator_paste._capture_screenshot_artifact", screenshot
     )
 
     out = await deliver_operator_paste(
@@ -134,7 +132,11 @@ async def test_deliver_operator_paste_grok_ok_readback(
     assert out["readback_ok"] is True
     assert out["submitted"] is True
     assert out["target_verified"] is True
-    assert out["sha256_dom"] == "d" * 64
+    assert out["verify_method"] == "dom"
+    assert out["sha256_png"] is None
+    assert out["screenshot_path"] is None
+    screenshot.assert_not_called()
+    assert out["sha256_dom"] == _sha256_dom_from_surface(surface_post)
     assert out["locate_method"] == "sidebar"
 
 
@@ -213,15 +215,11 @@ async def test_deliver_operator_paste_polls_until_assistant_generating(
         "cursor_bridge.operator_paste._submit_composer_enter",
         AsyncMock(return_value={"ok": True}),
     )
+    screenshot = AsyncMock(
+        return_value={"sha256_png": "p" * 64, "screenshot_path": "/tmp/x.png"}
+    )
     monkeypatch.setattr(
-        "cursor_bridge.operator_paste._capture_artifacts",
-        AsyncMock(
-            return_value={
-                "sha256_dom": "d" * 64,
-                "sha256_png": "p" * 64,
-                "screenshot_path": "/tmp/x.png",
-            }
-        ),
+        "cursor_bridge.operator_paste._capture_screenshot_artifact", screenshot
     )
     sleeps: list[float] = []
 
@@ -303,14 +301,8 @@ async def test_deliver_operator_paste_hidden_via_cmd_k(
         AsyncMock(return_value={"ok": True}),
     )
     monkeypatch.setattr(
-        "cursor_bridge.operator_paste._capture_artifacts",
-        AsyncMock(
-            return_value={
-                "sha256_dom": "d" * 64,
-                "sha256_png": "p" * 64,
-                "screenshot_path": "/tmp/x.png",
-            }
-        ),
+        "cursor_bridge.operator_paste._capture_screenshot_artifact",
+        AsyncMock(return_value={"sha256_png": None, "screenshot_path": None}),
     )
 
     out = await deliver_operator_paste(
@@ -323,6 +315,7 @@ async def test_deliver_operator_paste_hidden_via_cmd_k(
         scope="test",
     )
     assert out["ok"] is True
+    assert out["verify_method"] == "dom"
     assert out["locate_method"] == "cmd_k"
 
 
@@ -368,14 +361,8 @@ async def test_deliver_operator_paste_hidden_via_hidden_chats_manager(
         AsyncMock(return_value={"ok": True}),
     )
     monkeypatch.setattr(
-        "cursor_bridge.operator_paste._capture_artifacts",
-        AsyncMock(
-            return_value={
-                "sha256_dom": "d" * 64,
-                "sha256_png": "p" * 64,
-                "screenshot_path": "/tmp/x.png",
-            }
-        ),
+        "cursor_bridge.operator_paste._capture_screenshot_artifact",
+        AsyncMock(return_value={"sha256_png": None, "screenshot_path": None}),
     )
 
     out = await deliver_operator_paste(
@@ -388,6 +375,7 @@ async def test_deliver_operator_paste_hidden_via_hidden_chats_manager(
         scope="test",
     )
     assert out["ok"] is True
+    assert out["verify_method"] == "dom"
     assert out["locate_method"] == "hidden_chats"
 
 
@@ -556,14 +544,8 @@ async def test_deliver_operator_paste_exactly_one_insert_per_call(
         AsyncMock(return_value={"ok": True}),
     )
     monkeypatch.setattr(
-        "cursor_bridge.operator_paste._capture_artifacts",
-        AsyncMock(
-            return_value={
-                "sha256_dom": "d" * 64,
-                "sha256_png": "p" * 64,
-                "screenshot_path": "/tmp/x.png",
-            }
-        ),
+        "cursor_bridge.operator_paste._capture_screenshot_artifact",
+        AsyncMock(return_value={"sha256_png": None, "screenshot_path": None}),
     )
 
     await deliver_operator_paste(
@@ -632,14 +614,8 @@ async def test_deliver_operator_paste_submit_retry_once_without_repaste(
         "cursor_bridge.operator_paste._submit_composer_send_button", send_retry
     )
     monkeypatch.setattr(
-        "cursor_bridge.operator_paste._capture_artifacts",
-        AsyncMock(
-            return_value={
-                "sha256_dom": "d" * 64,
-                "sha256_png": "p" * 64,
-                "screenshot_path": "/tmp/fail.png",
-            }
-        ),
+        "cursor_bridge.operator_paste._capture_screenshot_artifact",
+        AsyncMock(return_value={"sha256_png": None, "screenshot_path": None}),
     )
     monkeypatch.setattr(
         "cursor_bridge.operator_paste._poll_readback",
@@ -719,15 +695,14 @@ async def test_deliver_operator_paste_submitted_false_after_retry(
         "cursor_bridge.operator_paste._submit_composer_send_button",
         AsyncMock(return_value={"ok": False, "send_fallback_clicked": False}),
     )
+    screenshot = AsyncMock(
+        return_value={
+            "sha256_png": "p" * 64,
+            "screenshot_path": "/tmp/submit-fail.png",
+        }
+    )
     monkeypatch.setattr(
-        "cursor_bridge.operator_paste._capture_artifacts",
-        AsyncMock(
-            return_value={
-                "sha256_dom": "d" * 64,
-                "sha256_png": "p" * 64,
-                "screenshot_path": "/tmp/submit-fail.png",
-            }
-        ),
+        "cursor_bridge.operator_paste._capture_screenshot_artifact", screenshot
     )
 
     out = await deliver_operator_paste(
@@ -741,4 +716,116 @@ async def test_deliver_operator_paste_submitted_false_after_retry(
     )
     assert out["submitted"] is False
     assert out["reason"] == "submit_unverified"
+    assert out["verify_method"] == "screenshot_fallback"
     assert out["screenshot_path"] == "/tmp/submit-fail.png"
+    screenshot.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_deliver_operator_paste_inconclusive_readback_screenshot_fallback(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    surface = {
+        "state": "chat_list",
+        "active_title": "Test Grok",
+        "active_agent_id": "agent-1",
+        "titles": ["Test Grok"],
+        "title_counts": {"Test Grok": 1},
+        "agent_ids": {"agent-1": "Test Grok"},
+        "composer_draft": "",
+        "generating": False,
+        "recent_messages": [],
+    }
+    wm_only = {
+        **surface,
+        "recent_messages": [f"relay {WATERMARK}"],
+        "generating": False,
+    }
+
+    async def _poll_submit(_ws: str, **_: Any) -> tuple[dict[str, Any], bool]:
+        return wm_only, True
+
+    async def _poll_readback(_ws: str, **_: Any) -> tuple[dict[str, Any], dict[str, bool]]:
+        fields = {
+            "readback_ok": False,
+            "composer_empty_after": True,
+            "assistant_began": False,
+            "watermark_visible": True,
+        }
+        return wm_only, fields
+
+    screenshot = AsyncMock(
+        return_value={"sha256_png": "p" * 64, "screenshot_path": "/tmp/inconclusive.png"}
+    )
+    monkeypatch.setattr(
+        "cursor_bridge.operator_paste.list_pages",
+        lambda _o: [{"title": "Grok Bot", "web_socket_debugger_url": "ws://x"}],
+    )
+    monkeypatch.setattr(
+        "cursor_bridge.operator_paste.visible_sidebar_agent_ids",
+        AsyncMock(return_value={"agent-1"}),
+    )
+    monkeypatch.setattr(
+        "cursor_bridge.operator_paste.probe_surface",
+        AsyncMock(return_value=surface),
+    )
+    monkeypatch.setattr(
+        "cursor_bridge.operator_paste._poll_submit_verified", _poll_submit
+    )
+    monkeypatch.setattr("cursor_bridge.operator_paste._poll_readback", _poll_readback)
+    monkeypatch.setattr(
+        "cursor_bridge.operator_paste._insert_composer_text",
+        AsyncMock(return_value={"ok": True}),
+    )
+    monkeypatch.setattr(
+        "cursor_bridge.operator_paste._submit_composer_enter",
+        AsyncMock(return_value={"ok": True}),
+    )
+    monkeypatch.setattr(
+        "cursor_bridge.operator_paste._capture_screenshot_artifact", screenshot
+    )
+
+    out = await deliver_operator_paste(
+        display="10",
+        app="grok",
+        agent_id="agent-1",
+        text="Operator relay test",
+        grant="operator",
+        authorization_source="agent-bus:21614#2",
+        scope="test",
+    )
+    assert out["submitted"] is True
+    assert out["ok"] is False
+    assert out["verify_method"] == "screenshot_fallback"
+    assert out["screenshot_path"] == "/tmp/inconclusive.png"
+    screenshot.assert_awaited_once()
+
+
+def test_dom_verification_conclusive_requires_agent_id_and_readback() -> None:
+    post = {
+        "active_agent_id": "agent-1",
+        "composer_draft": "",
+        "recent_messages": [WATERMARK, "assistant reply"],
+        "generating": True,
+    }
+    assert _dom_verification_conclusive(
+        post,
+        expected_agent_id="agent-1",
+        watermark=WATERMARK,
+        body_snippet="relay",
+        readback_ok=True,
+    )
+    assert not _dom_verification_conclusive(
+        post,
+        expected_agent_id="agent-1",
+        watermark=WATERMARK,
+        body_snippet="relay",
+        readback_ok=False,
+    )
+    assert not _dom_verification_conclusive(
+        {**post, "active_agent_id": ""},
+        expected_agent_id="agent-1",
+        watermark=WATERMARK,
+        body_snippet="relay",
+        readback_ok=True,
+    )
