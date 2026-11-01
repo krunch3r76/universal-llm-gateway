@@ -700,6 +700,7 @@ async def _deliver_operator_locked(
             ws_url,
             selector=composer_selector(app=app, agent_id=aid_s),
             watermark=WATERMARK,
+            refuse_if_active=True,
         )
         if not idle.get("idle"):
             return _grant_refuse(
@@ -728,6 +729,7 @@ async def _deliver_operator_locked(
             ws_url,
             selector=composer_selector(app=app, agent_id=aid_s),
             watermark=WATERMARK,
+            refuse_if_active=True,
         )
         if not idle.get("idle"):
             return _grant_refuse(
@@ -821,7 +823,10 @@ async def _deliver_operator_locked(
     body_snippet = flat_line[:120]
 
     idle = await wait_for_operator_idle(
-        ws_url, selector=prompt_sel, watermark=WATERMARK
+        ws_url,
+        selector=prompt_sel,
+        watermark=WATERMARK,
+        refuse_if_active=True,
     )
     if not idle.get("idle"):
         return _grant_refuse(
