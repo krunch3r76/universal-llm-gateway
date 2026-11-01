@@ -32,7 +32,9 @@ from __future__ import annotations
 
 import argparse
 import json
+import signal
 import sys
+from typing import Any
 
 from bus_watch.digest_budget import _bus, _get, effective_policy
 from bus_watch.fable_lock import WATCH_DIR
@@ -50,7 +52,11 @@ from bus_watch.ide_hop import (
     seal_hop_window,
     tick_register,
 )
-from bus_watch.ide_hop_land import DEFAULT_LANDING_TIMEOUT_S
+from bus_watch.ide_hop_land import (
+    DEFAULT_LANDING_TIMEOUT_S,
+    read_hop_land,
+    write_hop_land,
+)
 from bus_watch.ide_hop_mutex import release_hop_mutex, try_acquire_hop_mutex
 from bus_watch.ide_hop_retire import (
     GOAL_RELEASE,
@@ -63,6 +69,37 @@ from bus_watch.liaison_digest import build_digest
 from bus_watch.now_row import format_now_line, resolve_now_row
 from bus_watch.tick_state import load_state
 from cursor_bridge.cursor_agents_hop import is_cursor_xvfb_host
+
+_SIGTERM_RETIRE_CTX: dict[str, Any] = {}
+
+
+def _patch_hop_land_retire_pending(root: str, *, pending: bool) -> None:
+    record = read_hop_land(root, watch_dir=WATCH_DIR)
+    if not isinstance(record, dict) or record.get("state") != "landed":
+        return
+    write_hop_land({**record, "retire_pending": pending}, watch_dir=WATCH_DIR)
+
+
+def _sigterm_finish_retire(signum: int, frame: object | None) -> None:
+    del signum, frame
+    ctx = _SIGTERM_RETIRE_CTX
+    if ctx.get("retire_pending") and ctx.get("landed"):
+        root = str(ctx.get("root") or "")
+        tid = str(ctx.get("transcript_id") or "")
+        if root and tid:
+            try:
+                retire_departing_tab(
+                    root,
+                    f"ide:{tid}",
+                    transcript_id=tid,
+                )
+            except Exception:
+                pass
+            try:
+                _patch_hop_land_retire_pending(root, pending=False)
+            except Exception:
+                pass
+    raise SystemExit(143)
 
 
 def _jsonl_turn_count(transcript_id: str) -> int | None:
@@ -239,6 +276,8 @@ def main() -> int:
             )
         )
         return 2
+    if not args.dry_run:
+        signal.signal(signal.SIGTERM, _sigterm_finish_retire)
     state_path = WATCH_DIR / f"liaison-{args.root}.tick.json"
     state = load_state(state_path)
     policy = effective_policy(state)
@@ -345,11 +384,22 @@ def main() -> int:
         if args.dry_run:
             out["retire"] = {"ok": True, "skipped": "dry_run"}
         else:
+            _SIGTERM_RETIRE_CTX.update(
+                {
+                    "root": args.root,
+                    "transcript_id": args.transcript_id,
+                    "landed": True,
+                    "retire_pending": True,
+                }
+            )
+            _patch_hop_land_retire_pending(args.root, pending=True)
             out["retire"] = retire_departing_tab(
                 args.root,
                 holder=f"ide:{args.transcript_id}",
                 transcript_id=args.transcript_id,
             )
+            _SIGTERM_RETIRE_CTX["retire_pending"] = False
+            _patch_hop_land_retire_pending(args.root, pending=False)
             gui = args.gui_host or policy_gui_host(args.root)
             landed_tid = str(out.get("landed_transcript_id") or "")
             if is_cursor_xvfb_host(gui) and args.transcript_id:
