@@ -86,7 +86,7 @@ from .restart_intent_reason_codes import (
     TARGET_GONE,
     reason_code,
 )
-from .restart_intent_states import LIVE_STATUSES
+from .restart_intent_states import LIVE_STATUSES, STATUS_EXPIRED
 from .restart_intent_store import (
     STATUS_CANCELLED,
     STATUS_COMPLETED,
@@ -1040,6 +1040,8 @@ class GitWorkerDrainSupervisor:
             return "force"
         if current.status == STATUS_CANCELLED:
             return "cancel"
+        if current.status == STATUS_EXPIRED:
+            return "expired"
         return None
 
     async def _abort_if_requested(self, intent: Intent) -> bool:
@@ -1058,6 +1060,8 @@ class GitWorkerDrainSupervisor:
             return True
         if kind == "cancel":
             await self._on_cancelled(intent)
+            return True
+        if kind == "expired":
             return True
         return False
 

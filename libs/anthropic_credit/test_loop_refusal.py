@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import inspect
+import re
 from decimal import Decimal
 
 import httpx
@@ -12,7 +14,24 @@ from anthropic_credit.loop_refusal import (
     parse_credit_refusal_detail,
     parse_credit_refusal_type,
 )
-from anthropic_credit.policy import AnthropicCreditRefused, Refuse
+from anthropic_credit.policy import (
+    CREDIT_REFUSAL_429_CODES,
+    AnthropicCreditRefused,
+    CreditPolicy,
+    Refuse,
+)
+
+
+def test_credit_refusal_429_codes_drift_guard() -> None:
+    """CREDIT_REFUSAL_429_CODES must match every admit() Refuse with http_status=429."""
+    source = inspect.getsource(CreditPolicy.admit)
+    admit_429 = frozenset(
+        re.findall(
+            r'code="(anthropic_[^"]+)"[\s\S]{0,120}?http_status=429',
+            source,
+        )
+    )
+    assert admit_429 == CREDIT_REFUSAL_429_CODES
 
 
 def test_credit_cap_notice_zero_arg_unchanged() -> None:

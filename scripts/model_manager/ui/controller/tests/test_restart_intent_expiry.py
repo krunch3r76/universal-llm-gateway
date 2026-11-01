@@ -49,7 +49,7 @@ async def test_expiry_releases_drain_then_cancels(tmp_path) -> None:
     assert released == [(intent.intent_id, 3)]
     stored = store.get(intent.intent_id)
     assert stored is not None
-    assert stored.status == "cancelled"
+    assert stored.status == "expired"
 
 
 def test_readonly_busy_check_does_not_write_timeout(tmp_path) -> None:
@@ -144,7 +144,7 @@ async def test_abandoned_intent_30s_tick_expires(tmp_path) -> None:
     assert released == [(intent.intent_id, 1)]
     stored = store.get(intent.intent_id)
     assert stored is not None
-    assert stored.status == "cancelled"
+    assert stored.status == "expired"
 
 
 @pytest.mark.asyncio
@@ -284,7 +284,7 @@ async def test_expiry_release_failure_stays_pending_and_next_tick_cancels(
     assert calls["n"] >= 2
     stored = store.get(intent.intent_id)
     assert stored is not None
-    assert stored.status == "cancelled"
+    assert stored.status == "expired"
 
     # A release that raises, observed before the retry, stays pending and
     # cancel_restart_intent can still release.

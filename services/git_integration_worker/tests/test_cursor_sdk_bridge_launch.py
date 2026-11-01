@@ -38,10 +38,16 @@ def _fake_repo_venv(tmp_path: Path) -> Path:
 
 
 def _first_non_assignment(argv: list[str]) -> int:
-    """Index of the first element after ``argv[0]`` that is not ``K=V``."""
-    for i, arg in enumerate(argv[1:], start=1):
+    """Index of the first element after ``argv[0]`` that is not ``K=V`` or ``-u KEY``."""
+    i = 1
+    while i < len(argv):
+        arg = argv[i]
+        if arg == "-u":
+            i += 2
+            continue
         if "=" not in arg:
             return i
+        i += 1
     raise AssertionError(f"no program element in argv: {argv!r}")
 
 
@@ -141,7 +147,6 @@ def test_env_shim_execs_in_place(tmp_path, monkeypatch) -> None:
     home.mkdir()
     repo_venv = _fake_repo_venv(tmp_path)
     dispatch_id = "disp-exec"
-    prev_environ = dict(os.environ)
     command = build_bridge_command(
         bridge_bin=sys.executable,
         dispatch_home=home,
@@ -157,12 +162,18 @@ def test_env_shim_execs_in_place(tmp_path, monkeypatch) -> None:
         "print(os.environ['PATH'].split(os.pathsep)[0])\n"
         "print(os.environ['GIT_AUTHOR_EMAIL'])\n"
         "print(os.environ['CURSOR_SDK_DISPATCH_ID'])\n"
+        "print('MCP_AUTH_TOKEN' in os.environ)\n"
+        "print('MCP_TOKEN' in os.environ)\n"
     )
+    monkeypatch.setenv("MCP_AUTH_TOKEN", "must-not-reach-agent")
+    monkeypatch.setenv("MCP_TOKEN", "must-not-reach-agent")
+    parent_environ = dict(os.environ)
     proc = subprocess.Popen(
         command + ["-c", script],
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         text=True,
+        env=os.environ,
     )
     out, err = proc.communicate(timeout=30)
     assert proc.returncode == 0, err
@@ -173,7 +184,9 @@ def test_env_shim_execs_in_place(tmp_path, monkeypatch) -> None:
     assert lines[3] == str(repo_venv / "bin")
     assert lines[4] == f"{dispatch_id}@dispatch.git-integration-worker"
     assert lines[5] == dispatch_id
-    assert dict(os.environ) == prev_environ
+    assert lines[6] == "False"
+    assert lines[7] == "False"
+    assert dict(os.environ) == parent_environ
 
 
 def test_build_bridge_command_rejects_unsafe_bin(tmp_path) -> None:
@@ -198,7 +211,15 @@ def test_build_bridge_command_omits_optional_pairs(tmp_path, monkeypatch) -> Non
         real_home=None,
         dispatch_id=None,
     )
-    assert minimal == ["/usr/bin/env", f"HOME={tmp_path}", sys.executable]
+    from services.git_integration_worker.cursor_sdk_context import (
+        SDK_AGENT_STRIPPED_ENV_KEYS,
+    )
+
+    expected = ["/usr/bin/env"]
+    for key in sorted(SDK_AGENT_STRIPPED_ENV_KEYS):
+        expected.extend(["-u", key])
+    expected.extend([f"HOME={tmp_path}", sys.executable])
+    assert minimal == expected
 
     repo_venv = _fake_repo_venv(tmp_path)
     monkeypatch.delenv("PATH", raising=False)
@@ -687,7 +708,10 @@ def test_build_bridge_command_lane_a_argv_matches_master(
         build_dispatch_path_prepend,
         dispatch_git_env_vars,
     )
-    from services.git_integration_worker.cursor_sdk_context import steer_spool_dir
+    from services.git_integration_worker.cursor_sdk_context import (
+        SDK_AGENT_STRIPPED_ENV_KEYS,
+        steer_spool_dir,
+    )
 
     monkeypatch.delenv("NODE_OPTIONS", raising=False)
     lane = tmp_path / "lane"
@@ -700,8 +724,11 @@ def test_build_bridge_command_lane_a_argv_matches_master(
     base = os.environ.get("PATH", "")
     path_value = f"{prepend}{os.pathsep}{base}" if base else prepend
     preload = _preload_path()
-    expected = [
-        "/usr/bin/env",
+    expected = ["/usr/bin/env"]
+    for key in sorted(SDK_AGENT_STRIPPED_ENV_KEYS):
+        expected.extend(["-u", key])
+    expected.extend(
+        [
         f"HOME={home}",
         f"VIRTUAL_ENV={venv}",
         f"PATH={path_value}",
@@ -712,7 +739,8 @@ def test_build_bridge_command_lane_a_argv_matches_master(
         f"NODE_OPTIONS=--require {preload}",
         f"CURSOR_SDK_SHELL_FALLBACK_CWD={lane}",
         bridge_bin,
-    ]
+        ]
+    )
     actual = build_bridge_command(
         bridge_bin=bridge_bin,
         dispatch_home=home,

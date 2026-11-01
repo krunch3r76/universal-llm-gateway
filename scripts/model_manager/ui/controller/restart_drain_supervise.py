@@ -15,6 +15,7 @@ from typing import Any
 from universal_logging import get_logger
 
 from .busy_work_summary import _active_count, format_active_work_summary
+from .restart_intent_expiry import expire_pending_intent, intent_expired
 from .restart_intent_lookup import note_waiting_reason
 from .restart_intent_reason_codes import (
     BLOCKED_BY_JOB,
@@ -30,6 +31,7 @@ from .restart_intent_states import (
     STATUS_CANCELLED,
     STATUS_COMPLETED,
     STATUS_DRAINED_RESTARTING,
+    STATUS_EXPIRED,
     STATUS_FAILED,
     STATUS_FORCE_REQUESTED,
     STATUS_PENDING_DRAIN,
@@ -118,6 +120,12 @@ async def supervise_until_lifecycle(
     deadline_was_extended = False
     try:
         while True:
+            current = store.get(intent_id)
+            if current is not None and current.status == STATUS_EXPIRED:
+                return
+            if current is not None and intent_expired(current):
+                if await expire_pending_intent(store, intent_id):
+                    return
             try:
                 work = await probe()
             except asyncio.CancelledError:

@@ -51,6 +51,13 @@ _CURSOR_XDG_AUTH = Path(".config") / "cursor" / "auth.json"
 CURSOR_API_KEY_OTHER_MODELS_ENV = "CURSOR_API_KEY_OTHER_MODELS"
 _SECRETS_ENV_HINT = "~/.gateway/secrets.env"
 
+# Bearer tokens GIW resolves for MCP; must not reach cursor-sdk agent shells.
+# The stdio MCP bridge receives ``MCP_TOKEN`` via ``StdioMcpServerConfig.env``
+# only (``build_mcp_servers`` / ``_resolve_mcp_token_env``).
+SDK_AGENT_STRIPPED_ENV_KEYS: frozenset[str] = frozenset(
+    {"MCP_AUTH_TOKEN", "MCP_TOKEN"}
+)
+
 
 @dataclass(frozen=True, slots=True)
 class CursorApiKeyResolution:
@@ -324,7 +331,11 @@ def _resolve_mcp_token_env(*, real_home: Path | str | None = None) -> dict[str, 
     launcher imports ``services.*`` and ``transport_utils``, which require the
     universal venv ``sitecustomize`` / ``PYTHONPATH`` from the parent env.
     """
-    env = {k: v for k, v in os.environ.items() if isinstance(v, str)}
+    env = {
+        k: v
+        for k, v in os.environ.items()
+        if isinstance(v, str) and k not in SDK_AGENT_STRIPPED_ENV_KEYS
+    }
     mcp_url = os.environ.get("MCP_URL", "").strip()
     if mcp_url:
         env["MCP_URL"] = mcp_url
