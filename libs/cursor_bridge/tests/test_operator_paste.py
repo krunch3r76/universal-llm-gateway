@@ -20,6 +20,14 @@ from cursor_bridge.operator_paste import (
 pytestmark = pytest.mark.offline
 
 
+@pytest.fixture(autouse=True)
+def _operator_idle(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        "cursor_bridge.operator_paste.wait_for_operator_idle",
+        AsyncMock(return_value={"ok": True, "idle": True}),
+    )
+
+
 def test_wrap_operator_message_includes_header_source_watermark() -> None:
     msg = wrap_operator_message(
         text="hello",
@@ -109,8 +117,8 @@ async def test_deliver_operator_paste_grok_ok_readback(
         AsyncMock(return_value={"ok": True}),
     )
     monkeypatch.setattr(
-        "cursor_bridge.operator_paste._submit_composer_enter",
-        AsyncMock(return_value={"ok": True}),
+        "cursor_bridge.operator_paste._submit_composer_send_button",
+        AsyncMock(return_value={"ok": True, "send_fallback_clicked": True}),
     )
     screenshot = AsyncMock(
         return_value={"sha256_png": "p" * 64, "screenshot_path": "/tmp/x.png"}
@@ -212,8 +220,8 @@ async def test_deliver_operator_paste_polls_until_assistant_generating(
         AsyncMock(return_value={"ok": True}),
     )
     monkeypatch.setattr(
-        "cursor_bridge.operator_paste._submit_composer_enter",
-        AsyncMock(return_value={"ok": True}),
+        "cursor_bridge.operator_paste._submit_composer_send_button",
+        AsyncMock(return_value={"ok": True, "send_fallback_clicked": True}),
     )
     screenshot = AsyncMock(
         return_value={"sha256_png": "p" * 64, "screenshot_path": "/tmp/x.png"}
@@ -297,8 +305,8 @@ async def test_deliver_operator_paste_hidden_via_cmd_k(
         AsyncMock(return_value={"ok": True}),
     )
     monkeypatch.setattr(
-        "cursor_bridge.operator_paste._submit_composer_enter",
-        AsyncMock(return_value={"ok": True}),
+        "cursor_bridge.operator_paste._submit_composer_send_button",
+        AsyncMock(return_value={"ok": True, "send_fallback_clicked": True}),
     )
     monkeypatch.setattr(
         "cursor_bridge.operator_paste._capture_screenshot_artifact",
@@ -357,8 +365,8 @@ async def test_deliver_operator_paste_hidden_via_hidden_chats_manager(
         AsyncMock(return_value={"ok": True}),
     )
     monkeypatch.setattr(
-        "cursor_bridge.operator_paste._submit_composer_enter",
-        AsyncMock(return_value={"ok": True}),
+        "cursor_bridge.operator_paste._submit_composer_send_button",
+        AsyncMock(return_value={"ok": True, "send_fallback_clicked": True}),
     )
     monkeypatch.setattr(
         "cursor_bridge.operator_paste._capture_screenshot_artifact",
@@ -540,8 +548,8 @@ async def test_deliver_operator_paste_exactly_one_insert_per_call(
     )
     monkeypatch.setattr("cursor_bridge.operator_paste._insert_composer_text", insert)
     monkeypatch.setattr(
-        "cursor_bridge.operator_paste._submit_composer_enter",
-        AsyncMock(return_value={"ok": True}),
+        "cursor_bridge.operator_paste._submit_composer_send_button",
+        AsyncMock(return_value={"ok": True, "send_fallback_clicked": True}),
     )
     monkeypatch.setattr(
         "cursor_bridge.operator_paste._capture_screenshot_artifact",
@@ -589,7 +597,12 @@ async def test_deliver_operator_paste_submit_retry_once_without_repaste(
         return submitted, True
 
     insert = AsyncMock(return_value={"ok": True})
-    send_retry = AsyncMock(return_value={"ok": True, "send_fallback_clicked": True})
+    send_btn = AsyncMock(
+        side_effect=[
+            {"ok": True, "send_fallback_clicked": True},
+            {"ok": True, "send_fallback_clicked": True},
+        ]
+    )
     monkeypatch.setattr(
         "cursor_bridge.operator_paste.list_pages",
         lambda _o: [{"title": "Grok Bot", "web_socket_debugger_url": "ws://x"}],
@@ -607,11 +620,7 @@ async def test_deliver_operator_paste_submit_retry_once_without_repaste(
     )
     monkeypatch.setattr("cursor_bridge.operator_paste._insert_composer_text", insert)
     monkeypatch.setattr(
-        "cursor_bridge.operator_paste._submit_composer_enter",
-        AsyncMock(return_value={"ok": True}),
-    )
-    monkeypatch.setattr(
-        "cursor_bridge.operator_paste._submit_composer_send_button", send_retry
+        "cursor_bridge.operator_paste._submit_composer_send_button", send_btn
     )
     monkeypatch.setattr(
         "cursor_bridge.operator_paste._capture_screenshot_artifact",
@@ -642,7 +651,7 @@ async def test_deliver_operator_paste_submit_retry_once_without_repaste(
         scope="test",
     )
     assert insert.call_count == 1
-    assert send_retry.call_count == 1
+    assert send_btn.call_count == 2
     assert poll_calls["n"] == 2
     assert out["submitted"] is True
     assert out["ok"] is True
@@ -688,12 +697,13 @@ async def test_deliver_operator_paste_submitted_false_after_retry(
         AsyncMock(return_value={"ok": True}),
     )
     monkeypatch.setattr(
-        "cursor_bridge.operator_paste._submit_composer_enter",
-        AsyncMock(return_value={"ok": True}),
-    )
-    monkeypatch.setattr(
         "cursor_bridge.operator_paste._submit_composer_send_button",
-        AsyncMock(return_value={"ok": False, "send_fallback_clicked": False}),
+        AsyncMock(
+            side_effect=[
+                {"ok": True, "send_fallback_clicked": True},
+                {"ok": False, "send_fallback_clicked": False},
+            ]
+        ),
     )
     screenshot = AsyncMock(
         return_value={
@@ -745,7 +755,9 @@ async def test_deliver_operator_paste_inconclusive_readback_screenshot_fallback(
     async def _poll_submit(_ws: str, **_: Any) -> tuple[dict[str, Any], bool]:
         return wm_only, True
 
-    async def _poll_readback(_ws: str, **_: Any) -> tuple[dict[str, Any], dict[str, bool]]:
+    async def _poll_readback(
+        _ws: str, **_: Any
+    ) -> tuple[dict[str, Any], dict[str, bool]]:
         fields = {
             "readback_ok": False,
             "composer_empty_after": True,
@@ -755,7 +767,10 @@ async def test_deliver_operator_paste_inconclusive_readback_screenshot_fallback(
         return wm_only, fields
 
     screenshot = AsyncMock(
-        return_value={"sha256_png": "p" * 64, "screenshot_path": "/tmp/inconclusive.png"}
+        return_value={
+            "sha256_png": "p" * 64,
+            "screenshot_path": "/tmp/inconclusive.png",
+        }
     )
     monkeypatch.setattr(
         "cursor_bridge.operator_paste.list_pages",
@@ -778,8 +793,8 @@ async def test_deliver_operator_paste_inconclusive_readback_screenshot_fallback(
         AsyncMock(return_value={"ok": True}),
     )
     monkeypatch.setattr(
-        "cursor_bridge.operator_paste._submit_composer_enter",
-        AsyncMock(return_value={"ok": True}),
+        "cursor_bridge.operator_paste._submit_composer_send_button",
+        AsyncMock(return_value={"ok": True, "send_fallback_clicked": True}),
     )
     monkeypatch.setattr(
         "cursor_bridge.operator_paste._capture_screenshot_artifact", screenshot

@@ -32,6 +32,15 @@ from cursor_bridge.chat_surface import (
     wake_decision,
 )
 from cursor_bridge.chat_target import wake_line
+from cursor_bridge.display_interaction_locks import (
+    agent_paste_lock,
+    display_switch_lock,
+    paste_lock_key,
+)
+from cursor_bridge.dom_composer_paste import (
+    composer_selector,
+    dom_insert_and_send,
+)
 
 _TARGETS: dict[tuple[str, str], str] = {
     ("cursor", "8"): "http://127.0.0.1:9338",
@@ -40,7 +49,6 @@ _TARGETS: dict[tuple[str, str], str] = {
     ("grok", "10"): "http://127.0.0.1:9340",
 }
 _WINDOW_TITLE = {"cursor": "Cursor Agents", "grok": "Grok Bot"}
-_DISPLAY_LOCKS: dict[str, asyncio.Lock] = {}
 _GROK_COMPOSER_SELECTOR = '[aria-label="Prompt"][contenteditable="true"]'
 
 
@@ -72,10 +80,6 @@ _COMPOSER_JS = {
     "grok": _composer_focus_js(_GROK_COMPOSER_SELECTOR),
     "cursor": _composer_focus_js(_cursor_composer_selector()),
 }
-
-
-def _display_lock(display: str) -> asyncio.Lock:
-    return _DISPLAY_LOCKS.setdefault(display, asyncio.Lock())
 
 
 def normalize_target(display: object, app: object) -> dict[str, Any]:
@@ -226,7 +230,8 @@ async def deliver_wake(
         except ValueError:
             return _refuse("bad_options", display=target["display"], app=target["app"])
 
-    async with _display_lock(target["display"]):
+    lock_id = paste_lock_key(agent_id=aid_s, thread=thread_s)
+    async with agent_paste_lock(target["display"], lock_id):
         return await _deliver_locked(
             target=target,
             thread_s=thread_s,
@@ -297,11 +302,12 @@ async def _deliver_locked(
                 expected_title=verdict.get("expected_title"),
                 expected_agent_id=verdict.get("expected_agent_id"),
             )
-        click_res = await select_sidebar_target(
-            ws_url,
-            expected_title=str(verdict.get("expected_title") or ""),
-            expected_agent_id=str(verdict.get("expected_agent_id") or ""),
-        )
+        async with display_switch_lock(disp):
+            click_res = await select_sidebar_target(
+                ws_url,
+                expected_title=str(verdict.get("expected_title") or ""),
+                expected_agent_id=str(verdict.get("expected_agent_id") or ""),
+            )
         if click_res.get("clicked"):
             selected = True
             await asyncio.sleep(0.25)
@@ -356,7 +362,11 @@ async def _deliver_locked(
                 ),
             )
         else:
-            paste_res = await _paste(ws_url, composer, line)
+            sel = composer_selector(
+                app=app,
+                agent_id=str(verdict.get("expected_agent_id") or aid_s or ""),
+            )
+            paste_res = await dom_insert_and_send(ws_url, selector=sel, line=line)
     except (TimeoutError, RuntimeError, OSError) as exc:
         return _refuse(
             "paste_failed",
@@ -473,68 +483,13 @@ async def _paste_cursor_services(
     return {"ok": True, "send_fallback_clicked": False}
 
 
-async def _paste(ws_url: str, focus_js: str, line: str) -> dict[str, Any]:
-    import websockets
-
-    async with websockets.connect(ws_url, max_size=2_000_000) as ws:
-        await ws.send(
-            json.dumps(
-                {
-                    "id": 1,
-                    "method": "Runtime.evaluate",
-                    "params": {"expression": focus_js, "returnByValue": True},
-                }
-            )
-        )
-        focused = await asyncio.wait_for(_response(ws, 1), 5.0)
-        value = ((focused.get("result") or {}).get("result") or {}).get("value")
-        if not isinstance(value, dict) or not value.get("ok"):
-            reason = (
-                value.get("reason")
-                if isinstance(value, dict) and value.get("reason")
-                else "no_composer"
-            )
-            return {"ok": False, "reason": reason}
-        await ws.send(
-            json.dumps(
-                {"id": 2, "method": "Input.insertText", "params": {"text": line}}
-            )
-        )
-        await asyncio.wait_for(_response(ws, 2), 5.0)
-        for mid, phase in ((3, "keyDown"), (4, "keyUp")):
-            await ws.send(
-                json.dumps(
-                    {
-                        "id": mid,
-                        "method": "Input.dispatchKeyEvent",
-                        "params": {
-                            "type": phase,
-                            "key": "Enter",
-                            "code": "Enter",
-                            "windowsVirtualKeyCode": 13,
-                            "nativeVirtualKeyCode": 13,
-                        },
-                    }
-                )
-            )
-            await asyncio.wait_for(_response(ws, mid), 5.0)
-        await asyncio.sleep(0.1)
-        await ws.send(
-            json.dumps(
-                {
-                    "id": 5,
-                    "method": "Runtime.evaluate",
-                    "params": {
-                        "expression": _send_fallback_js(line),
-                        "returnByValue": True,
-                    },
-                }
-            )
-        )
-        fallback = await asyncio.wait_for(_response(ws, 5), 5.0)
-        val = ((fallback.get("result") or {}).get("result") or {}).get("value") or {}
-        clicked = bool(val.get("send_fallback_clicked"))
-    return {"ok": True, "send_fallback_clicked": clicked}
+async def _paste(
+    ws_url: str, focus_js: str, line: str, *, app: str = "grok"
+) -> dict[str, Any]:
+    """DOM-only grok paste (legacy signature; ``focus_js`` ignored)."""
+    del focus_js
+    sel = composer_selector(app=app, agent_id="")
+    return await dom_insert_and_send(ws_url, selector=sel, line=line)
 
 
 async def _response(ws: Any, mid: int) -> dict[str, Any]:

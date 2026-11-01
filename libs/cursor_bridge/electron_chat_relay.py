@@ -25,11 +25,14 @@ from cursor_bridge.chat_surface import (
     select_sidebar_target,
     wake_decision,
 )
+from cursor_bridge.display_interaction_locks import (
+    agent_paste_lock,
+    display_switch_lock,
+    paste_lock_key,
+)
+from cursor_bridge.dom_composer_paste import composer_selector, dom_insert_and_send
 from cursor_bridge.wake_delivery import (
-    _COMPOSER_JS,
     _busy_or_draft_reason,
-    _display_lock,
-    _paste,
     _pick_page,
     _refuse,
     normalize_target,
@@ -84,15 +87,36 @@ async def _resolve_and_select_endpoint(
     try:
         pages = list_pages(target["origin"])
     except URLError as exc:
-        return {"ok": False, "reason": "debug_unreachable", "endpoint": endpoint.label, "display": disp, "app": app, "detail": type(exc).__name__}
+        return {
+            "ok": False,
+            "reason": "debug_unreachable",
+            "endpoint": endpoint.label,
+            "display": disp,
+            "app": app,
+            "detail": type(exc).__name__,
+        }
     page = _pick_page(pages, app)
     if page is None:
-        return {"ok": False, "reason": "no_page", "endpoint": endpoint.label, "display": disp, "app": app, "pages": len(pages)}
+        return {
+            "ok": False,
+            "reason": "no_page",
+            "endpoint": endpoint.label,
+            "display": disp,
+            "app": app,
+            "pages": len(pages),
+        }
     ws_url = page["web_socket_debugger_url"]
     try:
         surface = await probe_surface(ws_url)
     except (TimeoutError, RuntimeError, OSError) as exc:
-        return {"ok": False, "reason": "surface_probe_failed", "endpoint": endpoint.label, "display": disp, "app": app, "detail": type(exc).__name__}
+        return {
+            "ok": False,
+            "reason": "surface_probe_failed",
+            "endpoint": endpoint.label,
+            "display": disp,
+            "app": app,
+            "detail": type(exc).__name__,
+        }
     verdict = wake_decision(
         surface,
         thread=endpoint.thread,
@@ -104,12 +128,20 @@ async def _resolve_and_select_endpoint(
     if not verdict.get("ok") and select and verdict.get("state") == "chat_list":
         guard = _busy_or_draft_reason(surface)
         if guard:
-            return {"ok": False, "reason": guard, "endpoint": endpoint.label, "display": disp, "app": app, "active_title": verdict.get("active_title")}
-        click_res = await select_sidebar_target(
-            ws_url,
-            expected_title=str(verdict.get("expected_title") or ""),
-            expected_agent_id=str(verdict.get("expected_agent_id") or ""),
-        )
+            return {
+                "ok": False,
+                "reason": guard,
+                "endpoint": endpoint.label,
+                "display": disp,
+                "app": app,
+                "active_title": verdict.get("active_title"),
+            }
+        async with display_switch_lock(disp):
+            click_res = await select_sidebar_target(
+                ws_url,
+                expected_title=str(verdict.get("expected_title") or ""),
+                expected_agent_id=str(verdict.get("expected_agent_id") or ""),
+            )
         if click_res.get("clicked"):
             selected = True
             await asyncio.sleep(0.25)
@@ -122,7 +154,14 @@ async def _resolve_and_select_endpoint(
                 agent_id=endpoint.agent_id or None,
             )
     if not verdict.get("ok"):
-        return {**verdict, "ok": False, "endpoint": endpoint.label, "display": disp, "app": app, "selected": selected}
+        return {
+            **verdict,
+            "ok": False,
+            "endpoint": endpoint.label,
+            "display": disp,
+            "app": app,
+            "selected": selected,
+        }
     return {
         "ok": True,
         "ws_url": ws_url,
@@ -140,12 +179,17 @@ async def read_endpoint_turn(
     """Select ``endpoint`` (if needed and safe) and return its latest prose state."""
     target = normalize_target(endpoint.display, endpoint.app)
     disp = str(target.get("display") or endpoint.display)
-    async with _display_lock(disp):
+    lock_id = paste_lock_key(agent_id=endpoint.agent_id, thread=endpoint.thread)
+    async with agent_paste_lock(disp, lock_id):
         res = await _resolve_and_select_endpoint(endpoint, select=select)
         if not res.get("ok"):
             return res
         surface, verdict = res["surface"], res["verdict"]
-        messages = [str(m).strip() for m in (surface.get("recent_messages") or []) if str(m).strip()]
+        messages = [
+            str(m).strip()
+            for m in (surface.get("recent_messages") or [])
+            if str(m).strip()
+        ]
         latest = messages[-1] if messages else ""
         return {
             "ok": True,
@@ -172,7 +216,8 @@ async def paste_endpoint_message(
         return _refuse("empty_message", endpoint=endpoint.label)
     target = normalize_target(endpoint.display, endpoint.app)
     disp = str(target.get("display") or endpoint.display)
-    async with _display_lock(disp):
+    lock_id = paste_lock_key(agent_id=endpoint.agent_id, thread=endpoint.thread)
+    async with agent_paste_lock(disp, lock_id):
         res = await _resolve_and_select_endpoint(endpoint, select=select)
         if not res.get("ok"):
             return {**res, "pasted": False, "delivered": False}
@@ -180,17 +225,44 @@ async def paste_endpoint_message(
         disp, app, selected = res["display"], res["app"], res["selected"]
         guard = _busy_or_draft_reason(surface)
         if guard:
-            return _refuse(guard, endpoint=endpoint.label, display=disp, app=app, selected=selected)
-        composer = _COMPOSER_JS.get(app)
-        if composer is None:
-            return _refuse("composer_unconfirmed", endpoint=endpoint.label, display=disp, app=app)
+            return _refuse(
+                guard, endpoint=endpoint.label, display=disp, app=app, selected=selected
+            )
+        if app not in {"grok", "cursor"}:
+            return _refuse(
+                "composer_unconfirmed", endpoint=endpoint.label, display=disp, app=app
+            )
         flat_line = " ".join(text.splitlines()).strip()
+        sel = composer_selector(
+            app=app,
+            agent_id=str(verdict.get("expected_agent_id") or endpoint.agent_id or ""),
+        )
         try:
-            paste_res = await _paste(ws_url, composer, flat_line)
+            if app == "cursor":
+                from cursor_bridge.wake_delivery import _paste_cursor_services
+
+                paste_res = await _paste_cursor_services(
+                    ws_url, flat_line, agent_id=str(endpoint.agent_id or "")
+                )
+            else:
+                paste_res = await dom_insert_and_send(
+                    ws_url, selector=sel, line=flat_line
+                )
         except (TimeoutError, RuntimeError, OSError) as exc:
-            return _refuse("paste_failed", endpoint=endpoint.label, display=disp, app=app, detail=type(exc).__name__)
+            return _refuse(
+                "paste_failed",
+                endpoint=endpoint.label,
+                display=disp,
+                app=app,
+                detail=type(exc).__name__,
+            )
         if not paste_res.get("ok"):
-            return _refuse(str(paste_res.get("reason") or "no_composer"), endpoint=endpoint.label, display=disp, app=app)
+            return _refuse(
+                str(paste_res.get("reason") or "no_composer"),
+                endpoint=endpoint.label,
+                display=disp,
+                app=app,
+            )
         await asyncio.sleep(0.25)
         post = await probe_surface(ws_url)
         delivered = bool(
@@ -200,7 +272,9 @@ async def paste_endpoint_message(
         return {
             **verdict,
             "ok": delivered,
-            "reason": verdict.get("reason", "match") if delivered else "delivery_unconfirmed",
+            "reason": verdict.get("reason", "match")
+            if delivered
+            else "delivery_unconfirmed",
             "pasted": True,
             "delivered": delivered,
             "selected": selected,
@@ -230,7 +304,12 @@ async def wait_for_new_settled_turn(
         if not snap.get("generating") and fp and fp != baseline_fingerprint:
             return snap
         await asyncio.sleep(poll_interval_s)
-    return {"ok": False, "reason": "turn_wait_timeout", "endpoint": endpoint.label, "baseline_fingerprint": baseline_fingerprint}
+    return {
+        "ok": False,
+        "reason": "turn_wait_timeout",
+        "endpoint": endpoint.label,
+        "baseline_fingerprint": baseline_fingerprint,
+    }
 
 
 async def run_one_to_one_relay(
@@ -247,10 +326,20 @@ async def run_one_to_one_relay(
     transcript: list[dict[str, Any]] = []
     left_snap = await read_endpoint_turn(left, select=True)
     if not left_snap.get("ok"):
-        return {"ok": False, "stage": "init_left", "detail": left_snap, "transcript": transcript}
+        return {
+            "ok": False,
+            "stage": "init_left",
+            "detail": left_snap,
+            "transcript": transcript,
+        }
     right_snap = await read_endpoint_turn(right, select=True)
     if not right_snap.get("ok"):
-        return {"ok": False, "stage": "init_right", "detail": right_snap, "transcript": transcript}
+        return {
+            "ok": False,
+            "stage": "init_right",
+            "detail": right_snap,
+            "transcript": transcript,
+        }
 
     last_fp: dict[str, str] = {
         left.label: str(left_snap.get("latest_fingerprint") or ""),
@@ -260,9 +349,21 @@ async def run_one_to_one_relay(
     if seed_message and seed_message.strip():
         pasted = await paste_endpoint_message(left, seed_message.strip(), select=True)
         if not pasted.get("ok"):
-            return {"ok": False, "stage": "seed_paste", "detail": pasted, "transcript": transcript}
+            return {
+                "ok": False,
+                "stage": "seed_paste",
+                "detail": pasted,
+                "transcript": transcript,
+            }
         last_fp[left.label] = str(pasted.get("fingerprint") or "")
-        transcript.append({"step": 0, "from": "seed", "to": left.label, "message": pasted.get("message")})
+        transcript.append(
+            {
+                "step": 0,
+                "from": "seed",
+                "to": left.label,
+                "message": pasted.get("message"),
+            }
+        )
 
     for step in range(1, max_exchanges + 1):
         turn = await wait_for_new_settled_turn(
@@ -272,23 +373,59 @@ async def run_one_to_one_relay(
             timeout_s=turn_timeout_s,
         )
         if not turn.get("ok"):
-            return {"ok": False, "stage": f"wait_turn_{step}_{speaker.label}", "detail": turn, "transcript": transcript}
+            return {
+                "ok": False,
+                "stage": f"wait_turn_{step}_{speaker.label}",
+                "detail": turn,
+                "transcript": transcript,
+            }
         reply_text = str(turn.get("latest_message") or "").strip()
         last_fp[speaker.label] = str(turn.get("latest_fingerprint") or "")
         if should_stop_for_bus_handoff(reply_text, extra_markers=extra_stop_markers):
-            transcript.append({"step": step, "from": speaker.label, "to": "agent_bus", "message": reply_text, "handoff": True})
-            return {"ok": True, "stopped_reason": "bus_handoff", "step": step, "speaker": speaker.label, "transcript": transcript}
+            transcript.append(
+                {
+                    "step": step,
+                    "from": speaker.label,
+                    "to": "agent_bus",
+                    "message": reply_text,
+                    "handoff": True,
+                }
+            )
+            return {
+                "ok": True,
+                "stopped_reason": "bus_handoff",
+                "step": step,
+                "speaker": speaker.label,
+                "transcript": transcript,
+            }
         listener_snap = await read_endpoint_turn(listener, select=True)
         if listener_snap.get("ok"):
             last_fp[listener.label] = str(listener_snap.get("latest_fingerprint") or "")
         pasted = await paste_endpoint_message(listener, reply_text, select=True)
         if not pasted.get("ok"):
-            return {"ok": False, "stage": f"paste_step_{step}_{listener.label}", "detail": pasted, "transcript": transcript}
+            return {
+                "ok": False,
+                "stage": f"paste_step_{step}_{listener.label}",
+                "detail": pasted,
+                "transcript": transcript,
+            }
         last_fp[listener.label] = str(pasted.get("fingerprint") or "")
-        transcript.append({"step": step, "from": speaker.label, "to": listener.label, "message": reply_text})
+        transcript.append(
+            {
+                "step": step,
+                "from": speaker.label,
+                "to": listener.label,
+                "message": reply_text,
+            }
+        )
         speaker, listener = listener, speaker
 
-    return {"ok": True, "stopped_reason": "max_exchanges_reached", "step": max_exchanges, "transcript": transcript}
+    return {
+        "ok": True,
+        "stopped_reason": "max_exchanges_reached",
+        "step": max_exchanges,
+        "transcript": transcript,
+    }
 
 
 __all__ = [

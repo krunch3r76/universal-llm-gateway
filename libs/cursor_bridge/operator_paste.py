@@ -18,17 +18,25 @@ from cursor_bridge.chat_surface import (
     select_sidebar_target,
     wake_decision,
 )
+from cursor_bridge.display_interaction_locks import (
+    agent_paste_lock,
+    display_switch_lock,
+)
+from cursor_bridge.dom_composer_paste import (
+    composer_selector,
+    dom_click_send,
+    dom_set_composer_text,
+    foreign_draft_guard,
+    wait_for_operator_idle,
+)
 from cursor_bridge.operator_agent_locate import (
     locate_off_sidebar,
     visible_sidebar_agent_ids,
 )
 from cursor_bridge.wake_delivery import (
-    _COMPOSER_JS,
     _busy_or_draft_reason,
-    _display_lock,
     _pick_page,
     _refuse,
-    _send_fallback_js,
     normalize_target,
 )
 
@@ -71,7 +79,9 @@ _DOM_FINGERPRINT_KEYS = (
 def _sha256_dom_from_surface(surface: dict[str, Any]) -> str:
     """Fingerprint probe-visible chat surface (Electron DOM read), not full page HTML."""
     payload = {k: surface.get(k) for k in _DOM_FINGERPRINT_KEYS}
-    dom_bytes = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    dom_bytes = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode(
+        "utf-8"
+    )
     return hashlib.sha256(dom_bytes).hexdigest()
 
 
@@ -165,83 +175,22 @@ def _dom_verification_conclusive(
 
 
 async def _insert_composer_text(
-    ws_url: str, focus_js: str, line: str
+    ws_url: str, *, selector: str, line: str
 ) -> dict[str, Any]:
-    """Focus composer and insert text once — no submit."""
-    import websockets
-
-    async with websockets.connect(ws_url, max_size=2_000_000) as ws:
-        await ws.send(
-            json.dumps(
-                {
-                    "id": 1,
-                    "method": "Runtime.evaluate",
-                    "params": {"expression": focus_js, "returnByValue": True},
-                }
-            )
-        )
-        focused = await asyncio.wait_for(_cdp_response(ws, 1), 5.0)
-        value = ((focused.get("result") or {}).get("result") or {}).get("value")
-        if not isinstance(value, dict) or not value.get("ok"):
-            reason = (
-                value.get("reason")
-                if isinstance(value, dict) and value.get("reason")
-                else "no_composer"
-            )
-            return {"ok": False, "reason": reason}
-        await ws.send(
-            json.dumps(
-                {"id": 2, "method": "Input.insertText", "params": {"text": line}}
-            )
-        )
-        await asyncio.wait_for(_cdp_response(ws, 2), 5.0)
-    return {"ok": True}
+    """Set composer text once via DOM — no submit, no focus()."""
+    return await dom_set_composer_text(ws_url, selector=selector, text=line)
 
 
-async def _submit_composer_enter(ws_url: str) -> dict[str, Any]:
-    import websockets
-
-    async with websockets.connect(ws_url, max_size=2_000_000) as ws:
-        for mid, phase in ((1, "keyDown"), (2, "keyUp")):
-            await ws.send(
-                json.dumps(
-                    {
-                        "id": mid,
-                        "method": "Input.dispatchKeyEvent",
-                        "params": {
-                            "type": phase,
-                            "key": "Enter",
-                            "code": "Enter",
-                            "windowsVirtualKeyCode": 13,
-                            "nativeVirtualKeyCode": 13,
-                        },
-                    }
-                )
-            )
-            await asyncio.wait_for(_cdp_response(ws, mid), 5.0)
-    return {"ok": True, "method": "enter"}
-
-
-async def _submit_composer_send_button(ws_url: str, line: str) -> dict[str, Any]:
-    import websockets
-
-    async with websockets.connect(ws_url, max_size=2_000_000) as ws:
-        await ws.send(
-            json.dumps(
-                {
-                    "id": 1,
-                    "method": "Runtime.evaluate",
-                    "params": {
-                        "expression": _send_fallback_js(line),
-                        "returnByValue": True,
-                    },
-                }
-            )
-        )
-        fallback = await asyncio.wait_for(_cdp_response(ws, 1), 5.0)
-    val = ((fallback.get("result") or {}).get("result") or {}).get("value") or {}
-    clicked = bool(val.get("send_fallback_clicked"))
-    return {"ok": clicked, "method": "send_button", "send_fallback_clicked": clicked}
+async def _submit_composer_send_button(
+    ws_url: str, *, selector: str, line: str
+) -> dict[str, Any]:
+    send = await dom_click_send(ws_url, selector=selector, line=line)
+    clicked = bool(send.get("send_clicked"))
+    return {
+        "ok": clicked,
+        "method": "send_button",
+        "send_fallback_clicked": clicked,
+    }
 
 
 async def _cdp_response(ws: Any, mid: int) -> dict[str, Any]:
@@ -313,9 +262,7 @@ def _message_in_transcript(
 ) -> bool:
     messages = [str(m) for m in (post.get("recent_messages") or [])]
     snippet = body_snippet.strip()
-    return any(
-        watermark in m or (snippet and snippet in m) for m in messages
-    )
+    return any(watermark in m or (snippet and snippet in m) for m in messages)
 
 
 def _submit_verified(
@@ -408,7 +355,7 @@ async def deliver_operator_paste(
         authorization_source=auth_src,
         scope=str(scope or "").strip(),
     )
-    async with _display_lock(target["display"]):
+    async with agent_paste_lock(target["display"], aid_s):
         return await _deliver_operator_locked(
             target=target,
             aid_s=aid_s,
@@ -442,6 +389,8 @@ async def _deliver_operator_locked(
             "surface_probe_failed", display=disp, app=app, detail=type(exc).__name__
         )
     pre_messages = [str(m) for m in (surface.get("recent_messages") or [])]
+    restore_agent_id = str(surface.get("active_agent_id") or "").strip()
+    did_switch = False
     locate_method: str | None = None
     try:
         visible_ids = await visible_sidebar_agent_ids(ws_url)
@@ -484,21 +433,53 @@ async def _deliver_operator_locked(
                 active_title=verdict.get("active_title"),
                 expected_agent_id=verdict.get("expected_agent_id"),
             )
-        click_res = await select_sidebar_target(
+        idle = await wait_for_operator_idle(
             ws_url,
-            expected_title=str(verdict.get("expected_title") or ""),
-            expected_agent_id=str(verdict.get("expected_agent_id") or aid_s),
+            selector=composer_selector(app=app, agent_id=aid_s),
+            watermark=WATERMARK,
         )
+        if not idle.get("idle"):
+            return _grant_refuse(
+                "operator_busy",
+                display=disp,
+                app=app,
+                submitted=False,
+                selected=selected,
+            )
+        async with display_switch_lock(disp):
+            click_res = await select_sidebar_target(
+                ws_url,
+                expected_title=str(verdict.get("expected_title") or ""),
+                expected_agent_id=str(verdict.get("expected_agent_id") or aid_s),
+            )
         if click_res.get("clicked"):
             selected = True
+            if restore_agent_id and restore_agent_id != aid_s:
+                did_switch = True
             await asyncio.sleep(0.25)
             surface = await probe_surface(ws_url)
             verdict = wake_decision(surface, agent_id=aid_s)
 
     if not verdict.get("ok") and select and aid_s not in visible_ids:
-        located = await locate_off_sidebar(ws_url, aid_s)
+        idle = await wait_for_operator_idle(
+            ws_url,
+            selector=composer_selector(app=app, agent_id=aid_s),
+            watermark=WATERMARK,
+        )
+        if not idle.get("idle"):
+            return _grant_refuse(
+                "operator_busy",
+                display=disp,
+                app=app,
+                submitted=False,
+                selected=selected,
+            )
+        async with display_switch_lock(disp):
+            located = await locate_off_sidebar(ws_url, aid_s)
         if located.get("ok"):
             locate_method = str(located.get("locate_method") or "")
+            if restore_agent_id and restore_agent_id != aid_s:
+                did_switch = True
             await asyncio.sleep(0.2)
             surface = await probe_surface(ws_url)
             verdict = wake_decision(surface, agent_id=aid_s)
@@ -560,7 +541,9 @@ async def _deliver_operator_locked(
             target_verified=False,
         )
 
-    guard = _busy_or_draft_reason(surface)
+    guard = foreign_draft_guard(surface, watermark=WATERMARK) or _busy_or_draft_reason(
+        surface
+    )
     if guard:
         return _grant_refuse(
             guard,
@@ -570,19 +553,27 @@ async def _deliver_operator_locked(
             active_title=verdict.get("active_title"),
             expected_agent_id=verdict.get("expected_agent_id"),
         )
-    composer = _COMPOSER_JS.get(app)
-    if composer is None:
-        return _grant_refuse(
-            "composer_unconfirmed",
-            display=disp,
-            app=app,
-            selected=selected,
-        )
+    prompt_sel = composer_selector(app=app, agent_id=aid_s)
     flat_line = " ".join(line.splitlines()).strip()
     body_snippet = flat_line[:120]
 
+    idle = await wait_for_operator_idle(
+        ws_url, selector=prompt_sel, watermark=WATERMARK
+    )
+    if not idle.get("idle"):
+        return _grant_refuse(
+            "operator_busy",
+            display=disp,
+            app=app,
+            submitted=False,
+            selected=selected,
+            expected_agent_id=aid_s,
+        )
+
     try:
-        insert_res = await _insert_composer_text(ws_url, composer, flat_line)
+        insert_res = await _insert_composer_text(
+            ws_url, selector=prompt_sel, line=flat_line
+        )
     except (TimeoutError, RuntimeError, OSError) as exc:
         return _grant_refuse(
             "paste_failed",
@@ -603,8 +594,10 @@ async def _deliver_operator_locked(
 
     submit_methods: list[str] = []
     try:
-        await _submit_composer_enter(ws_url)
-        submit_methods.append("enter")
+        first_send = await _submit_composer_send_button(
+            ws_url, selector=prompt_sel, line=flat_line
+        )
+        submit_methods.append("send_button")
     except (TimeoutError, RuntimeError, OSError) as exc:
         return _grant_refuse(
             "submit_failed",
@@ -613,13 +606,18 @@ async def _deliver_operator_locked(
             selected=selected,
             detail=type(exc).__name__,
         )
-
-    post_submit, submitted = await _poll_submit_verified(
-        ws_url, watermark=WATERMARK, body_snippet=body_snippet
-    )
+    if not first_send.get("ok"):
+        submitted = False
+        post_submit = surface
+    else:
+        post_submit, submitted = await _poll_submit_verified(
+            ws_url, watermark=WATERMARK, body_snippet=body_snippet
+        )
     if not submitted:
         try:
-            retry = await _submit_composer_send_button(ws_url, flat_line)
+            retry = await _submit_composer_send_button(
+                ws_url, selector=prompt_sel, line=flat_line
+            )
             submit_methods.append("send_button_retry")
             if retry.get("ok"):
                 post_submit, submitted = await _poll_submit_verified(
@@ -627,6 +625,10 @@ async def _deliver_operator_locked(
                 )
         except (TimeoutError, RuntimeError, OSError):
             submitted = False
+
+    if did_switch and restore_agent_id and submitted:
+        async with display_switch_lock(disp):
+            await select_sidebar_target(ws_url, expected_agent_id=restore_agent_id)
 
     if not submitted:
         artifacts = await _finalize_verification_artifacts(

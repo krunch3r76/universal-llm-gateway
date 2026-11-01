@@ -164,29 +164,15 @@ async def test_paste_send_button_fallback_when_enter_leaves_composer(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     line = "BRIDGE_WAKE thread=15851 turn=290"
-    inbox = [
-        _cdp_msg(1, {"ok": True}),
-        json.dumps({"id": 2, "result": {}}),
-        json.dumps({"id": 3, "result": {}}),
-        json.dumps({"id": 4, "result": {}}),
-        _cdp_msg(5, {"ok": True, "send_fallback_clicked": True}),
-    ]
-    fake = _FakeWS(inbox)
-
-    def _connect(_url: str, **_kw: Any) -> _FakeWS:
-        return fake
-
-    monkeypatch.setattr("websockets.connect", _connect)
-    monkeypatch.setattr(wd.asyncio, "sleep", AsyncMock())
+    dom = AsyncMock(return_value={"ok": True, "send_fallback_clicked": True})
+    monkeypatch.setattr(wd, "dom_insert_and_send", dom)
 
     out = await _paste("ws://fake", wd._COMPOSER_JS["grok"], line)
 
     assert out == {"ok": True, "send_fallback_clicked": True}
-    fallback_call = next(m for m in fake.sent if m.get("id") == 5)
-    expr = fallback_call["params"]["expression"]
-    assert "Send message" in expr
-    assert "send_fallback_clicked" in expr
-    assert line in expr
+    dom.assert_awaited_once()
+    assert dom.await_args.kwargs["line"] == line
+    assert "Input.insertText" not in str(dom.await_args)
 
 
 @pytest.mark.asyncio
@@ -214,11 +200,8 @@ async def test_deliver_wake_pastes_over_stale_bridge_wake_draft(
         lambda _origin: [{"title": "Grok Bot", "web_socket_debugger_url": "ws://x"}],
     )
     monkeypatch.setattr(wd, "probe_surface", _probe)
-    monkeypatch.setattr(
-        wd,
-        "_paste",
-        AsyncMock(return_value={"ok": True, "send_fallback_clicked": True}),
-    )
+    dom_paste = AsyncMock(return_value={"ok": True, "send_fallback_clicked": True})
+    monkeypatch.setattr(wd, "dom_insert_and_send", dom_paste)
 
     out = await deliver_wake(
         display="9",
@@ -231,7 +214,7 @@ async def test_deliver_wake_pastes_over_stale_bridge_wake_draft(
     assert out.get("reason") != "composer_not_empty"
     assert out.get("pasted") is True
     assert out.get("send_fallback_clicked") is True
-    wd._paste.assert_awaited_once()
+    dom_paste.assert_awaited_once()
 
 
 def test_cursor_probe_fixture_records_witness() -> None:
