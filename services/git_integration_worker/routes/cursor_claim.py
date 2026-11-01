@@ -17,7 +17,9 @@ from services.git_integration_worker.cursor_sdk_work_claim import (
     ClaimError,
     WorkKeyHeld,
     claim,
+    registry,
     release,
+    update,
 )
 from services.git_integration_worker.cursor_sdk_work_key_gate import (
     validate_work_key_scheme,
@@ -38,6 +40,18 @@ class ClaimBody(BaseModel):
     thread_id: str
     ttl_s: int | None = None
     request_turn: int | None = None
+    seat_name: str | None = None
+    address: dict[str, Any] | None = None
+    work_status: str | None = None
+
+
+class ClaimUpdateBody(BaseModel):
+    """Body for ``POST /claim/{id}/update`` — metadata patch or terminal release."""
+
+    holder_agent: str
+    work_status: str | None = None
+    address_patch: dict[str, Any] | None = None
+    note: str | None = None
 
 
 class ApiRoleDispatchBody(BaseModel):
@@ -83,10 +97,18 @@ def post_claim(body: ClaimBody) -> Any:
             "holder_agent": body.holder_agent.strip(),
             "thread_id": body.thread_id.strip(),
             "request_turn": body.request_turn,
+            "seat_name": body.seat_name,
+            "address": body.address,
+            "work_status": body.work_status,
         }
         if body.ttl_s is not None:
             kwargs["ttl_s"] = body.ttl_s
         return claim(**kwargs)
+    except ClaimError as exc:
+        return JSONResponse(
+            status_code=exc.http_status,
+            content={"code": exc.code, "message": str(exc)},
+        )
     except WorkKeyHeld as exc:
         return JSONResponse(
             status_code=409,
@@ -94,6 +116,46 @@ def post_claim(body: ClaimBody) -> Any:
         )
     except ValueError as exc:
         return _invalid("INVALID_TTL", str(exc))
+
+
+@router.post("/claim/{claim_id}/update", response_model=None)
+def post_claim_update(claim_id: str, body: ClaimUpdateBody) -> Any:
+    """Update house-claim metadata; ``landed`` / ``abandoned`` release the row."""
+    if not body.holder_agent.strip():
+        return _invalid("INVALID_CLAIM", "holder_agent is required")
+    try:
+        return update(
+            claim_id,
+            body.holder_agent.strip(),
+            work_status=body.work_status,
+            address_patch=body.address_patch,
+            note=body.note,
+        )
+    except ClaimError as exc:
+        return JSONResponse(
+            status_code=exc.http_status,
+            content={"code": exc.code, "message": str(exc)},
+        )
+
+
+@router.get("/registry", response_model=None)
+def get_registry(
+    state: str = Query("live"),
+    window_hours: int = Query(24, ge=1, le=168),
+    work_key_prefix: str | None = Query(None),
+) -> Any:
+    """Live work registry (claims + acting dispatches), ≤5120 UTF-8 bytes."""
+    try:
+        return registry(
+            state=state,
+            window_hours=window_hours,
+            work_key_prefix=work_key_prefix,
+        )
+    except ClaimError as exc:
+        return JSONResponse(
+            status_code=exc.http_status,
+            content={"code": exc.code, "message": str(exc)},
+        )
 
 
 @router.post("/claim/{claim_id}/release", response_model=None)

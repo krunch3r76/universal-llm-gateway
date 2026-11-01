@@ -302,7 +302,9 @@ def register_frontier_tools(mcp: FastMCP) -> None:
             "steer",
             "claim",
             "claim_release",
+            "claim_update",
             "occupancy",
+            "registry",
             "ledger",
         ],
         role: str | None = None,
@@ -595,20 +597,73 @@ def register_frontier_tools(mcp: FastMCP) -> None:
             int | None,
             Field(
                 description=(
-                    "When op='ledger', roll-up window in hours (default 24, clamp 1..168)."
+                    "When op='ledger' or op='registry', roll-up window in hours "
+                    "(default 24, clamp 1..168)."
                 ),
+            ),
+        ] = None,
+        seat_name: Annotated[
+            str | None,
+            Field(
+                description="House seat label stored on op='claim' rows.",
+            ),
+        ] = None,
+        address: Annotated[
+            dict[str, Any] | None,
+            Field(
+                description=(
+                    "Tab address on op='claim' (grok_bot+agent_id, cdp_url+target_id, "
+                    "or tab_url). 422 ADDRESS_UNREACHABLE_SHAPE when invalid."
+                ),
+            ),
+        ] = None,
+        work_status: Annotated[
+            str | None,
+            Field(
+                description=(
+                    "House work status on op='claim' or op='claim_update'. "
+                    "landed/abandoned on claim_update release the row."
+                ),
+            ),
+        ] = None,
+        address_patch: Annotated[
+            dict[str, Any] | None,
+            Field(
+                description="Partial address merge for op='claim_update'.",
+            ),
+        ] = None,
+        note: Annotated[
+            str | None,
+            Field(
+                description="Optional status-history note on op='claim_update'.",
+            ),
+        ] = None,
+        state: Annotated[
+            str | None,
+            Field(
+                description="Registry filter when op='registry' (default live).",
+            ),
+        ] = None,
+        work_key_prefix: Annotated[
+            str | None,
+            Field(
+                description="Optional work_key prefix filter when op='registry'.",
             ),
         ] = None,
     ) -> dict[str, Any]:
         """Team-seat dispatch to Stargate. Returns `{execution_id, pipeline, started_at, status}`. Poll `agent_bus(tool="wait")` via `poll_hint`. Role-less one-shots: `pipeline(op="async", pipeline_id="chat-dispatch")`.
 
-        **Ops:** `generate` | `to_thread` | `handoff` | `steer` | `claim` | `claim_release` | `occupancy` | `ledger`.
+        **Ops:** `generate` | `to_thread` | `handoff` | `steer` | `claim` | `claim_release` | `claim_update` | `occupancy` | `registry` | `ledger`.
 
-        **claim:** `work_key` + `thread`. Holder is `caller_agent`. 409 `WORK_KEY_HELD`. 422 `INVALID_WORK_KEY` or `INVALID_TTL`.
+        **claim:** `work_key` + `thread`. Holder is `caller_agent`. Optional `seat_name`, `address`, `work_status`. 409 `WORK_KEY_HELD`. 422 `INVALID_WORK_KEY`, `INVALID_TTL`, or `ADDRESS_UNREACHABLE_SHAPE`.
 
         **claim_release:** `claim_id` + `outcome`∈{completed,failed,withdrawn}. 404 `CLAIM_NOT_FOUND`. 409 `CLAIM_NOT_HELD`. 422 bad outcome.
 
+        **claim_update:** `claim_id` + `caller_agent`. Patch `work_status`, `address_patch`, `note`. `work_status=landed|abandoned` releases the claim.
+
         **occupancy:** `work_key`. 422 `INVALID_WORK_KEY`. Returns occupancy, not progress.
+
+        **registry:** optional `state` (live), `window_hours`, `work_key_prefix`. Live claims + acting dispatches, ≤5120 UTF-8 bytes (`truncated` when trimmed).
 
         **ledger:** `work_key`; optional `limit` (default 5) and `window_hours` (default 24). Read-only recent dispatches + house roll-up under 5120 UTF-8 bytes.
 
@@ -702,7 +757,14 @@ def register_frontier_tools(mcp: FastMCP) -> None:
                 record_prefix="mcp.team.steer",
             )
 
-        if op in ("claim", "claim_release", "occupancy", "ledger"):
+        if op in (
+            "claim",
+            "claim_release",
+            "claim_update",
+            "occupancy",
+            "registry",
+            "ledger",
+        ):
             if op == "claim" and (not work_key or not thread):
                 return {
                     "error": {
@@ -711,11 +773,11 @@ def register_frontier_tools(mcp: FastMCP) -> None:
                     },
                     "field": "work_key" if not work_key else "thread",
                 }
-            if op == "claim_release" and not claim_id:
+            if op in ("claim_release", "claim_update") and not claim_id:
                 return {
                     "error": {
                         "code": "validation_error",
-                        "message": "claim_id is required when op='claim_release'",
+                        "message": f"claim_id is required when op='{op}'",
                     },
                     "field": "claim_id",
                 }
@@ -763,8 +825,22 @@ def register_frontier_tools(mcp: FastMCP) -> None:
                 claim_body["ttl_s"] = ttl_s
             if limit is not None and op == "ledger":
                 claim_body["limit"] = limit
-            if window_hours is not None and op == "ledger":
+            if window_hours is not None and op in ("ledger", "registry"):
                 claim_body["window_hours"] = window_hours
+            if seat_name is not None and op == "claim":
+                claim_body["seat_name"] = seat_name
+            if address is not None and op == "claim":
+                claim_body["address"] = address
+            if work_status is not None and op in ("claim", "claim_update"):
+                claim_body["work_status"] = work_status
+            if address_patch is not None and op == "claim_update":
+                claim_body["address_patch"] = address_patch
+            if note is not None and op == "claim_update":
+                claim_body["note"] = note
+            if state is not None and op == "registry":
+                claim_body["state"] = state
+            if work_key_prefix is not None and op == "registry":
+                claim_body["work_key_prefix"] = work_key_prefix
             if caller_agent is not None:
                 claim_body["caller_agent"] = caller_agent
             record("mcp.team.claim.called", op=op)

@@ -27,7 +27,9 @@ from services.git_integration_worker.cursor_sdk_work_claim import (
     claim,
     claim_id_for,
     expire_claims,
+    registry,
     release,
+    update,
 )
 from services.git_integration_worker.cursor_sdk_worktree_reconcile import (
     _REMIT_SKIP_STATUSES,
@@ -559,3 +561,162 @@ def test_claim_route_rejects_bad_work_key() -> None:
     )
     assert resp.status_code == 422
     assert resp.json()["code"] == "INVALID_WORK_KEY"
+
+
+_GROK_AGENT = "e059a74c-2498-40c9-8189-5dc939a2cce2"
+_GROK_ADDRESS = {
+    "kind": "grok_bot",
+    "agent_id": _GROK_AGENT,
+    "display": ":10",
+    "app": "grok",
+}
+
+
+def test_registry_s1_claim_address_occupancy_and_renew_merge() -> None:
+    ledger = _ledger()
+    client = _client()
+    key_a = "todo:registry-s1-a"
+    key_b = "todo:registry-s1-b"
+    first = claim(
+        key_a,
+        "seat-a",
+        "L1",
+        ledger=ledger,
+        seat_name="gc1-grok",
+        address=_GROK_ADDRESS,
+        work_status="active",
+    )
+    occ = client.get("/api/v1/cursor/occupancy", params={"work_key": key_a})
+    assert occ.status_code == 200
+    holder = occ.json()["holder"]
+    assert holder["seat_name"] == "gc1-grok"
+    assert holder["address"]["agent_id"] == _GROK_AGENT
+    assert holder["address"]["display"] == "10"
+    assert holder["address"]["app"] == "grok"
+
+    claim(
+        key_a,
+        "seat-a",
+        "L1",
+        ledger=ledger,
+        seat_name="gc1-grok-renamed",
+        address={"kind": "grok_bot", "agent_id": _GROK_AGENT, "hidden": True},
+    )
+    again = client.get("/api/v1/cursor/occupancy", params={"work_key": key_a})
+    merged = again.json()["holder"]
+    assert merged["seat_name"] == "gc1-grok-renamed"
+    assert merged["address"]["agent_id"] == _GROK_AGENT
+    assert merged["address"].get("hidden") is True
+    assert merged["address"]["display"] == "10"
+
+    claim(
+        key_b,
+        "seat-a",
+        "L2",
+        ledger=ledger,
+        seat_name="seat-b",
+        address={"tab_url": "https://example.com/tab"},
+    )
+    reg = registry(ledger=ledger, work_key_prefix="todo:registry-s1")
+    assert reg["entries"][0]["work_key"] == key_b
+    assert reg["entries"][1]["work_key"] == key_a
+    assert reg["entries"][0]["address"]["tab_url"].startswith("https://")
+    assert reg["entries"][1]["address"]["agent_id"] == _GROK_AGENT
+
+
+def test_registry_s1_update_landed_and_holder_guard() -> None:
+    ledger = _ledger()
+    client = _client()
+    row = claim("todo:registry-update", "seat-a", "L1", ledger=ledger)
+    cid = row["claim_id"]
+    wrong = client.post(
+        f"/api/v1/cursor/claim/{cid}/update",
+        json={"holder_agent": "seat-b", "work_status": "active"},
+    )
+    assert wrong.status_code == 409
+    assert wrong.json()["code"] == "CLAIM_NOT_HELD"
+    landed = client.post(
+        f"/api/v1/cursor/claim/{cid}/update",
+        json={"holder_agent": "seat-a", "work_status": "landed"},
+    )
+    assert landed.status_code == 200
+    assert landed.json()["released"]["status"] == "completed"
+    assert _status(ledger, cid) == "completed"
+
+
+def test_registry_s1_invalid_address_and_secret_key() -> None:
+    client = _client()
+    bad_shape = client.post(
+        "/api/v1/cursor/claim",
+        json={
+            "work_key": _KEY,
+            "holder_agent": "seat-a",
+            "thread_id": "L1",
+            "address": {"kind": "grok_bot"},
+        },
+    )
+    assert bad_shape.status_code == 422
+    assert bad_shape.json()["code"] == "ADDRESS_UNREACHABLE_SHAPE"
+    secret = client.post(
+        "/api/v1/cursor/claim",
+        json={
+            "work_key": _KEY,
+            "holder_agent": "seat-a",
+            "thread_id": "L1",
+            "address": {
+                "kind": "grok_bot",
+                "agent_id": _GROK_AGENT,
+                "api_key": "nope",
+            },
+        },
+    )
+    assert secret.status_code == 422
+    assert secret.json()["code"] == "ADDRESS_UNREACHABLE_SHAPE"
+
+
+def test_registry_s1_grok_bot_agent_id_only_and_assertion_work_key() -> None:
+    ledger = _ledger()
+    minimal = claim(
+        "packet:smoke-grok",
+        "seat-a",
+        "L1",
+        ledger=ledger,
+        address={"kind": "grok_bot", "agent_id": _GROK_AGENT},
+    )
+    assert minimal["holder"]["address"]["agent_id"] == _GROK_AGENT
+    assert minimal["holder"]["address"]["app"] == "grok"
+    reg = registry(ledger=ledger, work_key_prefix="packet:smoke")
+    entry = reg["entries"][0]
+    assert entry["address"] == {
+        "kind": "grok_bot",
+        "agent_id": _GROK_AGENT,
+        "app": "grok",
+    }
+    claim("a:21631", "seat-a", "L9", ledger=ledger)
+    mapped = registry(ledger=ledger, work_key_prefix="a:")
+    assert mapped["entries"][0]["work_key_display"] == "decision:a-21631"
+
+
+def test_registry_s1_byte_cap_truncated() -> None:
+    ledger = _ledger()
+    for idx in range(40):
+        claim(
+            f"todo:registry-cap-{idx:02d}",
+            "seat-a",
+            f"L{idx}",
+            ledger=ledger,
+            address={"tab_url": f"https://example.com/{idx}/{'x' * 120}"},
+        )
+    reg = registry(ledger=ledger, work_key_prefix="todo:registry-cap")
+    assert reg["truncated"] is True
+    assert (
+        len(json.dumps(reg, separators=(",", ":"), ensure_ascii=False).encode("utf-8"))
+        <= 5120
+    )
+
+
+def test_registry_s1_abandoned_releases_withdrawn() -> None:
+    ledger = _ledger()
+    row = claim("todo:registry-abandon", "seat-a", "L1", ledger=ledger)
+    out = update(row["claim_id"], "seat-a", work_status="abandoned", ledger=ledger)
+    assert out["released"]["status"] == "cancelled"

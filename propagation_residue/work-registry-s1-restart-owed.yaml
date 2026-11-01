@@ -1,0 +1,9 @@
+# propagation_residue — PACKET-1 work-registry-s1 (lane-21631)
+# Operator/conductor: guarded_manage_reexec after hub master land.
+restart_owed:
+  - git_integration_worker
+  - mcp-server
+  - universal-stargate
+reason: >-
+  cursor_sdk_work_claim registry/update/address, cursor_claim routes,
+  frontier team_dispatch claim_update|registry, stargate claim relay.

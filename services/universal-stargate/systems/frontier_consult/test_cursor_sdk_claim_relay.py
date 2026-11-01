@@ -13,7 +13,9 @@ from systems.frontier_consult.cursor_sdk_worker_dispatch import (
 from systems.frontier_consult.route import (
     TeamDispatchClaimBody,
     TeamDispatchClaimReleaseBody,
+    TeamDispatchClaimUpdateBody,
     TeamDispatchOccupancyBody,
+    TeamDispatchRegistryBody,
     claim_id_from_generation_options,
     team_dispatch,
 )
@@ -68,6 +70,10 @@ def _client(status: int, body: dict, captured: dict) -> type:
         ("occupancy", 200),
         ("occupancy", 422),
         ("occupancy", 503),
+        ("claim_update", 200),
+        ("claim_update", 409),
+        ("registry", 200),
+        ("registry", 422),
     ],
 )
 async def test_relay_maps_giw_status(op: str, status: int) -> None:
@@ -103,6 +109,12 @@ async def test_relay_maps_giw_status(op: str, status: int) -> None:
     elif op == "claim_release":
         assert captured["path"] == "/api/v1/cursor/claim/claim-abc/release"
         assert captured["json"]["outcome"] == "completed"
+    elif op == "claim_update":
+        assert captured["path"] == "/api/v1/cursor/claim/claim-abc/update"
+        assert captured["json"]["holder_agent"] == "cursor-sdk"
+    elif op == "registry":
+        assert captured["method"] == "GET"
+        assert captured["path"] == "/api/v1/cursor/registry"
     else:
         assert captured["method"] == "GET"
         assert captured["params"]["work_key"] == "todo:k"
@@ -155,6 +167,36 @@ async def test_team_dispatch_release_and_occupancy_bodies() -> None:
         await team_dispatch(body=occ, response=AsyncMock())
     assert relay.await_args_list[0].kwargs["outcome"] == "withdrawn"
     assert relay.await_args_list[1].kwargs["op"] == "occupancy"
+
+
+@pytest.mark.asyncio
+async def test_team_dispatch_claim_update_and_registry_forward_fields() -> None:
+    upd = TeamDispatchClaimUpdateBody(
+        op="claim_update",
+        claim_id="claim-1",
+        work_status="abandoned",
+        caller_agent="cursor-sdk",
+        address_patch={"kind": "grok_bot", "agent_id": "x"},
+        note="done",
+    )
+    reg = TeamDispatchRegistryBody(
+        op="registry",
+        state="live",
+        window_hours=12,
+        work_key_prefix="todo:",
+        caller_agent="cursor-sdk",
+    )
+    with patch(
+        "systems.frontier_consult.cursor_sdk_claim_dispatch.relay_house_claim",
+        new_callable=AsyncMock,
+        return_value=(True, {"status_code": 200}),
+    ) as relay:
+        await team_dispatch(body=upd, response=AsyncMock())
+        await team_dispatch(body=reg, response=AsyncMock())
+    assert relay.await_args_list[0].kwargs["work_status"] == "abandoned"
+    assert relay.await_args_list[0].kwargs["address_patch"]["agent_id"] == "x"
+    assert relay.await_args_list[1].kwargs["op"] == "registry"
+    assert relay.await_args_list[1].kwargs["work_key_prefix"] == "todo:"
 
 
 def test_claim_id_from_generation_options() -> None:

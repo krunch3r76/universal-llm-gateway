@@ -240,6 +240,9 @@ class TeamDispatchClaimBody(_DispatchCommon):
     work_key: str
     thread: str
     ttl_s: int | None = None
+    seat_name: str | None = None
+    address: dict[str, Any] | None = None
+    work_status: str | None = None
 
 
 class TeamDispatchClaimReleaseBody(_DispatchCommon):
@@ -263,6 +266,25 @@ class TeamDispatchOccupancyBody(_DispatchCommon):
 
     op: Literal["occupancy"]
     work_key: str
+
+
+class TeamDispatchClaimUpdateBody(_DispatchCommon):
+    """``team_dispatch`` op ``claim_update`` patches one house claim row."""
+
+    op: Literal["claim_update"]
+    claim_id: str
+    work_status: str | None = None
+    address_patch: dict[str, Any] | None = None
+    note: str | None = None
+
+
+class TeamDispatchRegistryBody(_DispatchCommon):
+    """``team_dispatch`` op ``registry`` lists live claims and acting dispatches."""
+
+    op: Literal["registry"]
+    state: str = "live"
+    window_hours: int = Field(default=24, ge=1, le=168)
+    work_key_prefix: str | None = None
 
 
 class TeamDispatchLedgerParent(BaseModel):
@@ -417,7 +439,9 @@ TeamDispatchBody = Annotated[
     | TeamDispatchSteerBody
     | TeamDispatchClaimBody
     | TeamDispatchClaimReleaseBody
+    | TeamDispatchClaimUpdateBody
     | TeamDispatchOccupancyBody
+    | TeamDispatchRegistryBody
     | TeamDispatchLedgerBody,
     Field(discriminator="op"),
 ]

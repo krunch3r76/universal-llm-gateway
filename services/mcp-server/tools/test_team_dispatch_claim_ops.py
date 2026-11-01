@@ -33,8 +33,13 @@ def test_ops_enum_and_schema_contain_claim_ops() -> None:
     fn = _tool()
     sig = inspect.signature(fn)
     op = str(sig.parameters["op"].annotation)
-    for name in ("claim", "claim_release", "occupancy"):
+    for name in ("claim", "claim_release", "claim_update", "occupancy", "registry"):
         assert name in op
+    assert "seat_name" in sig.parameters
+    assert "address" in sig.parameters
+    assert "work_status" in sig.parameters
+    assert "address_patch" in sig.parameters
+    assert "work_key_prefix" in sig.parameters
     assert "claim_id" in sig.parameters
     assert "outcome" in sig.parameters
     assert "work_key" in sig.parameters
@@ -83,6 +88,43 @@ async def test_claim_ops_forward_like_steer() -> None:
         await fn(op="occupancy", work_key="todo:house-state-primitive")
         occ = relay.await_args.kwargs["body"]
         assert occ == {"op": "occupancy", "work_key": "todo:house-state-primitive"}
+
+        relay.reset_mock()
+        await fn(
+            op="claim_update",
+            claim_id="claim-1",
+            work_status="landed",
+            caller_agent="cursor-sdk",
+        )
+        upd = relay.await_args.kwargs["body"]
+        assert upd["op"] == "claim_update"
+        assert upd["work_status"] == "landed"
+
+        relay.reset_mock()
+        await fn(
+            op="registry",
+            work_key_prefix="todo:",
+            window_hours=48,
+            caller_agent="cursor-sdk",
+        )
+        reg = relay.await_args.kwargs["body"]
+        assert reg["op"] == "registry"
+        assert reg["work_key_prefix"] == "todo:"
+        assert reg["window_hours"] == 48
+
+        relay.reset_mock()
+        await fn(
+            op="claim",
+            work_key="todo:house-state-primitive",
+            thread="15945",
+            caller_agent="cursor-sdk",
+            seat_name="gc1",
+            address={"kind": "grok_bot", "agent_id": "abc"},
+            work_status="active",
+        )
+        with_addr = relay.await_args.kwargs["body"]
+        assert with_addr["seat_name"] == "gc1"
+        assert with_addr["address"]["agent_id"] == "abc"
 
 
 @pytest.mark.asyncio

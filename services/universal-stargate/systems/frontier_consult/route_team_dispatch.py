@@ -120,11 +120,18 @@ async def team_dispatch(
         )
         response.status_code = 200
         return detail
-    if body.op in ("claim", "claim_release", "occupancy", "ledger"):
+    if body.op in (
+        "claim",
+        "claim_release",
+        "claim_update",
+        "occupancy",
+        "registry",
+        "ledger",
+    ):
         from .cursor_sdk_claim_dispatch import relay_house_claim
 
         holder = (getattr(body, "caller_agent", None) or "").strip()
-        if body.op in ("claim", "claim_release") and not holder:
+        if body.op in ("claim", "claim_release", "claim_update") and not holder:
             return JSONResponse(
                 status_code=422,
                 content=FrontierEndpointError(
@@ -146,6 +153,13 @@ async def team_dispatch(
             ttl_s=getattr(body, "ttl_s", None),
             limit=getattr(body, "limit", None),
             window_hours=getattr(body, "window_hours", None),
+            seat_name=getattr(body, "seat_name", None),
+            address=getattr(body, "address", None),
+            work_status=getattr(body, "work_status", None),
+            address_patch=getattr(body, "address_patch", None),
+            note=getattr(body, "note", None),
+            state=getattr(body, "state", None),
+            work_key_prefix=getattr(body, "work_key_prefix", None),
         )
         if not ok:
             status_code = int(

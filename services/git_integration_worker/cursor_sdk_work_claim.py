@@ -27,6 +27,12 @@ from services.git_integration_worker.cursor_dispatch_ledger import (
     _lease_epoch_from_row,
     bump_lease_epoch_conn,
 )
+from services.git_integration_worker.cursor_sdk_claim_address import (
+    AddressValidationError,
+    address_for_registry,
+    display_work_key,
+    normalize_address,
+)
 from services.git_integration_worker.cursor_sdk_conductor_park_gate import (
     OPEN_RESTART_PARK_SQL,
     open_parks,
@@ -59,6 +65,11 @@ _RELEASE_STATUS = {
     "failed": "failed",
     "withdrawn": "cancelled",
 }
+_UPDATE_RELEASE = {
+    "landed": "completed",
+    "abandoned": "withdrawn",
+}
+_REGISTRY_BUDGET_BYTES = 5120
 
 Poster = Callable[[dict[str, Any]], None]
 
@@ -128,14 +139,97 @@ def _expiry(now: str, ttl_s: int) -> str:
     return (_parse_iso(now) + timedelta(seconds=ttl_s)).isoformat()
 
 
-def _record(holder_agent: str, request_turn: int | None) -> str:
+def _parse_record_json(raw: str | None) -> dict[str, Any]:
+    try:
+        data = json.loads(raw or "{}")
+    except json.JSONDecodeError:
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def _record(
+    holder_agent: str,
+    request_turn: int | None,
+    *,
+    seat_name: str | None = None,
+    address: dict[str, Any] | None = None,
+    work_status: str | None = None,
+    status_history: list[dict[str, Any]] | None = None,
+) -> str:
     payload: dict[str, Any] = {
         "claim_kind": "house",
         "holder_agent": holder_agent,
     }
     if request_turn is not None:
         payload["request_turn"] = request_turn
+    if seat_name is not None and str(seat_name).strip():
+        payload["seat_name"] = str(seat_name).strip()
+    if address is not None:
+        payload["address"] = address
+    if work_status is not None and str(work_status).strip():
+        payload["work_status"] = str(work_status).strip()
+    if status_history:
+        payload["status_history"] = status_history
     return json.dumps(payload, sort_keys=True, separators=(",", ":"))
+
+
+def _claim_fields_from_record(record: dict[str, Any]) -> dict[str, Any]:
+    out: dict[str, Any] = {}
+    seat = record.get("seat_name")
+    if isinstance(seat, str) and seat.strip():
+        out["seat_name"] = seat.strip()
+    address = record.get("address")
+    if isinstance(address, dict) and address:
+        out["address"] = address_for_registry(address) or address
+    status = record.get("work_status")
+    if isinstance(status, str) and status.strip():
+        out["work_status"] = status.strip()
+    return out
+
+
+def _merge_claim_record(
+    existing: dict[str, Any],
+    *,
+    seat_name: str | None = None,
+    address: dict[str, Any] | None = None,
+    work_status: str | None = None,
+    note: str | None = None,
+    now: str,
+) -> dict[str, Any]:
+    merged = dict(existing)
+    if seat_name is not None and str(seat_name).strip():
+        merged["seat_name"] = str(seat_name).strip()
+    if address is not None:
+        existing = merged.get("address")
+        if isinstance(existing, dict):
+            merged["address"] = {**existing, **address}
+        else:
+            merged["address"] = address
+    if work_status is not None and str(work_status).strip():
+        new_status = str(work_status).strip()
+        prior = merged.get("work_status")
+        if prior != new_status:
+            history = list(merged.get("status_history") or [])
+            if not isinstance(history, list):
+                history = []
+            entry: dict[str, Any] = {"at": now, "work_status": new_status}
+            if note and str(note).strip():
+                entry["note"] = str(note).strip()
+            history.append(entry)
+            merged["status_history"] = history
+        merged["work_status"] = new_status
+    elif note and str(note).strip():
+        history = list(merged.get("status_history") or [])
+        if not isinstance(history, list):
+            history = []
+        history.append({"at": now, "note": str(note).strip()})
+        merged["status_history"] = history
+    return merged
+
+
+def _attach_claim_fields(holder: dict[str, Any], record: dict[str, Any]) -> None:
+    for key, value in _claim_fields_from_record(record).items():
+        holder[key] = value
 
 
 def _holder_from_row(row: Any, *, now: str) -> dict[str, Any]:
@@ -151,7 +245,7 @@ def _holder_from_row(row: Any, *, now: str) -> dict[str, Any]:
     expires = row["claim_expires_at"] if "claim_expires_at" in row.keys() else None
     if status != CLAIM_STATUS:
         expires = row["park_expires_at"] if "park_expires_at" in row.keys() else None
-    return {
+    holder = {
         "id": row["dispatch_id"],
         "kind": kind if status == CLAIM_STATUS else "dispatch",
         "status": status,
@@ -165,6 +259,8 @@ def _holder_from_row(row: Any, *, now: str) -> dict[str, Any]:
         "holder_agent": row["caller_agent"],
         "as_of": now,
     }
+    _attach_claim_fields(holder, _parse_record_json(row["record_json"]))
+    return holder
 
 
 def _conflict_holder(row: Any) -> dict[str, Any]:
@@ -202,6 +298,9 @@ def claim(
     ttl_s: int = DEFAULT_TTL_S,
     request_turn: int | None = None,
     *,
+    seat_name: str | None = None,
+    address: dict[str, Any] | None = None,
+    work_status: str | None = None,
     ledger: CursorDispatchLedger | None = None,
     now: str | None = None,
 ) -> dict[str, Any]:
@@ -218,7 +317,16 @@ def claim(
     claim_id = claim_id_for(
         work_key=work_key, holder_agent=holder_agent, thread_id=thread_id
     )
-    record = _record(holder_agent, request_turn)
+    try:
+        normalized_address = (
+            normalize_address(address) if address is not None else None
+        )
+    except AddressValidationError as exc:
+        raise ClaimError(
+            code=exc.code,
+            http_status=422,
+            message=str(exc),
+        ) from exc
     with led._connect() as conn:
         conn.execute("BEGIN IMMEDIATE")
         blocker = _find_blocker(
@@ -235,11 +343,28 @@ def claim(
         renewed = False
         if own is not None and own["status"] == CLAIM_STATUS:
             own_exp = own["claim_expires_at"]
+            prior_record = _merge_claim_record(
+                _parse_record_json(own["record_json"]),
+                seat_name=seat_name,
+                address=normalized_address,
+                work_status=work_status,
+                now=stamp,
+            )
+            if isinstance(prior_record.get("address"), dict):
+                prior_record["address"] = normalize_address(prior_record["address"])
+            record = _record(
+                holder_agent,
+                request_turn,
+                seat_name=prior_record.get("seat_name"),
+                address=prior_record.get("address"),
+                work_status=prior_record.get("work_status"),
+                status_history=list(prior_record.get("status_history") or []),
+            )
             if own_exp and own_exp > stamp:
                 conn.execute(
-                    "UPDATE cursor_sdk_dispatches SET claim_expires_at=? "
-                    "WHERE dispatch_id=? AND status='claimed'",
-                    (expires, claim_id),
+                    "UPDATE cursor_sdk_dispatches SET claim_expires_at=?, "
+                    "record_json=? WHERE dispatch_id=? AND status='claimed'",
+                    (expires, record, claim_id),
                 )
                 renewed = True
             else:
@@ -247,13 +372,13 @@ def claim(
                 conn.execute(
                     "UPDATE cursor_sdk_dispatches SET status='claimed', "
                     "terminal_status=NULL, terminal_at=NULL, claim_expires_at=?, "
-                    "lease_epoch=?, "
-                    "record_json=json_remove(COALESCE(record_json,'{}'), "
-                    "'$.claim_release'), caller_agent=?, thread_id=?, work_key=? "
+                    "lease_epoch=?, record_json=?, "
+                    "caller_agent=?, thread_id=?, work_key=? "
                     "WHERE dispatch_id=?",
                     (
                         expires,
                         revive_epoch,
+                        record,
                         holder_agent,
                         thread_id,
                         work_key,
@@ -261,6 +386,23 @@ def claim(
                     ),
                 )
         elif own is not None:
+            prior_record = _merge_claim_record(
+                _parse_record_json(own["record_json"]),
+                seat_name=seat_name,
+                address=normalized_address,
+                work_status=work_status,
+                now=stamp,
+            )
+            if isinstance(prior_record.get("address"), dict):
+                prior_record["address"] = normalize_address(prior_record["address"])
+            record = _record(
+                holder_agent,
+                request_turn,
+                seat_name=prior_record.get("seat_name"),
+                address=prior_record.get("address"),
+                work_status=prior_record.get("work_status"),
+                status_history=list(prior_record.get("status_history") or []),
+            )
             conn.execute(
                 "UPDATE cursor_sdk_dispatches SET status='claimed', "
                 "terminal_status=NULL, terminal_at=NULL, claim_expires_at=?, "
@@ -280,6 +422,23 @@ def claim(
                 ),
             )
         else:
+            init_record = _merge_claim_record(
+                {},
+                seat_name=seat_name,
+                address=normalized_address,
+                work_status=work_status or "active",
+                now=stamp,
+            )
+            if isinstance(init_record.get("address"), dict):
+                init_record["address"] = normalize_address(init_record["address"])
+            record = _record(
+                holder_agent,
+                request_turn,
+                seat_name=init_record.get("seat_name"),
+                address=init_record.get("address"),
+                work_status=init_record.get("work_status"),
+                status_history=list(init_record.get("status_history") or []),
+            )
             lease_epoch = bump_lease_epoch_conn(conn, work_key=work_key)
             conn.execute(
                 "INSERT INTO cursor_sdk_dispatches "
@@ -316,18 +475,22 @@ def claim(
                 dispatch_id=claim_id,
             )
     holder = _holder_from_row(row, now=stamp)
+    slim: dict[str, Any] = {
+        "id": holder["id"],
+        "kind": "claim",
+        "status": holder["status"],
+        "thread_id": holder["thread_id"],
+        "caller_agent": holder["caller_agent"],
+        "claimed_at": holder["claimed_at"],
+        "expires_at": holder["expires_at"],
+    }
+    for key in ("seat_name", "address", "work_status"):
+        if key in holder:
+            slim[key] = holder[key]
     return {
         "claim_id": claim_id,
         "renewed": renewed,
-        "holder": {
-            "id": holder["id"],
-            "kind": "claim",
-            "status": holder["status"],
-            "thread_id": holder["thread_id"],
-            "caller_agent": holder["caller_agent"],
-            "claimed_at": holder["claimed_at"],
-            "expires_at": holder["expires_at"],
-        },
+        "holder": slim,
     }
 
 
@@ -538,7 +701,240 @@ def _projection_holder(row: Any) -> dict[str, Any]:
     epoch = _lease_epoch_from_row(row)
     if epoch is not None:
         holder["lease_epoch"] = epoch
+    _attach_claim_fields(holder, _parse_record_json(row["record_json"]))
     return holder
+
+
+def _registry_json_bytes(payload: dict[str, Any]) -> int:
+    return len(
+        json.dumps(payload, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
+    )
+
+
+def _registry_row(row: Any, *, now: str) -> dict[str, Any]:
+    status = str(row["status"])
+    kind = "claim" if status == CLAIM_STATUS else "dispatch"
+    work_key = str(row["work_key"] or "")
+    rec = _parse_record_json(row["record_json"])
+    entry: dict[str, Any] = {
+        "id": row["dispatch_id"],
+        "kind": kind,
+        "status": status,
+        "work_key": work_key,
+        "work_key_display": display_work_key(work_key),
+        "thread_id": row["thread_id"],
+        "caller_agent": row["caller_agent"],
+        "claimed_at": row["queued_at"] or row["started_at"],
+    }
+    if status == CLAIM_STATUS:
+        entry["expires_at"] = row["claim_expires_at"]
+    _attach_claim_fields(entry, rec)
+    entry["as_of"] = now
+    return entry
+
+
+def update(
+    claim_id: str,
+    holder_agent: str,
+    *,
+    work_status: str | None = None,
+    address_patch: dict[str, Any] | None = None,
+    note: str | None = None,
+    ledger: CursorDispatchLedger | None = None,
+    now: str | None = None,
+) -> dict[str, Any]:
+    """Patch claim metadata; ``landed`` / ``abandoned`` release the row."""
+    if work_status is None and address_patch is None and not (note and str(note).strip()):
+        raise ClaimError(
+            code="INVALID_UPDATE",
+            http_status=422,
+            message="work_status, address_patch, or note is required",
+        )
+    led = ledger or CursorDispatchLedger.instance()
+    stamp = now or _now_iso()
+    if work_status in _UPDATE_RELEASE:
+        merged_patch: dict[str, Any] | None = None
+        if address_patch is not None:
+            try:
+                merged_patch = normalize_address(address_patch)
+            except AddressValidationError as exc:
+                raise ClaimError(
+                    code=exc.code,
+                    http_status=422,
+                    message=str(exc),
+                ) from exc
+        with led._connect() as conn:
+            row = conn.execute(
+                "SELECT dispatch_id, status, caller_agent, record_json "
+                "FROM cursor_sdk_dispatches WHERE dispatch_id=?",
+                (claim_id,),
+            ).fetchone()
+            if row is None:
+                raise ClaimError(
+                    code="CLAIM_NOT_FOUND",
+                    http_status=404,
+                    message=f"claim {claim_id!r} not found",
+                )
+            if row["status"] != CLAIM_STATUS or row["caller_agent"] != holder_agent:
+                raise ClaimError(
+                    code="CLAIM_NOT_HELD",
+                    http_status=409,
+                    message="claim is not held by this caller",
+                )
+            if merged_patch is not None or note:
+                prior = _merge_claim_record(
+                    _parse_record_json(row["record_json"]),
+                    address=merged_patch,
+                    work_status=work_status,
+                    note=note,
+                    now=stamp,
+                )
+                record = _record(
+                    holder_agent,
+                    prior.get("request_turn"),
+                    seat_name=prior.get("seat_name"),
+                    address=prior.get("address"),
+                    work_status=prior.get("work_status"),
+                    status_history=list(prior.get("status_history") or []),
+                )
+                conn.execute(
+                    "UPDATE cursor_sdk_dispatches SET record_json=? WHERE dispatch_id=?",
+                    (record, claim_id),
+                )
+                conn.commit()
+        outcome = _UPDATE_RELEASE[work_status]
+        released = release(claim_id, holder_agent, outcome, ledger=led, now=stamp)
+        return {
+            "claim_id": claim_id,
+            "work_status": work_status,
+            "released": released,
+        }
+
+    merged_address: dict[str, Any] | None = None
+    if address_patch is not None:
+        try:
+            merged_address = normalize_address(address_patch)
+        except AddressValidationError as exc:
+            raise ClaimError(
+                code=exc.code,
+                http_status=422,
+                message=str(exc),
+            ) from exc
+
+    with led._connect() as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        row = conn.execute(
+            "SELECT dispatch_id, status, caller_agent, record_json "
+            "FROM cursor_sdk_dispatches WHERE dispatch_id=?",
+            (claim_id,),
+        ).fetchone()
+        if row is None:
+            raise ClaimError(
+                code="CLAIM_NOT_FOUND",
+                http_status=404,
+                message=f"claim {claim_id!r} not found",
+            )
+        if row["status"] != CLAIM_STATUS:
+            raise ClaimError(
+                code="CLAIM_NOT_HELD",
+                http_status=409,
+                message="claim is not held by this caller",
+            )
+        if row["caller_agent"] != holder_agent:
+            raise ClaimError(
+                code="CLAIM_NOT_HELD",
+                http_status=409,
+                message="claim is held by a different agent",
+            )
+        prior = _parse_record_json(row["record_json"])
+        if merged_address is not None and isinstance(prior.get("address"), dict):
+            combined = {**prior["address"], **merged_address}
+            merged_address = normalize_address(combined)
+        prior = _merge_claim_record(
+            prior,
+            address=merged_address,
+            work_status=work_status,
+            note=note,
+            now=stamp,
+        )
+        record = _record(
+            holder_agent,
+            prior.get("request_turn"),
+            seat_name=prior.get("seat_name"),
+            address=prior.get("address"),
+            work_status=prior.get("work_status"),
+            status_history=list(prior.get("status_history") or []),
+        )
+        conn.execute(
+            "UPDATE cursor_sdk_dispatches SET record_json=? "
+            "WHERE dispatch_id=? AND status='claimed' AND caller_agent=?",
+            (record, claim_id, holder_agent),
+        )
+        conn.commit()
+        row = conn.execute(
+            "SELECT * FROM cursor_sdk_dispatches WHERE dispatch_id=?",
+            (claim_id,),
+        ).fetchone()
+    assert row is not None
+    holder = _holder_from_row(row, now=stamp)
+    return {
+        "claim_id": claim_id,
+        "holder": holder,
+    }
+
+
+def registry(
+    *,
+    state: str = "live",
+    window_hours: int = 24,
+    work_key_prefix: str | None = None,
+    ledger: CursorDispatchLedger | None = None,
+    now: str | None = None,
+) -> dict[str, Any]:
+    """Fleet work registry: live house claims and acting cursor-sdk dispatches."""
+    if state != "live":
+        raise ClaimError(
+            code="INVALID_STATE",
+            http_status=422,
+            message="state must be 'live'",
+        )
+    window_hours = max(1, min(168, int(window_hours)))
+    led = ledger or CursorDispatchLedger.instance()
+    stamp = now or _now_iso()
+    cutoff = (_parse_iso(stamp) - timedelta(hours=window_hours)).isoformat()
+    prefix = (work_key_prefix or "").strip()
+    like = f"{prefix}%" if prefix else None
+
+    with led._connect() as conn:
+        acting = ",".join(repr(s) for s in _ACTING_DISPATCH)
+        sql = (
+            "SELECT * FROM cursor_sdk_dispatches WHERE ("
+            "(status='claimed' AND claim_expires_at > ?) OR "
+            f"(status IN ({acting}) AND COALESCE(queued_at, started_at, '') >= ?)"
+            ") "
+        )
+        params: list[Any] = [stamp, cutoff]
+        if like is not None:
+            sql += "AND work_key LIKE ? "
+            params.append(like)
+        sql += "ORDER BY COALESCE(started_at, queued_at) DESC, rowid DESC"
+        rows = conn.execute(sql, params).fetchall()
+
+    entries = [_registry_row(row, now=stamp) for row in rows]
+    truncated = False
+    shell = {
+        "state": state,
+        "window_hours": window_hours,
+        "work_key_prefix": prefix or None,
+        "as_of": stamp,
+    }
+    while entries:
+        payload = {**shell, "entries": entries, "truncated": truncated}
+        if _registry_json_bytes(payload) <= _REGISTRY_BUDGET_BYTES:
+            return payload
+        entries = entries[:-1]
+        truncated = True
+    return {**shell, "entries": [], "truncated": truncated}
 
 
 def occupancy(

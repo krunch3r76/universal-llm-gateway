@@ -47,6 +47,13 @@ async def relay_house_claim(
     ttl_s: int | None = None,
     limit: int | None = None,
     window_hours: int | None = None,
+    seat_name: str | None = None,
+    address: dict[str, Any] | None = None,
+    work_status: str | None = None,
+    address_patch: dict[str, Any] | None = None,
+    note: str | None = None,
+    state: str | None = None,
+    work_key_prefix: str | None = None,
 ) -> tuple[bool, dict[str, Any]]:
     """Forward claim, claim_release, occupancy, or ledger to the matching GIW route.
 
@@ -63,7 +70,24 @@ async def relay_house_claim(
         }
         if ttl_s is not None:
             payload["ttl_s"] = ttl_s
+        if seat_name is not None:
+            payload["seat_name"] = seat_name
+        if address is not None:
+            payload["address"] = address
+        if work_status is not None:
+            payload["work_status"] = work_status
         ident = work_key or ""
+    elif op == "claim_update":
+        path = f"/api/v1/cursor/claim/{claim_id}/update"
+        method = "POST"
+        payload = {"holder_agent": holder_agent}
+        if work_status is not None:
+            payload["work_status"] = work_status
+        if address_patch is not None:
+            payload["address_patch"] = address_patch
+        if note is not None:
+            payload["note"] = note
+        ident = claim_id or ""
     elif op == "claim_release":
         path = f"/api/v1/cursor/claim/{claim_id}/release"
         method = "POST"
@@ -79,6 +103,11 @@ async def relay_house_claim(
         method = "GET"
         payload = {}
         ident = work_key or ""
+    elif op == "registry":
+        path = "/api/v1/cursor/registry"
+        method = "GET"
+        payload = {}
+        ident = work_key_prefix or "registry"
     else:
         return False, {
             "status_code": 422,
@@ -90,12 +119,21 @@ async def relay_house_claim(
             worker_base_url(), timeout=_WORKER_TIMEOUT
         ) as client:
             if method == "GET":
-                params: dict[str, Any] = {"work_key": work_key}
-                if op == "ledger":
+                params: dict[str, Any] = {}
+                if op == "occupancy":
+                    params["work_key"] = work_key
+                elif op == "ledger":
+                    params["work_key"] = work_key
                     if limit is not None:
                         params["limit"] = limit
                     if window_hours is not None:
                         params["window_hours"] = window_hours
+                elif op == "registry":
+                    params["state"] = state or "live"
+                    if window_hours is not None:
+                        params["window_hours"] = window_hours
+                    if work_key_prefix is not None:
+                        params["work_key_prefix"] = work_key_prefix
                 resp = await client.get(path, params=params)
             else:
                 resp = await client.post(path, json=payload)
