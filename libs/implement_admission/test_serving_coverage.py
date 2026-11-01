@@ -81,14 +81,16 @@ def test_declared_unserved_structured_mint_is_silent() -> None:
 
 def test_wait_status_replay_33083d61_still_nominates_agent_bus() -> None:
     """Replay must stay nominated; coverage must not rewrite a declared serve."""
+    wait_status_serving = frozenset(
+        {"agent_bus", "git_integration_worker", "mcp", "stargate"}
+    )
     serving_rows, escalations = rows_from_lib_consumers(
         [_REPLAY_WAIT_STATUS],
         code_ref="33083d61",
     )
     services = {row.service for row in serving_rows}
     owned = set(declared_services_for_lib("agent_bus_store"))
-    assert "agent_bus" in services
-    assert services <= {"agent_bus", "mcp"}
+    assert services == wait_status_serving
     assert not owned <= services
     assert path_serving_coverage(_REPLAY_WAIT_STATUS) == "nominated"
     assert all(not line.startswith(UNMAPPED_PREFIX) for line in escalations)

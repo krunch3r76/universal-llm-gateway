@@ -122,6 +122,7 @@ def test_giw_serves_worker_hosted_libs_not_owned_libs() -> None:
             "agent_bus_store",
             "charter_runner_store",
             "consult_substrate_notice",
+            "dispatch_economics",
             "git_integrate",
             "implement_admission",
             "job_vocab",

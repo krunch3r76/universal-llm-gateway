@@ -13,9 +13,9 @@ from implement_admission.propagation_row import (
     propagation_residue_from_rows,
     residue_line_from_row,
     resolve_code_ref,
+    row_from_mapping,
     rows_from_closeout_payload,
     rows_from_lib_consumers,
-    row_from_mapping,
     rows_from_residue_lines,
     rows_from_service_paths,
     stamp_liveness_on_row,
@@ -201,17 +201,19 @@ def test_rows_from_closeout_payload_modified_lib_still_mints_consumers():
 
 
 def test_wait_status_land_mints_serving_agent_bus_not_owned_libs_blast():
-    """Replay 33083d61: serving process is nominated; seven-way owned_libs is not."""
+    """Replay 33083d61: serving processes with genuine imports; owned_libs blast not."""
     from implement_admission.service_lib_ownership import declared_services_for_lib
 
+    wait_status_serving = frozenset(
+        {"agent_bus", "git_integration_worker", "mcp", "stargate"}
+    )
     rows, escalations = rows_from_lib_consumers(
         ["libs/agent_bus_store/wait_status.py"],
         code_ref="33083d61",
     )
     services = {row.service for row in rows}
     owned = set(declared_services_for_lib("agent_bus_store"))
-    assert "agent_bus" in services
-    assert services <= {"agent_bus", "mcp"}
+    assert services == wait_status_serving
     assert not owned <= services
     assert any("derived:serves" in (row.reason or "") for row in rows)
     assert all(row.code_ref == "33083d61" for row in rows)

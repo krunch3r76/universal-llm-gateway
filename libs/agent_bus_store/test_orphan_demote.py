@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 from unittest.mock import patch
 
 import pytest
@@ -88,6 +89,26 @@ def _orphan_turns(thread_id: str) -> list[dict]:
         if t["from_agent"] == "dispatch"
         and "orphaned" in (t.get("subject") or "").lower()
     ]
+
+
+def test_dispatch_ledger_resolves_under_pytest_tmp_not_live_gateway(
+    tmp_path: Path,
+) -> None:
+    """Root conftest isolation beats inherited live ``CURSOR_SDK_DISPATCH_LEDGER``."""
+    from services.git_integration_worker.cursor_dispatch_ledger import (
+        CURSOR_SDK_DISPATCH_LEDGER_ENV,
+        resolve_cursor_sdk_dispatch_ledger_path,
+    )
+    from services.git_integration_worker.cursor_home import operator_real_home
+
+    path = resolve_cursor_sdk_dispatch_ledger_path()
+    live_gateway = operator_real_home() / ".gateway"
+    assert live_gateway not in path.parents
+    expected = tmp_path / "giw-ledger-root" / "cursor-sdk-dispatch.db"
+    assert path == expected.resolve()
+    import os
+
+    assert os.environ[CURSOR_SDK_DISPATCH_LEDGER_ENV] == str(expected)
 
 
 def test_late_closeout_demotes_orphan(bus_db) -> None:
