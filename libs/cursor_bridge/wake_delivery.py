@@ -270,6 +270,20 @@ async def _deliver_locked(
         return _refuse(
             "surface_probe_failed", display=disp, app=app, detail=type(exc).__name__
         )
+    if _busy_or_draft_reason(surface) is None:
+        try:
+            from bus_watch.endpoint_wake_composer_defer import (
+                notify_composer_empty_for_target,
+            )
+
+            notify_composer_empty_for_target(
+                display=disp,
+                surface=app,
+                agent_id=aid_s or str(surface.get("active_agent_id") or ""),
+                thread_scope=thread_s,
+            )
+        except Exception:
+            pass
     try:
         verdict = wake_decision(
             surface,

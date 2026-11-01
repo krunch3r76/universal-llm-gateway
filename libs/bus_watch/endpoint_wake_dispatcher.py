@@ -2041,6 +2041,10 @@ def fire_due_wakes(store: StoreClient) -> dict[str, Any] | None:
 
 async def run_dispatcher() -> None:
     """Scan and fire until cancelled. Each pass runs on a worker thread."""
+    from bus_watch.endpoint_wake_composer_defer import (
+        escalate_composer_deferred_on_sweep,
+        finalize_composer_defer_pass,
+    )
     from bus_watch.ide_context_hop_monitor import check_cursor_ide_context_hops
 
     store = StoreClient()
@@ -2048,12 +2052,14 @@ async def run_dispatcher() -> None:
     hop_mark: dict[str, float] = {}
     while True:
         try:
+            await asyncio.to_thread(escalate_composer_deferred_on_sweep, store)
             await asyncio.to_thread(expire_overdue_hops, store)
             await asyncio.to_thread(scan_once, store, idle_mark=idle)
             for _ in range(5):
                 claimed = await asyncio.to_thread(fire_due_wakes, store)
                 if not isinstance(claimed, dict) or not claimed.get("wake_id"):
                     break
+            await asyncio.to_thread(finalize_composer_defer_pass)
             await asyncio.to_thread(check_cursor_ide_context_hops, store, mark=hop_mark)
             from bus_watch.impresario_ear_patrol import run_patrol_pass
 
