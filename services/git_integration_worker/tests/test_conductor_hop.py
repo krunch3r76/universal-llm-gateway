@@ -210,8 +210,8 @@ def _partial_open_mission_row(
     return out
 
 
-def test_hop_skip_gate_partial_open_mission_no_row_hop_returns_none() -> None:
-    """Partial closeout row without ROW_HOP may still owe a successor."""
+def test_hop_skip_gate_partial_open_mission_no_row_hop_returns_no_hop_token() -> None:
+    """Partial closeout row without ROW_HOP owes no successor: skip as no_hop_token."""
     ledger = CursorDispatchLedger.instance()
     row = _partial_open_mission_row(ledger, closeout_tokens=[])
     with (
@@ -233,7 +233,9 @@ def test_hop_skip_gate_partial_open_mission_no_row_hop_returns_none() -> None:
         ),
     ):
         assert hop_owed(row, closeout_tokens=frozenset()) is False
-        assert _hop_skip_gate(row, closeout_tokens=frozenset()) is None
+        assert (
+            _hop_skip_gate(row, closeout_tokens=frozenset()) == SKIP_GATE_NO_HOP_TOKEN
+        )
 
 
 def test_hop_owed_partial_row_hop_mission_open() -> None:

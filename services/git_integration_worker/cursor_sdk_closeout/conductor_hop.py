@@ -961,8 +961,6 @@ def _hop_skip_gate(
             return "already_hopped"
         if not budget_ok_for_hop(row, closeout_tokens=tokens):
             return "budget"
-        if status == "partial":
-            return None
         return SKIP_GATE_NO_HOP_TOKEN
     return None
 
