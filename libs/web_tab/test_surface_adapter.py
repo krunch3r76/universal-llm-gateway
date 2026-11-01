@@ -32,6 +32,18 @@ def test_claude_surface_host_gate() -> None:
     assert url_in_surface_scope("claude", "https://claude.ai/")
     assert url_in_surface_scope("claude", "https://www.claude.ai/chat/abc")
     assert url_in_surface_scope("claude-console", "https://console.anthropic.com/settings")
+    assert url_in_surface_scope(
+        "claude-console", "https://platform.claude.com/settings/keys"
+    )
+    assert url_in_surface_scope("claude-console", "https://www.platform.claude.com/")
+    assert not url_in_surface_scope("claude", "https://platform.claude.com/")
+    assert not url_in_surface_scope("claude-console", "https://claude.ai/new")
+    assert not url_in_surface_scope(
+        "claude-console", "https://platform.claude.com.evil.example/"
+    )
+    assert not url_in_surface_scope(
+        "claude-console", "https://evilplatform.claude.com/"
+    )
     assert not url_in_surface_scope("claude", "https://chatgpt.com/")
     assert not url_in_surface_scope("chatgpt", "https://claude.ai/")
     assert not url_in_surface_scope("chatgpt", "https://accounts.google.com/signin")

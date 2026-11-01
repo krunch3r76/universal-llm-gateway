@@ -39,7 +39,9 @@ _CLAUDE_SURFACES = frozenset({"claude", "claude-console"})
 _SUPPORTED_SURFACES = _CHATGPT_SURFACES | _CLAUDE_SURFACES
 _CHATGPT_HOSTS = frozenset({"chatgpt.com", "www.chatgpt.com"})
 _CLAUDE_HOSTS = frozenset({"claude.ai", "www.claude.ai"})
-_CLAUDE_CONSOLE_HOSTS = frozenset({"console.anthropic.com"})
+_CLAUDE_CONSOLE_HOSTS = frozenset(
+    {"console.anthropic.com", "platform.claude.com", "www.platform.claude.com"}
+)
 
 
 def signed_in_from_signals(*, login_wall: bool, composer: bool) -> bool | None:
