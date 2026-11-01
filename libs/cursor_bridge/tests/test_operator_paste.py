@@ -26,6 +26,18 @@ def _operator_idle(monkeypatch: pytest.MonkeyPatch) -> None:
         "cursor_bridge.operator_paste.wait_for_operator_idle",
         AsyncMock(return_value={"ok": True, "idle": True}),
     )
+    monkeypatch.setattr(
+        "cursor_bridge.operator_paste.read_operator_busy",
+        AsyncMock(return_value={"ok": True, "operator_active": False}),
+    )
+    monkeypatch.setattr(
+        "cursor_bridge.operator_paste.clear_our_composer_draft",
+        AsyncMock(return_value={"ok": True, "cleared": False}),
+    )
+    monkeypatch.setattr(
+        "cursor_bridge.operator_paste._submit_composer_enter",
+        AsyncMock(return_value={"ok": True, "method": "cdp_enter"}),
+    )
 
 
 def test_wrap_operator_message_includes_header_source_watermark() -> None:
@@ -229,13 +241,6 @@ async def test_deliver_operator_paste_polls_until_assistant_generating(
     monkeypatch.setattr(
         "cursor_bridge.operator_paste._capture_screenshot_artifact", screenshot
     )
-    sleeps: list[float] = []
-
-    async def _fast_sleep(delay: float) -> None:
-        sleeps.append(delay)
-
-    monkeypatch.setattr("cursor_bridge.operator_paste.asyncio.sleep", _fast_sleep)
-
     out = await deliver_operator_paste(
         display="10",
         app="grok",
@@ -246,7 +251,6 @@ async def test_deliver_operator_paste_polls_until_assistant_generating(
         scope="test",
     )
     assert idx["n"] >= 3
-    assert sleeps
     assert out["watermark_visible"] is True
     assert out["composer_empty_after"] is True
     assert out["assistant_began"] is True
@@ -597,12 +601,8 @@ async def test_deliver_operator_paste_submit_retry_once_without_repaste(
         return submitted, True
 
     insert = AsyncMock(return_value={"ok": True})
-    send_btn = AsyncMock(
-        side_effect=[
-            {"ok": True, "send_fallback_clicked": True},
-            {"ok": True, "send_fallback_clicked": True},
-        ]
-    )
+    send_btn = AsyncMock(return_value={"ok": True, "send_fallback_clicked": True})
+    enter = AsyncMock(return_value={"ok": True, "method": "cdp_enter"})
     monkeypatch.setattr(
         "cursor_bridge.operator_paste.list_pages",
         lambda _o: [{"title": "Grok Bot", "web_socket_debugger_url": "ws://x"}],
@@ -622,6 +622,7 @@ async def test_deliver_operator_paste_submit_retry_once_without_repaste(
     monkeypatch.setattr(
         "cursor_bridge.operator_paste._submit_composer_send_button", send_btn
     )
+    monkeypatch.setattr("cursor_bridge.operator_paste._submit_composer_enter", enter)
     monkeypatch.setattr(
         "cursor_bridge.operator_paste._capture_screenshot_artifact",
         AsyncMock(return_value={"sha256_png": None, "screenshot_path": None}),
@@ -651,10 +652,12 @@ async def test_deliver_operator_paste_submit_retry_once_without_repaste(
         scope="test",
     )
     assert insert.call_count == 1
-    assert send_btn.call_count == 2
+    assert send_btn.call_count == 1
+    enter.assert_awaited_once()
     assert poll_calls["n"] == 2
     assert out["submitted"] is True
     assert out["ok"] is True
+    assert out["submit_methods"] == ["send_button", "cdp_enter"]
 
 
 @pytest.mark.asyncio
@@ -698,12 +701,11 @@ async def test_deliver_operator_paste_submitted_false_after_retry(
     )
     monkeypatch.setattr(
         "cursor_bridge.operator_paste._submit_composer_send_button",
-        AsyncMock(
-            side_effect=[
-                {"ok": True, "send_fallback_clicked": True},
-                {"ok": False, "send_fallback_clicked": False},
-            ]
-        ),
+        AsyncMock(return_value={"ok": True, "send_fallback_clicked": True}),
+    )
+    monkeypatch.setattr(
+        "cursor_bridge.operator_paste._submit_composer_enter",
+        AsyncMock(return_value={"ok": True, "method": "cdp_enter"}),
     )
     screenshot = AsyncMock(
         return_value={
@@ -726,6 +728,7 @@ async def test_deliver_operator_paste_submitted_false_after_retry(
     )
     assert out["submitted"] is False
     assert out["reason"] == "submit_unverified"
+    assert out["submit_methods"] == ["send_button", "cdp_enter"]
     assert out["verify_method"] == "screenshot_fallback"
     assert out["screenshot_path"] == "/tmp/submit-fail.png"
     screenshot.assert_awaited_once()

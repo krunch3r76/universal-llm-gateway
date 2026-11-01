@@ -134,7 +134,7 @@ async def test_deliver_operator_paste_restores_chat_after_hidden_switch(
         "generating": True,
         "recent_messages": [WATERMARK],
     }
-    probes = [pre, target, post]
+    probes = [pre, target, target, target, target, post, post]
 
     async def _probe(_ws: str) -> dict[str, Any]:
         return probes.pop(0) if probes else post
@@ -168,6 +168,18 @@ async def test_deliver_operator_paste_restores_chat_after_hidden_switch(
     monkeypatch.setattr(
         "cursor_bridge.operator_paste.wait_for_operator_idle",
         AsyncMock(return_value={"ok": True, "idle": True}),
+    )
+    monkeypatch.setattr(
+        "cursor_bridge.operator_paste.read_operator_busy",
+        AsyncMock(return_value={"ok": True, "operator_active": False}),
+    )
+    monkeypatch.setattr(
+        "cursor_bridge.operator_paste.clear_our_composer_draft",
+        AsyncMock(return_value={"ok": True, "cleared": False}),
+    )
+    monkeypatch.setattr(
+        "cursor_bridge.operator_paste._submit_composer_enter",
+        AsyncMock(return_value={"ok": True, "method": "cdp_enter"}),
     )
     monkeypatch.setattr("cursor_bridge.operator_paste.select_sidebar_target", _select)
     monkeypatch.setattr(

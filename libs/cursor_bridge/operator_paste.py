@@ -12,6 +12,11 @@ from pathlib import Path
 from typing import Any
 from urllib.error import URLError
 
+from cursor_bridge.cdp_composer_input import (
+    cdp_dispatch_enter,
+    cdp_insert_text,
+    clear_our_composer_draft,
+)
 from cursor_bridge.cdp_pages import list_pages
 from cursor_bridge.chat_surface import (
     probe_surface,
@@ -27,6 +32,7 @@ from cursor_bridge.dom_composer_paste import (
     dom_click_send,
     dom_set_composer_text,
     foreign_draft_guard,
+    read_operator_busy,
     wait_for_operator_idle,
 )
 from cursor_bridge.operator_agent_locate import (
@@ -191,6 +197,263 @@ async def _submit_composer_send_button(
         "method": "send_button",
         "send_fallback_clicked": clicked,
     }
+
+
+async def _submit_composer_enter(ws_url: str) -> dict[str, Any]:
+    return await cdp_dispatch_enter(ws_url)
+
+
+def _surface_agent_id(surface: dict[str, Any]) -> str:
+    return str(surface.get("active_agent_id") or "").strip()
+
+
+async def _probe_agent_match(
+    ws_url: str, *, expected_agent_id: str
+) -> tuple[bool, dict[str, Any]]:
+    surface = await probe_surface(ws_url)
+    return _surface_agent_id(surface) == expected_agent_id, surface
+
+
+def _target_changed_refuse(
+    *,
+    disp: str,
+    app: str,
+    aid_s: str,
+    selected: bool,
+    locate_method: str | None,
+    surface: dict[str, Any],
+    line: str,
+    verdict: dict[str, Any],
+) -> dict[str, Any]:
+    return {
+        **verdict,
+        "ok": False,
+        "reason": "target_changed",
+        "pasted": False,
+        "delivered": False,
+        "readback_ok": False,
+        "submitted": False,
+        "target_verified": False,
+        "selected": selected,
+        "display": disp,
+        "app": app,
+        "agent_id": aid_s,
+        "locate_method": locate_method,
+        "message": line,
+        "active_agent_id": surface.get("active_agent_id"),
+        "expected_agent_id": aid_s,
+    }
+
+
+async def _insert_composer_with_fallback(
+    ws_url: str, *, selector: str, line: str
+) -> dict[str, Any]:
+    dom = await _insert_composer_text(ws_url, selector=selector, line=line)
+    if dom.get("ok"):
+        return {**dom, "insert_method": "dom_set"}
+    cdp = await cdp_insert_text(ws_url, selector=selector, text=line)
+    if cdp.get("ok"):
+        return {**cdp, "insert_method": "cdp_insert"}
+    return dom if dom.get("reason") else cdp
+
+
+async def _guarded_insert_and_submit(
+    ws_url: str,
+    *,
+    disp: str,
+    app: str,
+    aid_s: str,
+    prompt_sel: str,
+    flat_line: str,
+    body_snippet: str,
+    line: str,
+    verdict: dict[str, Any],
+    selected: bool,
+    locate_method: str | None,
+    surface: dict[str, Any],
+) -> tuple[dict[str, Any] | None, bool, dict[str, Any], list[str]]:
+    """Insert + submit under display_switch_lock with agent re-verify."""
+    submit_methods: list[str] = []
+    post_submit = surface
+
+    async with display_switch_lock(disp):
+        matched, surface = await _probe_agent_match(ws_url, expected_agent_id=aid_s)
+        if not matched:
+            await clear_our_composer_draft(
+                ws_url, selector=prompt_sel, watermark=WATERMARK, line=flat_line
+            )
+            return (
+                _target_changed_refuse(
+                    disp=disp,
+                    app=app,
+                    aid_s=aid_s,
+                    selected=selected,
+                    locate_method=locate_method,
+                    surface=surface,
+                    line=line,
+                    verdict=verdict,
+                ),
+                False,
+                surface,
+                submit_methods,
+            )
+
+        busy = await read_operator_busy(
+            ws_url, selector=prompt_sel, watermark=WATERMARK
+        )
+        if bool(busy.get("operator_active")):
+            return (
+                _grant_refuse(
+                    "operator_busy",
+                    display=disp,
+                    app=app,
+                    submitted=False,
+                    selected=selected,
+                    expected_agent_id=aid_s,
+                    pasted=False,
+                ),
+                False,
+                surface,
+                submit_methods,
+            )
+
+        try:
+            insert_res = await _insert_composer_with_fallback(
+                ws_url, selector=prompt_sel, line=flat_line
+            )
+        except (TimeoutError, RuntimeError, OSError) as exc:
+            return (
+                _grant_refuse(
+                    "paste_failed",
+                    display=disp,
+                    app=app,
+                    selected=selected,
+                    detail=type(exc).__name__,
+                ),
+                False,
+                surface,
+                submit_methods,
+            )
+        if not insert_res.get("ok"):
+            return (
+                _grant_refuse(
+                    str(insert_res.get("reason") or "no_composer"),
+                    display=disp,
+                    app=app,
+                    selected=selected,
+                    expected_agent_id=aid_s,
+                    active_agent_id=verdict.get("active_agent_id"),
+                ),
+                False,
+                surface,
+                submit_methods,
+            )
+
+        matched, surface = await _probe_agent_match(ws_url, expected_agent_id=aid_s)
+        if not matched:
+            await clear_our_composer_draft(
+                ws_url, selector=prompt_sel, watermark=WATERMARK, line=flat_line
+            )
+            return (
+                _target_changed_refuse(
+                    disp=disp,
+                    app=app,
+                    aid_s=aid_s,
+                    selected=selected,
+                    locate_method=locate_method,
+                    surface=surface,
+                    line=line,
+                    verdict=verdict,
+                ),
+                False,
+                surface,
+                submit_methods,
+            )
+
+        try:
+            first_send = await _submit_composer_send_button(
+                ws_url, selector=prompt_sel, line=flat_line
+            )
+            submit_methods.append("send_button")
+        except (TimeoutError, RuntimeError, OSError) as exc:
+            return (
+                _grant_refuse(
+                    "submit_failed",
+                    display=disp,
+                    app=app,
+                    selected=selected,
+                    detail=type(exc).__name__,
+                ),
+                False,
+                surface,
+                submit_methods,
+            )
+
+        submitted = False
+        if first_send.get("ok"):
+            post_submit, submitted = await _poll_submit_verified(
+                ws_url, watermark=WATERMARK, body_snippet=body_snippet
+            )
+        else:
+            post_submit = surface
+
+        if not submitted:
+            matched, surface = await _probe_agent_match(
+                ws_url, expected_agent_id=aid_s
+            )
+            if not matched:
+                await clear_our_composer_draft(
+                    ws_url, selector=prompt_sel, watermark=WATERMARK, line=flat_line
+                )
+                return (
+                    _target_changed_refuse(
+                        disp=disp,
+                        app=app,
+                        aid_s=aid_s,
+                        selected=selected,
+                        locate_method=locate_method,
+                        surface=surface,
+                        line=line,
+                        verdict=verdict,
+                    ),
+                    False,
+                    surface,
+                    submit_methods,
+                )
+            try:
+                enter = await _submit_composer_enter(ws_url)
+                submit_methods.append("cdp_enter")
+                if enter.get("ok"):
+                    post_submit, submitted = await _poll_submit_verified(
+                        ws_url, watermark=WATERMARK, body_snippet=body_snippet
+                    )
+            except (TimeoutError, RuntimeError, OSError):
+                submitted = False
+
+        matched, verify_surface = await _probe_agent_match(
+            ws_url, expected_agent_id=aid_s
+        )
+        if not matched:
+            await clear_our_composer_draft(
+                ws_url, selector=prompt_sel, watermark=WATERMARK, line=flat_line
+            )
+            return (
+                _target_changed_refuse(
+                    disp=disp,
+                    app=app,
+                    aid_s=aid_s,
+                    selected=selected,
+                    locate_method=locate_method,
+                    surface=verify_surface,
+                    line=line,
+                    verdict=verdict,
+                ),
+                False,
+                verify_surface,
+                submit_methods,
+            )
+
+    return (None, submitted, post_submit, submit_methods)
 
 
 async def _cdp_response(ws: Any, mid: int) -> dict[str, Any]:
@@ -570,61 +833,22 @@ async def _deliver_operator_locked(
             expected_agent_id=aid_s,
         )
 
-    try:
-        insert_res = await _insert_composer_text(
-            ws_url, selector=prompt_sel, line=flat_line
-        )
-    except (TimeoutError, RuntimeError, OSError) as exc:
-        return _grant_refuse(
-            "paste_failed",
-            display=disp,
-            app=app,
-            selected=selected,
-            detail=type(exc).__name__,
-        )
-    if not insert_res.get("ok"):
-        return _grant_refuse(
-            str(insert_res.get("reason") or "no_composer"),
-            display=disp,
-            app=app,
-            selected=selected,
-            expected_agent_id=verdict.get("expected_agent_id"),
-            active_agent_id=verdict.get("active_agent_id"),
-        )
-
-    submit_methods: list[str] = []
-    try:
-        first_send = await _submit_composer_send_button(
-            ws_url, selector=prompt_sel, line=flat_line
-        )
-        submit_methods.append("send_button")
-    except (TimeoutError, RuntimeError, OSError) as exc:
-        return _grant_refuse(
-            "submit_failed",
-            display=disp,
-            app=app,
-            selected=selected,
-            detail=type(exc).__name__,
-        )
-    if not first_send.get("ok"):
-        submitted = False
-        post_submit = surface
-    else:
-        post_submit, submitted = await _poll_submit_verified(
-            ws_url, watermark=WATERMARK, body_snippet=body_snippet
-        )
-    if not submitted:
-        try:
-            retry = await _submit_composer_send_button(
-                ws_url, selector=prompt_sel, line=flat_line
-            )
-            submit_methods.append("send_button_retry")
-            if retry.get("ok"):
-                post_submit, submitted = await _poll_submit_verified(
-                    ws_url, watermark=WATERMARK, body_snippet=body_snippet
-                )
-        except (TimeoutError, RuntimeError, OSError):
-            submitted = False
+    early, submitted, post_submit, submit_methods = await _guarded_insert_and_submit(
+        ws_url,
+        disp=disp,
+        app=app,
+        aid_s=aid_s,
+        prompt_sel=prompt_sel,
+        flat_line=flat_line,
+        body_snippet=body_snippet,
+        line=line,
+        verdict=verdict,
+        selected=selected,
+        locate_method=locate_method,
+        surface=surface,
+    )
+    if early is not None:
+        return early
 
     if did_switch and restore_agent_id and submitted:
         async with display_switch_lock(disp):
