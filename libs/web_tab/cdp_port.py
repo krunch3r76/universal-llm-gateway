@@ -26,6 +26,7 @@ class CdpObservationPort(Protocol):
         target_id: str,
         expression: str,
         tab_row: dict[str, Any] | None = None,
+        surface: str = "chatgpt",
     ) -> dict[str, Any]:
         """Run *expression* on the listed page that matches *target_id* and URL."""
 
@@ -57,6 +58,7 @@ class RecordingCdpPort:
         target_id: str,
         expression: str,  # noqa: ARG002
         tab_row: dict[str, Any] | None = None,  # noqa: ARG002
+        surface: str = "chatgpt",  # noqa: ARG002
     ) -> dict[str, Any]:
         self.evaluated_targets.append(target_id)
         if target_id in self.evaluate_results:
@@ -69,7 +71,8 @@ class HttpListCdpPort:
 
     *connect* replaces ``connect_over_cdp`` in tests. Evaluate uses the listed
     *tab_row* and does not call ``list_tabs`` again. It refuses hosts outside
-    the ChatGPT surface, does not create pages, and does not close the browser.
+    *surface* (default ``chatgpt``), does not create pages, and does not close
+    the browser.
     """
 
     def __init__(
@@ -86,13 +89,14 @@ class HttpListCdpPort:
         target_id: str,
         expression: str,
         tab_row: dict[str, Any] | None = None,
+        surface: str = "chatgpt",
     ) -> dict[str, Any]:
         if not isinstance(tab_row, dict) or str(tab_row.get("id") or "") != target_id:
             return {"stale": True, "error": "listing_mismatch"}
         want_url = str(tab_row.get("url") or "")
         if not want_url:
             return {"stale": True}
-        if not url_in_surface_scope("chatgpt", want_url):
+        if not url_in_surface_scope(surface, want_url):
             return {"error": {"code": "target_out_of_scope"}, "url": want_url}
 
         timeout_s = resolve_cdp_evaluate_timeout_s()
@@ -155,9 +159,7 @@ class HttpListCdpPort:
         try:
             browser = await playwright.chromium.connect_over_cdp(cdp_url)
         except BaseException:
-            outcome = await _bounded_playwright_stop(
-                playwright, timeout_s=stop_timeout
-            )
+            outcome = await _bounded_playwright_stop(playwright, timeout_s=stop_timeout)
             if cleanup_state is not None:
                 cleanup_state["outcome"] = outcome
             raise
