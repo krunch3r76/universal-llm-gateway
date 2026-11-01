@@ -32,7 +32,9 @@ def test_claude_surface_host_gate() -> None:
     """Claude hosts pass for claude; console host for claude-console; cross-refuse."""
     assert url_in_surface_scope("claude", "https://claude.ai/")
     assert url_in_surface_scope("claude", "https://www.claude.ai/chat/abc")
-    assert url_in_surface_scope("claude-console", "https://console.anthropic.com/settings")
+    assert url_in_surface_scope(
+        "claude-console", "https://console.anthropic.com/settings"
+    )
     assert url_in_surface_scope(
         "claude-console", "https://platform.claude.com/settings/keys"
     )
@@ -49,7 +51,9 @@ def test_claude_surface_host_gate() -> None:
     assert not url_in_surface_scope("chatgpt", "https://claude.ai/")
     assert not url_in_surface_scope("chatgpt", "https://accounts.google.com/signin")
     assert not url_in_surface_scope("claude", "https://accounts.google.com/signin")
-    assert not url_in_surface_scope("claude-console", "https://accounts.google.com/signin")
+    assert not url_in_surface_scope(
+        "claude-console", "https://accounts.google.com/signin"
+    )
     assert "loginWall ? false : null" in CLAUDE_PROBE_JS
 
 
@@ -82,9 +86,7 @@ def test_malformed_port_tab_does_not_break_scope_probe() -> None:
         "https://claude.ai:abc/",
         "https://claude.ai:8080/",
     ]
-    assert all(
-        isinstance(url_in_surface_scope("claude", u), bool) for u in urls
-    )
+    assert all(isinstance(url_in_surface_scope("claude", u), bool) for u in urls)
 
 
 def test_canonical_page_url_strips_https_default_port() -> None:
@@ -95,3 +97,15 @@ def test_canonical_page_url_strips_https_default_port() -> None:
 
 def test_canonical_page_url_never_raises_on_bad_port() -> None:
     assert canonical_page_url("https://claude.ai:abc/path") == "https://claude.ai/path"
+
+
+def test_malformed_bracket_urls_never_raise_scope_or_canonical() -> None:
+    """Broken IPv6/bracket tab URLs from CDP must not crash scope or probe."""
+    bad = [
+        "https://[claude.ai/",
+        "https://claude.ai]/",
+        "http://[",
+    ]
+    for url in bad:
+        assert not url_in_surface_scope("claude", url)
+        assert isinstance(canonical_page_url(url), str)

@@ -9,7 +9,11 @@ from dataclasses import dataclass, field
 from typing import Any, Literal, Protocol
 from urllib.error import URLError
 
-from web_tab.config import resolve_cdp_cleanup_timeout_s, resolve_cdp_evaluate_timeout_s
+from web_tab.config import (
+    _validate_cdp_url,
+    resolve_cdp_cleanup_timeout_s,
+    resolve_cdp_evaluate_timeout_s,
+)
 from web_tab.surface_adapter import canonical_page_url, url_in_surface_scope
 
 
@@ -148,6 +152,7 @@ class HttpListCdpPort:
         cleanup_s: float | None = None,
         cleanup_state: dict[str, str | None] | None = None,
     ) -> tuple[Any, Any]:
+        cdp_url = _validate_cdp_url(cdp_url)
         if self._connect is not None:
             return await self._connect(cdp_url), None
         from playwright.async_api import async_playwright
@@ -167,6 +172,15 @@ class HttpListCdpPort:
 
     def list_tabs(self, *, cdp_url: str) -> dict[str, Any]:
         from cursor_bridge.cdp_pages import list_pages
+
+        try:
+            cdp_url = _validate_cdp_url(cdp_url)
+        except ValueError as exc:
+            return {
+                "pages": [],
+                "reachable": False,
+                "error": str(exc),
+            }
 
         try:
             pages = list_pages(cdp_url)

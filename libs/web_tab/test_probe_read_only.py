@@ -101,3 +101,11 @@ async def test_unsupported_surface_structured_error() -> None:
     )
     assert result["ok"] is False
     assert result["error"]["code"] == "unsupported_surface"
+
+
+@pytest.mark.asyncio
+async def test_probe_malformed_cdp_url_structured_error() -> None:
+    result = await probe_target(cdp_url="http://[", target_id="a")
+    assert result["ok"] is False
+    assert result["error"]["code"] == "invalid_cdp_url"
+    assert result["error"]["message"] == "invalid_cdp_url:malformed"
