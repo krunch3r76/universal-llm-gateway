@@ -12,8 +12,12 @@ Counters here are for observability, diagnostics, and soft assertions only.
 """
 
 import time
+from datetime import UTC, datetime
+from typing import Any
 
 from universal_logging import get_logger
+
+from .request_inflight_meta import resolve_request_meta
 
 logger = get_logger(__name__)
 
@@ -42,6 +46,7 @@ class InFlightRequestTracker:
         self._inflight_by_capacity_key: dict[CapacityKey, int] = {}
         # Track request age for cleanup
         self._request_timestamps: dict[str, float] = {}  # request_id -> start_time
+        self._request_meta: dict[str, dict[str, Any]] = {}  # request_id -> meta
 
     def try_reserve_slot(
         self,
@@ -51,6 +56,7 @@ class InFlightRequestTracker:
         request_id: str,
         routing_key: str,
         max_concurrent_requests: int = 1,
+        meta: dict[str, Any] | None = None,
     ) -> bool:
         """
         Track an in-flight request for a capacity key.
@@ -87,6 +93,7 @@ class InFlightRequestTracker:
         self._request_routing_keys[request_id] = routing_key
         self._request_capacity_keys[request_id] = capacity_key
         self._request_timestamps[request_id] = time.time()
+        self._request_meta[request_id] = resolve_request_meta(meta)
 
         logger.debug(
             f"✅ Slot tracked: {endpoint_category}/{compute_type} on {gateway_id} - "
@@ -104,6 +111,7 @@ class InFlightRequestTracker:
         gateway_id: str,
         request_id: str,
         routing_key: str,
+        meta: dict[str, Any] | None = None,
     ) -> None:
         """
         Track that a request is in-flight to a gateway.
@@ -122,6 +130,7 @@ class InFlightRequestTracker:
 
         # Record timestamp for age tracking
         self._request_timestamps[request_id] = time.time()
+        self._request_meta[request_id] = resolve_request_meta(meta)
 
         logger.debug(
             f"📍 Tracking request {request_id[:8]} on {gateway_id} "
@@ -143,6 +152,7 @@ class InFlightRequestTracker:
             and tracked_gateway_id is None
             and request_id not in self._request_routing_keys
             and request_id not in self._request_timestamps
+            and request_id not in self._request_meta
         ):
             return
 
@@ -156,6 +166,7 @@ class InFlightRequestTracker:
 
         self._request_routing_keys.pop(request_id, None)
         self._request_timestamps.pop(request_id, None)
+        self._request_meta.pop(request_id, None)
 
         # Release observability counter
         if capacity_key is not None:
@@ -208,6 +219,7 @@ class InFlightRequestTracker:
             self._request_capacity_keys.pop(rid, None)
             self._gateway_by_request_id.pop(rid, None)
             self._request_timestamps.pop(rid, None)
+            self._request_meta.pop(rid, None)
 
         # Clear capacity counters for this gateway
         keys_to_remove = [
@@ -224,6 +236,32 @@ class InFlightRequestTracker:
     def get_in_flight_count(self, gateway_id: str) -> int:
         """Get count of in-flight requests on a gateway."""
         return len(self._in_flight_requests.get(gateway_id, set()))
+
+    def list_in_flight(self, limit: int = 32) -> list[dict[str, Any]]:
+        """List in-flight requests oldest-first for admin observability."""
+        now = time.time()
+        rows: list[tuple[float, str, str, str]] = []
+        for gateway_id, request_ids in self._in_flight_requests.items():
+            for request_id in request_ids:
+                started = self._request_timestamps.get(request_id, now)
+                routing_key = self._request_routing_keys.get(request_id, "")
+                rows.append((started, gateway_id, request_id, routing_key))
+        rows.sort(key=lambda row: row[0])
+        capped = rows[: max(0, limit)]
+        out: list[dict[str, Any]] = []
+        for started, gateway_id, request_id, routing_key in capped:
+            age_s = max(0.0, now - started)
+            started_at = datetime.fromtimestamp(started, tz=UTC).isoformat()
+            item: dict[str, Any] = {
+                "request_id": request_id,
+                "gateway_id": gateway_id,
+                "routing_key": routing_key,
+                "started_at": started_at,
+                "age_s": round(age_s, 3),
+            }
+            item.update(self._request_meta.get(request_id, {"kind": "unknown"}))
+            out.append(item)
+        return out
 
     def get_total_in_flight(self) -> int:
         """Count in-flight requests across ALL gateways.

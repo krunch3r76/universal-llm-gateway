@@ -31,6 +31,11 @@ from .gateway_forwarding import (
 )
 from .request_store import ActiveRequestStore
 from .slot_management import SlotContext
+from src.core.gateway.request_inflight_meta import (
+    bind_request_inflight_meta,
+    infer_inflight_kind,
+    meta_from_http_request,
+)
 
 logger = get_logger(__name__)
 
@@ -230,6 +235,25 @@ def create_inference_router(
                         data={"model_id": model_str},
                     ),
                 )
+
+            stream = client_requested_stream(original_request)
+            inflight_kind = infer_inflight_kind(
+                is_pipeline_internal=bool(
+                    federation.get("pipeline_internal")
+                    or hints.get("pipeline_internal")
+                ),
+                is_pipeline_model=False,
+                client_wants_stream=stream,
+                model_id=model_str,
+                request_path=str(endpoint),
+            )
+            bind_request_inflight_meta(
+                meta_from_http_request(
+                    request,
+                    original_request if isinstance(original_request, dict) else None,
+                    kind=inflight_kind,
+                )
+            )
 
             slot_ctx = SlotContext(
                 gateway_id=gateway_id,

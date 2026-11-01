@@ -17,6 +17,7 @@ For implementation details, see src.core.gateway/.
 
 import time
 from dataclasses import dataclass, field
+from typing import Any
 
 from universal_logging import get_logger
 
@@ -93,6 +94,7 @@ class GatewayTracker:
         gateway_id: str,
         request_id: str,
         routing_key: str,
+        meta: dict[str, Any] | None = None,
     ) -> None:
         """
         Track that a request is in-flight to a gateway.
@@ -102,7 +104,9 @@ class GatewayTracker:
             request_id: Unique request identifier
             routing_key: Canonical model identity (normalize_model_id().routing_key)
         """
-        self._in_flight.track_request(gateway_id, request_id, routing_key)
+        self._in_flight.track_request(
+            gateway_id, request_id, routing_key, meta=meta
+        )
 
     def try_reserve_slot(
         self,
@@ -112,6 +116,7 @@ class GatewayTracker:
         request_id: str,
         routing_key: str,
         max_concurrent_requests: int = 1,
+        meta: dict[str, Any] | None = None,
     ) -> bool:
         """
         Track an in-flight request for a capacity key.
@@ -134,7 +139,12 @@ class GatewayTracker:
             request_id=request_id,
             routing_key=routing_key,
             max_concurrent_requests=max_concurrent_requests,
+            meta=meta,
         )
+
+    def list_in_flight(self, limit: int = 32) -> list[dict[str, Any]]:
+        """Delegate to in-flight tracker for admin active-work."""
+        return self._in_flight.list_in_flight(limit=limit)
 
     def get_capacity_count(
         self,
