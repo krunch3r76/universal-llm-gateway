@@ -107,21 +107,53 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_owed_wake_open_holder
 """
 
 
-def apply_restart_intent_schema(conn: sqlite3.Connection) -> None:
-    """Ensure restart-intent table matches the current CHECK and columns."""
-    conn.executescript(_DDL)
-    conn.executescript(_OWED_WAKE_DDL)
-    row = conn.execute(
-        "SELECT sql FROM sqlite_master WHERE type='table' AND name='restart_intents'"
-    ).fetchone()
-    if row is None or row[0] is None:
-        _ensure_kill_cas_indexes(conn)
-        return
-    sql = str(row[0])
-    if "'verifying_activation'" not in sql or "kill_boundary_at" not in sql:
-        conn.executescript(
+_V2_MIGRATION_TEMP = "restart_intents_v2"
+
+
+def _recover_interrupted_rebuilds(conn: sqlite3.Connection) -> None:
+    """Finish or discard a crashed table rebuild BEFORE ``_DDL`` runs (41247).
+
+    ``_DDL`` uses ``CREATE TABLE IF NOT EXISTS``: if a rebuild crashed after
+    ``DROP TABLE restart_intents`` but before the temp RENAME, running ``_DDL``
+    first would mint an empty up-to-date main and a later step would drop the
+    temp still holding every row. Recover here so the rows win.
+
+    * main missing, temp present -> rename temp back (expired_v1 preferred:
+      it is the later stage and already holds the widest shape).
+    * main present, temp present -> crash before DROP; main is authoritative,
+      discard the partial temp.
+    """
+    with _expired_status_migration_txn(conn):
+        has_main = _table_exists(conn, "restart_intents")
+        temps = [
+            t
+            for t in (_EXPIRED_MIGRATION_TEMP, _V2_MIGRATION_TEMP)
+            if _table_exists(conn, t)
+        ]
+        if not temps:
+            return
+        if not has_main:
+            conn.execute(f"ALTER TABLE {temps[0]} RENAME TO restart_intents")
+            temps = temps[1:]
+        for t in temps:
+            conn.execute(f"DROP TABLE IF EXISTS {t}")
+
+
+def _ensure_v2_shape(conn: sqlite3.Connection) -> None:
+    """Widen legacy CHECK / add ``kill_boundary_at`` in one atomic txn."""
+    with _expired_status_migration_txn(conn):
+        row = conn.execute(
+            "SELECT sql FROM sqlite_master WHERE type='table' AND name='restart_intents'"
+        ).fetchone()
+        if row is None or row[0] is None:
+            return
+        sql = str(row[0])
+        if "'verifying_activation'" in sql and "kill_boundary_at" in sql:
+            return
+        conn.execute(f"DROP TABLE IF EXISTS {_V2_MIGRATION_TEMP}")
+        conn.execute(
             f"""
-            CREATE TABLE restart_intents_v2 (
+            CREATE TABLE IF NOT EXISTS {_V2_MIGRATION_TEMP} (
                 intent_id            TEXT PRIMARY KEY,
                 service              TEXT NOT NULL,
                 action               TEXT NOT NULL DEFAULT 'restart',
@@ -140,8 +172,12 @@ def apply_restart_intent_schema(conn: sqlite3.Connection) -> None:
                 kill_boundary_at     TEXT,
                 created_at           TEXT NOT NULL,
                 updated_at           TEXT NOT NULL
-            );
-            INSERT INTO restart_intents_v2 (
+            )
+            """
+        )
+        conn.execute(
+            f"""
+            INSERT INTO {_V2_MIGRATION_TEMP} (
                 intent_id, service, action, status, drain_epoch, worker_id,
                 worker_started_at, deadline_at, last_seen_event_seq, reason,
                 kill_boundary_at, created_at, updated_at
@@ -150,11 +186,25 @@ def apply_restart_intent_schema(conn: sqlite3.Connection) -> None:
                 intent_id, service, action, status, drain_epoch, worker_id,
                 worker_started_at, deadline_at, last_seen_event_seq, reason,
                 NULL, created_at, updated_at
-            FROM restart_intents;
-            DROP TABLE restart_intents;
-            ALTER TABLE restart_intents_v2 RENAME TO restart_intents;
+            FROM restart_intents
             """
         )
+        conn.execute("DROP TABLE restart_intents")
+        conn.execute(f"ALTER TABLE {_V2_MIGRATION_TEMP} RENAME TO restart_intents")
+
+
+def apply_restart_intent_schema(conn: sqlite3.Connection) -> None:
+    """Ensure restart-intent table matches the current CHECK and columns."""
+    _recover_interrupted_rebuilds(conn)
+    conn.executescript(_DDL)
+    conn.executescript(_OWED_WAKE_DDL)
+    row = conn.execute(
+        "SELECT sql FROM sqlite_master WHERE type='table' AND name='restart_intents'"
+    ).fetchone()
+    if row is None or row[0] is None:
+        _ensure_kill_cas_indexes(conn)
+        return
+    _ensure_v2_shape(conn)
     _ensure_park_columns(conn)
     _ensure_wait_for_boundary_column(conn)
     _ensure_arm_columns(conn)
@@ -278,9 +328,9 @@ def _ensure_expired_status(conn: sqlite3.Connection) -> None:
     """Widen CHECK to allow terminal ``expired`` (friction:41247).
 
     Idempotent and atomic: ``executescript`` implicit commits left
-    ``restart_intents_expired_v1`` behind on crash (41247). Other table-rebuild
-    paths in this module still use ``executescript`` (``restart_intents_v2`` in
-    ``apply_restart_intent_schema``) and share that risk if interrupted mid-run.
+    ``restart_intents_expired_v1`` behind on crash (41247). A crash between
+    DROP and RENAME is recovered by ``_recover_interrupted_rebuilds`` before
+    ``_DDL`` can mint an empty main.
     """
     with _expired_status_migration_txn(conn):
         has_main = _table_exists(conn, "restart_intents")
