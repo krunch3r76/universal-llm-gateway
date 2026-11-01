@@ -1017,6 +1017,62 @@ def test_quiet_with_work_in_flight_routes_to_cursor() -> None:
     assert store.pending[0]["thread_id"] == child_thread
 
 
+def test_nest_child_parked_subject_cursor_gate_wake() -> None:
+    """Bare PARKED (nest child) on dispatch addresses must wake cursor."""
+    parked_subjects = (
+        "PARKED (nest child 8082a251) transport idle",
+        "PARKED|nest child 8082a251",
+        "hop|PARKED (nest child 8082a251)",
+    )
+    for subject in parked_subjects:
+        assert _effective_to_agent("dispatch", subject) == "cursor"
+        verdict = qualify(
+            {
+                "to_agent": "dispatch",
+                "from_agent": "cursor-sdk",
+                "subject": subject,
+            },
+            cse=False,
+        )
+        assert verdict.wake is True
+        assert verdict.rule_id == "wake_gate_or_directive"
+
+    assert _effective_to_agent("dispatch", "stop: PARKED_TRANSPORT — 20547") == "cursor"
+    assert qualify(
+        {
+            "to_agent": "conductor-hop",
+            "from_agent": "cursor-sdk",
+            "subject": "stop: PARKED_TRANSPORT",
+        },
+        cse=False,
+    ).wake
+
+    for subject in ("UNPARKED|40218", "status: parked_at=2020-01-01"):
+        assert _effective_to_agent("dispatch", subject) == "dispatch"
+        assert not qualify(
+            {
+                "to_agent": "dispatch",
+                "from_agent": "cursor-sdk",
+                "subject": subject,
+            },
+            cse=False,
+        ).wake
+
+    healthy = (
+        "cursor-sdk CLOSEOUT 2d1f2c04d3ff-15c30a1d "
+        "contract=conductor caller=conductor-hop"
+    )
+    assert _effective_to_agent("conductor-hop", healthy) == "conductor-hop"
+    assert not qualify(
+        {
+            "to_agent": "conductor-hop",
+            "from_agent": "cursor-sdk",
+            "subject": healthy,
+        },
+        cse=False,
+    ).wake
+
+
 def test_degraded_conductor_hop_closeout_routes_to_cursor() -> None:
     healthy = (
         "cursor-sdk CLOSEOUT 2d1f2c04d3ff-15c30a1d "

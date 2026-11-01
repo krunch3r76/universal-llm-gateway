@@ -179,7 +179,7 @@ _INTERMEDIATE_SUBJECT_RE = re.compile(
 )
 _CURSOR_GATE_WAKE_RE = re.compile(
     r"(?i)(?:CLOSEOUT|VERDICT|SCORE_RESURFACE|park-harvest escalation|conductor-hop escalation|"
-    r"PARKED_TRANSPORT|BLOCKED|ESCALATE|HOLD_MERGE|OPERATOR_GATE|"
+    r"PARKED_TRANSPORT|(?:^|[\|\s])PARKED(?=[\s(|]|$)|BLOCKED|ESCALATE|HOLD_MERGE|OPERATOR_GATE|"
     r"cdp (?:reply|FAILED|UNVERIFIED|DELIVERY FAILED)\b|"
     r"Quiet with work in flight)"
 )
