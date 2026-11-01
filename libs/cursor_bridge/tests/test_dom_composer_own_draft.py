@@ -11,7 +11,7 @@ def test_operator_busy_probe_uses_ordered_selectors() -> None:
         selector="[role='textbox'], [contenteditable='true']",
     )
     assert "for (const s of sels)" in js
-    assert "document.querySelector(sel)" in js
+    assert "document.querySelector(s)" in js
     assert "document.querySelector(" not in js.split("for (const s of sels)")[0]
 
 

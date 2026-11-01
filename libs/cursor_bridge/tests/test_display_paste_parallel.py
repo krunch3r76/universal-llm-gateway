@@ -193,6 +193,13 @@ async def test_synthetic_keydown_yields_operator_busy_before_insert(
 async def test_deliver_operator_paste_restores_chat_after_hidden_switch(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    from cursor_bridge.operator_paste import watermark_with_nonce
+
+    fixed_nonce = "restore00001"
+    monkeypatch.setattr(
+        "cursor_bridge.operator_paste.make_run_nonce", lambda: fixed_nonce
+    )
+    wm = watermark_with_nonce(fixed_nonce)
     hidden_id = "hidden-agent-restore"
     operator_id = "operator-active"
     pre = {
@@ -215,7 +222,8 @@ async def test_deliver_operator_paste_restores_chat_after_hidden_switch(
     post = {
         **target,
         "generating": True,
-        "recent_messages": [WATERMARK],
+        "recent_messages": [wm],
+        "message_turns": [{"role": "user", "text": wm}],
     }
     probes = [pre, target, target, target, target, post, post]
 

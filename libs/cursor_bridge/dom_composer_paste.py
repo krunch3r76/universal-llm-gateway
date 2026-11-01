@@ -152,6 +152,41 @@ def _click_send_own_draft_body(selector: str) -> str:
     )
 
 
+def clear_composer_draft_dom_no_focus_js(selector: str) -> str:
+    """Clear composer text via value setter + input event; no focus(), no Input.*."""
+    find = _find_composer_js(selector)
+    return (
+        f"(()=>{{const el=({find});"
+        "if(!el)return{ok:false,reason:'no_composer'};"
+        "const g=window.__ulgOperatorActivity=window.__ulgOperatorActivity||{};"
+        "const now=Date.now();"
+        "const last=Number(g.lastInputMs||0);"
+        "const operatorActive=last>0&&(now-last)<10000;"
+        "if(operatorActive||document.hasFocus())"
+        "return{ok:false,reason:'operator_active',operator_active:operatorActive,"
+        "document_has_focus:document.hasFocus()};"
+        "if(el.editor&&el.editor.commands&&typeof el.editor.commands.setContent==='function'){"
+        "try{el.editor.commands.setContent('');}catch(e){el.textContent='';}"
+        "}else if(el.tagName==='TEXTAREA'||el.tagName==='INPUT'){"
+        "const desc=Object.getOwnPropertyDescriptor("
+        "el.tagName==='TEXTAREA'?HTMLTextAreaElement.prototype:HTMLInputElement.prototype,'value');"
+        "if(desc&&desc.set)desc.set.call(el,'');else el.value='';"
+        "el.dispatchEvent(new Event('input',{bubbles:true}));"
+        "}else{"
+        "el.textContent='';"
+        "el.dispatchEvent(new InputEvent('input',{bubbles:true}));"
+        "}"
+        "g.ourDraftSig='';"
+        "const after=(el.innerText||el.value||'').trim();"
+        "return{ok:true,cleared:after.length===0,draft:after};})()"
+    )
+
+
+async def clear_composer_draft_dom_no_focus(ws_url: str, *, selector: str) -> dict[str, Any]:
+    raw = await _cdp_eval(ws_url, clear_composer_draft_dom_no_focus_js(selector))
+    return raw if isinstance(raw, dict) else {"ok": False}
+
+
 def _click_send_body(selector: str, line: str) -> str:
     find = _find_composer_js(selector)
     lj = json.dumps(_flatten_paste_line(line))
