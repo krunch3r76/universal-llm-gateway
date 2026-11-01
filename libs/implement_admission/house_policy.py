@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal
 
 from bus_watch.tick_state import load_state
+
 from implement_admission.impresario_policy import (
     ResolvedRoles,
     seat_transport_for_model,
@@ -87,12 +88,21 @@ def _policy_from_carriers(
 ) -> tuple[tuple[str, ...], str | None, dict[str, Any] | None] | None:
     if rematerialize is None:
         return None
-    binds = rematerialize.house_induction_binds
-    model = rematerialize.house_critic_model
-    knobs = rematerialize.house_critic_model_knobs
-    if binds or model or knobs:
-        return binds, model, knobs
-    return None
+    raw_binds = rematerialize.house_induction_binds
+    if isinstance(raw_binds, list):
+        binds = _parse_binds(raw_binds)
+    elif isinstance(raw_binds, tuple):
+        if raw_binds and all(isinstance(item, str) for item in raw_binds):
+            binds = tuple(s for item in raw_binds if (s := item.strip()))
+        else:
+            binds = ()
+    else:
+        binds = ()
+    model = _parse_critic_model(rematerialize.house_critic_model)
+    knobs = _parse_knobs(rematerialize.house_critic_model_knobs)
+    if not binds and model is None and knobs is None:
+        return None
+    return binds, model, knobs
 
 
 def _read_tick_policy(

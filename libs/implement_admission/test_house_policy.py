@@ -116,6 +116,24 @@ def test_unknown_prefix_critic_model_is_none(house_watch_dir: Path) -> None:
     assert read_house_policy("u", watch_dir=house_watch_dir).critic_model is None
 
 
+def test_carrier_unknown_prefix_critic_model_is_none(house_watch_dir: Path) -> None:
+    from implement_admission.house_policy import read_house_policy
+
+    rem_only = RematerializeContext(house_critic_model="openai/gpt-4")
+    hp = read_house_policy("absent-tick", rematerialize=rem_only, watch_dir=house_watch_dir)
+    assert hp.critic_model is None
+    assert hp.source == "unresolved"
+
+    rem_bind = RematerializeContext(
+        house_induction_binds=("carrier-bind",),
+        house_critic_model="openai/gpt-4",
+    )
+    hp2 = read_house_policy("absent-tick", rematerialize=rem_bind, watch_dir=house_watch_dir)
+    assert hp2.source == "carrier"
+    assert hp2.binds == ("carrier-bind",)
+    assert hp2.critic_model is None
+
+
 def test_critic_model_knobs_carry_only_when_dict(house_watch_dir: Path) -> None:
     from implement_admission.house_policy import read_house_policy
 
@@ -171,7 +189,7 @@ def test_roles_for_ctx_override_and_none() -> None:
         scope=None,
         acceptance=None,
     )
-    r0 = roles_for_ctx(ctx_none)
+    roles_for_ctx(ctx_none)
     ctx_h = ConductorMaterializeContext(
         source_ref="todo:x",
         slug="x",
