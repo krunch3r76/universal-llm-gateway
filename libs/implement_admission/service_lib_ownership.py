@@ -125,6 +125,7 @@ _SERVICE_OWNERSHIP: dict[str, ServiceOwnership] = {
                 "claude_bundles",
                 "closeout_memo",
                 "consult_substrate_notice",
+                "continuity_tape",
                 "contract_vocab",
                 "cortex_store",
                 "cursor_capabilities",
@@ -295,6 +296,7 @@ _SERVICE_OWNERSHIP: dict[str, ServiceOwnership] = {
                 "claude_bundles",
                 "continuity_tape",
                 "cortex_store",
+                "cursor_bridge",
                 "deploy_identity",
                 "durable_io",
                 "pager_notify",
@@ -489,9 +491,7 @@ def declared_services_for_lib(lib_name: str) -> tuple[str, ...]:
     return tuple(sorted(owners))
 
 
-UNSERVED_LIBS: frozenset[str] = frozenset(
-    {"bus_watch", "foo", "box_isolated_chrome"}
-)
+UNSERVED_LIBS: frozenset[str] = frozenset({"bus_watch", "foo", "box_isolated_chrome"})
 """Top-level ``libs/`` names explicitly classified as needing no manage restart.
 
 ``bus_watch`` is consumed by auxiliary liaison/watch scripts and IDE-hop

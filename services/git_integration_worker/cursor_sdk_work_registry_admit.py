@@ -1,0 +1,346 @@
+"""Best-effort work-registry stamps at team_dispatch admit and terminal closeout."""
+
+from __future__ import annotations
+
+import json
+from typing import Any
+
+from universal_logging import get_logger
+
+from services.git_integration_worker.cursor_dispatch_ledger import CursorDispatchLedger
+from services.git_integration_worker.cursor_sdk_claim_address import (
+    AddressValidationError,
+    normalize_address,
+)
+
+logger = get_logger(__name__)
+
+WORK_REGISTRY_RULE = (
+    'WORK REGISTRY RULE: Before acting on a work_key, read team_dispatch(op="registry", '
+    "work_key_prefix=<key>). If another live row holds it, coordinate on its thread "
+    "instead of duplicating. If you are not already auto-recorded (team_dispatch generate "
+    "auto-records with an address), claim it: team_dispatch(op=\"claim\", work_key, thread, "
+    "seat_name, address). Keep it current with op=\"claim_update\" (work_status, "
+    'address_patch, note); finish with work_status=landed or abandoned.'
+)
+
+_REGISTRY_NEXT_TEMPLATE = (
+    'Work registry: read team_dispatch(op=registry, work_key_prefix=<key>) before starting '
+    "work on a work_key; claim with op=claim (seat_name, address) and keep it current with "
+    "op=claim_update; this dispatch was auto-recorded as {row_id}."
+)
+
+
+def registry_next_hint(*, row_id: str) -> str:
+    """Operator-facing _next line after generate/to_thread admit."""
+    rid = str(row_id or "").strip() or "(unknown)"
+    return _REGISTRY_NEXT_TEMPLATE.format(row_id=rid)
+
+
+def resolve_registry_seat_name(
+    *,
+    caller_agent: str | None,
+    seat: str | None = None,
+    role: str | None = None,
+) -> str | None:
+    """Prefer explicit seat, then caller_agent, then functional role."""
+    for raw in (seat, caller_agent, role):
+        if isinstance(raw, str) and raw.strip():
+            return raw.strip()
+    return None
+
+
+def build_cursor_sdk_registry_address(
+    *,
+    dispatch_id: str,
+    worker_thread: str | None,
+    worktree: str | None = None,
+) -> dict[str, Any]:
+    out: dict[str, Any] = {
+        "kind": "cursor_sdk",
+        "dispatch_id": str(dispatch_id).strip(),
+    }
+    if worker_thread and str(worker_thread).strip():
+        out["worker_thread"] = str(worker_thread).strip()
+    if worktree and str(worktree).strip():
+        out["worktree"] = str(worktree).strip()
+    return out
+
+
+def build_api_registry_address(*, thread_id: str) -> dict[str, Any]:
+    return {"kind": "api_role", "thread_id": str(thread_id).strip()}
+
+
+def build_cdp_registry_address(
+    *,
+    thread_id: str,
+    chat_url: str | None = None,
+    registration_id: str | None = None,
+) -> dict[str, Any]:
+    out: dict[str, Any] = {"kind": "cdp", "thread_id": str(thread_id).strip()}
+    if chat_url and str(chat_url).strip():
+        out["chat_url"] = str(chat_url).strip()
+    if registration_id and str(registration_id).strip():
+        out["registration_id"] = str(registration_id).strip()
+    return out
+
+
+def build_cursor_ide_registry_address(
+    *,
+    gui_host: str,
+    tab: str | None = None,
+    agent_id: str | None = None,
+) -> dict[str, Any]:
+    out: dict[str, Any] = {
+        "kind": "cursor_ide",
+        "gui_host": str(gui_host).strip(),
+    }
+    if tab and str(tab).strip():
+        out["tab"] = str(tab).strip()
+    if agent_id and str(agent_id).strip():
+        out["agent_id"] = str(agent_id).strip()
+    return out
+
+
+def _merge_registry_record(
+    existing: dict[str, Any],
+    *,
+    seat_name: str | None,
+    address: dict[str, Any] | None,
+    work_status: str | None,
+) -> dict[str, Any]:
+    merged = dict(existing)
+    if seat_name and str(seat_name).strip():
+        merged["seat_name"] = str(seat_name).strip()
+    if address:
+        prior = merged.get("address")
+        if isinstance(prior, dict):
+            merged["address"] = {**prior, **address}
+        else:
+            merged["address"] = dict(address)
+    if work_status and str(work_status).strip():
+        merged["work_status"] = str(work_status).strip()
+    merged.setdefault("registry_auto_recorded", True)
+    return merged
+
+
+def stamp_registry_on_dispatch_row(
+    *,
+    dispatch_id: str,
+    caller_agent: str | None = None,
+    seat_name: str | None = None,
+    address: dict[str, Any] | None = None,
+    work_status: str | None = "active",
+    work_key: str | None = None,
+    ledger: CursorDispatchLedger | None = None,
+) -> str | None:
+    """Patch an existing dispatch row. Returns dispatch_id on success, else None."""
+    led = ledger or CursorDispatchLedger.instance()
+    norm_address: dict[str, Any] | None = None
+    if address is not None:
+        try:
+            norm_address = normalize_address(address)
+        except AddressValidationError as exc:
+            logger.warning(
+                "registry stamp skipped bad address dispatch_id=%s err=%s",
+                dispatch_id,
+                exc,
+            )
+            return None
+    with led._connect() as conn:
+        row = conn.execute(
+            "SELECT dispatch_id, caller_agent, record_json, work_key "
+            "FROM cursor_sdk_dispatches WHERE dispatch_id=?",
+            (dispatch_id,),
+        ).fetchone()
+        if row is None:
+            return None
+        try:
+            rec = json.loads(row["record_json"] or "{}")
+        except json.JSONDecodeError:
+            rec = {}
+        if not isinstance(rec, dict):
+            rec = {}
+        merged = _merge_registry_record(
+            rec,
+            seat_name=seat_name,
+            address=norm_address,
+            work_status=work_status,
+        )
+        record_json = json.dumps(merged, sort_keys=True, separators=(",", ":"))
+        caller = row["caller_agent"]
+        if not caller and caller_agent and str(caller_agent).strip():
+            caller = str(caller_agent).strip()
+        wk = row["work_key"]
+        if not wk and work_key and str(work_key).strip():
+            wk = str(work_key).strip()
+        conn.execute(
+            "UPDATE cursor_sdk_dispatches SET record_json=?, "
+            "caller_agent=COALESCE(?, caller_agent), work_key=COALESCE(?, work_key) "
+            "WHERE dispatch_id=?",
+            (record_json, caller, wk, dispatch_id),
+        )
+        conn.commit()
+    return dispatch_id
+
+
+def upsert_frontier_registry_dispatch(
+    *,
+    dispatch_id: str,
+    thread_id: str,
+    caller_agent: str | None,
+    seat_name: str | None,
+    address: dict[str, Any],
+    work_key: str | None = None,
+    resolved_model: str = "none",
+    contract: str | None = None,
+    ledger: CursorDispatchLedger | None = None,
+) -> str | None:
+    """Insert or refresh a registry projection row for non-GIW admits."""
+    led = ledger or CursorDispatchLedger.instance()
+    try:
+        norm_address = normalize_address(address)
+    except AddressValidationError as exc:
+        logger.warning(
+            "frontier registry upsert skipped bad address id=%s err=%s",
+            dispatch_id,
+            exc,
+        )
+        return None
+    rec = _merge_registry_record(
+        {},
+        seat_name=seat_name,
+        address=norm_address,
+        work_status="active",
+    )
+    record_json = json.dumps(rec, sort_keys=True, separators=(",", ":"))
+    holder = (caller_agent or seat_name or "dispatch").strip()
+    fp = str(dispatch_id).strip()
+    with led._connect() as conn:
+        existing = conn.execute(
+            "SELECT dispatch_id FROM cursor_sdk_dispatches WHERE dispatch_id=?",
+            (fp,),
+        ).fetchone()
+        if existing is not None:
+            conn.execute(
+                "UPDATE cursor_sdk_dispatches SET record_json=?, thread_id=?, "
+                "caller_agent=COALESCE(?, caller_agent), work_key=COALESCE(?, work_key) "
+                "WHERE dispatch_id=?",
+                (
+                    record_json,
+                    thread_id,
+                    holder or None,
+                    work_key,
+                    fp,
+                ),
+            )
+        else:
+            from services.git_integration_worker.cursor_dispatch_ledger import _now
+
+            stamp = _now()
+            conn.execute(
+                "INSERT INTO cursor_sdk_dispatches "
+                "(dispatch_id, fingerprint, thread_id, caller_agent, resolved_model, "
+                " message_present, status, record_json, contract, read_only, queued_at, "
+                " work_key, identity_class, started_at) "
+                "VALUES (?, ?, ?, ?, ?, 0, 'admitted', ?, ?, 1, ?, ?, 'declared', ?)",
+                (
+                    fp,
+                    fp,
+                    thread_id,
+                    holder or None,
+                    resolved_model,
+                    record_json,
+                    contract or "generate",
+                    stamp,
+                    work_key,
+                    stamp,
+                ),
+            )
+        conn.commit()
+    return fp
+
+
+def record_dispatch_registry_best_effort(**kwargs: Any) -> str | None:
+    """Never raises — registry write failure must not fail admit."""
+    try:
+        dispatch_id = kwargs.get("dispatch_id")
+        if not dispatch_id:
+            return None
+        led = kwargs.get("ledger") or CursorDispatchLedger.instance()
+        with led._connect() as conn:
+            exists = conn.execute(
+                "SELECT 1 FROM cursor_sdk_dispatches WHERE dispatch_id=?",
+                (str(dispatch_id),),
+            ).fetchone()
+        if exists:
+            return stamp_registry_on_dispatch_row(
+                dispatch_id=str(dispatch_id),
+                caller_agent=kwargs.get("caller_agent"),
+                seat_name=kwargs.get("seat_name"),
+                address=kwargs.get("address"),
+                work_key=kwargs.get("work_key"),
+                ledger=led,
+            )
+        return upsert_frontier_registry_dispatch(
+            dispatch_id=str(dispatch_id),
+            thread_id=str(kwargs.get("thread_id") or ""),
+            caller_agent=kwargs.get("caller_agent"),
+            seat_name=kwargs.get("seat_name"),
+            address=kwargs.get("address") or {},
+            work_key=kwargs.get("work_key"),
+            resolved_model=str(kwargs.get("resolved_model") or "none"),
+            contract=kwargs.get("contract"),
+            ledger=led,
+        )
+    except Exception as exc:  # noqa: BLE001 — admit must not fail
+        logger.warning(
+            "work registry auto-record failed dispatch_id=%s err=%s",
+            kwargs.get("dispatch_id"),
+            exc,
+        )
+        return None
+
+
+def stamp_registry_terminal_work_status(
+    *,
+    dispatch_id: str,
+    terminal_status: str,
+    ledger: CursorDispatchLedger | None = None,
+) -> None:
+    """Map terminal dispatch status to registry work_status at closeout."""
+    if terminal_status not in ("completed", "failed", "cancelled"):
+        return
+    work_status = "landed" if terminal_status == "completed" else "abandoned"
+    led = ledger or CursorDispatchLedger.instance()
+    try:
+        with led._connect() as conn:
+            row = conn.execute(
+                "SELECT record_json FROM cursor_sdk_dispatches WHERE dispatch_id=?",
+                (dispatch_id,),
+            ).fetchone()
+            if row is None:
+                return
+            try:
+                rec = json.loads(row["record_json"] or "{}")
+            except json.JSONDecodeError:
+                rec = {}
+            if not isinstance(rec, dict):
+                rec = {}
+            if not rec.get("registry_auto_recorded"):
+                return
+            rec["work_status"] = work_status
+            conn.execute(
+                "UPDATE cursor_sdk_dispatches SET record_json=? WHERE dispatch_id=?",
+                (
+                    json.dumps(rec, sort_keys=True, separators=(",", ":")),
+                    dispatch_id,
+                ),
+            )
+            conn.commit()
+    except Exception as exc:  # noqa: BLE001
+        logger.warning(
+            "registry terminal work_status stamp failed id=%s err=%s",
+            dispatch_id,
+            exc,
+        )

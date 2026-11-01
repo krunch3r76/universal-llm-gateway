@@ -1,0 +1,9 @@
+# propagation_residue — work registry slice 3 (lane-21650)
+# Lane-B seat: do not manage restart from unmerged worktree.
+restart_owed:
+  - service: git_integration_worker
+    reason: registry record route, auto-record at admit, terminal work_status stamp
+  - service: universal-stargate
+    reason: team_dispatch generate/to_thread registry relay and _next hints
+  - service: mcp-server
+    reason: team_dispatch tool description and generate _next fallback

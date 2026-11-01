@@ -4687,6 +4687,31 @@ async def admit_cursor_dispatch(
         patch={"sdk_mode": resolved_sdk_mode},
     )
 
+    from services.git_integration_worker.cursor_sdk_work_registry_admit import (
+        build_cursor_sdk_registry_address,
+        record_dispatch_registry_best_effort,
+        resolve_registry_seat_name,
+    )
+
+    record_dispatch_registry_best_effort(
+        dispatch_id=req.dispatch_id,
+        thread_id=req.thread_id,
+        caller_agent=req.caller_agent or "cursor-sdk",
+        seat_name=resolve_registry_seat_name(
+            caller_agent=req.caller_agent,
+            seat="cursor-sdk",
+        ),
+        address=build_cursor_sdk_registry_address(
+            dispatch_id=req.dispatch_id,
+            worker_thread=req.thread_id,
+            worktree=_preview_lane_worktree_path(req, cfg),
+        ),
+        work_key=candidate_work_key,
+        resolved_model=config.model_id,
+        contract=contract,
+        ledger=ledger,
+    )
+
     if req.resume_of:
         parent_row = load_parent_row(ledger, parent_id=req.resume_of)
         if parent_row is not None and parent_row.sdk_agent_id:
@@ -4839,7 +4864,14 @@ async def admit_cursor_dispatch(
     )
     if expand_status:
         admission = admission.model_copy(update={"prompt_expand": expand_status})
-    return JSONResponse(status_code=200, content=admission.model_dump())
+    from services.git_integration_worker.cursor_sdk_work_registry_admit import (
+        registry_next_hint,
+    )
+
+    payload = admission.model_dump()
+    payload["registry_row_id"] = req.dispatch_id
+    payload["_next"] = registry_next_hint(row_id=req.dispatch_id)
+    return JSONResponse(status_code=200, content=payload)
 
 
 @router.delete("/dispatch/{dispatch_id}")

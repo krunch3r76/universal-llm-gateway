@@ -641,7 +641,7 @@ def register_frontier_tools(mcp: FastMCP) -> None:
         state: Annotated[
             str | None,
             Field(
-                description="Registry filter when op='registry' (default live).",
+                description="Registry filter when op='registry' (live or all; default live).",
             ),
         ] = None,
         work_key_prefix: Annotated[
@@ -663,7 +663,9 @@ def register_frontier_tools(mcp: FastMCP) -> None:
 
         **occupancy:** `work_key`. 422 `INVALID_WORK_KEY`. Returns occupancy, not progress.
 
-        **registry:** optional `state` (live), `window_hours`, `work_key_prefix`. Live claims + acting dispatches, ≤5120 UTF-8 bytes (`truncated` when trimmed).
+        **registry:** optional `state` (live|all), `window_hours`, `work_key_prefix`. Live claims + acting dispatches; `all` includes completed/failed/cancelled within the window. ≤5120 UTF-8 bytes (`truncated` when trimmed).
+
+        Work registry: read `team_dispatch(op=registry, work_key_prefix=<key>)` before starting work on a work_key; claim with `op=claim` (seat_name, address) and keep it current with `op=claim_update`; `op=generate` auto-records the dispatch row.
 
         **ledger:** `work_key`; optional `limit` (default 5) and `window_hours` (default 24). Read-only recent dispatches + house roll-up under 5120 UTF-8 bytes.
 
@@ -1281,6 +1283,19 @@ def register_frontier_tools(mcp: FastMCP) -> None:
                 "Drop it, or use op='to_thread' to set a thread subject."
             )
             result["warnings"] = warnings
+        if (
+            op in ("generate", "to_thread")
+            and isinstance(result, dict)
+            and "error" not in result
+            and "_next" not in result
+        ):
+            row_id = result.get("registry_row_id") or result.get("dispatch_id")
+            if row_id:
+                from services.git_integration_worker.cursor_sdk_work_registry_admit import (
+                    registry_next_hint,
+                )
+
+                result["_next"] = registry_next_hint(row_id=str(row_id))
         return result
 
     description = _format_team_dispatch_description(team_dispatch.__doc__ or "")

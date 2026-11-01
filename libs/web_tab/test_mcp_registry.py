@@ -5,7 +5,11 @@ from __future__ import annotations
 import inspect
 
 from web_tab import mcp_registry
-from web_tab.mcp_registry import WEB_TAB_READ_OP_TO_PIPELINE, advertised_read_ops
+from web_tab.mcp_registry import (
+    WEB_TAB_READ_OP_TO_PIPELINE,
+    advertised_read_ops,
+    advertised_write_ops,
+)
 
 
 def test_partial_install_maps_only_present_ids() -> None:
@@ -22,6 +26,12 @@ def test_full_install_maps_both_ops() -> None:
     assert advertised_read_ops(installed_pipeline_ids=installed) == frozenset(
         {"status", "probe"}
     )
+
+
+def test_write_ops_require_web_tab_write_pipeline() -> None:
+    assert advertised_write_ops(installed_pipeline_ids=frozenset()) == frozenset()
+    ops = advertised_write_ops(installed_pipeline_ids=frozenset({"web-tab-write"}))
+    assert "paste" in ops and "open" in ops
 
 
 def test_mcp_registry_has_no_tools_import() -> None:

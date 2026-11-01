@@ -933,7 +933,7 @@ async def dispatch_cdp_generate(
         handoff_fields=handoff_fields,
     )
     response.status_code = 202
-    return {
+    result = {
         "op": "generate",
         "status": "running",
         "staged_prompt_byte_count": staged_digest["staged_prompt_byte_count"],
@@ -974,3 +974,23 @@ async def dispatch_cdp_generate(
         },
         "terminal": False,
     }
+    from services.git_integration_worker.cursor_sdk_work_registry_admit import (
+        build_cdp_registry_address,
+        resolve_registry_seat_name,
+    )
+
+    from .work_registry_admit_relay import attach_registry_next, relay_registry_record
+
+    relay_body = await relay_registry_record(
+        request_id=request_id,
+        dispatch_id=execution_id,
+        thread_id=str(thread_id),
+        caller_agent=body.caller_agent,
+        seat_name=resolve_registry_seat_name(caller_agent=body.caller_agent),
+        address=build_cdp_registry_address(thread_id=str(thread_id)),
+        work_key=getattr(body, "work_key", None),
+        resolved_model=str(model),
+        contract=contract,
+    )
+    attach_registry_next(result, relay_body)
+    return result

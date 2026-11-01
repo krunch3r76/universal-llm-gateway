@@ -54,6 +54,59 @@ def normalize_address(address: dict[str, Any] | None) -> dict[str, Any] | None:
         )
 
     kind = str(address.get("kind") or "").strip().lower()
+    if kind == "cursor_sdk":
+        dispatch_id = str(address.get("dispatch_id") or "").strip()
+        if not dispatch_id:
+            raise AddressValidationError(
+                "ADDRESS_UNREACHABLE_SHAPE",
+                "cursor_sdk address requires dispatch_id",
+            )
+        out = {"kind": "cursor_sdk", "dispatch_id": dispatch_id}
+        worker_thread = str(address.get("worker_thread") or "").strip()
+        if worker_thread:
+            out["worker_thread"] = worker_thread
+        worktree = str(address.get("worktree") or "").strip()
+        if worktree:
+            out["worktree"] = worktree
+        return out
+    if kind == "cursor_ide":
+        gui_host = str(address.get("gui_host") or "").strip()
+        if not gui_host:
+            raise AddressValidationError(
+                "ADDRESS_UNREACHABLE_SHAPE",
+                "cursor_ide address requires gui_host",
+            )
+        out = {"kind": "cursor_ide", "gui_host": gui_host}
+        tab = str(address.get("tab") or address.get("title") or "").strip()
+        if tab:
+            out["tab"] = tab
+        agent_id = str(address.get("agent_id") or "").strip()
+        if agent_id:
+            out["agent_id"] = agent_id
+        return out
+    if kind == "cdp":
+        thread_id = str(address.get("thread_id") or "").strip()
+        if not thread_id:
+            raise AddressValidationError(
+                "ADDRESS_UNREACHABLE_SHAPE",
+                "cdp address requires thread_id",
+            )
+        out = {"kind": "cdp", "thread_id": thread_id}
+        chat_url = str(address.get("chat_url") or "").strip()
+        if chat_url:
+            out["chat_url"] = chat_url
+        registration_id = str(address.get("registration_id") or "").strip()
+        if registration_id:
+            out["registration_id"] = registration_id
+        return out
+    if kind == "api_role":
+        thread_id = str(address.get("thread_id") or "").strip()
+        if not thread_id:
+            raise AddressValidationError(
+                "ADDRESS_UNREACHABLE_SHAPE",
+                "api_role address requires thread_id",
+            )
+        return {"kind": "api_role", "thread_id": thread_id}
     if kind == "grok_bot":
         agent_id = str(address.get("agent_id") or "").strip()
         if not agent_id:

@@ -64,6 +64,19 @@ class ApiRoleDispatchBody(BaseModel):
     usage: dict[str, Any] | None = None
 
 
+class RegistryRecordBody(BaseModel):
+    """Best-effort auto-record for team_dispatch generate/to_thread admits."""
+
+    dispatch_id: str
+    thread_id: str
+    caller_agent: str | None = None
+    seat_name: str | None = None
+    address: dict[str, Any] | None = None
+    work_key: str | None = None
+    resolved_model: str | None = None
+    contract: str | None = None
+
+
 class ReleaseBody(BaseModel):
     """Body for ``POST /claim/{id}/release``.
 
@@ -134,6 +147,35 @@ def post_claim_update(claim_id: str, body: ClaimUpdateBody) -> Any:
             status_code=exc.http_status,
             content={"code": exc.code, "message": str(exc)},
         )
+
+
+@router.post("/registry/record", response_model=None)
+def post_registry_record(body: RegistryRecordBody) -> Any:
+    """Stamp or upsert one dispatch row for the work registry (best-effort)."""
+    from services.git_integration_worker.cursor_sdk_work_registry_admit import (
+        record_dispatch_registry_best_effort,
+        registry_next_hint,
+    )
+
+    if not body.dispatch_id.strip() or not body.thread_id.strip():
+        return _invalid("INVALID_RECORD", "dispatch_id and thread_id are required")
+    row_id = record_dispatch_registry_best_effort(
+        dispatch_id=body.dispatch_id.strip(),
+        thread_id=body.thread_id.strip(),
+        caller_agent=body.caller_agent,
+        seat_name=body.seat_name,
+        address=body.address,
+        work_key=body.work_key,
+        resolved_model=body.resolved_model,
+        contract=body.contract,
+    )
+    if row_id is None:
+        return {"ok": False, "registry_row_id": None}
+    return {
+        "ok": True,
+        "registry_row_id": row_id,
+        "_next": registry_next_hint(row_id=row_id),
+    }
 
 
 @router.get("/registry", response_model=None)

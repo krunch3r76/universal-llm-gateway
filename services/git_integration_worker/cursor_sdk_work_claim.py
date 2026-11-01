@@ -885,6 +885,9 @@ def update(
     }
 
 
+_REGISTRY_STATES = frozenset({"live", "all"})
+
+
 def registry(
     *,
     state: str = "live",
@@ -893,12 +896,13 @@ def registry(
     ledger: CursorDispatchLedger | None = None,
     now: str | None = None,
 ) -> dict[str, Any]:
-    """Fleet work registry: live house claims and acting cursor-sdk dispatches."""
-    if state != "live":
+    """Fleet work registry: live claims/dispatches; ``all`` includes recent terminals."""
+    state_norm = str(state or "live").strip().lower()
+    if state_norm not in _REGISTRY_STATES:
         raise ClaimError(
             code="INVALID_STATE",
             http_status=422,
-            message="state must be 'live'",
+            message="state must be 'live' or 'all'",
         )
     window_hours = max(1, min(168, int(window_hours)))
     led = ledger or CursorDispatchLedger.instance()
@@ -909,13 +913,21 @@ def registry(
 
     with led._connect() as conn:
         acting = ",".join(repr(s) for s in _ACTING_DISPATCH)
-        sql = (
-            "SELECT * FROM cursor_sdk_dispatches WHERE ("
+        terminal = ",".join(repr(s) for s in ("completed", "failed", "cancelled"))
+        live_clause = (
             "(status='claimed' AND claim_expires_at > ?) OR "
             f"(status IN ({acting}) AND COALESCE(queued_at, started_at, '') >= ?)"
-            ") "
         )
-        params: list[Any] = [stamp, cutoff]
+        if state_norm == "live":
+            where = f"({live_clause})"
+            params: list[Any] = [stamp, cutoff]
+        else:
+            where = (
+                f"({live_clause} OR "
+                f"(status IN ({terminal}) AND COALESCE(terminal_at, queued_at, started_at, '') >= ?))"
+            )
+            params = [stamp, cutoff, cutoff]
+        sql = f"SELECT * FROM cursor_sdk_dispatches WHERE {where} "
         if like is not None:
             sql += "AND work_key LIKE ? "
             params.append(like)
@@ -925,7 +937,7 @@ def registry(
     entries = [_registry_row(row, now=stamp) for row in rows]
     truncated = False
     shell = {
-        "state": state,
+        "state": state_norm,
         "window_hours": window_hours,
         "work_key_prefix": prefix or None,
         "as_of": stamp,
