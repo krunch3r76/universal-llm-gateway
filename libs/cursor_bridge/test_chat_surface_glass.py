@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from cursor_bridge.chat_surface import classify_surface
+from cursor_bridge.chat_surface import _PROBE_JS, classify_surface
 
 pytestmark = pytest.mark.offline
 
@@ -33,3 +33,8 @@ def test_classify_glass_sidebar_rows() -> None:
     assert surface["state"] == "chat_list"
     assert surface["active_title"] == "18040 lane-x"
     assert surface["active_agent_id"] == "agent-uuid-1"
+
+
+def test_probe_js_falls_back_to_composer_editor_agent_id() -> None:
+    assert "data-sidebar-file-drop-editor-agent-id" in _PROBE_JS
+    assert "promptElEarly" in _PROBE_JS

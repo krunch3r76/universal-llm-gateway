@@ -95,6 +95,10 @@ _PROBE_JS = r"""
       break;
     }
   }
+  const promptElEarly = document.querySelector('[aria-label="Prompt"][contenteditable="true"]');
+  if (!activeAgentId && promptElEarly) {
+    activeAgentId = (promptElEarly.getAttribute('data-sidebar-file-drop-editor-agent-id') || '').trim();
+  }
   const promptSel = activeAgentId
     ? '[aria-label="Prompt"][contenteditable="true"][data-sidebar-file-drop-editor-agent-id="' + activeAgentId + '"]'
     : '[aria-label="Prompt"][contenteditable="true"]';
@@ -191,6 +195,9 @@ def wake_decision(
         if (title or (thread and slug))
         else ""
     )
+    agent_ids_early = dict(surface.get("agent_ids") or {})
+    if not expected and aid and aid in agent_ids_early:
+        expected = str(agent_ids_early[aid] or "").strip()
     state = str(surface.get("state") or "unknown")
     titles = list(surface.get("titles") or [])
     title_counts = dict(surface.get("title_counts") or {})

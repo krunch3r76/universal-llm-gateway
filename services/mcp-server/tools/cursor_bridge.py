@@ -22,6 +22,7 @@ from mcp_events import record
 from mcp_toolprogress import toolprogress_begin, toolprogress_end
 
 from .agent_bus import _fetch_impl, _send_impl
+from .relay import _relay
 
 if TYPE_CHECKING:
     from fastmcp import FastMCP
@@ -41,6 +42,7 @@ BridgeOp = Literal[
     "wake_tab",
     "rename_tab",
     "prune_sidebar",
+    "paste_as_operator",
 ]
 
 
@@ -283,6 +285,52 @@ def _prune_sidebar(
     return res
 
 
+def _paste_as_operator(
+    *,
+    display: str | None,
+    app: str | None,
+    agent_id: str | None,
+    body: str | None,
+    grant: str | None,
+    authorization_source: str | None,
+    scope: str | None,
+) -> dict[str, Any]:
+    disp = str(display or "").strip()
+    aid = str(agent_id or "").strip()
+    text = str(body or "").strip()
+    grant_s = str(grant or "").strip().lower()
+    auth = str(authorization_source or "").strip()
+    if not disp or not aid or not text:
+        return _param_error(
+            "paste_as_operator",
+            "params_required",
+            "paste_as_operator requires display, agent_id, and body",
+        )
+    if grant_s not in {"operator", "explicit"} or not auth:
+        return _param_error(
+            "paste_as_operator",
+            "grant_or_source_required",
+            "grant (operator|explicit) and authorization_source are required",
+        )
+    payload = {
+        "display": disp.lstrip(":"),
+        "app": (app or "grok").strip().lower(),
+        "agent_id": aid,
+        "text": text,
+        "grant": grant_s,
+        "authorization_source": auth,
+        "scope": str(scope or "").strip(),
+    }
+    result = _relay("POST", "/v1/display-chat/paste", json_body=payload)
+    record(
+        "mcp.cursor_bridge.paste_as_operator",
+        display=payload["display"],
+        ok=bool(result.get("ok")),
+        agent_id=aid,
+    )
+    return {**result, "op": "paste_as_operator"}
+
+
 def _status(*, thread: str | None, last: int) -> dict[str, Any]:
     if not thread:
         return _param_error("status", "thread_required", "status requires thread")
@@ -358,6 +406,11 @@ def register_cursor_bridge_tools(mcp: FastMCP) -> None:
         fast: bool | str | None = None,
         model_knobs: dict[str, str] | None = None,
         work_key: str | None = None,
+        display: str | None = None,
+        app: str | None = None,
+        grant: str | None = None,
+        authorization_source: str | None = None,
+        scope: str | None = None,
     ) -> dict[str, Any]:
         """claude.ai ↔ Cursor Composer keystroke bridge.
 
@@ -434,6 +487,16 @@ def register_cursor_bridge_tools(mcp: FastMCP) -> None:
             if op == "prune_sidebar":
                 return _prune_sidebar(
                     gui_host=gui_host, thread=thread, agent_id=agent_id
+                )
+            if op == "paste_as_operator":
+                return _paste_as_operator(
+                    display=display,
+                    app=app,
+                    agent_id=agent_id,
+                    body=body,
+                    grant=grant,
+                    authorization_source=authorization_source,
+                    scope=scope,
                 )
             return _param_error(
                 "dispatch", "unknown_op", f"unknown op {op!r}; expected {BridgeOp}"

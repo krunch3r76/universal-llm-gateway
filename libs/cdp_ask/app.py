@@ -42,6 +42,8 @@ from cdp_ask.cse_session_models import (
 )
 from cdp_ask.cse_session_paste import execute_paste
 from cdp_ask.cse_session_provenance import resolve_public_provenance
+from cdp_ask.display_chat_models import DisplayChatPasteRequest
+from cdp_ask.display_chat_paste import execute_display_chat_paste
 from cdp_ask.execution_ladder import finish_execution, guard_execution
 from cdp_ask.execution_resume import hydrate_in_flight, spawn_resume
 from cdp_ask.execution_store import ExecutionStore
@@ -529,6 +531,35 @@ def create_app(*, store: ExecutionStore | None = None) -> FastAPI:
                 content=_chat_session_refuse_body(
                     result.code,
                     result.reason or result.code,
+                ),
+            )
+        return JSONResponse(
+            status_code=200, content=result.model_dump(exclude_none=True)
+        )
+
+    @app.post("/v1/display-chat/paste")
+    async def display_chat_paste(request: Request) -> JSONResponse:
+        """Grant-gated operator relay into a Grok Bot sidebar agent."""
+        await asyncio.to_thread(verify_harvest_root)
+        body = await request.json()
+        grant = body.get("grant")
+        auth_src = str(body.get("authorization_source") or "").strip()
+        if grant not in ("explicit", "operator") or not auth_src:
+            return JSONResponse(
+                status_code=409,
+                content=_chat_session_refuse_body(
+                    "grant_or_source_required",
+                    "grant (operator|explicit) and authorization_source are required",
+                ),
+            )
+        req = DisplayChatPasteRequest.model_validate(body)
+        result = await execute_display_chat_paste(req)
+        if not result.ok:
+            return JSONResponse(
+                status_code=409,
+                content=_chat_session_refuse_body(
+                    str(result.code or result.reason or "refused"),
+                    str(result.reason or result.code or "refused"),
                 ),
             )
         return JSONResponse(

@@ -140,6 +140,33 @@ def test_wake_decision_stale_agent_id_fallback() -> None:
 
 
 @pytest.mark.offline
+def test_wake_decision_agent_id_only_resolves_title_from_sidebar_map() -> None:
+    surface = classify_surface(
+        [],
+        [
+            {"text": "16416 continuity", "selected": True, "agent_id": "live-id"},
+        ],
+    )
+    surface["agent_ids"] = {"live-id": "16416 continuity"}
+    out = wake_decision(surface, agent_id="live-id")
+    assert out["ok"] is True
+    assert out["reason"] == "match"
+
+
+def test_wake_decision_composer_agent_id_matches_stale_sidebar_row() -> None:
+    """Regression: active composer agent id when sidebar row id is empty."""
+    surface = classify_surface(
+        [],
+        [
+            {"text": "16416 continuity", "selected": True, "agent_id": ""},
+        ],
+    )
+    surface["active_agent_id"] = "composer-bound-id"
+    surface["agent_ids"] = {"composer-bound-id": "16416 continuity"}
+    out = wake_decision(surface, agent_id="composer-bound-id")
+    assert out["ok"] is True
+
+
 def test_wake_decision_live_agent_id_mismatch() -> None:
     surface = classify_surface(
         [],
