@@ -7,6 +7,7 @@ from typing import Any, Literal
 
 from cursor_bridge.dom_composer_paste import (
     dom_click_send,
+    dom_click_send_own_draft,
     dom_insert_and_send,
     dom_set_composer_text,
 )
@@ -25,7 +26,6 @@ from web_tab.operator_guard import operator_active_probe
 from web_tab.provider_selectors import (
     ProviderSite,
     composer_selector_for_site,
-    send_button_click_js,
     site_from_url,
     surface_for_site,
 )
@@ -39,7 +39,7 @@ from web_tab.target_lock import (
 
 WriteOp = Literal["open", "bind", "paste", "submit", "verify_committed", "read_reply"]
 
-ReceiptLevel = Literal["dom_paste", "dom_committed"]
+ReceiptLevel = Literal["dom_paste", "dom_committed", "dom_present"]
 
 
 def _resolve_site(
@@ -78,6 +78,24 @@ def _ws_for_target(
     return None, None, None
 
 
+def _created_by_agent_for_target(
+    *,
+    cdp_url: str,
+    target_id: str,
+    conversation_url: str | None,
+    store_path: Path | None = None,
+) -> bool:
+    """True when binding marks this target as agent-opened; conservative when unknown."""
+    conv = (conversation_url or "").strip()
+    if not conv:
+        return False
+    cdp_norm = normalize_cdp_store_key(cdp_url)
+    row = load_binding(cdp_url=cdp_norm, conversation_url=conv, path=store_path)
+    if row is None or row.target_id != target_id:
+        return False
+    return bool(row.created_by_agent)
+
+
 def _cdp_refusal(raw: dict[str, Any]) -> dict[str, Any] | None:
     if raw.get("code") == "cdp_transport_error":
         return raw
@@ -98,6 +116,9 @@ async def execute_open(
     surface: str | None = None,
     grant: str | None = None,
     authorization_source: str | None = None,
+    force_new: bool = True,
+    reuse: bool = False,
+    store_path: Path | None = None,
     port: CdpActuationPort | None = None,
 ) -> dict[str, Any]:
     refused = require_write_authorization(grant, authorization_source)
@@ -114,7 +135,12 @@ async def execute_open(
     cdp_norm = normalize_cdp_store_key(cdp_url)
     try:
         async with cdp_open_bind_lock(cdp_norm):
-            opened = impl.create_background_tab(cdp_url=cdp_url, url=url)
+            opened = impl.create_background_tab(
+                cdp_url=cdp_url,
+                url=url,
+                force_new=force_new,
+                reuse=reuse,
+            )
     except TargetLockBusyError:
         return {
             "ok": False,
@@ -124,13 +150,28 @@ async def execute_open(
         }
     if not opened.get("ok"):
         return {"ok": False, **opened}
+    reused = bool(opened.get("reused"))
+    created_by_agent = not reused
+    tid = str(opened.get("target_id") or "")
+    ws = str(opened.get("web_socket_debugger_url") or "") or None
+    session = tab_session_from_row(
+        target_id=tid,
+        cdp_url=cdp_norm,
+        conversation_url=url,
+        surface=surface or surface_for_site(site),
+        web_socket_debugger_url=ws,
+        created_by_agent=created_by_agent,
+    )
+    save_binding(session, path=store_path)
     outcome = {
         "ok": True,
-        "target_id": opened.get("target_id"),
+        "target_id": tid,
         "url": opened.get("url"),
-        "reused": bool(opened.get("reused")),
+        "reused": reused,
+        "created_by_agent": created_by_agent,
         "surface": surface_for_site(site),
-        "web_socket_debugger_url": opened.get("web_socket_debugger_url"),
+        "web_socket_debugger_url": ws,
+        "binding": session.as_dict(),
     }
     emit_write_outcome(
         op="open",
@@ -188,6 +229,7 @@ async def execute_bind(
                 conversation_url=conversation_url,
                 surface=surface or surface_for_site(site),
                 web_socket_debugger_url=ws,
+                created_by_agent=False,
             )
             save_binding(session, path=store_path)
     except TargetLockBusyError:
@@ -218,7 +260,7 @@ async def execute_paste(
     surface: str | None = None,
     conversation_url: str | None = None,
     submit: bool = False,
-    tab_reused: bool = False,
+    store_path: Path | None = None,
     port: CdpActuationPort | None = None,
 ) -> dict[str, Any]:
     refused = require_write_authorization(grant, authorization_source)
@@ -237,12 +279,18 @@ async def execute_paste(
         return {"ok": False, "code": "unsupported_surface"}
     line = flatten_paste_text(text)
     selector = composer_selector_for_site(site)
+    created_by_agent = _created_by_agent_for_target(
+        cdp_url=cdp_url,
+        target_id=target_id,
+        conversation_url=conversation_url,
+        store_path=store_path,
+    )
     try:
         async with target_write_lock(target_id):
             guard = await operator_active_probe(
                 ws,
                 selector=selector,
-                tab_reused=tab_reused,
+                created_by_agent=created_by_agent,
             )
             if not guard.get("ok"):
                 return guard
@@ -295,11 +343,16 @@ async def execute_paste(
         code=None,
         receipt=receipt,
     )
+    pre_assistant_count = int(baseline.get("assistant_count") or 0)
+    pre_assistant_text = str(baseline.get("last_assistant_text") or "")
     return {
         "ok": True,
         "receipt": receipt,
         "submitted": bool(submit),
         "target_id": target_id,
+        "assistant_count": pre_assistant_count,
+        "last_assistant_text": pre_assistant_text,
+        "created_by_agent": created_by_agent,
     }
 
 
@@ -312,7 +365,7 @@ async def execute_submit(
     expected_text: str | None = None,
     surface: str | None = None,
     conversation_url: str | None = None,
-    tab_reused: bool = False,
+    store_path: Path | None = None,
     port: CdpActuationPort | None = None,
 ) -> dict[str, Any]:
     refused = require_write_authorization(grant, authorization_source)
@@ -331,25 +384,25 @@ async def execute_submit(
         return {"ok": False, "code": "unsupported_surface"}
     selector = composer_selector_for_site(site)
     line = flatten_paste_text(expected_text or "")
+    created_by_agent = _created_by_agent_for_target(
+        cdp_url=cdp_url,
+        target_id=target_id,
+        conversation_url=conversation_url,
+        store_path=store_path,
+    )
     try:
         async with target_write_lock(target_id):
             guard = await operator_active_probe(
                 ws,
                 selector=selector,
-                tab_reused=tab_reused,
+                created_by_agent=created_by_agent,
             )
             if not guard.get("ok"):
                 return guard
             if line:
                 send = await dom_click_send(ws, selector=selector, line=line)
             else:
-                raw = await impl.evaluate(
-                    ws_url=ws, expression=send_button_click_js(site=site)
-                )
-                send = raw if isinstance(raw, dict) else {"ok": False}
-                transport = _cdp_refusal(send)
-                if transport:
-                    return transport
+                send = await dom_click_send_own_draft(ws, selector=selector)
     except TargetLockBusyError:
         return {"ok": False, "code": "target_lock_busy", "retryable": True}
     if not send.get("ok"):
@@ -380,6 +433,7 @@ async def execute_verify_committed(
     prompt_text: str,
     surface: str | None = None,
     conversation_url: str | None = None,
+    baseline_user_count: int | None = None,
     port: CdpActuationPort | None = None,
 ) -> dict[str, Any]:
     impl = port or default_actuation_port()
@@ -394,12 +448,12 @@ async def execute_verify_committed(
     if site is None:
         return {"ok": False, "code": "unsupported_surface"}
     baseline = await capture_dom_baseline(impl, ws_url=ws, site=site)
-    base_users = int(baseline.get("user_count") or 0)
+    pre_send_baseline = baseline_user_count is not None
+    if pre_send_baseline:
+        base_users = int(baseline_user_count)
+    else:
+        base_users = int(baseline.get("user_count") or 0)
     flat = flatten_paste_text(prompt_text)
-    texts = baseline.get("user_texts") or []
-    latest = str(texts[-1]) if texts else ""
-    if latest == flat and base_users > 0:
-        base_users -= 1
     out = await poll_verify_committed(
         impl,
         ws_url=ws,
@@ -409,12 +463,16 @@ async def execute_verify_committed(
         timeout_s=8.0,
     )
     receipt = str(out.get("receipt") or "dom_paste")
+    if not pre_send_baseline and receipt == "dom_committed":
+        receipt = "dom_present"
     committed = receipt == "dom_committed"
     return {
-        "ok": committed or bool(out.get("has_user_turn")),
+        "ok": committed or receipt == "dom_present" or bool(out.get("has_user_turn")),
         "receipt": receipt,
         "dom": out,
-        "screenshot_fallback": not committed and not out.get("has_user_turn"),
+        "screenshot_fallback": not committed
+        and receipt != "dom_present"
+        and not out.get("has_user_turn"),
     }
 
 
@@ -426,6 +484,8 @@ async def execute_read_reply(
     conversation_url: str | None = None,
     timeout_s: float = 45.0,
     poll_s: float = 0.75,
+    baseline_assistant_count: int | None = None,
+    baseline_assistant_text: str | None = None,
     port: CdpActuationPort | None = None,
 ) -> dict[str, Any]:
     impl = port or default_actuation_port()
@@ -439,9 +499,13 @@ async def execute_read_reply(
     )
     if site is None:
         return {"ok": False, "code": "unsupported_surface"}
-    baseline = await capture_dom_baseline(impl, ws_url=ws, site=site)
-    base_count = int(baseline.get("assistant_count") or 0)
-    base_text = str(baseline.get("last_assistant_text") or "")
+    if baseline_assistant_count is not None:
+        base_count = int(baseline_assistant_count)
+        base_text = str(baseline_assistant_text or "")
+    else:
+        baseline = await capture_dom_baseline(impl, ws_url=ws, site=site)
+        base_count = int(baseline.get("assistant_count") or 0)
+        base_text = str(baseline.get("last_assistant_text") or "")
     polled = await poll_read_reply(
         impl,
         ws_url=ws,
@@ -484,6 +548,8 @@ async def dispatch_write_op(op: WriteOp, options: dict[str, Any]) -> dict[str, A
             surface=options.get("surface"),
             grant=grant,
             authorization_source=authorization_source,
+            force_new=bool(options.get("force_new", True)),
+            reuse=bool(options.get("reuse")),
         )
     target_id = str(options.get("target_id") or "").strip()
     if op == "bind":
@@ -512,7 +578,6 @@ async def dispatch_write_op(op: WriteOp, options: dict[str, Any]) -> dict[str, A
             surface=options.get("surface"),
             conversation_url=options.get("conversation_url"),
             submit=bool(options.get("submit")),
-            tab_reused=bool(options.get("tab_reused")),
         )
     if op == "submit":
         if not target_id:
@@ -525,27 +590,32 @@ async def dispatch_write_op(op: WriteOp, options: dict[str, Any]) -> dict[str, A
             expected_text=options.get("text"),
             surface=options.get("surface"),
             conversation_url=options.get("conversation_url"),
-            tab_reused=bool(options.get("tab_reused")),
         )
     if op == "verify_committed":
         prompt = str(options.get("text") or options.get("prompt_text") or "")
         if not target_id or not prompt:
             return {"ok": False, "code": "missing_verify_fields"}
+        buc = options.get("baseline_user_count")
         return await execute_verify_committed(
             cdp_url=cdp_url,
             target_id=target_id,
             prompt_text=prompt,
             surface=options.get("surface"),
             conversation_url=options.get("conversation_url"),
+            baseline_user_count=int(buc) if buc is not None else None,
         )
     if op == "read_reply":
         if not target_id:
             return {"ok": False, "code": "missing_target_id"}
+        bac = options.get("baseline_assistant_count")
+        bat = options.get("baseline_assistant_text")
         return await execute_read_reply(
             cdp_url=cdp_url,
             target_id=target_id,
             surface=options.get("surface"),
             conversation_url=options.get("conversation_url"),
             timeout_s=float(options.get("timeout_s") or 45.0),
+            baseline_assistant_count=int(bac) if bac is not None else None,
+            baseline_assistant_text=str(bat) if bat is not None else None,
         )
     return {"ok": False, "code": "unknown_op", "op": op}

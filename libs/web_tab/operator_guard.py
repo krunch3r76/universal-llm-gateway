@@ -16,7 +16,7 @@ async def operator_active_probe(
     *,
     selector: str,
     watermark: str = "",
-    tab_reused: bool = False,
+    created_by_agent: bool = True,
     wait_for_idle: bool = True,
 ) -> dict[str, Any]:
     await install_operator_activity_probe(ws_url)
@@ -37,19 +37,11 @@ async def operator_active_probe(
     visible = str(probe.get("document_visibility") or "") == "visible"
     operator_active = bool(probe.get("operator_active"))
     foreign = bool(probe.get("foreign_draft"))
-    if tab_reused and (has_focus or visible):
+    if not created_by_agent and (has_focus or visible):
         return {
             "ok": False,
             "code": "operator_active",
-            "reason": "reused tab has focus or is visible to the operator",
-            "retryable": True,
-            "probe": probe,
-        }
-    if has_focus and operator_active:
-        return {
-            "ok": False,
-            "code": "operator_active",
-            "reason": "operator input or focus on target tab",
+            "reason": "tab not created by agent has focus or is visible to the operator",
             "retryable": True,
             "probe": probe,
         }

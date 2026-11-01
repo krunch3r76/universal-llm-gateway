@@ -19,7 +19,14 @@ class CdpActuationPort(Protocol):
     def list_tabs(self, *, cdp_url: str) -> dict[str, Any]:
         """Return ``{pages, reachable, error}``."""
 
-    def create_background_tab(self, *, cdp_url: str, url: str) -> dict[str, Any]:
+    def create_background_tab(
+        self,
+        *,
+        cdp_url: str,
+        url: str,
+        force_new: bool = True,
+        reuse: bool = False,
+    ) -> dict[str, Any]:
         """Open ``url`` in a background target; never Page.bringToFront."""
 
     async def evaluate(
@@ -202,23 +209,32 @@ class HttpCdpActuationPort:
                 "error": type(exc).__name__,
             }
 
-    def create_background_tab(self, *, cdp_url: str, url: str) -> dict[str, Any]:
+    def create_background_tab(
+        self,
+        *,
+        cdp_url: str,
+        url: str,
+        force_new: bool = True,
+        reuse: bool = False,
+    ) -> dict[str, Any]:
         cdp_url = _validate_cdp_url(cdp_url)
         listing = self.list_tabs(cdp_url=cdp_url)
         if not listing.get("reachable"):
             return {"ok": False, "error": {"code": "cdp_unreachable"}}
         pages = list(listing.get("pages") or [])
-        existing = match_tab_by_url(pages, url)
-        if existing and existing.get("id"):
-            return {
-                "ok": True,
-                "reused": True,
-                "target_id": str(existing["id"]),
-                "url": str(existing.get("url") or url),
-                "web_socket_debugger_url": str(
-                    existing.get("web_socket_debugger_url") or ""
-                ),
-            }
+        allow_reuse = bool(reuse) or not force_new
+        if allow_reuse:
+            existing = match_tab_by_url(pages, url)
+            if existing and existing.get("id"):
+                return {
+                    "ok": True,
+                    "reused": True,
+                    "target_id": str(existing["id"]),
+                    "url": str(existing.get("url") or url),
+                    "web_socket_debugger_url": str(
+                        existing.get("web_socket_debugger_url") or ""
+                    ),
+                }
         return create_background_target(cdp_url, url)
 
     async def evaluate(
@@ -264,21 +280,30 @@ class RecordingActuationPort:
             "error": None if self.reachable else "down",
         }
 
-    def create_background_tab(self, *, cdp_url: str, url: str) -> dict[str, Any]:
+    def create_background_tab(
+        self,
+        *,
+        cdp_url: str,
+        url: str,
+        force_new: bool = True,
+        reuse: bool = False,
+    ) -> dict[str, Any]:
         key = url
         if key in self.create_results:
             return dict(self.create_results[key])
-        existing = match_tab_by_url(self.tabs, url)
-        if existing and existing.get("id"):
-            return {
-                "ok": True,
-                "reused": True,
-                "target_id": str(existing["id"]),
-                "url": str(existing.get("url") or url),
-                "web_socket_debugger_url": str(
-                    existing.get("web_socket_debugger_url") or ""
-                ),
-            }
+        allow_reuse = bool(reuse) or not force_new
+        if allow_reuse:
+            existing = match_tab_by_url(self.tabs, url)
+            if existing and existing.get("id"):
+                return {
+                    "ok": True,
+                    "reused": True,
+                    "target_id": str(existing["id"]),
+                    "url": str(existing.get("url") or url),
+                    "web_socket_debugger_url": str(
+                        existing.get("web_socket_debugger_url") or ""
+                    ),
+                }
         self.created.append(url)
         tid = f"target-{len(self.created)}"
         row = {

@@ -17,6 +17,8 @@ from web_tab.write_ops import (
     execute_verify_committed,
 )
 
+_AUTH = "agent-bus:21642#13"
+
 
 @pytest.mark.asyncio
 async def test_grant_required_for_paste() -> None:
@@ -45,7 +47,40 @@ def test_require_grant_accepts_operator() -> None:
 
 
 @pytest.mark.asyncio
-async def test_open_reuses_tab_by_url() -> None:
+async def test_open_default_force_new_skips_reuse(tmp_path: Path) -> None:
+    port = RecordingActuationPort(
+        tabs=[
+            {
+                "id": "existing",
+                "url": "https://chatgpt.com/c/abc",
+                "web_socket_debugger_url": "ws://fake/existing",
+            }
+        ]
+    )
+    store = tmp_path / "bindings.json"
+    out = await execute_open(
+        cdp_url="http://127.0.0.1:9342",
+        url="https://chatgpt.com/c/abc",
+        grant="explicit",
+        authorization_source=_AUTH,
+        store_path=store,
+        port=port,
+    )
+    assert out["ok"] is True
+    assert out["reused"] is False
+    assert out["created_by_agent"] is True
+    assert port.created == ["https://chatgpt.com/c/abc"]
+    loaded = load_binding(
+        cdp_url="http://127.0.0.1:9342",
+        conversation_url="https://chatgpt.com/c/abc",
+        path=store,
+    )
+    assert loaded is not None
+    assert loaded.created_by_agent is True
+
+
+@pytest.mark.asyncio
+async def test_open_reuses_tab_when_reuse_true(tmp_path: Path) -> None:
     port = RecordingActuationPort(
         tabs=[
             {
@@ -59,10 +94,14 @@ async def test_open_reuses_tab_by_url() -> None:
         cdp_url="http://127.0.0.1:9342",
         url="https://chatgpt.com/c/abc",
         grant="explicit",
+        authorization_source=_AUTH,
+        reuse=True,
+        store_path=tmp_path / "bindings.json",
         port=port,
     )
     assert out["ok"] is True
     assert out["reused"] is True
+    assert out["created_by_agent"] is False
     assert out["target_id"] == "existing"
     assert port.created == []
 
@@ -84,6 +123,7 @@ async def test_bind_persists_session(tmp_path: Path) -> None:
         conversation_url="https://chatgpt.com/c/abc",
         target_id="t1",
         grant="explicit",
+        authorization_source=_AUTH,
         store_path=store,
         port=port,
     )
@@ -123,6 +163,7 @@ async def test_paste_operator_active_retryable() -> None:
             target_id="t1",
             text="hello",
             grant="explicit",
+            authorization_source=_AUTH,
             surface="grok",
             port=port,
         )
@@ -150,16 +191,30 @@ async def test_paste_dom_paste_receipt() -> None:
             "web_tab.write_ops.dom_set_composer_text",
             AsyncMock(return_value={"ok": True}),
         ),
+        patch(
+            "web_tab.write_ops.capture_dom_baseline",
+            AsyncMock(
+                return_value={
+                    "ok": True,
+                    "user_count": 0,
+                    "assistant_count": 2,
+                    "last_assistant_text": "prior",
+                }
+            ),
+        ),
     ):
         out = await execute_paste(
             cdp_url="http://127.0.0.1:9222",
             target_id="t1",
             text="hello",
             grant="explicit",
+            authorization_source=_AUTH,
             port=port,
         )
     assert out["ok"] is True
     assert out["receipt"] == "dom_paste"
+    assert out["assistant_count"] == 2
+    assert out["last_assistant_text"] == "prior"
 
 
 @pytest.mark.asyncio
@@ -187,9 +242,39 @@ async def test_verify_committed_receipt_from_dom() -> None:
         cdp_url="http://127.0.0.1:9342",
         target_id="t1",
         prompt_text="hello",
+        baseline_user_count=0,
         port=port,
     )
     assert out["receipt"] == "dom_committed"
+    assert out["ok"] is True
+
+
+@pytest.mark.asyncio
+async def test_verify_committed_standalone_downgrades_to_dom_present() -> None:
+    port = RecordingActuationPort(
+        tabs=[
+            {
+                "id": "t1",
+                "url": "https://grok.com/c/x",
+                "web_socket_debugger_url": "ws://fake/t1",
+            }
+        ]
+    )
+    port.evaluate_script["ws://fake/t1"] = {
+        "ok": True,
+        "user_count": 1,
+        "user_texts": ["hello"],
+        "receipt": "dom_committed",
+        "has_user_turn": True,
+        "composer_empty": True,
+    }
+    out = await execute_verify_committed(
+        cdp_url="http://127.0.0.1:9342",
+        target_id="t1",
+        prompt_text="hello",
+        port=port,
+    )
+    assert out["receipt"] == "dom_present"
     assert out["ok"] is True
 
 

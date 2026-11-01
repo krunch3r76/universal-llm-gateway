@@ -18,6 +18,7 @@ class TabSession:
     surface: str
     web_socket_debugger_url: str | None = None
     conversation_id: str | None = None
+    created_by_agent: bool = False
 
     def as_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -30,6 +31,7 @@ def tab_session_from_row(
     conversation_url: str,
     surface: str,
     web_socket_debugger_url: str | None = None,
+    created_by_agent: bool = False,
 ) -> TabSession:
     cid = conversation_id_from_url(conversation_url)
     return TabSession(
@@ -39,4 +41,5 @@ def tab_session_from_row(
         surface=surface,
         web_socket_debugger_url=web_socket_debugger_url,
         conversation_id=cid,
+        created_by_agent=created_by_agent,
     )

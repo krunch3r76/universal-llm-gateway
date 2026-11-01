@@ -88,6 +88,7 @@ async def poll_read_reply(
     deadline = loop.time() + timeout_s
     last: dict[str, Any] = {}
     base_text = (baseline_assistant_text or "").strip()
+    stable_text: str | None = None
     while loop.time() <= deadline:
         last = await port.evaluate(
             ws_url=ws_url,
@@ -100,11 +101,16 @@ async def poll_read_reply(
         if not isinstance(last, dict):
             last = {}
         if last.get("complete"):
-            return {
-                "ok": True,
-                "text": str(last.get("text") or ""),
-                "streaming": False,
-            }
+            text = str(last.get("text") or "").strip()
+            if text and text == stable_text:
+                return {
+                    "ok": True,
+                    "text": text,
+                    "streaming": False,
+                }
+            stable_text = text if text else None
+        else:
+            stable_text = None
         await asyncio.sleep(poll_s)
     return {
         "ok": False,

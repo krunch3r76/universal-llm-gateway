@@ -62,6 +62,7 @@ def test_write_op_relays_to_web_tab_write_pipeline() -> None:
             target_id="t1",
             text="hello",
             grant="explicit",
+            authorization_source="agent-bus:21642#13",
         )
     assert "error" not in result
     assert captured["pipeline_id"] == "web-tab-write"

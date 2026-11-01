@@ -85,6 +85,7 @@ def load_binding(
         conversation_id=(
             str(row["conversation_id"]) if row.get("conversation_id") else None
         ),
+        created_by_agent=bool(row.get("created_by_agent")),
     )
 
 

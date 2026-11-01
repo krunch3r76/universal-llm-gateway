@@ -5707,10 +5707,17 @@ tools:
         type: string
       authorization_source:
         type: string
+      force_new:
+        type: boolean
+        default: true
+      reuse:
+        type: boolean
+        default: false
     required:
     - op
     - cdp_url
     - grant
+    - authorization_source
   mandate_safety: write
   seat_visibility:
   - mcp
@@ -5756,6 +5763,7 @@ tools:
     - op
     - cdp_url
     - grant
+    - authorization_source
   mandate_safety: write
   seat_visibility:
   - mcp
@@ -5805,6 +5813,7 @@ tools:
     - target_id
     - text
     - grant
+    - authorization_source
   mandate_safety: write
   seat_visibility:
   - mcp
@@ -5851,6 +5860,7 @@ tools:
     - cdp_url
     - target_id
     - grant
+    - authorization_source
   mandate_safety: write
   seat_visibility:
   - mcp
@@ -5888,6 +5898,8 @@ tools:
         type: string
       conversation_url:
         type: string
+      baseline_user_count:
+        type: integer
     required:
     - op
     - cdp_url
@@ -5927,6 +5939,10 @@ tools:
       surface:
         type: string
       conversation_url:
+        type: string
+      baseline_assistant_count:
+        type: integer
+      baseline_assistant_text:
         type: string
     required:
     - op

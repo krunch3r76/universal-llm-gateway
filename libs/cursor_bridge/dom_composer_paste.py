@@ -38,8 +38,12 @@ READ_OPERATOR_BUSY_JS = r"""
   const last = Number(g.lastInputMs || 0);
   const idleMs = 10000;
   const operatorActive = last > 0 && (now - last) < idleMs;
-  const sel = %SELECTOR%;
-  const el = document.querySelector(sel);
+  const sels = %SELECTORS%;
+  let el = null;
+  for (const s of sels) {
+    el = document.querySelector(s);
+    if (el) break;
+  }
   const draft = el ? (el.innerText || '').trim() : '';
   const sig = String(g.ourDraftSig || '').trim();
   const staleWake = /^BRIDGE_WAKE\s+thread=\S+\s+turn=\d+(?:,\d+)*$/.test(draft);
@@ -115,6 +119,28 @@ def _set_composer_body(selector: str, text: str) -> str:
     )
 
 
+def _click_send_own_draft_body(selector: str) -> str:
+    """Send only when composer draft matches this writer's ourDraftSig."""
+    find = _find_composer_js(selector)
+    btn_sels = json.dumps(list(_SEND_BTN_SELECTORS))
+    return (
+        f"(()=>{{const el=({find});"
+        "if(!el)return{ok:false,reason:'no_composer',send_clicked:false};"
+        "const g=window.__ulgOperatorActivity||{};"
+        "const sig=String(g.ourDraftSig||'').trim();"
+        "const draft=(el.innerText||el.value||'').trim();"
+        "if(!sig||draft!==sig)"
+        "return{ok:false,reason:'draft_not_ours',send_clicked:false,draft,sig};"
+        f"const root=el.closest('form')||el.parentElement||document;"
+        f"const btnSels={btn_sels};"
+        "let btn=null;"
+        "for(const sel of btnSels){btn=root.querySelector(sel);if(btn)break;}"
+        "if(!btn)return{ok:false,reason:'no_send_button',send_clicked:false};"
+        "btn.click();"
+        "return{ok:true,send_clicked:true};})()"
+    )
+
+
 def _click_send_body(selector: str, line: str) -> str:
     find = _find_composer_js(selector)
     lj = json.dumps(_flatten_paste_line(line))
@@ -136,7 +162,8 @@ def _click_send_body(selector: str, line: str) -> str:
 
 
 def operator_busy_probe_js(*, selector: str, watermark: str = "") -> str:
-    body = READ_OPERATOR_BUSY_JS.replace("%SELECTOR%", json.dumps(selector))
+    sels = _selector_list(selector) or [selector]
+    body = READ_OPERATOR_BUSY_JS.replace("%SELECTORS%", json.dumps(sels))
     return body.replace("%WATERMARK%", json.dumps(watermark or ""))
 
 
@@ -234,6 +261,14 @@ async def dom_click_send(ws_url: str, *, selector: str, line: str) -> dict[str, 
     return value
 
 
+async def dom_click_send_own_draft(ws_url: str, *, selector: str) -> dict[str, Any]:
+    """Click send when composer text equals ourDraftSig (submit-without-text path)."""
+    value = await _cdp_eval(ws_url, _click_send_own_draft_body(selector))
+    if not isinstance(value, dict):
+        return {"ok": False, "send_clicked": False}
+    return value
+
+
 async def dom_insert_and_send(
     ws_url: str, *, selector: str, line: str
 ) -> dict[str, Any]:
@@ -265,6 +300,7 @@ __all__ = [
     "GROK_PROMPT_SELECTOR",
     "composer_selector",
     "dom_click_send",
+    "dom_click_send_own_draft",
     "dom_insert_and_send",
     "dom_set_composer_text",
     "foreign_draft_guard",

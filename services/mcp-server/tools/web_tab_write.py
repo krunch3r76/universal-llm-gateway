@@ -46,6 +46,8 @@ def register_web_tab_write_tool(mcp: FastMCP) -> None:
         surface: str | None = None,
         submit: bool = False,
         rebind: bool = False,
+        force_new: bool = True,
+        reuse: bool = False,
         house_id: str | None = None,
         agent: str | None = None,
     ) -> dict[str, Any]:
@@ -74,25 +76,29 @@ def register_web_tab_write_tool(mcp: FastMCP) -> None:
                     ),
                 }
             }
+        raw_opts = {
+            "op": op,
+            "house_id": house_id,
+            "agent": agent,
+            "target_id": target_id,
+            "cdp_url": cdp_url,
+            "url": url,
+            "conversation_url": conversation_url,
+            "text": text,
+            "grant": grant,
+            "authorization_source": authorization_source,
+            "surface": surface,
+            "submit": submit,
+            "rebind": rebind,
+            "force_new": force_new,
+            "reuse": reuse,
+        }
+        bool_keys_allow_false = frozenset({"force_new", "reuse"})
         options: dict[str, Any] = _stamp_relay_options(
             {
                 k: v
-                for k, v in {
-                    "op": op,
-                    "house_id": house_id,
-                    "agent": agent,
-                    "target_id": target_id,
-                    "cdp_url": cdp_url,
-                    "url": url,
-                    "conversation_url": conversation_url,
-                    "text": text,
-                    "grant": grant,
-                    "authorization_source": authorization_source,
-                    "surface": surface,
-                    "submit": submit,
-                    "rebind": rebind,
-                }.items()
-                if v is not None and v is not False
+                for k, v in raw_opts.items()
+                if v is not None and (v is not False or k in bool_keys_allow_false)
             }
         )
         options["op"] = op

@@ -25,15 +25,18 @@ def require_write_authorization(
     grant: str | None,
     authorization_source: str | None,
 ) -> dict[str, object] | None:
-    """Grant gate plus operator ``authorization_source`` (paste_as_operator parity)."""
+    """Grant gate plus ``authorization_source`` (paste_as_operator parity)."""
     refused = require_grant(grant)
     if refused:
         return refused
     g = (grant or "").strip()
-    if g == "operator" and not (authorization_source or "").strip():
+    auth = (authorization_source or "").strip()
+    if not auth:
         return {
             "ok": False,
-            "code": "authorization_source_required",
-            "reason": "operator grant requires authorization_source",
+            "code": "grant_or_source_required",
+            "reason": "grant and authorization_source are required",
+            "grant": g or None,
+            "authorization_source": None,
         }
     return None
