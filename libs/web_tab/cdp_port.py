@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from typing import Any, Protocol
 from urllib.error import URLError
 
+from web_tab.config import resolve_cdp_evaluate_timeout_s
 from web_tab.surface_adapter import canonical_page_url, url_in_surface_scope
 
 
@@ -92,18 +94,36 @@ class HttpListCdpPort:
             return {"stale": True}
         if not url_in_surface_scope("chatgpt", want_url):
             return {"error": {"code": "target_out_of_scope"}, "url": want_url}
-        browser, playwright = await self._open(cdp_url)
+
+        timeout_s = resolve_cdp_evaluate_timeout_s()
+
+        async def _attach_evaluate() -> dict[str, Any]:
+            browser, playwright = await self._open(cdp_url)
+            try:
+                page = await _page_matching_target(browser, want_url, target_id)
+                if page is None:
+                    return {"stale": True}
+                raw = await page.evaluate(expression)
+                if isinstance(raw, dict):
+                    return raw
+                return {"raw": raw}
+            finally:
+                if playwright is not None:
+                    await playwright.stop()
+
         try:
-            page = await _page_matching_target(browser, want_url, target_id)
-            if page is None:
-                return {"stale": True}
-            raw = await page.evaluate(expression)
-            if isinstance(raw, dict):
-                return raw
-            return {"raw": raw}
-        finally:
-            if playwright is not None:
-                await playwright.stop()
+            return await asyncio.wait_for(_attach_evaluate(), timeout=timeout_s)
+        except asyncio.TimeoutError:
+            return {"error": {"code": "cdp_timeout"}}
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            return {
+                "error": {
+                    "code": "cdp_attach_failed",
+                    "type": type(exc).__name__,
+                }
+            }
 
     async def _open(self, cdp_url: str) -> tuple[Any, Any]:
         if self._connect is not None:
@@ -111,7 +131,11 @@ class HttpListCdpPort:
         from playwright.async_api import async_playwright
 
         playwright = await async_playwright().start()
-        browser = await playwright.chromium.connect_over_cdp(cdp_url)
+        try:
+            browser = await playwright.chromium.connect_over_cdp(cdp_url)
+        except BaseException:
+            await playwright.stop()
+            raise
         return browser, playwright
 
     def list_tabs(self, *, cdp_url: str) -> dict[str, Any]:

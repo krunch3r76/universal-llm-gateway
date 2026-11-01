@@ -59,6 +59,7 @@ async def observe_actuation_plane(
     stale = False
     scoped_url = ""
     conv_id: str | None = None
+    cdp_eval_error: dict[str, Any] | None = None
 
     visible_tabs = [
         t
@@ -96,6 +97,9 @@ async def observe_actuation_plane(
                 err_code = err.get("code") if isinstance(err, dict) else None
                 if err_code == "target_out_of_scope":
                     out_of_scope = True
+                elif err_code in ("cdp_attach_failed", "cdp_timeout"):
+                    cdp_eval_error = err if isinstance(err, dict) else None
+                    signed_in = None
                 elif raw.get("stale"):
                     stale = True
                 else:
@@ -132,13 +136,18 @@ async def observe_actuation_plane(
             source=(
                 "cdp.refused"
                 if out_of_scope
-                else ("cdp.evaluate" if target_id else "cdp.unscoped")
+                else (
+                    "cdp.error"
+                    if cdp_eval_error is not None
+                    else ("cdp.evaluate" if target_id else "cdp.unscoped")
+                )
             ),
             scope=f"target:{target_id or 'none'}",
             epoch={"url": scoped_url, "conversation_id": conv_id},
             stale=stale,
         ),
         **({"error": {"code": "target_out_of_scope"}} if out_of_scope else {}),
+        **({"error": cdp_eval_error} if cdp_eval_error else {}),
         "tabs": [
             {
                 "target_id": t.get("id"),
