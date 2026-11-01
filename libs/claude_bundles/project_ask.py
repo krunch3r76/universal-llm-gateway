@@ -807,9 +807,18 @@ def _is_code_compose_surface(
     return "/claude.ai/code" in url or url.rstrip("/").endswith("/code")
 
 
+# friction:41151 -- /code now renders a hidden 'More options for Model picker
+# chip ...' button that also matches aria-label*="Model" and sorts first, so
+# .first.click() timed out. Require a visible button and exclude that decoy.
+_CODE_SURFACE_MODEL_BUTTON_SEL = (
+    'button[aria-label*="Model"]'
+    ':not([aria-label*="More options"]):not([aria-hidden="true"]):visible'
+)
+
+
 async def _read_code_surface_model_label(page: Page) -> str:
     """Read the model the /code UI exposes (no chat picker dropdown on this surface)."""
-    btn = page.locator('button[aria-label*="Model"]')
+    btn = page.locator(_CODE_SURFACE_MODEL_BUTTON_SEL)
     if await btn.count():
         label = (
             await btn.first.get_attribute("aria-label") or await btn.first.inner_text()
@@ -887,7 +896,7 @@ async def _code_surface_set_effort_from_menu(page: Page, effort: str) -> bool:
 
 
 async def _open_code_surface_model_menu(page: Page) -> bool:
-    btn = page.locator('button[aria-label*="Model"]')
+    btn = page.locator(_CODE_SURFACE_MODEL_BUTTON_SEL)
     if not await btn.count():
         return False
     await btn.first.click()
