@@ -26,6 +26,7 @@ class CdpObservationPort(Protocol):
         target_id: str,
         expression: str,
         tab_row: dict[str, Any] | None = None,
+        surface: str = "chatgpt",
     ) -> dict[str, Any]:
         """Run *expression* on the listed page that matches *target_id* and URL."""
 
@@ -57,6 +58,7 @@ class RecordingCdpPort:
         target_id: str,
         expression: str,  # noqa: ARG002
         tab_row: dict[str, Any] | None = None,  # noqa: ARG002
+        surface: str = "chatgpt",  # noqa: ARG002
     ) -> dict[str, Any]:
         self.evaluated_targets.append(target_id)
         if target_id in self.evaluate_results:
@@ -86,13 +88,14 @@ class HttpListCdpPort:
         target_id: str,
         expression: str,
         tab_row: dict[str, Any] | None = None,
+        surface: str = "chatgpt",
     ) -> dict[str, Any]:
         if not isinstance(tab_row, dict) or str(tab_row.get("id") or "") != target_id:
             return {"stale": True, "error": "listing_mismatch"}
         want_url = str(tab_row.get("url") or "")
         if not want_url:
             return {"stale": True}
-        if not url_in_surface_scope("chatgpt", want_url):
+        if not url_in_surface_scope(surface, want_url):
             return {"error": {"code": "target_out_of_scope"}, "url": want_url}
 
         timeout_s = resolve_cdp_evaluate_timeout_s()

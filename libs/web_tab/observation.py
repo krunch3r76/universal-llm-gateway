@@ -92,6 +92,7 @@ async def observe_actuation_plane(
                     target_id=target_id,
                     expression=probe_js,
                     tab_row=match,
+                    surface=surface,
                 )
                 err = raw.get("error")
                 err_code = err.get("code") if isinstance(err, dict) else None
