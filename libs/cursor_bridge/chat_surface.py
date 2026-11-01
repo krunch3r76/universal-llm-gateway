@@ -108,7 +108,7 @@ _PROBE_JS = r"""
     const lbl = (b.getAttribute('aria-label') || b.getAttribute('title') || '').trim().toLowerCase();
     return lbl === 'stop' || lbl.startsWith('stop ') || lbl.includes('stop generating') || lbl.includes('stop response');
   });
-  const proseEls = Array.from(document.querySelectorAll('.sand-message-prose')).slice(-12);
+  const proseEls = Array.from(document.querySelectorAll('.sand-message-prose')).slice(-40);
   const proseUser = (el) => {
     const cls = el.className || '';
     const parent = el.parentElement;

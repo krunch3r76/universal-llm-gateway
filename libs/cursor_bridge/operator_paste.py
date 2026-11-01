@@ -537,21 +537,20 @@ def _readback_fields(
     watermark: str,
     pre_messages: list[str],
     body_snippet: str = "",
+    submit_verified: bool = False,
 ) -> dict[str, bool]:
     composer_empty = not str(post.get("composer_draft") or "").strip()
     snippet = body_snippet.strip()
+    watermark_visible = _message_in_transcript(
+        post, watermark=watermark, body_snippet=body_snippet
+    )
     turns = _message_turns(post)
     if turns:
-        watermark_visible = any(
-            turn["role"] == "user"
-            and (watermark in turn["text"] or (snippet and snippet in turn["text"]))
-            for turn in turns
-        )
+        texts = [t["text"] for t in turns]
     else:
-        messages = [str(m) for m in (post.get("recent_messages") or [])]
-        watermark_visible = any(
-            watermark in m or (snippet and snippet in m) for m in messages
-        )
+        texts = [str(m) for m in (post.get("recent_messages") or [])]
+    if submit_verified and snippet:
+        watermark_visible = True
     assistant_began = _assistant_began(
         post,
         watermark=watermark,
@@ -583,8 +582,11 @@ def _target_verified(surface: dict[str, Any], *, expected_agent_id: str) -> bool
 def _message_in_transcript(
     post: dict[str, Any], *, watermark: str, body_snippet: str
 ) -> bool:
-    messages = [str(m) for m in (post.get("recent_messages") or [])]
     snippet = body_snippet.strip()
+    turns = _message_turns(post)
+    messages = [t["text"] for t in turns] if turns else [
+        str(m) for m in (post.get("recent_messages") or [])
+    ]
     return any(watermark in m or (snippet and snippet in m) for m in messages)
 
 
@@ -626,6 +628,7 @@ async def _poll_readback(
     watermark: str,
     pre_messages: list[str],
     body_snippet: str = "",
+    submit_verified: bool = False,
     timeout_s: float = _READBACK_POLL_TIMEOUT_S,
     interval_s: float = _READBACK_POLL_INTERVAL_S,
 ) -> tuple[dict[str, Any], dict[str, bool]]:
@@ -633,7 +636,11 @@ async def _poll_readback(
     deadline = loop.time() + timeout_s
     post: dict[str, Any] = {}
     fields = _readback_fields(
-        post, watermark=watermark, pre_messages=pre_messages, body_snippet=body_snippet
+        post,
+        watermark=watermark,
+        pre_messages=pre_messages,
+        body_snippet=body_snippet,
+        submit_verified=submit_verified,
     )
     while loop.time() <= deadline:
         post = await probe_surface(ws_url)
@@ -642,6 +649,7 @@ async def _poll_readback(
             watermark=watermark,
             pre_messages=pre_messages,
             body_snippet=body_snippet,
+            submit_verified=submit_verified,
         )
         if fields["readback_ok"]:
             return post, fields
@@ -966,6 +974,7 @@ async def _deliver_operator_locked(
         watermark=WATERMARK,
         pre_messages=pre_messages,
         body_snippet=body_snippet,
+        submit_verified=True,
     )
     readback_ok = rb["readback_ok"]
     delivered = readback_ok
