@@ -169,6 +169,7 @@ def _materialize_skills_index(
     mode: BootMode,
     *,
     concise_markdown: str | None = None,
+    attribution_agent: str | None = None,
 ) -> tuple[str, str, bool]:
     """Persist the web seat skills index sidecar from server-rendered markdown."""
     from agent_seat.body_injection import is_web_seat_slug
@@ -197,7 +198,7 @@ def _materialize_skills_index(
             logger.warning("Could not write skills index to %s: %s", ref, exc)
             record(
                 "mcp.cortex.boot.skills_index.writefailed",
-                agent=seat_slug,
+                agent=attribution_agent or seat_slug,
                 path=ref,
                 error=str(exc),
             )
@@ -230,6 +231,31 @@ def _resolve_last_session(
         if isinstance(row, dict) and str(row.get("agent", "")) == identity.agent:
             return row
     return None
+
+
+def _continuity_for_briefing_card(
+    identity: BootIdentity,
+    extracted: dict[str, Any],
+) -> dict[str, Any] | None:
+    """Strip error/mismatch continuity before card render (logical seats)."""
+    raw = extracted.get("continuity")
+    if not isinstance(raw, dict):
+        return None
+    if not identity.is_logical:
+        return raw or None
+    if raw.get("error"):
+        return None
+    out = dict(raw)
+    last = out.get("last_session")
+    if isinstance(last, dict) and str(last.get("agent", "")) != identity.agent:
+        out.pop("last_session", None)
+    chain = out.get("continuity_chain")
+    if isinstance(chain, list):
+        prefix = f"{identity.session_prefix}-"
+        out["continuity_chain"] = [
+            sid for sid in chain if isinstance(sid, str) and sid.startswith(prefix)
+        ]
+    return out or None
 
 
 def _build_artifacts(
@@ -632,6 +658,7 @@ def run_cortex_brief(
         list(extracted.get("skills") or []),
         mode,
         concise_markdown=extracted.get("skills_concise_markdown"),
+        attribution_agent=context_agent,
     )
 
     card, manifest = render_briefing_card(
@@ -644,7 +671,7 @@ def run_cortex_brief(
         review_total=card_review_total,
         review_top=card_review_top,
         last_session=_resolve_last_session(identity, extracted),
-        continuity=extracted.get("continuity") or None,
+        continuity=_continuity_for_briefing_card(identity, extracted),
         self_reflections=extracted["self_reflections"] or None,
         todos=card_todos,
         todo_total=len(card_todos or []),

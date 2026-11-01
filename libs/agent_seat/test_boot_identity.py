@@ -58,7 +58,7 @@ seats:
     loaded = load_boot_identity_registry(cfg)
     ident = loaded.lookup("alpha")
     assert ident is not None
-    assert ident.logical_seat_id == "alpha-work"
+    assert ident.logical_seat_id == "seat:alpha-work"
     assert ident.agent == "alpha-work"
     assert ident.self_entity_id == "seat:alpha-work"
     assert ident.inbox_recipient == "alpha-work"
@@ -110,7 +110,7 @@ seats:
     monkeypatch.setenv("CORTEX_BOOT_IDENTITIES_PATH", str(cfg))
     ident = resolve_boot_identity_for_seat("beta")
     assert isinstance(ident, BootIdentity)
-    assert ident.logical_seat_id == "beta-work"
+    assert ident.logical_seat_id == "seat:beta-work"
 
 
 def test_registry_no_cache_sequence(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -169,3 +169,60 @@ def test_registry_loader_rejects(tmp_path: Path, yaml_text: str, code: str) -> N
     with pytest.raises(BootIdentityConfigError) as exc:
         load_boot_identity_registry(cfg)
     assert exc.value.code == code
+
+
+@pytest.mark.parametrize(
+    ("yaml_text", "code"),
+    [
+        ("schema_version: 1\nseats:\n  alpha-work:\n    family: gpt\n    platform: web\n    house: null\n", "bad_field_type"),
+        ("schema_version: 1\nseats:\n  alpha-work:\n    family: gpt\n    platform: web\n    surface: null\n", "bad_field_type"),
+        ("schema_version: 1\nseats:\n  alpha-work:\n    family: gpt\n    platform: web\n    inbox_recipient: null\n", "bad_field_type"),
+        ("schema_version: 1\nseats:\n  alpha-work:\n    family: gpt\n    platform: web\n    aliases: null\n", "malformed_aliases"),
+        ("schema_version: 1\nseats:\n  alpha-work:\n    family: gpt\n    platform: web\n    aliases: {}\n", "malformed_aliases"),
+        ("schema_version: true\nseats: {}\n", "unsupported_schema_version"),
+        ("null\n", "malformed_yaml"),
+    ],
+)
+def test_registry_optional_and_root_strictness(
+    tmp_path: Path, yaml_text: str, code: str
+) -> None:
+    cfg = tmp_path / "boot-seats.yaml"
+    cfg.write_text(yaml_text, encoding="utf-8")
+    with pytest.raises(BootIdentityConfigError) as exc:
+        load_boot_identity_registry(cfg)
+    assert exc.value.code == code
+
+
+def test_registry_invalid_utf8_rejected(tmp_path: Path) -> None:
+    cfg = tmp_path / "boot-seats.yaml"
+    cfg.write_bytes(b"schema_version: 1\nseats:\n  \xff\xfe\n")
+    with pytest.raises(BootIdentityConfigError) as exc:
+        load_boot_identity_registry(cfg)
+    assert exc.value.code == "invalid_utf8"
+
+
+def test_registry_immutable_after_load(tmp_path: Path) -> None:
+    cfg = tmp_path / "boot-seats.yaml"
+    cfg.write_text(
+        """
+schema_version: 1
+seats:
+  alpha-work:
+    family: gpt
+    platform: web
+""".strip(),
+        encoding="utf-8",
+    )
+    reg = load_boot_identity_registry(cfg)
+    with pytest.raises(TypeError):
+        reg.by_alias["alpha-work"] = "beta-work"  # type: ignore[index]
+
+
+def test_gpt_web_capability_non_lead_no_dispatch_grant() -> None:
+    from agent_seat.profiles import get_profile, load_lead_agent_slugs
+
+    profile = get_profile("gpt", "web")
+    assert profile.api_dispatchable is False
+    assert profile.auto_dispatchable is False
+    assert profile.manual_handoff is False
+    assert "gpt-web" not in load_lead_agent_slugs()

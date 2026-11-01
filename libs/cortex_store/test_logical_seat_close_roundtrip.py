@@ -2,15 +2,10 @@
 
 from __future__ import annotations
 
-import pytest
+from agent_seat.session_id import SessionMintMode, mint_session_id
 from fastapi.testclient import TestClient
 
-from cortex_store.conftest import bind_cortex_db
 from cortex_store.db import cortex_conn
-from cortex_store.models import SessionCloseRequest
-from cortex_store.routes.session_close import close_session
-from cortex_store.routes.session_close_persist import try_idempotent_session_close
-from cortex_store.routes.session_close_validate import validate_session_close
 
 
 def _minimal_fields(**overrides: object) -> dict:
@@ -52,7 +47,7 @@ def test_logical_seat_close_draft_lifecycle_and_agent_column(
     cortex_client: TestClient,
     session_env: dict,
 ) -> None:
-    alpha_id = "alpha-work-2026-06-10-012830-a1b"
+    alpha_id = mint_session_id("alpha-work", mode=SessionMintMode.LIVE)
     _stage(cortex_client, alpha_id, "alpha-work")
     _draft(cortex_client, alpha_id, _minimal_fields())
     check = _check(cortex_client, alpha_id)
@@ -67,7 +62,7 @@ def test_logical_seat_close_draft_lifecycle_and_agent_column(
     assert row is not None
     assert row["agent"] == "alpha-work"
 
-    beta_id = "beta-work-2026-06-11-012830-d2c"
+    beta_id = mint_session_id("beta-work", mode=SessionMintMode.LIVE)
     _stage(cortex_client, beta_id, "beta-work")
     _draft(cortex_client, beta_id, _minimal_fields(summary="Arc: newer foreign beta seat."))
     check_b = _check(cortex_client, beta_id)
@@ -110,26 +105,22 @@ def test_logical_seat_idempotent_recommit(
     assert second.json().get("already_closed") is True
 
 
-def test_atomic_close_idempotent_twice_one_journal_row(
-    session_env: dict,
-    monkeypatch: pytest.MonkeyPatch,
+def test_atomic_close_route_idempotent_twice_one_journal_row(
+    cortex_client: TestClient,
 ) -> None:
-    bind_cortex_db(monkeypatch, session_env["db_path"])
-    session_id = "alpha-work-2026-06-13-012830-f4a"
-    body = SessionCloseRequest(
-        session_id=session_id,
-        agent="alpha-work",
-        session_summary_md="## Session Summary\n\nAtomic close roundtrip.",
-        summary="Atomic close roundtrip for logical alpha-work.",
-        transcript_depth="light",
-    )
-    ctx = validate_session_close(body)
-    first, _ = try_idempotent_session_close(body, ctx)
-    assert first is None
-    close_session(body)
-    second, _ = try_idempotent_session_close(body, ctx)
-    assert second is not None
-    assert second.already_closed is True
+    session_id = mint_session_id("alpha-work", mode=SessionMintMode.LIVE)
+    payload = {
+        "session_id": session_id,
+        "agent": "alpha-work",
+        "session_summary_md": "## Session Summary\n\nAtomic close roundtrip.",
+        "summary": "Atomic close roundtrip for logical alpha-work.",
+        "transcript_depth": "light",
+    }
+    first = cortex_client.post("/session-journals/close", json=payload)
+    assert first.status_code == 201, first.text
+    second = cortex_client.post("/session-journals/close", json=payload)
+    assert second.status_code == 201, second.text
+    assert second.json().get("already_closed") is True
 
     with cortex_conn() as conn:
         count = conn.execute(
@@ -141,11 +132,26 @@ def test_atomic_close_idempotent_twice_one_journal_row(
             (session_id,),
         ).fetchone()["id"]
     assert count == 1
-    third, _ = try_idempotent_session_close(body, ctx)
-    assert third is not None
+    third = cortex_client.post("/session-journals/close", json=payload)
+    assert third.status_code == 201
     with cortex_conn() as conn:
         journal_id_2 = conn.execute(
             "SELECT id FROM session_journals WHERE session_id = ?",
             (session_id,),
         ).fetchone()["id"]
     assert journal_id_2 == journal_id
+
+
+def test_atomic_close_empty_summary_rejected(cortex_client: TestClient) -> None:
+    session_id = mint_session_id("alpha-work", mode=SessionMintMode.LIVE)
+    resp = cortex_client.post(
+        "/session-journals/close",
+        json={
+            "session_id": session_id,
+            "agent": "alpha-work",
+            "session_summary_md": "",
+            "summary": "",
+            "transcript_depth": "light",
+        },
+    )
+    assert resp.status_code == 422

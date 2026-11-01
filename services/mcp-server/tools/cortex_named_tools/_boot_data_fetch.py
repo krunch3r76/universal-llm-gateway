@@ -214,7 +214,11 @@ def build_futures_spec(
         continuity_agent,
     )
 
-    self_entity_id = profile.get("self_entity_id")
+    self_entity_id = (
+        identity.self_entity_id
+        if identity is not None
+        else profile.get("self_entity_id")
+    )
     self_reflections_limit = profile.get("self_reflections_limit", 0)
     if self_entity_id and self_reflections_limit > 0:
         # §boot-compact: briefing renders only id/claim/observed_at/seeded_by

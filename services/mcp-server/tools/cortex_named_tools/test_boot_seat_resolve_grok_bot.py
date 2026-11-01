@@ -16,3 +16,24 @@ def test_resolve_boot_family_platform_grok_bot() -> None:
         "grok",
         "bot",
     )
+
+
+def test_resolve_boot_family_platform_logical_seat_requires_identity(
+    monkeypatch, tmp_path,
+) -> None:
+    cfg = tmp_path / "boot-seats.yaml"
+    cfg.write_text(
+        """
+schema_version: 1
+seats:
+  alpha-work:
+    aliases: [alpha]
+    family: gpt
+    platform: web
+""".strip(),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("CORTEX_BOOT_IDENTITIES_PATH", str(cfg))
+    out = resolve_boot_family_platform(seat="alpha")
+    assert isinstance(out, dict)
+    assert out.get("reason") == "logical_seat_requires_identity"

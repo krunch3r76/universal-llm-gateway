@@ -125,7 +125,7 @@ def _logical_boot_identity(canonical_key: str, entry: _SeatEntry) -> BootIdentit
         session_prefix=canonical_key,
         inbox_recipient=inbox_recipient,
         self_entity_id=f"seat:{canonical_key}",
-        logical_seat_id=canonical_key,
+        logical_seat_id=f"seat:{canonical_key}",
         house=entry.house,
         surface=entry.surface,
     )
@@ -172,11 +172,17 @@ def _strict_load_yaml(text: str, *, source: str) -> Any:
         mapping: dict[Any, Any] = {}
         for key_node, value_node in node.value:
             key = loader.construct_object(key_node, deep=deep)
-            if key in mapping:
+            try:
+                if key in mapping:
+                    raise BootIdentityConfigError(
+                        "duplicate_yaml_key",
+                        f"{source}: duplicate YAML key {key!r}",
+                    )
+            except TypeError as exc:
                 raise BootIdentityConfigError(
-                    "duplicate_yaml_key",
-                    f"{source}: duplicate YAML key {key!r}",
-                )
+                    "bad_yaml_key",
+                    f"{source}: mapping key must be hashable, got {type(key).__name__}",
+                ) from exc
             mapping[key] = loader.construct_object(value_node, deep=deep)
         return mapping
 
@@ -288,44 +294,60 @@ def _parse_registry_document(raw: Any, *, source: str) -> _BootIdentityRegistry:
                 f"({family!r}, {platform!r})",
             ) from exc
 
-        house_val = entry.get("house")
-        house: str | None
-        if house_val is None:
-            house = None
-        elif isinstance(house_val, str) and _HOUSE_RE.fullmatch(house_val):
-            house = house_val
+        if "house" in entry:
+            house_val = entry["house"]
+            if house_val is None:
+                raise BootIdentityConfigError(
+                    "bad_field_type",
+                    f"{source}: seat {canonical_key!r} house must be a digit string",
+                )
+            if isinstance(house_val, str) and _HOUSE_RE.fullmatch(house_val):
+                house: str | None = house_val
+            else:
+                raise BootIdentityConfigError(
+                    "bad_field_type",
+                    f"{source}: seat {canonical_key!r} house must be a digit string",
+                )
         else:
-            raise BootIdentityConfigError(
-                "bad_field_type",
-                f"{source}: seat {canonical_key!r} house must be a digit string",
-            )
+            house = None
 
-        surface_val = entry.get("surface")
-        if surface_val is not None and (
-            not isinstance(surface_val, str) or not surface_val.strip()
-        ):
-            raise BootIdentityConfigError(
-                "bad_field_type",
-                f"{source}: seat {canonical_key!r} surface must be a nonblank string",
-            )
-        surface = surface_val.strip() if isinstance(surface_val, str) else None
+        if "surface" in entry:
+            surface_val = entry["surface"]
+            if surface_val is None or not isinstance(surface_val, str) or not surface_val.strip():
+                raise BootIdentityConfigError(
+                    "bad_field_type",
+                    f"{source}: seat {canonical_key!r} surface must be a nonblank string",
+                )
+            surface = surface_val.strip()
+        else:
+            surface = None
 
-        inbox_val = entry.get("inbox_recipient")
-        if inbox_val is not None and (
-            not isinstance(inbox_val, str) or not inbox_val.strip()
-        ):
-            raise BootIdentityConfigError(
-                "bad_field_type",
-                f"{source}: seat {canonical_key!r} inbox_recipient must be a nonblank string",
-            )
-        inbox_recipient = inbox_val.strip() if isinstance(inbox_val, str) else None
+        if "inbox_recipient" in entry:
+            inbox_val = entry["inbox_recipient"]
+            if inbox_val is None or not isinstance(inbox_val, str) or not inbox_val.strip():
+                raise BootIdentityConfigError(
+                    "bad_field_type",
+                    f"{source}: seat {canonical_key!r} inbox_recipient must be a nonblank string",
+                )
+            inbox_recipient = inbox_val.strip()
+        else:
+            inbox_recipient = None
 
-        aliases_raw = entry.get("aliases") or []
-        if not isinstance(aliases_raw, list):
-            raise BootIdentityConfigError(
-                "malformed_aliases",
-                f"{source}: seat {canonical_key!r} aliases must be a list",
-            )
+        if "aliases" not in entry:
+            aliases_raw: list[Any] = []
+        else:
+            aliases_val = entry["aliases"]
+            if aliases_val is None or isinstance(aliases_val, (bool, int, str, dict)):
+                raise BootIdentityConfigError(
+                    "malformed_aliases",
+                    f"{source}: seat {canonical_key!r} aliases must be a list",
+                )
+            if not isinstance(aliases_val, list):
+                raise BootIdentityConfigError(
+                    "malformed_aliases",
+                    f"{source}: seat {canonical_key!r} aliases must be a list",
+                )
+            aliases_raw = aliases_val
         alias_keys = [_normalize_query(canonical_key)] + []
         for item in aliases_raw:
             if not isinstance(item, str) or not item.strip():
@@ -387,6 +409,11 @@ def load_boot_identity_registry(path: Path | None = None) -> _BootIdentityRegist
         )
     try:
         text = path.read_text(encoding="utf-8")
+    except UnicodeDecodeError as exc:
+        raise BootIdentityConfigError(
+            "invalid_utf8",
+            f"boot identities file {path} is not valid UTF-8: {exc}",
+        ) from exc
     except OSError as exc:
         raise BootIdentityConfigError(
             "unreadable_configured_file",
@@ -427,6 +454,7 @@ def _legacy_from_capability_cell(seat: str) -> BootIdentity | None:
 
 
 def seat_unresolved_error(seat: str) -> dict[str, Any]:
+    """Structured error when ``seat`` does not resolve to legacy or logical identity."""
     return {
         "error": (
             f"seat={seat!r} did not resolve to a known bus address, "
@@ -438,6 +466,7 @@ def seat_unresolved_error(seat: str) -> dict[str, Any]:
 
 
 def logical_seat_requires_identity_error(seat: str) -> dict[str, Any]:
+    """Structured error when tuple resolution hits a registry seat needing full identity."""
     return {
         "error": (
             f"seat={seat!r} is a registered logical seat; "
@@ -449,6 +478,7 @@ def logical_seat_requires_identity_error(seat: str) -> dict[str, Any]:
 
 
 def boot_identity_config_error(exc: BootIdentityConfigError) -> dict[str, Any]:
+    """Map a registry parse/load failure to a wire-shaped boot error payload."""
     return {
         "error": exc.detail,
         "reason": exc.code,

@@ -311,6 +311,10 @@ def test_single_write_site_for_fields() -> None:
         [
             "rg",
             "-n",
+            "--glob",
+            "!test_*.py",
+            "--glob",
+            "!*_test.py",
             "UPDATE close_drafts SET fields",
             str(repo / "libs" / "cortex_store"),
         ],
