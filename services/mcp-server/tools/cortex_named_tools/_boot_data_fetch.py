@@ -84,6 +84,8 @@ def build_futures_spec(
     agent: str,
     profile: dict[str, Any],
     recorder: Any,
+    *,
+    identity: Any | None = None,
 ) -> dict[str, tuple[Any, ...]]:
     """Build the parallel-fetch spec for a boot briefing.
 
@@ -94,14 +96,18 @@ def build_futures_spec(
     wrapped_cx = recorder.wrap("cortex", cortex_cx)
     relay = recorder.wrap("agent-bus", _relay)
 
+    continuity_agent = identity.agent if identity is not None else agent
+    unread_to = identity.inbox_recipient if identity is not None else agent
     unread_toc_qs = urlencode(
-        {"to": agent, "active_since": "14d", "limit": 10}
+        {"to": unread_to, "active_since": "14d", "limit": 10}
     )
     # Boot card uses windowed unread-toc sample + unwindowed totals (Q6).
     threads_qs = urlencode({"status": "active", "has_unread": "true", "limit": 10})
     session_qs_parts: dict[str, str | int] = {"limit": profile.get("session_limit", 3)}
-    if profile.get("session_agent_filter"):
-        session_qs_parts["agent"] = profile["session_agent_filter"]
+    if identity is not None and identity.is_logical:
+        session_qs_parts["agent"] = identity.agent
+    elif profile.get("session_agent_filter"):
+        session_qs_parts["agent"] = str(profile["session_agent_filter"])
     session_qs = urlencode(session_qs_parts)
 
     # Read-only fetch-graph audit (blocking contract for BootMode.INSPECT):
@@ -128,7 +134,7 @@ def build_futures_spec(
         "continuity": (
             wrapped_cx,
             "GET",
-            f"/boot-continuity?{urlencode({'agent': agent})}",
+            f"/boot-continuity?{urlencode({'agent': continuity_agent})}",
         ),
         # read-only: compact attention list — has_unread=true&limit=10
         "threads": (relay, "agent-bus", "GET", f"/threads?{threads_qs}"),
@@ -182,7 +188,7 @@ def build_futures_spec(
     futures_spec["reflective_journal"] = (
         wrapped_cx,
         "GET",
-        f"/boot-reflective?{urlencode({'agent': agent, 'limit': 5})}",
+        f"/boot-reflective?{urlencode({'agent': continuity_agent, 'limit': 5})}",
     )
 
     # read-only: fetch recent mentions for salience rendering
@@ -205,10 +211,14 @@ def build_futures_spec(
     # read-only: in-flight async dispatches for this agent from event service
     futures_spec["async_dispatches"] = (
         _fetch_async_dispatches_from_events,
-        agent,
+        continuity_agent,
     )
 
-    self_entity_id = profile.get("self_entity_id")
+    self_entity_id = (
+        identity.self_entity_id
+        if identity is not None
+        else profile.get("self_entity_id")
+    )
     self_reflections_limit = profile.get("self_reflections_limit", 0)
     if self_entity_id and self_reflections_limit > 0:
         # §boot-compact: briefing renders only id/claim/observed_at/seeded_by

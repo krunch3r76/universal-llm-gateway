@@ -4,8 +4,15 @@ from __future__ import annotations
 
 from typing import Any
 
+from agent_seat.boot_identity import (
+    BootIdentity,
+    boot_identity_config_error,
+    legacy_boot_identity,
+    logical_seat_requires_identity_error,
+    resolve_boot_identity_for_seat,
+    resolve_legacy_boot_identity,
+)
 from agent_seat.registry import (
-    normalize_agent_slug,
     normalize_bus_address,
     resolve_capability_cell_from_bus_address,
 )
@@ -75,6 +82,21 @@ def _seat_required_error() -> dict[str, Any]:
     }
 
 
+def resolve_boot_identity(
+    *,
+    seat: str | None = None,
+    mount_surface: str | None = None,
+) -> BootIdentity | dict[str, Any]:
+    """Resolve boot briefing identity for ``seat`` or mount-aware legacy default."""
+    if seat:
+        return resolve_boot_identity_for_seat(seat)
+
+    surface_fp = _surface_default_family_platform(mount_surface)
+    if surface_fp is not None:
+        return legacy_boot_identity(*surface_fp)
+    return _seat_required_error()
+
+
 def resolve_boot_family_platform(
     *,
     seat: str | None = None,
@@ -83,7 +105,7 @@ def resolve_boot_family_platform(
     """Map boot call axes to canonical (family, platform).
 
     Priority:
-      1. Explicit ``seat=`` (bus address or legacy capability cell)
+      1. Explicit ``seat=`` (bus address, capability cell, or logical registry alias)
       2. Blank → mount-aware default (life→web / code→cursor)
       3. Else ``seat_required`` error (no silent cursor default)
 
@@ -91,25 +113,27 @@ def resolve_boot_family_platform(
     ``seat`` or the mount. ``mount_surface`` is the FastMCP instance's
     registration-time surface (life|code) when request metadata omits it.
     """
-    if seat:
-        bus_addr = normalize_bus_address(seat)
-        resolved = resolve_capability_cell_from_bus_address(bus_addr)
-        if resolved is not None:
+    if not seat:
+        resolved = resolve_boot_identity(seat=seat, mount_surface=mount_surface)
+        if isinstance(resolved, dict):
             return resolved
-        slug = normalize_agent_slug(seat)
-        parsed = parse_seat_slug(slug)
-        if parsed[0] is not None and parsed[1] is not None:
-            return parsed[0], parsed[1]
-        return {
-            "error": (
-                f"seat={seat!r} did not resolve to a known bus address or "
-                "capability cell (e.g. web-anthropic, cursor, grok-api-multi)."
-            ),
-            "reason": "seat_unresolved",
-            "missing_fields": ["seat"],
-        }
+        return resolved.family, resolved.platform
 
-    surface_fp = _surface_default_family_platform(mount_surface)
-    if surface_fp is not None:
-        return surface_fp
-    return _seat_required_error()
+    legacy = resolve_legacy_boot_identity(seat)
+    if legacy is not None:
+        return legacy.family, legacy.platform
+
+    from agent_seat.boot_identity import (
+        BootIdentityConfigError,
+        load_boot_identity_registry,
+    )
+
+    try:
+        logical = load_boot_identity_registry().lookup(seat)
+    except BootIdentityConfigError as exc:
+        return boot_identity_config_error(exc)
+    if logical is not None:
+        return logical_seat_requires_identity_error(seat)
+    from agent_seat.boot_identity import seat_unresolved_error
+
+    return seat_unresolved_error(seat)

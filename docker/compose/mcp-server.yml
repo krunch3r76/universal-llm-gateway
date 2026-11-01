@@ -56,6 +56,7 @@ services:
       # container and panel_dispatch/handoff source_ref reads miss files
       # that fs(sandbox=cortex) wrote (friction a24515).
       - CORTEX_FILES_ROOT=/data/files
+      - CORTEX_BOOT_IDENTITIES_PATH=${CORTEX_BOOT_IDENTITIES_PATH:-}
       # Browser tools (Playwright Firefox) are disabled by default.
       # Enable via the browser override: -f mcp-server-browser.override.yml
       - ENABLE_BROWSER_TOOLS=${ENABLE_BROWSER_TOOLS:-false}

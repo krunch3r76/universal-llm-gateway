@@ -67,7 +67,9 @@ def _install_boot_stubs(
     monkeypatch.setattr(
         boot_runner,
         "build_futures_spec",
-        lambda _agent, _profile, _recorder: {"placeholder": (lambda: {},)},
+        lambda _agent, _profile, _recorder, *, identity=None: {
+            "placeholder": (lambda: {},)
+        },
     )
     monkeypatch.setattr(
         boot_runner, "extract_boot_results", _stub_extract_boot_results

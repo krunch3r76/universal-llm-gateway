@@ -335,7 +335,9 @@ def _stub_boot_runner(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     monkeypatch.setattr(
         boot_runner,
         "build_futures_spec",
-        lambda _agent, _profile, _recorder: {"placeholder": (lambda: {},)},
+        lambda _agent, _profile, _recorder, *, identity=None: {
+            "placeholder": (lambda: {},)
+        },
     )
     monkeypatch.setattr(
         boot_runner,
