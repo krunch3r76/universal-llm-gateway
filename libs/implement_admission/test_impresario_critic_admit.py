@@ -5,9 +5,11 @@ from __future__ import annotations
 import pytest
 
 from implement_admission.impresario_critic_admit import (
+    cloud_impresario_critic_models,
     is_roleless_impresario_critic_generate,
     resolve_roleless_impresario_critic_api_role,
 )
+from pipelines.team_dispatch_admit.v1.handlers.test_handlers import run_full_admit
 
 pytestmark = pytest.mark.offline
 
@@ -61,6 +63,30 @@ def test_role_present_not_roleless() -> None:
         "code-review",
         "anthropic/claude-sonnet-5-5",
     )
+
+
+@pytest.mark.parametrize("model", cloud_impresario_critic_models())
+def test_every_cloud_allowed_critic_admits_roleless_code_review(model: str) -> None:
+    assert is_roleless_impresario_critic_generate(
+        "generate",
+        None,
+        None,
+        "code-review",
+        model,
+    )
+    assert resolve_roleless_impresario_critic_api_role(model) == "synthesizer"
+    plan = run_full_admit(
+        {
+            "op": "generate",
+            "model": model,
+            "job": "code-review",
+            "request_id": f"cloud-critic-{model.replace('/', '-')}",
+        }
+    )
+    assert plan.get("admitted") is True, plan
+    assert plan.get("backend") == "api_role"
+    assert plan.get("role") == "synthesizer"
+    assert plan.get("model") == model
 
 
 def test_sonnet_critic_resolves_synthesizer() -> None:

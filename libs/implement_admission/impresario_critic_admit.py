@@ -20,9 +20,20 @@ from implement_admission.impresario_policy import (
 )
 
 _ROLELESS_CRITIC_ROLE_PREFERENCE: tuple[str, ...] = (
-    "skeptic",
     "synthesizer",
+    "skeptic",
 )
+
+
+def cloud_impresario_critic_models(
+    *,
+    policy: ImpresarioPolicy | None = None,
+) -> tuple[str, ...]:
+    """Sorted cloud entries from ``impresario.allowed_critics`` (non cdp/cursor)."""
+    pol = policy or load_impresario_policy()
+    return tuple(
+        sorted(model for model in pol.allowed_critics if _cloud_allowed_critic(model, pol))
+    )
 
 
 def _cloud_allowed_critic(model: str, policy: ImpresarioPolicy) -> bool:
@@ -57,7 +68,13 @@ def is_roleless_impresario_critic_generate(
     if not isinstance(model, str) or not model.strip():
         return False
     pol = policy or load_impresario_policy()
-    return _cloud_allowed_critic(model, pol)
+    if not _cloud_allowed_critic(model, pol):
+        return False
+    try:
+        resolve_roleless_impresario_critic_api_role(str(model).strip(), policy=pol)
+    except ValueError:
+        return False
+    return True
 
 
 def resolve_roleless_impresario_critic_api_role(

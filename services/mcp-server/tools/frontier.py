@@ -37,6 +37,9 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Annotated, Any, Literal, get_args
 
 import httpx
+from implement_admission.impresario_critic_admit import (
+    is_roleless_impresario_critic_generate,
+)
 from job_vocab import GENERATE_ADMITTED_JOBS, TO_THREAD_ADMITTED_JOBS
 from mcp_events import record
 from pydantic import Field
@@ -882,10 +885,6 @@ def register_frontier_tools(mcp: FastMCP) -> None:
             and isinstance(model, str)
             and model.startswith("cdp/")
         )
-        from implement_admission.impresario_critic_admit import (
-            is_roleless_impresario_critic_generate,
-        )
-
         impresario_critic_roleless = is_roleless_impresario_critic_generate(
             op, role, seat, contract, model
         )
@@ -902,7 +901,9 @@ def register_frontier_tools(mcp: FastMCP) -> None:
                     "message": (
                         "exactly one of role or seat is required when "
                         "op='generate' or op='to_thread' "
-                        "(except model=cdp/… or model=cursor/…)"
+                        "(except model=cdp/… or model=cursor/…; on op=generate, "
+                        "review contracts with a cloud impresario.allowed_critics "
+                        "model may omit role and seat)"
                     ),
                 },
                 "field": "role",
