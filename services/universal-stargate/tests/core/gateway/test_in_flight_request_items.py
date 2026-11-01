@@ -4,11 +4,20 @@ from __future__ import annotations
 
 import time
 
+import pytest
+
 from src.core.gateway.in_flight_requests import InFlightRequestTracker
 from src.core.gateway.request_inflight_meta import bind_request_inflight_meta
 
 
-def test_track_with_explicit_meta_and_list_ordering() -> None:
+@pytest.fixture
+def reset_inflight_meta():
+    bind_request_inflight_meta(None)
+    yield
+    bind_request_inflight_meta(None)
+
+
+def test_track_with_explicit_meta_and_list_ordering(reset_inflight_meta) -> None:
     tracker = InFlightRequestTracker()
     tracker.track_request(
         "gw",
@@ -28,7 +37,7 @@ def test_track_with_explicit_meta_and_list_ordering() -> None:
     assert items[0]["age_s"] >= 0
 
 
-def test_contextvar_meta_when_explicit_none() -> None:
+def test_contextvar_meta_when_explicit_none(reset_inflight_meta) -> None:
     tracker = InFlightRequestTracker()
     bind_request_inflight_meta(
         {"kind": "pipeline_sync", "execution_id": "exec-1", "thread": "t1"}
@@ -40,7 +49,7 @@ def test_contextvar_meta_when_explicit_none() -> None:
     bind_request_inflight_meta(None)
 
 
-def test_complete_and_clear_gateway_remove_meta() -> None:
+def test_complete_and_clear_gateway_remove_meta(reset_inflight_meta) -> None:
     tracker = InFlightRequestTracker()
     tracker.try_reserve_slot(
         "gw",
@@ -61,15 +70,14 @@ def test_complete_and_clear_gateway_remove_meta() -> None:
     assert tracker.list_in_flight() == []
 
 
-def test_list_in_flight_caps_at_32() -> None:
+def test_list_in_flight_caps_at_32(reset_inflight_meta) -> None:
     tracker = InFlightRequestTracker()
     for i in range(40):
         tracker.track_request("gw", f"req-{i:02d}", "model/c")
     assert len(tracker.list_in_flight(limit=32)) == 32
 
 
-def test_missing_contextvar_yields_unknown_kind() -> None:
-    bind_request_inflight_meta(None)
+def test_missing_contextvar_yields_unknown_kind(reset_inflight_meta) -> None:
     tracker = InFlightRequestTracker()
     tracker.track_request("gw", "req-unknown", "model/d")
     assert tracker.list_in_flight()[0]["kind"] == "unknown"

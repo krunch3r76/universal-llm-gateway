@@ -241,8 +241,8 @@ class InFlightRequestTracker:
         """List in-flight requests oldest-first for admin observability."""
         now = time.time()
         rows: list[tuple[float, str, str, str]] = []
-        for gateway_id, request_ids in self._in_flight_requests.items():
-            for request_id in request_ids:
+        for gateway_id, request_ids in list(self._in_flight_requests.items()):
+            for request_id in list(request_ids):
                 started = self._request_timestamps.get(request_id, now)
                 routing_key = self._request_routing_keys.get(request_id, "")
                 rows.append((started, gateway_id, request_id, routing_key))

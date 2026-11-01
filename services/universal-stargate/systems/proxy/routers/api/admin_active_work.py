@@ -12,6 +12,7 @@ Invariant: ∀ error response: ``{"error": {"code", "message"}}`` — the canoni
 
 from __future__ import annotations
 
+import time
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
@@ -104,17 +105,28 @@ async def get_active_work(
     async_running = 0
     async_pipelines_items: list[dict[str, object]] = []
     if tracker is not None:
-        for record in tracker.records.values():
-            if record.status != "running":
-                continue
-            async_running += 1
+        running_records = [
+            record
+            for record in tracker.records.values()
+            if record.status == "running"
+        ]
+        async_running = len(running_records)
+        running_records.sort(key=lambda record: record.started_at)
+        now_mono = time.monotonic()
+        for record in running_records[:32]:
+            age_s = max(0.0, now_mono - record.started_at_monotonic)
             item: dict[str, object] = {
                 "execution_id": record.execution_id,
                 "pipeline": record.pipeline,
                 "started_at": record.started_at,
+                "age_s": round(age_s, 3),
+                "kind": "pipeline_async",
             }
             if record.caller_agent:
                 item["caller_agent"] = record.caller_agent
+            thread = getattr(record, "dispatch_thread_id", None)
+            if isinstance(thread, str) and thread.strip():
+                item["thread"] = thread.strip()
             async_pipelines_items.append(item)
 
     requests_in_flight = in_flight_tracker.get_total_in_flight()

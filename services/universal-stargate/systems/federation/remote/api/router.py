@@ -16,8 +16,8 @@ from universal_logging import get_logger
 from universal_protocol import ErrorCode, error_envelope, get_http_status
 
 from src.core.gateway.request_inflight_meta import (
-    bind_request_inflight_meta,
     infer_inflight_kind,
+    inflight_meta_scope,
     meta_from_http_request,
 )
 from src.core.streaming.stream_flag import client_requested_stream
@@ -247,167 +247,171 @@ def create_inference_router(
                 model_id=model_str,
                 request_path=str(endpoint),
             )
-            bind_request_inflight_meta(
-                meta_from_http_request(
-                    request,
-                    original_request if isinstance(original_request, dict) else None,
-                    kind=inflight_kind,
-                )
+            request_meta = meta_from_http_request(
+                request,
+                original_request if isinstance(original_request, dict) else None,
+                kind=inflight_kind,
             )
-
-            slot_ctx = SlotContext(
-                gateway_id=gateway_id,
-                model_str=model_str,
-                request_id=request_id,
-                endpoint_category=endpoint_category,
-                compute_type=compute_type,
-            )
-
-            if gateway_id:
-                _ = slot_ctx.try_reserve(max_concurrent_requests=1000)
-            else:
-                logger.warning(
-                    f"⚠️ Edge slot tracking DISABLED (gateway_id=None) for "
-                    f"model={model_str}, req={request_id[:8]}"
-                )
-
-            # Step 4: Forward to gateway
-            stream = client_requested_stream(original_request)
 
             # Embeddings and rerank are always non-streaming
             if endpoint in ("/v1/embeddings", "/v1/rerank"):
                 stream = False
 
-            if stream:
-                from .error_parsing import create_gateway_http_exception
+            with inflight_meta_scope(request_meta):
+                slot_ctx = SlotContext(
+                    gateway_id=gateway_id,
+                    model_str=model_str,
+                    request_id=request_id,
+                    endpoint_category=endpoint_category,
+                    compute_type=compute_type,
+                )
 
-                try:
-                    stream_iter = forward_to_gateway_streaming(
-                        sock_path,
-                        http_url,
-                        original_request,
-                        request_id,
-                        explicit_timeout,
-                        endpoint,
-                    )
-                    first_chunk = await stream_iter.__anext__()
-                except httpx.HTTPStatusError as e:
-                    slot_ctx.release()
-                    request_store.complete(request_id)
-                    logger.error(
-                        f"Gateway HTTP error before stream: {e.response.status_code}",
-                        extra={"request_id": request_id},
-                    )
-                    raise create_gateway_http_exception(e, source="edge")
-                except StopAsyncIteration:
-                    slot_ctx.release()
-                    request_store.complete(request_id)
-                    model_name = original_request.get("model", "unknown")
-                    logger.error(
-                        f"❌ Gateway returned empty stream for {model_name} "
-                        f"(request={request_id[:8]})"
-                    )
-                    raise HTTPException(
-                        status_code=502,
-                        detail=error_envelope(
-                            code=ErrorCode.UNEXPECTED_ERROR,
-                            message="Gateway returned empty stream",
-                            source="edge",
-                            retryable=True,
-                            data={
-                                "request_id": request_id,
-                                "model": model_name,
-                            },
-                        ),
+                if gateway_id:
+                    _ = slot_ctx.try_reserve(max_concurrent_requests=1000)
+                else:
+                    logger.warning(
+                        f"⚠️ Edge slot tracking DISABLED (gateway_id=None) for "
+                        f"model={model_str}, req={request_id[:8]}"
                     )
 
-                async def stream_generator_with_first():
+                # Step 4: Forward to gateway
+                if stream:
+                    from .error_parsing import create_gateway_http_exception
+
                     try:
-                        yield first_chunk
-                        async for chunk in stream_iter:
-                            if request_store.is_cancelled(request_id):
-                                logger.info(f"Stream cancelled: {request_id[:8]}...")
-                                break
-                            yield chunk
+                        stream_iter = forward_to_gateway_streaming(
+                            sock_path,
+                            http_url,
+                            original_request,
+                            request_id,
+                            explicit_timeout,
+                            endpoint,
+                        )
+                        first_chunk = await stream_iter.__anext__()
+                    except httpx.HTTPStatusError as e:
+                        slot_ctx.release()
+                        request_store.complete(request_id)
+                        logger.error(
+                            "Gateway HTTP error before stream: %s",
+                            e.response.status_code,
+                            extra={"request_id": request_id},
+                        )
+                        raise create_gateway_http_exception(e, source="edge")
+                    except StopAsyncIteration:
+                        slot_ctx.release()
+                        request_store.complete(request_id)
+                        model_name = original_request.get("model", "unknown")
+                        logger.error(
+                            f"❌ Gateway returned empty stream for {model_name} "
+                            f"(request={request_id[:8]})"
+                        )
+                        raise HTTPException(
+                            status_code=502,
+                            detail=error_envelope(
+                                code=ErrorCode.UNEXPECTED_ERROR,
+                                message="Gateway returned empty stream",
+                                source="edge",
+                                retryable=True,
+                                data={
+                                    "request_id": request_id,
+                                    "model": model_name,
+                                },
+                            ),
+                        )
+
+                    async def stream_generator_with_first():
+                        try:
+                            yield first_chunk
+                            async for chunk in stream_iter:
+                                if request_store.is_cancelled(request_id):
+                                    logger.info(
+                                        f"Stream cancelled: {request_id[:8]}..."
+                                    )
+                                    break
+                                yield chunk
+                        except asyncio.CancelledError:
+                            logger.info(
+                                f"Stream task cancelled: {request_id[:8]}..."
+                            )
+                            raise
+                        except httpx.RequestError:
+                            logger.exception(
+                                "Connection error to gateway",
+                                extra={"request_id": request_id},
+                            )
+                            yield (
+                                json.dumps(
+                                    {
+                                        "signal": "error",
+                                        "payload": {
+                                            "message": "Gateway connection error"
+                                        },
+                                    },
+                                    ensure_ascii=False,
+                                )
+                                + "\n"
+                            ).encode("utf-8")
+                        finally:
+                            request_store.complete(request_id)
+                            slot_ctx.release()
+
+                    return StreamingResponse(
+                        stream_generator_with_first(),
+                        media_type="application/newline-delimited-json",
+                        headers={
+                            "Cache-Control": "no-cache",
+                            "Connection": "keep-alive",
+                            "X-Accel-Buffering": "no",
+                        },
+                    )
+                else:
+                    from .error_parsing import create_gateway_http_exception
+
+                    try:
+                        result = await forward_to_gateway_nonstreaming(
+                            sock_path,
+                            http_url,
+                            original_request,
+                            request_id,
+                            explicit_timeout,
+                            endpoint,
+                        )
+                        request_store.complete(request_id)
+                        slot_ctx.release()
+                        return JSONResponse(content=result)
                     except asyncio.CancelledError:
-                        logger.info(f"Stream task cancelled: {request_id[:8]}...")
+                        request_store.complete(request_id)
+                        slot_ctx.release()
+                        logger.info(
+                            f"Gateway request cancelled: {request_id[:8]}...",
+                            extra={"request_id": request_id},
+                        )
                         raise
-                    except httpx.RequestError:
+                    except httpx.HTTPStatusError as e:
+                        request_store.complete(request_id)
+                        slot_ctx.release()
+                        logger.error(
+                            f"Gateway HTTP error: {e.response.status_code}",
+                            extra={"request_id": request_id},
+                        )
+                        raise create_gateway_http_exception(e, source="edge")
+                    except httpx.RequestError as e:
+                        request_store.complete(request_id)
+                        slot_ctx.release()
                         logger.exception(
                             "Connection error to gateway",
                             extra={"request_id": request_id},
                         )
-                        yield (
-                            json.dumps(
-                                {
-                                    "signal": "error",
-                                    "payload": {"message": "Gateway connection error"},
-                                },
-                                ensure_ascii=False,
-                            )
-                            + "\n"
-                        ).encode("utf-8")
-                    finally:
-                        request_store.complete(request_id)
-                        slot_ctx.release()
-
-                return StreamingResponse(
-                    stream_generator_with_first(),
-                    media_type="application/newline-delimited-json",
-                    headers={
-                        "Cache-Control": "no-cache",
-                        "Connection": "keep-alive",
-                        "X-Accel-Buffering": "no",
-                    },
-                )
-            else:
-                from .error_parsing import create_gateway_http_exception
-
-                try:
-                    result = await forward_to_gateway_nonstreaming(
-                        sock_path,
-                        http_url,
-                        original_request,
-                        request_id,
-                        explicit_timeout,
-                        endpoint,
-                    )
-                    request_store.complete(request_id)
-                    slot_ctx.release()
-                    return JSONResponse(content=result)
-                except asyncio.CancelledError:
-                    request_store.complete(request_id)
-                    slot_ctx.release()
-                    logger.info(
-                        f"Gateway request cancelled: {request_id[:8]}...",
-                        extra={"request_id": request_id},
-                    )
-                    raise
-                except httpx.HTTPStatusError as e:
-                    request_store.complete(request_id)
-                    slot_ctx.release()
-                    logger.error(
-                        f"Gateway HTTP error: {e.response.status_code}",
-                        extra={"request_id": request_id},
-                    )
-                    raise create_gateway_http_exception(e, source="edge")
-                except httpx.RequestError as e:
-                    request_store.complete(request_id)
-                    slot_ctx.release()
-                    logger.exception(
-                        "Connection error to gateway",
-                        extra={"request_id": request_id},
-                    )
-                    raise HTTPException(
-                        status_code=get_http_status(ErrorCode.GATEWAY_DISCONNECTED),
-                        detail=error_envelope(
-                            code=ErrorCode.GATEWAY_DISCONNECTED,
-                            message="Gateway connection error",
-                            source="edge",
-                            retryable=True,
-                            data={"error": str(e)},
-                        ),
-                    )
+                        raise HTTPException(
+                            status_code=get_http_status(ErrorCode.GATEWAY_DISCONNECTED),
+                            detail=error_envelope(
+                                code=ErrorCode.GATEWAY_DISCONNECTED,
+                                message="Gateway connection error",
+                                source="edge",
+                                retryable=True,
+                                data={"error": str(e)},
+                            ),
+                        )
 
         except HTTPException:
             request_store.complete(request_id)

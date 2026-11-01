@@ -34,14 +34,19 @@ def test_stargate_async_pipeline_items_rendered() -> None:
         "total": 1,
         "async_pipelines_items": [
             {
+                "kind": "pipeline_async",
                 "execution_id": "exec-pipe-99",
                 "pipeline": "team_dispatch",
                 "started_at": "2026-11-01T12:00:00+00:00",
+                "thread": "21609",
+                "age_s": 45,
                 "caller_agent": "cursor",
             }
         ],
     }
     summary = format_active_work_summary(payload)
     assert summary.startswith("active_count=1")
-    assert "pipeline:exec-pip" in summary
+    assert "pipeline_async:exec-pip" in summary
     assert "team_dispatch" in summary
+    assert "thread=21609" in summary
+    assert "age=45s" in summary
