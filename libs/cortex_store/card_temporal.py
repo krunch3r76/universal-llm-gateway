@@ -30,8 +30,8 @@ def _parse_instant(raw: object) -> datetime:
         raise ValueError("missing instant")
     if isinstance(raw, datetime):
         dt = raw
-    else:
-        s = str(raw).strip()
+    elif isinstance(raw, str):
+        s = raw.strip()
         if not s:
             raise ValueError("empty instant")
         if len(s) == 10 and s[4] == "-" and s[7] == "-":
@@ -40,16 +40,23 @@ def _parse_instant(raw: object) -> datetime:
         else:
             if s.endswith("Z"):
                 s = s[:-1] + "+00:00"
-            dt = datetime.fromisoformat(s)
+            try:
+                dt = datetime.fromisoformat(s)
+            except (ValueError, OverflowError) as exc:
+                raise ValueError("unparseable instant") from exc
+    else:
+        raise ValueError(f"unsupported instant type: {type(raw).__name__}")
     if dt.tzinfo is None:
         dt = dt.replace(tzinfo=UTC)
-    return dt.astimezone(UTC)
+    try:
+        return dt.astimezone(UTC)
+    except OverflowError as exc:
+        raise ValueError("instant out of range") from exc
 
 
 def _parse_optional_bound(raw: object) -> datetime | None:
+    """Only SQL ``NULL`` is an open endpoint; every other value must parse."""
     if raw is None:
-        return None
-    if isinstance(raw, str) and not str(raw).strip():
         return None
     return _parse_instant(raw)
 
@@ -87,4 +94,4 @@ def install_card_temporal_function(conn: sqlite3.Connection) -> None:
     def _udf(valid_from: object, valid_until: object, as_of: object) -> int:
         return 1 if assertion_interval_contains(valid_from, valid_until, as_of) else 0
 
-    conn.create_function(_UDF_NAME, 3, _udf)
+    conn.create_function(_UDF_NAME, 3, _udf, deterministic=True)

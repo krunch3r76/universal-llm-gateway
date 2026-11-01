@@ -55,11 +55,14 @@ def build_cards(
     neighbor_fidelity: NeighborFidelity = "full",
     hub_rel_threshold: int = 20,
     rel_counts: dict[str, int] | None = None,
+    as_of: str | None = None,
 ) -> dict[str, dict[str, Any]]:
     """Build Card v0 (or sparse projection) payloads per visited entity."""
+    as_of_iso = card_as_of_utc() if as_of is None else as_of
+    install_card_temporal_function(conn)
     hop_map = visited or {eid: 0 for eid in visited_ids}
     rel_map = rel_counts or _batch_relationship_counts(conn, visited_ids)
-    assn_map = _batch_assertion_counts(conn, visited_ids)
+    assn_map = _batch_assertion_counts(conn, visited_ids, as_of=as_of_iso)
     entity_meta = _fetch_entity_meta(conn, visited_ids)
 
     cards: dict[str, dict[str, Any]] = {}
@@ -79,7 +82,11 @@ def build_cards(
         try:
             if neighbor_fidelity == "full" or top_k > 0:
                 cards[eid] = get_entity_card(
-                    conn, entity_id=eid, top_k=top_k, source="boot"
+                    conn,
+                    entity_id=eid,
+                    top_k=top_k,
+                    source="boot",
+                    as_of=as_of_iso,
                 )
             else:
                 cards[eid] = sparse_card_shell(
@@ -159,11 +166,14 @@ def _fetch_entity_meta(
 
 
 def _batch_assertion_counts(
-    conn: sqlite3.Connection, entity_ids: list[str]
+    conn: sqlite3.Connection,
+    entity_ids: list[str],
+    *,
+    as_of: str | None = None,
 ) -> dict[str, int]:
     if not entity_ids:
         return {}
-    as_of_iso = card_as_of_utc()
+    as_of_iso = card_as_of_utc() if as_of is None else as_of
     install_card_temporal_function(conn)
     ph = ",".join("?" for _ in entity_ids)
     rows = query(
@@ -236,10 +246,8 @@ def _override_top_k_with_superseded(
         superseded = row.get("superseded_by")
         if claim.lower().startswith("archive summary"):
             role = "archive_summary"
-        elif superseded is not None:
-            role = "history"
         else:
-            role = "current"
+            role = "history"
         out.append(
             {
                 "id": int(row["id"]),

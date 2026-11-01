@@ -103,7 +103,7 @@ def _fetch_main_top_k(
     top_k: int,
     as_of: str | None = None,
 ) -> list[dict[str, object]]:
-    as_of_iso = as_of or card_as_of_utc()
+    as_of_iso = card_as_of_utc() if as_of is None else as_of
     install_card_temporal_function(conn)
     return query(
         conn,
@@ -120,7 +120,7 @@ def _fetch_status_current_rows(
     entity_id: str,
     as_of: str | None = None,
 ) -> list[dict[str, object]]:
-    as_of_iso = as_of or card_as_of_utc()
+    as_of_iso = card_as_of_utc() if as_of is None else as_of
     install_card_temporal_function(conn)
     return query(
         conn,
@@ -276,10 +276,11 @@ def get_entity_card(
     agent: str = "web",
     session_id: str | None = None,
     include_body: bool | None = None,
+    as_of: str | None = None,
 ) -> dict[str, object]:
     """Build the Card v0 payload via projection-aware fetch + adapter dispatch."""
     rows_materialized = 0
-    as_of_iso = card_as_of_utc()
+    as_of_iso = card_as_of_utc() if as_of is None else as_of
     install_card_temporal_function(conn)
 
     table_cols = {

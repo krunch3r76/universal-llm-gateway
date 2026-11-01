@@ -219,10 +219,30 @@ def _assertion_bounds_suffix(assertion: dict[str, Any]) -> str:
         return ""
     parts: list[str] = []
     if vf is not None:
-        parts.append(f"valid_from={vf}")
+        parts.append(f"valid_from={_escape_md(str(vf))}")
     if vu is not None:
-        parts.append(f"valid_until={vu}")
+        parts.append(f"valid_until={_escape_md(str(vu))}")
     return f" ({', '.join(parts)})"
+
+
+def _assertions_section_heading(
+    assertions: list[dict[str, Any]], top_k_assertions: int
+) -> str:
+    if assertions and any(
+        (a.get("projection_role") or "current") != "current" for a in assertions
+    ):
+        return f"## Assertions (top {top_k_assertions})"
+    return f"## Active Assertions (top {top_k_assertions})"
+
+
+def _format_top_assertion_line(top: dict[str, Any]) -> str:
+    flag = _provenance_flag(top)
+    role_prefix = _assertion_role_prefix(top)
+    bounds = _assertion_bounds_suffix(top)
+    return (
+        f"**Top assertion:** {role_prefix}[{top.get('confidence', '')}]{flag} "
+        f"{_escape_md(str(top.get('claim', '')))}{bounds}"
+    )
 
 
 def _render_root_assertions(
@@ -232,8 +252,8 @@ def _render_root_assertions(
     include_observed: bool = True,
     include_assertion_id: bool = False,
 ) -> list[str]:
-    parts: list[str] = [f"## Active Assertions (top {top_k_assertions})"]
     assertions = root_card.get("top_k_assertions") or []
+    parts: list[str] = [_assertions_section_heading(assertions, top_k_assertions)]
     if not assertions:
         parts.append("_(no active assertions)_")
         return parts
@@ -423,12 +443,7 @@ def _render_full_entity_block(
         block_lines.append(tdesc)
     t_assertions = tcard.get("top_k_assertions") or []
     if t_assertions:
-        top = t_assertions[0]
-        flag = _provenance_flag(top)
-        block_lines.append(
-            f"**Top assertion:** [{top.get('confidence', '')}]{flag} "
-            f"{_escape_md(str(top.get('claim', '')))}"
-        )
+        block_lines.append(_format_top_assertion_line(t_assertions[0]))
     block_lines.append("---")
     return "\n\n".join(block_lines)
 
@@ -504,12 +519,7 @@ def _render_hub_promoted_block(
         block_lines.append(_escape_md(str(summary)[:120]))
     t_assertions = tcard.get("top_k_assertions") or []
     if t_assertions:
-        top = t_assertions[0]
-        flag = _provenance_flag(top)
-        block_lines.append(
-            f"**Top assertion:** [{top.get('confidence', '')}]{flag} "
-            f"{_escape_md(str(top.get('claim', '')))}"
-        )
+        block_lines.append(_format_top_assertion_line(t_assertions[0]))
     block_lines.append("---")
     return "\n\n".join(block_lines)
 
