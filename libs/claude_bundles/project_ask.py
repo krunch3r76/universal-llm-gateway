@@ -630,6 +630,7 @@ async def send_prompt(
     (a:37267). On the combined message it returns None: the reply to that
     message is the work reply. Paste-half leaves it false.
     """
+    from claude_bundles.chat_context_skills import ChatContextSkillsError
     from claude_bundles.composer_session_skills import require_compose_surface
     from claude_bundles.cowork_skill_delivery import (
         SkillDeliveryError,
@@ -642,7 +643,6 @@ async def send_prompt(
         partition_cdp_skills,
         render_skill_induction,
     )
-    from claude_bundles.chat_context_skills import ChatContextSkillsError
     from claude_bundles.skill_context_receipt import (
         record_post_submit_skills_receipt,
     )

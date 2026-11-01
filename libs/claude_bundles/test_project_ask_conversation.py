@@ -513,9 +513,7 @@ async def test_code_surface_two_turn_conversation_passes_every_approval_check(
     page = AsyncMock()
     page.url = "https://claude.ai/code"
     page.title = AsyncMock(return_value="Claude Code")
-    page.evaluate = AsyncMock(
-        return_value={"aria": "", "text": "Auto", "via": "text"}
-    )
+    page.evaluate = AsyncMock(return_value={"aria": "", "text": "Auto", "via": "text"})
 
     seen_surfaces: list[str | None] = []
     submit_mock = AsyncMock()
@@ -802,3 +800,9 @@ async def test_compose_new_path_skips_code_surface_pre_send_assert() -> None:
 
     pre_assert.assert_not_called()
     assert results[0].ok is True
+
+
+# Dispatch gates may target this module; implementation lives in test_compose_attest.
+from claude_bundles.test_compose_attest import (  # noqa: E402
+    test_code_surface_never_awaits_ensure_approval_auto,  # noqa: F401
+)
