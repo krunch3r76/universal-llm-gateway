@@ -125,3 +125,85 @@ def test_cse_cowork_session_stays_a_compose_surface() -> None:
 def test_settings_url_is_not_a_compose_surface() -> None:
     with pytest.raises(ChatContextSkillsError, match="cowork/local_"):
         require_chat_surface(_UrlPage("https://claude.ai/settings/skills"))
+
+
+class _DisclosurePage:
+    url = "https://claude.ai/cowork/cse_x"
+
+    def __init__(self, *, reads: list[dict], click_result: dict | None = None) -> None:
+        self.reads = list(reads)
+        self.click_result = click_result or {
+            "found": True,
+            "clicked": True,
+            "aria_expanded": None,
+            "list_visible": False,
+        }
+        self.evaluate_calls: list[dict] = []
+        self.timeouts: list[int] = []
+
+    async def evaluate(self, _js: str, spec: dict) -> dict:
+        self.evaluate_calls.append(dict(spec))
+        if spec.get("click"):
+            return dict(self.click_result)
+        if not self.reads:
+            return {"found": False, "aria_expanded": None, "list_visible": False, "clicked": False}
+        return dict(self.reads.pop(0))
+
+    async def wait_for_timeout(self, ms: int) -> None:
+        self.timeouts.append(ms)
+
+
+@pytest.mark.asyncio
+async def test_expand_context_frame_open_header_does_not_click() -> None:
+    from claude_bundles.chat_context_disclosure import expand_context_frame
+
+    open_state = {
+        "found": True,
+        "aria_expanded": "true",
+        "list_visible": False,
+        "clicked": False,
+    }
+    page = _DisclosurePage(reads=[open_state, open_state])
+    assert await expand_context_frame(page) is True
+    assert all(not c.get("click") for c in page.evaluate_calls)
+    assert page.timeouts == []
+
+
+@pytest.mark.asyncio
+async def test_expand_context_frame_collapsed_header_clicks_once() -> None:
+    from claude_bundles.chat_context_disclosure import expand_context_frame
+
+    collapsed = {
+        "found": True,
+        "aria_expanded": "false",
+        "list_visible": False,
+        "clicked": False,
+    }
+    opened = {
+        "found": True,
+        "aria_expanded": "true",
+        "list_visible": True,
+        "clicked": False,
+    }
+    page = _DisclosurePage(reads=[collapsed, collapsed, opened])
+    assert await expand_context_frame(page) is True
+    click_calls = [c for c in page.evaluate_calls if c.get("click")]
+    assert len(click_calls) == 1
+    assert page.timeouts == [400]
+
+
+@pytest.mark.asyncio
+async def test_expand_context_frame_stays_collapsed_after_one_click() -> None:
+    from claude_bundles.chat_context_disclosure import expand_context_frame
+
+    collapsed = {
+        "found": True,
+        "aria_expanded": "false",
+        "list_visible": False,
+        "clicked": False,
+    }
+    page = _DisclosurePage(reads=[collapsed, collapsed, collapsed])
+    with pytest.raises(ChatContextSkillsError, match="still collapsed"):
+        await expand_context_frame(page)
+    click_calls = [c for c in page.evaluate_calls if c.get("click")]
+    assert len(click_calls) == 1

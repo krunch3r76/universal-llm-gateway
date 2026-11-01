@@ -679,11 +679,19 @@ async def send_prompt(
             )
             return list(panel.skills)
         except ChatContextSkillsError as exc:
-            if (claude_surface or "").strip().lower() != "code":
+            from claude_bundles.context_rail_absence import (
+                recover_induction_slugs_on_rail_error,
+            )
+
+            recovered = recover_induction_slugs_on_rail_error(
+                exc,
+                claude_surface=claude_surface,
+                attached=attached_out,
+                induction_slugs=induction_slugs,
+            )
+            if recovered is None:
                 raise
-            if _code_rail_induction_fallback(exc):
-                return list(attached_out or induction_slugs)
-            raise
+            return recovered
 
     induction_observed: list[str] = []
     reply_baseline: dict | None = None
