@@ -20,9 +20,7 @@ from tools.web_tab_read import (
 if TYPE_CHECKING:
     from fastmcp import FastMCP
 
-WriteOp = Literal[
-    "open", "bind", "paste", "submit", "verify_committed", "read_reply"
-]
+WriteOp = Literal["open", "bind", "paste", "submit", "verify_committed", "read_reply"]
 
 
 def _resolve_write_pipeline(op: WriteOp, installed: frozenset[str]) -> str | None:

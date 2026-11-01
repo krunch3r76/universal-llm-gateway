@@ -49,7 +49,9 @@ def binding_key(*, cdp_url: str, conversation_url: str) -> str:
 
 def save_binding(session: TabSession, *, path: Path | None = None) -> TabSession:
     store = path or default_store_path()
-    key = binding_key(cdp_url=session.cdp_url, conversation_url=session.conversation_url)
+    key = binding_key(
+        cdp_url=session.cdp_url, conversation_url=session.conversation_url
+    )
     with _LOCK:
         doc = _read(store)
         doc["bindings"][key] = session.as_dict()

@@ -28,9 +28,7 @@ from web_tab.tab_binding_store import load_binding, save_binding
 from web_tab.tab_session import tab_session_from_row
 from web_tab.target_lock import TargetLockBusyError, target_write_lock
 
-WriteOp = Literal[
-    "open", "bind", "paste", "submit", "verify_committed", "read_reply"
-]
+WriteOp = Literal["open", "bind", "paste", "submit", "verify_committed", "read_reply"]
 
 ReceiptLevel = Literal["dom_paste", "dom_committed"]
 
@@ -77,7 +75,11 @@ async def execute_open(
 ) -> dict[str, Any]:
     site = _resolve_site(conversation_url=url, surface=surface)
     if site is None:
-        return {"ok": False, "code": "unsupported_url", "reason": "unknown provider host"}
+        return {
+            "ok": False,
+            "code": "unsupported_url",
+            "reason": "unknown provider host",
+        }
     impl = port or default_actuation_port()
     opened = impl.create_background_tab(cdp_url=cdp_url, url=url)
     if not opened.get("ok"):
@@ -278,9 +280,7 @@ async def execute_read_reply(
     deadline = loop.time() + timeout_s
     last: dict[str, Any] = {}
     while loop.time() <= deadline:
-        last = await impl.evaluate(
-            ws_url=ws, expression=read_reply_js(site=site)
-        )
+        last = await impl.evaluate(ws_url=ws, expression=read_reply_js(site=site))
         if last.get("complete"):
             return {
                 "ok": True,

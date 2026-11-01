@@ -12,6 +12,7 @@ from maestro_landed.serving_map import load_serving_map
 from implement_admission.consumer_import_blinds import measure_import_grammar_blinds
 from implement_admission.consumer_import_verify import (
     _entrypoint_seeds,
+    consumers_declared_in_source,
     verify_consumer_import,
 )
 from implement_admission.restart_owed import restart_owed_line
@@ -329,6 +330,24 @@ def test_stargate_web_tab_handler_load_imports_package() -> None:
     assert loaded == 1
     status_mod = sys.modules[f"{package_name}.status"]
     assert status_mod.build_status_report.__module__ == "web_tab.status_report"
+    write_mod = sys.modules[f"{package_name}.write"]
+    assert write_mod.dispatch_write_op.__module__ == "web_tab.write_ops"
+
+
+@pytest.mark.offline
+def test_web_tab_consumers_mcp_verified_stargate_dynamic() -> None:
+    """Package CONSUMERS name mcp+stargate; static verify reaches mcp only.
+
+    Stargate loads ``pipelines/web_tab`` handlers dynamically — see
+    ``test_stargate_web_tab_handler_load_imports_package`` for that edge.
+    """
+    path = "libs/web_tab/__init__.py"
+    decl = consumers_declared_in_source(
+        (repo_root() / path).read_text(encoding="utf-8")
+    )
+    assert decl == ("mcp", "stargate")
+    assert verify_consumer_import("mcp", path) == "verified"
+    assert verify_consumer_import("stargate", path) == "contradicted"
 
 
 @pytest.mark.offline
