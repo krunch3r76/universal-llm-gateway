@@ -144,3 +144,67 @@ async def test_recording_port_refuses_wrong_surface_before_evaluate() -> None:
     assert plane["error"]["code"] == "target_out_of_scope"
     assert port.evaluated_targets == []
     assert plane["signed_in"]["signed_in"] is None
+
+
+@pytest.mark.asyncio
+async def test_claude_wrong_port_and_scheme_refused_without_connect() -> None:
+    def _connect(cdp_url: str):  # noqa: ARG001
+        raise AssertionError("connect")
+
+    port = HttpListCdpPort(connect=_connect)  # type: ignore[arg-type]
+    for tab_url in ("https://claude.ai:8080/", "http://claude.ai/"):
+        raw = await port.evaluate_on_target(
+            cdp_url="http://127.0.0.1:9343",
+            target_id="t",
+            expression="() => ({})",
+            tab_row={"id": "t", "url": tab_url},
+            surface="claude",
+        )
+        assert raw["error"]["code"] == "target_out_of_scope"
+        assert "url" not in raw
+
+
+@pytest.mark.asyncio
+async def test_observe_actuation_out_of_scope_clears_url_epoch() -> None:
+    port = RecordingCdpPort(
+        tabs=[
+            {
+                "id": "bad",
+                "url": "https://claude.ai:8080/chat?q=secret",
+                "title": "x",
+            }
+        ],
+    )
+
+    plane = await observe_actuation_plane(
+        cdp_url="http://127.0.0.1:9343",
+        target_id="bad",
+        port=port,
+        probe_js="() => ({})",
+        surface="claude",
+    )
+    assert plane["error"]["code"] == "target_out_of_scope"
+    epoch = plane["signed_in"]["epoch"]
+    assert epoch.get("url") == ""
+    assert epoch.get("conversation_id") is None
+    assert port.evaluated_targets == []
+
+
+@pytest.mark.asyncio
+async def test_malformed_port_tab_in_list_does_not_fail_probe() -> None:
+    port = RecordingCdpPort(
+        tabs=[
+            {"id": "ok", "url": "https://claude.ai/", "title": "ok"},
+            {"id": "garbage", "url": "https://claude.ai:abc/", "title": "bad"},
+        ],
+        evaluate_results={"ok": {"signed_in": True}},
+    )
+    plane = await observe_actuation_plane(
+        cdp_url="http://127.0.0.1:9343",
+        target_id="ok",
+        port=port,
+        probe_js="() => ({})",
+        surface="claude",
+    )
+    assert plane["signed_in"]["signed_in"] is True
+    assert port.evaluated_targets == ["ok"]

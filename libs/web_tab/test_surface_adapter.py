@@ -5,6 +5,7 @@ from __future__ import annotations
 from web_tab.surface_adapter import (
     CHATGPT_PROBE_JS,
     CLAUDE_PROBE_JS,
+    canonical_page_url,
     signed_in_from_signals,
     url_in_surface_scope,
 )
@@ -70,3 +71,27 @@ def test_chatgpt_surface_scheme_port_hardening() -> None:
     """ChatGPT paths refuse cleartext and non-default HTTPS ports."""
     assert not url_in_surface_scope("chatgpt", "http://chatgpt.com/c/abc")
     assert not url_in_surface_scope("chatgpt", "https://chatgpt.com:8080/")
+
+
+def test_malformed_port_tab_does_not_break_scope_probe() -> None:
+    """Invalid port strings are out of scope without raising."""
+    assert not url_in_surface_scope("claude", "https://claude.ai:abc/")
+    assert not url_in_surface_scope("claude", "https://claude.ai:99999/")
+    urls = [
+        "https://claude.ai/",
+        "https://claude.ai:abc/",
+        "https://claude.ai:8080/",
+    ]
+    assert all(
+        isinstance(url_in_surface_scope("claude", u), bool) for u in urls
+    )
+
+
+def test_canonical_page_url_strips_https_default_port() -> None:
+    assert canonical_page_url("https://claude.ai:443/x") == canonical_page_url(
+        "https://claude.ai/x"
+    )
+
+
+def test_canonical_page_url_never_raises_on_bad_port() -> None:
+    assert canonical_page_url("https://claude.ai:abc/path") == "https://claude.ai/path"

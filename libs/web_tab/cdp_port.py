@@ -97,7 +97,7 @@ class HttpListCdpPort:
         if not want_url:
             return {"stale": True}
         if not url_in_surface_scope(surface, want_url):
-            return {"error": {"code": "target_out_of_scope"}, "url": want_url}
+            return {"error": {"code": "target_out_of_scope"}}
 
         timeout_s = resolve_cdp_evaluate_timeout_s()
         cleanup_s = resolve_cdp_cleanup_timeout_s()

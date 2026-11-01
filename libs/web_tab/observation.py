@@ -114,6 +114,10 @@ async def observe_actuation_plane(
     else:
         cdp_reachable_val = None
 
+    if out_of_scope:
+        scoped_url = ""
+        conv_id = None
+
     return {
         "plane": "actuation",
         "cdp_url": cdp_url,

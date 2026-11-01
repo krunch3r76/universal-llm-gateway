@@ -53,6 +53,14 @@ def signed_in_from_signals(*, login_wall: bool, composer: bool) -> bool | None:
     return None
 
 
+def _parsed_port(parts) -> int | None:
+    """Return URL port or None; invalid port strings do not raise."""
+    try:
+        return parts.port
+    except ValueError:
+        return None
+
+
 def canonical_page_url(url: str) -> str:
     """Normalize a page URL for equality: host case, no fragment, no trailing slash.
 
@@ -60,10 +68,14 @@ def canonical_page_url(url: str) -> str:
     when their paths match.
     """
     parts = urlsplit((url or "").strip())
+    scheme = (parts.scheme or "").lower()
     host = (parts.hostname or "").lower()
-    port = f":{parts.port}" if parts.port else ""
+    port = _parsed_port(parts)
+    port_suffix = ""
+    if port is not None and not (scheme == "https" and port == 443):
+        port_suffix = f":{port}"
     path = parts.path.rstrip("/") or "/"
-    return f"{(parts.scheme or '').lower()}://{host}{port}{path}" + (
+    return f"{scheme}://{host}{port_suffix}{path}" + (
         f"?{parts.query}" if parts.query else ""
     )
 
@@ -72,7 +84,10 @@ def _url_https_default_port(parts) -> bool:
     """Refuse cleartext and non-default HTTPS ports before host matching."""
     if (parts.scheme or "").lower() != "https":
         return False
-    port = parts.port
+    try:
+        port = parts.port
+    except ValueError:
+        return False
     return port is None or port == 443
 
 
