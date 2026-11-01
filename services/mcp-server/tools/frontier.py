@@ -882,7 +882,20 @@ def register_frontier_tools(mcp: FastMCP) -> None:
             and isinstance(model, str)
             and model.startswith("cdp/")
         )
-        if not role and not seat and not cdp_roleless and not cursor_model_only:
+        from implement_admission.impresario_critic_admit import (
+            is_roleless_impresario_critic_generate,
+        )
+
+        impresario_critic_roleless = is_roleless_impresario_critic_generate(
+            op, role, seat, contract, model
+        )
+        if (
+            not role
+            and not seat
+            and not cdp_roleless
+            and not cursor_model_only
+            and not impresario_critic_roleless
+        ):
             return {
                 "error": {
                     "code": "validation_error",

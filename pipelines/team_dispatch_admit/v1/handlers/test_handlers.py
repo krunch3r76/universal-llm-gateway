@@ -234,6 +234,37 @@ def test_seat_unknown_claude_web() -> None:
 
 
 @pytest.mark.offline
+@pytest.mark.parametrize("job", ["code-review", "delivery-review", "check-review"])
+def test_roleless_impresario_critic_admits_api_role(job: str) -> None:
+    plan = run_full_admit(
+        {
+            "op": "generate",
+            "model": "anthropic/claude-sonnet-5-5",
+            "job": job,
+            "request_id": f"t-roleless-{job}",
+        }
+    )
+    assert plan.get("admitted") is True, plan
+    assert plan.get("backend") == "api_role"
+    assert plan.get("role") == "synthesizer"
+    assert plan.get("model") == "anthropic/claude-sonnet-5-5"
+
+
+@pytest.mark.offline
+def test_roleless_anthropic_freeform_still_requires_role() -> None:
+    plan = run_full_admit(
+        {
+            "op": "generate",
+            "model": "anthropic/claude-sonnet-5-5",
+            "job": "freeform",
+            "request_id": "t-roleless-freeform",
+        }
+    )
+    assert plan.get("admitted") is False
+    assert plan.get("code") == "role_or_seat_required"
+
+
+@pytest.mark.offline
 def test_model_only_cdp_admits() -> None:
     plan = run_full_admit(
         {

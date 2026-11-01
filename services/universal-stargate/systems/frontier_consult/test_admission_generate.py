@@ -282,6 +282,34 @@ def test_role_or_seat_required_rejected() -> None:
     assert exc_info.value.code == "role_or_seat_required"
 
 
+@pytest.mark.parametrize("job", ["code-review", "delivery-review", "check-review"])
+def test_roleless_impresario_critic_sonnet_admits(job: str) -> None:
+    plan = admit_pipeline.run_full_admit(
+        {
+            "op": "generate",
+            "model": "anthropic/claude-sonnet-5-5",
+            "job": job,
+            "request_id": f"req-roleless-{job}",
+        }
+    )
+    assert plan.get("admitted") is True, plan
+    assert plan.get("backend") == "api_role"
+    assert plan.get("role") == "synthesizer"
+
+
+def test_roleless_anthropic_freeform_still_role_or_seat_required() -> None:
+    plan = admit_pipeline.run_full_admit(
+        {
+            "op": "generate",
+            "model": "anthropic/claude-sonnet-5-5",
+            "job": "freeform",
+            "request_id": "req-roleless-freeform",
+        }
+    )
+    assert plan.get("admitted") is False
+    assert plan.get("code") == "role_or_seat_required"
+
+
 def test_auto_seats_roster() -> None:
     assert auto_seats() == ["cursor-sdk"]
 

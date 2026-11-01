@@ -12,6 +12,10 @@ from implement_admission.check_review_substrate import (
     is_check_review_api_role,
     resolve_check_review_model,
 )
+from implement_admission.impresario_critic_admit import (
+    is_roleless_impresario_critic_generate,
+    resolve_roleless_impresario_critic_api_role,
+)
 from implement_admission.routing import load_route_policy
 from implement_admission.workflow_registry import CHECK_REVIEW_WORKFLOW
 from model_id import ModelId
@@ -101,6 +105,18 @@ def evaluate_defaults(
                 "other branches mint their own ids"
             ),
         )
+
+    if is_roleless_impresario_critic_generate(op, role, seat, job, model):
+        try:
+            role = resolve_roleless_impresario_critic_api_role(str(model))
+        except ValueError as exc:
+            return reject_envelope(
+                status_code=422,
+                code="role_or_seat_required",
+                field="role",
+                reason=str(exc),
+                details=_teach("role|seat"),
+            )
 
     backend = _select_backend(role=role, seat=seat, model=model)
 
