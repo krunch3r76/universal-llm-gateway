@@ -30,12 +30,14 @@ from cursor_bridge.cursor_agents_hop import (
     prune_cursor_agents_predecessors,
 )
 from cursor_bridge.glass_services_js import (
+    APPLY_HOUSE_KNOBS_FN,
     RESOLVE_WORKSPACE_SERVICES_FN,
     _resolve_catalog_js,
     launch_new_agent_tab_js,
     probe_glass_composer_budget_js,
     submit_wake_line_js,
 )
+from cursor_bridge.house_knob_parameters import map_house_knob_parameters
 from cursor_bridge.wake_delivery import normalize_target
 
 pytestmark = pytest.mark.offline
@@ -191,7 +193,75 @@ def test_launch_tab_js_house_knobs_override_grok_effort_to_high() -> None:
     )
     assert "applyHouseKnobs" in js
     assert '"effort": "high"' in js
-    assert "setParam('reasoning_effort', knobs.effort)" in js
+    assert "mapHouseKnobParameters" in js
+    assert "loadParameterDefinitions" in js
+    assert "setParam('reasoning_effort'" not in APPLY_HOUSE_KNOBS_FN
+
+
+_OPUS_EFFORT_DEFS = [
+    {"id": "context", "enum": ["300k", "1m"]},
+    {"id": "effort", "enum": ["low", "medium", "high", "xhigh", "max"]},
+    {"id": "fast", "enum": ["false", "true"]},
+]
+
+
+def test_map_house_knobs_effort_def_id_low_and_fast() -> None:
+    params, warnings = map_house_knob_parameters(
+        _OPUS_EFFORT_DEFS,
+        {"effort": "low", "fast": "false"},
+        [],
+    )
+    assert warnings == []
+    by_id = {p["id"]: p["value"] for p in params}
+    assert by_id == {"effort": "low", "fast": "false"}
+    assert "reasoning_effort" not in by_id
+
+
+def test_map_house_knobs_reasoning_effort_suffix_match() -> None:
+    defs = [{"id": "reasoning_effort", "enum": ["low", "high", "xhigh"]}]
+    params, warnings = map_house_knob_parameters(defs, {"effort": "low"}, [])
+    assert warnings == []
+    assert params == [{"id": "reasoning_effort", "value": "low"}]
+
+
+def test_map_house_knobs_exact_effort_wins_over_suffix() -> None:
+    defs = [
+        {"id": "effort", "enum": ["low", "medium", "high"]},
+        {"id": "reasoning_effort", "enum": ["low", "high"]},
+    ]
+    params, warnings = map_house_knob_parameters(defs, {"effort": "low"}, [])
+    assert warnings == []
+    assert params == [{"id": "effort", "value": "low"}]
+
+
+def test_map_house_knobs_warn_unknown_enum_and_empty_defs() -> None:
+    params, warnings = map_house_knob_parameters(
+        _OPUS_EFFORT_DEFS,
+        {"effort": "not-a-level", "unknown_knob": "x"},
+        [],
+    )
+    assert not params
+    assert any("outside allowed" in w for w in warnings)
+    assert any("unmapped knob" in w for w in warnings)
+
+    empty_params, empty_warnings = map_house_knob_parameters(
+        [],
+        {"effort": "low"},
+        [],
+    )
+    assert empty_params == []
+    assert empty_warnings == ["missing parameterDefinitions for model"]
+    assert "reasoning_effort" not in {p["id"] for p in empty_params}
+
+
+def test_map_house_knobs_drops_stale_reasoning_effort_when_effort_def() -> None:
+    params, warnings = map_house_knob_parameters(
+        _OPUS_EFFORT_DEFS,
+        {"effort": "low"},
+        [{"id": "reasoning_effort", "value": "high"}],
+    )
+    assert warnings == []
+    assert params == [{"id": "effort", "value": "low"}]
 
 
 def test_launch_tab_js_default_house_knobs_keep_grok_xhigh() -> None:

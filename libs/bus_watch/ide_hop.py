@@ -28,6 +28,7 @@ import json
 import os
 import shlex
 import subprocess
+import sys
 import time
 import uuid
 from collections.abc import Iterable
@@ -638,6 +639,19 @@ def remote_launch_command(
     return base
 
 
+def _log_hop_knob_warnings(keystroke: dict[str, Any]) -> None:
+    """Log createAgent ``knob_warnings`` with prefix ``ide_hop.knob_unmapped``."""
+    raw = keystroke.get("knob_warnings")
+    if not isinstance(raw, list):
+        return
+    for item in raw:
+        if item is None:
+            continue
+        msg = str(item).strip()
+        if msg:
+            print(f"ide_hop.knob_unmapped {msg}", flush=True, file=sys.stderr)
+
+
 def _parse_keystroke_stdout(stdout: str) -> dict[str, Any]:
     """Structured keystroke telemetry from the remote launcher's stdout."""
     text = stdout.strip()
@@ -952,6 +966,7 @@ def fire_ide_hop(
             # read it). Parse the whole payload; fall back to the last line for a remote
             # that ever emits single-line JSON.
             keystroke = _parse_keystroke_stdout(proc.stdout)
+        _log_hop_knob_warnings(keystroke)
         # Deadline clock, after the keystroke returns. A sample taken before
         # the keystroke lets the dispatcher expire the hop while this call is
         # still inside ``wait_for_landed_transcript``. The transcript window

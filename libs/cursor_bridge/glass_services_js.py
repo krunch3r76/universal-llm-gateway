@@ -218,7 +218,7 @@ async function resolveCatalog(modelConfigService, label) {
     if (lower.includes('opus') && (lower.includes('5.5') || lower.includes('5-5'))) {
       return {
         modelId: 'claude-opus-5-5',
-        parameters: [{ id: 'reasoning_effort', value: effort || 'high' }],
+        parameters: [{ id: 'effort', value: effort || 'high' }],
       };
     }
     if (lower.includes('opus') && lower.includes('5')
@@ -273,27 +273,115 @@ async function resolveCatalog(modelConfigService, label) {
 """
 
 
+LOAD_PARAMETER_DEFINITIONS_FN = r"""
+function loadParameterDefinitions(modelConfigService, modelId) {
+  if (!modelConfigService || typeof modelConfigService.getAvailableDefaultModels !== 'function') {
+    return { defs: [], warnings: ['parameterDefinitions unavailable'] };
+  }
+  try {
+    const models = modelConfigService.getAvailableDefaultModels();
+    const list = Array.isArray(models) ? models : [];
+    const mid = String(modelId || '').trim();
+    for (const m of list) {
+      if (!m || typeof m !== 'object') continue;
+      const name = String(m.name || m.serverModelName || '').trim();
+      if (name === mid) {
+        const defs = m.parameterDefinitions;
+        return { defs: Array.isArray(defs) ? defs : [], warnings: [] };
+      }
+    }
+    return { defs: [], warnings: [`no parameterDefinitions for model ${mid}`] };
+  } catch (e) {
+    return { defs: [], warnings: ['parameterDefinitions load failed'] };
+  }
+}
+"""
+
 APPLY_HOUSE_KNOBS_FN = r"""
-function applyHouseKnobs(cat, knobs) {
-  if (!cat || !cat.modelId || !knobs || typeof knobs !== 'object') return cat;
-  const params = Array.isArray(cat.parameters)
-    ? cat.parameters.map((p) => (p ? { ...p } : p))
-    : [];
+function defAllowedValues(defn) {
+  if (!defn || typeof defn !== 'object') return null;
+  for (const key of ['enum', 'values', 'allowedValues']) {
+    const raw = defn[key];
+    if (Array.isArray(raw) && raw.length) return raw.map((v) => String(v));
+  }
+  if (String(defn.type || '').toLowerCase() === 'boolean') return ['false', 'true'];
+  return null;
+}
+function suffixToken(defId) {
+  const parts = String(defId || '').replace(/-/g, '_').split('_').filter(Boolean);
+  return parts.length ? parts[parts.length - 1] : String(defId || '');
+}
+function resolveKnobDefId(knobKey, defs) {
+  const byId = new Map();
+  for (const d of defs) {
+    if (d && d.id != null) byId.set(String(d.id), d);
+  }
+  if (byId.has(knobKey)) return { defId: knobKey, warning: null };
+  const matches = [];
+  for (const d of defs) {
+    if (!d || d.id == null) continue;
+    if (suffixToken(String(d.id)) === knobKey) matches.push(String(d.id));
+  }
+  if (matches.length === 1) return { defId: matches[0], warning: null };
+  if (matches.length > 1) {
+    return { defId: null, warning: `ambiguous knob ${knobKey} matches def ids ${matches.join(',')}` };
+  }
+  return { defId: null, warning: `unmapped knob ${knobKey}` };
+}
+function mapHouseKnobParameters(defs, knobs, existingParameters) {
+  const warnings = [];
+  const params = [];
+  for (const entry of existingParameters || []) {
+    if (!entry || entry.id == null) continue;
+    const val = entry.value;
+    if (val == null || String(val).trim() === '') continue;
+    params.push({ id: String(entry.id), value: String(val) });
+  }
+  const validDefIds = new Set(
+    defs.filter((d) => d && d.id != null).map((d) => String(d.id)),
+  );
+  if (!validDefIds.size) {
+    warnings.push('missing parameterDefinitions for model');
+    return { parameters: params, knob_warnings: warnings };
+  }
+  const filtered = params.filter((p) => validDefIds.has(p.id));
   const setParam = (id, value) => {
-    if (value === undefined || value === null || String(value).trim() === '') return;
     const s = String(value);
-    const idx = params.findIndex((p) => p && p.id === id);
+    const idx = filtered.findIndex((p) => p && p.id === id);
     const entry = { id, value: s };
-    if (idx >= 0) params[idx] = entry;
-    else params.push(entry);
+    if (idx >= 0) filtered[idx] = entry;
+    else filtered.push(entry);
   };
-  if (knobs.effort != null && String(knobs.effort).trim() !== '') {
-    setParam('reasoning_effort', knobs.effort);
+  for (const [knobKey, rawValue] of Object.entries(knobs || {})) {
+    if (rawValue == null || String(rawValue).trim() === '') continue;
+    const value = String(rawValue).trim();
+    const { defId, warning } = resolveKnobDefId(knobKey, defs);
+    if (warning) {
+      warnings.push(warning);
+      continue;
+    }
+    const defn = defs.find((d) => d && String(d.id) === defId) || {};
+    const allowed = defAllowedValues(defn);
+    if (allowed && !allowed.includes(value)) {
+      warnings.push(`knob ${knobKey} value ${value} outside allowed ${allowed.join(',')}`);
+      continue;
+    }
+    setParam(defId, value);
   }
-  if (knobs.fast != null && String(knobs.fast).trim() !== '') {
-    setParam('fast', knobs.fast);
+  return { parameters: filtered, knob_warnings: warnings };
+}
+async function applyHouseKnobs(modelConfigService, cat, knobs) {
+  if (!cat || !cat.modelId || !knobs || typeof knobs !== 'object') {
+    return { ...cat, knob_warnings: [] };
   }
-  return { modelId: cat.modelId, parameters: params };
+  const loaded = loadParameterDefinitions(modelConfigService, cat.modelId);
+  const mapped = mapHouseKnobParameters(
+    loaded.defs,
+    knobs,
+    Array.isArray(cat.parameters) ? cat.parameters : [],
+  );
+  const knob_warnings = [...loaded.warnings, ...mapped.knob_warnings];
+  return { modelId: cat.modelId, parameters: mapped.parameters, knob_warnings };
 }
 """
 
@@ -318,9 +406,11 @@ def launch_new_agent_tab_js(
         f"{GLASS_SERVICE_MAP_FN}\n"
         f"{RESOLVE_WORKSPACE_SERVICES_FN}\n"
         f"{_resolve_catalog_js()}\n"
+        f"{LOAD_PARAMETER_DEFINITIONS_FN}\n"
         f"{APPLY_HOUSE_KNOBS_FN}\n"
         f"  const requestedAgentId = {req_id};\n"
         "  const task = async () => {\n"
+        "  let hopKnobWarnings = [];\n"
         "  const text = "
         f"{msg};\n"
         "  const modelLabel = "
@@ -340,7 +430,10 @@ def launch_new_agent_tab_js(
         "  let modelConfig = null;\n"
         "  if (modelLabel && modelConfigService) {\n"
         "    const catRaw = await resolveCatalog(modelConfigService, modelLabel);\n"
-        "    const cat = houseKnobs ? applyHouseKnobs(catRaw, houseKnobs) : catRaw;\n"
+        "    const cat = houseKnobs\n"
+        "      ? await applyHouseKnobs(modelConfigService, catRaw, houseKnobs)\n"
+        "      : catRaw;\n"
+        "    if (cat && cat.knob_warnings) hopKnobWarnings = cat.knob_warnings;\n"
         "    if (cat && cat.modelId) {\n"
         "      modelConfig = {\n"
         "        modelName: cat.modelId,\n"
@@ -356,7 +449,8 @@ def launch_new_agent_tab_js(
         "      const existing = agentRepositoryService.getAgentHeader(requestedAgentId);\n"
         "      if (existing) {\n"
         "        return {ok: true, agent_id: requestedAgentId, editor_agent_id: requestedAgentId,\n"
-        "          transport: 'cdp_glass_services', method: 'already_created'};\n"
+        "          transport: 'cdp_glass_services', method: 'already_created',\n"
+        "          knob_warnings: hopKnobWarnings};\n"
         "      }\n"
         "    } catch (e) {}\n"
         "  }\n"
@@ -384,7 +478,8 @@ def launch_new_agent_tab_js(
         "      await glassActiveAgentService.setActiveAgentId(agentId);\n"
         "    }\n"
         "    return {ok: true, agent_id: agentId, editor_agent_id: agentId,\n"
-        "      transport: 'cdp_glass_services', method: 'createAgent'};\n"
+        "      transport: 'cdp_glass_services', method: 'createAgent',\n"
+        "      knob_warnings: hopKnobWarnings};\n"
         "  }\n"
         "  if (!composerService || !composerDataService || !composerChatService) {\n"
         "    return {ok: false, reason: 'missing_services'};\n"
@@ -403,7 +498,10 @@ def launch_new_agent_tab_js(
         "  if (!handle) return {ok: false, reason: 'no_handle', agent_id: agentId};\n"
         "  if (modelLabel && modelConfigService) {\n"
         "    const catRaw = await resolveCatalog(modelConfigService, modelLabel);\n"
-        "    const cat = houseKnobs ? applyHouseKnobs(catRaw, houseKnobs) : catRaw;\n"
+        "    const cat = houseKnobs\n"
+        "      ? await applyHouseKnobs(modelConfigService, catRaw, houseKnobs)\n"
+        "      : catRaw;\n"
+        "    if (cat && cat.knob_warnings) hopKnobWarnings = cat.knob_warnings;\n"
         "    if (cat && cat.modelId) {\n"
         "      modelConfigService.setModelConfigForComposer(handle, {\n"
         "        modelName: cat.modelId,\n"
@@ -455,6 +553,7 @@ def launch_new_agent_tab_js(
         "  const delivered = raceWinner !== 'timer';\n"
         "  return {ok: delivered, delivered, race_winner: raceWinner, agent_id: agentId,\n"
         "    editor_agent_id: agentId, transport: 'cdp_glass_services',\n"
+        "    knob_warnings: hopKnobWarnings,\n"
         "    reason: delivered ? 'submitted' : 'delivery_unconfirmed'};\n"
         "  };\n"
         "  window.__ulgPendingLaunchPromise = task();\n"
