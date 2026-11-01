@@ -309,6 +309,23 @@ async def test_on_harvest_receives_liveness_samples(monkeypatch) -> None:
 
 
 @pytest.mark.asyncio
+async def test_absent_header_is_not_retried_until_idle_deadline(monkeypatch) -> None:
+    async def scrape(_page):
+        raise ChatContextSkillsError(
+            "Context list is not on the rail \u2014 scrape refused until it is expanded"
+        )
+
+    monkeypatch.setattr(panel, "scrape_loaded_skills", scrape)
+    monkeypatch.setattr(panel, "emit_skill_fetch_decision", lambda **_k: None)
+    page = _Page()
+    with pytest.raises(ChatContextSkillsError, match="not on the rail"):
+        await panel.wait_for_induction_panel(
+            page, ["reasoning-posture"], timeout_s=30, interval_ms=1000
+        )
+    assert page.waits == []
+
+
+@pytest.mark.asyncio
 async def test_collapsed_header_is_not_retried(monkeypatch) -> None:
     async def scrape(_page):
         raise ChatContextSkillsError(
