@@ -480,3 +480,127 @@ async def test_try_emit_stale_attempt_reopens_inflight_replacement(
     assert len(calls) == 2
     row = ledger.memo_row(dispatch_id)
     assert row is not None and row["memo_state"] == "emitted"
+
+
+def _claim_snapshot(
+    ledger: CursorDispatchLedger, dispatch_id: str
+) -> tuple[object, object, object, object]:
+    row = ledger.memo_row(dispatch_id)
+    assert row is not None
+    return (
+        row["memo_state"],
+        row["memo_next_at"],
+        row["memo_claim_gen"],
+        row["memo_attempts"],
+    )
+
+
+@pytest.mark.asyncio
+async def test_late_stale_exception_cannot_change_inflight_b(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    ledger = CursorDispatchLedger.instance()
+    dispatch_id = "pb-stale-raise"
+    _admit_parent_bus(ledger, dispatch_id=dispatch_id)
+    ledger.mark_terminal(dispatch_id=dispatch_id, terminal_status="completed")
+    gate_a = asyncio.Event()
+    gate_b = asyncio.Event()
+    calls: list[int] = []
+
+    async def _bus_send(**_kwargs: object) -> tuple[dict[str, object], int]:
+        calls.append(1)
+        if len(calls) == 1:
+            await gate_a.wait()
+            raise RuntimeError("stale attempt A transport crash")
+        await gate_b.wait()
+        return {}, 201
+
+    monkeypatch.setattr(
+        "services.git_integration_worker.cursor_sdk_closeout.closeout_memo_emit.bus_send",
+        _bus_send,
+    )
+    task_a = asyncio.create_task(try_emit(dispatch_id))
+    await asyncio.sleep(0.05)
+    row = ledger.memo_row(dispatch_id)
+    assert row is not None and row["memo_state"] == "claimed"
+    gen_a = int(row["memo_claim_gen"])
+    with ledger._connect() as conn:
+        conn.execute(
+            "UPDATE cursor_sdk_dispatches SET memo_next_at=? WHERE dispatch_id=?",
+            (time.time() - 10, dispatch_id),
+        )
+    task_b = asyncio.create_task(try_emit(dispatch_id))
+    await asyncio.sleep(0.05)
+    assert len(calls) == 2
+    before = _claim_snapshot(ledger, dispatch_id)
+    assert before[0] == "claimed" and int(before[2]) == gen_a + 1
+    gate_a.set()
+    await task_a
+    assert _claim_snapshot(ledger, dispatch_id) == before
+    assert ledger.claim_memo(dispatch_id) is None
+    assert _claim_snapshot(ledger, dispatch_id) == before
+    gate_b.set()
+    await task_b
+    row = ledger.memo_row(dispatch_id)
+    assert row is not None and row["memo_state"] == "emitted"
+    assert int(row["memo_claim_gen"]) == gen_a + 1
+    assert len(calls) == 2
+
+
+@pytest.mark.asyncio
+async def test_same_attempt_exception_reschedules_then_retries(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    ledger = CursorDispatchLedger.instance()
+    dispatch_id = "pb-own-raise"
+    _admit_parent_bus(ledger, dispatch_id=dispatch_id)
+    ledger.mark_terminal(dispatch_id=dispatch_id, terminal_status="completed")
+    calls: list[int] = []
+
+    async def _bus_send(**_kwargs: object) -> tuple[dict[str, object], int]:
+        calls.append(1)
+        if len(calls) == 1:
+            raise RuntimeError("own attempt transport crash")
+        return {}, 201
+
+    monkeypatch.setattr(
+        "services.git_integration_worker.cursor_sdk_closeout.closeout_memo_emit.bus_send",
+        _bus_send,
+    )
+    started = time.time()
+    await try_emit(dispatch_id)
+    row = ledger.memo_row(dispatch_id)
+    assert row is not None
+    assert row["memo_state"] == "owed"
+    assert int(row["memo_attempts"]) == 1
+    assert int(row["memo_claim_gen"]) == 1
+    assert float(row["memo_next_at"]) >= started + 30
+    ledger.finish_memo(dispatch_id, state="owed", next_at=time.time() - 1)
+    assert await sweep_due() == 1
+    row = ledger.memo_row(dispatch_id)
+    assert row is not None and row["memo_state"] == "emitted"
+    assert int(row["memo_claim_gen"]) == 2
+    assert len(calls) == 2
+
+
+@pytest.mark.asyncio
+async def test_preclaim_exception_leaves_other_claim_untouched(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    ledger = CursorDispatchLedger.instance()
+    dispatch_id = "pb-preclaim-raise"
+    _admit_parent_bus(ledger, dispatch_id=dispatch_id)
+    ledger.mark_terminal(dispatch_id=dispatch_id, terminal_status="completed")
+    gen_b = ledger.claim_memo(dispatch_id)
+    assert gen_b is not None
+    before = _claim_snapshot(ledger, dispatch_id)
+
+    def _claim_raises(_dispatch_id: str) -> int | None:
+        raise RuntimeError("claim transaction crashed before any winner")
+
+    monkeypatch.setattr(ledger, "claim_memo", _claim_raises)
+    await try_emit(dispatch_id)
+    assert _claim_snapshot(ledger, dispatch_id) == before
+    ledger.finish_memo(dispatch_id, state="emitted", claim_gen=gen_b)
+    row = ledger.memo_row(dispatch_id)
+    assert row is not None and row["memo_state"] == "emitted"

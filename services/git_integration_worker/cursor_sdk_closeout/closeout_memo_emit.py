@@ -235,24 +235,19 @@ def build_request(row: dict[str, Any]) -> CloseoutMemoRequest | None:
 
 async def try_emit(dispatch_id: str) -> None:
     """Claim an owed row and POST, or record suppression. Never raises."""
+    attempt: dict[str, int] = {}
     try:
-        await _try_emit(dispatch_id)
+        await _try_emit(dispatch_id, attempt)
     except Exception:  # noqa: BLE001 — AC-10
         logger.exception("closeout memo emit failed dispatch_id=%s", dispatch_id)
-        from services.git_integration_worker.cursor_dispatch_ledger import (
-            CursorDispatchLedger,
-        )
-
-        row = CursorDispatchLedger.instance().memo_row(dispatch_id)
-        if row is not None and row.get("memo_state") == "claimed":
-            gen = row.get("memo_claim_gen")
-            claim_gen = int(gen) if gen is not None else None
+        # Only the token this attempt won may authorize cleanup. The row's
+        # current gen can belong to a replacement claim still in flight.
+        claim_gen = attempt.get("claim_gen")
+        if claim_gen is not None:
             _reschedule_after_crash(dispatch_id, claim_gen=claim_gen)
 
 
-def _reschedule_after_crash(
-    dispatch_id: str, *, claim_gen: int | None
-) -> None:
+def _reschedule_after_crash(dispatch_id: str, *, claim_gen: int) -> None:
     """Return a claimed row to owed so the sweep can retry. Terminal stays."""
     from services.git_integration_worker.cursor_dispatch_ledger import (
         CursorDispatchLedger,
@@ -312,8 +307,13 @@ def _hop_outcome_pending(row: dict[str, Any]) -> bool:
     return age < _CONDUCTOR_HOP_GRACE_S
 
 
-async def _try_emit(dispatch_id: str) -> bool:
-    """Return True once the row is claimed. Callers reschedule on raise."""
+async def _try_emit(dispatch_id: str, attempt: dict[str, int]) -> bool:
+    """Return True once the row is claimed. Callers reschedule on raise.
+
+    ``attempt["claim_gen"]`` is set to the won token before any await, so a
+    raise anywhere after the claim leaves the caller holding this attempt's
+    fence. It stays unset when no claim was won.
+    """
     from services.git_integration_worker.cursor_dispatch_ledger import (
         CursorDispatchLedger,
     )
@@ -335,6 +335,7 @@ async def _try_emit(dispatch_id: str) -> bool:
     claim_gen = ledger.claim_memo(dispatch_id)
     if claim_gen is None:
         return False
+    attempt["claim_gen"] = claim_gen
     row = ledger.memo_row(dispatch_id)
     if row is None:
         return True
