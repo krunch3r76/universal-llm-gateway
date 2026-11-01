@@ -9,6 +9,8 @@ import pytest
 from cursor_bridge.operator_paste import (
     WATERMARK,
     _assistant_began,
+    _submit_verified,
+    _target_verified,
     deliver_operator_paste,
     wrap_operator_message,
 )
@@ -101,12 +103,22 @@ async def test_deliver_operator_paste_grok_ok_readback(
         AsyncMock(side_effect=_probe_counted),
     )
     monkeypatch.setattr(
-        "cursor_bridge.operator_paste._paste",
+        "cursor_bridge.operator_paste._insert_composer_text",
+        AsyncMock(return_value={"ok": True}),
+    )
+    monkeypatch.setattr(
+        "cursor_bridge.operator_paste._submit_composer_enter",
         AsyncMock(return_value={"ok": True}),
     )
     monkeypatch.setattr(
         "cursor_bridge.operator_paste._capture_artifacts",
-        AsyncMock(return_value={"sha256_dom": "d" * 64, "sha256_png": "p" * 64}),
+        AsyncMock(
+            return_value={
+                "sha256_dom": "d" * 64,
+                "sha256_png": "p" * 64,
+                "screenshot_path": "/tmp/x.png",
+            }
+        ),
     )
 
     out = await deliver_operator_paste(
@@ -120,6 +132,8 @@ async def test_deliver_operator_paste_grok_ok_readback(
     )
     assert out["ok"] is True
     assert out["readback_ok"] is True
+    assert out["submitted"] is True
+    assert out["target_verified"] is True
     assert out["sha256_dom"] == "d" * 64
     assert out["locate_method"] == "sidebar"
 
@@ -192,12 +206,22 @@ async def test_deliver_operator_paste_polls_until_assistant_generating(
         AsyncMock(side_effect=_probe_counted),
     )
     monkeypatch.setattr(
-        "cursor_bridge.operator_paste._paste",
+        "cursor_bridge.operator_paste._insert_composer_text",
+        AsyncMock(return_value={"ok": True}),
+    )
+    monkeypatch.setattr(
+        "cursor_bridge.operator_paste._submit_composer_enter",
         AsyncMock(return_value={"ok": True}),
     )
     monkeypatch.setattr(
         "cursor_bridge.operator_paste._capture_artifacts",
-        AsyncMock(return_value={"sha256_dom": "d" * 64, "sha256_png": "p" * 64}),
+        AsyncMock(
+            return_value={
+                "sha256_dom": "d" * 64,
+                "sha256_png": "p" * 64,
+                "screenshot_path": "/tmp/x.png",
+            }
+        ),
     )
     sleeps: list[float] = []
 
@@ -271,12 +295,22 @@ async def test_deliver_operator_paste_hidden_via_cmd_k(
         AsyncMock(side_effect=_probe),
     )
     monkeypatch.setattr(
-        "cursor_bridge.operator_paste._paste",
+        "cursor_bridge.operator_paste._insert_composer_text",
+        AsyncMock(return_value={"ok": True}),
+    )
+    monkeypatch.setattr(
+        "cursor_bridge.operator_paste._submit_composer_enter",
         AsyncMock(return_value={"ok": True}),
     )
     monkeypatch.setattr(
         "cursor_bridge.operator_paste._capture_artifacts",
-        AsyncMock(return_value={"sha256_dom": "d" * 64, "sha256_png": "p" * 64}),
+        AsyncMock(
+            return_value={
+                "sha256_dom": "d" * 64,
+                "sha256_png": "p" * 64,
+                "screenshot_path": "/tmp/x.png",
+            }
+        ),
     )
 
     out = await deliver_operator_paste(
@@ -326,12 +360,22 @@ async def test_deliver_operator_paste_hidden_via_hidden_chats_manager(
         AsyncMock(side_effect=_probe),
     )
     monkeypatch.setattr(
-        "cursor_bridge.operator_paste._paste",
+        "cursor_bridge.operator_paste._insert_composer_text",
+        AsyncMock(return_value={"ok": True}),
+    )
+    monkeypatch.setattr(
+        "cursor_bridge.operator_paste._submit_composer_enter",
         AsyncMock(return_value={"ok": True}),
     )
     monkeypatch.setattr(
         "cursor_bridge.operator_paste._capture_artifacts",
-        AsyncMock(return_value={"sha256_dom": "d" * 64, "sha256_png": "p" * 64}),
+        AsyncMock(
+            return_value={
+                "sha256_dom": "d" * 64,
+                "sha256_png": "p" * 64,
+                "screenshot_path": "/tmp/x.png",
+            }
+        ),
     )
 
     out = await deliver_operator_paste(
@@ -414,3 +458,287 @@ async def test_deliver_operator_paste_refuses_agent_id_mismatch(
     )
     assert out["reason"] == "agent_id_mismatch"
     assert out["pasted"] is False
+
+
+def test_target_verified_requires_matching_active_agent_id() -> None:
+    assert _target_verified({"active_agent_id": "a"}, expected_agent_id="a")
+    assert not _target_verified({"active_agent_id": "b"}, expected_agent_id="a")
+    assert not _target_verified({"active_agent_id": ""}, expected_agent_id="a")
+
+
+def test_submit_verified_requires_empty_composer_and_transcript() -> None:
+    post = {
+        "composer_draft": "",
+        "recent_messages": [f"user line {WATERMARK}"],
+    }
+    assert _submit_verified(post, watermark=WATERMARK, body_snippet="user line")
+
+
+@pytest.mark.asyncio
+async def test_deliver_operator_paste_refuses_target_unverified(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    surface = _hidden_chat_surface(active_agent_id="agent-1")
+    monkeypatch.setattr(
+        "cursor_bridge.operator_paste.list_pages",
+        lambda _o: [{"title": "Grok Bot", "web_socket_debugger_url": "ws://x"}],
+    )
+    monkeypatch.setattr(
+        "cursor_bridge.operator_paste.visible_sidebar_agent_ids",
+        AsyncMock(return_value={"agent-1"}),
+    )
+    monkeypatch.setattr(
+        "cursor_bridge.operator_paste.probe_surface",
+        AsyncMock(return_value=surface),
+    )
+    monkeypatch.setattr(
+        "cursor_bridge.operator_paste._target_verified",
+        lambda _s, **_: False,
+    )
+    insert = AsyncMock(return_value={"ok": True})
+    monkeypatch.setattr("cursor_bridge.operator_paste._insert_composer_text", insert)
+
+    out = await deliver_operator_paste(
+        display="10",
+        app="grok",
+        agent_id="agent-1",
+        text="hi",
+        grant="operator",
+        authorization_source="agent-bus:21614#2",
+    )
+    assert out["reason"] == "target_unverified"
+    insert.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_deliver_operator_paste_exactly_one_insert_per_call(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    surface_pre = {
+        "state": "chat_list",
+        "active_title": "Test Grok",
+        "active_agent_id": "agent-1",
+        "titles": ["Test Grok"],
+        "title_counts": {"Test Grok": 1},
+        "agent_ids": {"agent-1": "Test Grok"},
+        "composer_draft": "",
+        "generating": False,
+        "recent_messages": [],
+    }
+    surface_post = {
+        **surface_pre,
+        "generating": True,
+        "recent_messages": [f"line with {WATERMARK}"],
+    }
+
+    async def _probe_counted(_ws: str) -> dict[str, Any]:
+        if not hasattr(_probe_counted, "n"):
+            _probe_counted.n = 0  # type: ignore[attr-defined]
+        _probe_counted.n += 1  # type: ignore[attr-defined]
+        return surface_pre if _probe_counted.n <= 1 else surface_post  # type: ignore[attr-defined]
+
+    insert = AsyncMock(return_value={"ok": True})
+    monkeypatch.setattr(
+        "cursor_bridge.operator_paste.list_pages",
+        lambda _o: [{"title": "Grok Bot", "web_socket_debugger_url": "ws://x"}],
+    )
+    monkeypatch.setattr(
+        "cursor_bridge.operator_paste.visible_sidebar_agent_ids",
+        AsyncMock(return_value={"agent-1"}),
+    )
+    monkeypatch.setattr(
+        "cursor_bridge.operator_paste.probe_surface",
+        AsyncMock(side_effect=_probe_counted),
+    )
+    monkeypatch.setattr("cursor_bridge.operator_paste._insert_composer_text", insert)
+    monkeypatch.setattr(
+        "cursor_bridge.operator_paste._submit_composer_enter",
+        AsyncMock(return_value={"ok": True}),
+    )
+    monkeypatch.setattr(
+        "cursor_bridge.operator_paste._capture_artifacts",
+        AsyncMock(
+            return_value={
+                "sha256_dom": "d" * 64,
+                "sha256_png": "p" * 64,
+                "screenshot_path": "/tmp/x.png",
+            }
+        ),
+    )
+
+    await deliver_operator_paste(
+        display="10",
+        app="grok",
+        agent_id="agent-1",
+        text="Operator relay test",
+        grant="operator",
+        authorization_source="agent-bus:21614#2",
+        scope="test",
+    )
+    assert insert.call_count == 1
+
+
+@pytest.mark.asyncio
+async def test_deliver_operator_paste_submit_retry_once_without_repaste(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    surface = {
+        "state": "chat_list",
+        "active_title": "Test Grok",
+        "active_agent_id": "agent-1",
+        "titles": ["Test Grok"],
+        "title_counts": {"Test Grok": 1},
+        "agent_ids": {"agent-1": "Test Grok"},
+        "composer_draft": "",
+        "generating": False,
+        "recent_messages": [],
+    }
+    submitted = {
+        **surface,
+        "generating": True,
+        "recent_messages": [f"relay {WATERMARK}"],
+    }
+    poll_calls = {"n": 0}
+
+    async def _poll_submit(_ws: str, **_: Any) -> tuple[dict[str, Any], bool]:
+        poll_calls["n"] += 1
+        if poll_calls["n"] == 1:
+            return {**surface, "composer_draft": "still typing"}, False
+        return submitted, True
+
+    insert = AsyncMock(return_value={"ok": True})
+    send_retry = AsyncMock(return_value={"ok": True, "send_fallback_clicked": True})
+    monkeypatch.setattr(
+        "cursor_bridge.operator_paste.list_pages",
+        lambda _o: [{"title": "Grok Bot", "web_socket_debugger_url": "ws://x"}],
+    )
+    monkeypatch.setattr(
+        "cursor_bridge.operator_paste.visible_sidebar_agent_ids",
+        AsyncMock(return_value={"agent-1"}),
+    )
+    monkeypatch.setattr(
+        "cursor_bridge.operator_paste.probe_surface",
+        AsyncMock(return_value=surface),
+    )
+    monkeypatch.setattr(
+        "cursor_bridge.operator_paste._poll_submit_verified", _poll_submit
+    )
+    monkeypatch.setattr("cursor_bridge.operator_paste._insert_composer_text", insert)
+    monkeypatch.setattr(
+        "cursor_bridge.operator_paste._submit_composer_enter",
+        AsyncMock(return_value={"ok": True}),
+    )
+    monkeypatch.setattr(
+        "cursor_bridge.operator_paste._submit_composer_send_button", send_retry
+    )
+    monkeypatch.setattr(
+        "cursor_bridge.operator_paste._capture_artifacts",
+        AsyncMock(
+            return_value={
+                "sha256_dom": "d" * 64,
+                "sha256_png": "p" * 64,
+                "screenshot_path": "/tmp/fail.png",
+            }
+        ),
+    )
+    monkeypatch.setattr(
+        "cursor_bridge.operator_paste._poll_readback",
+        AsyncMock(
+            return_value=(
+                submitted,
+                {
+                    "readback_ok": True,
+                    "composer_empty_after": True,
+                    "assistant_began": True,
+                    "watermark_visible": True,
+                },
+            )
+        ),
+    )
+
+    out = await deliver_operator_paste(
+        display="10",
+        app="grok",
+        agent_id="agent-1",
+        text="Operator relay test",
+        grant="operator",
+        authorization_source="agent-bus:21614#2",
+        scope="test",
+    )
+    assert insert.call_count == 1
+    assert send_retry.call_count == 1
+    assert poll_calls["n"] == 2
+    assert out["submitted"] is True
+    assert out["ok"] is True
+
+
+@pytest.mark.asyncio
+async def test_deliver_operator_paste_submitted_false_after_retry(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    surface = {
+        "state": "chat_list",
+        "active_title": "Test Grok",
+        "active_agent_id": "agent-1",
+        "titles": ["Test Grok"],
+        "title_counts": {"Test Grok": 1},
+        "agent_ids": {"agent-1": "Test Grok"},
+        "composer_draft": "",
+        "generating": False,
+        "recent_messages": [],
+    }
+    stuck = {**surface, "composer_draft": "stuck draft"}
+
+    async def _poll_submit(_ws: str, **_: Any) -> tuple[dict[str, Any], bool]:
+        return stuck, False
+
+    monkeypatch.setattr(
+        "cursor_bridge.operator_paste.list_pages",
+        lambda _o: [{"title": "Grok Bot", "web_socket_debugger_url": "ws://x"}],
+    )
+    monkeypatch.setattr(
+        "cursor_bridge.operator_paste.visible_sidebar_agent_ids",
+        AsyncMock(return_value={"agent-1"}),
+    )
+    monkeypatch.setattr(
+        "cursor_bridge.operator_paste.probe_surface",
+        AsyncMock(return_value=surface),
+    )
+    monkeypatch.setattr(
+        "cursor_bridge.operator_paste._poll_submit_verified", _poll_submit
+    )
+    monkeypatch.setattr(
+        "cursor_bridge.operator_paste._insert_composer_text",
+        AsyncMock(return_value={"ok": True}),
+    )
+    monkeypatch.setattr(
+        "cursor_bridge.operator_paste._submit_composer_enter",
+        AsyncMock(return_value={"ok": True}),
+    )
+    monkeypatch.setattr(
+        "cursor_bridge.operator_paste._submit_composer_send_button",
+        AsyncMock(return_value={"ok": False, "send_fallback_clicked": False}),
+    )
+    monkeypatch.setattr(
+        "cursor_bridge.operator_paste._capture_artifacts",
+        AsyncMock(
+            return_value={
+                "sha256_dom": "d" * 64,
+                "sha256_png": "p" * 64,
+                "screenshot_path": "/tmp/submit-fail.png",
+            }
+        ),
+    )
+
+    out = await deliver_operator_paste(
+        display="10",
+        app="grok",
+        agent_id="agent-1",
+        text="Operator relay test",
+        grant="operator",
+        authorization_source="agent-bus:21614#2",
+        scope="test",
+    )
+    assert out["submitted"] is False
+    assert out["reason"] == "submit_unverified"
+    assert out["screenshot_path"] == "/tmp/submit-fail.png"

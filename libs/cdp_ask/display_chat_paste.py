@@ -32,6 +32,9 @@ def _to_response(
         assistant_began=raw.get("assistant_began"),  # type: ignore[arg-type]
         watermark_visible=raw.get("watermark_visible"),  # type: ignore[arg-type]
         locate_method=str(raw.get("locate_method") or "") or None,
+        target_verified=raw.get("target_verified"),  # type: ignore[arg-type]
+        submitted=raw.get("submitted"),  # type: ignore[arg-type]
+        screenshot_path=str(raw.get("screenshot_path") or "") or None,
     )
 
 

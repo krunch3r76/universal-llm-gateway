@@ -33,3 +33,6 @@ class DisplayChatPasteResponse(BaseModel):
     assistant_began: bool | None = None
     watermark_visible: bool | None = None
     locate_method: str | None = None
+    target_verified: bool | None = None
+    submitted: bool | None = None
+    screenshot_path: str | None = None

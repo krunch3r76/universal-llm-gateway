@@ -3,8 +3,12 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 import hashlib
 import json
+import os
+import uuid
+from pathlib import Path
 from typing import Any
 from urllib.error import URLError
 
@@ -22,9 +26,9 @@ from cursor_bridge.wake_delivery import (
     _COMPOSER_JS,
     _busy_or_draft_reason,
     _display_lock,
-    _paste,
     _pick_page,
     _refuse,
+    _send_fallback_js,
     normalize_target,
 )
 
@@ -47,7 +51,16 @@ def _grant_refuse(reason: str, **extra: Any) -> dict[str, Any]:
     return {**_refuse(reason, **extra), "readback_ok": False}
 
 
-async def _capture_artifacts(ws_url: str) -> dict[str, str]:
+def _screenshot_dir() -> Path:
+    root = Path(os.environ.get("CORTEX_FILES_ROOT", "/tmp")).expanduser()
+    dest = root / "operator-paste-screenshots"
+    dest.mkdir(parents=True, exist_ok=True)
+    return dest
+
+
+async def _capture_artifacts(
+    ws_url: str, *, agent_id: str, phase: str
+) -> dict[str, str]:
     import websockets
 
     dom_js = (
@@ -75,12 +88,100 @@ async def _capture_artifacts(ws_url: str) -> dict[str, str]:
             )
         )
         raw_png = await asyncio.wait_for(_cdp_response(ws, 2), 8.0)
-    png_b64 = ((raw_png.get("result") or {}).get("data") or "").encode("ascii")
+    png_b64_str = (raw_png.get("result") or {}).get("data") or ""
+    png_b64 = png_b64_str.encode("ascii")
     dom_bytes = str(dom_val).encode("utf-8", errors="replace")
+    png_path = ""
+    if png_b64_str:
+        fname = f"{agent_id[:8]}-{phase}-{uuid.uuid4().hex[:12]}.png"
+        out = _screenshot_dir() / fname
+        out.write_bytes(base64.standard_b64decode(png_b64_str))
+        png_path = str(out)
     return {
         "sha256_dom": hashlib.sha256(dom_bytes).hexdigest(),
         "sha256_png": hashlib.sha256(png_b64).hexdigest() if png_b64 else "",
+        "screenshot_path": png_path,
     }
+
+
+async def _insert_composer_text(
+    ws_url: str, focus_js: str, line: str
+) -> dict[str, Any]:
+    """Focus composer and insert text once — no submit."""
+    import websockets
+
+    async with websockets.connect(ws_url, max_size=2_000_000) as ws:
+        await ws.send(
+            json.dumps(
+                {
+                    "id": 1,
+                    "method": "Runtime.evaluate",
+                    "params": {"expression": focus_js, "returnByValue": True},
+                }
+            )
+        )
+        focused = await asyncio.wait_for(_cdp_response(ws, 1), 5.0)
+        value = ((focused.get("result") or {}).get("result") or {}).get("value")
+        if not isinstance(value, dict) or not value.get("ok"):
+            reason = (
+                value.get("reason")
+                if isinstance(value, dict) and value.get("reason")
+                else "no_composer"
+            )
+            return {"ok": False, "reason": reason}
+        await ws.send(
+            json.dumps(
+                {"id": 2, "method": "Input.insertText", "params": {"text": line}}
+            )
+        )
+        await asyncio.wait_for(_cdp_response(ws, 2), 5.0)
+    return {"ok": True}
+
+
+async def _submit_composer_enter(ws_url: str) -> dict[str, Any]:
+    import websockets
+
+    async with websockets.connect(ws_url, max_size=2_000_000) as ws:
+        for mid, phase in ((1, "keyDown"), (2, "keyUp")):
+            await ws.send(
+                json.dumps(
+                    {
+                        "id": mid,
+                        "method": "Input.dispatchKeyEvent",
+                        "params": {
+                            "type": phase,
+                            "key": "Enter",
+                            "code": "Enter",
+                            "windowsVirtualKeyCode": 13,
+                            "nativeVirtualKeyCode": 13,
+                        },
+                    }
+                )
+            )
+            await asyncio.wait_for(_cdp_response(ws, mid), 5.0)
+    return {"ok": True, "method": "enter"}
+
+
+async def _submit_composer_send_button(ws_url: str, line: str) -> dict[str, Any]:
+    import websockets
+
+    async with websockets.connect(ws_url, max_size=2_000_000) as ws:
+        await ws.send(
+            json.dumps(
+                {
+                    "id": 1,
+                    "method": "Runtime.evaluate",
+                    "params": {
+                        "expression": _send_fallback_js(line),
+                        "returnByValue": True,
+                    },
+                }
+            )
+        )
+        fallback = await asyncio.wait_for(_cdp_response(ws, 1), 5.0)
+    val = ((fallback.get("result") or {}).get("result") or {}).get("value") or {}
+    clicked = bool(val.get("send_fallback_clicked"))
+    return {"ok": clicked, "method": "send_button", "send_fallback_clicked": clicked}
 
 
 async def _cdp_response(ws: Any, mid: int) -> dict[str, Any]:
@@ -90,8 +191,10 @@ async def _cdp_response(ws: Any, mid: int) -> dict[str, Any]:
             return msg
 
 
-_READBACK_POLL_TIMEOUT_S = 20.0
+_READBACK_POLL_TIMEOUT_S = 60.0
 _READBACK_POLL_INTERVAL_S = 0.4
+_SUBMIT_VERIFY_TIMEOUT_S = 8.0
+_SUBMIT_VERIFY_INTERVAL_S = 0.25
 
 
 def _assistant_began(
@@ -138,6 +241,53 @@ def _readback_ok(
     return _readback_fields(post, watermark=watermark, pre_messages=pre_messages)[
         "readback_ok"
     ]
+
+
+def _target_verified(surface: dict[str, Any], *, expected_agent_id: str) -> bool:
+    active = str(surface.get("active_agent_id") or "").strip()
+    return bool(active) and active == expected_agent_id
+
+
+def _message_in_transcript(
+    post: dict[str, Any], *, watermark: str, body_snippet: str
+) -> bool:
+    messages = [str(m) for m in (post.get("recent_messages") or [])]
+    snippet = body_snippet.strip()
+    return any(
+        watermark in m or (snippet and snippet in m) for m in messages
+    )
+
+
+def _submit_verified(
+    post: dict[str, Any], *, watermark: str, body_snippet: str
+) -> bool:
+    composer_empty = not str(post.get("composer_draft") or "").strip()
+    return composer_empty and _message_in_transcript(
+        post, watermark=watermark, body_snippet=body_snippet
+    )
+
+
+async def _poll_submit_verified(
+    ws_url: str,
+    *,
+    watermark: str,
+    body_snippet: str,
+    timeout_s: float = _SUBMIT_VERIFY_TIMEOUT_S,
+    interval_s: float = _SUBMIT_VERIFY_INTERVAL_S,
+) -> tuple[dict[str, Any], bool]:
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + timeout_s
+    post: dict[str, Any] = {}
+    verified = False
+    while loop.time() <= deadline:
+        post = await probe_surface(ws_url)
+        verified = _submit_verified(
+            post, watermark=watermark, body_snippet=body_snippet
+        )
+        if verified:
+            return post, True
+        await asyncio.sleep(interval_s)
+    return post, verified
 
 
 async def _poll_readback(
@@ -338,6 +488,18 @@ async def _deliver_operator_locked(
     if locate_method is None and aid_s in visible_ids:
         locate_method = "sidebar"
 
+    if not _target_verified(surface, expected_agent_id=aid_s):
+        return _grant_refuse(
+            "target_unverified",
+            display=disp,
+            app=app,
+            selected=selected,
+            active_agent_id=surface.get("active_agent_id"),
+            expected_agent_id=aid_s,
+            locate_method=locate_method,
+            target_verified=False,
+        )
+
     guard = _busy_or_draft_reason(surface)
     if guard:
         return _grant_refuse(
@@ -357,8 +519,10 @@ async def _deliver_operator_locked(
             selected=selected,
         )
     flat_line = " ".join(line.splitlines()).strip()
+    body_snippet = flat_line[:120]
+
     try:
-        paste_res = await _paste(ws_url, composer, flat_line)
+        insert_res = await _insert_composer_text(ws_url, composer, flat_line)
     except (TimeoutError, RuntimeError, OSError) as exc:
         return _grant_refuse(
             "paste_failed",
@@ -367,21 +531,84 @@ async def _deliver_operator_locked(
             selected=selected,
             detail=type(exc).__name__,
         )
-    if not paste_res.get("ok"):
+    if not insert_res.get("ok"):
         return _grant_refuse(
-            str(paste_res.get("reason") or "no_composer"),
+            str(insert_res.get("reason") or "no_composer"),
             display=disp,
             app=app,
             selected=selected,
             expected_agent_id=verdict.get("expected_agent_id"),
             active_agent_id=verdict.get("active_agent_id"),
         )
+
+    submit_methods: list[str] = []
+    try:
+        await _submit_composer_enter(ws_url)
+        submit_methods.append("enter")
+    except (TimeoutError, RuntimeError, OSError) as exc:
+        return _grant_refuse(
+            "submit_failed",
+            display=disp,
+            app=app,
+            selected=selected,
+            detail=type(exc).__name__,
+        )
+
+    post_submit, submitted = await _poll_submit_verified(
+        ws_url, watermark=WATERMARK, body_snippet=body_snippet
+    )
+    if not submitted:
+        try:
+            retry = await _submit_composer_send_button(ws_url, flat_line)
+            submit_methods.append("send_button_retry")
+            if retry.get("ok"):
+                post_submit, submitted = await _poll_submit_verified(
+                    ws_url, watermark=WATERMARK, body_snippet=body_snippet
+                )
+        except (TimeoutError, RuntimeError, OSError):
+            submitted = False
+
+    artifacts = await _capture_artifacts(
+        ws_url, agent_id=aid_s, phase="submit" if submitted else "submit_failed"
+    )
+
+    if not submitted:
+        return {
+            **verdict,
+            "ok": False,
+            "reason": "submit_unverified",
+            "pasted": True,
+            "delivered": False,
+            "readback_ok": False,
+            "submitted": False,
+            "target_verified": True,
+            "composer_empty_after": not str(
+                post_submit.get("composer_draft") or ""
+            ).strip(),
+            "assistant_began": False,
+            "watermark_visible": _message_in_transcript(
+                post_submit, watermark=WATERMARK, body_snippet=body_snippet
+            ),
+            "selected": selected,
+            "display": disp,
+            "app": app,
+            "agent_id": aid_s,
+            "locate_method": locate_method,
+            "message": line,
+            "submit_methods": submit_methods,
+            **artifacts,
+        }
+
     post, rb = await _poll_readback(
         ws_url, watermark=WATERMARK, pre_messages=pre_messages
     )
     readback_ok = rb["readback_ok"]
     delivered = readback_ok
-    artifacts = await _capture_artifacts(ws_url)
+    if delivered:
+        post_artifacts = await _capture_artifacts(
+            ws_url, agent_id=aid_s, phase="delivered"
+        )
+        artifacts = post_artifacts
     return {
         **verdict,
         "ok": delivered,
@@ -389,6 +616,8 @@ async def _deliver_operator_locked(
         "pasted": True,
         "delivered": delivered,
         "readback_ok": readback_ok,
+        "submitted": True,
+        "target_verified": True,
         "composer_empty_after": rb["composer_empty_after"],
         "assistant_began": rb["assistant_began"],
         "watermark_visible": rb["watermark_visible"],
@@ -398,6 +627,7 @@ async def _deliver_operator_locked(
         "agent_id": aid_s,
         "locate_method": locate_method,
         "message": line,
+        "submit_methods": submit_methods,
         **artifacts,
     }
 
