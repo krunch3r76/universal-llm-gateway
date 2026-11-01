@@ -18,8 +18,18 @@ class DisplayChatPasteRequest(BaseModel):
     select: bool = True
 
 
+DisplayChatPasteStatus = Literal[
+    "delivered",
+    "refused",
+    "operator_busy",
+    "submit_unverified",
+    "readback_failed",
+]
+
+
 class DisplayChatPasteResponse(BaseModel):
     ok: bool
+    status: DisplayChatPasteStatus | None = None
     code: str | None = None
     reason: str | None = None
     display: str | None = None

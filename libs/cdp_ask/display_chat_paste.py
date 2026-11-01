@@ -8,7 +8,20 @@ from cdp_ask.display_chat_events import display_chat_pasted, emit
 from cdp_ask.display_chat_models import (
     DisplayChatPasteRequest,
     DisplayChatPasteResponse,
+    DisplayChatPasteStatus,
 )
+
+
+def _paste_status(raw: dict[str, object], *, ok: bool, reason: str) -> DisplayChatPasteStatus:
+    if reason == "operator_busy":
+        return "operator_busy"
+    if ok and reason == "delivered":
+        return "delivered"
+    if reason == "submit_unverified":
+        return "submit_unverified"
+    if reason == "readback_failed":
+        return "readback_failed"
+    return "refused"
 
 
 def _to_response(
@@ -17,8 +30,10 @@ def _to_response(
     ok = bool(raw.get("ok"))
     reason = str(raw.get("reason") or "")
     code = None if ok else (reason or "refused")
+    status = _paste_status(raw, ok=ok, reason=reason)
     return DisplayChatPasteResponse(
         ok=ok,
+        status=status,
         code=code,
         reason=reason or None,
         display=str(raw.get("display") or req.display),

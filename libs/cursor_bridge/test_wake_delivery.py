@@ -340,7 +340,7 @@ def test_normalize_target_orion_node_cursor() -> None:
     assert out["origin"] == "http://127.0.0.1:19338"
 
 
-def test_normalize_target_bridge_client_rewrites_only_9338_and_9339(
+def test_normalize_target_bridge_client_rewrites_forwarded_cdp_ports(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(
@@ -350,7 +350,7 @@ def test_normalize_target_bridge_client_rewrites_only_9338_and_9339(
     assert normalize_target("8", "cursor")["origin"] == "http://172.18.0.1:9338"
     assert normalize_target(":9", "grok-bot")["origin"] == "http://172.18.0.1:9339"
     assert (
-        normalize_target("orion-node", "cursor")["origin"] == "http://127.0.0.1:19338"
+        normalize_target("orion-node", "cursor")["origin"] == "http://172.18.0.1:19338"
     )
     assert normalize_target("10", "grok")["origin"] == "http://127.0.0.1:9340"
     assert normalize_target("99", "cursor")["reason"] == "unknown_target"
