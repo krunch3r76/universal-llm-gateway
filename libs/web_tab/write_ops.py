@@ -19,7 +19,7 @@ from web_tab.commit_verify import (
     poll_read_reply,
     poll_verify_committed,
 )
-from web_tab.config import normalize_cdp_store_key
+from web_tab.config import normalize_cdp_store_key, resolve_cdp_for_web_tab_options
 from web_tab.events import emit_write_outcome
 from web_tab.grants import require_write_authorization
 from web_tab.operator_guard import operator_active_probe
@@ -531,11 +531,30 @@ async def execute_read_reply(
     }
 
 
+def _resolve_write_cdp_url(options: dict[str, Any]) -> tuple[str | None, dict[str, Any] | None]:
+    try:
+        return (
+            resolve_cdp_for_web_tab_options(
+                surface=options.get("surface"),
+                cdp_url=options.get("cdp_url"),
+            ),
+            None,
+        )
+    except ValueError as exc:
+        msg = str(exc)
+        if msg in {"missing_cdp_url", "cdp_surface_mismatch"}:
+            return None, {"ok": False, "code": msg}
+        if msg.startswith("invalid_cdp_url"):
+            return None, {"ok": False, "code": "invalid_cdp_url", "reason": msg}
+        raise
+
+
 async def dispatch_write_op(op: WriteOp, options: dict[str, Any]) -> dict[str, Any]:
     """Route pipeline/MCP options to a write op."""
-    cdp_url = str(options.get("cdp_url") or "").strip()
-    if not cdp_url:
-        return {"ok": False, "code": "missing_cdp_url"}
+    cdp_url, cdp_err = _resolve_write_cdp_url(options)
+    if cdp_err is not None:
+        return cdp_err
+    assert cdp_url is not None
     grant = options.get("grant")
     authorization_source = options.get("authorization_source")
     if op == "open":
