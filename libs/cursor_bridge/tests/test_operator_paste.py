@@ -9,6 +9,7 @@ import pytest
 from cursor_bridge.operator_paste import (
     WATERMARK,
     _assistant_began,
+    _readback_fields,
     _dom_verification_conclusive,
     _sha256_dom_from_surface,
     _submit_verified,
@@ -181,6 +182,36 @@ def test_assistant_began_after_watermark_in_rolling_six_message_window() -> None
     }
     assert _assistant_began(surface, watermark=WATERMARK, pre_messages=pre) is True
     assert len(post) == len(pre)
+
+
+def test_assistant_began_from_grok_message_turns_fixture() -> None:
+    import json
+    from pathlib import Path
+
+    fixture = json.loads(
+        (
+            Path(__file__).parent / "fixtures" / "grok_operator_chat_turns.json"
+        ).read_text(encoding="utf-8")
+    )
+    pre = ["prior assistant prose"]
+    assert (
+        _assistant_began(
+            fixture,
+            watermark=WATERMARK,
+            pre_messages=pre,
+            body_snippet="Falsifier F1",
+        )
+        is True
+    )
+    fields = _readback_fields(
+        fixture,
+        watermark=WATERMARK,
+        pre_messages=pre,
+        body_snippet="Falsifier F1",
+    )
+    assert fields["watermark_visible"] is True
+    assert fields["assistant_began"] is True
+    assert fields["readback_ok"] is True
 
 
 @pytest.mark.asyncio
@@ -657,7 +688,96 @@ async def test_deliver_operator_paste_submit_retry_once_without_repaste(
     assert poll_calls["n"] == 2
     assert out["submitted"] is True
     assert out["ok"] is True
-    assert out["submit_methods"] == ["send_button", "cdp_enter"]
+
+
+@pytest.mark.asyncio
+async def test_submit_retry_skips_cdp_enter_when_transcript_has_watermark(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    line = "Operator relay Scope: F1 skip-enter test"
+    flat = " ".join(line.splitlines())
+    surface = {
+        "state": "chat_list",
+        "active_title": "Test Grok",
+        "active_agent_id": "agent-1",
+        "titles": ["Test Grok"],
+        "title_counts": {"Test Grok": 1},
+        "agent_ids": {"agent-1": "Test Grok"},
+        "composer_draft": "",
+        "generating": False,
+        "recent_messages": [],
+    }
+    verified_surface = {
+        **surface,
+        "composer_draft": "",
+        "recent_messages": [f"{flat} {WATERMARK}"],
+        "message_turns": [
+            {"role": "user", "text": f"{flat} {WATERMARK}"},
+        ],
+    }
+
+    async def _poll_submit(_ws: str, **_: Any) -> tuple[dict[str, Any], bool]:
+        return {**surface, "composer_draft": "draft"}, False
+
+    probe_calls = {"n": 0}
+
+    async def _probe(_ws: str) -> dict[str, Any]:
+        probe_calls["n"] += 1
+        if probe_calls["n"] == 1:
+            return surface
+        return verified_surface
+
+    insert = AsyncMock(return_value={"ok": True})
+    send_btn = AsyncMock(return_value={"ok": True, "send_fallback_clicked": True})
+    enter = AsyncMock(return_value={"ok": True, "method": "cdp_enter"})
+    monkeypatch.setattr(
+        "cursor_bridge.operator_paste.list_pages",
+        lambda _o: [{"title": "Grok Bot", "web_socket_debugger_url": "ws://x"}],
+    )
+    monkeypatch.setattr(
+        "cursor_bridge.operator_paste.visible_sidebar_agent_ids",
+        AsyncMock(return_value={"agent-1"}),
+    )
+    monkeypatch.setattr("cursor_bridge.operator_paste.probe_surface", _probe)
+    monkeypatch.setattr(
+        "cursor_bridge.operator_paste._poll_submit_verified", _poll_submit
+    )
+    monkeypatch.setattr("cursor_bridge.operator_paste._insert_composer_text", insert)
+    monkeypatch.setattr(
+        "cursor_bridge.operator_paste._submit_composer_send_button", send_btn
+    )
+    monkeypatch.setattr("cursor_bridge.operator_paste._submit_composer_enter", enter)
+    monkeypatch.setattr(
+        "cursor_bridge.operator_paste._capture_screenshot_artifact",
+        AsyncMock(return_value={"sha256_png": None, "screenshot_path": None}),
+    )
+    monkeypatch.setattr(
+        "cursor_bridge.operator_paste._poll_readback",
+        AsyncMock(
+            return_value=(
+                verified_surface,
+                {
+                    "readback_ok": True,
+                    "composer_empty_after": True,
+                    "assistant_began": True,
+                    "watermark_visible": True,
+                },
+            )
+        ),
+    )
+
+    out = await deliver_operator_paste(
+        display="10",
+        app="grok",
+        agent_id="agent-1",
+        text=line,
+        grant="operator",
+        authorization_source="agent-bus:21614#2",
+        scope="test",
+    )
+    enter.assert_not_awaited()
+    assert out["submitted"] is True
+    assert out["submit_methods"] == ["send_button"]
 
 
 @pytest.mark.asyncio

@@ -398,37 +398,47 @@ async def _guarded_insert_and_submit(
             post_submit = surface
 
         if not submitted:
-            matched, surface = await _probe_agent_match(
-                ws_url, expected_agent_id=aid_s
-            )
-            if not matched:
-                await clear_our_composer_draft(
-                    ws_url, selector=prompt_sel, watermark=WATERMARK, line=flat_line
+            retry_surface = await probe_surface(ws_url)
+            if _submit_verified(
+                retry_surface, watermark=WATERMARK, body_snippet=body_snippet
+            ):
+                post_submit = retry_surface
+                submitted = True
+            else:
+                matched, surface = await _probe_agent_match(
+                    ws_url, expected_agent_id=aid_s
                 )
-                return (
-                    _target_changed_refuse(
-                        disp=disp,
-                        app=app,
-                        aid_s=aid_s,
-                        selected=selected,
-                        locate_method=locate_method,
-                        surface=surface,
-                        line=line,
-                        verdict=verdict,
-                    ),
-                    False,
-                    surface,
-                    submit_methods,
-                )
-            try:
-                enter = await _submit_composer_enter(ws_url)
-                submit_methods.append("cdp_enter")
-                if enter.get("ok"):
-                    post_submit, submitted = await _poll_submit_verified(
-                        ws_url, watermark=WATERMARK, body_snippet=body_snippet
+                if not matched:
+                    await clear_our_composer_draft(
+                        ws_url,
+                        selector=prompt_sel,
+                        watermark=WATERMARK,
+                        line=flat_line,
                     )
-            except (TimeoutError, RuntimeError, OSError):
-                submitted = False
+                    return (
+                        _target_changed_refuse(
+                            disp=disp,
+                            app=app,
+                            aid_s=aid_s,
+                            selected=selected,
+                            locate_method=locate_method,
+                            surface=surface,
+                            line=line,
+                            verdict=verdict,
+                        ),
+                        False,
+                        surface,
+                        submit_methods,
+                    )
+                try:
+                    enter = await _submit_composer_enter(ws_url)
+                    submit_methods.append("cdp_enter")
+                    if enter.get("ok"):
+                        post_submit, submitted = await _poll_submit_verified(
+                            ws_url, watermark=WATERMARK, body_snippet=body_snippet
+                        )
+                except (TimeoutError, RuntimeError, OSError):
+                    submitted = False
 
         matched, verify_surface = await _probe_agent_match(
             ws_url, expected_agent_id=aid_s
@@ -469,16 +479,48 @@ _SUBMIT_VERIFY_TIMEOUT_S = 8.0
 _SUBMIT_VERIFY_INTERVAL_S = 0.25
 
 
+def _message_turns(post: dict[str, Any]) -> list[dict[str, str]]:
+    raw = post.get("message_turns") or []
+    turns: list[dict[str, str]] = []
+    for item in raw:
+        if not isinstance(item, dict):
+            continue
+        role = str(item.get("role") or "").strip().lower()
+        text = str(item.get("text") or "").strip()
+        if role in {"user", "assistant"} and text:
+            turns.append({"role": role, "text": text})
+    return turns
+
+
 def _assistant_began(
-    post: dict[str, Any], *, watermark: str, pre_messages: list[str]
+    post: dict[str, Any],
+    *,
+    watermark: str,
+    pre_messages: list[str],
+    body_snippet: str = "",
 ) -> bool:
-    """True when streaming is active or assistant prose appears after the watermark turn."""
+    """True when streaming is active or assistant prose appears after our user turn."""
     if bool(post.get("generating")):
         return True
+    snippet = body_snippet.strip()
+    turns = _message_turns(post)
+    if turns:
+        user_idx = -1
+        for i, turn in enumerate(turns):
+            if turn["role"] != "user":
+                continue
+            text = turn["text"]
+            if watermark in text or (snippet and snippet in text):
+                user_idx = i
+        if user_idx >= 0:
+            for turn in turns[user_idx + 1 :]:
+                if turn["role"] == "assistant" and turn["text"].strip():
+                    return True
+        return False
     messages = [str(m) for m in (post.get("recent_messages") or [])]
     wm_idx = -1
     for i, msg in enumerate(messages):
-        if watermark in msg:
+        if watermark in msg or (snippet and snippet in msg):
             wm_idx = i
     if wm_idx >= 0 and wm_idx < len(messages) - 1:
         return True
@@ -490,13 +532,31 @@ def _assistant_began(
 
 
 def _readback_fields(
-    post: dict[str, Any], *, watermark: str, pre_messages: list[str]
+    post: dict[str, Any],
+    *,
+    watermark: str,
+    pre_messages: list[str],
+    body_snippet: str = "",
 ) -> dict[str, bool]:
     composer_empty = not str(post.get("composer_draft") or "").strip()
-    messages = [str(m) for m in (post.get("recent_messages") or [])]
-    watermark_visible = any(watermark in m for m in messages)
+    snippet = body_snippet.strip()
+    turns = _message_turns(post)
+    if turns:
+        watermark_visible = any(
+            turn["role"] == "user"
+            and (watermark in turn["text"] or (snippet and snippet in turn["text"]))
+            for turn in turns
+        )
+    else:
+        messages = [str(m) for m in (post.get("recent_messages") or [])]
+        watermark_visible = any(
+            watermark in m or (snippet and snippet in m) for m in messages
+        )
     assistant_began = _assistant_began(
-        post, watermark=watermark, pre_messages=pre_messages
+        post,
+        watermark=watermark,
+        pre_messages=pre_messages,
+        body_snippet=body_snippet,
     )
     readback_ok = composer_empty and watermark_visible and assistant_began
     return {
@@ -565,16 +625,24 @@ async def _poll_readback(
     *,
     watermark: str,
     pre_messages: list[str],
+    body_snippet: str = "",
     timeout_s: float = _READBACK_POLL_TIMEOUT_S,
     interval_s: float = _READBACK_POLL_INTERVAL_S,
 ) -> tuple[dict[str, Any], dict[str, bool]]:
     loop = asyncio.get_running_loop()
     deadline = loop.time() + timeout_s
     post: dict[str, Any] = {}
-    fields = _readback_fields(post, watermark=watermark, pre_messages=pre_messages)
+    fields = _readback_fields(
+        post, watermark=watermark, pre_messages=pre_messages, body_snippet=body_snippet
+    )
     while loop.time() <= deadline:
         post = await probe_surface(ws_url)
-        fields = _readback_fields(post, watermark=watermark, pre_messages=pre_messages)
+        fields = _readback_fields(
+            post,
+            watermark=watermark,
+            pre_messages=pre_messages,
+            body_snippet=body_snippet,
+        )
         if fields["readback_ok"]:
             return post, fields
         await asyncio.sleep(interval_s)
@@ -894,7 +962,10 @@ async def _deliver_operator_locked(
         }
 
     post, rb = await _poll_readback(
-        ws_url, watermark=WATERMARK, pre_messages=pre_messages
+        ws_url,
+        watermark=WATERMARK,
+        pre_messages=pre_messages,
+        body_snippet=body_snippet,
     )
     readback_ok = rb["readback_ok"]
     delivered = readback_ok

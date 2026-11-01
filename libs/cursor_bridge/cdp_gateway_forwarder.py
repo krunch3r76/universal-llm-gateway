@@ -1,6 +1,6 @@
 """Gateway-only TCP forwarder for host Cursor and Grok CDP ports.
 
-The mcp-server container cannot open ``127.0.0.1:9338``, ``:9339``, or ``:19338``
+The mcp-server container cannot open ``127.0.0.1:9338``, ``:9339``, ``:9340``, or ``:19338``
 because that loopback is the container, not the host where Cursor and grok-bot
 listen. This module is the container-side origin rewrite and the host-side
 listener that compose runs as ``cdp-gateway-forwarder``. Host and Stargate
@@ -26,7 +26,7 @@ logger = get_logger(__name__)
 
 GATEWAY_HOST = "172.18.0.1"
 LOOPBACK_HOST = "127.0.0.1"
-FORWARDED_PORTS = (9338, 9339, 19338)
+FORWARDED_PORTS = (9338, 9339, 9340, 19338)
 _BRIDGE = ipaddress.ip_network("172.18.0.0/16")
 _GATEWAY = ipaddress.ip_address(GATEWAY_HOST)
 _TRIE = Path("/proc/net/fib_trie")
@@ -185,9 +185,9 @@ def _gateway_origin(origin: str) -> str | None:
 def container_cdp_origin(
     origin: str, *, addresses: frozenset[str] | None = None
 ) -> str:
-    """Rewrite loopback 9338/9339/19338 to the gateway only for a bridge client.
+    """Rewrite loopback 9338/9339/9340/19338 to the gateway only for a bridge client.
 
-    Any other origin, including grok display 10 ``9340``, is returned unchanged.
+    Any other loopback port is returned unchanged.
     When ``addresses`` is omitted the local
     fib_trie is read. This function does not open 9338, 9339, or 19338.
     """

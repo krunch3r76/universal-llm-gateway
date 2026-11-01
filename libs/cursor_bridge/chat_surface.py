@@ -108,10 +108,26 @@ _PROBE_JS = r"""
     const lbl = (b.getAttribute('aria-label') || b.getAttribute('title') || '').trim().toLowerCase();
     return lbl === 'stop' || lbl.startsWith('stop ') || lbl.includes('stop generating') || lbl.includes('stop response');
   });
-  const prose = Array.from(document.querySelectorAll('.sand-message-prose'))
-    .slice(-6)
-    .map((el) => (el.innerText || '').trim());
-  return {labels, items, composer_draft: composerDraft, generating, recent_messages: prose};
+  const proseEls = Array.from(document.querySelectorAll('.sand-message-prose')).slice(-12);
+  const proseUser = (el) => {
+    const cls = el.className || '';
+    const parent = el.parentElement;
+    const pcls = parent ? (parent.className || '') : '';
+    return cls.includes('sand-ehausa') || pcls.includes('sand-ufnvkl');
+  };
+  const message_turns = proseEls.map((el) => ({
+    role: proseUser(el) ? 'user' : 'assistant',
+    text: (el.innerText || '').trim(),
+  }));
+  const prose = message_turns.slice(-6).map((t) => t.text);
+  return {
+    labels,
+    items,
+    composer_draft: composerDraft,
+    generating,
+    recent_messages: prose,
+    message_turns,
+  };
 })()
 """
 
@@ -123,6 +139,7 @@ def classify_surface(
     composer_draft: str = "",
     generating: bool = False,
     recent_messages: list[str] | None = None,
+    message_turns: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """Turn a DOM probe into a sidebar observation.
 
@@ -171,6 +188,7 @@ def classify_surface(
         "composer_draft": composer_draft,
         "generating": bool(generating),
         "recent_messages": list(recent_messages or []),
+        "message_turns": list(message_turns or []),
     }
 
 
@@ -304,12 +322,19 @@ async def _read_surface(ws_url: str, *, timeout_s: float) -> dict[str, Any]:
         raise RuntimeError(f"surface probe failed: {detail or raw}")
     labels = [str(x) for x in value.get("labels") or []]
     items = [x for x in value.get("items") or [] if isinstance(x, dict)]
+    turns_raw = value.get("message_turns") or []
+    message_turns = [
+        {"role": str(t.get("role") or ""), "text": str(t.get("text") or "")}
+        for t in turns_raw
+        if isinstance(t, dict)
+    ]
     return classify_surface(
         labels,
         items,
         composer_draft=str(value.get("composer_draft") or ""),
         generating=bool(value.get("generating")),
         recent_messages=[str(x) for x in value.get("recent_messages") or []],
+        message_turns=message_turns,
     )
 
 

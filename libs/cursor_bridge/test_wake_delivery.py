@@ -352,7 +352,7 @@ def test_normalize_target_bridge_client_rewrites_forwarded_cdp_ports(
     assert (
         normalize_target("orion-node", "cursor")["origin"] == "http://172.18.0.1:19338"
     )
-    assert normalize_target("10", "grok")["origin"] == "http://127.0.0.1:9340"
+    assert normalize_target("10", "grok")["origin"] == "http://172.18.0.1:9340"
     assert normalize_target("99", "cursor")["reason"] == "unknown_target"
 
 
