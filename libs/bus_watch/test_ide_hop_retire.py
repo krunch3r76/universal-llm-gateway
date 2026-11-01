@@ -95,7 +95,7 @@ def test_departing_tail_pids_includes_house_label(monkeypatch: pytest.MonkeyPatc
         "house-12586-a1b2c3",
     ]
     monkeypatch.setattr(
-        "bus_watch.ide_hop_retire.psutil.process_iter",
+        "psutil.process_iter",
         lambda attrs: [FakeProc(9001, house_tail)],
     )
     pids = departing_tail_pids("12586", labels=["12586-r1-closeout"])
@@ -245,7 +245,7 @@ def test_tab_background_pids_skips_supervise_tails(
             return envs[pid]
 
     monkeypatch.setattr(
-        "bus_watch.ide_hop_retire.psutil.process_iter",
+        "psutil.process_iter",
         lambda attrs: [FakeProc(9001, tail_argv), FakeProc(9002, other_argv)],
     )
     monkeypatch.setattr(
@@ -253,7 +253,7 @@ def test_tab_background_pids_skips_supervise_tails(
         lambda p: FakeEnvironPath(str(p)),
     )
     monkeypatch.setattr(
-        "bus_watch.ide_hop_retire.psutil.Process",
+        "psutil.Process",
         lambda pid: type("P", (), {"ppid": lambda self: 1})(),
     )
     pids = tab_background_pids(tid)
