@@ -113,6 +113,22 @@ async def test_out_of_scope_host_does_not_connect() -> None:
 
 
 @pytest.mark.asyncio
+async def test_claude_surface_allows_claude_ai_tab() -> None:
+    page = _Page("https://claude.ai/", "claude-tab")
+    browser = _Browser([page])
+    raw = await _port(browser).evaluate_on_target(
+        cdp_url="http://127.0.0.1:9343",
+        target_id="claude-tab",
+        expression="() => ({})",
+        tab_row={"id": "claude-tab", "url": "https://claude.ai/"},
+        surface="claude",
+    )
+    assert raw["signed_in"] is True
+    assert page.evals == 1
+    assert browser.closed is False
+
+
+@pytest.mark.asyncio
 async def test_recording_port_refuses_wrong_surface_before_evaluate() -> None:
     port = RecordingCdpPort(
         tabs=[{"id": "g", "url": "https://accounts.google.com/x", "title": "g"}],

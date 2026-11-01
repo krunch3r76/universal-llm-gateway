@@ -1,4 +1,4 @@
-"""Surface-specific read-only probe JS (ChatGPT first, Claude beside it)."""
+"""Surface-specific read-only probe JS (ChatGPT first)."""
 
 from __future__ import annotations
 
@@ -20,26 +20,26 @@ CHATGPT_PROBE_JS = """
 }
 """
 
-# Login wall only. No clicks, typing, or navigation.
 CLAUDE_PROBE_JS = """
 () => {
   const url = location.href;
-  const loginWall = /\\/(login|signin|sign-in)\\b/i.test(url)
-    || !!document.querySelector('input[type="email"], input[type="password"]');
-  return { url, title: document.title, login_wall: loginWall };
+  const loginWall = /\\/login/i.test(location.pathname)
+    || !!document.querySelector('a[href*="/login"], button[data-testid="login"]');
+  return {
+    url,
+    title: document.title,
+    login_wall: loginWall,
+    signed_in: loginWall ? false : null,
+  };
 }
 """
 
 _CHATGPT_SURFACES = frozenset({"chatgpt", "openai", ""})
-_CLAUDE_SURFACES = frozenset({"claude"})
-_CLAUDE_CONSOLE_SURFACES = frozenset({"claude-console"})
-_SUPPORTED_SURFACES = _CHATGPT_SURFACES | _CLAUDE_SURFACES | _CLAUDE_CONSOLE_SURFACES
+_CLAUDE_SURFACES = frozenset({"claude", "claude-console"})
+_SUPPORTED_SURFACES = _CHATGPT_SURFACES | _CLAUDE_SURFACES
 _CHATGPT_HOSTS = frozenset({"chatgpt.com", "www.chatgpt.com"})
 _CLAUDE_HOSTS = frozenset({"claude.ai", "www.claude.ai"})
-# console.anthropic.com redirects the live house to platform.claude.com.
-_CLAUDE_CONSOLE_HOSTS = frozenset(
-    {"console.anthropic.com", "platform.claude.com", "www.platform.claude.com"}
-)
+_CLAUDE_CONSOLE_HOSTS = frozenset({"console.anthropic.com"})
 
 
 def signed_in_from_signals(*, login_wall: bool, composer: bool) -> bool | None:
@@ -66,23 +66,7 @@ def canonical_page_url(url: str) -> str:
     )
 
 
-def _host(url: str) -> str:
-    return (urlsplit((url or "").strip()).hostname or "").lower()
-
-
-def url_in_surface_scope(surface: str, url: str) -> bool:
-    """Host and path gate for *surface* before any DOM evaluation.
-
-    ChatGPT observation may run on ``chatgpt.com`` paths ``/``, ``/c/…``, and
-    ``/g/…`` only. Claude and the console match their hosts on any path.
-    Other hosts (including auth and account sites) are refused.
-    """
-    if surface in _CLAUDE_SURFACES:
-        return _host(url) in _CLAUDE_HOSTS
-    if surface in _CLAUDE_CONSOLE_SURFACES:
-        return _host(url) in _CLAUDE_CONSOLE_HOSTS
-    if surface not in _CHATGPT_SURFACES:
-        return False
+def _chatgpt_url_in_scope(url: str) -> bool:
     parts = urlsplit((url or "").strip())
     host = (parts.hostname or "").lower()
     if host not in _CHATGPT_HOSTS:
@@ -99,12 +83,31 @@ def url_in_surface_scope(surface: str, url: str) -> bool:
     )
 
 
+def url_in_surface_scope(surface: str, url: str) -> bool:
+    """Host and path gate for *surface* before any DOM evaluation.
+
+    ChatGPT observation may run on ``chatgpt.com`` paths ``/``, ``/c/…``, and
+    ``/g/…`` only. Claude surfaces allow any path on their hosts.
+    """
+    if surface not in _SUPPORTED_SURFACES:
+        return False
+    if surface in _CHATGPT_SURFACES:
+        return _chatgpt_url_in_scope(url)
+    parts = urlsplit((url or "").strip())
+    host = (parts.hostname or "").lower()
+    if surface == "claude":
+        return host in _CLAUDE_HOSTS
+    if surface == "claude-console":
+        return host in _CLAUDE_CONSOLE_HOSTS
+    return False
+
+
 def probe_js_for_surface(surface: str) -> str:
     """Return evaluate expression for *surface* (default chatgpt)."""
-    if surface in _CLAUDE_SURFACES or surface in _CLAUDE_CONSOLE_SURFACES:
-        return CLAUDE_PROBE_JS
     if surface in _CHATGPT_SURFACES:
         return CHATGPT_PROBE_JS
+    if surface in _CLAUDE_SURFACES:
+        return CLAUDE_PROBE_JS
     raise ValueError(f"unsupported_surface:{surface}")
 
 
