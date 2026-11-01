@@ -26,7 +26,9 @@ async def test_get_active_work_includes_items_and_preserves_counts() -> None:
     ]
     with (
         patch.object(mod.in_flight_tracker, "get_total_in_flight", return_value=2),
-        patch.object(mod.in_flight_tracker, "list_in_flight", return_value=sample_items),
+        patch.object(
+            mod.in_flight_tracker, "list_in_flight", return_value=sample_items
+        ),
         patch(
             "systems.frontier_consult.cdp_generate_inflight_ledger.list_open_inflight_legs",
             return_value=[],

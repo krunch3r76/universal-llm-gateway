@@ -18,8 +18,8 @@ from universal_logging import get_logger
 
 from src.core.gateway_tracker import gateway_tracker
 
-from ..model_tracker import ModelUsageTracker
 from ...step_config.model_resolution import get_pipeline_model_override
+from ..model_tracker import ModelUsageTracker
 
 if TYPE_CHECKING:
     from ...dag import StepNode

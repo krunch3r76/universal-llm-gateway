@@ -15,6 +15,11 @@ from model_id import ModelId, get_compute_type
 from universal_logging import get_logger
 from universal_protocol import ErrorCode, error_envelope, get_http_status
 
+from src.core.gateway.request_inflight_meta import (
+    bind_request_inflight_meta,
+    infer_inflight_kind,
+    meta_from_http_request,
+)
 from src.core.streaming.stream_flag import client_requested_stream
 
 from ...common.config import FederationConfig
@@ -31,11 +36,6 @@ from .gateway_forwarding import (
 )
 from .request_store import ActiveRequestStore
 from .slot_management import SlotContext
-from src.core.gateway.request_inflight_meta import (
-    bind_request_inflight_meta,
-    infer_inflight_kind,
-    meta_from_http_request,
-)
 
 logger = get_logger(__name__)
 
