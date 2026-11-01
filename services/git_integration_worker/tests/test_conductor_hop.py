@@ -799,10 +799,15 @@ def test_build_hop_team_dispatch_body_k97_recipe_default_not_predecessor_clone()
             "SELECT * FROM cursor_sdk_dispatches WHERE dispatch_id='pred-hop-1'"
         ).fetchone()
     row = {k: refreshed[k] for k in refreshed.keys()}
+    from implement_admission.conductor_admit_model import (
+        resolve_hop_successor_default_from_pipeline,
+    )
+
+    pipeline_default = resolve_hop_successor_default_from_pipeline()
     body = build_hop_team_dispatch_body(row)
     assert body is not None
-    assert body["model"] == "cursor/composer-2.5"
-    assert body["model_knobs"] == {"fast": "false"}
+    assert body["model"] == pipeline_default["model"]
+    assert body["model_knobs"] == pipeline_default.get("model_knobs")
 
 
 def test_admit_record_json_stores_policy_filled_effort() -> None:

@@ -16,6 +16,9 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from fastapi.testclient import TestClient
+from implement_admission.conductor_admit_model import (
+    resolve_hop_successor_default_from_pipeline,
+)
 
 from services.git_integration_worker.app import create_app
 from services.git_integration_worker.config import WorkerConfig
@@ -356,7 +359,9 @@ async def test_probe2_two_row_mechanical_conductor_mission(
     assert admitted_events[0]["successor_dispatch_id"] == succ["dispatch_id"]
     assert admitted_events[0]["hop_seq"] == 2
     assert len(relay_bodies) == 1
-    assert relay_bodies[0]["model"] == "cursor/composer-2.5"
+    assert relay_bodies[0]["model"] == (
+        resolve_hop_successor_default_from_pipeline()["model"]
+    )
     assert relay_bodies[0]["dispatch_thread_id"] == "9638"
     assert relay_bodies[0]["reuse_thread"] == _THREAD_ID
     assert relay_bodies[0]["generation_options"]["summon_mode"] == "confer_and_finish"
