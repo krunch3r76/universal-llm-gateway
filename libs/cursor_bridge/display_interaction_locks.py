@@ -1,8 +1,9 @@
 """Cross-process locks for display-chat paste (fcntl under a run dir).
 
-Per-(display, agent_id) serializes one agent's paste end-to-end. A short
-per-display lock wraps chat switch / restore only so parallel agents on
-different rows do not compete for the visible sidebar.
+Per-(display, agent_id) serializes one agent's paste end-to-end. The
+per-display lock wraps the full switch-type-submit-readback-restore span so
+one shared Grok composer is never driven by two agents at once. Parallel pastes
+apply only across different displays.
 """
 
 from __future__ import annotations
@@ -13,7 +14,10 @@ import os
 import re
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from contextvars import ContextVar
 from pathlib import Path
+
+_DISPLAY_SWITCH_DEPTH: ContextVar[int] = ContextVar("display_switch_depth", default=0)
 
 _INPROC_AGENT: dict[tuple[str, str], asyncio.Lock] = {}
 _INPROC_SWITCH: dict[str, asyncio.Lock] = {}
@@ -96,13 +100,18 @@ async def agent_paste_lock(display: str, agent_id: str) -> AsyncIterator[None]:
 
 @asynccontextmanager
 async def display_switch_lock(display: str) -> AsyncIterator[None]:
-    """Short critical section: sidebar row switch or restore."""
+    """Hold for switch, paste, readback, and restore on one display (reentrant)."""
+    if _DISPLAY_SWITCH_DEPTH.get() > 0:
+        yield
+        return
     async with _inproc_switch(display):
         lock = _FcntlFileLock(_lock_path(display, kind="switch"))
         await asyncio.to_thread(lock.acquire)
+        token = _DISPLAY_SWITCH_DEPTH.set(1)
         try:
             yield
         finally:
+            _DISPLAY_SWITCH_DEPTH.reset(token)
             await asyncio.to_thread(lock.release)
 
 

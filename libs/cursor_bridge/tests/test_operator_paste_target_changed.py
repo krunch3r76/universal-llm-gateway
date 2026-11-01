@@ -28,6 +28,10 @@ def _surface(*, agent_id: str) -> dict[str, Any]:
 @pytest.fixture(autouse=True)
 def _operator_idle(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(
+        "cursor_bridge.dom_composer_paste.install_operator_activity_probe",
+        AsyncMock(return_value=None),
+    )
+    monkeypatch.setattr(
         "cursor_bridge.operator_paste.wait_for_operator_idle",
         AsyncMock(return_value={"ok": True, "idle": True}),
     )
