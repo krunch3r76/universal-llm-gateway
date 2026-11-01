@@ -1529,3 +1529,49 @@ def list_turns_since(after_id: int, limit: int) -> list[dict[str, Any]]:
             (after_id, limit),
         ).fetchall()
     return [dict(r) for r in rows]
+
+
+def list_wake_ledger_rows(
+    *,
+    thread: str | None = None,
+    turn_id: int | None = None,
+    turn_number: int | None = None,
+    agent: str | None = None,
+    state: str | None = None,
+    limit: int = 20,
+) -> list[dict[str, Any]]:
+    """Read-only wake ledger query for agent_bus_read ``wake_ledger``."""
+    cap = max(1, min(int(limit), 200))
+    clauses: list[str] = []
+    params: list[Any] = []
+    if thread is not None and str(thread).strip():
+        clauses.append("thread_id = ?")
+        params.append(str(thread).strip())
+    if turn_id is not None:
+        clauses.append("turn_id = ?")
+        params.append(int(turn_id))
+    if turn_number is not None:
+        clauses.append("turn_number = ?")
+        params.append(int(turn_number))
+    if agent is not None and str(agent).strip():
+        clauses.append("agent = ?")
+        params.append(str(agent).strip())
+    if state is not None and str(state).strip():
+        clauses.append("state = ?")
+        params.append(str(state).strip())
+    where = f" WHERE {' AND '.join(clauses)}" if clauses else ""
+    sql = (
+        "SELECT id, agent, thread_id, turn_id, turn_number, state, wake_id, route, "
+        "subscription_id, cse_registration_id, reason, decided_by_rule, "
+        "created_at, claimed_at, finished_at "
+        f"FROM endpoint_wake_ledger{where} ORDER BY id DESC LIMIT ?"
+    )
+    params.append(cap)
+    with connect() as conn:
+        rows = conn.execute(sql, params).fetchall()
+    out: list[dict[str, Any]] = []
+    for row in rows:
+        item = dict(row)
+        item["rule_id"] = item.pop("decided_by_rule", None)
+        out.append(item)
+    return out

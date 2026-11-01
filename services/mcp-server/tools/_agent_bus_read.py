@@ -42,6 +42,7 @@ from .agent_bus.subscriptions import (
     _subscriptions_dispatch,
 )
 from .agent_bus.threads import _job_state_dispatch, _tape_dispatch, _thread_get_dispatch
+from .agent_bus.wake_ledger import _wake_ledger_dispatch
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -63,6 +64,7 @@ AGENT_BUS_READ_OPS: dict[str, Callable[..., Any]] = {
     "tape": _tape_dispatch,
     "subscriptions": _subscriptions_dispatch,
     "delivery_bindings_resolve": _delivery_bindings_resolve_dispatch,
+    "wake_ledger": _wake_ledger_dispatch,
 }
 
 
@@ -91,6 +93,7 @@ def register_agent_bus_read_tool(mcp: FastMCP) -> None:
           wait         (thread, after_turn?, wait_seconds?, completion?, from_agent?, mark_read?)  — mark_read is advisory-only; use get/fetch with mark_read to update read pointers
           lane_current (thread) — derived current lane parentage (state=none when unbound)
           delivery_bindings_resolve (house_id, intent) — wake/steer/inform actuation resolve; state bound or unbound (current null when unbound)
+          wake_ledger    (thread?, turn_id?, turn_number?, agent?, state?, limit?) — read endpoint_wake_ledger rows (rule_id, reason, route, state)
           tape           (thread, budget_bytes?, harvest?, max_seals?, scope?, transcript_id?, prior_cells?, include_extras?, tools?, channel?) — continuity dump; messages[] + cells[] + index[] (index = budget-degrade metadata only). scope=window requires transcript_id; tail = open cell (bus_turn_id null).
 
         Note: mark_read=true on get/fetch mutates per-turn read pointers for the

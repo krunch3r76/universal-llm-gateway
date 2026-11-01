@@ -31,6 +31,22 @@ from .watchdog import run_watchdog
 logger = logging.getLogger("agent-bus")
 
 
+def wire_bus_watch_event_publisher() -> None:
+    """Route ``bus_watch.events`` through the agent-bus UDS publisher.
+
+    The wake dispatcher runs inside agent-bus, where ``mcp_events`` is not on
+    ``sys.path``. Without this hook, observation emits are silent no-ops.
+    """
+    from bus_watch.events import register_uds_publisher
+
+    from .events.publisher import emit
+
+    def _publish(signal: str, payload: dict[str, Any]) -> None:
+        emit(signal, payload)
+
+    register_uds_publisher(_publish)
+
+
 def create_app(*, db_path: str | None = None) -> FastAPI:
     """Build the FastAPI application.
 
@@ -43,6 +59,7 @@ def create_app(*, db_path: str | None = None) -> FastAPI:
     @asynccontextmanager
     async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
         init_db()
+        wire_bus_watch_event_publisher()
         try:
             reaped = reconcile_orphaned_dispatches()
             if reaped:

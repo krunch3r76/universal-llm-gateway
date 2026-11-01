@@ -7,7 +7,7 @@ Regenerate:
 
 from __future__ import annotations
 
-OPENAPI_SHA256 = "5f06b55321ff09ad814bf91dfbcc472abf37ce3888f76c4cf7aef0f015098260"
+OPENAPI_SHA256 = "bf96f14d0753e9f5fd9cebcb6a9e62ac2feb6ed68cd8f81bef1a82bcd6e2ac50"
 FACADE_TOOL = "agent-bus"
 SERVED_OPS: dict[str, dict[str, str]] = {
     "branch_associate": {
@@ -154,6 +154,11 @@ SERVED_OPS: dict[str, dict[str, str]] = {
         "method": "GET",
         "path": "/threads/{thread_id}/wait",
         "operation_id": "wait_thread_route_threads__thread_id__wait_get",
+    },
+    "wake_ledger": {
+        "method": "GET",
+        "path": "/endpoint-wake/ledger",
+        "operation_id": "wake_ledger_route_endpoint_wake_ledger_get",
     },
 }
 NON_BINDING_PATH_FINGERPRINTS: dict[str, str] = {

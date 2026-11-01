@@ -411,13 +411,19 @@ def test_scan_once_emits_endpoint_wake_suppressed_for_subscribed_thread(
     db: None,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from agent_bus_store.db.endpoint_subscriptions import subscribe_endpoint
+    import json
 
-    suppressed: list[dict[str, object]] = []
-    monkeypatch.setattr(
-        "bus_watch.events.emit_endpoint_wake_suppressed",
-        lambda **kwargs: suppressed.append(kwargs),
-    )
+    from agent_bus_store.db.endpoint_subscriptions import subscribe_endpoint
+    from agent_bus_store.events import publisher
+    from agent_bus_store.server import wire_bus_watch_event_publisher
+
+    queued: list[dict[str, object]] = []
+
+    def _capture_put(self, line: str) -> None:
+        queued.append(json.loads(line.strip()))
+
+    monkeypatch.setattr(publisher._UDSPublisher, "put_nowait", _capture_put)
+    wire_bus_watch_event_publisher()
     detail = create_thread(thread_id=None, slug="41157-suppress-emit")
     assert detail is not None
     thread = str(detail["id"])
@@ -478,11 +484,16 @@ def test_scan_once_emits_endpoint_wake_suppressed_for_subscribed_thread(
             return None
 
     scan_once(Store())  # type: ignore[arg-type]
-    assert len(suppressed) == 1
-    assert suppressed[0]["rule_id"] == "drop_ack_route_coord"
-    assert suppressed[0]["to_agent"] == "grok-bot-gc1"
-    assert suppressed[0]["thread_id"] == thread
-    assert suppressed[0]["subject_head"] == "ACK"
+    suppressed_events = [
+        e for e in queued if e.get("signal") == "endpoint_wake.suppressed"
+    ]
+    assert len(suppressed_events) == 1
+    payload = suppressed_events[0].get("payload")
+    assert isinstance(payload, dict)
+    assert payload.get("rule_id") == "drop_ack_route_coord"
+    assert payload.get("to_agent") == "grok-bot-gc1"
+    assert payload.get("thread_id") == thread
+    assert payload.get("subject_head") == "ACK"
     assert not qualifies(
         {
             "to_agent": "cursor",
@@ -3489,6 +3500,42 @@ def test_prefixed_closeout_subject_wakes_same_holder() -> None:
     )
     assert verdict.wake is True
     assert verdict.rule_id == "wake_by_address"
+
+
+@pytest.mark.offline
+def test_endpoint_wake_address_route_reaches_agent_bus_publisher(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Qualify path must publish via agent-bus UDS publisher, not a silent no-op."""
+    import json
+
+    from agent_bus_store.events import publisher
+    from agent_bus_store.server import wire_bus_watch_event_publisher
+
+    queued: list[dict[str, object]] = []
+
+    def _capture_put(self, line: str) -> None:
+        queued.append(json.loads(line.strip()))
+
+    monkeypatch.setattr(publisher._UDSPublisher, "put_nowait", _capture_put)
+    wire_bus_watch_event_publisher()
+    held = _LaneChainStore(
+        holders={"12286": {"registration_id": "R", "seat_state": "driving"}},
+        parents={"20714": "12286"},
+    )
+    qualify(
+        _specimen_turn(to_agent="web-anthropic"),
+        cse=True,
+        store=held,  # type: ignore[arg-type]
+        seat_registration="R",
+    )
+    signals = [str(e.get("signal")) for e in queued]
+    assert "endpoint_wake.address_route" in signals
+    evt = next(e for e in queued if e.get("signal") == "endpoint_wake.address_route")
+    assert evt.get("role") == "observation"
+    payload = evt.get("payload")
+    assert isinstance(payload, dict)
+    assert payload.get("match") == "address"
 
 
 def test_address_route_emits_match_kind(monkeypatch: pytest.MonkeyPatch) -> None:
