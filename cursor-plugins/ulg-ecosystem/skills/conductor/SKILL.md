@@ -36,6 +36,10 @@ related_skills:
 - **G5 witness (a:37198).** After G3→G5 width-seat critic score-ratify, required attended witness = `SCORE_RESURFACE` on `summoning_thread_id` (slug subject; review sha) — ¬ tip `DONE`, ¬ steer-inject, ¬ harvest alone. Attended G5 fold needs that turn **and** implement (`ledger:nested_implement` ∨ `git:lane_head`). `bus:SCORE_RESURFACE` ⇒ ¬ re-post · ¬ re-ratify → `reference-packet.md`.
 - **Explicit `lane="B"`.** Top-level admit passes `lane="B"`; omit nest/resume only — GIW default Lane A, not "no preference" → `reference-admit.md`, `reference-gotchas.md`.
 
+## Guardrails
+
+- **Fleet auth stays on MCP tools.** Never read `MCP_AUTH_TOKEN` or any `*_TOKEN` / credential env var in the agent shell. Never call `team_dispatch`, registry, `agent_bus`, or other fleet HTTP endpoints via raw `curl`, `httpx`, or hand-rolled HTTP — use the vortex MCP tools only.
+
 ## Trigger
 
 Author/admit packet, drive G-rows, `/conductor`, or `follow up` / `page me when done` / `I'm leaving`.

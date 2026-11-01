@@ -204,6 +204,7 @@ def test_mcp_token_env_mirrors_auth_token(
 
     env = build_mcp_servers(repo)["vortex-code"].env or {}
     assert env.get("MCP_TOKEN") == "tok-from-auth"
+    assert "MCP_AUTH_TOKEN" not in env
     assert env.get("PROBE_PARENT_ENV") == "parent-survives"
 
 
