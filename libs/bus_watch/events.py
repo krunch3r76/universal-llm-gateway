@@ -342,3 +342,32 @@ def EndpointWakeAddressRoute(  # noqa: N802
 def emit_endpoint_wake_address_route(**kwargs: Any) -> None:
     """Publish the address-route observation for a closeout or milestone wake decision."""
     _emit(EndpointWakeAddressRoute(**kwargs))
+
+
+@event_factory
+def EndpointWakeSuppressed(  # noqa: N802
+    *,
+    thread_id: str,
+    turn_id: int | None,
+    to_agent: str,
+    rule_id: str,
+    subject_head: str = "",
+) -> Event:
+    """Observation: a turn on a subscribed thread was suppressed by wake qualification."""
+    return Event(
+        signal="endpoint_wake.suppressed",
+        role="observation",
+        payload={
+            "thread_id": thread_id,
+            "turn_id": turn_id,
+            "to_agent": to_agent,
+            "rule_id": rule_id,
+            "subject_head": subject_head,
+        },
+        scope="global",
+    )
+
+
+def emit_endpoint_wake_suppressed(**kwargs: Any) -> None:
+    """Publish that endpoint wake qualification suppressed a turn on a subscribed thread."""
+    _emit(EndpointWakeSuppressed(**kwargs))
