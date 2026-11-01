@@ -1,0 +1,16 @@
+schema_version: 6
+id: web-tab-write
+version: "1.0"
+type: web_tab
+category: web_tab
+description: >
+  Grant-gated web-tab actuation — open/bind/paste/submit/verify/read_reply over CDP
+  without focus steal. Op is selected via pipeline_options.op.
+output: result
+
+options:
+  timeout_seconds: 120
+
+steps:
+  - name: result
+    type: web_tab_write_v1

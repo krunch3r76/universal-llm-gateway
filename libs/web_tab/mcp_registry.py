@@ -11,7 +11,24 @@ WEB_TAB_READ_OP_TO_PIPELINE: dict[str, str] = {
     "probe": "web-tab-probe",
 }
 
+WEB_TAB_WRITE_OP_TO_PIPELINE: dict[str, str] = {
+    "open": "web-tab-write",
+    "bind": "web-tab-write",
+    "paste": "web-tab-write",
+    "submit": "web-tab-write",
+    "verify_committed": "web-tab-write",
+    "read_reply": "web-tab-write",
+}
+
 WEB_TAB_READ_PIPELINE_CATEGORY = "web_tab"
+WEB_TAB_WRITE_PIPELINE_CATEGORY = "web_tab"
+
+
+def advertised_write_ops(*, installed_pipeline_ids: frozenset[str]) -> frozenset[str]:
+    """Return write ops whose pipeline id is installed (single web-tab-write pipeline)."""
+    if "web-tab-write" not in installed_pipeline_ids:
+        return frozenset()
+    return frozenset(WEB_TAB_WRITE_OP_TO_PIPELINE.keys())
 
 
 def advertised_read_ops(*, installed_pipeline_ids: frozenset[str]) -> frozenset[str]:
