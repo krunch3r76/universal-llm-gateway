@@ -1001,6 +1001,9 @@ async def _busy_status(ctl: ServiceController, *, service: str = "") -> dict[str
     now = datetime.now(UTC)
     store = ctl.restart_intent_store
     store.sweep_expired_windows(now=now)
+    from .controller.restart_intent_expiry import sweep_expired_pending_intents
+
+    await sweep_expired_pending_intents(store, now=now)
     from .controller.restart_intent_consumer import project_restart_intent_last
     from .controller.restart_intent_lookup import latest_terminal_for_service
 
