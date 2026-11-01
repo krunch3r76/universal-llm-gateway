@@ -86,7 +86,7 @@ ExecStart={chrome} --remote-debugging-port={_CDP_PORT} --remote-allow-origins=* 
   --user-data-dir={profile} --ozone-platform=x11 --no-first-run \\
   --no-default-browser-check --window-size=1920,1200 --window-position=0,0 \\
   --disable-background-timer-throttling \\
-  https://claude.ai/ https://console.anthropic.com/
+  https://claude.ai/ https://platform.claude.com/ https://console.anthropic.com/
 ExecStartPost={home}/.venvs/universal/bin/python {maximize} {_DISPLAY}
 Restart=always
 RestartSec=3

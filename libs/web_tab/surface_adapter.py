@@ -68,8 +68,18 @@ def canonical_page_url(url: str) -> str:
     )
 
 
+def _url_https_default_port(parts) -> bool:
+    """Refuse cleartext and non-default HTTPS ports before host matching."""
+    if (parts.scheme or "").lower() != "https":
+        return False
+    port = parts.port
+    return port is None or port == 443
+
+
 def _chatgpt_url_in_scope(url: str) -> bool:
     parts = urlsplit((url or "").strip())
+    if not _url_https_default_port(parts):
+        return False
     host = (parts.hostname or "").lower()
     if host not in _CHATGPT_HOSTS:
         return False
@@ -93,9 +103,11 @@ def url_in_surface_scope(surface: str, url: str) -> bool:
     """
     if surface not in _SUPPORTED_SURFACES:
         return False
+    parts = urlsplit((url or "").strip())
+    if not _url_https_default_port(parts):
+        return False
     if surface in _CHATGPT_SURFACES:
         return _chatgpt_url_in_scope(url)
-    parts = urlsplit((url or "").strip())
     host = (parts.hostname or "").lower()
     if surface == "claude":
         return host in _CLAUDE_HOSTS

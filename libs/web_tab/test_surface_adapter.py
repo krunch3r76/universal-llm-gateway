@@ -50,3 +50,23 @@ def test_claude_surface_host_gate() -> None:
     assert not url_in_surface_scope("claude", "https://accounts.google.com/signin")
     assert not url_in_surface_scope("claude-console", "https://accounts.google.com/signin")
     assert "loginWall ? false : null" in CLAUDE_PROBE_JS
+
+
+def test_claude_surface_scheme_port_and_host_hardening() -> None:
+    """HTTPS default port only; exact host match; userinfo and lookalike hosts refused."""
+    assert url_in_surface_scope("claude", "https://CLAUDE.AI/new")
+    assert url_in_surface_scope(
+        "claude-console", "https://platform.claude.com:443/settings"
+    )
+    assert not url_in_surface_scope("claude", "http://claude.ai/")
+    assert not url_in_surface_scope("claude", "https://claude.ai:8080/")
+    assert not url_in_surface_scope(
+        "claude-console", "https://platform.claude.com@evil.example/"
+    )
+    assert not url_in_surface_scope("claude", "https://evilclaude.ai/")
+
+
+def test_chatgpt_surface_scheme_port_hardening() -> None:
+    """ChatGPT paths refuse cleartext and non-default HTTPS ports."""
+    assert not url_in_surface_scope("chatgpt", "http://chatgpt.com/c/abc")
+    assert not url_in_surface_scope("chatgpt", "https://chatgpt.com:8080/")
