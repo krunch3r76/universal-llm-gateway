@@ -402,9 +402,8 @@ async def team_dispatch(
                 "thread": thread,
             }
             if spawn_res.get("ok"):
-                from services.git_integration_worker.cursor_sdk_work_registry_admit import (
-                    build_cursor_ide_registry_address,
-                    resolve_registry_seat_name,
+                from services.git_integration_worker import (
+                    cursor_sdk_work_registry_admit as wr,
                 )
 
                 from .work_registry_admit_relay import (
@@ -417,10 +416,10 @@ async def team_dispatch(
                     dispatch_id=row_id,
                     thread_id=thread,
                     caller_agent=getattr(body, "caller_agent", None),
-                    seat_name=resolve_registry_seat_name(
+                    seat_name=wr.resolve_registry_seat_name(
                         caller_agent=getattr(body, "caller_agent", None),
                     ),
-                    address=build_cursor_ide_registry_address(
+                    address=wr.build_cursor_ide_registry_address(
                         gui_host=str(body.gui_host),
                         tab=str(getattr(body, "title", None) or agent_id or ""),
                         agent_id=agent_id or None,
