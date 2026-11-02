@@ -11,6 +11,8 @@ from unittest.mock import patch
 
 import pytest
 
+import systems.frontier_consult.cursor_sdk_lane_subscription as lane_subscription
+
 from systems.frontier_consult.cursor_sdk_worker_dispatch import worker_base_url
 from systems.frontier_consult.work_registry_admit_relay import relay_registry_record
 
@@ -54,10 +56,36 @@ async def test_relay_registry_record_returns_none_against_dead_port(
 @pytest.mark.live_giw
 def test_live_giw_marker_skips_dead_port_env(giw_dead_port: int) -> None:
     """``live_giw`` tests keep operator env instead of the session dead port."""
-    port = os.environ.get("GIT_INTEGRATION_WORKER_PORT", "8091")
-    assert port != str(giw_dead_port)
-    host = os.environ.get("GIT_INTEGRATION_WORKER_HOST", "127.0.0.1")
-    assert host == os.environ.get("GIT_INTEGRATION_WORKER_HOST")
+    assert os.environ.get("GIT_INTEGRATION_WORKER_PORT") != str(giw_dead_port)
     url = os.environ.get("GIT_INTEGRATION_WORKER_URL")
     if url is not None:
         assert str(giw_dead_port) not in url
+    assert str(giw_dead_port) not in lane_subscription._GIW
+
+
+def test_offline_giw_isolation_patches_modules_before_dead_port_setenv() -> None:
+    """Regression: patch-after-setenv left import-time URLs on the dead port."""
+    from pathlib import Path
+
+    source = Path(__file__).resolve().parents[2] / "conftest.py"
+    body = source.read_text(encoding="utf-8")
+    marker = '_patch_import_time_giw_constants(monkeypatch, dead_url, giw_dead_port)'
+    setenv = 'monkeypatch.setenv("GIT_INTEGRATION_WORKER_HOST"'
+    assert body.index(marker) < body.index(setenv)
+
+
+def test_wrong_giw_isolation_order_leaves_dead_import_time_url(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Patch-after-setenv + cleared env leaves ``_GIW`` on dead URL (live_giw hazard)."""
+    from conftest import _patch_import_time_giw_constants
+
+    dead_port = 58881
+    dead_url = f"http://127.0.0.1:{dead_port}"
+    monkeypatch.setenv("GIT_INTEGRATION_WORKER_URL", dead_url)
+    monkeypatch.setenv("GIT_INTEGRATION_WORKER_PORT", str(dead_port))
+    _patch_import_time_giw_constants(monkeypatch, dead_url, dead_port)
+    monkeypatch.delenv("GIT_INTEGRATION_WORKER_URL", raising=False)
+    monkeypatch.delenv("GIT_INTEGRATION_WORKER_HOST", raising=False)
+    monkeypatch.delenv("GIT_INTEGRATION_WORKER_PORT", raising=False)
+    assert lane_subscription._GIW == dead_url

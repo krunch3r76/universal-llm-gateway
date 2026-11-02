@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
+import time
 from datetime import UTC, datetime, timedelta
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
@@ -1776,6 +1778,7 @@ async def test_reconcile_alive_before_horizon_relays_registry_heartbeat(
         conn.close()
 
     await reconcile._reconcile_leg(reconcile.read_inflight_leg(execution_id))  # type: ignore[arg-type]
+    await asyncio.sleep(0)
 
     assert hb_calls == [execution_id]
     reaped = reap_stale_frontier_registry_rows(ledger=ledger, ttl_s=14400)
@@ -1897,6 +1900,128 @@ async def test_registry_heartbeat_throttled_two_ticks_one_relay(
     leg = reconcile.read_inflight_leg("exec-throttle-hb")
     assert leg is not None
     await reconcile._reconcile_leg(leg)
+    await asyncio.sleep(0)
     mono[0] += 20.0
     await reconcile._reconcile_leg(leg)
+    await asyncio.sleep(0)
     assert hb_calls == ["exec-throttle-hb"]
+
+
+@pytest.mark.asyncio
+async def test_registry_heartbeat_mono_pruned_after_leg_finalizes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    relay_calls = _relay_finalize_mocks(monkeypatch)
+    monkeypatch.setattr(
+        "systems.frontier_consult.cdp_generate_worker.deliver_cdp_result_turn",
+        AsyncMock(return_value=True),
+    )
+    execution_id = "exec-hb-prune-finalize"
+    reconcile._last_registry_heartbeat_mono[execution_id] = 1000.0
+    reconcile._last_registry_heartbeat_mono["exec-stale-closed"] = 2000.0
+    upsert_inflight_leg(
+        execution_id=execution_id,
+        request_id="req-hb-prune",
+        thread_id="5583",
+        pointer_turn=1,
+        caller_agent="dispatch",
+        prompt_uri="cortex://p.md",
+        model_id="cdp/opus-5",
+        max_wall_s=1800.0,
+    )
+    await finalize_cdp_generate(
+        result=_ok_result(execution_id=execution_id),
+        request_id="req-hb-prune",
+        thread_id="5583",
+        to_agent="dispatch",
+        pointer_turn=1,
+        via="reconcile",
+    )
+    await reconcile.reconcile_cdp_inflight_legs()
+    assert execution_id not in reconcile._last_registry_heartbeat_mono
+    assert "exec-stale-closed" not in reconcile._last_registry_heartbeat_mono
+    assert relay_calls  # finalize path exercised
+
+
+@pytest.mark.asyncio
+async def test_registry_heartbeat_mono_pruned_after_abandon(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _relay_finalize_mocks(monkeypatch)
+    monkeypatch.setattr(
+        "systems.frontier_consult.cdp_generate_worker.deliver_cdp_result_turn",
+        AsyncMock(return_value=True),
+    )
+    execution_id = "exec-hb-prune-abandon"
+    reconcile._last_registry_heartbeat_mono[execution_id] = 1000.0
+    upsert_inflight_leg(
+        execution_id=execution_id,
+        request_id="req-hb-abandon",
+        thread_id="5583",
+        pointer_turn=1,
+        caller_agent="dispatch",
+        prompt_uri="cortex://p.md",
+        model_id="cdp/opus-5",
+        max_wall_s=1800.0,
+    )
+    reconcile.attach_satellite_execution_id(
+        execution_id=execution_id,
+        satellite_execution_id="sat-hb-abandon",
+    )
+    _age_leg_past_horizon(execution_id)
+    monkeypatch.setattr(
+        reconcile,
+        "poll_satellite_snapshot",
+        AsyncMock(
+            return_value={
+                "status": "failed",
+                "stall_stage": "weekly_limit",
+                "error": "hit a limit",
+            }
+        ),
+    )
+    await reconcile.reconcile_cdp_inflight_legs()
+    assert execution_id not in reconcile._last_registry_heartbeat_mono
+    leg = reconcile.read_inflight_leg(execution_id)
+    assert leg is not None
+    assert leg.abandoned is True
+
+
+@pytest.mark.asyncio
+async def test_reconcile_tick_finishes_while_registry_heartbeat_hangs(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    hang = asyncio.Event()
+
+    async def _hang(**kwargs: object) -> None:
+        await hang.wait()
+
+    monkeypatch.setattr(
+        "systems.frontier_consult.work_registry_admit_relay.relay_registry_heartbeat",
+        _hang,
+    )
+    monkeypatch.setenv("CDP_REGISTRY_HEARTBEAT_MIN_S", "0")
+    monkeypatch.setattr(
+        reconcile,
+        "poll_satellite_snapshot",
+        AsyncMock(return_value=_running_snapshot()),
+    )
+    reconcile._last_registry_heartbeat_mono.clear()
+    upsert_inflight_leg(
+        execution_id="exec-hb-nonblock",
+        request_id="req-hb-nonblock",
+        thread_id="5583",
+        pointer_turn=1,
+        caller_agent="dispatch",
+        prompt_uri="cortex://p.md",
+        model_id="cdp/opus-5",
+        max_wall_s=43200.0,
+    )
+    reconcile.attach_satellite_execution_id(
+        execution_id="exec-hb-nonblock",
+        satellite_execution_id="sat-nonblock",
+    )
+    started = time.monotonic()
+    await asyncio.wait_for(reconcile.reconcile_cdp_inflight_legs(), timeout=0.5)
+    elapsed = time.monotonic() - started
+    assert elapsed < 0.25
