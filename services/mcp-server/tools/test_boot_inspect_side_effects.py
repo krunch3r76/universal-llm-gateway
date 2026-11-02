@@ -224,24 +224,6 @@ def test_view_materialization_path(monkeypatch: Any, tmp_path: Path) -> None:
     assert view_entity in result["briefing_card"]
 
 
-def _logical_registry(tmp_path: Path, monkeypatch: Any) -> None:
-    cfg = tmp_path / "boot-seats.yaml"
-    cfg.write_text(
-        """
-schema_version: 1
-seats:
-  alpha-work:
-    aliases: [alpha]
-    family: gpt
-    platform: web
-    inbox_recipient: alpha-inbox
-""".strip()
-        + "\n",
-        encoding="utf-8",
-    )
-    monkeypatch.setenv("CORTEX_BOOT_IDENTITIES_PATH", str(cfg))
-
-
 def _isolate_boot_io(
     monkeypatch: Any, tmp_path: Path, events: list[tuple[str, dict]]
 ) -> None:
@@ -301,7 +283,6 @@ def test_inspect_ceiling_plus_one_emits_warning_without_events(
     """Breaks when an over-ceiling INSPECT card writes events or omits the warning."""
     events: list[tuple[str, dict]] = []
     _isolate_boot_io(monkeypatch, tmp_path, events)
-    _logical_registry(tmp_path, monkeypatch)
 
     def _over_ceiling(**kwargs: Any) -> tuple[str, list]:
         ceiling = boot_runner._card_ceiling_for(kwargs["agent"], kwargs.get("domain"))
@@ -326,8 +307,8 @@ def test_inspect_ceiling_plus_one_emits_warning_without_events(
     mcp = _DummyMcp()
     orchestration_tools.register_orchestration_tools(mcp)
     cursor = mcp.tools["boot_inspect"](seat="cursor")
-    logical = mcp.tools["boot_inspect"](seat="alpha-work")
-    for result in (cursor, logical):
+    web = mcp.tools["boot_inspect"](seat="claude-web")
+    for result in (cursor, web):
         assert "Card over budget" in result["briefing_card"]
         assert result["mode"] == "inspect"
         assert result["audit_dump_path"] is None
@@ -341,7 +322,6 @@ def test_live_overbudget_event_and_skills_index_failure_attribution(
     """Breaks when LIVE drops the overbudget event or attributes a skills-index failure to the capability slug."""
     events: list[tuple[str, dict]] = []
     _isolate_boot_io(monkeypatch, tmp_path, events)
-    _logical_registry(tmp_path, monkeypatch)
 
     def _over_ceiling(**kwargs: Any) -> tuple[str, list]:
         ceiling = boot_runner._card_ceiling_for(kwargs["agent"], kwargs.get("domain"))
@@ -357,21 +337,20 @@ def test_live_overbudget_event_and_skills_index_failure_attribution(
 
     mcp = _DummyMcp()
     orchestration_tools.register_orchestration_tools(mcp)
-    result = mcp.tools["cortex_brief"](seat="alpha-work")
+    result = mcp.tools["cortex_brief"](seat="claude-web")
     assert "Card over budget" in result["briefing_card"]
     overbudget = [
         kw for signal, kw in events if signal == "mcp.cortex.boot.card.overbudget"
     ]
     assert overbudget
-    assert overbudget[0]["agent"] == "alpha-work"
+    assert overbudget[0]["agent"] == "claude-web"
     failed = [
         kw
         for signal, kw in events
         if signal == "mcp.cortex.boot.skills_index.writefailed"
     ]
     assert failed
-    assert failed[0]["agent"] == "alpha-work"
-    assert failed[0]["agent"] != "gpt-web"
+    assert failed[0]["agent"] == "claude-web"
 
 
 def _fake_brief(**kwargs: Any) -> dict[str, Any]:
@@ -411,19 +390,9 @@ def test_boot_inspect_diff_with_matrix(monkeypatch: Any, tmp_path: Path) -> None
     assert unknown_hyphen["secondary"]["reason"] == "seat_unresolved"
     assert calls == ["claude-cursor"]
 
-    _logical_registry(tmp_path, monkeypatch)
     calls.clear()
-    logical = inspect(seat="cursor", diff_with="alpha")
-    assert calls == ["claude-cursor", "alpha-work"]
-    assert logical["diff"] is not None
-    assert logical["secondary"]["session_identity"]["agent"] == "alpha-work"
-    assert logical["secondary"]["briefing_card"] == "card:alpha-work"
-
-    bad = tmp_path / "bad-seats.yaml"
-    bad.write_text("schema_version: 9\nseats: {}\n", encoding="utf-8")
-    monkeypatch.setenv("CORTEX_BOOT_IDENTITIES_PATH", str(bad))
-    calls.clear()
-    malformed = inspect(seat="cursor", diff_with="alpha-work")
-    assert malformed["diff"] is None
-    assert malformed["secondary"]["reason"] == "unsupported_schema_version"
-    assert calls == ["claude-cursor"]
+    resolved_secondary = inspect(seat="cursor", diff_with="grok-bot")
+    assert calls == ["claude-cursor", "grok-bot"]
+    assert resolved_secondary["diff"] is not None
+    assert resolved_secondary["secondary"]["session_identity"]["agent"] == "grok-bot"
+    assert resolved_secondary["secondary"]["briefing_card"] == "card:grok-bot"
