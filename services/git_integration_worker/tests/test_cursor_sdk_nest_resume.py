@@ -13,6 +13,7 @@ from agent_bus_store.cursor_sdk_dispatch_turn import (
 from services.git_integration_worker.cursor_dispatch_ledger import CursorDispatchLedger
 from services.git_integration_worker.cursor_sdk_nest_resume import (
     NEST_PARENT_RUN_EXITED,
+    _resume_request,
     admit_nest_parent_resume,
     claim_nest_parent_exit,
     defer_finished_parent_for_live_nest,
@@ -76,6 +77,24 @@ def _admit(
         source_ref=wk,
         nest_under=nest_under,
     )
+
+
+def test_nest_resume_builder_recovers_request_id() -> None:
+    """Breaks when nest-resume child drops explicit Stargate request_id from parent."""
+    parent_id = "660e8400-e29b-41d4-a716-446655440001"
+    ledger = CursorDispatchLedger.instance()
+    _admit(ledger, parent_id, contract="freeform")
+    ledger.merge_record_json(
+        dispatch_id=parent_id,
+        patch={
+            "request_id": "rid",
+            "dispatch_id": parent_id,
+        },
+    )
+    req = _resume_request(parent_id, child_id="nested-child")
+    assert req is not None
+    assert req.dispatch_id == f"{parent_id}-nr1"
+    assert req.request_id == "rid"
 
 
 def test_parked_subject_is_advisory_not_terminal() -> None:
