@@ -95,6 +95,12 @@ def _flatten_paste_line(text: str) -> str:
     return " ".join((text or "").splitlines()).strip()
 
 
+def _dom_paste_text(text: str, *, preserve_newlines: bool) -> str:
+    if preserve_newlines:
+        return (text or "").strip()
+    return _flatten_paste_line(text)
+
+
 def _selector_list(selector: str) -> list[str]:
     return [s.strip() for s in selector.split(",") if s.strip()]
 
@@ -104,9 +110,10 @@ def _find_composer_js(selector: str) -> str:
     return f"(()=>{{const sels={sels};for(const s of sels){{const el=document.querySelector(s);if(el)return el;}}return null;}})()"
 
 
-def _set_composer_body(selector: str, text: str) -> str:
+def _set_composer_body(selector: str, text: str, *, preserve_newlines: bool = False) -> str:
     find = _find_composer_js(selector)
-    msg = json.dumps(_flatten_paste_line(text))
+    line = _dom_paste_text(text, preserve_newlines=preserve_newlines)
+    msg = json.dumps(line)
     return (
         f"(()=>{{const el=({find});"
         "if(!el)return{ok:false,reason:'no_composer'};"
@@ -187,9 +194,11 @@ async def clear_composer_draft_dom_no_focus(ws_url: str, *, selector: str) -> di
     return raw if isinstance(raw, dict) else {"ok": False}
 
 
-def _click_send_body(selector: str, line: str) -> str:
+def _click_send_body(
+    selector: str, line: str, *, preserve_newlines: bool = False
+) -> str:
     find = _find_composer_js(selector)
-    lj = json.dumps(_flatten_paste_line(line))
+    lj = json.dumps(_dom_paste_text(line, preserve_newlines=preserve_newlines))
     btn_sels = json.dumps(list(_SEND_BTN_SELECTORS))
     return (
         f"(()=>{{const el=({find});"
@@ -298,10 +307,11 @@ async def wait_for_operator_idle(
 
 
 async def dom_set_composer_text(
-    ws_url: str, *, selector: str, text: str
+    ws_url: str, *, selector: str, text: str, preserve_newlines: bool = False
 ) -> dict[str, Any]:
-    flat = _flatten_paste_line(text)
-    value = await _cdp_eval(ws_url, _set_composer_body(selector, flat))
+    value = await _cdp_eval(
+        ws_url, _set_composer_body(selector, text, preserve_newlines=preserve_newlines)
+    )
     if not isinstance(value, dict):
         return {"ok": False, "reason": "paste_failed"}
     if not value.get("ok"):
@@ -309,9 +319,13 @@ async def dom_set_composer_text(
     return {"ok": True}
 
 
-async def dom_click_send(ws_url: str, *, selector: str, line: str) -> dict[str, Any]:
-    flat = _flatten_paste_line(line)
-    value = await _cdp_eval(ws_url, _click_send_body(selector, flat))
+async def dom_click_send(
+    ws_url: str, *, selector: str, line: str, preserve_newlines: bool = False
+) -> dict[str, Any]:
+    value = await _cdp_eval(
+        ws_url,
+        _click_send_body(selector, line, preserve_newlines=preserve_newlines),
+    )
     if not isinstance(value, dict):
         return {"ok": False, "send_clicked": False}
     return value
@@ -326,14 +340,17 @@ async def dom_click_send_own_draft(ws_url: str, *, selector: str) -> dict[str, A
 
 
 async def dom_insert_and_send(
-    ws_url: str, *, selector: str, line: str
+    ws_url: str, *, selector: str, line: str, preserve_newlines: bool = False
 ) -> dict[str, Any]:
     """Insert once via DOM; send via send-button click (no Enter, no focus())."""
-    flat = _flatten_paste_line(line)
-    ins = await dom_set_composer_text(ws_url, selector=selector, text=flat)
+    ins = await dom_set_composer_text(
+        ws_url, selector=selector, text=line, preserve_newlines=preserve_newlines
+    )
     if not ins.get("ok"):
         return ins
-    send = await dom_click_send(ws_url, selector=selector, line=flat)
+    send = await dom_click_send(
+        ws_url, selector=selector, line=line, preserve_newlines=preserve_newlines
+    )
     if not send.get("ok"):
         return {
             "ok": False,

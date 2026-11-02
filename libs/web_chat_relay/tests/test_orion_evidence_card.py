@@ -393,11 +393,12 @@ async def test_deliver_orion_wake_unchanged_without_paste_text(db: None) -> None
 
     page = _Page()
 
-    async def _paste(_page: object, text: str, **kwargs: object) -> None:
+    async def _paste(_page: object, text: str, **kwargs: object) -> dict[str, object]:
         pasted.append(text)
+        return {"ok": True, "receipt": "dom_committed"}
 
     with patch(
-        "web_chat_relay.orion_wake._paste_and_send", new=AsyncMock(side_effect=_paste)
+        "web_chat_relay.orion_wake._dom_deliver", new=AsyncMock(side_effect=_paste)
     ):
         out = await deliver_orion_wake(
             thread=_ORION_HOUSE,
