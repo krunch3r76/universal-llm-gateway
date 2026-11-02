@@ -185,6 +185,7 @@ async def _finish_prepared_dispatch(
             force_reason=handle.force_reason,
             hop_park_release=handle.hop_park_release,
             claim_id=handle.claim_id,
+            impresario_envelope=handle.impresario_envelope,
             caller_transcript_id=transcript_id,
             bus_lifecycle=handle.effective_bus_lifecycle,
             wake_lane=handle.wake_lane,

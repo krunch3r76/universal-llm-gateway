@@ -2180,7 +2180,7 @@ class CursorDispatchLedger:
                         )
                     insert_status = _STATUS_QUEUED
                     queued_at = _now()
-            if hop_park_release:
+            if hop_park_release and not read_only and str(contract or "").lower() == "conductor":
                 release_mission_parks(
                     conn,
                     work_key=effective_work_key,

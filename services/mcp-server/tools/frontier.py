@@ -34,6 +34,7 @@ pipeline composition only — not exposed as an MCP tool.
 
 from __future__ import annotations
 
+import uuid
 from typing import TYPE_CHECKING, Annotated, Any, Literal, get_args
 
 import httpx
@@ -61,7 +62,9 @@ from ._frontier_intake import (
 )
 from ._restart_probe import annotate_unreachable_error
 from ._team_dispatch_relay_recovery import (
+    build_admit_pending_response,
     build_response_lost_error,
+    is_admit_pending_transport,
     transport_error_code,
 )
 
@@ -193,6 +196,19 @@ async def _relay(
             record(f"{record_prefix}.failed", error="transport")
             if endpoint == "/api/v1/team/dispatch":
                 dispatch_thread_id = str(body.get("dispatch_thread_id") or "")
+                if (
+                    body.get("op") == "generate"
+                    and dispatch_thread_id
+                    and is_admit_pending_transport(exc)
+                ):
+                    relay_dispatch_id = str(body.get("dispatch_id") or "").strip()
+                    if relay_dispatch_id:
+                        return build_admit_pending_response(
+                            exc=exc,
+                            dispatch_id=relay_dispatch_id,
+                            work_key=body.get("work_key"),
+                            dispatch_thread_id=dispatch_thread_id,
+                        )
                 if (
                     transport_error_code(exc) == "stargate_response_lost"
                     and dispatch_thread_id
@@ -1127,6 +1143,10 @@ def register_frontier_tools(mcp: FastMCP) -> None:
             return thread_id_err
         subject_ignored_on_generate = False
         if op == "generate":
+            relay_dispatch_id = str(dispatch_id or "").strip()
+            if not relay_dispatch_id:
+                relay_dispatch_id = str(uuid.uuid4())
+            body["dispatch_id"] = relay_dispatch_id
             if thread is not None:
                 return {
                     "error": {

@@ -403,6 +403,70 @@ def _record(ledger: CursorDispatchLedger, dispatch_id: str) -> dict:
     return json.loads(row["record_json"])
 
 
+def test_hop_park_release_freeform_admit_does_not_release_mission_parks() -> None:
+    """Freeform admit with hop_park_release must not clear conductor mission parks."""
+    ledger = CursorDispatchLedger.instance()
+    _admit_terminal(ledger)
+    req = _req(dispatch_id="freeform-release-attempt")
+    ledger.admit(
+        req=req,
+        fingerprint=ledger.fingerprint(req),
+        execution_id=req.execution_id,
+        caller_agent="cursor",
+        resolved_model="composer-2.5",
+        admission=CursorDispatchResponse(
+            admitted=True,
+            dispatch_id=req.dispatch_id,
+            thread_id=req.thread_id,
+            model_id="composer-2.5",
+        ),
+        contract="freeform",
+        source_repo="/repo",
+        lease_key="/repo",
+        work_key=_WORK_KEY,
+        source_ref=_WORK_KEY,
+        hop_park_release=True,
+    )
+    with ledger._connect() as conn:
+        row = conn.execute(
+            "SELECT record_json FROM cursor_sdk_dispatches WHERE dispatch_id='parked-row'"
+        ).fetchone()
+    data = json.loads(row["record_json"])
+    assert HOP_PARK_RELEASED_AT_KEY not in data
+
+
+def test_hop_park_release_read_only_conductor_does_not_release_mission_parks() -> None:
+    ledger = CursorDispatchLedger.instance()
+    _admit_terminal(ledger)
+    req = _req(dispatch_id="ro-release-attempt")
+    ledger.admit(
+        req=req,
+        fingerprint=ledger.fingerprint(req),
+        execution_id=req.execution_id,
+        caller_agent="liaison",
+        resolved_model="composer-2.5",
+        admission=CursorDispatchResponse(
+            admitted=True,
+            dispatch_id=req.dispatch_id,
+            thread_id=req.thread_id,
+            model_id="composer-2.5",
+        ),
+        contract="conductor",
+        source_repo="/repo",
+        lease_key="/repo",
+        work_key=_WORK_KEY,
+        source_ref=_WORK_KEY,
+        read_only=True,
+        hop_park_release=True,
+    )
+    with ledger._connect() as conn:
+        row = conn.execute(
+            "SELECT record_json FROM cursor_sdk_dispatches WHERE dispatch_id='parked-row'"
+        ).fetchone()
+    data = json.loads(row["record_json"])
+    assert HOP_PARK_RELEASED_AT_KEY not in data
+
+
 def test_producer_harvest_admit_releases_only_no_progress_hop_from(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

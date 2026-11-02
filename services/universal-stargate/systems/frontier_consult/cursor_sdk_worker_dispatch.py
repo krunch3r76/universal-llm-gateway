@@ -419,6 +419,7 @@ async def dispatch_cursor_sdk_worker_message(
     force_reason: str | None = None,
     hop_park_release: bool = False,
     claim_id: str | None = None,
+    impresario_envelope: dict[str, Any] | None = None,
     caller_transcript_id: str | None = None,
     bus_lifecycle: Literal["persistent", "ephemeral"] | None = None,
     wake_lane: str | None = None,
@@ -471,6 +472,8 @@ async def dispatch_cursor_sdk_worker_message(
         payload["hop_park_release"] = True
     if claim_id:
         payload["claim_id"] = claim_id
+    if impresario_envelope:
+        payload["generation_options"] = {"impresario": impresario_envelope}
     if caller_transcript_id:
         payload["caller_transcript_id"] = caller_transcript_id
     if wake_lane:
@@ -538,10 +541,20 @@ async def post_worker_failure_turn(
     headers = {"Authorization": f"Bearer {token}"} if token else {}
     try:
         async with make_async_client(DEFAULT_AGENT_BUS_URL, timeout=10.0) as client:
-            await client.post("/turns", json=payload, headers=headers)
-    except httpx.HTTPError as exc:
+            resp = await client.post("/turns", json=payload, headers=headers)
+        if resp.status_code not in (200, 201, 202, 204):
+            logger.warning(
+                "cursor-sdk failure turn bus non-success: thread=%s dispatch_id=%s "
+                "status=%s body=%s",
+                thread_id,
+                dispatch_id or disp_part,
+                resp.status_code,
+                getattr(resp, "text", "")[:200],
+            )
+    except Exception as exc:
         logger.warning(
-            "cursor-sdk failure turn not posted: thread=%s err=%s",
+            "cursor-sdk failure turn not posted: thread=%s dispatch_id=%s err=%s",
             thread_id,
+            dispatch_id or disp_part,
             exc,
         )
