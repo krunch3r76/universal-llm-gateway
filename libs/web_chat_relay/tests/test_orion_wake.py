@@ -923,3 +923,162 @@ async def test_dom_deliver_marks_operator_refusal_before_lock(
     assert out["before_lock"] is True
     assert out["reason"] == "operator_busy"
     assert out["code"] == "operator_active"
+
+
+@pytest.mark.asyncio
+async def test_post_lock_operator_refusal_is_deferred(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An operator refusal after the lock is a deferred operator_active receipt."""
+    from web_chat_relay.orion_wake import deliver_orion_chat_wake
+    from web_chat_relay.orion_wake_owner import InMemoryWakeDeliveryOwner
+
+    async def _busy(page: object, text: str, **kwargs: object) -> dict:
+        return {
+            "ok": False,
+            "reason": "recent operator input or foreign draft in composer",
+            "code": "operator_active",
+            "after_lock": True,
+        }
+
+    monkeypatch.setattr("web_chat_relay.orion_wake._dom_deliver", _busy)
+    owner = InMemoryWakeDeliveryOwner()
+    claim, opts = _defer_claim_opts()
+    owner.register_claim(claim)
+    out = await deliver_orion_chat_wake(
+        thread="21207",
+        turn=12,
+        from_agent="maestro",
+        page=_FakePage(url=PINNED_CONVERSATION_URL),
+        conversation_url=PINNED_CONVERSATION_URL,
+        pipeline_options=opts,
+        delivery_owner=owner,
+    )
+    stored = owner.paste_receipts[claim.wake_id]
+    assert out["reason"] == "operator_active"
+    assert out.get("deferred") is True
+    assert stored["reason"] == "operator_active"
+    assert stored.get("deferred") is True
+    assert out["reason"] != "paste_failed"
+
+
+@pytest.mark.asyncio
+async def test_visibility_only_refusal_is_not_deferred(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Focus or visibility alone stays paste_failed so an unfocusable tab does not retry."""
+    from web_chat_relay.orion_wake import deliver_orion_chat_wake
+    from web_chat_relay.orion_wake_owner import InMemoryWakeDeliveryOwner
+
+    async def _visible(page: object, text: str, **kwargs: object) -> dict:
+        return {
+            "ok": False,
+            "reason": "tab not created by agent has focus or is visible to the operator",
+            "code": "operator_active",
+            "after_lock": True,
+        }
+
+    monkeypatch.setattr("web_chat_relay.orion_wake._dom_deliver", _visible)
+    owner = InMemoryWakeDeliveryOwner()
+    claim, opts = _defer_claim_opts()
+    claim = claim.__class__(
+        wake_id="wake-defer-vis",
+        agent=claim.agent,
+        thread_id=claim.thread_id,
+        turn_ids=claim.turn_ids,
+        turn_numbers=claim.turn_numbers,
+        endpoint_url=claim.endpoint_url,
+    )
+    opts = {**opts, "wake_id": claim.wake_id}
+    owner.register_claim(claim)
+    out = await deliver_orion_chat_wake(
+        thread="21207",
+        turn=12,
+        from_agent="maestro",
+        page=_FakePage(url=PINNED_CONVERSATION_URL),
+        conversation_url=PINNED_CONVERSATION_URL,
+        pipeline_options=opts,
+        delivery_owner=owner,
+    )
+    stored = owner.paste_receipts[claim.wake_id]
+    assert out["reason"] == "paste_failed"
+    assert out.get("deferred") is not True
+    assert stored["reason"] == "paste_failed"
+
+
+@pytest.mark.no_dom_stub
+@pytest.mark.asyncio
+async def test_bring_to_front_does_not_refuse_as_operator_active(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The wake's own bring-to-front passes lock_holder so focus is not operator_active."""
+    page = _FakePage()
+
+    async def _front() -> None:
+        page.brought_to_front = True
+
+    page.bring_to_front = _front  # type: ignore[attr-defined]
+    captured: dict[str, object] = {}
+
+    class _Port:
+        def list_tabs(self, *, cdp_url: str) -> dict:
+            return {
+                "pages": [
+                    {
+                        "id": "tab-front",
+                        "url": PINNED,
+                        "web_socket_debugger_url": "ws://127.0.0.1/devtools/page/front",
+                    }
+                ]
+            }
+
+    async def _pre(*_a: object, **_k: object) -> dict:
+        return {"ok": True}
+
+    async def _recheck(*_a: object, **kwargs: object) -> dict:
+        captured["lock_holder"] = kwargs.get("lock_holder")
+        if kwargs.get("lock_holder") is not True:
+            return {
+                "ok": False,
+                "code": "operator_active",
+                "reason": "tab not created by agent has focus or is visible to the operator",
+            }
+        return {
+            "ok": True,
+            "probe": {
+                "document_has_focus": True,
+                "document_visibility": "visible",
+                "operator_active": False,
+            },
+        }
+
+    async def _baseline(*_a: object, **_k: object) -> dict:
+        return {"ok": True, "user_count": 0}
+
+    async def _insert(*_a: object, **_k: object) -> dict:
+        return {"ok": True}
+
+    async def _verify(*_a: object, **_k: object) -> dict:
+        return {"ok": True, "receipt": "dom_committed"}
+
+    @asynccontextmanager
+    async def _lock(_target_id: str, *, timeout_s: float = 120, op: str = ""):
+        yield
+
+    monkeypatch.setattr("web_tab.cdp_actuation.default_actuation_port", lambda: _Port())
+    monkeypatch.setattr("web_tab.operator_guard.wait_operator_idle_before_lock", _pre)
+    monkeypatch.setattr("web_tab.operator_guard.operator_recheck_under_lock", _recheck)
+    monkeypatch.setattr("web_tab.commit_verify.capture_dom_baseline", _baseline)
+    monkeypatch.setattr("cursor_bridge.dom_composer_paste.dom_insert_and_send", _insert)
+    monkeypatch.setattr("web_tab.commit_verify.poll_verify_committed", _verify)
+    monkeypatch.setattr("web_tab.target_lock.target_write_lock", _lock)
+    out = await deliver_orion_wake(
+        thread="21207",
+        turn=2,
+        from_agent="maestro",
+        page=page,
+    )
+    assert page.brought_to_front is True
+    assert captured.get("lock_holder") is True
+    assert out.get("reason") != "operator_active"
+    assert out.get("reason") != "paste_failed"
