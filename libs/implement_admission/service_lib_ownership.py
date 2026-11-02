@@ -38,10 +38,14 @@ _SERVICE_OWNERSHIP: dict[str, ServiceOwnership] = {
             {
                 "agent_bus_store",
                 "agent_seat",
+                # server.py lifespan, gated on AGENT_BUS_ENDPOINT_WAKE_DISPATCHER
+                "background_supervisor",
                 "bus_watch",
                 "cdp_ask",
                 "claude_bundles",
                 "cortex_store",
+                # endpoint_subscriptions.py, endpoint_wake_ledger.py (module-top)
+                "cursor_bridge",
                 "cursor_capabilities",
                 "durable_io",
                 "gen_rules",
