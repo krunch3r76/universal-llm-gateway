@@ -7,7 +7,6 @@ from typing import Any
 
 from chat_harvest.models import ClassifyRefuse
 from cursor_bridge.electron_chat_relay import ElectronEndpoint, read_endpoint_turn
-from cursor_bridge.operator_paste import deliver_operator_paste
 from interlocutor.targets import DisplayEightTarget
 
 
@@ -62,6 +61,8 @@ async def steer_display(
                 code="watermark_missing_authorization",
                 reason="operator_relay requires grant (operator|explicit) and authorization_source",
             ).model_dump()
+        from cursor_bridge.operator_paste import deliver_operator_paste
+
         result = await deliver_operator_paste(
             display=target.display,
             app=target.app,

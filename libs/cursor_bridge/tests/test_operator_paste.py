@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import subprocess
+import sys
 from typing import Any
 from unittest.mock import AsyncMock
 
@@ -978,3 +980,14 @@ def test_dom_verification_conclusive_requires_agent_id_and_readback() -> None:
         body_snippet="relay",
         readback_ok=True,
     )
+
+
+def test_operator_paste_imports_in_fresh_subprocess() -> None:
+    """Module-level import must not hit interlocutor circular init."""
+    proc = subprocess.run(
+        [sys.executable, "-c", "import cursor_bridge.operator_paste"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert proc.returncode == 0, proc.stderr or proc.stdout
