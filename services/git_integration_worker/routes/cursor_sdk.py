@@ -2164,13 +2164,58 @@ async def reconcile_stale_leases(
     await sweep_conductor_hop_watchdog(ledger)
 
 
+async def frontier_registry_reaper(app: FastAPI) -> None:
+    """Fail frontier registry rows past TTL on an independent sweep clock.
+
+    Does not consult ``admission_controller`` or ``reconcile_stale_leases`` so a
+    hung stale-lease reconcile cannot starve the backstop reaper.
+    """
+    from datetime import UTC, datetime
+
+    from services.git_integration_worker.cursor_sdk_work_registry_admit import (
+        reap_stale_frontier_registry_rows,
+    )
+
+    last_stall_warn_monotonic = 0.0
+    while True:
+        await asyncio.sleep(_STALE_SWEEP_S)
+        started = getattr(app.state, "stale_lease_sweep_started_at", None)
+        finished = getattr(app.state, "stale_lease_sweep_finished_at", None)
+        if started is not None:
+            now = datetime.now(UTC)
+            reconcile_open = finished is None or finished < started
+            age_s = (now - started).total_seconds()
+            if reconcile_open and age_s > 10 * _STALE_SWEEP_S:
+                if time.monotonic() - last_stall_warn_monotonic >= 600.0:
+                    logger.warning(
+                        "stale-lease reconcile stalled: started=%s finished=%s",
+                        started,
+                        finished,
+                    )
+                    last_stall_warn_monotonic = time.monotonic()
+        try:
+            reaped = await asyncio.to_thread(reap_stale_frontier_registry_rows)
+        except Exception as exc:  # reaper must never kill the worker
+            logger.warning("frontier registry reaper failed: %s", exc)
+            continue
+        if reaped:
+            logger.info(
+                "frontier registry reaper reaped n=%s ids=%s",
+                len(reaped),
+                reaped[:10],
+            )
+
+
 async def stale_lease_sweeper(app: FastAPI) -> None:
     """Background task started at worker lifespan."""
+    from datetime import UTC, datetime
+
     while True:
         await asyncio.sleep(_STALE_SWEEP_S)
         controller = getattr(app.state, "admission_controller", None)
         if controller is None:
             continue
+        app.state.stale_lease_sweep_started_at = datetime.now(UTC)
         try:
             await reconcile_stale_leases(
                 controller,
@@ -2180,14 +2225,8 @@ async def stale_lease_sweeper(app: FastAPI) -> None:
             )
         except Exception as exc:  # sweeper must never kill the worker
             logger.warning("stale-lease sweeper failed: %s", exc)
-        try:
-            from services.git_integration_worker.cursor_sdk_work_registry_admit import (
-                reap_stale_frontier_registry_rows,
-            )
-
-            await asyncio.to_thread(reap_stale_frontier_registry_rows)
-        except Exception as exc:  # sweeper must never kill the worker
-            logger.warning("frontier registry reaper failed: %s", exc)
+        finally:
+            app.state.stale_lease_sweep_finished_at = datetime.now(UTC)
 
 
 async def bridge_sweeper(app: FastAPI) -> None:
