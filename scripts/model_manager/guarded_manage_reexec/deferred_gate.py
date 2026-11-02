@@ -22,7 +22,7 @@ DEFAULT_POLL_S = 2.0
 DEFAULT_WAIT_PARENT_TIMEOUT_S = 900.0
 REPLY_TIMEOUT_S = 10.0
 _MAX_REPLY_POSTS = 3
-_LOG_FIELD_CAP = 512
+_LOG_FIELD_CAP = 2048
 AgentBusReplyFn = Callable[..., None]
 
 RECYCLE_FLEET_SERVICES = (
@@ -385,6 +385,8 @@ def _parse_fetch_turns(stdout: str) -> list[dict[str, Any]] | None:
         payload = json.loads(stdout)
     except json.JSONDecodeError:
         return None
+    if not isinstance(payload, dict):
+        return None
     turns = payload.get("turns")
     if not isinstance(turns, list):
         return None
@@ -395,6 +397,8 @@ def _parse_reply_turn(stdout: str) -> int | None:
     try:
         payload = json.loads(stdout)
     except json.JSONDecodeError:
+        return None
+    if not isinstance(payload, dict):
         return None
     num = payload.get("turn_number")
     return int(num) if isinstance(num, int) else None
@@ -453,10 +457,13 @@ def _fetch_turns(
     *,
     last: int,
 ) -> tuple[list[dict[str, Any]] | None, int, str, str]:
-    code, out, err = _run_agent_bus_cli(
-        ctx,
-        ["fetch", "--thread", str(ctx.report_thread), "--last", str(last)],
-    )
+    try:
+        code, out, err = _run_agent_bus_cli(
+            ctx,
+            ["fetch", "--thread", str(ctx.report_thread), "--last", str(last)],
+        )
+    except subprocess.TimeoutExpired:
+        return None, -1, "", "TimeoutExpired"
     if code != 0:
         return None, code, out, err
     return _parse_fetch_turns(out), code, out, err
@@ -511,6 +518,7 @@ def _deliver_via_cli(
     *,
     subject: str,
     body: str,
+    delivered_holder: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     latest, fetch_code, _fo, fetch_err = _latest_turn_number(ctx)
     if latest is None:
@@ -558,8 +566,7 @@ def _deliver_via_cli(
 
         if last_exit == 0:
             turn_num = _parse_reply_turn(out)
-            _log_reply_success(turn_num)
-            return _report_record(
+            record = _report_record(
                 outcome="delivered",
                 attempts=post_count,
                 exit_code=0,
@@ -567,6 +574,10 @@ def _deliver_via_cli(
                 stderr_head=last_err,
                 turn_number=turn_num,
             )
+            if delivered_holder is not None:
+                delivered_holder.append(record)
+            _log_reply_success(turn_num)
+            return record
 
         _log_reply_failure(
             exit_code=last_exit,
@@ -724,13 +735,21 @@ def post_maestro_reply(
             body_lines.append(str(line))
     body = "\n".join(body_lines)
     subject = f"DONE|decision:manage-recycle-39439-39455-r3b status={report_status}"
+    delivered_after_ack: list[dict[str, Any]] = []
     try:
         if reply_fn is not None:
             return _deliver_via_reply_fn(
                 ctx, reply_fn=reply_fn, subject=subject, body=body
             )
-        return _deliver_via_cli(ctx, subject=subject, body=body)
+        return _deliver_via_cli(
+            ctx,
+            subject=subject,
+            body=body,
+            delivered_holder=delivered_after_ack,
+        )
     except Exception as exc:
+        if delivered_after_ack:
+            return delivered_after_ack[-1]
         return _report_record(
             outcome="failed",
             attempts=0,

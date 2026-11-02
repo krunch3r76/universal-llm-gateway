@@ -88,7 +88,8 @@ def test_ac1_log_truncation_and_redaction(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
     log_path = tmp_path / "calls.json"
-    long_err = "409 Conflict " + ("x" * 600)
+    tail = "SHOULD_NOT_APPEAR_IN_CAP"
+    long_err = "409 Conflict " + ("x" * 2048) + tail
     body = textwrap.dedent(
         f"""
         #!/usr/bin/env python3
@@ -118,9 +119,60 @@ def test_ac1_log_truncation_and_redaction(
         exit_code=2,
     )
     assert report["outcome"] == "failed"
+    assert len(report["stderr_head"]) == 2048
+    assert tail not in report["stderr_head"]
     captured = capsys.readouterr().err
     assert "409 Conflict" in captured
-    assert len(captured) < len(long_err) + 200
+    assert tail not in captured
+
+    bearer_err = "Bearer secret-token leaked"
+    bearer_body = textwrap.dedent(
+        f"""
+        #!/usr/bin/env python3
+        import json, sys
+        from pathlib import Path
+        log = Path({str(log_path)!r})
+        calls = json.loads(log.read_text(encoding="utf-8"))
+        calls.append(sys.argv[1:])
+        log.write_text(json.dumps(calls), encoding="utf-8")
+        if sys.argv[1] == "fetch":
+            print(json.dumps({{"turns": [{{"turn_number": 1}}]}}))
+            sys.exit(0)
+        print({bearer_err!r}, file=sys.stderr)
+        sys.exit(1)
+        """
+    )
+    _install_stub_bus(tmp_path, script_body=bearer_body, log_path=log_path)
+    post_maestro_reply(
+        ctx,
+        report_status="refused",
+        reason="r",
+        manage_before={},
+        manage_after=None,
+        child_pids_before={},
+        child_pids_after={},
+        exit_code=2,
+    )
+    bearer_captured = capsys.readouterr().err
+    assert "[redacted]" in bearer_captured
+    assert "secret-token" not in bearer_captured
+
+    token_err = "AGENT_BUS_TOKEN=supersecret"
+    token_body = bearer_body.replace(bearer_err, token_err)
+    _install_stub_bus(tmp_path, script_body=token_body, log_path=log_path)
+    post_maestro_reply(
+        ctx,
+        report_status="refused",
+        reason="r",
+        manage_before={},
+        manage_after=None,
+        child_pids_before={},
+        child_pids_after={},
+        exit_code=2,
+    )
+    err3 = capsys.readouterr().err
+    assert "[redacted]" in err3
+    assert "supersecret" not in err3
 
 
 def test_ac2_record_delivered_and_failed(tmp_path: Path) -> None:
@@ -153,8 +205,8 @@ def test_ac2_record_delivered_and_failed(tmp_path: Path) -> None:
         calls.append(sys.argv[1:])
         log.write_text(json.dumps(calls), encoding="utf-8")
         if sys.argv[1] == "fetch":
-            print(json.dumps({{"turns": []}}))
-            sys.exit(0)
+            print("agent-bus error: fetch failed", file=sys.stderr)
+            sys.exit(1)
         print("agent-bus error: boom", file=sys.stderr)
         sys.exit(1)
         """
@@ -171,7 +223,10 @@ def test_ac2_record_delivered_and_failed(tmp_path: Path) -> None:
         exit_code=2,
     )
     assert report_fail["outcome"] == "failed"
-    assert before == json.loads(ctx.result_path.read_text(encoding="utf-8")) or True
+    assert report_fail["cause"] == "fetch_latest_failed"
+    on_disk = json.loads(ctx.result_path.read_text(encoding="utf-8"))
+    on_disk.pop("report", None)
+    assert before == on_disk
 
 
 def test_ac3_deliver_past_unread_gate(tmp_path: Path) -> None:
@@ -195,6 +250,26 @@ def test_ac3_deliver_past_unread_gate(tmp_path: Path) -> None:
     assert report["outcome"] == "delivered"
     idx = reply_calls[0].index("--after-turn")
     assert int(reply_calls[0][idx + 1]) == 10
+
+
+def test_ac4_persist_failure_after_ack_post_one_turn(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    state_path = tmp_path / "state.json"
+    _install_turn_store(tmp_path, state_path)
+    ctx = _ctx(tmp_path, result_path=tmp_path / "crash.json")
+
+    def _fail_persist(_result: GuardedReexecResult, _path: Path) -> None:
+        raise OSError("disk full")
+
+    monkeypatch.setattr(
+        "scripts.model_manager.guarded_manage_reexec.deferred_gate.persist_result_projection",
+        _fail_persist,
+    )
+    with pytest.raises(OSError, match="disk full"):
+        report_deferred_crash(ctx, RuntimeError("boom"), "tb")
+    calls = json.loads(state_path.read_text(encoding="utf-8"))["calls"]
+    assert len([c for c in calls if c[0] == "reply"]) == 1
 
 
 def test_ac4_no_raise_paths(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -292,7 +367,398 @@ def test_ac4_no_raise_paths(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> 
     )
     assert report_ok["outcome"] == "delivered"
     assert report_ok["turn_number"] is None
+    assert report_ok["attempts"] == 1
     assert sum(1 for c in json.loads(log_path.read_text()) if c[0] == "reply") == 1
+
+    list_fetch_body = textwrap.dedent(
+        f"""
+        #!/usr/bin/env python3
+        import json, sys
+        from pathlib import Path
+        log = Path({str(log_path)!r})
+        calls = json.loads(log.read_text(encoding="utf-8"))
+        calls.append(sys.argv[1:])
+        log.write_text(json.dumps(calls), encoding="utf-8")
+        if sys.argv[1] == "fetch":
+            print(json.dumps([]))
+            sys.exit(0)
+        print(json.dumps({{"turn_number": 2}}))
+        sys.exit(0)
+        """
+    )
+    _install_stub_bus(tmp_path, script_body=list_fetch_body, log_path=log_path)
+    report_list = post_maestro_reply(
+        ctx,
+        report_status="refused",
+        reason="r",
+        manage_before={},
+        manage_after=None,
+        child_pids_before={},
+        child_pids_after={},
+        exit_code=2,
+    )
+    assert report_list["outcome"] == "failed"
+    assert report_list["cause"] == "fetch_latest_failed"
+
+    def _boom_log(_n: int | None) -> None:
+        raise RuntimeError("log sink broken")
+
+    monkeypatch.setattr(
+        "scripts.model_manager.guarded_manage_reexec.deferred_gate._log_reply_success",
+        _boom_log,
+    )
+    _install_stub_bus(tmp_path, script_body=_reply_only_stub(log_path), log_path=log_path)
+    report_after_ack = post_maestro_reply(
+        ctx,
+        report_status="executed",
+        manage_before={"pid": 1},
+        manage_after={"pid": 2},
+        child_pids_before={},
+        child_pids_after={},
+        exit_code=0,
+    )
+    assert report_after_ack["outcome"] == "delivered"
+    assert report_after_ack["attempts"] == 1
+
+
+def _turn_store_stub(
+    state_path: Path,
+    *,
+    initial_turn: int = 10,
+) -> str:
+    return textwrap.dedent(
+        f"""
+        #!/usr/bin/env python3
+        import json, sys
+        from pathlib import Path
+        state_path = Path({str(state_path)!r})
+        state = json.loads(state_path.read_text(encoding="utf-8"))
+        state["calls"].append(sys.argv[1:])
+        state_path.write_text(json.dumps(state), encoding="utf-8")
+        cmd = sys.argv[1] if len(sys.argv) > 1 else ""
+        if cmd == "fetch":
+            last = int(sys.argv[sys.argv.index("--last") + 1])
+            turns = state["turns"][-last:]
+            state_path.write_text(json.dumps(state), encoding="utf-8")
+            print(json.dumps({{"turns": turns}}))
+            sys.exit(0)
+        if cmd == "reply":
+            subj = sys.argv[sys.argv.index("--subject") + 1]
+            body = sys.argv[sys.argv.index("--body") + 1]
+            num = max((t["turn_number"] for t in state["turns"]), default={initial_turn}) + 1
+            state["turns"].append({{
+                "turn_number": num,
+                "from": "cursor",
+                "to": "maestro",
+                "subject": subj,
+                "body": body,
+            }})
+            state_path.write_text(json.dumps(state), encoding="utf-8")
+            print(json.dumps({{"turn_number": num}}))
+            sys.exit(0)
+        state_path.write_text(json.dumps(state), encoding="utf-8")
+        sys.exit(2)
+        """
+    )
+
+
+def _install_turn_store(tmp_path: Path, state_path: Path, *, initial_turn: int = 10) -> None:
+    initial_state = {
+        "calls": [],
+        "turns": [{"turn_number": initial_turn, "from": "x", "to": "y"}],
+    }
+    body = _turn_store_stub(state_path, initial_turn=initial_turn)
+    _install_stub_bus(tmp_path, script_body=body, log_path=state_path)
+    state_path.write_text(json.dumps(initial_state), encoding="utf-8")
+
+
+def test_ac5_timeout_then_inserted_delivered_single_post(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    state_path = tmp_path / "state.json"
+    body = textwrap.dedent(
+        f"""
+        #!/usr/bin/env python3
+        import json, sys, time
+        from pathlib import Path
+        state_path = Path({str(state_path)!r})
+        state = json.loads(state_path.read_text(encoding="utf-8"))
+        state["calls"].append(sys.argv[1:])
+        state_path.write_text(json.dumps(state), encoding="utf-8")
+        cmd = sys.argv[1] if len(sys.argv) > 1 else ""
+        if cmd == "fetch":
+            n_fetch = len([c for c in state["calls"] if c and c[0] == "fetch"])
+            if n_fetch >= 2:
+                subj = "DONE|decision:manage-recycle-39439-39455-r3b status=executed"
+                state["turns"].append({{
+                    "turn_number": 11,
+                    "from": "cursor",
+                    "to": "maestro",
+                    "subject": subj,
+                    "body": "status: executed",
+                }})
+            print(json.dumps({{"turns": state["turns"][-20:]}}))
+            state_path.write_text(json.dumps(state), encoding="utf-8")
+            sys.exit(0)
+        if cmd == "reply":
+            time.sleep(30)
+            sys.exit(0)
+        state_path.write_text(json.dumps(state), encoding="utf-8")
+        sys.exit(2)
+        """
+    )
+    initial = {"calls": [], "turns": [{"turn_number": 10, "from": "x", "to": "y"}]}
+    _install_stub_bus(tmp_path, script_body=body, log_path=state_path)
+    state_path.write_text(json.dumps(initial), encoding="utf-8")
+    monkeypatch.setattr(
+        "scripts.model_manager.guarded_manage_reexec.deferred_gate.REPLY_TIMEOUT_S",
+        0.05,
+    )
+    ctx = _ctx(tmp_path)
+    report = post_maestro_reply(
+        ctx,
+        report_status="executed",
+        manage_before={"pid": 1},
+        manage_after={"pid": 2},
+        child_pids_before={},
+        child_pids_after={},
+        exit_code=0,
+    )
+    state = json.loads(state_path.read_text(encoding="utf-8"))
+    replies = [c for c in state["calls"] if c[0] == "reply"]
+    assert len(replies) == 1
+    assert report["outcome"] == "delivered"
+    assert report["attempts"] == 1
+
+
+def test_ac5_late_insert_after_timeout_one_turn(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    state_path = tmp_path / "state.json"
+    initial_turns = [{"turn_number": 10, "from": "x", "to": "y"}]
+    hang_body = textwrap.dedent(
+        f"""
+        #!/usr/bin/env python3
+        import json, sys, time
+        from pathlib import Path
+        state_path = Path({str(state_path)!r})
+        state = json.loads(state_path.read_text(encoding="utf-8"))
+        state["calls"].append(sys.argv[1:])
+        state_path.write_text(json.dumps(state), encoding="utf-8")
+        cmd = sys.argv[1] if len(sys.argv) > 1 else ""
+        if cmd == "fetch":
+            if len([c for c in state["calls"] if c and c[0] == "reply"]) >= 1:
+                subj = "DONE|decision:manage-recycle-39439-39455-r3b status=executed"
+                if not any(t.get("turn_number") == 11 for t in state["turns"]):
+                    state["turns"].append({{
+                        "turn_number": 11,
+                        "from": "cursor",
+                        "to": "maestro",
+                        "subject": subj,
+                        "body": "status: executed",
+                    }})
+            print(json.dumps({{"turns": state["turns"]}}))
+            state_path.write_text(json.dumps(state), encoding="utf-8")
+            sys.exit(0)
+        if cmd == "reply":
+            time.sleep(30)
+        state_path.write_text(json.dumps(state), encoding="utf-8")
+        sys.exit(0)
+        """
+    )
+    _install_stub_bus(tmp_path, script_body=hang_body, log_path=state_path)
+    state_path.write_text(
+        json.dumps({"calls": [], "turns": initial_turns}),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        "scripts.model_manager.guarded_manage_reexec.deferred_gate.REPLY_TIMEOUT_S",
+        0.05,
+    )
+    ctx = _ctx(tmp_path)
+    report = post_maestro_reply(
+        ctx,
+        report_status="executed",
+        manage_before={"pid": 1},
+        manage_after={"pid": 2},
+        child_pids_before={},
+        child_pids_after={},
+        exit_code=0,
+    )
+    state = json.loads(state_path.read_text(encoding="utf-8"))
+    assert len([c for c in state["calls"] if c[0] == "reply"]) == 1
+    assert len([t for t in state["turns"] if t.get("from") == "cursor"]) == 1
+    assert report["outcome"] == "delivered"
+
+
+def test_ac5_request_not_sent_retry_uses_max_window(tmp_path: Path) -> None:
+    state_path = tmp_path / "state.json"
+    body = textwrap.dedent(
+        f"""
+        #!/usr/bin/env python3
+        import json, sys
+        from pathlib import Path
+        state_path = Path({str(state_path)!r})
+        state = json.loads(state_path.read_text(encoding="utf-8"))
+        state["calls"].append(sys.argv[1:])
+        state_path.write_text(json.dumps(state), encoding="utf-8")
+        cmd = sys.argv[1] if len(sys.argv) > 1 else ""
+        if cmd == "fetch":
+            print(json.dumps({{"turns": state["turns"]}}))
+            state_path.write_text(json.dumps(state), encoding="utf-8")
+            sys.exit(0)
+        if cmd == "reply":
+            n = len([c for c in state["calls"] if c and c[0] == "reply"])
+            if n == 1:
+                print("[Errno 111] Connection refused", file=sys.stderr)
+                sys.exit(1)
+            subj = sys.argv[sys.argv.index("--subject") + 1]
+            body = sys.argv[sys.argv.index("--body") + 1]
+            after = int(sys.argv[sys.argv.index("--after-turn") + 1])
+            assert after == 15
+            state["turns"].append({{
+                "turn_number": 16,
+                "from": "cursor",
+                "to": "maestro",
+                "subject": subj,
+                "body": body,
+            }})
+            print(json.dumps({{"turn_number": 16}}))
+            state_path.write_text(json.dumps(state), encoding="utf-8")
+            sys.exit(0)
+        state_path.write_text(json.dumps(state), encoding="utf-8")
+        sys.exit(2)
+        """
+    )
+    initial = {
+        "calls": [],
+        "turns": [
+            {"turn_number": 10, "from": "x", "to": "y"},
+            {"turn_number": 12, "from": "x", "to": "y"},
+            {"turn_number": 15, "from": "x", "to": "y"},
+        ],
+    }
+    _install_stub_bus(tmp_path, script_body=body, log_path=state_path)
+    state_path.write_text(json.dumps(initial), encoding="utf-8")
+    ctx = _ctx(tmp_path)
+    report = post_maestro_reply(
+        ctx,
+        report_status="executed",
+        manage_before={"pid": 1},
+        manage_after={"pid": 2},
+        child_pids_before={},
+        child_pids_after={},
+        exit_code=0,
+    )
+    assert report["outcome"] == "delivered"
+    assert len([c for c in json.loads(state_path.read_text())["calls"] if c[0] == "reply"]) == 2
+
+
+def test_ac5_server_error_retry_uses_max_window(tmp_path: Path) -> None:
+    state_path = tmp_path / "state.json"
+    body = textwrap.dedent(
+        f"""
+        #!/usr/bin/env python3
+        import json, sys
+        from pathlib import Path
+        state_path = Path({str(state_path)!r})
+        state = json.loads(state_path.read_text(encoding="utf-8"))
+        state["calls"].append(sys.argv[1:])
+        state_path.write_text(json.dumps(state), encoding="utf-8")
+        cmd = sys.argv[1] if len(sys.argv) > 1 else ""
+        if cmd == "fetch":
+            print(json.dumps({{"turns": state["turns"]}}))
+            state_path.write_text(json.dumps(state), encoding="utf-8")
+            sys.exit(0)
+        if cmd == "reply":
+            n = len([c for c in state["calls"] if c and c[0] == "reply"])
+            if n == 1:
+                print("Server error '503'", file=sys.stderr)
+                sys.exit(1)
+            after = int(sys.argv[sys.argv.index("--after-turn") + 1])
+            assert after == 14
+            subj = sys.argv[sys.argv.index("--subject") + 1]
+            body_txt = sys.argv[sys.argv.index("--body") + 1]
+            state["turns"].append({{
+                "turn_number": 15,
+                "from": "cursor",
+                "to": "maestro",
+                "subject": subj,
+                "body": body_txt,
+            }})
+            print(json.dumps({{"turn_number": 15}}))
+            state_path.write_text(json.dumps(state), encoding="utf-8")
+            sys.exit(0)
+        state_path.write_text(json.dumps(state), encoding="utf-8")
+        sys.exit(2)
+        """
+    )
+    initial = {
+        "calls": [],
+        "turns": [
+            {"turn_number": 10, "from": "x", "to": "y"},
+            {"turn_number": 14, "from": "x", "to": "y"},
+        ],
+    }
+    _install_stub_bus(tmp_path, script_body=body, log_path=state_path)
+    state_path.write_text(json.dumps(initial), encoding="utf-8")
+    ctx = _ctx(tmp_path)
+    report = post_maestro_reply(
+        ctx,
+        report_status="executed",
+        manage_before={"pid": 1},
+        manage_after={"pid": 2},
+        child_pids_before={},
+        child_pids_after={},
+        exit_code=0,
+    )
+    assert report["outcome"] == "delivered"
+
+
+def test_ac5_timeout_no_match_failed_no_extra_post(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    state_path = tmp_path / "state.json"
+    body = textwrap.dedent(
+        f"""
+        #!/usr/bin/env python3
+        import json, sys, time
+        from pathlib import Path
+        state_path = Path({str(state_path)!r})
+        state = json.loads(state_path.read_text(encoding="utf-8"))
+        state["calls"].append(sys.argv[1:])
+        state_path.write_text(json.dumps(state), encoding="utf-8")
+        cmd = sys.argv[1] if len(sys.argv) > 1 else ""
+        if cmd == "fetch":
+            print(json.dumps({{"turns": state["turns"]}}))
+            state_path.write_text(json.dumps(state), encoding="utf-8")
+            sys.exit(0)
+        if cmd == "reply":
+            time.sleep(30)
+        state_path.write_text(json.dumps(state), encoding="utf-8")
+        sys.exit(0)
+        """
+    )
+    initial = {"calls": [], "turns": [{"turn_number": 10, "from": "x", "to": "y"}]}
+    _install_stub_bus(tmp_path, script_body=body, log_path=state_path)
+    state_path.write_text(json.dumps(initial), encoding="utf-8")
+    monkeypatch.setattr(
+        "scripts.model_manager.guarded_manage_reexec.deferred_gate.REPLY_TIMEOUT_S",
+        0.05,
+    )
+    ctx = _ctx(tmp_path)
+    report = post_maestro_reply(
+        ctx,
+        report_status="executed",
+        manage_before={"pid": 1},
+        manage_after={"pid": 2},
+        child_pids_before={},
+        child_pids_after={},
+        exit_code=0,
+    )
+    assert report["outcome"] == "failed"
+    assert report["cause"] == "timeout delivery_unverified"
+    assert len([c for c in json.loads(state_path.read_text())["calls"] if c[0] == "reply"]) == 1
 
 
 def test_ac5_no_double_post_race_and_cap(tmp_path: Path) -> None:
@@ -454,10 +920,8 @@ def test_ac7_exit_codes_unchanged_when_report_fails(
 
 
 def test_ac10_argv_constraints(tmp_path: Path) -> None:
-    log_path = tmp_path / "calls.json"
-    _install_stub_bus(
-        tmp_path, script_body=_reply_only_stub(log_path), log_path=log_path
-    )
+    state_path = tmp_path / "state.json"
+    _install_turn_store(tmp_path, state_path)
     ctx = _ctx(tmp_path)
     post_maestro_reply(
         ctx,
@@ -468,8 +932,8 @@ def test_ac10_argv_constraints(tmp_path: Path) -> None:
         child_pids_after={},
         exit_code=0,
     )
-    calls = json.loads(log_path.read_text(encoding="utf-8"))
-    for argv in calls:
+    state = json.loads(state_path.read_text(encoding="utf-8"))
+    for argv in state["calls"]:
         if argv[0] == "reply":
             assert "--from-agent" not in argv
             assert "--mark-read" not in argv
@@ -477,6 +941,12 @@ def test_ac10_argv_constraints(tmp_path: Path) -> None:
             assert "--mark-read" not in argv
             assert "--unread" not in argv
             assert "--to" not in argv
+    stored = [t for t in state["turns"] if t.get("from") == "cursor"]
+    assert len(stored) == 1
+    turn = stored[0]
+    assert turn["to"] == "maestro"
+    assert turn["subject"].startswith("DONE|decision:manage-recycle-39439-39455-r3b")
+    assert turn["body"].startswith("status: executed")
 
 
 def test_ac2_persist_on_recycle_path(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -513,22 +983,21 @@ def test_ac4_crash_handler_propagates_original(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     result_path = tmp_path / "out.json"
+    state_path = tmp_path / "state.json"
+    _install_turn_store(tmp_path, state_path)
     monkeypatch.setattr(
         "scripts.model_manager.guarded_manage_reexec.__main__.run_deferred_recycle",
         lambda _ctx: (_ for _ in ()).throw(RuntimeError("status read failed")),
     )
 
-    def _capture(ctx: DeferredRecycleContext, exc: BaseException, tb: str, **kw: Any) -> None:
-        report_deferred_crash(
-            ctx,
-            exc,
-            tb,
-            reply_fn=lambda **_r: None,
-        )
+    def _failing_reporter(**_kw: Any) -> None:
+        raise RuntimeError("reply_fn boom")
 
     monkeypatch.setattr(
         "scripts.model_manager.guarded_manage_reexec.__main__.report_deferred_crash",
-        _capture,
+        lambda ctx, exc, tb, **kw: report_deferred_crash(
+            ctx, exc, tb, reply_fn=_failing_reporter
+        ),
     )
     with pytest.raises(RuntimeError, match="status read failed"):
         cli.main(
@@ -547,3 +1016,5 @@ def test_ac4_crash_handler_propagates_original(
                 str(result_path),
             ]
         )
+    on_disk = json.loads(result_path.read_text(encoding="utf-8"))
+    assert on_disk["report"]["outcome"] == "failed"
