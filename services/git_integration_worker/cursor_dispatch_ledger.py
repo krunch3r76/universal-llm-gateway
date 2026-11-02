@@ -57,6 +57,7 @@ _STATUS_CHECK = (
     "'claimed'"
 )
 _TERMINAL_STATUS_CHECK = "'completed','failed','cancelled'"
+_API_ROLE_CLOSEABLE_STATUSES = "'queued','admitted','running'"
 _ACTIVE_IDENTITY_STATUSES = "'queued','admitted','running','parked_waiting'"
 _NON_TERMINAL_CONDUCTOR_STATUSES = (
     "'queued','admitted','claimed','running','parked_waiting'"
@@ -360,9 +361,7 @@ def _read_only_ledger_connect() -> sqlite3.Connection | None:
     return conn
 
 
-def read_active_resume_steer_dispatch(
-    *, thread_id: str
-) -> dict[str, Any] | None:
+def read_active_resume_steer_dispatch(*, thread_id: str) -> dict[str, Any] | None:
     """Newest non-terminal cursor-sdk row on ``thread_id`` with ``resume_of`` set."""
     house = str(thread_id or "").strip()
     if not house:
@@ -3627,36 +3626,81 @@ class CursorDispatchLedger:
         record_json: str,
         stamp: str,
     ) -> str:
-        """Insert or update a synthetic completed ledger row for API-role team_dispatch."""
+        """Insert or update a synthetic completed ledger row for API-role team_dispatch.
+
+        Returns the ``dispatch_id`` that actually carries the completion: the
+        admitted row when one was closed in place, else the synthetic ``api-`` row.
+        Callers must project economics onto the returned id, not onto ``api-`` by
+        construction, or a closed-in-place completion is credited to a row that
+        does not exist (friction:41315 F7).
+
+        Closing the admitted row in place goes through a guarded claim under
+        ``BEGIN IMMEDIATE`` followed by :meth:`mark_terminal`, so a cancel or reap
+        committing concurrently cannot be flipped back to ``completed`` and the
+        terminal side effects (lease FIFO promotion, memo owe, stop_service,
+        registry work_status) still fire.
+        """
         dispatch_id = f"api-{execution_id}"
+        try:
+            patch = json.loads(record_json or "{}")
+        except json.JSONDecodeError:
+            patch = {}
+        if not isinstance(patch, dict):
+            patch = {}
+        claimed_id: str | None = None
         with self._connect() as conn:
+            conn.execute("BEGIN IMMEDIATE")
             open_row = conn.execute(
                 "SELECT dispatch_id FROM cursor_sdk_dispatches "
                 "WHERE (dispatch_id=? OR execution_id=?) "
-                f"AND status NOT IN ({_TERMINAL_STATUS_CHECK}) "
-                "ORDER BY rowid DESC LIMIT 1",
-                (execution_id, execution_id),
+                f"AND status IN ({_API_ROLE_CLOSEABLE_STATUSES}) "
+                "ORDER BY (dispatch_id=?) DESC, rowid DESC LIMIT 1",
+                (execution_id, execution_id, execution_id),
             ).fetchone()
             if open_row is not None:
                 admitted_id = str(open_row["dispatch_id"])
-                conn.execute(
+                cur = conn.execute(
                     "UPDATE cursor_sdk_dispatches SET execution_id=?, resolved_model=?, "
-                    "status='completed', record_json=?, contract=?, work_key=?, "
-                    "started_at=COALESCE(started_at, ?), terminal_at=?, "
-                    "terminal_status='completed' WHERE dispatch_id=?",
+                    "contract=COALESCE(contract, ?), work_key=COALESCE(work_key, ?), "
+                    "started_at=COALESCE(started_at, ?) "
+                    "WHERE dispatch_id=? "
+                    f"AND status IN ({_API_ROLE_CLOSEABLE_STATUSES})",
                     (
                         execution_id,
                         resolved_model,
-                        record_json,
                         contract or "freeform",
                         work_key,
-                        stamp,
                         stamp,
                         admitted_id,
                     ),
                 )
+                if cur.rowcount == 1:
+                    _merge_record_json_conn(conn, dispatch_id=admitted_id, patch=patch)
+                    claimed_id = admitted_id
                 conn.commit()
+                if claimed_id is not None:
+                    self.mark_terminal(
+                        dispatch_id=claimed_id, terminal_status="completed"
+                    )
+                    return claimed_id
                 return admitted_id
+            settled = conn.execute(
+                "SELECT dispatch_id FROM cursor_sdk_dispatches "
+                "WHERE (dispatch_id IN (?, ?) OR execution_id=?) "
+                f"AND status IN ({_TERMINAL_STATUS_CHECK}) "
+                "ORDER BY (dispatch_id=?) DESC, rowid DESC LIMIT 1",
+                (execution_id, dispatch_id, execution_id, execution_id),
+            ).fetchone()
+            if settled is not None:
+                settled_id = str(settled["dispatch_id"])
+                conn.execute(
+                    "UPDATE cursor_sdk_dispatches SET terminal_at=?, resolved_model=?, "
+                    "contract=COALESCE(contract, ?) WHERE dispatch_id=?",
+                    (stamp, resolved_model, contract or "freeform", settled_id),
+                )
+                _merge_record_json_conn(conn, dispatch_id=settled_id, patch=patch)
+                conn.commit()
+                return settled_id
             existing = conn.execute(
                 "SELECT dispatch_id FROM cursor_sdk_dispatches WHERE dispatch_id=?",
                 (dispatch_id,),
