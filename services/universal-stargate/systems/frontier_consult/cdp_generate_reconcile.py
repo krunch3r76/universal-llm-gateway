@@ -64,6 +64,18 @@ _reconcile_in_flight = False
 _last_registry_heartbeat_mono: dict[str, float] = {}
 
 
+def _drop_registry_heartbeat_entry(execution_id: str) -> None:
+    _last_registry_heartbeat_mono.pop(execution_id, None)
+
+
+def _prune_registry_heartbeat_mono() -> None:
+    """Drop heartbeat throttle entries for legs no longer open."""
+    open_ids = {leg.execution_id for leg in list_open_inflight_legs()}
+    for execution_id in list(_last_registry_heartbeat_mono):
+        if execution_id not in open_ids:
+            _drop_registry_heartbeat_entry(execution_id)
+
+
 def _registry_heartbeat_min_s() -> float:
     raw = os.environ.get("CDP_REGISTRY_HEARTBEAT_MIN_S", "300").strip()
     try:
@@ -79,13 +91,17 @@ async def _maybe_relay_registry_heartbeat(leg: InflightLeg) -> None:
     last = _last_registry_heartbeat_mono.get(leg.execution_id, 0.0)
     if min_s > 0 and (now - last) < min_s:
         return
-    from .work_registry_admit_relay import relay_registry_heartbeat
-
-    await relay_registry_heartbeat(
-        request_id=leg.request_id,
-        dispatch_id=leg.execution_id,
-    )
     _last_registry_heartbeat_mono[leg.execution_id] = now
+
+    async def _relay() -> None:
+        from .work_registry_admit_relay import relay_registry_heartbeat
+
+        await relay_registry_heartbeat(
+            request_id=leg.request_id,
+            dispatch_id=leg.execution_id,
+        )
+
+    asyncio.create_task(_relay(), name=f"cdp-registry-hb-{leg.execution_id[:8]}")
 
 # Re-export ledger API so existing callers/tests keep importing this module.
 __all__ = [
@@ -156,6 +172,7 @@ async def _emit_reconcile_abandon(
         via="reconcile",
     )
     mark_abandoned(leg.execution_id)
+    _drop_registry_heartbeat_entry(leg.execution_id)
 
 
 def _leg_registration_id(
@@ -398,6 +415,7 @@ async def finalize_cdp_generate(
         if link_owed and terminated is not True:
             return
         mark_proof_emitted(result.execution_id)
+        _drop_registry_heartbeat_entry(result.execution_id)
         from .work_registry_admit_relay import relay_registry_terminal
 
         await relay_registry_terminal(
@@ -480,6 +498,7 @@ async def finalize_cdp_generate(
         return
 
     mark_proof_emitted(result.execution_id)
+    _drop_registry_heartbeat_entry(result.execution_id)
     if via == "reconcile":
         publish_cdp_kwargs(
             CdpGenerateReconciled,
@@ -541,6 +560,7 @@ async def _reconcile_leg(leg: InflightLeg) -> None:
     if leg.owner == "pipeline":
         if open_s >= horizon:
             mark_abandoned(leg.execution_id)
+            _drop_registry_heartbeat_entry(leg.execution_id)
         return
     if open_s >= horizon:
         await _reconcile_horizon_leg(leg, horizon=horizon)
@@ -602,6 +622,7 @@ async def reconcile_cdp_inflight_legs() -> None:
                 )
     finally:
         _reconcile_in_flight = False
+        _prune_registry_heartbeat_mono()
 
 
 async def _reconcile_loop() -> None:
