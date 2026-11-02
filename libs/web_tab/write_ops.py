@@ -7,6 +7,7 @@ from typing import Any, Literal
 from urllib.parse import urlparse
 
 from cursor_bridge.dom_composer_paste import (
+    composer_draft_sha256_hex,
     dom_click_send,
     dom_click_send_own_draft,
     dom_insert_and_send,
@@ -432,6 +433,20 @@ async def execute_paste(
     }
 
 
+def _expect_draft_sha_matches(expect: str | None, composer_draft: str) -> bool:
+    """True when expect is 64 hex characters and is the SHA-256 of the draft.
+
+    A foreign-draft flag does not satisfy this. Callers refuse the submit when
+    an expectation is present and this returns false.
+    """
+    token = str(expect or "").strip().lower()
+    if len(token) != 64 or any(c not in "0123456789abcdef" for c in token):
+        return False
+    if not composer_draft:
+        return False
+    return composer_draft_sha256_hex(composer_draft) == token
+
+
 async def execute_submit(
     *,
     cdp_url: str,
@@ -445,6 +460,13 @@ async def execute_submit(
     store_path: Path | None = None,
     port: CdpActuationPort | None = None,
 ) -> dict[str, Any]:
+    """Submit the composer draft, or refuse when an expected SHA does not match.
+
+    ``expect_draft_sha256`` sends only when it is 64 hex characters and equals
+    ``composer_draft_sha256_hex`` of the probed draft. The foreign-draft flag
+    does not bypass that check. Side effect: emits a write-outcome event on
+    send success or send failure.
+    """
     refused = require_write_authorization(grant, authorization_source)
     if refused:
         return refused
@@ -485,19 +507,27 @@ async def execute_submit(
                 lock_holder=True,
                 expect_draft_sha256=expect_draft_sha256,
             )
-            if not guard.get("ok"):
-                return guard
             probe = guard.get("probe") if isinstance(guard.get("probe"), dict) else {}
             composer_draft = str(probe.get("composer_draft") or "").strip()
-            if line:
-                send = await dom_click_send(ws, selector=selector, line=line)
-            elif composer_draft and expect_draft_sha256:
+            if expect_draft_sha256:
+                if not _expect_draft_sha_matches(expect_draft_sha256, composer_draft):
+                    return {
+                        "ok": False,
+                        "code": "draft_sha_mismatch",
+                        "retryable": False,
+                    }
+                if not guard.get("ok"):
+                    return guard
                 send = await dom_click_send(
                     ws,
                     selector=selector,
                     line=composer_draft,
                     preserve_newlines=True,
                 )
+            elif not guard.get("ok"):
+                return guard
+            elif line:
+                send = await dom_click_send(ws, selector=selector, line=line)
             else:
                 send = await dom_click_send_own_draft(
                     ws, selector=selector, draft_writer=writer

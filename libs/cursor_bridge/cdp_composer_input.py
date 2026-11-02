@@ -53,6 +53,7 @@ def _mark_our_draft_sig_js(selector: str, line: str) -> str:
     return (
         f"(()=>{{const g=window.__ulgOperatorActivity=window.__ulgOperatorActivity||{{}};"
         f"g.ourDraftSig={msg};"
+        "g.ourDraftWriter='';"
         f"const el=document.querySelector({sel});"
         "return{ok:!!el};})()"
     )
@@ -61,6 +62,12 @@ def _mark_our_draft_sig_js(selector: str, line: str) -> str:
 def clear_our_composer_draft_js(
     *, selector: str, watermark: str, line: str = ""
 ) -> str:
+    """JS that clears a composer draft this writer owns and drops its sig.
+
+    Matches the draft against ``line`` or ``watermark``, empties the node, then
+    sets ``ourDraftSig`` and ``ourDraftWriter`` to empty so a later submit
+    cannot treat the cleared text as ours.
+    """
     sel = json.dumps(selector)
     wm = json.dumps(watermark or "")
     sig = json.dumps((line or "").strip())
@@ -77,6 +84,7 @@ def clear_our_composer_draft_js(
         "}else{el.textContent='';"
         "el.dispatchEvent(new InputEvent('input',{bubbles:true}));}"
         "g.ourDraftSig='';"
+        "g.ourDraftWriter='';"
         "return{ok:true,cleared:true};})()"
     )
 
