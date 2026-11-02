@@ -466,3 +466,208 @@ async def test_worker_refusal_bus_post_error_still_raises_worker_error() -> None
 
     assert exc_info.value.status_code == 409
     assert exc_info.value.code == "CONDUCTOR_MISSION_PARKED"
+
+
+_FINISH_PACKET_ONLY_KWARGS = frozenset(
+    {"packet_path", "prompt_preamble", "close_contract"}
+)
+_FINISH_MESSAGE_ONLY_KWARGS = frozenset({"message"})
+
+
+@pytest.mark.asyncio
+async def test_finish_prepared_message_path_kwarg_parity_with_packet_branch() -> None:
+    """Message-branch worker kwargs match packet branch minus path-specific keys."""
+    packet_kw: dict = {}
+    message_kw: dict = {}
+    imp = {"house_root": "todo:imp-parity", "policy_sha256": "deadbeef"}
+
+    async def _packet(**kwargs: object) -> tuple[bool, dict]:
+        packet_kw.update(kwargs)
+        return True, {"dispatch_id": str(kwargs.get("dispatch_id"))}
+
+    async def _message(**kwargs: object) -> tuple[bool, dict]:
+        message_kw.update(kwargs)
+        return True, {"dispatch_id": str(kwargs.get("dispatch_id"))}
+
+    packet_handle = _inline_message_handle(
+        packet_path="/tmp/inline-conductor.md",
+        message=None,
+        impresario_envelope=imp,
+    )
+    message_handle = _inline_message_handle(impresario_envelope=imp)
+
+    with (
+        patch(
+            "systems.frontier_consult.cursor_sdk_generate.dispatch_cursor_sdk_worker",
+            side_effect=_packet,
+        ),
+        patch(
+            "systems.frontier_consult.cursor_sdk_generate.dispatch_cursor_sdk_worker_message",
+            side_effect=_message,
+        ),
+        patch(
+            "systems.frontier_consult.cursor_sdk_generate.emit_sdk_worker_outcome",
+        ),
+        patch(
+            "systems.frontier_consult.cursor_sdk_generate._sdk_admit_envelope",
+            return_value={"dispatch_id": "disp-inline"},
+        ),
+    ):
+        await _finish_prepared_dispatch(packet_handle)
+        await _finish_prepared_dispatch(message_handle)
+
+    packet_norm = set(packet_kw) - _FINISH_PACKET_ONLY_KWARGS
+    message_norm = set(message_kw) - _FINISH_MESSAGE_ONLY_KWARGS
+    assert packet_norm == message_norm
+
+
+@pytest.mark.asyncio
+async def test_inline_conductor_message_admit_delivers_impresario_in_worker_payload() -> (
+    None
+):
+    """Inline message path forwards generation_options.impresario to GIW."""
+    captured: dict = {}
+    imp = {
+        "house_root": "todo:imp-inline-admit",
+        "policy_sha256": "abc123",
+        "roles": {"critic": "anthropic/claude-sonnet-5-5"},
+    }
+
+    class _Client:
+        async def __aenter__(self) -> _Client:
+            return self
+
+        async def __aexit__(self, *_a: object) -> None:
+            return None
+
+        async def post(self, path: str, *, json: dict) -> _Resp:
+            captured["path"] = path
+            captured["json"] = json
+            return _Resp(202, {"dispatch_id": "d-imp"})
+
+    handle = _inline_message_handle(
+        handoff_contract="conductor",
+        impresario_envelope=imp,
+    )
+
+    with (
+        patch(
+            "systems.frontier_consult.cursor_sdk_worker_dispatch.make_async_client",
+            return_value=_Client(),
+        ),
+        patch(
+            "systems.frontier_consult.cursor_sdk_worker_dispatch.worker_base_url",
+            return_value="http://giw.test",
+        ),
+        patch(
+            "systems.frontier_consult.cursor_sdk_generate.emit_sdk_worker_outcome",
+        ),
+        patch(
+            "systems.frontier_consult.cursor_sdk_generate._sdk_admit_envelope",
+            return_value={"dispatch_id": handle.dispatch_id},
+        ),
+    ):
+        await _finish_prepared_dispatch(handle)
+
+    assert captured["json"]["generation_options"] == {"impresario": imp}
+
+
+@pytest.mark.asyncio
+async def test_worker_refusal_runtime_error_on_bus_post_still_raises_worker_error() -> (
+    None
+):
+    handle = _inline_message_handle()
+    worker_detail = {
+        "status_code": 409,
+        "code": "CONDUCTOR_MISSION_PARKED",
+        "message": "parked",
+    }
+
+    class _BusClient:
+        async def __aenter__(self) -> _BusClient:
+            return self
+
+        async def __aexit__(self, *_a: object) -> None:
+            return None
+
+        async def post(self, path: str, *, json: dict, headers: dict) -> _Resp:
+            raise RuntimeError("bus client broken")
+
+    from systems.frontier_consult.admission import FrontierEndpointError
+
+    with (
+        patch.dict("os.environ", {"ALLOW_UNSET_AGENT_BUS_TOKEN": "1"}, clear=False),
+        patch(
+            "systems.frontier_consult.cursor_sdk_generate.dispatch_cursor_sdk_worker_message",
+            new=AsyncMock(return_value=(False, worker_detail)),
+        ),
+        patch(
+            "systems.frontier_consult.cursor_sdk_generate.rollback_admitted_dispatch_links",
+            new=AsyncMock(),
+        ),
+        patch(
+            "systems.frontier_consult.cursor_sdk_generate.emit_sdk_worker_outcome",
+        ),
+        patch(
+            "systems.frontier_consult.cursor_sdk_worker_dispatch.make_async_client",
+            return_value=_BusClient(),
+        ),
+        pytest.raises(FrontierEndpointError) as exc_info,
+    ):
+        await _finish_prepared_dispatch(handle)
+
+    assert exc_info.value.code == "CONDUCTOR_MISSION_PARKED"
+
+
+@pytest.mark.asyncio
+async def test_worker_refusal_bus_post_non_2xx_logs_warning_and_raises(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    handle = _inline_message_handle()
+    worker_detail = {
+        "status_code": 409,
+        "code": "CONDUCTOR_MISSION_PARKED",
+        "message": "parked",
+        "dispatch_id": handle.dispatch_id,
+    }
+
+    class _BusClient:
+        async def __aenter__(self) -> _BusClient:
+            return self
+
+        async def __aexit__(self, *_a: object) -> None:
+            return None
+
+        async def post(self, path: str, *, json: dict, headers: dict) -> _Resp:
+            return _Resp(500, {"error": "internal"})
+
+    from systems.frontier_consult.admission import FrontierEndpointError
+
+    with (
+        patch.dict("os.environ", {"ALLOW_UNSET_AGENT_BUS_TOKEN": "1"}, clear=False),
+        patch(
+            "systems.frontier_consult.cursor_sdk_generate.dispatch_cursor_sdk_worker_message",
+            new=AsyncMock(return_value=(False, worker_detail)),
+        ),
+        patch(
+            "systems.frontier_consult.cursor_sdk_generate.rollback_admitted_dispatch_links",
+            new=AsyncMock(),
+        ),
+        patch(
+            "systems.frontier_consult.cursor_sdk_generate.emit_sdk_worker_outcome",
+        ),
+        patch(
+            "systems.frontier_consult.cursor_sdk_worker_dispatch.make_async_client",
+            return_value=_BusClient(),
+        ),
+        caplog.at_level("WARNING"),
+        pytest.raises(FrontierEndpointError) as exc_info,
+    ):
+        await _finish_prepared_dispatch(handle)
+
+    assert exc_info.value.code == "CONDUCTOR_MISSION_PARKED"
+    assert any(
+        "failure turn bus non-success" in r.getMessage()
+        and handle.dispatch_id in r.getMessage()
+        for r in caplog.records
+    )
