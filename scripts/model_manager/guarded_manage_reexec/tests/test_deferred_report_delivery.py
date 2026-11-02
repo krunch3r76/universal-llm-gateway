@@ -23,6 +23,7 @@ from scripts.model_manager.guarded_manage_reexec.deferred_gate import (
     report_deferred_crash,
 )
 from scripts.model_manager.guarded_manage_reexec.result import GuardedReexecResult
+from scripts.model_manager.guarded_manage_reexec.runner import _write_result_file
 from scripts.model_manager.guarded_manage_reexec.tests import (
     test_deferred_execute as te,
 )
@@ -119,11 +120,44 @@ def test_ac1_log_truncation_and_redaction(
         exit_code=2,
     )
     assert report["outcome"] == "failed"
-    assert len(report["stderr_head"]) == 2048
+    assert len(report["stderr_head"]) == 512
     assert tail not in report["stderr_head"]
     captured = capsys.readouterr().err
     assert "409 Conflict" in captured
     assert tail not in captured
+    stdout_tail = "STDOUT_TAIL_SHOULD_NOT_APPEAR"
+    long_stdout = "y" * 600 + stdout_tail
+    stdout_body = textwrap.dedent(
+        f"""
+        #!/usr/bin/env python3
+        import json, sys
+        from pathlib import Path
+        log = Path({str(log_path)!r})
+        calls = json.loads(log.read_text(encoding="utf-8"))
+        calls.append(sys.argv[1:])
+        log.write_text(json.dumps(calls), encoding="utf-8")
+        if sys.argv[1] == "fetch":
+            print(json.dumps({{"turns": [{{"turn_number": 1}}]}}))
+            sys.exit(0)
+        print({long_stdout!r})
+        print("err", file=sys.stderr)
+        sys.exit(1)
+        """
+    )
+    _install_stub_bus(tmp_path, script_body=stdout_body, log_path=log_path)
+    post_maestro_reply(
+        ctx,
+        report_status="refused",
+        reason="r",
+        manage_before={},
+        manage_after=None,
+        child_pids_before={},
+        child_pids_after={},
+        exit_code=2,
+    )
+    stdout_captured = capsys.readouterr().err
+    assert stdout_tail not in stdout_captured
+    assert ("y" * 512) in stdout_captured or ("y" * 511) in stdout_captured
 
     bearer_err = "Bearer secret-token leaked"
     bearer_body = textwrap.dedent(
@@ -258,16 +292,30 @@ def test_ac4_persist_failure_after_ack_post_one_turn(
     state_path = tmp_path / "state.json"
     _install_turn_store(tmp_path, state_path)
     ctx = _ctx(tmp_path, result_path=tmp_path / "crash.json")
+    pre_report_snapshot: dict[str, Any] = {}
+    import scripts.model_manager.guarded_manage_reexec.deferred_gate as dg
 
-    def _fail_persist(_result: GuardedReexecResult, _path: Path) -> None:
+    real_post = dg.post_maestro_reply
+
+    def _capture_pre_report(*args: Any, **kwargs: Any) -> dict[str, Any]:
+        pre_report_snapshot.update(
+            json.loads(ctx.result_path.read_text(encoding="utf-8"))
+        )
+        return real_post(*args, **kwargs)
+
+    monkeypatch.setattr(dg, "post_maestro_reply", _capture_pre_report)
+
+    def _fail_replace(_src: str, _dst: str) -> None:
         raise OSError("disk full")
 
     monkeypatch.setattr(
-        "scripts.model_manager.guarded_manage_reexec.deferred_gate.persist_result_projection",
-        _fail_persist,
+        "scripts.model_manager.guarded_manage_reexec.deferred_gate.os.replace",
+        _fail_replace,
     )
-    with pytest.raises(OSError, match="disk full"):
-        report_deferred_crash(ctx, RuntimeError("boom"), "tb")
+    report_deferred_crash(ctx, RuntimeError("boom"), "tb")
+    on_disk = json.loads(ctx.result_path.read_text(encoding="utf-8"))
+    assert "report" not in on_disk
+    assert on_disk == pre_report_snapshot
     calls = json.loads(state_path.read_text(encoding="utf-8"))["calls"]
     assert len([c for c in calls if c[0] == "reply"]) == 1
 
@@ -955,15 +1003,35 @@ def test_ac2_persist_on_recycle_path(tmp_path: Path, monkeypatch: pytest.MonkeyP
         tmp_path, script_body=_reply_only_stub(log_path), log_path=log_path
     )
     rows = te._proof_rows()
-    monkeypatch.setattr(
-        "scripts.model_manager.guarded_manage_reexec.deferred_execute.run_guarded_reexec",
-        lambda **_k: GuardedReexecResult(
+    def _fake_reexec(**kwargs: Any) -> GuardedReexecResult:
+        proof = GuardedReexecResult(
             status="proof-satisfied",
             reason="ok",
             dry_run=False,
             target_ref="abc",
             executed=True,
-        ),
+        )
+        path = kwargs.get("result_path")
+        if path is not None:
+            _write_result_file(path, proof)
+        return proof
+
+    monkeypatch.setattr(
+        "scripts.model_manager.guarded_manage_reexec.deferred_execute.run_guarded_reexec",
+        _fake_reexec,
+    )
+    pre_report_snapshot: dict[str, Any] = {}
+    real_post = post_maestro_reply
+
+    def _capture_pre_report(ctx_in: DeferredRecycleContext, **kwargs: Any) -> dict[str, Any]:
+        pre_report_snapshot.update(
+            json.loads(ctx_in.result_path.read_text(encoding="utf-8"))
+        )
+        return real_post(ctx_in, **kwargs)
+
+    monkeypatch.setattr(
+        "scripts.model_manager.guarded_manage_reexec.deferred_execute.post_maestro_reply",
+        _capture_pre_report,
     )
     ctx = _ctx(tmp_path)
     code, result = run_deferred_recycle(
@@ -977,6 +1045,9 @@ def test_ac2_persist_on_recycle_path(tmp_path: Path, monkeypatch: pytest.MonkeyP
     on_disk = json.loads(ctx.result_path.read_text(encoding="utf-8"))
     assert on_disk["report"]["outcome"] == "delivered"
     assert result.report is not None
+    minus_report = dict(on_disk)
+    minus_report.pop("report", None)
+    assert minus_report == pre_report_snapshot
 
 
 def test_ac4_crash_handler_propagates_original(
