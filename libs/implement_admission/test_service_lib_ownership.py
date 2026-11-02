@@ -23,6 +23,7 @@ from implement_admission.service_lib_ownership import (
     service_ownership,
     serving_services_for_lib,
     serving_services_for_lib_path,
+    unserved_libs,
 )
 
 _propagation_execute = import_archived("propagation_execute")
@@ -152,6 +153,7 @@ def test_stargate_may_import_libs_stay_out_of_serves_libs() -> None:
             "job_grammar",
             "job_vocab",
             "prompt_expand_consume",
+            "web_chat_relay",
             "web_tab",
             "writing_intake",
         }
@@ -188,6 +190,38 @@ def test_serving_map_prefix_matches_serves_libs_field(row) -> None:
     assert got == want, (
         f"{row.prefix}: serves_libs={sorted(got)!r} serving-map={sorted(want)!r}"
     )
+
+
+def test_agent_bus_serves_wake_libs() -> None:
+    """Restart set for bus_watch and web_chat_relay is exact, and served libs are owned.
+
+    ``server.py`` imports ``bus_watch.events`` on every start.
+    ``web_chat_relay`` is loaded by agent_bus (ledger and subscriptions, not
+    only the flag-gated dispatcher) and by cdp_ask (``app.py`` imports
+    ``chat_session_harvest`` / ``chat_session_paste``, which import
+    ``web_chat_relay.grok_session`` at module top). Membership alone would
+    still pass if cdp_ask were dropped.
+    """
+    from scripts.model_manager.ui.controller.fleet_liveness_probe import (
+        services_for_path,
+    )
+
+    own = service_ownership()["agent_bus"]
+    assert own.serves_libs <= own.owned_libs
+    assert "bus_watch" not in unserved_libs()
+    assert set(services_for_path("libs/bus_watch/endpoint_wake_dispatcher.py")) == {
+        "agent_bus"
+    }
+    assert set(services_for_path("libs/web_chat_relay/orion_wake.py")) == {
+        "agent_bus",
+        "cdp_ask",
+        "stargate",
+    }
+    assert set(services_for_path("libs/web_chat_relay/grok_session.py")) == {
+        "agent_bus",
+        "cdp_ask",
+        "stargate",
+    }
 
 
 def test_wait_status_serving_slug_is_job_set_not_owned_libs_blast() -> None:
@@ -332,6 +366,39 @@ def test_stargate_web_tab_handler_load_imports_package() -> None:
     assert status_mod.build_status_report.__module__ == "web_tab.status_report"
     write_mod = sys.modules[f"{package_name}.write"]
     assert write_mod.dispatch_write_op.__module__ == "web_tab.write_ops"
+
+
+@pytest.mark.offline
+def test_stargate_orion_chat_wake_handler_load_imports_orion_wake() -> None:
+    """Dynamic pipeline load is a stargate consumer of web_chat_relay.orion_wake.
+
+    ``pipelines/orion_chat_wake/v1/handlers/wake.py`` imports
+    ``deliver_orion_chat_wake`` at module top. Loading that handlers package
+    must leave the function's module as ``web_chat_relay.orion_wake``.
+    """
+    import sys
+
+    from systems.pipeline.core.domain_router import get_domain_router
+    from systems.pipeline.user_handlers import (
+        _load_handlers_package,
+        _make_package_name,
+    )
+
+    handlers = repo_root() / "pipelines" / "orion_chat_wake" / "v1" / "handlers"
+    package_name = _make_package_name("orion_chat_wake", "v1")
+    sys.modules.pop(package_name, None)
+    for key in list(sys.modules):
+        if key.startswith(package_name + "."):
+            sys.modules.pop(key, None)
+    loaded = _load_handlers_package(
+        handlers_dir=handlers,
+        package_name=package_name,
+        display_path="orion_chat_wake/v1/handlers",
+        router=get_domain_router(),
+    )
+    assert loaded == 1
+    wake_mod = sys.modules[f"{package_name}.wake"]
+    assert wake_mod.deliver_orion_chat_wake.__module__ == "web_chat_relay.orion_wake"
 
 
 @pytest.mark.offline

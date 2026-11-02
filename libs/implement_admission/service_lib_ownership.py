@@ -38,6 +38,7 @@ _SERVICE_OWNERSHIP: dict[str, ServiceOwnership] = {
             {
                 "agent_bus_store",
                 "agent_seat",
+                "bus_watch",
                 "cdp_ask",
                 "claude_bundles",
                 "cortex_store",
@@ -59,9 +60,12 @@ _SERVICE_OWNERSHIP: dict[str, ServiceOwnership] = {
                 "transport_utils",
                 "universal_event_bus",
                 "universal_logging",
+                "web_chat_relay",
             }
         ),
-        serves_libs=frozenset({"agent_bus_store"}),
+        serves_libs=frozenset(
+            {"agent_bus_store", "bus_watch", "web_chat_relay"}
+        ),
         runtime_entrypoint="libs/agent_bus_store/server.py",
     ),
     "cortex_api": ServiceOwnership(
@@ -308,7 +312,7 @@ _SERVICE_OWNERSHIP: dict[str, ServiceOwnership] = {
                 "web_chat_relay",
             }
         ),
-        serves_libs=frozenset({"cdp_ask"}),
+        serves_libs=frozenset({"cdp_ask", "web_chat_relay"}),
         runtime_entrypoint="libs/cdp_ask/",
     ),
     "cloud_proxy": ServiceOwnership(
@@ -425,6 +429,7 @@ _SERVICE_OWNERSHIP: dict[str, ServiceOwnership] = {
                 "universal_logging",
                 "universal_protocol",
                 "universal_transport",
+                "web_chat_relay",
                 "web_tab",
             }
         ),
@@ -439,6 +444,7 @@ _SERVICE_OWNERSHIP: dict[str, ServiceOwnership] = {
                 "job_grammar",
                 "job_vocab",
                 "prompt_expand_consume",
+                "web_chat_relay",
                 "web_tab",
                 "writing_intake",
             }
@@ -491,16 +497,17 @@ def declared_services_for_lib(lib_name: str) -> tuple[str, ...]:
     return tuple(sorted(owners))
 
 
-UNSERVED_LIBS: frozenset[str] = frozenset({"bus_watch", "foo", "box_isolated_chrome"})
+UNSERVED_LIBS: frozenset[str] = frozenset({"foo", "box_isolated_chrome"})
 """Top-level ``libs/`` names explicitly classified as needing no manage restart.
 
-``bus_watch`` is consumed by auxiliary liaison/watch scripts and IDE-hop
-helpers — no fleet ``manage`` process makes those modules live on restart.
 ``foo`` is the dogfood / mechanical fixture package — test-only, not a
 production behaviour. ``box_isolated_chrome`` is the host CLI behind
-``scripts/box-isolated-chrome``, not a manage-served process. Absence from
-every ``serves_libs`` row is still ``unmapped`` until a name is listed here or
-nominated by CONSUMERS/INJECTORS. See ``serving_coverage.path_serving_coverage``.
+``scripts/box-isolated-chrome``, not a manage-served process. ``bus_watch``
+is not in this set: ``agent_bus`` loads it from
+``libs/agent_bus_store/server.py`` and lists it in ``serves_libs``. Absence
+from every ``serves_libs`` row is still ``unmapped`` until a name is listed
+here or nominated by CONSUMERS/INJECTORS. See
+``serving_coverage.path_serving_coverage``.
 """
 
 
