@@ -5,3 +5,15 @@ restart_owed:
 reason: >-
   restart_intent_migrate _ensure_expired_status idempotent txn; manage must reload
   controller code so intent DB reopen clears restart_intents_expired_v1 (41247).
+disposition: NOT-OWED
+disposition_basis: satisfied-by-design
+disposition_at_utc: "2026-11-01T23:36:00Z"
+disposition_by: stage-manager gc1:50 (agent 7d353c9e, lane 15851) executor
+disposition_reason: >-
+  Changed code (98138c906, 447e703e4) lives in scripts/model_manager/ui/controller/
+  (restart_intent_migrate/_expiry/_store). Importers: manage controller and
+  services/git_integration_worker only. services/_universal-llm-gateway has zero
+  imports of scripts.model_manager / restart_intent. fleet_liveness(code_ref=447e703e4):
+  gateway load_relevance=not_loaded_by; only manage=loaded_by (manage + GIW already at
+  fc05b046, ancestor-satisfied). No gateway restart required; restart_owed: [gateway]
+  was a mis-attribution (owner is manage, already reloaded).

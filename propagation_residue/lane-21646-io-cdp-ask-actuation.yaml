@@ -1,0 +1,11 @@
+# Hub (io) must expose cdp-ask for Jupiter Grok operator_actuation relay.
+# Jupiter POST /v1/display-chat/paste forwards to config/grok-windows.json
+# operator_actuation.url when local 127.0.0.1:9340 is unreachable.
+restart_owed:
+  - service: cdp_ask
+    note: "sync_restart on Jupiter after master land (efdf34e95+)"
+  - service: mcp
+    note: "sync_restart for in-process grok paste_as_operator"
+  - service: auxiliary
+    unit: "scripts/cdp-ask on io :8770 bind 0.0.0.0"
+    note: "Hub actuation target for Jupiter relay; not in manage fleet list"
