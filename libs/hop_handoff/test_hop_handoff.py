@@ -20,12 +20,12 @@ from hop_handoff import (
     assess_arc_hub,
     assess_standing_handoff,
     build_continuity_handoff_body,
-    parse_arc_hub_tag,
     build_seat_registration_stamp,
     build_seat_stand_down_body,
     consume_time_wake_protocol,
     is_successor_birth_id,
     mint_successor_birth_id,
+    parse_arc_hub_tag,
     parse_successor_birth_id,
 )
 from hop_handoff.body import parse_hop_kind
