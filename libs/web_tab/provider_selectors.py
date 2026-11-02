@@ -42,18 +42,47 @@ _SEND_BTN_SELECTORS = [
     'button[type="submit"]:not([disabled])',
 ]
 
+_USER_TURN_SELECTOR_LISTS: dict[ProviderSite, list[str]] = {
+    "chatgpt": [
+        "[data-message-author-role='user']",
+        "[class*='text-user-message']",
+        ".rich-text-user-turn",
+        "article[data-testid^='conversation-turn'] [data-message-author-role='user']",
+        "[data-testid*='user-message']",
+    ],
+    "claude": [
+        "[data-testid='user-message']",
+        "[data-is-user-message='true']",
+    ],
+    "grok": ["[data-testid='user-message']"],
+    "x_grok": ["[data-testid='user-message']"],
+}
+
+_ASSISTANT_TURN_SELECTOR_LISTS: dict[ProviderSite, list[str]] = {
+    "chatgpt": [
+        "[data-message-author-role='assistant']",
+        "[class*='MarkdownRoot']",
+        "article[data-testid^='conversation-turn'] [data-message-author-role='assistant']",
+        "[data-testid*='assistant-message']",
+    ],
+    "claude": ["[data-testid='assistant-message']"],
+    "grok": ["[data-testid='assistant-message']"],
+    "x_grok": ["[data-testid='assistant-message']"],
+}
+
+_CHATGPT_STOP_STREAMING_SELECTORS = [
+    "button[data-testid='stop-streaming']",
+    "button[data-testid*='stop-streaming']",
+    "button[data-testid='stop-generating']",
+    "button[data-testid*='stop-generating']",
+]
+
 _USER_TURN_SELECTORS: dict[ProviderSite, str] = {
-    "chatgpt": "[data-message-author-role='user'], [data-testid*='user']",
-    "claude": "[data-testid='user-message'], [data-is-user-message='true']",
-    "grok": "[data-testid='user-message']",
-    "x_grok": "[data-testid='user-message']",
+    site: ", ".join(sels) for site, sels in _USER_TURN_SELECTOR_LISTS.items()
 }
 
 _ASSISTANT_TURN_SELECTORS: dict[ProviderSite, str] = {
-    "chatgpt": "[data-message-author-role='assistant']",
-    "claude": "[data-testid='assistant-message']",
-    "grok": "[data-testid='assistant-message']",
-    "x_grok": "[data-testid='assistant-message']",
+    site: ", ".join(sels) for site, sels in _ASSISTANT_TURN_SELECTOR_LISTS.items()
 }
 
 # Legacy single-string exports (first preferred selector)
@@ -98,6 +127,80 @@ def composer_selector_for_site(site: ProviderSite) -> str:
     return ", ".join(composer_selectors_for_site(site))
 
 
+def _turn_helpers_js(*, site: ProviderSite) -> str:
+    """Shared DOM helpers: deduped user texts and assistant nodes from fallback lists."""
+    user_sels = json.dumps(_USER_TURN_SELECTOR_LISTS[site])
+    asst_sels = json.dumps(_ASSISTANT_TURN_SELECTOR_LISTS[site])
+    stop_sels = json.dumps(_CHATGPT_STOP_STREAMING_SELECTORS)
+    chatgpt = "true" if site == "chatgpt" else "false"
+    return f"""
+  const userSels = {user_sels};
+  const asstSels = {asst_sels};
+  const stopSels = {stop_sels};
+  const isChatgpt = {chatgpt};
+  const dedupeTexts = (sels) => {{
+    const out = [];
+    const seen = new Set();
+    for (const sel of sels) {{
+      for (const el of document.querySelectorAll(sel)) {{
+        const t = (el.innerText || '').trim();
+        if (!t) continue;
+        const key = t.slice(0, 800);
+        if (seen.has(key)) continue;
+        seen.add(key);
+        out.push(t);
+      }}
+    }}
+    return out;
+  }};
+  const assistantNodes = () => {{
+    const nodes = [];
+    const seen = new Set();
+    for (const sel of asstSels) {{
+      for (const el of document.querySelectorAll(sel)) {{
+        if (seen.has(el)) continue;
+        seen.add(el);
+        nodes.push(el);
+      }}
+    }}
+    return nodes;
+  }};
+  const visible = (el) => {{
+    if (!el) return false;
+    const r = el.getBoundingClientRect();
+    return !!(r.width || r.height) && el.offsetParent !== null;
+  }};
+  const streamingStop = () => {{
+    if (isChatgpt) {{
+      for (const sel of stopSels) {{
+        for (const btn of document.querySelectorAll(sel)) {{
+          if (visible(btn) && !btn.disabled) return true;
+        }}
+      }}
+      for (const btn of document.querySelectorAll('button')) {{
+        const label = (btn.getAttribute('aria-label') || '').trim();
+        if (!visible(btn) || btn.disabled) continue;
+        if (/stop generating|stop streaming/i.test(label)) return true;
+      }}
+      return false;
+    }}
+    return [...document.querySelectorAll('button')].some((b) => {{
+      const label = ((b.innerText || '') + ' ' + (b.getAttribute('aria-label') || '')).trim();
+      return /^(stop|stop generating)$/i.test(label) || /stop generating/i.test(label);
+    }});
+  }};
+  const turnActionsComplete = (lastAsstEl) => {{
+    if (!lastAsstEl) return false;
+    let root = lastAsstEl.closest('article') || lastAsstEl.closest("[class*='group/']") || lastAsstEl.parentElement;
+    for (let i = 0; i < 6 && root; i += 1) {{
+      if (root.querySelector('.turn-action-controls')) return true;
+      root = root.parentElement;
+    }}
+    return false;
+  }};
+"""
+
+
 def _composer_find_js(site: ProviderSite) -> str:
     sels = json.dumps(composer_selectors_for_site(site))
     return f"""
@@ -130,13 +233,12 @@ def _scoped_send_find_js(site: ProviderSite) -> str:
 
 
 def baseline_snapshot_js(*, site: ProviderSite) -> str:
-    user_sel = json.dumps(_USER_TURN_SELECTORS[site])
-    asst_sel = json.dumps(_ASSISTANT_TURN_SELECTORS[site])
+    helpers = _turn_helpers_js(site=site)
     return f"""
 (() => {{
-  const users = [...document.querySelectorAll({user_sel})];
-  const texts = users.map((el) => (el.innerText || '').trim()).filter(Boolean);
-  const assistants = [...document.querySelectorAll({asst_sel})];
+{helpers}
+  const texts = dedupeTexts(userSels);
+  const assistants = assistantNodes();
   const lastAsst = assistants.length ? assistants[assistants.length - 1] : null;
   return {{
     ok: true,
@@ -157,17 +259,17 @@ def verify_committed_js(
 ) -> str:
     """DOM receipt: new latest user turn exactly matches *prompt_text*, composer empty."""
     needle = json.dumps(prompt_text.strip())
-    user_sel = json.dumps(_USER_TURN_SELECTORS[site])
     composer_js = _composer_find_js(site).strip()
     base = int(baseline_user_count)
+    helpers = _turn_helpers_js(site=site)
     return f"""
 (() => {{
+{helpers}
   const composer = ({composer_js});
   const draft = composer
     ? ((composer.value !== undefined ? composer.value : composer.innerText) || '').trim()
     : '';
-  const nodes = [...document.querySelectorAll({user_sel})];
-  const texts = nodes.map((el) => (el.innerText || '').trim()).filter(Boolean);
+  const texts = dedupeTexts(userSels);
   const latest = texts.length ? texts[texts.length - 1] : '';
   const newTurn = texts.length > {base};
   const exact = latest === {needle};
@@ -193,19 +295,17 @@ def read_reply_js(
     baseline_assistant_count: int = 0,
     baseline_assistant_text: str = "",
 ) -> str:
-    asst_sel = json.dumps(_ASSISTANT_TURN_SELECTORS[site])
     base_count = int(baseline_assistant_count)
     base_text = json.dumps((baseline_assistant_text or "").strip())
     grok_site = site in {"grok", "x_grok"}
     grok_flag = "true" if grok_site else "false"
+    helpers = _turn_helpers_js(site=site)
     return f"""
 (() => {{
-  const stop = [...document.querySelectorAll('button')].some((b) => {{
-    const label = ((b.innerText || '') + ' ' + (b.getAttribute('aria-label') || '')).trim();
-    return /^(stop|stop generating)$/i.test(label) || /stop generating/i.test(label);
-  }});
+{helpers}
+  const stop = streamingStop();
   const busy = !!document.querySelector("[aria-busy='true']");
-  const nodes = [...document.querySelectorAll({asst_sel})];
+  const nodes = assistantNodes();
   const last = nodes.length ? nodes[nodes.length - 1] : null;
   const rawText = last ? (last.innerText || '').trim() : '';
   const stripGrokChip = (raw) => {{
@@ -216,11 +316,12 @@ def read_reply_js(
   const text = {grok_flag} ? stripGrokChip(rawText) : rawText;
   const chipStreaming = {grok_flag} && /(?:Working|Worked) for \\d+s/i.test(rawText);
   const nodeStreaming = last && last.getAttribute('data-is-streaming') === 'true';
+  const actionsReady = isChatgpt ? turnActionsComplete(last) : false;
   const streaming = stop || busy || nodeStreaming || chipStreaming;
   const newNode = nodes.length > {base_count};
   const changed = text && text !== {base_text};
   const fresh = newNode || changed;
-  const complete = !streaming && fresh && text.length > 0;
+  const complete = !streaming && fresh && text.length > 0 && (!isChatgpt || actionsReady);
   return {{
     ok: true,
     streaming,
@@ -229,6 +330,7 @@ def read_reply_js(
     raw_text: rawText,
     complete,
     assistant_count: nodes.length,
+    turn_actions: actionsReady,
   }};
 }})()
 """

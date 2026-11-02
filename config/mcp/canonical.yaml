@@ -5627,7 +5627,7 @@ tools:
         type: string
       surface:
         type: string
-        description: chatgpt (:12/9342), grok (explicit CDP), or anthropic_console (:13/9343). claude.ai chat is Jupiter :1 cdp_ask — not web_tab. Legacy alias claude maps to anthropic_console only.
+        description: chatgpt (:12/9342), grok (explicit CDP), or anthropic_console (:13/9343). claude.ai chat is Jupiter :2 cdp_ask — not web_tab. Legacy alias claude maps to anthropic_console only.
     required:
     - op
   mandate_safety: read_only
@@ -5702,7 +5702,7 @@ tools:
         type: string
       surface:
         type: string
-        description: chatgpt (:12/9342), grok (explicit CDP), or anthropic_console (:13/9343). claude.ai chat is Jupiter :1 cdp_ask — not web_tab. Legacy alias claude maps to anthropic_console only.
+        description: chatgpt (:12/9342), grok (explicit CDP), or anthropic_console (:13/9343). claude.ai chat is Jupiter :2 cdp_ask — not web_tab. Legacy alias claude maps to anthropic_console only.
       conversation_url:
         type: string
       grant:

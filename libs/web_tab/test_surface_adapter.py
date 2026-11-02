@@ -30,6 +30,12 @@ def test_anthropic_console_surface_host_gate() -> None:
     assert url_in_surface_scope(
         "anthropic_console", "https://www.platform.claude.com/"
     )
+    assert url_in_surface_scope(
+        "anthropic_console", "https://platform.claude.com/login"
+    )
+    assert url_in_surface_scope(
+        "anthropic_console", "https://platform.claude.com/sign-in"
+    )
     assert not url_in_surface_scope("anthropic_console", "https://claude.ai/new")
     assert not url_in_surface_scope("claude", "https://claude.ai/chat/abc")
     assert not url_in_surface_scope(

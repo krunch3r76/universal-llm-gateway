@@ -7,8 +7,18 @@
       role="textbox"
       aria-label="Work with ChatGPT"
     ></div>
-    <div data-message-author-role="user">hello world</div>
-    <div data-message-author-role="assistant">prior reply</div>
+    <!-- Legacy attrs (older ChatGPT DOM) -->
+    <div data-message-author-role="user">legacy user</div>
+    <div data-message-author-role="assistant">legacy assistant</div>
+    <!-- Current ChatGPT Work DOM (2026-11): class-based turns -->
+    <div class="group/user-message">
+      <div class="text-user-message">web_tab smoke ping: reply with the single word PONG</div>
+      <div class="turn-action-controls"></div>
+    </div>
+    <div class="group/agent-turn">
+      <div class="MarkdownRoot-rZKhxa">PONG</div>
+      <div class="turn-action-controls"></div>
+    </div>
     <button data-testid="send-button" aria-label="Send prompt">Send</button>
   </body>
 </html>

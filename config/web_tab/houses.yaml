@@ -1,5 +1,5 @@
 # Io-agent browser houses — keep in sync with scripts/io-agent-*-provision.py
-# claude.ai chat -> Jupiter :1 cdp_ask (not web_tab)
+# claude.ai chat -> Jupiter :2 cdp_ask (not web_tab)
 surfaces:
   chatgpt:
     cdp_url: http://127.0.0.1:9342

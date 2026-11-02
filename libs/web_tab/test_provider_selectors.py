@@ -49,6 +49,25 @@ def test_read_reply_js_grok_strips_activity_chip() -> None:
     assert "stripGrokChip" in js
 
 
+def test_read_reply_js_chatgpt_uses_class_turn_selectors() -> None:
+    from web_tab.provider_selectors import read_reply_js
+
+    js = read_reply_js(site="chatgpt", baseline_assistant_count=0)
+    assert "text-user-message" in js
+    assert "MarkdownRoot" in js
+    assert "turn-action-controls" in js
+    assert "stop-streaming" in js
+
+
+def test_verify_committed_js_chatgpt_dedupes_user_turns() -> None:
+    js = verify_committed_js(
+        site="chatgpt",
+        prompt_text="web_tab smoke ping: reply with the single word PONG",
+    )
+    assert "dedupeTexts" in js
+    assert "text-user-message" in js
+
+
 def test_fixtures_exist_on_disk() -> None:
     root = Path(__file__).resolve().parent / "fixtures"
     from web_tab.config import WEB_TAB_SMOKE_PROVIDER_FIXTURES

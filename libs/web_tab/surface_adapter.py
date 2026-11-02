@@ -76,7 +76,7 @@ def surface_not_web_tab_owned_refusal(url: str) -> dict[str, object] | None:
     return {
         "ok": False,
         "code": "surface_not_web_tab_owned",
-        "reason": "claude.ai chat is owned by Jupiter :1 cdp_ask; use cdp_ask, not web_tab",
+        "reason": "claude.ai chat is owned by Jupiter :2 cdp_ask; use cdp_ask, not web_tab",
         "owner": "cdp_ask",
     }
 
