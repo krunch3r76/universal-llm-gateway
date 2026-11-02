@@ -12,7 +12,6 @@ prefix is not an id.
 
 from __future__ import annotations
 
-import os
 import re
 from collections.abc import Callable
 from typing import Any

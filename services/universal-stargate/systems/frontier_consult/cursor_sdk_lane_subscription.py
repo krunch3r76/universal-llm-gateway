@@ -5,12 +5,12 @@ from __future__ import annotations
 import re
 
 import httpx
-from giw_endpoint import giw_api_url
 from bus_watch.cursor_xvfb_subscription import parse_ide_holder_agent_id
 from bus_watch.endpoint_wake_transport import (
     agent_id_matches_composer_suffix,
     composer_impresario_suffix,
 )
+from giw_endpoint import giw_api_url
 from transport_utils import DEFAULT_AGENT_BUS_URL
 
 _BARE_GLASS_AGENT_ID = re.compile(
