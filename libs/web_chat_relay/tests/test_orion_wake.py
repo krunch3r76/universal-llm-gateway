@@ -563,6 +563,292 @@ async def test_dom_deliver_uses_chatgpt_selector_not_keyboard(
     assert not page.keyboard.inserted
 
 
+def _dom_deliver_port_tab(tab_id: str = "tab-op") -> object:
+    class _Port:
+        def list_tabs(self, *, cdp_url: str) -> dict:
+            return {
+                "pages": [
+                    {
+                        "id": tab_id,
+                        "url": PINNED,
+                        "web_socket_debugger_url": "ws://127.0.0.1/devtools/page/op",
+                    }
+                ],
+                "reachable": True,
+                "error": None,
+            }
+
+    return _Port()
+
+
+@pytest.mark.asyncio
+@pytest.mark.no_dom_stub
+async def test_dom_deliver_accepts_visible_idle_operator_tab(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """AC7 (a): paste may proceed on a visible, idle operator-provenance tab."""
+    from unittest.mock import AsyncMock
+
+    page = _FakePage()
+    insert_calls: list[str] = []
+
+    async def _insert(
+        ws: str, *, selector: str, line: str, preserve_newlines: bool = False
+    ) -> dict:
+        insert_calls.append(line)
+        return {"ok": True}
+
+    async def _baseline(*_a: object, **_k: object) -> dict:
+        return {"user_count": 0}
+
+    async def _verify(*_a: object, **_k: object) -> dict:
+        return {"ok": True, "receipt": "dom_committed"}
+
+    async def _pre(*_a: object, **_k: object) -> dict:
+        return {"ok": True}
+
+    @asynccontextmanager
+    async def _lock(_target_id: str, *, timeout_s: float = 120, op: str = ""):
+        yield
+
+    monkeypatch.setattr(
+        "web_tab.cdp_actuation.default_actuation_port",
+        lambda: _dom_deliver_port_tab(),
+    )
+    monkeypatch.setattr(
+        "web_tab.write_ops._created_by_agent_for_target", lambda **kwargs: False
+    )
+    monkeypatch.setattr(
+        "cursor_bridge.dom_composer_paste.dom_insert_and_send", _insert
+    )
+    monkeypatch.setattr("web_tab.commit_verify.capture_dom_baseline", _baseline)
+    monkeypatch.setattr("web_tab.commit_verify.poll_verify_committed", _verify)
+    monkeypatch.setattr(
+        "web_tab.operator_guard.wait_operator_idle_before_lock", _pre
+    )
+    monkeypatch.setattr("web_tab.target_lock.target_write_lock", _lock)
+    monkeypatch.setattr(
+        "web_tab.operator_guard.read_operator_busy",
+        AsyncMock(
+            return_value={
+                "document_has_focus": False,
+                "document_visibility": "visible",
+                "operator_active": False,
+                "foreign_draft": False,
+            }
+        ),
+    )
+    monkeypatch.setattr(
+        "web_tab.operator_guard.wait_for_operator_idle",
+        AsyncMock(return_value={"ok": True, "idle": True}),
+    )
+
+    out = await _dom_deliver(
+        page,
+        build_wake_pointer(thread="21207", turn=2, from_agent="maestro"),
+    )
+    assert out["ok"] is True, out
+    assert insert_calls
+
+
+@pytest.mark.asyncio
+@pytest.mark.no_dom_stub
+async def test_dom_deliver_refuses_visible_operator_tab_when_operator_active(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """AC7 (b): operator_active still blocks paste on visible operator tabs."""
+    from unittest.mock import AsyncMock
+
+    page = _FakePage()
+
+    async def _pre(*_a: object, **_k: object) -> dict:
+        return {"ok": True}
+
+    @asynccontextmanager
+    async def _lock(_target_id: str, *, timeout_s: float = 120, op: str = ""):
+        yield
+
+    monkeypatch.setattr(
+        "web_tab.cdp_actuation.default_actuation_port",
+        lambda: _dom_deliver_port_tab(),
+    )
+    monkeypatch.setattr(
+        "web_tab.write_ops._created_by_agent_for_target", lambda **kwargs: False
+    )
+    monkeypatch.setattr(
+        "web_tab.operator_guard.wait_operator_idle_before_lock", _pre
+    )
+    monkeypatch.setattr("web_tab.target_lock.target_write_lock", _lock)
+    monkeypatch.setattr(
+        "web_tab.operator_guard.read_operator_busy",
+        AsyncMock(
+            return_value={
+                "document_has_focus": False,
+                "document_visibility": "visible",
+                "operator_active": True,
+                "foreign_draft": False,
+            }
+        ),
+    )
+    monkeypatch.setattr(
+        "web_tab.operator_guard.wait_for_operator_idle",
+        AsyncMock(return_value={"ok": True, "idle": True}),
+    )
+
+    out = await _dom_deliver(
+        page,
+        build_wake_pointer(thread="21207", turn=2, from_agent="maestro"),
+    )
+    assert out["ok"] is False
+    assert "operator" in str(out.get("reason") or "").lower()
+
+
+@pytest.mark.asyncio
+@pytest.mark.no_dom_stub
+async def test_dom_deliver_refuses_visible_operator_tab_when_foreign_draft(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """AC7 (b): foreign draft still blocks paste on visible operator tabs."""
+    from unittest.mock import AsyncMock
+
+    page = _FakePage()
+
+    async def _pre(*_a: object, **_k: object) -> dict:
+        return {"ok": True}
+
+    @asynccontextmanager
+    async def _lock(_target_id: str, *, timeout_s: float = 120, op: str = ""):
+        yield
+
+    monkeypatch.setattr(
+        "web_tab.cdp_actuation.default_actuation_port",
+        lambda: _dom_deliver_port_tab(),
+    )
+    monkeypatch.setattr(
+        "web_tab.write_ops._created_by_agent_for_target", lambda **kwargs: False
+    )
+    monkeypatch.setattr(
+        "web_tab.operator_guard.wait_operator_idle_before_lock", _pre
+    )
+    monkeypatch.setattr("web_tab.target_lock.target_write_lock", _lock)
+    monkeypatch.setattr(
+        "web_tab.operator_guard.read_operator_busy",
+        AsyncMock(
+            return_value={
+                "document_has_focus": False,
+                "document_visibility": "visible",
+                "operator_active": False,
+                "foreign_draft": True,
+                "composer_draft": "operator text",
+            }
+        ),
+    )
+    monkeypatch.setattr(
+        "web_tab.operator_guard.wait_for_operator_idle",
+        AsyncMock(return_value={"ok": True, "idle": True}),
+    )
+
+    out = await _dom_deliver(
+        page,
+        build_wake_pointer(thread="21207", turn=2, from_agent="maestro"),
+    )
+    assert out["ok"] is False
+    assert "foreign" in str(out.get("reason") or "").lower()
+
+
+@pytest.mark.asyncio
+async def test_guarde_close_refuses_focus_for_agent_and_operator_provenance(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """AC7 (c): close path keeps focus/visible refusal (agent tab via tab_has_focus)."""
+    from web_chat_relay.orion_wake import _guarded_close_orion_tab
+
+    async def _pre(*_a: object, **_k: object) -> dict:
+        return {"ok": True}
+
+    @asynccontextmanager
+    async def _lock(_target_id: str, *, timeout_s: float = 120, op: str = ""):
+        yield
+
+    class _Port:
+        def list_tabs(self, *, cdp_url: str) -> dict:
+            return {
+                "pages": [
+                    {
+                        "id": "tab-agent",
+                        "url": PINNED,
+                        "web_socket_debugger_url": "ws://agent",
+                    },
+                    {
+                        "id": "tab-operator",
+                        "url": PINNED,
+                        "web_socket_debugger_url": "ws://operator",
+                    },
+                ],
+                "reachable": True,
+                "error": None,
+            }
+
+    async def _recheck_focus(*_a: object, **_k: object) -> dict:
+        return {
+            "ok": True,
+            "probe": {
+                "document_has_focus": True,
+                "document_visibility": "hidden",
+                "operator_active": False,
+            },
+        }
+
+    async def _recheck_visible(*_a: object, **_k: object) -> dict:
+        return {
+            "ok": True,
+            "probe": {
+                "document_has_focus": False,
+                "document_visibility": "visible",
+                "operator_active": False,
+            },
+        }
+
+    monkeypatch.setattr("web_tab.cdp_actuation.default_actuation_port", lambda: _Port())
+    monkeypatch.setattr("web_tab.operator_guard.wait_operator_idle_before_lock", _pre)
+    monkeypatch.setattr("web_tab.target_lock.target_write_lock", _lock)
+    monkeypatch.setattr("web_tab.cdp_actuation._close_target", lambda *a, **k: None)
+
+    def _created(*, target_id: str, **kwargs: object) -> bool:
+        return target_id == "tab-agent"
+
+    monkeypatch.setattr("web_tab.write_ops._created_by_agent_for_target", _created)
+    monkeypatch.setattr(
+        "web_tab.operator_guard.operator_recheck_under_lock", _recheck_focus
+    )
+    agent_focus = await _guarded_close_orion_tab(
+        cdp_url="http://127.0.0.1:9342",
+        target_id="tab-agent",
+        conversation_url=PINNED,
+    )
+    assert agent_focus["ok"] is False
+    assert agent_focus["reason"] == "tab_has_focus"
+
+    monkeypatch.setattr(
+        "web_tab.operator_guard.operator_recheck_under_lock", _recheck_visible
+    )
+    agent_visible = await _guarded_close_orion_tab(
+        cdp_url="http://127.0.0.1:9342",
+        target_id="tab-agent",
+        conversation_url=PINNED,
+    )
+    assert agent_visible["ok"] is False
+    assert agent_visible["reason"] == "tab_has_focus"
+
+    operator_out = await _guarded_close_orion_tab(
+        cdp_url="http://127.0.0.1:9342",
+        target_id="tab-operator",
+        conversation_url=PINNED,
+    )
+    assert operator_out["ok"] is False
+    assert operator_out["reason"] == "operator_provenance_tab"
+
+
 @pytest.mark.asyncio
 async def test_dom_deliver_returns_busy_when_target_lock_timeout(
     monkeypatch: pytest.MonkeyPatch,

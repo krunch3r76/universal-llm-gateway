@@ -948,6 +948,7 @@ async def _dom_deliver(
                 selector=selector,
                 created_by_agent=created_by_agent,
                 lock_holder=False,
+                allow_visible_idle_operator_tab=True,
             )
             if not guard.get("ok"):
                 return {
