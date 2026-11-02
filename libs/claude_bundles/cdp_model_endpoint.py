@@ -83,6 +83,18 @@ _WEEKLY_LIMIT_USAGE_PERCENT_RE = re.compile(
     r"\d{1,3}\s*%\s+of\s+(?:your\s+)?weekly\s+limit",
     re.IGNORECASE,
 )
+_WEEKLY_LIMIT_PACE_RE = re.compile(
+    r"on\s+pace\s+to\s+hit(?:\s+your)?\s+.+\s*limit",
+    re.IGNORECASE,
+)
+_WEEKLY_LIMIT_PERCENT_USED_RE = re.compile(
+    r"\d{1,3}\s*%\s+used\b",
+    re.IGNORECASE,
+)
+_WEEKLY_LIMIT_EXPLICIT_STOP_RE = re.compile(
+    r"you'?ve\s+hit\s+your|limit\s+reached|reached\s+your\s+.+\s*limit",
+    re.IGNORECASE,
+)
 _WEEKLY_LIMIT_WARNING_MAX_LEN = 200
 
 HarvestSource = Literal["chat", "output-file", "auto"]
@@ -419,20 +431,27 @@ def _classify_weekly_limit_banner(
 ) -> Literal["stop", "warning", "other"] | None:
     """Classify joined harvest banner text when it mentions weekly limit.
 
-    Hard-stop phrases grade ``stop``. A usage-percentage notice
-    (``N% of your weekly limit``) and an approaching notice grade
+    Hard-stop phrases (``You've hit your weekly limit``, limit reached) grade
+    ``stop``. Pace and usage notices (``on pace to hit your weekly limit``,
+    ``N% used``, ``N% of your weekly limit``) and approaching notices grade
     ``warning``. Remaining weekly-limit mentions grade ``other``.
     """
     if not _WEEKLY_LIMIT_RE.search(banner):
         return None
-    if _WEEKLY_LIMIT_STOP_RE.search(banner):
+    if _WEEKLY_LIMIT_EXPLICIT_STOP_RE.search(banner):
         return "stop"
+    if _WEEKLY_LIMIT_PACE_RE.search(banner):
+        return "warning"
+    if _WEEKLY_LIMIT_PERCENT_USED_RE.search(banner):
+        return "warning"
     if _WEEKLY_LIMIT_USAGE_PERCENT_RE.search(banner):
         return "warning"
     if _WEEKLY_LIMIT_APPROACHING_RE.search(banner) and re.search(
         r"weekly\s+limit", banner, re.IGNORECASE
     ):
         return "warning"
+    if _WEEKLY_LIMIT_STOP_RE.search(banner):
+        return "stop"
     return "other"
 
 
@@ -546,7 +565,14 @@ def _matched_span_for_rule(snapshot: dict[str, Any], rule: str) -> str:
     for hay in haystacks:
         found = pattern.search(hay)
         if not found and rule == "weekly_limit_warning":
-            found = _WEEKLY_LIMIT_USAGE_PERCENT_RE.search(hay)
+            for extra in (
+                _WEEKLY_LIMIT_PACE_RE,
+                _WEEKLY_LIMIT_PERCENT_USED_RE,
+                _WEEKLY_LIMIT_USAGE_PERCENT_RE,
+            ):
+                found = extra.search(hay)
+                if found:
+                    break
         if found:
             return _collapse_trace_text(found.group(0))[:_GRADE_TRACE_MATCH_CAP]
         if rule == "weekly_limit_stop":

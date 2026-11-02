@@ -2406,6 +2406,57 @@ def test_weekly_limit_approaching_banner_long_body_ok_with_warning_extra(
     assert result.extras.get("weekly_limit_warning")
 
 
+_SPECIMEN_PACE_WEEKLY_LIMIT_BANNER_TEXT = (
+    "times Ran 7 commands Ran 7 commands Ran 6 commands Ran 4 commands  "
+    "On pace to hit your weekly limit early 28% used · Resets Sun, Nov 8, 9:00 AM "
+)
+_SPECIMEN_PACE_WEEKLY_LIMIT_BANNER_MATCH = "hit your weekly limit"
+
+
+def test_weekly_limit_pace_banner_specimen_long_body_ok_with_warning_extra(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Pace-to-hit banner (a:21772) + long seat body grades ok with warning extra."""
+    _mock_run_cdp_staging(monkeypatch, tmp_path, "dispatch-wl-pace-specimen")
+    long_body = (
+        "VERDICT: APPROVE range=b761e8c5e861d4902e3e9ad04b63a3a19b9a63e0.."
+        "27c5ecde6d9e0ddf5c8854ee04e1c56ddae3638e "
+        "head=27c5ecde6d9e0ddf5c8854ee04e1c56ddae3638e\n\n"
+        + ("Seat review paragraph. " * 80)
+    )
+    assert len(long_body) > 500
+    client = _FakeClient(
+        [
+            {"execution_id": "sat-wl-pace-specimen", "status": "running"},
+            {
+                "execution_id": "sat-wl-pace-specimen",
+                "status": "running",
+                "archive_uri": (
+                    "cortex://notes/system/threads/cdp-ask-archive-wl-pace-specimen.md"
+                ),
+                "body": long_body,
+                "error_banner_match": _SPECIMEN_PACE_WEEKLY_LIMIT_BANNER_MATCH,
+                "error_banner_text": _SPECIMEN_PACE_WEEKLY_LIMIT_BANNER_TEXT,
+                "attested_model": "Model: Opus 5 High",
+                "harvest_provenance": "chat",
+            },
+        ]
+    )
+    result = run_cdp_generate(
+        execution_id="dispatch-wl-pace-specimen",
+        model_id="cdp/opus-4.8",
+        prompt_text="ping",
+        purpose="code-review",
+        poll_interval_s=0,
+        client=client,  # type: ignore[arg-type]
+        sleep=lambda _s: None,
+    )
+    assert result.ok is True
+    assert result.stall_stage is None
+    assert result.stall_stage != "weekly_limit"
+    assert result.extras.get("weekly_limit_warning")
+
+
 _SPECIMEN_USAGE_PERCENT_BANNER = "You've used 75% of your weekly limit Get more usage"
 
 
