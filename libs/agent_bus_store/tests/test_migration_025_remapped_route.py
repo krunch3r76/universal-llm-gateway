@@ -198,6 +198,11 @@ def test_migration_025_rebuild_preserves_populated_rows(
         migration_025.run(conn)
         conn.commit()
 
+        master_after_first = conn.execute(
+            "SELECT rootpage, sql FROM sqlite_master WHERE type='table' AND name='endpoint_wake_ledger'"
+        ).fetchone()
+        assert master_after_first is not None
+
         count_after_first = conn.execute(
             "SELECT COUNT(*) AS n FROM endpoint_wake_ledger"
         ).fetchone()["n"]
@@ -237,11 +242,13 @@ def test_migration_025_rebuild_preserves_populated_rows(
             "SELECT COUNT(*) AS n FROM endpoint_wake_ledger"
         ).fetchone()["n"]
         assert count_after_second == count_before
-        ddl_after = conn.execute(
-            "SELECT sql FROM sqlite_master WHERE type='table' AND name='endpoint_wake_ledger'"
+        master_after_second = conn.execute(
+            "SELECT rootpage, sql FROM sqlite_master WHERE type='table' AND name='endpoint_wake_ledger'"
         ).fetchone()
-        assert ddl_after is not None
-        assert "'remapped'" in str(ddl_after[0])
+        assert master_after_second is not None
+        assert master_after_second["rootpage"] == master_after_first["rootpage"]
+        assert master_after_second["sql"] == master_after_first["sql"]
+        assert "'remapped'" in str(master_after_second["sql"])
 
 
 def test_migration_025_idempotent(tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -252,17 +259,24 @@ def test_migration_025_idempotent(tmp_path, monkeypatch: pytest.MonkeyPatch) -> 
         ).fetchone()["n"]
         assert count_before == len(seeds)
         migration_025.run(conn)
+        conn.commit()
+        master_after_first = conn.execute(
+            "SELECT rootpage, sql FROM sqlite_master WHERE type='table' AND name='endpoint_wake_ledger'"
+        ).fetchone()
+        assert master_after_first is not None
         migration_025.run(conn)
         conn.commit()
         count_after = conn.execute(
             "SELECT COUNT(*) AS n FROM endpoint_wake_ledger"
         ).fetchone()["n"]
         assert count_after == count_before
-        ddl = conn.execute(
-            "SELECT sql FROM sqlite_master WHERE type='table' AND name='endpoint_wake_ledger'"
+        master_after_second = conn.execute(
+            "SELECT rootpage, sql FROM sqlite_master WHERE type='table' AND name='endpoint_wake_ledger'"
         ).fetchone()
-    assert ddl is not None
-    assert "'remapped'" in str(ddl[0])
+        assert master_after_second is not None
+        assert master_after_second["rootpage"] == master_after_first["rootpage"]
+        assert master_after_second["sql"] == master_after_first["sql"]
+        assert "'remapped'" in str(master_after_second["sql"])
 
 
 def test_migration_025_rejects_bogus_route(
