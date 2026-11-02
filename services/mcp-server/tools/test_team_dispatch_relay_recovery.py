@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import asyncio
+import uuid
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
@@ -13,7 +16,7 @@ from tools._team_dispatch_relay_recovery import (
     is_admit_pending_transport,
     transport_error_code,
 )
-from tools.frontier import _relay
+from tools.frontier import _relay, register_frontier_tools
 
 pytestmark = pytest.mark.offline
 
@@ -191,3 +194,135 @@ async def test_relay_generate_read_timeout_admit_pending_preserves_body_dispatch
     assert result["status"] == "admit_pending"
     assert result["dispatch_id"] == captured_body["dispatch_id"]
     assert "error" not in result
+
+
+class _ToolNameRecorder:
+    def __init__(self) -> None:
+        self.functions: dict[str, Any] = {}
+
+    def tool(self, **_kwargs: Any) -> Any:
+        def decorator(fn: Any) -> Any:
+            self.functions[fn.__name__] = fn
+            return fn
+
+        return decorator
+
+
+def test_cdp_generate_relay_body_omits_dispatch_id() -> None:
+    recorder = _ToolNameRecorder()
+    register_frontier_tools(recorder)
+    team_dispatch_fn = recorder.functions["team_dispatch"]
+    relay_calls: list[dict[str, Any]] = []
+
+    async def _fake_relay(
+        *, endpoint: str, body: dict[str, Any], record_prefix: str
+    ) -> dict[str, Any]:
+        relay_calls.append({"endpoint": endpoint, "body": body})
+        return {"execution_id": "exec-test", "thread_id": "thread-test"}
+
+    with (
+        patch("tools.frontier._relay", side_effect=_fake_relay),
+        patch("tools.frontier.record"),
+    ):
+        asyncio.run(
+            team_dispatch_fn(
+                op="generate",
+                model="cdp/opus-5.5",
+                contract="delivery-review",
+                dispatch_thread_id=_COORD,
+            )
+        )
+
+    assert len(relay_calls) == 1
+    assert "dispatch_id" not in relay_calls[0]["body"]
+
+
+def test_cursor_sdk_generate_relay_stamps_caller_dispatch_id() -> None:
+    recorder = _ToolNameRecorder()
+    register_frontier_tools(recorder)
+    team_dispatch_fn = recorder.functions["team_dispatch"]
+    relay_calls: list[dict[str, Any]] = []
+
+    async def _fake_relay(
+        *, endpoint: str, body: dict[str, Any], record_prefix: str
+    ) -> dict[str, Any]:
+        relay_calls.append({"endpoint": endpoint, "body": body})
+        return {"execution_id": "exec-test", "thread_id": "thread-test"}
+
+    with (
+        patch("tools.frontier._relay", side_effect=_fake_relay),
+        patch("tools.frontier.record"),
+    ):
+        asyncio.run(
+            team_dispatch_fn(
+                op="generate",
+                seat="cursor-sdk",
+                contract="freeform",
+                dispatch_thread_id=_COORD,
+                prompt="relay dispatch_id stamp test",
+                dispatch_id="did-caller-41543",
+                lane="B",
+            )
+        )
+
+    assert relay_calls[0]["body"]["dispatch_id"] == "did-caller-41543"
+
+
+def test_cursor_sdk_generate_mints_dispatch_id_when_caller_omits() -> None:
+    recorder = _ToolNameRecorder()
+    register_frontier_tools(recorder)
+    team_dispatch_fn = recorder.functions["team_dispatch"]
+    relay_calls: list[dict[str, Any]] = []
+
+    async def _fake_relay(
+        *, endpoint: str, body: dict[str, Any], record_prefix: str
+    ) -> dict[str, Any]:
+        relay_calls.append({"endpoint": endpoint, "body": body})
+        return {"execution_id": "exec-test", "thread_id": "thread-test"}
+
+    fixed = uuid.UUID("aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee")
+    with (
+        patch("tools.frontier._relay", side_effect=_fake_relay),
+        patch("tools.frontier.record"),
+        patch("tools.frontier.uuid.uuid4", return_value=fixed),
+    ):
+        asyncio.run(
+            team_dispatch_fn(
+                op="generate",
+                seat="cursor-sdk",
+                contract="freeform",
+                dispatch_thread_id=_COORD,
+                prompt="relay dispatch_id mint test",
+                lane="B",
+            )
+        )
+
+    assert relay_calls[0]["body"]["dispatch_id"] == str(fixed)
+
+
+@pytest.mark.asyncio
+async def test_cdp_generate_read_timeout_returns_response_lost_not_admit_pending() -> None:
+    stargate_client = MagicMock()
+    stargate_client.post = AsyncMock(
+        side_effect=httpx.ReadTimeout("", request=httpx.Request("POST", "http://stargate/"))
+    )
+    stargate_ctx = MagicMock()
+    stargate_ctx.__aenter__ = AsyncMock(return_value=stargate_client)
+    stargate_ctx.__aexit__ = AsyncMock(return_value=None)
+
+    body = {
+        "op": "generate",
+        "model": "cdp/opus-5.5",
+        "dispatch_thread_id": _COORD,
+        "job": "delivery-review",
+    }
+
+    with patch("tools.frontier.make_async_client", return_value=stargate_ctx):
+        result = await _relay(
+            endpoint="/api/v1/team/dispatch",
+            body=body,
+            record_prefix="mcp.team.dispatch",
+        )
+
+    assert result["error"]["code"] == "stargate_response_lost"
+    assert "admit_pending" not in result
