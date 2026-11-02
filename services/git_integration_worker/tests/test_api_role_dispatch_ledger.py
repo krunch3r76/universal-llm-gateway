@@ -11,9 +11,16 @@ from services.git_integration_worker.cursor_dispatch_ledger import CursorDispatc
 from services.git_integration_worker.cursor_dispatch_read import (
     work_key_ledger_projection,
 )
+from services.git_integration_worker.cursor_sdk_work_claim import occupancy
+from services.git_integration_worker.models.cursor_api import (
+    CursorDispatchRequest,
+    CursorDispatchResponse,
+)
 from services.git_integration_worker.routes.cursor_claim import router as claim_router
 
 _KEY = "todo:api-role-ledger-test"
+_ADMIT_CLOSE_KEY = "todo:api-role-admit-close-test"
+_EXEC_UUID = "baf3afd7-dc49-472b-9fb0-709a88d9d625"
 
 
 @pytest.fixture
@@ -22,6 +29,62 @@ def ledger(tmp_path, monkeypatch: pytest.MonkeyPatch) -> CursorDispatchLedger:
     monkeypatch.setenv("CURSOR_SDK_DISPATCH_LEDGER", str(db))
     CursorDispatchLedger._instance = None
     return CursorDispatchLedger.instance()
+
+
+@pytest.mark.offline
+def test_upsert_api_role_completes_admitted_row_without_twin(
+    ledger: CursorDispatchLedger,
+) -> None:
+    """Admitted API-role row (dispatch_id=execution uuid) closes in place.
+
+    Breaks when completion inserts api-{uuid} while admit row stays admitted:
+    work_key occupancy stays acting until manual discard.
+    """
+    req = CursorDispatchRequest(
+        thread_id="12286",
+        model="anthropic/claude-sonnet-4-6",
+        dispatch_id=_EXEC_UUID,
+        execution_id=_EXEC_UUID,
+        message="skeptic slice",
+    )
+    ledger.admit(
+        req=req,
+        fingerprint=ledger.fingerprint(req),
+        execution_id=_EXEC_UUID,
+        caller_agent="maestro",
+        resolved_model="anthropic/claude-sonnet-4-6",
+        admission=CursorDispatchResponse(
+            admitted=True,
+            dispatch_id=_EXEC_UUID,
+            thread_id=req.thread_id,
+            model_id="anthropic/claude-sonnet-4-6",
+        ),
+        contract="freeform",
+        work_key=_ADMIT_CLOSE_KEY,
+        identity_class="declared",
+    )
+    assert occupancy(_ADMIT_CLOSE_KEY, ledger=ledger)["state"] == "acting"
+
+    returned = ledger.upsert_api_role_completed_dispatch(
+        execution_id=_EXEC_UUID,
+        work_key=_ADMIT_CLOSE_KEY,
+        resolved_model="anthropic/claude-sonnet-4-6",
+        contract="freeform",
+        record_json='{"substrate":"api_role"}',
+        stamp="2026-11-02T01:00:00+00:00",
+    )
+    assert returned == _EXEC_UUID
+
+    with ledger._connect() as conn:
+        rows = conn.execute(
+            "SELECT dispatch_id, status FROM cursor_sdk_dispatches "
+            "WHERE dispatch_id=? OR execution_id=? OR dispatch_id=?",
+            (_EXEC_UUID, _EXEC_UUID, f"api-{_EXEC_UUID}"),
+        ).fetchall()
+    assert len(rows) == 1
+    assert rows[0]["dispatch_id"] == _EXEC_UUID
+    assert rows[0]["status"] == "completed"
+    assert occupancy(_ADMIT_CLOSE_KEY, ledger=ledger)["state"] == "idle"
 
 
 @pytest.mark.offline

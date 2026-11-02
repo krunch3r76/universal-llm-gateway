@@ -3630,6 +3630,33 @@ class CursorDispatchLedger:
         """Insert or update a synthetic completed ledger row for API-role team_dispatch."""
         dispatch_id = f"api-{execution_id}"
         with self._connect() as conn:
+            open_row = conn.execute(
+                "SELECT dispatch_id FROM cursor_sdk_dispatches "
+                "WHERE (dispatch_id=? OR execution_id=?) "
+                f"AND status NOT IN ({_TERMINAL_STATUS_CHECK}) "
+                "ORDER BY rowid DESC LIMIT 1",
+                (execution_id, execution_id),
+            ).fetchone()
+            if open_row is not None:
+                admitted_id = str(open_row["dispatch_id"])
+                conn.execute(
+                    "UPDATE cursor_sdk_dispatches SET execution_id=?, resolved_model=?, "
+                    "status='completed', record_json=?, contract=?, work_key=?, "
+                    "started_at=COALESCE(started_at, ?), terminal_at=?, "
+                    "terminal_status='completed' WHERE dispatch_id=?",
+                    (
+                        execution_id,
+                        resolved_model,
+                        record_json,
+                        contract or "freeform",
+                        work_key,
+                        stamp,
+                        stamp,
+                        admitted_id,
+                    ),
+                )
+                conn.commit()
+                return admitted_id
             existing = conn.execute(
                 "SELECT dispatch_id FROM cursor_sdk_dispatches WHERE dispatch_id=?",
                 (dispatch_id,),
