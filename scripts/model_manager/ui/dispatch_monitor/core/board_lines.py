@@ -23,7 +23,9 @@ from .sdk_posture import (
     classify_sdk_live,
     posture_legend,
     row_role,
+    sdk_flight_label,
     sort_sdk_live,
+    split_open_sdk,
 )
 from .sdk_tree import cycle_nodes, nest_pointer, nest_under_edges, tree_glyph
 from .watch import SEVERITY_MARK, _ms, _truncate, clip_text
@@ -119,6 +121,45 @@ def tick_objective_line(root_id: str, text: str, width: int, *, kind: str = "obj
 def live_sdk(rows: tuple[SdkDispatchRow, ...]) -> list[SdkDispatchRow]:
     live = [row for row in rows if row.terminal_ms is None]
     return sort_sdk_live(live, classify_sdk_live(live))
+
+
+def paint_open_sdk(
+    rows: tuple[SdkDispatchRow, ...] | list[SdkDispatchRow],
+) -> tuple[list[SdkDispatchRow], list[SdkDispatchRow]]:
+    """Split still-open rows at paint time: LIVE, then UNSTARTED oldest first."""
+    open_rows = [row for row in rows if row.terminal_ms is None]
+    return split_open_sdk(open_rows)
+
+
+def sdk_flight_fragment(
+    open_rows: list[SdkDispatchRow],
+) -> tuple[str, int | None]:
+    """Header flight count (LIVE only) and oldest LIVE elapsed."""
+    live, unstarted = split_open_sdk(open_rows)
+    return sdk_flight_label(live, unstarted), oldest_elapsed_ms(live)
+
+
+def sdk_source_token(row: SdkDispatchRow) -> str:
+    """``via`` for the UNSTARTED block — caller_via, else admission / emitter."""
+    if row.caller_via:
+        return row.caller_via
+    if row.admitted_via:
+        return row.admitted_via
+    if row.asked_by:
+        return row.asked_by
+    if row.emitters_seen:
+        return ",".join(_short_emitter(name) for name in row.emitters_seen)
+    if row.caller_from:
+        return row.caller_from
+    return "-"
+
+
+def sdk_unstarted_line(row: SdkDispatchRow, width: int = 120) -> str:
+    """UNSTARTED row: elapsed age and via only."""
+    return clip_text(
+        f"  {row.dispatch_id} el={_ms(row.elapsed_ms)} via={sdk_source_token(row)}",
+        width,
+    )
 
 
 def sdk_live_posture(live: list[SdkDispatchRow]) -> SdkMultiPosture:

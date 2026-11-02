@@ -22,21 +22,23 @@ from .board_lines import (
     live_cdp,
     live_sdk,
     oldest_elapsed_ms,
+    paint_open_sdk,
     primary_sdk_dispatch_for_root,
     primary_tick_objective,
     resolve_hold,
     root_line_live,
+    sdk_flight_fragment,
     sdk_live_line,
     sdk_live_posture,
     sdk_posture_legend,
     sdk_ribbon,
     sdk_terminal_tally,
+    sdk_unstarted_line,
     section_bar,
     tick_objective_line,
 )
 from .curses_sections import _section_bar_attr, paint_attention, paint_lease
 from .dtos import CdpLegRow, CharterRootRow, SdkDispatchRow, SupervisorProjection
-from .sdk_posture import row_role
 from .watch import _cdp_line, _ms, _truncate, cdp_id_legend
 
 HEADER_ROWS = 3
@@ -268,8 +270,9 @@ class CursesBoard:
         crit = sum(1 for item in projection.attention if item.severity == "crit")
         warn = sum(1 for item in projection.attention if item.severity == "warn")
         cap = health.wip_capacity if health.wip_capacity is not None else "?"
+        flight_sdk, oldest_sdk = sdk_flight_fragment(sdk_live)
         flight = (
-            f"flight: sdk {len(sdk_live)} (oldest el {_ms(oldest_elapsed_ms(sdk_live))}) · "
+            f"flight: {flight_sdk} (oldest el {_ms(oldest_sdk)}) · "
             f"cdp {len(cdp_live)} (oldest el {_ms(oldest_elapsed_ms(cdp_live))}) · "
             f"queue {health.queue_depth} wip {health.wip_in_use}/{cap} · "
             f"attn {crit}crit {warn}warn"
@@ -433,7 +436,8 @@ class CursesBoard:
         if y >= height - 1:
             return y
         window_done = sum(1 for row in projection.sdk if row.terminal_ms is not None)
-        posture = sdk_live_posture(live)
+        active, unstarted = paint_open_sdk(live)
+        posture = sdk_live_posture(active)
         title = "SDK" if posture == "solo" else f"SDK · {posture}"
         self._safe_addstr(
             y,
@@ -457,19 +461,13 @@ class CursesBoard:
             self._safe_addstr(y, 0, "  idle — no sdk dispatch in flight", 0)
             y += 1
         shown = 0
-        for row in live:
+        for row in active:
             if y >= height - 1 or shown >= row_cap:
                 break
-            role = row_role(row, live, posture)
-            if row.divergent_fields:
-                pair = 2
-            elif role == "ghost":
-                pair = 3
-            else:
-                pair = 0
+            pair = 2 if row.divergent_fields else 0
             line = sdk_live_line(
                 row,
-                live=live,
+                live=active,
                 posture=posture,
                 width=width - 1,
                 relations=projection.relations,
@@ -480,6 +478,20 @@ class CursesBoard:
             self._safe_addstr(y, 0, line[: width - 1], pair, attr)
             y += 1
             shown += 1
+        if unstarted and y < height - 1:
+            bar = f" UNSTARTED ({len(unstarted)}) "
+            self._safe_addstr(y, 0, f"─{bar}{'─' * max(0, width - len(bar) - 2)}", 2)
+            y += 1
+            for row in unstarted:
+                if y >= height - 1 or shown >= row_cap:
+                    break
+                line = sdk_unstarted_line(row, width=width - 1)
+                attr = curses.A_REVERSE if row.dispatch_id == selected_key else 0
+                if row.dispatch_id == selected_key:
+                    self._selection_logical_y = y
+                self._safe_addstr(y, 0, line[: width - 1], 0, attr)
+                y += 1
+                shown += 1
         if shown < len(live) and y < height - 1:
             self._safe_addstr(y, 0, f"  … +{len(live) - shown} more", 0)
             y += 1
