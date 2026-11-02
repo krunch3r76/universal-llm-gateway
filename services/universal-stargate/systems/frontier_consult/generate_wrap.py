@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import asyncio
+import logging
+import sys
 import time
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
@@ -263,6 +265,9 @@ def prepare_implement_packet(
     )
 
 
+_logger = logging.getLogger(__name__)
+
+
 def _record_pending_spawn_row(
     *,
     row_id: str,
@@ -304,18 +309,42 @@ def _record_pending_spawn_row(
 
 
 def _fail_pending_spawn_row(
-    *, row_id: str, exc: BaseException, elapsed_ms: int
+    *,
+    row_id: str,
+    exc: BaseException | None,
+    stage: str,
+    elapsed_ms: int,
 ) -> None:
-    """Patch the pending row terminal so a dead materialize leaves a failed row."""
-    from cursor_bridge.spawn_endpoint_house_ledger import patch_spawn_row
+    """Patch a never-promoted row terminal, so no exit leaves it at ``launching``.
 
-    patch_spawn_row(
-        row_id,
-        state="failed",
-        error_class=type(exc).__name__,
-        materialize_elapsed_ms=elapsed_ms,
-        failed_at=_utcnow_iso(),
+    ``stage`` names the step that died, since the row outlives the request and
+    is the only account of it. A status row is written beside the patch because
+    ``project_row_status`` reads only ``status``/``report`` rows — a bare
+    ``state='failed'`` spawn patch projects as ``unknown``.
+
+    Never raises: this runs on the failure path, and a secondary ledger error
+    must not replace the exception being propagated.
+    """
+    from cursor_bridge.spawn_endpoint_house_ledger import (
+        patch_spawn_row,
+        record_status_row,
     )
+
+    reason = type(exc).__name__ if exc is not None else stage
+    try:
+        patch_spawn_row(
+            row_id,
+            state="failed",
+            reason=reason,
+            stage=stage,
+            materialize_elapsed_ms=elapsed_ms,
+            failed_at=_utcnow_iso(),
+        )
+        record_status_row(row_id=row_id, status="failed", source_status=reason)
+    except Exception:
+        _logger.exception(
+            "spawn row %s could not be marked failed at stage %s", row_id, stage
+        )
 
 
 def _utcnow_iso() -> str:
@@ -359,6 +388,8 @@ async def dispatch_cursor_sdk_generate_route(
     role = seat
     sdk_row_id: str | None = None
     spawn_pre_recorded = False
+    spawn_promoted = False
+    spawn_started_ms = time.monotonic()
     try:
         operator_lane_summon_warning: str | None = None
         source_ref = getattr(body, "source_ref", None)
@@ -505,7 +536,7 @@ async def dispatch_cursor_sdk_generate_route(
                 body=body,
                 work_key=getattr(body, "work_key", None),
             )
-            started_ms = time.monotonic()
+            spawn_started_ms = time.monotonic()
             try:
                 wrap = await loop.run_in_executor(
                     None,
@@ -535,8 +566,10 @@ async def dispatch_cursor_sdk_generate_route(
                     _fail_pending_spawn_row(
                         row_id=sdk_row_id,
                         exc=exc,
-                        elapsed_ms=int((time.monotonic() - started_ms) * 1000),
+                        stage="materialize",
+                        elapsed_ms=int((time.monotonic() - spawn_started_ms) * 1000),
                     )
+                    spawn_pre_recorded = False
                 raise
         elif (
             body.job == "sketch"
@@ -612,82 +645,101 @@ async def dispatch_cursor_sdk_generate_route(
                     ).to_dict(),
                 )
             wrap = GenerateWrapResult(packet_path=packet_path)
-        has_packet = wrap.packet_path is not None
-        conductor_message = (
-            wrap.packet_markdown
-            if body.job == "conductor" and wrap.packet_markdown
-            else None
-        )
-        prompt_resolution = None
-        if body.job == "implement" or has_packet or conductor_message is not None:
-            source_text = ""
-        else:
-            prompt_resolution = await resolve_generate_prompt_resolution(
-                request_id=request_id,
-                role=role,
-                dispatch_thread_id=body.dispatch_thread_id,
-                prompt=getattr(body, "prompt", None),
-                sidecar_ref=getattr(body, "sidecar_ref", None),
+        # Everything between the pre-materialize row and its promotion runs
+        # under one guard: a raise or an early return here would otherwise
+        # strand the row at ``launching``, and ingest_report_turn's thread
+        # fallback would let a later report turn attach to the orphan.
+        spawn_stage = "prompt_resolution"
+        try:
+            has_packet = wrap.packet_path is not None
+            conductor_message = (
+                wrap.packet_markdown
+                if body.job == "conductor" and wrap.packet_markdown
+                else None
             )
-            source_text = prompt_resolution.text
-        (
-            reuse_thread,
-            parent_dispatch_thread_id,
-            is_auto_consolidation,
-        ) = await resolve_cursor_sdk_thread_targets(
-            reuse_thread=getattr(body, "reuse_thread", None),
-            dispatch_thread_id=body.dispatch_thread_id,
-            contract=body.job,
-            request_id=request_id,
-        )
-        from cursor_bridge.spawn_endpoint_house_ledger import (
-            mint_row_id,
-            patch_spawn_row,
-            record_spawn,
-        )
-
-        house_thread = str(getattr(body, "dispatch_thread_id", "") or "").strip()
-        if not house_thread:
-            house_thread = str(reuse_thread or "").strip()
-        if sdk_row_id is None:
-            sdk_row_id = mint_row_id()
-        if spawn_pre_recorded:
-            # One row per sdk_row_id: the pre-materialize row is promoted to
-            # live here instead of being inserted a second time.
-            spine = patch_spawn_row(
-                sdk_row_id,
-                state="live",
-                thread=house_thread,
-                dispatch_id=getattr(body, "dispatch_id", None),
-                parent={
-                    "agent": str(getattr(body, "caller_agent", "") or "").strip(),
-                    "thread": house_thread,
-                },
-            )
-        else:
-            spine = record_spawn(
-                surface="cursor_sdk",
-                thread=house_thread,
-                purpose="(unstated)",
-                purpose_unstated=True,
-                row_id=sdk_row_id,
-                dispatch_id=getattr(body, "dispatch_id", None),
-                parent={
-                    "agent": str(getattr(body, "caller_agent", "") or "").strip(),
-                    "thread": house_thread,
-                },
-            )
-        if not spine.get("ok"):
-            return JSONResponse(
-                status_code=500,
-                content=FrontierEndpointError(
+            prompt_resolution = None
+            if body.job == "implement" or has_packet or conductor_message is not None:
+                source_text = ""
+            else:
+                prompt_resolution = await resolve_generate_prompt_resolution(
                     request_id=request_id,
-                    field="ledger",
-                    reason=str(spine.get("error") or "spawn_spine_failed"),
-                    status_code=500,
-                    code="spawn_spine_failed",
-                ).to_dict(),
+                    role=role,
+                    dispatch_thread_id=body.dispatch_thread_id,
+                    prompt=getattr(body, "prompt", None),
+                    sidecar_ref=getattr(body, "sidecar_ref", None),
+                )
+                source_text = prompt_resolution.text
+            spawn_stage = "thread_targets"
+            (
+                reuse_thread,
+                parent_dispatch_thread_id,
+                is_auto_consolidation,
+            ) = await resolve_cursor_sdk_thread_targets(
+                reuse_thread=getattr(body, "reuse_thread", None),
+                dispatch_thread_id=body.dispatch_thread_id,
+                contract=body.job,
+                request_id=request_id,
             )
+            spawn_stage = "spawn_spine"
+            from cursor_bridge.spawn_endpoint_house_ledger import (
+                mint_row_id,
+                patch_spawn_row,
+                record_spawn,
+            )
+
+            house_thread = str(getattr(body, "dispatch_thread_id", "") or "").strip()
+            if not house_thread:
+                house_thread = str(reuse_thread or "").strip()
+            if sdk_row_id is None:
+                sdk_row_id = mint_row_id()
+            if spawn_pre_recorded:
+                # One row per sdk_row_id: the pre-materialize row is promoted to
+                # live here instead of being inserted a second time.
+                spine = patch_spawn_row(
+                    sdk_row_id,
+                    state="live",
+                    thread=house_thread,
+                    dispatch_id=getattr(body, "dispatch_id", None),
+                    parent={
+                        "agent": str(getattr(body, "caller_agent", "") or "").strip(),
+                        "thread": house_thread,
+                    },
+                )
+                spawn_promoted = bool(spine.get("ok"))
+            else:
+                spine = record_spawn(
+                    surface="cursor_sdk",
+                    thread=house_thread,
+                    purpose="(unstated)",
+                    purpose_unstated=True,
+                    row_id=sdk_row_id,
+                    dispatch_id=getattr(body, "dispatch_id", None),
+                    parent={
+                        "agent": str(getattr(body, "caller_agent", "") or "").strip(),
+                        "thread": house_thread,
+                    },
+                )
+            if not spine.get("ok"):
+                return JSONResponse(
+                    status_code=500,
+                    content=FrontierEndpointError(
+                        request_id=request_id,
+                        field="ledger",
+                        reason=str(spine.get("error") or "spawn_spine_failed"),
+                        status_code=500,
+                        code="spawn_spine_failed",
+                    ).to_dict(),
+                )
+        finally:
+            # finally, not except: an early `return` leaves the row unpromoted
+            # just as an exception does.
+            if spawn_pre_recorded and not spawn_promoted:
+                _fail_pending_spawn_row(
+                    row_id=str(sdk_row_id),
+                    exc=sys.exc_info()[1],
+                    stage=spawn_stage,
+                    elapsed_ms=int((time.monotonic() - spawn_started_ms) * 1000),
+                )
         result = await dispatch_cursor_sdk_generate(
             request_id=request_id,
             role=role,
