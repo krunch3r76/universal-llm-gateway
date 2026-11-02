@@ -51,5 +51,7 @@ def test_read_reply_js_grok_strips_activity_chip() -> None:
 
 def test_fixtures_exist_on_disk() -> None:
     root = Path(__file__).resolve().parent / "fixtures"
-    for name in ("chatgpt_composer.html", "grok_chat.html", "claude_chat.html"):
+    from web_tab.config import WEB_TAB_SMOKE_PROVIDER_FIXTURES
+
+    for name in WEB_TAB_SMOKE_PROVIDER_FIXTURES:
         assert (root / name).is_file()

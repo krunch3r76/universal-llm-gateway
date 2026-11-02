@@ -291,7 +291,7 @@ Log the misfire: `cortex(tool="friction", service="agent-bus", category="tool_er
 cortex(tool="friction_close", arguments='{"assertion_id": ID, "resolution_kind": "agent_skill:slug"}')
 ```
 
-Valid `resolution_kind`: `agent_skill:{slug}`, `workflow:{slug}`, `todo:{slug}`, `commit:{sha}`, `superseded`, `wontfix`.
+Valid `resolution_kind`: `agent_skill:{slug}`, `rule:{slug}`, `skill:{slug}`, `workflow:{slug}`, `todo:{slug}`, `commit:{sha}`, `uncommitted`, `superseded`, `wontfix` (SOT: `_RESOLUTION_KIND_CATALOG` in `libs/cortex_store/dispatch_ops/_friction_close_impl.py`). The target must be a friction row (`[<category>] …` claim); anything else is refused `not_a_friction_row`.
 
 ## Log new friction (observation only)
 

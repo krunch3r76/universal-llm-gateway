@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 from typing import Any, Literal
+from urllib.parse import urlparse
 
 from cursor_bridge.dom_composer_paste import (
     dom_click_send,
@@ -29,7 +30,10 @@ from web_tab.provider_selectors import (
     site_from_url,
     surface_for_site,
 )
-from web_tab.surface_adapter import canonical_page_url
+from web_tab.surface_adapter import (
+    canonical_page_url,
+    surface_not_web_tab_owned_refusal,
+)
 from web_tab.tab_binding_store import (
     load_binding,
     load_binding_for_target,
@@ -46,6 +50,20 @@ WriteOp = Literal["open", "bind", "paste", "submit", "verify_committed", "read_r
 
 ReceiptLevel = Literal["dom_paste", "dom_committed", "dom_present"]
 
+_CONSOLE_HOSTS = frozenset(
+    {"console.anthropic.com", "platform.claude.com", "www.platform.claude.com"}
+)
+
+
+def _refuse_cdp_ask_owned_urls(*urls: str | None) -> dict[str, Any] | None:
+    for raw in urls:
+        if not raw:
+            continue
+        refusal = surface_not_web_tab_owned_refusal(str(raw))
+        if refusal:
+            return refusal
+    return None
+
 
 def _resolve_site(
     *,
@@ -61,10 +79,15 @@ def _resolve_site(
     surf = (surface or "").strip().lower()
     if surf in {"chatgpt", "openai"}:
         return "chatgpt"
-    if surf in {"claude"}:
-        return "claude"
     if surf in {"grok", "x_grok", "x"}:
         return "grok"
+    if surf in {"anthropic_console", "claude-console", "claude"}:
+        for candidate in (target_url, conversation_url):
+            if not candidate:
+                continue
+            host = (urlparse(candidate).hostname or "").lower()
+            if host in _CONSOLE_HOSTS:
+                return "claude"
     return None
 
 
@@ -143,6 +166,9 @@ async def execute_open(
     refused = require_write_authorization(grant, authorization_source)
     if refused:
         return refused
+    owned = _refuse_cdp_ask_owned_urls(url)
+    if owned:
+        return owned
     site = _resolve_site(conversation_url=url, surface=surface)
     if site is None:
         return {
@@ -218,10 +244,16 @@ async def execute_bind(
     refused = require_write_authorization(grant, authorization_source)
     if refused:
         return refused
+    owned = _refuse_cdp_ask_owned_urls(conversation_url)
+    if owned:
+        return owned
     impl = port or default_actuation_port()
     ws, row, site = _ws_for_target(impl, cdp_url=cdp_url, target_id=target_id)
     if row is None:
         return {"ok": False, "code": "target_not_found", "target_id": target_id}
+    owned = _refuse_cdp_ask_owned_urls(str(row.get("url") or ""))
+    if owned:
+        return owned
     site = site or _resolve_site(
         conversation_url=conversation_url,
         surface=surface,
@@ -289,6 +321,12 @@ async def execute_paste(
     ws, row, site = _ws_for_target(impl, cdp_url=cdp_url, target_id=target_id)
     if not ws or row is None:
         return {"ok": False, "code": "target_not_found", "target_id": target_id}
+    owned = _refuse_cdp_ask_owned_urls(
+        conversation_url,
+        str(row.get("url") or ""),
+    )
+    if owned:
+        return owned
     site = site or _resolve_site(
         conversation_url=conversation_url or "",
         surface=surface,

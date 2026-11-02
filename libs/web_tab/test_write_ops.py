@@ -355,19 +355,35 @@ async def test_target_lock_refuses_nonblocking_fcntl(
 
 
 def test_resolve_write_cdp_url_maps_surface_without_explicit() -> None:
-    url, err = _resolve_write_cdp_url({"surface": "claude"})
+    url, err = _resolve_write_cdp_url({"surface": "anthropic_console"})
     assert err is None
     assert url == "http://127.0.0.1:9343"
 
 
 @pytest.mark.asyncio
-async def test_dispatch_refuses_claude_on_chatgpt_cdp_port() -> None:
+async def test_dispatch_refuses_claude_ai_chat_url() -> None:
+    result = await dispatch_write_op(
+        "open",
+        {
+            "surface": "anthropic_console",
+            "url": "https://claude.ai/chat/x",
+            "grant": "explicit",
+            "authorization_source": _AUTH,
+        },
+    )
+    assert result["ok"] is False
+    assert result["code"] == "surface_not_web_tab_owned"
+    assert result["owner"] == "cdp_ask"
+
+
+@pytest.mark.asyncio
+async def test_dispatch_refuses_anthropic_console_on_chatgpt_cdp_port() -> None:
     result = await dispatch_write_op(
         "bind",
         {
-            "surface": "claude",
+            "surface": "anthropic_console",
             "cdp_url": "http://127.0.0.1:9342",
-            "conversation_url": "https://claude.ai/chat/x",
+            "conversation_url": "https://console.anthropic.com/settings",
             "target_id": "t1",
             "grant": "explicit",
             "authorization_source": _AUTH,
