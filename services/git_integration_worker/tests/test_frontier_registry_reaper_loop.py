@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 from unittest.mock import MagicMock
 
 import pytest
@@ -151,3 +153,11 @@ async def test_reaper_leaves_fresh_frontier_row_admitted(
         assert row["status"] == "admitted"
     finally:
         await _cancel_task(reaper)
+
+
+def test_frontier_registry_reaper_supervised_with_restart() -> None:
+    app_py = Path("services/git_integration_worker/app.py").read_text(encoding="utf-8")
+    assert re.search(
+        r'supervise\(\s*\n\s*app,\s*\n\s*"frontier_registry_reaper"[\s\S]*?restart=True',
+        app_py,
+    )

@@ -1689,3 +1689,214 @@ async def test_reconcile_finalize_relays_terminal(
         via="reconcile",
     )
     assert any(c["terminal_status"] == "completed" for c in relay_calls)
+
+
+@pytest.mark.asyncio
+async def test_reconcile_alive_before_horizon_relays_registry_heartbeat(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
+) -> None:
+    """Running satellite + open leg: heartbeat relay, then reaper respects bump."""
+    from services.git_integration_worker.cursor_dispatch_ledger import (
+        CursorDispatchLedger,
+    )
+    from services.git_integration_worker.cursor_sdk_work_registry_admit import (
+        bump_frontier_registry_heartbeat,
+        reap_stale_frontier_registry_rows,
+        upsert_frontier_registry_dispatch,
+    )
+
+    db = tmp_path / "giw.sqlite"
+    monkeypatch.setenv("CURSOR_SDK_DISPATCH_LEDGER", str(db))
+    CursorDispatchLedger._instance = None
+    ledger = CursorDispatchLedger.instance()
+
+    execution_id = "exec-hb-reconcile"
+    five_h_ago = (datetime.now(UTC) - timedelta(hours=5)).isoformat()
+    upsert_frontier_registry_dispatch(
+        dispatch_id=execution_id,
+        thread_id="21835",
+        caller_agent="dispatch",
+        seat_name="dispatch",
+        address={"kind": "cdp", "thread_id": "21835"},
+        work_key="todo:hb-reconcile",
+        max_wall_s=43200,
+        ledger=ledger,
+    )
+    with ledger._connect() as conn:
+        conn.execute(
+            "UPDATE cursor_sdk_dispatches SET started_at=?, queued_at=? "
+            "WHERE dispatch_id=?",
+            (five_h_ago, five_h_ago, execution_id),
+        )
+        conn.commit()
+
+    hb_calls: list[str] = []
+
+    async def _relay_hb(**kwargs: object) -> dict[str, bool]:
+        hb_calls.append(str(kwargs.get("dispatch_id")))
+        bump_frontier_registry_heartbeat(str(kwargs.get("dispatch_id")), ledger=ledger)
+        return {"ok": True, "bumped": True}
+
+    monkeypatch.setattr(
+        "systems.frontier_consult.work_registry_admit_relay.relay_registry_heartbeat",
+        _relay_hb,
+    )
+    monkeypatch.setattr(
+        reconcile,
+        "poll_satellite_snapshot",
+        AsyncMock(return_value=_running_snapshot()),
+    )
+    monkeypatch.setenv("CDP_REGISTRY_HEARTBEAT_MIN_S", "0")
+    reconcile._last_registry_heartbeat_mono.clear()
+
+    upsert_inflight_leg(
+        execution_id=execution_id,
+        request_id="req-hb",
+        thread_id="21835",
+        pointer_turn=1,
+        caller_agent="dispatch",
+        prompt_uri="cortex://p.md",
+        model_id="cdp/opus-5",
+        max_wall_s=43200.0,
+    )
+    reconcile.attach_satellite_execution_id(
+        execution_id=execution_id,
+        satellite_execution_id="sat-hb",
+    )
+    admitted = (datetime.now(UTC) - timedelta(hours=2)).isoformat()
+    conn = _connect()
+    try:
+        conn.execute(
+            "UPDATE cdp_inflight_leg SET admitted_at=? WHERE execution_id=?",
+            (admitted, execution_id),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+    await reconcile._reconcile_leg(reconcile.read_inflight_leg(execution_id))  # type: ignore[arg-type]
+
+    assert hb_calls == [execution_id]
+    reaped = reap_stale_frontier_registry_rows(ledger=ledger, ttl_s=14400)
+    assert execution_id not in reaped
+
+
+@pytest.mark.asyncio
+async def test_horizon_unverifiable_no_registry_heartbeat(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    hb_calls: list[str] = []
+
+    async def _relay_hb(**kwargs: object) -> dict[str, bool]:
+        hb_calls.append(str(kwargs.get("dispatch_id")))
+        return {"ok": True}
+
+    monkeypatch.setattr(
+        "systems.frontier_consult.work_registry_admit_relay.relay_registry_heartbeat",
+        _relay_hb,
+    )
+    monkeypatch.setenv("CDP_REGISTRY_HEARTBEAT_MIN_S", "0")
+    reconcile._last_registry_heartbeat_mono.clear()
+
+    upsert_inflight_leg(
+        execution_id="exec-no-sat-hb",
+        request_id="req-no-sat",
+        thread_id="21835",
+        pointer_turn=1,
+        caller_agent="dispatch",
+        prompt_uri="cortex://p.md",
+        model_id="cdp/opus-5",
+        max_wall_s=1800.0,
+    )
+    _age_leg_past_horizon("exec-no-sat-hb")
+    await reconcile._reconcile_horizon_leg(
+        reconcile.read_inflight_leg("exec-no-sat-hb"),  # type: ignore[arg-type]
+        horizon=max_open_leg_s(1800.0),
+    )
+    assert hb_calls == []
+
+
+def test_cdp_registry_row_null_heartbeat_reaped_after_margin(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from services.git_integration_worker.cursor_dispatch_ledger import (
+        CursorDispatchLedger,
+    )
+    from services.git_integration_worker.cursor_sdk_work_registry_admit import (
+        reap_stale_frontier_registry_rows,
+        upsert_frontier_registry_dispatch,
+    )
+
+    monkeypatch.setenv("CURSOR_REGISTRY_FRONTIER_WALL_MARGIN_S", "900")
+    db = tmp_path / "giw2.sqlite"
+    monkeypatch.setenv("CURSOR_SDK_DISPATCH_LEDGER", str(db))
+    CursorDispatchLedger._instance = None
+    ledger = CursorDispatchLedger.instance()
+    started = (datetime.now(UTC) - timedelta(hours=4, minutes=1)).isoformat()
+    upsert_frontier_registry_dispatch(
+        dispatch_id="exec-null-hb-reap",
+        thread_id="21835",
+        caller_agent="dispatch",
+        seat_name="dispatch",
+        address={"kind": "cdp", "thread_id": "21835"},
+        work_key="todo:null-hb",
+        max_wall_s=1800,
+        ledger=ledger,
+    )
+    with ledger._connect() as conn:
+        conn.execute(
+            "UPDATE cursor_sdk_dispatches SET started_at=?, queued_at=?, "
+            "last_heartbeat_at=NULL WHERE dispatch_id=?",
+            (started, started, "exec-null-hb-reap"),
+        )
+        conn.commit()
+    reaped = reap_stale_frontier_registry_rows(ledger=ledger, ttl_s=14400)
+    assert reaped == ["exec-null-hb-reap"]
+
+
+@pytest.mark.asyncio
+async def test_registry_heartbeat_throttled_two_ticks_one_relay(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    hb_calls: list[str] = []
+    mono = [1000.0]
+
+    async def _relay_hb(**kwargs: object) -> dict[str, bool]:
+        hb_calls.append(str(kwargs.get("dispatch_id")))
+        return {"ok": True}
+
+    monkeypatch.setattr(
+        "systems.frontier_consult.work_registry_admit_relay.relay_registry_heartbeat",
+        _relay_hb,
+    )
+    monkeypatch.setattr(reconcile.time, "monotonic", lambda: mono[0])
+    monkeypatch.setenv("CDP_REGISTRY_HEARTBEAT_MIN_S", "300")
+    reconcile._last_registry_heartbeat_mono.clear()
+
+    monkeypatch.setattr(
+        reconcile,
+        "poll_satellite_snapshot",
+        AsyncMock(return_value=_running_snapshot()),
+    )
+    upsert_inflight_leg(
+        execution_id="exec-throttle-hb",
+        request_id="req-throttle",
+        thread_id="21835",
+        pointer_turn=1,
+        caller_agent="dispatch",
+        prompt_uri="cortex://p.md",
+        model_id="cdp/opus-5",
+        max_wall_s=43200.0,
+    )
+    reconcile.attach_satellite_execution_id(
+        execution_id="exec-throttle-hb",
+        satellite_execution_id="sat-throttle",
+    )
+    leg = reconcile.read_inflight_leg("exec-throttle-hb")
+    assert leg is not None
+    await reconcile._reconcile_leg(leg)
+    mono[0] += 20.0
+    await reconcile._reconcile_leg(leg)
+    assert hb_calls == ["exec-throttle-hb"]

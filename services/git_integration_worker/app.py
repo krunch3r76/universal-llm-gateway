@@ -168,6 +168,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         app,
         "frontier_registry_reaper",
         lambda: frontier_registry_reaper(app),
+        restart=True,
     )
     supervise(app, "ulg_story_projector", lambda: ulg_story_projector_loop(app))
     supervise(app, "trigger_fire_loop", lambda: trigger_fire_loop(app))
