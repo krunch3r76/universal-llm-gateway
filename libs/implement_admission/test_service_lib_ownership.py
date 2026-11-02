@@ -192,6 +192,16 @@ def test_serving_map_prefix_matches_serves_libs_field(row) -> None:
     )
 
 
+def test_agent_bus_entrypoint_imports_owned_not_served() -> None:
+    """Runtime entrypoint imports background_supervisor and cursor_bridge; owned-only."""
+    own = service_ownership()["agent_bus"]
+    entrypoint_libs = {"background_supervisor", "cursor_bridge"}
+    assert entrypoint_libs <= own.owned_libs
+    assert entrypoint_libs.isdisjoint(own.serves_libs)
+    assert set(serving_services_for_lib("cursor_bridge")) == {"mcp"}
+    assert set(serving_services_for_lib("background_supervisor")) == set()
+
+
 def test_agent_bus_serves_wake_libs() -> None:
     """Restart set for bus_watch and web_chat_relay is exact, and served libs are owned.
 
