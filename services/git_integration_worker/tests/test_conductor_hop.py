@@ -26,6 +26,7 @@ from services.git_integration_worker.cursor_sdk_closeout.conductor_hop import (
     _utc_closeout_instant,
     build_conductor_hop_idempotency_key,
     build_hop_team_dispatch_body,
+    closeout_declares_partial,
     hop_owed,
     maybe_fire_conductor_hop_reactor,
     merge_conductor_closeout_hop_authority,
@@ -169,6 +170,7 @@ def _partial_open_mission_row(
     dispatch_id: str = "pred-hop-1",
     work_key: str = _WORK_KEY,
     thread_id: str = "9964",
+    closeout_body: str = "status: partial\n",
 ) -> dict:
     req = _req(dispatch_id=dispatch_id, thread_id=thread_id)
     ledger.admit(
@@ -198,6 +200,7 @@ def _partial_open_mission_row(
             "contract": "conductor",
             "lane": "B",
             "closeout_stop_tokens": closeout_tokens or [],
+            "closeout_body": closeout_body,
         },
     )
     with ledger._connect() as conn:
@@ -206,7 +209,9 @@ def _partial_open_mission_row(
             (req.dispatch_id,),
         ).fetchone()
     out = {k: row[k] for k in row.keys()}
-    out["status"] = "partial"
+    # a:41280: row status stays the transport lifecycle; partial is declared
+    # only in record_json.closeout_body.
+    out["status"] = "completed"
     return out
 
 
@@ -299,9 +304,67 @@ def test_hop_owed_partial_done_and_exit_persist_block_successor() -> None:
             "mission_closed"
         )
         assert hop_owed(row_pinned, closeout_tokens=frozenset({"ROW_PINNED"})) is False
-        assert _hop_skip_gate(row_pinned, closeout_tokens=frozenset({"ROW_PINNED"})) == (
-            "mission_closed"
-        )
+        assert _hop_skip_gate(
+            row_pinned, closeout_tokens=frozenset({"ROW_PINNED"})
+        ) == ("mission_closed")
+
+
+def test_closeout_declares_partial_reads_closeout_body_not_row_status() -> None:
+    """a:41280 option A: partial comes from closeout_body, row stays completed."""
+    ledger = CursorDispatchLedger.instance()
+    row = _partial_open_mission_row(
+        ledger,
+        dispatch_id="pred-hop-a41280-declared",
+        work_key="todo:conductor-hop-fixture-a41280-declared",
+        thread_id="9967",
+        closeout_body="status: partial:work\nstop: ROW_HOP\n",
+    )
+    assert row["status"] == "completed"
+    assert closeout_declares_partial(row) is True
+    plain = _partial_open_mission_row(
+        ledger,
+        dispatch_id="pred-hop-a41280-complete",
+        work_key="todo:conductor-hop-fixture-a41280-complete",
+        thread_id="9968",
+        closeout_body="status: complete\n",
+    )
+    assert closeout_declares_partial(plain) is False
+    assert closeout_declares_partial({**plain, "status": "partial"}) is False
+
+
+def test_hop_owed_completed_row_without_closeout_partial_still_owes() -> None:
+    """Completed row, closeout not partial, no ROW_HOP: gate unchanged (owes)."""
+    ledger = CursorDispatchLedger.instance()
+    row = _partial_open_mission_row(
+        ledger,
+        dispatch_id="pred-hop-a41280-nopartial",
+        work_key="todo:conductor-hop-fixture-a41280-nopartial",
+        thread_id="9969",
+        closeout_body="status: complete\n",
+    )
+    with (
+        patch(
+            "services.git_integration_worker.cursor_sdk_closeout.conductor_hop.mission_open_for_row",
+            return_value=True,
+        ),
+        patch(
+            "services.git_integration_worker.cursor_sdk_closeout.conductor_hop.budget_ok_for_hop",
+            return_value=True,
+        ),
+        patch(
+            "services.git_integration_worker.cursor_sdk_closeout.conductor_hop.live_conductor_row_on_thread",
+            return_value=False,
+        ),
+        patch(
+            "services.git_integration_worker.cursor_sdk_closeout.conductor_hop.conductor_has_live_nested",
+            return_value=False,
+        ),
+        patch(
+            "services.git_integration_worker.cursor_sdk_closeout.conductor_hop.external_gate_hop_verdict",
+            return_value=("closed", None),
+        ),
+    ):
+        assert hop_owed(row, closeout_tokens=frozenset()) is True
 
 
 def test_hop_skip_gate_partial_exit_persist_stop_blocks() -> None:

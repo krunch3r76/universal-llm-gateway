@@ -926,7 +926,7 @@ def _hop_skip_gate(
         ignore_probe_indeterminate=producer_completion_wake,
     ):
         status = str(row.get("status") or "")
-        if status not in ("completed", "failed", "cancelled", "partial"):
+        if status not in ("completed", "failed", "cancelled"):
             return "mission_closed"
         tokens = closeout_tokens
         head = _nested_harvest_head(row, _record_data(row))
@@ -1175,7 +1175,7 @@ def hop_owed(
     via resume. Restart blocks hop via ``PARKED_TRANSPORT``; discard blocks here.
     """
     status = str(row.get("status") or "")
-    if status not in ("completed", "failed", "cancelled", "partial"):
+    if status not in ("completed", "failed", "cancelled"):
         return False
     if _cancel_discard_blocks_hop(row):
         return False
@@ -1221,9 +1221,30 @@ def hop_owed(
     hop_fields = hop_fields_from_record_json(str(row.get("record_json") or ""))
     if hop_fields.get("hop_successor"):
         return False
-    if status == "partial" and "ROW_HOP" not in tokens:
+    if closeout_declares_partial(row) and "ROW_HOP" not in tokens:
         return False
     return True
+
+
+def closeout_declares_partial(row: dict[str, Any]) -> bool:
+    """True when the closeout body declares ``status: partial`` (a:41280).
+
+    The row ``status`` column is the transport lifecycle (completed/failed);
+    the ledger CHECK has no ``partial``. The conductor's declared mission
+    outcome lives in ``record_json.closeout_body``, read here the same way
+    ROW_HOP / DONE / EXIT_PERSIST tokens are. ``partial:work`` etc. count.
+    """
+    from services.git_integration_worker.cursor_sdk_closeout_harvest import (
+        _harvest_field_lines,
+    )
+
+    body = _closeout_body_from_row(row)
+    if not body:
+        return False
+    status_line, _verdict, _residue = _harvest_field_lines(body)
+    value = status_line.split(":", 1)[1].strip().lower() if ":" in status_line else ""
+    token = value.split()[0].split(":")[0].strip("`") if value else ""
+    return token == "partial"
 
 
 def _write_record_json(dispatch_id: str, record_json: str) -> None:
