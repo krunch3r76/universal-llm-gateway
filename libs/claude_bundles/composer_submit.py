@@ -45,7 +45,8 @@ def composer_holds_needle(draft: dict[str, Any], needle: str) -> bool:
     """True when the submit needle is still sitting in composer inner text."""
     if not needle:
         return False
-    return needle in str(draft.get("text") or "")
+    text = str(draft.get("text") or "")
+    return normalize_committed_turn(needle) in normalize_committed_turn(text)
 
 
 def _normalize_draft(raw: object) -> dict[str, Any]:

@@ -52,6 +52,19 @@ def test_composer_holds_needle_detects_draft() -> None:
     assert not composer_holds_needle({"text": needle}, "")
 
 
+def test_composer_holds_needle_multiline_draft_matches_normalized_marker() -> None:
+    """Regression: verification_marker is whitespace-normalized; raw draft is not."""
+    prompt = (
+        "Use the x skill\n\n\n\nledger_row: abc\n\npurpose: (unstated)\n\n"
+        "<role>You are the S2 consultant with enough body to slice</role>"
+    )
+    needle = verification_marker(prompt)
+    assert needle
+    assert "\n" not in needle
+    assert composer_holds_needle({"text": prompt}, needle)
+    assert not composer_holds_needle({"text": "unrelated composer body"}, needle)
+
+
 @pytest.mark.asyncio
 async def test_prove_returns_when_composer_already_clear() -> None:
     page = AsyncMock()
