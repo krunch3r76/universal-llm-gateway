@@ -2044,6 +2044,7 @@ async def run_dispatcher() -> None:
     from bus_watch.endpoint_wake_composer_defer import (
         escalate_composer_deferred_on_sweep,
         finalize_composer_defer_pass,
+        normalize_legacy_pending_wakes,
     )
     from bus_watch.ide_context_hop_monitor import check_cursor_ide_context_hops
 
@@ -2052,6 +2053,7 @@ async def run_dispatcher() -> None:
     hop_mark: dict[str, float] = {}
     while True:
         try:
+            await asyncio.to_thread(normalize_legacy_pending_wakes)
             await asyncio.to_thread(escalate_composer_deferred_on_sweep, store)
             await asyncio.to_thread(expire_overdue_hops, store)
             await asyncio.to_thread(scan_once, store, idle_mark=idle)
