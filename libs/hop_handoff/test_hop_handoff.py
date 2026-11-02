@@ -15,9 +15,12 @@ from pathlib import Path
 import pytest
 
 from hop_handoff import (
+    ArcHubTip,
     StandingHandoffFreshness,
+    assess_arc_hub,
     assess_standing_handoff,
     build_continuity_handoff_body,
+    parse_arc_hub_tag,
     build_seat_registration_stamp,
     build_seat_stand_down_body,
     consume_time_wake_protocol,
@@ -74,6 +77,61 @@ def test_shared_author_pattern_asserts_successor_birth_id() -> None:
     assert "KEEP-ALIVE" not in body
     assert "wake-guide" not in body
     assert "Resume as operator-proxy" not in body
+
+
+@pytest.mark.parametrize(
+    "tags,expected",
+    [
+        (None, None),
+        ([], None),
+        (["project:ulg"], None),
+        (
+            ["arc_hub:decision:ulg-arc-standing-terms"],
+            "decision:ulg-arc-standing-terms",
+        ),
+    ],
+)
+def test_parse_arc_hub_tag(tags: list[str] | None, expected: str | None) -> None:
+    assert parse_arc_hub_tag(tags) == expected
+
+
+def test_arc_hub_lines_emitted_when_param_present() -> None:
+    hub = ArcHubTip(
+        entity_id="decision:ulg-arc-standing-terms",
+        tip="a:13717@2026-06-10T02:00:00Z",
+        status="current",
+    )
+    body = _cadence_body(arc_hub=hub)
+    lines = body.splitlines()
+    assert "arc_hub: decision:ulg-arc-standing-terms" in lines
+    assert "arc_hub_tip: a:13717@2026-06-10T02:00:00Z" in lines
+    idx_fresh = lines.index("standing_handoff_freshness: current")
+    idx_hub = lines.index("arc_hub: decision:ulg-arc-standing-terms")
+    assert idx_hub > idx_fresh
+
+
+def test_arc_hub_lines_omitted_when_param_none() -> None:
+    body = _cadence_body()
+    assert not any(line.startswith("arc_hub:") for line in body.splitlines())
+    assert not any(line.startswith("arc_hub_tip:") for line in body.splitlines())
+
+
+def test_arc_hub_tip_none_renders_unknown() -> None:
+    hub = ArcHubTip(
+        entity_id="decision:ulg-arc-standing-terms",
+        tip=None,
+        status="unknown",
+    )
+    body = _cadence_body(arc_hub=hub)
+    assert "arc_hub_tip: unknown" in body
+
+
+def test_assess_arc_hub_never_raises_on_tip_reader_failure() -> None:
+    def boom(_entity_id: str) -> tuple[int, str]:
+        raise RuntimeError("reader down")
+
+    out = assess_arc_hub("decision:x", tip_reader=boom)
+    assert out == ArcHubTip(entity_id="decision:x", tip=None, status="unknown")
 
 
 def test_mission_line_omitted_when_absent() -> None:

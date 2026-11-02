@@ -14,6 +14,7 @@ import re
 import uuid
 from datetime import UTC, datetime
 
+from hop_handoff.arc_hub import ArcHubTip
 from hop_handoff.standing_handoff import StandingHandoffFreshness
 
 _BIRTH_ID_RE = re.compile(r"^[0-9a-f]{32}$")
@@ -88,6 +89,7 @@ def build_continuity_handoff_body(
     inflight_rows: int | None = None,
     successor_registration_id: str | None = None,
     successor_chat_url: str | None = None,
+    arc_hub: ArcHubTip | None = None,
 ) -> str:
     """Author a first-line ``TYPE: CONTINUITY_HANDOFF`` body for one hop fire.
 
@@ -142,6 +144,9 @@ def build_continuity_handoff_body(
     )
     if handoff.age_s is not None:
         lines.append(f"standing_handoff_age_s: {handoff.age_s:.1f}")
+    if arc_hub is not None:
+        lines.append(f"arc_hub: {arc_hub.entity_id}")
+        lines.append(f"arc_hub_tip: {arc_hub.tip or 'unknown'}")
     resolved_kind = (hop_kind or "").strip().lower()
     if resolved_kind == "housekeeping":
         lines.append(f"{_HOP_KIND_PREFIX} housekeeping")

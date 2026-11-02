@@ -7,6 +7,7 @@ mcp-server nor git_integration_worker imports the other.
 
 from __future__ import annotations
 
+from hop_handoff.arc_hub import ArcHubTip, assess_arc_hub, parse_arc_hub_tag
 from hop_handoff.body import (
     build_continuity_handoff_body,
     build_seat_registration_stamp,
@@ -30,7 +31,9 @@ from hop_handoff.standing_handoff import (
 CONSUMERS: tuple[str, ...] = ('git_integration_worker', 'mcp')
 
 __all__ = [
+    "ArcHubTip",
     "StandingHandoffFreshness",
+    "assess_arc_hub",
     "assess_standing_handoff",
     "build_continuity_handoff_body",
     "build_seat_registration_stamp",
@@ -39,6 +42,7 @@ __all__ = [
     "cse_age_threshold_s",
     "is_successor_birth_id",
     "mint_successor_birth_id",
+    "parse_arc_hub_tag",
     "parse_occupy_target",
     "parse_successor_birth_id",
     "parse_superseded_registration_id",

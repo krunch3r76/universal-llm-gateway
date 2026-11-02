@@ -15,6 +15,7 @@ from agent_bus_store.turns_models import (
 )
 from contract_vocab import CANONICAL_CONTRACTS
 from hop_handoff import (
+    ArcHubTip,
     StandingHandoffFreshness,
     build_continuity_handoff_body,
     parse_successor_birth_id,
@@ -26,6 +27,13 @@ from tools.agent_bus.request_intake import reset_request_id_registry_for_tests
 
 def setup_function() -> None:
     reset_request_id_registry_for_tests()
+
+
+def _patch_lane_tags(tags: list[str] | None) -> patch:
+    return patch(
+        "agent_bus_store.db.threads.get_thread",
+        return_value={"tags": tags or []},
+    )
 
 
 _HANDOFF = StandingHandoffFreshness(
@@ -440,6 +448,7 @@ def test_hop_relays_full_handoff_prompt(reason: str, tmp_path) -> None:
                 "hop_handoff.standing_handoff.standing_handoff_path",
                 return_value=tmp_path / "missing-standing-handoff.md",
             ),
+            _patch_lane_tags([]),
         ):
             return await _hop_dispatch(
                 thread="12286",
@@ -462,6 +471,7 @@ def test_hop_relays_full_handoff_prompt(reason: str, tmp_path) -> None:
         standing_handoff_budget=handoff.budget,
         standing_handoff_identity=handoff.identity,
         inflight_rows=None,
+        arc_hub=None,
     )
     assert "TYPE: CONTINUITY_HANDOFF" not in INLINE_CONTRACT_PREFIXES
 
@@ -505,6 +515,7 @@ def test_hop_emits_inflight_rows_when_sidecar_has_in_flight(tmp_path) -> None:
                 "hop_handoff.standing_handoff.standing_handoff_path",
                 return_value=sidecar_file,
             ),
+            _patch_lane_tags([]),
         ):
             return await _hop_dispatch(
                 thread="12286",
@@ -516,6 +527,74 @@ def test_hop_emits_inflight_rows_when_sidecar_has_in_flight(tmp_path) -> None:
     assert result.get("continuity_hop") is True, result
     prompt = str(captured["body"]["prompt"])
     assert "inflight_rows: 2" in prompt
+
+
+def test_hop_emits_arc_hub_pair_when_lane_tagged() -> None:
+    hub = ArcHubTip(
+        entity_id="decision:ulg-arc-standing-terms",
+        tip="a:99@2026-11-01T00:00:00Z",
+        status="current",
+    )
+    captured: dict[str, Any] = {}
+
+    async def fake_relay(**kwargs: Any) -> dict[str, str]:
+        captured.update(kwargs)
+        return {"execution_id": "ex-arc-hub"}
+
+    async def run() -> dict[str, Any]:
+        with (
+            patch("tools.agent_bus.hop.assess_standing_handoff", return_value=_HANDOFF),
+            patch(
+                "tools.agent_bus.hop._resolve_hop_seat_request_refusal",
+                return_value=None,
+            ),
+            patch("tools.agent_bus.hop.record"),
+            patch("tools.frontier._relay", side_effect=fake_relay),
+            _patch_lane_tags(["arc_hub:decision:ulg-arc-standing-terms"]),
+            patch("hop_handoff.arc_hub.assess_arc_hub", return_value=hub),
+        ):
+            return await _hop_dispatch(
+                thread="21744",
+                reason="arc-hub-bind",
+                from_agent="web-anthropic",
+            )
+
+    result = asyncio.run(run())
+    assert result.get("continuity_hop") is True, result
+    prompt = str(captured["body"]["prompt"])
+    assert "arc_hub: decision:ulg-arc-standing-terms" in prompt
+    assert "arc_hub_tip: a:99@2026-11-01T00:00:00Z" in prompt
+
+
+def test_hop_omits_arc_hub_when_lane_untagged() -> None:
+    captured: dict[str, Any] = {}
+
+    async def fake_relay(**kwargs: Any) -> dict[str, str]:
+        captured.update(kwargs)
+        return {"execution_id": "ex-no-arc"}
+
+    async def run() -> dict[str, Any]:
+        with (
+            patch("tools.agent_bus.hop.assess_standing_handoff", return_value=_HANDOFF),
+            patch(
+                "tools.agent_bus.hop._resolve_hop_seat_request_refusal",
+                return_value=None,
+            ),
+            patch("tools.agent_bus.hop.record"),
+            patch("tools.frontier._relay", side_effect=fake_relay),
+            _patch_lane_tags(["project:ulg"]),
+        ):
+            return await _hop_dispatch(
+                thread="21744",
+                reason="no-arc-hub",
+                from_agent="web-anthropic",
+            )
+
+    result = asyncio.run(run())
+    assert result.get("continuity_hop") is True, result
+    prompt = str(captured["body"]["prompt"])
+    assert "arc_hub:" not in prompt
+    assert "arc_hub_tip:" not in prompt
 
 
 def test_hop_relays_prompt_past_long_turn_cap() -> None:
