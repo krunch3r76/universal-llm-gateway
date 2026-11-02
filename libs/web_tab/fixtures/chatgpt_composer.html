@@ -1,8 +1,14 @@
 <!DOCTYPE html>
 <html>
   <body>
-    <textarea id="prompt-textarea">partial draft</textarea>
+    <div
+      class="ProseMirror"
+      contenteditable="true"
+      role="textbox"
+      aria-label="Work with ChatGPT"
+    ></div>
     <div data-message-author-role="user">hello world</div>
-    <button aria-label="Send message">Send</button>
+    <div data-message-author-role="assistant">prior reply</div>
+    <button data-testid="send-button" aria-label="Send prompt">Send</button>
   </body>
 </html>

@@ -13,10 +13,18 @@ ProviderSite = Literal["chatgpt", "claude", "grok", "x_grok"]
 GROK_COMPOSER_SELECTORS = [
     "[data-testid='chat-input'] [contenteditable='true']",
     "[aria-label='Ask Grok anything'][contenteditable='true']",
+    "div.ProseMirror[contenteditable='true']",
     '[aria-label="Prompt"][contenteditable="true"]',
 ]
 
-CHATGPT_COMPOSER_SELECTORS = ["#prompt-textarea", "textarea[data-id]", "textarea"]
+CHATGPT_COMPOSER_SELECTORS = [
+    "#prompt-textarea",
+    "div.ProseMirror[contenteditable='true']",
+    "[contenteditable='true'][role='textbox']",
+    "[aria-label='Work with ChatGPT'][contenteditable='true']",
+    "textarea[data-id]",
+    "textarea",
+]
 
 CLAUDE_COMPOSER_SELECTORS = [
     "[contenteditable='true'][role='textbox']",
@@ -26,8 +34,10 @@ CLAUDE_COMPOSER_SELECTORS = [
 
 _SEND_BTN_SELECTORS = [
     'button[aria-label="Send message"]:not([disabled])',
+    'button[aria-label="Send prompt"]:not([disabled])',
     'button[aria-label="Send"]:not([disabled])',
     'button[data-testid="send-button"]:not([disabled])',
+    "button[data-testid='chat-submit']:not([disabled])",
     "[data-testid='chat-input'] button[type='submit']:not([disabled])",
     'button[type="submit"]:not([disabled])',
 ]
@@ -186,21 +196,40 @@ def read_reply_js(
     asst_sel = json.dumps(_ASSISTANT_TURN_SELECTORS[site])
     base_count = int(baseline_assistant_count)
     base_text = json.dumps((baseline_assistant_text or "").strip())
+    grok_site = site in {"grok", "x_grok"}
+    grok_flag = "true" if grok_site else "false"
     return f"""
 (() => {{
   const stop = [...document.querySelectorAll('button')].some((b) => {{
     const label = ((b.innerText || '') + ' ' + (b.getAttribute('aria-label') || '')).trim();
     return /^(stop|stop generating)$/i.test(label) || /stop generating/i.test(label);
   }});
-  const streaming = stop || !!document.querySelector("[aria-busy='true']");
+  const busy = !!document.querySelector("[aria-busy='true']");
   const nodes = [...document.querySelectorAll({asst_sel})];
   const last = nodes.length ? nodes[nodes.length - 1] : null;
-  const text = last ? (last.innerText || '').trim() : '';
+  const rawText = last ? (last.innerText || '').trim() : '';
+  const stripGrokChip = (raw) => {{
+    let t = String(raw || '').trim();
+    t = t.replace(/(?:Working|Worked) for \\d+s\\.?\\s*/gi, ' ').trim();
+    return t;
+  }};
+  const text = {grok_flag} ? stripGrokChip(rawText) : rawText;
+  const chipStreaming = {grok_flag} && /(?:Working|Worked) for \\d+s/i.test(rawText);
+  const nodeStreaming = last && last.getAttribute('data-is-streaming') === 'true';
+  const streaming = stop || busy || nodeStreaming || chipStreaming;
   const newNode = nodes.length > {base_count};
   const changed = text && text !== {base_text};
   const fresh = newNode || changed;
   const complete = !streaming && fresh && text.length > 0;
-  return {{ ok: true, streaming, stop, text, complete, assistant_count: nodes.length }};
+  return {{
+    ok: true,
+    streaming,
+    stop,
+    text,
+    raw_text: rawText,
+    complete,
+    assistant_count: nodes.length,
+  }};
 }})()
 """
 

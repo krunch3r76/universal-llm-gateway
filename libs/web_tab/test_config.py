@@ -5,7 +5,9 @@ from __future__ import annotations
 import pytest
 
 from web_tab.config import (
+    WEB_TAB_SMOKE_PROVIDER_FIXTURES,
     load_web_tab_houses,
+    normalize_web_tab_surface,
     resolve_cdp_url,
     resolve_cdp_url_for_surface,
 )
@@ -89,18 +91,34 @@ def test_resolve_cdp_url_malformed_via_env(monkeypatch: pytest.MonkeyPatch) -> N
         resolve_cdp_url("http://[")
 
 
-def test_houses_yaml_maps_chatgpt_and_claude() -> None:
+def test_houses_yaml_maps_chatgpt_and_anthropic_console() -> None:
     houses = load_web_tab_houses()
     assert houses["chatgpt"].cdp_url == "http://127.0.0.1:9342"
     assert houses["chatgpt"].display == ":12"
-    assert houses["claude"].cdp_url == "http://127.0.0.1:9343"
-    assert houses["claude"].display == ":13"
+    assert houses["anthropic_console"].cdp_url == "http://127.0.0.1:9343"
+    assert houses["anthropic_console"].display == ":13"
     assert "grok" not in houses
+    assert "claude" not in houses
+
+
+def test_normalize_web_tab_surface_claude_alias_is_console() -> None:
+    assert normalize_web_tab_surface("claude") == "anthropic_console"
+    assert normalize_web_tab_surface("anthropic_console") == "anthropic_console"
+
+
+def test_smoke_fixture_gate_excludes_claude_chat() -> None:
+    assert "claude_chat.html" not in WEB_TAB_SMOKE_PROVIDER_FIXTURES
+    assert "chatgpt_composer.html" in WEB_TAB_SMOKE_PROVIDER_FIXTURES
+    assert "grok_chat.html" in WEB_TAB_SMOKE_PROVIDER_FIXTURES
 
 
 def test_resolve_cdp_url_for_surface_defaults_by_surface() -> None:
     assert (
         resolve_cdp_url_for_surface("chatgpt", None) == "http://127.0.0.1:9342"
+    )
+    assert (
+        resolve_cdp_url_for_surface("anthropic_console", None)
+        == "http://127.0.0.1:9343"
     )
     assert resolve_cdp_url_for_surface("claude", None) == "http://127.0.0.1:9343"
     assert resolve_cdp_url_for_surface("openai", None) == "http://127.0.0.1:9342"
@@ -108,7 +126,7 @@ def test_resolve_cdp_url_for_surface_defaults_by_surface() -> None:
 
 def test_resolve_cdp_url_for_surface_mismatch_refuses_wrong_house() -> None:
     with pytest.raises(ValueError, match="cdp_surface_mismatch"):
-        resolve_cdp_url_for_surface("claude", "http://127.0.0.1:9342")
+        resolve_cdp_url_for_surface("anthropic_console", "http://127.0.0.1:9342")
 
 
 def test_resolve_cdp_url_for_surface_grok_requires_explicit_or_env(

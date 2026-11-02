@@ -151,13 +151,13 @@ def test_write_resolves_cdp_from_surface_when_omitted() -> None:
     ):
         result = fn(
             op="open",
-            surface="claude",
-            url="https://claude.ai/chat/x",
+            surface="anthropic_console",
+            url="https://console.anthropic.com/sign-in",
             grant="explicit",
             authorization_source="agent-bus:21642#13",
         )
     assert "error" not in result
-    assert captured["options"]["surface"] == "claude"
+    assert captured["options"]["surface"] == "anthropic_console"
     assert "cdp_url" not in captured["options"]
 
 

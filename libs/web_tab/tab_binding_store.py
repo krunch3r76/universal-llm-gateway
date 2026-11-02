@@ -60,6 +60,47 @@ def save_binding(session: TabSession, *, path: Path | None = None) -> TabSession
     return session
 
 
+def load_binding_for_target(
+    *,
+    cdp_url: str,
+    target_id: str,
+    path: Path | None = None,
+) -> TabSession | None:
+    """Return the binding row for *target_id* on this CDP endpoint, if any."""
+    store = path or default_store_path()
+    cdp_norm = normalize_cdp_store_key(cdp_url)
+    want_tid = str(target_id or "").strip()
+    if not want_tid:
+        return None
+    with _LOCK:
+        bindings = _read(store).get("bindings") or {}
+    if not isinstance(bindings, dict):
+        return None
+    for row in bindings.values():
+        if not isinstance(row, dict):
+            continue
+        if normalize_cdp_store_key(str(row.get("cdp_url") or cdp_norm)) != cdp_norm:
+            continue
+        if str(row.get("target_id") or "") != want_tid:
+            continue
+        return TabSession(
+            target_id=want_tid,
+            cdp_url=str(row.get("cdp_url") or cdp_norm),
+            conversation_url=str(row.get("conversation_url") or ""),
+            surface=str(row.get("surface") or "chatgpt"),
+            web_socket_debugger_url=(
+                str(row["web_socket_debugger_url"])
+                if row.get("web_socket_debugger_url")
+                else None
+            ),
+            conversation_id=(
+                str(row["conversation_id"]) if row.get("conversation_id") else None
+            ),
+            created_by_agent=bool(row.get("created_by_agent")),
+        )
+    return None
+
+
 def load_binding(
     *,
     cdp_url: str,

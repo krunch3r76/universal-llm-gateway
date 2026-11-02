@@ -91,7 +91,9 @@ def file_closeout_friction(
         result = file_friction(
             owner=owner,
             note=note,
-            category="bug",
+            # "bug" is not a friction category (a:41288 slice 0 D1) — the
+            # enum lives in cortex_store.dispatch_ops._shared._FRICTION_CATEGORIES.
+            category="regression",
             evidence_uris=[evidence],
             agent="bus_watch",
         )

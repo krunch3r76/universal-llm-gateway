@@ -9,7 +9,10 @@ from web_tab.config import _safe_urlsplit
 CHATGPT_PROBE_JS = """
 () => {
   const url = location.href;
-  const composer = document.querySelector("#prompt-textarea, textarea[data-id], textarea");
+  const composer = document.querySelector(
+    "#prompt-textarea, div.ProseMirror[contenteditable='true'], "
+    + "[contenteditable='true'][role='textbox'], textarea[data-id], textarea"
+  );
   const loginWall = /auth\\.openai\\.com/i.test(url)
     || !!document.querySelector('button[data-testid="login-button"]');
   return {
@@ -37,10 +40,12 @@ CLAUDE_PROBE_JS = """
 """
 
 _CHATGPT_SURFACES = frozenset({"chatgpt", "openai", ""})
-_CLAUDE_SURFACES = frozenset({"claude", "claude-console"})
-_SUPPORTED_SURFACES = _CHATGPT_SURFACES | _CLAUDE_SURFACES
+_ANTHROPIC_CONSOLE_SURFACES = frozenset(
+    {"anthropic_console", "claude-console", "claude"}
+)
+_SUPPORTED_SURFACES = _CHATGPT_SURFACES | _ANTHROPIC_CONSOLE_SURFACES
 _CHATGPT_HOSTS = frozenset({"chatgpt.com", "www.chatgpt.com"})
-_CLAUDE_HOSTS = frozenset({"claude.ai", "www.claude.ai"})
+_CLAUDE_AI_HOSTS = frozenset({"claude.ai", "www.claude.ai"})
 _CLAUDE_CONSOLE_HOSTS = frozenset(
     {"console.anthropic.com", "platform.claude.com", "www.platform.claude.com"}
 )
@@ -53,6 +58,27 @@ def signed_in_from_signals(*, login_wall: bool, composer: bool) -> bool | None:
     if composer:
         return True
     return None
+
+
+def is_claude_ai_chat_url(url: str) -> bool:
+    """True for claude.ai product chat hosts (owned by cdp_ask, not web_tab)."""
+    parts = _safe_urlsplit((url or "").strip())
+    if parts is None:
+        return False
+    host = (parts.hostname or "").lower()
+    return host in _CLAUDE_AI_HOSTS
+
+
+def surface_not_web_tab_owned_refusal(url: str) -> dict[str, object] | None:
+    """Structured refusal when a URL belongs to cdp_ask rather than web_tab."""
+    if not is_claude_ai_chat_url(url):
+        return None
+    return {
+        "ok": False,
+        "code": "surface_not_web_tab_owned",
+        "reason": "claude.ai chat is owned by Jupiter :1 cdp_ask; use cdp_ask, not web_tab",
+        "owner": "cdp_ask",
+    }
 
 
 def _parsed_port(parts: SplitResult) -> int | None:
@@ -118,9 +144,12 @@ def url_in_surface_scope(surface: str, url: str) -> bool:
     """Host and path gate for *surface* before any DOM evaluation.
 
     ChatGPT observation may run on ``chatgpt.com`` paths ``/``, ``/c/…``, and
-    ``/g/…`` only. Claude surfaces allow any path on their hosts.
+    ``/g/…`` only. Anthropic console surfaces allow console/platform hosts only
+    (never claude.ai chat).
     """
     if surface not in _SUPPORTED_SURFACES:
+        return False
+    if is_claude_ai_chat_url(url):
         return False
     parts = _safe_urlsplit((url or "").strip())
     if parts is None or not _url_https_default_port(parts):
@@ -128,9 +157,7 @@ def url_in_surface_scope(surface: str, url: str) -> bool:
     if surface in _CHATGPT_SURFACES:
         return _chatgpt_url_in_scope(url)
     host = (parts.hostname or "").lower()
-    if surface == "claude":
-        return host in _CLAUDE_HOSTS
-    if surface == "claude-console":
+    if surface in _ANTHROPIC_CONSOLE_SURFACES:
         return host in _CLAUDE_CONSOLE_HOSTS
     return False
 
@@ -139,7 +166,7 @@ def probe_js_for_surface(surface: str) -> str:
     """Return evaluate expression for *surface* (default chatgpt)."""
     if surface in _CHATGPT_SURFACES:
         return CHATGPT_PROBE_JS
-    if surface in _CLAUDE_SURFACES:
+    if surface in _ANTHROPIC_CONSOLE_SURFACES:
         return CLAUDE_PROBE_JS
     raise ValueError(f"unsupported_surface:{surface}")
 

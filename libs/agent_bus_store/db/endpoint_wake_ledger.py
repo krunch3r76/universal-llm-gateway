@@ -1307,6 +1307,15 @@ def claim_due_wakes(
             skipped: list[dict[str, Any]] = []
             claimable: list[sqlite3.Row] = []
             for row in rows:
+                from bus_watch.endpoint_wake_composer_defer import (
+                    composer_defer_blocks_claim,
+                )
+
+                if composer_defer_blocks_claim(
+                    reason=str(row["reason"] or ""),
+                    decided_by_rule=str(row["decided_by_rule"] or ""),
+                ):
+                    continue
                 reason = _skip_reason(conn, row)
                 if reason:
                     conn.execute(
@@ -1472,6 +1481,13 @@ def record_wake_result(
     now: str | None = None,
 ) -> int:
     """Persist a result on claimed rows, or unknown rows folded from that claim."""
+    from bus_watch.endpoint_wake_composer_defer import (
+        merge_composer_defer_decided_by_rule,
+    )
+
+    decided_by_rule = merge_composer_defer_decided_by_rule(
+        decided_by_rule, reason=reason
+    )
     stamp = _now(now)
     finished = None if outcome == "refused" else stamp
     with write_connect() as conn:
