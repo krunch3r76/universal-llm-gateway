@@ -116,6 +116,51 @@ async def test_code_surface_multiline_submit_enters_and_commits_without_unique_m
         await browser.close()
 
 
+_NO_SEND_ENTER_HTML = """
+<!doctype html><html><head><title>Code - Claude</title></head><body>
+<div contenteditable="true" role="textbox" id="live-composer"
+     style="min-height:80px;width:420px;border:1px solid #ccc"></div>
+<script>
+  const composer = document.getElementById('live-composer');
+  composer.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
+      const t = (composer.innerText || '').trim();
+      if (!t) return;
+      const turn = document.createElement('div');
+      turn.setAttribute('data-testid', 'human-turn');
+      turn.innerText = t;
+      document.body.appendChild(turn);
+      composer.innerText = '';
+    }
+  });
+</script>
+</body></html>
+"""
+
+
+@pytest.mark.asyncio
+async def test_long_prompt_tail_needle_submits_via_enter_without_send_button() -> None:
+    """Regression 41500: 800-char draft slice false-cleared; Enter must commit tail needle."""
+    needle = "#1-unique: tail"
+    prompt = ("a" * 2800) + needle + ("b" * (3000 - 2800 - len(needle)))
+    assert len(prompt) == 3000
+    assert prompt.index(needle) == 2800
+    async with async_playwright() as pw:
+        browser = await pw.chromium.launch(headless=True)
+        page = await browser.new_page()
+        await page.set_content(_NO_SEND_ENTER_HTML)
+        composer = page.locator("#live-composer")
+        await composer.click()
+        await page.keyboard.insert_text(prompt)
+        await submit_composer_content(page, prompt, composer=composer)
+        draft = await read_composer_draft(page, composer=composer)
+        assert draft["len"] == 0
+        committed = await page.locator('[data-testid="human-turn"]').inner_text()
+        assert needle in committed
+        await browser.close()
+
+
 @pytest.mark.asyncio
 async def test_prove_does_not_skip_send_when_hidden_chat_input_empty() -> None:
     """Regression: page-level draft read must not false-clear on hidden stub."""
