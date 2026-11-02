@@ -16,7 +16,9 @@ from cursor_bridge.dom_composer_paste import (
     OPERATOR_PROBE_VERSION,
     _click_send_own_draft_body,
     _set_composer_body,
+    composer_draft_sha256_hex,
     operator_busy_probe_js,
+    probe_foreign_draft,
 )
 from playwright.async_api import Page as AsyncPage
 from playwright.async_api import async_playwright
@@ -184,6 +186,15 @@ def test_foreign_draft_when_composer_differs_from_sig(probe_page: Page) -> None:
     )
     probe = _eval_js(probe_page, operator_busy_probe_js(selector=_GROK_SELECTOR))
     assert probe.get("foreign_draft") is True
+    assert probe.get("composer_draft") == "theirs"
+
+
+def test_probe_foreign_draft_sha256_expect_overrides_js_foreign() -> None:
+    draft = "legacy tab draft without sig"
+    probe = {"foreign_draft": True, "composer_draft": draft}
+    expect = composer_draft_sha256_hex(draft)
+    assert probe_foreign_draft(probe, expect_draft_sha256=expect) is False
+    assert probe_foreign_draft(probe, expect_draft_sha256="0" * 64) is True
 
 
 def test_send_own_draft_clears_sig(probe_page: Page) -> None:
@@ -429,3 +440,153 @@ async def test_execute_paste_refuses_foreign_draft_at_sig_level() -> None:
     assert out["ok"] is False
     assert out["code"] == "operator_active"
     insert_mock.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_execute_submit_expect_draft_sha256_match_proceeds() -> None:
+    from web_tab.cdp_actuation import RecordingActuationPort
+
+    draft = _specimen_2153()
+    expect = composer_draft_sha256_hex(draft)
+    port = RecordingActuationPort(
+        tabs=[
+            {
+                "id": "t-sha-match",
+                "url": "https://grok.com/c/x",
+                "web_socket_debugger_url": _WS,
+            }
+        ]
+    )
+    async with async_playwright() as playwright:
+        browser = await playwright.chromium.launch(headless=True)
+        page = await browser.new_page()
+        await page.set_content(_composer_html(draft=draft))
+        await page.evaluate(INSTALL_OPERATOR_ACTIVITY_PROBE_JS)
+        with patch(
+            "cursor_bridge.dom_composer_paste._cdp_eval",
+            side_effect=_cdp_eval_shim(page),
+        ):
+            out = await execute_submit(
+                cdp_url="http://127.0.0.1:9222",
+                target_id="t-sha-match",
+                grant="explicit",
+                authorization_source="agent-bus:test#sha-match",
+                expect_draft_sha256=expect,
+                port=port,
+            )
+        await browser.close()
+    assert out["ok"] is True
+
+
+@pytest.mark.asyncio
+async def test_execute_submit_expect_draft_sha256_mismatch_refuses() -> None:
+    from web_tab.cdp_actuation import RecordingActuationPort
+
+    draft = "foreign legacy body"
+    port = RecordingActuationPort(
+        tabs=[
+            {
+                "id": "t-sha-mismatch",
+                "url": "https://grok.com/c/x",
+                "web_socket_debugger_url": _WS,
+            }
+        ]
+    )
+    send_mock = AsyncMock(return_value={"ok": True})
+    async with async_playwright() as playwright:
+        browser = await playwright.chromium.launch(headless=True)
+        page = await browser.new_page()
+        await page.set_content(_composer_html(draft=draft))
+        await page.evaluate(INSTALL_OPERATOR_ACTIVITY_PROBE_JS)
+        with (
+            patch(
+                "cursor_bridge.dom_composer_paste._cdp_eval",
+                side_effect=_cdp_eval_shim(page),
+            ),
+            patch("web_tab.write_ops.dom_click_send", send_mock),
+            patch("web_tab.write_ops.dom_click_send_own_draft", send_mock),
+        ):
+            out = await execute_submit(
+                cdp_url="http://127.0.0.1:9222",
+                target_id="t-sha-mismatch",
+                grant="explicit",
+                authorization_source="agent-bus:test#sha-mismatch",
+                expect_draft_sha256="f" * 64,
+                port=port,
+            )
+        await browser.close()
+    assert out["ok"] is False
+    assert out["code"] == "operator_active"
+    send_mock.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_execute_submit_unset_still_refuses_foreign_draft() -> None:
+    from web_tab.cdp_actuation import RecordingActuationPort
+
+    port = RecordingActuationPort(
+        tabs=[
+            {
+                "id": "t-sha-unset",
+                "url": "https://grok.com/c/x",
+                "web_socket_debugger_url": _WS,
+            }
+        ]
+    )
+    send_mock = AsyncMock(return_value={"ok": True})
+    async with async_playwright() as playwright:
+        browser = await playwright.chromium.launch(headless=True)
+        page = await browser.new_page()
+        await page.set_content(_composer_html(draft="operator legacy draft"))
+        await page.evaluate(INSTALL_OPERATOR_ACTIVITY_PROBE_JS)
+        with (
+            patch(
+                "cursor_bridge.dom_composer_paste._cdp_eval",
+                side_effect=_cdp_eval_shim(page),
+            ),
+            patch("web_tab.write_ops.dom_click_send", send_mock),
+            patch("web_tab.write_ops.dom_click_send_own_draft", send_mock),
+        ):
+            out = await execute_submit(
+                cdp_url="http://127.0.0.1:9222",
+                target_id="t-sha-unset",
+                grant="explicit",
+                authorization_source="agent-bus:test#sha-unset",
+                port=port,
+            )
+        await browser.close()
+    assert out["ok"] is False
+    assert out["code"] == "operator_active"
+    send_mock.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_matching_sha_still_refuses_when_operator_active_at_read() -> None:
+    """SHA expectation clears foreign_draft only; operator_active still blocks."""
+    draft = _specimen_2153()
+    expect = composer_draft_sha256_hex(draft)
+    async with async_playwright() as playwright:
+        browser = await playwright.chromium.launch(headless=True)
+        page = await browser.new_page()
+        await page.set_content(_composer_html(draft=draft))
+        await page.evaluate(INSTALL_OPERATOR_ACTIVITY_PROBE_JS)
+        await page.evaluate(
+            "() => { window.__ulgOperatorActivity.lastInputMs = Date.now(); }"
+        )
+        with patch(
+            "cursor_bridge.dom_composer_paste._cdp_eval",
+            side_effect=_cdp_eval_shim(page),
+        ):
+            out = await operator_active_probe(
+                _WS,
+                selector=_GROK_SELECTOR,
+                created_by_agent=True,
+                wait_for_idle=False,
+                lock_holder=True,
+                expect_draft_sha256=expect,
+            )
+        await browser.close()
+    assert out["ok"] is False
+    assert out["code"] == "operator_active"
+    probe = out.get("probe") or {}
+    assert probe_foreign_draft(probe, expect_draft_sha256=expect) is False

@@ -44,7 +44,9 @@ Firefox (**~158**); CDP automation does not need them to match. Set **`HOME=$HOM
 
 Relay paste/submit/open/bind through the installed pipeline — not ad-hoc MCP argument shapes:
 
-`pipeline(op=run, pipeline_id=web-tab-write, messages=[{role:user, content:<op>}], options={op, target_id, cdp_url, conversation_url, text, grant, authorization_source, submit})`
+`pipeline(op=run, pipeline_id=web-tab-write, messages=[{role:user, content:<op>}], options={op, target_id, cdp_url, conversation_url, text, grant, authorization_source, submit, expect_draft_sha256})`
+
+`expect_draft_sha256` (submit only): optional lowercase hex SHA-256 of the composer `innerText` (UTF-8). When it matches the live draft, the guard treats the draft as ours even without `ourDraftSig` or watermark.
 
 Writers queue on one target via `target_write_lock`; a second process waits until timeout instead of immediate `target_lock_busy`. While holding the lock, automation focus/visibility does not count as operator presence. Real trusted keyboard/pointer/input on the tab still pauses the writer; DOM-only paste/send does not bump the activity probe.
 
