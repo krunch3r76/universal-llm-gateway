@@ -1143,10 +1143,11 @@ def register_frontier_tools(mcp: FastMCP) -> None:
             return thread_id_err
         subject_ignored_on_generate = False
         if op == "generate":
-            relay_dispatch_id = str(dispatch_id or "").strip()
-            if not relay_dispatch_id:
-                relay_dispatch_id = str(uuid.uuid4())
-            body["dispatch_id"] = relay_dispatch_id
+            if seat_is_sdk:
+                relay_dispatch_id = str(dispatch_id or "").strip()
+                if not relay_dispatch_id:
+                    relay_dispatch_id = str(uuid.uuid4())
+                body["dispatch_id"] = relay_dispatch_id
             if thread is not None:
                 return {
                     "error": {
