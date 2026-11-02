@@ -120,10 +120,10 @@ async def _maybe_relay_registry_heartbeat(leg: InflightLeg) -> None:
             dispatch_id=leg.execution_id,
         )
 
-    _REGISTRY_HB_INFLIGHT.add(leg.execution_id)
     hb_task = asyncio.create_task(
         _relay(), name=f"cdp-registry-hb-{leg.execution_id[:8]}"
     )
+    _REGISTRY_HB_INFLIGHT.add(leg.execution_id)
     _REGISTRY_HB_TASKS.add(hb_task)
     hb_task.add_done_callback(
         lambda t, eid=leg.execution_id: _registry_hb_task_done(t, eid)

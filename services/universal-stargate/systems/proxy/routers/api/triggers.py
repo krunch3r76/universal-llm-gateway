@@ -9,9 +9,9 @@ from __future__ import annotations
 import os
 
 import httpx
-from giw_endpoint import git_integration_worker_base_url
 from fastapi import APIRouter, Request
 from fastapi.responses import Response
+from giw_endpoint import git_integration_worker_base_url
 from transport_utils import make_async_client
 from universal_logging import get_logger
 

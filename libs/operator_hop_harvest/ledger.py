@@ -7,7 +7,6 @@ import os
 from typing import Any
 
 import httpx
-
 from giw_endpoint import git_integration_worker_base_url
 
 _TIMEOUT_S = 5.0

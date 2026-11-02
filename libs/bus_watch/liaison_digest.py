@@ -41,7 +41,9 @@ from bus_watch.digest_unread import DIGEST_UNREAD_TO, root_unread_key
 from bus_watch.events import emit_checkpoint_observed
 from bus_watch.fable_lock import WATCH_DIR, current_night_id, read_lock
 from bus_watch.friction_rows import fold_fingerprint, harvest_frictions
+from bus_watch.giw_liaison_urls import liaison_giw_health_url
 from bus_watch.ide_budget import measure_ide_tab
+from bus_watch.impresario_ear_common import is_ear_turn
 from bus_watch.induction import build_wake_induction
 from bus_watch.liaison_conductor_attention import filter_conductor_routine_attention
 from bus_watch.liaison_l24_l28 import (
@@ -60,8 +62,6 @@ from bus_watch.spawn_pending import (
     digest_root_surface,
     observe_terminal_lane_closeouts,
 )
-from bus_watch.giw_liaison_urls import liaison_giw_health_url
-from bus_watch.impresario_ear_common import is_ear_turn
 from bus_watch.spawn_wake.review_apply import ready_review_apply_attention
 from bus_watch.spawn_wake.row_class import ready_row_class_attention
 

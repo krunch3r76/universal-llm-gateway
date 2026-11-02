@@ -11,7 +11,6 @@ from unittest.mock import patch
 
 import httpx
 import pytest
-
 from giw_endpoint import git_integration_worker_base_url
 
 from systems.frontier_consult.cursor_sdk_lane_subscription import (

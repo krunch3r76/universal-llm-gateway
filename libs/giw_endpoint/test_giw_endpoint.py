@@ -2,11 +2,9 @@
 
 from __future__ import annotations
 
-import os
-
 import pytest
 
-from giw_endpoint import giw_api_url, git_integration_worker_base_url
+from giw_endpoint import git_integration_worker_base_url, giw_api_url
 
 
 @pytest.fixture(autouse=True)

@@ -402,6 +402,7 @@ _SERVICE_OWNERSHIP: dict[str, ServiceOwnership] = {
                 "frontier_observability",
                 "g6_review_class",
                 "gen_rules",
+                "giw_endpoint",
                 "hop_handoff",
                 "implement_admission",
                 "intelligence_profiles",

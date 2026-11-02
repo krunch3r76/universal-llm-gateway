@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-import os
 import re
 import uuid
 from pathlib import Path
@@ -11,8 +10,8 @@ from typing import Any
 
 import httpx
 
-from bus_watch.giw_liaison_urls import liaison_giw_active_work_url
 from bus_watch.fable_lock import WATCH_DIR
+from bus_watch.giw_liaison_urls import liaison_giw_active_work_url
 from bus_watch.now_row import resolve_now_row
 from bus_watch.park_harvest import scoreboard_g_rows_done
 from bus_watch.spawn_wake.play_classify import (
