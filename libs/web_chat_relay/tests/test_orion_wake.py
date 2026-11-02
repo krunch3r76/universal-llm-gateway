@@ -495,11 +495,18 @@ async def test_dom_deliver_uses_chatgpt_selector_not_keyboard(
     async def _verify(*_a: object, **_k: object) -> dict:
         return {"ok": True, "receipt": "dom_committed"}
 
-    async def _probe(*_a: object, **_k: object) -> dict:
+    async def _pre(*_a: object, **_k: object) -> dict:
         return {"ok": True}
 
+    async def _recheck(*_a: object, **_k: object) -> dict:
+        return {"ok": True, "probe": {}}
+
+    lock_kwargs: dict[str, object] = {}
+
     @asynccontextmanager
-    async def _lock(_target_id: str):
+    async def _lock(_target_id: str, *, timeout_s: float = 120, op: str = ""):
+        lock_kwargs["timeout_s"] = timeout_s
+        lock_kwargs["op"] = op
         yield
 
     expected_selector = composer_selector_for_site("chatgpt")
@@ -509,7 +516,12 @@ async def test_dom_deliver_uses_chatgpt_selector_not_keyboard(
     )
     monkeypatch.setattr("web_tab.commit_verify.capture_dom_baseline", _baseline)
     monkeypatch.setattr("web_tab.commit_verify.poll_verify_committed", _verify)
-    monkeypatch.setattr("web_tab.operator_guard.operator_active_probe", _probe)
+    monkeypatch.setattr(
+        "web_tab.operator_guard.wait_operator_idle_before_lock", _pre
+    )
+    monkeypatch.setattr(
+        "web_tab.operator_guard.operator_recheck_under_lock", _recheck
+    )
     monkeypatch.setattr("web_tab.target_lock.target_write_lock", _lock)
 
     out = await _dom_deliver(
@@ -520,7 +532,55 @@ async def test_dom_deliver_uses_chatgpt_selector_not_keyboard(
     assert insert_calls
     assert insert_calls[0][0] == expected_selector
     assert insert_calls[0][2] is False
+    assert lock_kwargs.get("timeout_s") == 15
     assert not page.keyboard.inserted
+
+
+@pytest.mark.asyncio
+async def test_dom_deliver_returns_busy_when_target_lock_timeout(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    page = _FakePage()
+
+    class _Port:
+        def list_tabs(self, *, cdp_url: str) -> dict:
+            return {
+                "pages": [
+                    {
+                        "id": "tab-busy",
+                        "url": PINNED,
+                        "web_socket_debugger_url": "ws://127.0.0.1/devtools/page/busy",
+                    }
+                ]
+            }
+
+    async def _pre(*_a: object, **_k: object) -> dict:
+        return {"ok": True}
+
+    from web_tab.target_lock import TargetLockBusyError
+
+    @asynccontextmanager
+    async def _lock(_target_id: str, *, timeout_s: float = 120, op: str = ""):
+        raise TargetLockBusyError(
+            target_id=_target_id,
+            waited_s=timeout_s,
+            holder={"pid": 1, "op": op},
+        )
+        yield  # pragma: no cover
+
+    monkeypatch.setattr("web_tab.cdp_actuation.default_actuation_port", lambda: _Port())
+    monkeypatch.setattr(
+        "web_tab.operator_guard.wait_operator_idle_before_lock", _pre
+    )
+    monkeypatch.setattr("web_tab.target_lock.target_write_lock", _lock)
+
+    out = await _dom_deliver(
+        page,
+        build_wake_pointer(thread="21207", turn=2, from_agent="maestro"),
+    )
+    assert out["ok"] is False
+    assert out.get("reason") == "target_lock_busy"
+    assert out.get("retryable") is True
 
 
 @pytest.mark.asyncio

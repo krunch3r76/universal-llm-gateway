@@ -423,7 +423,10 @@ async def _dom_deliver(
     from cursor_bridge.dom_composer_paste import dom_insert_and_send
     from web_tab.cdp_actuation import default_actuation_port
     from web_tab.commit_verify import capture_dom_baseline, poll_verify_committed
-    from web_tab.operator_guard import operator_active_probe
+    from web_tab.operator_guard import (
+        operator_recheck_under_lock,
+        wait_operator_idle_before_lock,
+    )
     from web_tab.provider_selectors import composer_selector_for_site, match_tab_by_url
     from web_tab.target_lock import TargetLockBusyError, target_write_lock
 
@@ -441,9 +444,15 @@ async def _dom_deliver(
     site = "chatgpt"
     selector = composer_selector_for_site(site)
     verify_text = text.strip() if preserve_newlines else " ".join(text.splitlines()).strip()
+    pre = await wait_operator_idle_before_lock(ws, selector=selector)
+    if not pre.get("ok"):
+        return {
+            "ok": False,
+            "reason": str(pre.get("reason") or pre.get("code") or "operator_busy"),
+        }
     try:
-        async with target_write_lock(target_id):
-            guard = await operator_active_probe(
+        async with target_write_lock(target_id, timeout_s=15):
+            guard = await operator_recheck_under_lock(
                 ws,
                 selector=selector,
                 created_by_agent=False,
@@ -451,7 +460,9 @@ async def _dom_deliver(
             if not guard.get("ok"):
                 return {
                     "ok": False,
-                    "reason": str(guard.get("reason") or guard.get("code") or "operator_busy"),
+                    "reason": str(
+                        guard.get("reason") or guard.get("code") or "operator_busy"
+                    ),
                 }
             baseline = await capture_dom_baseline(impl, ws_url=ws, site=site)
             transport = _cdp_transport_refusal(baseline)

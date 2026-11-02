@@ -100,7 +100,9 @@ async def test_two_process_waiter_runs_after_release(lock_dir: str) -> None:
 
 
 @pytest.mark.asyncio
-async def test_sigkill_holder_waiter_acquires_before_deadline(lock_dir: str) -> None:
+async def test_sigkill_holder_waiter_acquires_before_deadline(
+    lock_dir: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
     target = "sigkill-target"
     ready = mp.Event()
     release = mp.Event()
@@ -116,7 +118,7 @@ async def test_sigkill_holder_waiter_acquires_before_deadline(lock_dir: str) -> 
     holder.join(timeout=5.0)
     assert holder.exitcode is not None
 
-    os.environ["ULG_WEB_TAB_LOCK_DIR"] = lock_dir
+    monkeypatch.setenv("ULG_WEB_TAB_LOCK_DIR", lock_dir)
     async with target_write_lock(target, timeout_s=5.0, op="after-kill"):
         pass
 
@@ -124,6 +126,7 @@ async def test_sigkill_holder_waiter_acquires_before_deadline(lock_dir: str) -> 
 @pytest.mark.asyncio
 async def test_cancelled_waiter_releases_fd_and_lock_is_acquirable(
     lock_dir: str,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     target = "cancel-target"
     ready = mp.Event()
@@ -137,7 +140,7 @@ async def test_cancelled_waiter_releases_fd_and_lock_is_acquirable(
     holder.start()
     assert ready.wait(timeout=5.0)
 
-    os.environ["ULG_WEB_TAB_LOCK_DIR"] = lock_dir
+    monkeypatch.setenv("ULG_WEB_TAB_LOCK_DIR", lock_dir)
 
     async def wait_for_lock() -> None:
         async with target_write_lock(target, timeout_s=30.0):
@@ -158,6 +161,7 @@ async def test_cancelled_waiter_releases_fd_and_lock_is_acquirable(
 @pytest.mark.asyncio
 async def test_timeout_includes_holder_fields_and_later_waiter_acquires(
     lock_dir: str,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     target = "timeout-target"
     ready = mp.Event()
@@ -171,7 +175,7 @@ async def test_timeout_includes_holder_fields_and_later_waiter_acquires(
     holder.start()
     assert ready.wait(timeout=5.0)
 
-    os.environ["ULG_WEB_TAB_LOCK_DIR"] = lock_dir
+    monkeypatch.setenv("ULG_WEB_TAB_LOCK_DIR", lock_dir)
     with pytest.raises(TargetLockBusyError) as exc:
         async with target_write_lock(target, timeout_s=0.25):
             pass
@@ -190,7 +194,9 @@ async def test_timeout_includes_holder_fields_and_later_waiter_acquires(
 
 
 @pytest.mark.asyncio
-async def test_zero_timeout_attempts_flock_once(lock_dir: str) -> None:
+async def test_zero_timeout_attempts_flock_once(
+    lock_dir: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
     target = "zero-timeout-target"
     ready = mp.Event()
     release = mp.Event()
@@ -200,7 +206,7 @@ async def test_zero_timeout_attempts_flock_once(lock_dir: str) -> None:
     )
     holder.start()
     assert ready.wait(timeout=5.0)
-    os.environ["ULG_WEB_TAB_LOCK_DIR"] = lock_dir
+    monkeypatch.setenv("ULG_WEB_TAB_LOCK_DIR", lock_dir)
     with pytest.raises(TargetLockBusyError):
         async with target_write_lock(target, timeout_s=0.0):
             pass
