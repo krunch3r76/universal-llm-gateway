@@ -349,6 +349,7 @@ async def execute_paste(
                 ws,
                 selector=selector,
                 created_by_agent=created_by_agent,
+                lock_holder=True,
             )
             if not guard.get("ok"):
                 return guard
@@ -455,6 +456,7 @@ async def execute_submit(
                 ws,
                 selector=selector,
                 created_by_agent=created_by_agent,
+                lock_holder=True,
             )
             if not guard.get("ok"):
                 return guard

@@ -35,8 +35,13 @@ INSTALL_OPERATOR_ACTIVITY_PROBE_JS = r"""
   };
   if (g.installed) return {ok: true, already: true};
   g.installed = true;
-  const bump = () => { g.lastInputMs = Date.now(); };
+  const bump = (e) => {
+    if (!e || !e.isTrusted) return;
+    if (Date.now() < Number(g.suppressUntilMs || 0)) return;
+    g.lastInputMs = Date.now();
+  };
   window.addEventListener('keydown', bump, true);
+  window.addEventListener('input', bump, true);
   window.addEventListener('pointerdown', bump, true);
   return {ok: true, installed: true};
 })()
@@ -123,7 +128,7 @@ def _set_composer_body(selector: str, text: str, *, preserve_newlines: bool = Fa
         "if(draft.length>0&&!stale&&draft!==line.trim())"
         "return{ok:false,reason:'composer_not_empty',draft};"
         "const g=window.__ulgOperatorActivity=window.__ulgOperatorActivity||{};"
-        "g.ourDraftSig=line;"
+        "g.suppressUntilMs=Date.now()+5000;"
         "if(el.editor&&el.editor.commands&&typeof el.editor.commands.setContent==='function'){"
         "try{el.editor.commands.setContent(line);}catch(e){"
         "el.textContent=line;el.dispatchEvent(new InputEvent('input',{bubbles:true,data:line}));}"
@@ -133,7 +138,9 @@ def _set_composer_body(selector: str, text: str, *, preserve_newlines: bool = Fa
         "el.textContent=line;"
         "el.dispatchEvent(new InputEvent('input',{bubbles:true,inputType:'insertText',data:line}));"
         "}"
-        "return{ok:true,sig:line};})()"
+        "const after=(el.innerText||el.value||'').trim();"
+        "g.ourDraftSig=after;"
+        "return{ok:true,sig:after};})()"
     )
 
 
@@ -144,7 +151,8 @@ def _click_send_own_draft_body(selector: str) -> str:
     return (
         f"(()=>{{const el=({find});"
         "if(!el)return{ok:false,reason:'no_composer',send_clicked:false};"
-        "const g=window.__ulgOperatorActivity||{};"
+        "const g=window.__ulgOperatorActivity=window.__ulgOperatorActivity||{};"
+        "g.suppressUntilMs=Date.now()+5000;"
         "const sig=String(g.ourDraftSig||'').trim();"
         "const draft=(el.innerText||el.value||'').trim();"
         "if(!sig||draft!==sig)"
@@ -203,6 +211,8 @@ def _click_send_body(
     return (
         f"(()=>{{const el=({find});"
         "if(!el)return{ok:false,reason:'no_composer',send_clicked:false};"
+        "const g=window.__ulgOperatorActivity=window.__ulgOperatorActivity||{};"
+        "g.suppressUntilMs=Date.now()+5000;"
         f"const text=(el.innerText||el.value||'').trim(),line={lj};"
         "if(!text||(text!==line.trim()&&!/^BRIDGE_WAKE\\s+thread=\\S+\\s+turn=\\d+(?:,\\d+)*$/.test(text)))"
         "return{ok:false,reason:'composer_text_mismatch',send_clicked:false};"

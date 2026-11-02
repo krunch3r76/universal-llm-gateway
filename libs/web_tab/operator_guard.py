@@ -18,6 +18,7 @@ async def operator_active_probe(
     watermark: str = "",
     created_by_agent: bool = True,
     wait_for_idle: bool = True,
+    lock_holder: bool = False,
 ) -> dict[str, Any]:
     await install_operator_activity_probe(ws_url)
     if wait_for_idle:
@@ -37,7 +38,7 @@ async def operator_active_probe(
     visible = str(probe.get("document_visibility") or "") == "visible"
     operator_active = bool(probe.get("operator_active"))
     foreign = bool(probe.get("foreign_draft"))
-    if not created_by_agent and (has_focus or visible):
+    if not lock_holder and not created_by_agent and (has_focus or visible):
         return {
             "ok": False,
             "code": "operator_active",
