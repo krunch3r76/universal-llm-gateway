@@ -722,6 +722,21 @@ def test_park_resume_builder_copies_record_workspace(tmp_path: Path) -> None:
     assert req.workspace_inherited_from == "p-ws"
 
 
+def test_park_resume_builder_recovers_request_id(tmp_path: Path) -> None:
+    _seed_parked("p-rid", thread_id="21826", tmp_path=tmp_path)
+    CursorDispatchLedger.instance().merge_record_json(
+        dispatch_id="p-rid",
+        patch={
+            "request_id": "rid",
+            "dispatch_id": "550e8400-e29b-41d4-a716-446655440000",
+        },
+    )
+    row = load_park_row(dispatch_id="p-rid")
+    assert row is not None
+    req = build_park_resume_request(row, attempt=1, code_version="v")
+    assert req.request_id == "rid"
+
+
 def test_park_resume_builder_derives_workspace_from_source_repo(
     tmp_path: Path,
 ) -> None:

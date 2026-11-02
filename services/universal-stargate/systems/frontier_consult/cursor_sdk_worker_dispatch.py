@@ -302,6 +302,7 @@ async def dispatch_cursor_sdk_worker(
         "model": model,
         "packet_path": packet_path,
         "dispatch_id": effective_dispatch_id,
+        "request_id": request_id,
         "execution_id": execution_id,
         "handoff_contract": handoff_contract,
         "prompt_preamble": prompt_preamble,
@@ -432,6 +433,7 @@ async def dispatch_cursor_sdk_worker_message(
         "model": model,
         "message": message,
         "dispatch_id": effective_dispatch_id,
+        "request_id": request_id,
         "execution_id": execution_id,
         "handoff_contract": handoff_contract,
     }

@@ -3582,6 +3582,58 @@ async def test_dispatch_success_emits_sdk019_completed_fields(
     assert event["degraded_reasons"] == ["sdk_fs_mismatch"]
 
 
+@pytest.mark.asyncio
+async def test_dispatch_completed_emit_prefers_explicit_request_id(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from services.git_integration_worker.routes import cursor_sdk as route_mod
+
+    source_repo = tmp_path / "repo"
+    source_repo.mkdir()
+    minted = "550e8400-e29b-41d4-a716-446655440000"
+    req = CursorDispatchRequest(
+        thread_id="21826",
+        model="cursor/composer-2.5",
+        dispatch_id=minted,
+        execution_id="exec-21826",
+        request_id="rid",
+        message="hello",
+    )
+    bus = _mock_bus()
+    captured: list[dict[str, object]] = []
+
+    def _ok_outcome(**_kwargs: object) -> SdkRunOutcome:
+        return SdkRunOutcome(
+            body="done",
+            status="finished",
+            duration_ms=100,
+            tool_call_count=1,
+        )
+
+    monkeypatch.setattr(route_mod, "_run_sdk_sync", _ok_outcome)
+    monkeypatch.setattr(
+        route_mod,
+        "emit_sdk_worker_completed",
+        lambda **kwargs: captured.append(dict(kwargs)),
+    )
+
+    await route_mod._run_sdk_dispatch_gated(
+        req=req,
+        ctx=_ctx(
+            source_repo,
+            dispatch_id=req.dispatch_id,
+            thread_id=req.thread_id,
+            dispatch_workspace=route_mod._CONFIG.dispatch_workspace,
+        ),
+        bus=bus,
+        controller=_make_controller(),
+    )
+
+    assert captured
+    assert captured[0]["request_id"] == "rid"
+
+
 def test_run_sdk_sync_local_bridge_post_wait_request_id(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

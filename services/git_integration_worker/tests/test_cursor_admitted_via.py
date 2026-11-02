@@ -170,6 +170,39 @@ def test_load_promoted_request_recovers_admitted_via(
     assert loaded.admitted_via == "stargate"
 
 
+def test_load_promoted_request_recovers_request_id(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("DATA_DIR", str(tmp_path))
+    CursorDispatchLedger._instance = None
+    req = CursorDispatchRequest(
+        thread_id="21826p",
+        model="cursor/composer-2.5",
+        dispatch_id="550e8400-e29b-41d4-a716-446655440000",
+        execution_id="exec-21826p",
+        request_id="rid",
+        message="hello",
+        admitted_via="stargate",
+    )
+    from services.git_integration_worker.cursor_dispatch_ledger import (
+        PromotedDispatch,
+    )
+
+    promoted = PromotedDispatch(
+        dispatch_id=req.dispatch_id,
+        thread_id=req.thread_id,
+        execution_id=req.execution_id,
+        caller_agent="web-anthropic",
+        resolved_model="composer-2.5",
+        source_repo=None,
+        contract="consult",
+        read_only=True,
+        record_json=_dispatch_record_json(req),
+    )
+    loaded = CursorDispatchLedger.instance().load_promoted_request(promoted)
+    assert loaded.request_id == "rid"
+
+
 def test_load_promoted_request_recovers_workspace(
     tmp_path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

@@ -67,6 +67,23 @@ def request_id_from_dispatch_id(dispatch_id: str) -> str:
     return dispatch_id
 
 
+def resolve_envelope_request_id(
+    *,
+    dispatch_id: str,
+    explicit_request_id: str | None = None,
+) -> str:
+    """Lifecycle envelope ``request_id`` for a cursor-sdk dispatch row.
+
+    Stargate may mint a uuid4 ``dispatch_id`` while keeping the Stargate
+    ``request_id`` on the admit wire; prefer that explicit value over
+    ``request_id_from_dispatch_id`` so story association and completed emits
+    stay joinable to the originating request.
+    """
+    if explicit_request_id:
+        return explicit_request_id
+    return request_id_from_dispatch_id(dispatch_id)
+
+
 def build_dispatch_error_envelope(
     *,
     origin_service: str = "git_worker",
