@@ -16,6 +16,7 @@ from .lane_associations import (
     associate_lane,
     get_current_lane,
     merge_lane_fields,
+    paste_lane_for,
 )
 from .lineage import (
     LineageChild,
@@ -132,6 +133,7 @@ __all__ = [
     "merge_lane_fields",
     "mark_turn_read",
     "normalize_thread_id",
+    "paste_lane_for",
     "reject_client_ordering_tokens",
     "remove_tags",
     "rename_thread",

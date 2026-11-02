@@ -136,6 +136,28 @@ async def create_turn(turn: TurnCreate) -> TurnCreated:
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail=seat_refusal,
         )
+    from ..house_paste_lane_gate import assert_house_paste_lane_gate
+
+    try:
+        prior_turn = await asyncio.to_thread(get_latest_turn, turn.thread)
+    except Exception:
+        from universal_logging import get_logger
+
+        get_logger(__name__).warning(
+            "get_latest_turn failed: thread=%s",
+            turn.thread,
+            exc_info=True,
+        )
+        prior_turn = None
+    await asyncio.to_thread(
+        assert_house_paste_lane_gate,
+        thread_id=turn.thread,
+        from_agent=turn.from_agent,
+        subject=turn.subject,
+        body=turn.body,
+        tags=thread_tags,
+        prior_turn=prior_turn,
+    )
     storage_supersedes, echo_turn_number, echo_turn_id = await asyncio.to_thread(
         _resolve_send_supersedes,
         thread_id=turn.thread,

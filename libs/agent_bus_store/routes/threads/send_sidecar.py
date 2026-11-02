@@ -10,7 +10,7 @@ from ...body_auto_spill import PreparedBody, build_turn_created
 from ...checkpoint_auto_stamp_wiring import load_thread_tags
 from ...checkpoint_projection import CheckpointBodyTooLargeError
 from ...checkpoint_projection_wiring import maybe_project_checkpoint_body
-from ...db import close_thread, get_thread, normalize_thread_id
+from ...db import close_thread, get_latest_turn, get_thread, normalize_thread_id
 from ...db.thread_idempotency import committed_first_turn
 from ...db.thread_mint import mint_thread
 from ...db.turns import SlugExists
@@ -175,6 +175,28 @@ def _send_with_sidecar(body: TurnSendCreate) -> tuple[TurnSendCreated, dict | No
             )
         _maybe_auto_bind_lane_on_send(body=body, thread_id=thread_id)
         send_path = "continue"
+        from ...house_paste_lane_gate import assert_house_paste_lane_gate
+
+        continue_tags = load_thread_tags(thread_id)
+        try:
+            prior_turn = get_latest_turn(thread_id)
+        except Exception:
+            from universal_logging import get_logger
+
+            get_logger(__name__).warning(
+                "get_latest_turn failed: thread=%s",
+                thread_id,
+                exc_info=True,
+            )
+            prior_turn = None
+        assert_house_paste_lane_gate(
+            thread_id=thread_id,
+            from_agent=body.from_agent,
+            subject=body.subject,
+            body=body.body,
+            tags=continue_tags,
+            prior_turn=prior_turn,
+        )
 
     assert thread_id is not None
     try:
