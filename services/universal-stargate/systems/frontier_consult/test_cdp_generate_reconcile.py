@@ -2179,6 +2179,14 @@ async def test_registry_heartbeat_single_flight_guard_prevents_pile_up(
     await asyncio.sleep(0.05)
     assert len(hb_calls) == 3
 
+    hang.set()
+    for _ in range(50):
+        if not reconcile._REGISTRY_HB_TASKS:
+            break
+        await asyncio.sleep(0.02)
+    assert reconcile._REGISTRY_HB_TASKS == set()
+    assert reconcile._REGISTRY_HB_INFLIGHT == set()
+
 
 @pytest.mark.asyncio
 async def test_registry_heartbeat_single_flight_different_legs_parallel(
@@ -2210,3 +2218,12 @@ async def test_registry_heartbeat_single_flight_different_legs_parallel(
     await asyncio.sleep(0.05)
     assert set(hb_calls) == {"exec-hb-leg-a", "exec-hb-leg-b"}
     assert len(reconcile._REGISTRY_HB_INFLIGHT) == 2
+
+    hang_a.set()
+    hang_b.set()
+    for _ in range(50):
+        if not reconcile._REGISTRY_HB_TASKS:
+            break
+        await asyncio.sleep(0.02)
+    assert reconcile._REGISTRY_HB_TASKS == set()
+    assert reconcile._REGISTRY_HB_INFLIGHT == set()

@@ -1,4 +1,9 @@
-"""Shared pytest fixtures for libs/ offline registry and display tests."""
+"""Shared pytest fixtures for libs/ offline registry and display tests.
+
+No GIW dead-port isolation runs under libs/ (that autouse lives in
+services/universal-stargate/conftest.py); libs tests that reach a GIW caller
+must patch the HTTP client or set GIT_INTEGRATION_WORKER_URL in the test.
+"""
 
 from __future__ import annotations
 
