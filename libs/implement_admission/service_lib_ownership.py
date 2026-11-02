@@ -38,6 +38,7 @@ _SERVICE_OWNERSHIP: dict[str, ServiceOwnership] = {
             {
                 "agent_bus_store",
                 "agent_seat",
+                "bus_watch",
                 "cdp_ask",
                 "claude_bundles",
                 "cortex_store",
@@ -59,6 +60,7 @@ _SERVICE_OWNERSHIP: dict[str, ServiceOwnership] = {
                 "transport_utils",
                 "universal_event_bus",
                 "universal_logging",
+                "web_chat_relay",
             }
         ),
         serves_libs=frozenset(
@@ -310,7 +312,7 @@ _SERVICE_OWNERSHIP: dict[str, ServiceOwnership] = {
                 "web_chat_relay",
             }
         ),
-        serves_libs=frozenset({"cdp_ask"}),
+        serves_libs=frozenset({"cdp_ask", "web_chat_relay"}),
         runtime_entrypoint="libs/cdp_ask/",
     ),
     "cloud_proxy": ServiceOwnership(

@@ -1454,7 +1454,7 @@ def test_not_loaded_by_when_service_does_not_import_code_ref(
     monkeypatch.setattr(
         live,
         "_code_ref_changed_paths",
-        lambda *_args: ["libs/box_isolated_chrome/x.py"],
+        lambda *_args: ["libs/build_results/x.py"],
     )
     unmapped = live.build_snapshot(
         repo, SimpleNamespace(), service="manage", code_ref=code_ref

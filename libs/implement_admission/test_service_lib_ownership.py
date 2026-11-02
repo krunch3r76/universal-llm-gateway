@@ -192,23 +192,33 @@ def test_serving_map_prefix_matches_serves_libs_field(row) -> None:
 
 
 def test_agent_bus_serves_wake_libs() -> None:
-    """agent_bus must restart for bus_watch and web_chat_relay.
+    """Restart set for bus_watch and web_chat_relay is exact, and served libs are owned.
 
-    ``server.py`` imports ``bus_watch.events`` on every start. The wake
-    dispatcher, loaded behind ``AGENT_BUS_ENDPOINT_WAKE_DISPATCHER``, imports
-    ``web_chat_relay.orion_wake`` at module top. An empty serving set makes
-    fleet_liveness report ``unmapped`` for those paths.
+    ``server.py`` imports ``bus_watch.events`` on every start.
+    ``web_chat_relay`` is loaded by agent_bus (ledger and subscriptions, not
+    only the flag-gated dispatcher) and by cdp_ask (``app.py`` imports
+    ``chat_session_harvest`` / ``chat_session_paste``, which import
+    ``web_chat_relay.grok_session`` at module top). Membership alone would
+    still pass if cdp_ask were dropped.
     """
     from scripts.model_manager.ui.controller.fleet_liveness_probe import (
         services_for_path,
     )
 
+    own = service_ownership()["agent_bus"]
+    assert own.serves_libs <= own.owned_libs
     assert "bus_watch" not in unserved_libs()
-    for path in (
-        "libs/bus_watch/endpoint_wake_dispatcher.py",
-        "libs/web_chat_relay/orion_wake.py",
-    ):
-        assert "agent_bus" in services_for_path(path), path
+    assert set(services_for_path("libs/bus_watch/endpoint_wake_dispatcher.py")) == {
+        "agent_bus"
+    }
+    assert set(services_for_path("libs/web_chat_relay/orion_wake.py")) == {
+        "agent_bus",
+        "cdp_ask",
+    }
+    assert set(services_for_path("libs/web_chat_relay/grok_session.py")) == {
+        "agent_bus",
+        "cdp_ask",
+    }
 
 
 def test_wait_status_serving_slug_is_job_set_not_owned_libs_blast() -> None:
