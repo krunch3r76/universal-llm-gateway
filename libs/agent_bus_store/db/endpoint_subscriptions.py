@@ -296,7 +296,7 @@ def unsubscribe_endpoint(
 MAIN_WAKE_AGENT = "main-wake"
 MAIN_WAKE_SCOPE = "main-wake"
 MAIN_TARGET_SHA256 = (
-    "c8b94ec55a2798b282262d7f938597dd8be7960257959b68b8ab8ee37be14b8c"
+    "170eba02b369eb1485da1e908a55bdf39ba326e54f437759bc03aa75a3d29311"
 )
 INSTANCE_TARGET_SHA256 = (
     "2d78994cba5b9a614fd7051e047f3ddaa5ffae822fd4200da03c3ccae0ecf4cc"

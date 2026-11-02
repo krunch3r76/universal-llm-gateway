@@ -31,9 +31,11 @@ from web_chat_relay.orion_wake import (
 
 from bus_watch.endpoint_wake_transport import (
     StoreClient,
+    agent_id_matches_composer_suffix,
     classify_cse,
     classify_display,
     classify_orion,
+    glass_agent_id_suffix_candidates,
 )
 from bus_watch.ide_hop_land import expire_overdue_hop, expire_overdue_hops
 
@@ -169,6 +171,7 @@ GROK_WAKE_SUBJECT_HEADS = frozenset(
         "ESCALATE",
         "BLOCKED",
         "READY",
+        "ANSWER",
     }
 )
 ENDPOINT_WAKE_SUBJECT_HEADS = CSE_WAKE_SUBJECT_HEADS
@@ -184,6 +187,11 @@ _CURSOR_GATE_WAKE_RE = re.compile(
     r"Quiet with work in flight)"
 )
 _ROUTINE_DISPATCH_FROM = frozenset({"cursor-sdk", "conductor-hop", "dispatch"})
+_GATE_WAKE_REMAP_ADDRESSES = frozenset(
+    {"dispatch", "conductor-hop", "git-integration-worker", "frontier-admit"}
+)
+_TAB_REMAP_STALE_NAME = "stale_name"
+_TAB_REMAP_BARE_NAME = "bare_name"
 _PEER_WAKE_FROM = frozenset(
     {
         "grok-bot",
@@ -193,8 +201,10 @@ _PEER_WAKE_FROM = frozenset(
         "web-anthropic",
         "maestro",
         "cursor",
+        "orion",
     }
 )
+_ORION_PEER_WAKE_HEADS = frozenset({"ANSWER"})
 _POLL_S = 2.0
 
 
@@ -208,12 +218,7 @@ def _effective_to_agent(to_agent: str | None, subject: str | None = None) -> str
     """
     agent = normalize_bus_address(str(to_agent or ""))
     text = str(subject or "")
-    if agent in {
-        "dispatch",
-        "conductor-hop",
-        "git-integration-worker",
-        "frontier-admit",
-    } and _CURSOR_GATE_WAKE_RE.search(text):
+    if agent in _GATE_WAKE_REMAP_ADDRESSES and _CURSOR_GATE_WAKE_RE.search(text):
         lowered = text.lower()
         if (
             agent == "conductor-hop"
@@ -431,6 +436,97 @@ def _observe_endpoint_wake_suppressed(
         )
 
 
+def _suffix_addressed_row(
+    store: StoreClient,
+    suffixes: list[str],
+) -> tuple[str, dict[str, Any]] | None:
+    """The cursor row the suffix names, wherever it is subscribed.
+
+    `_resolve_delivery_route` reaches the suffix lookup only when no row matches
+    the thread scope (transport :284-289), so an addressed turn on a lane that
+    already holds a newer row never gets there. Duck-typed test stores do not
+    implement the lookup; absence resolves to ``None``, not an error.
+    """
+    lookup = getattr(store, "_subscription_by_cursor_agent_id_suffix", None)
+    if lookup is None:
+        return None
+    for suffix in suffixes:
+        try:
+            found = lookup(suffix)
+        except Exception:
+            logger.exception(
+                "endpoint_wake_dispatcher: suffix subscription lookup failed suffix=%s",
+                suffix,
+            )
+            return None
+        if found is not None:
+            return found
+    return None
+
+
+def _cursor_tab_route(
+    store: StoreClient,
+    raw_to: str,
+    resolved: tuple[str, dict[str, Any]] | None,
+) -> tuple[str | None, tuple[str, dict[str, Any]] | None]:
+    """``(remap_reason, route)`` for a cursor turn against the tab the row names.
+
+    Never refuses: RULING a:41426 (K94) — the address wins; an unnamed or stale
+    name on an exact-scope row is delivered to the house's current hand. Only
+    display (``surface == "cursor"``) rows that name an ``agent_id`` are
+    tab-bound; CSE and synthetic grok/chatgpt rows keep the legacy path. A suffix
+    that misses the bound tab redirects to the row that suffix still names when
+    one exists; otherwise an exact-scope row yields ``stale_name`` or bare
+    ``to=cursor`` yields ``bare_name``. Gate-wake remap addresses carry no tab
+    suffix and are exempt. The label is recorded at fire time because scan-time
+    routes are not persisted on the ledger row.
+    """
+    if resolved is None:
+        return None, None
+    kind, sub = resolved
+    if str(sub.get("surface") or "") != "cursor":
+        return None, resolved
+    bound = str(sub.get("agent_id") or "").strip()
+    if not bound:
+        return None, resolved
+    raw = str(raw_to or "").strip()
+    normalized = normalize_bus_address(raw)
+    if normalized in _GATE_WAKE_REMAP_ADDRESSES:
+        return None, resolved
+    suffixes = glass_agent_id_suffix_candidates(normalized, raw_to=raw)
+    if suffixes:
+        if any(agent_id_matches_composer_suffix(bound, suffix) for suffix in suffixes):
+            return None, resolved
+        addressed = _suffix_addressed_row(store, suffixes)
+        if addressed is not None:
+            return None, addressed
+        if kind == "exact":
+            return _TAB_REMAP_STALE_NAME, resolved
+        return None, resolved
+    if normalized != "cursor":
+        return None, resolved
+    if kind == "exact":
+        return _TAB_REMAP_BARE_NAME, resolved
+    return None, resolved
+
+
+def _group_raw_to(rows: list[dict[str, Any]], agent: str) -> str:
+    """First non-gate-remap ``to_agent`` in a claimed wake group, else ``agent``.
+
+    Rows in one group share ledger ``agent``, but a gate-wake remap address and a
+    bare ``to=cursor`` both map to ``cursor`` — fire time needs the raw address.
+    """
+    for row in rows:
+        raw = str(row.get("to_agent") or "").strip()
+        if raw and normalize_bus_address(raw) not in _GATE_WAKE_REMAP_ADDRESSES:
+            return raw
+    if rows:
+        raw = str(rows[0].get("to_agent") or "").strip()
+        if raw:
+            return raw
+    return agent
+
+
 def _subscribed_for_wake_scan(
     store: StoreClient,
     agent: str,
@@ -560,10 +656,18 @@ def _maestro_cse_nonwake_head(
     return False
 
 
-def peer_operator_wake_from(from_agent: str) -> bool:
-    """Operator / Grok / Maestro seats always enqueue wakes; routine dispatch chatter does not."""
+def peer_operator_wake_from(from_agent: str, *, subject: str | None = None) -> bool:
+    """Operator / Grok / Maestro seats always enqueue wakes; routine dispatch chatter does not.
+
+    ``orion`` is a peer sender only on the ``ANSWER`` subject head: it answers
+    what another seat asked, so unsubject-gated peer status would let every
+    orion turn wake its recipient with no ping-pong budget.
+    """
     if from_agent in _ROUTINE_DISPATCH_FROM:
         return False
+    if from_agent == "orion":
+        head = str(subject or "").split("|", 1)[0].strip().upper().split(" ", 1)[0]
+        return head in _ORION_PEER_WAKE_HEADS
     if from_agent in _PEER_WAKE_FROM:
         return True
     if from_agent.startswith("grok-bot-"):
@@ -669,6 +773,7 @@ _RULES_YAML = Path(__file__).resolve().parent / "endpoint_wake_rules.yaml"
 
 _FALLBACK_WAKE_RULE_IDS: tuple[str, ...] = (
     "drop_self_or_broadcast",
+    "drop_orion_echo",
     "drop_stage_mgr_echo",
     "drop_ack_route_coord",
     "wake_maestro_ack_batch",
@@ -841,7 +946,7 @@ def qualify(
         return RuleVerdict(False, "drop_dispatch_intermediate")
     if _is_cursor_sdk_generate_admit_echo(subject):
         return RuleVerdict(False, "drop_dispatch_intermediate")
-    if peer_operator_wake_from(from_agent):
+    if peer_operator_wake_from(from_agent, subject=subject):
         return RuleVerdict(True, "wake_peer_sender")
     if _is_routine_conductor_hop_closeout(subject):
         return RuleVerdict(False, "drop_routine_hop_closeout")
@@ -893,7 +998,7 @@ def _legacy_qualifies(
         return False
     if _is_cursor_sdk_generate_admit_echo(subject):
         return False
-    if not peer_operator_wake_from(from_agent) and not subject_allowed(
+    if not peer_operator_wake_from(from_agent, subject=subject) and not subject_allowed(
         subject, cse=cse, to_agent=to_agent
     ):
         return False
@@ -1177,7 +1282,10 @@ def _resolve_delivery_route(
                     store, "cursor", house_lane, raw_to=raw_to
                 )
             if resolved is not None:
-                return _apply_grok_window_overlay(agent, resolved)
+                # The row is exact for the house lane, never for this thread: the
+                # transport labels it "exact" (:298-299) and a bare to=cursor on a
+                # worker lane deeper than _MAX_PARENT_HOPS would then be refused.
+                return _apply_grok_window_overlay(agent, ("parent", resolved[1]))
     from cursor_bridge.grok_window_bindings import mailbox_members
 
     for member in mailbox_members(agent):
@@ -1287,6 +1395,7 @@ def scan_once(store: StoreClient, *, idle_mark: dict[str, float] | None = None) 
                     subject=subject,
                 )
             continue
+        _remap, resolved = _cursor_tab_route(store, raw_to, resolved)
         pending.append(
             _pending_item(turn, decided_by_rule=verdict.rule_id, route=resolved)
         )
@@ -1779,7 +1888,11 @@ def _drop_dead_agent_subscription(
 
 
 def fire_due_wakes(store: StoreClient) -> dict[str, Any] | None:
-    """Claim one group and deliver it. Stargate and cdp-ask stay in the table."""
+    """Claim one group and deliver it. Stargate and cdp-ask stay in the table.
+
+    The display branch re-runs the tab check on the fire-time route and records
+    ``route='remapped'`` when delivery used a stale or bare name on an exact row.
+    """
     claimed = store.claim()
     rows = [r for r in claimed.get("rows") or [] if r.get("state") == "claimed"]
     wake_id = claimed.get("wake_id")
@@ -2002,6 +2115,12 @@ def fire_due_wakes(store: StoreClient) -> dict[str, Any] | None:
             subscription_id=sub.get("id"),
             cse_registration_id=None,
         )
+    remap_reason, resolved = _cursor_tab_route(
+        store, _group_raw_to(rows, agent), resolved
+    )
+    route, sub = resolved
+    if remap_reason is not None:
+        route = "remapped"
     turn_numbers = sorted({int(r["turn_number"]) for r in rows})
     turn_arg = (
         turn_numbers[0]
@@ -2032,7 +2151,11 @@ def fire_due_wakes(store: StoreClient) -> dict[str, Any] | None:
             )
     return _finish(
         outcome=state,
-        reason=reason,
+        reason=(
+            remap_reason
+            if remap_reason is not None and state == "delivered"
+            else reason
+        ),
         route=route,
         subscription_id=sub.get("id"),
         cse_registration_id=None,
@@ -2041,6 +2164,11 @@ def fire_due_wakes(store: StoreClient) -> dict[str, Any] | None:
 
 async def run_dispatcher() -> None:
     """Scan and fire until cancelled. Each pass runs on a worker thread."""
+    from bus_watch.endpoint_wake_composer_defer import (
+        escalate_composer_deferred_on_sweep,
+        finalize_composer_defer_pass,
+        normalize_legacy_pending_wakes,
+    )
     from bus_watch.ide_context_hop_monitor import check_cursor_ide_context_hops
 
     store = StoreClient()
@@ -2048,12 +2176,15 @@ async def run_dispatcher() -> None:
     hop_mark: dict[str, float] = {}
     while True:
         try:
+            await asyncio.to_thread(normalize_legacy_pending_wakes)
+            await asyncio.to_thread(escalate_composer_deferred_on_sweep, store)
             await asyncio.to_thread(expire_overdue_hops, store)
             await asyncio.to_thread(scan_once, store, idle_mark=idle)
             for _ in range(5):
                 claimed = await asyncio.to_thread(fire_due_wakes, store)
                 if not isinstance(claimed, dict) or not claimed.get("wake_id"):
                     break
+            await asyncio.to_thread(finalize_composer_defer_pass)
             await asyncio.to_thread(check_cursor_ide_context_hops, store, mark=hop_mark)
             from bus_watch.impresario_ear_patrol import run_patrol_pass
 

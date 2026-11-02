@@ -44,13 +44,13 @@ COMPOSER_DRAFT_FROM_PAGE_JS = f"""() => {{
     return {{ ok: false, text: '', len: 0 }};
   }}
   const t = (composer.innerText || composer.value || composer.textContent || '').trim();
-  return {{ ok: true, text: t.slice(0, 800), len: t.length }};
+  return {{ ok: true, text: t, len: t.length }};
 }}"""
 
 COMPOSER_DRAFT_FROM_ELEMENT_JS = """(el) => {
   if (!el) return { ok: false, text: '', len: 0 };
   const t = (el.innerText || el.value || el.textContent || '').trim();
-  return { ok: true, text: t.slice(0, 800), len: t.length };
+  return { ok: true, text: t, len: t.length };
 }"""
 
 COLLECT_COMPOSER_SUBMIT_JS = f"""() => {{

@@ -1,16 +1,21 @@
-"""SDK multi-row posture — View-only labels for how live rows relate.
+"""SDK multi-row posture — View-only labels for how open rows relate.
 
-Three operator-facing classes (≠ solo):
+Activity (per row, own fields only):
+
+* ``LIVE`` — ``thread_id`` is set, or ``tool_call_count > 0``, or
+  ``idle_age_ms < elapsed_ms`` (progress heartbeat younger than start).
+* ``UNSTARTED`` — no thread, no tool calls, and idle age equals elapsed.
+
+Relationship classes among LIVE rows (≠ solo):
 
 * ``nested`` — lease park or auto-review child, or a closed ``nest_under`` family
-  with no unrelated live peers.
-* ``id_split`` — same root, ≥2 live rows, no park — usually Stargate ``execution_id``
-  vs worker ``dispatch_id`` for one logical dispatch (ghost + live).
-* ``parallel`` — ≥2 live rows on distinct roots, or unrelated peers beside a nest
+  with no unrelated live peers. PARENT / CHILD stay on those rows.
+* ``id_split`` — same root, ≥2 LIVE rows, no park. No per-row GHOST/LIVE tag.
+* ``parallel`` — ≥2 LIVE rows on distinct roots, or unrelated peers beside a nest
   family (bar says parallel; tree glyphs still mark the family).
 
-Membership stays Rival A (open obligation = live). This module only names the
-relationship so the board does not leave the operator to infer it.
+Membership stays Rival A (open obligation = ``terminal_ms is None``). Activity
+is a paint split, not a fold close.
 """
 
 from __future__ import annotations
@@ -21,19 +26,53 @@ from .dtos import SdkDispatchRow
 from .sdk_tree import resolved_nest_members
 
 SdkMultiPosture = Literal["solo", "nested", "id_split", "parallel"]
+SdkActivity = Literal["LIVE", "UNSTARTED"]
 
-#: Short tags painted on each live row when multi (id_split / parallel only).
+#: Short tags painted on LIVE rows when multi (nested / parallel only).
 ROW_TAG = {
     "parent": "PARENT",
     "child": "CHILD",
-    "ghost": "GHOST",
-    "live": "LIVE",
     "para": "PARA",
 }
 
 
+def classify_sdk_activity(row: SdkDispatchRow) -> SdkActivity:
+    """LIVE vs UNSTARTED from this row's fields only — no sibling compare."""
+    if row.thread_id:
+        return "LIVE"
+    if row.tool_call_count is not None and row.tool_call_count > 0:
+        return "LIVE"
+    idle = row.idle_age_ms
+    elapsed = row.elapsed_ms
+    if idle is not None and elapsed is not None and idle < elapsed:
+        return "LIVE"
+    return "UNSTARTED"
+
+
+def split_open_sdk(
+    rows: list[SdkDispatchRow],
+) -> tuple[list[SdkDispatchRow], list[SdkDispatchRow]]:
+    """Partition still-open rows into LIVE then UNSTARTED (oldest elapsed first)."""
+    live = [row for row in rows if classify_sdk_activity(row) == "LIVE"]
+    unstarted = [row for row in rows if classify_sdk_activity(row) == "UNSTARTED"]
+    live = sort_sdk_live(live, classify_sdk_live(live))
+    unstarted.sort(key=lambda row: -(row.elapsed_ms or 0))
+    return live, unstarted
+
+
+def sdk_flight_label(
+    live: list[SdkDispatchRow],
+    unstarted: list[SdkDispatchRow],
+) -> str:
+    """Header count: LIVE only; append ``+M unstarted`` when any exist."""
+    label = f"sdk {len(live)}"
+    if unstarted:
+        label += f" +{len(unstarted)} unstarted"
+    return label
+
+
 def classify_sdk_live(live: list[SdkDispatchRow]) -> SdkMultiPosture:
-    """Classify how the current live SDK set relates."""
+    """Classify how the current LIVE SDK set relates."""
     if len(live) < 2:
         return "solo"
     if any(row.state == "parked_waiting" for row in live):
@@ -51,13 +90,6 @@ def classify_sdk_live(live: list[SdkDispatchRow]) -> SdkMultiPosture:
     if len(roots) >= 2:
         return "parallel"
     return "id_split"
-
-
-def _has_progress(row: SdkDispatchRow) -> bool:
-    """True when the row shows worker activity (toolcalls / named tool)."""
-    if row.tool_call_count is not None and row.tool_call_count > 0:
-        return True
-    return bool(row.last_tool_name)
 
 
 def _has_review_child_nest(live: list[SdkDispatchRow]) -> bool:
@@ -84,13 +116,16 @@ def row_role(
     live: list[SdkDispatchRow],
     posture: SdkMultiPosture,
 ) -> str | None:
-    """Return a short per-row role tag for id_split / parallel chrome, else None."""
+    """Return PARENT / CHILD / PARA for nest and parallel chrome, else None."""
     if posture == "solo":
         return None
     if posture == "nested":
         if row.state == "parked_waiting":
             return "parent"
-        if any(r.state == "parked_waiting" for r in live) and row.state != "parked_waiting":
+        if (
+            any(r.state == "parked_waiting" for r in live)
+            and row.state != "parked_waiting"
+        ):
             return "child"
         if row.review_child and _parent_dispatch_id(row, live):
             return "child"
@@ -105,14 +140,7 @@ def row_role(
         return None
     if posture == "parallel":
         return "para"
-    root = row.root_id
-    siblings = [r for r in live if r.root_id == root] if root else live
-    any_progress = any(_has_progress(r) for r in siblings)
-    if not any_progress:
-        return "live"
-    if _has_progress(row):
-        return "live"
-    return "ghost"
+    return None
 
 
 def posture_legend(posture: SdkMultiPosture) -> str | None:
@@ -120,15 +148,9 @@ def posture_legend(posture: SdkMultiPosture) -> str | None:
     if posture == "solo":
         return None
     if posture == "nested":
-        return (
-            "  multi: nested — lease park, nest_under family, or auto-review child"
-        )
+        return "  multi: nested — lease park, nest_under family, or auto-review child"
     if posture == "id_split":
-        return (
-            "  multi: id_split — same root dual IDs "
-            "(GHOST=Stargate exec · LIVE=worker dispatch; "
-            "writer count = ledger live writers, not id_split)"
-        )
+        return None
     return "  multi: parallel — concurrent roots (distinct WIP)"
 
 
@@ -153,13 +175,13 @@ def sort_sdk_live(
         role_rank = {
             "parent": 0,
             "child": 1,
-            "live": 0,
-            "ghost": 1,
             "para": 0,
             None: 0,
         }.get(role, 0)
         tree_rank = (
-            tree_ordered.index(row) if posture == "nested" and row in tree_ordered else 0
+            tree_ordered.index(row)
+            if posture == "nested" and row in tree_ordered
+            else 0
         )
         return (
             0 if row.divergent_fields else 1,

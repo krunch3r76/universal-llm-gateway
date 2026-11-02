@@ -49,7 +49,7 @@ async def test_expiry_releases_drain_then_cancels(tmp_path) -> None:
     assert released == [(intent.intent_id, 3)]
     stored = store.get(intent.intent_id)
     assert stored is not None
-    assert stored.status == "cancelled"
+    assert stored.status == "expired"
 
 
 def test_readonly_busy_check_does_not_write_timeout(tmp_path) -> None:
@@ -144,7 +144,7 @@ async def test_abandoned_intent_30s_tick_expires(tmp_path) -> None:
     assert released == [(intent.intent_id, 1)]
     stored = store.get(intent.intent_id)
     assert stored is not None
-    assert stored.status == "cancelled"
+    assert stored.status == "expired"
 
 
 @pytest.mark.asyncio
@@ -284,7 +284,7 @@ async def test_expiry_release_failure_stays_pending_and_next_tick_cancels(
     assert calls["n"] >= 2
     stored = store.get(intent.intent_id)
     assert stored is not None
-    assert stored.status == "cancelled"
+    assert stored.status == "expired"
 
     # A release that raises, observed before the retry, stays pending and
     # cancel_restart_intent can still release.
@@ -367,3 +367,41 @@ def test_migration_gives_inflight_row_a_fresh_window(tmp_path) -> None:
     expires = datetime.fromisoformat(row[0])
     assert expires > before
     assert expires - before >= timedelta(seconds=INTENT_EXPIRY_WINDOW_S - 5)
+
+
+@pytest.mark.asyncio
+async def test_expiry_clears_stargate_restart_window(tmp_path, monkeypatch) -> None:
+    """41247 NIT: expiry clears the service window like cancel does."""
+    from datetime import UTC as _UTC
+
+    from scripts.model_manager.ui.controller import restart_window_ctl
+
+    async def _noop(*_a, **_k) -> None:
+        return None
+
+    monkeypatch.setattr(restart_window_ctl, "emit_manage_restart_window_cleared", _noop)
+    store = RestartIntentStore(tmp_path / "restart-intents.db")
+    intent = store.create_intent(
+        service="stargate",
+        action="restart",
+        deadline_at="ceiling",
+        reason="armed",
+        caller_agent="cursor-sdk",
+    )
+    store.open_window(
+        scope="service",
+        service_set=["stargate"],
+        deadline_at=(datetime.now(_UTC) + timedelta(seconds=180)).isoformat(),
+        reason="manage restart",
+    )
+    assert store.window_for_service("stargate") is not None
+    past = (datetime.now(UTC) - timedelta(seconds=5)).isoformat()
+    store._update(intent.intent_id, expires_at=past)
+
+    from scripts.model_manager.ui.controller.restart_intent_expiry import (
+        expire_pending_intent,
+    )
+
+    assert await expire_pending_intent(store, intent.intent_id, emit_event=False)
+    assert store.get(intent.intent_id).status == "expired"
+    assert store.window_for_service("stargate") is None

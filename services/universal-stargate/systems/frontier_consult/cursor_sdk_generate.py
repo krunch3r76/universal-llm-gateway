@@ -18,6 +18,7 @@ from .cursor_sdk_generate_signals import emit_sdk_worker_outcome
 from .cursor_sdk_worker_dispatch import (
     dispatch_cursor_sdk_worker,
     dispatch_cursor_sdk_worker_message,
+    post_worker_failure_turn,
 )
 from .handoff import rollback_admitted_dispatch_links
 from .handoff_response import (
@@ -182,6 +183,7 @@ async def _finish_prepared_dispatch(
             source_ref=handle.source_ref,
             force=handle.force,
             force_reason=handle.force_reason,
+            hop_park_release=handle.hop_park_release,
             claim_id=handle.claim_id,
             caller_transcript_id=transcript_id,
             bus_lifecycle=handle.effective_bus_lifecycle,
@@ -214,6 +216,14 @@ async def _finish_prepared_dispatch(
             worker_thread_id=handle.thread_id,
             execution_id=handle.execution_id,
             parent_dispatch_thread_id=handle.parent_dispatch_thread_id,
+        )
+        await post_worker_failure_turn(
+            thread_id=handle.thread_id,
+            request_id=handle.request_id,
+            to_agent=handle.caller_agent or "cursor-sdk",
+            execution_id=handle.execution_id,
+            dispatch_id=handle.dispatch_id,
+            worker_detail=worker_detail,
         )
         _worker_dispatch_error(request_id=handle.request_id, detail=worker_detail)
 

@@ -113,15 +113,18 @@ async def test_out_of_scope_host_does_not_connect() -> None:
 
 
 @pytest.mark.asyncio
-async def test_claude_surface_allows_claude_ai_tab() -> None:
-    page = _Page("https://claude.ai/", "claude-tab")
+async def test_anthropic_console_surface_allows_console_tab() -> None:
+    page = _Page("https://console.anthropic.com/sign-in", "console-tab")
     browser = _Browser([page])
     raw = await _port(browser).evaluate_on_target(
         cdp_url="http://127.0.0.1:9343",
-        target_id="claude-tab",
+        target_id="console-tab",
         expression="() => ({})",
-        tab_row={"id": "claude-tab", "url": "https://claude.ai/"},
-        surface="claude",
+        tab_row={
+            "id": "console-tab",
+            "url": "https://console.anthropic.com/sign-in",
+        },
+        surface="anthropic_console",
     )
     assert raw["signed_in"] is True
     assert page.evals == 1
@@ -147,18 +150,18 @@ async def test_recording_port_refuses_wrong_surface_before_evaluate() -> None:
 
 
 @pytest.mark.asyncio
-async def test_claude_wrong_port_and_scheme_refused_without_connect() -> None:
+async def test_claude_ai_chat_refused_without_connect() -> None:
     def _connect(cdp_url: str):  # noqa: ARG001
         raise AssertionError("connect")
 
     port = HttpListCdpPort(connect=_connect)  # type: ignore[arg-type]
-    for tab_url in ("https://claude.ai:8080/", "http://claude.ai/"):
+    for tab_url in ("https://claude.ai/chat/x", "https://www.claude.ai/new"):
         raw = await port.evaluate_on_target(
             cdp_url="http://127.0.0.1:9343",
             target_id="t",
             expression="() => ({})",
             tab_row={"id": "t", "url": tab_url},
-            surface="claude",
+            surface="anthropic_console",
         )
         assert raw["error"]["code"] == "target_out_of_scope"
         assert "url" not in raw
@@ -170,7 +173,7 @@ async def test_observe_actuation_out_of_scope_clears_url_epoch() -> None:
         tabs=[
             {
                 "id": "bad",
-                "url": "https://claude.ai:8080/chat?q=secret",
+                "url": "https://console.anthropic.com:8080/settings?q=secret",
                 "title": "x",
             }
         ],
@@ -181,7 +184,7 @@ async def test_observe_actuation_out_of_scope_clears_url_epoch() -> None:
         target_id="bad",
         port=port,
         probe_js="() => ({})",
-        surface="claude",
+        surface="anthropic_console",
     )
     assert plane["error"]["code"] == "target_out_of_scope"
     epoch = plane["signed_in"]["epoch"]
@@ -194,7 +197,13 @@ async def test_observe_actuation_out_of_scope_clears_url_epoch() -> None:
 async def test_observe_actuation_http_tab_out_of_scope_without_connect() -> None:
     """Cleartext tab URLs are filtered before CDP attach (same as evaluate path)."""
     port = RecordingCdpPort(
-        tabs=[{"id": "http-tab", "url": "http://claude.ai/", "title": "cleartext"}],
+        tabs=[
+            {
+                "id": "http-tab",
+                "url": "http://console.anthropic.com/sign-in",
+                "title": "cleartext",
+            }
+        ],
         evaluate_results={"http-tab": {"signed_in": True}},
     )
     plane = await observe_actuation_plane(
@@ -202,7 +211,7 @@ async def test_observe_actuation_http_tab_out_of_scope_without_connect() -> None
         target_id="http-tab",
         port=port,
         probe_js="() => ({})",
-        surface="claude",
+        surface="anthropic_console",
     )
     assert plane["error"]["code"] == "target_out_of_scope"
     assert port.evaluated_targets == []
@@ -212,7 +221,11 @@ async def test_observe_actuation_http_tab_out_of_scope_without_connect() -> None
 async def test_malformed_bracket_tab_in_list_does_not_fail_probe() -> None:
     port = RecordingCdpPort(
         tabs=[
-            {"id": "ok", "url": "https://claude.ai/", "title": "ok"},
+            {
+                "id": "ok",
+                "url": "https://console.anthropic.com/sign-in",
+                "title": "ok",
+            },
             {"id": "garbage", "url": "https://[claude.ai/", "title": "bad"},
         ],
         evaluate_results={"ok": {"signed_in": True}},
@@ -222,7 +235,7 @@ async def test_malformed_bracket_tab_in_list_does_not_fail_probe() -> None:
         target_id="ok",
         port=port,
         probe_js="() => ({})",
-        surface="claude",
+        surface="anthropic_console",
     )
     assert plane["signed_in"]["signed_in"] is True
     assert port.evaluated_targets == ["ok"]
@@ -232,7 +245,11 @@ async def test_malformed_bracket_tab_in_list_does_not_fail_probe() -> None:
 async def test_malformed_port_tab_in_list_does_not_fail_probe() -> None:
     port = RecordingCdpPort(
         tabs=[
-            {"id": "ok", "url": "https://claude.ai/", "title": "ok"},
+            {
+                "id": "ok",
+                "url": "https://console.anthropic.com/sign-in",
+                "title": "ok",
+            },
             {"id": "garbage", "url": "https://claude.ai:abc/", "title": "bad"},
         ],
         evaluate_results={"ok": {"signed_in": True}},
@@ -242,7 +259,7 @@ async def test_malformed_port_tab_in_list_does_not_fail_probe() -> None:
         target_id="ok",
         port=port,
         probe_js="() => ({})",
-        surface="claude",
+        surface="anthropic_console",
     )
     assert plane["signed_in"]["signed_in"] is True
     assert port.evaluated_targets == ["ok"]

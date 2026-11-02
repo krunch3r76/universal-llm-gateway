@@ -83,6 +83,7 @@ _CLOSEOUT_TOKENS_KEY = "closeout_stop_tokens"
 _HOP_SEQ_LINE_RE = re.compile(r"(?im)^(?:\*\*)?hop_seq(?:\*\*)?:\s*(\d+)\s*$")
 _RELAY_TIMEOUT = httpx.Timeout(connect=5.0, read=30.0, write=15.0, pool=5.0)
 SKIP_GATE_NEXT_ADMIT_BLOCKED = "next_admit_blocked"
+SKIP_GATE_NO_HOP_TOKEN = "no_hop_token"
 HOP_DEFERRAL_GATE_KEY = "hop_deferral_gate"
 _LIFT_HOLD_TOKENS = EXIT_PERSIST_STOPS | frozenset(
     {"DONE", "CONFIRM_PENDING", "CONSULT_PENDING"}
@@ -960,7 +961,7 @@ def _hop_skip_gate(
             return "already_hopped"
         if not budget_ok_for_hop(row, closeout_tokens=tokens):
             return "budget"
-        return "mission_closed"
+        return SKIP_GATE_NO_HOP_TOKEN
     return None
 
 
@@ -1220,7 +1221,30 @@ def hop_owed(
     hop_fields = hop_fields_from_record_json(str(row.get("record_json") or ""))
     if hop_fields.get("hop_successor"):
         return False
+    if closeout_declares_partial(row) and "ROW_HOP" not in tokens:
+        return False
     return True
+
+
+def closeout_declares_partial(row: dict[str, Any]) -> bool:
+    """True when the closeout body declares ``status: partial`` (a:41280).
+
+    The row ``status`` column is the transport lifecycle (completed/failed);
+    the ledger CHECK has no ``partial``. The conductor's declared mission
+    outcome lives in ``record_json.closeout_body``, read here the same way
+    ROW_HOP / DONE / EXIT_PERSIST tokens are. ``partial:work`` etc. count.
+    """
+    from services.git_integration_worker.cursor_sdk_closeout_harvest import (
+        _harvest_field_lines,
+    )
+
+    body = _closeout_body_from_row(row)
+    if not body:
+        return False
+    status_line, _verdict, _residue = _harvest_field_lines(body)
+    value = status_line.split(":", 1)[1].strip().lower() if ":" in status_line else ""
+    token = value.split()[0].split(":")[0].strip("`") if value else ""
+    return token == "partial"
 
 
 def _write_record_json(dispatch_id: str, record_json: str) -> None:
@@ -1807,9 +1831,7 @@ async def maybe_wake_conductor_on_nest_child_terminal(
         return
     record_json = str(parent_row.get("record_json") or "")
     with ledger._connect() as conn:
-        if _successor_admitted(
-            conn, predecessor_id=parent_id, record_json=record_json
-        ):
+        if _successor_admitted(conn, predecessor_id=parent_id, record_json=record_json):
             return
         if hop_fields_from_record_json(record_json).get("hop_successor"):
             return
@@ -1973,6 +1995,7 @@ async def maybe_fire_conductor_hop_reactor(
 __all__ = [
     "HOP_DEFERRAL_GATE_KEY",
     "SKIP_GATE_NEXT_ADMIT_BLOCKED",
+    "SKIP_GATE_NO_HOP_TOKEN",
     "release_deferred_conductor_hops",
     "build_conductor_hop_idempotency_key",
     "build_hop_team_dispatch_body",

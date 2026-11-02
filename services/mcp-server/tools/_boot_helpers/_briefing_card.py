@@ -71,8 +71,6 @@ def render_briefing_card(
     agent: str | None = None,
     identity: BootIdentity | None = None,
     capability_slug: str | None = None,
-    logical_seat_id: str | None = None,
-    house: str | None = None,
     inbox_recipient: str | None = None,
     domain: str | None = None,
     cross_domain_sentinel: str | None = None,
@@ -99,17 +97,6 @@ def render_briefing_card(
     parts: list[str] = [
         f"# Briefing — {local_now.strftime('%Y-%m-%dT%H:%M:%S%z')}"
     ]
-    if identity is not None and identity.is_logical:
-        parts.append("\n## Identity")
-        if logical_seat_id:
-            parts.append(f"- logical seat: `{logical_seat_id}`")
-        if house:
-            parts.append(f"- house: `{house}`")
-        if capability_slug:
-            parts.append(f"- capability: `{capability_slug}`")
-        if inbox_recipient:
-            parts.append(f"- inbox: `{inbox_recipient}`")
-
     compact_dedup_ids: set[int] = set()
     if principal_context:
         compact_lines, compact_dedup_ids = render_compact_block(

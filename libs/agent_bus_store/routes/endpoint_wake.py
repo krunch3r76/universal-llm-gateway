@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import Any
 
 from fastapi import APIRouter, HTTPException, Query, status
+from openapi_mcp.binding import x_mcp
 from pydantic import BaseModel
 
 from ..db.endpoint_wake_ledger import (
@@ -12,6 +13,7 @@ from ..db.endpoint_wake_ledger import (
     advance_scan,
     claim_due_wakes,
     get_cursor,
+    list_wake_ledger_rows,
     record_wake_result,
 )
 
@@ -47,6 +49,30 @@ async def cursor_route(
 ) -> dict[str, Any]:
     """Read the consumer cursor, cold-starting at MAX(turns.id)."""
     return get_cursor(consumer)
+
+
+@router.get(
+    "/endpoint-wake/ledger",
+    openapi_extra=x_mcp("wake_ledger", tool="agent_bus_read"),
+)
+async def wake_ledger_route(
+    thread: str | None = None,
+    turn_id: int | None = None,
+    turn_number: int | None = None,
+    agent: str | None = None,
+    state: str | None = None,
+    limit: int = Query(default=20, ge=1, le=200),
+) -> dict[str, Any]:
+    """Read wake ledger rows (read-only; same DB as the dispatcher)."""
+    rows = list_wake_ledger_rows(
+        thread=thread,
+        turn_id=turn_id,
+        turn_number=turn_number,
+        agent=agent,
+        state=state,
+        limit=limit,
+    )
+    return {"rows": rows, "count": len(rows)}
 
 
 @router.post("/endpoint-wake/scan")

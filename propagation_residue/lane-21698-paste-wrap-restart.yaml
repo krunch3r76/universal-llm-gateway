@@ -1,0 +1,9 @@
+# propagation_residue — paste_as_operator double-wrap fix (lane-21698)
+# Operator/conductor: manage sync_restart (no force) after hub master land — not from Lane B.
+restart_owed:
+  - mcp
+  - cdp_ask
+reason: >-
+  Idempotent operator paste wrap + CDP enter guard + restore_ok fields in
+  libs/cursor_bridge/operator_paste.py and cdp_ask display-chat paste path;
+  serving processes must reload Python before live paste_as_operator.

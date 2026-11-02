@@ -1107,6 +1107,9 @@ async def run_gated_stargate_idle_drain_supervised(
         orphaned = cdp_legs_orphaned_from_active_work(probed.detail)
     except (httpx.HTTPError, ValueError, OSError):
         orphaned = []
+    from .restart_intent_expiry import clear_expired_arm_before_rearm
+
+    await clear_expired_arm_before_rearm(store, "stargate", now=datetime.now(UTC))
     outcome = await gate.evaluate("stargate", force=True, supervised_drain=True)
     if outcome is not None:
         existing = store.active_for_service("stargate")
@@ -1270,6 +1273,9 @@ async def run_gated_self_holder_drain_supervised(
             await gate.release(service)
         return {"status": "ok", "message": message}
 
+    from .restart_intent_expiry import clear_expired_arm_before_rearm
+
+    await clear_expired_arm_before_rearm(store, service, now=datetime.now(UTC))
     outcome = await gate.evaluate(service, force=True, supervised_drain=True)
     if outcome is not None:
         existing = store.active_for_service(service)
@@ -1328,6 +1334,9 @@ async def run_gated_drain_supervised(
     ``wait_for_boundary`` (a:37197) defers begin_drain until GIW idle so admits
     stay open during a long occupant row; optional ``intent_ttl_s`` bounds the arm.
     """
+    from .restart_intent_expiry import clear_expired_arm_before_rearm
+
+    await clear_expired_arm_before_rearm(store, service, now=datetime.now(UTC))
     outcome = await gate.evaluate(service, force=True, supervised_drain=True)
     if outcome is not None:
         existing = store.active_for_service(service)

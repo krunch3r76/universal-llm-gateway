@@ -6,11 +6,10 @@ from typing import Any
 
 from agent_seat.boot_identity import (
     BootIdentity,
-    boot_identity_config_error,
     legacy_boot_identity,
-    logical_seat_requires_identity_error,
     resolve_boot_identity_for_seat,
     resolve_legacy_boot_identity,
+    seat_unresolved_error,
 )
 from agent_seat.registry import (
     normalize_bus_address,
@@ -105,7 +104,7 @@ def resolve_boot_family_platform(
     """Map boot call axes to canonical (family, platform).
 
     Priority:
-      1. Explicit ``seat=`` (bus address, capability cell, or logical registry alias)
+      1. Explicit ``seat=`` (bus address or capability cell)
       2. Blank → mount-aware default (life→web / code→cursor)
       3. Else ``seat_required`` error (no silent cursor default)
 
@@ -122,18 +121,5 @@ def resolve_boot_family_platform(
     legacy = resolve_legacy_boot_identity(seat)
     if legacy is not None:
         return legacy.family, legacy.platform
-
-    from agent_seat.boot_identity import (
-        BootIdentityConfigError,
-        load_boot_identity_registry,
-    )
-
-    try:
-        logical = load_boot_identity_registry().lookup(seat)
-    except BootIdentityConfigError as exc:
-        return boot_identity_config_error(exc)
-    if logical is not None:
-        return logical_seat_requires_identity_error(seat)
-    from agent_seat.boot_identity import seat_unresolved_error
 
     return seat_unresolved_error(seat)

@@ -301,6 +301,7 @@ def test_cse_allowlist_not_display(db: None) -> None:
         "CONSULT",
         "QUESTION",
         "ASK",
+        "ANSWER",
         "DONE",
         "FAILED",
         "FACT",
@@ -411,13 +412,19 @@ def test_scan_once_emits_endpoint_wake_suppressed_for_subscribed_thread(
     db: None,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from agent_bus_store.db.endpoint_subscriptions import subscribe_endpoint
+    import json
 
-    suppressed: list[dict[str, object]] = []
-    monkeypatch.setattr(
-        "bus_watch.events.emit_endpoint_wake_suppressed",
-        lambda **kwargs: suppressed.append(kwargs),
-    )
+    from agent_bus_store.db.endpoint_subscriptions import subscribe_endpoint
+    from agent_bus_store.events import publisher
+    from agent_bus_store.server import wire_bus_watch_event_publisher
+
+    queued: list[dict[str, object]] = []
+
+    def _capture_put(self, line: str) -> None:
+        queued.append(json.loads(line.strip()))
+
+    monkeypatch.setattr(publisher._UDSPublisher, "put_nowait", _capture_put)
+    wire_bus_watch_event_publisher()
     detail = create_thread(thread_id=None, slug="41157-suppress-emit")
     assert detail is not None
     thread = str(detail["id"])
@@ -478,11 +485,16 @@ def test_scan_once_emits_endpoint_wake_suppressed_for_subscribed_thread(
             return None
 
     scan_once(Store())  # type: ignore[arg-type]
-    assert len(suppressed) == 1
-    assert suppressed[0]["rule_id"] == "drop_ack_route_coord"
-    assert suppressed[0]["to_agent"] == "grok-bot-gc1"
-    assert suppressed[0]["thread_id"] == thread
-    assert suppressed[0]["subject_head"] == "ACK"
+    suppressed_events = [
+        e for e in queued if e.get("signal") == "endpoint_wake.suppressed"
+    ]
+    assert len(suppressed_events) == 1
+    payload = suppressed_events[0].get("payload")
+    assert isinstance(payload, dict)
+    assert payload.get("rule_id") == "drop_ack_route_coord"
+    assert payload.get("to_agent") == "grok-bot-gc1"
+    assert payload.get("thread_id") == thread
+    assert payload.get("subject_head") == "ACK"
     assert not qualifies(
         {
             "to_agent": "cursor",
@@ -1099,8 +1111,13 @@ def test_degraded_conductor_hop_closeout_routes_to_cursor() -> None:
     )
 
 
-def test_retry_pending_and_paste_failed_unknown(db: None) -> None:
-    detail = create_thread(thread_id=None, slug="retry")
+def test_composer_defer_blocks_wall_clock_reclaim_until_empty_event(db: None) -> None:
+    from bus_watch.endpoint_wake_composer_defer import (
+        COMPOSER_DEFER_ARMED,
+        notify_composer_empty_for_target,
+    )
+
+    detail = create_thread(thread_id=None, slug="composer-defer-reclaim")
     assert detail is not None
     thread = str(detail["id"])
     turn_id, _ts, number, _c = insert_turn(
@@ -1126,19 +1143,21 @@ def test_retry_pending_and_paste_failed_unknown(db: None) -> None:
     record_wake_result(
         wake, "pending", "active_chat_busy", "exact", 1, None, now="2020-01-01 00:00:02"
     )
-    assert claim_due_wakes(now="2020-01-01 00:00:30")["wake_id"] is None
-    again = claim_due_wakes(now="2020-01-01 00:01:03")
-    assert again["wake_id"]
-    record_wake_result(
-        again["wake_id"],
-        "unknown",
-        "paste_failed",
-        "exact",
-        1,
-        None,
-        now="2020-01-01 00:01:04",
+    with connect() as conn:
+        row = conn.execute(
+            "SELECT decided_by_rule FROM endpoint_wake_ledger WHERE wake_id=?",
+            (wake,),
+        ).fetchone()
+    assert row["decided_by_rule"] == COMPOSER_DEFER_ARMED
+    assert claim_due_wakes(now="2020-01-01 00:01:03")["wake_id"] is None
+    notify_composer_empty_for_target(
+        display="9",
+        surface="grok",
+        agent_id="agent-grok",
+        thread_scope=thread,
     )
-    assert claim_due_wakes(now="2020-01-01 00:20:00")["wake_id"] is None
+    again = claim_due_wakes(now="2020-01-01 00:01:04")
+    assert again["wake_id"]
 
 
 def test_debounce_cleared_after_target_reply(db: None) -> None:
@@ -1452,11 +1471,14 @@ def test_outcome_table() -> None:
 
 def test_classify_display_hydration_reasons_stay_pending() -> None:
     pending_body = {"ok": False, "pasted": False}
-    for reason in ("unknown", "no_active_chat", "agent_id_mismatch"):
+    for reason in ("unknown", "no_active_chat"):
         assert classify_display(200, {**pending_body, "reason": reason}, None) == (
             "pending",
             reason,
         )
+    assert classify_display(
+        200, {**pending_body, "reason": "agent_id_mismatch"}, None
+    ) == ("refused", "agent_id_mismatch")
     assert classify_display(
         200, {"ok": False, "reason": "debug_unreachable", "pasted": False}, None
     ) == ("pending", "debug_unreachable")
@@ -2303,7 +2325,7 @@ def test_specimen_18460_no_composer_records_pending_and_drops_dead_agent_id(
     assert ledger_row is not None
     assert ledger_row["state"] == "pending"
     assert ledger_row["reason"] == "no_composer"
-    assert ledger_row["route"] == "exact"
+    assert ledger_row["route"] == "remapped"
     assert ledger_row["subscription_id"] == sub_row["id"]
     assert ledger_row["finished_at"] == "2026-10-20 22:59:57"
 
@@ -2442,11 +2464,13 @@ def test_fired_hop_past_deadline_with_null_landed_transcript_keeps_display_subsc
     assert expired["landed_transcript_id"] is None
     persisted = read_hop_land(thread, watch_dir=tmp_path)
     assert persisted is not None and persisted["state"] == "expired"
+    # RULING a:41381 option (ii): the row stays, the departed tab is unbound.
     assert resolve_endpoint("cursor", thread) is not None
     cur_sub = current_subscription("cursor", thread)
     assert cur_sub is not None
     assert cur_sub["state"] == "subscribed"
-    assert "hop_expired" not in str(cur_sub.get("evidence") or "")
+    assert cur_sub["agent_id"] is None
+    assert str(cur_sub.get("evidence") or "") == f"hop_expired_unbound:{dead_agent_id}"
 
     # Also verify scan_once reaps an overdue fired hop before resolving delivery route.
     subscribe_endpoint(
@@ -3026,12 +3050,14 @@ def test_declared_rule_map_loads_address_rules(db: None) -> None:
     from bus_watch.endpoint_wake_dispatcher import _FALLBACK_WAKE_RULE_IDS
 
     assert _declared_wake_rule_ids() == _FALLBACK_WAKE_RULE_IDS
-    assert len(_declared_wake_rule_ids()) == 17
-    assert _declared_wake_rule_ids()[5] == "wake_by_address"
-    assert _declared_wake_rule_ids()[6] == "wake_by_name"
-    assert _declared_wake_rule_ids()[7] == "refuse_address_mismatch"
-    assert _declared_wake_rule_ids()[12] == "drop_routine_hop_closeout"
-    assert _declared_wake_rule_ids()[11] == "wake_peer_sender"
+    assert len(_declared_wake_rule_ids()) == 18
+    assert _declared_wake_rule_ids()[1] == "drop_orion_echo"
+    assert _declared_wake_rule_ids()[6] == "wake_by_address"
+    assert _declared_wake_rule_ids()[7] == "wake_by_name"
+    assert _declared_wake_rule_ids()[8] == "refuse_address_mismatch"
+    assert _declared_wake_rule_ids()[13] == "drop_routine_hop_closeout"
+    assert _declared_wake_rule_ids()[12] == "wake_peer_sender"
+    assert _declared_wake_rule_ids()[-1] == "default_suppress"
 
 
 def test_qualify_matches_legacy_over_qualification_matrix(db: None) -> None:
@@ -3491,6 +3517,42 @@ def test_prefixed_closeout_subject_wakes_same_holder() -> None:
     assert verdict.rule_id == "wake_by_address"
 
 
+@pytest.mark.offline
+def test_endpoint_wake_address_route_reaches_agent_bus_publisher(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Qualify path must publish via agent-bus UDS publisher, not a silent no-op."""
+    import json
+
+    from agent_bus_store.events import publisher
+    from agent_bus_store.server import wire_bus_watch_event_publisher
+
+    queued: list[dict[str, object]] = []
+
+    def _capture_put(self, line: str) -> None:
+        queued.append(json.loads(line.strip()))
+
+    monkeypatch.setattr(publisher._UDSPublisher, "put_nowait", _capture_put)
+    wire_bus_watch_event_publisher()
+    held = _LaneChainStore(
+        holders={"12286": {"registration_id": "R", "seat_state": "driving"}},
+        parents={"20714": "12286"},
+    )
+    qualify(
+        _specimen_turn(to_agent="web-anthropic"),
+        cse=True,
+        store=held,  # type: ignore[arg-type]
+        seat_registration="R",
+    )
+    signals = [str(e.get("signal")) for e in queued]
+    assert "endpoint_wake.address_route" in signals
+    evt = next(e for e in queued if e.get("signal") == "endpoint_wake.address_route")
+    assert evt.get("role") == "observation"
+    payload = evt.get("payload")
+    assert isinstance(payload, dict)
+    assert payload.get("match") == "address"
+
+
 def test_address_route_emits_match_kind(monkeypatch: pytest.MonkeyPatch) -> None:
     seen: list[dict[str, object]] = []
     monkeypatch.setattr(
@@ -3718,7 +3780,6 @@ def test_worker_closeout_stale_uuid_to_resolves_glass_binding() -> None:
 
     worker_thread = "21228"
     raw_to = "4ed020f2"
-    subject = "CLOSEOUT|cursor-sdk CLOSEOUT lane-21228 contract=implement"
 
     class StubStore(StoreClient):
         def _bus(self, method: str, path: str, **kwargs: object) -> dict:
@@ -3846,6 +3907,21 @@ def test_scan_once_enqueues_dispatch_to_worker_closeout_on_house_scope() -> None
     assert len(store.pending) == 1
     assert store.pending[0]["agent"] == "cursor"
     assert store.pending[0]["display"] == "8"
+
+
+def test_orion_answer_to_cursor_wakes_peer() -> None:
+    verdict = qualify(
+        {
+            "to_agent": "cursor",
+            "from_agent": "orion",
+            "subject": "ANSWER|INTERLOCUTION|orion-paste-architecture",
+            "thread": "21207",
+        },
+        cse=False,
+        store=None,
+    )
+    assert verdict.wake is True
+    assert verdict.rule_id == "wake_peer_sender"
 
 
 def test_admit_echo_dropped_for_peer_sender_regardless_of_from_agent() -> None:
@@ -4036,3 +4112,891 @@ def test_deliver_cse_writes_no_ledger_row(tmp_path, monkeypatch) -> None:
     assert reg == "reg-1"
     assert reason is not None
     assert not ledger.exists()
+
+
+def test_agent_id_mismatch_records_refused_not_pending(db: None) -> None:
+    detail = create_thread(thread_id=None, slug="aid-mismatch")
+    assert detail is not None
+    thread = str(detail["id"])
+    turn_id, _ts, number, _c = insert_turn(
+        thread=thread,
+        from_agent="cursor",
+        to_agent="grok-bot-gc1",
+        subject="FACT|x",
+        body="b",
+    )
+    get_cursor()
+    with connect() as conn:
+        conn.execute("UPDATE endpoint_wake_cursor SET high_water_turn_id=0")
+    advance_scan(
+        "endpoint-wake-dispatcher",
+        0,
+        turn_id,
+        [
+            {
+                "agent": "grok-bot-gc1",
+                "thread_id": thread,
+                "turn_id": turn_id,
+                "turn_number": number,
+            }
+        ],
+        now="2020-01-01 00:00:00",
+    )
+    wake = claim_due_wakes(now="2020-01-01 00:00:01")["wake_id"]
+    assert wake
+    record_wake_result(
+        wake,
+        "refused",
+        "agent_id_mismatch",
+        "exact",
+        1,
+        None,
+        now="2020-01-01 00:00:02",
+    )
+    with connect() as conn:
+        row = conn.execute(
+            "SELECT state, reason FROM endpoint_wake_ledger WHERE wake_id=?",
+            (wake,),
+        ).fetchone()
+    assert row["state"] == "refused"
+    assert row["reason"] == "agent_id_mismatch"
+    assert claim_due_wakes(now="2020-01-01 00:00:30")["wake_id"] is None
+
+
+def test_composer_defer_sweep_escalates_once_to_maestro(db: None) -> None:
+    from bus_watch.endpoint_wake_composer_defer import (
+        COMPOSER_DEFER_ESCALATED,
+        COMPOSER_DEFER_SWEEP,
+        escalate_composer_deferred_on_sweep,
+        finalize_composer_defer_pass,
+    )
+
+    detail = create_thread(thread_id=None, slug="composer-sweep")
+    assert detail is not None
+    thread = str(detail["id"])
+    turn_id, _ts, number, _c = insert_turn(
+        thread=thread,
+        from_agent="cursor",
+        to_agent="grok-bot-gc1",
+        subject="FACT|x",
+        body="b",
+    )
+    get_cursor()
+    with connect() as conn:
+        conn.execute("UPDATE endpoint_wake_cursor SET high_water_turn_id=0")
+    advance_scan(
+        "endpoint-wake-dispatcher",
+        0,
+        turn_id,
+        [
+            {
+                "agent": "grok-bot-gc1",
+                "thread_id": thread,
+                "turn_id": turn_id,
+                "turn_number": number,
+            }
+        ],
+        now="2020-01-01 00:00:00",
+    )
+    wake = claim_due_wakes(now="2020-01-01 00:00:01")["wake_id"]
+    assert wake
+    record_wake_result(
+        wake,
+        "pending",
+        "composer_not_empty",
+        "exact",
+        1,
+        None,
+        now="2020-01-01 00:00:02",
+    )
+    finalize_composer_defer_pass()
+    with connect() as conn:
+        row = conn.execute(
+            "SELECT decided_by_rule FROM endpoint_wake_ledger WHERE id IN "
+            "(SELECT id FROM endpoint_wake_ledger WHERE thread_id=? LIMIT 1)",
+            (thread,),
+        ).fetchone()
+    assert row["decided_by_rule"] == COMPOSER_DEFER_SWEEP
+
+    class _Store:
+        posts: list[dict] = []
+
+        def create_turn(self, **kwargs: object) -> dict:
+            _Store.posts.append(dict(kwargs))
+            return {"ok": True}
+
+    store = _Store()
+    assert escalate_composer_deferred_on_sweep(store) == 1
+    assert len(_Store.posts) == 1
+    assert _Store.posts[0]["to_agent"] == "maestro"
+    with connect() as conn:
+        row = conn.execute(
+            "SELECT state, decided_by_rule FROM endpoint_wake_ledger WHERE thread_id=?",
+            (thread,),
+        ).fetchone()
+    assert row["state"] == "refused"
+    assert row["decided_by_rule"] == COMPOSER_DEFER_ESCALATED
+    assert escalate_composer_deferred_on_sweep(store) == 0
+    assert len(_Store.posts) == 1
+
+
+def _seed_legacy_pending_wake_row(
+    thread: str,
+    *,
+    reason: str,
+    decided_by_rule: str | None = None,
+) -> int:
+    turn_id, _ts, number, _c = insert_turn(
+        thread=thread,
+        from_agent="cursor",
+        to_agent="grok-bot-gc1",
+        subject=f"LEGACY|{reason}",
+        body="legacy",
+    )
+    from agent_bus_store.db.connection import write_connect
+
+    with write_connect() as conn:
+        conn.execute(
+            "INSERT INTO endpoint_wake_ledger "
+            "(agent, thread_id, turn_id, turn_number, state, reason, created_at, "
+            "decided_by_rule) VALUES (?,?,?,?, 'pending', ?, ?, ?)",
+            (
+                "grok-bot-gc1",
+                thread,
+                turn_id,
+                number,
+                reason,
+                "2020-01-01 00:00:00",
+                decided_by_rule,
+            ),
+        )
+    return turn_id
+
+
+def test_legacy_agent_id_mismatch_pending_refused_after_normalize(db: None) -> None:
+    from bus_watch.endpoint_wake_composer_defer import (
+        LEGACY_NORMALIZE_AGENT_MISMATCH,
+        normalize_legacy_pending_wakes,
+    )
+
+    detail = create_thread(thread_id=None, slug="legacy-aid-mismatch")
+    assert detail is not None
+    thread = str(detail["id"])
+    _seed_legacy_pending_wake_row(thread, reason="agent_id_mismatch")
+    stats = normalize_legacy_pending_wakes()
+    assert stats["agent_id_mismatch_refused"] == 1
+    with connect() as conn:
+        row = conn.execute(
+            "SELECT state, reason, decided_by_rule FROM endpoint_wake_ledger "
+            "WHERE thread_id=?",
+            (thread,),
+        ).fetchone()
+    assert row["state"] == "refused"
+    assert row["reason"] == "agent_id_mismatch"
+    assert row["decided_by_rule"] == LEGACY_NORMALIZE_AGENT_MISMATCH
+
+
+def test_legacy_composer_not_empty_two_pass_escalation(db: None) -> None:
+    from bus_watch.endpoint_wake_composer_defer import (
+        COMPOSER_DEFER_ESCALATED,
+        COMPOSER_DEFER_SWEEP,
+        run_dispatcher_pass_legacy_sweep,
+    )
+
+    detail = create_thread(thread_id=None, slug="legacy-composer")
+    assert detail is not None
+    thread = str(detail["id"])
+    _seed_legacy_pending_wake_row(thread, reason="composer_not_empty")
+
+    class _Store:
+        posts: list[dict] = []
+
+        def create_turn(self, **kwargs: object) -> dict:
+            _Store.posts.append(dict(kwargs))
+            return {"ok": True}
+
+    store = _Store()
+    pass1 = run_dispatcher_pass_legacy_sweep(store)
+    assert pass1["composer_defer_armed"] == 1
+    assert pass1["escalated"] == 0
+    assert pass1["finalized"] == 1
+    with connect() as conn:
+        row = conn.execute(
+            "SELECT state, decided_by_rule FROM endpoint_wake_ledger WHERE thread_id=?",
+            (thread,),
+        ).fetchone()
+    assert row["state"] == "pending"
+    assert row["decided_by_rule"] == COMPOSER_DEFER_SWEEP
+
+    pass2 = run_dispatcher_pass_legacy_sweep(store)
+    assert pass2["composer_defer_armed"] == 0
+    assert pass2["escalated"] == 1
+    assert len(_Store.posts) == 1
+    assert _Store.posts[0]["to_agent"] == "maestro"
+    with connect() as conn:
+        row = conn.execute(
+            "SELECT state, decided_by_rule FROM endpoint_wake_ledger WHERE thread_id=?",
+            (thread,),
+        ).fetchone()
+    assert row["state"] == "refused"
+    assert row["decided_by_rule"] == COMPOSER_DEFER_ESCALATED
+
+    pass3 = run_dispatcher_pass_legacy_sweep(store)
+    assert pass3["escalated"] == 0
+    assert len(_Store.posts) == 1
+
+
+def test_normalize_legacy_pending_wakes_idempotent(db: None) -> None:
+    from bus_watch.endpoint_wake_composer_defer import (
+        COMPOSER_DEFER_ARMED,
+        normalize_legacy_pending_wakes,
+    )
+
+    detail = create_thread(thread_id=None, slug="legacy-idempotent")
+    assert detail is not None
+    thread = str(detail["id"])
+    _seed_legacy_pending_wake_row(thread, reason="agent_id_mismatch")
+    _seed_legacy_pending_wake_row(thread, reason="composer_not_empty")
+    first = normalize_legacy_pending_wakes()
+    assert first["agent_id_mismatch_refused"] == 1
+    assert first["composer_defer_armed"] == 1
+    second = normalize_legacy_pending_wakes()
+    assert second["agent_id_mismatch_refused"] == 0
+    assert second["composer_defer_armed"] == 0
+    with connect() as conn:
+        rows = conn.execute(
+            "SELECT reason, decided_by_rule FROM endpoint_wake_ledger "
+            "WHERE thread_id=? ORDER BY reason",
+            (thread,),
+        ).fetchall()
+    assert rows[0]["reason"] == "agent_id_mismatch"
+    assert rows[0]["decided_by_rule"] == "legacy_normalize:agent_id_mismatch"
+    assert rows[1]["reason"] == "composer_not_empty"
+    assert rows[1]["decided_by_rule"] == COMPOSER_DEFER_ARMED
+
+
+def test_falsifier_no_pending_agent_id_mismatch_or_composer_not_empty_after_sweep(
+    db: None,
+) -> None:
+    from bus_watch.endpoint_wake_composer_defer import run_dispatcher_pass_legacy_sweep
+
+    detail = create_thread(thread_id=None, slug="falsifier-sweep")
+    assert detail is not None
+    thread = str(detail["id"])
+    _seed_legacy_pending_wake_row(thread, reason="agent_id_mismatch")
+    _seed_legacy_pending_wake_row(thread, reason="composer_not_empty")
+
+    class _Store:
+        def create_turn(self, **kwargs: object) -> dict:
+            return {"ok": True}
+
+    store = _Store()
+    run_dispatcher_pass_legacy_sweep(store)
+    run_dispatcher_pass_legacy_sweep(store)
+    with connect() as conn:
+        bad = conn.execute(
+            "SELECT COUNT(*) AS n FROM endpoint_wake_ledger "
+            "WHERE state='pending' AND reason IN ('agent_id_mismatch','composer_not_empty')"
+        ).fetchone()
+    assert int(bad["n"]) == 0
+
+
+def test_composer_defer_decision_does_not_use_wall_clock() -> None:
+    from bus_watch.endpoint_wake_composer_defer import defer_path_avoids_wall_clock
+
+    assert defer_path_avoids_wall_clock() is True
+
+
+# --- refuse_tab_unaddressed scope/surface/remap gating (43c9e95a fix-forward) ---
+
+
+def _seed_row(
+    *,
+    agent: str,
+    scope: str,
+    agent_id: str,
+    surface: str = "cursor",
+) -> None:
+    from agent_bus_store.db.endpoint_subscriptions import subscribe_endpoint
+
+    subscribe_endpoint(
+        agent=agent,
+        thread_scope=scope,
+        surface=surface,
+        display="8",
+        title="t",
+        agent_id=agent_id,
+        bound_by="test",
+    )
+
+
+class _TabScanStore:
+    """scan_once store that resolves exact rows first, then a ``*`` row as wildcard."""
+
+    def __init__(
+        self, *, holder: dict | None = None, parent_scope: str | None = None
+    ) -> None:
+        self.pending: list[dict] = []
+        self._holder = holder
+        self._parent_scope = parent_scope
+
+    def cursor(self) -> dict:
+        return get_cursor()
+
+    def since(self, after_id: int, limit: int = 50) -> list[dict]:
+        with connect() as c:
+            rows = c.execute(
+                "SELECT id, thread, turn_number, from_agent, to_agent, subject, "
+                "body, read_at FROM turns WHERE id>? ORDER BY id LIMIT ?",
+                (after_id, limit),
+            ).fetchall()
+        return [dict(r) for r in rows]
+
+    def scan(self, expected: int, new_hw: int, rows: list[dict]) -> dict:
+        self.pending = rows
+        return advance_scan(
+            "endpoint-wake-dispatcher",
+            expected,
+            new_hw,
+            rows,
+            now="2020-01-01 20:00:00",
+        )
+
+    def subscription(self, agent: str, thread_id: str, raw_to: str | None = None):
+        from agent_bus_store.db.endpoint_subscriptions import current_subscription
+
+        row = current_subscription(agent, thread_id)
+        if row and row.get("state") == "subscribed":
+            return ("exact", row)
+        if self._parent_scope:
+            row = current_subscription(agent, self._parent_scope)
+            if row and row.get("state") == "subscribed":
+                return ("parent", row)
+        if agent != "cursor":
+            # Transport falls back to the thread's cursor row for a suffix-bearing
+            # address (house-lane branch); the suffix match then decides.
+            row = current_subscription("cursor", thread_id)
+            if row and row.get("state") == "subscribed":
+                return ("exact", row)
+        return None
+
+    def holder(self, lane: str) -> dict | None:
+        return self._holder
+
+    def lane_parent(self, lane: str) -> str | None:
+        return None
+
+
+def _rewind_cursor() -> None:
+    get_cursor()
+    with connect() as conn:
+        conn.execute("UPDATE endpoint_wake_cursor SET high_water_turn_id=0")
+
+
+class _TabFireStore(_TabScanStore):
+    """``scan_once`` + ``claim_due_wakes`` + ``record_wake_result`` for round-3 fire proofs."""
+
+    def __init__(self, **kwargs: object) -> None:
+        super().__init__(**kwargs)  # type: ignore[arg-type]
+        self.results: list[dict] = []
+
+    def claim(self) -> dict:
+        return claim_due_wakes(now="2020-01-01 20:00:10")
+
+    def result(self, **payload: object) -> int:
+        self.results.append(dict(payload))
+        return record_wake_result(
+            str(payload["wake_id"]),
+            str(payload["outcome"]),
+            str(payload["reason"]) if payload["reason"] is not None else None,
+            str(payload["route"]) if payload["route"] is not None else None,
+            payload["subscription_id"],  # type: ignore[arg-type]
+            payload["cse_registration_id"],  # type: ignore[arg-type]
+        )
+
+    def unsubscribe(self, *args: object, **kwargs: object) -> dict:
+        return {}
+
+
+def _new_thread(slug: str) -> str:
+    detail = create_thread(thread_id=None, slug=slug)
+    assert detail is not None
+    return str(detail["id"])
+
+
+_TAB_A = "cd0f990b-9ce2-4b58-bf9b-2cb7ac3491a6"
+_TAB_B = "7e0b90ac-d861-4ae2-a484-17d57c193eeb"
+
+
+@pytest.mark.parametrize(
+    "subject",
+    [
+        "DONE| 43c9e95a",
+        "VERDICT| gate",
+        "PLAN| row 19",
+        "QUESTION| scope",
+        "RULING| bind",
+        "AMEND| packet",
+        "SEAT_REGISTRATION| maestro",
+    ],
+)
+def test_t1_maestro_direct_address_not_refused_by_tab_row(
+    db: None, subject: str
+) -> None:
+    """T1: a tab-bound cursor row must not swallow ``to=maestro`` on the lane."""
+    thread = _new_thread("21724-t1-maestro")
+    _seed_row(agent="cursor", scope=thread, agent_id=_TAB_A)
+    _seed_row(agent="maestro", scope=thread, agent_id="maestro-tab")
+    t_id, _ts, _n, _c = insert_turn(
+        thread=thread,
+        from_agent="web-anthropic",
+        to_agent="maestro",
+        subject=subject,
+        body="b",
+    )
+    _rewind_cursor()
+    store = _TabScanStore(holder={"agent": "maestro"})
+    scan_once(store)  # type: ignore[arg-type]
+    assert [r["turn_id"] for r in store.pending] == [t_id]
+    assert store.pending[0]["decided_by_rule"] == "wake_maestro_direct_address"
+
+
+def test_t1_plain_ack_to_maestro_still_drops_as_ack_route_coord(db: None) -> None:
+    thread = _new_thread("21724-t1-ack")
+    _seed_row(agent="cursor", scope=thread, agent_id=_TAB_A)
+    _seed_row(agent="maestro", scope=thread, agent_id="maestro-tab")
+    insert_turn(
+        thread=thread,
+        from_agent="web-anthropic",
+        to_agent="maestro",
+        subject="ACK|plain",
+        body="b",
+    )
+    _rewind_cursor()
+    store = _TabScanStore(holder={"agent": "maestro"})
+    scan_once(store)  # type: ignore[arg-type]
+    assert store.pending == []
+
+
+def test_t2_peer_sender_wakes_on_thread_with_tab_bound_cursor_row(db: None) -> None:
+    """T2: peer-sender turns to non-cursor addresses are untouched by the refusal."""
+    thread = _new_thread("21724-t2-peer")
+    _seed_row(agent="cursor", scope=thread, agent_id=_TAB_A)
+    _seed_row(agent="maestro", scope=thread, agent_id="maestro-tab")
+    _seed_row(agent="grok-bot-8e611904", scope=thread, agent_id="grok-tab")
+    a_id, _ts, _n, _c = insert_turn(
+        thread=thread,
+        from_agent="grok-bot-gc1",
+        to_agent="maestro",
+        subject="REPORT|15851 leg",
+        body="b",
+    )
+    b_id, _ts2, _n2, _c2 = insert_turn(
+        thread=thread,
+        from_agent="web-anthropic",
+        to_agent="grok-bot-8e611904",
+        subject="REPORT|15851 leg",
+        body="b",
+    )
+    _rewind_cursor()
+    store = _TabScanStore()
+    scan_once(store)  # type: ignore[arg-type]
+    assert [r["turn_id"] for r in store.pending] == [a_id, b_id]
+    assert {r["decided_by_rule"] for r in store.pending} == {"wake_peer_sender"}
+
+
+def test_t3_gate_wake_remap_address_enqueues_on_tab_bound_row(db: None) -> None:
+    """T3/H2: ``to=git-integration-worker`` CLOSEOUT remaps to cursor and must wake."""
+    thread = _new_thread("21724-t3-remap")
+    _seed_row(agent="cursor", scope=thread, agent_id=_TAB_A)
+    t_id, _ts, _n, _c = insert_turn(
+        thread=thread,
+        from_agent="maestro",
+        to_agent="git-integration-worker",
+        subject="CLOSEOUT| lane land",
+        body="b",
+    )
+    _rewind_cursor()
+    store = _TabScanStore()
+    scan_once(store)  # type: ignore[arg-type]
+    assert [r["turn_id"] for r in store.pending] == [t_id]
+    assert store.pending[0]["delivery_agent_id"] == _TAB_A
+
+
+def test_t3_bare_cursor_on_parent_row_keeps_legacy_pickup(db: None) -> None:
+    """T3/H3: only an exact-scope row owns the thread; an ancestor row must not refuse."""
+    parent = _new_thread("21724-t3-parent")
+    thread = _new_thread("21724-t3-child")
+    _seed_row(agent="cursor", scope=parent, agent_id=_TAB_A)
+    t_id, _ts, _n, _c = insert_turn(
+        thread=thread,
+        from_agent="maestro",
+        to_agent="cursor",
+        subject="RULING| bind",
+        body="b",
+    )
+    _rewind_cursor()
+    store = _TabScanStore(parent_scope=parent)
+    scan_once(store)  # type: ignore[arg-type]
+    assert [r["turn_id"] for r in store.pending] == [t_id]
+
+
+def test_bare_cursor_on_exact_tab_bound_row_enqueues(db: None) -> None:
+    """Round-3: bare ``to=cursor`` on an exact tab-bound row enqueues for fire-time remap."""
+    thread = _new_thread("21724-bare-enqueue")
+    _seed_row(agent="cursor", scope=thread, agent_id=_TAB_A)
+    t_id, _ts, _n, _c = insert_turn(
+        thread=thread,
+        from_agent="maestro",
+        to_agent="cursor",
+        subject="RULING| bind",
+        body="b",
+    )
+    _rewind_cursor()
+    store = _TabScanStore()
+    scan_once(store)  # type: ignore[arg-type]
+    assert [r["turn_id"] for r in store.pending] == [t_id]
+
+
+def _suffix_row(*, scope: str, agent_id: str, row_id: int) -> dict:
+    return {
+        "id": row_id,
+        "agent": "cursor",
+        "thread_scope": scope,
+        "state": "subscribed",
+        "surface": "cursor",
+        "display": "8",
+        "title": f"{scope} house",
+        "agent_id": agent_id,
+    }
+
+
+def _suffix_lookup_store(rows: list[dict]) -> StoreClient:
+    """Real transport labelling and suffix lookup over a canned payload."""
+
+    class StubStore(StoreClient):
+        def _bus(self, method: str, path: str, **kwargs):
+            if path == "/endpoint-subscriptions":
+                agent = (kwargs.get("params") or {}).get("agent")
+                return {
+                    "subscriptions": [r for r in rows if r.get("agent") == agent]
+                }
+            raise AssertionError(f"unexpected bus call {method} {path}")
+
+    return StubStore()
+
+
+def test_suffix_address_redirects_to_the_row_that_suffix_names(db: None) -> None:
+    """H1: a CLOSEOUT to the departed tab delivers to the row that tab still holds."""
+    from bus_watch.endpoint_wake_dispatcher import _cursor_tab_route
+
+    resolved_b = ("exact", _suffix_row(scope="21724", agent_id=_TAB_B, row_id=20))
+    row_a = _suffix_row(scope="18460", agent_id=_TAB_A, row_id=19)
+    store = _suffix_lookup_store([resolved_b[1], row_a])
+    reason, route = _cursor_tab_route(
+        store, f"composer-impresario-{_TAB_A[:8]}", resolved_b
+    )
+    assert reason is None
+    assert route is not None
+    assert route[0] == "agent_id"
+    assert route[1]["agent_id"] == _TAB_A
+
+
+def test_suffix_address_with_no_such_row_is_remapped_on_an_exact_row(db: None) -> None:
+    """H1: with the addressed tab gone from every scope, an exact row yields stale_name."""
+    from bus_watch.endpoint_wake_dispatcher import _cursor_tab_route
+
+    resolved_b = ("exact", _suffix_row(scope="21724", agent_id=_TAB_B, row_id=20))
+    store = _suffix_lookup_store([resolved_b[1]])
+    reason, route = _cursor_tab_route(
+        store, f"composer-impresario-{_TAB_A[:8]}", resolved_b
+    )
+    assert reason == "stale_name"
+    assert route == resolved_b
+
+
+def test_suffix_address_with_no_such_row_delivers_on_a_non_exact_row(db: None) -> None:
+    """H1: an ancestor row does not own the thread, so it delivers rather than refuse."""
+    from bus_watch.endpoint_wake_dispatcher import _cursor_tab_route
+
+    resolved_b = ("parent", _suffix_row(scope="12286", agent_id=_TAB_B, row_id=20))
+    store = _suffix_lookup_store([resolved_b[1]])
+    reason, route = _cursor_tab_route(
+        store, f"composer-impresario-{_TAB_A[:8]}", resolved_b
+    )
+    assert reason is None
+    assert route == resolved_b
+
+
+def test_suffix_address_for_right_tab_wakes(db: None) -> None:
+    thread = _new_thread("21724-suffix-match")
+    _seed_row(agent="cursor", scope=thread, agent_id=_TAB_B)
+    t_id, _ts, _n, _c = insert_turn(
+        thread=thread,
+        from_agent="maestro",
+        to_agent=f"composer-impresario-{_TAB_B[:8]}",
+        subject="RULING| bind",
+        body="b",
+    )
+    _rewind_cursor()
+    store = _TabScanStore()
+    scan_once(store)  # type: ignore[arg-type]
+    assert [r["turn_id"] for r in store.pending] == [t_id]
+
+
+def test_cse_row_agent_id_is_a_lane_not_a_tab(db: None) -> None:
+    """M2: a CSE row stores a lane id in ``agent_id``; it must not refuse a cursor turn."""
+    from bus_watch.endpoint_wake_dispatcher import _cursor_tab_route
+
+    cse = ("exact", {"surface": "cse", "agent_id": "21207"})
+    assert _cursor_tab_route(_suffix_lookup_store([]), "cursor", cse) == (None, cse)
+
+
+def test_orion_is_a_peer_sender_only_on_answer(db: None) -> None:
+    """M1: orion peer status is subject-gated to ANSWER."""
+    base = {"to_agent": "maestro", "from_agent": "orion", "id": 1}
+    assert qualify({**base, "subject": "ANSWER|probe"}, cse=False).wake is True
+    assert (
+        qualify({**base, "subject": "ANSWER|probe"}, cse=False).rule_id
+        == "wake_peer_sender"
+    )
+    assert qualify({**base, "subject": "CHATTER|probe"}, cse=False).wake is False
+
+
+def test_deep_lane_house_row_is_labelled_parent_not_exact(db: None, monkeypatch) -> None:
+    """M1: a holder walk past _MAX_PARENT_HOPS must not hand back an "exact" row."""
+    import types
+
+    from bus_watch import endpoint_wake_dispatcher as dispatcher
+
+    root = "12286"
+    chain = ["21726", "21724", "21207", "15851", root]
+    house_row = _suffix_row(scope=root, agent_id=_TAB_A, row_id=41)
+
+    class StubStore(StoreClient):
+        def _bus(self, method: str, path: str, **kwargs):
+            if path == "/endpoint-subscriptions":
+                agent = (kwargs.get("params") or {}).get("agent")
+                return {"subscriptions": [house_row] if agent == "cursor" else []}
+            if path.endswith("/lane-current"):
+                cur = path.split("/")[2]
+                idx = chain.index(cur) if cur in chain else None
+                parent = (
+                    chain[idx + 1] if idx is not None and idx + 1 < len(chain) else None
+                )
+                return {"parent_thread": parent}
+            raise AssertionError(f"unexpected bus call {method} {path}")
+
+    store = StubStore()
+    # Real transport: the deep thread is 4 hops under the house row, past
+    # _MAX_PARENT_HOPS=3, so scope resolution misses and the house lane answers.
+    assert store.subscription("cursor", chain[0]) is None
+    monkeypatch.setattr(
+        dispatcher,
+        "resolve_turn_address",
+        lambda thread, store: types.SimpleNamespace(lane_thread=root),
+    )
+    resolved = dispatcher._resolve_delivery_route(
+        store, "cursor", chain[0], raw_to="cursor"
+    )
+    assert resolved is not None
+    assert resolved[0] == "parent"
+    reason, route = dispatcher._cursor_tab_route(store, "cursor", resolved)
+    assert reason is None
+    assert route == resolved
+
+
+def test_orion_answer_gate_compares_only_the_first_token(db: None) -> None:
+    """L3: ``ANSWER INTERLOCUTION|…`` is still an ANSWER head."""
+    base = {"to_agent": "maestro", "from_agent": "orion", "id": 1}
+    verdict = qualify({**base, "subject": "ANSWER INTERLOCUTION|probe"}, cse=False)
+    assert verdict.wake is True
+    assert verdict.rule_id == "wake_peer_sender"
+    assert qualify({**base, "subject": "ANSWERING|probe"}, cse=False).wake is False
+
+
+def test_r3_orion_answer_bare_cursor_on_exact_row_enqueues(db: None) -> None:
+    thread = _new_thread("21724-r3-orion-answer")
+    _seed_row(agent="cursor", scope=thread, agent_id=_TAB_A)
+    t_id, _ts, _n, _c = insert_turn(
+        thread=thread,
+        from_agent="orion",
+        to_agent="cursor",
+        subject="ANSWER| probe",
+        body="b",
+    )
+    _rewind_cursor()
+    store = _TabScanStore()
+    scan_once(store)  # type: ignore[arg-type]
+    assert [r["turn_id"] for r in store.pending] == [t_id]
+    assert store.pending[0]["decided_by_rule"] == "wake_peer_sender"
+
+
+def test_r3_stale_suffix_on_exact_house_row_delivers_to_bound_tab_remapped(
+    db: None,
+) -> None:
+    from unittest.mock import patch
+
+    thread = _new_thread("21724-r3-stale-suffix")
+    _seed_row(agent="cursor", scope=thread, agent_id=_TAB_B)
+    t_id, _ts, _n, _c = insert_turn(
+        thread=thread,
+        from_agent="maestro",
+        to_agent=f"composer-impresario-{_TAB_A[:8]}",
+        subject="RULING| bind",
+        body="b",
+    )
+    _rewind_cursor()
+    store = _TabFireStore()
+    captured: list[dict] = []
+
+    def _capture(_row: dict, sub: dict, _turn_arg: object, **kwargs: object) -> tuple:
+        captured.append(sub)
+        return ("delivered", "delivered")
+
+    scan_once(store)  # type: ignore[arg-type]
+    with patch(
+        "bus_watch.endpoint_wake_dispatcher._display_post",
+        side_effect=_capture,
+    ):
+        fire_due_wakes(store)  # type: ignore[arg-type]
+    assert captured[0]["agent_id"] == _TAB_B
+    assert store.results[-1]["route"] == "remapped"
+    assert store.results[-1]["reason"] == "stale_name"
+    with connect() as conn:
+        row = conn.execute(
+            "SELECT state, route, reason FROM endpoint_wake_ledger WHERE turn_id=?",
+            (t_id,),
+        ).fetchone()
+    assert row is not None
+    assert row["state"] == "delivered"
+    assert row["route"] == "remapped"
+    assert row["reason"] == "stale_name"
+
+
+def test_r3_bare_cursor_on_exact_row_delivers_bare_name(db: None) -> None:
+    from unittest.mock import patch
+
+    thread = _new_thread("21724-r3-bare-fire")
+    _seed_row(agent="cursor", scope=thread, agent_id=_TAB_A)
+    t_id, _ts, _n, _c = insert_turn(
+        thread=thread,
+        from_agent="maestro",
+        to_agent="cursor",
+        subject="RULING| bind",
+        body="b",
+    )
+    _rewind_cursor()
+    store = _TabFireStore()
+    captured: list[dict] = []
+
+    def _capture(_row: dict, sub: dict, _turn_arg: object, **kwargs: object) -> tuple:
+        captured.append(sub)
+        return ("delivered", "delivered")
+
+    scan_once(store)  # type: ignore[arg-type]
+    with patch(
+        "bus_watch.endpoint_wake_dispatcher._display_post",
+        side_effect=_capture,
+    ):
+        fire_due_wakes(store)  # type: ignore[arg-type]
+    assert captured[0]["agent_id"] == _TAB_A
+    assert store.results[-1]["route"] == "remapped"
+    assert store.results[-1]["reason"] == "bare_name"
+    with connect() as conn:
+        row = conn.execute(
+            "SELECT state, route, reason FROM endpoint_wake_ledger WHERE turn_id=?",
+            (t_id,),
+        ).fetchone()
+    assert row is not None
+    assert row["state"] == "delivered"
+    assert row["route"] == "remapped"
+    assert row["reason"] == "bare_name"
+
+
+def test_r3_remapped_keeps_delivery_reason_when_not_delivered(db: None) -> None:
+    from unittest.mock import patch
+
+    thread = _new_thread("21724-r3-composer-busy")
+    _seed_row(agent="cursor", scope=thread, agent_id=_TAB_A)
+    insert_turn(
+        thread=thread,
+        from_agent="maestro",
+        to_agent="cursor",
+        subject="RULING| bind",
+        body="b",
+    )
+    _rewind_cursor()
+    store = _TabFireStore()
+    scan_once(store)  # type: ignore[arg-type]
+    with patch(
+        "bus_watch.endpoint_wake_dispatcher._display_post",
+        return_value=("pending", "composer_busy"),
+    ):
+        fire_due_wakes(store)  # type: ignore[arg-type]
+    assert store.results[-1]["route"] == "remapped"
+    assert store.results[-1]["reason"] == "composer_busy"
+
+
+def test_r3_gate_remap_address_on_exact_row_is_not_labelled_remapped(db: None) -> None:
+    from unittest.mock import patch
+
+    thread = _new_thread("21724-r3-gate-remap-fire")
+    _seed_row(agent="cursor", scope=thread, agent_id=_TAB_A)
+    insert_turn(
+        thread=thread,
+        from_agent="maestro",
+        to_agent="git-integration-worker",
+        subject="CLOSEOUT| lane land",
+        body="b",
+    )
+    _rewind_cursor()
+    store = _TabFireStore()
+    scan_once(store)  # type: ignore[arg-type]
+    with patch(
+        "bus_watch.endpoint_wake_dispatcher._display_post",
+        return_value=("delivered", "delivered"),
+    ):
+        fire_due_wakes(store)  # type: ignore[arg-type]
+    assert store.results[-1]["route"] == "exact"
+    assert store.results[-1]["reason"] == "delivered"
+
+
+def test_r3_fire_honours_live_suffix_row_redirect(db: None) -> None:
+    from unittest.mock import patch
+
+    thread = _new_thread("21724-r3-suffix-redirect")
+    _seed_row(agent="cursor", scope=thread, agent_id=_TAB_B)
+    insert_turn(
+        thread=thread,
+        from_agent="maestro",
+        to_agent=f"composer-impresario-{_TAB_A[:8]}",
+        subject="RULING| bind",
+        body="b",
+    )
+    _rewind_cursor()
+    row_a = _suffix_row(scope="18460", agent_id=_TAB_A, row_id=19)
+    from bus_watch.endpoint_wake_transport import agent_id_matches_composer_suffix
+
+    class _SuffixFireStore(_TabFireStore):
+        def _subscription_by_cursor_agent_id_suffix(self, suffix: str):
+            if agent_id_matches_composer_suffix(_TAB_A, suffix):
+                return ("agent_id", row_a)
+            return None
+
+    store = _SuffixFireStore()
+    captured: list[dict] = []
+
+    def _capture(_row: dict, sub: dict, _turn_arg: object, **kwargs: object) -> tuple:
+        captured.append(sub)
+        return ("delivered", "delivered")
+
+    scan_once(store)  # type: ignore[arg-type]
+    with patch(
+        "bus_watch.endpoint_wake_dispatcher._display_post",
+        side_effect=_capture,
+    ):
+        fire_due_wakes(store)  # type: ignore[arg-type]
+    assert captured[0]["agent_id"] == _TAB_A
+    assert store.results[-1]["route"] == "agent_id"
+    assert store.results[-1]["reason"] == "delivered"

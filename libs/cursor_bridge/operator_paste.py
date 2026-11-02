@@ -13,7 +13,7 @@ from typing import Any
 from urllib.error import URLError
 
 from cursor_bridge.cdp_composer_input import (
-    cdp_dispatch_enter,
+    cdp_dispatch_enter_guarded,
     cdp_insert_text,
     clear_our_composer_draft,
 )
@@ -52,6 +52,63 @@ from interlocutor.watermark import (
 )
 
 _VALID_GRANTS = frozenset({"operator", "explicit"})
+
+RELAY_NONCE_LABEL = "Relay-Nonce"
+
+
+def make_run_nonce() -> str:
+    """Unique per paste run; embedded in the outbound body for sent-transcript readback."""
+    return uuid.uuid4().hex[:12]
+
+
+def watermark_with_nonce(run_nonce: str) -> str:
+    nonce = str(run_nonce or "").strip()
+    if not nonce:
+        return WATERMARK
+    return f"{WATERMARK} · {RELAY_NONCE_LABEL}: {nonce}"
+
+
+def extract_run_nonce_from_line(line: str) -> str:
+    for part in str(line or "").splitlines():
+        if RELAY_NONCE_LABEL not in part:
+            continue
+        _, _, tail = part.partition(f"{RELAY_NONCE_LABEL}:")
+        return tail.strip()
+    return ""
+
+
+def operator_message_already_wrapped(text: str) -> bool:
+    """True when ``text`` already carries operator provenance (do not wrap again)."""
+    body = (text or "").strip()
+    if not body:
+        return False
+    if OPERATOR_HEADER in body:
+        return True
+    if extract_run_nonce_from_line(body):
+        return True
+    if WATERMARK in body and "Source:" in body:
+        return True
+    return False
+
+
+def wrap_operator_message(
+    *,
+    text: str,
+    authorization_source: str,
+    scope: str,
+    run_nonce: str | None = None,
+) -> str:
+    """Format one operator relay body with header, source, scope, watermark, and run nonce."""
+    body = (text or "").strip()
+    if operator_message_already_wrapped(body):
+        return body
+    src = (authorization_source or "").strip()
+    scope_s = (scope or "").strip()
+    nonce = str(run_nonce or "").strip() or make_run_nonce()
+    wm = watermark_with_nonce(nonce)
+    return (
+        f"{OPERATOR_HEADER}\n\nSource: {src}\nScope: {scope_s}\n\n{body}\n\n{wm}"
+    )
 
 
 def _grant_refuse(reason: str, **extra: Any) -> dict[str, Any]:
@@ -142,12 +199,20 @@ async def _finalize_verification_artifacts(
 
 
 def _transcript_ambiguous(
-    post: dict[str, Any], *, watermark: str, body_snippet: str
+    post: dict[str, Any],
+    *,
+    watermark: str,
+    body_snippet: str,
+    run_nonce: str = "",
 ) -> bool:
     """True when transcript/composer state does not decisively show submit/readback."""
     composer_draft = str(post.get("composer_draft") or "").strip()
-    messages = [str(m) for m in (post.get("recent_messages") or [])]
-    watermark_visible = any(watermark in m for m in messages)
+    messages = _transcript_message_texts(post)
+    nonce = str(run_nonce or "").strip()
+    if nonce:
+        watermark_visible = _nonce_in_sent_transcript(post, run_nonce=nonce)
+    else:
+        watermark_visible = any(watermark in m for m in messages)
     snippet = body_snippet.strip()
     snippet_visible = bool(snippet) and any(snippet in m for m in messages)
     if composer_draft and not watermark_visible and not snippet_visible:
@@ -164,11 +229,14 @@ def _dom_verification_conclusive(
     watermark: str,
     body_snippet: str,
     readback_ok: bool,
+    run_nonce: str = "",
 ) -> bool:
     active = str(post.get("active_agent_id") or "").strip()
     if not active or active != expected_agent_id:
         return False
-    if _transcript_ambiguous(post, watermark=watermark, body_snippet=body_snippet):
+    if _transcript_ambiguous(
+        post, watermark=watermark, body_snippet=body_snippet, run_nonce=run_nonce
+    ):
         return False
     return readback_ok
 
@@ -192,8 +260,19 @@ async def _submit_composer_send_button(
     }
 
 
-async def _submit_composer_enter(ws_url: str) -> dict[str, Any]:
-    return await cdp_dispatch_enter(ws_url)
+async def _submit_composer_enter(
+    ws_url: str,
+    *,
+    selector: str,
+    expected_agent_id: str,
+    nonce_needle: str,
+) -> dict[str, Any]:
+    return await cdp_dispatch_enter_guarded(
+        ws_url,
+        selector=selector,
+        expected_agent_id=expected_agent_id,
+        nonce_needle=nonce_needle,
+    )
 
 
 def _surface_agent_id(surface: dict[str, Any]) -> str:
@@ -264,10 +343,12 @@ async def _guarded_insert_and_submit(
     selected: bool,
     locate_method: str | None,
     surface: dict[str, Any],
+    run_nonce: str,
 ) -> tuple[dict[str, Any] | None, bool, dict[str, Any], list[str]]:
     """Insert + submit under display_switch_lock with agent re-verify."""
     submit_methods: list[str] = []
     post_submit = surface
+    wm_line = watermark_with_nonce(run_nonce)
 
     async with display_switch_lock(disp):
         matched, surface = await _probe_agent_match(ws_url, expected_agent_id=aid_s)
@@ -385,7 +466,10 @@ async def _guarded_insert_and_submit(
         submitted = False
         if first_send.get("ok"):
             post_submit, submitted = await _poll_submit_verified(
-                ws_url, watermark=WATERMARK, body_snippet=body_snippet
+                ws_url,
+                watermark=wm_line,
+                body_snippet=body_snippet,
+                run_nonce=run_nonce,
             )
         else:
             post_submit = surface
@@ -393,7 +477,10 @@ async def _guarded_insert_and_submit(
         if not submitted:
             retry_surface = await probe_surface(ws_url)
             if _submit_verified(
-                retry_surface, watermark=WATERMARK, body_snippet=body_snippet
+                retry_surface,
+                watermark=wm_line,
+                body_snippet=body_snippet,
+                run_nonce=run_nonce,
             ):
                 post_submit = retry_surface
                 submitted = True
@@ -424,12 +511,23 @@ async def _guarded_insert_and_submit(
                         submit_methods,
                     )
                 try:
-                    enter = await _submit_composer_enter(ws_url)
-                    submit_methods.append("cdp_enter")
+                    enter = await _submit_composer_enter(
+                        ws_url,
+                        selector=prompt_sel,
+                        expected_agent_id=aid_s,
+                        nonce_needle=run_nonce,
+                    )
                     if enter.get("ok"):
+                        submit_methods.append("cdp_enter")
                         post_submit, submitted = await _poll_submit_verified(
-                            ws_url, watermark=WATERMARK, body_snippet=body_snippet
+                            ws_url,
+                            watermark=wm_line,
+                            body_snippet=body_snippet,
+                            run_nonce=run_nonce,
                         )
+                    else:
+                        reason = str(enter.get("reason") or "enter_refused")
+                        submit_methods.append(f"cdp_enter_refused:{reason}")
                 except (TimeoutError, RuntimeError, OSError):
                     submitted = False
 
@@ -485,17 +583,35 @@ def _message_turns(post: dict[str, Any]) -> list[dict[str, str]]:
     return turns
 
 
+def _transcript_message_texts(post: dict[str, Any]) -> list[str]:
+    turns = _message_turns(post)
+    if turns:
+        return [t["text"] for t in turns]
+    return [str(m) for m in (post.get("recent_messages") or [])]
+
+
+def _nonce_in_sent_transcript(post: dict[str, Any], *, run_nonce: str) -> bool:
+    """True only when this run's nonce appears in probed transcript (composer excluded in probe)."""
+    nonce = str(run_nonce or "").strip()
+    if not nonce:
+        return False
+    needle = f"{RELAY_NONCE_LABEL}: {nonce}"
+    return any(needle in msg for msg in _transcript_message_texts(post))
+
+
 def _assistant_began(
     post: dict[str, Any],
     *,
     watermark: str,
     pre_messages: list[str],
     body_snippet: str = "",
+    run_nonce: str = "",
 ) -> bool:
     """True when streaming is active or assistant prose appears after our user turn."""
     if bool(post.get("generating")):
         return True
     snippet = body_snippet.strip()
+    nonce = str(run_nonce or "").strip()
     turns = _message_turns(post)
     if turns:
         user_idx = -1
@@ -503,17 +619,21 @@ def _assistant_began(
             if turn["role"] != "user":
                 continue
             text = turn["text"]
-            if watermark in text or (snippet and snippet in text):
+            if nonce and f"{RELAY_NONCE_LABEL}: {nonce}" in text:
+                user_idx = i
+            elif not nonce and (watermark in text or (snippet and snippet in text)):
                 user_idx = i
         if user_idx >= 0:
             for turn in turns[user_idx + 1 :]:
                 if turn["role"] == "assistant" and turn["text"].strip():
                     return True
         return False
-    messages = [str(m) for m in (post.get("recent_messages") or [])]
+    messages = _transcript_message_texts(post)
     wm_idx = -1
     for i, msg in enumerate(messages):
-        if watermark in msg or (snippet and snippet in msg):
+        if nonce and f"{RELAY_NONCE_LABEL}: {nonce}" in msg:
+            wm_idx = i
+        elif not nonce and (watermark in msg or (snippet and snippet in msg)):
             wm_idx = i
     if wm_idx >= 0 and wm_idx < len(messages) - 1:
         return True
@@ -530,25 +650,22 @@ def _readback_fields(
     watermark: str,
     pre_messages: list[str],
     body_snippet: str = "",
-    submit_verified: bool = False,
+    run_nonce: str = "",
 ) -> dict[str, bool]:
     composer_empty = not str(post.get("composer_draft") or "").strip()
-    snippet = body_snippet.strip()
-    watermark_visible = _message_in_transcript(
-        post, watermark=watermark, body_snippet=body_snippet
-    )
-    turns = _message_turns(post)
-    if turns:
-        texts = [t["text"] for t in turns]
+    nonce = str(run_nonce or "").strip()
+    if nonce:
+        watermark_visible = _nonce_in_sent_transcript(post, run_nonce=nonce)
     else:
-        texts = [str(m) for m in (post.get("recent_messages") or [])]
-    if submit_verified and snippet:
-        watermark_visible = True
+        watermark_visible = _message_in_transcript(
+            post, watermark=watermark, body_snippet=body_snippet
+        )
     assistant_began = _assistant_began(
         post,
         watermark=watermark,
         pre_messages=pre_messages,
         body_snippet=body_snippet,
+        run_nonce=nonce,
     )
     readback_ok = composer_empty and watermark_visible and assistant_began
     return {
@@ -573,22 +690,22 @@ def _target_verified(surface: dict[str, Any], *, expected_agent_id: str) -> bool
 
 
 def _message_in_transcript(
-    post: dict[str, Any], *, watermark: str, body_snippet: str
+    post: dict[str, Any], *, watermark: str, body_snippet: str, run_nonce: str = ""
 ) -> bool:
+    nonce = str(run_nonce or "").strip()
+    if nonce:
+        return _nonce_in_sent_transcript(post, run_nonce=nonce)
     snippet = body_snippet.strip()
-    turns = _message_turns(post)
-    messages = [t["text"] for t in turns] if turns else [
-        str(m) for m in (post.get("recent_messages") or [])
-    ]
+    messages = _transcript_message_texts(post)
     return any(watermark in m or (snippet and snippet in m) for m in messages)
 
 
 def _submit_verified(
-    post: dict[str, Any], *, watermark: str, body_snippet: str
+    post: dict[str, Any], *, watermark: str, body_snippet: str, run_nonce: str = ""
 ) -> bool:
     composer_empty = not str(post.get("composer_draft") or "").strip()
     return composer_empty and _message_in_transcript(
-        post, watermark=watermark, body_snippet=body_snippet
+        post, watermark=watermark, body_snippet=body_snippet, run_nonce=run_nonce
     )
 
 
@@ -597,6 +714,7 @@ async def _poll_submit_verified(
     *,
     watermark: str,
     body_snippet: str,
+    run_nonce: str = "",
     timeout_s: float = _SUBMIT_VERIFY_TIMEOUT_S,
     interval_s: float = _SUBMIT_VERIFY_INTERVAL_S,
 ) -> tuple[dict[str, Any], bool]:
@@ -607,7 +725,10 @@ async def _poll_submit_verified(
     while loop.time() <= deadline:
         post = await probe_surface(ws_url)
         verified = _submit_verified(
-            post, watermark=watermark, body_snippet=body_snippet
+            post,
+            watermark=watermark,
+            body_snippet=body_snippet,
+            run_nonce=run_nonce,
         )
         if verified:
             return post, True
@@ -621,7 +742,7 @@ async def _poll_readback(
     watermark: str,
     pre_messages: list[str],
     body_snippet: str = "",
-    submit_verified: bool = False,
+    run_nonce: str = "",
     timeout_s: float = _READBACK_POLL_TIMEOUT_S,
     interval_s: float = _READBACK_POLL_INTERVAL_S,
 ) -> tuple[dict[str, Any], dict[str, bool]]:
@@ -633,7 +754,7 @@ async def _poll_readback(
         watermark=watermark,
         pre_messages=pre_messages,
         body_snippet=body_snippet,
-        submit_verified=submit_verified,
+        run_nonce=run_nonce,
     )
     while loop.time() <= deadline:
         post = await probe_surface(ws_url)
@@ -642,7 +763,7 @@ async def _poll_readback(
             watermark=watermark,
             pre_messages=pre_messages,
             body_snippet=body_snippet,
-            submit_verified=submit_verified,
+            run_nonce=run_nonce,
         )
         if fields["readback_ok"]:
             return post, fields
@@ -739,8 +860,53 @@ async def _deliver_operator_session(
         )
     pre_messages = [str(m) for m in (surface.get("recent_messages") or [])]
     restore_agent_id = str(surface.get("active_agent_id") or "").strip()
-    did_switch = False
+    switch_ctx: dict[str, bool] = {"did_switch": False}
     locate_method: str | None = None
+
+    result: dict[str, Any] | None = None
+    try:
+        result = await _deliver_operator_session_body(
+            ws_url=ws_url,
+            aid_s=aid_s,
+            select=select,
+            line=line,
+            disp=disp,
+            app=app,
+            surface=surface,
+            pre_messages=pre_messages,
+            restore_agent_id=restore_agent_id,
+            switch_ctx=switch_ctx,
+            locate_method=locate_method,
+        )
+        return result
+    finally:
+        if switch_ctx["did_switch"] and restore_agent_id:
+            try:
+                await select_sidebar_target(
+                    ws_url, expected_agent_id=restore_agent_id
+                )
+                if result is not None:
+                    result["restore_ok"] = True
+            except (TimeoutError, RuntimeError, OSError) as exc:
+                if result is not None:
+                    result["restore_ok"] = False
+                    result["restore_error"] = type(exc).__name__
+
+
+async def _deliver_operator_session_body(
+    *,
+    ws_url: str,
+    aid_s: str,
+    select: bool,
+    line: str,
+    disp: str,
+    app: str,
+    surface: dict[str, Any],
+    pre_messages: list[str],
+    restore_agent_id: str,
+    switch_ctx: dict[str, bool],
+    locate_method: str | None,
+) -> dict[str, Any]:
     try:
         visible_ids = await visible_sidebar_agent_ids(ws_url)
     except (TimeoutError, RuntimeError, OSError) as exc:
@@ -805,7 +971,7 @@ async def _deliver_operator_session(
         if click_res.get("clicked"):
             selected = True
             if restore_agent_id and restore_agent_id != aid_s:
-                did_switch = True
+                switch_ctx["did_switch"] = True
             await asyncio.sleep(0.25)
             surface = await probe_surface(ws_url)
             verdict = wake_decision(surface, agent_id=aid_s)
@@ -830,7 +996,7 @@ async def _deliver_operator_session(
         if located.get("ok"):
             locate_method = str(located.get("locate_method") or "")
             if restore_agent_id and restore_agent_id != aid_s:
-                did_switch = True
+                switch_ctx["did_switch"] = True
             await asyncio.sleep(0.2)
             surface = await probe_surface(ws_url)
             verdict = wake_decision(surface, agent_id=aid_s)
@@ -907,6 +1073,8 @@ async def _deliver_operator_session(
     prompt_sel = composer_selector(app=app, agent_id=aid_s)
     flat_line = " ".join(line.splitlines()).strip()
     body_snippet = flat_line[:120]
+    run_nonce = extract_run_nonce_from_line(line)
+    wm_line = watermark_with_nonce(run_nonce)
 
     idle = await wait_for_operator_idle(
         ws_url,
@@ -937,6 +1105,7 @@ async def _deliver_operator_session(
         selected=selected,
         locate_method=locate_method,
         surface=surface,
+        run_nonce=run_nonce,
     )
     if early is not None:
         return early
@@ -963,8 +1132,12 @@ async def _deliver_operator_session(
             ).strip(),
             "assistant_began": False,
             "watermark_visible": _message_in_transcript(
-                post_submit, watermark=WATERMARK, body_snippet=body_snippet
+                post_submit,
+                watermark=wm_line,
+                body_snippet=body_snippet,
+                run_nonce=run_nonce,
             ),
+            "run_nonce": run_nonce,
             "selected": selected,
             "display": disp,
             "app": app,
@@ -977,21 +1150,20 @@ async def _deliver_operator_session(
 
     post, rb = await _poll_readback(
         ws_url,
-        watermark=WATERMARK,
+        watermark=wm_line,
         pre_messages=pre_messages,
         body_snippet=body_snippet,
-        submit_verified=True,
+        run_nonce=run_nonce,
     )
-    if did_switch and restore_agent_id:
-        await select_sidebar_target(ws_url, expected_agent_id=restore_agent_id)
     readback_ok = rb["readback_ok"]
     delivered = readback_ok
     dom_conclusive = _dom_verification_conclusive(
         post,
         expected_agent_id=aid_s,
-        watermark=WATERMARK,
+        watermark=wm_line,
         body_snippet=body_snippet,
         readback_ok=readback_ok,
+        run_nonce=run_nonce,
     )
     artifacts = await _finalize_verification_artifacts(
         ws_url,
@@ -1019,14 +1191,20 @@ async def _deliver_operator_session(
         "locate_method": locate_method,
         "message": line,
         "submit_methods": submit_methods,
-        "restore_agent_id": restore_agent_id if did_switch else None,
+        "restore_agent_id": restore_agent_id if switch_ctx["did_switch"] else None,
+        "run_nonce": run_nonce,
         **artifacts,
     }
 
 
 __all__ = [
     "WATERMARK",
+    "RELAY_NONCE_LABEL",
     "OPERATOR_HEADER",
     "deliver_operator_paste",
+    "make_run_nonce",
+    "operator_message_already_wrapped",
     "wrap_operator_message",
+    "extract_run_nonce_from_line",
+    "watermark_with_nonce",
 ]

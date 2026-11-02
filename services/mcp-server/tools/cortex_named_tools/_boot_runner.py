@@ -16,12 +16,7 @@ from agent_seat.boot_identity import (
     legacy_boot_identity,
 )
 from agent_seat.profiles import get_profile, resolve_seat
-from agent_seat.session_id import (
-    SESSION_ID_RE,
-    SessionMintMode,
-    agent_slug_from_session_id,
-    mint_session_id,
-)
+from agent_seat.session_id import SessionMintMode, mint_session_id
 from durable_io.atomic import durable_write_text
 from mcp_events import record
 from universal_logging import get_logger
@@ -219,53 +214,23 @@ def _resolve_last_session(
     identity: BootIdentity,
     extracted: dict[str, Any],
 ) -> dict[str, Any] | None:
-    """Pick last-session continuity without cross-agent fallback for logical seats."""
-    if not identity.is_logical:
-        return (extracted.get("continuity") or {}).get("last_session") or (
-            extracted["sessions"][0] if extracted.get("sessions") else None
-        )
-    continuity = extracted.get("continuity") or {}
-    if isinstance(continuity, dict) and continuity.get("error"):
-        continuity = {}
-    last_from_continuity = continuity.get("last_session")
-    if isinstance(last_from_continuity, dict):
-        if str(last_from_continuity.get("agent", "")) == identity.agent:
-            return last_from_continuity
-    sessions = extracted.get("sessions") or []
-    for row in sessions:
-        if isinstance(row, dict) and str(row.get("agent", "")) == identity.agent:
-            return row
-    return None
+    """Pick last-session continuity from boot fetch payload (capability-cell seats)."""
+    _ = identity
+    return (extracted.get("continuity") or {}).get("last_session") or (
+        extracted["sessions"][0] if extracted.get("sessions") else None
+    )
 
 
 def _continuity_for_briefing_card(
     identity: BootIdentity,
     extracted: dict[str, Any],
 ) -> dict[str, Any] | None:
-    """Strip error/mismatch continuity before card render (logical seats)."""
+    """Return continuity block for briefing card render (capability-cell seats)."""
+    _ = identity
     raw = extracted.get("continuity")
     if not isinstance(raw, dict):
         return None
-    if not identity.is_logical:
-        return raw or None
-    if raw.get("error"):
-        return None
-    out = dict(raw)
-    last = out.get("last_session")
-    if isinstance(last, dict) and str(last.get("agent", "")) != identity.agent:
-        out.pop("last_session", None)
-    chain = out.get("continuity_chain")
-    if isinstance(chain, list):
-        # Exact canonical ownership: a bare prefix test lets seat ``alpha`` claim
-        # ``alpha-beta-…`` sessions and malformed tails.
-        out["continuity_chain"] = [
-            sid
-            for sid in chain
-            if isinstance(sid, str)
-            and SESSION_ID_RE.fullmatch(sid)
-            and agent_slug_from_session_id(sid) == identity.session_prefix
-        ]
-    return out or None
+    return raw or None
 
 
 def _build_artifacts(
@@ -717,8 +682,6 @@ def run_cortex_brief(
         agent=capability_slug,
         identity=identity,
         capability_slug=capability_slug,
-        logical_seat_id=identity.logical_seat_id,
-        house=identity.house,
         inbox_recipient=identity.inbox_recipient,
         domain=boot_domain,
         principal_context=extracted.get("principal_context") or None,

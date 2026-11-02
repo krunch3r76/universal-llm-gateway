@@ -92,31 +92,14 @@ def build_manifest(
                 ),
             }
         )
-    if identity is not None and identity.is_logical:
-        from urllib.parse import urlencode
-
-        sess_qs = urlencode({"agent": identity.agent})
-        manifest.append(
-            {
-                "section": "sessions",
-                "hint": f"GET /session-journals?{sess_qs} via cortex-api",
-            }
-        )
-    else:
-        manifest.append(
-            {
-                "section": "sessions",
-                "hint": "cortex(tool='journal_read', arguments='{\"limit\": 5}')",
-            }
-        )
+    manifest.append(
+        {
+            "section": "sessions",
+            "hint": "cortex(tool='journal_read', arguments='{\"limit\": 5}')",
+        }
+    )
     if continuity:
-        from urllib.parse import urlencode
-
-        if identity is not None and identity.is_logical:
-            cont_qs = urlencode({"agent": identity.agent})
-            cont_hint = f"GET /boot-continuity?{cont_qs} via cortex-api"
-        else:
-            cont_hint = "GET /boot-continuity via cortex-api"
+        cont_hint = "GET /boot-continuity via cortex-api"
         manifest.append(
             {
                 "section": "continuity",
@@ -135,15 +118,9 @@ def build_manifest(
     # (written_file in LIVE, inline in INSPECT). It MUST NOT also appear here
     # as a manifest_only section — that produced a duplicate in boot_inspect
     # output. The artifact's own `path` field carries the fs hint.
-    if identity is not None and identity.is_logical:
-        self_hint = (
-            "cortex(tool='assertions', arguments="
-            f'\'{{\"entity_id\": \"{identity.self_entity_id}\"}}\')'
-        )
-    else:
-        self_hint = (
-            "cortex(tool='assertions', arguments='{\"entity_id\": \"ai_agent:AGENT\"}')"
-        )
+    self_hint = (
+        "cortex(tool='assertions', arguments='{\"entity_id\": \"ai_agent:AGENT\"}')"
+    )
     manifest.append(
         {
             "section": "self_reflections",

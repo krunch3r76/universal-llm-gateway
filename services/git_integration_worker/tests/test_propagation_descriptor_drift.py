@@ -29,6 +29,12 @@ def test_descriptor_drift_fatal_when_served_below_expected():
         "git_integration_worker: served x-mcp count 8 < expected 9" in msg
         for msg in result.fatal_messages
     )
+    agent_bus_expected = SERVED_ARTIFACT_DESCRIPTORS["agent_bus"].expected_x_mcp_count
+    assert agent_bus_expected == 30
+    assert any(
+        f"agent_bus: served x-mcp count 17 < expected {agent_bus_expected}" in msg
+        for msg in result.fatal_messages
+    )
     assert result.exit_code == 1
 
 

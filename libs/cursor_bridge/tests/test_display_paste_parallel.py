@@ -193,6 +193,13 @@ async def test_synthetic_keydown_yields_operator_busy_before_insert(
 async def test_deliver_operator_paste_restores_chat_after_hidden_switch(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    from cursor_bridge.operator_paste import watermark_with_nonce
+
+    fixed_nonce = "restore00001"
+    monkeypatch.setattr(
+        "cursor_bridge.operator_paste.make_run_nonce", lambda: fixed_nonce
+    )
+    wm = watermark_with_nonce(fixed_nonce)
     hidden_id = "hidden-agent-restore"
     operator_id = "operator-active"
     pre = {
@@ -215,7 +222,8 @@ async def test_deliver_operator_paste_restores_chat_after_hidden_switch(
     post = {
         **target,
         "generating": True,
-        "recent_messages": [WATERMARK],
+        "recent_messages": [wm],
+        "message_turns": [{"role": "user", "text": wm}],
     }
     probes = [pre, target, target, target, target, post, post]
 
@@ -308,3 +316,306 @@ async def test_deliver_operator_paste_restores_chat_after_hidden_switch(
     assert out["ok"] is True
     restore = [c for c in select_calls if c["expected_agent_id"] == operator_id]
     assert restore, select_calls
+
+
+def _hidden_switch_monkeypatch(
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    operator_id: str,
+    hidden_id: str,
+    probes: list[dict[str, Any]],
+    select_calls: list[dict[str, str]],
+) -> None:
+    tail = probes[-1] if probes else {}
+
+    async def _probe(_ws: str) -> dict[str, Any]:
+        return probes.pop(0) if probes else tail
+
+    async def _select(_ws: str, **kwargs: Any) -> dict[str, Any]:
+        select_calls.append(
+            {"expected_agent_id": str(kwargs.get("expected_agent_id") or "")}
+        )
+        return {"clicked": True, "matched_by": "agent_id"}
+
+    monkeypatch.setattr(
+        "cursor_bridge.operator_paste.list_pages",
+        lambda _o: [{"title": "Grok Bot", "web_socket_debugger_url": "ws://x"}],
+    )
+    monkeypatch.setattr(
+        "cursor_bridge.operator_paste.visible_sidebar_agent_ids",
+        AsyncMock(return_value=set()),
+    )
+    monkeypatch.setattr(
+        "cursor_bridge.operator_paste.locate_off_sidebar",
+        AsyncMock(return_value={"ok": True, "locate_method": "hidden_chats"}),
+    )
+    monkeypatch.setattr(
+        "cursor_bridge.operator_paste.probe_surface",
+        AsyncMock(side_effect=_probe),
+    )
+    monkeypatch.setattr(
+        "cursor_bridge.dom_composer_paste.install_operator_activity_probe",
+        AsyncMock(return_value=None),
+    )
+    monkeypatch.setattr(
+        "cursor_bridge.operator_paste.wait_for_operator_idle",
+        AsyncMock(return_value={"ok": True, "idle": True}),
+    )
+    monkeypatch.setattr(
+        "cursor_bridge.operator_paste.read_operator_busy",
+        AsyncMock(return_value={"ok": True, "operator_active": False}),
+    )
+    monkeypatch.setattr("cursor_bridge.operator_paste.select_sidebar_target", _select)
+
+
+@pytest.mark.asyncio
+async def test_deliver_operator_paste_restores_after_switch_on_submit_unverified(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    operator_id = "operator-active"
+    hidden_id = "hidden-agent-restore"
+    pre = {
+        "state": "chat_list",
+        "active_title": "Operator Chat",
+        "active_agent_id": operator_id,
+        "titles": ["Operator Chat"],
+        "title_counts": {"Operator Chat": 1},
+        "agent_ids": {operator_id: "Operator Chat"},
+        "composer_draft": "",
+        "generating": False,
+        "recent_messages": [],
+    }
+    target = {
+        **pre,
+        "active_agent_id": hidden_id,
+        "active_title": "Hidden Bot",
+        "agent_ids": {hidden_id: "Hidden Bot", operator_id: "Operator Chat"},
+    }
+    stuck = {**target, "composer_draft": "still here"}
+    probes = [pre, target, target, target, target, stuck]
+    select_calls: list[dict[str, str]] = []
+    _hidden_switch_monkeypatch(
+        monkeypatch,
+        operator_id=operator_id,
+        hidden_id=hidden_id,
+        probes=probes,
+        select_calls=select_calls,
+    )
+    monkeypatch.setattr(
+        "cursor_bridge.operator_paste._insert_composer_text",
+        AsyncMock(return_value={"ok": True}),
+    )
+    monkeypatch.setattr(
+        "cursor_bridge.operator_paste._submit_composer_send_button",
+        AsyncMock(return_value={"ok": True, "send_fallback_clicked": True}),
+    )
+    monkeypatch.setattr(
+        "cursor_bridge.operator_paste._submit_composer_enter",
+        AsyncMock(return_value={"ok": False, "reason": "enter_operator_active"}),
+    )
+    monkeypatch.setattr(
+        "cursor_bridge.operator_paste._poll_submit_verified",
+        AsyncMock(return_value=(stuck, False)),
+    )
+    monkeypatch.setattr(
+        "cursor_bridge.operator_paste._capture_screenshot_artifact",
+        AsyncMock(return_value={"sha256_png": None, "screenshot_path": None}),
+    )
+
+    out = await deliver_operator_paste(
+        display="10",
+        app="grok",
+        agent_id=hidden_id,
+        text="Operator relay test",
+        grant="operator",
+        authorization_source="agent-bus:21614#2",
+        scope="test",
+    )
+    assert out["reason"] == "submit_unverified"
+    restore = [c for c in select_calls if c["expected_agent_id"] == operator_id]
+    assert restore, select_calls
+
+
+@pytest.mark.asyncio
+async def test_deliver_operator_paste_no_restore_when_never_switched(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    agent_id = "agent-only"
+    surface = {
+        "state": "chat_list",
+        "active_title": "Test Grok",
+        "active_agent_id": agent_id,
+        "titles": ["Test Grok"],
+        "title_counts": {"Test Grok": 1},
+        "agent_ids": {agent_id: "Test Grok"},
+        "composer_draft": "",
+        "generating": False,
+        "recent_messages": [],
+    }
+    select_calls: list[dict[str, str]] = []
+
+    async def _select(_ws: str, **kwargs: Any) -> dict[str, Any]:
+        select_calls.append(
+            {"expected_agent_id": str(kwargs.get("expected_agent_id") or "")}
+        )
+        return {"clicked": True}
+
+    monkeypatch.setattr(
+        "cursor_bridge.operator_paste.list_pages",
+        lambda _o: [{"title": "Grok Bot", "web_socket_debugger_url": "ws://x"}],
+    )
+    monkeypatch.setattr(
+        "cursor_bridge.operator_paste.visible_sidebar_agent_ids",
+        AsyncMock(return_value={agent_id}),
+    )
+    monkeypatch.setattr(
+        "cursor_bridge.operator_paste.probe_surface",
+        AsyncMock(return_value=surface),
+    )
+    monkeypatch.setattr(
+        "cursor_bridge.dom_composer_paste.install_operator_activity_probe",
+        AsyncMock(return_value=None),
+    )
+    monkeypatch.setattr(
+        "cursor_bridge.operator_paste.wait_for_operator_idle",
+        AsyncMock(return_value={"ok": True, "idle": True}),
+    )
+    monkeypatch.setattr(
+        "cursor_bridge.operator_paste.read_operator_busy",
+        AsyncMock(return_value={"ok": True, "operator_active": True}),
+    )
+    monkeypatch.setattr("cursor_bridge.operator_paste.select_sidebar_target", _select)
+
+    out = await deliver_operator_paste(
+        display="10",
+        app="grok",
+        agent_id=agent_id,
+        text="hi",
+        grant="operator",
+        authorization_source="agent-bus:1#1",
+    )
+    assert out["reason"] == "operator_busy"
+    assert not select_calls
+
+
+@pytest.mark.asyncio
+async def test_deliver_operator_paste_restore_failure_preserves_submitted(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Break: restore exception in finally must not replace submitted=True success."""
+    from cursor_bridge.operator_paste import watermark_with_nonce
+
+    fixed_nonce = "restorefail1"
+    monkeypatch.setattr(
+        "cursor_bridge.operator_paste.make_run_nonce", lambda: fixed_nonce
+    )
+    wm = watermark_with_nonce(fixed_nonce)
+    hidden_id = "hidden-agent-restore"
+    operator_id = "operator-active"
+    pre = {
+        "state": "chat_list",
+        "active_title": "Operator Chat",
+        "active_agent_id": operator_id,
+        "titles": ["Operator Chat"],
+        "title_counts": {"Operator Chat": 1},
+        "agent_ids": {operator_id: "Operator Chat"},
+        "composer_draft": "",
+        "generating": False,
+        "recent_messages": [],
+    }
+    target = {
+        **pre,
+        "active_agent_id": hidden_id,
+        "active_title": "Hidden Bot",
+        "agent_ids": {hidden_id: "Hidden Bot", operator_id: "Operator Chat"},
+    }
+    post = {
+        **target,
+        "generating": True,
+        "recent_messages": [wm],
+        "message_turns": [{"role": "user", "text": wm}],
+    }
+    probes = [pre, target, target, target, target, post, post]
+
+    async def _probe(_ws: str) -> dict[str, Any]:
+        return probes.pop(0) if probes else post
+
+    restore_calls = {"n": 0}
+
+    async def _select(_ws: str, **kwargs: Any) -> dict[str, Any]:
+        aid = str(kwargs.get("expected_agent_id") or "")
+        if aid == operator_id:
+            restore_calls["n"] += 1
+            raise TimeoutError("restore failed")
+        return {"clicked": True, "matched_by": "agent_id"}
+
+    monkeypatch.setattr(
+        "cursor_bridge.operator_paste.list_pages",
+        lambda _o: [{"title": "Grok Bot", "web_socket_debugger_url": "ws://x"}],
+    )
+    monkeypatch.setattr(
+        "cursor_bridge.operator_paste.visible_sidebar_agent_ids",
+        AsyncMock(return_value=set()),
+    )
+    monkeypatch.setattr(
+        "cursor_bridge.operator_paste.locate_off_sidebar",
+        AsyncMock(return_value={"ok": True, "locate_method": "hidden_chats"}),
+    )
+    monkeypatch.setattr(
+        "cursor_bridge.operator_paste.probe_surface",
+        AsyncMock(side_effect=_probe),
+    )
+    monkeypatch.setattr(
+        "cursor_bridge.dom_composer_paste.install_operator_activity_probe",
+        AsyncMock(return_value=None),
+    )
+    monkeypatch.setattr(
+        "cursor_bridge.operator_paste.wait_for_operator_idle",
+        AsyncMock(return_value={"ok": True, "idle": True}),
+    )
+    monkeypatch.setattr(
+        "cursor_bridge.operator_paste._poll_readback",
+        AsyncMock(
+            return_value=(
+                post,
+                {
+                    "readback_ok": True,
+                    "composer_empty_after": True,
+                    "assistant_began": True,
+                    "watermark_visible": True,
+                },
+            )
+        ),
+    )
+    monkeypatch.setattr(
+        "cursor_bridge.operator_paste.read_operator_busy",
+        AsyncMock(return_value={"ok": True, "operator_active": False}),
+    )
+    monkeypatch.setattr("cursor_bridge.operator_paste.select_sidebar_target", _select)
+    monkeypatch.setattr(
+        "cursor_bridge.operator_paste._insert_composer_text",
+        AsyncMock(return_value={"ok": True}),
+    )
+    monkeypatch.setattr(
+        "cursor_bridge.operator_paste._submit_composer_send_button",
+        AsyncMock(return_value={"ok": True, "send_fallback_clicked": True}),
+    )
+    monkeypatch.setattr(
+        "cursor_bridge.operator_paste._capture_screenshot_artifact",
+        AsyncMock(return_value={"sha256_png": None, "screenshot_path": None}),
+    )
+
+    out = await deliver_operator_paste(
+        display="10",
+        app="grok",
+        agent_id=hidden_id,
+        text="Operator relay test",
+        grant="operator",
+        authorization_source="agent-bus:21614#2",
+        scope="test",
+    )
+    assert out["ok"] is True
+    assert out["submitted"] is True
+    assert out.get("restore_ok") is False
+    assert out.get("restore_error") == "TimeoutError"
+    assert restore_calls["n"] == 1

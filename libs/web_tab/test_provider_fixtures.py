@@ -46,4 +46,6 @@ def test_claude_fixture_user_assistant_turns() -> None:
 def test_chatgpt_fixture_user_turn_and_composer() -> None:
     html = _fixture("chatgpt_composer.html")
     assert _css_hits(html, _USER_TURN_SELECTORS["chatgpt"])
+    assert _css_hits(html, _ASSISTANT_TURN_SELECTORS["chatgpt"])
+    assert _css_hits(html, ".turn-action-controls")
     assert any(_css_hits(html, sel) for sel in composer_selectors_for_site("chatgpt"))

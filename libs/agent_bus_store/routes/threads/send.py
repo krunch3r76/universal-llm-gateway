@@ -271,6 +271,17 @@ async def send_route(body: TurnSendCreate) -> TurnSendCreated:
         tags=thread_tags,
         prior_turn=prior_turn,
     )
+    from ...house_paste_lane_gate import assert_house_paste_lane_gate
+
+    await asyncio.to_thread(
+        assert_house_paste_lane_gate,
+        thread_id=thread_id,
+        from_agent=body.from_agent,
+        subject=body.subject,
+        body=body.body,
+        tags=thread_tags,
+        prior_turn=prior_turn,
+    )
     storage_supersedes, echo_turn_number, echo_turn_id = await asyncio.to_thread(
         _resolve_send_supersedes,
         thread_id=thread_id,

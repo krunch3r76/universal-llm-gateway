@@ -36,7 +36,7 @@ def register_web_tab_write_tool(mcp: FastMCP) -> None:
     @mcp.tool(title="Web tab (write)")
     def web_tab_write(
         op: WriteOp,
-        cdp_url: str,
+        cdp_url: str | None = None,
         target_id: str | None = None,
         url: str | None = None,
         conversation_url: str | None = None,

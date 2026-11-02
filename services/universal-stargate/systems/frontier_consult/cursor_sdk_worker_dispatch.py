@@ -417,6 +417,7 @@ async def dispatch_cursor_sdk_worker_message(
     source_ref: str | None = None,
     force: bool = False,
     force_reason: str | None = None,
+    hop_park_release: bool = False,
     claim_id: str | None = None,
     caller_transcript_id: str | None = None,
     bus_lifecycle: Literal["persistent", "ephemeral"] | None = None,
@@ -466,6 +467,8 @@ async def dispatch_cursor_sdk_worker_message(
         payload["force"] = True
     if force_reason:
         payload["force_reason"] = force_reason
+    if hop_park_release:
+        payload["hop_park_release"] = True
     if claim_id:
         payload["claim_id"] = claim_id
     if caller_transcript_id:
@@ -496,7 +499,13 @@ async def dispatch_cursor_sdk_worker_message(
 
 
 async def post_worker_failure_turn(
-    *, thread_id: str, request_id: str, to_agent: str = "cursor-sdk"
+    *,
+    thread_id: str,
+    request_id: str,
+    to_agent: str = "cursor-sdk",
+    execution_id: str | None = None,
+    dispatch_id: str | None = None,
+    worker_detail: dict[str, Any] | None = None,
 ) -> None:
     """Best-effort failure turn when worker dispatch does not admit."""
     token = os.getenv("AGENT_BUS_TOKEN", "").strip()
@@ -507,15 +516,21 @@ async def post_worker_failure_turn(
     )
     if not token and not allow_unset:
         return
+    detail = worker_detail or {}
+    code = str(detail.get("code") or "CURSOR_WORKER_DISPATCH_FAILED")
+    message = str(detail.get("message") or "worker dispatch failed")
+    exec_part = execution_id or "unknown"
+    disp_part = dispatch_id or detail.get("dispatch_id") or "unknown"
+    subject = (
+        f"FAILED|execution_id={exec_part}|dispatch_id={disp_part}|code={code}|{message}"
+    )
     payload = {
         "thread": thread_id,
         "from": "dispatch",
         "to": to_agent,
-        "subject": f"cursor-sdk worker dispatch failed ({request_id})",
+        "subject": subject,
         "body": (
-            "Automated cursor-sdk worker dispatch failed (worker unreachable or "
-            "rejected admission). Re-dispatch manually or restart "
-            "git_integration_worker."
+            f"Cursor-sdk worker dispatch failed ({request_id}): {code} — {message}"
         ),
         "status": "open",
         "after_turn": 0,

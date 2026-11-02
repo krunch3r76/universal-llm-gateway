@@ -44,7 +44,10 @@ from services.git_integration_worker.cursor_home import (
     build_dispatch_path_prepend,
     dispatch_git_env_vars,
 )
-from services.git_integration_worker.cursor_sdk_context import steer_spool_dir
+from services.git_integration_worker.cursor_sdk_context import (
+    SDK_AGENT_STRIPPED_ENV_KEYS,
+    steer_spool_dir,
+)
 from services.git_integration_worker.cursor_sdk_dispatch_context import (
     SdkDispatchContext,
 )
@@ -145,7 +148,10 @@ def build_bridge_command(
             "bridge_bin must be an absolute path without '=' and not '-'-prefixed: "
             f"{bridge_bin!r}"
         )
-    command = [_ENV_BIN, f"HOME={dispatch_home}"]
+    command: list[str] = [_ENV_BIN]
+    for env_key in sorted(SDK_AGENT_STRIPPED_ENV_KEYS):
+        command.extend(("-u", env_key))
+    command.append(f"HOME={dispatch_home}")
     browsers = operator_playwright_browsers_dir(real_home)
     if browsers is not None:
         command.append(f"PLAYWRIGHT_BROWSERS_PATH={browsers}")

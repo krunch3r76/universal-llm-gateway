@@ -3,11 +3,15 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import re
 from typing import Any
 
+_EXPECT_DRAFT_SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
+
 GROK_PROMPT_SELECTOR = '[aria-label="Prompt"][contenteditable="true"]'
+OPERATOR_PROBE_VERSION = 2
 _STALE_WAKE_DRAFT = re.compile(r"^BRIDGE_WAKE\s+thread=\S+\s+turn=\d+(?:,\d+)*$")
 
 
@@ -15,31 +19,59 @@ def _is_stale_wake_draft(draft: str) -> bool:
     return bool(_STALE_WAKE_DRAFT.match(str(draft or "").strip()))
 
 
-DISPATCH_OPERATOR_KEYDOWN_JS = r"""
-(() => {
-  const g = window.__ulgOperatorActivity = window.__ulgOperatorActivity || { lastInputMs: 0 };
-  const target = document.querySelector('[aria-label="Prompt"][contenteditable="true"]')
-    || document.activeElement
-    || document.body;
-  target.dispatchEvent(new KeyboardEvent('keydown', { bubbles: true, cancelable: true, key: 'a' }));
-  return { ok: true, lastInputMs: g.lastInputMs };
-})()
-"""
+def composer_draft_sha256_hex(draft: str) -> str:
+    """UTF-8 SHA-256 hex digest of composer ``innerText`` (same bytes the probe reads)."""
+    return hashlib.sha256(str(draft).encode("utf-8")).hexdigest()
 
-INSTALL_OPERATOR_ACTIVITY_PROBE_JS = r"""
-(() => {
-  const g = window.__ulgOperatorActivity = window.__ulgOperatorActivity || {
+
+def probe_foreign_draft(
+    probe: dict[str, Any],
+    *,
+    expect_draft_sha256: str | None = None,
+) -> bool:
+    """True when the probe reports a non-agent draft (after optional SHA expectation)."""
+    foreign = bool(probe.get("foreign_draft"))
+    if not foreign:
+        return False
+    expect = str(expect_draft_sha256 or "").strip().lower()
+    if not expect or not _EXPECT_DRAFT_SHA256_RE.match(expect):
+        return foreign
+    draft = str(probe.get("composer_draft") or "")
+    if draft and composer_draft_sha256_hex(draft) == expect:
+        return False
+    return True
+
+
+INSTALL_OPERATOR_ACTIVITY_PROBE_JS = rf"""
+(() => {{
+  const PROBE_VERSION = {OPERATOR_PROBE_VERSION};
+  const g = window.__ulgOperatorActivity = window.__ulgOperatorActivity || {{
     lastInputMs: 0,
     ourDraftSig: '',
+    ourDraftWriter: '',
     installed: false,
-  };
-  if (g.installed) return {ok: true, already: true};
+    probeVersion: 0,
+  }};
+  if (g.probeVersion === PROBE_VERSION && g.installed) {{
+    return {{ok: true, already: true, probeVersion: PROBE_VERSION}};
+  }}
+  if (g._bump) {{
+    window.removeEventListener('keydown', g._bump, true);
+    window.removeEventListener('input', g._bump, true);
+    window.removeEventListener('pointerdown', g._bump, true);
+  }}
+  g._bump = (e) => {{
+    if (!e || !e.isTrusted) return;
+    if (Date.now() < Number(g.suppressUntilMs || 0)) return;
+    g.lastInputMs = Date.now();
+  }};
+  window.addEventListener('keydown', g._bump, true);
+  window.addEventListener('input', g._bump, true);
+  window.addEventListener('pointerdown', g._bump, true);
   g.installed = true;
-  const bump = () => { g.lastInputMs = Date.now(); };
-  window.addEventListener('keydown', bump, true);
-  window.addEventListener('pointerdown', bump, true);
-  return {ok: true, installed: true};
-})()
+  g.probeVersion = PROBE_VERSION;
+  return {{ok: true, installed: true, probeVersion: PROBE_VERSION}};
+}})()
 """
 
 READ_OPERATOR_BUSY_JS = r"""
@@ -66,6 +98,7 @@ READ_OPERATOR_BUSY_JS = r"""
     ok: true,
     operator_active: operatorActive,
     foreign_draft: foreignDraft,
+    composer_draft: draft,
     document_has_focus: document.hasFocus(),
     document_visibility: document.visibilityState || '',
     draft_len: draft.length,
@@ -95,6 +128,12 @@ def _flatten_paste_line(text: str) -> str:
     return " ".join((text or "").splitlines()).strip()
 
 
+def _dom_paste_text(text: str, *, preserve_newlines: bool) -> str:
+    if preserve_newlines:
+        return (text or "").strip()
+    return _flatten_paste_line(text)
+
+
 def _selector_list(selector: str) -> list[str]:
     return [s.strip() for s in selector.split(",") if s.strip()]
 
@@ -104,19 +143,27 @@ def _find_composer_js(selector: str) -> str:
     return f"(()=>{{const sels={sels};for(const s of sels){{const el=document.querySelector(s);if(el)return el;}}return null;}})()"
 
 
-def _set_composer_body(selector: str, text: str) -> str:
+def _set_composer_body(
+    selector: str,
+    text: str,
+    *,
+    preserve_newlines: bool = False,
+    draft_writer: str = "",
+) -> str:
     find = _find_composer_js(selector)
-    msg = json.dumps(_flatten_paste_line(text))
+    line = _dom_paste_text(text, preserve_newlines=preserve_newlines)
+    msg = json.dumps(line)
+    writer = json.dumps(str(draft_writer or ""))
     return (
         f"(()=>{{const el=({find});"
         "if(!el)return{ok:false,reason:'no_composer'};"
         f"const line={msg};"
+        f"const draftWriter={writer};"
         "const draft=(el.innerText||el.value||'').trim();"
         "const stale=/^BRIDGE_WAKE\\s+thread=\\S+\\s+turn=\\d+(?:,\\d+)*$/.test(draft);"
         "if(draft.length>0&&!stale&&draft!==line.trim())"
         "return{ok:false,reason:'composer_not_empty',draft};"
         "const g=window.__ulgOperatorActivity=window.__ulgOperatorActivity||{};"
-        "g.ourDraftSig=line;"
         "if(el.editor&&el.editor.commands&&typeof el.editor.commands.setContent==='function'){"
         "try{el.editor.commands.setContent(line);}catch(e){"
         "el.textContent=line;el.dispatchEvent(new InputEvent('input',{bubbles:true,data:line}));}"
@@ -126,20 +173,28 @@ def _set_composer_body(selector: str, text: str) -> str:
         "el.textContent=line;"
         "el.dispatchEvent(new InputEvent('input',{bubbles:true,inputType:'insertText',data:line}));"
         "}"
-        "return{ok:true,sig:line};})()"
+        "const after=(el.innerText||el.value||'').trim();"
+        "g.ourDraftSig=after;"
+        "g.ourDraftWriter=draftWriter;"
+        "return{ok:true,sig:after};})()"
     )
 
 
-def _click_send_own_draft_body(selector: str) -> str:
+def _click_send_own_draft_body(selector: str, *, draft_writer: str = "") -> str:
     """Send only when composer draft matches this writer's ourDraftSig."""
     find = _find_composer_js(selector)
     btn_sels = json.dumps(list(_SEND_BTN_SELECTORS))
+    expect_writer = json.dumps(str(draft_writer or ""))
     return (
         f"(()=>{{const el=({find});"
         "if(!el)return{ok:false,reason:'no_composer',send_clicked:false};"
-        "const g=window.__ulgOperatorActivity||{};"
+        "const g=window.__ulgOperatorActivity=window.__ulgOperatorActivity||{};"
+        f"const expectWriter={expect_writer};"
+        "const writer=String(g.ourDraftWriter||'').trim();"
         "const sig=String(g.ourDraftSig||'').trim();"
         "const draft=(el.innerText||el.value||'').trim();"
+        "if(expectWriter&&( !writer||writer!==expectWriter))"
+        "return{ok:false,reason:'foreign_draft',send_clicked:false,draft,sig,writer};"
         "if(!sig||draft!==sig)"
         "return{ok:false,reason:'draft_not_ours',send_clicked:false,draft,sig};"
         f"const root=el.closest('form')||el.parentElement||document;"
@@ -148,17 +203,57 @@ def _click_send_own_draft_body(selector: str) -> str:
         "for(const sel of btnSels){btn=root.querySelector(sel);if(btn)break;}"
         "if(!btn)return{ok:false,reason:'no_send_button',send_clicked:false};"
         "btn.click();"
+        "g.ourDraftSig='';"
+        "g.ourDraftWriter='';"
         "return{ok:true,send_clicked:true};})()"
     )
 
 
-def _click_send_body(selector: str, line: str) -> str:
+def clear_composer_draft_dom_no_focus_js(selector: str) -> str:
+    """Clear composer text via value setter + input event; no focus(), no Input.*."""
     find = _find_composer_js(selector)
-    lj = json.dumps(_flatten_paste_line(line))
+    return (
+        f"(()=>{{const el=({find});"
+        "if(!el)return{ok:false,reason:'no_composer'};"
+        "const g=window.__ulgOperatorActivity=window.__ulgOperatorActivity||{};"
+        "const now=Date.now();"
+        "const last=Number(g.lastInputMs||0);"
+        "const operatorActive=last>0&&(now-last)<10000;"
+        "if(operatorActive||document.hasFocus())"
+        "return{ok:false,reason:'operator_active',operator_active:operatorActive,"
+        "document_has_focus:document.hasFocus()};"
+        "if(el.editor&&el.editor.commands&&typeof el.editor.commands.setContent==='function'){"
+        "try{el.editor.commands.setContent('');}catch(e){el.textContent='';}"
+        "}else if(el.tagName==='TEXTAREA'||el.tagName==='INPUT'){"
+        "const desc=Object.getOwnPropertyDescriptor("
+        "el.tagName==='TEXTAREA'?HTMLTextAreaElement.prototype:HTMLInputElement.prototype,'value');"
+        "if(desc&&desc.set)desc.set.call(el,'');else el.value='';"
+        "el.dispatchEvent(new Event('input',{bubbles:true}));"
+        "}else{"
+        "el.textContent='';"
+        "el.dispatchEvent(new InputEvent('input',{bubbles:true}));"
+        "}"
+        "g.ourDraftSig='';"
+        "const after=(el.innerText||el.value||'').trim();"
+        "return{ok:true,cleared:after.length===0,draft:after};})()"
+    )
+
+
+async def clear_composer_draft_dom_no_focus(ws_url: str, *, selector: str) -> dict[str, Any]:
+    raw = await _cdp_eval(ws_url, clear_composer_draft_dom_no_focus_js(selector))
+    return raw if isinstance(raw, dict) else {"ok": False}
+
+
+def _click_send_body(
+    selector: str, line: str, *, preserve_newlines: bool = False
+) -> str:
+    find = _find_composer_js(selector)
+    lj = json.dumps(_dom_paste_text(line, preserve_newlines=preserve_newlines))
     btn_sels = json.dumps(list(_SEND_BTN_SELECTORS))
     return (
         f"(()=>{{const el=({find});"
         "if(!el)return{ok:false,reason:'no_composer',send_clicked:false};"
+        "const g=window.__ulgOperatorActivity=window.__ulgOperatorActivity||{};"
         f"const text=(el.innerText||el.value||'').trim(),line={lj};"
         "if(!text||(text!==line.trim()&&!/^BRIDGE_WAKE\\s+thread=\\S+\\s+turn=\\d+(?:,\\d+)*$/.test(text)))"
         "return{ok:false,reason:'composer_text_mismatch',send_clicked:false};"
@@ -168,6 +263,8 @@ def _click_send_body(selector: str, line: str) -> str:
         "for(const sel of btnSels){btn=root.querySelector(sel);if(btn)break;}"
         "if(!btn)return{ok:false,reason:'no_send_button',send_clicked:false};"
         "btn.click();"
+        "g.ourDraftSig='';"
+        "g.ourDraftWriter='';"
         "return{ok:true,send_clicked:true};})()"
     )
 
@@ -176,6 +273,22 @@ def operator_busy_probe_js(*, selector: str, watermark: str = "") -> str:
     sels = _selector_list(selector) or [selector]
     body = READ_OPERATOR_BUSY_JS.replace("%SELECTORS%", json.dumps(sels))
     return body.replace("%WATERMARK%", json.dumps(watermark or ""))
+
+
+def operator_activity_suppress_js(*, duration_ms: int = 5000) -> str:
+    """Raise suppress window so trusted CDP Input.* does not mark operator active."""
+    return (
+        "(()=>{const g=window.__ulgOperatorActivity="
+        f"window.__ulgOperatorActivity||{{}};g.suppressUntilMs=Date.now()+{int(duration_ms)};"
+        "return{ok:true};})()"
+    )
+
+
+def operator_activity_clear_suppress_js() -> str:
+    return (
+        "(()=>{const g=window.__ulgOperatorActivity=window.__ulgOperatorActivity||{};"
+        "g.suppressUntilMs=0;return{ok:true};})()"
+    )
 
 
 async def _cdp_eval(
@@ -210,13 +323,6 @@ async def _cdp_response(ws: Any, mid: int) -> dict[str, Any]:
             return msg
 
 
-async def dispatch_operator_keydown(ws_url: str) -> dict[str, Any]:
-    """Fire a bubbling keydown so the activity probe sees operator input (tests)."""
-    await install_operator_activity_probe(ws_url)
-    raw = await _cdp_eval(ws_url, DISPATCH_OPERATOR_KEYDOWN_JS)
-    return raw if isinstance(raw, dict) else {"ok": False}
-
-
 async def install_operator_activity_probe(ws_url: str) -> None:
     await _cdp_eval(ws_url, INSTALL_OPERATOR_ACTIVITY_PROBE_JS)
 
@@ -240,6 +346,7 @@ async def wait_for_operator_idle(
     poll_s: float = 0.5,
     refuse_if_active: bool = False,
     refuse_if_foreign_draft: bool = False,
+    expect_draft_sha256: str | None = None,
 ) -> dict[str, Any]:
     """Backoff until operator idle and no foreign draft, or timeout."""
     await install_operator_activity_probe(ws_url)
@@ -249,7 +356,9 @@ async def wait_for_operator_idle(
     while loop.time() <= deadline:
         probe = await read_operator_busy(ws_url, selector=selector, watermark=watermark)
         active = bool(probe.get("operator_active"))
-        foreign = bool(probe.get("foreign_draft"))
+        foreign = probe_foreign_draft(
+            probe, expect_draft_sha256=expect_draft_sha256
+        )
         if active and refuse_if_active:
             return {"ok": False, "reason": "operator_busy", "idle": False}
         if foreign and refuse_if_foreign_draft:
@@ -263,10 +372,22 @@ async def wait_for_operator_idle(
 
 
 async def dom_set_composer_text(
-    ws_url: str, *, selector: str, text: str
+    ws_url: str,
+    *,
+    selector: str,
+    text: str,
+    preserve_newlines: bool = False,
+    draft_writer: str = "",
 ) -> dict[str, Any]:
-    flat = _flatten_paste_line(text)
-    value = await _cdp_eval(ws_url, _set_composer_body(selector, flat))
+    value = await _cdp_eval(
+        ws_url,
+        _set_composer_body(
+            selector,
+            text,
+            preserve_newlines=preserve_newlines,
+            draft_writer=draft_writer,
+        ),
+    )
     if not isinstance(value, dict):
         return {"ok": False, "reason": "paste_failed"}
     if not value.get("ok"):
@@ -274,31 +395,51 @@ async def dom_set_composer_text(
     return {"ok": True}
 
 
-async def dom_click_send(ws_url: str, *, selector: str, line: str) -> dict[str, Any]:
-    flat = _flatten_paste_line(line)
-    value = await _cdp_eval(ws_url, _click_send_body(selector, flat))
+async def dom_click_send(
+    ws_url: str, *, selector: str, line: str, preserve_newlines: bool = False
+) -> dict[str, Any]:
+    value = await _cdp_eval(
+        ws_url,
+        _click_send_body(selector, line, preserve_newlines=preserve_newlines),
+    )
     if not isinstance(value, dict):
         return {"ok": False, "send_clicked": False}
     return value
 
 
-async def dom_click_send_own_draft(ws_url: str, *, selector: str) -> dict[str, Any]:
+async def dom_click_send_own_draft(
+    ws_url: str, *, selector: str, draft_writer: str = ""
+) -> dict[str, Any]:
     """Click send when composer text equals ourDraftSig (submit-without-text path)."""
-    value = await _cdp_eval(ws_url, _click_send_own_draft_body(selector))
+    value = await _cdp_eval(
+        ws_url, _click_send_own_draft_body(selector, draft_writer=draft_writer)
+    )
     if not isinstance(value, dict):
         return {"ok": False, "send_clicked": False}
     return value
 
 
 async def dom_insert_and_send(
-    ws_url: str, *, selector: str, line: str
+    ws_url: str,
+    *,
+    selector: str,
+    line: str,
+    preserve_newlines: bool = False,
+    draft_writer: str = "",
 ) -> dict[str, Any]:
     """Insert once via DOM; send via send-button click (no Enter, no focus())."""
-    flat = _flatten_paste_line(line)
-    ins = await dom_set_composer_text(ws_url, selector=selector, text=flat)
+    ins = await dom_set_composer_text(
+        ws_url,
+        selector=selector,
+        text=line,
+        preserve_newlines=preserve_newlines,
+        draft_writer=draft_writer,
+    )
     if not ins.get("ok"):
         return ins
-    send = await dom_click_send(ws_url, selector=selector, line=flat)
+    send = await dom_click_send(
+        ws_url, selector=selector, line=line, preserve_newlines=preserve_newlines
+    )
     if not send.get("ok"):
         return {
             "ok": False,
@@ -319,14 +460,18 @@ def foreign_draft_guard(surface: dict[str, Any], *, watermark: str = "") -> str 
 
 __all__ = [
     "GROK_PROMPT_SELECTOR",
+    "OPERATOR_PROBE_VERSION",
+    "composer_draft_sha256_hex",
     "composer_selector",
+    "probe_foreign_draft",
     "dom_click_send",
     "dom_click_send_own_draft",
     "dom_insert_and_send",
     "dom_set_composer_text",
     "foreign_draft_guard",
-    "dispatch_operator_keydown",
     "install_operator_activity_probe",
+    "operator_activity_clear_suppress_js",
+    "operator_activity_suppress_js",
     "operator_busy_probe_js",
     "read_operator_busy",
     "wait_for_operator_idle",

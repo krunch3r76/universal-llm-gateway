@@ -307,14 +307,17 @@ async def _run_native_tool_loop_body(
             from anthropic_credit.loop_refusal import (
                 credit_cap_notice,
                 emit_loop_refused,
+                parse_credit_refusal_detail,
                 parse_credit_refusal_type,
             )
+            from anthropic_credit.policy import CREDIT_REFUSAL_429_CODES
 
             refusal_code = parse_credit_refusal_type(exc)
-            if refusal_code != "anthropic_cycle_budget_exhausted":
+            if refusal_code not in CREDIT_REFUSAL_429_CODES:
                 raise
             emit_loop_refused(turns_used)
-            notice = credit_cap_notice()
+            refusal_detail = parse_credit_refusal_detail(exc)
+            notice = credit_cap_notice(code=refusal_code, detail=refusal_detail)
             prior_content = (
                 result.get("content", "") if isinstance(result, dict) else ""
             )
@@ -332,7 +335,7 @@ async def _run_native_tool_loop_body(
                 cancelled=False,
                 usage=usage_acc,
                 finish_reason="credit_cap",
-                block_reason="anthropic_cycle_budget_exhausted",
+                block_reason=refusal_code,
                 provider=provider,
                 raw=raw,
             )

@@ -61,9 +61,25 @@ async def test_status_handler_ignores_untrusted_identity(
 
 
 @pytest.mark.asyncio
-async def test_status_handler_requires_house() -> None:
+async def test_status_handler_list_mode_without_house(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        "web_tab.status_report.enumerate_house_agent_tab_index_pairs",
+        lambda: [],
+    )
     handler = WebTabStatusHandler()
     out = await handler.execute(None, _Ctx({}))
+    data = json.loads(out.raw)
+    assert data["ok"] is True
+    assert data["mode"] == "list"
+    assert data["rows"] == []
+
+
+@pytest.mark.asyncio
+async def test_status_handler_single_house_still_requires_agent() -> None:
+    handler = WebTabStatusHandler()
+    out = await handler.execute(None, _Ctx({"house_id": "21207"}))
     data = json.loads(out.raw)
     assert data["ok"] is False
 

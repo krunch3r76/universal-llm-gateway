@@ -104,9 +104,7 @@ def build_futures_spec(
     # Boot card uses windowed unread-toc sample + unwindowed totals (Q6).
     threads_qs = urlencode({"status": "active", "has_unread": "true", "limit": 10})
     session_qs_parts: dict[str, str | int] = {"limit": profile.get("session_limit", 3)}
-    if identity is not None and identity.is_logical:
-        session_qs_parts["agent"] = identity.agent
-    elif profile.get("session_agent_filter"):
+    if profile.get("session_agent_filter"):
         session_qs_parts["agent"] = str(profile["session_agent_filter"])
     session_qs = urlencode(session_qs_parts)
 

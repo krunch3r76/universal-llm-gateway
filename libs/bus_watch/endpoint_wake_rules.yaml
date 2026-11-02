@@ -3,6 +3,8 @@
 rules:
   - id: drop_self_or_broadcast
     action: suppress
+  - id: drop_orion_echo
+    action: suppress
   - id: drop_stage_mgr_echo
     action: suppress
   # Pure ACK|/ROUTE| to stage mgr / grok-bot / web-anthropic / maestro only; compound

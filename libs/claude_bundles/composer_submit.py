@@ -45,7 +45,19 @@ def composer_holds_needle(draft: dict[str, Any], needle: str) -> bool:
     """True when the submit needle is still sitting in composer inner text."""
     if not needle:
         return False
-    return needle in str(draft.get("text") or "")
+    text = str(draft.get("text") or "")
+    return normalize_committed_turn(needle) in normalize_committed_turn(text)
+
+
+def needle_index_in_draft(draft: dict[str, Any], needle: str) -> int:
+    """Index of normalized *needle* in normalized draft text, or -1 when absent."""
+    if not needle:
+        return -1
+    text = normalize_committed_turn(str(draft.get("text") or ""))
+    norm_needle = normalize_committed_turn(needle)
+    if not norm_needle:
+        return -1
+    return text.find(norm_needle)
 
 
 def _normalize_draft(raw: object) -> dict[str, Any]:
@@ -98,6 +110,26 @@ async def composer_holds_draft(page, needle: str, *, composer=None) -> bool:
         return False
     draft = await read_composer_draft(page, composer=composer)
     return composer_holds_needle(draft, needle)
+
+
+async def composer_still_holds_uncommitted_draft(
+    page, needle: str, *, composer=None
+) -> bool:
+    """True while the composer still needs submit proof (draft or len guard).
+
+    When the needle is absent from the returned text but ``len`` shows a
+    non-empty composer and committed DOM does not hold the marker yet, treat
+    the draft as still present (truncation-safe release gate).
+    """
+    if not needle:
+        return False
+    draft = await read_composer_draft(page, composer=composer)
+    if composer_holds_needle(draft, needle):
+        return True
+    composer_len = int(draft.get("len") or 0)
+    if composer_len > 0 and not await marker_survives_settle(page, needle, settle_ms=0):
+        return True
+    return False
 
 
 async def await_composer_released(
@@ -201,13 +233,39 @@ async def prove_composer_submitted(page, prompt: str, *, composer=None) -> None:
     needle = verification_marker(prompt)
     if not needle:
         return
-    if await await_composer_released(page, needle, composer=composer):
+    if not await composer_still_holds_uncommitted_draft(
+        page, needle, composer=composer
+    ):
         return
-    await page.keyboard.press("Enter")
-    if await await_composer_released(page, needle, composer=composer):
-        return
+    elapsed = 0.0
+    limit_ms = int(_RELEASE_TIMEOUT_S * 1000)
+    while elapsed < limit_ms:
+        if not await composer_still_holds_uncommitted_draft(
+            page, needle, composer=composer
+        ):
+            return
+        await page.wait_for_timeout(_RELEASE_POLL_MS)
+        elapsed += _RELEASE_POLL_MS
+    draft = await read_composer_draft(page, composer=composer)
+    holds = composer_holds_needle(draft, needle)
+    composer_len = int(draft.get("len") or 0)
+    committed = await marker_survives_settle(page, needle, settle_ms=0)
+    if not holds and composer_len > 0 and not committed:
+        await page.keyboard.press("Enter")
+        if not await composer_still_holds_uncommitted_draft(
+            page, needle, composer=composer
+        ):
+            return
+    elif holds:
+        await page.keyboard.press("Enter")
+        if not await composer_still_holds_uncommitted_draft(
+            page, needle, composer=composer
+        ):
+            return
     await press_send_chords(page, needle, composer=composer)
-    if await await_composer_released(page, needle, composer=composer):
+    if not await composer_still_holds_uncommitted_draft(
+        page, needle, composer=composer
+    ):
         return
     raise RuntimeError(
         "submit did not clear composer: Send click/chords left the draft in the box"
@@ -242,9 +300,12 @@ async def assert_committed_user_turn(
         elapsed += poll_ms
     draft = await read_composer_draft(page, composer=composer)
     committed = await marker_survives_settle(page, needle, settle_ms=0)
+    holds_needle = composer_holds_needle(draft, needle)
+    needle_index = needle_index_in_draft(draft, needle)
     raise RuntimeError(
         "submit_unverified: prompt marker absent from committed user turns "
-        f"(committed={committed}, composer_len={draft.get('len')}, "
+        f"(committed={committed}, holds_needle={holds_needle}, "
+        f"needle_index={needle_index}, composer_len={draft.get('len')}, "
         f"composer_text={str(draft.get('text') or '')[:120]!r}, needle={needle!r})"
     )
 

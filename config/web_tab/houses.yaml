@@ -1,0 +1,12 @@
+# Io-agent browser houses — keep in sync with scripts/io-agent-*-provision.py
+# claude.ai chat -> Jupiter :2 cdp_ask (not web_tab)
+surfaces:
+  chatgpt:
+    cdp_url: http://127.0.0.1:9342
+    display: ":12"
+    profile: ~/.gateway/chatgpt-io
+  anthropic_console:
+    cdp_url: http://127.0.0.1:9343
+    display: ":13"
+    profile: ~/.gateway/claude-ai-io
+    start_url: https://console.anthropic.com/sign-in

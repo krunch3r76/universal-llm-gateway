@@ -15,12 +15,13 @@ from web_chat_relay.orion_hop_storage import (
 )
 from web_chat_relay.orion_wake import (
     _DIALOG_SCAN_JS,
+    DEFAULT_ORION_CDP_URL,
     PINNED_CONVERSATION_ID,
     PINNED_CONVERSATION_URL,
     OrionPage,
     _blocking_dialog,
+    _dom_deliver,
     _handle_approvals,
-    _paste_and_send,
     conversation_id_from_url,
 )
 
@@ -428,6 +429,7 @@ async def orion_hop(
     *,
     read_handoff: HandoffRead | None = None,
     attempt_store: HopAttemptStore | None = None,
+    cdp_url: str = DEFAULT_ORION_CDP_URL,
 ) -> dict[str, Any]:
     """Open a new project conversation, select effort, paste hop prompt, approve connectors."""
     handoff = await preflight_standing_handoff(read_handoff)
@@ -470,8 +472,20 @@ async def orion_hop(
         new_url=new_url,
         handoff_read_sha256=handoff_sha,
     )
+    dom = await _dom_deliver(
+        page, paste_text, cdp_url=cdp_url, preserve_newlines=True
+    )
+    if not dom.get("ok"):
+        return _refuse(
+            "paste_failed",
+            error=str(dom.get("reason") or "paste_failed"),
+            pasted=False,
+            effort=effort,
+            conversation_url=new_url,
+            old_conversation_url=old_url,
+        )
+    dom_receipt = str(dom.get("receipt") or "dom_paste")
     try:
-        await _paste_and_send(page, paste_text)
         await page.wait_for_timeout(400)
         approval = await _handle_approvals(page)
     except Exception as exc:
@@ -498,6 +512,7 @@ async def orion_hop(
             "handoff_read_sha256": handoff_sha,
             "identity_token": ORION_IDENTITY_TOKEN,
             "paste_len": len(paste_text),
+            "receipt": dom_receipt,
         }
 
     attempt = build_hop_attempt(
@@ -522,6 +537,7 @@ async def orion_hop(
         "attempt_id": attempt.attempt_id,
         "hop_attempt": attempt.to_dict(),
         "paste_len": len(paste_text),
+        "receipt": dom_receipt,
         "pinned_conversation_preserved": PINNED_CONVERSATION_URL,
     }
 

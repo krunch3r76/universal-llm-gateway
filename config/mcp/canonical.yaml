@@ -1360,7 +1360,7 @@ tools:
   flat_call_shape:
     tool: cortex_friction
     substrate_qualified: user-vortex__cortex_friction
-  fol_descriptor: 'owner ∈ {service:,agent_skill:,ai_agent:} (bare slug -> service:); service= is the back-compat alias; exactly one of owner/service required. Required: category (enum), note (not message), agent.
+  fol_descriptor: 'owner ∈ {service:,agent_skill:,ai_agent:} (bare slug -> service:); service= is the back-compat alias; exactly one of owner/service required. Required: category (enum), note (not message). Optional: agent.
 
     Protocol category requires exactly one anchor unless actionable=false — charter{charter_root, window_index} or continuity{root_thread, cp_ordinal} (see file_charter_protocol_friction). Down-casting to schema_gap is a filing error once continuity is available.
 
@@ -5627,6 +5627,7 @@ tools:
         type: string
       surface:
         type: string
+        description: chatgpt (:12/9342), grok (explicit CDP), or anthropic_console (:13/9343). claude.ai chat is Jupiter :2 cdp_ask — not web_tab. Legacy alias claude maps to anthropic_console only.
     required:
     - op
   mandate_safety: read_only
@@ -5701,6 +5702,7 @@ tools:
         type: string
       surface:
         type: string
+        description: chatgpt (:12/9342), grok (explicit CDP), or anthropic_console (:13/9343). claude.ai chat is Jupiter :2 cdp_ask — not web_tab. Legacy alias claude maps to anthropic_console only.
       conversation_url:
         type: string
       grant:
@@ -5715,7 +5717,6 @@ tools:
         default: false
     required:
     - op
-    - cdp_url
     - grant
     - authorization_source
   mandate_safety: write
@@ -5761,7 +5762,6 @@ tools:
         type: string
     required:
     - op
-    - cdp_url
     - grant
     - authorization_source
   mandate_safety: write
@@ -5809,7 +5809,6 @@ tools:
         type: boolean
     required:
     - op
-    - cdp_url
     - target_id
     - text
     - grant
@@ -5857,7 +5856,6 @@ tools:
         type: string
     required:
     - op
-    - cdp_url
     - target_id
     - grant
     - authorization_source
@@ -5902,7 +5900,6 @@ tools:
         type: integer
     required:
     - op
-    - cdp_url
     - target_id
     - text
   mandate_safety: write
@@ -5946,7 +5943,6 @@ tools:
         type: string
     required:
     - op
-    - cdp_url
     - target_id
   mandate_safety: write
   seat_visibility:

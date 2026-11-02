@@ -1307,6 +1307,15 @@ def claim_due_wakes(
             skipped: list[dict[str, Any]] = []
             claimable: list[sqlite3.Row] = []
             for row in rows:
+                from bus_watch.endpoint_wake_composer_defer import (
+                    composer_defer_blocks_claim,
+                )
+
+                if composer_defer_blocks_claim(
+                    reason=str(row["reason"] or ""),
+                    decided_by_rule=str(row["decided_by_rule"] or ""),
+                ):
+                    continue
                 reason = _skip_reason(conn, row)
                 if reason:
                     conn.execute(
@@ -1336,7 +1345,8 @@ def claim_due_wakes(
                     """
                     SELECT endpoint_wake_ledger.*,
                            turns.body AS body,
-                           turns.from_agent AS from_agent
+                           turns.from_agent AS from_agent,
+                           turns.to_agent AS to_agent
                     FROM endpoint_wake_ledger
                     LEFT JOIN turns ON turns.id = endpoint_wake_ledger.turn_id
                     WHERE endpoint_wake_ledger.wake_id=?
@@ -1472,6 +1482,13 @@ def record_wake_result(
     now: str | None = None,
 ) -> int:
     """Persist a result on claimed rows, or unknown rows folded from that claim."""
+    from bus_watch.endpoint_wake_composer_defer import (
+        merge_composer_defer_decided_by_rule,
+    )
+
+    decided_by_rule = merge_composer_defer_decided_by_rule(
+        decided_by_rule, reason=reason
+    )
     stamp = _now(now)
     finished = None if outcome == "refused" else stamp
     with write_connect() as conn:
@@ -1529,3 +1546,49 @@ def list_turns_since(after_id: int, limit: int) -> list[dict[str, Any]]:
             (after_id, limit),
         ).fetchall()
     return [dict(r) for r in rows]
+
+
+def list_wake_ledger_rows(
+    *,
+    thread: str | None = None,
+    turn_id: int | None = None,
+    turn_number: int | None = None,
+    agent: str | None = None,
+    state: str | None = None,
+    limit: int = 20,
+) -> list[dict[str, Any]]:
+    """Read-only wake ledger query for agent_bus_read ``wake_ledger``."""
+    cap = max(1, min(int(limit), 200))
+    clauses: list[str] = []
+    params: list[Any] = []
+    if thread is not None and str(thread).strip():
+        clauses.append("thread_id = ?")
+        params.append(str(thread).strip())
+    if turn_id is not None:
+        clauses.append("turn_id = ?")
+        params.append(int(turn_id))
+    if turn_number is not None:
+        clauses.append("turn_number = ?")
+        params.append(int(turn_number))
+    if agent is not None and str(agent).strip():
+        clauses.append("agent = ?")
+        params.append(str(agent).strip())
+    if state is not None and str(state).strip():
+        clauses.append("state = ?")
+        params.append(str(state).strip())
+    where = f" WHERE {' AND '.join(clauses)}" if clauses else ""
+    sql = (
+        "SELECT id, agent, thread_id, turn_id, turn_number, state, wake_id, route, "
+        "subscription_id, cse_registration_id, reason, decided_by_rule, "
+        "created_at, claimed_at, finished_at "
+        f"FROM endpoint_wake_ledger{where} ORDER BY id DESC LIMIT ?"
+    )
+    params.append(cap)
+    with connect() as conn:
+        rows = conn.execute(sql, params).fetchall()
+    out: list[dict[str, Any]] = []
+    for row in rows:
+        item = dict(row)
+        item["rule_id"] = item.pop("decided_by_rule", None)
+        out.append(item)
+    return out

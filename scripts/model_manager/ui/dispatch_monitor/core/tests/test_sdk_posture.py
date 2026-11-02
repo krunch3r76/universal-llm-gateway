@@ -2,12 +2,20 @@
 
 from __future__ import annotations
 
+from scripts.model_manager.ui.dispatch_monitor.core.board_lines import (
+    sdk_flight_fragment,
+    sdk_unstarted_line,
+)
 from scripts.model_manager.ui.dispatch_monitor.core.dtos import SdkDispatchRow
 from scripts.model_manager.ui.dispatch_monitor.core.sdk_posture import (
+    ROW_TAG,
+    classify_sdk_activity,
     classify_sdk_live,
     posture_legend,
     row_role,
+    sdk_flight_label,
     sort_sdk_live,
+    split_open_sdk,
 )
 
 
@@ -15,24 +23,32 @@ def _row(
     dispatch_id: str,
     *,
     root_id: str | None = None,
+    thread_id: str | None = None,
     state: str = "running",
     tool_call_count: int | None = None,
     last_tool_name: str | None = None,
     idle_age_ms: int | None = 0,
+    elapsed_ms: int | None = None,
     parent_execution_id: str | None = None,
     review_child: bool = False,
     model: str | None = None,
+    emitters_seen: tuple[str, ...] = (),
+    caller_via: str | None = None,
 ) -> SdkDispatchRow:
     return SdkDispatchRow(
         dispatch_id=dispatch_id,
         root_id=root_id,
+        thread_id=thread_id,
         state=state,
         tool_call_count=tool_call_count,
         last_tool_name=last_tool_name,
         idle_age_ms=idle_age_ms,
+        elapsed_ms=elapsed_ms,
         parent_execution_id=parent_execution_id,
         review_child=review_child,
         model=model,
+        emitters_seen=emitters_seen,
+        caller_via=caller_via,
     )
 
 
@@ -70,23 +86,72 @@ def test_nested_when_review_child_linked() -> None:
     assert classify_sdk_live(live) == "nested"
     assert row_role(live[0], live, "nested") == "parent"
     assert row_role(live[1], live, "nested") == "child"
-def test_id_split_same_root_without_park() -> None:
-    live = [
-        _row("fc8437a1", root_id="6186", idle_age_ms=120_000),
+
+
+def test_never_active_rows_stay_unstarted_with_or_without_composer_workers() -> None:
+    """Three never-active rows stay UNSTARTED; header counts LIVE only."""
+    never = [
         _row(
-            "71f4e2689440",
-            root_id="6186",
-            tool_call_count=23,
-            last_tool_name="mcp",
-            idle_age_ms=0,
+            "idle-a",
+            elapsed_ms=90_000,
+            idle_age_ms=90_000,
+            emitters_seen=("pipeline",),
+            caller_via="mcp",
+        ),
+        _row(
+            "idle-b",
+            elapsed_ms=60_000,
+            idle_age_ms=60_000,
+            emitters_seen=("pipeline",),
+            caller_via="mcp",
+        ),
+        _row(
+            "idle-c",
+            elapsed_ms=30_000,
+            idle_age_ms=30_000,
+            emitters_seen=("pipeline",),
+            caller_via="mcp",
         ),
     ]
-    assert classify_sdk_live(live) == "id_split"
-    assert row_role(live[0], live, "id_split") == "ghost"
-    assert row_role(live[1], live, "id_split") == "live"
-    ordered = sort_sdk_live(live, "id_split")
-    assert ordered[0].dispatch_id == "71f4e2689440"
-    assert "id_split" in (posture_legend("id_split") or "")
+    workers = [
+        _row(
+            "composer-1",
+            root_id="12286",
+            thread_id="21698",
+            model="composer-2.5",
+            tool_call_count=4,
+            elapsed_ms=20_000,
+            idle_age_ms=1_000,
+        ),
+        _row(
+            "composer-2",
+            root_id="12286",
+            thread_id="21707",
+            model="composer-2.5",
+            tool_call_count=2,
+            elapsed_ms=15_000,
+            idle_age_ms=500,
+        ),
+    ]
+    assert [classify_sdk_activity(row) for row in never] == ["UNSTARTED"] * 3
+    live, unstarted = split_open_sdk(never + workers)
+    assert {row.dispatch_id for row in live} == {"composer-1", "composer-2"}
+    assert [row.dispatch_id for row in unstarted] == ["idle-a", "idle-b", "idle-c"]
+    assert sdk_flight_label(live, unstarted) == "sdk 2 +3 unstarted"
+    assert sdk_flight_fragment(never + workers) == ("sdk 2 +3 unstarted", 20_000)
+    assert len(live) == 2
+    assert all(row_role(row, never + workers, "id_split") != "ghost" for row in never)
+    assert "ghost" not in ROW_TAG
+    assert posture_legend("id_split") is None
+    assert "via=mcp" in sdk_unstarted_line(never[0], width=80)
+    assert "el=1m30s" in sdk_unstarted_line(never[0], width=80)
+
+    live_only, unstarted_only = split_open_sdk(never)
+    assert live_only == []
+    assert [classify_sdk_activity(row) for row in unstarted_only] == ["UNSTARTED"] * 3
+    assert [row.dispatch_id for row in unstarted_only] == ["idle-a", "idle-b", "idle-c"]
+    assert sdk_flight_label(live_only, unstarted_only) == "sdk 0 +3 unstarted"
+    assert sdk_flight_fragment(never) == ("sdk 0 +3 unstarted", None)
 
 
 def test_parallel_distinct_roots() -> None:

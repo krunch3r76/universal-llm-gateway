@@ -150,6 +150,29 @@ def test_build_bridge_command_never_injects_cursor_api_key(tmp_path: Path) -> No
     assert not any(a.startswith("CURSOR_API_KEY=") for a in command)
 
 
+def test_build_bridge_command_unsets_mcp_tokens_for_agent_shell(
+    tmp_path: Path,
+) -> None:
+    """GIW Popen env may still carry tokens; env(1) -u strips them before the bridge."""
+    from services.git_integration_worker.cursor_sdk_context import (
+        SDK_AGENT_STRIPPED_ENV_KEYS,
+    )
+
+    home = tmp_path / "dispatch-home"
+    home.mkdir()
+    command = build_bridge_command(
+        bridge_bin=sys.executable,
+        dispatch_home=home,
+        repo_venv=None,
+        real_home=None,
+        dispatch_id="disp-strip",
+    )
+    offset = 1
+    for key in sorted(SDK_AGENT_STRIPPED_ENV_KEYS):
+        assert command[offset : offset + 2] == ["-u", key]
+        offset += 2
+
+
 def test_validate_dispatch_context_other_models_fail_closed(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

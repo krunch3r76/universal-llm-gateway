@@ -31,6 +31,21 @@ from web_chat_relay.orion_wake_owner import (
 
 pytestmark = pytest.mark.offline
 
+
+@pytest.fixture(autouse=True)
+def stub_orion_dom_deliver(monkeypatch: pytest.MonkeyPatch) -> None:
+    async def _fake(page: object, text: str, **kwargs: object) -> dict[str, object]:
+        delivered = getattr(page, "dom_delivered", None)
+        if delivered is None:
+            page.dom_delivered = []  # type: ignore[attr-defined]
+            delivered = page.dom_delivered  # type: ignore[attr-defined]
+        delivered.append(text)
+        page.pasted = True  # type: ignore[attr-defined]
+        return {"ok": True, "receipt": "dom_committed"}
+
+    monkeypatch.setattr("web_chat_relay.orion_wake._dom_deliver", _fake)
+    monkeypatch.setattr("web_chat_relay.orion_hop._dom_deliver", _fake)
+
 BIRTH_FIXTURE = b"Orion birth prompt fixture.\n"
 HANDOFF_SHA = "413806d1e263a8d285974cd32ba445c70f090d05ed98d6254cb102a8dce26596"
 NEW_CONVERSATION_ID = "11111111-2222-3333-4444-555555555555"
@@ -249,6 +264,7 @@ class _FakeHopPage:
         self.approval_click_index: int | None = None
         self._effort_click_index: int | None = None
         self.pasted = False
+        self.dom_delivered: list[str] = []
         self.clicked: list[str] = []
         self.repin_calls: list[str] = []
         self.skip_new_chat_control = skip_new_chat_control
@@ -342,7 +358,7 @@ class _FakeHopPage:
         return {}
 
     async def wait_for_timeout(self, _ms: int) -> None:
-        if self.keyboard.inserted:
+        if self.dom_delivered or self.keyboard.inserted:
             self.pasted = True
             self.approval_runs += 1
 
@@ -366,7 +382,8 @@ async def test_pro_selectable_and_paste_includes_identity_pointer() -> None:
         new_url=NEW_URL,
         handoff_read_sha256=HANDOFF_SHA,
     )
-    assert page.keyboard.inserted[0] == expected
+    assert page.dom_delivered[0] == expected
+    assert not page.keyboard.inserted
     pointer = build_identity_pointer_line(
         old_url=PINNED_CONVERSATION_URL,
         new_url=NEW_URL,
@@ -420,7 +437,30 @@ async def test_unknown_dialog_refused_before_paste() -> None:
     out = await orion_hop(page, BIRTH_FIXTURE, read_handoff=_handoff_ok)
     assert out["reason"] == "non_connector_dialog"
     assert out["pasted"] is False
+    assert not page.dom_delivered
     assert not page.keyboard.inserted
+
+
+@pytest.mark.asyncio
+async def test_hop_dom_paste_failure_skips_pending_attempt(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store = InMemoryHopAttemptStore()
+
+    async def _fail(_page: object, _text: str, **kwargs: object) -> dict[str, object]:
+        return {"ok": False, "reason": "paste_failed"}
+
+    monkeypatch.setattr("web_chat_relay.orion_hop._dom_deliver", _fail)
+    page = _FakeHopPage(approval_dialogs=[])
+    out = await orion_hop(
+        page,
+        BIRTH_FIXTURE,
+        read_handoff=_handoff_ok,
+        attempt_store=store,
+    )
+    assert out["reason"] == "paste_failed"
+    assert out["pasted"] is False
+    assert store.load_pending_attempt() is None
 
 
 @pytest.mark.asyncio
@@ -926,7 +966,7 @@ async def test_second_conversation_runs_approval_path_again() -> None:
     page.url = PINNED_CONVERSATION_URL
     page._new_chat_index = 1
     page._picker_open = False
-    page.keyboard.inserted.clear()
+    page.dom_delivered.clear()
     second = await orion_hop(page, BIRTH_FIXTURE, read_handoff=_handoff_ok)
     assert second["ok"] is True, second
     assert second["conversation_url"] == SECOND_URL

@@ -9,14 +9,19 @@ from unittest.mock import AsyncMock
 
 import pytest
 from cursor_bridge.operator_paste import (
+    OPERATOR_HEADER,
+    RELAY_NONCE_LABEL,
     WATERMARK,
     _assistant_began,
     _readback_fields,
     _dom_verification_conclusive,
+    _nonce_in_sent_transcript,
     _sha256_dom_from_surface,
     _submit_verified,
     _target_verified,
     deliver_operator_paste,
+    make_run_nonce,
+    watermark_with_nonce,
     wrap_operator_message,
 )
 
@@ -57,7 +62,109 @@ def test_wrap_operator_message_includes_header_source_watermark() -> None:
     assert "Source: agent-bus:21614#2" in msg
     assert "Scope: falsifier" in msg
     assert WATERMARK in msg
+    assert RELAY_NONCE_LABEL in msg
     assert "hello" in msg
+
+
+def test_wrap_operator_message_idempotent_when_already_wrapped() -> None:
+    once = wrap_operator_message(
+        text="payload",
+        authorization_source="agent-bus:21614#2",
+        scope="s",
+    )
+    twice = wrap_operator_message(
+        text=once,
+        authorization_source="other",
+        scope="other",
+    )
+    assert twice == once
+    assert twice.count(OPERATOR_HEADER) == 1
+    assert twice.count(WATERMARK) == 1
+    assert twice.count(RELAY_NONCE_LABEL) == 1
+
+
+def _provenance_counts(text: str) -> tuple[int, int, int]:
+    return (
+        text.count(OPERATOR_HEADER),
+        text.count(WATERMARK),
+        text.count(RELAY_NONCE_LABEL),
+    )
+
+
+@pytest.mark.asyncio
+async def test_deliver_operator_paste_single_header_footer_on_insert(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Break: pre-wrapped MCP/route body must not nest another header+footer."""
+    pre_wrapped = wrap_operator_message(
+        text="agent body",
+        authorization_source="agent-bus:21614#2",
+        scope="scope-a",
+    )
+    surface = {
+        "state": "chat_list",
+        "active_title": "Test Grok",
+        "active_agent_id": "agent-1",
+        "titles": ["Test Grok"],
+        "title_counts": {"Test Grok": 1},
+        "agent_ids": {"agent-1": "Test Grok"},
+        "composer_draft": "",
+        "generating": False,
+        "recent_messages": [],
+    }
+    surface_post = {
+        **surface,
+        "generating": True,
+        "recent_messages": [pre_wrapped],
+    }
+    probe_n = {"n": 0}
+
+    async def _probe(_ws: str) -> dict[str, Any]:
+        probe_n["n"] += 1
+        return surface if probe_n["n"] <= 2 else surface_post
+
+    inserted: list[str] = []
+
+    async def _insert(_ws: str, *, selector: str, line: str) -> dict[str, Any]:
+        inserted.append(line)
+        return {"ok": True}
+
+    monkeypatch.setattr(
+        "cursor_bridge.operator_paste.list_pages",
+        lambda _o: [{"title": "Grok Bot", "web_socket_debugger_url": "ws://x"}],
+    )
+    monkeypatch.setattr(
+        "cursor_bridge.operator_paste.visible_sidebar_agent_ids",
+        AsyncMock(return_value={"agent-1"}),
+    )
+    monkeypatch.setattr(
+        "cursor_bridge.operator_paste.probe_surface", AsyncMock(side_effect=_probe)
+    )
+    monkeypatch.setattr("cursor_bridge.operator_paste._insert_composer_text", _insert)
+    monkeypatch.setattr(
+        "cursor_bridge.operator_paste._submit_composer_send_button",
+        AsyncMock(return_value={"ok": True, "send_fallback_clicked": True}),
+    )
+    monkeypatch.setattr(
+        "cursor_bridge.operator_paste._capture_screenshot_artifact",
+        AsyncMock(return_value={"sha256_png": None, "screenshot_path": None}),
+    )
+
+    await deliver_operator_paste(
+        display="10",
+        app="grok",
+        agent_id="agent-1",
+        text=pre_wrapped,
+        grant="operator",
+        authorization_source="agent-bus:21614#2",
+        scope="scope-a",
+    )
+    assert len(inserted) == 1
+    flat = inserted[0]
+    h, f, n = _provenance_counts(flat)
+    assert h == 1
+    assert f == 1
+    assert n == 1
 
 
 def test_watermark_imported_from_interlocutor_package() -> None:
@@ -98,6 +205,11 @@ async def test_deliver_operator_paste_refuses_cursor_ide() -> None:
 async def test_deliver_operator_paste_grok_ok_readback(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    fixed_nonce = "a1b2c3d4e5f6"
+    monkeypatch.setattr(
+        "cursor_bridge.operator_paste.make_run_nonce", lambda: fixed_nonce
+    )
+    wm_sent = watermark_with_nonce(fixed_nonce)
     surface_pre = {
         "state": "chat_list",
         "active_title": "Test Grok",
@@ -112,7 +224,8 @@ async def test_deliver_operator_paste_grok_ok_readback(
     surface_post = {
         **surface_pre,
         "generating": True,
-        "recent_messages": [f"line with {WATERMARK}"],
+        "recent_messages": [wm_sent],
+        "message_turns": [{"role": "user", "text": wm_sent}],
     }
 
     async def _probe(_ws: str) -> dict[str, Any]:
@@ -197,6 +310,58 @@ def test_assistant_began_after_watermark_in_rolling_six_message_window() -> None
     assert len(post) == len(pre)
 
 
+def test_draft_with_nonce_in_composer_does_not_count_delivered() -> None:
+    nonce = "deadbeefcafe"
+    wm = watermark_with_nonce(nonce)
+    post = {
+        "composer_draft": wm,
+        "generating": False,
+        "recent_messages": [],
+        "message_turns": [],
+    }
+    assert _nonce_in_sent_transcript(post, run_nonce=nonce) is False
+    fields = _readback_fields(
+        post, watermark=wm, pre_messages=[], run_nonce=nonce
+    )
+    assert fields["watermark_visible"] is False
+    assert fields["readback_ok"] is False
+
+
+def test_stale_nonce_in_transcript_does_not_count() -> None:
+    old_nonce = "111111111111"
+    new_nonce = "222222222222"
+    old_wm = watermark_with_nonce(old_nonce)
+    post = {
+        "composer_draft": "",
+        "generating": True,
+        "message_turns": [{"role": "user", "text": old_wm}],
+        "recent_messages": [old_wm],
+    }
+    assert _nonce_in_sent_transcript(post, run_nonce=new_nonce) is False
+    fields = _readback_fields(
+        post, watermark=watermark_with_nonce(new_nonce), pre_messages=[], run_nonce=new_nonce
+    )
+    assert fields["watermark_visible"] is False
+    assert fields["readback_ok"] is False
+
+
+def test_happy_path_nonce_in_transcript_counts() -> None:
+    nonce = make_run_nonce()
+    wm = watermark_with_nonce(nonce)
+    post = {
+        "composer_draft": "",
+        "generating": True,
+        "message_turns": [
+            {"role": "user", "text": wm},
+            {"role": "assistant", "text": "ack"},
+        ],
+        "recent_messages": [wm, "ack"],
+    }
+    assert _submit_verified(post, watermark=wm, body_snippet="", run_nonce=nonce)
+    fields = _readback_fields(post, watermark=wm, pre_messages=[], run_nonce=nonce)
+    assert fields["readback_ok"] is True
+
+
 def test_assistant_began_from_grok_message_turns_fixture() -> None:
     import json
     from pathlib import Path
@@ -232,6 +397,11 @@ async def test_deliver_operator_paste_polls_until_assistant_generating(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Single early probe would miss streaming; poll until generating flips true."""
+    fixed_nonce = "feedface1234"
+    monkeypatch.setattr(
+        "cursor_bridge.operator_paste.make_run_nonce", lambda: fixed_nonce
+    )
+    wm = watermark_with_nonce(fixed_nonce)
     surface_pre = {
         "state": "chat_list",
         "active_title": "Test Grok",
@@ -247,7 +417,8 @@ async def test_deliver_operator_paste_polls_until_assistant_generating(
         **surface_pre,
         "composer_draft": "",
         "generating": False,
-        "recent_messages": ["prior turn prose", f"relay {WATERMARK}"],
+        "recent_messages": ["prior turn prose", wm],
+        "message_turns": [{"role": "user", "text": wm}],
     }
     streaming = {**wm_only, "generating": True}
 
@@ -319,13 +490,19 @@ def _hidden_chat_surface(*, active_agent_id: str, ok: bool = True) -> dict[str, 
 async def test_deliver_operator_paste_hidden_via_cmd_k(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    fixed_nonce = "cmdk00000001"
+    monkeypatch.setattr(
+        "cursor_bridge.operator_paste.make_run_nonce", lambda: fixed_nonce
+    )
+    wm = watermark_with_nonce(fixed_nonce)
     hidden_id = "hidden-agent-cmdk"
     pre = _hidden_chat_surface(active_agent_id="", ok=False)
     pre["active_title"] = ""
     post = {
         **_hidden_chat_surface(active_agent_id=hidden_id),
         "generating": True,
-        "recent_messages": [WATERMARK],
+        "recent_messages": [wm],
+        "message_turns": [{"role": "user", "text": wm}],
     }
     probes = [pre, _hidden_chat_surface(active_agent_id=hidden_id), post]
 
@@ -379,13 +556,19 @@ async def test_deliver_operator_paste_hidden_via_cmd_k(
 async def test_deliver_operator_paste_hidden_via_hidden_chats_manager(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    fixed_nonce = "panel0000001"
+    monkeypatch.setattr(
+        "cursor_bridge.operator_paste.make_run_nonce", lambda: fixed_nonce
+    )
+    wm = watermark_with_nonce(fixed_nonce)
     hidden_id = "hidden-agent-panel"
     pre = _hidden_chat_surface(active_agent_id="", ok=False)
     pre["active_title"] = ""
     post = {
         **_hidden_chat_surface(active_agent_id=hidden_id),
         "generating": True,
-        "recent_messages": [WATERMARK],
+        "recent_messages": [wm],
+        "message_turns": [{"role": "user", "text": wm}],
     }
     probes = [pre, _hidden_chat_surface(active_agent_id=hidden_id), post]
 
@@ -490,6 +673,10 @@ async def test_deliver_operator_paste_refuses_agent_id_mismatch(
     monkeypatch.setattr(
         "cursor_bridge.operator_paste.probe_surface",
         AsyncMock(return_value=surface),
+    )
+    monkeypatch.setattr(
+        "cursor_bridge.operator_paste.select_sidebar_target",
+        AsyncMock(return_value={"clicked": True}),
     )
 
     out = await deliver_operator_paste(
@@ -707,8 +894,13 @@ async def test_deliver_operator_paste_submit_retry_once_without_repaste(
 async def test_submit_retry_skips_cdp_enter_when_transcript_has_watermark(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    fixed_nonce = "cafebabef00d"
+    monkeypatch.setattr(
+        "cursor_bridge.operator_paste.make_run_nonce", lambda: fixed_nonce
+    )
     line = "Operator relay Scope: F1 skip-enter test"
     flat = " ".join(line.splitlines())
+    wm = watermark_with_nonce(fixed_nonce)
     surface = {
         "state": "chat_list",
         "active_title": "Test Grok",
@@ -723,9 +915,9 @@ async def test_submit_retry_skips_cdp_enter_when_transcript_has_watermark(
     verified_surface = {
         **surface,
         "composer_draft": "",
-        "recent_messages": [f"{flat} {WATERMARK}"],
+        "recent_messages": [f"{flat} {wm}"],
         "message_turns": [
-            {"role": "user", "text": f"{flat} {WATERMARK}"},
+            {"role": "user", "text": f"{flat} {wm}"},
         ],
     }
 
@@ -791,6 +983,81 @@ async def test_submit_retry_skips_cdp_enter_when_transcript_has_watermark(
     enter.assert_not_awaited()
     assert out["submitted"] is True
     assert out["submit_methods"] == ["send_button"]
+
+
+@pytest.mark.parametrize(
+    "enter_reason",
+    [
+        "enter_wrong_active_agent",
+        "enter_nonce_missing",
+        "enter_operator_active",
+        "enter_composer_not_focused_operator_active",
+    ],
+)
+@pytest.mark.asyncio
+async def test_enter_retry_refused_without_cdp_enter_success(
+    monkeypatch: pytest.MonkeyPatch, enter_reason: str
+) -> None:
+    surface = {
+        "state": "chat_list",
+        "active_title": "Test Grok",
+        "active_agent_id": "agent-1",
+        "titles": ["Test Grok"],
+        "title_counts": {"Test Grok": 1},
+        "agent_ids": {"agent-1": "Test Grok"},
+        "composer_draft": "",
+        "generating": False,
+        "recent_messages": [],
+    }
+    stuck = {**surface, "composer_draft": "stuck draft"}
+
+    async def _poll_submit(_ws: str, **_: Any) -> tuple[dict[str, Any], bool]:
+        return stuck, False
+
+    enter = AsyncMock(
+        return_value={"ok": False, "reason": enter_reason, "method": "cdp_enter"}
+    )
+    monkeypatch.setattr(
+        "cursor_bridge.operator_paste.list_pages",
+        lambda _o: [{"title": "Grok Bot", "web_socket_debugger_url": "ws://x"}],
+    )
+    monkeypatch.setattr(
+        "cursor_bridge.operator_paste.visible_sidebar_agent_ids",
+        AsyncMock(return_value={"agent-1"}),
+    )
+    monkeypatch.setattr(
+        "cursor_bridge.operator_paste.probe_surface",
+        AsyncMock(return_value=surface),
+    )
+    monkeypatch.setattr(
+        "cursor_bridge.operator_paste._poll_submit_verified", _poll_submit
+    )
+    monkeypatch.setattr(
+        "cursor_bridge.operator_paste._insert_composer_text",
+        AsyncMock(return_value={"ok": True}),
+    )
+    monkeypatch.setattr(
+        "cursor_bridge.operator_paste._submit_composer_send_button",
+        AsyncMock(return_value={"ok": True, "send_fallback_clicked": True}),
+    )
+    monkeypatch.setattr("cursor_bridge.operator_paste._submit_composer_enter", enter)
+    monkeypatch.setattr(
+        "cursor_bridge.operator_paste._capture_screenshot_artifact",
+        AsyncMock(return_value={"sha256_png": None, "screenshot_path": None}),
+    )
+
+    out = await deliver_operator_paste(
+        display="10",
+        app="grok",
+        agent_id="agent-1",
+        text="Operator relay test",
+        grant="operator",
+        authorization_source="agent-bus:21614#2",
+        scope="test",
+    )
+    assert out["submitted"] is False
+    assert f"cdp_enter_refused:{enter_reason}" in out["submit_methods"]
+    enter.assert_awaited_once()
 
 
 @pytest.mark.asyncio

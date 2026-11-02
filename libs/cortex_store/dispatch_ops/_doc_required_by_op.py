@@ -53,7 +53,7 @@ _DOC_REQUIRED_BY_OP: Mapping[str, frozenset[str]] = {
     "entity_retype": frozenset({"entity_id", "new_type"}),
     "entity_update": frozenset({"entity_id"}),
     "fill_gaps": frozenset({"findings"}),
-    "friction": frozenset({"owner", "note"}),
+    "friction": frozenset({"owner", "note", "category"}),
     "impact": frozenset({"entity_id"}),
     "observe": frozenset({"claim"}),
     "relationship_delete": frozenset({"relationship_id"}),

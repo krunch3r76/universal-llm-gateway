@@ -12,28 +12,35 @@ from .policy import AnthropicCreditRefused
 logger = logging.getLogger(__name__)
 
 
+def _error_payload_from_http(exc: httpx.HTTPStatusError) -> dict[str, object] | None:
+    if exc.response is None:
+        return None
+    try:
+        payload = exc.response.json()
+    except json.JSONDecodeError:
+        return None
+    if not isinstance(payload, dict):
+        return None
+    err = payload.get("error")
+    if isinstance(err, dict):
+        return err
+    detail = payload.get("detail")
+    if isinstance(detail, dict):
+        nested = detail.get("error")
+        if isinstance(nested, dict):
+            return nested
+    return None
+
+
 def parse_credit_refusal_type(exc: BaseException) -> str | None:
     """Extract anthropic credit refusal code from HTTP-layer errors."""
     if isinstance(exc, AnthropicCreditRefused):
         return exc.code
-    if isinstance(exc, httpx.HTTPStatusError) and exc.response is not None:
-        try:
-            payload = exc.response.json()
-        except json.JSONDecodeError:
-            payload = None
-        if isinstance(payload, dict):
-            err = payload.get("error")
-            if isinstance(err, dict):
-                code = err.get("type")
-                if isinstance(code, str):
-                    return code
-            detail = payload.get("detail")
-            if isinstance(detail, dict):
-                err = detail.get("error")
-                if isinstance(err, dict):
-                    code = err.get("type")
-                    if isinstance(code, str):
-                        return code
+    err = _error_payload_from_http(exc) if isinstance(exc, httpx.HTTPStatusError) else None
+    if err is not None:
+        code = err.get("type")
+        if isinstance(code, str):
+            return code
     if isinstance(exc, RuntimeError):
         text = str(exc)
         marker = '"type":'
@@ -49,6 +56,20 @@ def parse_credit_refusal_type(exc: BaseException) -> str | None:
     return None
 
 
+def parse_credit_refusal_detail(exc: BaseException) -> str | None:
+    """Extract human-readable refusal detail from credit-layer errors."""
+    if isinstance(exc, AnthropicCreditRefused):
+        detail = exc.detail
+        return detail if detail else None
+    err = _error_payload_from_http(exc) if isinstance(exc, httpx.HTTPStatusError) else None
+    if err is not None:
+        for key in ("message", "detail"):
+            val = err.get(key)
+            if isinstance(val, str) and val.strip():
+                return val
+    return None
+
+
 def emit_loop_refused(turn_index: int) -> None:
     payload = {"turn_index": turn_index}
     from . import policy as _policy
@@ -58,9 +79,42 @@ def emit_loop_refused(turn_index: int) -> None:
         logger.info("anthropic.credit.loop_refused %s", payload)
 
 
-def credit_cap_notice() -> str:
-    return (
-        "[Anthropic credit cycle budget exhausted] Further model turns were "
-        "stopped to stay within the configured spend cap. Partial results above "
-        "are preserved."
-    )
+def credit_cap_notice(
+    code: str | None = None, detail: str | None = None
+) -> str:
+    if code is None:
+        return (
+            "[Anthropic credit cycle budget exhausted] Further model turns were "
+            "stopped to stay within the configured spend cap. Partial results above "
+            "are preserved."
+        )
+    if code == "anthropic_credit_latched":
+        headline = "credit latch active"
+        suffix = (
+            "Further model turns were stopped until the credit latch clears. "
+            "Partial results above are preserved."
+        )
+    elif code == "anthropic_mcp_serialized":
+        headline = (
+            "MCP connector requests are serialized; another MCP reservation was open"
+        )
+        suffix = (
+            "Further model turns were stopped until the open MCP reservation "
+            "completes. Partial results above are preserved."
+        )
+    elif code == "anthropic_mcp_cap_exceeded":
+        headline = "MCP connector spend cap exceeded"
+        suffix = (
+            "Further model turns were stopped to stay within the configured MCP "
+            "spend cap. Partial results above are preserved."
+        )
+    else:
+        headline = "credit cycle budget exhausted"
+        suffix = (
+            "Further model turns were stopped to stay within the configured spend "
+            "cap. Partial results above are preserved."
+        )
+    body = f"[Anthropic {headline}] {suffix} code={code}"
+    if detail:
+        body = f"{body} {detail}"
+    return body
