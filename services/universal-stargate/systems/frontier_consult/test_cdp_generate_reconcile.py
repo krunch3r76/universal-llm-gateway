@@ -2053,6 +2053,29 @@ def _upsert_open_leg_for_hb(
 
 
 @pytest.mark.asyncio
+async def test_registry_heartbeat_create_task_failure_clears_inflight(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    execution_id = "exec-hb-create-task-fail"
+    real_create_task = asyncio.create_task
+
+    def _create_task_raises(coro, **kwargs: object):  # type: ignore[no-untyped-def]
+        raise OSError("create_task rejected")
+
+    monkeypatch.setattr(asyncio, "create_task", _create_task_raises)
+    monkeypatch.setenv("CDP_REGISTRY_HEARTBEAT_MIN_S", "0")
+    reconcile._last_registry_heartbeat_mono.clear()
+    reconcile._REGISTRY_HB_INFLIGHT.clear()
+    leg = _upsert_open_leg_for_hb(execution_id)
+
+    with pytest.raises(OSError, match="create_task rejected"):
+        await reconcile._maybe_relay_registry_heartbeat(leg)
+
+    assert execution_id not in reconcile._REGISTRY_HB_INFLIGHT
+    monkeypatch.setattr(asyncio, "create_task", real_create_task)
+
+
+@pytest.mark.asyncio
 async def test_registry_heartbeat_relay_exception_logged_not_unretrieved(
     monkeypatch: pytest.MonkeyPatch,
     caplog: pytest.LogCaptureFixture,
