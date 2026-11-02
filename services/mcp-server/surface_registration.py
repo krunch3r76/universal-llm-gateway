@@ -19,6 +19,7 @@ from tools.context import register_context_tools
 from tools.continuity import register_continuity_tools
 from tools.cortex import register_cortex_tools
 from tools.cortex_named_tools import register_cortex_named_tools
+from interlocutor.mcp_tool import register_interlocutor_tool
 from tools.cse_session import register_cse_session_tool
 from tools.cursor_request import register_operator_request_tool
 from tools.delegate import register_delegate_schema_transform, register_delegate_tools
@@ -104,6 +105,7 @@ def register_tools_for_surface(mcp: FastMCP, surface: Surface) -> None:
     register_fs_read_tool(mcp, surface=surface)
     register_cortex_read_tool(mcp, surface=surface)
     register_cse_session_tool(mcp)
+    register_interlocutor_tool(mcp)
     register_chat_session_tool(mcp)
     register_web_tab_read_tool(mcp)
     register_web_tab_write_tool(mcp)

@@ -45,11 +45,15 @@ from cursor_bridge.wake_delivery import (
     _refuse,
     normalize_target,
 )
+from interlocutor.watermark import (
+    OPERATOR_HEADER,
+    WATERMARK,
+    wrap_operator_message,
+)
 
-OPERATOR_HEADER = "Operator request — Kaywan, relayed on his behalf"
-WATERMARK = "Pasted on Kaywan's behalf by gc1 — AI-assisted"
-RELAY_NONCE_LABEL = "Relay-Nonce"
 _VALID_GRANTS = frozenset({"operator", "explicit"})
+
+RELAY_NONCE_LABEL = "Relay-Nonce"
 
 
 def make_run_nonce() -> str:

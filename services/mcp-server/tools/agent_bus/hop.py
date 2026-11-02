@@ -286,6 +286,23 @@ async def _hop_dispatch(
     except Exception:  # noqa: BLE001 — omit arc_hub lines when not computed
         arc_hub = None
 
+    consumption_missing: str | None = None
+    try:
+        from receipts.consumption import (
+            consumption_missing_marker,
+            find_unconsumed_rulings,
+        )
+
+        from tools.agent_bus.pickup_gate import load_prior_turns
+
+        window = load_prior_turns(thread_id)
+        if window:
+            consumption_missing = consumption_missing_marker(
+                find_unconsumed_rulings(window)
+            )
+    except Exception:  # noqa: BLE001 — omit consumption_missing when not computed
+        consumption_missing = None
+
     inflight_count: int | None = None
     try:
         from claude_bundles.operator_proxy_hop_status import house_rules_section
@@ -321,6 +338,7 @@ async def _hop_dispatch(
         standing_handoff_identity=handoff.identity,
         inflight_rows=inflight_count,
         arc_hub=arc_hub,
+        consumption_missing=consumption_missing,
     )
     # mission_kind=hop arms Stargate hop_own_generate so the caller's own
     # live generate is excluded (a:37182). predecessor_registration_id names

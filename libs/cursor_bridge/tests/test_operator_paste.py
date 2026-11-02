@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import subprocess
+import sys
 from typing import Any
 from unittest.mock import AsyncMock
 
@@ -163,6 +165,13 @@ async def test_deliver_operator_paste_single_header_footer_on_insert(
     assert h == 1
     assert f == 1
     assert n == 1
+
+
+def test_watermark_imported_from_interlocutor_package() -> None:
+    from interlocutor import watermark as wm
+
+    assert WATERMARK is wm.WATERMARK
+    assert "Orion" in WATERMARK
 
 
 @pytest.mark.asyncio
@@ -1238,3 +1247,14 @@ def test_dom_verification_conclusive_requires_agent_id_and_readback() -> None:
         body_snippet="relay",
         readback_ok=True,
     )
+
+
+def test_operator_paste_imports_in_fresh_subprocess() -> None:
+    """Module-level import must not hit interlocutor circular init."""
+    proc = subprocess.run(
+        [sys.executable, "-c", "import cursor_bridge.operator_paste"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert proc.returncode == 0, proc.stderr or proc.stdout

@@ -90,6 +90,7 @@ def build_continuity_handoff_body(
     successor_registration_id: str | None = None,
     successor_chat_url: str | None = None,
     arc_hub: ArcHubTip | None = None,
+    consumption_missing: str | None = None,
 ) -> str:
     """Author a first-line ``TYPE: CONTINUITY_HANDOFF`` body for one hop fire.
 
@@ -147,6 +148,9 @@ def build_continuity_handoff_body(
     if arc_hub is not None:
         lines.append(f"arc_hub: {arc_hub.entity_id}")
         lines.append(f"arc_hub_tip: {arc_hub.tip or 'unknown'}")
+    marker = (consumption_missing or "").strip()
+    if marker:
+        lines.append(f"consumption_missing: {marker}")
     resolved_kind = (hop_kind or "").strip().lower()
     if resolved_kind == "housekeeping":
         lines.append(f"{_HOP_KIND_PREFIX} housekeeping")
