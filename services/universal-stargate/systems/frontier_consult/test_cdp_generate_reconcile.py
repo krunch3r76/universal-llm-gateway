@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import time
 from datetime import UTC, datetime, timedelta
 from typing import Any
@@ -2025,3 +2026,164 @@ async def test_reconcile_tick_finishes_while_registry_heartbeat_hangs(
     await asyncio.wait_for(reconcile.reconcile_cdp_inflight_legs(), timeout=0.5)
     elapsed = time.monotonic() - started
     assert elapsed < 0.25
+
+
+def _upsert_open_leg_for_hb(
+    execution_id: str,
+    *,
+    request_id: str | None = None,
+) -> reconcile.InflightLeg:
+    upsert_inflight_leg(
+        execution_id=execution_id,
+        request_id=request_id or f"req-{execution_id}",
+        thread_id="5583",
+        pointer_turn=1,
+        caller_agent="dispatch",
+        prompt_uri="cortex://p.md",
+        model_id="cdp/opus-5",
+        max_wall_s=43200.0,
+    )
+    reconcile.attach_satellite_execution_id(
+        execution_id=execution_id,
+        satellite_execution_id=f"sat-{execution_id}",
+    )
+    leg = reconcile.read_inflight_leg(execution_id)
+    assert leg is not None
+    return leg
+
+
+@pytest.mark.asyncio
+async def test_registry_heartbeat_relay_exception_logged_not_unretrieved(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    execution_id = "exec-hb-relay-err"
+
+    async def _boom(**kwargs: object) -> None:
+        raise RuntimeError("giw down")
+
+    monkeypatch.setattr(
+        "systems.frontier_consult.work_registry_admit_relay.relay_registry_heartbeat",
+        _boom,
+    )
+    monkeypatch.setenv("CDP_REGISTRY_HEARTBEAT_MIN_S", "0")
+    reconcile._last_registry_heartbeat_mono.clear()
+    leg = _upsert_open_leg_for_hb(execution_id)
+
+    caplog.set_level(logging.WARNING)
+    await reconcile._maybe_relay_registry_heartbeat(leg)
+    await asyncio.sleep(0.05)
+
+    warnings = [
+        r
+        for r in caplog.records
+        if r.levelno >= logging.WARNING and execution_id in r.getMessage()
+    ]
+    assert len(warnings) == 1
+    assert reconcile._REGISTRY_HB_TASKS == set()
+    assert reconcile._REGISTRY_HB_INFLIGHT == set()
+    assert "Task exception was never retrieved" not in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_registry_heartbeat_single_flight_while_relay_blocks(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    hang = asyncio.Event()
+    hb_calls: list[str] = []
+
+    async def _relay_hb(**kwargs: object) -> None:
+        hb_calls.append(str(kwargs.get("dispatch_id")))
+        await hang.wait()
+
+    monkeypatch.setattr(
+        "systems.frontier_consult.work_registry_admit_relay.relay_registry_heartbeat",
+        _relay_hb,
+    )
+    monkeypatch.setenv("CDP_REGISTRY_HEARTBEAT_MIN_S", "0")
+    reconcile._last_registry_heartbeat_mono.clear()
+    leg = _upsert_open_leg_for_hb("exec-hb-single-flight")
+
+    for _ in range(3):
+        await reconcile._maybe_relay_registry_heartbeat(leg)
+    await asyncio.sleep(0.05)
+    assert hb_calls == ["exec-hb-single-flight"]
+
+    hang.set()
+    for _ in range(20):
+        if not reconcile._REGISTRY_HB_INFLIGHT:
+            break
+        await asyncio.sleep(0.02)
+    assert reconcile._REGISTRY_HB_TASKS == set()
+
+    await reconcile._maybe_relay_registry_heartbeat(leg)
+    await asyncio.sleep(0.05)
+    assert hb_calls == ["exec-hb-single-flight", "exec-hb-single-flight"]
+
+
+class _InflightGuardDisabled(set[str]):
+    """Simulates pre-C2 pile-up: ids never appear in-flight."""
+
+    def add(self, item: str) -> None:
+        return
+
+    def __contains__(self, item: object) -> bool:
+        return False
+
+
+@pytest.mark.asyncio
+async def test_registry_heartbeat_single_flight_guard_prevents_pile_up(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    hang = asyncio.Event()
+    hb_calls: list[str] = []
+
+    async def _relay_hb(**kwargs: object) -> None:
+        hb_calls.append(str(kwargs.get("dispatch_id")))
+        await hang.wait()
+
+    monkeypatch.setattr(
+        "systems.frontier_consult.work_registry_admit_relay.relay_registry_heartbeat",
+        _relay_hb,
+    )
+    monkeypatch.setattr(reconcile, "_REGISTRY_HB_INFLIGHT", _InflightGuardDisabled())
+    monkeypatch.setenv("CDP_REGISTRY_HEARTBEAT_MIN_S", "0")
+    reconcile._last_registry_heartbeat_mono.clear()
+    leg = _upsert_open_leg_for_hb("exec-hb-no-guard")
+
+    for _ in range(3):
+        await reconcile._maybe_relay_registry_heartbeat(leg)
+    await asyncio.sleep(0.05)
+    assert len(hb_calls) == 3
+
+
+@pytest.mark.asyncio
+async def test_registry_heartbeat_single_flight_different_legs_parallel(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    hang_a = asyncio.Event()
+    hang_b = asyncio.Event()
+    hb_calls: list[str] = []
+
+    async def _relay_hb(**kwargs: object) -> None:
+        hb_calls.append(str(kwargs.get("dispatch_id")))
+        dispatch_id = str(kwargs.get("dispatch_id"))
+        if dispatch_id == "exec-hb-leg-a":
+            await hang_a.wait()
+        else:
+            await hang_b.wait()
+
+    monkeypatch.setattr(
+        "systems.frontier_consult.work_registry_admit_relay.relay_registry_heartbeat",
+        _relay_hb,
+    )
+    monkeypatch.setenv("CDP_REGISTRY_HEARTBEAT_MIN_S", "0")
+    reconcile._last_registry_heartbeat_mono.clear()
+    leg_a = _upsert_open_leg_for_hb("exec-hb-leg-a")
+    leg_b = _upsert_open_leg_for_hb("exec-hb-leg-b")
+
+    await reconcile._maybe_relay_registry_heartbeat(leg_a)
+    await reconcile._maybe_relay_registry_heartbeat(leg_b)
+    await asyncio.sleep(0.05)
+    assert set(hb_calls) == {"exec-hb-leg-a", "exec-hb-leg-b"}
+    assert len(reconcile._REGISTRY_HB_INFLIGHT) == 2
