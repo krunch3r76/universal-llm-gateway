@@ -227,9 +227,8 @@ def _drop_dead_hop_subscription(
 def _unbind_hop_subscription(root: str) -> bool:
     """Keep the display row at hop expiry but release the departed tab's ``agent_id``.
 
-    A row that still names a tab with no holder claims an address nothing can
-    deliver to, so ``refuse_tab_unaddressed`` drops every bare ``to=cursor``
-    turn on the root. Clearing ``agent_id`` leaves the row subscribed and lets
+    A row that still names a tab with no holder sends every bare ``to=cursor``
+    wake to a composer that no longer exists. Clearing ``agent_id`` leaves the row subscribed and lets
     legacy pickup through (RULING a:41381, option ii; K94 — delivery keys on the
     address, so an address with no holder must stop being claimed). The
     successor tab registers a newer row and rows collapse to newest, which is

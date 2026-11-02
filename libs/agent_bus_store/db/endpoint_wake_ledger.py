@@ -1345,7 +1345,8 @@ def claim_due_wakes(
                     """
                     SELECT endpoint_wake_ledger.*,
                            turns.body AS body,
-                           turns.from_agent AS from_agent
+                           turns.from_agent AS from_agent,
+                           turns.to_agent AS to_agent
                     FROM endpoint_wake_ledger
                     LEFT JOIN turns ON turns.id = endpoint_wake_ledger.turn_id
                     WHERE endpoint_wake_ledger.wake_id=?

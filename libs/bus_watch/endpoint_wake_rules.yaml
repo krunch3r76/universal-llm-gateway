@@ -39,6 +39,3 @@ rules:
     action: wake
   - id: default_suppress
     action: suppress
-  # Post-qualify delivery refusal in scan_once, not a qualify() branch.
-  - id: refuse_tab_unaddressed
-    action: suppress

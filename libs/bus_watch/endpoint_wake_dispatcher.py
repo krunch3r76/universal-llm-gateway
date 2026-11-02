@@ -190,6 +190,8 @@ _ROUTINE_DISPATCH_FROM = frozenset({"cursor-sdk", "conductor-hop", "dispatch"})
 _GATE_WAKE_REMAP_ADDRESSES = frozenset(
     {"dispatch", "conductor-hop", "git-integration-worker", "frontier-admit"}
 )
+_TAB_REMAP_STALE_NAME = "stale_name"
+_TAB_REMAP_BARE_NAME = "bare_name"
 _PEER_WAKE_FROM = frozenset(
     {
         "grok-bot",
@@ -466,43 +468,63 @@ def _cursor_tab_route(
     store: StoreClient,
     raw_to: str,
     resolved: tuple[str, dict[str, Any]] | None,
-) -> tuple[bool, tuple[str, dict[str, Any]] | None]:
-    """``(refused, route)`` for a cursor turn against the tab the row names.
+) -> tuple[str | None, tuple[str, dict[str, Any]] | None]:
+    """``(remap_reason, route)`` for a cursor turn against the tab the row names.
 
-    Only display (``surface == "cursor"``) rows that name an ``agent_id`` are
-    tab-bound; CSE rows store a lane id there and synthetic grok/chatgpt rows a
-    window id, so they keep the legacy path. An address whose suffix misses the
-    bound tab is redirected to the row that suffix does name — a CLOSEOUT to a
-    departed ``composer-impresario-<id>`` must reach its successor window rather
-    than be dropped — and is refused only when no such row exists and the
-    resolved row owns the thread outright. Bare ``to=cursor`` is refused on an
-    exact-scope row alone: a wildcard or ancestor row does not own this thread,
-    so legacy bare pickup stays. Gate-wake remap addresses
-    (`_effective_to_agent`) carry no tab suffix and are exempt.
+    Never refuses: RULING a:41426 (K94) — the address wins; an unnamed or stale
+    name on an exact-scope row is delivered to the house's current hand. Only
+    display (``surface == "cursor"``) rows that name an ``agent_id`` are
+    tab-bound; CSE and synthetic grok/chatgpt rows keep the legacy path. A suffix
+    that misses the bound tab redirects to the row that suffix still names when
+    one exists; otherwise an exact-scope row yields ``stale_name`` or bare
+    ``to=cursor`` yields ``bare_name``. Gate-wake remap addresses carry no tab
+    suffix and are exempt. The label is recorded at fire time because scan-time
+    routes are not persisted on the ledger row.
     """
     if resolved is None:
-        return False, None
+        return None, None
     kind, sub = resolved
     if str(sub.get("surface") or "") != "cursor":
-        return False, resolved
+        return None, resolved
     bound = str(sub.get("agent_id") or "").strip()
     if not bound:
-        return False, resolved
+        return None, resolved
     raw = str(raw_to or "").strip()
     normalized = normalize_bus_address(raw)
     if normalized in _GATE_WAKE_REMAP_ADDRESSES:
-        return False, resolved
+        return None, resolved
     suffixes = glass_agent_id_suffix_candidates(normalized, raw_to=raw)
     if suffixes:
         if any(agent_id_matches_composer_suffix(bound, suffix) for suffix in suffixes):
-            return False, resolved
+            return None, resolved
         addressed = _suffix_addressed_row(store, suffixes)
         if addressed is not None:
-            return False, addressed
-        return kind == "exact", resolved
+            return None, addressed
+        if kind == "exact":
+            return _TAB_REMAP_STALE_NAME, resolved
+        return None, resolved
     if normalized != "cursor":
-        return False, resolved
-    return kind == "exact", resolved
+        return None, resolved
+    if kind == "exact":
+        return _TAB_REMAP_BARE_NAME, resolved
+    return None, resolved
+
+
+def _group_raw_to(rows: list[dict[str, Any]], agent: str) -> str:
+    """First non-gate-remap ``to_agent`` in a claimed wake group, else ``agent``.
+
+    Rows in one group share ledger ``agent``, but a gate-wake remap address and a
+    bare ``to=cursor`` both map to ``cursor`` — fire time needs the raw address.
+    """
+    for row in rows:
+        raw = str(row.get("to_agent") or "").strip()
+        if raw and normalize_bus_address(raw) not in _GATE_WAKE_REMAP_ADDRESSES:
+            return raw
+    if rows:
+        raw = str(rows[0].get("to_agent") or "").strip()
+        if raw:
+            return raw
+    return agent
 
 
 def _subscribed_for_wake_scan(
@@ -768,7 +790,6 @@ _FALLBACK_WAKE_RULE_IDS: tuple[str, ...] = (
     "wake_cse_allowlist",
     "wake_grok_allowlist",
     "default_suppress",
-    "refuse_tab_unaddressed",
 )
 
 
@@ -1374,16 +1395,7 @@ def scan_once(store: StoreClient, *, idle_mark: dict[str, float] | None = None) 
                     subject=subject,
                 )
             continue
-        tab_refused, resolved = _cursor_tab_route(store, raw_to, resolved)
-        if tab_refused:
-            _observe_endpoint_wake_suppressed(
-                thread_id=thread,
-                turn_id=_turn_id_of(turn),
-                to_agent=agent,
-                rule_id="refuse_tab_unaddressed",
-                subject_head=head,
-            )
-            continue
+        _remap, resolved = _cursor_tab_route(store, raw_to, resolved)
         pending.append(
             _pending_item(turn, decided_by_rule=verdict.rule_id, route=resolved)
         )
@@ -1876,7 +1888,11 @@ def _drop_dead_agent_subscription(
 
 
 def fire_due_wakes(store: StoreClient) -> dict[str, Any] | None:
-    """Claim one group and deliver it. Stargate and cdp-ask stay in the table."""
+    """Claim one group and deliver it. Stargate and cdp-ask stay in the table.
+
+    The display branch re-runs the tab check on the fire-time route and records
+    ``route='remapped'`` when delivery used a stale or bare name on an exact row.
+    """
     claimed = store.claim()
     rows = [r for r in claimed.get("rows") or [] if r.get("state") == "claimed"]
     wake_id = claimed.get("wake_id")
@@ -2099,6 +2115,12 @@ def fire_due_wakes(store: StoreClient) -> dict[str, Any] | None:
             subscription_id=sub.get("id"),
             cse_registration_id=None,
         )
+    remap_reason, resolved = _cursor_tab_route(
+        store, _group_raw_to(rows, agent), resolved
+    )
+    route, sub = resolved
+    if remap_reason is not None:
+        route = "remapped"
     turn_numbers = sorted({int(r["turn_number"]) for r in rows})
     turn_arg = (
         turn_numbers[0]
@@ -2129,7 +2151,11 @@ def fire_due_wakes(store: StoreClient) -> dict[str, Any] | None:
             )
     return _finish(
         outcome=state,
-        reason=reason,
+        reason=(
+            remap_reason
+            if remap_reason is not None and state == "delivered"
+            else reason
+        ),
         route=route,
         subscription_id=sub.get("id"),
         cse_registration_id=None,

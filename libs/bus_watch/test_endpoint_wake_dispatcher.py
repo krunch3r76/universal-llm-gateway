@@ -2325,7 +2325,7 @@ def test_specimen_18460_no_composer_records_pending_and_drops_dead_agent_id(
     assert ledger_row is not None
     assert ledger_row["state"] == "pending"
     assert ledger_row["reason"] == "no_composer"
-    assert ledger_row["route"] == "exact"
+    assert ledger_row["route"] == "remapped"
     assert ledger_row["subscription_id"] == sub_row["id"]
     assert ledger_row["finished_at"] == "2026-10-20 22:59:57"
 
@@ -3050,14 +3050,14 @@ def test_declared_rule_map_loads_address_rules(db: None) -> None:
     from bus_watch.endpoint_wake_dispatcher import _FALLBACK_WAKE_RULE_IDS
 
     assert _declared_wake_rule_ids() == _FALLBACK_WAKE_RULE_IDS
-    assert len(_declared_wake_rule_ids()) == 19
+    assert len(_declared_wake_rule_ids()) == 18
     assert _declared_wake_rule_ids()[1] == "drop_orion_echo"
     assert _declared_wake_rule_ids()[6] == "wake_by_address"
     assert _declared_wake_rule_ids()[7] == "wake_by_name"
     assert _declared_wake_rule_ids()[8] == "refuse_address_mismatch"
     assert _declared_wake_rule_ids()[13] == "drop_routine_hop_closeout"
     assert _declared_wake_rule_ids()[12] == "wake_peer_sender"
-    assert _declared_wake_rule_ids()[-1] == "refuse_tab_unaddressed"
+    assert _declared_wake_rule_ids()[-1] == "default_suppress"
 
 
 def test_qualify_matches_legacy_over_qualification_matrix(db: None) -> None:
@@ -4493,6 +4493,31 @@ def _rewind_cursor() -> None:
         conn.execute("UPDATE endpoint_wake_cursor SET high_water_turn_id=0")
 
 
+class _TabFireStore(_TabScanStore):
+    """``scan_once`` + ``claim_due_wakes`` + ``record_wake_result`` for round-3 fire proofs."""
+
+    def __init__(self, **kwargs: object) -> None:
+        super().__init__(**kwargs)  # type: ignore[arg-type]
+        self.results: list[dict] = []
+
+    def claim(self) -> dict:
+        return claim_due_wakes(now="2020-01-01 20:00:10")
+
+    def result(self, **payload: object) -> int:
+        self.results.append(dict(payload))
+        return record_wake_result(
+            str(payload["wake_id"]),
+            str(payload["outcome"]),
+            str(payload["reason"]) if payload["reason"] is not None else None,
+            str(payload["route"]) if payload["route"] is not None else None,
+            payload["subscription_id"],  # type: ignore[arg-type]
+            payload["cse_registration_id"],  # type: ignore[arg-type]
+        )
+
+    def unsubscribe(self, *args: object, **kwargs: object) -> dict:
+        return {}
+
+
 def _new_thread(slug: str) -> str:
     detail = create_thread(thread_id=None, slug=slug)
     assert detail is not None
@@ -4616,11 +4641,11 @@ def test_t3_bare_cursor_on_parent_row_keeps_legacy_pickup(db: None) -> None:
     assert [r["turn_id"] for r in store.pending] == [t_id]
 
 
-def test_bare_cursor_on_exact_tab_bound_row_still_refused(db: None) -> None:
-    """Original 43c9e95a intent: bare ``to=cursor`` loses to the bound tab."""
-    thread = _new_thread("21724-bare-refused")
+def test_bare_cursor_on_exact_tab_bound_row_enqueues(db: None) -> None:
+    """Round-3: bare ``to=cursor`` on an exact tab-bound row enqueues for fire-time remap."""
+    thread = _new_thread("21724-bare-enqueue")
     _seed_row(agent="cursor", scope=thread, agent_id=_TAB_A)
-    insert_turn(
+    t_id, _ts, _n, _c = insert_turn(
         thread=thread,
         from_agent="maestro",
         to_agent="cursor",
@@ -4630,7 +4655,7 @@ def test_bare_cursor_on_exact_tab_bound_row_still_refused(db: None) -> None:
     _rewind_cursor()
     store = _TabScanStore()
     scan_once(store)  # type: ignore[arg-type]
-    assert store.pending == []
+    assert [r["turn_id"] for r in store.pending] == [t_id]
 
 
 def _suffix_row(*, scope: str, agent_id: str, row_id: int) -> dict:
@@ -4668,25 +4693,25 @@ def test_suffix_address_redirects_to_the_row_that_suffix_names(db: None) -> None
     resolved_b = ("exact", _suffix_row(scope="21724", agent_id=_TAB_B, row_id=20))
     row_a = _suffix_row(scope="18460", agent_id=_TAB_A, row_id=19)
     store = _suffix_lookup_store([resolved_b[1], row_a])
-    refused, route = _cursor_tab_route(
+    reason, route = _cursor_tab_route(
         store, f"composer-impresario-{_TAB_A[:8]}", resolved_b
     )
-    assert refused is False
+    assert reason is None
     assert route is not None
     assert route[0] == "agent_id"
     assert route[1]["agent_id"] == _TAB_A
 
 
-def test_suffix_address_with_no_such_row_is_refused_on_an_exact_row(db: None) -> None:
-    """H1: with the addressed tab gone from every scope, an exact row refuses."""
+def test_suffix_address_with_no_such_row_is_remapped_on_an_exact_row(db: None) -> None:
+    """H1: with the addressed tab gone from every scope, an exact row yields stale_name."""
     from bus_watch.endpoint_wake_dispatcher import _cursor_tab_route
 
     resolved_b = ("exact", _suffix_row(scope="21724", agent_id=_TAB_B, row_id=20))
     store = _suffix_lookup_store([resolved_b[1]])
-    refused, route = _cursor_tab_route(
+    reason, route = _cursor_tab_route(
         store, f"composer-impresario-{_TAB_A[:8]}", resolved_b
     )
-    assert refused is True
+    assert reason == "stale_name"
     assert route == resolved_b
 
 
@@ -4696,10 +4721,10 @@ def test_suffix_address_with_no_such_row_delivers_on_a_non_exact_row(db: None) -
 
     resolved_b = ("parent", _suffix_row(scope="12286", agent_id=_TAB_B, row_id=20))
     store = _suffix_lookup_store([resolved_b[1]])
-    refused, route = _cursor_tab_route(
+    reason, route = _cursor_tab_route(
         store, f"composer-impresario-{_TAB_A[:8]}", resolved_b
     )
-    assert refused is False
+    assert reason is None
     assert route == resolved_b
 
 
@@ -4724,7 +4749,7 @@ def test_cse_row_agent_id_is_a_lane_not_a_tab(db: None) -> None:
     from bus_watch.endpoint_wake_dispatcher import _cursor_tab_route
 
     cse = ("exact", {"surface": "cse", "agent_id": "21207"})
-    assert _cursor_tab_route(_suffix_lookup_store([]), "cursor", cse) == (False, cse)
+    assert _cursor_tab_route(_suffix_lookup_store([]), "cursor", cse) == (None, cse)
 
 
 def test_orion_is_a_peer_sender_only_on_answer(db: None) -> None:
@@ -4776,8 +4801,8 @@ def test_deep_lane_house_row_is_labelled_parent_not_exact(db: None, monkeypatch)
     )
     assert resolved is not None
     assert resolved[0] == "parent"
-    refused, route = dispatcher._cursor_tab_route(store, "cursor", resolved)
-    assert refused is False
+    reason, route = dispatcher._cursor_tab_route(store, "cursor", resolved)
+    assert reason is None
     assert route == resolved
 
 
@@ -4788,3 +4813,190 @@ def test_orion_answer_gate_compares_only_the_first_token(db: None) -> None:
     assert verdict.wake is True
     assert verdict.rule_id == "wake_peer_sender"
     assert qualify({**base, "subject": "ANSWERING|probe"}, cse=False).wake is False
+
+
+def test_r3_orion_answer_bare_cursor_on_exact_row_enqueues(db: None) -> None:
+    thread = _new_thread("21724-r3-orion-answer")
+    _seed_row(agent="cursor", scope=thread, agent_id=_TAB_A)
+    t_id, _ts, _n, _c = insert_turn(
+        thread=thread,
+        from_agent="orion",
+        to_agent="cursor",
+        subject="ANSWER| probe",
+        body="b",
+    )
+    _rewind_cursor()
+    store = _TabScanStore()
+    scan_once(store)  # type: ignore[arg-type]
+    assert [r["turn_id"] for r in store.pending] == [t_id]
+    assert store.pending[0]["decided_by_rule"] == "wake_peer_sender"
+
+
+def test_r3_stale_suffix_on_exact_house_row_delivers_to_bound_tab_remapped(
+    db: None,
+) -> None:
+    from unittest.mock import patch
+
+    thread = _new_thread("21724-r3-stale-suffix")
+    _seed_row(agent="cursor", scope=thread, agent_id=_TAB_B)
+    t_id, _ts, _n, _c = insert_turn(
+        thread=thread,
+        from_agent="maestro",
+        to_agent=f"composer-impresario-{_TAB_A[:8]}",
+        subject="RULING| bind",
+        body="b",
+    )
+    _rewind_cursor()
+    store = _TabFireStore()
+    captured: list[dict] = []
+
+    def _capture(_row: dict, sub: dict, _turn_arg: object, **kwargs: object) -> tuple:
+        captured.append(sub)
+        return ("delivered", "delivered")
+
+    scan_once(store)  # type: ignore[arg-type]
+    with patch(
+        "bus_watch.endpoint_wake_dispatcher._display_post",
+        side_effect=_capture,
+    ):
+        fire_due_wakes(store)  # type: ignore[arg-type]
+    assert captured[0]["agent_id"] == _TAB_B
+    assert store.results[-1]["route"] == "remapped"
+    assert store.results[-1]["reason"] == "stale_name"
+    with connect() as conn:
+        row = conn.execute(
+            "SELECT state, route, reason FROM endpoint_wake_ledger WHERE turn_id=?",
+            (t_id,),
+        ).fetchone()
+    assert row is not None
+    assert row["state"] == "delivered"
+    assert row["route"] == "remapped"
+    assert row["reason"] == "stale_name"
+
+
+def test_r3_bare_cursor_on_exact_row_delivers_bare_name(db: None) -> None:
+    from unittest.mock import patch
+
+    thread = _new_thread("21724-r3-bare-fire")
+    _seed_row(agent="cursor", scope=thread, agent_id=_TAB_A)
+    t_id, _ts, _n, _c = insert_turn(
+        thread=thread,
+        from_agent="maestro",
+        to_agent="cursor",
+        subject="RULING| bind",
+        body="b",
+    )
+    _rewind_cursor()
+    store = _TabFireStore()
+    captured: list[dict] = []
+
+    def _capture(_row: dict, sub: dict, _turn_arg: object, **kwargs: object) -> tuple:
+        captured.append(sub)
+        return ("delivered", "delivered")
+
+    scan_once(store)  # type: ignore[arg-type]
+    with patch(
+        "bus_watch.endpoint_wake_dispatcher._display_post",
+        side_effect=_capture,
+    ):
+        fire_due_wakes(store)  # type: ignore[arg-type]
+    assert captured[0]["agent_id"] == _TAB_A
+    assert store.results[-1]["route"] == "remapped"
+    assert store.results[-1]["reason"] == "bare_name"
+    with connect() as conn:
+        row = conn.execute(
+            "SELECT state, route, reason FROM endpoint_wake_ledger WHERE turn_id=?",
+            (t_id,),
+        ).fetchone()
+    assert row is not None
+    assert row["state"] == "delivered"
+    assert row["route"] == "remapped"
+    assert row["reason"] == "bare_name"
+
+
+def test_r3_remapped_keeps_delivery_reason_when_not_delivered(db: None) -> None:
+    from unittest.mock import patch
+
+    thread = _new_thread("21724-r3-composer-busy")
+    _seed_row(agent="cursor", scope=thread, agent_id=_TAB_A)
+    insert_turn(
+        thread=thread,
+        from_agent="maestro",
+        to_agent="cursor",
+        subject="RULING| bind",
+        body="b",
+    )
+    _rewind_cursor()
+    store = _TabFireStore()
+    scan_once(store)  # type: ignore[arg-type]
+    with patch(
+        "bus_watch.endpoint_wake_dispatcher._display_post",
+        return_value=("pending", "composer_busy"),
+    ):
+        fire_due_wakes(store)  # type: ignore[arg-type]
+    assert store.results[-1]["route"] == "remapped"
+    assert store.results[-1]["reason"] == "composer_busy"
+
+
+def test_r3_gate_remap_address_on_exact_row_is_not_labelled_remapped(db: None) -> None:
+    from unittest.mock import patch
+
+    thread = _new_thread("21724-r3-gate-remap-fire")
+    _seed_row(agent="cursor", scope=thread, agent_id=_TAB_A)
+    insert_turn(
+        thread=thread,
+        from_agent="maestro",
+        to_agent="git-integration-worker",
+        subject="CLOSEOUT| lane land",
+        body="b",
+    )
+    _rewind_cursor()
+    store = _TabFireStore()
+    scan_once(store)  # type: ignore[arg-type]
+    with patch(
+        "bus_watch.endpoint_wake_dispatcher._display_post",
+        return_value=("delivered", "delivered"),
+    ):
+        fire_due_wakes(store)  # type: ignore[arg-type]
+    assert store.results[-1]["route"] == "exact"
+    assert store.results[-1]["reason"] == "delivered"
+
+
+def test_r3_fire_honours_live_suffix_row_redirect(db: None) -> None:
+    from unittest.mock import patch
+
+    thread = _new_thread("21724-r3-suffix-redirect")
+    _seed_row(agent="cursor", scope=thread, agent_id=_TAB_B)
+    insert_turn(
+        thread=thread,
+        from_agent="maestro",
+        to_agent=f"composer-impresario-{_TAB_A[:8]}",
+        subject="RULING| bind",
+        body="b",
+    )
+    _rewind_cursor()
+    row_a = _suffix_row(scope="18460", agent_id=_TAB_A, row_id=19)
+    from bus_watch.endpoint_wake_transport import agent_id_matches_composer_suffix
+
+    class _SuffixFireStore(_TabFireStore):
+        def _subscription_by_cursor_agent_id_suffix(self, suffix: str):
+            if agent_id_matches_composer_suffix(_TAB_A, suffix):
+                return ("agent_id", row_a)
+            return None
+
+    store = _SuffixFireStore()
+    captured: list[dict] = []
+
+    def _capture(_row: dict, sub: dict, _turn_arg: object, **kwargs: object) -> tuple:
+        captured.append(sub)
+        return ("delivered", "delivered")
+
+    scan_once(store)  # type: ignore[arg-type]
+    with patch(
+        "bus_watch.endpoint_wake_dispatcher._display_post",
+        side_effect=_capture,
+    ):
+        fire_due_wakes(store)  # type: ignore[arg-type]
+    assert captured[0]["agent_id"] == _TAB_A
+    assert store.results[-1]["route"] == "agent_id"
+    assert store.results[-1]["reason"] == "delivered"
