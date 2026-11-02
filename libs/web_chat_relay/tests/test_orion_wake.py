@@ -3,22 +3,44 @@
 from __future__ import annotations
 
 import re
+from contextlib import asynccontextmanager
 
 import pytest
 from bus_watch.endpoint_wake_transport import classify_orion
 from web_chat_relay.orion_wake import (
     PINNED_CONVERSATION_ID,
     PINNED_CONVERSATION_URL,
-    _paste_and_send,
+    _dom_deliver,
     build_wake_pointer,
     conversation_id_from_url,
     deliver_orion_wake,
     holder_conversation_url,
 )
+from web_tab.provider_selectors import composer_selector_for_site
 
 pytestmark = pytest.mark.offline
 
 PINNED = PINNED_CONVERSATION_URL
+
+
+@pytest.fixture(autouse=True)
+def stub_orion_dom_deliver(
+    monkeypatch: pytest.MonkeyPatch, request: pytest.FixtureRequest
+) -> None:
+    if request.node.get_closest_marker("no_dom_stub"):
+        return
+
+    async def _fake(page: object, text: str, **kwargs: object) -> dict[str, object]:
+        delivered = getattr(page, "dom_delivered", None)
+        if delivered is None:
+            page.dom_delivered = []  # type: ignore[attr-defined]
+            delivered = page.dom_delivered  # type: ignore[attr-defined]
+        delivered.append(text)
+        page.pasted = True  # type: ignore[attr-defined]
+        return {"ok": True, "receipt": "dom_committed"}
+
+    monkeypatch.setattr("web_chat_relay.orion_wake._dom_deliver", _fake)
+    monkeypatch.setattr("web_chat_relay.orion_hop._dom_deliver", _fake)
 
 
 def _dialog_meta(
@@ -165,6 +187,7 @@ class _FakePage:
         self.approval_click_index: int | None = None
         self._active_dialog_index = 0
         self.pasted = False
+        self.dom_delivered: list[str] = []
         self.docked = False
         self.dock_visible = dock_visible
         self._dock_target = False
@@ -278,7 +301,7 @@ class _FakePage:
         return {}
 
     async def wait_for_timeout(self, _ms: int) -> None:
-        if self.keyboard.inserted:
+        if self.dom_delivered or self.keyboard.inserted:
             self.pasted = True
         return None
 
@@ -303,12 +326,13 @@ async def test_happy_path_paste_and_second_approval() -> None:
         out["approval"]["dialogs"][0]["clicked_text"]
         == "Allow ulg-code for this conversation"
     )
-    assert "21207" in page.keyboard.inserted[0]
-    assert "turn 7" in page.keyboard.inserted[0]
+    assert "21207" in page.dom_delivered[0]
+    assert "turn 7" in page.dom_delivered[0]
     assert (
-        "maestro" in page.keyboard.inserted[0].lower()
-        or "web-anthropic" in page.keyboard.inserted[0]
+        "maestro" in page.dom_delivered[0].lower()
+        or "web-anthropic" in page.dom_delivered[0].lower()
     )
+    assert not page.keyboard.inserted
 
 
 @pytest.mark.asyncio
@@ -336,7 +360,8 @@ async def test_floating_layout_delivers_with_floating_dialog_open() -> None:
     assert out["ok"] is True, out
     assert out["delivered"] is True
     assert out.get("layout") == "floating"
-    assert page.keyboard.inserted
+    assert page.dom_delivered
+    assert not page.keyboard.inserted
 
 
 @pytest.mark.asyncio
@@ -354,6 +379,7 @@ async def test_non_connector_dialog_refuses_before_paste() -> None:
     )
     assert out["reason"] == "non_connector_dialog"
     assert out["pasted"] is False
+    assert not page.dom_delivered
     assert not page.keyboard.inserted
 
 
@@ -393,7 +419,8 @@ async def test_hidden_tab_with_empty_composer_brings_to_front_and_reloads_before
     assert out["brought_to_front"] is True
     assert out["tab_reloaded"] is True
     assert page.reloaded == 1
-    assert page.keyboard.inserted
+    assert page.dom_delivered
+    assert not page.keyboard.inserted
 
 
 @pytest.mark.asyncio
@@ -413,6 +440,7 @@ async def test_hidden_tab_draft_restored_after_reload_refuses_non_empty() -> Non
     assert out["pasted"] is False
     assert out["tab_reloaded"] is True
     assert page.reloaded == 1
+    assert not page.dom_delivered
     assert not page.keyboard.inserted
 
 
@@ -431,22 +459,68 @@ async def test_hidden_tab_with_composer_draft_refuses_non_empty() -> None:
     assert out["reason"] == "non_empty_composer"
     assert out["pasted"] is False
     assert page.reloaded == 0
+    assert not page.dom_delivered
     assert not page.keyboard.inserted
 
 
 @pytest.mark.asyncio
-async def test_paste_and_send_clicks_steer_when_visible() -> None:
-    page = _FakePage(streaming=True, steer_visible=True, send_visible=False)
-    await _paste_and_send(page, "wake line", layout="docked")
-    assert "steer" in page.clicked
+@pytest.mark.no_dom_stub
+async def test_dom_deliver_uses_chatgpt_selector_not_keyboard(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    page = _FakePage()
+    insert_calls: list[tuple[str, str, bool]] = []
 
+    class _Port:
+        def list_tabs(self, *, cdp_url: str) -> dict:
+            return {
+                "pages": [
+                    {
+                        "id": "tab-orion",
+                        "url": PINNED,
+                        "web_socket_debugger_url": "ws://127.0.0.1/devtools/page/orion",
+                    }
+                ]
+            }
 
-@pytest.mark.asyncio
-async def test_paste_and_send_ignores_steer_button_when_not_streaming() -> None:
-    page = _FakePage(streaming=False, steer_visible=True, send_visible=True)
-    await _paste_and_send(page, "wake line", layout="docked")
-    assert "steer" not in page.clicked
-    assert page.clicked
+    async def _insert(
+        ws: str, *, selector: str, line: str, preserve_newlines: bool = False
+    ) -> dict:
+        insert_calls.append((selector, line, preserve_newlines))
+        return {"ok": True}
+
+    async def _baseline(*_a: object, **_k: object) -> dict:
+        return {"user_count": 0}
+
+    async def _verify(*_a: object, **_k: object) -> dict:
+        return {"ok": True, "receipt": "dom_committed"}
+
+    async def _probe(*_a: object, **_k: object) -> dict:
+        return {"ok": True}
+
+    @asynccontextmanager
+    async def _lock(_target_id: str):
+        yield
+
+    expected_selector = composer_selector_for_site("chatgpt")
+    monkeypatch.setattr("web_tab.cdp_actuation.default_actuation_port", lambda: _Port())
+    monkeypatch.setattr(
+        "cursor_bridge.dom_composer_paste.dom_insert_and_send", _insert
+    )
+    monkeypatch.setattr("web_tab.commit_verify.capture_dom_baseline", _baseline)
+    monkeypatch.setattr("web_tab.commit_verify.poll_verify_committed", _verify)
+    monkeypatch.setattr("web_tab.operator_guard.operator_active_probe", _probe)
+    monkeypatch.setattr("web_tab.target_lock.target_write_lock", _lock)
+
+    out = await _dom_deliver(
+        page,
+        build_wake_pointer(thread="21207", turn=1, from_agent="maestro"),
+    )
+    assert out["ok"] is True, out
+    assert insert_calls
+    assert insert_calls[0][0] == expected_selector
+    assert insert_calls[0][2] is False
+    assert not page.keyboard.inserted
 
 
 @pytest.mark.asyncio
@@ -466,7 +540,8 @@ async def test_hidden_tab_streaming_skips_reload_and_delivers() -> None:
     assert out["reason"] == "delivered"
     assert out["tab_reloaded"] is False
     assert page.reloaded == 0
-    assert page.keyboard.inserted
+    assert page.dom_delivered
+    assert not page.keyboard.inserted
 
 
 @pytest.mark.asyncio
@@ -476,6 +551,7 @@ async def test_orion_echo_drop() -> None:
         thread="21207", turn=1, from_agent="orion", page=page
     )
     assert out["reason"] == "orion_echo_drop"
+    assert not page.dom_delivered
     assert not page.keyboard.inserted
 
 

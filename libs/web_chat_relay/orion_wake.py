@@ -402,60 +402,96 @@ async def _prepare_composer(page: OrionPage) -> dict[str, Any]:
     return receipt
 
 
-async def _visible_submit_button(page: OrionPage, selector: str) -> Any | None:
-    loc = page.locator(selector).first
-    if await loc.count() and await loc.is_visible():
-        return loc
+def _cdp_transport_refusal(raw: dict[str, Any]) -> dict[str, Any] | None:
+    if raw.get("error"):
+        return {
+            "ok": False,
+            "reason": "cdp_transport_error",
+            "retryable": True,
+        }
     return None
 
 
-async def _steer_submit_button(page: OrionPage) -> Any | None:
-    root = page.locator("button")
-    filter_fn = getattr(root, "filter", None)
-    if callable(filter_fn):
-        try:
-            steer = filter_fn(has_text="Steer").first
-            if await steer.count() and await steer.is_visible():
-                return steer
-        except TypeError:
-            pass
-    for selector in (
-        'form button[aria-label="Steer"]',
-        'button[aria-label="Steer"]',
-        'button[aria-label*="Steer"]',
-    ):
-        hit = await _visible_submit_button(page, selector)
-        if hit is not None:
-            return hit
-    return None
+async def _dom_deliver(
+    page: OrionPage,
+    text: str,
+    *,
+    cdp_url: str = DEFAULT_ORION_CDP_URL,
+    preserve_newlines: bool = False,
+) -> dict[str, Any]:
+    """Paste via ChatGPT DOM helpers (same sequence as web_tab execute_paste submit path)."""
+    from cursor_bridge.dom_composer_paste import dom_insert_and_send
+    from web_tab.cdp_actuation import default_actuation_port
+    from web_tab.commit_verify import capture_dom_baseline, poll_verify_committed
+    from web_tab.operator_guard import operator_active_probe
+    from web_tab.provider_selectors import composer_selector_for_site, match_tab_by_url
+    from web_tab.target_lock import TargetLockBusyError, target_write_lock
 
+    tab_url = str(getattr(page, "url", "") or "")
+    impl = default_actuation_port()
+    listing = impl.list_tabs(cdp_url=cdp_url)
+    row = match_tab_by_url(list(listing.get("pages") or []), tab_url)
+    if row is None:
+        return {"ok": False, "reason": "target_not_found"}
+    target_id = str(row.get("id") or "").strip()
+    ws = str(row.get("web_socket_debugger_url") or "").strip()
+    if not target_id or not ws:
+        return {"ok": False, "reason": "target_not_found"}
 
-async def _paste_and_send(
-    page: OrionPage, text: str, *, layout: str = "docked"
-) -> None:
-    if layout == "floating":
-        comp = page.locator(
-            '[role=dialog] [contenteditable="true"], [role=alertdialog] [contenteditable="true"]'
-        ).first
-        if not await comp.count():
-            comp = page.locator('[contenteditable="true"]').last
-    else:
-        comp = page.locator('[contenteditable="true"]').last
-    await comp.click()
-    kb = page.keyboard
-    await kb.press("Control+A")
-    await kb.insert_text(text)
-    steer = None
-    if await _is_streaming(page):
-        steer = await _steer_submit_button(page)
-    if steer is not None:
-        await steer.click()
-        return
-    send = page.locator('form button[aria-label="Send"]').first
-    if await send.count() and await send.is_visible():
-        await send.click()
-        return
-    await comp.press("Enter")
+    site = "chatgpt"
+    selector = composer_selector_for_site(site)
+    verify_text = text.strip() if preserve_newlines else " ".join(text.splitlines()).strip()
+    try:
+        async with target_write_lock(target_id):
+            guard = await operator_active_probe(
+                ws,
+                selector=selector,
+                created_by_agent=False,
+            )
+            if not guard.get("ok"):
+                return {
+                    "ok": False,
+                    "reason": str(guard.get("reason") or guard.get("code") or "operator_busy"),
+                }
+            baseline = await capture_dom_baseline(impl, ws_url=ws, site=site)
+            transport = _cdp_transport_refusal(baseline)
+            if transport:
+                return transport
+            base_users = int(baseline.get("user_count") or 0)
+            result = await dom_insert_and_send(
+                ws,
+                selector=selector,
+                line=text,
+                preserve_newlines=preserve_newlines,
+            )
+    except TargetLockBusyError:
+        return {"ok": False, "reason": "target_lock_busy", "retryable": True}
+
+    if not result.get("ok"):
+        return {
+            "ok": False,
+            "reason": str(result.get("reason") or "paste_failed"),
+        }
+
+    receipt: str = "dom_paste"
+    verify = await poll_verify_committed(
+        impl,
+        ws_url=ws,
+        site=site,
+        prompt_text=verify_text,
+        baseline_user_count=base_users,
+    )
+    transport = _cdp_transport_refusal(verify)
+    if transport:
+        return transport
+    if verify.get("receipt") == "dom_committed":
+        receipt = "dom_committed"
+    return {
+        "ok": True,
+        "receipt": receipt,
+        "target_id": target_id,
+        "selector": selector,
+    }
 
 
 async def _approval_surface(page: OrionPage) -> str:
@@ -598,9 +634,17 @@ async def deliver_orion_wake(
         else build_wake_pointer(thread=thread_s, turn=turn, from_agent=from_agent)
     )
     try:
-        await _paste_and_send(
-            page, line, layout=str(layout_receipt.get("layout") or "docked")
-        )
+        dom = await _dom_deliver(page, line, cdp_url=cdp_url, preserve_newlines=False)
+        if not dom.get("ok"):
+            if owns_cdp and pw is not None:
+                await pw.stop()
+            return _refuse(
+                "paste_failed",
+                error=str(dom.get("reason") or "paste_failed"),
+                pasted=False,
+                brought_to_front=tab_sync["brought_to_front"],
+                tab_reloaded=tab_sync["tab_reloaded"],
+            )
         await page.wait_for_timeout(400)
         approval = await _handle_approvals(page)
     except Exception as exc:
@@ -620,6 +664,7 @@ async def deliver_orion_wake(
         "brought_to_front": tab_sync["brought_to_front"],
         "tab_reloaded": tab_sync["tab_reloaded"],
     }
+    dom_receipt = str(dom.get("receipt") or "dom_paste")
     if approval.get("outcome") == "approval_unrecognized":
         return {
             "ok": False,
@@ -628,6 +673,7 @@ async def deliver_orion_wake(
             "delivered": False,
             "approval": approval,
             "pointer_len": len(line),
+            "receipt": dom_receipt,
             **layout_receipt,
             **sync_flags,
         }
@@ -639,6 +685,7 @@ async def deliver_orion_wake(
         "delivered": True,
         "approval": approval,
         "pointer_len": len(line),
+        "receipt": dom_receipt,
         "conversation_id": target_id,
         **layout_receipt,
         **sync_flags,
