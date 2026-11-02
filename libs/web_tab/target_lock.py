@@ -148,17 +148,7 @@ async def _acquire_cross_process_lock(
     try:
         while True:
             now = loop.time()
-            if now >= deadline:
-                waited = now - started
-                holder = read_lock_holder_metadata(path)
-                if fd is not None:
-                    os.close(fd)
-                    fd = None
-                raise TargetLockBusyError(
-                    target_id,
-                    waited_s=waited,
-                    holder=holder,
-                )
+            expired = now >= deadline
             path.parent.mkdir(parents=True, exist_ok=True)
             fd = os.open(str(path), os.O_CREAT | os.O_RDWR, 0o666)
             try:
@@ -166,13 +156,18 @@ async def _acquire_cross_process_lock(
             except BlockingIOError:
                 os.close(fd)
                 fd = None
+                if expired:
+                    waited = now - started
+                    holder = read_lock_holder_metadata(path)
+                    raise TargetLockBusyError(
+                        target_id,
+                        waited_s=waited,
+                        holder=holder,
+                    )
                 remaining = max(0.0, deadline - loop.time())
                 await asyncio.sleep(min(delay, remaining))
                 delay = min(delay * 2, 1.0)
                 continue
-            except asyncio.CancelledError:
-                os.close(fd)
-                raise
             _write_holder_metadata(fd, op=op)
             return fd
     except BaseException:

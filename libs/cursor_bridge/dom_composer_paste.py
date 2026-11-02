@@ -8,6 +8,7 @@ import re
 from typing import Any
 
 GROK_PROMPT_SELECTOR = '[aria-label="Prompt"][contenteditable="true"]'
+OPERATOR_PROBE_VERSION = 2
 _STALE_WAKE_DRAFT = re.compile(r"^BRIDGE_WAKE\s+thread=\S+\s+turn=\d+(?:,\d+)*$")
 
 
@@ -15,36 +16,35 @@ def _is_stale_wake_draft(draft: str) -> bool:
     return bool(_STALE_WAKE_DRAFT.match(str(draft or "").strip()))
 
 
-DISPATCH_OPERATOR_KEYDOWN_JS = r"""
-(() => {
-  const g = window.__ulgOperatorActivity = window.__ulgOperatorActivity || { lastInputMs: 0 };
-  const target = document.querySelector('[aria-label="Prompt"][contenteditable="true"]')
-    || document.activeElement
-    || document.body;
-  target.dispatchEvent(new KeyboardEvent('keydown', { bubbles: true, cancelable: true, key: 'a' }));
-  return { ok: true, lastInputMs: g.lastInputMs };
-})()
-"""
-
-INSTALL_OPERATOR_ACTIVITY_PROBE_JS = r"""
-(() => {
-  const g = window.__ulgOperatorActivity = window.__ulgOperatorActivity || {
+INSTALL_OPERATOR_ACTIVITY_PROBE_JS = rf"""
+(() => {{
+  const PROBE_VERSION = {OPERATOR_PROBE_VERSION};
+  const g = window.__ulgOperatorActivity = window.__ulgOperatorActivity || {{
     lastInputMs: 0,
     ourDraftSig: '',
     installed: false,
-  };
-  if (g.installed) return {ok: true, already: true};
-  g.installed = true;
-  const bump = (e) => {
+    probeVersion: 0,
+  }};
+  if (g.probeVersion === PROBE_VERSION && g.installed) {{
+    return {{ok: true, already: true, probeVersion: PROBE_VERSION}};
+  }}
+  if (g._bump) {{
+    window.removeEventListener('keydown', g._bump, true);
+    window.removeEventListener('input', g._bump, true);
+    window.removeEventListener('pointerdown', g._bump, true);
+  }}
+  g._bump = (e) => {{
     if (!e || !e.isTrusted) return;
     if (Date.now() < Number(g.suppressUntilMs || 0)) return;
     g.lastInputMs = Date.now();
-  };
-  window.addEventListener('keydown', bump, true);
-  window.addEventListener('input', bump, true);
-  window.addEventListener('pointerdown', bump, true);
-  return {ok: true, installed: true};
-})()
+  }};
+  window.addEventListener('keydown', g._bump, true);
+  window.addEventListener('input', g._bump, true);
+  window.addEventListener('pointerdown', g._bump, true);
+  g.installed = true;
+  g.probeVersion = PROBE_VERSION;
+  return {{ok: true, installed: true, probeVersion: PROBE_VERSION}};
+}})()
 """
 
 READ_OPERATOR_BUSY_JS = r"""
@@ -128,7 +128,6 @@ def _set_composer_body(selector: str, text: str, *, preserve_newlines: bool = Fa
         "if(draft.length>0&&!stale&&draft!==line.trim())"
         "return{ok:false,reason:'composer_not_empty',draft};"
         "const g=window.__ulgOperatorActivity=window.__ulgOperatorActivity||{};"
-        "g.suppressUntilMs=Date.now()+5000;"
         "if(el.editor&&el.editor.commands&&typeof el.editor.commands.setContent==='function'){"
         "try{el.editor.commands.setContent(line);}catch(e){"
         "el.textContent=line;el.dispatchEvent(new InputEvent('input',{bubbles:true,data:line}));}"
@@ -152,7 +151,6 @@ def _click_send_own_draft_body(selector: str) -> str:
         f"(()=>{{const el=({find});"
         "if(!el)return{ok:false,reason:'no_composer',send_clicked:false};"
         "const g=window.__ulgOperatorActivity=window.__ulgOperatorActivity||{};"
-        "g.suppressUntilMs=Date.now()+5000;"
         "const sig=String(g.ourDraftSig||'').trim();"
         "const draft=(el.innerText||el.value||'').trim();"
         "if(!sig||draft!==sig)"
@@ -163,6 +161,7 @@ def _click_send_own_draft_body(selector: str) -> str:
         "for(const sel of btnSels){btn=root.querySelector(sel);if(btn)break;}"
         "if(!btn)return{ok:false,reason:'no_send_button',send_clicked:false};"
         "btn.click();"
+        "g.ourDraftSig='';"
         "return{ok:true,send_clicked:true};})()"
     )
 
@@ -212,7 +211,6 @@ def _click_send_body(
         f"(()=>{{const el=({find});"
         "if(!el)return{ok:false,reason:'no_composer',send_clicked:false};"
         "const g=window.__ulgOperatorActivity=window.__ulgOperatorActivity||{};"
-        "g.suppressUntilMs=Date.now()+5000;"
         f"const text=(el.innerText||el.value||'').trim(),line={lj};"
         "if(!text||(text!==line.trim()&&!/^BRIDGE_WAKE\\s+thread=\\S+\\s+turn=\\d+(?:,\\d+)*$/.test(text)))"
         "return{ok:false,reason:'composer_text_mismatch',send_clicked:false};"
@@ -222,6 +220,7 @@ def _click_send_body(
         "for(const sel of btnSels){btn=root.querySelector(sel);if(btn)break;}"
         "if(!btn)return{ok:false,reason:'no_send_button',send_clicked:false};"
         "btn.click();"
+        "g.ourDraftSig='';"
         "return{ok:true,send_clicked:true};})()"
     )
 
@@ -230,6 +229,22 @@ def operator_busy_probe_js(*, selector: str, watermark: str = "") -> str:
     sels = _selector_list(selector) or [selector]
     body = READ_OPERATOR_BUSY_JS.replace("%SELECTORS%", json.dumps(sels))
     return body.replace("%WATERMARK%", json.dumps(watermark or ""))
+
+
+def operator_activity_suppress_js(*, duration_ms: int = 5000) -> str:
+    """Raise suppress window so trusted CDP Input.* does not mark operator active."""
+    return (
+        "(()=>{const g=window.__ulgOperatorActivity="
+        f"window.__ulgOperatorActivity||{{}};g.suppressUntilMs=Date.now()+{int(duration_ms)};"
+        "return{ok:true};})()"
+    )
+
+
+def operator_activity_clear_suppress_js() -> str:
+    return (
+        "(()=>{const g=window.__ulgOperatorActivity=window.__ulgOperatorActivity||{};"
+        "g.suppressUntilMs=0;return{ok:true};})()"
+    )
 
 
 async def _cdp_eval(
@@ -262,13 +277,6 @@ async def _cdp_response(ws: Any, mid: int) -> dict[str, Any]:
         msg = json.loads(await ws.recv())
         if msg.get("id") == mid:
             return msg
-
-
-async def dispatch_operator_keydown(ws_url: str) -> dict[str, Any]:
-    """Fire a bubbling keydown so the activity probe sees operator input (tests)."""
-    await install_operator_activity_probe(ws_url)
-    raw = await _cdp_eval(ws_url, DISPATCH_OPERATOR_KEYDOWN_JS)
-    return raw if isinstance(raw, dict) else {"ok": False}
 
 
 async def install_operator_activity_probe(ws_url: str) -> None:
@@ -381,14 +389,16 @@ def foreign_draft_guard(surface: dict[str, Any], *, watermark: str = "") -> str 
 
 __all__ = [
     "GROK_PROMPT_SELECTOR",
+    "OPERATOR_PROBE_VERSION",
     "composer_selector",
     "dom_click_send",
     "dom_click_send_own_draft",
     "dom_insert_and_send",
     "dom_set_composer_text",
     "foreign_draft_guard",
-    "dispatch_operator_keydown",
     "install_operator_activity_probe",
+    "operator_activity_clear_suppress_js",
+    "operator_activity_suppress_js",
     "operator_busy_probe_js",
     "read_operator_busy",
     "wait_for_operator_idle",

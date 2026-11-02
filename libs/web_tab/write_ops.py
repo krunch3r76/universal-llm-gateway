@@ -344,7 +344,7 @@ async def execute_paste(
         store_path=store_path,
     )
     try:
-        async with target_write_lock(target_id):
+        async with target_write_lock(target_id, op="paste"):
             guard = await operator_active_probe(
                 ws,
                 selector=selector,
@@ -451,7 +451,7 @@ async def execute_submit(
         store_path=store_path,
     )
     try:
-        async with target_write_lock(target_id):
+        async with target_write_lock(target_id, op="submit"):
             guard = await operator_active_probe(
                 ws,
                 selector=selector,

@@ -6,6 +6,12 @@ import asyncio
 import json
 from typing import Any
 
+from cursor_bridge.dom_composer_paste import (
+    INSTALL_OPERATOR_ACTIVITY_PROBE_JS,
+    operator_activity_clear_suppress_js,
+    operator_activity_suppress_js,
+)
+
 _INSERT_METHOD = "Input.insertText"
 _KEYDOWN_METHOD = "Input.dispatchKeyEvent"
 
@@ -105,23 +111,28 @@ async def cdp_insert_text(
     import websockets
 
     async with websockets.connect(ws_url, max_size=2_000_000) as ws:
-        focus = await _runtime_eval(ws, 1, _focus_composer_js(selector))
+        await _runtime_eval(ws, 1, INSTALL_OPERATOR_ACTIVITY_PROBE_JS)
+        focus = await _runtime_eval(ws, 2, _focus_composer_js(selector))
         if not isinstance(focus, dict) or not focus.get("ok"):
             reason = (
                 focus.get("reason") if isinstance(focus, dict) else "focus_failed"
             )
             return {"ok": False, "reason": reason or "focus_failed", "method": "cdp_insert"}
-        await ws.send(
-            json.dumps(
-                {"id": 2, "method": _INSERT_METHOD, "params": {"text": text}}
+        await _runtime_eval(ws, 3, operator_activity_suppress_js())
+        try:
+            await ws.send(
+                json.dumps(
+                    {"id": 4, "method": _INSERT_METHOD, "params": {"text": text}}
+                )
             )
-        )
-        await asyncio.wait_for(_cdp_response(ws, 2), 8.0)
-        await _runtime_eval(ws, 3, _mark_our_draft_sig_js(selector, text))
+            await asyncio.wait_for(_cdp_response(ws, 4), 8.0)
+        finally:
+            await _runtime_eval(ws, 5, operator_activity_clear_suppress_js())
+        await _runtime_eval(ws, 6, _mark_our_draft_sig_js(selector, text))
         if restore_focus and not focus.get("priorIsComposer"):
             await _runtime_eval(
                 ws,
-                4,
+                7,
                 _restore_focus_js(
                     selector,
                     str(focus.get("priorId") or ""),
