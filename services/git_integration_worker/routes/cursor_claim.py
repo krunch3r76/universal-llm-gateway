@@ -62,6 +62,15 @@ class ApiRoleDispatchBody(BaseModel):
     resolved_model: str
     contract: str | None = None
     usage: dict[str, Any] | None = None
+    terminal_status: Literal["completed", "failed"] = "completed"
+
+
+class RegistryTerminalBody(BaseModel):
+    """Close a frontier registry projection row (api_role / cdp)."""
+
+    dispatch_id: str
+    terminal_status: Literal["completed", "failed", "cancelled"]
+    reason: str = ""
 
 
 class RegistryRecordBody(BaseModel):
@@ -244,8 +253,31 @@ def post_api_role_dispatch(body: ApiRoleDispatchBody) -> Any:
         resolved_model=body.resolved_model.strip(),
         contract=body.contract,
         usage=body.usage,
+        terminal_status=body.terminal_status,
     )
     return {"ok": True, "dispatch_id": dispatch_id or f"api-{execution_id}"}
+
+
+@router.post("/registry/terminal", response_model=None)
+def post_registry_terminal(body: RegistryTerminalBody) -> Any:
+    """Mark a frontier registry row terminal (api_role / cdp admits)."""
+    from services.git_integration_worker.cursor_sdk_work_registry_admit import (
+        close_frontier_registry_row,
+    )
+
+    if not body.dispatch_id.strip():
+        return _invalid("INVALID_TERMINAL", "dispatch_id is required")
+    outcome = close_frontier_registry_row(
+        body.dispatch_id.strip(),
+        body.terminal_status,
+        body.reason or "",
+    )
+    if not outcome.get("ok"):
+        return JSONResponse(
+            status_code=404,
+            content={"ok": False, "reason": outcome.get("reason", "not_found")},
+        )
+    return {"ok": True, "marked": outcome.get("marked", False)}
 
 
 @router.get("/work-key-ledger", response_model=None)

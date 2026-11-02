@@ -11,7 +11,7 @@ raised.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Literal
 
 from universal_logging import get_logger
 
@@ -52,7 +52,7 @@ def _is_api_role_team_dispatch(record: PipelineExecutionRecord) -> bool:
     """True when API-role to_thread delivery should record economics."""
     if not record.work_key or not record.endpoint_request_id:
         return False
-    if record.op != "to_thread" or record.result is None:
+    if record.op != "to_thread":
         return False
     from ...handlers.frontier_dispatch.cursor_sdk_dispatch import (
         is_cursor_sdk_dispatch_model,
@@ -85,8 +85,12 @@ def enrich_on_behalf_sidecar_content(
     )
 
 
-async def persist_api_role_ledger(record: PipelineExecutionRecord) -> None:
-    """POST economics to git_integration_worker after successful on-behalf delivery."""
+async def persist_api_role_ledger(
+    record: PipelineExecutionRecord,
+    *,
+    terminal_status: Literal["completed", "failed"] = "completed",
+) -> None:
+    """POST economics to git_integration_worker after on-behalf delivery."""
     if not _is_api_role_team_dispatch(record):
         return
     import httpx
@@ -105,11 +109,24 @@ async def persist_api_role_ledger(record: PipelineExecutionRecord) -> None:
         "resolved_model": model,
         "contract": record.resolved_contract,
         "usage": usage,
+        "terminal_status": terminal_status,
     }
     url = f"{worker_base_url().rstrip('/')}/api/v1/cursor/api-role-dispatch"
-    try:
-        async with httpx.AsyncClient(timeout=15.0) as client:
-            resp = await client.post(url, json=payload)
+    for attempt in range(2):
+        try:
+            async with httpx.AsyncClient(timeout=15.0) as client:
+                resp = await client.post(url, json=payload)
+        except httpx.HTTPError as exc:
+            if attempt == 0:
+                continue
+            logger.warning(
+                "api-role ledger relay unreachable: execution_id=%s err=%s",
+                record.execution_id,
+                exc,
+            )
+            return
+        if resp.status_code >= 500 and attempt == 0:
+            continue
         if resp.status_code >= 300:
             logger.warning(
                 "api-role ledger relay failed: execution_id=%s status=%s body=%s",
@@ -117,12 +134,7 @@ async def persist_api_role_ledger(record: PipelineExecutionRecord) -> None:
                 resp.status_code,
                 resp.text[:200],
             )
-    except httpx.HTTPError as exc:
-        logger.warning(
-            "api-role ledger relay unreachable: execution_id=%s err=%s",
-            record.execution_id,
-            exc,
-        )
+        return
 
 
 @dataclass

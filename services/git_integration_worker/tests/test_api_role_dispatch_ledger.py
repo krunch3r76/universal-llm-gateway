@@ -589,3 +589,80 @@ def test_post_api_role_dispatch_accepts_null_usage(
     payload = work_key_ledger_projection(_KEY, ledger=ledger, limit=5)
     row = next(r for r in payload["dispatches"] if r["dispatch_id"] == "api-no-usage-1")
     assert row.get("usage_cost") is None
+
+
+@pytest.mark.offline
+def test_failed_completion_closes_admitted_row_as_failed_and_abandoned(
+    ledger: CursorDispatchLedger,
+) -> None:
+    from services.git_integration_worker.cursor_sdk_work_registry_admit import (
+        upsert_frontier_registry_dispatch,
+    )
+
+    exec_id = "failed-close-exec-001"
+    key = "todo:api-role-failed-terminal"
+    upsert_frontier_registry_dispatch(
+        dispatch_id=exec_id,
+        thread_id="12286",
+        caller_agent="maestro",
+        seat_name="maestro",
+        address={"kind": "api_role", "thread_id": "12286"},
+        work_key=key,
+        ledger=ledger,
+    )
+    returned = ledger.upsert_api_role_completed_dispatch(
+        execution_id=exec_id,
+        work_key=key,
+        resolved_model="anthropic/claude-sonnet-4-6",
+        contract="freeform",
+        record_json='{"substrate":"api_role"}',
+        stamp="2026-11-02T08:00:00+00:00",
+        terminal_status="failed",
+    )
+    assert returned == exec_id
+    row = _row(ledger, exec_id)
+    assert row["status"] == "failed"
+    rec = json.loads(row["record_json"])
+    assert rec.get("work_status") == "abandoned"
+
+
+@pytest.mark.offline
+def test_post_api_role_dispatch_terminal_status_failed(
+    ledger: CursorDispatchLedger,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from services.git_integration_worker.cursor_sdk_work_registry_admit import (
+        upsert_frontier_registry_dispatch,
+    )
+
+    exec_id = "post-failed-terminal-1"
+    key = "todo:api-role-post-failed"
+    upsert_frontier_registry_dispatch(
+        dispatch_id=exec_id,
+        thread_id="12286",
+        caller_agent="maestro",
+        seat_name="maestro",
+        address={"kind": "api_role", "thread_id": "12286"},
+        work_key=key,
+        ledger=ledger,
+    )
+    monkeypatch.setattr(
+        "services.git_integration_worker.api_role_dispatch_ledger.CursorDispatchLedger.instance",
+        lambda: ledger,
+    )
+    app = FastAPI()
+    app.include_router(claim_router)
+    client = TestClient(app)
+    resp = client.post(
+        "/api/v1/cursor/api-role-dispatch",
+        json={
+            "execution_id": exec_id,
+            "work_key": key,
+            "resolved_model": "anthropic/claude-sonnet-4-6",
+            "contract": "freeform",
+            "terminal_status": "failed",
+        },
+    )
+    assert resp.status_code == 200
+    row = _row(ledger, exec_id)
+    assert row["status"] == "failed"

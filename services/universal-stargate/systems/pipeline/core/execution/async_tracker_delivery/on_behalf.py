@@ -70,11 +70,7 @@ from .envelope import (
 from .outcome import DeliveryOutcome
 from .protocol import _EventBusProtocol
 from .resolution import _resolve_to_agent, _utc_now_iso
-from .sidecar import (
-    enrich_on_behalf_sidecar_content,
-    persist_api_role_ledger,
-    write_on_behalf_sidecar,
-)
+from .sidecar import enrich_on_behalf_sidecar_content, write_on_behalf_sidecar
 
 if TYPE_CHECKING:
     from ..async_tracker import PipelineExecutionRecord
@@ -429,7 +425,6 @@ async def _post_content_on_behalf(
                 sidecar_status=sidecar_status,
             ),
         )
-        await persist_api_role_ledger(record)
         if record.bus_lifecycle == "ephemeral":
             prior_summary, thread_tags = await _fetch_thread_close_context(
                 thread, url=url, auth_token=auth_token

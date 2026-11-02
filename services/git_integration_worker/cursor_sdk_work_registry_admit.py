@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import json
+import os
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from universal_logging import get_logger
@@ -261,6 +263,83 @@ def upsert_frontier_registry_dispatch(
     return fp
 
 
+def close_frontier_registry_row(
+    dispatch_id: str,
+    terminal_status: str,
+    reason: str,
+    ledger: CursorDispatchLedger | None = None,
+) -> dict[str, Any]:
+    """Mark a frontier (api_role/cdp) registry projection row terminal."""
+    fp = str(dispatch_id).strip()
+    if not fp or terminal_status not in ("completed", "failed", "cancelled"):
+        return {"ok": False, "reason": "not_found"}
+    led = ledger or CursorDispatchLedger.instance()
+    with led._connect() as conn:
+        row = conn.execute(
+            "SELECT record_json FROM cursor_sdk_dispatches WHERE dispatch_id=?",
+            (fp,),
+        ).fetchone()
+    if row is None:
+        return {"ok": False, "reason": "not_found"}
+    try:
+        rec = json.loads(row["record_json"] or "{}")
+    except json.JSONDecodeError:
+        rec = {}
+    if not isinstance(rec, dict):
+        rec = {}
+    addr = rec.get("address")
+    if not isinstance(addr, dict) or addr.get("kind") not in ("api_role", "cdp"):
+        return {"ok": False, "reason": "not_found"}
+    rec["terminal_reason"] = reason
+    with led._connect() as conn:
+        conn.execute(
+            "UPDATE cursor_sdk_dispatches SET record_json=? WHERE dispatch_id=?",
+            (json.dumps(rec, sort_keys=True, separators=(",", ":")), fp),
+        )
+        conn.commit()
+    result = led.mark_terminal_checked(
+        dispatch_id=fp,
+        terminal_status=terminal_status,
+        only_from_statuses=("queued", "admitted", "running"),
+    )
+    return {"ok": True, "marked": result.marked}
+
+
+def reap_stale_frontier_registry_rows(
+    ledger: CursorDispatchLedger | None = None,
+    now: datetime | None = None,
+    ttl_s: int | None = None,
+) -> list[str]:
+    """Backstop: fail frontier registry rows older than ``ttl_s`` (default 4h)."""
+    led = ledger or CursorDispatchLedger.instance()
+    effective_ttl = ttl_s
+    if effective_ttl is None:
+        effective_ttl = int(os.environ.get("CURSOR_REGISTRY_FRONTIER_TTL_S", "14400"))
+    anchor = now or datetime.now(UTC)
+    cutoff = (anchor - timedelta(seconds=effective_ttl)).isoformat()
+    reaped: list[str] = []
+    with led._connect() as conn:
+        rows = conn.execute(
+            "SELECT dispatch_id FROM cursor_sdk_dispatches "
+            "WHERE status IN ('queued','admitted','running') "
+            "AND COALESCE(read_only, 0)=1 "
+            "AND json_extract(record_json, '$.address.kind') IN ('api_role', 'cdp') "
+            "AND COALESCE(started_at, queued_at) < ?",
+            (cutoff,),
+        ).fetchall()
+    for row in rows:
+        dispatch_id = str(row["dispatch_id"])
+        outcome = close_frontier_registry_row(
+            dispatch_id,
+            "failed",
+            "frontier_registry_ttl",
+            ledger=led,
+        )
+        if outcome.get("ok") and outcome.get("marked"):
+            reaped.append(dispatch_id)
+    return reaped
+
+
 def record_dispatch_registry_best_effort(**kwargs: Any) -> str | None:
     """Never raises — registry write failure must not fail admit."""
     try:
@@ -268,10 +347,19 @@ def record_dispatch_registry_best_effort(**kwargs: Any) -> str | None:
         if not dispatch_id:
             return None
         led = kwargs.get("ledger") or CursorDispatchLedger.instance()
+        fp = str(dispatch_id)
         with led._connect() as conn:
+            settled = conn.execute(
+                "SELECT dispatch_id FROM cursor_sdk_dispatches "
+                "WHERE (dispatch_id=? OR execution_id=?) "
+                "AND status IN ('completed','failed','cancelled')",
+                (f"api-{fp}", fp),
+            ).fetchone()
+            if settled is not None:
+                return str(settled["dispatch_id"])
             exists = conn.execute(
                 "SELECT 1 FROM cursor_sdk_dispatches WHERE dispatch_id=?",
-                (str(dispatch_id),),
+                (fp,),
             ).fetchone()
         if exists:
             return stamp_registry_on_dispatch_row(
@@ -307,11 +395,15 @@ def stamp_registry_terminal_work_status(
     dispatch_id: str,
     terminal_status: str,
     ledger: CursorDispatchLedger | None = None,
+    work_status_override: str | None = None,
 ) -> None:
     """Map terminal dispatch status to registry work_status at closeout."""
     if terminal_status not in ("completed", "failed", "cancelled"):
         return
-    work_status = "landed" if terminal_status == "completed" else "abandoned"
+    if work_status_override is not None:
+        work_status = work_status_override
+    else:
+        work_status = "landed" if terminal_status == "completed" else "abandoned"
     led = ledger or CursorDispatchLedger.instance()
     try:
         with led._connect() as conn:

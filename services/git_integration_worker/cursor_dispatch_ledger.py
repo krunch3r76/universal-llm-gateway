@@ -2776,6 +2776,7 @@ class CursorDispatchLedger:
         dispatch_id: str,
         terminal_status: str,
         only_from_statuses: tuple[str, ...] | None = None,
+        registry_work_status: str | None = None,
     ) -> str | None:
         """Mark terminal; return ``lease_key`` when present for FIFO promotion.
 
@@ -2792,6 +2793,7 @@ class CursorDispatchLedger:
             dispatch_id=dispatch_id,
             terminal_status=terminal_status,
             only_from_statuses=only_from_statuses,
+            registry_work_status=registry_work_status,
         ).lease_key
 
     def mark_terminal_checked(
@@ -2800,6 +2802,7 @@ class CursorDispatchLedger:
         dispatch_id: str,
         terminal_status: str,
         only_from_statuses: tuple[str, ...] | None = None,
+        registry_work_status: str | None = None,
     ) -> TerminalMarkResult:
         """Mark terminal, reporting whether the mark landed.
 
@@ -2886,6 +2889,7 @@ class CursorDispatchLedger:
             dispatch_id=dispatch_id,
             terminal_status=terminal_status,
             ledger=self,
+            work_status_override=registry_work_status,
         )
         return TerminalMarkResult(marked=marked, lease_key=lease_key)
 
@@ -3689,6 +3693,7 @@ class CursorDispatchLedger:
         contract: str | None,
         record_json: str,
         stamp: str,
+        terminal_status: str = "completed",
     ) -> str:
         """Insert or update a synthetic completed ledger row for API-role team_dispatch.
 
@@ -3751,7 +3756,7 @@ class CursorDispatchLedger:
                 conn.commit()
                 self.mark_terminal(
                     dispatch_id=admitted_id,
-                    terminal_status="completed",
+                    terminal_status=terminal_status,
                     only_from_statuses=_API_ROLE_ACTIVE_STATUSES,
                 )
                 return admitted_id
@@ -3778,23 +3783,26 @@ class CursorDispatchLedger:
                 (dispatch_id,),
             ).fetchone()
             if existing is None:
+                row_status = terminal_status if terminal_status in _STATUS_TERMINAL else "completed"
                 conn.execute(
                     "INSERT INTO cursor_sdk_dispatches "
                     "(dispatch_id, fingerprint, thread_id, execution_id, resolved_model, "
                     "message_present, status, record_json, contract, work_key, queued_at, "
                     "started_at, terminal_at, terminal_status) "
-                    "VALUES (?, ?, '', ?, ?, 0, 'completed', ?, ?, ?, ?, ?, ?, 'completed')",
+                    "VALUES (?, ?, '', ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?)",
                     (
                         dispatch_id,
                         dispatch_id,
                         execution_id,
                         resolved_model,
+                        row_status,
                         record_json,
                         contract or "freeform",
                         work_key,
                         stamp,
                         stamp,
                         stamp,
+                        row_status,
                     ),
                 )
             else:

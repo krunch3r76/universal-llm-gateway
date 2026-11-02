@@ -1504,3 +1504,188 @@ async def test_case_l_live_leg_stays_null(monkeypatch: pytest.MonkeyPatch) -> No
     )
     assert finalized == []
     assert terminated == []
+
+
+def _relay_finalize_mocks(monkeypatch: pytest.MonkeyPatch) -> list[dict[str, Any]]:
+    relay_calls: list[dict[str, Any]] = []
+
+    async def _relay(**kwargs: object) -> dict[str, str]:
+        relay_calls.append(dict(kwargs))
+        return {"ok": True}
+
+    monkeypatch.setattr(
+        "systems.frontier_consult.work_registry_admit_relay.relay_registry_terminal",
+        _relay,
+    )
+    monkeypatch.setattr(reconcile, "terminal_event_exists", lambda _eid: False)
+    monkeypatch.setattr(reconcile, "publish_cdp_kwargs", lambda *_a, **_k: None)
+    monkeypatch.setattr(
+        "systems.frontier_consult.handoff.terminate_handoff_dispatch",
+        AsyncMock(return_value=True),
+    )
+    return relay_calls
+
+
+@pytest.mark.asyncio
+async def test_finalize_ok_posted_relays_completed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    relay_calls = _relay_finalize_mocks(monkeypatch)
+    monkeypatch.setattr(
+        "systems.frontier_consult.cdp_generate_worker.deliver_cdp_result_turn",
+        AsyncMock(return_value=True),
+    )
+    upsert_inflight_leg(
+        execution_id="exec-relay-ok",
+        request_id="req-relay-ok",
+        thread_id="5583",
+        pointer_turn=1,
+        caller_agent="dispatch",
+        prompt_uri="cortex://p.md",
+        model_id="cdp/opus-5",
+        max_wall_s=1800.0,
+    )
+    await finalize_cdp_generate(
+        result=_ok_result(execution_id="exec-relay-ok"),
+        request_id="req-relay-ok",
+        thread_id="5583",
+        to_agent="dispatch",
+        pointer_turn=1,
+        via="worker",
+    )
+    assert relay_calls[-1]["terminal_status"] == "completed"
+    assert relay_calls[-1]["dispatch_id"] == "exec-relay-ok"
+
+
+@pytest.mark.asyncio
+async def test_finalize_not_ok_relays_failed(monkeypatch: pytest.MonkeyPatch) -> None:
+    relay_calls = _relay_finalize_mocks(monkeypatch)
+    monkeypatch.setattr(
+        "systems.frontier_consult.cdp_generate_worker.deliver_cdp_result_turn",
+        AsyncMock(return_value=True),
+    )
+    upsert_inflight_leg(
+        execution_id="exec-relay-fail",
+        request_id="req-relay-fail",
+        thread_id="5583",
+        pointer_turn=1,
+        caller_agent="dispatch",
+        prompt_uri="cortex://p.md",
+        model_id="cdp/opus-5",
+        max_wall_s=1800.0,
+    )
+    await finalize_cdp_generate(
+        result=CdpGenerateResult(
+            ok=False,
+            body="",
+            execution_id="exec-relay-fail",
+            satellite_execution_id="sat-fail",
+            prompt_uri="cortex://p.md",
+            picker_model="opus-5",
+            stall_stage="submit_failed",
+            error="submit failed",
+        ),
+        request_id="req-relay-fail",
+        thread_id="5583",
+        to_agent="dispatch",
+        pointer_turn=1,
+        via="worker",
+    )
+    assert relay_calls[-1]["terminal_status"] == "failed"
+
+
+@pytest.mark.asyncio
+async def test_finalize_ok_post_failed_relays_failed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    relay_calls = _relay_finalize_mocks(monkeypatch)
+    monkeypatch.setattr(
+        "systems.frontier_consult.cdp_generate_worker.deliver_cdp_result_turn",
+        AsyncMock(return_value=False),
+    )
+    upsert_inflight_leg(
+        execution_id="exec-relay-post-fail",
+        request_id="req-relay-post-fail",
+        thread_id="5583",
+        pointer_turn=1,
+        caller_agent="dispatch",
+        prompt_uri="cortex://p.md",
+        model_id="cdp/opus-5",
+        max_wall_s=1800.0,
+    )
+    await finalize_cdp_generate(
+        result=_ok_result(execution_id="exec-relay-post-fail"),
+        request_id="req-relay-post-fail",
+        thread_id="5583",
+        to_agent="dispatch",
+        pointer_turn=1,
+        via="worker",
+    )
+    assert relay_calls[-1]["terminal_status"] == "failed"
+
+
+@pytest.mark.asyncio
+async def test_finalize_unconfirmed_wall_stall_does_not_relay(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from cdp_ask.unverifiable import WALL_CLOCK_EXCEEDED_ABORT_UNCONFIRMED
+
+    relay_calls = _relay_finalize_mocks(monkeypatch)
+    upsert_inflight_leg(
+        execution_id="exec-relay-wall-u",
+        request_id="req-relay-wall-u",
+        thread_id="5583",
+        pointer_turn=1,
+        caller_agent="dispatch",
+        prompt_uri="cortex://p.md",
+        model_id="cdp/opus-5",
+        max_wall_s=1800.0,
+    )
+    await finalize_cdp_generate(
+        result=CdpGenerateResult(
+            ok=False,
+            body="",
+            execution_id="exec-relay-wall-u",
+            satellite_execution_id="sat-wall-u",
+            prompt_uri="cortex://p.md",
+            picker_model="opus-5",
+            stall_stage=WALL_CLOCK_EXCEEDED_ABORT_UNCONFIRMED,
+            error="stall",
+        ),
+        request_id="req-relay-wall-u",
+        thread_id="5583",
+        to_agent="dispatch",
+        pointer_turn=1,
+        via="worker",
+    )
+    assert relay_calls == []
+
+
+@pytest.mark.asyncio
+async def test_reconcile_finalize_relays_terminal(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    relay_calls = _relay_finalize_mocks(monkeypatch)
+    monkeypatch.setattr(
+        "systems.frontier_consult.cdp_generate_worker.deliver_cdp_result_turn",
+        AsyncMock(return_value=True),
+    )
+    upsert_inflight_leg(
+        execution_id="exec-relay-reconcile",
+        request_id="req-relay-reconcile",
+        thread_id="5583",
+        pointer_turn=1,
+        caller_agent="dispatch",
+        prompt_uri="cortex://p.md",
+        model_id="cdp/opus-5",
+        max_wall_s=1800.0,
+    )
+    await finalize_cdp_generate(
+        result=_ok_result(execution_id="exec-relay-reconcile"),
+        request_id="req-relay-reconcile",
+        thread_id="5583",
+        to_agent="dispatch",
+        pointer_turn=1,
+        via="reconcile",
+    )
+    assert any(c["terminal_status"] == "completed" for c in relay_calls)

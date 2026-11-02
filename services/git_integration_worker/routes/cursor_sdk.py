@@ -1662,6 +1662,7 @@ async def _mark_terminal_and_promote(
     request: Request | None = None,
     emit_tag: str,
     memo_facts: dict | None = None,
+    registry_work_status: str | None = None,
 ) -> None:
     """Mark terminal, release/restore lease, prune Lane-B worktree, promote FIFO head."""
     if memo_facts:
@@ -1686,6 +1687,7 @@ async def _mark_terminal_and_promote(
         ledger.mark_terminal,
         dispatch_id=dispatch_id,
         terminal_status=terminal_status,
+        registry_work_status=registry_work_status,
     )
     try:
         from services.git_integration_worker.cursor_sdk_steer_inject import (
@@ -2178,6 +2180,14 @@ async def stale_lease_sweeper(app: FastAPI) -> None:
             )
         except Exception as exc:  # sweeper must never kill the worker
             logger.warning("stale-lease sweeper failed: %s", exc)
+        try:
+            from services.git_integration_worker.cursor_sdk_work_registry_admit import (
+                reap_stale_frontier_registry_rows,
+            )
+
+            await asyncio.to_thread(reap_stale_frontier_registry_rows)
+        except Exception as exc:  # sweeper must never kill the worker
+            logger.warning("frontier registry reaper failed: %s", exc)
 
 
 async def bridge_sweeper(app: FastAPI) -> None:
@@ -2576,6 +2586,15 @@ async def _deliver_sdk_closeout(
                 "await_cdp_reply park hook raised dispatch=%s", req.dispatch_id
             )
             await_parked = False
+        registry_work_status = (
+            "landed"
+            if refusal is None and delivery.closeout_status.value == "complete"
+            else (
+                "partial"
+                if delivery.closeout_status.value == "partial"
+                else "abandoned"
+            )
+        )
         await _mark_terminal_and_promote(
             dispatch_id=req.dispatch_id,
             terminal_status=hop_terminal,
@@ -2585,13 +2604,18 @@ async def _deliver_sdk_closeout(
                 if refusal is not None
                 else "CURSOR_CLOSEOUT_COMPLETED"
             ),
+            registry_work_status=registry_work_status,
             memo_facts={
                 "emit_tag": (
                     "CURSOR_CLOSEOUT_REFUSED"
                     if refusal is not None
                     else "CURSOR_CLOSEOUT_COMPLETED"
                 ),
-                "closeout_status": "refused" if refusal is not None else "completed",
+                "closeout_status": (
+                    "refused"
+                    if refusal is not None
+                    else delivery.closeout_status.value
+                ),
                 "turn": turn_number,
                 "sidecar_ref": delivery.sidecar_ref,
             },

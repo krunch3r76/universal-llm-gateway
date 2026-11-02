@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 from datetime import UTC, datetime
-from typing import Any
+from typing import Any, Literal
 
 from dispatch_economics.api_closeout import normalize_api_role_usage
 
@@ -23,6 +23,7 @@ def record_api_role_dispatch(
     contract: str | None,
     usage: dict[str, Any] | None,
     usage_capture_status: str = "captured",
+    terminal_status: Literal["completed", "failed"] = "completed",
 ) -> str | None:
     """Insert or update a ledger row for one API-role completion.
 
@@ -50,6 +51,7 @@ def record_api_role_dispatch(
         contract=contract,
         record_json=record_json,
         stamp=stamp,
+        terminal_status=terminal_status,
     )
     persist_dispatch_usage(
         ledger,

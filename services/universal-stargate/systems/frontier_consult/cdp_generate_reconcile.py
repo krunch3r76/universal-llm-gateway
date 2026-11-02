@@ -370,6 +370,14 @@ async def finalize_cdp_generate(
         if link_owed and terminated is not True:
             return
         mark_proof_emitted(result.execution_id)
+        from .work_registry_admit_relay import relay_registry_terminal
+
+        await relay_registry_terminal(
+            request_id=request_id,
+            dispatch_id=result.execution_id,
+            terminal_status="completed" if result.ok else "failed",
+            reason="cdp_finalize_terminal_event",
+        )
         if not try_claim_delivery(execution_id=result.execution_id):
             return
         enriched = _enrich_result(result)
@@ -455,6 +463,7 @@ async def finalize_cdp_generate(
 
     if not try_claim_delivery(execution_id=result.execution_id):
         return
+    posted = False
     if result.ok:
         enriched = _enrich_result(result)
         posted = await deliver_cdp_result_turn(
@@ -486,6 +495,14 @@ async def finalize_cdp_generate(
         )
     if not posted:
         clear_delivery_claim(result.execution_id)
+    from .work_registry_admit_relay import relay_registry_terminal
+
+    await relay_registry_terminal(
+        request_id=request_id,
+        dispatch_id=result.execution_id,
+        terminal_status="completed" if result.ok and posted else "failed",
+        reason="cdp_finalize",
+    )
 
 
 async def _reconcile_leg(leg: InflightLeg) -> None:

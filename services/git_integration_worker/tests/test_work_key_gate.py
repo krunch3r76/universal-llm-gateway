@@ -195,6 +195,33 @@ def test_conductor_omitted_generation_options_admits(isolated_ledger) -> None:
     )
 
 
+def test_same_work_key_admit_succeeds_after_frontier_row_closed(
+    isolated_ledger,
+) -> None:
+    from services.git_integration_worker.cursor_sdk_work_registry_admit import (
+        close_frontier_registry_row,
+        upsert_frontier_registry_dispatch,
+    )
+
+    key = "todo:frontier-gate-release"
+    upsert_frontier_registry_dispatch(
+        dispatch_id="frontier-holder",
+        thread_id="21792",
+        caller_agent="maestro",
+        seat_name="maestro",
+        address={"kind": "api_role", "thread_id": "21792"},
+        work_key=key,
+        ledger=isolated_ledger,
+    )
+    second = _req(dispatch_id="d-after-frontier", work_key=key)
+    with pytest.raises(SourceRefConflict):
+        _admit(isolated_ledger, second, work_key=key)
+    close_frontier_registry_row(
+        "frontier-holder", "failed", "test", ledger=isolated_ledger
+    )
+    _admit(isolated_ledger, second, work_key=key)
+
+
 def test_peer_held_beats_envelope_missing(isolated_ledger) -> None:
     key = "todo:impresario-peer-409"
     first = _req(dispatch_id="cond-peer-1", work_key=key, contract="conductor")

@@ -1190,6 +1190,167 @@ def test_delivery_state_envelope_sidecar_delivered() -> None:
     assert "fs(cortex, op=read, path=notes/x.md)" in envelope["recovery"]["hint"]
 
 
+def _make_api_role_to_thread_record(**overrides: Any) -> PipelineExecutionRecord:
+    record = _make_to_thread_record()
+    defaults: dict[str, Any] = {
+        "execution_id": "exec-api-role-ledger",
+        "work_key": "todo:api-role-delivery-close",
+        "endpoint_request_id": "req-api-role-1",
+        "resolved_model": "openai/gpt-5.5",
+        "resolved_contract": "consult",
+    }
+    defaults.update(overrides)
+    for key, val in defaults.items():
+        object.__setattr__(record, key, val)
+    return record
+
+
+@pytest.mark.asyncio
+async def test_api_role_unresolved_to_agent_posts_failed_terminal(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    posts: list[dict[str, Any]] = []
+
+    async def _capture(record, *, terminal_status="completed"):
+        posts.append({"terminal_status": terminal_status})
+
+    monkeypatch.setattr(
+        "systems.pipeline.core.execution.async_tracker_delivery.deliver.persist_api_role_ledger",
+        _capture,
+    )
+    bus = _FakeBus()
+    record = _make_api_role_to_thread_record(caller_agent=None)
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.method == "GET":
+            return httpx.Response(200, json={"last_turn_from": "reviewer"})
+        return httpx.Response(201, json={"turn_number": 1})
+
+    _patch_client(monkeypatch, httpx.MockTransport(handler))
+    _patch_sidecar_ok(monkeypatch)
+
+    outcome = await deliver_result(record, event_bus=bus, auth_token="secret")
+    assert outcome.failure_reason == "unresolved_to_agent"
+    assert posts == [{"terminal_status": "failed"}]
+
+
+@pytest.mark.asyncio
+async def test_api_role_post_5xx_posts_failed_terminal(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    posts: list[dict[str, Any]] = []
+
+    async def _capture(record, *, terminal_status="completed"):
+        posts.append({"terminal_status": terminal_status})
+
+    monkeypatch.setattr(
+        "systems.pipeline.core.execution.async_tracker_delivery.deliver.persist_api_role_ledger",
+        _capture,
+    )
+    bus = _FakeBus()
+    captured: dict[str, Any] = {}
+    record = _make_api_role_to_thread_record()
+    _patch_client(
+        monkeypatch, _make_thread_aware_transport(captured, post_status=503)
+    )
+    _patch_sidecar_ok(monkeypatch)
+
+    outcome = await deliver_result(record, event_bus=bus, auth_token="secret")
+    assert outcome.status == "failed"
+    assert posts == [{"terminal_status": "failed"}]
+
+
+@pytest.mark.asyncio
+async def test_api_role_delivered_posts_completed_terminal(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    posts: list[dict[str, Any]] = []
+
+    async def _capture(record, *, terminal_status="completed"):
+        posts.append({"terminal_status": terminal_status})
+
+    monkeypatch.setattr(
+        "systems.pipeline.core.execution.async_tracker_delivery.deliver.persist_api_role_ledger",
+        _capture,
+    )
+    bus = _FakeBus()
+    captured: dict[str, Any] = {}
+    record = _make_api_role_to_thread_record()
+    _patch_client(monkeypatch, _make_thread_aware_transport(captured))
+    _patch_sidecar_ok(monkeypatch)
+
+    outcome = await deliver_result(record, event_bus=bus, auth_token="secret")
+    assert outcome.status == "delivered"
+    assert posts == [{"terminal_status": "completed"}]
+
+
+@pytest.mark.asyncio
+async def test_api_role_result_none_failed_posts_failed_terminal(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    posts: list[dict[str, Any]] = []
+
+    async def _capture(record, *, terminal_status="completed"):
+        posts.append({"terminal_status": terminal_status})
+
+    monkeypatch.setattr(
+        "systems.pipeline.core.execution.async_tracker_delivery.deliver.persist_api_role_ledger",
+        _capture,
+    )
+    bus = _FakeBus()
+    record = _make_api_role_to_thread_record(
+        status="failed",
+        result=None,
+    )
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.method == "GET":
+            return httpx.Response(200, json={"last_turn_from": "claude-web"})
+        return httpx.Response(201, json={"turn_number": 1})
+
+    _patch_client(monkeypatch, httpx.MockTransport(handler))
+    _patch_sidecar_ok(monkeypatch)
+
+    await deliver_result(record, event_bus=bus, auth_token="secret")
+    assert posts == [{"terminal_status": "failed"}]
+
+
+@pytest.mark.asyncio
+async def test_persist_retries_once_on_transport_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from systems.pipeline.core.execution.async_tracker_delivery import sidecar
+
+    calls = {"n": 0}
+
+    class _FlakyClient:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            return None
+
+        async def post(self, url, json):
+            calls["n"] += 1
+            if calls["n"] == 1:
+                raise httpx.ConnectError("down", request=httpx.Request("POST", url))
+            return httpx.Response(200, json={"ok": True})
+
+    import httpx as httpx_mod
+
+    monkeypatch.setattr(httpx_mod, "AsyncClient", _FlakyClient)
+    monkeypatch.setattr(
+        "systems.frontier_consult.cursor_sdk_worker_dispatch.worker_base_url",
+        lambda: "http://giw.test",
+    )
+    record = _make_api_role_to_thread_record()
+    await sidecar.persist_api_role_ledger(record, terminal_status="failed")
+    assert calls["n"] == 2
+
+
 def test_delivery_state_envelope_inline_delivered() -> None:
     with_uri = DeliveryState(
         status="delivered",

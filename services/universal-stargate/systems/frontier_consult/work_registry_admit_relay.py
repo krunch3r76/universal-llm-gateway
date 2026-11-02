@@ -68,6 +68,53 @@ async def relay_registry_record(
     return body if isinstance(body, dict) else None
 
 
+async def relay_registry_terminal(
+    *,
+    request_id: str,
+    dispatch_id: str,
+    terminal_status: str,
+    reason: str,
+) -> dict[str, Any] | None:
+    """POST ``/api/v1/cursor/registry/terminal``. Failures are logged and swallowed."""
+    payload = {
+        "dispatch_id": dispatch_id,
+        "terminal_status": terminal_status,
+        "reason": reason,
+    }
+    for attempt in range(2):
+        try:
+            async with make_async_client(
+                worker_base_url(), timeout=_WORKER_TIMEOUT
+            ) as client:
+                resp = await client.post("/api/v1/cursor/registry/terminal", json=payload)
+        except httpx.HTTPError as exc:
+            if attempt == 0:
+                continue
+            logger.warning(
+                "registry terminal relay unreachable request_id=%s id=%s err=%s",
+                request_id,
+                dispatch_id,
+                exc,
+            )
+            return None
+        if resp.status_code >= 500 and attempt == 0:
+            continue
+        if resp.status_code != 200:
+            logger.warning(
+                "registry terminal relay refused request_id=%s id=%s status=%s",
+                request_id,
+                dispatch_id,
+                resp.status_code,
+            )
+            return None
+        try:
+            body = resp.json()
+        except ValueError:
+            return None
+        return body if isinstance(body, dict) else None
+    return None
+
+
 def attach_registry_next(
     result: dict[str, Any], relay_body: dict[str, Any] | None
 ) -> None:
