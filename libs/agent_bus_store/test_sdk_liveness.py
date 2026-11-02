@@ -4,9 +4,12 @@ from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
 
+import pytest
+
 from agent_bus_store.sdk_liveness import (
     LivenessVerdict,
     ProbeResult,
+    _worker_base_url,
     classify_probe,
     evaluate_link_liveness,
     heartbeat_freshness,
@@ -20,6 +23,20 @@ def _fresh_ts() -> str:
 
 def _stale_ts() -> str:
     return (datetime.now(UTC) - timedelta(seconds=301)).isoformat()
+
+
+def test_worker_base_url_reads_git_integration_worker_url(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("GIT_INTEGRATION_WORKER_URL", "http://url-only.test:8091")
+    assert _worker_base_url() == "http://url-only.test:8091"
+
+
+def test_worker_base_url_host_port_fallback(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("GIT_INTEGRATION_WORKER_URL", raising=False)
+    monkeypatch.setenv("GIT_INTEGRATION_WORKER_HOST", "192.168.1.2")
+    monkeypatch.setenv("GIT_INTEGRATION_WORKER_PORT", "9090")
+    assert _worker_base_url() == "http://192.168.1.2:9090"
 
 
 def test_heartbeat_null_is_live() -> None:

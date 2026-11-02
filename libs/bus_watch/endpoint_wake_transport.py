@@ -8,6 +8,7 @@ from typing import Any
 
 import httpx
 from agent_bus_store.db.endpoint_wake_ledger import ENDPOINT_WAKE_DEBOUNCE_S_ORION_CHAT
+from giw_endpoint import git_integration_worker_base_url
 from transport_utils import DEFAULT_AGENT_BUS_URL, make_sync_client
 
 _COMPOSER_DEFER_DISPLAY = frozenset(
@@ -22,7 +23,6 @@ _RETRIABLE_DISPLAY = {
     "unknown",
 }
 _CSE_PENDING_ERRORS = {"no_identity", "project_ask_unconfigured"}
-_GIW = os.environ.get("GIT_INTEGRATION_WORKER_URL", "http://127.0.0.1:8091")
 _MAX_PARENT_HOPS = 3
 _COMPOSER_IMPRESARIO_PREFIX = "composer-impresario-"
 
@@ -148,10 +148,12 @@ class StoreClient:
     """HTTP access to agent_bus and GIW through transport_utils."""
 
     def __init__(
-        self, bus_url: str = DEFAULT_AGENT_BUS_URL, giw_url: str = _GIW
+        self,
+        bus_url: str = DEFAULT_AGENT_BUS_URL,
+        giw_url: str | None = None,
     ) -> None:
         self.bus_url = bus_url
-        self.giw_url = giw_url
+        self.giw_url = giw_url or git_integration_worker_base_url()
 
     def _bus(self, method: str, path: str, **kwargs: Any) -> Any:
         token = os.environ.get("AGENT_BUS_TOKEN", "")

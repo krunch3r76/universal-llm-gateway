@@ -9,6 +9,7 @@ from __future__ import annotations
 import os
 
 import httpx
+from giw_endpoint import git_integration_worker_base_url
 from fastapi import APIRouter, Request
 from fastapi.responses import Response
 from transport_utils import make_async_client
@@ -20,9 +21,6 @@ logger = get_logger(__name__)
 
 router = APIRouter(tags=["triggers-proxy"])
 
-_DEFAULT_HOST = os.environ.get("GIT_INTEGRATION_WORKER_HOST", "127.0.0.1")
-_DEFAULT_PORT = int(os.environ.get("GIT_INTEGRATION_WORKER_PORT", "8091"))
-_WORKER_BASE_URL = f"http://{_DEFAULT_HOST}:{_DEFAULT_PORT}"
 _PROXY_TIMEOUT = float(os.environ.get("GIT_INTEGRATION_PROXY_TIMEOUT", "600"))
 
 _PROXY_METHODS = ["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"]
@@ -33,7 +31,8 @@ async def _proxy_triggers(request: Request, *, subpath: str) -> Response:
     forwarded_headers = _filter_request_headers(request.headers.raw)
     body = await request.body()
 
-    client = make_async_client(_WORKER_BASE_URL, timeout=_PROXY_TIMEOUT)
+    worker_base = git_integration_worker_base_url()
+    client = make_async_client(worker_base, timeout=_PROXY_TIMEOUT)
     try:
         upstream_req = client.build_request(
             method=request.method,
@@ -47,7 +46,7 @@ async def _proxy_triggers(request: Request, *, subpath: str) -> Response:
         await client.aclose()
         logger.warning(
             "git-integration-worker trigger request failed at %s: %s",
-            _WORKER_BASE_URL,
+            worker_base,
             exc,
         )
         return Response(

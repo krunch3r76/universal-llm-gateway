@@ -58,11 +58,13 @@ def _complete_row(work_key: str, *, row_id: str = "done-row") -> dict[str, Any]:
 @pytest.mark.offline
 def test_k43_giw_active_work_default_url_matches_git_router() -> None:
     """Wrong default path → 404; roster and quiet_reason must match GIW integrate router."""
-    from bus_watch import quiet_reason, roster
+    import bus_watch.quiet_reason as quiet_reason
+    import bus_watch.roster as roster
+    from bus_watch.giw_liaison_urls import liaison_giw_active_work_url
     from services.git_integration_worker.routes.integrate import router as git_router
 
-    assert roster._GIW_ACTIVE_WORK == quiet_reason._GIW_ACTIVE_WORK
-    path = urlparse(roster._GIW_ACTIVE_WORK).path
+    assert roster.liaison_giw_active_work_url is quiet_reason.liaison_giw_active_work_url
+    path = urlparse(liaison_giw_active_work_url()).path
     assert path == f"{git_router.prefix}/active-work"
 
 
