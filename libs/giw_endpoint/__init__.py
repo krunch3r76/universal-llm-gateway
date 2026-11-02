@@ -12,13 +12,22 @@ def git_integration_worker_base_url() -> str:
     strip). Otherwise build ``http://{host}:{port}`` from
     ``GIT_INTEGRATION_WORKER_HOST`` (default ``127.0.0.1``) and
     ``GIT_INTEGRATION_WORKER_PORT`` (default ``8091``).
+
+    Raises:
+        ValueError: When the URL is unset and ``GIT_INTEGRATION_WORKER_PORT`` is
+            not an integer.
     """
     explicit = os.environ.get("GIT_INTEGRATION_WORKER_URL")
     if explicit is not None and explicit.strip():
         return explicit.strip().rstrip("/")
     host = os.environ.get("GIT_INTEGRATION_WORKER_HOST", "127.0.0.1").strip()
     port_raw = os.environ.get("GIT_INTEGRATION_WORKER_PORT", "8091").strip()
-    port = int(port_raw or "8091")
+    try:
+        port = int(port_raw or "8091")
+    except ValueError as exc:
+        raise ValueError(
+            f"GIT_INTEGRATION_WORKER_PORT must be an integer, got {port_raw!r}"
+        ) from exc
     return f"http://{host}:{port}"
 
 

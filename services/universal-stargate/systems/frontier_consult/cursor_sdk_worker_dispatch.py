@@ -10,6 +10,7 @@ from typing import Any, Literal
 import httpx
 from agent_bus_store.close_on_read import CloseContract, append_close_on_read_marker
 from agent_bus_store.disposition import append_bus_lifecycle_tags
+from giw_endpoint import git_integration_worker_base_url
 from transport_utils import DEFAULT_AGENT_BUS_URL, make_async_client
 from universal_logging import get_logger
 
@@ -132,12 +133,9 @@ def _transport_failure_detail(
 def worker_base_url() -> str:
     """Base URL for the git-integration-worker HTTP admit the SDK poster calls.
 
-    Host and port come from ``GIT_INTEGRATION_WORKER_HOST`` and
-    ``GIT_INTEGRATION_WORKER_PORT``. Defaults are loopback port 8091.
+    ``GIT_INTEGRATION_WORKER_URL`` wins, else HOST/PORT; see giw_endpoint.
     """
-    host = os.environ.get("GIT_INTEGRATION_WORKER_HOST", "127.0.0.1")
-    port = os.environ.get("GIT_INTEGRATION_WORKER_PORT", "8091")
-    return f"http://{host}:{port}"
+    return git_integration_worker_base_url()
 
 
 def derive_cursor_sdk_prompt_preamble(

@@ -13,6 +13,7 @@ from collections.abc import Iterable
 import httpx
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse, Response
+from giw_endpoint import git_integration_worker_base_url
 from transport_utils import make_async_client
 from universal_logging import get_logger
 
@@ -20,10 +21,9 @@ logger = get_logger(__name__)
 
 router = APIRouter(prefix="/providers/cursor", tags=["provider-native-cursor"])
 
+
 def _worker_base_url() -> str:
-    host = os.environ.get("GIT_INTEGRATION_WORKER_HOST", "127.0.0.1")
-    port = int(os.environ.get("GIT_INTEGRATION_WORKER_PORT", "8091"))
-    return f"http://{host}:{port}"
+    return git_integration_worker_base_url()
 
 
 _PROXY_TIMEOUT = float(os.environ.get("GIT_INTEGRATION_PROXY_TIMEOUT", "600"))

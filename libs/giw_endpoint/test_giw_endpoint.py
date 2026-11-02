@@ -42,3 +42,11 @@ def test_base_url_host_port_fallback(monkeypatch: pytest.MonkeyPatch) -> None:
     assert git_integration_worker_base_url() == "http://explicit.test"
     assert giw_api_url("/health") == "http://explicit.test/health"
     assert giw_api_url("api/v1/git/active-work") == "http://explicit.test/api/v1/git/active-work"
+
+
+def test_non_integer_port_raises_named_error(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("GIT_INTEGRATION_WORKER_PORT", "abc")
+    with pytest.raises(ValueError, match="GIT_INTEGRATION_WORKER_PORT"):
+        git_integration_worker_base_url()
+    monkeypatch.setenv("GIT_INTEGRATION_WORKER_URL", "http://u.test:1")
+    assert git_integration_worker_base_url() == "http://u.test:1"

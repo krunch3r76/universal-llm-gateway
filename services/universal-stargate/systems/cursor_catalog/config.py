@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
-import os
 from dataclasses import dataclass
+
+from giw_endpoint import git_integration_worker_base_url
 
 
 @dataclass(slots=True, kw_only=True)
@@ -15,6 +16,4 @@ class CursorSdkCatalogConfig:
 
 def parse_cursor_catalog_config() -> CursorSdkCatalogConfig:
     """Build worker catalog URL from git_integration_worker env defaults."""
-    host = os.environ.get("GIT_INTEGRATION_WORKER_HOST", "127.0.0.1")
-    port = os.environ.get("GIT_INTEGRATION_WORKER_PORT", "8091")
-    return CursorSdkCatalogConfig(worker_url=f"http://{host}:{port}")
+    return CursorSdkCatalogConfig(worker_url=git_integration_worker_base_url())
