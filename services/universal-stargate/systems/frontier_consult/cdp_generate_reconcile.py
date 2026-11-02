@@ -62,6 +62,8 @@ STALL_HORIZON_SEATED_AUTHORSHIP = "horizon_seated_authorship"
 _reconcile_task: asyncio.Task[None] | None = None
 _reconcile_in_flight = False
 _last_registry_heartbeat_mono: dict[str, float] = {}
+_REGISTRY_HB_TASKS: set[asyncio.Task[None]] = set()
+_REGISTRY_HB_INFLIGHT: set[str] = set()
 
 
 def _drop_registry_heartbeat_entry(execution_id: str) -> None:
@@ -84,8 +86,25 @@ def _registry_heartbeat_min_s() -> float:
         return 300.0
 
 
+def _registry_hb_task_done(task: asyncio.Task[None], execution_id: str) -> None:
+    _REGISTRY_HB_TASKS.discard(task)
+    _REGISTRY_HB_INFLIGHT.discard(execution_id)
+    if task.cancelled():
+        return
+    exc = task.exception()
+    if exc is not None:
+        logger.warning(
+            "cdp registry heartbeat relay failed execution_id=%s: %s",
+            execution_id,
+            exc,
+            exc_info=exc,
+        )
+
+
 async def _maybe_relay_registry_heartbeat(leg: InflightLeg) -> None:
     """Throttled GIW registry heartbeat while reconcile observes CDP progress."""
+    if leg.execution_id in _REGISTRY_HB_INFLIGHT:
+        return
     min_s = _registry_heartbeat_min_s()
     now = time.monotonic()
     last = _last_registry_heartbeat_mono.get(leg.execution_id, 0.0)
@@ -101,7 +120,14 @@ async def _maybe_relay_registry_heartbeat(leg: InflightLeg) -> None:
             dispatch_id=leg.execution_id,
         )
 
-    asyncio.create_task(_relay(), name=f"cdp-registry-hb-{leg.execution_id[:8]}")
+    _REGISTRY_HB_INFLIGHT.add(leg.execution_id)
+    hb_task = asyncio.create_task(
+        _relay(), name=f"cdp-registry-hb-{leg.execution_id[:8]}"
+    )
+    _REGISTRY_HB_TASKS.add(hb_task)
+    hb_task.add_done_callback(
+        lambda t, eid=leg.execution_id: _registry_hb_task_done(t, eid)
+    )
 
 # Re-export ledger API so existing callers/tests keep importing this module.
 __all__ = [
@@ -659,3 +685,6 @@ def reset_cdp_generate_reconcile_for_tests() -> None:
     clear_inflight_ledger()
     reset_horizon_unverifiable_emits_for_tests()
     _last_registry_heartbeat_mono.clear()
+    # Test isolation only; do not cancel in-flight relay tasks (C3).
+    _REGISTRY_HB_INFLIGHT.clear()
+    _REGISTRY_HB_TASKS.clear()
