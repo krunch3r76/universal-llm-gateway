@@ -54,6 +54,23 @@ def _load_hop_module():
     return mod
 
 
+def _fire_ide_hop_test_double(body):
+    """``fire_ide_hop`` stand-in: release pre-held root mutex in ``finally`` (ide_hop contract)."""
+
+    def _double(*args, **kwargs):
+        from bus_watch.ide_hop_mutex import release_hop_mutex
+
+        root_id = kwargs.get("root_id")
+        preheld = kwargs.get("hop_mutex_preheld", False)
+        try:
+            return body(*args, **kwargs)
+        finally:
+            if preheld and root_id:
+                release_hop_mutex(str(root_id))
+
+    return _double
+
+
 def test_build_hop_preamble_quiet_sentinel_uses_stay_not_dispatch() -> None:
     """Truthiness on row would treat quiet as a playable NOW leg and seal dispatch prose."""
     root = "10479"
@@ -405,7 +422,7 @@ def test_fired_pending_quiesces_landed_retires_expired_gates(capsys) -> None:
     hop_mod = _load_hop_module()
     calls: list[str] = []
 
-    def fake_fire(*_a, **kwargs):
+    def _landed_fire_body(*_a, **kwargs):
         on_fired = kwargs.get("on_fired")
         if on_fired is not None:
             calls.append("quiesce")
@@ -418,6 +435,8 @@ def test_fired_pending_quiesces_landed_retires_expired_gates(capsys) -> None:
             "root": "10479",
             "quiesce": {"phase": "quiesced"},
         }
+
+    fake_fire = _fire_ide_hop_test_double(_landed_fire_body)
 
     def fake_retire(root, holder, **_k):
         calls.append("retire")
@@ -458,7 +477,7 @@ def test_fired_pending_quiesces_landed_retires_expired_gates(capsys) -> None:
     # Expired: no retire, operator_gate, exit 2, fire not re-invoked as Ctrl+N.
     fire_count = {"n": 0}
 
-    def fake_expired(*_a, **kwargs):
+    def _expired_fire_body(*_a, **kwargs):
         fire_count["n"] += 1
         on_fired = kwargs.get("on_fired")
         if on_fired is not None:
@@ -469,6 +488,8 @@ def test_fired_pending_quiesces_landed_retires_expired_gates(capsys) -> None:
             "root": "10479",
             "message_path": "/tmp/msg.md",
         }
+
+    fake_expired = _fire_ide_hop_test_double(_expired_fire_body)
 
     retire_called = {"n": 0}
 
