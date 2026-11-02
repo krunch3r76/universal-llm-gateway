@@ -7,7 +7,7 @@ from typing import Any, override
 
 from systems.pipeline.core.handlers.builtin import BaseHandler
 from systems.pipeline.core.handlers.protocol import StepOutput
-from web_tab.status_report import build_status_report
+from web_tab.status_report import build_status_list_report, build_status_report
 
 
 class WebTabStatusHandler(BaseHandler):
@@ -25,8 +25,18 @@ class WebTabStatusHandler(BaseHandler):
         house_id = str(opts.get("house_id") or opts.get("house") or "")
         agent = str(opts.get("agent") or opts.get("from_agent") or "")
         if not house_id:
-            bad = {"ok": False, "error": "missing house_id in pipeline_options"}
-            return StepOutput(raw=json.dumps(bad), json=bad)
+            surface_raw = opts.get("surface")
+            surface_filter = (
+                str(surface_raw).strip()
+                if isinstance(surface_raw, str) and str(surface_raw).strip()
+                else None
+            )
+            agent_filter = agent.strip() if agent.strip() else None
+            report = await build_status_list_report(
+                agent_filter=agent_filter,
+                surface_filter=surface_filter,
+            )
+            return StepOutput(raw=json.dumps(report), json=report)
         if not agent:
             bad = {"ok": False, "error": "missing agent in pipeline_options"}
             return StepOutput(raw=json.dumps(bad), json=bad)
