@@ -16,6 +16,7 @@ COMPOSER_DEFER_REASONS = frozenset(
 COMPOSER_DEFER_ARMED = "composer_defer:armed"
 COMPOSER_DEFER_SWEEP = "composer_defer:sweep_eligible"
 COMPOSER_DEFER_ESCALATED = "composer_defer:escalated"
+LEGACY_NORMALIZE_AGENT_MISMATCH = "legacy_normalize:agent_id_mismatch"
 _ESCALATION_SUBJECT = "NOTICE|endpoint wake composer defer exhausted"
 _DEFER_PREFIX = "composer_defer:"
 
@@ -41,6 +42,40 @@ def merge_composer_defer_decided_by_rule(
     if rule.startswith(_DEFER_PREFIX):
         return decided_by_rule
     return COMPOSER_DEFER_ARMED
+
+
+def normalize_legacy_pending_wakes() -> dict[str, int]:
+    """One idempotent pass: terminal agent_id_mismatch; arm legacy composer defers."""
+    reasons = tuple(COMPOSER_DEFER_REASONS)
+    with write_connect() as conn:
+        mismatch = conn.execute(
+            "UPDATE endpoint_wake_ledger SET state='refused', "
+            "decided_by_rule=?, finished_at=datetime('now') "
+            "WHERE state='pending' AND reason='agent_id_mismatch'",
+            (LEGACY_NORMALIZE_AGENT_MISMATCH,),
+        )
+        composer = conn.execute(
+            "UPDATE endpoint_wake_ledger SET decided_by_rule=? "
+            "WHERE state='pending' AND reason IN (?,?,?) "
+            "AND (decided_by_rule IS NULL OR decided_by_rule NOT LIKE ?)",
+            (
+                COMPOSER_DEFER_ARMED,
+                *reasons,
+                f"{_DEFER_PREFIX}%",
+            ),
+        )
+    return {
+        "agent_id_mismatch_refused": int(mismatch.rowcount),
+        "composer_defer_armed": int(composer.rowcount),
+    }
+
+
+def run_dispatcher_pass_legacy_sweep(store: Any) -> dict[str, int]:
+    """Test/dispatch hook: normalize, escalate, finalize (one outer-pass legacy slice)."""
+    out = dict(normalize_legacy_pending_wakes())
+    out["escalated"] = escalate_composer_deferred_on_sweep(store)
+    out["finalized"] = finalize_composer_defer_pass()
+    return out
 
 
 def finalize_composer_defer_pass() -> int:
@@ -148,11 +183,14 @@ __all__ = [
     "COMPOSER_DEFER_ESCALATED",
     "COMPOSER_DEFER_REASONS",
     "COMPOSER_DEFER_SWEEP",
+    "LEGACY_NORMALIZE_AGENT_MISMATCH",
     "composer_defer_blocks_claim",
     "defer_path_avoids_wall_clock",
     "escalate_composer_deferred_on_sweep",
     "finalize_composer_defer_pass",
     "is_composer_defer_reason",
     "merge_composer_defer_decided_by_rule",
+    "normalize_legacy_pending_wakes",
     "notify_composer_empty_for_target",
+    "run_dispatcher_pass_legacy_sweep",
 ]

@@ -4220,61 +4220,159 @@ def test_composer_defer_sweep_escalates_once_to_maestro(db: None) -> None:
     assert len(_Store.posts) == 1
 
 
+def _seed_legacy_pending_wake_row(
+    thread: str,
+    *,
+    reason: str,
+    decided_by_rule: str | None = None,
+) -> int:
+    turn_id, _ts, number, _c = insert_turn(
+        thread=thread,
+        from_agent="cursor",
+        to_agent="grok-bot-gc1",
+        subject=f"LEGACY|{reason}",
+        body="legacy",
+    )
+    from agent_bus_store.db.connection import write_connect
+
+    with write_connect() as conn:
+        conn.execute(
+            "INSERT INTO endpoint_wake_ledger "
+            "(agent, thread_id, turn_id, turn_number, state, reason, created_at, "
+            "decided_by_rule) VALUES (?,?,?,?, 'pending', ?, ?, ?)",
+            (
+                "grok-bot-gc1",
+                thread,
+                turn_id,
+                number,
+                reason,
+                "2020-01-01 00:00:00",
+                decided_by_rule,
+            ),
+        )
+    return turn_id
+
+
+def test_legacy_agent_id_mismatch_pending_refused_after_normalize(db: None) -> None:
+    from bus_watch.endpoint_wake_composer_defer import (
+        LEGACY_NORMALIZE_AGENT_MISMATCH,
+        normalize_legacy_pending_wakes,
+    )
+
+    detail = create_thread(thread_id=None, slug="legacy-aid-mismatch")
+    assert detail is not None
+    thread = str(detail["id"])
+    _seed_legacy_pending_wake_row(thread, reason="agent_id_mismatch")
+    stats = normalize_legacy_pending_wakes()
+    assert stats["agent_id_mismatch_refused"] == 1
+    with connect() as conn:
+        row = conn.execute(
+            "SELECT state, reason, decided_by_rule FROM endpoint_wake_ledger "
+            "WHERE thread_id=?",
+            (thread,),
+        ).fetchone()
+    assert row["state"] == "refused"
+    assert row["reason"] == "agent_id_mismatch"
+    assert row["decided_by_rule"] == LEGACY_NORMALIZE_AGENT_MISMATCH
+
+
+def test_legacy_composer_not_empty_two_pass_escalation(db: None) -> None:
+    from bus_watch.endpoint_wake_composer_defer import (
+        COMPOSER_DEFER_ESCALATED,
+        COMPOSER_DEFER_SWEEP,
+        run_dispatcher_pass_legacy_sweep,
+    )
+
+    detail = create_thread(thread_id=None, slug="legacy-composer")
+    assert detail is not None
+    thread = str(detail["id"])
+    _seed_legacy_pending_wake_row(thread, reason="composer_not_empty")
+
+    class _Store:
+        posts: list[dict] = []
+
+        def create_turn(self, **kwargs: object) -> dict:
+            _Store.posts.append(dict(kwargs))
+            return {"ok": True}
+
+    store = _Store()
+    pass1 = run_dispatcher_pass_legacy_sweep(store)
+    assert pass1["composer_defer_armed"] == 1
+    assert pass1["escalated"] == 0
+    assert pass1["finalized"] == 1
+    with connect() as conn:
+        row = conn.execute(
+            "SELECT state, decided_by_rule FROM endpoint_wake_ledger WHERE thread_id=?",
+            (thread,),
+        ).fetchone()
+    assert row["state"] == "pending"
+    assert row["decided_by_rule"] == COMPOSER_DEFER_SWEEP
+
+    pass2 = run_dispatcher_pass_legacy_sweep(store)
+    assert pass2["composer_defer_armed"] == 0
+    assert pass2["escalated"] == 1
+    assert len(_Store.posts) == 1
+    assert _Store.posts[0]["to_agent"] == "maestro"
+    with connect() as conn:
+        row = conn.execute(
+            "SELECT state, decided_by_rule FROM endpoint_wake_ledger WHERE thread_id=?",
+            (thread,),
+        ).fetchone()
+    assert row["state"] == "refused"
+    assert row["decided_by_rule"] == COMPOSER_DEFER_ESCALATED
+
+    pass3 = run_dispatcher_pass_legacy_sweep(store)
+    assert pass3["escalated"] == 0
+    assert len(_Store.posts) == 1
+
+
+def test_normalize_legacy_pending_wakes_idempotent(db: None) -> None:
+    from bus_watch.endpoint_wake_composer_defer import (
+        COMPOSER_DEFER_ARMED,
+        normalize_legacy_pending_wakes,
+    )
+
+    detail = create_thread(thread_id=None, slug="legacy-idempotent")
+    assert detail is not None
+    thread = str(detail["id"])
+    _seed_legacy_pending_wake_row(thread, reason="agent_id_mismatch")
+    _seed_legacy_pending_wake_row(thread, reason="composer_not_empty")
+    first = normalize_legacy_pending_wakes()
+    assert first["agent_id_mismatch_refused"] == 1
+    assert first["composer_defer_armed"] == 1
+    second = normalize_legacy_pending_wakes()
+    assert second["agent_id_mismatch_refused"] == 0
+    assert second["composer_defer_armed"] == 0
+    with connect() as conn:
+        rows = conn.execute(
+            "SELECT reason, decided_by_rule FROM endpoint_wake_ledger "
+            "WHERE thread_id=? ORDER BY reason",
+            (thread,),
+        ).fetchall()
+    assert rows[0]["reason"] == "agent_id_mismatch"
+    assert rows[0]["decided_by_rule"] == "legacy_normalize:agent_id_mismatch"
+    assert rows[1]["reason"] == "composer_not_empty"
+    assert rows[1]["decided_by_rule"] == COMPOSER_DEFER_ARMED
+
+
 def test_falsifier_no_pending_agent_id_mismatch_or_composer_not_empty_after_sweep(
     db: None,
 ) -> None:
-    from bus_watch.endpoint_wake_composer_defer import (
-        escalate_composer_deferred_on_sweep,
-        finalize_composer_defer_pass,
-    )
+    from bus_watch.endpoint_wake_composer_defer import run_dispatcher_pass_legacy_sweep
 
     detail = create_thread(thread_id=None, slug="falsifier-sweep")
     assert detail is not None
     thread = str(detail["id"])
-    get_cursor()
-    with connect() as conn:
-        conn.execute("UPDATE endpoint_wake_cursor SET high_water_turn_id=0")
-    high = 0
-    for idx, reason in enumerate(("agent_id_mismatch", "composer_not_empty")):
-        turn_id, _ts, number, _c = insert_turn(
-            thread=thread,
-            from_agent="cursor",
-            to_agent="grok-bot-gc1",
-            subject=f"FACT|{idx}",
-            body="b",
-        )
-        advance_scan(
-            "endpoint-wake-dispatcher",
-            high,
-            turn_id,
-            [
-                {
-                    "agent": "grok-bot-gc1",
-                    "thread_id": thread,
-                    "turn_id": turn_id,
-                    "turn_number": number,
-                }
-            ],
-            now=f"2020-01-01 00:0{idx}:00",
-        )
-        high = turn_id
-        wake = claim_due_wakes(now=f"2020-01-01 00:0{idx}:01")["wake_id"]
-        assert wake
-        outcome = "refused" if reason == "agent_id_mismatch" else "pending"
-        record_wake_result(
-            wake,
-            outcome,
-            reason,
-            "exact",
-            1,
-            None,
-            now=f"2020-01-01 00:0{idx}:02",
-        )
-        if outcome == "pending":
-            finalize_composer_defer_pass()
-            escalate_composer_deferred_on_sweep(
-                type("_S", (), {"create_turn": lambda *a, **k: {}})()
-            )
+    _seed_legacy_pending_wake_row(thread, reason="agent_id_mismatch")
+    _seed_legacy_pending_wake_row(thread, reason="composer_not_empty")
+
+    class _Store:
+        def create_turn(self, **kwargs: object) -> dict:
+            return {"ok": True}
+
+    store = _Store()
+    run_dispatcher_pass_legacy_sweep(store)
+    run_dispatcher_pass_legacy_sweep(store)
     with connect() as conn:
         bad = conn.execute(
             "SELECT COUNT(*) AS n FROM endpoint_wake_ledger "
