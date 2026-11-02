@@ -17,6 +17,21 @@ _REPO_ROOT = Path(__file__).resolve().parents[3]
 
 pytestmark = pytest.mark.offline
 
+
+@pytest.fixture(autouse=True)
+def _isolate_hop_lock_watch_dir(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Keep hop mutex files off live tmp/watchers (run-order / live-hop isolation)."""
+    watch_dir = tmp_path / "watchers"
+    watch_dir.mkdir(parents=True, exist_ok=True)
+    import bus_watch.fable_lock as fable_lock
+    import bus_watch.ide_hop_mutex as ide_hop_mutex
+
+    monkeypatch.setattr(fable_lock, "WATCH_DIR", watch_dir)
+    monkeypatch.setattr(ide_hop_mutex, "WATCH_DIR", watch_dir)
+
+
 _SCRIPT = Path(__file__).resolve().parents[3] / "scripts" / "liaison-ide-hop.py"
 _HOP_ARGS = [
     "liaison-ide-hop.py",
