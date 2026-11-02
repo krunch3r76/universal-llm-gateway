@@ -23,10 +23,15 @@ def record_api_role_dispatch(
     contract: str | None,
     usage: dict[str, Any] | None,
     usage_capture_status: str = "captured",
-) -> None:
-    """Insert or update a synthetic ledger row keyed by execution_id."""
+) -> str | None:
+    """Insert or update a ledger row for one API-role completion.
+
+    Returns the ``dispatch_id`` the economics landed on — the admitted row when
+    the completion closed it in place — or ``None`` when no ``work_key`` was given
+    and nothing was recorded.
+    """
     if not work_key:
-        return
+        return None
     if usage is not None:
         usage = normalize_api_role_usage(usage, model=resolved_model)
     ledger = CursorDispatchLedger.instance()
@@ -54,3 +59,4 @@ def record_api_role_dispatch(
             usage_capture_status=usage_capture_status,  # type: ignore[arg-type]
         ),
     )
+    return dispatch_id
