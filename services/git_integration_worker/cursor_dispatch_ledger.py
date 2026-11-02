@@ -506,6 +506,8 @@ def _dispatch_record_json(req: CursorDispatchRequest) -> str:
         "wake_lane": req.wake_lane,
         "parent_dispatch_thread_id": req.parent_dispatch_thread_id,
     }
+    if req.request_id is not None:
+        payload["request_id"] = req.request_id
     if req.generation_options is not None:
         payload["generation_options"] = req.generation_options
     return json.dumps(payload, sort_keys=True, separators=(",", ":"))
@@ -3515,6 +3517,7 @@ class CursorDispatchLedger:
             model=str(data.get("model") or promoted.resolved_model),
             dispatch_id=promoted.dispatch_id,
             execution_id=promoted.execution_id or promoted.dispatch_id,
+            request_id=data.get("request_id"),
             caller_agent=promoted.caller_agent,
             packet_path=data.get("packet_path"),
             message=data.get("message"),

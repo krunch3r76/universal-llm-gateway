@@ -7,7 +7,7 @@ from typing import Any
 from implement_admission.dispatch_topic import extract_dispatch_topic
 
 from services.git_integration_worker.git_worker_lifecycle_events import (
-    request_id_from_dispatch_id,
+    resolve_envelope_request_id,
 )
 from services.git_integration_worker.models.cursor_api import CursorDispatchRequest
 
@@ -29,7 +29,10 @@ def build_dispatch_association_fields(
     envelope = build_association_envelope(
         purpose_body=packet_text or req.message,
         caller_agent=req.caller_agent,
-        request_id=request_id_from_dispatch_id(req.dispatch_id),
+        request_id=resolve_envelope_request_id(
+            dispatch_id=req.dispatch_id,
+            explicit_request_id=req.request_id,
+        ),
         dispatch_id=req.dispatch_id,
         packet_path=req.packet_path,
     )

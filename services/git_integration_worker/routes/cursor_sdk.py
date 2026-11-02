@@ -331,7 +331,7 @@ from services.git_integration_worker.git_worker_lifecycle_events import (
     build_dispatch_error_envelope,
     emit_git_worker_dispatch_rejected,
     log_dispatch_rejection,
-    request_id_from_dispatch_id,
+    resolve_envelope_request_id,
 )
 from services.git_integration_worker.models.cursor_api import (
     BranchDischargeRequest,
@@ -2450,7 +2450,10 @@ async def _deliver_sdk_closeout(
         merge_degraded_reasons(degraded_reason, *outcome.degraded_reasons)
     )
     captured_provider_error_class = provider_error_class(outcome.provider_error or "")
-    envelope_request_id = request_id_from_dispatch_id(req.dispatch_id)
+    envelope_request_id = resolve_envelope_request_id(
+        dispatch_id=req.dispatch_id,
+        explicit_request_id=req.request_id,
+    )
     from systems.frontier_consult.story_wire import build_association_envelope
 
     association = build_association_envelope(
