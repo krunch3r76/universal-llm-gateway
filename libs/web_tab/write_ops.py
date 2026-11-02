@@ -468,7 +468,10 @@ async def execute_submit(
                 send = await dom_click_send(ws, selector=selector, line=line)
             elif composer_draft and expect_draft_sha256:
                 send = await dom_click_send(
-                    ws, selector=selector, line=composer_draft
+                    ws,
+                    selector=selector,
+                    line=composer_draft,
+                    preserve_newlines=True,
                 )
             else:
                 send = await dom_click_send_own_draft(ws, selector=selector)
