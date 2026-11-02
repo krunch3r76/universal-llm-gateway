@@ -479,6 +479,92 @@ async def test_execute_submit_expect_draft_sha256_match_proceeds() -> None:
 
 
 @pytest.mark.asyncio
+async def test_execute_submit_multiline_expect_draft_sha256_match_proceeds() -> None:
+    from web_tab.cdp_actuation import RecordingActuationPort
+
+    draft = "CONTINUITY CALLBACK — block one\n\nSecond paragraph here.\nThird line."
+    expect = composer_draft_sha256_hex(draft)
+    port = RecordingActuationPort(
+        tabs=[
+            {
+                "id": "t-sha-multiline",
+                "url": "https://grok.com/c/x",
+                "web_socket_debugger_url": _WS,
+            }
+        ]
+    )
+    async with async_playwright() as playwright:
+        browser = await playwright.chromium.launch(headless=True)
+        page = await browser.new_page()
+        await page.set_content(_composer_html())
+        await page.evaluate(INSTALL_OPERATOR_ACTIVITY_PROBE_JS)
+        await page.evaluate(
+            "(d) => { document.getElementById('composer').innerText = d; }",
+            draft,
+        )
+        with patch(
+            "cursor_bridge.dom_composer_paste._cdp_eval",
+            side_effect=_cdp_eval_shim(page),
+        ):
+            out = await execute_submit(
+                cdp_url="http://127.0.0.1:9222",
+                target_id="t-sha-multiline",
+                grant="explicit",
+                authorization_source="agent-bus:test#sha-multiline",
+                expect_draft_sha256=expect,
+                port=port,
+            )
+        await browser.close()
+    assert out["ok"] is True
+
+
+@pytest.mark.asyncio
+async def test_execute_submit_multiline_expect_draft_sha256_mismatch_refuses() -> None:
+    from web_tab.cdp_actuation import RecordingActuationPort
+
+    draft = "line A\n\nline B"
+    port = RecordingActuationPort(
+        tabs=[
+            {
+                "id": "t-sha-multiline-bad",
+                "url": "https://grok.com/c/x",
+                "web_socket_debugger_url": _WS,
+            }
+        ]
+    )
+    send_mock = AsyncMock(return_value={"ok": True})
+    async with async_playwright() as playwright:
+        browser = await playwright.chromium.launch(headless=True)
+        page = await browser.new_page()
+        await page.set_content(_composer_html())
+        await page.evaluate(INSTALL_OPERATOR_ACTIVITY_PROBE_JS)
+        await page.evaluate(
+            "(d) => { document.getElementById('composer').innerText = d; }",
+            draft,
+        )
+        with (
+            patch(
+                "cursor_bridge.dom_composer_paste._cdp_eval",
+                side_effect=_cdp_eval_shim(page),
+            ),
+            patch("web_tab.write_ops.dom_click_send", send_mock),
+            patch("web_tab.write_ops.dom_click_send_own_draft", send_mock),
+        ):
+            out = await execute_submit(
+                cdp_url="http://127.0.0.1:9222",
+                target_id="t-sha-multiline-bad",
+                grant="explicit",
+                authorization_source="agent-bus:test#sha-multiline-bad",
+                expect_draft_sha256="a" * 64,
+                port=port,
+            )
+        await browser.close()
+    assert out["ok"] is False
+    assert out["code"] == "operator_active"
+    send_mock.assert_not_awaited()
+
+
+@pytest.mark.asyncio
 async def test_execute_submit_expect_draft_sha256_mismatch_refuses() -> None:
     from web_tab.cdp_actuation import RecordingActuationPort
 
