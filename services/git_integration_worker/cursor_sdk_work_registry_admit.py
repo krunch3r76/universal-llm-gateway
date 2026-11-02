@@ -263,7 +263,8 @@ def upsert_frontier_registry_dispatch(
             conn.execute(
                 "UPDATE cursor_sdk_dispatches SET record_json=?, thread_id=?, "
                 "caller_agent=COALESCE(?, caller_agent), work_key=COALESCE(?, work_key) "
-                "WHERE dispatch_id=?",
+                "WHERE dispatch_id=? "
+                "AND status IN ('queued','admitted','running')",
                 (
                     record_json,
                     thread_id,
@@ -344,7 +345,11 @@ def close_frontier_registry_row(
         ).fetchone()
         if row is None:
             tomb = json.dumps(
-                {"terminal_reason": reason, "registry_auto_recorded": True},
+                {
+                    "terminal_reason": reason,
+                    "registry_auto_recorded": True,
+                    "tombstone": True,
+                },
                 sort_keys=True,
                 separators=(",", ":"),
             )
@@ -380,6 +385,52 @@ def close_frontier_registry_row(
         return {"ok": True, "marked": False}
 
 
+def bump_frontier_registry_heartbeat(
+    dispatch_id: str,
+    ledger: CursorDispatchLedger | None = None,
+) -> dict[str, Any]:
+    """Refresh ``last_heartbeat_at`` for a live CDP frontier registry row."""
+    fp = str(dispatch_id or "").strip()
+    if not fp:
+        return {"ok": True, "bumped": False}
+    led = ledger or CursorDispatchLedger.instance()
+    from services.git_integration_worker.cursor_dispatch_ledger import _now
+
+    now_stamp = _now()
+    with led._connect() as conn:
+        cur = conn.execute(
+            "UPDATE cursor_sdk_dispatches SET last_heartbeat_at=? "
+            "WHERE dispatch_id=? "
+            "AND status IN ('queued','admitted','running') "
+            "AND COALESCE(read_only, 0)=1 "
+            "AND json_extract(record_json, '$.address.kind')='cdp'",
+            (now_stamp, fp),
+        )
+        conn.commit()
+    return {"ok": True, "bumped": cur.rowcount == 1}
+
+
+def _frontier_reap_anchor_iso(
+    *,
+    record_json: str | None,
+    started_at: str | None,
+    queued_at: str | None,
+    last_heartbeat_at: str | None,
+) -> str | None:
+    """Pick the timestamp the TTL reaper ages from (kind-specific)."""
+    try:
+        rec = json.loads(record_json or "{}")
+    except json.JSONDecodeError:
+        rec = {}
+    if not isinstance(rec, dict):
+        rec = {}
+    addr = rec.get("address")
+    kind = addr.get("kind") if isinstance(addr, dict) else None
+    if kind == "cdp":
+        return last_heartbeat_at or started_at or queued_at
+    return started_at or queued_at
+
+
 def reap_stale_frontier_registry_rows(
     ledger: CursorDispatchLedger | None = None,
     now: datetime | None = None,
@@ -392,7 +443,8 @@ def reap_stale_frontier_registry_rows(
     reaped: list[str] = []
     with led._connect() as conn:
         rows = conn.execute(
-            "SELECT dispatch_id, record_json, started_at, queued_at "
+            "SELECT dispatch_id, record_json, started_at, queued_at, "
+            "last_heartbeat_at "
             "FROM cursor_sdk_dispatches "
             "WHERE status IN ('queued','admitted','running') "
             "AND COALESCE(read_only, 0)=1 "
@@ -400,29 +452,47 @@ def reap_stale_frontier_registry_rows(
         ).fetchall()
     for row in rows:
         dispatch_id = str(row["dispatch_id"])
-        threshold_s = _frontier_reap_threshold_s(
-            row["record_json"], ttl_s=effective_ttl
-        )
-        started_raw = row["started_at"] or row["queued_at"]
-        if not started_raw:
-            continue
         try:
-            started = datetime.fromisoformat(str(started_raw))
-        except ValueError:
-            continue
-        if started.tzinfo is None:
-            started = started.replace(tzinfo=UTC)
-        age_s = (anchor - started).total_seconds()
-        if age_s <= threshold_s:
-            continue
-        outcome = close_frontier_registry_row(
-            dispatch_id,
-            "failed",
-            "frontier_registry_ttl",
-            ledger=led,
-        )
-        if outcome.get("ok") and outcome.get("marked"):
-            reaped.append(dispatch_id)
+            threshold_s = _frontier_reap_threshold_s(
+                row["record_json"], ttl_s=effective_ttl
+            )
+            anchor_raw = _frontier_reap_anchor_iso(
+                record_json=row["record_json"],
+                started_at=row["started_at"],
+                queued_at=row["queued_at"],
+                last_heartbeat_at=row["last_heartbeat_at"],
+            )
+            if not anchor_raw:
+                continue
+            try:
+                anchor_dt = datetime.fromisoformat(str(anchor_raw))
+            except ValueError:
+                logger.warning(
+                    "frontier registry reaper skipped bad timestamp "
+                    "dispatch_id=%s anchor=%r",
+                    dispatch_id,
+                    anchor_raw,
+                )
+                continue
+            if anchor_dt.tzinfo is None:
+                anchor_dt = anchor_dt.replace(tzinfo=UTC)
+            age_s = (anchor - anchor_dt).total_seconds()
+            if age_s <= threshold_s:
+                continue
+            outcome = close_frontier_registry_row(
+                dispatch_id,
+                "failed",
+                "frontier_registry_ttl",
+                ledger=led,
+            )
+            if outcome.get("ok") and outcome.get("marked"):
+                reaped.append(dispatch_id)
+        except Exception as exc:  # noqa: BLE001 — per-row isolation
+            logger.warning(
+                "frontier registry reaper row error dispatch_id=%s err=%s",
+                dispatch_id,
+                exc,
+            )
     return reaped
 
 

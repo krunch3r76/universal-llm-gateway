@@ -73,6 +73,12 @@ class RegistryTerminalBody(BaseModel):
     reason: str = ""
 
 
+class RegistryHeartbeatBody(BaseModel):
+    """Bump ``last_heartbeat_at`` on a live CDP frontier registry row."""
+
+    dispatch_id: str
+
+
 class RegistryRecordBody(BaseModel):
     """Best-effort auto-record for team_dispatch generate/to_thread admits."""
 
@@ -274,12 +280,20 @@ def post_registry_terminal(body: RegistryTerminalBody) -> Any:
         body.terminal_status,
         body.reason or "",
     )
-    if not outcome.get("ok"):
-        return JSONResponse(
-            status_code=404,
-            content={"ok": False, "reason": outcome.get("reason", "not_found")},
-        )
     return {"ok": True, "marked": outcome.get("marked", False)}
+
+
+@router.post("/registry/heartbeat", response_model=None)
+def post_registry_heartbeat(body: RegistryHeartbeatBody) -> Any:
+    """Refresh CDP frontier registry liveness (never 404)."""
+    from services.git_integration_worker.cursor_sdk_work_registry_admit import (
+        bump_frontier_registry_heartbeat,
+    )
+
+    if not body.dispatch_id.strip():
+        return _invalid("INVALID_HEARTBEAT", "dispatch_id is required")
+    outcome = bump_frontier_registry_heartbeat(body.dispatch_id.strip())
+    return {"ok": True, "bumped": outcome.get("bumped", False)}
 
 
 @router.get("/work-key-ledger", response_model=None)

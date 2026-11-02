@@ -8,6 +8,7 @@ import pytest
 
 from services.git_integration_worker.cursor_dispatch_ledger import CursorDispatchLedger
 from services.git_integration_worker.cursor_sdk_work_registry_admit import (
+    bump_frontier_registry_heartbeat,
     close_frontier_registry_row,
     record_dispatch_registry_best_effort,
     reap_stale_frontier_registry_rows,
@@ -208,7 +209,9 @@ def test_close_frontier_row_idempotent_second_call_marked_false(
     assert second == {"ok": True, "marked": False}
 
 
-def test_registry_terminal_route_tombstones_missing_row() -> None:
+def test_registry_terminal_route_tombstones_missing_row(
+    isolated_registry_ledger: CursorDispatchLedger,
+) -> None:
     from fastapi import FastAPI
     from fastapi.testclient import TestClient
 
@@ -227,6 +230,48 @@ def test_registry_terminal_route_tombstones_missing_row() -> None:
     )
     assert resp.status_code == 200
     assert resp.json() == {"ok": True, "marked": True}
+    with isolated_registry_ledger._connect() as conn:
+        row = conn.execute(
+            "SELECT record_json FROM cursor_sdk_dispatches WHERE dispatch_id=?",
+            ("missing-row-xyz",),
+        ).fetchone()
+    rec = json.loads(row["record_json"] or "{}")
+    assert rec.get("tombstone") is True
+
+
+def test_registry_terminal_route_duplicate_returns_marked_false(
+    isolated_registry_ledger: CursorDispatchLedger,
+) -> None:
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+
+    from services.git_integration_worker.routes.cursor_claim import router
+
+    upsert_frontier_registry_dispatch(
+        dispatch_id="dup-term-api",
+        thread_id="21802",
+        caller_agent="maestro",
+        seat_name="maestro",
+        address={"kind": "api_role", "thread_id": "21802"},
+        work_key="todo:dup-term",
+        ledger=isolated_registry_ledger,
+    )
+    close_frontier_registry_row(
+        "dup-term-api", "failed", "once", ledger=isolated_registry_ledger
+    )
+    app = FastAPI()
+    app.include_router(router)
+    tc = TestClient(app)
+    resp = tc.post(
+        "/api/v1/cursor/registry/terminal",
+        json={
+            "dispatch_id": "dup-term-api",
+            "terminal_status": "failed",
+            "reason": "again",
+        },
+    )
+    assert resp.status_code == 200
+    assert resp.json() == {"ok": True, "marked": False}
 
 
 def test_registry_record_after_api_completion_does_not_insert_admitted(
@@ -395,6 +440,7 @@ def test_reaper_respects_cdp_max_wall_s_before_margin(
 
     monkeypatch.setenv("CURSOR_REGISTRY_FRONTIER_WALL_MARGIN_S", "900")
     five_h_ago = (datetime.now(UTC) - timedelta(hours=5)).isoformat()
+    ten_min_ago = (datetime.now(UTC) - timedelta(minutes=10)).isoformat()
     upsert_frontier_registry_dispatch(
         dispatch_id="long-cdp-leg",
         thread_id="21802",
@@ -402,14 +448,14 @@ def test_reaper_respects_cdp_max_wall_s_before_margin(
         seat_name="maestro",
         address={"kind": "cdp", "thread_id": "21802"},
         work_key="todo:long-cdp",
-        max_wall_s=43200,
+        max_wall_s=1800,
         ledger=isolated_registry_ledger,
     )
     with isolated_registry_ledger._connect() as conn:
         conn.execute(
-            "UPDATE cursor_sdk_dispatches SET started_at=?, queued_at=? "
-            "WHERE dispatch_id=?",
-            (five_h_ago, five_h_ago, "long-cdp-leg"),
+            "UPDATE cursor_sdk_dispatches SET started_at=?, queued_at=?, "
+            "last_heartbeat_at=? WHERE dispatch_id=?",
+            (five_h_ago, five_h_ago, ten_min_ago, "long-cdp-leg"),
         )
         conn.commit()
     reaped = reap_stale_frontier_registry_rows(
@@ -425,28 +471,220 @@ def test_reaper_fails_cdp_row_past_max_wall_s_plus_margin(
     from datetime import UTC, datetime, timedelta
 
     monkeypatch.setenv("CURSOR_REGISTRY_FRONTIER_WALL_MARGIN_S", "900")
-    old = (datetime.now(UTC) - timedelta(hours=13)).isoformat()
+    twenty_h_ago = (datetime.now(UTC) - timedelta(hours=20)).isoformat()
+    hb_reaped = (datetime.now(UTC) - timedelta(hours=12, minutes=30)).isoformat()
+    hb_fresh = (datetime.now(UTC) - timedelta(hours=12)).isoformat()
+    for dispatch_id, hb in (
+        ("expired-cdp-leg", hb_reaped),
+        ("sibling-cdp-leg", hb_fresh),
+    ):
+        upsert_frontier_registry_dispatch(
+            dispatch_id=dispatch_id,
+            thread_id="21802",
+            caller_agent="maestro",
+            seat_name="maestro",
+            address={"kind": "cdp", "thread_id": "21802"},
+            work_key=f"todo:{dispatch_id}",
+            max_wall_s=43200,
+            ledger=isolated_registry_ledger,
+        )
+        with isolated_registry_ledger._connect() as conn:
+            conn.execute(
+                "UPDATE cursor_sdk_dispatches SET started_at=?, queued_at=?, "
+                "last_heartbeat_at=? WHERE dispatch_id=?",
+                (twenty_h_ago, twenty_h_ago, hb, dispatch_id),
+            )
+            conn.commit()
+    reaped = reap_stale_frontier_registry_rows(
+        ledger=isolated_registry_ledger, ttl_s=14400
+    )
+    assert reaped == ["expired-cdp-leg"]
+
+
+def test_reaper_api_role_ignores_recent_heartbeat(
+    isolated_registry_ledger: CursorDispatchLedger,
+) -> None:
+    from datetime import UTC, datetime, timedelta
+
+    five_h_ago = (datetime.now(UTC) - timedelta(hours=5)).isoformat()
+    one_min_ago = (datetime.now(UTC) - timedelta(minutes=1)).isoformat()
     upsert_frontier_registry_dispatch(
-        dispatch_id="expired-cdp-leg",
+        dispatch_id="api-heartbeat-noop",
+        thread_id="21802",
+        caller_agent="maestro",
+        seat_name="maestro",
+        address={"kind": "api_role", "thread_id": "21802"},
+        work_key="todo:api-hb",
+        ledger=isolated_registry_ledger,
+    )
+    with isolated_registry_ledger._connect() as conn:
+        conn.execute(
+            "UPDATE cursor_sdk_dispatches SET started_at=?, queued_at=?, "
+            "last_heartbeat_at=? WHERE dispatch_id=?",
+            (five_h_ago, five_h_ago, one_min_ago, "api-heartbeat-noop"),
+        )
+        conn.commit()
+    reaped = reap_stale_frontier_registry_rows(
+        ledger=isolated_registry_ledger, ttl_s=14400
+    )
+    assert reaped == ["api-heartbeat-noop"]
+
+
+def test_bump_heartbeat_cdp_only(
+    isolated_registry_ledger: CursorDispatchLedger,
+) -> None:
+    upsert_frontier_registry_dispatch(
+        dispatch_id="cdp-hb",
         thread_id="21802",
         caller_agent="maestro",
         seat_name="maestro",
         address={"kind": "cdp", "thread_id": "21802"},
-        work_key="todo:expired-cdp",
-        max_wall_s=43200,
+        work_key="todo:cdp-hb",
+        ledger=isolated_registry_ledger,
+    )
+    upsert_frontier_registry_dispatch(
+        dispatch_id="api-hb",
+        thread_id="21802",
+        caller_agent="maestro",
+        seat_name="maestro",
+        address={"kind": "api_role", "thread_id": "21802"},
+        work_key="todo:api-hb",
+        ledger=isolated_registry_ledger,
+    )
+    assert bump_frontier_registry_heartbeat("cdp-hb", ledger=isolated_registry_ledger) == {
+        "ok": True,
+        "bumped": True,
+    }
+    assert bump_frontier_registry_heartbeat("api-hb", ledger=isolated_registry_ledger) == {
+        "ok": True,
+        "bumped": False,
+    }
+
+
+def test_registry_heartbeat_route(
+    isolated_registry_ledger: CursorDispatchLedger,
+) -> None:
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+
+    from services.git_integration_worker.routes.cursor_claim import router
+
+    upsert_frontier_registry_dispatch(
+        dispatch_id="route-cdp-hb",
+        thread_id="21802",
+        caller_agent="maestro",
+        seat_name="maestro",
+        address={"kind": "cdp", "thread_id": "21802"},
+        work_key="todo:route-hb",
+        ledger=isolated_registry_ledger,
+    )
+    upsert_frontier_registry_dispatch(
+        dispatch_id="route-api-hb",
+        thread_id="21802",
+        caller_agent="maestro",
+        seat_name="maestro",
+        address={"kind": "api_role", "thread_id": "21802"},
+        work_key="todo:route-api",
+        ledger=isolated_registry_ledger,
+    )
+    app = FastAPI()
+    app.include_router(router)
+    tc = TestClient(app)
+    cdp_resp = tc.post(
+        "/api/v1/cursor/registry/heartbeat",
+        json={"dispatch_id": "route-cdp-hb"},
+    )
+    assert cdp_resp.status_code == 200
+    assert cdp_resp.json() == {"ok": True, "bumped": True}
+    api_resp = tc.post(
+        "/api/v1/cursor/registry/heartbeat",
+        json={"dispatch_id": "route-api-hb"},
+    )
+    assert api_resp.status_code == 200
+    assert api_resp.json() == {"ok": True, "bumped": False}
+    missing = tc.post(
+        "/api/v1/cursor/registry/heartbeat",
+        json={"dispatch_id": "no-such-dispatch"},
+    )
+    assert missing.status_code == 200
+    assert missing.json() == {"ok": True, "bumped": False}
+
+
+def test_reaper_continues_after_bad_timestamp_row(
+    isolated_registry_ledger: CursorDispatchLedger,
+) -> None:
+    from datetime import UTC, datetime, timedelta
+
+    stale = (datetime.now(UTC) - timedelta(hours=5)).isoformat()
+    upsert_frontier_registry_dispatch(
+        dispatch_id="good-row-reap",
+        thread_id="21802",
+        caller_agent="maestro",
+        seat_name="maestro",
+        address={"kind": "api_role", "thread_id": "21802"},
+        work_key="todo:good-reap",
+        ledger=isolated_registry_ledger,
+    )
+    upsert_frontier_registry_dispatch(
+        dispatch_id="bad-ts-row",
+        thread_id="21802",
+        caller_agent="maestro",
+        seat_name="maestro",
+        address={"kind": "cdp", "thread_id": "21802"},
+        work_key="todo:bad-ts",
         ledger=isolated_registry_ledger,
     )
     with isolated_registry_ledger._connect() as conn:
         conn.execute(
             "UPDATE cursor_sdk_dispatches SET started_at=?, queued_at=? "
             "WHERE dispatch_id=?",
-            (old, old, "expired-cdp-leg"),
+            (stale, stale, "good-row-reap"),
+        )
+        conn.execute(
+            "UPDATE cursor_sdk_dispatches SET started_at='not-iso', "
+            "queued_at='not-iso', last_heartbeat_at='not-iso' "
+            "WHERE dispatch_id=?",
+            ("bad-ts-row",),
         )
         conn.commit()
     reaped = reap_stale_frontier_registry_rows(
         ledger=isolated_registry_ledger, ttl_s=14400
     )
-    assert reaped == ["expired-cdp-leg"]
+    assert reaped == ["good-row-reap"]
+
+
+def test_reaper_three_cdp_rows_stale_heartbeat_no_inflight_db(
+    isolated_registry_ledger: CursorDispatchLedger,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from datetime import UTC, datetime, timedelta
+
+    monkeypatch.setenv("CURSOR_REGISTRY_FRONTIER_WALL_MARGIN_S", "900")
+    started = (datetime.now(UTC) - timedelta(hours=4, minutes=1)).isoformat()
+    hb = started
+    for i in range(3):
+        dispatch_id = f"cdp-batch-{i}"
+        upsert_frontier_registry_dispatch(
+            dispatch_id=dispatch_id,
+            thread_id="21802",
+            caller_agent="maestro",
+            seat_name="maestro",
+            address={"kind": "cdp", "thread_id": "21802"},
+            work_key=f"todo:{dispatch_id}",
+            max_wall_s=1800,
+            ledger=isolated_registry_ledger,
+        )
+        with isolated_registry_ledger._connect() as conn:
+            conn.execute(
+                "UPDATE cursor_sdk_dispatches SET started_at=?, queued_at=?, "
+                "last_heartbeat_at=? WHERE dispatch_id=?",
+                (started, started, hb, dispatch_id),
+            )
+            conn.commit()
+    reaped = reap_stale_frontier_registry_rows(
+        ledger=isolated_registry_ledger, ttl_s=14400
+    )
+    assert set(reaped) == {f"cdp-batch-{i}" for i in range(3)}
 
 
 def test_terminal_before_record_leaves_row_terminal(

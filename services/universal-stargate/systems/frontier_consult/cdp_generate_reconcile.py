@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import asyncio
+import os
+import time
 import uuid
 from datetime import UTC, datetime
 from typing import Any, Literal
@@ -59,6 +61,31 @@ STALL_HORIZON_SEATED_AUTHORSHIP = "horizon_seated_authorship"
 
 _reconcile_task: asyncio.Task[None] | None = None
 _reconcile_in_flight = False
+_last_registry_heartbeat_mono: dict[str, float] = {}
+
+
+def _registry_heartbeat_min_s() -> float:
+    raw = os.environ.get("CDP_REGISTRY_HEARTBEAT_MIN_S", "300").strip()
+    try:
+        return max(0.0, float(raw))
+    except ValueError:
+        return 300.0
+
+
+async def _maybe_relay_registry_heartbeat(leg: InflightLeg) -> None:
+    """Throttled GIW registry heartbeat while reconcile observes CDP progress."""
+    min_s = _registry_heartbeat_min_s()
+    now = time.monotonic()
+    last = _last_registry_heartbeat_mono.get(leg.execution_id, 0.0)
+    if min_s > 0 and (now - last) < min_s:
+        return
+    from .work_registry_admit_relay import relay_registry_heartbeat
+
+    await relay_registry_heartbeat(
+        request_id=leg.request_id,
+        dispatch_id=leg.execution_id,
+    )
+    _last_registry_heartbeat_mono[leg.execution_id] = now
 
 # Re-export ledger API so existing callers/tests keep importing this module.
 __all__ = [
@@ -210,6 +237,7 @@ async def _reconcile_horizon_leg(leg: InflightLeg, *, horizon: float) -> None:
             leg.execution_id,
             leg.satellite_execution_id,
         )
+        await _maybe_relay_registry_heartbeat(leg)
         return
 
     if observation == "confirmed_dead":
@@ -542,6 +570,8 @@ async def _reconcile_leg(leg: InflightLeg) -> None:
         purpose=leg.purpose,
     )
     if result is None:
+        if classify_horizon_probe(snapshot) == "alive":
+            await _maybe_relay_registry_heartbeat(leg)
         return
 
     await finalize_cdp_generate(
@@ -607,3 +637,4 @@ def reset_cdp_generate_reconcile_for_tests() -> None:
         _reconcile_task = None
     clear_inflight_ledger()
     reset_horizon_unverifiable_emits_for_tests()
+    _last_registry_heartbeat_mono.clear()
