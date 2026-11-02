@@ -23,6 +23,7 @@ from implement_admission.service_lib_ownership import (
     service_ownership,
     serving_services_for_lib,
     serving_services_for_lib_path,
+    unserved_libs,
 )
 
 _propagation_execute = import_archived("propagation_execute")
@@ -188,6 +189,26 @@ def test_serving_map_prefix_matches_serves_libs_field(row) -> None:
     assert got == want, (
         f"{row.prefix}: serves_libs={sorted(got)!r} serving-map={sorted(want)!r}"
     )
+
+
+def test_agent_bus_serves_wake_libs() -> None:
+    """agent_bus must restart for bus_watch and web_chat_relay.
+
+    ``server.py`` imports ``bus_watch.events`` on every start. The wake
+    dispatcher, loaded behind ``AGENT_BUS_ENDPOINT_WAKE_DISPATCHER``, imports
+    ``web_chat_relay.orion_wake`` at module top. An empty serving set makes
+    fleet_liveness report ``unmapped`` for those paths.
+    """
+    from scripts.model_manager.ui.controller.fleet_liveness_probe import (
+        services_for_path,
+    )
+
+    assert "bus_watch" not in unserved_libs()
+    for path in (
+        "libs/bus_watch/endpoint_wake_dispatcher.py",
+        "libs/web_chat_relay/orion_wake.py",
+    ):
+        assert "agent_bus" in services_for_path(path), path
 
 
 def test_wait_status_serving_slug_is_job_set_not_owned_libs_blast() -> None:

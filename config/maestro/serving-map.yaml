@@ -22,6 +22,19 @@ rows:
     cite: >-
       RULING 24 Part C: runtime imports in agent_bus (host), mcp tools, stargate
       frontier_consult/continuity/proxy, git_integration_worker cursor-sdk routes
+  - prefix: libs/bus_watch/
+    services:
+      - agent_bus
+    cite: >-
+      agent_bus loads bus_watch.events on every start
+      (libs/agent_bus_store/server.py) and the endpoint wake dispatcher
+      when AGENT_BUS_ENDPOINT_WAKE_DISPATCHER=1
+  - prefix: libs/web_chat_relay/
+    services:
+      - agent_bus
+    cite: >-
+      endpoint_wake_dispatcher imports web_chat_relay.orion_wake at module
+      top; that module loads inside the agent_bus process
   - prefix: libs/writing_intake/
     services:
       - stargate

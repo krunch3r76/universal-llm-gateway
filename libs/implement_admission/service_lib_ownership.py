@@ -61,7 +61,9 @@ _SERVICE_OWNERSHIP: dict[str, ServiceOwnership] = {
                 "universal_logging",
             }
         ),
-        serves_libs=frozenset({"agent_bus_store"}),
+        serves_libs=frozenset(
+            {"agent_bus_store", "bus_watch", "web_chat_relay"}
+        ),
         runtime_entrypoint="libs/agent_bus_store/server.py",
     ),
     "cortex_api": ServiceOwnership(
@@ -491,16 +493,17 @@ def declared_services_for_lib(lib_name: str) -> tuple[str, ...]:
     return tuple(sorted(owners))
 
 
-UNSERVED_LIBS: frozenset[str] = frozenset({"bus_watch", "foo", "box_isolated_chrome"})
+UNSERVED_LIBS: frozenset[str] = frozenset({"foo", "box_isolated_chrome"})
 """Top-level ``libs/`` names explicitly classified as needing no manage restart.
 
-``bus_watch`` is consumed by auxiliary liaison/watch scripts and IDE-hop
-helpers — no fleet ``manage`` process makes those modules live on restart.
 ``foo`` is the dogfood / mechanical fixture package — test-only, not a
 production behaviour. ``box_isolated_chrome`` is the host CLI behind
-``scripts/box-isolated-chrome``, not a manage-served process. Absence from
-every ``serves_libs`` row is still ``unmapped`` until a name is listed here or
-nominated by CONSUMERS/INJECTORS. See ``serving_coverage.path_serving_coverage``.
+``scripts/box-isolated-chrome``, not a manage-served process. ``bus_watch``
+is not in this set: ``agent_bus`` loads it from
+``libs/agent_bus_store/server.py`` and lists it in ``serves_libs``. Absence
+from every ``serves_libs`` row is still ``unmapped`` until a name is listed
+here or nominated by CONSUMERS/INJECTORS. See
+``serving_coverage.path_serving_coverage``.
 """
 
 
