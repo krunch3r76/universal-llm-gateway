@@ -56,6 +56,7 @@ from services.git_integration_worker.routes.cursor_claim import (
 )
 from services.git_integration_worker.routes.cursor_sdk import (
     bridge_sweeper,
+    frontier_registry_reaper,
     stale_lease_sweeper,
 )
 from services.git_integration_worker.routes.cursor_sdk import (
@@ -163,6 +164,11 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     schedule_startup_persistence(app)
     app.state.shutting_down = False
     supervise(app, "stale_lease_sweeper", lambda: stale_lease_sweeper(app))
+    supervise(
+        app,
+        "frontier_registry_reaper",
+        lambda: frontier_registry_reaper(app),
+    )
     supervise(app, "ulg_story_projector", lambda: ulg_story_projector_loop(app))
     supervise(app, "trigger_fire_loop", lambda: trigger_fire_loop(app))
     supervise(app, "lane_b_sweeper", lambda: lane_b_sweeper_loop(app))
@@ -210,6 +216,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         for attr in (
             "startup_persistence_task",
             "stale_lease_sweeper",
+            "frontier_registry_reaper",
             "ulg_story_projector",
             "trigger_fire_loop",
             "lane_b_sweeper",

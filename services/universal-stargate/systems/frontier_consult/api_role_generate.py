@@ -360,6 +360,9 @@ async def dispatch_api_role_generate(
 
     from .work_registry_admit_relay import attach_registry_next, relay_registry_record
 
+    api_max_wall: int | None = None
+    if getattr(body, "timeout_seconds", None) is not None:
+        api_max_wall = int(body.timeout_seconds)
     relay_body = await relay_registry_record(
         request_id=request_id,
         dispatch_id=exec_id,
@@ -373,6 +376,7 @@ async def dispatch_api_role_generate(
         work_key=getattr(body, "work_key", None),
         resolved_model=resolved_model or None,
         contract=contract,
+        max_wall_s=api_max_wall,
     )
     attach_registry_next(result, relay_body)
     return result

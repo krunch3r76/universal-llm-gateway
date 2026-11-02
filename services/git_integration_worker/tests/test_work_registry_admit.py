@@ -163,7 +163,10 @@ def test_close_frontier_row_does_not_overwrite_cancelled(
     with isolated_registry_ledger._connect() as conn:
         conn.execute(
             "UPDATE cursor_sdk_dispatches SET status='cancelled', "
-            "terminal_status='cancelled' WHERE dispatch_id=?",
+            "terminal_status='cancelled', "
+            "record_json=json_set(COALESCE(record_json, '{}'), "
+            "'$.terminal_reason', 'operator_cancel') "
+            "WHERE dispatch_id=?",
             ("exec-cancel-hold",),
         )
         conn.commit()
@@ -173,10 +176,14 @@ def test_close_frontier_row_does_not_overwrite_cancelled(
     assert outcome == {"ok": True, "marked": False}
     with isolated_registry_ledger._connect() as conn:
         row = conn.execute(
-            "SELECT status FROM cursor_sdk_dispatches WHERE dispatch_id=?",
+            "SELECT status, record_json FROM cursor_sdk_dispatches WHERE dispatch_id=?",
             ("exec-cancel-hold",),
         ).fetchone()
     assert row["status"] == "cancelled"
+    import json
+
+    rec = json.loads(row["record_json"] or "{}")
+    assert rec.get("terminal_reason") == "operator_cancel"
 
 
 def test_close_frontier_row_idempotent_second_call_marked_false(
@@ -201,7 +208,7 @@ def test_close_frontier_row_idempotent_second_call_marked_false(
     assert second == {"ok": True, "marked": False}
 
 
-def test_registry_terminal_route_404_shape_for_missing_row() -> None:
+def test_registry_terminal_route_tombstones_missing_row() -> None:
     from fastapi import FastAPI
     from fastapi.testclient import TestClient
 
@@ -218,8 +225,8 @@ def test_registry_terminal_route_404_shape_for_missing_row() -> None:
             "reason": "test",
         },
     )
-    assert resp.status_code == 404
-    assert resp.json() == {"ok": False, "reason": "not_found"}
+    assert resp.status_code == 200
+    assert resp.json() == {"ok": True, "marked": True}
 
 
 def test_registry_record_after_api_completion_does_not_insert_admitted(
@@ -378,3 +385,132 @@ def test_reaper_skips_already_cancelled(
         ledger=isolated_registry_ledger, ttl_s=14400
     )
     assert reaped == []
+
+
+def test_reaper_respects_cdp_max_wall_s_before_margin(
+    isolated_registry_ledger: CursorDispatchLedger,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from datetime import UTC, datetime, timedelta
+
+    monkeypatch.setenv("CURSOR_REGISTRY_FRONTIER_WALL_MARGIN_S", "900")
+    five_h_ago = (datetime.now(UTC) - timedelta(hours=5)).isoformat()
+    upsert_frontier_registry_dispatch(
+        dispatch_id="long-cdp-leg",
+        thread_id="21802",
+        caller_agent="maestro",
+        seat_name="maestro",
+        address={"kind": "cdp", "thread_id": "21802"},
+        work_key="todo:long-cdp",
+        max_wall_s=43200,
+        ledger=isolated_registry_ledger,
+    )
+    with isolated_registry_ledger._connect() as conn:
+        conn.execute(
+            "UPDATE cursor_sdk_dispatches SET started_at=?, queued_at=? "
+            "WHERE dispatch_id=?",
+            (five_h_ago, five_h_ago, "long-cdp-leg"),
+        )
+        conn.commit()
+    reaped = reap_stale_frontier_registry_rows(
+        ledger=isolated_registry_ledger, ttl_s=14400
+    )
+    assert reaped == []
+
+
+def test_reaper_fails_cdp_row_past_max_wall_s_plus_margin(
+    isolated_registry_ledger: CursorDispatchLedger,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from datetime import UTC, datetime, timedelta
+
+    monkeypatch.setenv("CURSOR_REGISTRY_FRONTIER_WALL_MARGIN_S", "900")
+    old = (datetime.now(UTC) - timedelta(hours=13)).isoformat()
+    upsert_frontier_registry_dispatch(
+        dispatch_id="expired-cdp-leg",
+        thread_id="21802",
+        caller_agent="maestro",
+        seat_name="maestro",
+        address={"kind": "cdp", "thread_id": "21802"},
+        work_key="todo:expired-cdp",
+        max_wall_s=43200,
+        ledger=isolated_registry_ledger,
+    )
+    with isolated_registry_ledger._connect() as conn:
+        conn.execute(
+            "UPDATE cursor_sdk_dispatches SET started_at=?, queued_at=? "
+            "WHERE dispatch_id=?",
+            (old, old, "expired-cdp-leg"),
+        )
+        conn.commit()
+    reaped = reap_stale_frontier_registry_rows(
+        ledger=isolated_registry_ledger, ttl_s=14400
+    )
+    assert reaped == ["expired-cdp-leg"]
+
+
+def test_terminal_before_record_leaves_row_terminal(
+    isolated_registry_ledger: CursorDispatchLedger,
+) -> None:
+    dispatch_id = "cdp-terminal-first"
+    close_outcome = close_frontier_registry_row(
+        dispatch_id,
+        "completed",
+        "cdp_finalize",
+        ledger=isolated_registry_ledger,
+    )
+    assert close_outcome == {"ok": True, "marked": True}
+    row_id = upsert_frontier_registry_dispatch(
+        dispatch_id=dispatch_id,
+        thread_id="21802",
+        caller_agent="maestro",
+        seat_name="maestro",
+        address={"kind": "cdp", "thread_id": "21802"},
+        work_key="todo:terminal-first",
+        ledger=isolated_registry_ledger,
+    )
+    assert row_id == dispatch_id
+    with isolated_registry_ledger._connect() as conn:
+        row = conn.execute(
+            "SELECT status, record_json FROM cursor_sdk_dispatches WHERE dispatch_id=?",
+            (dispatch_id,),
+        ).fetchone()
+    assert row["status"] == "completed"
+    import json
+
+    rec = json.loads(row["record_json"] or "{}")
+    assert rec.get("terminal_reason") == "cdp_finalize"
+
+
+def test_registry_record_accepts_payload_without_max_wall_s(
+    isolated_registry_ledger: CursorDispatchLedger,
+) -> None:
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+
+    from services.git_integration_worker.routes.cursor_claim import router
+
+    app = FastAPI()
+    app.include_router(router)
+    tc = TestClient(app)
+    resp = tc.post(
+        "/api/v1/cursor/registry/record",
+        json={
+            "dispatch_id": "no-max-wall",
+            "thread_id": "21802",
+            "caller_agent": "maestro",
+            "address": {"kind": "api_role", "thread_id": "21802"},
+        },
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["ok"] is True
+    with isolated_registry_ledger._connect() as conn:
+        row = conn.execute(
+            "SELECT record_json FROM cursor_sdk_dispatches WHERE dispatch_id=?",
+            ("no-max-wall",),
+        ).fetchone()
+    import json
+
+    rec = json.loads(row["record_json"] or "{}")
+    assert "max_wall_s" not in rec

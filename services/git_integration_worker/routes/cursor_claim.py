@@ -84,6 +84,7 @@ class RegistryRecordBody(BaseModel):
     work_key: str | None = None
     resolved_model: str | None = None
     contract: str | None = None
+    max_wall_s: int | None = None
 
 
 class ReleaseBody(BaseModel):
@@ -177,6 +178,7 @@ def post_registry_record(body: RegistryRecordBody) -> Any:
         work_key=body.work_key,
         resolved_model=body.resolved_model,
         contract=body.contract,
+        max_wall_s=body.max_wall_s,
     )
     if row_id is None:
         return {"ok": False, "registry_row_id": None}
