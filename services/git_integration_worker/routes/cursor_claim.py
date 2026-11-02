@@ -237,14 +237,15 @@ def post_api_role_dispatch(body: ApiRoleDispatchBody) -> Any:
         record_api_role_dispatch,
     )
 
-    record_api_role_dispatch(
-        execution_id=body.execution_id.strip(),
+    execution_id = body.execution_id.strip()
+    dispatch_id = record_api_role_dispatch(
+        execution_id=execution_id,
         work_key=body.work_key.strip(),
         resolved_model=body.resolved_model.strip(),
         contract=body.contract,
         usage=body.usage,
     )
-    return {"ok": True, "dispatch_id": f"api-{body.execution_id.strip()}"}
+    return {"ok": True, "dispatch_id": dispatch_id or f"api-{execution_id}"}
 
 
 @router.get("/work-key-ledger", response_model=None)
