@@ -31,6 +31,7 @@ class GuardedReexecResult:
     stage: str | None = None
     old_pid_exited: bool | None = None
     traceback: str | None = None
+    report: dict[str, Any] | None = None
 
     def as_dict(self) -> dict[str, Any]:
         payload: dict[str, Any] = {
@@ -49,7 +50,14 @@ class GuardedReexecResult:
                 "process_start_later_ok": self.process_start_later_ok,
             },
         }
-        for key in ("unit", "recovery", "stage", "old_pid_exited", "traceback"):
+        for key in (
+            "unit",
+            "recovery",
+            "stage",
+            "old_pid_exited",
+            "traceback",
+            "report",
+        ):
             value = getattr(self, key)
             if value is not None:
                 payload[key] = value
