@@ -31,9 +31,11 @@ from web_chat_relay.orion_wake import (
 
 from bus_watch.endpoint_wake_transport import (
     StoreClient,
+    agent_id_matches_composer_suffix,
     classify_cse,
     classify_display,
     classify_orion,
+    glass_agent_id_suffix_candidates,
 )
 from bus_watch.ide_hop_land import expire_overdue_hop, expire_overdue_hops
 
@@ -169,6 +171,7 @@ GROK_WAKE_SUBJECT_HEADS = frozenset(
         "ESCALATE",
         "BLOCKED",
         "READY",
+        "ANSWER",
     }
 )
 ENDPOINT_WAKE_SUBJECT_HEADS = CSE_WAKE_SUBJECT_HEADS
@@ -193,6 +196,7 @@ _PEER_WAKE_FROM = frozenset(
         "web-anthropic",
         "maestro",
         "cursor",
+        "orion",
     }
 )
 _POLL_S = 2.0
@@ -429,6 +433,23 @@ def _observe_endpoint_wake_suppressed(
             thread_id,
             rule_id,
         )
+
+
+def _cursor_tab_address_matches_subscription(
+    raw_to: str,
+    sub: dict[str, Any],
+) -> bool:
+    """When a cursor row names ``agent_id``, bare ``to=cursor`` must not claim the wake."""
+    bound = str(sub.get("agent_id") or "").strip()
+    if not bound:
+        return True
+    normalized = normalize_bus_address(str(raw_to or "").strip())
+    if normalized == "cursor":
+        return False
+    for suffix in glass_agent_id_suffix_candidates(normalized, raw_to=raw_to):
+        if agent_id_matches_composer_suffix(bound, suffix):
+            return True
+    return False
 
 
 def _subscribed_for_wake_scan(
@@ -1286,6 +1307,19 @@ def scan_once(store: StoreClient, *, idle_mark: dict[str, float] | None = None) 
                     rule_id=verdict.rule_id,
                     subject=subject,
                 )
+            continue
+        if (
+            agent == "cursor"
+            and resolved is not None
+            and not _cursor_tab_address_matches_subscription(raw_to, resolved[1])
+        ):
+            _observe_endpoint_wake_suppressed(
+                thread_id=thread,
+                turn_id=_turn_id_of(turn),
+                to_agent=agent,
+                rule_id="refuse_tab_unaddressed",
+                subject_head=head,
+            )
             continue
         pending.append(
             _pending_item(turn, decided_by_rule=verdict.rule_id, route=resolved)

@@ -301,6 +301,7 @@ def test_cse_allowlist_not_display(db: None) -> None:
         "CONSULT",
         "QUESTION",
         "ASK",
+        "ANSWER",
         "DONE",
         "FAILED",
         "FACT",
@@ -3902,6 +3903,32 @@ def test_scan_once_enqueues_dispatch_to_worker_closeout_on_house_scope() -> None
     assert len(store.pending) == 1
     assert store.pending[0]["agent"] == "cursor"
     assert store.pending[0]["display"] == "8"
+
+
+def test_orion_answer_to_cursor_wakes_peer() -> None:
+    verdict = qualify(
+        {
+            "to_agent": "cursor",
+            "from_agent": "orion",
+            "subject": "ANSWER|INTERLOCUTION|orion-paste-architecture",
+            "thread": "21207",
+        },
+        cse=False,
+        store=None,
+    )
+    assert verdict.wake is True
+    assert verdict.rule_id == "wake_peer_sender"
+
+
+def test_tab_scoped_subscription_rejects_bare_cursor_to() -> None:
+    from bus_watch.endpoint_wake_dispatcher import _cursor_tab_address_matches_subscription
+
+    sub = {"agent_id": "7e0b90ac-d861-4ae2-a484-17d57c193eeb"}
+    assert _cursor_tab_address_matches_subscription("cursor", sub) is False
+    assert _cursor_tab_address_matches_subscription(
+        "composer-impresario-7e0b90ac", sub
+    )
+    assert _cursor_tab_address_matches_subscription("7e0b90ac", sub)
 
 
 def test_admit_echo_dropped_for_peer_sender_regardless_of_from_agent() -> None:
