@@ -6,6 +6,7 @@ from typing import Any
 
 from cursor_bridge.dom_composer_paste import (
     install_operator_activity_probe,
+    probe_foreign_draft,
     read_operator_busy,
     wait_for_operator_idle,
 )
@@ -19,11 +20,16 @@ async def operator_active_probe(
     created_by_agent: bool = True,
     wait_for_idle: bool = True,
     lock_holder: bool = False,
+    expect_draft_sha256: str | None = None,
 ) -> dict[str, Any]:
     await install_operator_activity_probe(ws_url)
     if wait_for_idle:
         idle = await wait_for_operator_idle(
-            ws_url, selector=selector, watermark=watermark, max_wait_s=30.0
+            ws_url,
+            selector=selector,
+            watermark=watermark,
+            max_wait_s=30.0,
+            expect_draft_sha256=expect_draft_sha256,
         )
         if not idle.get("ok"):
             return {
@@ -37,7 +43,9 @@ async def operator_active_probe(
     has_focus = probe.get("document_has_focus") is True
     visible = str(probe.get("document_visibility") or "") == "visible"
     operator_active = bool(probe.get("operator_active"))
-    foreign = bool(probe.get("foreign_draft"))
+    foreign = probe_foreign_draft(
+        probe, expect_draft_sha256=expect_draft_sha256
+    )
     if not lock_holder and not created_by_agent and (has_focus or visible):
         return {
             "ok": False,

@@ -3,9 +3,12 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import re
 from typing import Any
+
+_EXPECT_DRAFT_SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 
 GROK_PROMPT_SELECTOR = '[aria-label="Prompt"][contenteditable="true"]'
 OPERATOR_PROBE_VERSION = 2
@@ -14,6 +17,29 @@ _STALE_WAKE_DRAFT = re.compile(r"^BRIDGE_WAKE\s+thread=\S+\s+turn=\d+(?:,\d+)*$"
 
 def _is_stale_wake_draft(draft: str) -> bool:
     return bool(_STALE_WAKE_DRAFT.match(str(draft or "").strip()))
+
+
+def composer_draft_sha256_hex(draft: str) -> str:
+    """UTF-8 SHA-256 hex digest of composer ``innerText`` (same bytes the probe reads)."""
+    return hashlib.sha256(str(draft).encode("utf-8")).hexdigest()
+
+
+def probe_foreign_draft(
+    probe: dict[str, Any],
+    *,
+    expect_draft_sha256: str | None = None,
+) -> bool:
+    """True when the probe reports a non-agent draft (after optional SHA expectation)."""
+    foreign = bool(probe.get("foreign_draft"))
+    if not foreign:
+        return False
+    expect = str(expect_draft_sha256 or "").strip().lower()
+    if not expect or not _EXPECT_DRAFT_SHA256_RE.match(expect):
+        return foreign
+    draft = str(probe.get("composer_draft") or "")
+    if draft and composer_draft_sha256_hex(draft) == expect:
+        return False
+    return True
 
 
 INSTALL_OPERATOR_ACTIVITY_PROBE_JS = rf"""
@@ -71,6 +97,7 @@ READ_OPERATOR_BUSY_JS = r"""
     ok: true,
     operator_active: operatorActive,
     foreign_draft: foreignDraft,
+    composer_draft: draft,
     document_has_focus: document.hasFocus(),
     document_visibility: document.visibilityState || '',
     draft_len: draft.length,
@@ -302,6 +329,7 @@ async def wait_for_operator_idle(
     poll_s: float = 0.5,
     refuse_if_active: bool = False,
     refuse_if_foreign_draft: bool = False,
+    expect_draft_sha256: str | None = None,
 ) -> dict[str, Any]:
     """Backoff until operator idle and no foreign draft, or timeout."""
     await install_operator_activity_probe(ws_url)
@@ -311,7 +339,9 @@ async def wait_for_operator_idle(
     while loop.time() <= deadline:
         probe = await read_operator_busy(ws_url, selector=selector, watermark=watermark)
         active = bool(probe.get("operator_active"))
-        foreign = bool(probe.get("foreign_draft"))
+        foreign = probe_foreign_draft(
+            probe, expect_draft_sha256=expect_draft_sha256
+        )
         if active and refuse_if_active:
             return {"ok": False, "reason": "operator_busy", "idle": False}
         if foreign and refuse_if_foreign_draft:
@@ -390,7 +420,9 @@ def foreign_draft_guard(surface: dict[str, Any], *, watermark: str = "") -> str 
 __all__ = [
     "GROK_PROMPT_SELECTOR",
     "OPERATOR_PROBE_VERSION",
+    "composer_draft_sha256_hex",
     "composer_selector",
+    "probe_foreign_draft",
     "dom_click_send",
     "dom_click_send_own_draft",
     "dom_insert_and_send",

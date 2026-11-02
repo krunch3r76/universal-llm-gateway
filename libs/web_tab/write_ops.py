@@ -422,6 +422,7 @@ async def execute_submit(
     grant: str | None,
     authorization_source: str | None = None,
     expected_text: str | None = None,
+    expect_draft_sha256: str | None = None,
     surface: str | None = None,
     conversation_url: str | None = None,
     store_path: Path | None = None,
@@ -457,11 +458,18 @@ async def execute_submit(
                 selector=selector,
                 created_by_agent=created_by_agent,
                 lock_holder=True,
+                expect_draft_sha256=expect_draft_sha256,
             )
             if not guard.get("ok"):
                 return guard
+            probe = guard.get("probe") if isinstance(guard.get("probe"), dict) else {}
+            composer_draft = str(probe.get("composer_draft") or "").strip()
             if line:
                 send = await dom_click_send(ws, selector=selector, line=line)
+            elif composer_draft and expect_draft_sha256:
+                send = await dom_click_send(
+                    ws, selector=selector, line=composer_draft
+                )
             else:
                 send = await dom_click_send_own_draft(ws, selector=selector)
     except TargetLockBusyError:
@@ -664,12 +672,16 @@ async def dispatch_write_op(op: WriteOp, options: dict[str, Any]) -> dict[str, A
     if op == "submit":
         if not target_id:
             return {"ok": False, "code": "missing_target_id"}
+        expect_sha = options.get("expect_draft_sha256")
         return await execute_submit(
             cdp_url=cdp_url,
             target_id=target_id,
             grant=grant,
             authorization_source=authorization_source,
             expected_text=options.get("text"),
+            expect_draft_sha256=(
+                str(expect_sha).strip().lower() if expect_sha is not None else None
+            ),
             surface=options.get("surface"),
             conversation_url=options.get("conversation_url"),
         )
