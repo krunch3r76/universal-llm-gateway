@@ -3048,12 +3048,14 @@ def test_declared_rule_map_loads_address_rules(db: None) -> None:
     from bus_watch.endpoint_wake_dispatcher import _FALLBACK_WAKE_RULE_IDS
 
     assert _declared_wake_rule_ids() == _FALLBACK_WAKE_RULE_IDS
-    assert len(_declared_wake_rule_ids()) == 17
-    assert _declared_wake_rule_ids()[5] == "wake_by_address"
-    assert _declared_wake_rule_ids()[6] == "wake_by_name"
-    assert _declared_wake_rule_ids()[7] == "refuse_address_mismatch"
-    assert _declared_wake_rule_ids()[12] == "drop_routine_hop_closeout"
-    assert _declared_wake_rule_ids()[11] == "wake_peer_sender"
+    assert len(_declared_wake_rule_ids()) == 19
+    assert _declared_wake_rule_ids()[1] == "drop_orion_echo"
+    assert _declared_wake_rule_ids()[6] == "wake_by_address"
+    assert _declared_wake_rule_ids()[7] == "wake_by_name"
+    assert _declared_wake_rule_ids()[8] == "refuse_address_mismatch"
+    assert _declared_wake_rule_ids()[13] == "drop_routine_hop_closeout"
+    assert _declared_wake_rule_ids()[12] == "wake_peer_sender"
+    assert _declared_wake_rule_ids()[-1] == "refuse_tab_unaddressed"
 
 
 def test_qualify_matches_legacy_over_qualification_matrix(db: None) -> None:
@@ -3921,7 +3923,9 @@ def test_orion_answer_to_cursor_wakes_peer() -> None:
 
 
 def test_tab_scoped_subscription_rejects_bare_cursor_to() -> None:
-    from bus_watch.endpoint_wake_dispatcher import _cursor_tab_address_matches_subscription
+    from bus_watch.endpoint_wake_dispatcher import (
+        _cursor_tab_address_matches_subscription,
+    )
 
     sub = {"agent_id": "7e0b90ac-d861-4ae2-a484-17d57c193eeb"}
     assert _cursor_tab_address_matches_subscription("cursor", sub) is False
@@ -4412,3 +4416,281 @@ def test_composer_defer_decision_does_not_use_wall_clock() -> None:
     from bus_watch.endpoint_wake_composer_defer import defer_path_avoids_wall_clock
 
     assert defer_path_avoids_wall_clock() is True
+
+
+# --- refuse_tab_unaddressed scope/surface/remap gating (43c9e95a fix-forward) ---
+
+
+def _seed_row(
+    *,
+    agent: str,
+    scope: str,
+    agent_id: str,
+    surface: str = "cursor",
+) -> None:
+    from agent_bus_store.db.endpoint_subscriptions import subscribe_endpoint
+
+    subscribe_endpoint(
+        agent=agent,
+        thread_scope=scope,
+        surface=surface,
+        display="8",
+        title="t",
+        agent_id=agent_id,
+        bound_by="test",
+    )
+
+
+class _TabScanStore:
+    """scan_once store that resolves exact rows first, then a ``*`` row as wildcard."""
+
+    def __init__(
+        self, *, holder: dict | None = None, parent_scope: str | None = None
+    ) -> None:
+        self.pending: list[dict] = []
+        self._holder = holder
+        self._parent_scope = parent_scope
+
+    def cursor(self) -> dict:
+        return get_cursor()
+
+    def since(self, after_id: int, limit: int = 50) -> list[dict]:
+        with connect() as c:
+            rows = c.execute(
+                "SELECT id, thread, turn_number, from_agent, to_agent, subject, "
+                "body, read_at FROM turns WHERE id>? ORDER BY id LIMIT ?",
+                (after_id, limit),
+            ).fetchall()
+        return [dict(r) for r in rows]
+
+    def scan(self, expected: int, new_hw: int, rows: list[dict]) -> dict:
+        self.pending = rows
+        return advance_scan(
+            "endpoint-wake-dispatcher",
+            expected,
+            new_hw,
+            rows,
+            now="2020-01-01 20:00:00",
+        )
+
+    def subscription(self, agent: str, thread_id: str, raw_to: str | None = None):
+        from agent_bus_store.db.endpoint_subscriptions import current_subscription
+
+        row = current_subscription(agent, thread_id)
+        if row and row.get("state") == "subscribed":
+            return ("exact", row)
+        if self._parent_scope:
+            row = current_subscription(agent, self._parent_scope)
+            if row and row.get("state") == "subscribed":
+                return ("parent", row)
+        if agent != "cursor":
+            # Transport falls back to the thread's cursor row for a suffix-bearing
+            # address (house-lane branch); the suffix match then decides.
+            row = current_subscription("cursor", thread_id)
+            if row and row.get("state") == "subscribed":
+                return ("exact", row)
+        return None
+
+    def holder(self, lane: str) -> dict | None:
+        return self._holder
+
+    def lane_parent(self, lane: str) -> str | None:
+        return None
+
+
+def _rewind_cursor() -> None:
+    get_cursor()
+    with connect() as conn:
+        conn.execute("UPDATE endpoint_wake_cursor SET high_water_turn_id=0")
+
+
+def _new_thread(slug: str) -> str:
+    detail = create_thread(thread_id=None, slug=slug)
+    assert detail is not None
+    return str(detail["id"])
+
+
+_TAB_A = "cd0f990b-9ce2-4b58-bf9b-2cb7ac3491a6"
+_TAB_B = "7e0b90ac-d861-4ae2-a484-17d57c193eeb"
+
+
+@pytest.mark.parametrize(
+    "subject",
+    [
+        "DONE| 43c9e95a",
+        "VERDICT| gate",
+        "PLAN| row 19",
+        "QUESTION| scope",
+        "RULING| bind",
+        "AMEND| packet",
+        "SEAT_REGISTRATION| maestro",
+    ],
+)
+def test_t1_maestro_direct_address_not_refused_by_tab_row(
+    db: None, subject: str
+) -> None:
+    """T1: a tab-bound cursor row must not swallow ``to=maestro`` on the lane."""
+    thread = _new_thread("21724-t1-maestro")
+    _seed_row(agent="cursor", scope=thread, agent_id=_TAB_A)
+    _seed_row(agent="maestro", scope=thread, agent_id="maestro-tab")
+    t_id, _ts, _n, _c = insert_turn(
+        thread=thread,
+        from_agent="web-anthropic",
+        to_agent="maestro",
+        subject=subject,
+        body="b",
+    )
+    _rewind_cursor()
+    store = _TabScanStore(holder={"agent": "maestro"})
+    scan_once(store)  # type: ignore[arg-type]
+    assert [r["turn_id"] for r in store.pending] == [t_id]
+    assert store.pending[0]["decided_by_rule"] == "wake_maestro_direct_address"
+
+
+def test_t1_plain_ack_to_maestro_still_drops_as_ack_route_coord(db: None) -> None:
+    thread = _new_thread("21724-t1-ack")
+    _seed_row(agent="cursor", scope=thread, agent_id=_TAB_A)
+    _seed_row(agent="maestro", scope=thread, agent_id="maestro-tab")
+    insert_turn(
+        thread=thread,
+        from_agent="web-anthropic",
+        to_agent="maestro",
+        subject="ACK|plain",
+        body="b",
+    )
+    _rewind_cursor()
+    store = _TabScanStore(holder={"agent": "maestro"})
+    scan_once(store)  # type: ignore[arg-type]
+    assert store.pending == []
+
+
+def test_t2_peer_sender_wakes_on_thread_with_tab_bound_cursor_row(db: None) -> None:
+    """T2: peer-sender turns to non-cursor addresses are untouched by the refusal."""
+    thread = _new_thread("21724-t2-peer")
+    _seed_row(agent="cursor", scope=thread, agent_id=_TAB_A)
+    _seed_row(agent="maestro", scope=thread, agent_id="maestro-tab")
+    _seed_row(agent="grok-bot-8e611904", scope=thread, agent_id="grok-tab")
+    a_id, _ts, _n, _c = insert_turn(
+        thread=thread,
+        from_agent="grok-bot-gc1",
+        to_agent="maestro",
+        subject="REPORT|15851 leg",
+        body="b",
+    )
+    b_id, _ts2, _n2, _c2 = insert_turn(
+        thread=thread,
+        from_agent="web-anthropic",
+        to_agent="grok-bot-8e611904",
+        subject="REPORT|15851 leg",
+        body="b",
+    )
+    _rewind_cursor()
+    store = _TabScanStore()
+    scan_once(store)  # type: ignore[arg-type]
+    assert [r["turn_id"] for r in store.pending] == [a_id, b_id]
+    assert {r["decided_by_rule"] for r in store.pending} == {"wake_peer_sender"}
+
+
+def test_t3_gate_wake_remap_address_enqueues_on_tab_bound_row(db: None) -> None:
+    """T3/H2: ``to=git-integration-worker`` CLOSEOUT remaps to cursor and must wake."""
+    thread = _new_thread("21724-t3-remap")
+    _seed_row(agent="cursor", scope=thread, agent_id=_TAB_A)
+    t_id, _ts, _n, _c = insert_turn(
+        thread=thread,
+        from_agent="maestro",
+        to_agent="git-integration-worker",
+        subject="CLOSEOUT| lane land",
+        body="b",
+    )
+    _rewind_cursor()
+    store = _TabScanStore()
+    scan_once(store)  # type: ignore[arg-type]
+    assert [r["turn_id"] for r in store.pending] == [t_id]
+    assert store.pending[0]["delivery_agent_id"] == _TAB_A
+
+
+def test_t3_bare_cursor_on_parent_row_keeps_legacy_pickup(db: None) -> None:
+    """T3/H3: only an exact-scope row owns the thread; an ancestor row must not refuse."""
+    parent = _new_thread("21724-t3-parent")
+    thread = _new_thread("21724-t3-child")
+    _seed_row(agent="cursor", scope=parent, agent_id=_TAB_A)
+    t_id, _ts, _n, _c = insert_turn(
+        thread=thread,
+        from_agent="maestro",
+        to_agent="cursor",
+        subject="RULING| bind",
+        body="b",
+    )
+    _rewind_cursor()
+    store = _TabScanStore(parent_scope=parent)
+    scan_once(store)  # type: ignore[arg-type]
+    assert [r["turn_id"] for r in store.pending] == [t_id]
+
+
+def test_bare_cursor_on_exact_tab_bound_row_still_refused(db: None) -> None:
+    """Original 43c9e95a intent: bare ``to=cursor`` loses to the bound tab."""
+    thread = _new_thread("21724-bare-refused")
+    _seed_row(agent="cursor", scope=thread, agent_id=_TAB_A)
+    insert_turn(
+        thread=thread,
+        from_agent="maestro",
+        to_agent="cursor",
+        subject="RULING| bind",
+        body="b",
+    )
+    _rewind_cursor()
+    store = _TabScanStore()
+    scan_once(store)  # type: ignore[arg-type]
+    assert store.pending == []
+
+
+def test_suffix_address_for_wrong_tab_is_refused(db: None) -> None:
+    """A ``composer-impresario-<A>`` turn must not wake a row bound to tab B."""
+    thread = _new_thread("21724-suffix-mismatch")
+    _seed_row(agent="cursor", scope=thread, agent_id=_TAB_B)
+    insert_turn(
+        thread=thread,
+        from_agent="maestro",
+        to_agent=f"composer-impresario-{_TAB_A[:8]}",
+        subject="RULING| bind",
+        body="b",
+    )
+    _rewind_cursor()
+    store = _TabScanStore()
+    scan_once(store)  # type: ignore[arg-type]
+    assert store.pending == []
+
+
+def test_suffix_address_for_right_tab_wakes(db: None) -> None:
+    thread = _new_thread("21724-suffix-match")
+    _seed_row(agent="cursor", scope=thread, agent_id=_TAB_B)
+    t_id, _ts, _n, _c = insert_turn(
+        thread=thread,
+        from_agent="maestro",
+        to_agent=f"composer-impresario-{_TAB_B[:8]}",
+        subject="RULING| bind",
+        body="b",
+    )
+    _rewind_cursor()
+    store = _TabScanStore()
+    scan_once(store)  # type: ignore[arg-type]
+    assert [r["turn_id"] for r in store.pending] == [t_id]
+
+
+def test_cse_row_agent_id_is_a_lane_not_a_tab(db: None) -> None:
+    """M2: a CSE row stores a lane id in ``agent_id``; it must not refuse a cursor turn."""
+    from bus_watch.endpoint_wake_dispatcher import _cursor_tab_wake_refused
+
+    cse = ("exact", {"surface": "cse", "agent_id": "21207"})
+    assert _cursor_tab_wake_refused("cursor", cse) is False
+
+
+def test_orion_is_a_peer_sender_only_on_answer(db: None) -> None:
+    """M1: orion peer status is subject-gated to ANSWER."""
+    base = {"to_agent": "maestro", "from_agent": "orion", "id": 1}
+    assert qualify({**base, "subject": "ANSWER|probe"}, cse=False).wake is True
+    assert (
+        qualify({**base, "subject": "ANSWER|probe"}, cse=False).rule_id
+        == "wake_peer_sender"
+    )
+    assert qualify({**base, "subject": "CHATTER|probe"}, cse=False).wake is False

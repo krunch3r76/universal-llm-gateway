@@ -3,6 +3,8 @@
 rules:
   - id: drop_self_or_broadcast
     action: suppress
+  - id: drop_orion_echo
+    action: suppress
   - id: drop_stage_mgr_echo
     action: suppress
   # Pure ACK|/ROUTE| to stage mgr / grok-bot / web-anthropic / maestro only; compound
@@ -36,4 +38,7 @@ rules:
   - id: wake_grok_allowlist
     action: wake
   - id: default_suppress
+    action: suppress
+  # Post-qualify delivery refusal in scan_once, not a qualify() branch.
+  - id: refuse_tab_unaddressed
     action: suppress

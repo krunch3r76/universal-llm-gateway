@@ -199,6 +199,7 @@ _PEER_WAKE_FROM = frozenset(
         "orion",
     }
 )
+_ORION_PEER_WAKE_HEADS = frozenset({"ANSWER"})
 _POLL_S = 2.0
 
 
@@ -452,6 +453,47 @@ def _cursor_tab_address_matches_subscription(
     return False
 
 
+_GATE_WAKE_REMAP_ADDRESSES = frozenset(
+    {"dispatch", "conductor-hop", "git-integration-worker", "frontier-admit"}
+)
+
+
+def _cursor_tab_wake_refused(
+    raw_to: str,
+    resolved: tuple[str, dict[str, Any]] | None,
+) -> bool:
+    """True when the ``to`` address contradicts the tab the resolved row names.
+
+    Only display (``surface == "cursor"``) rows that name an ``agent_id`` can
+    refuse; CSE rows store a lane id there and synthetic grok/chatgpt rows a
+    window id, so they keep the legacy path. A suffix-bearing address is refused
+    on any such row it fails to match. Bare ``to=cursor`` is refused only on an
+    exact-scope row — a wildcard or ancestor row does not own this thread, so
+    legacy bare pickup stays. Gate-wake remap addresses (`_effective_to_agent`)
+    carry no tab suffix and are exempt.
+    """
+    if resolved is None:
+        return False
+    kind, sub = resolved
+    if str(sub.get("surface") or "") != "cursor":
+        return False
+    bound = str(sub.get("agent_id") or "").strip()
+    if not bound:
+        return False
+    raw = str(raw_to or "").strip()
+    normalized = normalize_bus_address(raw)
+    if normalized in _GATE_WAKE_REMAP_ADDRESSES:
+        return False
+    suffixes = glass_agent_id_suffix_candidates(normalized, raw_to=raw)
+    if suffixes:
+        return not any(
+            agent_id_matches_composer_suffix(bound, suffix) for suffix in suffixes
+        )
+    if normalized != "cursor":
+        return False
+    return kind == "exact"
+
+
 def _subscribed_for_wake_scan(
     store: StoreClient,
     agent: str,
@@ -581,10 +623,18 @@ def _maestro_cse_nonwake_head(
     return False
 
 
-def peer_operator_wake_from(from_agent: str) -> bool:
-    """Operator / Grok / Maestro seats always enqueue wakes; routine dispatch chatter does not."""
+def peer_operator_wake_from(from_agent: str, *, subject: str | None = None) -> bool:
+    """Operator / Grok / Maestro seats always enqueue wakes; routine dispatch chatter does not.
+
+    ``orion`` is a peer sender only on the ``ANSWER`` subject head: it answers
+    what another seat asked, so unsubject-gated peer status would let every
+    orion turn wake its recipient with no ping-pong budget.
+    """
     if from_agent in _ROUTINE_DISPATCH_FROM:
         return False
+    if from_agent == "orion":
+        head = str(subject or "").split("|", 1)[0].strip().upper()
+        return head in _ORION_PEER_WAKE_HEADS
     if from_agent in _PEER_WAKE_FROM:
         return True
     if from_agent.startswith("grok-bot-"):
@@ -690,6 +740,7 @@ _RULES_YAML = Path(__file__).resolve().parent / "endpoint_wake_rules.yaml"
 
 _FALLBACK_WAKE_RULE_IDS: tuple[str, ...] = (
     "drop_self_or_broadcast",
+    "drop_orion_echo",
     "drop_stage_mgr_echo",
     "drop_ack_route_coord",
     "wake_maestro_ack_batch",
@@ -706,6 +757,7 @@ _FALLBACK_WAKE_RULE_IDS: tuple[str, ...] = (
     "wake_cse_allowlist",
     "wake_grok_allowlist",
     "default_suppress",
+    "refuse_tab_unaddressed",
 )
 
 
@@ -862,7 +914,7 @@ def qualify(
         return RuleVerdict(False, "drop_dispatch_intermediate")
     if _is_cursor_sdk_generate_admit_echo(subject):
         return RuleVerdict(False, "drop_dispatch_intermediate")
-    if peer_operator_wake_from(from_agent):
+    if peer_operator_wake_from(from_agent, subject=subject):
         return RuleVerdict(True, "wake_peer_sender")
     if _is_routine_conductor_hop_closeout(subject):
         return RuleVerdict(False, "drop_routine_hop_closeout")
@@ -914,7 +966,7 @@ def _legacy_qualifies(
         return False
     if _is_cursor_sdk_generate_admit_echo(subject):
         return False
-    if not peer_operator_wake_from(from_agent) and not subject_allowed(
+    if not peer_operator_wake_from(from_agent, subject=subject) and not subject_allowed(
         subject, cse=cse, to_agent=to_agent
     ):
         return False
@@ -1308,11 +1360,7 @@ def scan_once(store: StoreClient, *, idle_mark: dict[str, float] | None = None) 
                     subject=subject,
                 )
             continue
-        if (
-            agent == "cursor"
-            and resolved is not None
-            and not _cursor_tab_address_matches_subscription(raw_to, resolved[1])
-        ):
+        if _cursor_tab_wake_refused(raw_to, resolved):
             _observe_endpoint_wake_suppressed(
                 thread_id=thread,
                 turn_id=_turn_id_of(turn),
