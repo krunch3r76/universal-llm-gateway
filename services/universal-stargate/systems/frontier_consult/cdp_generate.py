@@ -991,6 +991,7 @@ async def dispatch_cdp_generate(
         work_key=getattr(body, "work_key", None),
         resolved_model=str(model),
         contract=contract,
+        max_wall_s=int(max_wall),
     )
     attach_registry_next(result, relay_body)
     return result

@@ -24,6 +24,7 @@ async def relay_registry_record(
     work_key: str | None = None,
     resolved_model: str | None = None,
     contract: str | None = None,
+    max_wall_s: int | None = None,
 ) -> dict[str, Any] | None:
     """POST ``/api/v1/cursor/registry/record``. Failures are logged and swallowed."""
     payload: dict[str, Any] = {
@@ -37,6 +38,7 @@ async def relay_registry_record(
         ("work_key", work_key),
         ("resolved_model", resolved_model),
         ("contract", contract),
+        ("max_wall_s", max_wall_s),
     ):
         if val is not None:
             payload[key] = val

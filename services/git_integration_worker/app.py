@@ -216,6 +216,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         for attr in (
             "startup_persistence_task",
             "stale_lease_sweeper",
+            "frontier_registry_reaper",
             "ulg_story_projector",
             "trigger_fire_loop",
             "lane_b_sweeper",
