@@ -464,8 +464,9 @@ async def execute_submit(
 
     ``expect_draft_sha256`` sends only when it is 64 hex characters and equals
     ``composer_draft_sha256_hex`` of the probed draft. The foreign-draft flag
-    does not bypass that check. Side effect: emits a write-outcome event on
-    send success or send failure.
+    does not bypass that check. A failed guard whose probe has no composer
+    draft is returned first, so a busy operator stays retryable. Side effect:
+    emits a write-outcome event on send success or send failure.
     """
     refused = require_write_authorization(grant, authorization_source)
     if refused:
@@ -509,6 +510,8 @@ async def execute_submit(
             )
             probe = guard.get("probe") if isinstance(guard.get("probe"), dict) else {}
             composer_draft = str(probe.get("composer_draft") or "").strip()
+            if not guard.get("ok") and not composer_draft:
+                return guard
             if expect_draft_sha256:
                 if not _expect_draft_sha_matches(expect_draft_sha256, composer_draft):
                     return {

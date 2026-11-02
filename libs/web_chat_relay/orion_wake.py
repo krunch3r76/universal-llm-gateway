@@ -458,6 +458,7 @@ async def _dom_deliver(
                 ws,
                 selector=selector,
                 created_by_agent=False,
+                lock_holder=True,
             )
             if not guard.get("ok"):
                 return {
@@ -465,6 +466,8 @@ async def _dom_deliver(
                     "reason": str(
                         guard.get("reason") or guard.get("code") or "operator_busy"
                     ),
+                    "code": str(guard.get("code") or "operator_active"),
+                    "after_lock": True,
                 }
             baseline = await capture_dom_baseline(impl, ws_url=ws, site=site)
             transport = _cdp_transport_refusal(baseline)
@@ -652,10 +655,23 @@ async def deliver_orion_wake(
             if owns_cdp and pw is not None:
                 await pw.stop()
             dom_reason = str(dom.get("reason") or "paste_failed")
+            visibility_only = (
+                dom_reason
+                == "tab not created by agent has focus or is visible to the operator"
+            )
             if dom_reason == "target_lock_busy" or dom.get("before_lock"):
                 return _refuse(
                     "deferred_streaming",
                     error=dom_reason,
+                    pasted=False,
+                    brought_to_front=tab_sync["brought_to_front"],
+                    tab_reloaded=tab_sync["tab_reloaded"],
+                )
+            if dom.get("after_lock") and not visibility_only:
+                return _refuse(
+                    "deferred_streaming",
+                    error=dom_reason,
+                    after_lock=True,
                     pasted=False,
                     brought_to_front=tab_sync["brought_to_front"],
                     tab_reloaded=tab_sync["tab_reloaded"],

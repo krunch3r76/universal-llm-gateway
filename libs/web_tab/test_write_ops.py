@@ -571,3 +571,42 @@ async def test_stale_bridge_wake_sha_of_other_text_refuses() -> None:
     assert out["ok"] is False
     assert out["code"] == "draft_sha_mismatch"
     send.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_busy_operator_without_draft_stays_retryable() -> None:
+    """A failed guard with no composer draft is returned before the hash check."""
+    port = _grok_port("t-busy-empty")
+    send = AsyncMock(return_value={"ok": True})
+    with (
+        patch(
+            "web_tab.write_ops.wait_operator_idle_before_lock",
+            AsyncMock(return_value={"ok": True}),
+        ),
+        patch(
+            "web_tab.write_ops.operator_recheck_under_lock",
+            AsyncMock(
+                return_value={
+                    "ok": False,
+                    "code": "operator_active",
+                    "reason": "operator_busy",
+                    "retryable": True,
+                    "probe": {},
+                }
+            ),
+        ),
+        patch("web_tab.write_ops.dom_click_send", send),
+    ):
+        out = await execute_submit(
+            cdp_url="http://127.0.0.1:9222",
+            target_id="t-busy-empty",
+            grant="explicit",
+            authorization_source="agent-bus:1#1",
+            expect_draft_sha256="0" * 64,
+            surface="grok",
+            port=port,
+        )
+    assert out["ok"] is False
+    assert out["code"] == "operator_active"
+    assert out.get("retryable") is True
+    send.assert_not_awaited()

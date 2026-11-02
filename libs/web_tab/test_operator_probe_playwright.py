@@ -33,8 +33,8 @@ _CHATGPT_SELECTOR = "#prompt-textarea"
 
 
 @contextmanager
-def _one_second_before_lock_wait() -> Iterator[None]:
-    """Cap the pre-lock idle poll at 1s so a foreign draft does not wait 30s."""
+def _cap_operator_idle_wait_at_one_second() -> Iterator[None]:
+    """Force wait_for_operator_idle's max_wait_s to 1s for this test."""
     from web_tab import operator_guard
 
     real_wait = operator_guard.wait_for_operator_idle
@@ -471,7 +471,7 @@ async def test_execute_paste_refuses_foreign_draft_at_sig_level() -> None:
             "() => { document.getElementById('composer').textContent = 'operator draft'; }"
         )
         with (
-            _one_second_before_lock_wait(),
+            _cap_operator_idle_wait_at_one_second(),
             patch(
                 "cursor_bridge.dom_composer_paste._cdp_eval",
                 side_effect=_cdp_eval_shim(page),
@@ -529,6 +529,50 @@ async def test_execute_submit_expect_draft_sha256_match_proceeds() -> None:
 
 
 @pytest.mark.asyncio
+async def test_matching_hash_recent_input_returns_operator_active_retryable() -> None:
+    """A matching draft hash still returns operator_active and retryable when input is fresh."""
+    from web_tab.cdp_actuation import RecordingActuationPort
+
+    draft = "hello wake"
+    expect = composer_draft_sha256_hex(draft)
+    port = RecordingActuationPort(
+        tabs=[
+            {
+                "id": "t-sha-active",
+                "url": "https://grok.com/c/x",
+                "web_socket_debugger_url": _WS,
+            }
+        ]
+    )
+    async with async_playwright() as playwright:
+        browser = await playwright.chromium.launch(headless=True)
+        page = await browser.new_page()
+        await page.set_content(_composer_html(draft=draft))
+        await page.evaluate(INSTALL_OPERATOR_ACTIVITY_PROBE_JS)
+        await page.evaluate(
+            "() => { window.__ulgOperatorActivity.lastInputMs = Date.now(); }"
+        )
+        with (
+            _cap_operator_idle_wait_at_one_second(),
+            patch(
+                "cursor_bridge.dom_composer_paste._cdp_eval",
+                side_effect=_cdp_eval_shim(page),
+            ),
+        ):
+            out = await execute_submit(
+                cdp_url="http://127.0.0.1:9222",
+                target_id="t-sha-active",
+                grant="explicit",
+                authorization_source="agent-bus:test#sha-active",
+                expect_draft_sha256=expect,
+                port=port,
+            )
+        await browser.close()
+    assert out["code"] == "operator_active"
+    assert out.get("retryable") is True
+
+
+@pytest.mark.asyncio
 async def test_execute_submit_multiline_expect_draft_sha256_match_proceeds() -> None:
     from web_tab.cdp_actuation import RecordingActuationPort
 
@@ -569,7 +613,7 @@ async def test_execute_submit_multiline_expect_draft_sha256_match_proceeds() -> 
 
 
 @pytest.mark.asyncio
-async def test_execute_submit_multiline_expect_draft_sha256_mismatch_refuses() -> None:
+async def test_execute_submit_multiline_foreign_draft_refuses_operator_active() -> None:
     from web_tab.cdp_actuation import RecordingActuationPort
 
     draft = "line A\n\nline B"
@@ -593,7 +637,7 @@ async def test_execute_submit_multiline_expect_draft_sha256_mismatch_refuses() -
             draft,
         )
         with (
-            _one_second_before_lock_wait(),
+            _cap_operator_idle_wait_at_one_second(),
             patch(
                 "cursor_bridge.dom_composer_paste._cdp_eval",
                 side_effect=_cdp_eval_shim(page),
@@ -616,7 +660,7 @@ async def test_execute_submit_multiline_expect_draft_sha256_mismatch_refuses() -
 
 
 @pytest.mark.asyncio
-async def test_execute_submit_expect_draft_sha256_mismatch_refuses() -> None:
+async def test_execute_submit_foreign_draft_nonmatching_expect_refuses_operator_active() -> None:
     from web_tab.cdp_actuation import RecordingActuationPort
 
     draft = "foreign legacy body"
@@ -636,7 +680,7 @@ async def test_execute_submit_expect_draft_sha256_mismatch_refuses() -> None:
         await page.set_content(_composer_html(draft=draft))
         await page.evaluate(INSTALL_OPERATOR_ACTIVITY_PROBE_JS)
         with (
-            _one_second_before_lock_wait(),
+            _cap_operator_idle_wait_at_one_second(),
             patch(
                 "cursor_bridge.dom_composer_paste._cdp_eval",
                 side_effect=_cdp_eval_shim(page),
@@ -678,7 +722,7 @@ async def test_execute_submit_unset_still_refuses_foreign_draft() -> None:
         await page.set_content(_composer_html(draft="operator legacy draft"))
         await page.evaluate(INSTALL_OPERATOR_ACTIVITY_PROBE_JS)
         with (
-            _one_second_before_lock_wait(),
+            _cap_operator_idle_wait_at_one_second(),
             patch(
                 "cursor_bridge.dom_composer_paste._cdp_eval",
                 side_effect=_cdp_eval_shim(page),

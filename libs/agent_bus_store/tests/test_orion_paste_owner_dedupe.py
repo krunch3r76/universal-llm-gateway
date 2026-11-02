@@ -9,6 +9,7 @@ from unittest.mock import patch
 import pytest
 from agent_bus_store.db import create_thread, init_db, insert_turn
 from agent_bus_store.db.connection import connect
+from agent_bus_store.db.endpoint_wake_ledger import parse_orion_deferred_attempt
 from agent_bus_store.db.orion_wake_owner_adapter import (
     WakeClaimContext,
     shared_wake_delivery_owner,
@@ -45,6 +46,50 @@ def _claim(*, slug: str = "paste-dedupe") -> WakeClaimContext:
         turn_numbers=(int(number),),
         endpoint_url=endpoint,
     )
+
+
+def test_post_lock_operator_refusal_stays_pending(db: None) -> None:
+    """A post-lock operator refusal increments the streaming deferral and stays pending."""
+    owner = shared_wake_delivery_owner()
+    claim = _claim(slug="post-lock-defer")
+    claim = WakeClaimContext(
+        wake_id="wake-post-lock",
+        agent=claim.agent,
+        thread_id=claim.thread_id,
+        turn_ids=claim.turn_ids,
+        turn_numbers=claim.turn_numbers,
+        endpoint_url=claim.endpoint_url,
+    )
+    assert owner.prepare_paste_delivery(claim)["ok"] is True
+    with connect() as conn:
+        before = conn.execute(
+            "SELECT state, decided_by_rule FROM endpoint_wake_ledger "
+            "WHERE wake_id=?",
+            (claim.wake_id,),
+        ).fetchone()
+    prior = parse_orion_deferred_attempt(
+        None if before is None else before["decided_by_rule"]
+    )
+    owner.record_paste_receipt(
+        claim,
+        {
+            "ok": False,
+            "reason": "deferred_streaming",
+            "error": "recent operator input or foreign draft in composer",
+            "after_lock": True,
+            "pasted": False,
+            "delivered": False,
+        },
+    )
+    with connect() as conn:
+        row = conn.execute(
+            "SELECT state, reason, decided_by_rule FROM endpoint_wake_ledger "
+            "WHERE agent=? AND thread_id=? AND turn_id=?",
+            (claim.normalized_agent(), claim.thread_id, int(claim.turn_ids[0])),
+        ).fetchone()
+    assert row["state"] == "pending"
+    assert row["reason"] == "deferred_streaming"
+    assert parse_orion_deferred_attempt(row["decided_by_rule"]) == prior + 1
 
 
 def test_shared_owner_duplicate_suppressed_returns_first_receipt(db: None) -> None:
