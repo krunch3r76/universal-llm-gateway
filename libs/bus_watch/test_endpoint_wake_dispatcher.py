@@ -2464,11 +2464,13 @@ def test_fired_hop_past_deadline_with_null_landed_transcript_keeps_display_subsc
     assert expired["landed_transcript_id"] is None
     persisted = read_hop_land(thread, watch_dir=tmp_path)
     assert persisted is not None and persisted["state"] == "expired"
+    # RULING a:41381 option (ii): the row stays, the departed tab is unbound.
     assert resolve_endpoint("cursor", thread) is not None
     cur_sub = current_subscription("cursor", thread)
     assert cur_sub is not None
     assert cur_sub["state"] == "subscribed"
-    assert "hop_expired" not in str(cur_sub.get("evidence") or "")
+    assert cur_sub["agent_id"] is None
+    assert str(cur_sub.get("evidence") or "") == f"hop_expired_unbound:{dead_agent_id}"
 
     # Also verify scan_once reaps an overdue fired hop before resolving delivery route.
     subscribe_endpoint(
@@ -3922,19 +3924,6 @@ def test_orion_answer_to_cursor_wakes_peer() -> None:
     assert verdict.rule_id == "wake_peer_sender"
 
 
-def test_tab_scoped_subscription_rejects_bare_cursor_to() -> None:
-    from bus_watch.endpoint_wake_dispatcher import (
-        _cursor_tab_address_matches_subscription,
-    )
-
-    sub = {"agent_id": "7e0b90ac-d861-4ae2-a484-17d57c193eeb"}
-    assert _cursor_tab_address_matches_subscription("cursor", sub) is False
-    assert _cursor_tab_address_matches_subscription(
-        "composer-impresario-7e0b90ac", sub
-    )
-    assert _cursor_tab_address_matches_subscription("7e0b90ac", sub)
-
-
 def test_admit_echo_dropped_for_peer_sender_regardless_of_from_agent() -> None:
     """Rec 4: coord admit pointer must not wake before worker CLOSEOUT."""
     house = "20995"
@@ -4644,21 +4633,74 @@ def test_bare_cursor_on_exact_tab_bound_row_still_refused(db: None) -> None:
     assert store.pending == []
 
 
-def test_suffix_address_for_wrong_tab_is_refused(db: None) -> None:
-    """A ``composer-impresario-<A>`` turn must not wake a row bound to tab B."""
-    thread = _new_thread("21724-suffix-mismatch")
-    _seed_row(agent="cursor", scope=thread, agent_id=_TAB_B)
-    insert_turn(
-        thread=thread,
-        from_agent="maestro",
-        to_agent=f"composer-impresario-{_TAB_A[:8]}",
-        subject="RULING| bind",
-        body="b",
+def _suffix_row(*, scope: str, agent_id: str, row_id: int) -> dict:
+    return {
+        "id": row_id,
+        "agent": "cursor",
+        "thread_scope": scope,
+        "state": "subscribed",
+        "surface": "cursor",
+        "display": "8",
+        "title": f"{scope} house",
+        "agent_id": agent_id,
+    }
+
+
+def _suffix_lookup_store(rows: list[dict]) -> StoreClient:
+    """Real transport labelling and suffix lookup over a canned payload."""
+
+    class StubStore(StoreClient):
+        def _bus(self, method: str, path: str, **kwargs):
+            if path == "/endpoint-subscriptions":
+                agent = (kwargs.get("params") or {}).get("agent")
+                return {
+                    "subscriptions": [r for r in rows if r.get("agent") == agent]
+                }
+            raise AssertionError(f"unexpected bus call {method} {path}")
+
+    return StubStore()
+
+
+def test_suffix_address_redirects_to_the_row_that_suffix_names(db: None) -> None:
+    """H1: a CLOSEOUT to the departed tab delivers to the row that tab still holds."""
+    from bus_watch.endpoint_wake_dispatcher import _cursor_tab_route
+
+    resolved_b = ("exact", _suffix_row(scope="21724", agent_id=_TAB_B, row_id=20))
+    row_a = _suffix_row(scope="18460", agent_id=_TAB_A, row_id=19)
+    store = _suffix_lookup_store([resolved_b[1], row_a])
+    refused, route = _cursor_tab_route(
+        store, f"composer-impresario-{_TAB_A[:8]}", resolved_b
     )
-    _rewind_cursor()
-    store = _TabScanStore()
-    scan_once(store)  # type: ignore[arg-type]
-    assert store.pending == []
+    assert refused is False
+    assert route is not None
+    assert route[0] == "agent_id"
+    assert route[1]["agent_id"] == _TAB_A
+
+
+def test_suffix_address_with_no_such_row_is_refused_on_an_exact_row(db: None) -> None:
+    """H1: with the addressed tab gone from every scope, an exact row refuses."""
+    from bus_watch.endpoint_wake_dispatcher import _cursor_tab_route
+
+    resolved_b = ("exact", _suffix_row(scope="21724", agent_id=_TAB_B, row_id=20))
+    store = _suffix_lookup_store([resolved_b[1]])
+    refused, route = _cursor_tab_route(
+        store, f"composer-impresario-{_TAB_A[:8]}", resolved_b
+    )
+    assert refused is True
+    assert route == resolved_b
+
+
+def test_suffix_address_with_no_such_row_delivers_on_a_non_exact_row(db: None) -> None:
+    """H1: an ancestor row does not own the thread, so it delivers rather than refuse."""
+    from bus_watch.endpoint_wake_dispatcher import _cursor_tab_route
+
+    resolved_b = ("parent", _suffix_row(scope="12286", agent_id=_TAB_B, row_id=20))
+    store = _suffix_lookup_store([resolved_b[1]])
+    refused, route = _cursor_tab_route(
+        store, f"composer-impresario-{_TAB_A[:8]}", resolved_b
+    )
+    assert refused is False
+    assert route == resolved_b
 
 
 def test_suffix_address_for_right_tab_wakes(db: None) -> None:
@@ -4679,10 +4721,10 @@ def test_suffix_address_for_right_tab_wakes(db: None) -> None:
 
 def test_cse_row_agent_id_is_a_lane_not_a_tab(db: None) -> None:
     """M2: a CSE row stores a lane id in ``agent_id``; it must not refuse a cursor turn."""
-    from bus_watch.endpoint_wake_dispatcher import _cursor_tab_wake_refused
+    from bus_watch.endpoint_wake_dispatcher import _cursor_tab_route
 
     cse = ("exact", {"surface": "cse", "agent_id": "21207"})
-    assert _cursor_tab_wake_refused("cursor", cse) is False
+    assert _cursor_tab_route(_suffix_lookup_store([]), "cursor", cse) == (False, cse)
 
 
 def test_orion_is_a_peer_sender_only_on_answer(db: None) -> None:
@@ -4694,3 +4736,55 @@ def test_orion_is_a_peer_sender_only_on_answer(db: None) -> None:
         == "wake_peer_sender"
     )
     assert qualify({**base, "subject": "CHATTER|probe"}, cse=False).wake is False
+
+
+def test_deep_lane_house_row_is_labelled_parent_not_exact(db: None, monkeypatch) -> None:
+    """M1: a holder walk past _MAX_PARENT_HOPS must not hand back an "exact" row."""
+    import types
+
+    from bus_watch import endpoint_wake_dispatcher as dispatcher
+
+    root = "12286"
+    chain = ["21726", "21724", "21207", "15851", root]
+    house_row = _suffix_row(scope=root, agent_id=_TAB_A, row_id=41)
+
+    class StubStore(StoreClient):
+        def _bus(self, method: str, path: str, **kwargs):
+            if path == "/endpoint-subscriptions":
+                agent = (kwargs.get("params") or {}).get("agent")
+                return {"subscriptions": [house_row] if agent == "cursor" else []}
+            if path.endswith("/lane-current"):
+                cur = path.split("/")[2]
+                idx = chain.index(cur) if cur in chain else None
+                parent = (
+                    chain[idx + 1] if idx is not None and idx + 1 < len(chain) else None
+                )
+                return {"parent_thread": parent}
+            raise AssertionError(f"unexpected bus call {method} {path}")
+
+    store = StubStore()
+    # Real transport: the deep thread is 4 hops under the house row, past
+    # _MAX_PARENT_HOPS=3, so scope resolution misses and the house lane answers.
+    assert store.subscription("cursor", chain[0]) is None
+    monkeypatch.setattr(
+        dispatcher,
+        "resolve_turn_address",
+        lambda thread, store: types.SimpleNamespace(lane_thread=root),
+    )
+    resolved = dispatcher._resolve_delivery_route(
+        store, "cursor", chain[0], raw_to="cursor"
+    )
+    assert resolved is not None
+    assert resolved[0] == "parent"
+    refused, route = dispatcher._cursor_tab_route(store, "cursor", resolved)
+    assert refused is False
+    assert route == resolved
+
+
+def test_orion_answer_gate_compares_only_the_first_token(db: None) -> None:
+    """L3: ``ANSWER INTERLOCUTION|…`` is still an ANSWER head."""
+    base = {"to_agent": "maestro", "from_agent": "orion", "id": 1}
+    verdict = qualify({**base, "subject": "ANSWER INTERLOCUTION|probe"}, cse=False)
+    assert verdict.wake is True
+    assert verdict.rule_id == "wake_peer_sender"
+    assert qualify({**base, "subject": "ANSWERING|probe"}, cse=False).wake is False

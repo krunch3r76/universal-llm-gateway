@@ -187,6 +187,9 @@ _CURSOR_GATE_WAKE_RE = re.compile(
     r"Quiet with work in flight)"
 )
 _ROUTINE_DISPATCH_FROM = frozenset({"cursor-sdk", "conductor-hop", "dispatch"})
+_GATE_WAKE_REMAP_ADDRESSES = frozenset(
+    {"dispatch", "conductor-hop", "git-integration-worker", "frontier-admit"}
+)
 _PEER_WAKE_FROM = frozenset(
     {
         "grok-bot",
@@ -213,12 +216,7 @@ def _effective_to_agent(to_agent: str | None, subject: str | None = None) -> str
     """
     agent = normalize_bus_address(str(to_agent or ""))
     text = str(subject or "")
-    if agent in {
-        "dispatch",
-        "conductor-hop",
-        "git-integration-worker",
-        "frontier-admit",
-    } and _CURSOR_GATE_WAKE_RE.search(text):
+    if agent in _GATE_WAKE_REMAP_ADDRESSES and _CURSOR_GATE_WAKE_RE.search(text):
         lowered = text.lower()
         if (
             agent == "conductor-hop"
@@ -436,62 +434,75 @@ def _observe_endpoint_wake_suppressed(
         )
 
 
-def _cursor_tab_address_matches_subscription(
-    raw_to: str,
-    sub: dict[str, Any],
-) -> bool:
-    """When a cursor row names ``agent_id``, bare ``to=cursor`` must not claim the wake."""
-    bound = str(sub.get("agent_id") or "").strip()
-    if not bound:
-        return True
-    normalized = normalize_bus_address(str(raw_to or "").strip())
-    if normalized == "cursor":
-        return False
-    for suffix in glass_agent_id_suffix_candidates(normalized, raw_to=raw_to):
-        if agent_id_matches_composer_suffix(bound, suffix):
-            return True
-    return False
+def _suffix_addressed_row(
+    store: StoreClient,
+    suffixes: list[str],
+) -> tuple[str, dict[str, Any]] | None:
+    """The cursor row the suffix names, wherever it is subscribed.
+
+    `_resolve_delivery_route` reaches the suffix lookup only when no row matches
+    the thread scope (transport :284-289), so an addressed turn on a lane that
+    already holds a newer row never gets there. Duck-typed test stores do not
+    implement the lookup; absence resolves to ``None``, not an error.
+    """
+    lookup = getattr(store, "_subscription_by_cursor_agent_id_suffix", None)
+    if lookup is None:
+        return None
+    for suffix in suffixes:
+        try:
+            found = lookup(suffix)
+        except Exception:
+            logger.exception(
+                "endpoint_wake_dispatcher: suffix subscription lookup failed suffix=%s",
+                suffix,
+            )
+            return None
+        if found is not None:
+            return found
+    return None
 
 
-_GATE_WAKE_REMAP_ADDRESSES = frozenset(
-    {"dispatch", "conductor-hop", "git-integration-worker", "frontier-admit"}
-)
-
-
-def _cursor_tab_wake_refused(
+def _cursor_tab_route(
+    store: StoreClient,
     raw_to: str,
     resolved: tuple[str, dict[str, Any]] | None,
-) -> bool:
-    """True when the ``to`` address contradicts the tab the resolved row names.
+) -> tuple[bool, tuple[str, dict[str, Any]] | None]:
+    """``(refused, route)`` for a cursor turn against the tab the row names.
 
-    Only display (``surface == "cursor"``) rows that name an ``agent_id`` can
-    refuse; CSE rows store a lane id there and synthetic grok/chatgpt rows a
-    window id, so they keep the legacy path. A suffix-bearing address is refused
-    on any such row it fails to match. Bare ``to=cursor`` is refused only on an
-    exact-scope row — a wildcard or ancestor row does not own this thread, so
-    legacy bare pickup stays. Gate-wake remap addresses (`_effective_to_agent`)
-    carry no tab suffix and are exempt.
+    Only display (``surface == "cursor"``) rows that name an ``agent_id`` are
+    tab-bound; CSE rows store a lane id there and synthetic grok/chatgpt rows a
+    window id, so they keep the legacy path. An address whose suffix misses the
+    bound tab is redirected to the row that suffix does name — a CLOSEOUT to a
+    departed ``composer-impresario-<id>`` must reach its successor window rather
+    than be dropped — and is refused only when no such row exists and the
+    resolved row owns the thread outright. Bare ``to=cursor`` is refused on an
+    exact-scope row alone: a wildcard or ancestor row does not own this thread,
+    so legacy bare pickup stays. Gate-wake remap addresses
+    (`_effective_to_agent`) carry no tab suffix and are exempt.
     """
     if resolved is None:
-        return False
+        return False, None
     kind, sub = resolved
     if str(sub.get("surface") or "") != "cursor":
-        return False
+        return False, resolved
     bound = str(sub.get("agent_id") or "").strip()
     if not bound:
-        return False
+        return False, resolved
     raw = str(raw_to or "").strip()
     normalized = normalize_bus_address(raw)
     if normalized in _GATE_WAKE_REMAP_ADDRESSES:
-        return False
+        return False, resolved
     suffixes = glass_agent_id_suffix_candidates(normalized, raw_to=raw)
     if suffixes:
-        return not any(
-            agent_id_matches_composer_suffix(bound, suffix) for suffix in suffixes
-        )
+        if any(agent_id_matches_composer_suffix(bound, suffix) for suffix in suffixes):
+            return False, resolved
+        addressed = _suffix_addressed_row(store, suffixes)
+        if addressed is not None:
+            return False, addressed
+        return kind == "exact", resolved
     if normalized != "cursor":
-        return False
-    return kind == "exact"
+        return False, resolved
+    return kind == "exact", resolved
 
 
 def _subscribed_for_wake_scan(
@@ -633,7 +644,7 @@ def peer_operator_wake_from(from_agent: str, *, subject: str | None = None) -> b
     if from_agent in _ROUTINE_DISPATCH_FROM:
         return False
     if from_agent == "orion":
-        head = str(subject or "").split("|", 1)[0].strip().upper()
+        head = str(subject or "").split("|", 1)[0].strip().upper().split(" ", 1)[0]
         return head in _ORION_PEER_WAKE_HEADS
     if from_agent in _PEER_WAKE_FROM:
         return True
@@ -1250,7 +1261,10 @@ def _resolve_delivery_route(
                     store, "cursor", house_lane, raw_to=raw_to
                 )
             if resolved is not None:
-                return _apply_grok_window_overlay(agent, resolved)
+                # The row is exact for the house lane, never for this thread: the
+                # transport labels it "exact" (:298-299) and a bare to=cursor on a
+                # worker lane deeper than _MAX_PARENT_HOPS would then be refused.
+                return _apply_grok_window_overlay(agent, ("parent", resolved[1]))
     from cursor_bridge.grok_window_bindings import mailbox_members
 
     for member in mailbox_members(agent):
@@ -1360,7 +1374,8 @@ def scan_once(store: StoreClient, *, idle_mark: dict[str, float] | None = None) 
                     subject=subject,
                 )
             continue
-        if _cursor_tab_wake_refused(raw_to, resolved):
+        tab_refused, resolved = _cursor_tab_route(store, raw_to, resolved)
+        if tab_refused:
             _observe_endpoint_wake_suppressed(
                 thread_id=thread,
                 turn_id=_turn_id_of(turn),

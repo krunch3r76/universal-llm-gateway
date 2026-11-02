@@ -224,6 +224,49 @@ def _drop_dead_hop_subscription(
     return dropped
 
 
+def _unbind_hop_subscription(root: str) -> bool:
+    """Keep the display row at hop expiry but release the departed tab's ``agent_id``.
+
+    A row that still names a tab with no holder claims an address nothing can
+    deliver to, so ``refuse_tab_unaddressed`` drops every bare ``to=cursor``
+    turn on the root. Clearing ``agent_id`` leaves the row subscribed and lets
+    legacy pickup through (RULING a:41381, option ii; K94 — delivery keys on the
+    address, so an address with no holder must stop being claimed). The
+    successor tab registers a newer row and rows collapse to newest, which is
+    why an alive-but-never-landed tab losing suffix-addressed wakes is accepted.
+    """
+    if not os.environ.get("AGENT_BUS_DB_PATH"):
+        return False
+    try:
+        from agent_bus_store.db.endpoint_subscriptions import (
+            current_subscription,
+            subscribe_endpoint,
+        )
+
+        cur = current_subscription("cursor", root)
+        if cur is None or cur.get("state") != "subscribed":
+            return False
+        bound = str(cur.get("agent_id") or "").strip()
+        if not bound:
+            return False
+        subscribe_endpoint(
+            agent="cursor",
+            thread_scope=root,
+            surface=str(cur.get("surface") or "cursor"),
+            display=str(cur.get("display") or ""),
+            # A row with neither title nor agent_id is refused, so the title
+            # carries the row once the tab is unbound.
+            title=str(cur.get("title") or "") or root,
+            agent_id=None,
+            bound_by="ide-hop-land",
+            evidence=f"hop_expired_unbound:{bound}",
+        )
+        return True
+    except Exception:
+        logger.exception("ide_hop_land: unbind on expiry failed root=%s", root)
+        return False
+
+
 def mark_expired(
     record: dict[str, Any],
     *,
@@ -233,7 +276,8 @@ def mark_expired(
 ) -> dict[str, Any]:
     """Advance a fired record to ``expired`` — OPERATOR_GATE, never re-fire.
 
-    With no landed transcript id the house display subscription stays. A
+    With no landed transcript id the house display subscription stays, with its
+    ``agent_id`` cleared so the departed tab stops holding the address. A
     recorded landed id that differs from the live ``agent_id`` is still dropped.
     """
     t = time.time() if now is None else float(now)
@@ -244,9 +288,11 @@ def mark_expired(
     if root and landed_id:
         _drop_dead_hop_subscription(root, updated, store=store)
     elif root:
+        unbound = _unbind_hop_subscription(root)
         logger.info(
-            "ide_hop_land: hop_expired keeps display subscription root=%s",
+            "ide_hop_land: hop_expired keeps display subscription root=%s unbound=%s",
             root,
+            unbound,
         )
     return updated
 
