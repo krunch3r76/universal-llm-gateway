@@ -49,3 +49,37 @@ def transport_error_code(exc: BaseException) -> str:
     if isinstance(exc, httpx.RemoteProtocolError):
         return "stargate_response_lost"
     return "stargate_unreachable"
+
+
+def is_admit_pending_transport(exc: BaseException) -> bool:
+    """Transport failures where generate may have been admitted server-side."""
+    return isinstance(exc, (httpx.ReadTimeout, httpx.RemoteProtocolError))
+
+
+def build_admit_pending_response(
+    *,
+    exc: BaseException,
+    dispatch_id: str,
+    work_key: str | None,
+    dispatch_thread_id: str,
+) -> dict[str, Any]:
+    """Honest pending envelope when the HTTP response was lost on generate."""
+    wk = str(work_key or "").strip()
+    read_hints: list[str] = []
+    if wk:
+        read_hints.append(
+            f"team_dispatch(op=registry, work_key_prefix={wk}, state=all)"
+        )
+    read_hints.append(
+        f'agent_bus thread {dispatch_thread_id} subject "cursor-sdk generate —"'
+    )
+    return {
+        "status": "admit_pending",
+        "dispatch_id": dispatch_id,
+        "work_key": wk or None,
+        "dispatch_thread_id": dispatch_thread_id,
+        "do_not_refire": True,
+        "read": read_hints,
+        "poll_after_s": 30,
+        "transport": type(exc).__name__,
+    }
