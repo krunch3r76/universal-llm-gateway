@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import asyncio
+import time
 from dataclasses import dataclass, field
+from datetime import UTC, datetime
 from functools import partial
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -261,6 +263,65 @@ def prepare_implement_packet(
     )
 
 
+def _record_pending_spawn_row(
+    *,
+    row_id: str,
+    body: Any,
+    work_key: str | None,
+) -> bool:
+    """Write the spawn spine row before materialize; ``state='launching'``.
+
+    ``launching`` is the pending-materialize value in ``_SPAWN_STATES``
+    (``launching``/``live``/``failed``); the ledger has no distinct
+    ``pending_materialize``. Returns whether the row is now this call's to
+    patch — a ledger write failure here is not fatal, because the post-
+    materialize write at the end of the route still runs.
+    """
+    from cursor_bridge.spawn_endpoint_house_ledger import patch_spawn_row, record_spawn
+
+    thread = str(getattr(body, "dispatch_thread_id", "") or "").strip()
+    caller = str(getattr(body, "caller_agent", "") or "").strip()
+    spine = record_spawn(
+        surface="cursor_sdk",
+        thread=thread,
+        purpose="(unstated)",
+        purpose_unstated=True,
+        row_id=row_id,
+        dispatch_id=getattr(body, "dispatch_id", None),
+        state="launching",
+        parent={"agent": caller, "thread": thread},
+    )
+    if not spine.get("ok"):
+        return False
+    fields: dict[str, Any] = {"materialize_started_at": _utcnow_iso()}
+    if work_key:
+        fields["work_key"] = str(work_key)
+    model = str(getattr(body, "model", "") or "").strip()
+    if model:
+        fields["model"] = model
+    patch_spawn_row(row_id, **fields)
+    return True
+
+
+def _fail_pending_spawn_row(
+    *, row_id: str, exc: BaseException, elapsed_ms: int
+) -> None:
+    """Patch the pending row terminal so a dead materialize leaves a failed row."""
+    from cursor_bridge.spawn_endpoint_house_ledger import patch_spawn_row
+
+    patch_spawn_row(
+        row_id,
+        state="failed",
+        error_class=type(exc).__name__,
+        materialize_elapsed_ms=elapsed_ms,
+        failed_at=_utcnow_iso(),
+    )
+
+
+def _utcnow_iso() -> str:
+    return datetime.now(UTC).isoformat(timespec="seconds").replace("+00:00", "Z")
+
+
 async def dispatch_cursor_sdk_generate_route(
     *,
     request_id: str,
@@ -297,6 +358,7 @@ async def dispatch_cursor_sdk_generate_route(
 
     role = seat
     sdk_row_id: str | None = None
+    spawn_pre_recorded = False
     try:
         operator_lane_summon_warning: str | None = None
         source_ref = getattr(body, "source_ref", None)
@@ -435,29 +497,47 @@ async def dispatch_cursor_sdk_generate_route(
 
             if sdk_row_id is None:
                 sdk_row_id = mint_row_id()
-            wrap = await loop.run_in_executor(
-                None,
-                partial(
-                    prepare_conductor_packet,
-                    request_id=request_id,
-                    source_ref=source_ref,
-                    caller_agent=body.caller_agent,
-                    summon_text=getattr(body, "prompt", None),
-                    summon_mode=(str(raw_summon).strip() if raw_summon else None),
-                    cortex=StargateCortexReader(),
-                    workspaces_root=_workspaces_root(),
-                    summoning_thread_id=(
-                        str(body.dispatch_thread_id).strip()
-                        if getattr(body, "dispatch_thread_id", None)
-                        else None
-                    ),
-                    summoning_turn_count=summoning_turn_count,
-                    rematerialize=rematerialize,
-                    conductor_opts=conductor_opts or None,
-                    row_id=sdk_row_id,
-                    ledger_purpose="(unstated)",
-                ),
+            # The materialize below is a held executor call: a request that times
+            # out or dies inside it never reaches the GIW admit, so the spawn row
+            # is written first and patched terminal on failure (friction:41315 A).
+            spawn_pre_recorded = _record_pending_spawn_row(
+                row_id=sdk_row_id,
+                body=body,
+                work_key=getattr(body, "work_key", None),
             )
+            started_ms = time.monotonic()
+            try:
+                wrap = await loop.run_in_executor(
+                    None,
+                    partial(
+                        prepare_conductor_packet,
+                        request_id=request_id,
+                        source_ref=source_ref,
+                        caller_agent=body.caller_agent,
+                        summon_text=getattr(body, "prompt", None),
+                        summon_mode=(str(raw_summon).strip() if raw_summon else None),
+                        cortex=StargateCortexReader(),
+                        workspaces_root=_workspaces_root(),
+                        summoning_thread_id=(
+                            str(body.dispatch_thread_id).strip()
+                            if getattr(body, "dispatch_thread_id", None)
+                            else None
+                        ),
+                        summoning_turn_count=summoning_turn_count,
+                        rematerialize=rematerialize,
+                        conductor_opts=conductor_opts or None,
+                        row_id=sdk_row_id,
+                        ledger_purpose="(unstated)",
+                    ),
+                )
+            except BaseException as exc:
+                if spawn_pre_recorded:
+                    _fail_pending_spawn_row(
+                        row_id=sdk_row_id,
+                        exc=exc,
+                        elapsed_ms=int((time.monotonic() - started_ms) * 1000),
+                    )
+                raise
         elif (
             body.job == "sketch"
             and source_ref
@@ -571,18 +651,32 @@ async def dispatch_cursor_sdk_generate_route(
             house_thread = str(reuse_thread or "").strip()
         if sdk_row_id is None:
             sdk_row_id = mint_row_id()
-        spine = record_spawn(
-            surface="cursor_sdk",
-            thread=house_thread,
-            purpose="(unstated)",
-            purpose_unstated=True,
-            row_id=sdk_row_id,
-            dispatch_id=getattr(body, "dispatch_id", None),
-            parent={
-                "agent": str(getattr(body, "caller_agent", "") or "").strip(),
-                "thread": house_thread,
-            },
-        )
+        if spawn_pre_recorded:
+            # One row per sdk_row_id: the pre-materialize row is promoted to
+            # live here instead of being inserted a second time.
+            spine = patch_spawn_row(
+                sdk_row_id,
+                state="live",
+                thread=house_thread,
+                dispatch_id=getattr(body, "dispatch_id", None),
+                parent={
+                    "agent": str(getattr(body, "caller_agent", "") or "").strip(),
+                    "thread": house_thread,
+                },
+            )
+        else:
+            spine = record_spawn(
+                surface="cursor_sdk",
+                thread=house_thread,
+                purpose="(unstated)",
+                purpose_unstated=True,
+                row_id=sdk_row_id,
+                dispatch_id=getattr(body, "dispatch_id", None),
+                parent={
+                    "agent": str(getattr(body, "caller_agent", "") or "").strip(),
+                    "thread": house_thread,
+                },
+            )
         if not spine.get("ok"):
             return JSONResponse(
                 status_code=500,
