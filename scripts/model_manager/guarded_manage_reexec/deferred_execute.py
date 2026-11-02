@@ -23,6 +23,7 @@ from .deferred_gate import (
     DeferredRecycleContext,
     evaluate_r3_pass_verdict,
     fleet_child_pids,
+    persist_result_projection,
     post_maestro_reply,
     report_deferred_crash,
     run_recycle_step1_per_service_gate,
@@ -199,7 +200,7 @@ def _refused_exit(
         checks=checks or {},
     )
     _write_result_file(ctx.result_path, refused)
-    post_maestro_reply(
+    report = post_maestro_reply(
         ctx,
         report_status="refused",
         reason=reason,
@@ -210,6 +211,8 @@ def _refused_exit(
         exit_code=2,
         reply_fn=reply_fn,
     )
+    refused.report = report
+    persist_result_projection(refused, ctx.result_path)
     return 2, refused
 
 
@@ -404,7 +407,7 @@ def run_deferred_recycle(
     else:
         report_status = "refused"
         report_reason = result.reason or verdict
-    post_maestro_reply(
+    report = post_maestro_reply(
         ctx,
         report_status=report_status,
         reason=report_reason,
@@ -417,6 +420,8 @@ def run_deferred_recycle(
         body_extra=body_extra,
         r3_verdict=verdict if report_status == "executed" else None,
     )
+    result.report = report
+    persist_result_projection(result, ctx.result_path)
     return exit_code, result
 
 

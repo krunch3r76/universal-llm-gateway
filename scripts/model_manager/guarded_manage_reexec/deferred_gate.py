@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
+import json
+import os
 import re
 import subprocess
 import sys
 from collections.abc import Callable
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -17,6 +20,9 @@ from .runner import _write_result_file
 
 DEFAULT_POLL_S = 2.0
 DEFAULT_WAIT_PARENT_TIMEOUT_S = 900.0
+REPLY_TIMEOUT_S = 10.0
+_MAX_REPLY_POSTS = 3
+_LOG_FIELD_CAP = 512
 AgentBusReplyFn = Callable[..., None]
 
 RECYCLE_FLEET_SERVICES = (
@@ -314,6 +320,371 @@ def evaluate_r3_pass_verdict(
     return "PASS", extra
 
 
+def persist_result_projection(result: GuardedReexecResult, path: Path) -> None:
+    """Rewrite the result file atomically after ``report`` is attached."""
+    try:
+        payload = json.dumps(result.as_dict(), indent=2, sort_keys=True)
+        tmp = path.with_name(f".{path.name}.{os.getpid()}.tmp")
+        tmp.write_text(payload, encoding="utf-8")
+        os.replace(tmp, path)
+    except OSError:
+        try:
+            tmp.unlink(missing_ok=True)
+        except OSError:
+            pass
+
+
+def _cap_log_field(text: str) -> str:
+    if "Bearer " in text or "AGENT_BUS_TOKEN" in text:
+        return "[redacted]"
+    return text[:_LOG_FIELD_CAP]
+
+
+def _report_record(
+    *,
+    outcome: str,
+    attempts: int,
+    exit_code: int | None,
+    cause: str | None,
+    stderr_head: str,
+    turn_number: int | None,
+) -> dict[str, Any]:
+    return {
+        "outcome": outcome,
+        "attempts": attempts,
+        "exit_code": exit_code,
+        "cause": cause,
+        "stderr_head": _cap_log_field(stderr_head),
+        "turn_number": turn_number,
+        "at": datetime.now(UTC).isoformat(),
+    }
+
+
+def _log_reply_failure(
+    *,
+    exit_code: int,
+    attempt: int,
+    thread: str,
+    stderr: str,
+    stdout: str,
+) -> None:
+    print(
+        f"agent-bus reply exit={exit_code} attempt={attempt} thread={thread} "
+        f"stderr={_cap_log_field(stderr)!r} stdout={_cap_log_field(stdout)!r}",
+        file=sys.stderr,
+        flush=True,
+    )
+
+
+def _log_reply_success(turn_number: int | None) -> None:
+    print(f"agent-bus reply delivered turn_number={turn_number}", file=sys.stderr, flush=True)
+
+
+def _parse_fetch_turns(stdout: str) -> list[dict[str, Any]] | None:
+    try:
+        payload = json.loads(stdout)
+    except json.JSONDecodeError:
+        return None
+    if not isinstance(payload, dict):
+        return None
+    turns = payload.get("turns")
+    if not isinstance(turns, list):
+        return None
+    return [t for t in turns if isinstance(t, dict)]
+
+
+def _parse_reply_turn(stdout: str) -> int | None:
+    try:
+        payload = json.loads(stdout)
+    except json.JSONDecodeError:
+        return None
+    if not isinstance(payload, dict):
+        return None
+    num = payload.get("turn_number")
+    return int(num) if isinstance(num, int) else None
+
+
+def _classify_reply_stderr(stderr: str, *, timed_out: bool) -> str:
+    if "409 Conflict" in stderr:
+        return "409"
+    if timed_out or "timed out" in stderr or "TimeoutExpired" in stderr:
+        return "timeout"
+    if any(
+        token in stderr
+        for token in ("[Errno 2]", "[Errno 111]", "Connection refused")
+    ):
+        return "request_not_sent"
+    if "Server error '5" in stderr:
+        return "server_error"
+    return "other"
+
+
+def _readback_match(
+    turns: list[dict[str, Any]],
+    *,
+    high_water: int,
+    subject: str,
+) -> int | None:
+    for row in turns:
+        num = row.get("turn_number")
+        if not isinstance(num, int) or num <= high_water:
+            continue
+        if row.get("from") != "cursor" or row.get("to") != "maestro":
+            continue
+        if row.get("subject") != subject:
+            continue
+        return num
+    return None
+
+
+def _run_agent_bus_cli(
+    ctx: DeferredRecycleContext,
+    argv: list[str],
+) -> tuple[int, str, str]:
+    script = ctx.repo_root / "scripts" / "agent-bus"
+    proc = subprocess.run(
+        [sys.executable, str(script), *argv],
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=REPLY_TIMEOUT_S,
+    )
+    return proc.returncode, proc.stdout or "", proc.stderr or ""
+
+
+def _fetch_turns(
+    ctx: DeferredRecycleContext,
+    *,
+    last: int,
+) -> tuple[list[dict[str, Any]] | None, int, str, str]:
+    try:
+        code, out, err = _run_agent_bus_cli(
+            ctx,
+            ["fetch", "--thread", str(ctx.report_thread), "--last", str(last)],
+        )
+    except subprocess.TimeoutExpired:
+        return None, -1, "", "TimeoutExpired"
+    if code != 0:
+        return None, code, out, err
+    return _parse_fetch_turns(out), code, out, err
+
+
+def _latest_turn_number(ctx: DeferredRecycleContext) -> tuple[int | None, int, str, str]:
+    turns, code, out, err = _fetch_turns(ctx, last=1)
+    if turns is None:
+        return None, code, out, err
+    if not turns:
+        return 0, code, out, err
+    num = turns[0].get("turn_number")
+    return (int(num) if isinstance(num, int) else 0), code, out, err
+
+
+def _deliver_via_reply_fn(
+    ctx: DeferredRecycleContext,
+    *,
+    reply_fn: AgentBusReplyFn,
+    subject: str,
+    body: str,
+) -> dict[str, Any]:
+    try:
+        reply_fn(
+            thread=ctx.report_thread,
+            to="maestro",
+            subject=subject,
+            body=body,
+            after_turn=ctx.report_after_turn,
+        )
+    except Exception as exc:
+        return _report_record(
+            outcome="failed",
+            attempts=1,
+            exit_code=None,
+            cause=f"{type(exc).__name__}: {exc}",
+            stderr_head="",
+            turn_number=None,
+        )
+    return _report_record(
+        outcome="delivered",
+        attempts=1,
+        exit_code=0,
+        cause=None,
+        stderr_head="",
+        turn_number=None,
+    )
+
+
+def _deliver_via_cli(
+    ctx: DeferredRecycleContext,
+    *,
+    subject: str,
+    body: str,
+    delivered_holder: list[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
+    latest, fetch_code, _fo, fetch_err = _latest_turn_number(ctx)
+    if latest is None:
+        return _report_record(
+            outcome="failed",
+            attempts=0,
+            exit_code=fetch_code,
+            cause="fetch_latest_failed",
+            stderr_head=fetch_err,
+            turn_number=None,
+        )
+
+    after_turn = latest
+    post_count = 0
+    last_exit = fetch_code
+    last_err = fetch_err
+
+    while post_count < _MAX_REPLY_POSTS:
+        post_count += 1
+        sent_after = after_turn
+        timed_out = False
+        out = ""
+        try:
+            last_exit, out, last_err = _run_agent_bus_cli(
+                ctx,
+                [
+                    "reply",
+                    "--thread",
+                    str(ctx.report_thread),
+                    "--to",
+                    "maestro",
+                    "--subject",
+                    subject,
+                    "--body",
+                    body,
+                    "--after-turn",
+                    str(after_turn),
+                ],
+            )
+        except subprocess.TimeoutExpired as exc:
+            timed_out = True
+            last_exit = -1
+            out = exc.stdout or "" if isinstance(exc.stdout, str) else ""
+            last_err = "TimeoutExpired"
+
+        if last_exit == 0:
+            turn_num = _parse_reply_turn(out)
+            record = _report_record(
+                outcome="delivered",
+                attempts=post_count,
+                exit_code=0,
+                cause=None,
+                stderr_head=last_err,
+                turn_number=turn_num,
+            )
+            if delivered_holder is not None:
+                delivered_holder.append(record)
+            _log_reply_success(turn_num)
+            return record
+
+        _log_reply_failure(
+            exit_code=last_exit,
+            attempt=post_count,
+            thread=str(ctx.report_thread),
+            stderr=last_err,
+            stdout=out,
+        )
+
+        if "409 Conflict" in last_err:
+            refreshed, ref_code, _rfo, ref_err = _latest_turn_number(ctx)
+            if refreshed is None:
+                return _report_record(
+                    outcome="failed",
+                    attempts=post_count,
+                    exit_code=ref_code,
+                    cause="409_refresh_fetch_failed",
+                    stderr_head=ref_err,
+                    turn_number=None,
+                )
+            if refreshed > sent_after:
+                after_turn = refreshed
+                continue
+            return _report_record(
+                outcome="failed",
+                attempts=post_count,
+                exit_code=last_exit,
+                cause="409_conflict",
+                stderr_head=last_err,
+                turn_number=None,
+            )
+
+        kind = _classify_reply_stderr(last_err, timed_out=timed_out)
+        turns, rb_code, _rbo, rb_err = _fetch_turns(ctx, last=20)
+        if turns is None:
+            return _report_record(
+                outcome="failed",
+                attempts=post_count,
+                exit_code=last_exit,
+                cause="readback_fetch_failed",
+                stderr_head=rb_err or last_err,
+                turn_number=None,
+            )
+
+        matched = _readback_match(turns, high_water=sent_after, subject=subject)
+        if matched is not None:
+            _log_reply_success(matched)
+            return _report_record(
+                outcome="delivered",
+                attempts=post_count,
+                exit_code=last_exit,
+                cause=None,
+                stderr_head=last_err,
+                turn_number=matched,
+            )
+
+        if kind == "timeout":
+            cause = "timeout delivery_unverified"
+            return _report_record(
+                outcome="failed",
+                attempts=post_count,
+                exit_code=last_exit,
+                cause=cause,
+                stderr_head=last_err,
+                turn_number=None,
+            )
+
+        if kind in ("request_not_sent", "server_error"):
+            oldest = min(
+                (int(t["turn_number"]) for t in turns if isinstance(t.get("turn_number"), int)),
+                default=None,
+            )
+            if oldest is not None and oldest <= sent_after and post_count < _MAX_REPLY_POSTS:
+                after_turn = max(
+                    int(t["turn_number"])
+                    for t in turns
+                    if isinstance(t.get("turn_number"), int)
+                )
+                continue
+            return _report_record(
+                outcome="failed",
+                attempts=post_count,
+                exit_code=last_exit,
+                cause=kind,
+                stderr_head=last_err,
+                turn_number=None,
+            )
+
+        return _report_record(
+            outcome="failed",
+            attempts=post_count,
+            exit_code=last_exit,
+            cause="unclassified delivery_unverified",
+            stderr_head=last_err,
+            turn_number=None,
+        )
+
+    return _report_record(
+        outcome="failed",
+        attempts=post_count,
+        exit_code=last_exit,
+        cause="post_cap_exhausted",
+        stderr_head=last_err,
+        turn_number=None,
+    )
+
+
 def post_maestro_reply(
     ctx: DeferredRecycleContext,
     *,
@@ -327,7 +698,7 @@ def post_maestro_reply(
     reply_fn: AgentBusReplyFn | None = None,
     body_extra: dict[str, Any] | None = None,
     r3_verdict: str | None = None,
-) -> None:
+) -> dict[str, Any]:
     body_lines = [f"status: {report_status}"]
     if report_status == "executed":
         body_lines.append(
@@ -364,41 +735,29 @@ def post_maestro_reply(
             body_lines.append(str(line))
     body = "\n".join(body_lines)
     subject = f"DONE|decision:manage-recycle-39439-39455-r3b status={report_status}"
-    if reply_fn is not None:
-        reply_fn(
-            thread=ctx.report_thread,
-            to="maestro",
+    delivered_after_ack: list[dict[str, Any]] = []
+    try:
+        if reply_fn is not None:
+            return _deliver_via_reply_fn(
+                ctx, reply_fn=reply_fn, subject=subject, body=body
+            )
+        return _deliver_via_cli(
+            ctx,
             subject=subject,
             body=body,
-            after_turn=ctx.report_after_turn,
+            delivered_holder=delivered_after_ack,
         )
-        return
-    script = ctx.repo_root / "scripts" / "agent-bus"
-    proc = subprocess.run(
-        [
-            sys.executable,
-            str(script),
-            "reply",
-            "--thread",
-            str(ctx.report_thread),
-            "--to",
-            "maestro",
-            "--subject",
-            subject,
-            "--body",
-            body,
-            "--after-turn",
-            str(ctx.report_after_turn),
-        ],
-        check=False,
-        capture_output=True,
-        text=True,
-    )
-    print(
-        f"agent-bus reply exit={proc.returncode}",
-        file=sys.stderr,
-        flush=True,
-    )
+    except Exception as exc:
+        if delivered_after_ack:
+            return delivered_after_ack[-1]
+        return _report_record(
+            outcome="failed",
+            attempts=0,
+            exit_code=None,
+            cause=f"{type(exc).__name__}: {exc}",
+            stderr_head="",
+            turn_number=None,
+        )
 
 
 def report_deferred_crash(
@@ -417,7 +776,7 @@ def report_deferred_crash(
         traceback=tb,
     )
     _write_result_file(ctx.result_path, crashed)
-    post_maestro_reply(
+    report = post_maestro_reply(
         ctx,
         report_status="refused",
         reason=str(exc),
@@ -428,3 +787,5 @@ def report_deferred_crash(
         exit_code=1,
         reply_fn=reply_fn,
     )
+    crashed.report = report
+    persist_result_projection(crashed, ctx.result_path)
