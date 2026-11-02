@@ -1360,7 +1360,7 @@ tools:
   flat_call_shape:
     tool: cortex_friction
     substrate_qualified: user-vortex__cortex_friction
-  fol_descriptor: 'owner ∈ {service:,agent_skill:,ai_agent:} (bare slug -> service:); service= is the back-compat alias; exactly one of owner/service required. Required: category (enum), note (not message), agent.
+  fol_descriptor: 'owner ∈ {service:,agent_skill:,ai_agent:} (bare slug -> service:); service= is the back-compat alias; exactly one of owner/service required. Required: category (enum), note (not message). Optional: agent.
 
     Protocol category requires exactly one anchor unless actionable=false — charter{charter_root, window_index} or continuity{root_thread, cp_ordinal} (see file_charter_protocol_friction). Down-casting to schema_gap is a filing error once continuity is available.
 
