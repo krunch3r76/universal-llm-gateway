@@ -32,6 +32,21 @@ _GROK_SELECTOR = "[data-testid='chat-input'] [contenteditable='true']"
 _CHATGPT_SELECTOR = "#prompt-textarea"
 
 
+@contextmanager
+def _one_second_before_lock_wait() -> Iterator[None]:
+    """Cap the pre-lock idle poll at 1s so a foreign draft does not wait 30s."""
+    from web_tab import operator_guard
+
+    real_wait = operator_guard.wait_for_operator_idle
+
+    async def _capped(*args: object, **kwargs: object) -> dict[str, Any]:
+        kwargs["max_wait_s"] = 1.0
+        return await real_wait(*args, **kwargs)
+
+    with patch("web_tab.operator_guard.wait_for_operator_idle", _capped):
+        yield
+
+
 def _composer_html(
     *,
     draft: str = "",
@@ -44,9 +59,7 @@ def _composer_html(
         else ""
     )
     if site == "chatgpt":
-        inner = (
-            f'<div id="prompt-textarea" contenteditable="true" role="textbox">{draft}</div>'
-        )
+        inner = f'<div id="prompt-textarea" contenteditable="true" role="textbox">{draft}</div>'
         focus = "document.getElementById('prompt-textarea')"
     else:
         inner = (
@@ -119,9 +132,7 @@ def test_probe_reinstalls_when_version_changes(probe_page: Page) -> None:
     )
     out = _eval_js(probe_page, INSTALL_OPERATOR_ACTIVITY_PROBE_JS)
     assert out.get("probeVersion") == OPERATOR_PROBE_VERSION
-    state = probe_page.evaluate(
-        "() => window.__ulgOperatorActivity.probeVersion"
-    )
+    state = probe_page.evaluate("() => window.__ulgOperatorActivity.probeVersion")
     assert state == OPERATOR_PROBE_VERSION
 
 
@@ -460,6 +471,7 @@ async def test_execute_paste_refuses_foreign_draft_at_sig_level() -> None:
             "() => { document.getElementById('composer').textContent = 'operator draft'; }"
         )
         with (
+            _one_second_before_lock_wait(),
             patch(
                 "cursor_bridge.dom_composer_paste._cdp_eval",
                 side_effect=_cdp_eval_shim(page),
@@ -581,6 +593,7 @@ async def test_execute_submit_multiline_expect_draft_sha256_mismatch_refuses() -
             draft,
         )
         with (
+            _one_second_before_lock_wait(),
             patch(
                 "cursor_bridge.dom_composer_paste._cdp_eval",
                 side_effect=_cdp_eval_shim(page),
@@ -623,6 +636,7 @@ async def test_execute_submit_expect_draft_sha256_mismatch_refuses() -> None:
         await page.set_content(_composer_html(draft=draft))
         await page.evaluate(INSTALL_OPERATOR_ACTIVITY_PROBE_JS)
         with (
+            _one_second_before_lock_wait(),
             patch(
                 "cursor_bridge.dom_composer_paste._cdp_eval",
                 side_effect=_cdp_eval_shim(page),
@@ -664,6 +678,7 @@ async def test_execute_submit_unset_still_refuses_foreign_draft() -> None:
         await page.set_content(_composer_html(draft="operator legacy draft"))
         await page.evaluate(INSTALL_OPERATOR_ACTIVITY_PROBE_JS)
         with (
+            _one_second_before_lock_wait(),
             patch(
                 "cursor_bridge.dom_composer_paste._cdp_eval",
                 side_effect=_cdp_eval_shim(page),

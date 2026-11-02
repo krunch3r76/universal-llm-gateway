@@ -449,6 +449,8 @@ async def _dom_deliver(
         return {
             "ok": False,
             "reason": str(pre.get("reason") or pre.get("code") or "operator_busy"),
+            "code": str(pre.get("code") or "operator_active"),
+            "before_lock": True,
         }
     try:
         async with target_write_lock(target_id, timeout_s=15):
@@ -649,9 +651,18 @@ async def deliver_orion_wake(
         if not dom.get("ok"):
             if owns_cdp and pw is not None:
                 await pw.stop()
+            dom_reason = str(dom.get("reason") or "paste_failed")
+            if dom_reason == "target_lock_busy" or dom.get("before_lock"):
+                return _refuse(
+                    "deferred_streaming",
+                    error=dom_reason,
+                    pasted=False,
+                    brought_to_front=tab_sync["brought_to_front"],
+                    tab_reloaded=tab_sync["tab_reloaded"],
+                )
             return _refuse(
                 "paste_failed",
-                error=str(dom.get("reason") or "paste_failed"),
+                error=dom_reason,
                 pasted=False,
                 brought_to_front=tab_sync["brought_to_front"],
                 tab_reloaded=tab_sync["tab_reloaded"],

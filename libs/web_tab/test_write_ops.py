@@ -7,6 +7,7 @@ from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
 import pytest
+from cursor_bridge.dom_composer_paste import composer_draft_sha256_hex
 
 from web_tab.cdp_actuation import RecordingActuationPort
 from web_tab.grants import require_grant
@@ -17,6 +18,7 @@ from web_tab.write_ops import (
     execute_bind,
     execute_open,
     execute_paste,
+    execute_submit,
     execute_verify_committed,
 )
 
@@ -152,7 +154,7 @@ async def test_paste_operator_active_retryable() -> None:
         ]
     )
     with patch(
-        "web_tab.write_ops.operator_active_probe",
+        "web_tab.write_ops.wait_operator_idle_before_lock",
         AsyncMock(
             return_value={
                 "ok": False,
@@ -199,7 +201,11 @@ async def test_open_then_paste_reports_created_by_agent(tmp_path: Path) -> None:
     tid = str(opened["target_id"])
     with (
         patch(
-            "web_tab.write_ops.operator_active_probe",
+            "web_tab.write_ops.wait_operator_idle_before_lock",
+            AsyncMock(return_value={"ok": True}),
+        ),
+        patch(
+            "web_tab.write_ops.operator_recheck_under_lock",
             AsyncMock(return_value={"ok": True}),
         ),
         patch(
@@ -244,7 +250,11 @@ async def test_paste_dom_paste_receipt() -> None:
     )
     with (
         patch(
-            "web_tab.write_ops.operator_active_probe",
+            "web_tab.write_ops.wait_operator_idle_before_lock",
+            AsyncMock(return_value={"ok": True}),
+        ),
+        patch(
+            "web_tab.write_ops.operator_recheck_under_lock",
             AsyncMock(return_value={"ok": True}),
         ),
         patch(
@@ -366,7 +376,9 @@ async def test_execute_paste_idle_wait_runs_before_target_lock(
         return {"ok": True}
 
     @asynccontextmanager
-    async def _track_lock(_target_id: str, *, op: str = "paste", timeout_s: float = 120):
+    async def _track_lock(
+        _target_id: str, *, op: str = "paste", timeout_s: float = 120
+    ):
         order.append("lock_acquire")
         yield
         order.append("lock_release")
@@ -453,3 +465,109 @@ async def test_dispatch_refuses_anthropic_console_on_chatgpt_cdp_port() -> None:
     assert result == {"ok": False, "code": "cdp_surface_mismatch"}
 
 
+def _grok_port(target_id: str) -> RecordingActuationPort:
+    return RecordingActuationPort(
+        tabs=[
+            {
+                "id": target_id,
+                "url": "https://grok.com/c/x",
+                "web_socket_debugger_url": f"ws://fake/{target_id}",
+            }
+        ]
+    )
+
+
+@pytest.mark.asyncio
+async def test_other_writer_expect_sha_mismatch_refuses() -> None:
+    """Writer B's 64-hex expect that is not the digest of writer A's hello draft is refused."""
+    port = _grok_port("t-writers")
+    send = AsyncMock(return_value={"ok": True})
+    probe = {
+        "ok": True,
+        "probe": {"composer_draft": "hello", "foreign_draft": True},
+    }
+    with (
+        patch(
+            "web_tab.write_ops.wait_operator_idle_before_lock",
+            AsyncMock(return_value={"ok": True}),
+        ),
+        patch(
+            "web_tab.write_ops.operator_recheck_under_lock",
+            AsyncMock(return_value=probe),
+        ),
+        patch(
+            "web_tab.write_ops.dom_set_composer_text",
+            AsyncMock(return_value={"ok": True}),
+        ),
+        patch(
+            "web_tab.write_ops.capture_dom_baseline",
+            AsyncMock(
+                return_value={
+                    "ok": True,
+                    "user_count": 0,
+                    "assistant_count": 0,
+                    "last_assistant_text": "",
+                }
+            ),
+        ),
+        patch("web_tab.write_ops.dom_click_send", send),
+        patch("web_tab.write_ops.dom_click_send_own_draft", send),
+    ):
+        pasted = await execute_paste(
+            cdp_url="http://127.0.0.1:9222",
+            target_id="t-writers",
+            text="hello",
+            grant="explicit",
+            authorization_source="agent-bus:1#1",
+            surface="grok",
+            port=port,
+        )
+        out = await execute_submit(
+            cdp_url="http://127.0.0.1:9222",
+            target_id="t-writers",
+            grant="explicit",
+            authorization_source="agent-bus:2#2",
+            expect_draft_sha256="0" * 64,
+            surface="grok",
+            port=port,
+        )
+    assert pasted["ok"] is True
+    assert out["ok"] is False
+    assert out["code"] == "draft_sha_mismatch"
+    send.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_stale_bridge_wake_sha_of_other_text_refuses() -> None:
+    """A BRIDGE_WAKE draft is refused when the submit expect is the SHA of different text."""
+    held = "BRIDGE_WAKE thread=21207 turn=2"
+    port = _grok_port("t-bridge")
+    send = AsyncMock(return_value={"ok": True})
+    probe = {
+        "ok": True,
+        "probe": {"composer_draft": held, "foreign_draft": False},
+    }
+    with (
+        patch(
+            "web_tab.write_ops.wait_operator_idle_before_lock",
+            AsyncMock(return_value={"ok": True}),
+        ),
+        patch(
+            "web_tab.write_ops.operator_recheck_under_lock",
+            AsyncMock(return_value=probe),
+        ),
+        patch("web_tab.write_ops.dom_click_send", send),
+        patch("web_tab.write_ops.dom_click_send_own_draft", send),
+    ):
+        out = await execute_submit(
+            cdp_url="http://127.0.0.1:9222",
+            target_id="t-bridge",
+            grant="explicit",
+            authorization_source="agent-bus:1#1",
+            expect_draft_sha256=composer_draft_sha256_hex("other wake text"),
+            surface="grok",
+            port=port,
+        )
+    assert out["ok"] is False
+    assert out["code"] == "draft_sha_mismatch"
+    send.assert_not_awaited()

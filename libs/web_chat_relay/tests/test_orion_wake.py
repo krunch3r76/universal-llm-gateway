@@ -791,3 +791,135 @@ def test_holder_conversation_url_full_agent_id_url_precedence() -> None:
         "title": flat_other,
     }
     assert holder_conversation_url(sub) == _NEUTRAL_PROJECT_URL
+
+
+def _defer_claim_opts():
+    from web_chat_relay.tests.test_orion_hop import _wake_claim
+
+    claim = _wake_claim(wake_id="wake-defer-1", turn_numbers=(12,), turn_ids=(912,))
+    opts = {
+        "wake_id": claim.wake_id,
+        "thread": claim.thread_id,
+        "turn_id": 912,
+        "turn": 12,
+        "conversation_url": PINNED_CONVERSATION_URL,
+        "agent": "orion",
+    }
+    return claim, opts
+
+
+@pytest.mark.asyncio
+async def test_chat_wake_defers_target_lock_busy(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A target lock timeout is re-deferred through record_paste_receipt, not paste_failed."""
+    from web_chat_relay.orion_wake import deliver_orion_chat_wake
+    from web_chat_relay.orion_wake_owner import InMemoryWakeDeliveryOwner
+
+    async def _busy(page: object, text: str, **kwargs: object) -> dict:
+        return {"ok": False, "reason": "target_lock_busy", "retryable": True}
+
+    monkeypatch.setattr("web_chat_relay.orion_wake._dom_deliver", _busy)
+    owner = InMemoryWakeDeliveryOwner()
+    claim, opts = _defer_claim_opts()
+    owner.register_claim(claim)
+    out = await deliver_orion_chat_wake(
+        thread="21207",
+        turn=12,
+        from_agent="maestro",
+        page=_FakePage(url=PINNED_CONVERSATION_URL),
+        conversation_url=PINNED_CONVERSATION_URL,
+        pipeline_options=opts,
+        delivery_owner=owner,
+    )
+    stored = owner.paste_receipts[claim.wake_id]
+    assert out["reason"] == "deferred_streaming"
+    assert stored["reason"] == "deferred_streaming"
+    assert stored.get("error") == "target_lock_busy"
+    assert "paste_failed" not in (out["reason"], stored["reason"])
+    assert classify_orion(out) == ("pending", "deferred_streaming")
+
+
+@pytest.mark.asyncio
+async def test_chat_wake_defers_operator_busy_before_lock(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An operator-busy refusal before the lock is re-deferred, not recorded paste_failed."""
+    from web_chat_relay.orion_wake import deliver_orion_chat_wake
+    from web_chat_relay.orion_wake_owner import InMemoryWakeDeliveryOwner
+
+    async def _busy(page: object, text: str, **kwargs: object) -> dict:
+        return {
+            "ok": False,
+            "reason": "operator_busy",
+            "code": "operator_active",
+            "before_lock": True,
+        }
+
+    monkeypatch.setattr("web_chat_relay.orion_wake._dom_deliver", _busy)
+    owner = InMemoryWakeDeliveryOwner()
+    claim, opts = _defer_claim_opts()
+    claim = claim.__class__(
+        wake_id="wake-defer-2",
+        agent=claim.agent,
+        thread_id=claim.thread_id,
+        turn_ids=claim.turn_ids,
+        turn_numbers=claim.turn_numbers,
+        endpoint_url=claim.endpoint_url,
+    )
+    opts = {**opts, "wake_id": claim.wake_id}
+    owner.register_claim(claim)
+    out = await deliver_orion_chat_wake(
+        thread="21207",
+        turn=12,
+        from_agent="maestro",
+        page=_FakePage(url=PINNED_CONVERSATION_URL),
+        conversation_url=PINNED_CONVERSATION_URL,
+        pipeline_options=opts,
+        delivery_owner=owner,
+    )
+    stored = owner.paste_receipts[claim.wake_id]
+    assert out["reason"] == "deferred_streaming"
+    assert stored["reason"] == "deferred_streaming"
+    assert stored.get("error") == "operator_busy"
+    assert classify_orion(out)[0] == "pending"
+
+
+@pytest.mark.no_dom_stub
+@pytest.mark.asyncio
+async def test_dom_deliver_marks_operator_refusal_before_lock(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The pre-lock idle refusal is marked before_lock so the wake can re-defer it."""
+    page = _FakePage()
+
+    class _Port:
+        def list_tabs(self, *, cdp_url: str) -> dict:
+            return {
+                "pages": [
+                    {
+                        "id": "tab-op",
+                        "url": PINNED,
+                        "web_socket_debugger_url": "ws://127.0.0.1/devtools/page/op",
+                    }
+                ]
+            }
+
+    async def _pre(*_a: object, **_k: object) -> dict:
+        return {
+            "ok": False,
+            "code": "operator_active",
+            "reason": "operator_busy",
+            "retryable": True,
+        }
+
+    monkeypatch.setattr("web_tab.cdp_actuation.default_actuation_port", lambda: _Port())
+    monkeypatch.setattr("web_tab.operator_guard.wait_operator_idle_before_lock", _pre)
+    out = await _dom_deliver(
+        page,
+        build_wake_pointer(thread="21207", turn=2, from_agent="maestro"),
+    )
+    assert out["ok"] is False
+    assert out["before_lock"] is True
+    assert out["reason"] == "operator_busy"
+    assert out["code"] == "operator_active"

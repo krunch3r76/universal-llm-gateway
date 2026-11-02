@@ -234,6 +234,7 @@ def clear_composer_draft_dom_no_focus_js(selector: str) -> str:
         "el.dispatchEvent(new InputEvent('input',{bubbles:true}));"
         "}"
         "g.ourDraftSig='';"
+        "g.ourDraftWriter='';"
         "const after=(el.innerText||el.value||'').trim();"
         "return{ok:true,cleared:after.length===0,draft:after};})()"
     )
