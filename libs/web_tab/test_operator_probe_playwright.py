@@ -230,12 +230,14 @@ def _holder_entry(
 
 
 @pytest.mark.asyncio
-async def test_waiter_paste_refuses_after_operator_keystroke_while_queued(
+async def test_queued_paste_waits_operator_idle_then_pastes(
     tmp_path: pytest.TempPathFactory,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Trusted input while another writer holds the lock must refuse after acquire."""
+    """Writer waits out operator activity before lock, then pastes when lock opens."""
     lock_dir = str(tmp_path / "locks")
     os.makedirs(lock_dir, exist_ok=True)
+    monkeypatch.setenv("ULG_WEB_TAB_LOCK_DIR", lock_dir)
     target = "mid-queue-target"
     ready = mp.Event()
     release = mp.Event()
@@ -264,10 +266,9 @@ async def test_waiter_paste_refuses_after_operator_keystroke_while_queued(
         page = await browser.new_page()
         await page.set_content(_composer_html())
         await page.evaluate(INSTALL_OPERATOR_ACTIVITY_PROBE_JS)
-        await page.focus("#composer")
-        await page.keyboard.press("b")
-        release.set()
-        holder.join(timeout=5.0)
+        await page.evaluate(
+            "() => { window.__ulgOperatorActivity.lastInputMs = Date.now(); }"
+        )
         with (
             patch(
                 "cursor_bridge.dom_composer_paste._cdp_eval",
@@ -286,19 +287,56 @@ async def test_waiter_paste_refuses_after_operator_keystroke_while_queued(
                 ),
             ),
         ):
-            os.environ["ULG_WEB_TAB_LOCK_DIR"] = lock_dir
-            out = await execute_paste(
-                cdp_url="http://127.0.0.1:9222",
-                target_id=target,
-                text="queued paste",
-                grant="explicit",
-                authorization_source="agent-bus:test#1",
-                port=port,
+            paste_task = asyncio.create_task(
+                execute_paste(
+                    cdp_url="http://127.0.0.1:9222",
+                    target_id=target,
+                    text="queued paste",
+                    grant="explicit",
+                    authorization_source="agent-bus:test#1",
+                    port=port,
+                )
             )
+            await asyncio.sleep(0.05)
+            await page.evaluate(
+                "() => { window.__ulgOperatorActivity.lastInputMs = Date.now() - 11000; }"
+            )
+            await asyncio.sleep(0.6)
+            release.set()
+            holder.join(timeout=5.0)
+            out = await asyncio.wait_for(paste_task, timeout=5.0)
+        await browser.close()
+    assert out["ok"] is True
+    insert_mock.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_operator_active_refuses_immediately_without_idle_wait() -> None:
+    async with async_playwright() as playwright:
+        browser = await playwright.chromium.launch(headless=True)
+        page = await browser.new_page()
+        await page.set_content(_composer_html())
+        await page.evaluate(INSTALL_OPERATOR_ACTIVITY_PROBE_JS)
+        await page.evaluate(
+            "() => { window.__ulgOperatorActivity.lastInputMs = Date.now(); }"
+        )
+        with patch(
+            "cursor_bridge.dom_composer_paste._cdp_eval",
+            side_effect=_cdp_eval_shim(page),
+        ):
+            started = asyncio.get_running_loop().time()
+            out = await operator_active_probe(
+                _WS,
+                selector=_GROK_SELECTOR,
+                created_by_agent=True,
+                wait_for_idle=False,
+                lock_holder=True,
+            )
+            elapsed = asyncio.get_running_loop().time() - started
         await browser.close()
     assert out["ok"] is False
     assert out["code"] == "operator_active"
-    insert_mock.assert_not_awaited()
+    assert elapsed < 2.0
 
 
 @pytest.mark.asyncio
@@ -676,3 +714,47 @@ async def test_matching_sha_still_refuses_when_operator_active_at_read() -> None
     assert out["code"] == "operator_active"
     probe = out.get("probe") or {}
     assert probe_foreign_draft(probe, expect_draft_sha256=expect) is False
+
+
+@pytest.mark.asyncio
+async def test_submit_without_text_refuses_when_another_writer_pasted() -> None:
+    from web_tab.cdp_actuation import RecordingActuationPort
+
+    line = "writer A draft"
+    port = RecordingActuationPort(
+        tabs=[
+            {
+                "id": "t-writer-b",
+                "url": "https://grok.com/c/x",
+                "web_socket_debugger_url": _WS,
+            }
+        ]
+    )
+    async with async_playwright() as playwright:
+        browser = await playwright.chromium.launch(headless=True)
+        page = await browser.new_page()
+        await page.set_content(_composer_html())
+        with patch(
+            "cursor_bridge.dom_composer_paste._cdp_eval",
+            side_effect=_cdp_eval_shim(page),
+        ):
+            await page.evaluate(INSTALL_OPERATOR_ACTIVITY_PROBE_JS)
+            paste_out = await execute_paste(
+                cdp_url="http://127.0.0.1:9222",
+                target_id="t-writer-b",
+                text=line,
+                grant="explicit",
+                authorization_source="agent-bus:writer-a#1",
+                port=port,
+            )
+            assert paste_out["ok"] is True
+            submit_out = await execute_submit(
+                cdp_url="http://127.0.0.1:9222",
+                target_id="t-writer-b",
+                grant="explicit",
+                authorization_source="agent-bus:writer-b#2",
+                port=port,
+            )
+        await browser.close()
+    assert submit_out["ok"] is False
+    assert submit_out.get("reason") == "foreign_draft"

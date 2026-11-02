@@ -23,7 +23,10 @@ from web_tab.commit_verify import (
 from web_tab.config import normalize_cdp_store_key, resolve_cdp_for_web_tab_options
 from web_tab.events import emit_write_outcome
 from web_tab.grants import require_write_authorization
-from web_tab.operator_guard import operator_active_probe
+from web_tab.operator_guard import (
+    operator_recheck_under_lock,
+    wait_operator_idle_before_lock,
+)
 from web_tab.provider_selectors import (
     ProviderSite,
     composer_selector_for_site,
@@ -343,9 +346,13 @@ async def execute_paste(
         tab_url=str(row.get("url") or ""),
         store_path=store_path,
     )
+    writer = str(authorization_source or "").strip()
+    pre = await wait_operator_idle_before_lock(ws, selector=selector)
+    if not pre.get("ok"):
+        return pre
     try:
         async with target_write_lock(target_id, op="paste"):
-            guard = await operator_active_probe(
+            guard = await operator_recheck_under_lock(
                 ws,
                 selector=selector,
                 created_by_agent=created_by_agent,
@@ -359,9 +366,19 @@ async def execute_paste(
                 return transport
             base_users = int(baseline.get("user_count") or 0)
             if submit:
-                result = await dom_insert_and_send(ws, selector=selector, line=line)
+                result = await dom_insert_and_send(
+                    ws,
+                    selector=selector,
+                    line=line,
+                    draft_writer=writer,
+                )
             else:
-                result = await dom_set_composer_text(ws, selector=selector, text=line)
+                result = await dom_set_composer_text(
+                    ws,
+                    selector=selector,
+                    text=line,
+                    draft_writer=writer,
+                )
     except TargetLockBusyError:
         return {
             "ok": False,
@@ -451,9 +468,17 @@ async def execute_submit(
         tab_url=str(row.get("url") or ""),
         store_path=store_path,
     )
+    writer = str(authorization_source or "").strip()
+    pre = await wait_operator_idle_before_lock(
+        ws,
+        selector=selector,
+        expect_draft_sha256=expect_draft_sha256,
+    )
+    if not pre.get("ok"):
+        return pre
     try:
         async with target_write_lock(target_id, op="submit"):
-            guard = await operator_active_probe(
+            guard = await operator_recheck_under_lock(
                 ws,
                 selector=selector,
                 created_by_agent=created_by_agent,
@@ -474,7 +499,9 @@ async def execute_submit(
                     preserve_newlines=True,
                 )
             else:
-                send = await dom_click_send_own_draft(ws, selector=selector)
+                send = await dom_click_send_own_draft(
+                    ws, selector=selector, draft_writer=writer
+                )
     except TargetLockBusyError:
         return {"ok": False, "code": "target_lock_busy", "retryable": True}
     if not send.get("ok"):

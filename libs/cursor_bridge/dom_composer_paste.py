@@ -48,6 +48,7 @@ INSTALL_OPERATOR_ACTIVITY_PROBE_JS = rf"""
   const g = window.__ulgOperatorActivity = window.__ulgOperatorActivity || {{
     lastInputMs: 0,
     ourDraftSig: '',
+    ourDraftWriter: '',
     installed: false,
     probeVersion: 0,
   }};
@@ -142,14 +143,22 @@ def _find_composer_js(selector: str) -> str:
     return f"(()=>{{const sels={sels};for(const s of sels){{const el=document.querySelector(s);if(el)return el;}}return null;}})()"
 
 
-def _set_composer_body(selector: str, text: str, *, preserve_newlines: bool = False) -> str:
+def _set_composer_body(
+    selector: str,
+    text: str,
+    *,
+    preserve_newlines: bool = False,
+    draft_writer: str = "",
+) -> str:
     find = _find_composer_js(selector)
     line = _dom_paste_text(text, preserve_newlines=preserve_newlines)
     msg = json.dumps(line)
+    writer = json.dumps(str(draft_writer or ""))
     return (
         f"(()=>{{const el=({find});"
         "if(!el)return{ok:false,reason:'no_composer'};"
         f"const line={msg};"
+        f"const draftWriter={writer};"
         "const draft=(el.innerText||el.value||'').trim();"
         "const stale=/^BRIDGE_WAKE\\s+thread=\\S+\\s+turn=\\d+(?:,\\d+)*$/.test(draft);"
         "if(draft.length>0&&!stale&&draft!==line.trim())"
@@ -166,20 +175,26 @@ def _set_composer_body(selector: str, text: str, *, preserve_newlines: bool = Fa
         "}"
         "const after=(el.innerText||el.value||'').trim();"
         "g.ourDraftSig=after;"
+        "g.ourDraftWriter=draftWriter;"
         "return{ok:true,sig:after};})()"
     )
 
 
-def _click_send_own_draft_body(selector: str) -> str:
+def _click_send_own_draft_body(selector: str, *, draft_writer: str = "") -> str:
     """Send only when composer draft matches this writer's ourDraftSig."""
     find = _find_composer_js(selector)
     btn_sels = json.dumps(list(_SEND_BTN_SELECTORS))
+    expect_writer = json.dumps(str(draft_writer or ""))
     return (
         f"(()=>{{const el=({find});"
         "if(!el)return{ok:false,reason:'no_composer',send_clicked:false};"
         "const g=window.__ulgOperatorActivity=window.__ulgOperatorActivity||{};"
+        f"const expectWriter={expect_writer};"
+        "const writer=String(g.ourDraftWriter||'').trim();"
         "const sig=String(g.ourDraftSig||'').trim();"
         "const draft=(el.innerText||el.value||'').trim();"
+        "if(expectWriter&&( !writer||writer!==expectWriter))"
+        "return{ok:false,reason:'foreign_draft',send_clicked:false,draft,sig,writer};"
         "if(!sig||draft!==sig)"
         "return{ok:false,reason:'draft_not_ours',send_clicked:false,draft,sig};"
         f"const root=el.closest('form')||el.parentElement||document;"
@@ -189,6 +204,7 @@ def _click_send_own_draft_body(selector: str) -> str:
         "if(!btn)return{ok:false,reason:'no_send_button',send_clicked:false};"
         "btn.click();"
         "g.ourDraftSig='';"
+        "g.ourDraftWriter='';"
         "return{ok:true,send_clicked:true};})()"
     )
 
@@ -248,6 +264,7 @@ def _click_send_body(
         "if(!btn)return{ok:false,reason:'no_send_button',send_clicked:false};"
         "btn.click();"
         "g.ourDraftSig='';"
+        "g.ourDraftWriter='';"
         "return{ok:true,send_clicked:true};})()"
     )
 
@@ -355,10 +372,21 @@ async def wait_for_operator_idle(
 
 
 async def dom_set_composer_text(
-    ws_url: str, *, selector: str, text: str, preserve_newlines: bool = False
+    ws_url: str,
+    *,
+    selector: str,
+    text: str,
+    preserve_newlines: bool = False,
+    draft_writer: str = "",
 ) -> dict[str, Any]:
     value = await _cdp_eval(
-        ws_url, _set_composer_body(selector, text, preserve_newlines=preserve_newlines)
+        ws_url,
+        _set_composer_body(
+            selector,
+            text,
+            preserve_newlines=preserve_newlines,
+            draft_writer=draft_writer,
+        ),
     )
     if not isinstance(value, dict):
         return {"ok": False, "reason": "paste_failed"}
@@ -379,20 +407,33 @@ async def dom_click_send(
     return value
 
 
-async def dom_click_send_own_draft(ws_url: str, *, selector: str) -> dict[str, Any]:
+async def dom_click_send_own_draft(
+    ws_url: str, *, selector: str, draft_writer: str = ""
+) -> dict[str, Any]:
     """Click send when composer text equals ourDraftSig (submit-without-text path)."""
-    value = await _cdp_eval(ws_url, _click_send_own_draft_body(selector))
+    value = await _cdp_eval(
+        ws_url, _click_send_own_draft_body(selector, draft_writer=draft_writer)
+    )
     if not isinstance(value, dict):
         return {"ok": False, "send_clicked": False}
     return value
 
 
 async def dom_insert_and_send(
-    ws_url: str, *, selector: str, line: str, preserve_newlines: bool = False
+    ws_url: str,
+    *,
+    selector: str,
+    line: str,
+    preserve_newlines: bool = False,
+    draft_writer: str = "",
 ) -> dict[str, Any]:
     """Insert once via DOM; send via send-button click (no Enter, no focus())."""
     ins = await dom_set_composer_text(
-        ws_url, selector=selector, text=line, preserve_newlines=preserve_newlines
+        ws_url,
+        selector=selector,
+        text=line,
+        preserve_newlines=preserve_newlines,
+        draft_writer=draft_writer,
     )
     if not ins.get("ok"):
         return ins

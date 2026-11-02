@@ -118,8 +118,8 @@ async def cdp_insert_text(
                 focus.get("reason") if isinstance(focus, dict) else "focus_failed"
             )
             return {"ok": False, "reason": reason or "focus_failed", "method": "cdp_insert"}
-        await _runtime_eval(ws, 3, operator_activity_suppress_js())
         try:
+            await _runtime_eval(ws, 3, operator_activity_suppress_js())
             await ws.send(
                 json.dumps(
                     {"id": 4, "method": _INSERT_METHOD, "params": {"text": text}}

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from contextlib import asynccontextmanager
 from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
@@ -352,6 +353,66 @@ async def test_target_lock_refuses_nonblocking_fcntl(
     second = _FcntlFileLock(path)
     assert second.acquire(blocking=False) is False
     first.release()
+
+
+@pytest.mark.asyncio
+async def test_execute_paste_idle_wait_runs_before_target_lock(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    order: list[str] = []
+
+    async def _pre(_ws: str, **_: object) -> dict:
+        order.append("idle_before_lock")
+        return {"ok": True}
+
+    @asynccontextmanager
+    async def _track_lock(_target_id: str, *, op: str = "paste", timeout_s: float = 120):
+        order.append("lock_acquire")
+        yield
+        order.append("lock_release")
+
+    port = RecordingActuationPort(
+        tabs=[
+            {
+                "id": "t-order",
+                "url": "https://grok.com/c/x",
+                "web_socket_debugger_url": "ws://fake/t-order",
+            }
+        ]
+    )
+    monkeypatch.setattr("web_tab.write_ops.wait_operator_idle_before_lock", _pre)
+    monkeypatch.setattr("web_tab.write_ops.target_write_lock", _track_lock)
+    with (
+        patch(
+            "web_tab.write_ops.dom_set_composer_text",
+            AsyncMock(return_value={"ok": True}),
+        ),
+        patch(
+            "web_tab.write_ops.capture_dom_baseline",
+            AsyncMock(
+                return_value={
+                    "ok": True,
+                    "user_count": 0,
+                    "assistant_count": 0,
+                    "last_assistant_text": "",
+                }
+            ),
+        ),
+        patch(
+            "web_tab.write_ops.operator_recheck_under_lock",
+            AsyncMock(return_value={"ok": True, "probe": {}}),
+        ),
+    ):
+        out = await execute_paste(
+            cdp_url="http://127.0.0.1:9222",
+            target_id="t-order",
+            text="ordered paste",
+            grant="explicit",
+            authorization_source=_AUTH,
+            port=port,
+        )
+    assert out["ok"] is True
+    assert order == ["idle_before_lock", "lock_acquire", "lock_release"]
 
 
 def test_resolve_write_cdp_url_maps_surface_without_explicit() -> None:
