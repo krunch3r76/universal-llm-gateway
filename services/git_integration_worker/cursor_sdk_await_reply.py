@@ -607,6 +607,7 @@ def build_await_resume_request(
         model=str(record.get("model") or row.resolved_model),
         dispatch_id=child_dispatch_id(row.dispatch_id, attempt=attempt),
         execution_id=row.execution_id or row.dispatch_id,
+        request_id=record.get("request_id"),
         caller_agent=row.caller_agent,
         packet_path=record.get("packet_path") or row.packet_path,
         message=record.get("message"),

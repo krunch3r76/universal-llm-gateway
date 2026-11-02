@@ -168,6 +168,7 @@ def _resume_request(parent_id: str, *, child_id: str) -> CursorDispatchRequest |
         model=model,
         dispatch_id=f"{parent_id}-nr1",
         execution_id=str(row["execution_id"] or parent_id),
+        request_id=record.get("request_id"),
         caller_agent=row["caller_agent"],
         packet_path=record.get("packet_path"),
         message=record.get("message"),

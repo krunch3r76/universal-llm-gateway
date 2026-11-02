@@ -674,6 +674,24 @@ def _await_park_row(
     )
 
 
+def test_await_resume_builder_recovers_request_id() -> None:
+    """Breaks when resume child drops explicit Stargate request_id from parent record."""
+    parent_id = "550e8400-e29b-41d4-a716-446655440000"
+    row = _await_park_row(
+        dispatch_id=parent_id,
+        record={
+            "request_id": "rid",
+            "dispatch_id": parent_id,
+            "model": "cursor/grok-4.7",
+            "message": "continue",
+            "handoff_contract": "freeform",
+            "park": {},
+        },
+    )
+    req = build_await_resume_request(row, replies=[], attempt=1, code_version="v")
+    assert req.request_id == "rid"
+
+
 def test_await_resume_builder_copies_record_workspace() -> None:
     row = _await_park_row(
         dispatch_id="d-ws",
