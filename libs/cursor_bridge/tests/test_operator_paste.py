@@ -58,6 +58,13 @@ def test_wrap_operator_message_includes_header_source_watermark() -> None:
     assert "hello" in msg
 
 
+def test_watermark_imported_from_interlocutor_package() -> None:
+    from interlocutor import watermark as wm
+
+    assert WATERMARK is wm.WATERMARK
+    assert "Orion" in WATERMARK
+
+
 @pytest.mark.asyncio
 async def test_deliver_operator_paste_refuses_without_grant() -> None:
     out = await deliver_operator_paste(

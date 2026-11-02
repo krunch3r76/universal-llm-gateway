@@ -45,20 +45,13 @@ from cursor_bridge.wake_delivery import (
     _refuse,
     normalize_target,
 )
+from interlocutor.watermark import (
+    OPERATOR_HEADER,
+    WATERMARK,
+    wrap_operator_message,
+)
 
-OPERATOR_HEADER = "Operator request — Kaywan, relayed on his behalf"
-WATERMARK = "Pasted on Kaywan's behalf by gc1 — AI-assisted"
 _VALID_GRANTS = frozenset({"operator", "explicit"})
-
-
-def wrap_operator_message(*, text: str, authorization_source: str, scope: str) -> str:
-    """Format one operator relay body with header, source, scope, and watermark."""
-    body = (text or "").strip()
-    src = (authorization_source or "").strip()
-    scope_s = (scope or "").strip()
-    return (
-        f"{OPERATOR_HEADER}\n\nSource: {src}\nScope: {scope_s}\n\n{body}\n\n{WATERMARK}"
-    )
 
 
 def _grant_refuse(reason: str, **extra: Any) -> dict[str, Any]:
