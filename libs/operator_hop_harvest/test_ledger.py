@@ -5,6 +5,7 @@ from __future__ import annotations
 from unittest.mock import MagicMock, patch
 
 import httpx
+import pytest
 
 from operator_hop_harvest.ledger import fetch_latest_terminal_conductor
 
@@ -37,6 +38,40 @@ def test_fetch_latest_terminal_conductor_success() -> None:
     assert result["ledger_unreachable"] is False
     assert result["row"]["dispatch_id"] == "d-1"
     mock_client.get.assert_called_once()
+
+
+def test_ledger_giw_base_url_prefers_giw_base_url_env(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("GIW_BASE_URL", "http://legacy-giw.test/")
+    monkeypatch.setenv("GIT_INTEGRATION_WORKER_URL", "http://ignored.test")
+    mock_resp = MagicMock()
+    mock_resp.status_code = 404
+    mock_client = MagicMock()
+    mock_client.__enter__ = MagicMock(return_value=mock_client)
+    mock_client.__exit__ = MagicMock(return_value=False)
+    mock_client.get.return_value = mock_resp
+    with patch("operator_hop_harvest.ledger.httpx.Client", return_value=mock_client):
+        fetch_latest_terminal_conductor("12291")
+    called_url = mock_client.get.call_args[0][0]
+    assert called_url.startswith("http://legacy-giw.test/")
+
+
+def test_ledger_giw_base_url_falls_back_to_git_integration_worker_url(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("GIW_BASE_URL", raising=False)
+    monkeypatch.setenv("GIT_INTEGRATION_WORKER_URL", "http://accessor-giw.test:8099")
+    mock_resp = MagicMock()
+    mock_resp.status_code = 404
+    mock_client = MagicMock()
+    mock_client.__enter__ = MagicMock(return_value=mock_client)
+    mock_client.__exit__ = MagicMock(return_value=False)
+    mock_client.get.return_value = mock_resp
+    with patch("operator_hop_harvest.ledger.httpx.Client", return_value=mock_client):
+        fetch_latest_terminal_conductor("12291")
+    called_url = mock_client.get.call_args[0][0]
+    assert called_url.startswith("http://accessor-giw.test:8099/")
 
 
 def test_fetch_latest_terminal_conductor_http_error_fail_closed() -> None:

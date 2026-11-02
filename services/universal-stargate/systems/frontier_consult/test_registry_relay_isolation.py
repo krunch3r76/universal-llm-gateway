@@ -9,10 +9,14 @@ import os
 from typing import Any
 from unittest.mock import patch
 
+import httpx
 import pytest
 
-import systems.frontier_consult.cursor_sdk_lane_subscription as lane_subscription
+from giw_endpoint import git_integration_worker_base_url
 
+from systems.frontier_consult.cursor_sdk_lane_subscription import (
+    resolve_worker_subscription_agent_id,
+)
 from systems.frontier_consult.cursor_sdk_worker_dispatch import worker_base_url
 from systems.frontier_consult.work_registry_admit_relay import relay_registry_record
 
@@ -60,32 +64,40 @@ def test_live_giw_marker_skips_dead_port_env(giw_dead_port: int) -> None:
     url = os.environ.get("GIT_INTEGRATION_WORKER_URL")
     if url is not None:
         assert str(giw_dead_port) not in url
-    assert str(giw_dead_port) not in lane_subscription._GIW
+    assert str(giw_dead_port) not in git_integration_worker_base_url()
 
 
-def test_offline_giw_isolation_patches_modules_before_dead_port_setenv() -> None:
-    """Regression: patch-after-setenv left import-time URLs on the dead port."""
+def test_offline_giw_isolation_uses_env_only() -> None:
+    """Regression: GIW isolation must not patch import-time module constants."""
     from pathlib import Path
 
     source = Path(__file__).resolve().parents[2] / "conftest.py"
     body = source.read_text(encoding="utf-8")
-    marker = '_patch_import_time_giw_constants(monkeypatch, dead_url, giw_dead_port)'
-    setenv = 'monkeypatch.setenv("GIT_INTEGRATION_WORKER_HOST"'
-    assert body.index(marker) < body.index(setenv)
+    assert "_patch_import_time_giw_constants" not in body
+    assert 'monkeypatch.setenv("GIT_INTEGRATION_WORKER_URL"' in body
 
 
-def test_wrong_giw_isolation_order_leaves_dead_import_time_url(
-    monkeypatch: pytest.MonkeyPatch,
+@pytest.mark.asyncio
+async def test_lane_subscription_cse_holders_uses_resolved_giw_url(
+    giw_dead_port: int,
 ) -> None:
-    """Patch-after-setenv + cleared env leaves ``_GIW`` on dead URL (live_giw hazard)."""
-    from conftest import _patch_import_time_giw_constants
+    """Holder probe must hit the dead-port URL from env, not a cached import constant."""
+    expected_base = git_integration_worker_base_url()
+    assert expected_base == f"http://127.0.0.1:{giw_dead_port}"
 
-    dead_port = 58881
-    dead_url = f"http://127.0.0.1:{dead_port}"
-    monkeypatch.setenv("GIT_INTEGRATION_WORKER_URL", dead_url)
-    monkeypatch.setenv("GIT_INTEGRATION_WORKER_PORT", str(dead_port))
-    _patch_import_time_giw_constants(monkeypatch, dead_url, dead_port)
-    monkeypatch.delenv("GIT_INTEGRATION_WORKER_URL", raising=False)
-    monkeypatch.delenv("GIT_INTEGRATION_WORKER_HOST", raising=False)
-    monkeypatch.delenv("GIT_INTEGRATION_WORKER_PORT", raising=False)
-    assert lane_subscription._GIW == dead_url
+    captured_urls: list[str] = []
+
+    class _Client:
+        async def get(self, url: str, **kwargs: Any) -> httpx.Response:
+            captured_urls.append(url)
+            raise httpx.ConnectError("refused")
+
+    client = _Client()
+    await resolve_worker_subscription_agent_id(
+        client,  # type: ignore[arg-type]
+        worker_thread_id="21896",
+        serving_to_agent=None,
+    )
+    assert len(captured_urls) == 1
+    assert captured_urls[0].startswith(expected_base)
+    assert captured_urls[0].endswith("/api/v1/git/admin/cse-holders")

@@ -8,7 +8,8 @@ from typing import Any
 
 import httpx
 
-_GIW_BASE_URL = os.getenv("GIW_BASE_URL", "http://127.0.0.1:8091").rstrip("/")
+from giw_endpoint import git_integration_worker_base_url
+
 _TIMEOUT_S = 5.0
 _ROUTE = "/api/v1/cursor/dispatch/latest-terminal-conductor"
 
@@ -22,11 +23,18 @@ def latest_terminal_conductor_for_thread(thread_id: str) -> dict[str, Any] | Non
     return row if isinstance(row, dict) else None
 
 
+def _ledger_giw_base_url() -> str:
+    legacy = os.getenv("GIW_BASE_URL")
+    if legacy is not None and legacy.strip():
+        return legacy.strip().rstrip("/")
+    return git_integration_worker_base_url()
+
+
 def fetch_latest_terminal_conductor(thread_id: str) -> dict[str, Any]:
     """Fetch terminal conductor row; fail-closed with ``ledger_unreachable``."""
     if not thread_id:
         return {"row": None, "ledger_unreachable": True}
-    url = f"{_GIW_BASE_URL}{_ROUTE}"
+    url = f"{_ledger_giw_base_url()}{_ROUTE}"
     try:
         with httpx.Client(timeout=_TIMEOUT_S) as client:
             resp = client.get(url, params={"thread_id": thread_id})

@@ -60,6 +60,7 @@ from bus_watch.spawn_pending import (
     digest_root_surface,
     observe_terminal_lane_closeouts,
 )
+from bus_watch.giw_liaison_urls import liaison_giw_health_url
 from bus_watch.impresario_ear_common import is_ear_turn
 from bus_watch.spawn_wake.review_apply import ready_review_apply_attention
 from bus_watch.spawn_wake.row_class import ready_row_class_attention
@@ -67,7 +68,6 @@ from bus_watch.spawn_wake.row_class import ready_row_class_attention
 _STARGATE_HEALTH = os.environ.get(
     "LIAISON_STARGATE_HEALTH", "http://localhost:9999/health"
 )
-_GIW_HEALTH = os.environ.get("LIAISON_GIW_HEALTH", "http://127.0.0.1:8091/health")
 _WATCH_DIR = WATCH_DIR
 TICK_OVERHEAD_TOKENS = 3000
 _SUBJECT_CAP = 120
@@ -218,7 +218,10 @@ def build_digest(
         "watchers_complete_unrelayed": collect_watchers(
             state, lane_ids, root_id, _WATCH_DIR
         ),
-        "fleet": {"stargate": _health(_STARGATE_HEALTH), "giw": _health(_GIW_HEALTH)},
+        "fleet": {
+            "stargate": _health(_STARGATE_HEALTH),
+            "giw": _health(liaison_giw_health_url()),
+        },
         "fable_lock": lock_now,
         "hop_cap": {
             "max_hops_per_night": policy["max_hops_per_night"],

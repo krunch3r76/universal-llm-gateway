@@ -19,15 +19,13 @@ import httpx
 import yaml
 
 from bus_watch.fable_lock import MAX_HOPS_PER_NIGHT
+from bus_watch.giw_liaison_urls import liaison_giw_usage_live_url
 
 _AGENT_BUS_SOCK = os.environ.get(
     "AGENT_BUS_SOCK", "/tmp/universal-protocol/agent-bus.sock"
 )
 _MCP_YAML = Path.home() / ".gateway" / "mcp.yaml"
 
-_GIW_USAGE_LIVE = os.environ.get(
-    "LIAISON_GIW_USAGE_LIVE", "http://127.0.0.1:8091/api/v1/cursor/dispatch-usage-live"
-)
 _BUDGET_SCOPE = "liaison_seat"
 _BUDGET_RATIO_THRESHOLD = 0.80
 _IDE_BUDGET_RATIO_THRESHOLD = 0.55
@@ -238,7 +236,7 @@ def _read_sdk_usage_live(dispatch_id: str) -> dict[str, Any] | None:
     """Fetch live stream usage for the holder dispatch from GIW."""
     try:
         response = httpx.get(
-            _GIW_USAGE_LIVE,
+            liaison_giw_usage_live_url(),
             params={"dispatch_id": dispatch_id},
             timeout=3.0,
         )

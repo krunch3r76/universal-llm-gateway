@@ -16,6 +16,7 @@ from enum import StrEnum
 from typing import Any, Literal
 
 import httpx
+from giw_endpoint import git_integration_worker_base_url
 from transport_utils import make_async_client, make_sync_client
 
 from .producer_projection import producer_liveness_grace
@@ -53,9 +54,7 @@ class ProbeResult:
 
 
 def _worker_base_url() -> str:
-    return os.environ.get("GIT_INTEGRATION_WORKER_URL", "http://127.0.0.1:8091").rstrip(
-        "/"
-    )
+    return git_integration_worker_base_url()
 
 
 def parse_ts(ts: str) -> datetime:

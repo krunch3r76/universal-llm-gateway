@@ -20,11 +20,8 @@ from typing import Any
 import httpx
 
 from bus_watch.digest_budget import _bus, _get
+from bus_watch.giw_liaison_urls import liaison_giw_active_work_url
 
-_GIW_ACTIVE_WORK = os.environ.get(
-    "LIAISON_GIW_ACTIVE_WORK",
-    "http://127.0.0.1:8091/api/v1/git/active-work",
-)
 _QUIET_REASON_RE = re.compile(r"\breason=([a-z_]+)")
 _UUID_RE = re.compile(
     r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}",
@@ -160,7 +157,7 @@ def fetch_held_execution_ids() -> set[str] | None:
     same payload. Those projections are not mixed into the returned id set.
     """
     try:
-        response = httpx.get(_GIW_ACTIVE_WORK, timeout=3.0)
+        response = httpx.get(liaison_giw_active_work_url(), timeout=3.0)
     except httpx.HTTPError:
         _remember_projections(None)
         return None

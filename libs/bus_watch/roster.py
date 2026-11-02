@@ -11,6 +11,7 @@ from typing import Any
 
 import httpx
 
+from bus_watch.giw_liaison_urls import liaison_giw_active_work_url
 from bus_watch.fable_lock import WATCH_DIR
 from bus_watch.now_row import resolve_now_row
 from bus_watch.park_harvest import scoreboard_g_rows_done
@@ -21,10 +22,6 @@ from bus_watch.spawn_wake.play_classify import (
     mark_consult_reply_seats_empty,
 )
 
-_GIW_ACTIVE_WORK = os.environ.get(
-    "LIAISON_GIW_ACTIVE_WORK",
-    "http://127.0.0.1:8091/api/v1/git/active-work",
-)
 _FRICTION_NOW_RE = re.compile(r"Friction\s+a:(\d+)", re.I)
 
 
@@ -194,7 +191,7 @@ def _holders_from_active_work(payload: dict[str, Any]) -> list[dict[str, Any]]:
 def fetch_giw_active_work_payload() -> dict[str, Any] | None:
     """Parsed ``/active-work`` body. ``None`` when GIW is unreachable."""
     try:
-        response = httpx.get(_GIW_ACTIVE_WORK, timeout=3.0)
+        response = httpx.get(liaison_giw_active_work_url(), timeout=3.0)
     except httpx.HTTPError:
         return None
     if response.status_code >= 400:

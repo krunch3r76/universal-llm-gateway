@@ -2,10 +2,10 @@
 
 from __future__ import annotations
 
-import os
 import re
 
 import httpx
+from giw_endpoint import giw_api_url
 from bus_watch.cursor_xvfb_subscription import parse_ide_holder_agent_id
 from bus_watch.endpoint_wake_transport import (
     agent_id_matches_composer_suffix,
@@ -17,9 +17,6 @@ _BARE_GLASS_AGENT_ID = re.compile(
     r"^[0-9a-f]{8}(?:-[0-9a-f]{4}){0,4}[0-9a-f]{0,12}$",
     re.I,
 )
-
-_GIW = os.environ.get("GIT_INTEGRATION_WORKER_URL", "http://127.0.0.1:8091")
-
 
 async def _cursor_agent_id_for_worker_suffix(
     client: httpx.AsyncClient,
@@ -51,7 +48,7 @@ async def _holder_agent_id_for_lane(
     client: httpx.AsyncClient, *, worker_thread_id: str
 ) -> str | None:
     resp = await client.get(
-        f"{_GIW.rstrip('/')}/api/v1/git/admin/cse-holders",
+        giw_api_url("/api/v1/git/admin/cse-holders"),
         params={"lane_thread_id": worker_thread_id},
     )
     resp.raise_for_status()
