@@ -36,6 +36,10 @@ def _patch_lane_tags(tags: list[str] | None) -> patch:
     )
 
 
+def _patch_no_consumption_window() -> patch:
+    return patch("tools.agent_bus.pickup_gate.load_prior_turns", return_value=[])
+
+
 _HANDOFF = StandingHandoffFreshness(
     status="current",
     uri="cortex://notes/system/threads/77-standing-handoff.md",
@@ -449,6 +453,7 @@ def test_hop_relays_full_handoff_prompt(reason: str, tmp_path) -> None:
                 return_value=tmp_path / "missing-standing-handoff.md",
             ),
             _patch_lane_tags([]),
+            _patch_no_consumption_window(),
         ):
             return await _hop_dispatch(
                 thread="12286",
@@ -564,6 +569,105 @@ def test_hop_emits_arc_hub_pair_when_lane_tagged() -> None:
     prompt = str(captured["body"]["prompt"])
     assert "arc_hub: decision:ulg-arc-standing-terms" in prompt
     assert "arc_hub_tip: a:99@2026-11-01T00:00:00Z" in prompt
+
+
+def test_hop_emits_consumption_missing_when_window_has_unconsumed() -> None:
+    window = [
+        {"turn_number": 10, "body": "TYPE: RULING\nrule: open\n"},
+    ]
+    captured: dict[str, Any] = {}
+
+    async def fake_relay(**kwargs: Any) -> dict[str, str]:
+        captured.update(kwargs)
+        return {"execution_id": "ex-consume"}
+
+    async def run() -> dict[str, Any]:
+        with (
+            patch("tools.agent_bus.hop.assess_standing_handoff", return_value=_HANDOFF),
+            patch(
+                "tools.agent_bus.hop._resolve_hop_seat_request_refusal",
+                return_value=None,
+            ),
+            patch("tools.agent_bus.hop.record"),
+            patch("tools.frontier._relay", side_effect=fake_relay),
+            patch(
+                "tools.agent_bus.pickup_gate.load_prior_turns",
+                return_value=window,
+            ),
+        ):
+            return await _hop_dispatch(
+                thread="21744",
+                reason="consumption-missing-bind",
+                from_agent="web-anthropic",
+            )
+
+    result = asyncio.run(run())
+    assert result.get("continuity_hop") is True, result
+    prompt = str(captured["body"]["prompt"])
+    assert "consumption_missing: CONSUMPTION_MISSING:10" in prompt
+
+
+def test_hop_omits_consumption_missing_when_window_unavailable() -> None:
+    captured: dict[str, Any] = {}
+
+    async def fake_relay(**kwargs: Any) -> dict[str, str]:
+        captured.update(kwargs)
+        return {"execution_id": "ex-no-consume"}
+
+    async def run() -> dict[str, Any]:
+        with (
+            patch("tools.agent_bus.hop.assess_standing_handoff", return_value=_HANDOFF),
+            patch(
+                "tools.agent_bus.hop._resolve_hop_seat_request_refusal",
+                return_value=None,
+            ),
+            patch("tools.agent_bus.hop.record"),
+            patch("tools.frontier._relay", side_effect=fake_relay),
+            patch("tools.agent_bus.pickup_gate.load_prior_turns", return_value=None),
+        ):
+            return await _hop_dispatch(
+                thread="21744",
+                reason="no-consumption-window",
+                from_agent="web-anthropic",
+            )
+
+    result = asyncio.run(run())
+    assert result.get("continuity_hop") is True, result
+    prompt = str(captured["body"]["prompt"])
+    assert "consumption_missing:" not in prompt
+
+
+def test_hop_omits_consumption_missing_when_load_raises() -> None:
+    captured: dict[str, Any] = {}
+
+    async def fake_relay(**kwargs: Any) -> dict[str, str]:
+        captured.update(kwargs)
+        return {"execution_id": "ex-consume-err"}
+
+    def boom(_thread: str) -> None:
+        raise RuntimeError("store down")
+
+    async def run() -> dict[str, Any]:
+        with (
+            patch("tools.agent_bus.hop.assess_standing_handoff", return_value=_HANDOFF),
+            patch(
+                "tools.agent_bus.hop._resolve_hop_seat_request_refusal",
+                return_value=None,
+            ),
+            patch("tools.agent_bus.hop.record"),
+            patch("tools.frontier._relay", side_effect=fake_relay),
+            patch("tools.agent_bus.pickup_gate.load_prior_turns", side_effect=boom),
+        ):
+            return await _hop_dispatch(
+                thread="21744",
+                reason="consumption-load-fail",
+                from_agent="web-anthropic",
+            )
+
+    result = asyncio.run(run())
+    assert result.get("continuity_hop") is True, result
+    prompt = str(captured["body"]["prompt"])
+    assert "consumption_missing:" not in prompt
 
 
 def test_hop_omits_arc_hub_when_lane_untagged() -> None:

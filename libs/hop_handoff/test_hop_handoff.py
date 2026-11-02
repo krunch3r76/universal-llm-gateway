@@ -116,6 +116,21 @@ def test_arc_hub_lines_omitted_when_param_none() -> None:
     assert not any(line.startswith("arc_hub_tip:") for line in body.splitlines())
 
 
+def test_consumption_missing_line_emitted_when_param_present() -> None:
+    marker = "CONSUMPTION_MISSING:12,15"
+    body = _cadence_body(consumption_missing=marker)
+    lines = body.splitlines()
+    assert f"consumption_missing: {marker}" in lines
+    idx_fresh = lines.index("standing_handoff_freshness: current")
+    idx_missing = lines.index(f"consumption_missing: {marker}")
+    assert idx_missing > idx_fresh
+
+
+def test_consumption_missing_line_omitted_when_param_none() -> None:
+    body = _cadence_body()
+    assert not any(line.startswith("consumption_missing:") for line in body.splitlines())
+
+
 def test_arc_hub_tip_none_renders_unknown() -> None:
     hub = ArcHubTip(
         entity_id="decision:ulg-arc-standing-terms",
