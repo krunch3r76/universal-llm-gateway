@@ -313,6 +313,109 @@ def _validate_stored_binding_endpoint(stored_endpoint: str) -> dict[str, Any] | 
     return None
 
 
+def _field_qualifies_as_stored_conversation_url(raw: str) -> bool:
+    text = str(raw or "").strip()
+    if not text.startswith("http") or "/c/" not in text:
+        return False
+    return bool(conversation_id_from_url(text))
+
+
+def _stored_endpoint_from_delivery_binding(binding_reference: str) -> str:
+    """Read subscription row URL fields by id; no synthesis or pinned fallback."""
+    from agent_bus_store.db.connection import connect
+
+    ref = str(binding_reference or "").strip()
+    if not ref:
+        return ""
+    with connect() as conn:
+        row = conn.execute(
+            "SELECT * FROM agent_endpoint_subscriptions WHERE id=? LIMIT 1",
+            (ref,),
+        ).fetchone()
+    if row is None:
+        return ""
+    data = dict(row)
+    for key in ("title", "agent_id", "chat_url"):
+        raw = str(data.get(key) or "").strip()
+        if raw and _field_qualifies_as_stored_conversation_url(raw):
+            return _normalize_stored_endpoint(raw)
+    for key in ("title", "agent_id", "chat_url"):
+        raw = str(data.get(key) or "").strip()
+        if raw:
+            return raw
+    return ""
+
+
+def _refuse_unless_binding_row_matches_claim(
+    binding_reference: str,
+    claim_endpoint: str,
+) -> dict[str, Any] | None:
+    """Refuse synthesized claim URLs unless the subscription row stored a /c/ URL."""
+    from agent_bus_store.db.connection import connect
+
+    claim_norm = _normalize_stored_endpoint(claim_endpoint)
+    ref = str(binding_reference or "").strip()
+    if not ref:
+        return _refuse(
+            "bad_conversation_url",
+            stored_endpoint="",
+            opened_url=claim_norm,
+        )
+    with connect() as conn:
+        row = conn.execute(
+            "SELECT * FROM agent_endpoint_subscriptions WHERE id=? LIMIT 1",
+            (ref,),
+        ).fetchone()
+    if row is None:
+        return _refuse(
+            "bad_conversation_url",
+            stored_endpoint="",
+            opened_url=claim_norm,
+        )
+    data = dict(row)
+    for key in ("title", "agent_id", "chat_url"):
+        raw = str(data.get(key) or "").strip()
+        if raw and _field_qualifies_as_stored_conversation_url(raw):
+            if _normalize_stored_endpoint(raw) == claim_norm:
+                return None
+            return _refuse(
+                "bad_conversation_url",
+                stored_endpoint=raw,
+                opened_url=claim_norm,
+            )
+    first_raw = ""
+    for key in ("title", "agent_id", "chat_url"):
+        raw = str(data.get(key) or "").strip()
+        if raw:
+            first_raw = raw
+            break
+    return _refuse(
+        "bad_conversation_url",
+        stored_endpoint=first_raw,
+        opened_url=claim_norm,
+    )
+
+
+def _target_id_from_cdp_rows(
+    rows: list[dict[str, Any]],
+    conversation_id: str,
+    page: Any | None,
+) -> str | None:
+    """Pick receipt target id: sole CDP match, else the page's own target id."""
+    matching = [
+        r for r in rows if _tab_row_matches_conversation_id(r, conversation_id)
+    ]
+    if len(matching) == 1:
+        tid = str(matching[0].get("id") or "").strip()
+        return tid or None
+    if page is not None:
+        tid = getattr(page, "target_id", None)
+        if tid:
+            text = str(tid).strip()
+            return text or None
+    return None
+
+
 async def _poll_playwright_page_for_conversation(
     ctx: Any,
     conversation_id: str,
@@ -334,9 +437,24 @@ async def _open_orion_binding_tab(
     stored_endpoint: str,
     cdp_url: str = DEFAULT_ORION_CDP_URL,
     store_path: Any | None = None,
+    binding_reference: str | None = None,
 ) -> dict[str, Any]:
     """Open the binding row URL verbatim (hidden) or reuse an existing conversation tab."""
-    stored = _normalize_stored_endpoint(stored_endpoint)
+    if binding_reference:
+        gate = _refuse_unless_binding_row_matches_claim(
+            binding_reference, stored_endpoint
+        )
+        if gate is not None:
+            return gate
+        stored = _stored_endpoint_from_delivery_binding(binding_reference)
+        if not stored:
+            return _refuse(
+                "bad_conversation_url",
+                stored_endpoint="",
+                opened_url=_normalize_stored_endpoint(stored_endpoint),
+            )
+    else:
+        stored = _normalize_stored_endpoint(stored_endpoint)
     invalid = _validate_stored_binding_endpoint(stored)
     if invalid is not None:
         return invalid
@@ -347,13 +465,23 @@ async def _open_orion_binding_tab(
     async with lock:
         existing = _pages_for_conversation_id(ctx.pages, conversation_id)
         if existing:
+            page0 = existing[0]
+            from web_tab.cdp_actuation import default_actuation_port
+
+            impl0 = default_actuation_port()
+            listing0 = impl0.list_tabs(cdp_url=cdp_url)
+            rows0 = (
+                list(listing0.get("pages") or [])
+                if listing0.get("reachable")
+                else []
+            )
             return {
                 "ok": True,
-                "page": existing[0],
+                "page": page0,
                 "opened": False,
                 "reused": True,
                 "closed": False,
-                "target_id": None,
+                "target_id": _target_id_from_cdp_rows(rows0, conversation_id, page0),
                 "policy_just_opened": False,
             }
 
@@ -368,7 +496,8 @@ async def _open_orion_binding_tab(
         listing = impl.list_tabs(cdp_url=cdp_url)
         if not listing.get("reachable"):
             return _refuse("cdp_unreachable")
-        for row in list(listing.get("pages") or []):
+        rows = list(listing.get("pages") or [])
+        for row in rows:
             if _tab_row_matches_conversation_id(row, conversation_id):
                 page = await _poll_playwright_page_for_conversation(
                     ctx, conversation_id
@@ -380,15 +509,19 @@ async def _open_orion_binding_tab(
                         "opened": False,
                         "reused": True,
                         "closed": False,
-                        "target_id": str(row.get("id") or "") or None,
+                        "target_id": _target_id_from_cdp_rows(
+                            rows, conversation_id, page
+                        ),
                         "policy_just_opened": False,
                     }
 
+        target_id = ""
         try:
             cdp_norm = normalize_cdp_store_key(cdp_url)
             async with cdp_open_bind_lock(cdp_norm):
                 relist = impl.list_tabs(cdp_url=cdp_url)
-                for row in list(relist.get("pages") or []):
+                relist_rows = list(relist.get("pages") or [])
+                for row in relist_rows:
                     if _tab_row_matches_conversation_id(row, conversation_id):
                         page = await _poll_playwright_page_for_conversation(
                             ctx, conversation_id
@@ -400,7 +533,9 @@ async def _open_orion_binding_tab(
                                 "opened": False,
                                 "reused": True,
                                 "closed": False,
-                                "target_id": str(row.get("id") or "") or None,
+                                "target_id": _target_id_from_cdp_rows(
+                                    relist_rows, conversation_id, page
+                                ),
                                 "policy_just_opened": False,
                             }
                 opened = impl.create_background_tab(
@@ -416,15 +551,6 @@ async def _open_orion_binding_tab(
                     return _refuse(
                         "conversation_missing",
                         conversation_id=conversation_id,
-                    )
-                opened_url = _normalize_stored_endpoint(
-                    str(opened.get("url") or stored)
-                )
-                if opened_url != stored:
-                    return _refuse(
-                        "endpoint_url_mismatch",
-                        stored_endpoint=stored,
-                        opened_url=opened_url,
                     )
                 target_id = str(opened.get("target_id") or "").strip()
                 ws = str(opened.get("web_socket_debugger_url") or "").strip() or None
@@ -443,6 +569,8 @@ async def _open_orion_binding_tab(
                 conversation_id=conversation_id,
                 retryable=True,
             )
+        except Exception as exc:
+            return _refuse("cdp_unreachable", error=type(exc).__name__)
 
         page = await _poll_playwright_page_for_conversation(ctx, conversation_id)
         if page is None:
@@ -537,6 +665,15 @@ async def _guarded_close_orion_tab(
                     "target_id": target_id,
                     "retryable": True,
                 }
+            try:
+                _close_target(cdp_url, target_id)
+            except Exception as exc:
+                return {
+                    "ok": False,
+                    "reason": "cdp_unreachable",
+                    "target_id": target_id,
+                    "error": type(exc).__name__,
+                }
     except TargetLockBusyError:
         return {
             "ok": False,
@@ -545,7 +682,6 @@ async def _guarded_close_orion_tab(
             "retryable": True,
         }
 
-    _close_target(cdp_url, target_id)
     return {"ok": True, "reason": "closed", "target_id": target_id}
 
 
@@ -556,36 +692,27 @@ async def sweep_orion_duplicate_tabs(
     primary_page: OrionPage,
     cdp_url: str = DEFAULT_ORION_CDP_URL,
     store_path: Any | None = None,
+    primary_target_id: str | None = None,
 ) -> dict[str, Any]:
     """Close agent-opened duplicate chatgpt.com tabs for one conversation (F12, F13)."""
     stored = _normalize_stored_endpoint(stored_endpoint)
     conversation_id = conversation_id_from_url(stored)
     if not conversation_id:
         return {"ok": True, "closed": False, "closed_target_ids": []}
-    matches = _pages_for_conversation_id(ctx.pages, conversation_id)
+    primary_tid = str(primary_target_id or "").strip()
+    if not primary_tid:
+        return {"ok": True, "closed": False, "closed_target_ids": []}
     closed_ids: list[str] = []
-    primary_url = str(getattr(primary_page, "url", "") or "")
     from web_tab.cdp_actuation import default_actuation_port
 
     impl = default_actuation_port()
     listing = impl.list_tabs(cdp_url=cdp_url)
     rows = list(listing.get("pages") or []) if listing.get("reachable") else []
-    for page in matches:
-        if str(getattr(page, "url", "") or "") == primary_url:
+    for row in rows:
+        if not _tab_row_matches_conversation_id(row, conversation_id):
             continue
-        row = next(
-            (
-                r
-                for r in rows
-                if _tab_row_matches_conversation_id(r, conversation_id)
-                and str(r.get("url") or "") == str(getattr(page, "url", "") or "")
-            ),
-            None,
-        )
-        if row is None:
-            continue
-        target_id = str(row.get("id") or "")
-        if not target_id:
+        target_id = str(row.get("id") or "").strip()
+        if not target_id or target_id == primary_tid:
             continue
         outcome = await _guarded_close_orion_tab(
             cdp_url=cdp_url,
@@ -941,6 +1068,7 @@ async def deliver_orion_wake(
     paste_text: str | None = None,
     binding_supplied: bool = False,
     stored_endpoint: str | None = None,
+    binding_reference: str | None = None,
 ) -> dict[str, Any]:
     """Attach to pinned chat, paste a pointer wake, optional MCP approval click."""
     from agent_seat.registry import normalize_bus_address
@@ -984,6 +1112,7 @@ async def deliver_orion_wake(
         "target_id": None,
     }
     policy_just_opened = False
+    selected_target_id: str | None = None
     ctx = None
     owns_cdp = False
     pw = None
@@ -999,7 +1128,10 @@ async def deliver_orion_wake(
         owns_cdp = True
         if binding_supplied:
             attach = await _open_orion_binding_tab(
-                ctx, stored_endpoint=target_url, cdp_url=cdp_url
+                ctx,
+                stored_endpoint=target_url,
+                cdp_url=cdp_url,
+                binding_reference=binding_reference,
             )
             if not attach.get("ok"):
                 if owns_cdp and pw is not None:
@@ -1013,6 +1145,23 @@ async def deliver_orion_wake(
                 "target_id": attach.get("target_id"),
             }
             policy_just_opened = bool(attach.get("policy_just_opened"))
+            tid = attach.get("target_id")
+            if tid:
+                selected_target_id = str(tid)
+            else:
+                from web_tab.cdp_actuation import default_actuation_port
+
+                impl_attach = default_actuation_port()
+                attach_list = impl_attach.list_tabs(cdp_url=cdp_url)
+                attach_rows = (
+                    list(attach_list.get("pages") or [])
+                    if attach_list.get("reachable")
+                    else []
+                )
+                selected_target_id = _target_id_from_cdp_rows(
+                    attach_rows, target_id, page
+                )
+            tab_policy["target_id"] = selected_target_id
         else:
             matches = _pages_for_conversation_id(ctx.pages, target_id)
             if not matches:
@@ -1021,6 +1170,22 @@ async def deliver_orion_wake(
                 return _refuse("conversation_missing", conversation_id=target_id)
             page = matches[0]
             tab_policy["reused"] = True
+            from web_tab.cdp_actuation import default_actuation_port
+
+            impl_pre = default_actuation_port()
+            pre_list = impl_pre.list_tabs(cdp_url=cdp_url)
+            pre_rows = (
+                list(pre_list.get("pages") or [])
+                if pre_list.get("reachable")
+                else []
+            )
+            selected_target_id = _target_id_from_cdp_rows(pre_rows, target_id, page)
+            tab_policy["target_id"] = selected_target_id
+    else:
+        selected_target_id = getattr(page, "target_id", None)
+        if selected_target_id is not None:
+            selected_target_id = str(selected_target_id).strip() or None
+        tab_policy["target_id"] = selected_target_id
 
     assert page is not None
     page_cid = conversation_id_from_url(page.url or "")
@@ -1032,34 +1197,34 @@ async def deliver_orion_wake(
         return _refuse("conversation_missing", conversation_id=target_id)
 
     if ctx is not None and binding_supplied:
+        if selected_target_id is None:
+            tid = getattr(page, "target_id", None)
+            selected_target_id = str(tid).strip() if tid else None
         sweep = await sweep_orion_duplicate_tabs(
             ctx,
             stored_endpoint=target_url,
             primary_page=page,
             cdp_url=cdp_url,
+            primary_target_id=selected_target_id,
         )
         if sweep.get("closed"):
             tab_policy["closed"] = True
-            closed_ids = list(sweep.get("closed_target_ids") or [])
-            if closed_ids and not tab_policy.get("target_id"):
-                tab_policy["target_id"] = closed_ids[0]
 
-    allow_bring_to_front = True
-    if not policy_just_opened:
+    allow_bring_to_front = False
+    if not policy_just_opened and selected_target_id:
         from web_tab.cdp_actuation import default_actuation_port
 
         impl = default_actuation_port()
         listing = impl.list_tabs(cdp_url=cdp_url)
         rows = list(listing.get("pages") or []) if listing.get("reachable") else []
         row = next(
-            (r for r in rows if _tab_row_matches_conversation_id(r, target_id)),
+            (r for r in rows if str(r.get("id") or "") == selected_target_id),
             None,
         )
         if row is not None:
-            tid = str(row.get("id") or "")
             allow_bring_to_front = _created_by_agent_for_target(
                 cdp_url=cdp_url,
-                target_id=tid,
+                target_id=selected_target_id,
                 conversation_url=target_url,
                 tab_url=str(row.get("url") or ""),
             )
@@ -1291,6 +1456,17 @@ async def deliver_orion_chat_wake(
         from_agent=from_agent,
         turns=wake_turns,
     )
+    if claim.binding_reference:
+        gate = _refuse_unless_binding_row_matches_claim(
+            claim.binding_reference, claim.normalized_endpoint()
+        )
+        if gate is not None:
+            return enrich_delivery_receipt(gate, claim)
+        open_endpoint = _stored_endpoint_from_delivery_binding(
+            claim.binding_reference
+        )
+    else:
+        open_endpoint = claim.normalized_endpoint()
     receipt = await deliver_orion_wake(
         thread=thread,
         turn=pointer_turn or turn,
@@ -1301,7 +1477,8 @@ async def deliver_orion_chat_wake(
         connect_cdp=connect_cdp,
         paste_text=paste_text,
         binding_supplied=True,
-        stored_endpoint=claim.normalized_endpoint(),
+        stored_endpoint=open_endpoint,
+        binding_reference=claim.binding_reference,
     )
     # Why: live deliver_orion_wake steers during streaming; deferred_streaming receipts
     # remain for legacy in-flight ledger retry rows and injected pipeline responses.
