@@ -250,6 +250,123 @@ def test_already_terminal_row_is_not_flipped_to_completed(
 
 
 @pytest.mark.offline
+def test_cancel_landing_in_the_mark_terminal_gap_is_not_overwritten(
+    ledger: CursorDispatchLedger,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """H1: a cancel committing between the claim commit and the terminal mark wins.
+
+    Breaks on the a94a1c6b0 shape, where the claim UPDATE re-checked status but
+    never changed it and the flip happened in an unguarded ``mark_terminal``
+    (``WHERE dispatch_id=?`` only, no transaction): a cancel, await-reply seal or
+    reap landing in that gap was overwritten with completed, and the dispatch was
+    reported as a success. The cancel here stands in for that interleaving by
+    committing at exactly the moment the real writer would.
+    """
+    exec_id = "0ad1b5be-0000-4000-8000-0000000000h1"
+    key = "todo:api-role-mark-terminal-gap"
+    _admit_api_role(ledger, dispatch_id=exec_id, execution_id=exec_id, work_key=key)
+
+    real = CursorDispatchLedger.mark_terminal
+
+    def cancel_then_mark(self, **kwargs):
+        with self._connect() as conn:
+            conn.execute(
+                "UPDATE cursor_sdk_dispatches SET status='cancelled', "
+                "terminal_status='cancelled', terminal_at=? WHERE dispatch_id=?",
+                ("2026-11-02T01:30:00+00:00", exec_id),
+            )
+            conn.commit()
+        return real(self, **kwargs)
+
+    monkeypatch.setattr(CursorDispatchLedger, "mark_terminal", cancel_then_mark)
+
+    returned = _complete(ledger, execution_id=exec_id, work_key=key)
+    assert returned == exec_id
+
+    row = _row(ledger, exec_id)
+    assert row["status"] == "cancelled"
+    assert row["terminal_status"] == "cancelled"
+    with ledger._connect() as conn:
+        stop = conn.execute(
+            "SELECT stop_id FROM cursor_dispatch_stop_service WHERE stop_id=?",
+            (exec_id,),
+        ).fetchone()
+    assert stop is None
+
+
+@pytest.mark.offline
+def test_mark_terminal_default_path_is_unguarded(
+    ledger: CursorDispatchLedger,
+) -> None:
+    """Existing callers keep the unguarded flip from any status.
+
+    Breaks if ``only_from_statuses`` were made the default: reap and seal paths
+    that legitimately close an already-terminal row would silently stop writing
+    the stop_service row.
+    """
+    exec_id = "0ad1b5be-0000-4000-8000-0000000000d1"
+    key = "todo:api-role-unguarded-default"
+    _admit_api_role(ledger, dispatch_id=exec_id, execution_id=exec_id, work_key=key)
+    with ledger._connect() as conn:
+        conn.execute(
+            "UPDATE cursor_sdk_dispatches SET status='cancelled', "
+            "terminal_status='cancelled' WHERE dispatch_id=?",
+            (exec_id,),
+        )
+        conn.commit()
+
+    result = ledger.mark_terminal_checked(dispatch_id=exec_id, terminal_status="failed")
+
+    assert result.marked is True
+    assert _row(ledger, exec_id)["terminal_status"] == "failed"
+
+
+@pytest.mark.offline
+def test_settled_row_keeps_its_original_terminal_at(
+    ledger: CursorDispatchLedger,
+) -> None:
+    """L1: a repeat completion does not move ``terminal_at`` on a finished row.
+
+    Breaks on a late retry: the row's end time walks forward to the retry's
+    stamp, so dispatch duration and the overlap census read long.
+    """
+    exec_id = "0ad1b5be-0000-4000-8000-0000000000l1"
+    key = "todo:api-role-terminal-at-stable"
+    _admit_api_role(ledger, dispatch_id=exec_id, execution_id=exec_id, work_key=key)
+    _complete(ledger, execution_id=exec_id, work_key=key)
+    first_terminal_at = _row(ledger, exec_id)["terminal_at"]
+
+    _complete(
+        ledger, execution_id=exec_id, work_key=key, stamp="2026-11-02T09:00:00+00:00"
+    )
+
+    assert _row(ledger, exec_id)["terminal_at"] == first_terminal_at
+
+
+@pytest.mark.offline
+def test_existing_execution_id_is_not_clobbered(
+    ledger: CursorDispatchLedger,
+) -> None:
+    """L3: a row matched by dispatch_id keeps the execution_id admit recorded.
+
+    Breaks when a completion arrives under a different execution_id than the one
+    admit stored: the row's link to the execution that actually ran is lost.
+    """
+    dispatch = "0ad1b5be-0000-4000-8000-0000000000l3"
+    admitted_exec = "exec-admitted-l3"
+    key = "todo:api-role-exec-id-stable"
+    _admit_api_role(
+        ledger, dispatch_id=dispatch, execution_id=admitted_exec, work_key=key
+    )
+
+    returned = _complete(ledger, execution_id=dispatch, work_key=key)
+
+    assert returned == dispatch
+    assert _row(ledger, dispatch)["execution_id"] == admitted_exec
+
+
+@pytest.mark.offline
 def test_parked_sibling_with_same_execution_id_is_not_matched(
     ledger: CursorDispatchLedger,
 ) -> None:

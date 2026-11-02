@@ -57,7 +57,8 @@ _STATUS_CHECK = (
     "'claimed'"
 )
 _TERMINAL_STATUS_CHECK = "'completed','failed','cancelled'"
-_API_ROLE_CLOSEABLE_STATUSES = "'queued','admitted','running'"
+_API_ROLE_ACTIVE_STATUSES = ("queued", "admitted", "running")
+_API_ROLE_CLOSEABLE_STATUSES = ",".join(f"'{s}'" for s in _API_ROLE_ACTIVE_STATUSES)
 _ACTIVE_IDENTITY_STATUSES = "'queued','admitted','running','parked_waiting'"
 _NON_TERMINAL_CONDUCTOR_STATUSES = (
     "'queued','admitted','claimed','running','parked_waiting'"
@@ -461,6 +462,18 @@ class PromotedDispatch:
     contract: str | None
     read_only: bool
     record_json: str
+    lease_key: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class TerminalMarkResult:
+    """Outcome of :meth:`CursorDispatchLedger.mark_terminal_checked`.
+
+    ``marked`` is ``False`` only on the guarded path, when another writer closed
+    the row first. ``lease_key`` is then ``None`` because nothing was released.
+    """
+
+    marked: bool
     lease_key: str | None = None
 
 
@@ -2757,16 +2770,58 @@ class CursorDispatchLedger:
                 thread_id=row["thread_id"],
             )
 
-    def mark_terminal(self, *, dispatch_id: str, terminal_status: str) -> str | None:
+    def mark_terminal(
+        self,
+        *,
+        dispatch_id: str,
+        terminal_status: str,
+        only_from_statuses: tuple[str, ...] | None = None,
+    ) -> str | None:
         """Mark terminal; return ``lease_key`` when present for FIFO promotion.
 
         Callers must emit a foldable ``frontier.sdk.worker.*`` terminal (or route
         through ``_mark_terminal_and_promote`` which synthesizes unclassified) before
         ``lease.released`` — this method does not emit worker lifecycle events.
+
+        ``only_from_statuses`` opts into a guarded mark: see
+        :meth:`mark_terminal_checked`. Callers that need to know whether the mark
+        landed must call that method, since a ``None`` return here is
+        indistinguishable from a row that simply holds no lease.
+        """
+        return self.mark_terminal_checked(
+            dispatch_id=dispatch_id,
+            terminal_status=terminal_status,
+            only_from_statuses=only_from_statuses,
+        ).lease_key
+
+    def mark_terminal_checked(
+        self,
+        *,
+        dispatch_id: str,
+        terminal_status: str,
+        only_from_statuses: tuple[str, ...] | None = None,
+    ) -> TerminalMarkResult:
+        """Mark terminal, reporting whether the mark landed.
+
+        Default (``only_from_statuses=None``) is unguarded and flips the row from
+        any status, which is what the long-standing callers want: they have
+        already decided the dispatch is over.
+
+        Pass ``only_from_statuses`` when a concurrent writer may legitimately
+        close the row first — an operator cancel, an await-reply seal, or a reap.
+        The status predicate then rides in the ``UPDATE`` itself under
+        ``BEGIN IMMEDIATE``, so a writer committing between the status read and
+        the mark cannot be overwritten. When the predicate does not match,
+        ``marked`` is ``False`` and **no** side effect runs: no status flip, no
+        ``memo_state``, no ``cursor_dispatch_stop_service`` row, no registry
+        work_status stamp.
         """
         assert terminal_status in _STATUS_TERMINAL
         lease_key: str | None = None
+        marked = True
         with self._connect() as conn:
+            if only_from_statuses is not None:
+                conn.execute("BEGIN IMMEDIATE")
             row = conn.execute(
                 "SELECT lease_key, source_repo, wake_lane, thread_id, record_json, "
                 "caller_agent, memo_state FROM cursor_sdk_dispatches WHERE dispatch_id=?",
@@ -2791,23 +2846,32 @@ class CursorDispatchLedger:
                 row_dict = {key: row[key] for key in row.keys()}
                 owe_memo = memo_owe_on_terminal(row_dict, rec)
             next_at = time.time() + 30 if owe_memo else None
-            conn.execute(
+            guard = ""
+            params: list[Any] = [
+                terminal_status,
+                terminal_status,
+                _now(),
+                1 if owe_memo else 0,
+                1 if owe_memo else 0,
+                next_at,
+                dispatch_id,
+            ]
+            if only_from_statuses is not None:
+                placeholders = ",".join("?" for _ in only_from_statuses)
+                guard = f" AND status IN ({placeholders})"
+                params.extend(only_from_statuses)
+            cur = conn.execute(
                 "UPDATE cursor_sdk_dispatches SET status=?, terminal_status=?, terminal_at=?, "
                 "memo_state=CASE WHEN ? AND memo_state IS NULL "
                 "THEN 'owed' ELSE memo_state END, "
                 "memo_next_at=CASE WHEN ? AND memo_state IS NULL "
                 "THEN ? ELSE memo_next_at END "
-                "WHERE dispatch_id=?",
-                (
-                    terminal_status,
-                    terminal_status,
-                    _now(),
-                    1 if owe_memo else 0,
-                    1 if owe_memo else 0,
-                    next_at,
-                    dispatch_id,
-                ),
+                f"WHERE dispatch_id=?{guard}",
+                params,
             )
+            if only_from_statuses is not None and cur.rowcount == 0:
+                conn.commit()
+                return TerminalMarkResult(marked=False, lease_key=None)
             conn.execute(
                 "INSERT OR IGNORE INTO cursor_dispatch_stop_service "
                 "(stop_id, serviced_admit) VALUES (?, NULL)",
@@ -2823,7 +2887,7 @@ class CursorDispatchLedger:
             terminal_status=terminal_status,
             ledger=self,
         )
-        return lease_key
+        return TerminalMarkResult(marked=marked, lease_key=lease_key)
 
     def _inherit_resume_wake_lane(self, req: CursorDispatchRequest) -> None:
         """Copy ``wake_lane`` from a ``resume_of`` parent. ``nest_under`` does not."""
@@ -3634,11 +3698,21 @@ class CursorDispatchLedger:
         construction, or a closed-in-place completion is credited to a row that
         does not exist (friction:41315 F7).
 
-        Closing the admitted row in place goes through a guarded claim under
-        ``BEGIN IMMEDIATE`` followed by :meth:`mark_terminal`, so a cancel or reap
-        committing concurrently cannot be flipped back to ``completed`` and the
-        terminal side effects (lease FIFO promotion, memo owe, stop_service,
-        registry work_status) still fire.
+        Closing the admitted row in place merges the completion fields under
+        ``BEGIN IMMEDIATE`` and then marks it terminal through
+        :meth:`mark_terminal_checked` with ``only_from_statuses``, so a cancel,
+        await-reply seal or reap that commits first keeps its own terminal status
+        and the completion becomes a no-op flip. The economics merge still lands:
+        usage belongs to the row whether or not the status flip won.
+
+        Side effects that fire on the winning flip: memo owe, the
+        ``cursor_dispatch_stop_service`` row, and the registry work_status stamp.
+        Lease FIFO promotion does not, and does not need to — API-role rows carry
+        no lease. Their admit site
+        (``universal-stargate/systems/frontier_consult/api_role_generate.py``)
+        passes neither ``lease_key`` nor ``source_repo``, and the synthetic insert
+        below names neither column, so :func:`_resolve_lease_key` resolves ``None``
+        for every row this method touches (friction:41315 M1, branch a).
         """
         dispatch_id = f"api-{execution_id}"
         try:
@@ -3647,7 +3721,6 @@ class CursorDispatchLedger:
             patch = {}
         if not isinstance(patch, dict):
             patch = {}
-        claimed_id: str | None = None
         with self._connect() as conn:
             conn.execute("BEGIN IMMEDIATE")
             open_row = conn.execute(
@@ -3659,12 +3732,12 @@ class CursorDispatchLedger:
             ).fetchone()
             if open_row is not None:
                 admitted_id = str(open_row["dispatch_id"])
-                cur = conn.execute(
-                    "UPDATE cursor_sdk_dispatches SET execution_id=?, resolved_model=?, "
+                conn.execute(
+                    "UPDATE cursor_sdk_dispatches SET "
+                    "execution_id=COALESCE(execution_id, ?), resolved_model=?, "
                     "contract=COALESCE(contract, ?), work_key=COALESCE(work_key, ?), "
                     "started_at=COALESCE(started_at, ?) "
-                    "WHERE dispatch_id=? "
-                    f"AND status IN ({_API_ROLE_CLOSEABLE_STATUSES})",
+                    "WHERE dispatch_id=?",
                     (
                         execution_id,
                         resolved_model,
@@ -3674,15 +3747,13 @@ class CursorDispatchLedger:
                         admitted_id,
                     ),
                 )
-                if cur.rowcount == 1:
-                    _merge_record_json_conn(conn, dispatch_id=admitted_id, patch=patch)
-                    claimed_id = admitted_id
+                _merge_record_json_conn(conn, dispatch_id=admitted_id, patch=patch)
                 conn.commit()
-                if claimed_id is not None:
-                    self.mark_terminal(
-                        dispatch_id=claimed_id, terminal_status="completed"
-                    )
-                    return claimed_id
+                self.mark_terminal(
+                    dispatch_id=admitted_id,
+                    terminal_status="completed",
+                    only_from_statuses=_API_ROLE_ACTIVE_STATUSES,
+                )
                 return admitted_id
             settled = conn.execute(
                 "SELECT dispatch_id FROM cursor_sdk_dispatches "
@@ -3694,7 +3765,8 @@ class CursorDispatchLedger:
             if settled is not None:
                 settled_id = str(settled["dispatch_id"])
                 conn.execute(
-                    "UPDATE cursor_sdk_dispatches SET terminal_at=?, resolved_model=?, "
+                    "UPDATE cursor_sdk_dispatches SET terminal_at=COALESCE(terminal_at, ?), "
+                    "resolved_model=?, "
                     "contract=COALESCE(contract, ?) WHERE dispatch_id=?",
                     (stamp, resolved_model, contract or "freeform", settled_id),
                 )
