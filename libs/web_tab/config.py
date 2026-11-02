@@ -18,9 +18,18 @@ _LOOPBACK_HOSTS = frozenset({"127.0.0.1", "localhost", "::1"})
 _HOST_ERROR_MAX_LEN = 64
 _SURFACE_CDP_ENV = {
     "chatgpt": "WEB_TAB_CDP_URL_CHATGPT",
+    "anthropic_console": "WEB_TAB_CDP_URL_ANTHROPIC_CONSOLE",
+}
+_SURFACE_CDP_ENV_ALIASES = {
     "claude": "WEB_TAB_CDP_URL_CLAUDE",
 }
 _UNMAPPED_SURFACES = frozenset({"grok", "x_grok", "x"})
+WEB_TAB_SMOKE_PROVIDER_FIXTURES: frozenset[str] = frozenset(
+    {
+        "chatgpt_composer.html",
+        "grok_chat.html",
+    }
+)
 
 
 @dataclass(frozen=True)
@@ -36,14 +45,14 @@ def _repo_root() -> Path:
 
 
 def normalize_web_tab_surface(surface: str | None) -> str | None:
-    """Map caller surface aliases to canonical keys (chatgpt, claude, grok) or None."""
+    """Map caller surface aliases to canonical keys (chatgpt, anthropic_console, grok) or None."""
     raw = (surface or "").strip().lower()
     if not raw:
         return None
     if raw in {"chatgpt", "openai"}:
         return "chatgpt"
-    if raw == "claude":
-        return "claude"
+    if raw in {"anthropic_console", "claude-console", "claude"}:
+        return "anthropic_console"
     if raw in _UNMAPPED_SURFACES:
         return "grok"
     return raw
@@ -79,8 +88,15 @@ def load_web_tab_houses() -> dict[str, WebTabHouse]:
 
 
 def _house_cdp_url(house: WebTabHouse) -> str:
-    env_key = _SURFACE_CDP_ENV.get(house.surface, "")
-    if env_key:
+    env_keys: list[str] = []
+    primary = _SURFACE_CDP_ENV.get(house.surface, "")
+    if primary:
+        env_keys.append(primary)
+    if house.surface == "anthropic_console":
+        legacy = _SURFACE_CDP_ENV_ALIASES.get("claude", "")
+        if legacy:
+            env_keys.append(legacy)
+    for env_key in env_keys:
         override = os.environ.get(env_key, "").strip()
         if override:
             return override
@@ -123,7 +139,11 @@ def _allowed_cdp_ports() -> frozenset[int]:
                 p = None
             if p is not None:
                 ports.add(p)
-    for env_key in ("WEB_TAB_CDP_URL", *_SURFACE_CDP_ENV.values()):
+    for env_key in (
+        "WEB_TAB_CDP_URL",
+        *_SURFACE_CDP_ENV.values(),
+        *_SURFACE_CDP_ENV_ALIASES.values(),
+    ):
         env_url = os.environ.get(env_key, "").strip()
         if not env_url:
             continue
@@ -188,7 +208,7 @@ def resolve_cdp_url_for_surface(
 ) -> str:
     """Resolve CDP URL for a product surface with optional explicit override.
 
-    Mapped surfaces (chatgpt, claude) default to ``config/web_tab/houses.yaml``.
+    Mapped surfaces (chatgpt, anthropic_console) default to ``config/web_tab/houses.yaml``.
     Explicit URLs on a mapped surface must match the mapped port or raise
     ``cdp_surface_mismatch``. Unmapped surfaces (e.g. grok) require explicit
     URL or ``WEB_TAB_CDP_URL``.

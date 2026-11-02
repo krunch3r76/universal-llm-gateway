@@ -185,6 +185,19 @@ async def expire_pending_intent(
         != 1
     ):
         return False
+    if intent.service == "stargate" and hasattr(store, "clear_open_for_service"):
+        # Mirror cancel (api_dispatch): an expired stargate arm must not leave
+        # its restart window open until the window TTL (41247 NIT).
+        from .restart_window_ctl import clear_service_windows
+
+        try:
+            await clear_service_windows(store, intent.service, reason="intent_expired")
+        except Exception:
+            logger.warning(
+                "restart intent expiry window clear failed intent_id=%s",
+                intent_id,
+                exc_info=True,
+            )
     refreshed = store.get(intent_id)
     last_reason = (
         (refreshed.status_reason or refreshed.reason or "")

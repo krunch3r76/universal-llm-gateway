@@ -236,3 +236,159 @@ def test_expired_migration_concurrent_open(tmp_path) -> None:
     assert _allows_expired(verify)
     assert _row_count(verify) == 5
     verify.close()
+
+
+def _seed_v1_legacy_schema(conn: sqlite3.Connection) -> None:
+    """Oldest shape: no verifying_activation, no kill_boundary_at."""
+    conn.executescript(
+        """
+        CREATE TABLE restart_intents (
+            intent_id TEXT PRIMARY KEY,
+            service TEXT NOT NULL,
+            action TEXT NOT NULL DEFAULT 'restart',
+            status TEXT NOT NULL CHECK (status IN (
+                'pending_drain','drained_restarting','completed',
+                'failed','timeout','force_requested','cancelled')),
+            drain_epoch INTEGER,
+            worker_id TEXT,
+            worker_started_at TEXT,
+            deadline_at TEXT,
+            last_seen_event_seq INTEGER NOT NULL DEFAULT 0,
+            reason TEXT,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        );
+        """
+    )
+
+
+def test_apply_schema_recovers_expired_temp_when_main_dropped(tmp_path) -> None:
+    """41247 data-loss: crash after DROP main, before RENAME temp.
+
+    Through ``apply_restart_intent_schema`` — ``_DDL`` must not mint an empty
+    main that then causes the row-holding temp to be dropped.
+    """
+    db = tmp_path / "intents.db"
+    conn = _connect(db)
+    _seed_pre_expired_schema(conn)
+    conn.execute(
+        "INSERT INTO restart_intents "
+        "(intent_id, service, status, created_at, updated_at) "
+        "VALUES ('survive', 'stargate', ?, 'c', 'u')",
+        (STATUS_PENDING_DRAIN,),
+    )
+    conn.commit()
+    _create_expired_migration_temp(conn)
+    conn.execute(
+        f"INSERT INTO {_EXPIRED_MIGRATION_TEMP} "
+        "(intent_id, service, status, created_at, updated_at) "
+        "SELECT intent_id, service, status, created_at, updated_at FROM restart_intents"
+    )
+    conn.execute("DROP TABLE restart_intents")
+    conn.commit()
+    conn.close()
+
+    conn = _connect(db)
+    apply_restart_intent_schema(conn)
+    conn.commit()
+    assert _allows_expired(conn)
+    assert _row_count(conn) == 1
+    assert conn.execute(
+        "SELECT intent_id FROM restart_intents WHERE intent_id='survive'"
+    ).fetchone()
+    assert conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?",
+        (_EXPIRED_MIGRATION_TEMP,),
+    ).fetchone() is None
+    # Re-open is a stable no-op.
+    apply_restart_intent_schema(conn)
+    conn.commit()
+    assert _row_count(conn) == 1
+
+
+def test_apply_schema_recovers_v2_temp_when_main_dropped(tmp_path) -> None:
+    """restart_intents_v2 crash after DROP main: rows restored, not dropped."""
+    db = tmp_path / "intents.db"
+    conn = _connect(db)
+    _seed_v1_legacy_schema(conn)
+    conn.execute(
+        "INSERT INTO restart_intents (intent_id, service, status, created_at, updated_at) "
+        "VALUES ('v2keep', 'git_integration_worker', 'pending_drain', 't', 't')"
+    )
+    conn.commit()
+    conn.execute("ALTER TABLE restart_intents RENAME TO restart_intents_v2")
+    conn.commit()
+    conn.close()
+
+    conn = _connect(db)
+    apply_restart_intent_schema(conn)
+    conn.commit()
+    assert _allows_expired(conn)
+    assert _row_count(conn) == 1
+    assert conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='restart_intents_v2'"
+    ).fetchone() is None
+
+
+def test_apply_schema_leftover_v2_temp_with_main_does_not_crash_loop(tmp_path) -> None:
+    """Crash after CREATE restart_intents_v2 (before DROP): reopen succeeds."""
+    db = tmp_path / "intents.db"
+    conn = _connect(db)
+    _seed_v1_legacy_schema(conn)
+    conn.execute(
+        "INSERT INTO restart_intents (intent_id, service, status, created_at, updated_at) "
+        "VALUES ('a', 'mcp', 'pending_drain', 't', 't')"
+    )
+    conn.execute("CREATE TABLE restart_intents_v2 (intent_id TEXT PRIMARY KEY)")
+    conn.execute("INSERT INTO restart_intents_v2 VALUES ('partial')")
+    conn.commit()
+
+    apply_restart_intent_schema(conn)
+    conn.commit()
+    apply_restart_intent_schema(conn)
+    conn.commit()
+    assert _allows_expired(conn)
+    assert _row_count(conn) == 1
+    cols = {r[1] for r in conn.execute("PRAGMA table_info(restart_intents)")}
+    assert "kill_boundary_at" in cols
+
+
+def test_v2_migration_is_atomic_on_failure(tmp_path, monkeypatch) -> None:
+    """A failure mid v2 rebuild rolls back: main intact, no temp left."""
+    from scripts.model_manager.ui.controller import restart_intent_migrate as mig
+
+    db = tmp_path / "intents.db"
+    conn = _connect(db)
+    _seed_v1_legacy_schema(conn)
+    conn.execute(
+        "INSERT INTO restart_intents (intent_id, service, status, created_at, updated_at) "
+        "VALUES ('b', 'mcp', 'pending_drain', 't', 't')"
+    )
+    conn.commit()
+
+    real_execute = conn.execute
+
+    calls = {"n": 0}
+
+    def _wrapped(sql, *a):
+        if str(sql).strip().startswith("DROP TABLE restart_intents") and "IF" not in str(sql):
+            calls["n"] += 1
+            raise sqlite3.OperationalError("simulated crash")
+        return real_execute(sql, *a)
+
+    class _Proxy:
+        def __getattr__(self, name):
+            return getattr(conn, name)
+
+        def execute(self, sql, *a):
+            return _wrapped(sql, *a)
+
+    try:
+        mig._ensure_v2_shape(_Proxy())
+    except sqlite3.OperationalError:
+        pass
+    assert calls["n"] == 1
+    assert _row_count(conn) == 1
+    assert conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='restart_intents_v2'"
+    ).fetchone() is None

@@ -174,6 +174,63 @@ async def test_paste_operator_active_retryable() -> None:
 
 
 @pytest.mark.asyncio
+async def test_open_then_paste_reports_created_by_agent(tmp_path: Path) -> None:
+    """Paste without conversation_url still resolves agent-open binding by target_id."""
+    store = tmp_path / "bindings.json"
+    port = RecordingActuationPort(
+        tabs=[
+            {
+                "id": "new-tab",
+                "url": "https://grok.com/",
+                "web_socket_debugger_url": "ws://fake/new-tab",
+            }
+        ]
+    )
+    opened = await execute_open(
+        cdp_url="http://127.0.0.1:9342",
+        url="https://grok.com/",
+        grant="explicit",
+        authorization_source=_AUTH,
+        store_path=store,
+        port=port,
+    )
+    assert opened["created_by_agent"] is True
+    tid = str(opened["target_id"])
+    with (
+        patch(
+            "web_tab.write_ops.operator_active_probe",
+            AsyncMock(return_value={"ok": True}),
+        ),
+        patch(
+            "web_tab.write_ops.dom_set_composer_text",
+            AsyncMock(return_value={"ok": True}),
+        ),
+        patch(
+            "web_tab.write_ops.capture_dom_baseline",
+            AsyncMock(
+                return_value={
+                    "ok": True,
+                    "user_count": 0,
+                    "assistant_count": 0,
+                    "last_assistant_text": "",
+                }
+            ),
+        ),
+    ):
+        pasted = await execute_paste(
+            cdp_url="http://127.0.0.1:9342",
+            target_id=tid,
+            text="hello",
+            grant="explicit",
+            authorization_source=_AUTH,
+            store_path=store,
+            port=port,
+        )
+    assert pasted["ok"] is True
+    assert pasted["created_by_agent"] is True
+
+
+@pytest.mark.asyncio
 async def test_paste_dom_paste_receipt() -> None:
     port = RecordingActuationPort(
         tabs=[
@@ -298,19 +355,35 @@ async def test_target_lock_refuses_nonblocking_fcntl(
 
 
 def test_resolve_write_cdp_url_maps_surface_without_explicit() -> None:
-    url, err = _resolve_write_cdp_url({"surface": "claude"})
+    url, err = _resolve_write_cdp_url({"surface": "anthropic_console"})
     assert err is None
     assert url == "http://127.0.0.1:9343"
 
 
 @pytest.mark.asyncio
-async def test_dispatch_refuses_claude_on_chatgpt_cdp_port() -> None:
+async def test_dispatch_refuses_claude_ai_chat_url() -> None:
+    result = await dispatch_write_op(
+        "open",
+        {
+            "surface": "anthropic_console",
+            "url": "https://claude.ai/chat/x",
+            "grant": "explicit",
+            "authorization_source": _AUTH,
+        },
+    )
+    assert result["ok"] is False
+    assert result["code"] == "surface_not_web_tab_owned"
+    assert result["owner"] == "cdp_ask"
+
+
+@pytest.mark.asyncio
+async def test_dispatch_refuses_anthropic_console_on_chatgpt_cdp_port() -> None:
     result = await dispatch_write_op(
         "bind",
         {
-            "surface": "claude",
+            "surface": "anthropic_console",
             "cdp_url": "http://127.0.0.1:9342",
-            "conversation_url": "https://claude.ai/chat/x",
+            "conversation_url": "https://console.anthropic.com/settings",
             "target_id": "t1",
             "grant": "explicit",
             "authorization_source": _AUTH,

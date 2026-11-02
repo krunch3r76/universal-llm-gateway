@@ -45,6 +45,8 @@ _REPO_PATH_RE = re.compile(
     r"[A-Za-z0-9_./-]+\.(?:py|md|yaml|yml|sh|json|mdc)\b"
 )
 _CATEGORY_PREFIX_RE = re.compile(r"^\[[^\]]+\]\s*")
+# A friction row's claim is ``[<category>] <note>`` (ops_assertions_friction).
+_FRICTION_ROW_CLAIM_RE = re.compile(r"^\[[a-z_]+\]")
 
 
 def format_resolution_kind_catalog() -> str:
@@ -495,6 +497,18 @@ def close_friction_assertion(
     entity_id = existing.get("entity_id")
     if not entity_id:
         return {"error": f"Friction assertion {assertion_id} has no entity_id"}
+
+    # D3 (a:41288): only friction rows (claim ``[<category>] …``) may be closed;
+    # closure rows (``[resolved:…]``) and plain assertions are refused.
+    if not _FRICTION_ROW_CLAIM_RE.match(str(existing.get("claim") or "")):
+        return {
+            "error": (
+                f"not_a_friction_row: assertion {assertion_id} is not a friction "
+                "row (claim must start with '[<category>] ')"
+            ),
+            "reason_code": "not_a_friction_row",
+            "assertion_id": assertion_id,
+        }
 
     # Promote BEFORE superseding the friction. Promotion can fail (e.g. schema
     # reject) and superseding is irreversible-by-early-return: a closed friction

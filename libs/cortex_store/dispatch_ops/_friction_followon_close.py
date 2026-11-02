@@ -103,7 +103,8 @@ def close_spawned_friction_on_todo_done(
 
     result = close_friction_assertion(
         friction_id,
-        f"todo:{entity_id}",
+        # entity_id is already a todo:<slug> id — do not re-prefix (D2, a:41288).
+        entity_id if entity_id.startswith("todo:") else f"todo:{entity_id}",
         agent="cortex-api",
         session_id="friction-followon-todo-done",
         resolution_note=(

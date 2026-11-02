@@ -133,7 +133,7 @@ def test_friction_close_todo_dedup(friction_db: int) -> None:
     from cortex_store import db as cortex_db
 
     with cortex_db.cortex_conn() as conn:
-        friction2_id = _insert_friction(conn, "second friction for dedup")
+        friction2_id = _insert_friction(conn, "[tool_error] second friction for dedup")
 
     result2 = close_friction_assertion(
         friction2_id, _TODO_ID, agent="t", session_id="t"
