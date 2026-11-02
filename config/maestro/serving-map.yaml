@@ -33,12 +33,16 @@ rows:
     services:
       - agent_bus
       - cdp_ask
+      - stargate
     cite: >-
       agent_bus: endpoint_wake_ledger.py and endpoint_subscriptions.py import
       web_chat_relay.orion_wake independent of AGENT_BUS_ENDPOINT_WAKE_DISPATCHER;
       the dispatcher import is flag-gated. cdp_ask/app.py imports
       chat_session_harvest and chat_session_paste, which import
-      web_chat_relay.grok_session at module top.
+      web_chat_relay.grok_session at module top. stargate runs
+      pipelines/orion_chat_wake/v1/handlers/wake.py, which imports
+      web_chat_relay.orion_wake at module top (lines 10-14) and awaits
+      deliver_orion_chat_wake (line 35).
   - prefix: libs/writing_intake/
     services:
       - stargate

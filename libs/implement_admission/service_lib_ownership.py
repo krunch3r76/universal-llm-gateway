@@ -429,6 +429,7 @@ _SERVICE_OWNERSHIP: dict[str, ServiceOwnership] = {
                 "universal_logging",
                 "universal_protocol",
                 "universal_transport",
+                "web_chat_relay",
                 "web_tab",
             }
         ),
@@ -443,6 +444,7 @@ _SERVICE_OWNERSHIP: dict[str, ServiceOwnership] = {
                 "job_grammar",
                 "job_vocab",
                 "prompt_expand_consume",
+                "web_chat_relay",
                 "web_tab",
                 "writing_intake",
             }

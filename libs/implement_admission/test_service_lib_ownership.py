@@ -153,6 +153,7 @@ def test_stargate_may_import_libs_stay_out_of_serves_libs() -> None:
             "job_grammar",
             "job_vocab",
             "prompt_expand_consume",
+            "web_chat_relay",
             "web_tab",
             "writing_intake",
         }
@@ -214,10 +215,12 @@ def test_agent_bus_serves_wake_libs() -> None:
     assert set(services_for_path("libs/web_chat_relay/orion_wake.py")) == {
         "agent_bus",
         "cdp_ask",
+        "stargate",
     }
     assert set(services_for_path("libs/web_chat_relay/grok_session.py")) == {
         "agent_bus",
         "cdp_ask",
+        "stargate",
     }
 
 
@@ -363,6 +366,39 @@ def test_stargate_web_tab_handler_load_imports_package() -> None:
     assert status_mod.build_status_report.__module__ == "web_tab.status_report"
     write_mod = sys.modules[f"{package_name}.write"]
     assert write_mod.dispatch_write_op.__module__ == "web_tab.write_ops"
+
+
+@pytest.mark.offline
+def test_stargate_orion_chat_wake_handler_load_imports_orion_wake() -> None:
+    """Dynamic pipeline load is a stargate consumer of web_chat_relay.orion_wake.
+
+    ``pipelines/orion_chat_wake/v1/handlers/wake.py`` imports
+    ``deliver_orion_chat_wake`` at module top. Loading that handlers package
+    must leave the function's module as ``web_chat_relay.orion_wake``.
+    """
+    import sys
+
+    from systems.pipeline.core.domain_router import get_domain_router
+    from systems.pipeline.user_handlers import (
+        _load_handlers_package,
+        _make_package_name,
+    )
+
+    handlers = repo_root() / "pipelines" / "orion_chat_wake" / "v1" / "handlers"
+    package_name = _make_package_name("orion_chat_wake", "v1")
+    sys.modules.pop(package_name, None)
+    for key in list(sys.modules):
+        if key.startswith(package_name + "."):
+            sys.modules.pop(key, None)
+    loaded = _load_handlers_package(
+        handlers_dir=handlers,
+        package_name=package_name,
+        display_path="orion_chat_wake/v1/handlers",
+        router=get_domain_router(),
+    )
+    assert loaded == 1
+    wake_mod = sys.modules[f"{package_name}.wake"]
+    assert wake_mod.deliver_orion_chat_wake.__module__ == "web_chat_relay.orion_wake"
 
 
 @pytest.mark.offline
