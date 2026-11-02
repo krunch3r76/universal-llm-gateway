@@ -187,3 +187,22 @@ async def test_timeout_includes_holder_fields_and_later_waiter_acquires(
     async with target_write_lock(target, timeout_s=2.0):
         meta = read_lock_holder_metadata(_lock_path(target))
         assert meta.get("pid") == os.getpid()
+
+
+@pytest.mark.asyncio
+async def test_zero_timeout_attempts_flock_once(lock_dir: str) -> None:
+    target = "zero-timeout-target"
+    ready = mp.Event()
+    release = mp.Event()
+    holder = mp.Process(
+        target=_holder_entry,
+        args=(lock_dir, target, ready, release, mp.Queue()),
+    )
+    holder.start()
+    assert ready.wait(timeout=5.0)
+    os.environ["ULG_WEB_TAB_LOCK_DIR"] = lock_dir
+    with pytest.raises(TargetLockBusyError):
+        async with target_write_lock(target, timeout_s=0.0):
+            pass
+    release.set()
+    holder.join(timeout=5.0)

@@ -46,7 +46,7 @@ Relay paste/submit/open/bind through the installed pipeline — not ad-hoc MCP a
 
 `pipeline(op=run, pipeline_id=web-tab-write, messages=[{role:user, content:<op>}], options={op, target_id, cdp_url, conversation_url, text, grant, authorization_source, submit})`
 
-Writers queue on one target via `target_write_lock`; a second process waits until timeout instead of immediate `target_lock_busy`. While holding the lock, automation focus/paste does not count as operator presence; real `isTrusted` input still pauses.
+Writers queue on one target via `target_write_lock`; a second process waits until timeout instead of immediate `target_lock_busy`. While holding the lock, automation focus/visibility does not count as operator presence. Real trusted keyboard/pointer/input on the tab still pauses the writer; DOM-only paste/send does not bump the activity probe.
 
 ## Pre-flight (always)
 
@@ -74,8 +74,6 @@ Probe order: listening port vs pipe → which `DISPLAY` → pid/heartbeat/script
 Before extract: scroll to top repeatedly until message/item count stabilizes (3 consecutive stable reads), then scroll back to bottom if needed.
 
 Incremental re-extract: anchor on a **matched prior content string**, not a raw DOM index — indices shift when lazy rendering loads history. Attachment or non-text rows may not match the primary text selector; a count gap of one is not always a missing message. (agent-bus:6032 deltas_to_spec)
-
-**Cursor dispatch sandbox (2026-07-27):** dispatch `HOME` points at an empty sandbox — set **`HOME=$HOME`** and **`PLAYWRIGHT_BROWSERS_PATH=$HOME/.cache/ms-playwright`** on Playwright launch or Chromium cannot be found.
 
 ## File uploads
 
