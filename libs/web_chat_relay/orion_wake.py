@@ -669,10 +669,9 @@ async def deliver_orion_wake(
                 )
             if dom.get("after_lock") and not visibility_only:
                 return _refuse(
-                    "operator_active",
+                    "deferred_streaming",
                     error=dom_reason,
-                    deferred=True,
-                    retry_eligible=True,
+                    after_lock=True,
                     pasted=False,
                     brought_to_front=tab_sync["brought_to_front"],
                     tab_reloaded=tab_sync["tab_reloaded"],

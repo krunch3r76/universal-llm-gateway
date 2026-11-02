@@ -929,7 +929,7 @@ async def test_dom_deliver_marks_operator_refusal_before_lock(
 async def test_post_lock_operator_refusal_is_deferred(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """An operator refusal after the lock is a deferred operator_active receipt."""
+    """An operator refusal after the lock is deferred_streaming and stays pending."""
     from web_chat_relay.orion_wake import deliver_orion_chat_wake
     from web_chat_relay.orion_wake_owner import InMemoryWakeDeliveryOwner
 
@@ -955,11 +955,12 @@ async def test_post_lock_operator_refusal_is_deferred(
         delivery_owner=owner,
     )
     stored = owner.paste_receipts[claim.wake_id]
-    assert out["reason"] == "operator_active"
-    assert out.get("deferred") is True
-    assert stored["reason"] == "operator_active"
-    assert stored.get("deferred") is True
+    assert out["reason"] == "deferred_streaming"
+    assert out.get("after_lock") is True
+    assert out.get("error") == "recent operator input or foreign draft in composer"
+    assert stored["reason"] == "deferred_streaming"
     assert out["reason"] != "paste_failed"
+    assert classify_orion(out)[0] == "pending"
 
 
 @pytest.mark.asyncio
