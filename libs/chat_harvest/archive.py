@@ -79,8 +79,44 @@ def conv12(conversation_id: str) -> str:
     return cleaned[:12]
 
 
+def sanitized_conversation_id(conversation_id: str) -> str:
+    """Full conversation id, lowercase, [a-z0-9-] only (no truncation)."""
+    return _CONV12_RE.sub("", conversation_id.lower())
+
+
 def _base_name(site: str, conversation_id: str) -> str:
-    return f"chat-harvest-{site}-{conv12(conversation_id)}"
+    return f"chat-harvest-{site}-{sanitized_conversation_id(conversation_id)}"
+
+
+def _conv12_archive_dest(site: str, conversation_id: str) -> Path:
+    """Pre-a:41818 messages sidecar keyed by truncated conversation id."""
+    legacy_base = f"chat-harvest-{site}-{conv12(conversation_id)}"
+    return cortex_files_root() / f"notes/system/threads/{legacy_base}.messages.json"
+
+
+def _legacy_conv12_envelope_matches(
+    envelope: object,
+    *,
+    conversation_id: str,
+    url: str,
+) -> bool:
+    """True when a conv12-keyed sidecar belongs to this chat, not a colliding id."""
+    meta = getattr(envelope, "meta", None)
+    if meta is None:
+        return False
+    chat_url = str(getattr(meta, "chat_url", "") or "").strip()
+    if chat_url and chat_url == url.strip():
+        return True
+    sources = getattr(meta, "sources", None) or []
+    if sources:
+        first = sources[0]
+        if isinstance(first, dict):
+            stored = str(first.get("conversation_id") or "").strip()
+        else:
+            stored = str(getattr(first, "conversation_id", "") or "").strip()
+        if stored and stored == conversation_id.strip():
+            return True
+    return False
 
 
 def legacy_md_rel_path(site: str, conversation_id: str) -> str:
@@ -313,6 +349,27 @@ def archive_chat_transcript(
                 existing_rows = message_index(existing_messages)
                 existing_sha = _sha256_of_file(legacy)
                 existing_source = "legacy_md"
+        if existing_rows is None:
+            conv12_dest = _conv12_archive_dest(site, conversation_id)
+            if conv12_dest.is_file():
+                legacy_envelope = load_harvest_envelope(conv12_dest)
+                if _legacy_conv12_envelope_matches(
+                    legacy_envelope,
+                    conversation_id=conversation_id,
+                    url=url,
+                ):
+                    existing_messages = list(legacy_envelope.messages)
+                    existing_rows = message_index(existing_messages)
+                    existing_sha = _sha256_of_file(conv12_dest)
+                    existing_source = "legacy_conv12_envelope"
+                else:
+                    logger.info(
+                        "ignore legacy conv12 archive — identity mismatch "
+                        "site=%s conversation_id=%s path=%s",
+                        site,
+                        conversation_id,
+                        conv12_dest,
+                    )
 
     if dest.is_file() and supersede:
         version = _next_supersede_version(site, conversation_id)

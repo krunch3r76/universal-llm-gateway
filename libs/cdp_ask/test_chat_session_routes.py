@@ -9,6 +9,8 @@ from unittest.mock import AsyncMock
 import pytest
 from fastapi.testclient import TestClient
 
+from chat_harvest.archive import archive_rel_path
+
 from cdp_ask.app import create_app
 from cdp_ask.chat_session_models import ChatHarvestResponse, ChatPasteResponse
 
@@ -69,7 +71,7 @@ def test_grok_harvest_200_emits_event(
         site="grok",
         conversation_id=GROK_ID,
         url=GROK_URL,
-        archive_uri=f"cortex://notes/system/threads/chat-harvest-grok-{GROK_ID[:12]}.messages.json",
+        archive_uri=f"cortex://{archive_rel_path('grok', GROK_ID)}",
         archive_sha256="a" * 64,
         turn_count=2,
     )
@@ -174,7 +176,7 @@ def test_paste_ok_emits_event(
         site="grok",
         conversation_id=GROK_ID,
         url=GROK_URL,
-        archive_uri=f"cortex://notes/system/threads/chat-harvest-grok-{GROK_ID[:12]}.messages.json",
+        archive_uri=f"cortex://{archive_rel_path('grok', GROK_ID)}",
         archive_sha256="b" * 64,
         send_verified=True,
         pasted_at="2026-08-25T12:00:00+00:00",

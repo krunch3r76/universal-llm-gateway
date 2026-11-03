@@ -689,10 +689,14 @@ def default_archive_path(
         return resolve_archive_path(req.archive_path)
     root = verify_harvest_root()
     seat = _seat_token_for_archive(req)
-    if req.project_uuid:
+    surface = (req.claude_surface or "cowork").strip().lower()
+    project_uuid = (req.project_uuid or "").strip()
+    if surface == "code":
+        project_uuid = ""
+    if project_uuid:
         # Project-scoped archives: seat + project UUID + execution_id (F-1b).
         exec_suffix = execution_id or "unknown"
-        name = f"cdp-ask-archive-{seat}-{req.project_uuid}-{exec_suffix}.md"
+        name = f"cdp-ask-archive-{seat}-{project_uuid}-{exec_suffix}.md"
     elif execution_id:
         name = f"cdp-ask-archive-{seat}-{execution_id}.md"
     else:

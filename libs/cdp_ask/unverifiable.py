@@ -31,6 +31,7 @@ DEATH_STALL_STAGES = frozenset(
         "worker_cancelled",
         "mark_terminal",
         "completion_detection",
+        "compose_surface",
         "no_progress",
         "wall_clock_exceeded",
     }
@@ -70,6 +71,7 @@ _DEATH_ERROR_TOKENS = (
     "cancelled",
     "worker_crash",
     "worker_cancelled",
+    "code_surface_not_on_code_page",
 )
 
 
