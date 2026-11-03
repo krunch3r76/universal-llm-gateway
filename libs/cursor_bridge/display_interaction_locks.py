@@ -4,6 +4,20 @@ Per-(display, agent_id) serializes one agent's paste end-to-end. The
 per-display lock wraps the full switch-type-submit-readback-restore span so
 one shared Grok composer is never driven by two agents at once. Parallel pastes
 apply only across different displays.
+
+Two layers per lock: an in-process ``asyncio.Lock`` (FIFO among tasks of one
+event loop, kept per running loop so several loops in one process never share
+one) and an ``fcntl.flock`` on a file under :func:`lock_run_dir`, which is the
+real mutual-exclusion boundary across loops, threads and processes.
+
+The flock is taken with ``LOCK_NB`` in a polling loop on the event loop, not
+with a blocking ``flock`` in a worker thread. A cancelled waiter therefore
+closes its fd at the ``await asyncio.sleep`` and leaves nothing behind; a
+blocking acquire in a thread would keep running after cancellation and hold
+the lock with no owner to release it. Cost: up to ``_POLL_MAX_S`` extra
+latency after a release, and no FIFO order across processes. There is no
+built-in deadline (callers wait as before); ``asyncio.timeout`` / ``wait_for``
+around the context manager is safe because cancellation is clean.
 """
 
 from __future__ import annotations
@@ -12,6 +26,8 @@ import asyncio
 import fcntl
 import os
 import re
+import threading
+import weakref
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from contextvars import ContextVar
@@ -19,8 +35,19 @@ from pathlib import Path
 
 _DISPLAY_SWITCH_DEPTH: ContextVar[int] = ContextVar("display_switch_depth", default=0)
 
-_INPROC_AGENT: dict[tuple[str, str], asyncio.Lock] = {}
-_INPROC_SWITCH: dict[str, asyncio.Lock] = {}
+# In-process locks are keyed by (running loop, key): an asyncio.Lock binds to the
+# first loop that waits on it, so one shared across loops raises RuntimeError or
+# strands waiters. Weak keys drop a loop's locks when the loop is collected.
+_INPROC_GUARD = threading.Lock()
+_INPROC_AGENT: weakref.WeakKeyDictionary[
+    asyncio.AbstractEventLoop, dict[tuple[str, str], asyncio.Lock]
+] = weakref.WeakKeyDictionary()
+_INPROC_SWITCH: weakref.WeakKeyDictionary[
+    asyncio.AbstractEventLoop, dict[str, asyncio.Lock]
+] = weakref.WeakKeyDictionary()
+
+_POLL_INITIAL_S = 0.005
+_POLL_MAX_S = 0.05
 
 
 def lock_run_dir() -> Path:
@@ -51,13 +78,19 @@ def _lock_path(display: str, *, kind: str, agent_id: str = "") -> Path:
 
 
 def _inproc_agent(display: str, agent_id: str) -> asyncio.Lock:
+    """Return the agent lock for ``(display, agent_id)`` on the running loop."""
     key = (_safe_token(display), _safe_token(agent_id))
-    return _INPROC_AGENT.setdefault(key, asyncio.Lock())
+    loop = asyncio.get_running_loop()
+    with _INPROC_GUARD:
+        return _INPROC_AGENT.setdefault(loop, {}).setdefault(key, asyncio.Lock())
 
 
 def _inproc_switch(display: str) -> asyncio.Lock:
+    """Return the switch lock for ``display`` on the running loop."""
     key = _safe_token(display)
-    return _INPROC_SWITCH.setdefault(key, asyncio.Lock())
+    loop = asyncio.get_running_loop()
+    with _INPROC_GUARD:
+        return _INPROC_SWITCH.setdefault(loop, {}).setdefault(key, asyncio.Lock())
 
 
 class _FcntlFileLock:
@@ -65,17 +98,30 @@ class _FcntlFileLock:
         self._path = path
         self._fh: int | None = None
 
-    def acquire(self) -> None:
+    async def acquire(self) -> None:
+        """Take the exclusive flock, polling ``LOCK_NB`` until it is free.
+
+        Cancellation (or any error) while waiting closes the fd before
+        re-raising, so an abandoned wait never ends up holding the lock.
+        """
         self._path.parent.mkdir(parents=True, exist_ok=True)
         fd = os.open(str(self._path), os.O_CREAT | os.O_RDWR, 0o666)
+        delay = _POLL_INITIAL_S
         try:
-            fcntl.flock(fd, fcntl.LOCK_EX)
-        except OSError:
+            while True:
+                try:
+                    fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                    break
+                except BlockingIOError:
+                    await asyncio.sleep(delay)
+                    delay = min(delay * 2, _POLL_MAX_S)
+        except BaseException:
             os.close(fd)
             raise
         self._fh = fd
 
     def release(self) -> None:
+        """Drop the flock and close the fd (``LOCK_UN`` never blocks)."""
         if self._fh is None:
             return
         try:
@@ -91,11 +137,11 @@ async def agent_paste_lock(display: str, agent_id: str) -> AsyncIterator[None]:
     aid = str(agent_id or "").strip() or "anonymous"
     async with _inproc_agent(display, aid):
         lock = _FcntlFileLock(_lock_path(display, kind="agent", agent_id=aid))
-        await asyncio.to_thread(lock.acquire)
+        await lock.acquire()
         try:
             yield
         finally:
-            await asyncio.to_thread(lock.release)
+            lock.release()
 
 
 @asynccontextmanager
@@ -106,13 +152,13 @@ async def display_switch_lock(display: str) -> AsyncIterator[None]:
         return
     async with _inproc_switch(display):
         lock = _FcntlFileLock(_lock_path(display, kind="switch"))
-        await asyncio.to_thread(lock.acquire)
+        await lock.acquire()
         token = _DISPLAY_SWITCH_DEPTH.set(1)
         try:
             yield
         finally:
             _DISPLAY_SWITCH_DEPTH.reset(token)
-            await asyncio.to_thread(lock.release)
+            lock.release()
 
 
 def paste_lock_key(*, agent_id: str = "", thread: str = "") -> str:
