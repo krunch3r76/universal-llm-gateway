@@ -71,6 +71,7 @@ _DEATH_ERROR_TOKENS = (
     "cancelled",
     "worker_crash",
     "worker_cancelled",
+    "code_surface_not_on_code_page",
 )
 
 
