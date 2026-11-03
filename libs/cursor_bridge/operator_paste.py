@@ -482,7 +482,20 @@ async def _guarded_insert_and_submit(
                     body_snippet=body_snippet,
                     run_nonce=run_nonce,
                 )
+                if not submitted:
+                    await clear_our_composer_draft(
+                        ws_url,
+                        selector=prompt_sel,
+                        watermark=WATERMARK,
+                        line=flat_line,
+                    )
             else:
+                await clear_our_composer_draft(
+                    ws_url,
+                    selector=prompt_sel,
+                    watermark=WATERMARK,
+                    line=flat_line,
+                )
                 return (
                     _grant_refuse(
                         "submit_failed",
