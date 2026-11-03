@@ -13,7 +13,12 @@ from typing import TYPE_CHECKING, Any
 from mcp_events import record  # re-exported for tests patching tools.agent_bus.record
 from mcp_toolprogress import toolprogress_begin, toolprogress_end
 
-from .._agent_bus_author import AUTHOR_AUTOFILL_OPS, reconcile_author_arguments
+from .._agent_bus_author import (
+    AUTHOR_AUTOFILL_OPS,
+    pop_omitted_author_warning,
+    reconcile_author_arguments,
+    stamp_omitted_author_warning,
+)
 from .._agent_bus_post_guard import reconcile_post_arguments, reconcile_send_arguments
 from .._agent_tools import JsonArgStr
 from .._local_relay import relay as _relay
@@ -205,7 +210,7 @@ def register_agent_bus_tools(mcp: FastMCP) -> None:
 
     @mcp.tool(title="Agent Bus")
     async def agent_bus(tool: str, arguments: JsonArgStr = "{}") -> Any:
-        """Inter-agent bus. `tool` = op name. `arguments` = JSON object string. Prefer `from=`. Bodies target 2000 characters (code points, Python len); use `sidecar_content` (cap 256KB) or auto-spill. Hard ceiling / spill failure → **413**. `allow_long_body=true` opts out of spill. Omitted author: life→`web-anthropic`, code→`cursor`.
+        """Inter-agent bus. `tool` = op name. `arguments` = JSON object string. Prefer `from=`. Bodies target 2000 characters (code points, Python len); use `sidecar_content` (cap 256KB) or auto-spill. Hard ceiling / spill failure → **413**. `allow_long_body=true` opts out of spill. Omitted author is recorded as `unspecified` and the success payload includes `warning` (accepted spellings: `from`, `from_agent`).
 
         **send** (primary write): XOR `new_slug`|`thread` + `to` + `subject` + `body`. Slug collision on the **`new_slug` path only** → **409 `slug_exists`** (body includes `created_thread`). `create_thread`, `with-turn`, and implicit thread mint on `reply`/`POST /turns` do **not** enforce global slug uniqueness (duplicate slugs possible). `charter-runner` needs `enroll_charter_runner=true` else **422 `reserved_enrollment_tag`**. `parent_thread`+`lane_role` are both-or-neither.
 
@@ -280,8 +285,10 @@ def register_agent_bus_tools(mcp: FastMCP) -> None:
             needs_author = tool in AUTHOR_AUTOFILL_OPS or (
                 tool == "get" and bool(parsed.get("mark_read"))
             )
+            author_warning: str | None = None
             if needs_author:
                 parsed, author_error = reconcile_author_arguments(parsed)
+                author_warning = pop_omitted_author_warning(parsed)
                 if author_error is not None:
                     record(
                         "mcp.agentbus.dispatch.rejected",
@@ -317,6 +324,8 @@ def register_agent_bus_tools(mcp: FastMCP) -> None:
                 result = await asyncio.to_thread(handler, **parsed)
             if rewrite_advisories:
                 result = merge_argument_rewrite_advisory(result, rewrite_advisories)
+            if isinstance(result, dict) and tool in ("post", "reply", "send"):
+                result = stamp_omitted_author_warning(result, author_warning)
             if (
                 isinstance(result, dict)
                 and "error" not in result

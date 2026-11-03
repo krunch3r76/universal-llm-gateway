@@ -9,7 +9,7 @@ from urllib.parse import urlencode
 from agent_bus_store.recipients import turn_mark_read_eligible
 from mcp_events import record
 
-from .._agent_bus_author import resolve_dispatch_from_agent
+from .._agent_bus_author import UNSPECIFIED_AUTHOR, resolve_dispatch_from_agent
 from ._closeout_projection import project_turn_body
 from ._shared import _FETCH_CONTEXT_CAP, _structured_relay_error, relay
 
@@ -50,13 +50,19 @@ def _resolve_mark_reader(
 
     Returns ``(seat, advisories, error, apply_mark)``. A ``to`` filter that is
     not the resolved caller refuses the stamp and names both seats. Omitting
-    ``from_agent`` still marks, and the advisory names the resolved identity.
+    ``from_agent`` still marks when the resolved reader is a real seat, and
+    the advisory names that seat. The omit sentinel ``unspecified`` is not a
+    seat: stamping it would clear the phantom inbox instead of the caller,
+    so the mark is skipped.
     """
     supplied = bool(from_agent.strip())
     reader, author_err = resolve_dispatch_from_agent(from_agent)
     if author_err is not None:
         return None, [], author_err, False
     advisories: list[str] = []
+    if reader == UNSPECIFIED_AUTHOR:
+        advisories.append(f"{op}: mark_read skipped — reader {reader!r} is not a seat")
+        return None, advisories, None, False
     if not reader:
         advisories.append(
             f"{op}: mark_read skipped — reader seat could not be resolved"

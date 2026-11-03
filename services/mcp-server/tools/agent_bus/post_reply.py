@@ -8,7 +8,9 @@ from typing import Any
 from mcp_events import record
 
 from .._agent_bus_author import (
+    AUTHOR_OMITTED_WARNING,
     resolve_dispatch_from_agent,
+    stamp_omitted_author_warning,
     turn_author_attestation_fields,
 )
 from .._agent_bus_post_guard import structured_route_guard
@@ -239,6 +241,7 @@ def _post_dispatch(
     attested_by: str | None = None,
     user_agent: str | None = None,
 ) -> dict[str, Any]:
+    author_omitted = not (from_agent or "").strip()
     from_agent, author_err = resolve_dispatch_from_agent(from_agent)
     if author_err is not None:
         return author_err
@@ -253,11 +256,6 @@ def _post_dispatch(
         missing.append("subject (str)")
     if not body:
         missing.append("body (str)")
-    if not from_agent:
-        missing.append(
-            "from (str) or from_agent (str) — omit only on /mcp/life or /mcp/code "
-            "for surface autofill (web-anthropic | cursor)"
-        )
     if missing:
         return {
             "error": f"post: missing required field(s): {'; '.join(missing)}",
@@ -283,6 +281,8 @@ def _post_dispatch(
             "replacement": "send",
         }
         record("mcp.agentbus.deprecated.op", op="post", caller=from_agent)
+        if author_omitted:
+            result = stamp_omitted_author_warning(result, AUTHOR_OMITTED_WARNING)
     return result
 
 
@@ -306,6 +306,7 @@ def _reply_dispatch(
     if isinstance(thread, int):
         thread = str(thread)
 
+    author_omitted = not (from_agent or "").strip()
     from_agent, author_err = resolve_dispatch_from_agent(from_agent)
     if author_err is not None:
         return author_err
@@ -322,11 +323,6 @@ def _reply_dispatch(
         missing.append("body (str)")
     if after_turn < 0:
         missing.append("after_turn (int >= 0; 0 skips the unread-concurrency check)")
-    if not from_agent:
-        missing.append(
-            "from (str) or from_agent (str) — omit only on /mcp/life or /mcp/code "
-            "for surface autofill (web-anthropic | cursor)"
-        )
     if missing:
         return {
             "error": f"reply: missing required field(s): {'; '.join(missing)}",
@@ -355,4 +351,6 @@ def _reply_dispatch(
             "replacement": "send",
         }
         record("mcp.agentbus.deprecated.op", op="reply", caller=from_agent)
+        if author_omitted:
+            result = stamp_omitted_author_warning(result, AUTHOR_OMITTED_WARNING)
     return result

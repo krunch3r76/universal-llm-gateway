@@ -341,6 +341,28 @@ def test_after_turn_truncation_probe_not_marked_read(tmp_path) -> None:
         assert probe.json()["read_at"] is None
 
 
+def test_fetch_mark_read_skips_unspecified_reader() -> None:
+    """Breaks when reader "unspecified" is stamped and clears the phantom inbox."""
+    captured: dict[str, str] = {}
+
+    def relay(service: str, method: str, path: str, **kwargs) -> dict:
+        del service, kwargs
+        captured.update({k: v[0] for k, v in parse_qs(urlparse(path).query).items()})
+        return {"turns": []}
+
+    with patch("tools.agent_bus.fetch.relay", side_effect=relay):
+        with patch(
+            "tools.agent_bus.fetch.resolve_dispatch_from_agent",
+            return_value=("unspecified", None),
+        ):
+            out = _fetch_dispatch(thread="1", mark_read=True)
+
+    assert captured.get("mark_read") != "true"
+    assert "mark_read_seat" not in captured
+    assert "unspecified" in out["argument_rewrite_advisory"]
+    assert "not a seat" in out["argument_rewrite_advisory"]
+
+
 def test_fetch_mark_read_omitted_from_agent_names_resolved_identity() -> None:
     def relay(service: str, method: str, path: str, **kwargs) -> dict:
         del service, method, path, kwargs
@@ -384,9 +406,7 @@ def test_fetch_to_mismatch_mark_read_advisory_not_silent() -> None:
             "tools.agent_bus.fetch.resolve_dispatch_from_agent",
             return_value=("cursor", None),
         ):
-            out = _fetch_dispatch(
-                thread="1", to="web-anthropic", mark_read=True
-            )
+            out = _fetch_dispatch(thread="1", to="web-anthropic", mark_read=True)
     assert captured.get("mark_read") != "true"
     assert "mark_read_seat" not in captured
     advisory = out["argument_rewrite_advisory"]
@@ -425,9 +445,7 @@ def test_fetch_tool_passes_supplied_from_agent(agent_bus_read_fn) -> None:
         seen["from_agent"] = from_agent
         return "cursor", [], None, True
 
-    with patch(
-        "tools.agent_bus.fetch._resolve_mark_reader", side_effect=fake_resolve
-    ):
+    with patch("tools.agent_bus.fetch._resolve_mark_reader", side_effect=fake_resolve):
         with patch("tools.agent_bus.fetch.relay", return_value={"turns": []}):
             out = agent_bus_read_fn(
                 tool="fetch",

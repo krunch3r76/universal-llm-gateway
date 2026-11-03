@@ -134,8 +134,14 @@ def _raise_if_maestro_milestone_body_over_limit(
 def apply_maestro_milestone_reroute(
     *, to: str, from_agent: str, subject: str | None
 ) -> str:
-    """Rewrite ``to=maestro`` / ``web-anthropic`` ``PICKUP``/``FACT`` to the composing house."""
-    if not (from_agent or "").strip():
+    """Rewrite ``to=maestro`` / ``web-anthropic`` ``PICKUP``/``FACT`` to the composing house.
+
+    A blank author or the omit sentinel ``unspecified`` leaves ``to`` unchanged,
+    the same path a missing house used before the sentinel existed. Any other
+    author rewrites only those subject prefixes. No I/O.
+    """
+    author = (from_agent or "").strip()
+    if not author or author == "unspecified":
         return to
     if normalize_bus_address(to) not in _MAESTRO_COMPOSE_TARGETS:
         return to

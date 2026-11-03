@@ -7,7 +7,9 @@ from typing import Any
 from mcp_events import record
 
 from .._agent_bus_author import (
+    AUTHOR_OMITTED_WARNING,
     resolve_dispatch_from_agent,
+    stamp_omitted_author_warning,
     turn_author_attestation_fields,
 )
 from .._agent_bus_post_guard import structured_slug_exists
@@ -170,6 +172,7 @@ def _send_dispatch(
     if isinstance(thread, int):
         thread = str(thread)
 
+    author_omitted = not (from_agent or "").strip()
     from_agent, author_err = resolve_dispatch_from_agent(from_agent)
     if author_err is not None:
         return author_err
@@ -207,11 +210,6 @@ def _send_dispatch(
         missing.append("subject (str)")
     if not body:
         missing.append("body (str)")
-    if not from_agent:
-        missing.append(
-            "from (str) or from_agent (str) — omit only on /mcp/life or /mcp/code "
-            "for surface autofill (web-anthropic | cursor)"
-        )
     if missing:
         return {
             "error": f"send: missing required field(s): {'; '.join(missing)}",
@@ -284,7 +282,7 @@ def _send_dispatch(
         )
         return checkpoint_refusal_envelope(checkpoint)
 
-    return _send_impl(
+    result = _send_impl(
         new_slug=new_slug,
         thread=thread,
         to=to,
@@ -312,3 +310,6 @@ def _send_dispatch(
         attested_by=attested_by,
         user_agent=user_agent,
     )
+    if author_omitted and isinstance(result, dict):
+        return stamp_omitted_author_warning(result, AUTHOR_OMITTED_WARNING)
+    return result

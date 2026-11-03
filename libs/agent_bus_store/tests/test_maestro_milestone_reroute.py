@@ -33,9 +33,7 @@ def test_milestone_prefixes_stay_on_maestro(prefix: str) -> None:
     house = "grok-bot-bl1"
     subject = f"{prefix}|work-key"
     assert (
-        apply_maestro_milestone_reroute(
-            to="maestro", from_agent=house, subject=subject
-        )
+        apply_maestro_milestone_reroute(to="maestro", from_agent=house, subject=subject)
         == "maestro"
     )
     assert (
@@ -51,9 +49,7 @@ def test_pickup_fact_reroute_to_house(prefix: str) -> None:
     house = "grok-bot-bl1"
     subject = f"{prefix}|detail"
     assert (
-        apply_maestro_milestone_reroute(
-            to="maestro", from_agent=house, subject=subject
-        )
+        apply_maestro_milestone_reroute(to="maestro", from_agent=house, subject=subject)
         == house
     )
     assert (
@@ -70,6 +66,23 @@ def test_pickup_fact_reroute_to_house(prefix: str) -> None:
         },
         cse=True,
     )
+
+
+def test_unspecified_author_matches_blank_on_pickup_to_maestro() -> None:
+    """Breaks when omitted author "unspecified" is rewritten as the compose house."""
+    subject = "PICKUP|work-1"
+    blank = apply_maestro_milestone_reroute(
+        to="maestro", from_agent="", subject=subject
+    )
+    omitted = apply_maestro_milestone_reroute(
+        to="maestro", from_agent="unspecified", subject=subject
+    )
+    whitespace = apply_maestro_milestone_reroute(
+        to="maestro", from_agent="  ", subject=subject
+    )
+    assert blank == "maestro"
+    assert omitted == blank
+    assert whitespace == blank
 
 
 def test_verdict_question_qualify_after_compose_policy() -> None:
@@ -105,7 +118,9 @@ def test_http_send_reroutes_pickup_fact_to_maestro(tmp_path, monkeypatch) -> Non
                 "body": "open lane",
             },
         ).json()["thread"]["id"]
-        for n, subject in enumerate(("PICKUP|work-1", "FACT|house-cp|16934|1"), start=2):
+        for n, subject in enumerate(
+            ("PICKUP|work-1", "FACT|house-cp|16934|1"), start=2
+        ):
             client.post(
                 "/threads/send",
                 json={
@@ -131,9 +146,7 @@ def test_http_send_reroutes_pickup_fact_to_maestro(tmp_path, monkeypatch) -> Non
                 "body": "milestone",
             },
         )
-        verdict = client.get(
-            f"/turns/by-number?thread={thread}&turn_number=4"
-        ).json()
+        verdict = client.get(f"/turns/by-number?thread={thread}&turn_number=4").json()
         assert verdict["to"] == "maestro"
 
 
@@ -159,9 +172,7 @@ def test_http_new_slug_reroutes_pickup_fact_to_house(
         )
         assert created.status_code == 201, created.text
         thread = created.json()["thread"]["id"]
-        stored = client.get(
-            f"/turns/by-number?thread={thread}&turn_number=1"
-        ).json()
+        stored = client.get(f"/turns/by-number?thread={thread}&turn_number=1").json()
         assert stored["to"] == house
         assert stored["subject"] == subject
 
@@ -428,9 +439,7 @@ def test_l29b_allow_long_body_bypass(tmp_path, monkeypatch) -> None:
     assert resp.status_code == 201
 
 
-def test_l29b_body_boundary_2000_allowed_2001_refused(
-    tmp_path, monkeypatch
-) -> None:
+def test_l29b_body_boundary_2000_allowed_2001_refused(tmp_path, monkeypatch) -> None:
     app = _app(tmp_path, monkeypatch)
     house = "grok-bot-bl1"
     with TestClient(app) as client:
@@ -469,9 +478,7 @@ def test_l29b_body_boundary_2000_allowed_2001_refused(
     assert bad.json()["detail"]["code"] == "milestone_body_over_2000_chars"
 
 
-def test_l29b_milestone_with_sidecar_and_short_body_201(
-    tmp_path, monkeypatch
-) -> None:
+def test_l29b_milestone_with_sidecar_and_short_body_201(tmp_path, monkeypatch) -> None:
     app = _app(tmp_path, monkeypatch)
     house = "grok-bot-bl1"
     with TestClient(app) as client:
@@ -499,9 +506,7 @@ def test_l29b_milestone_with_sidecar_and_short_body_201(
     assert resp.status_code == 201, resp.text
 
 
-def test_l29b_non_milestone_long_body_not_milestone_422(
-    tmp_path, monkeypatch
-) -> None:
+def test_l29b_non_milestone_long_body_not_milestone_422(tmp_path, monkeypatch) -> None:
     """Non-milestone turns keep auto-spill / 413 behavior, not L29b milestone 422."""
     app = _app(tmp_path, monkeypatch)
     house = "grok-bot-bl1"

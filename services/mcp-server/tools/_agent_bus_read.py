@@ -23,7 +23,11 @@ from mcp.types import ToolAnnotations
 from mcp_events import record
 from mcp_toolprogress import toolprogress_begin, toolprogress_end
 
-from ._agent_bus_author import AUTHOR_AUTOFILL_OPS, reconcile_author_arguments
+from ._agent_bus_author import (
+    AUTHOR_AUTOFILL_OPS,
+    pop_omitted_author_warning,
+    reconcile_author_arguments,
+)
 from ._agent_tools import JsonArgStr
 from .agent_bus import (
     _fetch_dispatch,
@@ -133,6 +137,7 @@ def register_agent_bus_read_tool(mcp: FastMCP) -> None:
             )
             if needs_author:
                 parsed, author_error = reconcile_author_arguments(parsed)
+                pop_omitted_author_warning(parsed)
                 if author_error is not None:
                     record(
                         "mcp.agentbus.dispatch.rejected",
