@@ -337,27 +337,34 @@ def test_mirror_logs_once_and_swallows_socket_errors(
     monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
 ) -> None:
     """Connect failures log at warning with transport/target; emit never raises."""
+    reset_mirror_state_for_tests()
+    flush_mirror_worker_for_tests(timeout=0.5)
+    caplog.clear()
+    mirror_logger = logging.getLogger("claude_bundles.events_skill_delivery")
+    mirror_logger.addHandler(caplog.handler)
+    try:
+        class _BoomSock(_FakeSock):
+            def connect(self, address: Any) -> None:
+                raise ConnectionRefusedError("offline")
 
-    class _BoomSock(_FakeSock):
-        def connect(self, address: Any) -> None:
-            raise ConnectionRefusedError("offline")
+        monkeypatch.setenv("EVENTS_INGEST_TCP", "127.0.0.1:7101")
+        monkeypatch.setattr(esd.socket, "socket", _BoomSock)
+        caplog.set_level(logging.WARNING, logger="claude_bundles.events_skill_delivery")
 
-    monkeypatch.setenv("EVENTS_INGEST_TCP", "127.0.0.1:7101")
-    monkeypatch.setattr(esd.socket, "socket", _BoomSock)
-    caplog.set_level(logging.WARNING, logger="claude_bundles.events_skill_delivery")
+        _emit_sample()
+        _emit_sample()
+        flush_mirror_worker_for_tests()
 
-    _emit_sample()
-    _emit_sample()
-    flush_mirror_worker_for_tests()
-
-    warnings = [
-        r
-        for r in caplog.records
-        if r.levelno == logging.WARNING and "mirror failed" in r.message
-    ]
-    assert len(warnings) == 1
-    assert "transport=tcp" in warnings[0].message
-    assert "target=127.0.0.1:7101" in warnings[0].message
+        warnings = [
+            r
+            for r in caplog.records
+            if r.levelno == logging.WARNING and "mirror failed" in r.message
+        ]
+        assert len(warnings) == 1
+        assert "transport=tcp" in warnings[0].message
+        assert "target=127.0.0.1:7101" in warnings[0].message
+    finally:
+        mirror_logger.removeHandler(caplog.handler)
 
 
 class _NotJsonSerializable:
@@ -419,6 +426,8 @@ def test_mirror_internal_error_emits_throttled_warning(
     monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
 ) -> None:
     """Programming errors in the mirror path increment internal_errors (N3)."""
+    reset_mirror_state_for_tests()
+    caplog.clear()
     caplog.set_level(logging.WARNING, logger="claude_bundles.events_skill_delivery")
     monkeypatch.setattr(esd, "_now", lambda: 9000.0)
 
