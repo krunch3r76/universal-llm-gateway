@@ -1,8 +1,14 @@
 """DOM-only composer insert and send for the cursor bridge (no focus steal, no Input.*).
 
-Callers are the insert and send wrappers in this package. A send poll that outlives
-the CDP wait must not click: the page stops on its own deadline, and a per-call
-abort nonce blocks a late evaluate without affecting the next send.
+Callers are the insert and send wrappers in this package. Send uses two CDP
+evaluates on one page clock: a synchronous permit stamp, then the click script.
+Task cancel cannot pre-empt the click script's synchronous prefix; a nonce mark
+queued behind an already-running script cannot stop ``btn.click()`` when that
+click runs before the script's first await. The permit stamped on ``performance.now()``
+before the click script is dispatched is what the prefix reads before clicking.
+A send poll that outlives the CDP wait must not click: the page gives up when
+``performance.now()`` passes that permit, and a per-call abort nonce blocks a
+late evaluate without affecting the next send.
 """
 
 from __future__ import annotations
@@ -284,15 +290,21 @@ def _click_send_body(
     """Build async page JS that polls for an enabled send control after insert.
 
     Returns a ``(async () => …)()`` expression (Promise) for CDP ``Runtime.evaluate``
-    with ``awaitPromise=True``. Immediate ``no_composer`` and ``composer_text_mismatch``
-    results do not wait. After the first scan miss, each retry awaits ``setTimeout``
-    for ``SEND_BTN_POLL_INTERVAL_MS`` up to ``SEND_BTN_WAIT_CEILING_MS``. Final
-    ``no_send_button`` includes a ``census`` object (``buttons`` capped at 20,
-    each ``aria_label``, ``data_testid``, and ``type`` sliced to
-    ``SEND_BTN_CENSUS_ATTR_CAP``, ``buttons_total`` uncapped). The poll returns
-    ``cdp_eval_timeout`` without clicking when ``performance.now()`` passes
-    ``eval_timeout_s`` minus ``SEND_BTN_PAGE_TIMEOUT_MARGIN_MS``, or when
-    ``abort_nonce`` is set on ``composerSendAbortNonces`` (that nonce only).
+    with ``awaitPromise=True``. Python must evaluate ``_composer_send_permit_expression``
+    for this ``abort_nonce`` before dispatching this script. The permit deadline lives
+    on the page clock only; this script does not restamp it. Cancel cannot pre-empt
+    the synchronous prefix: if the send button is found on the first scan, ``btn.click()``
+    runs before the first ``await``, so a nonce mark still queued on CDP cannot prevent
+    that click — the stamped permit is what ``sendGivenUp()`` reads first.
+
+    Immediate ``no_composer`` and ``composer_text_mismatch`` results do not wait. After
+    the first scan miss, each retry awaits ``setTimeout`` for ``SEND_BTN_POLL_INTERVAL_MS``
+    up to ``SEND_BTN_WAIT_CEILING_MS``. Final ``no_send_button`` includes a ``census``
+    object (``buttons`` capped at 20, each ``aria_label``, ``data_testid``, and ``type``
+    sliced to ``SEND_BTN_CENSUS_ATTR_CAP``, ``buttons_total`` uncapped). The poll
+    returns ``cdp_eval_timeout`` without clicking when the permit is missing or expired,
+    or when ``abort_nonce`` is set on ``composerSendAbortNonces`` (that nonce only).
+    Every return path deletes this call's permit and abort-nonce map entries only.
     """
     find = _find_composer_js(selector)
     lj = json.dumps(_dom_paste_text(line, preserve_newlines=preserve_newlines))
@@ -311,16 +323,22 @@ def _click_send_body(
     )
     nonce_js = json.dumps(str(abort_nonce))
     return (
-        f"(async ()=>{{const el=({find});"
-        "if(!el)return{ok:false,reason:'no_composer',send_clicked:false};"
-        "const g=window.__ulgOperatorActivity=window.__ulgOperatorActivity||{};"
+        f"(async ()=>{{const g=window.__ulgOperatorActivity=window.__ulgOperatorActivity||{{}};"
         f"const abortNonce={nonce_js};"
-        f"const pageDeadline=performance.now()+{page_budget_ms};"
-        "const sendGivenUp=()=>performance.now()>=pageDeadline||(!!abortNonce&&!!("
-        "g.composerSendAbortNonces&&g.composerSendAbortNonces[abortNonce]));"
+        "const cleanup=()=>{if(!abortNonce)return;"
+        "const pm=g.composerSendPermits;if(pm)delete pm[abortNonce];"
+        "const am=g.composerSendAbortNonces;if(am)delete am[abortNonce];};"
+        "const sendGivenUp=()=>{"
+        "const p=g.composerSendPermits&&g.composerSendPermits[abortNonce];"
+        "if(typeof p!=='number')return true;"
+        "if(performance.now()>=p)return true;"
+        "return !!(abortNonce&&g.composerSendAbortNonces&&g.composerSendAbortNonces[abortNonce]);"
+        "};"
+        f"const el=({find});"
+        "if(!el){cleanup();return{ok:false,reason:'no_composer',send_clicked:false};}"
         f"const text=(el.innerText||el.value||'').trim(),line={lj};"
         "if(!text||(text!==line.trim()&&!/^BRIDGE_WAKE\\s+thread=\\S+\\s+turn=\\d+(?:,\\d+)*$/.test(text)))"
-        "return{ok:false,reason:'composer_text_mismatch',send_clicked:false};"
+        "{cleanup();return{ok:false,reason:'composer_text_mismatch',send_clicked:false};}"
         f"const root=el.closest('form')||el.parentElement||document;"
         f"const btnSels={btn_sels};"
         f"const waitCeilingMs={wait_ceiling};"
@@ -366,15 +384,16 @@ def _click_send_body(
         "await new Promise((r)=>setTimeout(r,pollIntervalMs));"
         "btn=findSendBtn();"
         "}"
-        "if(sendGivenUp())return{ok:false,reason:'cdp_eval_timeout',send_clicked:false};"
+        "if(sendGivenUp()){cleanup();return{ok:false,reason:'cdp_eval_timeout',send_clicked:false};}"
         "if(!btn){"
-        "return{ok:false,reason:'no_send_button',send_clicked:false,"
+        "cleanup();return{ok:false,reason:'no_send_button',send_clicked:false,"
         "census:buildCensus(Date.now()-t0)};"
         "}"
+        "if(sendGivenUp()){cleanup();return{ok:false,reason:'cdp_eval_timeout',send_clicked:false};}"
         "btn.click();"
         "g.ourDraftSig='';"
         "g.ourDraftWriter='';"
-        "return{ok:true,send_clicked:true};})()"
+        "cleanup();return{ok:true,send_clicked:true};})()"
     )
 
 
@@ -397,6 +416,18 @@ def operator_activity_clear_suppress_js() -> str:
     return (
         "(()=>{const g=window.__ulgOperatorActivity=window.__ulgOperatorActivity||{};"
         "g.suppressUntilMs=0;return{ok:true};})()"
+    )
+
+
+def _composer_send_permit_expression(nonce: str, page_budget_ms: int) -> str:
+    """Page JS that stamps one send permit deadline on ``performance.now()``."""
+    nonce_js = json.dumps(str(nonce))
+    budget = int(page_budget_ms)
+    return (
+        "(()=>{const g=window.__ulgOperatorActivity=window.__ulgOperatorActivity||{};"
+        "const m=g.composerSendPermits=g.composerSendPermits||{};"
+        f"m[{nonce_js}]=performance.now()+{budget};"
+        "return{ok:true};})()"
     )
 
 
@@ -565,15 +596,33 @@ async def dom_click_send(
 ) -> dict[str, Any]:
     """Click send when composer text matches ``line``, or return without clicking.
 
-    The page poll returns ``reason=cdp_eval_timeout`` and ``send_clicked`` false
-    ``SEND_BTN_PAGE_TIMEOUT_MARGIN_MS`` before the CDP wait. The same dict is
-    returned when that wait times out or this task is cancelled, after this
-    call's abort nonce is marked so a late poll cannot click. A later call uses
-    a new nonce. ``no_send_button`` may include ``census`` (logged at WARNING).
+    Stamps a page-clock send permit via CDP before dispatching the click script.
+    Cancel cannot pre-empt that script's synchronous prefix; a nonce mark queued
+    behind an already-running script cannot stop ``btn.click()`` when the click
+    runs before the script's first await — the permit stamped earlier is what the
+    prefix reads before clicking. The page poll returns ``reason=cdp_eval_timeout``
+    when ``performance.now()`` passes that permit or the abort nonce is set.
+    Python returns the same dict when the permit or click CDP wait hits
+    ``TimeoutError`` (click script is not sent if the permit stamp times out).
+    ``CancelledError`` propagates after the abort nonce is marked. A later call
+    uses a new nonce. ``no_send_button`` may include ``census`` (logged at WARNING).
     """
     nonce = uuid.uuid4().hex
     token = _send_abort_nonce.set(nonce)
+    timeout_s = float(SEND_BTN_CDP_EVAL_TIMEOUT_S)
+    page_budget_ms = max(
+        0, int(timeout_s * 1000) - int(SEND_BTN_PAGE_TIMEOUT_MARGIN_MS)
+    )
     try:
+        try:
+            await _cdp_eval(
+                ws_url,
+                _composer_send_permit_expression(nonce, page_budget_ms),
+                await_promise=False,
+                timeout_s=timeout_s,
+            )
+        except TimeoutError:
+            return {"ok": False, "reason": "cdp_eval_timeout", "send_clicked": False}
         value = await _cdp_eval(
             ws_url,
             _click_send_body(
@@ -581,12 +630,12 @@ async def dom_click_send(
                 line,
                 preserve_newlines=preserve_newlines,
                 abort_nonce=nonce,
-                eval_timeout_s=SEND_BTN_CDP_EVAL_TIMEOUT_S,
+                eval_timeout_s=timeout_s,
             ),
             await_promise=True,
-            timeout_s=SEND_BTN_CDP_EVAL_TIMEOUT_S,
+            timeout_s=timeout_s,
         )
-    except (TimeoutError, asyncio.CancelledError):
+    except TimeoutError:
         return {"ok": False, "reason": "cdp_eval_timeout", "send_clicked": False}
     finally:
         _send_abort_nonce.reset(token)

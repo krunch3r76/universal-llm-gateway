@@ -21,8 +21,16 @@ from cursor_bridge.dom_composer_paste import (
     SEND_BTN_POLL_INTERVAL_MS,
     SEND_BTN_WAIT_CEILING_MS,
     _click_send_body,
+    _composer_send_permit_expression,
     dom_insert_and_send,
 )
+
+
+def _abort_nonce_from_click_js(js: str) -> str | None:
+    match = re.search(r"const abortNonce=(\"(?:\\.|[^\"\\])*\")", js)
+    if not match:
+        return None
+    return str(json.loads(match.group(1)))
 
 
 def _run_click_send_js(
@@ -35,6 +43,8 @@ def _run_click_send_js(
     async_js: bool = True,
     abort_nonces: dict[str, bool] | None = None,
     perf_jump_after_calls: int = 0,
+    permit_deadline_offset_ms: int | None = None,
+    stamp_via_mark_expression: bool = False,
 ) -> dict[str, Any]:
     """Evaluate generated click-send JS in Node with a minimal DOM mock."""
     if send_appears_after_searches is None:
@@ -45,6 +55,22 @@ def _run_click_send_js(
     btn_spec = json.dumps(buttons or [])
     abort_spec = json.dumps(abort_nonces or {})
     perf_jump = int(perf_jump_after_calls)
+    abort_nonce = _abort_nonce_from_click_js(js)
+    if permit_deadline_offset_ms is None:
+        permit_deadline_offset_ms = 600_000
+    permit_offset = int(permit_deadline_offset_ms)
+    if abort_nonce is None:
+        permit_setup = ""
+    elif stamp_via_mark_expression:
+        permit_stamp = _composer_send_permit_expression(
+            abort_nonce, max(0, permit_offset)
+        )
+        permit_setup = f"{permit_stamp};"
+    else:
+        permit_setup = (
+            f"window.__ulgOperatorActivity.composerSendPermits[{json.dumps(abort_nonce)}] = "
+            f"performance.now() + {permit_offset};"
+        )
     harness = f"""
 const appearAfter = {appear_after};
 const appearAfterMs = {appear_ms};
@@ -129,7 +155,7 @@ global.document = {{
   hasFocus: () => true,
   querySelector: (sel) => (sel.includes('Prompt') || sel.includes('contenteditable') ? composer : null),
 }};
-global.window = {{ __ulgOperatorActivity: {{ composerSendAbortNonces: {abort_spec} }} }};
+global.window = {{ __ulgOperatorActivity: {{ composerSendAbortNonces: {abort_spec}, composerSendPermits: {{}} }} }};
 global.HTMLTextAreaElement = {{ prototype: {{}} }};
 global.HTMLInputElement = {{ prototype: {{}} }};
 if ({perf_jump} > 0) {{
@@ -147,6 +173,8 @@ if ({perf_jump} > 0) {{
 if (appearAfterMs !== null) {{
   setTimeout(() => {{ sendVisibleByTimer = true; }}, appearAfterMs);
 }}
+
+{permit_setup}
 
 (async () => {{
   const result = {"await " + js if async_js else js};
@@ -244,7 +272,7 @@ def test_dom_insert_and_send_inserts_once(monkeypatch: pytest.MonkeyPatch) -> No
     )
     assert out["ok"] is True
     assert insert_calls == 1
-    assert send_calls == 1
+    assert send_calls == 2
 
 
 @pytest.mark.asyncio
@@ -374,6 +402,8 @@ async def test_dom_insert_and_send_forwards_census_on_send_failure() -> None:
         call_idx += 1
         if call_idx == 1:
             return {"ok": True, "sig": "hello"}
+        if call_idx == 2:
+            return {"ok": True}
         return {
             "ok": False,
             "reason": "no_send_button",
@@ -407,7 +437,9 @@ async def test_dom_click_send_uses_await_promise() -> None:
             selector='[aria-label="Prompt"][contenteditable="true"]',
             line="hello",
         )
-    assert mock_eval.await_args.kwargs.get("await_promise") is True
+    assert mock_eval.call_count == 2
+    assert mock_eval.call_args_list[0].kwargs.get("await_promise") is False
+    assert mock_eval.call_args_list[1].kwargs.get("await_promise") is True
 
 
 def test_page_deadline_returns_timeout_without_click() -> None:
@@ -524,15 +556,17 @@ async def test_dom_click_send_timeout_marks_nonce_and_does_not_click(
         "send_clicked": False,
     }
     assert ws.sent[0]["method"] == "Runtime.evaluate"
-    match = re.search(
-        r"const abortNonce=(\"(?:\\.|[^\"\\])*\")", ws.sent[0]["params"]["expression"]
-    )
-    assert match
-    nonce = json.loads(match.group(1))
+    assert "composerSendPermits" in ws.sent[0]["params"]["expression"]
+    click_evals = [
+        m
+        for m in ws.sent
+        if m.get("method") == "Runtime.evaluate"
+        and "findSendBtn" in m.get("params", {}).get("expression", "")
+    ]
+    assert not click_evals
     mark = ws.sent[1]
     assert mark["id"] == 2
     assert mark["method"] == "Runtime.evaluate"
-    assert json.dumps(nonce) in mark["params"]["expression"]
     assert "composerSendAbortNonces" in mark["params"]["expression"]
     assert all(msg["method"] != "Runtime.terminateExecution" for msg in ws.sent)
 
@@ -554,11 +588,50 @@ async def test_dom_click_send_cancel_returns_cdp_eval_timeout(
     )
     await asyncio.wait_for(ws.started.wait(), 1)
     task.cancel()
-    result = await task
-    assert result["ok"] is False
-    assert result["reason"] == "cdp_eval_timeout"
-    assert result["send_clicked"] is False
+    with pytest.raises(asyncio.CancelledError):
+        await task
     assert any(
         msg.get("id") == 2 and "composerSendAbortNonces" in msg["params"]["expression"]
         for msg in ws.sent
     )
+
+
+@pytest.mark.skipif(
+    subprocess.run(["which", "node"], capture_output=True).returncode != 0,
+    reason="node not installed",
+)
+def test_permit_expired_before_click_script_no_click() -> None:
+    js = _click_send_body('[aria-label="Prompt"][contenteditable="true"]', "hello")
+    result = _run_click_send_js(
+        js,
+        composer_text="hello",
+        send_appears_after_searches=1,
+        permit_deadline_offset_ms=-1,
+    )
+    assert result["ok"] is False
+    assert result["reason"] == "cdp_eval_timeout"
+    assert result["send_clicked"] is False
+    assert result["__sendClicked"] is False
+
+
+@pytest.mark.skipif(
+    subprocess.run(["which", "node"], capture_output=True).returncode != 0,
+    reason="node not installed",
+)
+def test_mark_then_click_valid_permit_aborted_nonce_no_click() -> None:
+    js = _click_send_body(
+        '[aria-label="Prompt"][contenteditable="true"]',
+        "hello",
+        abort_nonce="permit-still-valid",
+    )
+    result = _run_click_send_js(
+        js,
+        composer_text="hello",
+        send_appears_after_searches=1,
+        abort_nonces={"permit-still-valid": True},
+        stamp_via_mark_expression=True,
+    )
+    assert result["ok"] is False
+    assert result["reason"] == "cdp_eval_timeout"
+    assert result["send_clicked"] is False
+    assert result["__sendClicked"] is False

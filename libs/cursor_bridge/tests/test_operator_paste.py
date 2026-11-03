@@ -1249,6 +1249,63 @@ def test_dom_verification_conclusive_requires_agent_id_and_readback() -> None:
     )
 
 
+@pytest.mark.asyncio
+async def test_cdp_eval_timeout_skips_enter_fallback(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    surface = {
+        "state": "chat_list",
+        "active_title": "Test Grok",
+        "active_agent_id": "agent-1",
+        "titles": ["Test Grok"],
+        "title_counts": {"Test Grok": 1},
+        "agent_ids": {"agent-1": "Test Grok"},
+        "composer_draft": "",
+        "generating": False,
+        "recent_messages": [],
+    }
+    enter = AsyncMock(return_value={"ok": True, "method": "cdp_enter"})
+    monkeypatch.setattr(
+        "cursor_bridge.operator_paste.list_pages",
+        lambda _o: [{"title": "Grok Bot", "web_socket_debugger_url": "ws://x"}],
+    )
+    monkeypatch.setattr(
+        "cursor_bridge.operator_paste.visible_sidebar_agent_ids",
+        AsyncMock(return_value={"agent-1"}),
+    )
+    monkeypatch.setattr(
+        "cursor_bridge.operator_paste.probe_surface",
+        AsyncMock(return_value=surface),
+    )
+    monkeypatch.setattr(
+        "cursor_bridge.operator_paste._insert_composer_text",
+        AsyncMock(return_value={"ok": True}),
+    )
+    monkeypatch.setattr(
+        "cursor_bridge.operator_paste.dom_click_send",
+        AsyncMock(
+            return_value={
+                "ok": False,
+                "reason": "cdp_eval_timeout",
+                "send_clicked": False,
+            }
+        ),
+    )
+    monkeypatch.setattr("cursor_bridge.operator_paste._submit_composer_enter", enter)
+    out = await deliver_operator_paste(
+        display="10",
+        app="grok",
+        agent_id="agent-1",
+        text="Operator relay test",
+        grant="operator",
+        authorization_source="agent-bus:21614#2",
+        scope="test",
+    )
+    assert out["ok"] is False
+    assert out["reason"] == "submit_failed"
+    enter.assert_not_awaited()
+
+
 def test_operator_paste_imports_in_fresh_subprocess() -> None:
     """Module-level import must not hit interlocutor circular init."""
     proc = subprocess.run(

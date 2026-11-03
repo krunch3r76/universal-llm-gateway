@@ -253,11 +253,15 @@ async def _submit_composer_send_button(
 ) -> dict[str, Any]:
     send = await dom_click_send(ws_url, selector=selector, line=line)
     clicked = bool(send.get("send_clicked"))
-    return {
+    out: dict[str, Any] = {
         "ok": clicked,
         "method": "send_button",
         "send_fallback_clicked": clicked,
     }
+    reason = send.get("reason")
+    if reason is not None:
+        out["reason"] = reason
+    return out
 
 
 async def _submit_composer_enter(
@@ -457,6 +461,20 @@ async def _guarded_insert_and_submit(
                     app=app,
                     selected=selected,
                     detail=type(exc).__name__,
+                ),
+                False,
+                surface,
+                submit_methods,
+            )
+
+        if str(first_send.get("reason") or "") == "cdp_eval_timeout":
+            return (
+                _grant_refuse(
+                    "submit_failed",
+                    display=disp,
+                    app=app,
+                    selected=selected,
+                    detail="cdp_eval_timeout",
                 ),
                 False,
                 surface,
