@@ -10,6 +10,7 @@ Lane-B work renders as a first-class state rather than a cross-field inference.
 from __future__ import annotations
 
 import json
+import logging
 import re
 import subprocess
 from dataclasses import dataclass, replace
@@ -24,12 +25,20 @@ from services.git_integration_worker.relay.closeout_status_polarity import (
     status_dispositions_equivalent,
 )
 
+logger = logging.getLogger(__name__)
+
 _GIT_TIMEOUT_S = 30.0
 _SHA_RE = re.compile(r"^[0-9a-f]{7,40}$", re.I)
 _PLANE_LINE_RE = re.compile(r"(?im)^plane:\s*.+$")
 _PLANE_DISCREPANCY_RE = re.compile(r"(?im)^plane-discrepancy:\s*.+$")
 _PLANE_REGISTER_RE = re.compile(r"(?im)^plane-register:\s*.+$")
 _LAND_DISPOSITION_LINE_RE = re.compile(r"(?im)^land_disposition\s*:\s*(.+?)\s*$")
+_WORKER_LANDED_LINE_RE = re.compile(r"^[ \t]*landed:[ \t]*.*$", re.IGNORECASE)
+_WORKER_DISP_LANDED_RE = re.compile(
+    r"^[ \t]*land_disposition:[ \t]*[`\"']?landed(?:@local-master)?[`\"']?[ \t]*$",
+    re.IGNORECASE,
+)
+_ATX_HEADING_RE = re.compile(r"(?m)^#{1,6} ")
 _PLANE_INFIX = r"(?:@[\w.-]+(?:\([^)]*\))?)?"
 _PENDING_TAIL_RE = re.compile(r"\s+\(\+\d+\s+pending\)\s*$", re.I)
 _TRUNCATION_ELLIPSIS_RE = re.compile(
@@ -453,9 +462,7 @@ def land_disposition_measurement_from_plane(obs: PlaneObservation) -> str | None
     if obs.commit_exists is True:
         branch_token = f"({obs.branch})" if obs.branch else ""
         reason = obs.unknown_reason or "landed axis unmeasured"
-        return (
-            f"tip@lane-B{branch_token} · unknown@local-master ({reason})"
-        )
+        return f"tip@lane-B{branch_token} · unknown@local-master ({reason})"
     return None
 
 
@@ -715,6 +722,142 @@ def strip_plane_line(body: str) -> str:
     return "\n".join(lines).rstrip() + ("\n" if body.endswith("\n") else "")
 
 
+def _line_is_worker_land_claim(line: str) -> bool:
+    return bool(
+        _WORKER_LANDED_LINE_RE.match(line) or _WORKER_DISP_LANDED_RE.match(line)
+    )
+
+
+def _text_has_worker_land_claim(text: str) -> bool:
+    """True when an unfenced line claims the tip is already on master."""
+    in_fence = False
+    for line in text.splitlines():
+        if line.strip().startswith("```"):
+            in_fence = not in_fence
+            continue
+        if not in_fence and _line_is_worker_land_claim(line):
+            return True
+    return False
+
+
+def project_closeout_land_lines(
+    text: str | None,
+    *,
+    ancestry_on_master: bool | None,
+    sha: str | None,
+) -> str:
+    """Replace worker land claims with the ancestry probe's result.
+
+    Callers are closeout receipt assembly after settlement. A worker
+    ``landed:`` line or a bare ``land_disposition: landed`` line is not a
+    land. When *ancestry_on_master* is true and *sha* is a hex object name,
+    those lines are dropped and the two probe lines are appended. When the
+    probe is false, the lines are dropped and the receipt says the tip is
+    off master. When the probe is unknown, each claim is prefixed so it
+    cannot be read as a land. Text with no such claim is returned unchanged.
+    Fenced blocks are left intact. No git I/O and no events.
+    """
+    body = text or ""
+    if not _text_has_worker_land_claim(body):
+        return body
+    kept: list[str] = []
+    in_fence = False
+    for line in body.splitlines():
+        if line.strip().startswith("```"):
+            in_fence = not in_fence
+            kept.append(line)
+            continue
+        if not in_fence and _line_is_worker_land_claim(line):
+            if ancestry_on_master is None:
+                kept.append(f"unverified worker claim: {line.strip()}")
+            continue
+        kept.append(line)
+    projected = "\n".join(kept).rstrip("\n")
+    named = (sha or "").strip().lower()
+    if ancestry_on_master is True and _SHA_RE.fullmatch(named):
+        published = f"landed: {named}\nland_disposition: landed"
+        projected = f"{projected}\n{published}" if projected else published
+    elif ancestry_on_master is False:
+        notice = "tip: off master"
+        projected = f"{projected}\n{notice}" if projected else notice
+    if body.endswith("\n") or projected:
+        if projected and not projected.endswith("\n"):
+            projected += "\n"
+    return projected
+
+
+def project_receipt_land_claims(
+    text: str | None,
+    *,
+    repo: Path,
+    sha: str | None,
+    branch: str | None,
+) -> str:
+    """Project worker land claims through ``probe_three_planes`` for *sha*.
+
+    Receipt assembly calls this after the silent-land attempt. No claim in
+    *text* skips the probe and returns *text*. A missing *sha* leaves
+    ancestry unknown, so claims are marked unverified rather than published.
+    Local refs only; the probe does not fetch.
+    """
+    body = text or ""
+    if not _text_has_worker_land_claim(body):
+        return body
+    ancestry: bool | None = None
+    if sha and str(sha).strip():
+        ancestry = probe_three_planes(
+            repo,
+            head_sha=sha,
+            branch=branch,
+            hub_repo=repo,
+        ).landed_local_master
+    return project_closeout_land_lines(
+        body,
+        ancestry_on_master=ancestry,
+        sha=sha,
+    )
+
+
+def rewrite_receipt_preamble_file(
+    path: Path,
+    *,
+    repo: Path,
+    sha: str | None,
+    branch: str | None,
+) -> None:
+    """Rewrite the sidecar preamble's land claims. A write failure is logged.
+
+    Only the bytes before the first ATX heading change, so a later structured
+    JSON section is not scanned. OSError leaves the previous preamble in place;
+    the closeout path must not raise. No event: one file per dispatch, and a
+    failed write is already a warning.
+    """
+    try:
+        existing = path.read_text(encoding="utf-8")
+    except OSError:
+        logger.warning("receipt land-claim rewrite unreadable path=%s", path)
+        return
+    match = _ATX_HEADING_RE.search(existing)
+    if match is None:
+        section, rest = existing, ""
+    else:
+        section, rest = existing[: match.start()], existing[match.start() :]
+    projected = project_receipt_land_claims(
+        section,
+        repo=repo,
+        sha=sha,
+        branch=branch,
+    )
+    if projected == section:
+        return
+    if rest and projected and not projected.endswith("\n"):
+        projected += "\n"
+    try:
+        path.write_text(projected + rest, encoding="utf-8")
+    except OSError:
+        logger.warning("receipt land-claim rewrite failed path=%s", path)
+
+
 def preserve_plane_lines(body: str) -> bool:
     """True when body still carries a ``plane:`` line (relay must not drop it)."""
     return bool(_PLANE_LINE_RE.search(body or ""))
@@ -739,6 +882,9 @@ __all__ = [
     "inject_plane_line",
     "inject_qualified_land_disposition",
     "land_disposition_measurement_from_plane",
+    "project_closeout_land_lines",
+    "project_receipt_land_claims",
+    "rewrite_receipt_preamble_file",
     "parse_capture_plane_keys",
     "preserve_plane_lines",
     "probe_three_planes",

@@ -304,8 +304,10 @@ def packet_requests_silent_land(packet_text: str | None) -> bool:
 
     Opt-in token, line-start, off by default: ``land: silent``.
     Leading whitespace is allowed; the rest of the line must be empty.
-    ``do not hub-land``, a declared ``land_disposition``, and a read-only
-    admit still refuse the land even when this line is present.
+    ``do not hub-land`` and a read-only admit still refuse the land even
+    when this line is present. A worker ``land_disposition: landed`` line
+    does not: that claim is checked by ancestry after the attempt. Discard
+    and an ``unlanded`` tip that does not match the branch still refuse.
     """
     if not packet_text:
         return False
@@ -341,11 +343,15 @@ def silent_land_attempt(
     ``packet_requests_silent_land``). Without that token the branch is left
     for a guarded land. Fast-forward when master has not moved. When a peer
     commit landed first and git can merge with no conflict, merge.
-    Exploratory packets (``do not hub-land``), any declared disposition, a
-    read-only admit, a branch with nothing ahead, and a textual conflict
-    are left untouched even when the token is present.
-    Returns True only when hub master now contains the branch tip.
-    Side effects: may fast-forward or merge the hub master worktree.
+    Exploratory packets (``do not hub-land``), a read-only admit, a branch
+    with nothing ahead, a discard disposition, an ``unlanded`` tip that
+    does not match the branch, and a textual conflict are left untouched
+    even when the token is present. A worker ``land_disposition: landed``
+    claim is not one of those refusals: ``commits_ahead`` and the actuator
+    decide, and the actuator reports landed only when the hub sha moves.
+    ``SilentLandOutcome.landed`` is true only when the hub sha moved and now
+    contains the branch tip. Side effects: may fast-forward or merge the hub
+    master worktree, and logs one info line when a worker landed claim is ignored.
     """
     if (commits_ahead or 0) < 1:
         return SilentLandOutcome(False)
@@ -361,11 +367,22 @@ def silent_land_attempt(
         return SilentLandOutcome(False)
     verb, _reason, _sha = parse_land_disposition(closeout_text)
     if verb is not None:
-        if verb == DISCHARGE_UNLANDED and _silent_land_unlanded_tip_agrees(
-            repo, branch_name, closeout_text
+        # Introduced so a declared disposition would not be overridden by a
+        # merge (b25f733d4). Unlanded-plus-matching-tip was later allowed
+        # (2376fcae8) because the template forced that line. A worker
+        # ``landed`` line is the claim under test, not an opt-out: refusing
+        # it skipped the only closeout-time writer. ``commits_ahead`` above
+        # and the actuator (hub sha must change) keep that gate structural.
+        if verb == DISCHARGE_LANDED:
+            logger.info(
+                "lane_b silent land ignores worker landed claim branch=%s dispatch_id=%s",
+                branch_name,
+                dispatch_id,
+            )
+        elif not (
+            verb == DISCHARGE_UNLANDED
+            and _silent_land_unlanded_tip_agrees(repo, branch_name, closeout_text)
         ):
-            pass
-        else:
             return SilentLandOutcome(False)
     if not packet_requests_silent_land(silent_source):
         return SilentLandOutcome(False)
