@@ -31,19 +31,29 @@ import weakref
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from contextvars import ContextVar
+from dataclasses import dataclass
 from pathlib import Path
 
 _DISPLAY_SWITCH_DEPTH: ContextVar[int] = ContextVar("display_switch_depth", default=0)
 
 # In-process locks are keyed by (running loop, key): an asyncio.Lock binds to the
 # first loop that waits on it, so one shared across loops raises RuntimeError or
-# strands waiters. Weak keys drop a loop's locks when the loop is collected.
+# strands waiters. Entries drop when the last holder or waiter exits (user count
+# hits zero); a contended lock keeps its loop alive until then.
 _INPROC_GUARD = threading.Lock()
+
+
+@dataclass
+class _InprocEntry:
+    lock: asyncio.Lock
+    users: int
+
+
 _INPROC_AGENT: weakref.WeakKeyDictionary[
-    asyncio.AbstractEventLoop, dict[tuple[str, str], asyncio.Lock]
+    asyncio.AbstractEventLoop, dict[tuple[str, str], _InprocEntry]
 ] = weakref.WeakKeyDictionary()
 _INPROC_SWITCH: weakref.WeakKeyDictionary[
-    asyncio.AbstractEventLoop, dict[str, asyncio.Lock]
+    asyncio.AbstractEventLoop, dict[str, _InprocEntry]
 ] = weakref.WeakKeyDictionary()
 
 _POLL_INITIAL_S = 0.005
@@ -77,20 +87,74 @@ def _lock_path(display: str, *, kind: str, agent_id: str = "") -> Path:
     return lock_run_dir() / f"{disp}.{aid}.agent.lock"
 
 
-def _inproc_agent(display: str, agent_id: str) -> asyncio.Lock:
-    """Return the agent lock for ``(display, agent_id)`` on the running loop."""
+def _inproc_drop_agent(
+    loop: asyncio.AbstractEventLoop, key: tuple[str, str]
+) -> None:
+    per_loop = _INPROC_AGENT.get(loop)
+    if per_loop is None:
+        return
+    entry = per_loop.get(key)
+    if entry is None:
+        return
+    entry.users -= 1
+    if entry.users <= 0:
+        del per_loop[key]
+        if not per_loop:
+            del _INPROC_AGENT[loop]
+
+
+def _inproc_drop_switch(loop: asyncio.AbstractEventLoop, key: str) -> None:
+    per_loop = _INPROC_SWITCH.get(loop)
+    if per_loop is None:
+        return
+    entry = per_loop.get(key)
+    if entry is None:
+        return
+    entry.users -= 1
+    if entry.users <= 0:
+        del per_loop[key]
+        if not per_loop:
+            del _INPROC_SWITCH[loop]
+
+
+@asynccontextmanager
+async def _inproc_agent(display: str, agent_id: str) -> AsyncIterator[None]:
+    """Serialize coroutines on the running loop for one agent key."""
     key = (_safe_token(display), _safe_token(agent_id))
     loop = asyncio.get_running_loop()
     with _INPROC_GUARD:
-        return _INPROC_AGENT.setdefault(loop, {}).setdefault(key, asyncio.Lock())
+        per_loop = _INPROC_AGENT.setdefault(loop, {})
+        entry = per_loop.get(key)
+        if entry is None:
+            entry = _InprocEntry(lock=asyncio.Lock(), users=0)
+            per_loop[key] = entry
+        entry.users += 1
+    try:
+        async with entry.lock:
+            yield
+    finally:
+        with _INPROC_GUARD:
+            _inproc_drop_agent(loop, key)
 
 
-def _inproc_switch(display: str) -> asyncio.Lock:
-    """Return the switch lock for ``display`` on the running loop."""
+@asynccontextmanager
+async def _inproc_switch(display: str) -> AsyncIterator[None]:
+    """Serialize coroutines on the running loop for one display switch key."""
     key = _safe_token(display)
     loop = asyncio.get_running_loop()
     with _INPROC_GUARD:
-        return _INPROC_SWITCH.setdefault(loop, {}).setdefault(key, asyncio.Lock())
+        per_loop = _INPROC_SWITCH.setdefault(loop, {})
+        entry = per_loop.get(key)
+        if entry is None:
+            entry = _InprocEntry(lock=asyncio.Lock(), users=0)
+            per_loop[key] = entry
+        entry.users += 1
+    try:
+        async with entry.lock:
+            yield
+    finally:
+        with _INPROC_GUARD:
+            _inproc_drop_switch(loop, key)
 
 
 class _FcntlFileLock:

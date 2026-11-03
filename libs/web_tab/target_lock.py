@@ -13,15 +13,25 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from pathlib import Path
+from dataclasses import dataclass
 from typing import Any
 
 # In-process locks are keyed by (running loop, key): an asyncio.Lock binds to the
 # first loop that waits on it, so one shared across loops raises RuntimeError or
-# strands a waiter on another loop. Weak keys drop a loop's locks when the loop
-# is collected. flock still serializes across loops, threads and processes.
+# strands a waiter on another loop. Entries drop when the last holder or waiter
+# exits (user count hits zero); a contended lock keeps its loop alive until then.
+# flock still serializes across loops, threads and processes.
 _INPROC_GUARD = threading.Lock()
+
+
+@dataclass
+class _InprocEntry:
+    lock: asyncio.Lock
+    users: int
+
+
 _INPROC: weakref.WeakKeyDictionary[
-    asyncio.AbstractEventLoop, dict[str, asyncio.Lock]
+    asyncio.AbstractEventLoop, dict[str, _InprocEntry]
 ] = weakref.WeakKeyDictionary()
 
 
@@ -137,12 +147,39 @@ class _FcntlFileLock:
             self._fh = None
 
 
-def _inproc(target_id: str) -> asyncio.Lock:
-    """Return the in-process lock for ``target_id`` on the running loop."""
+def _inproc_drop(loop: asyncio.AbstractEventLoop, key: str) -> None:
+    """Remove ``key`` from ``loop`` when its user count reaches zero."""
+    per_loop = _INPROC.get(loop)
+    if per_loop is None:
+        return
+    entry = per_loop.get(key)
+    if entry is None:
+        return
+    entry.users -= 1
+    if entry.users <= 0:
+        del per_loop[key]
+        if not per_loop:
+            del _INPROC[loop]
+
+
+@asynccontextmanager
+async def _inproc(target_id: str) -> AsyncIterator[None]:
+    """Serialize coroutines on the running loop for one in-process key."""
     key = _safe_token(target_id)
     loop = asyncio.get_running_loop()
     with _INPROC_GUARD:
-        return _INPROC.setdefault(loop, {}).setdefault(key, asyncio.Lock())
+        per_loop = _INPROC.setdefault(loop, {})
+        entry = per_loop.get(key)
+        if entry is None:
+            entry = _InprocEntry(lock=asyncio.Lock(), users=0)
+            per_loop[key] = entry
+        entry.users += 1
+    try:
+        async with entry.lock:
+            yield
+    finally:
+        with _INPROC_GUARD:
+            _inproc_drop(loop, key)
 
 
 async def _acquire_cross_process_lock(
