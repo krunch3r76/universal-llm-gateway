@@ -2,7 +2,9 @@
 
 Callers are the operator-paste tool and its offline tests. A click script or
 an Enter key dispatched during submit is recorded in Python; the single exit
-gate then refuses a retry unless that attempt's delivery was verified.
+gate then refuses a retry unless that attempt's delivery was verified. A
+decisive page refusal means the click script finished without clicking, so
+Enter may still run and the result stays retryable until Enter is dispatched.
 """
 
 from __future__ import annotations
@@ -41,8 +43,9 @@ from cursor_bridge.display_interaction_locks import (
     display_switch_lock,
 )
 from cursor_bridge.dom_composer_paste import (
+    _click_was_decisively_refused,
     _click_was_dispatched,
-    _mark_click_dispatched,
+    _mark_enter_dispatched,
     _reset_click_dispatched,
     _restore_click_dispatched,
     composer_selector,
@@ -368,15 +371,17 @@ _POST_CLICK_EXC = (
 
 
 def _send_click_may_have_gone_out(first_send: dict[str, Any]) -> bool:
-    """True only when this attempt already sent the click script.
+    """True when a click or a later Enter may already have left this attempt.
 
     ``first_send`` is ignored. A reason string, including ``cdp_eval_timeout``
-    and ``send_button_error``, is not evidence. ``dom_click_send`` sets the
-    flag immediately before the click evaluate; a permit-stamp timeout leaves
-    it false.
+    and ``send_button_error``, is not evidence by itself. ``dom_click_send``
+    sets the monotonic flag immediately before the click evaluate; a
+    permit-stamp timeout leaves it false. A decisive page refusal means that
+    script finished without clicking, so this returns false until Enter
+    dispatch clears the refusal.
     """
     del first_send
-    return _click_was_dispatched()
+    return _click_was_dispatched() and not _click_was_decisively_refused()
 
 
 def _is_verified_delivery(payload: dict[str, Any]) -> bool:
@@ -391,19 +396,20 @@ def _is_verified_delivery(payload: dict[str, Any]) -> bool:
 def _seal_deliver_exit(payload: dict[str, Any] | None) -> dict[str, Any] | None:
     """Single exit gate for every ``deliver_operator_paste`` result.
 
-    When a click script or an Enter key was dispatched and this result is not
-    a verified delivery, stamp ``retryable`` false. That covers readback
-    failure and every sealed post-dispatch exception. A verified send that a
-    later return would deny is reported submitted. A still-false dispatch
-    flag leaves the payload unchanged. ``None`` stays ``None``. The stamp is
-    a copy; the input dict is not mutated.
+    When a click or Enter may have gone out and this result is not a verified
+    delivery, stamp ``retryable`` false. A decisive page refusal leaves the
+    monotonic click flag set but is not a send, so the stamp waits until
+    Enter dispatch clears that refusal. A verified send that a later return
+    would deny is reported submitted. A still-false dispatch flag leaves the
+    payload unchanged. ``None`` stays ``None``. The stamp is a copy; the
+    input dict is not mutated.
     """
     if not isinstance(payload, dict):
         return payload
     out = payload
     if _send_was_verified() and out.get("submitted") is not True:
         out = {**out, "submitted": True, "send_verified": True}
-    if _click_was_dispatched() and not _is_verified_delivery(out):
+    if _send_click_may_have_gone_out({}) and not _is_verified_delivery(out):
         if out.get("retryable") is not False:
             out = {**out, "retryable": False}
     return out
@@ -719,7 +725,7 @@ async def _guarded_insert_and_submit(
                                 nonce_needle=run_nonce,
                             )
                             if enter.get("ok"):
-                                _mark_click_dispatched()
+                                _mark_enter_dispatched()
                                 submit_methods.append("cdp_enter")
                                 post_submit, submitted = await _poll_submit_verified(
                                     ws_url,
@@ -732,10 +738,10 @@ async def _guarded_insert_and_submit(
                                 reason = str(enter.get("reason") or "enter_refused")
                                 submit_methods.append(f"cdp_enter_refused:{reason}")
                         except (TimeoutError, RuntimeError, OSError):
-                            _mark_click_dispatched()
+                            _mark_enter_dispatched()
                             submitted = False
                         except Exception:
-                            _mark_click_dispatched()
+                            _mark_enter_dispatched()
                             raise
 
             matched, verify_surface = await _probe_agent_match(
@@ -1018,7 +1024,8 @@ async def deliver_operator_paste(
     after a click script or an Enter key was sent (readback, artifact capture,
     screenshot, transcript check, or probe). A verified delivery gets no
     retryable stamp; any other post-dispatch result is not retryable. Enter
-    runs only while the dispatch fact is still false.
+    runs when the click may not have gone out, including after a decisive
+    page refusal that left the monotonic click fact set.
     """
     click_token = _reset_click_dispatched()
     verified_token = _send_verified.set(False)
