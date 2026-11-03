@@ -1,9 +1,15 @@
-"""Grant-gated operator relay paste into Grok Bot / display-chat sidebars."""
+"""Grant-gated operator relay paste into Grok Bot and display-chat sidebars.
+
+Callers are the operator-paste tool and its offline tests. A click script sent
+during submit is recorded in Python; the single exit gate then refuses a retry
+unless that attempt's delivery was verified.
+"""
 
 from __future__ import annotations
 
 import asyncio
 import base64
+import contextvars
 import hashlib
 import json
 import os
@@ -12,6 +18,11 @@ from pathlib import Path
 from typing import Any
 from urllib.error import URLError
 
+from interlocutor.watermark import (
+    OPERATOR_HEADER,
+    WATERMARK,
+    wrap_operator_message,
+)
 from websockets.exceptions import ConnectionClosed
 
 from cursor_bridge.cdp_composer_input import (
@@ -30,6 +41,9 @@ from cursor_bridge.display_interaction_locks import (
     display_switch_lock,
 )
 from cursor_bridge.dom_composer_paste import (
+    _click_was_dispatched,
+    _reset_click_dispatched,
+    _restore_click_dispatched,
     composer_selector,
     dom_click_send,
     dom_set_composer_text,
@@ -47,13 +61,26 @@ from cursor_bridge.wake_delivery import (
     _refuse,
     normalize_target,
 )
-from interlocutor.watermark import (
-    OPERATOR_HEADER,
-    WATERMARK,
-    wrap_operator_message,
-)
 
 _VALID_GRANTS = frozenset({"operator", "explicit"})
+
+# Set when a probe shows the send landed. The exit gate keeps later reports
+# submitted even if a following probe or target check fails.
+_send_verified: contextvars.ContextVar[bool] = contextvars.ContextVar(
+    "operator_paste_send_verified",
+    default=False,
+)
+
+
+def _mark_send_verified() -> None:
+    """Record that a post-click probe already showed this send in the transcript."""
+    _send_verified.set(True)
+
+
+def _send_was_verified() -> bool:
+    """True after ``_mark_send_verified`` in the current paste attempt."""
+    return bool(_send_verified.get())
+
 
 RELAY_NONCE_LABEL = "Relay-Nonce"
 
@@ -108,9 +135,7 @@ def wrap_operator_message(
     scope_s = (scope or "").strip()
     nonce = str(run_nonce or "").strip() or make_run_nonce()
     wm = watermark_with_nonce(nonce)
-    return (
-        f"{OPERATOR_HEADER}\n\nSource: {src}\nScope: {scope_s}\n\n{body}\n\n{wm}"
-    )
+    return f"{OPERATOR_HEADER}\n\nSource: {src}\nScope: {scope_s}\n\n{body}\n\n{wm}"
 
 
 def _grant_refuse(reason: str, **extra: Any) -> dict[str, Any]:
@@ -253,6 +278,12 @@ async def _insert_composer_text(
 async def _submit_composer_send_button(
     ws_url: str, *, selector: str, line: str
 ) -> dict[str, Any]:
+    """Click send via ``dom_click_send`` and copy its reason onto the result.
+
+    The click fact is recorded inside ``dom_click_send`` immediately before
+    the click script, after the permit stamp. This wrapper does not set the
+    fact itself: a permit timeout must stay unmarked so Enter can still run.
+    """
     send = await dom_click_send(ws_url, selector=selector, line=line)
     clicked = bool(send.get("send_clicked"))
     out: dict[str, Any] = {
@@ -336,15 +367,44 @@ _POST_CLICK_EXC = (
 
 
 def _send_click_may_have_gone_out(first_send: dict[str, Any]) -> bool:
-    """True when this send-button attempt may already have dispatched a click.
+    """True only when this attempt already sent the click script.
 
-    A ``cdp_eval_timeout`` without ``clicked_unknown`` ended before the click,
-    so a later retry cannot double-send. An ok result, ``clicked_unknown``,
-    or any other send-button failure counts as a possible click.
+    ``first_send`` is ignored. A reason string, including ``cdp_eval_timeout``
+    and ``send_button_error``, is not evidence. ``dom_click_send`` sets the
+    flag immediately before the click evaluate; a permit-stamp timeout leaves
+    it false.
     """
-    if first_send.get("ok") or first_send.get("clicked_unknown"):
-        return True
-    return str(first_send.get("reason") or "") != "cdp_eval_timeout"
+    del first_send
+    return _click_was_dispatched()
+
+
+def _is_verified_delivery(payload: dict[str, Any]) -> bool:
+    """True when paste already observed a delivered readback for this attempt."""
+    return (
+        payload.get("ok") is True
+        and payload.get("delivered") is True
+        and payload.get("reason") == "delivered"
+    )
+
+
+def _seal_deliver_exit(payload: dict[str, Any] | None) -> dict[str, Any] | None:
+    """Single exit gate for every ``deliver_operator_paste`` result.
+
+    When the click script was sent and this result is not a verified delivery,
+    stamp ``retryable`` false. That covers readback failure and every sealed
+    post-click exception. A verified send that a later return would deny is
+    reported submitted. A still-false click flag leaves the payload unchanged.
+    ``None`` stays ``None``. The stamp is a copy; the input dict is not mutated.
+    """
+    if not isinstance(payload, dict):
+        return payload
+    out = payload
+    if _send_was_verified() and out.get("submitted") is not True:
+        out = {**out, "submitted": True, "send_verified": True}
+    if _click_was_dispatched() and not _is_verified_delivery(out):
+        if out.get("retryable") is not False:
+            out = {**out, "retryable": False}
+    return out
 
 
 def _seal_retryable_after_possible_click(
@@ -352,16 +412,37 @@ def _seal_retryable_after_possible_click(
     *,
     click_may_have_gone_out: bool,
 ) -> dict[str, Any] | None:
-    """Stamp ``retryable`` false once a send-button click may have left.
+    """Delegate to ``_seal_deliver_exit``.
 
-    Returns ``payload`` unchanged when no click was possible, including the
-    timeout branch that reports the click did not fire. ``None`` stays ``None``
-    so the caller can stamp its own not-submitted returns. The stamp is a copy;
-    the input dict is not mutated.
+    ``click_may_have_gone_out`` is ignored so a reason-string guess cannot
+    seal or unseal a result. The gate reads the click fact instead.
     """
-    if payload is None or not click_may_have_gone_out:
-        return payload
-    return {**payload, "retryable": False}
+    del click_may_have_gone_out
+    return _seal_deliver_exit(payload)
+
+
+def _post_click_exception_result(exc: BaseException) -> dict[str, Any]:
+    """Sealed paste result for an exception after the click script was sent.
+
+    The caller must only use this when the click fact is true. Readback,
+    artifact, screenshot, transcript, and probe failures become this dict
+    instead of an unsealed raise. ``retryable`` is false. A send already
+    shown in the transcript stays submitted.
+    """
+    verified = _send_was_verified()
+    return {
+        "ok": False,
+        "reason": "submit_unverified",
+        "pasted": True,
+        "delivered": False,
+        "readback_ok": None,
+        "submitted": verified,
+        "send_verified": verified,
+        "retryable": False,
+        "detail": type(exc).__name__,
+        "watermark_visible": None,
+        "composer_empty_after": None,
+    }
 
 
 async def _clear_our_draft_once(
@@ -524,13 +605,18 @@ async def _guarded_insert_and_submit(
         submitted = False
         post_submit = surface
         send_probe_only = False
-        click_may_have_gone_out = False
         draft_state = {"clear_attempted": False, "send_verified": False}
 
         def _seal(payload: dict[str, Any] | None) -> dict[str, Any] | None:
             return _seal_retryable_after_possible_click(
-                payload, click_may_have_gone_out=click_may_have_gone_out
+                payload, click_may_have_gone_out=_click_was_dispatched()
             )
+
+        def _remember_verified(verified: bool) -> None:
+            if not verified:
+                return
+            draft_state["send_verified"] = True
+            _mark_send_verified()
 
         async def _clear_once() -> None:
             await _clear_our_draft_once(
@@ -545,15 +631,12 @@ async def _guarded_insert_and_submit(
                 ws_url, selector=prompt_sel, line=flat_line
             )
             submit_methods.append("send_button")
-            click_may_have_gone_out = _send_click_may_have_gone_out(first_send)
         except _POST_CLICK_EXC:
             submit_methods.append("send_button")
             send_probe_only = True
-            click_may_have_gone_out = True
             first_send = {
                 "ok": False,
-                "reason": "cdp_eval_timeout",
-                "clicked_unknown": True,
+                "reason": "send_button_error",
             }
             try:
                 post_submit = await probe_surface(ws_url)
@@ -563,42 +646,22 @@ async def _guarded_insert_and_submit(
                     body_snippet=body_snippet,
                     run_nonce=run_nonce,
                 )
-                if submitted:
-                    draft_state["send_verified"] = True
+                _remember_verified(submitted)
             except _POST_CLICK_EXC:
-                submitted = False
+                submitted = draft_state["send_verified"]
 
         post_click_failure: dict[str, Any] | None = None
         try:
             if not send_probe_only:
-                if str(first_send.get("reason") or "") == "cdp_eval_timeout":
-                    if first_send.get("clicked_unknown"):
-                        post_submit = await probe_surface(ws_url)
-                        submitted = _submit_verified(
-                            post_submit,
-                            watermark=wm_line,
-                            body_snippet=body_snippet,
-                            run_nonce=run_nonce,
-                        )
-                        if submitted:
-                            draft_state["send_verified"] = True
-                    else:
-                        await _clear_once()
-                        return (
-                            _seal(
-                                _grant_refuse(
-                                    "submit_failed",
-                                    display=disp,
-                                    app=app,
-                                    selected=selected,
-                                    detail="cdp_eval_timeout",
-                                )
-                            ),
-                            False,
-                            surface,
-                            submit_methods,
-                            None,
-                        )
+                if _click_was_dispatched() and not first_send.get("ok"):
+                    post_submit = await probe_surface(ws_url)
+                    submitted = _submit_verified(
+                        post_submit,
+                        watermark=wm_line,
+                        body_snippet=body_snippet,
+                        run_nonce=run_nonce,
+                    )
+                    _remember_verified(submitted)
                 elif first_send.get("ok"):
                     post_submit, submitted = await _poll_submit_verified(
                         ws_url,
@@ -606,8 +669,7 @@ async def _guarded_insert_and_submit(
                         body_snippet=body_snippet,
                         run_nonce=run_nonce,
                     )
-                    if submitted:
-                        draft_state["send_verified"] = True
+                    _remember_verified(submitted)
 
             if not submitted:
                 retry_surface = await probe_surface(ws_url)
@@ -619,7 +681,7 @@ async def _guarded_insert_and_submit(
                 ):
                     post_submit = retry_surface
                     submitted = True
-                    draft_state["send_verified"] = True
+                    _remember_verified(True)
                 else:
                     matched, surface = await _probe_agent_match(
                         ws_url, expected_agent_id=aid_s
@@ -644,10 +706,9 @@ async def _guarded_insert_and_submit(
                             submit_methods,
                             None,
                         )
-                    ambiguous_timeout = str(
-                        first_send.get("reason") or ""
-                    ) == "cdp_eval_timeout" and bool(first_send.get("clicked_unknown"))
-                    if not first_send.get("ok") and not ambiguous_timeout:
+                    if not first_send.get("ok") and not _send_click_may_have_gone_out(
+                        first_send
+                    ):
                         try:
                             enter = await _submit_composer_enter(
                                 ws_url,
@@ -663,8 +724,7 @@ async def _guarded_insert_and_submit(
                                     body_snippet=body_snippet,
                                     run_nonce=run_nonce,
                                 )
-                                if submitted:
-                                    draft_state["send_verified"] = True
+                                _remember_verified(submitted)
                             else:
                                 reason = str(enter.get("reason") or "enter_refused")
                                 submit_methods.append(f"cdp_enter_refused:{reason}")
@@ -699,7 +759,8 @@ async def _guarded_insert_and_submit(
                 await _clear_once()
                 post_submit = await probe_surface(ws_url)
         except _POST_CLICK_EXC as exc:
-            submitted = False
+            if not draft_state["send_verified"]:
+                submitted = False
             post_click_failure = {"detail": type(exc).__name__}
             if not isinstance(exc, ConnectionClosed):
                 try:
@@ -943,7 +1004,52 @@ async def deliver_operator_paste(
     scope: object = "",
     select: bool = True,
 ) -> dict[str, Any]:
-    """Paste one grant-gated operator message; refuse without grant and source."""
+    """Paste one grant-gated message and seal every return after a click.
+
+    Refuses without a grant and an authorization source. Every result from
+    this function passes ``_seal_deliver_exit``, including an exception raised
+    after the click script was sent (readback, artifact capture, screenshot,
+    transcript check, or probe). A verified delivery is left retryable; any
+    other post-click result is not. Enter runs only while the click fact is
+    still false.
+    """
+    click_token = _reset_click_dispatched()
+    verified_token = _send_verified.set(False)
+    try:
+        try:
+            result = await _deliver_operator_paste_body(
+                display=display,
+                app=app,
+                agent_id=agent_id,
+                text=text,
+                grant=grant,
+                authorization_source=authorization_source,
+                scope=scope,
+                select=select,
+            )
+        except Exception as exc:
+            if not _click_was_dispatched():
+                raise
+            result = _post_click_exception_result(exc)
+        sealed = _seal_deliver_exit(result)
+        return sealed if sealed is not None else result
+    finally:
+        _restore_click_dispatched(click_token)
+        _send_verified.reset(verified_token)
+
+
+async def _deliver_operator_paste_body(
+    *,
+    display: object,
+    app: object,
+    agent_id: object,
+    text: str,
+    grant: object,
+    authorization_source: object,
+    scope: object = "",
+    select: bool = True,
+) -> dict[str, Any]:
+    """Run one paste attempt. ``deliver_operator_paste`` seals the result."""
     grant_s = str(grant or "").strip().lower()
     auth_src = str(authorization_source or "").strip()
     if grant_s not in _VALID_GRANTS or not auth_src:
@@ -1043,9 +1149,7 @@ async def _deliver_operator_session(
     finally:
         if switch_ctx["did_switch"] and restore_agent_id:
             try:
-                await select_sidebar_target(
-                    ws_url, expected_agent_id=restore_agent_id
-                )
+                await select_sidebar_target(ws_url, expected_agent_id=restore_agent_id)
                 if result is not None:
                     result["restore_ok"] = True
             except (TimeoutError, RuntimeError, OSError) as exc:
@@ -1300,7 +1404,6 @@ async def _deliver_operator_session_body(
                 "locate_method": locate_method,
                 "message": line,
                 "submit_methods": submit_methods,
-                "retryable": False,
             }
         artifacts = await _finalize_verification_artifacts(
             ws_url,
@@ -1336,7 +1439,6 @@ async def _deliver_operator_session_body(
             "locate_method": locate_method,
             "message": line,
             "submit_methods": submit_methods,
-            "retryable": False,
             **artifacts,
         }
 

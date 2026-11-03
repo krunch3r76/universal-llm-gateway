@@ -8,7 +8,9 @@ click runs before the script's first await. The permit stamped on ``performance.
 before the click script is dispatched is what the prefix reads before clicking.
 A send poll that outlives the CDP wait must not click: the page gives up when
 ``performance.now()`` passes that permit, and a per-call abort nonce blocks a
-late evaluate without affecting the next send.
+late evaluate without affecting the next send. Python records a monotonic
+click fact immediately before the click script is sent; a permit-stamp timeout
+leaves that fact false.
 """
 
 from __future__ import annotations
@@ -30,6 +32,39 @@ _send_abort_nonce: contextvars.ContextVar[str] = contextvars.ContextVar(
     "composer_send_abort_nonce",
     default="",
 )
+
+# Monotonic for one paste attempt. Set immediately before the click script is
+# sent. Reset by the paste exit gate. The only evidence that no click happened
+# is that this flag is still false — reason strings are not evidence.
+_click_dispatched: contextvars.ContextVar[bool] = contextvars.ContextVar(
+    "composer_click_dispatched",
+    default=False,
+)
+
+
+def _mark_click_dispatched() -> None:
+    """Record that the click script is about to be sent on this task.
+
+    The flag stays true until ``_reset_click_dispatched`` starts another
+    attempt. A later failure result cannot clear it.
+    """
+    _click_dispatched.set(True)
+
+
+def _click_was_dispatched() -> bool:
+    """True after ``_mark_click_dispatched`` in the current context."""
+    return bool(_click_dispatched.get())
+
+
+def _reset_click_dispatched() -> contextvars.Token[bool]:
+    """Clear the click fact for one paste attempt and return the reset token."""
+    return _click_dispatched.set(False)
+
+
+def _restore_click_dispatched(token: contextvars.Token[bool]) -> None:
+    """Put the click fact back to the value from before this paste attempt."""
+    _click_dispatched.reset(token)
+
 
 _EXPECT_DRAFT_SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 
@@ -621,6 +656,9 @@ async def dom_click_send(
     ``TimeoutError`` (click script is not sent if the permit stamp times out).
     ``CancelledError`` propagates after the abort nonce is marked. A later call
     uses a new nonce. ``no_send_button`` may include ``census`` (logged at WARNING).
+    The click fact is set immediately before the click evaluate and stays false
+    when the permit stamp times out, so a later ``cdp_eval_timeout`` result is
+    not treated as proof that the click did not run.
     """
     nonce = uuid.uuid4().hex
     token = _send_abort_nonce.set(nonce)
@@ -638,6 +676,7 @@ async def dom_click_send(
             )
         except TimeoutError:
             return {"ok": False, "reason": "cdp_eval_timeout", "send_clicked": False}
+        _mark_click_dispatched()
         value = await _cdp_eval(
             ws_url,
             _click_send_body(
@@ -677,6 +716,8 @@ async def dom_click_send_own_draft(
 
     Stamps the same page-clock send permit and abort nonce as ``dom_click_send``
     before evaluating the click script so cancel and permit expiry block the click.
+    The click fact is set immediately before that click evaluate, and a permit
+    timeout returns without setting it.
     """
     nonce = uuid.uuid4().hex
     token = _send_abort_nonce.set(nonce)
@@ -694,6 +735,7 @@ async def dom_click_send_own_draft(
             )
         except TimeoutError:
             return {"ok": False, "reason": "cdp_eval_timeout", "send_clicked": False}
+        _mark_click_dispatched()
         value = await _cdp_eval(
             ws_url,
             _click_send_own_draft_body(
