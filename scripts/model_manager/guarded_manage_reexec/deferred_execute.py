@@ -71,11 +71,33 @@ def dispatch_status_terminal(row: dict[str, Any] | None) -> bool:
     return str(row.get("status") or "") in _STATUS_TERMINAL
 
 
+def _giw_probe_record_observed(
+    observed: dict[str, Any] | None,
+    *,
+    holder_dispatch_id: Any = None,
+    queue_depth: int | None = None,
+    busy: Any = None,
+    holder: Any = None,
+) -> None:
+    if observed is None:
+        return
+    observed.clear()
+    if holder_dispatch_id is not None:
+        observed["holder_dispatch_id"] = holder_dispatch_id
+    if queue_depth is not None:
+        observed["queue_depth"] = queue_depth
+    if busy is not None:
+        observed["busy"] = busy
+    if holder is not None:
+        observed["holder"] = holder
+
+
 def giw_idle_probe(
     manage_call: ManageCall,
     ledger_factory: Callable[[], Any],
     *,
     sock_path: str | None,
+    observed: dict[str, Any] | None = None,
 ) -> tuple[bool, str | None]:
     """Read the GIW lease and busy_status once and say whether it is idle.
 
@@ -83,15 +105,36 @@ def giw_idle_probe(
     depth is zero, and busy_status determination is idle with no holder.
     Ledger read failures, unobservable busy_status, and undetermined rows
     return a named refuse reason. Busy or held rows return ``(False, None)``.
-    Side effect: one ``busy_status`` manage call for git_integration_worker.
+
+    When ``observed`` is a dict, each sample clears it and stores
+    ``holder_dispatch_id``, ``queue_depth``, and when ``busy_status`` runs,
+    ``busy`` and ``holder`` from that row. Callers pass this sink through
+    ``wait_for_parent_and_giw_idle`` so timeout refusals record
+    ``giw_last_holder`` on ``checks``. Injected fakes that omit the sink leave
+    ``giw_last_holder`` as ``"unobserved"``.
+
+    Side effect: one ``busy_status`` manage call for git_integration_worker
+    unless the lease or queue already proves not idle.
     """
     try:
         snap = ledger_factory().lease_snapshot()
     except Exception:
         return False, "giw_idle_ledger_unreadable"
-    if snap.get("holder_dispatch_id"):
+    holder_id = snap.get("holder_dispatch_id")
+    depth = int(snap.get("queue_depth") or 0)
+    if holder_id:
+        _giw_probe_record_observed(
+            observed,
+            holder_dispatch_id=holder_id,
+            queue_depth=depth,
+        )
         return False, None
-    if int(snap.get("queue_depth") or 0) > 0:
+    if depth > 0:
+        _giw_probe_record_observed(
+            observed,
+            holder_dispatch_id=None,
+            queue_depth=depth,
+        )
         return False, None
     row = _manage(
         manage_call,
@@ -102,11 +145,41 @@ def giw_idle_probe(
     if row.get("status") == "error":
         return False, "giw_idle_busy_status_unobservable"
     if row.get("probe_error") is not None or row.get("determination") == "undetermined":
+        _giw_probe_record_observed(
+            observed,
+            holder_dispatch_id=None,
+            queue_depth=0,
+            busy=row.get("busy"),
+            holder=row.get("holder"),
+        )
         return False, "giw_idle_busy_status_undetermined"
-    if row.get("busy") or row.get("holder") is not None:
+    busy = row.get("busy")
+    holder = row.get("holder")
+    if busy or holder is not None:
+        _giw_probe_record_observed(
+            observed,
+            holder_dispatch_id=None,
+            queue_depth=0,
+            busy=busy,
+            holder=holder,
+        )
         return False, None
     if row.get("determination") != "idle":
+        _giw_probe_record_observed(
+            observed,
+            holder_dispatch_id=None,
+            queue_depth=0,
+            busy=busy,
+            holder=holder,
+        )
         return False, None
+    _giw_probe_record_observed(
+        observed,
+        holder_dispatch_id=None,
+        queue_depth=0,
+        busy=busy,
+        holder=holder,
+    )
     return True, None
 
 
@@ -127,6 +200,35 @@ def _bounded_sleep(
     sleep(min(poll_s, remaining))
 
 
+def _write_wait_budget_exhausted_checks(
+    checks: dict[str, Any],
+    *,
+    parent_row: dict[str, Any] | None,
+    last_idle: bool | None,
+    last_refuse: str | None,
+    samples: int,
+    wait_elapsed_s: float,
+    giw_observed: dict[str, Any] | None,
+    transient_consecutive: int | None = None,
+    transient_total: int | None = None,
+) -> None:
+    checks["parent_last_status"] = (
+        "unreadable" if parent_row is None else str(parent_row.get("status") or "")
+    )
+    checks["parent_terminal"] = dispatch_status_terminal(parent_row)
+    checks["giw_last_idle"] = last_idle
+    checks["giw_last_refuse"] = last_refuse
+    checks["samples"] = samples
+    checks["wait_elapsed_s"] = round(wait_elapsed_s, 1)
+    if giw_observed:
+        checks["giw_last_holder"] = dict(giw_observed)
+    else:
+        checks["giw_last_holder"] = "unobserved"
+    if transient_consecutive is not None:
+        checks[_CHECK_TRANSIENT_CONSECUTIVE] = transient_consecutive
+        checks[_CHECK_TRANSIENT_TOTAL] = transient_total
+
+
 def wait_for_parent_and_giw_idle(
     *,
     parent_dispatch_id: str,
@@ -137,6 +239,7 @@ def wait_for_parent_and_giw_idle(
     clock: ClockFn | None = None,
     sleep_fn: SleepFn | None = None,
     checks: dict[str, Any] | None = None,
+    giw_observed: dict[str, Any] | None = None,
 ) -> tuple[bool, str | None]:
     """Poll until the parent is terminal and GIW is idle, or the budget ends.
 
@@ -144,22 +247,34 @@ def wait_for_parent_and_giw_idle(
     Callers that already own a deadline pass only the time left; this function
     does not add a fresh full window. Ledger-unreadable, busy-status
     unobservable, and busy-status undetermined samples count as not idle and
-    keep polling. At the deadline a trailing transient reason is returned and
-    consecutive plus total counts are written onto ``checks`` when that dict
-    is provided. Any other exhausted budget returns ``(False, None)``. A
-    refuse string outside that set returns immediately.
+    keep polling. When the budget ends and ``checks`` is provided, it receives
+    ``parent_last_status`` (``"unreadable"`` when the row is missing),
+    ``parent_terminal``, ``giw_last_idle``, ``giw_last_refuse``, ``samples``,
+    ``wait_elapsed_s``, and ``giw_last_holder`` (a snapshot dict from
+    ``giw_observed`` or ``"unobserved"``). A trailing transient reason also
+    sets ``giw_idle_transient_consecutive`` and ``giw_idle_transient_total``.
+    Immediate refuse strings outside the transient set return without writing
+    those keys.
 
     Returns ``(True, None)`` when the parent row is terminal and the probe is
     idle. No I/O beyond the injected probe and status callables.
     """
     now = clock or time.time
     sleep = sleep_fn or time.sleep
-    deadline = now() + timeout_s
+    started = now()
+    deadline = started + timeout_s
     consecutive = 0
     total = 0
     last_transient: str | None = None
+    samples = 0
+    last_idle: bool | None = None
+    last_refuse: str | None = None
+    last_parent_row: dict[str, Any] | None = None
     while now() < deadline:
         idle, refuse = giw_idle_probe_fn()
+        samples += 1
+        last_idle = idle
+        last_refuse = refuse
         if refuse in _GIW_IDLE_TRANSIENT_REASONS:
             last_transient = refuse
             consecutive += 1
@@ -170,13 +285,35 @@ def wait_for_parent_and_giw_idle(
             consecutive = 0
             last_transient = None
             parent_row = dispatch_status_fn(parent_dispatch_id)
+            last_parent_row = parent_row
             if dispatch_status_terminal(parent_row) and idle:
                 return True, None
         _bounded_sleep(sleep, poll_s=poll_s, deadline=deadline, now=now)
+    elapsed = now() - started
+    if checks is not None:
+        if last_transient is not None:
+            _write_wait_budget_exhausted_checks(
+                checks,
+                parent_row=last_parent_row,
+                last_idle=last_idle,
+                last_refuse=last_refuse,
+                samples=samples,
+                wait_elapsed_s=elapsed,
+                giw_observed=giw_observed,
+                transient_consecutive=consecutive,
+                transient_total=total,
+            )
+        else:
+            _write_wait_budget_exhausted_checks(
+                checks,
+                parent_row=last_parent_row,
+                last_idle=last_idle,
+                last_refuse=last_refuse,
+                samples=samples,
+                wait_elapsed_s=elapsed,
+                giw_observed=giw_observed,
+            )
     if last_transient is not None:
-        if checks is not None:
-            checks[_CHECK_TRANSIENT_CONSECUTIVE] = consecutive
-            checks[_CHECK_TRANSIENT_TOTAL] = total
         return False, last_transient
     return False, None
 
@@ -290,9 +427,20 @@ def run_deferred_recycle(
             dispatch_id=did
         )
 
-    giw_probe = giw_idle_probe_fn or (
-        lambda: giw_idle_probe(manage, factory, sock_path=sock)  # noqa: E731
-    )
+    giw_observed: dict[str, Any] = {}
+    if giw_idle_probe_fn is None:
+        giw_probe = (
+            lambda: giw_idle_probe(  # noqa: E731
+                manage,
+                factory,
+                sock_path=sock,
+                observed=giw_observed,
+            )
+        )
+        wait_giw_observed: dict[str, Any] | None = giw_observed
+    else:
+        giw_probe = giw_idle_probe_fn
+        wait_giw_observed = None
 
     deadline = now() + ctx.wait_timeout_s
     probe_checks: dict[str, Any] = {}
@@ -308,7 +456,7 @@ def run_deferred_recycle(
                 manage_before={},
                 child_before={},
                 reply_fn=reply_fn,
-                checks=deadline_checks,
+                checks={**probe_checks, **deadline_checks},
             )
         ready, refuse_reason = wait_for_parent_and_giw_idle(
             parent_dispatch_id=ctx.parent_dispatch_id,
@@ -319,6 +467,7 @@ def run_deferred_recycle(
             clock=clock,
             sleep_fn=sleep_fn,
             checks=probe_checks,
+            giw_observed=wait_giw_observed,
         )
         if refuse_reason:
             return _refused_exit(
@@ -336,6 +485,7 @@ def run_deferred_recycle(
                 manage_before={},
                 child_before={},
                 reply_fn=reply_fn,
+                checks=probe_checks,
             )
 
         gate = run_recycle_step1_per_service_gate(
