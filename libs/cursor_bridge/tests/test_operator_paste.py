@@ -1461,6 +1461,81 @@ async def test_send_button_runtime_error_probes_skips_enter_clears(
 
 
 @pytest.mark.asyncio
+async def test_send_button_error_then_connection_closed_probe_unobserved(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import websockets.exceptions
+
+    surface = {
+        "state": "chat_list",
+        "active_title": "Test Grok",
+        "active_agent_id": "agent-1",
+        "titles": ["Test Grok"],
+        "title_counts": {"Test Grok": 1},
+        "agent_ids": {"agent-1": "Test Grok"},
+        "composer_draft": "",
+        "generating": False,
+        "recent_messages": [],
+    }
+    send = AsyncMock(side_effect=RuntimeError("socket dropped"))
+    enter = AsyncMock(return_value={"ok": True, "method": "cdp_enter"})
+    send_awaited = False
+    conn_closed = websockets.exceptions.ConnectionClosed(None, None)
+
+    async def probe_side_effect(*_a: object, **_k: object) -> dict[str, object]:
+        nonlocal send_awaited
+        if send_awaited:
+            raise conn_closed
+        return surface
+
+    async def send_side_effect(*_a: object, **_k: object) -> None:
+        nonlocal send_awaited
+        send_awaited = True
+        raise RuntimeError("socket dropped")
+
+    probe = AsyncMock(side_effect=probe_side_effect)
+    send.side_effect = send_side_effect
+    monkeypatch.setattr(
+        "cursor_bridge.operator_paste.list_pages",
+        lambda _o: [{"title": "Grok Bot", "web_socket_debugger_url": "ws://x"}],
+    )
+    monkeypatch.setattr(
+        "cursor_bridge.operator_paste.visible_sidebar_agent_ids",
+        AsyncMock(return_value={"agent-1"}),
+    )
+    monkeypatch.setattr("cursor_bridge.operator_paste.probe_surface", probe)
+    monkeypatch.setattr(
+        "cursor_bridge.operator_paste._insert_composer_text",
+        AsyncMock(return_value={"ok": True}),
+    )
+    monkeypatch.setattr("cursor_bridge.operator_paste._submit_composer_send_button", send)
+    monkeypatch.setattr("cursor_bridge.operator_paste._submit_composer_enter", enter)
+    monkeypatch.setattr(
+        "cursor_bridge.operator_paste._poll_submit_verified",
+        AsyncMock(return_value=(surface, False)),
+    )
+    monkeypatch.setattr(
+        "cursor_bridge.operator_paste._capture_screenshot_artifact",
+        AsyncMock(return_value={"sha256_png": None, "screenshot_path": None}),
+    )
+    out = await deliver_operator_paste(
+        display="10",
+        app="grok",
+        agent_id="agent-1",
+        text="Operator relay test",
+        grant="operator",
+        authorization_source="agent-bus:21614#2",
+        scope="test",
+    )
+    assert out["reason"] == "submit_unverified"
+    assert out["retryable"] is False
+    send.assert_awaited_once()
+    enter.assert_not_awaited()
+    assert out["composer_empty_after"] is None
+    assert out["detail"] == "ConnectionClosed"
+
+
+@pytest.mark.asyncio
 async def test_ambiguous_timeout_probe_verified_skips_clear_and_enter(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

@@ -704,6 +704,8 @@ async def test_click_eval_timeout_after_dispatch_is_ambiguous(
 async def test_dom_click_send_cancel_returns_cdp_eval_timeout(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    import inspect
+
     import cursor_bridge.dom_composer_paste as paste
 
     class _Sock:
@@ -740,6 +742,7 @@ async def test_dom_click_send_cancel_returns_cdp_eval_timeout(
 
     _Sock._next = 0
     monkeypatch.setattr(websockets, "connect", _connect)
+    handler_recancel = False
     task = asyncio.create_task(
         paste.dom_click_send(
             "ws://x",
@@ -747,6 +750,17 @@ async def test_dom_click_send_cancel_returns_cdp_eval_timeout(
             line="hello",
         )
     )
+    _orig_task_cancel = task.cancel
+
+    def _tracking_task_cancel(*args: object, **kwargs: object) -> bool:
+        nonlocal handler_recancel
+        for frame in inspect.stack():
+            if frame.filename.endswith("dom_composer_paste.py"):
+                handler_recancel = True
+                break
+        return _orig_task_cancel(*args, **kwargs)
+
+    task.cancel = _tracking_task_cancel  # type: ignore[method-assign]
     for _ in range(50):
         if len(socks) >= 2:
             break
@@ -767,6 +781,7 @@ async def test_dom_click_send_cancel_returns_cdp_eval_timeout(
         msg.get("id") == 2 and "composerSendAbortNonces" in msg["params"]["expression"]
         for msg in all_sent
     )
+    assert handler_recancel is True
 
 
 @pytest.mark.skipif(

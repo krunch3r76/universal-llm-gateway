@@ -354,7 +354,7 @@ async def _guarded_insert_and_submit(
     locate_method: str | None,
     surface: dict[str, Any],
     run_nonce: str,
-) -> tuple[dict[str, Any] | None, bool, dict[str, Any], list[str]]:
+) -> tuple[dict[str, Any] | None, bool, dict[str, Any], list[str], dict[str, Any] | None]:
     """Insert + submit under display_switch_lock with agent re-verify."""
     submit_methods: list[str] = []
     post_submit = surface
@@ -380,6 +380,7 @@ async def _guarded_insert_and_submit(
                 False,
                 surface,
                 submit_methods,
+                None,
             )
 
         busy = await read_operator_busy(
@@ -399,6 +400,7 @@ async def _guarded_insert_and_submit(
                 False,
                 surface,
                 submit_methods,
+                None,
             )
 
         try:
@@ -417,6 +419,7 @@ async def _guarded_insert_and_submit(
                 False,
                 surface,
                 submit_methods,
+                None,
             )
         if not insert_res.get("ok"):
             return (
@@ -431,6 +434,7 @@ async def _guarded_insert_and_submit(
                 False,
                 surface,
                 submit_methods,
+                None,
             )
 
         matched, surface = await _probe_agent_match(ws_url, expected_agent_id=aid_s)
@@ -452,6 +456,7 @@ async def _guarded_insert_and_submit(
                 False,
                 surface,
                 submit_methods,
+                None,
             )
 
         submitted = False
@@ -491,145 +496,177 @@ async def _guarded_insert_and_submit(
             ):
                 submitted = False
 
-        if not send_probe_only:
-            if str(first_send.get("reason") or "") == "cdp_eval_timeout":
-                if first_send.get("clicked_unknown"):
-                    post_submit = await probe_surface(ws_url)
-                    submitted = _submit_verified(
-                        post_submit,
-                        watermark=wm_line,
-                        body_snippet=body_snippet,
-                        run_nonce=run_nonce,
-                    )
-                    if not submitted:
+        _post_click_exc = (
+            TimeoutError,
+            RuntimeError,
+            OSError,
+            websockets.exceptions.ConnectionClosed,
+        )
+        post_click_failure: dict[str, Any] | None = None
+        try:
+            if not send_probe_only:
+                if str(first_send.get("reason") or "") == "cdp_eval_timeout":
+                    if first_send.get("clicked_unknown"):
+                        post_submit = await probe_surface(ws_url)
+                        submitted = _submit_verified(
+                            post_submit,
+                            watermark=wm_line,
+                            body_snippet=body_snippet,
+                            run_nonce=run_nonce,
+                        )
+                        if not submitted:
+                            await clear_our_composer_draft(
+                                ws_url,
+                                selector=prompt_sel,
+                                watermark=WATERMARK,
+                                line=flat_line,
+                            )
+                    else:
                         await clear_our_composer_draft(
                             ws_url,
                             selector=prompt_sel,
                             watermark=WATERMARK,
                             line=flat_line,
                         )
-                else:
-                    await clear_our_composer_draft(
+                        return (
+                            _grant_refuse(
+                                "submit_failed",
+                                display=disp,
+                                app=app,
+                                selected=selected,
+                                detail="cdp_eval_timeout",
+                            ),
+                            False,
+                            surface,
+                            submit_methods,
+                            None,
+                        )
+                elif first_send.get("ok"):
+                    post_submit, submitted = await _poll_submit_verified(
                         ws_url,
-                        selector=prompt_sel,
-                        watermark=WATERMARK,
-                        line=flat_line,
+                        watermark=wm_line,
+                        body_snippet=body_snippet,
+                        run_nonce=run_nonce,
                     )
-                    return (
-                        _grant_refuse(
-                            "submit_failed",
-                            display=disp,
-                            app=app,
-                            selected=selected,
-                            detail="cdp_eval_timeout",
-                        ),
-                        False,
-                        surface,
-                        submit_methods,
-                    )
-            elif first_send.get("ok"):
-                post_submit, submitted = await _poll_submit_verified(
-                    ws_url,
+
+            if not submitted:
+                retry_surface = await probe_surface(ws_url)
+                if _submit_verified(
+                    retry_surface,
                     watermark=wm_line,
                     body_snippet=body_snippet,
                     run_nonce=run_nonce,
+                ):
+                    post_submit = retry_surface
+                    submitted = True
+                else:
+                    matched, surface = await _probe_agent_match(
+                        ws_url, expected_agent_id=aid_s
+                    )
+                    if not matched:
+                        await clear_our_composer_draft(
+                            ws_url,
+                            selector=prompt_sel,
+                            watermark=WATERMARK,
+                            line=flat_line,
+                        )
+                        return (
+                            _target_changed_refuse(
+                                disp=disp,
+                                app=app,
+                                aid_s=aid_s,
+                                selected=selected,
+                                locate_method=locate_method,
+                                surface=surface,
+                                line=line,
+                                verdict=verdict,
+                            ),
+                            False,
+                            surface,
+                            submit_methods,
+                            None,
+                        )
+                    ambiguous_timeout = (
+                        str(first_send.get("reason") or "") == "cdp_eval_timeout"
+                        and bool(first_send.get("clicked_unknown"))
+                    )
+                    if not first_send.get("ok") and not ambiguous_timeout:
+                        try:
+                            enter = await _submit_composer_enter(
+                                ws_url,
+                                selector=prompt_sel,
+                                expected_agent_id=aid_s,
+                                nonce_needle=run_nonce,
+                            )
+                            if enter.get("ok"):
+                                submit_methods.append("cdp_enter")
+                                post_submit, submitted = await _poll_submit_verified(
+                                    ws_url,
+                                    watermark=wm_line,
+                                    body_snippet=body_snippet,
+                                    run_nonce=run_nonce,
+                                )
+                            else:
+                                reason = str(enter.get("reason") or "enter_refused")
+                                submit_methods.append(f"cdp_enter_refused:{reason}")
+                        except (TimeoutError, RuntimeError, OSError):
+                            submitted = False
+
+            matched, verify_surface = await _probe_agent_match(
+                ws_url, expected_agent_id=aid_s
+            )
+            if not matched:
+                await clear_our_composer_draft(
+                    ws_url, selector=prompt_sel, watermark=WATERMARK, line=flat_line
+                )
+                return (
+                    _target_changed_refuse(
+                        disp=disp,
+                        app=app,
+                        aid_s=aid_s,
+                        selected=selected,
+                        locate_method=locate_method,
+                        surface=verify_surface,
+                        line=line,
+                        verdict=verdict,
+                    ),
+                    False,
+                    verify_surface,
+                    submit_methods,
+                    None,
                 )
 
-        if not submitted:
-            retry_surface = await probe_surface(ws_url)
-            if _submit_verified(
-                retry_surface,
-                watermark=wm_line,
-                body_snippet=body_snippet,
-                run_nonce=run_nonce,
-            ):
-                post_submit = retry_surface
-                submitted = True
-            else:
-                matched, surface = await _probe_agent_match(
-                    ws_url, expected_agent_id=aid_s
+            if not submitted:
+                await clear_our_composer_draft(
+                    ws_url,
+                    selector=prompt_sel,
+                    watermark=WATERMARK,
+                    line=flat_line,
                 )
-                if not matched:
+                post_submit = await probe_surface(ws_url)
+        except _post_click_exc as exc:
+            submitted = False
+            post_click_failure = {"detail": type(exc).__name__}
+            if not isinstance(exc, websockets.exceptions.ConnectionClosed):
+                try:
                     await clear_our_composer_draft(
                         ws_url,
                         selector=prompt_sel,
                         watermark=WATERMARK,
                         line=flat_line,
                     )
-                    return (
-                        _target_changed_refuse(
-                            disp=disp,
-                            app=app,
-                            aid_s=aid_s,
-                            selected=selected,
-                            locate_method=locate_method,
-                            surface=surface,
-                            line=line,
-                            verdict=verdict,
-                        ),
-                        False,
-                        surface,
-                        submit_methods,
-                    )
-                ambiguous_timeout = (
-                    str(first_send.get("reason") or "") == "cdp_eval_timeout"
-                    and bool(first_send.get("clicked_unknown"))
-                )
-                if not first_send.get("ok") and not ambiguous_timeout:
+                except _post_click_exc as clear_exc:
+                    post_click_failure = {"detail": type(clear_exc).__name__}
+                else:
                     try:
-                        enter = await _submit_composer_enter(
-                            ws_url,
-                            selector=prompt_sel,
-                            expected_agent_id=aid_s,
-                            nonce_needle=run_nonce,
-                        )
-                        if enter.get("ok"):
-                            submit_methods.append("cdp_enter")
-                            post_submit, submitted = await _poll_submit_verified(
-                                ws_url,
-                                watermark=wm_line,
-                                body_snippet=body_snippet,
-                                run_nonce=run_nonce,
-                            )
-                        else:
-                            reason = str(enter.get("reason") or "enter_refused")
-                            submit_methods.append(f"cdp_enter_refused:{reason}")
-                    except (TimeoutError, RuntimeError, OSError):
-                        submitted = False
+                        post_submit = await probe_surface(ws_url)
+                    except _post_click_exc as probe_exc:
+                        post_click_failure = {"detail": type(probe_exc).__name__}
+                    else:
+                        post_click_failure = None
+            return (None, False, post_submit, submit_methods, post_click_failure)
 
-        matched, verify_surface = await _probe_agent_match(
-            ws_url, expected_agent_id=aid_s
-        )
-        if not matched:
-            await clear_our_composer_draft(
-                ws_url, selector=prompt_sel, watermark=WATERMARK, line=flat_line
-            )
-            return (
-                _target_changed_refuse(
-                    disp=disp,
-                    app=app,
-                    aid_s=aid_s,
-                    selected=selected,
-                    locate_method=locate_method,
-                    surface=verify_surface,
-                    line=line,
-                    verdict=verdict,
-                ),
-                False,
-                verify_surface,
-                submit_methods,
-            )
-
-        if not submitted:
-            await clear_our_composer_draft(
-                ws_url,
-                selector=prompt_sel,
-                watermark=WATERMARK,
-                line=flat_line,
-            )
-            post_submit = await probe_surface(ws_url)
-
-    return (None, submitted, post_submit, submit_methods)
+    return (None, submitted, post_submit, submit_methods, None)
 
 
 async def _cdp_response(ws: Any, mid: int) -> dict[str, Any]:
@@ -1167,7 +1204,13 @@ async def _deliver_operator_session_body(
             expected_agent_id=aid_s,
         )
 
-    early, submitted, post_submit, submit_methods = await _guarded_insert_and_submit(
+    (
+        early,
+        submitted,
+        post_submit,
+        submit_methods,
+        post_click_failure,
+    ) = await _guarded_insert_and_submit(
         ws_url,
         disp=disp,
         app=app,
@@ -1186,6 +1229,35 @@ async def _deliver_operator_session_body(
         return early
 
     if not submitted:
+        if post_click_failure is not None:
+            return {
+                **verdict,
+                "ok": False,
+                "reason": "submit_unverified",
+                "pasted": True,
+                "delivered": False,
+                "readback_ok": False,
+                "submitted": False,
+                "target_verified": True,
+                "composer_empty_after": None,
+                "detail": post_click_failure["detail"],
+                "assistant_began": False,
+                "watermark_visible": _message_in_transcript(
+                    post_submit,
+                    watermark=wm_line,
+                    body_snippet=body_snippet,
+                    run_nonce=run_nonce,
+                ),
+                "run_nonce": run_nonce,
+                "selected": selected,
+                "display": disp,
+                "app": app,
+                "agent_id": aid_s,
+                "locate_method": locate_method,
+                "message": line,
+                "submit_methods": submit_methods,
+                "retryable": False,
+            }
         artifacts = await _finalize_verification_artifacts(
             ws_url,
             surface=post_submit,
