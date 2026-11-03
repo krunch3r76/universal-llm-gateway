@@ -155,6 +155,41 @@ def test_default_archive_path_honors_explicit_archive_path(
     assert default_archive_path(req, execution_id="deadbeef" * 4) == explicit
 
 
+def test_default_archive_path_code_surface_ignores_project_uuid(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    root = tmp_path / "files"
+    root.mkdir()
+    monkeypatch.setenv("CORTEX_FILES_ROOT", str(root))
+    exec_id = "e" * 32
+    req = SubmitProjectAskRequest(
+        converse=True,
+        project_uuid="p",
+        claude_surface="code",
+        model="opus-5",
+    )
+    path = default_archive_path(req, execution_id=exec_id)
+    assert path.endswith(f"/cdp-ask-archive-cdp-opus-{exec_id}.md")
+    assert "-p-" not in path
+
+
+def test_default_archive_path_cowork_strips_project_uuid(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    root = tmp_path / "files"
+    root.mkdir()
+    monkeypatch.setenv("CORTEX_FILES_ROOT", str(root))
+    exec_id = "f" * 32
+    req = SubmitProjectAskRequest(
+        converse=True,
+        project_uuid=" p ",
+        claude_surface="cowork",
+        model="opus-5",
+    )
+    path = default_archive_path(req, execution_id=exec_id)
+    assert path.endswith(f"/cdp-ask-archive-cdp-opus-p-{exec_id}.md")
+
+
 def test_default_archive_path_scopes_project_uuid_by_execution_id(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
