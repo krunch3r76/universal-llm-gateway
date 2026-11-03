@@ -118,6 +118,11 @@ _SEND_BTN_SELECTORS = (
 
 SEND_BTN_WAIT_CEILING_MS = 3000
 SEND_BTN_POLL_INTERVAL_MS = 150
+SEND_BTN_CENSUS_BUTTONS_CAP = 20
+# Runtime.evaluate must outlive async send-button polling in the page.
+SEND_BTN_CDP_EVAL_TIMEOUT_S = max(
+    8.0, SEND_BTN_WAIT_CEILING_MS / 1000.0 + 2.0
+)
 
 
 def composer_selector(*, app: str, agent_id: str = "") -> str:
@@ -254,13 +259,23 @@ async def clear_composer_draft_dom_no_focus(ws_url: str, *, selector: str) -> di
 def _click_send_body(
     selector: str, line: str, *, preserve_newlines: bool = False
 ) -> str:
+    """Build async page JS that polls for an enabled send control after insert.
+
+    Returns a ``(async () => …)()`` expression (Promise) for CDP ``Runtime.evaluate``
+    with ``awaitPromise=True``. Immediate ``no_composer`` and ``composer_text_mismatch``
+    results do not wait. After the first scan miss, each retry awaits ``setTimeout``
+    for ``SEND_BTN_POLL_INTERVAL_MS`` up to ``SEND_BTN_WAIT_CEILING_MS``. Final
+    ``no_send_button`` includes a ``census`` object (``buttons`` capped at 20,
+    ``buttons_total`` uncapped).
+    """
     find = _find_composer_js(selector)
     lj = json.dumps(_dom_paste_text(line, preserve_newlines=preserve_newlines))
     btn_sels = json.dumps(list(_SEND_BTN_SELECTORS))
     wait_ceiling = int(SEND_BTN_WAIT_CEILING_MS)
     poll_interval = int(SEND_BTN_POLL_INTERVAL_MS)
+    btn_cap = int(SEND_BTN_CENSUS_BUTTONS_CAP)
     return (
-        f"(()=>{{const el=({find});"
+        f"(async ()=>{{const el=({find});"
         "if(!el)return{ok:false,reason:'no_composer',send_clicked:false};"
         "const g=window.__ulgOperatorActivity=window.__ulgOperatorActivity||{};"
         f"const text=(el.innerText||el.value||'').trim(),line={lj};"
@@ -275,10 +290,12 @@ def _click_send_body(
         "for(const sel of btnSels){b=root.querySelector(sel);if(b)break;}"
         "return b;"
         "};"
-        "const sleepMs=(ms)=>{const t=Date.now();while(Date.now()-t<ms){}};"
         "const buildCensus=(elapsedMs)=>{"
         "const buttons=[];"
+        "let buttonsTotal=0;"
         "root.querySelectorAll('button,[role=button]').forEach((node)=>{"
+        "buttonsTotal+=1;"
+        f"if(buttons.length>={btn_cap})return;"
         "const rect=node.getBoundingClientRect();"
         "buttons.push({"
         "aria_label:node.getAttribute('aria-label'),"
@@ -294,18 +311,18 @@ def _click_send_body(
         "root_tag:String(root.tagName||'').toLowerCase(),"
         "root_outer_html:outer,"
         "buttons,"
+        "buttons_total:buttonsTotal,"
         "document_visibility_state:document.visibilityState||'',"
         "document_has_focus:document.hasFocus(),"
         "elapsed_ms:elapsedMs,"
         "};"
         "};"
         "const t0=Date.now();"
+        "const deadline=t0+waitCeilingMs;"
         "let btn=findSendBtn();"
-        "if(!btn){"
-        "while(!btn&&Date.now()-t0<waitCeilingMs){"
-        "sleepMs(pollIntervalMs);"
+        "while(!btn&&Date.now()<deadline){"
+        "await new Promise((r)=>setTimeout(r,pollIntervalMs));"
         "btn=findSendBtn();"
-        "}"
         "}"
         "if(!btn){"
         "return{ok:false,reason:'no_send_button',send_clicked:false,"
@@ -447,9 +464,17 @@ async def dom_set_composer_text(
 async def dom_click_send(
     ws_url: str, *, selector: str, line: str, preserve_newlines: bool = False
 ) -> dict[str, Any]:
+    """Click the send control when composer text matches ``line`` (DOM-only path).
+
+    Evaluates async poll JS via CDP with ``awaitPromise=True`` and
+    ``SEND_BTN_CDP_EVAL_TIMEOUT_S`` so page ``setTimeout`` retries can run.
+    ``no_send_button`` failures may include ``census`` (logged at WARNING).
+    """
     value = await _cdp_eval(
         ws_url,
         _click_send_body(selector, line, preserve_newlines=preserve_newlines),
+        await_promise=True,
+        timeout_s=SEND_BTN_CDP_EVAL_TIMEOUT_S,
     )
     if not isinstance(value, dict):
         return {"ok": False, "send_clicked": False}
@@ -481,7 +506,12 @@ async def dom_insert_and_send(
     preserve_newlines: bool = False,
     draft_writer: str = "",
 ) -> dict[str, Any]:
-    """Insert once via DOM; send via send-button click (no Enter, no focus())."""
+    """Insert once via DOM; send via async send-button poll (no Enter, no focus()).
+
+    Calls ``dom_set_composer_text`` exactly once, then ``dom_click_send``. On send
+    failure the return includes ``reason`` and ``send_fallback_clicked: False``; when
+    ``dom_click_send`` returned ``census``, that key is forwarded unchanged.
+    """
     ins = await dom_set_composer_text(
         ws_url,
         selector=selector,
@@ -495,11 +525,14 @@ async def dom_insert_and_send(
         ws_url, selector=selector, line=line, preserve_newlines=preserve_newlines
     )
     if not send.get("ok"):
-        return {
+        out: dict[str, Any] = {
             "ok": False,
             "reason": str(send.get("reason") or "send_failed"),
             "send_fallback_clicked": False,
         }
+        if send.get("census") is not None:
+            out["census"] = send["census"]
+        return out
     return {"ok": True, "send_fallback_clicked": bool(send.get("send_clicked"))}
 
 
