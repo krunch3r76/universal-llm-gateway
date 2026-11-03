@@ -266,6 +266,8 @@ def _refuse(reason: str, **extra: Any) -> dict[str, Any]:
 
 _open_lock_registry_guard = asyncio.Lock()
 _open_locks_by_conversation: dict[str, asyncio.Lock] = {}
+_attach_misses: dict[str, int] = {}
+_ATTACH_MISS_LIMIT = 3
 
 
 async def _conversation_open_lock(conversation_id: str) -> asyncio.Lock:
@@ -302,8 +304,35 @@ def _pages_for_conversation_id(pages: Any, conversation_id: str) -> list[Any]:
 
 
 def _tab_row_matches_conversation_id(row: dict[str, Any], conversation_id: str) -> bool:
-    cid = conversation_id_from_url(str(row.get("url") or ""))
+    url = str(row.get("url") or "")
+    parsed = urlparse(url)
+    if not _is_chatgpt_host(parsed.hostname):
+        return False
+    cid = conversation_id_from_url(url)
     return bool(cid and cid.lower() == conversation_id.lower())
+
+
+def _clear_attach_misses(conversation_id: str) -> None:
+    _attach_misses.pop(conversation_id.lower(), None)
+
+
+def _refuse_cdp_row_poll_miss(conversation_id: str, target_id: str) -> dict[str, Any]:
+    key = conversation_id.lower()
+    count = _attach_misses.get(key, 0) + 1
+    _attach_misses[key] = count
+    if count >= _ATTACH_MISS_LIMIT:
+        return _refuse(
+            "conversation_tab_unattachable",
+            conversation_id=conversation_id,
+            retryable=False,
+            target_id=target_id,
+        )
+    return _refuse(
+        "conversation_missing",
+        conversation_id=conversation_id,
+        retryable=True,
+        target_id=target_id,
+    )
 
 
 def _validate_stored_binding_endpoint(stored_endpoint: str) -> dict[str, Any] | None:
@@ -441,8 +470,13 @@ async def _open_orion_binding_tab(
 ) -> dict[str, Any]:
     """Open the binding row URL verbatim (hidden) or reuse an existing conversation tab.
 
-    When CDP already lists a row for the conversation id, never open another tab;
-    a missing Playwright page yields conversation_missing with that row target_id.
+    CDP rows count as a match only on chatgpt.com (same host rule as
+    ``_pages_for_conversation_id``). When a matching row exists but Playwright
+    never attaches, return ``conversation_missing`` (retryable) until three
+    consecutive poll misses for that conversation id in this process; the third
+    returns ``conversation_tab_unattachable`` (not retryable). That path neither
+    closes nor opens tabs. The miss counter is in-memory only and resets on
+    process restart. Successful attach clears the counter.
     """
     if binding_reference:
         gate = _refuse_unless_binding_row_matches_claim(
@@ -469,6 +503,7 @@ async def _open_orion_binding_tab(
     async with lock:
         existing = _pages_for_conversation_id(ctx.pages, conversation_id)
         if existing:
+            _clear_attach_misses(conversation_id)
             page0 = existing[0]
             from web_tab.cdp_actuation import default_actuation_port
 
@@ -507,6 +542,7 @@ async def _open_orion_binding_tab(
                     ctx, conversation_id
                 )
                 if page is not None:
+                    _clear_attach_misses(conversation_id)
                     return {
                         "ok": True,
                         "page": page,
@@ -518,11 +554,9 @@ async def _open_orion_binding_tab(
                         ),
                         "policy_just_opened": False,
                     }
-                return _refuse(
-                    "conversation_missing",
-                    conversation_id=conversation_id,
-                    retryable=True,
-                    target_id=str(row.get("id") or "").strip(),
+                return _refuse_cdp_row_poll_miss(
+                    conversation_id,
+                    str(row.get("id") or "").strip(),
                 )
 
         target_id = ""
@@ -537,6 +571,7 @@ async def _open_orion_binding_tab(
                             ctx, conversation_id
                         )
                         if page is not None:
+                            _clear_attach_misses(conversation_id)
                             return {
                                 "ok": True,
                                 "page": page,
@@ -548,11 +583,9 @@ async def _open_orion_binding_tab(
                                 ),
                                 "policy_just_opened": False,
                             }
-                        return _refuse(
-                            "conversation_missing",
-                            conversation_id=conversation_id,
-                            retryable=True,
-                            target_id=str(row.get("id") or "").strip(),
+                        return _refuse_cdp_row_poll_miss(
+                            conversation_id,
+                            str(row.get("id") or "").strip(),
                         )
                 opened = impl.create_background_tab(
                     cdp_url=cdp_url,
@@ -596,6 +629,7 @@ async def _open_orion_binding_tab(
                 retryable=True,
                 target_id=target_id,
             )
+        _clear_attach_misses(conversation_id)
         return {
             "ok": True,
             "page": page,
