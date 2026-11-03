@@ -7,13 +7,22 @@ import fcntl
 import json
 import os
 import re
+import threading
+import weakref
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-_INPROC: dict[str, asyncio.Lock] = {}
+# In-process locks are keyed by (running loop, key): an asyncio.Lock binds to the
+# first loop that waits on it, so one shared across loops raises RuntimeError or
+# strands a waiter on another loop. Weak keys drop a loop's locks when the loop
+# is collected. flock still serializes across loops, threads and processes.
+_INPROC_GUARD = threading.Lock()
+_INPROC: weakref.WeakKeyDictionary[
+    asyncio.AbstractEventLoop, dict[str, asyncio.Lock]
+] = weakref.WeakKeyDictionary()
 
 
 class TargetLockBusyError(Exception):
@@ -129,8 +138,11 @@ class _FcntlFileLock:
 
 
 def _inproc(target_id: str) -> asyncio.Lock:
+    """Return the in-process lock for ``target_id`` on the running loop."""
     key = _safe_token(target_id)
-    return _INPROC.setdefault(key, asyncio.Lock())
+    loop = asyncio.get_running_loop()
+    with _INPROC_GUARD:
+        return _INPROC.setdefault(loop, {}).setdefault(key, asyncio.Lock())
 
 
 async def _acquire_cross_process_lock(
@@ -188,17 +200,22 @@ def _release_cross_process_lock(fd: int) -> None:
 
 @asynccontextmanager
 async def cdp_open_bind_lock(cdp_url: str) -> AsyncIterator[None]:
-    """Serialize open/bind for one CDP endpoint (avoid duplicate background tabs)."""
+    """Serialize open/bind for one CDP endpoint (avoid duplicate background tabs).
+
+    The flock is tried once with ``LOCK_NB`` and released with ``LOCK_UN``; neither
+    blocks, so both run on the loop. Running them in a worker thread let a
+    cancelled caller abandon a flock the thread had already taken, with nothing
+    left to release it.
+    """
     key = _safe_token(cdp_url or "default")
     async with _inproc(f"open:{key}"):
         lock = _FcntlFileLock(_lock_path(f"open-{key}"))
-        acquired = await asyncio.to_thread(lock.acquire, blocking=False)
-        if not acquired:
+        if not lock.acquire(blocking=False):
             raise TargetLockBusyError(f"open:{key}")
         try:
             yield
         finally:
-            await asyncio.to_thread(lock.release)
+            lock.release()
 
 
 @asynccontextmanager
@@ -210,9 +227,10 @@ async def target_write_lock(
 ) -> AsyncIterator[None]:
     """Serialize paste/submit/bind mutations for one CDP target.
 
-    Holds the per-process ``asyncio.Lock`` for the whole wait and critical section
-    (FIFO among coroutines in this process). Cross-process exclusion uses ``flock``
-    on one file per target with non-blocking retries and exponential backoff until
+    Holds the in-process ``asyncio.Lock`` (one per running event loop) for the
+    whole wait and critical section (FIFO among coroutines on that loop).
+    Exclusion across loops and processes uses ``flock`` on one file per target
+    with non-blocking retries and exponential backoff until
     ``timeout_s`` (default from ``ULG_WEB_TAB_LOCK_TIMEOUT_S``, else 120s).
 
     There is no cross-process FIFO; a later waiter may starve until the deadline.
