@@ -3372,3 +3372,58 @@ def test_grade_invariant_with_and_without_trace(
         )
 
     _assert_attach_cannot_change_grade(monkeypatch, _grade_plain)
+
+
+# R2 F3 — Claude renders the stop banner with a typographic apostrophe (U+2019);
+# the hard-stop regexes must treat it like the ASCII form.
+_STOP_STRAIGHT = "You've hit your weekly limit · 100% used · Resets Sun, Nov 8"
+_STOP_CURLY = "You’ve hit your weekly limit · 100% used · Resets Sun, Nov 8"
+_STOP_CURLY_BARE_LIMIT = "You’ve hit your limit · Resets Sun, Nov 8"
+_NON_LIMIT_CURLY = "We’ve hit a snag — Claude’s response was interrupted"
+
+
+@pytest.mark.parametrize(
+    "banner", [_STOP_STRAIGHT, _STOP_CURLY, _STOP_CURLY_BARE_LIMIT]
+)
+def test_weekly_limit_stop_banner_apostrophe_forms_grade_stop(banner: str) -> None:
+    from claude_bundles.cdp_model_endpoint import (
+        _WEEKLY_LIMIT_EXPLICIT_STOP_RE,
+        _classify_weekly_limit_banner,
+        _proof_rejects_weekly_limit,
+        _weekly_limit_grade_rule,
+    )
+
+    assert _WEEKLY_LIMIT_EXPLICIT_STOP_RE.search(banner)
+    assert _classify_weekly_limit_banner(banner) == "stop"
+    snap = {"error_banner_text": banner, "body": "x" * 4000}
+    assert _proof_rejects_weekly_limit(snap) is True
+    assert _weekly_limit_grade_rule(snap) == "weekly_limit_stop"
+
+
+def test_weekly_limit_curly_apostrophe_non_limit_banner_does_not_match() -> None:
+    from claude_bundles.cdp_model_endpoint import (
+        _WEEKLY_LIMIT_EXPLICIT_STOP_RE,
+        _WEEKLY_LIMIT_RE,
+        _WEEKLY_LIMIT_STOP_RE,
+        _classify_weekly_limit_banner,
+        _proof_rejects_weekly_limit,
+    )
+
+    assert not _WEEKLY_LIMIT_RE.search(_NON_LIMIT_CURLY)
+    assert not _WEEKLY_LIMIT_STOP_RE.search(_NON_LIMIT_CURLY)
+    assert not _WEEKLY_LIMIT_EXPLICIT_STOP_RE.search(_NON_LIMIT_CURLY)
+    assert _classify_weekly_limit_banner(_NON_LIMIT_CURLY) is None
+    assert (
+        _proof_rejects_weekly_limit(
+            {"error_banner_text": _NON_LIMIT_CURLY, "body": "x" * 4000}
+        )
+        is False
+    )
+
+
+def test_weekly_limit_curly_apostrophe_pace_warning_stays_warning() -> None:
+    """Curly-apostrophe pace notice keeps grading warning, not stop."""
+    from claude_bundles.cdp_model_endpoint import _classify_weekly_limit_banner
+
+    banner = "You’re on pace to hit your weekly limit early · 28% used"
+    assert _classify_weekly_limit_banner(banner) == "warning"
