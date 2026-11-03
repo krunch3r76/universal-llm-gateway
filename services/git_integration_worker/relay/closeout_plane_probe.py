@@ -792,25 +792,41 @@ def project_receipt_land_claims(
     repo: Path,
     sha: str | None,
     branch: str | None,
+    commits_ahead: int | None = None,
+    commits_ahead_presence: _FieldPresence | None = None,
+    git_land_plane_uncomputable: bool = False,
 ) -> str:
-    """Project worker land claims through ``probe_three_planes`` for *sha*.
+    """Project worker land claims through the ancestry probe and the admit gate.
 
     Receipt assembly calls this after the silent-land attempt. No claim in
     *text* skips the probe and returns *text*. A missing *sha* leaves
     ancestry unknown, so claims are marked unverified rather than published.
-    Local refs only; the probe does not fetch.
+    Omitting *commits_ahead_presence* keeps that ancestry bit, so a caller
+    that has not measured the meter does not demote a real on-master tip.
+    A supplied presence runs ``apply_landed_admit_gate``: measured zero ahead
+    demotes ancestry-true to not landed, and a ``None`` axis (absent meter
+    or an uncomputable plane) stays unverified. Local refs only; the probe
+    does not fetch. No events.
     """
     body = text or ""
     if not _text_has_worker_land_claim(body):
         return body
     ancestry: bool | None = None
     if sha and str(sha).strip():
-        ancestry = probe_three_planes(
+        plane = probe_three_planes(
             repo,
             head_sha=sha,
             branch=branch,
             hub_repo=repo,
-        ).landed_local_master
+        )
+        if commits_ahead_presence is not None:
+            plane = apply_landed_admit_gate(
+                plane,
+                commits_ahead=commits_ahead,
+                commits_ahead_presence=commits_ahead_presence,
+                git_land_plane_uncomputable=git_land_plane_uncomputable,
+            )
+        ancestry = plane.landed_local_master
     return project_closeout_land_lines(
         body,
         ancestry_on_master=ancestry,
@@ -824,13 +840,18 @@ def rewrite_receipt_preamble_file(
     repo: Path,
     sha: str | None,
     branch: str | None,
+    commits_ahead: int | None = None,
+    commits_ahead_presence: _FieldPresence | None = None,
+    git_land_plane_uncomputable: bool = False,
 ) -> None:
     """Rewrite the sidecar preamble's land claims. A write failure is logged.
 
     Only the bytes before the first ATX heading change, so a later structured
-    JSON section is not scanned. OSError leaves the previous preamble in place;
-    the closeout path must not raise. No event: one file per dispatch, and a
-    failed write is already a warning.
+    JSON section is not scanned. The ahead-meter is forwarded to
+    ``project_receipt_land_claims``; omitting it keeps the ancestry-only
+    projection. OSError leaves the previous preamble in place; the closeout
+    path must not raise. No event: one file per dispatch, and a failed write
+    is already a warning.
     """
     try:
         existing = path.read_text(encoding="utf-8")
@@ -847,6 +868,9 @@ def rewrite_receipt_preamble_file(
         repo=repo,
         sha=sha,
         branch=branch,
+        commits_ahead=commits_ahead,
+        commits_ahead_presence=commits_ahead_presence,
+        git_land_plane_uncomputable=git_land_plane_uncomputable,
     )
     if projected == section:
         return

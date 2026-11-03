@@ -12,7 +12,7 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Callable
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from services.git_integration_worker.cursor_sdk_capture_binding import CaptureBinding
 from services.git_integration_worker.cursor_sdk_events import (
@@ -192,16 +192,32 @@ def _assemble_closeout_delivery(
     # sidecar after the ancestry probe, and leave ``text`` for discharge so a
     # published line cannot change the branch outcome.
     if lane_b_lane == "B":
+        from services.git_integration_worker.cursor_sdk_deliverables_expected import (
+            git_land_plane_uncomputable,
+        )
         from services.git_integration_worker.relay.closeout_plane_probe import (
             project_receipt_land_claims,
             rewrite_receipt_preamble_file,
         )
 
+        meter_presence: Literal["absent", "present"] = (
+            "present" if capture_commits_ahead is not None else "absent"
+        )
+        plane_uncomputable = git_land_plane_uncomputable(
+            created=repo_change_set.created,
+            modified=repo_change_set.modified,
+            deleted=repo_change_set.deleted,
+            untracked=files_untracked_or_ignored,
+            offgit=offgit_uris,
+        )
         rewrite_receipt_preamble_file(
             sidecar_path,
             repo=receipt_tree,
             sha=capture_head_sha,
             branch=lane_b_branch,
+            commits_ahead=capture_commits_ahead,
+            commits_ahead_presence=meter_presence,
+            git_land_plane_uncomputable=plane_uncomputable,
         )
         if archived_closeout_body is not None:
             archived_closeout_body = project_receipt_land_claims(
@@ -209,6 +225,9 @@ def _assemble_closeout_delivery(
                 repo=receipt_tree,
                 sha=capture_head_sha,
                 branch=lane_b_branch,
+                commits_ahead=capture_commits_ahead,
+                commits_ahead_presence=meter_presence,
+                git_land_plane_uncomputable=plane_uncomputable,
             )
     from services.git_integration_worker.cursor_sdk_mode import sdk_mode_for_dispatch
 
