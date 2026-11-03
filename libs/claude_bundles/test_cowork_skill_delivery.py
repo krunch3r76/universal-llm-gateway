@@ -15,10 +15,12 @@ from claude_bundles.cowork_skill_delivery import (
     attest_skills_chip_enabled,
     check_delivery_channels_before_submit,
     classify_skill_delivery,
+    classify_delivery_channel_gaps,
     combine_induction_with_body,
     github_cannot_load_skill_trees_note,
     induction_panel_ready,
     ledger_skills_channels,
+    render_code_surface_inline_block,
     ledger_skills_record,
     load_skill_bodies,
     partition_cdp_skills,
@@ -173,6 +175,58 @@ def test_check_delivery_channels_before_submit_wrong_channel_raises() -> None:
             inlined=["reasoning-posture"],
             induction=[],
         )
+
+
+@pytest.mark.parametrize(
+    ("surface", "expect_ok"),
+    [
+        (None, False),
+        ("cowork", False),
+        ("code", True),
+        ("CODE", True),
+    ],
+)
+def test_shared_sync_inlined_surface_aware_attest(
+    surface: str | None, expect_ok: bool
+) -> None:
+    """T1 — shared_sync in inlined= passes only on claude_surface=code."""
+    kwargs = dict(
+        required=["reasoning-posture"],
+        attached=[],
+        inlined=["reasoning-posture"],
+        induction=[],
+        claude_surface=surface,
+    )
+    missing, wrong = classify_delivery_channel_gaps(**kwargs)
+    if expect_ok:
+        assert missing == [] and wrong == []
+        check_delivery_channels_before_submit(**kwargs)
+        rows = ledger_skills_channels(**kwargs)
+        assert rows == [{"slug": "reasoning-posture", "delivered_via": "inline"}]
+        assert attest_delivery_channels(**kwargs) == ["reasoning-posture"]
+    else:
+        assert wrong == ["reasoning-posture"]
+        with pytest.raises(SkillDeliveryError, match="wrong_channel"):
+            check_delivery_channels_before_submit(**kwargs)
+
+
+def test_render_code_surface_inline_block() -> None:
+    """T2 — inline block is parseable; missing SOT raises."""
+    from claude_bundles.cowork_skill_delivery import extract_inline_slugs_from_sealed
+
+    block, slugs = render_code_surface_inline_block(["reasoning-posture"])
+    assert slugs == ["reasoning-posture"]
+    assert '<skill slug="reasoning-posture"' in block
+    assert extract_inline_slugs_from_sealed(block) == ["reasoning-posture"]
+    assert render_code_surface_inline_block([]) == ("", [])
+    from unittest.mock import patch
+
+    with patch(
+        "claude_bundles.cowork_skill_delivery.load_skill_bodies",
+        side_effect=SkillDeliveryError("no local SOT for inject: ['missing']"),
+    ):
+        with pytest.raises(SkillDeliveryError, match="no local SOT"):
+            render_code_surface_inline_block(["reasoning-posture"])
 
 
 def test_induction_panel_ready_matches_observed_slugs() -> None:

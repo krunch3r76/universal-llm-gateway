@@ -231,3 +231,114 @@ async def test_backfill_preserves_all_fields_and_sets_archive_uri() -> None:
     assert backfilled["artifact_cards_unresolved"] is True
     assert backfilled["harvest_provenance"] == "chat"
     assert backfilled["delete_after"] == {"deleted": False}
+
+
+@pytest.mark.asyncio
+async def test_converse_archives_failed_result_with_body(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """T7 — non-ok converse harvest with body is archived as failed."""
+    root = tmp_path / "files"
+    root.mkdir(parents=True)
+    monkeypatch.setenv("CORTEX_FILES_ROOT", str(root))
+    reg = MagicMock()
+    reg.registration_id = "reg-fail-archive"
+    reg.cdp_url = "http://127.0.0.1:9222"
+    body = "X" * 9000
+    err = "skill_receipt_unverified: wrong_channel=['reasoning-posture']"
+    fail = ProjectAskResult(
+        ok=False,
+        body=body,
+        url="https://claude.ai/code/cse_fail",
+        project_uuid="",
+        project_url="https://claude.ai/code",
+        model={"ok": True},
+        body_len=len(body),
+        delete_after={"deleted": False},
+        error=err,
+        archive_uri=None,
+        attested_model="Model: Opus 5",
+        harvest_provenance="chat",
+    )
+    exec_id = "f" * 32
+    with (
+        patch("cdp_ask.runner.bind_execution_lane", return_value=reg),
+        patch(
+            "cdp_ask.runner.run_project_conversation",
+            new=AsyncMock(return_value=[fail]),
+        ),
+        patch("cdp_ask.runner.deregister_on_exit"),
+        patch("cdp_ask.runner.registration_has_wake_debt", return_value=False),
+        patch("cdp_ask.runner.cdp_registry.bind_session_address"),
+        patch("cdp_ask.runner._wake_debt_extras", return_value={}),
+    ):
+        payload = await run_execution(
+            SubmitProjectAskRequest(
+                prompt_text="ping",
+                converse=True,
+                no_project_uuid=True,
+                purpose="review",
+                claude_surface="code",
+            ),
+            execution_id=exec_id,
+            abort_check=AsyncMock(return_value=False),
+        )
+
+    assert payload["ok"] is False
+    assert payload["stall_stage"] == "observer_unverified"
+    assert payload["archive_uri"]
+    uri = payload["archive_uri"]
+    if uri.startswith("file://"):
+        full_path = Path(uri.removeprefix("file://"))
+    else:
+        full_path = root / uri.removeprefix("cortex://")
+    text = full_path.read_text(encoding="utf-8")
+    assert "- outcome: failed" in text
+    assert "- error:" in text and "skill_receipt_unverified" in text
+    assert body in text
+
+
+@pytest.mark.asyncio
+async def test_converse_skips_archive_when_failed_body_empty() -> None:
+    """T7 — non-ok with empty body does not write an archive."""
+    reg = MagicMock()
+    reg.registration_id = "reg-fail-empty"
+    reg.cdp_url = "http://127.0.0.1:9222"
+    fail = ProjectAskResult(
+        ok=False,
+        body="",
+        url="https://claude.ai/code/cse_fail",
+        project_uuid="",
+        project_url="https://claude.ai/code",
+        model={},
+        body_len=0,
+        delete_after={"deleted": False},
+        error="skill_receipt_unverified: empty",
+        archive_uri=None,
+        attested_model=None,
+        harvest_provenance=None,
+    )
+    with (
+        patch("cdp_ask.runner.bind_execution_lane", return_value=reg),
+        patch(
+            "cdp_ask.runner.run_project_conversation",
+            new=AsyncMock(return_value=[fail]),
+        ),
+        patch("cdp_ask.runner.archive_harvest") as archive_mock,
+        patch("cdp_ask.runner.deregister_on_exit"),
+        patch("cdp_ask.runner.registration_has_wake_debt", return_value=False),
+        patch("cdp_ask.runner.cdp_registry.bind_session_address"),
+        patch("cdp_ask.runner._wake_debt_extras", return_value={}),
+    ):
+        payload = await run_execution(
+            SubmitProjectAskRequest(
+                prompt_text="ping",
+                converse=True,
+                no_project_uuid=True,
+                purpose="review",
+            ),
+            execution_id="e" * 32,
+            abort_check=AsyncMock(return_value=False),
+        )
+    archive_mock.assert_not_called()
+    assert payload.get("archive_uri") is None

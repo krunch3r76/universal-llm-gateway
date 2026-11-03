@@ -461,6 +461,31 @@ def parse_cdp_sealed_skill_channels(
     return attach_slugs, inline_slugs, rest
 
 
+def _normalized_claude_surface(claude_surface: str | None) -> str | None:
+    if claude_surface is None:
+        return None
+    normalized = str(claude_surface).strip().lower()
+    return normalized or None
+
+
+def _code_surface_admits_shared_sync_inline(claude_surface: str | None) -> bool:
+    return _normalized_claude_surface(claude_surface) == "code"
+
+
+def render_code_surface_inline_block(
+    slugs: list[str],
+    *,
+    repo_root: Path | None = None,
+) -> tuple[str, list[str]]:
+    """Inline ``shared_sync`` bodies for ``claude_surface=code`` marked prompts."""
+    requested = [str(s).strip() for s in slugs if str(s).strip()]
+    if not requested:
+        return "", []
+    bodies = load_skill_bodies(requested, repo_root=repo_root, excerpt=True)
+    block = render_cdp_inline_skills_xml(bodies, repo_root=repo_root)
+    return block, [item.slug for item in bodies]
+
+
 def _attach_only_surface(surface_class: str) -> bool:
     """True when CDP delivery must be Customize attach (not ``<skills_inline>``).
 
@@ -478,6 +503,7 @@ def classify_delivery_channel_gaps(
     attached: list[str],
     inlined: list[str],
     induction: list[str] | None = None,
+    claude_surface: str | None = None,
 ) -> tuple[list[str], list[str]]:
     """Return ``(missing, wrong_channel)`` without telemetry or raise."""
     if not required:
@@ -495,6 +521,8 @@ def classify_delivery_channel_gaps(
             if slug in attached_set or slug in induction_set:
                 continue
             if slug in inlined_set:
+                if _code_surface_admits_shared_sync_inline(claude_surface):
+                    continue
                 wrong_channel.append(slug)
             else:
                 missing.append(slug)
@@ -514,6 +542,7 @@ def check_delivery_channels_before_submit(
     attached: list[str],
     inlined: list[str],
     induction: list[str] | None = None,
+    claude_surface: str | None = None,
 ) -> list[str]:
     """Panel-independent channel check before a combined submit.
 
@@ -525,6 +554,7 @@ def check_delivery_channels_before_submit(
         attached=attached,
         inlined=inlined,
         induction=induction,
+        claude_surface=claude_surface,
     )
     if wrong_channel:
         raise SkillDeliveryError(
@@ -542,6 +572,7 @@ def attest_delivery_channels(
     attached: list[str],
     inlined: list[str],
     induction: list[str] | None = None,
+    claude_surface: str | None = None,
     execution_id: str = "",
     satellite_execution_id: str = "",
 ) -> list[str]:
@@ -577,6 +608,7 @@ def attest_delivery_channels(
         attached=attached,
         inlined=inlined,
         induction=induction,
+        claude_surface=claude_surface,
     )
     attached_set = {str(s).strip() for s in attached if str(s).strip()}
     inlined_set = {str(s).strip() for s in inlined if str(s).strip()}
@@ -589,6 +621,7 @@ def attest_delivery_channels(
         attached=attached_sorted,
         inlined=inlined_sorted,
         induction=induction_sorted,
+        claude_surface=claude_surface,
     )
     stargate_id = str(execution_id or "")
     sat_id = str(satellite_execution_id or "")
@@ -635,6 +668,7 @@ def ledger_skills_channels(
     attached: list[str],
     inlined: list[str],
     induction: list[str] | None = None,
+    claude_surface: str | None = None,
 ) -> list[dict[str, str]]:
     """Build one ledger row per requested slug with ``delivered_via`` channel.
 
@@ -656,6 +690,10 @@ def ledger_skills_channels(
                 via = "induction"
             elif slug in attached_set:
                 via = "attach"
+            elif slug in inlined_set and _code_surface_admits_shared_sync_inline(
+                claude_surface
+            ):
+                via = "inline"
             else:
                 via = "undelivered"
         else:

@@ -874,7 +874,7 @@ async def run_execution(
                 }
             last = results[-1] if results else None
             archive_uri = last.archive_uri if last else None
-            if last and last.ok and not archive_uri and last.body:
+            if last and not archive_uri and last.body:
                 if ladder and ladder.on_archiving:
                     await ladder.on_archiving()
                 try:
@@ -891,6 +891,7 @@ async def run_execution(
                         stargate_execution_id=stargate_execution_id or None,
                         error_banner_text=poll_banner_fields.get("error_banner_text"),
                         error_banner_match=poll_banner_fields.get("error_banner_match"),
+                        failure_error=last.error if not last.ok else None,
                     )
                 except HarvestArchiveError as exc:
                     retain_host = True

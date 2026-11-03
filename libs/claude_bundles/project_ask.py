@@ -271,6 +271,7 @@ def archive_harvest(
     artifact_cards_unresolved: bool = False,
     error_banner_text: str | None = None,
     error_banner_match: str | None = None,
+    failure_error: str | None = None,
 ) -> str:
     """Persist raw harvest before delete. Returns cortex:// or file URI.
 
@@ -315,6 +316,10 @@ def archive_harvest(
     )
     banner_lines = _archive_banner_line("error_banner_text", error_banner_text, 500)
     banner_lines += _archive_banner_line("error_banner_match", error_banner_match, 120)
+    failure_lines = ""
+    if failure_error is not None:
+        err = failure_error.replace("\n", " ").strip()
+        failure_lines = f"- outcome: failed\n- error: {err}\n"
     text = (
         f"# CDP ask harvest\n\n"
         f"- archived_at: `{stamp}`\n"
@@ -325,7 +330,8 @@ def archive_harvest(
         f"- model_select: `{model}`\n"
         f"- attested_model: `{attested_model}`\n"
         f"{card_lines}"
-        f"{banner_lines}\n"
+        f"{banner_lines}"
+        f"{failure_lines}\n"
         f"## Body\n\n{body}\n"
     )
     if path.is_file():
@@ -641,6 +647,7 @@ async def send_prompt(
         extract_cdp_required_authority,
         parse_cdp_sealed_skill_channels,
         partition_cdp_skills,
+        render_code_surface_inline_block,
         render_skill_induction,
     )
     from claude_bundles.skill_context_receipt import (
@@ -700,8 +707,24 @@ async def send_prompt(
         # One submitted message so the first turn has Use-lines and the work
         # body. Panel wait runs after submit (a:37716); receipt failures become
         # SkillReceiptUnverifiedError so callers still harvest the work reply.
-        induction_text = render_skill_induction(induction_slugs)
-        draft = combine_induction_with_body(induction_text, _rest)
+        # claude_surface=code inlines shared_sync via <skills_inline> (a:41730).
+        surf_norm = (claude_surface or "").strip().lower()
+        if surf_norm == "code":
+            inline_block, code_inline_slugs = render_code_surface_inline_block(
+                induction_slugs
+            )
+            leading = inline_block
+            draft = combine_induction_with_body(inline_block, _rest)
+            attest_inlined = inline_slugs + code_inline_slugs
+            attest_induction: list[str] = []
+            attest_surface = "code"
+        else:
+            induction_text = render_skill_induction(induction_slugs)
+            leading = induction_text
+            draft = combine_induction_with_body(induction_text, _rest)
+            attest_inlined = inline_slugs
+            attest_induction = induction_slugs
+            attest_surface = None
         attached_out: list[str] = []
         missing, attach_notes = await _insert_prompt_text(
             page,
@@ -709,15 +732,16 @@ async def send_prompt(
             composer=composer,
             stargate_execution_id=stargate_execution_id,
             satellite_execution_id=satellite_execution_id,
-            leading_induction=induction_text,
+            leading_induction=leading,
             defer_attest=True,
             attached_out=attached_out,
         )
         check_delivery_channels_before_submit(
             required_for_induction,
             attached=attached_out,
-            inlined=inline_slugs,
-            induction=induction_slugs,
+            inlined=attest_inlined,
+            induction=attest_induction,
+            claude_surface=attest_surface,
         )
         await page.wait_for_timeout(600)
         await _submit_composer_draft(
@@ -728,14 +752,18 @@ async def send_prompt(
             compose_receipt=compose_receipt,
         )
         try:
-            induction_observed = await _induction_observed_after_submit(
-                induction_slugs, attached_out
-            )
+            if surf_norm == "code":
+                induction_observed = []
+            else:
+                induction_observed = await _induction_observed_after_submit(
+                    induction_slugs, attached_out
+                )
             attest_delivery_channels(
                 required_for_induction,
                 attached=attached_out,
-                inlined=inline_slugs,
+                inlined=attest_inlined,
                 induction=induction_observed,
+                claude_surface=attest_surface,
                 execution_id=str(stargate_execution_id or ""),
                 satellite_execution_id=str(satellite_execution_id or ""),
             )

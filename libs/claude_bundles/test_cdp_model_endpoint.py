@@ -3427,3 +3427,31 @@ def test_weekly_limit_curly_apostrophe_pace_warning_stays_warning() -> None:
 
     banner = "You’re on pace to hit your weekly limit early · 28% used"
     assert _classify_weekly_limit_banner(banner) == "warning"
+
+
+def test_terminal_failure_snapshot_carries_archive_uri_to_bus_body() -> None:
+    """T8 — failed terminal snapshot keeps archive_uri through format_cdp_result_body."""
+    from systems.frontier_consult.cdp_generate_worker import format_cdp_result_body
+
+    archive = "cortex://notes/system/threads/cdp-ask-archive-fail-41730.md"
+    snapshot = {
+        "status": "failed",
+        "stall_stage": "observer_unverified",
+        "error": "skill_receipt_unverified: attest failed",
+        "body": "partial harvest " * 200,
+        "archive_uri": archive,
+        "url": "https://claude.ai/code/cse_terminal",
+    }
+    result = result_from_snapshot(
+        snapshot=snapshot,
+        execution_id="dispatch-41730",
+        satellite_execution_id="sat-41730",
+        prompt_uri="cortex://notes/system/ephemeral/x/prompt.md",
+        picker_model="cdp/opus-5",
+    )
+    assert result is not None
+    assert result.ok is False
+    assert result.archive_uri == archive
+    bus_body = format_cdp_result_body(result)
+    assert "- archive_uri:" in bus_body
+    assert archive in bus_body
