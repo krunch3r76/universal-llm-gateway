@@ -123,3 +123,7 @@ def test_resolve_hub_cortex_http_prefers_explicit(
 def test_fallback_start_also_exports_cortex_http() -> None:
     src = Path(cdp_ask_remote.__file__).read_text(encoding="utf-8")
     assert src.count("CORTEX_API_HTTP=") >= 2
+
+
+def test_cdp_ask_paths_includes_claude_bundles() -> None:
+    assert "libs/claude_bundles/" in cdp_ask_remote._CDP_ASK_PATHS

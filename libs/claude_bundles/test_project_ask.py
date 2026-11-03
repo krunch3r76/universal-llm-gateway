@@ -273,7 +273,7 @@ def test_abort_cleanup_non_owner_emits_detached_not_kill(
     monkeypatch.setattr(reg, "is_driver_lock_held", lambda _rid: True)
     killed: list[str] = []
     monkeypatch.setattr(
-        abort, "bounded_stop_via_cdp", lambda _url: killed.append("stop")
+        abort, "bounded_stop_via_cdp", lambda _url, target_id=None: killed.append("stop")
     )
     monkeypatch.setattr(
         abort, "deregister_on_exit", lambda *_a, **_k: killed.append("kill")
@@ -296,7 +296,7 @@ def test_abort_cleanup_orphan_reap_noop_on_port_reassign(
     reg._release_driver_lock(r.registration_id)
     killed: list[str] = []
     monkeypatch.setattr(
-        abort, "bounded_stop_via_cdp", lambda _url: killed.append("stop")
+        abort, "bounded_stop_via_cdp", lambda _url, target_id=None: killed.append("stop")
     )
     monkeypatch.setattr(
         abort, "deregister_on_exit", lambda *_a, **_k: killed.append("kill")
@@ -1010,3 +1010,214 @@ async def test_compose_model_selected_code_surface_runs_picker_on_code_url() -> 
 
     picker.assert_awaited_once()
     assert result["ok"] is True
+
+
+@pytest.mark.parametrize(
+    ("page_url", "expect_picker"),
+    [
+        ("https://claude.ai/code", True),
+        ("https://claude.ai/code/", True),
+        ("https://claude.ai/code/session_x", True),
+        ("https://claude.ai/code?x=1", True),
+        ("https://claude.ai/codex", False),
+        ("https://claude.ai/codex-promo", False),
+        ("https://claude.ai/code-foo", False),
+        ("https://claude.ai/cowork/new", False),
+    ],
+)
+@pytest.mark.asyncio
+async def test_compose_model_selected_code_page_url_guard(
+    page_url: str, expect_picker: bool
+) -> None:
+    page = MagicMock()
+    page.url = page_url
+    page.wait_for_timeout = AsyncMock()
+
+    with (
+        patch("claude_bundles.project_ask.goto_fresh_compose", new=AsyncMock()),
+        patch("claude_bundles.project_ask.find_composer", new=AsyncMock(return_value=None)),
+        patch(
+            "claude_bundles.project_ask._apply_code_surface_model_picker",
+            new=AsyncMock(return_value={"ok": True, "step": "code_surface_model_picked"}),
+        ) as picker,
+        patch(
+            "claude_bundles.project_ask._read_code_surface_model_label",
+            new=AsyncMock(return_value="Model: Opus"),
+        ),
+    ):
+        result = await _compose_model_selected(
+            page,
+            "opus-5",
+            compose_url="https://claude.ai/code",
+            claude_surface="code",
+        )
+
+    if expect_picker:
+        picker.assert_awaited_once()
+        assert result["ok"] is True
+    else:
+        picker.assert_not_awaited()
+        assert result["ok"] is False
+        assert result["error"] == "code_surface_not_on_code_page"
+
+
+@pytest.mark.asyncio
+async def test_skill_receipt_unverified_harvest_failure_returns_ok_false() -> None:
+    from claude_bundles.cowork_skill_delivery import SkillReceiptUnverifiedError
+    from claude_bundles.project_ask import project_ask_on_page
+
+    page = AsyncMock()
+    page.url = "https://claude.ai/cowork/cse_x"
+    exc = SkillReceiptUnverifiedError("panel timeout", submitted=True)
+
+    with (
+        patch(
+            "claude_bundles.project_ask._compose_model_selected",
+            new=AsyncMock(return_value={"ok": True}),
+        ),
+        patch(
+            "claude_bundles.project_ask.harvest_assistant",
+            new=AsyncMock(return_value={"n": 0, "body_len": 0}),
+        ),
+        patch(
+            "claude_bundles.project_ask.send_prompt",
+            new=AsyncMock(side_effect=exc),
+        ),
+        patch(
+            "claude_bundles.project_ask._harvest_after_skill_receipt_unverified",
+            new=AsyncMock(side_effect=RuntimeError("Target closed")),
+        ),
+    ):
+        result = await project_ask_on_page(
+            page,
+            _SEALED,
+            project_uuid="019f6917-2ab2-772c-a1ec-f88434b08e32",
+            delete_after=False,
+        )
+
+    assert result.ok is False
+    assert result.error.startswith("skill_receipt_unverified:")
+    assert "harvest_failed" in result.error
+    assert "Target closed" in result.error
+
+
+@pytest.mark.asyncio
+async def test_marked_context_rail_error_harvests_work_reply() -> None:
+    from claude_bundles.chat_context_skills import ChatContextSkillsError, LoadedSkillsReport
+    from claude_bundles.project_ask import project_ask_on_page
+
+    page, composer = _induction_page()
+    page.url = "https://claude.ai/cowork/cse_x"
+    report = LoadedSkillsReport(
+        url=page.url,
+        skills=("reasoning-posture", "hypothesize-simulate"),
+        context_found=True,
+        skills_heading_found=True,
+        model_label=None,
+        selectors=(),
+        raw_section_text="",
+    )
+    harvested = "desk answer after rail failure"
+
+    with contextlib.ExitStack() as stack:
+        for ctx in _induction_patches(
+            composer,
+            report,
+            extra=(
+                patch(
+                    "claude_bundles.context_rail_absence.recover_induction_slugs_on_rail_error",
+                    return_value=None,
+                ),
+                patch(
+                    "claude_bundles.skill_induction_panel.wait_for_induction_panel",
+                    new=AsyncMock(
+                        side_effect=ChatContextSkillsError("Context → Skills collapsed")
+                    ),
+                ),
+            ),
+        ):
+            stack.enter_context(ctx)
+        stack.enter_context(
+            patch(
+                "claude_bundles.project_ask._compose_model_selected",
+                new=AsyncMock(return_value={"ok": True}),
+            )
+        )
+        stack.enter_context(
+            patch(
+                "claude_bundles.project_ask.harvest_assistant",
+                new=AsyncMock(return_value={"n": 0, "body_len": 0}),
+            )
+        )
+        stack.enter_context(
+            patch(
+                "claude_bundles.project_ask.wait_assistant_reply",
+                new=AsyncMock(
+                    return_value={
+                        "body": harvested,
+                        "body_len": len(harvested),
+                        "n": 1,
+                        "url": page.url,
+                    }
+                ),
+            )
+        )
+        stack.enter_context(
+            patch(
+                "claude_bundles.project_ask.resolve_harvest_body",
+                new=AsyncMock(
+                    return_value=type("H", (), {"content": harvested, "provenance": None})()
+                ),
+            )
+        )
+        stack.enter_context(patch("claude_bundles.project_ask._attest_model", return_value=None))
+        result = await project_ask_on_page(
+            page,
+            _SEALED,
+            project_uuid="019f6917-2ab2-772c-a1ec-f88434b08e32",
+            delete_after=False,
+        )
+
+    assert result.ok is False
+    assert result.error.startswith("skill_receipt_unverified:")
+    assert result.body == harvested
+
+
+@pytest.mark.asyncio
+async def test_unmarked_panel_runtime_error_raises_skill_delivery_error() -> None:
+    from claude_bundles.cowork_skill_delivery import SkillDeliveryError
+    from claude_bundles.project_ask import send_prompt
+
+    page, composer = _induction_page()
+    submit = AsyncMock()
+    with (
+        patch(
+            "claude_bundles.cowork_skill_delivery.partition_cdp_skills",
+            return_value=(["reasoning-posture"], []),
+        ),
+        patch(
+            "claude_bundles.cowork_skill_delivery.parse_cdp_sealed_skill_channels",
+            return_value=(["reasoning-posture"], [], "work body\n"),
+        ),
+        patch("claude_bundles.composer_session_skills.require_compose_surface"),
+        patch(
+            "claude_bundles.project_ask.find_composer",
+            new=AsyncMock(return_value=composer),
+        ),
+        patch(
+            "claude_bundles.composer_submit.clear_composer_verified",
+            new=AsyncMock(),
+        ),
+        patch("claude_bundles.project_ask._submit_composer_draft", new=submit),
+        patch(
+            "claude_bundles.skill_induction_panel.wait_for_induction_panel",
+            new=AsyncMock(side_effect=RuntimeError("panel detached")),
+        ),
+        patch(
+            "claude_bundles.skill_context_receipt.record_post_submit_skills_receipt",
+            new=AsyncMock(),
+        ),
+    ):
+        with pytest.raises(SkillDeliveryError, match="panel detached"):
+            await send_prompt(page, "attach channel body\n")
+    assert submit.await_count == 1

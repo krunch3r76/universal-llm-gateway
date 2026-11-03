@@ -284,6 +284,27 @@ async def test_poll_execution_terminal_payload_url_wins(
 
 
 @pytest.mark.asyncio
+async def test_poll_execution_exposes_code_surface_project_uuid_ignored_flag(
+    store: ExecutionStore,
+) -> None:
+    record = await store.create(holder="test", purpose="ask")
+    await store.set_registration_id(record.execution_id, "reg-code-flag")
+    await store.mark_terminal(
+        record.execution_id,
+        status="failed",
+        error="aborted",
+        result={
+            "ok": False,
+            "status": "aborted",
+            "project_uuid_ignored_for_code_surface": True,
+        },
+    )
+    client = TestClient(create_app(store=store))
+    done = client.get(f"/v1/project-ask/executions/{record.execution_id}").json()
+    assert done["project_uuid_ignored_for_code_surface"] is True
+
+
+@pytest.mark.asyncio
 async def test_poll_execution_url_none_without_registry(
     store: ExecutionStore,
     monkeypatch: pytest.MonkeyPatch,

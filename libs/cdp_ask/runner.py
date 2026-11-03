@@ -827,18 +827,20 @@ async def run_execution(
     effective_converse = req.converse
     run_no_project = req.no_project_uuid
     run_project_uuid = req.project_uuid
-    if surface == "code" and (req.project_uuid or "").strip():
-        logger.warning(
-            "claude_surface=code ignores project_uuid satellite_execution_id=%s project_uuid=%s",
-            execution_id,
-            req.project_uuid,
-        )
-        code_surface_extra = {"project_uuid_ignored_for_code_surface": True}
+    if surface == "code":
+        normalized_project_uuid = (req.project_uuid or "").strip()
         run_project_uuid = ""
         run_no_project = True
         if not req.converse:
             # Non-converse has no no-project /code compose route; use converse path.
             effective_converse = True
+        if normalized_project_uuid:
+            logger.warning(
+                "claude_surface=code ignores project_uuid satellite_execution_id=%s project_uuid=%s",
+                execution_id,
+                req.project_uuid,
+            )
+            code_surface_extra = {"project_uuid_ignored_for_code_surface": True}
     try:
         if effective_converse:
             delete_after = (
@@ -890,6 +892,7 @@ async def run_execution(
                     "status": "aborted",
                     "registration_id": reg.registration_id,
                     "error": "aborted",
+                    **code_surface_extra,
                 }
             last = results[-1] if results else None
             archive_uri = last.archive_uri if last else None
@@ -947,6 +950,7 @@ async def run_execution(
                         "stall_stage": stall,
                         **retry_meta,
                         **poll_banner_fields,
+                        **code_surface_extra,
                     }
                 if not last.archive_uri and archive_uri:
                     backfilled = ProjectAskResult(
@@ -1069,6 +1073,7 @@ async def run_execution(
                 "status": "aborted",
                 "registration_id": reg.registration_id,
                 "error": "aborted",
+                **code_surface_extra,
             }
         payload = _result_dict(result)
         payload["registration_id"] = reg.registration_id

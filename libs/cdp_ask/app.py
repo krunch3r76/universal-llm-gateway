@@ -812,6 +812,9 @@ def create_app(*, store: ExecutionStore | None = None) -> FastAPI:
             artifact_cards_unresolved=payload.get("artifact_cards_unresolved"),
             error_banner_match=payload.get("error_banner_match"),
             error_banner_text=payload.get("error_banner_text"),
+            project_uuid_ignored_for_code_surface=payload.get(
+                "project_uuid_ignored_for_code_surface"
+            ),
         )
 
     @app.post(

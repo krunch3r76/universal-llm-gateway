@@ -335,6 +335,14 @@ class ExecutionPollResponse(BaseModel):
             "Projection input for ``has_proof`` — must not be dual-written."
         ),
     )
+    project_uuid_ignored_for_code_surface: bool | None = Field(
+        default=None,
+        description=(
+            "True when ``claude_surface=code`` dropped a non-empty ``project_uuid`` "
+            "because /code compose has no project route. Absent when the request had "
+            "no project uuid or the surface was not code."
+        ),
+    )
     error_banner_match: str | None = Field(
         default=None,
         description=(

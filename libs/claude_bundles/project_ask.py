@@ -13,6 +13,7 @@ import ast
 import hashlib
 import re
 from collections.abc import Awaitable, Callable
+from urllib.parse import urlparse
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -726,8 +727,9 @@ async def send_prompt(
     marked = required_authority is not None
     if induction_slugs and marked:
         # One submitted message so the first turn has Use-lines and the work
-        # body. Panel wait runs after submit (a:37716); receipt failures become
-        # SkillReceiptUnverifiedError so callers still harvest the work reply.
+        # body. Panel wait runs after submit (a:37716); panel failures and
+        # unrecoverable Context-rail errors become SkillReceiptUnverifiedError
+        # so callers still harvest the work reply.
         # claude_surface=code inlines shared_sync via <skills_inline> (a:41730).
         surf_norm = (claude_surface or "").strip().lower()
         skill_seals: list[tuple[str, str]] = []
@@ -814,6 +816,8 @@ async def send_prompt(
             )
         except SkillDeliveryError as exc:
             raise SkillReceiptUnverifiedError(str(exc), submitted=True) from exc
+        except ChatContextSkillsError as exc:
+            raise SkillReceiptUnverifiedError(str(exc), submitted=True) from exc
     else:
         if induction_slugs:
             # Unmarked prompts keep the split turn (attach path unchanged).
@@ -892,6 +896,15 @@ def _is_code_compose_surface(
         return True
     url = (compose_url or "").lower()
     return "/claude.ai/code" in url or url.rstrip("/").endswith("/code")
+
+
+def _is_claude_ai_code_page_url(page_url: str) -> bool:
+    """True when the browser is on claude.ai /code compose (not /codex or /code-foo)."""
+    parsed = urlparse(page_url or "")
+    if parsed.netloc != "claude.ai":
+        return False
+    path = parsed.path or ""
+    return path == "/code" or path.startswith("/code/")
 
 
 # friction:41151 -- /code now renders a hidden 'More options for Model picker
@@ -1121,7 +1134,7 @@ async def _compose_model_selected(
         await page.wait_for_timeout(800)
     if _is_code_compose_surface(claude_surface=claude_surface, compose_url=compose_url):
         page_url = page.url or ""
-        if not page_url.startswith("https://claude.ai/code"):
+        if not _is_claude_ai_code_page_url(page_url):
             return {
                 "ok": False,
                 "error": "code_surface_not_on_code_page",
@@ -1414,20 +1427,36 @@ async def project_ask_on_page(
     except SkillReceiptUnverifiedError as exc:
         if not exc.submitted or anchor is None:
             raise
-        return await _harvest_after_skill_receipt_unverified(
-            page,
-            exc=exc,
-            anchor=anchor,
-            project_uuid=project_uuid,
-            project_url=dest,
-            model_info=model_info,
-            model=model,
-            timeout_s=timeout_s,
-            min_growth=min_growth,
-            min_body=min_body,
-            on_harvest=on_harvest,
-            purpose=purpose,
-        )
+        try:
+            return await _harvest_after_skill_receipt_unverified(
+                page,
+                exc=exc,
+                anchor=anchor,
+                project_uuid=project_uuid,
+                project_url=dest,
+                model_info=model_info,
+                model=model,
+                timeout_s=timeout_s,
+                min_growth=min_growth,
+                min_body=min_body,
+                on_harvest=on_harvest,
+                purpose=purpose,
+            )
+        except Exception as harvest_exc:  # noqa: BLE001 — match sibling Exception path
+            return ProjectAskResult(
+                ok=False,
+                body="",
+                url=page.url or "",
+                project_uuid=project_uuid,
+                project_url=dest,
+                model={},
+                body_len=0,
+                delete_after=None,
+                error=(
+                    f"skill_receipt_unverified: {exc}; harvest_failed: "
+                    f"{type(harvest_exc).__name__}: {harvest_exc}"
+                ),
+            )
     except Exception as exc:  # noqa: BLE001 — surface to CLI ledger; ¬delete
         return ProjectAskResult(
             ok=False,

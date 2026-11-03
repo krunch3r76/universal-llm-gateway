@@ -235,6 +235,16 @@ def test_execution_poll_response_harvest_provenance_field() -> None:
     assert failed.harvest_provenance is None
 
 
+def test_execution_poll_response_project_uuid_ignored_for_code_surface() -> None:
+    poll = ExecutionPollResponse(
+        execution_id=_EXEC_ID,
+        status="failed",
+        ok=False,
+        project_uuid_ignored_for_code_surface=True,
+    )
+    assert poll.project_uuid_ignored_for_code_surface is True
+
+
 def test_execution_poll_response_error_banner_fields_optional() -> None:
     bare = ExecutionPollResponse(execution_id=_EXEC_ID, status="running")
     assert bare.error_banner_match is None

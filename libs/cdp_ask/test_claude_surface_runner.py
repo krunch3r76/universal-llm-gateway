@@ -195,33 +195,6 @@ async def test_run_execution_code_surface_drops_project_uuid_converse_false() ->
 
 
 @pytest.mark.asyncio
-async def test_run_execution_non_converse_overlay_disables_family_substitution_for_code() -> None:
-    """converse=False + code uses converse overlay path (AC1); substitution still disabled."""
-    req = SubmitProjectAskRequest(
-        prompt_text="probe",
-        converse=False,
-        project_uuid="proj-only",
-        claude_surface="code",
-        model="opus-5",
-        delete_after=False,
-    )
-    reg = MagicMock(registration_id="reg-ov", cdp_url="http://127.0.0.1:9226", target_id=None)
-    converse = AsyncMock(return_value=[_converse_ok_result()])
-    overlay = AsyncMock()
-
-    async def _overlay(*, run_once, allow_family_substitution=False, **_kw):
-        overlay.last_allow_family_substitution = allow_family_substitution
-        return await run_once(req.model), {}
-
-    overlay.side_effect = _overlay
-
-    with _run_execution_patches(reg, converse=converse, overlay=overlay):
-        await run_execution(req, execution_id="exec-ov", abort_check=AsyncMock(return_value=False))
-
-    assert overlay.last_allow_family_substitution is False
-
-
-@pytest.mark.asyncio
 async def test_run_execution_non_converse_overlay_allows_family_substitution_for_cowork() -> None:
     req = SubmitProjectAskRequest(
         prompt_text="probe",
@@ -283,3 +256,143 @@ async def test_run_execution_non_converse_overlay_allows_family_substitution_for
         await run_execution(req, execution_id="exec-cw", abort_check=AsyncMock(return_value=False))
 
     assert overlay.await_args.kwargs["allow_family_substitution"] is True
+
+
+_SUBSTITUTION_SENTINEL = object()
+
+
+@pytest.mark.asyncio
+async def test_run_execution_code_surface_aborted_carries_ignore_flag() -> None:
+    req = SubmitProjectAskRequest(
+        prompt_text="probe",
+        converse=True,
+        project_uuid="p",
+        claude_surface="code",
+        model="opus-5",
+    )
+    reg = MagicMock(registration_id="reg-ab", cdp_url="http://127.0.0.1:9226", target_id=None)
+    converse = AsyncMock(return_value=[_converse_ok_result()])
+
+    async def _overlay(*, run_once, **_kw):
+        return await run_once(req.model), {}
+
+    with (
+        _run_execution_patches(reg, converse=converse, overlay=AsyncMock(side_effect=_overlay)),
+        patch("cdp_ask.runner.abort_cleanup"),
+    ):
+        result = await run_execution(
+            req,
+            execution_id="exec-ab-code",
+            abort_check=AsyncMock(return_value=True),
+        )
+
+    assert result["status"] == "aborted"
+    assert result["project_uuid_ignored_for_code_surface"] is True
+
+
+@pytest.mark.asyncio
+async def test_run_execution_non_converse_overlay_disables_family_substitution_for_code() -> None:
+    """converse=False + code uses converse overlay path (AC1); substitution still disabled."""
+    req = SubmitProjectAskRequest(
+        prompt_text="probe",
+        converse=False,
+        project_uuid="proj-only",
+        claude_surface="code",
+        model="opus-5",
+        delete_after=False,
+    )
+    reg = MagicMock(registration_id="reg-ov", cdp_url="http://127.0.0.1:9226", target_id=None)
+    converse = AsyncMock(return_value=[_converse_ok_result()])
+    overlay = AsyncMock()
+
+    async def _overlay(*, run_once, allow_family_substitution=_SUBSTITUTION_SENTINEL, **_kw):
+        overlay.last_allow_family_substitution = allow_family_substitution
+        return await run_once(req.model), {}
+
+    overlay.side_effect = _overlay
+
+    with _run_execution_patches(reg, converse=converse, overlay=overlay):
+        await run_execution(req, execution_id="exec-ov", abort_check=AsyncMock(return_value=False))
+
+    assert overlay.last_allow_family_substitution is False
+
+
+@pytest.mark.asyncio
+async def test_run_execution_code_no_project_uuid_non_converse_uses_converse_route() -> None:
+    req = SubmitProjectAskRequest(
+        prompt_text="probe",
+        converse=False,
+        claude_surface="code",
+        model="opus-5",
+        delete_after=False,
+    )
+    reg = MagicMock(registration_id="reg-npu", cdp_url="http://127.0.0.1:9226", target_id=None)
+    converse = AsyncMock(return_value=[_converse_ok_result()])
+    run_ask = AsyncMock()
+
+    async def _overlay(*, run_once, **_kw):
+        return await run_once(req.model), {}
+
+    with (
+        _run_execution_patches(reg, converse=converse, overlay=AsyncMock(side_effect=_overlay)),
+        patch("cdp_ask.runner.run_project_ask", new=run_ask),
+    ):
+        result = await run_execution(
+            req,
+            execution_id="exec-npu",
+            abort_check=AsyncMock(return_value=False),
+        )
+
+    run_ask.assert_not_awaited()
+    converse.assert_awaited_once()
+    assert "project_uuid_ignored_for_code_surface" not in result
+
+
+@pytest.mark.asyncio
+async def test_run_execution_code_whitespace_project_uuid_non_converse_no_flag() -> None:
+    req = SubmitProjectAskRequest(
+        prompt_text="probe",
+        converse=False,
+        project_uuid="  ",
+        claude_surface="code",
+        model="opus-5",
+        delete_after=False,
+    )
+    reg = MagicMock(registration_id="reg-ws", cdp_url="http://127.0.0.1:9226", target_id=None)
+    converse = AsyncMock(return_value=[_converse_ok_result()])
+
+    async def _overlay(*, run_once, **_kw):
+        return await run_once(req.model), {}
+
+    with _run_execution_patches(reg, converse=converse, overlay=AsyncMock(side_effect=_overlay)):
+        result = await run_execution(
+            req,
+            execution_id="exec-ws",
+            abort_check=AsyncMock(return_value=False),
+        )
+
+    converse.assert_awaited_once()
+    assert "project_uuid_ignored_for_code_surface" not in result
+
+
+@pytest.mark.asyncio
+async def test_run_execution_cowork_non_converse_no_project_raises() -> None:
+    req = SubmitProjectAskRequest(
+        prompt_text="probe",
+        converse=False,
+        claude_surface="cowork",
+        model="opus-5",
+        delete_after=False,
+        no_project_uuid=False,
+    )
+    reg = MagicMock(registration_id="reg-cv", cdp_url="http://127.0.0.1:9226", target_id=None)
+    converse = AsyncMock()
+
+    async def _overlay(*, run_once, **_kw):
+        return await run_once(req.model), {}
+
+    with (
+        _run_execution_patches(reg, converse=converse, overlay=AsyncMock(side_effect=_overlay)),
+        pytest.raises(ValueError, match="project_uuid required unless no_project_uuid=true"),
+    ):
+        await run_execution(req, execution_id="exec-cv", abort_check=AsyncMock(return_value=False))

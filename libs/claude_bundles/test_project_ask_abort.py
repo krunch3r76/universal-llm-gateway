@@ -299,7 +299,7 @@ def test_abort_cleanup_retain_idle_operator_proxy_deregisters_despite_has_stop(
     monkeypatch.setattr(
         paa,
         "bounded_stop_via_cdp",
-        lambda url: stop_calls.append(url)
+        lambda url, target_id=None: stop_calls.append(url)
         or paa.AttestResult(has_stop=True, probe_ok=True),
     )
     parked: list[tuple[str, str | None]] = []

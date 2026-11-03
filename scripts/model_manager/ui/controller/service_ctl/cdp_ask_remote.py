@@ -34,6 +34,7 @@ _REMOTE_REPO = "/mnt/torus/projects/universal-llm-gateway"
 _REMOTE_FILES_ROOT = "/mnt/torus/mcp-data/files"
 _CDP_ASK_PATHS = (
     "libs/cdp_ask/",
+    "libs/claude_bundles/",
     "scripts/cdp-ask",
     "scripts/cdp-ask-start",
     "services/cdp-ask/",
