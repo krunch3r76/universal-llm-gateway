@@ -537,6 +537,7 @@ class RestartDrainGate:
         self._witnesses: dict[str, list[InFlightWitness]] = witnesses or {}
         self._last_probe = LastProbeWitness()
         self._restart_hold_context: dict[str, dict[str, Any]] = {}
+        self._probe_resolve_cache: dict[str, _ProbeResolveCacheEntry] = {}
 
     def _witnesses_for(self, service: str) -> list[InFlightWitness]:
         return [*self._witnesses.get(service, ()), self._last_probe]
@@ -689,6 +690,51 @@ class RestartDrainGate:
         self._last_probe.record(service, busy=work.busy, detail=work.detail)
         return work
 
+    async def probe_resolving_failure(self, service: str) -> ActiveWork:
+        """Probe with witness merge on failure — for long-poll drain supervisors."""
+        from .restart_drain_witness import probe_answer_from_resolution
+
+        now = time.monotonic()
+        cached = self._probe_resolve_cache.get(service)
+        if cached is not None and (
+            now - cached.recorded_at
+        ) < _WITNESS_CONSULT_MIN_INTERVAL_S:
+            if cached.verdict == "busy":
+                return ActiveWork(busy=True, detail=dict(cached.active_work))
+            if cached.probe_exc is not None:
+                raise cached.probe_exc
+            raise ValueError("cached probe resolution unknown without exception")
+
+        try:
+            work = await self.probe(service)
+        except (httpx.HTTPError, ValueError, OSError) as exc:
+            resolution = await resolve_probe_failure(
+                service,
+                probe_error=describe_probe_exc(exc),
+                witnesses=self._witnesses_for(service),
+            )
+            answer = probe_answer_from_resolution(resolution)
+            if answer is None:
+                self._probe_resolve_cache[service] = _ProbeResolveCacheEntry(
+                    verdict="unknown",
+                    active_work=resolution.active_work,
+                    recorded_at=now,
+                    probe_exc=exc,
+                )
+                raise
+            busy, detail = answer
+            if busy:
+                self._probe_resolve_cache[service] = _ProbeResolveCacheEntry(
+                    verdict="busy",
+                    active_work=dict(detail),
+                    recorded_at=now,
+                )
+                return ActiveWork(busy=True, detail=detail)
+            self._probe_resolve_cache.pop(service, None)
+            return ActiveWork(busy=False, detail=detail)
+        self._probe_resolve_cache.pop(service, None)
+        return work
+
     def restart_in_progress(self, service: str) -> bool:
         """True iff the per-service restart slot is currently held (no free slot).
 
@@ -756,6 +802,17 @@ class RestartDrainGate:
 
 
 BeforeReleaseHook = Callable[[str], Awaitable[None]]
+BusyHook = Callable[[DrainOutcome], Awaitable[dict[str, Any] | None]]
+
+_WITNESS_CONSULT_MIN_INTERVAL_S = 5.0
+
+
+@dataclass(slots=True)
+class _ProbeResolveCacheEntry:
+    verdict: str
+    active_work: dict[str, Any]
+    recorded_at: float
+    probe_exc: BaseException | None = None
 
 
 def starting_pid_from_lifecycle_message(message: str) -> int | None:
@@ -791,6 +848,7 @@ async def run_gated(
     caller_requested: bool = False,
     force_already_enforced: bool = False,
     self_call_counted: bool = False,
+    on_busy: BusyHook | None = None,
 ) -> dict[str, Any]:
     """Run one lifecycle action under the drain gate. Single shared entry point.
 
@@ -829,6 +887,10 @@ async def run_gated(
             return refused
     outcome = await gate.evaluate(service, force=force, exclude_job_id=exclude_job_id)
     if outcome is not None:
+        if on_busy is not None and not force and outcome.state == "busy":
+            armed = await on_busy(outcome)
+            if armed is not None:
+                return armed
         return outcome.to_result()
     try:
         message = await lifecycle()
@@ -994,6 +1056,7 @@ class LocalServiceDrainSupervisor:
     deadline_s: float = 604800.0
     poll_interval_s: float = _SELF_HOLDER_POLL_INTERVAL_S
     exclude_job_id: str | None = None
+    witness_aware_probe: bool = False
 
     async def supervise(self, intent: Any) -> None:
         from .restart_drain_supervise import supervise_until_lifecycle
@@ -1008,10 +1071,20 @@ class LocalServiceDrainSupervisor:
             )
             return not filtered.busy
 
+        if self.witness_aware_probe:
+
+            async def _probe() -> ActiveWork:
+                return await self.gate.probe_resolving_failure(self.service)
+
+        else:
+
+            async def _probe() -> ActiveWork:
+                return await self.gate.probe(self.service)
+
         await supervise_until_lifecycle(
             store=self.store,
             intent=intent,
-            probe=lambda: self.gate.probe(self.service),
+            probe=_probe,
             is_idle=_idle,
             lifecycle=self.lifecycle,
             deadline_s=self.deadline_s,
@@ -1450,6 +1523,7 @@ __all__ = [
     "ActiveWork",
     "BackgroundCompleteHook",
     "BackgroundFailedHook",
+    "BusyHook",
     "BusyProbe",
     "DrainOutcome",
     "GATED_ACTIONS",
