@@ -500,6 +500,7 @@ async def run_project_conversation(
                 execution_id=satellite_execution_id or None,
                 stargate_execution_id=stargate_execution_id,
                 purpose=purpose,
+                claude_surface=claude_surface,
             )
         else:
             url = compose_url or "https://claude.ai/new"

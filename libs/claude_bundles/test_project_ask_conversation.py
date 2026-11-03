@@ -334,6 +334,283 @@ async def test_converse_path_threads_ids_via_project_ask_on_page() -> None:
     assert kwargs.get("execution_id") == "sat-exec-corr-2"
 
 
+_MARKED_REASONING = "<!--cdp-required-skills:reasoning-posture-->\n# Work body\n"
+
+
+@pytest.mark.asyncio
+async def test_converse_project_uuid_send_prompt_receives_claude_surface() -> None:
+    """project_uuid + claude_surface=code threads surface into send_prompt."""
+    page = AsyncMock()
+    page.url = "https://claude.ai/project/proj-uuid"
+    send_prompt = AsyncMock()
+    state = {
+        "body": "reply " + ("y" * 120),
+        "url": page.url,
+        "model_label": "Model: Opus 5",
+    }
+    harvest = HarvestBody(content=state["body"], provenance="chat")
+
+    with (
+        patch(
+            "claude_bundles.project_ask_conversation.connect_cdp",
+            new=AsyncMock(return_value=(AsyncMock(), None, None, None)),
+        ),
+        patch(
+            "claude_bundles.project_ask_conversation.pick_chat_page",
+            new=AsyncMock(return_value=page),
+        ),
+        patch(
+            "claude_bundles.project_ask._compose_model_selected",
+            new=AsyncMock(return_value={"ok": True, "current_model": "Opus 5"}),
+        ),
+        patch(
+            "claude_bundles.project_ask.harvest_assistant",
+            new=AsyncMock(return_value={"count": 0}),
+        ),
+        patch(
+            "claude_bundles.project_ask.send_prompt",
+            new=send_prompt,
+        ),
+        patch(
+            "claude_bundles.project_ask.wait_assistant_reply",
+            new=AsyncMock(return_value=state),
+        ),
+        patch(
+            "claude_bundles.project_ask.resolve_harvest_body",
+            new=AsyncMock(return_value=harvest),
+        ),
+        patch(
+            "claude_bundles.project_ask._attest_model",
+            return_value="Model: Opus 5",
+        ),
+    ):
+        results = await run_project_conversation(
+            [_MARKED_REASONING],
+            project_uuid="proj-uuid",
+            model="opus-5",
+            claude_surface="code",
+            delete_after=False,
+        )
+
+    assert len(results) == 1
+    assert results[0].ok is True
+    assert send_prompt.await_count == 1
+    assert send_prompt.call_args.kwargs.get("claude_surface") == "code"
+
+
+@pytest.mark.asyncio
+async def test_project_uuid_code_surface_inline_attest_via_on_page(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """project_uuid path: /code + marked prompt uses inline seals and post-submit attest."""
+    from contextlib import ExitStack
+
+    from claude_bundles.chat_context_skills import ChatContextSkillsError
+    from claude_bundles.project_ask import project_ask_on_page
+
+    page = AsyncMock()
+    composer = AsyncMock()
+    submit_calls: list[str] = []
+    attest_payloads: list[dict] = []
+
+    async def _capture_submit(*_args, **kwargs):
+        submit_calls.append(kwargs.get("draft_text") or "")
+
+    def _capture_attest(**payload):
+        attest_payloads.append(dict(payload))
+
+    patches = (
+        patch(
+            "claude_bundles.project_ask._compose_model_selected",
+            new=AsyncMock(return_value={"ok": True, "current_model": "Opus 5"}),
+        ),
+        patch(
+            "claude_bundles.project_ask.harvest_assistant",
+            new=AsyncMock(return_value={"count": 0}),
+        ),
+        patch(
+            "claude_bundles.project_ask.wait_assistant_reply",
+            new=AsyncMock(
+                return_value={
+                    "body": "done " + ("z" * 120),
+                    "url": page.url,
+                    "model_label": "Opus 5",
+                }
+            ),
+        ),
+        patch(
+            "claude_bundles.project_ask.resolve_harvest_body",
+            new=AsyncMock(
+                return_value=HarvestBody(content="done " + ("z" * 120), provenance="chat")
+            ),
+        ),
+        patch(
+            "claude_bundles.project_ask._attest_model",
+            return_value="Model: Opus 5",
+        ),
+        patch("claude_bundles.composer_session_skills.require_compose_surface"),
+        patch(
+            "claude_bundles.project_ask.find_composer",
+            new=AsyncMock(return_value=composer),
+        ),
+        patch(
+            "claude_bundles.composer_submit.clear_composer_verified",
+            new=AsyncMock(),
+        ),
+        patch(
+            "claude_bundles.composer_skill_observe.attach_skills_verified",
+            new=AsyncMock(return_value=[]),
+        ),
+        patch(
+            "claude_bundles.project_ask._submit_composer_draft",
+            side_effect=_capture_submit,
+        ),
+        patch(
+            "claude_bundles.skill_induction_panel.wait_for_induction_panel",
+            side_effect=ChatContextSkillsError("Context → Skills not on the rail"),
+        ),
+        patch(
+            "claude_bundles.skill_context_receipt.record_post_submit_skills_receipt",
+            new=AsyncMock(),
+        ),
+        patch(
+            "claude_bundles.cowork_skill_delivery.emit_skill_delivery_attested",
+            side_effect=_capture_attest,
+        ),
+        patch.object(page, "wait_for_timeout", new=AsyncMock()),
+    )
+
+    with ExitStack() as stack:
+        for item in patches:
+            stack.enter_context(item)
+        stack.enter_context(
+            patch(
+                "claude_bundles.cowork_skill_delivery.await_committed_skill_seals",
+                new=AsyncMock(return_value=["reasoning-posture"]),
+            )
+        )
+        result = await project_ask_on_page(
+            page,
+            _MARKED_REASONING,
+            project_uuid="proj-uuid",
+            claude_surface="code",
+            delete_after=False,
+        )
+
+    assert result.ok is True
+    assert submit_calls
+    draft = submit_calls[-1]
+    assert '<skill slug="reasoning-posture"' in draft
+    assert "Use the reasoning-posture skill" not in draft
+    assert attest_payloads
+    last = attest_payloads[-1]
+    assert last["ok"] is True
+    assert last["claude_surface"] == "code"
+    assert last["induction"] == []
+
+
+@pytest.mark.asyncio
+async def test_project_uuid_code_surface_missing_seal_fails_closed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """project_uuid /code path fails closed when inline seal is not observed."""
+    from contextlib import ExitStack
+
+    from claude_bundles.chat_context_skills import ChatContextSkillsError
+    from claude_bundles.cowork_skill_delivery import SkillReceiptUnverifiedError
+    from claude_bundles.project_ask import project_ask_on_page, send_prompt as real_send_prompt
+
+    page = AsyncMock()
+    composer = AsyncMock()
+    receipt_errors: list[SkillReceiptUnverifiedError] = []
+
+    async def _send_raises_on_bad_seal(*args, **kwargs):
+        try:
+            return await real_send_prompt(*args, **kwargs)
+        except SkillReceiptUnverifiedError as exc:
+            receipt_errors.append(exc)
+            raise
+
+    patches = (
+        patch(
+            "claude_bundles.project_ask._compose_model_selected",
+            new=AsyncMock(return_value={"ok": True, "current_model": "Opus 5"}),
+        ),
+        patch(
+            "claude_bundles.project_ask.harvest_assistant",
+            new=AsyncMock(return_value={"count": 0, "n": 0, "body_len": 0}),
+        ),
+        patch(
+            "claude_bundles.project_ask.send_prompt",
+            side_effect=_send_raises_on_bad_seal,
+        ),
+        patch(
+            "claude_bundles.project_ask.wait_assistant_reply",
+            new=AsyncMock(
+                return_value={
+                    "body": "partial " + ("p" * 80),
+                    "url": "https://claude.ai/project/proj-uuid",
+                    "n": 1,
+                    "model_label": "Model: Opus 5",
+                }
+            ),
+        ),
+        patch(
+            "claude_bundles.project_ask._attest_model",
+            return_value="Model: Opus 5",
+        ),
+        patch("claude_bundles.composer_session_skills.require_compose_surface"),
+        patch(
+            "claude_bundles.project_ask.find_composer",
+            new=AsyncMock(return_value=composer),
+        ),
+        patch(
+            "claude_bundles.composer_submit.clear_composer_verified",
+            new=AsyncMock(),
+        ),
+        patch(
+            "claude_bundles.composer_skill_observe.attach_skills_verified",
+            new=AsyncMock(return_value=[]),
+        ),
+        patch(
+            "claude_bundles.project_ask._submit_composer_draft",
+            new=AsyncMock(),
+        ),
+        patch(
+            "claude_bundles.skill_induction_panel.wait_for_induction_panel",
+            side_effect=ChatContextSkillsError("Context → Skills not on the rail"),
+        ),
+        patch(
+            "claude_bundles.skill_context_receipt.record_post_submit_skills_receipt",
+            new=AsyncMock(),
+        ),
+        patch.object(page, "wait_for_timeout", new=AsyncMock()),
+    )
+
+    with ExitStack() as stack:
+        for item in patches:
+            stack.enter_context(item)
+        stack.enter_context(
+            patch(
+                "claude_bundles.cowork_skill_delivery.await_committed_skill_seals",
+                new=AsyncMock(return_value=[]),
+            )
+        )
+        result = await project_ask_on_page(
+            page,
+            _MARKED_REASONING,
+            project_uuid="proj-uuid",
+            claude_surface="code",
+            delete_after=False,
+        )
+
+    assert receipt_errors
+    assert "undelivered" in str(receipt_errors[0])
+    assert receipt_errors[0].submitted is True
+    assert result.ok is False
+    assert "skill_receipt_unverified" in (result.error or "")
+
+
 @pytest.mark.asyncio
 async def test_followup_harvest_incomplete_preserves_nonzero_body() -> None:
     """a:37226 — timeout with last>0 must not return FAILED body_len=0."""

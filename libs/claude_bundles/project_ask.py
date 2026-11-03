@@ -1230,12 +1230,15 @@ async def project_ask_on_page(
     harvest_source: HarvestSource = "auto",
     download_output: bool = False,
     purpose: str = "ask",
+    claude_surface: str | None = None,
 ) -> ProjectAskResult:
     """Run one sealed ask on an existing Playwright page.
 
     ``execution_id`` remains the **satellite** admit id (archive path only).
     ``stargate_execution_id`` is the Stargate seating id threaded into skill
     delivery attest (payload key ``execution_id``).
+    ``claude_surface`` when ``"code"`` threads into ``send_prompt`` so marked
+    prompts use inline skill seals instead of the induction panel path.
     ``job=delivery-review`` keeps harvest open until a parseable VERDICT lands
     (a:37156 skill-induction seal).
     """
@@ -1273,6 +1276,7 @@ async def project_ask_on_page(
             satellite_execution_id=str(execution_id or ""),
             await_induction_reply=True,
             on_harvest=on_harvest,
+            claude_surface=claude_surface,
         )
         state = await wait_assistant_reply(
             page,
@@ -1446,11 +1450,14 @@ async def run_project_ask(
     download_output: bool = False,
     purpose: str = "ask",
     target_id: str | None = None,
+    claude_surface: str | None = None,
 ) -> ProjectAskResult:
     """Connect CDP, run one sealed ask, disconnect.
 
     ``execution_id`` = satellite admit id (archive); ``stargate_execution_id``
     threads into skill-delivery attest correlation keys.
+    ``claude_surface`` is forwarded to ``project_ask_on_page`` for /code inline
+    skill delivery when callers supply it.
     """
     pw, _browser, ctx, _page0 = await connect_cdp(cdp_url)
     try:
@@ -1479,6 +1486,7 @@ async def run_project_ask(
             harvest_source=harvest_source,
             download_output=download_output,
             purpose=purpose,
+            claude_surface=claude_surface,
         )
     finally:
         await pw.stop()
