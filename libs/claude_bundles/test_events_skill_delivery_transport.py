@@ -7,6 +7,7 @@ Jupiter (arc 12286 / friction 41800).
 from __future__ import annotations
 
 import logging
+import os
 import threading
 import time
 from typing import Any
@@ -175,24 +176,13 @@ def test_mirror_warning_throttle_per_transport_target(
     monkeypatch.setattr(esd, "_mirror_send_sync", _fail_send)
     monkeypatch.setenv("EVENTS_INGEST_TCP", "127.0.0.1:7101")
     t0 = 2000.0
-    seq = [
-        t0,
-        t0,
-        t0 + 1.0,
-        t0 + 1.0,
-        t0 + 301.0,
-        t0 + 301.0,
-        t0 + 301.0,
-        t0 + 301.0,
-    ]
-    monkeypatch.setattr(esd.time, "monotonic", lambda: seq.pop(0) if seq else t0 + 400.0)
+    monkeypatch.setattr(esd, "_now", lambda: t0)
 
     event = cdp_skill_delivery_attested(
         ok=True, attached=[], inlined=[], undelivered=[]
     )
-    for _ in range(2):
-        esd._mirror_to_event_service(event)
-        test_flush_mirror_worker()
+    esd._mirror_to_event_service(event)
+    test_flush_mirror_worker()
 
     warnings = [
         r
@@ -203,6 +193,9 @@ def test_mirror_warning_throttle_per_transport_target(
     assert "transport=tcp" in warnings[0].message
     assert "target=127.0.0.1:7101" in warnings[0].message
 
+    with esd._mirror_state_lock:
+        esd._circuit_open_until = 0.0
+    monkeypatch.setattr(esd, "_now", lambda: t0 + 301.0)
     esd._mirror_to_event_service(event)
     test_flush_mirror_worker()
     warnings2 = [
@@ -224,6 +217,82 @@ def test_full_mirror_queue_drops_and_counts() -> None:
         esd._mirror_queue.put_nowait(event)
     esd._mirror_to_event_service(event)
     assert esd._queue_drop_count >= 1
+
+
+def test_worker_breaker_drops_queued_events_after_one_failed_send(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """One failed send opens breaker; remaining queued items drop without send."""
+    attempts: list[int] = []
+
+    def _fail_send(_event: object) -> None:
+        attempts.append(1)
+        raise ConnectionRefusedError("blackhole")
+
+    monkeypatch.setattr(esd, "_mirror_send_sync", _fail_send)
+    event = cdp_skill_delivery_attested(
+        ok=True, attached=[], inlined=[], undelivered=[]
+    )
+    for _ in range(10):
+        esd._mirror_to_event_service(event)
+    test_flush_mirror_worker(timeout=3.0)
+    assert len(attempts) == 1
+    assert esd._circuit_skip_count >= 9
+
+
+def test_queue_drop_emits_throttled_warning_without_send_failure(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Queue-full drops log through the same throttle as send failures."""
+    caplog.set_level(logging.WARNING)
+    hold = threading.Event()
+
+    def _hold_send(_event: object) -> None:
+        hold.wait(timeout=2.0)
+
+    monkeypatch.setattr(esd, "_mirror_send_sync", _hold_send)
+    monkeypatch.setattr(esd, "_now", lambda: 5000.0)
+    event = cdp_skill_delivery_attested(
+        ok=True, attached=[], inlined=[], undelivered=[]
+    )
+    esd._mirror_to_event_service(event)
+    for _ in range(esd._MIRROR_QUEUE_MAXSIZE):
+        esd._mirror_queue.put_nowait(event)
+    esd._mirror_to_event_service(event)
+    hold.set()
+    test_flush_mirror_worker(timeout=3.0)
+    warnings = [
+        r
+        for r in caplog.records
+        if r.levelno == logging.WARNING and "mirror failed" in r.message
+    ]
+    assert len(warnings) == 1
+    assert "drops=" in warnings[0].message
+    assert "failures=0" in warnings[0].message
+
+
+def test_fork_pid_change_starts_fresh_mirror_worker(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """After fork, a new worker thread must start instead of inheriting a stale flag."""
+    starts: list[int] = []
+    real_start = esd.threading.Thread.start
+    pid = os.getpid()
+
+    def _track_start(self: esd.threading.Thread) -> None:
+        starts.append(1)
+        return real_start(self)
+
+    monkeypatch.setattr(esd.threading.Thread, "start", _track_start)
+    monkeypatch.setattr(esd.os, "getpid", lambda: pid)
+    emit_skill_delivery_attested(ok=True, attached=[], inlined=[], undelivered=[])
+    test_flush_mirror_worker(timeout=2.0)
+    assert len(starts) == 1
+
+    monkeypatch.setattr(esd.os, "getpid", lambda: pid + 1)
+    emit_skill_delivery_attested(ok=True, attached=[], inlined=[], undelivered=[])
+    test_flush_mirror_worker(timeout=2.0)
+    assert len(starts) == 2
 
 
 def test_emit_survives_thread_start_runtime_error(

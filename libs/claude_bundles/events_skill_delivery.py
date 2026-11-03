@@ -22,6 +22,8 @@ from universal_event_bus.events.factory import event_factory
 
 logger = logging.getLogger(__name__)
 
+_now = time.monotonic
+
 _MIRROR_QUEUE_MAXSIZE = 256
 _CIRCUIT_BREAKER_SECONDS = 30.0
 _WARNING_INTERVAL_SECONDS = 300.0
@@ -29,6 +31,8 @@ _WARNING_INTERVAL_SECONDS = 300.0
 _mirror_queue: queue.Queue[Any] = queue.Queue(maxsize=_MIRROR_QUEUE_MAXSIZE)
 _mirror_worker_lock = threading.Lock()
 _mirror_worker_started = False
+_mirror_worker_thread: threading.Thread | None = None
+_mirror_worker_owner_pid = 0
 _circuit_open_until = 0.0
 _mirror_state_lock = threading.Lock()
 # (transport, target) -> monotonic last warning time
@@ -256,9 +260,37 @@ def emit_skill_fetch_decision(
     return event
 
 
+class _MirrorDropNotice(Exception):
+    """Synthetic exception for drop-only mirror warnings."""
+
+
+def _mirror_transport_target() -> tuple[str, str]:
+    try:
+        tcp = _resolve_tcp_target()
+        if tcp is not None:
+            host, port = tcp
+            return "tcp", f"{host}:{port}"
+    except Exception:  # noqa: BLE001 — fall through to UDS label
+        pass
+    return "uds", os.environ.get(
+        "EVENTS_INGEST_SOCK", "/tmp/universal-protocol/events.sock"
+    )
+
+
+def _mirror_worker_stale() -> bool:
+    if not _mirror_worker_started:
+        return False
+    if os.getpid() != _mirror_worker_owner_pid:
+        return True
+    return _mirror_worker_thread is None or not _mirror_worker_thread.is_alive()
+
+
 def _ensure_mirror_worker() -> None:
-    global _mirror_worker_started  # noqa: PLW0603
+    global _mirror_worker_started, _mirror_worker_thread, _mirror_worker_owner_pid  # noqa: PLW0603
     with _mirror_worker_lock:
+        if _mirror_worker_stale():
+            _mirror_worker_started = False
+            _mirror_worker_thread = None
         if _mirror_worker_started:
             return
         thread = threading.Thread(
@@ -270,7 +302,34 @@ def _ensure_mirror_worker() -> None:
             thread.start()
         except Exception:  # noqa: BLE001 — mirror must not raise into emit_*
             return
+        _mirror_worker_thread = thread
+        _mirror_worker_owner_pid = os.getpid()
         _mirror_worker_started = True
+
+
+def _emit_mirror_warning_if_due(
+    key: tuple[str, str],
+    transport: str,
+    target: str,
+    exc: Exception,
+) -> None:
+    now = _now()
+    with _mirror_state_lock:
+        last = _last_warning_at.get(key, 0.0)
+        if now - last < _WARNING_INTERVAL_SECONDS:
+            return
+        fails, drops = _warning_counts.get(key, (0, 0))
+        _warning_counts[key] = (0, 0)
+        _last_warning_at[key] = now
+    logger.warning(
+        "cdp-skill-delivery Event Service mirror failed "
+        "(transport=%s target=%s failures=%s drops=%s): %s",
+        transport,
+        target,
+        fails,
+        drops,
+        exc,
+    )
 
 
 def _record_drop(*, transport: str, target: str, circuit: bool) -> None:
@@ -283,43 +342,20 @@ def _record_drop(*, transport: str, target: str, circuit: bool) -> None:
             _queue_drop_count += 1
         fails, drops = _warning_counts.get(key, (0, 0))
         _warning_counts[key] = (fails, drops + 1)
+    _emit_mirror_warning_if_due(
+        key, transport, target, _MirrorDropNotice("mirror dropped")
+    )
 
 
 def _record_send_failure(transport: str, target: str, exc: Exception) -> None:
     global _circuit_open_until  # noqa: PLW0603
     key = (transport, target)
-    now = time.monotonic()
-    should_warn = False
+    now = _now()
     with _mirror_state_lock:
         _circuit_open_until = now + _CIRCUIT_BREAKER_SECONDS
         fails, drops = _warning_counts.get(key, (0, 0))
         _warning_counts[key] = (fails + 1, drops)
-        last = _last_warning_at.get(key, 0.0)
-        if now - last >= _WARNING_INTERVAL_SECONDS:
-            should_warn = True
-    if should_warn:
-        _emit_mirror_warning(key, transport, target, exc)
-
-
-def _emit_mirror_warning(
-    key: tuple[str, str],
-    transport: str,
-    target: str,
-    exc: Exception,
-) -> None:
-    with _mirror_state_lock:
-        fails, drops = _warning_counts.get(key, (0, 0))
-        _warning_counts[key] = (0, 0)
-        _last_warning_at[key] = time.monotonic()
-    logger.warning(
-        "cdp-skill-delivery Event Service mirror failed "
-        "(transport=%s target=%s failures=%s drops=%s): %s",
-        transport,
-        target,
-        fails,
-        drops,
-        exc,
-    )
+    _emit_mirror_warning_if_due(key, transport, target, exc)
 
 
 def _mirror_send_sync(event: Event) -> None:
@@ -358,19 +394,11 @@ def _mirror_worker_loop() -> None:
                 item.done.set()
                 continue
             event = item
-            transport = ""
-            target = ""
+            transport, target = _mirror_transport_target()
+            if _now() < _circuit_open_until:
+                _record_drop(transport=transport, target=target, circuit=True)
+                continue
             try:
-                tcp = _resolve_tcp_target()
-                if tcp is not None:
-                    host, port = tcp
-                    transport = "tcp"
-                    target = f"{host}:{port}"
-                else:
-                    transport = "uds"
-                    target = os.environ.get(
-                        "EVENTS_INGEST_SOCK", "/tmp/universal-protocol/events.sock"
-                    )
                 _mirror_send_sync(event)
             except Exception as exc:  # noqa: BLE001 — worker must not die
                 _record_send_failure(transport, target, exc)
@@ -383,19 +411,8 @@ def _mirror_worker_loop() -> None:
 def _mirror_to_event_service(event: Event) -> None:
     """Best-effort Event Service ingest — enqueue only; never blocks on socket I/O."""
     try:
-        now = time.monotonic()
-        transport = ""
-        target = ""
-        tcp = _resolve_tcp_target()
-        if tcp is not None:
-            host, port = tcp
-            transport = "tcp"
-            target = f"{host}:{port}"
-        else:
-            transport = "uds"
-            target = os.environ.get(
-                "EVENTS_INGEST_SOCK", "/tmp/universal-protocol/events.sock"
-            )
+        now = _now()
+        transport, target = _mirror_transport_target()
         with _mirror_state_lock:
             circuit_open = now < _circuit_open_until
         if circuit_open:
@@ -425,6 +442,11 @@ def test_flush_mirror_worker(*, timeout: float = 5.0) -> None:
 def test_reset_mirror_transport_state() -> None:
     """Test-only: clear breaker, counters, and warning throttle keys."""
     global _circuit_open_until, _circuit_skip_count, _queue_drop_count  # noqa: PLW0603
+    global _mirror_worker_started, _mirror_worker_thread, _mirror_worker_owner_pid
+    with _mirror_worker_lock:
+        _mirror_worker_started = False
+        _mirror_worker_thread = None
+        _mirror_worker_owner_pid = 0
     with _mirror_state_lock:
         _circuit_open_until = 0.0
         _circuit_skip_count = 0
