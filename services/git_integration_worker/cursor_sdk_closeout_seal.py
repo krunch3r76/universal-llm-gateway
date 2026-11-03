@@ -24,9 +24,7 @@ _USAGE_AUTHORITY = "recorded"
 
 # a:36755 / arc closeout-files-fields-need-a-scope-token — files_* answer
 # authorship/ambient repo attribution; effects[] answers dispatch action movement.
-FILES_ATTRIBUTION_SCOPE = (
-    "repo paths in this closeout files_* fields (authored ChangeSet and ambient movement)"
-)
+FILES_ATTRIBUTION_SCOPE = "repo paths in this closeout files_* fields (authored ChangeSet and ambient movement)"
 FILES_ATTRIBUTION_AUTHORITY = "recorded"
 # effects[] holds dispatch-touched in-repo paths plus merged off-git deliverable URIs
 # (implement_body §4.7) — not the files_* authorship / ambient ChangeSet legs.
@@ -251,6 +249,31 @@ def CloseoutSealRefused(path: str, surface: str) -> Event:  # noqa: N802
     )
 
 
+def _qualify_run_progress(payload: dict[str, Any]) -> None:
+    """Qualify run-progress numbers. The plain census is already at the halt.
+
+    ``first_toolcall_s`` is null when no tool call succeeded, and null is not
+    a bare scalar. A measured offset and ``stream_tool_call_count`` carry
+    scope and authority siblings so seal accepts them without a new plain row.
+    """
+    if isinstance(payload.get("first_toolcall_s"), (int, float)) and not isinstance(
+        payload.get("first_toolcall_s"), bool
+    ):
+        payload.setdefault(
+            "first_toolcall_s_scope",
+            "seconds from run or resume start to the first successful tool call",
+        )
+        payload.setdefault("first_toolcall_s_authority", "recorded")
+    if isinstance(
+        payload.get("stream_tool_call_count"), (int, float)
+    ) and not isinstance(payload.get("stream_tool_call_count"), bool):
+        payload.setdefault(
+            "stream_tool_call_count_scope",
+            "stream tool-call observations on this dispatch, including incomplete calls",
+        )
+        payload.setdefault("stream_tool_call_count_authority", "recorded")
+
+
 def seal_closeout_payload(payload: dict[str, Any]) -> dict[str, Any]:
     """Run ``seal()`` on a dumped closeout. Refuses undeclared bare scalars.
 
@@ -267,6 +290,7 @@ def seal_closeout_payload(payload: dict[str, Any]) -> dict[str, Any]:
     _qualify_authority_fork(payload)
     _qualify_open_forks(payload)
     _qualify_dense_spec_valid(payload)
+    _qualify_run_progress(payload)
     try:
         return seal(payload, closeout_surface_decl())
     except UnqualifiedScalarError as exc:

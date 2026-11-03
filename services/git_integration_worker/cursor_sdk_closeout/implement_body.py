@@ -408,6 +408,14 @@ def build_implement_closeout_body(
         if error_class is not None:
             payload["provider_error_class"] = error_class
         payload["tool_call_count"] = outcome.tool_call_count
+        payload["first_toolcall_s"] = outcome.first_toolcall_s
+        payload["stream_tool_call_count"] = (
+            outcome.tool_call_count
+            if outcome.stream_tool_call_count is None
+            else outcome.stream_tool_call_count
+        )
+        if outcome.mcp_handshake is not None:
+            payload["mcp_handshake"] = outcome.mcp_handshake
         if status_authority_disagreement is not None:
             payload["status_authority_disagreement"] = status_authority_disagreement
         if status_incomplete_class is not None:

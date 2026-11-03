@@ -2077,8 +2077,9 @@ async def test_dispatch_idle_timeout_payload_fields(
         idle_budget_s: float,
         now_fn: Callable[[], float] | None = None,
         wait_fn: Any = None,
+        budget_fn: Any = None,
     ) -> bool:
-        del now_fn, wait_fn
+        del now_fn, wait_fn, budget_fn
         clock["t"] = idle_budget_s + 1.0
         return True
 

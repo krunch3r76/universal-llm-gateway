@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import os
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any, Literal
@@ -369,6 +370,152 @@ def load_resume_run_context(*, dispatch_id: str) -> ResumeRunContext | None:
     )
 
 
+_DEFAULT_RESUME_NO_TOOLCALL_S = 300.0
+_MCP_HANDSHAKE_NOT_OBSERVED = "not_observed"
+# Bridge discovery (`cursor-sdk-bridge ready`) is not an MCP handshake.
+# These substrings are the only stderr shapes GIW treats as a failed connect.
+_MCP_HANDSHAKE_FAIL_MARKERS: tuple[tuple[str, str], ...] = (
+    ("mcp server exited", "mcp_server_exited"),
+    ("mcp handshake failed", "mcp_handshake_failed"),
+    ("failed to connect to mcp", "mcp_connect_failed"),
+)
+
+
+class ResumeMcpHandshakeError(RuntimeError):
+    """Park-resume MCP connect failed before the continuation ``send``.
+
+    Raised only when the caller sets ``fail_on_mcp_handshake`` and
+    ``observe_resume_mcp_handshake`` returns ``failed:<reason>``. The
+    exception text and ``handshake_state`` are that same token so the
+    failure envelope can quote it without parsing the traceback.
+    """
+
+    def __init__(self, handshake_state: str) -> None:
+        self.handshake_state = handshake_state
+        super().__init__(handshake_state)
+
+
+def resume_no_toolcall_budget_s() -> float:
+    """Seconds a park-resumed run may sit with zero successful tool calls.
+
+    Reads ``CURSOR_SDK_RESUME_NO_TOOLCALL_S`` when it is a positive number.
+    The default is 300. Non-numeric or non-positive values fall back to 300
+    so a bad environment cannot disable the fast-fail or raise inside the
+    idle wait loop. Callers should take ``min`` with the outer idle budget.
+    """
+    raw = os.environ.get("CURSOR_SDK_RESUME_NO_TOOLCALL_S", "").strip()
+    if not raw:
+        return _DEFAULT_RESUME_NO_TOOLCALL_S
+    try:
+        value = float(raw)
+    except ValueError:
+        return _DEFAULT_RESUME_NO_TOOLCALL_S
+    if value <= 0:
+        return _DEFAULT_RESUME_NO_TOOLCALL_S
+    return value
+
+
+def classify_mcp_handshake_text(text: str | None) -> str:
+    """Classify drained bridge stderr into an MCP handshake state.
+
+    Success is not inferred: the bridge has no MCP-ready line for GIW.
+    A known failure marker returns ``failed:<reason>``. Empty text and the
+    discovery line ``cursor-sdk-bridge ready`` return ``not_observed``.
+    Does not read the process table or spawn a server.
+    """
+    if not text or not text.strip():
+        return _MCP_HANDSHAKE_NOT_OBSERVED
+    lowered = text.lower()
+    for marker, reason in _MCP_HANDSHAKE_FAIL_MARKERS:
+        if marker in lowered:
+            return f"failed:{reason}"
+    return _MCP_HANDSHAKE_NOT_OBSERVED
+
+
+def observe_resume_mcp_handshake(*, stderr_text: str | None = None) -> str:
+    """Observe MCP connect state immediately after ``resume_agent`` returns.
+
+    ``Client.resume_agent`` forwards ``mcpServers`` on the ResumeAgent RPC
+    and returns only agent id and model, so a successful resume does not
+    prove the stdio server came up. This reads the optional stderr snapshot
+    the caller already drained. It does not open a second MCP process and
+    does not mutate the client. ``ok`` is not produced: the bridge has no
+    handshake success line for GIW to read.
+    """
+    return classify_mcp_handshake_text(stderr_text)
+
+
+def run_progress_fields(
+    *,
+    first_toolcall_s: float | None,
+    stream_tool_call_count: int,
+    admitted_via: str | None = None,
+    mcp_handshake: str | None = None,
+) -> dict[str, Any]:
+    """Progress fields for the terminal record and the failure envelope.
+
+    ``first_toolcall_s`` is seconds from run start, or from resume start when
+    the counter noted one, to the first successful tool call. ``None`` means
+    none succeeded. ``stream_tool_call_count`` counts stream observations,
+    including calls that never completed. Park-resume rows also carry
+    ``mcp_handshake`` and ``admitted_via``. Fresh runs omit those two keys.
+    """
+    fields: dict[str, Any] = {
+        "first_toolcall_s": first_toolcall_s,
+        "stream_tool_call_count": stream_tool_call_count,
+    }
+    if admitted_via == "giw_park_resume":
+        fields["admitted_via"] = admitted_via
+        fields["mcp_handshake"] = mcp_handshake or _MCP_HANDSHAKE_NOT_OBSERVED
+    return fields
+
+
+def format_park_resume_failure_message(
+    *,
+    kind: str,
+    since_last_progress_s: float,
+    budget_s: float,
+    first_toolcall_s: float | None,
+    mcp_handshake: str,
+    admitted_via: str,
+) -> str:
+    """Failure sentence with first_toolcall_s, handshake state, and admitted_via.
+
+    ``kind='mcp_handshake'`` leads with the handshake token. Any other kind
+    is the no-successful-tool-call fast-fail, including the idle budget.
+    The three diagnostic tokens are always in the sentence so a bus reply
+    is readable without opening the envelope data object.
+    """
+    first = "null" if first_toolcall_s is None else f"{first_toolcall_s:.3f}"
+    if kind == "mcp_handshake":
+        lead = f"cursor-sdk park-resume MCP handshake {mcp_handshake}"
+    else:
+        lead = (
+            "cursor-sdk park-resume idle: no successful tool call "
+            f"for {since_last_progress_s:.0f}s (budget {budget_s:.0f}s)"
+        )
+    return (
+        f"{lead}; first_toolcall_s={first} "
+        f"mcp_handshake={mcp_handshake} admitted_via={admitted_via}"
+    )
+
+
+def persist_run_progress(dispatch_id: str, fields: dict[str, Any]) -> None:
+    """Merge progress fields into the dispatch ``record_json`` terminal blob.
+
+    A missing ledger row is a no-op inside the merge. Any other failure is
+    logged and swallowed so a telemetry write cannot replace the terminal
+    status the caller is about to mark.
+    """
+    try:
+        CursorDispatchLedger.instance().merge_record_json(
+            dispatch_id=dispatch_id,
+            patch=fields,
+        )
+    except Exception:
+        logger.exception("run progress merge failed dispatch_id=%s", dispatch_id)
+
+
 def sdk_agent_id_from_agent(agent: Any) -> str | None:
     """Capture SDK agent identity — ``agent_id`` is the stable surface on 1.0.26."""
     value = getattr(agent, "agent_id", None)
@@ -384,10 +531,34 @@ def start_or_resume_agent(
     agent_options: AgentOptions,
     prompt: str,
     resume_ctx: ResumeRunContext | None,
+    on_handshake: Callable[[str], None] | None = None,
+    stderr_text: str | None = None,
+    fail_on_mcp_handshake: bool = False,
 ) -> tuple[Any, Any]:
-    """Create or resume an SDK agent, then send the continuation turn."""
+    """Create or resume an SDK agent, then send the continuation turn.
+
+    On resume, ``client.resume_agent`` receives ``agent_options`` unchanged,
+    which is the rebuilt ``mcpServers`` map from ``build_agent_options``.
+    The SDK applies that map on the ResumeAgent RPC and does not return
+    connect state. Handshake observation runs before ``send``. When
+    ``fail_on_mcp_handshake`` is set and the observation is ``failed:*``,
+    this raises ``ResumeMcpHandshakeError`` and does not send. Fresh
+    creates skip the handshake. ``on_handshake`` is invoked for every
+    resume observation, including ``not_observed``.
+    """
     if resume_ctx is not None:
         agent = client.resume_agent(resume_ctx.sdk_agent_id, agent_options)
+        handshake = observe_resume_mcp_handshake(stderr_text=stderr_text)
+        logger.info(
+            "cursor sdk resume mcp handshake: agent_id=%s state=%s fail_closed=%s",
+            resume_ctx.sdk_agent_id,
+            handshake,
+            fail_on_mcp_handshake,
+        )
+        if on_handshake is not None:
+            on_handshake(handshake)
+        if fail_on_mcp_handshake and handshake.startswith("failed:"):
+            raise ResumeMcpHandshakeError(handshake)
         # Resume children exist only when the parent ledger row is terminal, so
         # unconditional force on resume is the deliberate superset of that done-when.
         run = agent.send(prompt, SendOptions(local=LocalSendOptions(force=True)))

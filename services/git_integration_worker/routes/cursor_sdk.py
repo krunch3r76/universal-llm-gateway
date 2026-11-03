@@ -258,11 +258,16 @@ from services.git_integration_worker.cursor_sdk_restart_orphan import (
     salvage_restart_survivor_worktree,
 )
 from services.git_integration_worker.cursor_sdk_resume import (
+    ResumeMcpHandshakeError,
     closeout_qualifies_for_resume_retain,
+    format_park_resume_failure_message,
     load_resume_run_context,
     persist_resume_retain,
+    persist_run_progress,
     persist_timeout_retain,
     reject_resume_if_ineligible,
+    resume_no_toolcall_budget_s,
+    run_progress_fields,
     sdk_agent_id_from_agent,
     start_or_resume_agent,
 )
@@ -1004,18 +1009,75 @@ class _LiveToolCallCounter:
     reset site for the outer watchdog.
     """
 
-    __slots__ = ("_last_progress_at", "_n", "_now_fn", "_usage_live")
+    __slots__ = (
+        "_first_success_at",
+        "_handshake",
+        "_last_progress_at",
+        "_n",
+        "_now_fn",
+        "_resume_started_at",
+        "_started_at",
+        "_success_n",
+        "_usage_live",
+    )
 
     def __init__(self, *, now_fn: Callable[[], float] | None = None) -> None:
         self._now_fn = now_fn or time.monotonic
         self._n = 0
-        self._last_progress_at = self._now_fn()
+        self._success_n = 0
+        self._started_at = self._now_fn()
+        self._last_progress_at = self._started_at
+        self._first_success_at: float | None = None
+        self._resume_started_at: float | None = None
+        self._handshake: str | None = None
         self._usage_live: dict[str, Any] | None = None
 
     def bump(self, observation: object = None) -> None:
         self._n += 1
         if getattr(observation, "status", None) == "completed":
-            self._last_progress_at = self._now_fn()
+            now = self._now_fn()
+            self._last_progress_at = now
+            self._success_n += 1
+            if self._first_success_at is None:
+                self._first_success_at = now
+
+    def note_resume_started(self) -> None:
+        """Move the idle origin to resume time when no tool call has succeeded."""
+        self._resume_started_at = self._now_fn()
+        if self._success_n == 0:
+            self._last_progress_at = self._resume_started_at
+
+    def note_handshake(self, state: str) -> None:
+        """Record the park-resume MCP handshake token for the terminal row."""
+        self._handshake = state
+
+    def handshake_state(self) -> str:
+        """Return the recorded handshake token, or ``not_observed`` when unset."""
+        return self._handshake or "not_observed"
+
+    def handshake_observed(self) -> bool:
+        """True after ``note_handshake`` ran for this counter."""
+        return self._handshake is not None
+
+    def had_successful_tool_call(self) -> bool:
+        """True once a stream observation with ``status == completed`` arrived."""
+        return self._success_n > 0
+
+    def first_toolcall_s(self) -> float | None:
+        """Seconds from run start, or resume start, to the first success.
+
+        Returns ``None`` when no tool call has completed. The origin is the
+        resume timestamp when ``note_resume_started`` ran, otherwise counter
+        construction (the outer run start).
+        """
+        if self._first_success_at is None:
+            return None
+        origin = (
+            self._resume_started_at
+            if self._resume_started_at is not None
+            else self._started_at
+        )
+        return round(self._first_success_at - origin, 3)
 
     def note_progress(self, observation: object = None) -> None:
         """Advance idle clock on successful stream tool calls."""
@@ -1043,6 +1105,7 @@ async def _idle_deadline_wait(
     *,
     live_counter: _LiveToolCallCounter,
     idle_budget_s: float,
+    budget_fn: Callable[[], float] | None = None,
     now_fn: Callable[[], float] | None = None,
     wait_fn: Callable[
         [set[asyncio.Task[Any]], float],
@@ -1056,9 +1119,12 @@ async def _idle_deadline_wait(
 ) -> bool:
     """Wait for ``worker_task`` with an idle-since-progress deadline.
 
-    Returns ``True`` when no successful tool call occurred within
-    ``idle_budget_s`` of ``live_counter.last_progress_at()``. Returns
-    ``False`` when the worker task completes first.
+    Returns ``True`` when no successful tool call occurred within the
+    active budget of ``live_counter.last_progress_at()``. The budget is
+    ``budget_fn()`` each loop when given, otherwise the constant
+    ``idle_budget_s``. Returns ``False`` when the worker task completes
+    first. Park-resume passes a budget that is short until the first
+    successful tool call, then the outer budget.
     """
     now = now_fn or live_counter._now_fn
     wait = wait_fn or asyncio.wait
@@ -1066,7 +1132,8 @@ async def _idle_deadline_wait(
         if worker_task.done():
             return False
         current = now()
-        deadline = live_counter.last_progress_at() + idle_budget_s
+        budget = budget_fn() if budget_fn is not None else idle_budget_s
+        deadline = live_counter.last_progress_at() + budget
         if current >= deadline:
             return True
         slice_s = min(deadline - current, _SDK_IDLE_WAIT_SLICE_S)
@@ -1182,6 +1249,7 @@ def _run_sdk_sync(
     live_counter: _LiveToolCallCounter | None = None,
     skills: list[str] | None = None,
     delegation_tier: str = "A",
+    admitted_via: str | None = None,
 ) -> SdkRunOutcome:
     # Pin operator home via passwd — never trust process HOME (may be a leaked
     # dispatch overlay; CURSOR_VENV_CONFIG / agent-bus:6468).
@@ -1438,6 +1506,7 @@ def _run_sdk_sync(
                 "cause": f"{type(exc).__name__}: {exc}",
                 "elapsed_s": round(time.monotonic() - run_started, 1),
                 "stream_tool_call_count": live_counter.value(),
+                "first_toolcall_s": live_counter.first_toolcall_s(),
                 "last_tool_calls": last_calls,
                 "state_root": str(bridge_state),
                 "agent_id": getattr(agent, "id", None),
@@ -1455,14 +1524,29 @@ def _run_sdk_sync(
                     "dispatch_id."
                 ),
             }
+            if admitted_via == "giw_park_resume":
+                forensics["admitted_via"] = admitted_via
+                forensics["mcp_handshake"] = live_counter.handshake_state()
             return forensics
 
         try:
+            stderr_text = None
+            if bridge_tap is not None:
+                tail = bridge_tap.tail()
+                if tail:
+                    stderr_text = "\n".join(tail)
+            if resume_ctx is not None and live_counter is not None:
+                live_counter.note_resume_started()
             agent, run = start_or_resume_agent(
                 client=client,
                 agent_options=agent_options,
                 prompt=prompt,
                 resume_ctx=resume_ctx,
+                on_handshake=(
+                    live_counter.note_handshake if live_counter is not None else None
+                ),
+                stderr_text=stderr_text,
+                fail_on_mcp_handshake=admitted_via == "giw_park_resume",
             )
             # Local bridge Send rejects Idempotency-Key (cloud-only in SDK v1).
             register_live_run(
@@ -1605,9 +1689,23 @@ def _run_sdk_sync(
                 ),
                 first_output_s=stream_capture.first_output_s,
                 last_output_s=stream_capture.last_output_s,
-                first_toolcall_s=stream_capture.first_toolcall_s,
+                first_toolcall_s=(
+                    live_counter.first_toolcall_s()
+                    if live_counter is not None
+                    else stream_capture.first_toolcall_s
+                ),
                 measures_interaction_output_offsets=(
                     stream_capture.measures_interaction_output_offsets
+                ),
+                stream_tool_call_count=(
+                    live_counter.value()
+                    if live_counter is not None
+                    else stream_capture.tool_call_count
+                ),
+                mcp_handshake=(
+                    live_counter.handshake_state()
+                    if live_counter is not None and live_counter.handshake_observed()
+                    else None
                 ),
             )
         except WorktreeMintError:
@@ -3032,14 +3130,24 @@ async def _run_sdk_dispatch_gated(
             live_counter=live_counter,
             skills=req.skills,
             delegation_tier=delegation_tier,
+            admitted_via=req.admitted_via,
         ),
         op_id=f"{req.dispatch_id}:worker",
     )
+
+    def _idle_budget() -> float:
+        if (
+            req.admitted_via == "giw_park_resume"
+            and not live_counter.had_successful_tool_call()
+        ):
+            return min(resume_no_toolcall_budget_s(), outer_timeout_s)
+        return outer_timeout_s
 
     timed_out = await _idle_deadline_wait(
         worker_task,
         live_counter=live_counter,
         idle_budget_s=outer_timeout_s,
+        budget_fn=_idle_budget,
     )
 
     if timed_out and park_mark(req.dispatch_id) is not None:
@@ -3085,6 +3193,39 @@ async def _run_sdk_dispatch_gated(
     if timed_out:
         since_last_progress_s = live_counter.since_last_progress_s()
         tool_call_count = live_counter.value()
+        park_fast = (
+            req.admitted_via == "giw_park_resume"
+            and not live_counter.had_successful_tool_call()
+        )
+        fail_budget_s = (
+            min(resume_no_toolcall_budget_s(), outer_timeout_s)
+            if park_fast
+            else outer_timeout_s
+        )
+        progress = run_progress_fields(
+            first_toolcall_s=live_counter.first_toolcall_s(),
+            stream_tool_call_count=tool_call_count,
+            admitted_via=req.admitted_via,
+            mcp_handshake=live_counter.handshake_state(),
+        )
+        if park_fast:
+            fail_code = "CURSOR_SDK_RESUME_NO_TOOLCALL"
+            fail_message = format_park_resume_failure_message(
+                kind="no_toolcall",
+                since_last_progress_s=since_last_progress_s,
+                budget_s=fail_budget_s,
+                first_toolcall_s=live_counter.first_toolcall_s(),
+                mcp_handshake=str(progress["mcp_handshake"]),
+                admitted_via="giw_park_resume",
+            )
+            fail_subject = "FAILED (resume no toolcall)"
+        else:
+            fail_code = "CURSOR_SDK_TIMEOUT"
+            fail_message = (
+                f"cursor-sdk dispatch idle timeout: no successful tool call "
+                f"for {since_last_progress_s:.0f}s (budget {fail_budget_s:.0f}s)"
+            )
+            fail_subject = "FAILED (timeout)"
         # Do NOT cancel worker_task. The thread is non-cancellable and owns the
         # gate slot until its finally block runs release_sdk_dispatch_slot_sync.
         # Mark orphaned first so heartbeats stop misleading observability, then
@@ -3096,7 +3237,7 @@ async def _run_sdk_dispatch_gated(
             thread_id=req.thread_id,
             execution_id=req.execution_id,
             resolved_model=req.model,
-            timeout_s=outer_timeout_s,
+            timeout_s=fail_budget_s,
             since_last_progress_s=since_last_progress_s,
             tool_call_count=tool_call_count,
         )
@@ -3110,7 +3251,7 @@ async def _run_sdk_dispatch_gated(
             thread_id=req.thread_id,
             execution_id=req.execution_id,
             resolved_model=req.model,
-            timeout_s=outer_timeout_s,
+            timeout_s=fail_budget_s,
             bridge_aborted=bridge_aborted,
             since_last_progress_s=since_last_progress_s,
         )
@@ -3138,16 +3279,15 @@ async def _run_sdk_dispatch_gated(
                 forensics={
                     "cause": "outer_idle_timeout",
                     "since_last_progress_s": since_last_progress_s,
-                    "timeout_s": outer_timeout_s,
+                    "timeout_s": fail_budget_s,
+                    **progress,
                 },
             )
         env = error_envelope(
-            code="CURSOR_SDK_TIMEOUT",
-            message=(
-                f"cursor-sdk dispatch idle timeout: no successful tool call "
-                f"for {since_last_progress_s:.0f}s (budget {outer_timeout_s:.0f}s)"
-            ),
+            code=fail_code,
+            message=fail_message,
             source="gateway",
+            data=progress,
         )
         await _terminate_link(
             bus,
@@ -3159,15 +3299,16 @@ async def _run_sdk_dispatch_gated(
             thread_id=req.thread_id,
             to_agent=reply_to,
             from_agent="cursor-sdk",
-            subject=f"cursor-sdk dispatch {req.dispatch_id} FAILED (timeout)",
+            subject=f"cursor-sdk dispatch {req.dispatch_id} {fail_subject}",
             body=f"```json\n{json.dumps(env, indent=2)}\n```",
         )
+        await asyncio.to_thread(persist_run_progress, req.dispatch_id, progress)
         await asyncio.to_thread(persist_timeout_retain, dispatch_id=req.dispatch_id)
         await _mark_terminal_and_promote(
             dispatch_id=req.dispatch_id,
             terminal_status="failed",
             controller=controller,
-            emit_tag="CURSOR_SDK_TIMEOUT",
+            emit_tag=fail_code,
         )
         return
 
@@ -3262,6 +3403,42 @@ async def _run_sdk_dispatch_gated(
             emit_tag="CURSOR_WORKTREE_MINT_FAILED",
         )
         return
+    except ResumeMcpHandshakeError as exc:
+        logger.error(
+            "cursor sdk park-resume mcp handshake failed: dispatch_id=%s state=%s",
+            req.dispatch_id,
+            exc.handshake_state,
+        )
+        live_counter.note_handshake(exc.handshake_state)
+        progress = run_progress_fields(
+            first_toolcall_s=live_counter.first_toolcall_s(),
+            stream_tool_call_count=live_counter.value(),
+            admitted_via=req.admitted_via or "giw_park_resume",
+            mcp_handshake=exc.handshake_state,
+        )
+        message = format_park_resume_failure_message(
+            kind="mcp_handshake",
+            since_last_progress_s=live_counter.since_last_progress_s(),
+            budget_s=0.0,
+            first_toolcall_s=live_counter.first_toolcall_s(),
+            mcp_handshake=exc.handshake_state,
+            admitted_via=str(progress.get("admitted_via") or "giw_park_resume"),
+        )
+        await asyncio.to_thread(persist_run_progress, req.dispatch_id, progress)
+        await _finalize_failed(
+            req=req,
+            bus=bus,
+            reply_to=reply_to,
+            controller=controller,
+            code="CURSOR_SDK_RESUME_MCP_HANDSHAKE",
+            message=message,
+            subject_suffix="FAILED (resume mcp handshake)",
+            error=exc.handshake_state,
+            retryable=False,
+            data=progress,
+            exc=exc,
+        )
+        return
     except BaseException as exc:  # noqa: BLE001
         # BaseException (not just Exception): a dying SDK/fastmcp bridge can
         # surface as BaseException/BaseExceptionGroup. A narrow ``except
@@ -3269,6 +3446,13 @@ async def _run_sdk_dispatch_gated(
         # with zero delivery (the orphaned-dispatch failure mode). Finalize on
         # ANY worker outcome so there is no silent path.
         logger.exception("cursor sdk dispatch failed: dispatch_id=%s", req.dispatch_id)
+        progress = run_progress_fields(
+            first_toolcall_s=live_counter.first_toolcall_s(),
+            stream_tool_call_count=live_counter.value(),
+            admitted_via=req.admitted_via,
+            mcp_handshake=live_counter.handshake_state(),
+        )
+        await asyncio.to_thread(persist_run_progress, req.dispatch_id, progress)
         if isinstance(exc, SdkRunAbortedError):
             tool_call_count = int(exc.forensics.get("stream_tool_call_count") or 0)
             if tool_call_count > 0:
@@ -3282,6 +3466,9 @@ async def _run_sdk_dispatch_gated(
                 )
                 return
         forensics = getattr(exc, "forensics", None)
+        fail_data = dict(progress)
+        if isinstance(forensics, dict):
+            fail_data = {**forensics, **progress}
         await _finalize_failed(
             req=req,
             bus=bus,
@@ -3292,10 +3479,21 @@ async def _run_sdk_dispatch_gated(
             subject_suffix="FAILED",
             error=f"{type(exc).__name__}: {exc}",
             exc=exc,
-            data=forensics if isinstance(forensics, dict) else None,
+            data=fail_data,
         )
         return
 
+    outcome_progress = run_progress_fields(
+        first_toolcall_s=outcome.first_toolcall_s,
+        stream_tool_call_count=(
+            outcome.stream_tool_call_count
+            if outcome.stream_tool_call_count is not None
+            else outcome.tool_call_count
+        ),
+        admitted_via=req.admitted_via,
+        mcp_handshake=outcome.mcp_handshake,
+    )
+    await asyncio.to_thread(persist_run_progress, req.dispatch_id, outcome_progress)
     try:
         from services.git_integration_worker.cursor_sdk_nest_resume import (
             defer_finished_parent_for_live_nest,
@@ -3427,6 +3625,12 @@ async def _finalize_bridge_abort_partial(
         "stream_tool_call_count": tool_call_count,
         "forensics": forensics,
     }
+    if "first_toolcall_s" in forensics:
+        env_data["first_toolcall_s"] = forensics["first_toolcall_s"]
+    if "mcp_handshake" in forensics:
+        env_data["mcp_handshake"] = forensics["mcp_handshake"]
+    if "admitted_via" in forensics:
+        env_data["admitted_via"] = forensics["admitted_via"]
     if degraded_reasons:
         env_data["degraded_reasons"] = list(degraded_reasons)
     _stamp_cursor_auth(env_data, forensics, fail_message, str(exc))
