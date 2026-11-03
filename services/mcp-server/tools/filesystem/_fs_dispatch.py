@@ -87,7 +87,7 @@ OP_DOC: dict[str, tuple[str, str]] = {
     ),
     "recent_commits": (
         "(path?, since?, limit?)",
-        "oneline git subjects (no diffs); life catch-up, not a project index",
+        "oneline git subjects (no diffs); sub-paths scope git log to that path",
     ),
     "delete": ("(path)", "delete file"),
     "search": (

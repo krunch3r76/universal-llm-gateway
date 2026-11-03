@@ -15,6 +15,58 @@ from git_integrate.recent_commits import DEFAULT_N, MAX_N, log_oneline
 from tools._project_paths import candidate_paths, project_root, repo_roots
 
 
+def resolve_path_scope(rel: str, repo: Path) -> tuple[str | None, str | None]:
+    """Map workspaces *rel* to a repo-relative git pathspec (``None`` at repo root).
+
+    Returns ``(path_scope, path_scope_error)``. *path_scope_error* is set when
+    the caller asked for a sub-path but it could not be applied under *repo*.
+    """
+    root = project_root()
+    rel_stripped = rel.strip().strip("/")
+    if not rel_stripped:
+        return None, None
+
+    repo_resolved = repo.resolve()
+    rel_parts = Path(rel_stripped).parts
+
+    for candidate in candidate_paths(rel, root):
+        start = candidate.parent if candidate.is_file() else candidate
+        if not start.exists() and not candidate.exists():
+            continue
+        found = find_git_repo(start, stop_at=root)
+        if found is None or found.resolve() != repo_resolved:
+            continue
+        if not candidate.exists():
+            continue
+        try:
+            rel_to = candidate.resolve().relative_to(repo_resolved)
+        except ValueError:
+            continue
+        if rel_to == Path("."):
+            return None, None
+        return rel_to.as_posix(), None
+
+    if rel_parts and rel_parts[0] == repo.name:
+        remainder = "/".join(rel_parts[1:])
+        if not remainder:
+            return None, None
+        return remainder, None
+
+    try:
+        repo_under = repo_resolved.relative_to(root.resolve())
+        if rel_parts[: len(repo_under.parts)] == repo_under.parts:
+            remainder = "/".join(rel_parts[len(repo_under.parts) :])
+            if not remainder:
+                return None, None
+            return remainder, None
+    except ValueError:
+        pass
+
+    if rel_parts == (repo.name,):
+        return None, None
+    return None, f"could not apply path scope for {rel!r} under {repo.name}"
+
+
 def path_touches_git_dir(rel: str) -> bool:
     """True when any path component is ``.git`` (object-store browse)."""
     return any(part == ".git" for part in Path(rel).parts)
@@ -70,11 +122,21 @@ def recent_commits_impl(
     repo = resolve_repo(path)
     if repo is None:
         return {"error": "no git repository found for path"}
+    path_scope, path_scope_error = resolve_path_scope(path, repo)
+    if path_scope_error:
+        return {
+            "error": path_scope_error,
+            "path_scope": None,
+            "path_scope_error": path_scope_error,
+        }
     n = DEFAULT_N if limit <= 0 else min(limit, MAX_N)
     try:
-        result = log_oneline(repo, since=since or None, n=n)
+        result = log_oneline(
+            repo, since=since or None, n=n, pathspec=path_scope
+        )
     except ValueError as exc:
         return {"error": str(exc)}
+    result["path_scope"] = path_scope
     emit_git_log_read(
         head=str(result.get("head") or ""),
         n=n,

@@ -56,6 +56,24 @@ def test_oneline_newest_first_oldest_last(tmp_path: Path) -> None:
         assert set(commit) == {"sha", "subject", "author", "authored_at"}
 
 
+def test_pathspec_limits_to_touched_file(tmp_path: Path) -> None:
+    repo = tmp_path / "r"
+    repo.mkdir()
+    _git(repo, "init", "-b", "master")
+    _git(repo, "config", "user.email", "test@example.com")
+    _git(repo, "config", "user.name", "Test")
+    (repo / "only.txt").write_text("1\n")
+    _git(repo, "add", "only.txt")
+    _git(repo, "commit", "-m", "only-file")
+    (repo / "other.txt").write_text("2\n")
+    _git(repo, "add", "other.txt")
+    _git(repo, "commit", "-m", "other-file")
+    scoped = log_oneline(repo, pathspec="only.txt")
+    assert [c["subject"] for c in scoped["commits"]] == ["only-file"]
+    all_commits = log_oneline(repo)
+    assert len(all_commits["commits"]) == 2
+
+
 def test_since_sha_excludes_bound(tmp_path: Path) -> None:
     repo, shas = _repo_with_commits(tmp_path, 5)
     result = log_oneline(repo, since=shas[1], n=15)

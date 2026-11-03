@@ -34,6 +34,7 @@ def log_oneline(
     *,
     since: str | None = None,
     n: int = DEFAULT_N,
+    pathspec: str | None = None,
 ) -> dict[str, Any]:
     """Return oneline commits for *repo* (newest first / oldest last).
 
@@ -65,15 +66,18 @@ def log_oneline(
         }
 
     spec = [f"{since_bound}..HEAD"] if since_bound else []
+    log_args = [
+        "log",
+        *spec,
+        f"--format={_LOG_FORMAT}",
+        f"--max-count={n + 1}",
+    ]
+    if pathspec:
+        log_args.extend(["--", pathspec])
     try:
         proc = git_run(
             repo,
-            [
-                "log",
-                *spec,
-                f"--format={_LOG_FORMAT}",
-                f"--max-count={n + 1}",
-            ],
+            log_args,
             timeout=_GIT_TIMEOUT_S,
             check=True,
         )
