@@ -21,6 +21,7 @@ from claude_bundles.project_ask import (
     _archive_body_section,
     archive_harvest,
     read_archive_execution_id,
+    read_archive_failure_error,
 )
 
 from cdp_ask.cse_session_harvest import harvest_page
@@ -32,6 +33,7 @@ from cdp_ask.cse_session_harvest_identity import (
 )
 from cdp_ask.cse_session_models import HarvestRequest, HarvestResponse
 from cdp_ask.execution_store import ExecutionStore
+from cdp_ask.models import classify_stall_stage
 from cdp_ask.runner import verify_harvest_root
 
 _BANNER_TEXT_LINE = re.compile(
@@ -186,18 +188,35 @@ def snapshot_from_archive_path(
     attested_match = _ATTESTED_LINE.search(text)
     attested = attested_match.group(1) if attested_match else None
     stamped = read_archive_execution_id(str(path)) or execution_id
-    snapshot: dict[str, Any] = {
-        "execution_id": stamped,
-        "status": "completed",
-        "ok": True,
-        "archive_uri": _path_to_cortex_uri(path),
-        "body": body,
-        "body_len": len(body),
-        "url": url,
-        "attested_model": attested,
-        "harvest_provenance": "chat",
-        "completion_phase": "terminal",
-    }
+    failure_error = read_archive_failure_error(text)
+    if failure_error is not None:
+        snapshot = {
+            "execution_id": stamped,
+            "status": "failed",
+            "ok": False,
+            "error": failure_error,
+            "stall_stage": classify_stall_stage(failure_error),
+            "archive_uri": _path_to_cortex_uri(path),
+            "body": body,
+            "body_len": len(body),
+            "url": url,
+            "attested_model": attested,
+            "harvest_provenance": "chat",
+            "completion_phase": "terminal",
+        }
+    else:
+        snapshot = {
+            "execution_id": stamped,
+            "status": "completed",
+            "ok": True,
+            "archive_uri": _path_to_cortex_uri(path),
+            "body": body,
+            "body_len": len(body),
+            "url": url,
+            "attested_model": attested,
+            "harvest_provenance": "chat",
+            "completion_phase": "terminal",
+        }
     grade_trace = _grade_trace_from_archive(text)
     if grade_trace is not None:
         snapshot["grade_trace"] = grade_trace

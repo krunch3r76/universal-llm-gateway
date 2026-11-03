@@ -19,15 +19,14 @@ def _code_surface_harness(monkeypatch: pytest.MonkeyPatch):
     page = AsyncMock()
     composer = AsyncMock()
     submit_calls: list[str] = []
-    panel_calls: list[object] = []
+    insert_calls: list[str] = []
     attest_payloads: list[dict] = []
 
     async def _capture_submit(*_args, **kwargs):
         submit_calls.append(kwargs.get("draft_text") or "")
 
-    async def _panel(*_args, **_kwargs):
-        panel_calls.append(True)
-        raise ChatContextSkillsError("Context → Skills not on the rail")
+    async def _capture_insert(text: str):
+        insert_calls.append(text)
 
     def _capture_attest(**payload):
         attest_payloads.append(dict(payload))
@@ -52,7 +51,11 @@ def _code_surface_harness(monkeypatch: pytest.MonkeyPatch):
         ),
         patch(
             "claude_bundles.skill_induction_panel.wait_for_induction_panel",
-            side_effect=_panel,
+            side_effect=AsyncMock(
+                side_effect=ChatContextSkillsError(
+                    "Context → Skills not on the rail"
+                )
+            ),
         ),
         patch(
             "claude_bundles.skill_context_receipt.record_post_submit_skills_receipt",
@@ -62,30 +65,39 @@ def _code_surface_harness(monkeypatch: pytest.MonkeyPatch):
             "claude_bundles.cowork_skill_delivery.emit_skill_delivery_attested",
             side_effect=_capture_attest,
         ),
+        patch.object(page, "wait_for_timeout", new=AsyncMock()),
+        patch.object(page.keyboard, "insert_text", side_effect=_capture_insert),
     )
-    return page, submit_calls, panel_calls, attest_payloads, patches
+    return page, submit_calls, insert_calls, attest_payloads, patches
 
 
 @pytest.mark.asyncio
-async def test_code_surface_marked_prompt_attests_via_inline(
+async def test_code_surface_marked_prompt_attests_via_inline_seals(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """T3 — /code marked prompt inlines shared_sync and attests via inline."""
+    """T3 — seals observed in committed DOM → inline attest ok."""
     from claude_bundles.project_ask import send_prompt
 
-    page, submit_calls, panel_calls, attest_payloads, patches = _code_surface_harness(
+    page, submit_calls, insert_calls, attest_payloads, patches = _code_surface_harness(
         monkeypatch
     )
     with ExitStack() as stack:
         for item in patches:
             stack.enter_context(item)
+        stack.enter_context(
+            patch(
+                "claude_bundles.cowork_skill_delivery.await_committed_skill_seals",
+                new=AsyncMock(return_value=["reasoning-posture"]),
+            )
+        )
         await send_prompt(page, _MARKED, claude_surface="code")
 
     assert submit_calls
     draft = submit_calls[-1]
     assert '<skill slug="reasoning-posture"' in draft
-    assert "Use the reasoning-posture skill" not in draft
-    assert panel_calls == []
+    assert "skill-seal: reasoning-posture" in draft
+    assert insert_calls
+    assert insert_calls[-1] == draft
     assert attest_payloads
     last = attest_payloads[-1]
     assert last["ok"] is True
@@ -96,13 +108,65 @@ async def test_code_surface_marked_prompt_attests_via_inline(
 
 
 @pytest.mark.asyncio
+async def test_code_surface_missing_skill_block_fails_attest(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Seal missing from committed turn → SkillReceiptUnverifiedError(submitted=True)."""
+    from claude_bundles.cowork_skill_delivery import SkillReceiptUnverifiedError
+    from claude_bundles.project_ask import send_prompt
+
+    page, submit_calls, _insert, _attest, patches = _code_surface_harness(monkeypatch)
+    with ExitStack() as stack:
+        for item in patches:
+            stack.enter_context(item)
+        stack.enter_context(
+            patch(
+                "claude_bundles.cowork_skill_delivery.await_committed_skill_seals",
+                new=AsyncMock(return_value=[]),
+            )
+        )
+        with pytest.raises(SkillReceiptUnverifiedError, match="undelivered"):
+            await send_prompt(page, _MARKED, claude_surface="code")
+    assert submit_calls
+
+
+@pytest.mark.asyncio
+async def test_code_surface_stale_seal_nonce_fails_attest(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An earlier-turn seal must not satisfy this dispatch's attest."""
+    from claude_bundles.cowork_skill_delivery import SkillReceiptUnverifiedError
+    from claude_bundles.project_ask import send_prompt
+
+    page, _submit, _insert, attest_payloads, patches = _code_surface_harness(
+        monkeypatch
+    )
+
+    async def _seals_only_stale(*_args, **_kwargs):
+        return []
+
+    with ExitStack() as stack:
+        for item in patches:
+            stack.enter_context(item)
+        stack.enter_context(
+            patch(
+                "claude_bundles.cowork_skill_delivery.await_committed_skill_seals",
+                side_effect=_seals_only_stale,
+            )
+        )
+        with pytest.raises(SkillReceiptUnverifiedError):
+            await send_prompt(page, _MARKED, claude_surface="code")
+    assert not attest_payloads or attest_payloads[-1]["ok"] is False
+
+
+@pytest.mark.asyncio
 async def test_code_surface_missing_sot_fails_before_submit(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """T4 — missing SOT raises SkillDeliveryError before submit."""
     from claude_bundles.project_ask import send_prompt
 
-    page, submit_calls, _panel, _attest, patches = _code_surface_harness(monkeypatch)
+    page, submit_calls, _insert, _attest, patches = _code_surface_harness(monkeypatch)
     with ExitStack() as stack:
         for item in patches:
             stack.enter_context(item)
@@ -128,7 +192,6 @@ async def test_cowork_surface_marked_prompt_keeps_induction_path(
     page = AsyncMock()
     composer = AsyncMock()
     submit_calls: list[str] = []
-    panel_calls: list[object] = []
 
     async def _capture_submit(*_args, **kwargs):
         submit_calls.append(kwargs.get("draft_text") or "")

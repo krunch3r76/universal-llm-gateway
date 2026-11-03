@@ -103,6 +103,45 @@ def test_archive_stamp_allows_content_proof(tmp_path: Path) -> None:
     assert archive_stamp_allows_content_proof(path, _EXEC_ID)
 
 
+def test_archive_stamp_rejects_failed_outcome(tmp_path: Path) -> None:
+    path = tmp_path / "failed.md"
+    path.write_text(
+        f"# CDP ask harvest\n\n"
+        f"- execution_id: `{_EXEC_ID}`\n"
+        "- outcome: failed\n"
+        "- error: skill_receipt_unverified: x\n\n"
+        f"## Body\n\n{'y' * 250}\n",
+        encoding="utf-8",
+    )
+    assert not archive_stamp_allows_content_proof(path, _EXEC_ID)
+
+
+def test_pick_content_proof_skips_failed_archive(tmp_path: Path) -> None:
+    from cdp_ask.page_liveness import LadderAdvanceState, _pick_content_proof
+
+    path = tmp_path / "failed-proof.md"
+    path.write_text(
+        f"# CDP ask harvest\n\n"
+        f"- execution_id: `{_EXEC_ID}`\n"
+        "- outcome: failed\n"
+        "- error: converse failed\n\n"
+        f"## Body\n\n{'z' * 300}\n",
+        encoding="utf-8",
+    )
+    uri = f"cortex://notes/system/threads/{path.name}"
+
+    def _sha256(_p: Path) -> str:
+        return "sha256:deadbeef"
+
+    progress = LadderAdvanceState(
+        execution_id=_EXEC_ID,
+        targets=[(path, uri)],
+        min_bytes=200,
+        sha256_file=_sha256,
+    )
+    assert _pick_content_proof(progress) is None
+
+
 @pytest.mark.asyncio
 async def test_advance_ladder_idle_then_content_proof(
     tmp_path: Path,

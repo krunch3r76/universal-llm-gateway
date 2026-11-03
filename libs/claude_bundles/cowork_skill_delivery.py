@@ -31,6 +31,7 @@ Entry points that must hit attach (not type):
 
 from __future__ import annotations
 
+import hashlib
 import re
 from dataclasses import dataclass
 from pathlib import Path
@@ -251,10 +252,33 @@ def format_cdp_slash_prefix(
     return "".join(f"/{slug}\n" for slug in slugs)
 
 
+def skill_inline_seal_line(slug: str, nonce: str) -> str:
+    """Plain-text seal line committed inside each inlined ``<skill>`` (a:41730)."""
+    return f"skill-seal: {slug} {nonce}"
+
+
+def mint_skill_inline_nonce(
+    slug: str,
+    *,
+    satellite_execution_id: str = "",
+    stargate_execution_id: str = "",
+    body_digest: str = "",
+) -> str:
+    """Derive a per-slug nonce for one dispatch's inline skill attest."""
+    seed = ":".join(
+        (
+            slug,
+            satellite_execution_id or stargate_execution_id or body_digest or slug,
+        )
+    )
+    return hashlib.sha256(seed.encode()).hexdigest()[:12]
+
+
 def render_cdp_inline_skills_xml(
     bodies: list[InjectedSkillBody],
     *,
     repo_root: Path | None = None,
+    seal_nonces: dict[str, str] | None = None,
 ) -> str:
     """XML-delimited inline skills for roleless CDP (team_dispatch packet idiom).
 
@@ -278,6 +302,10 @@ def render_cdp_inline_skills_xml(
     for item in bodies:
         parts.append(f'<skill slug="{item.slug}" surface_class="{item.surface_class}">')
         parts.append(item.body.rstrip())
+        if seal_nonces and item.slug in seal_nonces:
+            parts.append(
+                skill_inline_seal_line(item.slug, seal_nonces[item.slug])
+            )
         parts.append("</skill>")
     parts.append("</skills_inline>")
     parts.append("")
@@ -472,18 +500,61 @@ def _code_surface_admits_shared_sync_inline(claude_surface: str | None) -> bool:
     return _normalized_claude_surface(claude_surface) == "code"
 
 
+async def await_committed_skill_seals(
+    page,
+    seals: list[tuple[str, str]],
+    *,
+    timeout_s: float = 3.0,
+    poll_ms: int = 150,
+) -> list[str]:
+    """Return slugs whose seal line appears in committed user-turn DOM."""
+    from claude_bundles.composer_submit import marker_survives_settle
+
+    observed: list[str] = []
+    limit_ms = int(timeout_s * 1000)
+    for slug, seal_line in seals:
+        if not seal_line:
+            continue
+        elapsed = 0
+        while elapsed < limit_ms:
+            if await marker_survives_settle(page, seal_line, settle_ms=0):
+                observed.append(slug)
+                break
+            await page.wait_for_timeout(poll_ms)
+            elapsed += poll_ms
+    return observed
+
+
 def render_code_surface_inline_block(
     slugs: list[str],
     *,
     repo_root: Path | None = None,
-) -> tuple[str, list[str]]:
+    satellite_execution_id: str = "",
+    stargate_execution_id: str = "",
+    body_digest: str = "",
+) -> tuple[str, list[str], list[tuple[str, str]]]:
     """Inline ``shared_sync`` bodies for ``claude_surface=code`` marked prompts."""
     requested = [str(s).strip() for s in slugs if str(s).strip()]
     if not requested:
-        return "", []
+        return "", [], []
     bodies = load_skill_bodies(requested, repo_root=repo_root, excerpt=True)
-    block = render_cdp_inline_skills_xml(bodies, repo_root=repo_root)
-    return block, [item.slug for item in bodies]
+    nonces = {
+        item.slug: mint_skill_inline_nonce(
+            item.slug,
+            satellite_execution_id=satellite_execution_id,
+            stargate_execution_id=stargate_execution_id,
+            body_digest=body_digest,
+        )
+        for item in bodies
+    }
+    block = render_cdp_inline_skills_xml(
+        bodies, repo_root=repo_root, seal_nonces=nonces
+    )
+    slug_list = [item.slug for item in bodies]
+    seal_pairs = [
+        (slug, skill_inline_seal_line(slug, nonces[slug])) for slug in slug_list
+    ]
+    return block, slug_list, seal_pairs
 
 
 def _attach_only_surface(surface_class: str) -> bool:

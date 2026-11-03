@@ -37,7 +37,7 @@ from claude_bundles.project_ask_prompt_files import (
 from claude_bundles.what_is_running_view import OPERATOR_PURPOSES
 from cortex_store.files_path_normalize import normalize_cortex_files_path
 
-from cdp_ask.models import SubmitProjectAskRequest, classify_stall_stage
+from cdp_ask.models import SubmitProjectAskRequest
 from cdp_ask.overlay_effort_retry import run_with_overlay_retry
 from cdp_ask.page_liveness import (
     LadderAdvanceState,
@@ -900,6 +900,10 @@ async def run_execution(
                         last.url,
                         execution_id=execution_id,
                     )
+                    fail_error = converse_fail_error(last.error if last else None)
+                    stall = converse_stall_stage(
+                        last.error if last else None, conv_ok=False
+                    )
                     return {
                         "ok": False,
                         "registration_id": reg.registration_id,
@@ -912,9 +916,10 @@ async def run_execution(
                         "project_url": last.project_url,
                         "model": last.model,
                         "attested_model": last.attested_model,
-                        "error": str(exc),
+                        "error": fail_error,
+                        "archive_error": str(exc),
                         "harvest_provenance": None,
-                        "stall_stage": classify_stall_stage(str(exc)),
+                        "stall_stage": stall,
                         **retry_meta,
                         **poll_banner_fields,
                     }
@@ -937,10 +942,12 @@ async def run_execution(
                     )
                     results[-1] = backfilled
                     last = backfilled
-            await _release_f6_and_advance_proof(
-                progress=progress, ladder=ladder, archive_uri=archive_uri
-            )
             conv_ok = all(r.ok for r in results)
+            await _release_f6_and_advance_proof(
+                progress=progress,
+                ladder=ladder,
+                archive_uri=archive_uri if conv_ok else None,
+            )
             fail_error = (
                 None if conv_ok else converse_fail_error(last.error if last else None)
             )

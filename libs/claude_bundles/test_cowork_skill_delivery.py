@@ -14,18 +14,18 @@ from claude_bundles.cowork_skill_delivery import (
     attest_injected_slugs,
     attest_skills_chip_enabled,
     check_delivery_channels_before_submit,
-    classify_skill_delivery,
     classify_delivery_channel_gaps,
+    classify_skill_delivery,
     combine_induction_with_body,
     github_cannot_load_skill_trees_note,
     induction_panel_ready,
     ledger_skills_channels,
-    render_code_surface_inline_block,
     ledger_skills_record,
     load_skill_bodies,
     partition_cdp_skills,
     prepend_cdp_dispatch_skills,
     prepend_injected_skills,
+    render_code_surface_inline_block,
     render_injected_skills_block,
     render_skill_induction,
 )
@@ -214,11 +214,14 @@ def test_render_code_surface_inline_block() -> None:
     """T2 — inline block is parseable; missing SOT raises."""
     from claude_bundles.cowork_skill_delivery import extract_inline_slugs_from_sealed
 
-    block, slugs = render_code_surface_inline_block(["reasoning-posture"])
+    block, slugs, seals = render_code_surface_inline_block(["reasoning-posture"])
     assert slugs == ["reasoning-posture"]
     assert '<skill slug="reasoning-posture"' in block
+    assert "skill-seal: reasoning-posture" in block
+    assert len(seals) == 1
+    assert seals[0][0] == "reasoning-posture"
     assert extract_inline_slugs_from_sealed(block) == ["reasoning-posture"]
-    assert render_code_surface_inline_block([]) == ("", [])
+    assert render_code_surface_inline_block([]) == ("", [], [])
     from unittest.mock import patch
 
     with patch(

@@ -299,6 +299,113 @@ async def test_converse_archives_failed_result_with_body(
 
 
 @pytest.mark.asyncio
+async def test_failed_converse_archive_write_error_keeps_original_error() -> None:
+    """S2 — HarvestArchiveError on a failed run must not mask converse error."""
+    from claude_bundles.project_ask import HarvestArchiveError
+
+    reg = MagicMock()
+    reg.registration_id = "reg-archive-mask"
+    reg.cdp_url = "http://127.0.0.1:9222"
+    cause = "skill_receipt_unverified: undelivered=['reasoning-posture']"
+    fail = ProjectAskResult(
+        ok=False,
+        body="Y" * 9000,
+        url="https://claude.ai/code/cse_mask",
+        project_uuid="",
+        project_url="https://claude.ai/code",
+        model={"ok": True},
+        body_len=9000,
+        delete_after={"deleted": False},
+        error=cause,
+        archive_uri=None,
+        attested_model=None,
+        harvest_provenance="chat",
+    )
+    with (
+        patch("cdp_ask.runner.bind_execution_lane", return_value=reg),
+        patch(
+            "cdp_ask.runner.run_project_conversation",
+            new=AsyncMock(return_value=[fail]),
+        ),
+        patch(
+            "cdp_ask.runner.archive_harvest",
+            side_effect=HarvestArchiveError("sha256 mismatch"),
+        ),
+        patch("cdp_ask.runner.deregister_on_exit"),
+        patch("cdp_ask.runner.registration_has_wake_debt", return_value=False),
+        patch("cdp_ask.runner.cdp_registry.bind_session_address"),
+        patch("cdp_ask.runner._wake_debt_extras", return_value={}),
+    ):
+        payload = await run_execution(
+            SubmitProjectAskRequest(
+                prompt_text="ping",
+                converse=True,
+                no_project_uuid=True,
+                purpose="review",
+                claude_surface="code",
+            ),
+            execution_id="c" * 32,
+            abort_check=AsyncMock(return_value=False),
+        )
+
+    assert payload["ok"] is False
+    assert payload["error"] == cause
+    assert "archive_error" in payload
+    assert "sha256 mismatch" in payload["archive_error"]
+
+
+@pytest.mark.asyncio
+async def test_failed_converse_does_not_pass_archive_to_content_proof() -> None:
+    """B2 — failed converse must not stamp content_proof via archived failure."""
+    reg = MagicMock()
+    reg.registration_id = "reg-no-proof"
+    reg.cdp_url = "http://127.0.0.1:9222"
+    fail = ProjectAskResult(
+        ok=False,
+        body="Z" * 9000,
+        url="https://claude.ai/code/cse_noproof",
+        project_uuid="",
+        project_url="https://claude.ai/code",
+        model={"ok": True},
+        body_len=9000,
+        delete_after={"deleted": False},
+        error="skill_receipt_unverified: x",
+        archive_uri=None,
+        attested_model=None,
+        harvest_provenance="chat",
+    )
+    release = AsyncMock()
+    with (
+        patch("cdp_ask.runner.bind_execution_lane", return_value=reg),
+        patch(
+            "cdp_ask.runner.run_project_conversation",
+            new=AsyncMock(return_value=[fail]),
+        ),
+        patch("cdp_ask.runner.deregister_on_exit"),
+        patch("cdp_ask.runner.registration_has_wake_debt", return_value=False),
+        patch("cdp_ask.runner.cdp_registry.bind_session_address"),
+        patch("cdp_ask.runner._wake_debt_extras", return_value={}),
+        patch("cdp_ask.runner._release_f6_and_advance_proof", release),
+    ):
+        payload = await run_execution(
+            SubmitProjectAskRequest(
+                prompt_text="ping",
+                converse=True,
+                no_project_uuid=True,
+                purpose="review",
+                claude_surface="code",
+            ),
+            execution_id="d" * 32,
+            abort_check=AsyncMock(return_value=False),
+        )
+
+    assert payload["ok"] is False
+    assert payload.get("archive_uri")
+    release.assert_awaited()
+    assert release.await_args.kwargs.get("archive_uri") is None
+
+
+@pytest.mark.asyncio
 async def test_converse_skips_archive_when_failed_body_empty() -> None:
     """T7 — non-ok with empty body does not write an archive."""
     reg = MagicMock()

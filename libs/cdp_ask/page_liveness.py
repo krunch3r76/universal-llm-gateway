@@ -96,6 +96,14 @@ def archive_stamp_allows_content_proof(
     """
     if not execution_id:
         return False
+    try:
+        text = archive_path.read_text(encoding="utf-8")
+    except OSError:
+        return False
+    from claude_bundles.project_ask import read_archive_failure_error
+
+    if read_archive_failure_error(text) is not None:
+        return False
     stamp = read_archive_execution_id(str(archive_path))
     return stamp is not None and stamp == execution_id
 

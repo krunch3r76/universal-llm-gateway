@@ -239,6 +239,24 @@ def read_archive_execution_id(archive_path: str) -> str | None:
     return match.group(1) if match else None
 
 
+def read_archive_failure_error(full_text: str) -> str | None:
+    """Return the archived error when the header marks ``outcome: failed``.
+
+    Scans only metadata above ``## Body``. Returns ``None`` for success archives.
+    """
+    head = full_text
+    marker = "## Body\n\n"
+    idx = full_text.find(marker)
+    if idx >= 0:
+        head = full_text[:idx]
+    if "- outcome: failed" not in head:
+        return None
+    match = re.search(r"- error:\s*(.+)", head)
+    if not match:
+        return ""
+    return match.group(1).strip()
+
+
 def _archive_banner_line(key: str, value: str | None, cap: int) -> str:
     """One metadata line. Newlines and backticks cannot break the body marker."""
     if not value:
@@ -642,6 +660,7 @@ async def send_prompt(
         SkillDeliveryError,
         SkillReceiptUnverifiedError,
         attest_delivery_channels,
+        await_committed_skill_seals,
         check_delivery_channels_before_submit,
         combine_induction_with_body,
         extract_cdp_required_authority,
@@ -709,9 +728,16 @@ async def send_prompt(
         # SkillReceiptUnverifiedError so callers still harvest the work reply.
         # claude_surface=code inlines shared_sync via <skills_inline> (a:41730).
         surf_norm = (claude_surface or "").strip().lower()
+        skill_seals: list[tuple[str, str]] = []
         if surf_norm == "code":
-            inline_block, code_inline_slugs = render_code_surface_inline_block(
-                induction_slugs
+            body_digest = hashlib.sha256(_rest.encode()).hexdigest()
+            inline_block, code_inline_slugs, skill_seals = (
+                render_code_surface_inline_block(
+                    induction_slugs,
+                    satellite_execution_id=str(satellite_execution_id or ""),
+                    stargate_execution_id=str(stargate_execution_id or ""),
+                    body_digest=body_digest,
+                )
             )
             leading = inline_block
             draft = combine_induction_with_body(inline_block, _rest)
@@ -754,6 +780,10 @@ async def send_prompt(
         try:
             if surf_norm == "code":
                 induction_observed = []
+                observed_inline = await await_committed_skill_seals(
+                    page, skill_seals
+                )
+                attest_inlined = inline_slugs + observed_inline
             else:
                 induction_observed = await _induction_observed_after_submit(
                     induction_slugs, attached_out

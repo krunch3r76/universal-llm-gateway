@@ -99,6 +99,56 @@ def test_recovered_grade_trace_survives_poll_http(
     assert response.json()["grade_trace"]["archived_banner_text"].startswith("You've")
 
 
+def test_snapshot_from_archive_failed_outcome(tmp_path: Path) -> None:
+    """Failed harvest archives rebuild as ok=False (store-row miss recovery)."""
+    exe = "f" * 32
+    body = "X" * 200
+    err = "skill_receipt_unverified: undelivered=['reasoning-posture']"
+    archive = tmp_path / f"cdp-ask-archive-cdp-code-{exe}.md"
+    archive.write_text(
+        "# CDP ask harvest\n\n"
+        f"- execution_id: `{exe}`\n"
+        "- url: `https://claude.ai/code/cse_fail`\n"
+        f"- outcome: failed\n"
+        f"- error: {err}\n"
+        f"\n## Body\n\n{body}\n",
+        encoding="utf-8",
+    )
+    snap = snapshot_from_archive_token(exe, archive_dir=tmp_path)
+    assert snap is not None
+    assert snap["ok"] is False
+    assert snap["status"] == "failed"
+    assert snap["error"] == err
+    assert snap["body"] == body
+    assert snap["archive_uri"]
+
+
+@pytest.mark.asyncio
+async def test_recover_poll_snapshot_failed_archive_no_store_row(
+    tmp_path: Path,
+) -> None:
+    exe = "a" * 32
+    err = "skill_receipt_unverified: empty"
+    (tmp_path / f"cdp-ask-archive-seat-{exe}.md").write_text(
+        "# CDP ask harvest\n\n"
+        f"- execution_id: `{exe}`\n"
+        "- url: `https://claude.ai/code/cse_x`\n"
+        f"- outcome: failed\n"
+        f"- error: {err}\n"
+        "\n## Body\n\nfailed reply body here\n",
+        encoding="utf-8",
+    )
+    store = ExecutionStore()
+    with patch(
+        "cdp_ask.poll_recovery._archive_dir",
+        return_value=tmp_path,
+    ):
+        snap = await recover_poll_snapshot(exe, store)
+    assert snap is not None
+    assert snap["ok"] is False
+    assert snap["status"] == "failed"
+
+
 def test_snapshot_from_archive_token_rejects_chrome_only(tmp_path: Path) -> None:
     from chat_harvest.test_chrome import SPECIMEN_346_BODY
 
