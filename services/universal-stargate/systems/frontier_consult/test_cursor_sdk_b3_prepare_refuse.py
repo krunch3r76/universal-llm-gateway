@@ -272,7 +272,7 @@ async def test_prepare_stamps_resolved_effort(
     handle = await prepare_mod.prepare_cursor_sdk_generate(
         request_id="req-effort",
         role="cursor-sdk",
-        model="cursor/claude-sonnet-5",
+        model="cursor/composer-2.5",
         subject="s",
         caller_agent="dispatch",
         contract="none",

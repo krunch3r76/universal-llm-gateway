@@ -103,3 +103,27 @@ def pinned_cdp_roles(monkeypatch: pytest.MonkeyPatch):
     from implement_admission.house_testing import pin_cdp_roles
 
     return pin_cdp_roles(monkeypatch)
+
+
+@pytest.fixture
+def admit_other_cursor_models(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Rule B: widen the pair allowlist for pool-fence / other-models tests."""
+    import cursor_capabilities.cursor_capabilities as cap_mod
+
+    monkeypatch.setattr(
+        cap_mod,
+        "CURSOR_SDK_ADMITTED_MODELS",
+        frozenset(
+            {
+                "composer-2.5",
+                "grok-4.7",
+                "claude-sonnet-5",
+                "claude-fable-5",
+                "claude-fable-5-1",
+                "gpt-5.6-terra",
+                "gpt-5.6-luna",
+                "muse-wonder-1.0",
+                "gemini-4-argon",
+            }
+        ),
+    )

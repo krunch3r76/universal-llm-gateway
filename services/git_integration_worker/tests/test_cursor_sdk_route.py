@@ -254,7 +254,13 @@ def test_dispatch_composer_fast_alias_unprobed_422(
         json=_dispatch_body(model="cursor/composer-2.5-fast"),
     )
     assert resp.status_code == 422
-    assert resp.json()["code"] == "CURSOR_MODEL_UNPROBED"
+    assert resp.json()["code"] == "CURSOR_MODEL_UNTRUSTED"
+    data = resp.json().get("data") or {}
+    assert data.get("validation_stage") == "model_set"
+    assert data.get("retryable") is False
+    fix_hint = data.get("fix_hint") or ""
+    assert "cursor/composer-2.5" in fix_hint
+    assert "cursor/grok-4.7" in fix_hint
     bridge.assert_not_called()
 
 

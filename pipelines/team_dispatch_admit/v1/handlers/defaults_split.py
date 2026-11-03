@@ -7,7 +7,11 @@ from typing import Any
 from agent_seat.dispatch_role_catalog import auto_seats, generate_roles
 from agent_seat.profiles import CapabilityProfile, get_profile, seat_to_family
 from agent_seat.registry import normalize_agent_slug, normalize_bus_address
-from cursor_capabilities import is_cursor_model_denied
+from cursor_capabilities import (
+    cursor_sdk_model_set_details,
+    is_cursor_model_denied,
+    is_cursor_sdk_model_admitted,
+)
 from implement_admission.routing import load_route_policy
 from implement_admission.workflow_registry import (
     MECHANICAL_WORKFLOW,
@@ -128,6 +132,8 @@ def _resolve_sdk_target(
     if profile.family == "cursor" and profile.platform == "sdk":
         if is_cursor_model_denied(resolved):
             raise ValueError("sdk_generate_model_invalid")
+        if not is_cursor_sdk_model_admitted(resolved):
+            raise ValueError("sdk_generate_model_invalid")
     elif profile.allowed_models and resolved not in profile.allowed_models:
         raise ValueError("sdk_generate_model_invalid")
     if workflow_override:
@@ -163,6 +169,14 @@ def _seat_field_error(exc: ValueError) -> dict[str, Any]:
             code="sdk_substrate_required",
             field="seat",
             reason="SDK substrate required",
+        )
+    if code == "sdk_generate_model_invalid":
+        return reject_envelope(
+            status_code=422,
+            code="sdk_generate_model_invalid",
+            field="model",
+            reason="model is outside the cursor-sdk admitted set",
+            details=cursor_sdk_model_set_details(),
         )
     return reject_envelope(
         status_code=422,

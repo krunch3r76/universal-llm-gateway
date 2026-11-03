@@ -24,8 +24,17 @@ from implement_admission.conductor_score_journal import (
     render_sparse_scoreboard,
 )
 from implement_admission.source_ref import todo_slug_from_ref
+from cursor_capabilities import (
+    cursor_sdk_model_set_details,
+    is_cursor_sdk_model_admitted,
+)
 
-from ._envelope import admit_envelope, pass_through_reject, reject_envelope
+from ._envelope import (
+    admit_envelope,
+    is_cursor_substrate_model,
+    pass_through_reject,
+    reject_envelope,
+)
 
 
 def _pipeline_conductor(opts: dict[str, Any]) -> dict[str, Any]:
@@ -73,6 +82,18 @@ def evaluate_conductor_defaults(
     model, model_knobs, model_warnings = resolve_conductor_admit_model(
         opts, snapshot=snapshot, seat_role=seat_role
     )
+    if (
+        model
+        and is_cursor_substrate_model(model)
+        and not is_cursor_sdk_model_admitted(model)
+    ):
+        return reject_envelope(
+            status_code=422,
+            code="sdk_generate_model_invalid",
+            field="model",
+            reason="model is outside the cursor-sdk admitted set",
+            details=cursor_sdk_model_set_details(),
+        )
     hop_successor_default = resolve_hop_successor_default_from_pipeline()
     source_ref = str(opts.get("source_ref") or "").strip()
     scoreboard_root = _scoreboard_files_root(opts)

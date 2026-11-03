@@ -64,7 +64,7 @@ async def test_cursor_sdk_role_with_cursor_model_still_admits(
     body = TeamDispatchGenerateBody(
         op="generate",
         seat="cursor-sdk",
-        model="cursor/claude-sonnet-5",
+        model="cursor/composer-2.5",
         dispatch_thread_id="todo:arc",
         job="freeform",
         lane="A",

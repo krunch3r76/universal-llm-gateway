@@ -17,6 +17,7 @@ logger = logging.getLogger(__name__)
 __all__ = [
     "CURSOR_BARE_ALIASES",
     "CURSOR_DENIED_MODELS",
+    "CURSOR_SDK_ADMITTED_MODELS",
     "CURSOR_MODEL_CAPABILITIES",
     "DESCRIPTOR_VERSION",
     "KnobSpec",
@@ -29,6 +30,9 @@ __all__ = [
     "default_variant",
     "effort_knob_name",
     "is_cursor_model_denied",
+    "is_cursor_sdk_model_admitted",
+    "cursor_sdk_model_set_details",
+    "cursor_sdk_model_set_fix_hint",
     "suggest_effort_knobs",
     "supported_knobs",
     "to_model_card_dict",
@@ -39,6 +43,49 @@ DESCRIPTOR_VERSION: Final[str] = "2026-09-25"
 # Emergency denylist for cursor-sdk substrate admission. Entries are bare wire ids
 # (no cursor/ prefix); membership is checked after prefix strip + lowercase.
 CURSOR_DENIED_MODELS: Final[frozenset[str]] = frozenset()
+
+# Cursor-sdk generate admits only these bare wire ids (pair allowlist).
+CURSOR_SDK_ADMITTED_MODELS: Final[frozenset[str]] = frozenset(
+    {"composer-2.5", "grok-4.7"}
+)
+
+CURSOR_SDK_ADMITTED_MODELS_PREFIXED: Final[tuple[str, ...]] = (
+    "cursor/composer-2.5",
+    "cursor/grok-4.7",
+)
+
+
+def cursor_sdk_model_set_fix_hint() -> str:
+    """Actionable hint when a cursor-sdk model pin is outside the admitted pair."""
+    return (
+        "Cursor-sdk generate admits only cursor/composer-2.5 and "
+        "cursor/grok-4.7; pin one of those models."
+    )
+
+
+def cursor_sdk_model_set_details(
+    *, requested_model: str | None = None
+) -> dict[str, Any]:
+    """Shared Stargate ``details`` payload for model-set refusals."""
+    details: dict[str, Any] = {
+        "fix_hint": cursor_sdk_model_set_fix_hint(),
+        "allowed_models": list(CURSOR_SDK_ADMITTED_MODELS_PREFIXED),
+    }
+    if requested_model is not None:
+        details["requested_model"] = requested_model
+        details["retryable"] = False
+    return details
+
+
+def is_cursor_sdk_model_admitted(model: str) -> bool:
+    """True when *model* canonicalizes to a member of ``CURSOR_SDK_ADMITTED_MODELS``."""
+    if not model or not str(model).strip():
+        return False
+    try:
+        bare = canonical_cursor_bare_id(model)
+    except ValueError:
+        return False
+    return bare in CURSOR_SDK_ADMITTED_MODELS
 
 
 @dataclass(frozen=True, slots=True)
