@@ -9,8 +9,7 @@ from typing import Any
 import httpx
 import pytest
 
-import scripts.model_manager.ui.api_dispatch as api_dispatch
-from scripts.model_manager.ui.api_dispatch import _busy_status, orchestrate_cancel_restart_intent
+from scripts.model_manager.ui.api_dispatch import orchestrate_cancel_restart_intent
 from scripts.model_manager.ui.controller.restart_drain import (
     ActiveWork,
     DrainOutcome,
@@ -20,7 +19,6 @@ from scripts.model_manager.ui.controller.restart_drain import (
     run_gated_drain_supervised,
 )
 from scripts.model_manager.ui.controller.restart_drain_witness import (
-    InFlightWitness,
     LastProbeWitness,
     WitnessReport,
     probe_answer_from_resolution,
@@ -390,7 +388,7 @@ def test_t4_ac4_cancel_intent(tmp_path: Any, monkeypatch: pytest.MonkeyPatch) ->
         return cancel
 
     cancel = _run(_cancel_and_wait())
-    assert cancel.get("status") == "ok"
+    assert cancel.get("status") == "cancelled"
     assert store.get(intent_id) is not None
     assert store.get(intent_id).status == "cancelled"
     assert lifecycle_calls == 0
@@ -644,7 +642,8 @@ def test_t7_witness_aware_probe_busy_keeps_waiting(
             deadline_at=datetime.now(UTC).isoformat(),
             reason="t7b",
         )
-        await supervisor.supervise(intent)
+        with pytest.raises(asyncio.TimeoutError):
+            await asyncio.wait_for(supervisor.supervise(intent), timeout=0.25)
 
     _run(_go())
     assert lifecycle_calls == 0
