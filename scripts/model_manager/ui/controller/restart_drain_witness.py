@@ -273,6 +273,17 @@ class ProbeFailureResolution:
         }
 
 
+def probe_answer_from_resolution(
+    resolution: ProbeFailureResolution,
+) -> tuple[bool, dict[str, Any]] | None:
+    """Map a witness merge result to a supervisor probe answer, if decidable."""
+    if resolution.verdict == "busy":
+        return True, resolution.active_work
+    if resolution.verdict == "idle":
+        return False, resolution.active_work
+    return None
+
+
 async def resolve_probe_failure(
     service: str,
     *,
@@ -357,5 +368,6 @@ __all__ = [
     "WitnessVerdict",
     "holders_from_active_work",
     "in_flight_defer_reason",
+    "probe_answer_from_resolution",
     "resolve_probe_failure",
 ]

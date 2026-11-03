@@ -453,6 +453,35 @@ async def execute(
             if preempted is not None:
                 return preempted
             before_release = rag_start_settle_hook(service)
+            cdp_on_busy: Callable[[Any], Awaitable[dict[str, Any] | None]] | None = None
+            if service == "cdp_ask" and not force:
+
+                async def _cdp_ask_on_busy(_outcome: Any) -> dict[str, Any]:
+                    return await run_gated_drain_supervised(
+                        ctl.restart_gate,
+                        "sync_restart",
+                        "cdp_ask",
+                        store=ctl.restart_intent_store,
+                        supervisor=LocalServiceDrainSupervisor(
+                            gate=ctl.restart_gate,
+                            service="cdp_ask",
+                            store=ctl.restart_intent_store,
+                            lifecycle=lambda: _lifecycle_with_restart_window(
+                                ctl,
+                                service,
+                                "sync_restart",
+                                lambda: _sync_restart(ctl, service),
+                            ),
+                            witness_aware_probe=True,
+                        ),
+                        reason="manage sync_restart (cdp_ask busy drain)",
+                        intent_ttl_s=86400.0,
+                        code_ref=_optional_attr_str(params, "code_ref") or "HEAD",
+                        row_id=_optional_attr_str(params, "row_id"),
+                        caller_agent=caller_agent_from_manage_request(params),
+                    )
+
+                cdp_on_busy = _cdp_ask_on_busy
             return await run_gated(
                 ctl.restart_gate,
                 "sync_restart",
@@ -467,6 +496,7 @@ async def execute(
                 exclude_job_id=caller_job_id if service == "agent_bus" else None,
                 before_release=before_release,
                 force_already_enforced=True,
+                on_busy=cdp_on_busy,
                 **ctx,
             )
 
