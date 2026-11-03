@@ -428,7 +428,7 @@ def _mirror_to_event_service(event: Event) -> None:
         return
 
 
-def test_flush_mirror_worker(*, timeout: float = 5.0) -> None:
+def flush_mirror_worker_for_tests(*, timeout: float = 5.0) -> None:
     """Test-only: block until queued mirror work through this point is drained."""
     flush = _MirrorFlush()
     try:
@@ -439,7 +439,7 @@ def test_flush_mirror_worker(*, timeout: float = 5.0) -> None:
     flush.done.wait(timeout=timeout)
 
 
-def test_reset_mirror_transport_state() -> None:
+def reset_mirror_state_for_tests() -> None:
     """Test-only: clear breaker, counters, and warning throttle keys."""
     global _circuit_open_until, _circuit_skip_count, _queue_drop_count  # noqa: PLW0603
     global _mirror_worker_started, _mirror_worker_thread, _mirror_worker_owner_pid

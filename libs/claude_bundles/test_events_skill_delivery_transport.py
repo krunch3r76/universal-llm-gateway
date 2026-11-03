@@ -18,8 +18,8 @@ from claude_bundles import events_skill_delivery as esd
 from claude_bundles.events_skill_delivery import (
     cdp_skill_delivery_attested,
     emit_skill_delivery_attested,
-    test_flush_mirror_worker,
-    test_reset_mirror_transport_state,
+    flush_mirror_worker_for_tests,
+    reset_mirror_state_for_tests,
 )
 
 pytestmark = pytest.mark.offline
@@ -57,9 +57,9 @@ class _FakeSock:
 @pytest.fixture(autouse=True)
 def _reset_mirror_state() -> None:
     _FakeSock.instances = []
-    test_reset_mirror_transport_state()
+    reset_mirror_state_for_tests()
     yield
-    test_reset_mirror_transport_state()
+    reset_mirror_state_for_tests()
 
 
 def _emit_sample() -> None:
@@ -84,7 +84,7 @@ def test_mirror_uses_tcp_when_events_ingest_tcp_set(
     monkeypatch.setattr(esd.socket, "socket", _FakeSock)
 
     _emit_sample()
-    test_flush_mirror_worker()
+    flush_mirror_worker_for_tests()
 
     assert len(_FakeSock.instances) == 1
     sock = _FakeSock.instances[0]
@@ -106,7 +106,7 @@ def test_mirror_uses_uds_when_tcp_unset(monkeypatch: pytest.MonkeyPatch) -> None
     monkeypatch.setattr(esd.socket, "socket", _FakeSock)
 
     _emit_sample()
-    test_flush_mirror_worker()
+    flush_mirror_worker_for_tests()
 
     sock = _FakeSock.instances[0]
     assert sock.args[0] == esd.socket.AF_UNIX
@@ -131,7 +131,7 @@ def test_mirror_enqueue_returns_before_slow_send(
     )
     elapsed = time.monotonic() - started
     assert elapsed < 0.05
-    test_flush_mirror_worker(timeout=3.0)
+    flush_mirror_worker_for_tests(timeout=3.0)
 
 
 def test_circuit_breaker_skips_sends_after_failure(
@@ -150,17 +150,17 @@ def test_circuit_breaker_skips_sends_after_failure(
         ok=True, attached=[], inlined=[], undelivered=[]
     )
     esd._mirror_to_event_service(event)
-    test_flush_mirror_worker()
+    flush_mirror_worker_for_tests()
     assert len(calls) == 1
 
     esd._mirror_to_event_service(event)
-    test_flush_mirror_worker()
+    flush_mirror_worker_for_tests()
     assert len(calls) == 1
 
     with esd._mirror_state_lock:
         esd._circuit_open_until = 0.0
     esd._mirror_to_event_service(event)
-    test_flush_mirror_worker()
+    flush_mirror_worker_for_tests()
     assert len(calls) == 2
 
 
@@ -182,7 +182,7 @@ def test_mirror_warning_throttle_per_transport_target(
         ok=True, attached=[], inlined=[], undelivered=[]
     )
     esd._mirror_to_event_service(event)
-    test_flush_mirror_worker()
+    flush_mirror_worker_for_tests()
 
     warnings = [
         r
@@ -197,7 +197,7 @@ def test_mirror_warning_throttle_per_transport_target(
         esd._circuit_open_until = 0.0
     monkeypatch.setattr(esd, "_now", lambda: t0 + 301.0)
     esd._mirror_to_event_service(event)
-    test_flush_mirror_worker()
+    flush_mirror_worker_for_tests()
     warnings2 = [
         r
         for r in caplog.records
@@ -208,15 +208,26 @@ def test_mirror_warning_throttle_per_transport_target(
     assert "drops=" in warnings2[1].message
 
 
-def test_full_mirror_queue_drops_and_counts() -> None:
+def test_full_mirror_queue_drops_and_counts(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """When the bounded queue is full, new events are dropped and counted."""
+    hold = threading.Event()
+
+    def _hold_send(_event: object) -> None:
+        hold.wait(timeout=2.0)
+
+    monkeypatch.setattr(esd, "_mirror_send_sync", _hold_send)
     event = cdp_skill_delivery_attested(
         ok=True, attached=[], inlined=[], undelivered=[]
     )
-    for _ in range(esd._MIRROR_QUEUE_MAXSIZE):
+    esd._mirror_to_event_service(event)
+    for _ in range(esd._MIRROR_QUEUE_MAXSIZE - 1):
         esd._mirror_queue.put_nowait(event)
     esd._mirror_to_event_service(event)
     assert esd._queue_drop_count >= 1
+    hold.set()
+    flush_mirror_worker_for_tests(timeout=3.0)
 
 
 def test_worker_breaker_drops_queued_events_after_one_failed_send(
@@ -235,7 +246,7 @@ def test_worker_breaker_drops_queued_events_after_one_failed_send(
     )
     for _ in range(10):
         esd._mirror_to_event_service(event)
-    test_flush_mirror_worker(timeout=3.0)
+    flush_mirror_worker_for_tests(timeout=3.0)
     assert len(attempts) == 1
     assert esd._circuit_skip_count >= 9
 
@@ -260,7 +271,7 @@ def test_queue_drop_emits_throttled_warning_without_send_failure(
         esd._mirror_queue.put_nowait(event)
     esd._mirror_to_event_service(event)
     hold.set()
-    test_flush_mirror_worker(timeout=3.0)
+    flush_mirror_worker_for_tests(timeout=3.0)
     warnings = [
         r
         for r in caplog.records
@@ -286,12 +297,12 @@ def test_fork_pid_change_starts_fresh_mirror_worker(
     monkeypatch.setattr(esd.threading.Thread, "start", _track_start)
     monkeypatch.setattr(esd.os, "getpid", lambda: pid)
     emit_skill_delivery_attested(ok=True, attached=[], inlined=[], undelivered=[])
-    test_flush_mirror_worker(timeout=2.0)
+    flush_mirror_worker_for_tests(timeout=2.0)
     assert len(starts) == 1
 
     monkeypatch.setattr(esd.os, "getpid", lambda: pid + 1)
     emit_skill_delivery_attested(ok=True, attached=[], inlined=[], undelivered=[])
-    test_flush_mirror_worker(timeout=2.0)
+    flush_mirror_worker_for_tests(timeout=2.0)
     assert len(starts) == 2
 
 
@@ -345,7 +356,7 @@ def test_mirror_logs_once_and_swallows_socket_errors(
 
     _emit_sample()
     _emit_sample()
-    test_flush_mirror_worker()
+    flush_mirror_worker_for_tests()
 
     warnings = [
         r
