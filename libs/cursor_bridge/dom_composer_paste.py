@@ -10,7 +10,12 @@ A send poll that outlives the CDP wait must not click: the page gives up when
 ``performance.now()`` passes that permit, and a per-call abort nonce blocks a
 late evaluate without affecting the next send. Python records a monotonic
 click fact immediately before the click script is sent; a permit-stamp timeout
-leaves that fact false.
+leaves that fact false. A page dict with ``send_clicked`` false, no
+``clicked_unknown``, and reason ``no_composer``, ``composer_text_mismatch``,
+or ``no_send_button`` is a separate decisive-refusal fact: the script finished
+and did not click. That fact does not clear the monotonic flag. Enter may run
+while it is set; dispatching Enter clears it. A page ``cdp_eval_timeout`` is
+not a refusal.
 """
 
 from __future__ import annotations
@@ -34,11 +39,22 @@ _send_abort_nonce: contextvars.ContextVar[str] = contextvars.ContextVar(
 )
 
 # Monotonic for one paste attempt. Set immediately before the click script is
-# sent. Reset by the paste exit gate. The only evidence that no click happened
-# is that this flag is still false — reason strings are not evidence.
+# sent. Reset by the paste exit gate. A later failure result cannot clear it.
+# A decisive page refusal is a second fact, not a reason to clear this one.
 _click_dispatched: contextvars.ContextVar[bool] = contextvars.ContextVar(
     "composer_click_dispatched",
     default=False,
+)
+
+# Set when the click script returns a decisive no-click. Cleared when Enter
+# is dispatched, and reset with the click fact at the start of an attempt.
+_click_decisively_refused: contextvars.ContextVar[bool] = contextvars.ContextVar(
+    "composer_click_decisively_refused",
+    default=False,
+)
+
+_DECISIVE_NO_CLICK_REASONS = frozenset(
+    {"no_composer", "composer_text_mismatch", "no_send_button"}
 )
 
 
@@ -46,7 +62,8 @@ def _mark_click_dispatched() -> None:
     """Record that the click script is about to be sent on this task.
 
     The flag stays true until ``_reset_click_dispatched`` starts another
-    attempt. A later failure result cannot clear it.
+    attempt. A later failure result cannot clear it. A decisive page
+    refusal is recorded separately and does not clear this flag.
     """
     _click_dispatched.set(True)
 
@@ -56,14 +73,67 @@ def _click_was_dispatched() -> bool:
     return bool(_click_dispatched.get())
 
 
-def _reset_click_dispatched() -> contextvars.Token[bool]:
-    """Clear the click fact for one paste attempt and return the reset token."""
-    return _click_dispatched.set(False)
+def _mark_click_decisively_refused() -> None:
+    """Record that the click script finished and did not click.
+
+    Does not clear the monotonic click fact. ``_mark_enter_dispatched``
+    clears this fact when a later Enter key is sent.
+    """
+    _click_decisively_refused.set(True)
 
 
-def _restore_click_dispatched(token: contextvars.Token[bool]) -> None:
-    """Put the click fact back to the value from before this paste attempt."""
-    _click_dispatched.reset(token)
+def _click_was_decisively_refused() -> bool:
+    """True after a decisive no-click page result until Enter is dispatched."""
+    return bool(_click_decisively_refused.get())
+
+
+def _page_decisively_refused_click(value: dict[str, Any]) -> bool:
+    """True when the finished click script did not call ``btn.click()``.
+
+    Requires ``send_clicked`` false, no ``clicked_unknown``, and a reason in
+    ``no_composer``, ``composer_text_mismatch``, or ``no_send_button``.
+    ``cdp_eval_timeout`` is not decisive: the page can return it after the
+    poll, and a Python timeout is ``clicked_unknown``. Either may have clicked.
+    """
+    if value.get("clicked_unknown"):
+        return False
+    if value.get("send_clicked") is not False:
+        return False
+    return value.get("reason") in _DECISIVE_NO_CLICK_REASONS
+
+
+def _mark_enter_dispatched() -> None:
+    """Record that Enter is being sent and a prior no-click refusal is over.
+
+    Sets the same monotonic click fact as a send click, then clears a
+    decisive click refusal so an unverified Enter is not retried. Callers
+    must skip this on a preflight refusal, before any key is sent.
+    """
+    _mark_click_dispatched()
+    _click_decisively_refused.set(False)
+
+
+def _reset_click_dispatched() -> tuple[
+    contextvars.Token[bool], contextvars.Token[bool]
+]:
+    """Clear the click fact and the decisive-refusal fact for one attempt.
+
+    Returns both reset tokens. ``_restore_click_dispatched`` puts them back
+    so a nested attempt does not leak either fact into its caller.
+    """
+    return (
+        _click_dispatched.set(False),
+        _click_decisively_refused.set(False),
+    )
+
+
+def _restore_click_dispatched(
+    token: tuple[contextvars.Token[bool], contextvars.Token[bool]],
+) -> None:
+    """Put both click facts back to the values from before this paste attempt."""
+    click_token, refused_token = token
+    _click_dispatched.reset(click_token)
+    _click_decisively_refused.reset(refused_token)
 
 
 _EXPECT_DRAFT_SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
@@ -658,7 +728,11 @@ async def dom_click_send(
     uses a new nonce. ``no_send_button`` may include ``census`` (logged at WARNING).
     The click fact is set immediately before the click evaluate and stays false
     when the permit stamp times out, so a later ``cdp_eval_timeout`` result is
-    not treated as proof that the click did not run.
+    not treated as proof that the click did not run. A returned dict with
+    ``send_clicked`` false, no ``clicked_unknown``, and reason ``no_composer``,
+    ``composer_text_mismatch``, or ``no_send_button`` records a decisive
+    refusal: the script finished and did not click. That refusal does not
+    clear the click fact. ``cdp_eval_timeout`` does not record it.
     """
     nonce = uuid.uuid4().hex
     token = _send_abort_nonce.set(nonce)
@@ -701,6 +775,8 @@ async def dom_click_send(
         _send_abort_nonce.reset(token)
     if not isinstance(value, dict):
         return {"ok": False, "send_clicked": False}
+    if _page_decisively_refused_click(value):
+        _mark_click_decisively_refused()
     if value.get("reason") == "no_send_button" and value.get("census") is not None:
         logger.warning(
             "dom_click_send no_send_button census=%s",

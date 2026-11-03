@@ -143,6 +143,16 @@ def _handler(mode: str, state: dict[str, bool]) -> _EvalHandler:
                     "reason": "send_button_error",
                     "send_clicked": False,
                 }
+            if mode in {
+                "no_send_button",
+                "no_composer",
+                "composer_text_mismatch",
+            }:
+                return {
+                    "ok": False,
+                    "reason": mode,
+                    "send_clicked": False,
+                }
             return {"ok": True, "send_clicked": True}
         if mode == "permit_timeout":
             await asyncio.sleep(30)
@@ -251,6 +261,90 @@ async def test_permit_timeout_before_click_script_allows_enter_unsealed(
     enter.assert_awaited_once()
     assert out.get("retryable") is not False
     assert cleared.await_count <= 1
+
+
+_DECISIVE_NO_CLICK = ("no_send_button", "no_composer", "composer_text_mismatch")
+
+
+def _install_decisive_refusal(
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    reason: str,
+    enter: AsyncMock,
+) -> dict[str, bool]:
+    """Real ``dom_click_send`` over the fake socket; Enter is the injected fallback."""
+    state = {"click_sent": False}
+    _install_page(monkeypatch, _handler(reason, state))
+    monkeypatch.setattr(
+        "cursor_bridge.operator_paste.probe_surface", AsyncMock(return_value=_surface())
+    )
+    monkeypatch.setattr("cursor_bridge.operator_paste._submit_composer_enter", enter)
+    monkeypatch.setattr(
+        "cursor_bridge.operator_paste.clear_our_composer_draft",
+        AsyncMock(return_value={"ok": True, "cleared": True}),
+    )
+    monkeypatch.setattr(
+        "cursor_bridge.operator_paste._poll_submit_verified",
+        AsyncMock(return_value=(_surface(), False)),
+    )
+    monkeypatch.setattr(
+        "cursor_bridge.operator_paste._capture_screenshot_artifact",
+        AsyncMock(return_value={"sha256_png": None, "screenshot_path": None}),
+    )
+    return state
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("reason", _DECISIVE_NO_CLICK)
+async def test_decisive_page_refusal_awaits_enter_and_seals_when_enter_ok(
+    monkeypatch: pytest.MonkeyPatch, reason: str
+) -> None:
+    """Break: a decisive no-click page result skips Enter and stamps retryable anyway."""
+    enter = AsyncMock(return_value={"ok": True, "method": "cdp_enter"})
+    state = _install_decisive_refusal(monkeypatch, reason=reason, enter=enter)
+
+    out = await _deliver()
+
+    assert state["click_sent"] is True
+    enter.assert_awaited_once()
+    assert out["retryable"] is False
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("reason", _DECISIVE_NO_CLICK)
+async def test_decisive_page_refusal_preflight_enter_stays_retryable(
+    monkeypatch: pytest.MonkeyPatch, reason: str
+) -> None:
+    """Break: Enter refused before keyDown still leaves retryable false after a no-click."""
+    enter = AsyncMock(
+        return_value={
+            "ok": False,
+            "reason": "enter_nonce_missing",
+            "method": "cdp_enter",
+        }
+    )
+    state = _install_decisive_refusal(monkeypatch, reason=reason, enter=enter)
+
+    out = await _deliver()
+
+    assert state["click_sent"] is True
+    enter.assert_awaited_once()
+    assert out.get("retryable") is not False
+
+
+@pytest.mark.asyncio
+async def test_decisive_page_refusal_enter_timeout_is_sealed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Break: Enter raising after dispatch leaves a decisive no-click retryable."""
+    enter = AsyncMock(side_effect=TimeoutError("after keyDown"))
+    state = _install_decisive_refusal(monkeypatch, reason="no_send_button", enter=enter)
+
+    out = await _deliver()
+
+    assert state["click_sent"] is True
+    enter.assert_awaited_once()
+    assert out["retryable"] is False
 
 
 @pytest.mark.asyncio
