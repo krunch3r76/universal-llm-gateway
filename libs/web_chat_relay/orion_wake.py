@@ -264,6 +264,471 @@ def _refuse(reason: str, **extra: Any) -> dict[str, Any]:
     return {"ok": False, "reason": reason, "pasted": False, "delivered": False, **extra}
 
 
+_open_lock_registry_guard = asyncio.Lock()
+_open_locks_by_conversation: dict[str, asyncio.Lock] = {}
+
+
+async def _conversation_open_lock(conversation_id: str) -> asyncio.Lock:
+    key = conversation_id.lower()
+    async with _open_lock_registry_guard:
+        lock = _open_locks_by_conversation.get(key)
+        if lock is None:
+            lock = asyncio.Lock()
+            _open_locks_by_conversation[key] = lock
+        return lock
+
+
+def _normalize_stored_endpoint(raw: str) -> str:
+    return str(raw or "").split("?", 1)[0].strip()
+
+
+def _is_chatgpt_host(hostname: str | None) -> bool:
+    host = (hostname or "").lower().removeprefix("www.")
+    return host == "chatgpt.com"
+
+
+def _pages_for_conversation_id(pages: Any, conversation_id: str) -> list[Any]:
+    want = conversation_id.lower()
+    matches: list[Any] = []
+    for page in pages:
+        url = str(getattr(page, "url", "") or "")
+        parsed = urlparse(url)
+        if not _is_chatgpt_host(parsed.hostname):
+            continue
+        cid = conversation_id_from_url(url)
+        if cid and cid.lower() == want:
+            matches.append(page)
+    return matches
+
+
+def _tab_row_matches_conversation_id(row: dict[str, Any], conversation_id: str) -> bool:
+    cid = conversation_id_from_url(str(row.get("url") or ""))
+    return bool(cid and cid.lower() == conversation_id.lower())
+
+
+def _validate_stored_binding_endpoint(stored_endpoint: str) -> dict[str, Any] | None:
+    url = _normalize_stored_endpoint(stored_endpoint)
+    if not conversation_id_from_url(url):
+        return _refuse("bad_conversation_url", conversation_url=url)
+    return None
+
+
+def _field_qualifies_as_stored_conversation_url(raw: str) -> bool:
+    text = str(raw or "").strip()
+    if not text.startswith("http") or "/c/" not in text:
+        return False
+    return bool(conversation_id_from_url(text))
+
+
+def _stored_endpoint_from_delivery_binding(binding_reference: str) -> str:
+    """Read subscription row URL fields by id; no synthesis or pinned fallback."""
+    from agent_bus_store.db.connection import connect
+
+    ref = str(binding_reference or "").strip()
+    if not ref:
+        return ""
+    with connect() as conn:
+        row = conn.execute(
+            "SELECT * FROM agent_endpoint_subscriptions WHERE id=? LIMIT 1",
+            (ref,),
+        ).fetchone()
+    if row is None:
+        return ""
+    data = dict(row)
+    for key in ("title", "agent_id", "chat_url"):
+        raw = str(data.get(key) or "").strip()
+        if raw and _field_qualifies_as_stored_conversation_url(raw):
+            return _normalize_stored_endpoint(raw)
+    for key in ("title", "agent_id", "chat_url"):
+        raw = str(data.get(key) or "").strip()
+        if raw:
+            return raw
+    return ""
+
+
+def _refuse_unless_binding_row_matches_claim(
+    binding_reference: str,
+    claim_endpoint: str,
+) -> dict[str, Any] | None:
+    """Refuse synthesized claim URLs unless the subscription row stored a /c/ URL."""
+    from agent_bus_store.db.connection import connect
+
+    claim_norm = _normalize_stored_endpoint(claim_endpoint)
+    ref = str(binding_reference or "").strip()
+    if not ref:
+        return _refuse(
+            "bad_conversation_url",
+            stored_endpoint="",
+            opened_url=claim_norm,
+        )
+    with connect() as conn:
+        row = conn.execute(
+            "SELECT * FROM agent_endpoint_subscriptions WHERE id=? LIMIT 1",
+            (ref,),
+        ).fetchone()
+    if row is None:
+        return _refuse(
+            "bad_conversation_url",
+            stored_endpoint="",
+            opened_url=claim_norm,
+        )
+    data = dict(row)
+    for key in ("title", "agent_id", "chat_url"):
+        raw = str(data.get(key) or "").strip()
+        if raw and _field_qualifies_as_stored_conversation_url(raw):
+            if _normalize_stored_endpoint(raw) == claim_norm:
+                return None
+            return _refuse(
+                "bad_conversation_url",
+                stored_endpoint=raw,
+                opened_url=claim_norm,
+            )
+    first_raw = ""
+    for key in ("title", "agent_id", "chat_url"):
+        raw = str(data.get(key) or "").strip()
+        if raw:
+            first_raw = raw
+            break
+    return _refuse(
+        "bad_conversation_url",
+        stored_endpoint=first_raw,
+        opened_url=claim_norm,
+    )
+
+
+def _target_id_from_cdp_rows(
+    rows: list[dict[str, Any]],
+    conversation_id: str,
+    page: Any | None,
+) -> str | None:
+    """Pick receipt target id: sole CDP match, else the page's own target id."""
+    matching = [
+        r for r in rows if _tab_row_matches_conversation_id(r, conversation_id)
+    ]
+    if len(matching) == 1:
+        tid = str(matching[0].get("id") or "").strip()
+        return tid or None
+    if page is not None:
+        tid = getattr(page, "target_id", None)
+        if tid:
+            text = str(tid).strip()
+            return text or None
+    return None
+
+
+async def _poll_playwright_page_for_conversation(
+    ctx: Any,
+    conversation_id: str,
+    *,
+    attempts: int = 20,
+    delay_s: float = 0.25,
+) -> Any | None:
+    for _ in range(attempts):
+        matches = _pages_for_conversation_id(ctx.pages, conversation_id)
+        if matches:
+            return matches[0]
+        await asyncio.sleep(delay_s)
+    return None
+
+
+async def _open_orion_binding_tab(
+    ctx: Any,
+    *,
+    stored_endpoint: str,
+    cdp_url: str = DEFAULT_ORION_CDP_URL,
+    store_path: Any | None = None,
+    binding_reference: str | None = None,
+) -> dict[str, Any]:
+    """Open the binding row URL verbatim (hidden) or reuse an existing conversation tab."""
+    if binding_reference:
+        gate = _refuse_unless_binding_row_matches_claim(
+            binding_reference, stored_endpoint
+        )
+        if gate is not None:
+            return gate
+        stored = _stored_endpoint_from_delivery_binding(binding_reference)
+        if not stored:
+            return _refuse(
+                "bad_conversation_url",
+                stored_endpoint="",
+                opened_url=_normalize_stored_endpoint(stored_endpoint),
+            )
+    else:
+        stored = _normalize_stored_endpoint(stored_endpoint)
+    invalid = _validate_stored_binding_endpoint(stored)
+    if invalid is not None:
+        return invalid
+    conversation_id = conversation_id_from_url(stored)
+    assert conversation_id
+
+    lock = await _conversation_open_lock(conversation_id)
+    async with lock:
+        existing = _pages_for_conversation_id(ctx.pages, conversation_id)
+        if existing:
+            page0 = existing[0]
+            from web_tab.cdp_actuation import default_actuation_port
+
+            impl0 = default_actuation_port()
+            listing0 = impl0.list_tabs(cdp_url=cdp_url)
+            rows0 = (
+                list(listing0.get("pages") or [])
+                if listing0.get("reachable")
+                else []
+            )
+            return {
+                "ok": True,
+                "page": page0,
+                "opened": False,
+                "reused": True,
+                "closed": False,
+                "target_id": _target_id_from_cdp_rows(rows0, conversation_id, page0),
+                "policy_just_opened": False,
+            }
+
+        from web_tab.cdp_actuation import default_actuation_port
+        from web_tab.config import normalize_cdp_store_key
+        from web_tab.provider_selectors import surface_for_site
+        from web_tab.tab_binding_store import save_binding
+        from web_tab.tab_session import tab_session_from_row
+        from web_tab.target_lock import TargetLockBusyError, cdp_open_bind_lock
+
+        impl = default_actuation_port()
+        listing = impl.list_tabs(cdp_url=cdp_url)
+        if not listing.get("reachable"):
+            return _refuse("cdp_unreachable")
+        rows = list(listing.get("pages") or [])
+        for row in rows:
+            if _tab_row_matches_conversation_id(row, conversation_id):
+                page = await _poll_playwright_page_for_conversation(
+                    ctx, conversation_id
+                )
+                if page is not None:
+                    return {
+                        "ok": True,
+                        "page": page,
+                        "opened": False,
+                        "reused": True,
+                        "closed": False,
+                        "target_id": _target_id_from_cdp_rows(
+                            rows, conversation_id, page
+                        ),
+                        "policy_just_opened": False,
+                    }
+
+        target_id = ""
+        try:
+            cdp_norm = normalize_cdp_store_key(cdp_url)
+            async with cdp_open_bind_lock(cdp_norm):
+                relist = impl.list_tabs(cdp_url=cdp_url)
+                relist_rows = list(relist.get("pages") or [])
+                for row in relist_rows:
+                    if _tab_row_matches_conversation_id(row, conversation_id):
+                        page = await _poll_playwright_page_for_conversation(
+                            ctx, conversation_id
+                        )
+                        if page is not None:
+                            return {
+                                "ok": True,
+                                "page": page,
+                                "opened": False,
+                                "reused": True,
+                                "closed": False,
+                                "target_id": _target_id_from_cdp_rows(
+                                    relist_rows, conversation_id, page
+                                ),
+                                "policy_just_opened": False,
+                            }
+                opened = impl.create_background_tab(
+                    cdp_url=cdp_url,
+                    url=stored,
+                    force_new=True,
+                    reuse=False,
+                )
+                if not opened.get("ok"):
+                    err = opened.get("error")
+                    if isinstance(err, dict) and err.get("code") == "cdp_unreachable":
+                        return _refuse("cdp_unreachable")
+                    return _refuse(
+                        "conversation_missing",
+                        conversation_id=conversation_id,
+                    )
+                target_id = str(opened.get("target_id") or "").strip()
+                ws = str(opened.get("web_socket_debugger_url") or "").strip() or None
+                session = tab_session_from_row(
+                    target_id=target_id,
+                    cdp_url=cdp_norm,
+                    conversation_url=stored,
+                    surface=surface_for_site("chatgpt"),
+                    web_socket_debugger_url=ws,
+                    created_by_agent=True,
+                )
+                save_binding(session, path=store_path)
+        except TargetLockBusyError:
+            return _refuse(
+                "conversation_missing",
+                conversation_id=conversation_id,
+                retryable=True,
+            )
+        except Exception as exc:
+            return _refuse("cdp_unreachable", error=type(exc).__name__)
+
+        page = await _poll_playwright_page_for_conversation(ctx, conversation_id)
+        if page is None:
+            return _refuse(
+                "conversation_missing",
+                conversation_id=conversation_id,
+            )
+        return {
+            "ok": True,
+            "page": page,
+            "opened": True,
+            "reused": False,
+            "closed": False,
+            "target_id": target_id,
+            "policy_just_opened": True,
+        }
+
+
+async def _guarded_close_orion_tab(
+    *,
+    cdp_url: str,
+    target_id: str,
+    conversation_url: str,
+    store_path: Any | None = None,
+) -> dict[str, Any]:
+    """Close only agent-provenance tabs; focus refuses every close (21815#45 Q1)."""
+    from web_tab.cdp_actuation import _close_target, default_actuation_port
+    from web_tab.operator_guard import (
+        operator_recheck_under_lock,
+        wait_operator_idle_before_lock,
+    )
+    from web_tab.provider_selectors import composer_selector_for_site
+    from web_tab.target_lock import TargetLockBusyError, target_write_lock
+    from web_tab.write_ops import _created_by_agent_for_target
+
+    impl = default_actuation_port()
+    listing = impl.list_tabs(cdp_url=cdp_url)
+    if not listing.get("reachable"):
+        return {"ok": False, "reason": "cdp_unreachable"}
+    row = next(
+        (r for r in list(listing.get("pages") or []) if str(r.get("id")) == target_id),
+        None,
+    )
+    if row is None:
+        return {"ok": False, "reason": "target_not_found", "target_id": target_id}
+    tab_url = str(row.get("url") or "")
+    ws = str(row.get("web_socket_debugger_url") or "").strip()
+    if not ws:
+        return {"ok": False, "reason": "target_not_found", "target_id": target_id}
+
+    created_by_agent = _created_by_agent_for_target(
+        cdp_url=cdp_url,
+        target_id=target_id,
+        conversation_url=conversation_url,
+        tab_url=tab_url,
+        store_path=store_path,
+    )
+    if not created_by_agent:
+        return {"ok": False, "reason": "operator_provenance_tab", "target_id": target_id}
+
+    selector = composer_selector_for_site("chatgpt")
+    pre = await wait_operator_idle_before_lock(ws, selector=selector)
+    if not pre.get("ok"):
+        return {
+            "ok": False,
+            "reason": str(pre.get("reason") or "operator_busy"),
+            "target_id": target_id,
+            "retryable": True,
+        }
+    try:
+        async with target_write_lock(target_id, timeout_s=15):
+            guard = await operator_recheck_under_lock(
+                ws,
+                selector=selector,
+                created_by_agent=created_by_agent,
+                lock_holder=False,
+            )
+            if not guard.get("ok"):
+                return {
+                    "ok": False,
+                    "reason": str(guard.get("reason") or "operator_busy"),
+                    "target_id": target_id,
+                    "retryable": True,
+                }
+            probe = guard.get("probe") if isinstance(guard.get("probe"), dict) else {}
+            has_focus = probe.get("document_has_focus") is True
+            visible = str(probe.get("document_visibility") or "") == "visible"
+            if has_focus or visible:
+                return {
+                    "ok": False,
+                    "reason": "tab_has_focus",
+                    "target_id": target_id,
+                    "retryable": True,
+                }
+            try:
+                _close_target(cdp_url, target_id)
+            except Exception as exc:
+                return {
+                    "ok": False,
+                    "reason": "cdp_unreachable",
+                    "target_id": target_id,
+                    "error": type(exc).__name__,
+                }
+    except TargetLockBusyError:
+        return {
+            "ok": False,
+            "reason": "target_lock_busy",
+            "target_id": target_id,
+            "retryable": True,
+        }
+
+    return {"ok": True, "reason": "closed", "target_id": target_id}
+
+
+async def sweep_orion_duplicate_tabs(
+    ctx: Any,
+    *,
+    stored_endpoint: str,
+    primary_page: OrionPage,
+    cdp_url: str = DEFAULT_ORION_CDP_URL,
+    store_path: Any | None = None,
+    primary_target_id: str | None = None,
+) -> dict[str, Any]:
+    """Close agent-opened duplicate chatgpt.com tabs for one conversation (F12, F13)."""
+    stored = _normalize_stored_endpoint(stored_endpoint)
+    conversation_id = conversation_id_from_url(stored)
+    if not conversation_id:
+        return {"ok": True, "closed": False, "closed_target_ids": []}
+    primary_tid = str(primary_target_id or "").strip()
+    if not primary_tid:
+        return {"ok": True, "closed": False, "closed_target_ids": []}
+    closed_ids: list[str] = []
+    from web_tab.cdp_actuation import default_actuation_port
+
+    impl = default_actuation_port()
+    listing = impl.list_tabs(cdp_url=cdp_url)
+    rows = list(listing.get("pages") or []) if listing.get("reachable") else []
+    for row in rows:
+        if not _tab_row_matches_conversation_id(row, conversation_id):
+            continue
+        target_id = str(row.get("id") or "").strip()
+        if not target_id or target_id == primary_tid:
+            continue
+        outcome = await _guarded_close_orion_tab(
+            cdp_url=cdp_url,
+            target_id=target_id,
+            conversation_url=stored,
+            store_path=store_path,
+        )
+        if outcome.get("ok"):
+            closed_ids.append(target_id)
+    return {
+        "ok": True,
+        "closed": bool(closed_ids),
+        "closed_target_ids": closed_ids,
+    }
+
+
 class OrionPage(Protocol):
     """Minimal Playwright page surface used by Orion wake paste helpers (offline unit tests use fakes)."""
 
@@ -290,7 +755,13 @@ def _blocking_dialog(scan: dict[str, Any]) -> dict[str, Any] | None:
     return None
 
 
-async def _sync_tab_before_paste(page: OrionPage, *, target_id: str) -> dict[str, Any]:
+async def _sync_tab_before_paste(
+    page: OrionPage,
+    *,
+    target_id: str,
+    policy_just_opened: bool = False,
+    allow_bring_to_front: bool = True,
+) -> dict[str, Any]:
     """Foreground a background tab; reload only when hidden, empty, and not streaming."""
     brought_to_front = False
     tab_reloaded = False
@@ -307,14 +778,15 @@ async def _sync_tab_before_paste(page: OrionPage, *, target_id: str) -> dict[str
         composer_empty = True
 
     bring_fn = getattr(page, "bring_to_front", None)
-    if callable(bring_fn):
+    if allow_bring_to_front and callable(bring_fn):
         await bring_fn()
         brought_to_front = True
 
     reload_fn = getattr(page, "reload", None)
     tab_streaming = await _is_streaming(page)
     if (
-        visibility == "hidden"
+        not policy_just_opened
+        and visibility == "hidden"
         and composer_empty
         and not tab_streaming
         and callable(reload_fn)
@@ -323,7 +795,8 @@ async def _sync_tab_before_paste(page: OrionPage, *, target_id: str) -> dict[str
         await page.wait_for_timeout(300)
         tab_reloaded = True
 
-        if target_id not in (page.url or ""):
+        page_cid = conversation_id_from_url(page.url or "")
+        if page_cid != target_id:
             return {
                 "brought_to_front": brought_to_front,
                 "tab_reloaded": tab_reloaded,
@@ -433,7 +906,15 @@ async def _dom_deliver(
     tab_url = str(getattr(page, "url", "") or "")
     impl = default_actuation_port()
     listing = impl.list_tabs(cdp_url=cdp_url)
-    row = match_tab_by_url(list(listing.get("pages") or []), tab_url)
+    pages = list(listing.get("pages") or [])
+    row = match_tab_by_url(pages, tab_url)
+    if row is None:
+        want_cid = conversation_id_from_url(tab_url)
+        if want_cid:
+            row = next(
+                (r for r in pages if _tab_row_matches_conversation_id(r, want_cid)),
+                None,
+            )
     if row is None:
         return {"ok": False, "reason": "target_not_found"}
     target_id = str(row.get("id") or "").strip()
@@ -444,6 +925,14 @@ async def _dom_deliver(
     site = "chatgpt"
     selector = composer_selector_for_site(site)
     verify_text = text.strip() if preserve_newlines else " ".join(text.splitlines()).strip()
+    from web_tab.write_ops import _created_by_agent_for_target
+
+    created_by_agent = _created_by_agent_for_target(
+        cdp_url=cdp_url,
+        target_id=target_id,
+        conversation_url=tab_url,
+        tab_url=tab_url,
+    )
     pre = await wait_operator_idle_before_lock(ws, selector=selector)
     if not pre.get("ok"):
         return {
@@ -457,8 +946,9 @@ async def _dom_deliver(
             guard = await operator_recheck_under_lock(
                 ws,
                 selector=selector,
-                created_by_agent=False,
-                lock_holder=True,
+                created_by_agent=created_by_agent,
+                lock_holder=False,
+                allow_visible_idle_operator_tab=True,
             )
             if not guard.get("ok"):
                 return {
@@ -577,9 +1067,13 @@ async def deliver_orion_wake(
     page: OrionPage | None = None,
     connect_cdp=None,
     paste_text: str | None = None,
+    binding_supplied: bool = False,
+    stored_endpoint: str | None = None,
+    binding_reference: str | None = None,
 ) -> dict[str, Any]:
     """Attach to pinned chat, paste a pointer wake, optional MCP approval click."""
     from agent_seat.registry import normalize_bus_address
+    from web_tab.write_ops import _created_by_agent_for_target
 
     if normalize_bus_address(from_agent) == "orion":
         return _refuse("orion_echo_drop")
@@ -588,11 +1082,39 @@ async def deliver_orion_wake(
     if not thread_s or turn in (None, "", 0, "0"):
         return _refuse("bad_options")
 
-    target_url = (conversation_url or PINNED_CONVERSATION_URL).split("?", 1)[0]
-    target_id = conversation_id_from_url(target_url)
-    if not target_id:
-        return _refuse("bad_conversation_url", conversation_url=target_url)
+    stored = _normalize_stored_endpoint(
+        stored_endpoint or conversation_url or ""
+    )
+    if binding_supplied:
+        if not stored:
+            return _refuse("bad_conversation_url", conversation_url=stored)
+        invalid = _validate_stored_binding_endpoint(stored)
+        if invalid is not None:
+            return invalid
+        target_url = stored
+    elif conversation_url:
+        target_url = _normalize_stored_endpoint(conversation_url)
+        if not conversation_id_from_url(target_url):
+            return _refuse("bad_conversation_url", conversation_url=target_url)
+    elif page is not None:
+        target_url = _normalize_stored_endpoint(str(getattr(page, "url", "") or ""))
+        if not conversation_id_from_url(target_url):
+            return _refuse("bad_conversation_url", conversation_url=target_url)
+    else:
+        return _refuse("bad_conversation_url", conversation_url="")
 
+    target_id = conversation_id_from_url(target_url)
+    assert target_id
+
+    tab_policy: dict[str, Any] = {
+        "opened": False,
+        "reused": False,
+        "closed": False,
+        "target_id": None,
+    }
+    policy_just_opened = False
+    selected_target_id: str | None = None
+    ctx = None
     owns_cdp = False
     pw = None
     if page is None:
@@ -605,38 +1127,134 @@ async def deliver_orion_wake(
         except Exception as exc:
             return _refuse("cdp_unreachable", error=type(exc).__name__)
         owns_cdp = True
-        page = None
-        for p in ctx.pages:
-            if target_id in (p.url or ""):
-                page = p
-                break
-        if page is None:
-            if owns_cdp:
-                await pw.stop()
-            return _refuse("conversation_missing", conversation_id=target_id)
+        if binding_supplied:
+            attach = await _open_orion_binding_tab(
+                ctx,
+                stored_endpoint=target_url,
+                cdp_url=cdp_url,
+                binding_reference=binding_reference,
+            )
+            if not attach.get("ok"):
+                if owns_cdp and pw is not None:
+                    await pw.stop()
+                return attach
+            page = attach["page"]
+            tab_policy = {
+                "opened": bool(attach.get("opened")),
+                "reused": bool(attach.get("reused")),
+                "closed": bool(attach.get("closed")),
+                "target_id": attach.get("target_id"),
+            }
+            policy_just_opened = bool(attach.get("policy_just_opened"))
+            tid = attach.get("target_id")
+            if tid:
+                selected_target_id = str(tid)
+            else:
+                from web_tab.cdp_actuation import default_actuation_port
+
+                impl_attach = default_actuation_port()
+                attach_list = impl_attach.list_tabs(cdp_url=cdp_url)
+                attach_rows = (
+                    list(attach_list.get("pages") or [])
+                    if attach_list.get("reachable")
+                    else []
+                )
+                selected_target_id = _target_id_from_cdp_rows(
+                    attach_rows, target_id, page
+                )
+            tab_policy["target_id"] = selected_target_id
+        else:
+            matches = _pages_for_conversation_id(ctx.pages, target_id)
+            if not matches:
+                if owns_cdp and pw is not None:
+                    await pw.stop()
+                return _refuse("conversation_missing", conversation_id=target_id)
+            page = matches[0]
+            tab_policy["reused"] = True
+            from web_tab.cdp_actuation import default_actuation_port
+
+            impl_pre = default_actuation_port()
+            pre_list = impl_pre.list_tabs(cdp_url=cdp_url)
+            pre_rows = (
+                list(pre_list.get("pages") or [])
+                if pre_list.get("reachable")
+                else []
+            )
+            selected_target_id = _target_id_from_cdp_rows(pre_rows, target_id, page)
+            tab_policy["target_id"] = selected_target_id
+    else:
+        selected_target_id = getattr(page, "target_id", None)
+        if selected_target_id is not None:
+            selected_target_id = str(selected_target_id).strip() or None
+        tab_policy["target_id"] = selected_target_id
 
     assert page is not None
-    if target_id not in (page.url or ""):
+    page_cid = conversation_id_from_url(page.url or "")
+    if page_cid != target_id:
         if owns_cdp and pw is not None:
-            await pw.stop()
+            stop_fn = getattr(pw, "stop", None)
+            if callable(stop_fn):
+                await stop_fn()
         return _refuse("conversation_missing", conversation_id=target_id)
+
+    if ctx is not None and binding_supplied:
+        if selected_target_id is None:
+            tid = getattr(page, "target_id", None)
+            selected_target_id = str(tid).strip() if tid else None
+        sweep = await sweep_orion_duplicate_tabs(
+            ctx,
+            stored_endpoint=target_url,
+            primary_page=page,
+            cdp_url=cdp_url,
+            primary_target_id=selected_target_id,
+        )
+        if sweep.get("closed"):
+            tab_policy["closed"] = True
+
+    allow_bring_to_front = False
+    if not policy_just_opened and selected_target_id:
+        from web_tab.cdp_actuation import default_actuation_port
+
+        impl = default_actuation_port()
+        listing = impl.list_tabs(cdp_url=cdp_url)
+        rows = list(listing.get("pages") or []) if listing.get("reachable") else []
+        row = next(
+            (r for r in rows if str(r.get("id") or "") == selected_target_id),
+            None,
+        )
+        if row is not None:
+            allow_bring_to_front = _created_by_agent_for_target(
+                cdp_url=cdp_url,
+                target_id=selected_target_id,
+                conversation_url=target_url,
+                tab_url=str(row.get("url") or ""),
+            )
 
     scan_raw = await page.evaluate(_DIALOG_SCAN_JS)
     scan = scan_raw if isinstance(scan_raw, dict) else {"dialogs": []}
     blocking = _blocking_dialog(scan)
     if blocking is not None:
         if owns_cdp and pw is not None:
-            await pw.stop()
+            stop_fn = getattr(pw, "stop", None)
+            if callable(stop_fn):
+                await stop_fn()
         return _refuse(
             "non_connector_dialog",
             pasted=False,
             dialog=blocking,
         )
 
-    tab_sync = await _sync_tab_before_paste(page, target_id=target_id)
+    tab_sync = await _sync_tab_before_paste(
+        page,
+        target_id=target_id,
+        policy_just_opened=policy_just_opened,
+        allow_bring_to_front=allow_bring_to_front,
+    )
     if tab_sync.get("refuse") is not None:
         if owns_cdp and pw is not None:
-            await pw.stop()
+            stop_fn = getattr(pw, "stop", None)
+            if callable(stop_fn):
+                await stop_fn()
         return {
             **tab_sync["refuse"],
             "brought_to_front": tab_sync["brought_to_front"],
@@ -687,7 +1305,9 @@ async def deliver_orion_wake(
         approval = await _handle_approvals(page)
     except Exception as exc:
         if owns_cdp and pw is not None:
-            await pw.stop()
+            stop_fn = getattr(pw, "stop", None)
+            if callable(stop_fn):
+                await stop_fn()
         return _refuse(
             "paste_failed",
             error=type(exc).__name__,
@@ -725,6 +1345,7 @@ async def deliver_orion_wake(
         "pointer_len": len(line),
         "receipt": dom_receipt,
         "conversation_id": target_id,
+        **tab_policy,
         **layout_receipt,
         **sync_flags,
     }
@@ -782,7 +1403,9 @@ async def deliver_orion_chat_wake(
     claim = wake_claim_from_options(opts)
     if claim is None:
         thread_s = str(thread or "").strip()
-        endpoint = (conversation_url or PINNED_CONVERSATION_URL).split("?", 1)[0]
+        endpoint = _normalize_stored_endpoint(conversation_url or "")
+        if not endpoint or not conversation_id_from_url(endpoint):
+            return _refuse("bad_conversation_url", conversation_url=endpoint)
         turn_list = parse_turn_numbers(turn)
         if turn_list is None or len(turn_list) != 1:
             return _refuse("bad_turn")
@@ -834,6 +1457,17 @@ async def deliver_orion_chat_wake(
         from_agent=from_agent,
         turns=wake_turns,
     )
+    if claim.binding_reference:
+        gate = _refuse_unless_binding_row_matches_claim(
+            claim.binding_reference, claim.normalized_endpoint()
+        )
+        if gate is not None:
+            return enrich_delivery_receipt(gate, claim)
+        open_endpoint = _stored_endpoint_from_delivery_binding(
+            claim.binding_reference
+        )
+    else:
+        open_endpoint = claim.normalized_endpoint()
     receipt = await deliver_orion_wake(
         thread=thread,
         turn=pointer_turn or turn,
@@ -843,6 +1477,9 @@ async def deliver_orion_chat_wake(
         page=page,
         connect_cdp=connect_cdp,
         paste_text=paste_text,
+        binding_supplied=True,
+        stored_endpoint=open_endpoint,
+        binding_reference=claim.binding_reference,
     )
     # Why: live deliver_orion_wake steers during streaming; deferred_streaming receipts
     # remain for legacy in-flight ledger retry rows and injected pipeline responses.

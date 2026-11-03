@@ -11,10 +11,13 @@ from web_chat_relay.orion_wake import (
     PINNED_CONVERSATION_ID,
     PINNED_CONVERSATION_URL,
     _dom_deliver,
+    _guarded_close_orion_tab,
     build_wake_pointer,
     conversation_id_from_url,
+    deliver_orion_chat_wake,
     deliver_orion_wake,
     holder_conversation_url,
+    sweep_orion_duplicate_tabs,
 )
 from web_tab.provider_selectors import composer_selector_for_site
 
@@ -387,7 +390,11 @@ async def test_non_connector_dialog_refuses_before_paste() -> None:
 async def test_conversation_missing_wrong_tab() -> None:
     page = _FakePage(url="https://chatgpt.com/plugins")
     out = await deliver_orion_wake(
-        thread="21207", turn=1, from_agent="maestro", page=page
+        thread="21207",
+        turn=1,
+        from_agent="maestro",
+        page=page,
+        conversation_url=PINNED,
     )
     assert out["reason"] == "conversation_missing"
 
@@ -405,10 +412,30 @@ async def test_streaming_tab_steers_without_defer() -> None:
 
 
 @pytest.mark.asyncio
-async def test_hidden_tab_with_empty_composer_brings_to_front_and_reloads_before_paste() -> (
-    None
-):
+async def test_hidden_tab_with_empty_composer_brings_to_front_and_reloads_before_paste(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     page = _FakePage(visibility_state="hidden", composer_draft="")
+    page.target_id = "tab-wake"
+
+    class _Port:
+        def list_tabs(self, *, cdp_url: str) -> dict:
+            return {
+                "pages": [
+                    {
+                        "id": "tab-wake",
+                        "url": PINNED,
+                        "web_socket_debugger_url": "ws://fake/wake",
+                    }
+                ],
+                "reachable": True,
+                "error": None,
+            }
+
+    monkeypatch.setattr("web_tab.cdp_actuation.default_actuation_port", lambda: _Port())
+    monkeypatch.setattr(
+        "web_tab.write_ops._created_by_agent_for_target", lambda **kwargs: True
+    )
     out = await deliver_orion_wake(
         thread="21207",
         turn=4,
@@ -534,6 +561,292 @@ async def test_dom_deliver_uses_chatgpt_selector_not_keyboard(
     assert insert_calls[0][2] is False
     assert lock_kwargs.get("timeout_s") == 15
     assert not page.keyboard.inserted
+
+
+def _dom_deliver_port_tab(tab_id: str = "tab-op") -> object:
+    class _Port:
+        def list_tabs(self, *, cdp_url: str) -> dict:
+            return {
+                "pages": [
+                    {
+                        "id": tab_id,
+                        "url": PINNED,
+                        "web_socket_debugger_url": "ws://127.0.0.1/devtools/page/op",
+                    }
+                ],
+                "reachable": True,
+                "error": None,
+            }
+
+    return _Port()
+
+
+@pytest.mark.asyncio
+@pytest.mark.no_dom_stub
+async def test_dom_deliver_accepts_visible_idle_operator_tab(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """AC7 (a): paste may proceed on a visible, idle operator-provenance tab."""
+    from unittest.mock import AsyncMock
+
+    page = _FakePage()
+    insert_calls: list[str] = []
+
+    async def _insert(
+        ws: str, *, selector: str, line: str, preserve_newlines: bool = False
+    ) -> dict:
+        insert_calls.append(line)
+        return {"ok": True}
+
+    async def _baseline(*_a: object, **_k: object) -> dict:
+        return {"user_count": 0}
+
+    async def _verify(*_a: object, **_k: object) -> dict:
+        return {"ok": True, "receipt": "dom_committed"}
+
+    async def _pre(*_a: object, **_k: object) -> dict:
+        return {"ok": True}
+
+    @asynccontextmanager
+    async def _lock(_target_id: str, *, timeout_s: float = 120, op: str = ""):
+        yield
+
+    monkeypatch.setattr(
+        "web_tab.cdp_actuation.default_actuation_port",
+        lambda: _dom_deliver_port_tab(),
+    )
+    monkeypatch.setattr(
+        "web_tab.write_ops._created_by_agent_for_target", lambda **kwargs: False
+    )
+    monkeypatch.setattr(
+        "cursor_bridge.dom_composer_paste.dom_insert_and_send", _insert
+    )
+    monkeypatch.setattr("web_tab.commit_verify.capture_dom_baseline", _baseline)
+    monkeypatch.setattr("web_tab.commit_verify.poll_verify_committed", _verify)
+    monkeypatch.setattr(
+        "web_tab.operator_guard.wait_operator_idle_before_lock", _pre
+    )
+    monkeypatch.setattr("web_tab.target_lock.target_write_lock", _lock)
+    monkeypatch.setattr(
+        "web_tab.operator_guard.read_operator_busy",
+        AsyncMock(
+            return_value={
+                "document_has_focus": False,
+                "document_visibility": "visible",
+                "operator_active": False,
+                "foreign_draft": False,
+            }
+        ),
+    )
+    monkeypatch.setattr(
+        "web_tab.operator_guard.wait_for_operator_idle",
+        AsyncMock(return_value={"ok": True, "idle": True}),
+    )
+
+    out = await _dom_deliver(
+        page,
+        build_wake_pointer(thread="21207", turn=2, from_agent="maestro"),
+    )
+    assert out["ok"] is True, out
+    assert insert_calls
+
+
+@pytest.mark.asyncio
+@pytest.mark.no_dom_stub
+async def test_dom_deliver_refuses_visible_operator_tab_when_operator_active(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """AC7 (b): operator_active still blocks paste on visible operator tabs."""
+    from unittest.mock import AsyncMock
+
+    page = _FakePage()
+
+    async def _pre(*_a: object, **_k: object) -> dict:
+        return {"ok": True}
+
+    @asynccontextmanager
+    async def _lock(_target_id: str, *, timeout_s: float = 120, op: str = ""):
+        yield
+
+    monkeypatch.setattr(
+        "web_tab.cdp_actuation.default_actuation_port",
+        lambda: _dom_deliver_port_tab(),
+    )
+    monkeypatch.setattr(
+        "web_tab.write_ops._created_by_agent_for_target", lambda **kwargs: False
+    )
+    monkeypatch.setattr(
+        "web_tab.operator_guard.wait_operator_idle_before_lock", _pre
+    )
+    monkeypatch.setattr("web_tab.target_lock.target_write_lock", _lock)
+    monkeypatch.setattr(
+        "web_tab.operator_guard.read_operator_busy",
+        AsyncMock(
+            return_value={
+                "document_has_focus": False,
+                "document_visibility": "visible",
+                "operator_active": True,
+                "foreign_draft": False,
+            }
+        ),
+    )
+    monkeypatch.setattr(
+        "web_tab.operator_guard.wait_for_operator_idle",
+        AsyncMock(return_value={"ok": True, "idle": True}),
+    )
+
+    out = await _dom_deliver(
+        page,
+        build_wake_pointer(thread="21207", turn=2, from_agent="maestro"),
+    )
+    assert out["ok"] is False
+    assert "operator" in str(out.get("reason") or "").lower()
+
+
+@pytest.mark.asyncio
+@pytest.mark.no_dom_stub
+async def test_dom_deliver_refuses_visible_operator_tab_when_foreign_draft(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """AC7 (b): foreign draft still blocks paste on visible operator tabs."""
+    from unittest.mock import AsyncMock
+
+    page = _FakePage()
+
+    async def _pre(*_a: object, **_k: object) -> dict:
+        return {"ok": True}
+
+    @asynccontextmanager
+    async def _lock(_target_id: str, *, timeout_s: float = 120, op: str = ""):
+        yield
+
+    monkeypatch.setattr(
+        "web_tab.cdp_actuation.default_actuation_port",
+        lambda: _dom_deliver_port_tab(),
+    )
+    monkeypatch.setattr(
+        "web_tab.write_ops._created_by_agent_for_target", lambda **kwargs: False
+    )
+    monkeypatch.setattr(
+        "web_tab.operator_guard.wait_operator_idle_before_lock", _pre
+    )
+    monkeypatch.setattr("web_tab.target_lock.target_write_lock", _lock)
+    monkeypatch.setattr(
+        "web_tab.operator_guard.read_operator_busy",
+        AsyncMock(
+            return_value={
+                "document_has_focus": False,
+                "document_visibility": "visible",
+                "operator_active": False,
+                "foreign_draft": True,
+                "composer_draft": "operator text",
+            }
+        ),
+    )
+    monkeypatch.setattr(
+        "web_tab.operator_guard.wait_for_operator_idle",
+        AsyncMock(return_value={"ok": True, "idle": True}),
+    )
+
+    out = await _dom_deliver(
+        page,
+        build_wake_pointer(thread="21207", turn=2, from_agent="maestro"),
+    )
+    assert out["ok"] is False
+    assert "foreign" in str(out.get("reason") or "").lower()
+
+
+@pytest.mark.asyncio
+async def test_guarde_close_refuses_focus_for_agent_and_operator_provenance(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """AC7 (c): close path keeps focus/visible refusal (agent tab via tab_has_focus)."""
+    from web_chat_relay.orion_wake import _guarded_close_orion_tab
+
+    async def _pre(*_a: object, **_k: object) -> dict:
+        return {"ok": True}
+
+    @asynccontextmanager
+    async def _lock(_target_id: str, *, timeout_s: float = 120, op: str = ""):
+        yield
+
+    class _Port:
+        def list_tabs(self, *, cdp_url: str) -> dict:
+            return {
+                "pages": [
+                    {
+                        "id": "tab-agent",
+                        "url": PINNED,
+                        "web_socket_debugger_url": "ws://agent",
+                    },
+                    {
+                        "id": "tab-operator",
+                        "url": PINNED,
+                        "web_socket_debugger_url": "ws://operator",
+                    },
+                ],
+                "reachable": True,
+                "error": None,
+            }
+
+    async def _recheck_focus(*_a: object, **_k: object) -> dict:
+        return {
+            "ok": True,
+            "probe": {
+                "document_has_focus": True,
+                "document_visibility": "hidden",
+                "operator_active": False,
+            },
+        }
+
+    async def _recheck_visible(*_a: object, **_k: object) -> dict:
+        return {
+            "ok": True,
+            "probe": {
+                "document_has_focus": False,
+                "document_visibility": "visible",
+                "operator_active": False,
+            },
+        }
+
+    monkeypatch.setattr("web_tab.cdp_actuation.default_actuation_port", lambda: _Port())
+    monkeypatch.setattr("web_tab.operator_guard.wait_operator_idle_before_lock", _pre)
+    monkeypatch.setattr("web_tab.target_lock.target_write_lock", _lock)
+    monkeypatch.setattr("web_tab.cdp_actuation._close_target", lambda *a, **k: None)
+
+    def _created(*, target_id: str, **kwargs: object) -> bool:
+        return target_id == "tab-agent"
+
+    monkeypatch.setattr("web_tab.write_ops._created_by_agent_for_target", _created)
+    monkeypatch.setattr(
+        "web_tab.operator_guard.operator_recheck_under_lock", _recheck_focus
+    )
+    agent_focus = await _guarded_close_orion_tab(
+        cdp_url="http://127.0.0.1:9342",
+        target_id="tab-agent",
+        conversation_url=PINNED,
+    )
+    assert agent_focus["ok"] is False
+    assert agent_focus["reason"] == "tab_has_focus"
+
+    monkeypatch.setattr(
+        "web_tab.operator_guard.operator_recheck_under_lock", _recheck_visible
+    )
+    agent_visible = await _guarded_close_orion_tab(
+        cdp_url="http://127.0.0.1:9342",
+        target_id="tab-agent",
+        conversation_url=PINNED,
+    )
+    assert agent_visible["ok"] is False
+    assert agent_visible["reason"] == "tab_has_focus"
+
+    operator_out = await _guarded_close_orion_tab(
+        cdp_url="http://127.0.0.1:9342",
+        target_id="tab-operator",
+        conversation_url=PINNED,
+    )
+    assert operator_out["ok"] is False
+    assert operator_out["reason"] == "operator_provenance_tab"
 
 
 @pytest.mark.asyncio
@@ -692,6 +1005,8 @@ async def test_cdp_down() -> None:
         turn=1,
         from_agent="maestro",
         connect_cdp=_boom,
+        binding_supplied=True,
+        stored_endpoint=PINNED,
     )
     assert out["reason"] == "cdp_unreachable"
 
@@ -1014,6 +1329,7 @@ async def test_bring_to_front_does_not_refuse_as_operator_active(
 ) -> None:
     """The wake's own bring-to-front passes lock_holder so focus is not operator_active."""
     page = _FakePage()
+    page.target_id = "tab-front"
 
     async def _front() -> None:
         page.brought_to_front = True
@@ -1030,7 +1346,9 @@ async def test_bring_to_front_does_not_refuse_as_operator_active(
                         "url": PINNED,
                         "web_socket_debugger_url": "ws://127.0.0.1/devtools/page/front",
                     }
-                ]
+                ],
+                "reachable": True,
+                "error": None,
             }
 
     async def _pre(*_a: object, **_k: object) -> dict:
@@ -1038,7 +1356,8 @@ async def test_bring_to_front_does_not_refuse_as_operator_active(
 
     async def _recheck(*_a: object, **kwargs: object) -> dict:
         captured["lock_holder"] = kwargs.get("lock_holder")
-        if kwargs.get("lock_holder") is not True:
+        captured["created_by_agent"] = kwargs.get("created_by_agent")
+        if kwargs.get("created_by_agent") is not True:
             return {
                 "ok": False,
                 "code": "operator_active",
@@ -1067,6 +1386,9 @@ async def test_bring_to_front_does_not_refuse_as_operator_active(
         yield
 
     monkeypatch.setattr("web_tab.cdp_actuation.default_actuation_port", lambda: _Port())
+    monkeypatch.setattr(
+        "web_tab.write_ops._created_by_agent_for_target", lambda **_k: True
+    )
     monkeypatch.setattr("web_tab.operator_guard.wait_operator_idle_before_lock", _pre)
     monkeypatch.setattr("web_tab.operator_guard.operator_recheck_under_lock", _recheck)
     monkeypatch.setattr("web_tab.commit_verify.capture_dom_baseline", _baseline)
@@ -1080,6 +1402,666 @@ async def test_bring_to_front_does_not_refuse_as_operator_active(
         page=page,
     )
     assert page.brought_to_front is True
-    assert captured.get("lock_holder") is True
+    assert captured.get("lock_holder") is False
     assert out.get("reason") != "operator_active"
     assert out.get("reason") != "paste_failed"
+
+
+@pytest.mark.asyncio
+async def test_binding_open_uses_stored_url_verbatim(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    stored = (
+        "https://chatgpt.com/g/g-p-test-orion/c/"
+        "6ae44d27-06cc-83e8-8b8a-df9b819755bd"
+    )
+    opened_urls: list[str] = []
+
+    class _Ctx:
+        pages: list[object] = []
+
+    class _Port:
+        def list_tabs(self, *, cdp_url: str) -> dict:
+            return {"pages": [], "reachable": True, "error": None}
+
+        def create_background_tab(self, *, cdp_url: str, url: str, **kwargs: object) -> dict:
+            opened_urls.append(url)
+            return {
+                "ok": True,
+                "target_id": "tab-new",
+                "url": url,
+                "web_socket_debugger_url": "ws://fake/tab-new",
+            }
+
+    class _Pw:
+        async def stop(self) -> None:
+            return None
+
+    async def _connect(_cdp: str):
+        return _Pw(), object(), _Ctx(), None
+
+    async def _poll(_ctx: object, conversation_id: str, **kwargs: object):
+        page = _FakePage(url=stored)
+        _Ctx.pages = [page]
+        return page
+
+    monkeypatch.setattr(
+        "web_chat_relay.orion_wake._poll_playwright_page_for_conversation", _poll
+    )
+    monkeypatch.setattr("web_tab.cdp_actuation.default_actuation_port", lambda: _Port())
+    monkeypatch.setattr(
+        "web_tab.tab_binding_store.save_binding",
+        lambda *args, **kwargs: None,
+    )
+
+    out = await deliver_orion_wake(
+        thread="21207",
+        turn=1,
+        from_agent="maestro",
+        connect_cdp=_connect,
+        binding_supplied=True,
+        stored_endpoint=stored,
+    )
+    assert out["ok"] is True, out
+    assert opened_urls == [stored.split("?", 1)[0]]
+    assert out.get("opened") is True
+
+
+@pytest.mark.asyncio
+async def test_endpoint_url_mismatch_refuses_both_strings(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    stored = PINNED
+    wrong = "https://chatgpt.com/c/11111111-2222-3333-4444-555555555555"
+
+    class _Ctx:
+        pages: list[object] = []
+
+    class _Port:
+        def list_tabs(self, *, cdp_url: str) -> dict:
+            return {"pages": [], "reachable": True, "error": None}
+
+        def create_background_tab(self, *, cdp_url: str, url: str, **kwargs: object) -> dict:
+            return {
+                "ok": True,
+                "target_id": "tab-new",
+                "url": wrong,
+                "web_socket_debugger_url": "ws://fake/tab-new",
+            }
+
+    class _Pw:
+        async def stop(self) -> None:
+            return None
+
+    async def _connect(_cdp: str):
+        return _Pw(), object(), _Ctx(), None
+
+    monkeypatch.setattr("web_tab.cdp_actuation.default_actuation_port", lambda: _Port())
+    monkeypatch.setattr(
+        "web_tab.tab_binding_store.save_binding",
+        lambda *args, **kwargs: None,
+    )
+
+    async def _poll(_ctx: object, conversation_id: str, **kwargs: object):
+        return _FakePage(url=stored)
+
+    monkeypatch.setattr(
+        "web_chat_relay.orion_wake._poll_playwright_page_for_conversation", _poll
+    )
+
+    out = await deliver_orion_wake(
+        thread="21207",
+        turn=1,
+        from_agent="maestro",
+        connect_cdp=_connect,
+        binding_supplied=True,
+        stored_endpoint=stored,
+    )
+    assert out.get("reason") != "endpoint_url_mismatch"
+    assert out["ok"] is True, out
+
+
+@pytest.mark.asyncio
+async def test_focus_refuses_close_even_for_agent_tab(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    stored = PINNED
+    dup_url = PINNED
+    primary = _FakePage(url=stored)
+    duplicate = _FakePage(url=dup_url)
+
+    class _Ctx:
+        pages = [primary, duplicate]
+
+    rows = [
+        {
+            "id": "tab-primary",
+            "url": stored,
+            "web_socket_debugger_url": "ws://fake/primary",
+        },
+        {
+            "id": "tab-dup",
+            "url": dup_url,
+            "web_socket_debugger_url": "ws://fake/dup",
+        },
+    ]
+
+    class _Port:
+        def list_tabs(self, *, cdp_url: str) -> dict:
+            return {"pages": rows, "reachable": True, "error": None}
+
+    def _created(*, cdp_url: str, target_id: str, **kwargs: object) -> bool:
+        return target_id == "tab-dup"
+
+    async def _pre(*_a: object, **_k: object) -> dict:
+        return {"ok": True}
+
+    close_calls: list[str] = []
+    guard_calls: list[str] = []
+
+    def _close(cdp_url: str, target_id: str) -> None:
+        close_calls.append(target_id)
+
+    async def _recheck_tracked(*_a: object, **_k: object) -> dict:
+        guard_calls.append("recheck")
+        return {
+            "ok": True,
+            "probe": {
+                "document_has_focus": True,
+                "document_visibility": "visible",
+                "operator_active": False,
+            },
+        }
+
+    monkeypatch.setattr("web_tab.cdp_actuation.default_actuation_port", lambda: _Port())
+    monkeypatch.setattr(
+        "web_tab.write_ops._created_by_agent_for_target", _created
+    )
+    monkeypatch.setattr(
+        "web_tab.operator_guard.wait_operator_idle_before_lock", _pre
+    )
+    monkeypatch.setattr(
+        "web_tab.operator_guard.operator_recheck_under_lock", _recheck_tracked
+    )
+    monkeypatch.setattr("web_tab.cdp_actuation._close_target", _close)
+
+    out = await sweep_orion_duplicate_tabs(
+        _Ctx(),
+        stored_endpoint=stored,
+        primary_page=primary,
+        primary_target_id="tab-primary",
+    )
+    assert guard_calls == ["recheck"]
+    assert out["closed"] is False
+    assert close_calls == []
+
+
+@pytest.mark.asyncio
+async def test_synthesized_claim_url_refuses_unless_row_stored_it(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: pytest.TempPathFactory
+) -> None:
+    """Claim URL built from a bare UUID must not open; a stored /c/ URL still may."""
+    import os
+
+    from agent_bus_store.db.connection import connect, init_db
+    from web_chat_relay.orion_wake_owner import InMemoryWakeDeliveryOwner
+
+    os.environ["AGENT_BUS_DB_PATH"] = str(tmp_path / "bus.sqlite")
+    init_db()
+    bare = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
+    synthesized = f"https://chatgpt.com/c/{bare}"
+    with connect() as conn:
+        cur = conn.execute(
+            "INSERT INTO agent_endpoint_subscriptions "
+            "(agent, thread_scope, state, surface, display, title, agent_id) "
+            "VALUES (?,?,?,?,?,?,?)",
+            ("orion", "21207", "subscribed", "cursor", ":8", None, bare),
+        )
+        bare_id = str(cur.lastrowid)
+        pinned = (
+            "https://chatgpt.com/g/g-p-6ae3debfee8481918ff3fa45b7d18d3a-ulg-orion"
+            "/c/6ae44d27-06cc-83e8-8b8a-df9b819755bd"
+        )
+        cur = conn.execute(
+            "INSERT INTO agent_endpoint_subscriptions "
+            "(agent, thread_scope, state, surface, display, title, agent_id) "
+            "VALUES (?,?,?,?,?,?,?)",
+            ("orion", "21207", "subscribed", "cursor", ":8", pinned + "?foo=1", None),
+        )
+        good_id = str(cur.lastrowid)
+        conn.commit()
+
+    opened: list[str] = []
+
+    class _Port:
+        def list_tabs(self, *, cdp_url: str) -> dict:
+            return {"pages": [], "reachable": True, "error": None}
+
+        def create_background_tab(
+            self, *, cdp_url: str, url: str, **kwargs: object
+        ) -> dict:
+            opened.append(url)
+            return {
+                "ok": True,
+                "target_id": "tab-new",
+                "url": url,
+                "web_socket_debugger_url": "ws://fake/tab-new",
+            }
+
+    class _Pw:
+        async def stop(self) -> None:
+            return None
+
+    async def _connect(_cdp: str):
+        return _Pw(), object(), type("Ctx", (), {"pages": []})(), None
+
+    async def _poll(_ctx, conversation_id: str, **kwargs: object):
+        return _FakePage(url=pinned)
+
+    monkeypatch.setattr("web_tab.cdp_actuation.default_actuation_port", lambda: _Port())
+    monkeypatch.setattr("web_tab.tab_binding_store.save_binding", lambda *a, **k: None)
+    monkeypatch.setattr(
+        "web_chat_relay.orion_wake._poll_playwright_page_for_conversation", _poll
+    )
+    owner = InMemoryWakeDeliveryOwner()
+
+    def _opts(wake_id: str, url: str, binding_id: str) -> dict:
+        return {
+            "wake_id": wake_id,
+            "thread": "21207",
+            "turn": 12,
+            "turn_id": 912,
+            "turn_ids": [912],
+            "turn_numbers": [12],
+            "agent": "orion",
+            "conversation_url": url,
+            "binding_reference": binding_id,
+        }
+
+    from agent_bus_store.db.orion_wake_owner_adapter import wake_claim_from_options
+
+    bad_opts = _opts("wake-bare", synthesized, bare_id)
+    owner.register_claim(wake_claim_from_options(bad_opts))
+    refused = await deliver_orion_chat_wake(
+        thread="21207",
+        turn=12,
+        from_agent="maestro",
+        pipeline_options=bad_opts,
+        delivery_owner=owner,
+    )
+    assert refused["reason"] == "bad_conversation_url"
+    assert refused["stored_endpoint"] == bare
+    assert refused["opened_url"] == synthesized
+    assert opened == []
+
+    good_opts = _opts("wake-good", pinned, good_id)
+    owner.register_claim(wake_claim_from_options(good_opts))
+    opened.clear()
+    allowed = await deliver_orion_chat_wake(
+        thread="21207",
+        turn=12,
+        from_agent="maestro",
+        connect_cdp=_connect,
+        pipeline_options=good_opts,
+        delivery_owner=owner,
+    )
+    assert allowed["ok"] is True, allowed
+    assert opened == [pinned]
+
+
+@pytest.mark.asyncio
+async def test_operator_tab_not_brought_to_front_when_agent_duplicate_listed_first(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    page = _FakePage(url=PINNED_CONVERSATION_URL, visibility_state="visible")
+    page.target_id = "tab-operator"
+    rows = [
+        {
+            "id": "tab-agent",
+            "url": PINNED_CONVERSATION_URL,
+            "web_socket_debugger_url": "ws://a",
+        },
+        {
+            "id": "tab-operator",
+            "url": PINNED_CONVERSATION_URL,
+            "web_socket_debugger_url": "ws://b",
+        },
+    ]
+
+    class _Port:
+        def list_tabs(self, *, cdp_url: str) -> dict:
+            return {"pages": rows, "reachable": True, "error": None}
+
+    monkeypatch.setattr("web_tab.cdp_actuation.default_actuation_port", lambda: _Port())
+    monkeypatch.setattr(
+        "web_tab.write_ops._created_by_agent_for_target",
+        lambda *, target_id, **kwargs: target_id == "tab-agent",
+    )
+    out = await deliver_orion_wake(
+        thread="21207",
+        turn=1,
+        from_agent="maestro",
+        page=page,
+        conversation_url=PINNED_CONVERSATION_URL,
+    )
+    assert page.brought_to_front is False
+    assert out.get("brought_to_front") is False
+    assert out.get("target_id") != "tab-agent"
+
+
+@pytest.mark.asyncio
+async def test_unreachable_cdp_does_not_bring_to_front(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    page = _FakePage(url=PINNED_CONVERSATION_URL, visibility_state="hidden")
+
+    class _Port:
+        def list_tabs(self, *, cdp_url: str) -> dict:
+            return {"pages": [], "reachable": False, "error": "down"}
+
+    monkeypatch.setattr("web_tab.cdp_actuation.default_actuation_port", lambda: _Port())
+    out = await deliver_orion_wake(
+        thread="21207",
+        turn=1,
+        from_agent="maestro",
+        page=page,
+        conversation_url=PINNED_CONVERSATION_URL,
+    )
+    assert page.brought_to_front is False
+    assert out.get("brought_to_front") is False
+
+
+@pytest.mark.asyncio
+async def test_just_opened_tab_is_not_brought_to_front(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    stored = (
+        "https://chatgpt.com/g/g-p-test-orion/c/"
+        "6ae44d27-06cc-83e8-8b8a-df9b819755bd"
+    )
+    page = _FakePage(url=stored, visibility_state="hidden")
+
+    class _Ctx:
+        pages: list = []
+
+    class _Port:
+        def list_tabs(self, *, cdp_url: str) -> dict:
+            return {"pages": [], "reachable": True, "error": None}
+
+        def create_background_tab(self, *, cdp_url: str, url: str, **kwargs: object):
+            return {
+                "ok": True,
+                "target_id": "tab-new",
+                "url": "about:blank",
+                "web_socket_debugger_url": "ws://fake/tab-new",
+            }
+
+    class _Pw:
+        async def stop(self) -> None:
+            return None
+
+    async def _connect(_cdp: str):
+        return _Pw(), object(), _Ctx(), None
+
+    async def _poll(_ctx, conversation_id: str, **kwargs: object):
+        return page
+
+    monkeypatch.setattr("web_tab.cdp_actuation.default_actuation_port", lambda: _Port())
+    monkeypatch.setattr("web_tab.tab_binding_store.save_binding", lambda *a, **k: None)
+    monkeypatch.setattr(
+        "web_chat_relay.orion_wake._poll_playwright_page_for_conversation", _poll
+    )
+    monkeypatch.setattr(
+        "web_tab.write_ops._created_by_agent_for_target", lambda **kwargs: True
+    )
+    out = await deliver_orion_wake(
+        thread="21207",
+        turn=1,
+        from_agent="maestro",
+        connect_cdp=_connect,
+        binding_supplied=True,
+        stored_endpoint=stored,
+    )
+    assert out["ok"] is True, out
+    assert page.brought_to_front is False
+    assert out.get("brought_to_front") is False
+    assert page.reloaded == 0
+
+
+@pytest.mark.asyncio
+async def test_about_blank_create_saves_provenance_and_matches_conversation_id(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    stored = (
+        "https://chatgpt.com/g/g-p-test-orion/c/"
+        "6ae44d27-06cc-83e8-8b8a-df9b819755bd"
+    )
+    saved: list[dict] = []
+
+    class _Ctx:
+        pages: list = []
+
+    class _Port:
+        def list_tabs(self, *, cdp_url: str) -> dict:
+            return {"pages": [], "reachable": True, "error": None}
+
+        def create_background_tab(self, *, cdp_url: str, url: str, **kwargs: object):
+            return {
+                "ok": True,
+                "target_id": "tab-new",
+                "url": "about:blank",
+                "web_socket_debugger_url": "ws://fake/tab-new",
+            }
+
+    class _Pw:
+        async def stop(self) -> None:
+            return None
+
+    async def _connect(_cdp: str):
+        return _Pw(), object(), _Ctx(), None
+
+    async def _poll(_ctx, conversation_id: str, **kwargs: object):
+        return _FakePage(url=stored)
+
+    def _save(session, path=None):
+        saved.append(
+            {
+                "target_id": session.target_id,
+                "created_by_agent": session.created_by_agent,
+                "conversation_url": session.conversation_url,
+            }
+        )
+
+    monkeypatch.setattr("web_tab.cdp_actuation.default_actuation_port", lambda: _Port())
+    monkeypatch.setattr("web_tab.tab_binding_store.save_binding", _save)
+    monkeypatch.setattr(
+        "web_chat_relay.orion_wake._poll_playwright_page_for_conversation", _poll
+    )
+    out = await deliver_orion_wake(
+        thread="21207",
+        turn=1,
+        from_agent="maestro",
+        connect_cdp=_connect,
+        binding_supplied=True,
+        stored_endpoint=stored,
+    )
+    assert out.get("reason") != "endpoint_url_mismatch"
+    assert out["ok"] is True, out
+    assert saved and saved[0]["created_by_agent"] is True
+    assert saved[0]["target_id"] == "tab-new"
+    assert saved[0]["conversation_url"].split("?", 1)[0] == stored
+
+
+@pytest.mark.asyncio
+async def test_same_url_agent_duplicate_closes_when_focus_clear(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    stored = PINNED_CONVERSATION_URL
+    primary = _FakePage(url=stored)
+    duplicate = _FakePage(url=stored)
+    rows = [
+        {"id": "tab-primary", "url": stored, "web_socket_debugger_url": "ws://p"},
+        {"id": "tab-dup", "url": stored, "web_socket_debugger_url": "ws://d"},
+    ]
+    guard_calls: list[str] = []
+
+    class _Port:
+        def list_tabs(self, *, cdp_url: str) -> dict:
+            return {"pages": rows, "reachable": True, "error": None}
+
+    async def _pre(*_a: object, **_k: object) -> dict:
+        return {"ok": True}
+
+    async def _recheck(*_a: object, **_k: object) -> dict:
+        guard_calls.append("recheck")
+        return {
+            "ok": True,
+            "probe": {
+                "document_has_focus": False,
+                "document_visibility": "hidden",
+                "operator_active": False,
+            },
+        }
+
+    closed: list[str] = []
+
+    monkeypatch.setattr("web_tab.cdp_actuation.default_actuation_port", lambda: _Port())
+    monkeypatch.setattr(
+        "web_tab.write_ops._created_by_agent_for_target",
+        lambda *, target_id, **kwargs: target_id == "tab-dup",
+    )
+    monkeypatch.setattr("web_tab.operator_guard.wait_operator_idle_before_lock", _pre)
+    monkeypatch.setattr("web_tab.operator_guard.operator_recheck_under_lock", _recheck)
+    monkeypatch.setattr(
+        "web_tab.cdp_actuation._close_target",
+        lambda cdp_url, target_id: closed.append(target_id),
+    )
+    out = await sweep_orion_duplicate_tabs(
+        type("Ctx", (), {"pages": [primary, duplicate]})(),
+        stored_endpoint=stored,
+        primary_page=primary,
+        primary_target_id="tab-primary",
+    )
+    assert guard_calls == ["recheck"]
+    assert closed == ["tab-dup"]
+    assert out["closed_target_ids"] == ["tab-dup"]
+
+
+@pytest.mark.asyncio
+async def test_close_target_runs_inside_lock_and_failure_is_refusal(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    held = {"inside": False}
+
+    class _Lock:
+        async def __aenter__(self):
+            held["inside"] = True
+
+        async def __aexit__(self, *args):
+            held["inside"] = False
+            return False
+
+    def _lock(*_a: object, **_k: object):
+        return _Lock()
+
+    seen: dict[str, bool] = {}
+
+    def _close(cdp_url: str, target_id: str) -> None:
+        seen["inside"] = held["inside"]
+        raise RuntimeError("ws down")
+
+    class _Port:
+        def list_tabs(self, *, cdp_url: str) -> dict:
+            return {
+                "pages": [
+                    {
+                        "id": "tab-dup",
+                        "url": "https://chatgpt.com/c/aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
+                        "web_socket_debugger_url": "ws://d",
+                    }
+                ],
+                "reachable": True,
+                "error": None,
+            }
+
+    async def _pre(*_a: object, **_k: object) -> dict:
+        return {"ok": True}
+
+    async def _recheck(*_a: object, **_k: object) -> dict:
+        return {
+            "ok": True,
+            "probe": {
+                "document_has_focus": False,
+                "document_visibility": "hidden",
+                "operator_active": False,
+            },
+        }
+
+    monkeypatch.setattr("web_tab.cdp_actuation.default_actuation_port", lambda: _Port())
+    monkeypatch.setattr("web_tab.write_ops._created_by_agent_for_target", lambda **kwargs: True)
+    monkeypatch.setattr("web_tab.operator_guard.wait_operator_idle_before_lock", _pre)
+    monkeypatch.setattr("web_tab.operator_guard.operator_recheck_under_lock", _recheck)
+    monkeypatch.setattr("web_tab.target_lock.target_write_lock", _lock)
+    monkeypatch.setattr("web_tab.cdp_actuation._close_target", _close)
+    out = await _guarded_close_orion_tab(
+        cdp_url="http://127.0.0.1:9342",
+        target_id="tab-dup",
+        conversation_url="https://chatgpt.com/c/aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
+    )
+    assert seen["inside"] is True
+    assert out["ok"] is False
+    assert out["reason"] == "cdp_unreachable"
+    assert out["error"] == "RuntimeError"
+
+
+@pytest.mark.asyncio
+async def test_create_background_tab_exception_is_cdp_unreachable(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import urllib.error
+
+    stored = (
+        "https://chatgpt.com/g/g-p-test-orion/c/"
+        "6ae44d27-06cc-83e8-8b8a-df9b819755bd"
+    )
+    stopped = {"n": 0}
+
+    class _Ctx:
+        pages: list = []
+
+    class _Port:
+        def list_tabs(self, *, cdp_url: str) -> dict:
+            return {"pages": [], "reachable": True, "error": None}
+
+        def create_background_tab(self, *, cdp_url: str, url: str, **kwargs: object):
+            raise urllib.error.URLError("timed out")
+
+    class _Pw:
+        async def stop(self) -> None:
+            stopped["n"] += 1
+
+    async def _connect(_cdp: str):
+        return _Pw(), object(), _Ctx(), None
+
+    monkeypatch.setattr("web_tab.cdp_actuation.default_actuation_port", lambda: _Port())
+    out = await deliver_orion_wake(
+        thread="21207",
+        turn=1,
+        from_agent="maestro",
+        connect_cdp=_connect,
+        binding_supplied=True,
+        stored_endpoint=stored,
+    )
+    assert out["reason"] == "cdp_unreachable"
+    assert out["error"] == "URLError"
+    assert stopped["n"] == 1
+
+
+@pytest.mark.asyncio
+async def test_no_default_pinned_without_binding_supplied() -> None:
+    out = await deliver_orion_wake(
+        thread="21207",
+        turn=1,
+        from_agent="maestro",
+    )
+    assert out["reason"] == "bad_conversation_url"

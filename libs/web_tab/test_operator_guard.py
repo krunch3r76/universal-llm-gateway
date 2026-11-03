@@ -4,7 +4,7 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from web_tab.operator_guard import operator_active_probe
+from web_tab.operator_guard import operator_active_probe, operator_recheck_under_lock
 
 
 @pytest.mark.asyncio
@@ -99,5 +99,118 @@ async def test_focus_ok_under_lock_holder_when_not_created_by_agent() -> None:
             lock_holder=True,
         )
     assert out["ok"] is True
+
+
+@pytest.mark.asyncio
+async def test_recheck_allow_visible_idle_skips_focus_clause_only() -> None:
+    """AC7: paste may skip focus/visible refusal; operator_active still blocks."""
+    probe_idle = {
+        "document_has_focus": False,
+        "document_visibility": "visible",
+        "operator_active": False,
+        "foreign_draft": False,
+    }
+    with (
+        patch(
+            "web_tab.operator_guard.wait_for_operator_idle",
+            AsyncMock(return_value={"ok": True, "idle": True}),
+        ),
+        patch(
+            "web_tab.operator_guard.read_operator_busy",
+            AsyncMock(return_value=probe_idle),
+        ),
+    ):
+        out = await operator_recheck_under_lock(
+            "ws://fake",
+            selector="[contenteditable='true']",
+            created_by_agent=False,
+            lock_holder=False,
+            allow_visible_idle_operator_tab=True,
+        )
+    assert out["ok"] is True
+
+
+@pytest.mark.asyncio
+async def test_recheck_allow_visible_idle_still_refuses_operator_active() -> None:
+    probe_busy = {
+        "document_has_focus": False,
+        "document_visibility": "visible",
+        "operator_active": True,
+        "foreign_draft": False,
+    }
+    with (
+        patch(
+            "web_tab.operator_guard.wait_for_operator_idle",
+            AsyncMock(return_value={"ok": True, "idle": True}),
+        ),
+        patch(
+            "web_tab.operator_guard.read_operator_busy",
+            AsyncMock(return_value=probe_busy),
+        ),
+    ):
+        out = await operator_recheck_under_lock(
+            "ws://fake",
+            selector="[contenteditable='true']",
+            created_by_agent=False,
+            lock_holder=False,
+            allow_visible_idle_operator_tab=True,
+        )
+    assert out["ok"] is False
+    assert "operator" in str(out.get("reason") or "").lower()
+
+
+@pytest.mark.asyncio
+async def test_recheck_default_still_refuses_visible_operator_tab() -> None:
+    probe_visible = {
+        "document_has_focus": True,
+        "document_visibility": "visible",
+        "operator_active": False,
+        "foreign_draft": False,
+    }
+    with (
+        patch(
+            "web_tab.operator_guard.wait_for_operator_idle",
+            AsyncMock(return_value={"ok": True, "idle": True}),
+        ),
+        patch(
+            "web_tab.operator_guard.read_operator_busy",
+            AsyncMock(return_value=probe_visible),
+        ),
+    ):
+        out = await operator_recheck_under_lock(
+            "ws://fake",
+            selector="[contenteditable='true']",
+            created_by_agent=False,
+            lock_holder=False,
+        )
+    assert out["ok"] is False
+
+
+@pytest.mark.asyncio
+async def test_recheck_close_path_default_refuses_visible_operator_tab() -> None:
+    """Close keeps the focus/visible clause (allow flag not passed)."""
+    probe_visible = {
+        "document_has_focus": False,
+        "document_visibility": "visible",
+        "operator_active": False,
+        "foreign_draft": False,
+    }
+    with (
+        patch(
+            "web_tab.operator_guard.wait_for_operator_idle",
+            AsyncMock(return_value={"ok": True, "idle": True}),
+        ),
+        patch(
+            "web_tab.operator_guard.read_operator_busy",
+            AsyncMock(return_value=probe_visible),
+        ),
+    ):
+        out = await operator_recheck_under_lock(
+            "ws://fake",
+            selector="[contenteditable='true']",
+            created_by_agent=False,
+            lock_holder=False,
+        )
+    assert out["ok"] is False
 
 

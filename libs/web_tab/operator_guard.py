@@ -59,8 +59,14 @@ async def operator_recheck_under_lock(
     lock_holder: bool = False,
     expect_draft_sha256: str | None = None,
     max_wait_s: float = _UNDER_LOCK_MAX_WAIT_S,
+    allow_visible_idle_operator_tab: bool = False,
 ) -> dict[str, Any]:
-    """Short re-check after acquiring the target lock."""
+    """Short re-check after acquiring the target lock.
+
+    When ``allow_visible_idle_operator_tab`` is true, Orion paste may skip the
+    focus/visibility refusal for operator-provenance tabs; ``operator_active``
+    and foreign-draft checks still apply.
+    """
     if max_wait_s > 0:
         idle = await wait_for_operator_idle(
             ws_url,
@@ -81,7 +87,12 @@ async def operator_recheck_under_lock(
     foreign = probe_foreign_draft(
         probe, expect_draft_sha256=expect_draft_sha256
     )
-    if not lock_holder and not created_by_agent and (has_focus or visible):
+    if (
+        not allow_visible_idle_operator_tab
+        and not lock_holder
+        and not created_by_agent
+        and (has_focus or visible)
+    ):
         return _operator_busy_result(
             reason="tab not created by agent has focus or is visible to the operator",
             probe=probe,

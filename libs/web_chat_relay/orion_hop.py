@@ -659,3 +659,21 @@ async def repin_orion_wake_conversation(
         "attempt_id": bound_attempt.attempt_id,
         "wake_target_url": committed,
     }
+
+
+async def sweep_orion_hop_tab_duplicates(
+    ctx: Any,
+    *,
+    stored_endpoint: str,
+    primary_page: OrionPage,
+    cdp_url: str = DEFAULT_ORION_CDP_URL,
+) -> dict[str, Any]:
+    """F13: duplicate-tab housekeeping runs outside ``orion_hop`` proper."""
+    from web_chat_relay.orion_wake import sweep_orion_duplicate_tabs
+
+    return await sweep_orion_duplicate_tabs(
+        ctx,
+        stored_endpoint=stored_endpoint,
+        primary_page=primary_page,
+        cdp_url=cdp_url,
+    )
