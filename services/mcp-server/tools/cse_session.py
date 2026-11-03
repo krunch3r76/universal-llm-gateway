@@ -62,7 +62,9 @@ def register_cse_session_tool(mcp: FastMCP) -> None:
 
         ``paste`` = hop-pair / grant authorized paste (``/v1/cse-session/paste``).
         ``followup`` = warm wake into a retained or dormant Cowork CSE
-        (``/v1/project-ask/followups``). Identity omitted on followup ⇒ attended
+        (``/v1/project-ask/followups``). ``superseded_registration_id`` is
+        forwarded on followup so ``envelope=stand_down`` journals the
+        stand-down token for that predecessor. Identity omitted on followup ⇒ attended
         resolve. ``parent_thread`` without identity binds the one in-flight
         operator page, else the seat holder; a contested lane refuses with
         ``lane_cse_ambiguous``. ``resolve_attended(parent_thread=…)`` is
@@ -173,6 +175,7 @@ def register_cse_session_tool(mcp: FastMCP) -> None:
                 parent_thread=parent_thread,
                 envelope=envelope,
                 predecessor_registration_id=predecessor_registration_id,
+                superseded_registration_id=superseded_registration_id,
                 successor_registration_id=successor_registration_id,
                 successor_birth_id=successor_birth_id,
             )
