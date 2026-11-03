@@ -194,3 +194,59 @@ def test_legacy_conv12_archive_blocks_narrower_reharvest(
         archive_chat_transcript("claude", CSE_ID, CSE_URL, narrow, harvested_at="t1")
     assert exc.value.code == "narrower_capture"
     assert conv12(CSE_ID) in _conv12_archive_dest("claude", CSE_ID).name
+
+
+def test_legacy_conv12_corrupt_bytes_ignored_for_colliding_chat(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """AC7 (a): corrupt conv12 sidecar does not block a colliding chat (Shape B)."""
+    monkeypatch.setenv("CORTEX_FILES_ROOT", str(tmp_path))
+    conv12_path = _conv12_archive_dest("claude", CHAT_A_ID)
+    conv12_path.parent.mkdir(parents=True, exist_ok=True)
+    conv12_path.write_bytes(b"\x00not json")
+    before = conv12_path.read_bytes()
+    b_turns = _turns(1, 1, prefix="ChatB")
+    _uri, _sha, alignment = archive_chat_transcript(
+        "claude", CHAT_B_ID, CHAT_B_URL, b_turns, harvested_at="t1"
+    )
+    assert alignment == "first_write"
+    assert archive_dest("claude", CHAT_B_ID).is_file()
+    assert conv12_path.read_bytes() == before
+
+
+def test_legacy_conv12_invalid_schema_ignored_for_colliding_chat(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """AC7 (b): valid JSON but wrong schema → first_write for colliding chat."""
+    monkeypatch.setenv("CORTEX_FILES_ROOT", str(tmp_path))
+    conv12_path = _conv12_archive_dest("claude", CHAT_A_ID)
+    conv12_path.parent.mkdir(parents=True, exist_ok=True)
+    conv12_path.write_text("{}", encoding="utf-8")
+    before = conv12_path.read_text(encoding="utf-8")
+    _uri, _sha, alignment = archive_chat_transcript(
+        "claude",
+        CHAT_B_ID,
+        CHAT_B_URL,
+        _turns(1, 1, prefix="ChatB"),
+        harvested_at="t1",
+    )
+    assert alignment == "first_write"
+    assert archive_dest("claude", CHAT_B_ID).is_file()
+    assert conv12_path.read_text(encoding="utf-8") == before
+
+
+def test_legacy_conv12_corrupt_same_chat_first_write(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """AC7 (c): corrupt conv12 for same chat → first_write; legacy file unchanged."""
+    monkeypatch.setenv("CORTEX_FILES_ROOT", str(tmp_path))
+    conv12_path = _conv12_archive_dest("claude", CHAT_A_ID)
+    conv12_path.parent.mkdir(parents=True, exist_ok=True)
+    conv12_path.write_bytes(b"\xffbad")
+    before = conv12_path.read_bytes()
+    _uri, _sha, alignment = archive_chat_transcript(
+        "claude", CHAT_A_ID, CHAT_A_URL, _turns(1, 1), harvested_at="t1"
+    )
+    assert alignment == "first_write"
+    assert archive_dest("claude", CHAT_A_ID).is_file()
+    assert conv12_path.read_bytes() == before
