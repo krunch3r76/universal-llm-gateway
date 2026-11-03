@@ -470,3 +470,97 @@ def test_reset_mirror_joins_worker_without_holding_worker_lock() -> None:
     elapsed = time.monotonic() - started
     assert elapsed < 1.0, f"reset blocked {elapsed:.2f}s (join under lock?)"
     assert not worker.is_alive()
+
+
+def test_reset_stops_every_live_mirror_worker(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A replaced worker must not consume the only shutdown meant for join.
+
+    ``test_fork_pid_change_starts_fresh_mirror_worker`` leaves the previous
+    thread blocked on the same queue. One shutdown wakes that thread, and the
+    thread ``reset`` joins stays in ``get`` until ``join`` times out.
+    """
+    pid = os.getpid()
+    monkeypatch.setattr(esd, "_getpid", lambda: pid)
+    _emit_sample()
+    flush_mirror_worker_for_tests(timeout=2.0)
+    monkeypatch.setattr(esd, "_getpid", lambda: pid + 1)
+    _emit_sample()
+    flush_mirror_worker_for_tests(timeout=2.0)
+    alive_before = [
+        thread
+        for thread in threading.enumerate()
+        if thread.name == "cdp-skill-delivery-mirror" and thread.is_alive()
+    ]
+    assert len(alive_before) >= 2
+    reset_mirror_state_for_tests()
+    alive_after = [
+        thread.name
+        for thread in threading.enumerate()
+        if thread.name == "cdp-skill-delivery-mirror" and thread.is_alive()
+    ]
+    assert alive_after == [], f"mirror threads still alive: {alive_after}"
+
+
+def test_flush_sentinel_is_not_dropped_when_queue_is_full(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Flush must return because the worker observed the marker, not at timeout.
+
+    The marker used to be discarded on ``queue.Full`` while the worker was
+    blocked in send, and ``done.wait`` then ran until its timeout.
+    """
+    started = threading.Event()
+    release = threading.Event()
+
+    def _block(_line: object) -> None:
+        started.set()
+        release.wait(timeout=2.0)
+
+    monkeypatch.setattr(esd, "_mirror_send_sync", _block)
+    esd._mirror_to_event_service(
+        cdp_skill_delivery_attested(
+            ok=True, attached=[], inlined=[], undelivered=[]
+        )
+    )
+    assert started.wait(timeout=1.0)
+    filler = b'{"signal":"x"}\n'
+    for _ in range(esd._MIRROR_QUEUE_MAXSIZE):
+        esd._mirror_queue.put_nowait(filler)
+
+    def _release_later() -> None:
+        time.sleep(0.05)
+        release.set()
+
+    releaser = threading.Thread(target=_release_later, daemon=True)
+    releaser.start()
+    started_flush = time.monotonic()
+    flush_mirror_worker_for_tests(timeout=3.0)
+    elapsed = time.monotonic() - started_flush
+    releaser.join(timeout=1.0)
+    assert elapsed < 1.0, f"flush blocked {elapsed:.2f}s (sentinel dropped?)"
+
+
+def test_flush_does_not_wait_when_mirror_worker_cannot_start(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Flush must not burn its timeout when worker start raises.
+
+    The fixture used to call ``done.wait`` after ``_start_mirror_thread``
+    refused the thread, so teardown sat until ``timeout`` with no worker.
+    """
+
+    def _boom(_thread: threading.Thread) -> None:
+        raise RuntimeError("can't start new thread")
+
+    monkeypatch.setattr(esd, "_start_mirror_thread", _boom)
+    event = emit_skill_delivery_attested(
+        ok=True,
+        attached=["x"],
+        inlined=[],
+        undelivered=[],
+    )
+    assert event is not None
+    started = time.monotonic()
+    flush_mirror_worker_for_tests(timeout=2.0)
+    elapsed = time.monotonic() - started
+    assert elapsed < 1.0, f"flush blocked {elapsed:.2f}s (no worker)"

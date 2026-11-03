@@ -33,6 +33,7 @@ _mirror_worker_lock = threading.Lock()
 _mirror_worker_started = False
 _mirror_worker_thread: threading.Thread | None = None
 _mirror_worker_owner_pid = 0
+_MIRROR_WORKER_NAME = "cdp-skill-delivery-mirror"
 _circuit_open_until = 0.0
 _mirror_state_lock = threading.Lock()
 # (transport, target) -> monotonic last warning time
@@ -335,7 +336,7 @@ def _ensure_mirror_worker() -> None:
             return
         thread = threading.Thread(
             target=_mirror_worker_loop,
-            name="cdp-skill-delivery-mirror",
+            name=_MIRROR_WORKER_NAME,
             daemon=True,
         )
         try:
@@ -519,36 +520,89 @@ def _mirror_to_event_service(event: Event) -> None:
         _record_internal_error(transport, target, exc)
 
 
+def _live_mirror_workers() -> list[threading.Thread]:
+    """Return mirror threads still alive, including ones replaced after a pid change.
+
+    ``_mirror_worker_thread`` only points at the latest start. An older thread
+    stays blocked in ``Queue.get`` on the same queue and will consume a single
+    shutdown that was meant for the thread ``reset`` joins.
+    """
+    found = [
+        thread
+        for thread in threading.enumerate()
+        if thread.name == _MIRROR_WORKER_NAME and thread.is_alive()
+    ]
+    current = _mirror_worker_thread
+    if current is not None and current.is_alive() and current not in found:
+        found.append(current)
+    return found
+
+
+def _enqueue_mirror_sentinel(item: _MirrorFlush | _MirrorShutdown) -> bool:
+    """Queue a flush or shutdown marker, dropping one payload line if full.
+
+    ``put_nowait`` raising ``queue.Full`` used to be swallowed. The caller then
+    waited out ``timeout`` because the worker never observed the marker.
+    Returns False only when the marker itself could not be queued.
+    """
+    for _ in range(_MIRROR_QUEUE_MAXSIZE + 1):
+        try:
+            _mirror_queue.put_nowait(item)
+            return True
+        except queue.Full:
+            try:
+                evicted = _mirror_queue.get_nowait()
+            except queue.Empty:
+                continue
+            if isinstance(evicted, (_MirrorFlush, _MirrorShutdown)):
+                try:
+                    _mirror_queue.put_nowait(evicted)
+                except queue.Full:
+                    return False
+            else:
+                try:
+                    _mirror_queue.task_done()
+                except ValueError:
+                    pass
+    return False
+
+
 def flush_mirror_worker_for_tests(*, timeout: float = 5.0) -> None:
-    """Test-only: block until queued mirror work through this point is drained."""
+    """Block until mirror work queued before this call has been processed.
+
+    Test-only. The flush marker is placed even when the bounded queue holds
+    only payload lines, so the wait ends because the worker set ``done``.
+    When no mirror thread is alive (worker start refused), the marker cannot
+    be observed and this returns instead of burning ``timeout``. ``timeout``
+    remains an upper bound and is not the success path.
+    """
     flush = _MirrorFlush()
-    try:
-        _mirror_queue.put_nowait(flush)
-    except queue.Full:
-        pass
+    queued = _enqueue_mirror_sentinel(flush)
     _ensure_mirror_worker()
-    flush.done.wait(timeout=timeout)
+    if queued and _live_mirror_workers():
+        flush.done.wait(timeout=timeout)
 
 
 def reset_mirror_state_for_tests() -> None:
-    """Test-only: stop worker, clear breaker, counters, and warning throttle keys."""
+    """Stop every live mirror worker, then clear breaker, counters, and throttle.
+
+    Test-only. One shutdown wakes one blocked worker; a thread left behind
+    after a pid change takes that shutdown and the joined thread sits in
+    ``join`` until timeout. Each live worker gets its own shutdown. The worker
+    lock is not held across ``join``.
+    """
     global _circuit_open_until, _circuit_skip_count, _queue_drop_count  # noqa: PLW0603
     global _mirror_worker_started, _mirror_worker_thread, _mirror_worker_owner_pid
     global _internal_error_count
-    worker_to_join: threading.Thread | None = None
     with _mirror_worker_lock:
-        worker = _mirror_worker_thread
-        if worker is not None and worker.is_alive():
-            try:
-                _mirror_queue.put_nowait(_MirrorShutdown())
-            except queue.Full:
-                pass
-            worker_to_join = worker
+        workers = _live_mirror_workers()
         _mirror_worker_started = False
         _mirror_worker_thread = None
         _mirror_worker_owner_pid = 0
-    if worker_to_join is not None:
-        worker_to_join.join(timeout=5.0)
+    for _worker in workers:
+        _enqueue_mirror_sentinel(_MirrorShutdown())
+    for worker in workers:
+        worker.join(timeout=5.0)
     with _mirror_state_lock:
         _circuit_open_until = 0.0
         _circuit_skip_count = 0
