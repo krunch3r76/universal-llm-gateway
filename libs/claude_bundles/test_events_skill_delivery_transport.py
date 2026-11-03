@@ -7,6 +7,7 @@ Jupiter (arc 12286 / friction 41800).
 from __future__ import annotations
 
 import logging
+import threading
 import time
 from typing import Any
 
@@ -223,6 +224,41 @@ def test_full_mirror_queue_drops_and_counts() -> None:
         esd._mirror_queue.put_nowait(event)
     esd._mirror_to_event_service(event)
     assert esd._queue_drop_count >= 1
+
+
+def test_emit_survives_thread_start_runtime_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Mirror worker start failure must not escape emit_skill_delivery_attested."""
+
+    def _boom_start(_self: threading.Thread) -> None:
+        raise RuntimeError("can't start new thread")
+
+    monkeypatch.setattr(esd.threading.Thread, "start", _boom_start)
+    event = emit_skill_delivery_attested(
+        ok=True,
+        attached=["x"],
+        inlined=[],
+        undelivered=[],
+    )
+    assert event is not None
+    assert event.signal == "cdp.skill.delivery_attested"
+
+
+def test_mirror_survives_invalid_events_ingest_port(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Unicode digit port env must not raise through emit (a:41830 G1)."""
+    monkeypatch.delenv("EVENTS_INGEST_TCP", raising=False)
+    monkeypatch.setenv("EVENT_SERVICE_INGEST_HOST", "127.0.0.1")
+    monkeypatch.setenv("EVENTS_INGEST_PORT", "\u00b2")
+    event = emit_skill_delivery_attested(
+        ok=True,
+        attached=[],
+        inlined=[],
+        undelivered=[],
+    )
+    assert event is not None
 
 
 def test_mirror_logs_once_and_swallows_socket_errors(

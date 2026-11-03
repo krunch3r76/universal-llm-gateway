@@ -266,7 +266,10 @@ def _ensure_mirror_worker() -> None:
             name="cdp-skill-delivery-mirror",
             daemon=True,
         )
-        thread.start()
+        try:
+            thread.start()
+        except Exception:  # noqa: BLE001 — mirror must not raise into emit_*
+            return
         _mirror_worker_started = True
 
 
@@ -379,30 +382,33 @@ def _mirror_worker_loop() -> None:
 
 def _mirror_to_event_service(event: Event) -> None:
     """Best-effort Event Service ingest — enqueue only; never blocks on socket I/O."""
-    now = time.monotonic()
-    transport = ""
-    target = ""
-    tcp = _resolve_tcp_target()
-    if tcp is not None:
-        host, port = tcp
-        transport = "tcp"
-        target = f"{host}:{port}"
-    else:
-        transport = "uds"
-        target = os.environ.get(
-            "EVENTS_INGEST_SOCK", "/tmp/universal-protocol/events.sock"
-        )
-    with _mirror_state_lock:
-        circuit_open = now < _circuit_open_until
-    if circuit_open:
-        _record_drop(transport=transport, target=target, circuit=True)
-        return
     try:
-        _mirror_queue.put_nowait(event)
-    except queue.Full:
-        _record_drop(transport=transport, target=target, circuit=False)
+        now = time.monotonic()
+        transport = ""
+        target = ""
+        tcp = _resolve_tcp_target()
+        if tcp is not None:
+            host, port = tcp
+            transport = "tcp"
+            target = f"{host}:{port}"
+        else:
+            transport = "uds"
+            target = os.environ.get(
+                "EVENTS_INGEST_SOCK", "/tmp/universal-protocol/events.sock"
+            )
+        with _mirror_state_lock:
+            circuit_open = now < _circuit_open_until
+        if circuit_open:
+            _record_drop(transport=transport, target=target, circuit=True)
+            return
+        try:
+            _mirror_queue.put_nowait(event)
+        except queue.Full:
+            _record_drop(transport=transport, target=target, circuit=False)
+            return
+        _ensure_mirror_worker()
+    except Exception:  # noqa: BLE001 — mirror must not raise into emit_*
         return
-    _ensure_mirror_worker()
 
 
 def test_flush_mirror_worker(*, timeout: float = 5.0) -> None:
