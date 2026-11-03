@@ -227,7 +227,15 @@ async def cdp_dispatch_enter_guarded(
     expected_agent_id: str,
     nonce_needle: str,
 ) -> dict[str, Any]:
-    """Preflight composer/agent/nonce, in-page focus if idle, then CDP Enter."""
+    """Preflight the composer, then dispatch Enter and record that fact.
+
+    Callers are the operator-paste Enter fallback. After the preflight
+    accepts the agent and nonce, and before keyDown, this records the same
+    dispatch fact as a send click so an unverified delivery is not retried.
+    A preflight refusal returns before any key and does not record the fact.
+    Returns ok with method ``cdp_enter`` when both key events complete, or
+    ok false with a reason when preflight refuses.
+    """
     import websockets
 
     if not str(nonce_needle or "").strip():
@@ -254,6 +262,9 @@ async def cdp_dispatch_enter_guarded(
                 "reason": str(reason or "enter_preflight_failed"),
                 "method": "cdp_enter",
             }
+        from cursor_bridge.dom_composer_paste import _mark_click_dispatched
+
+        _mark_click_dispatched()
         for mid, phase in ((2, "keyDown"), (3, "keyUp")):
             await ws.send(
                 json.dumps(
