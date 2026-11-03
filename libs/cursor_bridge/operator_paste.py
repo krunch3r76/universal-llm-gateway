@@ -12,6 +12,8 @@ from pathlib import Path
 from typing import Any
 from urllib.error import URLError
 
+import websockets
+
 from cursor_bridge.cdp_composer_input import (
     cdp_dispatch_enter_guarded,
     cdp_insert_text,
@@ -452,29 +454,28 @@ async def _guarded_insert_and_submit(
                 submit_methods,
             )
 
+        submitted = False
+        post_submit = surface
+        send_probe_only = False
         try:
             first_send = await _submit_composer_send_button(
                 ws_url, selector=prompt_sel, line=flat_line
             )
             submit_methods.append("send_button")
-        except (TimeoutError, RuntimeError, OSError) as exc:
-            return (
-                _grant_refuse(
-                    "submit_failed",
-                    display=disp,
-                    app=app,
-                    selected=selected,
-                    detail=type(exc).__name__,
-                ),
-                False,
-                surface,
-                submit_methods,
-            )
-
-        submitted = False
-        post_submit = surface
-        if str(first_send.get("reason") or "") == "cdp_eval_timeout":
-            if first_send.get("clicked_unknown"):
+        except (
+            TimeoutError,
+            RuntimeError,
+            OSError,
+            websockets.exceptions.ConnectionClosed,
+        ):
+            submit_methods.append("send_button")
+            send_probe_only = True
+            first_send = {
+                "ok": False,
+                "reason": "cdp_eval_timeout",
+                "clicked_unknown": True,
+            }
+            try:
                 post_submit = await probe_surface(ws_url)
                 submitted = _submit_verified(
                     post_submit,
@@ -482,39 +483,57 @@ async def _guarded_insert_and_submit(
                     body_snippet=body_snippet,
                     run_nonce=run_nonce,
                 )
-                if not submitted:
+            except (
+                TimeoutError,
+                RuntimeError,
+                OSError,
+                websockets.exceptions.ConnectionClosed,
+            ):
+                submitted = False
+
+        if not send_probe_only:
+            if str(first_send.get("reason") or "") == "cdp_eval_timeout":
+                if first_send.get("clicked_unknown"):
+                    post_submit = await probe_surface(ws_url)
+                    submitted = _submit_verified(
+                        post_submit,
+                        watermark=wm_line,
+                        body_snippet=body_snippet,
+                        run_nonce=run_nonce,
+                    )
+                    if not submitted:
+                        await clear_our_composer_draft(
+                            ws_url,
+                            selector=prompt_sel,
+                            watermark=WATERMARK,
+                            line=flat_line,
+                        )
+                else:
                     await clear_our_composer_draft(
                         ws_url,
                         selector=prompt_sel,
                         watermark=WATERMARK,
                         line=flat_line,
                     )
-            else:
-                await clear_our_composer_draft(
+                    return (
+                        _grant_refuse(
+                            "submit_failed",
+                            display=disp,
+                            app=app,
+                            selected=selected,
+                            detail="cdp_eval_timeout",
+                        ),
+                        False,
+                        surface,
+                        submit_methods,
+                    )
+            elif first_send.get("ok"):
+                post_submit, submitted = await _poll_submit_verified(
                     ws_url,
-                    selector=prompt_sel,
-                    watermark=WATERMARK,
-                    line=flat_line,
+                    watermark=wm_line,
+                    body_snippet=body_snippet,
+                    run_nonce=run_nonce,
                 )
-                return (
-                    _grant_refuse(
-                        "submit_failed",
-                        display=disp,
-                        app=app,
-                        selected=selected,
-                        detail="cdp_eval_timeout",
-                    ),
-                    False,
-                    surface,
-                    submit_methods,
-                )
-        elif first_send.get("ok"):
-            post_submit, submitted = await _poll_submit_verified(
-                ws_url,
-                watermark=wm_line,
-                body_snippet=body_snippet,
-                run_nonce=run_nonce,
-            )
 
         if not submitted:
             retry_surface = await probe_surface(ws_url)
@@ -600,6 +619,15 @@ async def _guarded_insert_and_submit(
                 verify_surface,
                 submit_methods,
             )
+
+        if not submitted:
+            await clear_our_composer_draft(
+                ws_url,
+                selector=prompt_sel,
+                watermark=WATERMARK,
+                line=flat_line,
+            )
+            post_submit = await probe_surface(ws_url)
 
     return (None, submitted, post_submit, submit_methods)
 
@@ -1192,6 +1220,7 @@ async def _deliver_operator_session_body(
             "locate_method": locate_method,
             "message": line,
             "submit_methods": submit_methods,
+            "retryable": False,
             **artifacts,
         }
 

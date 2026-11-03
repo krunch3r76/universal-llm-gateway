@@ -15,6 +15,7 @@ from cursor_bridge.dom_composer_paste import (
     INSTALL_OPERATOR_ACTIVITY_PROBE_JS,
     OPERATOR_PROBE_VERSION,
     _click_send_own_draft_body,
+    _composer_send_permit_expression,
     _set_composer_body,
     composer_draft_sha256_hex,
     operator_busy_probe_js,
@@ -212,13 +213,25 @@ def test_send_own_draft_clears_sig(probe_page: Page) -> None:
     _eval_js(probe_page, INSTALL_OPERATOR_ACTIVITY_PROBE_JS)
     line = "send me"
     _eval_js(probe_page, _set_composer_body(_GROK_SELECTOR, line))
-    send_js = _click_send_own_draft_body(_GROK_SELECTOR)
+    nonce = "playwright-send-own-draft"
+    budget_ms = 7000
+    _eval_js(probe_page, _composer_send_permit_expression(nonce, budget_ms))
+    send_js = _click_send_own_draft_body(_GROK_SELECTOR, abort_nonce=nonce)
     first = _eval_js(probe_page, send_js)
     assert first.get("ok") is True
     sig = probe_page.evaluate("() => window.__ulgOperatorActivity.ourDraftSig")
     assert sig == ""
     second = _eval_js(probe_page, send_js)
     assert second.get("reason") == "draft_not_ours"
+
+    _eval_js(probe_page, _set_composer_body(_GROK_SELECTOR, line))
+    no_permit_nonce = "playwright-send-no-permit"
+    no_permit_js = _click_send_own_draft_body(
+        _GROK_SELECTOR, abort_nonce=no_permit_nonce
+    )
+    blocked = _eval_js(probe_page, no_permit_js)
+    assert blocked.get("ok") is not True
+    assert blocked.get("reason") == "cdp_eval_timeout"
 
 
 def _holder_entry(
