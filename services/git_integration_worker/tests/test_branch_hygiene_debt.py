@@ -166,10 +166,10 @@ def test_lane_b_preamble_states_the_branch_contract() -> None:
     )
     assert "LANE-B BRANCH CONTRACT" in preamble
     assert "cursor-sdk/lane-7229" in preamble
-    assert "land_disposition: landed" in preamble
-    assert "land_disposition: discard" in preamble
-    assert "land_disposition: unlanded" in preamble
+    assert "land_disposition:" not in preamble
+    assert "landed:" not in preamble
     assert "land: silent" in preamble
+    assert "ancestry probe" in preamble
 
 
 def test_lane_a_gets_no_branch_contract() -> None:

@@ -188,6 +188,28 @@ def _assemble_closeout_delivery(
         land_text=land_text,
         closeout_text=text,
     )
+    # Receipt prose is not the settlement input. Project land claims onto the
+    # sidecar after the ancestry probe, and leave ``text`` for discharge so a
+    # published line cannot change the branch outcome.
+    if lane_b_lane == "B":
+        from services.git_integration_worker.relay.closeout_plane_probe import (
+            project_receipt_land_claims,
+            rewrite_receipt_preamble_file,
+        )
+
+        rewrite_receipt_preamble_file(
+            sidecar_path,
+            repo=receipt_tree,
+            sha=capture_head_sha,
+            branch=lane_b_branch,
+        )
+        if archived_closeout_body is not None:
+            archived_closeout_body = project_receipt_land_claims(
+                archived_closeout_body,
+                repo=receipt_tree,
+                sha=capture_head_sha,
+                branch=lane_b_branch,
+            )
     from services.git_integration_worker.cursor_sdk_mode import sdk_mode_for_dispatch
 
     resolved_sdk_mode = sdk_mode_for_dispatch(dispatch_id)
