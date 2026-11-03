@@ -10,9 +10,11 @@ from bus_watch.endpoint_wake_transport import classify_orion
 from web_chat_relay.orion_wake import (
     PINNED_CONVERSATION_ID,
     PINNED_CONVERSATION_URL,
+    _attach_misses,
     _dom_deliver,
     _guarded_close_orion_tab,
     _open_orion_binding_tab,
+    _tab_row_matches_conversation_id,
     build_wake_pointer,
     conversation_id_from_url,
     deliver_orion_chat_wake,
@@ -2169,10 +2171,20 @@ async def test_wake_paste_failed_includes_dom_census(
     assert out["census"] == census
 
 
+def _clear_binding_tab_attach_misses() -> None:
+    _attach_misses.clear()
+
+
+@asynccontextmanager
+async def _noop_cdp_open_bind_lock(_key: str):
+    yield
+
+
 @pytest.mark.asyncio
 async def test_open_binding_tab_no_second_create_when_cdp_row_exists_poll_missing(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    _clear_binding_tab_attach_misses()
     stored = (
         "https://chatgpt.com/g/g-p-test-orion/c/"
         "6ae44d27-06cc-83e8-8b8a-df9b819755bd"
@@ -2229,4 +2241,197 @@ async def test_open_binding_tab_no_second_create_when_cdp_row_exists_poll_missin
     second = await _open_orion_binding_tab(ctx, stored_endpoint=stored)
     assert second["reason"] == "conversation_missing"
     assert second.get("target_id") == "tab-partial"
+    assert second.get("retryable") is True
     assert create_calls["n"] == 1
+
+
+@pytest.mark.asyncio
+async def test_tab_row_matches_conversation_id_requires_chatgpt_host() -> None:
+    cid = "6ae44d27-06cc-83e8-8b8a-df9b819755bd"
+    assert (
+        _tab_row_matches_conversation_id(
+            {"url": f"https://example.com/c/{cid}"},
+            cid,
+        )
+        is False
+    )
+    assert (
+        _tab_row_matches_conversation_id(
+            {"url": f"https://chatgpt.com/c/{cid}"},
+            cid,
+        )
+        is True
+    )
+
+
+@pytest.mark.asyncio
+async def test_open_binding_tab_relist_poll_miss_increments_attach_misses(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _clear_binding_tab_attach_misses()
+    cid = "6ae44d27-06cc-83e8-8b8a-df9b819755bd"
+    stored = f"https://chatgpt.com/g/g-p-test-orion/c/{cid}"
+    row = {
+        "id": "tab-relist",
+        "url": stored.split("?", 1)[0],
+        "web_socket_debugger_url": "ws://fake/tab-relist",
+    }
+    create_calls = {"n": 0}
+
+    class _Ctx:
+        pages: list = []
+
+    class _Port:
+        def __init__(self) -> None:
+            self._list_calls = 0
+
+        def list_tabs(self, *, cdp_url: str) -> dict:
+            self._list_calls += 1
+            if self._list_calls == 1:
+                return {"pages": [], "reachable": True, "error": None}
+            return {"pages": [row], "reachable": True, "error": None}
+
+        def create_background_tab(
+            self, *, cdp_url: str, url: str, **kwargs: object
+        ) -> dict:
+            create_calls["n"] += 1
+            return {"ok": True, "target_id": "tab-new", "url": url}
+
+    port = _Port()
+
+    async def _poll(_ctx: object, conversation_id: str, **kwargs: object) -> None:
+        return None
+
+    monkeypatch.setattr("web_tab.cdp_actuation.default_actuation_port", lambda: port)
+    monkeypatch.setattr("web_tab.tab_binding_store.save_binding", lambda *a, **k: None)
+    monkeypatch.setattr(
+        "web_chat_relay.orion_wake._poll_playwright_page_for_conversation", _poll
+    )
+    monkeypatch.setattr(
+        "web_tab.target_lock.cdp_open_bind_lock", _noop_cdp_open_bind_lock
+    )
+
+    ctx = _Ctx()
+    first = await _open_orion_binding_tab(ctx, stored_endpoint=stored)
+    assert first["reason"] == "conversation_missing"
+    assert first.get("retryable") is True
+    assert create_calls["n"] == 0
+
+    second = await _open_orion_binding_tab(ctx, stored_endpoint=stored)
+    assert second["reason"] == "conversation_missing"
+    assert second.get("retryable") is True
+    assert create_calls["n"] == 0
+
+    third = await _open_orion_binding_tab(ctx, stored_endpoint=stored)
+    assert third["ok"] is False
+    assert third["reason"] == "conversation_tab_unattachable"
+    assert third.get("retryable") is False
+    assert create_calls["n"] == 0
+
+
+@pytest.mark.asyncio
+async def test_open_binding_tab_attach_miss_counter_clears_on_poll_hit(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _clear_binding_tab_attach_misses()
+    cid = "6ae44d27-06cc-83e8-8b8a-df9b819755bd"
+    stored = f"https://chatgpt.com/g/g-p-test-orion/c/{cid}"
+    row = {
+        "id": "tab-cycle",
+        "url": stored.split("?", 1)[0],
+        "web_socket_debugger_url": "ws://fake/tab-cycle",
+    }
+    poll_hits = {"n": 0}
+
+    class _Ctx:
+        pages: list = []
+
+    class _Port:
+        def list_tabs(self, *, cdp_url: str) -> dict:
+            return {"pages": [row], "reachable": True, "error": None}
+
+    async def _poll(_ctx: object, conversation_id: str, **kwargs: object) -> object:
+        poll_hits["n"] += 1
+        if poll_hits["n"] == 4:
+            return type("Page", (), {"url": stored, "target_id": "tab-cycle"})()
+        return None
+
+    monkeypatch.setattr(
+        "web_tab.cdp_actuation.default_actuation_port", lambda: _Port()
+    )
+    monkeypatch.setattr(
+        "web_chat_relay.orion_wake._poll_playwright_page_for_conversation", _poll
+    )
+
+    ctx = _Ctx()
+    for i in range(3):
+        out = await _open_orion_binding_tab(ctx, stored_endpoint=stored)
+        if i < 2:
+            assert out["reason"] == "conversation_missing"
+            assert out.get("retryable") is True
+        else:
+            assert out["reason"] == "conversation_tab_unattachable"
+
+    attach = await _open_orion_binding_tab(ctx, stored_endpoint=stored)
+    assert attach["ok"] is True
+
+    for i in range(2):
+        out = await _open_orion_binding_tab(ctx, stored_endpoint=stored)
+        assert out["reason"] == "conversation_missing"
+        assert out.get("retryable") is True
+
+    final = await _open_orion_binding_tab(ctx, stored_endpoint=stored)
+    assert final["reason"] == "conversation_tab_unattachable"
+    assert final.get("retryable") is False
+
+
+@pytest.mark.asyncio
+async def test_open_binding_tab_non_chatgpt_cdp_row_triggers_create_not_unattachable(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _clear_binding_tab_attach_misses()
+    cid = "6ae44d27-06cc-83e8-8b8a-df9b819755bd"
+    stored = f"https://chatgpt.com/g/g-p-test-orion/c/{cid}"
+    foreign_row = {
+        "id": "tab-foreign",
+        "url": f"https://example.com/c/{cid}",
+        "web_socket_debugger_url": "ws://fake/tab-foreign",
+    }
+    create_calls = {"n": 0}
+
+    class _Ctx:
+        pages: list = []
+
+    class _Port:
+        def list_tabs(self, *, cdp_url: str) -> dict:
+            return {"pages": [foreign_row], "reachable": True, "error": None}
+
+        def create_background_tab(
+            self, *, cdp_url: str, url: str, **kwargs: object
+        ) -> dict:
+            create_calls["n"] += 1
+            return {
+                "ok": True,
+                "target_id": "tab-created",
+                "url": url,
+                "web_socket_debugger_url": "ws://fake/tab-created",
+            }
+
+    async def _poll(_ctx: object, conversation_id: str, **kwargs: object) -> None:
+        return None
+
+    monkeypatch.setattr("web_tab.cdp_actuation.default_actuation_port", lambda: _Port())
+    monkeypatch.setattr("web_tab.tab_binding_store.save_binding", lambda *a, **k: None)
+    monkeypatch.setattr(
+        "web_chat_relay.orion_wake._poll_playwright_page_for_conversation", _poll
+    )
+    monkeypatch.setattr(
+        "web_tab.target_lock.cdp_open_bind_lock", _noop_cdp_open_bind_lock
+    )
+
+    ctx = _Ctx()
+    out = await _open_orion_binding_tab(ctx, stored_endpoint=stored)
+    assert out["reason"] == "conversation_missing"
+    assert out.get("retryable") is True
+    assert create_calls["n"] == 1
+    assert out["reason"] != "conversation_tab_unattachable"
