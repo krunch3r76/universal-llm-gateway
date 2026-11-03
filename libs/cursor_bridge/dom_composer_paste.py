@@ -1,15 +1,29 @@
-"""DOM-only composer insert and send (no focus steal, no Input.* CDP paths)."""
+"""DOM-only composer insert and send for the cursor bridge (no focus steal, no Input.*).
+
+Callers are the insert and send wrappers in this package. A send poll that outlives
+the CDP wait must not click: the page stops on its own deadline, and a per-call
+abort nonce blocks a late evaluate without affecting the next send.
+"""
 
 from __future__ import annotations
 
 import asyncio
+import contextvars
 import hashlib
 import json
 import logging
 import re
+import uuid
 from typing import Any
 
 logger = logging.getLogger(__name__)
+
+# Per-call nonce for the in-flight send poll. A context var keeps ``_cdp_eval``'s
+# signature stable for existing test shims that do not accept new kwargs.
+_send_abort_nonce: contextvars.ContextVar[str] = contextvars.ContextVar(
+    "composer_send_abort_nonce",
+    default="",
+)
 
 _EXPECT_DRAFT_SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 
@@ -119,10 +133,11 @@ _SEND_BTN_SELECTORS = (
 SEND_BTN_WAIT_CEILING_MS = 3000
 SEND_BTN_POLL_INTERVAL_MS = 150
 SEND_BTN_CENSUS_BUTTONS_CAP = 20
+SEND_BTN_CENSUS_ATTR_CAP = 200
 # Runtime.evaluate must outlive async send-button polling in the page.
-SEND_BTN_CDP_EVAL_TIMEOUT_S = max(
-    8.0, SEND_BTN_WAIT_CEILING_MS / 1000.0 + 2.0
-)
+SEND_BTN_CDP_EVAL_TIMEOUT_S = max(8.0, SEND_BTN_WAIT_CEILING_MS / 1000.0 + 2.0)
+# Page poll returns before that wait so a late tick cannot click after Python gave up.
+SEND_BTN_PAGE_TIMEOUT_MARGIN_MS = 1000
 
 
 def composer_selector(*, app: str, agent_id: str = "") -> str:
@@ -251,13 +266,20 @@ def clear_composer_draft_dom_no_focus_js(selector: str) -> str:
     )
 
 
-async def clear_composer_draft_dom_no_focus(ws_url: str, *, selector: str) -> dict[str, Any]:
+async def clear_composer_draft_dom_no_focus(
+    ws_url: str, *, selector: str
+) -> dict[str, Any]:
     raw = await _cdp_eval(ws_url, clear_composer_draft_dom_no_focus_js(selector))
     return raw if isinstance(raw, dict) else {"ok": False}
 
 
 def _click_send_body(
-    selector: str, line: str, *, preserve_newlines: bool = False
+    selector: str,
+    line: str,
+    *,
+    preserve_newlines: bool = False,
+    abort_nonce: str = "",
+    eval_timeout_s: float | None = None,
 ) -> str:
     """Build async page JS that polls for an enabled send control after insert.
 
@@ -266,7 +288,11 @@ def _click_send_body(
     results do not wait. After the first scan miss, each retry awaits ``setTimeout``
     for ``SEND_BTN_POLL_INTERVAL_MS`` up to ``SEND_BTN_WAIT_CEILING_MS``. Final
     ``no_send_button`` includes a ``census`` object (``buttons`` capped at 20,
-    ``buttons_total`` uncapped).
+    each ``aria_label``, ``data_testid``, and ``type`` sliced to
+    ``SEND_BTN_CENSUS_ATTR_CAP``, ``buttons_total`` uncapped). The poll returns
+    ``cdp_eval_timeout`` without clicking when ``performance.now()`` passes
+    ``eval_timeout_s`` minus ``SEND_BTN_PAGE_TIMEOUT_MARGIN_MS``, or when
+    ``abort_nonce`` is set on ``composerSendAbortNonces`` (that nonce only).
     """
     find = _find_composer_js(selector)
     lj = json.dumps(_dom_paste_text(line, preserve_newlines=preserve_newlines))
@@ -274,10 +300,24 @@ def _click_send_body(
     wait_ceiling = int(SEND_BTN_WAIT_CEILING_MS)
     poll_interval = int(SEND_BTN_POLL_INTERVAL_MS)
     btn_cap = int(SEND_BTN_CENSUS_BUTTONS_CAP)
+    attr_cap = int(SEND_BTN_CENSUS_ATTR_CAP)
+    timeout_s = (
+        float(SEND_BTN_CDP_EVAL_TIMEOUT_S)
+        if eval_timeout_s is None
+        else float(eval_timeout_s)
+    )
+    page_budget_ms = max(
+        0, int(timeout_s * 1000) - int(SEND_BTN_PAGE_TIMEOUT_MARGIN_MS)
+    )
+    nonce_js = json.dumps(str(abort_nonce))
     return (
         f"(async ()=>{{const el=({find});"
         "if(!el)return{ok:false,reason:'no_composer',send_clicked:false};"
         "const g=window.__ulgOperatorActivity=window.__ulgOperatorActivity||{};"
+        f"const abortNonce={nonce_js};"
+        f"const pageDeadline=performance.now()+{page_budget_ms};"
+        "const sendGivenUp=()=>performance.now()>=pageDeadline||(!!abortNonce&&!!("
+        "g.composerSendAbortNonces&&g.composerSendAbortNonces[abortNonce]));"
         f"const text=(el.innerText||el.value||'').trim(),line={lj};"
         "if(!text||(text!==line.trim()&&!/^BRIDGE_WAKE\\s+thread=\\S+\\s+turn=\\d+(?:,\\d+)*$/.test(text)))"
         "return{ok:false,reason:'composer_text_mismatch',send_clicked:false};"
@@ -297,10 +337,12 @@ def _click_send_body(
         "buttonsTotal+=1;"
         f"if(buttons.length>={btn_cap})return;"
         "const rect=node.getBoundingClientRect();"
+        "const capAttr=(name)=>{const v=node.getAttribute(name);"
+        f"return v==null?null:String(v).slice(0,{attr_cap});}};"
         "buttons.push({"
-        "aria_label:node.getAttribute('aria-label'),"
-        "data_testid:node.getAttribute('data-testid'),"
-        "type:node.getAttribute('type'),"
+        "aria_label:capAttr('aria-label'),"
+        "data_testid:capAttr('data-testid'),"
+        "type:capAttr('type'),"
         "disabled:!!(node.disabled||node.hasAttribute('disabled')),"
         "non_zero_rect:rect.width>0&&rect.height>0,"
         "});"
@@ -320,10 +362,11 @@ def _click_send_body(
         "const t0=Date.now();"
         "const deadline=t0+waitCeilingMs;"
         "let btn=findSendBtn();"
-        "while(!btn&&Date.now()<deadline){"
+        "while(!btn&&Date.now()<deadline&&!sendGivenUp()){"
         "await new Promise((r)=>setTimeout(r,pollIntervalMs));"
         "btn=findSendBtn();"
         "}"
+        "if(sendGivenUp())return{ok:false,reason:'cdp_eval_timeout',send_clicked:false};"
         "if(!btn){"
         "return{ok:false,reason:'no_send_button',send_clicked:false,"
         "census:buildCensus(Date.now()-t0)};"
@@ -357,9 +400,56 @@ def operator_activity_clear_suppress_js() -> str:
     )
 
 
+def _composer_send_abort_expression(nonce: str) -> str:
+    """Page JS that records one send-poll nonce as aborted.
+
+    Other nonces already on ``composerSendAbortNonces`` stay, so a later send is
+    not refused and an older poll still matches its own nonce.
+    """
+    nonce_js = json.dumps(str(nonce))
+    return (
+        "(()=>{const g=window.__ulgOperatorActivity=window.__ulgOperatorActivity||{};"
+        "const m=g.composerSendAbortNonces=g.composerSendAbortNonces||{};"
+        f"m[{nonce_js}]=true;return{{ok:true}};}})()"
+    )
+
+
+async def _mark_composer_send_abort(ws: Any, nonce: str) -> None:
+    if not nonce:
+        return
+    try:
+        await ws.send(
+            json.dumps(
+                {
+                    "id": 2,
+                    "method": "Runtime.evaluate",
+                    "params": {
+                        "expression": _composer_send_abort_expression(nonce),
+                        "awaitPromise": False,
+                        "returnByValue": True,
+                    },
+                }
+            )
+        )
+        await asyncio.wait_for(_cdp_response(ws, 2), 1.0)
+    except Exception:
+        return
+
+
 async def _cdp_eval(
-    ws_url: str, expression: str, *, await_promise: bool = False, timeout_s: float = 8.0
+    ws_url: str,
+    expression: str,
+    *,
+    await_promise: bool = False,
+    timeout_s: float = 8.0,
 ) -> Any:
+    """Evaluate ``expression`` in the page.
+
+    On timeout or cancellation, if ``_send_abort_nonce`` is set, mark that nonce
+    on the page before the socket closes. Does not call
+    ``Runtime.terminateExecution`` (that stops the target's next script, which
+    may be the app). Other exceptions propagate with no mark.
+    """
     import websockets
 
     async with websockets.connect(ws_url, max_size=2_000_000) as ws:
@@ -376,7 +466,18 @@ async def _cdp_eval(
                 }
             )
         )
-        raw = await asyncio.wait_for(_cdp_response(ws, 1), timeout_s)
+        try:
+            raw = await asyncio.wait_for(_cdp_response(ws, 1), timeout_s)
+        except (TimeoutError, asyncio.CancelledError) as exc:
+            if isinstance(exc, asyncio.CancelledError):
+                task = asyncio.current_task()
+                if task is not None:
+                    while task.uncancel():
+                        pass
+            nonce = _send_abort_nonce.get()
+            if nonce:
+                await _mark_composer_send_abort(ws, nonce)
+            raise
     if raw.get("error"):
         raise RuntimeError(raw["error"])
     return ((raw.get("result") or {}).get("result") or {}).get("value")
@@ -422,9 +523,7 @@ async def wait_for_operator_idle(
     while loop.time() <= deadline:
         probe = await read_operator_busy(ws_url, selector=selector, watermark=watermark)
         active = bool(probe.get("operator_active"))
-        foreign = probe_foreign_draft(
-            probe, expect_draft_sha256=expect_draft_sha256
-        )
+        foreign = probe_foreign_draft(probe, expect_draft_sha256=expect_draft_sha256)
         if active and refuse_if_active:
             return {"ok": False, "reason": "operator_busy", "idle": False}
         if foreign and refuse_if_foreign_draft:
@@ -464,18 +563,33 @@ async def dom_set_composer_text(
 async def dom_click_send(
     ws_url: str, *, selector: str, line: str, preserve_newlines: bool = False
 ) -> dict[str, Any]:
-    """Click the send control when composer text matches ``line`` (DOM-only path).
+    """Click send when composer text matches ``line``, or return without clicking.
 
-    Evaluates async poll JS via CDP with ``awaitPromise=True`` and
-    ``SEND_BTN_CDP_EVAL_TIMEOUT_S`` so page ``setTimeout`` retries can run.
-    ``no_send_button`` failures may include ``census`` (logged at WARNING).
+    The page poll returns ``reason=cdp_eval_timeout`` and ``send_clicked`` false
+    ``SEND_BTN_PAGE_TIMEOUT_MARGIN_MS`` before the CDP wait. The same dict is
+    returned when that wait times out or this task is cancelled, after this
+    call's abort nonce is marked so a late poll cannot click. A later call uses
+    a new nonce. ``no_send_button`` may include ``census`` (logged at WARNING).
     """
-    value = await _cdp_eval(
-        ws_url,
-        _click_send_body(selector, line, preserve_newlines=preserve_newlines),
-        await_promise=True,
-        timeout_s=SEND_BTN_CDP_EVAL_TIMEOUT_S,
-    )
+    nonce = uuid.uuid4().hex
+    token = _send_abort_nonce.set(nonce)
+    try:
+        value = await _cdp_eval(
+            ws_url,
+            _click_send_body(
+                selector,
+                line,
+                preserve_newlines=preserve_newlines,
+                abort_nonce=nonce,
+                eval_timeout_s=SEND_BTN_CDP_EVAL_TIMEOUT_S,
+            ),
+            await_promise=True,
+            timeout_s=SEND_BTN_CDP_EVAL_TIMEOUT_S,
+        )
+    except (TimeoutError, asyncio.CancelledError):
+        return {"ok": False, "reason": "cdp_eval_timeout", "send_clicked": False}
+    finally:
+        _send_abort_nonce.reset(token)
     if not isinstance(value, dict):
         return {"ok": False, "send_clicked": False}
     if value.get("reason") == "no_send_button" and value.get("census") is not None:
