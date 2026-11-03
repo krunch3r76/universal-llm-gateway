@@ -261,6 +261,10 @@ async def _submit_composer_send_button(
     reason = send.get("reason")
     if reason is not None:
         out["reason"] = reason
+    if send.get("clicked_unknown"):
+        out["clicked_unknown"] = True
+    if "retryable" in send:
+        out["retryable"] = send["retryable"]
     return out
 
 
@@ -467,30 +471,50 @@ async def _guarded_insert_and_submit(
                 submit_methods,
             )
 
-        if str(first_send.get("reason") or "") == "cdp_eval_timeout":
-            return (
-                _grant_refuse(
-                    "submit_failed",
-                    display=disp,
-                    app=app,
-                    selected=selected,
-                    detail="cdp_eval_timeout",
-                ),
-                False,
-                surface,
-                submit_methods,
-            )
-
         submitted = False
-        if first_send.get("ok"):
+        post_submit = surface
+        if str(first_send.get("reason") or "") == "cdp_eval_timeout":
+            if first_send.get("clicked_unknown"):
+                post_submit = await probe_surface(ws_url)
+                submitted = _submit_verified(
+                    post_submit,
+                    watermark=wm_line,
+                    body_snippet=body_snippet,
+                    run_nonce=run_nonce,
+                )
+                if not submitted:
+                    await clear_our_composer_draft(
+                        ws_url,
+                        selector=prompt_sel,
+                        watermark=WATERMARK,
+                        line=flat_line,
+                    )
+            else:
+                await clear_our_composer_draft(
+                    ws_url,
+                    selector=prompt_sel,
+                    watermark=WATERMARK,
+                    line=flat_line,
+                )
+                return (
+                    _grant_refuse(
+                        "submit_failed",
+                        display=disp,
+                        app=app,
+                        selected=selected,
+                        detail="cdp_eval_timeout",
+                    ),
+                    False,
+                    surface,
+                    submit_methods,
+                )
+        elif first_send.get("ok"):
             post_submit, submitted = await _poll_submit_verified(
                 ws_url,
                 watermark=wm_line,
                 body_snippet=body_snippet,
                 run_nonce=run_nonce,
             )
-        else:
-            post_submit = surface
 
         if not submitted:
             retry_surface = await probe_surface(ws_url)
@@ -528,26 +552,31 @@ async def _guarded_insert_and_submit(
                         surface,
                         submit_methods,
                     )
-                try:
-                    enter = await _submit_composer_enter(
-                        ws_url,
-                        selector=prompt_sel,
-                        expected_agent_id=aid_s,
-                        nonce_needle=run_nonce,
-                    )
-                    if enter.get("ok"):
-                        submit_methods.append("cdp_enter")
-                        post_submit, submitted = await _poll_submit_verified(
+                ambiguous_timeout = (
+                    str(first_send.get("reason") or "") == "cdp_eval_timeout"
+                    and bool(first_send.get("clicked_unknown"))
+                )
+                if not first_send.get("ok") and not ambiguous_timeout:
+                    try:
+                        enter = await _submit_composer_enter(
                             ws_url,
-                            watermark=wm_line,
-                            body_snippet=body_snippet,
-                            run_nonce=run_nonce,
+                            selector=prompt_sel,
+                            expected_agent_id=aid_s,
+                            nonce_needle=run_nonce,
                         )
-                    else:
-                        reason = str(enter.get("reason") or "enter_refused")
-                        submit_methods.append(f"cdp_enter_refused:{reason}")
-                except (TimeoutError, RuntimeError, OSError):
-                    submitted = False
+                        if enter.get("ok"):
+                            submit_methods.append("cdp_enter")
+                            post_submit, submitted = await _poll_submit_verified(
+                                ws_url,
+                                watermark=wm_line,
+                                body_snippet=body_snippet,
+                                run_nonce=run_nonce,
+                            )
+                        else:
+                            reason = str(enter.get("reason") or "enter_refused")
+                            submit_methods.append(f"cdp_enter_refused:{reason}")
+                    except (TimeoutError, RuntimeError, OSError):
+                        submitted = False
 
         matched, verify_surface = await _probe_agent_match(
             ws_url, expected_agent_id=aid_s

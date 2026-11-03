@@ -212,32 +212,47 @@ def _set_composer_body(
     )
 
 
-def _click_send_own_draft_body(selector: str, *, draft_writer: str = "") -> str:
+def _click_send_own_draft_body(
+    selector: str, *, draft_writer: str = "", abort_nonce: str = ""
+) -> str:
     """Send only when composer draft matches this writer's ourDraftSig."""
     find = _find_composer_js(selector)
     btn_sels = json.dumps(list(_SEND_BTN_SELECTORS))
     expect_writer = json.dumps(str(draft_writer or ""))
+    nonce_js = json.dumps(str(abort_nonce))
     return (
         f"(()=>{{const el=({find});"
         "if(!el)return{ok:false,reason:'no_composer',send_clicked:false};"
         "const g=window.__ulgOperatorActivity=window.__ulgOperatorActivity||{};"
+        f"const abortNonce={nonce_js};"
+        "const cleanup=()=>{if(!abortNonce)return;"
+        "const pm=g.composerSendPermits;if(pm)delete pm[abortNonce];"
+        "const am=g.composerSendAbortNonces;if(am)delete am[abortNonce];};"
+        "const sendGivenUp=()=>{"
+        "const p=g.composerSendPermits&&g.composerSendPermits[abortNonce];"
+        "if(typeof p!=='number')return true;"
+        "if(performance.now()>=p)return true;"
+        "return !!(abortNonce&&g.composerSendAbortNonces&&g.composerSendAbortNonces[abortNonce]);"
+        "};"
         f"const expectWriter={expect_writer};"
         "const writer=String(g.ourDraftWriter||'').trim();"
         "const sig=String(g.ourDraftSig||'').trim();"
         "const draft=(el.innerText||el.value||'').trim();"
         "if(expectWriter&&( !writer||writer!==expectWriter))"
-        "return{ok:false,reason:'foreign_draft',send_clicked:false,draft,sig,writer};"
+        "{cleanup();return{ok:false,reason:'foreign_draft',send_clicked:false,draft,sig,writer};}"
         "if(!sig||draft!==sig)"
-        "return{ok:false,reason:'draft_not_ours',send_clicked:false,draft,sig};"
+        "{cleanup();return{ok:false,reason:'draft_not_ours',send_clicked:false,draft,sig};}"
+        "if(sendGivenUp())"
+        "{cleanup();return{ok:false,reason:'cdp_eval_timeout',send_clicked:false};}"
         f"const root=el.closest('form')||el.parentElement||document;"
         f"const btnSels={btn_sels};"
         "let btn=null;"
         "for(const sel of btnSels){btn=root.querySelector(sel);if(btn)break;}"
-        "if(!btn)return{ok:false,reason:'no_send_button',send_clicked:false};"
+        "if(!btn){cleanup();return{ok:false,reason:'no_send_button',send_clicked:false};}"
         "btn.click();"
         "g.ourDraftSig='';"
         "g.ourDraftWriter='';"
-        "return{ok:true,send_clicked:true};})()"
+        "cleanup();return{ok:true,send_clicked:true};})()"
     )
 
 
@@ -500,14 +515,14 @@ async def _cdp_eval(
         try:
             raw = await asyncio.wait_for(_cdp_response(ws, 1), timeout_s)
         except (TimeoutError, asyncio.CancelledError) as exc:
-            if isinstance(exc, asyncio.CancelledError):
-                task = asyncio.current_task()
-                if task is not None:
-                    while task.uncancel():
-                        pass
             nonce = _send_abort_nonce.get()
             if nonce:
                 await _mark_composer_send_abort(ws, nonce)
+            if isinstance(exc, asyncio.CancelledError):
+                task = asyncio.current_task()
+                if task is not None:
+                    task.cancel()
+                raise
             raise
     if raw.get("error"):
         raise RuntimeError(raw["error"])
@@ -611,7 +626,7 @@ async def dom_click_send(
     token = _send_abort_nonce.set(nonce)
     timeout_s = float(SEND_BTN_CDP_EVAL_TIMEOUT_S)
     page_budget_ms = max(
-        0, int(timeout_s * 1000) - int(SEND_BTN_PAGE_TIMEOUT_MARGIN_MS)
+        1, int(timeout_s * 1000) - int(SEND_BTN_PAGE_TIMEOUT_MARGIN_MS)
     )
     try:
         try:
@@ -636,7 +651,13 @@ async def dom_click_send(
             timeout_s=timeout_s,
         )
     except TimeoutError:
-        return {"ok": False, "reason": "cdp_eval_timeout", "send_clicked": False}
+        return {
+            "ok": False,
+            "reason": "cdp_eval_timeout",
+            "send_clicked": False,
+            "clicked_unknown": True,
+            "retryable": False,
+        }
     finally:
         _send_abort_nonce.reset(token)
     if not isinstance(value, dict):
@@ -652,10 +673,44 @@ async def dom_click_send(
 async def dom_click_send_own_draft(
     ws_url: str, *, selector: str, draft_writer: str = ""
 ) -> dict[str, Any]:
-    """Click send when composer text equals ourDraftSig (submit-without-text path)."""
-    value = await _cdp_eval(
-        ws_url, _click_send_own_draft_body(selector, draft_writer=draft_writer)
+    """Click send when composer text equals ourDraftSig (submit-without-text path).
+
+    Stamps the same page-clock send permit and abort nonce as ``dom_click_send``
+    before evaluating the click script so cancel and permit expiry block the click.
+    """
+    nonce = uuid.uuid4().hex
+    token = _send_abort_nonce.set(nonce)
+    timeout_s = float(SEND_BTN_CDP_EVAL_TIMEOUT_S)
+    page_budget_ms = max(
+        1, int(timeout_s * 1000) - int(SEND_BTN_PAGE_TIMEOUT_MARGIN_MS)
     )
+    try:
+        try:
+            await _cdp_eval(
+                ws_url,
+                _composer_send_permit_expression(nonce, page_budget_ms),
+                await_promise=False,
+                timeout_s=timeout_s,
+            )
+        except TimeoutError:
+            return {"ok": False, "reason": "cdp_eval_timeout", "send_clicked": False}
+        value = await _cdp_eval(
+            ws_url,
+            _click_send_own_draft_body(
+                selector, draft_writer=draft_writer, abort_nonce=nonce
+            ),
+            timeout_s=timeout_s,
+        )
+    except TimeoutError:
+        return {
+            "ok": False,
+            "reason": "cdp_eval_timeout",
+            "send_clicked": False,
+            "clicked_unknown": True,
+            "retryable": False,
+        }
+    finally:
+        _send_abort_nonce.reset(token)
     if not isinstance(value, dict):
         return {"ok": False, "send_clicked": False}
     return value
