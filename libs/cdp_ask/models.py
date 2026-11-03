@@ -431,6 +431,7 @@ class FollowupProjectAskRequest(BaseModel):
     )
     envelope: Literal["free", "stand_down", "page"] = "free"
     predecessor_registration_id: str | None = None
+    superseded_registration_id: str | None = None
     successor_registration_id: str | None = None
     successor_birth_id: str | None = None
     min_receipt: FollowupMinReceipt = Field(
@@ -475,3 +476,11 @@ class FollowupProjectAskResponse(BaseModel):
     target_binding: TargetBinding | None = None
     reattach_skipped_reason: str | None = None
     superseded_count: int | None = None
+    standdown_token_for: str | None = Field(
+        default=None,
+        description=(
+            "Registration id that received the stand-down journal token when "
+            "envelope=stand_down names superseded_registration_id. Null when "
+            "the mint stays on today's resolved target."
+        ),
+    )

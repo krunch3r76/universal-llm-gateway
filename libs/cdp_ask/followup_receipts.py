@@ -95,9 +95,18 @@ def paste_response(
     lane_created: bool,
     reattach_used: bool,
     target_binding: TargetBinding | None,
+    standdown_token_for: str | None = None,
+    superseded_count: int | None = None,
 ) -> FollowupProjectAskResponse:
-    """Build followup response from proven receipt and caller gate."""
-    binding: TargetBinding = target_binding or ("unbound" if lane_created else "explicit")
+    """Build followup response from proven receipt and caller gate.
+
+    ``standdown_token_for`` and ``superseded_count`` name the predecessor
+    that received a stand-down journal token. Both stay null when the mint
+    remains on the resolved paste target.
+    """
+    binding: TargetBinding = target_binding or (
+        "unbound" if lane_created else "explicit"
+    )
     receipt = apply_receipt_caps(
         receipt, lane_created=lane_created, target_binding=binding
     )
@@ -123,5 +132,7 @@ def paste_response(
         streaming_at_paste=streaming,
         error=None if ok else "send_unverified",
         target_binding=binding,
+        standdown_token_for=standdown_token_for,
+        superseded_count=superseded_count,
         **extra,
     )

@@ -91,6 +91,17 @@ def lane_in_flight(registration_id: str) -> bool:
     return bool(lock and lock.locked())
 
 
+def _explicit_superseded_standdown_id(req: FollowupProjectAskRequest) -> str:
+    """Return the superseded registration when this stand-down must mint there.
+
+    Empty unless ``envelope`` is ``stand_down`` and ``superseded_registration_id``
+    is set. Callers then journal that id and skip the resolved paste target.
+    """
+    if (req.envelope or "").strip().lower() != "stand_down":
+        return ""
+    return (req.superseded_registration_id or "").strip()
+
+
 def _stamp_followup_standdown(
     req: FollowupProjectAskRequest,
     *,
@@ -98,25 +109,38 @@ def _stamp_followup_standdown(
     chat_url: str | None,
     prompt: str,
     receipt: str | None,
-) -> None:
+) -> tuple[str | None, int | None]:
     """Write ``standdown_pasted`` when a verified followup is a seat stand-down.
+
+    ``envelope=stand_down`` with ``superseded_registration_id`` appends the
+    token for that id only and returns ``(id, 1)``. Otherwise the resolved
+    target is stamped, plus a distinct ``predecessor_registration_id``, and
+    the return is ``(None, None)`` so today's response shape stays put.
 
     ``fold_attachment_journal`` runs inside ``_append_standdown_token`` and
     takes ``ports_lock`` itself, so this helper must not already hold that lock.
-    A distinct ``predecessor_registration_id`` is stamped as well.
+    A missing chat URL makes the append a no-op; the return stays empty so
+    the response does not name a token that was not written.
     """
     from cdp_ask.cse_session_ack import STAND_DOWN_TYPE_RE
     from cdp_ask.cse_session_paste import _append_standdown_token
 
     envelope = (req.envelope or "").strip().lower()
     if envelope != "stand_down" and not STAND_DOWN_TYPE_RE.search(prompt or ""):
-        return
+        return None, None
+    explicit = _explicit_superseded_standdown_id(req)
+    if explicit:
+        targets = [explicit]
+    else:
+        targets = [registration_id] if (registration_id or "").strip() else []
+        predecessor = (req.predecessor_registration_id or "").strip()
+        if predecessor and predecessor not in targets:
+            targets.append(predecessor)
     payload = {"receipt": receipt} if receipt is not None else None
-    targets = [registration_id]
-    predecessor = (req.predecessor_registration_id or "").strip()
-    if predecessor and predecessor not in targets:
-        targets.append(predecessor)
+    url_ok = bool((chat_url or "").strip())
     for rid in targets:
+        if not rid:
+            continue
         _append_standdown_token(
             registration_id=rid,
             chat_url=chat_url,
@@ -126,6 +150,9 @@ def _stamp_followup_standdown(
             error=None,
             detail=None,
         )
+    if explicit and url_ok:
+        return explicit, 1
+    return None, None
 
 
 def _stamp_followup_in_flight(registration_id: str, resolution_path: str) -> None:
@@ -240,6 +267,7 @@ async def _maybe_reattach(
     )
     if not outcome.ok:
         reattach_probe_detail: str | None = None
+        standdown_token_for: str | None = None
         if outcome.error == "reattach_no_host_available":
             from claude_bundles import cdp_lane
             from claude_bundles import cdp_registry_store as registry_store
@@ -249,6 +277,8 @@ async def _maybe_reattach(
             lookup_id = (req.registration_id or "").strip() or (
                 req.predecessor_registration_id or ""
             ).strip()
+            explicit_superseded = _explicit_superseded_standdown_id(req)
+            mint_id = explicit_superseded or lookup_id
             row = registry_store.load_active().get(lookup_id) if lookup_id else None
             port = row.get("port") if isinstance(row, dict) else None
             if isinstance(port, int):
@@ -259,10 +289,10 @@ async def _maybe_reattach(
                 if (
                     (req.envelope or "").strip().lower() == "stand_down"
                     and not listening
-                    and lookup_id
+                    and mint_id
                 ):
                     _append_standdown_token(
-                        registration_id=lookup_id,
+                        registration_id=mint_id,
                         chat_url=chat_url,
                         envelope="stand_down",
                         pasted=False,
@@ -270,18 +300,22 @@ async def _maybe_reattach(
                         error="target_unreachable",
                         detail=None,
                     )
+                    if explicit_superseded and (chat_url or "").strip():
+                        standdown_token_for = explicit_superseded
             else:
                 reattach_probe_detail = "cdp_lane.is_listening not_run"
+        explicit_superseded = _explicit_superseded_standdown_id(req)
+        dormant_id = explicit_superseded or (outcome.registration_id or "").strip()
         if (
             outcome.error
             in ("dormant_relaunch_failed", "dormant_relaunch_deferred_x_headroom")
             and (req.envelope or "").strip().lower() == "stand_down"
-            and (outcome.registration_id or "").strip()
+            and dormant_id
         ):
             from cdp_ask.cse_session_paste import _append_standdown_token
 
             _append_standdown_token(
-                registration_id=outcome.registration_id or "",
+                registration_id=dormant_id,
                 chat_url=chat_url,
                 envelope="stand_down",
                 pasted=False,
@@ -289,6 +323,8 @@ async def _maybe_reattach(
                 error="dormant_relaunch_failed",
                 detail=None,
             )
+            if explicit_superseded and (chat_url or "").strip():
+                standdown_token_for = explicit_superseded
         skipped = skipped_reason_for_miss(
             reason=reason, chat_url=chat_url, outcome_error=outcome.error
         )
@@ -297,6 +333,8 @@ async def _maybe_reattach(
             detail=reattach_probe_detail,
             url=chat_url,
             reattach_skipped_reason=skipped,
+            standdown_token_for=standdown_token_for,
+            superseded_count=1 if standdown_token_for else None,
         )
     return outcome, None
 
@@ -562,6 +600,8 @@ async def execute_followup(
             receipt, lane_created=lane_created, target_binding=binding
         )
         send_verified = capped is not None
+        token_for: str | None = None
+        superseded_count: int | None = None
 
         emit_followup_event(
             cdp_ask_followup_paste_verified(
@@ -589,7 +629,7 @@ async def execute_followup(
                     purpose=req.purpose,
                 )
             )
-            _stamp_followup_standdown(
+            token_for, superseded_count = _stamp_followup_standdown(
                 req,
                 registration_id=target.registration_id,
                 chat_url=url or target.chat_url,
@@ -607,6 +647,8 @@ async def execute_followup(
             lane_created=lane_created,
             reattach_used=reattach_used,
             target_binding=binding,
+            standdown_token_for=token_for,
+            superseded_count=superseded_count,
         )
 
         if (

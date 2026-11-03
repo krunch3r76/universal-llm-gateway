@@ -185,6 +185,28 @@ def test_followup_identity_omitted_relays_to_satellite(
     assert result["error"] == "no_attended_cse"
 
 
+def test_followup_forwards_superseded_registration_id(
+    cse_session_module, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Stand-down followup relays the predecessor id the token must be minted for."""
+    import tools.cse_session_warm as warm
+
+    relay = MagicMock(return_value={"ok": True, "send_verified": True})
+    monkeypatch.setattr(warm, "_relay", relay)
+    tool_fn = _tool_fn(cse_session_module)
+    tool_fn(
+        op="followup",
+        chat_url="https://claude.ai/cowork/cse_pred",
+        prompt_text="TYPE: SEAT_STAND_DOWN",
+        envelope="stand_down",
+        superseded_registration_id="reg-pred",
+    )
+    body = relay.call_args.kwargs["json_body"]
+    assert body["envelope"] == "stand_down"
+    assert body["superseded_registration_id"] == "reg-pred"
+    assert body["chat_url"] == "https://claude.ai/cowork/cse_pred"
+
+
 def test_followup_forwards_cdp_url(
     cse_session_module, monkeypatch: pytest.MonkeyPatch
 ) -> None:

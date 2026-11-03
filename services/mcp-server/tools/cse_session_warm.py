@@ -192,10 +192,16 @@ def relay_followup(
     parent_thread: str | None = None,
     envelope: str = "free",
     predecessor_registration_id: str | None = None,
+    superseded_registration_id: str | None = None,
     successor_registration_id: str | None = None,
     successor_birth_id: str | None = None,
 ) -> dict[str, Any]:
-    """POST warm paste to ``/v1/project-ask/followups``."""
+    """POST warm paste to ``/v1/project-ask/followups``.
+
+    Forwards ``superseded_registration_id`` on the satellite body so a
+    stand-down token can be journaled for that predecessor instead of the
+    registration the chat URL resolved to.
+    """
     if not any(
         [
             (prompt_text or "").strip(),
@@ -222,6 +228,7 @@ def relay_followup(
             "parent_thread": parent_thread,
             "envelope": envelope,
             "predecessor_registration_id": predecessor_registration_id,
+            "superseded_registration_id": superseded_registration_id,
             "successor_registration_id": successor_registration_id,
             "successor_birth_id": successor_birth_id,
         }.items()
