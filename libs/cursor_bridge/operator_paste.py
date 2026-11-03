@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Any
 from urllib.error import URLError
 
-import websockets
+from websockets.exceptions import ConnectionClosed
 
 from cursor_bridge.cdp_composer_input import (
     cdp_dispatch_enter_guarded,
@@ -327,6 +327,66 @@ def _target_changed_refuse(
     }
 
 
+_POST_CLICK_EXC = (
+    TimeoutError,
+    RuntimeError,
+    OSError,
+    ConnectionClosed,
+)
+
+
+def _send_click_may_have_gone_out(first_send: dict[str, Any]) -> bool:
+    """True when this send-button attempt may already have dispatched a click.
+
+    A ``cdp_eval_timeout`` without ``clicked_unknown`` ended before the click,
+    so a later retry cannot double-send. An ok result, ``clicked_unknown``,
+    or any other send-button failure counts as a possible click.
+    """
+    if first_send.get("ok") or first_send.get("clicked_unknown"):
+        return True
+    return str(first_send.get("reason") or "") != "cdp_eval_timeout"
+
+
+def _seal_retryable_after_possible_click(
+    payload: dict[str, Any] | None,
+    *,
+    click_may_have_gone_out: bool,
+) -> dict[str, Any] | None:
+    """Stamp ``retryable`` false once a send-button click may have left.
+
+    Returns ``payload`` unchanged when no click was possible, including the
+    timeout branch that reports the click did not fire. ``None`` stays ``None``
+    so the caller can stamp its own not-submitted returns. The stamp is a copy;
+    the input dict is not mutated.
+    """
+    if payload is None or not click_may_have_gone_out:
+        return payload
+    return {**payload, "retryable": False}
+
+
+async def _clear_our_draft_once(
+    ws_url: str,
+    *,
+    selector: str,
+    line: str,
+    state: dict[str, bool],
+) -> None:
+    """Await the own-draft clear at most once, and never after a verified send.
+
+    ``state['clear_attempted']`` is set before the await, so a raised clear
+    still consumes the one try and the exception handler must not clear again.
+    ``state['send_verified']`` blocks the clear after a probe already showed
+    the send. A draft that matches neither the watermark nor ``line`` is left
+    in place by ``clear_our_composer_draft``.
+    """
+    if state["clear_attempted"] or state["send_verified"]:
+        return
+    state["clear_attempted"] = True
+    await clear_our_composer_draft(
+        ws_url, selector=selector, watermark=WATERMARK, line=line
+    )
+
+
 async def _insert_composer_with_fallback(
     ws_url: str, *, selector: str, line: str
 ) -> dict[str, Any]:
@@ -354,7 +414,9 @@ async def _guarded_insert_and_submit(
     locate_method: str | None,
     surface: dict[str, Any],
     run_nonce: str,
-) -> tuple[dict[str, Any] | None, bool, dict[str, Any], list[str], dict[str, Any] | None]:
+) -> tuple[
+    dict[str, Any] | None, bool, dict[str, Any], list[str], dict[str, Any] | None
+]:
     """Insert + submit under display_switch_lock with agent re-verify."""
     submit_methods: list[str] = []
     post_submit = surface
@@ -462,19 +524,32 @@ async def _guarded_insert_and_submit(
         submitted = False
         post_submit = surface
         send_probe_only = False
+        click_may_have_gone_out = False
+        draft_state = {"clear_attempted": False, "send_verified": False}
+
+        def _seal(payload: dict[str, Any] | None) -> dict[str, Any] | None:
+            return _seal_retryable_after_possible_click(
+                payload, click_may_have_gone_out=click_may_have_gone_out
+            )
+
+        async def _clear_once() -> None:
+            await _clear_our_draft_once(
+                ws_url,
+                selector=prompt_sel,
+                line=flat_line,
+                state=draft_state,
+            )
+
         try:
             first_send = await _submit_composer_send_button(
                 ws_url, selector=prompt_sel, line=flat_line
             )
             submit_methods.append("send_button")
-        except (
-            TimeoutError,
-            RuntimeError,
-            OSError,
-            websockets.exceptions.ConnectionClosed,
-        ):
+            click_may_have_gone_out = _send_click_may_have_gone_out(first_send)
+        except _POST_CLICK_EXC:
             submit_methods.append("send_button")
             send_probe_only = True
+            click_may_have_gone_out = True
             first_send = {
                 "ok": False,
                 "reason": "cdp_eval_timeout",
@@ -488,20 +563,11 @@ async def _guarded_insert_and_submit(
                     body_snippet=body_snippet,
                     run_nonce=run_nonce,
                 )
-            except (
-                TimeoutError,
-                RuntimeError,
-                OSError,
-                websockets.exceptions.ConnectionClosed,
-            ):
+                if submitted:
+                    draft_state["send_verified"] = True
+            except _POST_CLICK_EXC:
                 submitted = False
 
-        _post_click_exc = (
-            TimeoutError,
-            RuntimeError,
-            OSError,
-            websockets.exceptions.ConnectionClosed,
-        )
         post_click_failure: dict[str, Any] | None = None
         try:
             if not send_probe_only:
@@ -514,27 +580,19 @@ async def _guarded_insert_and_submit(
                             body_snippet=body_snippet,
                             run_nonce=run_nonce,
                         )
-                        if not submitted:
-                            await clear_our_composer_draft(
-                                ws_url,
-                                selector=prompt_sel,
-                                watermark=WATERMARK,
-                                line=flat_line,
-                            )
+                        if submitted:
+                            draft_state["send_verified"] = True
                     else:
-                        await clear_our_composer_draft(
-                            ws_url,
-                            selector=prompt_sel,
-                            watermark=WATERMARK,
-                            line=flat_line,
-                        )
+                        await _clear_once()
                         return (
-                            _grant_refuse(
-                                "submit_failed",
-                                display=disp,
-                                app=app,
-                                selected=selected,
-                                detail="cdp_eval_timeout",
+                            _seal(
+                                _grant_refuse(
+                                    "submit_failed",
+                                    display=disp,
+                                    app=app,
+                                    selected=selected,
+                                    detail="cdp_eval_timeout",
+                                )
                             ),
                             False,
                             surface,
@@ -548,6 +606,8 @@ async def _guarded_insert_and_submit(
                         body_snippet=body_snippet,
                         run_nonce=run_nonce,
                     )
+                    if submitted:
+                        draft_state["send_verified"] = True
 
             if not submitted:
                 retry_surface = await probe_surface(ws_url)
@@ -559,37 +619,34 @@ async def _guarded_insert_and_submit(
                 ):
                     post_submit = retry_surface
                     submitted = True
+                    draft_state["send_verified"] = True
                 else:
                     matched, surface = await _probe_agent_match(
                         ws_url, expected_agent_id=aid_s
                     )
                     if not matched:
-                        await clear_our_composer_draft(
-                            ws_url,
-                            selector=prompt_sel,
-                            watermark=WATERMARK,
-                            line=flat_line,
-                        )
+                        await _clear_once()
                         return (
-                            _target_changed_refuse(
-                                disp=disp,
-                                app=app,
-                                aid_s=aid_s,
-                                selected=selected,
-                                locate_method=locate_method,
-                                surface=surface,
-                                line=line,
-                                verdict=verdict,
+                            _seal(
+                                _target_changed_refuse(
+                                    disp=disp,
+                                    app=app,
+                                    aid_s=aid_s,
+                                    selected=selected,
+                                    locate_method=locate_method,
+                                    surface=surface,
+                                    line=line,
+                                    verdict=verdict,
+                                )
                             ),
                             False,
                             surface,
                             submit_methods,
                             None,
                         )
-                    ambiguous_timeout = (
-                        str(first_send.get("reason") or "") == "cdp_eval_timeout"
-                        and bool(first_send.get("clicked_unknown"))
-                    )
+                    ambiguous_timeout = str(
+                        first_send.get("reason") or ""
+                    ) == "cdp_eval_timeout" and bool(first_send.get("clicked_unknown"))
                     if not first_send.get("ok") and not ambiguous_timeout:
                         try:
                             enter = await _submit_composer_enter(
@@ -606,6 +663,8 @@ async def _guarded_insert_and_submit(
                                     body_snippet=body_snippet,
                                     run_nonce=run_nonce,
                                 )
+                                if submitted:
+                                    draft_state["send_verified"] = True
                             else:
                                 reason = str(enter.get("reason") or "enter_refused")
                                 submit_methods.append(f"cdp_enter_refused:{reason}")
@@ -616,19 +675,19 @@ async def _guarded_insert_and_submit(
                 ws_url, expected_agent_id=aid_s
             )
             if not matched:
-                await clear_our_composer_draft(
-                    ws_url, selector=prompt_sel, watermark=WATERMARK, line=flat_line
-                )
+                await _clear_once()
                 return (
-                    _target_changed_refuse(
-                        disp=disp,
-                        app=app,
-                        aid_s=aid_s,
-                        selected=selected,
-                        locate_method=locate_method,
-                        surface=verify_surface,
-                        line=line,
-                        verdict=verdict,
+                    _seal(
+                        _target_changed_refuse(
+                            disp=disp,
+                            app=app,
+                            aid_s=aid_s,
+                            selected=selected,
+                            locate_method=locate_method,
+                            surface=verify_surface,
+                            line=line,
+                            verdict=verdict,
+                        )
                     ),
                     False,
                     verify_surface,
@@ -637,30 +696,20 @@ async def _guarded_insert_and_submit(
                 )
 
             if not submitted:
-                await clear_our_composer_draft(
-                    ws_url,
-                    selector=prompt_sel,
-                    watermark=WATERMARK,
-                    line=flat_line,
-                )
+                await _clear_once()
                 post_submit = await probe_surface(ws_url)
-        except _post_click_exc as exc:
+        except _POST_CLICK_EXC as exc:
             submitted = False
             post_click_failure = {"detail": type(exc).__name__}
-            if not isinstance(exc, websockets.exceptions.ConnectionClosed):
+            if not isinstance(exc, ConnectionClosed):
                 try:
-                    await clear_our_composer_draft(
-                        ws_url,
-                        selector=prompt_sel,
-                        watermark=WATERMARK,
-                        line=flat_line,
-                    )
-                except _post_click_exc as clear_exc:
+                    await _clear_once()
+                except _POST_CLICK_EXC as clear_exc:
                     post_click_failure = {"detail": type(clear_exc).__name__}
                 else:
                     try:
                         post_submit = await probe_surface(ws_url)
-                    except _post_click_exc as probe_exc:
+                    except _POST_CLICK_EXC as probe_exc:
                         post_click_failure = {"detail": type(probe_exc).__name__}
                     else:
                         post_click_failure = None
@@ -1236,18 +1285,13 @@ async def _deliver_operator_session_body(
                 "reason": "submit_unverified",
                 "pasted": True,
                 "delivered": False,
-                "readback_ok": False,
+                "readback_ok": None,
                 "submitted": False,
                 "target_verified": True,
                 "composer_empty_after": None,
                 "detail": post_click_failure["detail"],
                 "assistant_began": False,
-                "watermark_visible": _message_in_transcript(
-                    post_submit,
-                    watermark=wm_line,
-                    body_snippet=body_snippet,
-                    run_nonce=run_nonce,
-                ),
+                "watermark_visible": None,
                 "run_nonce": run_nonce,
                 "selected": selected,
                 "display": disp,

@@ -1114,7 +1114,9 @@ async def test_deliver_operator_paste_submitted_false_after_retry(
         AsyncMock(return_value={"ok": True, "send_fallback_clicked": True}),
     )
     cleared = AsyncMock(return_value={"ok": True})
-    monkeypatch.setattr("cursor_bridge.operator_paste.clear_our_composer_draft", cleared)
+    monkeypatch.setattr(
+        "cursor_bridge.operator_paste.clear_our_composer_draft", cleared
+    )
     monkeypatch.setattr(
         "cursor_bridge.operator_paste._submit_composer_enter",
         AsyncMock(return_value={"ok": True, "method": "cdp_enter"}),
@@ -1144,6 +1146,7 @@ async def test_deliver_operator_paste_submitted_false_after_retry(
     assert out["verify_method"] == "screenshot_fallback"
     assert out["screenshot_path"] == "/tmp/submit-fail.png"
     screenshot.assert_awaited_once()
+    cleared.assert_awaited_once()
 
 
 @pytest.mark.asyncio
@@ -1161,12 +1164,24 @@ async def test_deliver_operator_paste_send_ok_unverified_clears_composer(
         "generating": False,
         "recent_messages": [],
     }
-    stuck = {**surface, "composer_draft": "stuck draft"}
-    cleared = AsyncMock(return_value={"ok": True})
+    phase = {"sent": False, "cleared": False}
+
+    async def _probe(_ws: str) -> dict[str, Any]:
+        draft = "stuck draft" if phase["sent"] and not phase["cleared"] else ""
+        return {**surface, "composer_draft": draft}
+
+    async def _send(_ws: str, **_: Any) -> dict[str, Any]:
+        phase["sent"] = True
+        return {"ok": True, "send_fallback_clicked": True}
+
+    async def _clear(*_a: object, **_k: object) -> dict[str, Any]:
+        phase["cleared"] = True
+        return {"ok": True, "cleared": True}
 
     async def _poll_submit(_ws: str, **_: Any) -> tuple[dict[str, Any], bool]:
-        return stuck, False
+        return {**surface, "composer_draft": "stuck draft"}, False
 
+    cleared = AsyncMock(side_effect=_clear)
     monkeypatch.setattr(
         "cursor_bridge.operator_paste.list_pages",
         lambda _o: [{"title": "Grok Bot", "web_socket_debugger_url": "ws://x"}],
@@ -1175,10 +1190,7 @@ async def test_deliver_operator_paste_send_ok_unverified_clears_composer(
         "cursor_bridge.operator_paste.visible_sidebar_agent_ids",
         AsyncMock(return_value={"agent-1"}),
     )
-    monkeypatch.setattr(
-        "cursor_bridge.operator_paste.probe_surface",
-        AsyncMock(return_value=surface),
-    )
+    monkeypatch.setattr("cursor_bridge.operator_paste.probe_surface", _probe)
     monkeypatch.setattr(
         "cursor_bridge.operator_paste._poll_submit_verified", _poll_submit
     )
@@ -1187,10 +1199,11 @@ async def test_deliver_operator_paste_send_ok_unverified_clears_composer(
         AsyncMock(return_value={"ok": True}),
     )
     monkeypatch.setattr(
-        "cursor_bridge.operator_paste._submit_composer_send_button",
-        AsyncMock(return_value={"ok": True, "send_fallback_clicked": True}),
+        "cursor_bridge.operator_paste._submit_composer_send_button", _send
     )
-    monkeypatch.setattr("cursor_bridge.operator_paste.clear_our_composer_draft", cleared)
+    monkeypatch.setattr(
+        "cursor_bridge.operator_paste.clear_our_composer_draft", cleared
+    )
     monkeypatch.setattr(
         "cursor_bridge.operator_paste._capture_screenshot_artifact",
         AsyncMock(return_value={"sha256_png": None, "screenshot_path": None}),
@@ -1209,7 +1222,8 @@ async def test_deliver_operator_paste_send_ok_unverified_clears_composer(
     assert out["reason"] == "submit_unverified"
     assert out["retryable"] is False
     assert out["composer_empty_after"] is True
-    cleared.assert_awaited()
+    assert phase["cleared"] is True
+    cleared.assert_awaited_once()
 
 
 @pytest.mark.asyncio
@@ -1345,7 +1359,9 @@ async def test_ambiguous_timeout_probes_and_skips_enter(
     stuck = {**surface, "composer_draft": "stuck relay text"}
     enter = AsyncMock(return_value={"ok": True, "method": "cdp_enter"})
     cleared = AsyncMock(return_value={"ok": True})
-    monkeypatch.setattr("cursor_bridge.operator_paste.clear_our_composer_draft", cleared)
+    monkeypatch.setattr(
+        "cursor_bridge.operator_paste.clear_our_composer_draft", cleared
+    )
 
     async def _probe(_ws: str) -> dict[str, Any]:
         _probe.calls += 1
@@ -1396,7 +1412,7 @@ async def test_ambiguous_timeout_probes_and_skips_enter(
     assert out["reason"] == "submit_unverified"
     enter.assert_not_awaited()
     assert probe.await_count >= 1
-    assert cleared.await_count >= 1
+    cleared.assert_awaited_once()
 
 
 @pytest.mark.asyncio
@@ -1477,8 +1493,8 @@ async def test_send_button_error_then_connection_closed_probe_unobserved(
         "generating": False,
         "recent_messages": [],
     }
-    send = AsyncMock(side_effect=RuntimeError("socket dropped"))
     enter = AsyncMock(return_value={"ok": True, "method": "cdp_enter"})
+    cleared = AsyncMock(return_value={"ok": True, "cleared": False})
     send_awaited = False
     conn_closed = websockets.exceptions.ConnectionClosed(None, None)
 
@@ -1494,7 +1510,7 @@ async def test_send_button_error_then_connection_closed_probe_unobserved(
         raise RuntimeError("socket dropped")
 
     probe = AsyncMock(side_effect=probe_side_effect)
-    send.side_effect = send_side_effect
+    send = AsyncMock(side_effect=send_side_effect)
     monkeypatch.setattr(
         "cursor_bridge.operator_paste.list_pages",
         lambda _o: [{"title": "Grok Bot", "web_socket_debugger_url": "ws://x"}],
@@ -1508,7 +1524,12 @@ async def test_send_button_error_then_connection_closed_probe_unobserved(
         "cursor_bridge.operator_paste._insert_composer_text",
         AsyncMock(return_value={"ok": True}),
     )
-    monkeypatch.setattr("cursor_bridge.operator_paste._submit_composer_send_button", send)
+    monkeypatch.setattr(
+        "cursor_bridge.operator_paste._submit_composer_send_button", send
+    )
+    monkeypatch.setattr(
+        "cursor_bridge.operator_paste.clear_our_composer_draft", cleared
+    )
     monkeypatch.setattr("cursor_bridge.operator_paste._submit_composer_enter", enter)
     monkeypatch.setattr(
         "cursor_bridge.operator_paste._poll_submit_verified",
@@ -1532,7 +1553,10 @@ async def test_send_button_error_then_connection_closed_probe_unobserved(
     send.assert_awaited_once()
     enter.assert_not_awaited()
     assert out["composer_empty_after"] is None
+    assert out["readback_ok"] is None
+    assert out["watermark_visible"] is None
     assert out["detail"] == "ConnectionClosed"
+    assert cleared.await_count == 0
 
 
 @pytest.mark.asyncio
@@ -1664,7 +1688,9 @@ async def test_cdp_eval_timeout_clears_our_draft(
             }
         ),
     )
-    monkeypatch.setattr("cursor_bridge.operator_paste.clear_our_composer_draft", cleared)
+    monkeypatch.setattr(
+        "cursor_bridge.operator_paste.clear_our_composer_draft", cleared
+    )
     await deliver_operator_paste(
         display="10",
         app="grok",
@@ -1674,7 +1700,7 @@ async def test_cdp_eval_timeout_clears_our_draft(
         authorization_source="agent-bus:21614#2",
         scope="test",
     )
-    assert cleared.await_count >= 1
+    cleared.assert_awaited_once()
 
 
 @pytest.mark.asyncio
@@ -1732,6 +1758,178 @@ async def test_cdp_eval_timeout_skips_enter_fallback(
     assert out["ok"] is False
     assert out["reason"] == "submit_failed"
     enter.assert_not_awaited()
+
+
+def _post_click_fault_exc(name: str) -> BaseException:
+    if name == "timeout":
+        return TimeoutError("post-click fault")
+    if name == "runtime":
+        return RuntimeError("post-click fault")
+    if name == "os":
+        return OSError("post-click fault")
+    import websockets.exceptions
+
+    return websockets.exceptions.ConnectionClosed(None, None)
+
+
+def _parse_post_click_fault(fault: str) -> tuple[str, str | None]:
+    if fault.startswith("verified_match_"):
+        return "verified_match", fault.removeprefix("verified_match_")
+    head, sep, tail = fault.partition("_")
+    if sep and head in {"probe", "match", "clear", "poll", "enter"}:
+        return head, tail
+    return fault, None
+
+
+def _post_click_fault_ids() -> list[str]:
+    faults = [
+        "ambiguous_unverified",
+        "ambiguous_agent_flip",
+        "ok_agent_flip",
+        "verified_agent_flip",
+    ]
+    for site in ("probe", "match", "clear", "poll", "enter"):
+        for exc_name in ("timeout", "runtime", "os", "closed"):
+            faults.append(f"{site}_{exc_name}")
+    for exc_name in ("timeout", "runtime", "os", "closed"):
+        faults.append(f"verified_match_{exc_name}")
+    return faults
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("fault", _post_click_fault_ids())
+async def test_post_click_exit_is_not_retried_and_clears_at_most_once(
+    monkeypatch: pytest.MonkeyPatch, fault: str
+) -> None:
+    """After a possible send click, retryable is false and the own-draft clear runs at most once.
+
+    A verified send is not cleared. A probe that died reports readback and watermark as unknown.
+    """
+    kind, exc_name = _parse_post_click_fault(fault)
+    surface = {
+        "state": "chat_list",
+        "active_title": "Test Grok",
+        "active_agent_id": "agent-1",
+        "titles": ["Test Grok"],
+        "title_counts": {"Test Grok": 1},
+        "agent_ids": {"agent-1": "Test Grok"},
+        "composer_draft": "",
+        "generating": False,
+        "recent_messages": [],
+    }
+    phase = {"sent": False}
+
+    async def _probe(_ws: str) -> dict[str, Any]:
+        if not phase["sent"]:
+            return dict(surface)
+        if kind == "probe":
+            assert exc_name is not None
+            raise _post_click_fault_exc(exc_name)
+        if "agent_flip" in fault:
+            return {**surface, "active_agent_id": "other"}
+        return dict(surface)
+
+    async def _send(_ws: str, **_: Any) -> dict[str, Any]:
+        phase["sent"] = True
+        if kind in {"ambiguous_unverified", "ambiguous_agent_flip", "probe", "clear"}:
+            return {
+                "ok": False,
+                "reason": "cdp_eval_timeout",
+                "clicked_unknown": True,
+                "retryable": False,
+            }
+        if kind == "enter":
+            return {"ok": False, "reason": "send_button_error"}
+        return {"ok": True, "send_fallback_clicked": True}
+
+    async def _poll(_ws: str, **_: Any) -> tuple[dict[str, Any], bool]:
+        if kind == "poll":
+            assert exc_name is not None
+            raise _post_click_fault_exc(exc_name)
+        if kind in {"verified_match", "verified_agent_flip"}:
+            return dict(surface), True
+        return dict(surface), False
+
+    match_calls = {"n": 0}
+
+    async def _match(
+        _ws: str, *, expected_agent_id: str
+    ) -> tuple[bool, dict[str, Any]]:
+        match_calls["n"] += 1
+        if kind in {"match", "verified_match"} and match_calls["n"] >= 3:
+            assert exc_name is not None
+            raise _post_click_fault_exc(exc_name)
+        seen = await _probe(_ws)
+        return str(seen.get("active_agent_id") or "") == expected_agent_id, seen
+
+    cleared = AsyncMock(return_value={"ok": True, "cleared": True})
+    if kind == "clear":
+        assert exc_name is not None
+        cleared.side_effect = _post_click_fault_exc(exc_name)
+    enter = AsyncMock(return_value={"ok": True, "method": "cdp_enter"})
+    if kind == "enter":
+        assert exc_name is not None
+        enter.side_effect = _post_click_fault_exc(exc_name)
+
+    monkeypatch.setattr(
+        "cursor_bridge.operator_paste.list_pages",
+        lambda _o: [{"title": "Grok Bot", "web_socket_debugger_url": "ws://x"}],
+    )
+    monkeypatch.setattr(
+        "cursor_bridge.operator_paste.visible_sidebar_agent_ids",
+        AsyncMock(return_value={"agent-1"}),
+    )
+    monkeypatch.setattr("cursor_bridge.operator_paste.probe_surface", _probe)
+    monkeypatch.setattr(
+        "cursor_bridge.operator_paste._insert_composer_text",
+        AsyncMock(return_value={"ok": True}),
+    )
+    monkeypatch.setattr(
+        "cursor_bridge.operator_paste._submit_composer_send_button", _send
+    )
+    monkeypatch.setattr("cursor_bridge.operator_paste._poll_submit_verified", _poll)
+    monkeypatch.setattr(
+        "cursor_bridge.operator_paste.clear_our_composer_draft", cleared
+    )
+    monkeypatch.setattr("cursor_bridge.operator_paste._submit_composer_enter", enter)
+    if kind in {"match", "verified_match"}:
+        monkeypatch.setattr("cursor_bridge.operator_paste._probe_agent_match", _match)
+    monkeypatch.setattr(
+        "cursor_bridge.operator_paste._capture_screenshot_artifact",
+        AsyncMock(return_value={"sha256_png": None, "screenshot_path": None}),
+    )
+
+    out = await deliver_operator_paste(
+        display="10",
+        app="grok",
+        agent_id="agent-1",
+        text="Operator relay test",
+        grant="operator",
+        authorization_source="agent-bus:21614#2",
+        scope="test",
+    )
+
+    assert out.get("retryable") is False
+    if "agent_flip" in fault:
+        assert out["reason"] == "target_changed"
+    else:
+        assert out["reason"] == "submit_unverified"
+    if kind == "enter":
+        enter.assert_awaited_once()
+    else:
+        enter.assert_not_awaited()
+    if fault.startswith("verified_"):
+        assert cleared.await_count == 0
+    else:
+        assert cleared.await_count <= 1
+    if out.get("detail") in {
+        "TimeoutError",
+        "RuntimeError",
+        "OSError",
+        "ConnectionClosed",
+    }:
+        assert out["readback_ok"] is None
+        assert out["watermark_visible"] is None
 
 
 def test_operator_paste_imports_in_fresh_subprocess() -> None:
