@@ -40,6 +40,19 @@ def test_classify_conversation_failed_token() -> None:
     assert classify_stall_stage("conversation failed") == "observer_unverified"
 
 
+def test_compose_surface_stall_not_unverifiable_on_cowork_cse_url() -> None:
+    err = "code_surface_not_on_code_page"
+    assert converse_stall_stage(err, conv_ok=False) == "compose_surface"
+    assert (
+        is_unverifiable_stall(
+            "compose_surface",
+            err,
+            url="https://claude.ai/cowork/cse_X",
+        )
+        is False
+    )
+
+
 def test_select_no_attest_record_is_not_observer_unverified() -> None:
     record = select_no_attest_status(
         requested="fable-5.1",

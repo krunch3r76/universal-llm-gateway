@@ -25,6 +25,7 @@ StallStage = Literal[
     "post_terminal_poll",
     "observer_unverified",
     "select_no_attest",
+    "compose_surface",
     "unknown",
 ]
 
@@ -53,6 +54,8 @@ def classify_stall_stage(error: str | None) -> StallStage:
         return "observer_unverified"
     if "select_no_attest" in low:
         return "select_no_attest"
+    if "code_surface_not_on_code_page" in low:
+        return "compose_surface"
     return "unknown"
 
 

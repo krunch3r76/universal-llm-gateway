@@ -31,6 +31,7 @@ DEATH_STALL_STAGES = frozenset(
         "worker_cancelled",
         "mark_terminal",
         "completion_detection",
+        "compose_surface",
         "no_progress",
         "wall_clock_exceeded",
     }
