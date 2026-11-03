@@ -480,13 +480,14 @@ async def test_project_uuid_code_surface_inline_attest_via_on_page(
         patch.object(page, "wait_for_timeout", new=AsyncMock()),
     )
 
+    seals_mock = AsyncMock(return_value=["reasoning-posture"])
     with ExitStack() as stack:
         for item in patches:
             stack.enter_context(item)
         stack.enter_context(
             patch(
                 "claude_bundles.cowork_skill_delivery.await_committed_skill_seals",
-                new=AsyncMock(return_value=["reasoning-posture"]),
+                new=seals_mock,
             )
         )
         result = await project_ask_on_page(
@@ -497,6 +498,9 @@ async def test_project_uuid_code_surface_inline_attest_via_on_page(
             delete_after=False,
         )
 
+    seals_mock.assert_awaited_once()
+    seal_specs = seals_mock.await_args.args[1]
+    assert any("reasoning-posture" in str(spec) for spec in seal_specs)
     assert result.ok is True
     assert submit_calls
     draft = submit_calls[-1]
@@ -507,6 +511,59 @@ async def test_project_uuid_code_surface_inline_attest_via_on_page(
     assert last["ok"] is True
     assert last["claude_surface"] == "code"
     assert last["induction"] == []
+
+
+@pytest.mark.asyncio
+async def test_project_uuid_on_page_passes_compose_receipt_to_send_prompt() -> None:
+    """project_uuid branch threads model_info as compose_receipt into send_prompt."""
+    page = AsyncMock()
+    model_info = {"ok": True, "current_model": "Opus 5"}
+    send_prompt = AsyncMock()
+    state = {
+        "body": "reply " + ("y" * 120),
+        "url": page.url,
+        "model_label": "Model: Opus 5",
+    }
+    harvest = HarvestBody(content=state["body"], provenance="chat")
+
+    with (
+        patch(
+            "claude_bundles.project_ask._compose_model_selected",
+            new=AsyncMock(return_value=model_info),
+        ),
+        patch(
+            "claude_bundles.project_ask.harvest_assistant",
+            new=AsyncMock(return_value={"count": 0}),
+        ),
+        patch("claude_bundles.project_ask.send_prompt", new=send_prompt),
+        patch(
+            "claude_bundles.project_ask.wait_assistant_reply",
+            new=AsyncMock(return_value=state),
+        ),
+        patch(
+            "claude_bundles.project_ask.resolve_harvest_body",
+            new=AsyncMock(return_value=harvest),
+        ),
+        patch(
+            "claude_bundles.project_ask._attest_model",
+            return_value="Model: Opus 5",
+        ),
+    ):
+        from claude_bundles.project_ask import project_ask_on_page
+
+        result = await project_ask_on_page(
+            page,
+            _MARKED_REASONING,
+            project_uuid="proj-uuid",
+            claude_surface="code",
+            delete_after=False,
+        )
+
+    assert result.ok is True
+    send_prompt.assert_awaited_once()
+    kwargs = send_prompt.call_args.kwargs
+    assert kwargs.get("claude_surface") == "code"
+    assert kwargs.get("compose_receipt") is model_info
 
 
 @pytest.mark.asyncio

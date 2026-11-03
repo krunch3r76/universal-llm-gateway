@@ -1012,6 +1012,8 @@ async def run_execution(
             else (resolve_archive_path(req.archive_path) if req.archive_path else None)
         )
 
+        surface = (req.claude_surface or "cowork").strip().lower()
+
         async def _ask_once(model: str):
             return await run_project_ask(
                 prompt,
@@ -1030,6 +1032,7 @@ async def run_execution(
                 harvest_source=req.harvest_source,
                 download_output=req.download_output,
                 purpose=req.purpose or "ask",
+                claude_surface=surface if surface == "code" else None,
                 **(
                     {"target_id": reg.target_id}
                     if getattr(reg, "target_id", None)

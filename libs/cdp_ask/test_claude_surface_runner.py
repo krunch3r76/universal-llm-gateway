@@ -90,3 +90,61 @@ async def test_run_execution_passes_code_compose_to_conversation() -> None:
     assert kwargs["ensure_cowork_auto"] is False
     assert kwargs["claude_surface"] == "code"
     assert result["url"] == "https://claude.ai/code/session_testid"
+
+
+@pytest.mark.asyncio
+async def test_run_execution_non_converse_project_uuid_passes_code_surface() -> None:
+    """converse=False + project_uuid threads claude_surface into run_project_ask."""
+    req = SubmitProjectAskRequest(
+        prompt_text="probe",
+        converse=False,
+        project_uuid="proj-uuid-1",
+        claude_surface="code",
+        model="opus-5",
+        delete_after=False,
+    )
+    reg = MagicMock()
+    reg.registration_id = "reg-ask-once"
+    reg.cdp_url = "http://127.0.0.1:9226"
+    reg.target_id = None
+
+    ok_result = MagicMock(
+        ok=True,
+        body="ok",
+        url="https://claude.ai/project/proj-uuid-1",
+        project_uuid="proj-uuid-1",
+        project_url="https://claude.ai/project/proj-uuid-1",
+        model={},
+        body_len=2,
+        delete_after=False,
+        error=None,
+        archive_uri=None,
+        attested_model=None,
+        harvest_provenance=None,
+    )
+
+    run_ask = AsyncMock(return_value=ok_result)
+
+    async def _overlay(*, run_once, **_kw):
+        return await run_once(req.model), {}
+
+    with (
+        patch("cdp_ask.runner.resolve_prompt", return_value=["probe"]),
+        patch("cdp_ask.runner.bind_execution_lane", return_value=reg),
+        patch(
+            "cdp_ask.runner.run_with_overlay_retry", new=AsyncMock(side_effect=_overlay)
+        ),
+        patch("cdp_ask.runner.run_project_ask", new=run_ask),
+        patch("cdp_ask.runner.deregister_on_exit"),
+        patch("cdp_ask.runner.registration_has_wake_debt", return_value=False),
+        patch("cdp_ask.runner.cdp_registry.bind_session_address"),
+        patch("cdp_ask.runner._wake_debt_extras", return_value={}),
+    ):
+        await run_execution(
+            req,
+            execution_id="exec-ask-once",
+            abort_check=AsyncMock(return_value=False),
+        )
+
+    run_ask.assert_awaited_once()
+    assert run_ask.await_args.kwargs.get("claude_surface") == "code"

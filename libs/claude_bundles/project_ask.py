@@ -1252,6 +1252,7 @@ async def project_ask_on_page(
             project_uuid=project_uuid,
             stargate_execution_id=stargate_execution_id,
             satellite_execution_id=str(execution_id or ""),
+            claude_surface=claude_surface,
         )
         if not model_info.get("ok"):
             return ProjectAskResult(
@@ -1277,6 +1278,7 @@ async def project_ask_on_page(
             await_induction_reply=True,
             on_harvest=on_harvest,
             claude_surface=claude_surface,
+            compose_receipt=model_info,
         )
         state = await wait_assistant_reply(
             page,
