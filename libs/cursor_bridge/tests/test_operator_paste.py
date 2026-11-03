@@ -1250,6 +1250,75 @@ def test_dom_verification_conclusive_requires_agent_id_and_readback() -> None:
 
 
 @pytest.mark.asyncio
+async def test_ambiguous_timeout_probes_and_skips_enter(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    surface = {
+        "state": "chat_list",
+        "active_title": "Test Grok",
+        "active_agent_id": "agent-1",
+        "titles": ["Test Grok"],
+        "title_counts": {"Test Grok": 1},
+        "agent_ids": {"agent-1": "Test Grok"},
+        "composer_draft": "",
+        "generating": False,
+        "recent_messages": [],
+    }
+    stuck = {**surface, "composer_draft": "stuck relay text"}
+    enter = AsyncMock(return_value={"ok": True, "method": "cdp_enter"})
+
+    async def _probe(_ws: str) -> dict[str, Any]:
+        _probe.calls += 1
+        return surface if _probe.calls == 1 else stuck
+
+    _probe.calls = 0
+    probe = AsyncMock(side_effect=_probe)
+    monkeypatch.setattr(
+        "cursor_bridge.operator_paste.list_pages",
+        lambda _o: [{"title": "Grok Bot", "web_socket_debugger_url": "ws://x"}],
+    )
+    monkeypatch.setattr(
+        "cursor_bridge.operator_paste.visible_sidebar_agent_ids",
+        AsyncMock(return_value={"agent-1"}),
+    )
+    monkeypatch.setattr("cursor_bridge.operator_paste.probe_surface", probe)
+    monkeypatch.setattr(
+        "cursor_bridge.operator_paste._insert_composer_text",
+        AsyncMock(return_value={"ok": True}),
+    )
+    monkeypatch.setattr(
+        "cursor_bridge.operator_paste.dom_click_send",
+        AsyncMock(
+            return_value={
+                "ok": False,
+                "reason": "cdp_eval_timeout",
+                "send_clicked": False,
+                "clicked_unknown": True,
+                "retryable": False,
+            }
+        ),
+    )
+    monkeypatch.setattr("cursor_bridge.operator_paste._submit_composer_enter", enter)
+    monkeypatch.setattr(
+        "cursor_bridge.operator_paste._capture_screenshot_artifact",
+        AsyncMock(return_value={"sha256_png": None, "screenshot_path": None}),
+    )
+    out = await deliver_operator_paste(
+        display="10",
+        app="grok",
+        agent_id="agent-1",
+        text="Operator relay test",
+        grant="operator",
+        authorization_source="agent-bus:21614#2",
+        scope="test",
+    )
+    assert out["ok"] is False
+    assert out["reason"] == "submit_unverified"
+    enter.assert_not_awaited()
+    assert probe.await_count >= 1
+
+
+@pytest.mark.asyncio
 async def test_cdp_eval_timeout_skips_enter_fallback(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

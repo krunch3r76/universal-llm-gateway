@@ -574,6 +574,49 @@ async def test_stale_bridge_wake_sha_of_other_text_refuses() -> None:
 
 
 @pytest.mark.asyncio
+async def test_execute_submit_cdp_timeout_is_not_retryable() -> None:
+    """Ambiguous click-eval timeout must not invite write-op retries."""
+    port = _grok_port("t-cdp-timeout")
+    send = AsyncMock(
+        return_value={
+            "ok": False,
+            "reason": "cdp_eval_timeout",
+            "send_clicked": False,
+            "clicked_unknown": True,
+            "retryable": False,
+        }
+    )
+    probe = {
+        "ok": True,
+        "probe": {"composer_draft": "hello", "foreign_draft": False},
+    }
+    with (
+        patch(
+            "web_tab.write_ops.wait_operator_idle_before_lock",
+            AsyncMock(return_value={"ok": True}),
+        ),
+        patch(
+            "web_tab.write_ops.operator_recheck_under_lock",
+            AsyncMock(return_value=probe),
+        ),
+        patch("web_tab.write_ops.dom_click_send", send),
+    ):
+        out = await execute_submit(
+            cdp_url="http://127.0.0.1:9222",
+            target_id="t-cdp-timeout",
+            grant="explicit",
+            authorization_source="agent-bus:1#1",
+            expected_text="hello",
+            surface="grok",
+            port=port,
+        )
+    assert out["ok"] is False
+    assert out["reason"] == "cdp_eval_timeout"
+    assert out.get("retryable") is False
+    send.assert_awaited_once()
+
+
+@pytest.mark.asyncio
 async def test_busy_operator_without_draft_stays_retryable() -> None:
     """A failed guard with no composer draft is returned before the hash check."""
     port = _grok_port("t-busy-empty")

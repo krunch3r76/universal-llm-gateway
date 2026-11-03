@@ -500,14 +500,14 @@ async def _cdp_eval(
         try:
             raw = await asyncio.wait_for(_cdp_response(ws, 1), timeout_s)
         except (TimeoutError, asyncio.CancelledError) as exc:
-            if isinstance(exc, asyncio.CancelledError):
-                task = asyncio.current_task()
-                if task is not None:
-                    while task.uncancel():
-                        pass
             nonce = _send_abort_nonce.get()
             if nonce:
                 await _mark_composer_send_abort(ws, nonce)
+            if isinstance(exc, asyncio.CancelledError):
+                task = asyncio.current_task()
+                if task is not None:
+                    task.cancel()
+                raise
             raise
     if raw.get("error"):
         raise RuntimeError(raw["error"])
@@ -636,7 +636,13 @@ async def dom_click_send(
             timeout_s=timeout_s,
         )
     except TimeoutError:
-        return {"ok": False, "reason": "cdp_eval_timeout", "send_clicked": False}
+        return {
+            "ok": False,
+            "reason": "cdp_eval_timeout",
+            "send_clicked": False,
+            "clicked_unknown": True,
+            "retryable": False,
+        }
     finally:
         _send_abort_nonce.reset(token)
     if not isinstance(value, dict):

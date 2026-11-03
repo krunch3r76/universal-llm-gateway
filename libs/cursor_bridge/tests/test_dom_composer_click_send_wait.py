@@ -571,14 +571,105 @@ async def test_dom_click_send_timeout_marks_nonce_and_does_not_click(
     assert all(msg["method"] != "Runtime.terminateExecution" for msg in ws.sent)
 
 
+class _FakePermitThenHangingClickSocket:
+    _next_conn = 0
+
+    def __init__(self) -> None:
+        self.conn_id = _FakePermitThenHangingClickSocket._next_conn
+        _FakePermitThenHangingClickSocket._next_conn += 1
+        self.sent: list[dict[str, Any]] = []
+        self.started = asyncio.Event()
+
+    async def send(self, data: str) -> None:
+        self.sent.append(json.loads(data))
+
+    async def recv(self) -> str:
+        if self.conn_id == 0:
+            return json.dumps({"id": 1, "result": {"result": {"value": {"ok": True}}}})
+        self.started.set()
+        await asyncio.sleep(30)
+        return json.dumps({"id": 1, "result": {"result": {"value": {"ok": True}}}})
+
+    async def __aenter__(self) -> _FakePermitThenHangingClickSocket:
+        return self
+
+    async def __aexit__(self, *_exc: object) -> bool:
+        return False
+
+
+@pytest.mark.asyncio
+async def test_click_eval_timeout_after_dispatch_is_ambiguous(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import cursor_bridge.dom_composer_paste as paste
+
+    eval_calls = 0
+
+    async def fake_eval(
+        _ws_url: str, _expression: str, **_kwargs: object
+    ) -> dict[str, bool]:
+        nonlocal eval_calls
+        eval_calls += 1
+        if eval_calls == 1:
+            return {"ok": True}
+        raise TimeoutError
+
+    monkeypatch.setattr(paste, "_cdp_eval", fake_eval)
+    result = await paste.dom_click_send(
+        "ws://x",
+        selector='[aria-label="Prompt"][contenteditable="true"]',
+        line="hello",
+    )
+    assert result == {
+        "ok": False,
+        "reason": "cdp_eval_timeout",
+        "send_clicked": False,
+        "clicked_unknown": True,
+        "retryable": False,
+    }
+    assert eval_calls == 2
+
+
 @pytest.mark.asyncio
 async def test_dom_click_send_cancel_returns_cdp_eval_timeout(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     import cursor_bridge.dom_composer_paste as paste
 
-    ws = _FakePageSocket()
-    _patch_page_socket(monkeypatch, ws)
+    class _Sock:
+        _next = 0
+
+        def __init__(self) -> None:
+            self.conn_id = _Sock._next
+            _Sock._next += 1
+            self.sent: list[dict[str, Any]] = []
+
+        async def send(self, data: str) -> None:
+            self.sent.append(json.loads(data))
+
+        async def recv(self) -> str:
+            if self.conn_id == 0:
+                return json.dumps(
+                    {"id": 1, "result": {"result": {"value": {"ok": True}}}}
+                )
+            await asyncio.sleep(3600)
+            return json.dumps({"id": 1, "result": {"result": {"value": {}}}})
+
+        async def __aenter__(self) -> _Sock:
+            return self
+
+        async def __aexit__(self, *_exc: object) -> bool:
+            return False
+
+    socks: list[_Sock] = []
+
+    def _connect(*_a: object, **_k: object) -> _Sock:
+        sock = _Sock()
+        socks.append(sock)
+        return sock
+
+    _Sock._next = 0
+    monkeypatch.setattr(websockets, "connect", _connect)
     task = asyncio.create_task(
         paste.dom_click_send(
             "ws://x",
@@ -586,13 +677,25 @@ async def test_dom_click_send_cancel_returns_cdp_eval_timeout(
             line="hello",
         )
     )
-    await asyncio.wait_for(ws.started.wait(), 1)
+    for _ in range(50):
+        if len(socks) >= 2:
+            break
+        await asyncio.sleep(0.01)
+    assert len(socks) >= 2
     task.cancel()
     with pytest.raises(asyncio.CancelledError):
         await task
+    all_sent = [msg for sock in socks for msg in sock.sent]
+    click_evals = [
+        m
+        for m in all_sent
+        if m.get("method") == "Runtime.evaluate"
+        and "findSendBtn" in m.get("params", {}).get("expression", "")
+    ]
+    assert click_evals
     assert any(
         msg.get("id") == 2 and "composerSendAbortNonces" in msg["params"]["expression"]
-        for msg in ws.sent
+        for msg in all_sent
     )
 
 
