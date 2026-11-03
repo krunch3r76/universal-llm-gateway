@@ -311,7 +311,12 @@ def packet_requests_silent_land(packet_text: str | None) -> bool:
     """
     if not packet_text:
         return False
-    return _SILENT_LAND_OPT_IN_RE.search(packet_text) is not None
+    from services.git_integration_worker.cursor_sdk_hub_land_scope import (
+        excise_relayed_regions,
+    )
+
+    scanned = excise_relayed_regions(packet_text)
+    return _SILENT_LAND_OPT_IN_RE.search(scanned) is not None
 
 
 def _silent_land_source(packet_text: str | None, land_text: str | None) -> str | None:

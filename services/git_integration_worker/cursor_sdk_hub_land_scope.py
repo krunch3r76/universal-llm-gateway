@@ -33,6 +33,10 @@ _HUB_LAND_SCOPED_OUT_PATTERNS: tuple[re.Pattern[str], ...] = (
     re.compile(r"out-of-scope[^\n]*\bhub\s+land\b", re.IGNORECASE),
     re.compile(r"¬\s*hub[- ]land", re.IGNORECASE),
 )
+_FENCE_LINE_RE = re.compile(r"^FENCE-(\S+)$")
+_DOCUMENT_SPAN_RE = re.compile(
+    r"<document\b[^>]*>.*?</document>", re.DOTALL | re.IGNORECASE
+)
 
 
 @dataclass(frozen=True)
@@ -547,6 +551,38 @@ def _git_capture(repo: Path, *args: str) -> subprocess.CompletedProcess[str]:
     )
 
 
+def excise_relayed_regions(prose: str) -> str:
+    """Remove relayed FENCE and document spans from commissioner packet prose.
+
+    Returns a copy of ``prose`` with paired ``FENCE-<token>`` blocks and
+    matched ``<document>`` … ``</document>`` regions replaced by a single
+    newline so scope scans see only the author's own lines.
+    """
+    lines = prose.split("\n")
+    out: list[str] = []
+    i = 0
+    while i < len(lines):
+        opener = _FENCE_LINE_RE.match(lines[i])
+        if not opener:
+            out.append(lines[i])
+            i += 1
+            continue
+        token = opener.group(1)
+        j = i + 1
+        while j < len(lines):
+            closer = _FENCE_LINE_RE.match(lines[j])
+            if closer and closer.group(1) == token:
+                out.append("")
+                i = j + 1
+                break
+            j += 1
+        else:
+            out.append(lines[i])
+            i += 1
+    text = "\n".join(out)
+    return _DOCUMENT_SPAN_RE.sub("\n", text)
+
+
 def packet_hub_land_scoped_out(prose: str | None) -> bool:
     """True when the packet explicitly excludes hub land from this dispatch's scope.
 
@@ -556,7 +592,8 @@ def packet_hub_land_scoped_out(prose: str | None) -> bool:
         return False
     if _LAND_ONLY_NOT_SCOPED_OUT_RE.search(prose):
         return False
-    return any(pat.search(prose) for pat in _HUB_LAND_SCOPED_OUT_PATTERNS)
+    scanned = excise_relayed_regions(prose)
+    return any(pat.search(scanned) for pat in _HUB_LAND_SCOPED_OUT_PATTERNS)
 
 
 def resolve_hub_master_ref(*, hub_repo: Path | None = None) -> str:
