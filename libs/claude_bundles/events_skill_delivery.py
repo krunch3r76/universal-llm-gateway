@@ -10,7 +10,9 @@ from __future__ import annotations
 import json
 import logging
 import os
+import queue
 import socket
+import threading
 import time
 from typing import Any
 
@@ -19,7 +21,31 @@ from universal_event_bus.events.event import Event
 from universal_event_bus.events.factory import event_factory
 
 logger = logging.getLogger(__name__)
-_mirror_failure_logged = False
+
+_MIRROR_QUEUE_MAXSIZE = 256
+_CIRCUIT_BREAKER_SECONDS = 30.0
+_WARNING_INTERVAL_SECONDS = 300.0
+
+_mirror_queue: queue.Queue[Any] = queue.Queue(maxsize=_MIRROR_QUEUE_MAXSIZE)
+_mirror_worker_lock = threading.Lock()
+_mirror_worker_started = False
+_circuit_open_until = 0.0
+_mirror_state_lock = threading.Lock()
+# (transport, target) -> monotonic last warning time
+_last_warning_at: dict[tuple[str, str], float] = {}
+# (transport, target) -> (failures, drops) since last warning
+_warning_counts: dict[tuple[str, str], tuple[int, int]] = {}
+_circuit_skip_count = 0
+_queue_drop_count = 0
+
+
+class _MirrorFlush:
+    """Test-only queue sentinel; worker sets ``done`` after draining ahead of it."""
+
+    __slots__ = ("done",)
+
+    def __init__(self) -> None:
+        self.done = threading.Event()
 
 
 @event_factory
@@ -230,9 +256,71 @@ def emit_skill_fetch_decision(
     return event
 
 
-def _mirror_to_event_service(event: Event) -> None:
-    """Best-effort Event Service ingest — TCP when configured, else UDS; never raises."""
-    global _mirror_failure_logged  # noqa: PLW0603 — once-per-process mirror failure log
+def _ensure_mirror_worker() -> None:
+    global _mirror_worker_started  # noqa: PLW0603
+    with _mirror_worker_lock:
+        if _mirror_worker_started:
+            return
+        thread = threading.Thread(
+            target=_mirror_worker_loop,
+            name="cdp-skill-delivery-mirror",
+            daemon=True,
+        )
+        thread.start()
+        _mirror_worker_started = True
+
+
+def _record_drop(*, transport: str, target: str, circuit: bool) -> None:
+    global _circuit_skip_count, _queue_drop_count  # noqa: PLW0603
+    key = (transport, target)
+    with _mirror_state_lock:
+        if circuit:
+            _circuit_skip_count += 1
+        else:
+            _queue_drop_count += 1
+        fails, drops = _warning_counts.get(key, (0, 0))
+        _warning_counts[key] = (fails, drops + 1)
+
+
+def _record_send_failure(transport: str, target: str, exc: Exception) -> None:
+    global _circuit_open_until  # noqa: PLW0603
+    key = (transport, target)
+    now = time.monotonic()
+    should_warn = False
+    with _mirror_state_lock:
+        _circuit_open_until = now + _CIRCUIT_BREAKER_SECONDS
+        fails, drops = _warning_counts.get(key, (0, 0))
+        _warning_counts[key] = (fails + 1, drops)
+        last = _last_warning_at.get(key, 0.0)
+        if now - last >= _WARNING_INTERVAL_SECONDS:
+            should_warn = True
+    if should_warn:
+        _emit_mirror_warning(key, transport, target, exc)
+
+
+def _emit_mirror_warning(
+    key: tuple[str, str],
+    transport: str,
+    target: str,
+    exc: Exception,
+) -> None:
+    with _mirror_state_lock:
+        fails, drops = _warning_counts.get(key, (0, 0))
+        _warning_counts[key] = (0, 0)
+        _last_warning_at[key] = time.monotonic()
+    logger.warning(
+        "cdp-skill-delivery Event Service mirror failed "
+        "(transport=%s target=%s failures=%s drops=%s): %s",
+        transport,
+        target,
+        fails,
+        drops,
+        exc,
+    )
+
+
+def _mirror_send_sync(event: Event) -> None:
+    """TCP when configured, else UDS; raises on connect/send failure."""
     payload: dict[str, Any] = {
         "signal": event.signal,
         "source": "cdp-skill-delivery",
@@ -242,35 +330,103 @@ def _mirror_to_event_service(event: Event) -> None:
         "payload": event.payload,
     }
     line = (json.dumps(payload) + "\n").encode()
+    tcp = _resolve_tcp_target()
+    if tcp is not None:
+        host, port = tcp
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+            sock.settimeout(1.0)
+            sock.connect((host, port))
+            sock.sendall(line)
+        return
+    sock_path = os.environ.get(
+        "EVENTS_INGEST_SOCK", "/tmp/universal-protocol/events.sock"
+    )
+    with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as sock:
+        sock.settimeout(1.0)
+        sock.connect(sock_path)
+        sock.sendall(line)
+
+
+def _mirror_worker_loop() -> None:
+    while True:
+        item = _mirror_queue.get()
+        try:
+            if isinstance(item, _MirrorFlush):
+                item.done.set()
+                continue
+            event = item
+            transport = ""
+            target = ""
+            try:
+                tcp = _resolve_tcp_target()
+                if tcp is not None:
+                    host, port = tcp
+                    transport = "tcp"
+                    target = f"{host}:{port}"
+                else:
+                    transport = "uds"
+                    target = os.environ.get(
+                        "EVENTS_INGEST_SOCK", "/tmp/universal-protocol/events.sock"
+                    )
+                _mirror_send_sync(event)
+            except Exception as exc:  # noqa: BLE001 — worker must not die
+                _record_send_failure(transport, target, exc)
+        except Exception:  # noqa: BLE001 — never escape the worker thread
+            pass
+        finally:
+            _mirror_queue.task_done()
+
+
+def _mirror_to_event_service(event: Event) -> None:
+    """Best-effort Event Service ingest — enqueue only; never blocks on socket I/O."""
+    now = time.monotonic()
     transport = ""
     target = ""
-    try:
-        tcp = _resolve_tcp_target()
-        if tcp is not None:
-            host, port = tcp
-            transport = "tcp"
-            target = f"{host}:{port}"
-            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
-                sock.settimeout(1.0)
-                sock.connect((host, port))
-                sock.sendall(line)
-            return
-        sock_path = os.environ.get(
+    tcp = _resolve_tcp_target()
+    if tcp is not None:
+        host, port = tcp
+        transport = "tcp"
+        target = f"{host}:{port}"
+    else:
+        transport = "uds"
+        target = os.environ.get(
             "EVENTS_INGEST_SOCK", "/tmp/universal-protocol/events.sock"
         )
-        transport = "uds"
-        target = sock_path
-        with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as sock:
-            sock.settimeout(1.0)
-            sock.connect(sock_path)
-            sock.sendall(line)
-    except Exception as exc:
-        if not _mirror_failure_logged:
-            _mirror_failure_logged = True
-            logger.warning(
-                "cdp-skill-delivery Event Service mirror failed "
-                "(transport=%s target=%s): %s",
-                transport,
-                target,
-                exc,
-            )
+    with _mirror_state_lock:
+        circuit_open = now < _circuit_open_until
+    if circuit_open:
+        _record_drop(transport=transport, target=target, circuit=True)
+        return
+    try:
+        _mirror_queue.put_nowait(event)
+    except queue.Full:
+        _record_drop(transport=transport, target=target, circuit=False)
+        return
+    _ensure_mirror_worker()
+
+
+def test_flush_mirror_worker(*, timeout: float = 5.0) -> None:
+    """Test-only: block until queued mirror work through this point is drained."""
+    flush = _MirrorFlush()
+    try:
+        _mirror_queue.put_nowait(flush)
+    except queue.Full:
+        pass
+    _ensure_mirror_worker()
+    flush.done.wait(timeout=timeout)
+
+
+def test_reset_mirror_transport_state() -> None:
+    """Test-only: clear breaker, counters, and warning throttle keys."""
+    global _circuit_open_until, _circuit_skip_count, _queue_drop_count  # noqa: PLW0603
+    with _mirror_state_lock:
+        _circuit_open_until = 0.0
+        _circuit_skip_count = 0
+        _queue_drop_count = 0
+        _last_warning_at.clear()
+        _warning_counts.clear()
+    while True:
+        try:
+            _mirror_queue.get_nowait()
+        except queue.Empty:
+            break
