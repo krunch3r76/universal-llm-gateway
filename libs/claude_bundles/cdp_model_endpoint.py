@@ -67,12 +67,13 @@ MAX_OVERLOAD_SUBMIT_ATTEMPTS = 2
 UPSTREAM_OVERLOADED = "upstream_overloaded"
 WEEKLY_LIMIT = "weekly_limit"
 _is_overload_only_harvest = is_error_banner_only_harvest
+# Apostrophe in "you've": ASCII ' or typographic U+2019 (R2 F3).
 _WEEKLY_LIMIT_RE = re.compile(
-    r"weekly\s+limit|hit\s+your\s+.+\s*limit|you've\s+hit\s+your",
+    r"weekly\s+limit|hit\s+your\s+.+\s*limit|you['\u2019]ve\s+hit\s+your",
     re.IGNORECASE,
 )
 _WEEKLY_LIMIT_STOP_RE = re.compile(
-    r"hit\s+your\s+.+\s*limit|you'?ve\s+hit\s+your|limit\s+reached|reached\s+your\s+.+\s*limit",
+    r"hit\s+your\s+.+\s*limit|you['\u2019]?ve\s+hit\s+your|limit\s+reached|reached\s+your\s+.+\s*limit",
     re.IGNORECASE,
 )
 _WEEKLY_LIMIT_APPROACHING_RE = re.compile(
@@ -92,7 +93,7 @@ _WEEKLY_LIMIT_PERCENT_USED_RE = re.compile(
     re.IGNORECASE,
 )
 _WEEKLY_LIMIT_EXPLICIT_STOP_RE = re.compile(
-    r"you'?ve\s+hit\s+your|limit\s+reached|reached\s+your\s+.+\s*limit",
+    r"you['\u2019]?ve\s+hit\s+your|limit\s+reached|reached\s+your\s+.+\s*limit",
     re.IGNORECASE,
 )
 _WEEKLY_LIMIT_WARNING_MAX_LEN = 200
