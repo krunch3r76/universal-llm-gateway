@@ -94,9 +94,10 @@ class SubmitProjectAskRequest(BaseModel):
     claude_surface: Literal["cowork", "code"] = Field(
         default="cowork",
         description=(
-            "Compose surface for no_project_uuid consult. ``cowork`` keeps "
-            "bare /new + ensure_cowork_auto. ``code`` opens claude.ai/code "
-            "without Cowork toggle setup."
+            "Compose surface. ``cowork`` keeps bare /new + ensure_cowork_auto "
+            "for no_project_uuid consult. ``code`` opens claude.ai/code "
+            "(no Cowork toggle); project_uuid is ignored because claude.ai/code "
+            "has no project."
         ),
     )
     stargate_execution_id: str | None = Field(

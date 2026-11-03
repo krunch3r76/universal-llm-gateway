@@ -1118,6 +1118,13 @@ async def _compose_model_selected(
         await composer.click(force=True)
         await page.wait_for_timeout(800)
     if _is_code_compose_surface(claude_surface=claude_surface, compose_url=compose_url):
+        page_url = page.url or ""
+        if not page_url.startswith("https://claude.ai/code"):
+            return {
+                "ok": False,
+                "error": "code_surface_not_on_code_page",
+                "url": page_url,
+            }
         pick = await _apply_code_surface_model_picker(page, model)
         if not pick.get("ok"):
             return pick

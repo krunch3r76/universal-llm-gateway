@@ -822,20 +822,36 @@ async def run_execution(
         on_poll_harvest=on_poll_harvest,
     )
     retain_host = False
+    surface = (req.claude_surface or "cowork").strip().lower()
+    code_surface_extra: dict[str, Any] = {}
+    effective_converse = req.converse
+    run_no_project = req.no_project_uuid
+    run_project_uuid = req.project_uuid
+    if surface == "code" and (req.project_uuid or "").strip():
+        logger.warning(
+            "claude_surface=code ignores project_uuid satellite_execution_id=%s project_uuid=%s",
+            execution_id,
+            req.project_uuid,
+        )
+        code_surface_extra = {"project_uuid_ignored_for_code_surface": True}
+        run_project_uuid = ""
+        run_no_project = True
+        if not req.converse:
+            # Non-converse has no no-project /code compose route; use converse path.
+            effective_converse = True
     try:
-        if req.converse:
+        if effective_converse:
             delete_after = (
                 bool(req.delete_after) if req.delete_after is not None else False
             )
             stargate_execution_id = resolve_stargate_execution_id(req)
 
             compose_url, ensure_cowork = _compose_args_for_surface(req)
-            surface = (req.claude_surface or "cowork").strip().lower()
 
             async def _converse_once(model: str):
                 return await run_project_conversation(
                     prompts,
-                    project_uuid="" if req.no_project_uuid else req.project_uuid,
+                    project_uuid="" if run_no_project else run_project_uuid,
                     compose_url=compose_url,
                     model=model,
                     delete_after=delete_after,
@@ -997,11 +1013,12 @@ async def run_execution(
                 **retry_meta,
                 **_wake_debt_extras(reg.registration_id, ok=conv_ok),
                 **poll_banner_fields,
+                **code_surface_extra,
             }
 
-        if req.no_project_uuid and not req.converse:
+        if run_no_project and not effective_converse:
             raise ValueError("no_project_uuid requires converse=true for /new consult")
-        if not req.project_uuid and not req.no_project_uuid:
+        if not run_project_uuid and not run_no_project:
             raise ValueError("project_uuid required unless no_project_uuid=true")
 
         prompt = prompts[0]
@@ -1012,12 +1029,10 @@ async def run_execution(
             else (resolve_archive_path(req.archive_path) if req.archive_path else None)
         )
 
-        surface = (req.claude_surface or "cowork").strip().lower()
-
         async def _ask_once(model: str):
             return await run_project_ask(
                 prompt,
-                project_uuid=req.project_uuid,
+                project_uuid=run_project_uuid,
                 model=model,
                 delete_after=delete_after,
                 cdp_url=reg.cdp_url,
@@ -1045,6 +1060,7 @@ async def run_execution(
             run_once=_ask_once,
             error_of=lambda r: r.error,
             ok_of=lambda r: bool(r.ok),
+            allow_family_substitution=surface != "code",
         )
         if await abort_check():
             abort_cleanup(reg, purpose=req.purpose)
@@ -1082,6 +1098,7 @@ async def run_execution(
         payload.update(retry_meta)
         payload.update(_wake_debt_extras(reg.registration_id, ok=result.ok))
         payload.update(poll_banner_fields)
+        payload.update(code_surface_extra)
         return payload
     finally:
         escaped = sys.exc_info()[1]

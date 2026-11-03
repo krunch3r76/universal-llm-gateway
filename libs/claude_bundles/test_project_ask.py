@@ -15,6 +15,7 @@ from claude_bundles.chat_reply_wait import HarvestIncompleteError
 from claude_bundles.chat_session_hygiene import _page_score
 from claude_bundles.project_ask import (
     _archive_body_section,
+    _compose_model_selected,
     archive_harvest,
     finalize_scrape_body,
     project_ask_on_page,
@@ -953,3 +954,59 @@ async def test_marked_submit_raises_unverified_when_panel_fails_after_send() -> 
     draft = submit.await_args.kwargs["draft_text"]
     assert "Question. Is the desk memo" in draft
     attest.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_compose_model_selected_code_surface_rejects_cowork_project_url() -> None:
+    page = MagicMock()
+    page.url = "https://claude.ai/cowork/project/x"
+    page.wait_for_timeout = AsyncMock()
+
+    with (
+        patch("claude_bundles.project_ask.goto_fresh_compose", new=AsyncMock()),
+        patch("claude_bundles.project_ask.find_composer", new=AsyncMock(return_value=None)),
+        patch(
+            "claude_bundles.project_ask._apply_code_surface_model_picker",
+            new=AsyncMock(),
+        ) as picker,
+    ):
+        result = await _compose_model_selected(
+            page,
+            "opus-5",
+            project_uuid="x",
+            claude_surface="code",
+        )
+
+    picker.assert_not_awaited()
+    assert result["ok"] is False
+    assert result["error"] == "code_surface_not_on_code_page"
+    assert result["url"] == page.url
+
+
+@pytest.mark.asyncio
+async def test_compose_model_selected_code_surface_runs_picker_on_code_url() -> None:
+    page = MagicMock()
+    page.url = "https://claude.ai/code/session_abc"
+    page.wait_for_timeout = AsyncMock()
+
+    with (
+        patch("claude_bundles.project_ask.goto_fresh_compose", new=AsyncMock()),
+        patch("claude_bundles.project_ask.find_composer", new=AsyncMock(return_value=None)),
+        patch(
+            "claude_bundles.project_ask._apply_code_surface_model_picker",
+            new=AsyncMock(return_value={"ok": True, "step": "code_surface_model_picked"}),
+        ) as picker,
+        patch(
+            "claude_bundles.project_ask._read_code_surface_model_label",
+            new=AsyncMock(return_value="Model: Opus"),
+        ),
+    ):
+        result = await _compose_model_selected(
+            page,
+            "opus-5",
+            compose_url="https://claude.ai/code",
+            claude_surface="code",
+        )
+
+    picker.assert_awaited_once()
+    assert result["ok"] is True
