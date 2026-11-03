@@ -169,22 +169,11 @@ def test_mirror_warning_throttle_per_transport_target(
     monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
 ) -> None:
     """At most one warning per 300s per (transport, target); counts roll forward."""
-    caplog.set_level(logging.WARNING)
-
-    def _fail_send(_event: object) -> None:
-        raise ConnectionRefusedError("offline")
-
-    monkeypatch.setattr(esd, "_mirror_send_sync", _fail_send)
-    monkeypatch.setenv("EVENTS_INGEST_TCP", "127.0.0.1:7101")
+    caplog.set_level(logging.WARNING, logger="claude_bundles.events_skill_delivery")
     t0 = 2000.0
     monkeypatch.setattr(esd, "_now", lambda: t0)
-
-    event = cdp_skill_delivery_attested(
-        ok=True, attached=[], inlined=[], undelivered=[]
-    )
-    esd._mirror_to_event_service(event)
-    flush_mirror_worker_for_tests()
-
+    esd._record_send_failure("tcp", "127.0.0.1:7101", ConnectionRefusedError("offline"))
+    esd._record_send_failure("tcp", "127.0.0.1:7101", ConnectionRefusedError("offline"))
     warnings = [
         r
         for r in caplog.records
@@ -194,11 +183,8 @@ def test_mirror_warning_throttle_per_transport_target(
     assert "transport=tcp" in warnings[0].message
     assert "target=127.0.0.1:7101" in warnings[0].message
 
-    with esd._mirror_state_lock:
-        esd._circuit_open_until = 0.0
     monkeypatch.setattr(esd, "_now", lambda: t0 + 301.0)
-    esd._mirror_to_event_service(event)
-    flush_mirror_worker_for_tests()
+    esd._record_send_failure("tcp", "127.0.0.1:7101", ConnectionRefusedError("offline"))
     warnings2 = [
         r
         for r in caplog.records
