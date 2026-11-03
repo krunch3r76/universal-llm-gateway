@@ -59,6 +59,7 @@ def _reset_mirror_state() -> None:
     _FakeSock.instances = []
     reset_mirror_state_for_tests()
     yield
+    flush_mirror_worker_for_tests(timeout=2.0)
     reset_mirror_state_for_tests()
 
 
@@ -222,8 +223,11 @@ def test_full_mirror_queue_drops_and_counts(
         ok=True, attached=[], inlined=[], undelivered=[]
     )
     esd._mirror_to_event_service(event)
-    for _ in range(esd._MIRROR_QUEUE_MAXSIZE - 1):
-        esd._mirror_queue.put_nowait(event)
+    for _ in range(esd._MIRROR_QUEUE_MAXSIZE):
+        try:
+            esd._mirror_queue.put_nowait(event)
+        except esd.queue.Full:
+            break
     esd._mirror_to_event_service(event)
     assert esd._queue_drop_count >= 1
     hold.set()
@@ -352,7 +356,7 @@ def test_mirror_logs_once_and_swallows_socket_errors(
 
     monkeypatch.setenv("EVENTS_INGEST_TCP", "127.0.0.1:7101")
     monkeypatch.setattr(esd.socket, "socket", _BoomSock)
-    caplog.set_level(logging.WARNING)
+    caplog.set_level(logging.WARNING, logger="claude_bundles.events_skill_delivery")
 
     _emit_sample()
     _emit_sample()
