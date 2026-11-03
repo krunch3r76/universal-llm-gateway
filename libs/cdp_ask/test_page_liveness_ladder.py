@@ -42,9 +42,7 @@ def _active_state(**overrides: object) -> dict:
 
 def _stamped_archive(path: Path, body: str, execution_id: str) -> None:
     path.write_text(
-        f"# CDP ask harvest\n\n"
-        f"- execution_id: `{execution_id}`\n\n"
-        f"## Body\n\n{body}\n",
+        f"# CDP ask harvest\n\n- execution_id: `{execution_id}`\n\n## Body\n\n{body}\n",
         encoding="utf-8",
     )
 

@@ -142,8 +142,7 @@ def test_stage_code_review_contract_omitted_purpose_injects_charter_and_floor(
         contract="code-review",
     )
     text = (
-        tmp_path
-        / "notes/system/ephemeral/cdp-endpoint/exec-cr-omit-purpose/prompt.md"
+        tmp_path / "notes/system/ephemeral/cdp-endpoint/exec-cr-omit-purpose/prompt.md"
     ).read_text(encoding="utf-8")
     assert staged.staged is True
     assert "consult-posture" in text
@@ -516,7 +515,10 @@ def test_stage_lane_worktree_repo_relative_packet(
         dispatch_thread_id="16538",
     )
     assert staged.staged is True
-    dest = cortex / "notes/system/ephemeral/cdp-endpoint/exec-lane-rel/g3-review-packet-16538-r3.md"
+    dest = (
+        cortex
+        / "notes/system/ephemeral/cdp-endpoint/exec-lane-rel/g3-review-packet-16538-r3.md"
+    )
     assert dest.read_text(encoding="utf-8") == "lane-only packet body\n"
 
 
@@ -700,7 +702,10 @@ def test_stage_workspaces_lane_uri_with_thread(
         dispatch_thread_id="16538",
     )
     assert staged.staged is True
-    dest = cortex / "notes/system/ephemeral/cdp-endpoint/exec-ws-lane/g3-review-packet-16538-r3.md"
+    dest = (
+        cortex
+        / "notes/system/ephemeral/cdp-endpoint/exec-ws-lane/g3-review-packet-16538-r3.md"
+    )
     assert dest.read_text(encoding="utf-8") == "workspaces lane uri\n"
 
 
@@ -3191,9 +3196,7 @@ def test_grade_invariant_with_and_without_trace(
             traced_result.extras["grade_trace"]["archived_banner_text"]
             == _GRADE_TRACE_INJECT["banner_text"]
         )
-        _assert_attach_cannot_change_grade(
-            monkeypatch, lambda: _snapshot_grade(plain)
-        )
+        _assert_attach_cannot_change_grade(monkeypatch, lambda: _snapshot_grade(plain))
         return
 
     polls = {

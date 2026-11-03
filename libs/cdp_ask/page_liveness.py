@@ -250,8 +250,6 @@ def make_harvest_ladder_hook(
     """Return an ``on_harvest`` callback bound to *callbacks* / *progress*."""
 
     async def _on_harvest(state: dict[str, Any]) -> None:
-        await advance_ladder_from_harvest(
-            state, callbacks=callbacks, progress=progress
-        )
+        await advance_ladder_from_harvest(state, callbacks=callbacks, progress=progress)
 
     return _on_harvest
