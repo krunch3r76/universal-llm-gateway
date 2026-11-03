@@ -782,7 +782,7 @@ async def _resume_completed_nest_parent(
         controller=controller,
         cfg=cfg,
     )
-    if resumed:
+    if resumed.outcome == "admitted":
         return OrphanReclaim(lease_key=None, resume_admitted=True)
     logger.warning(
         "completed nest child resume refused parent=%s child=%s",
@@ -811,10 +811,19 @@ async def _fail_stranded_parked_parent(
 ) -> OrphanReclaim:
     """Fail an exited parent that no resumer admitted.
 
-    The mark matches ``parked_waiting`` only, so a parent another resumer
-    already claimed (now ``cancelled``) is left alone and its slot is not
-    released. Waiters wake only after this parent is no longer parked.
+    The mark matches ``parked_waiting`` only. A parent another resumer
+    already claimed (now ``cancelled``) is left alone: the bridge is not
+    stopped, no orphan event is emitted, and its slot is not released.
+    Waiters wake only after this parent is no longer parked.
     """
+    marked = await asyncio.to_thread(
+        ledger.mark_terminal_checked,
+        dispatch_id=dispatch_id,
+        terminal_status="failed",
+        only_from_statuses=("parked_waiting",),
+    )
+    if not marked.marked:
+        return OrphanReclaim(lease_key=None, resume_admitted=False)
     bridge_aborted = await _stop_orphan_bridge(dispatch_id)
     holder = load_ledger_row(ledger, dispatch_id=dispatch_id)
     if holder is not None:
@@ -826,14 +835,6 @@ async def _fail_stranded_parked_parent(
             timeout_s=0.0,
             bridge_aborted=bridge_aborted,
         )
-    marked = await asyncio.to_thread(
-        ledger.mark_terminal_checked,
-        dispatch_id=dispatch_id,
-        terminal_status="failed",
-        only_from_statuses=("parked_waiting",),
-    )
-    if not marked.marked:
-        return OrphanReclaim(lease_key=None, resume_admitted=False)
     await force_release_sdk_dispatch_slot(dispatch_id=dispatch_id)
     if child_id:
         await force_release_sdk_dispatch_slot(dispatch_id=child_id)

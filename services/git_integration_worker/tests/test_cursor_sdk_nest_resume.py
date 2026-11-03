@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -10,18 +11,25 @@ from agent_bus_store.cursor_sdk_dispatch_turn import (
     is_cursor_sdk_advisory_subject,
     is_cursor_sdk_dispatch_terminal_subject,
 )
+from universal_concurrency import FifoCapacityGate
 
 from services.git_integration_worker.cursor_dispatch_ledger import CursorDispatchLedger
-from services.git_integration_worker.cursor_sdk_gate import sdk_busy_status_envelope
+from services.git_integration_worker.cursor_sdk_gate import (
+    acquire_sdk_dispatch_slot,
+    sdk_busy_status_envelope,
+    sdk_dispatch_gate_holders,
+)
 from services.git_integration_worker.cursor_sdk_nest_resume import (
     NEST_PARENT_RUN_EXITED,
     _resume_request,
     admit_nest_parent_resume,
     claim_nest_parent_exit,
+    claim_parked_parent_resume,
     defer_finished_parent_for_live_nest,
     nest_parked_subject,
 )
 from services.git_integration_worker.cursor_sdk_park import (
+    _fail_stranded_parked_parent,
     reclaim_orphan_holder,
     release_or_restore_for_child_sync,
 )
@@ -278,7 +286,7 @@ async def test_ineligible_parent_is_sealed_and_not_admitted() -> None:
             controller=object(),
             cfg=object(),
         )
-    assert ok is False
+    assert ok.outcome == "refused"
     with ledger._connect() as conn:
         parent = conn.execute(
             "SELECT status, park_child_dispatch_id FROM cursor_sdk_dispatches "
@@ -505,6 +513,364 @@ async def test_exited_parent_not_stranded_when_resume_not_admitted(
         ).fetchone()
     assert parent["status"] in {"failed", "cancelled", "completed"}
     assert parent["status"] != "parked_waiting"
+
+
+def _isolate_capacity_gate(monkeypatch: pytest.MonkeyPatch) -> None:
+    """One limit-1 gate so a leaked resume slot blocks the next acquire."""
+    isolated = FifoCapacityGate(limit=1, gate_id="friction-41842")
+    gates = {"standard": isolated, "operator": isolated}
+    monkeypatch.setattr(
+        "services.git_integration_worker.cursor_sdk_gate._STANDARD_GATE",
+        isolated,
+    )
+    monkeypatch.setattr(
+        "services.git_integration_worker.cursor_sdk_gate._OPERATOR_GATE",
+        isolated,
+    )
+    monkeypatch.setattr(
+        "services.git_integration_worker.cursor_sdk_gate._LANE_GATES",
+        gates,
+    )
+
+
+def _insert_queued(
+    ledger: CursorDispatchLedger, *, dispatch_id: str, lease_key: str
+) -> None:
+    req = _req(dispatch_id)
+    with ledger._connect() as conn:
+        conn.execute(
+            "INSERT INTO cursor_sdk_dispatches "
+            "(dispatch_id, fingerprint, thread_id, execution_id, resolved_model, "
+            " message_present, status, record_json, source_repo, lease_key, "
+            " read_only, queued_at) "
+            "VALUES (?, ?, ?, ?, ?, 1, 'queued', ?, ?, ?, 0, ?)",
+            (
+                dispatch_id,
+                ledger.fingerprint(req),
+                req.thread_id,
+                req.execution_id,
+                "grok-4.7",
+                json.dumps({"model": req.model, "message": req.message}),
+                lease_key,
+                lease_key,
+                "2026-11-03T00:00:00+00:00",
+            ),
+        )
+
+
+@pytest.mark.asyncio
+async def test_terminal_loser_does_not_promote_queued_writer(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Breaks when the claim loser releases the lease and promotes FIFO.
+
+    The other resumer has already cancelled the parent and has not inserted
+    the resume row. Promoting the queued writer in that window stalls it on
+    the slot the resume still holds.
+    """
+    parent_id = "parent-loser"
+    child_id = "parent-loser-child"
+    lease_key = f"/repo/{parent_id}"
+    ledger = CursorDispatchLedger.instance()
+    _seed_exited_parent(
+        ledger, parent_id=parent_id, child_id=child_id, child_terminal="completed"
+    )
+    _insert_queued(ledger, dispatch_id="queued-writer", lease_key=lease_key)
+    released: list[str] = []
+
+    def _prune_claims_first(*_args: object, **_kwargs: object) -> None:
+        claim_parked_parent_resume(
+            parent_id,
+            park_child_id=child_id,
+            resume_id=f"{parent_id}-nr1",
+        )
+
+    def _record_release(*_args: object, **kwargs: object) -> None:
+        released.append(str(kwargs.get("dispatch_id") or ""))
+
+    monkeypatch.setattr(
+        route_mod, "maybe_prune_worktree_on_terminal", _prune_claims_first
+    )
+    monkeypatch.setattr(route_mod, "emit_write_lease_released", _record_release)
+    monkeypatch.setattr(route_mod, "_start_promoted_dispatch", AsyncMock())
+    admitted = AsyncMock()
+    admitted.return_value = type("Resp", (), {"status_code": 200})()
+    with (
+        patch(
+            "services.git_integration_worker.routes.cursor_sdk.admit_cursor_dispatch",
+            admitted,
+        ),
+        patch(
+            "services.git_integration_worker.cursor_sdk_resume.resume_eligibility_reason",
+            return_value="parent_still_live",
+        ),
+    ):
+        await route_mod._mark_terminal_and_promote(
+            dispatch_id=child_id,
+            terminal_status="completed",
+            controller=_TerminalCtl(),
+            emit_tag="TEST",
+        )
+    assert admitted.await_count == 0
+    assert released == []
+    with ledger._connect() as conn:
+        queued = conn.execute(
+            "SELECT status FROM cursor_sdk_dispatches WHERE dispatch_id='queued-writer'"
+        ).fetchone()
+    assert queued["status"] == "queued"
+
+
+@pytest.mark.asyncio
+async def test_fail_stranded_skips_bridge_when_parent_already_claimed() -> None:
+    """Breaks when a lost reap stops the bridge of a parent already resumed."""
+    parent_id = "parent-stranded-claimed"
+    child_id = "parent-stranded-claimed-child"
+    ledger = CursorDispatchLedger.instance()
+    _seed_exited_parent(
+        ledger, parent_id=parent_id, child_id=child_id, child_terminal="completed"
+    )
+    claim = claim_parked_parent_resume(
+        parent_id,
+        park_child_id=child_id,
+        resume_id=f"{parent_id}-nr1",
+    )
+    assert claim.outcome == "claimed"
+    stop = AsyncMock(return_value=True)
+    with patch(
+        "services.git_integration_worker.cursor_sdk_park._stop_orphan_bridge",
+        stop,
+    ):
+        result = await _fail_stranded_parked_parent(
+            ledger,
+            dispatch_id=parent_id,
+            child_id=child_id,
+            lease_key=f"/repo/{parent_id}",
+        )
+    stop.assert_not_called()
+    assert result.lease_key is None
+    assert result.resume_admitted is False
+
+
+@pytest.mark.asyncio
+async def test_ineligible_resume_releases_handed_slot(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Breaks when an ineligible claim leaves the slot on the resume id."""
+    _isolate_capacity_gate(monkeypatch)
+    parent_id = "parent-slot"
+    child_id = "parent-slot-child"
+    ledger = CursorDispatchLedger.instance()
+    _seed_exited_parent(
+        ledger, parent_id=parent_id, child_id=child_id, child_terminal="completed"
+    )
+    await acquire_sdk_dispatch_slot(dispatch_id=parent_id)
+    with patch(
+        "services.git_integration_worker.cursor_sdk_resume.resume_eligibility_reason",
+        return_value="sdk_agent_id_missing",
+    ):
+        ok = await admit_nest_parent_resume(
+            parent_id,
+            child_id=child_id,
+            controller=object(),
+            cfg=object(),
+        )
+    assert ok.outcome == "refused"
+    assert f"{parent_id}-nr1" not in sdk_dispatch_gate_holders()
+    await asyncio.wait_for(
+        acquire_sdk_dispatch_slot(dispatch_id="waiter-ineligible"),
+        timeout=1,
+    )
+
+
+@pytest.mark.asyncio
+async def test_admit_raise_releases_handed_slot(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Breaks when admit_cursor_dispatch raising after claim leaks the slot."""
+    _isolate_capacity_gate(monkeypatch)
+    parent_id = "parent-raise"
+    child_id = "parent-raise-child"
+    ledger = CursorDispatchLedger.instance()
+    _seed_exited_parent(
+        ledger, parent_id=parent_id, child_id=child_id, child_terminal="completed"
+    )
+    await acquire_sdk_dispatch_slot(dispatch_id=parent_id)
+    with (
+        patch(
+            "services.git_integration_worker.cursor_sdk_resume.resume_eligibility_reason",
+            return_value="parent_still_live",
+        ),
+        patch(
+            "services.git_integration_worker.routes.cursor_sdk.admit_cursor_dispatch",
+            AsyncMock(side_effect=RuntimeError("admit blew up")),
+        ),
+    ):
+        with pytest.raises(RuntimeError, match="admit blew up"):
+            await admit_nest_parent_resume(
+                parent_id,
+                child_id=child_id,
+                controller=object(),
+                cfg=object(),
+            )
+    assert f"{parent_id}-nr1" not in sdk_dispatch_gate_holders()
+    await asyncio.wait_for(
+        acquire_sdk_dispatch_slot(dispatch_id="waiter-raise"),
+        timeout=1,
+    )
+
+
+@pytest.mark.asyncio
+async def test_hand_resume_rejected_keeps_parent_parked_and_slot(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Breaks when a hand resume_of rejected after the claim burns the parent.
+
+    The claim used to run before eligibility. A thread mismatch then left the
+    parent cancelled and the capacity slot on the rejected resume id.
+    """
+    _isolate_capacity_gate(monkeypatch)
+    parent_id = "parent-hand"
+    child_id = "parent-hand-child"
+    hand_id = "hand-resume-1"
+    ledger = CursorDispatchLedger.instance()
+    _seed_exited_parent(
+        ledger, parent_id=parent_id, child_id=child_id, child_terminal="completed"
+    )
+    hub = str(route_mod._CONFIG.source_repo)
+    with ledger._connect() as conn:
+        conn.execute(
+            "UPDATE cursor_sdk_dispatches SET source_repo=?, lease_key=? "
+            "WHERE dispatch_id=?",
+            (hub, hub, parent_id),
+        )
+    await acquire_sdk_dispatch_slot(dispatch_id=parent_id)
+    monkeypatch.setattr(
+        route_mod,
+        "validate_dispatch_context",
+        lambda *_a, **_k: {"cursor_auth_source": ""},
+    )
+    monkeypatch.setattr(route_mod, "is_not_entitled", lambda *_a, **_k: False)
+    monkeypatch.setattr(route_mod, "_branch_debt_refusal", lambda _req: None)
+    monkeypatch.setattr(
+        route_mod,
+        "select_lane",
+        lambda **_k: ("B", [], "test"),
+    )
+    req = CursorDispatchRequest(
+        thread_id="other-thread",
+        model="cursor/composer-2.5",
+        dispatch_id=hand_id,
+        execution_id="exec-hand",
+        message="hand resume",
+        resume_of=parent_id,
+        work_key="friction:hand-resume",
+        handoff_contract="freeform",
+        caller_agent="pipeline:cursor-paste-resolve",
+    )
+    response = await route_mod.admit_cursor_dispatch(
+        req,
+        cfg=route_mod._CONFIG,
+        controller=_TerminalCtl(),
+    )
+    assert response.status_code == 422
+    body = response.body.decode()
+    assert "thread_mismatch" in body or "CURSOR_RESUME_INELIGIBLE" in body
+    with ledger._connect() as conn:
+        parent = conn.execute(
+            "SELECT status, park_child_dispatch_id FROM cursor_sdk_dispatches "
+            "WHERE dispatch_id=?",
+            (parent_id,),
+        ).fetchone()
+    assert parent["status"] == "parked_waiting"
+    assert parent["park_child_dispatch_id"] == child_id
+    assert sdk_dispatch_gate_holders() == frozenset({parent_id})
+
+
+@pytest.mark.asyncio
+async def test_hand_resume_admit_error_restores_parent_and_slot(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Breaks when ledger.admit raising after the hand claim burns the parent."""
+    from pathlib import Path
+
+    from services.git_integration_worker.cursor_dispatch_ledger import WriteLeaseHeld
+    from services.git_integration_worker.cursor_sdk_worktree import AdmitBindingResult
+
+    _isolate_capacity_gate(monkeypatch)
+    parent_id = "parent-hand-err"
+    child_id = "parent-hand-err-child"
+    hand_id = "hand-resume-err"
+    ledger = CursorDispatchLedger.instance()
+    _seed_exited_parent(
+        ledger, parent_id=parent_id, child_id=child_id, child_terminal="completed"
+    )
+    hub = route_mod._CONFIG.source_repo
+    hub_path = hub if isinstance(hub, Path) else Path(hub)
+    with ledger._connect() as conn:
+        conn.execute(
+            "UPDATE cursor_sdk_dispatches SET source_repo=?, lease_key=? "
+            "WHERE dispatch_id=?",
+            (str(hub_path), str(hub_path), parent_id),
+        )
+    await acquire_sdk_dispatch_slot(dispatch_id=parent_id)
+    monkeypatch.setattr(
+        route_mod,
+        "validate_dispatch_context",
+        lambda *_a, **_k: {"cursor_auth_source": ""},
+    )
+    monkeypatch.setattr(route_mod, "is_not_entitled", lambda *_a, **_k: False)
+    monkeypatch.setattr(route_mod, "_branch_debt_refusal", lambda _req: None)
+    monkeypatch.setattr(route_mod, "select_lane", lambda **_k: ("A", [], "test"))
+    monkeypatch.setattr(
+        route_mod,
+        "resolve_admit_binding",
+        lambda **_k: AdmitBindingResult(
+            workspace=hub_path,
+            lease_key=str(hub_path),
+            binding_kind="lane_a",
+        ),
+    )
+    monkeypatch.setattr(
+        "services.git_integration_worker.cursor_sdk_resume.resume_eligibility_reason",
+        lambda *_a, **_k: None,
+    )
+
+    def _lease_held(self, **_kwargs: object) -> None:
+        del self
+        raise WriteLeaseHeld(
+            lease_key=str(hub_path),
+            holder_dispatch_id="holder",
+            holder_thread_id="18533",
+        )
+
+    monkeypatch.setattr(CursorDispatchLedger, "admit", _lease_held)
+    req = CursorDispatchRequest(
+        thread_id="18533",
+        model="cursor/composer-2.5",
+        dispatch_id=hand_id,
+        execution_id="exec-hand-err",
+        message="hand resume error",
+        resume_of=parent_id,
+        work_key="friction:hand-resume-err",
+        handoff_contract="freeform",
+        caller_agent="pipeline:cursor-paste-resolve",
+    )
+    response = await route_mod.admit_cursor_dispatch(
+        req,
+        cfg=route_mod._CONFIG,
+        controller=_TerminalCtl(),
+    )
+    assert response.status_code == 409
+    with ledger._connect() as conn:
+        parent = conn.execute(
+            "SELECT status, park_child_dispatch_id FROM cursor_sdk_dispatches "
+            "WHERE dispatch_id=?",
+            (parent_id,),
+        ).fetchone()
+    assert parent["status"] == "parked_waiting"
+    assert parent["park_child_dispatch_id"] == child_id
+    assert hand_id not in sdk_dispatch_gate_holders()
+    assert parent_id not in sdk_dispatch_gate_holders()
 
 
 def test_busy_status_ignores_exited_parked_parent() -> None:
