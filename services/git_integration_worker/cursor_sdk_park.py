@@ -48,6 +48,31 @@ _NEST_CHILD_DONE = frozenset({"completed", "failed", "cancelled"})
 ReleaseDisposition = Literal["restored", "released"]
 
 
+def _nest_parent_run_exited(ledger: CursorDispatchLedger, parent_id: str) -> bool:
+    """True when the parked parent already finished its own run.
+
+    ``claim_nest_parent_exit`` stamps ``nest_parent_run_exited`` while the
+    child is still live. Restoring that row to ``running`` clears the park
+    link before the child's terminal path can admit ``resume_of``.
+    """
+    from services.git_integration_worker.cursor_sdk_nest_resume import (
+        NEST_PARENT_RUN_EXITED,
+    )
+
+    with ledger._connect() as conn:
+        row = conn.execute(
+            "SELECT record_json FROM cursor_sdk_dispatches WHERE dispatch_id=?",
+            (parent_id,),
+        ).fetchone()
+    if row is None:
+        return False
+    try:
+        data = json.loads(row["record_json"] or "{}")
+    except json.JSONDecodeError:
+        return False
+    return bool(isinstance(data, dict) and data.get(NEST_PARENT_RUN_EXITED))
+
+
 class OrphanReclaim(NamedTuple):
     """Outcome of one orphan-holder reclaim for the stale-lease sweeper.
 
@@ -562,10 +587,14 @@ async def transfer_capacity_after_park(
 
 
 async def release_or_restore_for_child(*, dispatch_id: str) -> ReleaseDisposition:
-    """Child capacity exit: restore parked parent via transfer, else release.
+    """Child capacity exit: restore a still-live parent, else release the child.
 
-    A1: never wake FIFO waiters while a ``parked_waiting`` parent points at
-    this child — transfer_holder(child→parent) instead.
+    A parked parent whose own run is still in flight is transferred the slot
+    and moved back to ``running`` (A1: no FIFO wake while that parent waits).
+    A parent stamped ``nest_parent_run_exited`` stays ``parked_waiting`` with
+    ``park_child_dispatch_id`` intact; this function only releases the child
+    slot. ``_mark_terminal_and_promote`` is the sole ``resume_of`` admitter.
+    Returns ``restored`` or ``released``.
     """
     ledger = CursorDispatchLedger.instance()
     parked = await asyncio.to_thread(
@@ -573,6 +602,14 @@ async def release_or_restore_for_child(*, dispatch_id: str) -> ReleaseDispositio
     )
     if parked is not None:
         parent_id, source_repo = parked
+        if _nest_parent_run_exited(ledger, parent_id):
+            logger.info(
+                "nest parent run already exited; leaving parked parent=%s child=%s",
+                parent_id,
+                dispatch_id,
+            )
+            await release_sdk_dispatch_slot(dispatch_id=dispatch_id)
+            return "released"
         try:
             await transfer_sdk_dispatch_slot(from_id=dispatch_id, to_id=parent_id)
         except Exception:
@@ -600,15 +637,29 @@ async def release_or_restore_for_child(*, dispatch_id: str) -> ReleaseDispositio
 def release_or_restore_for_child_sync(
     loop: asyncio.AbstractEventLoop, *, dispatch_id: str
 ) -> ReleaseDisposition:
-    """Worker-thread finally path for park-aware capacity exit (A1).
+    """Worker-thread finally path for park-aware capacity exit.
 
-    Restores a parked parent via ``transfer_holder`` when present; otherwise
-    performs an ordinary release on the owning event loop.
+    Same rule as ``release_or_restore_for_child``: a still-live parked parent
+    is restored via ``transfer_holder``; a parent whose run already exited
+    stays parked and the child slot is released on ``loop``. Returns
+    ``restored`` or ``released``. The return is a side-effect label — the
+    worker finally discards it, and the terminal path owns ``resume_of``.
     """
     ledger = CursorDispatchLedger.instance()
     parked = ledger.find_parked_parent_for_child(child_id=dispatch_id)
     if parked is not None:
         parent_id, source_repo = parked
+        if _nest_parent_run_exited(ledger, parent_id):
+            logger.info(
+                "nest parent run already exited; leaving parked parent=%s child=%s",
+                parent_id,
+                dispatch_id,
+            )
+            fut = asyncio.run_coroutine_threadsafe(
+                release_sdk_dispatch_slot(dispatch_id=dispatch_id), loop
+            )
+            fut.result(timeout=30.0)
+            return "released"
         try:
             transfer_sdk_dispatch_slot_sync(loop, from_id=dispatch_id, to_id=parent_id)
         except Exception:
@@ -728,12 +779,16 @@ async def reclaim_orphan_holder(
     Parked holders and still-running nest children abort then OS-reap before
     the row is marked failed or the slot is force-released. A blocking parent
     whose nest child is already completed is harvested through
-    ``admit_nest_parent_resume`` when ``reap_only`` is false. ``reap_only``
-    skips that admit and keeps the fail path so a drain cannot start
-    ``resume_of``. ``controller`` and ``cfg`` are required for the admit;
-    without them the parent stays on the fail path. ``resume_admitted`` is
-    true only when that admit accepts. The lease key is empty when the row
-    is missing, already terminal, or the resume now owns the lease.
+    ``admit_nest_parent_resume`` when ``reap_only`` is false. A parent left
+    ``parked_waiting`` because ``nest_parent_run_exited`` (child cleanup did
+    not restore it) takes that same harvest here, so a missed terminal-path
+    admit still resumes without flipping the parent to ``running``.
+    ``reap_only`` skips that admit and keeps the fail path so a drain cannot
+    start ``resume_of``. ``controller`` and ``cfg`` are required for the
+    admit; without them the parent stays on the fail path.
+    ``resume_admitted`` is true only when that admit accepts. The lease key
+    is empty when the row is missing, already terminal, or the resume now
+    owns the lease.
     """
     with ledger._connect() as conn:
         row = conn.execute(
@@ -774,7 +829,24 @@ async def reclaim_orphan_holder(
                     dispatch_id=child_id,
                     terminal_status="failed",
                 )
-            await release_or_restore_for_child(dispatch_id=child_id)
+            disposition = await release_or_restore_for_child(dispatch_id=child_id)
+            if (
+                disposition != "restored"
+                and controller is not None
+                and cfg is not None
+                and not reap_only
+            ):
+                completed_child = _completed_nest_child_id(
+                    ledger, parent_id=dispatch_id
+                )
+                if completed_child is not None:
+                    return await _resume_completed_nest_parent(
+                        dispatch_id=dispatch_id,
+                        child_id=completed_child,
+                        lease_key=key,
+                        controller=controller,
+                        cfg=cfg,
+                    )
         elif ledger.restore_from_park(parent_id=dispatch_id) is None:
             bridge_aborted = await _stop_orphan_bridge(dispatch_id)
             parent_row = load_ledger_row(ledger, dispatch_id=dispatch_id)

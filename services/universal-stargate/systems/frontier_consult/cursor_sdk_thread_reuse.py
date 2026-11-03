@@ -36,9 +36,7 @@ async def probe_thread(thread_id: str) -> dict[str, Any] | None:
         async with make_async_client(DEFAULT_AGENT_BUS_URL, timeout=10.0) as client:
             resp = await client.get(f"/threads/{normalized}", headers=_bus_headers())
     except httpx.HTTPError as exc:
-        logger.warning(
-            "thread reuse probe failed: thread=%s err=%s", normalized, exc
-        )
+        logger.warning("thread reuse probe failed: thread=%s err=%s", normalized, exc)
         return None
     if resp.status_code != 200:
         return None
@@ -324,9 +322,7 @@ async def resolve_cursor_sdk_thread_targets(
 
 
 CURSOR_WORKER_THREAD_OCCUPIED = "CURSOR_WORKER_THREAD_OCCUPIED"
-_LIVE_WORKER_STATUSES = frozenset(
-    {"queued", "admitted", "running", "parked_waiting"}
-)
+_LIVE_WORKER_STATUSES = frozenset({"queued", "admitted", "running", "parked_waiting"})
 
 
 async def refuse_occupied_worker_thread(
@@ -335,6 +331,7 @@ async def refuse_occupied_worker_thread(
     reuse_thread: str | None,
     nest_under: str | None,
     read_only: bool = False,
+    resume_of: str | None = None,
 ) -> None:
     """422 before bus admit when reuse_thread already has a live GIW runner.
 
@@ -342,7 +339,9 @@ async def refuse_occupied_worker_thread(
     same thread orphans the first (9675#8). ``nest_under`` is a legal park.
     Read-only admits do not occupy the write slot. Pending-empty shells have
     no occupant. GIW unreachable on a thread that already has turns is
-    fail-closed.
+    fail-closed. ``resume_of`` naming the ``parked_waiting`` holder is the
+    one legal reuse of that thread; a fresh generate, or ``resume_of`` of a
+    different id, still raises ``CURSOR_WORKER_THREAD_OCCUPIED``.
     """
     if not reuse_thread or nest_under or read_only:
         return
@@ -392,8 +391,15 @@ async def refuse_occupied_worker_thread(
         return
     payload = resp.json()
     status = payload.get("status")
+    holder = payload.get("dispatch_id")
+    if (
+        status == "parked_waiting"
+        and resume_of
+        and holder
+        and str(resume_of) == str(holder)
+    ):
+        return
     if status in _LIVE_WORKER_STATUSES:
-        holder = payload.get("dispatch_id")
         raise FrontierEndpointError(
             request_id=request_id,
             field="reuse_thread",

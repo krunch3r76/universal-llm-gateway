@@ -496,6 +496,83 @@ async def test_refuse_occupied_live_status_422(
     assert excinfo.value.details["holder_dispatch_id"] == "85e312e900aa-26c192cf"
 
 
+def _parked_holder_client(status: str, dispatch_id: str):
+    class _Resp:
+        status_code = 200
+
+        def json(self) -> dict:
+            return {"status": status, "dispatch_id": dispatch_id}
+
+    class _Client:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            return None
+
+        async def get(self, url, params=None):
+            _ = url, params
+            return _Resp()
+
+    return _Client()
+
+
+@pytest.mark.asyncio
+async def test_refuse_occupied_allows_resume_of_parked_holder(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Breaks when a hand resume_of of the parked holder is refused as occupied."""
+
+    async def _probe(thread_id: str) -> dict | None:
+        return {"bus_lifecycle_state": "admitted", "turn_count": 6}
+
+    monkeypatch.setattr(
+        "systems.frontier_consult.cursor_sdk_thread_reuse.probe_thread",
+        _probe,
+    )
+    monkeypatch.setattr(
+        "systems.frontier_consult.cursor_sdk_thread_reuse.make_async_client",
+        lambda *a, **k: _parked_holder_client(
+            "parked_waiting", "85e312e900aa-26c192cf"
+        ),
+    )
+    await refuse_occupied_worker_thread(
+        request_id="req-parked-resume",
+        reuse_thread="9675",
+        nest_under=None,
+        resume_of="85e312e900aa-26c192cf",
+    )
+
+
+@pytest.mark.asyncio
+async def test_refuse_occupied_parked_fresh_generate_422(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Breaks when a fresh generate onto a parked holder is admitted."""
+
+    async def _probe(thread_id: str) -> dict | None:
+        return {"bus_lifecycle_state": "admitted", "turn_count": 6}
+
+    monkeypatch.setattr(
+        "systems.frontier_consult.cursor_sdk_thread_reuse.probe_thread",
+        _probe,
+    )
+    monkeypatch.setattr(
+        "systems.frontier_consult.cursor_sdk_thread_reuse.make_async_client",
+        lambda *a, **k: _parked_holder_client(
+            "parked_waiting", "85e312e900aa-26c192cf"
+        ),
+    )
+    with pytest.raises(FrontierEndpointError) as excinfo:
+        await refuse_occupied_worker_thread(
+            request_id="req-parked-fresh",
+            reuse_thread="9675",
+            nest_under=None,
+        )
+    assert excinfo.value.code == CURSOR_WORKER_THREAD_OCCUPIED
+    assert excinfo.value.details["holder_status"] == "parked_waiting"
+
+
 @pytest.mark.asyncio
 async def test_probe_continuity_root_thread_id_role_root_tag(
     monkeypatch: pytest.MonkeyPatch,
@@ -630,15 +707,14 @@ def _install_route_stubs(
 
     from .conftest import dispatch_cursor_sdk_generate_mock
 
-    dispatch_mock = dispatch_cursor_sdk_generate_mock(autospec=True,
+    dispatch_mock = dispatch_cursor_sdk_generate_mock(
+        autospec=True,
         return_value={"status": "admitted"},
     )
 
     monkeypatch.setattr(generate_wrap, "prepare_conductor_packet", _prepare)
     monkeypatch.setattr(generate_wrap, "resolve_cursor_sdk_thread_targets", _resolve)
-    monkeypatch.setattr(
-        generate_wrap, "dispatch_cursor_sdk_generate", dispatch_mock
-    )
+    monkeypatch.setattr(generate_wrap, "dispatch_cursor_sdk_generate", dispatch_mock)
     return calls, captured
 
 

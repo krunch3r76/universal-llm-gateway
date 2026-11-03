@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -18,6 +19,9 @@ from services.git_integration_worker.cursor_sdk_nest_resume import (
     claim_nest_parent_exit,
     defer_finished_parent_for_live_nest,
     nest_parked_subject,
+)
+from services.git_integration_worker.cursor_sdk_park import (
+    release_or_restore_for_child_sync,
 )
 from services.git_integration_worker.models.cursor_api import (
     CursorDispatchRequest,
@@ -279,3 +283,76 @@ async def test_ineligible_parent_is_sealed_and_not_admitted() -> None:
         ).fetchone()
     assert parent["status"] == "cancelled"
     assert parent["park_child_dispatch_id"] is None
+
+
+class _TerminalCtl:
+    worker_id = "w"
+
+    def is_draining(self) -> bool:
+        return False
+
+    def is_armed(self) -> bool:
+        return False
+
+    def maybe_activate_armed_drain(self, *, dispatch_id: str) -> None:
+        del dispatch_id
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("parent_id", ["parent-exit", "parent-exit-r1"])
+async def test_cleanup_then_terminal_admits_resume_of_exited_parent(
+    parent_id: str,
+) -> None:
+    """Breaks when child cleanup restores an exited parent before resume lookup.
+
+    Production order is the worker finally (``release_or_restore_for_child_sync``)
+    and then ``_mark_terminal_and_promote``. Nothing in that pair is patched.
+    ``parent-exit-r1`` is a ``giw_park_resume`` parent: the parked row id itself
+    ends in ``-r1``, and the resume must key off that row.
+    """
+    child_id = f"{parent_id}-child"
+    ledger = CursorDispatchLedger.instance()
+    _admit(ledger, parent_id, contract="freeform")
+    _admit(
+        ledger,
+        child_id,
+        contract="freeform",
+        nest_under=parent_id,
+        work_key=f"friction:{parent_id}",
+        lease_key=f"/repo/{parent_id}",
+    )
+    assert claim_nest_parent_exit(parent_id) == child_id
+    loop = asyncio.get_running_loop()
+
+    def _cleanup() -> str:
+        return release_or_restore_for_child_sync(loop, dispatch_id=child_id)
+
+    await asyncio.to_thread(_cleanup)
+    from services.git_integration_worker.routes.admin import dispatch_status
+
+    status_row = await dispatch_status(None, dispatch_id=parent_id)
+    assert status_row["status"] == "parked_waiting"
+    assert status_row["park_kind"] == NEST_PARENT_RUN_EXITED
+    assert status_row["park"]["park_kind"] == NEST_PARENT_RUN_EXITED
+    admitted = AsyncMock()
+    admitted.return_value = type("Resp", (), {"status_code": 200})()
+    with patch(
+        "services.git_integration_worker.routes.cursor_sdk.admit_cursor_dispatch",
+        admitted,
+    ):
+        await route_mod._mark_terminal_and_promote(
+            dispatch_id=child_id,
+            terminal_status="completed",
+            controller=_TerminalCtl(),
+            emit_tag="TEST",
+        )
+    admitted.assert_awaited()
+    req = admitted.await_args.args[0]
+    assert req.resume_of == parent_id
+    assert req.dispatch_id == f"{parent_id}-nr1"
+    with ledger._connect() as conn:
+        parent = conn.execute(
+            "SELECT status FROM cursor_sdk_dispatches WHERE dispatch_id=?",
+            (parent_id,),
+        ).fetchone()
+    assert parent["status"] == "cancelled"

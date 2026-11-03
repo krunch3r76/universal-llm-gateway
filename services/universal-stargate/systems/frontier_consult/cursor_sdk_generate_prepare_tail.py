@@ -33,6 +33,13 @@ def _row_identity_tags(work_key: str | None, packet_path: str | None) -> list[st
 async def finish_cursor_sdk_generate_prepare(
     bound: dict[str, Any],
 ) -> PreparedCursorSdkHandle:
+    """Finish a cursor-sdk generate after the prepare head has bound its fields.
+
+    Posts the bus pointer when the worker thread is new, refuses a second
+    live runner on ``reuse_thread`` (a ``resume_of`` of the parked holder is
+    the exception), and returns the prepared handle. ``bound`` is the head's
+    field dict; the return is what admit submits.
+    """
     request_id = bound["request_id"]
     role = bound["role"]
     model = bound["model"]
@@ -181,6 +188,7 @@ async def finish_cursor_sdk_generate_prepare(
             reuse_thread=reuse_thread,
             nest_under=nest_under,
             read_only=read_only,
+            resume_of=resume_of,
         )
         thread_id = reuse_thread
         if is_auto_consolidation:

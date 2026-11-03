@@ -10,6 +10,7 @@ NEVER gated by the drain itself.
 
 from __future__ import annotations
 
+import json
 import os
 import time
 from typing import Any
@@ -49,7 +50,11 @@ async def dispatch_status(
 
     ``park`` is ``None`` for rows never parked; otherwise
     ``{state ∈ parked|resumed|expired, intent_id, parked_at, park_resumed_by, …}``
-    (steer-restart D2 projection).
+    (steer-restart D2 projection). A nest-parked parent (``status=parked_waiting``
+    with ``park_child_dispatch_id``) also gets top-level ``park_kind``:
+    ``nest_parent_run_exited`` when that stamp is set, else ``nest``. When no
+    steer park exists, ``park`` is a minimal block carrying that kind so the
+    status is not reported as a bare ``running`` row.
     """
     from services.git_integration_worker.cursor_sdk_park_ledger import (
         load_park_row,
@@ -71,7 +76,46 @@ async def dispatch_status(
             "park": None,
         }
     row["park"] = park_projection(load_park_row(dispatch_id=str(row["dispatch_id"])))
+    _attach_nest_park_kind(row)
     return row
+
+
+def _attach_nest_park_kind(row: dict[str, object]) -> None:
+    """Stamp nest ``park_kind`` on a ``parked_waiting`` parent.
+
+    Steer-restart ``park`` is left unchanged. A nest park with no steer
+    record gets a minimal ``park`` block. No-op for any other status.
+    """
+    from services.git_integration_worker.cursor_sdk_nest_resume import (
+        NEST_PARENT_RUN_EXITED,
+    )
+
+    dispatch_id = row.get("dispatch_id")
+    if not dispatch_id or row.get("status") != "parked_waiting":
+        return
+    ledger = CursorDispatchLedger.instance()
+    with ledger._connect() as conn:
+        parked = conn.execute(
+            "SELECT park_child_dispatch_id, record_json "
+            "FROM cursor_sdk_dispatches WHERE dispatch_id=?",
+            (str(dispatch_id),),
+        ).fetchone()
+    if parked is None or not parked["park_child_dispatch_id"]:
+        return
+    kind = "nest"
+    try:
+        data = json.loads(parked["record_json"] or "{}")
+    except json.JSONDecodeError:
+        data = {}
+    if isinstance(data, dict) and data.get(NEST_PARENT_RUN_EXITED):
+        kind = NEST_PARENT_RUN_EXITED
+    row["park_kind"] = kind
+    if row.get("park") is None:
+        row["park"] = {
+            "state": "parked",
+            "park_kind": kind,
+            "park_child_dispatch_id": parked["park_child_dispatch_id"],
+        }
 
 
 class BeginDrainRequest(BaseModel):
