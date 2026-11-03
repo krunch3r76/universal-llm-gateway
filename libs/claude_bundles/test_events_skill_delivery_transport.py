@@ -209,9 +209,10 @@ def test_full_mirror_queue_drops_and_counts(
         ok=True, attached=[], inlined=[], undelivered=[]
     )
     esd._mirror_to_event_service(event)
+    filler = b'{"signal":"x"}\n'
     for _ in range(esd._MIRROR_QUEUE_MAXSIZE):
         try:
-            esd._mirror_queue.put_nowait(event)
+            esd._mirror_queue.put_nowait(filler)
         except esd.queue.Full:
             break
     esd._mirror_to_event_service(event)
@@ -257,8 +258,9 @@ def test_queue_drop_emits_throttled_warning_without_send_failure(
         ok=True, attached=[], inlined=[], undelivered=[]
     )
     esd._mirror_to_event_service(event)
+    filler = b'{"signal":"x"}\n'
     for _ in range(esd._MIRROR_QUEUE_MAXSIZE):
-        esd._mirror_queue.put_nowait(event)
+        esd._mirror_queue.put_nowait(filler)
     esd._mirror_to_event_service(event)
     hold.set()
     flush_mirror_worker_for_tests(timeout=3.0)
@@ -277,20 +279,20 @@ def test_fork_pid_change_starts_fresh_mirror_worker(
 ) -> None:
     """After fork, a new worker thread must start instead of inheriting a stale flag."""
     starts: list[int] = []
-    real_start = esd.threading.Thread.start
+    real_start = esd._start_mirror_thread
     pid = os.getpid()
 
-    def _track_start(self: esd.threading.Thread) -> None:
+    def _track_start(thread: esd.threading.Thread) -> None:
         starts.append(1)
-        return real_start(self)
+        return real_start(thread)
 
-    monkeypatch.setattr(esd.threading.Thread, "start", _track_start)
-    monkeypatch.setattr(esd.os, "getpid", lambda: pid)
+    monkeypatch.setattr(esd, "_start_mirror_thread", _track_start)
+    monkeypatch.setattr(esd, "_getpid", lambda: pid)
     emit_skill_delivery_attested(ok=True, attached=[], inlined=[], undelivered=[])
     flush_mirror_worker_for_tests(timeout=2.0)
     assert len(starts) == 1
 
-    monkeypatch.setattr(esd.os, "getpid", lambda: pid + 1)
+    monkeypatch.setattr(esd, "_getpid", lambda: pid + 1)
     emit_skill_delivery_attested(ok=True, attached=[], inlined=[], undelivered=[])
     flush_mirror_worker_for_tests(timeout=2.0)
     assert len(starts) == 2
@@ -304,7 +306,7 @@ def test_emit_survives_thread_start_runtime_error(
     def _boom_start(_self: threading.Thread) -> None:
         raise RuntimeError("can't start new thread")
 
-    monkeypatch.setattr(esd.threading.Thread, "start", _boom_start)
+    monkeypatch.setattr(esd, "_start_mirror_thread", lambda _t: _boom_start(_t))
     event = emit_skill_delivery_attested(
         ok=True,
         attached=["x"],
@@ -356,3 +358,84 @@ def test_mirror_logs_once_and_swallows_socket_errors(
     assert len(warnings) == 1
     assert "transport=tcp" in warnings[0].message
     assert "target=127.0.0.1:7101" in warnings[0].message
+
+
+class _NotJsonSerializable:
+    pass
+
+
+def test_non_serializable_row_drops_without_opening_breaker(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Serialization failure is a drop only; a following valid event still sends (N4)."""
+    sent: list[bytes] = []
+
+    def _capture_send(line: bytes) -> None:
+        sent.append(line)
+
+    monkeypatch.setattr(esd, "_mirror_send_sync", _capture_send)
+
+    bad = cdp_skill_delivery_attested(
+        ok=True, attached=[], inlined=[], undelivered=[], rows=[{"x": "1"}]
+    )
+    bad.payload["rows"] = [{"bad": _NotJsonSerializable()}]
+    esd._mirror_to_event_service(bad)
+    good = cdp_skill_delivery_attested(
+        ok=True, attached=["ok"], inlined=[], undelivered=[]
+    )
+    esd._mirror_to_event_service(good)
+    flush_mirror_worker_for_tests(timeout=3.0)
+    assert len(sent) == 1
+    assert b"ok" in sent[0]
+    assert esd._now() >= esd._circuit_open_until
+
+
+@pytest.mark.skipif(not hasattr(os, "fork"), reason="os.fork unavailable")
+def test_fork_child_resets_mirror_queue_and_lock() -> None:
+    """Fork child reinitializes queue and locks (N2); real os.fork."""
+    esd._mirror_to_event_service(
+        cdp_skill_delivery_attested(
+            ok=True, attached=[], inlined=[], undelivered=[]
+        )
+    )
+    assert esd._mirror_state_lock.acquire(blocking=False)
+    child = os.fork()
+    if child == 0:
+        try:
+            assert esd._mirror_queue.empty()
+            child_lock = esd._mirror_state_lock
+            assert child_lock.acquire(timeout=1.0)
+            child_lock.release()
+            os._exit(0)
+        except Exception:
+            os._exit(1)
+    assert child > 0
+    esd._mirror_state_lock.release()
+    _, status = os.waitpid(child, 0)
+    assert os.WEXITSTATUS(status) == 0
+
+
+def test_mirror_internal_error_emits_throttled_warning(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Programming errors in the mirror path increment internal_errors (N3)."""
+    caplog.set_level(logging.WARNING, logger="claude_bundles.events_skill_delivery")
+    monkeypatch.setattr(esd, "_now", lambda: 9000.0)
+
+    def _broken_target() -> tuple[str, str]:
+        raise NameError("mirror wiring bug")
+
+    monkeypatch.setattr(esd, "_mirror_transport_target", _broken_target)
+    esd._mirror_to_event_service(
+        cdp_skill_delivery_attested(
+            ok=True, attached=[], inlined=[], undelivered=[]
+        )
+    )
+    warnings = [
+        r
+        for r in caplog.records
+        if r.levelno == logging.WARNING and "mirror failed" in r.message
+    ]
+    assert len(warnings) == 1
+    assert "internal_errors=1" in warnings[0].message
+    assert esd._internal_error_count == 0

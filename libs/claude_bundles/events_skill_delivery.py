@@ -41,6 +41,13 @@ _last_warning_at: dict[tuple[str, str], float] = {}
 _warning_counts: dict[tuple[str, str], tuple[int, int]] = {}
 _circuit_skip_count = 0
 _queue_drop_count = 0
+_internal_error_count = 0
+
+_getpid = os.getpid
+
+
+def _start_mirror_thread(thread: threading.Thread) -> None:
+    thread.start()
 
 
 class _MirrorFlush:
@@ -50,6 +57,39 @@ class _MirrorFlush:
 
     def __init__(self) -> None:
         self.done = threading.Event()
+
+
+class _MirrorShutdown:
+    """Test-only sentinel; worker exits after draining ahead of it."""
+
+
+class _MirrorSerializationNotice(Exception):
+    """Synthetic exception for non-serializable mirror payloads."""
+
+
+def _reset_mirror_after_fork() -> None:
+    """Reinitialize mirror globals in a forked child (N2)."""
+    global _mirror_queue  # noqa: PLW0603
+    global _mirror_worker_lock, _mirror_state_lock  # noqa: PLW0603
+    global _mirror_worker_started, _mirror_worker_thread, _mirror_worker_owner_pid
+    global _circuit_open_until, _last_warning_at, _warning_counts
+    global _circuit_skip_count, _queue_drop_count, _internal_error_count
+    _mirror_queue = queue.Queue(maxsize=_MIRROR_QUEUE_MAXSIZE)
+    _mirror_worker_lock = threading.Lock()
+    _mirror_state_lock = threading.Lock()
+    _mirror_worker_started = False
+    _mirror_worker_thread = None
+    _mirror_worker_owner_pid = _getpid()
+    _circuit_open_until = 0.0
+    _last_warning_at = {}
+    _warning_counts = {}
+    _circuit_skip_count = 0
+    _queue_drop_count = 0
+    _internal_error_count = 0
+
+
+if hasattr(os, "register_at_fork"):
+    os.register_at_fork(after_in_child=_reset_mirror_after_fork)
 
 
 @event_factory
@@ -280,7 +320,7 @@ def _mirror_transport_target() -> tuple[str, str]:
 def _mirror_worker_stale() -> bool:
     if not _mirror_worker_started:
         return False
-    if os.getpid() != _mirror_worker_owner_pid:
+    if _getpid() != _mirror_worker_owner_pid:
         return True
     return _mirror_worker_thread is None or not _mirror_worker_thread.is_alive()
 
@@ -299,11 +339,13 @@ def _ensure_mirror_worker() -> None:
             daemon=True,
         )
         try:
-            thread.start()
-        except Exception:  # noqa: BLE001 — mirror must not raise into emit_*
+            _start_mirror_thread(thread)
+        except Exception as exc:  # noqa: BLE001 — mirror must not raise into emit_*
+            transport, target = _mirror_transport_target()
+            _record_internal_error(transport, target, exc)
             return
         _mirror_worker_thread = thread
-        _mirror_worker_owner_pid = os.getpid()
+        _mirror_worker_owner_pid = _getpid()
         _mirror_worker_started = True
 
 
@@ -313,6 +355,7 @@ def _emit_mirror_warning_if_due(
     target: str,
     exc: Exception,
 ) -> None:
+    global _internal_error_count  # noqa: PLW0603
     now = _now()
     with _mirror_state_lock:
         last = _last_warning_at.get(key, 0.0)
@@ -321,13 +364,16 @@ def _emit_mirror_warning_if_due(
         fails, drops = _warning_counts.get(key, (0, 0))
         _warning_counts[key] = (0, 0)
         _last_warning_at[key] = now
+        internal = _internal_error_count
+        _internal_error_count = 0
     logger.warning(
         "cdp-skill-delivery Event Service mirror failed "
-        "(transport=%s target=%s failures=%s drops=%s): %s",
+        "(transport=%s target=%s failures=%s drops=%s internal_errors=%s): %s",
         transport,
         target,
         fails,
         drops,
+        internal,
         exc,
     )
 
@@ -347,6 +393,29 @@ def _record_drop(*, transport: str, target: str, circuit: bool) -> None:
     )
 
 
+def _record_internal_error(transport: str, target: str, exc: Exception) -> None:
+    global _internal_error_count  # noqa: PLW0603
+    key = (transport, target)
+    with _mirror_state_lock:
+        _internal_error_count += 1
+        fails, drops = _warning_counts.get(key, (0, 0))
+        _warning_counts[key] = (fails + 1, drops)
+    _emit_mirror_warning_if_due(key, transport, target, exc)
+
+
+def _record_serialization_drop(transport: str, target: str, exc: Exception) -> None:
+    """Non-serializable payload — drop only; must not open the circuit breaker."""
+    global _queue_drop_count  # noqa: PLW0603
+    key = (transport, target)
+    with _mirror_state_lock:
+        _queue_drop_count += 1
+        fails, drops = _warning_counts.get(key, (0, 0))
+        _warning_counts[key] = (fails, drops + 1)
+    _emit_mirror_warning_if_due(
+        key, transport, target, _MirrorSerializationNotice(str(exc))
+    )
+
+
 def _record_send_failure(transport: str, target: str, exc: Exception) -> None:
     global _circuit_open_until  # noqa: PLW0603
     key = (transport, target)
@@ -358,8 +427,7 @@ def _record_send_failure(transport: str, target: str, exc: Exception) -> None:
     _emit_mirror_warning_if_due(key, transport, target, exc)
 
 
-def _mirror_send_sync(event: Event) -> None:
-    """TCP when configured, else UDS; raises on connect/send failure."""
+def _serialize_mirror_line(event: Event) -> bytes:
     payload: dict[str, Any] = {
         "signal": event.signal,
         "source": "cdp-skill-delivery",
@@ -368,7 +436,11 @@ def _mirror_send_sync(event: Event) -> None:
         "ts_unix_ms": int(time.time() * 1000),
         "payload": event.payload,
     }
-    line = (json.dumps(payload) + "\n").encode()
+    return (json.dumps(payload) + "\n").encode()
+
+
+def _mirror_send_sync(line: bytes) -> None:
+    """TCP when configured, else UDS; raises on connect/send failure."""
     tcp = _resolve_tcp_target()
     if tcp is not None:
         host, port = tcp
@@ -387,25 +459,35 @@ def _mirror_send_sync(event: Event) -> None:
 
 
 def _mirror_worker_loop() -> None:
-    while True:
-        item = _mirror_queue.get()
-        try:
-            if isinstance(item, _MirrorFlush):
-                item.done.set()
-                continue
-            event = item
-            transport, target = _mirror_transport_target()
-            if _now() < _circuit_open_until:
-                _record_drop(transport=transport, target=target, circuit=True)
-                continue
+    global _mirror_worker_started, _mirror_worker_thread  # noqa: PLW0603
+    try:
+        while True:
+            item = _mirror_queue.get()
             try:
-                _mirror_send_sync(event)
-            except Exception as exc:  # noqa: BLE001 — worker must not die
-                _record_send_failure(transport, target, exc)
-        except Exception:  # noqa: BLE001 — never escape the worker thread
-            pass
-        finally:
-            _mirror_queue.task_done()
+                if isinstance(item, _MirrorFlush):
+                    item.done.set()
+                    continue
+                if isinstance(item, _MirrorShutdown):
+                    break
+                line = item
+                transport, target = _mirror_transport_target()
+                if _now() < _circuit_open_until:
+                    _record_drop(transport=transport, target=target, circuit=True)
+                    continue
+                try:
+                    _mirror_send_sync(line)
+                except Exception as exc:  # noqa: BLE001 — worker must not die
+                    _record_send_failure(transport, target, exc)
+            except Exception as exc:  # noqa: BLE001 — never escape the worker thread
+                transport, target = _mirror_transport_target()
+                _record_internal_error(transport, target, exc)
+            finally:
+                _mirror_queue.task_done()
+    finally:
+        with _mirror_worker_lock:
+            if threading.current_thread() is _mirror_worker_thread:
+                _mirror_worker_started = False
+                _mirror_worker_thread = None
 
 
 def _mirror_to_event_service(event: Event) -> None:
@@ -419,13 +501,22 @@ def _mirror_to_event_service(event: Event) -> None:
             _record_drop(transport=transport, target=target, circuit=True)
             return
         try:
-            _mirror_queue.put_nowait(event)
+            line = _serialize_mirror_line(event)
+        except (TypeError, ValueError) as exc:
+            _record_serialization_drop(transport, target, exc)
+            return
+        try:
+            _mirror_queue.put_nowait(line)
         except queue.Full:
             _record_drop(transport=transport, target=target, circuit=False)
             return
         _ensure_mirror_worker()
-    except Exception:  # noqa: BLE001 — mirror must not raise into emit_*
-        return
+    except Exception as exc:  # noqa: BLE001 — mirror must not raise into emit_*
+        try:
+            transport, target = _mirror_transport_target()
+        except Exception:  # noqa: BLE001 — still record the original fault
+            transport, target = "uds", "unknown"
+        _record_internal_error(transport, target, exc)
 
 
 def flush_mirror_worker_for_tests(*, timeout: float = 5.0) -> None:
@@ -440,10 +531,18 @@ def flush_mirror_worker_for_tests(*, timeout: float = 5.0) -> None:
 
 
 def reset_mirror_state_for_tests() -> None:
-    """Test-only: clear breaker, counters, and warning throttle keys."""
+    """Test-only: stop worker, clear breaker, counters, and warning throttle keys."""
     global _circuit_open_until, _circuit_skip_count, _queue_drop_count  # noqa: PLW0603
     global _mirror_worker_started, _mirror_worker_thread, _mirror_worker_owner_pid
+    global _internal_error_count
     with _mirror_worker_lock:
+        worker = _mirror_worker_thread
+        if worker is not None and worker.is_alive():
+            try:
+                _mirror_queue.put_nowait(_MirrorShutdown())
+            except queue.Full:
+                pass
+            worker.join(timeout=5.0)
         _mirror_worker_started = False
         _mirror_worker_thread = None
         _mirror_worker_owner_pid = 0
@@ -451,6 +550,7 @@ def reset_mirror_state_for_tests() -> None:
         _circuit_open_until = 0.0
         _circuit_skip_count = 0
         _queue_drop_count = 0
+        _internal_error_count = 0
         _last_warning_at.clear()
         _warning_counts.clear()
     while True:
