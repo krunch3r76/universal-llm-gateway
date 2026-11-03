@@ -1128,7 +1128,7 @@ async def test_deliver_operator_paste_submitted_false_after_retry(
     )
     assert out["submitted"] is False
     assert out["reason"] == "submit_unverified"
-    assert out["submit_methods"] == ["send_button", "cdp_enter"]
+    assert out["submit_methods"] == ["send_button"]
     assert out["verify_method"] == "screenshot_fallback"
     assert out["screenshot_path"] == "/tmp/submit-fail.png"
     screenshot.assert_awaited_once()

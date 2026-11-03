@@ -528,26 +528,27 @@ async def _guarded_insert_and_submit(
                         surface,
                         submit_methods,
                     )
-                try:
-                    enter = await _submit_composer_enter(
-                        ws_url,
-                        selector=prompt_sel,
-                        expected_agent_id=aid_s,
-                        nonce_needle=run_nonce,
-                    )
-                    if enter.get("ok"):
-                        submit_methods.append("cdp_enter")
-                        post_submit, submitted = await _poll_submit_verified(
+                if not first_send.get("ok"):
+                    try:
+                        enter = await _submit_composer_enter(
                             ws_url,
-                            watermark=wm_line,
-                            body_snippet=body_snippet,
-                            run_nonce=run_nonce,
+                            selector=prompt_sel,
+                            expected_agent_id=aid_s,
+                            nonce_needle=run_nonce,
                         )
-                    else:
-                        reason = str(enter.get("reason") or "enter_refused")
-                        submit_methods.append(f"cdp_enter_refused:{reason}")
-                except (TimeoutError, RuntimeError, OSError):
-                    submitted = False
+                        if enter.get("ok"):
+                            submit_methods.append("cdp_enter")
+                            post_submit, submitted = await _poll_submit_verified(
+                                ws_url,
+                                watermark=wm_line,
+                                body_snippet=body_snippet,
+                                run_nonce=run_nonce,
+                            )
+                        else:
+                            reason = str(enter.get("reason") or "enter_refused")
+                            submit_methods.append(f"cdp_enter_refused:{reason}")
+                    except (TimeoutError, RuntimeError, OSError):
+                        submitted = False
 
         matched, verify_surface = await _probe_agent_match(
             ws_url, expected_agent_id=aid_s
