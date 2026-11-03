@@ -352,24 +352,35 @@ def archive_chat_transcript(
         if existing_rows is None:
             conv12_dest = _conv12_archive_dest(site, conversation_id)
             if conv12_dest.is_file():
-                legacy_envelope = load_harvest_envelope(conv12_dest)
-                if _legacy_conv12_envelope_matches(
-                    legacy_envelope,
-                    conversation_id=conversation_id,
-                    url=url,
-                ):
-                    existing_messages = list(legacy_envelope.messages)
-                    existing_rows = message_index(existing_messages)
-                    existing_sha = _sha256_of_file(conv12_dest)
-                    existing_source = "legacy_conv12_envelope"
-                else:
-                    logger.info(
-                        "ignore legacy conv12 archive — identity mismatch "
-                        "site=%s conversation_id=%s path=%s",
+                try:
+                    legacy_envelope = load_harvest_envelope(conv12_dest)
+                except (OSError, ValueError) as exc:
+                    logger.warning(
+                        "ignore legacy conv12 archive — unreadable "
+                        "site=%s conversation_id=%s path=%s error=%s",
                         site,
                         conversation_id,
                         conv12_dest,
+                        type(exc).__name__,
                     )
+                else:
+                    if _legacy_conv12_envelope_matches(
+                        legacy_envelope,
+                        conversation_id=conversation_id,
+                        url=url,
+                    ):
+                        existing_messages = list(legacy_envelope.messages)
+                        existing_rows = message_index(existing_messages)
+                        existing_sha = _sha256_of_file(conv12_dest)
+                        existing_source = "legacy_conv12_envelope"
+                    else:
+                        logger.info(
+                            "ignore legacy conv12 archive — identity mismatch "
+                            "site=%s conversation_id=%s path=%s",
+                            site,
+                            conversation_id,
+                            conv12_dest,
+                        )
 
     if dest.is_file() and supersede:
         version = _next_supersede_version(site, conversation_id)

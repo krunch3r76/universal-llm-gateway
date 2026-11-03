@@ -7,6 +7,7 @@ ingest must never override fail-closed attest semantics.
 
 from __future__ import annotations
 
+import atexit
 import json
 import logging
 import os
@@ -27,6 +28,8 @@ _now = time.monotonic
 _MIRROR_QUEUE_MAXSIZE = 256
 _CIRCUIT_BREAKER_SECONDS = 30.0
 _WARNING_INTERVAL_SECONDS = 300.0
+_EXIT_DRAIN_SECONDS = 2.0
+_RESET_JOIN_SECONDS = 5.0
 
 _mirror_queue: queue.Queue[Any] = queue.Queue(maxsize=_MIRROR_QUEUE_MAXSIZE)
 _mirror_worker_lock = threading.Lock()
@@ -91,6 +94,13 @@ def _reset_mirror_after_fork() -> None:
 
 if hasattr(os, "register_at_fork"):
     os.register_at_fork(after_in_child=_reset_mirror_after_fork)
+
+
+def _mirror_target_with_fallback() -> tuple[str, str]:
+    try:
+        return _mirror_transport_target()
+    except Exception:  # noqa: BLE001 — match emit path
+        return "uds", "unknown"
 
 
 @event_factory
@@ -359,8 +369,8 @@ def _emit_mirror_warning_if_due(
     global _internal_error_count  # noqa: PLW0603
     now = _now()
     with _mirror_state_lock:
-        last = _last_warning_at.get(key, 0.0)
-        if now - last < _WARNING_INTERVAL_SECONDS:
+        last = _last_warning_at.get(key)
+        if last is not None and now - last < _WARNING_INTERVAL_SECONDS:
             return
         fails, drops = _warning_counts.get(key, (0, 0))
         _warning_counts[key] = (0, 0)
@@ -564,7 +574,94 @@ def _enqueue_mirror_sentinel(item: _MirrorFlush | _MirrorShutdown) -> bool:
                     _mirror_queue.task_done()
                 except ValueError:
                     pass
+                transport, target = _mirror_target_with_fallback()
+                _record_drop(transport=transport, target=target, circuit=False)
     return False
+
+
+def drain_mirror_queue_at_exit(
+    *, timeout: float = _EXIT_DRAIN_SECONDS
+) -> tuple[int, int]:
+    """Flush or count queued mirror payloads at interpreter exit.
+
+    Runs on the exiting thread with ``get_nowait`` (no worker sentinel). A line
+    a live daemon worker already dequeued and is mid-``send`` is in flight, not
+    queued; the worker loop covers it until teardown.
+    """
+    flushed = 0
+    dropped = 0
+    deadline = _now() + timeout
+    try:
+        while True:
+            try:
+                item = _mirror_queue.get_nowait()
+            except queue.Empty:
+                break
+            try:
+                if isinstance(item, _MirrorFlush):
+                    item.done.set()
+                    continue
+                if isinstance(item, _MirrorShutdown):
+                    continue
+                line = item
+                transport, target = _mirror_target_with_fallback()
+                if _now() < _circuit_open_until:
+                    _record_drop(transport=transport, target=target, circuit=True)
+                    dropped += 1
+                elif _now() >= deadline:
+                    _record_drop(transport=transport, target=target, circuit=False)
+                    dropped += 1
+                else:
+                    try:
+                        _mirror_send_sync(line)
+                        flushed += 1
+                    except Exception as exc:  # noqa: BLE001 — exit drain must continue
+                        _record_send_failure(transport, target, exc)
+                        dropped += 1
+            except Exception as exc:  # noqa: BLE001 — route wiring bugs, keep draining
+                transport, target = _mirror_target_with_fallback()
+                _record_internal_error(transport, target, exc)
+                dropped += 1
+            finally:
+                try:
+                    _mirror_queue.task_done()
+                except ValueError:
+                    pass
+        if dropped >= 1:
+            transport, target = _mirror_target_with_fallback()
+            logger.warning(
+                "cdp-skill-delivery mirror exit drain "
+                "(transport=%s target=%s flushed=%s dropped=%s "
+                "circuit_skips=%s queue_drops=%s)",
+                transport,
+                target,
+                flushed,
+                dropped,
+                _circuit_skip_count,
+                _queue_drop_count,
+            )
+    except Exception as exc:  # noqa: BLE001 — atexit must not raise
+        transport, target = _mirror_target_with_fallback()
+        _record_internal_error(transport, target, exc)
+    return flushed, dropped
+
+
+atexit.register(drain_mirror_queue_at_exit)
+
+
+def _discard_mirror_queue_for_tests() -> None:
+    """Remove queued items without send or counters (test reset only)."""
+    while True:
+        try:
+            item = _mirror_queue.get_nowait()
+        except queue.Empty:
+            break
+        if isinstance(item, _MirrorFlush):
+            item.done.set()
+        try:
+            _mirror_queue.task_done()
+        except ValueError:
+            pass
 
 
 def flush_mirror_worker_for_tests(*, timeout: float = 5.0) -> None:
@@ -602,7 +699,8 @@ def reset_mirror_state_for_tests() -> None:
     for _worker in workers:
         _enqueue_mirror_sentinel(_MirrorShutdown())
     for worker in workers:
-        worker.join(timeout=5.0)
+        worker.join(timeout=_RESET_JOIN_SECONDS)
+    stuck = [worker for worker in workers if worker.is_alive()]
     with _mirror_state_lock:
         _circuit_open_until = 0.0
         _circuit_skip_count = 0
@@ -610,8 +708,9 @@ def reset_mirror_state_for_tests() -> None:
         _internal_error_count = 0
         _last_warning_at.clear()
         _warning_counts.clear()
-    while True:
+    _discard_mirror_queue_for_tests()
+    for _ in stuck:
         try:
-            _mirror_queue.get_nowait()
-        except queue.Empty:
-            break
+            _mirror_queue.put_nowait(_MirrorShutdown())
+        except queue.Full:
+            pass
