@@ -456,3 +456,17 @@ def test_mirror_internal_error_emits_throttled_warning(
     assert len(warnings) == 1
     assert "internal_errors=1" in warnings[0].message
     assert esd._internal_error_count == 0
+
+
+def test_reset_mirror_joins_worker_without_holding_worker_lock() -> None:
+    """reset must not hold _mirror_worker_lock during join (D1 / a:41869)."""
+    _emit_sample()
+    flush_mirror_worker_for_tests(timeout=2.0)
+    worker = esd._mirror_worker_thread
+    assert worker is not None
+    assert worker.is_alive()
+    started = time.monotonic()
+    reset_mirror_state_for_tests()
+    elapsed = time.monotonic() - started
+    assert elapsed < 1.0, f"reset blocked {elapsed:.2f}s (join under lock?)"
+    assert not worker.is_alive()

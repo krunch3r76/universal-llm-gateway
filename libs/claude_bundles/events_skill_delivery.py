@@ -535,6 +535,7 @@ def reset_mirror_state_for_tests() -> None:
     global _circuit_open_until, _circuit_skip_count, _queue_drop_count  # noqa: PLW0603
     global _mirror_worker_started, _mirror_worker_thread, _mirror_worker_owner_pid
     global _internal_error_count
+    worker_to_join: threading.Thread | None = None
     with _mirror_worker_lock:
         worker = _mirror_worker_thread
         if worker is not None and worker.is_alive():
@@ -542,10 +543,12 @@ def reset_mirror_state_for_tests() -> None:
                 _mirror_queue.put_nowait(_MirrorShutdown())
             except queue.Full:
                 pass
-            worker.join(timeout=5.0)
+            worker_to_join = worker
         _mirror_worker_started = False
         _mirror_worker_thread = None
         _mirror_worker_owner_pid = 0
+    if worker_to_join is not None:
+        worker_to_join.join(timeout=5.0)
     with _mirror_state_lock:
         _circuit_open_until = 0.0
         _circuit_skip_count = 0
