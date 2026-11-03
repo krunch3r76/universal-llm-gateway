@@ -24,6 +24,14 @@ _WS = "workspaces://universal-llm-gateway"
 
 
 @dataclass(frozen=True, slots=True)
+class HostLocalSotAbsence:
+    """Expected host-local SOT body missing on disk — reported, not load-aborting."""
+
+    slug: str
+    path: Path
+
+
+@dataclass(frozen=True, slots=True)
 class SkillCatalogEntry:
     """One authoritative placement row."""
 
@@ -33,6 +41,7 @@ class SkillCatalogEntry:
     aliases: tuple[str, ...] = ()
     delivery_priority: int | None = None
     sot_dirname: str | None = None
+    host_local: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -41,6 +50,7 @@ class SkillCatalog:
 
     entries: dict[str, SkillCatalogEntry]
     alias_to_canonical: dict[str, str]
+    host_local_absences: tuple[HostLocalSotAbsence, ...] = ()
 
     def get(self, slug: str) -> SkillCatalogEntry:
         key = self.canonical_slug(slug)
@@ -177,6 +187,13 @@ def _parse_entry(slug: str, raw: object) -> SkillCatalogEntry:
         not isinstance(sot_dirname, str) or not sot_dirname.strip()
     ):
         raise CatalogValidationError(f"{slug}: sot_dirname must be a non-empty string")
+    host_local = raw.get("host_local", False)
+    if not isinstance(host_local, bool):
+        raise CatalogValidationError(f"{slug}: host_local must be a boolean")
+    if host_local and surface != "cursor_only":
+        raise CatalogValidationError(
+            f"{slug}: host_local is only valid for surface_class=cursor_only"
+        )
     return SkillCatalogEntry(
         slug=slug,
         surface_class=surface,  # type: ignore[arg-type]
@@ -184,6 +201,7 @@ def _parse_entry(slug: str, raw: object) -> SkillCatalogEntry:
         aliases=aliases,
         delivery_priority=priority,
         sot_dirname=str(sot_dirname).strip() if sot_dirname else None,
+        host_local=host_local,
     )
 
 
@@ -269,15 +287,49 @@ def check_sot_catalog_parity(
     load_skill_catalog(path=catalog_path, repo_root=root, validate_sot=True)
 
 
-def _validate_sot_coverage(catalog: SkillCatalog, repo_root: Path) -> None:
-    """Every active Cursor SOT and every life_local row must resolve exactly once."""
-    errors: list[str] = []
-    cursor_sots = _active_sot_slugs(repo_root)
-    catalog_dirs = {
+def _host_local_cursor_dirnames(catalog: SkillCatalog) -> frozenset[str]:
+    return frozenset(
+        (entry.sot_dirname or entry.slug)
+        for entry in catalog.entries.values()
+        if entry.surface_class == "cursor_only" and entry.host_local
+    )
+
+
+def _cursor_parity_catalog_dirs(catalog: SkillCatalog) -> set[str]:
+    return {
         (entry.sot_dirname or entry.slug)
         for entry in catalog.entries.values()
         if entry.surface_class in ("shared_sync", "cursor_only")
+        and not entry.host_local
     }
+
+
+def _collect_host_local_absences(
+    catalog: SkillCatalog, repo_root: Path
+) -> tuple[HostLocalSotAbsence, ...]:
+    absences: list[HostLocalSotAbsence] = []
+    for slug in catalog.life_local_slugs():
+        entry = catalog.entries[slug]
+        dirname = entry.sot_dirname or slug
+        path = repo_root / ".claude" / "skills" / dirname / "SKILL.md"
+        if not path.is_file():
+            absences.append(HostLocalSotAbsence(slug=slug, path=path))
+    for slug, entry in catalog.entries.items():
+        if not entry.host_local:
+            continue
+        dirname = entry.sot_dirname or slug
+        path = repo_root / ".cursor" / "skills" / dirname / "SKILL.md"
+        if not path.is_file():
+            absences.append(HostLocalSotAbsence(slug=slug, path=path))
+    return tuple(absences)
+
+
+def _validate_sot_coverage(catalog: SkillCatalog, repo_root: Path) -> None:
+    """Cursor parity + resolvable hub SOTs; host-local misses are reported separately."""
+    errors: list[str] = []
+    host_local_dirs = _host_local_cursor_dirnames(catalog)
+    cursor_sots = _active_sot_slugs(repo_root) - host_local_dirs
+    catalog_dirs = _cursor_parity_catalog_dirs(catalog)
     missing_rows = sorted(cursor_sots - catalog_dirs)
     if missing_rows:
         errors.append(f"active Cursor SOTs missing catalog rows: {missing_rows}")
@@ -288,9 +340,6 @@ def _validate_sot_coverage(catalog: SkillCatalog, repo_root: Path) -> None:
     for slug in catalog.life_local_slugs():
         entry = catalog.entries[slug]
         dirname = entry.sot_dirname or slug
-        path = repo_root / ".claude" / "skills" / dirname / "SKILL.md"
-        if not path.is_file():
-            errors.append(f"life_local {slug!r} missing SOT at {path}")
         cursor_path = repo_root / ".cursor" / "skills" / dirname / "SKILL.md"
         if cursor_path.is_file():
             errors.append(
@@ -299,6 +348,8 @@ def _validate_sot_coverage(catalog: SkillCatalog, repo_root: Path) -> None:
 
     for slug, entry in catalog.entries.items():
         if entry.surface_class == "life_local":
+            continue
+        if entry.host_local:
             continue
         try:
             catalog.resolve_sot(slug, repo_root)
@@ -342,10 +393,16 @@ def load_skill_catalog(
                 )
             alias_to_canonical[alias] = key
 
-    catalog = SkillCatalog(entries=entries, alias_to_canonical=alias_to_canonical)
+    provisional = SkillCatalog(entries=entries, alias_to_canonical=alias_to_canonical)
+    absences: tuple[HostLocalSotAbsence, ...] = ()
     if validate_sot:
-        _validate_sot_coverage(catalog, root)
-    return catalog
+        _validate_sot_coverage(provisional, root)
+        absences = _collect_host_local_absences(provisional, root)
+    return SkillCatalog(
+        entries=entries,
+        alias_to_canonical=alias_to_canonical,
+        host_local_absences=absences,
+    )
 
 
 @lru_cache(maxsize=1)

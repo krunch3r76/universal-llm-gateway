@@ -64,6 +64,7 @@ skills:
   case-evidence-retrieval:
     surface_class: cursor_only
     mcp_surface_required: none
+    host_local: true
   cheap-recon-before-escalation:
     surface_class: cursor_only
     mcp_surface_required: code
@@ -154,6 +155,7 @@ skills:
   corpus-cross-reference-discipline:
     surface_class: cursor_only
     mcp_surface_required: code
+    host_local: true
   corpus-grounded-skill-authoring:
     surface_class: cursor_only
     mcp_surface_required: none
@@ -178,6 +180,7 @@ skills:
   crypto-trading-research:
     surface_class: cursor_only
     mcp_surface_required: none
+    host_local: true
   cursor-rule-authoring:
     surface_class: cursor_only
     mcp_surface_required: none
@@ -327,9 +330,11 @@ skills:
     # web/Customize open (opening-context cost).
     surface_class: cursor_only
     mcp_surface_required: none
+    host_local: true
   lawyer-stance-code:
     surface_class: cursor_only
     mcp_surface_required: code
+    host_local: true
   landed-not-live:
     surface_class: shared_sync
     mcp_surface_required: none
@@ -339,6 +344,7 @@ skills:
   legal-opinion-corpus-ingestion:
     surface_class: cursor_only
     mcp_surface_required: none
+    host_local: true
   life-handoff-corpus:
     surface_class: shared_sync
     mcp_surface_required: life
@@ -389,6 +395,7 @@ skills:
     # ¬ ulg-ecosystem census unless operator asks.
     surface_class: cursor_only
     mcp_surface_required: none
+    host_local: true
   matter-playbook-lifecycle:
     surface_class: life_local
     mcp_surface_required: none
@@ -487,6 +494,7 @@ skills:
   psych-framework-counsel:
     surface_class: cursor_only
     mcp_surface_required: none
+    host_local: true
   rag-canonical-reference-reminder:
     surface_class: cursor_only
     mcp_surface_required: none
@@ -580,6 +588,7 @@ skills:
     # ¬ ulg-ecosystem census unless operator asks. Same pattern as messages-check.
     surface_class: cursor_only
     mcp_surface_required: none
+    host_local: true
   writing-with-provenance:
     # Restored to shared_sync 2026-09-16 — mcp_surface_required=none (life-compatible);
     # operator: if life-compatible it belongs on claude.ai. 2026-08-02 demotion
@@ -589,6 +598,7 @@ skills:
   w2-ingestion:
     surface_class: cursor_only
     mcp_surface_required: none
+    host_local: true
   web-anthropic-canvas-dialogue:
     surface_class: cursor_only
     mcp_surface_required: code

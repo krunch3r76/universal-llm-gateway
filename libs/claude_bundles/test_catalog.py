@@ -12,6 +12,8 @@ import pytest
 from claude_bundles.catalog import (
     CatalogValidationError,
     _active_sot_slugs,
+    _cursor_parity_catalog_dirs,
+    _host_local_cursor_dirnames,
     check_sot_catalog_parity,
     clear_skill_catalog_cache,
     load_skill_catalog,
@@ -33,18 +35,73 @@ def _clear_catalog_cache() -> None:
 
 def test_every_active_cursor_sot_has_exactly_one_row() -> None:
     catalog = load_skill_catalog(repo_root=_REPO)
-    cursor_sots = _active_sot_slugs(_REPO)
-    catalog_dirs = {
-        (entry.sot_dirname or entry.slug)
-        for entry in catalog.entries.values()
-        if entry.surface_class in ("shared_sync", "cursor_only")
-    }
+    host_local_dirs = _host_local_cursor_dirnames(catalog)
+    cursor_sots = _active_sot_slugs(_REPO) - host_local_dirs
+    catalog_dirs = _cursor_parity_catalog_dirs(catalog)
     assert cursor_sots == catalog_dirs
     assert len(catalog.entries) == len(set(catalog.entries))
 
 
 def test_check_sot_catalog_parity_passes_on_repo() -> None:
     check_sot_catalog_parity(repo_root=_REPO)
+
+
+def test_host_local_absences_empty_when_bodies_present() -> None:
+    catalog = load_skill_catalog(repo_root=_REPO, validate_sot=True)
+    assert catalog.host_local_absences == ()
+
+
+def test_clean_checkout_host_local_missing_loads_with_report(tmp_path: Path) -> None:
+    census_dir = tmp_path / "cursor-plugins" / "ulg-ecosystem" / "skills" / "listed"
+    census_dir.mkdir(parents=True)
+    (census_dir / "SKILL.md").write_text("# listed\n", encoding="utf-8")
+    plugin_root = tmp_path / "cursor-plugins" / "ulg-ecosystem"
+    (plugin_root / "SKILLS_CENSUS.txt").write_text("listed\n", encoding="utf-8")
+    config_dir = tmp_path / "config"
+    config_dir.mkdir()
+    (config_dir / "skills.yaml").write_text(
+        "skills:\n"
+        "  listed:\n"
+        "    surface_class: shared_sync\n"
+        "    mcp_surface_required: none\n"
+        "  host-cursor:\n"
+        "    surface_class: cursor_only\n"
+        "    mcp_surface_required: none\n"
+        "    host_local: true\n"
+        "  host-life:\n"
+        "    surface_class: life_local\n"
+        "    mcp_surface_required: none\n",
+        encoding="utf-8",
+    )
+    clear_skill_catalog_cache()
+    catalog = load_skill_catalog(
+        path=config_dir / "skills.yaml",
+        repo_root=tmp_path,
+        validate_sot=True,
+    )
+    assert "host-cursor" in catalog.entries
+    assert "host-life" in catalog.entries
+    slugs = {a.slug for a in catalog.host_local_absences}
+    assert slugs == {"host-cursor", "host-life"}
+
+
+def test_host_local_on_shared_sync_raises(tmp_path: Path) -> None:
+    config_dir = tmp_path / "config"
+    config_dir.mkdir()
+    (config_dir / "skills.yaml").write_text(
+        "skills:\n"
+        "  bad:\n"
+        "    surface_class: shared_sync\n"
+        "    mcp_surface_required: none\n"
+        "    host_local: true\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(CatalogValidationError, match="host_local is only valid"):
+        load_skill_catalog(
+            path=config_dir / "skills.yaml",
+            repo_root=tmp_path,
+            validate_sot=False,
+        )
 
 
 def test_census_without_catalog_row_raises(tmp_path: Path) -> None:
