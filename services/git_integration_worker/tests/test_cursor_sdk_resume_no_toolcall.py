@@ -1,8 +1,10 @@
 """Park-resume silence and MCP handshake fast-fail (friction a:41850).
 
 Fresh runs keep the outer idle budget. A park-resumed run with no successful
-tool call fails at ``CURSOR_SDK_RESUME_NO_TOOLCALL_S`` (default 300). A failed
-MCP handshake on that path fails immediately with its own code.
+tool call fails at ``CURSOR_SDK_RESUME_NO_TOOLCALL_S`` (default 300), including
+when the worker returns before that deadline. A failed MCP handshake on that
+path fails immediately with its own code, and that exception must leave
+``_run_sdk_sync`` unwrapped.
 """
 
 from __future__ import annotations
@@ -10,6 +12,7 @@ from __future__ import annotations
 import asyncio
 import json
 import threading
+from pathlib import Path
 from typing import Any
 from unittest.mock import MagicMock
 
@@ -267,6 +270,191 @@ def test_resume_agent_applies_options_and_handshake_fail_skips_send(
     client.resume_agent.assert_called_once_with("agent-parent", options)
     agent.send.assert_not_called()
     assert observed == ["called"]
+
+
+async def _no_live_nest(**_kwargs: object) -> bool:
+    """Stand-in: this dispatch has no live nest child waiting on it."""
+    return False
+
+
+@pytest.mark.asyncio
+async def test_park_resume_quick_finish_without_completed_toolcall_fails(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A park-resumed worker that returns before the idle deadline with zero completed calls fails.
+
+    The idle watchdog never fires on this path. Text in the outcome is not a
+    completed tool call, so the row must be ``CURSOR_SDK_RESUME_NO_TOOLCALL``
+    and no success closeout is posted.
+    """
+    from services.git_integration_worker.routes import cursor_sdk as route_mod
+
+    def _finish(**_kwargs: object) -> SdkRunOutcome:
+        return SdkRunOutcome(
+            body="cannot reach tools",
+            status="finished",
+            duration_ms=1,
+            tool_call_count=0,
+        )
+
+    success = {"n": 0}
+
+    async def _success(**_kwargs: object) -> None:
+        success["n"] += 1
+
+    monkeypatch.setattr(route_mod, "_run_sdk_sync", _finish)
+    monkeypatch.setattr(route_mod, "_finalize_success", _success)
+    monkeypatch.setattr(
+        "services.git_integration_worker.cursor_sdk_nest_resume.defer_finished_parent_for_live_nest",
+        _no_live_nest,
+    )
+    req = _park_resume_request("disp-resume-quick-none")
+    bus = _mock_bus()
+    try:
+        await route_mod._run_sdk_dispatch_gated(
+            req=req,
+            ctx=_ctx_for(route_mod, req),
+            bus=bus,
+            controller=_make_controller(),
+        )
+    finally:
+        await _drop_slot(req.dispatch_id)
+
+    assert success["n"] == 0
+    env = _envelope(bus.reply.await_args.kwargs["body"])
+    assert env["code"] == "CURSOR_SDK_RESUME_NO_TOOLCALL"
+    assert "first_toolcall_s=" in env["message"]
+    assert "mcp_handshake=" in env["message"]
+    assert "admitted_via=giw_park_resume" in env["message"]
+    assert env["data"]["first_toolcall_s"] is None
+    assert env["data"]["stream_tool_call_count"] == 0
+    bus.terminate_dispatch.assert_awaited_once_with(
+        thread_id=req.thread_id,
+        terminal_status="failed",
+        execution_id=req.execution_id,
+    )
+    assert bus.reply.await_count == 1
+    assert "FAILED (resume no toolcall)" in bus.reply.await_args.kwargs["subject"]
+
+
+@pytest.mark.asyncio
+async def test_park_resume_quick_finish_with_completed_toolcall_succeeds(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """One completed tool call on a fast park-resume still takes the success finalizer.
+
+    This is the control for the zero-call quick finish: noting a completed
+    observation on the shared counter must not be reported as
+    ``CURSOR_SDK_RESUME_NO_TOOLCALL``.
+    """
+    from services.git_integration_worker.routes import cursor_sdk as route_mod
+
+    def _finish(**kwargs: object) -> SdkRunOutcome:
+        counter = kwargs["live_counter"]
+        counter.note_progress(_completed_observation())  # type: ignore[attr-defined]
+        return SdkRunOutcome(
+            body="status: complete — tools answered",
+            status="finished",
+            duration_ms=1,
+            tool_call_count=1,
+        )
+
+    success = {"n": 0}
+
+    async def _success(**_kwargs: object) -> None:
+        success["n"] += 1
+
+    monkeypatch.setattr(route_mod, "_run_sdk_sync", _finish)
+    monkeypatch.setattr(route_mod, "_finalize_success", _success)
+    monkeypatch.setattr(
+        "services.git_integration_worker.cursor_sdk_nest_resume.defer_finished_parent_for_live_nest",
+        _no_live_nest,
+    )
+    req = _park_resume_request("disp-resume-quick-one")
+    bus = _mock_bus()
+    try:
+        await route_mod._run_sdk_dispatch_gated(
+            req=req,
+            ctx=_ctx_for(route_mod, req),
+            bus=bus,
+            controller=_make_controller(),
+        )
+    finally:
+        await _drop_slot(req.dispatch_id)
+
+    assert success["n"] == 1
+    assert bus.reply.await_count == 0
+
+
+def test_run_sdk_sync_lets_resume_mcp_handshake_error_escape(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """``ResumeMcpHandshakeError`` raised inside ``_run_sdk_sync`` must not be wrapped.
+
+    The gated handler only matches that type. Wrapping it as
+    ``SdkRunAbortedError`` drops ``CURSOR_SDK_RESUME_MCP_HANDSHAKE``.
+    """
+    from services.git_integration_worker import (
+        cursor_sdk_bridge_launch as bridge_launch_mod,
+    )
+    from services.git_integration_worker import cursor_sdk_resume as resume_mod
+    from services.git_integration_worker.routes import cursor_sdk as route_mod
+    from services.git_integration_worker.tests.test_cursor_sdk_route import (
+        _fake_repo_venv,
+    )
+
+    repo_venv = _fake_repo_venv(tmp_path)
+    dispatch_home = tmp_path / "dispatch-home"
+    dispatch_home.mkdir()
+    monkeypatch.setattr(route_mod, "resolve_repo_venv", lambda **_: repo_venv)
+    monkeypatch.setattr(
+        route_mod, "setup_cursor_dispatch_home", lambda _did, **_: dispatch_home
+    )
+    monkeypatch.setattr(route_mod, "validate_dispatch_context", lambda *_a, **_k: {})
+    monkeypatch.setattr(
+        route_mod, "resolve_cursor", lambda _mid: MagicMock(model_id="composer-2.5")
+    )
+    monkeypatch.setattr(
+        route_mod, "build_model_selection", lambda _cfg, _ov: MagicMock(params=[])
+    )
+    monkeypatch.setattr(
+        route_mod, "build_agent_options", lambda *_a, **_k: MagicMock(local=True)
+    )
+    monkeypatch.setattr(
+        route_mod, "_start_heartbeat", lambda **_kw: (MagicMock(), MagicMock())
+    )
+    monkeypatch.setattr(
+        route_mod, "release_or_restore_for_child_sync", lambda *_a, **_k: None
+    )
+
+    def _fake_launch(
+        *_args: object, command: list[str], **_kwargs: object
+    ) -> MagicMock:
+        del command
+        client = MagicMock()
+        client.close = MagicMock()
+        return client
+
+    monkeypatch.setattr(bridge_launch_mod.Client, "launch_bridge", _fake_launch)
+
+    def _raise(**_kwargs: object) -> object:
+        raise resume_mod.ResumeMcpHandshakeError("failed:mcp_server_exited")
+
+    monkeypatch.setattr(route_mod, "start_or_resume_agent", _raise)
+    req = _park_resume_request("disp-resume-handshake-unwrap")
+    with pytest.raises(
+        resume_mod.ResumeMcpHandshakeError, match="failed:mcp_server_exited"
+    ):
+        route_mod._run_sdk_sync(
+            ctx=_ctx_for(route_mod, req),
+            prompt="continue",
+            config_model_id=req.model,
+            selection_overrides=None,
+            resolved_model=req.model,
+            gate_loop=MagicMock(),
+            live_counter=route_mod._LiveToolCallCounter(),
+            admitted_via="giw_park_resume",
+        )
 
 
 def test_classify_mcp_handshake_ignores_bridge_discovery_line() -> None:

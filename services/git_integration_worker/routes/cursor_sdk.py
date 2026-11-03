@@ -1707,6 +1707,10 @@ def _run_sdk_sync(
             )
         except WorktreeMintError:
             raise
+        except ResumeMcpHandshakeError:
+            # The gated runner matches this type. Wrapping it as
+            # SdkRunAbortedError makes that handler dead (friction:41850).
+            raise
         except BaseException as exc:
             sdk_request_id, request_id_source = request_id_from_sdk_error(exc)
             if sdk_request_id:
@@ -3489,6 +3493,41 @@ async def _run_sdk_dispatch_gated(
             error=f"{type(exc).__name__}: {exc}",
             exc=exc,
             data=fail_data,
+        )
+        return
+
+    # The idle watchdog never runs once the worker has returned. A park-resumed
+    # run with zero completed tool calls is still a failure (friction:41850).
+    # Outcome text is not a completed call; the counter is the same clock the
+    # idle budget uses.
+    if (
+        req.admitted_via == "giw_park_resume"
+        and not live_counter.had_successful_tool_call()
+    ):
+        progress = run_progress_fields(
+            first_toolcall_s=live_counter.first_toolcall_s(),
+            stream_tool_call_count=live_counter.value(),
+            admitted_via=req.admitted_via,
+            mcp_handshake=live_counter.handshake_state(),
+        )
+        await asyncio.to_thread(persist_run_progress, req.dispatch_id, progress)
+        await _finalize_failed(
+            req=req,
+            bus=bus,
+            reply_to=reply_to,
+            controller=controller,
+            code="CURSOR_SDK_RESUME_NO_TOOLCALL",
+            message=format_park_resume_failure_message(
+                kind="no_toolcall",
+                since_last_progress_s=live_counter.since_last_progress_s(),
+                budget_s=resume_no_toolcall_budget_s(),
+                first_toolcall_s=live_counter.first_toolcall_s(),
+                mcp_handshake=str(progress["mcp_handshake"]),
+                admitted_via="giw_park_resume",
+            ),
+            subject_suffix="FAILED (resume no toolcall)",
+            retryable=False,
+            data=progress,
         )
         return
 
