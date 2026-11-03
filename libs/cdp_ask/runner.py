@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import logging
 import os
 import re
 import subprocess
@@ -37,7 +38,7 @@ from claude_bundles.project_ask_prompt_files import (
 from claude_bundles.what_is_running_view import OPERATOR_PURPOSES
 from cortex_store.files_path_normalize import normalize_cortex_files_path
 
-from cdp_ask.models import SubmitProjectAskRequest
+from cdp_ask.models import SubmitProjectAskRequest, classify_stall_stage
 from cdp_ask.overlay_effort_retry import run_with_overlay_retry
 from cdp_ask.page_liveness import (
     LadderAdvanceState,
@@ -51,6 +52,8 @@ from cdp_ask.unverifiable import (
     is_host_lost_error,
     is_unverifiable_stall,
 )
+
+logger = logging.getLogger(__name__)
 
 _CSE_URL_MARKER = "claude.ai/cowork/cse_"
 _CODE_SESSION_URL = re.compile(
@@ -900,10 +903,17 @@ async def run_execution(
                         last.url,
                         execution_id=execution_id,
                     )
-                    fail_error = converse_fail_error(last.error if last else None)
-                    stall = converse_stall_stage(
-                        last.error if last else None, conv_ok=False
+                    logger.warning(
+                        "HarvestArchiveError registration_id=%s: %s",
+                        reg.registration_id,
+                        exc,
                     )
+                    if last.ok:
+                        fail_error = str(exc)
+                        stall = classify_stall_stage(str(exc))
+                    else:
+                        fail_error = converse_fail_error(last.error)
+                        stall = converse_stall_stage(last.error, conv_ok=False)
                     return {
                         "ok": False,
                         "registration_id": reg.registration_id,
@@ -917,7 +927,6 @@ async def run_execution(
                         "model": last.model,
                         "attested_model": last.attested_model,
                         "error": fail_error,
-                        "archive_error": str(exc),
                         "harvest_provenance": None,
                         "stall_stage": stall,
                         **retry_meta,

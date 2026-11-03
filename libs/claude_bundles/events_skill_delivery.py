@@ -30,6 +30,8 @@ def cdp_skill_delivery_attested(
     rows: list[dict[str, str]] | None = None,
     execution_id: str = "",
     satellite_execution_id: str = "",
+    claude_surface: str = "",
+    inline_observed: list[str] | None = None,
 ) -> Event:
     """Observation event for sealed CDP skill channel attest (success or fail).
 
@@ -51,6 +53,10 @@ def cdp_skill_delivery_attested(
             "rows": list(rows or []),
             "execution_id": str(execution_id or ""),
             "satellite_execution_id": str(satellite_execution_id or ""),
+            "claude_surface": str(claude_surface or ""),
+            "inline_observed": sorted(
+                {str(s).strip() for s in (inline_observed or []) if str(s).strip()}
+            ),
         },
     )
 
@@ -66,6 +72,8 @@ def emit_skill_delivery_attested(
     rows: list[dict[str, str]] | None = None,
     execution_id: str = "",
     satellite_execution_id: str = "",
+    claude_surface: str = "",
+    inline_observed: list[str] | None = None,
 ) -> Event | None:
     """Build + best-effort-mirror ``cdp.skill.delivery_attested``; never raises.
 
@@ -84,6 +92,8 @@ def emit_skill_delivery_attested(
             rows=rows,
             execution_id=execution_id,
             satellite_execution_id=satellite_execution_id,
+            claude_surface=claude_surface,
+            inline_observed=inline_observed,
         )
     except Exception:  # noqa: BLE001 — attest path must not fail on telemetry
         return None

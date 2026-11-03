@@ -729,9 +729,11 @@ async def send_prompt(
         # claude_surface=code inlines shared_sync via <skills_inline> (a:41730).
         surf_norm = (claude_surface or "").strip().lower()
         skill_seals: list[tuple[str, str]] = []
+        induction_set = set(induction_slugs)
+        intent = [s for s in inline_slugs if s not in induction_set]
         if surf_norm == "code":
             body_digest = hashlib.sha256(_rest.encode()).hexdigest()
-            inline_block, code_inline_slugs, skill_seals = (
+            inline_block, _code_inline_slugs, skill_seals = (
                 render_code_surface_inline_block(
                     induction_slugs,
                     satellite_execution_id=str(satellite_execution_id or ""),
@@ -739,11 +741,19 @@ async def send_prompt(
                     body_digest=body_digest,
                 )
             )
+            seal_slugs = {slug for slug, _ in skill_seals}
+            if seal_slugs != induction_set:
+                raise SkillDeliveryError(
+                    "code surface inline seals do not cover induction slugs "
+                    f"(seals={sorted(seal_slugs)}, induction={sorted(induction_set)}) "
+                    "— fail closed (friction a:41730)"
+                )
             leading = inline_block
             draft = combine_induction_with_body(inline_block, _rest)
-            attest_inlined = inline_slugs + code_inline_slugs
+            attest_inlined = intent
             attest_induction: list[str] = []
             attest_surface = "code"
+            inline_observed_pre: list[str] | None = None
         else:
             induction_text = render_skill_induction(induction_slugs)
             leading = induction_text
@@ -751,6 +761,7 @@ async def send_prompt(
             attest_inlined = inline_slugs
             attest_induction = induction_slugs
             attest_surface = None
+            inline_observed_pre = None
         attached_out: list[str] = []
         missing, attach_notes = await _insert_prompt_text(
             page,
@@ -768,6 +779,7 @@ async def send_prompt(
             inlined=attest_inlined,
             induction=attest_induction,
             claude_surface=attest_surface,
+            inline_observed=inline_observed_pre,
         )
         await page.wait_for_timeout(600)
         await _submit_composer_draft(
@@ -780,11 +792,11 @@ async def send_prompt(
         try:
             if surf_norm == "code":
                 induction_observed = []
-                observed_inline = await await_committed_skill_seals(
-                    page, skill_seals
-                )
-                attest_inlined = inline_slugs + observed_inline
+                observed_inline = await await_committed_skill_seals(page, skill_seals)
+                attest_inlined = intent + observed_inline
+                inline_observed_post = observed_inline
             else:
+                inline_observed_post = None
                 induction_observed = await _induction_observed_after_submit(
                     induction_slugs, attached_out
                 )
@@ -794,6 +806,7 @@ async def send_prompt(
                 inlined=attest_inlined,
                 induction=induction_observed,
                 claude_surface=attest_surface,
+                inline_observed=inline_observed_post if surf_norm == "code" else None,
                 execution_id=str(stargate_execution_id or ""),
                 satellite_execution_id=str(satellite_execution_id or ""),
             )

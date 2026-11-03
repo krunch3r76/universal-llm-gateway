@@ -350,8 +350,64 @@ async def test_failed_converse_archive_write_error_keeps_original_error() -> Non
 
     assert payload["ok"] is False
     assert payload["error"] == cause
-    assert "archive_error" in payload
-    assert "sha256 mismatch" in payload["archive_error"]
+    assert "archive_error" not in payload
+    from cdp_ask.unverifiable import converse_stall_stage
+
+    assert payload["stall_stage"] == converse_stall_stage(cause, conv_ok=False)
+
+
+@pytest.mark.asyncio
+async def test_success_converse_archive_write_error_surfaces_archive_exc() -> None:
+    """S2 — HarvestArchiveError on a successful run must not mask harvest ok."""
+    from claude_bundles.project_ask import HarvestArchiveError
+
+    reg = MagicMock()
+    reg.registration_id = "reg-archive-ok-fail"
+    reg.cdp_url = "http://127.0.0.1:9222"
+    ok_result = ProjectAskResult(
+        ok=True,
+        body="X" * 9000,
+        url="https://claude.ai/code/cse_ok",
+        project_uuid="",
+        project_url="https://claude.ai/code",
+        model={"ok": True},
+        body_len=9000,
+        delete_after={"deleted": False},
+        error=None,
+        archive_uri=None,
+        attested_model=None,
+        harvest_provenance="chat",
+    )
+    with (
+        patch("cdp_ask.runner.bind_execution_lane", return_value=reg),
+        patch(
+            "cdp_ask.runner.run_project_conversation",
+            new=AsyncMock(return_value=[ok_result]),
+        ),
+        patch(
+            "cdp_ask.runner.archive_harvest",
+            side_effect=HarvestArchiveError("disk full"),
+        ),
+        patch("cdp_ask.runner.deregister_on_exit"),
+        patch("cdp_ask.runner.registration_has_wake_debt", return_value=False),
+        patch("cdp_ask.runner.cdp_registry.bind_session_address"),
+        patch("cdp_ask.runner._wake_debt_extras", return_value={}),
+    ):
+        payload = await run_execution(
+            SubmitProjectAskRequest(
+                prompt_text="ping",
+                converse=True,
+                no_project_uuid=True,
+                purpose="review",
+                claude_surface="code",
+            ),
+            execution_id="d" * 32,
+            abort_check=AsyncMock(return_value=False),
+        )
+
+    assert payload["ok"] is False
+    assert payload["error"] == "disk full"
+    assert "archive_error" not in payload
 
 
 @pytest.mark.asyncio

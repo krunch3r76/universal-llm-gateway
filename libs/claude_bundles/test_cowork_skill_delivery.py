@@ -189,7 +189,7 @@ def test_check_delivery_channels_before_submit_wrong_channel_raises() -> None:
 def test_shared_sync_inlined_surface_aware_attest(
     surface: str | None, expect_ok: bool
 ) -> None:
-    """T1 — shared_sync in inlined= passes only on claude_surface=code."""
+    """T1 — shared_sync on code passes only with inline_observed, not inlined= alone."""
     kwargs = dict(
         required=["reasoning-posture"],
         attached=[],
@@ -197,6 +197,8 @@ def test_shared_sync_inlined_surface_aware_attest(
         induction=[],
         claude_surface=surface,
     )
+    if surface is not None and str(surface).strip().lower() == "code":
+        kwargs["inline_observed"] = ["reasoning-posture"]
     missing, wrong = classify_delivery_channel_gaps(**kwargs)
     if expect_ok:
         assert missing == [] and wrong == []
@@ -208,6 +210,47 @@ def test_shared_sync_inlined_surface_aware_attest(
         assert wrong == ["reasoning-posture"]
         with pytest.raises(SkillDeliveryError, match="wrong_channel"):
             check_delivery_channels_before_submit(**kwargs)
+
+
+@pytest.mark.parametrize(
+    ("surface", "inlined", "observed", "expect_missing", "expect_wrong", "ledger_via"),
+    [
+        (None, ["reasoning-posture"], None, [], ["reasoning-posture"], "undelivered"),
+        (
+            "cowork",
+            ["reasoning-posture"],
+            None,
+            [],
+            ["reasoning-posture"],
+            "undelivered",
+        ),
+        ("code", ["reasoning-posture"], None, ["reasoning-posture"], [], "undelivered"),
+        ("code", ["reasoning-posture"], [], ["reasoning-posture"], [], "undelivered"),
+        ("code", [], ["reasoning-posture"], [], [], "inline"),
+        ("code", ["reasoning-posture"], ["reasoning-posture"], [], [], "inline"),
+    ],
+)
+def test_classify_shared_sync_code_inline_observed_matrix(
+    surface: str | None,
+    inlined: list[str],
+    observed: list[str] | None,
+    expect_missing: list[str],
+    expect_wrong: list[str],
+    ledger_via: str,
+) -> None:
+    kwargs = dict(
+        required=["reasoning-posture"],
+        attached=[],
+        inlined=inlined,
+        induction=[],
+        claude_surface=surface,
+        inline_observed=observed,
+    )
+    missing, wrong = classify_delivery_channel_gaps(**kwargs)
+    assert missing == expect_missing
+    assert wrong == expect_wrong
+    rows = ledger_skills_channels(**kwargs)
+    assert rows == [{"slug": "reasoning-posture", "delivered_via": ledger_via}]
 
 
 def test_render_code_surface_inline_block() -> None:
@@ -357,6 +400,54 @@ def test_attest_emits_correlation_keys_stargate_scoped(
     assert payload["execution_id"] == "sg-exec-1"
     assert payload["satellite_execution_id"] == "sat-exec-1"
     assert payload["execution_id"] != payload["satellite_execution_id"]
+
+
+def test_attest_emits_claude_surface_and_inline_observed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from claude_bundles import events_skill_delivery as esd
+
+    captured: list[object] = []
+    monkeypatch.setattr(esd, "_mirror_to_event_service", captured.append)
+    attest_delivery_channels(
+        ["reasoning-posture"],
+        attached=[],
+        inlined=[],
+        induction=[],
+        claude_surface="code",
+        inline_observed=["reasoning-posture"],
+    )
+    payload = captured[0].payload  # type: ignore[attr-defined]
+    assert payload["claude_surface"] == "code"
+    assert payload["inline_observed"] == ["reasoning-posture"]
+
+    captured.clear()
+    attest_delivery_channels(
+        ["reasoning-posture", "path-sim"],
+        attached=["reasoning-posture"],
+        inlined=["path-sim"],
+        claude_surface=None,
+    )
+    payload2 = captured[0].payload  # type: ignore[attr-defined]
+    assert payload2["claude_surface"] == ""
+    assert payload2["inline_observed"] == []
+
+
+def test_render_code_surface_inline_block_nonce_unique_per_call() -> None:
+    a, _, seals_a = render_code_surface_inline_block(
+        ["reasoning-posture"],
+        satellite_execution_id="sat-fixed",
+        stargate_execution_id="sg-fixed",
+        body_digest="digest-fixed",
+    )
+    b, _, seals_b = render_code_surface_inline_block(
+        ["reasoning-posture"],
+        satellite_execution_id="sat-fixed",
+        stargate_execution_id="sg-fixed",
+        body_digest="digest-fixed",
+    )
+    assert a != b or seals_a != seals_b
+    assert seals_a[0][1] != seals_b[0][1]
 
 
 def test_cdp_inline_path_sim_is_size_gated_excerpt() -> None:

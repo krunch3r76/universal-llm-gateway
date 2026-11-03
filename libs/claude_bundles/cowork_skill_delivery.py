@@ -263,11 +263,13 @@ def mint_skill_inline_nonce(
     satellite_execution_id: str = "",
     stargate_execution_id: str = "",
     body_digest: str = "",
+    call_entropy: str = "",
 ) -> str:
     """Derive a per-slug nonce for one dispatch's inline skill attest."""
     seed = ":".join(
         (
             slug,
+            call_entropy,
             satellite_execution_id or stargate_execution_id or body_digest or slug,
         )
     )
@@ -303,9 +305,7 @@ def render_cdp_inline_skills_xml(
         parts.append(f'<skill slug="{item.slug}" surface_class="{item.surface_class}">')
         parts.append(item.body.rstrip())
         if seal_nonces and item.slug in seal_nonces:
-            parts.append(
-                skill_inline_seal_line(item.slug, seal_nonces[item.slug])
-            )
+            parts.append(skill_inline_seal_line(item.slug, seal_nonces[item.slug]))
         parts.append("</skill>")
     parts.append("</skills_inline>")
     parts.append("")
@@ -496,10 +496,6 @@ def _normalized_claude_surface(claude_surface: str | None) -> str | None:
     return normalized or None
 
 
-def _code_surface_admits_shared_sync_inline(claude_surface: str | None) -> bool:
-    return _normalized_claude_surface(claude_surface) == "code"
-
-
 async def await_committed_skill_seals(
     page,
     seals: list[tuple[str, str]],
@@ -534,16 +530,20 @@ def render_code_surface_inline_block(
     body_digest: str = "",
 ) -> tuple[str, list[str], list[tuple[str, str]]]:
     """Inline ``shared_sync`` bodies for ``claude_surface=code`` marked prompts."""
+    import secrets
+
     requested = [str(s).strip() for s in slugs if str(s).strip()]
     if not requested:
         return "", [], []
     bodies = load_skill_bodies(requested, repo_root=repo_root, excerpt=True)
+    call_entropy = secrets.token_hex(8)
     nonces = {
         item.slug: mint_skill_inline_nonce(
             item.slug,
             satellite_execution_id=satellite_execution_id,
             stargate_execution_id=stargate_execution_id,
             body_digest=body_digest,
+            call_entropy=call_entropy,
         )
         for item in bodies
     }
@@ -575,6 +575,7 @@ def classify_delivery_channel_gaps(
     inlined: list[str],
     induction: list[str] | None = None,
     claude_surface: str | None = None,
+    inline_observed: list[str] | None = None,
 ) -> tuple[list[str], list[str]]:
     """Return ``(missing, wrong_channel)`` without telemetry or raise."""
     if not required:
@@ -583,6 +584,8 @@ def classify_delivery_channel_gaps(
     attached_set = {str(s).strip() for s in attached if str(s).strip()}
     inlined_set = {str(s).strip() for s in inlined if str(s).strip()}
     induction_set = {str(s).strip() for s in (induction or []) if str(s).strip()}
+    observed_set = {str(s).strip() for s in (inline_observed or []) if str(s).strip()}
+    surf = _normalized_claude_surface(claude_surface)
     missing: list[str] = []
     wrong_channel: list[str] = []
     for raw in required:
@@ -591,9 +594,11 @@ def classify_delivery_channel_gaps(
         if _attach_only_surface(entry.surface_class):
             if slug in attached_set or slug in induction_set:
                 continue
-            if slug in inlined_set:
-                if _code_surface_admits_shared_sync_inline(claude_surface):
+            if surf == "code":
+                if slug in observed_set:
                     continue
+                missing.append(slug)
+            elif slug in inlined_set:
                 wrong_channel.append(slug)
             else:
                 missing.append(slug)
@@ -614,6 +619,7 @@ def check_delivery_channels_before_submit(
     inlined: list[str],
     induction: list[str] | None = None,
     claude_surface: str | None = None,
+    inline_observed: list[str] | None = None,
 ) -> list[str]:
     """Panel-independent channel check before a combined submit.
 
@@ -626,6 +632,7 @@ def check_delivery_channels_before_submit(
         inlined=inlined,
         induction=induction,
         claude_surface=claude_surface,
+        inline_observed=inline_observed,
     )
     if wrong_channel:
         raise SkillDeliveryError(
@@ -644,6 +651,7 @@ def attest_delivery_channels(
     inlined: list[str],
     induction: list[str] | None = None,
     claude_surface: str | None = None,
+    inline_observed: list[str] | None = None,
     execution_id: str = "",
     satellite_execution_id: str = "",
 ) -> list[str]:
@@ -652,8 +660,10 @@ def attest_delivery_channels(
     Channel by ``surface_class`` (friction a:27142 / 26986 / 24594):
     - ``shared_sync`` → **must** be in ``attached`` (``+`` → Skills) or in
       ``induction`` (Context → Skills panel slugs already observed;
-      ``delivered_via=induction``). Inline alone / slash-manifest-only does
-      not count.
+      ``delivered_via=induction``). On ``claude_surface=code`` only, observed
+      committed ``skill-seal:`` lines count via ``inline_observed``; quoted
+      ``<skills_inline>`` in the body (``inlined``) alone never satisfies
+      ``shared_sync`` on code.
     - All other surfaces, ``life_local`` included → **must** be in ``inlined``
       (``<skills_inline>``), which is the channel ``partition_cdp_skills``
       actually uses for them.
@@ -680,19 +690,25 @@ def attest_delivery_channels(
         inlined=inlined,
         induction=induction,
         claude_surface=claude_surface,
+        inline_observed=inline_observed,
     )
     attached_set = {str(s).strip() for s in attached if str(s).strip()}
     inlined_set = {str(s).strip() for s in inlined if str(s).strip()}
     induction_set = {str(s).strip() for s in (induction or []) if str(s).strip()}
+    observed_sorted = sorted(
+        {str(s).strip() for s in (inline_observed or []) if str(s).strip()}
+    )
     attached_sorted = sorted(attached_set)
     inlined_sorted = sorted(inlined_set)
     induction_sorted = sorted(induction_set)
+    surface_emit = _normalized_claude_surface(claude_surface) or ""
     rows = ledger_skills_channels(
         required,
         attached=attached_sorted,
         inlined=inlined_sorted,
         induction=induction_sorted,
         claude_surface=claude_surface,
+        inline_observed=inline_observed,
     )
     stargate_id = str(execution_id or "")
     sat_id = str(satellite_execution_id or "")
@@ -705,6 +721,8 @@ def attest_delivery_channels(
             undelivered=list(missing),
             wrong_channel=list(wrong_channel),
             rows=rows,
+            claude_surface=surface_emit,
+            inline_observed=observed_sorted,
             execution_id=stargate_id,
             satellite_execution_id=sat_id,
         )
@@ -727,6 +745,8 @@ def attest_delivery_channels(
         undelivered=[],
         wrong_channel=[],
         rows=rows,
+        claude_surface=surface_emit,
+        inline_observed=observed_sorted,
         execution_id=stargate_id,
         satellite_execution_id=sat_id,
     )
@@ -740,6 +760,7 @@ def ledger_skills_channels(
     inlined: list[str],
     induction: list[str] | None = None,
     claude_surface: str | None = None,
+    inline_observed: list[str] | None = None,
 ) -> list[dict[str, str]]:
     """Build one ledger row per requested slug with ``delivered_via`` channel.
 
@@ -752,6 +773,8 @@ def ledger_skills_channels(
     attached_set = {str(s).strip() for s in attached if str(s).strip()}
     inlined_set = {str(s).strip() for s in inlined if str(s).strip()}
     induction_set = {str(s).strip() for s in (induction or []) if str(s).strip()}
+    observed_set = {str(s).strip() for s in (inline_observed or []) if str(s).strip()}
+    surf = _normalized_claude_surface(claude_surface)
     rows: list[dict[str, str]] = []
     for raw in required:
         entry = catalog.get(raw)
@@ -761,9 +784,7 @@ def ledger_skills_channels(
                 via = "induction"
             elif slug in attached_set:
                 via = "attach"
-            elif slug in inlined_set and _code_surface_admits_shared_sync_inline(
-                claude_surface
-            ):
+            elif surf == "code" and slug in observed_set:
                 via = "inline"
             else:
                 via = "undelivered"

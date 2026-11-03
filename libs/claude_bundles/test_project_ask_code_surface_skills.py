@@ -52,9 +52,7 @@ def _code_surface_harness(monkeypatch: pytest.MonkeyPatch):
         patch(
             "claude_bundles.skill_induction_panel.wait_for_induction_panel",
             side_effect=AsyncMock(
-                side_effect=ChatContextSkillsError(
-                    "Context → Skills not on the rail"
-                )
+                side_effect=ChatContextSkillsError("Context → Skills not on the rail")
             ),
         ),
         patch(
@@ -102,6 +100,8 @@ async def test_code_surface_marked_prompt_attests_via_inline_seals(
     last = attest_payloads[-1]
     assert last["ok"] is True
     assert last["inlined"] == ["reasoning-posture"]
+    assert last["inline_observed"] == ["reasoning-posture"]
+    assert last["claude_surface"] == "code"
     assert last["induction"] == []
     rows = last["rows"]
     assert rows == [{"slug": "reasoning-posture", "delivered_via": "inline"}]
