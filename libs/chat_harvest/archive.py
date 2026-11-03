@@ -88,6 +88,12 @@ def _base_name(site: str, conversation_id: str) -> str:
     return f"chat-harvest-{site}-{sanitized_conversation_id(conversation_id)}"
 
 
+def _conv12_archive_dest(site: str, conversation_id: str) -> Path:
+    """Pre-a:41818 messages sidecar keyed by truncated conversation id."""
+    legacy_base = f"chat-harvest-{site}-{conv12(conversation_id)}"
+    return cortex_files_root() / f"notes/system/threads/{legacy_base}.messages.json"
+
+
 def legacy_md_rel_path(site: str, conversation_id: str) -> str:
     base = _base_name(site, conversation_id)
     return f"notes/system/threads/{base}.md"
@@ -318,6 +324,14 @@ def archive_chat_transcript(
                 existing_rows = message_index(existing_messages)
                 existing_sha = _sha256_of_file(legacy)
                 existing_source = "legacy_md"
+        if existing_rows is None:
+            conv12_dest = _conv12_archive_dest(site, conversation_id)
+            if conv12_dest.is_file():
+                existing = load_harvest_envelope(conv12_dest)
+                existing_messages = list(existing.messages)
+                existing_rows = message_index(existing_messages)
+                existing_sha = _sha256_of_file(conv12_dest)
+                existing_source = "legacy_conv12_envelope"
 
     if dest.is_file() and supersede:
         version = _next_supersede_version(site, conversation_id)
