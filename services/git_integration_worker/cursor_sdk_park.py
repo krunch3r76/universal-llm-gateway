@@ -767,9 +767,11 @@ async def _resume_completed_nest_parent(
     would take the lease before that claim. A successful admit
     does not emit ``frontier.sdk.worker.orphaned`` and does not mark the
     parent failed; ``resume_admitted`` is true and the lease key is empty
-    because the resume owns the lease. A refusal has already cancelled
-    the parent, so this emits ``frontier.sdk.worker.orphaned`` before
-    returning the lease key for ``lease.released``.
+    because the resume owns the lease. ``lost`` also returns an empty
+    lease key: the other resumer owns the row, and promoting would wake
+    a waiter onto that slot. A refusal returns the lease key so the
+    sweeper can emit ``lease.released``. The orphan event is emitted
+    only for that refusal.
     """
     bridge_aborted = await _stop_orphan_bridge(dispatch_id)
     from services.git_integration_worker.cursor_sdk_nest_resume import (
@@ -784,6 +786,8 @@ async def _resume_completed_nest_parent(
     )
     if resumed.outcome == "admitted":
         return OrphanReclaim(lease_key=None, resume_admitted=True)
+    if resumed.outcome == "lost":
+        return OrphanReclaim(lease_key=None, resume_admitted=False)
     logger.warning(
         "completed nest child resume refused parent=%s child=%s",
         dispatch_id,
@@ -862,9 +866,12 @@ async def reclaim_orphan_holder(
     start ``resume_of``. ``controller`` and ``cfg`` are required for the
     admit; without them an exited parent is marked failed instead of left
     parked. A failed or cancelled child takes that same fail path.
-    ``resume_admitted`` is true only when that admit accepts. The lease key
-    is empty when the row is missing, already terminal, or the resume now
-    owns the lease.
+    ``resume_admitted`` is true only when that admit accepts. A refused
+    admit that left the parent cancelled returns its lease key so the
+    sweeper can release and promote. A refusal that restored
+    ``parked_waiting`` returns an empty key and does not fail the row.
+    ``lost`` keeps an empty key. The lease key is empty when the row is
+    missing, already terminal, or the resume now owns the lease.
     """
     with ledger._connect() as conn:
         row = conn.execute(
@@ -924,6 +931,12 @@ async def reclaim_orphan_holder(
                         cfg=cfg,
                     )
                     if outcome.resume_admitted:
+                        return outcome
+                    if outcome.lease_key:
+                        held = ledger.dispatch_status_by_id(dispatch_id=dispatch_id)
+                        held_state = str((held or {}).get("status") or "")
+                        if held_state == "parked_waiting":
+                            return OrphanReclaim(lease_key=None, resume_admitted=False)
                         return outcome
             if disposition != "restored":
                 return await _fail_stranded_parked_parent(

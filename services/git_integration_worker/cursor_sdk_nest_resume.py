@@ -128,8 +128,9 @@ class NestResumeAdmit(NamedTuple):
 
     ``admitted`` means the resume row landed and owns the lease. ``lost``
     means another resumer already owns the claim, so the caller must not
-    release or promote. ``refused`` means this call declined after sealing
-    and the caller may promote so the park does not hold the lease.
+    release or promote. ``refused`` means this call declined. A permanent
+    refusal leaves the row sealed so the caller may promote. A retryable
+    refusal restores the park first; promote then sees that row and waits.
     """
 
     outcome: str
@@ -312,7 +313,7 @@ def _undo_unadmitted_hand_claim_sync(
 
 async def undo_unadmitted_hand_claim(
     *, parent_id: str, resume_id: str, park_child_id: str | None
-) -> None:
+) -> bool:
     """Restore a hand-claimed parent when its resume row never landed.
 
     The claim cancels the parent and moves the capacity slot onto
@@ -320,6 +321,10 @@ async def undo_unadmitted_hand_claim(
     parent cancelled and the slot stuck. This runs only while no resume
     row exists, then drops the handed slot. A row that did land is left
     alone so a queued or running resume keeps the parent sealed.
+
+    Returns True when no resume row existed and the restore statement
+    ran, including a no-op update. Returns False when the resume row
+    already landed, and does not release that row's slot.
     """
     restored = await asyncio.to_thread(
         _undo_unadmitted_hand_claim_sync,
@@ -329,6 +334,7 @@ async def undo_unadmitted_hand_claim(
     )
     if restored:
         await _release_handed_slot(resume_id)
+    return restored
 
 
 def nest_resume_parent_id(child_id: str) -> str | None:
@@ -418,6 +424,51 @@ def _resume_request(parent_id: str, *, child_id: str) -> CursorDispatchRequest |
     )
 
 
+def _retryable_nest_admit_refusal(response: Any) -> bool:
+    """True when a failed nest admit should put the parent back to parked.
+
+    HTTP 503 is always retryable: drain, lane pin, and worktree mint.
+    HTTP 409 is retryable only when the body names a held write lease.
+    Other refusals stay sealed so the sweeper can release that lease.
+    """
+    status = getattr(response, "status_code", 500)
+    if status == 503:
+        return True
+    if status != 409:
+        return False
+    raw = getattr(response, "body", None)
+    if raw is None:
+        raw = getattr(response, "content", None)
+    if isinstance(raw, bytes):
+        text = raw.decode("utf-8", errors="replace")
+    elif isinstance(raw, str):
+        text = raw
+    else:
+        text = str(raw or "")
+    return "CURSOR_WRITE_LEASE_HELD" in text
+
+
+async def _restore_claimed_parent_on_retryable(
+    *,
+    claim: ParkResumeClaim,
+    parent_id: str,
+    resume_id: str,
+) -> None:
+    """Put a claimed parent back to parked after a retryable nest admit miss.
+
+    The caller clears ``release_handed`` after this returns. The undo
+    already drops the handed slot when the resume row never landed, so
+    the finally block must not release that slot a second time.
+    """
+    if claim.outcome != "claimed":
+        return
+    await undo_unadmitted_hand_claim(
+        parent_id=parent_id,
+        resume_id=resume_id,
+        park_child_id=claim.park_child_id,
+    )
+
+
 async def admit_nest_parent_resume(
     parent_id: str,
     *,
@@ -432,9 +483,12 @@ async def admit_nest_parent_resume(
     changed the row admits. ``lost`` covers a second resumer, including
     ``already_claimed_by_us``, so the caller must not promote. ``refused``
     is an ineligible or failed admit after this call sealed the row; the
-    handed slot is released before return. The child must already be
-    terminal so the work-key peer gate sees a finished nest.
-    ``parent_still_live`` is expected while the row is parked.
+    handed slot is released before return. A retryable failure (HTTP 503,
+    HTTP 409 ``CURSOR_WRITE_LEASE_HELD``, or a raised admit) restores the
+    parent through ``undo_unadmitted_hand_claim`` instead of leaving it
+    cancelled. The child must already be terminal so the work-key peer
+    gate sees a finished nest. ``parent_still_live`` is expected while
+    the row is parked.
     """
     from services.git_integration_worker.cursor_sdk_resume import (
         resume_eligibility_reason,
@@ -496,6 +550,13 @@ async def admit_nest_parent_resume(
                 req.dispatch_id,
                 getattr(response, "status_code", None),
             )
+            if _retryable_nest_admit_refusal(response):
+                await _restore_claimed_parent_on_retryable(
+                    claim=claim,
+                    parent_id=parent_id,
+                    resume_id=resume_id,
+                )
+                release_handed = False
             return NestResumeAdmit("refused")
         release_handed = False
         if bus is not None:
@@ -518,6 +579,14 @@ async def admit_nest_parent_resume(
             child_id,
         )
         return NestResumeAdmit("admitted")
+    except Exception:
+        await _restore_claimed_parent_on_retryable(
+            claim=claim,
+            parent_id=parent_id,
+            resume_id=resume_id,
+        )
+        release_handed = False
+        raise
     finally:
         if release_handed:
             await _release_handed_slot(resume_id)

@@ -1763,7 +1763,12 @@ async def _mark_terminal_and_promote(
     memo_facts: dict | None = None,
     registry_work_status: str | None = None,
 ) -> None:
-    """Mark terminal, release/restore lease, prune Lane-B worktree, promote FIFO head."""
+    """Mark terminal, release or restore the lease, prune, and promote.
+
+    When the controller is draining or armed, an exited nest parent stays
+    ``parked_waiting``. Admitting ``resume_of`` would cancel that row, and
+    the drain's 503 would leave nothing for the sweeper to retry.
+    """
     if memo_facts:
         from services.git_integration_worker.cursor_sdk_closeout.closeout_memo_emit import (
             record_memo_closeout,
@@ -1929,7 +1934,12 @@ async def _mark_terminal_and_promote(
         # lost means the other resumer already sealed the row and may not
         # have inserted its resume yet, so promote would wake a FIFO waiter
         # onto that slot. refused falls through so a declined park cannot
-        # hold the lease.
+        # hold the lease. Draining or armed skips the admit: the claim
+        # would cancel the parent and the 503 would leave it unretried.
+        draining = getattr(controller, "is_draining", None)
+        armed = getattr(controller, "is_armed", None)
+        if (callable(draining) and draining()) or (callable(armed) and armed()):
+            return
         resumed = await admit_nest_parent_resume(
             nest_parent,
             child_id=dispatch_id,
