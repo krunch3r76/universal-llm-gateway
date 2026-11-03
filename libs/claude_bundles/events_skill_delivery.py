@@ -7,15 +7,19 @@ ingest must never override fail-closed attest semantics.
 
 from __future__ import annotations
 
-import contextlib
 import json
+import logging
 import os
 import socket
 import time
 from typing import Any
 
+from claude_bundles.events_compose_attest import _resolve_tcp_target
 from universal_event_bus.events.event import Event
 from universal_event_bus.events.factory import event_factory
+
+logger = logging.getLogger(__name__)
+_mirror_failure_logged = False
 
 
 @event_factory
@@ -227,10 +231,8 @@ def emit_skill_fetch_decision(
 
 
 def _mirror_to_event_service(event: Event) -> None:
-    """Best-effort UDS ingest — silent when the events sock is down."""
-    sock_path = os.environ.get(
-        "EVENTS_INGEST_SOCK", "/tmp/universal-protocol/events.sock"
-    )
+    """Best-effort Event Service ingest — TCP when configured, else UDS; never raises."""
+    global _mirror_failure_logged  # noqa: PLW0603 — once-per-process mirror failure log
     payload: dict[str, Any] = {
         "signal": event.signal,
         "source": "cdp-skill-delivery",
@@ -239,8 +241,36 @@ def _mirror_to_event_service(event: Event) -> None:
         "ts_unix_ms": int(time.time() * 1000),
         "payload": event.payload,
     }
-    with contextlib.suppress(Exception):
+    line = (json.dumps(payload) + "\n").encode()
+    transport = ""
+    target = ""
+    try:
+        tcp = _resolve_tcp_target()
+        if tcp is not None:
+            host, port = tcp
+            transport = "tcp"
+            target = f"{host}:{port}"
+            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+                sock.settimeout(1.0)
+                sock.connect((host, port))
+                sock.sendall(line)
+            return
+        sock_path = os.environ.get(
+            "EVENTS_INGEST_SOCK", "/tmp/universal-protocol/events.sock"
+        )
+        transport = "uds"
+        target = sock_path
         with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as sock:
             sock.settimeout(1.0)
             sock.connect(sock_path)
-            sock.sendall((json.dumps(payload) + "\n").encode())
+            sock.sendall(line)
+    except Exception as exc:
+        if not _mirror_failure_logged:
+            _mirror_failure_logged = True
+            logger.warning(
+                "cdp-skill-delivery Event Service mirror failed "
+                "(transport=%s target=%s): %s",
+                transport,
+                target,
+                exc,
+            )
