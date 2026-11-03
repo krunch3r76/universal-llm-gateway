@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 from datetime import UTC, datetime
 from typing import Any
+from unittest.mock import MagicMock
 
 import httpx
 import pytest
@@ -189,6 +190,24 @@ def test_t1_ac1_arm_on_busy_probe(
     assert live is not None
     assert live.status == STATUS_PENDING_DRAIN
 
+    from scripts.model_manager.ui import api_dispatch
+
+    ctl = MagicMock()
+    ctl.restart_intent_store = store
+    ctl.restart_gate = gate
+    ctl.build_running = False
+    ctl.shutdown_gate.snapshot.return_value = MagicMock(
+        manage_inflight=0, activities=[]
+    )
+
+    async def _busy() -> dict[str, Any]:
+        return await api_dispatch._busy_status(ctl, service=_SERVICE)
+
+    status = _run(_busy())
+    projected = status["restart_intent"]
+    assert projected is not None
+    assert projected["restart_intent_id"] == result["restart_intent_id"]
+
 
 def test_t2_ac2_idle_then_lifecycle_once(tmp_path: Any, monkeypatch: pytest.MonkeyPatch) -> None:
     """T2: probe busy then idle → lifecycle once, intent completed."""
@@ -299,7 +318,7 @@ def test_t3_ac3_extend_no_lifecycle_under_busy(
         )
 
     async def _go() -> dict[str, Any]:
-        return await run_gated(
+        result = await run_gated(
             gate,
             "sync_restart",
             _SERVICE,
@@ -307,6 +326,9 @@ def test_t3_ac3_extend_no_lifecycle_under_busy(
             lifecycle=lifecycle,
             on_busy=on_busy,
         )
+        # Keep the loop alive until the supervisor passes its deadline ceiling.
+        await asyncio.sleep(0.2)
+        return result
 
     result = _run(_go())
     assert hook_calls == 1
@@ -647,6 +669,71 @@ def test_t7_witness_aware_probe_busy_keeps_waiting(
 
     _run(_go())
     assert lifecycle_calls == 0
+
+
+def test_t7_witness_aware_probe_unknown_never_forces(
+    tmp_path: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """T7: probe raise + unknown witness — extend ceiling must not CAS-force."""
+    stub_process_live_probe(monkeypatch)
+    store = RestartIntentStore(db_path=tmp_path / "t7-unknown.db")
+    witness = _CountingWitness(
+        WitnessReport(verdict="unknown", source="fake_witness", detail={})
+    )
+    gate = RestartDrainGate(
+        probes={_SERVICE: _AlwaysTimeoutProbe()},
+        witnesses={_SERVICE: [witness]},
+    )
+    lifecycle_calls = 0
+    cas_calls: list[str] = []
+
+    async def lifecycle() -> str:
+        nonlocal lifecycle_calls
+        lifecycle_calls += 1
+        return "starting (PID 7)"
+
+    real_cas = store.cas_force_preempt_from_pending
+
+    def _spy_cas(intent_id: str, *, reason: str) -> int:
+        cas_calls.append(intent_id)
+        return real_cas(intent_id, reason=reason)
+
+    monkeypatch.setattr(store, "cas_force_preempt_from_pending", _spy_cas)
+
+    supervisor = LocalServiceDrainSupervisor(
+        gate=gate,
+        service=_SERVICE,
+        store=store,
+        lifecycle=lifecycle,
+        witness_aware_probe=True,
+        poll_interval_s=0.01,
+        deadline_s=0.05,
+    )
+
+    intent_id: str | None = None
+
+    async def _go() -> None:
+        nonlocal intent_id
+        intent = store.create_intent(
+            service=_SERVICE,
+            action="sync_restart",
+            deadline_at=datetime.now(UTC).isoformat(),
+            reason="t7-unknown",
+        )
+        intent_id = intent.intent_id
+        task = asyncio.create_task(supervisor.supervise(intent))
+        await asyncio.sleep(0.2)
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+
+    _run(_go())
+    assert intent_id is not None
+    assert lifecycle_calls == 0
+    assert cas_calls == []
+    stored = store.get(intent_id)
+    assert stored is not None
+    assert stored.status == STATUS_PENDING_DRAIN
 
 
 def test_t8_rate_limit_counts_witness_consults(
