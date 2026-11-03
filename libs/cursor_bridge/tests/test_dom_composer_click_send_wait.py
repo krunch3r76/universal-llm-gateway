@@ -309,10 +309,80 @@ def test_click_send_js_has_no_sync_date_spin() -> None:
 
 def test_cdp_eval_timeout_exceeds_send_wait_ceiling() -> None:
     assert SEND_BTN_CDP_EVAL_TIMEOUT_S > SEND_BTN_WAIT_CEILING_MS / 1000.0
-    page_budget_ms = (
-        SEND_BTN_CDP_EVAL_TIMEOUT_S * 1000 - SEND_BTN_PAGE_TIMEOUT_MARGIN_MS
+    page_budget_ms = max(
+        1,
+        int(SEND_BTN_CDP_EVAL_TIMEOUT_S * 1000) - int(SEND_BTN_PAGE_TIMEOUT_MARGIN_MS),
     )
     assert page_budget_ms > SEND_BTN_WAIT_CEILING_MS
+
+
+@pytest.mark.asyncio
+async def test_page_budget_floor_for_subsecond_timeout(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import cursor_bridge.dom_composer_paste as paste
+
+    budgets: list[int] = []
+    real_permit = paste._composer_send_permit_expression
+
+    def _capture_permit(nonce: str, page_budget_ms: int) -> str:
+        budgets.append(int(page_budget_ms))
+        return real_permit(nonce, page_budget_ms)
+
+    monkeypatch.setattr(paste, "_composer_send_permit_expression", _capture_permit)
+    monkeypatch.setattr(
+        paste,
+        "_cdp_eval",
+        AsyncMock(return_value={"ok": True, "send_clicked": True}),
+    )
+    monkeypatch.setattr(paste, "SEND_BTN_CDP_EVAL_TIMEOUT_S", 0.05)
+    await paste.dom_click_send(
+        "ws://x",
+        selector='[aria-label="Prompt"][contenteditable="true"]',
+        line="hello",
+    )
+    assert budgets[-1] == 1
+    monkeypatch.setattr(paste, "SEND_BTN_CDP_EVAL_TIMEOUT_S", 8.0)
+    await paste.dom_click_send(
+        "ws://x",
+        selector='[aria-label="Prompt"][contenteditable="true"]',
+        line="hello",
+    )
+    assert budgets[-1] == 7000
+
+
+@pytest.mark.asyncio
+async def test_own_draft_expired_permit_does_not_click(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import cursor_bridge.dom_composer_paste as paste
+
+    expressions: list[str] = []
+    eval_calls = 0
+
+    async def fake_eval(
+        _ws_url: str, expression: str, **_kwargs: object
+    ) -> dict[str, Any]:
+        nonlocal eval_calls
+        eval_calls += 1
+        expressions.append(expression)
+        if eval_calls == 1:
+            return {"ok": True}
+        return {"ok": False, "reason": "cdp_eval_timeout", "send_clicked": False}
+
+    monkeypatch.setattr(paste, "_cdp_eval", fake_eval)
+    result = await paste.dom_click_send_own_draft(
+        "ws://x",
+        selector='[aria-label="Prompt"][contenteditable="true"]',
+    )
+    assert result == {
+        "ok": False,
+        "reason": "cdp_eval_timeout",
+        "send_clicked": False,
+    }
+    assert len(expressions) == 2
+    assert "composerSendPermits" in expressions[0]
+    assert "ourDraftSig" in expressions[1]
 
 
 def test_send_control_appears_after_timer_yield() -> None:

@@ -827,12 +827,16 @@ async def test_deliver_operator_paste_submit_retry_once_without_repaste(
 
     async def _poll_submit(_ws: str, **_: Any) -> tuple[dict[str, Any], bool]:
         poll_calls["n"] += 1
-        if poll_calls["n"] == 1:
-            return {**surface, "composer_draft": "still typing"}, False
         return submitted, True
 
     insert = AsyncMock(return_value={"ok": True})
-    send_btn = AsyncMock(return_value={"ok": True, "send_fallback_clicked": True})
+    send_btn = AsyncMock(
+        return_value={
+            "ok": False,
+            "reason": "no_send_button",
+            "send_fallback_clicked": False,
+        }
+    )
     enter = AsyncMock(return_value={"ok": True, "method": "cdp_enter"})
     monkeypatch.setattr(
         "cursor_bridge.operator_paste.list_pages",
@@ -885,7 +889,7 @@ async def test_deliver_operator_paste_submit_retry_once_without_repaste(
     assert insert.call_count == 1
     assert send_btn.call_count == 1
     enter.assert_awaited_once()
-    assert poll_calls["n"] == 2
+    assert poll_calls["n"] == 1
     assert out["submitted"] is True
     assert out["ok"] is True
 
@@ -1038,7 +1042,13 @@ async def test_enter_retry_refused_without_cdp_enter_success(
     )
     monkeypatch.setattr(
         "cursor_bridge.operator_paste._submit_composer_send_button",
-        AsyncMock(return_value={"ok": True, "send_fallback_clicked": True}),
+        AsyncMock(
+            return_value={
+                "ok": False,
+                "reason": "no_send_button",
+                "send_fallback_clicked": False,
+            }
+        ),
     )
     monkeypatch.setattr("cursor_bridge.operator_paste._submit_composer_enter", enter)
     monkeypatch.setattr(
