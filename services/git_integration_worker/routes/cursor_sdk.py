@@ -1921,16 +1921,18 @@ async def _mark_terminal_and_promote(
     )
     if disposition == "nest_pending":
         # Child is terminal. Seal the exited parent and admit resume_of.
-        # A successful admit owns the lease, so FIFO promote must not run.
-        # An ineligible or refused admit still seals the parent cancelled
-        # and falls through so the park cannot hold the lease.
+        # admitted and lost both leave the lease with the resume claim.
+        # lost means the other resumer already sealed the row and may not
+        # have inserted its resume yet, so promote would wake a FIFO waiter
+        # onto that slot. refused falls through so a declined park cannot
+        # hold the lease.
         resumed = await admit_nest_parent_resume(
             nest_parent,
             child_id=dispatch_id,
             controller=controller,
             cfg=_config(request) if request is not None else _CONFIG,
         )
-        if resumed:
+        if resumed.outcome in ("admitted", "lost"):
             return
     if disposition == "restored":
         # Parked parent regained capacity — siblings stay queued (Q4).
@@ -4361,21 +4363,6 @@ async def admit_cursor_dispatch(
             req.dispatch_id[:8],
             lane_advisories,
         )
-    if req.resume_of:
-        from services.git_integration_worker.cursor_sdk_nest_resume import (
-            refuse_second_parked_resume,
-        )
-
-        parked_refusal = await refuse_second_parked_resume(req)
-        if parked_refusal is not None:
-            return _reject_pre_admission(
-                req,
-                worker_error_code="NEST_PARENT_RESUME_CLAIMED",
-                failure_layer="admission",
-                http_status=422,
-                detail_summary=parked_refusal,
-                retryable=False,
-            )
     resume_reject = reject_resume_if_ineligible(req)
     if resume_reject is not None:
         return resume_reject
@@ -4611,6 +4598,25 @@ async def admit_cursor_dispatch(
             request=request,
             intent_status=intent_status,
         )
+    hand_claim = None
+    if req.resume_of:
+        # Claim only once eligibility, lane pin, and worktree mint have
+        # passed. An earlier claim left the parent cancelled when those
+        # later checks refused.
+        from services.git_integration_worker.cursor_sdk_nest_resume import (
+            refuse_second_parked_resume,
+        )
+
+        hand_claim = await refuse_second_parked_resume(req)
+        if hand_claim.refusal is not None:
+            return _reject_pre_admission(
+                req,
+                worker_error_code="NEST_PARENT_RESUME_CLAIMED",
+                failure_layer="admission",
+                http_status=422,
+                detail_summary=hand_claim.refusal,
+                retryable=False,
+            )
     try:
         admit_kwargs: dict[str, object] = {
             "req": req,
@@ -4648,7 +4654,20 @@ async def admit_cursor_dispatch(
             admit_kwargs["hop_park_release"] = True
         if req.claim_id:
             admit_kwargs["claim_id"] = req.claim_id
-        cached = await asyncio.to_thread(ledger.admit, **admit_kwargs)
+        try:
+            cached = await asyncio.to_thread(ledger.admit, **admit_kwargs)
+        except Exception:
+            if hand_claim is not None and hand_claim.claimed:
+                from services.git_integration_worker.cursor_sdk_nest_resume import (
+                    undo_unadmitted_hand_claim,
+                )
+
+                await undo_unadmitted_hand_claim(
+                    parent_id=str(req.resume_of),
+                    resume_id=req.dispatch_id,
+                    park_child_id=hand_claim.park_child_id,
+                )
+            raise
     except WriteLeaseHeld as exc:
         await _rollback_lane_b_mint_if_needed(
             dispatch_id=req.dispatch_id,
