@@ -12,6 +12,7 @@ from web_chat_relay.orion_wake import (
     PINNED_CONVERSATION_URL,
     _dom_deliver,
     _guarded_close_orion_tab,
+    _open_orion_binding_tab,
     build_wake_pointer,
     conversation_id_from_url,
     deliver_orion_chat_wake,
@@ -2065,3 +2066,167 @@ async def test_no_default_pinned_without_binding_supplied() -> None:
         from_agent="maestro",
     )
     assert out["reason"] == "bad_conversation_url"
+
+
+_SAMPLE_DOM_CENSUS = {
+    "root_tag": "DIV",
+    "root_outer_html": "<div id='composer'></div>",
+    "buttons": [{"text": "Send"}],
+    "buttons_total": 1,
+    "document_visibility_state": "visible",
+    "document_has_focus": True,
+    "elapsed_ms": 42,
+}
+
+
+def _dom_deliver_no_send_stubs(
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    census: dict,
+    page: _FakePage,
+    tab_id: str = "tab-orion",
+) -> None:
+    class _Port:
+        def list_tabs(self, *, cdp_url: str) -> dict:
+            return {
+                "pages": [
+                    {
+                        "id": tab_id,
+                        "url": PINNED,
+                        "web_socket_debugger_url": "ws://127.0.0.1/devtools/page/orion",
+                    }
+                ],
+                "reachable": True,
+                "error": None,
+            }
+
+    async def _insert(
+        ws: str, *, selector: str, line: str, preserve_newlines: bool = False
+    ) -> dict:
+        return {"ok": False, "reason": "no_send_button", "census": census}
+
+    async def _baseline(*_a: object, **_k: object) -> dict:
+        return {"user_count": 0}
+
+    async def _pre(*_a: object, **_k: object) -> dict:
+        return {"ok": True}
+
+    async def _recheck(*_a: object, **_k: object) -> dict:
+        return {"ok": True, "probe": {}}
+
+    @asynccontextmanager
+    async def _lock(_target_id: str, *, timeout_s: float = 120, op: str = ""):
+        yield
+
+    monkeypatch.setattr("web_tab.cdp_actuation.default_actuation_port", lambda: _Port())
+    monkeypatch.setattr(
+        "cursor_bridge.dom_composer_paste.dom_insert_and_send", _insert
+    )
+    monkeypatch.setattr("web_tab.commit_verify.capture_dom_baseline", _baseline)
+    monkeypatch.setattr(
+        "web_tab.operator_guard.wait_operator_idle_before_lock", _pre
+    )
+    monkeypatch.setattr(
+        "web_tab.operator_guard.operator_recheck_under_lock", _recheck
+    )
+    monkeypatch.setattr("web_tab.target_lock.target_write_lock", _lock)
+    monkeypatch.setattr(
+        "web_tab.write_ops._created_by_agent_for_target", lambda **_k: True
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.no_dom_stub
+async def test_dom_deliver_forwards_census_on_no_send_button(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    page = _FakePage(url=PINNED)
+    census = dict(_SAMPLE_DOM_CENSUS)
+    _dom_deliver_no_send_stubs(monkeypatch, census=census, page=page)
+    out = await _dom_deliver(page, "wake line")
+    assert out["ok"] is False
+    assert out["reason"] == "no_send_button"
+    assert out["census"] == census
+
+
+@pytest.mark.asyncio
+@pytest.mark.no_dom_stub
+async def test_wake_paste_failed_includes_dom_census(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    page = _FakePage(url=PINNED)
+    page.target_id = "tab-orion"
+    census = dict(_SAMPLE_DOM_CENSUS)
+    _dom_deliver_no_send_stubs(monkeypatch, census=census, page=page)
+    out = await deliver_orion_wake(
+        thread="21207",
+        turn=2,
+        from_agent="maestro",
+        page=page,
+    )
+    assert out["reason"] == "paste_failed"
+    assert out.get("error") == "no_send_button"
+    assert out["census"] == census
+
+
+@pytest.mark.asyncio
+async def test_open_binding_tab_no_second_create_when_cdp_row_exists_poll_missing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    stored = (
+        "https://chatgpt.com/g/g-p-test-orion/c/"
+        "6ae44d27-06cc-83e8-8b8a-df9b819755bd"
+    )
+    row = {
+        "id": "tab-partial",
+        "url": stored.split("?", 1)[0],
+        "web_socket_debugger_url": "ws://fake/tab-partial",
+    }
+    create_calls = {"n": 0}
+
+    class _Ctx:
+        pages: list = []
+
+    class _Port:
+        def __init__(self) -> None:
+            self._listed = False
+
+        def list_tabs(self, *, cdp_url: str) -> dict:
+            if self._listed:
+                return {"pages": [row], "reachable": True, "error": None}
+            return {"pages": [], "reachable": True, "error": None}
+
+        def create_background_tab(
+            self, *, cdp_url: str, url: str, **kwargs: object
+        ) -> dict:
+            create_calls["n"] += 1
+            self._listed = True
+            return {
+                "ok": True,
+                "target_id": "tab-partial",
+                "url": url,
+                "web_socket_debugger_url": "ws://fake/tab-partial",
+            }
+
+    port = _Port()
+
+    async def _poll(_ctx: object, conversation_id: str, **kwargs: object) -> None:
+        return None
+
+    monkeypatch.setattr("web_tab.cdp_actuation.default_actuation_port", lambda: port)
+    monkeypatch.setattr("web_tab.tab_binding_store.save_binding", lambda *a, **k: None)
+    monkeypatch.setattr(
+        "web_chat_relay.orion_wake._poll_playwright_page_for_conversation", _poll
+    )
+
+    ctx = _Ctx()
+    first = await _open_orion_binding_tab(ctx, stored_endpoint=stored)
+    assert first["reason"] == "conversation_missing"
+    assert first.get("target_id") == "tab-partial"
+    assert first.get("retryable") is True
+    assert create_calls["n"] == 1
+
+    second = await _open_orion_binding_tab(ctx, stored_endpoint=stored)
+    assert second["reason"] == "conversation_missing"
+    assert second.get("target_id") == "tab-partial"
+    assert create_calls["n"] == 1

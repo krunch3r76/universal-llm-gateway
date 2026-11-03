@@ -19,6 +19,7 @@ from web_chat_relay.orion_hop import (
     preflight_standing_handoff,
     repin_orion_wake_conversation,
     resolve_orion_wake_conversation_url,
+    sweep_orion_hop_tab_duplicates,
 )
 from web_chat_relay.orion_hop_storage import InMemoryHopAttemptStore
 from web_chat_relay.orion_wake import PINNED_CONVERSATION_URL, deliver_orion_chat_wake
@@ -986,3 +987,27 @@ async def test_preflight_standing_handoff_reads_at_hop_time() -> None:
     assert out["ok"] is True
     assert seen == ["read"]
     assert out["read_sha256"] == "abcd" * 16
+
+
+@pytest.mark.asyncio
+async def test_sweep_orion_hop_tab_duplicates_forwards_primary_target_id(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured: dict[str, object] = {}
+
+    async def _sweep(*_args: object, **kwargs: object) -> dict[str, object]:
+        captured.update(kwargs)
+        return {"ok": True, "closed": False}
+
+    monkeypatch.setattr(
+        "web_chat_relay.orion_wake.sweep_orion_duplicate_tabs", _sweep
+    )
+    primary = type("OrionPage", (), {"url": PINNED_CONVERSATION_URL})()
+    out = await sweep_orion_hop_tab_duplicates(
+        object(),
+        stored_endpoint=PINNED_CONVERSATION_URL,
+        primary_page=primary,
+        primary_target_id="tab-keep",
+    )
+    assert out == {"ok": True, "closed": False}
+    assert captured.get("primary_target_id") == "tab-keep"

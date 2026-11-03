@@ -667,8 +667,13 @@ async def sweep_orion_hop_tab_duplicates(
     stored_endpoint: str,
     primary_page: OrionPage,
     cdp_url: str = DEFAULT_ORION_CDP_URL,
+    primary_target_id: str | None = None,
 ) -> dict[str, Any]:
-    """F13: duplicate-tab housekeeping runs outside ``orion_hop`` proper."""
+    """Close duplicate Orion tabs for one stored endpoint without closing the attached tab.
+
+    Forwards primary_target_id to sweep_orion_duplicate_tabs so the primary CDP target
+    is never closed during housekeeping. Returns the callee result dict unchanged.
+    """
     from web_chat_relay.orion_wake import sweep_orion_duplicate_tabs
 
     return await sweep_orion_duplicate_tabs(
@@ -676,4 +681,5 @@ async def sweep_orion_hop_tab_duplicates(
         stored_endpoint=stored_endpoint,
         primary_page=primary_page,
         cdp_url=cdp_url,
+        primary_target_id=primary_target_id,
     )

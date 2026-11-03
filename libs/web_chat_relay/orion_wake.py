@@ -439,7 +439,11 @@ async def _open_orion_binding_tab(
     store_path: Any | None = None,
     binding_reference: str | None = None,
 ) -> dict[str, Any]:
-    """Open the binding row URL verbatim (hidden) or reuse an existing conversation tab."""
+    """Open the binding row URL verbatim (hidden) or reuse an existing conversation tab.
+
+    When CDP already lists a row for the conversation id, never open another tab;
+    a missing Playwright page yields conversation_missing with that row target_id.
+    """
     if binding_reference:
         gate = _refuse_unless_binding_row_matches_claim(
             binding_reference, stored_endpoint
@@ -514,6 +518,12 @@ async def _open_orion_binding_tab(
                         ),
                         "policy_just_opened": False,
                     }
+                return _refuse(
+                    "conversation_missing",
+                    conversation_id=conversation_id,
+                    retryable=True,
+                    target_id=str(row.get("id") or "").strip(),
+                )
 
         target_id = ""
         try:
@@ -538,6 +548,12 @@ async def _open_orion_binding_tab(
                                 ),
                                 "policy_just_opened": False,
                             }
+                        return _refuse(
+                            "conversation_missing",
+                            conversation_id=conversation_id,
+                            retryable=True,
+                            target_id=str(row.get("id") or "").strip(),
+                        )
                 opened = impl.create_background_tab(
                     cdp_url=cdp_url,
                     url=stored,
@@ -577,6 +593,8 @@ async def _open_orion_binding_tab(
             return _refuse(
                 "conversation_missing",
                 conversation_id=conversation_id,
+                retryable=True,
+                target_id=target_id,
             )
         return {
             "ok": True,
@@ -892,7 +910,10 @@ async def _dom_deliver(
     cdp_url: str = DEFAULT_ORION_CDP_URL,
     preserve_newlines: bool = False,
 ) -> dict[str, Any]:
-    """Paste via ChatGPT DOM helpers (same sequence as web_tab execute_paste submit path)."""
+    """Paste via ChatGPT DOM helpers (same sequence as web_tab execute_paste submit path).
+
+    On dom_insert_and_send failure, forwards census unchanged when the inner result includes it.
+    """
     from cursor_bridge.dom_composer_paste import dom_insert_and_send
     from web_tab.cdp_actuation import default_actuation_port
     from web_tab.commit_verify import capture_dom_baseline, poll_verify_committed
@@ -974,10 +995,14 @@ async def _dom_deliver(
         return {"ok": False, "reason": "target_lock_busy", "retryable": True}
 
     if not result.get("ok"):
-        return {
+        failure: dict[str, Any] = {
             "ok": False,
             "reason": str(result.get("reason") or "paste_failed"),
         }
+        census = result.get("census")
+        if census is not None:
+            failure["census"] = census
+        return failure
 
     receipt: str = "dom_paste"
     verify = await poll_verify_committed(
@@ -1294,13 +1319,15 @@ async def deliver_orion_wake(
                     brought_to_front=tab_sync["brought_to_front"],
                     tab_reloaded=tab_sync["tab_reloaded"],
                 )
-            return _refuse(
-                "paste_failed",
-                error=dom_reason,
-                pasted=False,
-                brought_to_front=tab_sync["brought_to_front"],
-                tab_reloaded=tab_sync["tab_reloaded"],
-            )
+            paste_refuse: dict[str, Any] = {
+                "error": dom_reason,
+                "pasted": False,
+                "brought_to_front": tab_sync["brought_to_front"],
+                "tab_reloaded": tab_sync["tab_reloaded"],
+            }
+            if dom.get("census") is not None:
+                paste_refuse["census"] = dom["census"]
+            return _refuse("paste_failed", **paste_refuse)
         await page.wait_for_timeout(400)
         approval = await _handle_approvals(page)
     except Exception as exc:
