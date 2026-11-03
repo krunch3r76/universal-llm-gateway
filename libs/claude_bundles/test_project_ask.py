@@ -320,7 +320,7 @@ def test_abort_cleanup_owner_still_kills(
     monkeypatch.setattr(
         abort,
         "bounded_stop_via_cdp",
-        lambda _url: (
+        lambda _url, target_id=None: (
             killed.append("stop") or abort.AttestResult(has_stop=False, probe_ok=True)
         ),
     )

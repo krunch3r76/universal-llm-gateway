@@ -367,7 +367,7 @@ def test_abort_cleanup_streaming_has_stop_still_attached(
     monkeypatch.setattr(
         paa,
         "bounded_stop_via_cdp",
-        lambda _url: paa.AttestResult(has_stop=True, probe_ok=True),
+        lambda _url, target_id=None: paa.AttestResult(has_stop=True, probe_ok=True),
     )
     paa._ABORT_DONE = False
     outcome = paa.abort_cleanup(
@@ -389,7 +389,7 @@ def test_abort_cleanup_idempotent(monkeypatch: pytest.MonkeyPatch) -> None:
         lambda: {"abc123": {"status": "active", "port": 9234}},
     )
 
-    def _fake_stop(_url: str) -> paa.AttestResult:
+    def _fake_stop(_url: str, *, target_id: str | None = None) -> paa.AttestResult:
         stops["n"] += 1
         return paa.AttestResult(has_stop=False, probe_ok=True)
 

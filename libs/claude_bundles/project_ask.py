@@ -718,6 +718,8 @@ async def send_prompt(
             if recovered is None:
                 raise
             return recovered
+        except RuntimeError as exc:
+            raise SkillDeliveryError(str(exc)) from exc
 
     induction_observed: list[str] = []
     reply_baseline: dict | None = None
