@@ -315,9 +315,9 @@ _SERVES_LIBS_VERIFY_XFAIL_PAIRS = frozenset(
         # writing_intake reaches stargate via pipelines/writing handlers (dynamic load);
         # static verify walks services/universal-stargate/ only (21170 finding 3).
         ("stargate", "writing_intake"),
-        # web_tab reaches stargate via pipelines/web_tab handlers (dynamic load);
-        # static verify walks services/universal-stargate/ only.
-        ("stargate", "web_tab"),
+        # ("stargate", "web_tab") left this set at 838ff66: static verify now
+        # reaches web_tab via endpoint_wake_ledger -> web_chat_relay.orion_wake
+        # (_dom_deliver imports web_tab.*), so strict xfail would XPASS.
     }
 )
 
@@ -413,10 +413,14 @@ def test_stargate_orion_chat_wake_handler_load_imports_orion_wake() -> None:
 
 @pytest.mark.offline
 def test_web_tab_consumers_mcp_verified_stargate_dynamic() -> None:
-    """Package CONSUMERS name mcp+stargate; static verify reaches mcp only.
+    """Package CONSUMERS name mcp+stargate; static verify reaches both.
 
-    Stargate loads ``pipelines/web_tab`` handlers dynamically — see
+    Stargate also loads ``pipelines/web_tab`` handlers dynamically — see
     ``test_stargate_web_tab_handler_load_imports_package`` for that edge.
+    Since 838ff66 the static walk reaches web_tab too: stargate's
+    ``cursor_sdk_lane_subscription`` -> ``bus_watch.endpoint_wake_transport``
+    -> ``agent_bus_store.db.endpoint_wake_ledger`` -> ``web_chat_relay.orion_wake``,
+    whose ``_dom_deliver`` imports ``web_tab.*`` on every Orion wake delivery.
     """
     path = "libs/web_tab/__init__.py"
     decl = consumers_declared_in_source(
@@ -424,7 +428,7 @@ def test_web_tab_consumers_mcp_verified_stargate_dynamic() -> None:
     )
     assert decl == ("mcp", "stargate")
     assert verify_consumer_import("mcp", path) == "verified"
-    assert verify_consumer_import("stargate", path) == "contradicted"
+    assert verify_consumer_import("stargate", path) == "verified"
 
 
 @pytest.mark.offline
