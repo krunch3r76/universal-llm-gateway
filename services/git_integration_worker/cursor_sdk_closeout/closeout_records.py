@@ -57,6 +57,12 @@ class SdkRunOutcome:
     last_output_s: float | None = None
     first_toolcall_s: float | None = None
     measures_interaction_output_offsets: bool = True
+    # Stream observations, including calls that never reached completed.
+    # None means the live counter was not in scope and tool_call_count stands in.
+    stream_tool_call_count: int | None = None
+    # Park-resume MCP connect token: ok is not produced today; failed:<reason>
+    # or not_observed. None on fresh runs.
+    mcp_handshake: str | None = None
 
 
 @dataclass(frozen=True)
