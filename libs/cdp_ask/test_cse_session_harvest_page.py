@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -16,10 +17,17 @@ _BANNER_ONLY = (
     "— try again in a moment. If it persists, check https://status.claude.com."
 )
 
+# Harvested cse-dom outcomes persist ``ulg.continuity.messages/1`` keyed by the
+# CSE id in ``page.url`` (25c3ef75a); a bare MagicMock url has no ``cse_`` id.
+_CSE_URL = "https://claude.ai/cowork/cse_harvest_page_test"
+
 
 @pytest.mark.asyncio
-async def test_auto_error_banner_preview_falls_through_to_full_scrape() -> None:
+async def test_auto_error_banner_preview_falls_through_to_full_scrape(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
     """a:30411: error-banner last turn does not prove the CSE is empty."""
+    monkeypatch.setenv("CORTEX_FILES_ROOT", str(tmp_path))
     keep_body = "KEEP 4 — document:life-coding-playbook verdict body."
     harvest_mock = AsyncMock(
         side_effect=[
@@ -43,7 +51,7 @@ async def test_auto_error_banner_preview_falls_through_to_full_scrape() -> None:
             },
         ]
     )
-    page = MagicMock()
+    page = MagicMock(url=_CSE_URL)
     with (
         patch("cdp_ask.cse_session_harvest_scrape.harvest_turns", harvest_mock),
         patch(
@@ -63,13 +71,16 @@ async def test_auto_error_banner_preview_falls_through_to_full_scrape() -> None:
     assert result.content_provenance == "cse-dom"
     texts = [turn.text for turn in result.turns]
     assert keep_body in texts
+    assert result.archive_uri
+    assert result.message_count == 2
 
 
 @pytest.mark.asyncio
 async def test_open_on_demand_loading_then_overlay_title_harvests(
-    monkeypatch: pytest.MonkeyPatch,
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     """Open-on-demand loading shell waits, then harvests when overlay/title settles."""
+    monkeypatch.setenv("CORTEX_FILES_ROOT", str(tmp_path))
     monkeypatch.setattr(
         "cdp_ask.cse_session_harvest_scrape.OPEN_ON_DEMAND_INCOMPLETE_WAIT_S",
         5.0,
@@ -96,7 +107,7 @@ async def test_open_on_demand_loading_then_overlay_title_harvests(
             },
         ]
     )
-    page = MagicMock()
+    page = MagicMock(url=_CSE_URL)
     with (
         patch("cdp_ask.cse_session_harvest_scrape.harvest_turns", harvest_mock),
         patch("cdp_ask.cse_session_harvest_scrape.asyncio.sleep", AsyncMock()),
@@ -113,6 +124,8 @@ async def test_open_on_demand_loading_then_overlay_title_harvests(
     assert harvest_mock.await_count == 2
     assert result.outcome == "harvested"
     assert result.turns[0].text == "late reply"
+    assert result.archive_uri
+    assert result.message_count == 1
 
 
 @pytest.mark.asyncio
