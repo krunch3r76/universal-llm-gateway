@@ -350,13 +350,15 @@ def silent_land_attempt(
     claim is not one of those refusals: ``commits_ahead`` and the actuator
     decide, and the actuator reports landed only when the hub sha moves.
     ``SilentLandOutcome.landed`` is true only when the hub sha moved and now
-    contains the branch tip. Side effects: may fast-forward or merge the hub
+    contains the branch tip. Early refusals carry ``refuse_reason``
+    ``read_only``, ``scoped_out``, or ``verb_refused`` so a debt is not
+    labelled as a dirty hub. Side effects: may fast-forward or merge the hub
     master worktree, and logs one info line when a worker landed claim is ignored.
     """
     if (commits_ahead or 0) < 1:
         return SilentLandOutcome(False)
     if _dispatch_read_only(dispatch_id):
-        return SilentLandOutcome(False)
+        return SilentLandOutcome(False, "read_only")
     from services.git_integration_worker.cursor_sdk_hub_land_scope import (
         land_lane_branch_onto_hub_master,
         packet_hub_land_scoped_out,
@@ -364,7 +366,7 @@ def silent_land_attempt(
 
     silent_source = _silent_land_source(packet_text, land_text)
     if packet_hub_land_scoped_out(silent_source):
-        return SilentLandOutcome(False)
+        return SilentLandOutcome(False, "scoped_out")
     verb, _reason, _sha = parse_land_disposition(closeout_text)
     if verb is not None:
         # Introduced so a declared disposition would not be overridden by a
@@ -383,7 +385,7 @@ def silent_land_attempt(
             verb == DISCHARGE_UNLANDED
             and _silent_land_unlanded_tip_agrees(repo, branch_name, closeout_text)
         ):
-            return SilentLandOutcome(False)
+            return SilentLandOutcome(False, "verb_refused")
     if not packet_requests_silent_land(silent_source):
         return SilentLandOutcome(False)
     result = land_lane_branch_onto_hub_master(
