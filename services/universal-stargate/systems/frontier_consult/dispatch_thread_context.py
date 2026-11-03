@@ -117,12 +117,60 @@ def allowed_prompt_recipients(role: str) -> frozenset[str]:
     return frozenset(allowed)
 
 
+_FENCE_OPEN_LINE_RE = re.compile(r"^<<<(\S+)\s")
+
+
+def _fence_open_token(line: str) -> str | None:
+    match = _FENCE_OPEN_LINE_RE.match(line)
+    if match is None:
+        return None
+    return match.group(1)
+
+
+def _fence_close_line(line: str, token: str) -> bool:
+    return line.startswith(f"{token}>>>")
+
+
+def _text_for_placeholder_scan(text: str) -> str:
+    """Drop closed dispatch file-fence spans before template-marker scanning.
+
+    Packet file payloads use a ``<<<token `` opener and a line-start
+    ``token>>>`` closer. Only inclusive matched pairs are removed; an opener
+    without a matching closer leaves subsequent lines scannable, and search
+    continues on the line after that opener.
+    """
+    if not text:
+        return text
+    lines = text.splitlines()
+    kept: list[str] = []
+    index = 0
+    while index < len(lines):
+        line = lines[index]
+        token = _fence_open_token(line)
+        if token is None:
+            kept.append(line)
+            index += 1
+            continue
+        close_index: int | None = None
+        for probe in range(index + 1, len(lines)):
+            if _fence_close_line(lines[probe], token):
+                close_index = probe
+                break
+        if close_index is None:
+            kept.append(line)
+            index += 1
+            continue
+        index = close_index + 1
+    return "\n".join(kept)
+
+
 def reject_unresolved_placeholders(
     *, request_id: str, text: str, field: str = "dispatch_thread_id"
 ) -> None:
     """Reject template-marker residue before a dispatched model can run."""
+    scan_text = _text_for_placeholder_scan(text)
     for pattern in _PLACEHOLDER_PATTERNS:
-        match = pattern.search(text)
+        match = pattern.search(scan_text)
         if match is not None:
             raise FrontierEndpointError(
                 request_id=request_id,

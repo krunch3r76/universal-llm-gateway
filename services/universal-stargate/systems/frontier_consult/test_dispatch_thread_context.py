@@ -14,6 +14,7 @@ from systems.frontier_consult.dispatch_thread_context import (
     is_server_dispatch_turn_body,
     read_dispatch_thread_body_at_turn,
     read_latest_dispatch_thread_body,
+    reject_unresolved_placeholders,
     resolve_generate_prompt_body,
     resolve_generate_prompt_resolution,
 )
@@ -458,3 +459,46 @@ async def test_inline_prompt_unaffected_by_operator_packet_gate() -> None:
         prompt="hello",
     )
     assert resolution.text == "hello"
+
+
+def test_reject_placeholders_ac1_closed_fence_masks_markers() -> None:
+    """AC1: template markers inside a matched dispatch fence do not raise."""
+    text = (
+        "preamble\n"
+        "<<<k4v9q2 FILE example.js\n"
+        "const x = {{PROBE_NAME}};\n"
+        "<INSERT TOKEN>\n"
+        "<PUT ANSWER HERE>\n"
+        "```javascript\n"
+        "const probe = { ok: true, already: true, probeVersion: PROBE_VERSION };\n"
+        "```\n"
+        "k4v9q2>>> END FILE\n"
+        "tail\n"
+    )
+    reject_unresolved_placeholders(request_id="req-ac1", text=text)
+
+
+def test_reject_placeholders_ac2_unfenced_double_brace_raises() -> None:
+    """AC2: unfenced {{TITLE}} raises dispatch_context_placeholder 422."""
+    with pytest.raises(FrontierEndpointError) as exc_info:
+        reject_unresolved_placeholders(
+            request_id="req-ac2",
+            text="Summary: {{TITLE}}\n",
+        )
+    err = exc_info.value
+    assert err.status_code == 422
+    assert err.code == "dispatch_context_placeholder"
+
+
+def test_reject_placeholders_ac3_unclosed_or_mismatched_fence_still_raises() -> None:
+    """AC3: unfenced markers after bad fences still raise."""
+    with pytest.raises(FrontierEndpointError):
+        reject_unresolved_placeholders(
+            request_id="req-ac3a",
+            text="<<<open1 STUFF\nSummary: {{TITLE}}\n",
+        )
+    with pytest.raises(FrontierEndpointError):
+        reject_unresolved_placeholders(
+            request_id="req-ac3b",
+            text="<<<tok1 STUFF\nwrong>>> END\nSummary: {{TITLE}}\n",
+        )
