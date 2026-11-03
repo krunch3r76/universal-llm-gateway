@@ -126,3 +126,80 @@ async def test_a1_finally_release_restores_parent_not_sibling(
     with pytest.raises(asyncio.CancelledError):
         await task
     await isolated.cancel("sibling-a1")
+
+
+@pytest.mark.asyncio
+async def test_a1_exited_parent_does_not_wake_fifo_waiter(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Breaks when child cleanup releases the slot while an exited parent is parked.
+
+    The waiter must stay queued. The slot moves to the parked parent, which
+    still points at the child, until the resume admit.
+    """
+    from services.git_integration_worker.cursor_sdk_nest_resume import (
+        claim_nest_parent_exit,
+    )
+
+    isolated = FifoCapacityGate(limit=1, gate_id="a1-exited")
+    monkeypatch.setattr(
+        "services.git_integration_worker.cursor_sdk_gate._STANDARD_GATE", isolated
+    )
+    monkeypatch.setattr(
+        "services.git_integration_worker.cursor_sdk_gate._LANE_GATES",
+        {"standard": isolated, "operator": isolated},
+    )
+    ledger = CursorDispatchLedger.instance()
+    repo = "/tmp/repo-a1-exited"
+    parent = _req(dispatch_id="parent-ex", execution_id="e-p", message="p")
+    ledger.admit(
+        req=parent,
+        fingerprint=ledger.fingerprint(parent),
+        execution_id=parent.execution_id,
+        caller_agent=None,
+        resolved_model="c",
+        admission=_admission(parent),
+        source_repo=repo,
+    )
+    ledger.mark_running(dispatch_id="parent-ex")
+    await acquire_sdk_dispatch_slot(dispatch_id="parent-ex")
+    child = _req(
+        dispatch_id="child-ex",
+        execution_id="e-c",
+        message="c",
+        nest_under="parent-ex",
+        thread_id="t-c",
+    )
+    ledger.admit(
+        req=child,
+        fingerprint=ledger.fingerprint(child),
+        execution_id=child.execution_id,
+        caller_agent=None,
+        resolved_model="c",
+        admission=_admission(child),
+        source_repo=repo,
+        nest_under="parent-ex",
+    )
+    await transfer_capacity_after_park(
+        parent_id="parent-ex", child_id="child-ex", source_repo=repo
+    )
+    assert claim_nest_parent_exit("parent-ex") == "child-ex"
+    sibling_got = asyncio.Event()
+
+    async def sibling_acquire() -> None:
+        await acquire_sdk_dispatch_slot(dispatch_id="sibling-ex")
+        sibling_got.set()
+
+    task = asyncio.create_task(sibling_acquire())
+    await asyncio.sleep(0.05)
+    assert not sibling_got.is_set()
+    disposition = await release_or_restore_for_child(dispatch_id="child-ex")
+    assert disposition == "released"
+    await asyncio.sleep(0.05)
+    assert not sibling_got.is_set()
+    assert "sibling-ex" not in sdk_dispatch_gate_holders()
+    assert sdk_dispatch_gate_holders() == frozenset({"parent-ex"})
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    await isolated.cancel("sibling-ex")

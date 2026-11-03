@@ -182,7 +182,6 @@ from services.git_integration_worker.cursor_sdk_feature_probe import (
 from services.git_integration_worker.cursor_sdk_gate import (
     SdkSlotAcquireStallError,
     acquire_sdk_dispatch_slot,
-    force_release_sdk_dispatch_slot,
     sdk_dispatch_gate_stats,
     sdk_dispatch_lane,
 )
@@ -1366,9 +1365,7 @@ def _run_sdk_sync(
                 is_density_harness_steer_row,
             )
 
-            if is_density_harness_steer_row(
-                {"contract": ctx.handoff_contract or ""}
-            ):
+            if is_density_harness_steer_row({"contract": ctx.handoff_contract or ""}):
                 from services.git_integration_worker.conductor_hop_watchdog import (
                     maybe_tick_density_harness_steer,
                 )
@@ -1678,7 +1675,21 @@ async def _mark_terminal_and_promote(
 
     nest_parent = nest_resume_parent_id(dispatch_id)
     if nest_parent is not None:
-        await force_release_sdk_dispatch_slot(dispatch_id=dispatch_id)
+        # Keep the slot off the FIFO. Cleanup may already have moved it onto
+        # the parked parent; transferring again is a no-op when the child
+        # no longer holds.
+        try:
+            from services.git_integration_worker.cursor_sdk_gate import (
+                transfer_sdk_dispatch_slot,
+            )
+
+            await transfer_sdk_dispatch_slot(from_id=dispatch_id, to_id=nest_parent)
+        except Exception:
+            logger.info(
+                "nest terminal slot transfer skipped child=%s parent=%s",
+                dispatch_id,
+                nest_parent,
+            )
         disposition = "nest_pending"
     else:
         disposition = await release_or_restore_for_child(dispatch_id=dispatch_id)
@@ -1718,9 +1729,7 @@ async def _mark_terminal_and_promote(
     )
 
     try:
-        await maybe_wake_conductor_on_nest_child_terminal(
-            child_dispatch_id=dispatch_id
-        )
+        await maybe_wake_conductor_on_nest_child_terminal(child_dispatch_id=dispatch_id)
     except Exception:  # noqa: BLE001 — nest wake is advisory
         logger.exception(
             "conductor nest-child wake failed child dispatch_id=%s",
@@ -2654,9 +2663,7 @@ async def _deliver_sdk_closeout(
                     else "CURSOR_CLOSEOUT_COMPLETED"
                 ),
                 "closeout_status": (
-                    "refused"
-                    if refusal is not None
-                    else delivery.closeout_status.value
+                    "refused" if refusal is not None else delivery.closeout_status.value
                 ),
                 "turn": turn_number,
                 "sidecar_ref": delivery.sidecar_ref,
@@ -4150,6 +4157,21 @@ async def admit_cursor_dispatch(
             req.dispatch_id[:8],
             lane_advisories,
         )
+    if req.resume_of:
+        from services.git_integration_worker.cursor_sdk_nest_resume import (
+            refuse_second_parked_resume,
+        )
+
+        parked_refusal = await refuse_second_parked_resume(req)
+        if parked_refusal is not None:
+            return _reject_pre_admission(
+                req,
+                worker_error_code="NEST_PARENT_RESUME_CLAIMED",
+                failure_layer="admission",
+                http_status=422,
+                detail_summary=parked_refusal,
+                retryable=False,
+            )
     resume_reject = reject_resume_if_ineligible(req)
     if resume_reject is not None:
         return resume_reject
@@ -4734,7 +4756,9 @@ async def admit_cursor_dispatch(
         )
         if summoning_thread_id:
             conductor_patch["summoning_thread_id"] = summoning_thread_id
-        gen_opts = req.generation_options if isinstance(req.generation_options, dict) else {}
+        gen_opts = (
+            req.generation_options if isinstance(req.generation_options, dict) else {}
+        )
         hop_default = gen_opts.get("hop_successor_default")
         if hop_default:
             conductor_patch["hop_successor_default"] = str(hop_default).strip()

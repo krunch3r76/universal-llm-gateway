@@ -2182,7 +2182,11 @@ class CursorDispatchLedger:
                         )
                     insert_status = _STATUS_QUEUED
                     queued_at = _now()
-            if hop_park_release and not read_only and str(contract or "").lower() == "conductor":
+            if (
+                hop_park_release
+                and not read_only
+                and str(contract or "").lower() == "conductor"
+            ):
                 release_mission_parks(
                     conn,
                     work_key=effective_work_key,
@@ -2373,21 +2377,27 @@ class CursorDispatchLedger:
             return updated.rowcount == 1
 
     def restore_from_park(self, *, parent_id: str) -> str | None:
-        """Restore parent ``parked_waiting`` → ``running``; return source_repo."""
+        """Restore a still-live parked parent to ``running``.
+
+        The stamp check and the status write are one ``UPDATE``: a
+        ``nest_parent_run_exited`` record stays ``parked_waiting``. Returns
+        ``source_repo`` when this call moved the row, else None.
+        """
         with self._connect() as conn:
-            row = conn.execute(
-                "SELECT source_repo FROM cursor_sdk_dispatches "
-                "WHERE dispatch_id=? AND status=?",
-                (parent_id, _STATUS_PARKED_WAITING),
-            ).fetchone()
-            if row is None:
-                return None
-            conn.execute(
+            conn.execute("BEGIN IMMEDIATE")
+            cur = conn.execute(
                 "UPDATE cursor_sdk_dispatches SET status=?, park_child_dispatch_id=NULL "
-                "WHERE dispatch_id=? AND status=?",
+                "WHERE dispatch_id=? AND status=? "
+                "AND COALESCE(json_extract(record_json, '$.nest_parent_run_exited'), 0) = 0",
                 (_STATUS_RUNNING, parent_id, _STATUS_PARKED_WAITING),
             )
-            return row["source_repo"]
+            if cur.rowcount != 1:
+                return None
+            row = conn.execute(
+                "SELECT source_repo FROM cursor_sdk_dispatches WHERE dispatch_id=?",
+                (parent_id,),
+            ).fetchone()
+        return row["source_repo"] if row is not None else None
 
     def find_parked_parent_for_child(
         self, *, child_id: str
@@ -3290,12 +3300,22 @@ class CursorDispatchLedger:
         ]
 
     def sole_non_terminal_display_holder(self) -> dict[str, Any] | None:
-        """When exactly one non-terminal row exists, project it for busy_status display."""
+        """When exactly one non-terminal row exists, project it for busy_status display.
+
+        An exited nest parent (``parked_waiting`` plus ``nest_parent_run_exited``)
+        is not a live holder. Its run is over; the resume admit is the next
+        writer. Counting that row makes ``busy_status`` defer restarts on a
+        dispatch that is no longer working.
+        """
         with self._connect() as conn:
             rows = conn.execute(
                 "SELECT dispatch_id, thread_id, resolved_model, status, record_json "
                 "FROM cursor_sdk_dispatches "
                 f"WHERE status IN ({_ACTIVE_IDENTITY_STATUSES}) "
+                "AND NOT ("
+                "status='parked_waiting' AND COALESCE("
+                "json_extract(record_json, '$.nest_parent_run_exited'), 0) = 1"
+                ") "
                 "ORDER BY rowid ASC LIMIT 2"
             ).fetchall()
         if len(rows) != 1:
@@ -3470,6 +3490,13 @@ class CursorDispatchLedger:
                             dispatch_id=child_id, terminal_status="failed"
                         )
                 self.restore_from_park(parent_id=dispatch_id)
+                with self._connect() as conn:
+                    after = conn.execute(
+                        "SELECT status FROM cursor_sdk_dispatches WHERE dispatch_id=?",
+                        (dispatch_id,),
+                    ).fetchone()
+                if after is not None and after["status"] == _STATUS_PARKED_WAITING:
+                    continue
             if key:
                 lease_keys.add(key)
         with self._connect() as conn:
@@ -3786,7 +3813,11 @@ class CursorDispatchLedger:
                 (dispatch_id,),
             ).fetchone()
             if existing is None:
-                row_status = terminal_status if terminal_status in _STATUS_TERMINAL else "completed"
+                row_status = (
+                    terminal_status
+                    if terminal_status in _STATUS_TERMINAL
+                    else "completed"
+                )
                 conn.execute(
                     "INSERT INTO cursor_sdk_dispatches "
                     "(dispatch_id, fingerprint, thread_id, execution_id, resolved_model, "

@@ -14,8 +14,9 @@ the parent and admits ``resume_of`` so the same execution can harvest and land.
 
 from __future__ import annotations
 
+import asyncio
 import json
-from typing import Any
+from typing import Any, NamedTuple
 
 from universal_logging import get_logger
 
@@ -38,6 +39,11 @@ def nest_parked_subject(*, dispatch_id: str, child_id: str) -> str:
 
 
 def nest_resumed_subject(*, child_id: str, parent_id: str) -> str:
+    """Subject for the bus turn posted after a nest ``resume_of`` is admitted.
+
+    Names the new child and the parked parent so pollers can tell this
+    advisory from a terminal closeout.
+    """
     return (
         f"cursor-sdk dispatch {child_id} RESUMED "
         f"(resume_of {parent_id}, nest_child_terminal)"
@@ -91,6 +97,11 @@ def claim_nest_parent_exit(dispatch_id: str) -> str | None:
 
 
 def remember_exit_body(*, dispatch_id: str, body: str) -> None:
+    """Store a capped excerpt of the parent's last turn for the resume preamble.
+
+    The resume agent reads this back as prior-turn context. The write merges
+    into ``record_json`` and does not change dispatch status.
+    """
     text = (body or "").strip()
     if len(text) > _BODY_CAP:
         text = text[: _BODY_CAP - 20] + "\n…(truncated)…"
@@ -98,6 +109,145 @@ def remember_exit_body(*, dispatch_id: str, body: str) -> None:
         dispatch_id=dispatch_id,
         patch={NEST_PARENT_EXIT_BODY: text},
     )
+
+
+class ParkResumeClaim(NamedTuple):
+    """Result of the single parked-parent resume claim.
+
+    ``outcome`` is ``claimed`` when this call moved the row out of
+    ``parked_waiting``. ``park_child_id`` is the link read under the same
+    transaction, before the claim clears it.
+    """
+
+    outcome: str
+    park_child_id: str | None
+
+
+def claim_parked_parent_resume(
+    parent_id: str,
+    *,
+    park_child_id: str | None,
+    resume_id: str,
+) -> ParkResumeClaim:
+    """Claim one parked parent for a single resume admit.
+
+    One ``UPDATE`` under ``BEGIN IMMEDIATE``: ``status='parked_waiting'``,
+    the ``nest_parent_run_exited`` stamp set, and ``park_child_dispatch_id``
+    equal to ``park_child_id`` when that link is given. The row moves to
+    ``cancelled`` and records ``park_resumed_by``. Callers admit only when
+    ``outcome`` is ``claimed`` or ``already_claimed_by_us``. A second resumer
+    gets ``lost`` or ``already_claimed_by_other`` and must not admit.
+    ``not_waiting`` means the row was not parked (a steer park stays on its
+    own ``park_resumed_by`` stamp). ``not_exited`` means the parent is parked
+    on a live nest and must not be hand-resumed.
+    """
+    ledger = CursorDispatchLedger.instance()
+    with ledger._connect() as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        row = conn.execute(
+            "SELECT status, park_child_dispatch_id, park_resumed_by, record_json "
+            "FROM cursor_sdk_dispatches WHERE dispatch_id=?",
+            (parent_id,),
+        ).fetchone()
+        if row is None:
+            return ParkResumeClaim("not_waiting", None)
+        link = row["park_child_dispatch_id"]
+        link_text = str(link) if link else None
+        stamped = bool(_record(row["record_json"]).get(NEST_PARENT_RUN_EXITED))
+        status = str(row["status"] or "")
+        owner = str(row["park_resumed_by"] or "") or None
+        if status != "parked_waiting":
+            if stamped and owner == resume_id:
+                return ParkResumeClaim("already_claimed_by_us", link_text)
+            if stamped and owner and owner != resume_id:
+                return ParkResumeClaim("already_claimed_by_other", link_text)
+            return ParkResumeClaim("not_waiting", link_text)
+        if park_child_id is not None and link_text != park_child_id:
+            return ParkResumeClaim("lost", link_text)
+        if not stamped:
+            return ParkResumeClaim("not_exited", link_text)
+        from services.git_integration_worker.cursor_dispatch_ledger import _now
+
+        cur = conn.execute(
+            "UPDATE cursor_sdk_dispatches SET status='cancelled', "
+            "terminal_status='cancelled', terminal_at=?, "
+            "park_child_dispatch_id=NULL, park_resumed_by=? "
+            "WHERE dispatch_id=? AND status='parked_waiting' "
+            "AND park_child_dispatch_id IS ? "
+            "AND COALESCE(json_extract(record_json, '$.nest_parent_run_exited'), 0) = 1",
+            (_now(), resume_id, parent_id, link),
+        )
+        if cur.rowcount != 1:
+            return ParkResumeClaim("lost", link_text)
+    ledger.mark_terminal(dispatch_id=parent_id, terminal_status="cancelled")
+    persist_resume_retain(dispatch_id=parent_id)
+    return ParkResumeClaim("claimed", link_text)
+
+
+async def _release_handed_slot(resume_id: str) -> None:
+    """Drop a resume slot when the admit that claimed it did not land."""
+    from services.git_integration_worker.cursor_sdk_gate import (
+        force_release_sdk_dispatch_slot,
+    )
+
+    await force_release_sdk_dispatch_slot(dispatch_id=resume_id)
+
+
+async def _hand_slot_to_resume(
+    *, parent_id: str, child_id: str | None, resume_id: str
+) -> None:
+    """Move the capacity slot onto the resume id without waking FIFO waiters."""
+    from services.git_integration_worker.cursor_sdk_gate import (
+        transfer_sdk_dispatch_slot,
+    )
+
+    for holder in (parent_id, child_id):
+        if not holder or holder == resume_id:
+            continue
+        try:
+            await transfer_sdk_dispatch_slot(from_id=holder, to_id=resume_id)
+            return
+        except Exception:
+            logger.info(
+                "nest resume slot not held by %s; trying the other id resume=%s",
+                holder,
+                resume_id,
+            )
+    logger.info(
+        "nest resume slot transfer found no holder parent=%s child=%s resume=%s",
+        parent_id,
+        child_id,
+        resume_id,
+    )
+
+
+async def refuse_second_parked_resume(req: Any) -> str | None:
+    """Claim a parked exited parent on the shared admit path.
+
+    Returns a refusal detail when this ``resume_of`` lost the claim or the
+    parent is parked but its run has not exited. Returns None when the admit
+    may proceed: this call won, an earlier call in this same resume won, or
+    the parent is not ``parked_waiting`` (steer restart parks).
+    """
+    parent_id = getattr(req, "resume_of", None)
+    resume_id = getattr(req, "dispatch_id", None)
+    if not parent_id or not resume_id:
+        return None
+    claim = await asyncio.to_thread(
+        claim_parked_parent_resume,
+        str(parent_id),
+        park_child_id=None,
+        resume_id=str(resume_id),
+    )
+    if claim.outcome in ("lost", "not_exited", "already_claimed_by_other"):
+        return f"parked parent {parent_id} resume claim {claim.outcome} for {resume_id}"
+    if claim.outcome == "claimed":
+        await _hand_slot_to_resume(
+            parent_id=str(parent_id),
+            child_id=claim.park_child_id,
+            resume_id=str(resume_id),
+        )
+    return None
 
 
 def nest_resume_parent_id(child_id: str) -> str | None:
@@ -197,9 +347,10 @@ async def admit_nest_parent_resume(
 ) -> bool:
     """Seal the parked parent and admit one ``resume_of`` child.
 
-    The child dispatch must already be terminal so the work-key peer gate
-    sees a finished nest. Parent ``parent_still_live`` is expected while
-    the row is parked; eligibility is re-checked after the seal by admit.
+    The seal is ``claim_parked_parent_resume``. Only the call whose update
+    changed the row admits; a second resumer returns false. The child
+    dispatch must already be terminal so the work-key peer gate sees a
+    finished nest. ``parent_still_live`` is expected while the row is parked.
     """
     from services.git_integration_worker.cursor_sdk_resume import (
         resume_eligibility_reason,
@@ -208,9 +359,38 @@ async def admit_nest_parent_resume(
 
     ledger = CursorDispatchLedger.instance()
     reason = resume_eligibility_reason(ledger, parent_id=parent_id)
-    persist_resume_retain(dispatch_id=parent_id)
-    await ledger_mark_cancelled(parent_id)
-    ledger.clear_park_child(parent_id=parent_id)
+    resume_id = f"{parent_id}-nr1"
+    claim = await asyncio.to_thread(
+        claim_parked_parent_resume,
+        parent_id,
+        park_child_id=child_id,
+        resume_id=resume_id,
+    )
+    if claim.outcome != "claimed" and claim.outcome != "not_waiting":
+        # already_claimed_by_us is the other resumer, or this resume's admit
+        # already owns the row. Only the call that changed the row admits.
+        logger.info(
+            "nest parent resume not claimed parent=%s outcome=%s",
+            parent_id,
+            claim.outcome,
+        )
+        return False
+    if claim.outcome == "not_waiting":
+        status = ledger.dispatch_status_by_id(dispatch_id=parent_id)
+        state = str((status or {}).get("status") or "")
+        if state != "running":
+            return False
+        # Restored live parent: the parked claim does not apply. Seal it
+        # before admit so the work-key gate sees a terminal resume_of.
+        persist_resume_retain(dispatch_id=parent_id)
+        await ledger_mark_cancelled(parent_id)
+        ledger.clear_park_child(parent_id=parent_id)
+    elif claim.outcome == "claimed":
+        await _hand_slot_to_resume(
+            parent_id=parent_id,
+            child_id=claim.park_child_id,
+            resume_id=resume_id,
+        )
     if reason not in (None, "parent_still_live"):
         logger.warning(
             "nest parent resume ineligible parent=%s reason=%s",
@@ -220,6 +400,8 @@ async def admit_nest_parent_resume(
         return False
     req = _resume_request(parent_id, child_id=child_id)
     if req is None:
+        if claim.outcome == "claimed":
+            await _release_handed_slot(resume_id)
         return False
     response = await admit_cursor_dispatch(req, cfg=cfg, controller=controller)
     if getattr(response, "status_code", 500) not in (200, 202):
@@ -229,6 +411,8 @@ async def admit_nest_parent_resume(
             req.dispatch_id,
             getattr(response, "status_code", None),
         )
+        if claim.outcome == "claimed":
+            await _release_handed_slot(resume_id)
         return False
     if bus is not None:
         await bus.reply(
@@ -251,6 +435,11 @@ async def admit_nest_parent_resume(
 
 
 async def ledger_mark_cancelled(parent_id: str) -> None:
+    """Mark a restored live parent ``cancelled`` off the event loop.
+
+    Used when the parked-parent claim does not apply because the row is
+    already ``running``. The resume admit then sees a terminal parent.
+    """
     import asyncio
 
     ledger = CursorDispatchLedger.instance()

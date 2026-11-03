@@ -496,12 +496,12 @@ async def test_refuse_occupied_live_status_422(
     assert excinfo.value.details["holder_dispatch_id"] == "85e312e900aa-26c192cf"
 
 
-def _parked_holder_client(status: str, dispatch_id: str):
+def _parked_holder_client(status: str, dispatch_id: str, **extra: object):
     class _Resp:
         status_code = 200
 
         def json(self) -> dict:
-            return {"status": status, "dispatch_id": dispatch_id}
+            return {"status": status, "dispatch_id": dispatch_id, **extra}
 
     class _Client:
         async def __aenter__(self):
@@ -533,7 +533,9 @@ async def test_refuse_occupied_allows_resume_of_parked_holder(
     monkeypatch.setattr(
         "systems.frontier_consult.cursor_sdk_thread_reuse.make_async_client",
         lambda *a, **k: _parked_holder_client(
-            "parked_waiting", "85e312e900aa-26c192cf"
+            "parked_waiting",
+            "85e312e900aa-26c192cf",
+            park_kind="nest_parent_run_exited",
         ),
     )
     await refuse_occupied_worker_thread(
@@ -542,6 +544,49 @@ async def test_refuse_occupied_allows_resume_of_parked_holder(
         nest_under=None,
         resume_of="85e312e900aa-26c192cf",
     )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "park_kind,resume_of",
+    [
+        (None, "85e312e900aa-26c192cf"),
+        ("nest", "85e312e900aa-26c192cf"),
+        ("nest_parent_run_exited", "other-dispatch"),
+    ],
+)
+async def test_refuse_occupied_hand_resume_requires_exited_nest(
+    monkeypatch: pytest.MonkeyPatch,
+    park_kind: str | None,
+    resume_of: str,
+) -> None:
+    """Breaks when a steer park, a live nest, or a mismatched resume_of is admitted."""
+
+    async def _probe(thread_id: str) -> dict | None:
+        return {"bus_lifecycle_state": "admitted", "turn_count": 6}
+
+    extra: dict[str, object] = {}
+    if park_kind is not None:
+        extra["park_kind"] = park_kind
+    monkeypatch.setattr(
+        "systems.frontier_consult.cursor_sdk_thread_reuse.probe_thread",
+        _probe,
+    )
+    monkeypatch.setattr(
+        "systems.frontier_consult.cursor_sdk_thread_reuse.make_async_client",
+        lambda *a, **k: _parked_holder_client(
+            "parked_waiting", "85e312e900aa-26c192cf", **extra
+        ),
+    )
+    with pytest.raises(FrontierEndpointError) as excinfo:
+        await refuse_occupied_worker_thread(
+            request_id="req-parked-kind",
+            reuse_thread="9675",
+            nest_under=None,
+            resume_of=resume_of,
+        )
+    assert excinfo.value.code == CURSOR_WORKER_THREAD_OCCUPIED
+    assert excinfo.value.status_code == 422
 
 
 @pytest.mark.asyncio
