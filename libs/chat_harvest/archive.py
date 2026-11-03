@@ -79,8 +79,13 @@ def conv12(conversation_id: str) -> str:
     return cleaned[:12]
 
 
+def sanitized_conversation_id(conversation_id: str) -> str:
+    """Full conversation id, lowercase, [a-z0-9-] only (no truncation)."""
+    return _CONV12_RE.sub("", conversation_id.lower())
+
+
 def _base_name(site: str, conversation_id: str) -> str:
-    return f"chat-harvest-{site}-{conv12(conversation_id)}"
+    return f"chat-harvest-{site}-{sanitized_conversation_id(conversation_id)}"
 
 
 def legacy_md_rel_path(site: str, conversation_id: str) -> str:
