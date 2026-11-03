@@ -87,9 +87,7 @@ def _lock_path(display: str, *, kind: str, agent_id: str = "") -> Path:
     return lock_run_dir() / f"{disp}.{aid}.agent.lock"
 
 
-def _inproc_drop_agent(
-    loop: asyncio.AbstractEventLoop, key: tuple[str, str]
-) -> None:
+def _inproc_drop_agent(loop: asyncio.AbstractEventLoop, key: tuple[str, str]) -> None:
     per_loop = _INPROC_AGENT.get(loop)
     if per_loop is None:
         return

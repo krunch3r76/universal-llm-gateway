@@ -10,7 +10,7 @@ import weakref
 from typing import Any
 
 import pytest
-
+from cursor_bridge import display_interaction_locks as dil_mod
 from cursor_bridge.display_interaction_locks import (
     _INPROC_AGENT,
     _INPROC_SWITCH,
@@ -101,11 +101,49 @@ async def test_cancelled_waiter_clears_agent_inproc_map(
     with pytest.raises(asyncio.CancelledError):
         await h
     assert len(_INPROC_AGENT) == 0
+
+
+@pytest.mark.asyncio
+async def test_cancelled_waiter_clears_switch_inproc_map(
+    display_lock_dir: None,
+) -> None:
+    entered = asyncio.Event()
+
+    async def holder() -> None:
+        async with display_switch_lock("d-switch"):
+            entered.set()
+            await asyncio.sleep(2.0)
+
+    async def waiter() -> None:
+        await entered.wait()
+        async with display_switch_lock("d-switch"):
+            pass
+
+    h = asyncio.create_task(holder())
+    await entered.wait()
+    w = asyncio.create_task(waiter())
+    await asyncio.sleep(0.05)
+    w.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await w
+    h.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await h
     assert len(_INPROC_SWITCH) == 0
 
 
 @pytest.mark.asyncio
-async def test_inproc_mutual_exclusion_one_loop(display_lock_dir: None) -> None:
+async def test_agent_paste_lock_inproc_mutex_with_flock_noop(
+    display_lock_dir: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """In-process layer alone serializes two tasks on one loop (flock bypassed)."""
+
+    async def noop_acquire(self: object) -> None:
+        return None
+
+    monkeypatch.setattr(dil_mod._FcntlFileLock, "acquire", noop_acquire)
+    monkeypatch.setattr(dil_mod._FcntlFileLock, "release", lambda self: None)
+
     depth = 0
     max_depth = 0
     guard = threading.Lock()

@@ -10,7 +10,7 @@ import weakref
 from typing import Any
 
 import pytest
-
+from web_tab import target_lock as target_lock_mod
 from web_tab.target_lock import _INPROC, cdp_open_bind_lock, target_write_lock
 
 pytestmark = pytest.mark.offline
@@ -53,9 +53,7 @@ async def _contend_two(
         lambda: cdp_open_bind_lock("http://127.0.0.1:9222/leak"),
     ],
 )
-def test_contended_runs_drop_inproc_map(
-    web_tab_lock_dir: None, factory: Any
-) -> None:
+def test_contended_runs_drop_inproc_map(web_tab_lock_dir: None, factory: Any) -> None:
     refs: list[weakref.ref[Any]] = []
 
     for _ in range(50):
@@ -100,14 +98,56 @@ async def test_cancelled_waiter_clears_inproc_map(web_tab_lock_dir: None) -> Non
 
 
 @pytest.mark.asyncio
-async def test_inproc_mutual_exclusion_one_loop(web_tab_lock_dir: None) -> None:
+async def test_cancelled_waiter_clears_cdp_open_bind_inproc_map(
+    web_tab_lock_dir: None,
+) -> None:
+    entered = asyncio.Event()
+    url = "http://127.0.0.1:9222/cancel-open"
+
+    async def holder() -> None:
+        async with cdp_open_bind_lock(url):
+            entered.set()
+            await asyncio.sleep(2.0)
+
+    async def waiter() -> None:
+        await entered.wait()
+        async with cdp_open_bind_lock(url):
+            pass
+
+    h = asyncio.create_task(holder())
+    await entered.wait()
+    w = asyncio.create_task(waiter())
+    await asyncio.sleep(0.05)
+    w.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await w
+    h.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await h
+    assert len(_INPROC) == 0
+
+
+@pytest.mark.asyncio
+async def test_target_write_lock_inproc_mutex_with_flock_noop(
+    web_tab_lock_dir: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """In-process layer alone serializes two tasks on one loop (flock bypassed)."""
+
+    async def noop_acquire(*_a: object, **_k: object) -> int:
+        return 0
+
+    monkeypatch.setattr(target_lock_mod, "_acquire_cross_process_lock", noop_acquire)
+    monkeypatch.setattr(
+        target_lock_mod, "_release_cross_process_lock", lambda _fd: None
+    )
+
     depth = 0
     max_depth = 0
     guard = threading.Lock()
 
     async def one() -> None:
         nonlocal depth, max_depth
-        async with target_write_lock("mutex-target", timeout_s=5.0):
+        async with target_write_lock("inproc-mutex-target", timeout_s=5.0):
             with guard:
                 depth += 1
                 max_depth = max(max_depth, depth)

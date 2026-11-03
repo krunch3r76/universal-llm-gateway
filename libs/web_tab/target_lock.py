@@ -11,9 +11,9 @@ import threading
 import weakref
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
-from dataclasses import dataclass
 from typing import Any
 
 # In-process locks are keyed by (running loop, key): an asyncio.Lock binds to the
