@@ -12,6 +12,7 @@ from maestro_landed.serving_map import load_serving_map
 from implement_admission.consumer_import_blinds import measure_import_grammar_blinds
 from implement_admission.consumer_import_verify import (
     _entrypoint_seeds,
+    clear_verify_caches,
     consumers_declared_in_source,
     verify_consumer_import,
 )
@@ -412,15 +413,11 @@ def test_stargate_orion_chat_wake_handler_load_imports_orion_wake() -> None:
 
 
 @pytest.mark.offline
-def test_web_tab_consumers_mcp_verified_stargate_dynamic() -> None:
-    """Package CONSUMERS name mcp+stargate; static verify reaches both.
+def test_web_tab_consumers_declared_and_mcp_verified() -> None:
+    """``CONSUMERS`` names mcp and stargate; static walk verifies mcp only.
 
-    Stargate also loads ``pipelines/web_tab`` handlers dynamically — see
-    ``test_stargate_web_tab_handler_load_imports_package`` for that edge.
-    Since 838ff66 the static walk reaches web_tab too: stargate's
-    ``cursor_sdk_lane_subscription`` -> ``bus_watch.endpoint_wake_transport``
-    -> ``agent_bus_store.db.endpoint_wake_ledger`` -> ``web_chat_relay.orion_wake``,
-    whose ``_dom_deliver`` imports ``web_tab.*`` on every Orion wake delivery.
+    Stargate's runtime edge is dynamic handler load — see
+    ``test_stargate_web_tab_handler_load_imports_package``.
     """
     path = "libs/web_tab/__init__.py"
     decl = consumers_declared_in_source(
@@ -428,7 +425,18 @@ def test_web_tab_consumers_mcp_verified_stargate_dynamic() -> None:
     )
     assert decl == ("mcp", "stargate")
     assert verify_consumer_import("mcp", path) == "verified"
-    assert verify_consumer_import("stargate", path) == "verified"
+
+
+@pytest.mark.offline
+def test_interlocutor_consumers_declared_and_mcp_verified() -> None:
+    """Package ``CONSUMERS`` on interlocutor nominates mcp; import path verified."""
+    clear_verify_caches()
+    path = "libs/interlocutor/__init__.py"
+    decl = consumers_declared_in_source(
+        (repo_root() / path).read_text(encoding="utf-8")
+    )
+    assert decl == ("mcp",)
+    assert verify_consumer_import("mcp", path) == "verified"
 
 
 @pytest.mark.offline

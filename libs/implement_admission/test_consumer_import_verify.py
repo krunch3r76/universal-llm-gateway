@@ -16,9 +16,7 @@ from implement_admission.consumer_import_verify import (
     verify_consumer_import,
 )
 
-_OPERATOR_PROXY_BRIEFINGS = (
-    "libs/claude_bundles/operator_proxy_mission.py",
-)
+_OPERATOR_PROXY_BRIEFINGS = ("libs/claude_bundles/operator_proxy_mission.py",)
 
 
 def test_module_for_lib_path_file_and_init():
@@ -166,6 +164,21 @@ def test_request_admission_identity_land_mints_mcp():
     assert ("mcp", "consumers") in nominations_for_lib_path(path)
     assert verify_consumer_import("mcp", path) == "verified"
     rows, _escalations = rows_from_lib_consumers([path], code_ref="14-10-replay")
+    assert "mcp" in {row.service for row in rows}
+
+
+@pytest.mark.offline
+def test_interlocutor_facade_land_mints_mcp():
+    """Package ``CONSUMERS`` walk-up from ``facade.py`` nominates mcp at harvest."""
+    from implement_admission.injector_map import nominations_for_lib_path
+    from implement_admission.propagation_row import rows_from_lib_consumers
+
+    clear_verify_caches()
+    path = "libs/interlocutor/facade.py"
+    assert ("mcp", "consumers") in nominations_for_lib_path(path)
+    assert verify_consumer_import("mcp", path) == "verified"
+    rows, escalations = rows_from_lib_consumers([path], code_ref="friction-41754")
+    assert escalations == []
     assert "mcp" in {row.service for row in rows}
 
 
