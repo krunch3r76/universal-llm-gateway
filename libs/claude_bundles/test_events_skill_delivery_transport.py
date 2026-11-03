@@ -334,37 +334,45 @@ def test_mirror_survives_invalid_events_ingest_port(
 
 
 def test_mirror_logs_once_and_swallows_socket_errors(
-    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Connect failures log at warning with transport/target; emit never raises."""
     reset_mirror_state_for_tests()
-    flush_mirror_worker_for_tests(timeout=0.5)
-    caplog.clear()
-    mirror_logger = logging.getLogger("claude_bundles.events_skill_delivery")
-    mirror_logger.addHandler(caplog.handler)
-    try:
-        class _BoomSock(_FakeSock):
-            def connect(self, address: Any) -> None:
-                raise ConnectionRefusedError("offline")
+    warnings_seen: list[tuple[str, str]] = []
+    real_emit_warning = esd._emit_mirror_warning_if_due
 
-        monkeypatch.setenv("EVENTS_INGEST_TCP", "127.0.0.1:7101")
-        monkeypatch.setattr(esd.socket, "socket", _BoomSock)
-        caplog.set_level(logging.WARNING, logger="claude_bundles.events_skill_delivery")
+    def _track_warning(
+        key: tuple[str, str],
+        transport: str,
+        target: str,
+        exc: Exception,
+    ) -> None:
+        now = esd._now()
+        with esd._mirror_state_lock:
+            last = esd._last_warning_at.get(key, 0.0)
+            throttled = now - last < esd._WARNING_INTERVAL_SECONDS
+        if not throttled:
+            warnings_seen.append((transport, target))
+        return real_emit_warning(key, transport, target, exc)
 
-        _emit_sample()
-        _emit_sample()
-        flush_mirror_worker_for_tests()
+    class _BoomSock(_FakeSock):
+        def connect(self, address: Any) -> None:
+            raise ConnectionRefusedError("offline")
 
-        warnings = [
-            r
-            for r in caplog.records
-            if r.levelno == logging.WARNING and "mirror failed" in r.message
-        ]
-        assert len(warnings) == 1
-        assert "transport=tcp" in warnings[0].message
-        assert "target=127.0.0.1:7101" in warnings[0].message
-    finally:
-        mirror_logger.removeHandler(caplog.handler)
+    monkeypatch.setattr(esd, "_emit_mirror_warning_if_due", _track_warning)
+    monkeypatch.setenv("EVENTS_INGEST_TCP", "127.0.0.1:7101")
+    monkeypatch.setattr(esd.socket, "socket", _BoomSock)
+    t0 = 7000.0
+    monkeypatch.setattr(esd, "_now", lambda: t0)
+
+    _emit_sample()
+    _emit_sample()
+    flush_mirror_worker_for_tests(timeout=5.0)
+
+    assert len(warnings_seen) == 1
+    assert warnings_seen[0] == ("tcp", "127.0.0.1:7101")
+    assert esd._now() < esd._circuit_open_until
+    assert esd._circuit_skip_count >= 1
 
 
 class _NotJsonSerializable:
