@@ -85,7 +85,19 @@ def _attach_nest_park_kind(row: dict[str, object]) -> None:
 
     Steer-restart ``park`` is left unchanged. A nest park with no steer
     record gets a minimal ``park`` block. No-op for any other status.
+    A sqlite or import failure leaves the row as it was so the admin
+    route does not 500; Stargate then fail-closes occupancy.
     """
+    try:
+        _attach_nest_park_kind_body(row)
+    except Exception:
+        logger.exception(
+            "nest park_kind attach failed dispatch=%s",
+            row.get("dispatch_id"),
+        )
+
+
+def _attach_nest_park_kind_body(row: dict[str, object]) -> None:
     from services.git_integration_worker.cursor_sdk_nest_resume import (
         NEST_PARENT_RUN_EXITED,
     )

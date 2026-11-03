@@ -339,9 +339,11 @@ async def refuse_occupied_worker_thread(
     same thread orphans the first (9675#8). ``nest_under`` is a legal park.
     Read-only admits do not occupy the write slot. Pending-empty shells have
     no occupant. GIW unreachable on a thread that already has turns is
-    fail-closed. ``resume_of`` naming the ``parked_waiting`` holder is the
-    one legal reuse of that thread; a fresh generate, or ``resume_of`` of a
-    different id, still raises ``CURSOR_WORKER_THREAD_OCCUPIED``.
+    fail-closed. ``resume_of`` naming the ``parked_waiting`` holder is legal
+    only when ``park_kind`` is ``nest_parent_run_exited`` (the parent's own
+    run already finished). A steer park, a live nest park, a fresh generate,
+    or ``resume_of`` of a different id still raises
+    ``CURSOR_WORKER_THREAD_OCCUPIED``.
     """
     if not reuse_thread or nest_under or read_only:
         return
@@ -397,6 +399,7 @@ async def refuse_occupied_worker_thread(
         and resume_of
         and holder
         and str(resume_of) == str(holder)
+        and payload.get("park_kind") == "nest_parent_run_exited"
     ):
         return
     if status in _LIVE_WORKER_STATUSES:

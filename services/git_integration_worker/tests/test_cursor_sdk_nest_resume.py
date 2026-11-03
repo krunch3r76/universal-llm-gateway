@@ -12,6 +12,7 @@ from agent_bus_store.cursor_sdk_dispatch_turn import (
 )
 
 from services.git_integration_worker.cursor_dispatch_ledger import CursorDispatchLedger
+from services.git_integration_worker.cursor_sdk_gate import sdk_busy_status_envelope
 from services.git_integration_worker.cursor_sdk_nest_resume import (
     NEST_PARENT_RUN_EXITED,
     _resume_request,
@@ -21,6 +22,7 @@ from services.git_integration_worker.cursor_sdk_nest_resume import (
     nest_parked_subject,
 )
 from services.git_integration_worker.cursor_sdk_park import (
+    reclaim_orphan_holder,
     release_or_restore_for_child_sync,
 )
 from services.git_integration_worker.models.cursor_api import (
@@ -60,6 +62,8 @@ def _admit(
     lease_key: str | None = None,
 ) -> None:
     req = _req(dispatch_id)
+    if nest_under:
+        req = req.model_copy(update={"nest_under": nest_under})
     wk = work_key or f"friction:{dispatch_id}"
     lease = lease_key or f"/repo/{dispatch_id}"
     ledger.admit(
@@ -224,7 +228,6 @@ async def test_child_terminal_admits_resume_of_exited_parent() -> None:
             "services.git_integration_worker.routes.cursor_sdk.admit_cursor_dispatch",
             admitted,
         ),
-        patch.object(route_mod, "force_release_sdk_dispatch_slot", AsyncMock()),
         patch.object(route_mod, "release_or_restore_for_child", AsyncMock()) as rel,
     ):
         await route_mod._mark_terminal_and_promote(
@@ -356,3 +359,166 @@ async def test_cleanup_then_terminal_admits_resume_of_exited_parent(
             (parent_id,),
         ).fetchone()
     assert parent["status"] == "cancelled"
+
+
+def _seed_exited_parent(
+    ledger: CursorDispatchLedger, *, parent_id: str, child_id: str, child_terminal: str
+) -> None:
+    """Park a freeform parent, stamp exit, then terminal the child."""
+    _admit(ledger, parent_id, contract="freeform")
+    _admit(
+        ledger,
+        child_id,
+        contract="freeform",
+        nest_under=parent_id,
+        work_key=f"friction:{parent_id}",
+        lease_key=f"/repo/{parent_id}",
+    )
+    assert claim_nest_parent_exit(parent_id) == child_id
+    ledger.mark_terminal(dispatch_id=child_id, terminal_status=child_terminal)
+
+
+@pytest.mark.asyncio
+async def test_terminal_and_reclaim_admit_exited_parent_once() -> None:
+    """Breaks when the terminal path and the orphan sweep both admit resume_of.
+
+    An exited parent stays parked_waiting after child cleanup. Both resumers
+    must share one claim, so a concurrent pair yields one admit.
+    """
+    parent_id = "parent-race"
+    child_id = "parent-race-child"
+    ledger = CursorDispatchLedger.instance()
+    _seed_exited_parent(
+        ledger, parent_id=parent_id, child_id=child_id, child_terminal="completed"
+    )
+    admitted = AsyncMock()
+    admitted.return_value = type("Resp", (), {"status_code": 200})()
+    # Hold reclaim inside child cleanup until the terminal path has also
+    # observed the parked parent. A gather without this overlap lets the
+    # first resumer seal the row before the second reads it.
+    cleanup_entered = asyncio.Event()
+    release_cleanup = asyncio.Event()
+
+    from services.git_integration_worker import cursor_sdk_park as park_mod
+
+    real_async_release = park_mod.release_or_restore_for_child
+
+    async def _blocked_release(*, dispatch_id: str) -> str:
+        cleanup_entered.set()
+        await release_cleanup.wait()
+        return await real_async_release(dispatch_id=dispatch_id)
+
+    async def _reclaim() -> None:
+        await reclaim_orphan_holder(
+            ledger,
+            dispatch_id=parent_id,
+            controller=_TerminalCtl(),
+            cfg=object(),
+        )
+
+    with (
+        patch(
+            "services.git_integration_worker.routes.cursor_sdk.admit_cursor_dispatch",
+            admitted,
+        ),
+        patch(
+            "services.git_integration_worker.cursor_sdk_resume.resume_eligibility_reason",
+            lambda *a, **k: "parent_still_live",
+        ),
+        patch(
+            "services.git_integration_worker.cursor_sdk_park._stop_orphan_bridge",
+            AsyncMock(return_value=True),
+        ),
+        patch(
+            "services.git_integration_worker.cursor_sdk_park.release_or_restore_for_child",
+            _blocked_release,
+        ),
+    ):
+        reclaim_task = asyncio.create_task(_reclaim())
+        await asyncio.wait_for(cleanup_entered.wait(), timeout=2)
+        await route_mod._mark_terminal_and_promote(
+            dispatch_id=child_id,
+            terminal_status="completed",
+            controller=_TerminalCtl(),
+            emit_tag="TEST",
+        )
+        release_cleanup.set()
+        await reclaim_task
+    assert admitted.await_count == 1
+    req = admitted.await_args.args[0]
+    assert req.resume_of == parent_id
+    assert req.dispatch_id == f"{parent_id}-nr1"
+    with ledger._connect() as conn:
+        parent = conn.execute(
+            "SELECT status FROM cursor_sdk_dispatches WHERE dispatch_id=?",
+            (parent_id,),
+        ).fetchone()
+    assert parent["status"] != "parked_waiting"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "child_terminal,reap_only,pass_controller",
+    [
+        ("failed", False, True),
+        ("cancelled", False, True),
+        ("completed", False, False),
+        ("completed", True, True),
+    ],
+)
+async def test_exited_parent_not_stranded_when_resume_not_admitted(
+    child_terminal: str, reap_only: bool, pass_controller: bool
+) -> None:
+    """Breaks when a failed, cancelled, or unresumed exited parent stays parked."""
+    parent_id = f"parent-strand-{child_terminal}-{reap_only}-{pass_controller}"
+    child_id = f"{parent_id}-child"
+    ledger = CursorDispatchLedger.instance()
+    _seed_exited_parent(
+        ledger,
+        parent_id=parent_id,
+        child_id=child_id,
+        child_terminal=child_terminal,
+    )
+    admitted = AsyncMock()
+    admitted.return_value = type("Resp", (), {"status_code": 200})()
+    with (
+        patch(
+            "services.git_integration_worker.routes.cursor_sdk.admit_cursor_dispatch",
+            admitted,
+        ),
+        patch(
+            "services.git_integration_worker.cursor_sdk_park._stop_orphan_bridge",
+            AsyncMock(return_value=True),
+        ),
+    ):
+        await reclaim_orphan_holder(
+            ledger,
+            dispatch_id=parent_id,
+            controller=_TerminalCtl() if pass_controller else None,
+            cfg=object() if pass_controller else None,
+            reap_only=reap_only,
+        )
+    with ledger._connect() as conn:
+        parent = conn.execute(
+            "SELECT status FROM cursor_sdk_dispatches WHERE dispatch_id=?",
+            (parent_id,),
+        ).fetchone()
+    assert parent["status"] in {"failed", "cancelled", "completed"}
+    assert parent["status"] != "parked_waiting"
+
+
+def test_busy_status_ignores_exited_parked_parent() -> None:
+    """Breaks when the sole exited parked row is reported as the busy holder."""
+    ledger = CursorDispatchLedger.instance()
+    _seed_exited_parent(
+        ledger,
+        parent_id="parent-busy",
+        child_id="parent-busy-child",
+        child_terminal="completed",
+    )
+    envelope = sdk_busy_status_envelope()
+    holder = envelope["active_holder"]
+    assert holder is None or holder.get("dispatch_id") != "parent-busy"
+    assert all(
+        row.get("dispatch_id") != "parent-busy" for row in envelope["active_holders"]
+    )
