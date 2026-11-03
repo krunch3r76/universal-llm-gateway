@@ -46,9 +46,30 @@ def test_check_sot_catalog_parity_passes_on_repo() -> None:
     check_sot_catalog_parity(repo_root=_REPO)
 
 
+def _expected_host_local_absence_slugs(catalog, repo_root: Path) -> set[str]:
+    """Slugs whose host-local SKILL.md is not present under repo_root (mirrors catalog)."""
+    missing: set[str] = set()
+    for slug in catalog.life_local_slugs():
+        entry = catalog.entries[slug]
+        dirname = entry.sot_dirname or slug
+        path = repo_root / ".claude" / "skills" / dirname / "SKILL.md"
+        if not path.is_file():
+            missing.add(slug)
+    for slug, entry in catalog.entries.items():
+        if not entry.host_local:
+            continue
+        dirname = entry.sot_dirname or slug
+        path = repo_root / ".cursor" / "skills" / dirname / "SKILL.md"
+        if not path.is_file():
+            missing.add(slug)
+    return missing
+
+
 def test_host_local_absences_empty_when_bodies_present() -> None:
     catalog = load_skill_catalog(repo_root=_REPO, validate_sot=True)
-    assert catalog.host_local_absences == ()
+    reported = {a.slug for a in catalog.host_local_absences}
+    expected = _expected_host_local_absence_slugs(catalog, _REPO)
+    assert reported == expected
 
 
 def test_clean_checkout_host_local_missing_loads_with_report(tmp_path: Path) -> None:

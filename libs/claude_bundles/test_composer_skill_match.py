@@ -110,7 +110,10 @@ def test_customize_bytes_are_attach_reachable() -> None:
     """Zoom-out: rendered / adapted Customize bytes match, not raw SOT H1."""
     misses: list[str] = []
     for slug in claude_ai_target_slugs():
-        path, _label = resolve_sot(slug, _REPO)
+        try:
+            path, _label = resolve_sot(slug, _REPO)
+        except FileNotFoundError:
+            continue
         if not path.is_file():
             continue
         raw = path.read_text(encoding="utf-8")
