@@ -5,8 +5,11 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
+import logging
 import re
 from typing import Any
+
+logger = logging.getLogger(__name__)
 
 _EXPECT_DRAFT_SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 
@@ -112,6 +115,9 @@ _SEND_BTN_SELECTORS = (
     'button[data-testid="send-button"]:not([disabled])',
     'button[type="submit"]:not([disabled])',
 )
+
+SEND_BTN_WAIT_CEILING_MS = 3000
+SEND_BTN_POLL_INTERVAL_MS = 150
 
 
 def composer_selector(*, app: str, agent_id: str = "") -> str:
@@ -251,6 +257,8 @@ def _click_send_body(
     find = _find_composer_js(selector)
     lj = json.dumps(_dom_paste_text(line, preserve_newlines=preserve_newlines))
     btn_sels = json.dumps(list(_SEND_BTN_SELECTORS))
+    wait_ceiling = int(SEND_BTN_WAIT_CEILING_MS)
+    poll_interval = int(SEND_BTN_POLL_INTERVAL_MS)
     return (
         f"(()=>{{const el=({find});"
         "if(!el)return{ok:false,reason:'no_composer',send_clicked:false};"
@@ -260,9 +268,49 @@ def _click_send_body(
         "return{ok:false,reason:'composer_text_mismatch',send_clicked:false};"
         f"const root=el.closest('form')||el.parentElement||document;"
         f"const btnSels={btn_sels};"
-        "let btn=null;"
-        "for(const sel of btnSels){btn=root.querySelector(sel);if(btn)break;}"
-        "if(!btn)return{ok:false,reason:'no_send_button',send_clicked:false};"
+        f"const waitCeilingMs={wait_ceiling};"
+        f"const pollIntervalMs={poll_interval};"
+        "const findSendBtn=()=>{"
+        "let b=null;"
+        "for(const sel of btnSels){b=root.querySelector(sel);if(b)break;}"
+        "return b;"
+        "};"
+        "const sleepMs=(ms)=>{const t=Date.now();while(Date.now()-t<ms){}};"
+        "const buildCensus=(elapsedMs)=>{"
+        "const buttons=[];"
+        "root.querySelectorAll('button,[role=button]').forEach((node)=>{"
+        "const rect=node.getBoundingClientRect();"
+        "buttons.push({"
+        "aria_label:node.getAttribute('aria-label'),"
+        "data_testid:node.getAttribute('data-testid'),"
+        "type:node.getAttribute('type'),"
+        "disabled:!!(node.disabled||node.hasAttribute('disabled')),"
+        "non_zero_rect:rect.width>0&&rect.height>0,"
+        "});"
+        "});"
+        "let outer=String(root.outerHTML||'');"
+        "if(outer.length>4000)outer=outer.slice(0,4000);"
+        "return{"
+        "root_tag:String(root.tagName||'').toLowerCase(),"
+        "root_outer_html:outer,"
+        "buttons,"
+        "document_visibility_state:document.visibilityState||'',"
+        "document_has_focus:document.hasFocus(),"
+        "elapsed_ms:elapsedMs,"
+        "};"
+        "};"
+        "const t0=Date.now();"
+        "let btn=findSendBtn();"
+        "if(!btn){"
+        "while(!btn&&Date.now()-t0<waitCeilingMs){"
+        "sleepMs(pollIntervalMs);"
+        "btn=findSendBtn();"
+        "}"
+        "}"
+        "if(!btn){"
+        "return{ok:false,reason:'no_send_button',send_clicked:false,"
+        "census:buildCensus(Date.now()-t0)};"
+        "}"
         "btn.click();"
         "g.ourDraftSig='';"
         "g.ourDraftWriter='';"
@@ -405,6 +453,11 @@ async def dom_click_send(
     )
     if not isinstance(value, dict):
         return {"ok": False, "send_clicked": False}
+    if value.get("reason") == "no_send_button" and value.get("census") is not None:
+        logger.warning(
+            "dom_click_send no_send_button census=%s",
+            json.dumps(value["census"], ensure_ascii=False, default=str),
+        )
     return value
 
 
