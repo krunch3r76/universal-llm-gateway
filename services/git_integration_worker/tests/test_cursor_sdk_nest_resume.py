@@ -477,7 +477,12 @@ async def test_terminal_and_reclaim_admit_exited_parent_once() -> None:
 async def test_exited_parent_not_stranded_when_resume_not_admitted(
     child_terminal: str, reap_only: bool, pass_controller: bool
 ) -> None:
-    """Breaks when a failed, cancelled, or unresumed exited parent stays parked."""
+    """Fail a parent the sweeper cannot resume, and keep a drain harvest parked.
+
+    A completed nest child under ``reap_only`` stays ``parked_waiting`` so
+    the next non-reap sweep can admit ``resume_of``. A failed or cancelled
+    child, and a completed child with no controller, is still marked terminal.
+    """
     parent_id = f"parent-strand-{child_terminal}-{reap_only}-{pass_controller}"
     child_id = f"{parent_id}-child"
     ledger = CursorDispatchLedger.instance()
@@ -511,8 +516,11 @@ async def test_exited_parent_not_stranded_when_resume_not_admitted(
             "SELECT status FROM cursor_sdk_dispatches WHERE dispatch_id=?",
             (parent_id,),
         ).fetchone()
-    assert parent["status"] in {"failed", "cancelled", "completed"}
-    assert parent["status"] != "parked_waiting"
+    if child_terminal == "completed" and reap_only:
+        assert parent["status"] == "parked_waiting"
+    else:
+        assert parent["status"] in {"failed", "cancelled", "completed"}
+        assert parent["status"] != "parked_waiting"
 
 
 def _isolate_capacity_gate(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -683,10 +691,14 @@ async def test_ineligible_resume_releases_handed_slot(
 
 
 @pytest.mark.asyncio
-async def test_admit_raise_releases_handed_slot(
+async def test_admit_raise_returns_handed_slot_to_parent(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Breaks when admit_cursor_dispatch raising after claim leaks the slot."""
+    """Breaks when admit_cursor_dispatch raising after claim drops the slot.
+
+    The parent is parked again, so the handed slot moves back to it. A FIFO
+    waiter must not acquire while that parent holds the slot.
+    """
     _isolate_capacity_gate(monkeypatch)
     parent_id = "parent-raise"
     child_id = "parent-raise-child"
@@ -713,10 +725,12 @@ async def test_admit_raise_releases_handed_slot(
                 cfg=object(),
             )
     assert f"{parent_id}-nr1" not in sdk_dispatch_gate_holders()
-    await asyncio.wait_for(
-        acquire_sdk_dispatch_slot(dispatch_id="waiter-raise"),
-        timeout=1,
-    )
+    assert parent_id in sdk_dispatch_gate_holders()
+    with pytest.raises(TimeoutError):
+        await asyncio.wait_for(
+            acquire_sdk_dispatch_slot(dispatch_id="waiter-raise"),
+            timeout=0.05,
+        )
 
 
 @pytest.mark.asyncio
@@ -790,7 +804,11 @@ async def test_hand_resume_rejected_keeps_parent_parked_and_slot(
 async def test_hand_resume_admit_error_restores_parent_and_slot(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Breaks when ledger.admit raising after the hand claim burns the parent."""
+    """Breaks when ledger.admit raising after the hand claim burns the parent.
+
+    The capacity slot returns to the parked parent. Releasing it would let
+    a FIFO waiter take the slot the parent still needs.
+    """
     from pathlib import Path
 
     from services.git_integration_worker.cursor_dispatch_ledger import WriteLeaseHeld
@@ -870,7 +888,7 @@ async def test_hand_resume_admit_error_restores_parent_and_slot(
     assert parent["status"] == "parked_waiting"
     assert parent["park_child_dispatch_id"] == child_id
     assert hand_id not in sdk_dispatch_gate_holders()
-    assert parent_id not in sdk_dispatch_gate_holders()
+    assert parent_id in sdk_dispatch_gate_holders()
 
 
 def test_busy_status_ignores_exited_parked_parent() -> None:

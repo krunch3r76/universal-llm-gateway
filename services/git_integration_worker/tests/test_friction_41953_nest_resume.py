@@ -13,8 +13,14 @@ from unittest.mock import AsyncMock, patch
 import pytest
 
 from services.git_integration_worker.cursor_dispatch_ledger import CursorDispatchLedger
+from services.git_integration_worker.cursor_sdk_gate import (
+    acquire_sdk_dispatch_slot,
+    force_release_sdk_dispatch_slot,
+    sdk_dispatch_gate_holders,
+)
 from services.git_integration_worker.cursor_sdk_nest_resume import (
     claim_nest_parent_exit,
+    claim_parked_parent_resume,
 )
 from services.git_integration_worker.cursor_sdk_park import reclaim_orphan_holder
 from services.git_integration_worker.models.cursor_api import (
@@ -305,3 +311,90 @@ async def test_sweeper_ineligible_refusal_returns_lease_key() -> None:
             "SELECT status FROM cursor_sdk_dispatches WHERE dispatch_id='queued-writer'"
         ).fetchone()
     assert queued["status"] == "queued"
+
+
+@pytest.mark.asyncio
+async def test_retryable_refusal_undo_returns_slot_to_parent() -> None:
+    """Breaks when the undo force-releases the handed slot instead of returning it."""
+    parent_id = "parent-slot-503"
+    child_id = "parent-slot-503-child"
+    resume_id = f"{parent_id}-nr1"
+    ledger = CursorDispatchLedger.instance()
+    _seed_exited_parent(ledger, parent_id=parent_id, child_id=child_id)
+    await acquire_sdk_dispatch_slot(dispatch_id=parent_id, timeout=5.0)
+    admitted = AsyncMock(
+        return_value=type("Resp", (), {"status_code": 503, "body": b""})()
+    )
+    try:
+        with patch(
+            "services.git_integration_worker.routes.cursor_sdk.admit_cursor_dispatch",
+            admitted,
+        ):
+            await route_mod._mark_terminal_and_promote(
+                dispatch_id=child_id,
+                terminal_status="completed",
+                controller=_Ctl(),
+                emit_tag="TEST",
+            )
+        parent = _parent_row(ledger, parent_id)
+        assert parent["status"] == "parked_waiting"
+        holders = sdk_dispatch_gate_holders()
+        assert parent_id in holders
+        assert resume_id not in holders
+    finally:
+        await force_release_sdk_dispatch_slot(dispatch_id=parent_id)
+        await force_release_sdk_dispatch_slot(dispatch_id=resume_id)
+
+
+@pytest.mark.asyncio
+async def test_reap_only_sweeper_leaves_exited_parent_parked() -> None:
+    """Breaks when a draining sweep fails an exited parked parent."""
+    parent_id = "parent-reap-only"
+    child_id = "parent-reap-only-child"
+    ledger = CursorDispatchLedger.instance()
+    _seed_exited_parent(ledger, parent_id=parent_id, child_id=child_id)
+    ledger.mark_terminal(dispatch_id=child_id, terminal_status="completed")
+    with patch(
+        "services.git_integration_worker.cursor_sdk_park._stop_orphan_bridge",
+        AsyncMock(return_value=True),
+    ):
+        reclaimed = await reclaim_orphan_holder(
+            ledger,
+            dispatch_id=parent_id,
+            controller=_Ctl(draining=True),
+            cfg=object(),
+            reap_only=True,
+        )
+    parent = _parent_row(ledger, parent_id)
+    assert parent["status"] == "parked_waiting"
+    assert parent["park_child_dispatch_id"] == child_id
+    assert reclaimed.lease_key is None
+    assert reclaimed.resume_admitted is False
+
+
+def test_claim_post_commit_failure_restores_parked_parent() -> None:
+    """Breaks when a ledger write after the cancel UPDATE leaves the parent cancelled."""
+    parent_id = "parent-claim-post"
+    child_id = "parent-claim-post-child"
+    resume_id = f"{parent_id}-nr1"
+    ledger = CursorDispatchLedger.instance()
+    _seed_exited_parent(ledger, parent_id=parent_id, child_id=child_id)
+    with patch(
+        "services.git_integration_worker.cursor_sdk_nest_resume.persist_resume_retain",
+        side_effect=RuntimeError("retain failed"),
+    ):
+        with pytest.raises(RuntimeError, match="retain failed"):
+            claim_parked_parent_resume(
+                parent_id,
+                park_child_id=child_id,
+                resume_id=resume_id,
+            )
+    with ledger._connect() as conn:
+        parent = conn.execute(
+            "SELECT status, park_child_dispatch_id, park_resumed_by "
+            "FROM cursor_sdk_dispatches WHERE dispatch_id=?",
+            (parent_id,),
+        ).fetchone()
+    assert parent["status"] == "parked_waiting"
+    assert parent["park_child_dispatch_id"] == child_id
+    assert parent["park_resumed_by"] is None

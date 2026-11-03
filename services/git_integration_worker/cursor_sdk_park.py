@@ -862,10 +862,14 @@ async def reclaim_orphan_holder(
     ``parked_waiting`` because ``nest_parent_run_exited`` (child cleanup did
     not restore it) takes that same harvest here, so a missed terminal-path
     admit still resumes without flipping the parent to ``running``.
-    ``reap_only`` skips that admit and fails the parent so a drain cannot
-    start ``resume_of``. ``controller`` and ``cfg`` are required for the
-    admit; without them an exited parent is marked failed instead of left
-    parked. A failed or cancelled child takes that same fail path.
+    ``reap_only`` skips that admit. An exited parent whose nest child
+    completed stays ``parked_waiting`` with an empty lease key, so a drain
+    cannot start ``resume_of`` and cannot fail the row. The next sweep
+    with ``reap_only`` false resumes it through the same harvest. A parent
+    with no completed nest child is still failed. ``controller`` and
+    ``cfg`` are required for the admit; without them, and when
+    ``reap_only`` is false, an exited parent is marked failed instead of
+    left parked. A failed or cancelled child takes that same fail path.
     ``resume_admitted`` is true only when that admit accepts. A refused
     admit that left the parent cancelled returns its lease key so the
     sweeper can release and promote. A refusal that restored
@@ -913,16 +917,16 @@ async def reclaim_orphan_holder(
                     terminal_status="failed",
                 )
             disposition = await release_or_restore_for_child(dispatch_id=child_id)
-            if (
-                disposition != "restored"
-                and controller is not None
-                and cfg is not None
-                and not reap_only
-            ):
+            if disposition != "restored":
                 completed_child = _completed_nest_child_id(
                     ledger, parent_id=dispatch_id
                 )
-                if completed_child is not None:
+                if (
+                    completed_child is not None
+                    and controller is not None
+                    and cfg is not None
+                    and not reap_only
+                ):
                     outcome = await _resume_completed_nest_parent(
                         dispatch_id=dispatch_id,
                         child_id=completed_child,
@@ -938,7 +942,11 @@ async def reclaim_orphan_holder(
                         if held_state == "parked_waiting":
                             return OrphanReclaim(lease_key=None, resume_admitted=False)
                         return outcome
-            if disposition != "restored":
+                # Drain reap must not fail a parent the terminal path left
+                # parked. The next sweep with reap_only false resumes it
+                # through _resume_completed_nest_parent above.
+                if reap_only and completed_child is not None:
+                    return OrphanReclaim(lease_key=None, resume_admitted=False)
                 return await _fail_stranded_parked_parent(
                     ledger,
                     dispatch_id=dispatch_id,

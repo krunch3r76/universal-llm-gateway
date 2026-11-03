@@ -165,7 +165,11 @@ def claim_parked_parent_resume(
     gets ``lost`` or ``already_claimed_by_other`` and must not admit.
     ``not_waiting`` means the row was not parked (a steer park stays on its
     own ``park_resumed_by`` stamp). ``not_exited`` means the parent is parked
-    on a live nest and must not be hand-resumed.
+    on a live nest and must not be hand-resumed. If ``mark_terminal`` or
+    ``persist_resume_retain`` raises after the cancel commits, the parent
+    is put back to ``parked_waiting`` and the exception propagates. The
+    capacity slot is still on the parent: the hand runs only after this
+    returns ``claimed``.
     """
     ledger = CursorDispatchLedger.instance()
     with ledger._connect() as conn:
@@ -205,8 +209,28 @@ def claim_parked_parent_resume(
         )
         if cur.rowcount != 1:
             return ParkResumeClaim("lost", link_text)
-    ledger.mark_terminal(dispatch_id=parent_id, terminal_status="cancelled")
-    persist_resume_retain(dispatch_id=parent_id)
+    try:
+        ledger.mark_terminal(dispatch_id=parent_id, terminal_status="cancelled")
+        persist_resume_retain(dispatch_id=parent_id)
+    except Exception:
+        logger.exception(
+            "parked parent resume claim post-commit failed parent=%s resume=%s",
+            parent_id,
+            resume_id,
+        )
+        try:
+            _undo_unadmitted_hand_claim_sync(
+                parent_id=parent_id,
+                resume_id=resume_id,
+                park_child_id=link_text,
+            )
+        except Exception:
+            logger.exception(
+                "parked parent resume claim undo failed parent=%s resume=%s",
+                parent_id,
+                resume_id,
+            )
+        raise
     return ParkResumeClaim("claimed", link_text)
 
 
@@ -217,6 +241,29 @@ async def _release_handed_slot(resume_id: str) -> None:
     )
 
     await force_release_sdk_dispatch_slot(dispatch_id=resume_id)
+
+
+async def _return_handed_slot_to_parent(*, parent_id: str, resume_id: str) -> None:
+    """Move a handed resume slot back onto the parked parent.
+
+    ``force_release`` wakes FIFO waiters and must not run while that parent
+    is parked again. A resume id that never received the slot raises
+    ``TransferHolderError``; there is nothing to move back.
+    """
+    from universal_concurrency.exceptions import TransferHolderError
+
+    from services.git_integration_worker.cursor_sdk_gate import (
+        transfer_sdk_dispatch_slot,
+    )
+
+    try:
+        await transfer_sdk_dispatch_slot(from_id=resume_id, to_id=parent_id)
+    except TransferHolderError:
+        logger.info(
+            "nest resume undo found no handed slot parent=%s resume=%s",
+            parent_id,
+            resume_id,
+        )
 
 
 async def _hand_slot_to_resume(
@@ -319,8 +366,9 @@ async def undo_unadmitted_hand_claim(
     The claim cancels the parent and moves the capacity slot onto
     ``resume_id``. A later ``ledger.admit`` exception would leave that
     parent cancelled and the slot stuck. This runs only while no resume
-    row exists, then drops the handed slot. A row that did land is left
-    alone so a queued or running resume keeps the parent sealed.
+    row exists, then moves the handed slot back to ``parent_id`` so a
+    FIFO waiter cannot take it. A row that did land is left alone so a
+    queued or running resume keeps the parent sealed.
 
     Returns True when no resume row existed and the restore statement
     ran, including a no-op update. Returns False when the resume row
@@ -333,7 +381,7 @@ async def undo_unadmitted_hand_claim(
         park_child_id=park_child_id,
     )
     if restored:
-        await _release_handed_slot(resume_id)
+        await _return_handed_slot_to_parent(parent_id=parent_id, resume_id=resume_id)
     return restored
 
 
@@ -457,8 +505,8 @@ async def _restore_claimed_parent_on_retryable(
     """Put a claimed parent back to parked after a retryable nest admit miss.
 
     The caller clears ``release_handed`` after this returns. The undo
-    already drops the handed slot when the resume row never landed, so
-    the finally block must not release that slot a second time.
+    already returns the handed slot to the parent when the resume row
+    never landed, so the finally block must not release that slot.
     """
     if claim.outcome != "claimed":
         return
