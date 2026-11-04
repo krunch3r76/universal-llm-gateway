@@ -13,13 +13,17 @@ from cursor_bridge.operator_paste import (
     RELAY_NONCE_LABEL,
     WATERMARK,
     _assistant_began,
+    _composer_cdp_fallback_action,
     _dom_verification_conclusive,
+    _insert_composer_with_fallback,
     _nonce_in_sent_transcript,
+    _post_click_exception_result,
     _readback_fields,
     _sha256_dom_from_surface,
     _submit_verified,
     _target_verified,
     deliver_operator_paste,
+    extract_run_nonce_from_line,
     make_run_nonce,
     watermark_with_nonce,
     wrap_operator_message,
@@ -81,6 +85,137 @@ def test_wrap_operator_message_idempotent_when_already_wrapped() -> None:
     assert twice.count(OPERATOR_HEADER) == 1
     assert twice.count(WATERMARK) == 1
     assert twice.count(RELAY_NONCE_LABEL) == 1
+
+
+def test_wrap_operator_message_rewraps_when_run_nonce_changes() -> None:
+    """Break: retry after post-click fault must not keep a stale embedded run nonce."""
+    first_nonce = "aaa111bbb222"
+    once = wrap_operator_message(
+        text="payload",
+        authorization_source="agent-bus:21732#1",
+        scope="paste",
+        run_nonce=first_nonce,
+    )
+    twice = wrap_operator_message(
+        text=once,
+        authorization_source="agent-bus:21732#2",
+        scope="paste-retry",
+        run_nonce="ccc333ddd444",
+    )
+    assert twice.count(OPERATOR_HEADER) == 1
+    assert twice.count(WATERMARK) == 1
+    assert extract_run_nonce_from_line(twice) == "ccc333ddd444"
+    assert "Source: agent-bus:21732#2" in twice
+    assert "Scope: paste-retry" in twice
+    assert "payload" in twice
+
+
+def test_wrap_operator_message_same_nonce_leaves_body_unchanged() -> None:
+    fixed = "fixednonce01"
+    once = wrap_operator_message(
+        text="body",
+        authorization_source="agent-bus:21732#1",
+        scope="s",
+        run_nonce=fixed,
+    )
+    twice = wrap_operator_message(
+        text=once,
+        authorization_source="ignored",
+        scope="ignored",
+        run_nonce=fixed,
+    )
+    assert twice == once
+
+
+def test_wrap_operator_message_no_nonce_leaves_wrapped_body_unchanged() -> None:
+    once = wrap_operator_message(
+        text="body",
+        authorization_source="agent-bus:21732#1",
+        scope="s",
+        run_nonce="nonce1111111",
+    )
+    twice = wrap_operator_message(
+        text=once,
+        authorization_source="other",
+        scope="other",
+    )
+    assert twice == once
+
+
+@pytest.mark.parametrize(
+    ("draft", "line", "action"),
+    [
+        ("", "full paste line", "insert"),
+        ("full paste line", "full paste line", "skip"),
+        ("full", "full paste line", "clear_then_insert"),
+        ("someone else's draft", "full paste line", "refuse"),
+    ],
+)
+def test_composer_cdp_fallback_action_four_states(
+    draft: str, line: str, action: str
+) -> None:
+    """Break: DOM set failed but CDP must not append onto foreign or duplicate text."""
+    assert _composer_cdp_fallback_action(draft, line) == action
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("draft", "expect_reason", "expect_method", "expect_cdp"),
+    [
+        ("", None, "cdp_insert", True),
+        ("LINE", None, "cdp_skipped_full_draft", False),
+        ("LI", None, "cdp_insert", True),
+        ("foreign draft", "composer_not_empty", None, False),
+    ],
+)
+async def test_insert_composer_with_fallback_cdp_guard(
+    monkeypatch: pytest.MonkeyPatch,
+    draft: str,
+    expect_reason: str | None,
+    expect_method: str | None,
+    expect_cdp: bool,
+) -> None:
+    line = "LINE"
+    dom = AsyncMock(return_value={"ok": False, "reason": "paste_failed"})
+    read = AsyncMock(return_value={"ok": True, "draft": draft})
+    cleared = AsyncMock(return_value={"ok": True, "cleared": True})
+    cdp = AsyncMock(return_value={"ok": True, "method": "cdp_insert"})
+    monkeypatch.setattr("cursor_bridge.operator_paste._insert_composer_text", dom)
+    monkeypatch.setattr("cursor_bridge.operator_paste._read_composer_draft", read)
+    monkeypatch.setattr(
+        "cursor_bridge.operator_paste.clear_composer_draft_dom_no_focus", cleared
+    )
+    monkeypatch.setattr("cursor_bridge.operator_paste.cdp_insert_text", cdp)
+
+    out = await _insert_composer_with_fallback(
+        "ws://fake", selector="#composer", line=line
+    )
+
+    if expect_reason:
+        assert out.get("reason") == expect_reason
+        assert out.get("ok") is False
+        cdp.assert_not_awaited()
+        return
+    assert out.get("ok") is True
+    assert out.get("insert_method") == expect_method
+    if expect_cdp:
+        cdp.assert_awaited_once()
+    else:
+        cdp.assert_not_awaited()
+    if draft == "LI":
+        cleared.assert_awaited_once()
+
+
+def test_post_click_exception_result_logs_warning(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Break: post-click faults must surface exception class without re-raising for retry."""
+    caplog.set_level("WARNING")
+    out = _post_click_exception_result(RuntimeError("readback after click"))
+    assert out["detail"] == "RuntimeError"
+    assert any(
+        r.levelname == "WARNING" and "RuntimeError" in r.message for r in caplog.records
+    )
 
 
 def _provenance_counts(text: str) -> tuple[int, int, int]:
