@@ -66,10 +66,46 @@ def test_composer_holds_needle_multiline_draft_matches_normalized_marker() -> No
 
 
 @pytest.mark.asyncio
+async def test_prove_no_keys_when_composer_empty_and_needle_gone() -> None:
+    page = AsyncMock()
+    needle = "#3-unique: cleared"
+    page.wait_for_timeout = AsyncMock()
+
+    async def _evaluate(script, *args, **kwargs):
+        if "user-message" in script or "UserMessage" in script:
+            return False
+        return {"ok": True, "text": "", "len": 0}
+
+    page.evaluate = AsyncMock(side_effect=_evaluate)
+    page.keyboard.press = AsyncMock()
+    await prove_composer_submitted(page, f"{needle}\nbody")
+    page.keyboard.press.assert_not_called()
+
+
+@pytest.mark.asyncio
 async def test_prove_returns_when_composer_already_clear() -> None:
     page = AsyncMock()
     page.evaluate = AsyncMock(return_value={"ok": True, "text": "", "len": 0})
     await prove_composer_submitted(page, "#1-unique: already-sent\nbody")
+    page.keyboard.press.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_prove_no_keys_when_needle_gone_but_composer_nonempty() -> None:
+    """Post-release poll: foreign draft in box must not get Enter or send chords."""
+    page = AsyncMock()
+    needle = "#2-unique: ours-was-sent"
+    foreign_text = "leftover draft that is not our prompt body"
+    page.wait_for_timeout = AsyncMock()
+
+    async def _evaluate(script, *args, **kwargs):
+        if "user-message" in script or "UserMessage" in script:
+            return False
+        return {"ok": True, "text": foreign_text, "len": len(foreign_text)}
+
+    page.evaluate = AsyncMock(side_effect=_evaluate)
+    page.keyboard.press = AsyncMock()
+    await prove_composer_submitted(page, f"{needle}\nbody")
     page.keyboard.press.assert_not_called()
 
 
@@ -91,10 +127,28 @@ async def test_prove_chords_then_raises_when_draft_stays() -> None:
 
 
 @pytest.mark.asyncio
+async def test_press_send_chords_no_control_when_needle_not_in_composer() -> None:
+    page = AsyncMock()
+    needle = "#1-unique: already-gone"
+    page.evaluate = AsyncMock(
+        return_value={"ok": True, "text": "foreign draft", "len": 14}
+    )
+    page.wait_for_timeout = AsyncMock()
+    page.keyboard.press = AsyncMock()
+    await press_send_chords(page, needle)
+    page.keyboard.press.assert_not_called()
+
+
+@pytest.mark.asyncio
 async def test_press_send_chords_skips_meta_when_control_clears() -> None:
     page = AsyncMock()
     needle = "#1-unique: cleared-by-ctrl"
-    page.evaluate = AsyncMock(return_value={"ok": True, "text": "", "len": 0})
+    page.evaluate = AsyncMock(
+        side_effect=[
+            {"ok": True, "text": needle, "len": len(needle)},
+            {"ok": True, "text": "", "len": 0},
+        ]
+    )
     page.wait_for_timeout = AsyncMock()
     page.keyboard.press = AsyncMock()
     await press_send_chords(page, needle)
