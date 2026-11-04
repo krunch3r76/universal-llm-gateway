@@ -93,6 +93,23 @@ def hop_admit_error_is_stop_not_claimed(admit_err: dict[str, Any]) -> bool:
     return "stop_not_claimed" in last_error
 
 
+_PROBE_FAILED_MARKERS = (
+    "GIW occupancy probe failed",
+    "occupancy probe HTTP",
+)
+_LIVE_HOLDER_MARKER = "already holds live dispatch"
+
+
+def hop_admit_last_error_retryable(last_error: str) -> bool | None:
+    """Classify 422 hop-admit failures from stored ``last_error`` text only."""
+    text = last_error or ""
+    if _LIVE_HOLDER_MARKER in text:
+        return False
+    if any(marker in text for marker in _PROBE_FAILED_MARKERS):
+        return True
+    return None
+
+
 def park_harvest_stop_not_claimed_exhausted(admit_err: dict[str, Any]) -> bool:
     """Cap applies to dedicated counter; legacy rows without it use ``attempts`` + substring."""
     sn = admit_err.get("stop_not_claimed_attempts")
@@ -107,21 +124,25 @@ def _normalize_hop_admit_error(value: dict[str, Any]) -> dict[str, Any]:
     status = value.get("last_status_code")
     if status is None:
         status = value.get("status_code")
+    last_error = value.get("last_error") or value.get("error") or ""
+    last_error_s = str(last_error)
+    inferred = hop_admit_last_error_retryable(last_error_s)
     retryable = value.get("retryable")
     if retryable is None and status is not None:
         retryable = int(status) >= 500 or int(status) == 429
     if retryable is None:
         # Status-less transport (httpx, stargate_unreachable) is transient — §E.2.
         retryable = status is None
+    if inferred is not None:
+        retryable = inferred
     attempts = value.get("attempts")
     if not isinstance(attempts, int):
         attempts = 1
-    last_error = value.get("last_error") or value.get("error") or ""
     out: dict[str, Any] = {
         "retryable": bool(retryable),
         "attempts": attempts,
         "last_status_code": status,
-        "last_error": str(last_error),
+        "last_error": last_error_s,
     }
     reason = value.get("reason")
     if isinstance(reason, str) and reason:
@@ -280,6 +301,7 @@ def merge_hop_patch(record_json: str, patch: dict[str, Any]) -> str:
 
 __all__ = [
     "HOP_REASONS",
+    "hop_admit_last_error_retryable",
     "hop_admit_error_is_stop_not_claimed",
     "hop_fields_from_record_json",
     "merge_hop_admit_error",

@@ -1592,12 +1592,56 @@ def _admit_detail_retryable_once(detail: dict[str, Any]) -> bool:
     """
     if str(detail.get("reason") or "") == "stop_not_claimed":
         return False
+    from services.git_integration_worker.cursor_sdk_ledger_hop import (
+        hop_admit_last_error_retryable,
+    )
+
+    if hop_admit_last_error_retryable(json.dumps(detail, sort_keys=True)) is True:
+        return True
     if detail.get("retryable") is True:
         return True
     status = detail.get("status_code")
     if isinstance(status, int) and (status == 429 or status >= 500):
         return True
     return False
+
+
+def maybe_write_hop_admit_probe_failed_sidecar(
+    row: dict[str, Any],
+    *,
+    last_error: str,
+    status_code: Any,
+) -> None:
+    """Write a hop-admit sidecar for probe-failed 422; leave memo pointers unchanged."""
+    from services.git_integration_worker.cursor_sdk_deliverables import write_repo_sidecar
+    from services.git_integration_worker.cursor_sdk_ledger_hop import (
+        hop_admit_last_error_retryable,
+    )
+
+    try:
+        code = int(status_code) if status_code is not None else None
+    except (TypeError, ValueError):
+        return
+    if code != 422:
+        return
+    if hop_admit_last_error_retryable(last_error) is not True:
+        return
+    conductor_id = str(row.get("dispatch_id") or "").strip()
+    if not conductor_id:
+        return
+    sidecar_dispatch_id = f"hop-admit-{conductor_id}"
+    content = (
+        "hop_admit_refused: HTTP 422\n"
+        "cause: GIW occupancy probe failed\n\n"
+        f"{last_error.strip()}\n"
+    )
+    try:
+        write_repo_sidecar(_fold_repo(row), sidecar_dispatch_id, content)
+    except Exception:  # noqa: BLE001 — visibility must not block hop ledger
+        logger.exception(
+            "hop admit probe-failed sidecar write failed dispatch_id=%s",
+            conductor_id,
+        )
 
 
 async def post_conductor_hop_team_dispatch(
@@ -1982,6 +2026,11 @@ async def maybe_fire_conductor_hop_reactor(
     )
     merged = merge_hop_patch(record_json, {"hop_admit_error": merged_err})
     _write_record_json(dispatch_id, merged)
+    maybe_write_hop_admit_probe_failed_sidecar(
+        _load_row(dispatch_id) or row,
+        last_error=error_text,
+        status_code=detail.get("status_code"),
+    )
     emit_frontier_sdk_conductor_hop_admit_failed(
         dispatch_id=dispatch_id,
         thread_id=thread_id,
@@ -2006,6 +2055,7 @@ __all__ = [
     "live_conductor_row_on_thread",
     "merge_conductor_closeout_hop_authority",
     "maybe_fire_conductor_hop_reactor",
+    "maybe_write_hop_admit_probe_failed_sidecar",
     "maybe_wake_conductor_on_nest_child_terminal",
     "mission_open_for_row",
     "_terminal_nested_producers_only",
