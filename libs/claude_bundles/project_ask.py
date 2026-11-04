@@ -439,8 +439,12 @@ async def _insert_prompt_text(
     leading_induction: str = "",
     defer_attest: bool = False,
     attached_out: list[str] | None = None,
+    typed_out: list[str] | None = None,
 ) -> tuple[list[str], tuple[str, ...]]:
     """Fill the composer: attach Claude skills via + menu, then paste body.
+
+    When ``typed_out`` is provided, each ``keyboard.insert_text`` payload is
+    appended in order so submit verification can use the exact typed string.
 
     **Canonical skill attach (operator 2026-07-26):** ``+`` → **Skills** →
     pick each Customize skill from the list. Slash-type multi-chip is broken
@@ -489,6 +493,8 @@ async def _insert_prompt_text(
             if leading_induction
             else text
         )
+        if typed_out is not None:
+            typed_out.append(payload)
         await page.keyboard.insert_text(payload)
         return [], ()
 
@@ -526,6 +532,8 @@ async def _insert_prompt_text(
     if body:
         await composer.click(force=True)
         await page.wait_for_timeout(200)
+        if typed_out is not None:
+            typed_out.append(body)
         await page.keyboard.insert_text(body)
     return missing, click_errors
 
@@ -852,6 +860,7 @@ async def send_prompt(
             await clear_composer_verified(page, composer)
             await page.wait_for_timeout(180)
 
+        typed_payload: list[str] = []
         missing, attach_notes = await _insert_prompt_text(
             page,
             text,
@@ -859,12 +868,15 @@ async def send_prompt(
             stargate_execution_id=stargate_execution_id,
             satellite_execution_id=satellite_execution_id,
             induction_observed=induction_observed,
+            typed_out=typed_payload,
         )
         await page.wait_for_timeout(600)
+        # Submit needle must match keyboard.insert_text payload (a:42138).
+        draft_text = typed_payload[-1] if typed_payload else text
         await _submit_composer_draft(
             page,
             composer=composer,
-            draft_text=text,
+            draft_text=draft_text,
             claude_surface=claude_surface,
             compose_receipt=compose_receipt,
         )
