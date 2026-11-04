@@ -14,17 +14,14 @@ import base64
 import contextvars
 import hashlib
 import json
+import logging
 import os
 import uuid
 from pathlib import Path
 from typing import Any
 from urllib.error import URLError
 
-from interlocutor.watermark import (
-    OPERATOR_HEADER,
-    WATERMARK,
-    wrap_operator_message,
-)
+from interlocutor.watermark import OPERATOR_HEADER, WATERMARK
 from websockets.exceptions import ConnectionClosed
 
 from cursor_bridge.cdp_composer_input import (
@@ -43,11 +40,14 @@ from cursor_bridge.display_interaction_locks import (
     display_switch_lock,
 )
 from cursor_bridge.dom_composer_paste import (
+    _cdp_eval,
     _click_was_decisively_refused,
     _click_was_dispatched,
+    _find_composer_js,
     _mark_enter_dispatched,
     _reset_click_dispatched,
     _restore_click_dispatched,
+    clear_composer_draft_dom_no_focus,
     composer_selector,
     dom_click_send,
     dom_set_composer_text,
@@ -65,6 +65,8 @@ from cursor_bridge.wake_delivery import (
     _refuse,
     normalize_target,
 )
+
+logger = logging.getLogger(__name__)
 
 _VALID_GRANTS = frozenset({"operator", "explicit"})
 
@@ -124,6 +126,28 @@ def operator_message_already_wrapped(text: str) -> bool:
     return False
 
 
+def _operator_payload_from_wrapped(text: str) -> str:
+    """Return the inner payload from a wrapped operator message, or ``text`` unchanged."""
+    s = (text or "").strip()
+    header_prefix = f"{OPERATOR_HEADER}\n\n"
+    if not s.startswith(header_prefix):
+        return s
+    rest = s[len(header_prefix) :]
+    scope_sep = rest.find("\n\n")
+    if scope_sep < 0:
+        return s
+    after_scope = rest[scope_sep + 2 :]
+    wm_idx = after_scope.rfind(f"\n\n{WATERMARK}")
+    if wm_idx < 0:
+        wm_idx = after_scope.rfind(WATERMARK)
+        if wm_idx < 0:
+            return s
+        payload = after_scope[:wm_idx].rstrip()
+    else:
+        payload = after_scope[:wm_idx].rstrip()
+    return payload
+
+
 def wrap_operator_message(
     *,
     text: str,
@@ -133,11 +157,23 @@ def wrap_operator_message(
 ) -> str:
     """Format one operator relay body with header, source, scope, watermark, and run nonce."""
     body = (text or "").strip()
+    caller_nonce = str(run_nonce or "").strip()
     if operator_message_already_wrapped(body):
-        return body
+        if not caller_nonce:
+            return body
+        embedded = extract_run_nonce_from_line(body)
+        if embedded == caller_nonce:
+            return body
+        inner = _operator_payload_from_wrapped(body)
+        src = (authorization_source or "").strip()
+        scope_s = (scope or "").strip()
+        wm = watermark_with_nonce(caller_nonce)
+        return (
+            f"{OPERATOR_HEADER}\n\nSource: {src}\nScope: {scope_s}\n\n{inner}\n\n{wm}"
+        )
     src = (authorization_source or "").strip()
     scope_s = (scope or "").strip()
-    nonce = str(run_nonce or "").strip() or make_run_nonce()
+    nonce = caller_nonce or make_run_nonce()
     wm = watermark_with_nonce(nonce)
     return f"{OPERATOR_HEADER}\n\nSource: {src}\nScope: {scope_s}\n\n{body}\n\n{wm}"
 
@@ -437,6 +473,8 @@ def _post_click_exception_result(exc: BaseException) -> dict[str, Any]:
     instead of an unsealed raise. ``retryable`` is false. A send already
     shown in the transcript stays submitted.
     """
+    exc_name = type(exc).__name__
+    logger.warning("operator paste post-click fault: %s", exc_name)
     verified = _send_was_verified()
     return {
         "ok": False,
@@ -447,7 +485,7 @@ def _post_click_exception_result(exc: BaseException) -> dict[str, Any]:
         "submitted": verified,
         "send_verified": verified,
         "retryable": False,
-        "detail": type(exc).__name__,
+        "detail": exc_name,
         "watermark_visible": None,
         "composer_empty_after": None,
     }
@@ -476,12 +514,57 @@ async def _clear_our_draft_once(
     )
 
 
+def _composer_cdp_fallback_action(draft: str, line: str) -> str:
+    """Classify composer draft before CDP insert: insert, skip, clear_then_insert, refuse."""
+    draft_s = (draft or "").strip()
+    line_s = (line or "").strip()
+    if not draft_s:
+        return "insert"
+    if draft_s == line_s:
+        return "skip"
+    if line_s.startswith(draft_s):
+        return "clear_then_insert"
+    return "refuse"
+
+
+def _read_composer_draft_js(selector: str) -> str:
+    find = _find_composer_js(selector)
+    return (
+        f"(()=>{{const el=({find});"
+        "if(!el)return{ok:false,reason:'no_composer'};"
+        "const draft=(el.innerText||el.value||'').trim();"
+        "return{ok:true,draft};})()"
+    )
+
+
+async def _read_composer_draft(ws_url: str, *, selector: str) -> dict[str, Any]:
+    """Read trimmed composer text without focus or mutation."""
+    raw = await _cdp_eval(ws_url, _read_composer_draft_js(selector))
+    return raw if isinstance(raw, dict) else {"ok": False, "reason": "read_failed"}
+
+
 async def _insert_composer_with_fallback(
     ws_url: str, *, selector: str, line: str
 ) -> dict[str, Any]:
     dom = await _insert_composer_text(ws_url, selector=selector, line=line)
     if dom.get("ok"):
         return {**dom, "insert_method": "dom_set"}
+    read = await _read_composer_draft(ws_url, selector=selector)
+    if read.get("ok"):
+        action = _composer_cdp_fallback_action(str(read.get("draft") or ""), line)
+        if action == "skip":
+            return {
+                "ok": True,
+                "insert_method": "cdp_skipped_full_draft",
+                "dom_reason": dom.get("reason"),
+            }
+        if action == "refuse":
+            return {"ok": False, "reason": "composer_not_empty"}
+        if action == "clear_then_insert":
+            cleared = await clear_composer_draft_dom_no_focus(ws_url, selector=selector)
+            if not cleared.get("ok"):
+                reason = str(cleared.get("reason") or "clear_failed")
+                return {"ok": False, "reason": reason}
     cdp = await cdp_insert_text(ws_url, selector=selector, text=line)
     if cdp.get("ok"):
         return {**cdp, "insert_method": "cdp_insert"}
