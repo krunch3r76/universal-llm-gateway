@@ -6,6 +6,8 @@ from services.git_integration_worker.cursor_sdk_branch_terminal import (
     packet_requests_silent_land,
 )
 from services.git_integration_worker.cursor_sdk_hub_land_scope import (
+    excise_relayed_regions,
+    excise_relayed_regions_for_opt_in,
     packet_hub_land_scoped_out,
 )
 
@@ -79,3 +81,62 @@ def test_silent_land_opt_in_inside_fence_does_not_opt_in() -> None:
     )
     assert packet_requests_silent_land(inside) is False
     assert packet_requests_silent_land(outside) is True
+
+
+def test_opt_in_after_inline_document_span_does_not_opt_in() -> None:
+    prose = "\n".join(
+        [
+            "work_key: todo:foo",
+            "<document>x</document> " + _SILENT_LAND_OPT_IN_LINE,
+        ]
+    )
+    assert packet_requests_silent_land(prose) is False
+
+
+def test_opt_in_after_early_document_close_does_not_opt_in() -> None:
+    prose = "\n".join(
+        [
+            "work_key: todo:foo",
+            '<document index="1">',
+            "relayed text </document>",
+            _SILENT_LAND_OPT_IN_LINE,
+            "</document>",
+        ]
+    )
+    assert packet_requests_silent_land(prose) is False
+
+
+def test_author_opt_in_before_documents_still_opts_in() -> None:
+    prose = "\n".join(
+        [
+            "work_key: todo:foo",
+            _SILENT_LAND_OPT_IN_LINE,
+            "<document>",
+            "quoted",
+            "</document>",
+        ]
+    )
+    assert packet_requests_silent_land(prose) is True
+
+
+def test_author_opt_in_after_last_document_still_opts_in() -> None:
+    prose = "\n".join(
+        [
+            "<document>",
+            "quoted",
+            "</document>",
+            _SILENT_LAND_OPT_IN_LINE,
+        ]
+    )
+    assert packet_requests_silent_land(prose) is True
+
+
+def test_excise_document_span_joins_with_space() -> None:
+    assert excise_relayed_regions("a <document>x</document> b") == "a   b"
+
+
+def test_excise_for_opt_in_drops_outermost_document_lines() -> None:
+    joined = "\n".join(
+        ["h", "<document>", "x </document>", "y", "</document>", "t"]
+    )
+    assert excise_relayed_regions_for_opt_in(joined) == "h\n\nt"

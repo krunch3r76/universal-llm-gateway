@@ -304,18 +304,21 @@ def packet_requests_silent_land(packet_text: str | None) -> bool:
 
     Opt-in token, line-start, off by default: ``land: silent``.
     Leading whitespace is allowed; the rest of the line must be empty.
-    ``do not hub-land`` and a read-only admit still refuse the land even
-    when this line is present. A worker ``land_disposition: landed`` line
-    does not: that claim is checked by ancestry after the attempt. Discard
-    and an ``unlanded`` tip that does not match the branch still refuse.
+    Scans ``excise_relayed_regions_for_opt_in`` so relayed document blocks
+    cannot grant opt-in; that path removes more relayed text and fails closed
+    toward refusing silent land. ``do not hub-land`` and a read-only admit still
+    refuse the land even when this line is present. A worker
+    ``land_disposition: landed`` line does not: that claim is checked by ancestry
+    after the attempt. Discard and an ``unlanded`` tip that does not match the
+    branch still refuse.
     """
     if not packet_text:
         return False
     from services.git_integration_worker.cursor_sdk_hub_land_scope import (
-        excise_relayed_regions,
+        excise_relayed_regions_for_opt_in,
     )
 
-    scanned = excise_relayed_regions(packet_text)
+    scanned = excise_relayed_regions_for_opt_in(packet_text)
     return _SILENT_LAND_OPT_IN_RE.search(scanned) is not None
 
 

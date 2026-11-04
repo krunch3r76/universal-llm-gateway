@@ -37,6 +37,8 @@ _FENCE_LINE_RE = re.compile(r"^FENCE-(\S+)$")
 _DOCUMENT_SPAN_RE = re.compile(
     r"<document\b[^>]*>.*?</document>", re.DOTALL | re.IGNORECASE
 )
+_DOCUMENT_OPENER_IN_LINE_RE = re.compile(r"<document\b", re.IGNORECASE)
+_DOCUMENT_CLOSER_IN_LINE_RE = re.compile(r"</document>", re.IGNORECASE)
 
 
 @dataclass(frozen=True)
@@ -551,13 +553,7 @@ def _git_capture(repo: Path, *args: str) -> subprocess.CompletedProcess[str]:
     )
 
 
-def excise_relayed_regions(prose: str) -> str:
-    """Remove relayed FENCE and document spans from commissioner packet prose.
-
-    Returns a copy of ``prose`` with paired ``FENCE-<token>`` blocks and
-    matched ``<document>`` … ``</document>`` regions replaced by a single
-    newline so scope scans see only the author's own lines.
-    """
+def _excise_paired_fence_lines(prose: str) -> str:
     lines = prose.split("\n")
     out: list[str] = []
     i = 0
@@ -579,14 +575,54 @@ def excise_relayed_regions(prose: str) -> str:
         else:
             out.append(lines[i])
             i += 1
-    text = "\n".join(out)
-    return _DOCUMENT_SPAN_RE.sub("\n", text)
+    return "\n".join(out)
+
+
+def excise_relayed_regions(prose: str) -> str:
+    """Remove relayed FENCE and lazy document spans from commissioner packet prose.
+
+    Paired ``FENCE-<token>`` blocks and each lazy ``<document>`` … ``</document>``
+    match are replaced by a single space so author lines are not split. Used by
+    ``packet_hub_land_scoped_out``, which fails closed by excising less relayed
+    text than the silent-land opt-in path.
+    """
+    text = _excise_paired_fence_lines(prose)
+    return _DOCUMENT_SPAN_RE.sub(" ", text)
+
+
+def excise_relayed_regions_for_opt_in(prose: str) -> str:
+    """Remove relayed regions before silent-land opt-in scans, excising more than ``excise_relayed_regions``.
+
+    Document relay uses outermost opener-through-last-closer line removal so a
+    spurious ``</document>`` inside quoted prose cannot leave relayed opt-in lines
+    visible; silent land fails closed, so over-removal is intentional.
+    """
+    text = _excise_paired_fence_lines(prose)
+    lines = text.split("\n")
+    opener_idx: int | None = None
+    for i, line in enumerate(lines):
+        if _DOCUMENT_OPENER_IN_LINE_RE.search(line):
+            opener_idx = i
+            break
+    if opener_idx is None:
+        return text
+    closer_idx: int | None = None
+    for j in range(opener_idx, len(lines)):
+        if _DOCUMENT_CLOSER_IN_LINE_RE.search(lines[j]):
+            closer_idx = j
+    if closer_idx is None:
+        return text
+    new_lines = lines[:opener_idx] + [""] + lines[closer_idx + 1 :]
+    return "\n".join(new_lines)
 
 
 def packet_hub_land_scoped_out(prose: str | None) -> bool:
     """True when the packet explicitly excludes hub land from this dispatch's scope.
 
-    ``files_expected: none — land only`` is **not** scoped-out (land is the work).
+    Scans ``excise_relayed_regions`` (lazy document spans, space replacement).
+    A true result keeps the commit off master, so that path removes less relayed
+    text and fails closed toward scoped-out. ``files_expected: none — land only``
+    is **not** scoped-out (land is the work).
     """
     if not prose:
         return False
