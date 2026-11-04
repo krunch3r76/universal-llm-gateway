@@ -235,6 +235,18 @@ def test_agent_bus_serves_wake_libs() -> None:
     }
 
 
+def test_cdp_ask_serves_chat_harvest() -> None:
+    """``cse_session_harvest_scrape`` imports ``chat_harvest.archive`` at module top."""
+    from scripts.model_manager.ui.controller.fleet_liveness_probe import (
+        services_for_path,
+    )
+
+    own = service_ownership()["cdp_ask"]
+    assert "chat_harvest" in own.serves_libs
+    assert own.serves_libs <= own.owned_libs
+    assert set(services_for_path("libs/chat_harvest/archive.py")) == {"cdp_ask"}
+
+
 def test_wait_status_serving_slug_is_job_set_not_owned_libs_blast() -> None:
     """Replay 33083d61: serving-process set is serves_libs job slugs, not all owners."""
     serving = serving_services_for_lib_path("libs/agent_bus_store/wait_status.py")

@@ -318,7 +318,7 @@ _SERVICE_OWNERSHIP: dict[str, ServiceOwnership] = {
                 "web_chat_relay",
             }
         ),
-        serves_libs=frozenset({"cdp_ask", "web_chat_relay"}),
+        serves_libs=frozenset({"cdp_ask", "chat_harvest", "web_chat_relay"}),
         runtime_entrypoint="libs/cdp_ask/",
     ),
     "cloud_proxy": ServiceOwnership(
