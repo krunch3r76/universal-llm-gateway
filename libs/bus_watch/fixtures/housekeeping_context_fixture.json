@@ -1,0 +1,88 @@
+{
+  "digest": {
+    "ts": "2026-11-04T00:00:00Z",
+    "root": {
+      "id": "9732",
+      "slug": "pharmacy",
+      "turns": 10,
+      "unread": 1,
+      "recent_turns": [
+        {
+          "turn_number": 9,
+          "from": "cursor",
+          "subject": "CHECKPOINT",
+          "thread": "9732",
+          "body": "REPEAT_ME"
+        }
+      ]
+    },
+    "lanes": [
+      {
+        "id": "17620",
+        "slug": "done",
+        "status": "closed",
+        "lifecycle": "completed",
+        "terminal": true,
+        "unread": 0,
+        "last_subject": "CLOSEOUT",
+        "updated_at": "2026-11-01T00:00:00Z",
+        "turns": 40
+      },
+      {
+        "id": "17621",
+        "slug": "live",
+        "status": "open",
+        "lifecycle": "active",
+        "terminal": false,
+        "unread": 2,
+        "unstamped": 1,
+        "quiet_reason": "closeout_unharvested",
+        "last_subject": "WORK",
+        "updated_at": "2026-11-04T00:00:00Z",
+        "turns": 3
+      }
+    ],
+    "attention": [
+      {
+        "id": "17621",
+        "kind": "lane",
+        "unread": 2,
+        "lifecycle": "active",
+        "unread_turns": [
+          {
+            "turn_number": 3,
+            "from": "sdk",
+            "subject": "dispatch",
+            "thread": "17621",
+            "body": "REPEAT_ME"
+          }
+        ]
+      }
+    ],
+    "policy": {"gear": "3-wake-on-attention"},
+    "budget": {},
+    "induction": {}
+  },
+  "resume_bundle": {
+    "bundle_version": "resume-bundle-v2",
+    "preamble": {
+      "stance": "Role:root",
+      "facts": "tip_cp=1",
+      "next_action": "Run tick once"
+    },
+    "mission": {
+      "fence_id": "rf-fixture",
+      "preamble": {
+        "stance": "Role:root",
+        "facts": "tip_cp=1",
+        "next_action": "Run tick once"
+      },
+      "next_action": "Mission-specific action",
+      "standing_rules": [{"text": "REPEAT_ME", "assertions": []}],
+      "house_unread": [{"turn": 1, "subject": "INFO", "body": "REPEAT_ME"}]
+    },
+    "skills_to_use": [{"slug": "ide-continuity", "use_line": "Use the `ide-continuity` skill"}],
+    "tail": {"next_action": "Run tick once", "extra": "keep-me"},
+    "fence": {"fence_id": "rf-fixture", "state": "poured"}
+  }
+}

@@ -566,7 +566,7 @@ def _compose_successor_wake(
         f"addresses: dispatch(tool=\"continuity\", arguments='{resume_args}'); "
         f"agent_bus_read(thread_get, thread={root_id}); agent-bus:{echo} (echo){extras}",
     ]
-    if seat_dispatch_surface(seat) is None:
+    if seat_dispatch_surface(seat) is None and skill_detail != "none":
         from bus_watch.hop_skill_sections import format_skill_load_block
 
         detail = "compact" if skill_detail == "compact" else "full"
@@ -710,6 +710,9 @@ def render_successor_wake(
 
     row_text = row
     message = compose(row_text=row_text)
+    if len(message.encode("utf-8")) > cap and skill_detail == "compact":
+        skill_detail = "none"
+        message = compose(row_text=row_text)
     if len(message.encode("utf-8")) <= cap:
         return _inline_successor_dispatch_skills(message, seat)
 

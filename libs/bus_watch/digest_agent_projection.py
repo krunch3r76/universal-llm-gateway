@@ -33,7 +33,8 @@ def _turn_identity(row: dict[str, Any], *, thread_id: str) -> str:
 
 def _turn_get_retrieval(thread_id: str, turn_number: Any) -> str:
     return (
-        f'agent_bus_read(get, thread={thread_id}, turn={turn_number}, compact=false)'
+        f'agent_bus_read(get, thread={thread_id}, turn_number={turn_number}, '
+        f'projection="full")'
     )
 
 
@@ -66,10 +67,17 @@ def _lane_unresolved_obligation(lane: dict[str, Any]) -> bool:
         return True
     if (lane.get("unread") or 0) > 0:
         return True
+    if (lane.get("unstamped") or 0) > 0:
+        return True
+    if lane.get("quiet_reason"):
+        return True
     return False
 
 
 def _lane_resolved(lane: dict[str, Any]) -> bool:
+    lc = str(lane.get("lifecycle") or "").lower()
+    if lc in ("failed", "abandoned"):
+        return False
     if _lane_unresolved_obligation(lane):
         return False
     if row_is_terminal(lane) and str(lane.get("status") or "").lower() in {
@@ -82,7 +90,13 @@ def _lane_resolved(lane: dict[str, Any]) -> bool:
 
 
 def _lane_retrieval(lid: str) -> str:
-    return f"agent_bus_read(thread_get, thread={lid}, last=5, compact=true)"
+    return f"agent_bus_read(fetch, thread={lid}, last=5, compact=true)"
+
+
+def _full_digest_emit_only_retrieval(root_id: str) -> str:
+    return (
+        f"scripts/liaison-tick.py --root {root_id} --once --full-digest --emit-only"
+    )
 
 
 def _compact_lane_disposition(lane: dict[str, Any]) -> dict[str, Any]:
@@ -111,6 +125,9 @@ def _compact_lane_actionable(lane: dict[str, Any], *, root_id: str) -> dict[str,
             "lane_role",
             "turns",
             "unread",
+            "unstamped",
+            "quiet_reason",
+            "tags",
             "last_from",
             "last_subject",
             "terminal",
@@ -128,6 +145,8 @@ def _compact_lane_actionable(lane: dict[str, Any], *, root_id: str) -> dict[str,
         row["unread_turns"] = [
             _compact_turn_row(t, thread_id=lid) for t in unread_turns if isinstance(t, dict)
         ]
+    if lid:
+        row["retrieval"] = _lane_retrieval(lid)
     return row
 
 
@@ -177,11 +196,19 @@ def _slim_attention_item(
     if kind in _PROTECTED_ATTN_KINDS:
         return {**base, **{k: item[k] for k in item if k not in ("unread_turns",)}}
     if lid and lid in lane_ids:
-        return {
+        slim_lane: dict[str, Any] = {
             **base,
             "unread": item.get("unread"),
             "lifecycle": item.get("lifecycle"),
         }
+        unread_turns = item.get("unread_turns")
+        if isinstance(unread_turns, list) and unread_turns:
+            slim_lane["unread_turns"] = [
+                _compact_turn_row(t, thread_id=lid)
+                for t in unread_turns
+                if isinstance(t, dict)
+            ]
+        return slim_lane
     slim = dict(item)
     unread_turns = slim.pop("unread_turns", None)
     if isinstance(unread_turns, list) and unread_turns:
@@ -208,7 +235,7 @@ def _dedupe_root_notices(
             if isinstance(row, dict):
                 seen.add(_turn_identity(row, thread_id=lid))
     root_out = dict(root)
-    for key in ("recent_turns", "unread_turns"):
+    for key in ("unread_turns", "recent_turns"):
         rows = root_out.get(key)
         if not isinstance(rows, list):
             continue
@@ -284,7 +311,6 @@ def _apply_cap(
         out["lanes"] = lanes
         out["lanes_continued"] = continued
         if fits():
-            out["lanes_continued_count"] = len(continued)
             return out
 
     droppable_attn = sorted(attention, key=_attention_cap_priority)
@@ -295,11 +321,17 @@ def _apply_cap(
             continue
         attention.remove(item)
         out["attention"] = attention
+        attn_id = str(item.get("id") or "")
+        retrieval = (
+            _lane_retrieval(attn_id)
+            if attn_id
+            else _full_digest_emit_only_retrieval(root_id)
+        )
         out.setdefault("attention_continued", []).append(
             {
                 "id": item.get("id"),
                 "kind": item.get("kind"),
-                "retrieval": _lane_retrieval(str(item.get("id") or root_id)),
+                "retrieval": retrieval,
             }
         )
         if fits():
@@ -308,11 +340,14 @@ def _apply_cap(
     out["overflow"] = {
         "reason": "mandatory_exceeds_cap",
         "cap_bytes": cap_bytes,
+        "wire_bytes": len(serialize_agent_digest(out)),
         "full_digest": {
             "verify_sha256": full_digest_sha256,
-            "rebuild_read_only": f"scripts/liaison-tick.py --root {root_id} --once --full-digest",
+            "rebuild_read_only": _full_digest_emit_only_retrieval(root_id),
         },
     }
+    if len(continued):
+        out["lanes_continued_count"] = len(continued)
     return out
 
 
@@ -324,9 +359,9 @@ def project_liaison_digest_agent(
     """Compact digest for agent-facing CLI/tool responses; full digest stays internal."""
     base = project_digest(digest)
     root_id = str((base.get("root") or {}).get("id") or digest.get("root", {}).get("id") or "")
-    lanes_in = list(base.get("lanes") or digest.get("lanes") or [])
+    lanes_in = list(digest.get("lanes") or [])
     lanes, lane_ids = _project_lanes(lanes_in, root_id=root_id)
-    attention_in = list(base.get("attention") or [])
+    attention_in = list(digest.get("attention") or [])
     attention = [
         _slim_attention_item(item, lane_ids=lane_ids, root_id=root_id)
         for item in attention_in
@@ -351,9 +386,7 @@ def project_liaison_digest_agent(
             "full_digest_sha256": full_sha,
             "cap_bytes": cap_bytes,
             "full_digest_rebuild_read_only": (
-                f"scripts/liaison-tick.py --root {root_id} --once --full-digest"
-                if root_id
-                else None
+                _full_digest_emit_only_retrieval(root_id) if root_id else None
             ),
         },
     }

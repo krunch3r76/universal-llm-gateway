@@ -204,18 +204,10 @@ def project_digest(digest: dict[str, Any]) -> dict[str, Any]:
     filtered.sort(key=lambda r: str(r.get("updated_at") or ""), reverse=True)
     filtered.sort(key=_lane_rank)
     lanes, omitted = filtered[:_LANE_CAP], max(0, len(filtered) - _LANE_CAP)
-    from bus_watch.digest_agent_projection import _project_lanes, _slim_attention_item
-
-    root = digest.get("root") or {}
-    root_id = str(root.get("id") or "")
-    lanes, lane_ids = _project_lanes(lanes, root_id=root_id)
     attention = list(digest.get("attention") or [])
     attention.sort(key=_attn_rank)
-    attention = [
-        _slim_attention_item(item, lane_ids=lane_ids, root_id=root_id)
-        for item in attention
-        if isinstance(item, dict)
-    ]
+    root = digest.get("root") or {}
+    root_id = str(root.get("id") or "")
     policy = digest.get("policy") or {}
     budget = digest.get("budget") or {}
     binds = policy.get("induction_binds") or []

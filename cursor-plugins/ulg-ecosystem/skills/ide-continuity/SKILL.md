@@ -4,7 +4,7 @@ description: IDE continuity impresario — infer Light/Attended/Overnight, seat 
 ---
 ## Startup section load (house paths)
 
-On **house resume**, **liaison tick**, or **IDE hop**, do **not** read this file whole. Use `fs(op="md_list")` on this skill path, then `md_read` only the sections named in the hop/tick prompt (`Registers`, `FOL pipeline`, `Gear inference…` as applicable). Event wakes use `hop_skill_sections` plans in-tree. Re-read a section when its `read_sha256` differs from what this tab loaded; a digest “already loaded” line is not proof this tab loaded it.
+On **house resume**, **liaison tick**, or **IDE hop**, do **not** read this file whole. Use `fs(op="md_list")` on this skill path, then `md_read` only the sections listed in the `SKILL SECTIONS (…)` block on the wake/hop paste (e.g. `Startup section load (house paths)`, `Registers`, `FOL pipeline`). Event wakes use `hop_skill_sections` plans in-tree. Re-read a section when its `read_sha256` differs from what this tab loaded; a digest “already loaded” line is not proof this tab loaded it.
 
 # Impresario — the tab that runs the house
 

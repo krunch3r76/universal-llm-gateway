@@ -650,6 +650,28 @@ def test_render_body_nag_lanes_drop_first() -> None:
         assert "nag-1" not in lane_ids
 
 
+def test_publish_attention_keeps_unread_turns_for_terminal_unread_lane() -> None:
+    lane = {
+        "id": "17620",
+        "terminal": True,
+        "unread": 1,
+        "status": "closed",
+        "lifecycle": "completed",
+        "last_subject": "CLOSEOUT",
+        "unread_turns": [
+            {"turn_number": 1, "from": "x", "subject": "S", "body": "summary"}
+        ],
+    }
+    digest = _full_digest(lanes=[lane], attention=[{**lane, "kind": "lane"}])
+    proj = project_digest(digest)
+    attn = proj["attention"][0]
+    assert attn.get("unread_turns")
+    body = render_body(proj)
+    assert body is not None
+    parsed = json.loads(body)
+    assert parsed["attention"][0].get("unread_turns")
+
+
 def test_publish_skipped_loop_thread_unset_at_gear_three(
     capsys: pytest.CaptureFixture[str],
 ) -> None:

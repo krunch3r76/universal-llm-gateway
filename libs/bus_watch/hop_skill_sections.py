@@ -15,8 +15,8 @@ OperationKind = Literal["house_resume", "liaison_event", "checkpoint_hop", "impl
 LoadedKey = tuple[str, str, str]  # slug, section_path, file_sha256
 
 _CORE_REQUIRED: dict[str, tuple[str, ...]] = {
-    "reasoning-posture": ("Reasoning posture", "Before acting"),
-    "lean-dispatch": ("Lean dispatch (shared SoT)", "Packet in / envelope out"),
+    "reasoning-posture": ("Before acting",),
+    "lean-dispatch": ("Packet in / envelope out",),
 }
 
 _OPERATION_SECTIONS: dict[OperationKind, dict[str, tuple[str, ...]]] = {
@@ -260,22 +260,26 @@ def format_skill_load_block(
 ) -> str:
     plan = build_skill_section_plan(operation, already_loaded=already_loaded)
     if detail == "compact":
-        slugs: list[str] = []
+        named: list[str] = []
         for row in plan:
-            if row.slug not in slugs:
-                slugs.append(row.slug)
-        slug_list = ", ".join(slugs) if slugs else "(none)"
+            if row.status in ("ok", "missing_section", "stale_skip") and row.section:
+                label = f"{row.slug}§{row.section}"
+                if label not in named:
+                    named.append(label)
+        section_list = "; ".join(named) if named else "(none)"
+        if len(section_list) > 220:
+            section_list = section_list[:217] + "..."
         return (
-            f"SKILL SECTIONS ({operation}): md_list/md_read per slug ({slug_list}) — not full skim. "
-            f'Expand via fs(op="md_list", sandbox="workspaces", '
-            f'path="universal-llm-gateway/cursor-plugins/ulg-ecosystem/skills/<slug>/SKILL.md"); '
-            f"missing ⇒ BLOCKED (hop_skill_sections).\n"
+            f"SKILL SECTIONS ({operation}): md_read — {section_list}. "
+            f"Full plan: hop_skill_sections.format_skill_load_block({operation!r}).\n"
         )
     lines = [
         f"SKILL SECTIONS ({operation}): md_list/md_read required sections — not full-file skim.",
     ]
     for row in plan:
         if row.status == "missing_file":
+            lines.append(f"BLOCKED: {row.fs_call}")
+        elif row.status == "missing_section":
             lines.append(f"BLOCKED: {row.fs_call}")
         else:
             lines.append(row.fs_call)

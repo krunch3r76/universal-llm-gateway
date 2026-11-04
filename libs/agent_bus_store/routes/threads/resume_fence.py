@@ -137,6 +137,14 @@ async def create_resume_fence(
 async def get_thread_resume_bundle(
     thread_id: str,
     transcript_id: Annotated[str | None, Query()] = None,
+    raw: Annotated[
+        bool,
+        Query(
+            description=(
+                "When true, return the stored canonical bundle JSON (no agent projection)."
+            ),
+        ),
+    ] = False,
     since_epoch: Annotated[
         float | None,
         Query(
@@ -166,11 +174,21 @@ async def get_thread_resume_bundle(
     if view is not None:
         row, folded_state = view
         canonical = json.loads(row.body_json)
+        from ...resume_fence import resume_bundle_sha256
+
+        canonical_sha = resume_bundle_sha256(canonical)
+        if raw:
+            return {
+                "state": folded_state,
+                "fence_id": row.fence_id,
+                "bundle": canonical,
+                "bundle_canonical_sha256": canonical_sha,
+            }
         return {
             "state": folded_state,
             "fence_id": row.fence_id,
             "bundle": project_resume_bundle_agent(canonical),
-            "bundle_canonical_sha256": row.sha256,
+            "bundle_canonical_sha256": canonical_sha,
         }
     if in_flight:
         return {"state": "pouring", "fence_id": None}

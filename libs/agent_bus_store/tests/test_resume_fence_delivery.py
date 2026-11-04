@@ -174,7 +174,12 @@ def test_loop_runs_and_get_serves_while_continue_send_blocked(root_env) -> None:
             resp = await asyncio.wait_for(
                 get_thread_resume_bundle(root, transcript_id="tab-a"), 2
             )
+            from agent_bus_store.resume_fence import resume_bundle_sha256
+
+            canonical = json.loads(row.body_json)
+            assert resp["bundle_canonical_sha256"] == resume_bundle_sha256(canonical)
             assert resp["bundle_canonical_sha256"] == row.sha256
+            assert resp["bundle"]["agent_projection"]["full_bundle_sha256"] == row.sha256
             assert resp["fence_id"] == row.fence_id
             assert not send_task.done()
 
@@ -204,7 +209,12 @@ def test_direct_get_omitted_since_epoch_serves_stored_bundle(root_env) -> None:
         assert resp["state"] != "armed_since"
         assert resp["fence_id"] == row.fence_id
         assert "bundle" in resp
-        assert resp["bundle_canonical_sha256"] == row.sha256
+        from agent_bus_store.resume_fence import resume_bundle_sha256
+
+        canonical = json.loads(row.body_json)
+        assert resp["bundle_canonical_sha256"] == resume_bundle_sha256(canonical)
+        raw_resp = await get_thread_resume_bundle(root, transcript_id="tab-a", raw=True)
+        assert resume_bundle_sha256(raw_resp["bundle"]) == row.sha256
 
     asyncio.run(_run())
 

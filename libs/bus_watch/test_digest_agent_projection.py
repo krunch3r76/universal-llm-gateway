@@ -72,7 +72,6 @@ def test_closed_lane_not_duplicated_under_attention() -> None:
     assert after < before * 0.6
     attn = proj["attention"][0]
     assert attn.get("lane_ref") == {"id": "17620"}
-    assert "unread_turns" not in attn
     assert proj["lanes"][0]["disposition"] == "closed_summary"
     assert _BIG_BODY not in json.dumps(proj)
 
@@ -138,5 +137,89 @@ def test_cap_uses_same_serialization_as_render() -> None:
 def test_projection_carries_full_digest_rebuild_pointer() -> None:
     raw = _duplicate_lane_digest()
     proj = project_liaison_digest_agent(raw)
-    assert "9732" in str(proj["projection"]["full_digest_rebuild_read_only"])
+    rebuild = str(proj["projection"]["full_digest_rebuild_read_only"])
+    assert "9732" in rebuild
+    assert "--emit-only" in rebuild
     assert proj["projection"]["full_digest_sha256"]
+
+
+def test_mixed_failed_and_unstamped_lanes_preserved() -> None:
+    digest = {
+        "ts": "2026-11-04T00:00:00Z",
+        "root": {"id": "9732", "turns": 2, "unread": 0},
+        "lanes": [
+            {
+                "id": "L1",
+                "terminal": True,
+                "lifecycle": "failed",
+                "unread": 0,
+                "last_subject": "FAILED",
+            },
+            {
+                "id": "L2",
+                "terminal": False,
+                "unread": 0,
+                "unstamped": 2,
+                "quiet_reason": "holder_lost",
+                "tags": ["lane:paste"],
+                "last_subject": "WORK",
+            },
+        ],
+        "attention": [],
+        "policy": {},
+        "budget": {},
+        "induction": {},
+    }
+    proj = project_liaison_digest_agent(digest)
+    by_id = {lane["id"]: lane for lane in proj["lanes"]}
+    assert "L1" in by_id
+    assert "L2" in by_id
+    assert by_id["L2"]["unstamped"] == 2
+    assert by_id["L2"]["quiet_reason"] == "holder_lost"
+    assert by_id["L2"]["tags"] == ["lane:paste"]
+
+
+def test_retrieval_pointers_use_supported_agent_bus_read() -> None:
+    digest = {
+        "ts": "z",
+        "root": {"id": "99", "turns": 1},
+        "lanes": [
+            {
+                "id": "55",
+                "unread": 1,
+                "unread_turns": [
+                    {"turn_number": 3, "from": "a", "subject": "S", "body": "b" * 5000}
+                ],
+            }
+        ],
+        "attention": [],
+        "policy": {},
+        "budget": {},
+        "induction": {},
+    }
+    proj = project_liaison_digest_agent(digest, cap_bytes=800)
+    lane = proj["lanes"][0]
+    assert "agent_bus_read(fetch, thread=55" in lane["retrieval"]
+    row = lane["unread_turns"][0]
+    assert row.get("body_truncated") is True
+    assert 'projection="full"' in row["body_retrieval"]
+
+
+def test_unread_turns_kept_when_also_in_recent() -> None:
+    row = {"turn_number": 1, "from": "a", "subject": "S", "thread": "9732"}
+    digest = {
+        "ts": "z",
+        "root": {
+            "id": "9732",
+            "unread_turns": [dict(row)],
+            "recent_turns": [dict(row)],
+        },
+        "lanes": [],
+        "attention": [],
+        "policy": {},
+        "budget": {},
+        "induction": {},
+    }
+    proj = project_liaison_digest_agent(digest)
+    assert len(proj["root"]["unread_turns"]) == 1
+    assert proj["root"]["recent_turns"] == []

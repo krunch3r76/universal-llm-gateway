@@ -37,3 +37,15 @@ def test_house_resume_block_lists_md_read() -> None:
     block = format_skill_load_block("house_resume")
     assert "md_read" in block
     assert "house_resume" in block
+
+
+def test_compact_block_names_sections() -> None:
+    block = format_skill_load_block("house_resume", detail="compact")
+    assert "ide-continuity§" in block
+    assert "Before acting" in block
+    assert "format_skill_load_block('house_resume')" in block
+
+
+def test_core_sections_do_not_double_count_h1() -> None:
+    bodies, _overhead = measure_operation_skill_utf8("house_resume")
+    assert bodies < 25_000

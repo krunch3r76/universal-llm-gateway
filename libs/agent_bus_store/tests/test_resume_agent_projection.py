@@ -7,6 +7,7 @@ import json
 import pytest
 
 from agent_bus_store.resume_agent_projection import project_resume_bundle_agent
+from agent_bus_store.resume_fence import resume_bundle_sha256
 
 pytestmark = pytest.mark.offline
 
@@ -66,3 +67,27 @@ def test_canonical_stored_bundle_unchanged_by_projection() -> None:
 def test_error_bundle_passthrough() -> None:
     err = {"error": "no_tip_checkpoint", "reason": "resume_fence.no_tip_checkpoint"}
     assert project_resume_bundle_agent(err) == err
+
+
+def test_agent_projection_hash_matches_canonical_encoder() -> None:
+    raw = _sample_bundle()
+    canonical_sha = resume_bundle_sha256(raw)
+    proj = project_resume_bundle_agent(raw)
+    assert proj["agent_projection"]["full_bundle_sha256"] == canonical_sha
+    assert resume_bundle_sha256(proj) != canonical_sha
+
+
+def test_handoff_mission_fields_remain_addressable() -> None:
+    raw = _sample_bundle()
+    raw["mission"]["handoff"] = {
+        "handoff_steps": [
+            {
+                "step": 1,
+                "action": "read_preamble",
+                "detail": "Read mission.preamble before reference sections",
+            }
+        ]
+    }
+    proj = project_resume_bundle_agent(raw)
+    assert proj["mission"]["preamble"]["next_action"] == "Run tick once"
+    assert proj["mission"]["next_action"] == "Different mission action"

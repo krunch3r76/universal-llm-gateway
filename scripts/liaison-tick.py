@@ -213,6 +213,11 @@ def main() -> int:
         action="store_true",
         help="emit the full machine digest (default: agent-facing projection)",
     )
+    p.add_argument(
+        "--emit-only",
+        action="store_true",
+        help="with --once: print digest JSON without save_state or side effects",
+    )
     p.add_argument("--loop", action="store_true")
     p.add_argument(
         "--spawn-on-wake",
@@ -565,7 +570,8 @@ def main() -> int:
                 max_hop_minutes=float(policy.get("max_hop_minutes") or 60),
                 turns_seen=int((digest.get("root") or {}).get("turns") or 0),
             )
-        save_state(state_path, state)
+        if not args.emit_only:
+            save_state(state_path, state)
         print(json.dumps(_emit_digest_payload(digest, full=args.full_digest), default=str))
         return 0
 

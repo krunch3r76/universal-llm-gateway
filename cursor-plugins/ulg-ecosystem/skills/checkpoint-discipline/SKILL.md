@@ -15,7 +15,7 @@ trigger_match_terms: ["checkpoint-discipline", "CHECKPOINT", "tick_charter", "or
 
 About to fire, verify, or resume a CHECKPOINT; standing-root continuity; charter-runner enroll; operator `resume` / `checkpoint` (bare ∨ `<n|slug>` — § Utterance).
 
-**Section load (not full file):** On resume/hop startup, `md_read` only `Resume pickup stack` and (when firing) `CHECKPOINT fire (lean)` unless debugging. Watcher/tick loops are **event-driven** (`BRIDGE_WAKE`, `liaison-tick.py --once`) — do not attach poll/tail loops from legacy prose in other skills.
+**Section load (not full file):** On resume/hop startup, `md_read` only the sections named in the `SKILL SECTIONS (house_resume|checkpoint_hop)` block (`Resume (lean default)`, `When to load`, …) unless debugging. Watcher/tick loops are **event-driven** (`BRIDGE_WAKE`, `liaison-tick.py --once`) — do not attach poll/tail loops from legacy prose in other skills.
 
 **Continuity stance (first-class trait — operator 2026-08-25):** `∀ orchestrator_continuity` root: Use the `ulg-for-llms` skill ∧ `## Why this house` on the continuity-doc before Anchor. Birth CHECKPOINT indexes `## Stance` (Use-line + pointer; speech stays on the catch-up file). Resume loads the skill then the preamble, then the index. Footer stays §3.1.1. `tick_charter` skips. Substrate: `root_missing_stance` on birth/bootstrap when either half is missing. `thin_kickoff ∧ starving(why)` is a defect.
 

@@ -50,7 +50,7 @@ def test_hop_header_line_is_the_landing_marker() -> None:
     )
     assert "Hop only when autonomous follow-up remains" in message
     assert "STAY" in message
-    assert "LOAD the ide-continuity skill (do not skim)" in message
+    assert "SKILL SECTIONS (checkpoint_hop)" in message
     assert "LOAD liaison-cursor" in message
     assert "team_dispatch(seat=cursor-sdk, job=implement, lane=B)" in message
     assert "repo-write goals → cursor-auto" not in message
