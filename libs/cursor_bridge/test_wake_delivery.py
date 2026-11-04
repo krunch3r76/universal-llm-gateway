@@ -795,3 +795,158 @@ async def test_deliver_wake_paste_timeout_releases_display_switch_lock(
     assert out.get("detail") == "TimeoutError"
     async with display_switch_lock("9"):
         pass
+
+
+def _sidebar(rows: list[tuple[str, bool]], *, draft: str = "") -> dict[str, Any]:
+    return classify_surface(
+        [],
+        [
+            {"text": text, "selected": selected, "agent_id": ""}
+            for text, selected in rows
+        ],
+        composer_draft=draft,
+    )
+
+
+async def _flip_while_switch_lock_held(
+    display: str,
+    phase: dict[str, Any],
+    after: dict[str, Any],
+    *,
+    holder_ready: asyncio.Event,
+    prelock_seen: asyncio.Event,
+) -> None:
+    async with display_switch_lock(display):
+        holder_ready.set()
+        await prelock_seen.wait()
+        phase["surface"] = after
+
+
+@pytest.mark.asyncio
+async def test_deliver_wake_refuses_draft_typed_while_waiting_on_switch_lock(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Break: a draft typed while the wake waits on the switch lock is pasted over.
+
+    The target is already selected and the pre-lock probe shows an empty
+    composer. The surface gains a human draft before the lock is acquired.
+    """
+    expected = "15851 slug"
+    phase: dict[str, Any] = {
+        "surface": _sidebar([(expected, True)], draft=""),
+    }
+    holder_ready = asyncio.Event()
+    prelock_seen = asyncio.Event()
+    paste = AsyncMock(return_value={"ok": True, "send_fallback_clicked": False})
+
+    async def _probe(_url: str) -> dict[str, Any]:
+        prelock_seen.set()
+        return phase["surface"]
+
+    monkeypatch.setattr(wd, "list_pages", lambda _o: _wake_list_pages("grok"))
+    monkeypatch.setattr(wd, "probe_surface", _probe)
+    monkeypatch.setattr(wd, "dom_insert_and_send", paste)
+
+    holder = asyncio.create_task(
+        _flip_while_switch_lock_held(
+            "9",
+            phase,
+            _sidebar([(expected, True)], draft="operator draft text"),
+            holder_ready=holder_ready,
+            prelock_seen=prelock_seen,
+        )
+    )
+    await holder_ready.wait()
+    out = await asyncio.wait_for(
+        deliver_wake(
+            display="9",
+            app="grok",
+            thread="15851",
+            slug="slug",
+            turn=290,
+        ),
+        timeout=2,
+    )
+    await asyncio.wait_for(holder, timeout=2)
+
+    assert out.get("reason") == "composer_not_empty"
+    assert out.get("pasted") is False
+    assert out.get("delivered") is False
+    paste.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("after_rows", "after_draft", "reason"),
+    [
+        (
+            [("other chat", True), ("15851 slug", False)],
+            "operator draft text",
+            "composer_not_empty",
+        ),
+        (
+            [("operator moved here", True), ("15851 slug", False)],
+            "",
+            "title_mismatch",
+        ),
+    ],
+)
+async def test_deliver_wake_select_path_post_lock_change_does_not_click(
+    monkeypatch: pytest.MonkeyPatch,
+    after_rows: list[tuple[str, bool]],
+    after_draft: str,
+    reason: str,
+) -> None:
+    """Break: a select decided before the lock still clicks after the surface changes.
+
+    Pre-lock state is chat_list with the target unselected and an empty
+    composer. While the wake waits, the surface becomes a human draft or a
+    different active chat. Neither case may click or paste.
+    """
+    phase: dict[str, Any] = {
+        "surface": _sidebar(
+            [("other chat", True), ("15851 slug", False)],
+            draft="",
+        ),
+    }
+    holder_ready = asyncio.Event()
+    prelock_seen = asyncio.Event()
+    select_mock = AsyncMock(return_value={"clicked": True})
+    paste = AsyncMock(return_value={"ok": True, "send_fallback_clicked": False})
+
+    async def _probe(_url: str) -> dict[str, Any]:
+        prelock_seen.set()
+        return phase["surface"]
+
+    monkeypatch.setattr(wd, "list_pages", lambda _o: _wake_list_pages("grok"))
+    monkeypatch.setattr(wd, "probe_surface", _probe)
+    monkeypatch.setattr(wd, "select_sidebar_target", select_mock)
+    monkeypatch.setattr(wd, "dom_insert_and_send", paste)
+
+    holder = asyncio.create_task(
+        _flip_while_switch_lock_held(
+            "9",
+            phase,
+            _sidebar(after_rows, draft=after_draft),
+            holder_ready=holder_ready,
+            prelock_seen=prelock_seen,
+        )
+    )
+    await holder_ready.wait()
+    out = await asyncio.wait_for(
+        deliver_wake(
+            display="9",
+            app="grok",
+            thread="15851",
+            slug="slug",
+            turn=290,
+        ),
+        timeout=2,
+    )
+    await asyncio.wait_for(holder, timeout=2)
+
+    assert select_mock.await_count == 0
+    assert paste.await_count == 0
+    assert out.get("pasted") is False
+    assert out.get("delivered") is False
+    assert out.get("reason") == reason

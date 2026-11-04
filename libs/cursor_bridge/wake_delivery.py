@@ -202,10 +202,14 @@ async def deliver_wake(
     as never sent. ``classify_display`` then records unknown. Other failures
     set ``pasted`` false.
 
-    Sidebar row selection (when needed), settle, re-probe, target guard, and
-    paste run under :func:`display_switch_lock` for the display so operator
-    paste cannot switch chats or type into the composer between the guard and
-    the paste. Post-paste delivery readback runs after that lock is released.
+    Once :func:`display_switch_lock` is held, the step reads the surface
+    again and re-runs the target decision and the composer guard before any
+    sidebar click or paste. A human draft on that read, or an active chat
+    other than the target that is not the chat the pre-lock read was about
+    to leave, is a refusal: no click and no paste. When the post-lock read
+    still needs that same sidebar row, selection, settle, and a second
+    re-probe stay inside the lock, and the paste uses only the post-click
+    surface. Post-paste delivery readback runs after the lock is released.
     """
     target = normalize_target(display, app)
     if not target.get("ok"):
@@ -334,7 +338,58 @@ async def _deliver_locked(
             "app": app,
         }
 
+    pre_active_title = str(surface.get("active_title") or "")
+    pre_active_agent = str(surface.get("active_agent_id") or "")
+
     async with display_switch_lock(disp):
+        try:
+            surface = await probe_surface(ws_url)
+        except (TimeoutError, RuntimeError, OSError) as exc:
+            return _refuse(
+                "surface_probe_failed",
+                display=disp,
+                app=app,
+                detail=type(exc).__name__,
+            )
+        try:
+            verdict = wake_decision(
+                surface,
+                thread=thread_s,
+                slug=slug_s,
+                title=title_s or None,
+                agent_id=aid_s or None,
+            )
+        except ValueError:
+            return _refuse("bad_options", display=disp, app=app)
+        if verdict.get("reason") == "ambiguous_title":
+            return _refuse(
+                "ambiguous_title",
+                display=disp,
+                app=app,
+                expected_title=verdict.get("expected_title"),
+                titles=verdict.get("titles"),
+            )
+        guard = _busy_or_draft_reason(surface)
+        if guard:
+            return _refuse(
+                guard,
+                display=disp,
+                app=app,
+                selected=selected,
+                active_title=verdict.get("active_title"),
+                expected_title=verdict.get("expected_title"),
+            )
+        # A chat switch while this wake waited must not be clicked away from.
+        same_chat = (
+            str(surface.get("active_title") or "") == pre_active_title
+            and str(surface.get("active_agent_id") or "") == pre_active_agent
+        )
+        need_select = (
+            not verdict.get("ok")
+            and select
+            and verdict.get("state") == "chat_list"
+            and same_chat
+        )
         if need_select:
             click_res = await select_sidebar_target(
                 ws_url,
