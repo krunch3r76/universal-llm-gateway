@@ -286,7 +286,7 @@ def test_dispatch_body_message_not_packet() -> None:
         "tip CHECKPOINT #",
         "spawn_signal=",
         "contract: none",
-        "LOAD the ide-continuity skill",
+        "SKILL SECTIONS (house_resume)",
         "hop only if hop_qualifies",
         "STAY",
         "BRIDGE_WAKE",
@@ -351,7 +351,8 @@ def test_successor_message_is_doorbell_shaped() -> None:
         "echo:",
     ):
         assert sum(1 for ln in text.splitlines() if ln.startswith(prefix)) == 1
-    assert text.count("Use the ide-continuity skill.") == 1
+    assert "SKILL SECTIONS (house_resume)" in text
+    assert "md_read" in text
 
 
 def test_successor_message_ring_and_extra_addresses() -> None:
@@ -381,7 +382,7 @@ def test_successor_message_forbidden_content_absent() -> None:
     lower = text.lower()
     assert "you are" not in lower
     assert not any(line.startswith("NOW") for line in text.splitlines())
-    for banned in ("reasoning-posture", "ulg-for-llms", "hypothesize-simulate"):
+    for banned in ("ulg-for-llms", "hypothesize-simulate", "<skills_inline>"):
         assert banned not in text
 
 

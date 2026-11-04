@@ -543,6 +543,7 @@ def _compose_successor_wake(
     contract: str = "none",
     policy: dict | None = None,
     successor_model: str | None = None,
+    skill_detail: str = "compact",
 ) -> str:
     """Compose successor paste without cap shedding (for validation and render)."""
     echo = ring if ring else root_id
@@ -551,7 +552,6 @@ def _compose_successor_wake(
     signal_text = ",".join(spawn_signal_sources or []) or "none"
     extras = "".join(f"; {render_address(addr)}" for addr in extra_addresses)
     resume_args = f'{{"op":"resume","thread":"{root_id}"}}'
-    liaison_slug = _successor_liaison_slug(seat)
     lines = [
         f"resume {root_id}",
         "",
@@ -567,9 +567,11 @@ def _compose_successor_wake(
         f"agent_bus_read(thread_get, thread={root_id}); agent-bus:{echo} (echo){extras}",
     ]
     if seat_dispatch_surface(seat) is None:
+        from bus_watch.hop_skill_sections import format_skill_load_block
+
+        detail = "compact" if skill_detail == "compact" else "full"
         lines.append(
-            f"Use the {liaison_slug} skill. "
-            f"LOAD the {liaison_slug} skill body; do not skim."
+            format_skill_load_block("house_resume", detail=detail).rstrip()
         )
     gui_host = str((policy or {}).get("gui_host") or ":8")
     from cursor_bridge.cursor_agents_hop import is_cursor_xvfb_host
@@ -682,13 +684,14 @@ def render_successor_wake(
     Use-line / frame / echo). No recall language — echo is a graph-read, not
     hypnotic memory (suggestion_orientation: fpsyg.2025.1433762).
 
-    Over ``cap`` the renderer sheds the free-form ``row`` prose (``now_row`` bind)
-    with a visible truncation marker, then optional planted ``extra_addresses`` from
-    the tail — addresses, ids, root, and instruction lines are never shed.
+    Over ``cap`` the renderer compacts the skill-section block, then sheds the
+    free-form ``row`` prose (``now_row`` bind) with a visible truncation marker.
+    Planted ``extra_addresses`` stay on the addresses line — never shed.
     """
-    planted = list(extra_addresses)
+    fixed_addresses = tuple(extra_addresses)
+    skill_detail = "compact"
 
-    def compose(*, row_text: str, addresses: tuple[str, ...]) -> str:
+    def compose(*, row_text: str) -> str:
         return _compose_successor_wake(
             root_id,
             gear=gear,
@@ -698,39 +701,37 @@ def render_successor_wake(
             tip_checkpoint_turn=tip_checkpoint_turn,
             spawn_signal_sources=spawn_signal_sources,
             ring=ring,
-            extra_addresses=addresses,
+            extra_addresses=fixed_addresses,
             contract=contract,
             policy=policy,
             successor_model=successor_model,
+            skill_detail=skill_detail,
         )
 
     row_text = row
-    message = compose(row_text=row_text, addresses=tuple(planted))
+    message = compose(row_text=row_text)
     if len(message.encode("utf-8")) <= cap:
         return _inline_successor_dispatch_skills(message, seat)
 
     def shed() -> bool:
         """Drop the least load-bearing fragment; False when only the ritual is left."""
-        nonlocal row_text, planted
+        nonlocal row_text
         if row_text and _SUCCESSOR_ROW_TRUNC_MARKER not in row_text:
             row_text = _truncate_row_for_cap(
-                compose=lambda r: compose(row_text=r, addresses=tuple(planted)),
+                compose=lambda r: compose(row_text=r),
                 row=row_text,
                 cap=cap,
             )
             return True
-        if planted:
-            planted.pop()
-            return True
         return False
 
     while len(message.encode("utf-8")) > cap and shed():
-        message = compose(row_text=row_text, addresses=tuple(planted))
+        message = compose(row_text=row_text)
     if len(message.encode("utf-8")) > cap:
         row_text = _truncate_row_for_cap(
-            compose=lambda r: compose(row_text=r, addresses=()),
+            compose=lambda r: compose(row_text=r),
             row=row_text,
             cap=cap,
         )
-        message = compose(row_text=row_text, addresses=())
+        message = compose(row_text=row_text)
     return _inline_successor_dispatch_skills(message, seat)

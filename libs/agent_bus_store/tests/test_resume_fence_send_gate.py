@@ -3,12 +3,11 @@
 from __future__ import annotations
 
 import pytest
-from fastapi.testclient import TestClient
-
 from agent_bus_store import create_app
 from agent_bus_store.auth import require_token
 from agent_bus_store.db import create_thread, create_turn, init_db
 from agent_bus_store.resume_fence_store import append_fence_event, mint_fence_id
+from fastapi.testclient import TestClient
 
 pytestmark = pytest.mark.offline
 
@@ -81,6 +80,24 @@ def test_send_foreign_citation_422(bus_client) -> None:
     assert "agent-bus:9796" in detail["foreign"]
 
 
+def test_send_chat_shaped_work_subject_422_paste_lane(bus_client) -> None:
+    """Regression: clean fence send fails on paste-lane gate, not resume_fence (42277)."""
+    fid = _open_fence()
+    resp = bus_client.post(
+        "/threads/send",
+        json={
+            "thread": "10223",
+            "from": "cursor",
+            "to": "cursor",
+            "subject": "WORK update",
+            "body": "Clean send citing agent-bus:10223",
+            "fence_id": fid,
+        },
+    )
+    assert resp.status_code == 422
+    assert resp.json()["detail"]["code"] == "house_chat_turn_requires_paste_lane"
+
+
 def test_send_clean_releases_fence(bus_client) -> None:
     fid = _open_fence()
     resp = bus_client.post(
@@ -89,8 +106,8 @@ def test_send_clean_releases_fence(bus_client) -> None:
             "thread": "10223",
             "from": "cursor",
             "to": "cursor",
-            "subject": "orientation",
-            "body": "Clean orientation on agent-bus:10223",
+            "subject": "CHECKPOINT",
+            "body": "Clean send citing agent-bus:10223",
             "fence_id": fid,
         },
     )
@@ -101,7 +118,7 @@ def test_send_clean_releases_fence(bus_client) -> None:
             "thread": "10223",
             "from": "cursor",
             "to": "cursor",
-            "subject": "followup",
+            "subject": "CHECKPOINT",
             "body": "second",
             "fence_id": fid,
         },

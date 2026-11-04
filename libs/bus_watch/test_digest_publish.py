@@ -28,6 +28,13 @@ def _isolated_digest_watch_dir(
     monkeypatch.setattr("bus_watch.digest_publish.WATCH_DIR", tmp_path)
 
 
+@pytest.fixture(autouse=True)
+def _digest_publish_not_overnight_quiet(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        "bus_watch.spawn_on_wake.is_overnight_quiet", lambda **_k: False
+    )
+
+
 def _full_digest(**overrides: object) -> dict:
     base = {
         "ts": "2026-09-11T12:00:00Z",

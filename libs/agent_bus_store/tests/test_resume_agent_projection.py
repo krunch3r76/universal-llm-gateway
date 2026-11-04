@@ -20,41 +20,40 @@ def _sample_bundle() -> dict:
     skills = [{"slug": "ide-continuity", "use_line": "Use the `ide-continuity` skill"}]
     mission = {
         "fence_id": "rf-test",
-        "preamble": preamble,
-        "next_action": "Run tick once",
+        "preamble": dict(preamble),
+        "next_action": "Different mission action",
         "skills_to_use": skills,
         "standing_rules": [{"text": "rule", "assertions": []}],
-        "house_unread": [{"turn": 1, "subject": "INFO", "body": "dup"}],
-        "handoff": {
-            "steps": [
-                {"step": 1, "detail": "read mission.next_action tail"},
-                {"step": 2, "detail": "repeat mission.next_action again"},
-            ]
-        },
+        "house_unread": [{"turn": 1, "subject": "INFO", "body": "house-only"}],
     }
     return {
         "bundle_version": "resume-bundle-v2",
         "preamble": preamble,
         "mission": mission,
         "skills_to_use": skills,
-        "tail": {"next_action": "Run tick once"},
+        "tail": {"next_action": "Run tick once", "extra": "keep-me"},
         "resume_envelope": {
-            "tape_verbal": [{"turn_number": 1, "subject": "INFO", "content": "dup"}],
+            "tape_verbal": [{"turn_number": 2, "subject": "tape", "content": "other"}],
         },
         "fence": {"fence_id": "rf-test", "state": "poured"},
     }
 
 
-def test_resume_projection_deduplicates_top_level_fields() -> None:
-    raw = _sample_bundle()
-    before = len(json.dumps(raw, default=str).encode("utf-8"))
-    proj = project_resume_bundle_agent(raw)
-    after = len(json.dumps(proj, default=str).encode("utf-8"))
-    assert after < before
-    assert "skills_to_use" not in proj["mission"]
-    assert proj["skills_to_use"] == raw["skills_to_use"]
-    assert "tail" not in proj
-    assert proj["agent_projection"]["full_bundle_sha256"]
+def test_distinct_next_action_preserved() -> None:
+    proj = project_resume_bundle_agent(_sample_bundle())
+    assert proj["mission"]["next_action"] == "Different mission action"
+    assert proj["preamble"]["next_action"] == "Run tick once"
+
+
+def test_tail_keeps_non_duplicate_fields() -> None:
+    proj = project_resume_bundle_agent(_sample_bundle())
+    assert proj["tail"]["extra"] == "keep-me"
+    assert "next_action" not in proj["tail"]
+
+
+def test_house_unread_not_dropped_against_tape() -> None:
+    proj = project_resume_bundle_agent(_sample_bundle())
+    assert proj["mission"]["house_unread"][0]["body"] == "house-only"
 
 
 def test_canonical_stored_bundle_unchanged_by_projection() -> None:
@@ -62,3 +61,8 @@ def test_canonical_stored_bundle_unchanged_by_projection() -> None:
     stored = json.dumps(raw, sort_keys=True)
     project_resume_bundle_agent(raw)
     assert json.dumps(raw, sort_keys=True) == stored
+
+
+def test_error_bundle_passthrough() -> None:
+    err = {"error": "no_tip_checkpoint", "reason": "resume_fence.no_tip_checkpoint"}
+    assert project_resume_bundle_agent(err) == err

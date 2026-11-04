@@ -165,10 +165,12 @@ async def get_thread_resume_bundle(
     view = await asyncio.to_thread(read_delivery_view, thread_id, key[1])
     if view is not None:
         row, folded_state = view
+        canonical = json.loads(row.body_json)
         return {
             "state": folded_state,
             "fence_id": row.fence_id,
-            "bundle": json.loads(row.body_json),
+            "bundle": project_resume_bundle_agent(canonical),
+            "bundle_canonical_sha256": row.sha256,
         }
     if in_flight:
         return {"state": "pouring", "fence_id": None}

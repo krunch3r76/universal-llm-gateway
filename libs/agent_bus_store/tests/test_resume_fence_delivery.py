@@ -13,7 +13,6 @@ import pytest
 from agent_bus_store.db import create_thread, create_turn, init_db
 from agent_bus_store.db.connection import connect
 from agent_bus_store.house_pools import ContinuityCard
-from agent_bus_store.resume_fence import encode_resume_bundle
 from agent_bus_store.resume_fence_delivery import (
     _IN_FLIGHT,
     deliver_resume_bundle,
@@ -175,10 +174,7 @@ def test_loop_runs_and_get_serves_while_continue_send_blocked(root_env) -> None:
             resp = await asyncio.wait_for(
                 get_thread_resume_bundle(root, transcript_id="tab-a"), 2
             )
-            assert (
-                hashlib.sha256(encode_resume_bundle(resp["bundle"])).hexdigest()
-                == row.sha256
-            )
+            assert resp["bundle_canonical_sha256"] == row.sha256
             assert resp["fence_id"] == row.fence_id
             assert not send_task.done()
 
@@ -208,10 +204,7 @@ def test_direct_get_omitted_since_epoch_serves_stored_bundle(root_env) -> None:
         assert resp["state"] != "armed_since"
         assert resp["fence_id"] == row.fence_id
         assert "bundle" in resp
-        assert (
-            hashlib.sha256(encode_resume_bundle(resp["bundle"])).hexdigest()
-            == row.sha256
-        )
+        assert resp["bundle_canonical_sha256"] == row.sha256
 
     asyncio.run(_run())
 
@@ -236,10 +229,7 @@ def test_direct_get_omitted_transcript_id_serves_thread_only_bundle(
         resp = await get_thread_resume_bundle(root)
         assert resp["state"] != "armed_since"
         assert resp["fence_id"] == row.fence_id
-        assert (
-            hashlib.sha256(encode_resume_bundle(resp["bundle"])).hexdigest()
-            == row.sha256
-        )
+        assert resp["bundle_canonical_sha256"] == row.sha256
 
     asyncio.run(_run())
 
