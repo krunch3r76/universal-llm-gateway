@@ -345,6 +345,171 @@ async def test_resend_returned_message_mints_new_nonce(
     assert second["run_nonce"] == nonce_2
 
 
+def _pin_mint_and_spy_verify(monkeypatch: pytest.MonkeyPatch, nonce: str) -> list[str]:
+    """Pin ``make_run_nonce`` and record every nonce passed into submit verify."""
+    monkeypatch.setattr("cursor_bridge.operator_paste.make_run_nonce", lambda: nonce)
+    seen: list[str] = []
+
+    def _spy(
+        post: dict[str, Any],
+        *,
+        watermark: str,
+        body_snippet: str,
+        run_nonce: str = "",
+    ) -> bool:
+        seen.append(str(run_nonce))
+        return _submit_verified(
+            post,
+            watermark=watermark,
+            body_snippet=body_snippet,
+            run_nonce=run_nonce,
+        )
+
+    monkeypatch.setattr("cursor_bridge.operator_paste._submit_verified", _spy)
+    return seen
+
+
+@pytest.mark.asyncio
+async def test_quoted_earlier_relay_verifies_minted_nonce_not_deadbeef(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Break: a mid-body quoted Relay-Nonce must not be the nonce delivery verifies."""
+    minted = "mintednonce1"
+    quoted = "deadbeef0000"
+    seen = _pin_mint_and_spy_verify(monkeypatch, minted)
+    stale = _grok_surface(recent_messages=[watermark_with_nonce(quoted)])
+    inserted: list[str] = []
+    out = await _deliver_once(
+        monkeypatch,
+        text=f"earlier relay\n{RELAY_NONCE_LABEL}: {quoted}\nend",
+        surface=stale,
+        inserted=inserted,
+    )
+    assert inserted
+    assert f"{RELAY_NONCE_LABEL}: {quoted}" in inserted[0]
+    assert inserted[0].rstrip().endswith(watermark_with_nonce(minted))
+    assert seen
+    assert all(nonce == minted for nonce in seen)
+    assert quoted not in seen
+    assert out["run_nonce"] == minted
+    assert out["submitted"] is False
+
+
+@pytest.mark.asyncio
+async def test_unheadered_relay_nonce_line_verifies_minted_nonce(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Break: a Relay-Nonce line with no operator header must still verify the mint."""
+    minted = "b2c3d4e5f6a1"
+    quoted = "abcdef123456"
+    seen = _pin_mint_and_spy_verify(monkeypatch, minted)
+    wm = watermark_with_nonce(minted)
+    surface = _grok_surface(
+        generating=True,
+        recent_messages=[wm, "ack"],
+        message_turns=[
+            {"role": "user", "text": wm},
+            {"role": "assistant", "text": "ack"},
+        ],
+    )
+    inserted: list[str] = []
+    out = await _deliver_once(
+        monkeypatch,
+        text=f"{RELAY_NONCE_LABEL}: {quoted}\nplease relay",
+        surface=surface,
+        inserted=inserted,
+    )
+    assert OPERATOR_HEADER not in f"{RELAY_NONCE_LABEL}: {quoted}\nplease relay"
+    assert inserted
+    assert inserted[0].rstrip().endswith(wm)
+    assert f"{RELAY_NONCE_LABEL}: {quoted}" in inserted[0]
+    assert seen
+    assert all(nonce == minted for nonce in seen)
+    assert quoted not in seen
+    assert out["run_nonce"] == minted
+    assert out["submitted"] is True
+
+
+@pytest.mark.asyncio
+async def test_bare_relay_nonce_label_verifies_minted_nonce(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Break: a bare Relay-Nonce label must not raise or replace the minted nonce."""
+    minted = "c3d4e5f6a1b2"
+    seen = _pin_mint_and_spy_verify(monkeypatch, minted)
+    wm = watermark_with_nonce(minted)
+    surface = _grok_surface(
+        generating=True,
+        recent_messages=[wm, "ack"],
+        message_turns=[
+            {"role": "user", "text": wm},
+            {"role": "assistant", "text": "ack"},
+        ],
+    )
+    inserted: list[str] = []
+    out = await _deliver_once(
+        monkeypatch,
+        text=f"{RELAY_NONCE_LABEL}\nstill send this",
+        surface=surface,
+        inserted=inserted,
+    )
+    assert inserted
+    assert inserted[0].rstrip().endswith(wm)
+    assert seen
+    assert all(nonce == minted for nonce in seen)
+    assert out["run_nonce"] == minted
+    assert out["submitted"] is True
+
+
+@pytest.mark.asyncio
+async def test_trailing_watermark_mismatch_refuses_before_paste(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Break: a trailing watermark nonce other than the mint must not be pasted."""
+    minted = "mintednonce1"
+    stamped = "ffffeeeedddd"
+    seen = _pin_mint_and_spy_verify(monkeypatch, minted)
+
+    def _stamp_other(**kwargs: Any) -> str:
+        kwargs["run_nonce"] = stamped
+        return wrap_operator_message(**kwargs)
+
+    monkeypatch.setattr(
+        "cursor_bridge.operator_paste.wrap_operator_message", _stamp_other
+    )
+    inserted: list[str] = []
+    out = await _deliver_once(
+        monkeypatch,
+        text="hello",
+        surface=_grok_surface(),
+        inserted=inserted,
+    )
+    assert inserted == []
+    assert seen == []
+    assert out["reason"] == "run_nonce_mismatch"
+    assert out["pasted"] is False
+    assert out["ok"] is False
+
+
+@pytest.mark.asyncio
+async def test_empty_mint_refuses_before_paste(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Break: an empty minted nonce must refuse instead of verifying by watermark fallback."""
+    seen = _pin_mint_and_spy_verify(monkeypatch, "")
+    inserted: list[str] = []
+    out = await _deliver_once(
+        monkeypatch,
+        text="hello",
+        surface=_grok_surface(),
+        inserted=inserted,
+    )
+    assert inserted == []
+    assert seen == []
+    assert out["reason"] == "run_nonce_required"
+    assert out["pasted"] is False
+
+
 @pytest.mark.parametrize(
     ("draft", "line", "action"),
     [

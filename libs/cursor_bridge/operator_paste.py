@@ -97,13 +97,47 @@ def make_run_nonce() -> str:
 
 
 def watermark_with_nonce(run_nonce: str) -> str:
+    """Build the trailing watermark line that carries this attempt's run nonce.
+
+    An empty ``run_nonce`` returns the bare ``WATERMARK`` with no label.
+    Delivery passes the nonce minted for the attempt, not a value scanned
+    out of the body. Returns one line and does not read the message.
+    """
     nonce = str(run_nonce or "").strip()
     if not nonce:
         return WATERMARK
     return f"{WATERMARK} · {RELAY_NONCE_LABEL}: {nonce}"
 
 
+def _trailing_watermark_nonce(line: str) -> str:
+    """Return the nonce on the last watermark line, or empty when that line has none.
+
+    Quoted ``Relay-Nonce`` labels earlier in the body are ignored, including a
+    bare label with no colon. Only the line that starts at the last
+    ``WATERMARK`` marker is read. Returns the stripped value after the label
+    colon, or an empty string when that line has no labeled nonce. Does not
+    raise.
+    """
+    text = str(line or "")
+    idx = text.rfind(WATERMARK)
+    if idx < 0:
+        return ""
+    wm_line = text[idx:].splitlines()[0]
+    marker = f"{RELAY_NONCE_LABEL}:"
+    if marker not in wm_line:
+        return ""
+    return wm_line.partition(marker)[2].strip()
+
+
 def extract_run_nonce_from_line(line: str) -> str:
+    """Return the first ``Relay-Nonce`` value in ``line``, or empty when none is labeled.
+
+    This scan is first-match and is not the delivery verify key: a quoted
+    relay can precede the watermark stamped for the current attempt. Delivery
+    passes the minted nonce and checks the trailing watermark instead. A bare
+    ``Relay-Nonce`` label with no colon yields an empty string and does not
+    raise. Returns the stripped tail of that first labeled line.
+    """
     for part in str(line or "").splitlines():
         if RELAY_NONCE_LABEL not in part:
             continue
@@ -113,13 +147,19 @@ def extract_run_nonce_from_line(line: str) -> str:
 
 
 def operator_message_already_wrapped(text: str) -> bool:
-    """True when ``text`` already carries operator provenance (do not wrap again)."""
+    """True when ``text`` already carries operator provenance and must not be wrapped again.
+
+    A ``Relay-Nonce`` label quoted in the payload does not count. The body is
+    already wrapped when it has the operator header, a nonce on its trailing
+    watermark line, or a watermark paired with ``Source:``. Returns false for
+    empty text. Does not modify ``text``.
+    """
     body = (text or "").strip()
     if not body:
         return False
     if OPERATOR_HEADER in body:
         return True
-    if extract_run_nonce_from_line(body):
+    if _trailing_watermark_nonce(body):
         return True
     if WATERMARK in body and "Source:" in body:
         return True
@@ -157,17 +197,20 @@ def wrap_operator_message(
 ) -> str:
     """Format one operator relay body with header, source, scope, watermark, and run nonce.
 
-    A caller-supplied ``run_nonce`` replaces a different embedded nonce, or
-    adds one when the body is header-only and has none. Omitting ``run_nonce``
-    leaves an already-wrapped body unchanged; delivery always passes a nonce
-    minted for that attempt.
+    A caller-supplied ``run_nonce`` is compared to the nonce on the trailing
+    watermark, not to a ``Relay-Nonce`` label quoted earlier in the body. A
+    match leaves an already-wrapped body unchanged. A difference rebuilds the
+    wrapper around the inner payload and stamps ``run_nonce`` on the new
+    trailing watermark. Omitting ``run_nonce`` leaves an already-wrapped body
+    unchanged; delivery always passes the nonce minted for that attempt.
+    Returns the wrapped text and does not paste or probe a display.
     """
     body = (text or "").strip()
     caller_nonce = str(run_nonce or "").strip()
     if operator_message_already_wrapped(body):
         if not caller_nonce:
             return body
-        embedded = extract_run_nonce_from_line(body)
+        embedded = _trailing_watermark_nonce(body)
         if embedded == caller_nonce:
             return body
         inner = _operator_payload_from_wrapped(body)
@@ -1109,10 +1152,12 @@ async def deliver_operator_paste(
     """Paste one grant-gated message and seal every return after a dispatch.
 
     Refuses without a grant and an authorization source. Every attempt mints
-    a new run nonce via ``make_run_nonce`` and passes it to
-    ``wrap_operator_message``, including when ``text`` is already wrapped or
-    is a prior result's ``message`` line, so sent-transcript readback can
-    match only this attempt. Every result from this function passes
+    a new run nonce via ``make_run_nonce``, stamps it on the trailing
+    watermark, and passes that same value through delivery. Submit and
+    readback match only that minted nonce. They do not scan the body for the
+    first ``Relay-Nonce`` label, so a quoted earlier relay cannot satisfy
+    this attempt. The minted value is passed when ``text`` is already wrapped
+    or is a prior result's ``message`` line. Every result from this function passes
     ``_seal_deliver_exit``, including an exception raised after a click script
     or an Enter key was sent (readback, artifact capture, screenshot,
     transcript check, or probe). A verified delivery gets no retryable stamp;
@@ -1158,8 +1203,10 @@ async def _deliver_operator_paste_body(
 ) -> dict[str, Any]:
     """Run one paste attempt. ``deliver_operator_paste`` seals the result.
 
-    Mints ``make_run_nonce()`` for this attempt and passes it as ``run_nonce``
-    so an already-wrapped body cannot keep a prior nonce.
+    Mints ``make_run_nonce()`` for this attempt, stamps that value on the
+    wrapper, and passes the same string to ``_deliver_operator_locked``.
+    An empty mint refuses there with ``run_nonce_required`` before any page
+    probe. Returns that locked result, including a grant refusal.
     """
     grant_s = str(grant or "").strip().lower()
     auth_src = str(authorization_source or "").strip()
@@ -1181,11 +1228,12 @@ async def _deliver_operator_paste_body(
         return _grant_refuse(
             "cursor_ide_seat_forbidden", display=target["display"], app=target["app"]
         )
+    run_nonce = str(make_run_nonce() or "").strip()
     line = wrap_operator_message(
         text=text,
         authorization_source=auth_src,
         scope=str(scope or "").strip(),
-        run_nonce=make_run_nonce(),
+        run_nonce=run_nonce,
     )
     async with agent_paste_lock(target["display"], aid_s):
         return await _deliver_operator_locked(
@@ -1193,6 +1241,7 @@ async def _deliver_operator_paste_body(
             aid_s=aid_s,
             select=bool(select),
             line=line,
+            run_nonce=run_nonce,
         )
 
 
@@ -1202,11 +1251,30 @@ async def _deliver_operator_locked(
     aid_s: str,
     select: bool,
     line: str,
+    run_nonce: str,
 ) -> dict[str, Any]:
+    """Deliver one paste under the display lock, or refuse a missing attempt nonce.
+
+    ``run_nonce`` is the value minted for this attempt and already stamped on
+    ``line``. An empty nonce refuses with ``run_nonce_required`` before any
+    page probe or composer write. Returns the session result. Side effect:
+    holds ``display_switch_lock`` for the target display while the session runs.
+    """
+    minted = str(run_nonce or "").strip()
+    if not minted:
+        return _grant_refuse(
+            "run_nonce_required",
+            display=str(target.get("display") or ""),
+            app=str(target.get("app") or ""),
+        )
     disp = str(target["display"])
     async with display_switch_lock(disp):
         return await _deliver_operator_session(
-            target=target, aid_s=aid_s, select=select, line=line
+            target=target,
+            aid_s=aid_s,
+            select=select,
+            line=line,
+            run_nonce=minted,
         )
 
 
@@ -1216,6 +1284,7 @@ async def _deliver_operator_session(
     aid_s: str,
     select: bool,
     line: str,
+    run_nonce: str,
 ) -> dict[str, Any]:
     disp, app = target["display"], target["app"]
     try:
@@ -1256,6 +1325,7 @@ async def _deliver_operator_session(
             restore_agent_id=restore_agent_id,
             switch_ctx=switch_ctx,
             locate_method=locate_method,
+            run_nonce=run_nonce,
         )
         return result
     finally:
@@ -1283,7 +1353,17 @@ async def _deliver_operator_session_body(
     restore_agent_id: str,
     switch_ctx: dict[str, bool],
     locate_method: str | None,
+    run_nonce: str,
 ) -> dict[str, Any]:
+    """Paste and verify one operator line against the nonce minted for this attempt.
+
+    ``run_nonce`` is that minted value, passed from ``_deliver_operator_paste_body``
+    through the session. The trailing watermark on ``line`` must equal it. A
+    missing nonce refuses with ``run_nonce_required``; a different trailing
+    nonce refuses with ``run_nonce_mismatch``. Both refusals happen before
+    insert. Submit and readback then match only this nonce. Returns the
+    delivery result. Probes and mutates the composer over ``ws_url``.
+    """
     try:
         visible_ids = await visible_sidebar_agent_ids(ws_url)
     except (TimeoutError, RuntimeError, OSError) as exc:
@@ -1450,7 +1530,25 @@ async def _deliver_operator_session_body(
     prompt_sel = composer_selector(app=app, agent_id=aid_s)
     flat_line = " ".join(line.splitlines()).strip()
     body_snippet = flat_line[:120]
-    run_nonce = extract_run_nonce_from_line(line)
+    minted = str(run_nonce or "").strip()
+    if not minted:
+        return _grant_refuse(
+            "run_nonce_required",
+            display=disp,
+            app=app,
+            selected=selected,
+            locate_method=locate_method,
+        )
+    if _trailing_watermark_nonce(line) != minted:
+        return _grant_refuse(
+            "run_nonce_mismatch",
+            display=disp,
+            app=app,
+            selected=selected,
+            locate_method=locate_method,
+            run_nonce=minted,
+        )
+    run_nonce = minted
     wm_line = watermark_with_nonce(run_nonce)
 
     idle = await wait_for_operator_idle(
