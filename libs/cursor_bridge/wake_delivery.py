@@ -200,8 +200,12 @@ async def deliver_wake(
     the return keeps ``pasted`` true, ``delivered`` false, and
     ``race_winner`` ``timer`` so callers do not treat the in-flight submit
     as never sent. ``classify_display`` then records unknown. Other failures
-    set ``pasted`` false. Side effect: one CDP evaluate on the display debug
-    socket, under the per-display lock.
+    set ``pasted`` false.
+
+    Sidebar row selection (when needed), settle, re-probe, target guard, and
+    paste run under :func:`display_switch_lock` for the display so operator
+    paste cannot switch chats or type into the composer between the guard and
+    the paste. Post-paste delivery readback runs after that lock is released.
     """
     target = normalize_target(display, app)
     if not target.get("ok"):
@@ -305,7 +309,10 @@ async def _deliver_locked(
         )
 
     selected = False
-    if not verdict.get("ok") and select and verdict.get("state") == "chat_list":
+    need_select = (
+        not verdict.get("ok") and select and verdict.get("state") == "chat_list"
+    )
+    if need_select:
         guard = _busy_or_draft_reason(surface)
         if guard:
             return _refuse(
@@ -316,108 +323,121 @@ async def _deliver_locked(
                 expected_title=verdict.get("expected_title"),
                 expected_agent_id=verdict.get("expected_agent_id"),
             )
-        async with display_switch_lock(disp):
+
+    if not verdict.get("ok") and not need_select:
+        return {
+            **verdict,
+            "pasted": False,
+            "delivered": False,
+            "selected": selected,
+            "display": disp,
+            "app": app,
+        }
+
+    async with display_switch_lock(disp):
+        if need_select:
             click_res = await select_sidebar_target(
                 ws_url,
                 expected_title=str(verdict.get("expected_title") or ""),
                 expected_agent_id=str(verdict.get("expected_agent_id") or ""),
             )
-        if click_res.get("clicked"):
-            selected = True
-            await asyncio.sleep(0.25)
-            surface = await probe_surface(ws_url)
-            verdict = wake_decision(
-                surface,
-                thread=thread_s,
-                slug=slug_s,
-                title=title_s or None,
-                agent_id=aid_s or None,
-            )
+            if click_res.get("clicked"):
+                selected = True
+                await asyncio.sleep(0.25)
+                surface = await probe_surface(ws_url)
+                verdict = wake_decision(
+                    surface,
+                    thread=thread_s,
+                    slug=slug_s,
+                    title=title_s or None,
+                    agent_id=aid_s or None,
+                )
 
-    if not verdict.get("ok"):
-        return {
-            **verdict,
-            "pasted": False,
-            "delivered": False,
-            "selected": selected,
-            "display": disp,
-            "app": app,
-        }
+        if not verdict.get("ok"):
+            return {
+                **verdict,
+                "pasted": False,
+                "delivered": False,
+                "selected": selected,
+                "display": disp,
+                "app": app,
+            }
 
-    guard = _busy_or_draft_reason(surface)
-    if guard:
-        return _refuse(
-            guard,
-            display=disp,
-            app=app,
-            selected=selected,
-            active_title=verdict.get("active_title"),
-            expected_title=verdict.get("expected_title"),
-        )
-    composer = _COMPOSER_JS.get(app)
-    if composer is None:
-        return {
-            **verdict,
-            "ok": False,
-            "reason": "composer_unconfirmed",
-            "pasted": False,
-            "delivered": False,
-            "selected": selected,
-        }
-    try:
-        if app == "cursor":
-            paste_res = await _paste_cursor_services(
-                ws_url,
-                line,
-                agent_id=str(
-                    verdict.get("expected_agent_id")
-                    or surface.get("active_agent_id")
-                    or ""
-                ),
-            )
-        else:
-            sel = composer_selector(
+        guard = _busy_or_draft_reason(surface)
+        if guard:
+            return _refuse(
+                guard,
+                display=disp,
                 app=app,
-                agent_id=str(verdict.get("expected_agent_id") or aid_s or ""),
+                selected=selected,
+                active_title=verdict.get("active_title"),
+                expected_title=verdict.get("expected_title"),
             )
-            paste_res = await dom_insert_and_send(ws_url, selector=sel, line=line)
-    except (TimeoutError, RuntimeError, OSError) as exc:
-        return _refuse(
-            "paste_failed",
-            display=disp,
-            app=app,
-            selected=selected,
-            detail=type(exc).__name__,
-            expected_title=verdict.get("expected_title"),
-            active_title=verdict.get("active_title"),
-        )
-    if paste_res.get("race_winner") == "timer":
-        # Submit went out and was not confirmed. Do not post-probe: the
-        # script clears the draft in finally, which would look delivered.
-        return {
-            **verdict,
-            "ok": False,
-            "reason": str(paste_res.get("reason") or "delivery_unconfirmed"),
-            "pasted": True,
-            "delivered": False,
-            "race_winner": "timer",
-            "selected": selected,
-            "send_fallback_clicked": bool(paste_res.get("send_fallback_clicked")),
-            "display": disp,
-            "app": app,
-            "wake": line,
-        }
-    if not paste_res.get("ok"):
-        return _refuse(
-            str(paste_res.get("reason") or "no_composer"),
-            display=disp,
-            app=app,
-            selected=selected,
-            expected_title=verdict.get("expected_title"),
-            active_title=verdict.get("active_title"),
-            expected_agent_id=verdict.get("expected_agent_id"),
-            active_agent_id=verdict.get("active_agent_id"),
-        )
+        composer = _COMPOSER_JS.get(app)
+        if composer is None:
+            return {
+                **verdict,
+                "ok": False,
+                "reason": "composer_unconfirmed",
+                "pasted": False,
+                "delivered": False,
+                "selected": selected,
+            }
+        try:
+            if app == "cursor":
+                paste_res = await _paste_cursor_services(
+                    ws_url,
+                    line,
+                    agent_id=str(
+                        verdict.get("expected_agent_id")
+                        or surface.get("active_agent_id")
+                        or ""
+                    ),
+                )
+            else:
+                sel = composer_selector(
+                    app=app,
+                    agent_id=str(verdict.get("expected_agent_id") or aid_s or ""),
+                )
+                paste_res = await dom_insert_and_send(ws_url, selector=sel, line=line)
+        except (TimeoutError, RuntimeError, OSError) as exc:
+            return _refuse(
+                "paste_failed",
+                display=disp,
+                app=app,
+                selected=selected,
+                detail=type(exc).__name__,
+                expected_title=verdict.get("expected_title"),
+                active_title=verdict.get("active_title"),
+            )
+        if paste_res.get("race_winner") == "timer":
+            # Submit went out and was not confirmed. Do not post-probe: the
+            # script clears the draft in finally, which would look delivered.
+            return {
+                **verdict,
+                "ok": False,
+                "reason": str(paste_res.get("reason") or "delivery_unconfirmed"),
+                "pasted": True,
+                "delivered": False,
+                "race_winner": "timer",
+                "selected": selected,
+                "send_fallback_clicked": bool(paste_res.get("send_fallback_clicked")),
+                "display": disp,
+                "app": app,
+                "wake": line,
+            }
+        if not paste_res.get("ok"):
+            return _refuse(
+                str(paste_res.get("reason") or "no_composer"),
+                display=disp,
+                app=app,
+                selected=selected,
+                expected_title=verdict.get("expected_title"),
+                active_title=verdict.get("active_title"),
+                expected_agent_id=verdict.get("expected_agent_id"),
+                active_agent_id=verdict.get("active_agent_id"),
+            )
+
     await asyncio.sleep(0.25)
     post = await probe_surface(ws_url)
     delivered = bool(

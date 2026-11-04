@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import re
 from pathlib import Path
@@ -11,6 +12,10 @@ from unittest.mock import AsyncMock
 import pytest
 
 from cursor_bridge import wake_delivery as wd
+from cursor_bridge.display_interaction_locks import (
+    _DISPLAY_SWITCH_DEPTH,
+    display_switch_lock,
+)
 from cursor_bridge.chat_surface import classify_surface
 from cursor_bridge.chat_target import wake_line
 from cursor_bridge.composer_witness import composer_witness_expression
@@ -622,3 +627,171 @@ async def test_deliver_wake_timer_win_classifies_unknown_not_refused(
     assert out["ok"] is False
     kind, _why = classify_display(200, out, None)
     assert kind == "unknown"
+
+
+def _stale_match_surface(expected_title: str) -> dict[str, Any]:
+    stale = "BRIDGE_WAKE thread=15851 turn=289"
+    return classify_surface(
+        [],
+        [{"text": expected_title, "selected": True, "agent_id": ""}],
+        composer_draft=stale,
+    )
+
+
+def _wake_list_pages(app: str) -> list[dict[str, str]]:
+    title = "Cursor Agents" if app == "cursor" else "Grok Bot"
+    return [{"title": title, "web_socket_debugger_url": "ws://x"}]
+
+
+@pytest.mark.asyncio
+async def test_deliver_wake_paste_runs_under_display_switch_lock_grok(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Break: operator paste could interleave if paste ran outside the switch lock."""
+    expected_title = "15851 slug"
+    surface_match = _stale_match_surface(expected_title)
+    surface_post = {**surface_match, "composer_draft": ""}
+    lock_depth_at_paste: list[int] = []
+
+    async def _probe(_url: str) -> dict[str, Any]:
+        if not hasattr(_probe, "n"):
+            _probe.n = 0
+        _probe.n += 1
+        return surface_match if _probe.n == 1 else surface_post
+
+    async def _dom_paste(*_args: object, **_kwargs: object) -> dict[str, Any]:
+        lock_depth_at_paste.append(_DISPLAY_SWITCH_DEPTH.get())
+        return {"ok": True, "send_fallback_clicked": False}
+
+    monkeypatch.setattr(wd, "list_pages", lambda _o: _wake_list_pages("grok"))
+    monkeypatch.setattr(wd, "probe_surface", _probe)
+    monkeypatch.setattr(wd, "dom_insert_and_send", _dom_paste)
+
+    out = await deliver_wake(
+        display="9",
+        app="grok",
+        thread="15851",
+        slug="slug",
+        turn=290,
+    )
+
+    assert out.get("pasted") is True
+    assert lock_depth_at_paste == [1]
+
+
+@pytest.mark.asyncio
+async def test_deliver_wake_paste_runs_under_display_switch_lock_cursor(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    expected_title = "15851 slug"
+    surface_match = _stale_match_surface(expected_title)
+    surface_post = {**surface_match, "composer_draft": ""}
+    lock_depth_at_paste: list[int] = []
+
+    async def _probe(_url: str) -> dict[str, Any]:
+        if not hasattr(_probe, "n"):
+            _probe.n = 0
+        _probe.n += 1
+        return surface_match if _probe.n == 1 else surface_post
+
+    async def _cursor_paste(*_args: object, **_kwargs: object) -> dict[str, Any]:
+        lock_depth_at_paste.append(_DISPLAY_SWITCH_DEPTH.get())
+        return {"ok": True, "send_fallback_clicked": False}
+
+    monkeypatch.setattr(wd, "list_pages", lambda _o: _wake_list_pages("cursor"))
+    monkeypatch.setattr(wd, "probe_surface", _probe)
+    monkeypatch.setattr(wd, "_paste_cursor_services", _cursor_paste)
+
+    out = await deliver_wake(
+        display="8",
+        app="cursor",
+        thread="15851",
+        slug="slug",
+        turn=290,
+    )
+
+    assert out.get("pasted") is True
+    assert lock_depth_at_paste == [1]
+
+
+@pytest.mark.asyncio
+async def test_deliver_wake_waits_on_display_switch_lock(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Break: concurrent display switch must delay wake paste until lock frees."""
+    expected_title = "15851 slug"
+    surface_match = _stale_match_surface(expected_title)
+    surface_post = {**surface_match, "composer_draft": ""}
+    holder_ready = asyncio.Event()
+    release_holder = asyncio.Event()
+    paste_started = asyncio.Event()
+
+    async def _probe(_url: str) -> dict[str, Any]:
+        if not hasattr(_probe, "n"):
+            _probe.n = 0
+        _probe.n += 1
+        return surface_match if _probe.n == 1 else surface_post
+
+    async def _dom_paste(*_args: object, **_kwargs: object) -> dict[str, Any]:
+        paste_started.set()
+        return {"ok": True, "send_fallback_clicked": False}
+
+    async def _holder() -> None:
+        async with display_switch_lock("9"):
+            holder_ready.set()
+            await release_holder.wait()
+
+    monkeypatch.setattr(wd, "list_pages", lambda _o: _wake_list_pages("grok"))
+    monkeypatch.setattr(wd, "probe_surface", _probe)
+    monkeypatch.setattr(wd, "dom_insert_and_send", _dom_paste)
+
+    holder = asyncio.create_task(_holder())
+    await holder_ready.wait()
+    wake_task = asyncio.create_task(
+        deliver_wake(
+            display="9",
+            app="grok",
+            thread="15851",
+            slug="slug",
+            turn=290,
+        )
+    )
+    await asyncio.sleep(0.05)
+    assert not paste_started.is_set()
+    release_holder.set()
+    out = await wake_task
+    await holder
+    assert paste_started.is_set()
+    assert out.get("pasted") is True
+
+
+@pytest.mark.asyncio
+async def test_deliver_wake_paste_timeout_releases_display_switch_lock(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Break: paste failure must not strand the per-display switch lock."""
+    expected_title = "15851 slug"
+    surface_match = _stale_match_surface(expected_title)
+
+    async def _probe(_url: str) -> dict[str, Any]:
+        return surface_match
+
+    async def _dom_paste(*_args: object, **_kwargs: object) -> dict[str, Any]:
+        raise TimeoutError("paste hung")
+
+    monkeypatch.setattr(wd, "list_pages", lambda _o: _wake_list_pages("grok"))
+    monkeypatch.setattr(wd, "probe_surface", _probe)
+    monkeypatch.setattr(wd, "dom_insert_and_send", _dom_paste)
+
+    out = await deliver_wake(
+        display="9",
+        app="grok",
+        thread="15851",
+        slug="slug",
+        turn=290,
+    )
+
+    assert out.get("reason") == "paste_failed"
+    assert out.get("detail") == "TimeoutError"
+    async with display_switch_lock("9"):
+        pass
