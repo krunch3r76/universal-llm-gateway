@@ -5,7 +5,6 @@ from __future__ import annotations
 import json
 
 import pytest
-
 from agent_bus_store.resume_agent_projection import project_resume_bundle_agent
 from agent_bus_store.resume_fence import resume_bundle_sha256
 
