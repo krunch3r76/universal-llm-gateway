@@ -175,7 +175,10 @@ async def press_send_chords(page, needle: str = "", *, composer=None) -> None:
     """Legacy send shortcuts when Enter alone did not commit the draft.
 
     Control+Enter then Meta+Enter cover pre-stream-break-in compose surfaces.
+    When *needle* is set, skip all chords if our marker is no longer in the box.
     """
+    if needle and not await composer_holds_draft(page, needle, composer=composer):
+        return
     await page.keyboard.press("Control+Enter")
     if needle and not await composer_holds_draft(page, needle, composer=composer):
         return
@@ -248,20 +251,13 @@ async def prove_composer_submitted(page, prompt: str, *, composer=None) -> None:
         elapsed += _RELEASE_POLL_MS
     draft = await read_composer_draft(page, composer=composer)
     holds = composer_holds_needle(draft, needle)
-    composer_len = int(draft.get("len") or 0)
-    committed = await marker_survives_settle(page, needle, settle_ms=0)
-    if not holds and composer_len > 0 and not committed:
-        await page.keyboard.press("Enter")
-        if not await composer_still_holds_uncommitted_draft(
-            page, needle, composer=composer
-        ):
-            return
-    elif holds:
-        await page.keyboard.press("Enter")
-        if not await composer_still_holds_uncommitted_draft(
-            page, needle, composer=composer
-        ):
-            return
+    if not holds:
+        return
+    await page.keyboard.press("Enter")
+    if not await composer_still_holds_uncommitted_draft(
+        page, needle, composer=composer
+    ):
+        return
     await press_send_chords(page, needle, composer=composer)
     if not await composer_still_holds_uncommitted_draft(
         page, needle, composer=composer
