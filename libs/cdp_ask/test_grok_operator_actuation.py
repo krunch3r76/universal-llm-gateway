@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock
 
+import httpx
 import pytest
+from bus_watch.endpoint_wake_transport import classify_display
+
 from cdp_ask.display_chat_models import DisplayChatPasteRequest
 from cdp_ask.grok_operator_actuation import relay_grok_operator_paste_if_needed
 
@@ -48,13 +51,21 @@ async def test_relay_forwards_when_local_cdp_unreachable(
         content = b'{"ok": true, "reason": "delivered", "delivered": true, "readback_ok": true}'
 
         def json(self) -> dict[str, object]:
-            return {"ok": True, "reason": "delivered", "delivered": True, "readback_ok": True}
+            return {
+                "ok": True,
+                "reason": "delivered",
+                "delivered": True,
+                "readback_ok": True,
+            }
 
         def raise_for_status(self) -> None:
             return None
 
     mock_post = AsyncMock(return_value=_Resp())
-    monkeypatch.setattr("cdp_ask.grok_operator_actuation.httpx.AsyncClient", lambda **_: _FakeClient(mock_post))
+    monkeypatch.setattr(
+        "cdp_ask.grok_operator_actuation.httpx.AsyncClient",
+        lambda **_: _FakeClient(mock_post),
+    )
 
     req = DisplayChatPasteRequest(
         display="10",
@@ -147,8 +158,8 @@ async def test_relay_hub_path_single_wrap_on_insert(
     )
     monkeypatch.setattr("cdp_ask.display_chat_paste.emit", lambda _e: None)
 
-    from cdp_ask.display_chat_paste import execute_display_chat_paste
     from cdp_ask.display_chat_models import DisplayChatPasteRequest
+    from cdp_ask.display_chat_paste import execute_display_chat_paste
 
     pre_wrapped = wrap_operator_message(
         text="relay hop",
@@ -169,6 +180,102 @@ async def test_relay_hub_path_single_wrap_on_insert(
     assert inserted[0].count(OPERATOR_HEADER) == 1
     assert inserted[0].count(WATERMARK) == 1
     assert inserted[0].count(RELAY_NONCE_LABEL) == 1
+
+
+def _paste_req() -> DisplayChatPasteRequest:
+    return DisplayChatPasteRequest(
+        display="10",
+        app="grok",
+        agent_id="a1",
+        text="hi",
+        grant="operator",
+        authorization_source="agent-bus:1#1",
+    )
+
+
+def _relay_with_post_error(
+    monkeypatch: pytest.MonkeyPatch, exc: BaseException
+) -> tuple[AsyncMock, list[dict[str, object]]]:
+    """Run relay with ``post`` raising ``exc``; return mock and raw bodies passed to ``_to_response``."""
+    from cdp_ask import display_chat_paste
+
+    captured: list[dict[str, object]] = []
+    real_to_response = display_chat_paste._to_response
+
+    def _capture(raw: dict[str, object], *, req: DisplayChatPasteRequest) -> object:
+        captured.append(dict(raw))
+        return real_to_response(raw, req=req)
+
+    monkeypatch.setattr("cdp_ask.display_chat_paste._to_response", _capture)
+    monkeypatch.setattr(
+        "cdp_ask.grok_operator_actuation.local_grok_cdp_reachable",
+        lambda **_: False,
+    )
+    monkeypatch.setattr(
+        "cdp_ask.grok_operator_actuation.operator_actuation_paste_url",
+        lambda: "http://10.0.0.67:8770",
+    )
+    mock_post = AsyncMock(side_effect=exc)
+    monkeypatch.setattr(
+        "cdp_ask.grok_operator_actuation.httpx.AsyncClient",
+        lambda **_: _FakeClient(mock_post),
+    )
+    return mock_post, captured
+
+
+@pytest.mark.asyncio
+async def test_relay_read_timeout_returns_outcome_unknown(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Break: hub may have pasted after 120s read timeout; must not classify as retriable."""
+    _, captured = _relay_with_post_error(
+        monkeypatch, httpx.ReadTimeout("read timed out")
+    )
+    out = await relay_grok_operator_paste_if_needed(_paste_req())
+    assert out is not None
+    assert out.ok is False
+    assert out.reason == "outcome_unknown"
+    assert captured[0]["detail"] == "ReadTimeout"
+
+
+@pytest.mark.asyncio
+async def test_relay_connect_error_returns_debug_unreachable(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Break: TCP never established; wake dispatcher may retry paste."""
+    _, captured = _relay_with_post_error(
+        monkeypatch, httpx.ConnectError("connection refused")
+    )
+    out = await relay_grok_operator_paste_if_needed(_paste_req())
+    assert out is not None
+    assert out.reason == "debug_unreachable"
+    assert captured[0]["detail"] == "ConnectError"
+
+
+@pytest.mark.asyncio
+async def test_relay_connect_timeout_returns_debug_unreachable(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Break: connect-phase timeout; request not sent to hub."""
+    _, captured = _relay_with_post_error(
+        monkeypatch, httpx.ConnectTimeout("connect timed out")
+    )
+    out = await relay_grok_operator_paste_if_needed(_paste_req())
+    assert out is not None
+    assert out.reason == "debug_unreachable"
+    assert captured[0]["detail"] == "ConnectTimeout"
+
+
+@pytest.mark.asyncio
+async def test_relay_read_timeout_not_pending_in_classify_display(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Break: outcome_unknown after read timeout must not re-queue wake as pending."""
+    _, _ = _relay_with_post_error(monkeypatch, httpx.ReadTimeout("read timed out"))
+    out = await relay_grok_operator_paste_if_needed(_paste_req())
+    assert out is not None
+    state, _ = classify_display(200, out.model_dump(), None)
+    assert state != "pending"
 
 
 class _FakeClient:
