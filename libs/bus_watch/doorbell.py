@@ -569,8 +569,9 @@ def _compose_successor_wake(
     if seat_dispatch_surface(seat) is None and skill_detail == "blocked":
         lines.append(
             "SKILL SECTIONS (house_resume): BLOCKED over wake cap — "
-            'fs(op="md_list", sandbox="workspaces", '
-            'path="universal-llm-gateway/cursor-plugins/ulg-ecosystem/skills/ide-continuity/SKILL.md")'
+            'fs(op="md_read", sandbox="workspaces", '
+            'path="universal-llm-gateway/cursor-plugins/ulg-ecosystem/skills/ide-continuity/SKILL.md", '
+            'section="Startup section load (house paths)")'
         )
     elif seat_dispatch_surface(seat) is None:
         from bus_watch.hop_skill_sections import format_skill_load_block

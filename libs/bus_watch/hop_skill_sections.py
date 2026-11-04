@@ -269,10 +269,10 @@ def format_skill_load_block(
                 continue
             groups.setdefault(row.path, []).append(row.section)
         parts = [
-            f"{path}: " + " | ".join(sections) for path, sections in groups.items()
+            f"{path}: " + "|".join(sections) for path, sections in groups.items()
         ]
-        body = "; ".join(parts) if parts else "(none)"
-        lines = [f"SKILL SECTIONS ({operation}): md_read — {body}."]
+        body = ";".join(parts) if parts else "(none)"
+        lines = [f"SKILL SECTIONS ({operation}): md_read {body}"]
         lines.extend(blocked)
         return "\n".join(lines) + "\n"
     lines = [
