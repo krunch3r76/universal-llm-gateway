@@ -35,6 +35,7 @@ import os
 import shlex
 import signal
 import sys
+import tempfile
 import time
 from pathlib import Path
 
@@ -148,6 +149,28 @@ def _utcnow() -> str:
     from datetime import UTC, datetime
 
     return datetime.now(UTC).isoformat(timespec="seconds").replace("+00:00", "Z")
+
+
+def _persist_full_snapshot(root: str, digest: dict) -> tuple[str, str]:
+    """Atomically write the full digest bytes the projection hash must match."""
+    blob = json.dumps(
+        digest, separators=(",", ":"), sort_keys=True, default=str
+    ).encode("utf-8")
+    snap = _WATCH_DIR / f"liaison-{root}.digest-full.json"
+    fd, tmp_name = tempfile.mkstemp(
+        dir=_WATCH_DIR, prefix=f".liaison-{root}.digest-full.", suffix=".tmp"
+    )
+    try:
+        with os.fdopen(fd, "wb") as handle:
+            handle.write(blob)
+        os.replace(tmp_name, snap)
+    except Exception:
+        try:
+            os.unlink(tmp_name)
+        except OSError:
+            pass
+        raise
+    return hashlib.sha256(blob).hexdigest(), str(snap)
 
 
 def _emit_digest_payload(
@@ -598,13 +621,7 @@ def main() -> int:
                 max_hop_minutes=float(policy.get("max_hop_minutes") or 60),
                 turns_seen=int((digest.get("root") or {}).get("turns") or 0),
             )
-        snap = _WATCH_DIR / f"liaison-{root}.digest-full.json"
-        blob = json.dumps(
-            digest, separators=(",", ":"), sort_keys=True, default=str
-        ).encode("utf-8")
-        tmp = snap.with_suffix(".json.tmp")
-        tmp.write_bytes(blob)
-        tmp.replace(snap)
+        snap_sha, snap_path = _persist_full_snapshot(root, digest)
         if not args.emit_only:
             save_state(state_path, state)
         print(
@@ -612,8 +629,8 @@ def main() -> int:
                 _emit_digest_payload(
                     digest,
                     full=args.full_digest,
-                    snapshot_sha256=hashlib.sha256(blob).hexdigest(),
-                    snapshot_path=str(snap),
+                    snapshot_sha256=snap_sha,
+                    snapshot_path=snap_path,
                 ),
                 default=str,
             )
@@ -848,8 +865,15 @@ def _loop(args, root, state, state_path, register, holder, last_emit):  # noqa: 
             publish_if_enabled(
                 root, digest, state, require_change=True
             ) == "published" and save_state(state_path, state)
+            full = bool(getattr(args, "full_digest", False))
+            snap_sha = snap_path = None
+            if not full:
+                snap_sha, snap_path = _persist_full_snapshot(root, digest)
             payload = _emit_digest_payload(
-                digest, full=bool(getattr(args, "full_digest", False))
+                digest,
+                full=full,
+                snapshot_sha256=snap_sha,
+                snapshot_path=snap_path,
             )
             print(f"{_SENTINEL} {json.dumps(payload, default=str)}", flush=True)
             last_emit = now
