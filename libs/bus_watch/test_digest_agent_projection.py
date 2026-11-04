@@ -137,9 +137,10 @@ def test_cap_uses_same_serialization_as_render() -> None:
 def test_projection_carries_full_digest_rebuild_pointer() -> None:
     raw = _duplicate_lane_digest()
     proj = project_liaison_digest_agent(raw)
-    rebuild = str(proj["projection"]["full_digest_rebuild_read_only"])
+    rebuild = str(proj["projection"]["full_digest_snapshot_read_only"])
     assert "9732" in rebuild
     assert "--emit-only" in rebuild
+    assert "lanes_omitted" not in proj
     assert proj["projection"]["full_digest_sha256"]
 
 

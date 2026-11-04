@@ -566,7 +566,13 @@ def _compose_successor_wake(
         f"addresses: dispatch(tool=\"continuity\", arguments='{resume_args}'); "
         f"agent_bus_read(thread_get, thread={root_id}); agent-bus:{echo} (echo){extras}",
     ]
-    if seat_dispatch_surface(seat) is None and skill_detail != "none":
+    if seat_dispatch_surface(seat) is None and skill_detail == "blocked":
+        lines.append(
+            "SKILL SECTIONS (house_resume): BLOCKED over wake cap — "
+            'fs(op="md_list", sandbox="workspaces", '
+            'path="universal-llm-gateway/cursor-plugins/ulg-ecosystem/skills/ide-continuity/SKILL.md")'
+        )
+    elif seat_dispatch_surface(seat) is None:
         from bus_watch.hop_skill_sections import format_skill_load_block
 
         detail = "compact" if skill_detail == "compact" else "full"
@@ -710,9 +716,6 @@ def render_successor_wake(
 
     row_text = row
     message = compose(row_text=row_text)
-    if len(message.encode("utf-8")) > cap and skill_detail == "compact":
-        skill_detail = "none"
-        message = compose(row_text=row_text)
     if len(message.encode("utf-8")) <= cap:
         return _inline_successor_dispatch_skills(message, seat)
 
@@ -729,6 +732,9 @@ def render_successor_wake(
         return False
 
     while len(message.encode("utf-8")) > cap and shed():
+        message = compose(row_text=row_text)
+    if len(message.encode("utf-8")) > cap and skill_detail == "compact":
+        skill_detail = "blocked"
         message = compose(row_text=row_text)
     if len(message.encode("utf-8")) > cap:
         row_text = _truncate_row_for_cap(

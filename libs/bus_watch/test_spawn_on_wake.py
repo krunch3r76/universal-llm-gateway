@@ -324,6 +324,7 @@ def test_successor_message_sheds_when_over_cap() -> None:
     )
     assert len(text.encode("utf-8")) <= 2048
     assert "..." in text
+    assert "SKILL SECTIONS" in text
 
 
 def _default_successor() -> str:

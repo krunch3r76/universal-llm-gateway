@@ -93,10 +93,16 @@ def _lane_retrieval(lid: str) -> str:
     return f"agent_bus_read(fetch, thread={lid}, last=5, compact=true)"
 
 
-def _full_digest_emit_only_retrieval(root_id: str) -> str:
-    return (
-        f"scripts/liaison-tick.py --root {root_id} --once --full-digest --emit-only"
-    )
+def _full_digest_emit_only_retrieval(root_id: str, snapshot_path: str | None = None) -> str:
+    if snapshot_path:
+        return (
+            f"scripts/liaison-tick.py --root {root_id} --once --emit-only "
+            f"# snapshot {snapshot_path}"
+        )
+    from bus_watch.fable_lock import WATCH_DIR
+
+    path = WATCH_DIR / f"liaison-{root_id}.digest-full.json"
+    return f"scripts/liaison-tick.py --root {root_id} --once --emit-only # snapshot {path}"
 
 
 def _compact_lane_disposition(lane: dict[str, Any]) -> dict[str, Any]:
@@ -269,6 +275,7 @@ def _apply_cap(
     root_id: str,
     cap_bytes: int,
     full_digest_sha256: str,
+    snapshot_path: str | None = None,
 ) -> dict[str, Any]:
     lanes = list(out.get("lanes") or [])
     attention = list(out.get("attention") or [])
@@ -325,7 +332,7 @@ def _apply_cap(
         retrieval = (
             _lane_retrieval(attn_id)
             if attn_id
-            else _full_digest_emit_only_retrieval(root_id)
+            else _full_digest_emit_only_retrieval(root_id, snapshot_path)
         )
         out.setdefault("attention_continued", []).append(
             {
@@ -340,14 +347,20 @@ def _apply_cap(
     out["overflow"] = {
         "reason": "mandatory_exceeds_cap",
         "cap_bytes": cap_bytes,
-        "wire_bytes": len(serialize_agent_digest(out)),
         "full_digest": {
             "verify_sha256": full_digest_sha256,
-            "rebuild_read_only": _full_digest_emit_only_retrieval(root_id),
+            "snapshot_read_only": _full_digest_emit_only_retrieval(
+                root_id, snapshot_path
+            ),
         },
     }
-    if len(continued):
+    if continued:
         out["lanes_continued_count"] = len(continued)
+    for _ in range(4):
+        measured = len(serialize_agent_digest(out))
+        if out["overflow"].get("wire_bytes") == measured:
+            break
+        out["overflow"]["wire_bytes"] = measured
     return out
 
 
@@ -355,6 +368,8 @@ def project_liaison_digest_agent(
     digest: dict[str, Any],
     *,
     cap_bytes: int = DEFAULT_AGENT_DIGEST_CAP_BYTES,
+    full_digest_sha256: str | None = None,
+    snapshot_path: str | None = None,
 ) -> dict[str, Any]:
     """Compact digest for agent-facing CLI/tool responses; full digest stays internal."""
     base = project_digest(digest)
@@ -374,8 +389,13 @@ def project_liaison_digest_agent(
         if isinstance(rows, list):
             merged_root[key] = rows
     root = _dedupe_root_notices(merged_root, attention, root_id=root_id)
-    fp_src = json.dumps(digest, sort_keys=True, default=str).encode("utf-8")
-    full_sha = hashlib.sha256(fp_src).hexdigest()
+    if full_digest_sha256 is None:
+        fp_src = json.dumps(
+            digest, separators=(",", ":"), sort_keys=True, default=str
+        ).encode("utf-8")
+        full_sha = hashlib.sha256(fp_src).hexdigest()
+    else:
+        full_sha = full_digest_sha256
     out: dict[str, Any] = {
         **base,
         "root": root,
@@ -385,13 +405,20 @@ def project_liaison_digest_agent(
             "source": "digest_agent_projection",
             "full_digest_sha256": full_sha,
             "cap_bytes": cap_bytes,
-            "full_digest_rebuild_read_only": (
-                _full_digest_emit_only_retrieval(root_id) if root_id else None
+            "full_digest_snapshot_read_only": (
+                _full_digest_emit_only_retrieval(root_id, snapshot_path) if root_id else None
             ),
         },
     }
     out.pop("unread_toc", None)
-    return _apply_cap(out, root_id=root_id, cap_bytes=cap_bytes, full_digest_sha256=full_sha)
+    out.pop("lanes_omitted", None)
+    return _apply_cap(
+        out,
+        root_id=root_id,
+        cap_bytes=cap_bytes,
+        full_digest_sha256=full_sha,
+        snapshot_path=snapshot_path,
+    )
 
 
 def render_liaison_digest_agent_json(

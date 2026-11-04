@@ -29,6 +29,7 @@ Orchestra CLI alias: ``scripts/metronome.py`` (Metronome; ``--loop`` / ``--spawn
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import shlex
@@ -149,12 +150,22 @@ def _utcnow() -> str:
     return datetime.now(UTC).isoformat(timespec="seconds").replace("+00:00", "Z")
 
 
-def _emit_digest_payload(digest: dict, *, full: bool) -> dict:
+def _emit_digest_payload(
+    digest: dict,
+    *,
+    full: bool,
+    snapshot_sha256: str | None = None,
+    snapshot_path: str | None = None,
+) -> dict:
     if full:
         return digest
     from bus_watch.digest_agent_projection import project_liaison_digest_agent
 
-    return project_liaison_digest_agent(digest)
+    return project_liaison_digest_agent(
+        digest,
+        full_digest_sha256=snapshot_sha256,
+        snapshot_path=snapshot_path,
+    )
 
 
 def _successor_extra_addresses(raw: object) -> tuple[str, ...]:
@@ -406,6 +417,23 @@ def main() -> int:
     root = str(args.root).strip()
     if not root:
         raise SystemExit("--root (or LIAISON_ROOT) required")
+    if args.emit_only and not args.loop:
+        snap = _WATCH_DIR / f"liaison-{root}.digest-full.json"
+        if not snap.is_file():
+            print(
+                json.dumps(
+                    {
+                        "error": "digest_full_snapshot_missing",
+                        "path": str(snap),
+                        "hint": "run liaison-tick.py --root <id> --once without --emit-only first",
+                    }
+                )
+            )
+            return 2
+        sys.stdout.write(snap.read_text(encoding="utf-8"))
+        if not snap.read_bytes().endswith(b"\n"):
+            sys.stdout.write("\n")
+        return 0
     state_path = (
         Path(args.state_file)
         if args.state_file
@@ -570,9 +598,26 @@ def main() -> int:
                 max_hop_minutes=float(policy.get("max_hop_minutes") or 60),
                 turns_seen=int((digest.get("root") or {}).get("turns") or 0),
             )
+        snap = _WATCH_DIR / f"liaison-{root}.digest-full.json"
+        blob = json.dumps(
+            digest, separators=(",", ":"), sort_keys=True, default=str
+        ).encode("utf-8")
+        tmp = snap.with_suffix(".json.tmp")
+        tmp.write_bytes(blob)
+        tmp.replace(snap)
         if not args.emit_only:
             save_state(state_path, state)
-        print(json.dumps(_emit_digest_payload(digest, full=args.full_digest), default=str))
+        print(
+            json.dumps(
+                _emit_digest_payload(
+                    digest,
+                    full=args.full_digest,
+                    snapshot_sha256=hashlib.sha256(blob).hexdigest(),
+                    snapshot_path=str(snap),
+                ),
+                default=str,
+            )
+        )
         return 0
 
     if args.spawn_on_wake:

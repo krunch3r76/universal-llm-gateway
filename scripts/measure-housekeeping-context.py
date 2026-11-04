@@ -52,7 +52,9 @@ def main() -> int:
     digest = data["digest"]
     bundle = data["resume_bundle"]
 
-    digest_raw = len(json.dumps(digest, sort_keys=True).encode("utf-8"))
+    digest_raw = len(
+        json.dumps(digest, separators=(",", ":"), sort_keys=True).encode("utf-8")
+    )
     proj_digest = project_liaison_digest_agent(digest)
     digest_proj = len(serialize_agent_digest(proj_digest))
 
@@ -66,7 +68,7 @@ def main() -> int:
     full_files = _skill_full_files_utf8()
 
     combined_before = digest_raw + resume_raw + full_files
-    combined_after = digest_proj + resume_proj + section_bodies + compact_plan
+    combined_after = digest_proj + resume_proj + section_bodies + plan_overhead + compact_plan
 
     report = {
         "fixture": str(FIXTURE.relative_to(REPO)),

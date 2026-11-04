@@ -10,7 +10,7 @@ from typing import Literal
 from claude_bundles.catalog import load_skill_catalog
 from markdown_sections import list_sections, read_section
 
-OperationKind = Literal["house_resume", "liaison_event", "checkpoint_hop", "implement"]
+OperationKind = Literal["house_resume", "liaison_event", "checkpoint_hop"]
 
 LoadedKey = tuple[str, str, str]  # slug, section_path, file_sha256
 
@@ -37,10 +37,6 @@ _OPERATION_SECTIONS: dict[OperationKind, dict[str, tuple[str, ...]]] = {
     "checkpoint_hop": {
         "checkpoint-discipline": ("Utterance", "Resume (lean default)"),
         "ide-continuity": ("Startup section load (house paths)", "Registers"),
-    },
-    "implement": {
-        "ide-continuity": ("Play (binding)",),
-        "checkpoint-discipline": ("Posting a RULING between checkpoints",),
     },
 }
 
@@ -260,19 +256,25 @@ def format_skill_load_block(
 ) -> str:
     plan = build_skill_section_plan(operation, already_loaded=already_loaded)
     if detail == "compact":
-        named: list[str] = []
+        groups: dict[str, list[str]] = {}
+        blocked: list[str] = []
         for row in plan:
-            if row.status in ("ok", "missing_section", "stale_skip") and row.section:
-                label = f"{row.slug}§{row.section}"
-                if label not in named:
-                    named.append(label)
-        section_list = "; ".join(named) if named else "(none)"
-        if len(section_list) > 220:
-            section_list = section_list[:217] + "..."
-        return (
-            f"SKILL SECTIONS ({operation}): md_read — {section_list}. "
-            f"Full plan: hop_skill_sections.format_skill_load_block({operation!r}).\n"
-        )
+            if row.status == "missing_section":
+                blocked.append(f"BLOCKED: {row.path} missing section {row.section!r}")
+                continue
+            if row.status == "missing_file":
+                blocked.append(f"BLOCKED: {row.fs_call}")
+                continue
+            if not row.section:
+                continue
+            groups.setdefault(row.path, []).append(row.section)
+        parts = [
+            f"{path}: " + " | ".join(sections) for path, sections in groups.items()
+        ]
+        body = "; ".join(parts) if parts else "(none)"
+        lines = [f"SKILL SECTIONS ({operation}): md_read — {body}."]
+        lines.extend(blocked)
+        return "\n".join(lines) + "\n"
     lines = [
         f"SKILL SECTIONS ({operation}): md_list/md_read required sections — not full-file skim.",
     ]

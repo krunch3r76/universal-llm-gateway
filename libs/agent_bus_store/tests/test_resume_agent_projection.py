@@ -48,7 +48,7 @@ def test_distinct_next_action_preserved() -> None:
 def test_tail_keeps_non_duplicate_fields() -> None:
     proj = project_resume_bundle_agent(_sample_bundle())
     assert proj["tail"]["extra"] == "keep-me"
-    assert "next_action" not in proj["tail"]
+    assert proj["tail"]["next_action"] == "Run tick once"
 
 
 def test_house_unread_not_dropped_against_tape() -> None:

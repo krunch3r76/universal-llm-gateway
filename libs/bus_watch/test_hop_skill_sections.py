@@ -40,10 +40,16 @@ def test_house_resume_block_lists_md_read() -> None:
 
 
 def test_compact_block_names_sections() -> None:
+    plan = build_skill_section_plan("house_resume")
     block = format_skill_load_block("house_resume", detail="compact")
-    assert "ide-continuity§" in block
-    assert "Before acting" in block
-    assert "format_skill_load_block('house_resume')" in block
+    assert "checkpoint-discipline" in block
+    assert "..." not in block
+    for row in plan:
+        if row.status == "ok":
+            assert row.section in block
+            assert row.path in block
+        if row.status == "missing_section":
+            assert "BLOCKED" in block
 
 
 def test_core_sections_do_not_double_count_h1() -> None:
