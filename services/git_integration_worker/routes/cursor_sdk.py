@@ -4057,7 +4057,27 @@ async def admit_cursor_dispatch(
             invalid_fields=["model"],
             validation_stage="model_resolution",
         )
-    from cursor_capabilities import CURSOR_MODEL_CAPABILITIES
+    from cursor_capabilities import (
+        CURSOR_MODEL_CAPABILITIES,
+        cursor_sdk_model_set_fix_hint,
+        is_cursor_sdk_model_admitted,
+    )
+
+    if not is_cursor_sdk_model_admitted(req.model):
+        return _reject_pre_admission(
+            req,
+            worker_error_code="CURSOR_MODEL_UNTRUSTED",
+            failure_layer="validation",
+            http_status=422,
+            detail_summary="model is outside the cursor-sdk admitted set",
+            invalid_fields=["model"],
+            validation_stage="model_set",
+            retryable=False,
+            extra_data={
+                "fix_hint": cursor_sdk_model_set_fix_hint(),
+                "allowed_models": ["cursor/composer-2.5", "cursor/grok-4.7"],
+            },
+        )
 
     card_entry = CURSOR_MODEL_CAPABILITIES.get(config.model_id)
     if card_entry is None:

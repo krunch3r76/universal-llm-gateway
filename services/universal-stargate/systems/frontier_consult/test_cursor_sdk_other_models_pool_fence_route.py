@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from unittest.mock import AsyncMock, Mock
+from unittest.mock import AsyncMock, MagicMock, Mock
 
 import pytest
 from fastapi import Response
@@ -11,15 +11,22 @@ from fastapi.responses import JSONResponse
 from .route import TeamDispatchGenerateBody, team_dispatch
 
 
+def _mock_proxy(monkeypatch: pytest.MonkeyPatch) -> None:
+    proxy = MagicMock()
+    proxy.event_bus = None
+    monkeypatch.setattr("systems.proxy.dependencies.get_proxy", lambda: proxy)
+
+
 @pytest.mark.asyncio
 async def test_cdp_generate_bypasses_cursor_sdk_pool_fence(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    _mock_proxy(monkeypatch)
     cdp_mock = AsyncMock(
         return_value={"execution_id": "cdp-exec", "thread_id": "cdp-t"},
     )
     monkeypatch.setattr(
-        "systems.frontier_consult.route.dispatch_cdp_generate",
+        "systems.frontier_consult.route_team_dispatch.dispatch_cdp_generate",
         cdp_mock,
     )
     fence_mock = Mock()
@@ -37,7 +44,8 @@ async def test_cdp_generate_bypasses_cursor_sdk_pool_fence(
     )
     result = await team_dispatch(body, Response())
 
-    assert result == {"execution_id": "cdp-exec", "thread_id": "cdp-t"}
+    assert result["execution_id"] == "cdp-exec"
+    assert result["thread_id"] == "cdp-t"
     cdp_mock.assert_awaited_once()
     fence_mock.assert_not_called()
 
@@ -45,7 +53,9 @@ async def test_cdp_generate_bypasses_cursor_sdk_pool_fence(
 @pytest.mark.asyncio
 async def test_cursor_sdk_omit_path_other_models_generate_rejected_at_route(
     monkeypatch: pytest.MonkeyPatch,
+    admit_other_cursor_models: None,
 ) -> None:
+    _mock_proxy(monkeypatch)
     worker = AsyncMock(return_value=(True, {"dispatch_id": "d1"}))
     monkeypatch.setattr(
         "systems.frontier_consult.cursor_sdk_generate.dispatch_cursor_sdk_worker",
@@ -96,7 +106,9 @@ async def test_cursor_sdk_omit_path_other_models_generate_rejected_at_route(
 @pytest.mark.asyncio
 async def test_cursor_sdk_explicit_other_models_generate_passes_fence_at_route(
     monkeypatch: pytest.MonkeyPatch,
+    admit_other_cursor_models: None,
 ) -> None:
+    _mock_proxy(monkeypatch)
     from unittest.mock import Mock
 
     fence_spy = Mock(

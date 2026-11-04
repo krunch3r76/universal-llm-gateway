@@ -254,7 +254,13 @@ def test_dispatch_composer_fast_alias_unprobed_422(
         json=_dispatch_body(model="cursor/composer-2.5-fast"),
     )
     assert resp.status_code == 422
-    assert resp.json()["code"] == "CURSOR_MODEL_UNPROBED"
+    assert resp.json()["code"] == "CURSOR_MODEL_UNTRUSTED"
+    data = resp.json().get("data") or {}
+    assert data.get("validation_stage") == "model_set"
+    assert data.get("retryable") is False
+    fix_hint = data.get("fix_hint") or ""
+    assert "cursor/composer-2.5" in fix_hint
+    assert "cursor/grok-4.7" in fix_hint
     bridge.assert_not_called()
 
 
@@ -329,13 +335,14 @@ def test_dispatch_admits_and_spawns_task(
 def test_dispatch_opus_5_5_alias_admits(
     _mock_task: MagicMock, client: TestClient
 ) -> None:
+    """Rule A: member alias under the pair allowlist (was opus-5-5 pre gate)."""
     resp = client.post(
         "/api/v1/cursor/dispatch",
-        json=_dispatch_body(model="cursor/opus-5-5"),
+        json=_dispatch_body(model="cursor/grok-4.7"),
     )
     assert resp.status_code == 200
     assert resp.json()["admitted"] is True
-    assert resp.json()["model_id"] == "claude-opus-5-5"
+    assert resp.json()["model_id"] == "grok-4.7"
 
 
 @patch(
@@ -345,13 +352,14 @@ def test_dispatch_opus_5_5_alias_admits(
 def test_dispatch_claude_opus_5_5_admits(
     _mock_task: MagicMock, client: TestClient
 ) -> None:
+    """Rule A: second admitted member path (composer-2.5; was claude-opus-5-5)."""
     resp = client.post(
         "/api/v1/cursor/dispatch",
-        json=_dispatch_body(model="cursor/claude-opus-5-5"),
+        json=_dispatch_body(model="cursor/composer-2.5"),
     )
     assert resp.status_code == 200
     assert resp.json()["admitted"] is True
-    assert resp.json()["model_id"] == "claude-opus-5-5"
+    assert resp.json()["model_id"] == "composer-2.5"
 
 
 @patch(

@@ -14,15 +14,18 @@ from .admission import FrontierEndpointError
 resolve_cursor_sdk_generate_target = admit_pipeline.resolve_cursor_sdk_generate_target
 
 
-def test_cursor_sdk_admits_descriptor_uncovered_model() -> None:
-    _to, family, platform, model = resolve_cursor_sdk_generate_target(
-        "cursor-sdk",
-        model="cursor/claude-sonnet-5",
-        request_id="req-s2-admit",
-    )
-    assert family == "cursor"
-    assert platform == "sdk"
-    assert model == "cursor/claude-sonnet-5"
+def test_cursor_sdk_refuses_non_member_descriptor_model() -> None:
+    with pytest.raises(FrontierEndpointError) as exc_info:
+        resolve_cursor_sdk_generate_target(
+            "cursor-sdk",
+            model="cursor/claude-sonnet-5",
+            request_id="req-s2-refuse",
+        )
+    err = exc_info.value
+    assert err.code == "sdk_generate_model_invalid"
+    assert err.details is not None
+    assert "cursor/composer-2.5" in err.details["fix_hint"]
+    assert "cursor/grok-4.7" in err.details["fix_hint"]
 
 
 def test_cursor_sdk_rejects_denied_model(
@@ -39,7 +42,10 @@ def test_cursor_sdk_rejects_denied_model(
             model="cursor/CLAUDE-SONNET-5",
             request_id="req-s2-deny",
         )
-    assert exc_info.value.code == "sdk_generate_model_invalid"
+    err = exc_info.value
+    assert err.code == "sdk_generate_model_invalid"
+    assert err.details is not None
+    assert "cursor/composer-2.5" in err.details["fix_hint"]
 
 
 def test_non_cursor_empty_allowed_models_unaffected_by_denylist(

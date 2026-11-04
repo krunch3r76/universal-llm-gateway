@@ -152,7 +152,8 @@ workflows:
     jobs: [answer, confer, ask, verify, execute, propagate, sketch, none, conductor]
   check_review:
     # Reviewer omit-model follows workflows.check_review (anthropic sonnet).
-    # Second-pool cursor ids (muse, fable, terra, sol, luna) stay explicit pins.
+    # Cursor-sdk generate admits only composer-2.5 and grok-4.7; other cursor ids
+    # (muse, fable, terra, sol, luna) are not cursor-sdk generate targets.
     seat: reviewer
     model: anthropic/claude-sonnet-5-5
     contracts: []

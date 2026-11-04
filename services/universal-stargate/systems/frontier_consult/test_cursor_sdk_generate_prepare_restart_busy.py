@@ -252,14 +252,11 @@ async def test_prepare_cursor_sdk_generate_invokes_restart_busy_gate(
     with patch(
         "implement_admission.routing.load_route_policy",
         return_value=object(),
-    ), patch(
-        "implement_admission.workflow_registry.load_auto_judgment_default_model",
-        return_value="cursor/auto",
     ):
         await prepare_mod.prepare_cursor_sdk_generate(
             request_id="req-prepare-gate",
             role="worker",
-            model="cursor/auto",
+            model="cursor/composer-2.5",
             subject=None,
             caller_agent="cursor",
             contract="sketch",

@@ -175,7 +175,10 @@ def test_prepare_cursor_models_host_do_not_raise_fence(
 )
 @pytest.mark.asyncio
 async def test_prepare_explicit_other_models_pin_reaches_mint(
-    monkeypatch: pytest.MonkeyPatch, model: str, resolved: str
+    monkeypatch: pytest.MonkeyPatch,
+    model: str,
+    resolved: str,
+    admit_other_cursor_models: None,
 ) -> None:
     probes = _patch_prepare_deps(monkeypatch, resolved_model=resolved)
     try:
@@ -219,6 +222,7 @@ async def test_prepare_omit_path_other_models_refused_before_mint(
 @pytest.mark.asyncio
 async def test_e2e_generate_worker_not_called_for_omit_path_other_models(
     monkeypatch: pytest.MonkeyPatch,
+    admit_other_cursor_models: None,
 ) -> None:
     worker = AsyncMock(return_value=(True, {"dispatch_id": "d1"}))
     monkeypatch.setattr(generate_mod, "dispatch_cursor_sdk_worker", worker)

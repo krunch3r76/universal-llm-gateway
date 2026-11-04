@@ -205,7 +205,11 @@ async def prepare_cursor_sdk_generate(
     effective_contract = (contract or "").strip().lower() or None
     if early_packet_text and not effective_contract:
         effective_contract = extract_contract_from_body(early_packet_text)
-    from cursor_capabilities import is_cursor_model_denied
+    from cursor_capabilities import (
+        cursor_sdk_model_set_details,
+        is_cursor_model_denied,
+        is_cursor_sdk_model_admitted,
+    )
     from implement_admission.routing import load_route_policy
     from implement_admission.workflow_registry import load_auto_judgment_default_model
 
@@ -222,17 +226,19 @@ async def prepare_cursor_sdk_generate(
         raise FrontierEndpointError(
             request_id=request_id,
             field="model",
-            reason="cursor-sdk generate requires a resolvable model",
+            reason="model is outside the cursor-sdk admitted set",
             status_code=422,
             code="sdk_generate_model_invalid",
+            details=cursor_sdk_model_set_details(requested_model=raw_model or None),
         )
     if not resolved_model.startswith("cursor/"):
         raise FrontierEndpointError(
             request_id=request_id,
             field="model",
-            reason="cursor-sdk generate requires a cursor/* model",
+            reason="model is outside the cursor-sdk admitted set",
             status_code=422,
             code="sdk_generate_model_invalid",
+            details=cursor_sdk_model_set_details(requested_model=resolved_model),
         )
     enforce_check_review_substrate_admission(
         role, resolved_model, request_id=request_id, job=effective_contract
@@ -241,9 +247,19 @@ async def prepare_cursor_sdk_generate(
         raise FrontierEndpointError(
             request_id=request_id,
             field="model",
-            reason="cursor model is denied for sdk generate",
+            reason="model is outside the cursor-sdk admitted set",
             status_code=422,
             code="sdk_generate_model_invalid",
+            details=cursor_sdk_model_set_details(requested_model=resolved_model),
+        )
+    if not is_cursor_sdk_model_admitted(resolved_model):
+        raise FrontierEndpointError(
+            request_id=request_id,
+            field="model",
+            reason="model is outside the cursor-sdk admitted set",
+            status_code=422,
+            code="sdk_generate_model_invalid",
+            details=cursor_sdk_model_set_details(requested_model=resolved_model),
         )
     from .cursor_sdk_model_pin import refuse_code_contract_model_mismatch
 
