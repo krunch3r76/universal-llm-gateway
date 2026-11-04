@@ -13,6 +13,7 @@ from pydantic import BaseModel, Field
 
 from ...checkpoint_auto_stamp_wiring import load_thread_tags
 from ...db import get_thread, normalize_thread_id
+from ...resume_agent_projection import project_resume_bundle_agent
 from ...resume_fence import arm_resume_fence
 from ...resume_fence_delivery import (
     deliver_resume_bundle,
@@ -129,7 +130,7 @@ async def create_resume_fence(
         surface=body.surface,
     )
     _resume_fence_error(bundle, thread_id)
-    return bundle
+    return project_resume_bundle_agent(bundle)
 
 
 @router.get("/threads/{thread_id}/resume-fence")

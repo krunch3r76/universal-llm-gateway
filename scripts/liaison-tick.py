@@ -149,6 +149,14 @@ def _utcnow() -> str:
     return datetime.now(UTC).isoformat(timespec="seconds").replace("+00:00", "Z")
 
 
+def _emit_digest_payload(digest: dict, *, full: bool) -> dict:
+    if full:
+        return digest
+    from bus_watch.digest_agent_projection import project_liaison_digest_agent
+
+    return project_liaison_digest_agent(digest)
+
+
 def _successor_extra_addresses(raw: object) -> tuple[str, ...]:
     if raw is None:
         return ()
@@ -200,6 +208,11 @@ def main() -> int:
     p.add_argument("--register", choices=["attended", "autonomous"], default=None)
     p.add_argument("--state-file", default="")
     p.add_argument("--once", action="store_true")
+    p.add_argument(
+        "--full-digest",
+        action="store_true",
+        help="emit the full machine digest (default: agent-facing projection)",
+    )
     p.add_argument("--loop", action="store_true")
     p.add_argument(
         "--spawn-on-wake",
@@ -553,7 +566,7 @@ def main() -> int:
                 turns_seen=int((digest.get("root") or {}).get("turns") or 0),
             )
         save_state(state_path, state)
-        print(json.dumps(digest, default=str))
+        print(json.dumps(_emit_digest_payload(digest, full=args.full_digest), default=str))
         return 0
 
     if args.spawn_on_wake:
@@ -603,7 +616,9 @@ def main() -> int:
     signal.signal(signal.SIGTERM, lambda *_: sys.exit(0))
     last_emit = 0.0
     try:
-        return _loop(args, root, state, state_path, register, holder, last_emit)
+        return _loop(
+            args, root, state, state_path, register, holder, last_emit
+        )
     finally:
         release_root_loop_flock(flock_fd)
         release_fable_lock(holder, root_id=root)
@@ -782,7 +797,10 @@ def _loop(args, root, state, state_path, register, holder, last_emit):  # noqa: 
             publish_if_enabled(
                 root, digest, state, require_change=True
             ) == "published" and save_state(state_path, state)
-            print(f"{_SENTINEL} {json.dumps(digest, default=str)}", flush=True)
+            payload = _emit_digest_payload(
+                digest, full=bool(getattr(args, "full_digest", False))
+            )
+            print(f"{_SENTINEL} {json.dumps(payload, default=str)}", flush=True)
             last_emit = now
         else:
             state["ticks"] = int(state["ticks"]) - 1

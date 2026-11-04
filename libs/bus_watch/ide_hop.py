@@ -56,6 +56,7 @@ from bus_watch.fable_lock import (
     bus_watch_repo_root,
     read_lock,
 )
+from bus_watch.hop_skill_sections import format_skill_load_block
 from bus_watch.ide_budget import AGENT_TRANSCRIPTS, first_line_matches
 from bus_watch.ide_hop_land import (
     DEFAULT_LANDING_TIMEOUT_S,
@@ -375,11 +376,13 @@ def build_ide_hop_message(
     host_label = str(gui_host or ":8").strip() or ":8"
     hop_query = policy_hop_model_query(root_id)
     hop_knobs_json = json.dumps(policy_hop_model_knobs(root_id), separators=(",", ":"))
+    skill_block = format_skill_load_block("checkpoint_hop").rstrip()
     lines = [
         f"resume {root_id}",
         "",
         f"Liaison IDE hop ({register} register){tip}. "
-        f"LOAD the {primary_liaison_slug('ide')} skill (do not skim).",
+        f"Primary liaison skill: {primary_liaison_slug('ide')} — section loads only (see below).",
+        skill_block,
         (
             "HOP: When the operator tells this tab to hop (`hop`, `ide-hop`, `hop now`) "
             "or when budget.stop_class == 'CONTEXT_BUDGET' (tool_calls >= 35 or "
@@ -457,8 +460,8 @@ def build_hop_preamble(
     )
     stance = (
         f"Role:root {root_id} on universal-llm-gateway ({register} register); "
-        "this seat resumes the continuity house (LOAD ide-continuity, LOAD "
-        "liaison-cursor)."
+        "this seat resumes the continuity house (ide-continuity § Registers + "
+        "liaison-cursor via md_read sections — not full-file skim)."
     )
     facts = (
         f"{tip_token}. ARM watchers: {arm_text}. NOW: {row.strip() or '(empty)'}. "
