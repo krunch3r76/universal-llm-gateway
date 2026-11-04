@@ -155,7 +155,13 @@ def wrap_operator_message(
     scope: str,
     run_nonce: str | None = None,
 ) -> str:
-    """Format one operator relay body with header, source, scope, watermark, and run nonce."""
+    """Format one operator relay body with header, source, scope, watermark, and run nonce.
+
+    A caller-supplied ``run_nonce`` replaces a different embedded nonce, or
+    adds one when the body is header-only and has none. Omitting ``run_nonce``
+    leaves an already-wrapped body unchanged; delivery always passes a nonce
+    minted for that attempt.
+    """
     body = (text or "").strip()
     caller_nonce = str(run_nonce or "").strip()
     if operator_message_already_wrapped(body):
@@ -1102,13 +1108,17 @@ async def deliver_operator_paste(
 ) -> dict[str, Any]:
     """Paste one grant-gated message and seal every return after a dispatch.
 
-    Refuses without a grant and an authorization source. Every result from
-    this function passes ``_seal_deliver_exit``, including an exception raised
-    after a click script or an Enter key was sent (readback, artifact capture,
-    screenshot, transcript check, or probe). A verified delivery gets no
-    retryable stamp; any other post-dispatch result is not retryable. Enter
-    runs when the click may not have gone out, including after a decisive
-    page refusal that left the monotonic click fact set.
+    Refuses without a grant and an authorization source. Every attempt mints
+    a new run nonce via ``make_run_nonce`` and passes it to
+    ``wrap_operator_message``, including when ``text`` is already wrapped or
+    is a prior result's ``message`` line, so sent-transcript readback can
+    match only this attempt. Every result from this function passes
+    ``_seal_deliver_exit``, including an exception raised after a click script
+    or an Enter key was sent (readback, artifact capture, screenshot,
+    transcript check, or probe). A verified delivery gets no retryable stamp;
+    any other post-dispatch result is not retryable. Enter runs when the
+    click may not have gone out, including after a decisive page refusal that
+    left the monotonic click fact set.
     """
     click_token = _reset_click_dispatched()
     verified_token = _send_verified.set(False)
@@ -1146,7 +1156,11 @@ async def _deliver_operator_paste_body(
     scope: object = "",
     select: bool = True,
 ) -> dict[str, Any]:
-    """Run one paste attempt. ``deliver_operator_paste`` seals the result."""
+    """Run one paste attempt. ``deliver_operator_paste`` seals the result.
+
+    Mints ``make_run_nonce()`` for this attempt and passes it as ``run_nonce``
+    so an already-wrapped body cannot keep a prior nonce.
+    """
     grant_s = str(grant or "").strip().lower()
     auth_src = str(authorization_source or "").strip()
     if grant_s not in _VALID_GRANTS or not auth_src:
@@ -1171,6 +1185,7 @@ async def _deliver_operator_paste_body(
         text=text,
         authorization_source=auth_src,
         scope=str(scope or "").strip(),
+        run_nonce=make_run_nonce(),
     )
     async with agent_paste_lock(target["display"], aid_s):
         return await _deliver_operator_locked(
