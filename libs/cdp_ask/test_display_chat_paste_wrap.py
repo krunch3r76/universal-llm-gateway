@@ -57,17 +57,19 @@ async def test_execute_display_chat_paste_single_wrap_on_insert(
         "generating": False,
         "recent_messages": [],
     }
-    post = {
-        **surface,
-        "generating": True,
-        "recent_messages": [pre_wrapped],
-        "message_turns": [{"role": "user", "text": pre_wrapped}],
-    }
     probe_n = {"n": 0}
 
     async def _probe(_ws: str) -> dict[str, Any]:
         probe_n["n"] += 1
-        return surface if probe_n["n"] <= 6 else post
+        if probe_n["n"] <= 6 or not inserted:
+            return surface
+        sent = inserted[0]
+        return {
+            **surface,
+            "generating": True,
+            "recent_messages": [sent],
+            "message_turns": [{"role": "user", "text": sent}],
+        }
 
     async def _insert(_ws: str, *, selector: str, line: str) -> dict[str, Any]:
         inserted.append(line)
@@ -163,17 +165,19 @@ def test_http_display_chat_paste_single_wrap_on_insert(
         "generating": False,
         "recent_messages": [],
     }
-    post = {
-        **surface,
-        "generating": True,
-        "recent_messages": [pre_wrapped],
-        "message_turns": [{"role": "user", "text": pre_wrapped}],
-    }
     probe_n = {"n": 0}
 
     async def _probe(_ws: str) -> dict[str, Any]:
         probe_n["n"] += 1
-        return surface if probe_n["n"] <= 6 else post
+        if probe_n["n"] <= 6 or not inserted:
+            return surface
+        sent = inserted[0]
+        return {
+            **surface,
+            "generating": True,
+            "recent_messages": [sent],
+            "message_turns": [{"role": "user", "text": sent}],
+        }
 
     monkeypatch.setattr(
         "cursor_bridge.operator_paste.probe_surface", AsyncMock(side_effect=_probe)

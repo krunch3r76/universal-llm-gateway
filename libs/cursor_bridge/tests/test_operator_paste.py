@@ -28,6 +28,12 @@ from cursor_bridge.operator_paste import (
     watermark_with_nonce,
     wrap_operator_message,
 )
+from cursor_bridge.operator_paste import (
+    _poll_readback as _real_poll_readback,
+)
+from cursor_bridge.operator_paste import (
+    _poll_submit_verified as _real_poll_submit_verified,
+)
 
 pytestmark = pytest.mark.offline
 
@@ -142,6 +148,203 @@ def test_wrap_operator_message_no_nonce_leaves_wrapped_body_unchanged() -> None:
     assert twice == once
 
 
+def _grok_surface(**overrides: Any) -> dict[str, Any]:
+    surface: dict[str, Any] = {
+        "state": "chat_list",
+        "active_title": "Test Grok",
+        "active_agent_id": "agent-1",
+        "titles": ["Test Grok"],
+        "title_counts": {"Test Grok": 1},
+        "agent_ids": {"agent-1": "Test Grok"},
+        "composer_draft": "",
+        "generating": False,
+        "recent_messages": [],
+    }
+    surface.update(overrides)
+    return surface
+
+
+def _header_only_prewrap() -> str:
+    """Operator header and bare watermark, with no Relay-Nonce line."""
+    return (
+        f"{OPERATOR_HEADER}\n\n"
+        "Source: agent-bus:21732#1\n"
+        "Scope: paste\n\n"
+        f"payload\n\n{WATERMARK}"
+    )
+
+
+async def _deliver_once(
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    text: str,
+    surface: dict[str, Any],
+    inserted: list[str],
+) -> dict[str, Any]:
+    """Run one paste against a fixed probe surface and capture the outbound line.
+
+    Poll defaults are bound at import, so the real pollers are called with a
+    zero timeout. ``_submit_verified`` still runs inside those pollers.
+    """
+
+    async def _fast_submit(*args: Any, **kwargs: Any) -> tuple[dict[str, Any], bool]:
+        kwargs["timeout_s"] = 0.0
+        kwargs["interval_s"] = 0.05
+        return await _real_poll_submit_verified(*args, **kwargs)
+
+    async def _fast_readback(
+        *args: Any, **kwargs: Any
+    ) -> tuple[dict[str, Any], dict[str, bool]]:
+        kwargs["timeout_s"] = 0.0
+        kwargs["interval_s"] = 0.05
+        return await _real_poll_readback(*args, **kwargs)
+
+    monkeypatch.setattr(
+        "cursor_bridge.operator_paste._poll_submit_verified", _fast_submit
+    )
+    monkeypatch.setattr("cursor_bridge.operator_paste._poll_readback", _fast_readback)
+
+    async def _insert(_ws: str, *, selector: str, line: str) -> dict[str, Any]:
+        inserted.append(line)
+        return {"ok": True}
+
+    monkeypatch.setattr(
+        "cursor_bridge.operator_paste.list_pages",
+        lambda _o: [{"title": "Grok Bot", "web_socket_debugger_url": "ws://x"}],
+    )
+    monkeypatch.setattr(
+        "cursor_bridge.operator_paste.visible_sidebar_agent_ids",
+        AsyncMock(return_value={"agent-1"}),
+    )
+    monkeypatch.setattr(
+        "cursor_bridge.operator_paste.probe_surface",
+        AsyncMock(return_value=surface),
+    )
+    monkeypatch.setattr("cursor_bridge.operator_paste._insert_composer_text", _insert)
+    monkeypatch.setattr(
+        "cursor_bridge.operator_paste._submit_composer_send_button",
+        AsyncMock(return_value={"ok": True, "send_fallback_clicked": True}),
+    )
+    monkeypatch.setattr(
+        "cursor_bridge.operator_paste._capture_screenshot_artifact",
+        AsyncMock(return_value={"sha256_png": None, "screenshot_path": None}),
+    )
+    return await deliver_operator_paste(
+        display="10",
+        app="grok",
+        agent_id="agent-1",
+        text=text,
+        grant="operator",
+        authorization_source="agent-bus:21732#1",
+        scope="paste",
+    )
+
+
+@pytest.mark.asyncio
+async def test_redeliver_wrapped_body_mints_nonce_and_ignores_stale_transcript(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Break: a nonce-A body sent again must not verify against the nonce-A transcript."""
+    nonce_a = "aaa111bbb222"
+    wrapped = wrap_operator_message(
+        text="payload",
+        authorization_source="agent-bus:21732#1",
+        scope="paste",
+        run_nonce=nonce_a,
+    )
+    stale = _grok_surface(recent_messages=[wrapped])
+    inserted: list[str] = []
+    out = await _deliver_once(
+        monkeypatch, text=wrapped, surface=stale, inserted=inserted
+    )
+    assert len(inserted) == 1
+    sent_nonce = extract_run_nonce_from_line(inserted[0])
+    assert sent_nonce
+    assert sent_nonce != nonce_a
+    assert inserted[0].count(OPERATOR_HEADER) == 1
+    assert inserted[0].count(RELAY_NONCE_LABEL) == 1
+    assert (
+        _submit_verified(
+            stale,
+            watermark=watermark_with_nonce(sent_nonce),
+            body_snippet="",
+            run_nonce=sent_nonce,
+        )
+        is False
+    )
+    assert out["submitted"] is False
+    assert out["run_nonce"] == sent_nonce
+
+
+@pytest.mark.asyncio
+async def test_header_only_prewrap_gets_fresh_nonce_not_watermark_fallback(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Break: a header-only pre-wrap must not verify on the bare WATERMARK fallback."""
+    header_only = _header_only_prewrap()
+    assert extract_run_nonce_from_line(header_only) == ""
+    stale = _grok_surface(recent_messages=[header_only])
+    inserted: list[str] = []
+    out = await _deliver_once(
+        monkeypatch, text=header_only, surface=stale, inserted=inserted
+    )
+    assert len(inserted) == 1
+    sent_nonce = extract_run_nonce_from_line(inserted[0])
+    assert sent_nonce
+    assert inserted[0].count(OPERATOR_HEADER) == 1
+    assert inserted[0].count(RELAY_NONCE_LABEL) == 1
+    assert (
+        _submit_verified(
+            stale,
+            watermark=WATERMARK,
+            body_snippet="payload",
+            run_nonce=sent_nonce,
+        )
+        is False
+    )
+    assert out["submitted"] is False
+    assert out["run_nonce"] == sent_nonce
+
+
+@pytest.mark.asyncio
+async def test_resend_returned_message_mints_new_nonce(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Break: resending a prior result's message line must mint a new run nonce."""
+    inserted_first: list[str] = []
+    first = await _deliver_once(
+        monkeypatch,
+        text="payload",
+        surface=_grok_surface(),
+        inserted=inserted_first,
+    )
+    message = str(first["message"])
+    nonce_1 = extract_run_nonce_from_line(message)
+    assert nonce_1
+    stale = _grok_surface(recent_messages=[message])
+    inserted_second: list[str] = []
+    second = await _deliver_once(
+        monkeypatch, text=message, surface=stale, inserted=inserted_second
+    )
+    assert len(inserted_second) == 1
+    nonce_2 = extract_run_nonce_from_line(inserted_second[0])
+    assert nonce_2
+    assert nonce_2 != nonce_1
+    assert inserted_second[0].count(OPERATOR_HEADER) == 1
+    assert inserted_second[0].count(RELAY_NONCE_LABEL) == 1
+    assert (
+        _submit_verified(
+            stale,
+            watermark=watermark_with_nonce(nonce_2),
+            body_snippet="",
+            run_nonce=nonce_2,
+        )
+        is False
+    )
+    assert second["submitted"] is False
+    assert second["run_nonce"] == nonce_2
+
+
 @pytest.mark.parametrize(
     ("draft", "line", "action"),
     [
@@ -247,18 +450,18 @@ async def test_deliver_operator_paste_single_header_footer_on_insert(
         "generating": False,
         "recent_messages": [],
     }
-    surface_post = {
-        **surface,
-        "generating": True,
-        "recent_messages": [pre_wrapped],
-    }
     probe_n = {"n": 0}
+    inserted: list[str] = []
 
     async def _probe(_ws: str) -> dict[str, Any]:
         probe_n["n"] += 1
-        return surface if probe_n["n"] <= 2 else surface_post
-
-    inserted: list[str] = []
+        if probe_n["n"] <= 2 or not inserted:
+            return surface
+        return {
+            **surface,
+            "generating": True,
+            "recent_messages": [inserted[0]],
+        }
 
     async def _insert(_ws: str, *, selector: str, line: str) -> dict[str, Any]:
         inserted.append(line)
@@ -1720,6 +1923,7 @@ async def test_ambiguous_timeout_probe_verified_skips_clear_and_enter(
 ) -> None:
     flat = "Operator relay test"
     nonce = make_run_nonce()
+    monkeypatch.setattr("cursor_bridge.operator_paste.make_run_nonce", lambda: nonce)
     wm = watermark_with_nonce(nonce)
     verified = {
         "state": "chat_list",
