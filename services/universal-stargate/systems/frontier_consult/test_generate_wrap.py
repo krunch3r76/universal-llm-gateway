@@ -295,6 +295,35 @@ def test_prepare_implement_packet_noops_for_task_front_matter_source_ref(
 
 
 @pytest.mark.offline
+def test_prepare_conductor_packet_gated_short_circuits(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Break: conductor bridge gated still materializes or returns a packet path."""
+    monkeypatch.setattr(
+        "systems.frontier_consult.generate_wrap.resolve_source_ref_to_packet",
+        lambda *args, **kwargs: BridgeResult(
+            gated=True,
+            gated_reason="judgment_required",
+        ),
+    )
+    from systems.frontier_consult.generate_wrap import prepare_conductor_packet
+
+    result = prepare_conductor_packet(
+        request_id="req-conductor-gated",
+        source_ref="todo:gated-conductor",
+        caller_agent=None,
+        cortex=MagicMock(),
+        workspaces_root=tmp_path,
+    )
+
+    assert result.gated is True
+    assert result.gated_reason == "judgment_required"
+    assert result.packet_path is None
+    assert result.packet_markdown is None
+
+
+@pytest.mark.offline
 def test_ac_p1_5_prepare_conductor_packet_rematerialize_roundtrip(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,

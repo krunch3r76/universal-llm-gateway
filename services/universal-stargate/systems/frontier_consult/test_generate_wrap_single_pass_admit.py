@@ -124,6 +124,46 @@ async def test_admit_plan_skips_second_prepare_and_prefixes_message(
 
 
 @pytest.mark.asyncio
+async def test_conductor_route_gated_fails_closed(
+    watch_dir: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Gated bridge: 422, spawn row failed, dispatch not called, one prepare."""
+    counter = {"n": 0}
+
+    def _prepare(**_kw: Any) -> GenerateWrapResult:
+        counter["n"] += 1
+        return GenerateWrapResult(
+            packet_path=None,
+            gated=True,
+            gated_reason="judgment_required",
+        )
+
+    monkeypatch.setattr(enrich_mod, "prepare_conductor_packet", _prepare)
+    monkeypatch.setattr(gw, "prepare_conductor_packet", _prepare)
+    sdk_mock = AsyncMock(return_value={"dispatch_id": "d-gated"})
+    _patch_route_collaborators(monkeypatch, sdk_mock)
+
+    result = await dispatch_cursor_sdk_generate_route(
+        request_id="r-gated-route",
+        body=_conductor_body(),
+        seat="cursor-sdk",
+        response=Response(),
+        admit_plan={},
+    )
+
+    assert getattr(result, "status_code", None) == 422
+    assert b"generate_source_ref_gated" in result.body
+    sdk_mock.assert_not_awaited()
+    assert counter["n"] == 1
+    rows = list(_folded(watch_dir).values())
+    assert len(rows) == 1
+    assert rows[0]["state"] == "failed"
+    assert rows[0]["stage"] == "materialize"
+    assert rows[0]["reason"] == "generate_source_ref_gated"
+
+
+@pytest.mark.asyncio
 async def test_without_plan_markdown_prepare_runs_once_with_row_id(
     watch_dir: Path,
     monkeypatch: pytest.MonkeyPatch,

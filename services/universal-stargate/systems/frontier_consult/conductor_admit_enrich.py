@@ -113,6 +113,16 @@ async def enrich_conductor_admit_plan(
             conductor_opts=conductor_opts or None,
         ),
     )
+    if wrap.gated:
+        from .admission import FrontierEndpointError
+
+        raise FrontierEndpointError(
+            request_id=request_id,
+            field="source_ref",
+            reason=wrap.gated_reason or "source_ref not implement-ready",
+            status_code=422,
+            code="generate_source_ref_gated",
+        )
     markdown = wrap.packet_markdown or ""
     reject_oversized_conductor_packet(markdown, request_id=request_id)
     out = dict(plan)

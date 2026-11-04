@@ -607,6 +607,26 @@ async def dispatch_cursor_sdk_generate_route(
                     )
                     spawn_pre_recorded = False
                 raise
+            if wrap.gated:
+                gated_err = FrontierEndpointError(
+                    request_id=request_id,
+                    field="source_ref",
+                    reason=wrap.gated_reason or "source_ref not implement-ready",
+                    status_code=422,
+                    code="generate_source_ref_gated",
+                )
+                if spawn_pre_recorded:
+                    _fail_pending_spawn_row(
+                        row_id=str(sdk_row_id),
+                        exc=gated_err,
+                        stage="materialize",
+                        elapsed_ms=int((time.monotonic() - spawn_started_ms) * 1000),
+                    )
+                    spawn_pre_recorded = False
+                return JSONResponse(
+                    status_code=422,
+                    content=gated_err.to_dict(),
+                )
         elif (
             body.job == "sketch"
             and source_ref

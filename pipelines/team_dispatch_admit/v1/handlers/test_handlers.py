@@ -433,6 +433,11 @@ async def test_enrich_does_not_set_row_id_on_plan() -> None:
         packet_rel_path="rel",
         birth_scoreboard_markdown=None,
         gated=False,
+        birth_rows=None,
+        birth_seed_ignored=False,
+        scoreboard_uri=None,
+        route_contract=None,
+        warnings=[],
     )
     body = SimpleNamespace(
         job="conductor",
@@ -454,6 +459,55 @@ async def test_enrich_does_not_set_row_id_on_plan() -> None:
         )
     assert "row_id" not in out
     assert out["packet_markdown"] == "pkt"
+
+
+@pytest.mark.asyncio
+async def test_enrich_conductor_gated_raises() -> None:
+    """Break: gated bridge writes empty packet_markdown instead of 422."""
+    from types import SimpleNamespace
+    from unittest.mock import patch
+
+    from systems.frontier_consult.admission import FrontierEndpointError
+    from systems.frontier_consult.conductor_admit_enrich import (
+        enrich_conductor_admit_plan,
+    )
+
+    wrap = SimpleNamespace(
+        packet_markdown=None,
+        packet_sha256=None,
+        packet_rel_path=None,
+        birth_scoreboard_markdown=None,
+        gated=True,
+        gated_reason="judgment_required",
+        birth_rows=None,
+        birth_seed_ignored=False,
+        scoreboard_uri=None,
+        route_contract=None,
+        warnings=[],
+    )
+    body = SimpleNamespace(
+        job="conductor",
+        source_ref="todo:gated-slug",
+        packet_path=None,
+        hop_seq=0,
+        hop_from=None,
+        generation_options={},
+        dispatch_thread_id=None,
+        caller_agent=None,
+        prompt=None,
+    )
+    plan: dict[str, object] = {"admitted": True}
+    with patch(
+        "systems.frontier_consult.conductor_admit_enrich.prepare_conductor_packet",
+        return_value=wrap,
+    ):
+        with pytest.raises(FrontierEndpointError) as exc_info:
+            await enrich_conductor_admit_plan(
+                body=body, plan=plan, request_id="r-gated-enrich"
+            )
+    assert exc_info.value.status_code == 422
+    assert exc_info.value.code == "generate_source_ref_gated"
+    assert "packet_markdown" not in plan
 
 
 def test_handler_modules_do_not_import_frontier_consult() -> None:
