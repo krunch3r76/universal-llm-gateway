@@ -211,6 +211,15 @@ async def _stamp_admit_outcome(
         },
     )
     _write_record_json(dispatch_id, _stamp_admit_attempt_clock(merged))
+    from services.git_integration_worker.cursor_sdk_closeout.conductor_hop import (
+        maybe_write_hop_admit_probe_failed_sidecar,
+    )
+
+    maybe_write_hop_admit_probe_failed_sidecar(
+        _load_row(dispatch_id) or row,
+        last_error=error_text,
+        status_code=detail.get("status_code"),
+    )
     emit_frontier_sdk_conductor_hop_admit_failed(
         dispatch_id=dispatch_id,
         thread_id=thread_id,
