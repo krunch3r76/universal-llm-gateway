@@ -176,7 +176,13 @@ def route_harness(watch_dir: Path, monkeypatch: pytest.MonkeyPatch) -> dict[str,
     """Patch the route's collaborators so only the spawn-row path is exercised."""
     from unittest.mock import AsyncMock
 
-    sdk_mock = AsyncMock(return_value={"execution_id": "e1", "thread_id": "21723"})
+    sdk_mock = AsyncMock(
+        return_value={
+            "execution_id": "e1",
+            "dispatch_id": "disp-preadmit-e1",
+            "thread_id": "21723",
+        }
+    )
     monkeypatch.setattr(gw, "dispatch_cursor_sdk_generate", sdk_mock)
     monkeypatch.setattr(gw, "probe_thread", AsyncMock(return_value={"turn_count": 1}))
     monkeypatch.setattr(

@@ -83,6 +83,33 @@ class GenerateWrapResult:
     birth_seed_ignored: bool = False
 
 
+def _wrap_from_admit_plan(plan: dict[str, Any], *, row_id: str) -> GenerateWrapResult:
+    """Build a conductor wrap from an enriched admit plan without re-preparing."""
+    base = str(plan["packet_markdown"])
+    prefix = format_ledger_prompt_prefix(row_id=row_id, purpose="(unstated)")
+    text = prefix + base if prefix else base
+    sha = (
+        compute_packet_sha256(text)
+        if prefix
+        else str(plan.get("packet_sha256") or "")
+    )
+    return GenerateWrapResult(
+        packet_path=None,
+        packet_markdown=text,
+        packet_rel_path=str(plan.get("packet_rel_path") or ""),
+        birth_scoreboard_markdown=plan.get("birth_scoreboard_markdown"),
+        materialized=True,
+        warnings=list(plan.get("warnings") or []),
+        packet_sha256=sha,
+        materialization_present=False,
+        route_contract=plan.get("route_contract")
+        or {"job": "conductor", "lane": "B"},
+        scoreboard_uri=plan.get("scoreboard_uri"),
+        birth_rows=tuple(plan["birth_rows"]) if plan.get("birth_rows") else None,
+        birth_seed_ignored=bool(plan.get("birth_seed_ignored")),
+    )
+
+
 def prepare_conductor_packet(
     *,
     request_id: str,
@@ -330,7 +357,11 @@ def _fail_pending_spawn_row(
         record_status_row,
     )
 
-    reason = type(exc).__name__ if exc is not None else stage
+    reason = (
+        (str(getattr(exc, "code", "") or "") or type(exc).__name__)
+        if exc is not None
+        else stage
+    )
     try:
         patch_spawn_row(
             row_id,
@@ -538,29 +569,34 @@ async def dispatch_cursor_sdk_generate_route(
             )
             spawn_started_ms = time.monotonic()
             try:
-                wrap = await loop.run_in_executor(
-                    None,
-                    partial(
-                        prepare_conductor_packet,
-                        request_id=request_id,
-                        source_ref=source_ref,
-                        caller_agent=body.caller_agent,
-                        summon_text=getattr(body, "prompt", None),
-                        summon_mode=(str(raw_summon).strip() if raw_summon else None),
-                        cortex=StargateCortexReader(),
-                        workspaces_root=_workspaces_root(),
-                        summoning_thread_id=(
-                            str(body.dispatch_thread_id).strip()
-                            if getattr(body, "dispatch_thread_id", None)
-                            else None
+                if isinstance(plan.get("packet_markdown"), str) and plan["packet_markdown"]:
+                    wrap = _wrap_from_admit_plan(plan, row_id=str(sdk_row_id))
+                else:
+                    wrap = await loop.run_in_executor(
+                        None,
+                        partial(
+                            prepare_conductor_packet,
+                            request_id=request_id,
+                            source_ref=source_ref,
+                            caller_agent=body.caller_agent,
+                            summon_text=getattr(body, "prompt", None),
+                            summon_mode=(
+                                str(raw_summon).strip() if raw_summon else None
+                            ),
+                            cortex=StargateCortexReader(),
+                            workspaces_root=_workspaces_root(),
+                            summoning_thread_id=(
+                                str(body.dispatch_thread_id).strip()
+                                if getattr(body, "dispatch_thread_id", None)
+                                else None
+                            ),
+                            summoning_turn_count=summoning_turn_count,
+                            rematerialize=rematerialize,
+                            conductor_opts=conductor_opts or None,
+                            row_id=sdk_row_id,
+                            ledger_purpose="(unstated)",
                         ),
-                        summoning_turn_count=summoning_turn_count,
-                        rematerialize=rematerialize,
-                        conductor_opts=conductor_opts or None,
-                        row_id=sdk_row_id,
-                        ledger_purpose="(unstated)",
-                    ),
-                )
+                    )
             except BaseException as exc:
                 if spawn_pre_recorded:
                     _fail_pending_spawn_row(
@@ -740,77 +776,105 @@ async def dispatch_cursor_sdk_generate_route(
                     stage=spawn_stage,
                     elapsed_ms=int((time.monotonic() - spawn_started_ms) * 1000),
                 )
-        result = await dispatch_cursor_sdk_generate(
-            request_id=request_id,
-            role=role,
-            model=getattr(body, "model", None),
-            requested_model_pin=requested_model_pin,
-            subject=None,
-            caller_agent=body.caller_agent,
-            contract=body.job,
-            packet_path=wrap.packet_path,
-            message_text=conductor_message or source_text,
-            reuse_thread=reuse_thread,
-            bus_lifecycle=getattr(body, "bus_lifecycle", None),
-            parent_dispatch_thread_id=parent_dispatch_thread_id,
-            dispatch_thread_id=body.dispatch_thread_id,
-            is_auto_consolidation=is_auto_consolidation,
-            density_triage=getattr(body, "density_triage", None),
-            review_opt_out_reason_code=getattr(
-                body, "review_opt_out_reason_code", None
-            ),
-            auto_review_child=getattr(body, "auto_review_child", False),
-            model_knobs=getattr(body, "model_knobs", None),
-            cost_intent=getattr(body, "cost_intent", None),
-            suppress_cost_warning=getattr(body, "suppress_cost_warning", False),
-            cost_intent_reason=getattr(body, "cost_intent_reason", None),
-            reasoning_effort=getattr(body, "reasoning_effort", None),
-            max_tool_turns=getattr(body, "max_tool_turns", None),
-            prompt_turn_number=(
-                getattr(body, "prompt_turn_number", None)
-                if getattr(body, "prompt_turn_number", None) is not None
-                else (
-                    prompt_resolution.prompt_turn_number if prompt_resolution else None
+        try:
+            result = await dispatch_cursor_sdk_generate(
+                request_id=request_id,
+                role=role,
+                model=getattr(body, "model", None),
+                requested_model_pin=requested_model_pin,
+                subject=None,
+                caller_agent=body.caller_agent,
+                contract=body.job,
+                packet_path=wrap.packet_path,
+                message_text=conductor_message or source_text,
+                reuse_thread=reuse_thread,
+                bus_lifecycle=getattr(body, "bus_lifecycle", None),
+                parent_dispatch_thread_id=parent_dispatch_thread_id,
+                dispatch_thread_id=body.dispatch_thread_id,
+                is_auto_consolidation=is_auto_consolidation,
+                density_triage=getattr(body, "density_triage", None),
+                review_opt_out_reason_code=getattr(
+                    body, "review_opt_out_reason_code", None
+                ),
+                auto_review_child=getattr(body, "auto_review_child", False),
+                model_knobs=getattr(body, "model_knobs", None),
+                cost_intent=getattr(body, "cost_intent", None),
+                suppress_cost_warning=getattr(body, "suppress_cost_warning", False),
+                cost_intent_reason=getattr(body, "cost_intent_reason", None),
+                reasoning_effort=getattr(body, "reasoning_effort", None),
+                max_tool_turns=getattr(body, "max_tool_turns", None),
+                prompt_turn_number=(
+                    getattr(body, "prompt_turn_number", None)
+                    if getattr(body, "prompt_turn_number", None) is not None
+                    else (
+                        prompt_resolution.prompt_turn_number
+                        if prompt_resolution
+                        else None
+                    )
+                ),
+                prompt_bind_mode=(
+                    getattr(body, "prompt_bind_mode", None)
+                    or (
+                        prompt_resolution.prompt_bind_mode
+                        if prompt_resolution
+                        else None
+                    )
+                    or ("explicit_external" if conductor_message is not None else None)
+                ),
+                source_ref=getattr(body, "source_ref", None),
+                dispatch_lane=getattr(body, "dispatch_lane", None),
+                nest_under=getattr(body, "nest_under", None),
+                lane=getattr(body, "lane", None),
+                workspace=getattr(body, "workspace", None),
+                read_only=getattr(body, "read_only", False),
+                refuse_if_lease_held=getattr(body, "refuse_if_lease_held", False),
+                dispatch_id=getattr(body, "dispatch_id", None),
+                hop_from=getattr(body, "hop_from", None),
+                hop_seq=getattr(body, "hop_seq", None),
+                hop_reason=getattr(body, "hop_reason", None),
+                resume_of=getattr(body, "resume_of", None),
+                caller_dispatch_id=getattr(body, "caller_dispatch_id", None),
+                skills=getattr(body, "skills", None),
+                work_key=getattr(body, "work_key", None),
+                force=bool(getattr(body, "force", False)),
+                force_reason=getattr(body, "force_reason", None),
+                hop_park_release=bool(
+                    (getattr(body, "generation_options", None) or {}).get(
+                        "hop_park_release"
+                    )
+                ),
+                claim_id=_claim_id_from_options(
+                    getattr(body, "generation_options", None)
+                ),
+                impresario_envelope=_impresario_from_options(
+                    getattr(body, "generation_options", None)
+                ),
+                transcript_id=getattr(body, "transcript_id", None),
+                wake_lane=getattr(body, "wake_lane", None),
+                bus_body=getattr(body, "bus_body", None),
+                off_bus_ref=getattr(body, "sidecar_ref", None),
+                prompt_sha256=getattr(body, "prompt_sha256", None),
+                admit_provenance=admit_provenance,
+            )
+        except BaseException as exc:
+            if sdk_row_id:
+                _fail_pending_spawn_row(
+                    row_id=str(sdk_row_id),
+                    exc=exc,
+                    stage="dispatch",
+                    elapsed_ms=int((time.monotonic() - spawn_started_ms) * 1000),
                 )
-            ),
-            prompt_bind_mode=(
-                getattr(body, "prompt_bind_mode", None)
-                or (prompt_resolution.prompt_bind_mode if prompt_resolution else None)
-                or ("explicit_external" if conductor_message is not None else None)
-            ),
-            source_ref=getattr(body, "source_ref", None),
-            dispatch_lane=getattr(body, "dispatch_lane", None),
-            nest_under=getattr(body, "nest_under", None),
-            lane=getattr(body, "lane", None),
-            workspace=getattr(body, "workspace", None),
-            read_only=getattr(body, "read_only", False),
-            refuse_if_lease_held=getattr(body, "refuse_if_lease_held", False),
-            dispatch_id=getattr(body, "dispatch_id", None),
-            hop_from=getattr(body, "hop_from", None),
-            hop_seq=getattr(body, "hop_seq", None),
-            hop_reason=getattr(body, "hop_reason", None),
-            resume_of=getattr(body, "resume_of", None),
-            caller_dispatch_id=getattr(body, "caller_dispatch_id", None),
-            skills=getattr(body, "skills", None),
-            work_key=getattr(body, "work_key", None),
-            force=bool(getattr(body, "force", False)),
-            force_reason=getattr(body, "force_reason", None),
-            hop_park_release=bool(
-                (getattr(body, "generation_options", None) or {}).get(
-                    "hop_park_release"
-                )
-            ),
-            claim_id=_claim_id_from_options(getattr(body, "generation_options", None)),
-            impresario_envelope=_impresario_from_options(
-                getattr(body, "generation_options", None)
-            ),
-            transcript_id=getattr(body, "transcript_id", None),
-            wake_lane=getattr(body, "wake_lane", None),
-            bus_body=getattr(body, "bus_body", None),
-            off_bus_ref=getattr(body, "sidecar_ref", None),
-            prompt_sha256=getattr(body, "prompt_sha256", None),
-            admit_provenance=admit_provenance,
-        )
+            raise
+        if sdk_row_id and (
+            not isinstance(result, dict)
+            or not str(result.get("dispatch_id") or "").strip()
+        ):
+            _fail_pending_spawn_row(
+                row_id=str(sdk_row_id),
+                exc=None,
+                stage="dispatch_no_id",
+                elapsed_ms=int((time.monotonic() - spawn_started_ms) * 1000),
+            )
         if isinstance(result, dict):
             if operator_lane_summon_warning:
                 result["warnings"] = list(result.get("warnings") or []) + [

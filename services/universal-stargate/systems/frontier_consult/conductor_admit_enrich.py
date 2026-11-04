@@ -122,4 +122,9 @@ async def enrich_conductor_admit_plan(
     out["packet_rel_path"] = wrap.packet_rel_path
     out["birth_scoreboard_markdown"] = wrap.birth_scoreboard_markdown
     out["hop_seq"] = getattr(body, "hop_seq", None) or 0
+    out["birth_rows"] = list(wrap.birth_rows) if wrap.birth_rows else None
+    out["birth_seed_ignored"] = bool(wrap.birth_seed_ignored)
+    out["scoreboard_uri"] = wrap.scoreboard_uri
+    out["route_contract"] = wrap.route_contract
+    out["warnings"] = list(wrap.warnings)
     return out
