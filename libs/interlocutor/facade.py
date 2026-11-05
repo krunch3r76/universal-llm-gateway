@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import Any, Literal
 
 from chat_harvest.models import ClassifyRefuse
+
 from interlocutor import cowork_adapter, display_adapter, idempotency
 from interlocutor.targets import (
     CoworkMaestroTarget,
@@ -57,7 +58,9 @@ def execute_read(
             chat_url=resolved.url,
         )
 
-    return _refuse(ClassifyRefuse(code="unsupported_target", reason="unresolved adapter"))
+    return _refuse(
+        ClassifyRefuse(code="unsupported_target", reason="unresolved adapter")
+    )
 
 
 def execute_steer(
@@ -107,9 +110,11 @@ def execute_steer(
     elif isinstance(resolved, CoworkUrlTarget):
         result = cowork_adapter.followup(prompt_text=text, chat_url=resolved.url)
     else:
-        return _refuse(ClassifyRefuse(code="unsupported_target", reason="unresolved adapter"))
+        return _refuse(
+            ClassifyRefuse(code="unsupported_target", reason="unresolved adapter")
+        )
 
-    if result.get("ok") and idempotency_key:
+    if idempotency_key and idempotency.is_verified_steer_receipt(result):
         idempotency.remember(
             target=target, idempotency_key=idempotency_key, receipt=result
         )

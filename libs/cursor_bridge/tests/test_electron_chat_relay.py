@@ -3,12 +3,13 @@
 from __future__ import annotations
 
 from typing import Any
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 from cursor_bridge.electron_chat_relay import (
     ElectronEndpoint,
     message_fingerprint,
+    paste_endpoint_message,
     read_endpoint_turn,
     run_one_to_one_relay,
     should_stop_for_bus_handoff,
@@ -32,7 +33,10 @@ def test_should_stop_for_bus_handoff_detects_markers() -> None:
     assert should_stop_for_bus_handoff("Normal reply from gc1") is False
     assert should_stop_for_bus_handoff("Ready: HANDOFF_TO_BUS thread=16416") is True
     assert should_stop_for_bus_handoff("BRIDGE_WAKE thread=16416 turn=481") is True
-    assert should_stop_for_bus_handoff("custom stop", extra_markers=("custom stop",)) is True
+    assert (
+        should_stop_for_bus_handoff("custom stop", extra_markers=("custom stop",))
+        is True
+    )
 
 
 @pytest.mark.asyncio
@@ -44,7 +48,12 @@ async def test_read_endpoint_turn_selects_and_reads_latest_prose() -> None:
         title="Stage Manager (gc2)",
         agent_id="gc2-agent-uuid",
     )
-    pages = [{"title": "Grok Bot", "web_socket_debugger_url": "ws://127.0.0.1:9340/devtools/page/1"}]
+    pages = [
+        {
+            "title": "Grok Bot",
+            "web_socket_debugger_url": "ws://127.0.0.1:9340/devtools/page/1",
+        }
+    ]
     surfaces = [
         {
             "state": "chat_list",
@@ -52,7 +61,10 @@ async def test_read_endpoint_turn_selects_and_reads_latest_prose() -> None:
             "active_agent_id": "other-uuid",
             "titles": ["Other Chat", "Stage Manager (gc2)"],
             "title_counts": {"Other Chat": 1, "Stage Manager (gc2)": 1},
-            "agent_ids": {"other-uuid": "Other Chat", "gc2-agent-uuid": "Stage Manager (gc2)"},
+            "agent_ids": {
+                "other-uuid": "Other Chat",
+                "gc2-agent-uuid": "Stage Manager (gc2)",
+            },
             "composer_draft": "",
             "generating": False,
             "recent_messages": ["old"],
@@ -63,7 +75,10 @@ async def test_read_endpoint_turn_selects_and_reads_latest_prose() -> None:
             "active_agent_id": "gc2-agent-uuid",
             "titles": ["Other Chat", "Stage Manager (gc2)"],
             "title_counts": {"Other Chat": 1, "Stage Manager (gc2)": 1},
-            "agent_ids": {"other-uuid": "Other Chat", "gc2-agent-uuid": "Stage Manager (gc2)"},
+            "agent_ids": {
+                "other-uuid": "Other Chat",
+                "gc2-agent-uuid": "Stage Manager (gc2)",
+            },
             "composer_draft": "",
             "generating": False,
             "recent_messages": ["first turn", "latest turn from gc2"],
@@ -82,8 +97,13 @@ async def test_read_endpoint_turn_selects_and_reads_latest_prose() -> None:
 
     with (
         patch("cursor_bridge.electron_chat_relay.list_pages", return_value=pages),
-        patch("cursor_bridge.electron_chat_relay.probe_surface", side_effect=_fake_probe),
-        patch("cursor_bridge.electron_chat_relay.select_sidebar_target", side_effect=_fake_select),
+        patch(
+            "cursor_bridge.electron_chat_relay.probe_surface", side_effect=_fake_probe
+        ),
+        patch(
+            "cursor_bridge.electron_chat_relay.select_sidebar_target",
+            side_effect=_fake_select,
+        ),
     ):
         snap = await read_endpoint_turn(gc2, select=True)
 
@@ -95,8 +115,12 @@ async def test_read_endpoint_turn_selects_and_reads_latest_prose() -> None:
 
 @pytest.mark.asyncio
 async def test_run_one_to_one_relay_ping_pongs_until_bus_handoff() -> None:
-    gc1 = ElectronEndpoint(label="gc1", app="grok", display="9", title="Stage Manager (gc1)")
-    gc2 = ElectronEndpoint(label="gc2", app="grok", display="10", title="Stage Manager (gc2)")
+    gc1 = ElectronEndpoint(
+        label="gc1", app="grok", display="9", title="Stage Manager (gc1)"
+    )
+    gc2 = ElectronEndpoint(
+        label="gc2", app="grok", display="10", title="Stage Manager (gc2)"
+    )
 
     state = {
         "gc1": "initial gc1 prose",
@@ -105,7 +129,9 @@ async def test_run_one_to_one_relay_ping_pongs_until_bus_handoff() -> None:
         "pasted_to_gc1": [],
     }
 
-    async def _fake_read(endpoint: ElectronEndpoint, *, select: bool = True) -> dict[str, Any]:
+    async def _fake_read(
+        endpoint: ElectronEndpoint, *, select: bool = True
+    ) -> dict[str, Any]:
         del select
         msg = state[endpoint.label]
         return {
@@ -140,8 +166,14 @@ async def test_run_one_to_one_relay_ping_pongs_until_bus_handoff() -> None:
         }
 
     with (
-        patch("cursor_bridge.electron_chat_relay.read_endpoint_turn", side_effect=_fake_read),
-        patch("cursor_bridge.electron_chat_relay.paste_endpoint_message", side_effect=_fake_paste),
+        patch(
+            "cursor_bridge.electron_chat_relay.read_endpoint_turn",
+            side_effect=_fake_read,
+        ),
+        patch(
+            "cursor_bridge.electron_chat_relay.paste_endpoint_message",
+            side_effect=_fake_paste,
+        ),
     ):
         result = await run_one_to_one_relay(
             gc1,
@@ -157,3 +189,109 @@ async def test_run_one_to_one_relay_ping_pongs_until_bus_handoff() -> None:
     assert state["pasted_to_gc2"] == ["Hello gc2, let us sync."]
     assert state["pasted_to_gc1"] == ["SEED start", "Ack gc1, ready on :10."]
     assert result["transcript"][-1]["handoff"] is True
+
+
+class _noop_lock:
+    def __init__(self, *_a: Any, **_k: Any) -> None:
+        pass
+
+    async def __aenter__(self) -> None:
+        return None
+
+    async def __aexit__(self, *_a: Any) -> None:
+        return None
+
+
+@pytest.mark.asyncio
+async def test_paste_delivered_requires_semantic_user_turn_not_empty_composer() -> None:
+    ep = ElectronEndpoint(
+        label="gc2",
+        app="grok",
+        display="10",
+        agent_id="gc2-agent-uuid",
+    )
+    select_res = {
+        "ok": True,
+        "ws_url": "ws://fake",
+        "surface": {"composer_draft": "", "generating": False},
+        "verdict": {"ok": True, "active_agent_id": "gc2-agent-uuid"},
+        "display": "10",
+        "app": "grok",
+        "selected": True,
+    }
+
+    async def _fake_dom_insert(*_a: Any, **_k: Any) -> dict[str, Any]:
+        return {"ok": True}
+
+    async def _fake_probe(_ws: str) -> dict[str, Any]:
+        return {"composer_draft": "", "recent_messages": ["unrelated"]}
+
+    with (
+        patch(
+            "cursor_bridge.electron_chat_relay._resolve_and_select_endpoint",
+            new_callable=AsyncMock,
+            return_value=select_res,
+        ),
+        patch(
+            "cursor_bridge.electron_chat_relay.dom_insert_and_send",
+            side_effect=_fake_dom_insert,
+        ),
+        patch(
+            "cursor_bridge.electron_chat_relay.probe_surface",
+            new_callable=AsyncMock,
+            side_effect=_fake_probe,
+        ),
+        patch("cursor_bridge.electron_chat_relay.agent_paste_lock", _noop_lock),
+    ):
+        out = await paste_endpoint_message(ep, "exact payload", select=True)
+
+    assert out["ok"] is False
+    assert out["code"] == "unknown"
+
+
+@pytest.mark.asyncio
+async def test_paste_delivery_unconfirmed_when_draft_remains() -> None:
+    ep = ElectronEndpoint(
+        label="gc2",
+        app="grok",
+        display="10",
+        agent_id="gc2-agent-uuid",
+    )
+    select_res = {
+        "ok": True,
+        "ws_url": "ws://fake",
+        "surface": {"composer_draft": "", "generating": False},
+        "verdict": {"ok": True, "active_agent_id": "gc2-agent-uuid"},
+        "display": "10",
+        "app": "grok",
+        "selected": True,
+    }
+
+    async def _fake_dom_insert(*_a: Any, **_k: Any) -> dict[str, Any]:
+        return {"ok": True}
+
+    async def _fake_probe(_ws: str) -> dict[str, Any]:
+        return {"composer_draft": "exact payload", "recent_messages": []}
+
+    with (
+        patch(
+            "cursor_bridge.electron_chat_relay._resolve_and_select_endpoint",
+            new_callable=AsyncMock,
+            return_value=select_res,
+        ),
+        patch(
+            "cursor_bridge.electron_chat_relay.dom_insert_and_send",
+            side_effect=_fake_dom_insert,
+        ),
+        patch(
+            "cursor_bridge.electron_chat_relay.probe_surface",
+            new_callable=AsyncMock,
+            side_effect=_fake_probe,
+        ),
+        patch("cursor_bridge.electron_chat_relay.agent_paste_lock", _noop_lock),
+    ):
+        out = await paste_endpoint_message(ep, "exact payload", select=True)
+
+    assert out["ok"] is False
+    assert out["code"] == "delivery_unconfirmed"
+    assert out["pasted"] is True

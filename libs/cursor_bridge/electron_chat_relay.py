@@ -30,7 +30,11 @@ from cursor_bridge.display_interaction_locks import (
     display_switch_lock,
     paste_lock_key,
 )
-from cursor_bridge.dom_composer_paste import composer_selector, dom_insert_and_send
+from cursor_bridge.dom_composer_paste import (
+    composer_selector,
+    composer_text_semantic_equals,
+    dom_insert_and_send,
+)
 from cursor_bridge.wake_delivery import (
     _busy_or_draft_reason,
     _pick_page,
@@ -207,6 +211,28 @@ async def read_endpoint_turn(
         }
 
 
+def _paste_outcome_base(
+    *,
+    verdict: dict[str, Any],
+    endpoint: ElectronEndpoint,
+    disp: str,
+    app: str,
+    selected: bool,
+) -> dict[str, Any]:
+    return {
+        **verdict,
+        "selected": selected,
+        "endpoint": endpoint.label,
+        "display": disp,
+        "app": app,
+    }
+
+
+def _transcript_shows_payload(text: str, surface: dict[str, Any]) -> bool:
+    recent = surface.get("recent_messages") or []
+    return any(composer_text_semantic_equals(text, str(msg)) for msg in recent)
+
+
 async def paste_endpoint_message(
     endpoint: ElectronEndpoint, message: str, *, select: bool = True
 ) -> dict[str, Any]:
@@ -223,66 +249,119 @@ async def paste_endpoint_message(
             return {**res, "pasted": False, "delivered": False}
         ws_url, surface, verdict = res["ws_url"], res["surface"], res["verdict"]
         disp, app, selected = res["display"], res["app"], res["selected"]
+        base = _paste_outcome_base(
+            verdict=verdict,
+            endpoint=endpoint,
+            disp=disp,
+            app=app,
+            selected=selected,
+        )
+        expected = str(
+            endpoint.agent_id or verdict.get("expected_agent_id") or ""
+        ).strip()
+        active = str(verdict.get("active_agent_id") or "").strip()
+        if expected and active and active != expected:
+            return {
+                **base,
+                "ok": False,
+                "code": "target_mismatch",
+                "reason": "target_mismatch",
+                "pasted": False,
+                "delivered": False,
+            }
         guard = _busy_or_draft_reason(surface)
         if guard:
-            return _refuse(
+            refused = _refuse(
                 guard, endpoint=endpoint.label, display=disp, app=app, selected=selected
             )
+            return {**refused, "code": refused.get("reason")}
         if app not in {"grok", "cursor"}:
-            return _refuse(
-                "composer_unconfirmed", endpoint=endpoint.label, display=disp, app=app
-            )
-        flat_line = " ".join(text.splitlines()).strip()
+            return {
+                **_refuse(
+                    "composer_unconfirmed",
+                    endpoint=endpoint.label,
+                    display=disp,
+                    app=app,
+                ),
+                "code": "composer_unconfirmed",
+            }
         sel = composer_selector(
             app=app,
             agent_id=str(verdict.get("expected_agent_id") or endpoint.agent_id or ""),
         )
+        draft_writer = f"interlocutor:{endpoint.agent_id or endpoint.label}"
+        pasted = False
         try:
             if app == "cursor":
                 from cursor_bridge.wake_delivery import _paste_cursor_services
 
                 paste_res = await _paste_cursor_services(
-                    ws_url, flat_line, agent_id=str(endpoint.agent_id or "")
+                    ws_url, text, agent_id=str(endpoint.agent_id or "")
                 )
             else:
                 paste_res = await dom_insert_and_send(
-                    ws_url, selector=sel, line=flat_line
+                    ws_url,
+                    selector=sel,
+                    line=text,
+                    preserve_newlines=True,
+                    draft_writer=draft_writer,
                 )
         except (TimeoutError, RuntimeError, OSError) as exc:
-            return _refuse(
-                "paste_failed",
-                endpoint=endpoint.label,
-                display=disp,
-                app=app,
-                detail=type(exc).__name__,
-            )
+            return {
+                **_refuse(
+                    "paste_failed",
+                    endpoint=endpoint.label,
+                    display=disp,
+                    app=app,
+                    detail=type(exc).__name__,
+                ),
+                "code": "paste_failed",
+            }
+        pasted = bool(paste_res.get("pasted", paste_res.get("ok")))
         if not paste_res.get("ok"):
-            return _refuse(
-                str(paste_res.get("reason") or "no_composer"),
-                endpoint=endpoint.label,
-                display=disp,
-                app=app,
+            reason = str(
+                paste_res.get("reason") or paste_res.get("code") or "no_composer"
             )
+            out = {
+                **base,
+                "ok": False,
+                "code": reason,
+                "reason": reason,
+                "pasted": pasted,
+                "delivered": False,
+            }
+            if paste_res.get("retryable") is False or paste_res.get("clicked_unknown"):
+                out["retryable"] = False
+            return out
         await asyncio.sleep(0.25)
         post = await probe_surface(ws_url)
-        delivered = bool(
-            not str(post.get("composer_draft") or "").strip()
-            or any(flat_line in msg for msg in (post.get("recent_messages") or []))
-        )
+        delivered = _transcript_shows_payload(text, post)
+        if delivered:
+            return {
+                **base,
+                "ok": True,
+                "reason": verdict.get("reason", "match"),
+                "pasted": True,
+                "delivered": True,
+                "message": text,
+                "fingerprint": message_fingerprint(text),
+            }
+        if str(post.get("composer_draft") or "").strip():
+            return {
+                **base,
+                "ok": False,
+                "code": "delivery_unconfirmed",
+                "reason": "delivery_unconfirmed",
+                "pasted": True,
+                "delivered": False,
+            }
         return {
-            **verdict,
-            "ok": delivered,
-            "reason": verdict.get("reason", "match")
-            if delivered
-            else "delivery_unconfirmed",
-            "pasted": True,
-            "delivered": delivered,
-            "selected": selected,
-            "endpoint": endpoint.label,
-            "display": disp,
-            "app": app,
-            "message": flat_line,
-            "fingerprint": message_fingerprint(flat_line),
+            **base,
+            "ok": False,
+            "code": "unknown",
+            "reason": "unknown",
+            "pasted": pasted,
+            "delivered": False,
         }
 
 

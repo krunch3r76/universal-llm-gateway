@@ -26,10 +26,34 @@ import hashlib
 import json
 import logging
 import re
+import unicodedata
 import uuid
 from typing import Any
 
 logger = logging.getLogger(__name__)
+
+_ULG_NORM_COMPOSER_JS = r"""
+function ulgNormalizeComposerText(raw) {
+  let s = String(raw ?? '').normalize('NFC');
+  s = s.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+  s = s.replace(/\u00a0/g, ' ').replace(/\u202f/g, ' ');
+  return s.trim();
+}
+"""
+
+
+def normalize_composer_text(text: str) -> str:
+    """Normalize composer text for semantic equality (NFC, newlines, NBSP, trim ends)."""
+    s = unicodedata.normalize("NFC", text or "")
+    s = s.replace("\r\n", "\n").replace("\r", "\n")
+    s = s.replace("\u00a0", " ").replace("\u202f", " ")
+    return s.strip()
+
+
+def composer_text_semantic_equals(a: str, b: str) -> bool:
+    """True when two composer payloads match after semantic normalization."""
+    return normalize_composer_text(a) == normalize_composer_text(b)
+
 
 # Per-call nonce for the in-flight send poll. A context var keeps ``_cdp_eval``'s
 # signature stable for existing test shims that do not accept new kwargs.
@@ -292,15 +316,26 @@ def _set_composer_body(
     msg = json.dumps(line)
     writer = json.dumps(str(draft_writer or ""))
     return (
-        f"(()=>{{const el=({find});"
+        f"(()=>{{{_ULG_NORM_COMPOSER_JS}"
+        f"const el=({find});"
         "if(!el)return{ok:false,reason:'no_composer'};"
         f"const line={msg};"
-        f"const draftWriter={writer};"
-        "const draft=(el.innerText||el.value||'').trim();"
-        "const stale=/^BRIDGE_WAKE\\s+thread=\\S+\\s+turn=\\d+(?:,\\d+)*$/.test(draft);"
-        "if(draft.length>0&&!stale&&draft!==line.trim())"
-        "return{ok:false,reason:'composer_not_empty',draft};"
+        f"const expectWriter={writer};"
         "const g=window.__ulgOperatorActivity=window.__ulgOperatorActivity||{};"
+        "const normLine=ulgNormalizeComposerText(line);"
+        "const draftRaw=(el.innerText||el.value||'');"
+        "const normDraft=ulgNormalizeComposerText(draftRaw);"
+        "const stale=/^BRIDGE_WAKE\\s+thread=\\S+\\s+turn=\\d+(?:,\\d+)*$/.test(normDraft);"
+        "if(normDraft.length>0&&!stale){"
+        "const writer=String(g.ourDraftWriter||'').trim();"
+        "const sig=ulgNormalizeComposerText(String(g.ourDraftSig||''));"
+        "if(normDraft===normLine&&expectWriter&&writer===expectWriter&&sig===normDraft){"
+        "return{ok:true,sig:normDraft,used_existing_draft:true};"
+        "}"
+        "if(normDraft!==normLine){return{ok:false,reason:'composer_not_empty',draft:draftRaw};}"
+        "if(expectWriter&&(!writer||writer!==expectWriter)){"
+        "return{ok:false,reason:'composer_not_empty',draft:draftRaw};}"
+        "}"
         "if(el.editor&&el.editor.commands&&typeof el.editor.commands.setContent==='function'){"
         "try{el.editor.commands.setContent(line);}catch(e){"
         "el.textContent=line;el.dispatchEvent(new InputEvent('input',{bubbles:true,data:line}));}"
@@ -310,9 +345,13 @@ def _set_composer_body(
         "el.textContent=line;"
         "el.dispatchEvent(new InputEvent('input',{bubbles:true,inputType:'insertText',data:line}));"
         "}"
-        "const after=(el.innerText||el.value||'').trim();"
+        "let after=ulgNormalizeComposerText(el.innerText||el.value||'');"
+        "if(after!==normLine){"
+        "after=ulgNormalizeComposerText(el.innerText||el.value||'');"
+        "if(after!==normLine){return{ok:false,reason:'composer_text_mismatch',send_clicked:false};}"
+        "}"
         "g.ourDraftSig=after;"
-        "g.ourDraftWriter=draftWriter;"
+        "g.ourDraftWriter=expectWriter;"
         "return{ok:true,sig:after};})()"
     )
 
@@ -326,7 +365,8 @@ def _click_send_own_draft_body(
     expect_writer = json.dumps(str(draft_writer or ""))
     nonce_js = json.dumps(str(abort_nonce))
     return (
-        f"(()=>{{const el=({find});"
+        f"(()=>{{{_ULG_NORM_COMPOSER_JS}"
+        f"const el=({find});"
         "if(!el)return{ok:false,reason:'no_composer',send_clicked:false};"
         "const g=window.__ulgOperatorActivity=window.__ulgOperatorActivity||{};"
         f"const abortNonce={nonce_js};"
@@ -341,8 +381,8 @@ def _click_send_own_draft_body(
         "};"
         f"const expectWriter={expect_writer};"
         "const writer=String(g.ourDraftWriter||'').trim();"
-        "const sig=String(g.ourDraftSig||'').trim();"
-        "const draft=(el.innerText||el.value||'').trim();"
+        "const sig=ulgNormalizeComposerText(String(g.ourDraftSig||''));"
+        "const draft=ulgNormalizeComposerText(el.innerText||el.value||'');"
         "if(expectWriter&&( !writer||writer!==expectWriter))"
         "{cleanup();return{ok:false,reason:'foreign_draft',send_clicked:false,draft,sig,writer};}"
         "if(!sig||draft!==sig)"
@@ -433,17 +473,10 @@ def _click_send_body(
     poll_interval = int(SEND_BTN_POLL_INTERVAL_MS)
     btn_cap = int(SEND_BTN_CENSUS_BUTTONS_CAP)
     attr_cap = int(SEND_BTN_CENSUS_ATTR_CAP)
-    timeout_s = (
-        float(SEND_BTN_CDP_EVAL_TIMEOUT_S)
-        if eval_timeout_s is None
-        else float(eval_timeout_s)
-    )
-    page_budget_ms = max(
-        0, int(timeout_s * 1000) - int(SEND_BTN_PAGE_TIMEOUT_MARGIN_MS)
-    )
     nonce_js = json.dumps(str(abort_nonce))
     return (
-        f"(async ()=>{{const g=window.__ulgOperatorActivity=window.__ulgOperatorActivity||{{}};"
+        f"(async ()=>{{{_ULG_NORM_COMPOSER_JS}"
+        "const g=window.__ulgOperatorActivity=window.__ulgOperatorActivity||{};"
         f"const abortNonce={nonce_js};"
         "const cleanup=()=>{if(!abortNonce)return;"
         "const pm=g.composerSendPermits;if(pm)delete pm[abortNonce];"
@@ -456,9 +489,14 @@ def _click_send_body(
         "};"
         f"const el=({find});"
         "if(!el){cleanup();return{ok:false,reason:'no_composer',send_clicked:false};}"
-        f"const text=(el.innerText||el.value||'').trim(),line={lj};"
-        "if(!text||(text!==line.trim()&&!/^BRIDGE_WAKE\\s+thread=\\S+\\s+turn=\\d+(?:,\\d+)*$/.test(text)))"
-        "{cleanup();return{ok:false,reason:'composer_text_mismatch',send_clicked:false};}"
+        f"const line={lj};"
+        "const normLine=ulgNormalizeComposerText(line);"
+        "let normText=ulgNormalizeComposerText(el.innerText||el.value||'');"
+        "const wakeStale=(t)=>/^BRIDGE_WAKE\\s+thread=\\S+\\s+turn=\\d+(?:,\\d+)*$/.test(t);"
+        "if(!normText||(normText!==normLine&&!wakeStale(normText))){"
+        "normText=ulgNormalizeComposerText(el.innerText||el.value||'');"
+        "if(!normText||(normText!==normLine&&!wakeStale(normText))){"
+        "cleanup();return{ok:false,reason:'composer_text_mismatch',send_clicked:false};}}"
         f"const root=el.closest('form')||el.parentElement||document;"
         f"const btnSels={btn_sels};"
         f"const waitCeilingMs={wait_ceiling};"
@@ -708,6 +746,8 @@ async def dom_set_composer_text(
         return {"ok": False, "reason": "paste_failed"}
     if not value.get("ok"):
         return value
+    if value.get("used_existing_draft"):
+        return {"ok": True, "used_existing_draft": True}
     return {"ok": True}
 
 
@@ -857,9 +897,14 @@ async def dom_insert_and_send(
     )
     if not ins.get("ok"):
         return ins
-    send = await dom_click_send(
-        ws_url, selector=selector, line=line, preserve_newlines=preserve_newlines
-    )
+    if ins.get("used_existing_draft"):
+        send = await dom_click_send_own_draft(
+            ws_url, selector=selector, draft_writer=draft_writer
+        )
+    else:
+        send = await dom_click_send(
+            ws_url, selector=selector, line=line, preserve_newlines=preserve_newlines
+        )
     if not send.get("ok"):
         out: dict[str, Any] = {
             "ok": False,
@@ -884,8 +929,10 @@ def foreign_draft_guard(surface: dict[str, Any], *, watermark: str = "") -> str 
 __all__ = [
     "GROK_PROMPT_SELECTOR",
     "OPERATOR_PROBE_VERSION",
+    "composer_text_semantic_equals",
     "composer_draft_sha256_hex",
     "composer_selector",
+    "normalize_composer_text",
     "probe_foreign_draft",
     "dom_click_send",
     "dom_click_send_own_draft",

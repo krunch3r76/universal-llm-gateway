@@ -7,7 +7,12 @@ from typing import Any
 
 from chat_harvest.models import ClassifyRefuse
 from cursor_bridge.electron_chat_relay import ElectronEndpoint, read_endpoint_turn
+
 from interlocutor.targets import DisplayEightTarget
+
+_NON_RETRYABLE_TIMEOUT = frozenset(
+    {"cdp_eval_timeout", "clicked_unknown", "delivery_unconfirmed"}
+)
 
 
 def _endpoint(target: DisplayEightTarget) -> ElectronEndpoint:
@@ -20,6 +25,87 @@ def _endpoint(target: DisplayEightTarget) -> ElectronEndpoint:
     )
 
 
+def _leaf(result: dict[str, Any]) -> dict[str, Any]:
+    inner = result.get("result")
+    if isinstance(inner, dict):
+        return inner
+    return result
+
+
+def _verified_display_send(result: dict[str, Any]) -> bool:
+    leaf = _leaf(result)
+    if leaf.get("ok") is False:
+        return False
+    if leaf.get("delivered") is not True:
+        return False
+    if leaf.get("pasted") is False:
+        return False
+    return True
+
+
+def _display_steer_failure(result: dict[str, Any]) -> dict[str, Any]:
+    leaf = _leaf(result)
+    reason = str(
+        leaf.get("code")
+        or result.get("code")
+        or leaf.get("reason")
+        or result.get("reason")
+        or "delivery_failed"
+    )
+    code = str(result.get("code") or leaf.get("code") or reason or "unknown")
+    if code in {"agent_id_mismatch", "target_unverified"}:
+        code = "target_mismatch"
+    out: dict[str, Any] = {
+        "ok": False,
+        "code": code,
+        "reason": str(
+            result.get("reason") or leaf.get("reason") or leaf.get("message") or code
+        ),
+        "adapter": "display_eight",
+        "delivered": bool(leaf.get("delivered")),
+        "pasted": leaf.get("pasted"),
+    }
+    if leaf.get("clicked_unknown") or code == "cdp_eval_timeout":
+        out["retryable"] = False
+    for key in ("send_clicked", "race_winner", "endpoint", "display", "app"):
+        if key in leaf:
+            out[key] = leaf[key]
+    return out
+
+
+def _display_steer_success(
+    result: dict[str, Any], *, voice_s: str, target: DisplayEightTarget
+) -> dict[str, Any]:
+    leaf = _leaf(result)
+    watermarked = voice_s == "operator_relay"
+    out: dict[str, Any] = {
+        "ok": True,
+        "adapter": "display_eight",
+        "voice": voice_s,
+        "watermarked": watermarked,
+        "fidelity": "verbatim",
+        "delivered": True,
+        "pasted": leaf.get("pasted", True),
+    }
+    for key in (
+        "endpoint",
+        "display",
+        "app",
+        "selected",
+        "message",
+        "fingerprint",
+        "active_agent_id",
+        "active_title",
+    ):
+        if key in leaf:
+            out[key] = leaf[key]
+        elif key in result:
+            out[key] = result[key]
+    if "message" not in out and target.app in {"grok", "cursor"}:
+        out.setdefault("fidelity", "verbatim")
+    return out
+
+
 async def read_display_latest(target: DisplayEightTarget) -> dict[str, Any]:
     snap = await read_endpoint_turn(_endpoint(target), select=True)
     if not snap.get("ok"):
@@ -29,12 +115,18 @@ async def read_display_latest(target: DisplayEightTarget) -> dict[str, Any]:
             "code": code,
             "reason": str(snap.get("reason") or snap.get("detail") or code),
         }
+    recent = list(snap.get("recent_messages") or [])
     return {
         "ok": True,
         "adapter": "display_eight",
         "coverage": "latest",
         "latest_message": snap.get("latest_message") or "",
         "generating": bool(snap.get("generating")),
+        "composer_draft": str(snap.get("composer_draft") or ""),
+        "latest_fingerprint": str(snap.get("latest_fingerprint") or ""),
+        "active_agent_id": snap.get("active_agent_id"),
+        "active_title": snap.get("active_title"),
+        "recent_messages": recent[-3:],
         "endpoint": snap.get("endpoint"),
     }
 
@@ -50,7 +142,9 @@ async def steer_display(
 ) -> dict[str, Any]:
     body = (text or "").strip()
     if not body:
-        return ClassifyRefuse(code="text_required", reason="steer requires text").model_dump()
+        return ClassifyRefuse(
+            code="text_required", reason="steer requires text"
+        ).model_dump()
 
     voice_s = (voice or "self").strip().lower()
     if voice_s == "operator_relay":
@@ -83,22 +177,28 @@ async def steer_display(
             reason=f"unsupported voice: {voice!r}",
         ).model_dump()
 
-    if not result.get("ok", True) and result.get("code"):
+    if isinstance(result, dict) and result.get("ok") is False and result.get("code"):
         return {
             "ok": False,
             "code": str(result.get("code")),
-            "reason": str(result.get("reason") or result.get("message") or result.get("code")),
-            **{k: v for k, v in result.items() if k not in {"code", "reason", "message"}},
+            "reason": str(
+                result.get("reason") or result.get("message") or result.get("code")
+            ),
+            **{
+                k: v
+                for k, v in result.items()
+                if k not in {"code", "reason", "message"}
+            },
         }
-    watermarked = voice_s == "operator_relay"
-    return {
-        "ok": True,
-        "adapter": "display_eight",
-        "voice": voice_s,
-        "watermarked": watermarked,
-        "fidelity": "flattened" if target.app in {"grok", "cursor"} else "verbatim",
-        "result": result,
-    }
+
+    if not _verified_display_send(result):
+        failure = _display_steer_failure(result)
+        leaf = _leaf(result)
+        if str(leaf.get("reason") or "") in _NON_RETRYABLE_TIMEOUT:
+            failure["retryable"] = False
+        return failure
+
+    return _display_steer_success(result, voice_s=voice_s, target=target)
 
 
 def read_display_latest_sync(target: DisplayEightTarget) -> dict[str, Any]:

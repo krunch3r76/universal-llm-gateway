@@ -76,6 +76,8 @@ def register_interlocutor_tool(mcp: FastMCP) -> None:
         )
         if result.get("duplicate"):
             _record("interlocutor.steer.duplicate", target=target)
+        elif result.get("ok") is True:
+            _record("interlocutor.steer.committed", target=target, voice=voice)
         elif result.get("ok") is False:
             _record(
                 "interlocutor.steer.refused",
@@ -83,7 +85,7 @@ def register_interlocutor_tool(mcp: FastMCP) -> None:
                 code=result.get("code"),
             )
         else:
-            _record("interlocutor.steer.committed", target=target, voice=voice)
+            _record("interlocutor.steer.unknown", target=target)
         return {**result, "op": "steer", "target": target}
 
 
