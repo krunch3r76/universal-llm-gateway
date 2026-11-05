@@ -343,7 +343,8 @@
     80,
     81,
     82,
-    83
+    83,
+    84
   ],
   "seed_rows": {
     "relationship_types": [
@@ -1706,6 +1707,366 @@
         ]
       ],
       "sql": "CREATE TABLE close_drafts (\n            session_id TEXT PRIMARY KEY,\n            agent TEXT NOT NULL,\n            revision INTEGER NOT NULL DEFAULT 1,\n            fields TEXT NOT NULL DEFAULT '{}',\n            check_state TEXT,\n            ttl_expires_at TEXT,\n            reflection_flush_after TEXT,\n            created_at TEXT NOT NULL,\n            updated_at TEXT NOT NULL,\n            committed_at TEXT\n        )"
+    },
+    "concern_advisory_delivered": {
+      "columns": [
+        [
+          "id",
+          "INTEGER",
+          0,
+          null,
+          1
+        ],
+        [
+          "concern_id",
+          "TEXT",
+          1,
+          null,
+          0
+        ],
+        [
+          "seq",
+          "INTEGER",
+          0,
+          null,
+          0
+        ],
+        [
+          "event_kind",
+          "TEXT",
+          1,
+          null,
+          0
+        ],
+        [
+          "payload",
+          "TEXT",
+          1,
+          "'{}'",
+          0
+        ],
+        [
+          "delivered_at",
+          "TEXT",
+          1,
+          "datetime('now')",
+          0
+        ]
+      ],
+      "sql": "CREATE TABLE concern_advisory_delivered (\n    id INTEGER PRIMARY KEY AUTOINCREMENT,\n    concern_id TEXT NOT NULL,\n    seq INTEGER,\n    event_kind TEXT NOT NULL,\n    payload TEXT NOT NULL DEFAULT '{}',\n    delivered_at TEXT NOT NULL DEFAULT (datetime('now'))\n)"
+    },
+    "concern_advisory_outbox": {
+      "columns": [
+        [
+          "concern_id",
+          "TEXT",
+          1,
+          null,
+          1
+        ],
+        [
+          "seq",
+          "INTEGER",
+          1,
+          null,
+          2
+        ],
+        [
+          "record_ref",
+          "TEXT",
+          1,
+          null,
+          0
+        ],
+        [
+          "payload",
+          "TEXT",
+          1,
+          "'{}'",
+          0
+        ],
+        [
+          "emitted_at",
+          "TEXT",
+          0,
+          null,
+          0
+        ]
+      ],
+      "sql": "CREATE TABLE concern_advisory_outbox (\n    concern_id TEXT NOT NULL,\n    seq INTEGER NOT NULL,\n    record_ref TEXT NOT NULL,\n    payload TEXT NOT NULL DEFAULT '{}',\n    emitted_at TEXT,\n    PRIMARY KEY (concern_id, seq),\n    UNIQUE (record_ref)\n)"
+    },
+    "concern_checkpoint": {
+      "columns": [
+        [
+          "concern_id",
+          "TEXT",
+          1,
+          null,
+          1
+        ],
+        [
+          "through_seq",
+          "INTEGER",
+          1,
+          null,
+          2
+        ],
+        [
+          "fold_version",
+          "INTEGER",
+          1,
+          null,
+          0
+        ],
+        [
+          "folded_state",
+          "TEXT",
+          1,
+          null,
+          0
+        ],
+        [
+          "state_sha256",
+          "TEXT",
+          1,
+          null,
+          0
+        ],
+        [
+          "created_at",
+          "TEXT",
+          1,
+          "datetime('now')",
+          0
+        ]
+      ],
+      "sql": "CREATE TABLE concern_checkpoint (\n    concern_id TEXT NOT NULL,\n    through_seq INTEGER NOT NULL,\n    fold_version INTEGER NOT NULL,\n    folded_state TEXT NOT NULL,\n    state_sha256 TEXT NOT NULL,\n    created_at TEXT NOT NULL DEFAULT (datetime('now')),\n    PRIMARY KEY (concern_id, through_seq)\n)"
+    },
+    "concern_controls": {
+      "columns": [
+        [
+          "concern_id",
+          "TEXT",
+          1,
+          null,
+          1
+        ],
+        [
+          "control_key",
+          "TEXT",
+          1,
+          null,
+          2
+        ],
+        [
+          "hold_json",
+          "TEXT",
+          1,
+          "'{}'",
+          0
+        ]
+      ],
+      "sql": "CREATE TABLE concern_controls (\n    concern_id TEXT NOT NULL,\n    control_key TEXT NOT NULL,\n    hold_json TEXT NOT NULL DEFAULT '{}',\n    PRIMARY KEY (concern_id, control_key)\n)"
+    },
+    "concern_cursor": {
+      "columns": [
+        [
+          "concern_id",
+          "TEXT",
+          1,
+          null,
+          1
+        ],
+        [
+          "through_seq",
+          "INTEGER",
+          1,
+          "0",
+          0
+        ],
+        [
+          "cursor_token",
+          "TEXT",
+          1,
+          "'0'",
+          0
+        ]
+      ],
+      "sql": "CREATE TABLE concern_cursor (\n    concern_id TEXT NOT NULL PRIMARY KEY,\n    through_seq INTEGER NOT NULL DEFAULT 0,\n    cursor_token TEXT NOT NULL DEFAULT '0'\n)"
+    },
+    "concern_head": {
+      "columns": [
+        [
+          "concern_id",
+          "TEXT",
+          1,
+          null,
+          1
+        ],
+        [
+          "revision",
+          "INTEGER",
+          1,
+          "0",
+          0
+        ],
+        [
+          "record_ref",
+          "TEXT",
+          0,
+          null,
+          0
+        ],
+        [
+          "fencing_generation",
+          "INTEGER",
+          1,
+          "0",
+          0
+        ],
+        [
+          "fold_version",
+          "INTEGER",
+          1,
+          "1",
+          0
+        ]
+      ],
+      "sql": "CREATE TABLE concern_head (\n    concern_id TEXT NOT NULL PRIMARY KEY,\n    revision INTEGER NOT NULL DEFAULT 0,\n    record_ref TEXT,\n    fencing_generation INTEGER NOT NULL DEFAULT 0,\n    fold_version INTEGER NOT NULL DEFAULT 1\n)"
+    },
+    "concern_intents": {
+      "columns": [
+        [
+          "concern_id",
+          "TEXT",
+          1,
+          null,
+          1
+        ],
+        [
+          "intent_id",
+          "TEXT",
+          1,
+          null,
+          2
+        ],
+        [
+          "record_ref",
+          "TEXT",
+          1,
+          null,
+          0
+        ],
+        [
+          "intent_json",
+          "TEXT",
+          1,
+          "'{}'",
+          0
+        ]
+      ],
+      "sql": "CREATE TABLE concern_intents (\n    concern_id TEXT NOT NULL,\n    intent_id TEXT NOT NULL,\n    record_ref TEXT NOT NULL,\n    intent_json TEXT NOT NULL DEFAULT '{}',\n    PRIMARY KEY (concern_id, intent_id)\n)"
+    },
+    "concern_journal": {
+      "columns": [
+        [
+          "concern_id",
+          "TEXT",
+          1,
+          null,
+          1
+        ],
+        [
+          "seq",
+          "INTEGER",
+          1,
+          null,
+          2
+        ],
+        [
+          "record_ref",
+          "TEXT",
+          1,
+          null,
+          0
+        ],
+        [
+          "kind",
+          "TEXT",
+          1,
+          null,
+          0
+        ],
+        [
+          "payload",
+          "TEXT",
+          1,
+          "'{}'",
+          0
+        ],
+        [
+          "authorized_by",
+          "TEXT",
+          1,
+          null,
+          0
+        ],
+        [
+          "fencing_generation",
+          "INTEGER",
+          1,
+          "0",
+          0
+        ],
+        [
+          "revision",
+          "INTEGER",
+          1,
+          "0",
+          0
+        ],
+        [
+          "fold_version",
+          "INTEGER",
+          1,
+          "1",
+          0
+        ],
+        [
+          "schema_version",
+          "INTEGER",
+          1,
+          "1",
+          0
+        ],
+        [
+          "committed_at",
+          "TEXT",
+          0,
+          null,
+          0
+        ]
+      ],
+      "sql": "CREATE TABLE concern_journal (\n    concern_id TEXT NOT NULL,\n    seq INTEGER NOT NULL,\n    record_ref TEXT NOT NULL,\n    kind TEXT NOT NULL,\n    payload TEXT NOT NULL DEFAULT '{}',\n    authorized_by TEXT NOT NULL,\n    fencing_generation INTEGER NOT NULL DEFAULT 0,\n    revision INTEGER NOT NULL DEFAULT 0,\n    fold_version INTEGER NOT NULL DEFAULT 1,\n    schema_version INTEGER NOT NULL DEFAULT 1,\n    committed_at TEXT,\n    PRIMARY KEY (concern_id, seq),\n    UNIQUE (record_ref)\n)"
+    },
+    "concern_seq_alloc": {
+      "columns": [
+        [
+          "concern_id",
+          "TEXT",
+          1,
+          null,
+          1
+        ],
+        [
+          "next_seq",
+          "INTEGER",
+          1,
+          "1",
+          0
+        ]
+      ],
+      "sql": "CREATE TABLE concern_seq_alloc (\n    concern_id TEXT NOT NULL PRIMARY KEY,\n    next_seq INTEGER NOT NULL DEFAULT 1\n)"
     },
     "digest_jobs": {
       "columns": [

@@ -37,6 +37,7 @@ from .routes import (
     boot,
     claims_burst,
     close_draft,
+    concern_aggregate,
     deadlines,
     dispatch,
     doctrine,
@@ -293,6 +294,7 @@ def create_app(*, db_path: str | None = None) -> FastAPI:
     _include(substrate_s6_batch8_router)
     _include(substrate_s6_batch9_router)
     _include(seat_claims.router)
+    _include(concern_aggregate.router)
     from .routes.frictions import router as frictions_router
 
     _include(frictions_router)

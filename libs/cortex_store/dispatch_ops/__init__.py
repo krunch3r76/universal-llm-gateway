@@ -148,6 +148,8 @@ _OP_SPECS: dict[str, str] = {
     "walk_subgraph": "ops_subgraph:_op_walk_subgraph",
     "prose_fact_scan": "ops_prose_fact_scan:_op_prose_fact_scan",
     "view_render": "ops_views:_op_view_render",
+    "concern_transition": "ops_concern_aggregate:_op_concern_transition",
+    "concern_rebuild": "ops_concern_aggregate:_op_concern_rebuild",
 }
 
 

@@ -7,7 +7,7 @@ Regenerate:
 
 from __future__ import annotations
 
-OPENAPI_SHA256 = "2af6b5da257ffc117f1dda7431b280a1880e53c5cb7a79404f75ababb70c88f1"
+OPENAPI_SHA256 = "210875a7a0bc8325171767f8d80b4cd52ccfa8599169e574f6fff2bd018fca6e"
 FACADE_TOOL = "cortex"
 SERVED_OPS: dict[str, dict[str, str]] = {
     "activate": {
@@ -49,6 +49,16 @@ SERVED_OPS: dict[str, dict[str, str]] = {
         "method": "GET",
         "path": "/boot-audit-counters",
         "operation_id": "boot_audit_counters_boot_audit_counters_get",
+    },
+    "concern_rebuild": {
+        "method": "POST",
+        "path": "/concern-aggregate/rebuild",
+        "operation_id": "concern_rebuild_route_concern_aggregate_rebuild_post",
+    },
+    "concern_transition": {
+        "method": "POST",
+        "path": "/concern-aggregate/transition",
+        "operation_id": "concern_transition_route_concern_aggregate_transition_post",
     },
     "deadline_resolve": {
         "method": "POST",
@@ -372,7 +382,7 @@ SERVED_OPS: dict[str, dict[str, str]] = {
     },
 }
 NON_BINDING_PATH_FINGERPRINTS: dict[str, str] = {
-    "@components": "c58ebb370e54d70e93d21b49925a8e9872ccaf1f1b0d3ce6329e28924cc03c4c",
+    "@components": "d554be89455c86d8d50a5680e337400874ea3b4e40cf4a9ebdf8157e14a354e4",
     "@info": "1418971c74f9954e15f6a10ac814a7e27ff9889aca5f2d640c51dbeb6be527e4",
     "DELETE /tags/{tag_name}": "3fd67dfdaa2e5b50a1f1d192fa0e88e9722a19bc4dcdca19d12f3296c9be4c7f",
     "GET /api/v1/doctrine/vision-digest": "f161fc294c23139d04ed3d22bb992f730e4987e6b862e0d7258d278091a52dae",

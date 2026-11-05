@@ -7,7 +7,7 @@ Regenerate:
 
 from __future__ import annotations
 
-OPENAPI_SHA256 = "bf96f14d0753e9f5fd9cebcb6a9e62ac2feb6ed68cd8f81bef1a82bcd6e2ac50"
+OPENAPI_SHA256 = "061c5baf03f99e5cb2de79dbace85b0fc573df5b5152566488b3db5b6d3a5b20"
 FACADE_TOOL = "agent-bus"
 SERVED_OPS: dict[str, dict[str, str]] = {
     "branch_associate": {
@@ -172,7 +172,7 @@ NON_BINDING_PATH_FINGERPRINTS: dict[str, str] = {
     "GET /resume-fences/{fence_id}": "faa8db7e13d971df64761d456de2b49efdfca13983139ff6d363a38e63671603",
     "GET /threads/{thread_id}/cse-current": "2f461416fdaf2260253067b60ddd42037cb95af90e91cea3726b23bff64c31d2",
     "GET /threads/{thread_id}/export": "a784f1abaed3c1f6839a38b2da63cff1f70cd335d3a9098fa3f2ebf10d8eb063",
-    "GET /threads/{thread_id}/resume-fence": "9111adec1e5af49c6a2778f36ca005164511929b63dbe16cf93ea36e0344165c",
+    "GET /threads/{thread_id}/resume-fence": "a6a70dc55e1f45ede9187f1367c4fbb4e1a3db522e0ebae865af59ddb0c14113",
     "GET /threads/{thread_id}/summary": "417a68f81d68bf2bc3d782fa38b0e437fe498480b1814bebddc34190be955f74",
     "GET /turns/since": "93c587e9bae1612a749ddd982824e1fa1500da5e59554770b207dbec20659924",
     "PATCH /turns/{turn_id}/read": "fbc5092a653a58379b7b1a0317b69f9bdbaf31ff6bba8c539f7445af035e5a3b",
