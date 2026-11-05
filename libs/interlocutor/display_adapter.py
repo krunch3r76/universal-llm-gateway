@@ -11,7 +11,13 @@ from cursor_bridge.electron_chat_relay import ElectronEndpoint, read_endpoint_tu
 from interlocutor.targets import DisplayEightTarget
 
 _NON_RETRYABLE_TIMEOUT = frozenset(
-    {"cdp_eval_timeout", "clicked_unknown", "delivery_unconfirmed"}
+    {
+        "cdp_eval_timeout",
+        "clicked_unknown",
+        "delivery_unconfirmed",
+        "send_unconfirmed",
+        "unknown",
+    }
 )
 
 
@@ -65,9 +71,23 @@ def _display_steer_failure(result: dict[str, Any]) -> dict[str, Any]:
         "delivered": bool(leaf.get("delivered")),
         "pasted": leaf.get("pasted"),
     }
-    if leaf.get("clicked_unknown") or code == "cdp_eval_timeout":
+    if (
+        leaf.get("clicked_unknown")
+        or code in _NON_RETRYABLE_TIMEOUT
+        or leaf.get("retryable") is False
+    ):
         out["retryable"] = False
-    for key in ("send_clicked", "race_winner", "endpoint", "display", "app"):
+    if "clicked_unknown" in leaf:
+        out["clicked_unknown"] = bool(leaf["clicked_unknown"])
+    for key in (
+        "send_clicked",
+        "race_winner",
+        "endpoint",
+        "display",
+        "app",
+        "phase",
+        "inserted",
+    ):
         if key in leaf:
             out[key] = leaf[key]
     return out
@@ -78,14 +98,17 @@ def _display_steer_success(
 ) -> dict[str, Any]:
     leaf = _leaf(result)
     watermarked = voice_s == "operator_relay"
+    # operator_paste.py joins the body on spaces and stamps a watermark nonce.
+    fidelity = "flattened_watermark" if watermarked else "verbatim"
     out: dict[str, Any] = {
         "ok": True,
         "adapter": "display_eight",
         "voice": voice_s,
         "watermarked": watermarked,
-        "fidelity": "verbatim",
+        "fidelity": fidelity,
         "delivered": True,
         "pasted": leaf.get("pasted", True),
+        "phase": leaf.get("phase") or "submitted_visible",
     }
     for key in (
         "endpoint",
@@ -101,8 +124,6 @@ def _display_steer_success(
             out[key] = leaf[key]
         elif key in result:
             out[key] = result[key]
-    if "message" not in out and target.app in {"grok", "cursor"}:
-        out.setdefault("fidelity", "verbatim")
     return out
 
 

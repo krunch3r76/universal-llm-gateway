@@ -191,7 +191,7 @@ async def test_run_one_to_one_relay_ping_pongs_until_bus_handoff() -> None:
     assert result["transcript"][-1]["handoff"] is True
 
 
-class _noop_lock:
+class _noop_lock:  # noqa: N801 — local async-context stand-in, pre-existing name
     def __init__(self, *_a: Any, **_k: Any) -> None:
         pass
 
@@ -295,3 +295,146 @@ async def test_paste_delivery_unconfirmed_when_draft_remains() -> None:
     assert out["ok"] is False
     assert out["code"] == "delivery_unconfirmed"
     assert out["pasted"] is True
+    assert out["phase"] == "inserted"
+    assert out["delivered"] is False
+
+
+def _grok_select() -> dict:
+    return {
+        "ok": True,
+        "ws_url": "ws://fake",
+        "surface": {"composer_draft": "", "generating": False},
+        "verdict": {"ok": True, "active_agent_id": "gc2-agent-uuid"},
+        "display": "10",
+        "app": "grok",
+        "selected": True,
+    }
+
+
+@pytest.mark.asyncio
+async def test_click_timeout_reconciles_to_submitted_visible_without_second_send() -> (
+    None
+):
+    calls = {"n": 0}
+
+    async def _fake_dom_insert(*_a: Any, **_k: Any) -> dict[str, Any]:
+        calls["n"] += 1
+        return {
+            "ok": False,
+            "reason": "cdp_eval_timeout",
+            "clicked_unknown": True,
+            "phase": "send_unknown",
+            "pasted": True,
+            "inserted": True,
+            "retryable": False,
+        }
+
+    async def _fake_probe(_ws: str) -> dict[str, Any]:
+        return {
+            "composer_draft": "",
+            "recent_messages": ["exact payload"],
+            "generating": False,
+        }
+
+    ep = ElectronEndpoint(
+        label="gc2", app="grok", display="10", agent_id="gc2-agent-uuid"
+    )
+    with (
+        patch(
+            "cursor_bridge.electron_chat_relay._resolve_and_select_endpoint",
+            new_callable=AsyncMock,
+            return_value=_grok_select(),
+        ),
+        patch(
+            "cursor_bridge.electron_chat_relay.dom_insert_and_send",
+            side_effect=_fake_dom_insert,
+        ),
+        patch(
+            "cursor_bridge.electron_chat_relay.probe_surface",
+            new_callable=AsyncMock,
+            side_effect=_fake_probe,
+        ),
+        patch("cursor_bridge.electron_chat_relay.agent_paste_lock", _noop_lock),
+    ):
+        out = await paste_endpoint_message(ep, "exact payload", select=True)
+    assert calls["n"] == 1
+    assert out["ok"] is True
+    assert out["delivered"] is True
+    assert out["phase"] == "submitted_visible"
+    assert out["clicked_unknown"] is True
+
+
+@pytest.mark.asyncio
+async def test_click_timeout_with_owned_draft_stays_unconfirmed() -> None:
+    async def _fake_dom_insert(*_a: Any, **_k: Any) -> dict[str, Any]:
+        return {
+            "ok": False,
+            "reason": "cdp_eval_timeout",
+            "clicked_unknown": True,
+            "phase": "send_unknown",
+        }
+
+    async def _fake_probe(_ws: str) -> dict[str, Any]:
+        return {"composer_draft": "exact payload", "recent_messages": []}
+
+    ep = ElectronEndpoint(
+        label="gc2", app="grok", display="10", agent_id="gc2-agent-uuid"
+    )
+    with (
+        patch(
+            "cursor_bridge.electron_chat_relay._resolve_and_select_endpoint",
+            new_callable=AsyncMock,
+            return_value=_grok_select(),
+        ),
+        patch(
+            "cursor_bridge.electron_chat_relay.dom_insert_and_send",
+            side_effect=_fake_dom_insert,
+        ),
+        patch(
+            "cursor_bridge.electron_chat_relay.probe_surface",
+            new_callable=AsyncMock,
+            side_effect=_fake_probe,
+        ),
+        patch("cursor_bridge.electron_chat_relay.agent_paste_lock", _noop_lock),
+    ):
+        out = await paste_endpoint_message(ep, "exact payload", select=True)
+    assert out["ok"] is False
+    assert out["code"] == "send_unconfirmed"
+    assert out["phase"] == "inserted"
+    assert out["delivered"] is False
+    assert out["retryable"] is False
+
+
+@pytest.mark.asyncio
+async def test_click_timeout_empty_composer_is_unknown() -> None:
+    async def _fake_dom_insert(*_a: Any, **_k: Any) -> dict[str, Any]:
+        return {"ok": False, "reason": "cdp_eval_timeout", "clicked_unknown": True}
+
+    async def _fake_probe(_ws: str) -> dict[str, Any]:
+        return {"composer_draft": "", "recent_messages": []}
+
+    ep = ElectronEndpoint(
+        label="gc2", app="grok", display="10", agent_id="gc2-agent-uuid"
+    )
+    with (
+        patch(
+            "cursor_bridge.electron_chat_relay._resolve_and_select_endpoint",
+            new_callable=AsyncMock,
+            return_value=_grok_select(),
+        ),
+        patch(
+            "cursor_bridge.electron_chat_relay.dom_insert_and_send",
+            side_effect=_fake_dom_insert,
+        ),
+        patch(
+            "cursor_bridge.electron_chat_relay.probe_surface",
+            new_callable=AsyncMock,
+            side_effect=_fake_probe,
+        ),
+        patch("cursor_bridge.electron_chat_relay.agent_paste_lock", _noop_lock),
+    ):
+        out = await paste_endpoint_message(ep, "exact payload", select=True)
+    assert out["ok"] is False
+    assert out["code"] == "unknown"
+    assert out["delivered"] is False
+    assert out["phase"] == "send_unknown"

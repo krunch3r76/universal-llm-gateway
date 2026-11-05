@@ -233,6 +233,58 @@ def _transcript_shows_payload(text: str, surface: dict[str, Any]) -> bool:
     return any(composer_text_semantic_equals(text, str(msg)) for msg in recent)
 
 
+async def _reconcile_uncertain_send(
+    ws_url: str,
+    text: str,
+    base: dict[str, Any],
+    *,
+    pasted: bool,
+    phase: str,
+) -> dict[str, Any]:
+    """One target-page readback. Does not insert or click again.
+
+    A semantic-equal recent message is submitted-visible, or acknowledged when
+    the page is generating. A matching composer draft stays inserted and
+    unconfirmed. Anything else is unknown. An empty composer is not success.
+    """
+    post = await probe_surface(ws_url)
+    if _transcript_shows_payload(text, post):
+        return {
+            **base,
+            "ok": True,
+            "reason": "match",
+            "pasted": True,
+            "delivered": True,
+            "phase": "acknowledged" if post.get("generating") else "submitted_visible",
+            "message": text,
+            "fingerprint": message_fingerprint(text),
+            "retryable": False,
+        }
+    draft = str(post.get("composer_draft") or "")
+    if draft and composer_text_semantic_equals(draft, text):
+        return {
+            **base,
+            "ok": False,
+            "code": "send_unconfirmed",
+            "reason": "send_unconfirmed",
+            "phase": "inserted",
+            "pasted": True,
+            "inserted": True,
+            "delivered": False,
+            "retryable": False,
+        }
+    return {
+        **base,
+        "ok": False,
+        "code": "unknown",
+        "reason": "unknown",
+        "phase": phase or "send_unknown",
+        "pasted": pasted,
+        "delivered": False,
+        "retryable": False,
+    }
+
+
 async def paste_endpoint_message(
     endpoint: ElectronEndpoint, message: str, *, select: bool = True
 ) -> dict[str, Any]:
@@ -290,7 +342,6 @@ async def paste_endpoint_message(
             agent_id=str(verdict.get("expected_agent_id") or endpoint.agent_id or ""),
         )
         draft_writer = f"interlocutor:{endpoint.agent_id or endpoint.label}"
-        pasted = False
         try:
             if app == "cursor":
                 from cursor_bridge.wake_delivery import _paste_cursor_services
@@ -306,7 +357,11 @@ async def paste_endpoint_message(
                     preserve_newlines=True,
                     draft_writer=draft_writer,
                 )
-        except (TimeoutError, RuntimeError, OSError) as exc:
+        except TimeoutError:
+            return await _reconcile_uncertain_send(
+                ws_url, text, base, pasted=False, phase="send_unknown"
+            )
+        except (RuntimeError, OSError) as exc:
             return {
                 **_refuse(
                     "paste_failed",
@@ -316,23 +371,41 @@ async def paste_endpoint_message(
                     detail=type(exc).__name__,
                 ),
                 "code": "paste_failed",
-            }
-        pasted = bool(paste_res.get("pasted", paste_res.get("ok")))
-        if not paste_res.get("ok"):
-            reason = str(
-                paste_res.get("reason") or paste_res.get("code") or "no_composer"
-            )
-            out = {
-                **base,
-                "ok": False,
-                "code": reason,
-                "reason": reason,
-                "pasted": pasted,
+                "phase": "insertion_failed",
+                "pasted": False,
                 "delivered": False,
             }
-            if paste_res.get("retryable") is False or paste_res.get("clicked_unknown"):
-                out["retryable"] = False
-            return out
+        phase = str(paste_res.get("phase") or "")
+        inserted = bool(paste_res.get("inserted") or paste_res.get("pasted"))
+        reason = str(paste_res.get("reason") or paste_res.get("code") or "")
+        uncertain = (
+            bool(paste_res.get("clicked_unknown"))
+            or reason
+            in {
+                "cdp_eval_timeout",
+                "clicked_unknown",
+            }
+            or phase == "send_unknown"
+        )
+        if not paste_res.get("ok"):
+            if uncertain:
+                reconciled = await _reconcile_uncertain_send(
+                    ws_url, text, base, pasted=True, phase="send_unknown"
+                )
+                if paste_res.get("clicked_unknown"):
+                    reconciled["clicked_unknown"] = True
+                return reconciled
+            return {
+                **base,
+                "ok": False,
+                "code": reason or "no_composer",
+                "reason": reason or "no_composer",
+                "pasted": inserted,
+                "inserted": inserted,
+                "delivered": False,
+                "phase": phase or ("inserted" if inserted else "insertion_failed"),
+                **({"retryable": False} if paste_res.get("retryable") is False else {}),
+            }
         await asyncio.sleep(0.25)
         post = await probe_surface(ws_url)
         delivered = _transcript_shows_payload(text, post)
@@ -343,6 +416,9 @@ async def paste_endpoint_message(
                 "reason": verdict.get("reason", "match"),
                 "pasted": True,
                 "delivered": True,
+                "phase": "acknowledged"
+                if post.get("generating")
+                else "submitted_visible",
                 "message": text,
                 "fingerprint": message_fingerprint(text),
             }
@@ -352,16 +428,21 @@ async def paste_endpoint_message(
                 "ok": False,
                 "code": "delivery_unconfirmed",
                 "reason": "delivery_unconfirmed",
+                "phase": "inserted",
                 "pasted": True,
+                "inserted": True,
                 "delivered": False,
+                "retryable": False,
             }
         return {
             **base,
             "ok": False,
             "code": "unknown",
             "reason": "unknown",
-            "pasted": pasted,
+            "phase": "unknown",
+            "pasted": True,
             "delivered": False,
+            "retryable": False,
         }
 
 

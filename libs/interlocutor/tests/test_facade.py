@@ -232,5 +232,72 @@ def test_steer_verified_success_replays_with_duplicate() -> None:
             target=_DISPLAY_TARGET, text="once", idempotency_key="good-key"
         )
     assert first["ok"] is True
+    assert first["fidelity"] == "verbatim"
+    assert first["phase"] == "submitted_visible"
     assert second.get("duplicate") is True
     assert paste.await_count == 1
+
+
+def test_operator_relay_success_fidelity_is_flattened_watermark() -> None:
+    with patch(
+        "cursor_bridge.operator_paste.deliver_operator_paste",
+        new_callable=AsyncMock,
+    ) as paste:
+        paste.return_value = {
+            "ok": True,
+            "delivered": True,
+            "pasted": True,
+            "message": "flat line",
+        }
+        out = execute_steer(
+            target=_DISPLAY_TARGET,
+            text="a\nb",
+            voice="operator_relay",
+            grant="operator",
+            authorization_source="kaywan",
+            scope="probe",
+        )
+    assert out["ok"] is True
+    assert out["fidelity"] == "flattened_watermark"
+    assert out["watermarked"] is True
+    assert paste.await_count == 1
+
+
+class _FakeMCP:
+    def tool(self, title: str | None = None):
+        def deco(fn):
+            self.fn = fn
+            return fn
+
+        return deco
+
+
+def test_mcp_steer_records_committed_refused_and_unknown() -> None:
+    from interlocutor.mcp_tool import register_interlocutor_tool
+
+    recorded: list[str] = []
+    mcp = _FakeMCP()
+    with patch(
+        "interlocutor.mcp_tool._record", lambda signal, **_p: recorded.append(signal)
+    ):
+        register_interlocutor_tool(mcp)
+        with patch(
+            "interlocutor.mcp_tool.execute_steer",
+            return_value={"ok": True, "delivered": True},
+        ):
+            mcp.fn(op="steer", target=_DISPLAY_TARGET, text="hi")
+        with patch(
+            "interlocutor.mcp_tool.execute_steer",
+            return_value={"ok": False, "code": "composer_text_mismatch"},
+        ):
+            mcp.fn(op="steer", target=_DISPLAY_TARGET, text="hi")
+        with patch(
+            "interlocutor.mcp_tool.execute_steer",
+            return_value={"delivered": False},
+        ):
+            mcp.fn(op="steer", target=_DISPLAY_TARGET, text="hi")
+    assert recorded == [
+        "interlocutor.steer.committed",
+        "interlocutor.steer.refused",
+        "interlocutor.steer.unknown",
+    ]

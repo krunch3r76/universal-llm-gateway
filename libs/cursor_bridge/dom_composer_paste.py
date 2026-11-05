@@ -39,6 +39,13 @@ function ulgNormalizeComposerText(raw) {
   s = s.replace(/\u00a0/g, ' ').replace(/\u202f/g, ' ');
   return s.trim();
 }
+function ulgPlainHtml(raw) {
+  const esc = String(raw ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;');
+  return esc.split('\n').map((p) => '<p>' + p + '</p>').join('');
+}
 """
 
 
@@ -318,7 +325,7 @@ def _set_composer_body(
     return (
         f"(()=>{{{_ULG_NORM_COMPOSER_JS}"
         f"const el=({find});"
-        "if(!el)return{ok:false,reason:'no_composer'};"
+        "if(!el)return{ok:false,reason:'no_composer',phase:'insertion_failed',inserted:false,pasted:false};"
         f"const line={msg};"
         f"const expectWriter={writer};"
         "const g=window.__ulgOperatorActivity=window.__ulgOperatorActivity||{};"
@@ -330,14 +337,15 @@ def _set_composer_body(
         "const writer=String(g.ourDraftWriter||'').trim();"
         "const sig=ulgNormalizeComposerText(String(g.ourDraftSig||''));"
         "if(normDraft===normLine&&expectWriter&&writer===expectWriter&&sig===normDraft){"
-        "return{ok:true,sig:normDraft,used_existing_draft:true};"
+        "return{ok:true,sig:normDraft,used_existing_draft:true,phase:'inserted',inserted:true,pasted:true};"
         "}"
-        "if(normDraft!==normLine){return{ok:false,reason:'composer_not_empty',draft:draftRaw};}"
+        "if(normDraft!==normLine){"
+        "return{ok:false,reason:'composer_not_empty',draft:draftRaw,phase:'foreign_draft',inserted:false,pasted:false};}"
         "if(expectWriter&&(!writer||writer!==expectWriter)){"
-        "return{ok:false,reason:'composer_not_empty',draft:draftRaw};}"
+        "return{ok:false,reason:'composer_not_empty',draft:draftRaw,phase:'foreign_draft',inserted:false,pasted:false};}"
         "}"
         "if(el.editor&&el.editor.commands&&typeof el.editor.commands.setContent==='function'){"
-        "try{el.editor.commands.setContent(line);}catch(e){"
+        "try{el.editor.commands.setContent(ulgPlainHtml(line));}catch(e){"
         "el.textContent=line;el.dispatchEvent(new InputEvent('input',{bubbles:true,data:line}));}"
         "}else if(el.tagName==='TEXTAREA'||el.tagName==='INPUT'){"
         "el.value=line;el.dispatchEvent(new Event('input',{bubbles:true}));"
@@ -348,11 +356,12 @@ def _set_composer_body(
         "let after=ulgNormalizeComposerText(el.innerText||el.value||'');"
         "if(after!==normLine){"
         "after=ulgNormalizeComposerText(el.innerText||el.value||'');"
-        "if(after!==normLine){return{ok:false,reason:'composer_text_mismatch',send_clicked:false};}"
+        "if(after!==normLine){"
+        "return{ok:false,reason:'composer_text_mismatch',send_clicked:false,phase:'inserted',inserted:true,pasted:true};}"
         "}"
         "g.ourDraftSig=after;"
         "g.ourDraftWriter=expectWriter;"
-        "return{ok:true,sig:after};})()"
+        "return{ok:true,sig:after,phase:'inserted',inserted:true,pasted:true};})()"
     )
 
 
@@ -884,9 +893,11 @@ async def dom_insert_and_send(
 ) -> dict[str, Any]:
     """Insert once via DOM; send via async send-button poll (no Enter, no focus()).
 
-    Calls ``dom_set_composer_text`` exactly once, then ``dom_click_send``. On send
-    failure the return includes ``reason`` and ``send_fallback_clicked: False``; when
-    ``dom_click_send`` returned ``census``, that key is forwarded unchanged.
+    Calls ``dom_set_composer_text`` exactly once, then one send click. On send
+    failure the return keeps ``reason``, ``clicked_unknown``, ``retryable``, and
+    ``census``. An inserted draft that failed the click is ``phase='inserted'``
+    or ``phase='send_unknown'`` with ``pasted`` true. This function does not
+    click a second time.
     """
     ins = await dom_set_composer_text(
         ws_url,
@@ -906,15 +917,36 @@ async def dom_insert_and_send(
             ws_url, selector=selector, line=line, preserve_newlines=preserve_newlines
         )
     if not send.get("ok"):
+        reason = str(send.get("reason") or "send_failed")
+        uncertain = bool(send.get("clicked_unknown")) or reason in {
+            "cdp_eval_timeout",
+            "clicked_unknown",
+        }
         out: dict[str, Any] = {
             "ok": False,
-            "reason": str(send.get("reason") or "send_failed"),
+            "reason": reason,
+            "code": reason,
             "send_fallback_clicked": False,
+            "send_clicked": bool(send.get("send_clicked")),
+            "inserted": True,
+            "pasted": True,
+            "phase": "send_unknown" if uncertain else "inserted",
         }
+        if send.get("clicked_unknown"):
+            out["clicked_unknown"] = True
+        if uncertain or send.get("retryable") is False:
+            out["retryable"] = False
         if send.get("census") is not None:
             out["census"] = send["census"]
         return out
-    return {"ok": True, "send_fallback_clicked": bool(send.get("send_clicked"))}
+    return {
+        "ok": True,
+        "send_fallback_clicked": bool(send.get("send_clicked")),
+        "send_clicked": bool(send.get("send_clicked")),
+        "inserted": True,
+        "pasted": True,
+        "phase": "send_clicked",
+    }
 
 
 def foreign_draft_guard(surface: dict[str, Any], *, watermark: str = "") -> str | None:
