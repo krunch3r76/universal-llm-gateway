@@ -29,12 +29,7 @@ related_skills:
 
 ## Before acting (kernel)
 
-- **Run, don't ask; land on green.** Admitted ⇒ drive all open G-rows in one commission; packet = standing merge ack — land at tests+AC, ¬ second "ok to merge?" → `reference-run-to-completion.md`.
-- **ROW_HOP vs exit-and-persist.** `ROW_HOP` = journal → hop CHECKPOINT → closeout `stop: ROW_HOP`; substrate admits successor — never `team_dispatch(reuse_thread=<own thread>)`. `ROW_PINNED` · `HOLD_MERGE` · `OPERATOR_GATE` · `PARKED_TRANSPORT` · `DONE` persist and stop past the unpaid gate → `reference-invariant.md`, `reference-packet.md`.
-- **Width-seat critic, not `cdp/`.** G3→G5 and G6 use `anthropic/claude-sonnet-5-5` (`impresario.critic`). Do not substitute `cdp/`. `PARKED_TRANSPORT` and `reference-nested-cdp.md` apply only when the admitted model prefix is `cdp/`.
-- **Review harvest ≺ land ≺ DONE.** Land/`DONE`: harvest stronger-model review first — ¬ background, ¬ land-then-review → `reference-run-to-completion.md`, `reference-packet.md`.
-- **G5 witness (a:37198).** After G3→G5 width-seat critic score-ratify, required attended witness = `SCORE_RESURFACE` on `summoning_thread_id` (slug subject; review sha) — ¬ tip `DONE`, ¬ steer-inject, ¬ harvest alone. Attended G5 fold needs that turn **and** implement (`ledger:nested_implement` ∨ `git:lane_head`). `bus:SCORE_RESURFACE` ⇒ ¬ re-post · ¬ re-ratify → `reference-packet.md`.
-- **Explicit `lane="B"`.** Top-level admit passes `lane="B"`; omit nest/resume only — GIW default Lane A, not "no preference" → `reference-admit.md`, `reference-gotchas.md`.
+Kernel bullets (run/land, ROW_HOP, width-seat critic, review≺land, G5 witness, lane=B) → `reference-overview.md` § Before acting (kernel).
 
 ## Guardrails
 
