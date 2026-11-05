@@ -201,16 +201,22 @@ def append_transition(
     )
     resolve_authorized_by(conn, authorized_by)
 
-    prev_revision, prev_fence, _prev_ref = _read_head_row(conn, concern_id)
-    revision = prev_revision + 1
-    fencing_generation = prev_fence
-    if kind == "rollback":
-        fencing_generation = max(prev_fence, int(payload.get("fencing_generation", prev_fence)))
-    elif "fencing_generation" in payload:
-        fencing_generation = max(prev_fence, int(payload["fencing_generation"]))
-
     conn.execute("BEGIN IMMEDIATE")
     try:
+        prev_revision, prev_fence, _prev_ref = _read_head_row(conn, concern_id)
+        revision = prev_revision + 1
+        fencing_generation = prev_fence
+        if kind == "rollback":
+            requested = int(payload.get("fencing_generation", prev_fence))
+            if requested < prev_fence:
+                raise TransitionRejectedError("stale fencing_generation on rollback")
+            fencing_generation = max(prev_fence, requested)
+        elif "fencing_generation" in payload:
+            requested = int(payload["fencing_generation"])
+            if requested < prev_fence:
+                raise TransitionRejectedError("stale fencing_generation")
+            fencing_generation = max(prev_fence, requested)
+
         seq = _allocate_seq(conn, concern_id)
         now = datetime.now(UTC).isoformat()
         conn.execute(
