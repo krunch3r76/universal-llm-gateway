@@ -71,7 +71,12 @@ def _replay_suffix(
         "ORDER BY seq",
         (concern_id, after_seq),
     ).fetchall()
+    last_applied = after_seq
     for row in rows:
+        seq = int(row[0])
+        if seq != last_applied + 1:
+            break
+        last_applied = seq
         payload = json.loads(row[2]) if row[2] else {}
         kind = row[1]
         record_ref = row[3]

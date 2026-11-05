@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import sqlite3
 import threading
 from pathlib import Path
@@ -105,6 +106,65 @@ def test_fault_hooks_inert_when_disabled(
         record_ref="rec-ok",
         authorized_by=AUTH,
     )
+
+
+def test_rebuild_stops_at_seq_gap(concern_db: sqlite3.Connection) -> None:
+    """N3/F3: rebuild does not apply committed rows past the first seq gap."""
+    from datetime import UTC, datetime
+
+    from cortex_store.concern_aggregate.journal import append_transition
+    from cortex_store.concern_aggregate.recovery import rebuild_concern
+    from cortex_store.concern_aggregate.views import read_controls, read_cursor
+
+    cid = "concern:gap"
+    auth = AUTH
+    for i, key in enumerate(("k1", "k2", "k3"), start=1):
+        append_transition(
+            concern_db,
+            concern_id=cid,
+            kind="control_set",
+            payload={"control_key": key, "hold": {"n": i}},
+            record_ref=f"rec-{i}",
+            authorized_by=auth,
+        )
+    concern_db.execute(
+        "INSERT OR IGNORE INTO concern_seq_alloc (concern_id, next_seq) VALUES (?, 4)",
+        (cid,),
+    )
+    concern_db.execute(
+        "UPDATE concern_seq_alloc SET next_seq = 6 WHERE concern_id = ?",
+        (cid,),
+    )
+    concern_db.execute(
+        "INSERT INTO concern_journal "
+        "(concern_id, seq, record_ref, kind, payload, authorized_by, "
+        "fencing_generation, revision, fold_version, schema_version, committed_at) "
+        "VALUES (?, 4, 'rec-4', 'control_set', ?, ?, 0, 4, 1, 1, NULL)",
+        (cid, json.dumps({"control_key": "k4", "hold": {"n": 4}}), auth),
+    )
+    now = datetime.now(UTC).isoformat()
+    concern_db.execute(
+        "INSERT INTO concern_journal "
+        "(concern_id, seq, record_ref, kind, payload, authorized_by, "
+        "fencing_generation, revision, fold_version, schema_version, committed_at) "
+        "VALUES (?, 5, 'rec-5', 'control_set', ?, ?, 0, 5, 1, 1, ?)",
+        (cid, json.dumps({"control_key": "k5", "hold": {"n": 5}}), auth, now),
+    )
+    concern_db.commit()
+    rebuilt = rebuild_concern(concern_db, cid)
+    through, _ = read_cursor(concern_db, cid)
+    assert through == 3
+    assert rebuilt["through_seq"] == 3
+    assert "k5" not in read_controls(concern_db, cid)
+    concern_db.execute(
+        "UPDATE concern_journal SET committed_at = ? WHERE concern_id = ? AND seq = 4",
+        (now, cid),
+    )
+    concern_db.commit()
+    rebuild_concern(concern_db, cid)
+    through2, _ = read_cursor(concern_db, cid)
+    assert through2 == 5
+    assert "k5" in read_controls(concern_db, cid)
 
 
 def test_stale_fence_rejected_under_contention(
