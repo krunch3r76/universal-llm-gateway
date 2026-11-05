@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import sqlite3
 from datetime import UTC, datetime
+from unittest.mock import patch
 
 import pytest
 from cortex_store.concern_aggregate.advisory_outbox import (
@@ -29,11 +30,17 @@ from cortex_store.concern_aggregate.journal import (
     TransitionRejectedError,
     append_transition,
 )
+from cortex_store.concern_aggregate import journal as concern_journal
 from cortex_store.concern_aggregate.recovery import (
     read_effective_state,
     rebuild_concern,
 )
-from cortex_store.concern_aggregate.views import read_controls, read_cursor, read_head
+from cortex_store.concern_aggregate.views import (
+    read_controls,
+    read_cursor,
+    read_head,
+    snapshot_state,
+)
 from cortex_store.dispatch_ops import _OP_SPECS
 
 pytestmark = pytest.mark.offline
@@ -280,11 +287,13 @@ def test_effective_controls_no_divergence(concern_db: sqlite3.Connection) -> Non
     assert snap_a == snap_b
 
 
-def test_long_history_bounded_replay(concern_db: sqlite3.Connection) -> None:
-    """A6: checkpoint bounds replay work for long histories."""
+def _run_bounded_replay_scenario(
+    concern_db: sqlite3.Connection,
+    *,
+    total: int,
+    interval: int,
+) -> int:
     cid = "concern:a6"
-    interval = 500
-    total = 2000
     for i in range(total):
         _append(
             concern_db,
@@ -293,13 +302,42 @@ def test_long_history_bounded_replay(concern_db: sqlite3.Connection) -> None:
             control_key=f"k{i % 10}",
             hold={"i": i},
         )
-        if (i + 1) % interval == 0:
+        if (i + 1) % interval == 0 and (i + 1) < total:
             write_checkpoint(concern_db, concern_id=cid)
-    ck = latest_valid_checkpoint(concern_db, cid)
-    assert ck is not None
-    assert ck["through_seq"] >= interval
-    rebuilt = rebuild_concern(concern_db, cid)
-    assert len(rebuilt["controls"]) <= 10
+    replay_applied = 0
+    real_apply = concern_journal._apply_transition_to_views
+
+    def _counting_apply(*args: object, **kwargs: object) -> None:
+        nonlocal replay_applied
+        replay_applied += 1
+        real_apply(*args, **kwargs)
+
+    with patch.object(
+        concern_journal,
+        "_apply_transition_to_views",
+        side_effect=_counting_apply,
+    ):
+        rebuild_concern(concern_db, cid)
+    return replay_applied
+
+
+def test_long_history_bounded_replay(concern_db: sqlite3.Connection) -> None:
+    """A6 (fast): suffix replay row count stays within checkpoint interval."""
+    interval = 500
+    replay_applied = _run_bounded_replay_scenario(
+        concern_db, total=2000, interval=interval
+    )
+    assert replay_applied <= interval
+
+
+@pytest.mark.slow
+def test_long_history_bounded_replay_10k(concern_db: sqlite3.Connection) -> None:
+    """A6: 10k transitions; replay at rebuild bounded by checkpoint interval."""
+    interval = 500
+    replay_applied = _run_bounded_replay_scenario(
+        concern_db, total=10_000, interval=interval
+    )
+    assert replay_applied <= interval
 
 
 def test_backdated_semantic_claim_no_hold_change(concern_db: sqlite3.Connection) -> None:
@@ -357,25 +395,24 @@ def test_rollback_keeps_hold_monotonic(concern_db: sqlite3.Connection) -> None:
 
 
 def test_enrichment_cannot_change_admission(concern_db: sqlite3.Connection) -> None:
-    """A9: admission path does not import enrichment write modules."""
-    import importlib
-    import pkgutil
-
-    forbidden = []
-    for mod in pkgutil.walk_packages(
-        importlib.import_module("cortex_store").__path__,
-        prefix="cortex_store.",
-    ):
-        name = mod.name
-        if "rank" in name or "enrich" in name or "embed" in name:
-            try:
-                m = importlib.import_module(name)
-                src = getattr(m, "__file__", "") or ""
-                if src and "concern_aggregate/journal" in open(src, errors="ignore").read():
-                    forbidden.append(name)
-            except Exception:
-                continue
-    assert forbidden == []
+    """A9: enrichment writes do not change operational admission snapshot."""
+    cid = "concern:a9"
+    _append(
+        concern_db,
+        cid,
+        record_ref="rec-hold",
+        control_key="gate",
+        hold={"held": True},
+    )
+    before = json.dumps(snapshot_state(concern_db, cid), sort_keys=True)
+    concern_db.execute(
+        "INSERT INTO entities (id, type, name) VALUES (?, ?, ?)",
+        ("assertion:enriched", "assertion", "enriched row"),
+    )
+    concern_db.commit()
+    after = json.dumps(snapshot_state(concern_db, cid), sort_keys=True)
+    assert after == before
+    assert read_controls(concern_db, cid) == {"gate": {"held": True}}
 
 
 def test_recovery_without_advisory_events(concern_db: sqlite3.Connection) -> None:
@@ -435,8 +472,39 @@ def test_identities_distinct(concern_db: sqlite3.Connection) -> None:
         )
 
 
+def test_fold_version_mismatch_forces_refold(concern_db: sqlite3.Connection) -> None:
+    """A13: stale fold_version checkpoint ignored; rebuild replays from journal."""
+    from cortex_store.concern_aggregate.checkpoint import _state_digest
+    from cortex_store.concern_aggregate.journal import FOLD_VERSION
+
+    cid = "concern:a13-fold"
+    for i in range(3):
+        _append(
+            concern_db,
+            cid,
+            record_ref=f"rec-{i}",
+            control_key=f"k{i}",
+            hold={"i": i},
+        )
+    state = snapshot_state(concern_db, cid)
+    digest = _state_digest(state)
+    folded = json.dumps(state, sort_keys=True)
+    concern_db.execute(
+        "INSERT INTO concern_checkpoint "
+        "(concern_id, through_seq, fold_version, folded_state, state_sha256) "
+        "VALUES (?, ?, ?, ?, ?)",
+        (cid, state["through_seq"], FOLD_VERSION - 1, folded, digest),
+    )
+    concern_db.commit()
+    assert latest_valid_checkpoint(concern_db, cid) is None
+    expected = snapshot_state(concern_db, cid)
+    rebuilt = rebuild_concern(concern_db, cid)
+    assert rebuilt["controls"] == expected["controls"]
+    assert rebuilt["through_seq"] == expected["through_seq"]
+
+
 def test_migration_concern_aggregate(concern_db: sqlite3.Connection) -> None:
-    """A13: migration 084 tables present."""
+    """A13-migration: migration 084 tables present."""
     tables = {
         r[0]
         for r in concern_db.execute(
