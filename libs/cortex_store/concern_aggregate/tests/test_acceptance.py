@@ -16,7 +16,10 @@ from cortex_store.concern_aggregate.checkpoint import (
     write_checkpoint,
 )
 from cortex_store.concern_aggregate.fault_injection import (
+    set_after_cursor_update,
+    set_after_head_update,
     set_after_journal_insert,
+    set_during_checkpoint_write,
 )
 from cortex_store.concern_aggregate.identities import (
     IdentityTypeError,
@@ -89,9 +92,100 @@ def test_crash_boundary_append_head(concern_db: sqlite3.Connection) -> None:
     assert rebuilt["controls"] == before["controls"]
 
 
-def test_crash_boundary_head_cursor(concern_db: sqlite3.Connection) -> None:
-    """A2: corrupt head without cursor advance; rebuild restores fold."""
+def _operational_snapshot(conn: sqlite3.Connection, concern_id: str) -> dict:
+    journal = conn.execute(
+        "SELECT seq, kind, committed_at FROM concern_journal WHERE concern_id = ? ORDER BY seq",
+        (concern_id,),
+    ).fetchall()
+    outbox = conn.execute(
+        "SELECT seq, emitted_at FROM concern_advisory_outbox WHERE concern_id = ? ORDER BY seq",
+        (concern_id,),
+    ).fetchall()
+    head = conn.execute(
+        "SELECT revision, record_ref, fencing_generation FROM concern_head WHERE concern_id = ?",
+        (concern_id,),
+    ).fetchone()
+    cursor = conn.execute(
+        "SELECT through_seq, cursor_token FROM concern_cursor WHERE concern_id = ?",
+        (concern_id,),
+    ).fetchone()
+    return {
+        "journal": [tuple(r) for r in journal],
+        "outbox": [tuple(r) for r in outbox],
+        "head": tuple(head) if head else None,
+        "cursor": tuple(cursor) if cursor else None,
+    }
+
+
+def test_crash_boundary_head_update_rollback(concern_db: sqlite3.Connection) -> None:
+    """A2: fault after head update rolls back journal, head, cursor, and outbox."""
     cid = "concern:a2"
+    append_transition(
+        concern_db,
+        concern_id=cid,
+        kind="position_head",
+        payload={},
+        record_ref="rec-1",
+        authorized_by=AUTH,
+    )
+    before = _operational_snapshot(concern_db, cid)
+
+    def _boom() -> None:
+        raise RuntimeError("fault after head update")
+
+    set_after_head_update(_boom)
+    with pytest.raises(RuntimeError):
+        append_transition(
+            concern_db,
+            concern_id=cid,
+            kind="position_head",
+            payload={},
+            record_ref="rec-2",
+            authorized_by=AUTH,
+        )
+    assert _operational_snapshot(concern_db, cid) == before
+
+
+def test_crash_boundary_cursor_update_rollback(concern_db: sqlite3.Connection) -> None:
+    """A2b: fault after cursor update rolls back the in-flight append."""
+    cid = "concern:a2b"
+    _append(concern_db, cid, record_ref="rec-1", control_key="k1", hold={})
+    before = _operational_snapshot(concern_db, cid)
+
+    def _boom() -> None:
+        raise RuntimeError("fault after cursor update")
+
+    set_after_cursor_update(_boom)
+    with pytest.raises(RuntimeError):
+        _append(concern_db, cid, record_ref="rec-2", control_key="k2", hold={})
+    assert _operational_snapshot(concern_db, cid) == before
+
+
+def test_crash_boundary_checkpoint_hook_rollback(concern_db: sqlite3.Connection) -> None:
+    """A3: fault during checkpoint write leaves prior checkpoint valid."""
+    cid = "concern:a3"
+    _append(concern_db, cid, record_ref="rec-1", control_key="k", hold={"v": 1})
+    write_checkpoint(concern_db, concern_id=cid)
+    prior = latest_valid_checkpoint(concern_db, cid)
+    assert prior is not None
+    _append(concern_db, cid, record_ref="rec-2", control_key="k2", hold={"v": 2})
+    before_state = read_effective_state(concern_db, cid)
+
+    def _boom() -> None:
+        raise RuntimeError("fault during checkpoint write")
+
+    set_during_checkpoint_write(_boom)
+    with pytest.raises(RuntimeError):
+        write_checkpoint(concern_db, concern_id=cid)
+    assert latest_valid_checkpoint(concern_db, cid) == prior
+    rebuilt = rebuild_concern(concern_db, cid)
+    assert read_effective_state(concern_db, cid) == before_state
+    assert rebuilt["controls"] == before_state["controls"]
+
+
+def test_crash_boundary_head_cursor_static(concern_db: sqlite3.Connection) -> None:
+    """A2-static: corrupt head without cursor advance; rebuild restores fold."""
+    cid = "concern:a2-static"
     append_transition(
         concern_db,
         concern_id=cid,
@@ -113,9 +207,9 @@ def test_crash_boundary_head_cursor(concern_db: sqlite3.Connection) -> None:
     assert read_controls(concern_db, cid) == rebuilt["controls"]
 
 
-def test_crash_boundary_checkpoint(concern_db: sqlite3.Connection) -> None:
-    """A3: partial checkpoint ignored when sha mismatches."""
-    cid = "concern:a3"
+def test_crash_boundary_checkpoint_static(concern_db: sqlite3.Connection) -> None:
+    """A3-static: partial checkpoint ignored when sha mismatches."""
+    cid = "concern:a3-static"
     _append(concern_db, cid, record_ref="rec-1", control_key="k", hold={"v": 1})
     write_checkpoint(concern_db, concern_id=cid)
     concern_db.execute(
