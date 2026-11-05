@@ -8,6 +8,7 @@ from datetime import UTC, datetime
 from unittest.mock import patch
 
 import pytest
+from cortex_store.concern_aggregate import journal as concern_journal
 from cortex_store.concern_aggregate.advisory_outbox import (
     AdvisoryEmitError,
     emit_pending,
@@ -30,7 +31,6 @@ from cortex_store.concern_aggregate.journal import (
     TransitionRejectedError,
     append_transition,
 )
-from cortex_store.concern_aggregate import journal as concern_journal
 from cortex_store.concern_aggregate.recovery import (
     read_effective_state,
     rebuild_concern,
