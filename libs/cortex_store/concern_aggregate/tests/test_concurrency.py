@@ -8,6 +8,11 @@ from pathlib import Path
 
 import pytest
 from cortex_store._test_db_bootstrap import copy_template_db, open_migrated_connection
+from cortex_store.concern_aggregate.fault_injection import (
+    FaultInjectionDisabledError,
+    clear_all,
+    set_after_journal_insert,
+)
 from cortex_store.concern_aggregate.journal import (
     TransitionRejectedError,
     append_transition,
@@ -77,6 +82,29 @@ def test_concurrent_append_revisions_unique_monotonic(
     assert head is not None
     assert head["revision"] == total
     head_conn.close()
+
+
+def test_fault_hooks_inert_when_disabled(
+    concern_db: sqlite3.Connection,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """N2/F5: hooks cannot be registered when fault injection gate is off."""
+    monkeypatch.delenv("CORTEX_CONCERN_FAULT_INJECTION", raising=False)
+    import cortex_store.concern_aggregate.fault_injection as fi
+
+    fi._enabled = None
+    clear_all()
+    with pytest.raises(FaultInjectionDisabledError):
+        set_after_journal_insert(lambda: None)
+    fi._enabled = None
+    append_transition(
+        concern_db,
+        concern_id="concern:gate-off",
+        kind="control_set",
+        payload={"control_key": "k", "hold": {}},
+        record_ref="rec-ok",
+        authorized_by=AUTH,
+    )
 
 
 def test_stale_fence_rejected_under_contention(

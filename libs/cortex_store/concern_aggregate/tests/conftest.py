@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import sqlite3
 from pathlib import Path
 
@@ -10,10 +11,20 @@ from cortex_store._test_db_bootstrap import fresh_migrated_connection
 from cortex_store.concern_aggregate.fault_injection import clear_all
 
 
+@pytest.fixture(autouse=True, scope="session")
+def _enable_concern_fault_injection() -> None:
+    os.environ["CORTEX_CONCERN_FAULT_INJECTION"] = "1"
+    yield
+
+
 @pytest.fixture(autouse=True)
 def _clear_fault_hooks() -> None:
+    import cortex_store.concern_aggregate.fault_injection as fi
+
+    fi._enabled = None
     clear_all()
     yield
+    fi._enabled = None
     clear_all()
 
 
