@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import pytest
-from web_chat_relay.claude_leg import strip_chrome
+from chat_harvest.chrome import strip_chrome
 
 pytestmark = pytest.mark.offline
 

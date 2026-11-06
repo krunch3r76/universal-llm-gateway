@@ -17,10 +17,6 @@ import time
 from typing import Any
 
 from cdp_ask.client import CdpAskClient
-from chat_harvest.chrome import strip_chrome as _strip_chrome_body
-
-# Re-export for ``web_chat_relay.loop`` and tests (same API as chat_harvest).
-strip_chrome = _strip_chrome_body
 
 DEFAULT_PROJECT_ASK_URL = "http://127.0.0.1:8770"
 _ADVANCE_PHASES = frozenset({"content_proof", "archiving", "terminal"})
