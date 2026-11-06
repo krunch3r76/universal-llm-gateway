@@ -41,3 +41,18 @@ pytest libs/execution_conformance -q
 ```
 
 Machine-readable capability matrix: `execution_conformance.manifest.MANIFEST`.
+
+## Store epoch (best-effort)
+
+Conformance records `store_epoch` from the real actuator DB path resolvers
+(`agent_bus_store.db.connection._db_path`, cdp `_db_path`). Epoch is
+`inode:size` (no mtime) — a witness only, not a cryptographic store UUID.
+**Fail closed** when epoch is empty or the store file is missing. **Retry on
+miss** for `agent_bus` only: safe on epoch mismatch because `idempotency_key`
+dedups at the actuator; non-idempotent actuators always block on miss.
+
+## Drain / stop-new (out of scope)
+
+Phase-4 matrix covers eight capabilities (`identity` … `unknown_recovery`).
+Separate `drain` and `stop_new` actuator ops are not modeled in this package;
+cancel semantics are documented per manifest cell notes.

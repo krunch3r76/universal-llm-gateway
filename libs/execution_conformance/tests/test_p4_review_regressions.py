@@ -11,14 +11,14 @@ from execution_conformance.adapters import (
     CountingAdmitWrapper,
     CursorBridgeBusModelAdapter,
 )
-from execution_conformance.ledger import IntentLedger
-from execution_conformance.reconciler import dispatch_intent, reconcile
-from execution_conformance.states import ExecutionState
-from execution_conformance.store_epoch import intent_tag_prefix
-from execution_conformance.test_hooks import (
+from execution_conformance.crash_hooks import (
     dispatch_crash_after_admit_before_receipt,
     dispatch_crash_after_reserve,
 )
+from execution_conformance.ledger import IntentLedger
+from execution_conformance.reconciler import dispatch_intent, reconcile
+from execution_conformance.states import ExecutionState
+from execution_conformance.store_epoch import intent_tag_body
 
 
 @pytest.fixture()
@@ -27,6 +27,36 @@ def bus_env(tmp_path, monkeypatch: pytest.MonkeyPatch):
     from agent_bus_store.db.connection import init_db
 
     init_db()
+
+
+def test_p4_regression_double_reconcile_race(
+    tmp_path, monkeypatch: pytest.MonkeyPatch, bus_env
+) -> None:
+    monkeypatch.setenv("DATA_DIR", str(tmp_path / "gateway"))
+    ledger = IntentLedger(tmp_path / "intents.db")
+    adapter = CountingAdmitWrapper(AgentBusAdapter())
+    key = "reconcile-race-key-abcdef12"
+    dispatch_crash_after_reserve(
+        ledger,
+        adapter,
+        intent_id="intent-race-reconcile",
+        identity_key=key,
+        admit_kwargs={"slug": "race"},
+    )
+    results: list[int] = []
+
+    def _run() -> None:
+        probe = CountingAdmitWrapper(AgentBusAdapter())
+        reconcile(ledger.reopen(), probe, "intent-race-reconcile")
+        results.append(probe.admit_count)
+
+    t1 = threading.Thread(target=_run)
+    t2 = threading.Thread(target=_run)
+    t1.start()
+    t2.start()
+    t1.join()
+    t2.join()
+    assert sum(results) <= 1
 
 
 def test_p4_regression_double_reconcile_retry_claim(
@@ -145,10 +175,9 @@ def test_p4_regression_cdp_abandoned_cancelled(
     )
     mark_abandoned(exec_id)
     lookup = adapter.lookup(exec_id)
-    assert lookup.state == ExecutionState.cancelled
+    assert lookup.unknown_reason == "abandoned_worker_may_run"
     result = reconcile(ledger, adapter, "intent-abandon")
-    assert result.adopted is True
-    assert result.state == ExecutionState.cancelled
+    assert result.blocked is True
 
 
 def test_p4_regression_same_identity_two_intent_ids(
@@ -200,7 +229,7 @@ def test_p4_regression_bridge_reply_must_match_intent_tag(
         from_agent="cursor-sdk",
         to_agent="cursor-bridge",
         subject="REPLY",
-        body=intent_tag_prefix(key_b) + "wrong",
+        body=intent_tag_body(key_b) + "wrong",
     )
     lookup = adapter.lookup(key_a)
     assert lookup.unknown_reason == "msg_without_correlated_reply"

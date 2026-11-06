@@ -263,14 +263,43 @@ class IntentLedger:
             conn.commit()
             return cur.rowcount == 1
 
-    def write_compensation(
+    def merge_payload(self, intent_id: str, patch: dict[str, Any]) -> IntentRecord:
+        row = self.get(intent_id)
+        if row is None:
+            raise KeyError(intent_id)
+        merged = dict(row.payload or {})
+        merged.update(patch)
+        ts = _utc_now()
+        with closing(self._connect()) as conn:
+            conn.execute(
+                "UPDATE execution_intents SET payload_json = ?, updated_at = ? "
+                "WHERE intent_id = ?",
+                (json.dumps(merged), ts, intent_id),
+            )
+            conn.commit()
+        updated = self.get(intent_id)
+        if updated is None:
+            raise KeyError(intent_id)
+        return updated
+
+    def floor_retry(self, intent_id: str) -> None:
+        ts = _utc_now()
+        with closing(self._connect()) as conn:
+            conn.execute(
+                "UPDATE execution_intents SET retry_count = MAX(retry_count, 1), "
+                "updated_at = ? WHERE intent_id = ?",
+                (ts, intent_id),
+            )
+            conn.commit()
+
+    def apply_compensation(
         self,
         intent_id: str,
         *,
         authorized_by: str,
         reason: str,
         prior_state: ExecutionState,
-    ) -> None:
+    ) -> IntentRecord:
         ts = _utc_now()
         with closing(self._connect()) as conn:
             conn.execute(
@@ -279,7 +308,25 @@ class IntentLedger:
                 "VALUES (?, ?, ?, ?, ?)",
                 (intent_id, authorized_by, reason, prior_state.value, ts),
             )
+            conn.execute(
+                "UPDATE execution_intents SET state = ?, retry_count = MAX(retry_count, 1), "
+                "updated_at = ? WHERE intent_id = ? AND state = ?",
+                (
+                    ExecutionState.outcome_unknown.value,
+                    ts,
+                    intent_id,
+                    prior_state.value,
+                ),
+            )
+            if conn.total_changes == 0:
+                raise IllegalStateTransitionError(
+                    f"compensation cas failed for {intent_id!r}"
+                )
             conn.commit()
+        row = self.get(intent_id)
+        if row is None:
+            raise KeyError(intent_id)
+        return row
 
     def reopen(self) -> IntentLedger:
         return IntentLedger(self._db_path)

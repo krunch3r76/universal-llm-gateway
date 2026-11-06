@@ -10,9 +10,9 @@ from execution_conformance.adapters import (
     CursorBridgeBusModelAdapter,
     StargatePipelineAdapter,
 )
+from execution_conformance.crash_hooks import dispatch_crash_after_admit_before_receipt
 from execution_conformance.ledger import IntentLedger
 from execution_conformance.reconciler import reconcile
-from execution_conformance.test_hooks import dispatch_crash_after_admit_before_receipt
 
 
 @pytest.fixture()

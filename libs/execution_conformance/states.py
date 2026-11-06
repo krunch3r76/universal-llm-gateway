@@ -16,12 +16,10 @@ class ExecutionState(StrEnum):
     blocked_unknown = "blocked_unknown"
 
 
-# Adoption rank — reconcile never regresses local state to a lower rank.
 STATE_RANK: dict[ExecutionState, int] = {
     ExecutionState.reserved: 0,
     ExecutionState.accepted: 1,
     ExecutionState.running: 2,
-    ExecutionState.outcome_unknown: 2,
     ExecutionState.completed: 3,
     ExecutionState.failed: 3,
     ExecutionState.cancelled: 3,
@@ -60,7 +58,6 @@ LEGAL_TRANSITIONS: dict[ExecutionState, frozenset[ExecutionState]] = {
     ),
     ExecutionState.running: frozenset(
         {
-            ExecutionState.accepted,
             ExecutionState.completed,
             ExecutionState.failed,
             ExecutionState.cancelled,
@@ -109,7 +106,11 @@ def assert_transition(current: ExecutionState, target: ExecutionState) -> None:
 
 
 def adoption_target(local: ExecutionState, owner: ExecutionState) -> ExecutionState:
-    """Pick owner state unless that would regress local rank."""
+    """Resolve owner adoption; ``outcome_unknown`` is outside rank order."""
+    if owner == ExecutionState.outcome_unknown:
+        return local
+    if local == ExecutionState.outcome_unknown:
+        return owner
     if STATE_RANK.get(owner, 0) < STATE_RANK.get(local, 0):
         return local
     return owner

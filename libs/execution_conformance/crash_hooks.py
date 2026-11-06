@@ -1,4 +1,4 @@
-"""Crash-injection helpers for conformance tests only."""
+"""Crash-injection helpers for conformance tests (not collected as tests)."""
 
 from __future__ import annotations
 
@@ -6,7 +6,7 @@ from typing import Any
 
 from .adapters import ActuatorAdapter
 from .ledger import IntentLedger
-from .reconciler import DispatchResult, _payload_admit_kwargs
+from .reconciler import DispatchResult, payload_admit_kwargs
 from .states import ExecutionState
 
 
@@ -59,7 +59,7 @@ def dispatch_crash_after_admit_before_receipt(
             actuator_ref=record.actuator_ref,
             adopted_existing=True,
         )
-    kwargs = _payload_admit_kwargs(record) or (admit_kwargs or {})
+    kwargs = payload_admit_kwargs(record) or (admit_kwargs or {})
     outcome = adapter.admit(identity_key, **kwargs)
     return DispatchResult(
         intent_id=intent_id,
