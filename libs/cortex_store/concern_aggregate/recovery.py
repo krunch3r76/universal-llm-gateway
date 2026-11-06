@@ -115,6 +115,8 @@ def _replay_suffix(
             (concern_id, through, f"cur:{through}"),
         )
     # Journal columns from migration 085; checkpoints do not fold write intents.
+    # Empty suffix keeps the checkpoint cursor; this bound is the journal's
+    # contiguous prefix, equal only while journals stay keep-forever.
     conn.execute(
         "INSERT OR IGNORE INTO concern_write_intents "
         "(concern_id, write_intent_id, material_fingerprint, "
@@ -123,7 +125,9 @@ def _replay_suffix(
         "record_ref, revision, seq "
         "FROM concern_journal "
         "WHERE concern_id = ? AND committed_at IS NOT NULL "
-        "AND write_intent_id IS NOT NULL AND seq <= ?",
+        "AND write_intent_id IS NOT NULL "
+        "AND material_fingerprint IS NOT NULL AND seq <= ? "
+        "ORDER BY seq",
         (concern_id, through),
     )
 

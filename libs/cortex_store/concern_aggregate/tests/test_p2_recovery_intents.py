@@ -39,7 +39,8 @@ def _journal_intents(conn: sqlite3.Connection, concern_id: str, through: int) ->
     rows = conn.execute(
         "SELECT write_intent_id, material_fingerprint, record_ref, revision, seq "
         "FROM concern_journal WHERE concern_id = ? AND committed_at IS NOT NULL "
-        "AND write_intent_id IS NOT NULL AND seq <= ? ORDER BY seq",
+        "AND write_intent_id IS NOT NULL AND material_fingerprint IS NOT NULL "
+        "AND seq <= ? ORDER BY seq",
         (concern_id, through),
     ).fetchall()
     return [tuple(row) for row in rows]
@@ -57,10 +58,15 @@ def test_rebuild_restores_write_intents_from_journal(
         write_intent_id="wi:restore",
         material={"step": 1},
     )
+    before = _intent_rows(concern_db, cid)
+    assert before
     _wipe_intents(concern_db, cid)
     rebuild_concern(concern_db, cid)
     through, _ = read_cursor(concern_db, cid)
-    assert _intent_rows(concern_db, cid) == _journal_intents(concern_db, cid, through)
+    restored = _intent_rows(concern_db, cid)
+    assert restored
+    assert restored == before
+    assert restored == _journal_intents(concern_db, cid, through)
 
 
 def test_b2_replay_survives_rebuild(concern_db: sqlite3.Connection) -> None:
@@ -156,3 +162,92 @@ def test_rebuild_write_intents_stops_with_seq_gap(
     assert through == 1
     assert [row[0] for row in rows] == ["wi:1"]
     assert all(row[4] <= through for row in rows)
+
+
+def test_rebuild_empty_suffix_after_checkpoint(concern_db: sqlite3.Connection) -> None:
+    """Checkpoint at the tip still restores intents; there is no suffix to replay."""
+    cid = "concern:empty-suffix"
+    append_position_head(
+        concern_db, cid, record_ref="rec-1", write_intent_id="wi:tip", material={"n": 1}
+    )
+    write_checkpoint(concern_db, concern_id=cid)
+    before = _intent_rows(concern_db, cid)
+    assert before
+    _wipe_intents(concern_db, cid)
+    rebuild_concern(concern_db, cid)
+    through, _ = read_cursor(concern_db, cid)
+    assert through == 1
+    assert _intent_rows(concern_db, cid) == before
+
+
+def test_rebuild_duplicate_write_intent_keeps_earliest(
+    concern_db: sqlite3.Connection,
+) -> None:
+    """Two journal rows with one write_intent_id: the lower seq survives."""
+    cid = "concern:dup-intent"
+    append_position_head(
+        concern_db, cid, record_ref="rec-first", write_intent_id="wi:dup", material={"n": 1}
+    )
+    now = datetime.now(UTC).isoformat()
+    fp = concern_db.execute(
+        "SELECT material_fingerprint FROM concern_journal WHERE concern_id = ?",
+        (cid,),
+    ).fetchone()[0]
+    concern_db.execute(
+        "UPDATE concern_seq_alloc SET next_seq = 3 WHERE concern_id = ?", (cid,)
+    )
+    concern_db.execute(
+        "INSERT INTO concern_journal "
+        "(concern_id, seq, record_ref, kind, payload, authorized_by, "
+        "fencing_generation, revision, fold_version, schema_version, committed_at, "
+        "write_intent_id, material_fingerprint) "
+        "VALUES (?, 2, 'rec-later', 'position_head', '{}', ?, 1, 2, 1, 1, ?, 'wi:dup', ?)",
+        (cid, AUTH, now, fp),
+    )
+    concern_db.commit()
+    _wipe_intents(concern_db, cid)
+    rebuild_concern(concern_db, cid)
+    rows = _intent_rows(concern_db, cid)
+    assert len(rows) == 1
+    assert rows[0][0] == "wi:dup"
+    assert rows[0][2] == "rec-first"
+    assert rows[0][4] == 1
+
+
+def test_rebuild_skips_null_material_fingerprint(concern_db: sqlite3.Connection) -> None:
+    """A write_intent_id with a NULL fingerprint is not inserted."""
+    cid = "concern:null-fp"
+    append_position_head(
+        concern_db, cid, record_ref="rec-1", write_intent_id="wi:ok", material={"n": 1}
+    )
+    now = datetime.now(UTC).isoformat()
+    concern_db.execute(
+        "UPDATE concern_seq_alloc SET next_seq = 3 WHERE concern_id = ?", (cid,)
+    )
+    concern_db.execute(
+        "INSERT INTO concern_journal "
+        "(concern_id, seq, record_ref, kind, payload, authorized_by, "
+        "fencing_generation, revision, fold_version, schema_version, committed_at, "
+        "write_intent_id, material_fingerprint) "
+        "VALUES (?, 2, 'rec-null', 'position_head', '{}', ?, 1, 2, 1, 1, ?, 'wi:null', NULL)",
+        (cid, AUTH, now),
+    )
+    concern_db.commit()
+    _wipe_intents(concern_db, cid)
+    rebuild_concern(concern_db, cid)
+    ids = [row[0] for row in _intent_rows(concern_db, cid)]
+    assert ids == ["wi:ok"]
+
+
+def test_rebuild_write_intents_is_idempotent(concern_db: sqlite3.Connection) -> None:
+    """A second rebuild yields the same intent rows."""
+    cid = "concern:idem"
+    append_position_head(
+        concern_db, cid, record_ref="rec-1", write_intent_id="wi:idem", material={"n": 1}
+    )
+    _wipe_intents(concern_db, cid)
+    rebuild_concern(concern_db, cid)
+    first = _intent_rows(concern_db, cid)
+    rebuild_concern(concern_db, cid)
+    assert first
+    assert _intent_rows(concern_db, cid) == first
