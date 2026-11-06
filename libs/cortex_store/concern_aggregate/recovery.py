@@ -18,6 +18,9 @@ def _clear_views(conn: sqlite3.Connection, concern_id: str) -> None:
     conn.execute("DELETE FROM concern_controls WHERE concern_id = ?", (concern_id,))
     conn.execute("DELETE FROM concern_intents WHERE concern_id = ?", (concern_id,))
     conn.execute("DELETE FROM concern_cursor WHERE concern_id = ?", (concern_id,))
+    conn.execute(
+        "DELETE FROM concern_write_intents WHERE concern_id = ?", (concern_id,)
+    )
 
 
 def _apply_state_snapshot(conn: sqlite3.Connection, concern_id: str, state: dict[str, Any]) -> None:
@@ -100,10 +103,10 @@ def _replay_suffix(
             revision=int(row[6]),
             fencing_generation=int(row[5]),
         )
-    if rows:
-        from .views import contiguous_through_seq
+    from .views import contiguous_through_seq
 
-        through = contiguous_through_seq(conn, concern_id)
+    through = contiguous_through_seq(conn, concern_id)
+    if rows:
         conn.execute(
             "INSERT INTO concern_cursor (concern_id, through_seq, cursor_token) "
             "VALUES (?, ?, ?) "
@@ -111,6 +114,18 @@ def _replay_suffix(
             "through_seq=excluded.through_seq, cursor_token=excluded.cursor_token",
             (concern_id, through, f"cur:{through}"),
         )
+    # Journal columns from migration 085; checkpoints do not fold write intents.
+    conn.execute(
+        "INSERT OR IGNORE INTO concern_write_intents "
+        "(concern_id, write_intent_id, material_fingerprint, "
+        "result_record_ref, result_revision, result_seq) "
+        "SELECT concern_id, write_intent_id, material_fingerprint, "
+        "record_ref, revision, seq "
+        "FROM concern_journal "
+        "WHERE concern_id = ? AND committed_at IS NOT NULL "
+        "AND write_intent_id IS NOT NULL AND seq <= ?",
+        (concern_id, through),
+    )
 
 
 def rebuild_concern(
