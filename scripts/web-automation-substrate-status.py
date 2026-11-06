@@ -156,12 +156,21 @@ def build_report() -> dict[str, Any]:
         )
 
     operator_home = str(_operator_home())
+    from browser_governance.contract import census_enabled
+
+    if census_enabled():
+        from browser_governance.census import collect_local_browser_census
+
+        resource_census: dict[str, Any] = collect_local_browser_census()
+    else:
+        resource_census = {"enabled": False}
     return {
         "ok": all(row["cdp"].get("ok") for row in lanes_out if row.get("standing")),
         "operator_home": operator_home,
         "tunnels_config": str(_tunnels_path()),
         "lanes": lanes_out,
         "playwright": _playwright_bundles(),
+        "resource_census": resource_census,
         "attended_retail": {
             "surface": "io DISPLAY :11, VNC 5911",
             "browser": "system /usr/bin/firefox (not Playwright launch for bot-heavy PDPs)",
