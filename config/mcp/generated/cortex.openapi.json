@@ -2841,6 +2841,17 @@
             "title": "Emit Advisory",
             "type": "boolean"
           },
+          "expected_revision": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expected Revision"
+          },
           "intent_id": {
             "anyOf": [
               {
@@ -2855,6 +2866,18 @@
           "kind": {
             "title": "Kind",
             "type": "string"
+          },
+          "material": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Material"
           },
           "payload": {
             "anyOf": [
@@ -2882,6 +2905,17 @@
               }
             ],
             "title": "Request Id"
+          },
+          "write_intent_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Write Intent Id"
           }
         },
         "required": [
@@ -2907,6 +2941,17 @@
             "title": "Record Ref",
             "type": "string"
           },
+          "replayed": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Replayed"
+          },
           "revision": {
             "title": "Revision",
             "type": "integer"
@@ -2918,6 +2963,17 @@
           "through_seq": {
             "title": "Through Seq",
             "type": "integer"
+          },
+          "write_intent_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Write Intent Id"
           }
         },
         "required": [
