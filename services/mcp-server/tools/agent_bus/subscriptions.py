@@ -21,14 +21,21 @@ def _subscribe_dispatch(
     *,
     agent: str,
     thread_scope: str,
-    surface: str,
-    display: str,
+    surface: str | None = None,
+    display: str | None = None,
     title: str | None = None,
     agent_id: str | None = None,
     bound_by: str | None = None,
     evidence: str | None = None,
+    actuation: str | None = None,
+    home_house_id: str | None = None,
+    conversation_url: str | None = None,
+    expected: str | None = None,
+    attempt_id: str | None = None,
+    handoff_sha256: str | None = None,
+    instance_id: str | None = None,
 ) -> dict[str, Any]:
-    body = {
+    body: dict[str, Any] = {
         "agent": agent,
         "thread_scope": thread_scope,
         "surface": surface,
@@ -37,7 +44,15 @@ def _subscribe_dispatch(
         "agent_id": agent_id,
         "bound_by": bound_by,
         "evidence": evidence,
+        "actuation": actuation,
+        "home_house_id": home_house_id,
+        "conversation_url": conversation_url,
+        "expected": expected,
+        "attempt_id": attempt_id,
+        "handoff_sha256": handoff_sha256,
+        "instance_id": instance_id,
     }
+    body = {key: value for key, value in body.items() if value is not None}
     return _relay_result(
         relay("agent-bus", "POST", "/endpoint-subscriptions", body=body),
         "subscribe",

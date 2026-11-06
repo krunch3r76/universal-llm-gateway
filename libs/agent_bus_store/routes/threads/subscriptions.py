@@ -6,10 +6,13 @@ from typing import Any
 
 from fastapi import HTTPException, status
 from openapi_mcp.binding import x_mcp
-from pydantic import BaseModel
+from agent_seat.registry import normalize_bus_address
+from pydantic import BaseModel, model_validator
 
 from ...db.endpoint_subscriptions import (
+    ChatgptWorkCasError,
     SubscribeError,
+    attach_instance_wake_head,
     list_subscriptions,
     subscribe_endpoint,
     unsubscribe_endpoint,
@@ -31,12 +34,28 @@ router = threads_router
 class SubscribeBody(BaseModel):
     agent: str
     thread_scope: str
-    surface: str
-    display: str
+    surface: str | None = None
+    display: str | None = None
     title: str | None = None
     agent_id: str | None = None
     bound_by: str | None = None
     evidence: str | None = None
+    actuation: str | None = None
+    home_house_id: str | None = None
+    conversation_url: str | None = None
+    expected: str | None = None
+    attempt_id: str | None = None
+    handoff_sha256: str | None = None
+    instance_id: str | None = None
+
+    @model_validator(mode="after")
+    def _require_surface_unless_chatgpt_work(self) -> SubscribeBody:
+        actuation = str(self.actuation or "").strip().lower()
+        if actuation == "chatgpt_work":
+            return self
+        if not str(self.surface or "").strip() or not str(self.display or "").strip():
+            raise ValueError("endpoint_surface_display_required")
+        return self
 
 
 class UnsubscribeBody(BaseModel):
@@ -54,14 +73,57 @@ def _refuse(exc: SubscribeError) -> HTTPException:
     )
 
 
+def _refuse_work(exc: ChatgptWorkCasError) -> HTTPException:
+    code = exc.code
+    if code == "seat_cas_conflict":
+        status_code = status.HTTP_409_CONFLICT
+    elif code == "endpoint_thread_missing":
+        status_code = status.HTTP_422_UNPROCESSABLE_ENTITY
+    else:
+        status_code = status.HTTP_422_UNPROCESSABLE_ENTITY
+    return HTTPException(status_code=status_code, detail={"code": code})
+
+
 @router.post(
     "/endpoint-subscriptions",
     openapi_extra=x_mcp("subscribe", tool="agent_bus"),
 )
 async def subscribe_route(body: SubscribeBody) -> dict[str, Any]:
     """Append a subscription row when the endpoint identity changes."""
+    actuation = str(body.actuation or "").strip().lower()
+    if actuation == "chatgpt_work":
+        house = str(body.home_house_id or "").strip()
+        scope = str(body.thread_scope or "").strip()
+        if normalize_bus_address(body.agent) != "orion":
+            raise _refuse_work(ChatgptWorkCasError("work_scope_mismatch"))
+        if not house or house != scope:
+            raise _refuse_work(ChatgptWorkCasError("work_scope_mismatch"))
+        try:
+            return attach_instance_wake_head(
+                home_house_id=house,
+                conversation_url=str(body.conversation_url or ""),
+                expected=str(body.expected or ""),
+                attempt_id=str(body.attempt_id or ""),
+                handoff_sha256=str(body.handoff_sha256 or ""),
+                bound_by=str(body.bound_by or ""),
+                evidence=str(body.evidence or ""),
+                instance_id=body.instance_id,
+            )
+        except ChatgptWorkCasError as exc:
+            raise _refuse_work(exc) from exc
     try:
-        result = subscribe_endpoint(**body.model_dump())
+        payload = body.model_dump(
+            exclude={
+                "actuation",
+                "home_house_id",
+                "conversation_url",
+                "expected",
+                "attempt_id",
+                "handoff_sha256",
+                "instance_id",
+            }
+        )
+        result = subscribe_endpoint(**payload)
     except SubscribeError as exc:
         raise _refuse(exc) from exc
     if result["appended"]:
