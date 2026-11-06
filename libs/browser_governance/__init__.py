@@ -1,4 +1,8 @@
-"""Shared browser governance contract (C0)."""
+"""Shared browser governance contract (C0).
+
+``CONSUMERS`` names manage slugs that may import this shared contract for
+browser census, admission preflight, and supervision (R1/S1 slices).
+"""
 
 from browser_governance.contract import (
     DEFAULT_WARN_DISK_FREE_GIB,
@@ -26,7 +30,10 @@ from browser_governance.events import (
     emit_browser_event,
 )
 
+CONSUMERS: tuple[str, ...] = ("agent_bus", "cdp_ask", "mcp", "stargate")
+
 __all__ = [
+    "CONSUMERS",
     "DEFAULT_WARN_DISK_FREE_GIB",
     "DEFAULT_WARN_MEM_AVAILABLE_MIB",
     "DEFAULT_WARN_SWAP_FREE_MIB",
