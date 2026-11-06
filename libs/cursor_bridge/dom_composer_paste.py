@@ -48,21 +48,64 @@ function ulgPlainHtml(raw) {
 }
 function ulgComposerDomEmpty(el) {
   if (!el) return true;
-  const pm = el.closest ? el.closest('.ProseMirror') : null;
-  if (pm && pm.classList && pm.classList.contains('is-editor-empty')) return true;
-  if (el.classList && el.classList.contains('is-editor-empty')) return true;
-  if (el.editor && el.editor.isEmpty === true) return true;
-  if (el.editor && el.editor.state && el.editor.state.doc
-      && typeof el.editor.state.doc.textContent === 'string') {
-    const docText = el.editor.state.doc.textContent;
-    if (docText === '' || docText === '\\n') return true;
-  }
-  const html = String(el.innerHTML || '');
   const raw = el.innerText || el.value || '';
   const norm = ulgNormalizeComposerText(raw);
-  if (norm === '') return true;
-  if (norm === '\\n' && html.includes('ProseMirror-trailingBreak')
-      && html.includes('is-editor-empty')) return true;
+  const html = String(el.innerHTML || '');
+
+  // Two-char backslash + n is foreign content, not an empty newline placeholder.
+  if (raw === '\\n') return false;
+
+  // Protect human whitespace and visible text; do not trim it away.
+  if (/[ \t]/.test(raw) || /[ \t]/.test(norm)) return false;
+  if (norm !== '' && norm !== '\n') {
+    const withoutNl = norm.replace(/\n/g, '');
+    if (withoutNl.length > 0) return false;
+  }
+
+  const ed = el.editor;
+  if (ed && ed.state && ed.state.doc) {
+    const doc = ed.state.doc;
+    const docText = typeof doc.textContent === 'string' ? doc.textContent : '';
+    if (docText === '\\n') return false;
+    if (/[ \t]/.test(docText)) return false;
+    if (docText !== '' && docText !== '\n') {
+      const nd = ulgNormalizeComposerText(docText);
+      if (nd !== '' && nd !== '\n') return false;
+    }
+    if (typeof doc.descendants === 'function') {
+      let blocked = false;
+      doc.descendants((node) => {
+        if (blocked) return false;
+        if (!node) return;
+        if (node.isText && node.text) {
+          const t = String(node.text);
+          if (t === '\\n') { blocked = true; return false; }
+          const n = ulgNormalizeComposerText(t);
+          if (/[ \t]/.test(n)) { blocked = true; return false; }
+          if (n.replace(/\n/g, '').length > 0) { blocked = true; return false; }
+          return;
+        }
+        if (node.isAtom) { blocked = true; return false; }
+        const nm = node.type && node.type.name;
+        if (nm && (nm === 'image' || nm === 'attachment' || nm === 'file')) {
+          blocked = true;
+          return false;
+        }
+      });
+      if (blocked) return false;
+    }
+  }
+
+  const hasTrailingBreak = html.indexOf('ProseMirror-trailingBreak') >= 0;
+  const placeholderHtml = hasTrailingBreak && (
+    html.indexOf('is-editor-empty') >= 0 || html.indexOf('is-empty') >= 0
+  );
+
+  if (placeholderHtml && (norm === '\n' || norm === '')) return true;
+  if (hasTrailingBreak && norm === '\n' && ed && ed.isEmpty === true) return true;
+  if (norm === '' && html.trim() === '') return true;
+  if (ed && ed.isEmpty === true && norm === '' && hasTrailingBreak) return true;
+
   return false;
 }
 """
