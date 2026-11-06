@@ -5,31 +5,7 @@ from __future__ import annotations
 from typing import Any
 
 from bus_watch.endpoint_wake_composer_defer import is_composer_defer_reason
-
-# Pre-insert reasons resolved with bounded wall-clock retry (safe; no double-send).
-_ORION_BOUNDED_DEFER_REASONS = frozenset(
-    {
-        "non_empty_composer",
-        "composer_not_empty",
-        "composer_busy",
-        "active_chat_busy",
-        "composer_selection_active",
-        "composer_not_focused",
-        "composer_not_focused_other_control",
-        "operator_active",
-        "recent_operator_input",
-        "conversation_mismatch",
-        "no_composer",
-        "cdp_transport_error",
-    }
-)
-
-
-def orion_bounded_defer_reason(reason: str | None) -> bool:
-    r = str(reason or "").strip()
-    if r in _ORION_BOUNDED_DEFER_REASONS:
-        return True
-    return r.startswith("composer_not_focused")
+from bus_watch.orion_wake_bounded_defer import orion_bounded_defer_reason
 
 
 def map_orion_receipt_to_outcomes(
@@ -102,6 +78,13 @@ def map_orion_receipt_to_outcomes(
             {**extra, "reason_code": "insert_outcome_unknown"},
         )
 
+    if receipt.get("send_fallback_clicked") is True:
+        return (
+            "unknown",
+            "insert_outcome_unknown",
+            {**extra, "reason_code": "insert_outcome_unknown"},
+        )
+
     if receipt.get("clicked_unknown"):
         rc = top or "send_outcome_unknown"
         return "unknown", rc, {**extra, "reason_code": rc}
@@ -121,6 +104,14 @@ def map_orion_receipt_to_outcomes(
 
     if ok is False:
         r = str(receipt.get("reason") or "refused")
+        ins_att = bool(receipt.get("insert_attempted"))
+        if r == "paste_failed" and not ins_att:
+            err = str(receipt.get("error") or "").strip()
+            vis = "tab not created by agent has focus or is visible to the operator"
+            if vis in err:
+                return "refused", vis, {**extra, "reason_code": vis}
+            mapped = err or "error"
+            return "refused", mapped, {**extra, "reason_code": mapped}
         if r == "cdp_transport_error":
             phase = str(receipt.get("phase") or "")
             if receipt.get("retryable") is True and phase != "post_insert":

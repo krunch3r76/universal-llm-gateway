@@ -378,10 +378,8 @@ class LedgerWakeDeliveryOwner:
         self, claim: WakeClaimContext, receipt: dict[str, Any]
     ) -> None:
         from bus_watch.endpoint_wake_composer_defer import is_composer_defer_reason
-        from bus_watch.orion_wake_receipt_map import (
-            map_orion_receipt_to_outcomes,
-            orion_bounded_defer_reason,
-        )
+        from bus_watch.orion_wake_bounded_defer import orion_bounded_defer_reason
+        from bus_watch.orion_wake_receipt_map import map_orion_receipt_to_outcomes
 
         if str(receipt.get("reason") or "") == "duplicate_suppressed":
             return

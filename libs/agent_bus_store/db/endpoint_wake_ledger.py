@@ -1258,13 +1258,11 @@ def claim_due_wakes(
         group_next_sql = ""
         orion_group_params: tuple[Any, ...] = ()
         if "wake_next_attempt_at" in cols:
-            from bus_watch.endpoint_wake_composer_defer import (
-                composer_defer_reasons_sorted,
+            from bus_watch.orion_wake_bounded_defer import (
+                orion_bounded_defer_reasons_sql_sorted,
             )
 
-            _reasons = tuple(composer_defer_reasons_sorted()) + (
-                "cdp_transport_error",
-            )
+            _reasons = orion_bounded_defer_reasons_sql_sorted()
             _bounded_in_sql = f"({','.join('?' * len(_reasons))})"
             orion_next_gate = (
                 f" AND {_orion_composer_defer_claim_ready_sql('p', in_sql=_bounded_in_sql)}"
@@ -1607,7 +1605,7 @@ def record_wake_result(
         is_composer_defer_reason,
         merge_composer_defer_decided_by_rule,
     )
-    from bus_watch.orion_wake_receipt_map import orion_bounded_defer_reason
+    from bus_watch.orion_wake_bounded_defer import orion_bounded_defer_reason
 
     stamp = _now(now)
     detail = dict(wake_detail or {})
@@ -1674,7 +1672,7 @@ def record_wake_result(
         # Single authoritative writer: dispatcher must not overwrite owner unknown.
         prior_row = eligible[0]
         prior_reason = str(prior_row["reason"] or "")
-        if outcome_in == "refused" and prior_reason.startswith("paste_receipt:"):
+        if prior_reason.startswith("paste_receipt:"):
             try:
                 blob = json.loads(prior_reason[len("paste_receipt:") :])
             except json.JSONDecodeError:
