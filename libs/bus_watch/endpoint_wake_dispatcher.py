@@ -267,6 +267,9 @@ def _maestro_direct_address_turn(
 _LANE_NAME_ALIASES = frozenset({"maestro", "web-anthropic", "claude-web"})
 _ADDRESS_WALK_HOPS = 8
 _CURSOR_SDK_CLOSEOUT_RE = re.compile(r"(?i)^(?:CLOSEOUT\|)?cursor-sdk CLOSEOUT\b")
+_ON_BEHALF_EXECUTION_REPLY_RE = re.compile(
+    r"^[a-zA-Z0-9][a-zA-Z0-9._-]* reply — execution [0-9a-fA-F]{8}$"
+)
 _CURSOR_SDK_GENERATE_ADMIT_HEAD = "cursor-sdk generate admitted"
 _MILESTONE_NONWAKE_TOKENS = frozenset(
     {"ACK", "ROUTE", "FACT", "PICKUP", "STATUS", "UPDATE", "HOP", "CLOSEOUT"}
@@ -287,6 +290,11 @@ def _name_in_lane_alias(raw_to: str, normalized_to: str) -> bool:
     if raw in _LANE_NAME_ALIASES:
         return True
     return normalized_to in _LANE_NAME_ALIASES
+
+
+def _is_on_behalf_execution_reply(subject: str) -> bool:
+    """Native/API on-behalf delivery subject (async_tracker_delivery envelope)."""
+    return _ON_BEHALF_EXECUTION_REPLY_RE.match(str(subject or "").strip()) is not None
 
 
 def _is_cursor_sdk_generate_admit_echo(subject: str) -> bool:
@@ -536,6 +544,9 @@ def _subscribed_for_wake_scan(
 ) -> bool:
     if resolved is not None:
         return str(resolved[1].get("state") or "") == "subscribed"
+    if normalize_bus_address(agent) == "orion":
+        if _chatgpt_work_route(agent, thread) is not None:
+            return True
     if agent != "web-anthropic":
         return False
     try:
@@ -948,6 +959,12 @@ def qualify(
         return RuleVerdict(False, "drop_dispatch_intermediate")
     if peer_operator_wake_from(from_agent, subject=subject):
         return RuleVerdict(True, "wake_peer_sender")
+    if (
+        to_agent == "orion"
+        and _is_on_behalf_execution_reply(subject)
+        and not _INTERMEDIATE_SUBJECT_RE.search(subject)
+    ):
+        return RuleVerdict(True, "wake_on_behalf_execution_reply")
     if _is_routine_conductor_hop_closeout(subject):
         return RuleVerdict(False, "drop_routine_hop_closeout")
     allow_rule = _subject_allowed_rule_id(subject, cse=cse, to_agent=to_agent)
@@ -2104,7 +2121,11 @@ def fire_due_wakes(store: StoreClient) -> dict[str, Any] | None:
             wake_id=str(wake_id) if wake_id else None,
         )
         # Legacy ledger retries may still surface deferred_streaming; live delivery steers.
-        if state == "pending" and reason == "deferred_streaming":
+        from bus_watch.endpoint_wake_composer_defer import is_composer_defer_reason
+
+        if state == "pending" and (
+            reason == "deferred_streaming" or is_composer_defer_reason(reason)
+        ):
             return claimed
         if state == "refused" and reason == "deferred_exhausted":
             return claimed
