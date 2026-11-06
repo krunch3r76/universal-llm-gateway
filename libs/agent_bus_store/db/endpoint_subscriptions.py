@@ -61,7 +61,12 @@ def current_subscription(agent: str, thread_scope: str) -> dict[str, Any] | None
 def list_subscriptions(
     agent: str | None = None, thread_scope: str | None = None
 ) -> list[dict[str, Any]]:
-    """List current rows (MAX id per key), optionally filtered."""
+    """List display-seating rows (``actuation IS NULL``), MAX id per (agent, thread_scope).
+
+    ChatGPT Work fleet journal heads (``actuation='chatgpt_work'``, synthetic agent
+    keys such as ``orion-{house}``) are excluded; use ``chatgpt_work_journal_head``
+    or ``delivery_bindings_resolve(..., agent='orion')`` for wake actuation.
+    """
     clauses = [
         "actuation IS NULL",
         "id IN (SELECT MAX(id) FROM agent_endpoint_subscriptions "

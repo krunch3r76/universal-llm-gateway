@@ -1334,95 +1334,111 @@ def scan_once(store: StoreClient, *, idle_mark: dict[str, float] | None = None) 
     import time
 
     expire_overdue_hops(store)
-    cursor = store.cursor()
-    high = int(cursor["high_water_turn_id"])
-    turns = store.since(high)
-    if not turns:
-        return
-    pending: list[dict[str, Any]] = []
-    for turn in turns:
-        raw_to = str(turn.get("to_agent") or "")
-        subject = str(turn.get("subject") or "")
-        head = subject.split("|", 1)[0].strip().upper()
-        agent = _effective_to_agent(raw_to, subject)
-        thread = str(turn["thread"])
-        if agent == "web-anthropic":
-            resolved = None
-            cse = True
-        else:
-            if agent == "cursor":
-                try:
-                    expire_overdue_hop(thread, store=store)
-                except OSError:
-                    logger.exception(
-                        "ide_hop_land: expire overdue hop failed root=%s",
-                        thread,
-                    )
-            resolved = _resolve_delivery_route(store, agent, thread, raw_to=raw_to)
-            cse = (
-                resolved is not None and str(resolved[1].get("surface") or "") == "cse"
-            )
-        direct_maestro = _maestro_direct_address_turn(turn, store)
-        verdict = qualify(turn, cse=cse, store=store)
-        if not verdict.wake:
-            if direct_maestro:
-                _observe_maestro_wake_drop(
-                    thread=thread,
-                    turn_id=int(turn["id"]) if turn.get("id") is not None else None,
-                    reason="subject_unmatched",
-                    rule_id=verdict.rule_id,
-                    subject=subject,
+    mark = idle_mark if idle_mark is not None else {}
+    max_passes = 20
+    for _pass in range(max_passes):
+        cursor = store.cursor()
+        high = int(cursor["high_water_turn_id"])
+        turns = store.since(high)
+        if not turns:
+            return
+        pending: list[dict[str, Any]] = []
+        for turn in turns:
+            raw_to = str(turn.get("to_agent") or "")
+            subject = str(turn.get("subject") or "")
+            head = subject.split("|", 1)[0].strip().upper()
+            agent = _effective_to_agent(raw_to, subject)
+            thread = str(turn["thread"])
+            if agent == "web-anthropic":
+                resolved = None
+                cse = True
+            else:
+                if agent == "cursor":
+                    try:
+                        expire_overdue_hop(thread, store=store)
+                    except OSError:
+                        logger.exception(
+                            "ide_hop_land: expire overdue hop failed root=%s",
+                            thread,
+                        )
+                resolved = _resolve_delivery_route(
+                    store, agent, thread, raw_to=raw_to
                 )
-            if _subscribed_for_wake_scan(store, agent, thread, resolved=resolved):
-                _observe_endpoint_wake_suppressed(
-                    thread_id=thread,
-                    turn_id=_turn_id_of(turn),
-                    to_agent=agent,
-                    rule_id=verdict.rule_id,
-                    subject_head=head,
+                cse = (
+                    resolved is not None
+                    and str(resolved[1].get("surface") or "") == "cse"
                 )
-            continue
-        if turn.get("read_at"):
-            continue
-        if agent == "web-anthropic":
-            if _display_seated(store, thread):
-                continue
-            address = resolve_turn_address(thread, store)
-            if address is None and not store.holder(thread):
-                continue
-        elif resolved is not None and str(resolved[1].get("surface") or "") == "cse":
-            lane = str(resolved[1].get("agent_id") or "").strip()
-            if not lane or not store.holder(lane):
+            direct_maestro = _maestro_direct_address_turn(turn, store)
+            verdict = qualify(turn, cse=cse, store=store)
+            if not verdict.wake:
                 if direct_maestro:
                     _observe_maestro_wake_drop(
                         thread=thread,
-                        turn_id=int(turn["id"]) if turn.get("id") is not None else None,
+                        turn_id=int(turn["id"])
+                        if turn.get("id") is not None
+                        else None,
+                        reason="subject_unmatched",
+                        rule_id=verdict.rule_id,
+                        subject=subject,
+                    )
+                if _subscribed_for_wake_scan(
+                    store, agent, thread, resolved=resolved
+                ):
+                    _observe_endpoint_wake_suppressed(
+                        thread_id=thread,
+                        turn_id=_turn_id_of(turn),
+                        to_agent=agent,
+                        rule_id=verdict.rule_id,
+                        subject_head=head,
+                    )
+                continue
+            if turn.get("read_at"):
+                continue
+            if agent == "web-anthropic":
+                if _display_seated(store, thread):
+                    continue
+                address = resolve_turn_address(thread, store)
+                if address is None and not store.holder(thread):
+                    continue
+            elif resolved is not None and str(resolved[1].get("surface") or "") == "cse":
+                lane = str(resolved[1].get("agent_id") or "").strip()
+                if not lane or not store.holder(lane):
+                    if direct_maestro:
+                        _observe_maestro_wake_drop(
+                            thread=thread,
+                            turn_id=int(turn["id"])
+                            if turn.get("id") is not None
+                            else None,
+                            reason="no_route",
+                            rule_id=verdict.rule_id,
+                            subject=subject,
+                        )
+                    continue
+            elif resolved is None:
+                if direct_maestro:
+                    _observe_maestro_wake_drop(
+                        thread=thread,
+                        turn_id=int(turn["id"])
+                        if turn.get("id") is not None
+                        else None,
                         reason="no_route",
                         rule_id=verdict.rule_id,
                         subject=subject,
                     )
                 continue
-        elif resolved is None:
-            if direct_maestro:
-                _observe_maestro_wake_drop(
-                    thread=thread,
-                    turn_id=int(turn["id"]) if turn.get("id") is not None else None,
-                    reason="no_route",
-                    rule_id=verdict.rule_id,
-                    subject=subject,
-                )
-            continue
-        _remap, resolved = _cursor_tab_route(store, raw_to, resolved)
-        pending.append(
-            _pending_item(turn, decided_by_rule=verdict.rule_id, route=resolved)
-        )
-    new_hw = int(turns[-1]["id"])
-    if not pending:
-        mark = idle_mark if idle_mark is not None else {}
+            _remap, resolved = _cursor_tab_route(store, raw_to, resolved)
+            pending.append(
+                _pending_item(turn, decided_by_rule=verdict.rule_id, route=resolved)
+            )
+        new_hw = int(turns[-1]["id"])
+        if pending:
+            store.scan(high, new_hw, pending)
+            return
         if time.monotonic() - mark.get("at", 0.0) < 60:
+            store.scan(high, new_hw, pending)
             return
         mark["at"] = time.monotonic()
-    store.scan(high, new_hw, pending)
+        store.scan(high, new_hw, pending)
 
 
 def _display_post(

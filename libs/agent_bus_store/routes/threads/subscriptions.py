@@ -172,10 +172,19 @@ async def unsubscribe_route(body: UnsubscribeBody) -> dict[str, Any]:
     openapi_extra=x_mcp("subscriptions", tool="agent_bus"),
 )
 async def subscriptions_route(
-    agent: str | None = None, thread_scope: str | None = None
+    agent: str | None = None,
+    thread_scope: str | None = None,
+    home_house_id: str | None = None,
 ) -> dict[str, Any]:
-    """List the current subscription row per (agent, thread_scope)."""
-    return {"subscriptions": list_subscriptions(agent, thread_scope)}
+    """List display-seating rows; optional Work journal head for a fleet house."""
+    from ...db.endpoint_subscriptions import instance_wake_latest
+
+    out: dict[str, Any] = {"subscriptions": list_subscriptions(agent, thread_scope)}
+    if home_house_id is not None and str(home_house_id).strip():
+        out["chatgpt_work_journal_head"] = instance_wake_latest(
+            str(home_house_id).strip()
+        )
+    return out
 
 
 @router.get(
