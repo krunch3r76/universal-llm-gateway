@@ -2,14 +2,26 @@
 
 from __future__ import annotations
 
+from typing import Any
+from unittest.mock import patch
+
 import pytest
 from browser_governance.contract import (
     SUPERVISION_BANNER_SCAN_JS,
     classify_ui_banner_text,
 )
-from cursor_bridge.chat_surface import classify_surface, wake_decision
+from cursor_bridge.chat_surface import _read_surface, classify_surface, wake_decision
+from cursor_bridge.electron_chat_relay import probe_electron_supervision
 
 pytestmark = pytest.mark.offline
+
+
+class FakePlaywrightError(Exception):
+    pass
+
+
+class FakeWebSocketError(Exception):
+    pass
 
 
 def _surface_without_supervision(surface: dict) -> dict:
@@ -48,7 +60,7 @@ def test_failed_probe_envelope_unknown_safe(
 
 def test_message_prose_dom_excluded_from_banner_scan_js() -> None:
     assert ".sand-message-prose" in SUPERVISION_BANNER_SCAN_JS
-    assert "[contenteditable='true']" in SUPERVISION_BANNER_SCAN_JS
+    assert "contenteditable" in SUPERVISION_BANNER_SCAN_JS
 
 
 def test_non_message_ui_banner_classified() -> None:
@@ -104,4 +116,88 @@ def test_gate_off_supervision_unscanned(monkeypatch: pytest.MonkeyPatch) -> None
         ui_banner={"scanned": True, "present": True, "kind": "renderer_crashed"},
     )["supervision"]
     assert env["scanned"] is False
+    assert env["ui_error"]["present"] is None
+
+
+@pytest.mark.asyncio
+async def test_read_surface_banner_scan_exception_is_unknown_safe(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("ULG_SUPERVISION_GATE_MODE", "observe")
+    probe_value = {
+        "labels": [],
+        "items": [{"text": "t", "selected": True, "agent_id": "a"}],
+        "composer_draft": "",
+        "generating": False,
+        "recent_messages": [],
+        "message_turns": [],
+        "has_active_chat": True,
+    }
+    calls = {"banner": 0}
+
+    async def _eval(ws_url: str, expression: str, **kwargs: Any) -> Any:
+        if expression == SUPERVISION_BANNER_SCAN_JS:
+            calls["banner"] += 1
+            raise FakePlaywrightError("destroyed execution context")
+        return probe_value
+
+    with patch("cursor_bridge.chat_surface._evaluate_cdp_js", side_effect=_eval):
+        surface = await _read_surface("ws://fake", timeout_s=1.0)
+    assert calls["banner"] == 1
+    sup = surface["supervision"]
+    assert sup["ui_error"]["scanned"] is False
+    assert sup["ui_error"]["present"] is None
+
+
+@pytest.mark.asyncio
+async def test_read_surface_gate_off_skips_banner_evaluate(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("ULG_SUPERVISION_GATE_MODE", "off")
+    probe_value = {
+        "labels": [],
+        "items": [],
+        "composer_draft": "",
+        "generating": False,
+        "recent_messages": [],
+        "message_turns": [],
+        "has_active_chat": None,
+    }
+    banner_calls = 0
+
+    async def _eval(ws_url: str, expression: str, **kwargs: Any) -> Any:
+        nonlocal banner_calls
+        if "role='alert'" in expression or "selectors" in expression:
+            banner_calls += 1
+        return probe_value
+
+    with patch("cursor_bridge.chat_surface._evaluate_cdp_js", side_effect=_eval):
+        await _read_surface("ws://fake", timeout_s=1.0)
+    assert banner_calls == 0
+
+
+@pytest.mark.asyncio
+async def test_probe_electron_supervision_ws_exception_unscanned(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("ULG_SUPERVISION_GATE_MODE", "observe")
+
+    async def _probe(**_: Any) -> dict[str, Any]:
+        return {"selected_agent_id": "a", "phase": "ok"}
+
+    async def _eval(*_a: Any, **_k: Any) -> Any:
+        raise FakeWebSocketError("closed")
+
+    with patch(
+        "cursor_bridge.electron_chat_relay.probe_grok_computer",
+        side_effect=_probe,
+    ), patch(
+        "cursor_bridge.electron_chat_relay._grok_ws_url",
+        return_value="ws://x",
+    ), patch(
+        "cursor_bridge.electron_chat_relay._evaluate_cdp_js",
+        side_effect=_eval,
+    ):
+        env = await probe_electron_supervision(display=":9", cdp_port=9339)
+    assert env["ui_error"]["scanned"] is False
     assert env["ui_error"]["present"] is None

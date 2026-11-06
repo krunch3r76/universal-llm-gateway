@@ -156,14 +156,40 @@ def build_report() -> dict[str, Any]:
         )
 
     operator_home = str(_operator_home())
-    from browser_governance.contract import census_enabled
+    from browser_governance.contract import census_enabled, supervision_gate_mode
 
-    if census_enabled():
-        from browser_governance.census import collect_local_browser_census
+    resource_census: dict[str, Any]
+    try:
+        if census_enabled():
+            from browser_governance.census import collect_local_browser_census
 
-        resource_census: dict[str, Any] = collect_local_browser_census()
-    else:
-        resource_census = {"enabled": False}
+            resource_census = collect_local_browser_census()
+        else:
+            resource_census = {"enabled": False}
+    except Exception as exc:
+        resource_census = {"enabled": True, "error": type(exc).__name__}
+
+    grok_supervision: dict[str, Any] = {}
+    if supervision_gate_mode() == "observe":
+        try:
+            import asyncio
+
+            from cursor_bridge.electron_chat_relay import probe_electron_supervision
+
+            for disp, port in ((":9", 9339), (":10", 9340)):
+                summary = asyncio.run(
+                    probe_electron_supervision(
+                        display=disp, cdp_port=port, surface="grok_electron"
+                    )
+                )
+                grok_supervision[disp] = {
+                    "scanned": summary.get("scanned"),
+                    "auth_state": summary.get("auth_state"),
+                    "reason": summary.get("reason"),
+                }
+        except Exception as exc:
+            grok_supervision = {"error": type(exc).__name__}
+
     return {
         "ok": all(row["cdp"].get("ok") for row in lanes_out if row.get("standing")),
         "operator_home": operator_home,
@@ -171,6 +197,7 @@ def build_report() -> dict[str, Any]:
         "lanes": lanes_out,
         "playwright": _playwright_bundles(),
         "resource_census": resource_census,
+        "grok_supervision": grok_supervision,
         "attended_retail": {
             "surface": "io DISPLAY :11, VNC 5911",
             "browser": "system /usr/bin/firefox (not Playwright launch for bot-heavy PDPs)",

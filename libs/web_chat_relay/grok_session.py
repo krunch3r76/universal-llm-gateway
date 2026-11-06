@@ -6,6 +6,7 @@ is an auth miss; credential fields are never filled.
 
 from __future__ import annotations
 
+import asyncio
 import re
 from dataclasses import dataclass
 from typing import Any
@@ -14,6 +15,7 @@ from urllib.parse import urlparse
 from browser_governance.contract import (
     SUPERVISION_BANNER_SCAN_JS,
     build_supervision_envelope,
+    supervision_gate_mode,
     unscanned_supervision,
 )
 from claude_bundles.skills_ui_panel import connect_cdp
@@ -181,12 +183,16 @@ async def attach_grok_page(
 
 
 async def _supervision_for_grok_page(page, *, signed_in: bool | None) -> dict[str, Any]:
+    if supervision_gate_mode() != "observe":
+        return unscanned_supervision(surface="grok", reason="gate_mode_off")
     ui_banner: dict[str, Any] | None = None
     try:
         banner_raw = await page.evaluate(SUPERVISION_BANNER_SCAN_JS)
         if isinstance(banner_raw, dict) and "scanned" in banner_raw:
             ui_banner = banner_raw
-    except (TimeoutError, RuntimeError, OSError):
+    except asyncio.CancelledError:
+        raise
+    except Exception:
         ui_banner = None
     if ui_banner is None:
         return unscanned_supervision(surface="grok", reason="banner_scan_skipped")

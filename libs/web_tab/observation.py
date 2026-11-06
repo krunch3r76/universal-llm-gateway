@@ -9,6 +9,7 @@ from typing import Any
 from browser_governance.contract import (
     SUPERVISION_BANNER_SCAN_JS,
     build_supervision_envelope,
+    supervision_gate_mode,
     unscanned_supervision,
 )
 from universal_protocol.status_basis import status_basis
@@ -136,19 +137,24 @@ async def observe_actuation_plane(
                 else:
                     signed_in = _coerce_signed_in(raw.get("signed_in"))
                     probe_ran = True
-                    try:
-                        banner_raw = await port.evaluate_on_target(
-                            cdp_url=cdp_url,
-                            target_id=target_id,
-                            expression=SUPERVISION_BANNER_SCAN_JS,
-                            tab_row=match,
-                            surface=surface,
-                        )
-                        if isinstance(banner_raw, dict) and not banner_raw.get("error"):
-                            if "scanned" in banner_raw:
-                                ui_banner = banner_raw
-                    except (TimeoutError, RuntimeError, OSError):
-                        ui_banner = None
+                    if supervision_gate_mode() == "observe":
+                        try:
+                            banner_raw = await port.evaluate_on_target(
+                                cdp_url=cdp_url,
+                                target_id=target_id,
+                                expression=SUPERVISION_BANNER_SCAN_JS,
+                                tab_row=match,
+                                surface=surface,
+                            )
+                            if isinstance(banner_raw, dict) and not banner_raw.get(
+                                "error"
+                            ):
+                                if "scanned" in banner_raw:
+                                    ui_banner = banner_raw
+                        except asyncio.CancelledError:
+                            raise
+                        except Exception:
+                            ui_banner = None
 
     cdp_reachable_val: bool | None
     if reachable is False:

@@ -169,12 +169,11 @@ def _enumerate_processes(
 
         rss_mib, threads = _read_rss_mib(proc_root, pid)
         pss_mib = _read_pss_mib(proc_root, pid)
-        mem_mib = pss_mib if pss_mib is not None else rss_mib
 
         if "xvfb" in cmdline.lower():
             display = _xvfb_display(cmdline)
-            if display is not None and mem_mib is not None:
-                xvfb_rss[display] += mem_mib
+            if display is not None and rss_mib is not None:
+                xvfb_rss[display] += rss_mib
             continue
 
         if not _is_browser_cmdline(cmdline):
@@ -402,15 +401,23 @@ def check_ephemeral_admission_preflight(
     swap = data.get("swap_free_mib")
     disk = data.get("disk_free_gib")
 
-    if mem is not None and float(mem) < warn_mem_available_mib():
+    def _below(value: Any, threshold: float) -> bool:
+        if value is None:
+            return False
+        try:
+            return float(value) < threshold
+        except (TypeError, ValueError):
+            return False
+
+    if _below(mem, warn_mem_available_mib()):
         warnings.append(
             f"mem_available_mib={mem} below warn threshold {warn_mem_available_mib()}"
         )
-    if swap is not None and float(swap) < warn_swap_free_mib():
+    if _below(swap, warn_swap_free_mib()):
         warnings.append(
             f"swap_free_mib={swap} below warn threshold {warn_swap_free_mib()}"
         )
-    if disk is not None and float(disk) < warn_disk_free_gib():
+    if _below(disk, warn_disk_free_gib()):
         warnings.append(
             f"disk_free_gib={disk} below warn threshold {warn_disk_free_gib()}"
         )

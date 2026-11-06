@@ -82,11 +82,17 @@ async def probe_electron_supervision(
     surface: str = "grok_electron",
 ) -> dict[str, Any]:
     """Read-only Grok Electron supervision (:9/:10) via desktop.main + banner scan."""
+    from browser_governance.contract import supervision_gate_mode
+
+    if supervision_gate_mode() != "observe":
+        return unscanned_supervision(surface=surface, reason="gate_mode_off")
     disp = display if display.startswith(":") else f":{display.lstrip(':')}"
     port = resolve_grok_cdp_port(disp, cdp_port)
     try:
         probe = await probe_grok_computer(cdp_port=port, display=disp, timeout_s=10.0)
-    except (URLError, RuntimeError, OSError, TimeoutError) as exc:
+    except asyncio.CancelledError:
+        raise
+    except Exception as exc:
         return unscanned_supervision(
             surface=surface,
             reason=f"probe_skipped:{type(exc).__name__}",
@@ -114,7 +120,9 @@ async def probe_electron_supervision(
         )
         if isinstance(banner_raw, dict):
             ui_banner = banner_raw
-    except (URLError, RuntimeError, OSError, TimeoutError):
+    except asyncio.CancelledError:
+        raise
+    except Exception:
         ui_banner = None
 
     envelope = build_supervision_envelope(

@@ -140,6 +140,41 @@ class TestBannerClassification:
     def test_benign_text_returns_none(self) -> None:
         assert classify_ui_banner_text("All systems normal") == (None, None)
 
+    @pytest.mark.parametrize(
+        "raw",
+        [
+            "before\x00after",
+            "\x1b[31mred\x1b[0m",
+            "beep\x07here",
+            "del\x7fhere",
+            "nel\x85here",
+            "csi\x9bhere",
+        ],
+    )
+    def test_sanitize_strips_c0_c1_controls(self, raw: str) -> None:
+        out = sanitize_ui_banner_text(raw)
+        assert out is not None
+        for ch in ("\x00", "\x07", "\x7f", "\x85", "\x9b", "\x1b"):
+            assert ch not in out
+
+    def test_sanitize_redacts_before_truncation_at_boundary(self) -> None:
+        prefix = "x" * 155
+        raw = f"{prefix} user@boundary.example.com tail"
+        out = sanitize_ui_banner_text(raw)
+        assert out is not None
+        assert len(out) <= 160
+        assert "@" not in out
+        assert "<redacted-email>" in out
+
+    def test_sanitize_bearer_redacted_before_truncation(self) -> None:
+        prefix = "y" * 150
+        raw = f"{prefix} Bearer super-secret-token-value"
+        out = sanitize_ui_banner_text(raw)
+        assert out is not None
+        assert len(out) <= 160
+        assert "super-secret" not in out
+        assert "Bearer <redacted>" in out
+
     def test_sanitize_redactions_and_length(self) -> None:
         raw = (
             "Contact user@example.com with Bearer secret-token-xyz "
@@ -156,6 +191,11 @@ class TestBannerClassification:
 
 
 class TestBannerScanJs:
+    def test_js_excludes_message_testid_and_subtree_scan(self) -> None:
+        assert '[data-testid*="message" i]' in SUPERVISION_BANNER_SCAN_JS
+        assert "el.querySelector" in SUPERVISION_BANNER_SCAN_JS
+        assert "text.slice(0, 512)" in SUPERVISION_BANNER_SCAN_JS
+
     def test_js_excludes_message_dom_selectors(self) -> None:
         for needle in (
             "[data-message-author-role]",
@@ -166,10 +206,10 @@ class TestBannerScanJs:
             "pre",
             "code",
             "[data-is-streaming]",
-            "[contenteditable='true']",
             "textarea",
         ):
             assert needle in SUPERVISION_BANNER_SCAN_JS
+        assert "contenteditable" in SUPERVISION_BANNER_SCAN_JS
 
 
 class TestObservationEvents:

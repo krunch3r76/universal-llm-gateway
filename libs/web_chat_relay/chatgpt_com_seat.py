@@ -6,6 +6,7 @@ delivery when ``chatgpt_seat`` / ``seat`` is present on pipeline options.
 
 from __future__ import annotations
 
+import asyncio
 import re
 from dataclasses import dataclass
 from typing import Any, Protocol
@@ -13,6 +14,8 @@ from typing import Any, Protocol
 from browser_governance.contract import (
     SUPERVISION_BANNER_SCAN_JS,
     build_supervision_envelope,
+    supervision_gate_mode,
+    unscanned_supervision,
 )
 
 MODEL_PICKER_SELECTOR = 'button[aria-label="Select ChatGPT model"]'
@@ -195,12 +198,16 @@ def seat_target_from_pipeline_options(opts: dict[str, Any] | None) -> ChatgptCom
 
 
 async def _supervision_for_chatgpt_page(page: ChatgptPage) -> dict[str, Any]:
+    if supervision_gate_mode() != "observe":
+        return unscanned_supervision(surface="chatgpt", reason="gate_mode_off")
     ui_banner: dict[str, Any] | None = None
     try:
         banner_raw = await page.evaluate(SUPERVISION_BANNER_SCAN_JS)
         if isinstance(banner_raw, dict) and "scanned" in banner_raw:
             ui_banner = banner_raw
-    except (TimeoutError, RuntimeError, OSError):
+    except asyncio.CancelledError:
+        raise
+    except Exception:
         ui_banner = None
     return build_supervision_envelope(
         surface="chatgpt",

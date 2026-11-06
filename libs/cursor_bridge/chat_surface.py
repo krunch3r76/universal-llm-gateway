@@ -441,17 +441,20 @@ async def _read_surface(ws_url: str, *, timeout_s: float) -> dict[str, Any]:
     if not isinstance(value, dict):
         raise RuntimeError(f"surface probe failed: {value!r}")
     ui_banner: dict[str, Any] | None = None
-    try:
-        banner_raw = await _evaluate_cdp_js(
-            ws_url,
-            SUPERVISION_BANNER_SCAN_JS,
-            msg_id=2,
-            timeout_s=timeout_s,
-        )
-        if isinstance(banner_raw, dict):
-            ui_banner = banner_raw
-    except (TimeoutError, RuntimeError, OSError):
-        ui_banner = None
+    if supervision_gate_mode() == "observe":
+        try:
+            banner_raw = await _evaluate_cdp_js(
+                ws_url,
+                SUPERVISION_BANNER_SCAN_JS,
+                msg_id=2,
+                timeout_s=timeout_s,
+            )
+            if isinstance(banner_raw, dict):
+                ui_banner = banner_raw
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            ui_banner = None
     labels = [str(x) for x in value.get("labels") or []]
     items = [x for x in value.get("items") or [] if isinstance(x, dict)]
     turns_raw = value.get("message_turns") or []
@@ -464,7 +467,7 @@ async def _read_surface(ws_url: str, *, timeout_s: float) -> dict[str, Any]:
     has_active_chat = (
         bool(has_active_chat_raw) if isinstance(has_active_chat_raw, bool) else None
     )
-    return classify_surface(
+    result = classify_surface(
         labels,
         items,
         composer_draft=str(value.get("composer_draft") or ""),
@@ -473,8 +476,13 @@ async def _read_surface(ws_url: str, *, timeout_s: float) -> dict[str, Any]:
         message_turns=message_turns,
         has_active_chat=has_active_chat,
         ui_banner=ui_banner,
-        emit_events=True,
+        emit_events=False,
     )
+    try:
+        maybe_emit_browser_supervision(result["supervision"])
+    except Exception:
+        pass
+    return result
 
 
 async def select_sidebar_target(

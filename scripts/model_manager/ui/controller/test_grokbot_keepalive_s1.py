@@ -124,6 +124,49 @@ def test_unit_test_snapshot_fn_no_socket_dials_by_default(
     assert len(wakes) == 1
 
 
+def test_keepalive_survives_corrupt_grok_config(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import scripts.model_manager.ui.controller.grokbot_egress_watch_loop as loop_mod
+
+    def _boom() -> list[tuple[str, int]]:
+        raise ValueError("corrupt json")
+
+    monkeypatch.setattr(loop_mod, "resolve_grok_keepalive_targets", _boom)
+    wakes: list[tuple[str, int]] = []
+
+    def _wake(*, display: str = ":9", cdp_port: int = 9339, **_k: object) -> dict:
+        wakes.append((display, cdp_port))
+        return {"ok": True}
+
+    monkeypatch.setattr(loop_mod, "keep_alive_grokbot_presence", _wake)
+    loop = GrokbotEgressWatchLoop(workspace_root=Path("/tmp"))
+    _run(loop._maybe_keepalive_displays(_snap(desktop_running=True)))
+    assert (":9", 9339) in wakes
+
+
+def test_secondary_keepalive_passes_open_computer_view_false(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import scripts.model_manager.ui.controller.grokbot_egress_watch_loop as loop_mod
+
+    kwargs_log: list[dict[str, object]] = []
+
+    def _wake(**kwargs: object) -> dict:
+        kwargs_log.append(dict(kwargs))
+        return {"ok": True}
+
+    monkeypatch.setattr(loop_mod, "keep_alive_grokbot_presence", _wake)
+    loop = GrokbotEgressWatchLoop(
+        workspace_root=Path("/tmp"),
+        keepalive_targets_fn=lambda: [(":10", 9340)],
+        secondary_keepalive_fn=lambda _d, _p: True,
+    )
+    _run(loop._maybe_keepalive_displays(_snap(desktop_running=False)))
+    assert kwargs_log
+    assert kwargs_log[0].get("open_computer_view") is False
+
+
 def test_secondary_display_running_uses_injected_check(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:

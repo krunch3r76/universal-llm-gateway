@@ -33,7 +33,10 @@ _PRESENCE_KEEPALIVE_TIMEOUT_S = 5.0
 
 
 def keep_alive_grokbot_presence(
-    display: str = ":9", cdp_port: int = 9339
+    display: str = ":9",
+    cdp_port: int = 9339,
+    *,
+    open_computer_view: bool = True,
 ) -> dict[str, Any]:
     """Non-disruptive X11 + CDP presence wake when Grok Bot is running."""
     from cursor_bridge.grok_computer import wake_grok_computer
@@ -44,6 +47,7 @@ def keep_alive_grokbot_presence(
                 cdp_port=cdp_port,
                 display=display,
                 timeout_s=_PRESENCE_KEEPALIVE_TIMEOUT_S,
+                open_computer_view=open_computer_view,
             )
         )
     except Exception as exc:

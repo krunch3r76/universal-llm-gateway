@@ -114,7 +114,7 @@ def test_collect_local_browser_census_synthetic_proc(
     assert census["cdp_targets_total"] == 3
     assert census["cdp_page_targets"] == 2
     assert census["profile_count"] == 2
-    assert census["xvfb_rss_mib"]["8"] == pytest.approx(32000 / 1024.0)
+    assert census["xvfb_rss_mib"]["8"] == pytest.approx(64000 / 1024.0)
     assert census["total_pss_mib"] is not None
     assert census["total_rss_mib"] is not None
 
@@ -396,3 +396,56 @@ def test_web_automation_status_includes_census(
     monkeypatch.setenv("ULG_BROWSER_CENSUS_ENABLED", "0")
     report_off = status_mod.build_report()
     assert report_off["resource_census"] == {"enabled": False}
+
+
+def test_web_automation_status_census_exception_survives(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    status_mod = _load_status_module()
+    monkeypatch.setattr(status_mod, "_load_lanes", lambda: {})
+    monkeypatch.setenv("ULG_BROWSER_CENSUS_ENABLED", "1")
+
+    def _boom(**_: Any) -> dict[str, Any]:
+        raise RuntimeError("census boom")
+
+    monkeypatch.setattr(
+        "browser_governance.census.collect_local_browser_census", _boom
+    )
+    report = status_mod.build_report()
+    assert report["resource_census"]["error"] == "RuntimeError"
+
+
+def test_web_automation_status_grok_supervision_when_observe(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    status_mod = _load_status_module()
+    monkeypatch.setattr(status_mod, "_load_lanes", lambda: {})
+    monkeypatch.setenv("ULG_BROWSER_CENSUS_ENABLED", "0")
+    monkeypatch.setenv("ULG_SUPERVISION_GATE_MODE", "observe")
+
+    async def _probe(**_: Any) -> dict[str, Any]:
+        return {"scanned": False, "auth_state": "unknown", "reason": "probe_skipped"}
+
+    monkeypatch.setattr(
+        "cursor_bridge.electron_chat_relay.probe_electron_supervision", _probe
+    )
+    report = status_mod.build_report()
+    assert ":9" in report["grok_supervision"]
+    assert report["grok_supervision"][":9"]["reason"] == "probe_skipped"
+
+
+def test_admission_preflight_non_numeric_snapshot_allowed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("ULG_BROWSER_CENSUS_ENABLED", "1")
+    monkeypatch.setenv("ULG_BROWSER_ADMISSION_PREFLIGHT", "warn")
+    result = check_ephemeral_admission_preflight(
+        caller="x",
+        snapshot={
+            "mem_available_mib": "not-a-number",
+            "swap_free_mib": None,
+            "disk_free_gib": object(),
+        },
+    )
+    assert result["allowed"] is True
+    assert result["warnings"] == []

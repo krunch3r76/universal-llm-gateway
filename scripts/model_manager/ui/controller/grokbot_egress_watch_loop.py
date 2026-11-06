@@ -204,11 +204,16 @@ class GrokbotEgressWatchLoop:
             if snapshot.desktop_running:
                 await asyncio.to_thread(keep_alive_grokbot_presence)
             return
-        targets = (
-            self._keepalive_targets_fn()
-            if self._keepalive_targets_fn is not None
-            else resolve_grok_keepalive_targets()
-        )
+        try:
+            targets = (
+                self._keepalive_targets_fn()
+                if self._keepalive_targets_fn is not None
+                else resolve_grok_keepalive_targets()
+            )
+        except Exception:
+            if snapshot.desktop_running:
+                await asyncio.to_thread(keep_alive_grokbot_presence)
+            return
         for display, cdp_port in targets:
             token = display.lstrip(":")
             if token == "9":
@@ -222,7 +227,10 @@ class GrokbotEgressWatchLoop:
             running = await asyncio.to_thread(liveness_fn, display, cdp_port)
             if running:
                 await asyncio.to_thread(
-                    keep_alive_grokbot_presence, display=display, cdp_port=cdp_port
+                    keep_alive_grokbot_presence,
+                    display=display,
+                    cdp_port=cdp_port,
+                    open_computer_view=False,
                 )
 
     async def _default_restart_desktop(self) -> None:

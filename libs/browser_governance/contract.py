@@ -19,7 +19,8 @@ _OFF_VALUES = frozenset({"off", "0", "false", "no", "disabled"})
 _KEEPALIVE_OFF_VALUES = frozenset({"off", "0", "false", "none", "disabled"})
 
 EXCLUDED_MESSAGE_ANCESTOR_SELECTOR: str = (
-    "[data-message-author-role], [data-testid='assistant-message'], "
+    '[data-testid*="message" i], [data-message-author-role], '
+    "[data-testid='assistant-message'], "
     "[data-testid='user-message'], .sand-message-prose, .markdown, .prose, "
     "article, pre, code, [data-is-streaming], [contenteditable='true'], "
     "textarea, input, form"
@@ -47,6 +48,8 @@ _RE_EMAIL = re.compile(r"[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}")
 _RE_BEARER = re.compile(r"Bearer\s+\S+", re.IGNORECASE)
 _RE_URL_QUERY = re.compile(r"(https?://[^\s?#]+)(?:\?[^\s]*)?", re.IGNORECASE)
 _RE_LONG_HEX = re.compile(r"\b[0-9a-fA-F]{32,}\b")
+_RE_LONG_B64 = re.compile(r"\b[A-Za-z0-9+/]{40,}={0,2}\b")
+_RE_C0_C1_CONTROL = re.compile(r"[\x00-\x08\x0b-\x1f\x7f-\x9f]")
 
 
 def _strip_env(name: str, default: str) -> str:
@@ -137,7 +140,8 @@ def grok_keepalive_displays(configured_displays: Sequence[str]) -> tuple[str, ..
 def sanitize_ui_banner_text(raw: str | None, *, max_chars: int = 160) -> str | None:
     if raw is None:
         return None
-    text = " ".join(str(raw).split())
+    text = _RE_C0_C1_CONTROL.sub("", str(raw))
+    text = " ".join(text.split())
     if not text:
         return None
     text = _RE_EMAIL.sub("<redacted-email>", text)
@@ -148,6 +152,7 @@ def sanitize_ui_banner_text(raw: str | None, *, max_chars: int = 160) -> str | N
 
     text = _RE_URL_QUERY.sub(_url_keep_base, text)
     text = _RE_LONG_HEX.sub("<redacted-hex>", text)
+    text = _RE_LONG_B64.sub("<redacted-token>", text)
     if len(text) > max_chars:
         text = text[:max_chars]
     return text or None
@@ -279,6 +284,7 @@ SUPERVISION_BANNER_SCAN_JS: str = f"""(() => {{
     try {{
       if (el.matches && el.matches(EXCLUDED)) return true;
       if (el.closest(EXCLUDED)) return true;
+      if (el.querySelector && el.querySelector(EXCLUDED)) return true;
     }} catch (_e) {{ return true; }}
     return false;
   }};
@@ -295,7 +301,7 @@ SUPERVISION_BANNER_SCAN_JS: str = f"""(() => {{
           scanned: true,
           present: true,
           kind,
-          summary: text.slice(0, 160),
+          summary: text.slice(0, 512),
         }};
       }}
     }}
