@@ -56,3 +56,60 @@ def test_explicit_preview_intent(migrated_conn: sqlite3.Connection) -> None:
             "entity_get", {"entity_id": entity_id, "intent": "preview"}
         )
     assert result.get("intent") == "preview"
+
+
+@pytest.mark.offline
+def test_preview_includes_content_hash(migrated_conn: sqlite3.Connection) -> None:
+    entity_id = "todo:sparse-preview-hash"
+    insert_entity(migrated_conn, entity_id=entity_id, entity_type="todo")
+    migrated_conn.execute(
+        "UPDATE entities SET content_hash = ? WHERE id = ?",
+        ("abc123hash", entity_id),
+    )
+    migrated_conn.commit()
+    with _patched_conn(migrated_conn):
+        result = execute_op("entity_get", {"entity_id": entity_id})
+    assert result.get("content_hash") == "abc123hash"
+
+
+@pytest.mark.offline
+def test_batch_stale_handle_per_entity_revision(migrated_conn: sqlite3.Connection) -> None:
+    migrated_conn.execute("ALTER TABLE entities ADD COLUMN revision INTEGER DEFAULT 0")
+    migrated_conn.commit()
+    eid_a = "todo:stale-a"
+    eid_b = "todo:stale-b"
+    insert_entity(migrated_conn, entity_id=eid_a, entity_type="todo")
+    insert_entity(migrated_conn, entity_id=eid_b, entity_type="todo")
+    migrated_conn.execute("UPDATE entities SET revision = 2 WHERE id = ?", (eid_a,))
+    migrated_conn.execute("UPDATE entities SET revision = 5 WHERE id = ?", (eid_b,))
+    migrated_conn.commit()
+    with _patched_conn(migrated_conn):
+        result = execute_op(
+            "entity_get",
+            {
+                "entity_ids": [eid_a, eid_b],
+                "intent": "preview",
+                "expected_revisions": {eid_a: 1, eid_b: 5},
+            },
+        )
+    assert result["items"][0]["ok"] is False
+    assert result["items"][0]["outcome"] == "stale_handle"
+    assert result["items"][0]["revision"] == 2
+    assert result["items"][1]["ok"] is True
+    assert result["items"][1]["revision"] == 5
+
+
+@pytest.mark.offline
+def test_preview_revision_when_column_present(migrated_conn: sqlite3.Connection) -> None:
+    migrated_conn.execute("ALTER TABLE entities ADD COLUMN revision INTEGER DEFAULT 0")
+    migrated_conn.commit()
+    entity_id = "todo:sparse-preview-rev"
+    insert_entity(migrated_conn, entity_id=entity_id, entity_type="todo")
+    migrated_conn.execute(
+        "UPDATE entities SET revision = 7 WHERE id = ?",
+        (entity_id,),
+    )
+    migrated_conn.commit()
+    with _patched_conn(migrated_conn):
+        result = execute_op("entity_get", {"entity_id": entity_id})
+    assert result.get("revision") == 7

@@ -7,9 +7,12 @@ import re
 from dataclasses import dataclass
 from typing import Any
 
+from markdown_fence import is_closing_fence_line, parse_fence_open
 from markdown_sections import SectionError, parse_sections, read_section
 
 from tools._hashing import sha256_hex_of_bytes
+
+_MIN_FENCE_LEN = 3
 
 PREAMBLE_ID = "__preamble__"
 UNSECTIONED_ID = "__unsectioned__"
@@ -107,6 +110,9 @@ def _own_body_slice(text: str, sec: Any) -> str:
     lines = text.splitlines(keepends=True)
     char_offset = 0
     in_range = False
+    in_fence = False
+    fence_char = ""
+    fence_len = 0
     child_start: int | None = None
     for line in lines:
         if not in_range:
@@ -115,6 +121,24 @@ def _own_body_slice(text: str, sec: Any) -> str:
             else:
                 char_offset += len(line)
                 continue
+        stripped_fence = line.strip()
+        if not in_fence:
+            parsed = parse_fence_open(stripped_fence)
+            if parsed is not None:
+                ch, ln, _lang = parsed
+                if ln >= _MIN_FENCE_LEN:
+                    in_fence = True
+                    fence_char, fence_len = ch, ln
+                    char_offset += len(line)
+                    continue
+        elif is_closing_fence_line(stripped_fence, fence_char, fence_len):
+            in_fence = False
+            fence_char, fence_len = "", 0
+            char_offset += len(line)
+            continue
+        if in_fence:
+            char_offset += len(line)
+            continue
         stripped = line.rstrip("\n\r")
         m = _HEADING_RE.match(stripped)
         if m and char_offset > sec.start:
@@ -125,6 +149,36 @@ def _own_body_slice(text: str, sec: Any) -> str:
         char_offset += len(line)
     end = child_start if child_start is not None else sec.end
     return text[sec.start:end]
+
+
+def _resolve_section_object(
+    text: str, row: _IndexedSection
+) -> Any | None:
+    sections = parse_sections(text)
+    dupes = [s for s in sections if s.level > 0 and s.path == row.path_key]
+    if not dupes:
+        return None
+    if len(dupes) > 1:
+        dupes.sort(key=lambda s: s.line)
+        if row.ordinal <= 0 or row.ordinal > len(dupes):
+            return None
+        return dupes[row.ordinal - 1]
+    return dupes[0]
+
+
+def _section_own_body(text: str, row: _IndexedSection) -> str | None:
+    sec = _resolve_section_object(text, row)
+    if sec is None:
+        return None
+    all_body = [s for s in parse_sections(text) if s.level > 0]
+    children = [
+        s
+        for s in all_body
+        if s.level > sec.level and s.start > sec.start and s.start < sec.end
+    ]
+    if children:
+        return _own_body_slice(text, sec)
+    return text[sec.start : sec.end]
 
 
 def _resolve_indexed(
@@ -157,6 +211,9 @@ def _resolve_indexed(
 
 
 def _content_for_id(text: str, indexed: list[_IndexedSection], section_id: str) -> tuple[str | None, str]:
+    if section_id == UNSECTIONED_ID:
+        if not [s for s in parse_sections(text) if s.level > 0]:
+            return text, "ok"
     if section_id == PREAMBLE_ID:
         sections = parse_sections(text)
         for sec in sections:
@@ -266,13 +323,14 @@ def build_document_manifest(
             }
         )
     for row in indexed:
+        own = _section_own_body(text, row)
         descriptors.append(
             {
                 "id": row.section_id,
                 "heading": row.heading,
                 "level": row.level,
                 "parent_id": row.parent_id,
-                "char_count": row.char_count,
+                "char_count": len(own) if own is not None else row.char_count,
             }
         )
     paged, omitted, cursor, truncated = _page_descriptors(descriptors)
@@ -345,6 +403,8 @@ def build_section_batch_response(
         "sandbox": sandbox,
         "read_sha256": read_sha256,
         "items": items,
+        "sparse_section_batch": True,
+        "selection": "sections",
     }
     if omitted:
         payload["omitted"] = omitted
@@ -397,9 +457,11 @@ def resolve_document_read(
         return sparse_selector_conflict_error("sections must be a non-empty list when provided")
 
     if export:
-        return build_export_response(
+        out = build_export_response(
             path=path, sandbox=sandbox, text=text, read_sha256=read_sha256
         )
+        out["sparse_explicit_export"] = True
+        return out
     if sections:
         return build_section_batch_response(
             path=path,

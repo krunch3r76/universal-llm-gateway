@@ -37,6 +37,40 @@ SEARCH_METHOD_CONVERTED = "converted"
 
 FILES_ROOT = Path("/data/files")
 
+_SPARSE_MANIFEST_CODE = "sparse_manifest_requires_expansion"
+
+
+def sparse_manifest_batch_entry(result: dict[str, Any]) -> dict[str, Any]:
+    """Structured fail-loud entry when a batch read got manifest, not body."""
+    return {
+        "code": _SPARSE_MANIFEST_CODE,
+        "message": (
+            "Document read returned selection=manifest without content; "
+            "pass export=true or sections=[...] on read/md_read."
+        ),
+        "selection": result.get("selection", "manifest"),
+        "read_sha256": result.get("read_sha256"),
+        "path": result.get("path"),
+    }
+
+
+def _read_files_batch_value(result: dict[str, Any]) -> Any:
+    if "error" in result or result.get("code"):
+        return result
+    if result.get("auto_binary") or "content_base64" in result:
+        return result
+    if result.get("items") or result.get("sparse_section_batch"):
+        return result
+    if result.get("selection") == "manifest" or (
+        "content" not in result and not binary_payload(result)
+    ):
+        return sparse_manifest_batch_entry(result)
+    return result["content"]
+
+
+def binary_payload(result: dict[str, Any]) -> bool:
+    return bool(result.get("auto_binary") or result.get("content_base64"))
+
 # Extensions whose content is binary and must not be decoded as UTF-8 text.
 # When binary=False is requested for one of these, read_file_result auto-routes
 # to binary mode and sets auto_binary=True in the result so callers can detect it.
@@ -371,8 +405,14 @@ def read_file_result(
         if "code" in sparse_result or "error" in sparse_result:
             sparse_result["path"] = path
             return sparse_result
-        if sparse_result.get("items"):
-            sparse_result["sparse_section_batch"] = True
+        if suffix == ".pdf":
+            _attach_pdf_read_metadata(
+                sparse_result,
+                path=path,
+                content=content,
+                pdf_method=pdf_method,
+                sidecar_path=sidecar_path,
+            )
         sparse_result["path"] = path
         return sparse_result
 
@@ -457,6 +497,63 @@ def read_file_result(
     return result
 
 
+def _attach_pdf_read_metadata(
+    result: dict[str, Any],
+    *,
+    path: str,
+    content: str,
+    pdf_method: str,
+    sidecar_path: Path | None,
+) -> None:
+    content_stripped = content.strip()
+    is_empty = len(content_stripped) < 50
+    result["extraction_method"] = pdf_method
+    if sidecar_path:
+        result["sidecar_path"] = str(sidecar_path)
+    if pdf_method == PDF_METHOD_SIDECAR:
+        advisory_prefix = "Read from pre-extracted markdown sidecar. "
+    elif pdf_method == PDF_METHOD_LAYOUT:
+        advisory_prefix = "Extracted with pymupdf4llm (prose-oriented). "
+    elif pdf_method == PDF_METHOD_PLAINTEXT_GATED:
+        advisory_prefix = (
+            "Extracted with pymupdf plaintext — file exceeded "
+            f"{PDF_LAYOUT_MAX_BYTES} bytes, layout pass skipped. "
+        )
+    elif pdf_method == PDF_METHOD_PLAINTEXT_TIMEOUT:
+        advisory_prefix = (
+            "Extracted with pymupdf plaintext — pymupdf4llm layout pass "
+            f"exceeded {PDF_READ_TIMEOUT_S:.0f}s, fallback used. "
+        )
+    elif pdf_method == PDF_METHOD_PLAINTEXT_EMPTY:
+        advisory_prefix = (
+            "Extracted with pymupdf plaintext — pymupdf4llm returned "
+            "empty/scaffolding output, fallback used. "
+        )
+    elif pdf_method:
+        advisory_prefix = "Extracted from PDF. "
+    else:
+        advisory_prefix = ""
+    if pdf_method:
+        result["extraction"] = {
+            "method": pdf_method,
+            "kind": "prose_oriented",
+            "advisory": advisory_prefix
+            + (
+                "If output has garbled tables or columns, try "
+                'finance(op="inspect", path=...) for pdfplumber-based '
+                "tabular extraction."
+            ),
+        }
+    if is_empty:
+        rel_path = str(Path(path))
+        result["_next"] = (
+            f"This PDF has no text layer (scanned or image-only). "
+            f'Use dispatch(tool="extract_document", '
+            f'arguments=\'{{"path": "{rel_path}"}}\') '
+            f"to OCR and persist as a reusable markdown sidecar."
+        )
+
+
 def read_files_batch(
     paths: list[str],
     root: Path = FILES_ROOT,
@@ -471,7 +568,7 @@ def read_files_batch(
             if binary or result.get("auto_binary"):
                 results[path] = result
             else:
-                results[path] = result["content"]
+                results[path] = _read_files_batch_value(result)
         except Exception as exc:
             results[path] = {"error": str(exc)}
     return results

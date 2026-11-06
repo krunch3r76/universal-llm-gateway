@@ -19,9 +19,16 @@ def test_read_pdf_prefers_readable_sidecar(tmp_path: Path) -> None:
 
     result = _file_helpers.read_file_result("case-law/example.pdf", root=tmp_path)
 
-    assert result["content"] == "# Example\n\nExtracted case text."
+    assert result["selection"] == "manifest"
+    assert "content" not in result
     assert result["extraction_method"] == _file_helpers.PDF_METHOD_SIDECAR
     assert result["sidecar_path"] == str(sidecar)
+
+    exported = _file_helpers.read_file_result(
+        "case-law/example.pdf", root=tmp_path, export=True
+    )
+    assert exported["content"] == "# Example\n\nExtracted case text."
+    assert exported["extraction_method"] == _file_helpers.PDF_METHOD_SIDECAR
 
 
 def test_read_pdf_timeout_emits_event(

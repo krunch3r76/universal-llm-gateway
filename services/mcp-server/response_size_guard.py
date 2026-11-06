@@ -896,6 +896,30 @@ def _replacement_result(
 _SEMANTIC_GUARD_TOOLS: frozenset[str] = frozenset({"agent_bus", "cortex"})
 
 
+def _node_is_sparse_document_payload(node: dict[str, Any]) -> bool:
+    if node.get("sparse_section_batch") or node.get("sparse_explicit_export"):
+        return True
+    selection = node.get("selection")
+    if selection in {"manifest", "sections", "export"}:
+        return True
+    if node.get("code") == "sparse_manifest_requires_expansion":
+        return True
+    return False
+
+
+def _sparse_document_read_passthrough(result: ToolResult) -> bool:
+    """Explicit sparse document reads must not be re-clipped by the byte guard."""
+    structured = result.structured_content
+    if not isinstance(structured, dict):
+        return False
+    if _node_is_sparse_document_payload(structured):
+        return True
+    for value in structured.values():
+        if isinstance(value, dict) and _node_is_sparse_document_payload(value):
+            return True
+    return False
+
+
 def _is_single_json_mirror_text(result: ToolResult) -> tuple[str, Any] | None:
     """Return (text, structured_content) when content is one JSON mirror of structured_content."""
     content = result.content
@@ -1024,6 +1048,8 @@ class ResponseSizeGuard(Middleware):
             return result
         if _is_tape_read_exempt(context):
             return result
+        if _sparse_document_read_passthrough(result):
+            return _lean_content(result, tool_name=tool_name)
 
         threshold = _threshold_for_profile()
         if tool_name == "agent_bus":

@@ -8,7 +8,7 @@ from urllib.parse import quote, urlencode
 from cortex_store.handoff_surface import build_handoff_surface
 
 from .._cortex_relay import cx
-from .._file_helpers import read_files_batch
+from .._file_helpers import read_file_result
 
 
 def resolve_transcript(
@@ -43,10 +43,35 @@ def resolve_transcript(
     source_uri = entity_raw.get("source_uri") or ""
     composed_md = ""
     if source_uri:
-        md_results = read_files_batch([source_uri])
-        md_content = md_results.get(source_uri)
-        if isinstance(md_content, str):
-            composed_md = md_content
+        rel = source_uri.lstrip("/")
+        read_out = read_file_result(rel, export=True)
+        if read_out.get("code") == "sparse_manifest_requires_expansion":
+            return {
+                "error": "transcript_source_sparse_manifest",
+                "transcript_id": clean_id,
+                "transcript_entity_id": entity_key,
+                "detail": (
+                    "Transcript source_uri read returned manifest without body; "
+                    "export=true failed or source is not expandable."
+                ),
+                "read_sha256": read_out.get("read_sha256"),
+            }
+        if "error" in read_out or read_out.get("code"):
+            return {
+                "error": "transcript_source_read_failed",
+                "transcript_id": clean_id,
+                "transcript_entity_id": entity_key,
+                "detail": str(read_out.get("error") or read_out.get("message")),
+            }
+        body = read_out.get("content")
+        if not isinstance(body, str) or not body.strip():
+            return {
+                "error": "transcript_source_empty",
+                "transcript_id": clean_id,
+                "transcript_entity_id": entity_key,
+                "detail": "Transcript markdown body empty after explicit export read.",
+            }
+        composed_md = body
 
     chain_qs = urlencode({"node": entity_key, "edge_type": "continues", "hops": 5})
     chain_raw = cx("GET", f"/edges/traverse?{chain_qs}")

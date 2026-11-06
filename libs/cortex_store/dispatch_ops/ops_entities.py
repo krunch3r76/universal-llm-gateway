@@ -199,16 +199,9 @@ def _entity_get_single(
         return _http_error_dict(exc)
     resolved_id = canonical_id if not raw_id else entity_id
     if expected_revision is not None:
-        cols = {
-            r[1] for r in conn.execute("PRAGMA table_info(entities)").fetchall()
-        }
-        live_rev = None
-        if "revision" in cols:
-            row = conn.execute(
-                "SELECT revision FROM entities WHERE id = ?",
-                (resolved_id,),
-            ).fetchone()
-            live_rev = row["revision"] if row else None
+        from ._entity_get_preview import read_live_entity_revision
+
+        live_rev = read_live_entity_revision(conn, resolved_id)
         if live_rev is not None and int(live_rev) != int(expected_revision):
             return {
                 "code": "stale_handle",
@@ -270,6 +263,17 @@ def _batch_item_from_result(
     input_entity_id: str,
     result: dict[str, Any],
 ) -> dict[str, Any]:
+    if result.get("code") == "stale_handle":
+        data = result.get("data") if isinstance(result.get("data"), dict) else {}
+        return {
+            "input_entity_id": input_entity_id,
+            "ok": False,
+            "outcome": "stale_handle",
+            "code": "stale_handle",
+            "message": result.get("message"),
+            "revision": data.get("revision"),
+            "expected_revision": data.get("expected_revision"),
+        }
     if "error" in result:
         item: dict[str, Any] = {
             "input_entity_id": input_entity_id,
@@ -290,11 +294,23 @@ def _batch_item_from_result(
     }
 
 
+def _expected_revision_for_batch_id(
+    entity_id: str,
+    *,
+    expected_revision: int | None,
+    expected_revisions: dict[str, int] | None,
+) -> int | None:
+    if expected_revisions and entity_id in expected_revisions:
+        return expected_revisions[entity_id]
+    return expected_revision
+
+
 def _entity_get_batch(
     entity_ids: list[str],
     *,
     intent: str,
     expected_revision: int | None = None,
+    expected_revisions: dict[str, int] | None = None,
     include_edges: bool = False,
     edge_limit: int = 20,
     include_compaction_pointers: bool = False,
@@ -340,7 +356,11 @@ def _entity_get_batch(
                     conn,
                     entity_id=eid,
                     intent=batch_intent,
-                    expected_revision=expected_revision,
+                    expected_revision=_expected_revision_for_batch_id(
+                        eid,
+                        expected_revision=expected_revision,
+                        expected_revisions=expected_revisions,
+                    ),
                     include_edges=include_edges,
                     edge_limit=edge_limit,
                     include_compaction_pointers=include_compaction_pointers,
@@ -414,6 +434,7 @@ def _op_entity_get(
     include_compaction_pointers: bool = False,
     intent: str | None = None,
     expected_revision: int | None = None,
+    expected_revisions: dict[str, int] | None = None,
     include_superseded: bool = False,
     debug: bool = False,
     top_k: int = _CARD_TOP_K_DEFAULT,
@@ -452,6 +473,7 @@ def _op_entity_get(
             entity_ids,
             intent=resolved_intent,
             expected_revision=expected_revision,
+            expected_revisions=expected_revisions,
             include_edges=include_edges,
             edge_limit=edge_limit,
             include_compaction_pointers=include_compaction_pointers,

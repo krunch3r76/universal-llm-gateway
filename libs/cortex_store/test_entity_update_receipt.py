@@ -49,7 +49,7 @@ def test_entity_update_default_receipt_small_and_echo_card_full(migrated_db) -> 
     assert receipt["changed_keys"] == ["notes"]
     assert len(receipt["sha256"]) == 64
     assert receipt["card_call"] == (
-        f'cortex(tool="entity_get", arguments=\'{{"entity_id":"{eid}"}}\')'
+        f'cortex(tool="entity_get", arguments=\'{{"entity_id":"{eid}","intent":"full"}}\')'
     )
     receipt_bytes = len(
         json.dumps(receipt, separators=(",", ":")).encode("utf-8")

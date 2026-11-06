@@ -13,6 +13,23 @@ _PREVIEW_OMITTED = ("attributes", "assertions", "journal", "relations", "content
 _SUMMARY_CAP = 500
 
 
+def read_live_entity_revision(
+    conn: sqlite3.Connection, entity_id: str
+) -> int | None:
+    """Return entities.revision when the column exists, else None."""
+    cols = {r[1] for r in conn.execute("PRAGMA table_info(entities)").fetchall()}
+    if "revision" not in cols:
+        return None
+    row = conn.execute(
+        "SELECT revision FROM entities WHERE id = ?",
+        (entity_id,),
+    ).fetchone()
+    if not row:
+        return None
+    val = row["revision"]
+    return int(val) if val is not None else 0
+
+
 def _clip_summary(text: str) -> tuple[str, bool, str]:
     raw = text.strip()
     if len(raw) <= _SUMMARY_CAP:
@@ -124,7 +141,7 @@ def build_entity_preview(
         "summary_truncated": truncated,
         "summary_source": summary_source,
         "updated_at": row.get("updated_at"),
-        "revision": None,
+        "revision": read_live_entity_revision(conn, entity_id),
         "content_hash": row.get("content_hash"),
         "freshest_assertion_id": int(freshest["id"]) if freshest else None,
         "facet_counts": {
