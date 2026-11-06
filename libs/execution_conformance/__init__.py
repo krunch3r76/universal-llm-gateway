@@ -5,9 +5,10 @@ from .adapters import (
     CdpInflightAdapter,
     CountingAdmitWrapper,
     CursorBridgeBusModelAdapter,
+    HealthOnlyAdapter,
     StargatePipelineAdapter,
 )
-from .ledger import IntentLedger, IntentRecord
+from .ledger import IntentLedger, IntentRecord, ReserveOutcome
 from .manifest import MANIFEST, assert_manifest_complete, manifest_unknowns
 from .reconciler import (
     CompensatingAction,
@@ -15,10 +16,9 @@ from .reconciler import (
     ReconcileResult,
     compensate_unknown,
     dispatch_intent,
-    health_only_would_claim_ready,
     reconcile,
 )
-from .states import ExecutionState, IllegalStateTransition, transition
+from .states import ExecutionState, IllegalStateTransition, IllegalStateTransitionError
 
 __all__ = [
     "AgentBusAdapter",
@@ -28,17 +28,18 @@ __all__ = [
     "CursorBridgeBusModelAdapter",
     "DispatchResult",
     "ExecutionState",
+    "HealthOnlyAdapter",
     "IllegalStateTransition",
+    "IllegalStateTransitionError",
     "IntentLedger",
     "IntentRecord",
     "MANIFEST",
     "ReconcileResult",
+    "ReserveOutcome",
     "StargatePipelineAdapter",
     "assert_manifest_complete",
     "compensate_unknown",
     "dispatch_intent",
-    "health_only_would_claim_ready",
     "manifest_unknowns",
     "reconcile",
-    "transition",
 ]

@@ -4,9 +4,21 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, Protocol
 
 from .states import ExecutionState
+from .store_epoch import file_store_epoch, intent_tag_prefix
+
+_TRACKER_STATUS_MAP: dict[str, ExecutionState] = {
+    "running": ExecutionState.running,
+    "completed": ExecutionState.completed,
+    "failed": ExecutionState.failed,
+}
+
+
+def map_tracker_status(status: str) -> ExecutionState:
+    return _TRACKER_STATUS_MAP.get(status, ExecutionState.outcome_unknown)
 
 
 @dataclass(frozen=True, slots=True)
@@ -14,7 +26,8 @@ class OwnerLookup:
     found: bool
     actuator_ref: str | None = None
     state: ExecutionState | None = None
-    durable: bool = False
+    store_epoch: str = ""
+    unknown_reason: str | None = None
     note: str | None = None
 
 
@@ -22,10 +35,16 @@ class OwnerLookup:
 class AdmitOutcome:
     actuator_ref: str
     state: ExecutionState
+    idempotent_replay: bool = False
 
 
 class ActuatorAdapter(Protocol):
     name: str
+    admit_idempotent: bool
+
+    def store_epoch(self) -> str: ...
+
+    def health(self) -> bool: ...
 
     def lookup(self, identity_key: str) -> OwnerLookup: ...
 
@@ -34,7 +53,7 @@ class ActuatorAdapter(Protocol):
 
 @dataclass(slots=True)
 class CountingAdmitWrapper:
-    """Test probe: counts remote admit calls per wrapped adapter."""
+    """Test probe: counts remote admit calls on this wrapper."""
 
     inner: ActuatorAdapter
     admit_count: int = 0
@@ -42,6 +61,16 @@ class CountingAdmitWrapper:
     @property
     def name(self) -> str:
         return self.inner.name
+
+    @property
+    def admit_idempotent(self) -> bool:
+        return self.inner.admit_idempotent
+
+    def store_epoch(self) -> str:
+        return self.inner.store_epoch()
+
+    def health(self) -> bool:
+        return self.inner.health()
 
     def lookup(self, identity_key: str) -> OwnerLookup:
         return self.inner.lookup(identity_key)
@@ -51,29 +80,55 @@ class CountingAdmitWrapper:
         return self.inner.admit(identity_key, **kwargs)
 
 
+def _agent_bus_db_path() -> Path:
+    return Path(os.environ.get("AGENT_BUS_DB_PATH", "/data/messages.db")).expanduser()
+
+
+def _cdp_db_path() -> Path:
+    data_dir = Path(
+        os.environ.get("DATA_DIR", str(Path.home() / ".gateway"))
+    ).expanduser()
+    return data_dir / "stargate-cdp-generate-inflight.db"
+
+
+def _validate_idempotency_key(key: str) -> None:
+    if len(key) < 8 or len(key) > 128:
+        raise ValueError("identity_key must be 8..128 chars for agent_bus idempotency")
+
+
 class AgentBusAdapter:
-    """``libs/agent_bus_store/db/threads.py::create_thread`` + idempotency replay."""
+    """``create_thread`` + ``thread_id_for_idempotency_key`` (migration_014)."""
 
     name = "agent_bus"
+    admit_idempotent = True
+
+    def store_epoch(self) -> str:
+        return file_store_epoch(_agent_bus_db_path())
+
+    def health(self) -> bool:
+        path = _agent_bus_db_path()
+        return path.parent.exists()
 
     def lookup(self, identity_key: str) -> OwnerLookup:
         from agent_bus_store.db.connection import connect
         from agent_bus_store.db.thread_idempotency import thread_id_for_idempotency_key
 
+        epoch = self.store_epoch()
         with connect() as conn:
             thread_id = thread_id_for_idempotency_key(conn, identity_key)
         if thread_id is None:
-            return OwnerLookup(found=False, durable=True)
+            return OwnerLookup(found=False, store_epoch=epoch)
         return OwnerLookup(
             found=True,
             actuator_ref=thread_id,
             state=ExecutionState.accepted,
-            durable=True,
+            store_epoch=epoch,
         )
 
     def admit(self, identity_key: str, **kwargs: Any) -> AdmitOutcome:
         from agent_bus_store.db.threads import create_thread
 
+        _validate_idempotency_key(identity_key)
         slug = str(kwargs.get("slug") or "execution-conformance")
         detail = create_thread(
             thread_id=kwargs.get("thread_id"),
@@ -84,14 +139,18 @@ class AgentBusAdapter:
             raise RuntimeError("create_thread returned None for fresh id")
         thread_id = str(detail["id"])
         replay = bool(detail.get("idempotent_replay"))
-        state = ExecutionState.accepted if replay else ExecutionState.accepted
-        return AdmitOutcome(actuator_ref=thread_id, state=state)
+        return AdmitOutcome(
+            actuator_ref=thread_id,
+            state=ExecutionState.accepted,
+            idempotent_replay=replay,
+        )
 
 
 class StargatePipelineAdapter:
     """In-process ``PipelineExecutionTracker`` (memory-only owner store)."""
 
     name = "stargate_pipeline"
+    admit_idempotent = False
 
     def __init__(self, tracker: Any | None = None) -> None:
         if tracker is None:
@@ -106,28 +165,36 @@ class StargatePipelineAdapter:
     def tracker(self) -> Any:
         return self._tracker
 
+    def store_epoch(self) -> str:
+        return f"memory:{id(self._tracker)}"
+
+    def health(self) -> bool:
+        return True
+
     def lookup(self, identity_key: str) -> OwnerLookup:
         record = self._tracker.get(identity_key)
+        epoch = self.store_epoch()
         if record is None:
             return OwnerLookup(
                 found=False,
-                durable=False,
+                store_epoch=epoch,
                 note="PipelineExecutionTracker.records is in-process only",
             )
-        status_map = {
-            "running": ExecutionState.running,
-            "completed": ExecutionState.completed,
-            "failed": ExecutionState.failed,
-        }
-        state = status_map.get(record.status, ExecutionState.running)
         return OwnerLookup(
             found=True,
             actuator_ref=record.execution_id,
-            state=state,
-            durable=False,
+            state=map_tracker_status(record.status),
+            store_epoch=epoch,
         )
 
     def admit(self, identity_key: str, **kwargs: Any) -> AdmitOutcome:
+        existing = self.lookup(identity_key)
+        if existing.found and existing.actuator_ref:
+            return AdmitOutcome(
+                actuator_ref=existing.actuator_ref,
+                state=existing.state or ExecutionState.running,
+                idempotent_replay=True,
+            )
         from systems.pipeline.core.execution.async_tracker.constants import _utc_now_iso
 
         pipeline = str(kwargs.get("pipeline") or "conformance.probe")
@@ -136,40 +203,52 @@ class StargatePipelineAdapter:
             pipeline=pipeline,
             started_at=_utc_now_iso(),
         )
-        status_map = {
-            "running": ExecutionState.running,
-            "completed": ExecutionState.completed,
-            "failed": ExecutionState.failed,
-        }
-        state = status_map.get(record.status, ExecutionState.running)
-        return AdmitOutcome(actuator_ref=record.execution_id, state=state)
+        return AdmitOutcome(
+            actuator_ref=record.execution_id,
+            state=map_tracker_status(record.status),
+        )
 
 
 class CdpInflightAdapter:
     """``cdp_generate_inflight_ledger`` durable SQLite leg rows."""
 
     name = "cdp_ask"
+    admit_idempotent = False
+
+    def store_epoch(self) -> str:
+        return file_store_epoch(_cdp_db_path())
+
+    def health(self) -> bool:
+        return _cdp_db_path().parent.exists()
 
     def lookup(self, identity_key: str) -> OwnerLookup:
         from systems.frontier_consult.cdp_generate_inflight_ledger import (
             read_inflight_leg,
         )
 
+        epoch = self.store_epoch()
         leg = read_inflight_leg(identity_key)
         if leg is None:
-            return OwnerLookup(found=False, durable=True)
-        if leg.proof_emitted or leg.delivered:
-            state = ExecutionState.completed
-        elif leg.abandoned:
+            return OwnerLookup(found=False, store_epoch=epoch)
+        if leg.abandoned:
             state = ExecutionState.cancelled
+        elif leg.proof_emitted or leg.delivered:
+            state = ExecutionState.completed
+        elif not leg.proof_emitted and not leg.delivered:
+            return OwnerLookup(
+                found=True,
+                actuator_ref=leg.execution_id,
+                state=ExecutionState.accepted,
+                store_epoch=epoch,
+                unknown_reason="open_leg_without_board_proof",
+            )
         else:
             state = ExecutionState.running
         return OwnerLookup(
             found=True,
             actuator_ref=leg.execution_id,
             state=state,
-            durable=True,
-            note="proof_emitted=0 open leg is admitted but outcome may be unknown",
+            store_epoch=epoch,
         )
 
     def admit(self, identity_key: str, **kwargs: Any) -> AdmitOutcome:
@@ -191,56 +270,63 @@ class CdpInflightAdapter:
             max_wall_s=float(kwargs.get("max_wall_s") or 30.0),
         )
         leg = read_inflight_leg(identity_key)
-        assert leg is not None
+        if leg is None:
+            raise RuntimeError("upsert_inflight_leg did not persist")
         return AdmitOutcome(
             actuator_ref=leg.execution_id, state=ExecutionState.accepted
         )
 
 
 class CursorBridgeBusModelAdapter:
-    """Thin bus-store model of cursor bridge MSG/REPLY (no MCP ``cursor_bridge`` import).
-
-    ``services/mcp-server/tools/cursor_bridge.py`` ``_open_tab`` / ``_send_msg`` delegate
-    to agent-bus sends; this adapter models ``send_msg`` as a durable MSG turn and treats
-    a subsequent REPLY turn as terminal completion.
-    """
+    """Bus-store model of bridge MSG/REPLY — MCP ``cursor_bridge`` not imported."""
 
     name = "cursor_bridge"
+    admit_idempotent = False
+
+    def store_epoch(self) -> str:
+        return file_store_epoch(_agent_bus_db_path())
+
+    def health(self) -> bool:
+        return _agent_bus_db_path().parent.exists()
 
     def lookup(self, identity_key: str) -> OwnerLookup:
         from agent_bus_store.db.connection import connect
 
+        epoch = self.store_epoch()
+        prefix = intent_tag_prefix(identity_key)
         with connect() as conn:
             row = conn.execute(
-                "SELECT t.thread, t.turn_number, t.subject "
+                "SELECT t.id, t.thread, t.turn_number "
                 "FROM turns t "
-                "JOIN threads th ON th.id = t.thread "
-                "WHERE t.subject = 'MSG' AND t.body LIKE ? "
+                "WHERE t.subject = 'MSG' AND t.body LIKE ? ESCAPE '\\' "
                 "ORDER BY t.id ASC LIMIT 1",
-                (f"%intent:{identity_key}%",),
+                (prefix + "%",),
             ).fetchone()
             if row is None:
-                return OwnerLookup(found=False, durable=True)
+                return OwnerLookup(found=False, store_epoch=epoch)
             thread_id = row["thread"]
+            msg_turn = int(row["turn_number"])
             reply = conn.execute(
                 "SELECT id FROM turns "
-                "WHERE thread = ? AND subject = 'REPLY' AND turn_number > ? "
+                "WHERE thread = ? AND subject = 'REPLY' "
+                "AND body LIKE ? ESCAPE '\\' "
                 "ORDER BY turn_number ASC LIMIT 1",
-                (thread_id, row["turn_number"]),
+                (thread_id, prefix + "%"),
             ).fetchone()
         if reply is None:
             return OwnerLookup(
                 found=True,
                 actuator_ref=thread_id,
-                state=ExecutionState.running,
-                durable=True,
-                note="MSG durable without REPLY → blocked_unknown path",
+                state=ExecutionState.accepted,
+                store_epoch=epoch,
+                unknown_reason="msg_without_correlated_reply",
             )
         return OwnerLookup(
             found=True,
             actuator_ref=thread_id,
             state=ExecutionState.completed,
-            durable=True,
+            store_epoch=epoch,
+            note=f"correlated REPLY after MSG turn {msg_turn}",
         )
 
     def admit(self, identity_key: str, **kwargs: Any) -> AdmitOutcome:
@@ -251,9 +337,10 @@ class CursorBridgeBusModelAdapter:
             detail = create_thread(
                 thread_id=None, slug=str(kwargs.get("slug") or "bridge-lane")
             )
-            assert detail is not None
+            if detail is None:
+                raise RuntimeError("create_thread failed")
             thread_id = str(detail["id"])
-        body = f"intent:{identity_key}\n{kwargs.get('body') or 'probe'}"
+        body = intent_tag_prefix(identity_key) + str(kwargs.get("body") or "probe")
         insert_turn(
             thread=str(thread_id),
             from_agent=str(kwargs.get("from_agent") or "cursor-bridge"),
@@ -264,6 +351,20 @@ class CursorBridgeBusModelAdapter:
         return AdmitOutcome(actuator_ref=str(thread_id), state=ExecutionState.accepted)
 
 
-def cdp_adapter_with_data_dir(data_dir: str) -> CdpInflightAdapter:
-    os.environ["DATA_DIR"] = data_dir
-    return CdpInflightAdapter()
+class HealthOnlyAdapter:
+    """Test double: ``health`` true while owner store is empty."""
+
+    name = "health_probe"
+    admit_idempotent = False
+
+    def store_epoch(self) -> str:
+        return "health-probe"
+
+    def health(self) -> bool:
+        return True
+
+    def lookup(self, identity_key: str) -> OwnerLookup:
+        return OwnerLookup(found=False, store_epoch=self.store_epoch())
+
+    def admit(self, identity_key: str, **kwargs: Any) -> AdmitOutcome:
+        raise RuntimeError("health probe does not admit")

@@ -4,12 +4,14 @@ from __future__ import annotations
 
 import json
 import sqlite3
+from contextlib import closing
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from .states import ExecutionState, assert_transition
+from .manifest import ActuatorName
+from .states import ExecutionState, IllegalStateTransitionError, assert_transition
 
 
 def _utc_now() -> str:
@@ -24,26 +26,41 @@ CREATE TABLE IF NOT EXISTS execution_intents (
     state           TEXT NOT NULL,
     actuator_ref    TEXT,
     retry_count     INTEGER NOT NULL DEFAULT 0,
+    store_epoch     TEXT NOT NULL DEFAULT '',
     payload_json    TEXT,
     created_at      TEXT NOT NULL,
-    updated_at      TEXT NOT NULL
+    updated_at      TEXT NOT NULL,
+    UNIQUE(actuator, identity_key)
 );
-CREATE INDEX IF NOT EXISTS idx_execution_intents_identity
-    ON execution_intents(actuator, identity_key);
+CREATE TABLE IF NOT EXISTS execution_compensations (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    intent_id       TEXT NOT NULL,
+    authorized_by   TEXT NOT NULL,
+    reason          TEXT NOT NULL,
+    prior_state     TEXT NOT NULL,
+    created_at      TEXT NOT NULL
+);
 """
 
 
 @dataclass(frozen=True, slots=True)
 class IntentRecord:
     intent_id: str
-    actuator: str
+    actuator: ActuatorName
     identity_key: str
     state: ExecutionState
     actuator_ref: str | None
     retry_count: int
+    store_epoch: str
     payload: dict[str, Any] | None
     created_at: str
     updated_at: str
+
+
+@dataclass(frozen=True, slots=True)
+class ReserveOutcome:
+    record: IntentRecord
+    created: bool
 
 
 class IntentLedger:
@@ -62,10 +79,11 @@ class IntentLedger:
         conn = sqlite3.connect(self._db_path, timeout=5.0)
         conn.row_factory = sqlite3.Row
         conn.execute("PRAGMA journal_mode=WAL")
+        conn.execute("PRAGMA synchronous=FULL")
         return conn
 
     def _init_schema(self) -> None:
-        with self._connect() as conn:
+        with closing(self._connect()) as conn:
             conn.executescript(_DDL)
             conn.commit()
 
@@ -73,35 +91,49 @@ class IntentLedger:
         self,
         *,
         intent_id: str,
-        actuator: str,
+        actuator: ActuatorName,
         identity_key: str,
+        store_epoch: str,
         payload: dict[str, Any] | None = None,
-    ) -> IntentRecord:
+    ) -> ReserveOutcome:
+        existing = self.find_by_identity(actuator=actuator, identity_key=identity_key)
+        if existing is not None:
+            return ReserveOutcome(record=existing, created=False)
         ts = _utc_now()
         payload_json = json.dumps(payload) if payload is not None else None
-        with self._connect() as conn:
-            conn.execute(
-                "INSERT INTO execution_intents "
-                "(intent_id, actuator, identity_key, state, actuator_ref, retry_count, "
-                "payload_json, created_at, updated_at) "
-                "VALUES (?, ?, ?, ?, NULL, 0, ?, ?, ?)",
-                (
-                    intent_id,
-                    actuator,
-                    identity_key,
-                    ExecutionState.reserved.value,
-                    payload_json,
-                    ts,
-                    ts,
-                ),
-            )
-            conn.commit()
+        with closing(self._connect()) as conn:
+            try:
+                conn.execute(
+                    "INSERT INTO execution_intents "
+                    "(intent_id, actuator, identity_key, state, actuator_ref, retry_count, "
+                    "store_epoch, payload_json, created_at, updated_at) "
+                    "VALUES (?, ?, ?, ?, NULL, 0, ?, ?, ?, ?)",
+                    (
+                        intent_id,
+                        actuator,
+                        identity_key,
+                        ExecutionState.reserved.value,
+                        store_epoch,
+                        payload_json,
+                        ts,
+                        ts,
+                    ),
+                )
+                conn.commit()
+            except sqlite3.IntegrityError:
+                row = self.find_by_identity(
+                    actuator=actuator, identity_key=identity_key
+                )
+                if row is None:
+                    raise
+                return ReserveOutcome(record=row, created=False)
         row = self.get(intent_id)
-        assert row is not None
-        return row
+        if row is None:
+            raise RuntimeError(f"reserve failed to read back {intent_id!r}")
+        return ReserveOutcome(record=row, created=True)
 
     def get(self, intent_id: str) -> IntentRecord | None:
-        with self._connect() as conn:
+        with closing(self._connect()) as conn:
             row = conn.execute(
                 "SELECT * FROM execution_intents WHERE intent_id = ?",
                 (intent_id,),
@@ -109,16 +141,72 @@ class IntentLedger:
         return _row_to_record(row) if row is not None else None
 
     def find_by_identity(
-        self, *, actuator: str, identity_key: str
+        self, *, actuator: ActuatorName, identity_key: str
     ) -> IntentRecord | None:
-        with self._connect() as conn:
+        with closing(self._connect()) as conn:
             row = conn.execute(
                 "SELECT * FROM execution_intents "
-                "WHERE actuator = ? AND identity_key = ? "
-                "ORDER BY created_at ASC LIMIT 1",
+                "WHERE actuator = ? AND identity_key = ? LIMIT 1",
                 (actuator, identity_key),
             ).fetchone()
         return _row_to_record(row) if row is not None else None
+
+    def set_state_cas(
+        self, intent_id: str, expected: ExecutionState, target: ExecutionState
+    ) -> IntentRecord | None:
+        if expected == target:
+            row = self.get(intent_id)
+            return row
+        assert_transition(expected, target)
+        ts = _utc_now()
+        with closing(self._connect()) as conn:
+            cur = conn.execute(
+                "UPDATE execution_intents SET state = ?, updated_at = ? "
+                "WHERE intent_id = ? AND state = ?",
+                (target.value, ts, intent_id, expected.value),
+            )
+            conn.commit()
+            if cur.rowcount != 1:
+                return None
+        return self.get(intent_id)
+
+    def set_state(self, intent_id: str, state: ExecutionState) -> IntentRecord:
+        current = self.get(intent_id)
+        if current is None:
+            raise KeyError(f"unknown intent_id {intent_id!r}")
+        if current.state == state:
+            return current
+        row = self.set_state_cas(intent_id, current.state, state)
+        if row is None:
+            fresh = self.get(intent_id)
+            if fresh is None:
+                raise KeyError(intent_id)
+            raise IllegalStateTransitionError(
+                f"cas set_state lost race on {intent_id!r}"
+            )
+        return row
+
+    def record_receipt_cas(
+        self,
+        intent_id: str,
+        *,
+        expected: ExecutionState,
+        actuator_ref: str,
+        state: ExecutionState,
+    ) -> IntentRecord | None:
+        assert_transition(expected, state)
+        ts = _utc_now()
+        with closing(self._connect()) as conn:
+            cur = conn.execute(
+                "UPDATE execution_intents "
+                "SET state = ?, actuator_ref = ?, updated_at = ? "
+                "WHERE intent_id = ? AND state = ?",
+                (state.value, actuator_ref, ts, intent_id, expected.value),
+            )
+            conn.commit()
+            if cur.rowcount != 1:
+                return None
+        return self.get(intent_id)
 
     def record_receipt(
         self,
@@ -130,77 +218,86 @@ class IntentLedger:
         current = self.get(intent_id)
         if current is None:
             raise KeyError(f"unknown intent_id {intent_id!r}")
-        assert_transition(current.state, state)
-        ts = _utc_now()
-        with self._connect() as conn:
-            conn.execute(
-                "UPDATE execution_intents "
-                "SET state = ?, actuator_ref = ?, updated_at = ? "
-                "WHERE intent_id = ?",
-                (state.value, actuator_ref, ts, intent_id),
+        row = self.record_receipt_cas(
+            intent_id,
+            expected=current.state,
+            actuator_ref=actuator_ref,
+            state=state,
+        )
+        if row is None:
+            raise IllegalStateTransitionError(
+                f"cas record_receipt lost race on {intent_id!r}"
             )
-            conn.commit()
-        row = self.get(intent_id)
-        assert row is not None
         return row
 
-    def set_state(self, intent_id: str, state: ExecutionState) -> IntentRecord:
-        current = self.get(intent_id)
-        if current is None:
-            raise KeyError(f"unknown intent_id {intent_id!r}")
-        assert_transition(current.state, state)
+    def patch_actuator_ref_if_null(
+        self, intent_id: str, actuator_ref: str
+    ) -> IntentRecord | None:
         ts = _utc_now()
-        with self._connect() as conn:
-            conn.execute(
-                "UPDATE execution_intents SET state = ?, updated_at = ? WHERE intent_id = ?",
-                (state.value, ts, intent_id),
-            )
-            conn.commit()
-        row = self.get(intent_id)
-        assert row is not None
-        return row
-
-    def patch_actuator_ref(self, intent_id: str, actuator_ref: str) -> IntentRecord:
-        ts = _utc_now()
-        with self._connect() as conn:
-            conn.execute(
+        with closing(self._connect()) as conn:
+            cur = conn.execute(
                 "UPDATE execution_intents SET actuator_ref = ?, updated_at = ? "
-                "WHERE intent_id = ?",
+                "WHERE intent_id = ? AND actuator_ref IS NULL",
                 (actuator_ref, ts, intent_id),
             )
             conn.commit()
-        row = self.get(intent_id)
-        assert row is not None
-        return row
+            if cur.rowcount != 1:
+                return None
+        return self.get(intent_id)
 
-    def increment_retry(self, intent_id: str) -> IntentRecord:
+    def claim_retry(self, intent_id: str) -> bool:
+        """Atomically increment retry_count once for eligible states."""
         ts = _utc_now()
-        with self._connect() as conn:
-            conn.execute(
-                "UPDATE execution_intents SET retry_count = retry_count + 1, updated_at = ? "
-                "WHERE intent_id = ?",
-                (ts, intent_id),
+        allowed = (
+            ExecutionState.reserved.value,
+            ExecutionState.outcome_unknown.value,
+        )
+        placeholders = ",".join("?" for _ in allowed)
+        with closing(self._connect()) as conn:
+            cur = conn.execute(
+                f"UPDATE execution_intents SET retry_count = retry_count + 1, "
+                f"updated_at = ? WHERE intent_id = ? AND retry_count = 0 "
+                f"AND state IN ({placeholders})",
+                (ts, intent_id, *allowed),
             )
             conn.commit()
-        row = self.get(intent_id)
-        assert row is not None
-        return row
+            return cur.rowcount == 1
+
+    def write_compensation(
+        self,
+        intent_id: str,
+        *,
+        authorized_by: str,
+        reason: str,
+        prior_state: ExecutionState,
+    ) -> None:
+        ts = _utc_now()
+        with closing(self._connect()) as conn:
+            conn.execute(
+                "INSERT INTO execution_compensations "
+                "(intent_id, authorized_by, reason, prior_state, created_at) "
+                "VALUES (?, ?, ?, ?, ?)",
+                (intent_id, authorized_by, reason, prior_state.value, ts),
+            )
+            conn.commit()
 
     def reopen(self) -> IntentLedger:
-        """Return a fresh handle over the same on-disk ledger (process restart model)."""
         return IntentLedger(self._db_path)
 
 
 def _row_to_record(row: sqlite3.Row) -> IntentRecord:
     payload_raw = row["payload_json"]
     payload = json.loads(payload_raw) if payload_raw else None
+    keys = set(row.keys())
+    store_epoch = row["store_epoch"] if "store_epoch" in keys else ""
     return IntentRecord(
         intent_id=row["intent_id"],
-        actuator=row["actuator"],
+        actuator=row["actuator"],  # type: ignore[arg-type]
         identity_key=row["identity_key"],
         state=ExecutionState(row["state"]),
         actuator_ref=row["actuator_ref"],
         retry_count=int(row["retry_count"]),
+        store_epoch=str(store_epoch or ""),
         payload=payload,
         created_at=row["created_at"],
         updated_at=row["updated_at"],

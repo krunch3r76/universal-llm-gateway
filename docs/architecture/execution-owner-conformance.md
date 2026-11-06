@@ -21,11 +21,14 @@ admit call. Receipt columns store the actuator reference (`thread_id`,
 
 ## Reconcile
 
-1. **Found** — adopt owner state; do not redispatch.
-2. **Not found + durable owner** — at most one retry with the same identity key.
-3. **Not found + memory-only owner** — `outcome_unknown` → `blocked_unknown`; zero redispatch.
-4. **CDP open leg without board proof** — after local receipt, `outcome_unknown` (no retry).
-5. **Bridge MSG without REPLY** — `blocked_unknown` (no resend).
+1. **Terminal local states** (`completed`, `failed`, `cancelled`) — no lookup admit.
+2. **Found** — adopt owner state (no rank regression); ref conflicts block.
+3. **Retry on miss** — only when `adapter.admit_idempotent` is true (today: `agent_bus` only),
+   store epoch matches, and `claim_retry` wins the CAS race. Retry reuses persisted
+   `payload.admit_kwargs`.
+4. **All other misses** (cdp, bridge, stargate, epoch mismatch) — `blocked_unknown`, zero redispatch.
+5. **Open CDP leg / bridge MSG without correlated REPLY** — block after local receipt;
+   reserved-without-receipt adopts from owner.
 
 Compensation from `blocked_unknown` requires an explicit `CompensatingAction`.
 

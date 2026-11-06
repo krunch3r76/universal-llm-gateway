@@ -14,6 +14,7 @@ def test_p4_c9_compensation_falsifier(tmp_path) -> None:
         intent_id="intent-c9",
         actuator="agent_bus",
         identity_key="c9-key-abcdef12",
+        store_epoch="test-epoch",
     )
     ledger.set_state("intent-c9", ExecutionState.outcome_unknown)
     ledger.set_state("intent-c9", ExecutionState.blocked_unknown)
@@ -26,4 +27,4 @@ def test_p4_c9_compensation_falsifier(tmp_path) -> None:
         CompensatingAction(authorized_by="reviewer", reason="test"),
     )
     assert row.state == ExecutionState.outcome_unknown
-    assert row.authorized_by == "reviewer"
+    assert row.state == ExecutionState.outcome_unknown

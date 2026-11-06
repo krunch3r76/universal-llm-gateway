@@ -45,6 +45,7 @@ def test_p4_c4_cdp_open_without_proof(cdp_env, tmp_path) -> None:
         admit_kwargs={"thread_id": "22398"},
     )
     result = reconcile(ledger.reopen(), CdpInflightAdapter(), "intent-c4-open")
-    assert result.state == ExecutionState.outcome_unknown
+    assert result.blocked is True
+    assert result.state == ExecutionState.blocked_unknown
     assert result.redispatched is False
     assert wrapped.admit_count == 1

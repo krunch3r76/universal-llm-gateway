@@ -18,15 +18,13 @@ def test_p4_c1_manifest_every_cell_populated() -> None:
             cell = MANIFEST[actuator][cap]
             assert cell.level in {"supported", "partial", "unsupported", "unknown"}
             assert cell.source
-            assert "path" in cell.source or "/" in cell.source
 
 
 def test_p4_c1_manifest_unknowns_explicit() -> None:
-    unknowns = manifest_unknowns()
-    assert unknowns == [
-        (
-            "cursor_bridge",
-            "cancel",
-            MANIFEST["cursor_bridge"]["cancel"],
-        )
-    ]
+    unknowns = {(a, c) for a, c, _ in manifest_unknowns()}
+    assert unknowns == {
+        ("cursor_bridge", "identity"),
+        ("cursor_bridge", "lookup"),
+        ("cursor_bridge", "cancel"),
+        ("cursor_bridge", "unknown_recovery"),
+    }

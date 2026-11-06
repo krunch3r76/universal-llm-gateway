@@ -16,21 +16,34 @@ class ExecutionState(StrEnum):
     blocked_unknown = "blocked_unknown"
 
 
+# Adoption rank — reconcile never regresses local state to a lower rank.
+STATE_RANK: dict[ExecutionState, int] = {
+    ExecutionState.reserved: 0,
+    ExecutionState.accepted: 1,
+    ExecutionState.running: 2,
+    ExecutionState.outcome_unknown: 2,
+    ExecutionState.completed: 3,
+    ExecutionState.failed: 3,
+    ExecutionState.cancelled: 3,
+    ExecutionState.blocked_unknown: 3,
+}
+
+
 TERMINAL_STATES: frozenset[ExecutionState] = frozenset(
     {
         ExecutionState.completed,
         ExecutionState.failed,
         ExecutionState.cancelled,
-        ExecutionState.blocked_unknown,
     }
 )
 
-# Monotone progression: reserved → accepted → running → terminal/unknown lanes.
+
 LEGAL_TRANSITIONS: dict[ExecutionState, frozenset[ExecutionState]] = {
     ExecutionState.reserved: frozenset(
         {
             ExecutionState.accepted,
             ExecutionState.running,
+            ExecutionState.completed,
             ExecutionState.failed,
             ExecutionState.cancelled,
             ExecutionState.outcome_unknown,
@@ -47,6 +60,7 @@ LEGAL_TRANSITIONS: dict[ExecutionState, frozenset[ExecutionState]] = {
     ),
     ExecutionState.running: frozenset(
         {
+            ExecutionState.accepted,
             ExecutionState.completed,
             ExecutionState.failed,
             ExecutionState.cancelled,
@@ -60,9 +74,17 @@ LEGAL_TRANSITIONS: dict[ExecutionState, frozenset[ExecutionState]] = {
             ExecutionState.running,
             ExecutionState.completed,
             ExecutionState.failed,
+            ExecutionState.cancelled,
         }
     ),
-    ExecutionState.blocked_unknown: frozenset({ExecutionState.outcome_unknown}),
+    ExecutionState.blocked_unknown: frozenset(
+        {
+            ExecutionState.outcome_unknown,
+            ExecutionState.completed,
+            ExecutionState.failed,
+            ExecutionState.cancelled,
+        }
+    ),
     ExecutionState.completed: frozenset(),
     ExecutionState.failed: frozenset(),
     ExecutionState.cancelled: frozenset(),
@@ -73,7 +95,12 @@ class IllegalStateTransitionError(ValueError):
     """Raised when a transition would violate the monotone table."""
 
 
+IllegalStateTransition = IllegalStateTransitionError
+
+
 def assert_transition(current: ExecutionState, target: ExecutionState) -> None:
+    if current == target:
+        return
     allowed = LEGAL_TRANSITIONS.get(current, frozenset())
     if target not in allowed:
         raise IllegalStateTransitionError(
@@ -81,9 +108,8 @@ def assert_transition(current: ExecutionState, target: ExecutionState) -> None:
         )
 
 
-IllegalStateTransition = IllegalStateTransitionError
-
-
-def transition(current: ExecutionState, target: ExecutionState) -> ExecutionState:
-    assert_transition(current, target)
-    return target
+def adoption_target(local: ExecutionState, owner: ExecutionState) -> ExecutionState:
+    """Pick owner state unless that would regress local rank."""
+    if STATE_RANK.get(owner, 0) < STATE_RANK.get(local, 0):
+        return local
+    return owner

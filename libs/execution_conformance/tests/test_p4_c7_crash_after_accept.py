@@ -11,7 +11,8 @@ from execution_conformance.adapters import (
     StargatePipelineAdapter,
 )
 from execution_conformance.ledger import IntentLedger
-from execution_conformance.reconciler import dispatch_intent, reconcile
+from execution_conformance.reconciler import reconcile
+from execution_conformance.test_hooks import dispatch_crash_after_admit_before_receipt
 
 
 @pytest.fixture()
@@ -69,18 +70,16 @@ def test_p4_c7_crash_after_accept_before_receipt(
     ledger = IntentLedger(tmp_path / "intents.db")
     wrapped = make_adapter()
     intent_id = f"intent-c7-{wrapped.name}"
-    dispatch_intent(
+    dispatch_crash_after_admit_before_receipt(
         ledger,
         wrapped,
         intent_id=intent_id,
         identity_key=identity,
         admit_kwargs=admit_kwargs,
-        record_receipt=False,
     )
     assert wrapped.admit_count == 1
-    ledger2 = ledger.reopen()
     probe = _fresh_counting(wrapped.inner)
-    result = reconcile(ledger2, probe, intent_id)
+    result = reconcile(ledger.reopen(), probe, intent_id)
     assert probe.admit_count == 0
     assert result.adopted is True
     assert wrapped.admit_count == 1

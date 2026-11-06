@@ -1,4 +1,4 @@
-"""C6 — crash after local reservation, restart both sides; remote admits ≤ 1."""
+"""C6 — crash after local reservation; remote admits ≤ 1."""
 
 from __future__ import annotations
 
@@ -11,7 +11,9 @@ from execution_conformance.adapters import (
     StargatePipelineAdapter,
 )
 from execution_conformance.ledger import IntentLedger
-from execution_conformance.reconciler import dispatch_intent, reconcile
+from execution_conformance.reconciler import reconcile
+from execution_conformance.states import ExecutionState
+from execution_conformance.test_hooks import dispatch_crash_after_reserve
 
 
 @pytest.fixture()
@@ -22,88 +24,88 @@ def bus_env(tmp_path, monkeypatch: pytest.MonkeyPatch):
     init_db()
 
 
-def _case_stargate(tmp_path, monkeypatch: pytest.MonkeyPatch):
+def _run_case(tmp_path, monkeypatch, wrapped, probe, identity, intent_id, admit_kwargs):
     monkeypatch.setenv("DATA_DIR", str(tmp_path / "gateway"))
     ledger = IntentLedger(tmp_path / "intents.db")
-    wrapped = CountingAdmitWrapper(StargatePipelineAdapter())
-    identity = "c6-stargate-exec"
-    intent_id = "intent-c6-stargate_pipeline"
-    dispatch_intent(
+    dispatch_crash_after_reserve(
         ledger,
         wrapped,
         intent_id=intent_id,
         identity_key=identity,
-        admit_kwargs={"pipeline": "c6"},
-        remote_admit=False,
+        admit_kwargs=admit_kwargs,
     )
-    probe = CountingAdmitWrapper(StargatePipelineAdapter())
     reconcile(ledger.reopen(), probe, intent_id)
     return wrapped, probe
 
 
-def _case_agent_bus(tmp_path, monkeypatch: pytest.MonkeyPatch):
-    monkeypatch.setenv("DATA_DIR", str(tmp_path / "gateway"))
-    ledger = IntentLedger(tmp_path / "intents.db")
-    wrapped = CountingAdmitWrapper(AgentBusAdapter())
-    identity = "c6-agent-bus-key-abcdef12"
-    intent_id = "intent-c6-agent_bus"
-    dispatch_intent(
-        ledger,
-        wrapped,
-        intent_id=intent_id,
-        identity_key=identity,
-        admit_kwargs={"slug": "c6-bus"},
-        remote_admit=False,
-    )
-    probe = CountingAdmitWrapper(AgentBusAdapter())
-    reconcile(ledger.reopen(), probe, intent_id)
-    return wrapped, probe
-
-
-def _case_cdp(tmp_path, monkeypatch: pytest.MonkeyPatch):
-    monkeypatch.setenv("DATA_DIR", str(tmp_path / "gateway"))
-    ledger = IntentLedger(tmp_path / "intents.db")
-    wrapped = CountingAdmitWrapper(CdpInflightAdapter())
-    identity = "c6-cdp-exec"
-    intent_id = "intent-c6-cdp_ask"
-    dispatch_intent(
-        ledger,
-        wrapped,
-        intent_id=intent_id,
-        identity_key=identity,
-        admit_kwargs={"thread_id": "22398"},
-        remote_admit=False,
-    )
-    probe = CountingAdmitWrapper(CdpInflightAdapter())
-    reconcile(ledger.reopen(), probe, intent_id)
-    return wrapped, probe
-
-
-def _case_bridge(tmp_path, monkeypatch: pytest.MonkeyPatch):
-    monkeypatch.setenv("DATA_DIR", str(tmp_path / "gateway"))
-    ledger = IntentLedger(tmp_path / "intents.db")
-    wrapped = CountingAdmitWrapper(CursorBridgeBusModelAdapter())
-    identity = "c6-bridge-intent"
-    intent_id = "intent-c6-cursor_bridge"
-    dispatch_intent(
-        ledger,
-        wrapped,
-        intent_id=intent_id,
-        identity_key=identity,
-        admit_kwargs={"slug": "c6-bridge"},
-        remote_admit=False,
-    )
-    probe = CountingAdmitWrapper(CursorBridgeBusModelAdapter())
-    reconcile(ledger.reopen(), probe, intent_id)
-    return wrapped, probe
-
-
-@pytest.mark.parametrize(
-    "case_fn", [_case_agent_bus, _case_stargate, _case_cdp, _case_bridge]
-)
-def test_p4_c6_crash_after_reservation(
-    tmp_path, monkeypatch: pytest.MonkeyPatch, bus_env, case_fn
+def test_p4_c6_crash_after_reservation_agent_bus(
+    tmp_path, monkeypatch: pytest.MonkeyPatch, bus_env
 ) -> None:
-    wrapped, probe = case_fn(tmp_path, monkeypatch)
+    wrapped = CountingAdmitWrapper(AgentBusAdapter())
+    probe = CountingAdmitWrapper(AgentBusAdapter())
+    _run_case(
+        tmp_path,
+        monkeypatch,
+        wrapped,
+        probe,
+        "c6-agent-bus-key-abcdef12",
+        "intent-c6-agent_bus",
+        {"slug": "c6-bus"},
+    )
     assert wrapped.admit_count == 0
     assert probe.admit_count <= 1
+
+
+def test_p4_c6_crash_after_reservation_stargate(tmp_path, monkeypatch) -> None:
+    wrapped = CountingAdmitWrapper(StargatePipelineAdapter())
+    probe = CountingAdmitWrapper(StargatePipelineAdapter())
+    _run_case(
+        tmp_path,
+        monkeypatch,
+        wrapped,
+        probe,
+        "c6-stargate-exec",
+        "intent-c6-stargate",
+        {"pipeline": "c6"},
+    )
+    assert wrapped.admit_count == 0
+    assert probe.admit_count == 0
+
+
+def test_p4_c6_crash_after_reservation_cdp(
+    tmp_path, monkeypatch: pytest.MonkeyPatch, bus_env
+) -> None:
+    wrapped = CountingAdmitWrapper(CdpInflightAdapter())
+    probe = CountingAdmitWrapper(CdpInflightAdapter())
+    _run_case(
+        tmp_path,
+        monkeypatch,
+        wrapped,
+        probe,
+        "c6-cdp-exec",
+        "intent-c6-cdp",
+        {"thread_id": "22398"},
+    )
+    assert wrapped.admit_count == 0
+    assert probe.admit_count == 0
+
+
+def test_p4_c6_crash_after_reservation_bridge(
+    tmp_path, monkeypatch: pytest.MonkeyPatch, bus_env
+) -> None:
+    wrapped = CountingAdmitWrapper(CursorBridgeBusModelAdapter())
+    probe = CountingAdmitWrapper(CursorBridgeBusModelAdapter())
+    _run_case(
+        tmp_path,
+        monkeypatch,
+        wrapped,
+        probe,
+        "c6-bridge-intent",
+        "intent-c6-bridge",
+        {"slug": "c6-bridge"},
+    )
+    assert wrapped.admit_count == 0
+    assert probe.admit_count == 0
+    row = IntentLedger(tmp_path / "intents.db").get("intent-c6-bridge")
+    assert row is not None
+    assert row.state == ExecutionState.blocked_unknown
