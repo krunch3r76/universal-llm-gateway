@@ -698,6 +698,55 @@ def _load_plain_text_for_sparse(rel: str, root: Path) -> str:
     return text
 
 
+def _stopped_multi_section_item(rel: str, sid: str, *, root: Path) -> dict[str, Any]:
+    """Later section after the shared budget stopped.
+
+    Content is not returned. ``oversize`` is set only when this id's own
+    body exceeds the cap.
+    """
+    item: dict[str, Any] = {"path": rel, "id": sid, "outcome": "over_budget"}
+    one = read_file_result(rel, root=root, binary=False, sections=[sid])
+    probed = (one.get("items") or [None])[0]
+    if isinstance(probed, dict) and probed.get("oversize") is True:
+        item["oversize"] = True
+        if "char_count" in probed:
+            item["char_count"] = probed["char_count"]
+        fetch = probed.get("fetch")
+        item["fetch"] = fetch if isinstance(fetch, dict) else {
+            "section": sid,
+            "chunk_cursor": 0,
+        }
+    return item
+
+
+def _stopped_export_item(rel: str, *, root: Path) -> dict[str, Any]:
+    """Later export path after the shared budget stopped.
+
+    A path whose own text exceeds the cap carries ``oversize``. A path that
+    is over budget only because an earlier path stopped the batch does not.
+    """
+    item: dict[str, Any] = {
+        "path": rel,
+        "outcome": "over_budget",
+        "fetch": {
+            "op": "read",
+            "path": rel,
+            "export": True,
+            "chunk_cursor": 0,
+        },
+    }
+    if _is_sparse_path(rel, root):
+        length = len(_load_plain_text_for_sparse(rel, root))
+    else:
+        probed = read_file_result(rel, root=root, binary=False)
+        body = probed.get("content")
+        length = len(body) if isinstance(body, str) else 0
+    if length > BATCH_MAX_CONTENT_CHARS:
+        item["oversize"] = True
+        item["char_count"] = length
+    return item
+
+
 def read_files_batch(
     paths: list[str],
     root: Path = FILES_ROOT,
@@ -784,7 +833,7 @@ def read_files_batch(
             for sid in list(sections or []):
                 if ended:
                     flat.append(
-                        {"path": rel, "id": sid, "outcome": "over_budget"}
+                        _stopped_multi_section_item(rel, sid, root=root)
                     )
                     omitted.append(f"{rel}:{sid}")
                     flat_idx += 1
@@ -872,18 +921,7 @@ def read_files_batch(
         terminated = False
         for rel in paths:
             if terminated:
-                items.append(
-                    {
-                        "path": rel,
-                        "outcome": "over_budget",
-                        "fetch": {
-                            "op": "read",
-                            "path": rel,
-                            "export": True,
-                            "chunk_cursor": 0,
-                        },
-                    }
-                )
+                items.append(_stopped_export_item(rel, root=root))
                 continue
             per_exp = _per_path_expected(rel)
             if not _is_sparse_path(rel, root):

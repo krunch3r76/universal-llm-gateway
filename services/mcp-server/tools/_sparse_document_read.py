@@ -537,6 +537,31 @@ def _span_meta_for_section_id(
     }
 
 
+def _stopped_section_item(
+    sid: str,
+    *,
+    span_meta: dict[str, Any],
+    body: str | None,
+    outcome: str,
+) -> dict[str, Any]:
+    """An undelivered sibling after the batch has stopped.
+
+    A sibling whose own body exceeds the cap still carries ``oversize`` and
+    ``fetch``. A sibling that is over budget only because an earlier item
+    stopped the batch does not.
+    """
+    item: dict[str, Any] = {"id": sid, "outcome": "over_budget", **span_meta}
+    if (
+        outcome == "ok"
+        and isinstance(body, str)
+        and len(body) > BATCH_MAX_CONTENT_CHARS
+    ):
+        item["oversize"] = True
+        item["char_count"] = len(body)
+        item["fetch"] = {"section": sid, "chunk_cursor": 0}
+    return item
+
+
 def build_section_batch_response(
     *,
     path: str,
@@ -569,14 +594,16 @@ def build_section_batch_response(
     over_budget_from: int | None = None
     for idx, sid in enumerate(section_ids):
         span_meta = _span_meta_for_section_id(text, indexed, sid)
-        if over_budget_from is not None:
-            items.append({"id": sid, "outcome": "over_budget", **span_meta})
-            omitted.append(sid)
-            continue
-        if idx >= BATCH_MAX_SECTIONS:
-            over_budget_from = idx
-            budget_cursor = idx
-            items.append({"id": sid, "outcome": "over_budget", **span_meta})
+        if over_budget_from is not None or idx >= BATCH_MAX_SECTIONS:
+            if over_budget_from is None:
+                over_budget_from = idx
+                budget_cursor = idx
+            body, outcome = _content_for_id(text, indexed, sid)
+            items.append(
+                _stopped_section_item(
+                    sid, span_meta=span_meta, body=body, outcome=outcome
+                )
+            )
             omitted.append(sid)
             continue
         body, outcome = _content_for_id(text, indexed, sid)

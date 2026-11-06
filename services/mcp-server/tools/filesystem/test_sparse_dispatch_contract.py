@@ -190,7 +190,8 @@ def test_single_path_read_multi_returns_manifest_descriptors(tmp_path: Path) -> 
     assert any(row.get("heading") == "Title" or row.get("id") == "Title" for row in entry["sections"])
 
 
-def test_section_batch_terminates_once(tmp_path: Path) -> None:
+def test_read_multi_export_stops_later_paths(tmp_path: Path) -> None:
+    """Export end-the-batch across files. Not the one-document sections loop."""
     root = _root(tmp_path)
     big = "Z" * 70000
     for name, body in (
@@ -213,6 +214,8 @@ def test_section_batch_terminates_once(tmp_path: Path) -> None:
     assert "content" not in items[2]
     assert "content" not in items[3]
     assert sum(1 for item in items if item["path"] == "big.md") == 1
+    assert items[2].get("oversize") is True
+    assert "oversize" not in items[3]
 
 
 def test_byte_ceiling_boundary_and_over(tmp_path: Path) -> None:
@@ -308,3 +311,226 @@ def test_xml_preamble_unsectioned_and_parent_metadata(tmp_path: Path) -> None:
     assert plain["outcome"] == "ok"
     assert "just text" in plain["content"]
     assert plain["char_count"] == len(plain["content"])
+
+
+def _own(text: str) -> str:
+    return text.strip("\n")
+
+
+def test_one_document_sections_termination_loop(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Acceptance: one document, sections=[a,b,big,c], cumulative then oversize.
+
+    a and b are ~40000 code points so b crosses the cap (budget_cursor=1).
+    big exceeds 65536 and must be oversize on that first call even though b
+    stopped the batch. c is small and stays over_budget without oversize.
+    """
+    root = _root(tmp_path)
+    _patch_read(monkeypatch, root)
+    a_body = "a" * 40000
+    b_body = "b" * 40000
+    big_body = "Z" * 65537
+    c_body = "c"
+    (root / "doc.md").write_text(
+        f"# A\n\n{a_body}\n\n# B\n\n{b_body}\n\n# Big\n\n{big_body}\n\n# C\n\n{c_body}\n",
+        encoding="utf-8",
+    )
+    calls: list[tuple] = [("sections", ["A", "B", "Big", "C"])]
+    first = read_file_impl("doc.md", sections=["A", "B", "Big", "C"])
+    assert first["selection"] == "sections"
+    assert first["budget_cursor"] == 1
+    assert [item["id"] for item in first["items"]] == ["A", "B", "Big", "C"]
+    assert [item["outcome"] for item in first["items"]] == [
+        "ok",
+        "over_budget",
+        "over_budget",
+        "over_budget",
+    ]
+    assert "oversize" not in first["items"][1]
+    assert first["items"][2]["oversize"] is True
+    assert first["items"][2]["char_count"] > 65536
+    assert first["items"][2]["fetch"] == {"section": "Big", "chunk_cursor": 0}
+    assert "content" not in first["items"][2]
+    assert "oversize" not in first["items"][3]
+    assert "content" not in first["items"][3]
+
+    delivered: dict[str, str] = {}
+
+    def _absorb(payload: dict) -> tuple[list[str], list[str]]:
+        pending: list[str] = []
+        oversized: list[str] = []
+        for item in payload["items"]:
+            sid = item["id"]
+            if item["outcome"] == "ok":
+                assert sid not in delivered
+                delivered[sid] = item["content"]
+            elif item.get("oversize") is True:
+                oversized.append(sid)
+            else:
+                pending.append(sid)
+        return pending, oversized
+
+    pending, oversized = _absorb(first)
+    assert oversized == ["Big"]
+    parts: list[str] = []
+    cursor = 0
+    while True:
+        calls.append(("chunk", "Big", cursor))
+        chunk = read_file_impl("doc.md", section="Big", chunk_cursor=cursor)
+        assert chunk["outcome"] == "ok"
+        assert chunk["selection"] == "section"
+        parts.append(chunk["content"])
+        nxt = chunk.get("chunk_cursor_next")
+        if nxt is None:
+            assert chunk["truncated"] is False
+            break
+        assert isinstance(nxt, int) and nxt > cursor
+        cursor = nxt
+    assert "Big" not in delivered
+    delivered["Big"] = "".join(parts)
+    assert pending == ["B", "C"]
+    calls.append(("sections", ["B", "C"]))
+    second = read_file_impl("doc.md", sections=["B", "C"])
+    pending2, oversized2 = _absorb(second)
+    assert pending2 == []
+    assert oversized2 == []
+    assert set(delivered) == {"A", "B", "Big", "C"}
+    assert _own(delivered["A"]) == a_body
+    assert _own(delivered["B"]) == b_body
+    assert _own(delivered["Big"]) == big_body
+    assert _own(delivered["C"]) == c_body
+    assert len(calls) <= 6
+    assert sum(1 for kind, *_rest in calls if kind == "chunk") >= 2
+
+
+def test_budget_cursor_count_cap_and_cumulative(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = _root(tmp_path)
+    _patch_read(monkeypatch, root)
+    seventeen = "".join(f"# S{i}\n\nv{i}\n\n" for i in range(17))
+    (root / "many.md").write_text(seventeen, encoding="utf-8")
+    ids = [f"S{i}" for i in range(17)]
+    counted = read_file_impl("many.md", sections=ids)
+    assert counted["budget_cursor"] == 16
+    assert [item["outcome"] for item in counted["items"][:16]] == ["ok"] * 16
+    assert counted["items"][16]["outcome"] == "over_budget"
+    assert "content" not in counted["items"][16]
+    assert "oversize" not in counted["items"][16]
+
+    (root / "pair.md").write_text(
+        "# A\n\n" + ("a" * 40000) + "\n\n# B\n\n" + ("b" * 40000) + "\n",
+        encoding="utf-8",
+    )
+    crossed = read_file_impl("pair.md", sections=["A", "B"])
+    assert crossed["budget_cursor"] == 1
+    assert crossed["items"][0]["outcome"] == "ok"
+    assert crossed["items"][1]["outcome"] == "over_budget"
+    assert "oversize" not in crossed["items"][1]
+
+
+def test_read_multi_budget_cursor_is_flattened_index(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = _root(tmp_path)
+    _patch_read(monkeypatch, root)
+    body = "# A\n\n" + ("a" * 40000) + "\n\n# B\n\n" + ("b" * 40000) + "\n"
+    (root / "a.md").write_text(body, encoding="utf-8")
+    (root / "b.md").write_text(body, encoding="utf-8")
+    batch = read_files_batch_impl(["a.md", "b.md"], sections=["A", "B"])
+    assert batch["budget_cursor"] == 1
+    assert [(item["path"], item["id"]) for item in batch["items"]] == [
+        ("a.md", "A"),
+        ("a.md", "B"),
+        ("b.md", "A"),
+        ("b.md", "B"),
+    ]
+    assert [item["outcome"] for item in batch["items"]] == [
+        "ok",
+        "over_budget",
+        "over_budget",
+        "over_budget",
+    ]
+    assert "oversize" not in batch["items"][1]
+
+
+def test_read_multi_export_later_sibling_oversize(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A later file that is itself over 65536 stays oversize after the stop."""
+    root = _root(tmp_path)
+    _patch_read(monkeypatch, root)
+    (root / "a.md").write_text("# A\n\n" + ("a" * 40000) + "\n", encoding="utf-8")
+    (root / "b.md").write_text("# B\n\n" + ("b" * 40000) + "\n", encoding="utf-8")
+    (root / "huge.md").write_text("# H\n\n" + ("Z" * 70000) + "\n", encoding="utf-8")
+    batch = read_files_batch_impl(["a.md", "b.md", "huge.md"], export=True)
+    assert [item["outcome"] for item in batch["items"]] == [
+        "ok",
+        "over_budget",
+        "over_budget",
+    ]
+    assert "oversize" not in batch["items"][1]
+    assert batch["items"][2]["oversize"] is True
+    assert batch["items"][2]["fetch"]["path"] == "huge.md"
+    assert "content" not in batch["items"][1]
+    assert "content" not in batch["items"][2]
+
+
+def test_fs_dispatcher_workspaces_share_uri_matches_relative(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Ingress plus workspaces read_multi, not the helper alone."""
+    from fs_impl import fs_impl
+
+    projects = tmp_path / "projects"
+    rel = "universal-llm-gateway/notes/doc.md"
+    target = projects / rel
+    target.parent.mkdir(parents=True)
+    target.write_text("# Title\n\nbody\n", encoding="utf-8")
+    live = sha256_hex_of_file(target)
+
+    def _root(surface: str, root_id: str) -> Path:
+        assert root_id == "workspaces"
+        return projects
+
+    monkeypatch.setattr("fs_roots.fs_root_for", _root)
+    uri = "workspaces://universal-llm-gateway/notes/doc.md"
+    common = {
+        "surface": "code",
+        "overflow_registry": {},
+        "op": "read_multi",
+        "sandbox": "workspaces",
+        "path": "",
+        "content": "",
+        "target": "",
+        "target_sandbox": "",
+        "line": 0,
+        "section": "",
+        "all_occurrences": False,
+        "include_untracked": True,
+        "binary": False,
+        "max_depth": 3,
+        "offset": 0,
+        "limit": 0,
+        "expected_sha256": "",
+        "if_absent": False,
+        "paths": [rel],
+        "sections": ["Title"],
+    }
+    matched = fs_impl(**common, expected_read_sha256={uri: live})
+    assert matched.get("code") != "param_not_applicable", matched
+    assert "error" not in matched, matched
+    item = matched["files"][rel]["items"][0]
+    assert item["outcome"] == "ok"
+    assert "body" in item["content"]
+
+    stale = fs_impl(**common, expected_read_sha256={uri: "0" * 64})
+    entry = stale["files"][rel]
+    assert entry.get("outcome") == "stale_handle" or entry.get("code") == "stale_handle"
+    assert "content" not in entry
+    assert entry.get("read_sha256") == live or (
+        isinstance(entry.get("items"), list)
+        and entry["items"]
+        and entry["items"][0].get("outcome") == "stale_handle"
+    )
