@@ -44,6 +44,10 @@
       "sql": "CREATE UNIQUE INDEX idx_close_drafts_uncommitted_session\n        ON close_drafts (session_id)\n        WHERE committed_at IS NULL\n        ",
       "table": "close_drafts"
     },
+    "idx_concern_write_intents_concern": {
+      "sql": "CREATE INDEX idx_concern_write_intents_concern\n    ON concern_write_intents (concern_id)",
+      "table": "concern_write_intents"
+    },
     "idx_digest_jobs_dedupe": {
       "sql": "CREATE INDEX idx_digest_jobs_dedupe\n        ON digest_jobs (entry_anchor, content_sha256, prompt_rev, state)\n        ",
       "table": "digest_jobs"
@@ -344,7 +348,8 @@
     81,
     82,
     83,
-    84
+    84,
+    85
   ],
   "seed_rows": {
     "relationship_types": [
@@ -2045,9 +2050,23 @@
           0,
           null,
           0
+        ],
+        [
+          "write_intent_id",
+          "TEXT",
+          0,
+          null,
+          0
+        ],
+        [
+          "material_fingerprint",
+          "TEXT",
+          0,
+          null,
+          0
         ]
       ],
-      "sql": "CREATE TABLE concern_journal (\n    concern_id TEXT NOT NULL,\n    seq INTEGER NOT NULL,\n    record_ref TEXT NOT NULL,\n    kind TEXT NOT NULL,\n    payload TEXT NOT NULL DEFAULT '{}',\n    authorized_by TEXT NOT NULL,\n    fencing_generation INTEGER NOT NULL DEFAULT 0,\n    revision INTEGER NOT NULL DEFAULT 0,\n    fold_version INTEGER NOT NULL DEFAULT 1,\n    schema_version INTEGER NOT NULL DEFAULT 1,\n    committed_at TEXT,\n    PRIMARY KEY (concern_id, seq),\n    UNIQUE (record_ref)\n)"
+      "sql": "CREATE TABLE concern_journal (\n    concern_id TEXT NOT NULL,\n    seq INTEGER NOT NULL,\n    record_ref TEXT NOT NULL,\n    kind TEXT NOT NULL,\n    payload TEXT NOT NULL DEFAULT '{}',\n    authorized_by TEXT NOT NULL,\n    fencing_generation INTEGER NOT NULL DEFAULT 0,\n    revision INTEGER NOT NULL DEFAULT 0,\n    fold_version INTEGER NOT NULL DEFAULT 1,\n    schema_version INTEGER NOT NULL DEFAULT 1,\n    committed_at TEXT, write_intent_id TEXT, material_fingerprint TEXT,\n    PRIMARY KEY (concern_id, seq),\n    UNIQUE (record_ref)\n)"
     },
     "concern_seq_alloc": {
       "columns": [
@@ -2067,6 +2086,60 @@
         ]
       ],
       "sql": "CREATE TABLE concern_seq_alloc (\n    concern_id TEXT NOT NULL PRIMARY KEY,\n    next_seq INTEGER NOT NULL DEFAULT 1\n)"
+    },
+    "concern_write_intents": {
+      "columns": [
+        [
+          "concern_id",
+          "TEXT",
+          1,
+          null,
+          1
+        ],
+        [
+          "write_intent_id",
+          "TEXT",
+          1,
+          null,
+          2
+        ],
+        [
+          "material_fingerprint",
+          "TEXT",
+          1,
+          null,
+          0
+        ],
+        [
+          "result_record_ref",
+          "TEXT",
+          1,
+          null,
+          0
+        ],
+        [
+          "result_revision",
+          "INTEGER",
+          1,
+          null,
+          0
+        ],
+        [
+          "result_seq",
+          "INTEGER",
+          1,
+          null,
+          0
+        ],
+        [
+          "created_at",
+          "TEXT",
+          1,
+          "datetime('now')",
+          0
+        ]
+      ],
+      "sql": "CREATE TABLE concern_write_intents (\n    concern_id TEXT NOT NULL,\n    write_intent_id TEXT NOT NULL,\n    material_fingerprint TEXT NOT NULL,\n    result_record_ref TEXT NOT NULL,\n    result_revision INTEGER NOT NULL,\n    result_seq INTEGER NOT NULL,\n    created_at TEXT NOT NULL DEFAULT (datetime('now')),\n    PRIMARY KEY (concern_id, write_intent_id)\n)"
     },
     "digest_jobs": {
       "columns": [

@@ -35,6 +35,7 @@ from cortex_store.concern_aggregate.recovery import (
     read_effective_state,
     rebuild_concern,
 )
+from cortex_store.concern_aggregate.tests.conftest import append_position_head
 from cortex_store.concern_aggregate.views import (
     read_controls,
     read_cursor,
@@ -127,14 +128,7 @@ def _operational_snapshot(conn: sqlite3.Connection, concern_id: str) -> dict:
 def test_crash_boundary_head_update_rollback(concern_db: sqlite3.Connection) -> None:
     """A2: fault after head update rolls back journal, head, cursor, and outbox."""
     cid = "concern:a2"
-    append_transition(
-        concern_db,
-        concern_id=cid,
-        kind="position_head",
-        payload={},
-        record_ref="rec-1",
-        authorized_by=AUTH,
-    )
+    append_position_head(concern_db, cid, record_ref="rec-1", write_intent_id="wi:a2-1")
     before = _operational_snapshot(concern_db, cid)
 
     def _boom() -> None:
@@ -142,13 +136,12 @@ def test_crash_boundary_head_update_rollback(concern_db: sqlite3.Connection) -> 
 
     set_after_head_update(_boom)
     with pytest.raises(RuntimeError):
-        append_transition(
+        append_position_head(
             concern_db,
-            concern_id=cid,
-            kind="position_head",
-            payload={},
+            cid,
             record_ref="rec-2",
-            authorized_by=AUTH,
+            expected_revision=1,
+            write_intent_id="wi:a2-2",
         )
     assert _operational_snapshot(concern_db, cid) == before
 
@@ -193,14 +186,7 @@ def test_crash_boundary_checkpoint_hook_rollback(concern_db: sqlite3.Connection)
 def test_crash_boundary_head_cursor_static(concern_db: sqlite3.Connection) -> None:
     """A2-static: corrupt head without cursor advance; rebuild restores fold."""
     cid = "concern:a2-static"
-    append_transition(
-        concern_db,
-        concern_id=cid,
-        kind="position_head",
-        payload={},
-        record_ref="rec-1",
-        authorized_by=AUTH,
-    )
+    append_position_head(concern_db, cid, record_ref="rec-1", write_intent_id="wi:a2s-1")
     _append(concern_db, cid, record_ref="rec-2", control_key="k2", hold={})
     concern_db.execute(
         "UPDATE concern_head SET revision = revision + 99 WHERE concern_id = ?",
@@ -363,13 +349,8 @@ def test_backdated_semantic_claim_no_hold_change(concern_db: sqlite3.Connection)
 def test_rollback_keeps_hold_monotonic(concern_db: sqlite3.Connection) -> None:
     """A8: rollback transition keeps holds; revision/fencing monotonic."""
     cid = "concern:a8"
-    append_transition(
-        concern_db,
-        concern_id=cid,
-        kind="position_head",
-        payload={},
-        record_ref="rec-head",
-        authorized_by=AUTH,
+    append_position_head(
+        concern_db, cid, record_ref="rec-head", write_intent_id="wi:a8-head"
     )
     _append(
         concern_db,
@@ -525,6 +506,8 @@ def test_migration_concern_aggregate(concern_db: sqlite3.Connection) -> None:
         for r in concern_db.execute("SELECT version FROM schema_version").fetchall()
     }
     assert 84 in versions
+    assert 85 in versions
+    assert "concern_write_intents" in tables
 
 
 def test_advisory_emit_failure_does_not_roll_back_commit(

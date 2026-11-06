@@ -64,6 +64,7 @@ from .entities import (
     CardDebug,
     CardEdgeTypeCount,
     CardSection,
+    ConcernHeadPin,
     CurrentStatus,
     EntityCard,
     EntityCreate,
