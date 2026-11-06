@@ -403,15 +403,16 @@ async def test_conversation_missing_wrong_tab() -> None:
 
 
 @pytest.mark.asyncio
-async def test_streaming_tab_steers_without_defer() -> None:
+async def test_streaming_tab_defers_before_insert() -> None:
     page = _FakePage(streaming=True)
     out = await deliver_orion_wake(
         thread="21207", turn=1, from_agent="maestro", page=page
     )
-    assert out["ok"] is True, out
-    assert out["reason"] == "delivered"
-    assert out["delivered"] is True
-    assert page.pasted is True
+    assert out["ok"] is False, out
+    assert out["reason"] == "deferred_streaming"
+    assert out.get("error") == "active_generation"
+    assert out["delivered"] is False
+    assert page.pasted is False
 
 
 @pytest.mark.asyncio
@@ -1052,7 +1053,7 @@ async def test_dom_deliver_returns_busy_when_target_lock_timeout(
 
 
 @pytest.mark.asyncio
-async def test_hidden_tab_streaming_skips_reload_and_delivers() -> None:
+async def test_hidden_tab_streaming_skips_reload_and_defers() -> None:
     page = _FakePage(
         visibility_state="hidden",
         composer_draft="",
@@ -1064,11 +1065,12 @@ async def test_hidden_tab_streaming_skips_reload_and_delivers() -> None:
         from_agent="maestro",
         page=page,
     )
-    assert out["ok"] is True, out
-    assert out["reason"] == "delivered"
+    assert out["ok"] is False, out
+    assert out["reason"] == "deferred_streaming"
+    assert out.get("error") == "active_generation"
     assert out["tab_reloaded"] is False
     assert page.reloaded == 0
-    assert page.dom_delivered
+    assert not page.dom_delivered
     assert not page.keyboard.inserted
 
 

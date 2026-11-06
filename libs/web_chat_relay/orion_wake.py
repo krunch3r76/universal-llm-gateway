@@ -29,7 +29,21 @@ _STREAMING_JS = """
 _TAB_SYNC_STATE_JS = """
 () => {
   const composers = [...document.querySelectorAll('[contenteditable="true"]')];
-  const composerEmpty = composers.every(el => !(el.innerText || '').trim());
+  const structuralEmpty = (el) => {
+    let visibleText = '';
+    const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT);
+    let node;
+    while ((node = walker.nextNode())) {{
+      const t = node.textContent || '';
+      if (node.parentNode === el && /^[\\n\\r\\t\\x20]*$/.test(t)) continue;
+      visibleText += t;
+    }}
+    if (/[\\u00a0\\u200b\\u200c\\u200d\\ufeff\\t]/.test(visibleText)) return false;
+    if (visibleText.includes(' ')) return false;
+    if (/[^\\s\\n\\r]/.test(visibleText)) return false;
+    return true;
+  };
+  const composerEmpty = composers.every((el) => structuralEmpty(el));
   return { visibilityState: document.visibilityState, composerEmpty };
 }
 """
@@ -1381,6 +1395,18 @@ async def deliver_orion_wake(
         if paste_text is not None
         else build_wake_pointer(thread=thread_s, turn=turn, from_agent=from_agent)
     )
+    if await _is_streaming(page):
+        if owns_cdp and pw is not None:
+            stop_fn = getattr(pw, "stop", None)
+            if callable(stop_fn):
+                await stop_fn()
+        return _refuse(
+            "deferred_streaming",
+            error="active_generation",
+            pasted=False,
+            brought_to_front=tab_sync["brought_to_front"],
+            tab_reloaded=tab_sync["tab_reloaded"],
+        )
     dom: dict[str, Any] | None = None
     try:
         dom = await _dom_deliver(page, line, cdp_url=cdp_url, preserve_newlines=False)
@@ -1451,7 +1477,7 @@ async def deliver_orion_wake(
             elif dom_reason == "send_button_disabled":
                 refuse_reason = "deferred_streaming"
             elif dom_reason == "delivery_unconfirmed":
-                refuse_reason = "paste_failed"
+                refuse_reason = "delivery_unconfirmed"
             else:
                 refuse_reason = "paste_failed"
             return _refuse(refuse_reason, **paste_refuse)
@@ -1646,8 +1672,8 @@ async def deliver_orion_chat_wake(
         stored_endpoint=open_endpoint,
         binding_reference=claim.binding_reference,
     )
-    # Why: live deliver_orion_wake steers during streaming; deferred_streaming receipts
-    # remain for legacy in-flight ledger retry rows and injected pipeline responses.
+    # Active-generation tabs defer before insert (I1); coalesce to retry-eligible
+    # receipt for the owner/ledger path.
     if receipt.get("reason") == "deferred_streaming":
         receipt = {**receipt, "ok": False, "retry_eligible": True}
     owner.record_paste_receipt(claim, receipt)

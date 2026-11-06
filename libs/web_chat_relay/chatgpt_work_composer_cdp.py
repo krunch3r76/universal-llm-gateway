@@ -122,8 +122,15 @@ def chatgpt_work_preflight_expression(
   let visibleText = '';
   const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT);
   let node;
-  while ((node = walker.nextNode())) visibleText += node.textContent || '';
+  while ((node = walker.nextNode())) {{
+    const t = node.textContent || '';
+    if (node.parentNode === el && /^[\\n\\r\\t\\x20]*$/.test(t)) continue;
+    visibleText += t;
+  }}
   if (/[\\u00a0\\u200b\\u200c\\u200d\\ufeff\\t]/.test(visibleText)) {{
+    return {{ ok: false, reason: 'composer_not_empty' }};
+  }}
+  if (visibleText.includes(' ')) {{
     return {{ ok: false, reason: 'composer_not_empty' }};
   }}
   if (/[^\\s\\n\\r]/.test(visibleText)) {{

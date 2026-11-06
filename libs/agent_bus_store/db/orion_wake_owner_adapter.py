@@ -26,19 +26,33 @@ def _now() -> str:
     return datetime.now(UTC).strftime("%Y-%m-%d %H:%M:%S")
 
 
-def _encode_paste_receipt(receipt: dict[str, Any]) -> str:
+def _encode_paste_receipt(
+    *, outcome: str, reason_s: str, receipt: dict[str, Any]
+) -> str:
     payload = {
         k: receipt[k]
         for k in (
             "ok",
             "delivered",
             "pasted",
+            "inserted",
+            "insert_attempted",
+            "pasted_dom",
             "reason",
             "pointer_len",
             "conversation_id",
+            "receipt",
+            "phase",
+            "uncertain_side_effect",
+            "delivery_unconfirmed",
+            "retryable",
+            "clicked_unknown",
+            "send_fallback_clicked",
         )
         if k in receipt
     }
+    payload["outcome"] = outcome
+    payload["reason"] = reason_s
     return f"{_RECEIPT_PREFIX}{json.dumps(payload, sort_keys=True)}"
 
 
@@ -367,17 +381,28 @@ class LedgerWakeDeliveryOwner:
         if str(receipt.get("reason") or "") == "duplicate_suppressed":
             return
         sub_id: int | None = None
-        binding = resolve_orion_chat_wake(
-            claim.thread_id, agent=claim.normalized_agent()
-        )
-        if str(binding.get("state") or "") == "bound":
-            cur = dict(binding.get("current") or {})
-            sid = cur.get("subscription_id")
-            if sid is not None:
-                sub_id = int(sid)
+        bind_ref = str(claim.binding_reference or "").strip()
+        if bind_ref.startswith("agent_endpoint_subscriptions:"):
+            try:
+                sub_id = int(bind_ref.split(":", 1)[1])
+            except (TypeError, ValueError):
+                sub_id = None
+        if sub_id is None:
+            binding = resolve_orion_chat_wake(
+                claim.thread_id, agent=claim.normalized_agent()
+            )
+            if str(binding.get("state") or "") == "bound":
+                cur = dict(binding.get("current") or {})
+                sid = cur.get("subscription_id")
+                if sid is not None:
+                    sub_id = int(sid)
         if receipt.get("delivered") is True:
             outcome = "delivered"
-            reason = _encode_paste_receipt(receipt)
+            reason = _encode_paste_receipt(
+                outcome=outcome,
+                reason_s=str(receipt.get("reason") or "delivered"),
+                receipt=receipt,
+            )
         elif str(receipt.get("reason") or "") == "deferred_streaming":
             # Why: live paste steers by default; deferral is for legacy ledger retries only.
             sched = record_orion_deferred_streaming(
@@ -402,15 +427,24 @@ class LedgerWakeDeliveryOwner:
             reason = str(receipt.get("reason") or "insertion_unknown")
         elif receipt.get("pasted") and not receipt.get("delivered"):
             outcome = "unknown"
-            reason = str(receipt.get("reason") or "delivery_unconfirmed")
+            reason_s = str(receipt.get("reason") or "delivery_unconfirmed")
+            reason = _encode_paste_receipt(
+                outcome=outcome, reason_s=reason_s, receipt=receipt
+            )
         elif receipt.get("ok") is False:
             outcome = "refused"
-            reason = str(receipt.get("reason") or "refused")
-            if is_composer_defer_reason(reason):
+            reason_s = str(receipt.get("reason") or "refused")
+            if is_composer_defer_reason(reason_s):
                 outcome = "pending"
+            reason = _encode_paste_receipt(
+                outcome=outcome, reason_s=reason_s, receipt=receipt
+            )
         else:
             outcome = "unknown"
-            reason = str(receipt.get("reason") or "unnamed")
+            reason_s = str(receipt.get("reason") or "unnamed")
+            reason = _encode_paste_receipt(
+                outcome=outcome, reason_s=reason_s, receipt=receipt
+            )
         detail_keys = (
             "receipt",
             "insert_attempted",
@@ -420,14 +454,19 @@ class LedgerWakeDeliveryOwner:
             "send_fallback_clicked",
             "phase",
             "uncertain_side_effect",
+            "inserted",
+            "pasted",
+            "delivery_unconfirmed",
         )
         wake_detail = {
             k: receipt[k]
             for k in detail_keys
             if k in receipt and receipt[k] is not None
         }
-        if outcome == "pending" and is_composer_defer_reason(reason):
+        defer_reason = str(receipt.get("reason") or "")
+        if outcome == "pending" and is_composer_defer_reason(defer_reason):
             wake_detail["release_claim_for_retry"] = True
+            wake_detail["composer_defer_reason"] = defer_reason
         record_wake_result(
             claim.wake_id,
             outcome,

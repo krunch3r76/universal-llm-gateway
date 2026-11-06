@@ -1618,6 +1618,16 @@ def _orion_post(
     row = rows[0]
     turn_ids = sorted({int(r["turn_id"]) for r in rows})
     turn_numbers = sorted({int(r["turn_number"]) for r in rows})
+    sub_id_raw = sub.get("id")
+    try:
+        sub_id_int = int(sub_id_raw) if sub_id_raw is not None else None
+    except (TypeError, ValueError):
+        sub_id_int = None
+    binding_ref = (
+        f"agent_endpoint_subscriptions:{sub_id_int}"
+        if sub_id_int is not None
+        else None
+    )
     options: dict[str, Any] = {
         "thread": row["thread_id"],
         "turn": turn,
@@ -1629,11 +1639,10 @@ def _orion_post(
         "turn_ids": turn_ids,
         "covered_turn_ids": turn_ids,
         "turn_numbers": turn_numbers,
-        "binding_reference": str(sub.get("id") or "") or None,
+        "binding_reference": binding_ref,
     }
-    sub_id = sub.get("id")
-    if sub_id is not None:
-        options["subscription_id"] = int(sub_id)
+    if sub_id_int is not None:
+        options["subscription_id"] = sub_id_int
     body = {
         "model": "orion-chat-wake",
         "messages": [{"role": "user", "content": "wake"}],
@@ -1643,18 +1652,40 @@ def _orion_post(
         with make_sync_client(DEFAULT_STARGATE_URL, timeout=45.0) as client:
             last_status = 0
             parsed: Any = None
-            for attempt in range(2):
-                response = client.post(
+            response = client.post(
+                "/v1/chat/completions",
+                json=body,
+                headers={"X-ULG-Surface": "code"},
+            )
+            last_status = int(response.status_code)
+            try:
+                payload = response.json()
+                content = payload["choices"][0]["message"]["content"]
+                parsed = json.loads(content) if isinstance(content, str) else content
+            except (
+                KeyError,
+                IndexError,
+                TypeError,
+                json.JSONDecodeError,
+                ValueError,
+            ):
+                parsed = None
+            if last_status < 400 and isinstance(parsed, dict):
+                return classify_orion(parsed)
+            if last_status >= 500 and last_status < 600:
+                response2 = client.post(
                     "/v1/chat/completions",
                     json=body,
                     headers={"X-ULG-Surface": "code"},
                 )
-                last_status = int(response.status_code)
+                last_status = int(response2.status_code)
                 try:
-                    payload = response.json()
-                    content = payload["choices"][0]["message"]["content"]
+                    payload2 = response2.json()
+                    content2 = payload2["choices"][0]["message"]["content"]
                     parsed = (
-                        json.loads(content) if isinstance(content, str) else content
+                        json.loads(content2)
+                        if isinstance(content2, str)
+                        else content2
                     )
                 except (
                     KeyError,
@@ -1666,13 +1697,10 @@ def _orion_post(
                     parsed = None
                 if last_status < 400 and isinstance(parsed, dict):
                     return classify_orion(parsed)
-                if attempt == 0:
-                    continue
-                return classify_orion(
-                    parsed if isinstance(parsed, dict) else None,
-                    http_status=last_status,
-                )
-            return classify_orion(None, http_status=last_status or 500)
+            return classify_orion(
+                parsed if isinstance(parsed, dict) else None,
+                http_status=last_status,
+            )
     except httpx.ConnectError:
         return "pending", "connect"
     except Exception as exc:  # noqa: BLE001

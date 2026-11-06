@@ -110,6 +110,20 @@ async def test_rejects_nbsp_in_text_node() -> None:
 
 
 @pytest.mark.asyncio
+async def test_rejects_literal_space_in_placeholder_text_node() -> None:
+    html = _empty_pm().replace(
+        '<p data-empty-paragraph="true">',
+        '<p data-empty-paragraph="true"> ',
+    )
+    async with async_playwright() as pw:
+        browser = await pw.chromium.launch(headless=True)
+        page = await browser.new_page()
+        state = await _preflight(page, html)
+        await browser.close()
+    assert state.get("reason") == "composer_not_empty"
+
+
+@pytest.mark.asyncio
 async def test_rejects_two_paragraph_blocks() -> None:
     html = """
 <div class="ProseMirror" contenteditable="true">

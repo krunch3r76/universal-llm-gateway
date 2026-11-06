@@ -54,6 +54,12 @@ def test_classify_orion_non_empty_composer_defers(db: None) -> None:
     assert reason == "non_empty_composer"
 
 
+def test_classify_orion_active_generation_maps_to_deferred_streaming(db: None) -> None:
+    state, reason = classify_orion({"ok": False, "reason": "active_generation"})
+    assert state == "pending"
+    assert reason == "deferred_streaming"
+
+
 def test_qualify_native_api_on_behalf_execution_reply(db: None) -> None:
     turn = {
         "from_agent": "synthesizer",

@@ -65,4 +65,4 @@ def test_orion_post_includes_wake_id_and_covered_turns() -> None:
     assert opts["wake_id"] == "wake-abc"
     assert opts["turn_ids"] == [10, 11]
     assert opts["covered_turn_ids"] == [10, 11]
-    assert opts["binding_reference"] == "42"
+    assert opts["binding_reference"] == "agent_endpoint_subscriptions:42"

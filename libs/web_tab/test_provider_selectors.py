@@ -59,12 +59,14 @@ def test_read_reply_js_chatgpt_uses_class_turn_selectors() -> None:
     assert "stop-streaming" in js
 
 
-def test_verify_committed_js_chatgpt_dedupes_user_turns() -> None:
+def test_verify_committed_js_matches_full_user_turn_text() -> None:
     js = verify_committed_js(
         site="chatgpt",
         prompt_text="web_tab smoke ping: reply with the single word PONG",
     )
     assert "dedupeTexts" in js
+    assert "slice(0, 800)" not in js
+    assert "committed_message_id" in js
     assert "text-user-message" in js
 
 

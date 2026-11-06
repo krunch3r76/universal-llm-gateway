@@ -90,6 +90,8 @@ def classify_orion(body: Any, *, http_status: int | None = None) -> tuple[str, s
         return "delivered", reason or "delivered"
     if reason == "deferred_streaming":
         return "pending", reason
+    if reason == "active_generation":
+        return "pending", "deferred_streaming"
     if reason == "deferred_exhausted":
         return "refused", reason
     if reason == "insert_outcome_unknown":

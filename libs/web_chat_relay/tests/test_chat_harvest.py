@@ -732,6 +732,10 @@ class _FakeComposer:
     async def click(self, *, force: bool = False) -> None:  # noqa: ARG002
         return None
 
+    async def evaluate(self, _script: str) -> dict:
+        """Match ``read_composer_draft`` contract after paste clears composer."""
+        return {"ok": True, "text": "", "len": 0}
+
 
 class _FakeContext:
     def __init__(
