@@ -352,18 +352,28 @@ def EndpointWakeSuppressed(  # noqa: N802
     to_agent: str,
     rule_id: str,
     subject_head: str = "",
+    stale_catchup_count: int | None = None,
+    min_turn_id: int | None = None,
+    max_turn_id: int | None = None,
 ) -> Event:
     """Observation: a turn on a subscribed thread was suppressed by wake qualification."""
+    payload: dict[str, Any] = {
+        "thread_id": thread_id,
+        "turn_id": turn_id,
+        "to_agent": to_agent,
+        "rule_id": rule_id,
+        "subject_head": subject_head,
+    }
+    if stale_catchup_count is not None:
+        payload["stale_catchup_count"] = stale_catchup_count
+    if min_turn_id is not None:
+        payload["min_turn_id"] = min_turn_id
+    if max_turn_id is not None:
+        payload["max_turn_id"] = max_turn_id
     return Event(
         signal="endpoint_wake.suppressed",
         role="observation",
-        payload={
-            "thread_id": thread_id,
-            "turn_id": turn_id,
-            "to_agent": to_agent,
-            "rule_id": rule_id,
-            "subject_head": subject_head,
-        },
+        payload=payload,
         scope="global",
     )
 
@@ -371,3 +381,28 @@ def EndpointWakeSuppressed(  # noqa: N802
 def emit_endpoint_wake_suppressed(**kwargs: Any) -> None:
     """Publish that endpoint wake qualification suppressed a turn on a subscribed thread."""
     _emit(EndpointWakeSuppressed(**kwargs))
+
+
+@event_factory
+def EndpointWakePassFailed(  # noqa: N802
+    *,
+    error_class: str,
+    error_message: str,
+    stage: str = "",
+) -> Event:
+    """Observation: one endpoint_wake_dispatcher outer pass aborted before completion."""
+    return Event(
+        signal="endpoint_wake.pass_failed",
+        role="observation",
+        payload={
+            "error_class": error_class,
+            "error_message": error_message,
+            "stage": stage,
+        },
+        scope="global",
+    )
+
+
+def emit_endpoint_wake_pass_failed(**kwargs: Any) -> None:
+    """Publish that an endpoint wake dispatcher pass failed."""
+    _emit(EndpointWakePassFailed(**kwargs))

@@ -9,6 +9,7 @@ import os
 import re
 import time
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from functools import lru_cache
 from pathlib import Path
 from typing import Any
@@ -206,6 +207,63 @@ _PEER_WAKE_FROM = frozenset(
 )
 _ORION_PEER_WAKE_HEADS = frozenset({"ANSWER"})
 _POLL_S = 2.0
+
+
+def _endpoint_wake_catchup_max_age_s() -> float:
+    raw = os.environ.get("ENDPOINT_WAKE_CATCHUP_MAX_AGE_S", "900")
+    try:
+        return max(0.0, float(raw))
+    except ValueError:
+        return 900.0
+
+
+def _turn_created_at_epoch(raw: Any) -> float | None:
+    text = str(raw or "").strip()
+    if not text:
+        return None
+    try:
+        if text.endswith("Z"):
+            normalized = text[:-1] + "+00:00"
+            return datetime.fromisoformat(normalized).timestamp()
+        if "T" in text:
+            return datetime.fromisoformat(text).timestamp()
+        parsed = datetime.strptime(text, "%Y-%m-%d %H:%M:%S")
+        return parsed.replace(tzinfo=UTC).timestamp()
+    except ValueError:
+        return None
+
+
+def _turn_is_stale_catchup(
+    turn: dict[str, Any], *, now_epoch: float | None = None
+) -> bool:
+    created_epoch = _turn_created_at_epoch(turn.get("created_at"))
+    if created_epoch is None:
+        return False
+    now = time.time() if now_epoch is None else now_epoch
+    return (now - created_epoch) > _endpoint_wake_catchup_max_age_s()
+
+
+def _observe_drop_stale_catchup_aggregate(
+    *,
+    count: int,
+    min_turn_id: int,
+    max_turn_id: int,
+) -> None:
+    try:
+        from bus_watch.events import emit_endpoint_wake_suppressed
+
+        emit_endpoint_wake_suppressed(
+            thread_id="",
+            turn_id=min_turn_id,
+            to_agent="",
+            rule_id="drop_stale_catchup",
+            subject_head="",
+            stale_catchup_count=count,
+            min_turn_id=min_turn_id,
+            max_turn_id=max_turn_id,
+        )
+    except Exception:
+        logger.exception("endpoint_wake_dispatcher: drop_stale_catchup emit failed")
 
 
 def _effective_to_agent(to_agent: str | None, subject: str | None = None) -> str:
@@ -737,9 +795,7 @@ def subject_allowed(
     return False
 
 
-_COMPOUND_ACTIONABLE_HEADS = frozenset(
-    {"REQUEST", "QUESTION", "DIRECTIVE", "BLOCKED"}
-)
+_COMPOUND_ACTIONABLE_HEADS = frozenset({"REQUEST", "QUESTION", "DIRECTIVE", "BLOCKED"})
 
 
 def _segment_subject_head(segment: str) -> str:
@@ -1343,6 +1399,7 @@ def scan_once(store: StoreClient, *, idle_mark: dict[str, float] | None = None) 
         if not turns:
             return
         pending: list[dict[str, Any]] = []
+        stale_catchup: dict[str, int] | None = None
         for turn in turns:
             raw_to = str(turn.get("to_agent") or "")
             subject = str(turn.get("subject") or "")
@@ -1361,9 +1418,7 @@ def scan_once(store: StoreClient, *, idle_mark: dict[str, float] | None = None) 
                             "ide_hop_land: expire overdue hop failed root=%s",
                             thread,
                         )
-                resolved = _resolve_delivery_route(
-                    store, agent, thread, raw_to=raw_to
-                )
+                resolved = _resolve_delivery_route(store, agent, thread, raw_to=raw_to)
                 cse = (
                     resolved is not None
                     and str(resolved[1].get("surface") or "") == "cse"
@@ -1374,16 +1429,12 @@ def scan_once(store: StoreClient, *, idle_mark: dict[str, float] | None = None) 
                 if direct_maestro:
                     _observe_maestro_wake_drop(
                         thread=thread,
-                        turn_id=int(turn["id"])
-                        if turn.get("id") is not None
-                        else None,
+                        turn_id=int(turn["id"]) if turn.get("id") is not None else None,
                         reason="subject_unmatched",
                         rule_id=verdict.rule_id,
                         subject=subject,
                     )
-                if _subscribed_for_wake_scan(
-                    store, agent, thread, resolved=resolved
-                ):
+                if _subscribed_for_wake_scan(store, agent, thread, resolved=resolved):
                     _observe_endpoint_wake_suppressed(
                         thread_id=thread,
                         turn_id=_turn_id_of(turn),
@@ -1400,7 +1451,9 @@ def scan_once(store: StoreClient, *, idle_mark: dict[str, float] | None = None) 
                 address = resolve_turn_address(thread, store)
                 if address is None and not store.holder(thread):
                     continue
-            elif resolved is not None and str(resolved[1].get("surface") or "") == "cse":
+            elif (
+                resolved is not None and str(resolved[1].get("surface") or "") == "cse"
+            ):
                 lane = str(resolved[1].get("agent_id") or "").strip()
                 if not lane or not store.holder(lane):
                     if direct_maestro:
@@ -1418,17 +1471,29 @@ def scan_once(store: StoreClient, *, idle_mark: dict[str, float] | None = None) 
                 if direct_maestro:
                     _observe_maestro_wake_drop(
                         thread=thread,
-                        turn_id=int(turn["id"])
-                        if turn.get("id") is not None
-                        else None,
+                        turn_id=int(turn["id"]) if turn.get("id") is not None else None,
                         reason="no_route",
                         rule_id=verdict.rule_id,
                         subject=subject,
                     )
                 continue
+            if _turn_is_stale_catchup(turn):
+                tid = int(turn["id"])
+                if stale_catchup is None:
+                    stale_catchup = {"count": 0, "min": tid, "max": tid}
+                stale_catchup["count"] += 1
+                stale_catchup["min"] = min(stale_catchup["min"], tid)
+                stale_catchup["max"] = max(stale_catchup["max"], tid)
+                continue
             _remap, resolved = _cursor_tab_route(store, raw_to, resolved)
             pending.append(
                 _pending_item(turn, decided_by_rule=verdict.rule_id, route=resolved)
+            )
+        if stale_catchup is not None and stale_catchup["count"] > 0:
+            _observe_drop_stale_catchup_aggregate(
+                count=stale_catchup["count"],
+                min_turn_id=stale_catchup["min"],
+                max_turn_id=stale_catchup["max"],
             )
         new_hw = int(turns[-1]["id"])
         if pending:
@@ -2212,20 +2277,39 @@ async def run_dispatcher() -> None:
     idle: dict[str, float] = {}
     hop_mark: dict[str, float] = {}
     while True:
+        stage = "init"
         try:
+            stage = "normalize_legacy_pending_wakes"
             await asyncio.to_thread(normalize_legacy_pending_wakes)
+            stage = "escalate_composer_deferred_on_sweep"
             await asyncio.to_thread(escalate_composer_deferred_on_sweep, store)
+            stage = "expire_overdue_hops"
             await asyncio.to_thread(expire_overdue_hops, store)
+            stage = "scan_once"
             await asyncio.to_thread(scan_once, store, idle_mark=idle)
+            stage = "fire_due_wakes"
             for _ in range(5):
                 claimed = await asyncio.to_thread(fire_due_wakes, store)
                 if not isinstance(claimed, dict) or not claimed.get("wake_id"):
                     break
+            stage = "finalize_composer_defer_pass"
             await asyncio.to_thread(finalize_composer_defer_pass)
+            stage = "check_cursor_ide_context_hops"
             await asyncio.to_thread(check_cursor_ide_context_hops, store, mark=hop_mark)
             from bus_watch.impresario_ear_patrol import run_patrol_pass
 
+            stage = "run_patrol_pass"
             await asyncio.to_thread(run_patrol_pass, store)
-        except Exception:
+        except Exception as exc:
             logger.exception("endpoint_wake_dispatcher pass failed")
+            try:
+                from bus_watch.events import emit_endpoint_wake_pass_failed
+
+                emit_endpoint_wake_pass_failed(
+                    error_class=type(exc).__name__,
+                    error_message=str(exc)[:300],
+                    stage=stage,
+                )
+            except Exception:
+                logger.exception("endpoint_wake pass_failed emit failed")
         await asyncio.sleep(_POLL_S)

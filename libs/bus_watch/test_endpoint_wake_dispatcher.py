@@ -5000,3 +5000,168 @@ def test_r3_fire_honours_live_suffix_row_redirect(db: None) -> None:
     assert captured[0]["agent_id"] == _TAB_A
     assert store.results[-1]["route"] == "agent_id"
     assert store.results[-1]["reason"] == "delivered"
+
+
+def test_run_dispatcher_emits_pass_failed_when_stage_raises(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from bus_watch.endpoint_wake_dispatcher import run_dispatcher
+
+    emitted: list[dict[str, str]] = []
+
+    def _normalize_boom() -> None:
+        raise RuntimeError("normalize boom")
+
+    monkeypatch.setattr(
+        "bus_watch.endpoint_wake_composer_defer.normalize_legacy_pending_wakes",
+        _normalize_boom,
+    )
+    monkeypatch.setattr(
+        "bus_watch.events.emit_endpoint_wake_pass_failed",
+        lambda **kw: emitted.append(dict(kw)),
+    )
+
+    async def _sleep(_delay: float) -> None:
+        raise asyncio.CancelledError()
+
+    monkeypatch.setattr(asyncio, "sleep", _sleep)
+    with pytest.raises(asyncio.CancelledError):
+        asyncio.run(run_dispatcher())
+    assert len(emitted) == 1
+    assert emitted[0]["error_class"] == "RuntimeError"
+    assert "normalize boom" in emitted[0]["error_message"]
+    assert emitted[0]["stage"] == "normalize_legacy_pending_wakes"
+
+
+def test_run_dispatcher_survives_pass_failed_emit_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from bus_watch.endpoint_wake_dispatcher import run_dispatcher
+
+    def _normalize_boom() -> None:
+        raise ValueError("stage fail")
+
+    def _emit_boom(**_kw: object) -> None:
+        raise OSError("telemetry down")
+
+    monkeypatch.setattr(
+        "bus_watch.endpoint_wake_composer_defer.normalize_legacy_pending_wakes",
+        _normalize_boom,
+    )
+    monkeypatch.setattr(
+        "bus_watch.events.emit_endpoint_wake_pass_failed",
+        _emit_boom,
+    )
+    sleeps = {"n": 0}
+
+    async def _sleep(_delay: float) -> None:
+        sleeps["n"] += 1
+        if sleeps["n"] >= 1:
+            raise asyncio.CancelledError()
+
+    monkeypatch.setattr(asyncio, "sleep", _sleep)
+    with pytest.raises(asyncio.CancelledError):
+        asyncio.run(run_dispatcher())
+    assert sleeps["n"] == 1
+
+
+def test_scan_once_drop_stale_catchup_enqueues_fresh_only(
+    db: None,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from datetime import UTC, datetime
+
+    from agent_bus_store.db.connection import write_connect
+
+    monkeypatch.setenv("ENDPOINT_WAKE_CATCHUP_MAX_AGE_S", "900")
+    fixed_now = datetime(2033, 6, 1, 12, 0, 0, tzinfo=UTC).timestamp()
+    monkeypatch.setattr(
+        "bus_watch.endpoint_wake_dispatcher.time.time",
+        lambda: fixed_now,
+    )
+    detail = create_thread(thread_id=None, slug="stale-catchup")
+    assert detail is not None
+    thread = str(detail["id"])
+    stale_id, _ts1, stale_n, _c1 = insert_turn(
+        thread=thread,
+        from_agent="grok-bot-gc1",
+        to_agent="maestro",
+        subject="QUESTION|stale",
+        body="old",
+    )
+    fresh_id, _ts2, fresh_n, _c2 = insert_turn(
+        thread=thread,
+        from_agent="grok-bot-gc1",
+        to_agent="maestro",
+        subject="QUESTION|fresh",
+        body="new",
+    )
+    get_cursor()
+    with write_connect() as conn:
+        conn.execute(
+            "UPDATE turns SET created_at=? WHERE id=?",
+            ("2020-01-01 00:00:00", stale_id),
+        )
+        conn.execute(
+            "UPDATE turns SET created_at=? WHERE id=?",
+            ("2033-06-01T11:59:00Z", fresh_id),
+        )
+        conn.execute("UPDATE endpoint_wake_cursor SET high_water_turn_id=0")
+
+    pending: list[dict] = []
+    scan_calls: list[tuple[int, int, list]] = []
+
+    class Store:
+        def cursor(self) -> dict:
+            return get_cursor()
+
+        def since(self, after_id: int, limit: int = 50) -> list[dict]:
+            with connect() as c:
+                rows = c.execute(
+                    "SELECT id, thread, turn_number, from_agent, to_agent, subject, "
+                    "body, read_at, created_at FROM turns WHERE id>? ORDER BY id LIMIT ?",
+                    (after_id, limit),
+                ).fetchall()
+            return [dict(r) for r in rows]
+
+        def scan(self, expected: int, new_hw: int, rows: list[dict]) -> dict:
+            pending.extend(rows)
+            scan_calls.append((expected, new_hw, list(rows)))
+            return advance_scan(
+                "endpoint-wake-dispatcher",
+                expected,
+                new_hw,
+                rows,
+                now="2033-06-01 12:00:01",
+            )
+
+        def holder(self, lane: str) -> dict:
+            return {"registration_id": "reg-live", "seat_state": "driving"}
+
+        def subscription(self, agent: str, thread_id: str):
+            return (
+                "cse",
+                {
+                    "surface": "cse",
+                    "agent_id": thread_id,
+                    "id": 1,
+                    "state": "subscribed",
+                },
+            )
+
+    scan_once(Store())  # type: ignore[arg-type]
+    assert [p["turn_id"] for p in pending] == [fresh_id]
+    assert scan_calls[-1][1] == fresh_id
+    cursor = get_cursor()
+    assert int(cursor["high_water_turn_id"]) == fresh_id
+    with connect() as conn:
+        stale_row = conn.execute(
+            "SELECT state FROM endpoint_wake_ledger WHERE turn_id=?", (stale_id,)
+        ).fetchone()
+        fresh_row = conn.execute(
+            "SELECT state FROM endpoint_wake_ledger WHERE turn_id=?", (fresh_id,)
+        ).fetchone()
+    assert stale_row is None
+    assert fresh_row is not None
+    assert fresh_row["state"] == "pending"
+    assert stale_n and fresh_n

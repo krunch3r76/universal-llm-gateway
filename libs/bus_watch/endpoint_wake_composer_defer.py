@@ -26,11 +26,24 @@ _ESCALATION_SUBJECT = "NOTICE|endpoint wake composer defer exhausted"
 _DEFER_PREFIX = "composer_defer:"
 
 
+def composer_defer_reasons_sorted() -> tuple[str, ...]:
+    """Stable binding order for SQL ``IN`` placeholders."""
+    return tuple(sorted(COMPOSER_DEFER_REASONS))
+
+
+def composer_defer_reason_in_sql() -> str:
+    """``(?,?,...)`` placeholder count matches ``COMPOSER_DEFER_REASONS``."""
+    n = len(COMPOSER_DEFER_REASONS)
+    return f"({','.join('?' * n)})"
+
+
 def is_composer_defer_reason(reason: str | None) -> bool:
     return str(reason or "").strip() in COMPOSER_DEFER_REASONS
 
 
-def composer_defer_blocks_claim(*, reason: str | None, decided_by_rule: str | None) -> bool:
+def composer_defer_blocks_claim(
+    *, reason: str | None, decided_by_rule: str | None
+) -> bool:
     """Pending composer-defers are not re-claimed until empty-event redrive or sweep refuse."""
     if not is_composer_defer_reason(reason):
         return False
@@ -51,7 +64,8 @@ def merge_composer_defer_decided_by_rule(
 
 def normalize_legacy_pending_wakes() -> dict[str, int]:
     """One idempotent pass: terminal agent_id_mismatch; arm legacy composer defers."""
-    reasons = tuple(COMPOSER_DEFER_REASONS)
+    reasons = composer_defer_reasons_sorted()
+    in_sql = composer_defer_reason_in_sql()
     with write_connect() as conn:
         mismatch = conn.execute(
             "UPDATE endpoint_wake_ledger SET state='refused', "
@@ -61,7 +75,7 @@ def normalize_legacy_pending_wakes() -> dict[str, int]:
         )
         composer = conn.execute(
             "UPDATE endpoint_wake_ledger SET decided_by_rule=? "
-            "WHERE state='pending' AND reason IN (?,?,?) "
+            f"WHERE state='pending' AND reason IN {in_sql} "
             "AND (decided_by_rule IS NULL OR decided_by_rule NOT LIKE ?)",
             (
                 COMPOSER_DEFER_ARMED,
@@ -85,13 +99,15 @@ def run_dispatcher_pass_legacy_sweep(store: Any) -> dict[str, int]:
 
 def finalize_composer_defer_pass() -> int:
     """End of one dispatcher outer pass: armed → sweep_eligible."""
+    reasons = composer_defer_reasons_sorted()
+    in_sql = composer_defer_reason_in_sql()
     with write_connect() as conn:
         cur = conn.execute(
             "UPDATE endpoint_wake_ledger SET decided_by_rule=? "
-            "WHERE state='pending' AND reason IN (?,?,?) AND decided_by_rule=?",
+            f"WHERE state='pending' AND reason IN {in_sql} AND decided_by_rule=?",
             (
                 COMPOSER_DEFER_SWEEP,
-                *COMPOSER_DEFER_REASONS,
+                *reasons,
                 COMPOSER_DEFER_ARMED,
             ),
         )
@@ -161,12 +177,14 @@ def notify_composer_empty_for_target(
     scope = str(thread_scope or "").strip()
     if not aid or not scope:
         return 0
+    reasons = composer_defer_reasons_sorted()
+    in_sql = composer_defer_reason_in_sql()
     with write_connect() as conn:
         cur = conn.execute(
             "UPDATE endpoint_wake_ledger SET decided_by_rule=NULL "
-            "WHERE state='pending' AND thread_id=? AND reason IN (?,?,?) "
+            f"WHERE state='pending' AND thread_id=? AND reason IN {in_sql} "
             "AND decided_by_rule LIKE ?",
-            (scope, *COMPOSER_DEFER_REASONS, f"{_DEFER_PREFIX}%"),
+            (scope, *reasons, f"{_DEFER_PREFIX}%"),
         )
         return int(cur.rowcount)
 
@@ -189,6 +207,8 @@ __all__ = [
     "COMPOSER_DEFER_REASONS",
     "COMPOSER_DEFER_SWEEP",
     "LEGACY_NORMALIZE_AGENT_MISMATCH",
+    "composer_defer_reason_in_sql",
+    "composer_defer_reasons_sorted",
     "composer_defer_blocks_claim",
     "defer_path_avoids_wall_clock",
     "escalate_composer_deferred_on_sweep",
