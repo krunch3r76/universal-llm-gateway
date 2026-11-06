@@ -1,4 +1,4 @@
-"""C5 — cursor bridge bus model: MSG durable, no REPLY → blocked_unknown."""
+"""C5 — cursor bridge bus model: MSG durable, no REPLY → advisory accepted."""
 
 from __future__ import annotations
 
@@ -33,7 +33,10 @@ def test_p4_c5_bridge_msg_without_reply(bus_env, tmp_path) -> None:
         admit_kwargs={"slug": "bridge-p4"},
     )
     result = reconcile(ledger.reopen(), CursorBridgeBusModelAdapter(), "intent-c5")
-    assert result.blocked is True
-    assert result.state == ExecutionState.blocked_unknown
+    assert result.blocked is False
+    assert result.state == ExecutionState.accepted
     assert result.redispatched is False
     assert wrapped.admit_count == 1
+    row = ledger.get("intent-c5")
+    assert row is not None
+    assert row.payload.get("owner_unknown_reason") == "msg_without_correlated_reply"

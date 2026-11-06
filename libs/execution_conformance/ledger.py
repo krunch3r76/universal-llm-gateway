@@ -1,4 +1,4 @@
-"""SQLite local intent ledger — durable before any remote actuator call."""
+"""Reference SQLite intent ledger — conformance fixture only (see module docstring)."""
 
 from __future__ import annotations
 
@@ -8,7 +8,7 @@ from contextlib import closing
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, Protocol, runtime_checkable
 
 from .manifest import ActuatorName
 from .states import ExecutionState, IllegalStateTransitionError, assert_transition
@@ -63,8 +63,63 @@ class ReserveOutcome:
     created: bool
 
 
-class IntentLedger:
-    """Caller-minted ``intent_id`` rows persisted at ``reserved`` before remote I/O."""
+@runtime_checkable
+class IntentStore(Protocol):
+    """Operational intent persistence — production binds ``libs/cortex_store`` aggregate."""
+
+    @property
+    def db_path(self) -> Path: ...
+
+    def reserve(
+        self,
+        *,
+        intent_id: str,
+        actuator: ActuatorName,
+        identity_key: str,
+        store_epoch: str,
+        payload: dict[str, Any] | None = None,
+    ) -> ReserveOutcome: ...
+
+    def get(self, intent_id: str) -> IntentRecord | None: ...
+
+    def find_by_identity(
+        self, *, actuator: ActuatorName, identity_key: str
+    ) -> IntentRecord | None: ...
+
+    def set_state(self, intent_id: str, state: ExecutionState) -> IntentRecord: ...
+
+    def record_receipt(
+        self,
+        intent_id: str,
+        *,
+        actuator_ref: str,
+        state: ExecutionState,
+    ) -> IntentRecord: ...
+
+    def patch_actuator_ref_if_null(
+        self, intent_id: str, actuator_ref: str
+    ) -> IntentRecord | None: ...
+
+    def claim_retry(self, intent_id: str) -> bool: ...
+
+    def merge_payload(self, intent_id: str, patch: dict[str, Any]) -> IntentRecord: ...
+
+    def floor_retry(self, intent_id: str) -> None: ...
+
+    def apply_compensation(
+        self,
+        intent_id: str,
+        *,
+        authorized_by: str,
+        reason: str,
+        prior_state: ExecutionState,
+    ) -> IntentRecord: ...
+
+    def reopen(self) -> IntentStore: ...
+
+
+class ReferenceSqliteIntentLedger:
+    """Reference / conformance-fixture ``IntentStore`` — NOT production operational authority."""
 
     def __init__(self, db_path: str | Path) -> None:
         self._db_path = Path(db_path)
@@ -80,6 +135,7 @@ class IntentLedger:
         conn.row_factory = sqlite3.Row
         conn.execute("PRAGMA journal_mode=WAL")
         conn.execute("PRAGMA synchronous=FULL")
+        conn.execute("PRAGMA busy_timeout=5000")
         return conn
 
     def _init_schema(self) -> None:
@@ -155,8 +211,7 @@ class IntentLedger:
         self, intent_id: str, expected: ExecutionState, target: ExecutionState
     ) -> IntentRecord | None:
         if expected == target:
-            row = self.get(intent_id)
-            return row
+            return self.get(intent_id)
         assert_transition(expected, target)
         ts = _utc_now()
         with closing(self._connect()) as conn:
@@ -246,7 +301,6 @@ class IntentLedger:
         return self.get(intent_id)
 
     def claim_retry(self, intent_id: str) -> bool:
-        """Atomically increment retry_count once for eligible states."""
         ts = _utc_now()
         allowed = (
             ExecutionState.reserved.value,
@@ -264,13 +318,20 @@ class IntentLedger:
             return cur.rowcount == 1
 
     def merge_payload(self, intent_id: str, patch: dict[str, Any]) -> IntentRecord:
-        row = self.get(intent_id)
-        if row is None:
-            raise KeyError(intent_id)
-        merged = dict(row.payload or {})
-        merged.update(patch)
         ts = _utc_now()
         with closing(self._connect()) as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            row = conn.execute(
+                "SELECT payload_json FROM execution_intents WHERE intent_id = ?",
+                (intent_id,),
+            ).fetchone()
+            if row is None:
+                conn.execute("ROLLBACK")
+                raise KeyError(intent_id)
+            merged = dict(
+                json.loads(row["payload_json"]) if row["payload_json"] else {}
+            )
+            merged.update(patch)
             conn.execute(
                 "UPDATE execution_intents SET payload_json = ?, updated_at = ? "
                 "WHERE intent_id = ?",
@@ -302,13 +363,14 @@ class IntentLedger:
     ) -> IntentRecord:
         ts = _utc_now()
         with closing(self._connect()) as conn:
+            conn.execute("BEGIN IMMEDIATE")
             conn.execute(
                 "INSERT INTO execution_compensations "
                 "(intent_id, authorized_by, reason, prior_state, created_at) "
                 "VALUES (?, ?, ?, ?, ?)",
                 (intent_id, authorized_by, reason, prior_state.value, ts),
             )
-            conn.execute(
+            cur = conn.execute(
                 "UPDATE execution_intents SET state = ?, retry_count = MAX(retry_count, 1), "
                 "updated_at = ? WHERE intent_id = ? AND state = ?",
                 (
@@ -318,7 +380,8 @@ class IntentLedger:
                     prior_state.value,
                 ),
             )
-            if conn.total_changes == 0:
+            if cur.rowcount != 1:
+                conn.execute("ROLLBACK")
                 raise IllegalStateTransitionError(
                     f"compensation cas failed for {intent_id!r}"
                 )
@@ -328,8 +391,11 @@ class IntentLedger:
             raise KeyError(intent_id)
         return row
 
-    def reopen(self) -> IntentLedger:
-        return IntentLedger(self._db_path)
+    def reopen(self) -> ReferenceSqliteIntentLedger:
+        return ReferenceSqliteIntentLedger(self._db_path)
+
+
+IntentLedger = ReferenceSqliteIntentLedger
 
 
 def _row_to_record(row: sqlite3.Row) -> IntentRecord:

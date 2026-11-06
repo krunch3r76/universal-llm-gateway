@@ -83,7 +83,7 @@ def test_p4_round2_dispatch_twice_blocked_unknown(
     from execution_conformance.reconciler import reconcile
 
     reconcile(ledger, CursorBridgeBusModelAdapter(), "intent-blocked")
-    assert ledger.get("intent-blocked").state == ExecutionState.blocked_unknown
+    assert ledger.get("intent-blocked").state == ExecutionState.accepted
     dispatch_intent(
         ledger,
         wrapped,

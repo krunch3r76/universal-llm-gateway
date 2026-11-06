@@ -5,13 +5,13 @@ from __future__ import annotations
 from typing import Any
 
 from .adapters import ActuatorAdapter
-from .ledger import IntentLedger
+from .ledger import IntentStore
 from .reconciler import DispatchResult, payload_admit_kwargs
 from .states import ExecutionState
 
 
 def dispatch_crash_after_reserve(
-    ledger: IntentLedger,
+    ledger: IntentStore,
     adapter: ActuatorAdapter,
     *,
     intent_id: str,
@@ -36,7 +36,7 @@ def dispatch_crash_after_reserve(
 
 
 def dispatch_crash_after_admit_before_receipt(
-    ledger: IntentLedger,
+    ledger: IntentStore,
     adapter: ActuatorAdapter,
     *,
     intent_id: str,

@@ -8,7 +8,13 @@ from .adapters import (
     HealthOnlyAdapter,
     StargatePipelineAdapter,
 )
-from .ledger import IntentLedger, IntentRecord, ReserveOutcome
+from .ledger import (
+    IntentLedger,
+    IntentRecord,
+    IntentStore,
+    ReferenceSqliteIntentLedger,
+    ReserveOutcome,
+)
 from .manifest import MANIFEST, assert_manifest_complete, manifest_unknowns
 from .reconciler import (
     CompensatingAction,
@@ -33,6 +39,8 @@ __all__ = [
     "IllegalStateTransitionError",
     "IntentLedger",
     "IntentRecord",
+    "IntentStore",
+    "ReferenceSqliteIntentLedger",
     "MANIFEST",
     "ReconcileResult",
     "ReserveOutcome",

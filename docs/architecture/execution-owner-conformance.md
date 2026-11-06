@@ -19,18 +19,32 @@ Caller-minted `intent_id` rows are persisted at `reserved` **before** any remote
 admit call. Receipt columns store the actuator reference (`thread_id`,
 `execution_id`, …) once the owner acknowledges.
 
+## Operational Authority Boundary (IntentStore Protocol vs Reference Fixture)
+
+Production execution truth lives in the **Cortex concern aggregate** (`libs/cortex_store`).
+Callers bind the `IntentStore` protocol to that aggregate (or its successor) for
+operational reads and writes. `ReferenceSqliteIntentLedger` in this package is **only**
+a reference / conformance-fixture implementation used by phase-4 tests and harness
+code. Do **not** stand it up as a parallel operational store beside cortex_store.
+
 ## Reconcile
 
 1. **Terminal local states** (`completed`, `failed`, `cancelled`) — no lookup admit.
-2. **Found** — adopt owner state (no rank regression); ref conflicts block.
+2. **Found** — adopt owner state (no rank regression); ref conflicts block with
+   persisted `blocked_reason` (`ref_conflict` is compensation-only).
 3. **Retry on miss** — only when `adapter.admit_idempotent` is true (today: `agent_bus` only),
-   store epoch matches, and `claim_retry` wins the CAS race. Retry reuses persisted
-   `payload.admit_kwargs`.
-4. **All other misses** (cdp, bridge, stargate, epoch mismatch) — `blocked_unknown`, zero redispatch.
-5. **Open CDP leg / bridge MSG without correlated REPLY** — block after local receipt;
-   reserved-without-receipt adopts from owner.
+   **recorded and current `store_epoch` match**, and `claim_retry` wins the CAS race.
+   Retry reuses persisted `payload.admit_kwargs`. CDP miss with a durable local row
+   does not retry (safe block).
+4. **All other misses** (stargate, epoch mismatch, empty epoch) — `blocked_unknown`, zero redispatch.
+5. **Open CDP leg / bridge MSG without correlated REPLY** — after local receipt, adopt
+   `accepted`/`running` with `owner_unknown_reason` recorded; steady across repeated
+   reconciles (does not flip to `blocked_unknown` on the next pass). This is conservative
+   for duplicate prevention but does not distinguish healthy in-flight legs from true unknowns.
 
 Compensation from `blocked_unknown` requires an explicit `CompensatingAction`.
+`blocked_unknown` re-query is read-only at the actuator (no second admit) until owner-proven
+terminal evidence with matching `actuator_ref` (except `ref_conflict`, which never auto-adopts).
 
 ## Verification
 
@@ -42,14 +56,15 @@ pytest libs/execution_conformance -q
 
 Machine-readable capability matrix: `execution_conformance.manifest.MANIFEST`.
 
-## Store epoch (best-effort)
+## Store epoch (persisted UUID)
 
-Conformance records `store_epoch` from the real actuator DB path resolvers
-(`agent_bus_store.db.connection._db_path`, cdp `_db_path`). Epoch is
-`inode:size` (no mtime) — a witness only, not a cryptographic store UUID.
-**Fail closed** when epoch is empty or the store file is missing. **Retry on
-miss** for `agent_bus` only: safe on epoch mismatch because `idempotency_key`
-dedups at the actuator; non-idempotent actuators always block on miss.
+Each durable owner SQLite file carries a singleton meta-table
+`_execution_store_epoch` with a UUID written at first open (`INSERT OR IGNORE`).
+Resolvers: `agent_bus_store.db.connection._db_path`, cdp `_db_path`. Stargate uses
+a per-tracker-instance `uuid4` (not `id(tracker)`). **Fail closed** when the DB
+file is missing, empty, or unreadable (`store_epoch == ""`). **Retry on miss**
+for `agent_bus` requires `record.store_epoch == lookup.store_epoch`; recreate or
+replace the owner DB changes epoch and blocks non-idempotent retry paths.
 
 ## Drain / stop-new (out of scope)
 

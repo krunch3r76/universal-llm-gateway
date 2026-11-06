@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+import threading
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Protocol
+from uuid import uuid4
 
 from .states import ExecutionState
-from .store_epoch import file_store_epoch, intent_tag_body, intent_tag_length
+from .store_epoch import intent_tag_body, intent_tag_length, persisted_store_epoch
 
 # PipelineExecutionRecord.status (records.py) is only running | completed | failed.
 _TRACKER_STATUS_MAP: dict[str, ExecutionState] = {
@@ -90,9 +92,14 @@ def cdp_store_path() -> Path:
     return _db_path()
 
 
-def _validate_idempotency_key(key: str) -> None:
-    if len(key) < 8 or len(key) > 128:
-        raise ValueError("identity_key must be 8..128 chars for agent_bus idempotency")
+def validate_actuator_identity_key(adapter: ActuatorAdapter, identity_key: str) -> None:
+    if adapter.name == "agent_bus":
+        if "\n" in identity_key or "\r" in identity_key:
+            raise ValueError("identity_key must not contain newline characters")
+        if len(identity_key) < 8 or len(identity_key) > 128:
+            raise ValueError(
+                "identity_key must be 8..128 chars for agent_bus idempotency"
+            )
 
 
 class AgentBusAdapter:
@@ -100,7 +107,7 @@ class AgentBusAdapter:
     admit_idempotent = True
 
     def store_epoch(self) -> str:
-        return file_store_epoch(agent_bus_store_path())
+        return persisted_store_epoch(agent_bus_store_path())
 
     def health(self) -> bool:
         return agent_bus_store_path().parent.exists()
@@ -124,7 +131,7 @@ class AgentBusAdapter:
     def admit(self, identity_key: str, **kwargs: Any) -> AdmitOutcome:
         from agent_bus_store.db.threads import create_thread
 
-        _validate_idempotency_key(identity_key)
+        validate_actuator_identity_key(self, identity_key)
         slug = str(kwargs.get("slug") or "execution-conformance")
         detail = create_thread(
             thread_id=kwargs.get("thread_id"),
@@ -154,13 +161,16 @@ class StargatePipelineAdapter:
 
             tracker = PipelineExecutionTracker(event_bus=None)
         self._tracker = tracker
+        self._lock = threading.Lock()
+        if not hasattr(self._tracker, "_execution_conformance_epoch"):
+            self._tracker._execution_conformance_epoch = uuid4().hex  # noqa: SLF001
 
     @property
     def tracker(self) -> Any:
         return self._tracker
 
     def store_epoch(self) -> str:
-        return f"memory:{id(self._tracker)}"
+        return str(self._tracker._execution_conformance_epoch)  # noqa: SLF001
 
     def health(self) -> bool:
         return True
@@ -182,25 +192,28 @@ class StargatePipelineAdapter:
         )
 
     def admit(self, identity_key: str, **kwargs: Any) -> AdmitOutcome:
-        existing = self.lookup(identity_key)
-        if existing.found and existing.actuator_ref:
-            return AdmitOutcome(
-                actuator_ref=existing.actuator_ref,
-                state=existing.state or ExecutionState.running,
-                idempotent_replay=True,
+        with self._lock:
+            existing = self.lookup(identity_key)
+            if existing.found and existing.actuator_ref:
+                return AdmitOutcome(
+                    actuator_ref=existing.actuator_ref,
+                    state=existing.state or ExecutionState.running,
+                    idempotent_replay=True,
+                )
+            from systems.pipeline.core.execution.async_tracker.constants import (
+                _utc_now_iso,
             )
-        from systems.pipeline.core.execution.async_tracker.constants import _utc_now_iso
 
-        pipeline = str(kwargs.get("pipeline") or "conformance.probe")
-        record = self._tracker.register_execution(
-            execution_id=identity_key,
-            pipeline=pipeline,
-            started_at=_utc_now_iso(),
-        )
-        return AdmitOutcome(
-            actuator_ref=record.execution_id,
-            state=map_tracker_status(record.status),
-        )
+            pipeline = str(kwargs.get("pipeline") or "conformance.probe")
+            record = self._tracker.register_execution(
+                execution_id=identity_key,
+                pipeline=pipeline,
+                started_at=_utc_now_iso(),
+            )
+            return AdmitOutcome(
+                actuator_ref=record.execution_id,
+                state=map_tracker_status(record.status),
+            )
 
 
 class CdpInflightAdapter:
@@ -208,7 +221,7 @@ class CdpInflightAdapter:
     admit_idempotent = False
 
     def store_epoch(self) -> str:
-        return file_store_epoch(cdp_store_path())
+        return persisted_store_epoch(cdp_store_path())
 
     def health(self) -> bool:
         return cdp_store_path().parent.exists()
@@ -276,7 +289,7 @@ class CursorBridgeBusModelAdapter:
     admit_idempotent = False
 
     def store_epoch(self) -> str:
-        return file_store_epoch(agent_bus_store_path())
+        return persisted_store_epoch(agent_bus_store_path())
 
     def health(self) -> bool:
         return agent_bus_store_path().parent.exists()

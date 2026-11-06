@@ -121,9 +121,10 @@ def test_p4_regression_reconcile_idempotent_unknown(
     )
     r1 = reconcile(ledger, adapter, "intent-idem")
     r2 = reconcile(ledger, adapter, "intent-idem")
-    assert r1.blocked is True
-    assert r2.blocked is True
-    assert r2.state == ExecutionState.blocked_unknown
+    assert r1.blocked is False
+    assert r2.blocked is False
+    assert r1.state == ExecutionState.accepted
+    assert r2.state == ExecutionState.accepted
 
 
 def test_p4_regression_reserved_to_completed_adopt(

@@ -45,7 +45,10 @@ def test_p4_c4_cdp_open_without_proof(cdp_env, tmp_path) -> None:
         admit_kwargs={"thread_id": "22398"},
     )
     result = reconcile(ledger.reopen(), CdpInflightAdapter(), "intent-c4-open")
-    assert result.blocked is True
-    assert result.state == ExecutionState.blocked_unknown
+    assert result.blocked is False
+    assert result.state == ExecutionState.accepted
     assert result.redispatched is False
     assert wrapped.admit_count == 1
+    row = ledger.get("intent-c4-open")
+    assert row is not None
+    assert row.payload.get("owner_unknown_reason") == "open_leg_without_board_proof"
