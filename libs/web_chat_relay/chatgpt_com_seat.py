@@ -7,8 +7,13 @@ delivery when ``chatgpt_seat`` / ``seat`` is present on pipeline options.
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any, Protocol
+
+from browser_governance.contract import (
+    SUPERVISION_BANNER_SCAN_JS,
+    build_supervision_envelope,
+)
 
 MODEL_PICKER_SELECTOR = 'button[aria-label="Select ChatGPT model"]'
 
@@ -58,8 +63,8 @@ class ChatgptComSeatState:
     blockers: tuple[str, ...] = ()
     menu_present: bool = False
 
-    def as_dict(self) -> dict[str, Any]:
-        return {
+    def as_dict(self, *, supervision: dict[str, Any] | None = None) -> dict[str, Any]:
+        out: dict[str, Any] = {
             "closed_label": self.closed_label,
             "model": self.model,
             "power_index": self.power_index,
@@ -69,6 +74,9 @@ class ChatgptComSeatState:
             "blockers": list(self.blockers),
             "menu_present": self.menu_present,
         }
+        if supervision is not None:
+            out["supervision"] = supervision
+        return out
 
 
 @dataclass
@@ -186,9 +194,33 @@ def seat_target_from_pipeline_options(opts: dict[str, Any] | None) -> ChatgptCom
     return None
 
 
+async def _supervision_for_chatgpt_page(page: ChatgptPage) -> dict[str, Any]:
+    ui_banner: dict[str, Any] | None = None
+    try:
+        banner_raw = await page.evaluate(SUPERVISION_BANNER_SCAN_JS)
+        if isinstance(banner_raw, dict) and "scanned" in banner_raw:
+            ui_banner = banner_raw
+    except (TimeoutError, RuntimeError, OSError):
+        ui_banner = None
+    return build_supervision_envelope(
+        surface="chatgpt",
+        auth_state="unknown",
+        visibility_state="unknown",
+        ui_banner=ui_banner,
+        reason=None if ui_banner is not None else "banner_scan_skipped",
+    )
+
+
 async def read_chatgpt_com_seat(page: ChatgptPage) -> ChatgptComSeatState:
     raw = await page.evaluate(_READ_SEAT_JS)
     return parse_seat_raw(raw if isinstance(raw, dict) else {})
+
+
+async def _seat_with_supervision(
+    page: ChatgptPage, state: ChatgptComSeatState
+) -> dict[str, Any]:
+    supervision = await _supervision_for_chatgpt_page(page)
+    return state.as_dict(supervision=supervision)
 
 
 async def _open_model_menu(page: ChatgptPage) -> bool:
@@ -237,7 +269,6 @@ async def _adjust_power_index(page: ChatgptPage, desired: int, *, max_steps: int
     for _ in range(max_steps):
         state = parse_seat_raw(await page.evaluate(_READ_SEAT_JS))
         current = state.power_index
-        total = state.power_total or 4
         if current == desired:
             return True
         if current is None:
@@ -281,8 +312,8 @@ async def ensure_chatgpt_com_seat(
         return {
             "outcome": "already_set",
             "ok": True,
-            "seat_before": before.as_dict(),
-            "seat_after": before.as_dict(),
+            "seat_before": await _seat_with_supervision(page, before),
+            "seat_after": await _seat_with_supervision(page, before),
             "actions": actions,
         }
 
@@ -295,8 +326,8 @@ async def ensure_chatgpt_com_seat(
             return {
                 "outcome": "partial",
                 "ok": False,
-                "seat_before": before.as_dict(),
-                "seat_after": after.as_dict(),
+                "seat_before": await _seat_with_supervision(page, before),
+                "seat_after": await _seat_with_supervision(page, after),
                 "actions": actions,
                 "reason": "model_select_failed",
             }
@@ -311,8 +342,8 @@ async def ensure_chatgpt_com_seat(
                 return {
                     "outcome": "partial",
                     "ok": False,
-                    "seat_before": before.as_dict(),
-                    "seat_after": after.as_dict(),
+                    "seat_before": await _seat_with_supervision(page, before),
+                    "seat_after": await _seat_with_supervision(page, after),
                     "actions": actions,
                     "reason": "usage_limit_reached",
                     "blockers": list(mid.blockers),
@@ -326,8 +357,8 @@ async def ensure_chatgpt_com_seat(
             return {
                 "outcome": "partial",
                 "ok": False,
-                "seat_before": before.as_dict(),
-                "seat_after": after.as_dict(),
+                "seat_before": await _seat_with_supervision(page, before),
+                "seat_after": await _seat_with_supervision(page, after),
                 "actions": actions,
                 "reason": "power_adjust_failed",
             }
@@ -341,8 +372,8 @@ async def ensure_chatgpt_com_seat(
     receipt: dict[str, Any] = {
         "outcome": outcome,
         "ok": ok,
-        "seat_before": before.as_dict(),
-        "seat_after": after.as_dict(),
+        "seat_before": await _seat_with_supervision(page, before),
+        "seat_after": await _seat_with_supervision(page, after),
         "actions": actions,
     }
     if after.blockers:

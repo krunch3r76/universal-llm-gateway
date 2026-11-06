@@ -19,8 +19,16 @@ from dataclasses import dataclass
 from typing import Any
 from urllib.error import URLError
 
+from browser_governance.contract import (
+    SUPERVISION_BANNER_SCAN_JS,
+    build_supervision_envelope,
+    unscanned_supervision,
+)
+
 from cursor_bridge.cdp_pages import list_pages
 from cursor_bridge.chat_surface import (
+    _evaluate_cdp_js,
+    maybe_emit_browser_supervision,
     probe_surface,
     select_sidebar_target,
     wake_decision,
@@ -35,6 +43,7 @@ from cursor_bridge.dom_composer_paste import (
     composer_text_semantic_equals,
     dom_insert_and_send,
 )
+from cursor_bridge.grok_computer import probe_grok_computer, resolve_grok_cdp_port
 from cursor_bridge.wake_delivery import (
     _busy_or_draft_reason,
     _pick_page,
@@ -43,6 +52,81 @@ from cursor_bridge.wake_delivery import (
 )
 
 HANDOFF_MARKERS = ("HANDOFF_TO_BUS", "BRIDGE_WAKE", "AGENT_BUS_READY")
+_GROK_WINDOW_TITLE = "Grok Bot"
+
+
+def _grok_ws_url(cdp_port: int, *, timeout_s: float = 5.0) -> str:
+    pages = list_pages(f"http://127.0.0.1:{cdp_port}", timeout_s=timeout_s)
+    named = [
+        p
+        for p in pages
+        if p.get("title") == _GROK_WINDOW_TITLE and p.get("web_socket_debugger_url")
+    ]
+    if len(named) == 1:
+        page = named[0]
+    else:
+        usable = [p for p in pages if p.get("web_socket_debugger_url")]
+        if len(usable) != 1:
+            raise URLError("no Grok Bot CDP page on port")
+        page = usable[0]
+    ws = page.get("web_socket_debugger_url") or ""
+    if not ws:
+        raise URLError("missing web_socket_debugger_url")
+    return ws
+
+
+async def probe_electron_supervision(
+    *,
+    display: str,
+    cdp_port: int | None = None,
+    surface: str = "grok_electron",
+) -> dict[str, Any]:
+    """Read-only Grok Electron supervision (:9/:10) via desktop.main + banner scan."""
+    disp = display if display.startswith(":") else f":{display.lstrip(':')}"
+    port = resolve_grok_cdp_port(disp, cdp_port)
+    try:
+        probe = await probe_grok_computer(cdp_port=port, display=disp, timeout_s=10.0)
+    except (URLError, RuntimeError, OSError, TimeoutError) as exc:
+        return unscanned_supervision(
+            surface=surface,
+            reason=f"probe_skipped:{type(exc).__name__}",
+        )
+    if not isinstance(probe, dict):
+        return unscanned_supervision(surface=surface, reason="probe_empty")
+
+    migration = probe.get("migration")
+    migration_phase = (
+        migration.get("phase") if isinstance(migration, dict) else None
+    )
+    app_health: dict[str, Any] = {
+        "phase": probe.get("phase"),
+        "egress": probe.get("egress"),
+        "migration_phase": migration_phase,
+        "forever_box": probe.get("forever_box"),
+    }
+    auth_state = "signed_in" if probe.get("selected_agent_id") else "unknown"
+
+    ui_banner: dict[str, Any] | None = None
+    try:
+        ws_url = _grok_ws_url(port)
+        banner_raw = await _evaluate_cdp_js(
+            ws_url, SUPERVISION_BANNER_SCAN_JS, msg_id=1, timeout_s=10.0
+        )
+        if isinstance(banner_raw, dict):
+            ui_banner = banner_raw
+    except (URLError, RuntimeError, OSError, TimeoutError):
+        ui_banner = None
+
+    envelope = build_supervision_envelope(
+        surface=surface,
+        auth_state=auth_state,
+        visibility_state="unknown",
+        ui_banner=ui_banner,
+        app_health=app_health,
+        reason=None if ui_banner is not None else "banner_scan_skipped",
+    )
+    maybe_emit_browser_supervision(envelope, display=disp, cdp_port=port)
+    return envelope
 
 
 @dataclass(frozen=True, slots=True)
@@ -195,7 +279,7 @@ async def read_endpoint_turn(
             if str(m).strip()
         ]
         latest = messages[-1] if messages else ""
-        return {
+        out: dict[str, Any] = {
             "ok": True,
             "endpoint": endpoint.label,
             "display": res["display"],
@@ -209,6 +293,9 @@ async def read_endpoint_turn(
             "latest_message": latest,
             "latest_fingerprint": message_fingerprint(latest) if latest else "",
         }
+        if isinstance(surface, dict) and surface.get("supervision"):
+            out["supervision"] = surface["supervision"]
+        return out
 
 
 def _paste_outcome_base(
@@ -650,6 +737,7 @@ __all__ = [
     "HANDOFF_MARKERS",
     "message_fingerprint",
     "paste_endpoint_message",
+    "probe_electron_supervision",
     "read_endpoint_turn",
     "run_one_to_one_relay",
     "should_stop_for_bus_handoff",

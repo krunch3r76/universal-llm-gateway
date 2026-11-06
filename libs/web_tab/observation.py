@@ -6,11 +6,39 @@ import asyncio
 from datetime import UTC, datetime
 from typing import Any
 
+from browser_governance.contract import (
+    SUPERVISION_BANNER_SCAN_JS,
+    build_supervision_envelope,
+    unscanned_supervision,
+)
 from universal_protocol.status_basis import status_basis
 
 from web_tab.cdp_port import CdpObservationPort
 from web_tab.conversation_id import conversation_id_from_url
 from web_tab.surface_adapter import url_in_surface_scope
+
+
+def _supervision_for_actuation(
+    *,
+    surface: str,
+    signed_in: bool | None,
+    ui_banner: dict[str, Any] | None,
+    probe_ran: bool,
+) -> dict[str, Any]:
+    if not probe_ran:
+        return unscanned_supervision(surface=surface, reason="probe_skipped")
+    auth_state = "unknown"
+    if signed_in is True:
+        auth_state = "signed_in"
+    elif signed_in is False:
+        auth_state = "signed_out"
+    return build_supervision_envelope(
+        surface=surface,
+        auth_state=auth_state,
+        visibility_state="unknown",
+        ui_banner=ui_banner,
+        reason=None if ui_banner is not None else "banner_scan_skipped",
+    )
 
 
 def _coerce_signed_in(val: Any) -> bool | None:
@@ -60,6 +88,8 @@ async def observe_actuation_plane(
     scoped_url = ""
     conv_id: str | None = None
     cdp_eval_error: dict[str, Any] | None = None
+    ui_banner: dict[str, Any] | None = None
+    probe_ran = False
 
     visible_tabs = [
         t
@@ -105,6 +135,20 @@ async def observe_actuation_plane(
                     stale = True
                 else:
                     signed_in = _coerce_signed_in(raw.get("signed_in"))
+                    probe_ran = True
+                    try:
+                        banner_raw = await port.evaluate_on_target(
+                            cdp_url=cdp_url,
+                            target_id=target_id,
+                            expression=SUPERVISION_BANNER_SCAN_JS,
+                            tab_row=match,
+                            surface=surface,
+                        )
+                        if isinstance(banner_raw, dict) and not banner_raw.get("error"):
+                            if "scanned" in banner_raw:
+                                ui_banner = banner_raw
+                    except (TimeoutError, RuntimeError, OSError):
+                        ui_banner = None
 
     cdp_reachable_val: bool | None
     if reachable is False:
@@ -118,10 +162,18 @@ async def observe_actuation_plane(
         scoped_url = ""
         conv_id = None
 
+    supervision = _supervision_for_actuation(
+        surface=surface,
+        signed_in=signed_in,
+        ui_banner=ui_banner,
+        probe_ran=probe_ran and not out_of_scope,
+    )
+
     return {
         "plane": "actuation",
         "cdp_url": cdp_url,
         "target_id": target_id,
+        "supervision": supervision,
         "cdp_reachable": status_basis(
             "cdp_reachable",
             cdp_reachable_val,
