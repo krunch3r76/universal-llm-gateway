@@ -34,6 +34,22 @@ def _shadow_events(captured: list[tuple[str, dict]]) -> list[dict]:
     ]
 
 
+@pytest.fixture(autouse=True)
+def _restore_dispatch_cache():
+    """Undo handler stubs so later tests in the same process see real ops.
+
+    ``_install`` writes ``_OPS._cache`` and the module has no teardown. That
+    leak makes a following ``entity_get`` test observe ``{"ok": True}``.
+    """
+    saved_cache = dict(_OPS._cache)  # type: ignore[attr-defined]
+    saved_specs = dict(_OPS._specs)  # type: ignore[attr-defined]
+    yield
+    _OPS._cache.clear()  # type: ignore[attr-defined]
+    _OPS._cache.update(saved_cache)  # type: ignore[attr-defined]
+    _OPS._specs.clear()  # type: ignore[attr-defined]
+    _OPS._specs.update(saved_specs)  # type: ignore[attr-defined]
+
+
 def _install(tool: str, result: dict) -> None:
     def _handler(**_kwargs: object) -> dict:
         return result

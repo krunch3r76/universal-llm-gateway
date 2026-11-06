@@ -146,3 +146,21 @@ def test_outline_manifest_ids_round_trip(tmp_path: Path) -> None:
     assert "page 1" in item["content"]
     assert "page 2" not in item["content"]
     assert item["includes_children"] is False
+
+
+def test_sidecar_does_not_replace_outline_ids(tmp_path: Path) -> None:
+    """A readable PDF keeps TOC ids when a sidecar markdown file also exists."""
+    from tools._file_helpers import read_file_result
+
+    pdf = _make_pdf(tmp_path, 2, toc=[[1, "Alpha", 1], [1, "Beta", 2]])
+    pdf.with_name("doc-readable.md").write_text(
+        "# Sidecar Only\n\nnot the outline\n",
+        encoding="utf-8",
+    )
+    manifest = read_file_result("doc.pdf", root=tmp_path)
+    ids = [row["id"] for row in manifest["sections"]]
+    assert ids == ["Alpha", "Beta"]
+    assert "Sidecar Only" not in ids
+    expanded = read_file_result("doc.pdf", root=tmp_path, sections=["Alpha"])
+    assert expanded["items"][0]["id"] == "Alpha"
+    assert "page 1" in expanded["items"][0]["content"]

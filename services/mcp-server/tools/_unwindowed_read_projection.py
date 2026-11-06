@@ -10,6 +10,7 @@ from typing import Any
 
 from markdown_sections import SectionError
 from markdown_sections import list_sections as md_list_sections
+
 from ._line_range import (
     DEFAULT_UNWINDOWED_MAX_BYTES,
     DEFAULT_UNWINDOWED_MAX_LINES,

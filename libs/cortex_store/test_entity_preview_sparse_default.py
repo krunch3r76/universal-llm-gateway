@@ -74,6 +74,12 @@ def test_preview_includes_content_hash(migrated_conn: sqlite3.Connection) -> Non
 
 @pytest.mark.offline
 def test_batch_stale_handle_per_entity_revision(migrated_conn: sqlite3.Connection) -> None:
+    """Labeled non-production seam.
+
+    ``live_schema_snapshot.json`` entities has no revision column. This ALTER
+    is not production proof; a mismatch is stale_handle only when that column
+    was added by the test.
+    """
     migrated_conn.execute("ALTER TABLE entities ADD COLUMN revision INTEGER DEFAULT 0")
     migrated_conn.commit()
     eid_a = "todo:stale-a"

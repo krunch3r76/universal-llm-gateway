@@ -355,7 +355,7 @@ def conductor_unwitnessed_done_degraded_reason(
     from implement_admission.conductor_witness_defaults import (
         DefaultWitnessCortex,
         DefaultWitnessGit,
-        WitnessCortexUnavailable,
+        WitnessCortexUnavailableError,
     )
 
     claimed = done_rows_claimed_in_closeout(body)
@@ -388,7 +388,7 @@ def conductor_unwitnessed_done_degraded_reason(
     )
     try:
         witnesses = closeout_witnesses_for_slug(slug, tip_body=None, deps=deps)
-    except WitnessCortexUnavailable:
+    except WitnessCortexUnavailableError:
         return "witness_cortex_unavailable"
     for gid in sorted(claimed):
         if witnesses.get(gid) is None:

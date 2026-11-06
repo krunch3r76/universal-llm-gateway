@@ -8,7 +8,11 @@ import pytest
 
 from tools._file_helpers import read_file_result, read_files_batch
 from tools._hashing import sha256_hex_of_file
-from tools.filesystem._fs_dispatch import OP_CONSUMES, md_section_op_doc
+from tools.filesystem._fs_dispatch import (
+    OP_CONSUMES,
+    md_section_op_doc,
+    validate_op_params,
+)
 from tools.filesystem._ops_text import read_file_impl, read_files_batch_impl
 
 pytestmark = pytest.mark.offline
@@ -151,3 +155,156 @@ def test_unmatched_hash_key_names_the_key(tmp_path: Path) -> None:
     )
     assert out.get("code") == "param_not_applicable"
     assert "missing.md" in out["data"]["keys"]
+
+
+def test_workspaces_share_uri_matches_repo_relative_path(tmp_path: Path) -> None:
+    """workspaces://{repo}/{rel} matches sandbox-relative {repo}/{rel}."""
+    root = _root(tmp_path)
+    rel = "universal-llm-gateway/notes/doc.md"
+    target = root / rel
+    target.parent.mkdir(parents=True)
+    target.write_text("# Title\n\nbody\n", encoding="utf-8")
+    live = sha256_hex_of_file(target)
+    out = read_files_batch(
+        [rel],
+        root=root,
+        sections=["Title"],
+        expected_read_sha256={
+            "workspaces://universal-llm-gateway/notes/doc.md": live
+        },
+    )
+    assert out.get("code") != "param_not_applicable"
+    item = out["files"][rel]["items"][0]
+    assert item["outcome"] == "ok"
+    assert "body" in item["content"]
+
+
+def test_single_path_read_multi_returns_manifest_descriptors(tmp_path: Path) -> None:
+    root = _root(tmp_path)
+    (root / "doc.md").write_text("# Title\n\nbody\n", encoding="utf-8")
+    batch = read_files_batch(["doc.md"], root=root)
+    entry = batch["files"]["doc.md"]
+    assert entry["selection"] == "manifest"
+    assert "content" not in entry
+    assert entry.get("code") != "sparse_manifest_requires_expansion"
+    assert any(row.get("heading") == "Title" or row.get("id") == "Title" for row in entry["sections"])
+
+
+def test_section_batch_terminates_once(tmp_path: Path) -> None:
+    root = _root(tmp_path)
+    big = "Z" * 70000
+    for name, body in (
+        ("a.md", "# A\n\na\n"),
+        ("b.md", "# B\n\nb\n"),
+        ("big.md", f"# Big\n\n{big}\n"),
+        ("c.md", "# C\n\nc\n"),
+    ):
+        (root / name).write_text(body, encoding="utf-8")
+    paths = ["a.md", "b.md", "big.md", "c.md"]
+    batch = read_files_batch(paths, root=root, export=True)
+    items = batch["items"]
+    assert [item["path"] for item in items] == paths
+    assert [item["outcome"] for item in items] == [
+        "ok",
+        "ok",
+        "over_budget",
+        "over_budget",
+    ]
+    assert "content" not in items[2]
+    assert "content" not in items[3]
+    assert sum(1 for item in items if item["path"] == "big.md") == 1
+
+
+def test_byte_ceiling_boundary_and_over(tmp_path: Path) -> None:
+    from tools._sparse_document_read import (
+        SPARSE_MAX_CONTENT_BYTES,
+        finalize_sparse_document_payload,
+    )
+
+    assert SPARSE_MAX_CONTENT_BYTES == 262144
+    unit = "\U0001f600"
+    assert len(unit.encode("utf-8")) == 4
+    exact = unit * (SPARSE_MAX_CONTENT_BYTES // 4)
+    held = finalize_sparse_document_payload(
+        {"selection": "section", "content": exact, "path": "a.md"}
+    )
+    assert held.get("code") != "sparse_payload_over_byte_ceiling"
+    assert held.get("sparse_policy")
+    over = finalize_sparse_document_payload(
+        {"selection": "section", "content": exact + "x", "path": "a.md"}
+    )
+    assert over["code"] == "sparse_payload_over_byte_ceiling"
+
+    root = _root(tmp_path)
+    # One code point over the char cap forces the chunk path. The returned
+    # chunk is 65536 four-byte characters, exactly the 262144-byte boundary.
+    (root / "wide.md").write_text(
+        "# Wide\n\n" + (exact + unit) + "\n",
+        encoding="utf-8",
+    )
+    read = read_file_result(
+        "wide.md",
+        root=root,
+        section="Wide",
+        chunk_cursor=1,
+        chunk_cursor_provided=True,
+    )
+    assert read.get("code") != "sparse_payload_over_byte_ceiling"
+    assert read["selection"] == "section"
+    assert len(read["content"]) == 65536
+    assert len(read["content"].encode("utf-8")) == SPARSE_MAX_CONTENT_BYTES
+
+
+def test_read_multi_consumes_every_declared_param(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = _root(tmp_path)
+    _patch_read(monkeypatch, root)
+    (root / "a.md").write_text("# A\n\nalpha\n", encoding="utf-8")
+    assert OP_CONSUMES["read_multi"] == frozenset(
+        {"section", "sections", "export", "chunk_cursor", "expected_read_sha256"}
+    )
+    assert validate_op_params("read_multi", {"section": "A"}) is None
+
+    by_section = read_files_batch_impl(["a.md"], section="A")
+    assert by_section["files"]["a.md"]["selection"] == "section"
+    assert "alpha" in by_section["files"]["a.md"]["content"]
+
+    by_sections = read_files_batch_impl(["a.md"], sections=["A"])
+    assert by_sections["files"]["a.md"]["items"][0]["outcome"] == "ok"
+
+    exported = read_files_batch_impl(["a.md"], export=True)
+    assert "alpha" in exported["files"]["a.md"]["content"]
+
+    stale = read_files_batch_impl(["a.md"], expected_read_sha256="ab")
+    assert stale["files"]["a.md"].get("outcome") == "stale_handle" or stale[
+        "files"
+    ]["a.md"].get("code") == "stale_handle"
+
+    cursor = read_files_batch_impl(["a.md"], chunk_cursor=0)
+    assert cursor.get("code") == "param_not_applicable"
+    assert cursor["data"]["parameter"] == "chunk_cursor"
+
+
+def test_xml_preamble_unsectioned_and_parent_metadata(tmp_path: Path) -> None:
+    root = _root(tmp_path)
+    (root / "mix.md").write_text(
+        "front matter\n\n<scope>\ninside scope\n</scope>\n\n"
+        "# Parent\n\nown\n\n## Child\n\nnested heading text\n",
+        encoding="utf-8",
+    )
+    (root / "plain.md").write_text("just text\n", encoding="utf-8")
+    preamble = read_file_result("mix.md", root=root, section="__preamble__")
+    assert preamble["outcome"] == "ok"
+    assert preamble["content"].startswith("front matter")
+    xml = read_file_result("mix.md", root=root, section="<scope>")
+    assert xml["outcome"] == "ok"
+    assert "inside scope" in xml["content"]
+    assert xml["includes_children"] is False
+    parent = read_file_result("mix.md", root=root, section="Parent")
+    assert "nested heading text" not in parent["content"]
+    assert "Parent/Child" in parent["children"]
+    plain = read_file_result("plain.md", root=root, section="__unsectioned__")
+    assert plain["outcome"] == "ok"
+    assert "just text" in plain["content"]
+    assert plain["char_count"] == len(plain["content"])

@@ -745,9 +745,6 @@ def register_markdown_tools(mcp: FastMCP) -> None:
                     return result
                 if "error" in result:
                     return result
-                if result.get("selection") == "section" and "content" in result:
-                    # Legacy read_section of a found heading stays unmarked.
-                    result.pop("selection", None)
                 selection = result.get("selection")
                 record(
                     "mcp.tool.markdown.section.read",

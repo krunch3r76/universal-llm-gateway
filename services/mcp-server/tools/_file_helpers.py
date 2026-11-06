@@ -72,9 +72,7 @@ def _read_files_batch_value(result: dict[str, Any]) -> Any:
     if result.get("auto_binary") or "content_base64" in result:
         return result
     selection = result.get("selection")
-    if selection == "manifest":
-        return sparse_manifest_batch_entry(result)
-    if selection in {"section", "sections", "export", "window", "multi"}:
+    if selection in {"manifest", "section", "sections", "export", "window", "multi"}:
         return result
     if (
         result.get("items")
@@ -88,15 +86,47 @@ def _read_files_batch_value(result: dict[str, Any]) -> Any:
     return result["content"]
 
 
-def _normalize_request_path(raw: str) -> str:
-    """Sandbox-relative key for a path or its Share-URI spelling."""
+def _pdf_bytes_unreadable(exc: BaseException) -> bool:
+    """True when pymupdf could not open the file as a PDF."""
+    name = type(exc).__name__
+    return name in {"FileDataError", "FzErrorFormat", "EmptyFileError"}
+
+
+def _path_match_keys(raw: str) -> set[str]:
+    """Aliases that identify one path under the fs Share-URI grammar.
+
+    ``workspaces://{repo}/{rel}`` matches both the sandbox-relative
+    ``{repo}/{rel}`` spelling and the repo-stripped ``{rel}`` spelling.
+    """
     text = str(raw).strip()
+    keys: set[str] = set()
     if "://" in text:
         scheme, rest = text.split("://", 1)
         if scheme == "workspaces" and "/" in rest:
-            rest = rest.split("/", 1)[1]
-        text = rest
-    return text.lstrip("/")
+            repo, rel = rest.split("/", 1)
+            repo = repo.strip("/")
+            rel = rel.lstrip("/")
+            if rel:
+                keys.add(rel)
+            if repo and rel:
+                keys.add(f"{repo}/{rel}")
+        else:
+            bare = rest.lstrip("/")
+            if bare:
+                keys.add(bare)
+    else:
+        bare = text.lstrip("/")
+        if bare:
+            keys.add(bare)
+    return keys
+
+
+def _normalize_request_path(raw: str) -> str:
+    """Sandbox-relative key for a path or its Share-URI spelling."""
+    keys = _path_match_keys(raw)
+    if not keys:
+        return str(raw).strip().lstrip("/")
+    return sorted(keys, key=len)[0]
 
 
 def binary_payload(result: dict[str, Any]) -> bool:
@@ -446,38 +476,41 @@ def read_file_result(
         and auto_result is None
         and is_sparse_document_suffix(suffix)
     )
-    if (
-        sparse_doc
-        and suffix == ".pdf"
-        and sidecar_path is None
-        and not export
-        and not range_requested
-    ):
+    if sparse_doc and suffix == ".pdf" and not export and not range_requested:
         from ._pdf_sections import resolve_pdf_outline_read
 
-        sparse_result = resolve_pdf_outline_read(
-            file_path=src,
-            path=path,
-            sandbox=sandbox,
-            read_sha256=read_sha256,
-            section=section,
-            sections=sections,
-            chunk_cursor=chunk_cursor,
-            chunk_cursor_provided=chunk_cursor_provided,
-            expected_read_sha256=expected_read_sha256 or None,
-        )
-        if "code" in sparse_result or "error" in sparse_result:
-            sparse_result["path"] = path
-            return sparse_result
-        _attach_pdf_read_metadata(
-            sparse_result,
-            path=path,
-            content=content,
-            pdf_method=pdf_method,
-            sidecar_path=sidecar_path,
-        )
-        sparse_result["path"] = path
-        return sparse_result
+        outline_result: dict[str, Any] | None
+        try:
+            outline_result = resolve_pdf_outline_read(
+                file_path=src,
+                path=path,
+                sandbox=sandbox,
+                read_sha256=read_sha256,
+                section=section,
+                sections=sections,
+                chunk_cursor=chunk_cursor,
+                chunk_cursor_provided=chunk_cursor_provided,
+                expected_read_sha256=expected_read_sha256 or None,
+            )
+        except Exception as exc:
+            # Unreadable bytes keep the sidecar markdown path. A PDF that
+            # opens stays in the TOC id space even when a sidecar exists.
+            if sidecar_path is None or not _pdf_bytes_unreadable(exc):
+                raise
+            outline_result = None
+        if outline_result is not None:
+            if "code" in outline_result or "error" in outline_result:
+                outline_result["path"] = path
+                return outline_result
+            _attach_pdf_read_metadata(
+                outline_result,
+                path=path,
+                content=content,
+                pdf_method=pdf_method,
+                sidecar_path=sidecar_path,
+            )
+            outline_result["path"] = path
+            return outline_result
 
     if sparse_doc:
         sparse_result = resolve_document_read(
@@ -706,12 +739,18 @@ def read_files_batch(
         )
 
     if exp_map is not None:
-        requested = {_normalize_request_path(p): p for p in paths}
+        requested: dict[str, str] = {}
+        for path_item in paths:
+            for alias in _path_match_keys(path_item):
+                requested.setdefault(alias, path_item)
         bad_keys: list[str] = []
         resolved_map: dict[str, str] = {}
         for key, value in exp_map.items():
-            norm = _normalize_request_path(key)
-            target = requested.get(norm)
+            target = None
+            for alias in _path_match_keys(key):
+                target = requested.get(alias)
+                if target is not None:
+                    break
             if target is None or not _is_sparse_path(target, root):
                 bad_keys.append(str(key))
                 continue

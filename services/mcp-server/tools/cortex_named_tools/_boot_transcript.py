@@ -46,13 +46,46 @@ def resolve_transcript(
         rel = source_uri.lstrip("/")
         chunks: list[str] = []
         cursor: int | None = None
+        pinned_hash: str | None = None
+        seen_cursors: set[int] = set()
         read_out: dict[str, Any] = {}
         while True:
+            if cursor is not None and cursor in seen_cursors:
+                return {
+                    "error": "transcript_export_cursor_stuck",
+                    "transcript_id": clean_id,
+                    "transcript_entity_id": entity_key,
+                    "detail": (
+                        "Transcript export chunk_cursor did not advance; "
+                        "refusing to stitch a mixed or stuck body."
+                    ),
+                    "read_sha256": pinned_hash,
+                }
+            if cursor is not None:
+                seen_cursors.add(cursor)
             read_kwargs: dict[str, Any] = {"export": True}
             if cursor is not None:
                 read_kwargs["chunk_cursor"] = cursor
                 read_kwargs["chunk_cursor_provided"] = True
+                if pinned_hash:
+                    read_kwargs["expected_read_sha256"] = pinned_hash
             read_out = read_file_result(rel, **read_kwargs)
+            file_hash = read_out.get("read_sha256")
+            if isinstance(file_hash, str) and file_hash:
+                if pinned_hash is None:
+                    pinned_hash = file_hash
+                elif file_hash != pinned_hash:
+                    return {
+                        "error": "transcript_export_revision_changed",
+                        "transcript_id": clean_id,
+                        "transcript_entity_id": entity_key,
+                        "detail": (
+                            "Transcript export read_sha256 changed between chunks; "
+                            "refusing to join two revisions."
+                        ),
+                        "read_sha256": file_hash,
+                        "expected_read_sha256": pinned_hash,
+                    }
             if read_out.get("code") == "sparse_manifest_requires_expansion":
                 return {
                     "error": "transcript_source_sparse_manifest",
@@ -93,6 +126,17 @@ def resolve_transcript(
                         "refusing to clip the body silently."
                     ),
                     "read_sha256": read_out.get("read_sha256"),
+                }
+            if cursor is not None and nxt <= cursor:
+                return {
+                    "error": "transcript_export_cursor_stuck",
+                    "transcript_id": clean_id,
+                    "transcript_entity_id": entity_key,
+                    "detail": (
+                        "Transcript export chunk_cursor did not advance; "
+                        "refusing to stitch a mixed or stuck body."
+                    ),
+                    "read_sha256": pinned_hash,
                 }
             cursor = nxt
         composed_md = "".join(chunks)

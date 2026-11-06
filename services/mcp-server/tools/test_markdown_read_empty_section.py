@@ -80,7 +80,7 @@ def test_real_section_unchanged_and_unmarked(md_tool) -> None:
     res = fn(op="read_section", path="doc.md", sandbox="cortex", section="Title")
     assert "Section body." in res["content"]
     assert res["section"] == "Title"
-    assert "selection" not in res
+    assert res["selection"] == "section"
 
 
 def test_nonexistent_section_errors_without_fallback(md_tool) -> None:

@@ -109,3 +109,61 @@ def test_transcript_truncated_without_cursor_fails(
         out = resolve_transcript("clip")
 
     assert out.get("error") == "transcript_export_truncated"
+
+
+@pytest.mark.offline
+def test_transcript_export_pins_hash_and_refuses_stuck_cursor(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def _read(path: str, **kwargs: object) -> dict:
+        cursor = kwargs.get("chunk_cursor")
+        if cursor is None:
+            return {
+                "content": "AAA",
+                "truncated": True,
+                "chunk_cursor_next": 3,
+                "read_sha256": "abc",
+            }
+        assert kwargs.get("expected_read_sha256") == "abc"
+        return {
+            "content": "BBB",
+            "truncated": True,
+            "chunk_cursor_next": 3,
+            "read_sha256": "abc",
+        }
+
+    monkeypatch.setattr(
+        "tools.cortex_named_tools._boot_transcript.read_file_result",
+        _read,
+    )
+
+    def _cx(method: str, path: str) -> dict:
+        if path.startswith("/entities/"):
+            return {"source_uri": "t.md", "id": "transcript:stuck"}
+        return {"items": []}
+
+    with patch("tools.cortex_named_tools._boot_transcript.cx", side_effect=_cx):
+        stuck = resolve_transcript("stuck")
+    assert stuck.get("error") == "transcript_export_cursor_stuck"
+
+    def _changed(path: str, **kwargs: object) -> dict:
+        if kwargs.get("chunk_cursor") is None:
+            return {
+                "content": "AAA",
+                "truncated": True,
+                "chunk_cursor_next": 3,
+                "read_sha256": "abc",
+            }
+        return {
+            "content": "BBB",
+            "truncated": False,
+            "read_sha256": "def",
+        }
+
+    monkeypatch.setattr(
+        "tools.cortex_named_tools._boot_transcript.read_file_result",
+        _changed,
+    )
+    with patch("tools.cortex_named_tools._boot_transcript.cx", side_effect=_cx):
+        mixed = resolve_transcript("stuck")
+    assert mixed.get("error") == "transcript_export_revision_changed"
