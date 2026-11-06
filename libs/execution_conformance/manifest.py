@@ -75,7 +75,7 @@ MANIFEST: dict[ActuatorName, dict[CapabilityName, ManifestCell]] = {
         ),
         "dedup_retention": ManifestCell(
             level="supported",
-            source="libs/agent_bus_store/db/migrations/migration_014.py:migration_014",
+            source="libs/agent_bus_store/db/migrations/migration_014.py:run",
             fixture="test_p4_c2_agent_bus_idempotency_reconcile",
             note="UNIQUE idempotency_key; delete_thread ends dedup scope",
         ),
@@ -253,10 +253,21 @@ def _resolve_source(source: str) -> None:
         raise AssertionError(f"manifest source missing file: {path}")
     if not symbol_part:
         return
-    symbol = symbol_part.split(":")[0]
+    symbols = [s.strip() for s in symbol_part.split(":") if s.strip()]
     text = path.read_text(encoding="utf-8", errors="replace")
-    if symbol not in text:
-        raise AssertionError(f"manifest symbol {symbol!r} not found in {path}")
+    for symbol in symbols:
+        if symbol == "PipelineExecutionTracker":
+            if "class PipelineExecutionTracker" not in text:
+                raise AssertionError(
+                    f"manifest class PipelineExecutionTracker not found in {path}"
+                )
+            continue
+        if (
+            f"def {symbol}" not in text
+            and f"class {symbol}" not in text
+            and f"{symbol} =" not in text
+        ):
+            raise AssertionError(f"manifest symbol {symbol!r} not found in {path}")
 
 
 def _fixture_collected(name: str) -> bool:

@@ -37,12 +37,16 @@ def intent_tag_length(identity_key: str) -> int:
     return len(intent_tag_body(identity_key))
 
 
+def _read_only_uri(path: Path) -> str:
+    return f"{path.resolve().as_uri()}?mode=ro"
+
+
 def read_store_epoch(db_path: Path, *, timeout: float = 0.2) -> EpochReadResult:
     """Read epoch UUID from owner SQLite without writes, DDL, or COMMIT."""
     path = Path(db_path)
     if not path.exists() or path.stat().st_size == 0:
         return EpochReadResult(status="unprovisioned", epoch=None)
-    uri = f"file:{path.resolve()}?mode=ro"
+    uri = _read_only_uri(path)
     try:
         with closing(
             sqlite3.connect(uri, uri=True, timeout=timeout, check_same_thread=False)
@@ -59,9 +63,9 @@ def read_store_epoch(db_path: Path, *, timeout: float = 0.2) -> EpochReadResult:
             return EpochReadResult(status="ok", epoch=epoch)
     except sqlite3.OperationalError as exc:
         msg = str(exc).lower()
-        if "locked" in msg or "busy" in msg:
-            return EpochReadResult(status="unavailable", epoch=None)
-        return EpochReadResult(status="unprovisioned", epoch=None)
+        if "no such table" in msg:
+            return EpochReadResult(status="unprovisioned", epoch=None)
+        return EpochReadResult(status="unavailable", epoch=None)
     except sqlite3.Error:
         return EpochReadResult(status="unavailable", epoch=None)
 

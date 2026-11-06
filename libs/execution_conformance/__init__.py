@@ -22,6 +22,7 @@ from .reconciler import (
     compensate_unknown,
     dispatch_intent,
     reconcile,
+    resolve_blocked,
     resolve_ref_conflict,
 )
 from .states import ExecutionState, IllegalStateTransitionError
@@ -48,5 +49,6 @@ __all__ = [
     "dispatch_intent",
     "manifest_unknowns",
     "reconcile",
+    "resolve_blocked",
     "resolve_ref_conflict",
 ]

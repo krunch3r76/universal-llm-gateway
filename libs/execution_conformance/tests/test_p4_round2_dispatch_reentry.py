@@ -58,7 +58,7 @@ def test_p4_round2_dispatch_twice_stargate_after_restart(tmp_path) -> None:
     assert fresh.admit_count == 0
 
 
-def test_p4_round2_dispatch_twice_blocked_unknown(
+def test_p4_round2_dispatch_twice_idempotent_accept(
     tmp_path, monkeypatch, bus_env
 ) -> None:
     monkeypatch.setenv("DATA_DIR", str(tmp_path / "gateway"))

@@ -1,13 +1,13 @@
-"""Round-5 — concurrent reconcile claim_retry race (Major 1)."""
+"""Round-5/6 — concurrent reconcile claim_retry: one redispatched winner."""
 
 from __future__ import annotations
 
 import threading
 import time
 from typing import Any
+from unittest.mock import patch
 
 from execution_conformance.adapters import (
-    AdmitOutcome,
     AgentBusAdapter,
     CountingAdmitWrapper,
 )
@@ -16,13 +16,14 @@ from execution_conformance.ledger import ReferenceSqliteIntentLedger
 from execution_conformance.reconciler import reconcile
 from execution_conformance.states import ExecutionState
 
+_real_create_thread = None
+_start_barrier: threading.Barrier | None = None
 
-class SlowAgentBusAdapter(AgentBusAdapter):
-    """Slow admit so dual reconcile threads contend on claim_retry."""
 
-    def admit(self, identity_key: str, **kwargs: Any) -> AdmitOutcome:
-        time.sleep(0.08)
-        return super().admit(identity_key, **kwargs)
+def _patched_create_thread(*args: Any, **kwargs: Any):
+    time.sleep(0.08)
+    assert _real_create_thread is not None
+    return _real_create_thread(*args, **kwargs)
 
 
 def _thread_count(conn, key: str) -> int:
@@ -33,7 +34,12 @@ def _thread_count(conn, key: str) -> int:
 
 
 def test_p4_round5_concurrent_reconcile_claim_retry(bus_env, tmp_path) -> None:
+    global _real_create_thread, _start_barrier
+    from agent_bus_store.db import threads as threads_mod
     from agent_bus_store.db.connection import connect
+
+    _real_create_thread = threads_mod.create_thread
+    _start_barrier = threading.Barrier(2)
 
     ledger = ReferenceSqliteIntentLedger(tmp_path / "intents.db")
     key = "concurrent-claim-key-abcdef12"
@@ -44,14 +50,21 @@ def test_p4_round5_concurrent_reconcile_claim_retry(bus_env, tmp_path) -> None:
         identity_key=key,
         admit_kwargs={"slug": "conc"},
     )
+    ledger.clear_inflight_marker("intent-concurrent")
     errors: list[BaseException] = []
     results = []
 
     def _worker() -> None:
         try:
-            probe = CountingAdmitWrapper(SlowAgentBusAdapter())
-            results.append(reconcile(ledger.reopen(), probe, "intent-concurrent"))
-        except BaseException as exc:  # noqa: BLE001 — test collects thread errors
+            assert _start_barrier is not None
+            _start_barrier.wait(timeout=5.0)
+            with patch(
+                "agent_bus_store.db.threads.create_thread",
+                side_effect=_patched_create_thread,
+            ):
+                probe = CountingAdmitWrapper(AgentBusAdapter())
+                results.append(reconcile(ledger, probe, "intent-concurrent"))
+        except BaseException as exc:  # noqa: BLE001
             errors.append(exc)
 
     threads = [threading.Thread(target=_worker) for _ in range(2)]
@@ -64,6 +77,9 @@ def test_p4_round5_concurrent_reconcile_claim_retry(bus_env, tmp_path) -> None:
     assert row is not None
     assert row.state == ExecutionState.accepted
     assert row.actuator_ref is not None
-    assert any(r.redispatched for r in results) or row.actuator_ref
+    redispatched_flags = [r.redispatched for r in results]
+    assert redispatched_flags.count(True) == 1
+    assert redispatched_flags.count(False) == 1
+    assert all(not r.blocked for r in results)
     with connect() as conn:
         assert _thread_count(conn, key) == 1

@@ -60,9 +60,10 @@ def test_p4_c6_crash_after_reservation_agent_bus(
 
 
 def test_p4_c6_crash_after_reservation_stargate(tmp_path, monkeypatch) -> None:
-    wrapped = CountingAdmitWrapper(StargatePipelineAdapter())
-    probe = CountingAdmitWrapper(StargatePipelineAdapter())
-    _run_case(
+    tracker = StargatePipelineAdapter().tracker
+    wrapped = CountingAdmitWrapper(StargatePipelineAdapter(tracker))
+    probe = CountingAdmitWrapper(StargatePipelineAdapter(tracker))
+    _, probe, result, ledger = _run_case(
         tmp_path,
         monkeypatch,
         wrapped,
@@ -73,14 +74,18 @@ def test_p4_c6_crash_after_reservation_stargate(tmp_path, monkeypatch) -> None:
     )
     assert wrapped.admit_count == 0
     assert probe.admit_count == 0
+    row = ledger.get("intent-c6-stargate")
+    assert row.state == ExecutionState.blocked_unknown
+    assert row.payload.get("blocked_reason") == "owner_miss"
+    assert result.blocked is True
 
 
 def test_p4_c6_crash_after_reservation_cdp(
-    tmp_path, monkeypatch: pytest.MonkeyPatch, bus_env
+    tmp_path, monkeypatch: pytest.MonkeyPatch, cdp_env
 ) -> None:
     wrapped = CountingAdmitWrapper(CdpInflightAdapter())
     probe = CountingAdmitWrapper(CdpInflightAdapter())
-    _run_case(
+    _, probe, result, ledger = _run_case(
         tmp_path,
         monkeypatch,
         wrapped,
@@ -91,6 +96,10 @@ def test_p4_c6_crash_after_reservation_cdp(
     )
     assert wrapped.admit_count == 0
     assert probe.admit_count == 0
+    row = ledger.get("intent-c6-cdp")
+    assert row.state == ExecutionState.blocked_unknown
+    assert row.payload.get("blocked_reason") == "owner_miss"
+    assert result.blocked is True
 
 
 def test_p4_c6_crash_after_reservation_bridge(

@@ -1,4 +1,4 @@
-"""Read-only actuator adapters for phase-4 conformance (no MCP runtime import)."""
+"""Owner lookup + admit wrappers for phase-4 conformance (no MCP runtime import)."""
 
 from __future__ import annotations
 
@@ -127,15 +127,17 @@ def _lookup_epoch(path: Path) -> EpochReadResult:
 
 
 def validate_actuator_identity_key(
-    _adapter: ActuatorAdapter, identity_key: str
+    adapter: ActuatorAdapter, identity_key: str
 ) -> None:
     """Reject empty, whitespace-only, and newline identity keys before reserve."""
     if not identity_key or not identity_key.strip():
         raise ValueError("identity_key must be non-empty and not whitespace-only")
     if "\n" in identity_key or "\r" in identity_key:
         raise ValueError("identity_key must not contain newline characters")
-    if len(identity_key) < 8 or len(identity_key) > 128:
-        raise ValueError("identity_key must be 8..128 chars")
+    if adapter.name == "agent_bus" and (
+        len(identity_key) < 8 or len(identity_key) > 128
+    ):
+        raise ValueError("identity_key must be 8..128 chars for agent_bus idempotency")
 
 
 class AgentBusAdapter:
@@ -212,6 +214,10 @@ class StargatePipelineAdapter:
     @property
     def tracker(self) -> Any:
         return self._tracker
+
+    @property
+    def lock(self) -> threading.Lock:
+        return self._lock
 
     def store_epoch(self) -> str:
         return self._epoch

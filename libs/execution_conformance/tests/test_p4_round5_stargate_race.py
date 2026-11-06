@@ -1,8 +1,10 @@
-"""Round-5 — shared tracker lock prevents register_execution races (Minor 6)."""
+"""Round-5/6 — shared tracker lock prevents duplicate register_execution."""
 
 from __future__ import annotations
 
 import threading
+import time
+from typing import Any
 
 from execution_conformance.adapters import StargatePipelineAdapter
 from systems.pipeline.core.execution.async_tracker.tracker import (
@@ -10,36 +12,68 @@ from systems.pipeline.core.execution.async_tracker.tracker import (
 )
 
 
-def test_p4_stargate_two_adapters_one_tracker_no_status_regression() -> None:
+def test_p4_stargate_two_adapters_share_lock() -> None:
     tracker = PipelineExecutionTracker(event_bus=None)
-    exec_id = "stargate-race-exec-id"
-    tracker.register_execution(
-        execution_id=exec_id,
-        pipeline="race",
-        started_at="2026-01-01T00:00:00Z",
-    )
-    record = tracker.get(exec_id)
-    assert record is not None
-    record.status = "completed"
+    a = StargatePipelineAdapter(tracker)
+    b = StargatePipelineAdapter(tracker)
+    assert a.lock is b.lock
 
-    errors: list[BaseException] = []
 
-    def _lookup_admit(adapter: StargatePipelineAdapter) -> None:
-        try:
-            adapter.lookup(exec_id)
-            adapter.admit(exec_id, pipeline="race")
-        except BaseException as exc:  # noqa: BLE001
-            errors.append(exc)
+def test_p4_stargate_race_fresh_execution_id_register_once() -> None:
+    tracker = PipelineExecutionTracker(event_bus=None)
+    exec_id = "stargate-fresh-race-exec"
+    calls: list[str] = []
+    barrier = threading.Barrier(2)
+    real_register = tracker.register_execution
+
+    def counting_register(**kwargs: Any):
+        calls.append(kwargs.get("execution_id", ""))
+        time.sleep(0.05)
+        return real_register(**kwargs)
+
+    tracker.register_execution = counting_register  # type: ignore[method-assign]
+
+    def _run(adapter: StargatePipelineAdapter) -> None:
+        barrier.wait(timeout=5.0)
+        adapter.admit(exec_id, pipeline="race")
 
     a = StargatePipelineAdapter(tracker)
     b = StargatePipelineAdapter(tracker)
-    t1 = threading.Thread(target=_lookup_admit, args=(a,))
-    t2 = threading.Thread(target=_lookup_admit, args=(b,))
+    t1 = threading.Thread(target=_run, args=(a,))
+    t2 = threading.Thread(target=_run, args=(b,))
     t1.start()
     t2.start()
     t1.join()
     t2.join()
-    assert not errors
+    assert calls.count(exec_id) == 1
+
+
+def test_p4_stargate_completed_not_overwritten_to_running() -> None:
+    tracker = PipelineExecutionTracker(event_bus=None)
+    exec_id = "stargate-complete-race"
+    barrier = threading.Barrier(2)
+    real_register = tracker.register_execution
+
+    def register_then_complete(**kwargs: Any):
+        rec = real_register(**kwargs)
+        if kwargs.get("execution_id") == exec_id:
+            rec.status = "completed"
+        return rec
+
+    tracker.register_execution = register_then_complete  # type: ignore[method-assign]
+
+    def _run(adapter: StargatePipelineAdapter) -> None:
+        barrier.wait(timeout=5.0)
+        adapter.admit(exec_id, pipeline="race")
+
+    a = StargatePipelineAdapter(tracker)
+    b = StargatePipelineAdapter(tracker)
+    t1 = threading.Thread(target=_run, args=(a,))
+    t2 = threading.Thread(target=_run, args=(b,))
+    t1.start()
+    t2.start()
+    t1.join()
+    t2.join()
     final = tracker.get(exec_id)
     assert final is not None
     assert final.status == "completed"

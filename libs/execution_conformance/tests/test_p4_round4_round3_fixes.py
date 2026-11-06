@@ -30,7 +30,7 @@ def test_p4_blocked_unknown_reconcile_read_only(bus_env, tmp_path) -> None:
     ledger.merge_payload("intent-ro", {"blocked_reason": "owner_miss"})
     before = probe.admit_count
     for _ in range(3):
-        r = reconcile(ledger, CountingAdmitWrapper(AgentBusAdapter()), "intent-ro")
+        r = reconcile(ledger, probe, "intent-ro")
         assert r.blocked is True
     assert probe.admit_count == before
 

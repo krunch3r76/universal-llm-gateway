@@ -82,6 +82,25 @@ Stargate shares one epoch + lock per `PipelineExecutionTracker` instance (WeakKe
 CDP `CdpInflightAdapter.admit` uses reference `INSERT OR REPLACE`; production requires
 owner insert-if-absent wiring.
 
+**Production owner DBs without `_execution_store_epoch`:** first `dispatch_intent` can
+still admit, but crash-recovery **retry** on `agent_bus` fails closed (`epoch_unverified`)
+until owner-side provisioning writes the meta-table (or tests call `provision_store_epoch`).
+
+**Backup restore:** restoring an owner SQLite file without calling `rotate_store_epoch`
+keeps the same UUID — benign for `agent_bus` when the backup predates the thread row;
+use `rotate_store_epoch` when the file is replaced with a divergent copy.
+
+**In-flight lease:** fresh `dispatch_intent` stamps `inflight_claimed_at` on the local row;
+concurrent `reconcile()` on an owner miss returns **transient** while the lease is active.
+
+**Stargate terminal short-circuit vs service hooks:** local rows in `completed`/`failed`/`cancelled`
+do not re-query the owner. Stargate `delivery_hooks.py` may regress a pipeline record from
+`completed` to `failed` after local terminal adoption — conformance does not model that hook;
+production must reconcile hook semantics separately.
+
+**Blocked exit helpers:** `compensate_unknown` (non-terminal), `resolve_blocked` / `resolve_ref_conflict`
+(terminal failed/cancelled with audit).
+
 ## Drain / stop-new (out of scope)
 
 Phase-4 matrix covers eight capabilities (`identity` … `unknown_recovery`).

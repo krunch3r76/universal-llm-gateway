@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
+import time
+from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
 
 from .adapters import ActuatorAdapter, OwnerLookup, validate_actuator_identity_key
 from .ledger import IntentRecord, IntentStore
+from .manifest import ActuatorName
 from .states import (
     TERMINAL_STATES,
     ExecutionState,
@@ -22,9 +25,13 @@ IN_FLIGHT: frozenset[ExecutionState] = frozenset(
     {ExecutionState.reserved, ExecutionState.accepted, ExecutionState.running}
 )
 
+DEFAULT_CLAIM_TTL_SECONDS = 30.0
+
 
 @dataclass(frozen=True, slots=True)
 class CompensatingAction:
+    """Authorized human/agent action required to exit ``blocked_unknown`` via compensation."""
+
     authorized_by: str
     reason: str
 
@@ -62,14 +69,18 @@ def dispatch_intent(
     intent_id: str,
     identity_key: str,
     admit_kwargs: dict[str, Any] | None = None,
+    clock: Callable[[], float] | None = None,
+    claim_ttl_seconds: float = DEFAULT_CLAIM_TTL_SECONDS,
 ) -> DispatchResult:
     """Reserve locally; admit only on ``reserve().created`` with owner miss."""
+    clock_fn = clock or time.time
     validate_actuator_identity_key(adapter, identity_key)
     payload = {"admit_kwargs": admit_kwargs or {}}
     epoch = adapter.store_epoch()
+    actuator: ActuatorName = adapter.name  # type: ignore[assignment]
     reserved = ledger.reserve(
         intent_id=intent_id,
-        actuator=adapter.name,  # type: ignore[arg-type]
+        actuator=actuator,
         identity_key=identity_key,
         store_epoch=epoch,
         payload=payload,
@@ -83,8 +94,16 @@ def dispatch_intent(
                 actuator_ref=record.actuator_ref,
                 adopted_existing=True,
             )
-        rec = reconcile(ledger, adapter, intent_id)
+        rec = reconcile(
+            ledger,
+            adapter,
+            intent_id,
+            clock=clock_fn,
+            claim_ttl_seconds=claim_ttl_seconds,
+        )
         return _reconcile_as_dispatch(ledger, rec)
+
+    ledger.stamp_inflight(intent_id, clock_fn())
 
     lookup = adapter.lookup(identity_key)
     if _lookup_epoch_unavailable(lookup):
@@ -98,7 +117,17 @@ def dispatch_intent(
     if adopted is not None:
         return adopted
 
-    outcome = adapter.admit(identity_key, **payload_admit_kwargs(record))
+    try:
+        outcome = adapter.admit(identity_key, **payload_admit_kwargs(record))
+    except Exception as exc:
+        adopted = _recover_after_admit_error(
+            ledger, adapter, intent_id, identity_key, record
+        )
+        if adopted is not None:
+            return adopted
+        _block_unknown(ledger, intent_id, reason="admit_error")
+        raise exc
+
     try:
         row = ledger.record_receipt(
             intent_id,
@@ -106,7 +135,13 @@ def dispatch_intent(
             state=outcome.state,
         )
     except IllegalStateTransitionError:
-        rec = reconcile(ledger, adapter, intent_id)
+        rec = reconcile(
+            ledger,
+            adapter,
+            intent_id,
+            clock=clock_fn,
+            claim_ttl_seconds=claim_ttl_seconds,
+        )
         return _reconcile_as_dispatch(ledger, rec)
     return DispatchResult(
         intent_id=intent_id,
@@ -119,7 +154,12 @@ def reconcile(
     ledger: IntentStore,
     adapter: ActuatorAdapter,
     intent_id: str,
+    *,
+    clock: Callable[[], float] | None = None,
+    claim_ttl_seconds: float = DEFAULT_CLAIM_TTL_SECONDS,
 ) -> ReconcileResult:
+    """Drive local intent row toward owner truth without duplicate remote admits."""
+    clock_fn = clock or time.time
     record = ledger.get(intent_id)
     if record is None:
         raise KeyError(f"unknown intent {intent_id!r}")
@@ -162,9 +202,40 @@ def reconcile(
         )
 
     if adapter.admit_idempotent and _retry_epoch_allows(record, lookup, adapter):
-        if ledger.claim_retry(intent_id):
+        if ledger.claim_retry(intent_id, inflight_at=clock_fn()):
             kwargs = payload_admit_kwargs(record)
-            outcome = adapter.admit(record.identity_key, **kwargs)
+            try:
+                outcome = adapter.admit(record.identity_key, **kwargs)
+            except Exception:
+                adopted = _recover_after_admit_error(
+                    ledger,
+                    adapter,
+                    intent_id,
+                    record.identity_key,
+                    record,
+                )
+                if adopted is not None:
+                    row = ledger.get(intent_id)
+                    if row is None:
+                        raise KeyError(intent_id)
+                    return ReconcileResult(
+                        intent_id=intent_id,
+                        state=row.state,
+                        adopted=True,
+                        redispatched=False,
+                        blocked=False,
+                    )
+                _block_unknown(ledger, intent_id, reason="admit_error")
+                row = ledger.get(intent_id)
+                if row is None:
+                    raise KeyError(intent_id)
+                return ReconcileResult(
+                    intent_id=intent_id,
+                    state=row.state,
+                    adopted=False,
+                    redispatched=False,
+                    blocked=True,
+                )
             try:
                 row = ledger.record_receipt(
                     intent_id,
@@ -172,14 +243,28 @@ def reconcile(
                     state=outcome.state,
                 )
             except IllegalStateTransitionError:
-                return _result_after_retry_race(ledger, intent_id)
+                return _result_after_lost_claim(
+                    ledger, intent_id, clock_fn, claim_ttl_seconds
+                )
             return ReconcileResult(
                 intent_id=intent_id,
                 state=row.state,
                 adopted=False,
                 redispatched=True,
             )
-        return _result_after_retry_race(ledger, intent_id)
+        return _result_after_lost_claim(
+            ledger, intent_id, clock_fn, claim_ttl_seconds
+        )
+
+    if _inflight_lease_active(record, clock_fn, claim_ttl_seconds):
+        return ReconcileResult(
+            intent_id=intent_id,
+            state=record.state,
+            adopted=False,
+            redispatched=False,
+            blocked=False,
+            transient=True,
+        )
 
     if _lookup_epoch_unavailable(lookup):
         return ReconcileResult(
@@ -191,7 +276,12 @@ def reconcile(
             transient=True,
         )
 
-    reason = _miss_block_reason(record, lookup)
+    if record.inflight_claimed_at is not None and (
+        clock_fn() - record.inflight_claimed_at
+    ) >= claim_ttl_seconds:
+        reason = "retry_claim_stale"
+    else:
+        reason = _miss_block_reason(record, lookup)
     _block_unknown(ledger, intent_id, reason=reason)
     row = ledger.get(intent_id)
     if row is None:
@@ -205,28 +295,94 @@ def reconcile(
     )
 
 
-def _result_after_retry_race(ledger: IntentStore, intent_id: str) -> ReconcileResult:
+def _inflight_lease_active(
+    record: IntentRecord,
+    clock_fn: Callable[[], float],
+    claim_ttl_seconds: float,
+) -> bool:
+    if record.inflight_claimed_at is None:
+        return False
+    if record.state != ExecutionState.reserved:
+        return False
+    return (clock_fn() - record.inflight_claimed_at) < claim_ttl_seconds
+
+
+def _result_after_lost_claim(
+    ledger: IntentStore,
+    intent_id: str,
+    clock_fn: Callable[[], float],
+    claim_ttl_seconds: float,
+) -> ReconcileResult:
     row = ledger.get(intent_id)
     if row is None:
         raise KeyError(intent_id)
-    if row.state in IN_FLIGHT or row.state in TERMINAL_LOCAL:
-        if row.actuator_ref is not None or row.state in TERMINAL_LOCAL:
+    if row.state not in (
+        ExecutionState.reserved,
+        ExecutionState.outcome_unknown,
+    ):
+        return ReconcileResult(
+            intent_id=intent_id,
+            state=row.state,
+            adopted=row.state not in (ExecutionState.blocked_unknown,),
+            redispatched=False,
+            blocked=row.state == ExecutionState.blocked_unknown,
+        )
+    if row.state == ExecutionState.reserved and row.retry_count >= 1:
+        if row.inflight_claimed_at is None or (
+            clock_fn() - row.inflight_claimed_at
+        ) < claim_ttl_seconds:
             return ReconcileResult(
                 intent_id=intent_id,
                 state=row.state,
-                adopted=row.state in TERMINAL_LOCAL or row.actuator_ref is not None,
-                redispatched=row.actuator_ref is not None
-                and row.state != ExecutionState.reserved,
+                adopted=False,
+                redispatched=False,
                 blocked=False,
+                transient=True,
             )
+    if row.inflight_claimed_at is not None and (
+        clock_fn() - row.inflight_claimed_at
+    ) < claim_ttl_seconds:
+        return ReconcileResult(
+            intent_id=intent_id,
+            state=row.state,
+            adopted=False,
+            redispatched=False,
+            blocked=False,
+            transient=True,
+        )
+    reason = (
+        "retry_claim_stale"
+        if row.inflight_claimed_at is not None
+        else "owner_miss"
+    )
+    _block_unknown(ledger, intent_id, reason=reason)
+    row = ledger.get(intent_id)
+    if row is None:
+        raise KeyError(intent_id)
     return ReconcileResult(
         intent_id=intent_id,
         state=row.state,
         adopted=False,
         redispatched=False,
-        blocked=False,
-        transient=True,
+        blocked=True,
     )
+
+
+def _recover_after_admit_error(
+    ledger: IntentStore,
+    adapter: ActuatorAdapter,
+    intent_id: str,
+    identity_key: str,
+    record: IntentRecord,
+) -> DispatchResult | None:
+    lookup = adapter.lookup(identity_key)
+    if (
+        lookup.found
+        and lookup.state is not None
+        and lookup.state != ExecutionState.outcome_unknown
+    ):
+        return _try_adopt_from_lookup(ledger, intent_id, record, lookup)
+    return None
 
 
 def _miss_block_reason(record: IntentRecord, lookup: OwnerLookup) -> str:
@@ -245,7 +401,7 @@ def _reconcile_blocked_unknown(
 ) -> ReconcileResult:
     payload = record.payload or {}
     blocked_reason = payload.get("blocked_reason")
-    if blocked_reason == "ref_conflict":
+    if blocked_reason in ("ref_conflict", "duplicate_msg"):
         return ReconcileResult(
             intent_id=intent_id,
             state=record.state,
@@ -265,43 +421,9 @@ def _reconcile_blocked_unknown(
             transient=True,
         )
 
-    if (
-        lookup.found
-        and not lookup.unknown_reason
-        and lookup.state
-        not in (
-            None,
-            ExecutionState.outcome_unknown,
-        )
-    ):
-        if record.actuator_ref and lookup.actuator_ref:
-            if record.actuator_ref != lookup.actuator_ref:
-                _block_unknown(ledger, intent_id, reason="ref_conflict")
-                row = ledger.get(intent_id)
-                if row is None:
-                    raise KeyError(intent_id)
-                return ReconcileResult(
-                    intent_id=intent_id,
-                    state=row.state,
-                    adopted=False,
-                    redispatched=False,
-                    blocked=True,
-                )
-        if record.actuator_ref is None or record.actuator_ref == lookup.actuator_ref:
-            target = lookup.state
-            row = _promote_from_blocked(
-                ledger,
-                intent_id,
-                target=target,
-                actuator_ref=lookup.actuator_ref,
-            )
-            return ReconcileResult(
-                intent_id=intent_id,
-                state=row.state,
-                adopted=True,
-                redispatched=False,
-                blocked=False,
-            )
+    adopted = _adopt_blocked_from_lookup(ledger, intent_id, record, lookup)
+    if adopted is not None:
+        return adopted
 
     row = ledger.get(intent_id)
     if row is None:
@@ -315,21 +437,53 @@ def _reconcile_blocked_unknown(
     )
 
 
-def _promote_from_blocked(
+def _adopt_blocked_from_lookup(
     ledger: IntentStore,
     intent_id: str,
-    *,
-    target: ExecutionState,
-    actuator_ref: str | None,
-) -> IntentRecord:
-    ledger.set_state(intent_id, ExecutionState.outcome_unknown)
-    ledger.set_state(intent_id, target)
-    if actuator_ref:
-        ledger.patch_actuator_ref_if_null(intent_id, actuator_ref)
-    row = ledger.get(intent_id)
-    if row is None:
-        raise KeyError(intent_id)
-    return row
+    record: IntentRecord,
+    lookup: OwnerLookup,
+) -> ReconcileResult | None:
+    if not lookup.found or lookup.state in (
+        None,
+        ExecutionState.outcome_unknown,
+    ):
+        return None
+
+    if record.actuator_ref and lookup.actuator_ref:
+        if record.actuator_ref != lookup.actuator_ref:
+            _block_unknown(ledger, intent_id, reason="ref_conflict")
+            row = ledger.get(intent_id)
+            if row is None:
+                raise KeyError(intent_id)
+            return ReconcileResult(
+                intent_id=intent_id,
+                state=row.state,
+                adopted=False,
+                redispatched=False,
+                blocked=True,
+            )
+
+    owner_state = lookup.state or ExecutionState.accepted
+    baseline = (
+        ExecutionState.reserved
+        if record.state == ExecutionState.blocked_unknown
+        else record.state
+    )
+    target = adoption_target(baseline, owner_state)
+    ref = lookup.actuator_ref or record.actuator_ref
+    row = ledger.promote_blocked_adoption(
+        intent_id,
+        target=target,
+        actuator_ref=ref,
+        owner_unknown_reason=lookup.unknown_reason,
+    )
+    return ReconcileResult(
+        intent_id=intent_id,
+        state=row.state,
+        adopted=True,
+        redispatched=False,
+        blocked=False,
+    )
 
 
 def _try_adopt_from_lookup(
@@ -368,10 +522,22 @@ def _try_adopt_from_lookup(
             )
 
     target = adoption_target(record.state, lookup.state)
-    if record.state != target:
-        ledger.set_state(intent_id, target)
-    if lookup.actuator_ref and record.actuator_ref is None:
-        ledger.patch_actuator_ref_if_null(intent_id, lookup.actuator_ref)
+    try:
+        if record.state != target:
+            ledger.set_state(intent_id, target)
+        if lookup.actuator_ref and record.actuator_ref is None:
+            ledger.patch_actuator_ref_if_null(intent_id, lookup.actuator_ref)
+    except IllegalStateTransitionError:
+        fresh = ledger.get(intent_id)
+        if fresh is None:
+            raise
+        if fresh.state in TERMINAL_LOCAL:
+            return DispatchResult(
+                intent_id=intent_id,
+                state=fresh.state,
+                actuator_ref=fresh.actuator_ref,
+            )
+        raise
     row = ledger.get(intent_id)
     if row is None:
         raise KeyError(intent_id)
@@ -401,10 +567,22 @@ def _adopt_with_advisory_unknown(
             )
     owner_state = lookup.state or ExecutionState.accepted
     target = adoption_target(record.state, owner_state)
-    if record.state != target:
-        ledger.set_state(intent_id, target)
-    if lookup.actuator_ref and record.actuator_ref is None:
-        ledger.patch_actuator_ref_if_null(intent_id, lookup.actuator_ref)
+    try:
+        if record.state != target:
+            ledger.set_state(intent_id, target)
+        if lookup.actuator_ref and record.actuator_ref is None:
+            ledger.patch_actuator_ref_if_null(intent_id, lookup.actuator_ref)
+    except IllegalStateTransitionError:
+        fresh = ledger.get(intent_id)
+        if fresh is None:
+            raise
+        if fresh.state in TERMINAL_LOCAL:
+            return DispatchResult(
+                intent_id=intent_id,
+                state=fresh.state,
+                actuator_ref=fresh.actuator_ref,
+            )
+        raise
     payload = record.payload or {}
     if payload.get("owner_unknown_reason") != lookup.unknown_reason:
         ledger.merge_payload(
@@ -476,10 +654,9 @@ def _block_unknown(ledger: IntentStore, intent_id: str, *, reason: str) -> Inten
     existing = payload.get("blocked_reason")
     if existing == "ref_conflict":
         reason = "ref_conflict"
-    elif reason != "ref_conflict" and existing:
-        pass
     ledger.floor_retry(intent_id)
     ledger.merge_payload(intent_id, {"blocked_reason": reason})
+    ledger.clear_inflight_marker(intent_id)
     return _ensure_unknown(ledger, intent_id, block=True)
 
 
@@ -488,6 +665,7 @@ def compensate_unknown(
     intent_id: str,
     action: CompensatingAction | None,
 ) -> IntentRecord:
+    """Move ``blocked_unknown`` to ``outcome_unknown`` with audit (non-terminal)."""
     if action is None:
         raise PermissionError(
             "compensating action required for blocked_unknown recovery"
@@ -507,6 +685,33 @@ def compensate_unknown(
     )
 
 
+def resolve_blocked(
+    ledger: IntentStore,
+    intent_id: str,
+    *,
+    actor: str,
+    reason: str,
+    target_state: ExecutionState = ExecutionState.failed,
+) -> IntentRecord:
+    """Terminal audited exit from any ``blocked_unknown`` row."""
+    if actor not in COMPENSATION_ALLOWLIST:
+        raise PermissionError(f"unauthorized resolver {actor!r}")
+    if target_state not in (ExecutionState.failed, ExecutionState.cancelled):
+        raise ValueError("resolve_blocked target must be failed or cancelled")
+    record = ledger.get(intent_id)
+    if record is None:
+        raise KeyError(intent_id)
+    if record.state != ExecutionState.blocked_unknown:
+        raise ValueError(f"intent {intent_id} not blocked_unknown")
+    return ledger.apply_blocked_resolution(
+        intent_id,
+        authorized_by=actor,
+        reason=reason,
+        target_state=target_state,
+        prior_state=record.state,
+    )
+
+
 def resolve_ref_conflict(
     ledger: IntentStore,
     intent_id: str,
@@ -515,21 +720,17 @@ def resolve_ref_conflict(
     reason: str,
     target_state: ExecutionState = ExecutionState.failed,
 ) -> IntentRecord:
-    """Terminal exit for ``blocked_unknown(ref_conflict)`` with audit row."""
-    if actor not in COMPENSATION_ALLOWLIST:
-        raise PermissionError(f"unauthorized resolver {actor!r}")
+    """Terminal exit for ``blocked_unknown(ref_conflict)`` — delegates to ``resolve_blocked``."""
     record = ledger.get(intent_id)
     if record is None:
         raise KeyError(intent_id)
     payload = record.payload or {}
-    if record.state != ExecutionState.blocked_unknown:
-        raise ValueError(f"intent {intent_id} not blocked_unknown")
     if payload.get("blocked_reason") != "ref_conflict":
         raise ValueError(f"intent {intent_id} blocked_reason is not ref_conflict")
-    return ledger.apply_ref_conflict_resolution(
+    return resolve_blocked(
+        ledger,
         intent_id,
-        authorized_by=actor,
+        actor=actor,
         reason=reason,
         target_state=target_state,
-        prior_state=record.state,
     )
