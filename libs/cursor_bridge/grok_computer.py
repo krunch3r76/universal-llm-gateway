@@ -145,16 +145,25 @@ async def _cdp_response(ws: Any, mid: int) -> dict[str, Any]:
 
 
 async def probe_grok_computer(
-    cdp_port: int = 9339, display: str = ":9", *, timeout_s: float = 10.0
+    cdp_port: int = 9339,
+    display: str = ":9",
+    *,
+    agent_id: str | None = None,
+    timeout_s: float = 10.0,
 ) -> dict[str, Any]:
     """Read box phase, egress, migration, and running assistants over CDP.
 
     ``display`` is accepted for call-site symmetry and is not sent to the page.
-    The websocket is chosen from ``cdp_port``.
+    When ``agent_id`` is set, ``foreverBox`` health is read for that agent rather
+    than whichever sidebar chat is selected. The websocket is chosen from
+    ``cdp_port``.
     """
     del display
-    ws_url = _resolve_ws_url(cdp_port, timeout_s=min(timeout_s, 5.0))
-    payload = await _cdp_eval(ws_url, _PROBE_JS, timeout_s=timeout_s)
+    ws_url = await asyncio.to_thread(
+        _resolve_ws_url, cdp_port, timeout_s=min(timeout_s, 5.0)
+    )
+    expr = f"({_PROBE_JS})({json.dumps(agent_id)})"
+    payload = await _cdp_eval(ws_url, expr, timeout_s=timeout_s)
     return payload if isinstance(payload, dict) else {}
 
 
@@ -163,18 +172,28 @@ async def wake_grok_computer(
     display: str = ":9",
     agent_id: str = _DEFAULT_AGENT_ID,
     *,
-    open_computer_view: bool = True,
+    open_computer_view: bool | None = True,
+    focus_window: bool = True,
     timeout_s: float = 15.0,
 ) -> dict[str, Any]:
     """Reset X11 idle and signal presence on the Grok Bot desktop.
 
-    ``open_computer_view`` false closes the computer view so a post-update
-    keep-alive leaves the main portal on the display. Side effect: X11
-    screensaver reset on ``display`` and a CDP evaluate on ``cdp_port``.
+    ``open_computer_view`` true with ``focus_window`` true opens Computer and
+    sends ``composer_focus``; false closes Computer; ``None`` leaves the pane
+    untouched. When ``focus_window`` is false, the wake skips ``focusWindow``,
+    Computer toggles, and composer focus — only X11 reset and, when
+    ``egress.state == "off"``, a passive ``forceReconnectGateway``. Side effect:
+    X11 screensaver reset on ``display`` and a CDP evaluate on ``cdp_port``.
     """
     x11_reset = reset_x11_screensaver(display)
-    ws_url = _resolve_ws_url(cdp_port, timeout_s=min(timeout_s, 5.0))
-    expr = f"({_WAKE_JS})({json.dumps(agent_id)}, {json.dumps(open_computer_view)})"
+    ws_url = await asyncio.to_thread(
+        _resolve_ws_url, cdp_port, timeout_s=min(timeout_s, 5.0)
+    )
+    open_cv_json = "null" if open_computer_view is None else json.dumps(open_computer_view)
+    expr = (
+        f"({_WAKE_JS})({json.dumps(agent_id)}, {open_cv_json}, "
+        f"{json.dumps(focus_window)})"
+    )
     wake = await _cdp_eval(ws_url, expr, timeout_s=timeout_s)
     if not isinstance(wake, dict):
         wake = {}
@@ -186,7 +205,8 @@ async def _wait_phase_settled(
 ) -> dict[str, Any] | None:
     deadline = time.monotonic() + timeout_s
     while time.monotonic() < deadline:
-        probe = await _cdp_eval(ws_url, _PROBE_JS, timeout_s=5.0)
+        expr = f"({_PROBE_JS})({json.dumps(None)})"
+        probe = await _cdp_eval(ws_url, expr, timeout_s=5.0)
         if isinstance(probe, dict):
             phase = str(probe.get("phase") or "").lower()
             if phase in {"following", "settled"}:

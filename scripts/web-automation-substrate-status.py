@@ -156,30 +156,45 @@ def build_report() -> dict[str, Any]:
         )
 
     operator_home = str(_operator_home())
-    from browser_governance.contract import census_enabled, supervision_gate_mode
 
     resource_census: dict[str, Any]
     try:
+        from browser_governance.contract import census_enabled
+
         if census_enabled():
             from browser_governance.census import collect_local_browser_census
 
             resource_census = collect_local_browser_census()
         else:
             resource_census = {"enabled": False}
+    except ImportError:
+        resource_census = {"enabled": False, "error": "ImportError"}
     except Exception as exc:
         resource_census = {"enabled": True, "error": type(exc).__name__}
 
     grok_supervision: dict[str, Any] = {}
-    if supervision_gate_mode() == "observe":
-        try:
-            import asyncio
+    try:
+        from browser_governance.contract import supervision_gate_mode
+    except ImportError:
+        supervision_gate_mode = None  # type: ignore[assignment,misc]
+    if supervision_gate_mode is not None and supervision_gate_mode() == "observe":
+        import asyncio
 
-            from cursor_bridge.electron_chat_relay import probe_electron_supervision
+        for disp, port in ((":9", 9339), (":10", 9340)):
+            try:
+                from cursor_bridge.electron_chat_relay import probe_electron_supervision
 
-            for disp, port in ((":9", 9339), (":10", 9340)):
+                from scripts.model_manager.ui.controller.grokbot_egress_watch_io import (
+                    resolve_grok_display_agent_id,
+                )
+
+                agent_id = resolve_grok_display_agent_id(disp)
                 summary = asyncio.run(
                     probe_electron_supervision(
-                        display=disp, cdp_port=port, surface="grok_electron"
+                        display=disp,
+                        cdp_port=port,
+                        surface="grok_electron",
+                        agent_id=agent_id,
                     )
                 )
                 grok_supervision[disp] = {
@@ -187,8 +202,10 @@ def build_report() -> dict[str, Any]:
                     "auth_state": summary.get("auth_state"),
                     "reason": summary.get("reason"),
                 }
-        except Exception as exc:
-            grok_supervision = {"error": type(exc).__name__}
+            except ImportError:
+                grok_supervision[disp] = {"error": "ImportError"}
+            except Exception as exc:
+                grok_supervision[disp] = {"error": type(exc).__name__}
 
     return {
         "ok": all(row["cdp"].get("ok") for row in lanes_out if row.get("standing")),

@@ -3,11 +3,14 @@
 from __future__ import annotations
 
 import json
+import subprocess
+from pathlib import Path
 from typing import Any
 from unittest.mock import MagicMock
 
 import pytest
 from cursor_bridge import grok_computer as gc
+from cursor_bridge.grok_computer_page import PROBE_JS, WAKE_JS
 
 pytestmark = pytest.mark.offline
 
@@ -84,6 +87,13 @@ async def test_wake_grok_computer_includes_x11_reset(
 ) -> None:
     monkeypatch.setattr(gc, "reset_x11_screensaver", lambda _display: True)
     inbox = [_cdp_msg(1, {"phase": "following", "egress": {"state": "connected"}})]
+    sent: list[str] = []
+
+    class _CapturingWS(_FakeWS):
+        async def send(self, raw: str) -> None:
+            sent.append(raw)
+            await super().send(raw)
+
     monkeypatch.setattr(
         gc,
         "list_pages",
@@ -96,10 +106,63 @@ async def test_wake_grok_computer_includes_x11_reset(
             }
         ],
     )
-    monkeypatch.setattr("websockets.connect", lambda _url, **_kw: _FakeWS(inbox))
+    monkeypatch.setattr("websockets.connect", lambda _url, **_kw: _CapturingWS(inbox))
     out = await gc.wake_grok_computer()
     assert out["x11_reset"] is True
     assert out["egress"]["state"] == "connected"
+    assert sent
+    assert "focusWindow" in sent[0]
+
+
+@pytest.mark.asyncio
+async def test_wake_grok_computer_ui_neutral_presence(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(gc, "reset_x11_screensaver", lambda _display: True)
+    captured: list[str] = []
+
+    async def _eval(_ws: str, expression: str, **_kw: Any) -> dict[str, str]:
+        captured.append(expression)
+        return {"phase": "following", "egress": {"state": "connected"}}
+
+    monkeypatch.setattr(gc, "_resolve_ws_url", lambda *_a, **_k: "ws://fake")
+    monkeypatch.setattr(gc, "_cdp_eval", _eval)
+    await gc.wake_grok_computer(open_computer_view=None, focus_window=False)
+    assert captured
+    assert ", null, false)" in captured[0]
+
+
+@pytest.mark.asyncio
+async def test_probe_grok_computer_passes_bound_agent_id(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    payload = {"phase": "settled", "egress": {"state": "connected"}}
+    inbox = [_cdp_msg(1, payload)]
+    sent: list[str] = []
+
+    class _CapturingWS(_FakeWS):
+        async def send(self, raw: str) -> None:
+            sent.append(raw)
+            await super().send(raw)
+
+    monkeypatch.setattr(
+        gc,
+        "list_pages",
+        lambda _origin, **_kw: [
+            {
+                "id": "1",
+                "title": "Grok Bot",
+                "url": "",
+                "web_socket_debugger_url": "ws://fake",
+            }
+        ],
+    )
+    monkeypatch.setattr("websockets.connect", lambda _url, **_kw: _CapturingWS(inbox))
+    aid = "agent-uuid-123"
+    out = await gc.probe_grok_computer(agent_id=aid)
+    assert out["phase"] == "settled"
+    assert sent
+    assert aid in sent[0]
 
 
 @pytest.mark.asyncio
@@ -284,3 +347,102 @@ async def test_second_pass_clears_image_update(
     assert out["status"] == "done"
     assert len(out["passes"]) == 2
     assert out["probe_after"]["forever_box"]["imageUpdateAvailable"] is False
+
+
+def test_probe_js_is_not_self_invoking_iife() -> None:
+    assert not PROBE_JS.rstrip().endswith("})()")
+    assert WAKE_JS.rstrip().endswith("})")
+
+
+@pytest.mark.skipif(
+    subprocess.run(["which", "node"], capture_output=True).returncode != 0,
+    reason="node not installed",
+)
+def test_grok_probe_and_wake_js_node_execution(tmp_path: Path) -> None:
+    script = tmp_path / "grok_page_scripts_run.mjs"
+    script.write_text(
+        f"""
+const counts = {{
+  focusWindow: 0,
+  setComputerViewOpen: 0,
+  signalBoxIntent: 0,
+  forceReconnectGateway: 0,
+}};
+let egressState = "connected";
+globalThis.window = {{
+  desktop: {{
+    main: {{
+      focusWindow: async () => {{ counts.focusWindow += 1; }},
+      setComputerViewOpen: async (_opts) => {{ counts.setComputerViewOpen += 1; }},
+      signalBoxIntent: async (_opts) => {{ counts.signalBoxIntent += 1; }},
+      getEgressTunnelStatus: async () => ({{ state: egressState }}),
+      forceReconnectGateway: async () => {{
+        counts.forceReconnectGateway += 1;
+        egressState = "connected";
+        return {{}};
+      }},
+      getBoxHostPhase: async () => "settled",
+      getBoxMigrationStatus: async () => ({{ phase: "idle" }}),
+      getUpdateStatus: async () => ({{}}),
+    }},
+  }},
+}};
+globalThis.document = {{
+  getElementById: () => null,
+  body: {{ firstElementChild: null }},
+  querySelectorAll: () => [],
+}};
+
+const PROBE = {json.dumps(PROBE_JS)};
+const WAKE = {json.dumps(WAKE_JS)};
+
+const probeOut = await eval(`(${{PROBE}})(${{JSON.stringify("agent-1")}})`);
+if (probeOut.phase !== "settled") {{
+  throw new Error(`probe phase ${{probeOut.phase}}`);
+}}
+
+Object.assign(counts, {{
+  focusWindow: 0,
+  setComputerViewOpen: 0,
+  signalBoxIntent: 0,
+  forceReconnectGateway: 0,
+}});
+await eval(`(${{WAKE}})(${{JSON.stringify("agent-1")}}, null, false)`);
+if (
+  counts.focusWindow !== 0
+  || counts.setComputerViewOpen !== 0
+  || counts.signalBoxIntent !== 0
+) {{
+  throw new Error(`passive wake UI counts ${{JSON.stringify(counts)}}`);
+}}
+
+Object.assign(counts, {{
+  focusWindow: 0,
+  setComputerViewOpen: 0,
+  signalBoxIntent: 0,
+}});
+await eval(`(${{WAKE}})(${{JSON.stringify("agent-1")}}, true, true)`);
+if (
+  counts.focusWindow !== 1
+  || counts.setComputerViewOpen !== 1
+  || counts.signalBoxIntent !== 1
+) {{
+  throw new Error(`active wake UI counts ${{JSON.stringify(counts)}}`);
+}}
+
+egressState = "off";
+Object.assign(counts, {{ forceReconnectGateway: 0, setComputerViewOpen: 0 }});
+await eval(`(${{WAKE}})(${{JSON.stringify("agent-1")}}, null, false)`);
+if (counts.forceReconnectGateway !== 1 || counts.setComputerViewOpen !== 0) {{
+  throw new Error(`passive reconnect counts ${{JSON.stringify(counts)}}`);
+}}
+""",
+        encoding="utf-8",
+    )
+    proc = subprocess.run(
+        ["node", str(script)],
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    assert proc.returncode == 0, proc.stderr or proc.stdout

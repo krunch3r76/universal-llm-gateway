@@ -85,6 +85,14 @@ def supervision_gate_mode() -> Literal["off", "observe"]:
     return "observe"
 
 
+def supervision_poll_mode() -> Literal["off", "observe"]:
+    """Read ULG_SUPERVISION_POLL_MODE at call time (default observe)."""
+    raw = _strip_env("ULG_SUPERVISION_POLL_MODE", "observe")
+    if _is_off_value(raw):
+        return "off"
+    return "observe"
+
+
 def census_enabled() -> bool:
     """Read ULG_BROWSER_CENSUS_ENABLED at call time (default enabled)."""
     raw = _strip_env("ULG_BROWSER_CENSUS_ENABLED", "1")
@@ -133,6 +141,12 @@ def grok_keepalive_displays(configured_displays: Sequence[str]) -> tuple[str, ..
     stripped = raw.strip()
     if _is_off_value(stripped, extra_off=_KEEPALIVE_OFF_VALUES):
         return ()
+    if stripped.lower() == "secondary_off":
+        return tuple(
+            token
+            for token in _normalize_display_tokens(configured_displays)
+            if token == "9"
+        )
     parts = [p.strip().lstrip(":") for p in stripped.split(",")]
     return _normalize_display_tokens(parts)
 

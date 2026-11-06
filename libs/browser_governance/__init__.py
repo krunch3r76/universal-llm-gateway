@@ -2,6 +2,11 @@
 
 ``CONSUMERS`` names manage slugs that may import this shared contract for
 browser census, admission preflight, and supervision (R1/S1 slices).
+
+``IN_PROCESS_HOST_CONSUMERS`` names hosts that embed governance-adjacent loops
+inside another manage process (for example model-manager TUI hosting
+``GrokbotEgressWatchLoop``). These are audit-visible only — not an automatic
+``owned_libs`` restart list.
 """
 
 from browser_governance.contract import (
@@ -31,9 +36,11 @@ from browser_governance.events import (
 )
 
 CONSUMERS: tuple[str, ...] = ("agent_bus", "cdp_ask", "mcp", "stargate")
+IN_PROCESS_HOST_CONSUMERS: tuple[str, ...] = ("manage",)
 
 __all__ = [
     "CONSUMERS",
+    "IN_PROCESS_HOST_CONSUMERS",
     "DEFAULT_WARN_DISK_FREE_GIB",
     "DEFAULT_WARN_MEM_AVAILABLE_MIB",
     "DEFAULT_WARN_SWAP_FREE_MIB",

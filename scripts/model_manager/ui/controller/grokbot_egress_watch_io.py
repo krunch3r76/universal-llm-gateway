@@ -16,12 +16,15 @@ from pathlib import Path
 from typing import Any
 
 from transport_utils.client_factory import DEFAULT_EVENTS_QUERY_SOCK_PATH
+from universal_logging import get_logger
 
 from scripts.model_manager.ui.controller.grokbot_egress_watch_logic import (
     _LOADER_STUCK_AFTER_TOOLS_LIST_S,
     GrokbotEgressSnapshot,
     watch_connection_state,
 )
+
+logger = get_logger(__name__)
 
 DEFAULT_DESKTOP_STATUS = Path.home() / ".gateway/grok-io/desktop-status.json"
 DEFAULT_GC2_DESKTOP_STATUS = Path.home() / ".gateway/grok-io-gc2/desktop-status.json"
@@ -30,13 +33,16 @@ DEFAULT_HOP_COOLDOWN = DEFAULT_DESKTOP_STATUS.parent / "hop-cooldown.json"
 DEFAULT_DAEMON_LOG = Path.home() / ".gateway/grok-io/sand-data/local-exec-daemon.log"
 DEFAULT_DESKTOP_BINARY = Path("/opt/Grok Bot/grok-bot")
 _PRESENCE_KEEPALIVE_TIMEOUT_S = 5.0
+_KEEPALIVE_MALFORMED_WARN_COOLDOWN_S = 300.0
+_last_malformed_keepalive_warn_at: dict[str, float] = {}
 
 
 def keep_alive_grokbot_presence(
     display: str = ":9",
     cdp_port: int = 9339,
     *,
-    open_computer_view: bool = True,
+    open_computer_view: bool | None = True,
+    focus_window: bool = True,
 ) -> dict[str, Any]:
     """Non-disruptive X11 + CDP presence wake when Grok Bot is running."""
     from cursor_bridge.grok_computer import wake_grok_computer
@@ -48,6 +54,7 @@ def keep_alive_grokbot_presence(
                 display=display,
                 timeout_s=_PRESENCE_KEEPALIVE_TIMEOUT_S,
                 open_computer_view=open_computer_view,
+                focus_window=focus_window,
             )
         )
     except Exception as exc:
@@ -111,17 +118,20 @@ def save_hop_cooldown_journal(
     path.write_text(json.dumps(entries, indent=2) + "\n", encoding="utf-8")
 
 
-def desktop_status_path_for_display(display: str) -> Path:
+def desktop_status_path_for_display(display: str) -> Path | None:
     """Map a Grok display id to its desktop-status.json path."""
     token = str(display or "").strip().lstrip(":")
+    if token == "9":
+        return DEFAULT_DESKTOP_STATUS
     if token == "10":
         return DEFAULT_GC2_DESKTOP_STATUS
-    return DEFAULT_DESKTOP_STATUS
+    return None
 
 
 def secondary_display_running(display: str, cdp_port: int) -> bool:
     """True when a non-primary Grok display is alive (status pid or CDP TCP)."""
-    status = read_desktop_status(desktop_status_path_for_display(display))
+    status_path = desktop_status_path_for_display(display)
+    status = read_desktop_status(status_path) if status_path is not None else None
     alive, _ = desktop_pid_alive(status)
     if alive:
         return True
@@ -140,27 +150,131 @@ def secondary_display_running(display: str, cdp_port: int) -> bool:
         sock.close()
 
 
+_DISPLAY_PROBE_AGENT_SLUG: dict[str, str] = {
+    "9": "grok-bot-gc1",
+    "10": "grok-bot-gc2",
+}
+
+
+def resolve_grok_display_agent_id(display: str) -> str | None:
+    """Bound Grok roster UUID for health probes, when configured."""
+    token = str(display or "").strip().lstrip(":")
+    try:
+        from cursor_bridge.grok_window_bindings import load_config
+
+        config = load_config()
+        windows = config.get("windows")
+        if isinstance(windows, dict):
+            row = windows.get(token) or windows.get(f":{token}")
+            if isinstance(row, dict):
+                raw = row.get("agent_id")
+                if isinstance(raw, str) and raw.strip():
+                    return raw.strip()
+    except Exception:
+        pass
+    slug = _DISPLAY_PROBE_AGENT_SLUG.get(token)
+    if not slug:
+        return None
+    try:
+        from agent_bus_store.db.endpoint_subscriptions import list_subscriptions
+
+        for row in list_subscriptions():
+            if str(row.get("agent") or "").strip().lower().replace("_", "-") != slug:
+                continue
+            aid = row.get("agent_id")
+            if isinstance(aid, str) and aid.strip():
+                return aid.strip()
+    except Exception:
+        return None
+    return None
+
+
 def resolve_grok_keepalive_targets() -> list[tuple[str, int]]:
     """Enabled (display, cdp_port) pairs from config + ULG_GROK_KEEPALIVE_DISPLAYS."""
     from browser_governance.contract import grok_keepalive_displays
     from cursor_bridge.grok_window_bindings import load_config
 
-    config = load_config()
-    windows = config.get("windows")
-    if not isinstance(windows, dict):
-        return []
-    configured = tuple(str(k).lstrip(":") for k in windows.keys())
-    selected = grok_keepalive_displays(configured)
-    out: list[tuple[str, int]] = []
-    for token in selected:
-        row = windows.get(token) or windows.get(f":{token}")
-        if not isinstance(row, dict):
-            continue
-        port_raw = row.get("cdp_port")
-        if not isinstance(port_raw, int):
-            continue
-        out.append((f":{token.lstrip(':')}", port_raw))
-    return out
+    try:
+        config = load_config()
+        windows = config.get("windows")
+        if not isinstance(windows, dict):
+            raise ValueError("grok-windows.json windows missing or invalid")
+        configured = tuple(str(k).lstrip(":") for k in windows.keys())
+        selected = grok_keepalive_displays(configured)
+        out: list[tuple[str, int]] = []
+        for token in selected:
+            row = windows.get(token) or windows.get(f":{token}")
+            if not isinstance(row, dict):
+                continue
+            port_raw = row.get("cdp_port")
+            if not isinstance(port_raw, int):
+                continue
+            out.append((f":{token.lstrip(':')}", port_raw))
+        return out
+    except Exception as exc:
+        warn_key = f"{type(exc).__name__}:{exc}"
+        now = time.monotonic()
+        last = _last_malformed_keepalive_warn_at.get(warn_key)
+        if last is None or (now - last) >= _KEEPALIVE_MALFORMED_WARN_COOLDOWN_S:
+            logger.warning(
+                "grok keepalive targets malformed; falling back to display 9 only",
+                extra={
+                    "error_class": type(exc).__name__,
+                    "detail": str(exc),
+                    "signal": "grokbot.keepalive.config_fallback",
+                },
+            )
+            _last_malformed_keepalive_warn_at[warn_key] = now
+        selected = grok_keepalive_displays(("9",))
+        if not selected:
+            return []
+        return [(":9", 9339)]
+
+
+def _forever_box_status_token(raw: object) -> str | None:
+    if raw is None:
+        return None
+    if isinstance(raw, str):
+        text = raw.strip()
+        return text.lower() if text else None
+    if isinstance(raw, dict):
+        for key in ("status", "state", "phase"):
+            val = raw.get(key)
+            if isinstance(val, str) and val.strip():
+                return val.strip().lower()
+    return None
+
+
+def grok_app_health_classify(
+    probe: dict[str, Any] | None,
+) -> tuple[list[str], list[str]]:
+    """Report-only tags: (error_kinds, observe_kinds). No side effects."""
+    if not isinstance(probe, dict) or not probe:
+        return (["probe_unknown"], [])
+    errors: list[str] = []
+    observes: list[str] = []
+    phase = str(probe.get("phase") or "").lower()
+    if phase == "asleep":
+        observes.append("phase_asleep")
+    egress = probe.get("egress")
+    if isinstance(egress, dict):
+        egress_state = str(egress.get("state") or "").lower()
+        if egress_state in {"off", "error", "failed", "disconnected"}:
+            errors.append(f"egress_{egress_state}")
+    forever_box = probe.get("forever_box")
+    if forever_box is None:
+        observes.append("forever_box_unreadable")
+    else:
+        status = _forever_box_status_token(forever_box)
+        if status in {"unresponsive", "failed", "offline", "error"}:
+            errors.append("forever_box_unresponsive")
+    return (errors, observes)
+
+
+def grok_app_health_issue_kinds(probe: dict[str, Any] | None) -> list[str]:
+    """Error-level issue tags only (observe kinds excluded)."""
+    errors, _observes = grok_app_health_classify(probe)
+    return errors
 
 
 def read_desktop_status(
@@ -579,6 +693,9 @@ __all__ = [
     "DEFAULT_GC2_DESKTOP_STATUS",
     "DEFAULT_HOP_COOLDOWN",
     "desktop_status_path_for_display",
+    "grok_app_health_classify",
+    "grok_app_health_issue_kinds",
+    "resolve_grok_display_agent_id",
     "resolve_grok_keepalive_targets",
     "secondary_display_running",
     "load_hop_cooldown_journal",
