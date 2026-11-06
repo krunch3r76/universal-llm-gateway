@@ -6,6 +6,7 @@ import asyncio
 import json
 import os
 import re
+import socket
 import sqlite3
 import time
 from collections import deque
@@ -23,6 +24,8 @@ from scripts.model_manager.ui.controller.grokbot_egress_watch_logic import (
 )
 
 DEFAULT_DESKTOP_STATUS = Path.home() / ".gateway/grok-io/desktop-status.json"
+DEFAULT_GC2_DESKTOP_STATUS = Path.home() / ".gateway/grok-io-gc2/desktop-status.json"
+_SECONDARY_CDP_CONNECT_TIMEOUT_S = 0.3
 DEFAULT_HOP_COOLDOWN = DEFAULT_DESKTOP_STATUS.parent / "hop-cooldown.json"
 DEFAULT_DAEMON_LOG = Path.home() / ".gateway/grok-io/sand-data/local-exec-daemon.log"
 DEFAULT_DESKTOP_BINARY = Path("/opt/Grok Bot/grok-bot")
@@ -102,6 +105,58 @@ def save_hop_cooldown_journal(
     ]
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(entries, indent=2) + "\n", encoding="utf-8")
+
+
+def desktop_status_path_for_display(display: str) -> Path:
+    """Map a Grok display id to its desktop-status.json path."""
+    token = str(display or "").strip().lstrip(":")
+    if token == "10":
+        return DEFAULT_GC2_DESKTOP_STATUS
+    return DEFAULT_DESKTOP_STATUS
+
+
+def secondary_display_running(display: str, cdp_port: int) -> bool:
+    """True when a non-primary Grok display is alive (status pid or CDP TCP)."""
+    status = read_desktop_status(desktop_status_path_for_display(display))
+    alive, _ = desktop_pid_alive(status)
+    if alive:
+        return True
+    if os.environ.get("PYTEST_CURRENT_TEST") and os.environ.get(
+        "ULG_GROK_KEEPALIVE_DISPLAYS"
+    ) is None:
+        return False
+    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    try:
+        sock.settimeout(_SECONDARY_CDP_CONNECT_TIMEOUT_S)
+        sock.connect(("127.0.0.1", int(cdp_port)))
+        return True
+    except OSError:
+        return False
+    finally:
+        sock.close()
+
+
+def resolve_grok_keepalive_targets() -> list[tuple[str, int]]:
+    """Enabled (display, cdp_port) pairs from config + ULG_GROK_KEEPALIVE_DISPLAYS."""
+    from browser_governance.contract import grok_keepalive_displays
+    from cursor_bridge.grok_window_bindings import load_config
+
+    config = load_config()
+    windows = config.get("windows")
+    if not isinstance(windows, dict):
+        return []
+    configured = tuple(str(k).lstrip(":") for k in windows.keys())
+    selected = grok_keepalive_displays(configured)
+    out: list[tuple[str, int]] = []
+    for token in selected:
+        row = windows.get(token) or windows.get(f":{token}")
+        if not isinstance(row, dict):
+            continue
+        port_raw = row.get("cdp_port")
+        if not isinstance(port_raw, int):
+            continue
+        out.append((f":{token.lstrip(':')}", port_raw))
+    return out
 
 
 def read_desktop_status(
@@ -517,7 +572,11 @@ __all__ = [
     "DEFAULT_DAEMON_LOG",
     "DEFAULT_DESKTOP_BINARY",
     "DEFAULT_DESKTOP_STATUS",
+    "DEFAULT_GC2_DESKTOP_STATUS",
     "DEFAULT_HOP_COOLDOWN",
+    "desktop_status_path_for_display",
+    "resolve_grok_keepalive_targets",
+    "secondary_display_running",
     "load_hop_cooldown_journal",
     "save_hop_cooldown_journal",
     "keep_alive_grokbot_presence",
