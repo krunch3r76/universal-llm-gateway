@@ -11,7 +11,12 @@ from agent_bus_store.db.connection import write_connect
 logger = logging.getLogger(__name__)
 
 COMPOSER_DEFER_REASONS = frozenset(
-    {"composer_not_empty", "composer_busy", "active_chat_busy"}
+    {
+        "composer_not_empty",
+        "composer_busy",
+        "active_chat_busy",
+        "non_empty_composer",
+    }
 )
 COMPOSER_DEFER_ARMED = "composer_defer:armed"
 COMPOSER_DEFER_SWEEP = "composer_defer:sweep_eligible"
