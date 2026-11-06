@@ -2,19 +2,10 @@
 
 from __future__ import annotations
 
-import pytest
 from execution_conformance.adapters import CursorBridgeBusModelAdapter
 from execution_conformance.ledger import ReferenceSqliteIntentLedger
 from execution_conformance.reconciler import dispatch_intent, reconcile
 from execution_conformance.states import ExecutionState
-
-
-@pytest.fixture()
-def bus_env(tmp_path, monkeypatch: pytest.MonkeyPatch):
-    monkeypatch.setenv("AGENT_BUS_DB_PATH", str(tmp_path / "bus.db"))
-    from agent_bus_store.db.connection import init_db
-
-    init_db()
 
 
 def test_p4_m6_reserved_receipt_reconcile_steady(bus_env, tmp_path) -> None:

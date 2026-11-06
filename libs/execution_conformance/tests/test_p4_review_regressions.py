@@ -15,25 +15,17 @@ from execution_conformance.crash_hooks import (
     dispatch_crash_after_admit_before_receipt,
     dispatch_crash_after_reserve,
 )
-from execution_conformance.ledger import IntentLedger
+from execution_conformance.ledger import ReferenceSqliteIntentLedger
 from execution_conformance.reconciler import dispatch_intent, reconcile
 from execution_conformance.states import ExecutionState
 from execution_conformance.store_epoch import intent_tag_body
-
-
-@pytest.fixture()
-def bus_env(tmp_path, monkeypatch: pytest.MonkeyPatch):
-    monkeypatch.setenv("AGENT_BUS_DB_PATH", str(tmp_path / "bus.db"))
-    from agent_bus_store.db.connection import init_db
-
-    init_db()
 
 
 def test_p4_regression_double_reconcile_race(
     tmp_path, monkeypatch: pytest.MonkeyPatch, bus_env
 ) -> None:
     monkeypatch.setenv("DATA_DIR", str(tmp_path / "gateway"))
-    ledger = IntentLedger(tmp_path / "intents.db")
+    ledger = ReferenceSqliteIntentLedger(tmp_path / "intents.db")
     adapter = CountingAdmitWrapper(AgentBusAdapter())
     key = "reconcile-race-key-abcdef12"
     dispatch_crash_after_reserve(
@@ -57,13 +49,22 @@ def test_p4_regression_double_reconcile_race(
     t1.join()
     t2.join()
     assert sum(results) <= 1
+    row = ledger.get("intent-race-reconcile")
+    assert row is not None
+    assert row.state == ExecutionState.accepted
+    assert row.actuator_ref is not None
+    from agent_bus_store.db.connection import connect
+    from agent_bus_store.db.thread_idempotency import thread_id_for_idempotency_key
+
+    with connect() as conn:
+        assert thread_id_for_idempotency_key(conn, key) is not None
 
 
 def test_p4_regression_double_reconcile_retry_claim(
     tmp_path, monkeypatch: pytest.MonkeyPatch, bus_env
 ) -> None:
     monkeypatch.setenv("DATA_DIR", str(tmp_path / "gateway"))
-    ledger = IntentLedger(tmp_path / "intents.db")
+    ledger = ReferenceSqliteIntentLedger(tmp_path / "intents.db")
     adapter = CountingAdmitWrapper(AgentBusAdapter())
     key = "race-retry-key-abcdef12"
     dispatch_crash_after_reserve(
@@ -90,7 +91,7 @@ def test_p4_regression_double_reconcile_retry_claim(
 def test_p4_regression_completed_local_owner_miss_no_admit(
     tmp_path, monkeypatch: pytest.MonkeyPatch, bus_env
 ) -> None:
-    ledger = IntentLedger(tmp_path / "intents.db")
+    ledger = ReferenceSqliteIntentLedger(tmp_path / "intents.db")
     adapter = CountingAdmitWrapper(AgentBusAdapter())
     dispatch_intent(
         ledger,
@@ -110,7 +111,7 @@ def test_p4_regression_reconcile_idempotent_unknown(
     tmp_path, monkeypatch: pytest.MonkeyPatch, bus_env
 ) -> None:
     monkeypatch.setenv("DATA_DIR", str(tmp_path / "gateway"))
-    ledger = IntentLedger(tmp_path / "intents.db")
+    ledger = ReferenceSqliteIntentLedger(tmp_path / "intents.db")
     adapter = CursorBridgeBusModelAdapter()
     dispatch_intent(
         ledger,
@@ -133,7 +134,7 @@ def test_p4_regression_reserved_to_completed_adopt(
 ) -> None:
     from execution_conformance.adapters import StargatePipelineAdapter
 
-    ledger = IntentLedger(tmp_path / "intents.db")
+    ledger = ReferenceSqliteIntentLedger(tmp_path / "intents.db")
     tracker = StargatePipelineAdapter().tracker
     exec_id = "stargate-reserved-complete"
     adapter = StargatePipelineAdapter(tracker)
@@ -164,7 +165,7 @@ def test_p4_regression_cdp_abandoned_cancelled(
     monkeypatch.setenv("DATA_DIR", str(tmp_path / "gateway"))
     from systems.frontier_consult.cdp_generate_inflight_ledger import mark_abandoned
 
-    ledger = IntentLedger(tmp_path / "intents.db")
+    ledger = ReferenceSqliteIntentLedger(tmp_path / "intents.db")
     adapter = CdpInflightAdapter()
     exec_id = "cdp-abandon-exec"
     dispatch_intent(
@@ -184,7 +185,7 @@ def test_p4_regression_cdp_abandoned_cancelled(
 def test_p4_regression_same_identity_two_intent_ids(
     tmp_path, monkeypatch: pytest.MonkeyPatch, bus_env
 ) -> None:
-    ledger = IntentLedger(tmp_path / "intents.db")
+    ledger = ReferenceSqliteIntentLedger(tmp_path / "intents.db")
     adapter = CountingAdmitWrapper(AgentBusAdapter())
     key = "shared-key-abcdef12"
     first = dispatch_intent(
@@ -211,7 +212,7 @@ def test_p4_regression_bridge_reply_must_match_intent_tag(
 ) -> None:
     from agent_bus_store.db import insert_turn
 
-    ledger = IntentLedger(tmp_path / "intents.db")
+    ledger = ReferenceSqliteIntentLedger(tmp_path / "intents.db")
     adapter = CursorBridgeBusModelAdapter()
     key_a = "bridge-a-key-abcdef12"
     key_b = "bridge-b-key-abcdef12"

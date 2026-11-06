@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import pytest
 from execution_conformance.adapters import (
     AgentBusAdapter,
     CdpInflightAdapter,
@@ -10,22 +9,14 @@ from execution_conformance.adapters import (
     CursorBridgeBusModelAdapter,
     StargatePipelineAdapter,
 )
-from execution_conformance.ledger import IntentLedger
+from execution_conformance.ledger import ReferenceSqliteIntentLedger
 from execution_conformance.reconciler import dispatch_intent
 from execution_conformance.states import ExecutionState
 
 
-@pytest.fixture()
-def bus_env(tmp_path, monkeypatch: pytest.MonkeyPatch):
-    monkeypatch.setenv("AGENT_BUS_DB_PATH", str(tmp_path / "bus.db"))
-    from agent_bus_store.db.connection import init_db
-
-    init_db()
-
-
 def test_p4_round2_dispatch_twice_cdp(tmp_path, monkeypatch, bus_env) -> None:
     monkeypatch.setenv("DATA_DIR", str(tmp_path / "gateway"))
-    ledger = IntentLedger(tmp_path / "intents.db")
+    ledger = ReferenceSqliteIntentLedger(tmp_path / "intents.db")
     wrapped = CountingAdmitWrapper(CdpInflightAdapter())
     dispatch_intent(
         ledger,
@@ -45,7 +36,7 @@ def test_p4_round2_dispatch_twice_cdp(tmp_path, monkeypatch, bus_env) -> None:
 
 
 def test_p4_round2_dispatch_twice_stargate_after_restart(tmp_path) -> None:
-    ledger = IntentLedger(tmp_path / "intents.db")
+    ledger = ReferenceSqliteIntentLedger(tmp_path / "intents.db")
     t1 = StargatePipelineAdapter()
     wrapped = CountingAdmitWrapper(t1)
     dispatch_intent(
@@ -71,7 +62,7 @@ def test_p4_round2_dispatch_twice_blocked_unknown(
     tmp_path, monkeypatch, bus_env
 ) -> None:
     monkeypatch.setenv("DATA_DIR", str(tmp_path / "gateway"))
-    ledger = IntentLedger(tmp_path / "intents.db")
+    ledger = ReferenceSqliteIntentLedger(tmp_path / "intents.db")
     wrapped = CountingAdmitWrapper(CursorBridgeBusModelAdapter())
     dispatch_intent(
         ledger,
@@ -95,7 +86,7 @@ def test_p4_round2_dispatch_twice_blocked_unknown(
 
 
 def test_p4_round2_dispatch_twice_completed(tmp_path, monkeypatch, bus_env) -> None:
-    ledger = IntentLedger(tmp_path / "intents.db")
+    ledger = ReferenceSqliteIntentLedger(tmp_path / "intents.db")
     wrapped = CountingAdmitWrapper(AgentBusAdapter())
     key = "completed-key-abcdef12"
     dispatch_intent(
@@ -117,7 +108,7 @@ def test_p4_round2_dispatch_twice_completed(tmp_path, monkeypatch, bus_env) -> N
 
 
 def test_p4_round2_bridge_tag_special_chars(tmp_path, monkeypatch, bus_env) -> None:
-    ledger = IntentLedger(tmp_path / "intents.db")
+    ledger = ReferenceSqliteIntentLedger(tmp_path / "intents.db")
     adapter = CursorBridgeBusModelAdapter()
     key = "intent_%wild\\key"
     dispatch_intent(

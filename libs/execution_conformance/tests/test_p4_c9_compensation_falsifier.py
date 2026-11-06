@@ -3,13 +3,13 @@
 from __future__ import annotations
 
 import pytest
-from execution_conformance.ledger import IntentLedger
+from execution_conformance.ledger import ReferenceSqliteIntentLedger
 from execution_conformance.reconciler import CompensatingAction, compensate_unknown
 from execution_conformance.states import ExecutionState
 
 
 def test_p4_c9_compensation_falsifier(tmp_path) -> None:
-    ledger = IntentLedger(tmp_path / "intents.db")
+    ledger = ReferenceSqliteIntentLedger(tmp_path / "intents.db")
     ledger.reserve(
         intent_id="intent-c9",
         actuator="agent_bus",

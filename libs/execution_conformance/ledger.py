@@ -11,7 +11,12 @@ from pathlib import Path
 from typing import Any, Protocol, runtime_checkable
 
 from .manifest import ActuatorName
-from .states import ExecutionState, IllegalStateTransitionError, assert_transition
+from .states import (
+    TERMINAL_STATES,
+    ExecutionState,
+    IllegalStateTransitionError,
+    assert_transition,
+)
 
 
 def _utc_now() -> str:
@@ -65,10 +70,15 @@ class ReserveOutcome:
 
 @runtime_checkable
 class IntentStore(Protocol):
-    """Operational intent persistence — production binds ``libs/cortex_store`` aggregate."""
+    """Durable local intent persistence contract (production: ``libs/cortex_store`` aggregate).
 
-    @property
-    def db_path(self) -> Path: ...
+    Invariants:
+    - ``reserve`` persists ``reserved`` before any remote admit returns (durable-before-return).
+    - ``UNIQUE(actuator, identity_key)`` — at most one row per actuator identity.
+    - Mutators use compare-and-swap (``set_state_cas``, ``record_receipt_cas``, ``claim_retry``).
+    - ``set_state`` enforces monotone ``LEGAL_TRANSITIONS``; ``blocked_unknown`` exits only via
+      ``apply_compensation``, ``apply_ref_conflict_resolution``, or owner-evidence adoption paths.
+    """
 
     def reserve(
         self,
@@ -115,7 +125,15 @@ class IntentStore(Protocol):
         prior_state: ExecutionState,
     ) -> IntentRecord: ...
 
-    def reopen(self) -> IntentStore: ...
+    def apply_ref_conflict_resolution(
+        self,
+        intent_id: str,
+        *,
+        authorized_by: str,
+        reason: str,
+        target_state: ExecutionState,
+        prior_state: ExecutionState,
+    ) -> IntentRecord: ...
 
 
 class ReferenceSqliteIntentLedger:
@@ -231,6 +249,10 @@ class ReferenceSqliteIntentLedger:
             raise KeyError(f"unknown intent_id {intent_id!r}")
         if current.state == state:
             return current
+        if current.state == ExecutionState.blocked_unknown and state in TERMINAL_STATES:
+            raise IllegalStateTransitionError(
+                f"blocked_unknown → {state.value} requires resolution helper"
+            )
         row = self.set_state_cas(intent_id, current.state, state)
         if row is None:
             fresh = self.get(intent_id)
@@ -391,11 +413,48 @@ class ReferenceSqliteIntentLedger:
             raise KeyError(intent_id)
         return row
 
+    def apply_ref_conflict_resolution(
+        self,
+        intent_id: str,
+        *,
+        authorized_by: str,
+        reason: str,
+        target_state: ExecutionState,
+        prior_state: ExecutionState,
+    ) -> IntentRecord:
+        if target_state not in (
+            ExecutionState.failed,
+            ExecutionState.cancelled,
+            ExecutionState.completed,
+        ):
+            raise ValueError("ref_conflict resolution target must be terminal")
+        ts = _utc_now()
+        with closing(self._connect()) as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            conn.execute(
+                "INSERT INTO execution_compensations "
+                "(intent_id, authorized_by, reason, prior_state, created_at) "
+                "VALUES (?, ?, ?, ?, ?)",
+                (intent_id, authorized_by, reason, prior_state.value, ts),
+            )
+            cur = conn.execute(
+                "UPDATE execution_intents SET state = ?, retry_count = MAX(retry_count, 1), "
+                "updated_at = ? WHERE intent_id = ? AND state = ?",
+                (target_state.value, ts, intent_id, prior_state.value),
+            )
+            if cur.rowcount != 1:
+                conn.execute("ROLLBACK")
+                raise IllegalStateTransitionError(
+                    f"ref_conflict resolution cas failed for {intent_id!r}"
+                )
+            conn.commit()
+        row = self.get(intent_id)
+        if row is None:
+            raise KeyError(intent_id)
+        return row
+
     def reopen(self) -> ReferenceSqliteIntentLedger:
         return ReferenceSqliteIntentLedger(self._db_path)
-
-
-IntentLedger = ReferenceSqliteIntentLedger
 
 
 def _row_to_record(row: sqlite3.Row) -> IntentRecord:

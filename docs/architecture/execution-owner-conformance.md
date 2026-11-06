@@ -31,12 +31,17 @@ code. Do **not** stand it up as a parallel operational store beside cortex_store
 
 1. **Terminal local states** (`completed`, `failed`, `cancelled`) — no lookup admit.
 2. **Found** — adopt owner state (no rank regression); ref conflicts block with
-   persisted `blocked_reason` (`ref_conflict` is compensation-only).
+   persisted `blocked_reason` (`ref_conflict` is sticky and exits only via
+   `resolve_ref_conflict`; `compensate_unknown` on ref_conflict yields
+   `outcome_unknown` and the next reconcile re-blocks as ref_conflict).
 3. **Retry on miss** — only when `adapter.admit_idempotent` is true (today: `agent_bus` only),
    **recorded and current `store_epoch` match**, and `claim_retry` wins the CAS race.
    Retry reuses persisted `payload.admit_kwargs`. CDP miss with a durable local row
    does not retry (safe block).
-4. **All other misses** (stargate, epoch mismatch, empty epoch) — `blocked_unknown`, zero redispatch.
+4. **All other misses** (`stargate_pipeline` with `admit_idempotent=False`, epoch mismatch,
+   unprovisioned epoch on crash-recovery retry) — `blocked_unknown`, zero redispatch.
+   **`claim_retry` loss** — re-read ledger; return advanced state or a non-mutating
+   in-flight outcome (never fall through to `_block_unknown` after a lost CAS).
 5. **Open CDP leg / bridge MSG without correlated REPLY** — after local receipt, adopt
    `accepted`/`running` with `owner_unknown_reason` recorded; steady across repeated
    reconciles (does not flip to `blocked_unknown` on the next pass). This is conservative
@@ -56,15 +61,26 @@ pytest libs/execution_conformance -q
 
 Machine-readable capability matrix: `execution_conformance.manifest.MANIFEST`.
 
-## Store epoch (persisted UUID)
+## Store epoch (read-only witness + explicit provisioning)
 
-Each durable owner SQLite file carries a singleton meta-table
-`_execution_store_epoch` with a UUID written at first open (`INSERT OR IGNORE`).
-Resolvers: `agent_bus_store.db.connection._db_path`, cdp `_db_path`. Stargate uses
-a per-tracker-instance `uuid4` (not `id(tracker)`). **Fail closed** when the DB
-file is missing, empty, or unreadable (`store_epoch == ""`). **Retry on miss**
-for `agent_bus` requires `record.store_epoch == lookup.store_epoch`; recreate or
-replace the owner DB changes epoch and blocks non-idempotent retry paths.
+Conformance **never** writes owner SQLite from `lookup` / `store_epoch` / `reserve`.
+`read_store_epoch(path)` opens `file:…?mode=ro` and returns
+`EpochReadResult(status=ok|unprovisioned|unavailable, epoch=…)`.
+
+- **`provision_store_epoch(path)`** — tests/bootstrap only; creates `_execution_store_epoch`.
+- **`rotate_store_epoch(path)`** — post backup/restore; assigns a new UUID so retry
+  paths fail closed with `epoch_mismatch`.
+
+**Retry on miss** (`agent_bus` only) requires matching non-empty UUIDs. **Unprovisioned**
+epoch allows first `dispatch_intent` admit without mutating owner DB; crash-recovery
+retry fails closed (`epoch_unverified`). **Unavailable** (locked/busy) returns a
+**transient** reconcile outcome — no `_block_unknown`, no `floor_retry` — so a later
+pass can succeed.
+
+Stargate shares one epoch + lock per `PipelineExecutionTracker` instance (WeakKeyDictionary).
+
+CDP `CdpInflightAdapter.admit` uses reference `INSERT OR REPLACE`; production requires
+owner insert-if-absent wiring.
 
 ## Drain / stop-new (out of scope)
 

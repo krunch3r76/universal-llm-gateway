@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from execution_conformance.adapters import HealthOnlyAdapter
 from execution_conformance.crash_hooks import dispatch_crash_after_reserve
-from execution_conformance.ledger import IntentLedger
+from execution_conformance.ledger import ReferenceSqliteIntentLedger
 from execution_conformance.reconciler import reconcile
 from execution_conformance.states import ExecutionState
 
@@ -12,7 +12,7 @@ from execution_conformance.states import ExecutionState
 def test_p4_c8_health_alone_falsifier(tmp_path) -> None:
     adapter = HealthOnlyAdapter()
     assert adapter.health() is True
-    ledger = IntentLedger(tmp_path / "intents.db")
+    ledger = ReferenceSqliteIntentLedger(tmp_path / "intents.db")
     dispatch_crash_after_reserve(
         ledger,
         adapter,

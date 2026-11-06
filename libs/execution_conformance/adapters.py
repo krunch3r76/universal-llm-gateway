@@ -1,15 +1,23 @@
-"""Read-only wrappers over existing actuator surfaces (no MCP runtime import)."""
+"""Read-only actuator adapters for phase-4 conformance (no MCP runtime import)."""
 
 from __future__ import annotations
 
 import threading
+import weakref
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Protocol
 from uuid import uuid4
 
 from .states import ExecutionState
-from .store_epoch import intent_tag_body, intent_tag_length, persisted_store_epoch
+from .store_epoch import (
+    EpochReadResult,
+    EpochStatus,
+    epoch_for_reserve,
+    intent_tag_body,
+    intent_tag_length,
+    read_store_epoch,
+)
 
 # PipelineExecutionRecord.status (records.py) is only running | completed | failed.
 _TRACKER_STATUS_MAP: dict[str, ExecutionState] = {
@@ -18,17 +26,35 @@ _TRACKER_STATUS_MAP: dict[str, ExecutionState] = {
     "failed": ExecutionState.failed,
 }
 
+_TRACKER_EPOCH_LOCK_INIT = threading.Lock()
+_TRACKER_EPOCH_LOCK: weakref.WeakKeyDictionary[Any, tuple[str, threading.Lock]] = (
+    weakref.WeakKeyDictionary()
+)
+
 
 def map_tracker_status(status: str) -> ExecutionState:
+    """Map Stargate tracker status strings to local ``ExecutionState``."""
     return _TRACKER_STATUS_MAP.get(status, ExecutionState.outcome_unknown)
+
+
+def _tracker_epoch_and_lock(tracker: Any) -> tuple[str, threading.Lock]:
+    with _TRACKER_EPOCH_LOCK_INIT:
+        entry = _TRACKER_EPOCH_LOCK.get(tracker)
+        if entry is None:
+            entry = (uuid4().hex, threading.Lock())
+            _TRACKER_EPOCH_LOCK[tracker] = entry
+        return entry
 
 
 @dataclass(frozen=True, slots=True)
 class OwnerLookup:
+    """Owner read model for reconcile (read-only; no side effects on owner stores)."""
+
     found: bool
     actuator_ref: str | None = None
     state: ExecutionState | None = None
     store_epoch: str = ""
+    epoch_status: EpochStatus = "ok"
     unknown_reason: str | None = None
     note: str | None = None
 
@@ -41,6 +67,8 @@ class AdmitOutcome:
 
 
 class ActuatorAdapter(Protocol):
+    """Actuator surface: health, lookup, admit, and store epoch witness."""
+
     name: str
     admit_idempotent: bool
 
@@ -55,6 +83,8 @@ class ActuatorAdapter(Protocol):
 
 @dataclass(slots=True)
 class CountingAdmitWrapper:
+    """Test wrapper counting remote ``admit`` calls."""
+
     inner: ActuatorAdapter
     admit_count: int = 0
 
@@ -92,22 +122,30 @@ def cdp_store_path() -> Path:
     return _db_path()
 
 
-def validate_actuator_identity_key(adapter: ActuatorAdapter, identity_key: str) -> None:
-    if adapter.name == "agent_bus":
-        if "\n" in identity_key or "\r" in identity_key:
-            raise ValueError("identity_key must not contain newline characters")
-        if len(identity_key) < 8 or len(identity_key) > 128:
-            raise ValueError(
-                "identity_key must be 8..128 chars for agent_bus idempotency"
-            )
+def _lookup_epoch(path: Path) -> EpochReadResult:
+    return read_store_epoch(path)
+
+
+def validate_actuator_identity_key(
+    _adapter: ActuatorAdapter, identity_key: str
+) -> None:
+    """Reject empty, whitespace-only, and newline identity keys before reserve."""
+    if not identity_key or not identity_key.strip():
+        raise ValueError("identity_key must be non-empty and not whitespace-only")
+    if "\n" in identity_key or "\r" in identity_key:
+        raise ValueError("identity_key must not contain newline characters")
+    if len(identity_key) < 8 or len(identity_key) > 128:
+        raise ValueError("identity_key must be 8..128 chars")
 
 
 class AgentBusAdapter:
+    """``agent_bus`` owner: ``create_thread`` + idempotency key (durable SQLite)."""
+
     name = "agent_bus"
     admit_idempotent = True
 
     def store_epoch(self) -> str:
-        return persisted_store_epoch(agent_bus_store_path())
+        return epoch_for_reserve(_lookup_epoch(agent_bus_store_path()))
 
     def health(self) -> bool:
         return agent_bus_store_path().parent.exists()
@@ -116,16 +154,22 @@ class AgentBusAdapter:
         from agent_bus_store.db.connection import connect
         from agent_bus_store.db.thread_idempotency import thread_id_for_idempotency_key
 
-        epoch = self.store_epoch()
+        epoch_read = _lookup_epoch(agent_bus_store_path())
+        if epoch_read.status == "unavailable":
+            return OwnerLookup(found=False, epoch_status="unavailable")
+        epoch = epoch_read.epoch or ""
         with connect() as conn:
             thread_id = thread_id_for_idempotency_key(conn, identity_key)
         if thread_id is None:
-            return OwnerLookup(found=False, store_epoch=epoch)
+            return OwnerLookup(
+                found=False, store_epoch=epoch, epoch_status=epoch_read.status
+            )
         return OwnerLookup(
             found=True,
             actuator_ref=thread_id,
             state=ExecutionState.accepted,
             store_epoch=epoch,
+            epoch_status=epoch_read.status,
         )
 
     def admit(self, identity_key: str, **kwargs: Any) -> AdmitOutcome:
@@ -150,6 +194,8 @@ class AgentBusAdapter:
 
 
 class StargatePipelineAdapter:
+    """In-process ``PipelineExecutionTracker`` adapter (non-durable; ``admit_idempotent=False``)."""
+
     name = "stargate_pipeline"
     admit_idempotent = False
 
@@ -161,43 +207,41 @@ class StargatePipelineAdapter:
 
             tracker = PipelineExecutionTracker(event_bus=None)
         self._tracker = tracker
-        self._lock = threading.Lock()
-        if not hasattr(self._tracker, "_execution_conformance_epoch"):
-            self._tracker._execution_conformance_epoch = uuid4().hex  # noqa: SLF001
+        self._epoch, self._lock = _tracker_epoch_and_lock(tracker)
 
     @property
     def tracker(self) -> Any:
         return self._tracker
 
     def store_epoch(self) -> str:
-        return str(self._tracker._execution_conformance_epoch)  # noqa: SLF001
+        return self._epoch
 
     def health(self) -> bool:
         return True
 
     def lookup(self, identity_key: str) -> OwnerLookup:
-        record = self._tracker.get(identity_key)
-        epoch = self.store_epoch()
+        with self._lock:
+            record = self._tracker.get(identity_key)
         if record is None:
             return OwnerLookup(
                 found=False,
-                store_epoch=epoch,
+                store_epoch=self._epoch,
                 note="PipelineExecutionTracker.records is in-process only",
             )
         return OwnerLookup(
             found=True,
             actuator_ref=record.execution_id,
             state=map_tracker_status(record.status),
-            store_epoch=epoch,
+            store_epoch=self._epoch,
         )
 
     def admit(self, identity_key: str, **kwargs: Any) -> AdmitOutcome:
         with self._lock:
-            existing = self.lookup(identity_key)
-            if existing.found and existing.actuator_ref:
+            existing = self._tracker.get(identity_key)
+            if existing is not None:
                 return AdmitOutcome(
-                    actuator_ref=existing.actuator_ref,
-                    state=existing.state or ExecutionState.running,
+                    actuator_ref=existing.execution_id,
+                    state=map_tracker_status(existing.status),
                     idempotent_replay=True,
                 )
             from systems.pipeline.core.execution.async_tracker.constants import (
@@ -217,11 +261,17 @@ class StargatePipelineAdapter:
 
 
 class CdpInflightAdapter:
+    """CDP inflight SQLite ledger adapter (reference model).
+
+    ``admit`` uses ``INSERT OR REPLACE`` via ``upsert_inflight_leg`` — reference-only;
+    production wiring must use owner-side insert-if-absent semantics.
+    """
+
     name = "cdp_ask"
     admit_idempotent = False
 
     def store_epoch(self) -> str:
-        return persisted_store_epoch(cdp_store_path())
+        return epoch_for_reserve(_lookup_epoch(cdp_store_path()))
 
     def health(self) -> bool:
         return cdp_store_path().parent.exists()
@@ -231,16 +281,22 @@ class CdpInflightAdapter:
             read_inflight_leg,
         )
 
-        epoch = self.store_epoch()
+        epoch_read = _lookup_epoch(cdp_store_path())
+        if epoch_read.status == "unavailable":
+            return OwnerLookup(found=False, epoch_status="unavailable")
+        epoch = epoch_read.epoch or ""
         leg = read_inflight_leg(identity_key)
         if leg is None:
-            return OwnerLookup(found=False, store_epoch=epoch)
+            return OwnerLookup(
+                found=False, store_epoch=epoch, epoch_status=epoch_read.status
+            )
         if leg.proof_emitted or leg.delivered:
             return OwnerLookup(
                 found=True,
                 actuator_ref=leg.execution_id,
                 state=ExecutionState.completed,
                 store_epoch=epoch,
+                epoch_status=epoch_read.status,
             )
         if leg.abandoned:
             return OwnerLookup(
@@ -248,6 +304,7 @@ class CdpInflightAdapter:
                 actuator_ref=leg.execution_id,
                 state=ExecutionState.outcome_unknown,
                 store_epoch=epoch,
+                epoch_status=epoch_read.status,
                 unknown_reason="abandoned_worker_may_run",
             )
         return OwnerLookup(
@@ -255,6 +312,7 @@ class CdpInflightAdapter:
             actuator_ref=leg.execution_id,
             state=ExecutionState.accepted,
             store_epoch=epoch,
+            epoch_status=epoch_read.status,
             unknown_reason="open_leg_without_board_proof",
         )
 
@@ -285,11 +343,13 @@ class CdpInflightAdapter:
 
 
 class CursorBridgeBusModelAdapter:
+    """Bus-store MSG/REPLY correlation model for cursor bridge (no MCP import)."""
+
     name = "cursor_bridge"
     admit_idempotent = False
 
     def store_epoch(self) -> str:
-        return persisted_store_epoch(agent_bus_store_path())
+        return epoch_for_reserve(_lookup_epoch(agent_bus_store_path()))
 
     def health(self) -> bool:
         return agent_bus_store_path().parent.exists()
@@ -297,7 +357,10 @@ class CursorBridgeBusModelAdapter:
     def lookup(self, identity_key: str) -> OwnerLookup:
         from agent_bus_store.db.connection import connect
 
-        epoch = self.store_epoch()
+        epoch_read = _lookup_epoch(agent_bus_store_path())
+        if epoch_read.status == "unavailable":
+            return OwnerLookup(found=False, epoch_status="unavailable")
+        epoch = epoch_read.epoch or ""
         tag = intent_tag_body(identity_key)
         tag_len = intent_tag_length(identity_key)
         with connect() as conn:
@@ -307,12 +370,15 @@ class CursorBridgeBusModelAdapter:
                 (tag_len, tag),
             ).fetchone()[0]
             if count == 0:
-                return OwnerLookup(found=False, store_epoch=epoch)
+                return OwnerLookup(
+                    found=False, store_epoch=epoch, epoch_status=epoch_read.status
+                )
             if count > 1:
                 return OwnerLookup(
                     found=True,
                     state=ExecutionState.outcome_unknown,
                     store_epoch=epoch,
+                    epoch_status=epoch_read.status,
                     unknown_reason="duplicate_msg",
                 )
             row = conn.execute(
@@ -322,7 +388,9 @@ class CursorBridgeBusModelAdapter:
                 (tag_len, tag),
             ).fetchone()
             if row is None:
-                return OwnerLookup(found=False, store_epoch=epoch)
+                return OwnerLookup(
+                    found=False, store_epoch=epoch, epoch_status=epoch_read.status
+                )
             thread_id = row["thread"]
             reply = conn.execute(
                 "SELECT id FROM turns "
@@ -336,6 +404,7 @@ class CursorBridgeBusModelAdapter:
                 actuator_ref=thread_id,
                 state=ExecutionState.accepted,
                 store_epoch=epoch,
+                epoch_status=epoch_read.status,
                 unknown_reason="msg_without_correlated_reply",
             )
         return OwnerLookup(
@@ -343,11 +412,13 @@ class CursorBridgeBusModelAdapter:
             actuator_ref=thread_id,
             state=ExecutionState.completed,
             store_epoch=epoch,
+            epoch_status=epoch_read.status,
         )
 
     def admit(self, identity_key: str, **kwargs: Any) -> AdmitOutcome:
         from agent_bus_store.db import create_thread, insert_turn
 
+        validate_actuator_identity_key(self, identity_key)
         thread_id = kwargs.get("thread_id")
         if thread_id is None:
             detail = create_thread(
@@ -368,6 +439,8 @@ class CursorBridgeBusModelAdapter:
 
 
 class HealthOnlyAdapter:
+    """Falsifier adapter: health passes, lookup/admit do not dispatch."""
+
     name = "health_probe"
     admit_idempotent = False
 

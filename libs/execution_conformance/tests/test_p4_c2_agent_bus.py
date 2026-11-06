@@ -2,25 +2,14 @@
 
 from __future__ import annotations
 
-import pytest
 from execution_conformance.adapters import AgentBusAdapter, CountingAdmitWrapper
-from execution_conformance.ledger import IntentLedger
+from execution_conformance.ledger import ReferenceSqliteIntentLedger
 from execution_conformance.reconciler import dispatch_intent, reconcile
 from execution_conformance.states import ExecutionState
 
 
-@pytest.fixture()
-def bus_env(tmp_path, monkeypatch: pytest.MonkeyPatch):
-    db = tmp_path / "bus.db"
-    monkeypatch.setenv("AGENT_BUS_DB_PATH", str(db))
-    from agent_bus_store.db.connection import init_db
-
-    init_db()
-    yield db
-
-
 def test_p4_c2_agent_bus_idempotency_reconcile(bus_env, tmp_path) -> None:
-    ledger = IntentLedger(tmp_path / "intents.db")
+    ledger = ReferenceSqliteIntentLedger(tmp_path / "intents.db")
     adapter = CountingAdmitWrapper(AgentBusAdapter())
     key = "idem-key-phase4-c2-abcdef12"
     intent_id = "intent-c2-a"

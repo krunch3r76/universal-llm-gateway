@@ -77,9 +77,6 @@ LEGAL_TRANSITIONS: dict[ExecutionState, frozenset[ExecutionState]] = {
     ExecutionState.blocked_unknown: frozenset(
         {
             ExecutionState.outcome_unknown,
-            ExecutionState.completed,
-            ExecutionState.failed,
-            ExecutionState.cancelled,
         }
     ),
     ExecutionState.completed: frozenset(),
@@ -90,9 +87,6 @@ LEGAL_TRANSITIONS: dict[ExecutionState, frozenset[ExecutionState]] = {
 
 class IllegalStateTransitionError(ValueError):
     """Raised when a transition would violate the monotone table."""
-
-
-IllegalStateTransition = IllegalStateTransitionError
 
 
 def assert_transition(current: ExecutionState, target: ExecutionState) -> None:

@@ -11,16 +11,8 @@ from execution_conformance.adapters import (
     StargatePipelineAdapter,
 )
 from execution_conformance.crash_hooks import dispatch_crash_after_admit_before_receipt
-from execution_conformance.ledger import IntentLedger
+from execution_conformance.ledger import ReferenceSqliteIntentLedger
 from execution_conformance.reconciler import reconcile
-
-
-@pytest.fixture()
-def bus_env(tmp_path, monkeypatch: pytest.MonkeyPatch):
-    monkeypatch.setenv("AGENT_BUS_DB_PATH", str(tmp_path / "bus.db"))
-    from agent_bus_store.db.connection import init_db
-
-    init_db()
 
 
 def _fresh_counting(inner: object) -> CountingAdmitWrapper:
@@ -67,7 +59,7 @@ def test_p4_c7_crash_after_accept_before_receipt(
     admit_kwargs,
 ) -> None:
     monkeypatch.setenv("DATA_DIR", str(tmp_path / "gateway"))
-    ledger = IntentLedger(tmp_path / "intents.db")
+    ledger = ReferenceSqliteIntentLedger(tmp_path / "intents.db")
     wrapped = make_adapter()
     intent_id = f"intent-c7-{wrapped.name}"
     dispatch_crash_after_admit_before_receipt(

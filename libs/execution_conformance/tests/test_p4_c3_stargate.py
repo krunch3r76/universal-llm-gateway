@@ -3,14 +3,14 @@
 from __future__ import annotations
 
 from execution_conformance.adapters import CountingAdmitWrapper, StargatePipelineAdapter
-from execution_conformance.ledger import IntentLedger
+from execution_conformance.ledger import ReferenceSqliteIntentLedger
 from execution_conformance.reconciler import dispatch_intent, reconcile
 from execution_conformance.states import ExecutionState
 
 
 def test_p4_c3_stargate_tracker_restart_unknown(tmp_path) -> None:
     tracker = StargatePipelineAdapter().tracker
-    ledger = IntentLedger(tmp_path / "intents.db")
+    ledger = ReferenceSqliteIntentLedger(tmp_path / "intents.db")
     wrapped = CountingAdmitWrapper(StargatePipelineAdapter(tracker))
     exec_id = "exec-p4-c3-001"
     intent_id = "intent-c3"

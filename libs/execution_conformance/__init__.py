@@ -9,7 +9,6 @@ from .adapters import (
     StargatePipelineAdapter,
 )
 from .ledger import (
-    IntentLedger,
     IntentRecord,
     IntentStore,
     ReferenceSqliteIntentLedger,
@@ -23,8 +22,9 @@ from .reconciler import (
     compensate_unknown,
     dispatch_intent,
     reconcile,
+    resolve_ref_conflict,
 )
-from .states import ExecutionState, IllegalStateTransition, IllegalStateTransitionError
+from .states import ExecutionState, IllegalStateTransitionError
 
 __all__ = [
     "AgentBusAdapter",
@@ -35,9 +35,7 @@ __all__ = [
     "DispatchResult",
     "ExecutionState",
     "HealthOnlyAdapter",
-    "IllegalStateTransition",
     "IllegalStateTransitionError",
-    "IntentLedger",
     "IntentRecord",
     "IntentStore",
     "ReferenceSqliteIntentLedger",
@@ -50,4 +48,5 @@ __all__ = [
     "dispatch_intent",
     "manifest_unknowns",
     "reconcile",
+    "resolve_ref_conflict",
 ]
