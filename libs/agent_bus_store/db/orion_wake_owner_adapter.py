@@ -48,6 +48,7 @@ def _encode_paste_receipt(
             "retryable",
             "clicked_unknown",
             "send_fallback_clicked",
+            "error",
         )
         if k in receipt
     }
@@ -377,9 +378,14 @@ class LedgerWakeDeliveryOwner:
         self, claim: WakeClaimContext, receipt: dict[str, Any]
     ) -> None:
         from bus_watch.endpoint_wake_composer_defer import is_composer_defer_reason
+        from bus_watch.orion_wake_receipt_map import (
+            map_orion_receipt_to_outcomes,
+            orion_bounded_defer_reason,
+        )
 
         if str(receipt.get("reason") or "") == "duplicate_suppressed":
             return
+        map_extra: dict[str, Any] = {}
         sub_id: int | None = None
         bind_ref = str(claim.binding_reference or "").strip()
         if bind_ref.startswith("agent_endpoint_subscriptions:"):
@@ -422,6 +428,7 @@ class LedgerWakeDeliveryOwner:
             return
         elif str(receipt.get("reason") or "") == "deferred_exhausted":
             return
+<<<<<<< HEAD
         elif receipt.get("insertion_unknown") is True:
             outcome = "unknown"
             reason = str(receipt.get("reason") or "insertion_unknown")
@@ -439,9 +446,12 @@ class LedgerWakeDeliveryOwner:
             reason = _encode_paste_receipt(
                 outcome=outcome, reason_s=reason_s, receipt=receipt
             )
+=======
+>>>>>>> d0b4200cd (fix(orion5944): unified receipt map, defer gate, cdp phase split)
         else:
-            outcome = "unknown"
-            reason_s = str(receipt.get("reason") or "unnamed")
+            outcome, reason_s, map_extra = map_orion_receipt_to_outcomes(receipt)
+            if outcome == "skipped":
+                return
             reason = _encode_paste_receipt(
                 outcome=outcome, reason_s=reason_s, receipt=receipt
             )
@@ -457,16 +467,24 @@ class LedgerWakeDeliveryOwner:
             "inserted",
             "pasted",
             "delivery_unconfirmed",
+            "error",
         )
         wake_detail = {
             k: receipt[k]
             for k in detail_keys
             if k in receipt and receipt[k] is not None
         }
-        defer_reason = str(receipt.get("reason") or "")
-        if outcome == "pending" and is_composer_defer_reason(defer_reason):
+        wake_detail = {**wake_detail, **map_extra}
+        defer_reason = str(
+            receipt.get("composer_defer_reason") or receipt.get("reason") or ""
+        )
+        if outcome == "pending" and (
+            is_composer_defer_reason(defer_reason)
+            or orion_bounded_defer_reason(defer_reason)
+            or defer_reason == "cdp_transport_error"
+        ):
             wake_detail["release_claim_for_retry"] = True
-            wake_detail["composer_defer_reason"] = defer_reason
+            wake_detail["composer_defer_reason"] = reason_s
         record_wake_result(
             claim.wake_id,
             outcome,

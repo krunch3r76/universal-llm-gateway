@@ -79,44 +79,14 @@ def agent_id_matches_composer_suffix(agent_id: str, suffix: str) -> bool:
 
 def classify_orion(body: Any, *, http_status: int | None = None) -> tuple[str, str]:
     """Map an orion-chat-wake pipeline result onto delivery outcomes."""
+    from bus_watch.orion_wake_receipt_map import map_orion_receipt_to_outcomes
+
     if http_status is not None and http_status >= 400:
         return "pending", f"pipeline_error:{http_status}"
     if not isinstance(body, dict):
         return "pending", "pipeline_error"
-    reason = str(body.get("reason") or "")
-    if reason == "bad_turn":
-        return "refused", "bad_turn"
-    if body.get("ok") and body.get("delivered"):
-        return "delivered", reason or "delivered"
-    if reason == "deferred_streaming":
-        return "pending", reason
-    if reason == "active_generation":
-        return "pending", "deferred_streaming"
-    if reason == "deferred_exhausted":
-        return "refused", reason
-    if reason == "insert_outcome_unknown":
-        return "unknown", reason
-    if body.get("clicked_unknown"):
-        return "unknown", reason or "send_outcome_unknown"
-    if reason == "send_button_disabled" or (
-        body.get("insert_attempted") and body.get("retryable") is True
-    ):
-        return "pending", reason or "send_button_disabled"
-    if body.get("insert_attempted") and body.get("retryable") is False:
-        return "unknown", reason or "insert_outcome_unknown"
-    if reason in {"non_empty_composer", "composer_not_empty", "composer_busy"}:
-        return "pending", reason
-    if reason in {"cdp_unreachable", "conversation_missing"}:
-        return "pending", reason
-    if reason == "orion_echo_drop":
-        return "skipped", reason
-    if reason in {"approval_unrecognized", "non_connector_dialog"}:
-        return "refused", reason
-    if body.get("pasted") and not body.get("delivered"):
-        return "unknown", reason or "delivery_unconfirmed"
-    if body.get("ok") is False:
-        return "refused", reason or "refused"
-    return "unknown", reason or "unnamed"
+    state, reason_s, _extra = map_orion_receipt_to_outcomes(body)
+    return state, reason_s
 
 
 def classify_display(

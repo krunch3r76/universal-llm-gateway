@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 
 import pytest
+import agent_bus_store.db.endpoint_wake_ledger as _ewl_mod
 from agent_bus_store.db import create_thread, init_db, insert_turn
 from agent_bus_store.db.connection import connect, write_connect
 from agent_bus_store.db.endpoint_wake_ledger import (
@@ -95,13 +96,17 @@ def test_composer_defer_release_schedules_next_attempt(db: str) -> None:
     assert late["wake_id"] is not None
 
 
-def test_composer_defer_exhausts_after_cap(
-    db: str, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    monkeypatch.setattr(
-        "agent_bus_store.db.endpoint_wake_ledger.post_orion_wake_undelivered_notices",
-        lambda **_: None,
-    )
+def test_composer_defer_exhausts_after_cap(db: str, monkeypatch: pytest.MonkeyPatch) -> None:
+    captured: list[str] = []
+    _real_notice = _ewl_mod.post_orion_wake_undelivered_notices
+
+    def _capture(**kwargs: object) -> None:
+        _real_notice(**kwargs)
+        captured.append("called")
+
+    monkeypatch.setattr(_ewl_mod, "post_orion_wake_undelivered_notices", _capture)
+    create_thread(thread_id="12286", slug="orion-notice-a")
+    create_thread(thread_id="21220", slug="orion-notice-b")
     wake_id, stamp, _tid = _seed_pending_orion(db)
     with write_connect() as conn:
         conn.execute(
@@ -121,12 +126,61 @@ def test_composer_defer_exhausts_after_cap(
         },
         now=stamp,
     )
+    assert captured == ["called"]
+    with connect() as conn:
+        n12286 = conn.execute(
+            "SELECT COUNT(*) AS c FROM turns WHERE thread='12286' "
+            "AND subject LIKE 'NOTICE|orion wake undelivered%'"
+        ).fetchone()
+        n21220 = conn.execute(
+            "SELECT COUNT(*) AS c FROM turns WHERE thread='21220' "
+            "AND subject LIKE 'NOTICE|orion wake undelivered%'"
+        ).fetchone()
+    assert int(n12286["c"]) >= 1
+    assert int(n21220["c"]) >= 1
     with connect() as conn:
         row = conn.execute(
             "SELECT state, reason FROM endpoint_wake_ledger WHERE agent='orion' LIMIT 1"
         ).fetchone()
     assert str(row["state"]) == "refused"
     assert str(row["reason"]) == "composer_defer_exhausted"
+
+
+def test_two_claim_cycles_respect_composer_defer_backoff(db: str) -> None:
+    wake_id, stamp, _tid = _seed_pending_orion(db)
+    cur_stamp = stamp
+    for _ in range(2):
+        rec = record_wake_result(
+            wake_id,
+            "pending",
+            "composer_not_empty",
+            "exact",
+            5944,
+            None,
+            wake_detail={
+                "release_claim_for_retry": True,
+                "composer_defer_reason": "composer_not_empty",
+            },
+            now=cur_stamp,
+        )
+        assert rec == 1
+        with connect() as conn:
+            row = conn.execute(
+                "SELECT wake_id FROM endpoint_wake_ledger WHERE agent='orion' LIMIT 1"
+            ).fetchone()
+        assert row["wake_id"] is None
+        assert claim_due_wakes(now=cur_stamp)["wake_id"] is None
+        with connect() as conn:
+            nxt = conn.execute(
+                "SELECT wake_next_attempt_at FROM endpoint_wake_ledger "
+                "WHERE agent='orion' LIMIT 1"
+            ).fetchone()
+        assert nxt is not None and nxt["wake_next_attempt_at"] is not None
+        next_stamp = str(nxt["wake_next_attempt_at"])
+        late = claim_due_wakes(now=next_stamp)
+        assert late["wake_id"] is not None
+        wake_id = str(late["wake_id"])
+        cur_stamp = next_stamp
 
 
 def test_dispatcher_refused_does_not_overwrite_owner_unknown_paste_receipt(db: str) -> None:

@@ -171,6 +171,7 @@ class _FakePage:
         dock_visible: bool = False,
         steer_visible: bool = False,
         send_visible: bool = False,
+        owned_draft_matches_pointer: bool = False,
     ) -> None:
         self.url = url
         self.streaming = streaming
@@ -197,6 +198,7 @@ class _FakePage:
         self.docked = False
         self.dock_visible = dock_visible
         self._dock_target = False
+        self.owned_draft_matches_pointer = owned_draft_matches_pointer
 
     def _active_labels(self) -> list[str]:
         if not self.pasted:
@@ -274,6 +276,8 @@ class _FakePage:
                 "visibilityState": self.visibility_state,
                 "composerEmpty": not (draft or "").strip(),
             }
+        if "__ulgOrionWakeTabSync" in expression and "ourDraftSig" in expression:
+            return {"ok": bool(self.owned_draft_matches_pointer)}
         if "stop" in expression.lower() and "streaming" not in expression:
             return self.streaming
         if "dialogs.find" in expression and "d.connector" in expression:
@@ -1050,6 +1054,25 @@ async def test_dom_deliver_returns_busy_when_target_lock_timeout(
     assert out["ok"] is False
     assert out.get("reason") == "target_lock_busy"
     assert out.get("retryable") is True
+
+
+@pytest.mark.asyncio
+async def test_owned_pointer_draft_skips_non_empty_refusal() -> None:
+    line = build_wake_pointer(thread="21207", turn=5, from_agent="maestro")
+    page = _FakePage(
+        visibility_state="visible",
+        composer_draft=line,
+        owned_draft_matches_pointer=True,
+    )
+    out = await deliver_orion_wake(
+        thread="21207",
+        turn=5,
+        from_agent="maestro",
+        page=page,
+    )
+    assert out["ok"] is True, out
+    assert out["reason"] == "delivered"
+    assert out["delivered"] is True
 
 
 @pytest.mark.asyncio

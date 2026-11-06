@@ -7,6 +7,7 @@ Does not import ``orion_session`` or ``orion_cli`` (untracked helpers). Uses
 from __future__ import annotations
 
 import asyncio
+import json
 import os
 import re
 import uuid
@@ -44,9 +45,46 @@ _TAB_SYNC_STATE_JS = """
     return true;
   };
   const composerEmpty = composers.every((el) => structuralEmpty(el));
-  return { visibilityState: document.visibilityState, composerEmpty };
+  return {{
+    visibilityState: document.visibilityState,
+    composerEmpty,
+    pointerLine: String(window.__ulgOrionWakeTabSync?.pointerLine || ''),
+  }};
 }
 """
+
+_OWNED_POINTER_DRAFT_JS = """
+() => {
+  const line = String(window.__ulgOrionWakeTabSync?.pointerLine || '').trim();
+  const g = window.__ulgOperatorActivity || {};
+  const sig = String(g.ourDraftSig || '').trim();
+  const composers = [...document.querySelectorAll('[contenteditable="true"]')];
+  const text = composers.map((c) => (c.innerText || '')).join('\\n').trim();
+  if (!line || text !== line) return { ok: false };
+  if (sig !== line) return { ok: false };
+  return { ok: true };
+}
+"""
+
+
+def _tab_sync_state_eval(pointer_line: str) -> str:
+    pl = json.dumps(str(pointer_line or ""))
+    fn = _TAB_SYNC_STATE_JS.strip()
+    return f"""(() => {{
+  window.__ulgOrionWakeTabSync = {{ pointerLine: {pl} }};
+  const sync = {fn};
+  return sync();
+}})()"""
+
+
+def _owned_pointer_draft_eval(pointer_line: str) -> str:
+    pl = json.dumps(str(pointer_line or ""))
+    return f"""(() => {{
+  window.__ulgOrionWakeTabSync = {{ pointerLine: {pl} }};
+  const check = {_OWNED_POINTER_DRAFT_JS.strip()};
+  return check();
+}})()"""
+
 
 _DIALOG_SCAN_JS = """
 () => {
@@ -843,6 +881,7 @@ async def _sync_tab_before_paste(
     page: OrionPage,
     *,
     target_id: str,
+    pointer_line: str,
     policy_just_opened: bool = False,
     allow_bring_to_front: bool = True,
 ) -> dict[str, Any]:
@@ -850,7 +889,7 @@ async def _sync_tab_before_paste(
     brought_to_front = False
     tab_reloaded = False
 
-    raw = await page.evaluate(_TAB_SYNC_STATE_JS)
+    raw = await page.evaluate(_tab_sync_state_eval(pointer_line))
     if isinstance(raw, dict):
         visibility = str(raw.get("visibilityState") or "visible")
         composer_empty_raw = raw.get("composerEmpty")
@@ -901,7 +940,7 @@ async def _sync_tab_before_paste(
                 ),
             }
 
-        post_raw = await page.evaluate(_TAB_SYNC_STATE_JS)
+        post_raw = await page.evaluate(_tab_sync_state_eval(pointer_line))
         if isinstance(post_raw, dict):
             composer_empty_raw = post_raw.get("composerEmpty")
             composer_empty = (
@@ -909,6 +948,13 @@ async def _sync_tab_before_paste(
             )
 
     if not composer_empty:
+        own = await page.evaluate(_owned_pointer_draft_eval(pointer_line))
+        if isinstance(own, dict) and own.get("ok"):
+            return {
+                "brought_to_front": brought_to_front,
+                "tab_reloaded": tab_reloaded,
+                "owned_draft_already_inserted": True,
+            }
         return {
             "brought_to_front": brought_to_front,
             "tab_reloaded": tab_reloaded,
@@ -959,12 +1005,15 @@ async def _prepare_composer(page: OrionPage) -> dict[str, Any]:
     return receipt
 
 
-def _cdp_transport_refusal(raw: dict[str, Any]) -> dict[str, Any] | None:
+def _cdp_transport_refusal(
+    raw: dict[str, Any], *, phase: str = "pre_insert"
+) -> dict[str, Any] | None:
     if raw.get("error"):
         return {
             "ok": False,
             "reason": "cdp_transport_error",
             "retryable": True,
+            "phase": phase,
         }
     return None
 
@@ -1049,7 +1098,7 @@ async def _dom_deliver(
                     "after_lock": True,
                 }
             baseline = await capture_dom_baseline(impl, ws_url=ws, site=site)
-            transport = _cdp_transport_refusal(baseline)
+            transport = _cdp_transport_refusal(baseline, phase="pre_insert")
             if transport:
                 return transport
             base_users = int(baseline.get("user_count") or 0)
@@ -1105,8 +1154,11 @@ async def _dom_deliver(
         prompt_text=verify_text,
         baseline_user_count=base_users,
     )
-    transport = _cdp_transport_refusal(verify)
+    transport = _cdp_transport_refusal(verify, phase="post_insert")
     if transport:
+        transport["insert_attempted"] = bool(result.get("insert_attempted"))
+        if result.get("send_fallback_clicked"):
+            transport["send_fallback_clicked"] = True
         return transport
     receipt = str(verify.get("receipt") or "dom_paste")
     if receipt != "dom_committed":
@@ -1318,6 +1370,11 @@ async def deliver_orion_wake(
 
     assert page is not None
     page_cid = conversation_id_from_url(page.url or "")
+    pointer_line = (
+        paste_text
+        if paste_text is not None
+        else build_wake_pointer(thread=thread_s, turn=turn, from_agent=from_agent)
+    )
     if page_cid != target_id:
         if owns_cdp and pw is not None:
             stop_fn = getattr(pw, "stop", None)
@@ -1375,6 +1432,7 @@ async def deliver_orion_wake(
     tab_sync = await _sync_tab_before_paste(
         page,
         target_id=target_id,
+        pointer_line=pointer_line,
         policy_just_opened=policy_just_opened,
         allow_bring_to_front=allow_bring_to_front,
     )
@@ -1390,11 +1448,7 @@ async def deliver_orion_wake(
         }
 
     layout_receipt = await _prepare_composer(page)
-    line = (
-        paste_text
-        if paste_text is not None
-        else build_wake_pointer(thread=thread_s, turn=turn, from_agent=from_agent)
-    )
+    line = pointer_line
     if await _is_streaming(page):
         if owns_cdp and pw is not None:
             stop_fn = getattr(pw, "stop", None)
@@ -1426,7 +1480,14 @@ async def deliver_orion_wake(
                     brought_to_front=tab_sync["brought_to_front"],
                     tab_reloaded=tab_sync["tab_reloaded"],
                 )
-            if dom.get("after_lock") and not visibility_only:
+            if (
+                dom.get("after_lock")
+                and not visibility_only
+                and not (
+                    dom_reason == "cdp_transport_error"
+                    and str(dom.get("phase") or "") == "post_insert"
+                )
+            ):
                 return _refuse(
                     "deferred_streaming",
                     error=dom_reason,
@@ -1472,7 +1533,16 @@ async def deliver_orion_wake(
                 paste_refuse["clicked_unknown"] = True
             if dom.get("owned_draft_retained"):
                 paste_refuse["owned_draft_retained"] = True
-            if dom_reason == "insert_outcome_unknown":
+            if dom.get("send_fallback_clicked"):
+                paste_refuse["send_fallback_clicked"] = True
+            if dom.get("phase") is not None:
+                paste_refuse["phase"] = dom.get("phase")
+            if dom_reason == "cdp_transport_error":
+                if dom.get("retryable") is True and str(dom.get("phase") or "") != "post_insert":
+                    refuse_reason = "cdp_transport_error"
+                else:
+                    refuse_reason = "insert_outcome_unknown"
+            elif dom_reason == "insert_outcome_unknown":
                 refuse_reason = "insert_outcome_unknown"
             elif dom_reason == "send_button_disabled":
                 refuse_reason = "deferred_streaming"

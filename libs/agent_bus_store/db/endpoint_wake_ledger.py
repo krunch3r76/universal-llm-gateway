@@ -450,12 +450,12 @@ def _pending_retry_ready_sql(alias: str = "") -> str:
     )"""
 
 
-def _orion_composer_defer_claim_ready_sql(alias: str) -> str:
-    """Orion ``composer_not_empty`` pending rows wait until ``wake_next_attempt_at`` (026+)."""
+def _orion_composer_defer_claim_ready_sql(alias: str, *, in_sql: str) -> str:
+    """Orion bounded-retry pending rows wait until ``wake_next_attempt_at`` (026+)."""
     ap = f"{alias}." if alias else ""
     return f"""(
       lower(trim({ap}agent)) != 'orion'
-      OR {ap}reason != 'composer_not_empty'
+      OR {ap}reason NOT IN {in_sql}
       OR {ap}wake_next_attempt_at IS NULL
       OR datetime({ap}wake_next_attempt_at) <= datetime(?)
     )"""
@@ -468,6 +468,7 @@ def _group_pending_rows(
     stamp: str,
     retry_before: str,
     orion_next_gate_sql: str = "",
+    orion_next_extra_params: tuple[Any, ...] = (),
 ) -> list[sqlite3.Row]:
     """All pending ledger rows for the (agent, thread_id) group eligible to claim together."""
     ga, tid = str(group["agent"]), group["thread_id"]
@@ -478,18 +479,13 @@ def _group_pending_rows(
             f"AND (agent=? OR lower(trim(agent)) IN ({_STAGE_MANAGER_SQL})) "
             "ORDER BY turn_id"
         )
-        params: tuple[Any, ...] = (tid, stamp, retry_before)
-        if orion_next_gate_sql:
-            params = params + (stamp,)
-        params = params + (ga,)
+        params = (tid, stamp, retry_before, *orion_next_extra_params, ga)
         return conn.execute(q, params).fetchall()
     q = (
         f"SELECT * FROM endpoint_wake_ledger WHERE agent=? AND thread_id=? {filt} "
         "ORDER BY turn_id"
     )
-    params2: tuple[Any, ...] = (ga, tid, stamp, retry_before)
-    if orion_next_gate_sql:
-        params2 = params2 + (stamp,)
+    params2 = (ga, tid, stamp, retry_before, *orion_next_extra_params)
     return conn.execute(q, params2).fetchall()
 
 
@@ -1260,10 +1256,24 @@ def claim_due_wakes(
         orion_next_gate = ""
         orion_next_params: tuple[Any, ...] = ()
         group_next_sql = ""
+        orion_group_params: tuple[Any, ...] = ()
         if "wake_next_attempt_at" in cols:
-            orion_next_gate = f" AND {_orion_composer_defer_claim_ready_sql('p')}"
-            group_next_sql = f" AND {_orion_composer_defer_claim_ready_sql('')}"
-            orion_next_params = (stamp,)
+            from bus_watch.endpoint_wake_composer_defer import (
+                composer_defer_reasons_sorted,
+            )
+
+            _reasons = tuple(composer_defer_reasons_sorted()) + (
+                "cdp_transport_error",
+            )
+            _bounded_in_sql = f"({','.join('?' * len(_reasons))})"
+            orion_next_gate = (
+                f" AND {_orion_composer_defer_claim_ready_sql('p', in_sql=_bounded_in_sql)}"
+            )
+            group_next_sql = (
+                f" AND {_orion_composer_defer_claim_ready_sql('', in_sql=_bounded_in_sql)}"
+            )
+            orion_next_params = (*_reasons, stamp)
+            orion_group_params = orion_next_params
         conn.execute(
             "UPDATE endpoint_wake_ledger SET state='unknown' "
             "WHERE state='claimed' AND claimed_at<=?",
@@ -1376,6 +1386,7 @@ def claim_due_wakes(
                 stamp=stamp,
                 retry_before=retry_before,
                 orion_next_gate_sql=group_next_sql,
+                orion_next_extra_params=orion_group_params,
             )
             skipped: list[dict[str, Any]] = []
             claimable: list[sqlite3.Row] = []
@@ -1596,6 +1607,7 @@ def record_wake_result(
         is_composer_defer_reason,
         merge_composer_defer_decided_by_rule,
     )
+    from bus_watch.orion_wake_receipt_map import orion_bounded_defer_reason
 
     stamp = _now(now)
     detail = dict(wake_detail or {})
@@ -1607,7 +1619,10 @@ def record_wake_result(
     )
     outcome_in = str(outcome or "").strip().lower()
     reason_s = str(reason or "").strip()
-    pending_handoff = outcome_in == "pending" and is_composer_defer_reason(merge_reason)
+    pending_handoff = outcome_in == "pending" and (
+        is_composer_defer_reason(merge_reason)
+        or orion_bounded_defer_reason(merge_reason)
+    )
     release_claim = bool(detail.pop("release_claim_for_retry", False))
     finished = (
         None
@@ -1731,11 +1746,9 @@ def record_wake_result(
             ac_val = max(1, comp_prior + 1)
             next_wall = _shift(stamp, orion_deferred_retry_delay_s(ac_val))
             orion_agent = normalize_bus_address(str(eligible[0]["agent"])) == "orion"
-            exhausted_orion = (
-                orion_agent
-                and is_composer_defer_reason(merge_reason)
-                and ac_val > ORION_COMPOSER_DEFER_MAX_ATTEMPTS
-            )
+            exhausted_orion = orion_agent and orion_bounded_defer_reason(
+                merge_reason
+            ) and ac_val > ORION_COMPOSER_DEFER_MAX_ATTEMPTS
             if exhausted_orion:
                 thread_id = str(eligible[0]["thread_id"])
                 turn_numbers = sorted({int(r["turn_number"]) for r in eligible})

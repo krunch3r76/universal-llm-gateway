@@ -21,6 +21,17 @@ def test_migration_026_idempotent_columns(tmp_path, monkeypatch: pytest.MonkeyPa
     monkeypatch.setenv("AGENT_BUS_DB_PATH", db_path)
     init_db()
     with connect() as conn:
+        for col in (
+            "wake_last_attempt_at",
+            "wake_next_attempt_at",
+            "wake_attempt_count",
+            "delivery_failure_detail",
+        ):
+            try:
+                conn.execute(f"ALTER TABLE endpoint_wake_ledger DROP COLUMN {col}")
+            except Exception:
+                pass
+        conn.commit()
         migration_026.run(conn)
         migration_026.run(conn)
         conn.commit()
