@@ -87,7 +87,7 @@ MANIFEST: dict[ActuatorName, dict[CapabilityName, ManifestCell]] = {
         "restart": ManifestCell(
             level="supported",
             source="libs/agent_bus_store/db/connection.py:_db_path",
-            fixture="test_p4_c6_crash_after_reservation",
+            fixture="test_p4_c6_crash_after_reservation_agent_bus",
         ),
         "unknown_recovery": ManifestCell(
             level="partial",
@@ -271,9 +271,10 @@ def _resolve_source(source: str) -> None:
 
 
 def _fixture_collected(name: str) -> bool:
+    needle = f"def {name}("
     for path in _TESTS_DIR.glob("test_p4_*.py"):
         content = path.read_text(encoding="utf-8", errors="replace")
-        if f"def {name}" in content:
+        if needle in content:
             return True
     return False
 

@@ -17,6 +17,7 @@ def dispatch_crash_after_reserve(
     intent_id: str,
     identity_key: str,
     admit_kwargs: dict[str, Any] | None = None,
+    inflight_claimed_at: float | None = None,
 ) -> DispatchResult:
     payload = {"admit_kwargs": admit_kwargs or {}}
     reserved = ledger.reserve(
@@ -25,6 +26,7 @@ def dispatch_crash_after_reserve(
         identity_key=identity_key,
         store_epoch=adapter.store_epoch(),
         payload=payload,
+        inflight_claimed_at=inflight_claimed_at,
     )
     row = reserved.record
     return DispatchResult(

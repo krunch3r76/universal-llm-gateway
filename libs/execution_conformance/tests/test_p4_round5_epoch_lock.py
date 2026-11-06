@@ -1,29 +1,34 @@
-"""Round-5/6 — real file lock → epoch unavailable → transient reconcile."""
+"""Round-5/7 — real file lock → epoch unavailable → transient reconcile."""
 
 from __future__ import annotations
 
+import hashlib
 import sqlite3
 import threading
 from contextlib import closing
+from pathlib import Path
 
+import pytest
 from execution_conformance.adapters import AgentBusAdapter, CountingAdmitWrapper
 from execution_conformance.crash_hooks import dispatch_crash_after_reserve
 from execution_conformance.ledger import ReferenceSqliteIntentLedger
-from execution_conformance.reconciler import dispatch_intent, reconcile
+from execution_conformance.reconciler import reconcile
 from execution_conformance.states import ExecutionState
 from execution_conformance.store_epoch import read_store_epoch
 
 
-def _owner_fingerprint(path) -> tuple:
-    with closing(sqlite3.connect(path)) as conn:
-        tables = tuple(
-            row[0]
-            for row in conn.execute(
-                "SELECT name FROM sqlite_master WHERE type='table' ORDER BY name"
-            ).fetchall()
-        )
-        dv = conn.execute("PRAGMA data_version").fetchone()[0]
-    return tables, dv
+def _file_sha256(path: Path) -> str:
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def _sidecars(path: Path) -> list[Path]:
+    parent = path.parent
+    stem = path.name
+    return [
+        p
+        for p in (parent / f"{stem}-wal", parent / f"{stem}-shm")
+        if p.exists()
+    ]
 
 
 def test_p4_epoch_lock_contention_transient_then_succeeds(bus_env, tmp_path) -> None:
@@ -40,7 +45,7 @@ def test_p4_epoch_lock_contention_transient_then_succeeds(bus_env, tmp_path) -> 
         identity_key=key,
         admit_kwargs={"slug": "lock"},
     )
-    before = _owner_fingerprint(path)
+    before = _file_sha256(path)
     lock_ready = threading.Event()
     release = threading.Event()
 
@@ -67,39 +72,42 @@ def test_p4_epoch_lock_contention_transient_then_succeeds(bus_env, tmp_path) -> 
     assert mid.retry_count == 0
     release.set()
     locker.join()
-    after_lock = _owner_fingerprint(path)
-    assert before == after_lock
+    assert _file_sha256(path) == before
+    assert not _sidecars(path)
     final = reconcile(ledger, CountingAdmitWrapper(AgentBusAdapter()), "intent-lock")
     assert final.state == ExecutionState.accepted
     assert final.redispatched is True
 
 
-def test_p4_dispatch_under_epoch_unavailable_no_owner_writes(
-    bus_env, tmp_path, monkeypatch
+def test_p4_unprovisioned_owner_zero_writes_and_no_wal(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    path = bus_env
-    before = _owner_fingerprint(path)
+    db = tmp_path / "bare.db"
+    monkeypatch.setenv("AGENT_BUS_DB_PATH", str(db))
+    from agent_bus_store.db.connection import init_db
 
-    def _always_unavailable(db_path, *, timeout=0.2):
-        from execution_conformance.store_epoch import EpochReadResult
-
-        return EpochReadResult(status="unavailable", epoch=None)
-
-    monkeypatch.setattr(
-        "execution_conformance.adapters.read_store_epoch",
-        _always_unavailable,
-    )
+    init_db()
+    with closing(sqlite3.connect(db)) as conn:
+        conn.execute("PRAGMA journal_mode=DELETE")
+        conn.commit()
+    assert read_store_epoch(db).status == "unprovisioned"
     ledger = ReferenceSqliteIntentLedger(tmp_path / "intents.db")
-    key = "unavail-dispatch-key-abcdef12"
-    dispatch_intent(
+    adapter = CountingAdmitWrapper(AgentBusAdapter())
+    key = "unprov-key-abcdef12"
+    dispatch_crash_after_reserve(
         ledger,
-        CountingAdmitWrapper(AgentBusAdapter()),
-        intent_id="intent-unavail",
+        adapter,
+        intent_id="intent-unprov",
         identity_key=key,
         admit_kwargs={"slug": "u"},
     )
-    after = _owner_fingerprint(path)
-    assert before == after
+    adapter.store_epoch()
+    adapter.lookup(key)
+    before = _file_sha256(db)
+    side_before = _sidecars(db)
+    reconcile(ledger, adapter, "intent-unprov")
+    assert _file_sha256(db) == before
+    assert _sidecars(db) == side_before
 
 
 def test_p4_read_only_connection_rejects_ddl(bus_env) -> None:

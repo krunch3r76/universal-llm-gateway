@@ -1,7 +1,7 @@
 # Execution owner conformance (phase 4)
 
 Lane-B package `libs/execution_conformance/` models the **local intent ledger** and
-**read-only actuator adapters** used to verify crash/restart behavior without
+**read/lookup plus owner-admit wrappers** used to verify crash/restart behavior without
 mutating Stargate admission, MCP tools, or cortex store.
 
 ## Actuators
@@ -40,8 +40,9 @@ code. Do **not** stand it up as a parallel operational store beside cortex_store
    does not retry (safe block).
 4. **All other misses** (`stargate_pipeline` with `admit_idempotent=False`, epoch mismatch,
    unprovisioned epoch on crash-recovery retry) — `blocked_unknown`, zero redispatch.
-   **`claim_retry` loss** — re-read ledger; return advanced state or a non-mutating
-   in-flight outcome (never fall through to `_block_unknown` after a lost CAS).
+   **`claim_retry` loss** — re-read ledger; return advanced state or `transient=True`
+   only while peer `inflight_claimed_at` is within TTL (never transient when
+   `inflight_claimed_at` is absent on `reserved` / `outcome_unknown`).
 5. **Open CDP leg / bridge MSG without correlated REPLY** — after local receipt, adopt
    `accepted`/`running` with `owner_unknown_reason` recorded; steady across repeated
    reconciles (does not flip to `blocked_unknown` on the next pass). This is conservative
@@ -90,8 +91,9 @@ until owner-side provisioning writes the meta-table (or tests call `provision_st
 keeps the same UUID — benign for `agent_bus` when the backup predates the thread row;
 use `rotate_store_epoch` when the file is replaced with a divergent copy.
 
-**In-flight lease:** fresh `dispatch_intent` stamps `inflight_claimed_at` on the local row;
-concurrent `reconcile()` on an owner miss returns **transient** while the lease is active.
+**In-flight lease:** `reserve(..., inflight_claimed_at=clock())` on fresh `dispatch_intent`
+(single INSERT transaction); concurrent `reconcile()` on an owner miss returns **transient**
+while `(clock - inflight_claimed_at) < claim_ttl_seconds`.
 
 **Stargate terminal short-circuit vs service hooks:** local rows in `completed`/`failed`/`cancelled`
 do not re-query the owner. Stargate `delivery_hooks.py` may regress a pipeline record from
