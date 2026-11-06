@@ -138,7 +138,10 @@ def _entity_hash(entity_id: str) -> str | None:
         resp = entity_ops.cx(
             "POST",
             "/mcp",
-            {"tool": "entity_get", "arguments": {"entity_id": entity_id}},
+            {
+                "tool": "entity_get",
+                "arguments": {"entity_id": entity_id, "intent": "preview"},
+            },
         )
     except Exception:  # noqa: BLE001
         return None

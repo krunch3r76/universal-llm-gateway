@@ -283,7 +283,7 @@ def test_op_entity_get_stamps_discoverable(migrated_conn: sqlite3.Connection) ->
         "cortex_store.dispatch_ops.ops_entities.cortex_conn",
         return_value=migrated_conn,
     ):
-        out = _op_entity_get(entity_id="agent_skill:draft-op")
+        out = _op_entity_get(entity_id="agent_skill:draft-op", intent="card")
     assert out["discoverable"] is False
 
 

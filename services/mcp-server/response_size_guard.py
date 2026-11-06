@@ -686,7 +686,7 @@ def _cortex_manifest(
         first_id = str(items[0].get("id", "") or "") if items else ""
         if first_id:
             selective_options.append(
-                f'cortex(tool="entity_get", arguments=\'{{"entity_id":"{first_id}"}}\')'
+                f'cortex(tool="entity_get", arguments=\'{{"entity_id":"{first_id}","intent":"preview"}}\')'
             )
         manifest["request_particular_payload"] = bool(first_id)
         manifest["selective_options"] = selective_options or [
@@ -782,7 +782,7 @@ def _cortex_manifest(
             first_id = str(provisional[0].get("id", "") or "")
             if first_id:
                 selective_options.append(
-                    f'cortex(tool="entity_get", arguments=\'{{"entity_id":"{first_id}"}}\')'
+                    f'cortex(tool="entity_get", arguments=\'{{"entity_id":"{first_id}","intent":"preview"}}\')'
                 )
         manifest["selective_options"] = selective_options
         return manifest

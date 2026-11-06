@@ -55,7 +55,6 @@ from ._file_helpers import extract_text_content, is_converted_format
 from ._pdf_sections import (
     PdfSectionError,
     list_pdf_sections,
-    pdf_to_dict,
     read_pdf_section,
 )
 from ._section_mutation import (
@@ -63,6 +62,10 @@ from ._section_mutation import (
     delete_warning,
     section_mutation_summary,
     shrink_warning,
+)
+from ._sparse_document_read import (
+    resolve_document_read,
+    sparse_selector_conflict_error,
 )
 
 if TYPE_CHECKING:
@@ -510,7 +513,14 @@ def _section_delete_result(
 
 
 def _pdf_section_op(
-    op: str, resolved: Path, path: str, sandbox: str, section: str
+    op: str,
+    resolved: Path,
+    path: str,
+    sandbox: str,
+    section: str,
+    *,
+    sections: list[str] | None = None,
+    export: bool = False,
 ) -> dict[str, Any]:
     """List/read PDF sections via the outline-driven (TOC) navigator."""
     if not resolved.exists():
@@ -527,17 +537,64 @@ def _pdf_section_op(
             )
             return {"path": path, "sandbox": sandbox, **listing}
         if op == "to_dict":
-            data = pdf_to_dict(resolved)
+            listing = list_pdf_sections(resolved)
+            read_sha256 = _read_sha256_for_file(resolved)
             record(
                 "mcp.tool.markdown.converted.to.dict",
                 path=path,
                 sandbox=sandbox,
-                keys=len(data),
-                source="pdf",
+                keys=len(listing.get("sections") or []),
+                source=listing.get("source", "pdf"),
             )
-            return {"data": data, "path": path, "sandbox": sandbox}
-        body = read_pdf_section(resolved, section)
+            return {
+                "data": {"sections": listing.get("sections") or []},
+                "path": path,
+                "sandbox": sandbox,
+                "read_sha256": read_sha256,
+                "selection": "manifest",
+                "omitted": ["content"],
+            }
         read_sha256 = _read_sha256_for_file(resolved)
+        if op == "read_section" and not section.strip() and not export and not sections:
+            listing = list_pdf_sections(resolved)
+            descriptors = [
+                {
+                    "id": str(row.get("path") or row.get("heading") or ""),
+                    "heading": str(row.get("heading") or ""),
+                    "level": int(row.get("level") or 0),
+                    "parent_id": None,
+                    "char_count": int(row.get("chars") or 0),
+                }
+                for row in listing.get("sections") or []
+            ]
+            return {
+                "path": path,
+                "sandbox": sandbox,
+                "read_sha256": read_sha256,
+                "total_chars": 0,
+                "selection": "manifest",
+                "structure": "sectioned",
+                "preamble": False,
+                "sections": descriptors,
+                "omitted": ["content"],
+                "cursor": None,
+                "truncated": False,
+                "source": listing.get("source"),
+            }
+        if export or sections:
+            text, err = _load_text(resolved)
+            if err:
+                return {"error": err}
+            return resolve_document_read(
+                path=path,
+                sandbox=sandbox,
+                text=text or "",
+                read_sha256=read_sha256,
+                section=section if section.strip() else None,
+                sections=sections,
+                export=export,
+            )
+        body = read_pdf_section(resolved, section)
         record(
             "mcp.tool.markdown.section.read",
             path=path,
@@ -573,12 +630,16 @@ def register_markdown_tools(mcp: FastMCP) -> None:
         target: str = "",
         all_occurrences: bool = False,
         size_only: bool = False,
+        sections: list[str] | None = None,
+        export: bool = False,
     ) -> dict[str, Any]:
         """Section-level markdown: list/read/replace/append/insert/delete/to_dict/from_dict.
 
         Sandboxes: context → tasks/; cortex → /data/files; workspaces → project root.
         Section path from list_sections; read ops with empty/omitted section return
-        the full document; write ops use "" for the preamble. from_dict: content is JSON.
+        a manifest (``selection=manifest``) without inline body text; use ``section``,
+        ``sections``, or ``export=true`` to expand. Write ops use "" for the preamble.
+        from_dict: content is JSON.
         Prefer over whole-file context/cortex/workspaces for long structured docs.
         Use workspaces sandbox for tmp/ files (debrief log, phase docs, handoff docs).
 
@@ -617,7 +678,15 @@ def register_markdown_tools(mcp: FastMCP) -> None:
             op in ("list_sections", "read_section", "to_dict")
             and resolved.suffix.lower() == ".pdf"
         ):
-            return _pdf_section_op(op, resolved, path, sandbox, section)
+            return _pdf_section_op(
+                op,
+                resolved,
+                path,
+                sandbox,
+                section,
+                sections=sections,
+                export=export,
+            )
 
         if op in ("list_sections", "read_section", "to_dict"):
             text, err = _load_text(resolved)
@@ -653,55 +722,68 @@ def register_markdown_tools(mcp: FastMCP) -> None:
                     "path": path,
                     "sandbox": sandbox,
                     "total_chars": len(text),
+                    "read_sha256": read_sha256,
                     "sections": sections,
                 }
             if op == "read_section":
-                if section.strip() == "":
-                    record(
-                        "mcp.tool.markdown.section.read",
-                        path=path,
-                        sandbox=sandbox,
-                        section=None,
-                        chars=len(text),
-                        selection="full_document",
-                    )
-                    return {
-                        "content": text,
-                        "path": path,
-                        "sandbox": sandbox,
-                        "section": None,
-                        "selection": "full_document",
-                        "read_sha256": read_sha256,
-                    }
-                try:
-                    body = md_read_section(text, section)
-                except SectionError as e:
-                    return {"error": str(e)}
+                result = resolve_document_read(
+                    path=path,
+                    sandbox=sandbox,
+                    text=text,
+                    read_sha256=read_sha256,
+                    section=section if section.strip() else None,
+                    sections=sections,
+                    export=export,
+                )
+                if "code" in result:
+                    return result
+                if "error" in result:
+                    return result
+                selection = result.get("selection")
                 record(
                     "mcp.tool.markdown.section.read",
                     path=path,
                     sandbox=sandbox,
-                    section=section,
-                    chars=len(body),
+                    section=section or None,
+                    chars=len(result.get("content", "")),
+                    selection=selection or "section",
                 )
-                return {
-                    "content": body,
-                    "path": path,
-                    "sandbox": sandbox,
-                    "section": section,
-                    "read_sha256": read_sha256,
-                }
+                return result
+            if sections:
+                return sparse_selector_conflict_error(
+                    "sections is only valid for read_section / md_read"
+                )
             try:
                 data = sections_to_dict(text)
             except SectionError as e:
                 return {"error": str(e)}
+
+            def _strip_bodies(node: Any) -> Any:
+                if isinstance(node, dict):
+                    return {
+                        k: _strip_bodies(v)
+                        for k, v in node.items()
+                        if k != "_content"
+                    }
+                if isinstance(node, list):
+                    return [_strip_bodies(v) for v in node]
+                return node
+
+            sparse_data = _strip_bodies(data)
             record(
                 "mcp.tool.markdown.converted.to.dict",
                 path=path,
                 sandbox=sandbox,
                 keys=len(data),
             )
-            return {"data": data, "path": path, "sandbox": sandbox}
+            return {
+                "data": sparse_data,
+                "path": path,
+                "sandbox": sandbox,
+                "read_sha256": read_sha256,
+                "selection": "manifest",
+                "omitted": ["content"],
+            }
 
         if op == "replace_section":
             return _section_patch_result(

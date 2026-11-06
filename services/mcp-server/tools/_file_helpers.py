@@ -9,7 +9,7 @@ from typing import Any
 
 from mcp_events import record
 
-from ._hashing import sha256_hex_of_file
+from ._hashing import sha256_hex_equal, sha256_hex_of_file
 from ._line_range import apply_line_range, exceeds_unwindowed_read_cap
 from ._operating_state_serve import apply_operating_state_serve
 from ._pdf_read import (
@@ -23,6 +23,10 @@ from ._pdf_read import (
     _read_pdf_text,
     extract_pdf_plaintext_with_timeout,
     read_pdf,
+)
+from ._sparse_document_read import (
+    is_sparse_document_suffix,
+    resolve_document_read,
 )
 from ._unwindowed_read_projection import build_unwindowed_oversized_payload
 
@@ -243,6 +247,11 @@ def read_file_result(
     binary: bool = False,
     offset: int = 0,
     limit: int = 0,
+    section: str | None = None,
+    sections: list[str] | None = None,
+    export: bool = False,
+    expected_read_sha256: str | None = None,
+    sandbox: str = "cortex",
 ) -> dict[str, Any]:
     """Read one sandboxed file and return the standard MCP payload shape.
 
@@ -262,6 +271,17 @@ def read_file_result(
         raise ValueError(f"Path is not a file: {path!r}")
 
     read_sha256 = sha256_hex_of_file(src)
+    if expected_read_sha256 and not sha256_hex_equal(read_sha256, expected_read_sha256):
+        return {
+            "code": "stale_handle",
+            "message": "read_sha256 does not match expected_read_sha256",
+            "source": "fs",
+            "retryable": False,
+            "data": {
+                "expected_read_sha256": expected_read_sha256,
+                "read_sha256": read_sha256,
+            },
+        }
 
     served = apply_operating_state_serve(
         path,
@@ -331,6 +351,31 @@ def read_file_result(
         content = extract_text_content(src)
         pdf_method = ""  # non-PDF — unused below
 
+    sparse_doc = (
+        not binary
+        and auto_result is None
+        and is_sparse_document_suffix(suffix)
+    )
+    if sparse_doc:
+        sparse_result = resolve_document_read(
+            path=path,
+            sandbox=sandbox,
+            text=content,
+            read_sha256=read_sha256,
+            section=section,
+            sections=sections,
+            export=export,
+            offset=offset,
+            limit=limit,
+        )
+        if "code" in sparse_result or "error" in sparse_result:
+            sparse_result["path"] = path
+            return sparse_result
+        if sparse_result.get("items"):
+            sparse_result["sparse_section_batch"] = True
+        sparse_result["path"] = path
+        return sparse_result
+
     result: dict[str, Any] = {"content": content, "path": str(src)}
     if suffix == ".pdf":
         content_stripped = content.strip()
@@ -389,6 +434,15 @@ def read_file_result(
                 "Empty content ≠ missing file."
             )
     elif exceeds_unwindowed_read_cap(content):
+        if suffix in {".md", ".markdown"}:
+            projected = resolve_document_read(
+                path=path,
+                sandbox=sandbox,
+                text=content,
+                read_sha256=read_sha256,
+            )
+            projected["path"] = path
+            return projected
         projected = build_unwindowed_oversized_payload(
             request_path=path,
             text=content,

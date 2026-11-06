@@ -10,8 +10,6 @@ from typing import Any
 
 from markdown_sections import SectionError
 from markdown_sections import list_sections as md_list_sections
-from markdown_sections import read_section as md_read_section
-
 from ._line_range import (
     DEFAULT_UNWINDOWED_MAX_BYTES,
     DEFAULT_UNWINDOWED_MAX_LINES,
@@ -98,63 +96,24 @@ def build_markdown_unwindowed_payload(
     request_path: str,
     text: str,
 ) -> dict[str, Any]:
-    """Listing, first section body, and md_read calls — no truncated file body."""
-    try:
-        raw_sections = md_list_sections(text)
-    except SectionError:
-        return build_plain_unwindowed_payload(request_path=request_path, text=text)
+    """Sparse slice 1: delegate oversized markdown reads to the manifest shape."""
+    from tools._hashing import sha256_hex_of_bytes
+    from tools._sparse_document_read import build_document_manifest
 
-    sections = _normalize_section_rows(raw_sections)
-    if not sections:
-        return build_plain_unwindowed_payload(request_path=request_path, text=text)
-
-    sections_truncated = len(sections) > MAX_LISTED_SECTIONS
-    if sections_truncated:
-        sections = sections[:MAX_LISTED_SECTIONS]
-
-    first_path = sections[0]["path"]
-    try:
-        first_raw = md_read_section(text, first_path)
-    except SectionError:
-        first_raw = text
-    first_body, first_byte_limited, first_single_line_partial = (
-        _cap_utf8_on_line_boundary(first_raw, DEFAULT_UNWINDOWED_MAX_BYTES)
+    read_sha256 = sha256_hex_of_bytes(text.encode("utf-8"))
+    manifest = build_document_manifest(
+        path=request_path,
+        sandbox="cortex",
+        text=text,
+        read_sha256=read_sha256,
     )
-
-    section_reads = [
-        _md_read_call(request_path, str(row["path"]))
-        for row in sections[1:]
-        if str(row.get("path", "")).strip()
-    ]
-
-    payload: dict[str, Any] = {
-        "content": first_body,
-        "unwindowed_oversized": True,
-        "kind": "markdown_sections",
-        "total_chars": len(text),
-        "sections": sections,
-        "first_section": {
-            "heading": sections[0]["heading"],
-            "path": sections[0]["path"],
-            "line": sections[0]["line"],
-        },
-        "section_reads": section_reads,
-        "prefer_selective_reads": True,
-        "_next": (
-            "Unwindowed read exceeded the default cap; full file is not inline. "
-            "Use section_reads (or fs md_list / md_read) for remaining sections."
-        ),
-    }
-    if sections_truncated:
-        payload["sections_truncated"] = True
-        payload["section_reads"].insert(
-            0, f'fs(op="md_list", path="{_escape_path_for_fs_call(request_path)}")'
-        )
-    if first_byte_limited:
-        payload["truncated"] = True
-        payload["first_section_truncated"] = True
-        payload["first_section_line_aligned"] = not first_single_line_partial
-    return payload
+    manifest["unwindowed_oversized"] = True
+    manifest["prefer_selective_reads"] = True
+    manifest["_next"] = (
+        "Unwindowed read exceeded the default cap; use md_read section/sections "
+        "or export=true for explicit expansion."
+    )
+    return manifest
 
 
 def build_plain_unwindowed_payload(

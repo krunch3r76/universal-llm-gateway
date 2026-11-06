@@ -70,8 +70,8 @@ def sandbox_op_names(sandbox: str) -> str:
 # Per-op descriptor metadata. Keys MUST match OP_SANDBOXES exactly (enforced by test).
 OP_DOC: dict[str, tuple[str, str]] = {
     "read": (
-        "(path, offset?, limit?)",
-        "read file (text or PDF/DOCX/ODT/EML/HTML)",
+        "(path, offset?, limit?, sections?, export?, expected_read_sha256?)",
+        "read file (text or PDF/DOCX/ODT/EML/HTML); markdown/converted docs default to manifest",
     ),
     "read_multi": ("(paths: list)", "read multiple files"),
     "write": ("(path, content)", "write/create file"),
@@ -115,10 +115,13 @@ OP_DOC: dict[str, tuple[str, str]] = {
     ),
     "md_list": ("(path)", "list sections/TOC (see Markdown section ops below)"),
     "md_read": (
-        "(path, section?)",
-        "read one section (see Markdown section ops below)",
+        "(path, section?, sections?, export?, expected_read_sha256?)",
+        "read manifest or expand sections (see Markdown section ops below)",
     ),
-    "md_to_dict": ("(path)", "nested heading dict (see Markdown section ops below)"),
+    "md_to_dict": (
+        "(path, sections?, export?, expected_read_sha256?)",
+        "heading tree manifest (see Markdown section ops below)",
+    ),
     "md_replace": (
         "(path, section, target, content, all_occurrences?)",
         "patch target substring within section body (see Markdown section ops below)",
@@ -152,6 +155,9 @@ OP_DOC: dict[str, tuple[str, str]] = {
 CONTRACT_PARAMS: tuple[str, ...] = (
     "target",
     "section",
+    "sections",
+    "export",
+    "expected_read_sha256",
     "line",
     "heading",
     "level",
@@ -179,12 +185,15 @@ PARAM_PURPOSE: dict[str, str] = {
         "ulg-arc-worktrees paths"
     ),
     "size_only": "size-only list_sections flag for md_list",
+    "sections": "batched section ids for document read expansion",
+    "export": "explicit full-document export on read/md_read",
+    "expected_read_sha256": "optional full-file hash precondition for reads",
 }
 
 # unified op -> confusable params it actually consumes
 OP_CONSUMES: dict[str, frozenset[str]] = {
-    "read": frozenset(),
-    "read_multi": frozenset(),
+    "read": frozenset({"sections", "export", "expected_read_sha256"}),
+    "read_multi": frozenset({"export", "expected_read_sha256"}),
     "write": frozenset(),
     "write_binary": frozenset(),
     "append_binary": frozenset(),
@@ -201,8 +210,8 @@ OP_CONSUMES: dict[str, frozenset[str]] = {
     "copy": frozenset({"target"}),
     "delete": frozenset(),
     "md_list": frozenset({"size_only"}),
-    "md_read": frozenset({"section"}),
-    "md_to_dict": frozenset(),
+    "md_read": frozenset({"section", "sections", "export", "expected_read_sha256"}),
+    "md_to_dict": frozenset({"sections", "export", "expected_read_sha256"}),
     "md_replace": frozenset({"section", "target", "all_occurrences"}),
     "md_rewrite_section": frozenset({"section"}),
     "md_append": frozenset({"section"}),
@@ -266,8 +275,12 @@ def _param_provided(name: str, value: Any) -> bool:
     """True when a contract param carries a non-default (caller-supplied) value."""
     if name in ("line", "level"):
         return bool(value)  # int sentinel is 0
-    if name in ("all_occurrences", "include_worktrees", "size_only"):
+    if name in ("all_occurrences", "include_worktrees", "size_only", "export"):
         return value is True
+    if name == "sections":
+        return bool(value)
+    if name == "expected_read_sha256":
+        return bool(str(value).strip())
     if name == "section":
         return bool(str(value).strip())
     return bool(value)
@@ -340,8 +353,8 @@ def md_section_op_doc() -> str:
     return (
         "Markdown section ops (for large docs):\n"
         "  md_list    (path)                    — list sections/TOC (PDFs: embedded outline; markdown: ATX headings plus line-anchored XML blocks such as `<scope>` / `<task_guidance>` on six-block handoff packets)\n"
-        '  md_read    (path, section?)          — read one section; empty/absent section => full document (text/markdown; PDFs still require a section). XML block keys: `<tag>` or bare `tag` (e.g. section="<task_guidance>" or section="task_guidance")\n'
-        "  md_to_dict (path)                    — nested heading dict (PDFs: outline-driven; others: ATX sections)\n"
+        '  md_read    (path, section?, sections?, export?, expected_read_sha256?) — default manifest; section/sections/export expand. XML block keys: `<tag>` or bare `tag`\n'
+        "  md_to_dict (path, sections?, export?, expected_read_sha256?) — heading tree manifest without bodies\n"
         "  md_replace (path, section, target, content, all_occurrences?)  — patch target substring within the section body only; target required; cannot truncate unmentioned content\n"
         "  md_rewrite_section (path, section, content)  — replace the entire section body (explicit rewrite after md_read); response includes mutation and _warning when body shrinks by >50%\n"
         "  md_append  (path, section, content)  — append to section body (text files only); same heading-less-content contract as md_replace\n"

@@ -41,14 +41,31 @@ __all__ = [
 
 
 def read_file_impl(
-    path: str, binary: bool = False, offset: int = 0, limit: int = 0
+    path: str,
+    binary: bool = False,
+    offset: int = 0,
+    limit: int = 0,
+    *,
+    section: str | None = None,
+    sections: list[str] | None = None,
+    export: bool = False,
+    expected_read_sha256: str | None = None,
 ) -> dict[str, Any]:
     """Read and return the contents of *path* from the sandboxed directory.
 
     Response includes ``read_sha256``: bare lowercase hex of on-disk source bytes
     (full file; independent of offset/limit windowing on ``content``).
     """
-    result = read_file_result(path, binary=binary, offset=offset, limit=limit)
+    result = read_file_result(
+        path,
+        binary=binary,
+        offset=offset,
+        limit=limit,
+        section=section,
+        sections=sections,
+        export=export,
+        expected_read_sha256=expected_read_sha256 or None,
+    )
     auto_binary = bool(result.get("auto_binary"))
     range_requested = offset > 0 or limit > 0
     event_payload: dict[str, Any] = {

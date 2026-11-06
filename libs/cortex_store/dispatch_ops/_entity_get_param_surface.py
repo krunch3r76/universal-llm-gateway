@@ -20,6 +20,7 @@ _ENTITY_GET_ACCEPTED_KEYS: frozenset[str] = frozenset(
         "section",
         "full_body",
         "include_body",
+        "expected_revision",
     }
 )
 

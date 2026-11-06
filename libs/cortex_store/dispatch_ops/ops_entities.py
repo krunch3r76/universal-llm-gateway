@@ -175,6 +175,7 @@ def _entity_get_single(
     *,
     entity_id: str,
     intent: str,
+    expected_revision: int | None = None,
     include_edges: bool = False,
     edge_limit: int = 20,
     include_compaction_pointers: bool = False,
@@ -197,6 +198,35 @@ def _entity_get_single(
     except HTTPException as exc:
         return _http_error_dict(exc)
     resolved_id = canonical_id if not raw_id else entity_id
+    if expected_revision is not None:
+        cols = {
+            r[1] for r in conn.execute("PRAGMA table_info(entities)").fetchall()
+        }
+        live_rev = None
+        if "revision" in cols:
+            row = conn.execute(
+                "SELECT revision FROM entities WHERE id = ?",
+                (resolved_id,),
+            ).fetchone()
+            live_rev = row["revision"] if row else None
+        if live_rev is not None and int(live_rev) != int(expected_revision):
+            return {
+                "code": "stale_handle",
+                "message": "expected_revision mismatch",
+                "source": "entity_get",
+                "retryable": False,
+                "data": {
+                    "expected_revision": expected_revision,
+                    "revision": live_rev,
+                },
+            }
+    if intent == "preview":
+        from ._entity_get_preview import build_entity_preview
+
+        try:
+            return build_entity_preview(conn, entity_id=resolved_id)
+        except HTTPException as exc:
+            return _http_error_dict(exc)
     if intent == "body":
         return _entity_get_body_response(
             conn,
@@ -264,6 +294,7 @@ def _entity_get_batch(
     entity_ids: list[str],
     *,
     intent: str,
+    expected_revision: int | None = None,
     include_edges: bool = False,
     edge_limit: int = 20,
     include_compaction_pointers: bool = False,
@@ -288,13 +319,16 @@ def _entity_get_batch(
             "max": MAX_ENTITY_GET_BATCH_IDS,
             "status_code": 400,
         }
-    if intent not in _BATCH_SUPPORTED_INTENTS:
+    batch_intent = intent
+    if batch_intent in {"preview", ""}:
+        batch_intent = "preview"
+    if batch_intent not in _BATCH_SUPPORTED_INTENTS | {"preview"}:
         return {
             "error": "batch_intent_unsupported",
             "supported": sorted(_BATCH_SUPPORTED_INTENTS),
             "status_code": 400,
         }
-    if intent in {"card", "card-md"} and (
+    if batch_intent in {"card", "card-md"} and (
         not isinstance(top_k, int) or top_k < 1 or top_k > 50
     ):
         return {"error": "top_k must be int in [1, 50]"}
@@ -305,7 +339,8 @@ def _entity_get_batch(
                 result = _entity_get_single(
                     conn,
                     entity_id=eid,
-                    intent=intent,
+                    intent=batch_intent,
+                    expected_revision=expected_revision,
                     include_edges=include_edges,
                     edge_limit=edge_limit,
                     include_compaction_pointers=include_compaction_pointers,
@@ -377,7 +412,8 @@ def _op_entity_get(
     include_edges: bool = False,
     edge_limit: int = 20,
     include_compaction_pointers: bool = False,
-    intent: str = "card",
+    intent: str | None = None,
+    expected_revision: int | None = None,
     include_superseded: bool = False,
     debug: bool = False,
     top_k: int = _CARD_TOP_K_DEFAULT,
@@ -408,12 +444,14 @@ def _op_entity_get(
     from ._entity_get_param_surface import attach_entity_get_param_warnings
 
     dropped_keys = sorted(extra.keys())
+    resolved_intent = "preview" if intent is None else intent
     if entity_ids is not None and entity_id is not None:
         return {"error": "both_entity_id_and_entity_ids", "status_code": 400}
     if entity_ids is not None:
         batch_result = _entity_get_batch(
             entity_ids,
-            intent=intent,
+            intent=resolved_intent,
+            expected_revision=expected_revision,
             include_edges=include_edges,
             edge_limit=edge_limit,
             include_compaction_pointers=include_compaction_pointers,
@@ -431,24 +469,25 @@ def _op_entity_get(
             dropped_keys=dropped_keys,
             include_body=include_body,
             entity_type=None,
-            intent=intent,
+            intent=resolved_intent,
         )
     if not entity_id:
         return {"error": "entity_id is required"}
-    if intent not in {
+    if resolved_intent not in {
         "full",
         "full-historical",
         "card",
         "card-md",
         "body",
+        "preview",
         "cluster",
         "impact",
     }:
         return {
-            "error": f"Unknown intent {intent!r}. Supported: full, full-historical, card, "
-            "card-md, body (cluster, impact reserved for later phases).",
+            "error": f"Unknown intent {resolved_intent!r}. Supported: full, full-historical, card, "
+            "card-md, body, preview (cluster, impact reserved for later phases).",
         }
-    if intent == "full-historical" and include_superseded:
+    if resolved_intent == "full-historical" and include_superseded:
         return {
             "error": (
                 "Invalid combo: intent='full-historical' with include_superseded=true "
@@ -457,27 +496,28 @@ def _op_entity_get(
             ),
             "status_code": 400,
         }
-    if include_superseded and intent in {
+    if include_superseded and resolved_intent in {
         "card",
         "card-md",
         "body",
+        "preview",
         "cluster",
         "impact",
     }:
         return {
             "error": (
-                f"Invalid combo: intent={intent!r} with include_superseded=true "
+                f"Invalid combo: intent={resolved_intent!r} with include_superseded=true "
                 "— include_superseded applies only to intent='full'."
             ),
             "status_code": 400,
         }
-    if intent in _CARD_INTENTS_DEFERRED:
+    if resolved_intent in _CARD_INTENTS_DEFERRED:
         return {
-            "error": f"intent={intent!r} reserved but not implemented in Slice 1",
+            "error": f"intent={resolved_intent!r} reserved but not implemented in Slice 1",
             "supported_intents": ["full", "card"],
             "reference": "cortex-v2.4 §6.1, §7.1, §7.3",
         }
-    if intent in {"card", "card-md"} and (
+    if resolved_intent in {"card", "card-md"} and (
         not isinstance(top_k, int) or top_k < 1 or top_k > 50
     ):
         return {"error": "top_k must be int in [1, 50]"}
@@ -485,7 +525,8 @@ def _op_entity_get(
         result = _entity_get_single(
             conn,
             entity_id=entity_id,
-            intent=intent,
+            intent=resolved_intent,
+            expected_revision=expected_revision,
             include_edges=include_edges,
             edge_limit=edge_limit,
             include_compaction_pointers=include_compaction_pointers,
@@ -504,7 +545,7 @@ def _op_entity_get(
         dropped_keys=dropped_keys,
         include_body=include_body,
         entity_type=str(entity_type) if entity_type is not None else None,
-        intent=intent,
+        intent=resolved_intent,
     )
 
 
