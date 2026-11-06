@@ -17,6 +17,9 @@ class ConcernTransitionRequest(BaseModel):
     request_id: str | None = None
     delivery_id: str | None = None
     emit_advisory: bool = True
+    expected_revision: int | None = None
+    write_intent_id: str | None = None
+    material: dict[str, Any] | None = None
 
 
 class ConcernTransitionResponse(BaseModel):
@@ -26,6 +29,8 @@ class ConcernTransitionResponse(BaseModel):
     revision: int
     fencing_generation: int
     through_seq: int
+    write_intent_id: str | None = None
+    replayed: bool | None = None
 
 
 class ConcernRebuildRequest(BaseModel):

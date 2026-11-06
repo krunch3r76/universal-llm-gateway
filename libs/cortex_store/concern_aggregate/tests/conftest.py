@@ -42,6 +42,31 @@ def concern_db(
     return conn
 
 
+def append_position_head(
+    conn: sqlite3.Connection,
+    concern_id: str,
+    *,
+    record_ref: str,
+    expected_revision: int = 0,
+    write_intent_id: str = "wi:test-head",
+    material: dict | None = None,
+    authorized_by: str = "decision:test-auth",
+) -> dict:
+    from cortex_store.concern_aggregate.journal import append_transition
+
+    return append_transition(
+        conn,
+        concern_id=concern_id,
+        kind="position_head",
+        payload={},
+        record_ref=record_ref,
+        authorized_by=authorized_by,
+        expected_revision=expected_revision,
+        write_intent_id=write_intent_id,
+        material=material if material is not None else {"position": record_ref},
+    )
+
+
 def seed_authority(conn: sqlite3.Connection, entity_id: str = "decision:test-auth") -> str:
     conn.execute(
         "INSERT OR IGNORE INTO entities (id, type, name) VALUES (?, ?, ?)",

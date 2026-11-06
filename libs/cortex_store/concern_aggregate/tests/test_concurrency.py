@@ -9,6 +9,7 @@ from pathlib import Path
 
 import pytest
 from cortex_store._test_db_bootstrap import copy_template_db, open_migrated_connection
+from cortex_store.concern_aggregate.cas import ConcernCasError
 from cortex_store.concern_aggregate.fault_injection import (
     FaultInjectionDisabledError,
     clear_all,
@@ -52,17 +53,29 @@ def test_concurrent_append_revisions_unique_monotonic(
         conn = open_migrated_connection(db_path)
         try:
             for i in range(appends_per_writer):
-                result = append_transition(
-                    conn,
-                    concern_id=cid,
-                    kind="position_head",
-                    payload={},
-                    record_ref=f"rec-{worker_id}-{i}",
-                    authorized_by=AUTH,
-                )
-                with revisions_lock:
-                    revisions_seen.append(int(result["revision"]))
-                    fences_seen.append(int(result["fencing_generation"]))
+                for _attempt in range(20):
+                    head = read_head(conn, cid)
+                    expected = int(head["revision"]) if head else 0
+                    try:
+                        result = append_transition(
+                            conn,
+                            concern_id=cid,
+                            kind="position_head",
+                            payload={},
+                            record_ref=f"rec-{worker_id}-{i}",
+                            authorized_by=AUTH,
+                            expected_revision=expected,
+                            write_intent_id=f"wi:{worker_id}:{i}",
+                            material={"worker": worker_id, "i": i},
+                        )
+                    except ConcernCasError:
+                        continue
+                    with revisions_lock:
+                        revisions_seen.append(int(result["revision"]))
+                        fences_seen.append(int(result["fencing_generation"]))
+                    break
+                else:
+                    errors.append(RuntimeError(f"worker {worker_id} stuck on i={i}"))
         except BaseException as exc:
             errors.append(exc)
         finally:
@@ -179,6 +192,9 @@ def test_stale_fence_rejected_under_contention(
         payload={"fencing_generation": 5},
         record_ref="rec-head",
         authorized_by=AUTH,
+        expected_revision=0,
+        write_intent_id="wi:stale-fence-head",
+        material={"fencing_generation": 5},
     )
     head = read_head(concern_db, cid)
     assert head is not None
