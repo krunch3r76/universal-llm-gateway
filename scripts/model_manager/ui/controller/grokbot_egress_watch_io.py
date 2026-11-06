@@ -33,6 +33,8 @@ DEFAULT_HOP_COOLDOWN = DEFAULT_DESKTOP_STATUS.parent / "hop-cooldown.json"
 DEFAULT_DAEMON_LOG = Path.home() / ".gateway/grok-io/sand-data/local-exec-daemon.log"
 DEFAULT_DESKTOP_BINARY = Path("/opt/Grok Bot/grok-bot")
 _PRESENCE_KEEPALIVE_TIMEOUT_S = 5.0
+_KEEPALIVE_MALFORMED_WARN_COOLDOWN_S = 300.0
+_last_malformed_keepalive_warn_at: dict[str, float] = {}
 
 
 def keep_alive_grokbot_presence(
@@ -210,38 +212,69 @@ def resolve_grok_keepalive_targets() -> list[tuple[str, int]]:
             out.append((f":{token.lstrip(':')}", port_raw))
         return out
     except Exception as exc:
-        logger.warning(
-            "grok keepalive targets malformed; falling back to display 9 only",
-            extra={
-                "error_class": type(exc).__name__,
-                "detail": str(exc),
-                "signal": "grokbot.keepalive.config_fallback",
-            },
-        )
+        warn_key = f"{type(exc).__name__}:{exc}"
+        now = time.monotonic()
+        last = _last_malformed_keepalive_warn_at.get(warn_key)
+        if last is None or (now - last) >= _KEEPALIVE_MALFORMED_WARN_COOLDOWN_S:
+            logger.warning(
+                "grok keepalive targets malformed; falling back to display 9 only",
+                extra={
+                    "error_class": type(exc).__name__,
+                    "detail": str(exc),
+                    "signal": "grokbot.keepalive.config_fallback",
+                },
+            )
+            _last_malformed_keepalive_warn_at[warn_key] = now
+        selected = grok_keepalive_displays(("9",))
+        if not selected:
+            return []
         return [(":9", 9339)]
 
 
-def grok_app_health_issue_kinds(probe: dict[str, Any] | None) -> list[str]:
-    """Report-only issue tags from a Grok computer probe (no side effects)."""
+def _forever_box_status_token(raw: object) -> str | None:
+    if raw is None:
+        return None
+    if isinstance(raw, str):
+        text = raw.strip()
+        return text.lower() if text else None
+    if isinstance(raw, dict):
+        for key in ("status", "state", "phase"):
+            val = raw.get(key)
+            if isinstance(val, str) and val.strip():
+                return val.strip().lower()
+    return None
+
+
+def grok_app_health_classify(
+    probe: dict[str, Any] | None,
+) -> tuple[list[str], list[str]]:
+    """Report-only tags: (error_kinds, observe_kinds). No side effects."""
     if not isinstance(probe, dict) or not probe:
-        return ["probe_unknown"]
-    issues: list[str] = []
+        return (["probe_unknown"], [])
+    errors: list[str] = []
+    observes: list[str] = []
     phase = str(probe.get("phase") or "").lower()
     if phase == "asleep":
-        issues.append("phase_asleep")
+        observes.append("phase_asleep")
     egress = probe.get("egress")
     if isinstance(egress, dict):
         egress_state = str(egress.get("state") or "").lower()
         if egress_state in {"off", "error", "failed", "disconnected"}:
-            issues.append(f"egress_{egress_state}")
+            errors.append(f"egress_{egress_state}")
     forever_box = probe.get("forever_box")
     if forever_box is None:
-        issues.append("forever_box_unresponsive")
-    elif isinstance(forever_box, dict):
-        status = str(forever_box.get("status") or forever_box.get("state") or "").lower()
+        observes.append("forever_box_unreadable")
+    else:
+        status = _forever_box_status_token(forever_box)
         if status in {"unresponsive", "failed", "offline", "error"}:
-            issues.append("forever_box_unresponsive")
-    return issues
+            errors.append("forever_box_unresponsive")
+    return (errors, observes)
+
+
+def grok_app_health_issue_kinds(probe: dict[str, Any] | None) -> list[str]:
+    """Error-level issue tags only (observe kinds excluded)."""
+    errors, _observes = grok_app_health_classify(probe)
+    return errors
 
 
 def read_desktop_status(
@@ -660,6 +693,7 @@ __all__ = [
     "DEFAULT_GC2_DESKTOP_STATUS",
     "DEFAULT_HOP_COOLDOWN",
     "desktop_status_path_for_display",
+    "grok_app_health_classify",
     "grok_app_health_issue_kinds",
     "resolve_grok_display_agent_id",
     "resolve_grok_keepalive_targets",

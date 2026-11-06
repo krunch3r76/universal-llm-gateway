@@ -184,9 +184,17 @@ def build_report() -> dict[str, Any]:
             try:
                 from cursor_bridge.electron_chat_relay import probe_electron_supervision
 
+                from scripts.model_manager.ui.controller.grokbot_egress_watch_io import (
+                    resolve_grok_display_agent_id,
+                )
+
+                agent_id = resolve_grok_display_agent_id(disp)
                 summary = asyncio.run(
                     probe_electron_supervision(
-                        display=disp, cdp_port=port, surface="grok_electron"
+                        display=disp,
+                        cdp_port=port,
+                        surface="grok_electron",
+                        agent_id=agent_id,
                     )
                 )
                 grok_supervision[disp] = {

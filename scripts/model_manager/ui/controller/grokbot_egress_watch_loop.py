@@ -36,7 +36,7 @@ from scripts.model_manager.ui.controller.grokbot_egress_watch_io import (
     DEFAULT_HOP_COOLDOWN,
     build_snapshot_from_inputs,
     desktop_pid_alive,
-    grok_app_health_issue_kinds,
+    grok_app_health_classify,
     keep_alive_grokbot_presence,
     load_hop_cooldown_journal,
     query_events_rows,
@@ -225,36 +225,57 @@ class GrokbotEgressWatchLoop:
                 if token == "9":
                     if not snapshot.desktop_running:
                         continue
-                    await asyncio.to_thread(
+                    result = await asyncio.to_thread(
                         keep_alive_grokbot_presence,
                         display=display,
                         cdp_port=cdp_port,
                         open_computer_view=True,
                         focus_window=True,
                     )
+                    if isinstance(result, dict) and (
+                        result.get("ok") is False or result.get("error")
+                    ):
+                        logger.warning(
+                            "grokbot keepalive returned non-ok for %s",
+                            display,
+                            extra={"display": display, "result": result},
+                        )
                     continue
                 liveness_fn = self._secondary_keepalive_fn or secondary_display_running
                 running = await asyncio.to_thread(liveness_fn, display, cdp_port)
                 if running:
-                    await asyncio.to_thread(
+                    result = await asyncio.to_thread(
                         keep_alive_grokbot_presence,
                         display=display,
                         cdp_port=cdp_port,
                         open_computer_view=None,
                         focus_window=False,
                     )
+                    if isinstance(result, dict) and (
+                        result.get("ok") is False or result.get("error")
+                    ):
+                        logger.warning(
+                            "grokbot keepalive returned non-ok for %s",
+                            display,
+                            extra={"display": display, "result": result},
+                        )
             except Exception:
                 logger.exception(
                     "grokbot keepalive failed for display %s (isolated)", display
                 )
 
-    async def _maybe_poll_grok_app_health(self, *, now: float) -> None:
+    async def _maybe_poll_grok_app_health(
+        self, *, now: float, snapshot: GrokbotEgressSnapshot
+    ) -> None:
         from browser_governance.contract import supervision_poll_mode
         from browser_governance.events import browser_supervision_error
         from cursor_bridge.grok_computer import probe_grok_computer
 
+        if not self._keepalive_targets_enabled():
+            return
         if supervision_poll_mode() == "off":
             return
+        del snapshot
         last = self._last_app_health_poll_at
         if last is not None and (now - last) < _APP_HEALTH_POLL_INTERVAL_S:
             return
@@ -305,22 +326,33 @@ class GrokbotEgressWatchLoop:
                     )
                     continue
                 probe = probe_raw if isinstance(probe_raw, dict) else {}
-                issues = grok_app_health_issue_kinds(probe)
-                if not issues:
+                errors, observes = grok_app_health_classify(probe)
+                if observes:
+                    logger.info(
+                        "grok app-health observe-only",
+                        extra={
+                            "display": display,
+                            "cdp_port": cdp_port,
+                            "issue_kinds": observes,
+                            "signal": "grokbot.app_health.observe",
+                        },
+                    )
+                if not errors:
                     continue
                 app_health = {
                     "phase": probe.get("phase"),
                     "egress": probe.get("egress"),
                     "forever_box": probe.get("forever_box"),
                     "agent_id": agent_id,
-                    "issue_kinds": issues,
+                    "issue_kinds": errors,
+                    "observe_kinds": observes,
                 }
                 logger.warning(
-                    "grok app-health report-only observation",
+                    "grok app-health report-only error observation",
                     extra={
                         "display": display,
                         "cdp_port": cdp_port,
-                        "issue_kinds": issues,
+                        "issue_kinds": errors,
                         "signal": "grokbot.app_health.report",
                     },
                 )
@@ -329,7 +361,7 @@ class GrokbotEgressWatchLoop:
                     display=display,
                     cdp_port=cdp_port,
                     error_kind="grok_app_health",
-                    summary=",".join(issues),
+                    summary=",".join(errors),
                     visibility_state="report_only",
                     app_health=app_health,
                 )
@@ -429,7 +461,10 @@ class GrokbotEgressWatchLoop:
         )
         await self._maybe_keepalive_displays(snapshot)
         now = time.time()
-        await self._maybe_poll_grok_app_health(now=now)
+        try:
+            await self._maybe_poll_grok_app_health(now=now, snapshot=snapshot)
+        except Exception:
+            logger.exception("grok app-health poll tick hook failed (isolated)")
         decision = decide_grokbot_tick(now=now, state=self._state, snapshot=snapshot)
 
         if decision.run_hm1_recovery_chain:

@@ -101,8 +101,8 @@ def test_app_health_poll_emits_report_only(
 
     async def _probe(**_kw: object) -> dict[str, object]:
         return {
-            "phase": "asleep",
-            "egress": {"state": "connected"},
+            "phase": "settled",
+            "egress": {"state": "error"},
             "forever_box": {"status": "ok"},
         }
 
@@ -117,12 +117,13 @@ def test_app_health_poll_emits_report_only(
         keepalive_targets_fn=lambda: [(":9", 9339)],
     )
     loop._last_app_health_poll_at = None
-    _run(loop._maybe_poll_grok_app_health(now=1000.0))
+    monkeypatch.delenv("ULG_GROK_KEEPALIVE_DISPLAYS", raising=False)
+    _run(loop._maybe_poll_grok_app_health(now=1000.0, snapshot=_snap()))
     assert emitted
     signal, payload = emitted[0]
     assert signal == "browser.supervision.error"
     assert payload.get("visibility_state") == "report_only"
-    assert "phase_asleep" in str(payload.get("summary") or "")
+    assert "egress_error" in str(payload.get("summary") or "")
 
 
 def test_app_health_poll_off_skips(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -137,12 +138,29 @@ def test_app_health_poll_off_skips(monkeypatch: pytest.MonkeyPatch) -> None:
         _boom,
     )
     loop = GrokbotEgressWatchLoop(workspace_root=Path("/tmp"))
-    _run(loop._maybe_poll_grok_app_health(now=1000.0))
+    _run(loop._maybe_poll_grok_app_health(now=1000.0, snapshot=_snap()))
 
 
 def test_grok_app_health_issue_kinds_unknown() -> None:
     assert io_mod.grok_app_health_issue_kinds(None) == ["probe_unknown"]
-    assert "phase_asleep" in io_mod.grok_app_health_issue_kinds({"phase": "asleep"})
+    errors, observes = io_mod.grok_app_health_classify({"phase": "asleep"})
+    assert not errors
+    assert "phase_asleep" in observes
+
+
+def test_malformed_keepalive_respects_off_env(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("ULG_GROK_KEEPALIVE_DISPLAYS", "off")
+
+    def _boom() -> dict[str, object]:
+        raise ValueError("corrupt json")
+
+    monkeypatch.setattr(
+        "cursor_bridge.grok_window_bindings.load_config",
+        _boom,
+    )
+    assert io_mod.resolve_grok_keepalive_targets() == []
 
 
 def test_substrate_status_import_error_fallback(monkeypatch: pytest.MonkeyPatch) -> None:

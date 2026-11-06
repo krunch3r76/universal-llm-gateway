@@ -159,7 +159,9 @@ async def probe_grok_computer(
     ``cdp_port``.
     """
     del display
-    ws_url = _resolve_ws_url(cdp_port, timeout_s=min(timeout_s, 5.0))
+    ws_url = await asyncio.to_thread(
+        _resolve_ws_url, cdp_port, timeout_s=min(timeout_s, 5.0)
+    )
     expr = f"({_PROBE_JS})({json.dumps(agent_id)})"
     payload = await _cdp_eval(ws_url, expr, timeout_s=timeout_s)
     return payload if isinstance(payload, dict) else {}
@@ -176,14 +178,17 @@ async def wake_grok_computer(
 ) -> dict[str, Any]:
     """Reset X11 idle and signal presence on the Grok Bot desktop.
 
-    ``open_computer_view`` true opens Computer and composer focus; false closes
-    Computer; ``None`` leaves the pane untouched. When ``focus_window`` is false,
-    the wake skips ``focusWindow`` and composer focus (X11 reset and passive
-    gateway reconnect only). Side effect: X11 screensaver reset on ``display`` and
-    a CDP evaluate on ``cdp_port``.
+    ``open_computer_view`` true with ``focus_window`` true opens Computer and
+    sends ``composer_focus``; false closes Computer; ``None`` leaves the pane
+    untouched. When ``focus_window`` is false, the wake skips ``focusWindow``,
+    Computer toggles, and composer focus — only X11 reset and, when
+    ``egress.state == "off"``, a passive ``forceReconnectGateway``. Side effect:
+    X11 screensaver reset on ``display`` and a CDP evaluate on ``cdp_port``.
     """
     x11_reset = reset_x11_screensaver(display)
-    ws_url = _resolve_ws_url(cdp_port, timeout_s=min(timeout_s, 5.0))
+    ws_url = await asyncio.to_thread(
+        _resolve_ws_url, cdp_port, timeout_s=min(timeout_s, 5.0)
+    )
     open_cv_json = "null" if open_computer_view is None else json.dumps(open_computer_view)
     expr = (
         f"({_WAKE_JS})({json.dumps(agent_id)}, {open_cv_json}, "
@@ -200,7 +205,8 @@ async def _wait_phase_settled(
 ) -> dict[str, Any] | None:
     deadline = time.monotonic() + timeout_s
     while time.monotonic() < deadline:
-        probe = await _cdp_eval(ws_url, _PROBE_JS, timeout_s=5.0)
+        expr = f"({_PROBE_JS})({json.dumps(None)})"
+        probe = await _cdp_eval(ws_url, expr, timeout_s=5.0)
         if isinstance(probe, dict):
             phase = str(probe.get("phase") or "").lower()
             if phase in {"following", "settled"}:

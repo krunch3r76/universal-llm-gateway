@@ -45,13 +45,13 @@ PROBE_JS = """(async (boundAgentId) => {
     b => (b.innerText || "").trim() === "Update Bot's Computer" && !b.getAttribute("aria-label")
   );
   return {phase, egress, migration, app_update, forever_box, selected_agent_id, top_bar_update_pill, running_assistants};
-})()"""
+})"""
 
 WAKE_JS = """(async (agentId, openComputerView, focusWindow) => {
   if (focusWindow) {
     await window.desktop.main.focusWindow();
   }
-  if (openComputerView === true) {
+  if (openComputerView === true && focusWindow) {
     await window.desktop.main.setComputerViewOpen({isOpen: true});
     await window.desktop.main.signalBoxIntent({agentId, intent: "composer_focus"});
   } else if (openComputerView === false) {
