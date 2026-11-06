@@ -36,11 +36,13 @@ from scripts.model_manager.ui.controller.grokbot_egress_watch_io import (
     DEFAULT_HOP_COOLDOWN,
     build_snapshot_from_inputs,
     desktop_pid_alive,
+    grok_app_health_issue_kinds,
     keep_alive_grokbot_presence,
     load_hop_cooldown_journal,
     query_events_rows,
     read_daemon_log,
     read_desktop_status,
+    resolve_grok_display_agent_id,
     resolve_grok_keepalive_targets,
     save_hop_cooldown_journal,
     secondary_display_running,
@@ -68,6 +70,8 @@ logger = get_logger(__name__)
 
 _INTERVAL_S = 30.0
 _WATCH_OK_INTERVAL_S = 120.0
+_APP_HEALTH_POLL_INTERVAL_S = 120.0
+_APP_HEALTH_PROBE_TIMEOUT_S = 8.0
 
 _EVENT_SQL = """
 SELECT ts_unix_ms, signal, payload
@@ -112,6 +116,7 @@ class GrokbotEgressWatchLoop:
             load_hop_cooldown_journal(self._hop_cooldown_path)
         )
         self._last_watch_ok_emitted_at: float | None = None
+        self._last_app_health_poll_at: float | None = None
         self._health_probe_failed = False
         self._task: asyncio.Task[None] | None = None
 
@@ -215,22 +220,129 @@ class GrokbotEgressWatchLoop:
                 await asyncio.to_thread(keep_alive_grokbot_presence)
             return
         for display, cdp_port in targets:
-            token = display.lstrip(":")
-            if token == "9":
-                if not snapshot.desktop_running:
+            try:
+                token = display.lstrip(":")
+                if token == "9":
+                    if not snapshot.desktop_running:
+                        continue
+                    await asyncio.to_thread(
+                        keep_alive_grokbot_presence,
+                        display=display,
+                        cdp_port=cdp_port,
+                        open_computer_view=True,
+                        focus_window=True,
+                    )
                     continue
-                await asyncio.to_thread(
-                    keep_alive_grokbot_presence, display=display, cdp_port=cdp_port
+                liveness_fn = self._secondary_keepalive_fn or secondary_display_running
+                running = await asyncio.to_thread(liveness_fn, display, cdp_port)
+                if running:
+                    await asyncio.to_thread(
+                        keep_alive_grokbot_presence,
+                        display=display,
+                        cdp_port=cdp_port,
+                        open_computer_view=None,
+                        focus_window=False,
+                    )
+            except Exception:
+                logger.exception(
+                    "grokbot keepalive failed for display %s (isolated)", display
                 )
-                continue
-            liveness_fn = self._secondary_keepalive_fn or secondary_display_running
-            running = await asyncio.to_thread(liveness_fn, display, cdp_port)
-            if running:
-                await asyncio.to_thread(
-                    keep_alive_grokbot_presence,
+
+    async def _maybe_poll_grok_app_health(self, *, now: float) -> None:
+        from browser_governance.contract import supervision_poll_mode
+        from browser_governance.events import browser_supervision_error
+        from cursor_bridge.grok_computer import probe_grok_computer
+
+        if supervision_poll_mode() == "off":
+            return
+        last = self._last_app_health_poll_at
+        if last is not None and (now - last) < _APP_HEALTH_POLL_INTERVAL_S:
+            return
+        self._last_app_health_poll_at = now
+        try:
+            targets = (
+                self._keepalive_targets_fn()
+                if self._keepalive_targets_fn is not None
+                else resolve_grok_keepalive_targets()
+            )
+        except Exception as exc:
+            logger.warning(
+                "grok app-health poll skipped: keepalive targets unavailable",
+                extra={"error_class": type(exc).__name__, "detail": str(exc)},
+            )
+            return
+        for display, cdp_port in targets:
+            try:
+                agent_id = await asyncio.to_thread(
+                    resolve_grok_display_agent_id, display
+                )
+
+                async def _probe() -> dict[str, object]:
+                    return await probe_grok_computer(
+                        cdp_port=cdp_port,
+                        display=display,
+                        agent_id=agent_id,
+                        timeout_s=_APP_HEALTH_PROBE_TIMEOUT_S,
+                    )
+
+                try:
+                    probe_raw = await asyncio.wait_for(
+                        _probe(), timeout=_APP_HEALTH_PROBE_TIMEOUT_S + 1.0
+                    )
+                except asyncio.TimeoutError:
+                    probe_raw = {}
+                except Exception as exc:
+                    logger.warning(
+                        "grok app-health probe failed for %s",
+                        display,
+                        extra={
+                            "display": display,
+                            "cdp_port": cdp_port,
+                            "error_class": type(exc).__name__,
+                            "detail": str(exc),
+                            "signal": "grokbot.app_health.probe_failed",
+                        },
+                    )
+                    continue
+                probe = probe_raw if isinstance(probe_raw, dict) else {}
+                issues = grok_app_health_issue_kinds(probe)
+                if not issues:
+                    continue
+                app_health = {
+                    "phase": probe.get("phase"),
+                    "egress": probe.get("egress"),
+                    "forever_box": probe.get("forever_box"),
+                    "agent_id": agent_id,
+                    "issue_kinds": issues,
+                }
+                logger.warning(
+                    "grok app-health report-only observation",
+                    extra={
+                        "display": display,
+                        "cdp_port": cdp_port,
+                        "issue_kinds": issues,
+                        "signal": "grokbot.app_health.report",
+                    },
+                )
+                event = browser_supervision_error(
+                    surface="grok_electron",
                     display=display,
                     cdp_port=cdp_port,
-                    open_computer_view=False,
+                    error_kind="grok_app_health",
+                    summary=",".join(issues),
+                    visibility_state="report_only",
+                    app_health=app_health,
+                )
+                await _emit(
+                    event.signal,
+                    dict(event.payload),
+                    source="manage",
+                    role=event.role,
+                    scope=event.scope,
+                )
+            except Exception:
+                logger.exception(
+                    "grok app-health poll failed for display %s (isolated)", display
                 )
 
     async def _default_restart_desktop(self) -> None:
@@ -317,6 +429,7 @@ class GrokbotEgressWatchLoop:
         )
         await self._maybe_keepalive_displays(snapshot)
         now = time.time()
+        await self._maybe_poll_grok_app_health(now=now)
         decision = decide_grokbot_tick(now=now, state=self._state, snapshot=snapshot)
 
         if decision.run_hm1_recovery_chain:

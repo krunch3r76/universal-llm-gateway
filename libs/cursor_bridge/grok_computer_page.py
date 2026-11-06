@@ -5,7 +5,7 @@ Grok Bot settings dialog and never clicks a transcript chip. The portal
 script closes that dialog's own Close control, not the first Close on the page.
 """
 
-PROBE_JS = """(async () => {
+PROBE_JS = """(async (boundAgentId) => {
   const phase = await window.desktop.main.getBoxHostPhase();
   const egress = await window.desktop.main.getEgressTunnelStatus();
   const migration = await window.desktop.main.getBoxMigrationStatus();
@@ -35,8 +35,9 @@ PROBE_JS = """(async () => {
           .map(r => ({id: r.id, name: r.name, isRunning: Boolean(r.isRunning)}));
         const sel = client.selection?.snapshots?.get ? client.selection.snapshots.get() : null;
         selected_agent_id = sel?.currentAgentId || rows[0]?.id || "a0a69fa2-aa00-4606-b11a-43936e5d44ba";
-        await client.foreverBox.refresh(selected_agent_id);
-        forever_box = client.foreverBox.statusSnapshotsFor(selected_agent_id).get()?.status ?? null;
+        const healthAgentId = boundAgentId || selected_agent_id;
+        await client.foreverBox.refresh(healthAgentId);
+        forever_box = client.foreverBox.statusSnapshotsFor(healthAgentId).get()?.status ?? null;
       }
     }
   } catch (_) {}
@@ -46,12 +47,14 @@ PROBE_JS = """(async () => {
   return {phase, egress, migration, app_update, forever_box, selected_agent_id, top_bar_update_pill, running_assistants};
 })()"""
 
-WAKE_JS = """(async (agentId, openComputerView) => {
-  await window.desktop.main.focusWindow();
-  if (openComputerView) {
+WAKE_JS = """(async (agentId, openComputerView, focusWindow) => {
+  if (focusWindow) {
+    await window.desktop.main.focusWindow();
+  }
+  if (openComputerView === true) {
     await window.desktop.main.setComputerViewOpen({isOpen: true});
     await window.desktop.main.signalBoxIntent({agentId, intent: "composer_focus"});
-  } else {
+  } else if (openComputerView === false) {
     await window.desktop.main.setComputerViewOpen({isOpen: false});
   }
   let egress = await window.desktop.main.getEgressTunnelStatus();
@@ -60,7 +63,7 @@ WAKE_JS = """(async (agentId, openComputerView) => {
     egress = await window.desktop.main.getEgressTunnelStatus();
   }
   const phase = await window.desktop.main.getBoxHostPhase();
-  return {phase, egress, open_computer_view: openComputerView};
+  return {phase, egress, open_computer_view: openComputerView, focus_window: focusWindow};
 })"""
 
 UPDATE_CLICK_JS = """(async () => {

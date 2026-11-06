@@ -80,6 +80,7 @@ async def probe_electron_supervision(
     display: str,
     cdp_port: int | None = None,
     surface: str = "grok_electron",
+    agent_id: str | None = None,
 ) -> dict[str, Any]:
     """Read-only Grok Electron supervision (:9/:10) via desktop.main + banner scan."""
     from browser_governance.contract import supervision_gate_mode
@@ -89,7 +90,12 @@ async def probe_electron_supervision(
     disp = display if display.startswith(":") else f":{display.lstrip(':')}"
     port = resolve_grok_cdp_port(disp, cdp_port)
     try:
-        probe = await probe_grok_computer(cdp_port=port, display=disp, timeout_s=10.0)
+        probe = await probe_grok_computer(
+            cdp_port=port,
+            display=disp,
+            agent_id=agent_id,
+            timeout_s=10.0,
+        )
     except asyncio.CancelledError:
         raise
     except Exception as exc:

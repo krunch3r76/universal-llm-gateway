@@ -66,6 +66,16 @@ class TestRuntimeEnvReaders:
         assert grok_keepalive_displays([":9", ":10"]) == ("9",)
         monkeypatch.setenv("ULG_GROK_KEEPALIVE_DISPLAYS", "off")
         assert grok_keepalive_displays([":9", ":10"]) == ()
+        monkeypatch.setenv("ULG_GROK_KEEPALIVE_DISPLAYS", "secondary_off")
+        assert grok_keepalive_displays([":9", ":10"]) == ("9",)
+        monkeypatch.setenv("ULG_GROK_KEEPALIVE_DISPLAYS", "none")
+        assert grok_keepalive_displays([":9", ":10"]) == ()
+
+
+def test_in_process_host_consumers_documents_manage() -> None:
+    from browser_governance import IN_PROCESS_HOST_CONSUMERS
+
+    assert "manage" in IN_PROCESS_HOST_CONSUMERS
 
 
 class TestUnknownSafeSupervision:

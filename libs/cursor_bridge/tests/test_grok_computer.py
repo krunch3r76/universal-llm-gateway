@@ -84,6 +84,13 @@ async def test_wake_grok_computer_includes_x11_reset(
 ) -> None:
     monkeypatch.setattr(gc, "reset_x11_screensaver", lambda _display: True)
     inbox = [_cdp_msg(1, {"phase": "following", "egress": {"state": "connected"}})]
+    sent: list[str] = []
+
+    class _CapturingWS(_FakeWS):
+        async def send(self, raw: str) -> None:
+            sent.append(raw)
+            await super().send(raw)
+
     monkeypatch.setattr(
         gc,
         "list_pages",
@@ -96,10 +103,63 @@ async def test_wake_grok_computer_includes_x11_reset(
             }
         ],
     )
-    monkeypatch.setattr("websockets.connect", lambda _url, **_kw: _FakeWS(inbox))
+    monkeypatch.setattr("websockets.connect", lambda _url, **_kw: _CapturingWS(inbox))
     out = await gc.wake_grok_computer()
     assert out["x11_reset"] is True
     assert out["egress"]["state"] == "connected"
+    assert sent
+    assert "focusWindow" in sent[0]
+
+
+@pytest.mark.asyncio
+async def test_wake_grok_computer_ui_neutral_presence(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(gc, "reset_x11_screensaver", lambda _display: True)
+    captured: list[str] = []
+
+    async def _eval(_ws: str, expression: str, **_kw: Any) -> dict[str, str]:
+        captured.append(expression)
+        return {"phase": "following", "egress": {"state": "connected"}}
+
+    monkeypatch.setattr(gc, "_resolve_ws_url", lambda *_a, **_k: "ws://fake")
+    monkeypatch.setattr(gc, "_cdp_eval", _eval)
+    await gc.wake_grok_computer(open_computer_view=None, focus_window=False)
+    assert captured
+    assert ", null, false)" in captured[0]
+
+
+@pytest.mark.asyncio
+async def test_probe_grok_computer_passes_bound_agent_id(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    payload = {"phase": "settled", "egress": {"state": "connected"}}
+    inbox = [_cdp_msg(1, payload)]
+    sent: list[str] = []
+
+    class _CapturingWS(_FakeWS):
+        async def send(self, raw: str) -> None:
+            sent.append(raw)
+            await super().send(raw)
+
+    monkeypatch.setattr(
+        gc,
+        "list_pages",
+        lambda _origin, **_kw: [
+            {
+                "id": "1",
+                "title": "Grok Bot",
+                "url": "",
+                "web_socket_debugger_url": "ws://fake",
+            }
+        ],
+    )
+    monkeypatch.setattr("websockets.connect", lambda _url, **_kw: _CapturingWS(inbox))
+    aid = "agent-uuid-123"
+    out = await gc.probe_grok_computer(agent_id=aid)
+    assert out["phase"] == "settled"
+    assert sent
+    assert aid in sent[0]
 
 
 @pytest.mark.asyncio

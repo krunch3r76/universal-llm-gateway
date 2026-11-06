@@ -145,7 +145,7 @@ def test_keepalive_survives_corrupt_grok_config(
     assert (":9", 9339) in wakes
 
 
-def test_secondary_keepalive_passes_open_computer_view_false(
+def test_secondary_keepalive_passes_ui_neutral_presence(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     import scripts.model_manager.ui.controller.grokbot_egress_watch_loop as loop_mod
@@ -164,7 +164,8 @@ def test_secondary_keepalive_passes_open_computer_view_false(
     )
     _run(loop._maybe_keepalive_displays(_snap(desktop_running=False)))
     assert kwargs_log
-    assert kwargs_log[0].get("open_computer_view") is False
+    assert kwargs_log[0].get("open_computer_view") is None
+    assert kwargs_log[0].get("focus_window") is False
 
 
 def test_secondary_display_running_uses_injected_check(
