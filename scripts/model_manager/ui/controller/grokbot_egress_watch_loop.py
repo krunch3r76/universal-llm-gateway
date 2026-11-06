@@ -289,7 +289,7 @@ class GrokbotEgressWatchLoop:
                     probe_raw = await asyncio.wait_for(
                         _probe(), timeout=_APP_HEALTH_PROBE_TIMEOUT_S + 1.0
                     )
-                except asyncio.TimeoutError:
+                except TimeoutError:
                     probe_raw = {}
                 except Exception as exc:
                     logger.warning(

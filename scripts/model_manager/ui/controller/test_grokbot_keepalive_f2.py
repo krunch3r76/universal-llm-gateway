@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import json
 from pathlib import Path
 from typing import Any
 
@@ -127,7 +126,6 @@ def test_app_health_poll_emits_report_only(
 
 
 def test_app_health_poll_off_skips(monkeypatch: pytest.MonkeyPatch) -> None:
-    import scripts.model_manager.ui.controller.grokbot_egress_watch_loop as loop_mod
 
     monkeypatch.setenv("ULG_SUPERVISION_POLL_MODE", "off")
 
