@@ -220,7 +220,7 @@ _WORKFLOW_HINTS["frictions"] = (
 _CORTEX_FORMAT_HINT = (
     "arguments must be a JSON-encoded object string (the MCP tool schema "
     "declares type=string). "
-    'Example: cortex(tool="entity_get", arguments=\'{"entity_id": "service:mcp-server"}\')'
+    'Example: cortex(tool="entity_get", arguments=\'{"entity_id": "service:mcp-server", "intent": "card"}\')'
 )
 
 # Ops whose payloads are routinely large and quote-heavy (transcripts, handoffs).

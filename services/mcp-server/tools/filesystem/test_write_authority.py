@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 import pytest
@@ -561,12 +562,30 @@ def test_file_editor_house_rules_growth_refused(
     assert (sandbox_root / rel).read_bytes() == before
 
 
+def _checkout_subprocess_env() -> dict[str, str]:
+    """Point a fresh interpreter at this checkout's ``libs``.
+
+    sitecustomize follows ``PROJECT_ROOT`` or the hub checkout. A child whose
+    ambient root does not contain ``libs/durable_io`` raises
+    ``ModuleNotFoundError: durable_io`` even though this tree ships the package.
+    """
+    repo = Path(__file__).resolve().parents[4]
+    env = os.environ.copy()
+    libs = str(repo / "libs")
+    prior = env.get("PYTHONPATH", "")
+    env["PYTHONPATH"] = libs if not prior else libs + os.pathsep + prior
+    env["PROJECT_ROOT"] = str(repo)
+    env["ULG_REPO"] = str(repo)
+    return env
+
+
 def test_file_editor_and_surface_registration_import_order_no_cycle() -> None:
     """Importing tools.context / tools.file_editor before tools.filesystem must not circular-import."""
     import subprocess
     import sys
 
     mcp_dir = str(Path(__file__).resolve().parents[2])
+    env = _checkout_subprocess_env()
     for stmt in (
         "import tools.file_editor",
         "import tools.context",
@@ -575,6 +594,7 @@ def test_file_editor_and_surface_registration_import_order_no_cycle() -> None:
         proc = subprocess.run(
             [sys.executable, "-c", stmt],
             cwd=mcp_dir,
+            env=env,
             capture_output=True,
             text=True,
             check=False,
@@ -605,6 +625,7 @@ def test_register_filesystem_tools_fresh_subprocess_no_blanket_except() -> None:
     proc = subprocess.run(
         [sys.executable, "-c", stmt],
         cwd=mcp_dir,
+        env=_checkout_subprocess_env(),
         capture_output=True,
         text=True,
         check=False,

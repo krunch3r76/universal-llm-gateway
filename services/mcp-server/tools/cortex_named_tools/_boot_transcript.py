@@ -44,34 +44,65 @@ def resolve_transcript(
     composed_md = ""
     if source_uri:
         rel = source_uri.lstrip("/")
-        read_out = read_file_result(rel, export=True)
-        if read_out.get("code") == "sparse_manifest_requires_expansion":
-            return {
-                "error": "transcript_source_sparse_manifest",
-                "transcript_id": clean_id,
-                "transcript_entity_id": entity_key,
-                "detail": (
-                    "Transcript source_uri read returned manifest without body; "
-                    "export=true failed or source is not expandable."
-                ),
-                "read_sha256": read_out.get("read_sha256"),
-            }
-        if "error" in read_out or read_out.get("code"):
-            return {
-                "error": "transcript_source_read_failed",
-                "transcript_id": clean_id,
-                "transcript_entity_id": entity_key,
-                "detail": str(read_out.get("error") or read_out.get("message")),
-            }
-        body = read_out.get("content")
-        if not isinstance(body, str) or not body.strip():
+        chunks: list[str] = []
+        cursor: int | None = None
+        read_out: dict[str, Any] = {}
+        while True:
+            read_kwargs: dict[str, Any] = {"export": True}
+            if cursor is not None:
+                read_kwargs["chunk_cursor"] = cursor
+                read_kwargs["chunk_cursor_provided"] = True
+            read_out = read_file_result(rel, **read_kwargs)
+            if read_out.get("code") == "sparse_manifest_requires_expansion":
+                return {
+                    "error": "transcript_source_sparse_manifest",
+                    "transcript_id": clean_id,
+                    "transcript_entity_id": entity_key,
+                    "detail": (
+                        "Transcript source_uri read returned manifest without body; "
+                        "export=true failed or source is not expandable."
+                    ),
+                    "read_sha256": read_out.get("read_sha256"),
+                }
+            if "error" in read_out or read_out.get("code"):
+                return {
+                    "error": "transcript_source_read_failed",
+                    "transcript_id": clean_id,
+                    "transcript_entity_id": entity_key,
+                    "detail": str(read_out.get("error") or read_out.get("message")),
+                }
+            body = read_out.get("content")
+            if not isinstance(body, str):
+                return {
+                    "error": "transcript_source_empty",
+                    "transcript_id": clean_id,
+                    "transcript_entity_id": entity_key,
+                    "detail": "Transcript markdown body empty after explicit export read.",
+                }
+            chunks.append(body)
+            if not read_out.get("truncated"):
+                break
+            nxt = read_out.get("chunk_cursor_next")
+            if not isinstance(nxt, int):
+                return {
+                    "error": "transcript_export_truncated",
+                    "transcript_id": clean_id,
+                    "transcript_entity_id": entity_key,
+                    "detail": (
+                        "Transcript export was truncated without chunk_cursor_next; "
+                        "refusing to clip the body silently."
+                    ),
+                    "read_sha256": read_out.get("read_sha256"),
+                }
+            cursor = nxt
+        composed_md = "".join(chunks)
+        if not composed_md.strip():
             return {
                 "error": "transcript_source_empty",
                 "transcript_id": clean_id,
                 "transcript_entity_id": entity_key,
                 "detail": "Transcript markdown body empty after explicit export read.",
             }
-        composed_md = body
 
     chain_qs = urlencode({"node": entity_key, "edge_type": "continues", "hops": 5})
     chain_raw = cx("GET", f"/edges/traverse?{chain_qs}")

@@ -37,43 +37,122 @@ def _clip_summary(text: str) -> tuple[str, bool, str]:
     return raw[:_SUMMARY_CAP], True, "description"
 
 
+def _assertion_sort_key(row: dict[str, Any]) -> tuple[str, int]:
+    """Newest ``observed_at``, then lowest numeric id (via negated id under reverse)."""
+    observed = row.get("observed_at")
+    stamp = observed if isinstance(observed, str) else ""
+    return (stamp, -int(row["id"]))
+
+
+def _freshest_of(rows: list[dict[str, Any]]) -> dict[str, Any] | None:
+    if not rows:
+        return None
+    return sorted(rows, key=_assertion_sort_key, reverse=True)[0]
+
+
 def _freshest_assertion(conn: sqlite3.Connection, entity_id: str) -> dict[str, Any] | None:
     rows = query(
         conn,
-        "SELECT id, claim, observed_at, confidence FROM assertions "
-        "WHERE entity_id = ? AND superseded_by IS NULL "
-        "ORDER BY COALESCE(observed_at, created_at) DESC, id ASC LIMIT 5",
+        "SELECT id, claim, observed_at, confidence, review_status, entity_id "
+        "FROM assertions WHERE entity_id = ? AND superseded_by IS NULL",
         (entity_id,),
     )
-    return rows[0] if rows else None
+    return _freshest_of(rows)
+
+
+def _parse_assertion_node(node: object) -> int | None:
+    if not isinstance(node, str) or not node.startswith("assertion:"):
+        return None
+    raw = node.removeprefix("assertion:")
+    if not raw.isdigit():
+        return None
+    return int(raw)
 
 
 def _conflict_slot(conn: sqlite3.Connection, entity_id: str) -> dict[str, Any]:
-    rows = query(
+    """Live ``contradicts`` edges. Assertion confidence has no ``contradicts`` value.
+
+    A pair counts only when both endpoints are live (not superseded) assertions
+    and at least one belongs to ``entity_id``. ``conflict_assertion_id`` is the
+    non-freshest member of the chosen pair: newest ``observed_at``, then lowest id.
+    """
+    empty = {
+        "contradiction_count": 0,
+        "conflict_assertion_id": None,
+        "conflict_marker": None,
+    }
+    live = query(
         conn,
-        "SELECT id, claim, confidence FROM assertions "
-        "WHERE entity_id = ? AND superseded_by IS NULL AND confidence = 'contradicts' "
-        "ORDER BY id DESC LIMIT 1",
+        "SELECT id FROM assertions WHERE entity_id = ? AND superseded_by IS NULL",
         (entity_id,),
     )
-    if not rows:
-        return {}
-    row = rows[0]
-    all_rows = query(
+    live_ids = {int(row["id"]) for row in live}
+    if not live_ids:
+        return empty
+    edges = query(
         conn,
-        "SELECT COUNT(*) AS n FROM assertions "
-        "WHERE entity_id = ? AND superseded_by IS NULL AND confidence = 'contradicts'",
-        (entity_id,),
+        "SELECT from_node, to_node FROM session_edges "
+        "WHERE edge_type = 'contradicts' AND valid_until IS NULL",
     )
-    count = int(all_rows[0]["n"]) if all_rows else 0
+    pair_ids: list[tuple[int, int]] = []
+    needed: set[int] = set()
+    for edge in edges:
+        left = _parse_assertion_node(edge.get("from_node"))
+        right = _parse_assertion_node(edge.get("to_node"))
+        if left is None or right is None or left == right:
+            continue
+        if left not in live_ids and right not in live_ids:
+            continue
+        pair_ids.append((left, right))
+        needed.add(left)
+        needed.add(right)
+    if not pair_ids:
+        return empty
+    loaded = query(
+        conn,
+        "SELECT id, claim, observed_at, confidence, review_status, entity_id, "
+        "superseded_by FROM assertions WHERE id IN ("
+        + ",".join("?" for _ in needed)
+        + ")",
+        tuple(needed),
+    )
+    by_id = {
+        int(row["id"]): row
+        for row in loaded
+        if row.get("superseded_by") is None
+    }
     freshest = _freshest_assertion(conn, entity_id)
-    conflict_id = int(row["id"])
-    if freshest and int(freshest["id"]) == conflict_id:
-        return {}
+    candidates: list[dict[str, Any]] = []
+    counted = 0
+    for left, right in pair_ids:
+        members = [by_id[i] for i in (left, right) if i in by_id]
+        if len(members) != 2:
+            continue
+        if not any(int(row["id"]) in live_ids for row in members):
+            continue
+        counted += 1
+        pair_fresh = _freshest_of(members)
+        if pair_fresh is None:
+            continue
+        others = [row for row in members if int(row["id"]) != int(pair_fresh["id"])]
+        if others:
+            candidates.append(others[0])
+    if freshest is not None:
+        # Prefer the non-freshest side relative to this entity when it is in the pair.
+        narrowed = [
+            row
+            for row in candidates
+            if int(row["id"]) != int(freshest["id"])
+        ]
+        if narrowed:
+            candidates = narrowed
+    chosen = _freshest_of(candidates)
+    if chosen is None or counted == 0:
+        return empty
     return {
-        "contradiction_count": count,
-        "conflict_assertion_id": conflict_id,
-        "conflict_marker": str(row["claim"])[:200],
+        "contradiction_count": counted,
+        "conflict_assertion_id": int(chosen["id"]),
+        "conflict_marker": str(chosen.get("claim") or "")[:200],
     }
 
 
@@ -91,9 +170,15 @@ def build_entity_preview(
     if not rows:
         raise HTTPException(status_code=404, detail=f"Entity not found: {entity_id}")
     row = rows[0]
-    summary, truncated, summary_source = _clip_summary(
-        str(row.get("description") or row.get("name") or "")
-    )
+    description = str(row.get("description") or "")
+    if description.strip():
+        summary_field = "description"
+        summary_text = description
+    else:
+        summary_field = "name"
+        summary_text = str(row.get("name") or "")
+    summary, truncated, _summary_field_ignored = _clip_summary(summary_text)
+    revision = read_live_entity_revision(conn, entity_id)
     attr_count = 0
     raw_attrs = row.get("attributes")
     if isinstance(raw_attrs, str) and raw_attrs.strip():
@@ -139,11 +224,14 @@ def build_entity_preview(
         or row.get("confidence_band"),
         "short_summary": summary,
         "summary_truncated": truncated,
-        "summary_source": summary_source,
+        "summary_source": {"field": summary_field, "revision": revision},
+        "summary_as_of": row.get("updated_at"),
         "updated_at": row.get("updated_at"),
-        "revision": read_live_entity_revision(conn, entity_id),
+        "revision": revision,
         "content_hash": row.get("content_hash"),
         "freshest_assertion_id": int(freshest["id"]) if freshest else None,
+        "confidence": freshest.get("confidence") if freshest else None,
+        "review_status": freshest.get("review_status") if freshest else None,
         "facet_counts": {
             "attributes": attr_count,
             "assertions": assertion_count,

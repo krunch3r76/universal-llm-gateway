@@ -36,7 +36,7 @@ from markdown_sections import (
 )
 from mcp_events import record
 
-from tools._hashing import format_sha256_uri, sha256_hex_equal, sha256_hex_of_bytes
+from tools._hashing import format_sha256_uri, sha256_hex_of_bytes
 from tools.filesystem._house_rules_rotation import rotate_house_rules_to_fit
 from tools.filesystem._write_authority import (
     RULINGS_ARCHIVE_REL,
@@ -55,16 +55,15 @@ from ._file_helpers import extract_text_content, is_converted_format
 from ._pdf_sections import (
     PdfSectionError,
     list_pdf_sections,
-    read_pdf_section,
 )
 from ._section_mutation import (
     delete_mutation_summary,
     delete_warning,
+    removed_child_headings,
     section_mutation_summary,
     shrink_warning,
 )
 from ._sparse_document_read import (
-    finalize_sparse_document_payload,
     param_not_applicable_error,
     resolve_document_read,
     sparse_selector_conflict_error,
@@ -345,6 +344,18 @@ def _section_write_result(
         warning = shrink_warning(prior_body, new_body, op=mutation_op)
         if warning:
             result["_warning"] = warning
+    if mutation_op == "md_rewrite_section":
+        removed = removed_child_headings(rmw.before_text, rmw.after_text, section)
+        if removed:
+            result["children_removed"] = removed
+            child_warning = (
+                f"{mutation_op} dropped child headings {removed}; "
+                "the stored section span includes child headings."
+            )
+            prior_warning = result.get("_warning")
+            result["_warning"] = (
+                f"{prior_warning} {child_warning}" if prior_warning else child_warning
+            )
     if rotation_meta:
         result.update(rotation_meta)
     result["written_sha256"] = rmw.written_sha256
@@ -561,51 +572,7 @@ def _pdf_section_op(
                 "omitted": ["content"],
             }
         read_sha256 = _read_sha256_for_file(resolved)
-        has_sections = bool(sections)
-        if chunk_cursor is not None and not export and not (
-            bool(section.strip()) and not has_sections
-        ):
-            return param_not_applicable_error(parameter="chunk_cursor")
-        if op == "read_section" and not section.strip() and not export and not sections:
-            if expected_read_sha256.strip() and not sha256_hex_equal(
-                read_sha256, expected_read_sha256
-            ):
-                return finalize_sparse_document_payload(
-                    {
-                        "ok": False,
-                        "outcome": "stale_handle",
-                        "read_sha256": read_sha256,
-                        "expected_read_sha256": expected_read_sha256,
-                        "selection": "manifest",
-                        "omitted": ["content"],
-                    }
-                )
-            listing = list_pdf_sections(resolved)
-            descriptors = [
-                {
-                    "id": str(row.get("path") or row.get("heading") or ""),
-                    "heading": str(row.get("heading") or ""),
-                    "level": int(row.get("level") or 0),
-                    "parent_id": None,
-                    "char_count": int(row.get("chars") or 0),
-                }
-                for row in listing.get("sections") or []
-            ]
-            return {
-                "path": path,
-                "sandbox": sandbox,
-                "read_sha256": read_sha256,
-                "total_chars": 0,
-                "selection": "manifest",
-                "structure": "sectioned",
-                "preamble": False,
-                "sections": descriptors,
-                "omitted": ["content"],
-                "cursor": None,
-                "truncated": False,
-                "source": listing.get("source"),
-            }
-        if export or sections:
+        if export:
             text, err = _load_text(resolved)
             if err:
                 return {"error": err}
@@ -614,44 +581,34 @@ def _pdf_section_op(
                 sandbox=sandbox,
                 text=text or "",
                 read_sha256=read_sha256,
-                section=section if section.strip() else None,
-                sections=sections,
-                export=export,
+                export=True,
                 chunk_cursor=chunk_cursor,
                 chunk_cursor_provided=chunk_cursor is not None,
                 expected_read_sha256=expected_read_sha256 or None,
             )
-        if chunk_cursor is not None:
-            return param_not_applicable_error(parameter="chunk_cursor")
-        if expected_read_sha256.strip() and not sha256_hex_equal(
-            read_sha256, expected_read_sha256
-        ):
-            return finalize_sparse_document_payload(
-                {
-                    "ok": False,
-                    "outcome": "stale_handle",
-                    "read_sha256": read_sha256,
-                    "expected_read_sha256": expected_read_sha256,
-                    "selection": "section",
-                    "section": section,
-                }
-            )
-        body = read_pdf_section(resolved, section)
-        record(
-            "mcp.tool.markdown.section.read",
+        from ._pdf_sections import resolve_pdf_outline_read
+
+        outlined = resolve_pdf_outline_read(
+            file_path=resolved,
             path=path,
             sandbox=sandbox,
-            section=section,
-            chars=len(body),
-            source="pdf",
+            read_sha256=read_sha256,
+            section=section if section.strip() else None,
+            sections=sections,
+            chunk_cursor=chunk_cursor,
+            chunk_cursor_provided=chunk_cursor is not None,
+            expected_read_sha256=expected_read_sha256 or None,
         )
-        return {
-            "content": body,
-            "path": path,
-            "sandbox": sandbox,
-            "section": section,
-            "read_sha256": read_sha256,
-        }
+        if outlined.get("outcome") == "ok" and outlined.get("selection") == "section":
+            record(
+                "mcp.tool.markdown.section.read",
+                path=path,
+                sandbox=sandbox,
+                section=section,
+                chars=len(str(outlined.get("content") or "")),
+                source="pdf",
+            )
+        return outlined
     except PdfSectionError as e:
         return {"error": str(e)}
     except Exception as e:  # pymupdf open/parse failures surface as a tool error
@@ -788,6 +745,9 @@ def register_markdown_tools(mcp: FastMCP) -> None:
                     return result
                 if "error" in result:
                     return result
+                if result.get("selection") == "section" and "content" in result:
+                    # Legacy read_section of a found heading stays unmarked.
+                    result.pop("selection", None)
                 selection = result.get("selection")
                 record(
                     "mcp.tool.markdown.section.read",
@@ -797,17 +757,9 @@ def register_markdown_tools(mcp: FastMCP) -> None:
                     chars=len(result.get("content", "")),
                     selection=selection or "section",
                 )
-                # Plain single-section reads keep the legacy shape (no sparse markers).
-                if (
-                    result.get("selection") == "section"
-                    and result.get("outcome") == "ok"
-                    and chunk_cursor is None
-                ):
-                    legacy = dict(result)
-                    legacy.pop("selection", None)
-                    legacy.pop("sparse_policy", None)
-                    return legacy
                 return result
+            if export:
+                return param_not_applicable_error(parameter="export")
             if sections:
                 return sparse_selector_conflict_error(
                     "sections is only valid for read_section / md_read"

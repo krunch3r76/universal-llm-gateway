@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from markdown_fence import is_closing_fence_line, parse_fence_open
-from markdown_sections import SectionError, parse_sections, read_section
+from markdown_sections import SectionError, parse_sections, resolve_section
 
 from tools._hashing import sha256_hex_equal, sha256_hex_of_bytes
 
@@ -299,6 +299,51 @@ def _resolve_indexed(
     return None, "missing"
 
 
+def _honest_span_meta(
+    *,
+    body: str,
+    children: list[str],
+    subtree: int,
+) -> dict[str, Any]:
+    """Own-body disclosure. ``char_count`` is the returned slice, never a zero stand-in."""
+    return {
+        "span": "own_body",
+        "includes_children": False,
+        "children": children,
+        "char_count": len(body),
+        "subtree_char_count": subtree,
+    }
+
+
+def _empty_span_meta() -> dict[str, Any]:
+    return _honest_span_meta(body="", children=[], subtree=0)
+
+
+def _meta_for_resolved_section(text: str, sec: Any) -> tuple[str, dict[str, Any]]:
+    """Own-body slice plus real child ids for a resolved ATX or XML section.
+
+    Leaf-name, suffix, and XML fallbacks used to return the child-inclusive
+    ``read_section`` span while labelling it own-body with empty children.
+    """
+    atx = [s for s in parse_sections(text) if s.level > 0]
+    nested = [
+        s
+        for s in atx
+        if s.level > sec.level and s.start > sec.start and s.start < sec.end
+    ]
+    direct = [s for s in nested if s.level == sec.level + 1]
+    if nested and not direct:
+        min_level = min(s.level for s in nested)
+        direct = [s for s in nested if s.level == min_level]
+    body = _own_body_slice(text, sec) if nested else text[sec.start : sec.end]
+    subtree = sec.end - sec.start
+    return body, _honest_span_meta(
+        body=body,
+        children=[s.path for s in direct],
+        subtree=subtree,
+    )
+
+
 def _content_for_id(text: str, indexed: list[_IndexedSection], section_id: str) -> tuple[str | None, str]:
     if section_id == UNSECTIONED_ID:
         if not [s for s in parse_sections(text) if s.level > 0]:
@@ -314,10 +359,11 @@ def _content_for_id(text: str, indexed: list[_IndexedSection], section_id: str) 
         return None, "duplicate_ambiguous"
     if row is None:
         try:
-            body = read_section(text, section_id)
-            return body, "ok"
+            sec = resolve_section(text, section_id)
         except SectionError:
             return None, "missing"
+        body, _meta = _meta_for_resolved_section(text, sec)
+        return body, "ok"
     sections = parse_sections(text)
     by_path = {s.path: s for s in sections if s.level > 0}
     sec = by_path.get(row.path_key)
@@ -458,15 +504,26 @@ def build_document_manifest(
 def _span_meta_for_section_id(
     text: str, indexed: list[_IndexedSection], section_id: str
 ) -> dict[str, Any]:
+    if section_id == PREAMBLE_ID:
+        for sec in parse_sections(text):
+            if sec.level == 0:
+                body = text[sec.start : sec.end]
+                return _honest_span_meta(body=body, children=[], subtree=len(body))
+        return _empty_span_meta()
+    if section_id == UNSECTIONED_ID:
+        if not [s for s in parse_sections(text) if s.level > 0]:
+            return _honest_span_meta(body=text, children=[], subtree=len(text))
+        return _empty_span_meta()
     row, err = _resolve_indexed(indexed, section_id)
-    if row is None or err is not None:
-        return {
-            "span": "own_body",
-            "includes_children": False,
-            "children": [],
-            "char_count": 0,
-            "subtree_char_count": 0,
-        }
+    if err is not None:
+        return _empty_span_meta()
+    if row is None:
+        try:
+            sec = resolve_section(text, section_id)
+        except SectionError:
+            return _empty_span_meta()
+        _body, meta = _meta_for_resolved_section(text, sec)
+        return meta
     own = _section_own_body(text, row)
     own_len = len(own) if own is not None else row.char_count
     child_ids = _direct_child_ids(indexed, row.path_key)
@@ -733,7 +790,22 @@ def resolve_document_read(
                 }
             )
         if outcome != "ok" or body is None:
-            return {"error": f"Section not found: {section!r}"}
+            missing_outcome = (
+                "duplicate_ambiguous" if outcome == "duplicate_ambiguous" else "missing"
+            )
+            return finalize_sparse_document_payload(
+                {
+                    "ok": False,
+                    "outcome": missing_outcome,
+                    "error": f"Section not found: {sid!r}",
+                    "selection": "section",
+                    "section": sid,
+                    "path": path,
+                    "sandbox": sandbox,
+                    "read_sha256": read_sha256,
+                    **span_meta,
+                }
+            )
 
         if chunk_cursor_provided:
             start = 0 if chunk_cursor is None else int(chunk_cursor)

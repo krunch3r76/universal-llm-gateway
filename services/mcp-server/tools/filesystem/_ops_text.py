@@ -85,9 +85,10 @@ def read_file_impl(
             pass
     auto_binary = bool(result.get("auto_binary"))
     range_requested = offset > 0 or limit > 0
+    resolved_path = result.get("path") if isinstance(result.get("path"), str) else path
     event_payload: dict[str, Any] = {
         "path": path,
-        "resolved": result["path"],
+        "resolved": resolved_path,
         "binary": binary or auto_binary,
         "auto_binary": auto_binary,
         "chars": len(result["content"]) if "content" in result else 0,
@@ -137,7 +138,7 @@ def read_files_batch_impl(
         chunk_cursor_provided=chunk_cursor is not None,
         expected_read_sha256=expected_read_sha256,
     )
-    if "files" not in batch:
+    if "files" not in batch or batch.get("selection") == "multi":
         record(
             "mcp.tool.file.read",
             path=";".join(paths),

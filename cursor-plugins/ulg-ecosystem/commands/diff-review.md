@@ -895,7 +895,7 @@ Before forming findings, ground them by:
    Use op="md_read" with a "section" arg for large markdown docs.
 
 2. cortex(tool="search", arguments='{"query": "<terms>", "limit": 10}')
-   cortex(tool="entity_get", arguments='{"entity_id": "<id>"}')
+   cortex(tool="entity_get", arguments='{"entity_id": "<id>", "intent": "card"}')
    — surface prior decisions, observations, or todos touching the same
    subsystem. Flag conflicts with prior conclusions explicitly.
 
@@ -1113,7 +1113,7 @@ Before forming findings, ground them by:
    boundary. Use op="md_read" with a "section" arg for large markdown docs.
 
 2. cortex(tool="search", arguments='{"query": "<terms>", "limit": 10}')
-   cortex(tool="entity_get", arguments='{"entity_id": "<id>"}')
+   cortex(tool="entity_get", arguments='{"entity_id": "<id>", "intent": "card"}')
    — surface prior decisions, observations, or todos touching the same
    subsystem. Flag conflicts with prior conclusions explicitly.
 

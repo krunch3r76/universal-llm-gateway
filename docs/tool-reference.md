@@ -8,7 +8,7 @@ individual tools with `fs(op="md_read", sandbox="workspaces", path="universal-ll
 
 `cortex`, `agent_bus`, `agent_bus_read`, `rag`, and `dispatch` are **dispatch-style**
 tools: an outer selector (`tool` or `op`) plus an inner **`arguments` JSON-encoded
-object string** — e.g. `cortex(tool="entity_get", arguments='{"entity_id": "decision:foo"}')`.
+object string** — e.g. `cortex(tool="entity_get", arguments='{"entity_id": "decision:foo", "intent": "card"}')`.
 
 ## fleet_liveness
 

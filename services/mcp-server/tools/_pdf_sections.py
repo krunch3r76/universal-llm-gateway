@@ -265,3 +265,301 @@ def pdf_to_dict(path: Path) -> dict[str, object]:
     finally:
         doc.close()
     return _nest(sections, texts, 0, len(sections))
+
+
+def _outline_descriptors(listing: dict[str, object]) -> tuple[list[dict[str, object]], int]:
+    """TOC rows with the same ids ``read_pdf_section`` resolves, plus child metadata."""
+    rows = list(listing.get("sections") or [])
+    stack: list[tuple[int, str]] = []
+    raw: list[dict[str, object]] = []
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        level = int(row.get("level") or 1)
+        sid = str(row.get("path") or row.get("heading") or "")
+        while stack and stack[-1][0] >= level:
+            stack.pop()
+        parent_id = stack[-1][1] if stack else None
+        raw.append(
+            {
+                "id": sid,
+                "heading": str(row.get("heading") or ""),
+                "level": level,
+                "parent_id": parent_id,
+                "char_count": int(row.get("chars") or 0),
+            }
+        )
+        stack.append((level, sid))
+    children: dict[str, list[str]] = {str(item["id"]): [] for item in raw}
+    for item in raw:
+        parent = item["parent_id"]
+        if isinstance(parent, str) and parent in children:
+            children[parent].append(str(item["id"]))
+    by_id = {str(item["id"]): item for item in raw}
+
+    def _subtree(sid: str) -> int:
+        own = int(by_id[sid]["char_count"])
+        return own + sum(_subtree(child) for child in children.get(sid, []))
+
+    descriptors: list[dict[str, object]] = []
+    for item in raw:
+        sid = str(item["id"])
+        descriptors.append(
+            {
+                **item,
+                "children": children.get(sid, []),
+                "subtree_char_count": _subtree(sid),
+            }
+        )
+    total = listing.get("total_chars")
+    total_chars = int(total) if isinstance(total, int) else sum(
+        int(item["char_count"]) for item in raw
+    )
+    return descriptors, total_chars
+
+
+def _match_pdf_descriptor(
+    descriptors: list[dict[str, object]], section_id: str
+) -> tuple[dict[str, object] | None, str]:
+    exact = [row for row in descriptors if row.get("id") == section_id]
+    if len(exact) == 1:
+        return exact[0], "ok"
+    if len(exact) > 1:
+        return None, "duplicate_ambiguous"
+    heading = [
+        row
+        for row in descriptors
+        if row.get("heading") == section_id or str(row.get("id") or "").endswith("/" + section_id)
+    ]
+    if len(heading) == 1:
+        return heading[0], "ok"
+    if len(heading) > 1:
+        return None, "duplicate_ambiguous"
+    return None, "missing"
+
+
+def resolve_pdf_outline_read(
+    *,
+    file_path: Path,
+    path: str,
+    sandbox: str,
+    read_sha256: str,
+    section: str | None = None,
+    sections: list[str] | None = None,
+    chunk_cursor: int | None = None,
+    chunk_cursor_provided: bool = False,
+    expected_read_sha256: str | None = None,
+) -> dict[str, object]:
+    """PDF manifest and section expansion in the outline id space.
+
+    ``sections`` / ``export`` must not re-parse extracted markdown headings:
+    those ids do not match the TOC manifest.
+    """
+    from tools._hashing import sha256_hex_equal, sha256_hex_of_bytes
+
+    from ._sparse_document_read import (
+        BATCH_MAX_CONTENT_CHARS,
+        BATCH_MAX_SECTIONS,
+        _chunk_cursor_out_of_range,
+        _page_descriptors,
+        finalize_sparse_document_payload,
+        param_not_applicable_error,
+        sparse_selector_conflict_error,
+    )
+
+    has_section = bool(section and str(section).strip())
+    has_sections = bool(sections)
+    if chunk_cursor_provided and has_sections:
+        return sparse_selector_conflict_error(
+            "chunk_cursor is not valid together with sections="
+        )
+    if chunk_cursor_provided and not (has_section and not has_sections):
+        return param_not_applicable_error(parameter="chunk_cursor")
+    if has_section and has_sections:
+        return sparse_selector_conflict_error("Pass either section or sections, not both")
+    if sections is not None and len(sections) == 0:
+        return sparse_selector_conflict_error(
+            "sections must be a non-empty list when provided"
+        )
+    if expected_read_sha256 and not sha256_hex_equal(read_sha256, expected_read_sha256):
+        return finalize_sparse_document_payload(
+            {
+                "ok": False,
+                "outcome": "stale_handle",
+                "path": path,
+                "read_sha256": read_sha256,
+                "expected_read_sha256": expected_read_sha256,
+                "selection": "section" if has_section or has_sections else "manifest",
+                "omitted": ["content"],
+            }
+        )
+
+    listing = list_pdf_sections(file_path)
+    descriptors, total_chars = _outline_descriptors(listing)
+
+    def _span(row: dict[str, object], body: str) -> dict[str, object]:
+        kids = row.get("children")
+        return {
+            "span": "own_body",
+            "includes_children": False,
+            "children": list(kids) if isinstance(kids, list) else [],
+            "char_count": len(body),
+            "subtree_char_count": int(row.get("subtree_char_count") or len(body)),
+        }
+
+    def _load(row: dict[str, object]) -> str:
+        return read_pdf_section(file_path, str(row["id"]))
+
+    if not has_section and not has_sections:
+        paged, omitted, cursor, truncated = _page_descriptors(descriptors)
+        return finalize_sparse_document_payload(
+            {
+                "path": path,
+                "sandbox": sandbox,
+                "read_sha256": read_sha256,
+                "total_chars": total_chars,
+                "selection": "manifest",
+                "structure": "sectioned" if descriptors else "unsectioned",
+                "preamble": False,
+                "sections": paged,
+                "omitted": ["content", *omitted],
+                "cursor": cursor,
+                "truncated": truncated,
+                "source": listing.get("source"),
+            }
+        )
+
+    wanted = [str(section).strip()] if has_section else list(sections or [])
+    if has_section:
+        row, status = _match_pdf_descriptor(descriptors, wanted[0])
+        if row is None:
+            return finalize_sparse_document_payload(
+                {
+                    "ok": False,
+                    "outcome": "missing" if status == "missing" else status,
+                    "selection": "section",
+                    "section": wanted[0],
+                    "path": path,
+                    "sandbox": sandbox,
+                    "read_sha256": read_sha256,
+                }
+            )
+        try:
+            body = _load(row)
+        except PdfSectionError as exc:
+            return {"ok": False, "outcome": "missing", "error": str(exc), "selection": "section", "section": wanted[0], "path": path, "read_sha256": read_sha256}
+        span = _span(row, body)
+        if chunk_cursor_provided:
+            start = 0 if chunk_cursor is None else int(chunk_cursor)
+            if start < 0 or start > len(body):
+                return _chunk_cursor_out_of_range(section_label=str(row["id"]))
+            chunk = body[start : start + BATCH_MAX_CONTENT_CHARS]
+            next_pos = start + len(chunk)
+            chunk_next = next_pos if next_pos < len(body) else None
+            return finalize_sparse_document_payload(
+                {
+                    "ok": True,
+                    "outcome": "ok",
+                    "content": chunk,
+                    "path": path,
+                    "sandbox": sandbox,
+                    "section": str(row["id"]),
+                    "read_sha256": read_sha256,
+                    "content_sha256": sha256_hex_of_bytes(chunk.encode("utf-8")),
+                    "chunk_cursor": start,
+                    "chunk_cursor_next": chunk_next,
+                    "truncated": chunk_next is not None,
+                    "selection": "section",
+                    **span,
+                }
+            )
+        if len(body) > BATCH_MAX_CONTENT_CHARS:
+            return finalize_sparse_document_payload(
+                {
+                    "ok": False,
+                    "outcome": "over_budget",
+                    "oversize": True,
+                    "selection": "section",
+                    "section": str(row["id"]),
+                    "path": path,
+                    "read_sha256": read_sha256,
+                    "char_count": len(body),
+                    "fetch": {"section": str(row["id"]), "chunk_cursor": 0},
+                    **span,
+                }
+            )
+        return finalize_sparse_document_payload(
+            {
+                "ok": True,
+                "outcome": "ok",
+                "content": body,
+                "path": path,
+                "sandbox": sandbox,
+                "section": str(row["id"]),
+                "read_sha256": read_sha256,
+                "content_sha256": sha256_hex_of_bytes(body.encode("utf-8")),
+                "selection": "section",
+                **span,
+            }
+        )
+
+    items: list[dict[str, object]] = []
+    omitted: list[str] = []
+    budget_cursor: int | None = None
+    used = 0
+    ended = False
+    for idx, sid in enumerate(wanted):
+        row, status = _match_pdf_descriptor(descriptors, sid)
+        if ended or idx >= BATCH_MAX_SECTIONS:
+            items.append({"id": sid, "outcome": "over_budget"})
+            omitted.append(sid)
+            if budget_cursor is None:
+                budget_cursor = idx
+            continue
+        if row is None:
+            items.append({"id": sid, "outcome": "missing" if status == "missing" else status})
+            continue
+        try:
+            body = _load(row)
+        except PdfSectionError:
+            items.append({"id": sid, "outcome": "missing"})
+            continue
+        span = _span(row, body)
+        if len(body) > BATCH_MAX_CONTENT_CHARS or used + len(body) > BATCH_MAX_CONTENT_CHARS:
+            ended = True
+            budget_cursor = idx
+            items.append(
+                {
+                    "id": sid,
+                    "outcome": "over_budget",
+                    "oversize": len(body) > BATCH_MAX_CONTENT_CHARS,
+                    "fetch": {"section": str(row["id"]), "chunk_cursor": 0},
+                    **span,
+                }
+            )
+            omitted.append(sid)
+            continue
+        used += len(body)
+        items.append(
+            {
+                "id": sid,
+                "outcome": "ok",
+                "content": body,
+                "content_sha256": sha256_hex_of_bytes(body.encode("utf-8")),
+                **span,
+            }
+        )
+    payload: dict[str, object] = {
+        "path": path,
+        "sandbox": sandbox,
+        "read_sha256": read_sha256,
+        "items": items,
+        "selection": "sections",
+        "sparse_section_batch": True,
+        "source": listing.get("source"),
+    }
+    if omitted:
+        payload["omitted"] = omitted
+    if budget_cursor is not None:
+        payload["budget_cursor"] = budget_cursor
+    return finalize_sparse_document_payload(payload)

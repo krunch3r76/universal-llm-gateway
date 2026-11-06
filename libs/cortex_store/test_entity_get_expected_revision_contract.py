@@ -72,9 +72,31 @@ def test_batch_expected_revisions_unverifiable_without_column(
                 "expected_revisions": {eid: 0},
             },
         )
-    assert out["outcome"] == "revision_unverifiable"
-    assert out["revision"] is None
-    assert "items" not in out
+    assert "items" in out
+    item = out["items"][0]
+    assert item["outcome"] == "revision_unverifiable"
+    assert item["revision"] is None
+    assert "short_summary" not in item
+    assert "selection" not in item
+    other = "todo:batch-rev-other"
+    insert_entity(migrated_conn, entity_id=other, entity_type="todo")
+    missing = "todo:batch-rev-missing"
+    with _patched_conn(migrated_conn):
+        mixed = execute_op(
+            "entity_get",
+            {
+                "entity_ids": [eid, other, missing],
+                "expected_revisions": {eid: 0},
+            },
+        )
+    assert [row["outcome"] for row in mixed["items"]] == [
+        "revision_unverifiable",
+        "ok",
+        "missing",
+    ]
+    assert mixed["items"][0]["revision"] is None
+    assert "short_summary" not in mixed["items"][0]
+    assert mixed["items"][1]["outcome"] == "ok"
 
 
 @pytest.mark.offline
@@ -139,8 +161,6 @@ def test_expected_revisions_unmatched_key(
     b = "todo:batch-b"
     insert_entity(migrated_conn, entity_id=a, entity_type="todo")
     insert_entity(migrated_conn, entity_id=b, entity_type="todo")
-    migrated_conn.execute("ALTER TABLE entities ADD COLUMN revision INTEGER DEFAULT 0")
-    migrated_conn.commit()
     with _patched_conn(migrated_conn):
         out = execute_op(
             "entity_get",
@@ -153,3 +173,32 @@ def test_expected_revisions_unmatched_key(
     assert out.get("status_code") == 400
     assert out["outcome"] == "expected_revisions_unmatched"
     assert "todo:stranger" in out["data"]["unmatched_keys"]
+
+
+@pytest.mark.offline
+def test_unknown_id_with_expected_revision_is_missing(
+    migrated_conn: sqlite3.Connection,
+) -> None:
+    with _patched_conn(migrated_conn):
+        out = execute_op(
+            "entity_get",
+            {"entity_id": "todo:does-not-exist", "expected_revision": 1, "intent": "card"},
+        )
+    assert out["outcome"] == "missing"
+    assert "top_k_assertions" not in out
+
+
+@pytest.mark.offline
+def test_expected_revision_rejected_for_full_intent(
+    migrated_conn: sqlite3.Connection,
+) -> None:
+    entity_id = "todo:full-precondition"
+    insert_entity(migrated_conn, entity_id=entity_id, entity_type="todo")
+    with _patched_conn(migrated_conn):
+        out = execute_op(
+            "entity_get",
+            {"entity_id": entity_id, "intent": "full", "expected_revision": 1},
+        )
+    assert out["outcome"] == "param_not_applicable"
+    assert "assertions" not in out
+    assert out.get("data", {}).get("parameter") == "expected_revision"

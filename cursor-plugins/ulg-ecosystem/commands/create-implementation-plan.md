@@ -15,7 +15,7 @@ No-BC refactor. Breaking changes allowed.
 
 For `plan:{slug}` and `todo:{slug}` args:
 
-1. `cortex(tool="entity_get", arguments='{"entity_id":"{arg}"}')`.
+1. `cortex(tool="entity_get", arguments='{"entity_id":"{arg}", "intent": "card"}')`.
 2. Follow the entity's `source_uri` — that spec **is** the plan source. Read it
    (and any `phase_dir` / `phases_planned` attributes that scope the work).
 3. Author phase docs into `tmp/prompts/{slug}/` where `{slug}` ≡ the entity id

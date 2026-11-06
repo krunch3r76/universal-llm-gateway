@@ -126,7 +126,7 @@ class DefaultWitnessCortex:
     """
 
     def entity_get(self, entity_id: str, **kwargs: Any) -> dict[str, Any]:
-        arguments: dict[str, Any] = {"entity_id": entity_id}
+        arguments: dict[str, Any] = {"entity_id": entity_id, "intent": "preview"}
         arguments.update(kwargs)
         return _cortex_dispatch("entity_get", arguments)
 

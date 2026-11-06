@@ -17,7 +17,7 @@ continuation pointer.
 Normalize the argument to `transcript:{id}` (add the prefix if absent), then:
 
 ```
-cortex(tool="entity_get", arguments='{"entity_id":"transcript:{id}","include_edges":true}')
+cortex(tool="entity_get", arguments='{"entity_id":"transcript:{id}","intent":"full","include_edges":true}')
 ```
 
 Do NOT fetch any agent-bus thread, grep files, or scan recent activity before this

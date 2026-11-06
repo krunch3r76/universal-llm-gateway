@@ -27,5 +27,5 @@ stub; it defers to the skill SOT via seat self-fetch on explicit use.
 Index / discovery (fallback — metadata only, not body load):
 ```
 cortex(tool="entities", arguments='{"type": "agent_skill"}')
-cortex(tool="entity_get", arguments='{"entity_id": "agent_skill:<slug>"}')
+cortex(tool="entity_get", arguments='{"entity_id": "agent_skill:<slug>", "intent": "card"}')
 ```

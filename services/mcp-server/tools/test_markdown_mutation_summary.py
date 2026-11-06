@@ -94,6 +94,32 @@ def test_md_rewrite_section_warns_on_accidental_truncation(md_tool) -> None:
     assert "_warning" in res
 
 
+def test_md_rewrite_parent_discloses_removed_children(md_tool) -> None:
+    fn, root = md_tool
+    _write(
+        root,
+        "parent.md",
+        "# Parent\n\nparent own body that is long enough to matter.\n\n## Child\n\nchild text\n",
+    )
+    dropped = fn(
+        op="rewrite_section",
+        path="parent.md",
+        sandbox="cortex",
+        section="Parent",
+        content="parent own body only\n",
+    )
+    assert dropped["children_removed"] == ["Child"]
+    assert "includes child headings" in dropped["_warning"]
+    kept = fn(
+        op="rewrite_section",
+        path="parent.md",
+        sandbox="cortex",
+        section="Parent",
+        content="parent own body only\n\n## Child\n\nchild text\n",
+    )
+    assert "children_removed" not in kept
+
+
 def test_md_delete_reports_removed_body(md_tool) -> None:
     fn, root = md_tool
     _write(root, "charter.md", DOC)

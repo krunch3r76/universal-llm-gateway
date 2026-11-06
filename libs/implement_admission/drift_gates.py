@@ -247,7 +247,10 @@ def _resolve_materialized_spec(
 
     class _Reader:
         def entity_get(self, entity_id: str, **kwargs: Any) -> dict[str, Any]:
-            return rt.dispatch("entity_get", {"entity_id": entity_id, **kwargs})
+            return rt.dispatch(
+                "entity_get",
+                {"entity_id": entity_id, "intent": "preview", **kwargs},
+            )
 
     return normalize(
         source_ref,

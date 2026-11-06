@@ -119,7 +119,10 @@ def repair_todo_exists(root_id: str, window_index: int) -> bool:
     """Dedup F1 repair todos by deterministic slug."""
     from .ops_entities import _op_entity_get
 
-    existing = _op_entity_get(entity_id=repair_todo_slug(root_id, window_index))
+    existing = _op_entity_get(
+        entity_id=repair_todo_slug(root_id, window_index),
+        intent="preview",
+    )
     return isinstance(existing, dict) and "error" not in existing
 
 

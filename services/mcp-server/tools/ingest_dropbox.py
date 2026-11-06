@@ -105,7 +105,22 @@ def reconcile_promote_stages(_config: dict[str, Any]) -> None:
             current = load_state(sha) or rec
             entity_id = current.get("entity_id") or entity_id_from_path(rel)
             bundle = find_promoted_bundle(sha, rel)
-            if bundle and _entity_hash(entity_id) == sha:
+            try:
+                promoted_hash = _entity_hash(entity_id) if bundle else None
+            except EntityHashUnavailableError as exc:
+                current["terminal"] = "needs_human"
+                current["last_error"] = f"entity_hash_unavailable: {exc}"
+                record(
+                    "mcp.ingest.state.advanced",
+                    path=rel,
+                    from_stage="promote",
+                    to_stage="promote",
+                    terminal="needs_human",
+                    last_error_kind="entity_hash_unavailable",
+                )
+                save_state(sha, current)
+                continue
+            if bundle and promoted_hash == sha:
                 current["stage"] = "done"
                 current["entity_id"] = entity_id
                 current["last_error"] = None
@@ -131,7 +146,12 @@ def reconcile_promote_stages(_config: dict[str, Any]) -> None:
             save_state(sha, current)
 
 
-def _entity_hash(entity_id: str) -> str | None:
+class EntityHashUnavailableError(RuntimeError):
+    """entity_get did not return a stored content_hash. Not a silent miss."""
+
+
+def _entity_hash(entity_id: str) -> str:
+    """Return the preview ``content_hash`` or raise when it is absent."""
     from tools import _evidence_entity_ops as entity_ops
 
     try:
@@ -143,11 +163,22 @@ def _entity_hash(entity_id: str) -> str | None:
                 "arguments": {"entity_id": entity_id, "intent": "preview"},
             },
         )
-    except Exception:  # noqa: BLE001
-        return None
+    except Exception as exc:  # noqa: BLE001 — transport failure must not look like a missing hash
+        raise EntityHashUnavailableError(
+            f"entity_get preview failed for {entity_id}: {exc}"
+        ) from exc
     if not isinstance(resp, dict):
-        return None
-    return resp.get("content_hash")
+        raise EntityHashUnavailableError(
+            f"entity_get preview for {entity_id} returned {type(resp).__name__}"
+        )
+    if resp.get("error") or resp.get("code"):
+        raise EntityHashUnavailableError(
+            f"entity_get preview for {entity_id} returned {resp.get('error') or resp.get('code')}"
+        )
+    content_hash = resp.get("content_hash")
+    if not isinstance(content_hash, str) or not content_hash:
+        raise EntityHashUnavailableError(f"content_hash absent for {entity_id}")
+    return content_hash
 
 
 def _config_dict(config: IngestConfig) -> dict[str, Any]:

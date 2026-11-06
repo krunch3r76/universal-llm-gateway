@@ -67,6 +67,32 @@ def shrink_warning(prior_body: str, new_body: str, *, op: str) -> str | None:
     )
 
 
+def direct_child_headings(text: str, section_path: str) -> list[str]:
+    """Direct child headings of ``section_path`` in document order."""
+    from markdown_sections import SectionError, parse_sections, resolve_section
+
+    try:
+        parent = resolve_section(text, section_path)
+    except SectionError:
+        return []
+    if parent.level <= 0:
+        return []
+    headings: list[str] = []
+    for sec in parse_sections(text):
+        if sec.level != parent.level + 1:
+            continue
+        if sec.start <= parent.start or sec.start >= parent.end:
+            continue
+        headings.append(sec.heading)
+    return headings
+
+
+def removed_child_headings(before: str, after: str, section_path: str) -> list[str]:
+    """Headings present under ``section_path`` before a write and absent after."""
+    after_set = set(direct_child_headings(after, section_path))
+    return [heading for heading in direct_child_headings(before, section_path) if heading not in after_set]
+
+
 def delete_warning(prior_body: str) -> str | None:
     """Warn when deleting a non-trivial section body."""
     prior_chars = len(prior_body)

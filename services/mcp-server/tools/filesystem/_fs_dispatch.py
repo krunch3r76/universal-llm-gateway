@@ -122,8 +122,8 @@ OP_DOC: dict[str, tuple[str, str]] = {
         "read manifest or expand sections (see Markdown section ops below)",
     ),
     "md_to_dict": (
-        "(path, sections?, export?, expected_read_sha256?)",
-        "heading tree manifest (see Markdown section ops below)",
+        "(path, expected_read_sha256?)",
+        "heading tree manifest without bodies; expected_read_sha256 is param_not_applicable",
     ),
     "md_replace": (
         "(path, section, target, content, all_occurrences?)",
@@ -225,7 +225,7 @@ OP_CONSUMES: dict[str, frozenset[str]] = {
     "md_read": frozenset(
         {"section", "sections", "export", "chunk_cursor", "expected_read_sha256"}
     ),
-    "md_to_dict": frozenset({"sections", "export", "expected_read_sha256"}),
+    "md_to_dict": frozenset({"expected_read_sha256"}),
     "md_replace": frozenset({"section", "target", "all_occurrences"}),
     "md_rewrite_section": frozenset({"section"}),
     "md_append": frozenset({"section"}),
@@ -372,12 +372,12 @@ def md_section_op_doc() -> str:
         "Markdown section ops (for large docs):\n"
         "  md_list    (path)                    — list sections/TOC (PDFs: embedded outline; markdown: ATX headings plus line-anchored XML blocks such as `<scope>` / `<task_guidance>` on six-block handoff packets)\n"
         '  md_read    (path, section?, sections?, export?, expected_read_sha256?) — default manifest; section/sections/export expand. XML block keys: `<tag>` or bare `tag`\n'
-        "  md_to_dict (path, sections?, export?, expected_read_sha256?) — heading tree manifest without bodies\n"
-        "  md_replace (path, section, target, content, all_occurrences?)  — patch target substring within the section body only; target required; cannot truncate unmentioned content\n"
-        "  md_rewrite_section (path, section, content)  — replace the entire section body (explicit rewrite after md_read); response includes mutation and _warning when body shrinks by >50%\n"
+        "  md_to_dict (path, expected_read_sha256?) — heading tree manifest without bodies; expected_read_sha256 is param_not_applicable\n"
+        "  md_replace (path, section, target, content, all_occurrences?)  — patch target substring within the section body only; target required; cannot truncate unmentioned content; the section span includes child headings\n"
+        "  md_rewrite_section (path, section, content)  — replace the entire section body (explicit rewrite after md_read); response includes mutation and _warning when body shrinks by >50% or children_removed when the rewrite drops nested headings; the section span includes child headings\n"
         "  md_append  (path, section, content)  — append to section body (text files only); same heading-less-content contract as md_replace\n"
         "  md_insert  (path, heading, level, position, section?, content?) — insert a new section (text files only); position: end|after|before; section is anchor for after/before; same heading-less-content contract as md_replace\n"
-        "  md_delete  (path, section)           — delete section (text files only); response includes mutation summary of removed body\n"
+        "  md_delete  (path, section)           — delete section (text files only); response includes mutation summary of removed body; the section span includes child headings\n"
         "md_replace/md_rewrite_section/md_delete REQUIRE a non-empty section — "
         "md_replace patches via target= within the section; md_rewrite_section "
         "replaces the entire named-section body; an empty section means the file preamble "

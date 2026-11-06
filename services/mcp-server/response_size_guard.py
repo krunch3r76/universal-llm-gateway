@@ -686,7 +686,7 @@ def _cortex_manifest(
         first_id = str(items[0].get("id", "") or "") if items else ""
         if first_id:
             selective_options.append(
-                f'cortex(tool="entity_get", arguments=\'{{"entity_id":"{first_id}","intent":"preview"}}\')'
+                f'cortex(tool="entity_get", arguments=\'{{"entity_id":"{first_id}","intent":"card"}}\')'
             )
         manifest["request_particular_payload"] = bool(first_id)
         manifest["selective_options"] = selective_options or [
@@ -782,7 +782,7 @@ def _cortex_manifest(
             first_id = str(provisional[0].get("id", "") or "")
             if first_id:
                 selective_options.append(
-                    f'cortex(tool="entity_get", arguments=\'{{"entity_id":"{first_id}","intent":"preview"}}\')'
+                    f'cortex(tool="entity_get", arguments=\'{{"entity_id":"{first_id}","intent":"card"}}\')'
                 )
         manifest["selective_options"] = selective_options
         return manifest
@@ -899,32 +899,32 @@ _SPARSE_SLICE1_POLICY = "slice1_document_and_entity_preview"
 
 
 def _node_is_sparse_document_payload(node: dict[str, Any]) -> bool:
-    """Root-marked sparse reads pass through; selection alone is not sufficient."""
-    if node.get("sparse_section_batch") or node.get("sparse_explicit_export"):
-        return True
+    """Passthrough requires the root marker. Nested selection and flag-only payloads do not qualify."""
     if node.get("code") == "sparse_payload_over_byte_ceiling":
         return True
     if node.get("sparse_policy") != _SPARSE_SLICE1_POLICY:
         return False
-    selection = node.get("selection")
-    if selection not in {"manifest", "section", "sections", "export", "multi", "window"}:
-        return False
-    if selection == "multi" and not node.get("sparse_section_batch"):
-        return False
-    return True
+    return node.get("selection") in {
+        "manifest",
+        "section",
+        "sections",
+        "export",
+        "multi",
+    }
 
 
 def _sparse_document_read_passthrough(result: ToolResult) -> bool:
-    """Explicit sparse document reads must not be re-clipped by the byte guard."""
+    """Root-marked sparse document reads must not be re-clipped by the byte guard.
+
+    A nested dict that would qualify on its own does not earn passthrough.
+    ``sparse_section_batch`` / ``sparse_explicit_export`` without the root
+    ``sparse_policy`` marker do not earn it either. ``selection=multi`` covers
+    read_multi export and default manifests, not only section batches.
+    """
     structured = result.structured_content
     if not isinstance(structured, dict):
         return False
-    if _node_is_sparse_document_payload(structured):
-        return True
-    for value in structured.values():
-        if isinstance(value, dict) and _node_is_sparse_document_payload(value):
-            return True
-    return False
+    return _node_is_sparse_document_payload(structured)
 
 
 def _is_single_json_mirror_text(result: ToolResult) -> tuple[str, Any] | None:

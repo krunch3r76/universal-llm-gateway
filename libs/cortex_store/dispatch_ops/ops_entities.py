@@ -196,6 +196,15 @@ def _entity_get_single(
             raw_id=raw_id,
         )
     except HTTPException as exc:
+        if exc.status_code == 404 and expected_revision is not None:
+            return {
+                "ok": False,
+                "outcome": "missing",
+                "entity_id": entity_id,
+                "source": "entity_get",
+                "status_code": 404,
+                "error": str(exc.detail),
+            }
         return _http_error_dict(exc)
     resolved_id = canonical_id if not raw_id else entity_id
     if expected_revision is not None:
@@ -272,8 +281,21 @@ def _batch_item_from_result(
             "input_entity_id": input_entity_id,
             "ok": False,
             "outcome": "revision_unverifiable",
-            "entity_id": result.get("entity_id"),
-            "revision": result.get("revision"),
+            "entity_id": result.get("entity_id") or input_entity_id,
+            "revision": None,
+        }
+    not_found = result.get("status_code") == 404 or (
+        isinstance(result.get("error"), str) and "Entity not found" in result["error"]
+    )
+    if result.get("outcome") == "missing" or not_found:
+        return {
+            "input_entity_id": input_entity_id,
+            "ok": False,
+            "outcome": "missing",
+            "entity_id": input_entity_id,
+            "status_code": 404,
+            "source": "entity_get",
+            "error": result.get("error") or f"Entity not found: {input_entity_id}",
         }
     if result.get("code") == "stale_handle":
         data = result.get("data") if isinstance(result.get("data"), dict) else {}
@@ -298,12 +320,17 @@ def _batch_item_from_result(
             item["status_code"] = 404
         return item
     resolved_entity_id = result.get("entity_id") or result.get("id") or input_entity_id
-    return {
+    item = {
         "input_entity_id": input_entity_id,
-        "ok": True,
         "resolved_entity_id": resolved_entity_id,
         **result,
     }
+    item["ok"] = True
+    item["outcome"] = "ok"
+    item.setdefault("entity_id", resolved_entity_id)
+    if "revision" not in result:
+        item["revision"] = None
+    return item
 
 
 def _expected_revision_for_batch_id_conn(
@@ -474,20 +501,29 @@ def _validate_expected_revisions_keys_for_batch(
     resolve_aliases: bool,
     raw_id: bool,
 ) -> dict[str, Any] | None:
-    """Fail the whole batch when a map key does not resolve to a batch member."""
-    try:
-        batch_resolved = set(
-            _batch_resolve_entity_ids(
-                conn,
-                entity_ids,
-                resolve_aliases=resolve_aliases,
-                raw_id=raw_id,
+    """Fail the whole batch when a map key does not resolve to a batch member.
+
+    A missing batch member stays per-item ``missing``. Resolving every requested
+    id up front turned that miss into a whole-call error and skipped the
+    unmatched-key check on the production schema.
+    """
+    resolved_members: set[str] = set(entity_ids)
+    for eid in entity_ids:
+        try:
+            resolved_members.add(
+                _resolve_read_entity_id(
+                    conn,
+                    eid,
+                    resolve_aliases=resolve_aliases,
+                    raw_id=raw_id,
+                )
             )
-        )
-    except HTTPException as exc:
-        return _http_error_dict(exc)
+        except HTTPException:
+            continue
     unmatched: list[str] = []
     for key in expected_revisions:
+        if key in resolved_members:
+            continue
         try:
             rk = _resolve_read_entity_id(
                 conn,
@@ -498,7 +534,7 @@ def _validate_expected_revisions_keys_for_batch(
         except HTTPException:
             unmatched.append(key)
             continue
-        if rk not in batch_resolved:
+        if rk not in resolved_members:
             unmatched.append(key)
     if unmatched:
         return {
@@ -582,11 +618,6 @@ def _entity_get_batch(
         return {"error": "top_k must be int in [1, 50]"}
     items: list[dict[str, Any]] = []
     with cortex_conn() as conn:
-        if _needs_expected_revision_check(
-            exp_rev=expected_revision, er_map=expected_revisions
-        ):
-            if not _entities_table_has_revision_column(conn):
-                return _revision_unverifiable_whole_call()
         if expected_revisions:
             key_err = _validate_expected_revisions_keys_for_batch(
                 conn,
@@ -732,6 +763,22 @@ def _op_entity_get(
             entity_type=None,
             intent=resolved_intent,
         )
+    if (exp_rev_coerced is not None or er_coerced) and resolved_intent in {
+        "full",
+        "card-md",
+        "full-historical",
+    }:
+        return {
+            "ok": False,
+            "outcome": "param_not_applicable",
+            "code": "param_not_applicable",
+            "status_code": 400,
+            "source": "entity_get",
+            "message": (
+                f"expected_revision does not apply to intent={resolved_intent!r}"
+            ),
+            "data": {"parameter": "expected_revision", "intent": resolved_intent},
+        }
     if entity_ids is not None:
         batch_result = _entity_get_batch(
             entity_ids,
@@ -808,18 +855,6 @@ def _op_entity_get(
     ):
         return {"error": "top_k must be int in [1, 50]"}
     with cortex_conn() as conn:
-        if _needs_expected_revision_check(
-            exp_rev=exp_rev_coerced, er_map=er_coerced
-        ):
-            if not _entities_table_has_revision_column(conn):
-                unver = _revision_unverifiable_whole_call(entity_id=entity_id)
-                return attach_entity_get_param_warnings(
-                    unver,
-                    dropped_keys=dropped_keys,
-                    include_body=include_body,
-                    entity_type=None,
-                    intent=resolved_intent,
-                )
         result = _entity_get_single(
             conn,
             entity_id=entity_id,

@@ -1358,3 +1358,16 @@ def test_concurrent_runs_one_promote_second_locked(
     assert counts["extract"] == 1
     assert counts["check"] == 1
     assert counts["promote"] <= 1
+
+
+def test_entity_hash_raises_when_preview_has_no_hash(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A preview without content_hash is a transport failure, not a missing file."""
+
+    def _cx(*_a: Any, **_k: Any) -> dict[str, Any]:
+        return {"entity_id": "document:scan"}
+
+    monkeypatch.setattr(evidence_entity_ops, "cx", _cx)
+    with pytest.raises(ingest_mod.EntityHashUnavailableError, match="content_hash absent"):
+        ingest_mod._entity_hash("document:scan")
