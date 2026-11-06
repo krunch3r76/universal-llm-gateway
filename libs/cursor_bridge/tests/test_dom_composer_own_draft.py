@@ -65,6 +65,76 @@ def test_dom_js_includes_semantic_normalizer() -> None:
     assert "setContent(line)" not in set_js
     assert "el.textContent=line" not in set_js
     assert "ulgNormalizeComposerText" in click_js
+    assert "ulgComposerDomEmpty" in set_js
+
+
+def test_tiptap_empty_placeholder_allows_insert_and_foreign_whitespace_blocks() -> None:
+    """Live-observed empty TipTap uses innerText newline; human spaces must stay protected."""
+    from playwright.sync_api import sync_playwright
+
+    writer = "interlocutor:agent"
+    empty_html = (
+        '<p class="is-empty is-editor-empty">'
+        '<br class="ProseMirror-trailingBreak">'
+        "</p>"
+    )
+    foreign_html = '<p class="is-editor-empty">  human note  </p>'
+
+    with sync_playwright() as playwright:
+        browser = playwright.chromium.launch(headless=True)
+        page = browser.new_page()
+
+        empty_row = page.evaluate(
+            """({js, html, writer}) => {
+              document.body.innerHTML = '<form><div data-composer="1"></div></form>';
+              const el = document.querySelector('[data-composer]');
+              el.innerHTML = html;
+              Object.defineProperty(el, 'innerText', {get() { return '\\n'; }});
+              let calls = 0;
+              el.editor = {isEmpty: true, commands: {setContent(h) { calls += 1; el.innerHTML = h; }}};
+              window.__ulgOperatorActivity = {};
+              const ret = eval(js);
+              return {ret, calls};
+            }""",
+            {
+                "js": _set_composer_body(
+                    "[data-composer]",
+                    "probe nonce",
+                    preserve_newlines=True,
+                    draft_writer=writer,
+                ),
+                "html": empty_html,
+                "writer": writer,
+            },
+        )
+        assert empty_row["ret"]["ok"] is True
+        assert empty_row["calls"] == 1
+
+        foreign_row = page.evaluate(
+            """({js, html}) => {
+              document.body.innerHTML = '<form><div data-composer="1"></div></form>';
+              const el = document.querySelector('[data-composer]');
+              el.innerHTML = html;
+              Object.defineProperty(el, 'innerText', {get() { return '  human note  '; }});
+              let calls = 0;
+              el.editor = {isEmpty: false, commands: {setContent(h) { calls += 1; el.innerHTML = h; }}};
+              window.__ulgOperatorActivity = {};
+              const ret = eval(js);
+              return {ret, calls, inner: el.innerText};
+            }""",
+            {
+                "js": _set_composer_body(
+                    "[data-composer]",
+                    "probe nonce",
+                    preserve_newlines=True,
+                    draft_writer=writer,
+                ),
+                "html": foreign_html,
+            },
+        )
+        assert foreign_row["ret"]["reason"] == "composer_not_empty"
+        assert foreign_row["calls"] == 0
+        browser.close()
 
 
 def _old_paragraph_html(raw: str) -> str:

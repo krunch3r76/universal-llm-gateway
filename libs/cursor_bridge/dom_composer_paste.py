@@ -46,6 +46,25 @@ function ulgPlainHtml(raw) {
     .replace(/>/g, '&gt;');
   return '<p style="white-space:pre-wrap">' + esc.split('\n').join('<br>') + '</p>';
 }
+function ulgComposerDomEmpty(el) {
+  if (!el) return true;
+  const pm = el.closest ? el.closest('.ProseMirror') : null;
+  if (pm && pm.classList && pm.classList.contains('is-editor-empty')) return true;
+  if (el.classList && el.classList.contains('is-editor-empty')) return true;
+  if (el.editor && el.editor.isEmpty === true) return true;
+  if (el.editor && el.editor.state && el.editor.state.doc
+      && typeof el.editor.state.doc.textContent === 'string') {
+    const docText = el.editor.state.doc.textContent;
+    if (docText === '' || docText === '\\n') return true;
+  }
+  const html = String(el.innerHTML || '');
+  const raw = el.innerText || el.value || '';
+  const norm = ulgNormalizeComposerText(raw);
+  if (norm === '') return true;
+  if (norm === '\\n' && html.includes('ProseMirror-trailingBreak')
+      && html.includes('is-editor-empty')) return true;
+  return false;
+}
 """
 
 
@@ -333,7 +352,8 @@ def _set_composer_body(
         "const draftRaw=(el.innerText||el.value||'');"
         "const normDraft=ulgNormalizeComposerText(draftRaw);"
         "const stale=/^BRIDGE_WAKE\\s+thread=\\S+\\s+turn=\\d+(?:,\\d+)*$/.test(normDraft);"
-        "if(normDraft.length>0&&!stale){"
+        "const composerEmpty=ulgComposerDomEmpty(el);"
+        "if(!composerEmpty&&!stale){"
         "const writer=String(g.ourDraftWriter||'').trim();"
         "const sig=ulgNormalizeComposerText(String(g.ourDraftSig||''));"
         "if(normDraft===normLine&&expectWriter&&writer===expectWriter&&sig===normDraft){"
@@ -500,9 +520,10 @@ def _click_send_body(
         "const normLine=ulgNormalizeComposerText(line);"
         "let normText=ulgNormalizeComposerText(el.innerText||el.value||'');"
         "const wakeStale=(t)=>/^BRIDGE_WAKE\\s+thread=\\S+\\s+turn=\\d+(?:,\\d+)*$/.test(t);"
-        "if(!normText||(normText!==normLine&&!wakeStale(normText))){"
+        "const composerEmpty=ulgComposerDomEmpty(el);"
+        "if(!composerEmpty&&(!normText||(normText!==normLine&&!wakeStale(normText)))){"
         "normText=ulgNormalizeComposerText(el.innerText||el.value||'');"
-        "if(!normText||(normText!==normLine&&!wakeStale(normText))){"
+        "if(!composerEmpty&&(!normText||(normText!==normLine&&!wakeStale(normText)))){"
         "cleanup();return{ok:false,reason:'composer_text_mismatch',send_clicked:false};}}"
         f"const root=el.closest('form')||el.parentElement||document;"
         f"const btnSels={btn_sels};"
