@@ -49,6 +49,18 @@ CREATE TABLE IF NOT EXISTS execution_compensations (
 """
 
 
+STICKY_BLOCKED_REASONS = frozenset(
+    {
+        "ref_conflict",
+        "duplicate_msg",
+        "epoch_mismatch",
+        "epoch_unverified",
+    }
+)
+
+PROMOTE_BLOCKED_STICKY_REASONS = frozenset({"ref_conflict", "duplicate_msg"})
+
+
 def _payload_inflight(payload: dict[str, Any] | None) -> float | None:
     if not payload:
         return None
@@ -134,9 +146,11 @@ class IntentStore(Protocol):
 
     def claim_retry(self, intent_id: str, *, inflight_at: float | None = None) -> bool: ...
 
-    def stamp_inflight(self, intent_id: str, claimed_at: float) -> IntentRecord: ...
-
     def clear_inflight_marker(self, intent_id: str) -> None: ...
+
+    def pop_payload_keys(self, intent_id: str, *keys: str) -> IntentRecord | None: ...
+
+    def apply_store_epoch_capture(self, intent_id: str, store_epoch: str) -> None: ...
 
     def merge_payload(self, intent_id: str, patch: dict[str, Any]) -> IntentRecord: ...
 
@@ -158,7 +172,7 @@ class IntentStore(Protocol):
         target: ExecutionState,
         actuator_ref: str | None,
         owner_unknown_reason: str | None = None,
-    ) -> IntentRecord: ...
+    ) -> IntentRecord | None: ...
 
     def apply_blocked_resolution(
         self,
@@ -264,10 +278,42 @@ class ReferenceSqliteIntentLedger:
             ).fetchone()
         return _row_to_record(row) if row is not None else None
 
-    def stamp_inflight(self, intent_id: str, claimed_at: float) -> IntentRecord:
-        return self.merge_payload(intent_id, {"inflight_claimed_at": claimed_at})
+    def pop_payload_keys(self, intent_id: str, *keys: str) -> IntentRecord | None:
+        if not keys:
+            return self.get(intent_id)
+        ts = _utc_now()
+        with closing(self._connect()) as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            row = conn.execute(
+                "SELECT payload_json FROM execution_intents WHERE intent_id = ?",
+                (intent_id,),
+            ).fetchone()
+            if row is None:
+                conn.execute("ROLLBACK")
+                return None
+            payload = dict(
+                json.loads(row["payload_json"]) if row["payload_json"] else {}
+            )
+            changed = False
+            for key in keys:
+                if key in payload:
+                    payload.pop(key, None)
+                    changed = True
+            if not changed:
+                conn.execute("ROLLBACK")
+                return self.get(intent_id)
+            conn.execute(
+                "UPDATE execution_intents SET payload_json = ?, updated_at = ? "
+                "WHERE intent_id = ?",
+                (json.dumps(payload), ts, intent_id),
+            )
+            conn.commit()
+        return self.get(intent_id)
 
     def clear_inflight_marker(self, intent_id: str) -> None:
+        self.pop_payload_keys(intent_id, "inflight_claimed_at")
+
+    def apply_store_epoch_capture(self, intent_id: str, store_epoch: str) -> None:
         ts = _utc_now()
         with closing(self._connect()) as conn:
             conn.execute("BEGIN IMMEDIATE")
@@ -281,14 +327,13 @@ class ReferenceSqliteIntentLedger:
             payload = dict(
                 json.loads(row["payload_json"]) if row["payload_json"] else {}
             )
-            if "inflight_claimed_at" not in payload:
+            if not payload.pop("store_epoch_pending", False):
                 conn.execute("ROLLBACK")
                 return
-            payload.pop("inflight_claimed_at", None)
             conn.execute(
-                "UPDATE execution_intents SET payload_json = ?, updated_at = ? "
-                "WHERE intent_id = ?",
-                (json.dumps(payload), ts, intent_id),
+                "UPDATE execution_intents SET store_epoch = ?, payload_json = ?, "
+                "updated_at = ? WHERE intent_id = ?",
+                (store_epoch, json.dumps(payload), ts, intent_id),
             )
             conn.commit()
 
@@ -324,7 +369,7 @@ class ReferenceSqliteIntentLedger:
                 json.loads(row["payload_json"]) if row["payload_json"] else {}
             )
             existing = payload.get("blocked_reason")
-            if existing in ("ref_conflict", "duplicate_msg"):
+            if existing in STICKY_BLOCKED_REASONS:
                 reason = str(existing)
             if current != ExecutionState.blocked_unknown:
                 payload["pre_block_state"] = current.value
@@ -557,7 +602,7 @@ class ReferenceSqliteIntentLedger:
         target: ExecutionState,
         actuator_ref: str | None,
         owner_unknown_reason: str | None = None,
-    ) -> IntentRecord:
+    ) -> IntentRecord | None:
         ts = _utc_now()
         with closing(self._connect()) as conn:
             conn.execute("BEGIN IMMEDIATE")
@@ -568,18 +613,26 @@ class ReferenceSqliteIntentLedger:
             ).fetchone()
             if row is None or row["state"] != ExecutionState.blocked_unknown.value:
                 conn.execute("ROLLBACK")
-                raise IllegalStateTransitionError(
-                    f"promote_blocked_adoption requires blocked_unknown on {intent_id!r}"
-                )
+                return None
             payload = dict(
                 json.loads(row["payload_json"]) if row["payload_json"] else {}
             )
+            blocked_reason = payload.get("blocked_reason")
+            if blocked_reason in PROMOTE_BLOCKED_STICKY_REASONS:
+                conn.execute("ROLLBACK")
+                return None
+            row_ref = row["actuator_ref"]
+            if actuator_ref is not None and row_ref is not None:
+                if str(row_ref) != str(actuator_ref):
+                    conn.execute("ROLLBACK")
+                    return None
             payload.pop("blocked_reason", None)
             payload.pop("inflight_claimed_at", None)
+            payload.pop("epoch_unavailable_since", None)
             pre_block = payload.pop("pre_block_state", ExecutionState.reserved.value)
             if owner_unknown_reason is not None:
                 payload["owner_unknown_reason"] = owner_unknown_reason
-            ref = actuator_ref or row["actuator_ref"]
+            ref = actuator_ref or row_ref
             baseline = ExecutionState(pre_block)
             resolved = adoption_target(baseline, target)
             cur = conn.execute(
@@ -596,14 +649,9 @@ class ReferenceSqliteIntentLedger:
             )
             if cur.rowcount != 1:
                 conn.execute("ROLLBACK")
-                raise IllegalStateTransitionError(
-                    f"promote_blocked_adoption cas failed for {intent_id!r}"
-                )
+                return None
             conn.commit()
-        updated = self.get(intent_id)
-        if updated is None:
-            raise KeyError(intent_id)
-        return updated
+        return self.get(intent_id)
 
     def apply_compensation(
         self,
@@ -701,23 +749,6 @@ class ReferenceSqliteIntentLedger:
         if row is None:
             raise KeyError(intent_id)
         return row
-
-    def apply_ref_conflict_resolution(
-        self,
-        intent_id: str,
-        *,
-        authorized_by: str,
-        reason: str,
-        target_state: ExecutionState,
-        prior_state: ExecutionState,
-    ) -> IntentRecord:
-        return self.apply_blocked_resolution(
-            intent_id,
-            authorized_by=authorized_by,
-            reason=reason,
-            target_state=target_state,
-            prior_state=prior_state,
-        )
 
     def reopen(self) -> ReferenceSqliteIntentLedger:
         return ReferenceSqliteIntentLedger(self._db_path)

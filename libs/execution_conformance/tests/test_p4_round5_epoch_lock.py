@@ -90,24 +90,37 @@ def test_p4_unprovisioned_owner_zero_writes_and_no_wal(
     with closing(sqlite3.connect(db)) as conn:
         conn.execute("PRAGMA journal_mode=DELETE")
         conn.commit()
-    assert read_store_epoch(db).status == "unprovisioned"
-    ledger = ReferenceSqliteIntentLedger(tmp_path / "intents.db")
-    adapter = CountingAdmitWrapper(AgentBusAdapter())
-    key = "unprov-key-abcdef12"
-    dispatch_crash_after_reserve(
-        ledger,
-        adapter,
-        intent_id="intent-unprov",
-        identity_key=key,
-        admit_kwargs={"slug": "u"},
-    )
-    adapter.store_epoch()
-    adapter.lookup(key)
     before = _file_sha256(db)
     side_before = _sidecars(db)
-    reconcile(ledger, adapter, "intent-unprov")
+    assert read_store_epoch(db).status == "unprovisioned"
+    assert _file_sha256(db) == before
+    ledger = ReferenceSqliteIntentLedger(tmp_path / "intents.db")
+    ledger.reserve(
+        intent_id="intent-unprov",
+        actuator="agent_bus",
+        identity_key="unprov-key-abcdef12",
+        store_epoch="",
+        payload={"store_epoch_pending": True},
+    )
+    assert read_store_epoch(db).status == "unprovisioned"
     assert _file_sha256(db) == before
     assert _sidecars(db) == side_before
+
+
+def test_p4_wal_db_main_file_unchanged_on_read_paths(bus_env, tmp_path) -> None:
+    path = bus_env
+    before = _file_sha256(path)
+    assert read_store_epoch(path).status == "ok"
+    assert _file_sha256(path) == before
+    ledger = ReferenceSqliteIntentLedger(tmp_path / "intents.db")
+    ledger.reserve(
+        intent_id="intent-wal",
+        actuator="agent_bus",
+        identity_key="wal-read-key-abcdef12",
+        store_epoch="epoch-wal-test",
+    )
+    assert read_store_epoch(path).status == "ok"
+    assert _file_sha256(path) == before
 
 
 def test_p4_read_only_connection_rejects_ddl(bus_env) -> None:

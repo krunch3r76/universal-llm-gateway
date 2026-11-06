@@ -8,7 +8,12 @@ from dataclasses import dataclass
 from typing import Any
 
 from .adapters import ActuatorAdapter, OwnerLookup, validate_actuator_identity_key
-from .ledger import IntentRecord, IntentStore
+from .ledger import (
+    STICKY_BLOCKED_REASONS,
+    IntentRecord,
+    IntentStore,
+    ReferenceSqliteIntentLedger,
+)
 from .manifest import ActuatorName
 from .states import (
     TERMINAL_STATES,
@@ -44,6 +49,7 @@ class DispatchResult:
     actuator_ref: str | None
     redispatched: bool = False
     adopted_existing: bool = False
+    transient: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -78,14 +84,22 @@ def dispatch_intent(
     """Reserve locally; admit only on ``reserve().created`` with owner miss."""
     clock_fn = clock or time.time
     validate_actuator_identity_key(adapter, identity_key)
+    lookup_pre = adapter.lookup(identity_key)
+    if lookup_pre.epoch_status == "unavailable":
+        return DispatchResult(
+            intent_id=intent_id,
+            state=ExecutionState.reserved,
+            actuator_ref=None,
+            transient=True,
+        )
     payload = {"admit_kwargs": admit_kwargs or {}}
-    epoch = adapter.store_epoch()
+    store_epoch, payload = _store_epoch_for_reserve(lookup_pre, adapter, payload)
     actuator: ActuatorName = adapter.name  # type: ignore[assignment]
     reserved = ledger.reserve(
         intent_id=intent_id,
         actuator=actuator,
         identity_key=identity_key,
-        store_epoch=epoch,
+        store_epoch=store_epoch,
         payload=payload,
         inflight_claimed_at=clock_fn(),
     )
@@ -113,7 +127,11 @@ def dispatch_intent(
             intent_id=intent_id,
             state=record.state,
             actuator_ref=record.actuator_ref,
+            transient=True,
         )
+
+    _capture_store_epoch_if_pending(ledger, intent_id, lookup)
+    _clear_epoch_unavailable_if_ok(ledger, intent_id, lookup)
 
     adopted = _try_adopt_from_lookup(ledger, intent_id, record, lookup)
     if adopted is not None:
@@ -197,6 +215,9 @@ def reconcile(
     )
     if unavailable is not None:
         return unavailable
+
+    _capture_store_epoch_if_pending(ledger, intent_id, lookup)
+    _clear_epoch_unavailable_if_ok(ledger, intent_id, lookup)
 
     adopted = _try_adopt_from_lookup(ledger, intent_id, record, lookup)
     if adopted is not None:
@@ -581,10 +602,23 @@ def _adopt_blocked_from_lookup(
         actuator_ref=ref,
         owner_unknown_reason=lookup.unknown_reason,
     )
+    if row is None:
+        fresh = ledger.get(intent_id)
+        if fresh is None:
+            raise KeyError(intent_id)
+        return ReconcileResult(
+            intent_id=intent_id,
+            state=fresh.state,
+            adopted=fresh.state not in (ExecutionState.blocked_unknown,),
+            adopted_existing=fresh.state not in (ExecutionState.blocked_unknown,),
+            redispatched=False,
+            blocked=fresh.state == ExecutionState.blocked_unknown,
+        )
     return ReconcileResult(
         intent_id=intent_id,
         state=row.state,
         adopted=True,
+        adopted_existing=True,
         redispatched=False,
         blocked=False,
     )
@@ -598,6 +632,8 @@ def _try_adopt_from_lookup(
 ) -> DispatchResult | None:
     if not lookup.found:
         return None
+
+    _clear_epoch_unavailable_if_ok(ledger, intent_id, lookup)
 
     if lookup.state is None or lookup.state == ExecutionState.outcome_unknown:
         reason = (
@@ -637,16 +673,7 @@ def _try_adopt_from_lookup(
         if lookup.actuator_ref and record.actuator_ref is None:
             ledger.patch_actuator_ref_if_null(intent_id, lookup.actuator_ref)
     except IllegalStateTransitionError:
-        fresh = ledger.get(intent_id)
-        if fresh is None:
-            raise
-        if fresh.state in TERMINAL_LOCAL:
-            return DispatchResult(
-                intent_id=intent_id,
-                state=fresh.state,
-                actuator_ref=fresh.actuator_ref,
-            )
-        raise
+        return _finish_adopt_after_cas_race(ledger, intent_id, lookup)
     ledger.clear_inflight_marker(intent_id)
     row = ledger.get(intent_id)
     if row is None:
@@ -664,6 +691,7 @@ def _adopt_with_advisory_unknown(
     record: IntentRecord,
     lookup: OwnerLookup,
 ) -> DispatchResult:
+    _clear_epoch_unavailable_if_ok(ledger, intent_id, lookup)
     if lookup.actuator_ref and record.actuator_ref:
         if record.actuator_ref != lookup.actuator_ref:
             _block_unknown(ledger, intent_id, reason="ref_conflict")
@@ -683,16 +711,7 @@ def _adopt_with_advisory_unknown(
         if lookup.actuator_ref and record.actuator_ref is None:
             ledger.patch_actuator_ref_if_null(intent_id, lookup.actuator_ref)
     except IllegalStateTransitionError:
-        fresh = ledger.get(intent_id)
-        if fresh is None:
-            raise
-        if fresh.state in TERMINAL_LOCAL:
-            return DispatchResult(
-                intent_id=intent_id,
-                state=fresh.state,
-                actuator_ref=fresh.actuator_ref,
-            )
-        raise
+        return _finish_adopt_after_cas_race(ledger, intent_id, lookup)
     payload = record.payload or {}
     if payload.get("owner_unknown_reason") != lookup.unknown_reason:
         ledger.merge_payload(
@@ -727,6 +746,74 @@ def _reconcile_as_dispatch(ledger: IntentStore, rec: ReconcileResult) -> Dispatc
     )
 
 
+def _store_epoch_for_reserve(
+    lookup: OwnerLookup,
+    adapter: ActuatorAdapter,
+    payload: dict[str, Any],
+) -> tuple[str, dict[str, Any]]:
+    merged = dict(payload)
+    if lookup.epoch_status == "ok" and lookup.store_epoch:
+        return lookup.store_epoch, merged
+    if lookup.epoch_status == "unprovisioned":
+        merged["store_epoch_pending"] = True
+        return "", merged
+    return adapter.store_epoch(), merged
+
+
+def _capture_store_epoch_if_pending(
+    ledger: IntentStore, intent_id: str, lookup: OwnerLookup
+) -> None:
+    if lookup.epoch_status != "ok" or not lookup.store_epoch:
+        return
+    row = ledger.get(intent_id)
+    if row is None or not row.payload or not row.payload.get("store_epoch_pending"):
+        return
+    if isinstance(ledger, ReferenceSqliteIntentLedger):
+        ledger.apply_store_epoch_capture(intent_id, lookup.store_epoch)
+
+
+def _clear_epoch_unavailable_if_ok(
+    ledger: IntentStore, intent_id: str, lookup: OwnerLookup
+) -> None:
+    if lookup.epoch_status == "unavailable":
+        return
+    ledger.pop_payload_keys(intent_id, "epoch_unavailable_since")
+
+
+def _finish_adopt_after_cas_race(
+    ledger: IntentStore, intent_id: str, lookup: OwnerLookup
+) -> DispatchResult:
+    fresh = ledger.get(intent_id)
+    if fresh is None:
+        raise KeyError(intent_id)
+    if lookup.state is None:
+        return DispatchResult(
+            intent_id=intent_id,
+            state=fresh.state,
+            actuator_ref=fresh.actuator_ref,
+        )
+    owner_state = lookup.state
+    if owner_state == ExecutionState.outcome_unknown:
+        return DispatchResult(
+            intent_id=intent_id,
+            state=fresh.state,
+            actuator_ref=fresh.actuator_ref,
+        )
+    target = adoption_target(fresh.state, owner_state)
+    if fresh.state != target and isinstance(ledger, ReferenceSqliteIntentLedger):
+        moved = ledger.set_state_cas(intent_id, fresh.state, target)
+        fresh = moved or ledger.get(intent_id) or fresh
+    if lookup.actuator_ref and fresh.actuator_ref is None:
+        ledger.patch_actuator_ref_if_null(intent_id, lookup.actuator_ref)
+        fresh = ledger.get(intent_id) or fresh
+    ledger.clear_inflight_marker(intent_id)
+    return DispatchResult(
+        intent_id=intent_id,
+        state=fresh.state,
+        actuator_ref=fresh.actuator_ref,
+    )
+
+
 def _lookup_epoch_unavailable(lookup: OwnerLookup) -> bool:
     return lookup.epoch_status == "unavailable"
 
@@ -745,31 +832,13 @@ def _retry_epoch_allows(
     return adapter.admit_idempotent
 
 
-def _ensure_unknown(
-    ledger: IntentStore, intent_id: str, *, block: bool
-) -> IntentRecord:
-    row = ledger.get(intent_id)
-    if row is None:
-        raise KeyError(intent_id)
-    if row.state == ExecutionState.blocked_unknown:
-        return row
-    if row.state == ExecutionState.outcome_unknown:
-        if block:
-            return ledger.set_state(intent_id, ExecutionState.blocked_unknown)
-        return row
-    row = ledger.set_state(intent_id, ExecutionState.outcome_unknown)
-    if block:
-        return ledger.set_state(intent_id, ExecutionState.blocked_unknown)
-    return row
-
-
 def _block_unknown(ledger: IntentStore, intent_id: str, *, reason: str) -> IntentRecord:
     row = ledger.get(intent_id)
     if row is None:
         raise KeyError(intent_id)
     if row.state == ExecutionState.blocked_unknown:
         payload = row.payload or {}
-        if payload.get("blocked_reason") in ("ref_conflict", "duplicate_msg"):
+        if payload.get("blocked_reason") in STICKY_BLOCKED_REASONS:
             return row
         ledger.merge_payload(intent_id, {"blocked_reason": reason})
         return ledger.get(intent_id) or row
@@ -777,9 +846,9 @@ def _block_unknown(ledger: IntentStore, intent_id: str, *, reason: str) -> Inten
     if blocked is not None:
         return blocked
     fresh = ledger.get(intent_id)
-    if fresh is not None and fresh.state == ExecutionState.blocked_unknown:
-        return fresh
-    return _ensure_unknown(ledger, intent_id, block=True)
+    if fresh is None:
+        raise KeyError(intent_id)
+    return fresh
 
 
 def compensate_unknown(

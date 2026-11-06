@@ -84,8 +84,13 @@ CDP `CdpInflightAdapter.admit` uses reference `INSERT OR REPLACE`; production re
 owner insert-if-absent wiring.
 
 **Production owner DBs without `_execution_store_epoch`:** first `dispatch_intent` can
-still admit, but crash-recovery **retry** on `agent_bus` fails closed (`epoch_unverified`)
-until owner-side provisioning writes the meta-table (or tests call `provision_store_epoch`).
+still admit (local row may carry `store_epoch_pending` until the first `ok` epoch read),
+but crash-recovery **retry** on `agent_bus` fails closed (`epoch_unverified`) until
+owner-side provisioning writes the meta-table (or tests call `provision_store_epoch`).
+
+**Epoch store unavailable at dispatch:** `dispatch_intent` probes owner epoch **before**
+`reserve`; when `read_store_epoch` returns `unavailable`, dispatch returns `transient=True`
+and does **not** create a local row (no empty `store_epoch` snapshot).
 
 **Backup restore:** restoring an owner SQLite file without calling `rotate_store_epoch`
 keeps the same UUID — benign for `agent_bus` when the backup predates the thread row;
