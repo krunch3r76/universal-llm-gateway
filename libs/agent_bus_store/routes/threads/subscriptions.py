@@ -6,6 +6,7 @@ from typing import Any
 
 from fastapi import HTTPException, status
 from openapi_mcp.binding import x_mcp
+from agent_seat.registry import normalize_bus_address
 from pydantic import BaseModel, model_validator
 
 from ...db.endpoint_subscriptions import (
@@ -91,9 +92,15 @@ async def subscribe_route(body: SubscribeBody) -> dict[str, Any]:
     """Append a subscription row when the endpoint identity changes."""
     actuation = str(body.actuation or "").strip().lower()
     if actuation == "chatgpt_work":
+        house = str(body.home_house_id or "").strip()
+        scope = str(body.thread_scope or "").strip()
+        if normalize_bus_address(body.agent) != "orion":
+            raise _refuse_work(ChatgptWorkCasError("work_scope_mismatch"))
+        if not house or house != scope:
+            raise _refuse_work(ChatgptWorkCasError("work_scope_mismatch"))
         try:
             return attach_instance_wake_head(
-                home_house_id=str(body.home_house_id or body.thread_scope or ""),
+                home_house_id=house,
                 conversation_url=str(body.conversation_url or ""),
                 expected=str(body.expected or ""),
                 attempt_id=str(body.attempt_id or ""),

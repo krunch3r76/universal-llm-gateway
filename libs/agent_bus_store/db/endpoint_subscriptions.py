@@ -352,8 +352,26 @@ _SHA256_HEX_RE = re.compile(r"^[0-9a-f]{64}$", re.I)
 _HEAD_EXPECTED_RE = re.compile(r"^head:(\d+)$", re.I)
 
 
-def _validate_chatgpt_work_conversation_url(url: str) -> str:
-    """Return clean URL or raise ``work_url_refused``."""
+def _work_conversation_id_from_path_parts(parts: list[str]) -> str | None:
+    """Conversation UUID from the validated ``/c/{uuid}`` path segment only."""
+    if parts and parts[0] == "c" and len(parts) == 2:
+        segment = parts[1]
+        if _UUID_RE.fullmatch(segment):
+            return segment.lower()
+        return None
+    if "c" not in parts:
+        return None
+    idx = parts.index("c")
+    if idx + 1 >= len(parts):
+        return None
+    segment = parts[idx + 1]
+    if not _UUID_RE.fullmatch(segment):
+        return None
+    return segment.lower()
+
+
+def _validate_chatgpt_work_conversation_url(url: str) -> tuple[str, str]:
+    """Return ``(clean_url, lowercase conv_id)`` or raise ``work_url_refused``."""
     from web_chat_relay.orion_wake import PINNED_CONVERSATION_ID
 
     raw = str(url or "").strip()
@@ -363,19 +381,13 @@ def _validate_chatgpt_work_conversation_url(url: str) -> str:
     if parsed.query or parsed.fragment:
         raise ChatgptWorkCasError("work_url_refused")
     clean = raw.split("?", 1)[0]
-    conv_id = _conversation_uuid(clean)
+    parts = [p for p in parsed.path.split("/") if p]
+    conv_id = _work_conversation_id_from_path_parts(parts)
     if not conv_id:
         raise ChatgptWorkCasError("work_url_refused")
-    if conv_id.lower() == PINNED_CONVERSATION_ID.lower():
+    if conv_id == PINNED_CONVERSATION_ID.lower():
         raise ChatgptWorkCasError("work_url_refused")
-    parts = [p for p in parsed.path.split("/") if p]
-    if parts and parts[0] == "c" and len(parts) == 2:
-        return clean
-    if "c" in parts:
-        idx = parts.index("c")
-        if idx + 1 < len(parts) and _UUID_RE.fullmatch(parts[idx + 1]):
-            return clean
-    raise ChatgptWorkCasError("work_url_refused")
+    return clean, conv_id
 
 
 def _attempt_id_from_evidence(evidence: str) -> str | None:
@@ -393,8 +405,6 @@ def _compose_attach_evidence(
     extra = str(evidence or "").strip()
     if not extra:
         return base
-    if extra.startswith("attempt_id="):
-        return extra
     return f"{base};{extra}"
 
 
@@ -436,10 +446,11 @@ def _conversation_subscribed_elsewhere(
     home_house_id: str,
 ) -> bool:
     """True when another instance/house already has this UUID as subscribed head."""
+    want = conv_id.lower()
     rows = conn.execute(
         "SELECT agent, home_house_id, state, agent_id, id FROM "
-        "agent_endpoint_subscriptions WHERE actuation=? AND agent_id=?",
-        (_CHATGPT_WORK, conv_id),
+        "agent_endpoint_subscriptions WHERE actuation=?",
+        (_CHATGPT_WORK,),
     ).fetchall()
     latest: dict[tuple[str, str | None], dict[str, Any]] = {}
     for row in rows:
@@ -450,6 +461,9 @@ def _conversation_subscribed_elsewhere(
             latest[key] = d
     for (agent_key, house), head in latest.items():
         if str(head.get("state") or "") != "subscribed":
+            continue
+        stored = str(head.get("agent_id") or "").lower()
+        if stored != want:
             continue
         if agent_key == instance_id and str(house or "") == home_house_id:
             continue
@@ -521,9 +535,7 @@ def attach_instance_wake_head(
     if not str(evidence or "").strip():
         raise ChatgptWorkCasError("work_evidence_refused")
 
-    clean_url = _validate_chatgpt_work_conversation_url(conversation_url)
-    conv_id = _conversation_uuid(clean_url)
-    assert conv_id is not None
+    clean_url, conv_id = _validate_chatgpt_work_conversation_url(conversation_url)
     expected_raw = str(expected or "").strip()
     expected_upper = expected_raw.upper()
     head_match = _HEAD_EXPECTED_RE.match(expected_raw)
@@ -537,18 +549,22 @@ def attach_instance_wake_head(
             raise ChatgptWorkCasError("endpoint_thread_missing")
 
         head = _instance_work_head(conn, instance_id=inst, home_house_id=house)
-        if (
-            head is not None
-            and str(head.get("state") or "") == "subscribed"
-            and str(head.get("title") or "").split("?", 1)[0] == clean_url
-            and _attempt_id_from_evidence(str(head.get("evidence") or "")) == attempt
-        ):
-            return {
-                "appended": False,
-                "row": head,
-                "prior": None,
-                "idempotent_replay": True,
-            }
+        if head is not None and str(head.get("state") or "") == "subscribed":
+            stored_title = str(head.get("title") or "").split("?", 1)[0]
+            stored_evidence = str(head.get("evidence") or "")
+            if stored_title == clean_url and stored_evidence == evidence_out:
+                return {
+                    "appended": False,
+                    "row": head,
+                    "prior": None,
+                    "idempotent_replay": True,
+                }
+            if (
+                stored_title == clean_url
+                and _attempt_id_from_evidence(stored_evidence) == attempt
+                and stored_evidence != evidence_out
+            ):
+                raise ChatgptWorkCasError("seat_cas_conflict")
 
         if _rejected_url_exists(inst, clean_url):
             raise ChatgptWorkCasError("superseded_target_rejected")

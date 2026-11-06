@@ -194,9 +194,14 @@ def test_ac5_expected_head_cas(db: None) -> None:
     assert replaced["row"]["predecessor_id"] == head_id
     with connect() as conn:
         tomb = conn.execute(
-            "SELECT state FROM agent_endpoint_subscriptions WHERE id=?", (head_id,)
+            "SELECT state FROM agent_endpoint_subscriptions "
+            "WHERE id > ? AND agent=? AND state='unsubscribed' "
+            "ORDER BY id ASC LIMIT 1",
+            (head_id, _INST),
         ).fetchone()
     assert tomb is not None
+    binding = resolve_orion_chat_wake(_HOME, agent="orion")
+    assert binding["current"]["actuation"]["conversation_url"] == _URL_B
 
 
 def test_ac6_other_houses_and_main_unchanged(db: None) -> None:
@@ -423,6 +428,132 @@ def test_cas_conflict_http_409(client: TestClient) -> None:
     conflict = _post_work(client, attempt_id="other", conversation_url=_URL_B)
     assert conflict.status_code == 409
     assert conflict.json()["detail"]["code"] == "seat_cas_conflict"
+
+
+def test_b1_scope_mismatch_rejects_before_write(client: TestClient) -> None:
+    bad_agent = client.post(
+        "/endpoint-subscriptions",
+        json={
+            "agent": "grok-bot-gc1",
+            "thread_scope": _HOME,
+            "actuation": "chatgpt_work",
+            "home_house_id": _HOME,
+            "conversation_url": _URL,
+            "expected": "ABSENT",
+            "attempt_id": "scope-1",
+            "handoff_sha256": _HANDOFF,
+            "bound_by": _BOUND_BY,
+            "evidence": _EVIDENCE,
+        },
+    )
+    assert bad_agent.status_code == 422
+    assert bad_agent.json()["detail"]["code"] == "work_scope_mismatch"
+    bad_house = client.post(
+        "/endpoint-subscriptions",
+        json={
+            "agent": "orion",
+            "thread_scope": _HOME,
+            "actuation": "chatgpt_work",
+            "home_house_id": _OTHER_HOME,
+            "conversation_url": _URL,
+            "expected": "ABSENT",
+            "attempt_id": "scope-2",
+            "handoff_sha256": _HANDOFF,
+            "bound_by": _BOUND_BY,
+            "evidence": _EVIDENCE,
+        },
+    )
+    assert bad_house.status_code == 422
+    assert bad_house.json()["detail"]["code"] == "work_scope_mismatch"
+    with connect() as conn:
+        count = conn.execute(
+            "SELECT COUNT(*) FROM agent_endpoint_subscriptions WHERE actuation='chatgpt_work'"
+        ).fetchone()[0]
+    assert count == 0
+
+
+def test_b2_uppercase_url_conflicts_with_mixed_case_bound_row(db: None) -> None:
+    upper_url = (
+        "https://chatgpt.com/g/g-p-proj/c/6AECB6B3-4A8C-83E8-8D72-CF08D91E5F7E"
+    )
+    insert_chatgpt_work_row_for_test(
+        instance_id="orion-other",
+        home_house_id=_OTHER_HOME,
+        conversation_url=upper_url,
+    )
+    with pytest.raises(ChatgptWorkCasError) as exc:
+        _attach()
+    assert exc.value.code == "conversation_already_bound"
+
+
+def test_b2_main_wake_non_pinned_url_blocks_attach(db: None) -> None:
+    insert_main_wake_row_for_test(conversation_url=_URL)
+    with pytest.raises(ChatgptWorkCasError) as exc:
+        _attach()
+    assert exc.value.code == "conversation_already_bound"
+
+
+def test_b2_project_path_uses_c_segment_not_g_uuid(db: None) -> None:
+    ambiguous = (
+        "https://chatgpt.com/g/6aecb6b3-4a8c-83e8-8d72-cf08d91e5f7e/c/"
+        "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"
+    )
+    out = attach_instance_wake_head(
+        home_house_id=_HOME,
+        conversation_url=ambiguous,
+        expected="ABSENT",
+        attempt_id="path-segment",
+        handoff_sha256=_HANDOFF,
+        bound_by=_BOUND_BY,
+        evidence=_EVIDENCE,
+    )
+    assert out["row"]["agent_id"] == "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"
+
+
+def test_b3_caller_evidence_cannot_override_attempt_or_handoff(db: None) -> None:
+    out = _attach(
+        attempt_id="attempt-truth",
+        evidence="attempt_id=forged;handoff_sha256=deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef",
+    )
+    stored = str(out["row"]["evidence"])
+    assert stored.startswith("attempt_id=attempt-truth;handoff_sha256=" + _HANDOFF)
+    assert "forged" not in stored.split(";", 2)[0]
+
+
+def test_b3_same_attempt_different_payload_conflicts(db: None) -> None:
+    _attach(attempt_id="dup-attempt")
+    with pytest.raises(ChatgptWorkCasError) as exc:
+        _attach(
+            attempt_id="dup-attempt",
+            evidence=_EVIDENCE + ";extra=touch",
+        )
+    assert exc.value.code == "seat_cas_conflict"
+
+
+def test_closeout_subjects_qualify_wake_to_orion_on_22388(db: None) -> None:
+    from bus_watch.endpoint_wake_dispatcher import qualify
+
+    wake_subjects = (
+        "CLOSEOUT|ORION-22388-BOUND-20261106-A",
+        "cursor-sdk CLOSEOUT|lane-22394",
+    )
+    for subject in wake_subjects:
+        turn = {
+            "from_agent": "cursor-sdk",
+            "to_agent": "orion",
+            "thread": _HOME,
+            "subject": subject,
+        }
+        verdict = qualify(turn, cse=False, store=None)
+        assert verdict.wake is True, subject
+
+    review_turn = {
+        "from_agent": "cursor-sdk",
+        "to_agent": "orion",
+        "thread": _HOME,
+        "subject": "READY_FOR_REVIEW|todo:mcp-session-self-location-wake-attach",
+    }
+    assert qualify(review_turn, cse=False, store=None).wake is False
 
 
 def test_dispatcher_resolve_target_display_12(db: None) -> None:
