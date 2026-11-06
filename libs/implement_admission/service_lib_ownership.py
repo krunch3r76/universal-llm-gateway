@@ -40,6 +40,7 @@ _SERVICE_OWNERSHIP: dict[str, ServiceOwnership] = {
                 "agent_seat",
                 # server.py lifespan, gated on AGENT_BUS_ENDPOINT_WAKE_DISPATCHER
                 "background_supervisor",
+                "browser_governance",
                 "bus_watch",
                 "cdp_ask",
                 "claude_bundles",
@@ -78,6 +79,7 @@ _SERVICE_OWNERSHIP: dict[str, ServiceOwnership] = {
             {
                 "agent_bus_store",
                 "agent_seat",
+                "browser_governance",
                 "cdp_ask",
                 "claude_bundles",
                 "continuity_tape",
@@ -126,6 +128,7 @@ _SERVICE_OWNERSHIP: dict[str, ServiceOwnership] = {
                 "agent_seat",
                 "anthropic_credit",
                 "background_supervisor",
+                "browser_governance",
                 "bus_watch",
                 "cdp_ask",
                 "charter_runner_store",
@@ -198,6 +201,7 @@ _SERVICE_OWNERSHIP: dict[str, ServiceOwnership] = {
             {
                 "agent_bus_store",
                 "agent_seat",
+                "browser_governance",
                 "bus_watch",
                 "cdp_ask",
                 "claude_bundles",
@@ -266,6 +270,7 @@ _SERVICE_OWNERSHIP: dict[str, ServiceOwnership] = {
             {
                 "agent_bus_store",
                 "agent_seat",
+                "browser_governance",
                 "cdp_ask",
                 "claude_bundles",
                 "continuity_tape",
@@ -301,6 +306,7 @@ _SERVICE_OWNERSHIP: dict[str, ServiceOwnership] = {
         owned_libs=frozenset(
             {
                 "admission_common",
+                "browser_governance",
                 "cdp_ask",
                 "chat_harvest",
                 "claude_bundles",
@@ -328,6 +334,7 @@ _SERVICE_OWNERSHIP: dict[str, ServiceOwnership] = {
                 "agent_bus_store",
                 "agent_seat",
                 "anthropic_credit",
+                "browser_governance",
                 "cdp_ask",
                 "claude_bundles",
                 "cortex_store",
@@ -386,6 +393,7 @@ _SERVICE_OWNERSHIP: dict[str, ServiceOwnership] = {
                 "agent_bus_store",
                 "agent_seat",
                 "anthropic_credit",
+                "browser_governance",
                 "bus_watch",
                 "capability_tree",
                 "cdp_ask",

@@ -353,6 +353,10 @@ def _finish_reserved_launch(
     registration_id = str(row["registration_id"])
     chrome_pid: int | None = None
     display = str(row.get("display") or "").strip() or None
+    with contextlib.suppress(Exception):
+        from browser_governance.census import check_ephemeral_admission_preflight
+
+        check_ephemeral_admission_preflight(caller="cdp_registry.ephemeral")
     try:
         if launch:
             acct = str(row.get("account_id") or "default")

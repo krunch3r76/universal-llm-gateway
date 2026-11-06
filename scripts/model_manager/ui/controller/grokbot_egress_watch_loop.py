@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import os
 import time
 from collections.abc import Awaitable, Callable
 from dataclasses import replace
@@ -40,7 +41,9 @@ from scripts.model_manager.ui.controller.grokbot_egress_watch_io import (
     query_events_rows,
     read_daemon_log,
     read_desktop_status,
+    resolve_grok_keepalive_targets,
     save_hop_cooldown_journal,
+    secondary_display_running,
 )
 from scripts.model_manager.ui.controller.grokbot_egress_watch_logic import (
     HOP_THREAD_ID,
@@ -94,12 +97,16 @@ class GrokbotEgressWatchLoop:
         snapshot_fn: Callable[[], Awaitable[GrokbotEgressSnapshot]] | None = None,
         restart_desktop_fn: Callable[[], Awaitable[None]] | None = None,
         hop_cooldown_path: Path | None = None,
+        keepalive_targets_fn: Callable[[], list[tuple[str, int]]] | None = None,
+        secondary_keepalive_fn: Callable[[str, int], bool] | None = None,
     ) -> None:
         self._workspace_root = workspace_root
         self._interval_s = interval_s
         self._snapshot_fn = snapshot_fn
         self._restart_desktop_fn = restart_desktop_fn
         self._hop_cooldown_path = hop_cooldown_path or DEFAULT_HOP_COOLDOWN
+        self._keepalive_targets_fn = keepalive_targets_fn
+        self._secondary_keepalive_fn = secondary_keepalive_fn
         self._state = GrokbotEgressLoopState()
         self._hop_state = rebuild_hop_state(
             load_hop_cooldown_journal(self._hop_cooldown_path)
@@ -185,6 +192,47 @@ class GrokbotEgressWatchLoop:
             return replace(snap, event_rows_trusted=False)
         return snap
 
+    def _keepalive_targets_enabled(self) -> bool:
+        if self._keepalive_targets_fn is not None:
+            return True
+        if os.environ.get("ULG_GROK_KEEPALIVE_DISPLAYS") is not None:
+            return True
+        return self._snapshot_fn is None
+
+    async def _maybe_keepalive_displays(self, snapshot: GrokbotEgressSnapshot) -> None:
+        if not self._keepalive_targets_enabled():
+            if snapshot.desktop_running:
+                await asyncio.to_thread(keep_alive_grokbot_presence)
+            return
+        try:
+            targets = (
+                self._keepalive_targets_fn()
+                if self._keepalive_targets_fn is not None
+                else resolve_grok_keepalive_targets()
+            )
+        except Exception:
+            if snapshot.desktop_running:
+                await asyncio.to_thread(keep_alive_grokbot_presence)
+            return
+        for display, cdp_port in targets:
+            token = display.lstrip(":")
+            if token == "9":
+                if not snapshot.desktop_running:
+                    continue
+                await asyncio.to_thread(
+                    keep_alive_grokbot_presence, display=display, cdp_port=cdp_port
+                )
+                continue
+            liveness_fn = self._secondary_keepalive_fn or secondary_display_running
+            running = await asyncio.to_thread(liveness_fn, display, cdp_port)
+            if running:
+                await asyncio.to_thread(
+                    keep_alive_grokbot_presence,
+                    display=display,
+                    cdp_port=cdp_port,
+                    open_computer_view=False,
+                )
+
     async def _default_restart_desktop(self) -> None:
         binary = DEFAULT_DESKTOP_BINARY
         if not binary.is_file():
@@ -267,8 +315,7 @@ class GrokbotEgressWatchLoop:
             if self._snapshot_fn is not None
             else await self._default_snapshot()
         )
-        if snapshot.desktop_running:
-            await asyncio.to_thread(keep_alive_grokbot_presence)
+        await self._maybe_keepalive_displays(snapshot)
         now = time.time()
         decision = decide_grokbot_tick(now=now, state=self._state, snapshot=snapshot)
 
