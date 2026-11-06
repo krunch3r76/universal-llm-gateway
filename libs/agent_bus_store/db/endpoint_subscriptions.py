@@ -7,6 +7,7 @@ import re
 import sqlite3
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlparse
 
 from agent_seat.registry import normalize_bus_address
 from cursor_bridge.wake_delivery import normalize_target
@@ -345,6 +346,255 @@ def _parse_target_lines(path: Path, required: frozenset[str]) -> dict[str, str]:
 def _conversation_uuid(url: str) -> str | None:
     match = _UUID_RE.search(url.split("?", 1)[0])
     return match.group(0) if match else None
+
+
+_SHA256_HEX_RE = re.compile(r"^[0-9a-f]{64}$", re.I)
+_HEAD_EXPECTED_RE = re.compile(r"^head:(\d+)$", re.I)
+
+
+def _validate_chatgpt_work_conversation_url(url: str) -> str:
+    """Return clean URL or raise ``work_url_refused``."""
+    from web_chat_relay.orion_wake import PINNED_CONVERSATION_ID
+
+    raw = str(url or "").strip()
+    parsed = urlparse(raw)
+    if parsed.scheme != "https" or parsed.netloc != "chatgpt.com":
+        raise ChatgptWorkCasError("work_url_refused")
+    if parsed.query or parsed.fragment:
+        raise ChatgptWorkCasError("work_url_refused")
+    clean = raw.split("?", 1)[0]
+    conv_id = _conversation_uuid(clean)
+    if not conv_id:
+        raise ChatgptWorkCasError("work_url_refused")
+    if conv_id.lower() == PINNED_CONVERSATION_ID.lower():
+        raise ChatgptWorkCasError("work_url_refused")
+    parts = [p for p in parsed.path.split("/") if p]
+    if parts and parts[0] == "c" and len(parts) == 2:
+        return clean
+    if "c" in parts:
+        idx = parts.index("c")
+        if idx + 1 < len(parts) and _UUID_RE.fullmatch(parts[idx + 1]):
+            return clean
+    raise ChatgptWorkCasError("work_url_refused")
+
+
+def _attempt_id_from_evidence(evidence: str) -> str | None:
+    for segment in str(evidence or "").split(";"):
+        segment = segment.strip()
+        if segment.startswith("attempt_id="):
+            return segment.partition("=")[2].strip() or None
+    return None
+
+
+def _compose_attach_evidence(
+    *, attempt_id: str, handoff_sha256: str, evidence: str
+) -> str:
+    base = f"attempt_id={attempt_id};handoff_sha256={handoff_sha256}"
+    extra = str(evidence or "").strip()
+    if not extra:
+        return base
+    if extra.startswith("attempt_id="):
+        return extra
+    return f"{base};{extra}"
+
+
+def _instance_work_head(
+    conn: sqlite3.Connection, *, instance_id: str, home_house_id: str
+) -> dict[str, Any] | None:
+    row = conn.execute(
+        "SELECT * FROM agent_endpoint_subscriptions "
+        "WHERE actuation=? AND agent=? AND scope_kind='agent' "
+        "AND home_house_id=? "
+        "ORDER BY id DESC LIMIT 1",
+        (_CHATGPT_WORK, instance_id, home_house_id),
+    ).fetchone()
+    return _row(row)
+
+
+def _house_has_subscribed_work_head(
+    conn: sqlite3.Connection, *, home_house_id: str, exclude_instance: str
+) -> bool:
+    row = conn.execute(
+        "SELECT 1 FROM agent_endpoint_subscriptions AS a "
+        "WHERE a.actuation=? AND a.home_house_id=? AND a.agent <> ? "
+        "AND a.state='subscribed' "
+        "AND a.id = ("
+        "  SELECT MAX(b.id) FROM agent_endpoint_subscriptions AS b "
+        "  WHERE b.actuation=a.actuation AND b.home_house_id=a.home_house_id "
+        "  AND b.agent=a.agent"
+        ") LIMIT 1",
+        (_CHATGPT_WORK, home_house_id, exclude_instance),
+    ).fetchone()
+    return row is not None
+
+
+def _conversation_subscribed_elsewhere(
+    conn: sqlite3.Connection,
+    conv_id: str,
+    *,
+    instance_id: str,
+    home_house_id: str,
+) -> bool:
+    """True when another instance/house already has this UUID as subscribed head."""
+    rows = conn.execute(
+        "SELECT agent, home_house_id, state, agent_id, id FROM "
+        "agent_endpoint_subscriptions WHERE actuation=? AND agent_id=?",
+        (_CHATGPT_WORK, conv_id),
+    ).fetchall()
+    latest: dict[tuple[str, str | None], dict[str, Any]] = {}
+    for row in rows:
+        d = _row(row)
+        assert d is not None
+        key = (str(d["agent"]), d.get("home_house_id"))
+        if key not in latest or int(d["id"]) > int(latest[key]["id"]):
+            latest[key] = d
+    for (agent_key, house), head in latest.items():
+        if str(head.get("state") or "") != "subscribed":
+            continue
+        if agent_key == instance_id and str(house or "") == home_house_id:
+            continue
+        return True
+    return False
+
+
+def _tombstone_work_head(
+    conn: sqlite3.Connection,
+    head: dict[str, Any],
+    *,
+    instance_id: str,
+    home_house_id: str,
+    bound_by: str,
+    tombstone_evidence: str,
+) -> int:
+    old_id = int(head["id"])
+    conn.execute(
+        "INSERT INTO agent_endpoint_subscriptions "
+        "(agent, thread_scope, state, surface, display, title, agent_id, "
+        "bound_by, evidence, scope_kind, actuation, predecessor_id, home_house_id) "
+        "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
+        (
+            instance_id,
+            instance_id,
+            "unsubscribed",
+            None,
+            None,
+            head["title"],
+            head["agent_id"],
+            bound_by,
+            tombstone_evidence,
+            "agent",
+            _CHATGPT_WORK,
+            None,
+            home_house_id,
+        ),
+    )
+    return old_id
+
+
+def attach_instance_wake_head(
+    *,
+    home_house_id: str,
+    conversation_url: str,
+    expected: str,
+    attempt_id: str,
+    handoff_sha256: str,
+    bound_by: str,
+    evidence: str,
+    instance_id: str | None = None,
+) -> dict[str, Any]:
+    """Production CAS attach for a satellite ChatGPT Work wake head."""
+    house = str(home_house_id or "").strip()
+    if not house:
+        raise ChatgptWorkCasError("work_house_refused")
+    inst = str(instance_id or f"orion-{house}").strip()
+    if not inst or inst == MAIN_WAKE_AGENT:
+        raise ChatgptWorkCasError("work_instance_refused")
+    attempt = str(attempt_id or "").strip()
+    if not attempt:
+        raise ChatgptWorkCasError("work_attempt_refused")
+    sha = str(handoff_sha256 or "").strip().lower()
+    if not _SHA256_HEX_RE.fullmatch(sha):
+        raise ChatgptWorkCasError("work_handoff_refused")
+    recorder = str(bound_by or "").strip()
+    if not recorder:
+        raise ChatgptWorkCasError("work_bound_by_refused")
+    if not str(evidence or "").strip():
+        raise ChatgptWorkCasError("work_evidence_refused")
+
+    clean_url = _validate_chatgpt_work_conversation_url(conversation_url)
+    conv_id = _conversation_uuid(clean_url)
+    assert conv_id is not None
+    expected_raw = str(expected or "").strip()
+    expected_upper = expected_raw.upper()
+    head_match = _HEAD_EXPECTED_RE.match(expected_raw)
+    evidence_out = _compose_attach_evidence(
+        attempt_id=attempt, handoff_sha256=sha, evidence=evidence
+    )
+
+    with write_connect() as conn:
+        exists = conn.execute("SELECT id FROM threads WHERE id=?", (house,)).fetchone()
+        if exists is None:
+            raise ChatgptWorkCasError("endpoint_thread_missing")
+
+        head = _instance_work_head(conn, instance_id=inst, home_house_id=house)
+        if (
+            head is not None
+            and str(head.get("state") or "") == "subscribed"
+            and str(head.get("title") or "").split("?", 1)[0] == clean_url
+            and _attempt_id_from_evidence(str(head.get("evidence") or "")) == attempt
+        ):
+            return {
+                "appended": False,
+                "row": head,
+                "prior": None,
+                "idempotent_replay": True,
+            }
+
+        if _rejected_url_exists(inst, clean_url):
+            raise ChatgptWorkCasError("superseded_target_rejected")
+        if _conversation_subscribed_elsewhere(
+            conn, conv_id, instance_id=inst, home_house_id=house
+        ):
+            raise ChatgptWorkCasError("conversation_already_bound")
+
+        if expected_upper == "ABSENT":
+            if _house_has_subscribed_work_head(
+                conn, home_house_id=house, exclude_instance=inst
+            ):
+                raise ChatgptWorkCasError("seat_cas_conflict")
+            if head is not None and str(head.get("state") or "") == "subscribed":
+                raise ChatgptWorkCasError("seat_cas_conflict")
+            predecessor_id: int | None = None
+        elif head_match is not None:
+            want_id = int(head_match.group(1))
+            if head is None or int(head["id"]) != want_id:
+                raise ChatgptWorkCasError("seat_cas_conflict")
+            if str(head.get("state") or "") != "subscribed":
+                raise ChatgptWorkCasError("seat_cas_conflict")
+            predecessor_id = _tombstone_work_head(
+                conn,
+                head,
+                instance_id=inst,
+                home_house_id=house,
+                bound_by=recorder,
+                tombstone_evidence=f"superseded_by:{want_id}",
+            )
+        else:
+            raise ChatgptWorkCasError("work_expected_refused")
+
+        row = _insert_work_row(
+            conn,
+            agent=inst,
+            thread_scope=inst,
+            home_house_id=house,
+            state="subscribed",
+            title=clean_url,
+            agent_id=conv_id,
+            bound_by=recorder,
+            evidence=evidence_out,
+            predecessor_id=predecessor_id,
+        )
+    return {"appended": True, "row": row, "prior": head, "idempotent_replay": False}
 
 
 def main_wake_latest() -> dict[str, Any] | None:
