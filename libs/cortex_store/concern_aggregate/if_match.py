@@ -38,7 +38,7 @@ def parse_if_match(header: str | None, *, current_revision: int) -> IfMatchResul
         if not _STRONG_ETAG.match(tag):
             raise IfMatchParseError("malformed")
         inner = tag[1:-1]
-        if not inner.isdigit():
+        if not (inner.isascii() and inner.isdecimal()):
             raise IfMatchParseError("malformed")
         revisions.append(int(inner))
     if len(revisions) == 1:

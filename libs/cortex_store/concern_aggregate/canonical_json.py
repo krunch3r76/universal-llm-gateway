@@ -18,8 +18,8 @@ class CanonicalJsonError(ValueError):
     """Material cannot be canonicalized under JCS rules."""
 
 
-def _utf16_sort_key(key: str) -> list[int]:
-    return [ord(ch) for ch in key]
+def _utf16_sort_key(key: str) -> bytes:
+    return key.encode("utf-16-be")
 
 
 def _reject_non_string_keys(obj: dict[Any, Any]) -> None:
@@ -44,18 +44,73 @@ def _validate_number(value: float | int) -> None:
             raise CanonicalJsonError("integer outside IEEE-754 safe range")
 
 
+def _format_digits_decimal(*, digits: str, decimal_pos: int, negative: bool) -> str:
+    """Place the decimal point *decimal_pos* characters from the left of *digits*."""
+    if decimal_pos <= 0:
+        body = "0." + ("0" * (-decimal_pos)) + digits
+    elif decimal_pos >= len(digits):
+        body = digits + ("0" * (decimal_pos - len(digits)))
+    else:
+        body = digits[:decimal_pos] + "." + digits[decimal_pos:]
+    if "." in body:
+        body = body.rstrip("0").rstrip(".")
+    if not body:
+        body = "0"
+    return ("-" if negative else "") + body
+
+
+def _format_exponential(*, coeff: str, exp10: int, negative: bool) -> str:
+    if "." in coeff:
+        ip, fp = coeff.split(".")
+        digits = ip + fp
+    else:
+        digits = coeff
+    if len(digits) > 1:
+        mantissa = digits[0] + "." + digits[1:]
+        mantissa = mantissa.rstrip("0").rstrip(".")
+    else:
+        mantissa = digits
+    prefix = "-" if negative else ""
+    if exp10 >= 0:
+        return f"{prefix}{mantissa}e+{exp10}"
+    return f"{prefix}{mantissa}e{exp10}"
+
+
 def _es6_number_string(value: float) -> str:
-    if value == 0.0:
+    if value == 0.0 or value == -0.0:
         return "0"
-    if math.isfinite(value) and value == math.trunc(value):
+    if value == math.trunc(value):
         iv = int(value)
         if abs(iv) <= _MAX_SAFE_INTEGER:
             return str(iv)
-    # ES6 Number.toString — json.dumps matches for finite non-zero floats in practice
-    text = json.dumps(value)
-    if text == "-0":
-        return "0"
-    return text
+
+    text = repr(value)
+    negative = text.startswith("-")
+    if negative:
+        text = text[1:]
+
+    if "e" not in text:
+        if "." in text:
+            text = text.rstrip("0").rstrip(".")
+        return ("-" if negative else "") + text
+
+    coeff, exp_part = text.split("e")
+    exp10 = int(exp_part)
+    if "." in coeff:
+        ip, fp = coeff.split(".")
+        int_len = len(ip)
+        digits = ip + fp
+    else:
+        int_len = len(coeff)
+        digits = coeff
+
+    if -7 < exp10 < 21:
+        return _format_digits_decimal(
+            digits=digits,
+            decimal_pos=int_len + exp10,
+            negative=negative,
+        )
+    return _format_exponential(coeff=coeff, exp10=exp10, negative=negative)
 
 
 def _serialize_number(value: float | int) -> str:

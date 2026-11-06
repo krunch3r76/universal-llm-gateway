@@ -109,13 +109,30 @@ def concern_transition_route(
             write_intent_id=body.write_intent_id,
             material=body.material if body.kind == "position_head" else None,
         )
+        etag_rev = _current_head_revision(conn, body.concern_id)
     except ConcernCasError as exc:
+        if (
+            exc.error == "revision_conflict"
+            and if_match is not None
+            and str(if_match).strip()
+        ):
+            current_head = exc.payload.get("current_head")
+            if not current_head:
+                current_head = read_head(conn, body.concern_id) or {
+                    "revision": 0,
+                    "record_ref": None,
+                    "fencing_generation": 0,
+                }
+            raise HTTPException(
+                status_code=412,
+                detail={"error": "precondition_failed", "current_head": current_head},
+            ) from exc
         raise HTTPException(status_code=exc.http_status, detail=exc.payload) from exc
     except TransitionRejectedError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     finally:
         conn.close()
-    response.headers["ETag"] = f'"{result["revision"]}"'
+    response.headers["ETag"] = f'"{etag_rev}"'
     return ConcernTransitionResponse(**result)
 
 

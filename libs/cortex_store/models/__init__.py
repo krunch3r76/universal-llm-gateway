@@ -208,6 +208,7 @@ __all__ = [
     "CardDebug",
     "CardEdgeTypeCount",
     "CardSection",
+    "ConcernHeadPin",
     "CurrentStatus",
     "EntityCard",
     "EntityCreate",
