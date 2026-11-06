@@ -6,6 +6,7 @@ and supersession-edge bookkeeping.
 from __future__ import annotations
 
 import datetime as dt
+import sqlite3
 import threading
 
 from fastapi import HTTPException, status
@@ -74,6 +75,22 @@ def _hard_reject_rule_ids(diagnostics: list[ValidationDiagnostic]) -> list[str]:
         else:
             rule_ids.append(diag.field)
     return rule_ids
+
+
+def concern_head_conflict_fields(
+    conn: sqlite3.Connection, entity_id: str
+) -> dict[str, object]:
+    """Additive 409 fields when *entity_id* is backed by ``concern_head`` (B10)."""
+    head_row = conn.execute(
+        "SELECT revision, record_ref FROM concern_head WHERE concern_id = ?",
+        (entity_id,),
+    ).fetchone()
+    if head_row is None:
+        return {}
+    return {
+        "current_revision": int(head_row[0]),
+        "current_head_ref": head_row[1],
+    }
 
 
 def _staging_rule_ids(
@@ -434,12 +451,16 @@ def supersede_assertion(body: SupersedeRequest) -> SupersedeResponse:
                         ),
                     )
                 existing = conflict_rows[0].get("superseded_by")
+                detail: dict[str, object] | str = (
+                    f"Assertion {body.old_assertion_id} is already superseded "
+                    f"by {existing}; pass force=true to override"
+                )
+                extras = concern_head_conflict_fields(conn, body.entity_id)
+                if extras:
+                    detail = {"message": str(detail), **extras}
                 raise HTTPException(
                     status_code=status.HTTP_409_CONFLICT,
-                    detail=(
-                        f"Assertion {body.old_assertion_id} is already superseded "
-                        f"by {existing}; pass force=true to override"
-                    ),
+                    detail=detail,
                 )
             conn.execute(
                 "INSERT INTO session_edges ("

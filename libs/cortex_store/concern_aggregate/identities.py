@@ -9,6 +9,7 @@ IntentId = NewType("IntentId", str)
 RequestId = NewType("RequestId", str)
 DeliveryId = NewType("DeliveryId", str)
 CursorToken = NewType("CursorToken", str)
+WriteIntentId = NewType("WriteIntentId", str)
 
 _ID_PREFIXES: dict[type, str] = {
     RecordRef: "rec",
@@ -16,6 +17,7 @@ _ID_PREFIXES: dict[type, str] = {
     RequestId: "req",
     DeliveryId: "del",
     CursorToken: "cur",
+    WriteIntentId: "wi",
 }
 
 
@@ -63,6 +65,13 @@ def as_cursor_token(value: str) -> CursorToken:
     _reject_cross_prefix(value, allowed=_ID_PREFIXES[CursorToken])
     return CursorToken(
         _validate_shape(value, expected=CursorToken, label="cursor")
+    )
+
+
+def as_write_intent_id(value: str) -> WriteIntentId:
+    _reject_cross_prefix(value, allowed=_ID_PREFIXES[WriteIntentId])
+    return WriteIntentId(
+        _validate_shape(value, expected=WriteIntentId, label="write_intent_id")
     )
 
 

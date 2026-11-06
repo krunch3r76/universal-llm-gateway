@@ -15,6 +15,17 @@ import json
 import logging
 from typing import Any
 
+from browser_governance.contract import (
+    SUPERVISION_BANNER_SCAN_JS,
+    build_supervision_envelope,
+    supervision_gate_mode,
+)
+from browser_governance.events import (
+    browser_supervision_error,
+    browser_supervision_visibility,
+    emit_browser_event,
+)
+
 from cursor_bridge.chat_target import (
     chat_title,
     normalize_agent_id,
@@ -133,6 +144,7 @@ _PROBE_JS = r"""
     text: (el.innerText || '').trim(),
   }));
   const prose = message_turns.slice(-6).map((t) => t.text);
+  const has_active_chat = !!(promptEl);
   return {
     labels,
     items,
@@ -140,9 +152,75 @@ _PROBE_JS = r"""
     generating,
     recent_messages: prose,
     message_turns,
+    has_active_chat,
   };
 })()
 """
+
+
+def maybe_emit_browser_supervision(
+    envelope: dict[str, Any],
+    *,
+    display: str | None = None,
+    cdp_port: int | None = None,
+) -> None:
+    """Emit observation events in ``observe`` mode only; never raises."""
+    if supervision_gate_mode() != "observe":
+        return
+    surface = str(envelope.get("surface") or "cursor_electron")
+    ui = envelope.get("ui_error") if isinstance(envelope.get("ui_error"), dict) else {}
+    if ui.get("present") and ui.get("kind"):
+        emit_browser_event(
+            browser_supervision_error(
+                surface=surface,
+                display=display,
+                cdp_port=cdp_port,
+                error_kind=str(ui.get("kind") or "unknown"),
+                summary=ui.get("summary") if isinstance(ui.get("summary"), str) else None,
+                visibility_state=str(envelope.get("visibility_state") or "unknown"),
+                app_health=envelope.get("app_health")
+                if isinstance(envelope.get("app_health"), dict)
+                else None,
+            ),
+            source="cursor-bridge",
+        )
+    visibility = str(envelope.get("visibility_state") or "")
+    if visibility == "no_active_chat_transient":
+        emit_browser_event(
+            browser_supervision_visibility(
+                surface=surface,
+                display=display,
+                cdp_port=cdp_port,
+                visibility_state=visibility,
+                auth_state=str(envelope.get("auth_state") or "unknown"),
+                detail="sidebar_visible_without_active_composer",
+            ),
+            source="cursor-bridge",
+        )
+
+
+def _supervision_auth_state(state: str, *, signed_out: bool) -> str:
+    if state == "signed_out":
+        return "signed_out"
+    if state == "chat_list":
+        return "signed_in"
+    return "unknown"
+
+
+def _supervision_visibility_state(
+    *,
+    state: str,
+    signed_out: bool,
+    has_active_chat: bool | None,
+) -> str:
+    signed_in_shell = state != "signed_out" and not signed_out
+    if has_active_chat is False and (state == "chat_list" or signed_in_shell):
+        return "no_active_chat_transient"
+    if state == "signed_out":
+        return "signed_out"
+    if state == "chat_list":
+        return "chat_list"
+    return "unknown"
 
 
 def classify_surface(
@@ -153,6 +231,12 @@ def classify_surface(
     generating: bool = False,
     recent_messages: list[str] | None = None,
     message_turns: list[dict[str, Any]] | None = None,
+    has_active_chat: bool | None = None,
+    ui_banner: dict[str, Any] | None = None,
+    surface_name: str = "cursor_electron",
+    emit_events: bool = False,
+    display: str | None = None,
+    cdp_port: int | None = None,
 ) -> dict[str, Any]:
     """Turn a DOM probe into a sidebar observation.
 
@@ -191,7 +275,19 @@ def classify_surface(
         state = "unknown"
         active = None
         active_agent_id = ""
-    return {
+    auth_state = _supervision_auth_state(state, signed_out=signed_out)
+    visibility_state = _supervision_visibility_state(
+        state=state,
+        signed_out=signed_out,
+        has_active_chat=has_active_chat,
+    )
+    supervision = build_supervision_envelope(
+        surface=surface_name,
+        auth_state=auth_state,
+        visibility_state=visibility_state,
+        ui_banner=ui_banner,
+    )
+    result = {
         "state": state,
         "active_title": active,
         "active_agent_id": active_agent_id,
@@ -202,7 +298,13 @@ def classify_surface(
         "generating": bool(generating),
         "recent_messages": list(recent_messages or []),
         "message_turns": list(message_turns or []),
+        "supervision": supervision,
     }
+    if emit_events:
+        maybe_emit_browser_supervision(
+            supervision, display=display, cdp_port=cdp_port
+        )
+    return result
 
 
 def wake_decision(
@@ -315,24 +417,44 @@ def read_surface(ws_url: str, *, timeout_s: float = 5.0) -> dict[str, Any]:
     return asyncio.run(_read_surface(ws_url, timeout_s=timeout_s))
 
 
-async def _read_surface(ws_url: str, *, timeout_s: float) -> dict[str, Any]:
+async def _evaluate_cdp_js(
+    ws_url: str, expression: str, *, msg_id: int, timeout_s: float
+) -> Any:
     import websockets
 
     async with websockets.connect(ws_url, max_size=2_000_000) as ws:
         await ws.send(
             json.dumps(
                 {
-                    "id": 1,
+                    "id": msg_id,
                     "method": "Runtime.evaluate",
-                    "params": {"expression": _PROBE_JS, "returnByValue": True},
+                    "params": {"expression": expression, "returnByValue": True},
                 }
             )
         )
-        raw = await asyncio.wait_for(_response(ws, 1), timeout_s)
-    value = ((raw.get("result") or {}).get("result") or {}).get("value")
+        raw = await asyncio.wait_for(_response(ws, msg_id), timeout_s)
+    return ((raw.get("result") or {}).get("result") or {}).get("value")
+
+
+async def _read_surface(ws_url: str, *, timeout_s: float) -> dict[str, Any]:
+    value = await _evaluate_cdp_js(ws_url, _PROBE_JS, msg_id=1, timeout_s=timeout_s)
     if not isinstance(value, dict):
-        detail = (raw.get("result") or {}).get("exceptionDetails")
-        raise RuntimeError(f"surface probe failed: {detail or raw}")
+        raise RuntimeError(f"surface probe failed: {value!r}")
+    ui_banner: dict[str, Any] | None = None
+    if supervision_gate_mode() == "observe":
+        try:
+            banner_raw = await _evaluate_cdp_js(
+                ws_url,
+                SUPERVISION_BANNER_SCAN_JS,
+                msg_id=2,
+                timeout_s=timeout_s,
+            )
+            if isinstance(banner_raw, dict):
+                ui_banner = banner_raw
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            ui_banner = None
     labels = [str(x) for x in value.get("labels") or []]
     items = [x for x in value.get("items") or [] if isinstance(x, dict)]
     turns_raw = value.get("message_turns") or []
@@ -341,14 +463,26 @@ async def _read_surface(ws_url: str, *, timeout_s: float) -> dict[str, Any]:
         for t in turns_raw
         if isinstance(t, dict)
     ]
-    return classify_surface(
+    has_active_chat_raw = value.get("has_active_chat")
+    has_active_chat = (
+        bool(has_active_chat_raw) if isinstance(has_active_chat_raw, bool) else None
+    )
+    result = classify_surface(
         labels,
         items,
         composer_draft=str(value.get("composer_draft") or ""),
         generating=bool(value.get("generating")),
         recent_messages=[str(x) for x in value.get("recent_messages") or []],
         message_turns=message_turns,
+        has_active_chat=has_active_chat,
+        ui_banner=ui_banner,
+        emit_events=False,
     )
+    try:
+        maybe_emit_browser_supervision(result["supervision"])
+    except Exception:
+        pass
+    return result
 
 
 async def select_sidebar_target(

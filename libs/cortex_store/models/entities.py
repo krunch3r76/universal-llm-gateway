@@ -194,6 +194,13 @@ class WithheldStatusEntry(BaseModel):
     observed_at: str | None = None
 
 
+class ConcernHeadPin(BaseModel):
+    """Typed concern position served on concern-typed entity cards (Phase 2)."""
+
+    record_ref: str
+    revision: int
+
+
 class CurrentStatus(BaseModel):
     """Qualified current-status projection (Wave 1 graduation honesty)."""
 
@@ -203,6 +210,7 @@ class CurrentStatus(BaseModel):
     source: str | None = None
     withheld_newer: list[WithheldStatusEntry] = Field(default_factory=list)
     withheld_count: int = 0
+    concern_head: ConcernHeadPin | None = None
 
 
 class CardEdgeTypeCount(BaseModel):

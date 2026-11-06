@@ -89,9 +89,18 @@ def test_tiptap_empty_placeholder_allows_insert_and_foreign_whitespace_blocks() 
               document.body.innerHTML = '<form><div data-composer="1"></div></form>';
               const el = document.querySelector('[data-composer]');
               el.innerHTML = html;
-              Object.defineProperty(el, 'innerText', {get() { return '\\n'; }});
+              let inner = '\\n';
+              Object.defineProperty(el, 'innerText', {
+                get() { return inner; },
+                set(v) { inner = v; },
+                configurable: true,
+              });
               let calls = 0;
-              el.editor = {isEmpty: true, commands: {setContent(h) { calls += 1; el.innerHTML = h; }}};
+              el.editor = {isEmpty: true, commands: {setContent(h) {
+                calls += 1;
+                el.innerHTML = h;
+                inner = 'probe nonce';
+              }}};
               window.__ulgOperatorActivity = {};
               const ret = eval(js);
               return {ret, calls};
@@ -134,6 +143,92 @@ def test_tiptap_empty_placeholder_allows_insert_and_foreign_whitespace_blocks() 
         )
         assert foreign_row["ret"]["reason"] == "composer_not_empty"
         assert foreign_row["calls"] == 0
+
+        atom_row = page.evaluate(
+            """({js, html}) => {
+              document.body.innerHTML = '<form><div data-composer="1"></div></form>';
+              const el = document.querySelector('[data-composer]');
+              el.innerHTML = html;
+              Object.defineProperty(el, 'innerText', {get() { return ''; }});
+              let calls = 0;
+              const doc = {
+                textContent: '',
+                descendants(fn) {
+                  fn({isText: false, isAtom: true, type: {name: 'image'}});
+                },
+              };
+              el.editor = {isEmpty: false, state: {doc}, commands: {setContent(h) { calls += 1; el.innerHTML = h; }}};
+              window.__ulgOperatorActivity = {};
+              return {ret: eval(js), calls};
+            }""",
+            {
+                "js": _set_composer_body(
+                    "[data-composer]",
+                    "probe nonce",
+                    preserve_newlines=True,
+                    draft_writer=writer,
+                ),
+                "html": '<p class="is-editor-empty"><img src="x"></p>',
+            },
+        )
+        assert atom_row["ret"]["reason"] == "composer_not_empty"
+        assert atom_row["calls"] == 0
+
+        stale_class_row = page.evaluate(
+            """({js, html}) => {
+              document.body.innerHTML = '<form><div data-composer="1"></div></form>';
+              const el = document.querySelector('[data-composer]');
+              el.innerHTML = html;
+              Object.defineProperty(el, 'innerText', {get() { return 'foreign text'; }});
+              let calls = 0;
+              el.editor = {isEmpty: true, commands: {setContent(h) { calls += 1; el.innerHTML = h; }}};
+              window.__ulgOperatorActivity = {};
+              return {ret: eval(js), calls};
+            }""",
+            {
+                "js": _set_composer_body(
+                    "[data-composer]",
+                    "probe nonce",
+                    preserve_newlines=True,
+                    draft_writer=writer,
+                ),
+                "html": (
+                    '<p class="is-editor-empty is-empty">'
+                    '<br class="ProseMirror-trailingBreak"></p>'
+                ),
+            },
+        )
+        assert stale_class_row["ret"]["reason"] == "composer_not_empty"
+        assert stale_class_row["calls"] == 0
+
+        literal_bs_n_row = page.evaluate(
+            """({js, html}) => {
+              document.body.innerHTML = '<form><div data-composer="1"></div></form>';
+              const el = document.querySelector('[data-composer]');
+              el.innerHTML = html;
+              Object.defineProperty(el, 'innerText', {get() { return '\\\\n'; }});
+              let calls = 0;
+              el.editor = {
+                isEmpty: true,
+                state: {doc: {textContent: '\\\\n'}},
+                commands: {setContent(h) { calls += 1; el.innerHTML = h; }},
+              };
+              window.__ulgOperatorActivity = {};
+              return {ret: eval(js), calls};
+            }""",
+            {
+                "js": _set_composer_body(
+                    "[data-composer]",
+                    "probe nonce",
+                    preserve_newlines=True,
+                    draft_writer=writer,
+                ),
+                "html": empty_html,
+            },
+        )
+        assert literal_bs_n_row["ret"]["reason"] == "composer_not_empty"
+        assert literal_bs_n_row["calls"] == 0
+
         browser.close()
 
 

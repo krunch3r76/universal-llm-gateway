@@ -40,6 +40,7 @@ from .compaction import (
     is_compaction_pointer,
     is_tombstone_only,
 )
+from .concern_aggregate.views import read_head
 from .confidence_field import agent_skill_is_discoverable
 from .db import json_decode, query
 from .models import (
@@ -47,6 +48,7 @@ from .models import (
     CardAssertionCounts,
     CardDebug,
     CardEdgeTypeCount,
+    ConcernHeadPin,
     CurrentStatus,
     EntityCard,
     WithheldStatusEntry,
@@ -150,6 +152,32 @@ def _extract_flag_reason(review_notes: str) -> str | None:
             token = remainder.split(":", 1)[0].strip()
             return token or None
     return None
+
+
+def _entity_is_concern_typed(
+    conn: sqlite3.Connection, *, entity_id: str, entity_type: str
+) -> bool:
+    if entity_type == "concern":
+        return True
+    row = conn.execute(
+        "SELECT 1 FROM concern_head WHERE concern_id = ? LIMIT 1", (entity_id,)
+    ).fetchone()
+    return row is not None
+
+
+def _fetch_concern_typed_current_status(
+    conn: sqlite3.Connection, *, entity_id: str
+) -> CurrentStatus:
+    """Serve typed ``concern_head`` without assertion-ID merge (a:42363)."""
+    head = read_head(conn, entity_id)
+    if head is None or not head.get("record_ref"):
+        return CurrentStatus()
+    return CurrentStatus(
+        concern_head=ConcernHeadPin(
+            record_ref=str(head["record_ref"]),
+            revision=int(head["revision"]),
+        ),
+    )
 
 
 def _fetch_qualified_current_status(
@@ -414,13 +442,21 @@ def get_entity_card(
             else "tombstoned"
         )
     else:
-        current_status = _fetch_qualified_current_status(
-            conn, entity_id=entity_id, as_of=as_of_iso
-        )
-        rows_materialized += len(
-            _fetch_status_current_rows(conn, entity_id=entity_id, as_of=as_of_iso)
-        )
-        e_row = _fetch_current_status_row(conn, entity_id=entity_id, as_of=as_of_iso)
+        if _entity_is_concern_typed(conn, entity_id=entity_id, entity_type=str(e["type"])):
+            current_status = _fetch_concern_typed_current_status(
+                conn, entity_id=entity_id
+            )
+            e_row = None
+        else:
+            current_status = _fetch_qualified_current_status(
+                conn, entity_id=entity_id, as_of=as_of_iso
+            )
+            rows_materialized += len(
+                _fetch_status_current_rows(conn, entity_id=entity_id, as_of=as_of_iso)
+            )
+            e_row = _fetch_current_status_row(
+                conn, entity_id=entity_id, as_of=as_of_iso
+            )
         surfaced_rows = _merge_current_status_slot(a_rows, e_row, top_k=top_k)
         top_k_for_card = [_card_assertion(r) for r in surfaced_rows]
         predicate_summary, _summary_withheld = aggregate_predicate_summary(

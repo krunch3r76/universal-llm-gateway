@@ -188,10 +188,35 @@ def append_transition(
     request_id: str | None = None,
     delivery_id: str | None = None,
     emit_advisory: bool = True,
+    expected_revision: int | None = None,
+    write_intent_id: str | None = None,
+    material: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Accept one transition: journal row + view updates + outbox in one transaction."""
     if kind not in _TRANSITION_KINDS:
         raise TransitionRejectedError(f"invalid kind: {kind!r}")
+    if kind == "position_head":
+        if write_intent_id is None:
+            raise TransitionRejectedError("position_head requires write_intent_id")
+        if expected_revision is None:
+            raise TransitionRejectedError("position_head requires expected_revision")
+        if material is None:
+            raise TransitionRejectedError("position_head requires material")
+        from .cas import apply_position_head
+
+        return apply_position_head(
+            conn,
+            concern_id=concern_id,
+            expected_revision=expected_revision,
+            write_intent_id=write_intent_id,
+            material=material,
+            record_ref=record_ref,
+            authorized_by=authorized_by,
+            payload=payload,
+            emit_advisory=emit_advisory,
+        )
+    if write_intent_id is not None:
+        raise TransitionRejectedError("write_intent_id is only valid for position_head")
     payload = dict(payload or {})
     rec, iid, _rid, _did = parse_transition_identities(
         record_ref=record_ref,
@@ -204,7 +229,10 @@ def append_transition(
     conn.execute("BEGIN IMMEDIATE")
     try:
         prev_revision, prev_fence, _prev_ref = _read_head_row(conn, concern_id)
-        revision = prev_revision + 1
+        if kind == "rollback":
+            revision = prev_revision + 1
+        else:
+            revision = prev_revision
         fencing_generation = prev_fence
         if kind == "rollback":
             requested = int(payload.get("fencing_generation", prev_fence))
@@ -222,8 +250,9 @@ def append_transition(
         conn.execute(
             "INSERT INTO concern_journal "
             "(concern_id, seq, record_ref, kind, payload, authorized_by, "
-            "fencing_generation, revision, fold_version, schema_version, committed_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "fencing_generation, revision, fold_version, schema_version, committed_at, "
+            "write_intent_id, material_fingerprint) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 concern_id,
                 seq,
@@ -235,6 +264,8 @@ def append_transition(
                 revision,
                 FOLD_VERSION,
                 SCHEMA_VERSION,
+                None,
+                None,
                 None,
             ),
         )

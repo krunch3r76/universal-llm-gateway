@@ -6,11 +6,18 @@ is an auth miss; credential fields are never filled.
 
 from __future__ import annotations
 
+import asyncio
 import re
 from dataclasses import dataclass
 from typing import Any
 from urllib.parse import urlparse
 
+from browser_governance.contract import (
+    SUPERVISION_BANNER_SCAN_JS,
+    build_supervision_envelope,
+    supervision_gate_mode,
+    unscanned_supervision,
+)
 from claude_bundles.skills_ui_panel import connect_cdp
 
 DEFAULT_CDP_URL = "http://127.0.0.1:9222"
@@ -175,9 +182,44 @@ async def attach_grok_page(
     raise GrokAuthError(f"no open tab containing {url_substr!r} on {cdp_url}")
 
 
+async def _supervision_for_grok_page(page, *, signed_in: bool | None) -> dict[str, Any]:
+    if supervision_gate_mode() != "observe":
+        return unscanned_supervision(surface="grok", reason="gate_mode_off")
+    ui_banner: dict[str, Any] | None = None
+    try:
+        banner_raw = await page.evaluate(SUPERVISION_BANNER_SCAN_JS)
+        if isinstance(banner_raw, dict) and "scanned" in banner_raw:
+            ui_banner = banner_raw
+    except asyncio.CancelledError:
+        raise
+    except Exception:
+        ui_banner = None
+    if ui_banner is None:
+        return unscanned_supervision(surface="grok", reason="banner_scan_skipped")
+    auth_state = "unknown"
+    if signed_in is True:
+        auth_state = "signed_in"
+    elif signed_in is False:
+        auth_state = "signed_out"
+    return build_supervision_envelope(
+        surface="grok",
+        auth_state=auth_state,
+        visibility_state="unknown",
+        ui_banner=ui_banner,
+    )
+
+
 async def probe_dom(page) -> dict[str, Any]:
     """Dump visible composer / message / idle controls from the live SPA."""
-    return await page.evaluate(PROBE_JS)
+    raw = await page.evaluate(PROBE_JS)
+    if not isinstance(raw, dict):
+        raw = {}
+    login_wall = bool(raw.get("login_wall"))
+    signed_in = not login_wall
+    raw["supervision"] = await _supervision_for_grok_page(
+        page, signed_in=signed_in if raw else None
+    )
+    return raw
 
 
 async def harvest(page) -> GrokHarvest:

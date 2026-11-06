@@ -6,6 +6,7 @@ from typing import Any
 
 from universal_logging import get_logger
 
+from ..concern_aggregate.cas import ConcernCasError
 from ..concern_aggregate.checkpoint import write_checkpoint
 from ..concern_aggregate.journal import TransitionRejectedError, append_transition
 from ..concern_aggregate.recovery import rebuild_concern
@@ -25,6 +26,9 @@ def _op_concern_transition(
     request_id: str | None = None,
     delivery_id: str | None = None,
     emit_advisory: bool = True,
+    expected_revision: int | None = None,
+    write_intent_id: str | None = None,
+    material: dict[str, Any] | None = None,
     **_: object,
 ) -> dict[str, Any]:
     if not concern_id or not kind or not record_ref or not authorized_by:
@@ -44,6 +48,9 @@ def _op_concern_transition(
             request_id=request_id,
             delivery_id=delivery_id,
             emit_advisory=bool(emit_advisory),
+            expected_revision=expected_revision,
+            write_intent_id=write_intent_id,
+            material=material,
         )
         record(
             "mcp.cortex.concern_transition",
@@ -52,6 +59,8 @@ def _op_concern_transition(
             kind=kind,
         )
         return result
+    except ConcernCasError as exc:
+        return exc.payload
     except TransitionRejectedError as exc:
         return {"error": str(exc)}
     finally:

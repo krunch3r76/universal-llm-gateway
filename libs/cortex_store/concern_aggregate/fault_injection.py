@@ -9,6 +9,7 @@ from typing import Any
 Hook = Callable[[], None]
 
 _after_journal_insert: Hook | None = None
+_after_write_intent_insert: Hook | None = None
 _after_head_update: Hook | None = None
 _after_cursor_update: Hook | None = None
 _during_checkpoint_write: Hook | None = None
@@ -45,6 +46,13 @@ def set_after_journal_insert(hook: Hook | None) -> None:
     _after_journal_insert = hook
 
 
+def set_after_write_intent_insert(hook: Hook | None) -> None:
+    global _after_write_intent_insert
+    if hook is not None:
+        _require_enabled_for_set()
+    _after_write_intent_insert = hook
+
+
 def set_after_head_update(hook: Hook | None) -> None:
     global _after_head_update
     if hook is not None:
@@ -67,9 +75,10 @@ def set_during_checkpoint_write(hook: Hook | None) -> None:
 
 
 def clear_all() -> None:
-    global _after_journal_insert, _after_head_update, _after_cursor_update
-    global _during_checkpoint_write
+    global _after_journal_insert, _after_write_intent_insert, _after_head_update
+    global _after_cursor_update, _during_checkpoint_write
     _after_journal_insert = None
+    _after_write_intent_insert = None
     _after_head_update = None
     _after_cursor_update = None
     _during_checkpoint_write = None
@@ -78,6 +87,11 @@ def clear_all() -> None:
 def maybe_after_journal_insert() -> None:
     if is_enabled() and _after_journal_insert is not None:
         _after_journal_insert()
+
+
+def maybe_after_write_intent_insert() -> None:
+    if is_enabled() and _after_write_intent_insert is not None:
+        _after_write_intent_insert()
 
 
 def maybe_after_head_update() -> None:

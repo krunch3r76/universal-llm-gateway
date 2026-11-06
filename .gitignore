@@ -197,8 +197,11 @@ snapshots/
 # SQL files (may contain private/sensitive data — never commit)
 **/*.sql
 
-# Migrations are local — sole maintainer applies them directly
-libs/cortex_store/migrations/
+# Migrations are local — sole maintainer applies them directly; narrow DDL-only allowlist per 22373#66
+!libs/cortex_store/migrations/
+libs/cortex_store/migrations/*
+libs/cortex_store/migrations/**
+!libs/cortex_store/migrations/085_concern_write_intents.sql
 .*
 */.*
 */.*/
