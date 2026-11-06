@@ -41,6 +41,7 @@ class ResultBody(BaseModel):
     subscription_id: int | None = None
     cse_registration_id: str | None = None
     decided_by_rule: str | None = None
+    wake_detail: dict[str, Any] | None = None
 
 
 @router.get("/endpoint-wake/cursor")
@@ -109,6 +110,7 @@ async def result_route(body: ResultBody) -> dict[str, Any]:
             body.subscription_id,
             body.cse_registration_id,
             decided_by_rule=body.decided_by_rule,
+            wake_detail=body.wake_detail,
         )
     except WakeConflictError as exc:
         raise HTTPException(

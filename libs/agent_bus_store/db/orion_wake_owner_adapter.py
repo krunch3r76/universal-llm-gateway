@@ -362,8 +362,19 @@ class LedgerWakeDeliveryOwner:
     def record_paste_receipt(
         self, claim: WakeClaimContext, receipt: dict[str, Any]
     ) -> None:
+        from bus_watch.endpoint_wake_composer_defer import is_composer_defer_reason
+
         if str(receipt.get("reason") or "") == "duplicate_suppressed":
             return
+        sub_id: int | None = None
+        binding = resolve_orion_chat_wake(
+            claim.thread_id, agent=claim.normalized_agent()
+        )
+        if str(binding.get("state") or "") == "bound":
+            cur = dict(binding.get("current") or {})
+            sid = cur.get("subscription_id")
+            if sid is not None:
+                sub_id = int(sid)
         if receipt.get("delivered") is True:
             outcome = "delivered"
             reason = _encode_paste_receipt(receipt)
@@ -372,7 +383,7 @@ class LedgerWakeDeliveryOwner:
             sched = record_orion_deferred_streaming(
                 claim.wake_id,
                 "exact",
-                None,
+                sub_id,
                 None,
             )
             if sched.get("exhausted"):
@@ -395,16 +406,36 @@ class LedgerWakeDeliveryOwner:
         elif receipt.get("ok") is False:
             outcome = "refused"
             reason = str(receipt.get("reason") or "refused")
+            if is_composer_defer_reason(reason):
+                outcome = "pending"
         else:
             outcome = "unknown"
             reason = str(receipt.get("reason") or "unnamed")
+        detail_keys = (
+            "receipt",
+            "insert_attempted",
+            "retryable",
+            "clicked_unknown",
+            "owned_draft_retained",
+            "send_fallback_clicked",
+            "phase",
+            "uncertain_side_effect",
+        )
+        wake_detail = {
+            k: receipt[k]
+            for k in detail_keys
+            if k in receipt and receipt[k] is not None
+        }
+        if outcome == "pending" and is_composer_defer_reason(reason):
+            wake_detail["release_claim_for_retry"] = True
         record_wake_result(
             claim.wake_id,
             outcome,
             reason,
             "exact",
+            sub_id,
             None,
-            None,
+            wake_detail=wake_detail or None,
         )
 
 

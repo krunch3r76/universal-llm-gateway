@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import re
 import sqlite3
 import uuid
@@ -44,6 +45,31 @@ def _now(now: str | None) -> str:
 def _shift(stamp: str, seconds: int) -> str:
     base = datetime.strptime(stamp, "%Y-%m-%d %H:%M:%S").replace(tzinfo=UTC)
     return (base + timedelta(seconds=seconds)).strftime("%Y-%m-%d %H:%M:%S")
+
+
+def _ledger_columns(conn: sqlite3.Connection) -> set[str]:
+    rows = conn.execute("PRAGMA table_info(endpoint_wake_ledger)").fetchall()
+    return {str(r[1]) for r in rows}
+
+
+def _encode_delivery_failure_detail(
+    reason: str | None, **fields: Any
+) -> str | None:
+    """Stable JSON blob for agent_bus_read / advisory tooling (nullable)."""
+    base = str(reason or "").strip()
+    if not base and not fields:
+        return None
+    payload: dict[str, Any] = {"reason_code": base} if base else {}
+    for key, val in fields.items():
+        if val is None:
+            continue
+        payload[key] = val
+    if len(payload) <= 1 and not base:
+        return None
+    try:
+        return json.dumps(payload, sort_keys=True)
+    except (TypeError, ValueError):
+        return base or None
 
 
 def get_cursor(consumer: str = CONSUMER, *, now: str | None = None) -> dict[str, Any]:
@@ -1326,6 +1352,7 @@ def claim_due_wakes(
                 if composer_defer_blocks_claim(
                     reason=str(row["reason"] or ""),
                     decided_by_rule=str(row["decided_by_rule"] or ""),
+                    agent=str(row["agent"] or ""),
                 ):
                     continue
                 reason = _skip_reason(conn, row)
@@ -1435,17 +1462,30 @@ def record_orion_deferred_streaming(
         thread_id = str(eligible[0]["thread_id"])
         turn_numbers = sorted({int(r["turn_number"]) for r in eligible})
         ids = [int(r["id"]) for r in eligible]
+        cols = _ledger_columns(conn)
         if attempt > ORION_DEFERRED_STREAMING_MAX_ATTEMPTS:
+            telem_sets = ""
+            telem_vals: tuple[Any, ...] = ()
+            if "wake_last_attempt_at" in cols:
+                telem_sets += ", wake_last_attempt_at=?"
+                telem_vals += (stamp,)
+            if "wake_next_attempt_at" in cols:
+                telem_sets += ", wake_next_attempt_at=?"
+                telem_vals += (None,)
+            if "wake_attempt_count" in cols:
+                telem_sets += ", wake_attempt_count=?"
+                telem_vals += (attempt,)
             conn.execute(
                 f"UPDATE endpoint_wake_ledger SET state='refused', reason='deferred_exhausted', "
                 f"route=?, subscription_id=?, cse_registration_id=?, finished_at=?, "
-                f"decided_by_rule=? WHERE id IN ({','.join('?' * len(ids))})",
+                f"decided_by_rule=?{telem_sets} WHERE id IN ({','.join('?' * len(ids))})",
                 (
                     route,
                     subscription_id,
                     cse_registration_id,
                     stamp,
                     f"{_ORION_DEFERRED_ATTEMPT_PREFIX}{attempt}",
+                    *telem_vals,
                     *ids,
                 ),
             )
@@ -1459,10 +1499,21 @@ def record_orion_deferred_streaming(
                 "turn_numbers": turn_numbers,
             }
         retry_at = _shift(stamp, orion_deferred_retry_delay_s(attempt))
+        telem_sets = ""
+        telem_vals = ()
+        if "wake_last_attempt_at" in cols:
+            telem_sets += ", wake_last_attempt_at=?"
+            telem_vals += (stamp,)
+        if "wake_next_attempt_at" in cols:
+            telem_sets += ", wake_next_attempt_at=?"
+            telem_vals += (retry_at,)
+        if "wake_attempt_count" in cols:
+            telem_sets += ", wake_attempt_count=?"
+            telem_vals += (attempt,)
         conn.execute(
             f"UPDATE endpoint_wake_ledger SET state='pending', reason='deferred_streaming', "
             f"route=?, subscription_id=?, cse_registration_id=?, finished_at=?, "
-            f"decided_by_rule=?, wake_id=NULL, claimed_at=NULL "
+            f"decided_by_rule=?, wake_id=NULL, claimed_at=NULL{telem_sets} "
             f"WHERE id IN ({','.join('?' * len(ids))})",
             (
                 route,
@@ -1470,6 +1521,7 @@ def record_orion_deferred_streaming(
                 cse_registration_id,
                 retry_at,
                 f"{_ORION_DEFERRED_ATTEMPT_PREFIX}{attempt}",
+                *telem_vals,
                 *ids,
             ),
         )
@@ -1491,10 +1543,12 @@ def record_wake_result(
     cse_registration_id: str | None,
     *,
     decided_by_rule: str | None = None,
+    wake_detail: dict[str, Any] | None = None,
     now: str | None = None,
 ) -> int:
     """Persist a result on claimed rows, or unknown rows folded from that claim."""
     from bus_watch.endpoint_wake_composer_defer import (
+        is_composer_defer_reason,
         merge_composer_defer_decided_by_rule,
     )
 
@@ -1502,36 +1556,87 @@ def record_wake_result(
         decided_by_rule, reason=reason
     )
     stamp = _now(now)
-    finished = None if outcome == "refused" else stamp
+    detail = dict(wake_detail or {})
+    pending_handoff = outcome == "pending" and is_composer_defer_reason(reason)
+    release_claim = bool(detail.pop("release_claim_for_retry", False))
+    finished = (
+        None
+        if outcome == "refused" or (pending_handoff and release_claim)
+        else stamp
+    )
     with write_connect() as conn:
+        cols = _ledger_columns(conn)
         rows = conn.execute(
-            "SELECT id, state FROM endpoint_wake_ledger WHERE wake_id=?",
+            "SELECT id, state, subscription_id, decided_by_rule FROM endpoint_wake_ledger "
+            "WHERE wake_id=?",
             (wake_id,),
         ).fetchall()
         eligible = [r for r in rows if r["state"] in _CLAIM_STATES]
         if not eligible:
             raise WakeConflictError("wake_not_claimed")
         ids = [int(r["id"]) for r in eligible]
+        prior_attempt = 0
+        if "wake_attempt_count" in cols:
+            for r in eligible:
+                prior_attempt = max(
+                    prior_attempt, parse_orion_deferred_attempt(r["decided_by_rule"])
+                )
+        next_attempt = detail.pop("wake_next_attempt_at", None)
+        last_attempt = detail.pop("wake_last_attempt_at", None)
+        if last_attempt is None:
+            last_attempt = stamp
+        attempt_count = detail.pop("wake_attempt_count", None)
+        if attempt_count is None and "wake_attempt_count" in cols:
+            attempt_count = prior_attempt + 1
+        detail_blob = _encode_delivery_failure_detail(reason, **detail)
         set_rule = (
             ", decided_by_rule=COALESCE(?, decided_by_rule)" if decided_by_rule else ""
         )
+        telem = ""
+        telem_params: list[Any] = []
+        if "wake_last_attempt_at" in cols:
+            telem += ", wake_last_attempt_at=?"
+            telem_params.append(last_attempt)
+        if "wake_next_attempt_at" in cols:
+            telem += ", wake_next_attempt_at=?"
+            telem_params.append(next_attempt)
+        if "wake_attempt_count" in cols:
+            telem += ", wake_attempt_count=?"
+            telem_params.append(attempt_count)
+        if "delivery_failure_detail" in cols:
+            telem += ", delivery_failure_detail=?"
+            telem_params.append(detail_blob)
+        sub_for_row = subscription_id
+        if sub_for_row is None and "subscription_id" in cols:
+            for r in eligible:
+                sid = r["subscription_id"]
+                if sid is not None:
+                    sub_for_row = int(sid)
+                    break
         params: list[Any] = [
             outcome,
             reason,
             route,
-            subscription_id,
+            sub_for_row,
             cse_registration_id,
             finished,
         ]
         if decided_by_rule:
             params.append(decided_by_rule)
+        params.extend(telem_params)
         params.extend(ids)
         conn.execute(
             f"UPDATE endpoint_wake_ledger SET state=?, reason=?, route=?, "
-            f"subscription_id=?, cse_registration_id=?, finished_at=?{set_rule} "
+            f"subscription_id=?, cse_registration_id=?, finished_at=?{set_rule}{telem} "
             f"WHERE id IN ({','.join('?' * len(ids))})",
             tuple(params),
         )
+        if pending_handoff and release_claim:
+            conn.execute(
+                f"UPDATE endpoint_wake_ledger SET state='pending', wake_id=NULL, "
+                f"claimed_at=NULL, finished_at=NULL WHERE id IN ({','.join('?' * len(ids))})",
+                tuple(ids),
+            )
     return len(ids)
 
 
@@ -1589,14 +1694,30 @@ def list_wake_ledger_rows(
         clauses.append("state = ?")
         params.append(str(state).strip())
     where = f" WHERE {' AND '.join(clauses)}" if clauses else ""
-    sql = (
-        "SELECT id, agent, thread_id, turn_id, turn_number, state, wake_id, route, "
-        "subscription_id, cse_registration_id, reason, decided_by_rule, "
-        "created_at, claimed_at, finished_at "
-        f"FROM endpoint_wake_ledger{where} ORDER BY id DESC LIMIT ?"
-    )
     params.append(cap)
     with connect() as conn:
+        cols = _ledger_columns(conn)
+        extra = [
+            c
+            for c in (
+                "wake_last_attempt_at",
+                "wake_next_attempt_at",
+                "wake_attempt_count",
+                "delivery_failure_detail",
+            )
+            if c in cols
+        ]
+        select_cols = (
+            "id, agent, thread_id, turn_id, turn_number, state, wake_id, route, "
+            "subscription_id, cse_registration_id, reason, decided_by_rule, "
+            "created_at, claimed_at, finished_at"
+        )
+        if extra:
+            select_cols += ", " + ", ".join(extra)
+        sql = (
+            f"SELECT {select_cols} FROM endpoint_wake_ledger{where} "
+            "ORDER BY id DESC LIMIT ?"
+        )
         rows = conn.execute(sql, params).fetchall()
     out: list[dict[str, Any]] = []
     for row in rows:

@@ -943,6 +943,12 @@ def _composer_send_abort_expression(nonce: str) -> str:
     )
 
 
+def _next_cdp_msg_id(ws: Any) -> int:
+    n = int(getattr(ws, "_ulg_cdp_seq", 0)) + 1
+    setattr(ws, "_ulg_cdp_seq", n)
+    return n
+
+
 async def _mark_composer_send_abort(ws: Any, nonce: str) -> None:
     if not nonce:
         return
@@ -965,6 +971,45 @@ async def _mark_composer_send_abort(ws: Any, nonce: str) -> None:
         return
 
 
+async def _cdp_eval_connected(
+    ws: Any,
+    expression: str,
+    *,
+    await_promise: bool = False,
+    timeout_s: float = 8.0,
+) -> Any:
+    """Evaluate on an already-open CDP websocket (caller owns lifecycle)."""
+    mid = _next_cdp_msg_id(ws)
+    await ws.send(
+        json.dumps(
+            {
+                "id": mid,
+                "method": "Runtime.evaluate",
+                "params": {
+                    "expression": expression,
+                    "awaitPromise": await_promise,
+                    "returnByValue": True,
+                },
+            }
+        )
+    )
+    try:
+        raw = await asyncio.wait_for(_cdp_response(ws, mid), timeout_s)
+    except (TimeoutError, asyncio.CancelledError) as exc:
+        nonce = _send_abort_nonce.get()
+        if nonce:
+            await _mark_composer_send_abort(ws, nonce)
+        if isinstance(exc, asyncio.CancelledError):
+            task = asyncio.current_task()
+            if task is not None:
+                task.cancel()
+            raise
+        raise
+    if raw.get("error"):
+        raise RuntimeError(raw["error"])
+    return ((raw.get("result") or {}).get("result") or {}).get("value")
+
+
 async def _cdp_eval(
     ws_url: str,
     expression: str,
@@ -982,34 +1027,12 @@ async def _cdp_eval(
     import websockets
 
     async with websockets.connect(ws_url, max_size=2_000_000) as ws:
-        await ws.send(
-            json.dumps(
-                {
-                    "id": 1,
-                    "method": "Runtime.evaluate",
-                    "params": {
-                        "expression": expression,
-                        "awaitPromise": await_promise,
-                        "returnByValue": True,
-                    },
-                }
-            )
+        return await _cdp_eval_connected(
+            ws,
+            expression,
+            await_promise=await_promise,
+            timeout_s=timeout_s,
         )
-        try:
-            raw = await asyncio.wait_for(_cdp_response(ws, 1), timeout_s)
-        except (TimeoutError, asyncio.CancelledError) as exc:
-            nonce = _send_abort_nonce.get()
-            if nonce:
-                await _mark_composer_send_abort(ws, nonce)
-            if isinstance(exc, asyncio.CancelledError):
-                task = asyncio.current_task()
-                if task is not None:
-                    task.cancel()
-                raise
-            raise
-    if raw.get("error"):
-        raise RuntimeError(raw["error"])
-    return ((raw.get("result") or {}).get("result") or {}).get("value")
 
 
 async def _cdp_response(ws: Any, mid: int) -> dict[str, Any]:
@@ -1092,7 +1115,12 @@ async def dom_set_composer_text(
 
 
 async def dom_click_send(
-    ws_url: str, *, selector: str, line: str, preserve_newlines: bool = False
+    ws_url: str,
+    *,
+    selector: str,
+    line: str,
+    preserve_newlines: bool = False,
+    ws: Any | None = None,
 ) -> dict[str, Any]:
     """Click send when composer text matches ``line``, or return without clicking.
 
@@ -1120,10 +1148,12 @@ async def dom_click_send(
     page_budget_ms = max(
         1, int(timeout_s * 1000) - int(SEND_BTN_PAGE_TIMEOUT_MARGIN_MS)
     )
+    eval_fn = _cdp_eval_connected if ws is not None else _cdp_eval
+    target = ws if ws is not None else ws_url
     try:
         try:
-            await _cdp_eval(
-                ws_url,
+            await eval_fn(
+                target,
                 _composer_send_permit_expression(nonce, page_budget_ms),
                 await_promise=False,
                 timeout_s=timeout_s,
@@ -1131,8 +1161,8 @@ async def dom_click_send(
         except TimeoutError:
             return {"ok": False, "reason": "cdp_eval_timeout", "send_clicked": False}
         _mark_click_dispatched()
-        value = await _cdp_eval(
-            ws_url,
+        value = await eval_fn(
+            target,
             _click_send_body(
                 selector,
                 line,

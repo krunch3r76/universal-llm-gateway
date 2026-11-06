@@ -92,6 +92,16 @@ def classify_orion(body: Any, *, http_status: int | None = None) -> tuple[str, s
         return "pending", reason
     if reason == "deferred_exhausted":
         return "refused", reason
+    if reason == "insert_outcome_unknown":
+        return "unknown", reason
+    if body.get("clicked_unknown"):
+        return "unknown", reason or "send_outcome_unknown"
+    if reason == "send_button_disabled" or (
+        body.get("insert_attempted") and body.get("retryable") is True
+    ):
+        return "pending", reason or "send_button_disabled"
+    if body.get("insert_attempted") and body.get("retryable") is False:
+        return "unknown", reason or "insert_outcome_unknown"
     if reason in {"non_empty_composer", "composer_not_empty", "composer_busy"}:
         return "pending", reason
     if reason in {"cdp_unreachable", "conversation_missing"}:

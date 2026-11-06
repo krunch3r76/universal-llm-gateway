@@ -1118,6 +1118,7 @@ def record(
     subscription_id: int | None,
     cse_registration_id: str | None,
     decided_by_rule: str | None = None,
+    wake_detail: dict[str, Any] | None = None,
 ) -> Any:
     """Thin handler: persist delivery outcome on claimed ledger rows."""
     return store.result(
@@ -1128,6 +1129,7 @@ def record(
         subscription_id=subscription_id,
         cse_registration_id=cse_registration_id,
         decided_by_rule=decided_by_rule,
+        wake_detail=wake_detail,
     )
 
 
@@ -1192,6 +1194,8 @@ def _orion_seat_registration_url_for_route(
 
 def _orion_synthetic_route_from_actuation(
     actuation: dict[str, Any],
+    *,
+    subscription_id: int | None = None,
 ) -> tuple[str, dict[str, Any]] | None:
     url = str(actuation.get("conversation_url") or "").split("?", 1)[0]
     conv_id = conversation_id_from_url(url) or str(
@@ -1199,16 +1203,16 @@ def _orion_synthetic_route_from_actuation(
     )
     if not url or not conv_id:
         return None
-    return (
-        "exact",
-        {
-            "surface": "chatgpt",
-            "display": "12",
-            "title": url,
-            "agent_id": conv_id,
-            "state": "subscribed",
-        },
-    )
+    sub: dict[str, Any] = {
+        "surface": "chatgpt",
+        "display": "12",
+        "title": url,
+        "agent_id": conv_id,
+        "state": "subscribed",
+    }
+    if subscription_id is not None:
+        sub["id"] = int(subscription_id)
+    return ("exact", sub)
 
 
 def _orion_synthetic_route(
@@ -1227,7 +1231,12 @@ def _orion_synthetic_route(
     basis = str(binding.get("basis") or "")
     if basis == "chatgpt_work" and str(binding.get("state") or "") == "bound":
         actuation = dict((binding.get("current") or {}).get("actuation") or {})
-        routed = _orion_synthetic_route_from_actuation(actuation)
+        current = dict(binding.get("current") or {})
+        sid = current.get("subscription_id")
+        sid_i = int(sid) if sid is not None else None
+        routed = _orion_synthetic_route_from_actuation(
+            actuation, subscription_id=sid_i
+        )
         if routed is not None:
             return routed
 
@@ -1248,7 +1257,12 @@ def _orion_synthetic_route(
 
     if str(binding.get("state") or "") == "bound":
         actuation = dict((binding.get("current") or {}).get("actuation") or {})
-        return _orion_synthetic_route_from_actuation(actuation)
+        current = dict(binding.get("current") or {})
+        sid = current.get("subscription_id")
+        sid_i = int(sid) if sid is not None else None
+        return _orion_synthetic_route_from_actuation(
+            actuation, subscription_id=sid_i
+        )
     return None
 
 
@@ -1268,16 +1282,18 @@ def _chatgpt_work_route(agent: str, thread: str) -> tuple[str, dict[str, Any]] |
     )
     if not url or not conv_id:
         return None
-    return (
-        "exact",
-        {
-            "surface": "chatgpt",
-            "display": "12",
-            "title": url,
-            "agent_id": conv_id,
-            "state": "subscribed",
-        },
-    )
+    current = dict(binding.get("current") or {})
+    sid = current.get("subscription_id")
+    sub: dict[str, Any] = {
+        "surface": "chatgpt",
+        "display": "12",
+        "title": url,
+        "agent_id": conv_id,
+        "state": "subscribed",
+    }
+    if sid is not None:
+        sub["id"] = int(sid)
+    return ("exact", sub)
 
 
 def _window_binding_route(agent: str) -> tuple[str, dict[str, Any]] | None:
@@ -1615,6 +1631,9 @@ def _orion_post(
         "turn_numbers": turn_numbers,
         "binding_reference": str(sub.get("id") or "") or None,
     }
+    sub_id = sub.get("id")
+    if sub_id is not None:
+        options["subscription_id"] = int(sub_id)
     body = {
         "model": "orion-chat-wake",
         "messages": [{"role": "user", "content": "wake"}],

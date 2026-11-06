@@ -964,10 +964,9 @@ async def _dom_deliver(
 ) -> dict[str, Any]:
     """Paste via ChatGPT DOM helpers (web_tab execute_paste submit sequence).
 
-    On ``dom_insert_and_send`` failure, forwards ``census``, ``pasted``,
-    ``delivered``, ``inserted``, ``phase``, and ``send_clicked`` when present.
+    Uses ChatGPT-specific CDP Input.insertText when the composer is structurally empty;
+    forwards census, pasted, delivered, inserted, phase, and send_clicked when present.
     """
-    from cursor_bridge.dom_composer_paste import dom_insert_and_send
     from web_tab.cdp_actuation import default_actuation_port
     from web_tab.commit_verify import capture_dom_baseline, poll_verify_committed
     from web_tab.operator_guard import (
@@ -976,6 +975,8 @@ async def _dom_deliver(
     )
     from web_tab.provider_selectors import composer_selector_for_site, match_tab_by_url
     from web_tab.target_lock import TargetLockBusyError, target_write_lock
+
+    from web_chat_relay.chatgpt_work_composer_cdp import chatgpt_work_insert_and_send
 
     tab_url = str(getattr(page, "url", "") or "")
     impl = default_actuation_port()
@@ -1038,16 +1039,14 @@ async def _dom_deliver(
             if transport:
                 return transport
             base_users = int(baseline.get("user_count") or 0)
-            conv_url = tab_url.split("?", 1)[0]
-            insertion_writer = f"orion:{target_id}:{uuid.uuid4().hex}"
-            result = await dom_insert_and_send(
+            want_cid = (conversation_id_from_url(tab_url) or "").lower()
+            result = await chatgpt_work_insert_and_send(
                 ws,
                 selector=selector,
                 line=text,
                 preserve_newlines=preserve_newlines,
-                draft_writer=insertion_writer,
-                work_native_insert=True,
-                expected_conversation_url=conv_url,
+                expected_conversation_id=want_cid,
+                expected_target_id=target_id,
             )
     except TargetLockBusyError:
         return {"ok": False, "reason": "target_lock_busy", "retryable": True}
@@ -1057,6 +1056,16 @@ async def _dom_deliver(
             "ok": False,
             "reason": str(result.get("reason") or "paste_failed"),
         }
+        if result.get("insert_attempted"):
+            failure["insert_attempted"] = True
+        if result.get("retryable") is True:
+            failure["retryable"] = True
+        elif result.get("retryable") is False:
+            failure["retryable"] = False
+        if result.get("clicked_unknown"):
+            failure["clicked_unknown"] = True
+        if result.get("owned_draft_retained"):
+            failure["owned_draft_retained"] = True
         census = result.get("census")
         if census is not None:
             failure["census"] = census
@@ -1075,7 +1084,6 @@ async def _dom_deliver(
             failure["delivered"] = False
         return failure
 
-    receipt: str = "dom_paste"
     verify = await poll_verify_committed(
         impl,
         ws_url=ws,
@@ -1086,11 +1094,21 @@ async def _dom_deliver(
     transport = _cdp_transport_refusal(verify)
     if transport:
         return transport
-    if verify.get("receipt") == "dom_committed":
-        receipt = "dom_committed"
+    receipt = str(verify.get("receipt") or "dom_paste")
+    if receipt != "dom_committed":
+        unconfirmed: dict[str, Any] = {
+            "ok": False,
+            "reason": "delivery_unconfirmed",
+            "receipt": receipt,
+        }
+        if result.get("insert_attempted"):
+            unconfirmed["insert_attempted"] = True
+        if result.get("send_fallback_clicked"):
+            unconfirmed["send_fallback_clicked"] = True
+        return unconfirmed
     return {
         "ok": True,
-        "receipt": receipt,
+        "receipt": "dom_committed",
         "target_id": target_id,
         "selector": selector,
     }
@@ -1363,6 +1381,7 @@ async def deliver_orion_wake(
         if paste_text is not None
         else build_wake_pointer(thread=thread_s, turn=turn, from_agent=from_agent)
     )
+    dom: dict[str, Any] | None = None
     try:
         dom = await _dom_deliver(page, line, cdp_url=cdp_url, preserve_newlines=False)
         if not dom.get("ok"):
@@ -1417,7 +1436,25 @@ async def deliver_orion_wake(
                 paste_refuse["retry_eligible"] = bool(dom.get("retry_eligible", False))
             if dom.get("census") is not None:
                 paste_refuse["census"] = dom["census"]
-            return _refuse("paste_failed", **paste_refuse)
+            if dom.get("insert_attempted"):
+                paste_refuse["insert_attempted"] = True
+            if dom.get("retryable") is True:
+                paste_refuse["retryable"] = True
+            elif dom.get("retryable") is False:
+                paste_refuse["retryable"] = False
+            if dom.get("clicked_unknown"):
+                paste_refuse["clicked_unknown"] = True
+            if dom.get("owned_draft_retained"):
+                paste_refuse["owned_draft_retained"] = True
+            if dom_reason == "insert_outcome_unknown":
+                refuse_reason = "insert_outcome_unknown"
+            elif dom_reason == "send_button_disabled":
+                refuse_reason = "deferred_streaming"
+            elif dom_reason == "delivery_unconfirmed":
+                refuse_reason = "paste_failed"
+            else:
+                refuse_reason = "paste_failed"
+            return _refuse(refuse_reason, **paste_refuse)
         await page.wait_for_timeout(400)
         approval = await _handle_approvals(page)
     except Exception as exc:
@@ -1425,11 +1462,22 @@ async def deliver_orion_wake(
             stop_fn = getattr(pw, "stop", None)
             if callable(stop_fn):
                 await stop_fn()
+        exc_refuse: dict[str, Any] = {
+            "error": type(exc).__name__,
+            "brought_to_front": tab_sync["brought_to_front"],
+            "tab_reloaded": tab_sync["tab_reloaded"],
+        }
+        if isinstance(dom, dict):
+            if dom.get("insert_attempted"):
+                exc_refuse["insert_attempted"] = True
+                exc_refuse["retryable"] = dom.get("retryable") is False
+            if dom.get("clicked_unknown"):
+                exc_refuse["clicked_unknown"] = True
         return _refuse(
-            "paste_failed",
-            error=type(exc).__name__,
-            brought_to_front=tab_sync["brought_to_front"],
-            tab_reloaded=tab_sync["tab_reloaded"],
+            "insert_outcome_unknown"
+            if exc_refuse.get("insert_attempted")
+            else "paste_failed",
+            **exc_refuse,
         )
 
     if owns_cdp and pw is not None:

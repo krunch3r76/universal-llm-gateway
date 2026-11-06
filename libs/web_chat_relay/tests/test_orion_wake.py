@@ -514,7 +514,12 @@ async def test_dom_deliver_uses_chatgpt_selector_not_keyboard(
             }
 
     async def _insert(
-        ws: str, *, selector: str, line: str, preserve_newlines: bool = False, **_kwargs: object
+        _ws: str,
+        *,
+        selector: str,
+        line: str,
+        preserve_newlines: bool = False,
+        **_: object,
     ) -> dict:
         insert_calls.append((selector, line, preserve_newlines))
         return {"ok": True}
@@ -542,7 +547,8 @@ async def test_dom_deliver_uses_chatgpt_selector_not_keyboard(
     expected_selector = composer_selector_for_site("chatgpt")
     monkeypatch.setattr("web_tab.cdp_actuation.default_actuation_port", lambda: _Port())
     monkeypatch.setattr(
-        "cursor_bridge.dom_composer_paste.dom_insert_and_send", _insert
+        "web_chat_relay.chatgpt_work_composer_cdp.chatgpt_work_insert_and_send",
+        _insert,
     )
     monkeypatch.setattr("web_tab.commit_verify.capture_dom_baseline", _baseline)
     monkeypatch.setattr("web_tab.commit_verify.poll_verify_committed", _verify)
@@ -735,7 +741,14 @@ async def test_dom_deliver_accepts_visible_idle_operator_tab(
     page = _FakePage()
     insert_calls: list[str] = []
 
-    async def _insert(ws: str, *, selector: str, line: str, **_kwargs: object) -> dict:
+    async def _insert(
+        _ws: str,
+        *,
+        selector: str,
+        line: str,
+        preserve_newlines: bool = False,
+        **_: object,
+    ) -> dict:
         insert_calls.append(line)
         return {"ok": True}
 
@@ -760,7 +773,8 @@ async def test_dom_deliver_accepts_visible_idle_operator_tab(
         "web_tab.write_ops._created_by_agent_for_target", lambda **kwargs: False
     )
     monkeypatch.setattr(
-        "cursor_bridge.dom_composer_paste.dom_insert_and_send", _insert
+        "web_chat_relay.chatgpt_work_composer_cdp.chatgpt_work_insert_and_send",
+        _insert,
     )
     monkeypatch.setattr("web_tab.commit_verify.capture_dom_baseline", _baseline)
     monkeypatch.setattr("web_tab.commit_verify.poll_verify_committed", _verify)
@@ -1533,7 +1547,10 @@ async def test_bring_to_front_does_not_refuse_as_operator_active(
     monkeypatch.setattr("web_tab.operator_guard.wait_operator_idle_before_lock", _pre)
     monkeypatch.setattr("web_tab.operator_guard.operator_recheck_under_lock", _recheck)
     monkeypatch.setattr("web_tab.commit_verify.capture_dom_baseline", _baseline)
-    monkeypatch.setattr("cursor_bridge.dom_composer_paste.dom_insert_and_send", _insert)
+    monkeypatch.setattr(
+        "web_chat_relay.chatgpt_work_composer_cdp.chatgpt_work_insert_and_send",
+        _insert,
+    )
     monkeypatch.setattr("web_tab.commit_verify.poll_verify_committed", _verify)
     monkeypatch.setattr("web_tab.target_lock.target_write_lock", _lock)
     out = await deliver_orion_wake(
@@ -2240,7 +2257,14 @@ def _dom_deliver_no_send_stubs(
                 "error": None,
             }
 
-    async def _insert(ws: str, *, selector: str, line: str, **_kwargs: object) -> dict:
+    async def _insert(
+        _ws: str,
+        *,
+        selector: str,
+        line: str,
+        preserve_newlines: bool = False,
+        **_: object,
+    ) -> dict:
         return {
             "ok": False,
             "reason": "no_send_button",
@@ -2267,7 +2291,8 @@ def _dom_deliver_no_send_stubs(
 
     monkeypatch.setattr("web_tab.cdp_actuation.default_actuation_port", lambda: _Port())
     monkeypatch.setattr(
-        "cursor_bridge.dom_composer_paste.dom_insert_and_send", _insert
+        "web_chat_relay.chatgpt_work_composer_cdp.chatgpt_work_insert_and_send",
+        _insert,
     )
     monkeypatch.setattr("web_tab.commit_verify.capture_dom_baseline", _baseline)
     monkeypatch.setattr(
