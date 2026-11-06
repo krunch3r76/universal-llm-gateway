@@ -8,8 +8,8 @@ from pathlib import Path
 import pytest
 from fastmcp import FastMCP
 
-from tools._hashing import sha256_hex_of_bytes
 from tools._file_helpers import read_file_result, read_files_batch
+from tools._hashing import sha256_hex_of_bytes
 from tools.markdown_tool import register_markdown_tools
 
 

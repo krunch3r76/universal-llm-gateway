@@ -28,7 +28,8 @@ def test_body_resolve_survives_uri_miss_via_file_fallback(
         lambda _uri, _slug: body_path,
     )
     monkeypatch.setattr(
-        "cortex_store.db.cortex_conn",
+        mod,
+        "cortex_conn",
         lambda: type("C", (), {"close": lambda self: None})(),
     )
 
