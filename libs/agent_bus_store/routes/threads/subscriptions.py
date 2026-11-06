@@ -113,6 +113,7 @@ async def subscribe_route(body: SubscribeBody) -> dict[str, Any]:
                 "expected",
                 "attempt_id",
                 "handoff_sha256",
+                "instance_id",
             }
         )
         result = subscribe_endpoint(**payload)
