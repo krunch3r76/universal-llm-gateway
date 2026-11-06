@@ -73,10 +73,6 @@ def execute_steer(
     scope: str | None = None,
     idempotency_key: str | None = None,
 ) -> dict[str, Any]:
-    cached = idempotency.lookup(target=target, idempotency_key=idempotency_key)
-    if cached is not None:
-        return {**cached, "duplicate": True}
-
     resolved = resolve_target(target)
     if isinstance(resolved, ClassifyRefuse):
         return _refuse(resolved)
@@ -93,31 +89,62 @@ def execute_steer(
                 )
             )
 
-    if isinstance(resolved, DisplayEightTarget):
-        result = display_adapter.steer_display_sync(
-            resolved,
+    decision = idempotency.reserve(
+        target=target,
+        idempotency_key=idempotency_key,
+        text=text,
+        voice=voice_s,
+    )
+    action = str(decision.get("action") or "")
+    if action == "duplicate":
+        return {**decision.get("receipt", {}), "duplicate": True}
+    if action != "proceed":
+        code = str(decision.get("code") or "idempotency_unknown")
+        return {
+            "ok": False,
+            "code": code,
+            "reason": code,
+            "delivered": False,
+            "pasted": False,
+        }
+
+    try:
+        if isinstance(resolved, DisplayEightTarget):
+            result = display_adapter.steer_display_sync(
+                resolved,
+                text=text,
+                voice=voice_s,
+                grant=grant,
+                authorization_source=authorization_source,
+                scope=scope,
+            )
+        elif isinstance(resolved, CoworkMaestroTarget):
+            result = cowork_adapter.followup(
+                prompt_text=text,
+                parent_thread=resolved.parent_thread,
+            )
+        elif isinstance(resolved, CoworkUrlTarget):
+            result = cowork_adapter.followup(prompt_text=text, chat_url=resolved.url)
+        else:
+            result = _refuse(
+                ClassifyRefuse(code="unsupported_target", reason="unresolved adapter")
+            )
+    except Exception:
+        idempotency.settle(
+            target=target,
+            idempotency_key=idempotency_key,
             text=text,
             voice=voice_s,
-            grant=grant,
-            authorization_source=authorization_source,
-            scope=scope,
+            receipt={"ok": False, "code": "unknown", "delivered": False},
         )
-    elif isinstance(resolved, CoworkMaestroTarget):
-        result = cowork_adapter.followup(
-            prompt_text=text,
-            parent_thread=resolved.parent_thread,
-        )
-    elif isinstance(resolved, CoworkUrlTarget):
-        result = cowork_adapter.followup(prompt_text=text, chat_url=resolved.url)
-    else:
-        return _refuse(
-            ClassifyRefuse(code="unsupported_target", reason="unresolved adapter")
-        )
-
-    if idempotency_key and idempotency.is_verified_steer_receipt(result):
-        idempotency.remember(
-            target=target, idempotency_key=idempotency_key, receipt=result
-        )
+        raise
+    idempotency.settle(
+        target=target,
+        idempotency_key=idempotency_key,
+        text=text,
+        voice=voice_s,
+        receipt=result,
+    )
     return result
 
 

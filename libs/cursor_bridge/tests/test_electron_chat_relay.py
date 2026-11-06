@@ -250,7 +250,7 @@ async def test_paste_delivered_requires_semantic_user_turn_not_empty_composer() 
 
 
 @pytest.mark.asyncio
-async def test_paste_delivery_unconfirmed_when_draft_remains() -> None:
+async def test_paste_matching_draft_is_inserted_not_delivered() -> None:
     ep = ElectronEndpoint(
         label="gc2",
         app="grok",
@@ -271,7 +271,12 @@ async def test_paste_delivery_unconfirmed_when_draft_remains() -> None:
         return {"ok": True}
 
     async def _fake_probe(_ws: str) -> dict[str, Any]:
-        return {"composer_draft": "exact payload", "recent_messages": []}
+        return {
+            "composer_draft": "exact payload",
+            "recent_messages": [],
+            "active_agent_id": "gc2-agent-uuid",
+            "message_turns": [],
+        }
 
     with (
         patch(
@@ -293,7 +298,7 @@ async def test_paste_delivery_unconfirmed_when_draft_remains() -> None:
         out = await paste_endpoint_message(ep, "exact payload", select=True)
 
     assert out["ok"] is False
-    assert out["code"] == "delivery_unconfirmed"
+    assert out["code"] == "send_unconfirmed"
     assert out["pasted"] is True
     assert out["phase"] == "inserted"
     assert out["delivered"] is False
@@ -333,7 +338,9 @@ async def test_click_timeout_reconciles_to_submitted_visible_without_second_send
         return {
             "composer_draft": "",
             "recent_messages": ["exact payload"],
-            "generating": False,
+            "generating": True,
+            "active_agent_id": "gc2-agent-uuid",
+            "message_turns": [{"role": "user", "text": "exact payload"}],
         }
 
     ep = ElectronEndpoint(
@@ -361,6 +368,8 @@ async def test_click_timeout_reconciles_to_submitted_visible_without_second_send
     assert out["ok"] is True
     assert out["delivered"] is True
     assert out["phase"] == "submitted_visible"
+    assert out["generating"] is True
+    assert out["phase"] != "acknowledged"
     assert out["clicked_unknown"] is True
 
 
@@ -375,7 +384,12 @@ async def test_click_timeout_with_owned_draft_stays_unconfirmed() -> None:
         }
 
     async def _fake_probe(_ws: str) -> dict[str, Any]:
-        return {"composer_draft": "exact payload", "recent_messages": []}
+        return {
+            "composer_draft": "exact payload",
+            "recent_messages": [],
+            "active_agent_id": "gc2-agent-uuid",
+            "message_turns": [],
+        }
 
     ep = ElectronEndpoint(
         label="gc2", app="grok", display="10", agent_id="gc2-agent-uuid"
@@ -411,7 +425,12 @@ async def test_click_timeout_empty_composer_is_unknown() -> None:
         return {"ok": False, "reason": "cdp_eval_timeout", "clicked_unknown": True}
 
     async def _fake_probe(_ws: str) -> dict[str, Any]:
-        return {"composer_draft": "", "recent_messages": []}
+        return {
+            "composer_draft": "",
+            "recent_messages": [],
+            "active_agent_id": "gc2-agent-uuid",
+            "message_turns": [],
+        }
 
     ep = ElectronEndpoint(
         label="gc2", app="grok", display="10", agent_id="gc2-agent-uuid"
@@ -438,3 +457,127 @@ async def test_click_timeout_empty_composer_is_unknown() -> None:
     assert out["code"] == "unknown"
     assert out["delivered"] is False
     assert out["phase"] == "send_unknown"
+
+
+@pytest.mark.asyncio
+async def test_preexisting_user_turn_is_not_delivery() -> None:
+    select = _grok_select()
+    select["surface"] = {
+        "composer_draft": "",
+        "generating": False,
+        "message_turns": [{"role": "user", "text": "exact payload"}],
+        "active_agent_id": "gc2-agent-uuid",
+    }
+
+    async def _fake_dom_insert(*_a: Any, **_k: Any) -> dict[str, Any]:
+        return {"ok": True, "phase": "send_clicked"}
+
+    async def _fake_probe(_ws: str) -> dict[str, Any]:
+        return {
+            "composer_draft": "",
+            "active_agent_id": "gc2-agent-uuid",
+            "message_turns": [{"role": "user", "text": "exact payload"}],
+        }
+
+    ep = ElectronEndpoint(
+        label="gc2", app="grok", display="10", agent_id="gc2-agent-uuid"
+    )
+    with (
+        patch(
+            "cursor_bridge.electron_chat_relay._resolve_and_select_endpoint",
+            new_callable=AsyncMock,
+            return_value=select,
+        ),
+        patch(
+            "cursor_bridge.electron_chat_relay.dom_insert_and_send",
+            side_effect=_fake_dom_insert,
+        ),
+        patch(
+            "cursor_bridge.electron_chat_relay.probe_surface",
+            new_callable=AsyncMock,
+            side_effect=_fake_probe,
+        ),
+        patch("cursor_bridge.electron_chat_relay.agent_paste_lock", _noop_lock),
+    ):
+        out = await paste_endpoint_message(ep, "exact payload", select=True)
+    assert out["ok"] is False
+    assert out["delivered"] is False
+    assert out["code"] == "unknown"
+
+
+@pytest.mark.asyncio
+async def test_assistant_echo_is_not_delivery() -> None:
+    async def _fake_dom_insert(*_a: Any, **_k: Any) -> dict[str, Any]:
+        return {"ok": True}
+
+    async def _fake_probe(_ws: str) -> dict[str, Any]:
+        return {
+            "composer_draft": "",
+            "active_agent_id": "gc2-agent-uuid",
+            "generating": True,
+            "message_turns": [{"role": "assistant", "text": "exact payload"}],
+        }
+
+    ep = ElectronEndpoint(
+        label="gc2", app="grok", display="10", agent_id="gc2-agent-uuid"
+    )
+    with (
+        patch(
+            "cursor_bridge.electron_chat_relay._resolve_and_select_endpoint",
+            new_callable=AsyncMock,
+            return_value=_grok_select(),
+        ),
+        patch(
+            "cursor_bridge.electron_chat_relay.dom_insert_and_send",
+            side_effect=_fake_dom_insert,
+        ),
+        patch(
+            "cursor_bridge.electron_chat_relay.probe_surface",
+            new_callable=AsyncMock,
+            side_effect=_fake_probe,
+        ),
+        patch("cursor_bridge.electron_chat_relay.agent_paste_lock", _noop_lock),
+    ):
+        out = await paste_endpoint_message(ep, "exact payload", select=True)
+    assert out["delivered"] is False
+    assert out["ok"] is False
+    assert out.get("phase") != "acknowledged"
+    assert out["generating"] is True
+
+
+@pytest.mark.asyncio
+async def test_cursor_timer_race_is_unconfirmed_without_readback() -> None:
+    async def _fake_cursor(*_a: Any, **_k: Any) -> dict[str, Any]:
+        return {
+            "ok": False,
+            "reason": "delivery_unconfirmed",
+            "pasted": True,
+            "delivered": False,
+            "race_winner": "timer",
+        }
+
+    probe = AsyncMock()
+    ep = ElectronEndpoint(label="gc1", app="cursor", display="10", agent_id="gc1-agent")
+    select = _grok_select()
+    select["app"] = "cursor"
+    select["verdict"] = {"ok": True, "active_agent_id": "gc1-agent"}
+    with (
+        patch(
+            "cursor_bridge.electron_chat_relay._resolve_and_select_endpoint",
+            new_callable=AsyncMock,
+            return_value=select,
+        ),
+        patch(
+            "cursor_bridge.wake_delivery._paste_cursor_services",
+            side_effect=_fake_cursor,
+        ),
+        patch("cursor_bridge.electron_chat_relay.probe_surface", probe),
+        patch("cursor_bridge.electron_chat_relay.agent_paste_lock", _noop_lock),
+    ):
+        out = await paste_endpoint_message(ep, "exact payload", select=True)
+    assert out["ok"] is False
+    assert out["code"] == "delivery_unconfirmed"
+    assert out["delivered"] is False
+    assert out["retryable"] is False
+    assert out["race_winner"] == "timer"
+    probe.assert_not_called()

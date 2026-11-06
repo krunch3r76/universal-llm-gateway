@@ -1,11 +1,5 @@
 """Submit-without-text must match ourDraftSig in generated JS."""
 
-import json
-import os
-import shutil
-import subprocess
-import textwrap
-
 import pytest
 from cursor_bridge.dom_composer_paste import (
     _click_send_body,
@@ -55,7 +49,9 @@ def test_composer_text_semantic_equals_nfc_nbsp_and_newlines() -> None:
     assert composer_text_semantic_equals("café", "caf\u00e9")
     assert composer_text_semantic_equals("a\u00a0b", "a b")
     assert composer_text_semantic_equals("line1\nline2", "line1\nline2")
-    assert composer_text_semantic_equals("  spaced  ", "spaced")
+    assert composer_text_semantic_equals("  spaced  ", "  spaced  ")
+    assert not composer_text_semantic_equals("  spaced  ", "spaced")
+    assert not composer_text_semantic_equals("a\nb", "a\n\nb")
     assert not composer_text_semantic_equals("alpha", "beta")
     assert normalize_composer_text("x\r\ny") == "x\ny"
 
@@ -65,277 +61,222 @@ def test_dom_js_includes_semantic_normalizer() -> None:
     click_js = _click_send_body("[contenteditable='true']", "hello")
     assert "ulgNormalizeComposerText" in set_js
     assert "ulgPlainHtml" in set_js
+    assert "white-space:pre-wrap" in set_js
     assert "setContent(line)" not in set_js
+    assert "el.textContent=line" not in set_js
     assert "ulgNormalizeComposerText" in click_js
 
 
-_FIXTURE_JS = textwrap.dedent(
-    r"""
-    const fs = require('fs');
-    const spec = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'));
-    function decode(text) {
-      return text
-        .replace(/&nbsp;/g, '\u00a0')
-        .replace(/&lt;/g, '<')
-        .replace(/&gt;/g, '>')
-        .replace(/&quot;/g, '"')
-        .replace(/&#39;/g, "'")
-        .replace(/&amp;/g, '&');
-    }
-    function htmlToInnerText(html) {
-      const src = String(html);
-      let out = '';
-      let i = 0;
-      while (i < src.length) {
-        if (src[i] === '<') {
-          const end = src.indexOf('>', i);
-          if (end < 0) { out += src.slice(i); break; }
-          const raw = src.slice(i + 1, end).trim().toLowerCase();
-          const closing = raw.startsWith('/');
-          const name = raw.replace(/^\//, '').split(/\s+/)[0];
-          if (name === 'br' || (closing && (name === 'p' || name === 'div'))) {
-            if (!out.endsWith('\n')) out += '\n';
-          }
-          i = end + 1;
-          continue;
-        }
-        const next = src.indexOf('<', i);
-        const chunk = src.slice(i, next < 0 ? src.length : next);
-        out += decode(chunk).replace(/[ \t\r\n\f]+/g, ' ');
-        i = next < 0 ? src.length : next;
-      }
-      return out.replace(/^\n/, '').replace(/\n$/, '');
-    }
-    function norm(raw) {
-      let s = String(raw ?? '').normalize('NFC');
-      s = s.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
-      s = s.replace(/\u00a0/g, ' ').replace(/\u202f/g, ' ');
-      return s.trim();
-    }
-    function makeEl(initial) {
-      const el = {
-        tagName: 'DIV',
-        _text: initial || '',
-        _setCalls: [],
-        editor: { commands: { setContent(value) {
-          if (typeof value !== 'string') throw new Error('setContent rejected ' + typeof value);
-          el._text = htmlToInnerText(value);
-          el._setCalls.push(value);
-        }}},
-        get innerText() { return el._text; },
-        set innerText(v) { el._text = String(v); },
-        get value() { return el._text; },
-        set textContent(v) { el._text = String(v); },
-        dispatchEvent() {},
-        closest() { return null; },
-        parentElement: null,
-      };
-      return el;
-    }
-    global.document = {
-      querySelector(sel) {
-        const s = String(sel);
-        if (s.includes('Send') || s.includes('send-button') || s.includes('submit')) {
-          return global.__button || null;
-        }
-        return global.__el;
-      },
-      querySelectorAll() { return []; },
-      visibilityState: 'visible',
-      hasFocus() { return false; },
-    };
-    global.window = { __ulgOperatorActivity: {} };
-    (async () => {
-      const results = [];
-      for (const item of spec.cases) {
-        global.window.__ulgOperatorActivity = item.activity || {};
-        if (item.kind === 'old_vs_new') {
-          const oldEl = makeEl('');
-          oldEl.editor.commands.setContent(item.line);
-          const el = makeEl('');
-          global.__el = el;
-          const ret = eval(item.setter);
-          results.push({
-            id: item.id,
-            oldMatch: norm(oldEl.innerText) === norm(item.line),
-            newOk: !!ret.ok,
-            newPhase: ret.phase || '',
-            newMatch: norm(el.innerText) === norm(item.line),
-            calls: el._setCalls.length,
-          });
-        } else if (item.kind === 'draft') {
-          const el = makeEl(item.draft);
-          global.__el = el;
-          const before = el.innerText;
-          const ret = eval(item.setter);
-          results.push({
-            id: item.id,
-            ok: !!ret.ok,
-            reason: ret.reason || '',
-            used: !!ret.used_existing_draft,
-            unchanged: el.innerText === before,
-            calls: el._setCalls.length,
-          });
-        } else if (item.kind === 'click') {
-          if (item.nonce) {
-            global.window.__ulgOperatorActivity.composerSendPermits = {};
-            global.window.__ulgOperatorActivity.composerSendPermits[item.nonce] =
-              performance.now() + 60000;
-          }
-          const el = makeEl(item.draft);
-          global.__el = el;
-          let clicks = 0;
-          global.__button = { click() { clicks += 1; } };
-          const ret = await eval(item.clicker);
-          results.push({
-            id: item.id,
-            ok: !!ret.ok,
-            reason: ret.reason || '',
-            clicks,
-          });
-        }
-      }
-      process.stdout.write(JSON.stringify(results));
-    })().catch((err) => { console.error(err); process.exit(1); });
+def _old_paragraph_html(raw: str) -> str:
+    """The previous per-line paragraph setter. Chromium turns adjacent p into a blank line."""
+    esc = str(raw).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+    return "".join(f"<p>{part}</p>" for part in esc.split("\n"))
+
+
+def test_chromium_editor_round_trips_literal_text_and_old_paragraphs_do_not() -> None:
+    """Run the generated setter in headless Chromium and read real innerText.
+
+    The old one-paragraph-per-line HTML is frozen here so this test fails that
+    shape. This is not a live Grok or TipTap page.
     """
-)
+    from playwright.sync_api import sync_playwright
 
-
-def test_html_setcontent_fails_old_call_and_literal_html_passes(tmp_path) -> None:
-    """Rich-editor setContent(string) parses HTML. Commit 660e282a passed the raw line.
-
-    Fixture-observed, not a live Grok DOM. The old call and the generated setter
-    run against one HTML innerText model.
-    """
-    node = (
-        shutil.which("node") or "/usr/share/cursor/resources/app/resources/helpers/node"
-    )
-    assert os.path.isfile(node), (
-        "node is required to execute the generated composer setter"
-    )
     writer = "interlocutor:agent"
     payloads = {
         "newline": "line1\nline2",
+        "blank": "a\n\nb",
+        "indent": "line\n  indented",
         "markup": "<b>literal</b>",
-        "plain": "hello",
-        "unicode": "caf\u00e9",
+        "entity": "a &lt; b",
+        "emoji": "hi \U0001f600",
     }
-    cases: list[dict[str, object]] = []
-    for name, line in payloads.items():
-        cases.append(
+
+    def _page_eval(page, expression: str, arg: dict) -> dict:
+        return page.evaluate(expression, arg)
+
+    with sync_playwright() as playwright:
+        browser = playwright.chromium.launch(headless=True)
+        page = browser.new_page()
+        page.set_content("<!doctype html><html><body></body></html>")
+        old_diverges = {"newline", "indent"}
+        for name, line in payloads.items():
+            old_text = _page_eval(
+                page,
+                """(html) => {
+                  const probe = document.createElement('div');
+                  probe.innerHTML = html;
+                  document.body.appendChild(probe);
+                  const text = probe.innerText;
+                  probe.remove();
+                  return text;
+                }""",
+                _old_paragraph_html(line),
+            )
+            if name in old_diverges:
+                assert old_text != line, (name, old_text)
+            if name == "newline":
+                assert old_text == "line1\n\nline2"
+            setter = _set_composer_body(
+                "[data-composer]",
+                line,
+                preserve_newlines=True,
+                draft_writer=writer,
+            )
+            row = _page_eval(
+                page,
+                """({js}) => {
+                  document.body.innerHTML = '<form><div data-composer="1"></div></form>';
+                  const el = document.querySelector('[data-composer]');
+                  let calls = 0;
+                  el.editor = {commands: {setContent(html) { calls += 1; el.innerHTML = html; }}};
+                  window.__ulgOperatorActivity = {};
+                  const ret = eval(js);
+                  return {ret, inner: el.innerText, calls};
+                }""",
+                {"js": setter},
+            )
+            assert row["ret"]["ok"] is True, (name, row)
+            assert row["calls"] == 1
+            assert row["inner"] == line, (name, repr(row["inner"]))
+
+        foreign = _page_eval(
+            page,
+            """({js}) => {
+              document.body.innerHTML = '<form><div data-composer="1"></div></form>';
+              const el = document.querySelector('[data-composer]');
+              let calls = 0;
+              el.editor = {commands: {setContent(html) { calls += 1; el.innerHTML = html; }}};
+              el.textContent = 'human note';
+              window.__ulgOperatorActivity = {};
+              const ret = eval(js);
+              return {ret, calls, inner: el.innerText};
+            }""",
             {
-                "kind": "old_vs_new",
-                "id": name,
-                "line": line,
-                "setter": _set_composer_body(
+                "js": _set_composer_body(
                     "[data-composer]",
-                    line,
+                    "hello",
                     preserve_newlines=True,
                     draft_writer=writer,
-                ),
-            }
+                )
+            },
         )
-    cases.extend(
-        [
+        assert foreign["ret"]["reason"] == "composer_not_empty"
+        assert foreign["calls"] == 0
+        assert foreign["inner"] == "human note"
+
+        bare = _page_eval(
+            page,
+            """({js}) => {
+              document.body.innerHTML = '<form><div data-composer="1">hello</div></form>';
+              const el = document.querySelector('[data-composer]');
+              let calls = 0;
+              el.editor = {commands: {setContent(html) { calls += 1; el.innerHTML = html; }}};
+              window.__ulgOperatorActivity = {};
+              const ret = eval(js);
+              return {ret, calls};
+            }""",
             {
-                "kind": "draft",
-                "id": "foreign",
-                "draft": "human note",
-                "setter": _set_composer_body(
+                "js": _set_composer_body(
+                    "[data-composer]",
+                    "hello",
+                    preserve_newlines=True,
+                    draft_writer=writer,
+                )
+            },
+        )
+        assert bare["ret"]["reason"] == "composer_not_empty"
+        assert bare["calls"] == 0
+
+        owned = _page_eval(
+            page,
+            """({js, writer}) => {
+              document.body.innerHTML = '<form><div data-composer="1">hello</div></form>';
+              const el = document.querySelector('[data-composer]');
+              let calls = 0;
+              el.editor = {commands: {setContent(html) { calls += 1; el.innerHTML = html; }}};
+              window.__ulgOperatorActivity = {ourDraftWriter: writer, ourDraftSig: 'hello'};
+              const ret = eval(js);
+              return {ret, calls};
+            }""",
+            {
+                "js": _set_composer_body(
                     "[data-composer]",
                     "hello",
                     preserve_newlines=True,
                     draft_writer=writer,
                 ),
+                "writer": writer,
             },
+        )
+        assert owned["ret"].get("used_existing_draft") is True
+        assert owned["calls"] == 0
+
+        changed = _page_eval(
+            page,
+            """({js, writer}) => {
+              document.body.innerHTML = '<form><div data-composer="1">hello edited</div></form>';
+              const el = document.querySelector('[data-composer]');
+              let calls = 0;
+              el.editor = {commands: {setContent(html) { calls += 1; el.innerHTML = html; }}};
+              window.__ulgOperatorActivity = {ourDraftWriter: writer, ourDraftSig: 'hello'};
+              const ret = eval(js);
+              return {ret, calls, inner: el.innerText};
+            }""",
             {
-                "kind": "draft",
-                "id": "same_text_no_owner",
-                "draft": "hello",
-                "setter": _set_composer_body(
+                "js": _set_composer_body(
                     "[data-composer]",
                     "hello",
                     preserve_newlines=True,
                     draft_writer=writer,
                 ),
+                "writer": writer,
             },
+        )
+        assert changed["ret"]["reason"] == "composer_not_empty"
+        assert changed["calls"] == 0
+        assert changed["inner"] == "hello edited"
+
+        mismatch = _page_eval(
+            page,
+            """async ({js}) => {
+              document.body.innerHTML = '<form><div data-composer="1">other</div><button aria-label="Send" type="button">Send</button></form>';
+              let clicks = 0;
+              document.querySelector('button').addEventListener('click', () => { clicks += 1; });
+              window.__ulgOperatorActivity = {};
+              const ret = await eval(js);
+              return {ret, clicks};
+            }""",
             {
-                "kind": "draft",
-                "id": "owned",
-                "draft": "hello",
-                "activity": {"ourDraftWriter": writer, "ourDraftSig": "hello"},
-                "setter": _set_composer_body(
-                    "[data-composer]",
-                    "hello",
-                    preserve_newlines=True,
-                    draft_writer=writer,
-                ),
-            },
-            {
-                "kind": "draft",
-                "id": "owned_changed",
-                "draft": "hello edited",
-                "activity": {"ourDraftWriter": writer, "ourDraftSig": "hello"},
-                "setter": _set_composer_body(
-                    "[data-composer]",
-                    "hello",
-                    preserve_newlines=True,
-                    draft_writer=writer,
-                ),
-            },
-            {
-                "kind": "click",
-                "id": "click_mismatch",
-                "draft": "other",
-                "clicker": _click_send_body(
+                "js": _click_send_body(
                     "[data-composer]", "hello", preserve_newlines=True
-                ),
+                )
             },
+        )
+        assert mismatch["ret"]["reason"] == "composer_text_mismatch"
+        assert mismatch["clicks"] == 0
+
+        matched = _page_eval(
+            page,
+            """async ({js}) => {
+              document.body.innerHTML = '<form><div data-composer="1">hello</div><button aria-label="Send" type="button">Send</button></form>';
+              let clicks = 0;
+              document.querySelector('button').addEventListener('click', () => { clicks += 1; });
+              window.__ulgOperatorActivity = {composerSendPermits: {n1: performance.now() + 60000}};
+              const ret = await eval(js);
+              return {ret, clicks};
+            }""",
             {
-                "kind": "click",
-                "id": "click_match",
-                "draft": "hello",
-                "nonce": "n1",
-                "clicker": _click_send_body(
-                    "[data-composer]", "hello", preserve_newlines=True, abort_nonce="n1"
-                ),
+                "js": _click_send_body(
+                    "[data-composer]",
+                    "hello",
+                    preserve_newlines=True,
+                    abort_nonce="n1",
+                )
             },
-        ]
-    )
-    spec = tmp_path / "spec.json"
-    spec.write_text(json.dumps({"cases": cases}), encoding="utf-8")
-    script = tmp_path / "fixture.js"
-    script.write_text(_FIXTURE_JS, encoding="utf-8")
-    proc = subprocess.run(
-        [node, str(script), str(spec)],
-        text=True,
-        capture_output=True,
-        check=False,
-    )
-    assert proc.returncode == 0, proc.stderr
-    rows = {row["id"]: row for row in json.loads(proc.stdout)}
-    assert rows["newline"]["oldMatch"] is False
-    assert rows["newline"]["newMatch"] is True
-    assert rows["newline"]["newOk"] is True
-    assert rows["markup"]["oldMatch"] is False
-    assert rows["markup"]["newMatch"] is True
-    assert rows["plain"]["oldMatch"] is True
-    assert rows["plain"]["newMatch"] is True
-    assert rows["unicode"]["oldMatch"] is True
-    assert rows["unicode"]["newMatch"] is True
-    assert rows["foreign"]["reason"] == "composer_not_empty"
-    assert rows["foreign"]["unchanged"] is True
-    assert rows["foreign"]["calls"] == 0
-    assert rows["same_text_no_owner"]["reason"] == "composer_not_empty"
-    assert rows["same_text_no_owner"]["calls"] == 0
-    assert rows["owned"]["used"] is True
-    assert rows["owned"]["calls"] == 0
-    assert rows["owned_changed"]["reason"] == "composer_not_empty"
-    assert rows["owned_changed"]["unchanged"] is True
-    assert rows["click_mismatch"]["reason"] == "composer_text_mismatch"
-    assert rows["click_mismatch"]["clicks"] == 0
-    assert rows["click_match"]["ok"] is True
-    assert rows["click_match"]["clicks"] == 1
+        )
+        assert matched["ret"]["ok"] is True
+        assert matched["clicks"] == 1
+        browser.close()
 
 
 @pytest.mark.asyncio

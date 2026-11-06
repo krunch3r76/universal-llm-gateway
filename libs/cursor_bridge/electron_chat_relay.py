@@ -228,34 +228,62 @@ def _paste_outcome_base(
     }
 
 
-def _transcript_shows_payload(text: str, surface: dict[str, Any]) -> bool:
-    recent = surface.get("recent_messages") or []
-    return any(composer_text_semantic_equals(text, str(msg)) for msg in recent)
+def _user_match_count(text: str, surface: dict[str, Any]) -> int:
+    """Count user-role turns equal to ``text``. Assistant echoes do not count."""
+    count = 0
+    for turn in surface.get("message_turns") or []:
+        if not isinstance(turn, dict):
+            continue
+        if str(turn.get("role") or "") != "user":
+            continue
+        if composer_text_semantic_equals(text, str(turn.get("text") or "")):
+            count += 1
+    return count
 
 
-async def _reconcile_uncertain_send(
-    ws_url: str,
+def _agent_matches(expected: str, surface: dict[str, Any]) -> bool:
+    expected_s = (expected or "").strip()
+    active = str(surface.get("active_agent_id") or "").strip()
+    return bool(expected_s) and active == expected_s
+
+
+def _readback_outcome(
     text: str,
+    post: dict[str, Any],
     base: dict[str, Any],
     *,
+    baseline: int,
+    expected_agent: str,
     pasted: bool,
     phase: str,
 ) -> dict[str, Any]:
-    """One target-page readback. Does not insert or click again.
+    """Classify one probe. ``generating`` is informational and never delivery.
 
-    A semantic-equal recent message is submitted-visible, or acknowledged when
-    the page is generating. A matching composer draft stays inserted and
-    unconfirmed. Anything else is unknown. An empty composer is not success.
+    Delivery requires a new user-role match and the same active agent id.
+    An empty composer is not success.
     """
-    post = await probe_surface(ws_url)
-    if _transcript_shows_payload(text, post):
+    generating = bool(post.get("generating"))
+    if not _agent_matches(expected_agent, post):
+        return {
+            **base,
+            "ok": False,
+            "code": "unknown",
+            "reason": "unknown",
+            "phase": phase or "send_unknown",
+            "pasted": pasted,
+            "delivered": False,
+            "generating": generating,
+            "retryable": False,
+        }
+    if _user_match_count(text, post) > baseline:
         return {
             **base,
             "ok": True,
             "reason": "match",
             "pasted": True,
             "delivered": True,
-            "phase": "acknowledged" if post.get("generating") else "submitted_visible",
+            "phase": "submitted_visible",
+            "generating": generating,
             "message": text,
             "fingerprint": message_fingerprint(text),
             "retryable": False,
@@ -271,6 +299,7 @@ async def _reconcile_uncertain_send(
             "pasted": True,
             "inserted": True,
             "delivered": False,
+            "generating": generating,
             "retryable": False,
         }
     return {
@@ -281,16 +310,40 @@ async def _reconcile_uncertain_send(
         "phase": phase or "send_unknown",
         "pasted": pasted,
         "delivered": False,
+        "generating": generating,
         "retryable": False,
     }
+
+
+async def _reconcile_uncertain_send(
+    ws_url: str,
+    text: str,
+    base: dict[str, Any],
+    *,
+    baseline: int,
+    expected_agent: str,
+    pasted: bool,
+    phase: str,
+) -> dict[str, Any]:
+    """One target-page readback. Does not insert or click again."""
+    post = await probe_surface(ws_url)
+    return _readback_outcome(
+        text,
+        post,
+        base,
+        baseline=baseline,
+        expected_agent=expected_agent,
+        pasted=pasted,
+        phase=phase,
+    )
 
 
 async def paste_endpoint_message(
     endpoint: ElectronEndpoint, message: str, *, select: bool = True
 ) -> dict[str, Any]:
     """Select ``endpoint`` and paste + submit arbitrary ``message`` text."""
-    text = (message or "").strip()
-    if not text:
+    text = message or ""
+    if not text.strip():
         return _refuse("empty_message", endpoint=endpoint.label)
     target = normalize_target(endpoint.display, endpoint.app)
     disp = str(target.get("display") or endpoint.display)
@@ -342,6 +395,7 @@ async def paste_endpoint_message(
             agent_id=str(verdict.get("expected_agent_id") or endpoint.agent_id or ""),
         )
         draft_writer = f"interlocutor:{endpoint.agent_id or endpoint.label}"
+        baseline = _user_match_count(text, surface if isinstance(surface, dict) else {})
         try:
             if app == "cursor":
                 from cursor_bridge.wake_delivery import _paste_cursor_services
@@ -359,7 +413,13 @@ async def paste_endpoint_message(
                 )
         except TimeoutError:
             return await _reconcile_uncertain_send(
-                ws_url, text, base, pasted=False, phase="send_unknown"
+                ws_url,
+                text,
+                base,
+                baseline=baseline,
+                expected_agent=expected,
+                pasted=False,
+                phase="send_unknown",
             )
         except (RuntimeError, OSError) as exc:
             return {
@@ -387,10 +447,31 @@ async def paste_endpoint_message(
             }
             or phase == "send_unknown"
         )
+        if str(paste_res.get("race_winner") or "") == "timer":
+            return {
+                **base,
+                "ok": False,
+                "code": "delivery_unconfirmed",
+                "reason": "delivery_unconfirmed",
+                "pasted": True,
+                "delivered": False,
+                "retryable": False,
+                "phase": "send_unknown",
+                "race_winner": "timer",
+                "generating": bool(surface.get("generating"))
+                if isinstance(surface, dict)
+                else False,
+            }
         if not paste_res.get("ok"):
             if uncertain:
                 reconciled = await _reconcile_uncertain_send(
-                    ws_url, text, base, pasted=True, phase="send_unknown"
+                    ws_url,
+                    text,
+                    base,
+                    baseline=baseline,
+                    expected_agent=expected,
+                    pasted=True,
+                    phase="send_unknown",
                 )
                 if paste_res.get("clicked_unknown"):
                     reconciled["clicked_unknown"] = True
@@ -408,42 +489,18 @@ async def paste_endpoint_message(
             }
         await asyncio.sleep(0.25)
         post = await probe_surface(ws_url)
-        delivered = _transcript_shows_payload(text, post)
-        if delivered:
-            return {
-                **base,
-                "ok": True,
-                "reason": verdict.get("reason", "match"),
-                "pasted": True,
-                "delivered": True,
-                "phase": "acknowledged"
-                if post.get("generating")
-                else "submitted_visible",
-                "message": text,
-                "fingerprint": message_fingerprint(text),
-            }
-        if str(post.get("composer_draft") or "").strip():
-            return {
-                **base,
-                "ok": False,
-                "code": "delivery_unconfirmed",
-                "reason": "delivery_unconfirmed",
-                "phase": "inserted",
-                "pasted": True,
-                "inserted": True,
-                "delivered": False,
-                "retryable": False,
-            }
-        return {
-            **base,
-            "ok": False,
-            "code": "unknown",
-            "reason": "unknown",
-            "phase": "unknown",
-            "pasted": True,
-            "delivered": False,
-            "retryable": False,
-        }
+        outcome = _readback_outcome(
+            text,
+            post,
+            base,
+            baseline=baseline,
+            expected_agent=expected,
+            pasted=True,
+            phase="send_unknown",
+        )
+        if outcome.get("ok") and verdict.get("reason"):
+            outcome["reason"] = verdict.get("reason")
+        return outcome
 
 
 async def wait_for_new_settled_turn(

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import threading
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -301,3 +302,127 @@ def test_mcp_steer_records_committed_refused_and_unknown() -> None:
         "interlocutor.steer.refused",
         "interlocutor.steer.unknown",
     ]
+
+
+def test_unknown_outcome_blocks_same_key_resend() -> None:
+    with patch(
+        "cursor_bridge.electron_chat_relay.paste_endpoint_message",
+        new_callable=AsyncMock,
+    ) as paste:
+        paste.return_value = {
+            "ok": False,
+            "code": "cdp_eval_timeout",
+            "reason": "cdp_eval_timeout",
+            "clicked_unknown": True,
+            "delivered": False,
+            "retryable": False,
+        }
+        execute_steer(target=_DISPLAY_TARGET, text="hello", idempotency_key="unk")
+        second = execute_steer(
+            target=_DISPLAY_TARGET, text="hello", idempotency_key="unk"
+        )
+    assert paste.await_count == 1
+    assert second["ok"] is False
+    assert second["code"] == "idempotency_unknown"
+
+
+def test_same_key_different_text_conflicts() -> None:
+    with patch(
+        "cursor_bridge.electron_chat_relay.paste_endpoint_message",
+        new_callable=AsyncMock,
+    ) as paste:
+        paste.return_value = {
+            "ok": True,
+            "delivered": True,
+            "pasted": True,
+            "message": "hello",
+        }
+        execute_steer(target=_DISPLAY_TARGET, text="hello", idempotency_key="k")
+        conflict = execute_steer(
+            target=_DISPLAY_TARGET, text="other", idempotency_key="k"
+        )
+    assert paste.await_count == 1
+    assert conflict["code"] == "idempotency_conflict"
+    assert conflict["delivered"] is False
+
+
+def test_alias_display_target_shares_verified_slot() -> None:
+    with patch(
+        "cursor_bridge.electron_chat_relay.paste_endpoint_message",
+        new_callable=AsyncMock,
+    ) as paste:
+        paste.return_value = {
+            "ok": True,
+            "delivered": True,
+            "pasted": True,
+            "message": "hello",
+        }
+        execute_steer(
+            target="display:8/test-agent", text="hello", idempotency_key="alias"
+        )
+        replay = execute_steer(
+            target="display:8/test-agent/grok",
+            text="hello",
+            idempotency_key="alias",
+        )
+    assert paste.await_count == 1
+    assert replay.get("duplicate") is True
+
+
+def test_cursor_timer_outcome_blocks_same_key_resend() -> None:
+    with patch(
+        "cursor_bridge.electron_chat_relay.paste_endpoint_message",
+        new_callable=AsyncMock,
+    ) as paste:
+        paste.return_value = {
+            "ok": False,
+            "code": "delivery_unconfirmed",
+            "reason": "delivery_unconfirmed",
+            "pasted": True,
+            "delivered": False,
+            "retryable": False,
+            "phase": "send_unknown",
+            "race_winner": "timer",
+        }
+        first = execute_steer(
+            target=_DISPLAY_TARGET, text="hello", idempotency_key="timer"
+        )
+        second = execute_steer(
+            target=_DISPLAY_TARGET, text="hello", idempotency_key="timer"
+        )
+    assert first["code"] == "delivery_unconfirmed"
+    assert first["delivered"] is False
+    assert paste.await_count == 1
+    assert second["code"] == "idempotency_unknown"
+
+
+def test_concurrent_same_key_sends_once() -> None:
+    started = threading.Event()
+    release = threading.Event()
+
+    async def _slow(*_a, **_k):
+        started.set()
+        assert release.wait(timeout=2)
+        return {"ok": True, "delivered": True, "pasted": True, "message": "hello"}
+
+    with patch(
+        "cursor_bridge.electron_chat_relay.paste_endpoint_message",
+        side_effect=_slow,
+    ):
+        holder: dict[str, dict] = {}
+
+        def _first() -> None:
+            holder["first"] = execute_steer(
+                target=_DISPLAY_TARGET, text="hello", idempotency_key="race"
+            )
+
+        thread = threading.Thread(target=_first)
+        thread.start()
+        assert started.wait(timeout=2)
+        second = execute_steer(
+            target=_DISPLAY_TARGET, text="hello", idempotency_key="race"
+        )
+        release.set()
+        thread.join(timeout=2)
+    assert second["code"] == "idempotency_in_flight"
+    assert holder["first"]["ok"] is True

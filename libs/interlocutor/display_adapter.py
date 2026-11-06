@@ -119,6 +119,7 @@ def _display_steer_success(
         "fingerprint",
         "active_agent_id",
         "active_title",
+        "generating",
     ):
         if key in leaf:
             out[key] = leaf[key]
@@ -161,8 +162,8 @@ async def steer_display(
     authorization_source: str | None,
     scope: str | None,
 ) -> dict[str, Any]:
-    body = (text or "").strip()
-    if not body:
+    body = text or ""
+    if not body.strip():
         return ClassifyRefuse(
             code="text_required", reason="steer requires text"
         ).model_dump()

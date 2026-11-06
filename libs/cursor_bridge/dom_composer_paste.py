@@ -37,24 +37,24 @@ function ulgNormalizeComposerText(raw) {
   let s = String(raw ?? '').normalize('NFC');
   s = s.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
   s = s.replace(/\u00a0/g, ' ').replace(/\u202f/g, ' ');
-  return s.trim();
+  return s;
 }
 function ulgPlainHtml(raw) {
   const esc = String(raw ?? '')
     .replace(/&/g, '&amp;')
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;');
-  return esc.split('\n').map((p) => '<p>' + p + '</p>').join('');
+  return '<p style="white-space:pre-wrap">' + esc.split('\n').join('<br>') + '</p>';
 }
 """
 
 
 def normalize_composer_text(text: str) -> str:
-    """Normalize composer text for semantic equality (NFC, newlines, NBSP, trim ends)."""
+    """Normalize for equality: NFC, newlines, NBSP. Ends and indentation stay."""
     s = unicodedata.normalize("NFC", text or "")
     s = s.replace("\r\n", "\n").replace("\r", "\n")
     s = s.replace("\u00a0", " ").replace("\u202f", " ")
-    return s.strip()
+    return s
 
 
 def composer_text_semantic_equals(a: str, b: str) -> bool:
@@ -298,7 +298,7 @@ def _flatten_paste_line(text: str) -> str:
 
 def _dom_paste_text(text: str, *, preserve_newlines: bool) -> str:
     if preserve_newlines:
-        return (text or "").strip()
+        return text or ""
     return _flatten_paste_line(text)
 
 
@@ -346,13 +346,11 @@ def _set_composer_body(
         "}"
         "if(el.editor&&el.editor.commands&&typeof el.editor.commands.setContent==='function'){"
         "try{el.editor.commands.setContent(ulgPlainHtml(line));}catch(e){"
-        "el.textContent=line;el.dispatchEvent(new InputEvent('input',{bubbles:true,data:line}));}"
+        "return{ok:false,reason:'insertion_failed',phase:'insertion_failed',inserted:false,pasted:false,send_clicked:false};}"
         "}else if(el.tagName==='TEXTAREA'||el.tagName==='INPUT'){"
         "el.value=line;el.dispatchEvent(new Event('input',{bubbles:true}));"
         "}else{"
-        "el.textContent=line;"
-        "el.dispatchEvent(new InputEvent('input',{bubbles:true,inputType:'insertText',data:line}));"
-        "}"
+        "return{ok:false,reason:'insertion_failed',phase:'insertion_failed',inserted:false,pasted:false,send_clicked:false};}"
         "let after=ulgNormalizeComposerText(el.innerText||el.value||'');"
         "if(after!==normLine){"
         "after=ulgNormalizeComposerText(el.innerText||el.value||'');"
