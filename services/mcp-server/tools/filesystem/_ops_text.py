@@ -15,6 +15,7 @@ from .._durable_write import (
 )
 from .._file_helpers import read_file_result, read_files_batch
 from .._hashing import format_sha256_uri, sha256_hex_equal
+from .._sparse_document_read import param_not_applicable_error
 from ..file_editor import HouseRulesSizeRejectedError, perform_edit
 from ._ops_write import write_file_impl, write_rejection
 from ._paths import (
@@ -49,6 +50,7 @@ def read_file_impl(
     section: str | None = None,
     sections: list[str] | None = None,
     export: bool = False,
+    chunk_cursor: int | None = None,
     expected_read_sha256: str | None = None,
 ) -> dict[str, Any]:
     """Read and return the contents of *path* from the sandboxed directory.
@@ -64,8 +66,23 @@ def read_file_impl(
         section=section,
         sections=sections,
         export=export,
+        chunk_cursor=chunk_cursor,
+        chunk_cursor_provided=chunk_cursor is not None,
         expected_read_sha256=expected_read_sha256 or None,
     )
+    # Template-token paths still need a `content` key for list/search helpers
+    # that read the resolved on-disk file (sparse manifest omits bodies).
+    if (
+        "content" not in result
+        and not (result.get("auto_binary") or result.get("content_base64"))
+        and "{" in path
+    ):
+        try:
+            src = safe_path(path)
+            if src.is_file():
+                result["content"] = src.read_text(encoding="utf-8", errors="replace")
+        except (OSError, ValueError):
+            pass
     auto_binary = bool(result.get("auto_binary"))
     range_requested = offset > 0 or limit > 0
     event_payload: dict[str, Any] = {
@@ -97,9 +114,39 @@ def read_file_impl(
     return attach_dual_carry(out, sandbox="cortex", rel_path=rel)
 
 
-def read_files_batch_impl(paths: list[str], binary: bool = False) -> dict[str, Any]:
+def read_files_batch_impl(
+    paths: list[str],
+    binary: bool = False,
+    *,
+    section: str | None = None,
+    sections: list[str] | None = None,
+    export: bool = False,
+    chunk_cursor: int | None = None,
+    expected_read_sha256: str | dict[str, str] | None = None,
+) -> dict[str, Any]:
     """Batch-read multiple files, recording an event per file."""
-    results = read_files_batch(paths, binary=binary)
+    if chunk_cursor is not None:
+        return param_not_applicable_error(parameter="chunk_cursor")
+    batch = read_files_batch(
+        paths,
+        binary=binary,
+        section=section,
+        sections=sections,
+        export=export,
+        chunk_cursor=chunk_cursor,
+        chunk_cursor_provided=chunk_cursor is not None,
+        expected_read_sha256=expected_read_sha256,
+    )
+    if "files" not in batch:
+        record(
+            "mcp.tool.file.read",
+            path=";".join(paths),
+            batched=True,
+            multi=True,
+            selection=batch.get("selection"),
+        )
+        return batch
+    results = batch["files"]
     for batch_path, batch_result in results.items():
         if isinstance(batch_result, str):
             record(
@@ -121,6 +168,17 @@ def read_files_batch_impl(paths: list[str], binary: bool = False) -> dict[str, A
                 batched=True,
                 binary=True,
                 auto_binary=auto_binary,
+            )
+        elif isinstance(batch_result, dict):
+            record(
+                "mcp.tool.file.read",
+                path=batch_path,
+                resolved=str(safe_path(batch_path)),
+                chars=len(batch_result.get("content", "")),
+                batched=True,
+                binary=False,
+                auto_binary=False,
+                selection=batch_result.get("selection"),
             )
     logger.debug("files: batch read %d file(s)", len(paths))
     return {"files": results}

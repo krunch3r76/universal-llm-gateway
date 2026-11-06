@@ -95,7 +95,7 @@ def test_read_files_batch_manifest_fail_loud(tmp_path: Path, monkeypatch: pytest
     monkeypatch.setattr("tools._file_helpers.FILES_ROOT", tmp_path)
     (tmp_path / "doc.md").write_text("# T\n\nbody\n", encoding="utf-8")
     batch = read_files_batch(["doc.md"], root=tmp_path)
-    entry = batch["doc.md"]
+    entry = batch["files"]["doc.md"]
     assert isinstance(entry, dict)
     assert entry.get("code") == "sparse_manifest_requires_expansion"
     assert entry.get("selection") == "manifest"

@@ -3,13 +3,14 @@
 from __future__ import annotations
 
 import base64
+import json
 import mimetypes
 from pathlib import Path
 from typing import Any
 
 from mcp_events import record
 
-from ._hashing import sha256_hex_equal, sha256_hex_of_file
+from ._hashing import normalize_sha256_hex, sha256_hex_equal, sha256_hex_of_file
 from ._line_range import apply_line_range, exceeds_unwindowed_read_cap
 from ._operating_state_serve import apply_operating_state_serve
 from ._pdf_read import (
@@ -25,8 +26,12 @@ from ._pdf_read import (
     read_pdf,
 )
 from ._sparse_document_read import (
+    BATCH_MAX_CONTENT_CHARS,
+    finalize_sparse_document_payload,
     is_sparse_document_suffix,
+    param_not_applicable_error,
     resolve_document_read,
+    sparse_selector_conflict_error,
 )
 from ._unwindowed_read_projection import build_unwindowed_oversized_payload
 
@@ -61,9 +66,9 @@ def _read_files_batch_value(result: dict[str, Any]) -> Any:
         return result
     if result.get("items") or result.get("sparse_section_batch"):
         return result
-    if result.get("selection") == "manifest" or (
-        "content" not in result and not binary_payload(result)
-    ):
+    if result.get("selection") == "manifest":
+        return sparse_manifest_batch_entry(result)
+    if "content" not in result and not binary_payload(result):
         return sparse_manifest_batch_entry(result)
     return result["content"]
 
@@ -284,6 +289,8 @@ def read_file_result(
     section: str | None = None,
     sections: list[str] | None = None,
     export: bool = False,
+    chunk_cursor: int | None = None,
+    chunk_cursor_provided: bool = False,
     expected_read_sha256: str | None = None,
     sandbox: str = "cortex",
 ) -> dict[str, Any]:
@@ -305,6 +312,12 @@ def read_file_result(
         raise ValueError(f"Path is not a file: {path!r}")
 
     read_sha256 = sha256_hex_of_file(src)
+    if chunk_cursor_provided and not is_sparse_document_suffix(src.suffix):
+        return param_not_applicable_error(parameter="chunk_cursor")
+    if expected_read_sha256 and range_requested and is_sparse_document_suffix(
+        src.suffix
+    ):
+        return param_not_applicable_error(parameter="expected_read_sha256")
     if expected_read_sha256 and not sha256_hex_equal(read_sha256, expected_read_sha256):
         return {
             "code": "stale_handle",
@@ -385,6 +398,29 @@ def read_file_result(
         content = extract_text_content(src)
         pdf_method = ""  # non-PDF — unused below
 
+    if (
+        expected_read_sha256
+        and not sha256_hex_equal(read_sha256, expected_read_sha256)
+        and not binary
+        and auto_result is None
+        and is_sparse_document_suffix(suffix)
+        and not range_requested
+    ):
+        return resolve_document_read(
+            path=path,
+            sandbox=sandbox,
+            text=content,
+            read_sha256=read_sha256,
+            section=section,
+            sections=sections,
+            export=export,
+            offset=offset,
+            limit=limit,
+            chunk_cursor=chunk_cursor,
+            chunk_cursor_provided=chunk_cursor_provided,
+            expected_read_sha256=expected_read_sha256 or None,
+        )
+
     sparse_doc = (
         not binary
         and auto_result is None
@@ -401,6 +437,9 @@ def read_file_result(
             export=export,
             offset=offset,
             limit=limit,
+            chunk_cursor=chunk_cursor,
+            chunk_cursor_provided=chunk_cursor_provided,
+            expected_read_sha256=expected_read_sha256 or None,
         )
         if "code" in sparse_result or "error" in sparse_result:
             sparse_result["path"] = path
@@ -554,21 +593,306 @@ def _attach_pdf_read_metadata(
         )
 
 
+def _is_sparse_path(rel: str, root: Path) -> bool:
+    return is_sparse_document_suffix(resolve_files_path(rel, root=root).suffix.lower())
+
+
+def _load_plain_text_for_sparse(rel: str, root: Path) -> str:
+    """Load full document text the same way read_file_result does (PDF, etc.)."""
+    src = resolve_files_path(rel, root=root)
+    suffix = src.suffix.lower()
+    if suffix == ".pdf":
+        sidecar = next((c for c in _pdf_sidecar_candidates(src) if c.is_file()), None)
+        if sidecar is None:
+            text, _ = read_pdf(src)
+        else:
+            text = sidecar.read_text(encoding="utf-8", errors="replace")
+    else:
+        text = extract_text_content(src)
+    return text
+
+
 def read_files_batch(
     paths: list[str],
     root: Path = FILES_ROOT,
     *,
     binary: bool = False,
+    section: str | None = None,
+    sections: list[str] | None = None,
+    export: bool = False,
+    chunk_cursor: int | None = None,
+    chunk_cursor_provided: bool = False,
+    expected_read_sha256: str | dict[str, str] | None = None,
 ) -> dict[str, Any]:
     """Read multiple sandboxed files, preserving per-path errors inline."""
+    if chunk_cursor_provided:
+        return param_not_applicable_error(parameter="chunk_cursor")
+
+    exp_map: dict[str, str] | None = None
+    exp_scalar: str | None = None
+    if isinstance(expected_read_sha256, dict):
+        exp_map = dict(expected_read_sha256)
+    elif expected_read_sha256:
+        raw_exp = str(expected_read_sha256).strip()
+        if raw_exp.startswith("{"):
+            try:
+                parsed = json.loads(raw_exp)
+                if isinstance(parsed, dict):
+                    exp_map = {str(k): str(v) for k, v in parsed.items()}
+                else:
+                    exp_scalar = raw_exp
+            except json.JSONDecodeError:
+                exp_scalar = raw_exp
+        else:
+            exp_scalar = raw_exp
+
+    sparse_paths = [p for p in paths if _is_sparse_path(p, root)]
+    if exp_scalar is not None and len(sparse_paths) > 1:
+        return sparse_selector_conflict_error(
+            "expected_read_sha256 scalar applies only when read_multi names one document path"
+        )
+
+    def _per_path_expected(p: str) -> str | None:
+        if exp_map is not None:
+            if p in exp_map:
+                return exp_map[p]
+            p_norm = normalize_sha256_hex(p)
+            for k, v in exp_map.items():
+                if normalize_sha256_hex(k) == p_norm:
+                    return v
+            return None
+        if exp_scalar is not None and _is_sparse_path(p, root):
+            return exp_scalar
+        return None
+
+    has_section = bool(section and str(section).strip())
+    multi_path = len(paths) > 1
+    multi_expanded = multi_path and (bool(sections) or export or has_section)
+
+    if multi_expanded and sections:
+        flat: list[dict[str, Any]] = []
+        omitted: list[str] = []
+        budget_cursor: int | None = None
+        used = 0
+        flat_idx = 0
+        ended = False
+        for rel in paths:
+            for sid in list(sections or []):
+                if ended:
+                    flat.append(
+                        {"path": rel, "id": sid, "outcome": "over_budget"}
+                    )
+                    omitted.append(f"{rel}:{sid}")
+                    flat_idx += 1
+                    continue
+                per_exp = _per_path_expected(rel)
+                one = read_file_result(
+                    rel,
+                    root=root,
+                    binary=False,
+                    sections=[sid],
+                    expected_read_sha256=per_exp,
+                )
+                it = (one.get("items") or [None])[0]
+                if it is None:
+                    flat.append(
+                        {
+                            "path": rel,
+                            "id": sid,
+                            "outcome": "error",
+                            "error": "no batch item",
+                        }
+                    )
+                    flat_idx += 1
+                    continue
+                oc = it.get("outcome")
+                if oc == "stale_handle" or one.get("outcome") == "stale_handle":
+                    flat.append(
+                        {
+                            "path": rel,
+                            "id": sid,
+                            "outcome": "stale_handle",
+                            "read_sha256": one.get("read_sha256"),
+                        }
+                    )
+                    flat_idx += 1
+                    continue
+                if oc != "ok":
+                    flat.append({"path": rel, **it})
+                    if oc == "over_budget":
+                        ended = True
+                        budget_cursor = flat_idx
+                    flat_idx += 1
+                    continue
+                body = str(it.get("content", ""))
+                next_used = used + len(body)
+                if next_used > BATCH_MAX_CONTENT_CHARS:
+                    ended = True
+                    budget_cursor = flat_idx
+                    flat.append(
+                        {"path": rel, "id": sid, "outcome": "over_budget"}
+                    )
+                    omitted.append(f"{rel}:{sid}")
+                    flat_idx += 1
+                    continue
+                used = next_used
+                flat.append({"path": rel, **it})
+                flat_idx += 1
+        out: dict[str, Any] = {
+            "selection": "multi",
+            "read_multi": True,
+            "items": flat,
+            "sparse_section_batch": True,
+        }
+        if omitted:
+            out["omitted"] = omitted
+        if budget_cursor is not None:
+            out["budget_cursor"] = budget_cursor
+        return finalize_sparse_document_payload(out)
+
+    if multi_expanded and export:
+        items: list[dict[str, Any]] = []
+        remaining = BATCH_MAX_CONTENT_CHARS
+        terminated = False
+        for rel in paths:
+            if terminated:
+                items.append({"path": rel, "outcome": "over_budget"})
+                continue
+            per_exp = _per_path_expected(rel)
+            if not _is_sparse_path(rel, root):
+                r = read_file_result(
+                    rel,
+                    root=root,
+                    binary=False,
+                    expected_read_sha256=per_exp,
+                )
+                body = str(r.get("content", ""))
+                if len(body) > BATCH_MAX_CONTENT_CHARS:
+                    items.append(
+                        {
+                            "path": rel,
+                            "outcome": "over_budget",
+                            "oversize": True,
+                            "fetch": {
+                                "op": "read",
+                                "path": rel,
+                                "export": True,
+                                "chunk_cursor": 0,
+                            },
+                        }
+                    )
+                    terminated = True
+                    continue
+                if len(body) > remaining:
+                    items.append(
+                        {
+                            "path": rel,
+                            "outcome": "over_budget",
+                            "fetch": {
+                                "op": "read",
+                                "path": rel,
+                                "export": True,
+                                "chunk_cursor": 0,
+                            },
+                        }
+                    )
+                    terminated = True
+                    continue
+                items.append({"path": rel, "content": body, "outcome": "ok"})
+                remaining -= len(body)
+                continue
+            text = _load_plain_text_for_sparse(rel, root)
+            body_len = len(text)
+            if body_len > BATCH_MAX_CONTENT_CHARS:
+                items.append(
+                    {
+                        "path": rel,
+                        "outcome": "over_budget",
+                        "oversize": True,
+                        "fetch": {
+                            "op": "read",
+                            "path": rel,
+                            "export": True,
+                            "chunk_cursor": 0,
+                        },
+                    }
+                )
+                terminated = True
+                continue
+            if body_len > remaining:
+                items.append(
+                    {
+                        "path": rel,
+                        "outcome": "over_budget",
+                        "fetch": {
+                            "op": "read",
+                            "path": rel,
+                            "export": True,
+                            "chunk_cursor": 0,
+                        },
+                    }
+                )
+                terminated = True
+                continue
+            src = resolve_files_path(rel, root=root)
+            rs = sha256_hex_of_file(src)
+            if per_exp and not sha256_hex_equal(rs, per_exp):
+                items.append(
+                    {
+                        "path": rel,
+                        "outcome": "stale_handle",
+                        "read_sha256": rs,
+                    }
+                )
+                continue
+            chunk = finalize_sparse_document_payload(
+                resolve_document_read(
+                    path=rel,
+                    sandbox="cortex",
+                    text=text,
+                    read_sha256=rs,
+                    export=True,
+                    expected_read_sha256=per_exp,
+                )
+            )
+            chunk["path"] = rel
+            chunk["outcome"] = "ok"
+            items.append(chunk)
+            remaining -= len(text)
+        return finalize_sparse_document_payload(
+            {"selection": "multi", "read_multi": True, "items": items}
+        )
+
+    if multi_expanded and has_section:
+        return sparse_selector_conflict_error(
+            "read_multi does not support a single section= selector across multiple paths"
+        )
+
     results: dict[str, Any] = {}
     for path in paths:
         try:
-            result = read_file_result(path, root=root, binary=binary)
-            if binary or result.get("auto_binary"):
+            per_exp = _per_path_expected(path)
+            result = read_file_result(
+                path,
+                root=root,
+                binary=binary,
+                section=section,
+                sections=sections,
+                export=export,
+                chunk_cursor=chunk_cursor,
+                chunk_cursor_provided=chunk_cursor_provided,
+                expected_read_sha256=per_exp,
+            )
+            if multi_path:
+                results[path] = result
+            elif binary or result.get("auto_binary"):
                 results[path] = result
             else:
                 results[path] = _read_files_batch_value(result)
         except Exception as exc:
             results[path] = {"error": str(exc)}
-    return results
+    if not multi_path:
+        return {"files": results}
+    return finalize_sparse_document_payload(
+        {"selection": "multi", "read_multi": True, "files": results}
+    )

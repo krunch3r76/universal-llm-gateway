@@ -201,8 +201,12 @@ def _entity_get_single(
     if expected_revision is not None:
         from ._entity_get_preview import read_live_entity_revision
 
+        if not _entities_table_has_revision_column(conn):
+            return _revision_unverifiable_whole_call(entity_id=resolved_id)
         live_rev = read_live_entity_revision(conn, resolved_id)
-        if live_rev is not None and int(live_rev) != int(expected_revision):
+        if live_rev is None:
+            return _revision_unverifiable_whole_call(entity_id=resolved_id)
+        if int(live_rev) != int(expected_revision):
             return {
                 "code": "stale_handle",
                 "message": "expected_revision mismatch",
@@ -263,6 +267,14 @@ def _batch_item_from_result(
     input_entity_id: str,
     result: dict[str, Any],
 ) -> dict[str, Any]:
+    if result.get("outcome") == "revision_unverifiable":
+        return {
+            "input_entity_id": input_entity_id,
+            "ok": False,
+            "outcome": "revision_unverifiable",
+            "entity_id": result.get("entity_id"),
+            "revision": result.get("revision"),
+        }
     if result.get("code") == "stale_handle":
         data = result.get("data") if isinstance(result.get("data"), dict) else {}
         return {
@@ -294,15 +306,235 @@ def _batch_item_from_result(
     }
 
 
-def _expected_revision_for_batch_id(
+def _expected_revision_for_batch_id_conn(
+    conn: sqlite3.Connection,
     entity_id: str,
     *,
     expected_revision: int | None,
     expected_revisions: dict[str, int] | None,
+    resolve_aliases: bool,
+    raw_id: bool,
 ) -> int | None:
-    if expected_revisions and entity_id in expected_revisions:
-        return expected_revisions[entity_id]
+    if expected_revisions:
+        if entity_id in expected_revisions:
+            return expected_revisions[entity_id]
+        for key, rev in expected_revisions.items():
+            if key == entity_id:
+                continue
+            try:
+                resolved_key = _resolve_read_entity_id(
+                    conn,
+                    key,
+                    resolve_aliases=resolve_aliases,
+                    raw_id=raw_id,
+                )
+            except HTTPException:
+                continue
+            if resolved_key == entity_id or str(resolved_key) == str(entity_id):
+                return rev
     return expected_revision
+
+
+def _coerce_non_negative_int_revision(value: object, *, field: str) -> int | dict[str, Any]:
+    if not isinstance(value, int):
+        return {
+            "error": f"{field} values must be non-negative integers",
+            "outcome": "invalid_expected_revision",
+            "status_code": 400,
+            "source": "entity_get",
+        }
+    if value < 0:
+        return {
+            "error": f"{field} values must be non-negative integers",
+            "outcome": "invalid_expected_revision",
+            "status_code": 400,
+            "source": "entity_get",
+        }
+    return value
+
+
+def _normalize_expected_revisions_dict(
+    raw: object,
+) -> dict[str, int] | dict[str, Any]:
+    if raw is None:
+        return {}
+    if not isinstance(raw, dict):
+        return {
+            "error": "expected_revisions must be a string-keyed map of revision ints",
+            "outcome": "invalid_expected_revisions",
+            "status_code": 400,
+            "source": "entity_get",
+        }
+    out: dict[str, int] = {}
+    for key_obj, rev_obj in raw.items():
+        if not isinstance(key_obj, str):
+            return {
+                "error": "expected_revisions keys must be entity id strings",
+                "outcome": "invalid_expected_revisions",
+                "status_code": 400,
+                "source": "entity_get",
+            }
+        coerced = _coerce_non_negative_int_revision(rev_obj, field="expected_revisions")
+        if isinstance(coerced, dict):
+            return coerced
+        out[key_obj] = coerced
+    return out
+
+
+def _parse_entity_get_revision_params(
+    *,
+    entity_id: str | None,
+    entity_ids: list[str] | None,
+    expected_revision: int | None,
+    expected_revisions_raw: object | None,
+) -> tuple[dict[str, Any] | None, int | None, dict[str, int] | None]:
+    """Return (error, coerced_expected_revision, expected_revisions_map or None)."""
+    exp_rev: int | None = None
+    if expected_revision is not None:
+        coerced_er = _coerce_non_negative_int_revision(
+            expected_revision, field="expected_revision"
+        )
+        if isinstance(coerced_er, dict):
+            return coerced_er, None, None
+        exp_rev = coerced_er
+
+    revisions_norm = _normalize_expected_revisions_dict(expected_revisions_raw)
+    if isinstance(revisions_norm, dict) and revisions_norm.get("status_code") == 400:
+        return revisions_norm, None, None
+    er_map = revisions_norm
+    assert isinstance(er_map, dict)
+
+    if entity_ids is not None:
+        if exp_rev is not None:
+            return (
+                {
+                    "error": (
+                        "Use expected_revisions map for batch entity_get, "
+                        "not expected_revision"
+                    ),
+                    "outcome": "expected_revision_scalar_on_batch",
+                    "status_code": 400,
+                    "source": "entity_get",
+                },
+                None,
+                None,
+            )
+    if exp_rev is not None and er_map:
+        return (
+            {
+                "error": "expected_revision and expected_revisions are mutually exclusive",
+                "outcome": "expected_revision_conflict",
+                "status_code": 400,
+                "source": "entity_get",
+            },
+            None,
+            None,
+        )
+    if entity_id is not None and er_map:
+        return (
+            {
+                "error": "expected_revisions applies only to entity_get with entity_ids",
+                "outcome": "param_not_applicable",
+                "status_code": 400,
+                "source": "entity_get",
+                "data": {"parameter": "expected_revisions"},
+            },
+            None,
+            None,
+        )
+    er_out: dict[str, int] | None = er_map if er_map else None
+    return None, exp_rev, er_out
+
+
+def _batch_resolve_entity_ids(
+    conn: sqlite3.Connection,
+    entity_ids: list[str],
+    *,
+    resolve_aliases: bool,
+    raw_id: bool,
+) -> list[str]:
+    out: list[str] = []
+    for eid in entity_ids:
+        out.append(
+            _resolve_read_entity_id(
+                conn,
+                eid,
+                resolve_aliases=resolve_aliases,
+                raw_id=raw_id,
+            )
+        )
+    return out
+
+
+def _validate_expected_revisions_keys_for_batch(
+    conn: sqlite3.Connection,
+    entity_ids: list[str],
+    expected_revisions: dict[str, int],
+    *,
+    resolve_aliases: bool,
+    raw_id: bool,
+) -> dict[str, Any] | None:
+    """Fail the whole batch when a map key does not resolve to a batch member."""
+    try:
+        batch_resolved = set(
+            _batch_resolve_entity_ids(
+                conn,
+                entity_ids,
+                resolve_aliases=resolve_aliases,
+                raw_id=raw_id,
+            )
+        )
+    except HTTPException as exc:
+        return _http_error_dict(exc)
+    unmatched: list[str] = []
+    for key in expected_revisions:
+        try:
+            rk = _resolve_read_entity_id(
+                conn,
+                key,
+                resolve_aliases=resolve_aliases,
+                raw_id=raw_id,
+            )
+        except HTTPException:
+            unmatched.append(key)
+            continue
+        if rk not in batch_resolved:
+            unmatched.append(key)
+    if unmatched:
+        return {
+            "error": "expected_revisions contains ids not present in this batch",
+            "outcome": "expected_revisions_unmatched",
+            "status_code": 400,
+            "source": "entity_get",
+            "data": {"unmatched_keys": unmatched},
+        }
+    return None
+
+
+def _entities_table_has_revision_column(conn: sqlite3.Connection) -> bool:
+    rows = conn.execute("PRAGMA table_info(entities)").fetchall()
+    return any(r[1] == "revision" for r in rows)
+
+
+def _revision_unverifiable_whole_call(*, entity_id: str | None = None) -> dict[str, Any]:
+    out: dict[str, Any] = {
+        "ok": False,
+        "outcome": "revision_unverifiable",
+        "source": "entity_get",
+        "revision": None,
+        "reason": "entities.revision column absent (production schema)",
+    }
+    if entity_id is not None:
+        out["entity_id"] = entity_id
+    return out
+
+
+def _needs_expected_revision_check(
+    *,
+    exp_rev: int | None,
+    er_map: dict[str, int] | None,
+) -> bool:
+    return exp_rev is not None or bool(er_map)
 
 
 def _entity_get_batch(
@@ -350,16 +582,34 @@ def _entity_get_batch(
         return {"error": "top_k must be int in [1, 50]"}
     items: list[dict[str, Any]] = []
     with cortex_conn() as conn:
+        if _needs_expected_revision_check(
+            exp_rev=expected_revision, er_map=expected_revisions
+        ):
+            if not _entities_table_has_revision_column(conn):
+                return _revision_unverifiable_whole_call()
+        if expected_revisions:
+            key_err = _validate_expected_revisions_keys_for_batch(
+                conn,
+                entity_ids,
+                expected_revisions,
+                resolve_aliases=resolve_aliases,
+                raw_id=raw_id,
+            )
+            if key_err is not None:
+                return key_err
         for eid in entity_ids:
             try:
                 result = _entity_get_single(
                     conn,
                     entity_id=eid,
                     intent=batch_intent,
-                    expected_revision=_expected_revision_for_batch_id(
+                    expected_revision=_expected_revision_for_batch_id_conn(
+                        conn,
                         eid,
                         expected_revision=expected_revision,
                         expected_revisions=expected_revisions,
+                        resolve_aliases=resolve_aliases,
+                        raw_id=raw_id,
                     ),
                     include_edges=include_edges,
                     edge_limit=edge_limit,
@@ -468,12 +718,26 @@ def _op_entity_get(
     resolved_intent = "preview" if intent is None else intent
     if entity_ids is not None and entity_id is not None:
         return {"error": "both_entity_id_and_entity_ids", "status_code": 400}
+    rev_parse_err, exp_rev_coerced, er_coerced = _parse_entity_get_revision_params(
+        entity_id=entity_id,
+        entity_ids=entity_ids,
+        expected_revision=expected_revision,
+        expected_revisions_raw=expected_revisions,
+    )
+    if rev_parse_err is not None:
+        return attach_entity_get_param_warnings(
+            rev_parse_err,
+            dropped_keys=dropped_keys,
+            include_body=include_body,
+            entity_type=None,
+            intent=resolved_intent,
+        )
     if entity_ids is not None:
         batch_result = _entity_get_batch(
             entity_ids,
             intent=resolved_intent,
-            expected_revision=expected_revision,
-            expected_revisions=expected_revisions,
+            expected_revision=exp_rev_coerced,
+            expected_revisions=er_coerced,
             include_edges=include_edges,
             edge_limit=edge_limit,
             include_compaction_pointers=include_compaction_pointers,
@@ -544,11 +808,23 @@ def _op_entity_get(
     ):
         return {"error": "top_k must be int in [1, 50]"}
     with cortex_conn() as conn:
+        if _needs_expected_revision_check(
+            exp_rev=exp_rev_coerced, er_map=er_coerced
+        ):
+            if not _entities_table_has_revision_column(conn):
+                unver = _revision_unverifiable_whole_call(entity_id=entity_id)
+                return attach_entity_get_param_warnings(
+                    unver,
+                    dropped_keys=dropped_keys,
+                    include_body=include_body,
+                    entity_type=None,
+                    intent=resolved_intent,
+                )
         result = _entity_get_single(
             conn,
             entity_id=entity_id,
             intent=resolved_intent,
-            expected_revision=expected_revision,
+            expected_revision=exp_rev_coerced,
             include_edges=include_edges,
             edge_limit=edge_limit,
             include_compaction_pointers=include_compaction_pointers,

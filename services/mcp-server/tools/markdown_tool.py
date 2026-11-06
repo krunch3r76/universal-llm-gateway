@@ -36,7 +36,7 @@ from markdown_sections import (
 )
 from mcp_events import record
 
-from tools._hashing import format_sha256_uri, sha256_hex_of_bytes
+from tools._hashing import format_sha256_uri, sha256_hex_equal, sha256_hex_of_bytes
 from tools.filesystem._house_rules_rotation import rotate_house_rules_to_fit
 from tools.filesystem._write_authority import (
     RULINGS_ARCHIVE_REL,
@@ -64,6 +64,8 @@ from ._section_mutation import (
     shrink_warning,
 )
 from ._sparse_document_read import (
+    finalize_sparse_document_payload,
+    param_not_applicable_error,
     resolve_document_read,
     sparse_selector_conflict_error,
 )
@@ -521,6 +523,8 @@ def _pdf_section_op(
     *,
     sections: list[str] | None = None,
     export: bool = False,
+    chunk_cursor: int | None = None,
+    expected_read_sha256: str = "",
 ) -> dict[str, Any]:
     """List/read PDF sections via the outline-driven (TOC) navigator."""
     if not resolved.exists():
@@ -537,6 +541,8 @@ def _pdf_section_op(
             )
             return {"path": path, "sandbox": sandbox, **listing}
         if op == "to_dict":
+            if expected_read_sha256.strip():
+                return param_not_applicable_error(parameter="expected_read_sha256")
             listing = list_pdf_sections(resolved)
             read_sha256 = _read_sha256_for_file(resolved)
             record(
@@ -555,7 +561,25 @@ def _pdf_section_op(
                 "omitted": ["content"],
             }
         read_sha256 = _read_sha256_for_file(resolved)
+        has_sections = bool(sections)
+        if chunk_cursor is not None and not export and not (
+            bool(section.strip()) and not has_sections
+        ):
+            return param_not_applicable_error(parameter="chunk_cursor")
         if op == "read_section" and not section.strip() and not export and not sections:
+            if expected_read_sha256.strip() and not sha256_hex_equal(
+                read_sha256, expected_read_sha256
+            ):
+                return finalize_sparse_document_payload(
+                    {
+                        "ok": False,
+                        "outcome": "stale_handle",
+                        "read_sha256": read_sha256,
+                        "expected_read_sha256": expected_read_sha256,
+                        "selection": "manifest",
+                        "omitted": ["content"],
+                    }
+                )
             listing = list_pdf_sections(resolved)
             descriptors = [
                 {
@@ -593,6 +617,24 @@ def _pdf_section_op(
                 section=section if section.strip() else None,
                 sections=sections,
                 export=export,
+                chunk_cursor=chunk_cursor,
+                chunk_cursor_provided=chunk_cursor is not None,
+                expected_read_sha256=expected_read_sha256 or None,
+            )
+        if chunk_cursor is not None:
+            return param_not_applicable_error(parameter="chunk_cursor")
+        if expected_read_sha256.strip() and not sha256_hex_equal(
+            read_sha256, expected_read_sha256
+        ):
+            return finalize_sparse_document_payload(
+                {
+                    "ok": False,
+                    "outcome": "stale_handle",
+                    "read_sha256": read_sha256,
+                    "expected_read_sha256": expected_read_sha256,
+                    "selection": "section",
+                    "section": section,
+                }
             )
         body = read_pdf_section(resolved, section)
         record(
@@ -632,6 +674,8 @@ def register_markdown_tools(mcp: FastMCP) -> None:
         size_only: bool = False,
         sections: list[str] | None = None,
         export: bool = False,
+        chunk_cursor: int | None = None,
+        expected_read_sha256: str = "",
     ) -> dict[str, Any]:
         """Section-level markdown: list/read/replace/append/insert/delete/to_dict/from_dict.
 
@@ -686,6 +730,8 @@ def register_markdown_tools(mcp: FastMCP) -> None:
                 section,
                 sections=sections,
                 export=export,
+                chunk_cursor=chunk_cursor,
+                expected_read_sha256=expected_read_sha256,
             )
 
         if op in ("list_sections", "read_section", "to_dict"):
@@ -734,6 +780,9 @@ def register_markdown_tools(mcp: FastMCP) -> None:
                     section=section if section.strip() else None,
                     sections=sections,
                     export=export,
+                    chunk_cursor=chunk_cursor,
+                    chunk_cursor_provided=chunk_cursor is not None,
+                    expected_read_sha256=expected_read_sha256 or None,
                 )
                 if "code" in result:
                     return result
@@ -748,11 +797,23 @@ def register_markdown_tools(mcp: FastMCP) -> None:
                     chars=len(result.get("content", "")),
                     selection=selection or "section",
                 )
+                # Plain single-section reads keep the legacy shape (no sparse markers).
+                if (
+                    result.get("selection") == "section"
+                    and result.get("outcome") == "ok"
+                    and chunk_cursor is None
+                ):
+                    legacy = dict(result)
+                    legacy.pop("selection", None)
+                    legacy.pop("sparse_policy", None)
+                    return legacy
                 return result
             if sections:
                 return sparse_selector_conflict_error(
                     "sections is only valid for read_section / md_read"
                 )
+            if expected_read_sha256.strip():
+                return param_not_applicable_error(parameter="expected_read_sha256")
             try:
                 data = sections_to_dict(text)
             except SectionError as e:

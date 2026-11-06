@@ -895,16 +895,23 @@ def _replacement_result(
 
 _SEMANTIC_GUARD_TOOLS: frozenset[str] = frozenset({"agent_bus", "cortex"})
 
+_SPARSE_SLICE1_POLICY = "slice1_document_and_entity_preview"
+
 
 def _node_is_sparse_document_payload(node: dict[str, Any]) -> bool:
+    """Root-marked sparse reads pass through; selection alone is not sufficient."""
     if node.get("sparse_section_batch") or node.get("sparse_explicit_export"):
         return True
+    if node.get("code") == "sparse_payload_over_byte_ceiling":
+        return True
+    if node.get("sparse_policy") != _SPARSE_SLICE1_POLICY:
+        return False
     selection = node.get("selection")
-    if selection in {"manifest", "sections", "export"}:
-        return True
-    if node.get("code") == "sparse_manifest_requires_expansion":
-        return True
-    return False
+    if selection not in {"manifest", "section", "sections", "export", "multi", "window"}:
+        return False
+    if selection == "multi" and not node.get("sparse_section_batch"):
+        return False
+    return True
 
 
 def _sparse_document_read_passthrough(result: ToolResult) -> bool:

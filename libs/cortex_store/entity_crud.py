@@ -494,6 +494,8 @@ def update_entity_impl(
                 alias_input,
             ),
         }
+        if name_changed and prior_name:
+            prior_name_retained = str(prior_name) in updates["aliases"]
 
     merged: dict[str, object] = dict(prior)
     for field, value in updates.items():

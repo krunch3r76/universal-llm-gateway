@@ -341,6 +341,7 @@ def _build_server(
         sections: list[str] | None = None,
         export: bool = False,
         expected_read_sha256: str = "",
+        chunk_cursor: int | None = None,
     ) -> dict[str, Any]:
         """Sandboxed file I/O (cortex, workspaces). Full catalog in tool description."""
         try:
@@ -375,6 +376,7 @@ def _build_server(
                 sections=sections,
                 export=export,
                 expected_read_sha256=expected_read_sha256,
+                chunk_cursor=chunk_cursor,
             )
         except Exception as exc:
             return _tool_error_envelope("fs", op, exc)

@@ -37,7 +37,7 @@ from ._durable_write import (
     verify_persisted,
     write_verify_error_dict,
 )
-from ._file_helpers import read_file_result
+from ._file_helpers import read_file_result, read_files_batch
 from ._project_paths import (
     multi_repo_root_unscoped,
     normalize_directory_arg,
@@ -376,7 +376,15 @@ def register_project_tools(mcp: FastMCP) -> None:
 
     @mcp.tool(title="Read Project File")
     def read_project_file(
-        path: str, binary: bool = False, offset: int = 0, limit: int = 0
+        path: str,
+        binary: bool = False,
+        offset: int = 0,
+        limit: int = 0,
+        section: str | None = None,
+        sections: list[str] | None = None,
+        export: bool = False,
+        chunk_cursor: int | None = None,
+        expected_read_sha256: str | dict[str, str] | None = None,
     ) -> dict[str, Any]:
         """Read a file from the project directory.
 
@@ -406,7 +414,19 @@ def register_project_tools(mcp: FastMCP) -> None:
             raise ValueError(f"Path is not a file: {path!r}")
 
         result = read_file_result(
-            rel_path, root=_PROJECT_ROOT, binary=binary, offset=offset, limit=limit
+            rel_path,
+            root=_PROJECT_ROOT,
+            binary=binary,
+            offset=offset,
+            limit=limit,
+            section=section,
+            sections=sections,
+            export=export,
+            chunk_cursor=chunk_cursor,
+            chunk_cursor_provided=chunk_cursor is not None,
+            expected_read_sha256=expected_read_sha256
+            if not isinstance(expected_read_sha256, dict)
+            else expected_read_sha256.get(rel_path),
         )
         result["path"] = rel_path
         result["uri"] = workspaces_share_uri(src, _PROJECT_ROOT.resolve())
@@ -422,6 +442,35 @@ def register_project_tools(mcp: FastMCP) -> None:
                 "read_project_file: %s (%d chars)", path, len(result.get("content", ""))
             )
         return result
+
+    @mcp.tool(title="Read Multiple Project Files")
+    def read_project_multi(
+        paths: list[str],
+        binary: bool = False,
+        offset: int = 0,
+        limit: int = 0,
+        section: str | None = None,
+        sections: list[str] | None = None,
+        export: bool = False,
+        chunk_cursor: int | None = None,
+        expected_read_sha256: str | dict[str, str] | None = None,
+    ) -> dict[str, Any]:
+        """Batch-read paths under the project root using the shared sparse batch logic."""
+        rel_paths: list[str] = []
+        for p in paths:
+            _src, rel = _resolve_project_file_path(p)
+            rel_paths.append(rel)
+        return read_files_batch(
+            rel_paths,
+            root=_PROJECT_ROOT,
+            binary=binary,
+            section=section,
+            sections=sections,
+            export=export,
+            chunk_cursor=chunk_cursor,
+            chunk_cursor_provided=chunk_cursor is not None,
+            expected_read_sha256=expected_read_sha256,
+        )
 
     @mcp.tool(title="Move Project File")
     def move_project_file(path: str, target: str) -> dict[str, str]:
