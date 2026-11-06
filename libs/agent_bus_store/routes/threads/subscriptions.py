@@ -4,15 +4,16 @@ from __future__ import annotations
 
 from typing import Any
 
+from agent_seat.registry import normalize_bus_address
 from fastapi import HTTPException, status
 from openapi_mcp.binding import x_mcp
-from agent_seat.registry import normalize_bus_address
 from pydantic import BaseModel, model_validator
 
 from ...db.endpoint_subscriptions import (
     ChatgptWorkCasError,
     SubscribeError,
     attach_instance_wake_head,
+    instance_wake_latest,
     list_subscriptions,
     subscribe_endpoint,
     unsubscribe_endpoint,
@@ -177,8 +178,6 @@ async def subscriptions_route(
     home_house_id: str | None = None,
 ) -> dict[str, Any]:
     """List display-seating rows; optional Work journal head for a fleet house."""
-    from ...db.endpoint_subscriptions import instance_wake_latest
-
     out: dict[str, Any] = {"subscriptions": list_subscriptions(agent, thread_scope)}
     if home_house_id is not None and str(home_house_id).strip():
         out["chatgpt_work_journal_head"] = instance_wake_latest(

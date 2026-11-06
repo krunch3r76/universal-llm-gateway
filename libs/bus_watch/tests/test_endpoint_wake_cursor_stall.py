@@ -80,8 +80,8 @@ def test_suppressed_backlog_advances_cursor_without_pending(
     import bus_watch.endpoint_wake_dispatcher as ew
 
     monkeypatch.setattr(ew.time, "monotonic", lambda: mono["t"])
-    Store = _store_factory(subscription=None)
-    scan_once(Store())  # type: ignore[arg-type]
+    store_cls = _store_factory(subscription=None)
+    scan_once(store_cls())  # type: ignore[arg-type]
     cursor = get_cursor()
     assert int(cursor["high_water_turn_id"]) >= 55
 
@@ -114,8 +114,8 @@ def test_callback_test_stays_suppressed(db: None) -> None:
     )
     assert verdict.wake is False
     assert verdict.rule_id == "default_suppress"
-    Store = _store_factory(subscription=None)
-    scan_once(Store())  # type: ignore[arg-type]
+    store_cls = _store_factory(subscription=None)
+    scan_once(store_cls())  # type: ignore[arg-type]
     with connect() as conn:
         row = conn.execute(
             "SELECT COUNT(*) AS n FROM endpoint_wake_ledger WHERE turn_id=?",
