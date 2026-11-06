@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import math
 import os
 import re
 import time
@@ -212,9 +213,12 @@ _POLL_S = 2.0
 def _endpoint_wake_catchup_max_age_s() -> float:
     raw = os.environ.get("ENDPOINT_WAKE_CATCHUP_MAX_AGE_S", "900")
     try:
-        return max(0.0, float(raw))
+        value = float(raw)
     except ValueError:
         return 900.0
+    if not math.isfinite(value) or value <= 0:
+        return 900.0
+    return value
 
 
 def _turn_created_at_epoch(raw: Any) -> float | None:
@@ -226,7 +230,10 @@ def _turn_created_at_epoch(raw: Any) -> float | None:
             normalized = text[:-1] + "+00:00"
             return datetime.fromisoformat(normalized).timestamp()
         if "T" in text:
-            return datetime.fromisoformat(text).timestamp()
+            dt = datetime.fromisoformat(text)
+            if dt.tzinfo is None:
+                dt = dt.replace(tzinfo=UTC)
+            return dt.timestamp()
         parsed = datetime.strptime(text, "%Y-%m-%d %H:%M:%S")
         return parsed.replace(tzinfo=UTC).timestamp()
     except ValueError:

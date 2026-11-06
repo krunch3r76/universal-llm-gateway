@@ -3795,9 +3795,7 @@ def test_worker_closeout_stale_uuid_to_resolves_glass_binding() -> None:
                 return {"parent_thread": None}
             raise AssertionError(f"unexpected bus call {method} {path}")
 
-    route = _resolve_delivery_route(
-        StubStore(), raw_to, worker_thread, raw_to=raw_to
-    )
+    route = _resolve_delivery_route(StubStore(), raw_to, worker_thread, raw_to=raw_to)
     assert route is not None
     assert route[0] == "agent_id"
     assert route[1]["agent_id"] == _ORION_AGENT_ID
@@ -4078,7 +4076,9 @@ def test_fire_cse_followup_appends_wake_when_not_dry_run(tmp_path, monkeypatch) 
     ):
         out = fire_cse_followup("WAKE", "10479", dry_run=False, post=_post)
     assert out["ok"] is True
-    rows = [json.loads(line) for line in ledger.read_text().splitlines() if line.strip()]
+    rows = [
+        json.loads(line) for line in ledger.read_text().splitlines() if line.strip()
+    ]
     wakes = [r for r in rows if r.get("kind") == "wake"]
     assert len(wakes) == 1
     assert wakes[0]["op"] == "cse_followup"
@@ -4100,7 +4100,12 @@ def test_deliver_cse_writes_no_ledger_row(tmp_path, monkeypatch) -> None:
 
     def _fire(*args, **kwargs):
         calls.append(bool(kwargs.get("dry_run")))
-        return {"ok": True, "registration_id": "reg-1", "send_verified": True, "source": "local"}
+        return {
+            "ok": True,
+            "registration_id": "reg-1",
+            "send_verified": True,
+            "source": "local",
+        }
 
     with patch("bus_watch.cse_followup.fire_cse_followup", _fire):
         state, reason, reg = _deliver_cse(
@@ -4678,9 +4683,7 @@ def _suffix_lookup_store(rows: list[dict]) -> StoreClient:
         def _bus(self, method: str, path: str, **kwargs):
             if path == "/endpoint-subscriptions":
                 agent = (kwargs.get("params") or {}).get("agent")
-                return {
-                    "subscriptions": [r for r in rows if r.get("agent") == agent]
-                }
+                return {"subscriptions": [r for r in rows if r.get("agent") == agent]}
             raise AssertionError(f"unexpected bus call {method} {path}")
 
     return StubStore()
@@ -4763,7 +4766,9 @@ def test_orion_is_a_peer_sender_only_on_answer(db: None) -> None:
     assert qualify({**base, "subject": "CHATTER|probe"}, cse=False).wake is False
 
 
-def test_deep_lane_house_row_is_labelled_parent_not_exact(db: None, monkeypatch) -> None:
+def test_deep_lane_house_row_is_labelled_parent_not_exact(
+    db: None, monkeypatch
+) -> None:
     """M1: a holder walk past _MAX_PARENT_HOPS must not hand back an "exact" row."""
     import types
 
@@ -5063,6 +5068,47 @@ def test_run_dispatcher_survives_pass_failed_emit_error(
     with pytest.raises(asyncio.CancelledError):
         asyncio.run(run_dispatcher())
     assert sleeps["n"] == 1
+
+
+@pytest.mark.parametrize(
+    ("env_val", "expected"),
+    [
+        ("0", 900.0),
+        ("-5", 900.0),
+        ("nan", 900.0),
+        ("inf", 900.0),
+        ("abc", 900.0),
+        pytest.param(None, 900.0, id="unset"),
+    ],
+)
+def test_endpoint_wake_catchup_max_age_s_env_fallback(
+    monkeypatch: pytest.MonkeyPatch, env_val: str | None, expected: float
+) -> None:
+    from bus_watch.endpoint_wake_dispatcher import (
+        _endpoint_wake_catchup_max_age_s,
+        _turn_is_stale_catchup,
+    )
+
+    if env_val is None:
+        monkeypatch.delenv("ENDPOINT_WAKE_CATCHUP_MAX_AGE_S", raising=False)
+    else:
+        monkeypatch.setenv("ENDPOINT_WAKE_CATCHUP_MAX_AGE_S", env_val)
+    assert _endpoint_wake_catchup_max_age_s() == expected
+    # Guard must not treat every turn as stale when env is misconfigured.
+    from datetime import UTC, datetime
+
+    now_epoch = datetime(2033, 6, 1, 12, 0, 0, tzinfo=UTC).timestamp()
+    recent = {"created_at": "2033-06-01T11:59:00Z"}
+    assert _turn_is_stale_catchup(recent, now_epoch=now_epoch) is False
+
+
+def test_turn_created_at_epoch_naive_iso_t_is_utc() -> None:
+    from datetime import UTC, datetime
+
+    from bus_watch.endpoint_wake_dispatcher import _turn_created_at_epoch
+
+    ts = _turn_created_at_epoch("2033-06-01T12:00:00")
+    assert ts == datetime(2033, 6, 1, 12, 0, 0, tzinfo=UTC).timestamp()
 
 
 def test_scan_once_drop_stale_catchup_enqueues_fresh_only(
