@@ -708,6 +708,128 @@ def test_work_native_footer_file_refuses_and_empty_attach_allows() -> None:
 
 
 @_PLAYWRIGHT_SKIP
+def test_work_native_bare_remove_file_blocks_preflight_and_gate() -> None:
+    """A bare footer Remove file button blocks both production checks, while an empty Attach button, an empty file input, and an outside control do not."""
+    from cursor_bridge.cdp_composer_input import (
+        _work_native_insert_gate_js,
+        _work_native_preflight_js,
+    )
+    from playwright.sync_api import sync_playwright
+
+    pre = _work_native_preflight_js(
+        expected_url="https://chatgpt.com/c/abc",
+        text="wake",
+        draft_writer="orion:test",
+        preserve_newlines=False,
+    )
+    gate = _work_native_insert_gate_js(
+        expected_url="https://chatgpt.com/c/abc",
+        text="wake",
+        draft_writer="orion:test",
+        preserve_newlines=False,
+    )
+    bare = """<!DOCTYPE html><html><body>
+<div class="composer-layout">
+  <div class="text-size-chat">
+    <div class="ProseMirror-shell">
+      <div contenteditable="true" role="textbox"
+        aria-label="Work with ChatGPT on your tasks"
+        style="min-height:40px;width:200px" id="main"></div>
+    </div>
+  </div>
+  <div class="ComposerLayoutFooter">
+    <button aria-label="Remove file">report.pdf</button>
+  </div>
+</div>
+</body></html>"""
+    attach = """<!DOCTYPE html><html><body>
+<div class="composer-layout">
+  <div class="text-size-chat">
+    <div class="ProseMirror-shell">
+      <div contenteditable="true" role="textbox"
+        aria-label="Work with ChatGPT on your tasks"
+        style="min-height:40px;width:200px" id="main"></div>
+    </div>
+  </div>
+  <div class="ComposerLayoutFooter">
+    <button aria-label="Attach">Attach</button>
+    <input type="file" id="empty-file">
+  </div>
+</div>
+</body></html>"""
+    outside = """<!DOCTYPE html><html><body>
+<button aria-label="Remove file">report.pdf</button>
+<div class="composer-layout">
+  <div class="text-size-chat">
+    <div class="ProseMirror-shell">
+      <div contenteditable="true" role="textbox"
+        aria-label="Work with ChatGPT on your tasks"
+        style="min-height:40px;width:200px" id="main"></div>
+    </div>
+  </div>
+  <div class="ComposerLayoutFooter"></div>
+</div>
+</body></html>"""
+    url = "https://chatgpt.com/c/abc"
+    refused = _eval_native_page(bare, pre, url=url, setup=_NATIVE_READY)
+    assert refused.get("ok") is False
+    assert refused.get("reason") == "foreign_attachment"
+    allowed = _eval_native_page(attach, pre, url=url, setup=_NATIVE_READY)
+    assert allowed.get("ok") is True
+    bounded = _eval_native_page(outside, pre, url=url, setup=_NATIVE_READY)
+    assert bounded.get("ok") is True
+    with sync_playwright() as playwright:
+        browser = playwright.chromium.launch(headless=True)
+        page = browser.new_page()
+        page.goto(url, wait_until="domcontentloaded")
+        page.set_content(_NATIVE_EDITOR_HTML)
+        page.evaluate(_NATIVE_READY)
+        clean = page.evaluate(pre)
+        page.evaluate(
+            """() => {
+              const footer = document.getElementById('footer');
+              const button = document.createElement('button');
+              button.setAttribute('aria-label', 'Remove file');
+              button.textContent = 'report.pdf';
+              footer.appendChild(button);
+            }"""
+        )
+        blocked = page.evaluate(gate)
+        browser.close()
+    assert clean.get("ok") is True
+    assert blocked.get("ok") is False
+    assert blocked.get("reason") == "foreign_attachment"
+    picked = """<!DOCTYPE html><html><body>
+<div class="composer-layout">
+  <div class="text-size-chat">
+    <div class="ProseMirror-shell">
+      <div contenteditable="true" role="textbox"
+        aria-label="Work with ChatGPT on your tasks"
+        style="min-height:40px;width:200px" id="main"></div>
+    </div>
+  </div>
+  <div class="ComposerLayoutFooter"><input type="file" id="picked"></div>
+</div>
+</body></html>"""
+    held = _eval_native_page(
+        picked,
+        pre,
+        url=url,
+        setup=(
+            "() => { const el = document.getElementById('main');"
+            " el.pmViewDesc = {}; window.__ulgWorkNativeEditor = el;"
+            " window.__ulgOperatorActivity = {};"
+            " const input = document.getElementById('picked');"
+            " const transfer = new DataTransfer();"
+            " transfer.items.add(new File(['x'], 'report.pdf'));"
+            " input.files = transfer.files; el.focus(); }"
+        ),
+    )
+    assert held.get("ok") is False
+    assert held.get("reason") == "foreign_attachment"
+
+
+@_PLAYWRIGHT_SKIP
 def test_work_native_gate_refuses_focus_url_and_editor_drift() -> None:
     """The last eval refuses when focus, URL, or the visible editor drifts."""
     from cursor_bridge.cdp_composer_input import _work_native_insert_gate_js

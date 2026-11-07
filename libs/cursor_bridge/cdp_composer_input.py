@@ -184,6 +184,17 @@ function ulgHasPopulatedAttachment(el) {
     if (!node || node === el) continue;
     if (ulgNodeIsPopulatedFile(node)) return true;
   }
+  const controls = region.querySelectorAll('button,[role="button"],input[type="file"]');
+  for (const node of controls) {
+    if (!node || node === el) continue;
+    const tag = String(node.tagName || '');
+    if (tag === 'INPUT') {
+      const type = String(node.getAttribute('type') || '').toLowerCase();
+      if (type === 'file' && node.files && node.files.length > 0) return true;
+      continue;
+    }
+    if (ulgIsRemoveControl(node)) return true;
+  }
   return false;
 }
 """
