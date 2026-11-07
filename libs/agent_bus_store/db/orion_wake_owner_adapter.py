@@ -386,6 +386,9 @@ class LedgerWakeDeliveryOwner:
             return
         elif str(receipt.get("reason") or "") == "deferred_exhausted":
             return
+        elif receipt.get("insertion_unknown") is True:
+            outcome = "unknown"
+            reason = str(receipt.get("reason") or "insertion_unknown")
         elif receipt.get("pasted") and not receipt.get("delivered"):
             outcome = "unknown"
             reason = str(receipt.get("reason") or "delivery_unconfirmed")

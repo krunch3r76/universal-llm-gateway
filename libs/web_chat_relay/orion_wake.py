@@ -264,6 +264,24 @@ def _refuse(reason: str, **extra: Any) -> dict[str, Any]:
     return {"ok": False, "reason": reason, "pasted": False, "delivered": False, **extra}
 
 
+def _dom_inserted_but_unsent(result: dict[str, Any]) -> bool:
+    """True when insertion succeeded but send actuation did not run.
+
+    Requires ``reason=no_send_button`` plus ``pasted``, ``inserted``, or
+    ``phase`` inserted/send_unknown from the inner DOM layer — not bare
+    ``no_send_button`` alone.
+    """
+    reason = str(result.get("reason") or "")
+    if reason != "no_send_button":
+        return False
+    if result.get("pasted") is True:
+        return True
+    if result.get("inserted") is True:
+        return True
+    phase = str(result.get("phase") or "")
+    return phase in {"inserted", "send_unknown"}
+
+
 _open_lock_registry_guard = asyncio.Lock()
 _open_locks_by_conversation: dict[str, asyncio.Lock] = {}
 _attach_misses: dict[str, int] = {}
@@ -944,9 +962,10 @@ async def _dom_deliver(
     cdp_url: str = DEFAULT_ORION_CDP_URL,
     preserve_newlines: bool = False,
 ) -> dict[str, Any]:
-    """Paste via ChatGPT DOM helpers (same sequence as web_tab execute_paste submit path).
+    """Paste via ChatGPT DOM helpers (web_tab execute_paste submit sequence).
 
-    On dom_insert_and_send failure, forwards census unchanged when the inner result includes it.
+    On ``dom_insert_and_send`` failure, forwards ``census``, ``pasted``,
+    ``delivered``, ``inserted``, ``phase``, and ``send_clicked`` when present.
     """
     from cursor_bridge.dom_composer_paste import dom_insert_and_send
     from web_tab.cdp_actuation import default_actuation_port
@@ -1019,11 +1038,16 @@ async def _dom_deliver(
             if transport:
                 return transport
             base_users = int(baseline.get("user_count") or 0)
+            conv_url = tab_url.split("?", 1)[0]
+            insertion_writer = f"orion:{target_id}:{uuid.uuid4().hex}"
             result = await dom_insert_and_send(
                 ws,
                 selector=selector,
                 line=text,
                 preserve_newlines=preserve_newlines,
+                draft_writer=insertion_writer,
+                work_native_insert=True,
+                expected_conversation_url=conv_url,
             )
     except TargetLockBusyError:
         return {"ok": False, "reason": "target_lock_busy", "retryable": True}
@@ -1036,6 +1060,19 @@ async def _dom_deliver(
         census = result.get("census")
         if census is not None:
             failure["census"] = census
+        for key in (
+            "pasted",
+            "delivered",
+            "inserted",
+            "phase",
+            "send_clicked",
+            "insertion_unknown",
+            "retry_eligible",
+        ):
+            if key in result:
+                failure[key] = result[key]
+        if result.get("pasted") is True and "delivered" not in failure:
+            failure["delivered"] = False
         return failure
 
     receipt: str = "dom_paste"
@@ -1353,12 +1390,31 @@ async def deliver_orion_wake(
                     brought_to_front=tab_sync["brought_to_front"],
                     tab_reloaded=tab_sync["tab_reloaded"],
                 )
+            if _dom_inserted_but_unsent(dom):
+                inserted_unsent: dict[str, Any] = {
+                    "ok": False,
+                    "reason": dom_reason,
+                    "pasted": True,
+                    "delivered": False,
+                    "error": dom_reason,
+                    "brought_to_front": tab_sync["brought_to_front"],
+                    "tab_reloaded": tab_sync["tab_reloaded"],
+                }
+                if dom.get("census") is not None:
+                    inserted_unsent["census"] = dom["census"]
+                for key in ("inserted", "phase", "send_clicked"):
+                    if key in dom:
+                        inserted_unsent[key] = dom[key]
+                return inserted_unsent
             paste_refuse: dict[str, Any] = {
                 "error": dom_reason,
                 "pasted": False,
                 "brought_to_front": tab_sync["brought_to_front"],
                 "tab_reloaded": tab_sync["tab_reloaded"],
             }
+            if dom.get("insertion_unknown") is True:
+                paste_refuse["insertion_unknown"] = True
+                paste_refuse["retry_eligible"] = bool(dom.get("retry_eligible", False))
             if dom.get("census") is not None:
                 paste_refuse["census"] = dom["census"]
             return _refuse("paste_failed", **paste_refuse)
