@@ -202,6 +202,7 @@ snapshots/
 libs/cortex_store/migrations/*
 libs/cortex_store/migrations/**
 !libs/cortex_store/migrations/085_concern_write_intents.sql
+!libs/cortex_store/migrations/086_concern_effects.sql
 .*
 */.*
 */.*/
