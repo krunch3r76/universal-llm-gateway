@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from unittest.mock import AsyncMock
 
 import pytest
@@ -319,6 +320,61 @@ async def test_coord_admit_mirrors_worker_scoped_subscription(
     assert posts[0]["evidence"] == f"serving_to_agent:{serving_uuid}"
     assert posts[0]["agent_id"] == serving_uuid
     assert posts[0]["agent_id"] != coord_row["agent_id"]
+
+
+@pytest.mark.asyncio
+async def test_coord_admit_mirror_skips_unresolved_worker_agent_id(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    post_turn = AsyncMock()
+    coord_row = {
+        "agent": "cursor",
+        "thread_scope": "20995",
+        "state": "subscribed",
+        "surface": "cursor",
+        "display": "orion-node",
+        "title": "20995 impresario",
+        "agent_id": "composer-impresario-dbbfc4c2",
+    }
+    ctx_holder: list[_ClientCtx] = []
+
+    def _factory(*_a: object, **_k: object) -> _ClientCtx:
+        ctx = _ClientCtx(post_turn, coord_subscriptions=[coord_row])
+        ctx_holder.append(ctx)
+        return ctx
+
+    monkeypatch.setattr(
+        "systems.frontier_consult.cursor_sdk_coord_notify.make_async_client",
+        _factory,
+    )
+    monkeypatch.setenv("AGENT_BUS_TOKEN", "test-token")
+
+    async def _resolve_unresolved(
+        _client, *, worker_thread_id, serving_to_agent, headers
+    ):
+        return None, "serving_to_agent:missing"
+
+    monkeypatch.setattr(
+        "systems.frontier_consult.cursor_sdk_coord_notify.resolve_worker_subscription_agent_id",
+        _resolve_unresolved,
+    )
+    with caplog.at_level(logging.INFO):
+        await post_coord_admit_pointer(
+            coord_thread_id="20995",
+            worker_thread_id="21015",
+            to_agent="composer-impresario-dbbfc4c2",
+            caller_agent="composer-impresario-dbbfc4c2",
+            contract="implement",
+        )
+    posts = []
+    for ctx in ctx_holder:
+        posts.extend(ctx.subscription_posts)
+    assert len(posts) == 0
+    assert any(
+        "worker subscription mirror skipped unresolved agent_id" in rec.message
+        for rec in caplog.records
+    )
 
 
 @pytest.mark.asyncio

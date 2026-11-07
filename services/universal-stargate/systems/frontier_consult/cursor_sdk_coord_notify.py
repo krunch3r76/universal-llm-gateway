@@ -183,6 +183,17 @@ async def _mirror_coord_subscriptions_to_worker(
                         headers=headers,
                     )
                 )
+                if not resolved_aid:
+                    logger.info(
+                        "worker subscription mirror skipped unresolved agent_id: "
+                        "coord=%s worker=%s agent=%s parent_agent_id=%s evidence=%s",
+                        coord_thread_id,
+                        worker_thread_id,
+                        agent,
+                        row.get("agent_id"),
+                        bind_evidence,
+                    )
+                    continue
                 body: dict[str, Any] = {
                     "agent": agent,
                     "thread_scope": worker_thread_id,
@@ -191,18 +202,8 @@ async def _mirror_coord_subscriptions_to_worker(
                     "title": row.get("title"),
                     "bound_by": "cursor-sdk-admit",
                     "evidence": bind_evidence,
+                    "agent_id": resolved_aid,
                 }
-                if resolved_aid:
-                    body["agent_id"] = resolved_aid
-                elif row.get("agent_id"):
-                    logger.info(
-                        "worker subscription mirror skipped parent agent_id: "
-                        "coord=%s worker=%s parent_agent_id=%s evidence=%s",
-                        coord_thread_id,
-                        worker_thread_id,
-                        row.get("agent_id"),
-                        bind_evidence,
-                    )
                 try:
                     sub_resp = await client.post(
                         "/endpoint-subscriptions", json=body, headers=headers
