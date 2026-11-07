@@ -43,7 +43,9 @@ def _patch_read(monkeypatch: pytest.MonkeyPatch, root: Path) -> None:
     )
 
 
-def test_stale_manifest_envelope_has_path(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_stale_manifest_envelope_has_path(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     root = _root(tmp_path)
     _patch_read(monkeypatch, root)
     rel = "notes/doc.md"
@@ -169,9 +171,7 @@ def test_workspaces_share_uri_matches_repo_relative_path(tmp_path: Path) -> None
         [rel],
         root=root,
         sections=["Title"],
-        expected_read_sha256={
-            "workspaces://universal-llm-gateway/notes/doc.md": live
-        },
+        expected_read_sha256={"workspaces://universal-llm-gateway/notes/doc.md": live},
     )
     assert out.get("code") != "param_not_applicable"
     item = out["files"][rel]["items"][0]
@@ -187,7 +187,10 @@ def test_single_path_read_multi_returns_manifest_descriptors(tmp_path: Path) -> 
     assert entry["selection"] == "manifest"
     assert "content" not in entry
     assert entry.get("code") != "sparse_manifest_requires_expansion"
-    assert any(row.get("heading") == "Title" or row.get("id") == "Title" for row in entry["sections"])
+    assert any(
+        row.get("heading") == "Title" or row.get("id") == "Title"
+        for row in entry["sections"]
+    )
 
 
 def test_read_multi_export_stops_later_paths(tmp_path: Path) -> None:
@@ -282,9 +285,10 @@ def test_read_multi_consumes_every_declared_param(
     assert "alpha" in exported["files"]["a.md"]["content"]
 
     stale = read_files_batch_impl(["a.md"], expected_read_sha256="ab")
-    assert stale["files"]["a.md"].get("outcome") == "stale_handle" or stale[
-        "files"
-    ]["a.md"].get("code") == "stale_handle"
+    assert (
+        stale["files"]["a.md"].get("outcome") == "stale_handle"
+        or stale["files"]["a.md"].get("code") == "stale_handle"
+    )
 
     cursor = read_files_batch_impl(["a.md"], chunk_cursor=0)
     assert cursor.get("code") == "param_not_applicable"
@@ -636,7 +640,9 @@ def test_read_multi_export_big_txt_single_error_multi_full(
     assert "fetch" not in mixed["items"][1]
     assert "omitted" not in mixed
     assert "budget_cursor" not in mixed
-    assert len(mixed["items"][0]["content"]) + len(mixed["items"][2]["content"]) <= 65536
+    assert (
+        len(mixed["items"][0]["content"]) + len(mixed["items"][2]["content"]) <= 65536
+    )
 
 
 def test_read_multi_export_budget_markers(tmp_path: Path) -> None:
@@ -786,9 +792,7 @@ def test_read_multi_export_binary_keeps_payload(tmp_path: Path) -> None:
     plain = read_files_batch(["img.png"], root=root)
     plain_item = plain["files"]["img.png"]
 
-    before = read_files_batch(
-        ["img.png", "a.md", "b.md"], root=root, export=True
-    )
+    before = read_files_batch(["img.png", "a.md", "b.md"], root=root, export=True)
     assert [item["path"] for item in before["items"]] == ["img.png", "a.md", "b.md"]
     assert [item["outcome"] for item in before["items"]] == [
         "ok",
@@ -800,9 +804,7 @@ def test_read_multi_export_binary_keeps_payload(tmp_path: Path) -> None:
     assert before["omitted"] == ["b.md"]
     assert "fetch" not in before["items"][0]
 
-    after = read_files_batch(
-        ["a.md", "b.md", "img.png"], root=root, export=True
-    )
+    after = read_files_batch(["a.md", "b.md", "img.png"], root=root, export=True)
     assert [item["outcome"] for item in after["items"]] == [
         "ok",
         "over_budget",
@@ -871,7 +873,9 @@ def test_fs_dispatcher_export_binary_keeps_payload(
     assert "budget_cursor" not in exported
 
 
-def _fs_multi(monkeypatch: pytest.MonkeyPatch, projects: Path, paths: list[str], **extra):
+def _fs_multi(
+    monkeypatch: pytest.MonkeyPatch, projects: Path, paths: list[str], **extra
+):
     from fs_impl import fs_impl
 
     def _fs_root(surface: str, root_id: str) -> Path:

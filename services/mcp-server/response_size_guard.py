@@ -913,6 +913,17 @@ def _node_is_sparse_document_payload(node: dict[str, Any]) -> bool:
     }
 
 
+def _content_base64_nodes(node: Any) -> bool:
+    """True when a non-document binary body is sitting on this payload."""
+    if isinstance(node, dict):
+        if isinstance(node.get("content_base64"), str):
+            return True
+        return any(_content_base64_nodes(value) for value in node.values())
+    if isinstance(node, list):
+        return any(_content_base64_nodes(value) for value in node)
+    return False
+
+
 def _sparse_document_read_passthrough(result: ToolResult) -> bool:
     """Root-marked sparse document reads must not be re-clipped by the byte guard.
 
@@ -920,11 +931,24 @@ def _sparse_document_read_passthrough(result: ToolResult) -> bool:
     ``sparse_section_batch`` / ``sparse_explicit_export`` without the root
     ``sparse_policy`` marker do not earn it either. ``selection=multi`` covers
     read_multi export and default manifests, not only section batches.
+
+    A large non-document ``content_base64`` does not earn passthrough either.
+    The marker stays on the payload so the stored copy keeps sparse provenance,
+    and the real size check below externalizes it. Document text under the
+    sparse ceiling still passes through: it has no ``content_base64``.
     """
     structured = result.structured_content
     if not isinstance(structured, dict):
         return False
-    return _node_is_sparse_document_payload(structured)
+    if not _node_is_sparse_document_payload(structured):
+        return False
+    if _content_base64_nodes(structured):
+        try:
+            if _measure_result(result) > _threshold_for_profile():
+                return False
+        except Exception:
+            return False
+    return True
 
 
 def _is_single_json_mirror_text(result: ToolResult) -> tuple[str, Any] | None:
@@ -966,9 +990,7 @@ def _lean_content(result: ToolResult, *, tool_name: str) -> ToolResult:
             from mcp.types import TextContent
 
             candidate = result.model_copy(
-                update={
-                    "content": [TextContent(type="text", text=_MIRROR_PLACEHOLDER)]
-                }
+                update={"content": [TextContent(type="text", text=_MIRROR_PLACEHOLDER)]}
             )
             threshold = _threshold_for_profile()
             target = (
