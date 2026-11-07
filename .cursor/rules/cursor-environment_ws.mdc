@@ -176,6 +176,11 @@ an explicit override, the process environment (Remote-SSH vs Xvfb `:8`),
 `scripts/liaison-tick.py --claim` sync that policy and subscribe with the
 matching `/endpoint-subscriptions` `display`.
 
+**Operator VNC / Remmina / clipboard wiring** for this topology lives in
+`scripts.local/orion/` (nested git). Do not add autossh units, Remmina profiles,
+or SSH fragments under public `config/` or `scripts/` — rule:
+`personal-workflow-local-tracking_ulg`.
+
 **Live Glass context budget:** `measure_ide_tab` probes
 `composerDataService.getComposerHandleById` on `cursor_debug_url_for_gui_host(gui_host)`
 (`contextTokensUsed`, `contextTokenLimit`, `status`, summarized-conversation

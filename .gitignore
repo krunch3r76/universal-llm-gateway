@@ -116,6 +116,15 @@ scripts/model_manager/ui/controller/service_ctl/local/
 # Personal-life helpers/workflows: nested git here. Rule: personal-workflow-local-tracking_ulg
 scripts.local/
 
+# Operator Glass/VNC topology — canonical home scripts.local/orion/ (nested git)
+config/orion-node/
+config/remmina/
+config/systemd/orion-node/
+scripts/provision-orion-node-vnc.sh
+scripts/sync-orion-remmina-profiles.sh
+scripts/orion-io-display12-clipboard-bridge.sh
+scripts/orion-io-display12-clipboard-push-once.sh
+
 # RAG scope vocabulary (auto-generated, per-machine)
 scope_vocabulary.yaml
 
