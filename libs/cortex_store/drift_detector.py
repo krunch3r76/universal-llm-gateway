@@ -1,15 +1,10 @@
-"""Read-only live entity-state drift scanner (plan cortex-live-entity-state W2).
-
-Compares card surfaces and deadline closure signals against newer structured
-evidence without mutating the Cortex database.
-"""
-
 from __future__ import annotations
 
 import re
 import sqlite3
 from collections.abc import Callable
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Any
 
 from . import db as _db
@@ -25,26 +20,21 @@ from .routes.deadlines import (
 _NEGATION_RE = re.compile(
     r"\bnot_submitted\b|\bnot submitted\b|\bunsubmitted\b", re.IGNORECASE
 )
-_GENERIC_TOKENS = frozenset(
-    {"todo", "document", "window", "choice", "projected", "urgent"}
+_GENERIC = frozenset({"todo", "document", "window", "choice", "projected", "urgent"})
+_OUTCOMES = frozenset({"met", "resolved", "completed"})
+_DERIV = frozenset({"direct_observation", "user_statement"})
+_DEAD = ("merged", "reaped", "deprecated", "retired")
+_REL_TYPES = "('pertains_to','references','deadline_for','child_of')"
+_REL_ON = f"type IN {_REL_TYPES} AND COALESCE(active,1)=1"
+_ASQL = (
+    "SELECT id,claim,confidence,derivation_type,review_status,review_notes,"
+    "evidence_uris,created_at,observed_at,superseded_by,predicate_form "
+    "FROM assertions WHERE entity_id=? ORDER BY created_at ASC,id ASC"
 )
-_LINK_TYPES = frozenset({"pertains_to", "references", "deadline_for", "child_of"})
-_FULFILLMENT_OUTCOMES = frozenset({"met", "resolved", "completed"})
-_EVIDENCE_DERIVATIONS = frozenset({"direct_observation", "user_statement"})
-_LIFECYCLE_EXCLUDED = ("merged", "reaped", "deprecated", "retired")
-_ASSERTIONS_SQL = """
-    SELECT id, claim, confidence, derivation_type, review_status, review_notes,
-           evidence_uris, created_at, observed_at, superseded_by, predicate_form
-    FROM assertions
-    WHERE entity_id = ?
-    ORDER BY created_at ASC, id ASC
-"""
 
 
 @dataclass(frozen=True, slots=True)
 class DriftRow:
-    """One drift surface on one entity."""
-
     entity_id: str
     drift_class: str
     surface: str
@@ -55,8 +45,6 @@ class DriftRow:
 
 @dataclass(frozen=True, slots=True)
 class DriftScanResult:
-    """Deterministic scan output."""
-
     rows: list[DriftRow]
     total_rows: int
     distinct_entities: int
@@ -67,409 +55,283 @@ def scan_entity_state_drift(
     conn: sqlite3.Connection | None = None,
     after_entity: Callable[[str], None] | None = None,
 ) -> DriftScanResult:
-    """Run a full read-only drift scan; raises on connection failure or hook abort."""
-    owns_conn = conn is None
-    if owns_conn:
+    owns = conn is None
+    if owns:
         if not _db.check_cortex_db():
             raise RuntimeError("Cortex database unavailable")
         conn = _db.cortex_conn(read_only=True)
     assert conn is not None
     try:
-        pending: list[DriftRow] = []
-        entity_ids = enumerate_entity_ids(conn)
-        for entity_id in entity_ids:
-            if after_entity is not None:
-                after_entity(entity_id)
-            card = get_entity_card(conn, entity_id=entity_id, source="boot")
-            pending.extend(_detect_f1(entity_id, card))
-            pending.extend(_detect_f3(conn, entity_id, card))
+        out: list[DriftRow] = []
+        for eid in enumerate_entity_ids(conn):
+            if after_entity:
+                after_entity(eid)
+            card = get_entity_card(conn, entity_id=eid, source="boot")
+            out.extend(_f1(eid, card))
+            out.extend(_f3(conn, eid, card))
         for item in open_deadline_items(conn):
-            pending.extend(_detect_f2(conn, item))
-        return _finalize_rows(pending)
+            out.extend(_f2(conn, item))
+        return _pack(out)
     finally:
-        if owns_conn:
+        if owns:
             conn.close()
 
 
 def enumerate_entity_ids(conn: sqlite3.Connection) -> list[str]:
-    """Eligible entity population (A4)."""
-    table_cols = {
-        row[1] for row in conn.execute("PRAGMA table_info(entities)").fetchall()
-    }
-    if "status" in table_cols:
-        lifecycle_col = "COALESCE(status, '')"
-    else:
-        lifecycle_col = "COALESCE(lifecycle, '')"
-    excluded = ",".join(f"'{v}'" for v in _LIFECYCLE_EXCLUDED)
-    sql = (
-        f"SELECT id FROM entities WHERE {lifecycle_col} NOT IN ({excluded}) "
-        "ORDER BY id ASC"
-    )
-    rows = query(conn, sql)
-    return [str(r["id"]) for r in rows]
+    cols = {r[1] for r in conn.execute("PRAGMA table_info(entities)")}
+    col = "COALESCE(status,'')" if "status" in cols else "COALESCE(lifecycle,'')"
+    dead = ",".join(f"'{v}'" for v in _DEAD)
+    return [
+        str(r["id"])
+        for r in query(
+            conn, f"SELECT id FROM entities WHERE {col} NOT IN ({dead}) ORDER BY id"
+        )
+    ]
 
 
 def open_deadline_items(conn: sqlite3.Connection) -> list[DeadlineItem]:
-    """Open deadlines using the same filters as ``list_deadlines(include_resolved=False)``."""
     rows = query(conn, _DEADLINES_SQL)
-    deadline_ids = [str(r["deadline_id"]) for r in rows if r.get("deadline_id")]
-    resolved_by_assertion = _resolved_assertion_ids(conn, deadline_ids)
-    items: list[DeadlineItem] = []
+    resolved = _resolved_assertion_ids(
+        conn, [str(r["deadline_id"]) for r in rows if r.get("deadline_id")]
+    )
+    out: list[DeadlineItem] = []
     for row in rows:
         item = DeadlineItem(**row)
-        if item.deadline_id is None:
-            continue
-        assn_resolved = item.deadline_id in resolved_by_assertion
-        if _is_resolved(item) or assn_resolved:
-            continue
-        items.append(item)
-    return items
+        if item.deadline_id and not _is_resolved(item) and item.deadline_id not in resolved:
+            out.append(item)
+    return out
 
 
-def snapshot_table_counts(conn: sqlite3.Connection) -> dict[str, int]:
-    """Row counts for every user table (write-transaction tests)."""
-    tables = [
-        str(r[0])
-        for r in conn.execute(
-            "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'"
-        )
-    ]
-    return {
-        name: int(conn.execute(f"SELECT COUNT(*) FROM {name}").fetchone()[0])
-        for name in sorted(tables)
-    }
+def _pack(rows: list[DriftRow]) -> DriftScanResult:
+    seen, ordered = set(), []
+    for r in sorted(rows, key=lambda x: (x.entity_id, x.drift_class, x.surface)):
+        k = (r.entity_id, r.drift_class, r.surface)
+        if k not in seen:
+            seen.add(k)
+            ordered.append(r)
+    return DriftScanResult(ordered, len(ordered), len({r.entity_id for r in ordered}))
 
 
-def _finalize_rows(rows: list[DriftRow]) -> DriftScanResult:
-    seen: set[tuple[str, str, str]] = set()
-    ordered: list[DriftRow] = []
-    for row in sorted(
-        rows, key=lambda r: (r.entity_id, r.drift_class, r.surface, r.right_cite)
-    ):
-        key = (row.entity_id, row.drift_class, row.surface)
-        if key in seen:
-            continue
-        seen.add(key)
-        ordered.append(row)
-    entity_ids = {r.entity_id for r in ordered}
-    return DriftScanResult(
-        rows=ordered, total_rows=len(ordered), distinct_entities=len(entity_ids)
-    )
-
-
-def _domain_tokens(entity_id: str, name: str | None) -> set[str]:
-    raw = f"{entity_id} {name or ''}".lower()
-    parts = re.split(r"[:_\-\s]+", raw)
-    return {
-        p
-        for p in parts
-        if p and p not in _GENERIC_TOKENS and not p.isdigit() and len(p) > 1
-    }
-
-
-def _entity_row(conn: sqlite3.Connection, entity_id: str) -> dict[str, Any] | None:
-    rows = query(
-        conn,
-        "SELECT id, type, name, attributes, created_at FROM entities WHERE id = ?",
-        (entity_id,),
-    )
-    return rows[0] if rows else None
-
-
-def _parse_attributes(raw: object) -> dict[str, Any]:
+def _attrs(raw: object) -> dict[str, Any]:
     if isinstance(raw, dict):
         return raw
     if isinstance(raw, str):
-        decoded = json_decode(raw, fallback={})
-        return decoded if isinstance(decoded, dict) else {}
+        d = json_decode(raw, fallback={})
+        return d if isinstance(d, dict) else {}
     return {}
 
 
-def _has_affirmative_completion(attrs: dict[str, Any]) -> bool:
-    if attrs.get("application_submitted") is True:
-        return True
-    if attrs.get("enrollment_confirmed") is True:
-        return True
-    status = attrs.get("status")
-    if isinstance(status, str) and status.lower() == "submitted":
-        return True
-    return False
+def _true(attrs: dict[str, Any], key: str) -> bool:
+    v = attrs.get(key)
+    return v is True or (isinstance(v, str) and v.lower() == "true")
 
 
-def _text_has_negation(text: str | None) -> bool:
-    if not text:
+def _f1(eid: str, card: dict[str, object]) -> list[DriftRow]:
+    attrs = _attrs(card.get("attributes"))
+    if not (
+        _true(attrs, "application_submitted")
+        or _true(attrs, "enrollment_confirmed")
+        or (isinstance(attrs.get("status"), str) and attrs["status"].lower() == "submitted")
+    ):
+        return []
+    out: list[DriftRow] = []
+    for surface, text in (
+        ("summary_row", str(card.get("summary_row") or "")),
+        ("predicate_summary", str(card.get("predicate_summary") or "")),
+    ):
+        if not text or not _NEGATION_RE.search(text):
+            continue
+        cite = ",".join(
+            k
+            for k, ok in (
+                ("application_submitted", _true(attrs, "application_submitted")),
+                ("enrollment_confirmed", _true(attrs, "enrollment_confirmed")),
+            )
+            if ok
+        )
+        out.append(
+            DriftRow(eid, "F1", surface, text[:120], cite or "affirmative_attributes", None)
+        )
+    return out
+
+
+def _row(conn: sqlite3.Connection, eid: str) -> dict[str, Any] | None:
+    rs = query(
+        conn,
+        "SELECT id,name,attributes,created_at,updated_at FROM entities WHERE id=?",
+        (eid,),
+    )
+    return rs[0] if rs else None
+
+
+def _ck(row: dict[str, Any]) -> tuple[str, int]:
+    return (str(row.get("created_at") or ""), int(row["id"]))
+
+
+def _backed(a: dict[str, Any]) -> bool:
+    ev = str(a.get("evidence_uris") or "").strip()
+    return a.get("confidence") == "confirmed" and (
+        a.get("derivation_type") in _DERIV or ev not in ("", "[]", "null", "None")
+    )
+
+
+def _after(later: str | None, earlier: str | None) -> bool:
+    if not later or not earlier:
         return False
-    return _NEGATION_RE.search(text) is not None
-
-
-def _detect_f1(entity_id: str, card: dict[str, object]) -> list[DriftRow]:
-    attrs = _parse_attributes(card.get("attributes"))
-    if not _has_affirmative_completion(attrs):
-        return []
-    rows: list[DriftRow] = []
-    summary = str(card.get("summary_row") or "")
-    predicate = str(card.get("predicate_summary") or "")
-    for surface, text in (("summary_row", summary), ("predicate_summary", predicate)):
-        if not _text_has_negation(text):
-            continue
-        rows.append(
-            DriftRow(
-                entity_id=entity_id,
-                drift_class="F1",
-                surface=surface,
-                left_cite=text[:120] or surface,
-                right_cite=_affirmative_cite(attrs),
-                reason="affirmative_attributes_vs_negated_summary",
-            )
+    lo, ea = later.strip(), earlier.strip()
+    if " " in lo and "T" not in lo:
+        lo = lo.replace(" ", "T", 1)
+    if " " in ea and "T" not in ea:
+        ea = ea.replace(" ", "T", 1)
+    try:
+        return datetime.fromisoformat(lo.replace("Z", "+00:00")) > datetime.fromisoformat(
+            ea.replace("Z", "+00:00")
         )
-    return rows
+    except ValueError:
+        return lo > ea
 
 
-def _affirmative_cite(attrs: dict[str, Any]) -> str:
-    parts: list[str] = []
-    if attrs.get("application_submitted") is True:
-        parts.append("application_submitted=true")
-    if attrs.get("enrollment_confirmed") is True:
-        parts.append("enrollment_confirmed=true")
-    status = attrs.get("status")
-    if isinstance(status, str) and status.lower() == "submitted":
-        parts.append(f"status={status}")
-    return ",".join(parts) if parts else "affirmative_attributes"
-
-
-def _fetch_assertions(conn: sqlite3.Connection, entity_id: str) -> list[dict[str, Any]]:
-    return query(conn, _ASSERTIONS_SQL, (entity_id,))
-
-
-def _claim_ts(row: dict[str, Any]) -> tuple[str, int]:
-    observed = str(row.get("observed_at") or "")
-    created = str(row.get("created_at") or "")
-    ts = observed or created
-    return (ts, int(row["id"]))
-
-
-def _is_evidence_backed(row: dict[str, Any]) -> bool:
-    if row.get("confidence") == "confirmed":
-        return True
-    dt = row.get("derivation_type")
-    if dt in _EVIDENCE_DERIVATIONS:
-        return True
-    ev = row.get("evidence_uris")
-    if ev is not None and str(ev).strip() not in ("", "[]", "null", "None"):
-        return True
-    return False
-
-
-def _is_status_predicate(row: dict[str, Any]) -> bool:
-    pf = str(row.get("predicate_form") or "")
-    if pf.startswith("status("):
-        return True
-    claim = str(row.get("claim") or "").lower()
-    return claim.startswith("status(") or " current status" in claim
-
-
-def _detect_f3(
-    conn: sqlite3.Connection, entity_id: str, card: dict[str, object]
-) -> list[DriftRow]:
-    rows: list[DriftRow] = []
-    current_status = card.get("current_status")
-    if not isinstance(current_status, dict):
-        current_status = {}
-    withheld = current_status.get("withheld_newer")
+def _f3(conn: sqlite3.Connection, eid: str, card: dict[str, object]) -> list[DriftRow]:
+    out: list[DriftRow] = []
+    cs = card.get("current_status")
+    cs = cs if isinstance(cs, dict) else {}
+    withheld = cs.get("withheld_newer")
     if isinstance(withheld, list) and withheld:
-        for entry in withheld:
-            if not isinstance(entry, dict):
-                continue
-            aid = entry.get("assertion_id")
-            reason = entry.get("reason")
-            rows.append(
-                DriftRow(
-                    entity_id=entity_id,
-                    drift_class="F3",
-                    surface="current_status.withheld_newer",
-                    left_cite=str(current_status.get("source") or "served"),
-                    right_cite=f"assertion:{aid}",
-                    reason=str(reason) if reason is not None else None,
-                )
+        entry = withheld[0] if isinstance(withheld[0], dict) else {}
+        out.append(
+            DriftRow(
+                eid,
+                "F3",
+                "current_status.withheld_newer",
+                str(cs.get("source") or "served"),
+                f"assertion:{entry.get('assertion_id')}",
+                str(entry.get("reason")) if entry.get("reason") is not None else None,
             )
-
-    assertions = _fetch_assertions(conn, entity_id)
-    active = [a for a in assertions if a.get("superseded_by") is None]
-    served_source = current_status.get("source")
-    served_ts = ("", 0)
-    if served_source is not None:
+        )
+    active = [
+        a for a in query(conn, _ASQL, (eid,)) if a.get("superseded_by") is None
+    ]
+    served_key = ("", 0)
+    served_src = cs.get("source")
+    served_row: dict[str, Any] | None = None
+    if served_src is not None:
         try:
-            served_id = int(served_source)
+            sid = int(served_src)
         except (TypeError, ValueError):
-            served_id = None
-        if served_id is not None:
-            for row in active:
-                if int(row["id"]) == served_id:
-                    served_ts = _claim_ts(row)
+            sid = None
+        if sid is not None:
+            for a in active:
+                if int(a["id"]) == sid:
+                    served_row, served_key = a, _ck(a)
                     break
-
-    for row in active:
-        if not _is_status_predicate(row):
+    for a in active:
+        if not str(a.get("predicate_form") or "").startswith("status("):
             continue
-        if row.get("review_status") == "flagged":
+        if a.get("review_status") == "flagged" or not _backed(a) or _ck(a) <= served_key:
             continue
-        if not _is_evidence_backed(row):
-            continue
-        if _claim_ts(row) <= served_ts:
-            continue
-        rows.append(
+        out.append(
             DriftRow(
-                entity_id=entity_id,
-                drift_class="F3",
-                surface="current_status.served",
-                left_cite=f"assertion:{served_source}",
-                right_cite=f"assertion:{row['id']}",
-                reason="newer_confirmed_status_claim",
+                eid,
+                "F3",
+                "current_status.served",
+                f"assertion:{served_src}",
+                f"assertion:{a['id']}",
+                "newer_confirmed_status_claim",
             )
         )
-
-    served_conf = None
-    if isinstance(current_status.get("served"), dict):
-        served_conf = current_status["served"].get("confidence")
-    if served_conf == "believed":
-        for row in active:
-            if row.get("review_status") != "flagged":
+    served = cs.get("served") if isinstance(cs.get("served"), dict) else {}
+    grounded = served_row and (
+        served_row.get("derivation_type") in _DERIV
+        or str(served_row.get("evidence_uris") or "").strip()
+        not in ("", "[]", "null", "None")
+    )
+    if served.get("confidence") == "believed" and not grounded:
+        for a in active:
+            if (
+                a.get("review_status") != "flagged"
+                or not str(a.get("predicate_form") or "").startswith("status(")
+                or not _backed(a)
+                or _ck(a) <= served_key
+            ):
                 continue
-            if row.get("confidence") != "confirmed":
-                continue
-            if not _is_evidence_backed(row):
-                continue
-            rows.append(
+            out.append(
                 DriftRow(
-                    entity_id=entity_id,
-                    drift_class="F3",
-                    surface="current_status.believed_served",
-                    left_cite=f"assertion:{served_source}",
-                    right_cite=f"assertion:{row['id']}",
-                    reason="believed_served_vs_withheld_confirmed",
+                    eid,
+                    "F3",
+                    "current_status.believed_served",
+                    f"assertion:{served_src}",
+                    f"assertion:{a['id']}",
+                    "believed_served_vs_withheld_confirmed",
                 )
             )
-    return rows
+            break
+    return out
 
 
-def _has_fulfillment_evidence(
-    attrs: dict[str, Any], *, after_ts: str, assertion_rows: list[dict[str, Any]]
-) -> tuple[bool, str]:
-    """Return whether newer fulfillment evidence exists and a right_cite fragment."""
-    if attrs.get("enrollment_confirmed") is True:
-        return True, "enrollment_confirmed=true"
-    if attrs.get("application_submitted") is True:
-        return True, "application_submitted=true"
-    outcome = attrs.get("outcome")
-    if isinstance(outcome, str) and outcome in _FULFILLMENT_OUTCOMES:
-        return True, f"outcome={outcome}"
-    if attrs.get("resolution_status") == "resolved":
-        return True, "resolution_status=resolved"
-    if attrs.get("fulfillment_assertion_id") is not None:
-        return True, f"fulfillment_assertion_id={attrs['fulfillment_assertion_id']}"
-    for row in assertion_rows:
-        if row.get("superseded_by") is not None:
+def _tokens(eid: str, name: str | None) -> set[str]:
+    parts = re.split(r"[:_\-\s]+", f"{eid} {name or ''}".lower())
+    return {p for p in parts if p and p not in _GENERIC and not p.isdigit() and len(p) > 1}
+
+
+def _f2_cands(conn: sqlite3.Connection, eid: str) -> set[str]:
+    cands = {eid}
+    q = f"SELECT from_entity a,to_entity b FROM relationships WHERE {_REL_ON} AND (from_entity=? OR to_entity=?)"
+    for r in query(conn, q, (eid, eid)):
+        cands.update((str(r["a"]), str(r["b"])))
+    pq = f"SELECT from_entity pid FROM relationships WHERE to_entity=? AND {_REL_ON} UNION SELECT to_entity pid FROM relationships WHERE from_entity=? AND {_REL_ON}"
+    for p in query(conn, pq, (eid, eid)):
+        pid = str(p["pid"])
+        if not _tokens(pid, pid):
             continue
-        ts = _claim_ts(row)[0]
-        if after_ts and ts and ts <= after_ts:
-            continue
-        claim_u = str(row.get("claim") or "").upper()
-        if "RESOLVED" in claim_u:
-            continue
-        if attrs.get("enrollment_confirmed") or attrs.get("application_submitted"):
-            return True, f"assertion:{row['id']}"
-        if row.get("confidence") == "confirmed" and (
-            "enrollment" in claim_u.lower() or "confirm" in claim_u.lower()
-        ):
-            return True, f"assertion:{row['id']}"
-    return False, ""
+        sq = f"SELECT from_entity x FROM relationships WHERE to_entity=? AND {_REL_ON} UNION SELECT to_entity x FROM relationships WHERE from_entity=? AND {_REL_ON}"
+        for r in query(conn, sq, (pid, pid)):
+            cands.add(str(r["x"]))
+    return cands
 
 
-def _neighbor_ids(conn: sqlite3.Connection, entity_id: str) -> set[str]:
-    rows = query(
-        conn,
-        "SELECT from_entity, to_entity FROM relationships "
-        "WHERE type IN ('pertains_to','references','deadline_for','child_of') "
-        "AND (from_entity = ? OR to_entity = ?)",
-        (entity_id, entity_id),
-    )
-    neighbors: set[str] = {entity_id}
-    for row in rows:
-        neighbors.add(str(row["from_entity"]))
-        neighbors.add(str(row["to_entity"]))
-    return neighbors
-
-
-def _shared_parent_siblings(conn: sqlite3.Connection, entity_id: str) -> set[str]:
-    parent_rows = query(
-        conn,
-        "SELECT from_entity AS parent_id FROM relationships "
-        "WHERE to_entity = ? AND type IN ('pertains_to','references','deadline_for','child_of') "
-        "UNION "
-        "SELECT to_entity FROM relationships "
-        "WHERE from_entity = ? AND type IN ('pertains_to','references','deadline_for','child_of')",
-        (entity_id, entity_id),
-    )
-    siblings: set[str] = set()
-    for prow in parent_rows:
-        parent_id = str(prow["parent_id"])
-        parent_tokens = _domain_tokens(parent_id, parent_id)
-        if parent_tokens <= _GENERIC_TOKENS or not parent_tokens:
-            continue
-        sib_rows = query(
-            conn,
-            "SELECT from_entity AS eid FROM relationships WHERE to_entity = ? "
-            "AND type IN ('pertains_to','references','deadline_for','child_of') "
-            "UNION "
-            "SELECT to_entity FROM relationships WHERE from_entity = ? "
-            "AND type IN ('pertains_to','references','deadline_for','child_of')",
-            (parent_id, parent_id),
-        )
-        for srow in sib_rows:
-            siblings.add(str(srow["eid"]))
-    siblings.discard(entity_id)
-    return siblings
-
-
-def _detect_f2(conn: sqlite3.Connection, item: DeadlineItem) -> list[DriftRow]:
-    deadline_id = item.deadline_id
-    if not deadline_id:
+def _f2(conn: sqlite3.Connection, item: DeadlineItem) -> list[DriftRow]:
+    did = item.deadline_id
+    if not did:
         return []
-    deadline_row = _entity_row(conn, deadline_id)
-    if deadline_row is None:
-        deadline_row = _entity_row(conn, item.matter_id)
-    deadline_created = str((deadline_row or {}).get("created_at") or "")
-    deadline_tokens = _domain_tokens(
-        deadline_id, item.deadline_name or item.matter_name
-    )
-    candidates: set[str] = set()
-    candidates.update(_neighbor_ids(conn, item.matter_id))
-    candidates.update(_shared_parent_siblings(conn, item.matter_id))
-    if deadline_id != item.matter_id:
-        candidates.update(_neighbor_ids(conn, deadline_id))
-    rows: list[DriftRow] = []
-    for cand_id in sorted(candidates):
-        cand = _entity_row(conn, cand_id)
-        if cand is None:
+    drow = _row(conn, did) or _row(conn, item.matter_id)
+    after = str((drow or {}).get("created_at") or "")
+    dtoks = _tokens(did, item.deadline_name or item.matter_name)
+    cands = _f2_cands(conn, item.matter_id)
+    if did != item.matter_id:
+        cands |= _f2_cands(conn, did)
+    out: list[DriftRow] = []
+    for cid in sorted(cands):
+        ent = _row(conn, cid)
+        if not ent or not (dtoks & _tokens(cid, str(ent.get("name") or ""))):
             continue
-        cand_tokens = _domain_tokens(cand_id, str(cand.get("name") or ""))
-        if not deadline_tokens & cand_tokens:
+        attrs = _attrs(ent.get("attributes"))
+        if not any(_after(str(ent.get(k) or ""), after) for k in ("created_at", "updated_at")):
             continue
-        attrs = _parse_attributes(cand.get("attributes"))
-        assertions = _fetch_assertions(conn, cand_id)
-        has_evidence, cite_tail = _has_fulfillment_evidence(
-            attrs, after_ts=deadline_created, assertion_rows=assertions
-        )
-        if not has_evidence:
+        if _true(attrs, "enrollment_confirmed"):
+            tail = "enrollment_confirmed=true"
+        elif _true(attrs, "application_submitted"):
+            tail = "application_submitted=true"
+        elif isinstance(attrs.get("outcome"), str) and attrs["outcome"] in _OUTCOMES:
+            tail = f"outcome={attrs['outcome']}"
+        elif attrs.get("resolution_status") == "resolved":
+            tail = "resolution_status=resolved"
+        elif attrs.get("fulfillment_assertion_id") is not None:
+            tail = f"fulfillment_assertion_id={attrs['fulfillment_assertion_id']}"
+        else:
             continue
-        rows.append(
+        out.append(
             DriftRow(
-                entity_id=deadline_id,
-                drift_class="F2",
-                surface="deadline_list",
-                left_cite=deadline_id,
-                right_cite=f"{cand_id}:{cite_tail}" if cite_tail else cand_id,
-                reason="open_deadline_with_newer_fulfillment",
+                did,
+                "F2",
+                "deadline_list",
+                did,
+                f"{cid}:{tail}" if tail else cid,
+                "open_deadline_with_newer_fulfillment",
             )
         )
-    return rows
+    return out
+
+
+if __name__ == "__main__":
+    _r = scan_entity_state_drift()
+    print(f"distinct_entities={_r.distinct_entities} total_rows={_r.total_rows}")
