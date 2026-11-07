@@ -404,6 +404,15 @@ def test_handoff_resolved_model_banned() -> None:
     assert verdict.allowed is False
 
 
+def test_executor_override_model_banned() -> None:
+    verdict = check_model_ban(
+        resolved_model="cursor/grok-4.7",
+        explicit_pin=True,
+        workflow_key="team.handoff.executor_override",
+    )
+    assert verdict.allowed is False
+
+
 def test_giw_resume_path_bans_explicit_grok() -> None:
     verdict = check_model_ban(
         resolved_model="cursor/grok-4.7",
