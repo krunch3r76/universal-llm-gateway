@@ -234,6 +234,24 @@ def test_seat_unknown_claude_web() -> None:
 
 
 @pytest.mark.offline
+def test_seat_cursor_sdk_with_anthropic_model_routes_frontier() -> None:
+    """cursor-sdk + cloud_api model uses Stargate frontier (native API), not GIW cursor worker."""
+    plan = run_full_admit(
+        {
+            "op": "generate",
+            "seat": "cursor-sdk",
+            "model": "anthropic/claude-sonnet-5-5",
+            "job": "freeform",
+            "request_id": "t-sdk-seat-anthropic-frontier",
+        }
+    )
+    assert plan.get("admitted") is True, plan
+    assert plan.get("backend") == "frontier"
+    assert plan.get("seat") == "cursor-sdk"
+    assert plan.get("model") == "anthropic/claude-sonnet-5-5"
+
+
+@pytest.mark.offline
 @pytest.mark.parametrize("job", ["code-review", "delivery-review", "check-review"])
 def test_roleless_impresario_critic_admits_api_role(job: str) -> None:
     plan = run_full_admit(

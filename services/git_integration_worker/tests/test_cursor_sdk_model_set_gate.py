@@ -25,6 +25,9 @@ from services.git_integration_worker.routes import cursor_sdk as route_mod
 from services.git_integration_worker.app import create_app
 from services.git_integration_worker.tests.test_cursor_sdk_route import _dispatch_body
 
+# Not in CURSOR_MODEL_CAPABILITIES — park/nest/await refusal tests stay valid.
+_UNTRUSTED_CURSOR_MODEL = "cursor/claude-sonnet-5-ultra-fake"
+
 
 @pytest.fixture
 def client() -> TestClient:
@@ -92,7 +95,7 @@ def test_enforce_model_set_absent_in_production_giw() -> None:
     assert hits == []
 
 
-def test_http_refuses_argon_prefixed(
+def test_http_explicit_other_models_argon_passes_model_set(
     client: TestClient, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     bridge = MagicMock()
@@ -101,17 +104,16 @@ def test_http_refuses_argon_prefixed(
         "/api/v1/cursor/dispatch",
         json=_dispatch_body(model="cursor/gemini-4-argon"),
     )
-    assert resp.status_code == 422
     payload = resp.json()
-    assert payload["code"] == "CURSOR_MODEL_UNTRUSTED"
-    data = payload.get("data") or {}
-    assert data.get("validation_stage") == "model_set"
-    assert payload.get("retryable") is False
-    assert "cursor/composer-2.5" in (data.get("fix_hint") or "")
-    bridge.assert_not_called()
+    if resp.status_code == 422:
+        assert payload.get("code") != "CURSOR_MODEL_UNTRUSTED"
+        data = payload.get("data") or {}
+        assert data.get("validation_stage") != "model_set"
+    else:
+        assert resp.status_code in {200, 201, 202}
 
 
-def test_http_refuses_bare_argon(
+def test_http_admits_bare_other_models_pool_id(
     client: TestClient, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     bridge = MagicMock()
@@ -119,6 +121,20 @@ def test_http_refuses_bare_argon(
     resp = client.post(
         "/api/v1/cursor/dispatch",
         json=_dispatch_body(model="gemini-4-argon"),
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body.get("code") != "CURSOR_MODEL_UNTRUSTED"
+
+
+def test_http_refuses_untrusted_bare_model(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    bridge = MagicMock()
+    monkeypatch.setattr(route_mod, "launch_sdk_bridge", bridge)
+    resp = client.post(
+        "/api/v1/cursor/dispatch",
+        json=_dispatch_body(model="claude-sonnet-5-ultra-fake"),
     )
     assert resp.status_code == 422
     assert resp.json()["code"] == "CURSOR_MODEL_UNTRUSTED"
@@ -133,23 +149,28 @@ def _bus() -> AsyncMock:
 
 
 def _seed_parked_non_member(
-    dispatch_id: str, *, tmp_path: Path, thread_id: str = "22144"
+    dispatch_id: str,
+    *,
+    tmp_path: Path,
+    thread_id: str = "22144",
+    stored_model: str = _UNTRUSTED_CURSOR_MODEL,
+    resolved_model: str = "claude-sonnet-5-ultra-fake",
 ) -> None:
     ledger = CursorDispatchLedger.instance()
     req = CursorDispatchRequest(
         thread_id=thread_id,
-        model="cursor/gemini-4-argon",
+        model=stored_model,
         dispatch_id=dispatch_id,
         execution_id=f"exec-{dispatch_id}",
         caller_agent="cursor",
-        message="parked argon",
+        message="parked non-member",
     )
     ledger.admit(
         req=req,
         fingerprint=ledger.fingerprint(req),
         execution_id=req.execution_id,
         caller_agent="cursor",
-        resolved_model="gemini-4-argon",
+        resolved_model=resolved_model,
         admission=CursorDispatchResponse(
             admitted=True, dispatch_id=dispatch_id, thread_id=thread_id, model_id="m"
         ),
@@ -159,7 +180,7 @@ def _seed_parked_non_member(
     )
     ledger.merge_record_json(
         dispatch_id=dispatch_id,
-        patch={"model": "cursor/gemini-4-argon"},
+        patch={"model": stored_model},
     )
     ledger.mark_running(dispatch_id=dispatch_id)
     ledger.record_sdk_identity(
@@ -196,13 +217,18 @@ def _seed_parked_non_member(
 
 
 @pytest.mark.asyncio
-async def test_t7_1_park_resume_refuses_stored_non_member(
+async def test_t7_1_park_resume_admits_stored_other_models_pool(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """T7-1 / T7-8: park re-admit refuses; no child row; bridge not launched."""
+    """Park re-admit admits stored Other Models pool rows."""
     bridge = MagicMock()
     monkeypatch.setattr(route_mod, "launch_sdk_bridge", bridge)
-    _seed_parked_non_member("p-argon", tmp_path=tmp_path)
+    _seed_parked_non_member(
+        "p-argon",
+        tmp_path=tmp_path,
+        stored_model="cursor/gemini-4-argon",
+        resolved_model="gemini-4-argon",
+    )
     started = (datetime.now(UTC) - timedelta(hours=1)).isoformat()
     summary = await resume_parked_dispatches(
         cfg=load_config(),
@@ -215,8 +241,31 @@ async def test_t7_1_park_resume_refuses_stored_non_member(
         code_version="gate-test",
         bus=_bus(),
     )
-    assert ("p-argon", "CURSOR_MODEL_UNTRUSTED") in summary.refused
-    child_id = "p-argon-r1"
+    assert ("p-argon", "p-argon-r1") in summary.admitted
+
+
+@pytest.mark.asyncio
+async def test_t7_1_park_resume_refuses_stored_non_member(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """T7-1 / T7-8: park re-admit refuses untrusted model; no child row."""
+    bridge = MagicMock()
+    monkeypatch.setattr(route_mod, "launch_sdk_bridge", bridge)
+    _seed_parked_non_member("p-fake", tmp_path=tmp_path)
+    started = (datetime.now(UTC) - timedelta(hours=1)).isoformat()
+    summary = await resume_parked_dispatches(
+        cfg=load_config(),
+        controller=WorkAdmissionController(
+            ledger=CursorDispatchLedger.instance(),
+            worker_id="w",
+            pid=0,
+            worker_started_at=started,
+        ),
+        code_version="gate-test",
+        bus=_bus(),
+    )
+    assert ("p-fake", "CURSOR_MODEL_UNTRUSTED") in summary.refused
+    child_id = "p-fake-r1"
     with CursorDispatchLedger.instance()._connect() as conn:
         row = conn.execute(
             "SELECT dispatch_id FROM cursor_sdk_dispatches WHERE dispatch_id=?",
@@ -383,11 +432,11 @@ async def test_t7_7_conductor_park_refusal_does_not_stamp_hop_successor(
         "services.git_integration_worker.cursor_sdk_park_resume._stamp_hop_successor",
         stamp,
     )
-    dispatch_id = "p-cond-argon"
+    dispatch_id = "p-cond-fake"
     ledger = CursorDispatchLedger.instance()
     req = CursorDispatchRequest(
         thread_id="22144",
-        model="cursor/gemini-4-argon",
+        model=_UNTRUSTED_CURSOR_MODEL,
         dispatch_id=dispatch_id,
         execution_id=f"exec-{dispatch_id}",
         caller_agent="cursor",
@@ -399,12 +448,12 @@ async def test_t7_7_conductor_park_refusal_does_not_stamp_hop_successor(
         fingerprint=ledger.fingerprint(req),
         execution_id=req.execution_id,
         caller_agent="cursor",
-        resolved_model="gemini-4-argon",
+        resolved_model="claude-sonnet-5-ultra-fake",
         admission=CursorDispatchResponse(
             admitted=True,
             dispatch_id=dispatch_id,
             thread_id=req.thread_id,
-            model_id="gemini-4-argon",
+            model_id="claude-sonnet-5-ultra-fake",
         ),
         contract="conductor",
         source_repo=str(load_config().source_repo),
@@ -413,7 +462,7 @@ async def test_t7_7_conductor_park_refusal_does_not_stamp_hop_successor(
     )
     ledger.merge_record_json(
         dispatch_id=dispatch_id,
-        patch={"model": "cursor/gemini-4-argon", "contract": "conductor"},
+        patch={"model": _UNTRUSTED_CURSOR_MODEL, "contract": "conductor"},
     )
     ledger.mark_running(dispatch_id=dispatch_id)
     ledger.record_sdk_identity(
@@ -589,12 +638,12 @@ async def test_t7_3_nest_refuses_non_member_and_releases_handed_slot_once(
     for did in (parent_id, child_id):
         ledger.merge_record_json(
             dispatch_id=did,
-            patch={"model": "cursor/gemini-4-argon"},
+            patch={"model": _UNTRUSTED_CURSOR_MODEL},
         )
         with ledger._connect() as conn:
             conn.execute(
                 "UPDATE cursor_sdk_dispatches SET resolved_model=? WHERE dispatch_id=?",
-                ("gemini-4-argon", did),
+                ("claude-sonnet-5-ultra-fake", did),
             )
     assert claim_nest_parent_exit(parent_id) == child_id
     ledger.mark_terminal(dispatch_id=child_id, terminal_status="completed")
@@ -635,12 +684,12 @@ async def test_t7_2_await_refusal_cap_expires_non_member(
 
     monkeypatch.setenv(AWAIT_REPLY_FLAG_ENV, "1")
     monkeypatch.setattr(await_mod, "_MAX_RESUME_ATTEMPTS", 2)
-    dispatch_id = "d-await-argon"
+    dispatch_id = "d-await-fake"
     _seed_member_row(
         dispatch_id,
         tmp_path=tmp_path,
-        stored_model="cursor/gemini-4-argon",
-        resolved_model="gemini-4-argon",
+        stored_model=_UNTRUSTED_CURSOR_MODEL,
+        resolved_model="claude-sonnet-5-ultra-fake",
     )
     await_h._record_generate(tmp_path, dispatch_id)
     bus = await_h._bus()

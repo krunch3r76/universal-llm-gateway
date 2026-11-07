@@ -54,21 +54,27 @@ CURSOR_SDK_ADMITTED_MODELS_PREFIXED: Final[tuple[str, ...]] = (
     "cursor/grok-4.7",
 )
 
-
-def cursor_sdk_model_set_fix_hint() -> str:
-    """Actionable hint when a cursor-sdk model pin is outside the admitted pair."""
+def cursor_sdk_model_set_fix_hint(*, explicit_pin: bool = False) -> str:
+    """Actionable hint when a cursor-sdk model pin fails admission."""
+    if explicit_pin:
+        return (
+            "Explicit cursor-sdk pins must name a carded cursor/ id on the "
+            "Cursor Models or Other Models pool; omit model= for composer-2.5 "
+            "or grok-4.7 defaults."
+        )
     return (
-        "Cursor-sdk generate admits only cursor/composer-2.5 and "
-        "cursor/grok-4.7; pin one of those models."
+        "Omit-model on cursor-sdk resolves to cursor/composer-2.5 or "
+        "cursor/grok-4.7; pin model= explicitly for Other Models pool ids "
+        "(e.g. cursor/claude-opus-5-5)."
     )
 
 
 def cursor_sdk_model_set_details(
-    *, requested_model: str | None = None
+    *, requested_model: str | None = None, explicit_pin: bool = False
 ) -> dict[str, Any]:
     """Shared Stargate ``details`` payload for model-set refusals."""
     details: dict[str, Any] = {
-        "fix_hint": cursor_sdk_model_set_fix_hint(),
+        "fix_hint": cursor_sdk_model_set_fix_hint(explicit_pin=explicit_pin),
         "allowed_models": list(CURSOR_SDK_ADMITTED_MODELS_PREFIXED),
     }
     if requested_model is not None:
@@ -77,14 +83,23 @@ def cursor_sdk_model_set_details(
     return details
 
 
-def is_cursor_sdk_model_admitted(model: str) -> bool:
-    """True when *model* canonicalizes to a member of ``CURSOR_SDK_ADMITTED_MODELS``."""
+def is_cursor_sdk_model_admitted(model: str, *, explicit_pin: bool = False) -> bool:
+    """True when *model* is admitted for cursor-sdk generate.
+
+    Omit path (``explicit_pin=False``): only ``CURSOR_SDK_ADMITTED_MODELS``.
+    Explicit ``model=`` pin (``explicit_pin=True``): any carded cursor id; Other
+    Models pool pins still pass through the pool fence at prepare time.
+    """
     if not model or not str(model).strip():
         return False
     try:
         bare = canonical_cursor_bare_id(model)
     except ValueError:
         return False
+    if is_cursor_model_denied(model):
+        return False
+    if explicit_pin:
+        return bare in CURSOR_MODEL_CAPABILITIES
     return bare in CURSOR_SDK_ADMITTED_MODELS
 
 
@@ -256,6 +271,8 @@ CURSOR_MODEL_CAPABILITIES: Final[dict[str, ModelCapability]] = {
             "fast": "false",
         },
         instruction_profile="reasoner",
+        # Knob surface aligned with claude-opus-5 family; stamp for cursor-sdk admit.
+        probed_at="2026-10-03",
     ),
     "claude-sonnet-5": ModelCapability(
         knobs={
@@ -269,9 +286,11 @@ CURSOR_MODEL_CAPABILITIES: Final[dict[str, ModelCapability]] = {
             "effort": "high",
         },
         instruction_profile="reasoner",
+        # Live ListModels probe 2026-07-14 — same knob surface as claude-fable-5.
+        probed_at="2026-07-14",
     ),
     # Sonnet 5.5. Knob surface mirrored from claude-sonnet-5.
-    # No ListModels probe on this admission (2026-09-28).
+    # Inherits sonnet-5 ListModels stamp until a diverging probe.
     "claude-sonnet-5-5": ModelCapability(
         knobs={
             "thinking": KnobSpec(accepted=("false", "true"), default="true"),
@@ -284,6 +303,7 @@ CURSOR_MODEL_CAPABILITIES: Final[dict[str, ModelCapability]] = {
             "effort": "high",
         },
         instruction_profile="reasoner",
+        probed_at="2026-07-14",
     ),
     # Live ListModels probe 2026-07-14 — same knob surface as claude-sonnet-5
     # (thinking/context/effort; no fast; no cyber fixed_param).
@@ -332,6 +352,7 @@ CURSOR_MODEL_CAPABILITIES: Final[dict[str, ModelCapability]] = {
         },
         default_variant={"context": "272k", "reasoning": "medium", "fast": "false"},
         instruction_profile="reasoner",
+        probed_at="2026-10-16",
     ),
     # GPT-5.6 family (GA 2026-07-09) — knobs mirrored from gpt-5.5 until live
     # ListModels widens accepted sets. Prefer explicit tier ids; bare gpt-5.6 → Sol.
@@ -345,6 +366,7 @@ CURSOR_MODEL_CAPABILITIES: Final[dict[str, ModelCapability]] = {
         },
         default_variant={"context": "272k", "reasoning": "medium", "fast": "false"},
         instruction_profile="reasoner",
+        probed_at="2026-10-16",
     ),
     "gpt-5.6-terra": ModelCapability(
         knobs={
@@ -356,6 +378,7 @@ CURSOR_MODEL_CAPABILITIES: Final[dict[str, ModelCapability]] = {
         },
         default_variant={"context": "272k", "reasoning": "medium", "fast": "false"},
         instruction_profile="reasoner",
+        probed_at="2026-10-16",
     ),
     "gpt-5.6-luna": ModelCapability(
         knobs={
@@ -367,6 +390,7 @@ CURSOR_MODEL_CAPABILITIES: Final[dict[str, ModelCapability]] = {
         },
         default_variant={"context": "272k", "reasoning": "medium", "fast": "false"},
         instruction_profile="reasoner",
+        probed_at="2026-10-16",
     ),
     # Meta Muse Spark 1.3 (Cursor GA 2026-09-09) — first Meta provider model.
     # Knobs seeded from cursor.com/docs/models/muse-spark-1-3 (six effort levels,
@@ -426,6 +450,7 @@ CURSOR_MODEL_CAPABILITIES: Final[dict[str, ModelCapability]] = {
         knobs={},
         default_variant={},
         instruction_profile="mechanical",
+        probed_at="2026-10-17",
     ),
     # GA 2026-07-21 — successor to gemini-3.5-flash; effort knob includes minimal
     # (capability subset — not WIRE_LADDER vocabulary).
@@ -437,6 +462,7 @@ CURSOR_MODEL_CAPABILITIES: Final[dict[str, ModelCapability]] = {
         },
         default_variant={"effort": "high"},
         instruction_profile="mechanical",
+        probed_at="2026-10-17",
     ),
     # Live ListModels probe 2026-10-17 (dispatch 3dedf4295603-0581f0b9)
     "gemini-3.7-flash": ModelCapability(
@@ -469,11 +495,13 @@ CURSOR_MODEL_CAPABILITIES: Final[dict[str, ModelCapability]] = {
         },
         default_variant={"reasoning": "high"},
         instruction_profile="reasoner",
+        probed_at="2026-10-16",
     ),
     "kimi-k2.7-code": ModelCapability(
         knobs={},
         default_variant={},
         instruction_profile="mechanical",
+        probed_at="2026-10-16",
     ),
     "claude-haiku-4-5": ModelCapability(
         knobs={
@@ -481,6 +509,7 @@ CURSOR_MODEL_CAPABILITIES: Final[dict[str, ModelCapability]] = {
         },
         default_variant={"thinking": "true"},
         instruction_profile="mechanical",
+        probed_at="2026-10-01",
     ),
     # Cursor Auto. ListModels id is ``default`` (no parameters). Card id is
     # ``auto`` so ``cursor/auto`` admits. ``fast`` and ``effort`` are absent:

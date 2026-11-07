@@ -18,6 +18,7 @@ from implement_admission.workflow_registry import (
     load_auto_judgment_default_model,
     load_workflow_registry,
 )
+from model_id import ModelId
 
 from ._envelope import Backend, is_cdp_model, is_cursor_substrate_model, reject_envelope
 
@@ -74,6 +75,15 @@ def _sdk_admission(
     return is_cursor_substrate_model(model)
 
 
+def _cloud_api_model(model: str | None) -> bool:
+    if not model or not str(model).strip():
+        return False
+    try:
+        return ModelId.parse(str(model)).backend_type == "cloud_api"
+    except (TypeError, ValueError):
+        return False
+
+
 def _select_backend(
     *,
     role: str | None,
@@ -82,6 +92,14 @@ def _select_backend(
 ) -> Backend:
     if is_cdp_model(model):
         return "cdp"
+    # seat=cursor-sdk + anthropic/* (or other cloud_api) uses Stargate frontier path,
+    # not the Cursor IDE SDK worker (native Anthropic API transport).
+    if (
+        seat is not None
+        and normalize_agent_slug(str(seat)) == "cursor-sdk"
+        and _cloud_api_model(model)
+    ):
+        return "frontier"
     if role is not None and normalize_agent_slug(role) == "cursor-sdk":
         pass
     elif seat is not None and str(seat).strip() and _sdk_admission(
@@ -129,11 +147,20 @@ def _resolve_sdk_target(
         raise ValueError("sdk_generate_model_invalid")
     if not resolved.startswith("cursor/"):
         raise ValueError("sdk_generate_model_invalid")
+    explicit_pin = bool(model and str(model).strip())
     if profile.family == "cursor" and profile.platform == "sdk":
         if is_cursor_model_denied(resolved):
-            raise ValueError("sdk_generate_model_invalid")
-        if not is_cursor_sdk_model_admitted(resolved):
-            raise ValueError("sdk_generate_model_invalid")
+            raise ValueError(
+                "sdk_generate_model_invalid_explicit"
+                if explicit_pin
+                else "sdk_generate_model_invalid"
+            )
+        if not is_cursor_sdk_model_admitted(resolved, explicit_pin=explicit_pin):
+            raise ValueError(
+                "sdk_generate_model_invalid_explicit"
+                if explicit_pin
+                else "sdk_generate_model_invalid"
+            )
     elif profile.allowed_models and resolved not in profile.allowed_models:
         raise ValueError("sdk_generate_model_invalid")
     if workflow_override:
@@ -170,13 +197,14 @@ def _seat_field_error(exc: ValueError) -> dict[str, Any]:
             field="seat",
             reason="SDK substrate required",
         )
-    if code == "sdk_generate_model_invalid":
+    if code in {"sdk_generate_model_invalid", "sdk_generate_model_invalid_explicit"}:
+        explicit = code.endswith("_explicit")
         return reject_envelope(
             status_code=422,
             code="sdk_generate_model_invalid",
             field="model",
             reason="model is outside the cursor-sdk admitted set",
-            details=cursor_sdk_model_set_details(),
+            details=cursor_sdk_model_set_details(explicit_pin=explicit),
         )
     return reject_envelope(
         status_code=422,

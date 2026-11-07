@@ -74,8 +74,7 @@ def _cursor_card_probed_at_for_admit_tests(monkeypatch: pytest.MonkeyPatch) -> N
 
     stamped: dict[str, cap_mod.ModelCapability] = {}
     for model_id, cap in cap_mod.CURSOR_MODEL_CAPABILITIES.items():
-        # sonnet-5-5 stays unprobed so admit tests see CURSOR_MODEL_UNPROBED.
-        if cap.probed_at is not None or model_id == "claude-sonnet-5-5":
+        if cap.probed_at is not None:
             stamped[model_id] = cap
         else:
             stamped[model_id] = replace(cap, probed_at="test-probe-stamp")

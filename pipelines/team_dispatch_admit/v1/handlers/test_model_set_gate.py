@@ -15,8 +15,8 @@ from .test_handlers import run_full_admit
 def _model_set_details(plan: dict) -> dict:
     details = plan.get("details") or {}
     assert "fix_hint" in details
-    assert "cursor/composer-2.5" in details["fix_hint"]
-    assert "cursor/grok-4.7" in details["fix_hint"]
+    hint = details["fix_hint"]
+    assert "composer-2.5" in hint and "grok-4.7" in hint
     assert details.get("allowed_models") == [
         "cursor/composer-2.5",
         "cursor/grok-4.7",
@@ -25,7 +25,7 @@ def _model_set_details(plan: dict) -> dict:
 
 
 @pytest.mark.offline
-def test_stargate_admit_refuses_argon_prefixed() -> None:
+def test_stargate_admit_explicit_other_models_argon() -> None:
     plan = run_full_admit(
         {
             "op": "generate",
@@ -34,11 +34,8 @@ def test_stargate_admit_refuses_argon_prefixed() -> None:
             "request_id": "ms-argon-p",
         }
     )
-    assert plan.get("admitted") is False
-    assert plan.get("status_code") == 422
-    assert plan.get("code") == "sdk_generate_model_invalid"
-    assert plan.get("field") == "model"
-    _model_set_details(plan)
+    assert plan.get("admitted") is True, plan
+    assert plan.get("model") == "cursor/gemini-4-argon"
 
 
 @pytest.mark.offline
@@ -72,7 +69,21 @@ def test_stargate_admit_members() -> None:
 
 
 @pytest.mark.offline
-def test_conductor_refuses_non_member_cursor_model() -> None:
+def test_stargate_admit_explicit_other_models_pool_pin() -> None:
+    plan = run_full_admit(
+        {
+            "op": "generate",
+            "seat": "cursor-sdk",
+            "model": "cursor/claude-opus-5-5",
+            "request_id": "ms-opus-explicit",
+        }
+    )
+    assert plan.get("admitted") is True, plan
+    assert plan.get("model") == "cursor/claude-opus-5-5"
+
+
+@pytest.mark.offline
+def test_conductor_admits_explicit_other_models_argon() -> None:
     plan = run_full_admit(
         {
             "op": "generate",
@@ -82,9 +93,8 @@ def test_conductor_refuses_non_member_cursor_model() -> None:
             "source_ref": "todo:model-set-test",
         }
     )
-    assert plan.get("admitted") is False
-    assert plan.get("code") == "sdk_generate_model_invalid"
-    _model_set_details(plan)
+    assert plan.get("admitted") is True, plan
+    assert plan.get("model") == "cursor/gemini-4-argon"
 
 
 @pytest.mark.offline
@@ -140,14 +150,15 @@ def test_workflow_cursor_models_are_admitted() -> None:
                 assert is_cursor_sdk_model_admitted(str(model)), role
 
 
-def test_advisor_model_not_admitted() -> None:
+def test_advisor_model_not_admitted_on_omit_path() -> None:
     from cursor_capabilities import is_cursor_sdk_model_admitted
 
     assert is_cursor_sdk_model_admitted(ADVISOR_MODEL) is False
+    assert is_cursor_sdk_model_admitted(ADVISOR_MODEL, explicit_pin=True) is True
 
 
 @pytest.mark.offline
-def test_advisor_model_stargate_admit_refused() -> None:
+def test_advisor_model_stargate_admit_explicit_pin() -> None:
     plan = run_full_admit(
         {
             "op": "generate",
@@ -156,8 +167,8 @@ def test_advisor_model_stargate_admit_refused() -> None:
             "request_id": "ms-advisor-pin",
         }
     )
-    assert plan.get("admitted") is False
-    assert plan.get("code") == "sdk_generate_model_invalid"
+    assert plan.get("admitted") is True, plan
+    assert plan.get("model") == ADVISOR_MODEL
 
 
 def test_comment_only_yaml_unchanged() -> None:

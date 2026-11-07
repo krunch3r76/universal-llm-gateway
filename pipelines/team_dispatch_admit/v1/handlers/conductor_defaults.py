@@ -98,17 +98,18 @@ def evaluate_conductor_defaults(
                 pipe = str(role_block.get("model") or "").strip()
             if not model or model == pipe:
                 model = floor
+    explicit_pin = bool(str(opts.get("model") or "").strip())
     if (
         model
         and is_cursor_substrate_model(model)
-        and not is_cursor_sdk_model_admitted(model)
+        and not is_cursor_sdk_model_admitted(model, explicit_pin=explicit_pin)
     ):
         return reject_envelope(
             status_code=422,
             code="sdk_generate_model_invalid",
             field="model",
             reason="model is outside the cursor-sdk admitted set",
-            details=cursor_sdk_model_set_details(),
+            details=cursor_sdk_model_set_details(explicit_pin=explicit_pin),
         )
     hop_successor_default = resolve_hop_successor_default_from_pipeline()
     source_ref = str(opts.get("source_ref") or "").strip()

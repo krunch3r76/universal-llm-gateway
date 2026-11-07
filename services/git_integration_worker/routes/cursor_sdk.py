@@ -4063,7 +4063,7 @@ async def admit_cursor_dispatch(
         is_cursor_sdk_model_admitted,
     )
 
-    if not is_cursor_sdk_model_admitted(req.model):
+    if not is_cursor_sdk_model_admitted(req.model, explicit_pin=True):
         return _reject_pre_admission(
             req,
             worker_error_code="CURSOR_MODEL_UNTRUSTED",
@@ -4074,7 +4074,7 @@ async def admit_cursor_dispatch(
             validation_stage="model_set",
             retryable=False,
             extra_data={
-                "fix_hint": cursor_sdk_model_set_fix_hint(),
+                "fix_hint": cursor_sdk_model_set_fix_hint(explicit_pin=True),
                 "allowed_models": ["cursor/composer-2.5", "cursor/grok-4.7"],
             },
         )

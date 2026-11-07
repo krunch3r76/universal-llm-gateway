@@ -216,6 +216,7 @@ async def prepare_cursor_sdk_generate(
     from .admission import FrontierEndpointError
 
     raw_model = str(model).strip() if model else ""
+    explicit_pin = bool(raw_model)
     if raw_model:
         resolved_model = raw_model
     else:
@@ -229,7 +230,9 @@ async def prepare_cursor_sdk_generate(
             reason="model is outside the cursor-sdk admitted set",
             status_code=422,
             code="sdk_generate_model_invalid",
-            details=cursor_sdk_model_set_details(requested_model=raw_model or None),
+            details=cursor_sdk_model_set_details(
+                requested_model=raw_model or None, explicit_pin=explicit_pin
+            ),
         )
     if not resolved_model.startswith("cursor/"):
         raise FrontierEndpointError(
@@ -238,7 +241,9 @@ async def prepare_cursor_sdk_generate(
             reason="model is outside the cursor-sdk admitted set",
             status_code=422,
             code="sdk_generate_model_invalid",
-            details=cursor_sdk_model_set_details(requested_model=resolved_model),
+            details=cursor_sdk_model_set_details(
+                requested_model=resolved_model, explicit_pin=explicit_pin
+            ),
         )
     enforce_check_review_substrate_admission(
         role, resolved_model, request_id=request_id, job=effective_contract
@@ -250,16 +255,20 @@ async def prepare_cursor_sdk_generate(
             reason="model is outside the cursor-sdk admitted set",
             status_code=422,
             code="sdk_generate_model_invalid",
-            details=cursor_sdk_model_set_details(requested_model=resolved_model),
+            details=cursor_sdk_model_set_details(
+                requested_model=resolved_model, explicit_pin=explicit_pin
+            ),
         )
-    if not is_cursor_sdk_model_admitted(resolved_model):
+    if not is_cursor_sdk_model_admitted(resolved_model, explicit_pin=explicit_pin):
         raise FrontierEndpointError(
             request_id=request_id,
             field="model",
             reason="model is outside the cursor-sdk admitted set",
             status_code=422,
             code="sdk_generate_model_invalid",
-            details=cursor_sdk_model_set_details(requested_model=resolved_model),
+            details=cursor_sdk_model_set_details(
+                requested_model=resolved_model, explicit_pin=explicit_pin
+            ),
         )
     from .cursor_sdk_model_pin import refuse_code_contract_model_mismatch
 

@@ -11,6 +11,7 @@ from cursor_capabilities import (
     cursor_sdk_model_set_fix_hint,
     is_cursor_sdk_model_admitted,
 )
+from cursor_capabilities.model_pools import OTHER_MODELS_BARE
 
 
 def test_cursor_sdk_admitted_models_constant() -> None:
@@ -35,7 +36,6 @@ def test_is_cursor_sdk_model_admitted_members(model: str) -> None:
 @pytest.mark.parametrize(
     "model",
     [
-        "cursor/gemini-4-argon",
         "gemini-4-argon",
         "cursor/Gemini-4-Argon",
         "cursor/auto",
@@ -69,3 +69,25 @@ def test_fix_hint_names_both_pair_ids() -> None:
     hint = cursor_sdk_model_set_fix_hint()
     assert "cursor/composer-2.5" in hint
     assert "cursor/grok-4.7" in hint
+
+
+def test_explicit_pin_admits_other_models_pool() -> None:
+    assert (
+        is_cursor_sdk_model_admitted("cursor/claude-opus-5-5", explicit_pin=True)
+        is True
+    )
+    assert is_cursor_sdk_model_admitted("cursor/claude-opus-5-5") is False
+
+
+def test_explicit_pin_admits_all_other_models_pool_including_advisor() -> None:
+    assert (
+        is_cursor_sdk_model_admitted("cursor/gemini-4-argon", explicit_pin=True)
+        is True
+    )
+    assert is_cursor_sdk_model_admitted("cursor/gemini-4-argon") is False
+
+
+@pytest.mark.parametrize("bare_id", sorted(OTHER_MODELS_BARE))
+def test_explicit_pin_admits_every_other_models_pool_card(bare_id: str) -> None:
+    assert is_cursor_sdk_model_admitted(f"cursor/{bare_id}", explicit_pin=True) is True
+    assert is_cursor_sdk_model_admitted(f"cursor/{bare_id}") is False

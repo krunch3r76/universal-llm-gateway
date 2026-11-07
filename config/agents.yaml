@@ -311,8 +311,9 @@ profiles:
     confirm_and_proceed: false
     addenda: []
     auto_dispatchable: true
-    # F-2: cursor/sdk admission is allowlist-bound to cursor/composer-2.5 and
-    # cursor/grok-4.7 (CURSOR_SDK_ADMITTED_MODELS); CURSOR_DENIED_MODELS is an extra layer.
+    # F-2: omit-model on cursor/sdk resolves to cursor/composer-2.5 and
+    # cursor/grok-4.7 (CURSOR_SDK_ADMITTED_MODELS). Explicit model= pins admit
+    # carded Other Models pool ids; CURSOR_DENIED_MODELS is an extra layer.
     # Knob trust lives on CURSOR_MODEL_CAPABILITIES, not here.
     # Knob trust per model id lives in libs/cursor_capabilities/cursor_capabilities.py.
     # Every contract (answer/confer/ask/investigate/implement/verify/seed/recon/
