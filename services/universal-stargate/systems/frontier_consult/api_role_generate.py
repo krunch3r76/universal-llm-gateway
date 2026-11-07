@@ -189,51 +189,40 @@ async def dispatch_api_role_generate(
     last_user = prompt_resolution.text
     review_layer_payload: dict[str, Any] | None = None
     if contract in ("code-review", "check-review", "delivery-review"):
-        from review_layer.detect import detect_review_targets, select_review_target
-        from review_layer.materialize import (
-            ReviewTargetUnreachable,
-            format_review_layer_prompt_block,
-            layer_uri,
-            materialize_review_layer,
-        )
-
-        detection = detect_review_targets(last_user)
-        if not detection.layer_present and detection.targets:
-            target = select_review_target(detection)
-            if target is not None:
-                try:
-                    manifest = materialize_review_layer(
-                        layer_id=request_id,
-                        head_ref=target.head,
-                        base_ref=target.base,
-                    )
-                except (ReviewTargetUnreachable, OSError) as exc:
-                    fix_hint = (
-                        "Commit the lane branch, pass review_head: <ref|sha> on a "
-                        "prompt line, or hand-materialize "
-                        "cortex://tmp/review-layers/<id>/ and cite it in the prompt."
-                    )
-                    raise FrontierEndpointError(
-                        request_id=request_id,
-                        field="prompt",
-                        reason=str(
-                            getattr(exc, "reason", None) or exc
-                        ),
-                        status_code=422,
-                        code="REVIEW_TARGET_UNREACHABLE",
-                        details={"fix_hint": fix_hint},
-                    ) from exc
-                if manifest is not None:
-                    review_layer_payload = {
-                        "uri": layer_uri(request_id),
-                        "base_sha": manifest.base_sha,
-                        "head_sha": manifest.head_sha,
-                        "diff_sha256": manifest.diff_sha256,
-                    }
-                    last_user = last_user + format_review_layer_prompt_block(
-                        layer_id=request_id,
-                        manifest=manifest,
-                    )
+        try:
+            from review_layer.hook import (
+                ReviewLayerAdmitError,
+                apply_review_layer_admit,
+            )
+        except Exception as exc:
+            raise FrontierEndpointError(
+                request_id=request_id,
+                field="prompt",
+                reason="review layer module unavailable",
+                status_code=422,
+                code="REVIEW_TARGET_UNREACHABLE",
+                details={
+                    "kind": "infra",
+                    "fix_hint": (
+                        "Retry after Stargate reload; or hand-materialize "
+                        "cortex://tmp/review-layers/<id>/ and cite it."
+                    ),
+                },
+            ) from exc
+        try:
+            last_user, review_layer_payload = await apply_review_layer_admit(
+                request_id=request_id,
+                prompt_text=last_user,
+            )
+        except ReviewLayerAdmitError as exc:
+            raise FrontierEndpointError(
+                request_id=request_id,
+                field=exc.field,
+                reason=exc.reason,
+                status_code=422,
+                code="REVIEW_TARGET_UNREACHABLE",
+                details={"kind": exc.kind, "fix_hint": exc.fix_hint},
+            ) from exc
 
     provenance_missing = (
         admit_provenance.missing if admit_provenance is not None else ()

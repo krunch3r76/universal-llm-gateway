@@ -1,4 +1,4 @@
-"""API-role generate review-layer admit hook tests."""
+"""API-role generate review-layer admit hook tests (hermetic)."""
 
 from __future__ import annotations
 
@@ -30,7 +30,7 @@ def _init_hub_with_lane_branch(hub: Path, lane_branch: str) -> None:
     subprocess.check_call(["git", "checkout", "master"], cwd=hub)
 
 
-def _patch_review_generate(prompt: str):
+def _patches(prompt: str, *, cortex: Path):
     mock_profile = type("Profile", (), {"tool_surface": "mcp"})()
     dispatch_payload = {
         "execution_id": "exec-review",
@@ -67,6 +67,15 @@ def _patch_review_generate(prompt: str):
         patch(
             "systems.frontier_consult.api_role_generate.emit_poll_hint_from_handoff",
         ),
+        patch(
+            "systems.frontier_consult.api_role_generate.resolve_generate_thread_targets",
+            new_callable=AsyncMock,
+            return_value=(None, None, False, 0),
+        ),
+        patch(
+            "implement_admission.closeout_helpers.cortex_files_root",
+            return_value=cortex,
+        ),
     )
 
 
@@ -75,28 +84,25 @@ async def test_code_review_unmerged_lane_branch_layers(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     hub = tmp_path / "hub"
-    hub.mkdir()
     cortex = tmp_path / "cortex"
+    hub.mkdir()
     cortex.mkdir()
     lane = "cursor-sdk/lane-22520"
     _init_hub_with_lane_branch(hub, lane)
     monkeypatch.setenv("GIT_INTEGRATION_SOURCE_REPO", str(hub))
-    monkeypatch.setattr(
-        "review_layer.materialize.cortex_files_root", lambda: cortex
-    )
 
     prompt = f"Review branch {lane} before land."
     body = TeamDispatchGenerateBody(
         op="generate",
         role="synthesizer",
-        dispatch_thread_id="22520",
+        dispatch_thread_id="thread:dispatch:test",
         job="code-review",
         model="anthropic/claude-sonnet-5-5",
         prompt=prompt,
         caller_agent="cursor",
     )
     response = Response()
-    patches = _patch_review_generate(prompt)
+    patches = _patches(prompt, cortex=cortex)
     with (
         patches[0],
         patches[1] as dispatch,
@@ -104,6 +110,8 @@ async def test_code_review_unmerged_lane_branch_layers(
         patches[3],
         patches[4],
         patches[5],
+        patches[6],
+        patches[7],
     ):
         from .api_role_generate import dispatch_api_role_generate
 
@@ -113,20 +121,20 @@ async def test_code_review_unmerged_lane_branch_layers(
             response=response,
         )
 
-    assert "review_layer" in result
     assert result["review_layer"]["uri"] == "cortex://tmp/review-layers/req-layer/"
     req = dispatch.await_args.args[0]
-    user_text = req.messages[0]["content"]
-    assert "## review_layer" in user_text
+    assert "## review_layer" in req.messages[0]["content"]
     assert (cortex / "tmp/review-layers/req-layer/manifest.json").is_file()
 
 
 @pytest.mark.asyncio
-async def test_code_review_bogus_lane_branch_422(
+async def test_implicit_missing_branch_skips(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     hub = tmp_path / "hub"
+    cortex = tmp_path / "cortex"
     hub.mkdir()
+    cortex.mkdir()
     _init_hub_with_lane_branch(hub, "cursor-sdk/lane-1")
     monkeypatch.setenv("GIT_INTEGRATION_SOURCE_REPO", str(hub))
 
@@ -134,28 +142,93 @@ async def test_code_review_bogus_lane_branch_422(
     body = TeamDispatchGenerateBody(
         op="generate",
         role="synthesizer",
-        dispatch_thread_id="1",
+        dispatch_thread_id="thread:dispatch:test",
         job="code-review",
         model="anthropic/claude-sonnet-5-5",
         prompt=prompt,
         caller_agent="cursor",
     )
     response = Response()
-    patches = _patch_review_generate(prompt)
-    with patches[0], patches[1], patches[2], patches[3], patches[4], patches[5]:
+    patches = _patches(prompt, cortex=cortex)
+    with patches[0], patches[1], patches[2], patches[3], patches[4], patches[5], patches[6], patches[7]:
+        from .api_role_generate import dispatch_api_role_generate
+
+        result = await dispatch_api_role_generate(
+            request_id="req-skip",
+            body=body,
+            response=response,
+        )
+
+    assert result.get("review_layer") == {
+        "status": "skipped_unresolvable",
+        "token": "cursor-sdk/lane-99999",
+    }
+
+
+@pytest.mark.asyncio
+async def test_explicit_review_head_bogus_422(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    hub = tmp_path / "hub"
+    cortex = tmp_path / "cortex"
+    hub.mkdir()
+    cortex.mkdir()
+    _init_hub_with_lane_branch(hub, "cursor-sdk/lane-1")
+    monkeypatch.setenv("GIT_INTEGRATION_SOURCE_REPO", str(hub))
+
+    prompt = "review_head: no-such-ref\n"
+    body = TeamDispatchGenerateBody(
+        op="generate",
+        role="synthesizer",
+        dispatch_thread_id="thread:dispatch:test",
+        job="code-review",
+        model="anthropic/claude-sonnet-5-5",
+        prompt=prompt,
+        caller_agent="cursor",
+    )
+    response = Response()
+    patches = _patches(prompt, cortex=cortex)
+    with patches[0], patches[1], patches[2], patches[3], patches[4], patches[5], patches[6], patches[7]:
         from .api_role_generate import dispatch_api_role_generate
 
         with pytest.raises(FrontierEndpointError) as exc_info:
             await dispatch_api_role_generate(
-                request_id="req-bogus",
+                request_id="req-explicit",
                 body=body,
                 response=response,
             )
     err = exc_info.value
     assert err.code == "REVIEW_TARGET_UNREACHABLE"
-    assert err.status_code == 422
-    assert err.details is not None
-    assert "fix_hint" in err.details
+    assert err.details["kind"] == "target"
+    assert "review_head" in err.details["fix_hint"]
+
+
+@pytest.mark.asyncio
+async def test_ambiguous_implicit_targets_422(tmp_path: Path) -> None:
+    prompt = "cursor-sdk/lane-1 and cursor-sdk/lane-2"
+    body = TeamDispatchGenerateBody(
+        op="generate",
+        role="synthesizer",
+        dispatch_thread_id="thread:dispatch:test",
+        job="code-review",
+        model="anthropic/claude-sonnet-5-5",
+        prompt=prompt,
+        caller_agent="cursor",
+    )
+    response = Response()
+    cortex = tmp_path / "cortex"
+    cortex.mkdir()
+    patches = _patches(prompt, cortex=cortex)
+    with patches[0], patches[1], patches[2], patches[3], patches[4], patches[5], patches[6], patches[7]:
+        from .api_role_generate import dispatch_api_role_generate
+
+        with pytest.raises(FrontierEndpointError) as exc_info:
+            await dispatch_api_role_generate(
+                request_id="req-ambig",
+                body=body,
+                response=response,
+            )
+    assert exc_info.value.details["kind"] == "ambiguous"
 
 
 @pytest.mark.asyncio
@@ -164,21 +237,16 @@ async def test_freeform_contract_skips_review_layer(tmp_path: Path) -> None:
     body = TeamDispatchGenerateBody(
         op="generate",
         role="synthesizer",
-        dispatch_thread_id="22520",
+        dispatch_thread_id="thread:dispatch:test",
         job="freeform",
         prompt=prompt,
         caller_agent="cursor",
     )
     response = Response()
-    patches = _patch_review_generate(prompt)
-    with (
-        patches[0],
-        patches[1] as dispatch,
-        patches[2],
-        patches[3],
-        patches[4],
-        patches[5],
-    ):
+    cortex = tmp_path / "cortex"
+    cortex.mkdir()
+    patches = _patches(prompt, cortex=cortex)
+    with patches[0], patches[1] as dispatch, patches[2], patches[3], patches[4], patches[5], patches[6], patches[7]:
         from .api_role_generate import dispatch_api_role_generate
 
         result = await dispatch_api_role_generate(
@@ -188,8 +256,7 @@ async def test_freeform_contract_skips_review_layer(tmp_path: Path) -> None:
         )
 
     assert "review_layer" not in result
-    req = dispatch.await_args.args[0]
-    assert "## review_layer" not in req.messages[0]["content"]
+    assert "## review_layer" not in dispatch.await_args.args[0].messages[0]["content"]
 
 
 @pytest.mark.asyncio
@@ -197,7 +264,7 @@ async def test_implement_contract_raises_before_review_layer(tmp_path: Path) -> 
     body = TeamDispatchGenerateBody(
         op="generate",
         role="synthesizer",
-        dispatch_thread_id="1",
+        dispatch_thread_id="thread:dispatch:test",
         job="implement",
         prompt="cursor-sdk/lane-1",
         caller_agent="cursor",

@@ -8,15 +8,17 @@ from typing import Literal
 
 ReviewTargetKind = Literal["lane_branch", "worktree_lane", "explicit_head"]
 
-_LAYER_PRESENT_MARKER = "cortex://tmp/review-layers/"
-_LANE_BRANCH = re.compile(r"\bcursor-sdk/lane-(\d+)\b")
+_LAYER_URI = re.compile(
+    r"cortex://tmp/review-layers/([A-Za-z0-9._-]+)/",
+    re.IGNORECASE,
+)
+_LANE_BRANCH = re.compile(r"\bcursor-sdk/lane-(\d+)(?![\w-])")
 _WORKTREE_LANE = re.compile(
-    r"ulg-arc-worktrees/[^\s]*?/lane-(\d+)",
+    r"ulg-arc-worktrees/[^\s]*?/lane-(\d+)(?![\w-])",
     re.IGNORECASE,
 )
 _REVIEW_HEAD = re.compile(r"^review_head:\s*(\S+)", re.MULTILINE)
 _REVIEW_BASE = re.compile(r"^review_base:\s*(\S+)", re.MULTILINE)
-_BARE_SHA256 = re.compile(r"\b[0-9a-f]{64}\b", re.IGNORECASE)
 
 
 @dataclass(frozen=True, slots=True)
@@ -30,16 +32,16 @@ class ReviewTarget:
 
 @dataclass(frozen=True, slots=True)
 class DetectionResult:
-    layer_present: bool
+    """Targets extracted from a prompt; layer presence is resolved separately on disk."""
+
     targets: tuple[ReviewTarget, ...]
 
 
 def detect_review_targets(body: str) -> DetectionResult:
-    """Extract review targets and layer-presence from a resolved prompt body."""
+    """Extract review targets from explicit tokens in a resolved prompt body."""
     if not body:
-        return DetectionResult(layer_present=False, targets=())
+        return DetectionResult(targets=())
 
-    layer_present = _LAYER_PRESENT_MARKER in body
     targets: list[ReviewTarget] = []
 
     head_line = _REVIEW_HEAD.search(body)
@@ -65,18 +67,30 @@ def detect_review_targets(body: str) -> DetectionResult:
         if not any(t.head == head for t in targets):
             targets.append(ReviewTarget(kind="worktree_lane", head=head))
 
-    # Bare sha256 tokens in prose must not become implicit targets.
-    if not targets and _BARE_SHA256.search(body):
-        pass
-
-    return DetectionResult(layer_present=layer_present, targets=tuple(targets))
+    return DetectionResult(targets=tuple(targets))
 
 
-def select_review_target(result: DetectionResult) -> ReviewTarget | None:
-    """Choose the primary target for materialization (explicit head wins)."""
-    if not result.targets:
-        return None
-    for target in result.targets:
-        if target.kind == "explicit_head":
-            return target
-    return result.targets[0]
+def cited_layer_ids(body: str) -> tuple[str, ...]:
+    """Return layer ids cited via ``cortex://tmp/review-layers/<id>/`` URIs."""
+    return tuple(dict.fromkeys(_LAYER_URI.findall(body)))
+
+
+def resolve_primary_target(result: DetectionResult) -> ReviewTarget | None:
+    """Pick the materialization target: explicit ``review_head:`` wins, else one implicit."""
+    explicit = [t for t in result.targets if t.kind == "explicit_head"]
+    if explicit:
+        return explicit[0]
+    implicit_heads = sorted({t.head for t in result.targets if t.kind != "explicit_head"})
+    if len(implicit_heads) == 1:
+        head = implicit_heads[0]
+        for target in result.targets:
+            if target.head == head:
+                return target
+    return None
+
+
+def implicit_target_heads(result: DetectionResult) -> tuple[str, ...]:
+    """Distinct implicit heads (lane branch / worktree), excluding explicit ``review_head:``."""
+    if any(t.kind == "explicit_head" for t in result.targets):
+        return ()
+    return tuple(sorted({t.head for t in result.targets}))
