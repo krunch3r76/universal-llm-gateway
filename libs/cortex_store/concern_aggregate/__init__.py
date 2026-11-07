@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from .effects import (
+    AdmitResult,
     OutcomeResult,
     acquire_lease,
     admit_effect,
@@ -21,6 +22,7 @@ from .recovery import read_effective_state, rebuild_concern
 from .views import read_controls, read_cursor, read_head
 
 __all__ = [
+    "AdmitResult",
     "OutcomeResult",
     "acquire_lease",
     "admit_effect",

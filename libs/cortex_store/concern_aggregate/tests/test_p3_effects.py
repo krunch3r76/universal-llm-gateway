@@ -119,9 +119,11 @@ def test_f1_lost_response_one_effect(
         fencing_token=g,
         now=T0,
     )
-    _on_admit()
-    assert r1["replay"] is False
-    ek = str(r1["effect_key"])
+    if r1.execution_allowed:
+        _on_admit()
+    assert r1.replay is False
+    assert r1.execution_allowed is True
+    ek = str(r1.effect_key)
 
     record_outcome(
         concern_db,
@@ -140,8 +142,8 @@ def test_f1_lost_response_one_effect(
         fencing_token=g,
         now=T0,
     )
-    assert r2["replay"] is True
-    assert r2["receipt"] == {"done": True}
+    assert r2.replay is True
+    assert r2.receipt == {"done": True}
     n = concern_db.execute("SELECT COUNT(*) FROM concern_effects").fetchone()[0]
     assert n == 1
     assert len(admit_count) == 1
@@ -179,7 +181,7 @@ def test_f1b_replay_under_hold_returns_receipt(
         fencing_token=g,
         now=T0,
     )
-    ek = str(r["effect_key"])
+    ek = str(r.effect_key)
     record_outcome(
         concern_db,
         effect_key=ek,
@@ -205,8 +207,8 @@ def test_f1b_replay_under_hold_returns_receipt(
         fencing_token=g,
         now=T0,
     )
-    assert r2["replay"] is True
-    assert r2["receipt"] == {"r": 1}
+    assert r2.replay is True
+    assert r2.receipt == {"r": 1}
 
 
 def test_f2_idempotency_and_stale_run_generation(
@@ -335,7 +337,7 @@ def test_f3_conflict(concern_db: sqlite3.Connection) -> None:
         fencing_token=g,
         now=T0,
     )
-    ek = str(r["effect_key"])
+    ek = str(r.effect_key)
     row_before = concern_db.execute(
         "SELECT material_fingerprint, receipt_json FROM concern_effects WHERE effect_key = ?",
         (ek,),
@@ -387,7 +389,7 @@ def test_f4_lease_expiry_late_report(concern_db: sqlite3.Connection) -> None:
         fencing_token=g_a,
         now=t_a,
     )
-    ek = str(r["effect_key"])
+    ek = str(r.effect_key)
     t_expired = t_a + timedelta(minutes=10)
     g_b = acquire_lease(
         concern_db,
@@ -502,7 +504,7 @@ def test_f4b_stale_token_replay(concern_db: sqlite3.Connection) -> None:
         request_id="req:1",
         fencing_token=g1,
         now=T0,
-    )["effect_key"]
+    ).effect_key
     record_outcome(
         concern_db,
         effect_key=ek,
@@ -528,8 +530,8 @@ def test_f4b_stale_token_replay(concern_db: sqlite3.Connection) -> None:
         fencing_token=g1,
         now=T0 + timedelta(hours=1),
     )
-    assert out["replay"] is True
-    assert out["receipt"] == {"ok": True}
+    assert out.replay is True
+    assert out.receipt == {"ok": True}
 
 
 def test_f4c_successor_after_admit(concern_db: sqlite3.Connection) -> None:
@@ -562,7 +564,7 @@ def test_f4c_successor_after_admit(concern_db: sqlite3.Connection) -> None:
         request_id="req:a",
         fencing_token=g_a,
         now=t0,
-    )["effect_key"]
+    ).effect_key
     t1 = t0 + timedelta(minutes=30)
     acquire_lease(
         concern_db,
@@ -722,8 +724,8 @@ def test_f5_hold_before_admit(tmp_path: Path, migrated_db_template: Path) -> Non
         fencing_token=g,
         now=T0,
     )
-    assert r["replay"] is False
-    ek = str(r["effect_key"])
+    assert r.replay is False
+    ek = str(r.effect_key)
     record_outcome(
         concern_db,
         effect_key=ek,
@@ -815,7 +817,7 @@ def test_f5b_hold_during_admit_linearization(
         fencing_token=g,
         now=T0,
     )
-    assert out["replay"] is False
+    assert out.replay is False
     assert hold_thread is not None
     hold_thread.join(timeout=5.0)
     assert not hold_thread.is_alive()
@@ -824,7 +826,7 @@ def test_f5b_hold_during_admit_linearization(
         "SELECT COUNT(*) FROM concern_journal WHERE concern_id = ?", (cid,)
     ).fetchone()[0]
 
-    ek = str(out["effect_key"])
+    ek = str(out.effect_key)
     record_outcome(
         conn,
         effect_key=ek,
@@ -1056,7 +1058,7 @@ def test_f6_unknown_outcome_reconcile(concern_db: sqlite3.Connection) -> None:
         request_id="req:1",
         fencing_token=g,
         now=T0,
-    )["effect_key"]
+    ).effect_key
     record_outcome(
         concern_db,
         effect_key=ek,
@@ -1099,7 +1101,7 @@ def test_f6_unknown_outcome_reconcile(concern_db: sqlite3.Connection) -> None:
         request_id="req:e2a",
         fencing_token=g,
         now=T0,
-    )["effect_key"]
+    ).effect_key
     record_outcome(
         concern_db,
         effect_key=ek2,
@@ -1144,6 +1146,8 @@ def test_f6_unknown_outcome_reconcile(concern_db: sqlite3.Connection) -> None:
         request_id="req:e2d1",
         fencing_token=g,
         now=T0,
+        resend_basis="resource_dedup",
+        resend_evidence="resource dedups on K",
     )
     with pytest.raises(RetryBudgetExceededError):
         admit_effect(
@@ -1154,6 +1158,8 @@ def test_f6_unknown_outcome_reconcile(concern_db: sqlite3.Connection) -> None:
             request_id="req:e2d2",
             fencing_token=g,
             now=T0,
+            resend_basis="resource_dedup",
+            resend_evidence="resource dedups on K",
         )
 
     iid3 = resolve_action_intent(
@@ -1172,7 +1178,7 @@ def test_f6_unknown_outcome_reconcile(concern_db: sqlite3.Connection) -> None:
         request_id="req:e3a",
         fencing_token=g,
         now=T0,
-    )["effect_key"]
+    ).effect_key
     with pytest.raises(InvalidTransitionError):
         record_recovery_decision(
             concern_db,
@@ -1214,7 +1220,7 @@ def test_f7_dedup_outlives_ttl(concern_db: sqlite3.Connection) -> None:
         request_id="req:1",
         fencing_token=g,
         now=t0,
-    )["effect_key"]
+    ).effect_key
     record_outcome(
         concern_db,
         effect_key=ek,
@@ -1236,7 +1242,7 @@ def test_f7_dedup_outlives_ttl(concern_db: sqlite3.Connection) -> None:
 
 
 def test_f8_transport_retry_budget(concern_db: sqlite3.Connection) -> None:
-    """F8: one auto retry then RetryBudgetExceededError."""
+    """F8: permit, no-basis repeat writes nothing, one evidenced resend, then budget."""
     cid = "concern:f8"
     wk = "wk:f8"
     g = acquire_lease(
@@ -1256,7 +1262,7 @@ def test_f8_transport_retry_budget(concern_db: sqlite3.Connection) -> None:
         now=T0,
     )
     req = {"a": 1}
-    admit_effect(
+    first = admit_effect(
         concern_db,
         intent_id=iid,
         effect_kind="e",
@@ -1265,7 +1271,26 @@ def test_f8_transport_retry_budget(concern_db: sqlite3.Connection) -> None:
         fencing_token=g,
         now=T0,
     )
-    admit_effect(
+    assert first.execution_allowed is True
+    bare = admit_effect(
+        concern_db,
+        intent_id=iid,
+        effect_kind="e",
+        request=req,
+        request_id="req:bare",
+        fencing_token=g,
+        now=T0,
+    )
+    assert bare.execution_allowed is False
+    assert bare.permit_request_id is None
+    assert bare.state == STATE_ADMITTED
+    assert bare.receipt is None
+    unchanged = concern_db.execute(
+        "SELECT attempt_count FROM concern_effects WHERE intent_id = ?",
+        (iid,),
+    ).fetchone()
+    assert int(unchanged[0]) == 1
+    second = admit_effect(
         concern_db,
         intent_id=iid,
         effect_kind="e",
@@ -1273,7 +1298,10 @@ def test_f8_transport_retry_budget(concern_db: sqlite3.Connection) -> None:
         request_id="req:2",
         fencing_token=g,
         now=T0,
+        resend_basis="resource_dedup",
+        resend_evidence="accepting resource dedups this K",
     )
+    assert second.execution_allowed is True
     row = concern_db.execute(
         "SELECT attempt_count, attempts_json FROM concern_effects WHERE intent_id = ?",
         (iid,),
@@ -1291,12 +1319,14 @@ def test_f8_transport_retry_budget(concern_db: sqlite3.Connection) -> None:
             request_id="req:3",
             fencing_token=g,
             now=T0,
+            resend_basis="confirmed_not_accepted",
+            resend_evidence="upstream confirmed non-acceptance",
         )
     assert concern_db.execute("SELECT COUNT(*) FROM concern_effects").fetchone()[0] == 1
 
 
 def test_f8b_budget_resets_after_decision(concern_db: sqlite3.Connection) -> None:
-    """F8b: after decision admit one auto retry then block (attempt_count 3 then error)."""
+    """F8b: after decision admit one basis resend (attempt_count 3) then budget error."""
     cid = "concern:f8b"
     wk = "wk:f8b"
     g = acquire_lease(
@@ -1325,29 +1355,9 @@ def test_f8b_budget_resets_after_decision(concern_db: sqlite3.Connection) -> Non
         fencing_token=g,
         now=T0,
     )
-    admit_effect(
-        concern_db,
-        intent_id=iid,
-        effect_kind="e",
-        request=req,
-        request_id="req:x2",
-        fencing_token=g,
-        now=T0,
-    )
     ek = concern_db.execute(
         "SELECT effect_key FROM concern_effects WHERE intent_id = ?", (iid,)
     ).fetchone()[0]
-
-    with pytest.raises(RetryBudgetExceededError):
-        admit_effect(
-            concern_db,
-            intent_id=iid,
-            effect_kind="e",
-            request=req,
-            request_id="req:x3",
-            fencing_token=g,
-            now=T0,
-        )
     record_outcome(
         concern_db,
         effect_key=ek,
@@ -1379,7 +1389,7 @@ def test_f8b_budget_resets_after_decision(concern_db: sqlite3.Connection) -> Non
             "SELECT attempt_count FROM concern_effects WHERE effect_key = ?", (ek,)
         ).fetchone()[0]
     )
-    assert ac == 3
+    assert ac == 2
     admit_effect(
         concern_db,
         intent_id=iid,
@@ -1388,13 +1398,15 @@ def test_f8b_budget_resets_after_decision(concern_db: sqlite3.Connection) -> Non
         request_id="req:auto-after",
         fencing_token=g,
         now=T0,
+        resend_basis="confirmed_not_accepted",
+        resend_evidence="not accepted",
     )
     ac2 = int(
         concern_db.execute(
             "SELECT attempt_count FROM concern_effects WHERE effect_key = ?", (ek,)
         ).fetchone()[0]
     )
-    assert ac2 == 4
+    assert ac2 == 3
     with pytest.raises(RetryBudgetExceededError):
         admit_effect(
             concern_db,
@@ -1404,6 +1416,8 @@ def test_f8b_budget_resets_after_decision(concern_db: sqlite3.Connection) -> Non
             request_id="req:final-block",
             fencing_token=g,
             now=T0,
+            resend_basis="resource_dedup",
+            resend_evidence="dedup",
         )
 
 
@@ -1445,6 +1459,8 @@ def test_f8c_exhausted_admitted_to_decision(concern_db: sqlite3.Connection) -> N
         request_id="req:b",
         fencing_token=g,
         now=T0,
+        resend_basis="resource_dedup",
+        resend_evidence="dedup",
     )
     ek = concern_db.execute(
         "SELECT effect_key FROM concern_effects WHERE intent_id = ?", (iid,)
@@ -1458,6 +1474,8 @@ def test_f8c_exhausted_admitted_to_decision(concern_db: sqlite3.Connection) -> N
             request_id="req:c",
             fencing_token=g,
             now=T0,
+            resend_basis="resource_dedup",
+            resend_evidence="dedup",
         )
     record_outcome(
         concern_db,
@@ -1521,7 +1539,7 @@ def test_f9_succeeded_terminal(concern_db: sqlite3.Connection) -> None:
         request_id="req:1",
         fencing_token=g,
         now=T0,
-    )["effect_key"]
+    ).effect_key
     record_outcome(
         concern_db,
         effect_key=ek,
@@ -1539,3 +1557,187 @@ def test_f9_succeeded_terminal(concern_db: sqlite3.Connection) -> None:
             fencing_token=g,
             now=T0,
         )
+
+
+def test_f10_applied_before_record_same_holder_no_second_permit(
+    tmp_path: Path, migrated_db_template: Path
+) -> None:
+    """F10: crash before record_outcome; same holder gets no second permit."""
+    conn = fresh_migrated_connection(tmp_path, migrated_db_template)
+    db_file = next(
+        r[2] for r in conn.execute("PRAGMA database_list").fetchall() if r[1] == "main"
+    )
+    cid = "concern:f10"
+    wk = "wk:f10"
+    g = acquire_lease(
+        conn,
+        concern_id=cid,
+        work_key=wk,
+        holder="A",
+        lease_expires_at=T0 + timedelta(hours=1),
+        now=T0,
+    )
+    iid = resolve_action_intent(
+        conn,
+        concern_id=cid,
+        work_key=wk,
+        action_slot="s",
+        run_generation=1,
+        now=T0,
+    )
+    req = {"a": 1}
+    counter = 0
+    first = admit_effect(
+        conn,
+        intent_id=iid,
+        effect_kind="e",
+        request=req,
+        request_id="req:1",
+        fencing_token=g,
+        now=T0,
+    )
+    if first.execution_allowed:
+        counter += 1
+    assert counter == 1
+    conn.close()
+    fresh = sqlite3.connect(db_file, isolation_level=None)
+    second = admit_effect(
+        fresh,
+        intent_id=iid,
+        effect_kind="e",
+        request=req,
+        request_id="req:2",
+        fencing_token=g,
+        now=T0,
+    )
+    if second.execution_allowed:
+        counter += 1
+    assert counter == 1
+    assert second.execution_allowed is False
+    assert second.permit_request_id is None
+    assert second.state == STATE_ADMITTED
+    assert second.receipt is None
+    assert lookup_receipt(fresh, second.effect_key) is None
+    st = fresh.execute(
+        "SELECT state FROM concern_effects WHERE effect_key = ?",
+        (second.effect_key,),
+    ).fetchone()[0]
+    assert st != STATE_SUCCEEDED
+    fresh.close()
+
+
+def test_f10b_concurrent_duplicate_admits_single_permit(
+    tmp_path: Path, migrated_db_template: Path
+) -> None:
+    """F10b: two concurrent admits yield one permit."""
+    conn = fresh_migrated_connection(tmp_path, migrated_db_template)
+    db_file = next(
+        r[2] for r in conn.execute("PRAGMA database_list").fetchall() if r[1] == "main"
+    )
+    cid = "concern:f10b"
+    wk = "wk:f10b"
+    g = acquire_lease(
+        conn,
+        concern_id=cid,
+        work_key=wk,
+        holder="A",
+        lease_expires_at=T0 + timedelta(hours=1),
+        now=T0,
+    )
+    iid = resolve_action_intent(
+        conn,
+        concern_id=cid,
+        work_key=wk,
+        action_slot="s",
+        run_generation=1,
+        now=T0,
+    )
+    conn.close()
+    req = {"a": 1}
+    barrier = threading.Barrier(2)
+    results: list = []
+    counter = {"n": 0}
+    lock = threading.Lock()
+
+    def _hook() -> None:
+        barrier.wait(timeout=5)
+
+    def _run(req_id: str) -> None:
+        c = sqlite3.connect(db_file, isolation_level=None, check_same_thread=False)
+        c.execute("PRAGMA journal_mode=WAL")
+        c.execute("PRAGMA busy_timeout=2000")
+        out = admit_effect(
+            c,
+            intent_id=iid,
+            effect_kind="e",
+            request=req,
+            request_id=req_id,
+            fencing_token=g,
+            now=T0,
+        )
+        if out.execution_allowed:
+            with lock:
+                counter["n"] += 1
+        results.append(out)
+        c.close()
+
+    set_between_resolve_and_admit(_hook)
+    t1 = threading.Thread(target=_run, args=("req:a",))
+    t2 = threading.Thread(target=_run, args=("req:b",))
+    t1.start()
+    t2.start()
+    t1.join(timeout=10)
+    t2.join(timeout=10)
+    set_between_resolve_and_admit(None)
+    assert sum(1 for r in results if r.execution_allowed) == 1
+    assert counter["n"] == 1
+
+
+def test_f10c_unsupported_resend_basis_rejected(
+    concern_db: sqlite3.Connection,
+) -> None:
+    """F10c: unsupported basis or empty evidence raises before any write."""
+    cid = "concern:f10c"
+    wk = "wk:f10c"
+    g = acquire_lease(
+        concern_db,
+        concern_id=cid,
+        work_key=wk,
+        holder="A",
+        lease_expires_at=T0 + timedelta(hours=1),
+        now=T0,
+    )
+    iid = resolve_action_intent(
+        concern_db,
+        concern_id=cid,
+        work_key=wk,
+        action_slot="s",
+        run_generation=1,
+        now=T0,
+    )
+    with pytest.raises(ValueError):
+        admit_effect(
+            concern_db,
+            intent_id=iid,
+            effect_kind="e",
+            request={"a": 1},
+            request_id="req:bad",
+            fencing_token=g,
+            now=T0,
+            resend_basis="timeout",
+            resend_evidence="x",
+        )
+    assert concern_db.execute("SELECT COUNT(*) FROM concern_effects").fetchone()[0] == 0
+    with pytest.raises(ValueError):
+        admit_effect(
+            concern_db,
+            intent_id=iid,
+            effect_kind="e",
+            request={"a": 1},
+            request_id="req:empty",
+            fencing_token=g,
+            now=T0,
+            resend_basis="resource_dedup",
+            resend_evidence="",
+        )
+    assert concern_db.execute("SELECT COUNT(*) FROM concern_effects").fetchone()[0] == 0

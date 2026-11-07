@@ -11,7 +11,12 @@ Ledger tables are **not** rebuilt by ``rebuild_concern``: recovery clears materi
 views and replays the journal; effect rows, intents, and leases persist unchanged.
 Holds are journaled via ``control_set`` / ``control_clear`` so they survive rebuild.
 
-Ref: decision a:42489 (admission and identities).
+``attempt_count`` / ``attempts_json`` are transport accounting only; they do not count
+external effect executions. One ``concern_effects`` row is not proof of one external
+effect. ``execution_allowed`` on ``AdmitResult`` is the sole permit to run the side
+effect, and only for ``permit_request_id``.
+
+Ref: decision a:42489 (admission and identities); R1 execution permission (root review).
 """
 
 from __future__ import annotations
@@ -33,6 +38,7 @@ from .journal import TransitionRejectedError, append_transition, resolve_authori
 EFFECT_KEY_NAMESPACE = "ulg.concern.effect.v1"
 
 RECOGNIZED_HOLD_KEYS = frozenset({"stop_new_admissions", "cancel", "drain"})
+VALID_RESEND_BASES = frozenset({"resource_dedup", "confirmed_not_accepted"})
 
 INTENT_OPEN = "open"
 INTENT_HELD = "held"
@@ -394,6 +400,32 @@ class OutcomeResult:
     late_report: bool
 
 
+@dataclass(frozen=True)
+class AdmitResult:
+    """Admission outcome; only ``execution_allowed`` authorizes an external effect for ``permit_request_id``."""
+
+    effect_key: str
+    intent_id: str
+    state: str
+    replay: bool
+    receipt: dict[str, Any] | None
+    execution_allowed: bool
+    permit_request_id: str | None
+
+
+def _validate_resend_params(
+    resend_basis: str | None, resend_evidence: str | None
+) -> None:
+    if resend_basis is None and resend_evidence is None:
+        return
+    if resend_basis is None or resend_evidence is None:
+        raise ValueError("resend_basis and resend_evidence must be provided together")
+    if not str(resend_evidence).strip():
+        raise ValueError("resend_evidence must be non-empty")
+    if resend_basis not in VALID_RESEND_BASES:
+        raise ValueError(f"unsupported resend_basis: {resend_basis!r}")
+
+
 def admit_effect(
     conn: sqlite3.Connection,
     *,
@@ -403,8 +435,11 @@ def admit_effect(
     request_id: str,
     fencing_token: int,
     now: datetime,
-) -> dict[str, Any]:
+    resend_basis: str | None = None,
+    resend_evidence: str | None = None,
+) -> AdmitResult:
     """Admit one effect attempt under lease fencing and hold policy; may replay succeeded."""
+    _validate_resend_params(resend_basis, resend_evidence)
     as_request_id(request_id)
     intent_id = str(as_intent_id(intent_id))
     concern_id, work_key, _action_slot, _rg = _load_intent_row(conn, intent_id)
@@ -440,7 +475,15 @@ def admit_effect(
             if st == STATE_SUCCEEDED:
                 receipt = json.loads(eff_row[4]) if eff_row[4] else {}
                 conn.commit()
-                return {"replay": True, "effect_key": effect_key, "receipt": receipt}
+                return AdmitResult(
+                    effect_key=effect_key,
+                    intent_id=intent_id,
+                    state=STATE_SUCCEEDED,
+                    replay=True,
+                    receipt=receipt,
+                    execution_allowed=False,
+                    permit_request_id=None,
+                )
 
         lease = _lease_row(conn, concern_id, work_key)
         if lease is None:
@@ -485,6 +528,17 @@ def admit_effect(
                     )
                 kind = "decision"
             elif st == STATE_ADMITTED:
+                if resend_basis is None:
+                    conn.commit()
+                    return AdmitResult(
+                        effect_key=effect_key,
+                        intent_id=intent_id,
+                        state=STATE_ADMITTED,
+                        replay=False,
+                        receipt=None,
+                        execution_allowed=False,
+                        permit_request_id=None,
+                    )
                 if not _automatic_retry_allowed(attempts):
                     conn.rollback()
                     raise RetryBudgetExceededError(
@@ -503,6 +557,9 @@ def admit_effect(
                 "req": request_id,
                 "at": now_s,
             }
+            if kind == "auto_retry":
+                attempt_entry["resend_basis"] = resend_basis
+                attempt_entry["resend_evidence"] = resend_evidence
             attempts.append(attempt_entry)
             ac += 1
 
@@ -535,7 +592,15 @@ def admit_effect(
                 (INTENT_OPEN, now_s, intent_id),
             )
             conn.commit()
-            return {"replay": False, "effect_key": effect_key, "receipt": None}
+            return AdmitResult(
+                effect_key=effect_key,
+                intent_id=intent_id,
+                state=new_state,
+                replay=False,
+                receipt=None,
+                execution_allowed=True,
+                permit_request_id=request_id,
+            )
 
         attempts = [
             {
@@ -572,7 +637,15 @@ def admit_effect(
             (INTENT_OPEN, now_s, intent_id),
         )
         conn.commit()
-        return {"replay": False, "effect_key": effect_key, "receipt": None}
+        return AdmitResult(
+            effect_key=effect_key,
+            intent_id=intent_id,
+            state=STATE_ADMITTED,
+            replay=False,
+            receipt=None,
+            execution_allowed=True,
+            permit_request_id=request_id,
+        )
     except EffectAdmissionError:
         try:
             conn.rollback()
