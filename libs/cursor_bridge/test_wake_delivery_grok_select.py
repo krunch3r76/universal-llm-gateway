@@ -158,6 +158,50 @@ async def test_failed_cdp_falls_back_to_sidebar() -> None:
 
 
 @pytest.mark.asyncio
+async def test_probe_after_cdp_select_refuses_without_raise() -> None:
+    surface = _surface()
+
+    async def _probe(_ws: str) -> dict[str, Any]:
+        if not hasattr(_probe, "n"):
+            _probe.n = 0
+        _probe.n += 1
+        if _probe.n <= 2:
+            return surface
+        raise RuntimeError("probe blew up")
+
+    with (
+        patch(
+            "cursor_bridge.wake_delivery.list_pages",
+            return_value=[{"title": "Grok Bot", "web_socket_debugger_url": "ws://x"}],
+        ),
+        patch("cursor_bridge.wake_delivery.probe_surface", side_effect=_probe),
+        patch(
+            "cursor_bridge.wake_delivery.select_grok_agent_async",
+            new_callable=AsyncMock,
+            return_value={"ok": True, "currentAgentId": "hidden-uuid"},
+        ),
+        patch("cursor_bridge.wake_delivery.select_sidebar_target", new_callable=AsyncMock),
+    ):
+        out = await _deliver_locked(
+            target={
+                "ok": True,
+                "display": "9",
+                "app": "grok",
+                "origin": "http://127.0.0.1:9339",
+            },
+            thread_s="1",
+            slug_s="",
+            title_s="Hidden",
+            aid_s="hidden-uuid",
+            select=True,
+            line="hello",
+        )
+    assert out["reason"] == "surface_probe_failed"
+    assert out["pasted"] is False
+    assert out.get("selected") is True
+
+
+@pytest.mark.asyncio
 async def test_same_chat_false_does_not_select() -> None:
     surfaces = [
         _surface(),

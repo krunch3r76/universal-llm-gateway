@@ -87,7 +87,7 @@ def normalize_target(display: object, app: object) -> dict[str, Any]:
     """Map one display and app to its debug-port origin.
 
     The table is loopback. A process on the mcp docker bridge rewrites only
-    ports 9338, 9339, and 19338 to the gateway forwarder. Host and Stargate
+    ports 9338, 9339, 9340, and 19338 to the gateway forwarder. Host and Stargate
     callers keep ``127.0.0.1``. Unknown display/app pairs stay unknown.
     """
     disp = str(display or "").strip().lstrip(":").lower()
@@ -396,14 +396,22 @@ async def _deliver_locked(
             if cdp_pick.get("ok"):
                 selected = True
                 await asyncio.sleep(0.15)
-                surface = await probe_surface(ws_url)
-                verdict = wake_decision(
-                    surface,
-                    thread=thread_s,
-                    slug=slug_s,
-                    title=title_s or None,
-                    agent_id=aid_s or None,
-                )
+                try:
+                    surface = await probe_surface(ws_url)
+                    verdict = wake_decision(
+                        surface,
+                        thread=thread_s,
+                        slug=slug_s,
+                        title=title_s or None,
+                        agent_id=aid_s or None,
+                    )
+                except Exception:
+                    return _refuse(
+                        "surface_probe_failed",
+                        display=disp,
+                        app=app,
+                        selected=selected,
+                    )
                 need_select = (
                     not verdict.get("ok")
                     and select

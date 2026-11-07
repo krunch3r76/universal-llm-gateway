@@ -7,18 +7,9 @@ from typing import Any
 
 from chat_harvest.models import ClassifyRefuse
 from cursor_bridge.electron_chat_relay import ElectronEndpoint, read_endpoint_turn
+from cursor_bridge.grok_spawn_idempotency import _NON_RETRYABLE
 
 from interlocutor.targets import DisplayEightTarget, DisplayGrokWindowTarget
-
-_NON_RETRYABLE_TIMEOUT = frozenset(
-    {
-        "cdp_eval_timeout",
-        "clicked_unknown",
-        "delivery_unconfirmed",
-        "send_unconfirmed",
-        "unknown",
-    }
-)
 
 
 def _endpoint(target: DisplayEightTarget) -> ElectronEndpoint:
@@ -73,7 +64,7 @@ def _display_steer_failure(result: dict[str, Any]) -> dict[str, Any]:
     }
     if (
         leaf.get("clicked_unknown")
-        or code in _NON_RETRYABLE_TIMEOUT
+        or code in _NON_RETRYABLE
         or leaf.get("retryable") is False
     ):
         out["retryable"] = False
@@ -219,7 +210,7 @@ async def steer_display(
     if not _verified_display_send(result):
         failure = _display_steer_failure(result)
         leaf = _leaf(result)
-        if str(leaf.get("reason") or "") in _NON_RETRYABLE_TIMEOUT:
+        if str(leaf.get("reason") or "") in _NON_RETRYABLE:
             failure["retryable"] = False
         return failure
 

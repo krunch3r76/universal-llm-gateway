@@ -36,17 +36,6 @@ def _code_from_response(resp: Any) -> str:
     return "subscription_failed"
 
 
-def _require_route_models() -> None:
-    """Import route models before create so a missing module cannot fail later."""
-    from agent_bus_store.routes.threads.subscriptions import (
-        SubscribeBody,
-        UnsubscribeBody,
-    )
-
-    if SubscribeBody is None or UnsubscribeBody is None:
-        raise ImportError("subscription route models missing")
-
-
 def _subscribe_body(
     *,
     mailbox: str,
@@ -70,7 +59,6 @@ def _subscribe_body(
 def preflight_subscriptions() -> dict[str, Any]:
     """GET the subscription index. Failure blocks a mailbox spawn before create."""
     try:
-        _require_route_models()
         with _client() as bus:
             resp = bus.get("/endpoint-subscriptions")
     except SystemExit as exc:
