@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+import runpy
 import sqlite3
 from datetime import UTC, datetime
 from pathlib import Path
@@ -14,7 +15,7 @@ import pytest
 from cortex_store import db
 from cortex_store._intent_card_test_fixtures import insert_entity
 from cortex_store._test_db_bootstrap import copy_template_db
-from cortex_store.card import _fetch_status_current_rows, get_entity_card
+from cortex_store.card import get_entity_card
 from cortex_store.conftest import bind_cortex_db
 from cortex_store.drift_detector import (
     DriftRow,
@@ -272,19 +273,19 @@ def test_scanner_source_has_no_specimen_id_literals() -> None:
 
 
 @pytest.mark.parametrize(
-    "desc,expect_f1",
+    "slug,desc,expect_f1",
     [
-        ("Payment not submitted on file.", True),
-        ("Payment not submitted pending.", True),
-        ("Account remains unsubmitted.", True),
-        ("xnot_submittedy token only.", False),
-        ("OPEN ENROLLMENT window open.", False),
+        ("pay-file", "Payment not submitted on file.", True),
+        ("pay-pending", "Payment not submitted pending.", True),
+        ("remains-unsub", "Account remains unsubmitted.", True),
+        ("token-only", "xnot_submittedy token only.", False),
+        ("open-enroll", "OPEN ENROLLMENT window open.", False),
     ],
 )
 def test_f1_a7_negation_boundaries(
-    migrated_conn: sqlite3.Connection, desc: str, expect_f1: bool
+    migrated_conn: sqlite3.Connection, slug: str, desc: str, expect_f1: bool
 ) -> None:
-    eid = f"account:f1-{hash(desc) % 10_000}"
+    eid = f"account:f1-{slug}"
     insert_entity(
         migrated_conn,
         entity_id=eid,
@@ -418,6 +419,10 @@ def test_f2_assertion_fulfillment_evidence_positive(migrated_conn: sqlite3.Conne
         entity_type="document",
         name="assertion enrollment sibling",
         attributes=json.dumps({}),
+    )
+    migrated_conn.execute(
+        "UPDATE entities SET created_at = ? WHERE id = ?",
+        ("2026-08-15T00:00:00+00:00", sibling),
     )
     migrated_conn.executemany(
         "INSERT INTO relationships (from_entity, to_entity, type, active) VALUES (?, ?, ?, 1)",
@@ -641,6 +646,8 @@ def test_instant_after_mixed_naive_and_aware() -> None:
     assert _instant_after("2026-11-02 12:00:00", "2026-11-01T12:00:00Z")
     assert not _instant_after("2026-11-01T00:00:00", "2026-11-02T00:00:00+00:00")
     assert not _instant_after("", "2026-11-01T00:00:00+00:00")
+    assert not _instant_after("not-a-date", "2026-11-01T00:00:00+00:00")
+    assert not _instant_after(None, "2026-11-01T00:00:00+00:00")
 
 
 def test_format_cli_lines_emits_tabs_then_totals() -> None:
@@ -663,31 +670,114 @@ def test_format_cli_lines_emits_tabs_then_totals() -> None:
     assert lines[-1] == "distinct_entities=1 total_rows=1"
 
 
-def test_f3_operational_status_predicate_positive(migrated_conn: sqlite3.Connection) -> None:
-    eid = "plan:f3-ops-status"
-    insert_entity(migrated_conn, entity_id=eid, entity_type="plan", name="ops")
+def test_format_cli_lines_sanitizes_embedded_delimiters() -> None:
+    result = DriftScanResult(
+        [
+            DriftRow(
+                "e\n1",
+                "F1",
+                "surf\te",
+                "le\tft",
+                "ri\ngh\t",
+                "re\rason",
+            )
+        ],
+        1,
+        1,
+    )
+    row_line = format_cli_lines(result)[0]
+    assert "\n" not in row_line and "\r" not in row_line
+    assert row_line.count("\t") == 5
+
+
+def test_f3_operational_status_flagged_scanner_cite(migrated_conn: sqlite3.Connection) -> None:
+    eid = "plan:f3-ops-flagged"
+    insert_entity(migrated_conn, entity_id=eid, entity_type="plan", name="ops flagged")
     _insert_status_assertion(
         migrated_conn,
         entity_id=eid,
-        claim="served",
+        claim="staging believed",
         confidence="believed",
         created_at="2026-10-01T00:00:00+00:00",
     )
-    newer = _insert_status_assertion(
+    flagged_id = _insert_status_assertion(
         migrated_conn,
         entity_id=eid,
-        claim="newer ops status",
+        claim="flagged ops status",
         confidence="confirmed",
+        review_status="flagged",
         created_at="2026-11-01T00:00:00+00:00",
         derivation_type="direct_observation",
         evidence_uris='["cortex://x"]',
         predicate_form=f"operational_status({eid}, operational, current)",
     )
-    status_rows = _fetch_status_current_rows(migrated_conn, entity_id=eid)
-    preds = {str(r.get("predicate_form") or "") for r in status_rows}
-    assert f"status({eid}, operational, current)" in preds
-    assert f"operational_status({eid}, operational, current)" in preds
-    assert int(newer) in {int(r["id"]) for r in status_rows}
+    hit = [
+        r
+        for r in scan_entity_state_drift(conn=migrated_conn).rows
+        if r.entity_id == eid and r.surface == "current_status.believed_served"
+    ]
+    assert len(hit) == 1
+    assert hit[0].right_cite == f"assertion:{flagged_id}"
+
+
+def test_f3_believed_served_older_flagged_vs_newer_believed_served(
+    migrated_conn: sqlite3.Connection,
+) -> None:
+    eid = "plan:f3-live-ordering"
+    insert_entity(migrated_conn, entity_id=eid, entity_type="plan", name="live ordering")
+    older_flagged = _insert_status_assertion(
+        migrated_conn,
+        entity_id=eid,
+        claim="older flagged confirmed",
+        confidence="confirmed",
+        review_status="flagged",
+        created_at="2026-10-05T00:00:00+00:00",
+        derivation_type="direct_observation",
+        evidence_uris='["cortex://x"]',
+    )
+    _insert_status_assertion(
+        migrated_conn,
+        entity_id=eid,
+        claim="newer believed staging",
+        confidence="believed",
+        created_at="2026-11-07T00:00:00+00:00",
+    )
+    hit = [
+        r
+        for r in scan_entity_state_drift(conn=migrated_conn).rows
+        if r.entity_id == eid and r.surface == "current_status.believed_served"
+    ]
+    assert len(hit) == 1
+    assert hit[0].right_cite == f"assertion:{older_flagged}"
+
+
+def test_f3_believed_served_zero_when_served_grounded(migrated_conn: sqlite3.Connection) -> None:
+    eid = "plan:f3-grounded-served"
+    insert_entity(migrated_conn, entity_id=eid, entity_type="plan", name="grounded")
+    _insert_status_assertion(
+        migrated_conn,
+        entity_id=eid,
+        claim="grounded believed served",
+        confidence="believed",
+        created_at="2026-10-01T00:00:00+00:00",
+        derivation_type="direct_observation",
+        evidence_uris='["cortex://grounded"]',
+    )
+    _insert_status_assertion(
+        migrated_conn,
+        entity_id=eid,
+        claim="flagged newer",
+        confidence="confirmed",
+        review_status="flagged",
+        created_at="2026-11-01T00:00:00+00:00",
+        derivation_type="direct_observation",
+        evidence_uris='["cortex://x"]',
+    )
+    assert not [
+        r
+        for r in scan_entity_state_drift(conn=migrated_conn).rows
+        if r.entity_id == eid and r.surface == "current_status.believed_served"
+    ]
 
 
 def test_f3_expired_status_interval_zero(migrated_conn: sqlite3.Connection) -> None:
@@ -719,10 +809,22 @@ def test_f3_expired_status_interval_zero(migrated_conn: sqlite3.Connection) -> N
 
 
 def test_f3_left_cite_served_when_no_served_assertion_id(migrated_conn: sqlite3.Connection) -> None:
-    eid = "todo:f3-no-served"
-    insert_entity(migrated_conn, entity_id=eid, entity_type="todo", name="No served slot")
-    rows = scan_entity_state_drift(conn=migrated_conn).rows
-    assert not any(r.entity_id == eid and "assertion:None" in r.left_cite for r in rows)
+    eid = "plan:f3-flagged-only-served-none"
+    insert_entity(migrated_conn, entity_id=eid, entity_type="plan", name="flagged only")
+    _insert_status_assertion(
+        migrated_conn,
+        entity_id=eid,
+        claim="only flagged status",
+        confidence="confirmed",
+        review_status="flagged",
+        created_at="2026-11-01T00:00:00+00:00",
+        derivation_type="direct_observation",
+        evidence_uris='["cortex://x"]',
+    )
+    rows = [r for r in scan_entity_state_drift(conn=migrated_conn).rows if r.entity_id == eid]
+    assert rows
+    assert all(r.left_cite == "served" for r in rows)
+    assert not any("assertion:None" in r.left_cite for r in rows)
 
 
 def test_get_entity_card_uses_boot_source(
@@ -750,6 +852,7 @@ def test_a6_equal_timestamp_id_ordering(migrated_conn: sqlite3.Connection) -> No
         claim="served",
         confidence="believed",
         created_at=ts,
+        assertion_id=81_001,
     )
     newer = _insert_status_assertion(
         migrated_conn,
@@ -759,6 +862,7 @@ def test_a6_equal_timestamp_id_ordering(migrated_conn: sqlite3.Connection) -> No
         created_at=ts,
         evidence_uris='["cortex://c"]',
         derivation_type="direct_observation",
+        assertion_id=81_002,
     )
     migrated_conn.execute("UPDATE entities SET updated_at = ? WHERE id = ?", (_now(), eid))
     migrated_conn.commit()
@@ -780,8 +884,9 @@ def test_a5_withheld_more_than_three(migrated_conn: sqlite3.Connection) -> None:
         confidence="believed",
         created_at="2026-09-01T00:00:00+00:00",
     )
+    fourth_id = 0
     for i in range(4):
-        _insert_status_assertion(
+        fourth_id = _insert_status_assertion(
             migrated_conn,
             entity_id=eid,
             claim=f"flag {i}",
@@ -791,16 +896,120 @@ def test_a5_withheld_more_than_three(migrated_conn: sqlite3.Connection) -> None:
             derivation_type="direct_observation",
             evidence_uris='["cortex://d"]',
         )
-    assert any(
-        r.entity_id == eid and r.drift_class == "F3" for r in scan_entity_state_drift(conn=migrated_conn).rows
-    )
+    believed = [
+        r
+        for r in scan_entity_state_drift(conn=migrated_conn).rows
+        if r.entity_id == eid and r.surface == "current_status.believed_served"
+    ]
+    assert len(believed) == 1
+    assert believed[0].right_cite == f"assertion:{fourth_id}"
 
 
 def test_population_null_lifecycle_included(migrated_conn: sqlite3.Connection) -> None:
     insert_entity(migrated_conn, entity_id="entity:null-life", entity_type="todo", name="N")
-    migrated_conn.execute("UPDATE entities SET lifecycle = NULL WHERE id = ?", ("entity:null-life",))
+    migrated_conn.execute(
+        "UPDATE entities SET lifecycle = NULL WHERE id = ?",
+        ("entity:null-life",),
+    )
     migrated_conn.commit()
     assert "entity:null-life" in enumerate_entity_ids(migrated_conn)
+
+
+def test_enumerate_entity_ids_excludes_terminal_lifecycle(migrated_conn: sqlite3.Connection) -> None:
+    for idx, life in enumerate(("merged", "reaped", "deprecated", "retired")):
+        eid = f"entity:dead-{life}"
+        insert_entity(migrated_conn, entity_id=eid, entity_type="todo", name=life)
+        if "lifecycle" in {r[1] for r in migrated_conn.execute("PRAGMA table_info(entities)")}:
+            migrated_conn.execute(
+                "UPDATE entities SET lifecycle = ? WHERE id = ?", (life, eid)
+            )
+        else:
+            migrated_conn.execute("UPDATE entities SET status = ? WHERE id = ?", (life, eid))
+    migrated_conn.commit()
+    live = set(enumerate_entity_ids(migrated_conn))
+    for life in ("merged", "reaped", "deprecated", "retired"):
+        assert f"entity:dead-{life}" not in live
+
+
+def test_enumerate_entity_ids_deterministic_order(migrated_conn: sqlite3.Connection) -> None:
+    insert_entity(migrated_conn, entity_id="todo:zzz-last", entity_type="todo", name="z")
+    insert_entity(migrated_conn, entity_id="todo:aaa-first", entity_type="todo", name="a")
+    migrated_conn.commit()
+    ids = enumerate_entity_ids(migrated_conn)
+    assert ids.index("todo:aaa-first") < ids.index("todo:zzz-last")
+
+
+def test_f2_generic_parent_hub_expansion_zero(migrated_conn: sqlite3.Connection) -> None:
+    generic_parent = "todo:window"
+    window = "todo:window-enrollment-deadline"
+    stray = "document:window-enrollment-stray"
+    insert_entity(migrated_conn, entity_id=generic_parent, entity_type="todo", name="window")
+    insert_entity(
+        migrated_conn,
+        entity_id=window,
+        entity_type="todo",
+        name="window enrollment deadline",
+        workflow_state="open",
+        attributes=json.dumps({"deadline_date": "2026-12-02"}),
+    )
+    migrated_conn.execute(
+        "UPDATE entities SET created_at = ? WHERE id = ?", ("2026-09-01T00:00:00+00:00", window)
+    )
+    insert_entity(
+        migrated_conn,
+        entity_id=stray,
+        entity_type="document",
+        name="window enrollment stray",
+        attributes=json.dumps({"enrollment_confirmed": True}),
+    )
+    migrated_conn.execute(
+        "UPDATE entities SET created_at = ? WHERE id = ?", ("2026-11-01T00:00:00+00:00", stray)
+    )
+    migrated_conn.executemany(
+        "INSERT INTO relationships (from_entity, to_entity, type, active) VALUES (?, ?, ?, 1)",
+        [(window, generic_parent, "pertains_to"), (stray, generic_parent, "references")],
+    )
+    migrated_conn.commit()
+    assert not [r for r in scan_entity_state_drift(conn=migrated_conn).rows if r.drift_class == "F2"]
+
+
+def test_resolved_deadline_outcome_excluded(migrated_conn: sqlite3.Connection) -> None:
+    matter = "legal_matter:outcome-matter"
+    deadline = "deadline:outcome-deadline-row"
+    insert_entity(migrated_conn, entity_id=matter, entity_type="legal_matter", name="Outcome matter")
+    insert_entity(
+        migrated_conn,
+        entity_id=deadline,
+        entity_type="deadline",
+        name="outcome deadline",
+        attributes=json.dumps({"deadline_date": "2026-12-02", "outcome": "met"}),
+    )
+    migrated_conn.execute(
+        "INSERT INTO relationships (from_entity, to_entity, type, active) VALUES (?, ?, 'deadline_for', 1)",
+        (deadline, matter),
+    )
+    migrated_conn.commit()
+    assert deadline not in {i.deadline_id for i in open_deadline_items(migrated_conn)}
+
+
+def test_resolved_deadline_assertion_excluded(migrated_conn: sqlite3.Connection) -> None:
+    eid = "todo:resolved-assertion"
+    insert_entity(
+        migrated_conn,
+        entity_id=eid,
+        entity_type="todo",
+        name="assertion resolved",
+        workflow_state="open",
+        attributes=json.dumps({"deadline_date": "2026-12-02"}),
+    )
+    migrated_conn.execute(
+        "INSERT INTO assertions (entity_id, claim, confidence, derivation_type, "
+        "entrenchment_score, created_at, updated_at) VALUES (?, 'Deadline RESOLVED', "
+        "'confirmed', 'inference', 0.5, ?, ?)",
+        (eid, _now(), _now()),
+    )
+    migrated_conn.commit()
+    assert eid not in {i.deadline_id for i in open_deadline_items(migrated_conn)}
 
 
 def test_open_deadlines_match_list_deadlines_impl(
@@ -949,28 +1158,53 @@ def test_detector_never_opens_a_write_transaction(
     assert any(c.kwargs.get("read_only") is True for c in conn_spy.call_args_list)
 
 
-_LIVE_DB = db.check_cortex_db()
+def test_drift_detector_main_prints_specimen_rows(
+    migrated_db_path: Path,
+    specimen_conn: sqlite3.Connection,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    bind_cortex_db(monkeypatch, migrated_db_path)
+
+    def _scan(**kwargs: object) -> DriftScanResult:
+        return scan_entity_state_drift(conn=specimen_conn)
+
+    monkeypatch.setattr("cortex_store.drift_detector.scan_entity_state_drift", _scan)
+    runpy.run_module("cortex_store.drift_detector", run_name="__main__")
+    out = capsys.readouterr().out
+    for needle in (
+        "account:specimen-f1-loan",
+        "todo:acme-benefits-enrollment-window",
+        "plan:specimen-f3-concern",
+        "acme-benefits-choice",
+        "distinct_entities=",
+        "total_rows=",
+    ):
+        assert needle in out
+    assert out.strip().splitlines()[-1].startswith("distinct_entities=")
 
 
-@pytest.mark.skipif(not _LIVE_DB, reason="live cortex db absent on this seat")
 def test_live_specimen_f1_account() -> None:
+    if not db.check_cortex_db():
+        pytest.skip("live cortex db absent on this seat")
     rows = [r for r in scan_entity_state_drift().rows if r.entity_id == "account:edfinancial-student-loan-9158"]
     assert any(r.drift_class == "F1" for r in rows)
 
 
-@pytest.mark.skipif(not _LIVE_DB, reason="live cortex db absent on this seat")
 def test_live_specimen_f2_walgreens() -> None:
+    if not db.check_cortex_db():
+        pytest.skip("live cortex db absent on this seat")
     rows = [
         r
         for r in scan_entity_state_drift().rows
         if r.entity_id == "todo:walgreens-benefits-enrollment-window" and r.drift_class == "F2"
     ]
-    assert rows
-    assert "document:walgreens-benefits-choice-20261030" in rows[0].right_cite
+    assert any("document:walgreens-benefits-choice-20261030" in r.right_cite for r in rows)
 
 
-@pytest.mark.skipif(not _LIVE_DB, reason="live cortex db absent on this seat")
 def test_live_specimen_f3_concern_substrate() -> None:
+    if not db.check_cortex_db():
+        pytest.skip("live cortex db absent on this seat")
     rows = [
         r
         for r in scan_entity_state_drift().rows

@@ -88,13 +88,16 @@ def scan_entity_state_drift(
 
 
 def enumerate_entity_ids(conn: sqlite3.Connection) -> list[str]:
+    """Return entity ids for active rows in deterministic id order (A4)."""
     cols = {r[1] for r in conn.execute("PRAGMA table_info(entities)")}
     col = "COALESCE(status,'')" if "status" in cols else "COALESCE(lifecycle,'')"
     dead = ",".join(f"'{v}'" for v in _DEAD)
-    return [str(r["id"]) for r in query(conn, f"SELECT id FROM entities WHERE {col} NOT IN ({dead}) ORDER BY id")]
+    sql = f"SELECT id FROM entities WHERE {col} NOT IN ({dead}) ORDER BY id"
+    return [str(r["id"]) for r in query(conn, sql)]
 
 
 def open_deadline_items(conn: sqlite3.Connection) -> list[DeadlineItem]:
+    """Open deadlines mirroring list_deadlines(include_resolved=False) filters."""
     rows = query(conn, _DEADLINES_SQL)
     resolved = _resolved_assertion_ids(
         conn, [str(r["deadline_id"]) for r in rows if r.get("deadline_id")]
@@ -107,10 +110,14 @@ def open_deadline_items(conn: sqlite3.Connection) -> list[DeadlineItem]:
     return out
 
 
+def _cli_field(value: object) -> str:
+    return ("" if value is None else str(value)).replace("\t", " ").replace("\n", " ").replace("\r", " ")
+
+
 def format_cli_lines(result: DriftScanResult) -> list[str]:
     """Format drift rows and headline totals for printed baseline output."""
     lines = [
-        f"{r.drift_class}\t{r.entity_id}\t{r.surface}\t{r.left_cite}\t{r.right_cite}\t{r.reason or ''}"
+        "\t".join(map(_cli_field, (r.drift_class, r.entity_id, r.surface, r.left_cite, r.right_cite, r.reason or "")))
         for r in result.rows
     ]
     lines.append(
@@ -153,7 +160,7 @@ def _instant_after(later: str | None, earlier: str | None) -> bool:
     try:
         return _parse_instant(later) > _parse_instant(earlier)
     except ValueError:
-        return str(later) > str(earlier)
+        return False
 
 
 def _evidence_backed(row: dict[str, Any]) -> bool:
@@ -212,12 +219,12 @@ def _f2_candidates(conn: sqlite3.Connection, entity_id: str) -> set[str]:
     for row in query(conn, edge_sql, (entity_id, entity_id)):
         candidates.update((str(row["a"]), str(row["b"])))
     parent_sql = (
-        f"SELECT from_entity pid FROM relationships WHERE to_entity=? AND {_REL_ON} "
-        f"UNION SELECT to_entity pid FROM relationships WHERE from_entity=? AND {_REL_ON}"
+        f"SELECT from_entity pid FROM relationships WHERE to_entity=? AND {_REL_ON} UNION "
+        f"SELECT to_entity pid FROM relationships WHERE from_entity=? AND {_REL_ON}"
     )
     child_sql = (
-        f"SELECT from_entity x FROM relationships WHERE to_entity=? AND {_REL_ON} "
-        f"UNION SELECT to_entity x FROM relationships WHERE from_entity=? AND {_REL_ON}"
+        f"SELECT from_entity x FROM relationships WHERE to_entity=? AND {_REL_ON} UNION "
+        f"SELECT to_entity x FROM relationships WHERE from_entity=? AND {_REL_ON}"
     )
     for parent in query(conn, parent_sql, (entity_id, entity_id)):
         parent_id = str(parent["pid"])
@@ -293,10 +300,7 @@ def _detect_f3(
         entry = withheld[0]
         out.append(
             DriftRow(
-                entity_id,
-                "F3",
-                "current_status.withheld_newer",
-                left_cite,
+                entity_id, "F3", "current_status.withheld_newer", left_cite,
                 f"assertion:{entry.get('assertion_id')}",
                 str(entry.get("reason")) if entry.get("reason") is not None else None,
             )
@@ -320,25 +324,28 @@ def _detect_f3(
         or str(served_row.get("evidence_uris") or "").strip() not in ("", "[]", "null", "None")
     )
     believed = served.get("confidence") == "believed" and not served_grounded
-    for row in status_rows:
-        order = _claim_order_key(row)
-        if order <= served_key or not _evidence_backed(row):
-            continue
-        if row.get("review_status") != "flagged":
-            out.append(
-                DriftRow(
-                    entity_id, "F3", "current_status.served", left_cite,
-                    f"assertion:{row['id']}", "newer_confirmed_status_claim",
-                )
-            )
-        elif believed:
+    if believed:
+        flagged = [r for r in status_rows if r.get("review_status") == "flagged" and _evidence_backed(r)]
+        if flagged:
+            older = [r for r in flagged if _claim_order_key(r) < served_key]
+            pick = max(older or flagged, key=_claim_order_key)
             out.append(
                 DriftRow(
                     entity_id, "F3", "current_status.believed_served", left_cite,
-                    f"assertion:{row['id']}", "believed_served_vs_withheld_confirmed",
+                    f"assertion:{pick['id']}", "believed_served_vs_withheld_confirmed",
                 )
             )
-            break
+    for row in status_rows:
+        if row.get("review_status") == "flagged" or not _evidence_backed(row):
+            continue
+        if _claim_order_key(row) <= served_key:
+            continue
+        out.append(
+            DriftRow(
+                entity_id, "F3", "current_status.served", left_cite,
+                f"assertion:{row['id']}", "newer_confirmed_status_claim",
+            )
+        )
     return out
 
 
