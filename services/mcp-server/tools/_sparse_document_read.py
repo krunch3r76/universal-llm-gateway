@@ -135,7 +135,6 @@ def _subtree_char_count(text: str, row: _IndexedSection) -> int:
     return sec.end - sec.start
 
 
-
 def is_sparse_document_suffix(suffix: str) -> bool:
     lowered = suffix.lower()
     return lowered in {
@@ -237,12 +236,10 @@ def _own_body_slice(text: str, sec: Any) -> str:
                 break
         char_offset += len(line)
     end = child_start if child_start is not None else sec.end
-    return text[sec.start:end]
+    return text[sec.start : end]
 
 
-def _resolve_section_object(
-    text: str, row: _IndexedSection
-) -> Any | None:
+def _resolve_section_object(text: str, row: _IndexedSection) -> Any | None:
     sections = parse_sections(text)
     dupes = [s for s in sections if s.level > 0 and s.path == row.path_key]
     if not dupes:
@@ -293,7 +290,9 @@ def _resolve_indexed(
     if "#" in section_id:
         base, _, ord_str = section_id.rpartition("#")
         if ord_str.isdigit():
-            matches = [r for r in indexed if r.path_key == base and r.ordinal == int(ord_str)]
+            matches = [
+                r for r in indexed if r.path_key == base and r.ordinal == int(ord_str)
+            ]
             if len(matches) == 1:
                 return matches[0], None
     return None, "missing"
@@ -344,7 +343,9 @@ def _meta_for_resolved_section(text: str, sec: Any) -> tuple[str, dict[str, Any]
     )
 
 
-def _content_for_id(text: str, indexed: list[_IndexedSection], section_id: str) -> tuple[str | None, str]:
+def _content_for_id(
+    text: str, indexed: list[_IndexedSection], section_id: str
+) -> tuple[str | None, str]:
     if section_id == UNSECTIONED_ID:
         if not [s for s in parse_sections(text) if s.level > 0]:
             return text, "ok"
@@ -418,9 +419,7 @@ def build_document_manifest(
     read_sha256: str,
     expected_read_sha256: str | None = None,
 ) -> dict[str, Any]:
-    if expected_read_sha256 and not sha256_hex_equal(
-        read_sha256, expected_read_sha256
-    ):
+    if expected_read_sha256 and not sha256_hex_equal(read_sha256, expected_read_sha256):
         return _stale_read_root(
             read_sha256=read_sha256,
             expected_read_sha256=expected_read_sha256,
@@ -571,17 +570,13 @@ def build_section_batch_response(
     section_ids: list[str],
     expected_read_sha256: str | None = None,
 ) -> dict[str, Any]:
-    if expected_read_sha256 and not sha256_hex_equal(
-        read_sha256, expected_read_sha256
-    ):
+    if expected_read_sha256 and not sha256_hex_equal(read_sha256, expected_read_sha256):
         return {
             "ok": False,
             "outcome": "stale_handle",
             "read_sha256": read_sha256,
             "expected_read_sha256": expected_read_sha256,
-            "items": [
-                {"id": sid, "outcome": "stale_handle"} for sid in section_ids
-            ],
+            "items": [{"id": sid, "outcome": "stale_handle"} for sid in section_ids],
             "selection": "sections",
             "sparse_section_batch": True,
         }
@@ -609,9 +604,7 @@ def build_section_batch_response(
         body, outcome = _content_for_id(text, indexed, sid)
         if outcome != "ok" or body is None:
             if outcome == "duplicate_ambiguous":
-                items.append(
-                    {"id": sid, "outcome": "duplicate_ambiguous", **span_meta}
-                )
+                items.append({"id": sid, "outcome": "duplicate_ambiguous", **span_meta})
             else:
                 items.append({"id": sid, "outcome": "missing", **span_meta})
             continue
@@ -682,9 +675,7 @@ def build_export_response(
     chunk_cursor: int | None = None,
     expected_read_sha256: str | None = None,
 ) -> dict[str, Any]:
-    if expected_read_sha256 and not sha256_hex_equal(
-        read_sha256, expected_read_sha256
-    ):
+    if expected_read_sha256 and not sha256_hex_equal(read_sha256, expected_read_sha256):
         return {
             "ok": False,
             "outcome": "stale_handle",
@@ -741,9 +732,7 @@ def resolve_document_read(
         return sparse_selector_conflict_error(
             "chunk_cursor is not valid together with offset/limit window reads"
         )
-    if chunk_cursor_provided and not export and not (
-        has_section and not has_sections
-    ):
+    if chunk_cursor_provided and not export and not (has_section and not has_sections):
         return param_not_applicable_error(parameter="chunk_cursor")
 
     if export and (has_section or has_sections or range_requested):

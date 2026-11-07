@@ -65,7 +65,9 @@ def test_whitespace_only_section_returns_manifest(md_tool) -> None:
     assert res["selection"] == "manifest"
 
 
-def test_preamble_present_empty_section_returns_manifest_not_preamble_body(md_tool) -> None:
+def test_preamble_present_empty_section_returns_manifest_not_preamble_body(
+    md_tool,
+) -> None:
     fn, root = md_tool
     _write(root, "doc.md", PREAMBLE_DOC)
     res = fn(op="read_section", path="doc.md", sandbox="cortex", section="")

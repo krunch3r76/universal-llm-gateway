@@ -267,7 +267,9 @@ def pdf_to_dict(path: Path) -> dict[str, object]:
     return _nest(sections, texts, 0, len(sections))
 
 
-def _outline_descriptors(listing: dict[str, object]) -> tuple[list[dict[str, object]], int]:
+def _outline_descriptors(
+    listing: dict[str, object],
+) -> tuple[list[dict[str, object]], int]:
     """TOC rows with the same ids ``read_pdf_section`` resolves, plus child metadata."""
     rows = list(listing.get("sections") or [])
     stack: list[tuple[int, str]] = []
@@ -312,8 +314,10 @@ def _outline_descriptors(listing: dict[str, object]) -> tuple[list[dict[str, obj
             }
         )
     total = listing.get("total_chars")
-    total_chars = int(total) if isinstance(total, int) else sum(
-        int(item["char_count"]) for item in raw
+    total_chars = (
+        int(total)
+        if isinstance(total, int)
+        else sum(int(item["char_count"]) for item in raw)
     )
     return descriptors, total_chars
 
@@ -329,7 +333,8 @@ def _match_pdf_descriptor(
     heading = [
         row
         for row in descriptors
-        if row.get("heading") == section_id or str(row.get("id") or "").endswith("/" + section_id)
+        if row.get("heading") == section_id
+        or str(row.get("id") or "").endswith("/" + section_id)
     ]
     if len(heading) == 1:
         return heading[0], "ok"
@@ -376,7 +381,9 @@ def resolve_pdf_outline_read(
     if chunk_cursor_provided and not (has_section and not has_sections):
         return param_not_applicable_error(parameter="chunk_cursor")
     if has_section and has_sections:
-        return sparse_selector_conflict_error("Pass either section or sections, not both")
+        return sparse_selector_conflict_error(
+            "Pass either section or sections, not both"
+        )
     if sections is not None and len(sections) == 0:
         return sparse_selector_conflict_error(
             "sections must be a non-empty list when provided"
@@ -447,7 +454,15 @@ def resolve_pdf_outline_read(
         try:
             body = _load(row)
         except PdfSectionError as exc:
-            return {"ok": False, "outcome": "missing", "error": str(exc), "selection": "section", "section": wanted[0], "path": path, "read_sha256": read_sha256}
+            return {
+                "ok": False,
+                "outcome": "missing",
+                "error": str(exc),
+                "selection": "section",
+                "section": wanted[0],
+                "path": path,
+                "read_sha256": read_sha256,
+            }
         span = _span(row, body)
         if chunk_cursor_provided:
             start = 0 if chunk_cursor is None else int(chunk_cursor)
@@ -517,7 +532,9 @@ def resolve_pdf_outline_read(
                 budget_cursor = idx
             continue
         if row is None:
-            items.append({"id": sid, "outcome": "missing" if status == "missing" else status})
+            items.append(
+                {"id": sid, "outcome": "missing" if status == "missing" else status}
+            )
             continue
         try:
             body = _load(row)
@@ -525,7 +542,10 @@ def resolve_pdf_outline_read(
             items.append({"id": sid, "outcome": "missing"})
             continue
         span = _span(row, body)
-        if len(body) > BATCH_MAX_CONTENT_CHARS or used + len(body) > BATCH_MAX_CONTENT_CHARS:
+        if (
+            len(body) > BATCH_MAX_CONTENT_CHARS
+            or used + len(body) > BATCH_MAX_CONTENT_CHARS
+        ):
             ended = True
             budget_cursor = idx
             items.append(

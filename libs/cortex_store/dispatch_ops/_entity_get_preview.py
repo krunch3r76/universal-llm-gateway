@@ -13,9 +13,7 @@ _PREVIEW_OMITTED = ("attributes", "assertions", "journal", "relations", "content
 _SUMMARY_CAP = 500
 
 
-def read_live_entity_revision(
-    conn: sqlite3.Connection, entity_id: str
-) -> int | None:
+def read_live_entity_revision(conn: sqlite3.Connection, entity_id: str) -> int | None:
     """Return entities.revision when the column exists, else None."""
     cols = {r[1] for r in conn.execute("PRAGMA table_info(entities)").fetchall()}
     if "revision" not in cols:
@@ -50,7 +48,9 @@ def _freshest_of(rows: list[dict[str, Any]]) -> dict[str, Any] | None:
     return sorted(rows, key=_assertion_sort_key, reverse=True)[0]
 
 
-def _freshest_assertion(conn: sqlite3.Connection, entity_id: str) -> dict[str, Any] | None:
+def _freshest_assertion(
+    conn: sqlite3.Connection, entity_id: str
+) -> dict[str, Any] | None:
     rows = query(
         conn,
         "SELECT id, claim, observed_at, confidence, review_status, entity_id "
@@ -116,11 +116,7 @@ def _conflict_slot(conn: sqlite3.Connection, entity_id: str) -> dict[str, Any]:
         + ")",
         tuple(needed),
     )
-    by_id = {
-        int(row["id"]): row
-        for row in loaded
-        if row.get("superseded_by") is None
-    }
+    by_id = {int(row["id"]): row for row in loaded if row.get("superseded_by") is None}
     freshest = _freshest_assertion(conn, entity_id)
     candidates: list[dict[str, Any]] = []
     counted = 0
@@ -139,11 +135,7 @@ def _conflict_slot(conn: sqlite3.Connection, entity_id: str) -> dict[str, Any]:
             candidates.append(others[0])
     if freshest is not None:
         # Prefer the non-freshest side relative to this entity when it is in the pair.
-        narrowed = [
-            row
-            for row in candidates
-            if int(row["id"]) != int(freshest["id"])
-        ]
+        narrowed = [row for row in candidates if int(row["id"]) != int(freshest["id"])]
         if narrowed:
             candidates = narrowed
     chosen = _freshest_of(candidates)

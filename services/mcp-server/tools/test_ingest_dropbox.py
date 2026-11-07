@@ -1369,5 +1369,7 @@ def test_entity_hash_raises_when_preview_has_no_hash(
         return {"entity_id": "document:scan"}
 
     monkeypatch.setattr(evidence_entity_ops, "cx", _cx)
-    with pytest.raises(ingest_mod.EntityHashUnavailableError, match="content_hash absent"):
+    with pytest.raises(
+        ingest_mod.EntityHashUnavailableError, match="content_hash absent"
+    ):
         ingest_mod._entity_hash("document:scan")

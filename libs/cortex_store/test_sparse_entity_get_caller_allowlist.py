@@ -145,7 +145,9 @@ def _payload_has_intent(call: ast.Call) -> bool | None:
 
 
 def _allowed(rel: str, segment: str) -> bool:
-    return any(path == rel and anchor in segment for path, anchor, _reason in _ALLOWLIST)
+    return any(
+        path == rel and anchor in segment for path, anchor, _reason in _ALLOWLIST
+    )
 
 
 def _violations_in_py(path: Path) -> list[str]:
@@ -178,7 +180,11 @@ def _violations_in_py(path: Path) -> list[str]:
             if _allowed(rel, segment):
                 continue
             found.append(f"{rel}:{node.lineno}: call omits intent ({segment[:180]!r})")
-        text = None if isinstance(node, ast.Call) or _inside_joined(node) else _literal_text(node)
+        text = (
+            None
+            if isinstance(node, ast.Call) or _inside_joined(node)
+            else _literal_text(node)
+        )
         if isinstance(node, ast.JoinedStr):
             text = _literal_text(node)
         if text and _omits_intent_text(text):
@@ -204,7 +210,12 @@ def _compliant_py_sites() -> list[str]:
                 if _payload_has_intent(node) is True:
                     hits.append(f"{rel}:{node.lineno}")
             text = _literal_text(node)
-            if text and "entity_get" in text and "intent" in text and "entity_id" in text:
+            if (
+                text
+                and "entity_get" in text
+                and "intent" in text
+                and "entity_id" in text
+            ):
                 hits.append(f"{rel}:{getattr(node, 'lineno', 0)}:hint")
     return hits
 

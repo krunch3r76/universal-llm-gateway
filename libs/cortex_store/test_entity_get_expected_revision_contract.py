@@ -182,7 +182,11 @@ def test_unknown_id_with_expected_revision_is_missing(
     with _patched_conn(migrated_conn):
         out = execute_op(
             "entity_get",
-            {"entity_id": "todo:does-not-exist", "expected_revision": 1, "intent": "card"},
+            {
+                "entity_id": "todo:does-not-exist",
+                "expected_revision": 1,
+                "intent": "card",
+            },
         )
     assert out["outcome"] == "missing"
     assert "top_k_assertions" not in out

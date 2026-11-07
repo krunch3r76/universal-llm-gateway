@@ -52,9 +52,7 @@ def test_explicit_preview_intent(migrated_conn: sqlite3.Connection) -> None:
     entity_id = "todo:sparse-preview-explicit"
     insert_entity(migrated_conn, entity_id=entity_id, entity_type="todo")
     with _patched_conn(migrated_conn):
-        result = execute_op(
-            "entity_get", {"entity_id": entity_id, "intent": "preview"}
-        )
+        result = execute_op("entity_get", {"entity_id": entity_id, "intent": "preview"})
     assert result.get("intent") == "preview"
 
 
@@ -73,7 +71,9 @@ def test_preview_includes_content_hash(migrated_conn: sqlite3.Connection) -> Non
 
 
 @pytest.mark.offline
-def test_batch_stale_handle_per_entity_revision(migrated_conn: sqlite3.Connection) -> None:
+def test_batch_stale_handle_per_entity_revision(
+    migrated_conn: sqlite3.Connection,
+) -> None:
     """Labeled non-production seam.
 
     ``live_schema_snapshot.json`` entities has no revision column. This ALTER
@@ -105,7 +105,9 @@ def test_batch_stale_handle_per_entity_revision(migrated_conn: sqlite3.Connectio
     assert result["items"][1]["revision"] == 5
 
 
-def _edge(conn: sqlite3.Connection, left: int, right: int, *, retired: bool = False) -> None:
+def _edge(
+    conn: sqlite3.Connection, left: int, right: int, *, retired: bool = False
+) -> None:
     conn.execute(
         "INSERT INTO session_edges (session_id, agent, from_node, to_node, edge_type, valid_until) "
         "VALUES (?, ?, ?, ?, 'contradicts', ?)",
@@ -121,7 +123,9 @@ def _edge(conn: sqlite3.Connection, left: int, right: int, *, retired: bool = Fa
 
 
 @pytest.mark.offline
-def test_preview_conflict_uses_live_contradicts_edge(migrated_conn: sqlite3.Connection) -> None:
+def test_preview_conflict_uses_live_contradicts_edge(
+    migrated_conn: sqlite3.Connection,
+) -> None:
     entity_id = "todo:preview-conflict"
     insert_entity(
         migrated_conn,
@@ -129,7 +133,9 @@ def test_preview_conflict_uses_live_contradicts_edge(migrated_conn: sqlite3.Conn
         entity_type="todo",
         description="Stored description that does not mention the buried conflict.",
     )
-    older = insert_assertion(migrated_conn, entity_id=entity_id, claim="buried conflict claim")
+    older = insert_assertion(
+        migrated_conn, entity_id=entity_id, claim="buried conflict claim"
+    )
     newer = insert_assertion(migrated_conn, entity_id=entity_id, claim="freshest claim")
     migrated_conn.execute(
         "UPDATE assertions SET observed_at = ? WHERE id = ?",
@@ -168,7 +174,9 @@ def test_preview_without_contradicts_edge_has_zero_count(
 
 
 @pytest.mark.offline
-def test_superseded_contradiction_does_not_count(migrated_conn: sqlite3.Connection) -> None:
+def test_superseded_contradiction_does_not_count(
+    migrated_conn: sqlite3.Connection,
+) -> None:
     entity_id = "todo:preview-retired-conflict"
     insert_entity(migrated_conn, entity_id=entity_id, entity_type="todo")
     older = insert_assertion(migrated_conn, entity_id=entity_id, claim="old")
@@ -185,7 +193,9 @@ def test_superseded_contradiction_does_not_count(migrated_conn: sqlite3.Connecti
 
 
 @pytest.mark.offline
-def test_preview_revision_when_column_present(migrated_conn: sqlite3.Connection) -> None:
+def test_preview_revision_when_column_present(
+    migrated_conn: sqlite3.Connection,
+) -> None:
     migrated_conn.execute("ALTER TABLE entities ADD COLUMN revision INTEGER DEFAULT 0")
     migrated_conn.commit()
     entity_id = "todo:sparse-preview-rev"

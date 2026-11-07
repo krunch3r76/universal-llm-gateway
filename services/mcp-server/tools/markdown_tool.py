@@ -771,9 +771,7 @@ def register_markdown_tools(mcp: FastMCP) -> None:
             def _strip_bodies(node: Any) -> Any:
                 if isinstance(node, dict):
                     return {
-                        k: _strip_bodies(v)
-                        for k, v in node.items()
-                        if k != "_content"
+                        k: _strip_bodies(v) for k, v in node.items() if k != "_content"
                     }
                 if isinstance(node, list):
                     return [_strip_bodies(v) for v in node]

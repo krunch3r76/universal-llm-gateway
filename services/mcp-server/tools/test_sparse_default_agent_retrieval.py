@@ -83,7 +83,9 @@ def test_export_conflict(md_tool) -> None:
     assert res["code"] == "invalid_selector_combo"
 
 
-def test_fs_read_py_still_returns_body(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_fs_read_py_still_returns_body(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     monkeypatch.setattr("tools._file_helpers.FILES_ROOT", tmp_path)
     monkeypatch.setattr("tools.filesystem._paths.SANDBOX_ROOT", tmp_path)
     (tmp_path / "mod.py").write_text("print('hi')\n", encoding="utf-8")
@@ -102,7 +104,9 @@ def test_read_files_batch_single_path_keeps_manifest(
     assert entry.get("code") != "sparse_manifest_requires_expansion"
     assert entry.get("selection") == "manifest"
     assert "content" not in entry
-    assert any(row.get("id") == "T" or row.get("heading") == "T" for row in entry["sections"])
+    assert any(
+        row.get("id") == "T" or row.get("heading") == "T" for row in entry["sections"]
+    )
 
 
 def test_parent_body_excludes_child(md_tool) -> None:
