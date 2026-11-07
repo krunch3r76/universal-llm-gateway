@@ -9,6 +9,7 @@ from agent_bus_store.db import create_thread, init_db, insert_turn
 from agent_bus_store.db.connection import connect, write_connect
 from bus_watch.endpoint_wake_composer_defer import (
     COMPOSER_DEFER_ARMED,
+    COMPOSER_DEFER_ESCALATED,
     COMPOSER_DEFER_REASONS,
     COMPOSER_DEFER_SWEEP,
     composer_defer_reason_in_sql,
@@ -125,6 +126,100 @@ def test_notify_composer_empty_for_target_includes_non_empty_composer(db: None) 
             (thread,),
         ).fetchone()
     assert row["decided_by_rule"] is None
+
+
+def _seed_escalated_composer_defer(thread: str, *, reason: str = "composer_not_empty") -> None:
+    turn_id, _ts, number, _c = insert_turn(
+        thread=thread,
+        from_agent="cursor",
+        to_agent="grok-bot-gc1",
+        subject=f"DEFER|{reason}",
+        body="defer",
+    )
+    with write_connect() as conn:
+        conn.execute(
+            "INSERT INTO endpoint_wake_ledger "
+            "(agent, thread_id, turn_id, turn_number, state, reason, created_at, "
+            "decided_by_rule, finished_at) VALUES (?,?,?,?, 'refused', ?, ?, ?, ?)",
+            (
+                "grok-bot-gc1",
+                thread,
+                turn_id,
+                number,
+                reason,
+                "2020-01-01 00:00:00",
+                COMPOSER_DEFER_ESCALATED,
+                "2020-01-01 00:00:01",
+            ),
+        )
+
+
+def test_notify_composer_empty_rearms_escalated_composer_defer(db: None) -> None:
+    """Break: sweep refuse before empty notify leaves escalated row unclaimable."""
+    detail = create_thread(thread_id=None, slug="arity-rearm-escalated")
+    assert detail is not None
+    thread = str(detail["id"])
+    _seed_escalated_composer_defer(thread)
+    kw = dict(
+        display="9",
+        surface="grok",
+        agent_id="grok-bot-gc1",
+        thread_scope=thread,
+    )
+    assert notify_composer_empty_for_target(**kw) == 1
+    with connect() as conn:
+        row = conn.execute(
+            "SELECT state, decided_by_rule, finished_at FROM endpoint_wake_ledger "
+            "WHERE thread_id=?",
+            (thread,),
+        ).fetchone()
+    assert row["state"] == "pending"
+    assert row["decided_by_rule"] is None
+    assert row["finished_at"] is None
+    assert notify_composer_empty_for_target(**kw) == 0
+
+
+def test_notify_composer_empty_skips_title_mismatch_refused(db: None) -> None:
+    """Break: broad refused match would resurrect terminal title_mismatch rows."""
+    detail = create_thread(thread_id=None, slug="arity-skip-title-mismatch")
+    assert detail is not None
+    thread = str(detail["id"])
+    turn_id, _ts, number, _c = insert_turn(
+        thread=thread,
+        from_agent="cursor",
+        to_agent="grok-bot-gc1",
+        subject="FACT|title",
+        body="b",
+    )
+    with write_connect() as conn:
+        conn.execute(
+            "INSERT INTO endpoint_wake_ledger "
+            "(agent, thread_id, turn_id, turn_number, state, reason, created_at, "
+            "finished_at) VALUES (?,?,?,?, 'refused', 'title_mismatch', ?, ?)",
+            (
+                "grok-bot-gc1",
+                thread,
+                turn_id,
+                number,
+                "2020-01-01 00:00:00",
+                "2020-01-01 00:00:02",
+            ),
+        )
+    cleared = notify_composer_empty_for_target(
+        display="9",
+        surface="grok",
+        agent_id="grok-bot-gc1",
+        thread_scope=thread,
+    )
+    assert cleared == 0
+    with connect() as conn:
+        row = conn.execute(
+            "SELECT state, reason, finished_at FROM endpoint_wake_ledger WHERE thread_id=?",
+            (thread,),
+        ).fetchone()
+    assert row["state"] == "refused"
+    assert row["reason"] == "title_mismatch"
+    assert row["finished_at"] == "2020-01-01 00:00:02"
 
 
 def test_composer_defer_functions_reference_dynamic_in_sql() -> None:

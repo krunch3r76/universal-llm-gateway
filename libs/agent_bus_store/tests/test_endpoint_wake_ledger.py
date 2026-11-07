@@ -1719,3 +1719,42 @@ def test_escalate_composer_deferred_stamp_fn_outside_write_connect_no_deadlock(
             return {"ok": True}
 
     assert escalate_composer_deferred_on_sweep(_Store()) == 1
+
+
+def test_record_wake_result_title_mismatch_refused_stamps_finished_at(
+    db: TestClient,
+) -> None:
+    """Break: terminal refused without finished_at skews debounce / completion scans."""
+    detail = create_thread(thread_id=None, slug="title-mismatch-finished")
+    assert detail is not None
+    thread = str(detail["id"])
+    made = _turn(thread)
+    get_cursor()
+    with connect() as conn:
+        conn.execute("UPDATE endpoint_wake_cursor SET high_water_turn_id=0")
+    advance_scan(
+        "endpoint-wake-dispatcher",
+        0,
+        made["turn_id"],
+        [made],
+        now="2020-01-01 00:00:00",
+    )
+    wake = claim_due_wakes(now="2020-01-01 00:00:01")["wake_id"]
+    assert wake
+    record_wake_result(
+        wake,
+        "refused",
+        "title_mismatch",
+        "exact",
+        1,
+        None,
+        now="2020-01-01 00:00:02",
+    )
+    with connect() as conn:
+        row = conn.execute(
+            "SELECT state, reason, finished_at FROM endpoint_wake_ledger WHERE wake_id=?",
+            (wake,),
+        ).fetchone()
+    assert row["state"] == "refused"
+    assert row["reason"] == "title_mismatch"
+    assert row["finished_at"] == "2020-01-01 00:00:02"
