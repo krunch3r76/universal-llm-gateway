@@ -1491,7 +1491,7 @@ def record_wake_result(
     )
     stamp = _now(now)
     if outcome == "refused":
-        # Terminal display refusals stamp finished_at; composer-defers stay pending.
+        # title_mismatch is a terminal display refusal; composer defers record outcome=pending.
         finished = stamp if str(reason or "").strip() == "title_mismatch" else None
     else:
         finished = stamp
