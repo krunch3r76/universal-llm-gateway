@@ -179,3 +179,7 @@ Strength on *existing* edges is also **retrospective**, not live auto-count (`de
 - `decision:cortex-relationship-strength-at-link` — grade `relationship_create` strength + evidence at link time.
 
 Load `agent_skill:cortex` by entity name when you need depth; do not hardcode paths or reintroduce parallel deep copies.
+
+## F1 — historical regression specimen (as of 2026-11-07)
+
+`entity_get` `account:edfinancial-student-loan-9158` card: `summary_row` and `predicate_summary` imply RAP **not submitted**; `current_status.served` is `a:40748` (2026-10-06 final notice). **Correct cold-seat answer:** RAP **submitted** 2026-11-03 (`a:41768`, `withheld_newer` state `submitted`); `attributes.application_submitted=true`, `attributes.rap_application_status=submitted_by_Kaywan_awaiting_servicer_processing`, corroborated by `rap_submission_receipt_uri` — awaiting servicer processing. **Wrong:** repeating "not submitted" from `summary_row` or `predicate_summary`.
