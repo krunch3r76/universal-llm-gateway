@@ -12,6 +12,29 @@ from agent_bus_store.server import create_app
 from fastapi.testclient import TestClient
 
 
+@pytest.fixture(autouse=True)
+def _cursor_placement_neutral(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Journal tests are not placement tests; avoid live vscdb mismatch on hub."""
+
+    def _neutral(**_kwargs: object) -> dict[str, object]:
+        return {
+            "subscription_display": "8",
+            "basis": "unresolved",
+            "gui_host": ":8",
+            "readable_count": 0,
+            "vscdbs_checked": [],
+        }
+
+    monkeypatch.setattr(
+        "bus_watch.cursor_tab_whereami.resolve_cursor_tab_whereami",
+        _neutral,
+    )
+    monkeypatch.setattr(
+        "agent_bus_store.db.cursor_subscribe_placement.resolve_cursor_tab_whereami",
+        _neutral,
+    )
+
+
 @pytest.fixture()
 def client(tmp_path, monkeypatch: pytest.MonkeyPatch) -> TestClient:
     monkeypatch.setenv("AGENT_BUS_DB_PATH", str(tmp_path / "bus.db"))
@@ -165,16 +188,15 @@ def test_subscribe_supersedes_prior_agent_id(client: TestClient) -> None:
     assert second.json()["appended"] is True
     prior = second.json()["prior"]
     assert prior is not None
-    assert prior["state"] == "unsubscribed"
+    assert prior["state"] == "subscribed"
     assert prior["agent_id"] == "11111111-1111-1111-1111-111111111111"
-    assert prior["evidence"] == "superseded_by:22222222-2222-2222-2222-222222222222"
     assert second.json()["prior_subscription_id"] == first.json()["row"]["id"]
     row = second.json()["row"]
     assert row["state"] == "subscribed"
     assert row["agent_id"] == "22222222-2222-2222-2222-222222222222"
 
 
-def test_resubscribe_same_agent_id_no_prior_subscription_id(client: TestClient) -> None:
+def test_resubscribe_same_agent_id_reports_prior_subscribed_row(client: TestClient) -> None:
     thread = _thread("xvfb-same-agent")
     agent_id = "33333333-3333-3333-3333-333333333333"
     first = _sub(

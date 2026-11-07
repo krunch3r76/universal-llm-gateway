@@ -10,7 +10,7 @@ from agent_bus_store.db import create_thread, init_db
 from agent_bus_store.server import create_app
 from fastapi.testclient import TestClient
 
-_TID = "7689373a-2222-4222-8222-222222222222"
+_TID = "7689373a-2499-41f0-9ff6-fccbcf130362"
 
 
 @pytest.fixture()
@@ -81,3 +81,33 @@ def test_cursor_subscribe_display_mismatch_422(client: TestClient) -> None:
     assert detail["code"] == "display_mismatch"
     assert detail["resolved_display"] == "orion-node"
     assert detail["supplied_display"] == "8"
+
+
+def test_cursor_subscribe_display_override_emits_event(client: TestClient) -> None:
+    thread = _thread("cursor-override")
+    placement = {
+        "subscription_display": "orion-node",
+        "basis": "vscdb",
+    }
+    with patch(
+        "bus_watch.cursor_tab_whereami.resolve_cursor_tab_whereami",
+        return_value=placement,
+    ):
+        with patch(
+            "agent_bus_store.routes.threads.subscriptions.emit_endpoint_display_override"
+        ) as emit_override:
+            resp = client.post(
+                "/endpoint-subscriptions",
+                json={
+                    "agent": "cursor",
+                    "thread_scope": thread,
+                    "surface": "cursor",
+                    "display": "8",
+                    "title": f"{thread} ",
+                    "agent_id": _TID,
+                    "display_override": True,
+                    "display_override_reason": "operator confirmed",
+                },
+            )
+    assert resp.status_code == 200
+    emit_override.assert_called_once()

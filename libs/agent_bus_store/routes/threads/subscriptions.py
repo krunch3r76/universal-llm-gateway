@@ -25,6 +25,7 @@ from ...db.endpoint_wake_ledger import (
     resolve_wake_delivery_binding,
 )
 from ...events.endpoint_subscribed import (
+    emit_endpoint_display_override,
     emit_endpoint_subscribed,
     emit_endpoint_unsubscribed,
 )
@@ -49,6 +50,8 @@ class SubscribeBody(BaseModel):
     attempt_id: str | None = None
     handoff_sha256: str | None = None
     instance_id: str | None = None
+    display_override: bool = False
+    display_override_reason: str | None = None
 
     @model_validator(mode="after")
     def _require_surface_unless_chatgpt_work(self) -> SubscribeBody:
@@ -68,6 +71,8 @@ class SubscribeBody(BaseModel):
             if surface == "cursor" and agent_id and uuid_re.match(agent_id):
                 return self
             raise ValueError("endpoint_surface_display_required")
+        if self.display_override and not str(self.display_override_reason or "").strip():
+            raise ValueError("display_override_reason_required")
         return self
 
 
@@ -143,7 +148,7 @@ async def subscribe_route(body: SubscribeBody) -> dict[str, Any]:
         raise _refuse(exc) from exc
     if result["appended"]:
         row = result["row"]
-        prior = result["prior"] or {}
+        prior = result.get("prior") or {}
         emit_endpoint_subscribed(
             agent=row["agent"],
             thread_scope=row["thread_scope"],
@@ -152,13 +157,25 @@ async def subscribe_route(body: SubscribeBody) -> dict[str, Any]:
             title=row["title"],
             agent_id=row["agent_id"],
             subscription_id=row["id"],
-            prior_subscription_id=prior.get("id"),
+            prior_subscription_id=result.get("prior_subscription_id"),
             prior_surface=prior.get("surface"),
             prior_display=prior.get("display"),
             prior_title=prior.get("title"),
             prior_agent_id=prior.get("agent_id"),
             bound_by=row["bound_by"],
         )
+        override = result.get("display_override_event")
+        if isinstance(override, dict):
+            emit_endpoint_display_override(
+                agent=row["agent"],
+                thread_scope=row["thread_scope"],
+                agent_id=row.get("agent_id"),
+                subscription_id=int(row["id"]),
+                supplied_display=str(override.get("supplied_display") or ""),
+                resolved_display=override.get("resolved_display"),
+                basis=override.get("basis"),
+                reason=str(override.get("reason") or ""),
+            )
     return result
 
 
@@ -171,12 +188,11 @@ async def unsubscribe_route(body: UnsubscribeBody) -> dict[str, Any]:
     result = unsubscribe_endpoint(**body.model_dump())
     if result["appended"]:
         row = result["row"]
-        prior = result["prior"] or {}
         emit_endpoint_unsubscribed(
             agent=row["agent"],
             thread_scope=row["thread_scope"],
             subscription_id=row["id"],
-            prior_subscription_id=prior.get("id"),
+            prior_subscription_id=result.get("prior_subscription_id"),
             bound_by=row["bound_by"],
         )
     return result

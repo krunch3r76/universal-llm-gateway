@@ -82,10 +82,7 @@ def test_detect_cursor_gui_host_vscdb_pane(
             "INSERT INTO ItemTable VALUES (?, ?)",
             (f"glass.agentConversationPanes.{tid}", b"{}"),
         )
-    monkeypatch.setattr(
-        "bus_watch.cursor_xvfb_subscription._readable_vscdb",
-        lambda: db,
-    )
+    monkeypatch.setenv("CURSOR_VSCDB_PATHS", f"{db}|:8")
     monkeypatch.delenv("SSH_CONNECTION", raising=False)
     monkeypatch.delenv("DISPLAY", raising=False)
     assert detect_cursor_gui_host(transcript_id=tid) == ":8"
