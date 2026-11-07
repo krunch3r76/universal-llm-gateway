@@ -7,13 +7,13 @@ from typing import Any
 from unittest.mock import AsyncMock, patch
 
 import pytest
-
 from cursor_bridge.grok_agent_ops import (
-    clear_spawn_cache_for_tests,
     list_grok_agents_async,
     select_grok_agent_async,
     spawn_grok_agent_async,
 )
+from cursor_bridge.grok_roster_js import js_list
+from cursor_bridge.grok_spawn_idempotency import clear_spawn_cache_for_tests
 
 pytestmark = pytest.mark.offline
 
@@ -71,8 +71,10 @@ async def test_spawn_idempotency_duplicate() -> None:
 
     async def _eval(_display: object, expr: str, **_kw: Any) -> dict[str, Any]:
         calls["n"] += 1
-        if "createAgent" in expr or "clientNonce" in expr:
-            return {"ok": True, "agent_id": "spawned-1"}
+        if "createAgent" in expr:
+            return {"ok": True, "created": True, "agent_id": "spawned-1"}
+        if "setAgentHiddenFromSidebar" in expr:
+            return {"ok": True, "hidden": True, "code": "hidden"}
         return {"ok": True, "currentAgentId": "spawned-1"}
 
     with (
@@ -91,7 +93,7 @@ async def test_spawn_idempotency_duplicate() -> None:
         )
     assert first["ok"] is True
     assert second.get("duplicate") is True
-    assert calls["n"] == 2  # create + verify select on first call only paths
+    assert calls["n"] == 3  # create, hide readback, select
 
 
 @pytest.mark.asyncio
@@ -108,7 +110,9 @@ async def test_spawn_partial_failure_clears_idempotency() -> None:
     with patch(
         "cursor_bridge.grok_agent_ops._eval_display",
         new_callable=AsyncMock,
-        return_value={"ok": True, "agent_id": "r1"},
+        side_effect=lambda *_a, **_k: (
+            {"ok": True, "created": True, "agent_id": "r1", "hidden": True, "currentAgentId": "r1"}
+        ),
     ) as ev:
         retry = await spawn_grok_agent_async("9", "x", idempotency_key="idem-2")
     assert retry["ok"] is True
@@ -181,6 +185,8 @@ async def test_spawn_post_create_failure_resumes_same_agent() -> None:
         if "createAgent" in expr:
             creates["n"] += 1
             return {"ok": True, "created": True, "agent_id": "kept-1"}
+        if "setAgentHiddenFromSidebar" in expr:
+            return {"ok": True, "hidden": True}
         return {"ok": True, "currentAgentId": "kept-1"}
 
     with (
@@ -189,10 +195,10 @@ async def test_spawn_post_create_failure_resumes_same_agent() -> None:
             "interlocutor.display_adapter.steer_display",
             new_callable=AsyncMock,
             side_effect=[
-                {"ok": False, "code": "delivery_unconfirmed"},
+                {"ok": False, "code": "delivery_unconfirmed", "delivered": False, "pasted": True},
                 {"ok": True, "delivered": True},
             ],
-        ),
+        ) as steer,
     ):
         first = await spawn_grok_agent_async(
             "9", "bot", text="hi", idempotency_key="post-1"
@@ -200,11 +206,12 @@ async def test_spawn_post_create_failure_resumes_same_agent() -> None:
         second = await spawn_grok_agent_async(
             "9", "bot", text="hi", idempotency_key="post-1"
         )
-    assert first["ok"] is False
-    assert first["agent_id"] == "kept-1"
-    assert second["ok"] is True
-    assert second["agent_id"] == "kept-1"
-    assert creates["n"] == 1
+        assert first["code"] == "initial_text_unconfirmed"
+        assert first["agent_id"] == "kept-1"
+        assert second["code"] == "initial_text_unconfirmed"
+        assert second.get("needs_operator") is True
+        assert creates["n"] == 1
+        assert steer.await_count == 1
 
 
 @pytest.mark.asyncio
@@ -224,8 +231,6 @@ async def test_spawn_key_conflict_and_operator_relay_before_create() -> None:
 
 
 def test_list_defaults_include_hidden_not_retired() -> None:
-    js = __import__("cursor_bridge.grok_agent_ops", fromlist=["_js_list"])._js_list(
-        include_hidden=True, include_retired=False
-    )
+    js = js_list(include_hidden=True, include_retired=False)
     assert "includeHidden = true" in js
     assert "includeRetired = false" in js
