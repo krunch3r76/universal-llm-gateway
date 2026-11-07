@@ -6,35 +6,40 @@ import re
 from dataclasses import dataclass
 from typing import Literal
 
-ReviewTargetKind = Literal["lane_branch", "worktree_lane", "explicit_head"]
+ReviewTargetKind = Literal[
+    "review_thread",
+    "lane_branch",
+    "worktree_lane",
+    "explicit_head",
+]
 
-_LAYER_URI = re.compile(
-    r"cortex://tmp/review-layers/([A-Za-z0-9._-]+)/",
-    re.IGNORECASE,
-)
 _LANE_BRANCH = re.compile(r"\bcursor-sdk/lane-(\d+)(?![\w-])")
 _WORKTREE_LANE = re.compile(
     r"ulg-arc-worktrees/[^\s]*?/lane-(\d+)(?![\w-])",
     re.IGNORECASE,
 )
-_REVIEW_HEAD = re.compile(r"^review_head:\s*(\S+)", re.MULTILINE)
-_REVIEW_BASE = re.compile(r"^review_base:\s*(\S+)", re.MULTILINE)
+_REVIEW_THREAD = re.compile(r"^review_thread:[ \t]*(\d+)\s*$", re.MULTILINE)
+_REVIEW_HEAD = re.compile(r"^review_head:[ \t]*(\S+)", re.MULTILINE)
+_REVIEW_BASE = re.compile(r"^review_base:[ \t]*(\S+)", re.MULTILINE)
 
 
 @dataclass(frozen=True, slots=True)
 class ReviewTarget:
-    """A single review head (and optional base) extracted from prompt text."""
+    """A review lane thread and optional explicit head/base refs."""
 
     kind: ReviewTargetKind
-    head: str
+    thread_id: str
+    head: str | None = None
     base: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
 class DetectionResult:
-    """Targets extracted from a prompt; layer presence is resolved separately on disk."""
+    """Targets extracted from a prompt body."""
 
     targets: tuple[ReviewTarget, ...]
+    explicit_head: str | None = None
+    explicit_base: str | None = None
 
 
 def detect_review_targets(body: str) -> DetectionResult:
@@ -42,55 +47,86 @@ def detect_review_targets(body: str) -> DetectionResult:
     if not body:
         return DetectionResult(targets=())
 
-    targets: list[ReviewTarget] = []
-
+    explicit_head = None
+    explicit_base = None
     head_line = _REVIEW_HEAD.search(body)
     base_line = _REVIEW_BASE.search(body)
     if head_line:
+        explicit_head = head_line.group(1).strip()
+    if base_line:
+        explicit_base = base_line.group(1).strip()
+
+    targets: list[ReviewTarget] = []
+
+    thread_line = _REVIEW_THREAD.search(body)
+    if thread_line:
+        tid = thread_line.group(1)
         targets.append(
             ReviewTarget(
-                kind="explicit_head",
-                head=head_line.group(1).strip(),
-                base=base_line.group(1).strip() if base_line else None,
+                kind="review_thread",
+                thread_id=tid,
+                head=explicit_head,
+                base=explicit_base,
+            )
+        )
+        return DetectionResult(
+            targets=tuple(targets),
+            explicit_head=explicit_head,
+            explicit_base=explicit_base,
+        )
+
+    seen_threads: set[str] = set()
+    for match in _LANE_BRANCH.finditer(body):
+        thread_id = match.group(1)
+        if thread_id in seen_threads:
+            continue
+        seen_threads.add(thread_id)
+        targets.append(
+            ReviewTarget(
+                kind="lane_branch",
+                thread_id=thread_id,
+                head=explicit_head,
+                base=explicit_base,
             )
         )
 
-    for match in _LANE_BRANCH.finditer(body):
-        thread_id = match.group(1)
-        head = f"cursor-sdk/lane-{thread_id}"
-        if not any(t.head == head for t in targets):
-            targets.append(ReviewTarget(kind="lane_branch", head=head))
-
     for match in _WORKTREE_LANE.finditer(body):
         thread_id = match.group(1)
-        head = f"cursor-sdk/lane-{thread_id}"
-        if not any(t.head == head for t in targets):
-            targets.append(ReviewTarget(kind="worktree_lane", head=head))
+        if thread_id in seen_threads:
+            continue
+        seen_threads.add(thread_id)
+        targets.append(
+            ReviewTarget(
+                kind="worktree_lane",
+                thread_id=thread_id,
+                head=explicit_head,
+                base=explicit_base,
+            )
+        )
 
-    return DetectionResult(targets=tuple(targets))
+    return DetectionResult(
+        targets=tuple(targets),
+        explicit_head=explicit_head,
+        explicit_base=explicit_base,
+    )
 
 
-def cited_layer_ids(body: str) -> tuple[str, ...]:
-    """Return layer ids cited via ``cortex://tmp/review-layers/<id>/`` URIs."""
-    return tuple(dict.fromkeys(_LAYER_URI.findall(body)))
+def implicit_lane_thread_ids(result: DetectionResult) -> tuple[str, ...]:
+    """Distinct lane thread ids when ``review_thread:`` is absent."""
+    if any(t.kind == "review_thread" for t in result.targets):
+        return ()
+    return tuple(sorted({t.thread_id for t in result.targets}))
 
 
 def resolve_primary_target(result: DetectionResult) -> ReviewTarget | None:
-    """Pick the materialization target: explicit ``review_head:`` wins, else one implicit."""
-    explicit = [t for t in result.targets if t.kind == "explicit_head"]
+    """Choose the single lane target; ``review_thread:`` wins over implicit tokens."""
+    explicit = [t for t in result.targets if t.kind == "review_thread"]
     if explicit:
         return explicit[0]
-    implicit_heads = sorted({t.head for t in result.targets if t.kind != "explicit_head"})
-    if len(implicit_heads) == 1:
-        head = implicit_heads[0]
+    threads = implicit_lane_thread_ids(result)
+    if len(threads) == 1:
+        tid = threads[0]
         for target in result.targets:
-            if target.head == head:
+            if target.thread_id == tid:
                 return target
     return None
-
-
-def implicit_target_heads(result: DetectionResult) -> tuple[str, ...]:
-    """Distinct implicit heads (lane branch / worktree), excluding explicit ``review_head:``."""
-    if any(t.kind == "explicit_head" for t in result.targets):
-        return ()
-    return tuple(sorted({t.head for t in result.targets}))

@@ -187,11 +187,11 @@ async def dispatch_api_role_generate(
         sidecar_ref=getattr(body, "sidecar_ref", None),
     )
     last_user = prompt_resolution.text
-    review_layer_payload: dict[str, Any] | None = None
+    review_target_payload: dict[str, Any] | None = None
     if contract in ("code-review", "check-review", "delivery-review"):
-        from review_layer.stargate_bridge import review_layer_api_admit
+        from review_layer.hook import review_target_api_admit
 
-        last_user, review_layer_payload = await review_layer_api_admit(
+        last_user, review_target_payload = await review_target_api_admit(
             request_id, last_user, FrontierEndpointError
         )
 
@@ -386,8 +386,8 @@ async def dispatch_api_role_generate(
         max_wall_s=api_max_wall,
     )
     attach_registry_next(result, relay_body)
-    if review_layer_payload is not None:
-        result["review_layer"] = review_layer_payload
+    if review_target_payload is not None:
+        result["review_target"] = review_target_payload
     return result
 
 

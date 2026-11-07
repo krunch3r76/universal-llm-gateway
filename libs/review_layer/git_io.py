@@ -1,20 +1,45 @@
-"""Read-only git subprocess helpers for review-layer export."""
+"""Read-only git subprocess helpers for review-target resolution."""
 
 from __future__ import annotations
 
+import os
 import re
 import subprocess
 from pathlib import Path
 
 _GIT_TIMEOUT_S = 30
+_REF_MISS_MARKERS = (
+    "unknown revision",
+    "bad revision",
+    "ambiguous argument",
+    "needed a single revision",
+)
 
 
-class ReviewTargetUnreachable(Exception):  # noqa: N818 — stable API name in AC
-    """Raised when a review head cannot be materialized from hub git."""
+class ReviewTargetUnreachable(Exception):  # noqa: N818
+    """Named ref does not resolve or is not reachable on the lane."""
 
     def __init__(self, reason: str) -> None:
         self.reason = reason
         super().__init__(reason)
+
+
+class ReviewLayerInfraError(Exception):
+    """Hub git, timeout, or environment failure."""
+
+    def __init__(self, reason: str = "git unavailable") -> None:
+        self.reason = reason
+        super().__init__(reason)
+
+
+def hub_repo_path() -> Path:
+    """Resolve the hub git checkout used for read-only review resolution."""
+    raw = os.environ.get("GIT_INTEGRATION_SOURCE_REPO", "").strip()
+    if raw:
+        return Path(raw).expanduser().resolve()
+    from implement_admission.closeout_helpers import workspaces_root
+
+    return workspaces_root()
 
 
 def validate_git_ref(ref: str) -> None:
@@ -23,8 +48,7 @@ def validate_git_ref(ref: str) -> None:
         raise ReviewTargetUnreachable("invalid git ref")
 
 
-def git_run_bytes(repo: Path, *args: str) -> bytes:
-    """Run a git subprocess and return raw stdout bytes (no decode/strip)."""
+def _git_run_bytes(repo: Path, *args: str) -> bytes:
     try:
         proc = subprocess.run(
             ["git", "-C", str(repo), *args],
@@ -32,22 +56,26 @@ def git_run_bytes(repo: Path, *args: str) -> bytes:
             timeout=_GIT_TIMEOUT_S,
             check=False,
         )
+    except FileNotFoundError as exc:
+        raise ReviewLayerInfraError("git executable missing") from exc
     except subprocess.TimeoutExpired as exc:
-        raise ReviewTargetUnreachable("git command timed out") from exc
+        raise ReviewLayerInfraError("git command timed out") from exc
     if proc.returncode != 0:
-        err = (proc.stderr or proc.stdout or b"git failed")[:240]
-        try:
-            reason = err.decode("utf-8", errors="replace").strip()
-        except Exception:
-            reason = "git failed"
-        raise ReviewTargetUnreachable(reason)
+        err = (proc.stderr or proc.stdout or b"git failed").decode(
+            "utf-8", errors="replace"
+        ).lower()
+        if any(marker in err for marker in _REF_MISS_MARKERS):
+            raise ReviewTargetUnreachable("ref does not resolve")
+        raise ReviewLayerInfraError("git command failed")
     return proc.stdout
 
 
 def resolve_commit(repo: Path, ref: str) -> str:
     """Resolve a ref to a 40-char commit sha."""
     validate_git_ref(ref)
-    out = git_run_bytes(repo, "rev-parse", "--verify", f"{ref}^{{commit}}")
+    if not (repo / ".git").exists():
+        raise ReviewLayerInfraError("hub path is not a git repository")
+    out = _git_run_bytes(repo, "rev-parse", "--verify", f"{ref}^{{commit}}")
     sha = out.decode("ascii", errors="strict").strip()
     if not re.fullmatch(r"[0-9a-f]{40}", sha):
         raise ReviewTargetUnreachable("invalid commit sha")
@@ -55,38 +83,17 @@ def resolve_commit(repo: Path, ref: str) -> str:
 
 
 def merge_base(repo: Path, *refs: str) -> str:
-    """Return merge-base sha for two or more commits."""
-    out = git_run_bytes(repo, "merge-base", *refs)
+    out = _git_run_bytes(repo, "merge-base", *refs)
     sha = out.decode("ascii", errors="strict").strip()
     if not re.fullmatch(r"[0-9a-f]{40}", sha):
         raise ReviewTargetUnreachable("merge-base failed")
     return sha
 
 
-def default_diff_base(repo: Path, head_sha: str) -> str:
-    """Merge-base of head against master or main."""
-    for base_ref in ("master", "main"):
-        try:
-            base_tip = resolve_commit(repo, base_ref)
-        except ReviewTargetUnreachable:
-            continue
-        try:
-            return merge_base(repo, base_tip, head_sha)
-        except ReviewTargetUnreachable:
-            continue
-    raise ReviewTargetUnreachable("no merge-base against master/main")
-
-
-def diff_base_sha(repo: Path, head_sha: str, base_ref: str | None) -> str:
-    """Three-dot semantics: merge-base between optional base ref and head."""
-    if base_ref:
-        base_tip = resolve_commit(repo, base_ref)
-        return merge_base(repo, base_tip, head_sha)
-    return default_diff_base(repo, head_sha)
-
-
-def is_ancestor(repo: Path, descendant: str, ancestor: str) -> bool:
-    """Return whether ``descendant`` is an ancestor of ``ancestor``."""
+def is_ancestor_of(repo: Path, ancestor: str, descendant: str) -> bool:
+    """True when ``ancestor`` is reachable from ``descendant`` (``git merge-base --is-ancestor``)."""
+    if ancestor == descendant:
+        return True
     try:
         proc = subprocess.run(
             [
@@ -95,88 +102,36 @@ def is_ancestor(repo: Path, descendant: str, ancestor: str) -> bool:
                 str(repo),
                 "merge-base",
                 "--is-ancestor",
-                descendant,
                 ancestor,
+                descendant,
             ],
             capture_output=True,
             timeout=_GIT_TIMEOUT_S,
             check=False,
         )
+    except FileNotFoundError as exc:
+        raise ReviewLayerInfraError("git executable missing") from exc
     except subprocess.TimeoutExpired as exc:
-        raise ReviewTargetUnreachable("git command timed out") from exc
+        raise ReviewLayerInfraError("git command timed out") from exc
     if proc.returncode == 0:
         return True
     if proc.returncode == 1:
         return False
-    err = (proc.stderr or proc.stdout or b"ancestor check failed")[:240]
-    raise ReviewTargetUnreachable(err.decode("utf-8", errors="replace").strip())
+    raise ReviewLayerInfraError("ancestor check failed")
 
 
-def parse_name_status_z(raw: bytes) -> list[str]:
-    """Parse ``git diff --name-status -z --no-renames`` into repo-relative paths."""
+def diff_name_only_z(repo: Path, base_sha: str, head_sha: str) -> tuple[str, ...]:
+    """Return changed paths between ``base_sha`` and ``head_sha`` (no deleted dirs)."""
+    raw = _git_run_bytes(
+        repo,
+        "diff",
+        "--name-only",
+        "-z",
+        "--no-renames",
+        f"{base_sha}..{head_sha}",
+    )
     paths: list[str] = []
-    chunks = raw.split(b"\0")
-    idx = 0
-    while idx < len(chunks):
-        status_blob = chunks[idx]
-        idx += 1
-        if not status_blob:
-            continue
-        if idx >= len(chunks):
-            break
-        rel_blob = chunks[idx]
-        idx += 1
-        if not rel_blob:
-            continue
-        status = status_blob.decode("ascii", errors="replace")
-        if status.startswith("D"):
-            continue
-        rel = rel_blob.decode("utf-8", errors="surrogateescape")
-        if rel:
-            paths.append(rel)
-    return paths
-
-
-def cat_file_batch(repo: Path, head_sha: str, paths: list[str]) -> dict[str, bytes]:
-    """Fetch blob bytes for ``paths`` at ``head_sha`` via one ``cat-file --batch``."""
-    if not paths:
-        return {}
-    requests = "".join(f"{head_sha}:{p}\n" for p in paths).encode("ascii")
-    try:
-        proc = subprocess.run(
-            ["git", "-C", str(repo), "cat-file", "--batch"],
-            input=requests,
-            capture_output=True,
-            timeout=_GIT_TIMEOUT_S,
-            check=False,
-        )
-    except subprocess.TimeoutExpired as exc:
-        raise ReviewTargetUnreachable("git command timed out") from exc
-    if proc.returncode != 0:
-        raise ReviewTargetUnreachable("cat-file batch failed")
-    return _parse_cat_file_batch(proc.stdout, paths)
-
-
-def _parse_cat_file_batch(stdout: bytes, paths: list[str]) -> dict[str, bytes]:
-    out: dict[str, bytes] = {}
-    idx = 0
-    data = stdout
-    for path in paths:
-        nl = data.find(b"\n", idx)
-        if nl < 0:
-            break
-        header = data[idx:nl].decode("ascii", errors="replace")
-        idx = nl + 1
-        parts = header.split()
-        if len(parts) < 3 or parts[1] != "blob":
-            continue
-        try:
-            size = int(parts[2])
-        except ValueError:
-            continue
-        blob = data[idx : idx + size]
-        idx += size
-        if idx < len(data) and data[idx : idx + 1] == b"\n":
-            idx += 1
-        out[path] = blob
-    return out
+    for chunk in raw.split(b"\0"):
+        if chunk:
+            paths.append(chunk.decode("utf-8", errors="surrogateescape"))
+    return tuple(paths)

@@ -265,13 +265,12 @@ GIW Auto lane `resolve_desired_model(auto)` for judgment contracts).
 (or `check-review` / `delivery-review`); `dispatch_thread_id`; one of
 `prompt`|`packet_path`|`sidecar_ref`; `reasoning_effort=high`. Omit `purpose` and **`role`**
 — `role=reviewer` → 422 `job_unknown`. The registry **seat** column is omit-model routing,
-not a `team_dispatch` `role=` argument. API-substrate critics read hub master only; packets
-naming unmerged `cursor-sdk/lane-<id>`, a lane worktree path under
-`ulg-arc-worktrees/.../lane-<id>`, or line-start `review_head: <ref|sha>` (optional
-`review_base: <ref|sha>`) auto-materialize `cortex://tmp/review-layers/<request_id>/`
-on admit (`review_layer.uri` in the admit response is authoritative) or return **422
-`REVIEW_TARGET_UNREACHABLE`** — cite an on-disk layer URI (manifest present) to skip
-auto-layer.
+not a `team_dispatch` `role=` argument. API-substrate critics read hub master by default
+and lane files via fs(sandbox=workspaces, thread=<lane thread>, …). Packets name
+review_thread:, review_head:, review_base: and/or implicit lane tokens. Admit outcomes:
+review_target block with fs(thread=) calls, no-op when merged, or **422
+REVIEW_TARGET_UNREACHABLE** (kind target|ambiguous|infra). Removed worktrees: fs op=copy
+workspaces→cortex and cite the copy.
 
 ## Non-primary model gate — discriminator
 

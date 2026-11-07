@@ -1,41 +1,37 @@
-"""Review-layer detection and materialization for API-substrate consult reviews."""
+"""Review-target detection and lane fs guidance for API-substrate consult reviews."""
 
 from __future__ import annotations
 
 from review_layer.detect import (
-    DetectionResult,
     ReviewTarget,
-    cited_layer_ids,
     detect_review_targets,
-    implicit_target_heads,
+    implicit_lane_thread_ids,
     resolve_primary_target,
 )
-from review_layer.layer_gc import gc_expired_layers
-from review_layer.materialize import (
-    ReviewLayerManifest,
+from review_layer.git_io import (
+    ReviewLayerInfraError,
     ReviewTargetUnreachable,
-    any_cited_layer_present,
-    format_review_layer_prompt_block,
-    layer_uri,
-    materialize_review_layer,
-    review_layer_exists,
-    validate_layer_id,
+    hub_repo_path,
+)
+from review_layer.materialize import (
+    default_lane_branch,
+    format_review_target_block,
+    lane_worktree_path,
+    resolve_review_target,
+    worktree_root,
 )
 
 __all__ = [
-    "DetectionResult",
-    "ReviewLayerManifest",
+    "ReviewLayerInfraError",
     "ReviewTarget",
     "ReviewTargetUnreachable",
-    "any_cited_layer_present",
-    "cited_layer_ids",
+    "default_lane_branch",
     "detect_review_targets",
-    "format_review_layer_prompt_block",
-    "gc_expired_layers",
-    "implicit_target_heads",
-    "layer_uri",
-    "materialize_review_layer",
+    "format_review_target_block",
+    "hub_repo_path",
+    "implicit_lane_thread_ids",
+    "lane_worktree_path",
     "resolve_primary_target",
-    "review_layer_exists",
-    "validate_layer_id",
+    "resolve_review_target",
+    "worktree_root",
 ]

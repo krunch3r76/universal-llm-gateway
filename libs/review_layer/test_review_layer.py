@@ -1,262 +1,168 @@
-"""Unit tests for review_layer detection, materialize, and GC."""
+"""Unit tests for review_layer detection, git_io, and lane resolution."""
 
 from __future__ import annotations
 
-import hashlib
 import subprocess
-from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
 
 from review_layer.detect import (
-    cited_layer_ids,
     detect_review_targets,
-    implicit_target_heads,
+    implicit_lane_thread_ids,
     resolve_primary_target,
 )
-from review_layer.materialize import (
+from review_layer.git_io import (
+    ReviewLayerInfraError,
     ReviewTargetUnreachable,
-    any_cited_layer_present,
-    gc_expired_layers,
-    materialize_review_layer,
-    review_layer_exists,
-    validate_layer_id,
+    resolve_commit,
+)
+from review_layer.materialize import (
+    lane_worktree_path,
+    resolve_review_target,
 )
 
 
-def test_detect_lane_branch() -> None:
-    body = "Branch cursor-sdk/lane-22520 carries the diff."
+def test_review_thread_explicit() -> None:
+    body = "review_thread: 22520\nreview_head: feature-tip\n"
     result = detect_review_targets(body)
-    assert len(result.targets) == 1
-    assert result.targets[0].head == "cursor-sdk/lane-22520"
+    t = result.targets[0]
+    assert t.kind == "review_thread"
+    assert t.thread_id == "22520"
+    assert t.head == "feature-tip"
+
+
+def test_lane_branch_anchor() -> None:
+    body = "Branch cursor-sdk/lane-22520 carries the diff."
+    t = resolve_primary_target(detect_review_targets(body))
+    assert t is not None
+    assert t.thread_id == "22520"
 
 
 def test_lane_suffix_not_matched() -> None:
-    body = "cursor-sdk/lane-22520-r2 is not a lane token."
-    result = detect_review_targets(body)
-    assert result.targets == ()
+    assert detect_review_targets("cursor-sdk/lane-22520-r2").targets == ()
 
 
-def test_detect_worktree_path() -> None:
-    body = (
-        "Work in /mnt/torus/projects/ulg-arc-worktrees/"
-        "universal-llm-gateway/lane-22520 only."
-    )
-    result = detect_review_targets(body)
-    assert len(result.targets) == 1
-    assert result.targets[0].head == "cursor-sdk/lane-22520"
+def test_multiline_review_head_not_captured() -> None:
+    body = "review_head:\ndeadbeef\n"
+    assert detect_review_targets(body).explicit_head is None
 
 
-def test_detect_review_head_and_base() -> None:
-    body = "review_head: cursor-sdk/lane-99\nreview_base: master\n"
-    result = detect_review_targets(body)
-    t = result.targets[0]
-    assert t.kind == "explicit_head"
-    assert t.head == "cursor-sdk/lane-99"
-    assert t.base == "master"
-
-
-def test_bare_sha256_in_prose_no_target() -> None:
-    sha = "a" * 64
-    body = f"See commit {sha} in the narrative."
-    assert detect_review_targets(body).targets == ()
-
-
-def test_ambiguous_implicit_targets() -> None:
+def test_ambiguous_implicit_threads() -> None:
     body = "cursor-sdk/lane-1 and cursor-sdk/lane-2"
     result = detect_review_targets(body)
-    assert len(implicit_target_heads(result)) == 2
+    assert len(implicit_lane_thread_ids(result)) == 2
     assert resolve_primary_target(result) is None
 
 
-def test_explicit_head_wins_over_implicit() -> None:
-    body = "cursor-sdk/lane-1\nreview_head: feature-x\n"
-    target = resolve_primary_target(detect_review_targets(body))
-    assert target is not None
-    assert target.kind == "explicit_head"
-    assert target.head == "feature-x"
+def test_review_thread_wins_over_implicit() -> None:
+    body = "cursor-sdk/lane-99\nreview_thread: 1\n"
+    t = resolve_primary_target(detect_review_targets(body))
+    assert t is not None
+    assert t.thread_id == "1"
 
 
-def test_cited_layer_ids() -> None:
-    body = "See cortex://tmp/review-layers/req-1/ and cortex://tmp/review-layers/req-2/"
-    assert cited_layer_ids(body) == ("req-1", "req-2")
-
-
-def test_layer_present_requires_manifest(tmp_path: Path) -> None:
-    cortex = tmp_path / "cortex"
-    layer = cortex / "tmp/review-layers/foo"
-    layer.mkdir(parents=True)
-    body = "Pre-built cortex://tmp/review-layers/foo/ cited."
-    assert not any_cited_layer_present(body, cortex)
-    (layer / "manifest.json").write_text("{}", encoding="utf-8")
-    assert any_cited_layer_present(body, cortex)
-
-
-def _init_repo(repo: Path) -> None:
+def _init_lane_repo(repo: Path, thread: str) -> None:
     subprocess.check_call(["git", "init", "-b", "master"], cwd=repo)
-    subprocess.check_call(
-        ["git", "config", "user.email", "test@example.com"], cwd=repo
-    )
-    subprocess.check_call(["git", "config", "user.name", "test"], cwd=repo)
-    (repo / "README.md").write_text("master\n", encoding="utf-8")
+    subprocess.check_call(["git", "config", "user.email", "t@t.com"], cwd=repo)
+    subprocess.check_call(["git", "config", "user.name", "t"], cwd=repo)
+    (repo / "README.md").write_text("m\n", encoding="utf-8")
     subprocess.check_call(["git", "add", "README.md"], cwd=repo)
-    subprocess.check_call(["git", "commit", "-m", "master"], cwd=repo)
-    subprocess.check_call(["git", "checkout", "-b", "feature"], cwd=repo)
-    (repo / "delta.txt").write_text("branch\n", encoding="utf-8")
-    subprocess.check_call(["git", "add", "delta.txt"], cwd=repo)
-    subprocess.check_call(["git", "commit", "-m", "feature"], cwd=repo)
+    subprocess.check_call(["git", "commit", "-qm", "m"], cwd=repo)
+    branch = f"cursor-sdk/lane-{thread}"
+    subprocess.check_call(["git", "checkout", "-b", branch], cwd=repo)
+    (repo / "lane.txt").write_text("lane\n", encoding="utf-8")
+    subprocess.check_call(["git", "add", "lane.txt"], cwd=repo)
+    subprocess.check_call(["git", "commit", "-qm", "lane"], cwd=repo)
     subprocess.check_call(["git", "checkout", "master"], cwd=repo)
 
 
-def test_materialize_unmerged_branch(tmp_path: Path) -> None:
+def test_resolve_review_target_with_worktree(tmp_path: Path) -> None:
     repo = tmp_path / "repo"
-    cortex = tmp_path / "cortex"
+    wt_root = tmp_path / "wt"
     repo.mkdir()
-    _init_repo(repo)
-    manifest = materialize_review_layer(
-        layer_id="layer-1",
-        head_ref="feature",
+    wt_root.mkdir()
+    _init_lane_repo(repo, "9")
+    lane_dir = lane_worktree_path("9", wt_root)
+    lane_dir.mkdir(parents=True)
+
+    resolved = resolve_review_target(
+        thread_id="9",
+        head_ref=None,
+        base_ref=None,
         repo=repo,
-        cortex_root=cortex,
+        worktree_root_path=wt_root,
     )
-    assert manifest is not None
-    layer_dir = cortex / "tmp/review-layers/layer-1"
-    diff_bytes = (layer_dir / "diff.patch").read_bytes()
-    merge_base = subprocess.check_output(
-        ["git", "-C", str(repo), "merge-base", "master", "feature"],
-        text=True,
-    ).strip()
-    git_diff = subprocess.check_output(
-        ["git", "-C", str(repo), "diff", f"{merge_base}..feature"],
-    )
-    assert diff_bytes == git_diff
-    assert manifest.diff_sha256 == hashlib.sha256(diff_bytes).hexdigest()
-    assert (layer_dir / "files/delta.txt").read_bytes() == b"branch\n"
-    assert manifest.files == ("delta.txt",)
+    assert resolved is not None
+    assert resolved["thread"] == "9"
+    assert resolved["branch"] == "cursor-sdk/lane-9"
 
 
-def test_materialize_binary_file(tmp_path: Path) -> None:
+def test_resolve_merged_returns_none(tmp_path: Path) -> None:
     repo = tmp_path / "repo"
-    cortex = tmp_path / "cortex"
     repo.mkdir()
-    _init_repo(repo)
-    subprocess.check_call(["git", "checkout", "feature"], cwd=repo)
-    (repo / "bin.dat").write_bytes(b"\x00\xff\xfe")
-    subprocess.check_call(["git", "add", "bin.dat"], cwd=repo)
-    subprocess.check_call(["git", "commit", "-m", "bin"], cwd=repo)
-    subprocess.check_call(["git", "checkout", "master"], cwd=repo)
-    manifest = materialize_review_layer(
-        layer_id="layer-bin",
-        head_ref="feature",
-        repo=repo,
-        cortex_root=cortex,
-    )
-    assert manifest is not None
-    blob = (cortex / "tmp/review-layers/layer-bin/files/bin.dat").read_bytes()
-    assert blob == b"\x00\xff\xfe"
-
-
-def test_materialize_idempotent_reuse(tmp_path: Path) -> None:
-    repo = tmp_path / "repo"
-    cortex = tmp_path / "cortex"
-    repo.mkdir()
-    _init_repo(repo)
-    first = materialize_review_layer(
-        layer_id="layer-idem",
-        head_ref="feature",
-        repo=repo,
-        cortex_root=cortex,
-    )
-    second = materialize_review_layer(
-        layer_id="layer-idem",
-        head_ref="feature",
-        repo=repo,
-        cortex_root=cortex,
-    )
-    assert first is not None and second is not None
-    assert first.head_sha == second.head_sha
-
-
-def test_materialize_merged_branch_returns_none(tmp_path: Path) -> None:
-    repo = tmp_path / "repo"
-    cortex = tmp_path / "cortex"
-    repo.mkdir()
-    _init_repo(repo)
-    subprocess.check_call(["git", "merge", "feature", "-m", "merge"], cwd=repo)
+    _init_lane_repo(repo, "1")
+    subprocess.check_call(["git", "merge", "cursor-sdk/lane-1", "-m", "m"], cwd=repo)
     assert (
-        materialize_review_layer(
-            layer_id="layer-2",
-            head_ref="feature",
+        resolve_review_target(
+            thread_id="1",
+            head_ref=None,
+            base_ref=None,
             repo=repo,
-            cortex_root=cortex,
+            worktree_root_path=tmp_path / "wt",
         )
         is None
     )
 
 
-def test_explicit_bogus_ref(tmp_path: Path) -> None:
+def test_missing_worktree_target_error(tmp_path: Path) -> None:
     repo = tmp_path / "repo"
     repo.mkdir()
-    _init_repo(repo)
+    _init_lane_repo(repo, "2")
     with pytest.raises(ReviewTargetUnreachable):
-        materialize_review_layer(
-            layer_id="layer-3",
-            head_ref="no-such-branch",
+        resolve_review_target(
+            thread_id="2",
+            head_ref=None,
+            base_ref=None,
             repo=repo,
-            cortex_root=tmp_path / "cortex",
+            worktree_root_path=tmp_path / "wt",
         )
 
 
-def test_review_base_uses_merge_base(tmp_path: Path) -> None:
+def test_bogus_ref_target(tmp_path: Path) -> None:
     repo = tmp_path / "repo"
-    cortex = tmp_path / "cortex"
     repo.mkdir()
-    _init_repo(repo)
-    subprocess.check_call(["git", "checkout", "master"], cwd=repo)
-    (repo / "master-only.txt").write_text("m\n", encoding="utf-8")
-    subprocess.check_call(["git", "add", "master-only.txt"], cwd=repo)
-    subprocess.check_call(["git", "commit", "-m", "master advance"], cwd=repo)
-    manifest = materialize_review_layer(
-        layer_id="layer-base",
-        head_ref="feature",
-        base_ref="master",
-        repo=repo,
-        cortex_root=cortex,
-    )
-    assert manifest is not None
-    merge_base = subprocess.check_output(
-        ["git", "-C", str(repo), "merge-base", "master", "feature"],
-        text=True,
-    ).strip()
-    assert manifest.base_sha == merge_base
-
-
-def test_validate_layer_id_rejects_partial_suffix() -> None:
+    _init_lane_repo(repo, "3")
     with pytest.raises(ReviewTargetUnreachable):
-        validate_layer_id("foo.partial")
+        resolve_commit(repo, "no-such-ref")
 
 
-def test_gc_expired_and_corrupt_manifest(tmp_path: Path) -> None:
-    root = tmp_path / "layers"
-    root.mkdir()
-    now = datetime(2025, 1, 2, tzinfo=UTC)
-    stale = root / "stale"
-    stale.mkdir()
-    (stale / "manifest.json").write_text("not-json", encoding="utf-8")
-    import os
-
-    old_ts = (now - timedelta(hours=30)).timestamp()
-    os.utime(stale, (old_ts, old_ts))
-    removed = gc_expired_layers(root, now=now)
-    assert removed >= 1
-    assert not stale.exists()
+def test_non_repo_infra(tmp_path: Path) -> None:
+    with pytest.raises(ReviewLayerInfraError):
+        resolve_commit(tmp_path / "not-git", "master")
 
 
-def test_review_layer_exists(tmp_path: Path) -> None:
-    cortex = tmp_path / "c"
-    path = cortex / "tmp/review-layers/x/manifest.json"
-    path.parent.mkdir(parents=True)
-    path.write_text("{}", encoding="utf-8")
-    assert review_layer_exists(cortex, "x")
-    assert not review_layer_exists(cortex, "y")
+def test_format_review_target_lists_fs_calls(tmp_path: Path) -> None:
+    from review_layer.materialize import format_review_target_block
+
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _init_lane_repo(repo, "5")
+    head = resolve_commit(repo, "cursor-sdk/lane-5")
+    base = resolve_commit(repo, "master")
+    block = format_review_target_block(
+        thread_id="5",
+        branch="cursor-sdk/lane-5",
+        base_sha=base,
+        head_sha=head,
+        repo=repo,
+    )
+    assert 'thread="5"' in block
+    assert "universal-llm-gateway/lane.txt" in block
+
+
+def test_validate_git_ref_rejects_dash() -> None:
+    from review_layer.git_io import validate_git_ref
+
+    with pytest.raises(ReviewTargetUnreachable):
+        validate_git_ref("-dirty")
