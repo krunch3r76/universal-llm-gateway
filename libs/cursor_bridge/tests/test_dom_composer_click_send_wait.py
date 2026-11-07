@@ -510,8 +510,8 @@ def test_work_send_on_body_only_outside_composer_chain() -> None:
     subprocess.run(["which", "node"], capture_output=True).returncode != 0,
     reason="node not installed",
 )
-def test_work_second_composer_skips_misplaced_send_clicks_footer() -> None:
-    """Two editables under editor-col skip that root; footer Send prompt is used."""
+def test_work_second_composer_skips_misplaced_send_not_footer() -> None:
+    """Two editables skip misleading ancestor roots; footer send is not mis-clicked."""
     js = _click_send_body(
         'div.ProseMirror[contenteditable="true"]', "wake", abort_nonce="2edit"
     )
@@ -521,9 +521,9 @@ def test_work_second_composer_skips_misplaced_send_clicks_footer() -> None:
         extra_editable_in_editor_col=True,
         misplaced_send_in_editor_col=True,
     )
-    assert result["ok"] is True
-    assert result["send_clicked"] is True
-    assert result["__sendClickCount"] == 1
+    assert result["ok"] is False
+    assert result["reason"] == "no_send_button"
+    assert result["__sendClickCount"] == 0
     assert result["__misplacedSendClickCount"] == 0
     assert result["__stopClicked"] is False
 
