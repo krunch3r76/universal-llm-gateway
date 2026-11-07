@@ -91,6 +91,7 @@ class MockEl {{
     this._form = opts.form ?? null;
     this._children = opts.children ?? [];
     this.clicked = false;
+    this._clickCount = 0;
   }}
   getAttribute(name) {{
     return this._attrs[name] ?? null;
@@ -122,16 +123,30 @@ class MockEl {{
     return null;
   }}
   querySelectorAll(sel) {{
-    if (sel === 'button,[role=button]') {{
-      return [...this._children];
-    }}
-    return [];
+    const out = [];
+    const walk = (node) => {{
+      if (!node) return;
+      if (sel === '[contenteditable="true"]' && node.isContentEditable) out.push(node);
+      if (
+        sel === 'button,[role=button]'
+        && (node.tagName === 'BUTTON' || (node.getAttribute && node.getAttribute('role') === 'button'))
+      ) {{
+        out.push(node);
+      }}
+      for (const c of node._children || []) walk(c);
+    }};
+    walk(this);
+    return out;
+  }}
+  get isContentEditable() {{
+    return String(this._attrs.contenteditable || '').toLowerCase() === 'true';
   }}
   get outerHTML() {{
     return '<form mock="1"></form>';
   }}
   click() {{
     this.clicked = true;
+    this._clickCount += 1;
   }}
 }}
 
@@ -205,6 +220,13 @@ def _run_work_shape_click_send_js(
     *,
     composer_text: str,
     draft_writer: str = "",
+    include_send_prompt: bool = True,
+    send_disabled: bool = False,
+    stop_only: bool = False,
+    extra_editable_in_editor_col: bool = False,
+    misplaced_send_in_editor_col: bool = False,
+    send_on_document_body: bool = False,
+    detach_from_body: bool = False,
 ) -> dict[str, Any]:
     """ChatGPT Work layout: editor shell has no buttons; footer is several ancestors up."""
     writer = json.dumps(draft_writer)
@@ -215,6 +237,30 @@ def _run_work_shape_click_send_js(
             f"window.__ulgOperatorActivity.composerSendPermits[{json.dumps(abort_nonce)}] = "
             "performance.now() + 600000;"
         )
+    if send_on_document_body and detach_from_body:
+        body_block = """
+const bodyEl = new MockEl('body', { children: [] });
+const bodySend = new MockEl('button', {
+  attrs: { 'aria-label': 'Send prompt', type: 'button' },
+});
+bodyEl._children = [bodySend];
+bodySend._parent = bodyEl;
+"""
+        doc_body = "bodyEl"
+    elif send_on_document_body:
+        body_block = """
+const bodyEl = new MockEl('body', { children: [] });
+layout._parent = bodyEl;
+const bodySend = new MockEl('button', {
+  attrs: { 'aria-label': 'Send prompt', type: 'button' },
+});
+bodyEl._children = [layout, bodySend];
+bodySend._parent = bodyEl;
+"""
+        doc_body = "bodyEl"
+    else:
+        body_block = "const bodyEl = null;"
+        doc_body = "null"
     harness = f"""
 const composerText = {json.dumps(composer_text)};
 const draftWriter = {writer};
@@ -227,6 +273,7 @@ class MockEl {{
     this._parent = opts.parent ?? null;
     this.editor = opts.editor ?? null;
     this.clicked = false;
+    this._clickCount = 0;
     this.disabled = opts.disabled ?? false;
     for (const c of this._children) c._parent = this;
   }}
@@ -277,7 +324,10 @@ class MockEl {{
     return out;
   }}
   get outerHTML() {{ return '<div class="work-mock"></div>'; }}
-  click() {{ this.clicked = true; }}
+  click() {{
+    this.clicked = true;
+    this._clickCount += 1;
+  }}
 }}
 function buttonMatches(sel) {{
   const btn = this;
@@ -291,9 +341,14 @@ function buttonMatches(sel) {{
   return false;
 }}
 MockEl.prototype._matchesSendSel = buttonMatches;
-const sendPrompt = new MockEl('button', {{ attrs: {{ 'aria-label': 'Send prompt', type: 'button' }} }});
+const sendPrompt = new MockEl('button', {{
+  attrs: {{ 'aria-label': 'Send prompt', type: 'button' }},
+  disabled: {json.dumps(send_disabled)},
+}});
 const stopBtn = new MockEl('button', {{ attrs: {{ 'aria-label': 'Stop', type: 'button' }} }});
-const footer = new MockEl('div', {{ attrs: {{ class: 'ComposerLayoutFooter' }}, children: [stopBtn, sendPrompt] }});
+const footerChildren = [stopBtn];
+if ({json.dumps(include_send_prompt and not stop_only)}) footerChildren.push(sendPrompt);
+const footer = new MockEl('div', {{ attrs: {{ class: 'ComposerLayoutFooter' }}, children: footerChildren }});
 const editorShell = new MockEl('div', {{ attrs: {{ class: 'text-size-chat LegacyExpandableEditor' }} }});
 const composer = new MockEl('div', {{
   attrs: {{ contenteditable: 'true', 'aria-label': 'Work with ChatGPT', role: 'textbox' }},
@@ -301,17 +356,40 @@ const composer = new MockEl('div', {{
   parent: editorShell,
 }});
 editorShell._children = [composer];
-const editorCol = new MockEl('div', {{ attrs: {{ class: 'editor-col' }}, children: [editorShell] }});
+const editorColChildren = [editorShell];
+if ({json.dumps(extra_editable_in_editor_col)}) {{
+  editorColChildren.push(new MockEl('div', {{
+    attrs: {{ contenteditable: 'true', 'aria-label': 'foreign composer' }},
+    innerText: 'other',
+  }}));
+}}
+if ({json.dumps(misplaced_send_in_editor_col)}) {{
+  editorColChildren.push(new MockEl('button', {{
+    attrs: {{ 'aria-label': 'Send prompt', type: 'button' }},
+  }}));
+}}
+const editorCol = new MockEl('div', {{ attrs: {{ class: 'editor-col' }}, children: editorColChildren }});
 const layout = new MockEl('div', {{ attrs: {{ class: 'composer-layout' }}, children: [editorCol, footer] }});
 editorShell._parent = editorCol;
 editorCol._parent = layout;
 footer._parent = layout;
 composer._parent = editorShell;
+const bodyEl = {json.dumps("new MockEl('body', { children: [layout] })" if send_on_document_body else "null")};
+if (bodyEl) {{
+  layout._parent = bodyEl;
+  if ({json.dumps(send_on_document_body)})) {{
+    const bodySend = new MockEl('button', {{
+      attrs: {{ 'aria-label': 'Send prompt', type: 'button' }},
+    }});
+    bodyEl._children = [layout, bodySend];
+    bodySend._parent = bodyEl;
+  }}
+}}
 global.document = {{
   visibilityState: 'visible',
   hasFocus: () => true,
   querySelector: (sel) => (sel.includes('contenteditable') ? composer : null),
-  body: null,
+  body: bodyEl,
 }};
 global.window = {{
   __ulgOperatorActivity: {{
@@ -328,7 +406,7 @@ global.HTMLInputElement = {{ prototype: {{}} }};
   const result = {"await " + js if js.lstrip().startswith("(async") else js};
   result.__sendClicked = sendPrompt.clicked;
   result.__stopClicked = stopBtn.clicked;
-  result.__sendClickCount = sendPrompt.clicked ? 1 : 0;
+  result.__sendClickCount = sendPrompt._clickCount || 0;
   console.log(JSON.stringify(result));
 }})().catch((err) => {{ console.error(err); process.exit(1); }});
 """
@@ -374,6 +452,80 @@ def test_work_footer_owned_draft_send_prompt_clicks_once() -> None:
         js,
         composer_text="owned draft line",
         draft_writer="orion-wake",
+    )
+    assert result["ok"] is True
+    assert result["send_clicked"] is True
+    assert result["__sendClickCount"] == 1
+    assert result["__stopClicked"] is False
+
+
+@pytest.mark.skipif(
+    subprocess.run(["which", "node"], capture_output=True).returncode != 0,
+    reason="node not installed",
+)
+def test_work_footer_stop_only_no_send_button() -> None:
+    js = _click_send_body(
+        'div.ProseMirror[contenteditable="true"]', "wake", abort_nonce="stop-only"
+    )
+    result = _run_work_shape_click_send_js(
+        js, composer_text="wake", stop_only=True, include_send_prompt=False
+    )
+    assert result["ok"] is False
+    assert result["reason"] == "no_send_button"
+    assert result["__sendClickCount"] == 0
+    assert result["__stopClicked"] is False
+
+
+@pytest.mark.skipif(
+    subprocess.run(["which", "node"], capture_output=True).returncode != 0,
+    reason="node not installed",
+)
+def test_work_footer_disabled_send_prompt_not_clicked() -> None:
+    js = _click_send_body(
+        'div.ProseMirror[contenteditable="true"]', "wake", abort_nonce="dis-send"
+    )
+    result = _run_work_shape_click_send_js(
+        js, composer_text="wake", send_disabled=True
+    )
+    assert result["ok"] is False
+    assert result["reason"] == "no_send_button"
+    assert result["__sendClickCount"] == 0
+
+
+@pytest.mark.skipif(
+    subprocess.run(["which", "node"], capture_output=True).returncode != 0,
+    reason="node not installed",
+)
+def test_work_send_on_body_only_outside_composer_chain() -> None:
+    js = _click_send_body(
+        'div.ProseMirror[contenteditable="true"]', "wake", abort_nonce="body-only"
+    )
+    result = _run_work_shape_click_send_js(
+        js,
+        composer_text="wake",
+        send_on_document_body=True,
+        detach_from_body=True,
+        include_send_prompt=False,
+        stop_only=True,
+    )
+    assert result["ok"] is False
+    assert result["reason"] == "no_send_button"
+    assert result["__sendClickCount"] == 0
+
+
+@pytest.mark.skipif(
+    subprocess.run(["which", "node"], capture_output=True).returncode != 0,
+    reason="node not installed",
+)
+def test_work_second_composer_skips_misplaced_send_clicks_footer() -> None:
+    js = _click_send_body(
+        'div.ProseMirror[contenteditable="true"]', "wake", abort_nonce="2edit"
+    )
+    result = _run_work_shape_click_send_js(
+        js,
+        composer_text="wake",
+        extra_editable_in_editor_col=True,
+        misplaced_send_in_editor_col=True,
     )
     assert result["ok"] is True
     assert result["send_clicked"] is True
