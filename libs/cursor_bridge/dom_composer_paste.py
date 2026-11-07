@@ -106,6 +106,27 @@ function ulgComposerDomEmpty(el) {
   if (norm === '' && html.trim() === '') return true;
   if (ed && ed.isEmpty === true && norm === '' && hasTrailingBreak) return true;
 
+  // ChatGPT can leave one paragraph, one trailing BR, and a newline after a
+  // sent draft, with no editor object and no is-editor-empty class.
+  if (!ed && (norm === '' || norm === '\n')) {
+    const elementChildren = [...(el.children || [])].filter((n) => n && n.tagName);
+    const block = elementChildren.length === 1 ? elementChildren[0] : null;
+    const blockKids = block && block.children ? [...block.children] : [];
+    const br = blockKids.length === 1 ? blockKids[0] : null;
+    const brClass = br
+      ? String((br.getAttribute && br.getAttribute('class')) || br.className || '')
+      : '';
+    const onlyTrailingBreak = !!block
+      && /^(P|DIV)$/.test(String(block.tagName || ''))
+      && !!br
+      && String(br.tagName || '') === 'BR'
+      && brClass.indexOf('ProseMirror-trailingBreak') >= 0;
+    const foreign = typeof el.querySelector === 'function' && el.querySelector(
+      'img, atom, svg, a[href], [data-testid*="attachment" i], [data-testid*="file-chip" i], [class*="chip" i]'
+    );
+    if (onlyTrailingBreak && !foreign) return true;
+  }
+
   return false;
 }
 """
