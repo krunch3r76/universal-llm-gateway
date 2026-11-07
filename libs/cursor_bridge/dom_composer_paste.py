@@ -137,6 +137,109 @@ function ulgComposerDomEmpty(el) {
 
   return false;
 }
+function ulgIsStopControl(btn) {
+  if (!btn) return true;
+  const label = String((btn.getAttribute && btn.getAttribute('aria-label')) || '');
+  const testid = String((btn.getAttribute && btn.getAttribute('data-testid')) || '');
+  return /stop/i.test(label) || /stop/i.test(testid);
+}
+function ulgHasForeignForm(root, el) {
+  if (!root || typeof root.querySelectorAll !== 'function') return false;
+  const own = el.closest && el.closest('form');
+  const forms = root.querySelectorAll('form');
+  for (let i = 0; i < forms.length; i += 1) {
+    const f = forms[i];
+    if (own && f === own) continue;
+    return true;
+  }
+  return false;
+}
+function ulgHasForeignTextControl(root, el) {
+  if (!root || typeof root.querySelectorAll !== 'function') return false;
+  let bad = false;
+  root.querySelectorAll('textarea,input').forEach((n) => {
+    if (bad || n === el) return;
+    const tag = String(n.tagName || '').toUpperCase();
+    const typ = String((n.getAttribute && n.getAttribute('type')) || n.type || '')
+      .toLowerCase();
+    if (tag === 'TEXTAREA' || typ === 'text' || typ === 'search' || typ === 'email' || typ === '') {
+      bad = true;
+    }
+  });
+  return bad;
+}
+function ulgScopeSelector(sel) {
+  return String(sel || '').replace(/:not\(\[disabled\]\)/g, '');
+}
+function ulgHasRecognizableSendControl(root, el, btnSels) {
+  if (!root) return false;
+  const ownForm = el.closest && el.closest('form');
+  const allowGenericSubmit = !!(ownForm && root === ownForm);
+  for (const sel of btnSels) {
+    if (!allowGenericSubmit && sel.indexOf('type="submit"') >= 0) continue;
+    const btn = root.querySelector(ulgScopeSelector(sel));
+    if (!btn) continue;
+    if (ulgIsStopControl(btn)) continue;
+    return true;
+  }
+  return false;
+}
+function ulgFindSendBtn(root, el, btnSels) {
+  if (!root) return null;
+  const ownForm = el.closest && el.closest('form');
+  const allowGenericSubmit = !!(ownForm && root === ownForm);
+  for (const sel of btnSels) {
+    if (!allowGenericSubmit && sel.indexOf('type="submit"') >= 0) continue;
+    const btn = root.querySelector(sel);
+    if (!btn) continue;
+    if (btn.disabled || btn.hasAttribute('disabled')) continue;
+    if (ulgIsStopControl(btn)) continue;
+    return btn;
+  }
+  return null;
+}
+function ulgComposerSendRoot(el) {
+  if (!el) return null;
+  const form = el.closest('form');
+  if (form) return form;
+  const isEditable = (n) => {
+    if (!n || n.nodeType !== 1) return false;
+    if (n.isContentEditable) return true;
+    const ce = n.getAttribute && n.getAttribute('contenteditable');
+    return String(ce || '').toLowerCase() === 'true';
+  };
+  const isVisibleEditable = (n) => {
+    if (!isEditable(n)) return false;
+    if (!n.isConnected) return false;
+    const rect = n.getBoundingClientRect();
+    return rect.width > 0 && rect.height > 0;
+  };
+  const hasSecondComposer = (root) => {
+    if (!root || typeof root.querySelectorAll !== 'function') return false;
+    let count = 0;
+    root.querySelectorAll('[contenteditable="true"]').forEach((node) => {
+      if (isVisibleEditable(node)) count += 1;
+    });
+    return count > 1;
+  };
+  const ULG_SEND_BTN_SELECTORS = [
+    'button[aria-label="Send message"]:not([disabled])',
+    'button[aria-label="Send prompt"]:not([disabled])',
+    'button[aria-label="Send"]:not([disabled])',
+    'button[data-testid="send-button"]:not([disabled])',
+    'button[type="submit"]:not([disabled])',
+  ];
+  let cur = el.parentElement;
+  for (let step = 0; cur && step < 8; step += 1, cur = cur.parentElement) {
+    if (cur === document.body || cur === document.documentElement) break;
+    if (ulgHasForeignForm(cur, el)) continue;
+    if (ulgHasForeignTextControl(cur, el)) continue;
+    if (hasSecondComposer(cur)) continue;
+    if (!ulgHasRecognizableSendControl(cur, el, ULG_SEND_BTN_SELECTORS)) continue;
+    return cur;
+  }
+  return null;
+}
 """
 
 
@@ -324,7 +427,60 @@ INSTALL_OPERATOR_ACTIVITY_PROBE_JS = rf"""
 }})()
 """
 
-READ_OPERATOR_BUSY_JS = r"""
+_WORK_EDITOR_RESOLVE_JS = r"""
+function ulgWorkEditorLabeled(el) {
+  const label = String((el && el.getAttribute && el.getAttribute('aria-label')) || '').toLowerCase();
+  return label.includes('work with chatgpt');
+}
+function ulgWorkEditorRenderedVisible(el) {
+  if (!el) return false;
+  if (el.isConnected === false) return false;
+  if ('inert' in el && el.inert) return false;
+  let p = el.parentElement;
+  while (p) {
+    if ('inert' in p && p.inert) return false;
+    p = p.parentElement;
+  }
+  const rect = el.getBoundingClientRect();
+  if (rect.width <= 0 || rect.height <= 0) return false;
+  if (typeof window.getComputedStyle === 'function') {
+    const st = window.getComputedStyle(el);
+    if (st.visibility === 'hidden' || st.display === 'none' || Number(st.opacity || '1') === 0) {
+      return false;
+    }
+  }
+  return true;
+}
+function ulgAnyHiddenWorkEditor() {
+  if (!document || typeof document.querySelectorAll !== 'function') return false;
+  const nodes = document.querySelectorAll('[contenteditable="true"][role="textbox"]');
+  for (const el of nodes) {
+    if (!ulgWorkEditorLabeled(el)) continue;
+    if (!ulgWorkEditorRenderedVisible(el)) return true;
+  }
+  return false;
+}
+function ulgResolveVisibleWorkComposer() {
+  if (!document || typeof document.querySelectorAll !== 'function') {
+    return {ok: false, reason: 'no_composer'};
+  }
+  const candidates = [];
+  const nodes = document.querySelectorAll('[contenteditable="true"][role="textbox"]');
+  for (const el of nodes) {
+    if (!el || !ulgWorkEditorLabeled(el)) continue;
+    if (!ulgWorkEditorRenderedVisible(el)) continue;
+    if (el.querySelector && el.querySelector('textarea,input[type="text"]')) continue;
+    candidates.push(el);
+  }
+  if (!candidates.length) return {ok: false, reason: 'no_composer'};
+  if (candidates.length > 1) return {ok: false, reason: 'ambiguous_work_composer'};
+  return {ok: true, el: candidates[0]};
+}
+"""
+
+READ_OPERATOR_BUSY_JS = (
+    _WORK_EDITOR_RESOLVE_JS
+    + r"""
 (() => {
   const g = window.__ulgOperatorActivity || {};
   const now = Date.now();
@@ -333,9 +489,14 @@ READ_OPERATOR_BUSY_JS = r"""
   const operatorActive = last > 0 && (now - last) < idleMs;
   const sels = %SELECTORS%;
   let el = null;
-  for (const s of sels) {
-    el = document.querySelector(s);
-    if (el) break;
+  const work = ulgResolveVisibleWorkComposer();
+  if (work.ok) {
+    el = work.el;
+  } else if (work.reason !== 'ambiguous_work_composer') {
+    for (const s of sels) {
+      el = document.querySelector(s);
+      if (el) break;
+    }
   }
   const draft = el ? (el.innerText || '').trim() : '';
   const sig = String(g.ourDraftSig || '').trim();
@@ -355,9 +516,11 @@ READ_OPERATOR_BUSY_JS = r"""
   };
 })()
 """
+)
 
 _SEND_BTN_SELECTORS = (
     'button[aria-label="Send message"]:not([disabled])',
+    'button[aria-label="Send prompt"]:not([disabled])',
     'button[aria-label="Send"]:not([disabled])',
     'button[data-testid="send-button"]:not([disabled])',
     'button[type="submit"]:not([disabled])',
@@ -398,8 +561,36 @@ def _selector_list(selector: str) -> list[str]:
 
 
 def _find_composer_js(selector: str) -> str:
+    """Resolve composer: visible Work editor first, else selector list (ambiguous Work → null)."""
     sels = json.dumps(_selector_list(selector) or [selector])
-    return f"(()=>{{const sels={sels};for(const s of sels){{const el=document.querySelector(s);if(el)return el;}}return null;}})()"
+    return (
+        f"(()=>{{{_WORK_EDITOR_RESOLVE_JS}"
+        f"const sels={sels};"
+        "const work=ulgResolveVisibleWorkComposer();"
+        "if(work.ok)return work.el;"
+        "if(work.reason==='ambiguous_work_composer')return null;"
+        "if(work.reason==='no_composer'&&ulgAnyHiddenWorkEditor())return null;"
+        "for(const s of sels){const el=document.querySelector(s);if(el)return el;}"
+        "return null;})()"
+    )
+
+
+def work_native_unsupported_probe_js(*, expected_url: str) -> str:
+    """Return whether hydrated Work needs guarded native insert (before any mutation)."""
+    exp = json.dumps(str(expected_url or "").split("?")[0])
+    return (
+        f"(()=>{{{_ULG_NORM_COMPOSER_JS}{_WORK_EDITOR_RESOLVE_JS}"
+        f"const expectUrl={exp};"
+        "const here=String(location.href||'').split('?')[0];"
+        "if(expectUrl&&here!==expectUrl)return{ok:false,eligible:false,reason:'url_mismatch'};"
+        "const resolved=ulgResolveVisibleWorkComposer();"
+        "if(!resolved.ok)return{ok:false,eligible:false,reason:resolved.reason||'no_composer'};"
+        "const el=resolved.el;"
+        "if(el.editor&&el.editor.commands&&typeof el.editor.commands.setContent==='function'){"
+        "return{ok:true,eligible:false,reason:'work_dom_api_available'};}"
+        "if(!el.pmViewDesc)return{ok:false,eligible:false,reason:'work_native_unsupported'};"
+        "return{ok:true,eligible:true};})()"
+    )
 
 
 def _set_composer_body(
@@ -441,6 +632,8 @@ def _set_composer_body(
         "return{ok:false,reason:'insertion_failed',phase:'insertion_failed',inserted:false,pasted:false,send_clicked:false};}"
         "}else if(el.tagName==='TEXTAREA'||el.tagName==='INPUT'){"
         "el.value=line;el.dispatchEvent(new Event('input',{bubbles:true}));"
+        "}else if(el.pmViewDesc){"
+        "return{ok:false,reason:'work_native_unsupported',phase:'insertion_failed',inserted:false,pasted:false,send_clicked:false};"
         "}else{"
         "return{ok:false,reason:'insertion_failed',phase:'insertion_failed',inserted:false,pasted:false,send_clicked:false};}"
         "let after=ulgNormalizeComposerText(el.innerText||el.value||'');"
@@ -458,7 +651,11 @@ def _set_composer_body(
 def _click_send_own_draft_body(
     selector: str, *, draft_writer: str = "", abort_nonce: str = ""
 ) -> str:
-    """Send only when composer draft matches this writer's ourDraftSig."""
+    """Send only when composer draft matches this writer's ourDraftSig.
+
+    Uses the same bounded ``ulgComposerSendRoot`` ancestor walk and
+    ``ulgFindSendBtn`` eligible-control filter as ``_click_send_body``.
+    """
     find = _find_composer_js(selector)
     btn_sels = json.dumps(list(_SEND_BTN_SELECTORS))
     expect_writer = json.dumps(str(draft_writer or ""))
@@ -488,10 +685,10 @@ def _click_send_own_draft_body(
         "{cleanup();return{ok:false,reason:'draft_not_ours',send_clicked:false,draft,sig};}"
         "if(sendGivenUp())"
         "{cleanup();return{ok:false,reason:'cdp_eval_timeout',send_clicked:false};}"
-        f"const root=el.closest('form')||el.parentElement||document;"
+        "const root=ulgComposerSendRoot(el);"
+        "if(!root){cleanup();return{ok:false,reason:'no_send_button',send_clicked:false};}"
         f"const btnSels={btn_sels};"
-        "let btn=null;"
-        "for(const sel of btnSels){btn=root.querySelector(sel);if(btn)break;}"
+        "const btn=ulgFindSendBtn(root,el,btnSels);"
         "if(!btn){cleanup();return{ok:false,reason:'no_send_button',send_clicked:false};}"
         "btn.click();"
         "g.ourDraftSig='';"
@@ -548,22 +745,15 @@ def _click_send_body(
 ) -> str:
     """Build async page JS that polls for an enabled send control after insert.
 
-    Returns a ``(async () => …)()`` expression (Promise) for CDP ``Runtime.evaluate``
-    with ``awaitPromise=True``. Python must evaluate ``_composer_send_permit_expression``
-    for this ``abort_nonce`` before dispatching this script. The permit deadline lives
-    on the page clock only; this script does not restamp it. Cancel cannot pre-empt
-    the synchronous prefix: if the send button is found on the first scan, ``btn.click()``
-    runs before the first ``await``, so a nonce mark still queued on CDP cannot prevent
-    that click — the stamped permit is what ``sendGivenUp()`` reads first.
+    Ancestor scope comes from ``ulgComposerSendRoot`` (≤8 parents, no body/html,
+    no foreign form/textarea/input/second composer, only roots with an eligible
+    labelled send). ``ulgFindSendBtn`` rejects Stop-labelled controls and limits
+    generic ``type=submit`` to the composer's own ``<form>``.
 
-    Immediate ``no_composer`` and ``composer_text_mismatch`` results do not wait. After
-    the first scan miss, each retry awaits ``setTimeout`` for ``SEND_BTN_POLL_INTERVAL_MS``
-    up to ``SEND_BTN_WAIT_CEILING_MS``. Final ``no_send_button`` includes a ``census``
-    object (``buttons`` capped at 20, each ``aria_label``, ``data_testid``, and ``type``
-    sliced to ``SEND_BTN_CENSUS_ATTR_CAP``, ``buttons_total`` uncapped). The poll
-    returns ``cdp_eval_timeout`` without clicking when the permit is missing or expired,
-    or when ``abort_nonce`` is set on ``composerSendAbortNonces`` (that nonce only).
-    Every return path deletes this call's permit and abort-nonce map entries only.
+    Returns a ``(async () => …)()`` expression (Promise) for CDP ``Runtime.evaluate``
+    with ``awaitPromise=True``. Python must stamp ``_composer_send_permit_expression``
+    before dispatch. Final ``no_send_button`` includes a bounded ``census`` when
+    polling exhausts without a click.
     """
     find = _find_composer_js(selector)
     lj = json.dumps(_dom_paste_text(line, preserve_newlines=preserve_newlines))
@@ -597,15 +787,12 @@ def _click_send_body(
         "normText=ulgNormalizeComposerText(el.innerText||el.value||'');"
         "if(!composerEmpty&&(!normText||(normText!==normLine&&!wakeStale(normText)))){"
         "cleanup();return{ok:false,reason:'composer_text_mismatch',send_clicked:false};}}"
-        f"const root=el.closest('form')||el.parentElement||document;"
+        "const root=ulgComposerSendRoot(el);"
+        "if(!root){cleanup();return{ok:false,reason:'no_send_button',send_clicked:false};}"
         f"const btnSels={btn_sels};"
         f"const waitCeilingMs={wait_ceiling};"
         f"const pollIntervalMs={poll_interval};"
-        "const findSendBtn=()=>{"
-        "let b=null;"
-        "for(const sel of btnSels){b=root.querySelector(sel);if(b)break;}"
-        "return b;"
-        "};"
+        "const findSendBtn=()=>ulgFindSendBtn(root,el,btnSels);"
         "const buildCensus=(elapsedMs)=>{"
         "const buttons=[];"
         "let buttonsTotal=0;"
@@ -981,6 +1168,8 @@ async def dom_insert_and_send(
     line: str,
     preserve_newlines: bool = False,
     draft_writer: str = "",
+    work_native_insert: bool = False,
+    expected_conversation_url: str = "",
 ) -> dict[str, Any]:
     """Insert once via DOM; send via async send-button poll (no Enter, no focus()).
 
@@ -990,13 +1179,73 @@ async def dom_insert_and_send(
     or ``phase='send_unknown'`` with ``pasted`` true. This function does not
     click a second time.
     """
-    ins = await dom_set_composer_text(
-        ws_url,
-        selector=selector,
-        text=line,
-        preserve_newlines=preserve_newlines,
-        draft_writer=draft_writer,
-    )
+    if work_native_insert:
+        from cursor_bridge.cdp_composer_input import cdp_work_native_insert_text
+
+        probe = await _cdp_eval(
+            ws_url, work_native_unsupported_probe_js(expected_url=expected_conversation_url)
+        )
+        if not isinstance(probe, dict):
+            return {
+                "ok": False,
+                "reason": "work_native_unsupported",
+                "pasted": False,
+                "inserted": False,
+                "phase": "insertion_failed",
+            }
+        if probe.get("eligible") is not True:
+            reason = str(probe.get("reason") or "work_native_unsupported")
+            if reason in ("work_dom_api_available", "no_composer"):
+                ins = await dom_set_composer_text(
+                    ws_url,
+                    selector=selector,
+                    text=line,
+                    preserve_newlines=preserve_newlines,
+                    draft_writer=draft_writer,
+                )
+            elif reason in (
+                "work_native_unsupported",
+                "url_mismatch",
+                "ambiguous_work_composer",
+            ):
+                return {
+                    "ok": False,
+                    "reason": reason,
+                    "pasted": False,
+                    "inserted": False,
+                    "phase": "insertion_failed",
+                }
+            else:
+                ins = await dom_set_composer_text(
+                    ws_url,
+                    selector=selector,
+                    text=line,
+                    preserve_newlines=preserve_newlines,
+                    draft_writer=draft_writer,
+                )
+        else:
+            ins = await cdp_work_native_insert_text(
+                ws_url,
+                text=line,
+                expected_url=expected_conversation_url,
+                draft_writer=draft_writer,
+                preserve_newlines=preserve_newlines,
+            )
+        if not isinstance(ins, dict):
+            return {
+                "ok": False,
+                "reason": "insertion_failed",
+                "pasted": False,
+                "inserted": False,
+            }
+    else:
+        ins = await dom_set_composer_text(
+            ws_url,
+            selector=selector,
+            text=line,
+            preserve_newlines=preserve_newlines,
+            draft_writer=draft_writer,
+        )
     if not ins.get("ok"):
         return ins
     if ins.get("used_existing_draft"):
@@ -1021,6 +1270,7 @@ async def dom_insert_and_send(
             "send_clicked": bool(send.get("send_clicked")),
             "inserted": True,
             "pasted": True,
+            "delivered": False,
             "phase": "send_unknown" if uncertain else "inserted",
         }
         if send.get("clicked_unknown"):
