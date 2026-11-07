@@ -265,7 +265,10 @@ GIW Auto lane `resolve_desired_model(auto)` for judgment contracts).
 (or `check-review` / `delivery-review`); `dispatch_thread_id`; one of
 `prompt`|`packet_path`|`sidecar_ref`; `reasoning_effort=high`. Omit `purpose` and **`role`**
 — `role=reviewer` → 422 `job_unknown`. The registry **seat** column is omit-model routing,
-not a `team_dispatch` `role=` argument.
+not a `team_dispatch` `role=` argument. API-substrate critics read hub master only; packets
+naming unmerged `cursor-sdk/lane-<id>` (or `review_head:`) auto-materialize
+`cortex://tmp/review-layers/<dispatch_id>/` on admit or return **422
+`REVIEW_TARGET_UNREACHABLE`** — cite an existing layer URI to skip auto-layer.
 
 ## Non-primary model gate — discriminator
 
