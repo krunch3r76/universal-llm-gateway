@@ -357,6 +357,17 @@ def _dom_inserted_but_unsent(result: dict[str, Any]) -> bool:
     return phase in {"inserted", "send_unknown"}
 
 
+async def _safe_playwright_stop(pw: Any) -> None:
+    """Best-effort Playwright shutdown; must not mask post-commit unknown outcomes."""
+    stop_fn = getattr(pw, "stop", None)
+    if not callable(stop_fn):
+        return
+    try:
+        await stop_fn()
+    except Exception:
+        return
+
+
 _open_lock_registry_guard = asyncio.Lock()
 _open_locks_by_conversation: dict[str, asyncio.Lock] = {}
 _attach_misses: dict[str, int] = {}
@@ -1578,9 +1589,7 @@ async def deliver_orion_wake(
             await page.wait_for_timeout(400)
         except Exception as exc:
             if owns_cdp and pw is not None:
-                stop_fn = getattr(pw, "stop", None)
-                if callable(stop_fn):
-                    await stop_fn()
+                await _safe_playwright_stop(pw)
             wait_exc: dict[str, Any] = {
                 "error": type(exc).__name__,
                 "brought_to_front": tab_sync["brought_to_front"],
@@ -1597,9 +1606,7 @@ async def deliver_orion_wake(
             approval = await _handle_approvals(page)
         except Exception as exc:
             if owns_cdp and pw is not None:
-                stop_fn = getattr(pw, "stop", None)
-                if callable(stop_fn):
-                    await stop_fn()
+                await _safe_playwright_stop(pw)
             exc_refuse: dict[str, Any] = {
                 "error": type(exc).__name__,
                 "brought_to_front": tab_sync["brought_to_front"],
@@ -1613,29 +1620,33 @@ async def deliver_orion_wake(
             return _refuse("insert_outcome_unknown", **exc_refuse)
     except Exception as exc:
         if owns_cdp and pw is not None:
-            stop_fn = getattr(pw, "stop", None)
-            if callable(stop_fn):
-                await stop_fn()
-        exc_refuse: dict[str, Any] = {
+            await _safe_playwright_stop(pw)
+        exc_refuse_pre: dict[str, Any] = {
             "error": type(exc).__name__,
             "brought_to_front": tab_sync["brought_to_front"],
             "tab_reloaded": tab_sync["tab_reloaded"],
         }
         if isinstance(dom, dict):
+            committed_send = bool(dom.get("ok"))
+            if committed_send:
+                exc_refuse_pre["insert_attempted"] = True
+                exc_refuse_pre["retryable"] = False
+                exc_refuse_pre["pasted"] = True
+                exc_refuse_pre["delivered"] = False
             if dom.get("insert_attempted"):
-                exc_refuse["insert_attempted"] = True
-                exc_refuse["retryable"] = dom.get("retryable") is False
+                exc_refuse_pre["insert_attempted"] = True
+                exc_refuse_pre["retryable"] = dom.get("retryable") is False
             if dom.get("clicked_unknown"):
-                exc_refuse["clicked_unknown"] = True
+                exc_refuse_pre["clicked_unknown"] = True
         return _refuse(
             "insert_outcome_unknown"
-            if exc_refuse.get("insert_attempted")
+            if exc_refuse_pre.get("insert_attempted")
             else "paste_failed",
-            **exc_refuse,
+            **exc_refuse_pre,
         )
 
     if owns_cdp and pw is not None:
-        await pw.stop()
+        await _safe_playwright_stop(pw)
 
     sync_flags = {
         "brought_to_front": tab_sync["brought_to_front"],

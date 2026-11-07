@@ -569,6 +569,108 @@ async def test_post_commit_wait_timeout_records_insert_outcome_unknown(
 
 
 @pytest.mark.asyncio
+async def test_post_commit_stop_fn_raises_still_records_insert_outcome_unknown(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """N1: cleanup stop_fn raising in post-commit handler must not become paste_failed."""
+
+    page = _FakePage(wait_timeout_error=True, url=PINNED)
+    page.target_id = "tab-stop-cleanup"
+
+    class _Ctx:
+        pages = [page]
+
+    class _Pw:
+        async def stop(self) -> None:
+            raise RuntimeError("stop_fn probe")
+
+    async def _connect(_cdp: str) -> tuple[object, object, _Ctx, _FakePage]:
+        return _Pw(), object(), _Ctx(), page
+
+    class _Port:
+        def list_tabs(self, *, cdp_url: str) -> dict:
+            return {
+                "pages": [
+                    {
+                        "id": "tab-stop-cleanup",
+                        "url": PINNED,
+                        "web_socket_debugger_url": "ws://fake/stop",
+                    }
+                ],
+                "reachable": True,
+                "error": None,
+            }
+
+    monkeypatch.setattr("web_tab.cdp_actuation.default_actuation_port", lambda: _Port())
+    monkeypatch.setattr(
+        "web_tab.write_ops._created_by_agent_for_target", lambda **kwargs: True
+    )
+    out = await deliver_orion_wake(
+        thread="21207",
+        turn=3,
+        from_agent="maestro",
+        conversation_url=PINNED,
+        connect_cdp=_connect,
+    )
+    assert out["reason"] == "insert_outcome_unknown"
+    assert out.get("insert_attempted") is True
+    assert out.get("retryable") is False
+    assert out["pasted"] is True
+    assert out["delivered"] is False
+    assert len(page.dom_delivered) == 1
+
+
+@pytest.mark.asyncio
+async def test_final_pw_stop_raises_still_delivers_after_commit(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """N5: final pw.stop() raising must not prevent a delivered receipt after commit."""
+
+    page = _FakePage(url=PINNED)
+    page.target_id = "tab-final-stop"
+
+    class _Ctx:
+        pages = [page]
+
+    class _Pw:
+        async def stop(self) -> None:
+            raise RuntimeError("final stop probe")
+
+    async def _connect(_cdp: str) -> tuple[object, object, _Ctx, _FakePage]:
+        return _Pw(), object(), _Ctx(), page
+
+    class _Port:
+        def list_tabs(self, *, cdp_url: str) -> dict:
+            return {
+                "pages": [
+                    {
+                        "id": "tab-final-stop",
+                        "url": PINNED,
+                        "web_socket_debugger_url": "ws://fake/final",
+                    }
+                ],
+                "reachable": True,
+                "error": None,
+            }
+
+    monkeypatch.setattr("web_tab.cdp_actuation.default_actuation_port", lambda: _Port())
+    monkeypatch.setattr(
+        "web_tab.write_ops._created_by_agent_for_target", lambda **kwargs: True
+    )
+    out = await deliver_orion_wake(
+        thread="21207",
+        turn=3,
+        from_agent="maestro",
+        conversation_url=PINNED,
+        connect_cdp=_connect,
+    )
+    assert out["ok"] is True, out
+    assert out["reason"] == "delivered"
+    assert out["delivered"] is True
+    assert len(page.dom_delivered) == 1
+
+
+@pytest.mark.asyncio
 async def test_hidden_tab_draft_restored_after_reload_refuses_non_empty() -> None:
     page = _FakePage(
         visibility_state="hidden",
