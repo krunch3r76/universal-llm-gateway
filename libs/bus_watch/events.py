@@ -406,3 +406,48 @@ def EndpointWakePassFailed(  # noqa: N802
 def emit_endpoint_wake_pass_failed(**kwargs: Any) -> None:
     """Publish that an endpoint wake dispatcher pass failed."""
     _emit(EndpointWakePassFailed(**kwargs))
+
+
+@event_factory
+def EndpointWakePassDuration(  # noqa: N802
+    *,
+    total_pass_ms: float,
+    normalize_legacy_pending_wakes_ms: float,
+    escalate_composer_deferred_on_sweep_ms: float,
+    expire_overdue_hops_ms: float,
+    scan_once_ms: float,
+    fire_due_wakes_ms: float,
+    finalize_composer_defer_pass_ms: float,
+    check_cursor_ide_context_hops_ms: float,
+    run_patrol_pass_ms: float,
+    display_post_count: int,
+    display_post_cumulative_ms: float,
+    fire_due_wakes_iteration_count: int,
+) -> Event:
+    """Observation: timing for one completed endpoint_wake_dispatcher outer pass."""
+    return Event(
+        signal="endpoint_wake.pass_duration",
+        role="observation",
+        payload={
+            "total_pass_ms": total_pass_ms,
+            "normalize_legacy_pending_wakes_ms": normalize_legacy_pending_wakes_ms,
+            "escalate_composer_deferred_on_sweep_ms": (
+                escalate_composer_deferred_on_sweep_ms
+            ),
+            "expire_overdue_hops_ms": expire_overdue_hops_ms,
+            "scan_once_ms": scan_once_ms,
+            "fire_due_wakes_ms": fire_due_wakes_ms,
+            "finalize_composer_defer_pass_ms": finalize_composer_defer_pass_ms,
+            "check_cursor_ide_context_hops_ms": check_cursor_ide_context_hops_ms,
+            "run_patrol_pass_ms": run_patrol_pass_ms,
+            "display_post_count": display_post_count,
+            "display_post_cumulative_ms": display_post_cumulative_ms,
+            "fire_due_wakes_iteration_count": fire_due_wakes_iteration_count,
+        },
+        scope="global",
+    )
+
+
+def emit_endpoint_wake_pass_duration(**kwargs: Any) -> None:
+    """Publish per-pass duration breakdown for endpoint_wake_dispatcher."""
+    _emit(EndpointWakePassDuration(**kwargs))

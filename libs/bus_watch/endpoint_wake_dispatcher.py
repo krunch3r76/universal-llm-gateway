@@ -1520,6 +1520,22 @@ def _display_post(
     *,
     text: str = "",
 ) -> tuple[str, str]:
+    _display_started = time.monotonic()
+    try:
+        return _display_post_body(row, sub, turn, text=text)
+    finally:
+        from bus_watch.endpoint_wake_pass_timing import note_display_post_duration
+
+        note_display_post_duration((time.monotonic() - _display_started) * 1000.0)
+
+
+def _display_post_body(
+    row: dict[str, Any],
+    sub: dict[str, Any],
+    turn: int | str,
+    *,
+    text: str = "",
+) -> tuple[str, str]:
     options = {
         "display": sub.get("display"),
         "app": sub.get("surface"),
@@ -2278,36 +2294,72 @@ async def run_dispatcher() -> None:
         finalize_composer_defer_pass,
         normalize_legacy_pending_wakes,
     )
+    from bus_watch.endpoint_wake_pass_timing import (
+        begin_pass,
+        begin_phase,
+        end_phase,
+        note_fire_due_wakes_iteration,
+        safe_emit_pass_duration,
+    )
     from bus_watch.ide_context_hop_monitor import check_cursor_ide_context_hops
 
     store = StoreClient()
     idle: dict[str, float] = {}
     hop_mark: dict[str, float] = {}
     while True:
+        begin_pass()
         stage = "init"
         try:
+            begin_phase("normalize_legacy_pending_wakes")
             stage = "normalize_legacy_pending_wakes"
             await asyncio.to_thread(normalize_legacy_pending_wakes)
+            end_phase("normalize_legacy_pending_wakes")
+            begin_phase("escalate_composer_deferred_on_sweep")
             stage = "escalate_composer_deferred_on_sweep"
             await asyncio.to_thread(escalate_composer_deferred_on_sweep, store)
+            end_phase("escalate_composer_deferred_on_sweep")
+            begin_phase("expire_overdue_hops")
             stage = "expire_overdue_hops"
             await asyncio.to_thread(expire_overdue_hops, store)
+            end_phase("expire_overdue_hops")
+            begin_phase("scan_once")
             stage = "scan_once"
             await asyncio.to_thread(scan_once, store, idle_mark=idle)
+            end_phase("scan_once")
+            begin_phase("fire_due_wakes")
             stage = "fire_due_wakes"
             for _ in range(5):
+                note_fire_due_wakes_iteration()
                 claimed = await asyncio.to_thread(fire_due_wakes, store)
                 if not isinstance(claimed, dict) or not claimed.get("wake_id"):
                     break
+            end_phase("fire_due_wakes")
+            begin_phase("finalize_composer_defer_pass")
             stage = "finalize_composer_defer_pass"
             await asyncio.to_thread(finalize_composer_defer_pass)
+            end_phase("finalize_composer_defer_pass")
+            begin_phase("check_cursor_ide_context_hops")
             stage = "check_cursor_ide_context_hops"
             await asyncio.to_thread(check_cursor_ide_context_hops, store, mark=hop_mark)
+            end_phase("check_cursor_ide_context_hops")
             from bus_watch.impresario_ear_patrol import run_patrol_pass
 
+            begin_phase("run_patrol_pass")
             stage = "run_patrol_pass"
             await asyncio.to_thread(run_patrol_pass, store)
+            end_phase("run_patrol_pass")
         except Exception as exc:
+            if stage in {
+                "normalize_legacy_pending_wakes",
+                "escalate_composer_deferred_on_sweep",
+                "expire_overdue_hops",
+                "scan_once",
+                "fire_due_wakes",
+                "finalize_composer_defer_pass",
+                "check_cursor_ide_context_hops",
+                "run_patrol_pass",
+            }:
+                end_phase(stage)
             logger.exception("endpoint_wake_dispatcher pass failed")
             try:
                 from bus_watch.events import emit_endpoint_wake_pass_failed
@@ -2319,4 +2371,6 @@ async def run_dispatcher() -> None:
                 )
             except Exception:
                 logger.exception("endpoint_wake pass_failed emit failed")
+        finally:
+            safe_emit_pass_duration()
         await asyncio.sleep(_POLL_S)
