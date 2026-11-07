@@ -240,8 +240,7 @@ async def _open_model_menu(page: ChatgptPage) -> bool:
 
 
 async def _close_model_menu(page: ChatgptPage) -> None:
-    kb = await page.keyboard()
-    await kb.press("Escape")
+    await page.keyboard.press("Escape")
     await page.wait_for_timeout(150)
 
 
@@ -272,7 +271,6 @@ async def _adjust_power_index(page: ChatgptPage, desired: int, *, max_steps: int
         return False
     await status.click()
     await page.wait_for_timeout(120)
-    kb = await page.keyboard()
     for _ in range(max_steps):
         state = parse_seat_raw(await page.evaluate(_READ_SEAT_JS))
         current = state.power_index
@@ -281,9 +279,9 @@ async def _adjust_power_index(page: ChatgptPage, desired: int, *, max_steps: int
         if current is None:
             return False
         if current < desired:
-            await kb.press("ArrowRight")
+            await page.keyboard.press("ArrowRight")
         else:
-            await kb.press("ArrowLeft")
+            await page.keyboard.press("ArrowLeft")
         await page.wait_for_timeout(180)
     final = parse_seat_raw(await page.evaluate(_READ_SEAT_JS))
     return final.power_index == desired

@@ -5,9 +5,13 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
-import sys
 
-from web_chat_relay.orion_session import DEFAULT_CDP_URL, login_orion, probe_orion
+from web_chat_relay.orion_session import (
+    DEFAULT_CDP_URL,
+    billing_probe_orion,
+    login_orion,
+    probe_orion,
+)
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -17,6 +21,7 @@ def _parser() -> argparse.ArgumentParser:
         ("preflight", "CDP + chatgpt.com probe JSON"),
         ("probe", "Alias for preflight"),
         ("login", "Sign in using ~/.gateway/secrets/chatgpt.env (stops on email 2FA)"),
+        ("billing-probe", "Usage + orion-web admin billing + Work menu blockers (JSON)"),
     ):
         sp = sub.add_parser(name, help=help_text)
         sp.add_argument("--cdp-url", default=DEFAULT_CDP_URL)
@@ -33,6 +38,11 @@ async def _run(args: argparse.Namespace) -> int:
         result = await probe_orion(cdp_url=args.cdp_url)
         print(json.dumps(result.as_dict(), indent=2))
         return 0 if result.signed_in or not result.login_wall else 1
+    if args.cmd == "billing-probe":
+        result = await billing_probe_orion(cdp_url=args.cdp_url)
+        print(json.dumps(result, indent=2))
+        blocked = bool((result.get("work_menu") or {}).get("blocked"))
+        return 1 if blocked else 0
     if args.cmd == "login":
         result = await login_orion(cdp_url=args.cdp_url)
         print(json.dumps(result, indent=2))

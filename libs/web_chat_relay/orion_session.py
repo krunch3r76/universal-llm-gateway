@@ -20,6 +20,25 @@ _LOGIN_HINT = re.compile(
     re.I,
 )
 
+BILLING_PROBE_JS = """
+() => {
+  const body = (document.body && document.body.innerText) || "";
+  const credits = body.match(/([\\d,]+)\\s*\\n\\s*workspace credits/i);
+  const weekly = body.match(/Weekly limit[\\s\\S]{0,120}/i);
+  const creditsAdmin = body.match(/Credits balance\\s*\\n\\s*([\\d,]+)/i);
+  return {
+    url: location.href,
+    workspace_credits: credits ? credits[1] : null,
+    admin_credits: creditsAdmin ? creditsAdmin[1] : null,
+    weekly_excerpt: weekly ? weekly[0].replace(/\\s+/g, " ").trim() : null,
+    plan_business: /Business Plan/i.test(body),
+    email: (body.match(/[\\w.+-]+@[\\w.-]+/) || [])[0] || null,
+    work_limit_menu: /usage limit reached/i.test(body),
+    body_head: body.slice(0, 800),
+  };
+}
+"""
+
 PROBE_JS = """
 () => {
   const body = (document.body && document.body.innerText) || "";
@@ -70,6 +89,49 @@ def load_secrets() -> dict[str, str]:
         key, _, val = line.partition("=")
         out[key.strip()] = val.strip().strip("'\"")
     return out
+
+
+async def billing_probe_orion(*, cdp_url: str = DEFAULT_CDP_URL) -> dict[str, Any]:
+    """Usage + admin billing snapshot for orion-web workspace troubleshooting."""
+    _pw, _browser, _ctx, page = await connect_cdp(cdp_url)
+    out: dict[str, Any] = {"cdp_url": cdp_url}
+    try:
+        await page.goto(
+            "https://chatgpt.com/settings/usage",
+            wait_until="domcontentloaded",
+            timeout=90_000,
+        )
+        await page.wait_for_timeout(3000)
+        out["usage"] = await page.evaluate(BILLING_PROBE_JS)
+        await page.goto(
+            "https://admin.openai.com/workspace/11f605b8-daa1-47fc-b8aa-7fe17bd8025d/billing",
+            wait_until="domcontentloaded",
+            timeout=90_000,
+        )
+        await page.wait_for_timeout(3000)
+        out["admin_billing"] = await page.evaluate(BILLING_PROBE_JS)
+        await page.goto("https://chatgpt.com/", wait_until="domcontentloaded", timeout=60_000)
+        await page.wait_for_timeout(1500)
+        work = page.locator("button, a").filter(has_text="Work")
+        for i in range(await work.count()):
+            if (await work.nth(i).inner_text()).strip() == "Work":
+                await work.nth(i).click(force=True)
+                break
+        await page.wait_for_timeout(1500)
+        picker = page.locator('button[aria-label="Select ChatGPT model"]')
+        if await picker.count():
+            await picker.first.click()
+            await page.wait_for_timeout(800)
+        out["work_menu"] = await page.evaluate(
+            "() => { const m=document.querySelector('[role=menu]');"
+            " return { text: m ? (m.innerText||'').slice(0,500) : '',"
+            " blocked: /usage limit reached/i.test(m?m.innerText:'') }; }"
+        )
+        await page.keyboard.press("Escape")
+        return out
+    finally:
+        await _browser.close()
+        await _pw.stop()
 
 
 async def probe_orion(*, cdp_url: str = DEFAULT_CDP_URL) -> OrionProbe:
