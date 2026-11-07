@@ -12,6 +12,7 @@ from interlocutor.targets import (
     CoworkUrlTarget,
     DisplayEightTarget,
     refuse_dict,
+    resolve_grok_window_target,
     resolve_target,
 )
 
@@ -148,4 +149,75 @@ def execute_steer(
     return result
 
 
-__all__ = ["execute_read", "execute_steer"]
+def execute_list(
+    *,
+    target: str,
+    include_hidden: bool = True,
+    include_retired: bool = False,
+) -> dict[str, Any]:
+    resolved = resolve_grok_window_target(target)
+    if isinstance(resolved, ClassifyRefuse):
+        return _refuse(resolved)
+    return display_adapter.list_grok_window_sync(
+        resolved,
+        include_hidden=include_hidden,
+        include_retired=include_retired,
+    )
+
+
+def execute_spawn(
+    *,
+    target: str,
+    name: str,
+    description: str = "",
+    hidden: bool = True,
+    mailbox: str | None = None,
+    thread_scope: str | None = None,
+    text: str | None = None,
+    voice: Voice = "self",
+    idempotency_key: str | None = None,
+) -> dict[str, Any]:
+    resolved = resolve_grok_window_target(target)
+    if isinstance(resolved, ClassifyRefuse):
+        return _refuse(resolved)
+    return display_adapter.spawn_grok_window_sync(
+        resolved,
+        name=name,
+        description=description,
+        hidden=hidden,
+        mailbox=mailbox,
+        thread_scope=thread_scope,
+        text=text,
+        voice=voice,
+        idempotency_key=idempotency_key,
+    )
+
+
+def execute_retire(*, target: str) -> dict[str, Any]:
+    resolved = resolve_target(target)
+    if isinstance(resolved, ClassifyRefuse):
+        return _refuse(resolved)
+    if not isinstance(resolved, DisplayEightTarget):
+        return _refuse(
+            ClassifyRefuse(
+                code="unsupported_target",
+                reason="retire requires display:<n>/<agent_id>",
+            )
+        )
+    if resolved.display not in {"9", "10"}:
+        return _refuse(
+            ClassifyRefuse(
+                code="capability_unsupported",
+                reason="retire is supported on grok displays 9 and 10 only",
+            )
+        )
+    return display_adapter.retire_grok_agent_sync(resolved)
+
+
+__all__ = [
+    "execute_list",
+    "execute_read",
+    "execute_retire",
+    "execute_spawn",
+    "execute_steer",
+]

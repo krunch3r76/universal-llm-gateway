@@ -41,6 +41,7 @@ from cursor_bridge.dom_composer_paste import (
     composer_selector,
     dom_insert_and_send,
 )
+from cursor_bridge.grok_agent_ops import select_grok_agent_async
 
 _TARGETS: dict[tuple[str, str], str] = {
     ("cursor", "8"): "http://127.0.0.1:9338",
@@ -390,6 +391,25 @@ async def _deliver_locked(
             and verdict.get("state") == "chat_list"
             and same_chat
         )
+        if need_select and app == "grok" and aid_s and not verdict.get("ok"):
+            cdp_pick = await select_grok_agent_async(disp, aid_s)
+            if cdp_pick.get("ok"):
+                selected = True
+                await asyncio.sleep(0.15)
+                surface = await probe_surface(ws_url)
+                verdict = wake_decision(
+                    surface,
+                    thread=thread_s,
+                    slug=slug_s,
+                    title=title_s or None,
+                    agent_id=aid_s or None,
+                )
+                need_select = (
+                    not verdict.get("ok")
+                    and select
+                    and verdict.get("state") == "chat_list"
+                    and same_chat
+                )
         if need_select:
             click_res = await select_sidebar_target(
                 ws_url,

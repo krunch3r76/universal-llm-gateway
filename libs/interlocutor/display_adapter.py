@@ -8,7 +8,7 @@ from typing import Any
 from chat_harvest.models import ClassifyRefuse
 from cursor_bridge.electron_chat_relay import ElectronEndpoint, read_endpoint_turn
 
-from interlocutor.targets import DisplayEightTarget
+from interlocutor.targets import DisplayEightTarget, DisplayGrokWindowTarget
 
 _NON_RETRYABLE_TIMEOUT = frozenset(
     {
@@ -248,4 +248,61 @@ def steer_display_sync(
     )
 
 
-__all__ = ["read_display_latest_sync", "steer_display_sync"]
+def list_grok_window_sync(
+    target: DisplayGrokWindowTarget,
+    *,
+    include_hidden: bool = True,
+    include_retired: bool = False,
+) -> dict[str, Any]:
+    from cursor_bridge.grok_agent_ops import list_grok_agents
+
+    out = list_grok_agents(
+        target.display,
+        include_hidden=include_hidden,
+        include_retired=include_retired,
+    )
+    return {**out, "adapter": "display_grok_window", "op": "list"}
+
+
+def spawn_grok_window_sync(
+    target: DisplayGrokWindowTarget,
+    *,
+    name: str,
+    description: str = "",
+    hidden: bool = True,
+    mailbox: str | None = None,
+    thread_scope: str | None = None,
+    text: str | None = None,
+    voice: str = "self",
+    idempotency_key: str | None = None,
+) -> dict[str, Any]:
+    from cursor_bridge.grok_agent_ops import spawn_grok_agent
+
+    out = spawn_grok_agent(
+        target.display,
+        name,
+        description=description,
+        hidden=hidden,
+        mailbox=mailbox,
+        thread_scope=thread_scope,
+        text=text,
+        voice=voice,
+        idempotency_key=idempotency_key,
+    )
+    return {**out, "adapter": "display_grok_window", "op": "spawn"}
+
+
+def retire_grok_agent_sync(target: DisplayEightTarget) -> dict[str, Any]:
+    from cursor_bridge.grok_agent_ops import retire_grok_agent
+
+    out = retire_grok_agent(target.display, target.agent_id)
+    return {**out, "adapter": "display_eight", "op": "retire"}
+
+
+__all__ = [
+    "list_grok_window_sync",
+    "read_display_latest_sync",
+    "retire_grok_agent_sync",
+    "spawn_grok_window_sync",
+    "steer_display_sync",
+]

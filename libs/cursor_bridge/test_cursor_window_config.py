@@ -12,6 +12,7 @@ from cursor_bridge.cursor_window_config import (
     config_path,
     load_config,
     subscription_display_for_gui_host,
+    unknown_gui_host_error,
 )
 
 pytestmark = pytest.mark.offline
@@ -71,3 +72,17 @@ def test_cdp_origin_host_gateway_stays_loopback(
 def test_subscription_display_from_config() -> None:
     assert subscription_display_for_gui_host("orion-node") == "orion-node"
     assert subscription_display_for_gui_host(":8") == "8"
+
+
+@pytest.mark.parametrize("host", [":9", ":10", "jupiter"])
+def test_unknown_gui_host_error_refuses_grok_displays(host: str) -> None:
+    out = unknown_gui_host_error(host)
+    assert out["ok"] is False
+    assert out["code"] == "unknown_gui_host"
+    assert out["gui_host"] == host
+
+
+def test_unknown_gui_host_error_accepts_glass_row() -> None:
+    out = unknown_gui_host_error(":8")
+    assert out["ok"] is True
+    assert "cdp_origin" in out

@@ -31,7 +31,21 @@ class DisplayEightTarget:
     agent_id: str = ""
 
 
-ResolvedTarget = CoworkMaestroTarget | CoworkUrlTarget | DisplayEightTarget
+@dataclass(frozen=True, slots=True)
+class DisplayGrokWindowTarget:
+    """Grok window slot (:9 / :10) for roster list/spawn without a fixed agent id."""
+
+    kind: Literal["display_grok_window"] = "display_grok_window"
+    display: str = "9"
+    app: str = "grok"
+
+
+_GROK_WINDOW_DISPLAYS = frozenset({"9", "10"})
+
+
+ResolvedTarget = (
+    CoworkMaestroTarget | CoworkUrlTarget | DisplayEightTarget | DisplayGrokWindowTarget
+)
 
 
 def _normalize_maestro(target: str) -> CoworkMaestroTarget | None:
@@ -41,15 +55,24 @@ def _normalize_maestro(target: str) -> CoworkMaestroTarget | None:
     return None
 
 
-def _parse_display_target(target: str) -> DisplayEightTarget | ClassifyRefuse | None:
+def _parse_display_target(
+    target: str, *, allow_bare_grok_window: bool = False
+) -> DisplayEightTarget | DisplayGrokWindowTarget | ClassifyRefuse | None:
     raw = target.strip()
     if not raw.lower().startswith("display:"):
         return None
     rest = raw.split(":", 1)[1].strip()
     parts = [p for p in rest.split("/") if p]
     if not parts:
-        return ClassifyRefuse(code="params_required", reason="display target needs :8/<agent_id>")
+        return ClassifyRefuse(
+            code="params_required", reason="display target needs :8/<agent_id>"
+        )
     disp = parts[0].lstrip(":")
+    if allow_bare_grok_window and disp in _GROK_WINDOW_DISPLAYS:
+        if len(parts) == 1:
+            return DisplayGrokWindowTarget(display=disp)
+        if len(parts) >= 2 and parts[1].replace("_", "-") in {"grok", "grok-bot"}:
+            return DisplayGrokWindowTarget(display=disp)
     agent_id = parts[1] if len(parts) > 1 else ""
     if not agent_id:
         return ClassifyRefuse(
@@ -57,7 +80,28 @@ def _parse_display_target(target: str) -> DisplayEightTarget | ClassifyRefuse | 
             reason="display target requires agent_id (display:8/<agent_id>)",
         )
     app = parts[2] if len(parts) > 2 else "grok"
-    return DisplayEightTarget(display=disp, app=app.replace("_", "-"), agent_id=agent_id)
+    return DisplayEightTarget(
+        display=disp, app=app.replace("_", "-"), agent_id=agent_id
+    )
+
+
+def resolve_grok_window_target(
+    target: str,
+) -> DisplayGrokWindowTarget | ClassifyRefuse | None:
+    """Resolve ``display:9``, ``display:10``, or ``display:9/grok`` for list/spawn ops."""
+    parsed = _parse_display_target(target, allow_bare_grok_window=True)
+    if parsed is None:
+        return ClassifyRefuse(
+            code="unsupported_target", reason=f"unsupported target: {target!r}"
+        )
+    if isinstance(parsed, ClassifyRefuse):
+        return parsed
+    if isinstance(parsed, DisplayGrokWindowTarget):
+        return parsed
+    return ClassifyRefuse(
+        code="unsupported_target",
+        reason="list/spawn requires display:9 or display:10 (optional /grok suffix)",
+    )
 
 
 def _parse_cowork_url(target: str) -> CoworkUrlTarget | None:
@@ -110,7 +154,9 @@ __all__ = [
     "CoworkMaestroTarget",
     "CoworkUrlTarget",
     "DisplayEightTarget",
+    "DisplayGrokWindowTarget",
     "ResolvedTarget",
     "refuse_dict",
+    "resolve_grok_window_target",
     "resolve_target",
 ]

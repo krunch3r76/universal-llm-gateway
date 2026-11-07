@@ -53,7 +53,9 @@ def _alias_index(config: dict[str, Any]) -> dict[str, dict[str, Any]]:
     return out
 
 
-def _row_for_gui_host(gui_host: str | None, *, config: dict[str, Any] | None = None) -> dict[str, Any] | None:
+def _row_for_gui_host(
+    gui_host: str | None, *, config: dict[str, Any] | None = None
+) -> dict[str, Any] | None:
     cfg = config if config is not None else load_config()
     key = str(gui_host or "").strip() or ":8"
     idx = _alias_index(cfg)
@@ -125,6 +127,27 @@ def is_configured_cursor_glass_host(gui_host: str | None) -> bool:
     return _row_for_gui_host(gui_host) is not None
 
 
+def unknown_gui_host_error(gui_host: str | None) -> dict[str, Any]:
+    """Structured refusal for hosts outside the Cursor Glass window table.
+
+    Grok displays (:9 / :10) and other labels must not fall back to ``:8``.
+    """
+    key = str(gui_host or "").strip() or ":8"
+    if is_configured_cursor_glass_host(key):
+        row = _row_for_gui_host(key) or {}
+        return {
+            "ok": True,
+            "gui_host": str(row.get("gui_host") or key),
+            "cdp_origin": str(row.get("cdp_origin") or _DEFAULT_ORIGIN),
+        }
+    return {
+        "ok": False,
+        "code": "unknown_gui_host",
+        "reason": f"unknown gui_host {key!r}",
+        "gui_host": key,
+    }
+
+
 __all__ = [
     "all_gui_host_aliases",
     "cdp_origin_for_gui_host",
@@ -133,4 +156,5 @@ __all__ = [
     "load_config",
     "normalize_gui_host",
     "subscription_display_for_gui_host",
+    "unknown_gui_host_error",
 ]

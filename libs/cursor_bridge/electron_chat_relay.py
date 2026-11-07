@@ -43,6 +43,7 @@ from cursor_bridge.dom_composer_paste import (
     composer_text_semantic_equals,
     dom_insert_and_send,
 )
+from cursor_bridge.grok_agent_ops import select_grok_agent_async
 from cursor_bridge.grok_computer import probe_grok_computer, resolve_grok_cdp_port
 from cursor_bridge.wake_delivery import (
     _busy_or_draft_reason,
@@ -107,9 +108,7 @@ async def probe_electron_supervision(
         return unscanned_supervision(surface=surface, reason="probe_empty")
 
     migration = probe.get("migration")
-    migration_phase = (
-        migration.get("phase") if isinstance(migration, dict) else None
-    )
+    migration_phase = migration.get("phase") if isinstance(migration, dict) else None
     app_health: dict[str, Any] = {
         "phase": probe.get("phase"),
         "egress": probe.get("egress"),
@@ -227,6 +226,24 @@ async def _resolve_and_select_endpoint(
         agent_id=endpoint.agent_id or None,
     )
     selected = False
+    if (
+        not verdict.get("ok")
+        and select
+        and app == "grok"
+        and str(endpoint.agent_id or "").strip()
+    ):
+        cdp_pick = await select_grok_agent_async(disp, str(endpoint.agent_id))
+        if cdp_pick.get("ok"):
+            selected = True
+            await asyncio.sleep(0.15)
+            surface = await probe_surface(ws_url)
+            verdict = wake_decision(
+                surface,
+                thread=endpoint.thread,
+                slug=endpoint.slug,
+                title=endpoint.title or None,
+                agent_id=endpoint.agent_id or None,
+            )
     if not verdict.get("ok") and select and verdict.get("state") == "chat_list":
         guard = _busy_or_draft_reason(surface)
         if guard:
@@ -237,6 +254,8 @@ async def _resolve_and_select_endpoint(
                 "display": disp,
                 "app": app,
                 "active_title": verdict.get("active_title"),
+                "active_agent_id": verdict.get("active_agent_id"),
+                "titles": verdict.get("titles"),
             }
         async with display_switch_lock(disp):
             click_res = await select_sidebar_target(

@@ -1,10 +1,16 @@
-"""MCP interlocutor tool — read and steer only."""
+"""MCP interlocutor tool — read, steer, list, spawn, and retire."""
 
 from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any, Literal
 
-from interlocutor.facade import execute_read, execute_steer
+from interlocutor.facade import (
+    execute_list,
+    execute_read,
+    execute_retire,
+    execute_spawn,
+    execute_steer,
+)
 
 if TYPE_CHECKING:
     from fastmcp import FastMCP
@@ -23,7 +29,7 @@ def register_interlocutor_tool(mcp: FastMCP) -> None:
 
     @mcp.tool(title="Interlocutor")
     def interlocutor(
-        op: Literal["read", "steer"],
+        op: Literal["read", "steer", "list", "spawn", "retire"],
         target: str,
         coverage: Literal["latest", "from_turn", "full", "meta"] = "latest",
         after_turn: int | None = None,
@@ -34,16 +40,18 @@ def register_interlocutor_tool(mcp: FastMCP) -> None:
         authorization_source: str | None = None,
         scope: str | None = None,
         idempotency_key: str | None = None,
+        name: str | None = None,
+        description: str | None = None,
+        hidden: bool | None = None,
+        mailbox: str | None = None,
+        thread_scope: str | None = None,
+        include_hidden: bool = True,
+        include_retired: bool = False,
     ) -> dict[str, Any]:
-        """Read or steer an interlocutor target (Cowork cse_session or display :8).
+        """Read or steer an interlocutor target (Cowork, display :8/:9/:10, or Grok roster ops).
 
-        ``read`` harvests via ``cse_session`` for Cowork targets or reads the latest
-        composer turn on display ``:8``. ``after_turn`` is forwarded to harvest
-        unchanged (no off-by-one adjustment).
-
-        ``steer`` sends followup on Cowork or pastes on display ``:8``.
-        ``voice=operator_relay`` composes the Kaywan operator watermark; ``voice=self``
-        does not watermark.
+        ``list`` / ``spawn`` accept ``display:9``, ``display:10``, or ``display:9/grok``.
+        ``retire`` requires ``display:<n>/<agent_id>`` on Grok displays 9 or 10.
         """
         if op == "read":
             result = execute_read(
@@ -55,6 +63,48 @@ def register_interlocutor_tool(mcp: FastMCP) -> None:
             outcome = "refused" if result.get("ok") is False else "completed"
             _record(f"interlocutor.read.{outcome}", target=target, coverage=coverage)
             return {**result, "op": "read", "target": target}
+
+        if op == "list":
+            result = execute_list(
+                target=target,
+                include_hidden=include_hidden,
+                include_retired=include_retired,
+            )
+            outcome = "refused" if result.get("ok") is False else "completed"
+            _record(f"interlocutor.list.{outcome}", target=target)
+            return {**result, "op": "list", "target": target}
+
+        if op == "spawn":
+            if not (name or "").strip():
+                refuse = {
+                    "ok": False,
+                    "code": "name_required",
+                    "reason": "spawn requires name",
+                }
+                _record(
+                    "interlocutor.spawn.refused", target=target, code="name_required"
+                )
+                return {**refuse, "op": "spawn", "target": target}
+            result = execute_spawn(
+                target=target,
+                name=str(name),
+                description=str(description or ""),
+                hidden=True if hidden is None else bool(hidden),
+                mailbox=mailbox,
+                thread_scope=thread_scope,
+                text=text,
+                voice=voice,
+                idempotency_key=idempotency_key,
+            )
+            outcome = "refused" if result.get("ok") is False else "completed"
+            _record(f"interlocutor.spawn.{outcome}", target=target)
+            return {**result, "op": "spawn", "target": target}
+
+        if op == "retire":
+            result = execute_retire(target=target)
+            outcome = "refused" if result.get("ok") is False else "completed"
+            _record(f"interlocutor.retire.{outcome}", target=target)
+            return {**result, "op": "retire", "target": target}
 
         if not (text or "").strip():
             refuse = {
