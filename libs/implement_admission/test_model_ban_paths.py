@@ -11,6 +11,7 @@ import yaml
 from implement_admission.model_ban import clear_model_ban_cache
 from services.git_integration_worker.cursor_sdk_model_ban import (
     evaluate_cursor_dispatch_model_ban,
+    models_for_ban_check,
 )
 from services.git_integration_worker.models.cursor_api import CursorDispatchRequest
 
@@ -29,7 +30,9 @@ def test_structural_guard_model_bearing_admit_paths() -> None:
         _REPO / "services/git_integration_worker/routes/cursor_sdk.py"
     ).read_text()
     assert "evaluate_cursor_dispatch_model_ban" in giw_route
-    assert "check_model_ban(" not in giw_route.split("admit_cursor_dispatch", 1)[-1][:800]
+    assert (
+        "check_model_ban(" not in giw_route.split("admit_cursor_dispatch", 1)[-1][:800]
+    )
 
 
 def test_evaluate_cursor_dispatch_model_ban_refuses_grok() -> None:
@@ -62,6 +65,35 @@ def test_evaluate_cursor_dispatch_model_ban_accepts_waiver() -> None:
     assert verdict.allowed is True
 
 
+def test_hop_refusal_does_not_advertise_ban_override() -> None:
+    from implement_admission.model_ban import check_model_ban_safe
+
+    verdict = check_model_ban_safe(
+        resolved_model="cursor/grok-4.7",
+        explicit_pin=True,
+        workflow_key="agent_bus.hop",
+        advertise_ban_override=False,
+    )
+    assert verdict.allowed is False
+    details = (verdict.reject_envelope or {}).get("details") or {}
+    assert "ban_override" not in details
+    assert "ban_override_reason" not in details
+
+
+def test_handoff_refusal_does_not_advertise_ban_override() -> None:
+    from implement_admission.model_ban import check_model_ban_safe
+
+    verdict = check_model_ban_safe(
+        resolved_model="cursor/grok-4.7",
+        explicit_pin=True,
+        workflow_key="team.handoff",
+        advertise_ban_override=False,
+    )
+    assert verdict.allowed is False
+    details = (verdict.reject_envelope or {}).get("details") or {}
+    assert "ban_override" not in details
+
+
 @pytest.mark.asyncio
 async def test_hop_dispatch_entry_rejects_banned_model(
     monkeypatch: pytest.MonkeyPatch,
@@ -84,9 +116,11 @@ async def test_hop_dispatch_entry_rejects_banned_model(
         desired_model="cursor/grok-4.7",
         reason="model-ban-path-test",
     )
-    assert result.get("reason") in ("MODEL_BANNED", "model_banned", "MODEL_BANNED_DEFAULT") or (
-        "banned" in str(result.get("error", "")).lower()
-    )
+    assert result.get("reason") in (
+        "MODEL_BANNED",
+        "model_banned",
+        "MODEL_BANNED_DEFAULT",
+    ) or ("banned" in str(result.get("error", "")).lower())
 
 
 def test_agents_yaml_default_and_allowed_exclude_scope_all_bans() -> None:
@@ -121,7 +155,10 @@ def test_agents_yaml_default_and_allowed_exclude_scope_all_bans() -> None:
     imp = policy.get("impresario") or {}
     adv = imp.get("advisor") or {}
     mech = imp.get("mechanical") or {}
-    for key, model in (("advisor.model", adv.get("model")), ("mechanical.model", mech.get("model"))):
+    for key, model in (
+        ("advisor.model", adv.get("model")),
+        ("mechanical.model", mech.get("model")),
+    ):
         ms = str(model or "").strip()
         if ms:
             try:
@@ -130,6 +167,50 @@ def test_agents_yaml_default_and_allowed_exclude_scope_all_bans() -> None:
             except (TypeError, ValueError):
                 pass
     assert offenders == [], offenders
+
+
+def test_resume_checks_child_model_when_parent_missing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        "services.git_integration_worker.cursor_sdk_model_ban._parent_resolved_model",
+        lambda _pid: None,
+    )
+    req = CursorDispatchRequest(
+        thread_id="22499",
+        model="cursor/grok-4.7",
+        dispatch_id="d-ban-resume-miss",
+        execution_id="e-ban-resume-miss",
+        message="x",
+        resume_of="parent-missing",
+    )
+    assert models_for_ban_check(req) == ("cursor/grok-4.7",)
+    verdict, _ = evaluate_cursor_dispatch_model_ban(req)
+    assert verdict.allowed is False
+
+
+def test_resume_refuses_when_child_grok_parent_composer(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        "services.git_integration_worker.cursor_sdk_model_ban._parent_resolved_model",
+        lambda _pid: "cursor/composer-2.5",
+    )
+    req = CursorDispatchRequest(
+        thread_id="22499",
+        model="cursor/grok-4.7",
+        dispatch_id="d-ban-resume-dual",
+        execution_id="e-ban-resume-dual",
+        message="x",
+        resume_of="parent-composer",
+    )
+    assert models_for_ban_check(req) == (
+        "cursor/grok-4.7",
+        "cursor/composer-2.5",
+    )
+    verdict, model = evaluate_cursor_dispatch_model_ban(req)
+    assert verdict.allowed is False
+    assert model == "cursor/grok-4.7"
 
 
 def test_admit_cursor_dispatch_signature_uses_helper_not_inline_ban() -> None:

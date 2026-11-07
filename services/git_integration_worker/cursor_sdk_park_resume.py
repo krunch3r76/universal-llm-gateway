@@ -207,6 +207,16 @@ def build_park_resume_request(
         source_ref=row.source_ref,
         resume_of=row.dispatch_id,
     )
+    if record.get("ban_override") is True:
+        req = req.model_copy(
+            update={
+                "ban_override": True,
+                "ban_override_reason": record.get("ban_override_reason"),
+                "model_ban_override_event_id": record.get(
+                    "model_ban_override_event_id"
+                ),
+            }
+        )
     req.stamp_inherited_workspace(row.dispatch_id)
     return req
 

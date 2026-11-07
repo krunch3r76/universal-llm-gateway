@@ -21,6 +21,7 @@ __all__ = [
     "ModelBanVerdict",
     "argon_role_barred",
     "ban_override_fields",
+    "ban_override_pair_reject",
     "check_model_ban",
     "check_model_ban_safe",
     "clear_model_ban_cache",
@@ -78,13 +79,52 @@ def validate_ban_override_pair(
     return None
 
 
-def _reject_details(entry: ModelBanEntry, *, resolved_model: str) -> dict[str, Any]:
-    return {
+def ban_override_pair_reject(
+    ban_override: Any,
+    ban_override_reason: Any,
+    *,
+    status_code: int = 422,
+    advertise_ban_override: bool = True,
+) -> dict[str, Any] | None:
+    code = validate_ban_override_pair(ban_override, ban_override_reason)
+    if code is None:
+        return None
+    field = (
+        "ban_override_reason"
+        if code == "ban_override_reason_required"
+        else "ban_override"
+    )
+    details = ban_override_fields() if advertise_ban_override else None
+    envelope: dict[str, Any] = {
+        "admitted": False,
+        "status_code": status_code,
+        "code": code,
+        "field": field,
+        "reason": (
+            "ban_override_reason is required when ban_override=true"
+            if code == "ban_override_reason_required"
+            else "ban_override=true is required when ban_override_reason is set"
+        ),
+    }
+    if details is not None:
+        envelope["details"] = details
+    return envelope
+
+
+def _reject_details(
+    entry: ModelBanEntry,
+    *,
+    resolved_model: str,
+    advertise_ban_override: bool = True,
+) -> dict[str, Any]:
+    out: dict[str, Any] = {
         "model": resolved_model,
         "reason": entry.reason,
         "ref": entry.ref,
-        **ban_override_fields(),
     }
+    if advertise_ban_override:
+        out.update(ban_override_fields())
+    return out
 
 
 def evaluate_dispatch_model_ban(
@@ -98,29 +138,15 @@ def evaluate_dispatch_model_ban(
     caller_agent: str | None,
     dispatch_id: str | None = None,
     bans: tuple[ModelBanEntry, ...] | None = None,
+    advertise_ban_override: bool = True,
 ) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
-    pair_err = validate_ban_override_pair(ban_override, ban_override_reason)
-    if pair_err:
-        field = (
-            "ban_override_reason"
-            if pair_err == "ban_override_reason_required"
-            else "ban_override"
-        )
-        return (
-            {
-                "admitted": False,
-                "status_code": 422,
-                "code": pair_err,
-                "field": field,
-                "reason": (
-                    "ban_override_reason is required when ban_override=true"
-                    if pair_err == "ban_override_reason_required"
-                    else "ban_override=true is required when ban_override_reason is set"
-                ),
-                "details": ban_override_fields(),
-            },
-            None,
-        )
+    pair_reject = ban_override_pair_reject(
+        ban_override,
+        ban_override_reason,
+        advertise_ban_override=advertise_ban_override,
+    )
+    if pair_reject is not None:
+        return pair_reject, None
     entry = find_matching_ban(resolved_model, role=role, bans=bans)
     if entry is None:
         return None, None
@@ -140,7 +166,11 @@ def evaluate_dispatch_model_ban(
         reason = f"model {resolved_model!r} is banned ({entry.ref})"
     else:
         reason = f"omit-model resolves to banned model via {omit_key}"
-    details = _reject_details(entry, resolved_model=resolved_model)
+    details = _reject_details(
+        entry,
+        resolved_model=resolved_model,
+        advertise_ban_override=advertise_ban_override,
+    )
     if not explicit_pin:
         details["omit_config_key"] = omit_key
     return (
@@ -197,6 +227,7 @@ def check_model_ban(
     caller_agent: str | None = None,
     dispatch_id: str | None = None,
     bans: tuple[ModelBanEntry, ...] | None = None,
+    advertise_ban_override: bool = True,
 ) -> ModelBanVerdict:
     try:
         return _check_model_ban_inner(
@@ -209,6 +240,7 @@ def check_model_ban(
             caller_agent=caller_agent,
             dispatch_id=dispatch_id,
             bans=bans,
+            advertise_ban_override=advertise_ban_override,
         )
     except ModelBanUnparseableError:
         return _unparseable_verdict(resolved_model)
@@ -225,6 +257,7 @@ def _check_model_ban_inner(
     caller_agent: str | None,
     dispatch_id: str | None,
     bans: tuple[ModelBanEntry, ...] | None,
+    advertise_ban_override: bool,
 ) -> ModelBanVerdict:
     reject, override = evaluate_dispatch_model_ban(
         resolved_model=resolved_model,
@@ -236,6 +269,7 @@ def _check_model_ban_inner(
         caller_agent=caller_agent,
         dispatch_id=dispatch_id,
         bans=bans,
+        advertise_ban_override=advertise_ban_override,
     )
     if reject is not None:
         entry = find_matching_ban(resolved_model, role=role, bans=bans)

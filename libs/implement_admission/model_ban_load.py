@@ -74,11 +74,11 @@ def _parse_scope(raw: Any) -> tuple[bool, frozenset[str]]:
     if isinstance(raw, dict):
         roles = raw.get("roles")
         if isinstance(roles, list):
-            parsed = frozenset(
-                str(r).strip().lower() for r in roles if str(r).strip()
-            )
+            parsed = frozenset(str(r).strip().lower() for r in roles if str(r).strip())
             if not parsed:
-                msg = "model_bans scope.roles must be non-empty when scope is role-scoped"
+                msg = (
+                    "model_bans scope.roles must be non-empty when scope is role-scoped"
+                )
                 raise ValueError(msg)
             return False, parsed
     msg = f"model_bans scope must be 'all' or {{roles: [...]}}; got {raw!r}"
@@ -126,10 +126,17 @@ def parse_model_bans(policy: dict[str, Any]) -> tuple[ModelBanEntry, ...]:
 
 def load_model_bans_strict(*, path: Path | None = None) -> tuple[ModelBanEntry, ...]:
     policy_path = path or default_policy_path()
-    policy = load_route_policy(policy_path)
     try:
+        if not policy_path.is_file():
+            msg = f"route policy missing at {policy_path}"
+            raise ModelBansUnloadableError(msg)
+        policy = load_route_policy(policy_path)
         return parse_model_bans(policy)
+    except ModelBansUnloadableError:
+        raise
     except ValueError as exc:
+        raise ModelBansUnloadableError(str(exc)) from exc
+    except OSError as exc:
         raise ModelBansUnloadableError(str(exc)) from exc
 
 
@@ -141,9 +148,15 @@ def _cached_bans(policy_path: str, mtime_ns: int) -> tuple[ModelBanEntry, ...]:
 
 def load_model_bans(path: Path | None = None) -> tuple[ModelBanEntry, ...]:
     policy_path = path or default_policy_path()
-    if path is not None:
-        return load_model_bans_strict(path=path)
-    return _cached_bans(str(policy_path), policy_path.stat().st_mtime_ns)
+    try:
+        if path is not None:
+            return load_model_bans_strict(path=path)
+        mtime_ns = policy_path.stat().st_mtime_ns
+        return _cached_bans(str(policy_path), mtime_ns)
+    except ModelBansUnloadableError:
+        raise
+    except OSError as exc:
+        raise ModelBansUnloadableError(str(exc)) from exc
 
 
 def clear_model_ban_cache() -> None:

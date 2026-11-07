@@ -207,6 +207,7 @@ async def team_handoff(
             workflow_key="team.handoff",
             role=getattr(body, "role", None),
             caller_agent=getattr(body, "caller_agent", None),
+            advertise_ban_override=False,
         )
         if not ban_verdict.allowed:
             env = ban_verdict.reject_envelope or {}
@@ -230,6 +231,7 @@ async def team_handoff(
                 explicit_pin=True,
                 workflow_key="team.handoff.executor_override",
                 caller_agent=getattr(body, "caller_agent", None),
+                advertise_ban_override=False,
             )
             if not exec_verdict.allowed:
                 env = exec_verdict.reject_envelope or {}

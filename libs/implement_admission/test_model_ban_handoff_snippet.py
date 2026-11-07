@@ -12,4 +12,8 @@ def test_team_handoff_module_calls_safe_ban_gate() -> None:
         _REPO / "services/universal-stargate/systems/frontier_consult/route_handoff.py"
     ).read_text(encoding="utf-8")
     assert "check_model_ban_safe" in src
-    assert 'override_model and str(override_model).strip()' in src
+    assert "override_model and str(override_model).strip()" in src
+    assert src.index("check_model_ban_safe") < src.index("derive_contract(")
+    assert src.index("check_model_ban_safe") < src.index(
+        'getattr(body, "executor_override"'
+    )

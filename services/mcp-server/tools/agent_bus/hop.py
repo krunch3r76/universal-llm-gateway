@@ -281,6 +281,7 @@ async def _hop_dispatch(
         workflow_key="agent_bus.hop",
         role=None,
         caller_agent=from_agent,
+        advertise_ban_override=False,
     )
     if not ban_verdict.allowed:
         env = ban_verdict.reject_envelope or {}

@@ -4,41 +4,19 @@ from __future__ import annotations
 
 from typing import Any
 
-from implement_admission.model_ban import (
-    ban_override_fields,
-    validate_ban_override_pair,
-)
+from implement_admission.model_ban import ban_override_pair_reject  # noqa: F401
+
+__all__ = [
+    "ban_override_pair_reject",
+    "collect_model_ban_overrides",
+    "extract_model_ban_waiver",
+    "waiver_for_resolved_model",
+]
 
 
-def ban_override_pair_reject(
-    ban_override: Any,
-    ban_override_reason: Any,
-    *,
-    status_code: int = 422,
-) -> dict[str, Any] | None:
-    code = validate_ban_override_pair(ban_override, ban_override_reason)
-    if code is None:
-        return None
-    field = (
-        "ban_override_reason"
-        if code == "ban_override_reason_required"
-        else "ban_override"
-    )
-    return {
-        "admitted": False,
-        "status_code": status_code,
-        "code": code,
-        "field": field,
-        "reason": (
-            "ban_override_reason is required when ban_override=true"
-            if code == "ban_override_reason_required"
-            else "ban_override=true is required when ban_override_reason is set"
-        ),
-        "details": ban_override_fields(),
-    }
-
-
-def collect_model_ban_overrides(admit_plan: dict[str, Any] | None) -> list[dict[str, Any]]:
+def collect_model_ban_overrides(
+    admit_plan: dict[str, Any] | None,
+) -> list[dict[str, Any]]:
     if not admit_plan:
         return []
     raw = admit_plan.get("model_ban_overrides")

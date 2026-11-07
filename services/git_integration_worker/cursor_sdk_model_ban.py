@@ -1,4 +1,10 @@
-"""Model-ban gate for cursor-sdk worker dispatch admission."""
+"""Model-ban gate for cursor-sdk worker dispatch admission.
+
+Primary entry: Stargate ``cursor_sdk_worker_dispatch`` (team_dispatch generate).
+Also relayed via Stargate ``POST /api/v1/providers/cursor/dispatch`` — waiver ids are
+persisted on the dispatch ledger row for audit; cross-check against the event bus is
+ticketed (agent-bus:9956).
+"""
 
 from __future__ import annotations
 
@@ -41,13 +47,23 @@ def _parent_resolved_model(parent_dispatch_id: str) -> str | None:
     return model or None
 
 
-def effective_model_for_ban_check(req: CursorDispatchRequest) -> str:
-    """Wire model for ban check; resume uses parent's resolved model when set."""
+def models_for_ban_check(req: CursorDispatchRequest) -> tuple[str, ...]:
+    """Models that must pass the ban gate (resume checks parent + child wire)."""
+    ordered: list[str] = []
+    wire = str(req.model or "").strip()
+    if wire:
+        ordered.append(wire)
     if req.resume_of:
         parent = _parent_resolved_model(str(req.resume_of).strip())
-        if parent:
-            return parent
-    return str(req.model)
+        if parent and parent not in ordered:
+            ordered.append(parent)
+    return tuple(ordered)
+
+
+def effective_model_for_ban_check(req: CursorDispatchRequest) -> str:
+    """Primary model label for logging (first in ``models_for_ban_check``)."""
+    models = models_for_ban_check(req)
+    return models[0] if models else str(req.model)
 
 
 def cursor_sdk_allowed_models_hint() -> list[str]:
@@ -72,10 +88,58 @@ def cursor_sdk_model_set_extra_data() -> dict[str, Any]:
     }
 
 
+def _verdict_for_model(
+    req: CursorDispatchRequest,
+    *,
+    resolved_model: str,
+    workflow: str,
+    enabled: bool,
+    reason: str | None,
+    caller: str | None,
+) -> ModelBanVerdict:
+    matched = find_matching_ban(resolved_model)
+    if matched is not None and not enabled:
+        return check_model_ban_safe(
+            resolved_model=resolved_model,
+            explicit_pin=True,
+            workflow_key=workflow,
+            ban_override=False,
+            caller_agent=caller,
+            dispatch_id=req.dispatch_id,
+        )
+    if matched is not None and enabled:
+        event_id = str(req.model_ban_override_event_id or "").strip()
+        audit_reason = str(reason or "").strip()
+        if not audit_reason or not event_id:
+            return ModelBanVerdict(
+                allowed=False,
+                reject_envelope={
+                    "admitted": False,
+                    "status_code": 422,
+                    "code": "model_ban_waiver_incomplete",
+                    "field": "ban_override",
+                    "reason": (
+                        "banned model requires ban_override, "
+                        "ban_override_reason, and model_ban_override_event_id"
+                    ),
+                },
+                override_payload=None,
+                matched=matched,
+            )
+    return check_model_ban_safe(
+        resolved_model=resolved_model,
+        explicit_pin=True,
+        workflow_key=workflow,
+        ban_override=enabled,
+        ban_override_reason=reason,
+        caller_agent=caller,
+        dispatch_id=req.dispatch_id,
+    )
+
+
 def evaluate_cursor_dispatch_model_ban(
     req: CursorDispatchRequest,
 ) -> tuple[ModelBanVerdict, str]:
-    model = effective_model_for_ban_check(req)
     enabled, reason, caller = model_ban_wire_fields(
         {
             "ban_override": req.ban_override,
@@ -86,49 +150,40 @@ def evaluate_cursor_dispatch_model_ban(
     workflow = (
         "git_integration_worker.resume_of" if req.resume_of else "cursor_sdk.dispatch"
     )
-    matched = find_matching_ban(model)
-    if matched is not None:
-        if not enabled:
-            verdict = check_model_ban_safe(
-                resolved_model=model,
-                explicit_pin=True,
-                workflow_key=workflow,
-                ban_override=False,
-                caller_agent=caller,
-                dispatch_id=req.dispatch_id,
-            )
-            return verdict, model
-        event_id = str(req.model_ban_override_event_id or "").strip()
-        audit_reason = str(reason or "").strip()
-        if not audit_reason or not event_id:
-            return (
-                ModelBanVerdict(
-                    allowed=False,
-                    reject_envelope={
-                        "admitted": False,
-                        "status_code": 422,
-                        "code": "model_ban_waiver_incomplete",
-                        "field": "ban_override",
-                        "reason": (
-                            "banned model requires ban_override, "
-                            "ban_override_reason, and model_ban_override_event_id"
-                        ),
-                    },
-                    override_payload=None,
-                    matched=matched,
-                ),
-                model,
-            )
-    verdict = check_model_ban_safe(
-        resolved_model=model,
-        explicit_pin=True,
-        workflow_key=workflow,
-        ban_override=enabled,
-        ban_override_reason=reason,
-        caller_agent=caller,
-        dispatch_id=req.dispatch_id,
+    models = models_for_ban_check(req)
+    label = effective_model_for_ban_check(req)
+    for resolved_model in models:
+        verdict = _verdict_for_model(
+            req,
+            resolved_model=resolved_model,
+            workflow=workflow,
+            enabled=enabled,
+            reason=reason,
+            caller=caller,
+        )
+        if not verdict.allowed:
+            return verdict, resolved_model
+    if not models:
+        verdict = _verdict_for_model(
+            req,
+            resolved_model=str(req.model),
+            workflow=workflow,
+            enabled=enabled,
+            reason=reason,
+            caller=caller,
+        )
+        return verdict, str(req.model)
+    return (
+        _verdict_for_model(
+            req,
+            resolved_model=models[-1],
+            workflow=workflow,
+            enabled=enabled,
+            reason=reason,
+            caller=caller,
+        ),
+        label,
     )
-    return verdict, model
 
 
 def model_slugs_match(left: str, right: str) -> bool:

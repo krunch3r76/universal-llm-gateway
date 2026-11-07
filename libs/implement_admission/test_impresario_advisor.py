@@ -86,6 +86,16 @@ def test_argon_barred_for_non_advisor_roles(role: str) -> None:
     assert result.code == "ARGON_ROLE_BARRED"
 
 
+def test_argon_fast_suffix_barred_for_non_advisor() -> None:
+    fast = "cursor/gemini-4-argon-fast"
+    result = refuse_argon_non_advisor_route(
+        model=fast,
+        impresario_role="critic",
+    )
+    assert result is not None
+    assert result.code == "ARGON_ROLE_BARRED"
+
+
 def test_provider_error_falls_back_to_grok_with_event() -> None:
     err = "You've hit your usage limit ... reset when your monthly cycle ends on 11/13/2026"
     result = resolve_advisor_provider_fallback(provider_error=err)

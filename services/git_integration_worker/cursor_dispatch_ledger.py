@@ -510,6 +510,18 @@ def _dispatch_record_json(req: CursorDispatchRequest) -> str:
         payload["request_id"] = req.request_id
     if req.generation_options is not None:
         payload["generation_options"] = req.generation_options
+    if req.ban_override:
+        payload["ban_override"] = True
+    if req.ban_override_reason:
+        payload["ban_override_reason"] = req.ban_override_reason
+    if req.model_ban_override_event_id:
+        payload["model_ban_override_event_id"] = req.model_ban_override_event_id
+    if req.ban_override and req.model_ban_override_event_id:
+        payload["model_ban_waiver"] = {
+            "event_id": str(req.model_ban_override_event_id).strip(),
+            "reason": str(req.ban_override_reason or "").strip(),
+            "caller": str(req.caller_agent or "").strip() or None,
+        }
     return json.dumps(payload, sort_keys=True, separators=(",", ":"))
 
 

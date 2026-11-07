@@ -722,6 +722,24 @@ def test_park_resume_builder_copies_record_workspace(tmp_path: Path) -> None:
     assert req.workspace_inherited_from == "p-ws"
 
 
+def test_park_resume_builder_copies_ban_waiver(tmp_path: Path) -> None:
+    _seed_parked("p-ban", thread_id="22499", tmp_path=tmp_path)
+    CursorDispatchLedger.instance().merge_record_json(
+        dispatch_id="p-ban",
+        patch={
+            "ban_override": True,
+            "ban_override_reason": "audit agent-bus:22498",
+            "model_ban_override_event_id": "evt-waiver-22498",
+        },
+    )
+    row = load_park_row(dispatch_id="p-ban")
+    assert row is not None
+    req = build_park_resume_request(row, attempt=1, code_version="v")
+    assert req.ban_override is True
+    assert req.ban_override_reason == "audit agent-bus:22498"
+    assert req.model_ban_override_event_id == "evt-waiver-22498"
+
+
 def test_park_resume_builder_recovers_request_id(tmp_path: Path) -> None:
     _seed_parked("p-rid", thread_id="21826", tmp_path=tmp_path)
     CursorDispatchLedger.instance().merge_record_json(

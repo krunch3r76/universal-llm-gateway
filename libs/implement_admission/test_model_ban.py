@@ -13,7 +13,9 @@ from implement_admission.impresario_policy import (
     refuse_argon_non_advisor_route,
 )
 from implement_admission.model_ban import (
+    ModelBanEntry,
     check_model_ban,
+    check_model_ban_safe,
     clear_model_ban_cache,
     evaluate_dispatch_model_ban,
     find_matching_ban,
@@ -302,6 +304,45 @@ def test_argon_ban_scoped_roles_only(role: str) -> None:
     assert entry is not None
     entry_adv = find_matching_ban(ADVISOR, role="advisor")
     assert entry_adv is None
+
+
+def test_loader_missing_policy_file_fail_closed_safe(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from pathlib import Path
+
+    missing = Path("/nonexistent/route_policy_for_ban_test.yaml")
+
+    def _boom(_path: Path | None = None) -> tuple[ModelBanEntry, ...]:
+        return load_model_bans_strict(path=missing)
+
+    monkeypatch.setattr("implement_admission.model_ban_load.load_model_bans", _boom)
+    clear_model_ban_cache()
+    verdict = check_model_ban_safe(resolved_model="cursor/composer-2.5")
+    assert verdict.allowed is False
+    assert (verdict.reject_envelope or {}).get("code") == "MODEL_BANS_UNLOADABLE"
+
+
+def test_emit_override_refused_without_publisher() -> None:
+    from systems.frontier_consult.admission import FrontierEndpointError
+    from systems.frontier_consult.team_dispatch_admit_client import (
+        _emit_model_ban_override_events,
+    )
+
+    plan = {
+        "admitted": True,
+        "model_ban_override": {
+            "model": "cursor/grok-4.7",
+            "reason": "audit",
+        },
+    }
+    with pytest.raises(FrontierEndpointError) as exc:
+        _emit_model_ban_override_events(
+            plan,
+            request_id="req-ban",
+            publisher=None,
+        )
+    assert exc.value.code == "model_ban_override_unaudited"
 
 
 def test_loader_missing_key_fail_closed() -> None:
