@@ -911,14 +911,63 @@ def worktree_is_quarantined(
     return row is not None and bool(row["quarantined_at"])
 
 
+_LANE_B_WRITE_CAPACITY_UNLIMITED = 2_147_483_647
+_UNLIMITED_CAPACITY_TOKENS = frozenset(
+    {"", "0", "*", "none", "off", "unlimited", "unset"}
+)
+_LANE_B_CAPACITY_OVERRIDE_BASENAME = "cursor_sdk_isolated_write_ceiling"
+
+
+def _lane_b_capacity_gateway_dir() -> Path:
+    data = os.environ.get("DATA_DIR", "").strip()
+    if data:
+        return Path(data)
+    from services.git_integration_worker.cursor_home import operator_real_home
+
+    return operator_real_home() / ".gateway"
+
+
+def _lane_b_capacity_override_path() -> Path:
+    return _lane_b_capacity_gateway_dir() / _LANE_B_CAPACITY_OVERRIDE_BASENAME
+
+
+def _lane_b_capacity_raw() -> str | None:
+    """Hot-reload override (``~/.gateway/cursor_sdk_isolated_write_ceiling``) then env."""
+    path = _lane_b_capacity_override_path()
+    if path.is_file():
+        return path.read_text(encoding="utf-8").strip()
+    env_raw = os.environ.get("CURSOR_SDK_ISOLATED_WRITE_CEILING")
+    if env_raw is None:
+        return None
+    return env_raw.strip()
+
+
+def lane_b_isolated_write_ceiling_unlimited() -> bool:
+    """True when Lane-B isolated write capacity is unset or explicitly unlimited."""
+    raw = _lane_b_capacity_raw()
+    if raw is None:
+        return True
+    return raw.lower() in _UNLIMITED_CAPACITY_TOKENS
+
+
 def isolated_write_ceiling() -> int:
-    """Regime-ON configured writer ceiling (``CURSOR_SDK_ISOLATED_WRITE_CEILING``)."""
-    raw = os.environ.get("CURSOR_SDK_ISOLATED_WRITE_CEILING", "6")
+    """Regime-ON Lane-B writer ceiling (override file, env, default unlimited).
+
+    ``~/.gateway/cursor_sdk_isolated_write_ceiling`` is re-read on every call so
+    capacity can change without recycling GIW. Tokens ``unlimited``, ``unset``,
+    empty, or ``0`` mean no cap. Omitted env and override file mean unlimited.
+    """
+    if lane_b_isolated_write_ceiling_unlimited():
+        return _LANE_B_WRITE_CAPACITY_UNLIMITED
+    raw = _lane_b_capacity_raw()
+    assert raw is not None
     return max(1, int(raw))
 
 
 def mintable_worktrees() -> int:
     """Remaining mint slots: ceiling minus live lanes with a worktree on disk."""
+    if lane_b_isolated_write_ceiling_unlimited():
+        return isolated_write_ceiling()
     ceiling = isolated_write_ceiling()
     try:
         rows = list_registered_worktrees_with_status()
