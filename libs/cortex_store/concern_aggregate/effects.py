@@ -17,7 +17,7 @@ effect. ``execution_allowed`` on ``AdmitResult`` is the sole permit to run the s
 effect, and only for ``permit_request_id``.
 
 Library ``now`` is caller-asserted. Trust holds only when slice 3b.2 routes
-callers through the adapter clock in ``effect_gate``.
+callers through the test-only adapter clock.
 
 Ref: decision a:42489 (admission and identities); R1 execution permission (root review).
 """
@@ -115,12 +115,10 @@ _STATE_WRITE_COLUMNS = frozenset(
     {"attempt_count", "attempts_json", "recovery_json", "receipt_json", "fencing_token"}
 )
 
-# The 3a resend path writes ``state`` (admitted stays admitted). It is labeled
-# ``resend``. ``auto_retry`` is the attempt-entry kind, not a second writer, but
-# the triple stays in the table because that path assigns the state column.
+# The 3a automatic-retry admit (evidenced resend from admitted) writes state.
+# That writer passes via ``auto_retry``. No caller passes via ``resend``.
 ALLOWED_TRANSITIONS: frozenset[tuple[str, str, str]] = frozenset(
     {
-        (STATE_ADMITTED, STATE_ADMITTED, "resend"),
         (STATE_ADMITTED, STATE_ADMITTED, "auto_retry"),
         (STATE_FAILED, STATE_ADMITTED, "decision"),
         (STATE_RECONCILE_REQUIRED_RETRY, STATE_ADMITTED, "decision"),
@@ -592,7 +590,9 @@ def admit_effect(
     """Admit one effect under fencing and holds.
 
     ``execution_allowed`` is true only for the inserting admit, an admit that consumes
-    an unconsumed retry decision, or an evidenced resend from ``admitted``. A repeat
+    an unconsumed retry decision, or an evidenced resend from ``admitted``. A resend
+    while the row is ``outcome_unknown`` raises ``ReconcileRequiredError`` (fails
+    closed; not ``InvalidTransitionError``). A repeat
     admit with the same fingerprint and a current token writes nothing and returns
     ``execution_allowed`` false. ``succeeded`` replays the stored receipt (``None`` when
     the column is null) and never permits execution.
@@ -756,7 +756,7 @@ def admit_effect(
                 recovery_new[idx]["consumed_attempt"] = True
 
             new_state = st
-            via = "resend"
+            via = "auto_retry"
             if kind == "decision":
                 new_state = STATE_ADMITTED
                 via = "decision"

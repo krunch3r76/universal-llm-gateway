@@ -1,7 +1,7 @@
 """Trusted clocks for the concern effect ledger.
 
 ``SystemClock`` is the only wall-clock read in ``clock.py``, ``effects.py``,
-``evidence.py``, and ``effect_gate.py``. Journal row timestamps are stamped
+``evidence.py``, and the test-only adapter. Journal row timestamps are stamped
 inside ``append_transition``, which slice 3b.1 does not edit.
 
 Library functions keep a caller-supplied ``now``; only the test adapter takes

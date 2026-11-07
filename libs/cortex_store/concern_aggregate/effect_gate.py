@@ -117,14 +117,20 @@ def run_effect(
         result = executor(permit)
     except EffectNotApplied as exc:
         if exc.evidence is None:
-            record_outcome(
-                conn,
-                effect_key=admit.effect_key,
-                outcome=STATE_OUTCOME_UNKNOWN,
-                receipt=None,
-                fencing_token=fencing_token,
-                now=clock.now(),
-            )
+            try:
+                record_outcome(
+                    conn,
+                    effect_key=admit.effect_key,
+                    outcome=STATE_OUTCOME_UNKNOWN,
+                    receipt=None,
+                    fencing_token=fencing_token,
+                    now=clock.now(),
+                )
+            except Exception as fallback:
+                raise EffectOutcomeUnknownError(
+                    "non-application fallback record failed; row stays admitted",
+                    effect_key=admit.effect_key,
+                ) from fallback
             raise EffectOutcomeUnknownError(
                 "non-application had no evidence",
                 effect_key=admit.effect_key,
@@ -141,15 +147,21 @@ def run_effect(
                 evidence=exc.evidence,
                 evidence_provider=evidence_provider,
             )
-        except (ValueError, EffectAdmissionError) as rejected:
-            record_outcome(
-                conn,
-                effect_key=admit.effect_key,
-                outcome=STATE_OUTCOME_UNKNOWN,
-                receipt=None,
-                fencing_token=fencing_token,
-                now=clock.now(),
-            )
+        except Exception as rejected:
+            try:
+                record_outcome(
+                    conn,
+                    effect_key=admit.effect_key,
+                    outcome=STATE_OUTCOME_UNKNOWN,
+                    receipt=None,
+                    fencing_token=fencing_token,
+                    now=clock.now(),
+                )
+            except Exception as fallback:
+                raise EffectOutcomeUnknownError(
+                    "non-application fallback record failed; row stays admitted",
+                    effect_key=admit.effect_key,
+                ) from fallback
             raise EffectOutcomeUnknownError(
                 "non-application evidence was rejected",
                 effect_key=admit.effect_key,

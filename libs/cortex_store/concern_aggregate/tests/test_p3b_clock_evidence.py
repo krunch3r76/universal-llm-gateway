@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import ast
 import inspect
+import json
 import sqlite3
 import threading
 from datetime import datetime, timedelta
@@ -28,6 +29,7 @@ from cortex_store.concern_aggregate.effects import (
     STATE_SUCCEEDED,
     EffectConflictError,
     EvidenceRejectedError,
+    HoldActiveError,
     InvalidTransitionError,
     ReconcileRequiredError,
     RetryBudgetExceededError,
@@ -69,7 +71,6 @@ _NOW_FUNCS = {
     "clear_hold",
 }
 _LITERAL = {
-    ("admitted", "admitted", "resend"),
     ("admitted", "admitted", "auto_retry"),
     ("failed", "admitted", "decision"),
     ("reconcile_required_retry", "admitted", "decision"),
@@ -159,8 +160,8 @@ def test_b1_naive_now_rejected(
     from cortex_store._test_db_bootstrap import fresh_migrated_connection
 
     locked = fresh_migrated_connection(tmp_path, migrated_db_template)
-    before = _counts(locked)
     seed_authority(locked)
+    before = _counts(locked)
     path = next(r[2] for r in locked.execute("PRAGMA database_list") if r[1] == "main")
     holder = sqlite3.connect(path, isolation_level=None)
     holder.execute("BEGIN IMMEDIATE")
@@ -193,15 +194,19 @@ def test_b1_naive_now_rejected(
         "authorized_by": AUTH,
         "record_ref": "rec-b1",
     }
-    if fname in ("acquire_lease", "renew_lease"):
-        kwargs["lease_expires_at"] = naive
-        kwargs["now"] = T0
     accepted = {p.name for p in inspect.signature(fn).parameters.values()}
-    call = {k: v for k, v in kwargs.items() if k in accepted}
-    with pytest.raises(ValueError):
-        fn(**call)
+    variants = [kwargs]
+    if fname in ("acquire_lease", "renew_lease"):
+        naive_expiry = dict(kwargs)
+        naive_expiry["lease_expires_at"] = naive
+        naive_expiry["now"] = T0
+        variants = [kwargs, naive_expiry]
+    for variant in variants:
+        call = {k: v for k, v in variant.items() if k in accepted}
+        with pytest.raises(ValueError):
+            fn(**call)
     holder.rollback()
-    assert _counts(locked) == before or _counts(locked)[0] == before[0]
+    assert _counts(locked) == before
     holder.close()
     victim.close()
     locked.close()
@@ -505,14 +510,20 @@ def test_b5_reconcile_not_applied_requires_verified_evidence(
         concern_db.execute("SELECT state FROM concern_effects").fetchone()[0]
         == STATE_OUTCOME_UNKNOWN
     )
+    stored = _ev("not_applied", admitted.effect_key, later, "req:1")
     reconcile_effect(
         concern_db,
         effect_key=admitted.effect_key,
         observed_applied=False,
         now=later,
-        evidence=_ev("not_applied", admitted.effect_key, later, "req:1"),
+        evidence=stored,
         evidence_provider=_PROV,
     )
+    recovery = json.loads(
+        concern_db.execute("SELECT recovery_json FROM concern_effects").fetchone()[0]
+    )
+    assert recovery[-1]["kind"] == "reconcile"
+    assert recovery[-1]["evidence"] == stored.to_json()
     assert (
         concern_db.execute("SELECT state FROM concern_effects").fetchone()[0]
         == STATE_RECONCILE_REQUIRED_RETRY
@@ -579,7 +590,7 @@ def test_b6_holds_require_aware_now(concern_db: sqlite3.Connection) -> None:
         record_ref="r3",
         now=T0,
     )
-    with pytest.raises(Exception):
+    with pytest.raises(HoldActiveError):
         admit_effect(
             concern_db,
             intent_id=intent,
@@ -668,37 +679,235 @@ def test_b7_transition_matrix(concern_db: sqlite3.Connection) -> None:
             via="outcome",
             now_s=_iso_utc(T0),
         )
-    captured: list[str] = []
-    concern_db.execute(
-        "UPDATE concern_effects SET state = ? WHERE effect_key = ?",
-        (STATE_ADMITTED, admitted.effect_key),
+
+    def _state_write_guarded(sql: str) -> None:
+        compact = " ".join(sql.split())
+        upper = compact.upper()
+        if not upper.startswith("UPDATE CONCERN_EFFECTS"):
+            return
+        set_part, separator, where = upper.partition(" WHERE ")
+        if "STATE =" not in set_part.split("VALUES", 1)[0]:
+            return
+        assert separator == " WHERE "
+        assert " AND STATE = " in f" {where}"
+
+    def _traced(fn) -> None:
+        captured: list[str] = []
+        concern_db.set_trace_callback(captured.append)
+        try:
+            fn()
+        finally:
+            concern_db.set_trace_callback(None)
+        assert captured
+        for sql in captured:
+            _state_write_guarded(sql)
+
+    g2, intent2 = _setup(concern_db, "concern:trace")
+    first = admit_effect(
+        concern_db,
+        intent_id=intent2,
+        effect_kind="e",
+        request={"a": 1},
+        request_id="req:1",
+        fencing_token=g2,
+        now=T0,
     )
-    concern_db.commit()
-    concern_db.set_trace_callback(captured.append)
+    _traced(
+        lambda: admit_effect(
+            concern_db,
+            intent_id=intent2,
+            effect_kind="e",
+            request={"a": 1},
+            request_id="req:resend",
+            fencing_token=g2,
+            now=T0 + timedelta(seconds=2),
+            resend_basis="resource_dedup",
+            resend_evidence=_ev(
+                "resource_dedup", first.effect_key, T0 + timedelta(seconds=1)
+            ),
+            evidence_provider=_PROV,
+        )
+    )
+    _traced(
+        lambda: record_outcome(
+            concern_db,
+            effect_key=first.effect_key,
+            outcome=STATE_FAILED,
+            receipt=None,
+            fencing_token=g2,
+            now=T0 + timedelta(seconds=4),
+            evidence=_ev(
+                "not_applied", first.effect_key, T0 + timedelta(seconds=4), "req:resend"
+            ),
+            evidence_provider=_PROV,
+        )
+    )
+    record_recovery_decision(
+        concern_db,
+        effect_key=first.effect_key,
+        decision="retry",
+        decided_by=AUTH,
+        reason="trace",
+        now=T0 + timedelta(seconds=4),
+    )
+    _traced(
+        lambda: admit_effect(
+            concern_db,
+            intent_id=intent2,
+            effect_kind="e",
+            request={"a": 1},
+            request_id="req:decision",
+            fencing_token=g2,
+            now=T0 + timedelta(seconds=4),
+        )
+    )
+    g3, intent3 = _setup(concern_db, "concern:trace-ok")
+    ok = admit_effect(
+        concern_db,
+        intent_id=intent3,
+        effect_kind="e",
+        request={"a": 1},
+        request_id="req:1",
+        fencing_token=g3,
+        now=T0,
+    )
+    _traced(
+        lambda: record_outcome(
+            concern_db,
+            effect_key=ok.effect_key,
+            outcome=STATE_SUCCEEDED,
+            receipt={"ok": True},
+            fencing_token=g3,
+            now=T0,
+        )
+    )
+    g4, intent4 = _setup(concern_db, "concern:trace-unk")
+    unk = admit_effect(
+        concern_db,
+        intent_id=intent4,
+        effect_kind="e",
+        request={"a": 1},
+        request_id="req:1",
+        fencing_token=g4,
+        now=T0,
+    )
+    _traced(
+        lambda: record_outcome(
+            concern_db,
+            effect_key=unk.effect_key,
+            outcome=STATE_OUTCOME_UNKNOWN,
+            receipt=None,
+            fencing_token=g4,
+            now=T0,
+        )
+    )
+    later = T0 + timedelta(hours=2)
+    g_late, intent_late = _setup(concern_db, "concern:trace-late")
+    late_row = admit_effect(
+        concern_db,
+        intent_id=intent_late,
+        effect_kind="e",
+        request={"a": 1},
+        request_id="req:1",
+        fencing_token=g_late,
+        now=T0,
+    )
+    _traced(
+        lambda: record_outcome(
+            concern_db,
+            effect_key=late_row.effect_key,
+            outcome=STATE_FAILED,
+            receipt=None,
+            fencing_token=0,
+            now=T0 + timedelta(seconds=2),
+            evidence=_ev(
+                "not_applied", late_row.effect_key, T0 + timedelta(seconds=2), "req:1"
+            ),
+            evidence_provider=_PROV,
+        )
+    )
+    g6, intent6 = _setup(concern_db, "concern:trace-rec")
+    rec = admit_effect(
+        concern_db,
+        intent_id=intent6,
+        effect_kind="e",
+        request={"a": 1},
+        request_id="req:1",
+        fencing_token=g6,
+        now=T0,
+    )
     record_outcome(
         concern_db,
-        effect_key=admitted.effect_key,
-        outcome=STATE_FAILED,
+        effect_key=rec.effect_key,
+        outcome=STATE_OUTCOME_UNKNOWN,
         receipt=None,
-        fencing_token=gen,
-        now=T0 + timedelta(seconds=2),
-        evidence=_ev(
-            "not_applied", admitted.effect_key, T0 + timedelta(seconds=2), "req:1"
-        ),
-        evidence_provider=_PROV,
+        fencing_token=g6,
+        now=T0,
     )
-    concern_db.set_trace_callback(None)
-    for sql in captured:
-        compact = " ".join(sql.split())
-        if (
-            compact.upper().startswith("UPDATE CONCERN_EFFECTS")
-            and " SET STATE " in compact.upper()
-        ):
-            tail = compact.rstrip()
-            assert tail.endswith("WHERE effect_key = ? AND state = ?") or (
-                "WHERE effect_key = " in tail
-                and " AND state = " in tail.split("WHERE", 1)[-1]
-            )
+    _traced(
+        lambda: reconcile_effect(
+            concern_db,
+            effect_key=rec.effect_key,
+            observed_applied=True,
+            now=T0,
+        )
+    )
+    g7, intent7 = _setup(concern_db, "concern:trace-na")
+    na = admit_effect(
+        concern_db,
+        intent_id=intent7,
+        effect_kind="e",
+        request={"a": 1},
+        request_id="req:1",
+        fencing_token=g7,
+        now=T0,
+    )
+    record_outcome(
+        concern_db,
+        effect_key=na.effect_key,
+        outcome=STATE_OUTCOME_UNKNOWN,
+        receipt=None,
+        fencing_token=g7,
+        now=T0,
+    )
+    _traced(
+        lambda: reconcile_effect(
+            concern_db,
+            effect_key=na.effect_key,
+            observed_applied=False,
+            now=T0 + timedelta(seconds=2),
+            evidence=_ev(
+                "not_applied", na.effect_key, T0 + timedelta(seconds=2), "req:1"
+            ),
+            evidence_provider=_PROV,
+        )
+    )
+    _traced(
+        lambda: acquire_lease(
+            concern_db,
+            concern_id="concern:trace",
+            work_key="wk",
+            holder="next",
+            lease_expires_at=later + timedelta(hours=1),
+            now=later,
+        )
+    )
+    tree = ast.parse((_PKG / "effects.py").read_text())
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.FunctionDef):
+            continue
+        if node.name == "_set_state":
+            continue
+        for child in ast.walk(node):
+            if isinstance(child, ast.Constant) and isinstance(child.value, str):
+                sql = " ".join(child.value.split()).upper()
+                if (
+                    sql.startswith("UPDATE CONCERN_EFFECTS")
+                    and "STATE =" in sql.split("WHERE", 1)[0]
+                ):
+                    raise AssertionError(
+                        f"state write outside _set_state in {node.name}"
+                    )
 
 
 def test_b8_effect_gate_crash_after_apply_no_second_execution(
@@ -911,6 +1120,94 @@ def test_b8_effect_gate_crash_after_apply_no_second_execution(
         )
     assert held["n"] == 1
 
+    gen_ok, intent_ok = _setup(concern_db, "concern:b8-ok")
+    clock_ok = FixedClock(T0)
+
+    def applied(permit: EffectPermit) -> dict:
+        clock_ok.advance(timedelta(seconds=2))
+        raise EffectNotApplied(
+            _ev(
+                "not_applied",
+                permit.effect_key,
+                clock_ok.now(),
+                permit.permit_request_id,
+            )
+        )
+
+    result = run_effect(
+        concern_db,
+        intent_id=intent_ok,
+        effect_kind="e",
+        request={"a": 1},
+        request_id="req:1",
+        fencing_token=gen_ok,
+        executor=applied,
+        clock=clock_ok,
+        evidence_provider=_PROV,
+    )
+    assert result.executed is True and result.state == STATE_FAILED
+
+    gen_bad, intent_bad = _setup(concern_db, "concern:b8-bad")
+
+    def rejected(permit: EffectPermit) -> dict:
+        raise EffectNotApplied(
+            _ev("not_applied", permit.effect_key, T0 + timedelta(seconds=2), "req:nope")
+        )
+
+    with pytest.raises(EffectOutcomeUnknownError):
+        run_effect(
+            concern_db,
+            intent_id=intent_bad,
+            effect_kind="e",
+            request={"a": 1},
+            request_id="req:1",
+            fencing_token=gen_bad,
+            executor=rejected,
+            clock=FixedClock(T0 + timedelta(seconds=2)),
+            evidence_provider=_PROV,
+        )
+    assert (
+        concern_db.execute(
+            "SELECT state FROM concern_effects WHERE intent_id = ?", (intent_bad,)
+        ).fetchone()[0]
+        == STATE_OUTCOME_UNKNOWN
+    )
+
+    gen_take, intent_take = _setup(concern_db, "concern:b8-take")
+    clock_take = FixedClock(T0)
+
+    def taken(permit: EffectPermit) -> dict:
+        clock_take.advance(timedelta(hours=2))
+        acquire_lease(
+            concern_db,
+            concern_id="concern:b8-take",
+            work_key="wk",
+            holder="other",
+            lease_expires_at=clock_take.now() + timedelta(hours=1),
+            now=clock_take.now(),
+        )
+        raise EffectNotApplied(
+            _ev(
+                "not_applied",
+                permit.effect_key,
+                clock_take.now(),
+                permit.permit_request_id,
+            )
+        )
+
+    with pytest.raises(EffectOutcomeUnknownError):
+        run_effect(
+            concern_db,
+            intent_id=intent_take,
+            effect_kind="e",
+            request={"a": 1},
+            request_id="req:1",
+            fencing_token=gen_take,
+            executor=taken,
+            clock=clock_take,
+            evidence_provider=_PROV,
+        )
+
 
 def test_b9_effect_gate_concurrent_single_execution(
     tmp_path: Path, migrated_db_template: Path
@@ -968,25 +1265,61 @@ def test_b9_effect_gate_concurrent_single_execution(
     for thread in threads:
         thread.join(timeout=10)
     set_between_resolve_and_admit(None)
+    assert all(not thread.is_alive() for thread in threads)
     assert errors == []
+    assert len(results) == 2
     assert len(reached) == 2
     assert sum(1 for item in results if getattr(item, "executed", False)) == 1
     assert counter["n"] == 1
     assert conn.execute("SELECT COUNT(*) FROM concern_effects").fetchone()[0] == 1
 
 
+def _imports_effect_gate(source: str, *, constants: bool = True) -> bool:
+    tree = ast.parse(source)
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import) and any(
+            "effect_gate" in alias.name for alias in node.names
+        ):
+            return True
+        if isinstance(node, ast.ImportFrom) and any(
+            alias.name == "effect_gate" for alias in node.names
+        ):
+            return True
+        if (
+            isinstance(node, ast.ImportFrom)
+            and node.module
+            and "effect_gate" in node.module
+        ):
+            return True
+        if (
+            constants
+            and isinstance(node, ast.Constant)
+            and isinstance(node.value, str)
+            and "effect_gate" in node.value
+        ):
+            return True
+    return False
+
+
 def test_b10_effect_gate_not_imported_by_production() -> None:
+    assert _imports_effect_gate("from . import effect_gate\n")
+    assert _imports_effect_gate(
+        "from cortex_store.concern_aggregate import effect_gate\n"
+    )
+    assert _imports_effect_gate(
+        'import importlib\nimportlib.import_module("effect_gate")\n'
+    )
     root = Path(__file__).resolve().parents[4]
     for base in (root / "libs", root / "services"):
         for path in base.rglob("*.py"):
             if "tests" in path.parts or path.name.startswith("test_"):
                 continue
-            tree = ast.parse(path.read_text())
-            for node in ast.walk(tree):
-                if isinstance(node, ast.Import):
-                    assert all("effect_gate" not in alias.name for alias in node.names)
-                if isinstance(node, ast.ImportFrom) and node.module:
-                    assert "effect_gate" not in node.module
+            assert (
+                _imports_effect_gate(
+                    path.read_text(), constants=path.name != "effect_gate.py"
+                )
+                is False
+            )
 
 
 def test_b11_concurrent_evidenced_resend_single_permit(
@@ -1044,3 +1377,232 @@ def test_b11_concurrent_evidenced_resend_single_permit(
     permits = [item for item in outcomes if getattr(item, "execution_allowed", False)]
     refusals = [item for item in outcomes if isinstance(item, RetryBudgetExceededError)]
     assert len(permits) == 1 and len(refusals) == 1
+
+
+def test_m1_failed_evidence_door(concern_db: sqlite3.Connection) -> None:
+    """G1: failed without verified bound evidence writes nothing."""
+    gen, intent = _setup(concern_db, "concern:m1door")
+    admitted = admit_effect(
+        concern_db,
+        intent_id=intent,
+        effect_kind="e",
+        request={"a": 1},
+        request_id="req:1",
+        fencing_token=gen,
+        now=T0,
+    )
+    snap = concern_db.execute("SELECT * FROM concern_effects").fetchone()
+    later = T0 + timedelta(seconds=2)
+    with pytest.raises(ValueError):
+        record_outcome(
+            concern_db,
+            effect_key=admitted.effect_key,
+            outcome=STATE_FAILED,
+            receipt=None,
+            fencing_token=gen,
+            now=later,
+        )
+    with pytest.raises(ValueError):
+        record_outcome(
+            concern_db,
+            effect_key=admitted.effect_key,
+            outcome=STATE_SUCCEEDED,
+            receipt=None,
+            fencing_token=gen,
+            now=later,
+            evidence=_ev("not_applied", admitted.effect_key, later, "req:1"),
+            evidence_provider=_PROV,
+        )
+    with pytest.raises(ValueError):
+        record_outcome(
+            concern_db,
+            effect_key=admitted.effect_key,
+            outcome=STATE_OUTCOME_UNKNOWN,
+            receipt=None,
+            fencing_token=gen,
+            now=later,
+            evidence=_ev("not_applied", admitted.effect_key, later, "req:1"),
+            evidence_provider=_PROV,
+        )
+    with pytest.raises(EvidenceRejectedError):
+        record_outcome(
+            concern_db,
+            effect_key=admitted.effect_key,
+            outcome=STATE_FAILED,
+            receipt=None,
+            fencing_token=gen,
+            now=later,
+            evidence=_ev("not_applied", admitted.effect_key, later, "req:other"),
+            evidence_provider=_PROV,
+        )
+    with pytest.raises(EvidenceRejectedError):
+        record_outcome(
+            concern_db,
+            effect_key=admitted.effect_key,
+            outcome=STATE_FAILED,
+            receipt=None,
+            fencing_token=gen,
+            now=later,
+            evidence=_ev("not_applied", admitted.effect_key, T0, "req:1"),
+            evidence_provider=_PROV,
+        )
+    assert (
+        concern_db.execute("SELECT state FROM concern_effects").fetchone()[0]
+        == STATE_ADMITTED
+    )
+    assert concern_db.execute("SELECT * FROM concern_effects").fetchone() == snap
+    good = _ev("not_applied", admitted.effect_key, later, "req:1")
+    record_outcome(
+        concern_db,
+        effect_key=admitted.effect_key,
+        outcome=STATE_FAILED,
+        receipt=None,
+        fencing_token=gen,
+        now=later,
+        evidence=good,
+        evidence_provider=_PROV,
+    )
+    attempts = json.loads(
+        concern_db.execute("SELECT attempts_json FROM concern_effects").fetchone()[0]
+    )
+    evidence_entries = [
+        item for item in attempts if item.get("kind") == "outcome_evidence"
+    ]
+    assert evidence_entries[-1]["outcome"] == "failed"
+    assert evidence_entries[-1]["evidence"] == good.to_json()
+    assert evidence_entries[-1]["at"] == _iso_utc(later)
+
+
+class _Named:
+    def __init__(self, name: str) -> None:
+        self.name = name
+        self.calls = 0
+
+    def verify(self, evidence: EffectEvidence) -> bool:
+        self.calls += 1
+        return True
+
+
+def test_m5_resend_state_and_provider_name(concern_db: sqlite3.Connection) -> None:
+    """Resend off admitted is InvalidTransitionError. Name mismatch never calls verify.
+
+    A resend while outcome_unknown stays ReconcileRequiredError: it fails closed.
+    """
+    gen, intent = _setup(concern_db, "concern:m5")
+    admitted = admit_effect(
+        concern_db,
+        intent_id=intent,
+        effect_kind="e",
+        request={"a": 1},
+        request_id="req:1",
+        fencing_token=gen,
+        now=T0,
+    )
+    record_outcome(
+        concern_db,
+        effect_key=admitted.effect_key,
+        outcome=STATE_FAILED,
+        receipt=None,
+        fencing_token=gen,
+        now=T0 + timedelta(seconds=2),
+        evidence=_ev(
+            "not_applied", admitted.effect_key, T0 + timedelta(seconds=2), "req:1"
+        ),
+        evidence_provider=_PROV,
+    )
+    with pytest.raises(InvalidTransitionError):
+        admit_effect(
+            concern_db,
+            intent_id=intent,
+            effect_kind="e",
+            request={"a": 1},
+            request_id="req:r",
+            fencing_token=gen,
+            now=T0 + timedelta(seconds=3),
+            resend_basis="resource_dedup",
+            resend_evidence=_ev(
+                "resource_dedup", admitted.effect_key, T0 + timedelta(seconds=3)
+            ),
+            evidence_provider=_PROV,
+        )
+    gen2, intent2 = _setup(concern_db, "concern:m5b")
+    row = admit_effect(
+        concern_db,
+        intent_id=intent2,
+        effect_kind="e",
+        request={"a": 1},
+        request_id="req:1",
+        fencing_token=gen2,
+        now=T0,
+    )
+    record_outcome(
+        concern_db,
+        effect_key=row.effect_key,
+        outcome=STATE_OUTCOME_UNKNOWN,
+        receipt=None,
+        fencing_token=gen2,
+        now=T0,
+    )
+    with pytest.raises(ReconcileRequiredError):
+        admit_effect(
+            concern_db,
+            intent_id=intent2,
+            effect_kind="e",
+            request={"a": 1},
+            request_id="req:unk",
+            fencing_token=gen2,
+            now=T0 + timedelta(seconds=2),
+            resend_basis="resource_dedup",
+            resend_evidence=_ev(
+                "resource_dedup", row.effect_key, T0 + timedelta(seconds=1)
+            ),
+            evidence_provider=_PROV,
+        )
+    reconcile_effect(
+        concern_db,
+        effect_key=row.effect_key,
+        observed_applied=False,
+        now=T0 + timedelta(seconds=2),
+        evidence=_ev("not_applied", row.effect_key, T0 + timedelta(seconds=2), "req:1"),
+        evidence_provider=_PROV,
+    )
+    with pytest.raises(InvalidTransitionError):
+        admit_effect(
+            concern_db,
+            intent_id=intent2,
+            effect_kind="e",
+            request={"a": 1},
+            request_id="req:rr",
+            fencing_token=gen2,
+            now=T0 + timedelta(seconds=3),
+            resend_basis="resource_dedup",
+            resend_evidence=_ev(
+                "resource_dedup", row.effect_key, T0 + timedelta(seconds=3)
+            ),
+            evidence_provider=_PROV,
+        )
+    mismatch = _Named("other")
+    gen3, intent3 = _setup(concern_db, "concern:m5c")
+    live = admit_effect(
+        concern_db,
+        intent_id=intent3,
+        effect_kind="e",
+        request={"a": 1},
+        request_id="req:1",
+        fencing_token=gen3,
+        now=T0,
+    )
+    with pytest.raises(EvidenceRejectedError):
+        admit_effect(
+            concern_db,
+            intent_id=intent3,
+            effect_kind="e",
+            request={"a": 1},
+            request_id="req:name",
+            fencing_token=gen3,
+            now=T0,
+            resend_basis="resource_dedup",
+            resend_evidence=_ev("resource_dedup", live.effect_key, T0),
+            evidence_provider=mismatch,
+        )
+    assert mismatch.calls == 0
