@@ -44,6 +44,18 @@
       "sql": "CREATE UNIQUE INDEX idx_close_drafts_uncommitted_session\n        ON close_drafts (session_id)\n        WHERE committed_at IS NULL\n        ",
       "table": "close_drafts"
     },
+    "idx_concern_action_intents_concern_work": {
+      "sql": "CREATE INDEX idx_concern_action_intents_concern_work\n    ON concern_action_intents (concern_id, work_key)",
+      "table": "concern_action_intents"
+    },
+    "idx_concern_effects_concern_work": {
+      "sql": "CREATE INDEX idx_concern_effects_concern_work\n    ON concern_effects (concern_id, work_key)",
+      "table": "concern_effects"
+    },
+    "idx_concern_effects_intent": {
+      "sql": "CREATE INDEX idx_concern_effects_intent\n    ON concern_effects (intent_id)",
+      "table": "concern_effects"
+    },
     "idx_concern_write_intents_concern": {
       "sql": "CREATE INDEX idx_concern_write_intents_concern\n    ON concern_write_intents (concern_id)",
       "table": "concern_write_intents"
@@ -1713,6 +1725,67 @@
       ],
       "sql": "CREATE TABLE close_drafts (\n            session_id TEXT PRIMARY KEY,\n            agent TEXT NOT NULL,\n            revision INTEGER NOT NULL DEFAULT 1,\n            fields TEXT NOT NULL DEFAULT '{}',\n            check_state TEXT,\n            ttl_expires_at TEXT,\n            reflection_flush_after TEXT,\n            created_at TEXT NOT NULL,\n            updated_at TEXT NOT NULL,\n            committed_at TEXT\n        )"
     },
+    "concern_action_intents": {
+      "columns": [
+        [
+          "concern_id",
+          "TEXT",
+          1,
+          null,
+          0
+        ],
+        [
+          "work_key",
+          "TEXT",
+          1,
+          null,
+          0
+        ],
+        [
+          "action_slot",
+          "TEXT",
+          1,
+          null,
+          0
+        ],
+        [
+          "run_generation",
+          "INTEGER",
+          1,
+          null,
+          0
+        ],
+        [
+          "intent_id",
+          "TEXT",
+          1,
+          null,
+          0
+        ],
+        [
+          "state",
+          "TEXT",
+          1,
+          null,
+          0
+        ],
+        [
+          "created_at",
+          "TEXT",
+          1,
+          null,
+          0
+        ],
+        [
+          "updated_at",
+          "TEXT",
+          1,
+          null,
+          0
+        ]
+      ],
+      "sql": "CREATE TABLE concern_action_intents (\n    concern_id TEXT NOT NULL,\n    work_key TEXT NOT NULL,\n    action_slot TEXT NOT NULL,\n    run_generation INTEGER NOT NULL,\n    intent_id TEXT NOT NULL UNIQUE,\n    state TEXT NOT NULL,\n    created_at TEXT NOT NULL,\n    updated_at TEXT NOT NULL,\n    UNIQUE (concern_id, work_key, action_slot, run_generation)\n)"
+    },
     "concern_advisory_delivered": {
       "columns": [
         [
@@ -1898,6 +1971,149 @@
         ]
       ],
       "sql": "CREATE TABLE concern_cursor (\n    concern_id TEXT NOT NULL PRIMARY KEY,\n    through_seq INTEGER NOT NULL DEFAULT 0,\n    cursor_token TEXT NOT NULL DEFAULT '0'\n)"
+    },
+    "concern_effect_leases": {
+      "columns": [
+        [
+          "concern_id",
+          "TEXT",
+          1,
+          null,
+          1
+        ],
+        [
+          "work_key",
+          "TEXT",
+          1,
+          null,
+          2
+        ],
+        [
+          "holder",
+          "TEXT",
+          1,
+          null,
+          0
+        ],
+        [
+          "owner_generation",
+          "INTEGER",
+          1,
+          null,
+          0
+        ],
+        [
+          "lease_expires_at",
+          "TEXT",
+          1,
+          null,
+          0
+        ]
+      ],
+      "sql": "CREATE TABLE concern_effect_leases (\n    concern_id TEXT NOT NULL,\n    work_key TEXT NOT NULL,\n    holder TEXT NOT NULL,\n    owner_generation INTEGER NOT NULL,\n    lease_expires_at TEXT NOT NULL,\n    PRIMARY KEY (concern_id, work_key)\n)"
+    },
+    "concern_effects": {
+      "columns": [
+        [
+          "effect_key",
+          "TEXT",
+          1,
+          null,
+          1
+        ],
+        [
+          "concern_id",
+          "TEXT",
+          1,
+          null,
+          0
+        ],
+        [
+          "work_key",
+          "TEXT",
+          1,
+          null,
+          0
+        ],
+        [
+          "intent_id",
+          "TEXT",
+          1,
+          null,
+          0
+        ],
+        [
+          "effect_kind",
+          "TEXT",
+          1,
+          null,
+          0
+        ],
+        [
+          "material_fingerprint",
+          "TEXT",
+          1,
+          null,
+          0
+        ],
+        [
+          "fencing_token",
+          "INTEGER",
+          1,
+          null,
+          0
+        ],
+        [
+          "state",
+          "TEXT",
+          1,
+          null,
+          0
+        ],
+        [
+          "attempt_count",
+          "INTEGER",
+          1,
+          "0",
+          0
+        ],
+        [
+          "attempts_json",
+          "TEXT",
+          1,
+          "'[]'",
+          0
+        ],
+        [
+          "receipt_json",
+          "TEXT",
+          0,
+          null,
+          0
+        ],
+        [
+          "recovery_json",
+          "TEXT",
+          1,
+          "'[]'",
+          0
+        ],
+        [
+          "created_at",
+          "TEXT",
+          1,
+          null,
+          0
+        ],
+        [
+          "updated_at",
+          "TEXT",
+          1,
+          null,
+          0
+        ]
+      ],
+      "sql": "CREATE TABLE concern_effects (\n    effect_key TEXT NOT NULL PRIMARY KEY,\n    concern_id TEXT NOT NULL,\n    work_key TEXT NOT NULL,\n    intent_id TEXT NOT NULL,\n    effect_kind TEXT NOT NULL,\n    material_fingerprint TEXT NOT NULL,\n    fencing_token INTEGER NOT NULL,\n    state TEXT NOT NULL,\n    attempt_count INTEGER NOT NULL DEFAULT 0,\n    attempts_json TEXT NOT NULL DEFAULT '[]',\n    receipt_json TEXT,\n    recovery_json TEXT NOT NULL DEFAULT '[]',\n    created_at TEXT NOT NULL,\n    updated_at TEXT NOT NULL\n)"
     },
     "concern_head": {
       "columns": [
