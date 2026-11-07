@@ -123,6 +123,7 @@ def _rehydrate_only() -> dict[str, object]:
 
 
 def provision(*, start: bool) -> dict[str, object]:
+    """Write systemd user units for :11 playground; optionally enable and start them."""
     chrome = _resolve_chrome_bin()
     _PROFILE_DIR.mkdir(parents=True, exist_ok=True)
     _SYSTEMD_USER_DIR.mkdir(parents=True, exist_ok=True)
@@ -177,6 +178,7 @@ def _parser() -> argparse.ArgumentParser:
 
 
 def main() -> int:
+    """CLI entry: provision units, rehydrate-only, or emit JSON status for operators."""
     args = _parser().parse_args()
     if args.rehydrate_only:
         result = _rehydrate_only()
