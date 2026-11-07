@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 from pathlib import Path
 from typing import Any
 
@@ -89,8 +90,13 @@ def test_read_multi_cortex_uri_resolves_like_single_read(cortex_root: Path) -> N
     assert "error" not in result, result
     files = result["files"]
     assert uri in files
-    assert files[uri] == body
-    assert "File not found" not in str(files[uri])
+    entry = files[uri]
+    assert isinstance(entry, dict)
+    assert "File not found" not in str(entry)
+    assert entry["path"] == rel
+    assert entry["selection"] == "manifest"
+    assert "content" not in entry
+    assert entry["read_sha256"] == hashlib.sha256(body.encode()).hexdigest()
 
 
 def test_read_multi_relative_plus_sandbox_still_works(cortex_root: Path) -> None:
@@ -103,7 +109,12 @@ def test_read_multi_relative_plus_sandbox_still_works(cortex_root: Path) -> None
     result = fs_impl(**_fs_kwargs(sandbox="cortex", paths=[rel]))
 
     assert "error" not in result, result
-    assert result["files"][rel] == body
+    entry = result["files"][rel]
+    assert isinstance(entry, dict)
+    assert entry["path"] == rel
+    assert entry["selection"] == "manifest"
+    assert "content" not in entry
+    assert entry["read_sha256"] == hashlib.sha256(body.encode()).hexdigest()
 
 
 def test_read_multi_absent_still_reports_missing(cortex_root: Path) -> None:
@@ -169,3 +180,29 @@ def test_life_read_multi_schemeless_still_defaults_cortex(
     assert call.error is None, call.error
     assert call.sandbox == "cortex"
     assert call.paths == [rel]
+
+
+def test_read_multi_omitted_cursor_returns_body_explicit_zero_rejects(
+    cortex_root: Path,
+) -> None:
+    """Omitted chunk_cursor reads the body. Explicit 0 is still a cursor."""
+    rel = "notes/system/specs/a37216-cursor.md"
+    body = "cursor-omitted-body\n"
+    target = cortex_root / rel
+    target.parent.mkdir(parents=True)
+    target.write_text(body, encoding="utf-8")
+    uri = f"cortex://{rel}"
+
+    omitted = fs_impl(**_fs_kwargs(paths=[uri]))
+
+    assert omitted.get("code") != "param_not_applicable"
+    entry = omitted["files"][uri]
+    assert entry["selection"] == "manifest"
+    assert "content" not in entry
+    assert entry["read_sha256"] == hashlib.sha256(body.encode()).hexdigest()
+
+    explicit = fs_impl(**_fs_kwargs(paths=[uri], chunk_cursor=0))
+
+    assert explicit["code"] == "param_not_applicable"
+    assert explicit["data"]["parameter"] == "chunk_cursor"
+    assert "files" not in explicit

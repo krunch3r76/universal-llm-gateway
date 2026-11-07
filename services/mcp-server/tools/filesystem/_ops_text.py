@@ -128,16 +128,19 @@ def read_files_batch_impl(
     """Batch-read multiple files, recording an event per file."""
     if chunk_cursor is not None:
         return param_not_applicable_error(parameter="chunk_cursor")
-    batch = read_files_batch(
-        paths,
-        binary=binary,
-        section=section,
-        sections=sections,
-        export=export,
-        chunk_cursor=chunk_cursor,
-        chunk_cursor_provided=chunk_cursor is not None,
-        expected_read_sha256=expected_read_sha256,
-    )
+    # Forward only selectors the caller set. An omitted chunk_cursor stays
+    # omitted (including the pre-slice call shape). Explicit 0 already
+    # returned above and must not be rewritten into "not provided".
+    selectors: dict[str, Any] = {}
+    if section is not None and str(section).strip():
+        selectors["section"] = section
+    if sections:
+        selectors["sections"] = sections
+    if export:
+        selectors["export"] = True
+    if expected_read_sha256:
+        selectors["expected_read_sha256"] = expected_read_sha256
+    batch = read_files_batch(paths, binary=binary, **selectors)
     if "files" not in batch or batch.get("selection") == "multi":
         record(
             "mcp.tool.file.read",
@@ -335,9 +338,7 @@ def _edit_file_impl_locked(
     except HouseRulesSizeRejectedError as exc:
         rejection = exc.rejection
         extra = {
-            k: v
-            for k, v in rejection.items()
-            if k not in ("error", "reason", "path")
+            k: v for k, v in rejection.items() if k not in ("error", "reason", "path")
         }
         return write_rejection(
             path=path,
