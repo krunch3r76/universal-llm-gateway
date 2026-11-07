@@ -30,6 +30,8 @@ def _subscribe_xvfb_tab(
     evidence: str,
 ) -> dict[str, Any]:
     gui_host = detect_cursor_gui_host(transcript_id=tid, root_id=thread)
+    if gui_host is None:
+        return {"ok": False, "reason": "gui_host_unresolved"}
     if not is_cursor_xvfb_host(gui_host):
         return {"ok": False, "reason": "not_xvfb_host", "gui_host": gui_host}
     sync_policy_gui_host(thread, gui_host)
@@ -63,6 +65,9 @@ def maybe_subscribe_cursor_xvfb_on_resume(
     if resume_result.get("error"):
         return out
     gui_host = detect_cursor_gui_host(transcript_id=tid, root_id=thread)
+    if gui_host is None:
+        out["xvfb_subscription"] = {"ok": False, "reason": "gui_host_unresolved"}
+        return out
     if not is_cursor_xvfb_host(gui_host):
         return out
     holder_id = str(holder or f"ide:{tid}").strip()
@@ -140,6 +145,9 @@ def maybe_subscribe_cursor_xvfb_on_checkpoint(
     if checkpoint_result.get("error"):
         return out
     gui_host = detect_cursor_gui_host(transcript_id=tid, root_id=thread)
+    if gui_host is None:
+        out["xvfb_subscription"] = {"ok": False, "reason": "gui_host_unresolved"}
+        return out
     if not is_cursor_xvfb_host(gui_host):
         return out
     sub = _subscribe_xvfb_tab(

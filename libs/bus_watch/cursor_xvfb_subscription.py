@@ -4,26 +4,18 @@ from __future__ import annotations
 
 import os
 import re
-import sqlite3
 from pathlib import Path
 from typing import Any
 
 import httpx
 
+from bus_watch.cursor_vscdb import TRANSCRIPT_UUID_RE
 from bus_watch.digest_budget import _bus, _get
 from bus_watch.fable_lock import WATCH_DIR
 from bus_watch.tick_state import update_state
 
 _HOLDER_RE = re.compile(r"^ide:(?P<uuid>[0-9a-f-]{36})$", re.I)
-_UUID_RE = re.compile(
-    r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
-    re.I,
-)
-_VSCDB_CANDIDATES: tuple[Path, ...] = (
-    Path.home() / ".gateway/cursor-io/User/globalStorage/state.vscdb",
-    Path("/home/io/.gateway/cursor-io/User/globalStorage/state.vscdb"),
-    Path("/home/mcp/.gateway/cursor-io/User/globalStorage/state.vscdb"),
-)
+_UUID_RE = TRANSCRIPT_UUID_RE
 
 
 def parse_ide_holder_agent_id(holder: str) -> str | None:
@@ -198,7 +190,7 @@ def _normalize_gui_host(gui_host: str | None) -> str:
     return normalize_gui_host(gui_host)
 
 
-def _gui_host_from_process_env() -> str | None:
+def gui_host_from_process_env() -> str | None:
     vscode_agent = os.environ.get("VSCODE_AGENT_FOLDER", "")
     ripgrep = os.environ.get("CURSOR_RIPGREP_PATH", "")
     if ".cursor-server" in vscode_agent or ".cursor-server" in ripgrep:
@@ -213,68 +205,26 @@ def _gui_host_from_process_env() -> str | None:
     return None
 
 
-def _readable_vscdb() -> Path | None:
-    for path in _VSCDB_CANDIDATES:
-        if path.is_file():
-            return path
-    return None
-
-
-def _vscdb_has_pane_key(db_path: Path, transcript_id: str) -> bool:
-    key = f"glass.agentConversationPanes.{transcript_id}"
-    with sqlite3.connect(f"file:{db_path}?mode=ro", uri=True) as conn:
-        row = conn.execute(
-            "SELECT 1 FROM ItemTable WHERE key = ? LIMIT 1", (key,)
-        ).fetchone()
-    return row is not None
-
-
-def _vscdb_has_any_glass_pane(db_path: Path) -> bool:
-    with sqlite3.connect(f"file:{db_path}?mode=ro", uri=True) as conn:
-        row = conn.execute(
-            "SELECT 1 FROM ItemTable WHERE key LIKE 'glass.agentConversationPanes.%' LIMIT 1"
-        ).fetchone()
-    return row is not None
-
-
-def _gui_host_from_vscdb(transcript_id: str) -> str | None:
-    db_path = _readable_vscdb()
-    if db_path is None:
-        return None
-    try:
-        if _vscdb_has_pane_key(db_path, transcript_id):
-            return ":8"
-        if _vscdb_has_any_glass_pane(db_path):
-            return "orion-node"
-    except sqlite3.Error:
-        return None
-    return None
-
-
 def detect_cursor_gui_host(
     *,
     transcript_id: str | None = None,
     root_id: str | None = None,
     explicit_gui_host: str | None = None,
-) -> str:
+) -> str | None:
     """Resolve ``orion-node`` vs ``:8`` for wake subscription and CDP probes."""
     from cursor_bridge.cursor_agents_hop import is_cursor_xvfb_host
 
+    from bus_watch.cursor_tab_whereami import resolve_cursor_tab_whereami
+
     if explicit_gui_host and is_cursor_xvfb_host(explicit_gui_host):
         return _normalize_gui_host(explicit_gui_host)
-    env_host = _gui_host_from_process_env()
-    if env_host:
-        return env_host
-    tid = str(transcript_id or "").strip()
-    if tid and _UUID_RE.match(tid):
-        vscdb_host = _gui_host_from_vscdb(tid)
-        if vscdb_host:
-            return vscdb_host
-    if root_id:
-        from bus_watch.ide_hop import policy_gui_host
-
-        return policy_gui_host(str(root_id))
-    return ":8"
+    out = resolve_cursor_tab_whereami(
+        transcript_id=transcript_id,
+        root_id=root_id,
+        use_process_env=True,
+    )
+    host = out.get("gui_host")
+    return str(host) if host else None
 
 
 def _fetch_thread_slug(
@@ -325,7 +275,7 @@ def _policy_gui_host_pinned(policy: dict[str, Any]) -> bool:
 
 def sync_policy_gui_host(
     root_id: str,
-    gui_host: str,
+    gui_host: str | None,
     *,
     watch_dir: Path = WATCH_DIR,
 ) -> None:
@@ -337,6 +287,8 @@ def sync_policy_gui_host(
     true, the stored ``gui_host`` is left unchanged. Endpoint wake routing still
     uses ``detect_cursor_gui_host`` so the live tab keeps its own display.
     """
+    if not str(gui_host or "").strip():
+        return
     path = watch_dir / f"liaison-{root_id}.tick.json"
 
     def mutate(state: dict[str, Any]) -> None:
@@ -354,6 +306,7 @@ __all__ = [
     "cursor_xvfb_display_for_gui_host",
     "cursor_xvfb_subscription_body",
     "detect_cursor_gui_host",
+    "gui_host_from_process_env",
     "parse_ide_holder_agent_id",
     "resolve_subscription_title",
     "subscribe_cursor_xvfb_from_holder",
