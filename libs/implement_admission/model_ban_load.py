@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import re
 from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
@@ -14,7 +13,6 @@ from model_id.entity import canonical_model_slug
 from implement_admission.routing import default_policy_path, load_route_policy
 
 _EFFORT_DASH_SUFFIXES = ("-fast", "-high", "-max", "-low", "-medium", "-xhigh")
-_GROK_47_STEM = re.compile(r"^grok-4\.7$", re.IGNORECASE)
 
 
 @dataclass(frozen=True, slots=True)
@@ -36,26 +34,38 @@ class ModelBansUnloadableError(Exception):
         self.code = "MODEL_BANS_UNLOADABLE"
 
 
+class ModelBanUnparseableError(ValueError):
+    """Non-empty model id could not be normalized for ban matching."""
+
+
 def _strip_dash_effort_suffix(slug: str) -> str:
     lower = slug.lower()
     for suf in _EFFORT_DASH_SUFFIXES:
-        if lower.endswith(suf):
-            stem = lower[: -len(suf)]
-            if _GROK_47_STEM.fullmatch(stem):
-                return stem.lower()
+        if lower.endswith(suf) and len(lower) > len(suf):
+            return lower[: -len(suf)]
     return lower
 
 
-def normalize_model_for_ban(model: str) -> str:
+def _wire_base_slug(model: str) -> str:
     raw = str(model).strip()
     if not raw:
-        msg = "model id required for ban normalization"
-        raise ValueError(msg)
+        raise ModelBanUnparseableError("empty model id")
     if "__effort_" in raw:
         raw = raw.split("__effort_", 1)[0].strip()
     parsed = ModelId.parse(raw)
-    slug = canonical_model_slug(parsed).lower()
-    return _strip_dash_effort_suffix(slug)
+    return canonical_model_slug(parsed).lower()
+
+
+def normalize_model_for_ban(model: str) -> str:
+    return _wire_base_slug(model)
+
+
+def ban_slug_variants(model: str) -> frozenset[str]:
+    base = _wire_base_slug(model)
+    stripped = _strip_dash_effort_suffix(base)
+    if stripped == base:
+        return frozenset({base})
+    return frozenset({base, stripped})
 
 
 def _parse_scope(raw: Any) -> tuple[bool, frozenset[str]]:
@@ -64,16 +74,21 @@ def _parse_scope(raw: Any) -> tuple[bool, frozenset[str]]:
     if isinstance(raw, dict):
         roles = raw.get("roles")
         if isinstance(roles, list):
-            return False, frozenset(
+            parsed = frozenset(
                 str(r).strip().lower() for r in roles if str(r).strip()
             )
+            if not parsed:
+                msg = "model_bans scope.roles must be non-empty when scope is role-scoped"
+                raise ValueError(msg)
+            return False, parsed
     msg = f"model_bans scope must be 'all' or {{roles: [...]}}; got {raw!r}"
     raise ValueError(msg)
 
 
 def parse_model_bans(policy: dict[str, Any]) -> tuple[ModelBanEntry, ...]:
     if "model_bans" not in policy:
-        return ()
+        msg = "route policy missing model_bans key"
+        raise ValueError(msg)
     raw = policy["model_bans"]
     if raw is None:
         msg = "model_bans must not be null"
@@ -112,8 +127,6 @@ def parse_model_bans(policy: dict[str, Any]) -> tuple[ModelBanEntry, ...]:
 def load_model_bans_strict(*, path: Path | None = None) -> tuple[ModelBanEntry, ...]:
     policy_path = path or default_policy_path()
     policy = load_route_policy(policy_path)
-    if "model_bans" not in policy:
-        raise ModelBansUnloadableError("route policy missing model_bans key")
     try:
         return parse_model_bans(policy)
     except ValueError as exc:
@@ -145,18 +158,49 @@ def _role_in_scope(entry: ModelBanEntry, role: str | None) -> bool:
     return str(role).strip().lower() in entry.roles
 
 
+def _entry_slug_variants(entry: ModelBanEntry) -> frozenset[str]:
+    base = entry.match_slug
+    stripped = _strip_dash_effort_suffix(base)
+    if stripped == base:
+        return frozenset({base})
+    return frozenset({base, stripped})
+
+
 def find_matching_ban(
     resolved_model: str,
     *,
     role: str | None = None,
     bans: tuple[ModelBanEntry, ...] | None = None,
 ) -> ModelBanEntry | None:
+    if not str(resolved_model or "").strip():
+        return None
     entries = load_model_bans() if bans is None else bans
     try:
-        slug = normalize_model_for_ban(resolved_model)
-    except (TypeError, ValueError):
-        return None
+        variants = ban_slug_variants(resolved_model)
+    except (TypeError, ValueError, ModelBanUnparseableError):
+        raise ModelBanUnparseableError(
+            f"unparseable model id for ban check: {resolved_model!r}"
+        ) from None
     for entry in entries:
-        if entry.match_slug == slug and _role_in_scope(entry, role):
+        if variants & _entry_slug_variants(entry) and _role_in_scope(entry, role):
             return entry
     return None
+
+
+def advisor_wire_from_policy(policy: dict[str, Any] | None = None) -> str:
+    pol = policy if policy is not None else load_route_policy()
+    imp = pol.get("impresario") or {}
+    adv = imp.get("advisor") or {}
+    return str(adv.get("model") or "").strip()
+
+
+def advisor_fallback_model_from_policy(policy: dict[str, Any] | None = None) -> str:
+    pol = policy if policy is not None else load_route_policy()
+    imp = pol.get("impresario") or {}
+    mech = imp.get("mechanical") or {}
+    model = str(mech.get("model") or "").strip()
+    if model:
+        return model
+    workflows = pol.get("workflows") or {}
+    auto = workflows.get("auto_judgment") or {}
+    return str(auto.get("model") or "cursor/composer-2.5").strip()

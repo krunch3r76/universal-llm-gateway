@@ -797,6 +797,18 @@ async def dispatch_cursor_sdk_generate_route(
                     elapsed_ms=int((time.monotonic() - spawn_started_ms) * 1000),
                 )
         try:
+            from implement_admission.model_ban_admit import waiver_for_resolved_model
+
+            plan = admit_plan or {}
+            resolved_for_waiver = str(
+                plan.get("model") or getattr(body, "model", None) or ""
+            )
+            w_enabled, w_reason, w_event_id = waiver_for_resolved_model(
+                resolved_model=resolved_for_waiver,
+                admit_plan=plan,
+                body_ban_override=bool(getattr(body, "ban_override", False)),
+                body_ban_override_reason=getattr(body, "ban_override_reason", None),
+            )
             result = await dispatch_cursor_sdk_generate(
                 request_id=request_id,
                 role=role,
@@ -875,6 +887,9 @@ async def dispatch_cursor_sdk_generate_route(
                 off_bus_ref=getattr(body, "sidecar_ref", None),
                 prompt_sha256=getattr(body, "prompt_sha256", None),
                 admit_provenance=admit_provenance,
+                ban_override=w_enabled,
+                ban_override_reason=w_reason,
+                model_ban_override_event_id=w_event_id,
             )
         except BaseException as exc:
             if sdk_row_id:

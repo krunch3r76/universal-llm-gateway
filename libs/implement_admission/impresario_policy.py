@@ -14,6 +14,10 @@ from cursor_capabilities import CURSOR_MODEL_CAPABILITIES, canonical_cursor_bare
 from effort_vocabulary import WIRE_LADDER, normalize_effort
 from universal_protocol.errors import ProtocolError
 
+from implement_admission.model_ban_load import (
+    advisor_fallback_model_from_policy,
+    advisor_wire_from_policy,
+)
 from implement_admission.routing import default_policy_path, load_route_policy
 
 Transport = Literal["cdp_parked", "api", "cursor_nested", "grok_bot_window"]
@@ -24,9 +28,7 @@ RESTORE_MODEL = "anthropic/claude-fable-5-1"
 _HYBRID_MECHANICAL_MODEL = "cursor/composer-2.5"
 _HYBRID_MECHANICAL_SEAT = "cursor-sdk"
 _HYBRID_MECHANICAL_EFFORT = "medium"
-_ADVISOR_DEFAULT_WIRE = "cursor/gemini-4-argon"
 ADVISOR_LEAN_DISPATCH_LINE = "Use the lean-dispatch skill"
-ADVISOR_FALLBACK_MODEL = "cursor/composer-2.5"
 
 
 @dataclass(frozen=True, slots=True)
@@ -245,7 +247,7 @@ def parse_impresario_policy(policy: dict[str, Any]) -> ImpresarioPolicy:
     if not isinstance(advisor_raw, dict):
         msg = "impresario.advisor must be a mapping"
         raise ValueError(msg)
-    advisor_wire = str(advisor_raw.get("model") or _ADVISOR_DEFAULT_WIRE).strip()
+    advisor_wire = str(advisor_raw.get("model") or advisor_wire_from_policy()).strip()
     advisor_seat = _parse_seat_entry(
         advisor_raw,
         default_model=advisor_wire,
@@ -528,14 +530,14 @@ def resolve_advisor_provider_fallback(
     _ = policy or load_impresario_policy()
     return AdvisorAdmitResult(
         admitted=True,
-        resolved_model=ADVISOR_FALLBACK_MODEL,
+        resolved_model=advisor_fallback_model_from_policy(),
         code="ADVISOR_PROVIDER_FALLBACK",
         message=provider_error.strip(),
         provider_fallback=True,
         event_signal="impresario.advisor.provider_fallback",
         event_payload={
             "requested_model": advisor_model_wire(),
-            "resolved_model": ADVISOR_FALLBACK_MODEL,
+            "resolved_model": advisor_fallback_model_from_policy(),
             "provider_error": provider_error.strip(),
         },
     )

@@ -173,7 +173,7 @@ def resolve_hop_successor_model(desired_model: str) -> str:
     """Choose the CDP (or other prefixed) model a hop dispatches.
 
     Empty and ``auto`` stay on ``cdp/opus-5.5-high``. A slash-prefixed id is
-    sent as given, so ``cdp/opus-5.5-max`` and ``cursor/grok-4.7`` pass through.
+    sent as given, so ``cdp/opus-5.5-max`` passes through unchanged.
     A bare family such as ``fable-5.1-high`` is prefixed ``cdp/`` because the
     picker wire is ``cdp/<family>``.
     """
@@ -271,10 +271,11 @@ async def _hop_dispatch(
             "reason": "hop_model_invalid",
         }
 
-    from implement_admission.model_ban import check_model_ban
+    from implement_admission.model_ban import check_model_ban_safe
 
-    hop_pin = bool((desired_model or "").strip())
-    ban_verdict = check_model_ban(
+    raw_desired = (desired_model or "").strip()
+    hop_pin = bool(raw_desired) and raw_desired.lower() != "auto"
+    ban_verdict = check_model_ban_safe(
         resolved_model=model,
         explicit_pin=hop_pin,
         workflow_key="agent_bus.hop",

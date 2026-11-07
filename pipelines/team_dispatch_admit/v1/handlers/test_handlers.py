@@ -395,6 +395,7 @@ def test_assemble_prefixes_ledger_row() -> None:
             "packet_markdown": packet,
             "packet_sha256": "old",
         },
+        {},
     )
     assert out["packet_markdown"].startswith(
         f"ledger_row: {row_id}\npurpose: ship it\n"
@@ -416,6 +417,7 @@ def test_assemble_recomputes_packet_sha256() -> None:
             "packet_markdown": "body",
             "packet_sha256": "stale",
         },
+        {},
     )
     assert out["packet_sha256"] == compute_packet_sha256(out["packet_markdown"])
     assert out["packet_sha256"] != "stale"
@@ -431,6 +433,7 @@ def test_assemble_without_row_id_unchanged() -> None:
             "packet_markdown": "body",
             "packet_sha256": "kept",
         },
+        {},
     )
     assert out["packet_markdown"] == "body"
     assert out["packet_sha256"] == "kept"

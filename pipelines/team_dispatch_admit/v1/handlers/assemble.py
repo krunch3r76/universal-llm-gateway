@@ -47,7 +47,7 @@ def _turn0_budget_from_plan(plan: dict[str, Any]) -> dict[str, Any]:
 def evaluate_assemble(
     validate_out: dict[str, Any],
     defaults_out: dict[str, Any],
-    opts: dict[str, Any] | None = None,
+    opts: dict[str, Any],
 ) -> dict[str, Any]:
     for prior in (validate_out, defaults_out):
         if prior.get("admitted") is False:
@@ -55,10 +55,9 @@ def evaluate_assemble(
     plan = dict(defaults_out)
     plan["skill_rows"] = []
     plan["admitted"] = True
-    if opts is not None:
-        plan = apply_model_ban_to_plan(opts, plan)
-        if plan.get("admitted") is False:
-            return plan
+    plan = apply_model_ban_to_plan(opts, plan)
+    if plan.get("admitted") is False:
+        return plan
     row_id = str(plan.get("row_id") or "").strip()
     packet = str(plan.get("packet_markdown") or "")
     if (

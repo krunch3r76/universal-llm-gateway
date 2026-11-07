@@ -4057,18 +4057,12 @@ async def admit_cursor_dispatch(
             invalid_fields=["model"],
             validation_stage="model_resolution",
         )
-    from implement_admission.model_ban import check_model_ban
+    from services.git_integration_worker.cursor_sdk_model_ban import (
+        cursor_sdk_model_set_extra_data,
+        evaluate_cursor_dispatch_model_ban,
+    )
 
-    resume_workflow = (
-        "git_integration_worker.resume_of" if req.resume_of else "cursor_sdk.dispatch"
-    )
-    ban_verdict = check_model_ban(
-        resolved_model=req.model,
-        explicit_pin=True,
-        workflow_key=resume_workflow,
-        caller_agent=req.caller_agent,
-        dispatch_id=req.dispatch_id,
-    )
+    ban_verdict, _ban_model = evaluate_cursor_dispatch_model_ban(req)
     if not ban_verdict.allowed:
         env = ban_verdict.reject_envelope or {}
         return _reject_pre_admission(
@@ -4083,7 +4077,6 @@ async def admit_cursor_dispatch(
         )
     from cursor_capabilities import (
         CURSOR_MODEL_CAPABILITIES,
-        cursor_sdk_model_set_fix_hint,
         is_cursor_sdk_model_admitted,
     )
 
@@ -4097,10 +4090,7 @@ async def admit_cursor_dispatch(
             invalid_fields=["model"],
             validation_stage="model_set",
             retryable=False,
-            extra_data={
-                "fix_hint": cursor_sdk_model_set_fix_hint(explicit_pin=True),
-                "allowed_models": ["cursor/composer-2.5", "cursor/grok-4.7"],
-            },
+            extra_data=cursor_sdk_model_set_extra_data(),
         )
 
     card_entry = CURSOR_MODEL_CAPABILITIES.get(config.model_id)

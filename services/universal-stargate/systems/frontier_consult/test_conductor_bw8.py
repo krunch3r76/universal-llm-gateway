@@ -27,6 +27,7 @@ def test_bw8_fixture_under_cap_counts_packet_bytes() -> None:
             "packet_markdown": packet,
             "policy_sha256": "bw8sha",
         },
+        {},
     )
     budget = plan["turn0_budget"]
     assert budget["total_turn0_bytes"] == len(packet.encode("utf-8"))

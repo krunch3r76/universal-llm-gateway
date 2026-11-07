@@ -155,6 +155,9 @@ async def _finish_prepared_dispatch(
             bus_lifecycle=handle.effective_bus_lifecycle,
             wake_lane=handle.wake_lane,
             parent_dispatch_thread_id=handle.parent_dispatch_thread_id,
+            ban_override=handle.ban_override,
+            ban_override_reason=handle.ban_override_reason,
+            model_ban_override_event_id=handle.model_ban_override_event_id,
         )
     else:
         worker_ok, worker_detail = await dispatch_cursor_sdk_worker_message(
@@ -190,6 +193,9 @@ async def _finish_prepared_dispatch(
             bus_lifecycle=handle.effective_bus_lifecycle,
             wake_lane=handle.wake_lane,
             parent_dispatch_thread_id=handle.parent_dispatch_thread_id,
+            ban_override=handle.ban_override,
+            ban_override_reason=handle.ban_override_reason,
+            model_ban_override_event_id=handle.model_ban_override_event_id,
         )
 
     if not worker_ok:
@@ -380,6 +386,9 @@ async def dispatch_cursor_sdk_generate(
     prompt_sha256: str | None = None,
     requested_model_pin: str | None | object = _UNSET_MODEL_PIN,
     admit_provenance: AdmitProvenanceContext | None = None,
+    ban_override: bool = False,
+    ban_override_reason: str | None = None,
+    model_ban_override_event_id: str | None = None,
 ) -> dict[str, Any]:
     """Cursor-sdk generate with to_thread delivery (or reuse ``prepared_handle``)."""
     if prepared_handle is not None:
@@ -438,5 +447,8 @@ async def dispatch_cursor_sdk_generate(
         prompt_sha256=prompt_sha256,
         requested_model_pin=requested_model_pin,
         admit_provenance=admit_provenance,
+        ban_override=ban_override,
+        ban_override_reason=ban_override_reason,
+        model_ban_override_event_id=model_ban_override_event_id,
     )
     return await dispatch_prepared_cursor_sdk(handle, transcript_id=transcript_id)

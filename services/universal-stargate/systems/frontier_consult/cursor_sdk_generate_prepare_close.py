@@ -242,4 +242,7 @@ async def complete_cursor_sdk_generate_prepare(
         impresario_envelope=impresario_envelope,
         requested_model_knobs=dict(model_knobs or {}),
         wake_lane=wake_lane,
+        ban_override=bool(bound.get("ban_override")),
+        ban_override_reason=bound.get("ban_override_reason"),
+        model_ban_override_event_id=bound.get("model_ban_override_event_id"),
     )

@@ -5,7 +5,6 @@ from __future__ import annotations
 import ast
 import os
 import re
-from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
@@ -417,10 +416,9 @@ def test_g3_g5_clause_uses_house_roles(
     house_watch_dir: Path,
     tmp_path: Path,
 ) -> None:
-    from implement_admission.conductor_materialize import load_conductor_context
     from implement_admission.conductor_critic_render import g3_g5_score_ratify_clause
+    from implement_admission.conductor_materialize import load_conductor_context
     from implement_admission.house_policy import roles_for_ctx
-
     from implement_admission.house_testing import write_tick
 
     write_tick(
@@ -553,11 +551,11 @@ def test_house_block_has_r1_signpost_only_with_critic_model(
     house_watch_dir: Path,
     tmp_path: Path,
 ) -> None:
-    from implement_admission.house_testing import write_tick
     from implement_admission.conductor_materialize import (
         load_conductor_context,
         render_conductor_packet,
     )
+    from implement_admission.house_testing import write_tick
 
     signpost = (
         "R1 scoreboard row model stamps are global defaults; "

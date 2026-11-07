@@ -71,6 +71,9 @@ class PreparedCursorSdkHandle:
     #: Wire knobs the caller sent, before policy defaults are filled.
     requested_model_knobs: dict[str, str] | None = None
     wake_lane: str | None = None
+    ban_override: bool = False
+    ban_override_reason: str | None = None
+    model_ban_override_event_id: str | None = None
 
 
 def mint_cursor_sdk_ids(*, request_id: str) -> tuple[str, str]:
@@ -149,6 +152,9 @@ def handle_to_dict(handle: PreparedCursorSdkHandle) -> dict[str, Any]:
         "consume_reason": handle.consume_reason,
         "requested_model_knobs": handle.requested_model_knobs,
         "wake_lane": handle.wake_lane,
+        "ban_override": handle.ban_override,
+        "ban_override_reason": handle.ban_override_reason,
+        "model_ban_override_event_id": handle.model_ban_override_event_id,
     }
 
 
@@ -212,4 +218,7 @@ def handle_from_dict(data: dict[str, Any]) -> PreparedCursorSdkHandle:
         consume_reason=data.get("consume_reason"),
         requested_model_knobs=data.get("requested_model_knobs"),
         wake_lane=data.get("wake_lane"),
+        ban_override=bool(data.get("ban_override", False)),
+        ban_override_reason=data.get("ban_override_reason"),
+        model_ban_override_event_id=data.get("model_ban_override_event_id"),
     )

@@ -4,9 +4,11 @@ from __future__ import annotations
 
 import json
 import logging
+import uuid
 from collections.abc import Callable
 from typing import Any
 
+from implement_admission.model_ban_admit import collect_model_ban_overrides
 from model_id import ModelId, canonical_model_entity_id
 from transport_utils import DEFAULT_STARGATE_URL, make_sync_client
 
@@ -134,6 +136,44 @@ def _emit_admit_event(
     emit_conductor_hop_lifecycle(plan, publisher)
 
 
+def _emit_model_ban_override_events(
+    plan: dict[str, Any],
+    *,
+    request_id: str,
+    publisher: EventPublisher | None,
+) -> dict[str, Any]:
+    overrides = collect_model_ban_overrides(plan)
+    if not overrides:
+        return plan
+    if publisher is None:
+        raise FrontierEndpointError(
+            request_id=request_id,
+            field="ban_override",
+            reason="model ban override requires an event publisher",
+            status_code=503,
+            code="model_ban_override_unaudited",
+        )
+    from .events import DispatchModelBanOverride
+
+    stamped: list[dict[str, Any]] = []
+    for row in overrides:
+        event_id = uuid.uuid4().hex
+        publisher(
+            DispatchModelBanOverride(
+                request_id=request_id,
+                caller=row.get("caller"),
+                model=str(row.get("model") or ""),
+                reason=str(row.get("reason") or ""),
+                ref=row.get("ref"),
+                dispatch_id=row.get("dispatch_id"),
+            )
+        )
+        stamped.append({**row, "event_id": event_id})
+    merged = dict(plan)
+    merged["model_ban_override_events"] = stamped
+    return merged
+
+
 def run_team_dispatch_admit_sync(
     *,
     body: Any,
@@ -218,6 +258,15 @@ def run_team_dispatch_admit_sync(
         )
 
     assert plan is not None
+    if plan.get("admitted") is not False:
+        try:
+            plan = _emit_model_ban_override_events(
+                plan,
+                request_id=request_id,
+                publisher=event_publisher,
+            )
+        except FrontierEndpointError:
+            raise
     _emit_admit_event(
         plan=plan,
         request_id=request_id,
@@ -235,20 +284,6 @@ def run_team_dispatch_admit_sync(
             details=(
                 plan.get("details") if isinstance(plan.get("details"), dict) else None
             ),
-        )
-    override = plan.get("model_ban_override")
-    if isinstance(override, dict) and event_publisher is not None:
-        from .events import DispatchModelBanOverride
-
-        event_publisher(
-            DispatchModelBanOverride(
-                request_id=request_id,
-                caller=override.get("caller"),
-                model=str(override.get("model") or ""),
-                reason=str(override.get("reason") or ""),
-                ref=override.get("ref"),
-                dispatch_id=override.get("dispatch_id"),
-            )
         )
     return plan
 

@@ -7,6 +7,8 @@ from typing import Any
 
 from implement_admission.model_ban_load import (
     ModelBanEntry,
+    ModelBansUnloadableError,
+    ModelBanUnparseableError,
     clear_model_ban_cache,
     find_matching_ban,
     load_model_bans,
@@ -20,6 +22,7 @@ __all__ = [
     "argon_role_barred",
     "ban_override_fields",
     "check_model_ban",
+    "check_model_ban_safe",
     "clear_model_ban_cache",
     "evaluate_dispatch_model_ban",
     "find_matching_ban",
@@ -132,7 +135,7 @@ def evaluate_dispatch_model_ban(
             payload["dispatch_id"] = str(dispatch_id).strip()
         return None, payload
     code = "MODEL_BANNED" if explicit_pin else "MODEL_BANNED_DEFAULT"
-    omit_key = workflow_key or "auto_judgment"
+    omit_key = workflow_key or "omit_unlabeled"
     if explicit_pin:
         reason = f"model {resolved_model!r} is banned ({entry.ref})"
     else:
@@ -153,6 +156,36 @@ def evaluate_dispatch_model_ban(
     )
 
 
+def _unloadable_verdict(exc: ModelBansUnloadableError) -> ModelBanVerdict:
+    return ModelBanVerdict(
+        allowed=False,
+        reject_envelope={
+            "admitted": False,
+            "status_code": 503,
+            "code": exc.code,
+            "field": "model_bans",
+            "reason": str(exc),
+        },
+        override_payload=None,
+        matched=None,
+    )
+
+
+def _unparseable_verdict(model: str) -> ModelBanVerdict:
+    return ModelBanVerdict(
+        allowed=False,
+        reject_envelope={
+            "admitted": False,
+            "status_code": 422,
+            "code": "MODEL_BAN_UNPARSEABLE",
+            "field": "model",
+            "reason": f"model id {model!r} is not parseable for ban check",
+        },
+        override_payload=None,
+        matched=None,
+    )
+
+
 def check_model_ban(
     *,
     resolved_model: str,
@@ -164,6 +197,34 @@ def check_model_ban(
     caller_agent: str | None = None,
     dispatch_id: str | None = None,
     bans: tuple[ModelBanEntry, ...] | None = None,
+) -> ModelBanVerdict:
+    try:
+        return _check_model_ban_inner(
+            resolved_model=resolved_model,
+            explicit_pin=explicit_pin,
+            workflow_key=workflow_key,
+            role=role,
+            ban_override=ban_override,
+            ban_override_reason=ban_override_reason,
+            caller_agent=caller_agent,
+            dispatch_id=dispatch_id,
+            bans=bans,
+        )
+    except ModelBanUnparseableError:
+        return _unparseable_verdict(resolved_model)
+
+
+def _check_model_ban_inner(
+    *,
+    resolved_model: str,
+    explicit_pin: bool,
+    workflow_key: str | None,
+    role: str | None,
+    ban_override: bool,
+    ban_override_reason: str | None,
+    caller_agent: str | None,
+    dispatch_id: str | None,
+    bans: tuple[ModelBanEntry, ...] | None,
 ) -> ModelBanVerdict:
     reject, override = evaluate_dispatch_model_ban(
         resolved_model=resolved_model,
@@ -198,3 +259,12 @@ def check_model_ban(
         override_payload=None,
         matched=None,
     )
+
+
+def check_model_ban_safe(
+    **kwargs: Any,
+) -> ModelBanVerdict:
+    try:
+        return check_model_ban(**kwargs)
+    except ModelBansUnloadableError as exc:
+        return _unloadable_verdict(exc)

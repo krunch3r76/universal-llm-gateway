@@ -886,7 +886,6 @@ def test_materialize_unresolved_hop_scope_and_marker(
     pinned_cdp_roles,
     tmp_path: Path,
 ) -> None:
-    from implement_admission.house_testing import assert_house_packet_clean
 
     rem = RematerializeContext(summoning_thread_id_unresolved=True, hop_seq=1)
     mp = materialize_conductor(

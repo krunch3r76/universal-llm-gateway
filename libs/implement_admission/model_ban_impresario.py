@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from implement_admission.model_ban_load import (
     ModelBanEntry,
+    advisor_wire_from_policy,
+    ban_slug_variants,
     find_matching_ban,
     load_model_bans,
     normalize_model_for_ban,
@@ -15,11 +17,9 @@ _ARGON_CODE = "ARGON_ROLE_BARRED"
 def impresario_argon_ban_roles(
     bans: tuple[ModelBanEntry, ...] | None = None,
 ) -> frozenset[str]:
-    from implement_admission.impresario_policy import advisor_model_wire
-
     entries = load_model_bans() if bans is None else bans
     try:
-        advisor_slug = normalize_model_for_ban(advisor_model_wire())
+        advisor_slug = normalize_model_for_ban(advisor_wire_from_policy())
     except (TypeError, ValueError):
         return frozenset()
     roles: set[str] = set()
@@ -43,15 +43,15 @@ def impresario_argon_refusal(
     impresario_role: str | None,
     bans: tuple[ModelBanEntry, ...] | None = None,
 ) -> tuple[str, str] | None:
-    from implement_admission.impresario_policy import advisor_model_wire
-
-    wire = advisor_model_wire()
-    normalized = (model or "").strip()
-    if normalized != wire:
+    wire = advisor_wire_from_policy()
+    try:
+        if ban_slug_variants(model) != ban_slug_variants(wire):
+            return None
+    except (TypeError, ValueError):
         return None
     if (impresario_role or "").strip().lower() == "advisor":
         return None
-    entry = find_matching_ban(normalized, role=impresario_role, bans=bans)
+    entry = find_matching_ban(model, role=impresario_role, bans=bans)
     if entry is None:
         return None
     return (_ARGON_CODE, entry.reason)

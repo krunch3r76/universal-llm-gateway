@@ -198,10 +198,10 @@ async def team_handoff(
                 request_id=request_id,
             )
 
-        from implement_admission.model_ban import check_model_ban
+        from implement_admission.model_ban import check_model_ban_safe
 
         explicit_model = getattr(body, "model", None)
-        ban_verdict = check_model_ban(
+        ban_verdict = check_model_ban_safe(
             resolved_model=resolved_model,
             explicit_pin=bool(explicit_model and str(explicit_model).strip()),
             workflow_key="team.handoff",
@@ -224,8 +224,8 @@ async def team_handoff(
                 ).to_dict(),
             )
         override_model = getattr(body, "executor_override", None)
-        if override_model and "/" in str(override_model):
-            exec_verdict = check_model_ban(
+        if override_model and str(override_model).strip():
+            exec_verdict = check_model_ban_safe(
                 resolved_model=str(override_model),
                 explicit_pin=True,
                 workflow_key="team.handoff.executor_override",

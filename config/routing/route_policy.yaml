@@ -3,9 +3,12 @@ policy_source: consult-routing
 policy_version: "2026-09-30"
 lead_claim_authority: server_contract_overrides_packet_prose
 
-# Dispatch admit ban list (team_dispatch generate/to_thread/hop). Match after
-# model_id normalization (cursor/grok-4.7 ≡ xai/grok-4.7 slug). Override on the
-# wire: ban_override=true + ban_override_reason (audit event dispatch.model_ban.override).
+# Dispatch admit ban list (team_dispatch generate/to_thread/hop/handoff and
+# cursor-sdk GIW POST /dispatch). Scope: Stargate team_dispatch + agent_bus hop;
+# frontier chat-dispatch async pipeline and CDP-only seats without a resolved
+# cursor/xai model id are outside this gate. Match after model_id normalization
+# (cursor/grok-4.7 ≡ xai/grok-4.7 slug). Override on the wire: ban_override=true
+# + ban_override_reason (audit event dispatch.model_ban.override).
 model_bans:
   - model: cursor/grok-4.7
     scope: all

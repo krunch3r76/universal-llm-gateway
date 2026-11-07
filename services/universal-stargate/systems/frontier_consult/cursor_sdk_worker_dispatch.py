@@ -284,6 +284,9 @@ async def dispatch_cursor_sdk_worker(
     bus_lifecycle: Literal["persistent", "ephemeral"] | None = None,
     wake_lane: str | None = None,
     parent_dispatch_thread_id: str | None = None,
+    ban_override: bool = False,
+    ban_override_reason: str | None = None,
+    model_ban_override_event_id: str | None = None,
 ) -> tuple[bool, dict[str, Any]]:
     """POST ``/api/v1/cursor/dispatch``; return structured ``(ok, detail)``.
 
@@ -352,6 +355,12 @@ async def dispatch_cursor_sdk_worker(
         payload["wake_lane"] = wake_lane
     if parent_dispatch_thread_id:
         payload["parent_dispatch_thread_id"] = parent_dispatch_thread_id
+    if ban_override:
+        payload["ban_override"] = True
+    if ban_override_reason:
+        payload["ban_override_reason"] = ban_override_reason
+    if model_ban_override_event_id:
+        payload["model_ban_override_event_id"] = model_ban_override_event_id
     # bus_lifecycle stays on the bus thread (append_bus_lifecycle_tags).
     # Running GIW extra=forbid rejects the field until that process reloads
     # models/cursor_api.py (422 extra_forbidden — 11834 play hop 2853894a).
@@ -423,6 +432,9 @@ async def dispatch_cursor_sdk_worker_message(
     bus_lifecycle: Literal["persistent", "ephemeral"] | None = None,
     wake_lane: str | None = None,
     parent_dispatch_thread_id: str | None = None,
+    ban_override: bool = False,
+    ban_override_reason: str | None = None,
+    model_ban_override_event_id: str | None = None,
 ) -> tuple[bool, dict[str, Any]]:
     """POST ``/api/v1/cursor/dispatch`` with ``message`` (prompt= path)."""
     effective_dispatch_id = dispatch_id or f"{request_id}-{uuid.uuid4().hex[:8]}"
@@ -480,6 +492,12 @@ async def dispatch_cursor_sdk_worker_message(
         payload["wake_lane"] = wake_lane
     if parent_dispatch_thread_id:
         payload["parent_dispatch_thread_id"] = parent_dispatch_thread_id
+    if ban_override:
+        payload["ban_override"] = True
+    if ban_override_reason:
+        payload["ban_override_reason"] = ban_override_reason
+    if model_ban_override_event_id:
+        payload["model_ban_override_event_id"] = model_ban_override_event_id
     try:
         async with make_async_client(
             worker_base_url(), timeout=_WORKER_TIMEOUT

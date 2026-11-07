@@ -7,36 +7,15 @@ from typing import Any
 from implement_admission.model_ban import (
     evaluate_dispatch_model_ban,
     model_ban_wire_fields,
-    validate_ban_override_pair,
 )
+from implement_admission.model_ban_admit import ban_override_pair_reject
 
 from ._envelope import admit_envelope
 
 
 def ban_override_reject(opts: dict[str, Any]) -> dict[str, Any] | None:
     enabled, reason, _caller = model_ban_wire_fields(opts)
-    code = validate_ban_override_pair(enabled, reason)
-    if code is None:
-        return None
-    field = (
-        "ban_override_reason"
-        if code == "ban_override_reason_required"
-        else "ban_override"
-    )
-    from implement_admission.model_ban import ban_override_fields
-
-    return {
-        "admitted": False,
-        "status_code": 422,
-        "code": code,
-        "field": field,
-        "reason": (
-            "ban_override_reason is required when ban_override=true"
-            if code == "ban_override_reason_required"
-            else "ban_override=true is required when ban_override_reason is set"
-        ),
-        "details": ban_override_fields(),
-    }
+    return ban_override_pair_reject(enabled, reason)
 
 
 def _workflow_key_for_plan(opts: dict[str, Any], plan: dict[str, Any]) -> str | None:
@@ -52,6 +31,20 @@ def _workflow_key_for_plan(opts: dict[str, Any], plan: dict[str, Any]) -> str | 
         elif job:
             workflow_key = "workflows.auto_judgment"
     return workflow_key
+
+
+def _append_override(plan: dict[str, Any], payload: dict[str, Any]) -> dict[str, Any]:
+    merged = dict(plan)
+    existing = merged.get("model_ban_overrides")
+    overrides: list[dict[str, Any]] = []
+    if isinstance(existing, list):
+        overrides.extend(dict(x) for x in existing if isinstance(x, dict))
+    elif isinstance(merged.get("model_ban_override"), dict):
+        overrides.append(dict(merged["model_ban_override"]))
+    overrides.append(dict(payload))
+    merged["model_ban_overrides"] = overrides
+    merged["model_ban_override"] = dict(payload)
+    return merged
 
 
 def _gate_resolved_model(
@@ -81,9 +74,7 @@ def _gate_resolved_model(
     if reject is not None:
         return reject
     if override_payload is not None:
-        merged = dict(plan)
-        merged["model_ban_override"] = override_payload
-        return merged
+        return _append_override(plan, override_payload)
     return plan
 
 
@@ -107,9 +98,7 @@ def apply_model_ban_to_plan(
             return plan
     hop = plan.get("hop_successor_default")
     if hop and str(hop).strip():
-        hop_key = (
-            "team-dispatch-admit.model_defaults.conductor.hop_successor"
-        )
+        hop_key = "team-dispatch-admit.model_defaults.conductor.hop_successor"
         plan = _gate_resolved_model(
             opts,
             plan,

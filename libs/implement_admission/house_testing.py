@@ -13,7 +13,6 @@ from implement_admission.impresario_policy import (
     ImpresarioPolicy,
     ResolvedRoles,
     SeatSpec,
-    load_impresario_policy,
     resolve_roles,
 )
 

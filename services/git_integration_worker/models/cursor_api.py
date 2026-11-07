@@ -153,6 +153,23 @@ class CursorDispatchRequest(BaseModel):
             "terminal closeout posts a pointer memo on that lane."
         ),
     )
+    ban_override: bool = Field(
+        default=False,
+        description=(
+            "Plan-carried model_bans waiver from team_dispatch admit "
+            "(requires ban_override_reason and model_ban_override_event_id)."
+        ),
+    )
+    ban_override_reason: str | None = Field(
+        default=None,
+        description="Audit reason paired with ban_override.",
+    )
+    model_ban_override_event_id: str | None = Field(
+        default=None,
+        description=(
+            "Event id from dispatch.model_ban.override emitted at Stargate admit."
+        ),
+    )
     _workspace_inherited_from: str | None = PrivateAttr(default=None)
 
     @property
