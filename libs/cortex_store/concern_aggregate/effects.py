@@ -140,8 +140,6 @@ def resolve_action_intent(
     """Create or return the canonical intent row for the tuple; enforces run monotonicity."""
     if run_generation < 0:
         raise StaleRunGenerationError("run_generation must be non-negative")
-    iid_t = as_intent_id  # validates prefix
-    del iid_t
     now_s = _iso_utc(now)
     conn.execute("BEGIN IMMEDIATE")
     try:
@@ -438,7 +436,14 @@ def admit_effect(
     resend_basis: str | None = None,
     resend_evidence: str | None = None,
 ) -> AdmitResult:
-    """Admit one effect attempt under lease fencing and hold policy; may replay succeeded."""
+    """Admit one effect under fencing and holds.
+
+    ``execution_allowed`` is true only for the inserting admit, an admit that consumes
+    an unconsumed retry decision, or an evidenced resend from ``admitted``. A repeat
+    admit with the same fingerprint and a current token writes nothing and returns
+    ``execution_allowed`` false. ``succeeded`` replays the stored receipt (``None`` when
+    the column is null) and never permits execution.
+    """
     _validate_resend_params(resend_basis, resend_evidence)
     as_request_id(request_id)
     intent_id = str(as_intent_id(intent_id))
@@ -455,8 +460,8 @@ def admit_effect(
     fault_injection.maybe_between_resolve_and_admit()
 
     conn.execute("BEGIN IMMEDIATE")
-    fault_injection.maybe_after_begin()
     try:
+        fault_injection.maybe_after_begin()
         eff_row = conn.execute(
             "SELECT material_fingerprint, state, attempt_count, attempts_json, receipt_json, recovery_json, fencing_token "
             "FROM concern_effects WHERE effect_key = ?",
@@ -473,7 +478,7 @@ def admit_effect(
 
             st = str(eff_row[1])
             if st == STATE_SUCCEEDED:
-                receipt = json.loads(eff_row[4]) if eff_row[4] else {}
+                receipt = json.loads(eff_row[4]) if eff_row[4] else None
                 conn.commit()
                 return AdmitResult(
                     effect_key=effect_key,
@@ -705,7 +710,7 @@ def record_outcome(
                         effect_key,
                     ),
                 )
-            elif st == STATE_SUCCEEDED:
+            else:
                 conn.execute(
                     "UPDATE concern_effects SET attempts_json = ?, updated_at = ? WHERE effect_key = ?",
                     (_dump_json_list(attempts), now_s, effect_key),
@@ -717,6 +722,11 @@ def record_outcome(
             conn.rollback()
             raise InvalidTransitionError(
                 "outcome on succeeded terminal", effect_key=effect_key
+            )
+        if st != STATE_ADMITTED:
+            conn.rollback()
+            raise InvalidTransitionError(
+                f"outcome only from admitted, got {st!r}", effect_key=effect_key
             )
 
         if outcome not in (STATE_SUCCEEDED, STATE_FAILED, STATE_OUTCOME_UNKNOWN):
@@ -817,6 +827,11 @@ def record_recovery_decision(
                 effect_key=effect_key,
             )
         recovery = _parse_json_list(row[1])
+        if _find_unconsumed_retry(recovery) is not None:
+            conn.rollback()
+            raise InvalidTransitionError(
+                "unconsumed retry decision already exists", effect_key=effect_key
+            )
         recovery.append(
             {
                 "decision": decision,
@@ -860,8 +875,10 @@ def set_hold(
     hold: dict[str, Any],
     authorized_by: str,
     record_ref: str,
+    now: datetime | None = None,
 ) -> None:
     """Journal a ``control_set`` hold; rejects unknown *control_key* before journal I/O."""
+    del now
     if control_key not in RECOGNIZED_HOLD_KEYS:
         raise ValueError(f"unsupported control_key for hold: {control_key!r}")
     if conn.in_transaction:
@@ -886,8 +903,14 @@ def clear_hold(
     control_key: str,
     authorized_by: str,
     record_ref: str,
+    now: datetime | None = None,
 ) -> None:
-    """Journal ``control_clear`` and reopen ``held`` intents when no hold keys remain."""
+    """Journal ``control_clear`` and reopen ``held`` intents when no hold keys remain.
+
+    A crash after the journal append and before the intent-state update leaves the
+    hold cleared in the journal while intents stay ``held`` until a later clear or
+    rebuild (A6).
+    """
     if control_key not in RECOGNIZED_HOLD_KEYS:
         raise ValueError(f"unsupported control_key for clear: {control_key!r}")
     if conn.in_transaction:
@@ -909,7 +932,12 @@ def clear_hold(
             conn.execute(
                 "UPDATE concern_action_intents SET state = ?, updated_at = ? "
                 "WHERE concern_id = ? AND state = ?",
-                (INTENT_OPEN, _iso_utc(datetime.now(tz=UTC)), concern_id, INTENT_HELD),
+                (
+                    INTENT_OPEN,
+                    _iso_utc(now if now is not None else datetime.now(tz=UTC)),
+                    concern_id,
+                    INTENT_HELD,
+                ),
             )
         conn.commit()
     except Exception:
