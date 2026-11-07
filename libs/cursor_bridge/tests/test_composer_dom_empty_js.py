@@ -38,11 +38,12 @@ function el(tag, props, kids) {{
         if (sel.includes('atom') && n.tagName === 'ATOM') return true;
         if (sel.includes('svg') && n.tagName === 'SVG') return true;
         if (sel.includes('a[href]') && n.tagName === 'A' && n.getAttribute('href')) return true;
-        const id = n.getAttribute('data-testid') || '';
-        const cls = String(n.className || '');
-        if (sel.includes('attachment') && (id.includes('attachment') || cls.includes('attachment'))) return true;
+        const id = (n.getAttribute('data-testid') || '').toLowerCase();
+        const cls = String(n.className || '').toLowerCase();
+        if (sel.includes('data-testid*="attachment"') && id.includes('attachment')) return true;
+        if (sel.includes('class*="attachment"') && cls.includes('attachment')) return true;
         if (sel.includes('file-chip') && id.includes('file-chip')) return true;
-        if (sel.includes('chip') && cls.includes('chip')) return true;
+        if (sel.includes('class*="chip"') && cls.includes('chip')) return true;
         return false;
       }}) || null;
     }},
@@ -171,6 +172,41 @@ def test_observed_trailing_break_without_editor_is_empty() -> None:
                     ],
                 },
                 {"tag": "A", "attrs": {"href": "https://example.test"}},
+            ],
+        },
+        {
+            "innerText": "\n",
+            "innerHTML": '<p contenteditable="false"><br class="ProseMirror-trailingBreak"></p>',
+            "children": [
+                {
+                    "tag": "P",
+                    "attrs": {"contenteditable": "false"},
+                    "children": [
+                        {
+                            "tag": "BR",
+                            "className": "ProseMirror-trailingBreak",
+                            "attrs": {"class": "ProseMirror-trailingBreak"},
+                        }
+                    ],
+                }
+            ],
+        },
+        {
+            "innerText": "\n",
+            "innerHTML": '<p class="attachment"><br class="ProseMirror-trailingBreak"></p>',
+            "children": [
+                {
+                    "tag": "P",
+                    "className": "attachment",
+                    "attrs": {"class": "attachment"},
+                    "children": [
+                        {
+                            "tag": "BR",
+                            "className": "ProseMirror-trailingBreak",
+                            "attrs": {"class": "ProseMirror-trailingBreak"},
+                        }
+                    ],
+                }
             ],
         },
     ],

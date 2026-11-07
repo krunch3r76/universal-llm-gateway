@@ -121,10 +121,18 @@ function ulgComposerDomEmpty(el) {
       && !!br
       && String(br.tagName || '') === 'BR'
       && brClass.indexOf('ProseMirror-trailingBreak') >= 0;
+    const structuralReject = (node) => {
+      if (!node) return false;
+      const ce = node.getAttribute && node.getAttribute('contenteditable');
+      if (String(ce || '') === 'false') return true;
+      const cls = String((node.getAttribute && node.getAttribute('class')) || node.className || '');
+      if (cls.indexOf('attachment') >= 0) return true;
+      return [...(node.children || [])].some(structuralReject);
+    };
     const foreign = typeof el.querySelector === 'function' && el.querySelector(
       'img, atom, svg, a[href], [data-testid*="attachment" i], [data-testid*="file-chip" i], [class*="chip" i]'
     );
-    if (onlyTrailingBreak && !foreign) return true;
+    if (onlyTrailingBreak && !foreign && !structuralReject(el)) return true;
   }
 
   return false;
