@@ -322,21 +322,31 @@ async def test_coord_admit_mirrors_worker_scoped_subscription(
     assert posts[0]["agent_id"] != coord_row["agent_id"]
 
 
+@pytest.mark.parametrize(
+    "coord_parent_agent_id",
+    [
+        pytest.param("composer-impresario-dbbfc4c2", id="parent_set"),
+        pytest.param("omit_key", id="parent_key_missing"),
+        pytest.param(None, id="parent_none"),
+    ],
+)
 @pytest.mark.asyncio
 async def test_coord_admit_mirror_skips_unresolved_worker_agent_id(
     monkeypatch: pytest.MonkeyPatch,
     caplog: pytest.LogCaptureFixture,
+    coord_parent_agent_id: str | None,
 ) -> None:
     post_turn = AsyncMock()
-    coord_row = {
+    coord_row: dict = {
         "agent": "cursor",
         "thread_scope": "20995",
         "state": "subscribed",
         "surface": "cursor",
         "display": "orion-node",
         "title": "20995 impresario",
-        "agent_id": "composer-impresario-dbbfc4c2",
     }
+    if coord_parent_agent_id != "omit_key":
+        coord_row["agent_id"] = coord_parent_agent_id
     ctx_holder: list[_ClientCtx] = []
 
     def _factory(*_a: object, **_k: object) -> _ClientCtx:
@@ -367,6 +377,7 @@ async def test_coord_admit_mirror_skips_unresolved_worker_agent_id(
             caller_agent="composer-impresario-dbbfc4c2",
             contract="implement",
         )
+    post_turn.assert_awaited_once()
     posts = []
     for ctx in ctx_holder:
         posts.extend(ctx.subscription_posts)
