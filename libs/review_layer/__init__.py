@@ -10,12 +10,12 @@ from review_layer.detect import (
     implicit_target_heads,
     resolve_primary_target,
 )
+from review_layer.layer_gc import gc_expired_layers
 from review_layer.materialize import (
     ReviewLayerManifest,
     ReviewTargetUnreachable,
     any_cited_layer_present,
     format_review_layer_prompt_block,
-    gc_expired_layers,
     layer_uri,
     materialize_review_layer,
     review_layer_exists,

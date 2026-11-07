@@ -1,4 +1,4 @@
-"""API-role admit hook: detection, async materialize, and 422 mapping."""
+"""API-role admit hook: detection, async materialize, and Stargate error mapping."""
 
 from __future__ import annotations
 
@@ -128,3 +128,25 @@ async def apply_review_layer_admit(
         payload["truncated"] = True
     block = format_review_layer_prompt_block(layer_id=request_id, manifest=manifest)
     return prompt_text + block, payload
+
+
+async def bind_api_prompt(
+    request_id: str,
+    prompt_text: str,
+    frontier_error: type[Any],
+) -> tuple[str, dict[str, Any] | None]:
+    """Run admit and raise ``frontier_error`` (422) on review-layer failures."""
+    try:
+        return await apply_review_layer_admit(
+            request_id=request_id,
+            prompt_text=prompt_text,
+        )
+    except ReviewLayerAdmitError as exc:
+        raise frontier_error(
+            request_id=request_id,
+            field=exc.field,
+            reason=exc.reason,
+            status_code=422,
+            code="REVIEW_TARGET_UNREACHABLE",
+            details={"kind": exc.kind, "fix_hint": exc.fix_hint},
+        ) from exc

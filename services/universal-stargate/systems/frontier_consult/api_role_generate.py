@@ -189,40 +189,11 @@ async def dispatch_api_role_generate(
     last_user = prompt_resolution.text
     review_layer_payload: dict[str, Any] | None = None
     if contract in ("code-review", "check-review", "delivery-review"):
-        try:
-            from review_layer.hook import (
-                ReviewLayerAdmitError,
-                apply_review_layer_admit,
-            )
-        except Exception as exc:
-            raise FrontierEndpointError(
-                request_id=request_id,
-                field="prompt",
-                reason="review layer module unavailable",
-                status_code=422,
-                code="REVIEW_TARGET_UNREACHABLE",
-                details={
-                    "kind": "infra",
-                    "fix_hint": (
-                        "Retry after Stargate reload; or hand-materialize "
-                        "cortex://tmp/review-layers/<id>/ and cite it."
-                    ),
-                },
-            ) from exc
-        try:
-            last_user, review_layer_payload = await apply_review_layer_admit(
-                request_id=request_id,
-                prompt_text=last_user,
-            )
-        except ReviewLayerAdmitError as exc:
-            raise FrontierEndpointError(
-                request_id=request_id,
-                field=exc.field,
-                reason=exc.reason,
-                status_code=422,
-                code="REVIEW_TARGET_UNREACHABLE",
-                details={"kind": exc.kind, "fix_hint": exc.fix_hint},
-            ) from exc
+        from review_layer.stargate_bridge import review_layer_api_admit
+
+        last_user, review_layer_payload = await review_layer_api_admit(
+            request_id, last_user, FrontierEndpointError
+        )
 
     provenance_missing = (
         admit_provenance.missing if admit_provenance is not None else ()
