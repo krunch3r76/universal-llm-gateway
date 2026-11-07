@@ -35,9 +35,10 @@ _GROK_WILDCARD_RESERVED = frozenset(
 class SubscribeError(Exception):
     """Refused subscribe. ``code`` is the HTTP detail code."""
 
-    def __init__(self, code: str) -> None:
+    def __init__(self, code: str, **extra: Any) -> None:
         super().__init__(code)
         self.code = code
+        self.extra = extra
 
 
 def _row(row: sqlite3.Row | None) -> dict[str, Any] | None:
@@ -100,12 +101,44 @@ def _same(current: dict[str, Any], nxt: dict[str, Any]) -> bool:
     return all(current.get(k) == nxt.get(k) for k in _IDENTITY)
 
 
+def _resolve_cursor_display_for_subscribe(
+    *,
+    display: str | None,
+    agent_id: str | None,
+    thread_scope: str,
+) -> str:
+    from bus_watch.cursor_tab_whereami import resolve_cursor_tab_whereami
+
+    placement = resolve_cursor_tab_whereami(
+        transcript_id=agent_id,
+        root_id=thread_scope,
+    )
+    resolved = str(placement.get("subscription_display") or "").strip() or None
+    basis = str(placement.get("basis") or "").strip()
+    supplied = str(display or "").strip() or None
+    if not supplied:
+        if not resolved:
+            raise SubscribeError("endpoint_display_unresolved")
+        return resolved
+    if (
+        basis not in {"", "unresolved", "default"}
+        and resolved
+        and supplied != resolved
+    ):
+        raise SubscribeError(
+            "display_mismatch",
+            resolved_display=resolved,
+            supplied_display=supplied,
+        )
+    return supplied
+
+
 def subscribe_endpoint(
     *,
     agent: str,
     thread_scope: str,
     surface: str,
-    display: str,
+    display: str | None = None,
     title: str | None = None,
     agent_id: str | None = None,
     bound_by: str | None = None,
@@ -124,13 +157,22 @@ def subscribe_endpoint(
         raise SubscribeError("endpoint_wildcard_refused")
     if not (title or agent_id):
         raise SubscribeError("endpoint_title_or_agent_required")
+    display_val = str(display or "").strip() or None
+    if surface_raw == "cursor" and agent_id:
+        display_val = _resolve_cursor_display_for_subscribe(
+            display=display_val,
+            agent_id=agent_id,
+            thread_scope=scope,
+        )
+    elif not display_val:
+        raise SubscribeError("endpoint_surface_display_required")
     if surface_raw == "cse":
         if not agent_id:
             raise SubscribeError("endpoint_title_or_agent_required")
         surface_n = "cse"
-        display_n = str(display or "cse").strip().lower() or "cse"
+        display_n = str(display_val or "cse").strip().lower() or "cse"
     else:
-        target = normalize_target(display, surface)
+        target = normalize_target(display_val, surface)
         if not target.get("ok"):
             raise SubscribeError("endpoint_target_refused")
         surface_n = str(target["app"])
@@ -211,6 +253,14 @@ def subscribe_endpoint(
                     (canon, scope),
                 ).fetchone()
             )
+        elif (
+            current_d is not None
+            and current_d.get("state") == "subscribed"
+            and not _same(current_d, proposed)
+        ):
+            prior_for_response = current_d
+            if current_d.get("id") is not None:
+                prior_subscription_id = int(current_d["id"])
         cur = conn.execute(
             "INSERT INTO agent_endpoint_subscriptions "
             "(agent, thread_scope, state, surface, display, title, agent_id, bound_by, evidence) "

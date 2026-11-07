@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from typing import Any
 
 from agent_seat.registry import normalize_bus_address
@@ -54,7 +55,18 @@ class SubscribeBody(BaseModel):
         actuation = str(self.actuation or "").strip().lower()
         if actuation == "chatgpt_work":
             return self
-        if not str(self.surface or "").strip() or not str(self.display or "").strip():
+        if not str(self.surface or "").strip():
+            raise ValueError("endpoint_surface_display_required")
+        surface = str(self.surface or "").strip().lower()
+        agent_id = str(self.agent_id or "").strip()
+        display = str(self.display or "").strip()
+        if not display:
+            uuid_re = re.compile(
+                r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+                re.I,
+            )
+            if surface == "cursor" and agent_id and uuid_re.match(agent_id):
+                return self
             raise ValueError("endpoint_surface_display_required")
         return self
 
@@ -68,9 +80,11 @@ class UnsubscribeBody(BaseModel):
 
 
 def _refuse(exc: SubscribeError) -> HTTPException:
+    detail: dict[str, Any] = {"code": exc.code}
+    detail.update(getattr(exc, "extra", {}) or {})
     return HTTPException(
         status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-        detail={"code": exc.code},
+        detail=detail,
     )
 
 

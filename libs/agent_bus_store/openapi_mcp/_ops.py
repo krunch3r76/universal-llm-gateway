@@ -38,5 +38,6 @@ AGENT_BUS_DISPATCH_OPS: frozenset[str] = frozenset(
         "subscribe",
         "unsubscribe",
         "subscriptions",
+        "whereami",
     }
 )

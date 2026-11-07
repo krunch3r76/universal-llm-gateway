@@ -197,8 +197,11 @@ def test_resubscribe_same_agent_id_no_prior_subscription_id(client: TestClient) 
         agent_id=agent_id,
     )
     assert second.status_code == 200
-    assert second.json()["prior_subscription_id"] is None
-    assert second.json()["prior"] is None
+    assert second.json()["prior_subscription_id"] == first.json()["row"]["id"]
+    prior = second.json()["prior"]
+    assert prior is not None
+    assert prior["state"] == "subscribed"
+    assert prior["title"] == f"{thread} "
 
 
 def test_identical_resubscribe_and_unsubscribe_idempotent(client: TestClient) -> None:
@@ -212,8 +215,9 @@ def test_identical_resubscribe_and_unsubscribe_idempotent(client: TestClient) ->
         assert again.json()["appended"] is False
         changed = _sub(client, thread_scope=thread, title="renamed")
         assert changed.json()["appended"] is True
-        assert changed.json()["prior"] is None
-        assert changed.json()["prior_subscription_id"] is None
+        assert changed.json()["prior"] is not None
+        assert changed.json()["prior"]["title"] == "lane"
+        assert changed.json()["prior_subscription_id"] is not None
         assert sub_emit.call_count == 2
     with patch(
         "agent_bus_store.routes.threads.subscriptions.emit_endpoint_unsubscribed"
