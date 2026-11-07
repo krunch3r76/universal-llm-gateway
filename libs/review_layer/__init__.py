@@ -5,6 +5,7 @@ from __future__ import annotations
 from review_layer.detect import (
     ReviewTarget,
     detect_review_targets,
+    distinct_explicit_review_threads,
     implicit_lane_thread_ids,
     resolve_primary_target,
 )
@@ -27,6 +28,7 @@ __all__ = [
     "ReviewTargetUnreachable",
     "default_lane_branch",
     "detect_review_targets",
+    "distinct_explicit_review_threads",
     "format_review_target_block",
     "hub_repo_path",
     "implicit_lane_thread_ids",

@@ -117,7 +117,9 @@ def test_resolve_merged_returns_none(tmp_path: Path) -> None:
 
 def test_missing_worktree_target_error(tmp_path: Path) -> None:
     repo = tmp_path / "repo"
+    wt_root = tmp_path / "wt"
     repo.mkdir()
+    wt_root.mkdir()
     _init_lane_repo(repo, "2")
     with pytest.raises(ReviewTargetUnreachable):
         resolve_review_target(
@@ -125,7 +127,7 @@ def test_missing_worktree_target_error(tmp_path: Path) -> None:
             head_ref=None,
             base_ref=None,
             repo=repo,
-            worktree_root_path=tmp_path / "wt",
+            worktree_root_path=wt_root,
         )
 
 
@@ -159,6 +161,8 @@ def test_format_review_target_lists_fs_calls(tmp_path: Path) -> None:
     )
     assert 'thread="5"' in block
     assert "universal-llm-gateway/lane.txt" in block
+    assert "op=recent_commits" in block
+    assert "repo-relative paths" in block
 
 
 def test_validate_git_ref_rejects_dash() -> None:
@@ -166,3 +170,97 @@ def test_validate_git_ref_rejects_dash() -> None:
 
     with pytest.raises(ReviewTargetUnreachable):
         validate_git_ref("-dirty")
+
+
+def test_worktree_path_implicit_lane() -> None:
+    body = "/mnt/x/ulg-arc-worktrees/universal-llm-gateway/lane-44/wt\n"
+    t = resolve_primary_target(detect_review_targets(body))
+    assert t is not None
+    assert t.thread_id == "44"
+    assert t.kind == "worktree_lane"
+
+
+def test_multiple_review_thread_ambiguous() -> None:
+    body = "review_thread: 1\nreview_thread: 2\n"
+    from review_layer.hook import ReviewLayerAdmitError, _resolve_sync
+
+    with pytest.raises(ReviewLayerAdmitError) as exc:
+        _resolve_sync(body)
+    assert exc.value.kind == "ambiguous"
+
+
+def test_merged_explicit_head_branch_deleted(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _init_lane_repo(repo, "7")
+    subprocess.check_call(["git", "merge", "cursor-sdk/lane-7", "-m", "m"], cwd=repo)
+    head = resolve_commit(repo, "master")
+    subprocess.check_call(["git", "branch", "-D", "cursor-sdk/lane-7"], cwd=repo)
+    assert (
+        resolve_review_target(
+            thread_id="7",
+            head_ref=head,
+            base_ref=None,
+            repo=repo,
+            worktree_root_path=tmp_path / "wt",
+        )
+        is None
+    )
+
+
+def test_worktree_root_missing_infra(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _init_lane_repo(repo, "8")
+    missing = tmp_path / "no-mount"
+    monkeypatch.setenv("GIT_INTEGRATION_WORKTREE_ROOT", str(missing))
+    with pytest.raises(ReviewLayerInfraError):
+        resolve_review_target(
+            thread_id="8",
+            head_ref=None,
+            base_ref=None,
+            repo=repo,
+        )
+
+
+def test_merge_base_empty_target(tmp_path: Path) -> None:
+    from review_layer.git_io import merge_base
+
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    subprocess.check_call(["git", "init", "-b", "master"], cwd=repo)
+    subprocess.check_call(["git", "config", "user.email", "t@t.com"], cwd=repo)
+    subprocess.check_call(["git", "config", "user.name", "t"], cwd=repo)
+    (repo / "f").write_text("a\n", encoding="utf-8")
+    subprocess.check_call(["git", "add", "f"], cwd=repo)
+    subprocess.check_call(["git", "commit", "-qm", "a"], cwd=repo)
+    sha_a = resolve_commit(repo, "master")
+    subprocess.check_call(["git", "checkout", "--orphan", "orphan"], cwd=repo)
+    (repo / "f").write_text("b\n", encoding="utf-8")
+    subprocess.check_call(["git", "add", "f"], cwd=repo)
+    subprocess.check_call(["git", "commit", "-qm", "b"], cwd=repo)
+    sha_b = resolve_commit(repo, "orphan")
+    with pytest.raises(ReviewTargetUnreachable):
+        merge_base(repo, sha_a, sha_b)
+
+
+@pytest.mark.asyncio
+async def test_hook_single_implicit_lane(tmp_path: Path) -> None:
+    from review_layer.hook import apply_review_target_admit
+
+    repo = tmp_path / "repo"
+    wt = tmp_path / "wt"
+    repo.mkdir()
+    wt.mkdir()
+    _init_lane_repo(repo, "12")
+    (wt / "universal-llm-gateway" / "lane-12").mkdir(parents=True)
+    import os
+
+    os.environ["GIT_INTEGRATION_SOURCE_REPO"] = str(repo)
+    os.environ["GIT_INTEGRATION_WORKTREE_ROOT"] = str(wt)
+    prompt, payload = await apply_review_target_admit(
+        prompt_text="work on cursor-sdk/lane-12\n",
+    )
+    assert payload is not None
+    assert payload["thread"] == "12"
+    assert "## review_target" in prompt

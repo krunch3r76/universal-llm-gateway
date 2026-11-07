@@ -189,7 +189,7 @@ async def dispatch_api_role_generate(
     last_user = prompt_resolution.text
     review_target_payload: dict[str, Any] | None = None
     if contract in ("code-review", "check-review", "delivery-review"):
-        from review_layer.hook import review_target_api_admit
+        from .review_target_admit import review_target_api_admit
 
         last_user, review_target_payload = await review_target_api_admit(
             request_id, last_user, FrontierEndpointError

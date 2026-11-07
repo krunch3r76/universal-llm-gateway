@@ -164,6 +164,7 @@ async def test_worktree_missing_422(tmp_path: Path) -> None:
     hub = tmp_path / "hub"
     wt = tmp_path / "wt"
     hub.mkdir()
+    wt.mkdir()
     _init_hub_with_lane(hub, "2")
 
     prompt = "review_thread: 2\n"
@@ -305,6 +306,171 @@ async def test_git_infra_422(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) ->
         with pytest.raises(FrontierEndpointError) as exc_info:
             await dispatch_api_role_generate(
                 request_id="req-infra",
+                body=body,
+                response=response,
+            )
+    assert exc_info.value.details["kind"] == "infra"
+
+
+@pytest.mark.asyncio
+async def test_review_head_only_merged_no_op(tmp_path: Path) -> None:
+    hub = tmp_path / "hub"
+    hub.mkdir()
+    _init_hub_with_lane(hub, "10")
+    subprocess.check_call(["git", "merge", "cursor-sdk/lane-10", "-m", "m"], cwd=hub)
+    head = subprocess.check_output(
+        ["git", "rev-parse", "master"], cwd=hub, text=True
+    ).strip()
+    prompt = f"review_head: {head}\n"
+    body = TeamDispatchGenerateBody(
+        op="generate",
+        role="synthesizer",
+        dispatch_thread_id="thread:dispatch:test",
+        job="code-review",
+        model="anthropic/claude-sonnet-5-5",
+        prompt=prompt,
+        caller_agent="cursor",
+    )
+    response = Response()
+    patches = _patches(prompt, hub=hub, wt_root=tmp_path / "wt")
+    with patches[0], patches[1] as dispatch, patches[2], patches[3], patches[4], patches[5], patches[6], patches[7]:
+        from .api_role_generate import dispatch_api_role_generate
+
+        result = await dispatch_api_role_generate(
+            request_id="req-head-ok",
+            body=body,
+            response=response,
+        )
+    assert "review_target" not in result
+    assert "## review_target" not in dispatch.await_args.args[0].messages[0]["content"]
+
+
+@pytest.mark.asyncio
+async def test_review_head_only_unmerged_422(tmp_path: Path) -> None:
+    hub = tmp_path / "hub"
+    hub.mkdir()
+    _init_hub_with_lane(hub, "11")
+    head = subprocess.check_output(
+        ["git", "rev-parse", "cursor-sdk/lane-11"], cwd=hub, text=True
+    ).strip()
+    prompt = f"review_head: {head}\n"
+    body = TeamDispatchGenerateBody(
+        op="generate",
+        role="synthesizer",
+        dispatch_thread_id="thread:dispatch:test",
+        job="check-review",
+        model="anthropic/claude-sonnet-5-5",
+        prompt=prompt,
+        caller_agent="cursor",
+    )
+    response = Response()
+    patches = _patches(prompt, hub=hub, wt_root=tmp_path / "wt")
+    with patches[0], patches[1], patches[2], patches[3], patches[4], patches[5], patches[6], patches[7]:
+        from .api_role_generate import dispatch_api_role_generate
+
+        with pytest.raises(FrontierEndpointError) as exc_info:
+            await dispatch_api_role_generate(
+                request_id="req-head-bad",
+                body=body,
+                response=response,
+            )
+    assert exc_info.value.details["kind"] == "target"
+
+
+@pytest.mark.asyncio
+async def test_delivery_review_contract(tmp_path: Path) -> None:
+    hub = tmp_path / "hub"
+    wt = tmp_path / "wt"
+    hub.mkdir()
+    wt.mkdir()
+    _init_hub_with_lane(hub, "6")
+    (wt / "universal-llm-gateway" / "lane-6").mkdir(parents=True)
+    prompt = "review_thread: 6\n"
+    body = TeamDispatchGenerateBody(
+        op="generate",
+        role="synthesizer",
+        dispatch_thread_id="thread:dispatch:test",
+        job="delivery-review",
+        model="anthropic/claude-sonnet-5-5",
+        prompt=prompt,
+        caller_agent="cursor",
+    )
+    response = Response()
+    patches = _patches(prompt, hub=hub, wt_root=wt)
+    with patches[0], patches[1], patches[2], patches[3], patches[4], patches[5], patches[6], patches[7]:
+        from .api_role_generate import dispatch_api_role_generate
+
+        result = await dispatch_api_role_generate(
+            request_id="req-del",
+            body=body,
+            response=response,
+        )
+    assert "review_target" in result
+
+
+@pytest.mark.asyncio
+async def test_source_repo_non_git_infra(tmp_path: Path) -> None:
+    not_git = tmp_path / "plain"
+    not_git.mkdir()
+    prompt = "review_head: deadbeef\n"
+    body = TeamDispatchGenerateBody(
+        op="generate",
+        role="synthesizer",
+        dispatch_thread_id="thread:dispatch:test",
+        job="code-review",
+        model="anthropic/claude-sonnet-5-5",
+        prompt=prompt,
+        caller_agent="cursor",
+    )
+    response = Response()
+    patches = _patches(prompt, hub=not_git, wt_root=tmp_path / "wt")
+    with patches[0], patches[1], patches[2], patches[3], patches[4], patches[5], patches[6], patches[7]:
+        from .api_role_generate import dispatch_api_role_generate
+
+        with pytest.raises(FrontierEndpointError) as exc_info:
+            await dispatch_api_role_generate(
+                request_id="req-norepo",
+                body=body,
+                response=response,
+            )
+    assert exc_info.value.details["kind"] == "infra"
+
+
+@pytest.mark.asyncio
+async def test_hook_import_infra_422(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    import builtins
+    import sys
+
+    real_import = builtins.__import__
+
+    def broken_import(name: str, *args: object, **kwargs: object):
+        if name == "review_layer.hook":
+            raise ImportError("simulated hook import failure")
+        return real_import(name, *args, **kwargs)
+
+    sys.modules.pop("review_layer.hook", None)
+    monkeypatch.setattr(builtins, "__import__", broken_import)
+    hub = tmp_path / "hub"
+    hub.mkdir()
+    _init_hub_with_lane(hub, "20")
+    prompt = "review_thread: 20\n"
+    body = TeamDispatchGenerateBody(
+        op="generate",
+        role="synthesizer",
+        dispatch_thread_id="thread:dispatch:test",
+        job="code-review",
+        model="anthropic/claude-sonnet-5-5",
+        prompt=prompt,
+        caller_agent="cursor",
+    )
+    response = Response()
+    patches = _patches(prompt, hub=hub, wt_root=tmp_path / "wt")
+    with patches[0], patches[1], patches[2], patches[3], patches[4], patches[5], patches[6], patches[7]:
+        from .api_role_generate import dispatch_api_role_generate
+
+        with pytest.raises(FrontierEndpointError) as exc_info:
+            await dispatch_api_role_generate(
+                request_id="req-import",
                 body=body,
                 response=response,
             )

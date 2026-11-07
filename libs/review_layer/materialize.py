@@ -37,6 +37,14 @@ def worktree_root() -> Path:
     return _DEFAULT_WORKTREE_ROOT.resolve()
 
 
+def require_worktree_root(root: Path | None = None) -> Path:
+    """Ensure the configured worktree root exists (missing mount → infra)."""
+    base = (root or worktree_root()).resolve()
+    if not base.is_dir():
+        raise ReviewLayerInfraError("worktree root unavailable")
+    return base
+
+
 def lane_worktree_path(thread_id: str, root: Path | None = None) -> Path:
     """Path to ``…/ulg-arc-worktrees/<repo>/lane-<thread>``."""
     base = root or worktree_root()
@@ -60,7 +68,6 @@ def resolve_review_target(
     branch = default_lane_branch(thread_id)
     head = head_ref or branch
     head_sha = resolve_commit(repo, head)
-    branch_sha = resolve_commit(repo, branch)
 
     for master_ref in ("master", "main"):
         try:
@@ -70,10 +77,18 @@ def resolve_review_target(
         if is_ancestor_of(repo, head_sha, master_sha):
             return None
 
+    try:
+        branch_sha = resolve_commit(repo, branch)
+    except ReviewTargetUnreachable as exc:
+        raise ReviewTargetUnreachable(
+            f"lane branch missing; add review_thread: or review_head:{head_sha}"
+        ) from exc
+
     if not is_ancestor_of(repo, head_sha, branch_sha):
         raise ReviewTargetUnreachable("head is not on the lane branch")
 
-    wt = lane_worktree_path(thread_id, worktree_root_path)
+    root = require_worktree_root(worktree_root_path)
+    wt = lane_worktree_path(thread_id, root)
     if not wt.is_dir():
         raise ReviewTargetUnreachable("lane worktree is not present")
 
@@ -122,8 +137,13 @@ def format_review_target_block(
         f"head_sha: {head_sha}",
         f"diff: {base_sha}..{head_sha}",
         "",
-        "Read lane files via fs(sandbox=\"workspaces\", thread=\"" + thread_id + "\", …).",
-        "list, search, and recent_commits accept the same thread=.",
+        "Lane fs(sandbox=\"workspaces\", thread=\"" + thread_id + "\", …):",
+        "- op=read takes path=universal-llm-gateway/<rel>",
+        "- op=list and op=search take repo-relative paths (no universal-llm-gateway/ prefix)",
+        f'- op=recent_commits on thread="{thread_id}"; if tip differs from head_sha above, '
+        "state the mismatch in the verdict (there is no diff tool)",
+        "",
+        "On hub master, use the same op=read path without thread=.",
         "",
         "files:",
     ]

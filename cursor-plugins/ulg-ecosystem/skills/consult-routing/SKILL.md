@@ -266,7 +266,10 @@ GIW Auto lane `resolve_desired_model(auto)` for judgment contracts).
 `prompt`|`packet_path`|`sidecar_ref`; `reasoning_effort=high`. Omit `purpose` and **`role`**
 — `role=reviewer` → 422 `job_unknown`. The registry **seat** column is omit-model routing,
 not a `team_dispatch` `role=` argument. API-substrate critics read hub master by default
-and lane files via fs(sandbox=workspaces, thread=<lane thread>, …). Packets name
+and lane files via fs(sandbox=workspaces, thread=<lane thread>, …). op=read uses
+path=universal-llm-gateway/<rel>; op=list and op=search use repo-relative paths;
+op=recent_commits uses the same thread= and must match head_sha or the verdict
+notes mismatch. Hub master uses the same read path without thread=. Packets name
 review_thread:, review_head:, review_base: and/or implicit lane tokens. Admit outcomes:
 review_target block with fs(thread=) calls, no-op when merged, or **422
 REVIEW_TARGET_UNREACHABLE** (kind target|ambiguous|infra). Removed worktrees: fs op=copy

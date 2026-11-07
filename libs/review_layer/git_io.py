@@ -48,6 +48,12 @@ def validate_git_ref(ref: str) -> None:
         raise ReviewTargetUnreachable("invalid git ref")
 
 
+def _git_env() -> dict[str, str]:
+    env = os.environ.copy()
+    env["LC_ALL"] = "C"
+    return env
+
+
 def _git_run_bytes(repo: Path, *args: str) -> bytes:
     try:
         proc = subprocess.run(
@@ -55,12 +61,20 @@ def _git_run_bytes(repo: Path, *args: str) -> bytes:
             capture_output=True,
             timeout=_GIT_TIMEOUT_S,
             check=False,
+            env=_git_env(),
         )
     except FileNotFoundError as exc:
         raise ReviewLayerInfraError("git executable missing") from exc
     except subprocess.TimeoutExpired as exc:
         raise ReviewLayerInfraError("git command timed out") from exc
     if proc.returncode != 0:
+        if (
+            args
+            and args[0] == "merge-base"
+            and proc.returncode == 1
+            and not (proc.stdout or proc.stderr or b"").strip()
+        ):
+            raise ReviewTargetUnreachable("no merge-base")
         err = (proc.stderr or proc.stdout or b"git failed").decode(
             "utf-8", errors="replace"
         ).lower()
@@ -108,6 +122,7 @@ def is_ancestor_of(repo: Path, ancestor: str, descendant: str) -> bool:
             capture_output=True,
             timeout=_GIT_TIMEOUT_S,
             check=False,
+            env=_git_env(),
         )
     except FileNotFoundError as exc:
         raise ReviewLayerInfraError("git executable missing") from exc
@@ -128,6 +143,7 @@ def diff_name_only_z(repo: Path, base_sha: str, head_sha: str) -> tuple[str, ...
         "--name-only",
         "-z",
         "--no-renames",
+        "--diff-filter=d",
         f"{base_sha}..{head_sha}",
     )
     paths: list[str] = []

@@ -42,6 +42,13 @@ class DetectionResult:
     explicit_base: str | None = None
 
 
+def distinct_explicit_review_threads(body: str) -> tuple[str, ...]:
+    """Distinct thread ids from line-start ``review_thread:`` tokens."""
+    if not body:
+        return ()
+    return tuple(sorted({m.group(1) for m in _REVIEW_THREAD.finditer(body)}))
+
+
 def detect_review_targets(body: str) -> DetectionResult:
     """Extract review targets from explicit tokens in a resolved prompt body."""
     if not body:
