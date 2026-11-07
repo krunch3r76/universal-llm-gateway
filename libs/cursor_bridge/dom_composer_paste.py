@@ -200,20 +200,23 @@ function ulgComposerSendRoot(el) {
     });
     return count > 1;
   };
-  const hasSendableButton = (root) => {
-    if (!root || typeof root.querySelector !== 'function') return false;
-    return !!(root.querySelector('button') || root.querySelector('[role=button]'));
-  };
+  const ULG_SEND_BTN_SELECTORS = [
+    'button[aria-label="Send message"]:not([disabled])',
+    'button[aria-label="Send prompt"]:not([disabled])',
+    'button[aria-label="Send"]:not([disabled])',
+    'button[data-testid="send-button"]:not([disabled])',
+    'button[type="submit"]:not([disabled])',
+  ];
   let cur = el.parentElement;
   for (let step = 0; cur && step < 8; step += 1, cur = cur.parentElement) {
     if (cur === document.body || cur === document.documentElement) break;
-    if (!hasSendableButton(cur)) continue;
     if (ulgHasForeignForm(cur, el)) continue;
     if (ulgHasForeignTextControl(cur, el)) continue;
     if (hasSecondComposer(cur)) continue;
+    if (!ulgFindSendBtn(cur, el, ULG_SEND_BTN_SELECTORS)) continue;
     return cur;
   }
-  return el.parentElement || null;
+  return null;
 }
 """
 
@@ -537,7 +540,11 @@ def _set_composer_body(
 def _click_send_own_draft_body(
     selector: str, *, draft_writer: str = "", abort_nonce: str = ""
 ) -> str:
-    """Send only when composer draft matches this writer's ourDraftSig."""
+    """Send only when composer draft matches this writer's ourDraftSig.
+
+    Uses the same bounded ``ulgComposerSendRoot`` ancestor walk and
+    ``ulgFindSendBtn`` eligible-control filter as ``_click_send_body``.
+    """
     find = _find_composer_js(selector)
     btn_sels = json.dumps(list(_SEND_BTN_SELECTORS))
     expect_writer = json.dumps(str(draft_writer or ""))
@@ -568,7 +575,7 @@ def _click_send_own_draft_body(
         "if(sendGivenUp())"
         "{cleanup();return{ok:false,reason:'cdp_eval_timeout',send_clicked:false};}"
         "const root=ulgComposerSendRoot(el);"
-        "if(!root){cleanup();return{ok:false,reason:'no_composer',send_clicked:false};}"
+        "if(!root){cleanup();return{ok:false,reason:'no_send_button',send_clicked:false};}"
         f"const btnSels={btn_sels};"
         "const btn=ulgFindSendBtn(root,el,btnSels);"
         "if(!btn){cleanup();return{ok:false,reason:'no_send_button',send_clicked:false};}"
@@ -627,22 +634,15 @@ def _click_send_body(
 ) -> str:
     """Build async page JS that polls for an enabled send control after insert.
 
-    Returns a ``(async () => …)()`` expression (Promise) for CDP ``Runtime.evaluate``
-    with ``awaitPromise=True``. Python must evaluate ``_composer_send_permit_expression``
-    for this ``abort_nonce`` before dispatching this script. The permit deadline lives
-    on the page clock only; this script does not restamp it. Cancel cannot pre-empt
-    the synchronous prefix: if the send button is found on the first scan, ``btn.click()``
-    runs before the first ``await``, so a nonce mark still queued on CDP cannot prevent
-    that click — the stamped permit is what ``sendGivenUp()`` reads first.
+    Ancestor scope comes from ``ulgComposerSendRoot`` (≤8 parents, no body/html,
+    no foreign form/textarea/input/second composer, only roots with an eligible
+    labelled send). ``ulgFindSendBtn`` rejects Stop-labelled controls and limits
+    generic ``type=submit`` to the composer's own ``<form>``.
 
-    Immediate ``no_composer`` and ``composer_text_mismatch`` results do not wait. After
-    the first scan miss, each retry awaits ``setTimeout`` for ``SEND_BTN_POLL_INTERVAL_MS``
-    up to ``SEND_BTN_WAIT_CEILING_MS``. Final ``no_send_button`` includes a ``census``
-    object (``buttons`` capped at 20, each ``aria_label``, ``data_testid``, and ``type``
-    sliced to ``SEND_BTN_CENSUS_ATTR_CAP``, ``buttons_total`` uncapped). The poll
-    returns ``cdp_eval_timeout`` without clicking when the permit is missing or expired,
-    or when ``abort_nonce`` is set on ``composerSendAbortNonces`` (that nonce only).
-    Every return path deletes this call's permit and abort-nonce map entries only.
+    Returns a ``(async () => …)()`` expression (Promise) for CDP ``Runtime.evaluate``
+    with ``awaitPromise=True``. Python must stamp ``_composer_send_permit_expression``
+    before dispatch. Final ``no_send_button`` includes a bounded ``census`` when
+    polling exhausts without a click.
     """
     find = _find_composer_js(selector)
     lj = json.dumps(_dom_paste_text(line, preserve_newlines=preserve_newlines))
@@ -677,7 +677,7 @@ def _click_send_body(
         "if(!composerEmpty&&(!normText||(normText!==normLine&&!wakeStale(normText)))){"
         "cleanup();return{ok:false,reason:'composer_text_mismatch',send_clicked:false};}}"
         "const root=ulgComposerSendRoot(el);"
-        "if(!root){cleanup();return{ok:false,reason:'no_composer',send_clicked:false};}"
+        "if(!root){cleanup();return{ok:false,reason:'no_send_button',send_clicked:false};}"
         f"const btnSels={btn_sels};"
         f"const waitCeilingMs={wait_ceiling};"
         f"const pollIntervalMs={poll_interval};"

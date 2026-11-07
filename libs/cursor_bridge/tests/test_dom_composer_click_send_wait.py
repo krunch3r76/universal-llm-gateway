@@ -110,16 +110,25 @@ class MockEl {{
     return this._parent;
   }}
   querySelector(sel) {{
+    const match = (node) => {{
+      if (!node) return null;
+      if (node._matchesSendSel && node._matchesSendSel(sel)) return node;
+      for (const c of node._children || []) {{
+        const hit = match(c);
+        if (hit) return hit;
+      }}
+      return null;
+    }};
     const isSendSel =
       sel.includes('Send') || sel.includes('send-button') || sel.includes('submit');
-    if (isSendSel) {{
-      sendSearchCount += 1;
-      if (appearAfterMs !== null) {{
-        return sendVisibleByTimer ? this._sendBtn : null;
-      }}
-      if (appearAfter < 0 || sendSearchCount < appearAfter) return null;
-      return this._sendBtn;
+    if (!isSendSel) return null;
+    sendSearchCount += 1;
+    if (appearAfterMs !== null) {{
+      return sendVisibleByTimer ? match(this) : null;
     }}
+    const hit = match(this);
+    if (hit) return hit;
+    if (appearAfter >= 0 && sendSearchCount < appearAfter) return null;
     return null;
   }}
   querySelectorAll(sel) {{
@@ -150,14 +159,29 @@ class MockEl {{
   }}
 }}
 
+function buttonMatches(sel) {{
+  const btn = this;
+  if (!btn || btn.tagName !== 'BUTTON') return false;
+  if (sel.includes(':not([disabled])') && btn.disabled) return false;
+  let m = sel.match(/aria-label="([^"]+)"/);
+  if (m) return btn.getAttribute('aria-label') === m[1];
+  m = sel.match(/data-testid="([^"]+)"/);
+  if (m) return btn.getAttribute('data-testid') === m[1];
+  if (sel.includes('type="submit"')) return btn.getAttribute('type') === 'submit';
+  return false;
+}}
+MockEl.prototype._matchesSendSel = buttonMatches;
 const sendBtn = new MockEl('button', {{
   attrs: {{ 'aria-label': 'Send', type: 'submit' }},
 }});
-const form = new MockEl('form', {{ children: extraButtons.map((b) => new MockEl('button', {{
+const mappedExtra = extraButtons.map((b) => new MockEl('button', {{
   attrs: b,
+  disabled: !!b.disabled,
   rect: b.non_zero_rect === false ? {{ width: 0, height: 0 }} : {{ width: 10, height: 10 }},
-}})) }});
-form._sendBtn = sendBtn;
+}}));
+const formChildren = mappedExtra.length ? mappedExtra : [sendBtn];
+const form = new MockEl('form', {{ children: formChildren }});
+form._sendBtn = mappedExtra.length ? null : sendBtn;
 const composer = new MockEl('div', {{
   innerText: composerText,
   form,
@@ -229,6 +253,10 @@ def _run_work_shape_click_send_js(
     detach_from_body: bool = False,
     stop_type_submit: bool = False,
     foreign_form_in_layout: bool = False,
+    include_footer_stop: bool = True,
+    empty_footer: bool = False,
+    textarea_in_editor_col: bool = False,
+    remove_file_chip: bool = False,
 ) -> dict[str, Any]:
     """ChatGPT Work layout: editor shell has no buttons; footer is several ancestors up."""
     writer = json.dumps(draft_writer)
@@ -316,6 +344,12 @@ class MockEl {{
       if (sel === '[contenteditable="true"]' && node.isContentEditable) out.push(node);
       if (sel === 'form' && node.tagName === 'FORM') out.push(node);
       if (
+        (sel === 'textarea,input' || sel === 'textarea, input')
+        && (node.tagName === 'TEXTAREA' || node.tagName === 'INPUT')
+      ) {{
+        out.push(node);
+      }}
+      if (
         sel === 'button,[role=button]'
         && (node.tagName === 'BUTTON' || (node.getAttribute && node.getAttribute('role') === 'button'))
       ) {{
@@ -351,8 +385,9 @@ const sendPrompt = new MockEl('button', {{
 const stopBtn = new MockEl('button', {{
   attrs: {json.dumps({'aria-label': 'Stop', 'type': 'submit' if stop_type_submit else 'button'})},
 }});
-const footerChildren = [stopBtn];
-if ({json.dumps(include_send_prompt and not stop_only)}) footerChildren.push(sendPrompt);
+const footerChildren = [];
+if ({json.dumps(include_footer_stop and not empty_footer)}) footerChildren.push(stopBtn);
+if ({json.dumps(include_send_prompt and not stop_only and not empty_footer)}) footerChildren.push(sendPrompt);
 const footer = new MockEl('div', {{ attrs: {{ class: 'ComposerLayoutFooter' }}, children: footerChildren }});
 const editorShell = new MockEl('div', {{ attrs: {{ class: 'text-size-chat LegacyExpandableEditor' }} }});
 const composer = new MockEl('div', {{
@@ -366,6 +401,14 @@ if ({json.dumps(extra_editable_in_editor_col)}) {{
   editorColChildren.push(new MockEl('div', {{
     attrs: {{ contenteditable: 'true', 'aria-label': 'foreign composer' }},
     innerText: 'other',
+  }}));
+}}
+if ({json.dumps(textarea_in_editor_col)}) {{
+  editorColChildren.push(new MockEl('textarea', {{ attrs: {{}}, innerText: '' }}));
+}}
+if ({json.dumps(remove_file_chip)}) {{
+  editorColChildren.push(new MockEl('button', {{
+    attrs: {{ 'aria-label': 'Remove file', type: 'button' }},
   }}));
 }}
 let misplacedSend = null;
@@ -579,6 +622,158 @@ def test_work_send_on_body_reachable_but_out_of_scope() -> None:
     assert result["__sendClickCount"] == 0
 
 
+_NODE_SKIP = pytest.mark.skipif(
+    subprocess.run(["which", "node"], capture_output=True).returncode != 0,
+    reason="node not installed",
+)
+
+
+def _work_fixture_kwargs(refusal: str) -> dict[str, Any]:
+    """Map review refusal shape names to Work harness flags."""
+    shapes: dict[str, dict[str, Any]] = {
+        "second_editable": {
+            "extra_editable_in_editor_col": True,
+            "empty_footer": True,
+            "include_send_prompt": False,
+            "include_footer_stop": False,
+        },
+        "textarea": {"textarea_in_editor_col": True},
+        "foreign_form": {"foreign_form_in_layout": True, "empty_footer": True},
+        "disabled_send": {"send_disabled": True},
+        "stop_only": {"stop_only": True, "include_send_prompt": False},
+        "stop_submit": {
+            "stop_only": True,
+            "include_send_prompt": False,
+            "stop_type_submit": True,
+        },
+        "attached_body": {
+            "include_footer_stop": False,
+            "empty_footer": True,
+            "send_on_document_body": True,
+        },
+    }
+    return dict(shapes[refusal])
+
+
+@_NODE_SKIP
+@pytest.mark.parametrize("refusal", ["second_editable", "textarea", "foreign_form", "disabled_send", "stop_only", "stop_submit", "attached_body"])
+def test_work_normal_send_refusals(refusal: str) -> None:
+    """Production normal-send script refuses rival scopes with zero Send prompt clicks."""
+    js = _click_send_body(
+        'div.ProseMirror[contenteditable="true"]', "wake", abort_nonce=f"n-{refusal}"
+    )
+    result = _run_work_shape_click_send_js(
+        js, composer_text="wake", **_work_fixture_kwargs(refusal)
+    )
+    assert result["ok"] is False
+    assert result["reason"] == "no_send_button"
+    assert result["__sendClickCount"] == 0
+
+
+@_NODE_SKIP
+@pytest.mark.parametrize("refusal", ["second_editable", "textarea", "foreign_form", "disabled_send", "stop_only", "stop_submit", "attached_body"])
+def test_work_owned_draft_send_refusals(refusal: str) -> None:
+    """Owned-draft production send script refuses the same rival scopes."""
+    js = _click_send_own_draft_body(
+        'div.ProseMirror[contenteditable="true"]',
+        draft_writer="orion-wake",
+        abort_nonce=f"o-{refusal}",
+    )
+    result = _run_work_shape_click_send_js(
+        js,
+        composer_text="owned",
+        draft_writer="orion-wake",
+        **_work_fixture_kwargs(refusal),
+    )
+    assert result["ok"] is False
+    assert result["reason"] in {"no_send_button", "foreign_draft", "draft_not_ours"}
+    assert result["__sendClickCount"] == 0
+
+
+@_NODE_SKIP
+def test_work_chip_before_footer_still_clicks_send_prompt() -> None:
+    """Unrelated inner-column buttons must not block labelled Send in footer."""
+    js = _click_send_body(
+        'div.ProseMirror[contenteditable="true"]', "wake", abort_nonce="chip"
+    )
+    result = _run_work_shape_click_send_js(
+        js, composer_text="wake", remove_file_chip=True
+    )
+    assert result["ok"] is True
+    assert result["__sendClickCount"] == 1
+
+
+@_NODE_SKIP
+def test_work_attached_body_send_layout_without_stop_refuses() -> None:
+    """Attached body Send with an empty layout must not click (body/html out of scope)."""
+    js = _click_send_body(
+        'div.ProseMirror[contenteditable="true"]', "wake", abort_nonce="body-att"
+    )
+    result = _run_work_shape_click_send_js(
+        js,
+        composer_text="wake",
+        include_footer_stop=False,
+        empty_footer=True,
+        send_on_document_body=True,
+    )
+    assert result["ok"] is False
+    assert result["__sendClickCount"] == 0
+
+
+@_NODE_SKIP
+def test_own_form_stop_aria_refuses_generic_submit() -> None:
+    js = _click_send_body('[aria-label="Prompt"][contenteditable="true"]', "hello")
+    result = _run_click_send_js(
+        js,
+        composer_text="hello",
+        send_appears_after_searches=1,
+        buttons=[{"aria-label": "Stop", "type": "submit"}],
+    )
+    assert result["ok"] is False
+    assert result.get("__sendClicked") is False
+
+
+@_NODE_SKIP
+def test_own_form_stop_testid_refuses() -> None:
+    js = _click_send_body('[aria-label="Prompt"][contenteditable="true"]', "hello")
+    result = _run_click_send_js(
+        js,
+        composer_text="hello",
+        send_appears_after_searches=1,
+        buttons=[{"data-testid": "stop-generation", "type": "button"}],
+    )
+    assert result["ok"] is False
+
+
+@_NODE_SKIP
+def test_own_form_unlabelled_submit_clicks_once() -> None:
+    js = _click_send_body('[aria-label="Prompt"][contenteditable="true"]', "hello")
+    result = _run_click_send_js(
+        js,
+        composer_text="hello",
+        send_appears_after_searches=1,
+        buttons=[{"type": "submit"}],
+    )
+    assert result["ok"] is True
+    assert result["send_clicked"] is True
+
+
+@_NODE_SKIP
+def test_form_less_unlabelled_submit_outside_form_refuses() -> None:
+    """Generic submit outside the composer's own form is not a send target."""
+    js = _click_send_body('div.ProseMirror[contenteditable="true"]', "wake")
+    result = _run_work_shape_click_send_js(
+        js,
+        composer_text="wake",
+        misplaced_send_in_editor_col=True,
+        include_send_prompt=False,
+        stop_only=True,
+        empty_footer=True,
+    )
+    assert result["ok"] is False
+    assert result["__sendClickCount"] == 0
+
+
 def test_work_send_on_body_only_outside_composer_chain() -> None:
     js = _click_send_body(
         'div.ProseMirror[contenteditable="true"]', "wake", abort_nonce="body-only"
@@ -599,7 +794,10 @@ def test_work_send_on_body_only_outside_composer_chain() -> None:
 def test_send_control_found_immediately_no_extra_poll() -> None:
     js = _click_send_body('[aria-label="Prompt"][contenteditable="true"]', "hello")
     result = _run_click_send_js(
-        js, composer_text="hello", send_appears_after_searches=1
+        js,
+        composer_text="hello",
+        send_appears_after_searches=1,
+        buttons=[{"aria-label": "Send message", "type": "submit"}],
     )
     assert result["ok"] is True
     assert result["send_clicked"] is True

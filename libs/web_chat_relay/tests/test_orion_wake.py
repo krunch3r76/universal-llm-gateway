@@ -2184,6 +2184,76 @@ async def test_wake_inserted_no_send_preserves_pasted_and_census(
     assert out["census"] == census
 
 
+@pytest.mark.asyncio
+@pytest.mark.no_dom_stub
+async def test_dom_deliver_no_send_without_insert_metadata_is_paste_failed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Bare no_send_button from the DOM layer must not infer insertion."""
+    page = _FakePage(url=PINNED)
+    census: dict = {}
+    _dom_deliver_no_send_stubs(monkeypatch, census=census, page=page)
+
+    async def _bare_no_send(
+        *_a: object, **_k: object
+    ) -> dict:
+        return {"ok": False, "reason": "no_send_button"}
+
+    monkeypatch.setattr(
+        "cursor_bridge.dom_composer_paste.dom_insert_and_send", _bare_no_send
+    )
+    out = await _dom_deliver(page, "wake line")
+    assert out["reason"] == "no_send_button"
+    assert out.get("pasted") is not True
+    assert out.get("pasted", False) is False
+
+
+@pytest.mark.asyncio
+@pytest.mark.no_dom_stub
+async def test_dom_deliver_insertion_failure_pasted_false(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    page = _FakePage(url=PINNED)
+    _dom_deliver_no_send_stubs(monkeypatch, census={}, page=page)
+
+    async def _insert_fail(*_a: object, **_k: object) -> dict:
+        return {
+            "ok": False,
+            "reason": "composer_text_mismatch",
+            "pasted": False,
+            "inserted": False,
+        }
+
+    monkeypatch.setattr(
+        "cursor_bridge.dom_composer_paste.dom_insert_and_send", _insert_fail
+    )
+    out = await _dom_deliver(page, "wake line")
+    assert out["pasted"] is False
+    assert out["reason"] == "composer_text_mismatch"
+
+
+@pytest.mark.asyncio
+@pytest.mark.no_dom_stub
+async def test_wake_no_send_without_insert_metadata_paste_failed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    page = _FakePage(url=PINNED)
+    page.target_id = "tab-orion"
+
+    async def _bare(*_a: object, **_k: object) -> dict:
+        return {"ok": False, "reason": "no_send_button"}
+
+    _dom_deliver_no_send_stubs(monkeypatch, census={}, page=page)
+    monkeypatch.setattr(
+        "cursor_bridge.dom_composer_paste.dom_insert_and_send", _bare
+    )
+    out = await deliver_orion_wake(
+        thread="21207", turn=2, from_agent="maestro", page=page
+    )
+    assert out["pasted"] is False
+    assert out["reason"] in {"paste_failed", "no_send_button"}
+
+
 def test_ledger_owner_records_unknown_for_inserted_no_send(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

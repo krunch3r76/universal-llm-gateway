@@ -265,7 +265,12 @@ def _refuse(reason: str, **extra: Any) -> dict[str, Any]:
 
 
 def _dom_inserted_but_unsent(result: dict[str, Any]) -> bool:
-    """True when the composer holds our text but send actuation did not run."""
+    """True when insertion succeeded but send actuation did not run.
+
+    Requires ``reason=no_send_button`` plus ``pasted``, ``inserted``, or
+    ``phase`` inserted/send_unknown from the inner DOM layer — not bare
+    ``no_send_button`` alone.
+    """
     reason = str(result.get("reason") or "")
     if reason != "no_send_button":
         return False
@@ -957,9 +962,10 @@ async def _dom_deliver(
     cdp_url: str = DEFAULT_ORION_CDP_URL,
     preserve_newlines: bool = False,
 ) -> dict[str, Any]:
-    """Paste via ChatGPT DOM helpers (same sequence as web_tab execute_paste submit path).
+    """Paste via ChatGPT DOM helpers (web_tab execute_paste submit sequence).
 
-    On dom_insert_and_send failure, forwards census unchanged when the inner result includes it.
+    On ``dom_insert_and_send`` failure, forwards ``census``, ``pasted``,
+    ``delivered``, ``inserted``, ``phase``, and ``send_clicked`` when present.
     """
     from cursor_bridge.dom_composer_paste import dom_insert_and_send
     from web_tab.cdp_actuation import default_actuation_port
