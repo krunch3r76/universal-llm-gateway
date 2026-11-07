@@ -556,8 +556,54 @@ def test_a8_rebuild_keeps_digest_and_cursor(concern_db: sqlite3.Connection) -> N
     assert before.cortex_half["holds"]
     rebuild_concern(concern_db, cid)
     after = read_intent_index(concern_db, cid, now=T0, owner=None)
+    assert after.integrity_errors == ()
     assert after.cortex_digest == before.cortex_digest
     assert after.cursor_token == before.cursor_token
+
+
+def test_r1_health_raise_is_unavailable(concern_db: sqlite3.Connection) -> None:
+    """R1 step 1: health() raising marks every effect unavailable and skips lookup."""
+    cid = "concern:health-raise"
+    _admit(concern_db, cid, "wk:health-raise")
+    owner = StubOwner(health_raises=True)
+    concern_db.execute("PRAGMA query_only=ON")
+    prior_query_only = int(concern_db.execute("PRAGMA query_only").fetchone()[0])
+    prior_in_tx = concern_db.in_transaction
+    got = read_intent_index(concern_db, cid, now=T0, owner=owner)
+    observations = got.derived["observations"]
+    assert observations
+    assert all(obs["state"] == "unavailable" for obs in observations)
+    assert all(
+        str(obs["reason"]).startswith("health_error:RuntimeError")
+        for obs in observations
+    )
+    assert got.owner_consulted is True
+    assert got.blocked is True
+    assert owner.calls == ["health"]
+    assert (
+        int(concern_db.execute("PRAGMA query_only").fetchone()[0]) == prior_query_only
+    )
+    assert concern_db.in_transaction is prior_in_tx
+    concern_db.execute("PRAGMA query_only=OFF")
+
+
+def test_identity_key_error_skips_lookup(concern_db: sqlite3.Connection) -> None:
+    """identity_key_for raising is unknown and never reaches owner.lookup."""
+    cid = "concern:id-key-error"
+    _admit(concern_db, cid, "wk:id-key")
+    owner = StubOwner(lookups={})
+    got = read_intent_index(
+        concern_db,
+        cid,
+        now=T0,
+        owner=owner,
+        identity_key_for=lambda _e: 1 / 0,
+    )
+    obs = got.derived["observations"]
+    assert len(obs) == 1
+    assert obs[0]["state"] == "unknown"
+    assert str(obs[0]["reason"]).startswith("identity_key_error:ZeroDivisionError")
+    assert owner.calls == ["health"]
 
 
 def test_r2_health_only_and_retry_and_lease_without_intent(
