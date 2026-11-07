@@ -20,15 +20,10 @@ Load before any `cortex(...)` call, `cortex_brief` on session boot or close, or 
 
 2. **Card read.** `cortex(tool="entity_get", arguments='{"entity_id":"<type:slug>","intent":"card"}')`.
 
-3. **Status questions (interim rule).** Synthesize status from:
-   - `attributes` (machine fields, e.g. `application_submitted`, `rap_application_status`, receipt URIs);
-   - `top_k_assertions` (rank-ordered; not exhaustive) / newest claims by `observed_at`;
-   - `current_status.withheld_newer[]` (list capped; newer states withheld from `served`).
-   When `withheld_count` ≥ len(`withheld_newer`) shown, or the decisive claim may sit outside `top_k`, fetch assertions for the entity directly — do not trust the card slice alone.
-   `withheld_newer` entries with non-null `reason` (e.g. `invention`) are **leads**, not status. Before citing a claim with `epistemic_state=flagged`, corroborate via `attributes` or an evidence/receipt URI on the entity.
-   Treat `summary_row`, `predicate_summary`, `status_summary`, and `current_status.served` as **orientation hints** — scan for contradiction, never quote as final status when attributes or `withheld_newer` disagree. Cite assertion ids (e.g. `a:41768`) and dates.
+3. **Status questions (interim rule).** Reading order: **(a)** `attributes` → **(b)** newest claims (`top_k_assertions` by `observed_at`, `withheld_newer`) → **(c)** `summary_row` / `predicate_summary` / `status_summary` / `served` only to detect staleness, never as final answer if (a)-(b) disagree.
+   (b) details: `top_k` is rank-ordered, not exhaustive; `withheld_newer` is capped. When `withheld_count` ≥ len(`withheld_newer`) shown, or the decisive claim may sit outside `top_k`, fetch assertions for the entity — do not trust the card slice alone. Non-null `reason` on `withheld_newer` (e.g. `invention`) = lead, not status. `epistemic_state=flagged` ⇒ corroborate via `attributes` or receipt/evidence URI before citing. Cite assertion ids (e.g. `a:41768`) and dates.
 
-4. **Before `assert`.** Stranger + negation + subject-centered gates; channel ladder (assert vs commit vs journal). Under-assert bias. Preflight: `dry_run=true`. Full tables: [reference.md](reference.md).
+4. **Before `assert`.** All must pass: **Stranger** — a stranger querying the entity in 30 days benefits (else journal/close, not assert); **Negation** — claim not likely wrong/superseded/irrelevant in 24h (else do not write); **Subject-centered** — adds beyond `workflow_state` / status tautology (else skip). Channel ladder + `dry_run=true` preflight: [reference.md](reference.md). Under-assert bias.
 
 5. **Depth.** Ops, claim shape, `terminal_facts`, `recall`, myelinate: [reference.md](reference.md). Historical regression specimen **F1** (as of 2026-11-07): same file § F1. Provenance: `cortex-provenance-discipline`.
 
