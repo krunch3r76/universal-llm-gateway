@@ -15,7 +15,11 @@ from cortex_store import db
 from cortex_store._intent_card_test_fixtures import insert_entity
 from cortex_store._test_db_bootstrap import copy_template_db
 from cortex_store.conftest import bind_cortex_db
-from cortex_store.drift_detector import enumerate_entity_ids, open_deadline_items, scan_entity_state_drift
+from cortex_store.drift_detector import (
+    enumerate_entity_ids,
+    open_deadline_items,
+    scan_entity_state_drift,
+)
 from cortex_store.routes.deadlines import _list_deadlines_impl
 
 
