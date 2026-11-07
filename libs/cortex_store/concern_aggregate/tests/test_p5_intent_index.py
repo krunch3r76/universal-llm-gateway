@@ -2,18 +2,18 @@
 
 from __future__ import annotations
 
+import json
 import sqlite3
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
 import pytest
+from cortex_store._test_db_bootstrap import fresh_migrated_connection
 from cortex_store.concern_aggregate import effects as effects_mod
 from cortex_store.concern_aggregate import intent_index as idx
 from cortex_store.concern_aggregate.canonical_json import CanonicalJsonError
 from cortex_store.concern_aggregate.effects import (
-    INTENT_HELD,
-    INTENT_OPEN,
     STATE_ADMITTED,
     STATE_FAILED,
     STATE_OUTCOME_UNKNOWN,
@@ -34,6 +34,7 @@ from cortex_store.concern_aggregate.journal import append_transition
 from cortex_store.concern_aggregate.recovery import rebuild_concern
 from cortex_store.concern_aggregate.tests.conftest import seed_authority
 from execution_conformance.adapters import HealthOnlyAdapter
+from execution_conformance.states import ExecutionState
 
 pytestmark = pytest.mark.offline
 
@@ -177,6 +178,7 @@ def test_a1c_lookup_raises_for_one_effect(concern_db: sqlite3.Connection) -> Non
     by_key = {o["effect_key"]: o["state"] for o in got.derived["observations"]}
     assert by_key[ek1] == "unavailable"
     assert by_key[ek2] == "running"
+    assert owner.calls.count("health") == 1
 
 
 def test_a2_integrity_blocks(concern_db: sqlite3.Connection) -> None:
@@ -308,8 +310,10 @@ def test_a3_same_boundary_and_negative_controls(concern_db: sqlite3.Connection) 
         authorized_by=AUTH,
         record_ref="rec-hold-a3",
     )
-    after_hold = read_intent_index(concern_db, cid, now=early, owner=None).cortex_digest
+    held = read_intent_index(concern_db, cid, now=early, owner=None)
+    after_hold = held.cortex_digest
     assert after_hold != after_lease
+    assert held.cortex_half["holds"] == ["drain"]
 
     append_transition(
         concern_db,
@@ -515,6 +519,8 @@ def test_a7_journal_intents_separate(concern_db: sqlite3.Connection) -> None:
         intent_id=journal_id,
     )
     got = read_intent_index(concern_db, cid, now=T0, owner=None)
+    assert got.integrity_errors == ()
+    assert got.completeness == "complete"
     assert got.journal_intents == (journal_id,)
     assert got.journal_intents_count == 1
     assert [row["intent_id"] for row in got.intents] == [ledger_id]
@@ -544,6 +550,10 @@ def test_a8_rebuild_keeps_digest_and_cursor(concern_db: sqlite3.Connection) -> N
         record_ref="rec-a8-hold",
     )
     before = read_intent_index(concern_db, cid, now=T0, owner=None)
+    assert before.integrity_errors == ()
+    assert before.completeness == "complete"
+    assert before.journal_intents
+    assert before.cortex_half["holds"]
     rebuild_concern(concern_db, cid)
     after = read_intent_index(concern_db, cid, now=T0, owner=None)
     assert after.cortex_digest == before.cortex_digest
@@ -560,6 +570,7 @@ def test_r2_health_only_and_retry_and_lease_without_intent(
     assert got.blocked is True
     assert got.owner_consulted is True
     assert got.derived["observations"][0]["state"] == "not_found"
+    assert any(r["cause"] == "not_found" for r in got.blocked_reasons)
     assert got.derived["observations"][0]["identity_key"] == ek
     assert got.derived["observations"][0]["identity_key_basis"] == "effect_key_default"
 
@@ -595,6 +606,20 @@ def test_r2_health_only_and_retry_and_lease_without_intent(
     assert any(
         e["kind"] == "lease_without_intent" and e["work_key"] == "wk:stray"
         for e in stray.integrity_errors
+    )
+
+    cid_stale = "concern:r2-stale"
+    _admit(concern_db, cid_stale, "wk:stale")
+    concern_db.execute(
+        "UPDATE concern_effect_leases SET owner_generation = owner_generation + 1 "
+        "WHERE concern_id = ?",
+        (cid_stale,),
+    )
+    concern_db.commit()
+    stale = read_intent_index(concern_db, cid_stale, now=T0, owner=None)
+    assert stale.derived["effects"][0]["claim_status"] == "stale"
+    assert any(
+        r["cause"] == "admitted_stale_or_no_lease" for r in stale.blocked_reasons
     )
 
 
@@ -681,8 +706,12 @@ def test_r12_isolation_order_and_state_pins(concern_db: sqlite3.Connection) -> N
     keys = _keys(one.to_dict())
     assert "allowed" not in keys
     assert "permit" not in keys
-    assert {INTENT_OPEN, INTENT_HELD} <= {INTENT_OPEN, INTENT_HELD}
-    assert STATE_ADMITTED == effects_mod.STATE_ADMITTED
+    assert {v for k, v in vars(effects_mod).items() if k.startswith("STATE_")} == (
+        idx._KNOWN_EFFECT_STATES
+    )
+    assert {v for k, v in vars(effects_mod).items() if k.startswith("INTENT_")} == (
+        idx._KNOWN_INTENT_STATES
+    )
     assert idx._KNOWN_EFFECT_STATES == {
         effects_mod.STATE_ADMITTED,
         effects_mod.STATE_SUCCEEDED,
@@ -713,69 +742,87 @@ def test_r12_isolation_order_and_state_pins(concern_db: sqlite3.Connection) -> N
     assert caller.derived["observations"][0]["store_epoch"] == "ep1"
 
 
-def test_digest_independent_of_insert_order(concern_db: sqlite3.Connection) -> None:
-    """R12: two insert orders of the same ledger rows share a digest."""
-    cid = "concern:order"
-    gen = acquire_lease(
-        concern_db,
-        concern_id=cid,
-        work_key="wk:z",
-        holder="h",
-        lease_expires_at=T0 + timedelta(hours=1),
-        now=T0,
-    )
-    second = resolve_action_intent(
-        concern_db,
-        concern_id=cid,
-        work_key="wk:z",
-        action_slot="m",
-        run_generation=1,
-        now=T0,
-    )
-    first = resolve_action_intent(
-        concern_db,
-        concern_id=cid,
-        work_key="wk:a",
-        action_slot="m",
-        run_generation=1,
-        now=T0,
-    )
-    admit_effect(
-        concern_db,
-        intent_id=second,
-        effect_kind="dispatch",
-        request={"n": 2},
-        request_id="req:second",
-        fencing_token=gen,
-        now=T0,
-    )
-    gen_a = acquire_lease(
-        concern_db,
-        concern_id=cid,
-        work_key="wk:a",
-        holder="h",
-        lease_expires_at=T0 + timedelta(hours=1),
-        now=T0,
-    )
-    admit_effect(
-        concern_db,
-        intent_id=first,
-        effect_kind="dispatch",
-        request={"n": 1},
-        request_id="req:first",
-        fencing_token=gen_a,
-        now=T0,
-    )
-    digest = read_intent_index(concern_db, cid, now=T0, owner=None).cortex_digest
-    slots = [
-        row["action_slot"]
-        for row in read_intent_index(concern_db, cid, now=T0, owner=None).intents
+def _open_fresh(tmp_path: Path, template: Path, name: str) -> sqlite3.Connection:
+    directory = tmp_path / name
+    directory.mkdir()
+    return fresh_migrated_connection(directory, template)
+
+
+def _copy_concern_rows(
+    src: sqlite3.Connection, dest: sqlite3.Connection, *, reverse: bool
+) -> None:
+    names = [
+        str(row[0])
+        for row in src.execute(
+            "SELECT name FROM sqlite_master WHERE type = 'table' AND name LIKE 'concern_%' "
+            "ORDER BY name"
+        )
     ]
-    assert slots
-    # Re-read is stable; ordering key is work_key so wk:a precedes wk:z regardless of insert.
-    again = read_intent_index(concern_db, cid, now=T0, owner=None)
-    assert again.cortex_digest == digest
-    assert [row["work_key"] for row in again.intents] == ["wk:a", "wk:z"]
+    for name in names:
+        cols = [str(row[1]) for row in src.execute(f"PRAGMA table_info({name})")]
+        rows = src.execute(f"SELECT {', '.join(cols)} FROM {name}").fetchall()
+        if reverse:
+            rows = list(reversed(rows))
+        if not rows:
+            continue
+        placeholders = ", ".join("?" for _ in cols)
+        dest.executemany(
+            f"INSERT INTO {name} ({', '.join(cols)}) VALUES ({placeholders})",
+            rows,
+        )
+    dest.commit()
+
+
+def test_digest_independent_of_insert_order(
+    tmp_path: Path, migrated_db_template: Path
+) -> None:
+    """R12: two fresh databases, same rows, opposite insert order, equal digests."""
+    cid = "concern:order"
+    z_first = _open_fresh(tmp_path, migrated_db_template, "z-first")
+    for work, request_id, request in (
+        ("wk:z", "req:z", {"n": 2}),
+        ("wk:a", "req:a", {"n": 1}),
+    ):
+        gen = acquire_lease(
+            z_first,
+            concern_id=cid,
+            work_key=work,
+            holder="h",
+            lease_expires_at=T0 + timedelta(hours=1),
+            now=T0,
+        )
+        intent_id = resolve_action_intent(
+            z_first,
+            concern_id=cid,
+            work_key=work,
+            action_slot="m",
+            run_generation=1,
+            now=T0,
+        )
+        admit_effect(
+            z_first,
+            intent_id=intent_id,
+            effect_kind="dispatch",
+            request=request,
+            request_id=request_id,
+            fencing_token=gen,
+            now=T0,
+        )
+    a_first = _open_fresh(tmp_path, migrated_db_template, "a-first")
+    _copy_concern_rows(z_first, a_first, reverse=True)
+    digest_z = read_intent_index(z_first, cid, now=T0, owner=None).cortex_digest
+    digest_a = read_intent_index(a_first, cid, now=T0, owner=None).cortex_digest
+    assert digest_z == digest_a
+    assert digest_z
+    assert [
+        row["work_key"]
+        for row in read_intent_index(a_first, cid, now=T0, owner=None).intents
+    ] == [
+        "wk:a",
+        "wk:z",
+    ]
+    z_first.close()
+    a_first.close()
 
 
 def test_no_identity_key_and_fencing_ahead(concern_db: sqlite3.Connection) -> None:
@@ -826,3 +873,151 @@ def test_unparseable_lease_and_admitted_no_lease(
     concern_db.commit()
     bad = read_intent_index(concern_db, cid2, now=T0, owner=None)
     assert any(e["kind"] == "unparseable_lease_expiry" for e in bad.integrity_errors)
+
+
+def test_query_only_restored(concern_db: sqlite3.Connection) -> None:
+    """R11: prior query_only 0 and 1 are restored after the read."""
+    cid = "concern:qo"
+    _admit(concern_db, cid, "wk:qo")
+    concern_db.execute("PRAGMA query_only=OFF")
+    read_intent_index(concern_db, cid, now=T0, owner=None)
+    assert int(concern_db.execute("PRAGMA query_only").fetchone()[0]) == 0
+    concern_db.execute("PRAGMA query_only=ON")
+    read_intent_index(concern_db, cid, now=T0, owner=None)
+    assert int(concern_db.execute("PRAGMA query_only").fetchone()[0]) == 1
+    concern_db.execute("PRAGMA query_only=OFF")
+
+
+def test_query_only_probe_raise_and_readonly(concern_db: sqlite3.Connection) -> None:
+    """R11: a mid-snapshot raise restores query_only; a reader INSERT is readonly."""
+    cid = "concern:probe"
+    _admit(concern_db, cid, "wk:probe")
+    concern_db.execute("PRAGMA query_only=OFF")
+
+    def _boom(_label: str) -> None:
+        raise RuntimeError("snapshot broke")
+
+    idx.statement_boundary_probe = _boom
+    try:
+        with pytest.raises(RuntimeError, match="snapshot broke"):
+            read_intent_index(concern_db, cid, now=T0, owner=None)
+    finally:
+        idx.statement_boundary_probe = None
+    assert int(concern_db.execute("PRAGMA query_only").fetchone()[0]) == 0
+    assert concern_db.in_transaction is False
+
+    def _insert(_label: str) -> None:
+        concern_db.execute(
+            "INSERT INTO concern_effect_leases "
+            "(concern_id, work_key, holder, owner_generation, lease_expires_at) "
+            "VALUES (?, ?, ?, ?, ?)",
+            (cid, "wk:mid", "h", 1, "2026-01-01T13:00:00+00:00"),
+        )
+
+    idx.statement_boundary_probe = _insert
+    try:
+        with pytest.raises(sqlite3.OperationalError, match="readonly"):
+            read_intent_index(concern_db, cid, now=T0, owner=None)
+    finally:
+        idx.statement_boundary_probe = None
+    assert int(concern_db.execute("PRAGMA query_only").fetchone()[0]) == 0
+    assert concern_db.in_transaction is False
+
+
+def test_owner_write_after_query_only_restored(concern_db: sqlite3.Connection) -> None:
+    """Owner lookup may write on the reader connection once the snapshot ends."""
+    cid = "concern:owner-write"
+    _iid, ek, _gen = _admit(concern_db, cid, "wk:ow")
+
+    class _Writing:
+        def health(self) -> bool:
+            return True
+
+        def lookup(self, identity_key: str) -> _Found:
+            concern_db.execute(
+                "UPDATE concern_effect_leases SET holder = ? WHERE concern_id = ?",
+                ("writer", cid),
+            )
+            return _Found(state=ExecutionState.running)
+
+    got = read_intent_index(concern_db, cid, now=T0, owner=_Writing())
+    assert got.derived["observations"][0]["effect_key"] == ek
+    assert got.derived["observations"][0]["state"] == "running"
+    assert type(got.derived["observations"][0]["state"]) is str
+    holder = concern_db.execute(
+        "SELECT holder FROM concern_effect_leases WHERE concern_id = ?",
+        (cid,),
+    ).fetchone()
+    assert holder is not None and holder[0] == "writer"
+
+
+@pytest.mark.parametrize("epoch_status", ["unprovisioned", "", "weird"])
+def test_epoch_not_ok_is_unknown_even_when_missing(
+    concern_db: sqlite3.Connection, epoch_status: str
+) -> None:
+    """R1: a non-ok epoch is unknown, including when the execution row is absent."""
+    cid = "concern:epoch"
+    _iid, ek, _gen = _admit(concern_db, cid, "wk:epoch")
+    owner = StubOwner(lookups={ek: _Found(found=False, epoch_status=epoch_status)})
+    got = read_intent_index(concern_db, cid, now=T0, owner=owner)
+    assert got.derived["observations"][0]["state"] == "unknown"
+    assert got.derived["observations"][0]["state"] != "not_found"
+
+
+@pytest.mark.parametrize(
+    "state",
+    [None, ExecutionState.outcome_unknown, ExecutionState.blocked_unknown],
+)
+def test_owner_unknown_states(
+    concern_db: sqlite3.Connection, state: ExecutionState | None
+) -> None:
+    """R1: None, outcome_unknown, and blocked_unknown are unknown observations."""
+    cid = "concern:owner-state"
+    _iid, ek, _gen = _admit(concern_db, cid, "wk:os")
+    owner = StubOwner(lookups={ek: _Found(state=state)})
+    got = read_intent_index(concern_db, cid, now=T0, owner=owner)
+    assert got.derived["observations"][0]["state"] == "unknown"
+
+
+def test_consumed_retry_is_not_unresolved(concern_db: sqlite3.Connection) -> None:
+    """A consumed retry does not block; an unconsumed retry does."""
+    cid = "concern:consumed"
+    _iid, ek, gen = _admit(concern_db, cid, "wk:consumed")
+    record_outcome(
+        concern_db,
+        effect_key=ek,
+        outcome=STATE_FAILED,
+        receipt=None,
+        fencing_token=gen,
+        now=T0,
+    )
+    record_recovery_decision(
+        concern_db,
+        effect_key=ek,
+        decision="retry",
+        decided_by=AUTH,
+        reason="again",
+        now=T0,
+    )
+    open_retry = read_intent_index(concern_db, cid, now=T0, owner=None)
+    assert any(
+        r["cause"] == "failed_retry_unresolved" for r in open_retry.blocked_reasons
+    )
+    raw = concern_db.execute(
+        "SELECT recovery_json FROM concern_effects WHERE effect_key = ?",
+        (ek,),
+    ).fetchone()
+    assert raw is not None
+    recovery = json.loads(raw[0])
+    for item in recovery:
+        if item.get("decision") == "retry":
+            item["consumed_attempt"] = True
+    concern_db.execute(
+        "UPDATE concern_effects SET recovery_json = ? WHERE effect_key = ?",
+        (json.dumps(recovery), ek),
+    )
+    concern_db.commit()
+    consumed = read_intent_index(concern_db, cid, now=T0, owner=None)
+    assert not any(
+        r["cause"] == "failed_retry_unresolved" for r in consumed.blocked_reasons
+    )

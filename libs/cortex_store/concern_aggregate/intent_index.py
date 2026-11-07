@@ -2,7 +2,9 @@
 
 Decisions a:42490 and a:42489: one cortex read boundary enumerates the
 Phase-3a ledger and attaches execution observations afterwards. A read
-is not a permit. ``blocked`` false is not a launch certificate.
+is not a permit. ``blocked`` false is not a launch certificate: an
+admitted effect whose owner state is ``running`` or ``completed`` can
+still yield ``blocked`` false, and that result does not authorize a launch.
 
 Ledger tables do not advance ``concern_cursor``. ``cortex_digest`` is
 the witness for that ledger half (raw stored rows only). Observation
@@ -125,8 +127,12 @@ def read_intent_index(
     """Enumerate one concern's work intents inside a single read snapshot.
 
     Raises ``ValueError`` when ``now`` is naive or ``conn`` is already in
-    a transaction. The check runs before ``BEGIN``. The connection's
-    ``query_only`` pragma is set for the read and restored afterwards.
+    a transaction. The check runs before ``BEGIN``. A Python 3.12
+    connection opened with ``autocommit=False`` always raises
+    ``ValueError`` here, because that mode keeps a transaction open.
+    The connection's ``query_only`` pragma is set for the ledger snapshot
+    and restored before the owner join, so ``identity_key_for`` and
+    ``owner.lookup`` do not run under ``query_only``.
     """
     if now.tzinfo is None:
         raise ValueError("now must be timezone-aware")
@@ -136,18 +142,22 @@ def read_intent_index(
     prior = conn.execute("PRAGMA query_only").fetchone()
     prior_on = int(prior[0]) if prior is not None else 0
     conn.execute("PRAGMA query_only=ON")
+    snapshot_done = False
     try:
-        return _read_snapshot(
+        result = _read_snapshot(
             conn,
             concern_id,
             now=now,
             owner=owner,
             identity_key_for=identity_key_for,
             owner_label=owner_label,
+            query_only_prior=prior_on,
         )
+        snapshot_done = True
+        return result
     finally:
         try:
-            if conn.in_transaction:
+            if conn.in_transaction and not snapshot_done:
                 conn.rollback()
         finally:
             conn.execute(f"PRAGMA query_only={prior_on}")
@@ -174,6 +184,7 @@ def _read_snapshot(
     owner: ExecutionOwnerPort | None,
     identity_key_for: IdentityKeyFn | None,
     owner_label: str | None,
+    query_only_prior: int,
 ) -> IntentIndex:
     integrity: list[dict[str, Any]] = []
     conn.execute("BEGIN DEFERRED")
@@ -270,6 +281,9 @@ def _read_snapshot(
         ]
     finally:
         conn.rollback()
+
+    # Owner identity and lookup may write. They run after the snapshot ends.
+    conn.execute(f"PRAGMA query_only={query_only_prior}")
 
     by_intent = {row["intent_id"]: row for row in intent_rows}
     intent_work = {row["intent_id"]: row["work_key"] for row in intent_rows}
@@ -485,6 +499,11 @@ def _claim_status(
     now: datetime,
     integrity: list[dict[str, Any]],
 ) -> str:
+    """Classify one effect's lease.
+
+    Returned values are exactly ``no_lease``, ``unparseable_lease_expiry``,
+    ``fencing_token_ahead``, ``stale``, ``live``, and ``expired``.
+    """
     if lease is None:
         claim = "no_lease"
     else:
@@ -522,10 +541,18 @@ def _claim_status(
 
 
 def _has_retry(recovery: Any) -> bool:
+    """True when recovery holds a retry decision that is not consumed.
+
+    Matches ``effects._find_unconsumed_retry``: a retry entry with
+    ``consumed_attempt`` set is not outstanding.
+    """
     if not isinstance(recovery, list):
         return False
     return any(
-        isinstance(item, dict) and item.get("decision") == "retry" for item in recovery
+        isinstance(item, dict)
+        and item.get("decision") == "retry"
+        and not item.get("consumed_attempt")
+        for item in recovery
     )
 
 
@@ -571,10 +598,13 @@ def _blocked_reasons(
 
 
 def _state_str(value: Any) -> str | None:
+    """Return a plain ``str``. ``StrEnum`` members are ``str`` subclasses."""
     if value is None:
         return None
-    if isinstance(value, str):
+    if type(value) is str:
         return value
+    if isinstance(value, str):
+        return str(value)
     inner = getattr(value, "value", None)
     if isinstance(inner, str):
         return inner
