@@ -59,6 +59,7 @@ def test_normalize_matches_xai_and_cursor_grok_slug() -> None:
         ("grok-4.70", False),
         ("grok-4.7x", False),
         ("cursor/composer-2.5", False),
+        ("gro\u0430k-4.7", False),
     ],
 )
 def test_normalize_ban_table(wire: str, banned: bool) -> None:
@@ -343,3 +344,134 @@ def test_check_model_ban_public_api() -> None:
     assert verdict.allowed is False
     assert verdict.reject_envelope is not None
     assert verdict.matched is not None
+
+
+def test_to_thread_generate_ban_path() -> None:
+    plan = run_full_admit(
+        {
+            "op": "to_thread",
+            "model": "cursor/grok-4.7",
+            "request_id": "ban-to-thread",
+        }
+    )
+    assert plan.get("admitted") is False
+    assert plan.get("code") == "MODEL_BANNED"
+
+
+def test_conductor_hop_successor_default_passes_assemble_gate() -> None:
+    plan = run_full_admit(
+        {
+            "op": "generate",
+            "seat": "cursor-sdk",
+            "job": "conductor",
+            "hop_seq": 0,
+            "request_id": "ban-conductor-hop",
+        }
+    )
+    assert plan.get("admitted") is True, plan
+    hop = plan.get("hop_successor_default")
+    assert hop == "cursor/composer-2.5"
+
+
+def test_hop_successor_model_banned_after_cdp_prefix() -> None:
+    import sys
+    from pathlib import Path
+
+    mcp_root = Path(__file__).resolve().parents[2] / "services/mcp-server"
+    if str(mcp_root) not in sys.path:
+        sys.path.insert(0, str(mcp_root))
+    from tools.agent_bus.hop import resolve_hop_successor_model
+
+    resolved = resolve_hop_successor_model("cursor/grok-4.7")
+    verdict = check_model_ban(
+        resolved_model=resolved,
+        explicit_pin=True,
+        workflow_key="agent_bus.hop",
+    )
+    assert verdict.allowed is False
+    bare = resolve_hop_successor_model("grok-4.7")
+    assert bare == "cdp/grok-4.7"
+    verdict_cdp = check_model_ban(resolved_model=bare, explicit_pin=True)
+    assert verdict_cdp.allowed is False
+
+
+def test_handoff_resolved_model_banned() -> None:
+    verdict = check_model_ban(
+        resolved_model="cursor/grok-4.7",
+        explicit_pin=False,
+        workflow_key="team.handoff",
+    )
+    assert verdict.allowed is False
+
+
+def test_giw_resume_path_bans_explicit_grok() -> None:
+    verdict = check_model_ban(
+        resolved_model="cursor/grok-4.7",
+        explicit_pin=True,
+        workflow_key="git_integration_worker.resume_of",
+        dispatch_id="child-resume",
+    )
+    assert verdict.allowed is False
+    assert verdict.reject_envelope is not None
+
+
+def test_unicode_lookalike_does_not_match_grok_ban() -> None:
+    # Cyrillic 'а' in place of Latin 'a' — must not normalize to grok-4.7 ban slug.
+    lookalike = "gro\u0430k-4.7"
+    assert find_matching_ban(lookalike) is None
+
+
+def test_validate_fail_closed_when_model_bans_missing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from pipelines.team_dispatch_admit.v1.handlers.validate import evaluate_validate
+
+    def _missing() -> tuple[object, ...]:
+        raise ModelBansUnloadableError("model_bans key missing")
+
+    monkeypatch.setattr("implement_admission.model_ban_load.load_model_bans", _missing)
+    out = evaluate_validate({"op": "generate"})
+    assert out.get("admitted") is False
+    assert out.get("status_code") == 503
+    assert out.get("code") == "MODEL_BANS_UNLOADABLE"
+
+
+def test_override_event_payload_fields() -> None:
+    _, override = evaluate_dispatch_model_ban(
+        resolved_model="cursor/grok-4.7",
+        explicit_pin=True,
+        workflow_key=None,
+        role=None,
+        ban_override=True,
+        ban_override_reason="audit agent-bus:22498",
+        caller_agent="cursor-sdk",
+        dispatch_id="d-22498",
+    )
+    assert override is not None
+    assert override.get("model") == "cursor/grok-4.7"
+    assert override.get("reason") == "audit agent-bus:22498"
+    assert override.get("caller") == "cursor-sdk"
+    assert override.get("dispatch_id") == "d-22498"
+    assert override.get("ref") == "agent-bus:9956"
+
+
+def test_model_knobs_fast_does_not_waive_banned_model() -> None:
+    """fast knob does not change ban slug for cursor/grok-4.7."""
+    plan = run_full_admit(
+        {
+            "op": "generate",
+            "seat": "cursor-sdk",
+            "model": "cursor/grok-4.7",
+            "job": "freeform",
+            "generation_options": {"model_knobs": {"fast": "true"}},
+            "request_id": "ban-knobs-fast",
+        }
+    )
+    assert plan.get("admitted") is False
+    assert plan.get("code") == "MODEL_BANNED"
+
+
+def test_config_ban_invariants_unified() -> None:
+    """Single load-time sweep: workflows, pipeline defaults, impresario critics."""
+    test_no_workflows_model_resolves_to_scope_all_banned_model()
+    test_pipeline_model_defaults_exclude_scope_all_bans()

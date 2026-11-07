@@ -524,7 +524,7 @@ def resolve_advisor_provider_fallback(
     provider_error: str,
     policy: ImpresarioPolicy | None = None,
 ) -> AdvisorAdmitResult:
-    """Advisor-leg provider_error → grok fallback + event payload (not a calendar pause)."""
+    """Advisor-leg provider_error → configured fallback model + event payload."""
     _ = policy or load_impresario_policy()
     return AdvisorAdmitResult(
         admitted=True,
