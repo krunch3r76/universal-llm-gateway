@@ -3907,6 +3907,53 @@ def test_scan_once_enqueues_dispatch_to_worker_closeout_on_house_scope() -> None
     assert store.pending[0]["display"] == "8"
 
 
+_UUID_MAILBOX_SENDER = "f47ac10b-58cc-4372-a567-0e02b2c3d479"
+_SUPERVISOR_GATE_RULES = frozenset({"wake_grok_allowlist", "wake_gate_or_directive"})
+
+
+def test_uuid_sender_supervisor_head_parity_contract() -> None:
+    """UUID mailbox senders must use allowlisted heads to wake a :8 cursor supervisor (friction:42964 Leg B)."""
+    base = {
+        "to_agent": "cursor",
+        "from_agent": _UUID_MAILBOX_SENDER,
+        "thread": "22514",
+    }
+    for head in (
+        "PLAN",
+        "BLOCKED",
+        "RESULT",
+        "REPORT",
+        "READY",
+        "VERDICT",
+        "REVIEW",
+        "ESCALATE",
+        "DONE",
+        "FAILED",
+        "QUESTION",
+        "CLOSEOUT",
+    ):
+        verdict = qualify({**base, "subject": f"{head}|supervisor-gate-probe"}, cse=False, store=None)
+        assert verdict.wake is True, head
+        assert verdict.rule_id in _SUPERVISOR_GATE_RULES, (head, verdict.rule_id)
+    # Intentional: RECEIPT/CHECKPOINT are ack-class; UUID senders do not wake :8 on them.
+    for subject in ("RECEIPT|coord-ack", "CHECKPOINT|leg-boundary"):
+        verdict = qualify({**base, "subject": subject}, cse=False, store=None)
+        assert verdict.wake is False, subject
+        assert verdict.rule_id == "default_suppress", subject
+    receipt = qualify(
+        {
+            "to_agent": "cursor",
+            "from_agent": "grok-bot-gc1",
+            "subject": "RECEIPT|peer-ack",
+            "thread": "22514",
+        },
+        cse=False,
+        store=None,
+    )
+    assert receipt.wake is True
+    assert receipt.rule_id == "wake_peer_sender"
+
+
 def test_orion_answer_to_cursor_wakes_peer() -> None:
     verdict = qualify(
         {
