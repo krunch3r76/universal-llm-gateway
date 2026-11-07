@@ -226,6 +226,43 @@ def test_work_native_probe_ignores_hidden_twin() -> None:
 
 
 @_PLAYWRIGHT_SKIP
+def test_work_native_preflight_refuses_populated_sibling_attachment() -> None:
+    """Sibling file chip with content must refuse native insert before Input."""
+    from playwright.sync_api import sync_playwright
+
+    from cursor_bridge.cdp_composer_input import _work_native_preflight_js
+
+    html = """<!DOCTYPE html><html><body>
+<div class="text-size-chat LegacyExpandableEditor">
+  <div class="ProseMirror-shell">
+    <div class="file-chip">report.pdf</div>
+    <div contenteditable="true" role="textbox" aria-label="Work with ChatGPT on your tasks"
+      style="min-height:40px;width:200px" id="main"></div>
+  </div>
+</div>
+</body></html>"""
+    pre_js = _work_native_preflight_js(
+        expected_url="https://chatgpt.com/c/abc",
+        text="wake",
+        draft_writer="orion:test",
+        preserve_newlines=False,
+    )
+    with sync_playwright() as playwright:
+        browser = playwright.chromium.launch(headless=True)
+        page = browser.new_page()
+        page.goto("https://chatgpt.com/c/abc", wait_until="domcontentloaded")
+        page.set_content(html)
+        page.evaluate(
+            "() => { document.getElementById('main').pmViewDesc = {}; "
+            "window.__ulgOperatorActivity = {}; }"
+        )
+        result = page.evaluate(pre_js)
+        browser.close()
+    assert result.get("ok") is False
+    assert result.get("reason") == "foreign_attachment"
+
+
+@_PLAYWRIGHT_SKIP
 def test_dom_set_signals_work_native_unsupported_before_mutation() -> None:
     """Hydrated Work without setContent refuses with work_native_unsupported."""
     from playwright.sync_api import sync_playwright
