@@ -788,6 +788,32 @@ async def test_observed_no_editor_div_chatgpt_work_inserts_once_with_readback() 
 
 
 @pytest.mark.asyncio
+async def test_owned_replay_websocket_failure_yields_unknown() -> None:
+    with mock.patch(
+        "web_chat_relay.chatgpt_work_composer_cdp._runtime_eval_ws",
+        side_effect=[
+            None,
+            {"ok": True, "state": "already_inserted", "matchedSelector": _PM},
+            {"ok": True, "text": "ORION-REPLAY"},
+        ],
+    ), mock.patch(
+        "web_chat_relay.chatgpt_work_composer_cdp.dom_click_send",
+        side_effect=RuntimeError("websocket closed"),
+    ), mock.patch("websockets.connect") as conn:
+        conn.return_value.__aenter__ = mock.AsyncMock(return_value=object())
+        conn.return_value.__aexit__ = mock.AsyncMock(return_value=None)
+        out = await chatgpt_work_insert_and_send(
+            "ws://fake",
+            selector=_PM,
+            line="ORION-REPLAY",
+            expected_conversation_id=_CONV,
+        )
+    assert out.get("reason") == "insert_outcome_unknown"
+    assert out.get("insert_attempted") is True
+    assert out.get("retryable") is False
+
+
+@pytest.mark.asyncio
 async def test_rejects_zwsp_and_tab_in_text_nodes() -> None:
     html = _empty_pm().replace(
         "<br class=\"ProseMirror-trailingBreak\">",

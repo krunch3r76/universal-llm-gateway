@@ -1634,9 +1634,12 @@ def record_wake_result(
         select_extra = ""
         if "wake_attempt_count" in cols:
             select_extra = ", wake_attempt_count"
+        detail_select = (
+            ", delivery_failure_detail" if "delivery_failure_detail" in cols else ""
+        )
         rows = conn.execute(
             f"SELECT id, state, agent, thread_id, turn_number, subscription_id, reason, "
-            f"decided_by_rule, delivery_failure_detail{select_extra} "
+            f"decided_by_rule{detail_select}{select_extra} "
             f"FROM endpoint_wake_ledger WHERE wake_id=?",
             (wake_id,),
         ).fetchall()
@@ -1684,14 +1687,15 @@ def record_wake_result(
                 return 0
         # Merge with prior delivery_failure_detail when the new payload is thinner.
         prior_detail: dict[str, Any] = {}
-        raw_prior = prior_row["delivery_failure_detail"]
-        if raw_prior:
-            try:
-                parsed = json.loads(str(raw_prior))
-                if isinstance(parsed, dict):
-                    prior_detail = parsed
-            except json.JSONDecodeError:
-                prior_detail = {}
+        if "delivery_failure_detail" in cols:
+            raw_prior = prior_row["delivery_failure_detail"]
+            if raw_prior:
+                try:
+                    parsed = json.loads(str(raw_prior))
+                    if isinstance(parsed, dict):
+                        prior_detail = parsed
+                except json.JSONDecodeError:
+                    prior_detail = {}
         merged_detail = {**prior_detail, **detail}
         detail_blob = _encode_delivery_failure_detail(merge_reason, **merged_detail)
         row_reason = (

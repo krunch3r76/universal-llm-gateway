@@ -338,6 +338,31 @@ console.log(JSON.stringify({exp.strip()}));
     "ce_attr",
     ["false", "FALSE", "False", "  false  "],
 )
+def test_tab_sync_noneditable_paragraph_core_empty_guard_nonempty(ce_attr: str) -> None:
+    """Core alone accepts trailing-break empty; committed tab-sync guard must reject."""
+    fn = _TAB_SYNC_STATE_JS.strip()
+    setup = _DOM_MIN + _trailing_break_root() + f"""
+const paraNode = globalThis.__ce_roots[0].children[0];
+paraNode.getAttribute = (a) => (a === 'contenteditable' ? {json.dumps(ce_attr)} : null);
+"""
+    out = _run_node(setup + "refreshWindowGlobals(); console.log(JSON.stringify((" + fn + ")()));")
+    assert out["composerEmpty"] is False
+
+
+def test_tab_sync_noneditable_br_core_empty_guard_nonempty() -> None:
+    fn = _TAB_SYNC_STATE_JS.strip()
+    setup = _DOM_MIN + _trailing_break_root() + """
+const brNode = globalThis.__ce_roots[0].children[0].children[0];
+brNode.getAttribute = (a) => (a === 'contenteditable' ? 'false' : (a === 'class' ? 'ProseMirror-trailingBreak' : null));
+"""
+    out = _run_node(setup + "refreshWindowGlobals(); console.log(JSON.stringify((" + fn + ")()));")
+    assert out["composerEmpty"] is False
+
+
+@pytest.mark.parametrize(
+    "ce_attr",
+    ["false", "FALSE", "False", "  false  "],
+)
 def test_preflight_noneditable_descendant_not_empty(ce_attr: str) -> None:
     cid = "6aed2b2e-1b88-83e8-bc37-c8eb6c56b623"
     exp = chatgpt_work_preflight_expression(

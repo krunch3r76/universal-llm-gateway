@@ -1053,7 +1053,31 @@ def _cdp_transport_refusal(
             "retryable": True,
             "phase": phase,
         }
+    code = str(raw.get("code") or "").strip()
+    if code == "cdp_transport_error":
+        return {
+            "ok": False,
+            "reason": "cdp_transport_error",
+            "retryable": bool(raw.get("retryable", True)),
+            "phase": phase,
+        }
     return None
+
+
+def _dom_indicates_committed_send(dom: dict[str, Any]) -> bool:
+    if dom.get("ok"):
+        return True
+    if dom.get("insert_attempted"):
+        return True
+    if dom.get("send_fallback_clicked"):
+        return True
+    reason = str(dom.get("reason") or "")
+    phase = str(dom.get("phase") or "")
+    if reason == "delivery_unconfirmed":
+        return True
+    if reason == "cdp_transport_error" and phase == "post_insert":
+        return True
+    return False
 
 
 async def _dom_deliver(
@@ -1194,7 +1218,7 @@ async def _dom_deliver(
     )
     transport = _cdp_transport_refusal(verify, phase="post_insert")
     if transport:
-        transport["insert_attempted"] = bool(result.get("insert_attempted"))
+        transport["insert_attempted"] = True
         if result.get("send_fallback_clicked"):
             transport["send_fallback_clicked"] = True
         return transport
@@ -1204,9 +1228,8 @@ async def _dom_deliver(
             "ok": False,
             "reason": "delivery_unconfirmed",
             "receipt": receipt,
+            "insert_attempted": True,
         }
-        if result.get("insert_attempted"):
-            unconfirmed["insert_attempted"] = True
         if result.get("send_fallback_clicked"):
             unconfirmed["send_fallback_clicked"] = True
         return unconfirmed
@@ -1504,7 +1527,7 @@ async def deliver_orion_wake(
         dom = await _dom_deliver(page, line, cdp_url=cdp_url, preserve_newlines=False)
         if not dom.get("ok"):
             if owns_cdp and pw is not None:
-                await pw.stop()
+                await _safe_playwright_stop(pw)
             dom_reason = str(dom.get("reason") or "paste_failed")
             visibility_only = (
                 dom_reason
@@ -1631,8 +1654,7 @@ async def deliver_orion_wake(
             "tab_reloaded": tab_sync["tab_reloaded"],
         }
         if isinstance(dom, dict):
-            committed_send = bool(dom.get("ok"))
-            if committed_send:
+            if _dom_indicates_committed_send(dom):
                 exc_refuse_pre["insert_attempted"] = True
                 exc_refuse_pre["retryable"] = False
                 exc_refuse_pre["pasted"] = True

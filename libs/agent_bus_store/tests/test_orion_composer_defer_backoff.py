@@ -60,6 +60,42 @@ def _seed_pending_orion(db_path: str) -> tuple[str, str, int]:
     return wake_id, "2020-01-01 00:00:30", turn_id
 
 
+def test_record_wake_result_without_delivery_failure_detail_column(
+    db: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    wake_id, stamp, _tid = _seed_pending_orion(db)
+    minimal_cols = {
+        "id",
+        "state",
+        "agent",
+        "thread_id",
+        "turn_number",
+        "subscription_id",
+        "reason",
+        "decided_by_rule",
+        "wake_id",
+        "wake_last_attempt_at",
+        "wake_next_attempt_at",
+        "wake_attempt_count",
+    }
+
+    def _cols(_conn: object) -> set[str]:
+        return set(minimal_cols)
+
+    monkeypatch.setattr(_ewl_mod, "_ledger_columns", _cols)
+    n = record_wake_result(
+        wake_id,
+        "refused",
+        "composer_not_empty",
+        "exact",
+        5944,
+        None,
+        wake_detail={"retryable": True},
+        now=stamp,
+    )
+    assert n == 1
+
+
 def test_composer_defer_release_schedules_next_attempt(db: str) -> None:
     wake_id, stamp, _tid = _seed_pending_orion(db)
     record_wake_result(

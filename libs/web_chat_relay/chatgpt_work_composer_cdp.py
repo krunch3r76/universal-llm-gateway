@@ -400,11 +400,11 @@ async def chatgpt_work_insert_and_send(
                 return out
             return {"ok": True, "send_fallback_clicked": bool(send.get("send_clicked"))}
     except (TimeoutError, asyncio.CancelledError):
-        if insert_attempted:
+        if insert_attempted or owned_replay:
             return _unknown_insert_outcome()
         raise
     except Exception:
-        if insert_attempted:
+        if insert_attempted or owned_replay:
             return _unknown_insert_outcome()
         raise
 
