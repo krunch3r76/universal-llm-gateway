@@ -12,8 +12,9 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
 
+from . import db as _db
 from .card import get_entity_card
-from .db import check_cortex_db, cortex_conn, json_decode, query
+from .db import json_decode, query
 from .models.deadlines import DeadlineItem
 from .routes.deadlines import (
     _DEADLINES_SQL,
@@ -69,9 +70,9 @@ def scan_entity_state_drift(
     """Run a full read-only drift scan; raises on connection failure or hook abort."""
     owns_conn = conn is None
     if owns_conn:
-        if not check_cortex_db():
+        if not _db.check_cortex_db():
             raise RuntimeError("Cortex database unavailable")
-        conn = cortex_conn(read_only=True)
+        conn = _db.cortex_conn(read_only=True)
     assert conn is not None
     try:
         pending: list[DriftRow] = []
