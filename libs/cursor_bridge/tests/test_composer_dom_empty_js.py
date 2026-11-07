@@ -193,6 +193,40 @@ def test_observed_trailing_break_without_editor_is_empty() -> None:
         },
         {
             "innerText": "\n",
+            "innerHTML": '<p contenteditable="FALSE"><br class="ProseMirror-trailingBreak"></p>',
+            "children": [
+                {
+                    "tag": "P",
+                    "attrs": {"contenteditable": "FALSE"},
+                    "children": [
+                        {
+                            "tag": "BR",
+                            "className": "ProseMirror-trailingBreak",
+                            "attrs": {"class": "ProseMirror-trailingBreak"},
+                        }
+                    ],
+                }
+            ],
+        },
+        {
+            "innerText": "\n",
+            "innerHTML": '<p contenteditable="FaLsE"><br class="ProseMirror-trailingBreak"></p>',
+            "children": [
+                {
+                    "tag": "P",
+                    "attrs": {"contenteditable": "FaLsE"},
+                    "children": [
+                        {
+                            "tag": "BR",
+                            "className": "ProseMirror-trailingBreak",
+                            "attrs": {"class": "ProseMirror-trailingBreak"},
+                        }
+                    ],
+                }
+            ],
+        },
+        {
+            "innerText": "\n",
             "innerHTML": '<p class="attachment"><br class="ProseMirror-trailingBreak"></p>',
             "children": [
                 {

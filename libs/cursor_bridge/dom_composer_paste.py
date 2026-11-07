@@ -124,7 +124,7 @@ function ulgComposerDomEmpty(el) {
     const structuralReject = (node) => {
       if (!node) return false;
       const ce = node.getAttribute && node.getAttribute('contenteditable');
-      if (String(ce || '') === 'false') return true;
+      if (String(ce || '').toLowerCase() === 'false') return true;
       const cls = String((node.getAttribute && node.getAttribute('class')) || node.className || '');
       if (cls.indexOf('attachment') >= 0) return true;
       return [...(node.children || [])].some(structuralReject);
