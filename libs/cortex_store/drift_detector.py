@@ -338,7 +338,7 @@ def _detect_f3(
     for row in status_rows:
         if row.get("review_status") == "flagged" or not _evidence_backed(row):
             continue
-        if _claim_order_key(row) <= served_key:
+        if served_row is None or _claim_order_key(row) <= served_key:
             continue
         out.append(
             DriftRow(

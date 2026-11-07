@@ -808,6 +808,35 @@ def test_f3_expired_status_interval_zero(migrated_conn: sqlite3.Connection) -> N
     ]
 
 
+def test_f3_unflagged_newer_zero_when_concern_card_has_no_served_row(
+    migrated_conn: sqlite3.Connection,
+) -> None:
+    eid = "concern:f3-no-served-row"
+    insert_entity(migrated_conn, entity_id=eid, entity_type="concern", name="Concern head only")
+    migrated_conn.execute(
+        "INSERT INTO concern_head (concern_id, revision, record_ref) VALUES (?, 1, ?)",
+        (eid, "rec:drift-no-served"),
+    )
+    _insert_status_assertion(
+        migrated_conn,
+        entity_id=eid,
+        claim="unflagged confirmed status",
+        confidence="confirmed",
+        created_at="2026-11-05T00:00:00+00:00",
+        derivation_type="direct_observation",
+        evidence_uris='["cortex://x"]',
+    )
+    migrated_conn.commit()
+    card = get_entity_card(migrated_conn, entity_id=eid, source="boot")
+    current_status = card.get("current_status") if isinstance(card.get("current_status"), dict) else {}
+    assert current_status.get("source") is None
+    assert not [
+        r
+        for r in scan_entity_state_drift(conn=migrated_conn).rows
+        if r.entity_id == eid and r.surface == "current_status.served"
+    ]
+
+
 def test_f3_left_cite_served_when_no_served_assertion_id(migrated_conn: sqlite3.Connection) -> None:
     eid = "plan:f3-flagged-only-served-none"
     insert_entity(migrated_conn, entity_id=eid, entity_type="plan", name="flagged only")
@@ -884,25 +913,39 @@ def test_a5_withheld_more_than_three(migrated_conn: sqlite3.Connection) -> None:
         confidence="believed",
         created_at="2026-09-01T00:00:00+00:00",
     )
-    fourth_id = 0
-    for i in range(4):
-        fourth_id = _insert_status_assertion(
+    first_id = _insert_status_assertion(
+        migrated_conn,
+        entity_id=eid,
+        claim="flag oldest backed",
+        confidence="confirmed",
+        review_status="flagged",
+        created_at="2026-11-01T00:00:00+00:00",
+        derivation_type="direct_observation",
+        evidence_uris='["cortex://ev/1"]',
+    )
+    for day in (2, 3, 4):
+        _insert_status_assertion(
             migrated_conn,
             entity_id=eid,
-            claim=f"flag {i}",
+            claim=f"flag newer unbacked {day}",
             confidence="confirmed",
             review_status="flagged",
-            created_at=f"2026-11-0{i + 1}T00:00:00+00:00",
-            derivation_type="direct_observation",
-            evidence_uris='["cortex://d"]',
+            created_at=f"2026-11-0{day}T00:00:00+00:00",
+            derivation_type=None,
+            evidence_uris=None,
         )
+    card = get_entity_card(migrated_conn, entity_id=eid, source="boot")
+    current_status = card.get("current_status") if isinstance(card.get("current_status"), dict) else {}
+    withheld = current_status.get("withheld_newer") or []
+    withheld_ids = {int(entry["assertion_id"]) for entry in withheld if isinstance(entry, dict)}
+    assert first_id not in withheld_ids
     believed = [
         r
         for r in scan_entity_state_drift(conn=migrated_conn).rows
         if r.entity_id == eid and r.surface == "current_status.believed_served"
     ]
     assert len(believed) == 1
-    assert believed[0].right_cite == f"assertion:{fourth_id}"
+    assert believed[0].right_cite == f"assertion:{first_id}"
 
 
 def test_population_null_lifecycle_included(migrated_conn: sqlite3.Connection) -> None:
