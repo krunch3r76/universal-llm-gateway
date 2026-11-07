@@ -2350,7 +2350,7 @@ async def test_dom_deliver_no_send_without_insert_metadata_is_paste_failed(
 async def test_dom_deliver_insertion_failure_pasted_false(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Pre-send insertion failure must surface pasted=false through _dom_deliver."""
+    """A pre-send insertion failure must surface pasted=false through the _dom_deliver wrapper."""
     page = _FakePage(url=PINNED)
     _dom_deliver_no_send_stubs(monkeypatch, census={}, page=page)
 
@@ -2375,7 +2375,7 @@ async def test_dom_deliver_insertion_failure_pasted_false(
 async def test_wake_no_send_without_insert_metadata_paste_failed(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Bare no_send_button without insert metadata must classify as paste_failed."""
+    """A bare no_send_button without insert metadata must classify the attempt as paste_failed."""
     page = _FakePage(url=PINNED)
     page.target_id = "tab-orion"
 
@@ -2442,7 +2442,7 @@ def test_ledger_owner_records_unknown_for_inserted_no_send(
 async def test_wake_deliver_work_insertion_refusal_paste_failed(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Insertion failure through deliver_orion_wake stays pasted=false (not unsent send)."""
+    """An insertion failure through deliver_orion_wake stays pasted=false rather than an unsent send."""
     page = _FakePage(url=PINNED)
     page.target_id = "tab-orion"
 

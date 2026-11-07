@@ -520,7 +520,7 @@ def test_work_footer_owned_draft_send_prompt_clicks_once() -> None:
     reason="node not installed",
 )
 def test_work_footer_stop_only_no_send_button() -> None:
-    """Stop-only footer must not satisfy send control discovery."""
+    """A Stop-only footer must not satisfy send-control discovery or click anything."""
     js = _click_send_body(
         'div.ProseMirror[contenteditable="true"]', "wake", abort_nonce="stop-only"
     )
@@ -702,7 +702,7 @@ def test_work_normal_send_refusals(refusal: str) -> None:
 @_NODE_SKIP
 @pytest.mark.parametrize("refusal", ["second_editable", "textarea", "foreign_form", "disabled_send", "stop_only", "stop_submit", "attached_body"])
 def test_work_owned_draft_send_refusals(refusal: str) -> None:
-    """Owned-draft production send script refuses the same rival scopes."""
+    """The owned-draft production send script refuses the same rival composer scopes."""
     js = _click_send_own_draft_body(
         'div.ProseMirror[contenteditable="true"]',
         draft_writer="orion-wake",
@@ -765,7 +765,7 @@ def test_own_form_stop_aria_refuses_generic_submit() -> None:
 
 @_NODE_SKIP
 def test_own_form_stop_testid_refuses() -> None:
-    """Stop data-testid control must not be clicked as Send."""
+    """A Stop data-testid control must not be clicked as the Send button."""
     js = _click_send_body('[aria-label="Prompt"][contenteditable="true"]', "hello")
     result = _run_click_send_js(
         js,

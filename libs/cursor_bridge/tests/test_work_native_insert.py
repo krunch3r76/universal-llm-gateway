@@ -1,4 +1,4 @@
-"""Guarded CDP native insert for hydrated ChatGPT Work composers."""
+"""Guarded CDP native insert tests for hydrated ChatGPT Work composers that lack a supported setter API."""
 
 from __future__ import annotations
 
@@ -45,7 +45,7 @@ class _FakeWS:
 
 @pytest.mark.asyncio
 async def test_work_native_preflight_refusal_before_insert(monkeypatch) -> None:
-    """Pre-input refusal must not send Input.insertText."""
+    """A pre-input refusal must not send Input.insertText or claim a paste."""
     fake = _FakeWS(
         preflight={"ok": False, "reason": "composer_not_empty"},
         readback={"ok": True},
@@ -92,7 +92,7 @@ async def test_work_native_preflight_refusal_before_insert(monkeypatch) -> None:
 
 @pytest.mark.asyncio
 async def test_work_native_readback_mismatch_is_insertion_unknown(monkeypatch) -> None:
-    """Transport/readback uncertainty must not claim pasted."""
+    """Transport or readback uncertainty must not claim the draft was pasted."""
     fake = _FakeWS(
         preflight={"ok": True},
         readback={"ok": False, "reason": "composer_text_mismatch"},
@@ -273,7 +273,7 @@ def test_work_native_preflight_refuses_populated_sibling_attachment() -> None:
 
 @_PLAYWRIGHT_SKIP
 def test_dom_set_signals_work_native_unsupported_before_mutation() -> None:
-    """Hydrated Work without setContent refuses with work_native_unsupported."""
+    """A hydrated Work editor without setContent refuses with work_native_unsupported before mutation."""
     from playwright.sync_api import sync_playwright
 
     html = """<!DOCTYPE html><html><body>
@@ -348,7 +348,7 @@ async def test_work_native_insert_ack_error_is_insertion_unknown(monkeypatch) ->
 
 @pytest.mark.asyncio
 async def test_work_native_readback_transport_is_insertion_unknown(monkeypatch) -> None:
-    """Readback evaluate failure after Input must not assign ownership."""
+    """A readback evaluate failure after Input must not assign draft ownership."""
     fake = _FakeWS(preflight={"ok": True}, readback={"ok": True})
 
     async def _eval(ws: Any, mid: int, expression: str) -> Any:
@@ -424,7 +424,7 @@ async def test_work_native_cleanup_failure_after_dispatch_unknown(monkeypatch) -
 
 @_PLAYWRIGHT_SKIP
 def test_work_native_preflight_url_mismatch_refuses() -> None:
-    """Conversation URL drift before insert must refuse without Input."""
+    """Conversation URL drift before insert must refuse without sending Input.insertText."""
     from cursor_bridge.cdp_composer_input import _work_native_preflight_js
     from playwright.sync_api import sync_playwright
 
