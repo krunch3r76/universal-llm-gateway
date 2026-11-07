@@ -4057,6 +4057,30 @@ async def admit_cursor_dispatch(
             invalid_fields=["model"],
             validation_stage="model_resolution",
         )
+    from implement_admission.model_ban import check_model_ban
+
+    resume_workflow = (
+        "git_integration_worker.resume_of" if req.resume_of else "cursor_sdk.dispatch"
+    )
+    ban_verdict = check_model_ban(
+        resolved_model=req.model,
+        explicit_pin=True,
+        workflow_key=resume_workflow,
+        caller_agent=req.caller_agent,
+        dispatch_id=req.dispatch_id,
+    )
+    if not ban_verdict.allowed:
+        env = ban_verdict.reject_envelope or {}
+        return _reject_pre_admission(
+            req,
+            worker_error_code=str(env.get("code") or "MODEL_BANNED"),
+            failure_layer="validation",
+            http_status=int(env.get("status_code") or 403),
+            detail_summary=str(env.get("reason") or "model is banned"),
+            invalid_fields=["model"],
+            validation_stage="model_ban",
+            retryable=False,
+        )
     from cursor_capabilities import (
         CURSOR_MODEL_CAPABILITIES,
         cursor_sdk_model_set_fix_hint,

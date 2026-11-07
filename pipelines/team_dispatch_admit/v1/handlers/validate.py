@@ -69,6 +69,21 @@ def _spawn_purpose_reject(sp: Any) -> dict[str, Any] | None:
 
 
 def evaluate_validate(opts: dict[str, Any]) -> dict[str, Any]:
+    from implement_admission.model_ban_load import (
+        ModelBansUnloadableError,
+        load_model_bans,
+    )
+
+    try:
+        load_model_bans()
+    except ModelBansUnloadableError as exc:
+        return reject_envelope(
+            status_code=503,
+            code=exc.code,
+            field="model_bans",
+            reason=str(exc),
+        )
+
     op = str(opts.get("op") or "")
     if op == "spawn":
         backend = str(opts.get("backend") or "")

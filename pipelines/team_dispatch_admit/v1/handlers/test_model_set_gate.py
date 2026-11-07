@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 import yaml
-from implement_admission.impresario_policy import ADVISOR_MODEL
+from implement_admission.impresario_policy import advisor_model_wire
 from implement_admission.routing import load_route_policy
 
 from .defaults import evaluate_defaults
@@ -166,8 +166,9 @@ def test_workflow_cursor_models_are_admitted() -> None:
 def test_advisor_model_not_admitted_on_omit_path() -> None:
     from cursor_capabilities import is_cursor_sdk_model_admitted
 
-    assert is_cursor_sdk_model_admitted(ADVISOR_MODEL) is False
-    assert is_cursor_sdk_model_admitted(ADVISOR_MODEL, explicit_pin=True) is True
+    wire = advisor_model_wire()
+    assert is_cursor_sdk_model_admitted(wire) is False
+    assert is_cursor_sdk_model_admitted(wire, explicit_pin=True) is True
 
 
 @pytest.mark.offline
@@ -176,12 +177,12 @@ def test_advisor_model_stargate_admit_explicit_pin() -> None:
         {
             "op": "generate",
             "seat": "cursor-sdk",
-            "model": ADVISOR_MODEL,
+            "model": advisor_model_wire(),
             "request_id": "ms-advisor-pin",
         }
     )
     assert plan.get("admitted") is True, plan
-    assert plan.get("model") == ADVISOR_MODEL
+    assert plan.get("model") == advisor_model_wire()
 
 
 def test_comment_only_yaml_unchanged() -> None:

@@ -15,11 +15,11 @@ _ARGON_CODE = "ARGON_ROLE_BARRED"
 def impresario_argon_ban_roles(
     bans: tuple[ModelBanEntry, ...] | None = None,
 ) -> frozenset[str]:
-    from implement_admission.impresario_policy import ADVISOR_MODEL
+    from implement_admission.impresario_policy import advisor_model_wire
 
     entries = load_model_bans() if bans is None else bans
     try:
-        advisor_slug = normalize_model_for_ban(ADVISOR_MODEL)
+        advisor_slug = normalize_model_for_ban(advisor_model_wire())
     except (TypeError, ValueError):
         return frozenset()
     roles: set[str] = set()
@@ -43,16 +43,15 @@ def impresario_argon_refusal(
     impresario_role: str | None,
     bans: tuple[ModelBanEntry, ...] | None = None,
 ) -> tuple[str, str] | None:
-    from implement_admission.impresario_policy import ADVISOR_MODEL
+    from implement_admission.impresario_policy import advisor_model_wire
 
+    wire = advisor_model_wire()
     normalized = (model or "").strip()
-    if normalized != ADVISOR_MODEL:
+    if normalized != wire:
         return None
     if (impresario_role or "").strip().lower() == "advisor":
         return None
-    if find_matching_ban(normalized, role=impresario_role, bans=bans) is None:
+    entry = find_matching_ban(normalized, role=impresario_role, bans=bans)
+    if entry is None:
         return None
-    return (
-        _ARGON_CODE,
-        f"cursor/gemini-4-argon is barred for impresario role {impresario_role!r}",
-    )
+    return (_ARGON_CODE, entry.reason)

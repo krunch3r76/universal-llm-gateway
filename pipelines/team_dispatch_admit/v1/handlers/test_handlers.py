@@ -20,7 +20,7 @@ from .validate import evaluate_validate
 def run_full_admit(opts: dict) -> dict:
     v = evaluate_validate(opts)
     d = evaluate_defaults(opts, v)
-    return evaluate_assemble(v, d)
+    return evaluate_assemble(v, d, opts)
 
 
 async def run_team_dispatch_admit_for_route_tests(

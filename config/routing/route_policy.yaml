@@ -78,7 +78,6 @@ impresario:
     - cdp/fable-5
     - cursor/muse-wonder-1.0
     - cursor/composer-2.5
-    - cursor/grok-4.7
   cdp_reroute_for_critic: false
   ear: {model: cursor/composer-2.5, fast: false}
   ear_patrol: {model: cursor/composer-2.5, effort: low, fast: true}
@@ -184,7 +183,7 @@ workflows:
     jobs: [answer, confer, ask, verify, execute, propagate, sketch, none, conductor]
   check_review:
     # Reviewer omit-model follows workflows.check_review (anthropic sonnet).
-    # Cursor-sdk generate admits only composer-2.5 and grok-4.7; other cursor ids
+    # Cursor-sdk generate admits composer-2.5 explicitly; other cursor ids
     # (muse, fable, terra, sol, luna) are not cursor-sdk generate targets.
     seat: reviewer
     model: anthropic/claude-sonnet-5-5
@@ -197,6 +196,7 @@ workflows:
 # workflows.*.model reference to it. Re-enable = drop the flag or add the slot.
 models:
   composer-2.5:      {roaming: true}
+  # roaming is a capability flag for dispatch_bounds waivers — not dispatch admit allow.
   grok-4.7:          {roaming: true}
 
 # Per-contract omit-effort defaults (todo:model-workflow-config-first, P3).

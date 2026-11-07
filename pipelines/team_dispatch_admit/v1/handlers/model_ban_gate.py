@@ -6,6 +6,7 @@ from typing import Any
 
 from implement_admission.model_ban import (
     evaluate_dispatch_model_ban,
+    model_ban_wire_fields,
     validate_ban_override_pair,
 )
 
@@ -13,10 +14,8 @@ from ._envelope import admit_envelope
 
 
 def ban_override_reject(opts: dict[str, Any]) -> dict[str, Any] | None:
-    code = validate_ban_override_pair(
-        opts.get("ban_override"),
-        opts.get("ban_override_reason"),
-    )
+    enabled, reason, _caller = model_ban_wire_fields(opts)
+    code = validate_ban_override_pair(enabled, reason)
     if code is None:
         return None
     field = (
@@ -40,15 +39,7 @@ def ban_override_reject(opts: dict[str, Any]) -> dict[str, Any] | None:
     }
 
 
-def apply_model_ban_to_plan(
-    opts: dict[str, Any], plan: dict[str, Any]
-) -> dict[str, Any]:
-    if plan.get("admitted") is False:
-        return plan
-    model = plan.get("model")
-    if not model or not str(model).strip():
-        return plan
-    explicit_pin = bool(str(opts.get("model") or "").strip())
+def _workflow_key_for_plan(opts: dict[str, Any], plan: dict[str, Any]) -> str | None:
     workflow_key = str(plan.get("workflow") or "").strip() or None
     if workflow_key and not workflow_key.startswith(
         ("workflows.", "team-dispatch-admit.")
@@ -60,29 +51,72 @@ def apply_model_ban_to_plan(
             workflow_key = "team-dispatch-admit.model_defaults.conductor"
         elif job:
             workflow_key = "workflows.auto_judgment"
+    return workflow_key
+
+
+def _gate_resolved_model(
+    opts: dict[str, Any],
+    plan: dict[str, Any],
+    *,
+    resolved_model: str,
+    explicit_pin: bool,
+    workflow_key: str | None,
+) -> dict[str, Any]:
+    enabled, reason, caller = model_ban_wire_fields(opts)
     role = plan.get("role") or opts.get("role")
     reject, override_payload = evaluate_dispatch_model_ban(
-        resolved_model=str(model),
+        resolved_model=resolved_model,
         explicit_pin=explicit_pin,
         workflow_key=workflow_key,
         role=str(role) if role is not None else None,
-        ban_override=opts.get("ban_override") is True,
-        ban_override_reason=(
-            str(opts.get("ban_override_reason"))
-            if opts.get("ban_override_reason") is not None
-            else None
-        ),
-        caller_agent=(
-            str(opts.get("caller_agent"))
-            if opts.get("caller_agent") is not None
+        ban_override=enabled,
+        ban_override_reason=reason,
+        caller_agent=caller,
+        dispatch_id=(
+            str(opts.get("dispatch_id")).strip()
+            if opts.get("dispatch_id") is not None
             else None
         ),
     )
     if reject is not None:
         return reject
     if override_payload is not None:
-        plan = dict(plan)
-        plan["model_ban_override"] = override_payload
+        merged = dict(plan)
+        merged["model_ban_override"] = override_payload
+        return merged
+    return plan
+
+
+def apply_model_ban_to_plan(
+    opts: dict[str, Any], plan: dict[str, Any]
+) -> dict[str, Any]:
+    if plan.get("admitted") is False:
+        return plan
+    workflow_key = _workflow_key_for_plan(opts, plan)
+    model = plan.get("model")
+    if model and str(model).strip():
+        explicit_pin = bool(str(opts.get("model") or "").strip())
+        plan = _gate_resolved_model(
+            opts,
+            plan,
+            resolved_model=str(model),
+            explicit_pin=explicit_pin,
+            workflow_key=workflow_key,
+        )
+        if plan.get("admitted") is False:
+            return plan
+    hop = plan.get("hop_successor_default")
+    if hop and str(hop).strip():
+        hop_key = (
+            "team-dispatch-admit.model_defaults.conductor.hop_successor"
+        )
+        plan = _gate_resolved_model(
+            opts,
+            plan,
+            resolved_model=str(hop),
+            explicit_pin=False,
+            workflow_key=hop_key,
+        )
     return plan
 
 

@@ -247,6 +247,7 @@ def run_team_dispatch_admit_sync(
                 model=str(override.get("model") or ""),
                 reason=str(override.get("reason") or ""),
                 ref=override.get("ref"),
+                dispatch_id=override.get("dispatch_id"),
             )
         )
     return plan

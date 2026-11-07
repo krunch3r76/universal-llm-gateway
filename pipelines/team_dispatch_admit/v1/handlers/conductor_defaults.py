@@ -38,7 +38,7 @@ from ._envelope import (
     pass_through_reject,
     reject_envelope,
 )
-from .model_ban_gate import apply_model_ban_to_plan, ban_override_reject
+from .model_ban_gate import ban_override_reject
 
 
 def _pipeline_conductor(opts: dict[str, Any]) -> dict[str, Any]:
@@ -201,7 +201,7 @@ def evaluate_conductor_defaults(
         if hop_successor_default.get("model_knobs"):
             extra["hop_successor_default_knobs"] = hop_successor_default["model_knobs"]
     plan.update(extra)
-    return apply_model_ban_to_plan(opts, plan)
+    return plan
 
 
 def validate_conductor_policy_drift(opts: dict[str, Any]) -> dict[str, Any] | None:

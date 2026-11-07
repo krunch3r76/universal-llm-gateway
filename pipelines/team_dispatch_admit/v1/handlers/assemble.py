@@ -11,6 +11,8 @@ from implement_admission.admission_read import compute_packet_sha256
 from systems.pipeline.core.handlers.builtin import BaseHandler
 from systems.pipeline.core.handlers.protocol import StepOutput
 
+from .model_ban_gate import apply_model_ban_to_plan
+
 _ROW_ID_RE = re.compile(r"^[0-9a-f]{32}$")
 
 
@@ -43,7 +45,9 @@ def _turn0_budget_from_plan(plan: dict[str, Any]) -> dict[str, Any]:
 
 
 def evaluate_assemble(
-    validate_out: dict[str, Any], defaults_out: dict[str, Any]
+    validate_out: dict[str, Any],
+    defaults_out: dict[str, Any],
+    opts: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     for prior in (validate_out, defaults_out):
         if prior.get("admitted") is False:
@@ -51,6 +55,10 @@ def evaluate_assemble(
     plan = dict(defaults_out)
     plan["skill_rows"] = []
     plan["admitted"] = True
+    if opts is not None:
+        plan = apply_model_ban_to_plan(opts, plan)
+        if plan.get("admitted") is False:
+            return plan
     row_id = str(plan.get("row_id") or "").strip()
     packet = str(plan.get("packet_markdown") or "")
     if (
@@ -73,9 +81,10 @@ class TeamDispatchAdmitAssembleHandler(BaseHandler):
 
     @override
     async def execute(self, step: Any, context: Any) -> StepOutput:
+        opts = dict(getattr(context, "options", {}) or {})
         validate_out = _step_json(context, "validate")
         defaults_out = _step_json(context, "defaults")
-        payload = evaluate_assemble(validate_out, defaults_out)
+        payload = evaluate_assemble(validate_out, defaults_out, opts)
         return StepOutput(raw=json.dumps(payload), json=payload)
 
 

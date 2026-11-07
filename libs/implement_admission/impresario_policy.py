@@ -24,7 +24,7 @@ RESTORE_MODEL = "anthropic/claude-fable-5-1"
 _HYBRID_MECHANICAL_MODEL = "cursor/composer-2.5"
 _HYBRID_MECHANICAL_SEAT = "cursor-sdk"
 _HYBRID_MECHANICAL_EFFORT = "medium"
-ADVISOR_MODEL = "cursor/gemini-4-argon"
+_ADVISOR_DEFAULT_WIRE = "cursor/gemini-4-argon"
 ADVISOR_LEAN_DISPATCH_LINE = "Use the lean-dispatch skill"
 ADVISOR_FALLBACK_MODEL = "cursor/composer-2.5"
 
@@ -245,9 +245,10 @@ def parse_impresario_policy(policy: dict[str, Any]) -> ImpresarioPolicy:
     if not isinstance(advisor_raw, dict):
         msg = "impresario.advisor must be a mapping"
         raise ValueError(msg)
+    advisor_wire = str(advisor_raw.get("model") or _ADVISOR_DEFAULT_WIRE).strip()
     advisor_seat = _parse_seat_entry(
         advisor_raw,
-        default_model=ADVISOR_MODEL,
+        default_model=advisor_wire,
         default_effort="high",
         require_allowed_critic=False,
     )
@@ -259,8 +260,8 @@ def parse_impresario_policy(policy: dict[str, Any]) -> ImpresarioPolicy:
         seat=advisor_seat.seat,
         fast=advisor_fast,
     )
-    if advisor_seat.model != ADVISOR_MODEL:
-        msg = f"impresario.advisor.model must be {ADVISOR_MODEL!r}"
+    if advisor_seat.model != advisor_wire:
+        msg = f"impresario.advisor.model must match configured advisor wire {advisor_wire!r}"
         raise ValueError(msg)
     role_sentence = str(
         advisor_raw.get("role_sentence")
@@ -328,6 +329,11 @@ def load_impresario_policy(path: Path | None = None) -> ImpresarioPolicy:
     """Process-cached load of Pattern A policy."""
     policy_path = path or default_policy_path()
     return parse_impresario_policy(load_route_policy(policy_path))
+
+
+def advisor_model_wire(*, path: Path | None = None) -> str:
+    """Configured ``impresario.advisor.model`` (route_policy.yaml)."""
+    return load_impresario_policy(path).advisor.seat.model
 
 
 def impresario_registry_errors(policy: dict[str, Any]) -> list[str]:
@@ -528,7 +534,7 @@ def resolve_advisor_provider_fallback(
         provider_fallback=True,
         event_signal="impresario.advisor.provider_fallback",
         event_payload={
-            "requested_model": ADVISOR_MODEL,
+            "requested_model": advisor_model_wire(),
             "resolved_model": ADVISOR_FALLBACK_MODEL,
             "provider_error": provider_error.strip(),
         },
@@ -551,13 +557,14 @@ def evaluate_advisor_dispatch_admission(
     )
     if barred is not None:
         return barred
+    wire = pol.advisor.seat.model
     normalized = (model or "").strip()
-    if normalized != ADVISOR_MODEL:
+    if normalized != wire:
         return AdvisorAdmitResult(
             admitted=False,
             resolved_model=None,
             code="NOT_ADVISOR_MODEL",
-            message=f"model {model!r} is not the advisor wire",
+            message=f"model {model!r} is not the advisor wire ({wire})",
         )
     if provider_error and provider_error.strip():
         return resolve_advisor_provider_fallback(
@@ -578,12 +585,12 @@ def evaluate_advisor_dispatch_admission(
             message=f"advisor packet must contain {ADVISOR_LEAN_DISPATCH_LINE!r}",
         )
     author = (item_author or "").strip()
-    if author == ADVISOR_MODEL:
+    if author == wire:
         return AdvisorAdmitResult(
             admitted=False,
             resolved_model=None,
             code="ADVISOR_K40_AUTHOR",
-            message="advisor route refuses when the item author is cursor/gemini-4-argon",
+            message=f"advisor route refuses when the item author is {wire}",
         )
     return AdvisorAdmitResult(
         admitted=True,

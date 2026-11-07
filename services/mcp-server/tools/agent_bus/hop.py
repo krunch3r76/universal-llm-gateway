@@ -271,6 +271,31 @@ async def _hop_dispatch(
             "reason": "hop_model_invalid",
         }
 
+    from implement_admission.model_ban import check_model_ban
+
+    hop_pin = bool((desired_model or "").strip())
+    ban_verdict = check_model_ban(
+        resolved_model=model,
+        explicit_pin=hop_pin,
+        workflow_key="agent_bus.hop",
+        role=None,
+        caller_agent=from_agent,
+    )
+    if not ban_verdict.allowed:
+        env = ban_verdict.reject_envelope or {}
+        record(
+            "mcp.agentbus.hop.rejected",
+            reason=str(env.get("code") or "model_banned"),
+            thread=thread_id,
+            model=model,
+        )
+        return {
+            "error": str(env.get("reason") or "hop: model is banned"),
+            "reason": str(env.get("code") or "MODEL_BANNED"),
+            "status_code": env.get("status_code"),
+            "details": env.get("details"),
+        }
+
     handoff = assess_standing_handoff(
         thread_id,
         superseded_registration_id=cse_registration_id,

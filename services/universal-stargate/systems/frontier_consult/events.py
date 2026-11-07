@@ -1160,6 +1160,7 @@ def DispatchModelBanOverride(  # noqa: N802
     model: str,
     reason: str,
     ref: str | None = None,
+    dispatch_id: str | None = None,
 ) -> Event:
     payload: dict[str, Any] = {
         "request_id": request_id,
@@ -1169,6 +1170,8 @@ def DispatchModelBanOverride(  # noqa: N802
     }
     if ref is not None:
         payload["ref"] = ref
+    if dispatch_id is not None and str(dispatch_id).strip():
+        payload["dispatch_id"] = str(dispatch_id).strip()
     return Event(
         signal="dispatch.model_ban.override",
         payload=payload,

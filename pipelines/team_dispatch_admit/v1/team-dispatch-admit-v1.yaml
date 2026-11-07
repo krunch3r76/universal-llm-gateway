@@ -17,10 +17,11 @@ output: assemble
 
 model_defaults:
   conductor:
-    driver: {model: cursor/grok-4.7, fast: false}
+    # Omit-model floor matches workflows.auto_judgment (composer-2.5); grok is banned at admit.
+    driver: {model: cursor/composer-2.5, fast: false}
     mechanical: {model: cursor/composer-2.5, fast: false}
-    hop_successor: {model: cursor/grok-4.7, fast: false}
-    allowed_models: [cursor/grok-4.7, cursor/composer-2.5]
+    hop_successor: {model: cursor/composer-2.5, fast: false}
+    allowed_models: [cursor/composer-2.5]
 
 options:
   timeout_seconds: 30

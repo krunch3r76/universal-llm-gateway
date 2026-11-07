@@ -198,6 +198,55 @@ async def team_handoff(
                 request_id=request_id,
             )
 
+        from implement_admission.model_ban import check_model_ban
+
+        explicit_model = getattr(body, "model", None)
+        ban_verdict = check_model_ban(
+            resolved_model=resolved_model,
+            explicit_pin=bool(explicit_model and str(explicit_model).strip()),
+            workflow_key="team.handoff",
+            role=getattr(body, "role", None),
+            caller_agent=getattr(body, "caller_agent", None),
+        )
+        if not ban_verdict.allowed:
+            env = ban_verdict.reject_envelope or {}
+            return JSONResponse(
+                status_code=int(env.get("status_code") or 403),
+                content=FrontierEndpointError(
+                    request_id=request_id,
+                    field=str(env.get("field") or "model"),
+                    reason=str(env.get("reason") or "model banned"),
+                    status_code=int(env.get("status_code") or 403),
+                    code=str(env.get("code") or "MODEL_BANNED"),
+                    details=env.get("details")
+                    if isinstance(env.get("details"), dict)
+                    else None,
+                ).to_dict(),
+            )
+        override_model = getattr(body, "executor_override", None)
+        if override_model and "/" in str(override_model):
+            exec_verdict = check_model_ban(
+                resolved_model=str(override_model),
+                explicit_pin=True,
+                workflow_key="team.handoff.executor_override",
+                caller_agent=getattr(body, "caller_agent", None),
+            )
+            if not exec_verdict.allowed:
+                env = exec_verdict.reject_envelope or {}
+                return JSONResponse(
+                    status_code=int(env.get("status_code") or 403),
+                    content=FrontierEndpointError(
+                        request_id=request_id,
+                        field="executor_override",
+                        reason=str(env.get("reason") or "executor model banned"),
+                        status_code=int(env.get("status_code") or 403),
+                        code=str(env.get("code") or "MODEL_BANNED"),
+                        details=env.get("details")
+                        if isinstance(env.get("details"), dict)
+                        else None,
+                    ).to_dict(),
+                )
+
         handoff_contract, contract_source = await loop.run_in_executor(
             None,
             lambda: derive_contract(
