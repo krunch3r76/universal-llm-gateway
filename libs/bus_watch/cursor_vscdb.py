@@ -6,6 +6,7 @@ import json
 import os
 import re
 import sqlite3
+from contextlib import closing
 from pathlib import Path
 from typing import Any
 
@@ -27,6 +28,10 @@ _DEFAULT_VSCDB_BINDINGS: tuple[tuple[str, str], ...] = (
 )
 
 _GLASS_PANE_GLOB = "glass.agentConversationPanes.*"
+
+
+def _open_vscdb_ro(db_path: Path) -> sqlite3.Connection:
+    return sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
 
 
 def parse_vscdb_path_env(raw: str | None = None) -> list[tuple[Path, str]]:
@@ -75,7 +80,7 @@ def host_is_colon_eight_family(gui_host: str) -> bool:
 def vscdb_has_pane_key(db_path: Path, transcript_id: str) -> bool:
     """Return whether the Glass pane key exists for one transcript UUID."""
     key = f"glass.agentConversationPanes.{transcript_id}"
-    with sqlite3.connect(f"file:{db_path}?mode=ro", uri=True) as conn:
+    with closing(_open_vscdb_ro(db_path)) as conn:
         row = conn.execute(
             "SELECT 1 FROM ItemTable WHERE key = ? LIMIT 1", (key,)
         ).fetchone()
@@ -84,7 +89,7 @@ def vscdb_has_pane_key(db_path: Path, transcript_id: str) -> bool:
 
 def vscdb_has_any_glass_pane(db_path: Path) -> bool:
     """Return whether any Glass agent conversation pane row exists."""
-    with sqlite3.connect(f"file:{db_path}?mode=ro", uri=True) as conn:
+    with closing(_open_vscdb_ro(db_path)) as conn:
         row = conn.execute(
             "SELECT 1 FROM ItemTable WHERE key GLOB ? LIMIT 1",
             (_GLASS_PANE_GLOB,),
@@ -96,7 +101,7 @@ def vscdb_pane_metadata(db_path: Path, transcript_id: str) -> dict[str, Any]:
     """Extract layout/surface hints from a pane blob when present."""
     key = f"glass.agentConversationPanes.{transcript_id}"
     try:
-        with sqlite3.connect(f"file:{db_path}?mode=ro", uri=True) as conn:
+        with closing(_open_vscdb_ro(db_path)) as conn:
             row = conn.execute(
                 "SELECT value FROM ItemTable WHERE key = ? LIMIT 1", (key,)
             ).fetchone()
@@ -138,7 +143,7 @@ def probe_vscdb_readability() -> dict[str, Any]:
         if not path.is_file():
             continue
         try:
-            with sqlite3.connect(f"file:{path}?mode=ro", uri=True) as conn:
+            with closing(_open_vscdb_ro(path)) as conn:
                 conn.execute("SELECT 1").fetchone()
             readable.append(str(path))
         except (OSError, sqlite3.Error):
@@ -161,7 +166,7 @@ def resolve_gui_host_from_vscdb(
         if not path.is_file():
             continue
         try:
-            with sqlite3.connect(f"file:{path}?mode=ro", uri=True) as conn:
+            with closing(_open_vscdb_ro(path)) as conn:
                 conn.execute("SELECT 1").fetchone()
             readable += 1
         except (OSError, sqlite3.Error):

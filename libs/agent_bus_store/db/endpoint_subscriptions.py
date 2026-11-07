@@ -94,6 +94,11 @@ def _same(current: dict[str, Any], nxt: dict[str, Any]) -> bool:
     return all(current.get(k) == nxt.get(k) for k in _IDENTITY)
 
 
+def _evidence_tag_value(text: str) -> str:
+    """Encode values embedded in semicolon-separated subscribe evidence tags."""
+    return str(text or "").strip().replace(";", "%3B")
+
+
 def subscribe_endpoint(
     *,
     agent: str,
@@ -135,12 +140,16 @@ def subscribe_endpoint(
             )
         )
         if display_override_event is not None:
-            reason = str(display_override_event.get("reason") or "").strip()
+            reason = _evidence_tag_value(
+                str(display_override_event.get("reason") or "")
+            )
             tag = f"display_override:{reason}"
             row_evidence = f"{row_evidence};{tag}" if row_evidence else tag
         pbasis = str(placement_meta.get("placement_basis") or "").strip()
         if pbasis == "vscdb_inferred":
-            inf = str(placement_meta.get("inference_reason") or "other_glass_panes")
+            inf = _evidence_tag_value(
+                str(placement_meta.get("inference_reason") or "other_glass_panes")
+            )
             tag = f"placement_basis:vscdb_inferred;inference:{inf}"
             row_evidence = f"{row_evidence};{tag}" if row_evidence else tag
     elif not display_val:

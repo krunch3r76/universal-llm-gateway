@@ -10,6 +10,10 @@ from agent_bus_store.db import create_thread, init_db
 from agent_bus_store.server import create_app
 from fastapi.testclient import TestClient
 
+_PLACEMENT_PATCH = (
+    "agent_bus_store.db.cursor_subscribe_placement.resolve_cursor_tab_whereami"
+)
+
 _TID = "7689373a-2499-41f0-9ff6-fccbcf130362"
 
 
@@ -36,10 +40,7 @@ def test_cursor_subscribe_omitted_display_derived(client: TestClient) -> None:
         "basis": "vscdb",
         "gui_host": "orion-node",
     }
-    with patch(
-        "bus_watch.cursor_tab_whereami.resolve_cursor_tab_whereami",
-        return_value=placement,
-    ):
+    with patch(_PLACEMENT_PATCH, return_value=placement):
         resp = client.post(
             "/endpoint-subscriptions",
             json={
@@ -61,16 +62,7 @@ def test_cursor_subscribe_display_mismatch_422(client: TestClient) -> None:
         "basis": "vscdb",
         "gui_host": "orion-node",
     }
-    with (
-        patch(
-            "bus_watch.cursor_tab_whereami.resolve_cursor_tab_whereami",
-            return_value=placement,
-        ),
-        patch(
-            "agent_bus_store.db.cursor_subscribe_placement.resolve_cursor_tab_whereami",
-            return_value=placement,
-        ),
-    ):
+    with patch(_PLACEMENT_PATCH, return_value=placement):
         resp = client.post(
             "/endpoint-subscriptions",
             json={
@@ -126,25 +118,56 @@ def test_cursor_subscribe_display_override_emits_event(client: TestClient) -> No
         "subscription_display": "orion-node",
         "basis": "vscdb",
     }
-    with patch(
-        "bus_watch.cursor_tab_whereami.resolve_cursor_tab_whereami",
-        return_value=placement,
-    ):
+    with patch(_PLACEMENT_PATCH, return_value=placement):
         with patch(
             "agent_bus_store.routes.threads.subscriptions.emit_endpoint_display_override"
         ) as emit_override:
-            resp = client.post(
-                "/endpoint-subscriptions",
-                json={
-                    "agent": "cursor",
-                    "thread_scope": thread,
-                    "surface": "cursor",
-                    "display": "8",
-                    "title": f"{thread} ",
-                    "agent_id": _TID,
-                    "display_override": True,
-                    "display_override_reason": "operator confirmed",
-                },
-            )
+            with patch(
+                "agent_bus_store.routes.threads.subscriptions.emit_endpoint_subscribed"
+            ) as emit_subscribed:
+                resp = client.post(
+                    "/endpoint-subscriptions",
+                    json={
+                        "agent": "cursor",
+                        "thread_scope": thread,
+                        "surface": "cursor",
+                        "display": "8",
+                        "title": f"{thread} ",
+                        "agent_id": _TID,
+                        "display_override": True,
+                        "display_override_reason": "operator confirmed",
+                    },
+                )
     assert resp.status_code == 200
     emit_override.assert_called_once()
+    emit_subscribed.assert_called_once()
+    assert emit_override.call_count == 1
+    assert emit_subscribed.call_count == 1
+
+
+def test_display_override_reason_semicolon_encoded_in_evidence(
+    client: TestClient,
+) -> None:
+    thread = _thread("cursor-override-evidence")
+    placement = {
+        "subscription_display": "orion-node",
+        "basis": "vscdb",
+    }
+    with patch(_PLACEMENT_PATCH, return_value=placement):
+        resp = client.post(
+            "/endpoint-subscriptions",
+            json={
+                "agent": "cursor",
+                "thread_scope": thread,
+                "surface": "cursor",
+                "display": "8",
+                "title": f"{thread} ",
+                "agent_id": _TID,
+                "display_override": True,
+                "display_override_reason": "a;b",
+            },
+        )
+    assert resp.status_code == 200
+    evidence = str(resp.json()["row"].get("evidence") or "")
+    assert "display_override:a%3Bb" in evidence
+    assert "display_override:a;b" not in evidence

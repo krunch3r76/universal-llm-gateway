@@ -75,9 +75,7 @@ def test_detect_cursor_gui_host_vscdb_pane(
     db = tmp_path / "state.vscdb"
     tid = "db36e9f8-e76f-49e7-bd57-c9c4ffa88195"
     with sqlite3.connect(db) as conn:
-        conn.execute(
-            "CREATE TABLE ItemTable (key TEXT PRIMARY KEY, value BLOB)"
-        )
+        conn.execute("CREATE TABLE ItemTable (key TEXT PRIMARY KEY, value BLOB)")
         conn.execute(
             "INSERT INTO ItemTable VALUES (?, ?)",
             (f"glass.agentConversationPanes.{tid}", b"{}"),
@@ -194,9 +192,19 @@ def test_resume_path_subscribe_before_cleanup_on_failure() -> None:
 def test_subscribe_survives_bus_config_failure() -> None:
 
     with patch("bus_watch.cursor_xvfb_subscription._bus", side_effect=SystemExit(1)):
-        out = subscribe_cursor_xvfb_house("18374", "db36e9f8-e76f-49e7-bd57-c9c4ffa88195")
+        out = subscribe_cursor_xvfb_house(
+            "18374", "db36e9f8-e76f-49e7-bd57-c9c4ffa88195"
+        )
     assert out["ok"] is False
     assert "subscription_failed" in out.get("reason", "")
+
+
+def test_sync_policy_gui_host_none_is_noop(tmp_path: Path) -> None:
+    tick = tmp_path / "liaison-18677.tick.json"
+    tick.write_text(json.dumps({"policy": {"gui_host": ":8"}}), encoding="utf-8")
+    sync_policy_gui_host("18677", None, watch_dir=tmp_path)
+    loaded = json.loads(tick.read_text(encoding="utf-8"))
+    assert loaded["policy"]["gui_host"] == ":8"
 
 
 def test_sync_policy_gui_host_pinned_keeps_colon_eight(tmp_path: Path) -> None:

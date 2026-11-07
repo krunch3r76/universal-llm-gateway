@@ -95,6 +95,23 @@ def test_explicit_policy_gui_host_requires_tick_file(tmp_path: Path) -> None:
         fl.WATCH_DIR = old
 
 
+def test_whereami_unknown_gui_host_from_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        "bus_watch.cursor_tab_whereami.gui_host_from_process_env",
+        lambda: "not-a-glass-host",
+    )
+    monkeypatch.setattr(
+        "bus_watch.cursor_tab_whereami.probe_vscdb_readability",
+        lambda: {"vscdbs_checked": [], "readable_count": 0, "readable_paths": []},
+    )
+    out = resolve_cursor_tab_whereami(
+        transcript_id=_REAL_TID,
+        use_process_env=True,
+    )
+    assert out["basis"] == "unresolved"
+    assert out["limitation"] == "unknown_gui_host"
+
+
 def test_whereami_env_when_enabled(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("SSH_CONNECTION", "1.2.3.4 22 5.6.7.8 9")
     monkeypatch.delenv("DISPLAY", raising=False)
