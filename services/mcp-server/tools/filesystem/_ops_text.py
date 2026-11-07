@@ -134,7 +134,8 @@ def read_files_batch_impl(
     selectors: dict[str, Any] = {}
     if section is not None and str(section).strip():
         selectors["section"] = section
-    if sections:
+    # [] is provided. Truthiness would drop it and return a silent manifest.
+    if sections is not None:
         selectors["sections"] = sections
     if export:
         selectors["export"] = True
