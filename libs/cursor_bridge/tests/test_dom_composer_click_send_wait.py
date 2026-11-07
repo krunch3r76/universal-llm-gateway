@@ -1478,6 +1478,7 @@ def _work_real_dom_html(
     late_send_ms: int | None = None,
     enable_send_after_ms: int | None = None,
     second_work_labeled_editable: bool = False,
+    competing_body_send: bool = False,
 ) -> str:
     """Build disposable browser HTML for ChatGPT Work-shaped send regression."""
     editor_bits: list[str] = []
@@ -1525,7 +1526,12 @@ def _work_real_dom_html(
             'onclick="window.__clickCounts.foreign+=1">Send</button></form>'
         )
     body_extra = ""
-    if labelled_send_on_body:
+    if competing_body_send:
+        body_extra = (
+            '<button type="button" aria-label="Send prompt" id="body-send" '
+            'onclick="window.__clickCounts.body+=1">Body</button>'
+        )
+    elif labelled_send_on_body:
         body_extra = (
             '<button type="button" aria-label="Send prompt" '
             'onclick="window.__clickCounts.send+=1">Send</button>'
@@ -1780,6 +1786,11 @@ def _click_send_with_guard_removed(click_js: str, guard_key: str) -> str:
         if line not in click_js:
             raise AssertionError("second-composer guard line missing")
         return click_js.replace(line, "/* guard-removed */", 1)
+    if guard_key == "stop_anchor":
+        line = "if (ulgHasStopControl(cur)) return cur;"
+        if line not in click_js:
+            raise AssertionError("stop-anchor guard line missing")
+        return click_js.replace(line, "/* guard-removed */", 1)
     if guard_key == "body_html_boundary":
         snippet = _SEND_GUARD_FN_PATCH[guard_key]
         if snippet not in click_js:
@@ -1870,3 +1881,166 @@ def test_work_real_dom_disabled_send_refusal_includes_census() -> None:
     assert result["reason"] == "no_send_button"
     assert result.get("census") is not None
     assert result["__sendClickCount"] == 0
+
+
+@_PLAYWRIGHT_SKIP
+def test_work_real_dom_late_send_ignores_competing_body_send() -> None:
+    """Late footer Send is clicked once; a body Send present from the start is not."""
+    js = _click_send_body(
+        'div.ProseMirror[contenteditable="true"]', "wake", abort_nonce="pw-late-body"
+    )
+    html = _work_real_dom_html(
+        composer_text="wake",
+        include_footer_send=False,
+        late_send_ms=250,
+        competing_body_send=True,
+    )
+    result = _eval_production_click_send_playwright(
+        js, html, composer_text="wake", abort_nonce="pw-late-body"
+    )
+    assert result["ok"] is True
+    assert result["__sendClickCount"] == 1
+    assert result["__bodyClickCount"] == 0
+
+
+_STOP_OUTER_HTML = """<!DOCTYPE html><html><body>
+<div id="outer-wrap">
+  <button type="button" aria-label="Send prompt"
+    onclick="window.__clickCounts.send+=1">Outer</button>
+  <div class="composer-layout">
+    <div class="text-size-chat">
+      <div class="ProseMirror-shell">
+        <div class="ProseMirror" contenteditable="true" role="textbox"
+          aria-label="Work with ChatGPT on your tasks">wake</div>
+      </div>
+    </div>
+    <div class="ComposerLayoutFooter" id="work-footer">
+      <button type="button" aria-label="Stop generating">Stop</button>
+    </div>
+  </div>
+</div>
+<script>window.__clickCounts = {send:0,foreign:0,body:0};</script>
+</body></html>"""
+
+
+@_PLAYWRIGHT_SKIP
+def test_work_real_dom_stop_anchors_against_outer_send() -> None:
+    """Nearest Stop pins scope so a reachable outer Send is not clicked."""
+    js = _click_send_body(
+        'div.ProseMirror[contenteditable="true"]', "wake", abort_nonce="pw-stop-outer"
+    )
+    result = _eval_production_click_send_playwright(
+        js, _STOP_OUTER_HTML, composer_text="wake", abort_nonce="pw-stop-outer"
+    )
+    assert result["ok"] is False
+    assert result["reason"] == "no_send_button"
+    assert result["__sendClickCount"] == 0
+    naive = _click_send_with_guard_removed(js, "stop_anchor")
+    opened = _eval_production_click_send_playwright(
+        naive, _STOP_OUTER_HTML, composer_text="wake", abort_nonce="pw-stop-outer"
+    )
+    assert int(opened.get("__sendClickCount") or 0) >= 1
+
+
+@_PLAYWRIGHT_SKIP
+def test_work_real_dom_own_draft_stop_does_not_click_outer_send() -> None:
+    """Own-draft send uses the same Stop anchor and does not click the outer Send."""
+    js = _click_send_own_draft_body(
+        'div.ProseMirror[contenteditable="true"]', abort_nonce="pw-own-stop"
+    )
+    result = _eval_production_click_send_playwright(
+        js, _STOP_OUTER_HTML, composer_text="wake", abort_nonce="pw-own-stop"
+    )
+    assert result["ok"] is False
+    assert result["reason"] == "no_send_button"
+    assert result["__sendClickCount"] == 0
+
+
+def _eval_composer_page(html: str, expression: str) -> Any:
+    """Evaluate one expression against disposable composer HTML."""
+    from playwright.sync_api import sync_playwright
+
+    script = expression.strip()
+    if script.startswith("function"):
+        marker = "(() => {"
+        split_at = script.find(marker)
+        if split_at < 0:
+            raise AssertionError("composer script has no trailing expression")
+        script = "() => {\n" + script[:split_at] + "return " + script[split_at:] + ";\n}"
+    with sync_playwright() as playwright:
+        browser = playwright.chromium.launch(headless=True)
+        page = browser.new_page()
+        page.set_content(html)
+        value = page.evaluate(script)
+        browser.close()
+    return value
+
+
+@_PLAYWRIGHT_SKIP
+def test_find_and_busy_probe_skip_hidden_work_for_visible_legacy() -> None:
+    """Hidden Work twin is ignored; visible textarea and el.editor stay usable."""
+    from cursor_bridge.dom_composer_paste import (
+        _find_composer_js,
+        operator_busy_probe_js,
+    )
+
+    html = """<!DOCTYPE html><html><body>
+<div class="ProseMirror" contenteditable="true" role="textbox"
+  aria-label="Work with ChatGPT on your tasks" id="twin"
+  style="position:absolute;width:0;height:0;overflow:hidden">HIDDEN DRAFT</div>
+<textarea id="legacy">legacy draft</textarea>
+<div class="ProseMirror" contenteditable="true" id="hosted"
+  style="width:180px;height:28px">hosted</div>
+</body></html>"""
+    find_area = _find_composer_js("textarea")
+    found = _eval_composer_page(
+        html, "() => { const el = " + find_area + "; return el && el.id; }"
+    )
+    assert found == "legacy"
+    find_host = _find_composer_js("div.ProseMirror")
+    hosted = _eval_composer_page(
+        html,
+        "() => { document.getElementById('hosted').editor = {commands:{}}; "
+        "const el = " + find_host + "; return el && el.id; }",
+    )
+    assert hosted == "hosted"
+    probe = operator_busy_probe_js(selector="textarea")
+    draft = _eval_composer_page(html, probe)
+    assert draft.get("composer_draft") == "legacy draft"
+    prose = operator_busy_probe_js(selector="div.ProseMirror")
+    prose_draft = _eval_composer_page(html, prose)
+    assert prose_draft.get("composer_draft") == "hosted"
+    only_hidden = operator_busy_probe_js(selector="#twin")
+    hidden_draft = _eval_composer_page(html, only_hidden)
+    assert hidden_draft.get("composer_draft") == ""
+
+
+@_PLAYWRIGHT_SKIP
+@pytest.mark.parametrize(
+    "wrapper_style",
+    ["opacity:0", "visibility:hidden", "display:none"],
+)
+def test_work_visibility_walks_ancestor_css(wrapper_style: str) -> None:
+    """Ancestor opacity, visibility, or display hides a Work editor with a live rect."""
+    from cursor_bridge.dom_composer_paste import (
+        _find_composer_js,
+        work_native_unsupported_probe_js,
+    )
+
+    html = f"""<!DOCTYPE html><html><body>
+<div style="{wrapper_style}">
+  <div class="ProseMirror" contenteditable="true" role="textbox"
+    aria-label="Work with ChatGPT on your tasks" id="wrapped"
+    style="width:200px;height:30px">secret</div>
+</div>
+<textarea id="legacy">visible legacy</textarea>
+</body></html>"""
+    find_js = _find_composer_js("textarea, div.ProseMirror")
+    found = _eval_composer_page(
+        html, "() => { const el = " + find_js + "; return el && el.id; }"
+    )
+    assert found == "legacy"
+    probe = work_native_unsupported_probe_js(expected_url="")
+    probed = _eval_composer_page(html, probe)
+    assert probed.get("eligible") is not True
+    assert probed.get("reason") == "no_composer"

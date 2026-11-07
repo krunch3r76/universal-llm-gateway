@@ -171,6 +171,14 @@ function ulgHasForeignTextControl(root, el) {
 function ulgScopeSelector(sel) {
   return String(sel || '').replace(/:not\(\[disabled\]\)/g, '');
 }
+function ulgHasStopControl(root) {
+  if (!root || typeof root.querySelectorAll !== 'function') return false;
+  const nodes = root.querySelectorAll('button,[role="button"]');
+  for (let i = 0; i < nodes.length; i += 1) {
+    if (ulgIsStopControl(nodes[i])) return true;
+  }
+  return false;
+}
 function ulgHasRecognizableSendControl(root, el, btnSels) {
   if (!root) return false;
   const ownForm = el.closest && el.closest('form');
@@ -235,6 +243,7 @@ function ulgComposerSendRoot(el) {
     if (ulgHasForeignForm(cur, el)) continue;
     if (ulgHasForeignTextControl(cur, el)) continue;
     if (hasSecondComposer(cur)) continue;
+    if (ulgHasStopControl(cur)) return cur;
     if (!ulgHasRecognizableSendControl(cur, el, ULG_SEND_BTN_SELECTORS)) continue;
     return cur;
   }
@@ -432,6 +441,14 @@ function ulgWorkEditorLabeled(el) {
   const label = String((el && el.getAttribute && el.getAttribute('aria-label')) || '').toLowerCase();
   return label.includes('work with chatgpt');
 }
+function ulgCssHides(node) {
+  if (!node || typeof window.getComputedStyle !== 'function') return false;
+  const st = window.getComputedStyle(node);
+  if (!st) return false;
+  if (st.visibility === 'hidden' || st.display === 'none') return true;
+  const raw = st.opacity;
+  return raw != null && raw !== '' && Number(raw) === 0;
+}
 function ulgWorkEditorRenderedVisible(el) {
   if (!el) return false;
   if (el.isConnected === false) return false;
@@ -439,16 +456,12 @@ function ulgWorkEditorRenderedVisible(el) {
   let p = el.parentElement;
   while (p) {
     if ('inert' in p && p.inert) return false;
+    if (ulgCssHides(p)) return false;
     p = p.parentElement;
   }
   const rect = el.getBoundingClientRect();
   if (rect.width <= 0 || rect.height <= 0) return false;
-  if (typeof window.getComputedStyle === 'function') {
-    const st = window.getComputedStyle(el);
-    if (st.visibility === 'hidden' || st.display === 'none' || Number(st.opacity || '1') === 0) {
-      return false;
-    }
-  }
+  if (ulgCssHides(el)) return false;
   return true;
 }
 function ulgAnyHiddenWorkEditor() {
@@ -459,6 +472,18 @@ function ulgAnyHiddenWorkEditor() {
     if (!ulgWorkEditorRenderedVisible(el)) return true;
   }
   return false;
+}
+function ulgIsHiddenWorkHit(el) {
+  if (!el || !ulgWorkEditorLabeled(el)) return false;
+  const tag = String(el.tagName || '').toUpperCase();
+  if (tag === 'TEXTAREA' || tag === 'INPUT') return false;
+  return !ulgWorkEditorRenderedVisible(el);
+}
+function ulgComposerSurfaceText(el) {
+  if (!el) return '';
+  const tag = String(el.tagName || '').toUpperCase();
+  if (tag === 'TEXTAREA' || tag === 'INPUT') return String(el.value || '');
+  return String(el.innerText || '');
 }
 function ulgResolveVisibleWorkComposer() {
   if (!document || typeof document.querySelectorAll !== 'function') {
@@ -479,9 +504,9 @@ function ulgResolveVisibleWorkComposer() {
 """
 
 READ_OPERATOR_BUSY_JS = (
-    _WORK_EDITOR_RESOLVE_JS
+    "(() => {\n"
+    + _WORK_EDITOR_RESOLVE_JS
     + r"""
-(() => {
   const g = window.__ulgOperatorActivity || {};
   const now = Date.now();
   const last = Number(g.lastInputMs || 0);
@@ -490,15 +515,23 @@ READ_OPERATOR_BUSY_JS = (
   const sels = %SELECTORS%;
   let el = null;
   const work = ulgResolveVisibleWorkComposer();
-  if (work.ok) {
+  if (work.ok && work.el && !ulgIsHiddenWorkHit(work.el)) {
     el = work.el;
   } else if (work.reason !== 'ambiguous_work_composer') {
     for (const s of sels) {
-      el = document.querySelector(s);
+      const listed = typeof document.querySelectorAll === 'function'
+        ? document.querySelectorAll(s) : [];
+      for (const hit of listed) {
+        if (!ulgIsHiddenWorkHit(hit)) { el = hit; break; }
+      }
+      if (!el) {
+        const single = document.querySelector(s);
+        if (single && !ulgIsHiddenWorkHit(single)) el = single;
+      }
       if (el) break;
     }
   }
-  const draft = el ? (el.innerText || '').trim() : '';
+  const draft = ulgComposerSurfaceText(el).trim();
   const sig = String(g.ourDraftSig || '').trim();
   const staleWake = /^BRIDGE_WAKE\s+thread=\S+\s+turn=\d+(?:,\d+)*$/.test(draft);
   const watermark = %WATERMARK%;
@@ -561,16 +594,27 @@ def _selector_list(selector: str) -> list[str]:
 
 
 def _find_composer_js(selector: str) -> str:
-    """Resolve composer: visible Work editor first, else selector list (ambiguous Work → null)."""
+    """Resolve one composer, skipping hidden Work hits.
+
+    A unique visible Work editor wins. Ambiguous visible Work editors return
+    null. Otherwise the selector list may return a visible textarea, input,
+    or ``el.editor`` host. A hidden Work textbox is never that host, and its
+    presence does not veto the legacy control.
+    """
     sels = json.dumps(_selector_list(selector) or [selector])
     return (
         f"(()=>{{{_WORK_EDITOR_RESOLVE_JS}"
         f"const sels={sels};"
         "const work=ulgResolveVisibleWorkComposer();"
-        "if(work.ok)return work.el;"
+        "if(work.ok&&work.el&&!ulgIsHiddenWorkHit(work.el))return work.el;"
         "if(work.reason==='ambiguous_work_composer')return null;"
-        "if(work.reason==='no_composer'&&ulgAnyHiddenWorkEditor())return null;"
-        "for(const s of sels){const el=document.querySelector(s);if(el)return el;}"
+        "for(const s of sels){"
+        "const listed=typeof document.querySelectorAll==='function'"
+        "?document.querySelectorAll(s):[];"
+        "for(const hit of listed){if(hit&&!ulgIsHiddenWorkHit(hit))return hit;}"
+        "const single=document.querySelector(s);"
+        "if(single&&!ulgIsHiddenWorkHit(single))return single;"
+        "}"
         "return null;})()"
     )
 
@@ -746,9 +790,12 @@ def _click_send_body(
     """Build async page JS that polls for an enabled send control after insert.
 
     Ancestor scope comes from ``ulgComposerSendRoot`` (≤8 parents, no body/html,
-    no foreign form/textarea/input/second composer, only roots with an eligible
-    labelled send). ``ulgFindSendBtn`` rejects Stop-labelled controls and limits
-    generic ``type=submit`` to the composer's own ``<form>``.
+    no foreign form/textarea/input/second composer). A nearest Stop control
+    anchors that root so an outer Send is not selected. When no Send or Stop
+    is mounted yet, the same bounded resolver is polled until the page clock
+    deadline; the first accepted root is then frozen and only its enabled
+    Send is polled. ``ulgFindSendBtn`` rejects Stop-labelled controls and
+    limits generic ``type=submit`` to the composer's own ``<form>``.
 
     Returns a ``(async () => …)()`` expression (Promise) for CDP ``Runtime.evaluate``
     with ``awaitPromise=True``. Python must stamp ``_composer_send_permit_expression``
@@ -787,11 +834,19 @@ def _click_send_body(
         "normText=ulgNormalizeComposerText(el.innerText||el.value||'');"
         "if(!composerEmpty&&(!normText||(normText!==normLine&&!wakeStale(normText)))){"
         "cleanup();return{ok:false,reason:'composer_text_mismatch',send_clicked:false};}}"
-        "const root=ulgComposerSendRoot(el);"
-        "if(!root){cleanup();return{ok:false,reason:'no_send_button',send_clicked:false};}"
         f"const btnSels={btn_sels};"
         f"const waitCeilingMs={wait_ceiling};"
         f"const pollIntervalMs={poll_interval};"
+        "const t0=Date.now();"
+        "const deadline=t0+waitCeilingMs;"
+        "let root=null;"
+        "while(!root&&Date.now()<deadline&&!sendGivenUp()){"
+        "root=ulgComposerSendRoot(el);"
+        "if(root)break;"
+        "await new Promise((r)=>setTimeout(r,pollIntervalMs));"
+        "}"
+        "if(sendGivenUp()){cleanup();return{ok:false,reason:'cdp_eval_timeout',send_clicked:false};}"
+        "if(!root){cleanup();return{ok:false,reason:'no_send_button',send_clicked:false};}"
         "const findSendBtn=()=>ulgFindSendBtn(root,el,btnSels);"
         "const buildCensus=(elapsedMs)=>{"
         "const buttons=[];"
@@ -822,8 +877,6 @@ def _click_send_body(
         "elapsed_ms:elapsedMs,"
         "};"
         "};"
-        "const t0=Date.now();"
-        "const deadline=t0+waitCeilingMs;"
         "let btn=findSendBtn();"
         "while(!btn&&Date.now()<deadline&&!sendGivenUp()){"
         "await new Promise((r)=>setTimeout(r,pollIntervalMs));"

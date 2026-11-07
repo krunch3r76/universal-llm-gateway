@@ -8,7 +8,6 @@ import json
 from typing import Any
 
 import pytest
-
 from cursor_bridge.cdp_composer_input import cdp_work_native_insert_text
 from cursor_bridge.dom_composer_paste import (
     _set_composer_body,
@@ -104,7 +103,9 @@ async def test_work_native_readback_mismatch_is_insertion_unknown(monkeypatch) -
             return None
         if mid == 2:
             return fake._preflight
-        if mid in (3, 5):
+        if mid == 3:
+            return {"ok": True}
+        if mid == 5:
             return None
         if mid == 6:
             return fake._readback
@@ -143,20 +144,24 @@ async def test_work_native_readback_mismatch_is_insertion_unknown(monkeypatch) -
 
 @pytest.mark.asyncio
 async def test_work_native_insert_socket_command_order(monkeypatch) -> None:
-    """Exactly one Input.insertText between suppress eval and clear eval."""
+    """One Input.insertText, and the prior eval is the guarded gate."""
     fake = _FakeWS(
         preflight={"ok": True},
         readback={"ok": True, "phase": "inserted", "inserted": True, "pasted": True},
     )
     eval_mids: list[int] = []
+    eval_exprs: dict[int, str] = {}
 
     async def _eval(ws: Any, mid: int, expression: str) -> Any:
         eval_mids.append(mid)
+        eval_exprs[mid] = expression
         if mid == 1:
             return None
         if mid == 2:
             return fake._preflight
-        if mid in (3, 5):
+        if mid == 3:
+            return {"ok": True}
+        if mid == 5:
             return None
         if mid == 6:
             return fake._readback
@@ -193,6 +198,11 @@ async def test_work_native_insert_socket_command_order(monkeypatch) -> None:
     methods = [m.get("method") for m in fake.sent]
     assert methods.count("Input.insertText") == 1
     assert eval_mids.index(3) < eval_mids.index(5)
+    gate_expr = eval_exprs[3]
+    assert "ulgResolveVisibleWorkComposer" in gate_expr
+    assert "suppressUntilMs" in gate_expr
+    assert "ulgHasPopulatedAttachment" in gate_expr
+    assert eval_mids[eval_mids.index(3) + 1] == 5
 
 
 @_PLAYWRIGHT_SKIP
@@ -228,9 +238,8 @@ def test_work_native_probe_ignores_hidden_twin() -> None:
 @_PLAYWRIGHT_SKIP
 def test_work_native_preflight_refuses_populated_sibling_attachment() -> None:
     """Sibling file chip with content must refuse native insert before Input."""
-    from playwright.sync_api import sync_playwright
-
     from cursor_bridge.cdp_composer_input import _work_native_preflight_js
+    from playwright.sync_api import sync_playwright
 
     html = """<!DOCTYPE html><html><body>
 <div class="text-size-chat LegacyExpandableEditor">
@@ -309,7 +318,9 @@ async def test_work_native_insert_ack_error_is_insertion_unknown(monkeypatch) ->
             return None
         if mid == 2:
             return fake._preflight
-        if mid in (3, 5):
+        if mid == 3:
+            return {"ok": True}
+        if mid == 5:
             return None
         return None
 
@@ -345,7 +356,9 @@ async def test_work_native_readback_transport_is_insertion_unknown(monkeypatch) 
             return None
         if mid == 2:
             return fake._preflight
-        if mid in (3, 5):
+        if mid == 3:
+            return {"ok": True}
+        if mid == 5:
             return None
         if mid == 6:
             raise TimeoutError("readback stalled")
@@ -383,7 +396,7 @@ async def test_work_native_cleanup_failure_after_dispatch_unknown(monkeypatch) -
         if mid == 2:
             return fake._preflight
         if mid == 3:
-            return None
+            return {"ok": True}
         if mid == 5:
             raise RuntimeError("clear failed")
         return None
@@ -412,9 +425,8 @@ async def test_work_native_cleanup_failure_after_dispatch_unknown(monkeypatch) -
 @_PLAYWRIGHT_SKIP
 def test_work_native_preflight_url_mismatch_refuses() -> None:
     """Conversation URL drift before insert must refuse without Input."""
-    from playwright.sync_api import sync_playwright
-
     from cursor_bridge.cdp_composer_input import _work_native_preflight_js
+    from playwright.sync_api import sync_playwright
 
     html = """<!DOCTYPE html><html><body>
 <div contenteditable="true" role="textbox" aria-label="Work with ChatGPT on your tasks"
@@ -444,9 +456,8 @@ def test_work_native_preflight_url_mismatch_refuses() -> None:
 @_PLAYWRIGHT_SKIP
 def test_work_native_readback_rejects_editor_identity_change() -> None:
     """Readback must not assign ownership if pinned editor no longer matches resolver."""
-    from playwright.sync_api import sync_playwright
-
     from cursor_bridge.cdp_composer_input import _work_native_readback_js
+    from playwright.sync_api import sync_playwright
 
     html = """<!DOCTYPE html><html><body>
 <div contenteditable="true" role="textbox" aria-label="Work with ChatGPT on your tasks"
@@ -495,7 +506,9 @@ async def test_work_native_success_assigns_writer_only_after_readback(monkeypatc
             return None
         if mid == 2:
             return fake._preflight
-        if mid in (3, 5):
+        if mid == 3:
+            return {"ok": True}
+        if mid == 5:
             return None
         if mid == 6:
             return fake._readback
@@ -522,3 +535,231 @@ async def test_work_native_success_assigns_writer_only_after_readback(monkeypatc
     assert out.get("pasted") is True
     assert out.get("sig") == "hello"
     assert len([m for m in fake.sent if m.get("method") == "Input.insertText"]) == 1
+
+
+def _eval_native_page(html: str, expression: str, *, url: str, setup: str = "") -> Any:
+    """Run production page JS in a disposable browser at ``url``."""
+    from playwright.sync_api import sync_playwright
+
+    with sync_playwright() as playwright:
+        browser = playwright.chromium.launch(headless=True)
+        page = browser.new_page()
+        page.goto(url, wait_until="domcontentloaded")
+        page.set_content(html)
+        if setup:
+            page.evaluate(setup)
+        value = page.evaluate(expression)
+        browser.close()
+    return value
+
+
+_NATIVE_EDITOR_HTML = """<!DOCTYPE html><html><body>
+<div class="composer-layout">
+  <div class="text-size-chat">
+    <div class="ProseMirror-shell">
+      <div contenteditable="true" role="textbox"
+        aria-label="Work with ChatGPT on your tasks"
+        style="min-height:40px;width:200px" id="main"></div>
+    </div>
+  </div>
+  <div class="ComposerLayoutFooter" id="footer"></div>
+</div>
+<textarea id="other"></textarea>
+</body></html>"""
+
+_NATIVE_READY = (
+    "() => { const el = document.getElementById('main');"
+    " el.pmViewDesc = {}; window.__ulgWorkNativeEditor = el;"
+    " window.__ulgOperatorActivity = {}; el.focus(); }"
+)
+
+
+@pytest.mark.asyncio
+async def test_work_native_gate_refusal_does_not_insert(monkeypatch) -> None:
+    """A failing last-eval gate is pre-input: no Input.insertText and not unknown."""
+    fake = _FakeWS(
+        preflight={"ok": True},
+        readback={"ok": True, "pasted": True},
+    )
+
+    async def _eval(ws: Any, mid: int, expression: str) -> Any:
+        if mid == 2:
+            return fake._preflight
+        if mid == 3:
+            return {"ok": False, "reason": "editor_changed"}
+        return None
+
+    monkeypatch.setattr("cursor_bridge.cdp_composer_input._runtime_eval", _eval)
+
+    class _Connect:
+        async def __aenter__(self) -> _FakeWS:
+            return fake
+
+        async def __aexit__(self, *exc: object) -> None:
+            return None
+
+    monkeypatch.setattr("websockets.connect", lambda *a, **kw: _Connect())
+    out = await cdp_work_native_insert_text(
+        "ws://fake",
+        text="hello",
+        expected_url="https://chatgpt.com/c/abc",
+        draft_writer="w",
+    )
+    assert out["ok"] is False
+    assert out["reason"] == "editor_changed"
+    assert out.get("insertion_unknown") is not True
+    assert out.get("pasted") is False
+    assert not any(m.get("method") == "Input.insertText" for m in fake.sent)
+
+
+@pytest.mark.asyncio
+async def test_work_native_cancel_after_insert_does_not_send_again(monkeypatch) -> None:
+    """Cancellation during readback leaves one insert and does not claim pasted."""
+    fake = _FakeWS(preflight={"ok": True}, readback={"ok": True, "pasted": True})
+
+    async def _eval(ws: Any, mid: int, expression: str) -> Any:
+        if mid == 2:
+            return fake._preflight
+        if mid == 3:
+            return {"ok": True}
+        if mid == 5:
+            return None
+        if mid == 6:
+            raise asyncio.CancelledError()
+        return None
+
+    monkeypatch.setattr("cursor_bridge.cdp_composer_input._runtime_eval", _eval)
+
+    class _Connect:
+        async def __aenter__(self) -> _FakeWS:
+            return fake
+
+        async def __aexit__(self, *exc: object) -> None:
+            return None
+
+    monkeypatch.setattr("websockets.connect", lambda *a, **kw: _Connect())
+    with pytest.raises(asyncio.CancelledError):
+        await cdp_work_native_insert_text(
+            "ws://fake",
+            text="hello",
+            expected_url="https://chatgpt.com/c/abc",
+            draft_writer="w",
+        )
+    assert len([m for m in fake.sent if m.get("method") == "Input.insertText"]) == 1
+
+
+@_PLAYWRIGHT_SKIP
+def test_work_native_footer_file_refuses_and_empty_attach_allows() -> None:
+    """A footer file chip outside the shell refuses; an empty Attach button does not."""
+    from cursor_bridge.cdp_composer_input import _work_native_preflight_js
+
+    footer = """<!DOCTYPE html><html><body>
+<div class="composer-layout">
+  <div class="text-size-chat">
+    <div class="ProseMirror-shell">
+      <div contenteditable="true" role="textbox"
+        aria-label="Work with ChatGPT on your tasks"
+        style="min-height:40px;width:200px" id="main"></div>
+    </div>
+  </div>
+  <div class="ComposerLayoutFooter"><div class="file-chip">notes.txt</div></div>
+</div>
+</body></html>"""
+    attach = """<!DOCTYPE html><html><body>
+<div class="composer-layout">
+  <div class="text-size-chat">
+    <div class="ProseMirror-shell">
+      <button data-testid="composer-attachment" class="attachment">Attach</button>
+      <div contenteditable="true" role="textbox"
+        aria-label="Work with ChatGPT on your tasks"
+        style="min-height:40px;width:200px" id="main"></div>
+    </div>
+  </div>
+  <div class="ComposerLayoutFooter"></div>
+</div>
+</body></html>"""
+    outside = """<!DOCTYPE html><html><body>
+<div class="file-chip">secret.pdf</div>
+<div class="composer-layout">
+  <div class="text-size-chat">
+    <div class="ProseMirror-shell">
+      <div contenteditable="true" role="textbox"
+        aria-label="Work with ChatGPT on your tasks"
+        style="min-height:40px;width:200px" id="main"></div>
+    </div>
+  </div>
+  <div class="ComposerLayoutFooter"></div>
+</div>
+</body></html>"""
+    pre = _work_native_preflight_js(
+        expected_url="https://chatgpt.com/c/abc",
+        text="wake",
+        draft_writer="orion:test",
+        preserve_newlines=False,
+    )
+    url = "https://chatgpt.com/c/abc"
+    refused = _eval_native_page(footer, pre, url=url, setup=_NATIVE_READY)
+    assert refused.get("ok") is False
+    assert refused.get("reason") == "foreign_attachment"
+    allowed = _eval_native_page(attach, pre, url=url, setup=_NATIVE_READY)
+    assert allowed.get("ok") is True
+    bounded = _eval_native_page(outside, pre, url=url, setup=_NATIVE_READY)
+    assert bounded.get("ok") is True
+
+
+@_PLAYWRIGHT_SKIP
+def test_work_native_gate_refuses_focus_url_and_editor_drift() -> None:
+    """The last eval refuses when focus, URL, or the visible editor drifts."""
+    from cursor_bridge.cdp_composer_input import _work_native_insert_gate_js
+
+    gate = _work_native_insert_gate_js(
+        expected_url="https://chatgpt.com/c/abc",
+        text="wake",
+        draft_writer="orion:test",
+        preserve_newlines=False,
+    )
+    url = "https://chatgpt.com/c/abc"
+    focused = _eval_native_page(
+        _NATIVE_EDITOR_HTML, gate, url=url, setup=_NATIVE_READY
+    )
+    assert focused.get("ok") is True
+    stolen = _eval_native_page(
+        _NATIVE_EDITOR_HTML,
+        gate,
+        url=url,
+        setup=(
+            "() => { const el = document.getElementById('main');"
+            " el.pmViewDesc = {}; window.__ulgWorkNativeEditor = el;"
+            " window.__ulgOperatorActivity = {};"
+            " document.getElementById('other').focus(); }"
+        ),
+    )
+    assert stolen.get("ok") is False
+    assert stolen.get("reason") == "focus_failed"
+    replaced = """<!DOCTYPE html><html><body>
+<div contenteditable="true" role="textbox" aria-label="Work with ChatGPT on your tasks"
+  style="width:200px;height:30px" id="main"></div>
+<div contenteditable="true" role="textbox" aria-label="Work with ChatGPT on your tasks"
+  style="width:200px;height:30px" id="second"></div>
+</body></html>"""
+    ambiguous = _eval_native_page(
+        replaced,
+        gate,
+        url=url,
+        setup=(
+            "() => { const el = document.getElementById('main');"
+            " el.pmViewDesc = {}; document.getElementById('second').pmViewDesc = {};"
+            " window.__ulgWorkNativeEditor = el; window.__ulgOperatorActivity = {};"
+            " el.focus(); }"
+        ),
+    )
+    assert ambiguous.get("ok") is False
+    assert ambiguous.get("reason") == "ambiguous_work_composer"
+    wrong_url = _eval_native_page(
+        _NATIVE_EDITOR_HTML,
+        gate,
+        url="https://chatgpt.com/c/other",
+        setup=_NATIVE_READY,
+    )
+    assert wrong_url.get("ok") is False
+    assert wrong_url.get("reason") == "url_mismatch"
