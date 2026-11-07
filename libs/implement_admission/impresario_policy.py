@@ -488,7 +488,7 @@ def resolve_roles(
 
 def argon_barred_for_role(impresario_role: str | None) -> bool:
     """True when ``impresario_role`` must not use ``cursor/gemini-4-argon``."""
-    from implement_admission.model_ban import argon_role_barred
+    from implement_admission.model_ban_impresario import argon_role_barred
 
     return argon_role_barred(impresario_role)
 
@@ -499,7 +499,7 @@ def refuse_argon_non_advisor_route(
     impresario_role: str | None,
 ) -> AdvisorAdmitResult | None:
     """Refuse argon when the role is critic, ear, implement, or sweep."""
-    from implement_admission.model_ban import impresario_argon_refusal
+    from implement_admission.model_ban_impresario import impresario_argon_refusal
 
     refusal = impresario_argon_refusal(model=model, impresario_role=impresario_role)
     if refusal is None:
