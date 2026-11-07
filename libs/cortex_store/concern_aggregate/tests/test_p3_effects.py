@@ -33,6 +33,7 @@ from cortex_store.concern_aggregate.effects import (
     acquire_lease,
     admit_effect,
     clear_hold,
+    compute_effect_key,
     lookup_receipt,
     reconcile_effect,
     record_outcome,
@@ -41,6 +42,7 @@ from cortex_store.concern_aggregate.effects import (
     resolve_action_intent,
     set_hold,
 )
+from cortex_store.concern_aggregate.evidence import EffectEvidence
 from cortex_store.concern_aggregate.fault_injection import (
     set_after_begin,
     set_after_controls_read,
@@ -54,6 +56,31 @@ pytestmark = pytest.mark.offline
 
 AUTH = "decision:test-auth"
 T0 = datetime(2026, 1, 1, 12, 0, 0, tzinfo=UTC)
+_DIGEST = "ab" * 32
+
+
+class _Accept:
+    name = "stub"
+
+    def verify(self, evidence: EffectEvidence) -> bool:
+        return True
+
+
+_PROV = _Accept()
+
+
+def _ev(
+    kind: str, effect_key: str, at: datetime, superseded: str = ""
+) -> EffectEvidence:
+    return EffectEvidence(
+        kind=kind,
+        provider="stub",
+        effect_key=effect_key,
+        ref_uri="ref:evidence",
+        observed_at=at,
+        digest=_DIGEST,
+        superseded_request_id=superseded,
+    )
 
 
 def _connect_wal(path: Path) -> sqlite3.Connection:
@@ -197,6 +224,7 @@ def test_f1b_replay_under_hold_returns_receipt(
         hold={"active": True},
         authorized_by=AUTH,
         record_ref="rec-hold1",
+        now=T0,
     )
     r2 = admit_effect(
         concern_db,
@@ -420,7 +448,12 @@ def test_f4_lease_expiry_late_report(concern_db: sqlite3.Connection) -> None:
     )
 
     reconcile_effect(
-        conn=concern_db, effect_key=ek, observed_applied=False, now=t_expired
+        conn=concern_db,
+        effect_key=ek,
+        observed_applied=False,
+        now=t_expired + timedelta(seconds=2),
+        evidence=_ev("not_applied", ek, t_expired + timedelta(seconds=2), "req:a1"),
+        evidence_provider=_PROV,
     )
     record_recovery_decision(
         concern_db,
@@ -689,6 +722,7 @@ def test_f5_hold_before_admit(tmp_path: Path, migrated_db_template: Path) -> Non
             hold={},
             authorized_by=AUTH,
             record_ref="rec-mid",
+            now=T0,
         )
 
     set_between_resolve_and_admit(_hook)
@@ -714,6 +748,7 @@ def test_f5_hold_before_admit(tmp_path: Path, migrated_db_template: Path) -> Non
         control_key="cancel",
         authorized_by=AUTH,
         record_ref="rec-clear",
+        now=T0,
     )
     r = admit_effect(
         concern_db,
@@ -741,6 +776,7 @@ def test_f5_hold_before_admit(tmp_path: Path, migrated_db_template: Path) -> Non
         hold={},
         authorized_by=AUTH,
         record_ref="rec-aftersucc",
+        now=T0,
     )
     st_eff = concern_db.execute(
         "SELECT state FROM concern_effects WHERE effect_key = ?", (ek,)
@@ -752,7 +788,11 @@ def test_f5_hold_before_admit(tmp_path: Path, migrated_db_template: Path) -> Non
 def test_f5b_hold_during_admit_linearization(
     tmp_path: Path, migrated_db_template: Path
 ) -> None:
-    """F5b: set_hold blocks until admit commits; short busy_timeout errors."""
+    """F5b: set_hold blocks until admit commits; short busy_timeout errors.
+
+    The busy_timeout=50 case asserts the SQLite locked message. A read-before-BEGIN
+    race is excluded by code review, not by this test.
+    """
     conn = fresh_migrated_connection(tmp_path, migrated_db_template)
     seed_authority(conn)
     db_file = next(
@@ -892,7 +932,7 @@ def test_f5b_hold_during_admit_linearization(
     admitter.start()
     assert opened.wait(timeout=2.0)
     try:
-        with pytest.raises(sqlite3.OperationalError):
+        with pytest.raises(sqlite3.OperationalError) as busy_exc:
             set_hold(
                 busy_conn,
                 concern_id=cid,
@@ -906,6 +946,7 @@ def test_f5b_hold_during_admit_linearization(
         release.set()
         admitter.join(timeout=5.0)
         set_after_begin(None)
+    assert "locked" in str(busy_exc.value).lower()
     assert getattr(busy_admit["result"], "execution_allowed") is True
     after = conn.execute(
         "SELECT COUNT(*) FROM concern_journal WHERE concern_id = ?", (cid,)
@@ -1009,6 +1050,68 @@ def test_f5c_hold_survives_rebuild(
             fencing_token=g,
             now=T0,
         )
+    clear_hold(
+        concern_db,
+        concern_id=cid,
+        control_key="cancel",
+        authorized_by=AUTH,
+        record_ref="rec-f5c-open",
+        now=T0,
+    )
+    set_hold(
+        concern_db,
+        concern_id=cid,
+        control_key="cancel",
+        hold={"live": True},
+        authorized_by=AUTH,
+        record_ref="rec-f5c-held",
+        now=T0,
+    )
+    write_checkpoint(concern_db, concern_id=cid)
+    from cortex_store.concern_aggregate import journal as journal_mod
+
+    calls: list[int] = []
+    real_apply = journal_mod._apply_transition_to_views
+
+    def _spy(*args: object, **kwargs: object) -> None:
+        calls.append(1)
+        real_apply(*args, **kwargs)
+
+    journal_mod._apply_transition_to_views = _spy  # type: ignore[assignment]
+    try:
+        rebuild_concern(concern_db, cid)
+    finally:
+        journal_mod._apply_transition_to_views = real_apply
+    assert calls == []
+    with pytest.raises(HoldActiveError):
+        admit_effect(
+            concern_db,
+            intent_id=iid,
+            effect_kind="e",
+            request={"a": 1},
+            request_id="req:ckpt",
+            fencing_token=g,
+            now=T0,
+        )
+    clear_hold(
+        concern_db,
+        concern_id=cid,
+        control_key="cancel",
+        authorized_by=AUTH,
+        record_ref="rec-f5c-suffix-clear",
+        now=T0,
+    )
+    rebuild_concern(concern_db, cid)
+    opened = admit_effect(
+        concern_db,
+        intent_id=iid,
+        effect_kind="e-after",
+        request={"a": 1},
+        request_id="req:after-ckpt",
+        fencing_token=g,
+        now=T0,
+    )
+    assert opened.execution_allowed is True
 
 
 def test_f5d_partial_clear_keeps_held(concern_db: sqlite3.Connection) -> None:
@@ -1030,6 +1133,7 @@ def test_f5d_partial_clear_keeps_held(concern_db: sqlite3.Connection) -> None:
         hold={},
         authorized_by=AUTH,
         record_ref="rec-c1",
+        now=T0,
     )
     set_hold(
         concern_db,
@@ -1038,6 +1142,7 @@ def test_f5d_partial_clear_keeps_held(concern_db: sqlite3.Connection) -> None:
         hold={},
         authorized_by=AUTH,
         record_ref="rec-d1",
+        now=T0,
     )
     iid = resolve_action_intent(
         concern_db,
@@ -1068,11 +1173,12 @@ def test_f5d_partial_clear_keeps_held(concern_db: sqlite3.Connection) -> None:
         control_key="cancel",
         authorized_by=AUTH,
         record_ref="rec-clr",
+        now=T0,
     )
     st = concern_db.execute(
         "SELECT state FROM concern_action_intents WHERE intent_id = ?", (iid,)
     ).fetchone()
-    assert st is None or st[0] == "held"
+    assert st[0] == "held"
     with pytest.raises(HoldActiveError):
         admit_effect(
             concern_db,
@@ -1166,7 +1272,14 @@ def test_f6_unknown_outcome_reconcile(concern_db: sqlite3.Connection) -> None:
         fencing_token=g,
         now=T0,
     )
-    reconcile_effect(conn=concern_db, effect_key=ek2, observed_applied=False, now=T0)
+    reconcile_effect(
+        conn=concern_db,
+        effect_key=ek2,
+        observed_applied=False,
+        now=T0 + timedelta(seconds=2),
+        evidence=_ev("not_applied", ek2, T0 + timedelta(seconds=2), "req:e2a"),
+        evidence_provider=_PROV,
+    )
     with pytest.raises(ReconcileRequiredError):
         admit_effect(
             concern_db,
@@ -1232,7 +1345,8 @@ def test_f6_unknown_outcome_reconcile(concern_db: sqlite3.Connection) -> None:
         fencing_token=g,
         now=T0,
         resend_basis="resource_dedup",
-        resend_evidence="resource dedups on K",
+        resend_evidence=_ev("resource_dedup", ek2, T0),
+        evidence_provider=_PROV,
     )
     with pytest.raises(RetryBudgetExceededError):
         admit_effect(
@@ -1244,7 +1358,8 @@ def test_f6_unknown_outcome_reconcile(concern_db: sqlite3.Connection) -> None:
             fencing_token=g,
             now=T0,
             resend_basis="resource_dedup",
-            resend_evidence="resource dedups on K",
+            resend_evidence=_ev("resource_dedup", ek2, T0),
+            evidence_provider=_PROV,
         )
 
     iid3 = resolve_action_intent(
@@ -1402,7 +1517,8 @@ def test_f8_transport_retry_budget(concern_db: sqlite3.Connection) -> None:
         fencing_token=g,
         now=T0,
         resend_basis="resource_dedup",
-        resend_evidence="accepting resource dedups this K",
+        resend_evidence=_ev("resource_dedup", first.effect_key, T0),
+        evidence_provider=_PROV,
     )
     assert second.execution_allowed is True
     row = concern_db.execute(
@@ -1421,9 +1537,15 @@ def test_f8_transport_retry_budget(concern_db: sqlite3.Connection) -> None:
             request=req,
             request_id="req:3",
             fencing_token=g,
-            now=T0,
             resend_basis="confirmed_not_accepted",
-            resend_evidence="upstream confirmed non-acceptance",
+            resend_evidence=_ev(
+                "confirmed_not_accepted",
+                first.effect_key,
+                T0 + timedelta(seconds=1),
+                "req:2",
+            ),
+            evidence_provider=_PROV,
+            now=T0 + timedelta(seconds=2),
         )
     assert concern_db.execute("SELECT COUNT(*) FROM concern_effects").fetchone()[0] == 1
 
@@ -1469,7 +1591,14 @@ def test_f8b_budget_resets_after_decision(concern_db: sqlite3.Connection) -> Non
         fencing_token=g,
         now=T0,
     )
-    reconcile_effect(conn=concern_db, effect_key=ek, observed_applied=False, now=T0)
+    reconcile_effect(
+        conn=concern_db,
+        effect_key=ek,
+        observed_applied=False,
+        now=T0 + timedelta(seconds=2),
+        evidence=_ev("not_applied", ek, T0 + timedelta(seconds=2), "req:x1"),
+        evidence_provider=_PROV,
+    )
     record_recovery_decision(
         concern_db,
         effect_key=ek,
@@ -1500,9 +1629,12 @@ def test_f8b_budget_resets_after_decision(concern_db: sqlite3.Connection) -> Non
         request=req,
         request_id="req:auto-after",
         fencing_token=g,
-        now=T0,
         resend_basis="confirmed_not_accepted",
-        resend_evidence="not accepted",
+        resend_evidence=_ev(
+            "confirmed_not_accepted", ek, T0 + timedelta(seconds=1), "req:dec"
+        ),
+        evidence_provider=_PROV,
+        now=T0 + timedelta(seconds=2),
     )
     ac2 = int(
         concern_db.execute(
@@ -1520,7 +1652,8 @@ def test_f8b_budget_resets_after_decision(concern_db: sqlite3.Connection) -> Non
             fencing_token=g,
             now=T0,
             resend_basis="resource_dedup",
-            resend_evidence="dedup",
+            resend_evidence=_ev("resource_dedup", ek, T0),
+            evidence_provider=_PROV,
         )
 
 
@@ -1563,7 +1696,14 @@ def test_f8c_exhausted_admitted_to_decision(concern_db: sqlite3.Connection) -> N
         fencing_token=g,
         now=T0,
         resend_basis="resource_dedup",
-        resend_evidence="dedup",
+        resend_evidence=_ev(
+            "resource_dedup",
+            compute_effect_key(
+                concern_id=cid, work_key=wk, intent_id=iid, effect_kind="e"
+            ),
+            T0,
+        ),
+        evidence_provider=_PROV,
     )
     ek = concern_db.execute(
         "SELECT effect_key FROM concern_effects WHERE intent_id = ?", (iid,)
@@ -1578,7 +1718,8 @@ def test_f8c_exhausted_admitted_to_decision(concern_db: sqlite3.Connection) -> N
             fencing_token=g,
             now=T0,
             resend_basis="resource_dedup",
-            resend_evidence="dedup",
+            resend_evidence=_ev("resource_dedup", ek, T0),
+            evidence_provider=_PROV,
         )
     record_outcome(
         concern_db,
@@ -1588,7 +1729,14 @@ def test_f8c_exhausted_admitted_to_decision(concern_db: sqlite3.Connection) -> N
         fencing_token=g,
         now=T0,
     )
-    reconcile_effect(conn=concern_db, effect_key=ek, observed_applied=False, now=T0)
+    reconcile_effect(
+        conn=concern_db,
+        effect_key=ek,
+        observed_applied=False,
+        now=T0 + timedelta(seconds=2),
+        evidence=_ev("not_applied", ek, T0 + timedelta(seconds=2), "req:b"),
+        evidence_provider=_PROV,
+    )
     record_recovery_decision(
         concern_db,
         effect_key=ek,
@@ -1658,7 +1806,9 @@ def test_f9_succeeded_terminal(concern_db: sqlite3.Connection) -> None:
             outcome=STATE_FAILED,
             receipt=None,
             fencing_token=g,
-            now=T0,
+            now=T0 + timedelta(seconds=2),
+            evidence=_ev("not_applied", ek, T0 + timedelta(seconds=2), "req:1"),
+            evidence_provider=_PROV,
         )
 
 
@@ -1994,7 +2144,9 @@ def test_m1_outcome_only_from_admitted(concern_db: sqlite3.Connection) -> None:
             outcome=STATE_FAILED,
             receipt=None,
             fencing_token=g,
-            now=T0,
+            now=T0 + timedelta(seconds=2),
+            evidence=_ev("not_applied", ek, T0 + timedelta(seconds=2), "req:1"),
+            evidence_provider=_PROV,
         )
     with pytest.raises(ReconcileRequiredError):
         admit_effect(
@@ -2006,7 +2158,14 @@ def test_m1_outcome_only_from_admitted(concern_db: sqlite3.Connection) -> None:
             fencing_token=g,
             now=T0,
         )
-    reconcile_effect(conn=concern_db, effect_key=ek, observed_applied=False, now=T0)
+    reconcile_effect(
+        conn=concern_db,
+        effect_key=ek,
+        observed_applied=False,
+        now=T0 + timedelta(seconds=2),
+        evidence=_ev("not_applied", ek, T0 + timedelta(seconds=2), "req:1"),
+        evidence_provider=_PROV,
+    )
     with pytest.raises(InvalidTransitionError):
         record_outcome(
             concern_db,
@@ -2040,7 +2199,9 @@ def test_m1_outcome_only_from_admitted(concern_db: sqlite3.Connection) -> None:
         outcome=STATE_FAILED,
         receipt=None,
         fencing_token=g,
-        now=T0,
+        now=T0 + timedelta(seconds=2),
+        evidence=_ev("not_applied", ek_f, T0 + timedelta(seconds=2), "req:f"),
+        evidence_provider=_PROV,
     )
     with pytest.raises(InvalidTransitionError):
         record_outcome(
@@ -2184,7 +2345,9 @@ def test_m3_unconsumed_decision_and_stale_after_failure(
         outcome=STATE_FAILED,
         receipt=None,
         fencing_token=g,
-        now=T0,
+        now=T0 + timedelta(seconds=2),
+        evidence=_ev("not_applied", ek, T0 + timedelta(seconds=2), "req:1"),
+        evidence_provider=_PROV,
     )
     record_recovery_decision(
         concern_db,
@@ -2219,7 +2382,9 @@ def test_m3_unconsumed_decision_and_stale_after_failure(
         outcome=STATE_FAILED,
         receipt=None,
         fencing_token=g,
-        now=T0,
+        now=T0 + timedelta(seconds=2),
+        evidence=_ev("not_applied", ek, T0 + timedelta(seconds=2), "req:use"),
+        evidence_provider=_PROV,
     )
     with pytest.raises(ReconcileRequiredError):
         admit_effect(
@@ -2233,10 +2398,15 @@ def test_m3_unconsumed_decision_and_stale_after_failure(
         )
 
 
+@pytest.mark.parametrize(
+    "terminal",
+    ["failed", "reconcile_required_retry", "succeeded", "outcome_unknown"],
+)
 def test_m6_stale_token_late_report_every_state(
     concern_db: sqlite3.Connection,
+    terminal: str,
 ) -> None:
-    """m6: a stale token appends late_report and changes state only from admitted."""
+    """m6: a stale token appends late_report and leaves every non-admit state unchanged."""
     cid = "concern:m6"
     wk = "wk:m6"
     g = acquire_lease(
@@ -2265,14 +2435,56 @@ def test_m6_stale_token_late_report_every_state(
         fencing_token=g,
         now=T0,
     ).effect_key
-    record_outcome(
-        concern_db,
-        effect_key=ek,
-        outcome=STATE_OUTCOME_UNKNOWN,
-        receipt=None,
-        fencing_token=g,
-        now=T0,
-    )
+    if terminal == "succeeded":
+        record_outcome(
+            concern_db,
+            effect_key=ek,
+            outcome=STATE_SUCCEEDED,
+            receipt={"ok": True},
+            fencing_token=g,
+            now=T0,
+        )
+        expected = STATE_SUCCEEDED
+    elif terminal == "failed":
+        record_outcome(
+            concern_db,
+            effect_key=ek,
+            outcome=STATE_FAILED,
+            receipt=None,
+            fencing_token=g,
+            now=T0 + timedelta(seconds=2),
+            evidence=_ev("not_applied", ek, T0 + timedelta(seconds=2), "req:1"),
+            evidence_provider=_PROV,
+        )
+        expected = STATE_FAILED
+    elif terminal == "reconcile_required_retry":
+        record_outcome(
+            concern_db,
+            effect_key=ek,
+            outcome=STATE_OUTCOME_UNKNOWN,
+            receipt=None,
+            fencing_token=g,
+            now=T0,
+        )
+        reconcile_effect(
+            concern_db,
+            effect_key=ek,
+            observed_applied=False,
+            now=T0 + timedelta(seconds=2),
+            evidence=_ev("not_applied", ek, T0 + timedelta(seconds=2), "req:1"),
+            evidence_provider=_PROV,
+        )
+        expected = "reconcile_required_retry"
+    else:
+        record_outcome(
+            concern_db,
+            effect_key=ek,
+            outcome=STATE_OUTCOME_UNKNOWN,
+            receipt=None,
+            fencing_token=g,
+            now=T0,
+        )
+        expected = STATE_OUTCOME_UNKNOWN
     t1 = T0 + timedelta(hours=1)
     g2 = acquire_lease(
         concern_db,
@@ -2290,10 +2502,12 @@ def test_m6_stale_token_late_report_every_state(
         receipt=None,
         fencing_token=g,
         now=t1,
+        evidence=_ev("not_applied", ek, t1, "req:1"),
+        evidence_provider=_PROV,
     )
     assert late.late_report is True
     st, attempts_json = concern_db.execute(
         "SELECT state, attempts_json FROM concern_effects WHERE effect_key = ?", (ek,)
     ).fetchone()
-    assert st == STATE_OUTCOME_UNKNOWN
+    assert st == expected
     assert any(x.get("kind") == "late_report" for x in json.loads(attempts_json))

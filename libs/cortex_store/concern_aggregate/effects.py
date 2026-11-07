@@ -16,6 +16,9 @@ external effect executions. One ``concern_effects`` row is not proof of one exte
 effect. ``execution_allowed`` on ``AdmitResult`` is the sole permit to run the side
 effect, and only for ``permit_request_id``.
 
+Library ``now`` is caller-asserted. Trust holds only when slice 3b.2 routes
+callers through the adapter clock in ``effect_gate``.
+
 Ref: decision a:42489 (admission and identities); R1 execution permission (root review).
 """
 
@@ -32,6 +35,8 @@ from typing import Any
 from . import fault_injection
 from .canonical_json import jcs_serialize
 from .canonical_json import material_fingerprint as compute_material_fingerprint
+from .clock import require_aware_utc
+from .evidence import EffectEvidence, EvidenceProvider
 from .identities import as_intent_id, as_request_id
 from .journal import TransitionRejectedError, append_transition, resolve_authorized_by
 
@@ -102,6 +107,34 @@ class StaleRunGenerationError(EffectAdmissionError):
     """Caller supplied a run_generation lower than the maximum for the triple."""
 
 
+class EvidenceRejectedError(EffectAdmissionError):
+    """Verified-evidence check failed; the ledger wrote nothing."""
+
+
+_STATE_WRITE_COLUMNS = frozenset(
+    {"attempt_count", "attempts_json", "recovery_json", "receipt_json", "fencing_token"}
+)
+
+# The 3a resend path writes ``state`` (admitted stays admitted). It is labeled
+# ``resend``. ``auto_retry`` is the attempt-entry kind, not a second writer, but
+# the triple stays in the table because that path assigns the state column.
+ALLOWED_TRANSITIONS: frozenset[tuple[str, str, str]] = frozenset(
+    {
+        (STATE_ADMITTED, STATE_ADMITTED, "resend"),
+        (STATE_ADMITTED, STATE_ADMITTED, "auto_retry"),
+        (STATE_FAILED, STATE_ADMITTED, "decision"),
+        (STATE_RECONCILE_REQUIRED_RETRY, STATE_ADMITTED, "decision"),
+        (STATE_ADMITTED, STATE_SUCCEEDED, "outcome"),
+        (STATE_ADMITTED, STATE_FAILED, "outcome"),
+        (STATE_ADMITTED, STATE_OUTCOME_UNKNOWN, "outcome"),
+        (STATE_ADMITTED, STATE_OUTCOME_UNKNOWN, "late_report"),
+        (STATE_ADMITTED, STATE_OUTCOME_UNKNOWN, "sweep"),
+        (STATE_OUTCOME_UNKNOWN, STATE_SUCCEEDED, "reconcile"),
+        (STATE_OUTCOME_UNKNOWN, STATE_RECONCILE_REQUIRED_RETRY, "reconcile"),
+    }
+)
+
+
 def compute_effect_key(
     *,
     concern_id: str,
@@ -116,9 +149,9 @@ def compute_effect_key(
 
 
 def _iso_utc(dt: datetime) -> str:
-    if dt.tzinfo is None:
-        dt = dt.replace(tzinfo=UTC)
-    return dt.astimezone(UTC).replace(microsecond=0).isoformat()
+    """Format an aware datetime as whole-second UTC ISO. Naive values raise."""
+    aware = require_aware_utc(dt, name="datetime")
+    return aware.replace(microsecond=0).isoformat()
 
 
 def _parse_iso_utc(value: str) -> datetime:
@@ -138,6 +171,7 @@ def resolve_action_intent(
     now: datetime,
 ) -> str:
     """Create or return the canonical intent row for the tuple; enforces run monotonicity."""
+    now = require_aware_utc(now, name="now")
     if run_generation < 0:
         raise StaleRunGenerationError("run_generation must be non-negative")
     now_s = _iso_utc(now)
@@ -187,6 +221,109 @@ def resolve_action_intent(
         raise
 
 
+def _set_state(
+    conn: sqlite3.Connection,
+    *,
+    effect_key: str,
+    from_state: str,
+    to_state: str,
+    via: str,
+    now_s: str,
+    columns: dict[str, Any] | None = None,
+) -> None:
+    """Assign ``state`` only for a labeled triple, guarded by the prior state.
+
+    Column names come from a fixed allowlist so caller strings are never interpolated.
+    """
+    extra = columns or {}
+    unknown = set(extra) - _STATE_WRITE_COLUMNS
+    if unknown:
+        raise ValueError(f"state write column not allowlisted: {sorted(unknown)!r}")
+    if (from_state, to_state, via) not in ALLOWED_TRANSITIONS:
+        raise InvalidTransitionError(
+            f"transition {from_state!r} -> {to_state!r} via {via!r} is not allowed",
+            effect_key=effect_key,
+        )
+    names = sorted(extra)
+    assignments = ", ".join(f"{name} = ?" for name in names)
+    set_sql = "state = ?, updated_at = ?"
+    if assignments:
+        set_sql = f"{set_sql}, {assignments}"
+    params: list[Any] = [
+        to_state,
+        now_s,
+        *[extra[name] for name in names],
+        effect_key,
+        from_state,
+    ]
+    cur = conn.execute(
+        f"UPDATE concern_effects SET {set_sql} WHERE effect_key = ? AND state = ?",
+        params,
+    )
+    if cur.rowcount != 1:
+        raise InvalidTransitionError(
+            f"state guard missed for {effect_key!r} from {from_state!r}",
+            effect_key=effect_key,
+        )
+
+
+def _check_evidence(
+    evidence: EffectEvidence | None,
+    provider: EvidenceProvider | None,
+    *,
+    expected_kinds: frozenset[str],
+    effect_key: str,
+    now: datetime,
+) -> EffectEvidence:
+    """Reject unverified evidence before BEGIN so a failed check writes nothing."""
+    if evidence is None or provider is None:
+        raise ValueError("evidence and evidence_provider are required")
+    if not isinstance(evidence, EffectEvidence):
+        raise ValueError("evidence must be an EffectEvidence")
+    evidence.validate_shape()
+    if evidence.kind not in expected_kinds:
+        raise ValueError(
+            f"evidence kind {evidence.kind!r} not in {sorted(expected_kinds)!r}"
+        )
+    if evidence.effect_key != effect_key:
+        raise EvidenceRejectedError(
+            "evidence effect_key does not match",
+        )
+    if require_aware_utc(evidence.observed_at, name="observed_at") > require_aware_utc(
+        now, name="now"
+    ):
+        raise EvidenceRejectedError("evidence observed_at is after now")
+    if getattr(provider, "name", None) != evidence.provider:
+        raise EvidenceRejectedError("provider name does not match evidence.provider")
+    if provider.verify(evidence) is not True:
+        raise EvidenceRejectedError("evidence provider rejected the record")
+    return evidence
+
+
+def _latest_permit_attempt(attempts: list[dict[str, Any]]) -> dict[str, Any] | None:
+    for entry in reversed(attempts):
+        if entry.get("kind") in ("initial", "decision", "auto_retry"):
+            return entry
+    return None
+
+
+def _bind_non_application(
+    evidence: EffectEvidence, attempts: list[dict[str, Any]]
+) -> None:
+    """Bind non-application evidence to the latest permit inside the write transaction."""
+    permit = _latest_permit_attempt(attempts)
+    if permit is None or evidence.superseded_request_id != permit.get("request_id"):
+        raise EvidenceRejectedError(
+            "evidence is not bound to the latest permit request_id"
+        )
+    permit_at = _parse_iso_utc(str(permit.get("at")))
+    observed = _parse_iso_utc(_iso_utc(evidence.observed_at))
+    if observed <= permit_at:
+        raise EvidenceRejectedError(
+            "evidence observed_at is not after the latest permit"
+        )
+
+
 def _sweep_admitted_to_unknown(
     conn: sqlite3.Connection,
     *,
@@ -196,18 +333,20 @@ def _sweep_admitted_to_unknown(
     now: datetime,
 ) -> None:
     now_s = _iso_utc(now)
-    conn.execute(
-        "UPDATE concern_effects SET state = ?, updated_at = ? "
+    rows = conn.execute(
+        "SELECT effect_key FROM concern_effects "
         "WHERE concern_id = ? AND work_key = ? AND state = ? AND fencing_token < ?",
-        (
-            STATE_OUTCOME_UNKNOWN,
-            now_s,
-            concern_id,
-            work_key,
-            STATE_ADMITTED,
-            new_generation,
-        ),
-    )
+        (concern_id, work_key, STATE_ADMITTED, new_generation),
+    ).fetchall()
+    for (effect_key,) in rows:
+        _set_state(
+            conn,
+            effect_key=str(effect_key),
+            from_state=STATE_ADMITTED,
+            to_state=STATE_OUTCOME_UNKNOWN,
+            via="sweep",
+            now_s=now_s,
+        )
 
 
 def acquire_lease(
@@ -220,6 +359,8 @@ def acquire_lease(
     now: datetime,
 ) -> int:
     """Acquire or refresh a per-work-key lease; increments generation when ownership changes."""
+    now = require_aware_utc(now, name="now")
+    lease_expires_at = require_aware_utc(lease_expires_at, name="lease_expires_at")
     exp_s = _iso_utc(lease_expires_at)
     conn.execute("BEGIN IMMEDIATE")
     try:
@@ -293,6 +434,8 @@ def renew_lease(
     now: datetime,
 ) -> None:
     """Extend expiry for the same holder and generation while the lease is unexpired."""
+    now = require_aware_utc(now, name="now")
+    lease_expires_at = require_aware_utc(lease_expires_at, name="lease_expires_at")
     exp_s = _iso_utc(lease_expires_at)
     conn.execute("BEGIN IMMEDIATE")
     try:
@@ -353,9 +496,11 @@ def _lease_row(
 
 
 def _recognized_hold_active(conn: sqlite3.Connection, concern_id: str) -> bool:
+    keys = sorted(RECOGNIZED_HOLD_KEYS)
+    placeholders = ", ".join("?" for _ in keys)
     row = conn.execute(
-        "SELECT 1 FROM concern_controls WHERE concern_id = ? AND control_key IN (?, ?, ?) LIMIT 1",
-        (concern_id, "stop_new_admissions", "cancel", "drain"),
+        f"SELECT 1 FROM concern_controls WHERE concern_id = ? AND control_key IN ({placeholders}) LIMIT 1",
+        (concern_id, *keys),
     ).fetchone()
     return row is not None
 
@@ -412,14 +557,21 @@ class AdmitResult:
 
 
 def _validate_resend_params(
-    resend_basis: str | None, resend_evidence: str | None
+    resend_basis: str | None,
+    resend_evidence: EffectEvidence | None,
+    evidence_provider: EvidenceProvider | None,
 ) -> None:
-    if resend_basis is None and resend_evidence is None:
+    present = (
+        resend_basis is not None
+        or resend_evidence is not None
+        or evidence_provider is not None
+    )
+    if not present:
         return
-    if resend_basis is None or resend_evidence is None:
-        raise ValueError("resend_basis and resend_evidence must be provided together")
-    if not str(resend_evidence).strip():
-        raise ValueError("resend_evidence must be non-empty")
+    if resend_basis is None or resend_evidence is None or evidence_provider is None:
+        raise ValueError(
+            "resend_basis, resend_evidence, and evidence_provider must be provided together"
+        )
     if resend_basis not in VALID_RESEND_BASES:
         raise ValueError(f"unsupported resend_basis: {resend_basis!r}")
 
@@ -434,7 +586,8 @@ def admit_effect(
     fencing_token: int,
     now: datetime,
     resend_basis: str | None = None,
-    resend_evidence: str | None = None,
+    resend_evidence: EffectEvidence | None = None,
+    evidence_provider: EvidenceProvider | None = None,
 ) -> AdmitResult:
     """Admit one effect under fencing and holds.
 
@@ -444,7 +597,8 @@ def admit_effect(
     ``execution_allowed`` false. ``succeeded`` replays the stored receipt (``None`` when
     the column is null) and never permits execution.
     """
-    _validate_resend_params(resend_basis, resend_evidence)
+    now = require_aware_utc(now, name="now")
+    _validate_resend_params(resend_basis, resend_evidence, evidence_provider)
     as_request_id(request_id)
     intent_id = str(as_intent_id(intent_id))
     concern_id, work_key, _action_slot, _rg = _load_intent_row(conn, intent_id)
@@ -456,6 +610,19 @@ def admit_effect(
         effect_kind=effect_kind,
     )
     now_s = _iso_utc(now)
+    if resend_basis is not None:
+        assert resend_evidence is not None and evidence_provider is not None
+        if not isinstance(resend_evidence, EffectEvidence):
+            raise ValueError("resend_evidence must be an EffectEvidence")
+        if resend_evidence.kind != resend_basis:
+            raise ValueError("resend_evidence.kind must equal resend_basis")
+        _check_evidence(
+            resend_evidence,
+            evidence_provider,
+            expected_kinds=frozenset({resend_basis}),
+            effect_key=effect_key,
+            now=now,
+        )
 
     fault_injection.maybe_between_resolve_and_admit()
 
@@ -503,9 +670,11 @@ def admit_effect(
             conn.rollback()
             raise StaleFencingTokenError("lease expired at admit")
 
+        hold_keys = sorted(RECOGNIZED_HOLD_KEYS)
+        hold_ph = ", ".join("?" for _ in hold_keys)
         rows = conn.execute(
-            "SELECT control_key FROM concern_controls WHERE concern_id = ? AND control_key IN (?, ?, ?)",
-            (concern_id, "stop_new_admissions", "cancel", "drain"),
+            f"SELECT control_key FROM concern_controls WHERE concern_id = ? AND control_key IN ({hold_ph})",
+            (concern_id, *hold_keys),
         ).fetchall()
         fault_injection.maybe_after_controls_read()
         if rows:
@@ -526,6 +695,12 @@ def admit_effect(
                 raise ReconcileRequiredError("admit blocked: outcome_unknown")
 
             if st in (STATE_FAILED, STATE_RECONCILE_REQUIRED_RETRY):
+                if resend_basis is not None:
+                    conn.rollback()
+                    raise InvalidTransitionError(
+                        f"resend evidence is only valid from admitted, got {st!r}",
+                        effect_key=effect_key,
+                    )
                 if _find_unconsumed_retry(recovery) is None:
                     conn.rollback()
                     raise ReconcileRequiredError(
@@ -550,6 +725,9 @@ def admit_effect(
                         "automatic retry budget exhausted", effect_key=effect_key
                     )
                 kind = "auto_retry"
+                assert resend_evidence is not None
+                if resend_evidence.kind in ("confirmed_not_accepted", "not_applied"):
+                    _bind_non_application(resend_evidence, attempts)
             else:
                 conn.rollback()
                 raise InvalidTransitionError(
@@ -563,8 +741,9 @@ def admit_effect(
                 "at": now_s,
             }
             if kind == "auto_retry":
+                assert resend_evidence is not None
                 attempt_entry["resend_basis"] = resend_basis
-                attempt_entry["resend_evidence"] = resend_evidence
+                attempt_entry["resend_evidence"] = resend_evidence.to_json()
             attempts.append(attempt_entry)
             ac += 1
 
@@ -577,20 +756,23 @@ def admit_effect(
                 recovery_new[idx]["consumed_attempt"] = True
 
             new_state = st
+            via = "resend"
             if kind == "decision":
                 new_state = STATE_ADMITTED
-            conn.execute(
-                "UPDATE concern_effects SET state = ?, attempt_count = ?, attempts_json = ?, recovery_json = ?, "
-                "fencing_token = ?, updated_at = ? WHERE effect_key = ?",
-                (
-                    new_state,
-                    ac,
-                    _dump_json_list(attempts),
-                    _dump_json_list(recovery_new),
-                    fencing_token,
-                    now_s,
-                    effect_key,
-                ),
+                via = "decision"
+            _set_state(
+                conn,
+                effect_key=effect_key,
+                from_state=st,
+                to_state=new_state,
+                via=via,
+                now_s=now_s,
+                columns={
+                    "attempt_count": ac,
+                    "attempts_json": _dump_json_list(attempts),
+                    "recovery_json": _dump_json_list(recovery_new),
+                    "fencing_token": fencing_token,
+                },
             )
             conn.execute(
                 "UPDATE concern_action_intents SET state = ?, updated_at = ? WHERE intent_id = ?",
@@ -670,8 +852,28 @@ def record_outcome(
     receipt: dict[str, Any] | None,
     fencing_token: int,
     now: datetime,
+    evidence: EffectEvidence | None = None,
+    evidence_provider: EvidenceProvider | None = None,
 ) -> OutcomeResult:
-    """Record terminal or unknown outcome; late reports commit without raising."""
+    """Record terminal or unknown outcome; late reports commit without raising.
+
+    ``failed`` requires verified ``not_applied`` evidence. ``succeeded`` and
+    ``outcome_unknown`` reject evidence. A stale-token late report stores no
+    evidence. Reconcile of an applied effect without evidence is a separate path.
+    """
+    now = require_aware_utc(now, name="now")
+    if outcome not in (STATE_SUCCEEDED, STATE_FAILED, STATE_OUTCOME_UNKNOWN):
+        raise ValueError(f"unknown outcome {outcome!r}")
+    if outcome == STATE_FAILED:
+        _check_evidence(
+            evidence,
+            evidence_provider,
+            expected_kinds=frozenset({"not_applied"}),
+            effect_key=effect_key,
+            now=now,
+        )
+    elif evidence is not None or evidence_provider is not None:
+        raise ValueError("evidence is only accepted for outcome 'failed'")
     now_s = _iso_utc(now)
     conn.execute("BEGIN IMMEDIATE")
     try:
@@ -701,14 +903,14 @@ def record_outcome(
                 }
             )
             if st == STATE_ADMITTED:
-                conn.execute(
-                    "UPDATE concern_effects SET state = ?, attempts_json = ?, updated_at = ? WHERE effect_key = ?",
-                    (
-                        STATE_OUTCOME_UNKNOWN,
-                        _dump_json_list(attempts),
-                        now_s,
-                        effect_key,
-                    ),
+                _set_state(
+                    conn,
+                    effect_key=effect_key,
+                    from_state=STATE_ADMITTED,
+                    to_state=STATE_OUTCOME_UNKNOWN,
+                    via="late_report",
+                    now_s=now_s,
+                    columns={"attempts_json": _dump_json_list(attempts)},
                 )
             else:
                 conn.execute(
@@ -729,20 +931,33 @@ def record_outcome(
                 f"outcome only from admitted, got {st!r}", effect_key=effect_key
             )
 
-        if outcome not in (STATE_SUCCEEDED, STATE_FAILED, STATE_OUTCOME_UNKNOWN):
-            conn.rollback()
-            raise InvalidTransitionError(
-                f"unknown outcome {outcome!r}", effect_key=effect_key
+        if outcome == STATE_FAILED:
+            assert evidence is not None
+            _bind_non_application(evidence, attempts)
+            attempts.append(
+                {
+                    "kind": "outcome_evidence",
+                    "outcome": STATE_FAILED,
+                    "evidence": evidence.to_json(),
+                    "at": now_s,
+                }
             )
 
         receipt_json = (
             json.dumps(receipt, sort_keys=True) if receipt is not None else None
         )
         new_state = outcome
-        conn.execute(
-            "UPDATE concern_effects SET state = ?, receipt_json = ?, attempts_json = ?, updated_at = ? "
-            "WHERE effect_key = ?",
-            (new_state, receipt_json, _dump_json_list(attempts), now_s, effect_key),
+        _set_state(
+            conn,
+            effect_key=effect_key,
+            from_state=STATE_ADMITTED,
+            to_state=new_state,
+            via="outcome",
+            now_s=now_s,
+            columns={
+                "receipt_json": receipt_json,
+                "attempts_json": _dump_json_list(attempts),
+            },
         )
         conn.commit()
         return OutcomeResult(applied=True, late_report=False)
@@ -760,8 +975,32 @@ def reconcile_effect(
     effect_key: str,
     observed_applied: bool,
     now: datetime,
+    evidence: EffectEvidence | None = None,
+    evidence_provider: EvidenceProvider | None = None,
 ) -> None:
-    """Reconcile an ``outcome_unknown`` effect to succeeded or reconcile_required_retry."""
+    """Reconcile ``outcome_unknown`` to succeeded or reconcile_required_retry.
+
+    ``observed_applied=False`` requires verified ``not_applied`` evidence.
+    ``observed_applied=True`` without evidence is allowed and fails closed when
+    the row is not ``outcome_unknown``. ``digest`` is opaque to the ledger.
+    """
+    now = require_aware_utc(now, name="now")
+    if not observed_applied:
+        _check_evidence(
+            evidence,
+            evidence_provider,
+            expected_kinds=frozenset({"not_applied"}),
+            effect_key=effect_key,
+            now=now,
+        )
+    elif evidence is not None or evidence_provider is not None:
+        _check_evidence(
+            evidence,
+            evidence_provider,
+            expected_kinds=frozenset({"applied"}),
+            effect_key=effect_key,
+            now=now,
+        )
     now_s = _iso_utc(now)
     conn.execute("BEGIN IMMEDIATE")
     try:
@@ -778,12 +1017,33 @@ def reconcile_effect(
                 f"reconcile only from outcome_unknown, got {st!r}",
                 effect_key=effect_key,
             )
+        recovery_row = conn.execute(
+            "SELECT recovery_json, attempts_json FROM concern_effects WHERE effect_key = ?",
+            (effect_key,),
+        ).fetchone()
+        attempts = _parse_json_list(recovery_row[1] if recovery_row else None)
+        if evidence is not None and evidence.kind == "not_applied":
+            _bind_non_application(evidence, attempts)
+        recovery = _parse_json_list(recovery_row[0] if recovery_row else None)
+        entry: dict[str, Any] = {
+            "kind": "reconcile",
+            "observed_applied": observed_applied,
+            "at": now_s,
+        }
+        if evidence is not None:
+            entry["evidence"] = evidence.to_json()
+        recovery.append(entry)
         new_state = (
             STATE_SUCCEEDED if observed_applied else STATE_RECONCILE_REQUIRED_RETRY
         )
-        conn.execute(
-            "UPDATE concern_effects SET state = ?, updated_at = ? WHERE effect_key = ?",
-            (new_state, now_s, effect_key),
+        _set_state(
+            conn,
+            effect_key=effect_key,
+            from_state=STATE_OUTCOME_UNKNOWN,
+            to_state=new_state,
+            via="reconcile",
+            now_s=now_s,
+            columns={"recovery_json": _dump_json_list(recovery)},
         )
         conn.commit()
     except EffectAdmissionError:
@@ -804,6 +1064,7 @@ def record_recovery_decision(
     now: datetime,
 ) -> None:
     """Persist a consumable recovery decision (``retry``) on failed / reconcile_required_retry."""
+    now = require_aware_utc(now, name="now")
     now_s = _iso_utc(now)
     if decision != "retry":
         raise InvalidTransitionError(
@@ -875,10 +1136,15 @@ def set_hold(
     hold: dict[str, Any],
     authorized_by: str,
     record_ref: str,
-    now: datetime | None = None,
+    now: datetime,
 ) -> None:
-    """Journal a ``control_set`` hold; rejects unknown *control_key* before journal I/O."""
-    del now
+    """Journal a ``control_set`` hold; rejects unknown *control_key* before journal I/O.
+
+    ``now`` is required and must be aware. This slice does not edit
+    ``append_transition``, which stamps the journal row; ``now`` is validated
+    and not stored on the hold.
+    """
+    require_aware_utc(now, name="now")
     if control_key not in RECOGNIZED_HOLD_KEYS:
         raise ValueError(f"unsupported control_key for hold: {control_key!r}")
     if conn.in_transaction:
@@ -903,14 +1169,18 @@ def clear_hold(
     control_key: str,
     authorized_by: str,
     record_ref: str,
-    now: datetime | None = None,
+    now: datetime,
 ) -> None:
     """Journal ``control_clear`` and reopen ``held`` intents when no hold keys remain.
+
+    ``now`` is required and aware. It is stored as ``updated_at`` on reopened
+    intents. The journal row timestamp still comes from ``append_transition``.
 
     A crash after the journal append and before the intent-state update leaves the
     hold cleared in the journal while intents stay ``held`` until a later clear or
     rebuild (A6).
     """
+    now = require_aware_utc(now, name="now")
     if control_key not in RECOGNIZED_HOLD_KEYS:
         raise ValueError(f"unsupported control_key for clear: {control_key!r}")
     if conn.in_transaction:
@@ -934,7 +1204,7 @@ def clear_hold(
                 "WHERE concern_id = ? AND state = ?",
                 (
                     INTENT_OPEN,
-                    _iso_utc(now if now is not None else datetime.now(tz=UTC)),
+                    _iso_utc(now),
                     concern_id,
                     INTENT_HELD,
                 ),

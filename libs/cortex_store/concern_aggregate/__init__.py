@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+from .clock import FixedClock, SystemClock, TrustedClock, require_aware_utc
 from .effects import (
     AdmitResult,
+    EvidenceRejectedError,
     OutcomeResult,
     acquire_lease,
     admit_effect,
@@ -17,13 +19,20 @@ from .effects import (
     resolve_action_intent,
     set_hold,
 )
+from .evidence import EffectEvidence, EvidenceProvider
 from .journal import append_transition
 from .recovery import read_effective_state, rebuild_concern
 from .views import read_controls, read_cursor, read_head
 
 __all__ = [
     "AdmitResult",
+    "EffectEvidence",
+    "EvidenceProvider",
+    "EvidenceRejectedError",
+    "FixedClock",
     "OutcomeResult",
+    "SystemClock",
+    "TrustedClock",
     "acquire_lease",
     "admit_effect",
     "append_transition",
@@ -40,5 +49,6 @@ __all__ = [
     "reconcile_effect",
     "renew_lease",
     "resolve_action_intent",
+    "require_aware_utc",
     "set_hold",
 ]
