@@ -175,8 +175,11 @@ def execute_spawn(
     thread_scope: str | None = None,
     text: str | None = None,
     voice: Voice = "self",
+    grant: str | None = None,
+    authorization_source: str | None = None,
     idempotency_key: str | None = None,
 ) -> dict[str, Any]:
+    """Spawn on a configured Grok window. Voice uses the existing steer contract."""
     resolved = resolve_grok_window_target(target)
     if isinstance(resolved, ClassifyRefuse):
         return _refuse(resolved)
@@ -189,6 +192,8 @@ def execute_spawn(
         thread_scope=thread_scope,
         text=text,
         voice=voice,
+        grant=grant,
+        authorization_source=authorization_source,
         idempotency_key=idempotency_key,
     )
 
@@ -204,7 +209,9 @@ def execute_retire(*, target: str) -> dict[str, Any]:
                 reason="retire requires display:<n>/<agent_id>",
             )
         )
-    if resolved.display not in {"9", "10"}:
+    from cursor_bridge.grok_window_bindings import cdp_port_for_display
+
+    if cdp_port_for_display(resolved.display) is None:
         return _refuse(
             ClassifyRefuse(
                 code="capability_unsupported",

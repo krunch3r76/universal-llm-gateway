@@ -43,6 +43,24 @@ def test_execute_spawn_requires_resolved_window() -> None:
     spawn_fn.assert_called_once()
 
 
+def test_steer_failure_keeps_mismatch_identity() -> None:
+    from interlocutor.display_adapter import _display_steer_failure
+
+    out = _display_steer_failure(
+        {
+            "ok": False,
+            "reason": "agent_id_mismatch",
+            "active_agent_id": "live",
+            "active_title": "Live",
+            "titles": ["Live", "Wanted"],
+        }
+    )
+    assert out["code"] == "target_mismatch"
+    assert out["active_agent_id"] == "live"
+    assert out["active_title"] == "Live"
+    assert out["titles"] == ["Live", "Wanted"]
+
+
 def test_execute_retire_on_display_9_agent() -> None:
     with patch("interlocutor.display_adapter.retire_grok_agent_sync") as ret:
         ret.return_value = {"ok": True}

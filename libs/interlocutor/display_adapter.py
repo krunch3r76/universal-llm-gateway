@@ -87,6 +87,9 @@ def _display_steer_failure(result: dict[str, Any]) -> dict[str, Any]:
         "app",
         "phase",
         "inserted",
+        "active_agent_id",
+        "active_title",
+        "titles",
     ):
         if key in leaf:
             out[key] = leaf[key]
@@ -274,8 +277,11 @@ def spawn_grok_window_sync(
     thread_scope: str | None = None,
     text: str | None = None,
     voice: str = "self",
+    grant: str | None = None,
+    authorization_source: str | None = None,
     idempotency_key: str | None = None,
 ) -> dict[str, Any]:
+    """Spawn through ``grok_agent_ops`` using the steer voice contract."""
     from cursor_bridge.grok_agent_ops import spawn_grok_agent
 
     out = spawn_grok_agent(
@@ -287,6 +293,8 @@ def spawn_grok_window_sync(
         thread_scope=thread_scope,
         text=text,
         voice=voice,
+        grant=grant,
+        authorization_source=authorization_source,
         idempotency_key=idempotency_key,
     )
     return {**out, "adapter": "display_grok_window", "op": "spawn"}

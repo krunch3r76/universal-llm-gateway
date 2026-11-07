@@ -226,24 +226,6 @@ async def _resolve_and_select_endpoint(
         agent_id=endpoint.agent_id or None,
     )
     selected = False
-    if (
-        not verdict.get("ok")
-        and select
-        and app == "grok"
-        and str(endpoint.agent_id or "").strip()
-    ):
-        cdp_pick = await select_grok_agent_async(disp, str(endpoint.agent_id))
-        if cdp_pick.get("ok"):
-            selected = True
-            await asyncio.sleep(0.15)
-            surface = await probe_surface(ws_url)
-            verdict = wake_decision(
-                surface,
-                thread=endpoint.thread,
-                slug=endpoint.slug,
-                title=endpoint.title or None,
-                agent_id=endpoint.agent_id or None,
-            )
     if not verdict.get("ok") and select and verdict.get("state") == "chat_list":
         guard = _busy_or_draft_reason(surface)
         if guard:
@@ -258,11 +240,27 @@ async def _resolve_and_select_endpoint(
                 "titles": verdict.get("titles"),
             }
         async with display_switch_lock(disp):
-            click_res = await select_sidebar_target(
-                ws_url,
-                expected_title=str(verdict.get("expected_title") or ""),
-                expected_agent_id=str(verdict.get("expected_agent_id") or ""),
-            )
+            if app == "grok" and str(endpoint.agent_id or "").strip():
+                cdp_pick = await select_grok_agent_async(disp, str(endpoint.agent_id))
+                if cdp_pick.get("ok"):
+                    selected = True
+                    await asyncio.sleep(0.15)
+                    surface = await probe_surface(ws_url)
+                    verdict = wake_decision(
+                        surface,
+                        thread=endpoint.thread,
+                        slug=endpoint.slug,
+                        title=endpoint.title or None,
+                        agent_id=endpoint.agent_id or None,
+                    )
+            if verdict.get("ok"):
+                click_res = {"clicked": False}
+            else:
+                click_res = await select_sidebar_target(
+                    ws_url,
+                    expected_title=str(verdict.get("expected_title") or ""),
+                    expected_agent_id=str(verdict.get("expected_agent_id") or ""),
+                )
         if click_res.get("clicked"):
             selected = True
             await asyncio.sleep(0.25)

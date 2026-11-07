@@ -73,3 +73,46 @@ async def test_hidden_agent_cdp_select_before_sidebar() -> None:
     cdp_select.assert_awaited_once()
     sidebar.assert_not_awaited()
     assert snap["active_agent_id"] == "hidden-uuid"
+
+
+@pytest.mark.asyncio
+async def test_composer_draft_blocks_cdp_select() -> None:
+    endpoint = ElectronEndpoint(
+        label="hidden-bot",
+        app="grok",
+        display="9",
+        agent_id="hidden-uuid",
+        thread="hidden-uuid",
+    )
+    pages = [
+        {
+            "title": "Grok Bot",
+            "web_socket_debugger_url": "ws://127.0.0.1:9339/devtools/page/1",
+        }
+    ]
+    surface = {
+        "state": "chat_list",
+        "active_title": "Other",
+        "active_agent_id": "other",
+        "titles": ["Other"],
+        "agent_ids": {"other": "Other"},
+        "composer_draft": "human draft",
+        "generating": False,
+        "recent_messages": [],
+    }
+    with (
+        patch("cursor_bridge.electron_chat_relay.list_pages", return_value=pages),
+        patch(
+            "cursor_bridge.electron_chat_relay.probe_surface",
+            new_callable=AsyncMock,
+            return_value=surface,
+        ),
+        patch(
+            "cursor_bridge.electron_chat_relay.select_grok_agent_async",
+            new_callable=AsyncMock,
+        ) as cdp_select,
+    ):
+        snap = await read_endpoint_turn(endpoint, select=True)
+    assert snap["ok"] is False
+    assert snap["reason"] == "composer_not_empty"
+    cdp_select.assert_not_awaited()

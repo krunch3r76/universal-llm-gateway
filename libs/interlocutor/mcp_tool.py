@@ -94,6 +94,8 @@ def register_interlocutor_tool(mcp: FastMCP) -> None:
                 thread_scope=thread_scope,
                 text=text,
                 voice=voice,
+                grant=grant,
+                authorization_source=authorization_source,
                 idempotency_key=idempotency_key,
             )
             outcome = "refused" if result.get("ok") is False else "completed"

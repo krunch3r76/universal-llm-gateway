@@ -5,7 +5,10 @@ from __future__ import annotations
 from typing import Any
 
 from cursor_bridge.cursor_agents_hop import launch_cursor_agents_tab
-from cursor_bridge.cursor_window_config import unknown_gui_host_error
+from cursor_bridge.cursor_window_config import (
+    cdp_origin_for_gui_host,
+    unknown_gui_host_error,
+)
 from cursor_bridge.impresario_spawn_prompt import augment_spawn_prompt_for_impresario
 from cursor_bridge.spawn_house import spawn_house as spawn_house_impl
 from cursor_bridge.spawn_model_knobs import merge_spawn_model_knobs
@@ -27,7 +30,7 @@ def relay_spawn_tab(
     host_row = unknown_gui_host_error(gui_host)
     if host_row.get("ok") is not True:
         return {**host_row, "op": "spawn_tab", "gui_host": gui_host}
-    debug_url = str(host_row.get("cdp_origin") or "")
+    debug_url = cdp_origin_for_gui_host(gui_host)
     knobs = merge_spawn_model_knobs(model_knobs, effort=effort, fast=fast)
     requested = str(agent_id or "").strip() or None
     hop_prompt = augment_spawn_prompt_for_impresario(prompt, slug=slug, title=title)
