@@ -33,6 +33,7 @@ from cortex_store.concern_aggregate.intent_index import read_intent_index
 from cortex_store.concern_aggregate.journal import append_transition
 from cortex_store.concern_aggregate.recovery import rebuild_concern
 from cortex_store.concern_aggregate.tests.conftest import seed_authority
+from cortex_store.concern_aggregate.tests.test_p3_effects import _PROV, _ev
 from execution_conformance.adapters import HealthOnlyAdapter
 from execution_conformance.states import ExecutionState
 
@@ -309,6 +310,7 @@ def test_a3_same_boundary_and_negative_controls(concern_db: sqlite3.Connection) 
         hold={"on": True},
         authorized_by=AUTH,
         record_ref="rec-hold-a3",
+        now=T0,
     )
     held = read_intent_index(concern_db, cid, now=early, owner=None)
     after_hold = held.cortex_digest
@@ -367,7 +369,9 @@ def test_a4_r8_conflict(concern_db: sqlite3.Connection) -> None:
         outcome=STATE_FAILED,
         receipt=None,
         fencing_token=gen2,
-        now=T0,
+        now=T0 + timedelta(seconds=2),
+        evidence=_ev("not_applied", ek2, T0 + timedelta(seconds=2), "req:wk:a4b"),
+        evidence_provider=_PROV,
     )
     completed = StubOwner(lookups={ek2: _Found(state="completed")})
     bad = read_intent_index(concern_db, cid2, now=T0, owner=completed)
@@ -408,7 +412,14 @@ def test_a5_phase3_states_claim_and_receipt(concern_db: sqlite3.Connection) -> N
     assert unknown.blocked is True
     assert any(r["cause"] == STATE_OUTCOME_UNKNOWN for r in unknown.blocked_reasons)
 
-    reconcile_effect(concern_db, effect_key=ek, observed_applied=False, now=T0)
+    reconcile_effect(
+        concern_db,
+        effect_key=ek,
+        observed_applied=False,
+        now=T0 + timedelta(seconds=2),
+        evidence=_ev("not_applied", ek, T0 + timedelta(seconds=2), "req:wk:a5"),
+        evidence_provider=_PROV,
+    )
     recon = read_intent_index(
         concern_db, cid, now=T0, owner=StubOwner(lookups={ek: _Found(state="running")})
     )
@@ -548,6 +559,7 @@ def test_a8_rebuild_keeps_digest_and_cursor(concern_db: sqlite3.Connection) -> N
         hold={"on": True},
         authorized_by=AUTH,
         record_ref="rec-a8-hold",
+        now=T0,
     )
     before = read_intent_index(concern_db, cid, now=T0, owner=None)
     assert before.integrity_errors == ()
@@ -626,7 +638,9 @@ def test_r2_health_only_and_retry_and_lease_without_intent(
         outcome=STATE_FAILED,
         receipt=None,
         fencing_token=gen,
-        now=T0,
+        now=T0 + timedelta(seconds=2),
+        evidence=_ev("not_applied", ek, T0 + timedelta(seconds=2), "req:wk:r2"),
+        evidence_provider=_PROV,
     )
     record_recovery_decision(
         concern_db,
@@ -1035,7 +1049,9 @@ def test_consumed_retry_is_not_unresolved(concern_db: sqlite3.Connection) -> Non
         outcome=STATE_FAILED,
         receipt=None,
         fencing_token=gen,
-        now=T0,
+        now=T0 + timedelta(seconds=2),
+        evidence=_ev("not_applied", ek, T0 + timedelta(seconds=2), "req:wk:consumed"),
+        evidence_provider=_PROV,
     )
     record_recovery_decision(
         concern_db,

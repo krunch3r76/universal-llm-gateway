@@ -53,7 +53,6 @@ from cortex_store.concern_aggregate.tests.test_p3_effects import (
     _PROV,
     AUTH,
     T0,
-    _connect_wal,
     _ev,
 )
 
@@ -1215,6 +1214,8 @@ def test_b9_effect_gate_concurrent_single_execution(
     from cortex_store._test_db_bootstrap import fresh_migrated_connection
 
     conn = fresh_migrated_connection(tmp_path, migrated_db_template)
+    conn.execute("PRAGMA journal_mode=WAL")
+    conn.execute("PRAGMA busy_timeout=5000")
     gen, intent = _setup(conn)
     path = next(r[2] for r in conn.execute("PRAGMA database_list") if r[1] == "main")
     reached: list[str] = []
@@ -1235,8 +1236,8 @@ def test_b9_effect_gate_concurrent_single_execution(
     errors: list[BaseException] = []
 
     def _run(name: str, request_id: str) -> None:
-        local = _connect_wal(Path(path))
-        local.execute("PRAGMA busy_timeout=2000")
+        local = sqlite3.connect(path, isolation_level=None, timeout=5)
+        local.execute("PRAGMA busy_timeout=5000")
         try:
             results.append(
                 run_effect(
@@ -1328,6 +1329,8 @@ def test_b11_concurrent_evidenced_resend_single_permit(
     from cortex_store._test_db_bootstrap import fresh_migrated_connection
 
     conn = fresh_migrated_connection(tmp_path, migrated_db_template)
+    conn.execute("PRAGMA journal_mode=WAL")
+    conn.execute("PRAGMA busy_timeout=5000")
     gen, intent = _setup(conn)
     admitted = admit_effect(
         conn,
@@ -1343,7 +1346,6 @@ def test_b11_concurrent_evidenced_resend_single_permit(
 
     def _run(request_id: str) -> None:
         local = sqlite3.connect(path, isolation_level=None, timeout=5)
-        local.execute("PRAGMA journal_mode=WAL")
         local.execute("PRAGMA busy_timeout=5000")
         try:
             outcomes.append(
