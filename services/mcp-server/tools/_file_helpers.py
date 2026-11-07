@@ -721,47 +721,53 @@ def _stopped_multi_section_item(rel: str, sid: str, *, root: Path) -> dict[str, 
 
 
 def _stopped_export_item(rel: str, *, root: Path) -> dict[str, Any]:
-    """Later export path after the shared budget stopped.
+    """Later document export path after the shared budget stopped.
 
     A path whose own text exceeds the cap carries ``oversize``. A path that
     is over budget only because an earlier path stopped the batch does not.
+    Non-documents are not stopped here and do not receive an export fetch.
     """
-    item: dict[str, Any] = {
+    item: dict[str, Any] = {"path": rel, "outcome": "over_budget"}
+    if not _is_sparse_path(rel, root):
+        return item
+    item["fetch"] = {
+        "op": "read",
         "path": rel,
-        "outcome": "over_budget",
-        "fetch": {
-            "op": "read",
-            "path": rel,
-            "export": True,
-            "chunk_cursor": 0,
-        },
+        "export": True,
+        "chunk_cursor": 0,
     }
-    if _is_sparse_path(rel, root):
-        length = len(_load_plain_text_for_sparse(rel, root))
-    else:
-        probed = read_file_result(rel, root=root, binary=False)
-        body = probed.get("content")
-        length = len(body) if isinstance(body, str) else 0
+    length = len(_load_plain_text_for_sparse(rel, root))
     if length > BATCH_MAX_CONTENT_CHARS:
         item["oversize"] = True
         item["char_count"] = length
     return item
 
 
-def _nondocument_export_body(rel: str, *, root: Path) -> str:
-    """Full ordinary-file text for one read_multi export item.
+def _nondocument_export_item(rel: str, *, root: Path) -> dict[str, Any]:
+    """One ordinary path inside a read_multi export.
 
-    A non-document path is not a sparse export. The unwindowed line window
-    is not the body, and a binary read keeps the empty content slot so it
-    does not grow an export fetch.
+    Text stays the full file body. A binary read keeps the no-selector
+    envelope (``content_base64``, mime, hash) and never grows an export fetch
+    or an empty ``content`` string.
     """
     probed = read_file_result(rel, root=root, binary=False)
-    if probed.get("auto_binary") or "content_base64" in probed:
-        return ""
+    if (
+        probed.get("auto_binary")
+        or probed.get("is_binary")
+        or "content_base64" in probed
+    ):
+        item = dict(probed)
+        item["path"] = rel
+        item.pop("fetch", None)
+        item.pop("content", None)
+        item["outcome"] = "ok"
+        return item
     if probed.get("unwindowed_oversized") or probed.get("byte_truncated"):
-        return extract_text_content(resolve_files_path(rel, root=root))
-    body = probed.get("content")
-    return body if isinstance(body, str) else ""
+        body = extract_text_content(resolve_files_path(rel, root=root))
+    else:
+        raw_body = probed.get("content")
+        body = raw_body if isinstance(raw_body, str) else ""
+    return {"path": rel, "content": body, "outcome": "ok"}
 
 
 def read_files_batch(
@@ -779,8 +785,9 @@ def read_files_batch(
     """Read multiple sandboxed files, preserving per-path errors inline.
 
     Multi-path ``export`` budgets document paths only (16 items, 65536 code
-    points). A non-document path keeps its full body, does not consume that
-    budget, and never receives an export fetch. ``omitted`` lists stopped
+    points). A text non-document keeps its full body. A binary non-document
+    keeps the no-selector envelope and is not coerced to empty text. Neither
+    consumes that budget or receives an export fetch. ``omitted`` lists stopped
     document paths; ``budget_cursor`` is the flattened index of the first.
     """
     if chunk_cursor_provided:
@@ -948,13 +955,7 @@ def read_files_batch(
         flat_idx = 0
         for rel in paths:
             if not _is_sparse_path(rel, root):
-                items.append(
-                    {
-                        "path": rel,
-                        "content": _nondocument_export_body(rel, root=root),
-                        "outcome": "ok",
-                    }
-                )
+                items.append(_nondocument_export_item(rel, root=root))
                 flat_idx += 1
                 continue
             if terminated or doc_count >= BATCH_MAX_SECTIONS:

@@ -758,3 +758,114 @@ def test_fs_dispatcher_export_nondoc_budget(
     assert "fetch" not in out["items"][2]
     assert out["items"][1]["outcome"] == "over_budget"
     assert "content" not in out["items"][1]
+
+
+def _png_bytes() -> bytes:
+    return b"\x89PNG\r\n\x1a\n" + b"PX" * 35000
+
+
+def _assert_binary_export_item(item: dict, plain: dict, raw: bytes) -> None:
+    import base64
+
+    assert "content" not in item
+    assert "fetch" not in item
+    assert item["content_base64"] == plain["content_base64"]
+    assert item["content_base64"] == base64.b64encode(raw).decode("ascii")
+    assert item.get("mime_type") == plain.get("mime_type")
+    assert item.get("read_sha256") == plain.get("read_sha256")
+    assert base64.b64decode(item["content_base64"]) == raw
+
+
+def test_read_multi_export_binary_keeps_payload(tmp_path: Path) -> None:
+    """A png beside documents stays the binary envelope and ignores the budget."""
+    root = _root(tmp_path)
+    raw = _png_bytes()
+    (root / "img.png").write_bytes(raw)
+    (root / "a.md").write_text("a" * 40006, encoding="utf-8")
+    (root / "b.md").write_text("b" * 40006, encoding="utf-8")
+    plain = read_files_batch(["img.png"], root=root)
+    plain_item = plain["files"]["img.png"]
+
+    before = read_files_batch(
+        ["img.png", "a.md", "b.md"], root=root, export=True
+    )
+    assert [item["path"] for item in before["items"]] == ["img.png", "a.md", "b.md"]
+    assert [item["outcome"] for item in before["items"]] == [
+        "ok",
+        "ok",
+        "over_budget",
+    ]
+    _assert_binary_export_item(before["items"][0], plain_item, raw)
+    assert before["budget_cursor"] == 2
+    assert before["omitted"] == ["b.md"]
+    assert "fetch" not in before["items"][0]
+
+    after = read_files_batch(
+        ["a.md", "b.md", "img.png"], root=root, export=True
+    )
+    assert [item["outcome"] for item in after["items"]] == [
+        "ok",
+        "over_budget",
+        "ok",
+    ]
+    _assert_binary_export_item(after["items"][2], plain_item, raw)
+    assert after["budget_cursor"] == 1
+    assert after["omitted"] == ["b.md"]
+
+
+def test_fs_dispatcher_export_binary_keeps_payload(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """fs ingress export of a png matches the no-selector binary read."""
+    import base64
+
+    from fs_impl import fs_impl
+
+    projects = tmp_path / "projects"
+    prefix = "universal-llm-gateway/notes"
+    folder = projects / prefix
+    folder.mkdir(parents=True)
+    raw = _png_bytes()
+    (folder / "img.png").write_bytes(raw)
+    (folder / "a.md").write_text("a" * 10, encoding="utf-8")
+    png_rel = f"{prefix}/img.png"
+    md_rel = f"{prefix}/a.md"
+
+    def _fs_root(surface: str, root_id: str) -> Path:
+        assert root_id == "workspaces"
+        return projects
+
+    monkeypatch.setattr("fs_roots.fs_root_for", _fs_root)
+    common = {
+        "surface": "code",
+        "overflow_registry": {},
+        "sandbox": "workspaces",
+        "path": "",
+        "content": "",
+        "target": "",
+        "target_sandbox": "",
+        "line": 0,
+        "section": "",
+        "all_occurrences": False,
+        "include_untracked": True,
+        "binary": False,
+        "max_depth": 3,
+        "offset": 0,
+        "limit": 0,
+        "expected_sha256": "",
+        "if_absent": False,
+        "paths": [png_rel, md_rel],
+    }
+    plain = fs_impl(**common, op="read_multi", export=False)
+    exported = fs_impl(**common, op="read_multi", export=True)
+    plain_item = plain["files"][png_rel]
+    item = exported["items"][0]
+    assert item["content_base64"] == plain_item["content_base64"]
+    assert base64.b64decode(item["content_base64"]) == raw
+    assert item.get("mime_type") == plain_item.get("mime_type")
+    assert item.get("read_sha256") == plain_item.get("read_sha256")
+    assert "fetch" not in item
+    assert "content" not in item
+    assert exported["items"][1]["outcome"] == "ok"
+    assert "omitted" not in exported
+    assert "budget_cursor" not in exported
