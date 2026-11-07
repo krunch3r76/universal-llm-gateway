@@ -27,6 +27,7 @@ from ._pdf_read import (
 )
 from ._sparse_document_read import (
     BATCH_MAX_CONTENT_CHARS,
+    BATCH_MAX_SECTIONS,
     _stale_read_root,
     finalize_sparse_document_payload,
     is_sparse_document_suffix,
@@ -747,6 +748,22 @@ def _stopped_export_item(rel: str, *, root: Path) -> dict[str, Any]:
     return item
 
 
+def _nondocument_export_body(rel: str, *, root: Path) -> str:
+    """Full ordinary-file text for one read_multi export item.
+
+    A non-document path is not a sparse export. The unwindowed line window
+    is not the body, and a binary read keeps the empty content slot so it
+    does not grow an export fetch.
+    """
+    probed = read_file_result(rel, root=root, binary=False)
+    if probed.get("auto_binary") or "content_base64" in probed:
+        return ""
+    if probed.get("unwindowed_oversized") or probed.get("byte_truncated"):
+        return extract_text_content(resolve_files_path(rel, root=root))
+    body = probed.get("content")
+    return body if isinstance(body, str) else ""
+
+
 def read_files_batch(
     paths: list[str],
     root: Path = FILES_ROOT,
@@ -759,7 +776,13 @@ def read_files_batch(
     chunk_cursor_provided: bool = False,
     expected_read_sha256: str | dict[str, str] | None = None,
 ) -> dict[str, Any]:
-    """Read multiple sandboxed files, preserving per-path errors inline."""
+    """Read multiple sandboxed files, preserving per-path errors inline.
+
+    Multi-path ``export`` budgets document paths only (16 items, 65536 code
+    points). A non-document path keeps its full body, does not consume that
+    budget, and never receives an export fetch. ``omitted`` lists stopped
+    document paths; ``budget_cursor`` is the flattened index of the first.
+    """
     if chunk_cursor_provided:
         return param_not_applicable_error(parameter="chunk_cursor")
 
@@ -917,87 +940,41 @@ def read_files_batch(
 
     if multi_expanded and export:
         items: list[dict[str, Any]] = []
+        omitted: list[str] = []
+        budget_cursor: int | None = None
         remaining = BATCH_MAX_CONTENT_CHARS
         terminated = False
+        doc_count = 0
+        flat_idx = 0
         for rel in paths:
-            if terminated:
+            if not _is_sparse_path(rel, root):
+                items.append(
+                    {
+                        "path": rel,
+                        "content": _nondocument_export_body(rel, root=root),
+                        "outcome": "ok",
+                    }
+                )
+                flat_idx += 1
+                continue
+            if terminated or doc_count >= BATCH_MAX_SECTIONS:
+                if budget_cursor is None:
+                    budget_cursor = flat_idx
                 items.append(_stopped_export_item(rel, root=root))
+                omitted.append(rel)
+                terminated = True
+                flat_idx += 1
                 continue
             per_exp = _per_path_expected(rel)
-            if not _is_sparse_path(rel, root):
-                r = read_file_result(
-                    rel,
-                    root=root,
-                    binary=False,
-                    expected_read_sha256=per_exp,
-                )
-                body = str(r.get("content", ""))
-                if len(body) > BATCH_MAX_CONTENT_CHARS:
-                    items.append(
-                        {
-                            "path": rel,
-                            "outcome": "over_budget",
-                            "oversize": True,
-                            "fetch": {
-                                "op": "read",
-                                "path": rel,
-                                "export": True,
-                                "chunk_cursor": 0,
-                            },
-                        }
-                    )
-                    terminated = True
-                    continue
-                if len(body) > remaining:
-                    items.append(
-                        {
-                            "path": rel,
-                            "outcome": "over_budget",
-                            "fetch": {
-                                "op": "read",
-                                "path": rel,
-                                "export": True,
-                                "chunk_cursor": 0,
-                            },
-                        }
-                    )
-                    terminated = True
-                    continue
-                items.append({"path": rel, "content": body, "outcome": "ok"})
-                remaining -= len(body)
-                continue
             text = _load_plain_text_for_sparse(rel, root)
             body_len = len(text)
-            if body_len > BATCH_MAX_CONTENT_CHARS:
-                items.append(
-                    {
-                        "path": rel,
-                        "outcome": "over_budget",
-                        "oversize": True,
-                        "fetch": {
-                            "op": "read",
-                            "path": rel,
-                            "export": True,
-                            "chunk_cursor": 0,
-                        },
-                    }
-                )
-                terminated = True
-                continue
             if body_len > remaining:
-                items.append(
-                    {
-                        "path": rel,
-                        "outcome": "over_budget",
-                        "fetch": {
-                            "op": "read",
-                            "path": rel,
-                            "export": True,
-                            "chunk_cursor": 0,
-                        },
-                    }
-                )
+                if budget_cursor is None:
+                    budget_cursor = flat_idx
+                items.append(_stopped_export_item(rel, root=root))
+                omitted.append(rel)
                 terminated = True
+                flat_idx += 1
                 continue
             src = resolve_files_path(rel, root=root)
             rs = sha256_hex_of_file(src)
@@ -1009,6 +986,8 @@ def read_files_batch(
                         "read_sha256": rs,
                     }
                 )
+                doc_count += 1
+                flat_idx += 1
                 continue
             chunk = finalize_sparse_document_payload(
                 resolve_document_read(
@@ -1024,9 +1003,18 @@ def read_files_batch(
             chunk["outcome"] = "ok"
             items.append(chunk)
             remaining -= len(text)
-        return finalize_sparse_document_payload(
-            {"selection": "multi", "read_multi": True, "items": items}
-        )
+            doc_count += 1
+            flat_idx += 1
+        out: dict[str, Any] = {
+            "selection": "multi",
+            "read_multi": True,
+            "items": items,
+        }
+        if omitted:
+            out["omitted"] = omitted
+        if budget_cursor is not None:
+            out["budget_cursor"] = budget_cursor
+        return finalize_sparse_document_payload(out)
 
     if multi_expanded and has_section:
         return sparse_selector_conflict_error(

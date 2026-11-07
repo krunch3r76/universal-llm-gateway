@@ -216,6 +216,8 @@ def test_read_multi_export_stops_later_paths(tmp_path: Path) -> None:
     assert sum(1 for item in items if item["path"] == "big.md") == 1
     assert items[2].get("oversize") is True
     assert "oversize" not in items[3]
+    assert batch["budget_cursor"] == 2
+    assert batch["omitted"] == ["big.md", "c.md"]
 
 
 def test_byte_ceiling_boundary_and_over(tmp_path: Path) -> None:
@@ -475,6 +477,8 @@ def test_read_multi_export_later_sibling_oversize(
     assert batch["items"][2]["fetch"]["path"] == "huge.md"
     assert "content" not in batch["items"][1]
     assert "content" not in batch["items"][2]
+    assert batch["budget_cursor"] == 1
+    assert batch["omitted"] == ["b.md", "huge.md"]
 
 
 def test_fs_dispatcher_workspaces_share_uri_matches_relative(
@@ -534,3 +538,223 @@ def test_fs_dispatcher_workspaces_share_uri_matches_relative(
         and entry["items"]
         and entry["items"][0].get("outcome") == "stale_handle"
     )
+
+
+def _replay_export_fetch(path: str, root: Path) -> str:
+    """Replay one emitted export fetch until the final chunk."""
+    live = sha256_hex_of_file(root / path)
+    original = (root / path).read_text(encoding="utf-8")
+    cursor = 0
+    parts: list[str] = []
+    for _ in range(8):
+        chunk = read_file_result(
+            path,
+            root=root,
+            export=True,
+            chunk_cursor=cursor,
+            chunk_cursor_provided=True,
+            expected_read_sha256=live,
+        )
+        assert chunk.get("code") is None, chunk
+        assert "content" in chunk
+        parts.append(chunk["content"])
+        nxt = chunk.get("chunk_cursor_next")
+        if nxt is None:
+            assert chunk.get("truncated") is False
+            break
+        assert isinstance(nxt, int) and nxt > cursor
+        cursor = nxt
+    else:
+        raise AssertionError(f"export replay did not terminate for {path}")
+    assert "".join(parts) == original
+    return original
+
+
+def _assert_export_replay(batch: dict, root: Path) -> None:
+    emitted = [item for item in batch["items"] if isinstance(item.get("fetch"), dict)]
+    assert emitted, "expected at least one document export fetch"
+    for item in emitted:
+        assert item["outcome"] == "over_budget"
+        assert "content" not in item
+        fetch = item["fetch"]
+        assert fetch["export"] is True
+        assert fetch["chunk_cursor"] == 0
+        assert fetch["op"] == "read"
+        assert fetch["path"] == item["path"]
+        _replay_export_fetch(item["path"], root)
+
+
+def test_read_multi_export_nondoc_after_stop_and_replay(tmp_path: Path) -> None:
+    """a.md and b.md are 40006 chars; small.txt follows the stop and stays whole."""
+    root = _root(tmp_path)
+    a_text = "a" * 40006
+    b_text = "b" * 40006
+    small = "s" * 12
+    (root / "a.md").write_text(a_text, encoding="utf-8")
+    (root / "b.md").write_text(b_text, encoding="utf-8")
+    (root / "small.txt").write_text(small, encoding="utf-8")
+    batch = read_files_batch(["a.md", "b.md", "small.txt"], root=root, export=True)
+    items = batch["items"]
+    assert [item["path"] for item in items] == ["a.md", "b.md", "small.txt"]
+    assert [item["outcome"] for item in items] == ["ok", "over_budget", "ok"]
+    assert items[0]["content"] == a_text
+    assert "content" not in items[1]
+    assert "fetch" not in items[2]
+    assert items[2]["content"] == small
+    assert batch["budget_cursor"] == 1
+    assert batch["omitted"] == ["b.md"]
+    _assert_export_replay(batch, root)
+
+
+def test_read_multi_export_big_txt_single_error_multi_full(
+    tmp_path: Path,
+) -> None:
+    """Single-path export on a non-document stays param_not_applicable.
+
+    A multi-path call returns the 70000-char body and does not budget it.
+    """
+    root = _root(tmp_path)
+    big = "t" * 70000
+    (root / "big.txt").write_text(big, encoding="utf-8")
+    (root / "a.md").write_text("a" * 40006, encoding="utf-8")
+    (root / "c.md").write_text("c" * 20000, encoding="utf-8")
+    single = read_files_batch(["big.txt"], root=root, export=True)
+    assert single["files"]["big.txt"]["code"] == "param_not_applicable"
+    assert single["files"]["big.txt"]["data"]["parameter"] == "export"
+
+    paired = read_files_batch(["big.txt", "a.md"], root=root, export=True)
+    assert "omitted" not in paired
+    assert "budget_cursor" not in paired
+    assert paired["items"][0]["content"] == big
+    assert "fetch" not in paired["items"][0]
+    assert paired["items"][1]["outcome"] == "ok"
+    assert paired["items"][1]["content"] == "a" * 40006
+
+    mixed = read_files_batch(["a.md", "big.txt", "c.md"], root=root, export=True)
+    assert [item["outcome"] for item in mixed["items"]] == ["ok", "ok", "ok"]
+    assert mixed["items"][1]["content"] == big
+    assert "fetch" not in mixed["items"][1]
+    assert "omitted" not in mixed
+    assert "budget_cursor" not in mixed
+    assert len(mixed["items"][0]["content"]) + len(mixed["items"][2]["content"]) <= 65536
+
+
+def test_read_multi_export_budget_markers(tmp_path: Path) -> None:
+    """No omission, cumulative index, later oversize, count cap, mixed order."""
+    root = _root(tmp_path)
+    (root / "a.md").write_text("a" * 10, encoding="utf-8")
+    (root / "b.md").write_text("b" * 10, encoding="utf-8")
+    (root / "note.txt").write_text("n" * 12, encoding="utf-8")
+    quiet = read_files_batch(["a.md", "note.txt", "b.md"], root=root, export=True)
+    assert "omitted" not in quiet
+    assert "budget_cursor" not in quiet
+    assert quiet["items"][1]["content"] == "n" * 12
+
+    (root / "a.md").write_text("a" * 40006, encoding="utf-8")
+    (root / "b.md").write_text("b" * 40006, encoding="utf-8")
+    (root / "huge.md").write_text("Z" * 70000, encoding="utf-8")
+    (root / "tail.txt").write_text("tail-body!!", encoding="utf-8")
+    crossed = read_files_batch(
+        ["note.txt", "a.md", "b.md", "huge.md", "tail.txt"],
+        root=root,
+        export=True,
+    )
+    assert [item["path"] for item in crossed["items"]] == [
+        "note.txt",
+        "a.md",
+        "b.md",
+        "huge.md",
+        "tail.txt",
+    ]
+    assert [item["outcome"] for item in crossed["items"]] == [
+        "ok",
+        "ok",
+        "over_budget",
+        "over_budget",
+        "ok",
+    ]
+    assert crossed["items"][0]["content"] == "n" * 12
+    assert crossed["items"][4]["content"] == "tail-body!!"
+    assert "fetch" not in crossed["items"][0]
+    assert "fetch" not in crossed["items"][4]
+    assert "oversize" not in crossed["items"][2]
+    assert crossed["items"][3]["oversize"] is True
+    assert crossed["budget_cursor"] == 2
+    assert crossed["omitted"] == ["b.md", "huge.md"]
+    _assert_export_replay(crossed, root)
+
+    for i in range(17):
+        (root / f"d{i:02d}.md").write_text(f"d{i:02d}", encoding="utf-8")
+    counted_paths = ["d00.md", "note.txt"] + [f"d{i:02d}.md" for i in range(1, 17)]
+    counted = read_files_batch(counted_paths, root=root, export=True)
+    assert counted["budget_cursor"] == 17
+    assert counted["omitted"] == ["d16.md"]
+    assert [item["outcome"] for item in counted["items"][:17]] == ["ok"] * 17
+    assert counted["items"][1]["content"] == "n" * 12
+    assert "fetch" not in counted["items"][1]
+    assert counted["items"][17]["outcome"] == "over_budget"
+    assert "content" not in counted["items"][17]
+    assert "oversize" not in counted["items"][17]
+    assert (
+        sum(
+            1
+            for item in counted["items"]
+            if item["outcome"] == "ok" and item["path"].endswith(".md")
+        )
+        == 16
+    )
+
+
+def test_fs_dispatcher_export_nondoc_budget(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """fs ingress read_multi export, not the helper alone."""
+    from fs_impl import fs_impl
+
+    projects = tmp_path / "projects"
+    prefix = "universal-llm-gateway/notes"
+    folder = projects / prefix
+    folder.mkdir(parents=True)
+    a_text = "a" * 40006
+    b_text = "b" * 40006
+    small = "s" * 12
+    (folder / "a.md").write_text(a_text, encoding="utf-8")
+    (folder / "b.md").write_text(b_text, encoding="utf-8")
+    (folder / "small.txt").write_text(small, encoding="utf-8")
+    paths = [f"{prefix}/a.md", f"{prefix}/b.md", f"{prefix}/small.txt"]
+
+    def _fs_root(surface: str, root_id: str) -> Path:
+        assert root_id == "workspaces"
+        return projects
+
+    monkeypatch.setattr("fs_roots.fs_root_for", _fs_root)
+    out = fs_impl(
+        surface="code",
+        overflow_registry={},
+        op="read_multi",
+        sandbox="workspaces",
+        path="",
+        content="",
+        target="",
+        target_sandbox="",
+        line=0,
+        section="",
+        all_occurrences=False,
+        include_untracked=True,
+        binary=False,
+        max_depth=3,
+        offset=0,
+        limit=0,
+        expected_sha256="",
+        if_absent=False,
+        paths=paths,
+        export=True,
+    )
+    assert out.get("code") is None, out
+    assert out.get("selection") == "multi"
+    assert out["budget_cursor"] == 1
+    assert out["omitted"] == paths[1:2]
+    assert out["items"][2]["content"] == small
+    assert "fetch" not in out["items"][2]
+    assert out["items"][1]["outcome"] == "over_budget"
+    assert "content" not in out["items"][1]
