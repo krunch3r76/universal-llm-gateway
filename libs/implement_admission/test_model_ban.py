@@ -15,6 +15,7 @@ from implement_admission.model_ban import (
     load_model_bans,
     normalize_model_for_ban,
 )
+from implement_admission.routing import load_route_policy
 from pipelines.team_dispatch_admit.v1.handlers.test_handlers import run_full_admit
 
 pytestmark = pytest.mark.offline
@@ -66,21 +67,40 @@ def test_xai_grok_alias_refused() -> None:
     assert plan.get("code") == "MODEL_BANNED"
 
 
-def test_omit_auto_judgment_refused_default() -> None:
+def test_omit_ask_admits_composer_not_grok() -> None:
     plan = run_full_admit(
         {
             "op": "generate",
             "seat": "cursor-sdk",
             "model": None,
             "job": "ask",
-            "request_id": "ban-omit",
+            "request_id": "ban-omit-ask",
         }
     )
-    assert plan.get("admitted") is False
-    assert plan.get("code") == "MODEL_BANNED_DEFAULT"
-    assert (plan.get("details") or {}).get(
-        "omit_config_key"
-    ) == "workflows.auto_judgment"
+    assert plan.get("admitted") is True, plan
+    assert plan.get("model") == "cursor/composer-2.5"
+    assert plan.get("workflow") == "auto_judgment"
+
+
+def test_no_workflows_model_resolves_to_scope_all_banned_model() -> None:
+    """Config invariant: omit paths must not default to scope:all banned ids."""
+    clear_model_ban_cache()
+    policy = load_route_policy()
+    banned_slugs = {b.match_slug for b in load_model_bans() if b.scope_all}
+    workflows = policy.get("workflows") or {}
+    offenders: list[str] = []
+    for slug, binding in workflows.items():
+        if not isinstance(binding, dict):
+            continue
+        model = str(binding.get("model") or "").strip()
+        if not model:
+            continue
+        try:
+            if normalize_model_for_ban(model) in banned_slugs:
+                offenders.append(f"workflows.{slug}.model={model!r}")
+        except (TypeError, ValueError):
+            continue
+    assert offenders == [], offenders
 
 
 def test_ban_override_admits_grok() -> None:

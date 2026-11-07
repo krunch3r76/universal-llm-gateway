@@ -2,9 +2,8 @@
 
 from __future__ import annotations
 
-import yaml
-
 import pytest
+import yaml
 from implement_admission.impresario_policy import ADVISOR_MODEL
 from implement_admission.routing import load_route_policy
 

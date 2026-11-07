@@ -174,11 +174,13 @@ workflows:
     model: cursor/composer-2.5
     jobs: [investigate, recon, seed]
   auto_judgment:
-    # Judgment omit-model defaults to grok-4.7 for cursor-sdk judgment-class
-    # jobs. Effort for these jobs is contract_effort (conductor low;
+    # Judgment omit-model: composer-2.5 (agent-bus:9956 grok-4.7 dispatch ban;
+    # same mechanical slot as workflows.mechanical_implement). Explicit
+    # model=cursor/grok-4.7 still refuses at admit unless ban_override.
+    # Effort for these jobs is contract_effort (conductor low;
     # answer/ask/confer/verify/execute/propagate high).
     seat: cursor-sdk
-    model: cursor/grok-4.7
+    model: cursor/composer-2.5
     jobs: [answer, confer, ask, verify, execute, propagate, sketch, none, conductor]
   check_review:
     # Reviewer omit-model follows workflows.check_review (anthropic sonnet).
