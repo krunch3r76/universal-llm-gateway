@@ -14,7 +14,10 @@ import uuid
 from typing import Any, Protocol
 from urllib.parse import urlparse
 
-from web_chat_relay.chatgpt_structural_empty_js import STRUCTURAL_COMPOSER_EMPTY_CORE_JS
+from web_chat_relay.chatgpt_structural_empty_js import (
+    STRUCTURAL_COMPOSER_EMPTY_CORE_JS,
+    STRUCTURAL_FOREIGN_EMBED_GUARD_JS,
+)
 
 DEFAULT_ORION_CDP_URL = os.environ.get("ORION_CDP_URL", "http://127.0.0.1:9342")
 PINNED_CONVERSATION_URL = (
@@ -32,6 +35,7 @@ _STREAMING_JS = """
 _TAB_SYNC_STATE_JS = f"""
 () => {{
 {STRUCTURAL_COMPOSER_EMPTY_CORE_JS.strip()}
+{STRUCTURAL_FOREIGN_EMBED_GUARD_JS.strip()}
   const composers = [...document.querySelectorAll('[contenteditable="true"]')];
   const foreignAttachmentOrChip = (el) => {{
     const region =
@@ -62,7 +66,7 @@ _TAB_SYNC_STATE_JS = f"""
   }};
   const structuralEmpty = (el) => {{
     if (foreignAttachmentOrChip(el)) return false;
-    if (el.querySelector('atom,img,svg,a[href],[contenteditable="false"]')) return false;
+    if (__ulgHasForeignStructuralEmbed(el)) return false;
     const draft = (el.innerText || el.value || '').trim();
     if (draft.length > 0) return false;
     return __ulgStructuralComposerEmptyCore(el);

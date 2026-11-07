@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import subprocess
 
 import pytest
@@ -15,6 +16,12 @@ from web_chat_relay.orion_wake import (
 )
 
 pytestmark = pytest.mark.offline
+
+
+@pytest.fixture(autouse=True)
+def _require_node() -> None:
+    if shutil.which("node") is None:
+        pytest.fail("node is required for Orion JS snippet tests")
 
 
 def _node_check(script: str) -> None:
@@ -57,6 +64,15 @@ function createTreeWalker(root) {
 document = {
   visibilityState: 'visible',
   createTreeWalker,
+  querySelector(sel) {
+    const s = String(sel || '');
+    if (globalThis.__ce_roots && globalThis.__ce_roots[0]) {
+      if (s.includes('ProseMirror') || s.includes('composer') || s === '#composer') {
+        return globalThis.__ce_roots[0];
+      }
+    }
+    return null;
+  },
   querySelectorAll(sel) {
     if (sel === '[contenteditable="true"]') return [...globalThis.__ce_roots || []];
     return [];
@@ -230,3 +246,114 @@ def test_chatgpt_work_preflight_expression_parses() -> None:
         expected_conversation_id="6aee30ff-802c-83e8-bc37-abf4c0339c36",
     )
     _node_check("(async () => {" + exp.strip() + "})")
+
+
+def _trailing_break_root(*, inner_text: str = "\n") -> str:
+    return f"""
+const br = {{ nodeType: 1, tagName: 'BR', childNodes: [], children: [],
+  className: 'ProseMirror-trailingBreak',
+  getAttribute(a) {{ return a === 'class' ? 'ProseMirror-trailingBreak' : null; }} }};
+const para = {{ nodeType: 1, tagName: 'P', childNodes: [br], children: [br],
+  getAttribute() {{ return null; }} }};
+br.parentNode = para;
+const root = {{
+  nodeType: 1, tagName: 'DIV', innerText: {json.dumps(inner_text)}, value: '',
+  childNodes: [para], children: [para],
+  closest: () => null,
+  querySelector(sel) {{
+    const s = String(sel);
+    if (s.includes('atom')) return globalThis.__atom || null;
+    if (s.includes('img')) return globalThis.__img || null;
+    return null;
+  }},
+  querySelectorAll() {{ return []; }},
+  getAttribute(a) {{ return a === 'contenteditable' ? 'true' : null; }},
+}};
+para.parentNode = root;
+globalThis.__ce_roots = [root];
+"""
+
+
+def test_tab_sync_observed_trailing_break_is_empty() -> None:
+    fn = _TAB_SYNC_STATE_JS.strip()
+    setup = _DOM_MIN + _trailing_break_root()
+    out = _run_node(setup + "refreshWindowGlobals(); console.log(JSON.stringify((" + fn + ")()));")
+    assert out["composerEmpty"] is True
+
+
+@pytest.mark.parametrize(
+    "ce_attr",
+    ["false", "FALSE", "False", "  false  "],
+)
+def test_tab_sync_noneditable_descendant_blocks_empty(ce_attr: str) -> None:
+    fn = _TAB_SYNC_STATE_JS.strip()
+    setup = _DOM_MIN + _trailing_break_root() + f"""
+const blocked = {{ nodeType: 1, tagName: 'SPAN', children: [], childNodes: [],
+  getAttribute(a) {{ return a === 'contenteditable' ? {json.dumps(ce_attr)} : null; }} }};
+globalThis.__ce_roots[0].children[0].childNodes.push(blocked);
+globalThis.__ce_roots[0].children[0].children.push(blocked);
+blocked.parentNode = globalThis.__ce_roots[0].children[0];
+"""
+    out = _run_node(setup + "refreshWindowGlobals(); console.log(JSON.stringify((" + fn + ")()));")
+    assert out["composerEmpty"] is False
+
+
+def test_tab_sync_visible_text_blocks_empty() -> None:
+    fn = _TAB_SYNC_STATE_JS.strip()
+    setup = _DOM_MIN + """
+const text = { nodeType: 3, textContent: 'draft', parentNode: null };
+const para = { nodeType: 1, tagName: 'P', childNodes: [text], children: [] };
+text.parentNode = para;
+const root = {
+  nodeType: 1, tagName: 'DIV', childNodes: [para], children: [para],
+  closest: () => null, querySelector: () => null, querySelectorAll: () => [],
+  getAttribute: (a) => (a === 'contenteditable' ? 'true' : null), innerText: 'draft', value: '',
+};
+para.parentNode = root;
+globalThis.__ce_roots = [root];
+"""
+    out = _run_node(setup + "refreshWindowGlobals(); console.log(JSON.stringify((" + fn + ")()));")
+    assert out["composerEmpty"] is False
+
+
+def test_preflight_observed_trailing_break_is_empty() -> None:
+    cid = "6aed2b2e-1b88-83e8-bc37-c8eb6c56b623"
+    exp = chatgpt_work_preflight_expression(
+        selector="div.ProseMirror",
+        line="wake",
+        preserve_newlines=False,
+        expected_conversation_id=cid,
+    )
+    setup = _DOM_MIN + _trailing_break_root() + f"""
+location = {{ href: 'https://chatgpt.com/c/{cid}' }};
+refreshWindowGlobals();
+console.log(JSON.stringify({exp.strip()}));
+"""
+    out = _run_node(setup)
+    assert out.get("ok") is True
+    assert out.get("state") == "empty"
+
+
+@pytest.mark.parametrize(
+    "ce_attr",
+    ["false", "FALSE", "False", "  false  "],
+)
+def test_preflight_noneditable_descendant_not_empty(ce_attr: str) -> None:
+    cid = "6aed2b2e-1b88-83e8-bc37-c8eb6c56b623"
+    exp = chatgpt_work_preflight_expression(
+        selector="div.ProseMirror",
+        line="wake",
+        preserve_newlines=False,
+        expected_conversation_id=cid,
+    )
+    setup = _DOM_MIN + _trailing_break_root() + f"""
+const blocked = {{ nodeType: 1, tagName: 'SPAN', children: [], childNodes: [],
+  getAttribute(a) {{ return a === 'contenteditable' ? {json.dumps(ce_attr)} : null; }} }};
+globalThis.__ce_roots[0].children[0].childNodes.push(blocked);
+blocked.parentNode = globalThis.__ce_roots[0].children[0];
+location = {{ href: 'https://chatgpt.com/c/{cid}' }};
+refreshWindowGlobals();
+console.log(JSON.stringify({exp.strip()}));
+"""
+    out = _run_node(setup)
+    assert out.get("reason") == "composer_not_empty"

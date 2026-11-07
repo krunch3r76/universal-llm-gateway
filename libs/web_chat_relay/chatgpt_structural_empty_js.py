@@ -30,3 +30,28 @@ const __ulgStructuralComposerEmptyCore = (el) => {
   return false;
 };
 """
+
+STRUCTURAL_FOREIGN_EMBED_GUARD_JS = """
+const __ulgContenteditableIsFalse = (node) => {
+  if (!node || node.nodeType !== 1) return false;
+  const raw = node.getAttribute && node.getAttribute('contenteditable');
+  if (raw == null) return false;
+  return String(raw).trim().toLowerCase() === 'false';
+};
+const __ulgHasNoneditableDescendant = (el) => {
+  const walk = (node) => {
+    if (!node || node.nodeType !== 1) return false;
+    if (__ulgContenteditableIsFalse(node)) return true;
+    for (const c of node.children || []) {
+      if (walk(c)) return true;
+    }
+    return false;
+  };
+  return walk(el);
+};
+const __ulgHasForeignStructuralEmbed = (el) => {
+  if (!el || typeof el.querySelector !== 'function') return false;
+  if (el.querySelector('atom,img,svg,a[href]')) return true;
+  return __ulgHasNoneditableDescendant(el);
+};
+"""

@@ -29,6 +29,13 @@ pytestmark = pytest.mark.offline
 PINNED = PINNED_CONVERSATION_URL
 
 
+def test_dom_deliver_routes_chatgpt_work_insert_and_send() -> None:
+    import inspect
+
+    src = inspect.getsource(_dom_deliver)
+    assert "chatgpt_work_insert_and_send" in src
+
+
 @pytest.fixture(autouse=True)
 def stub_orion_dom_deliver(
     monkeypatch: pytest.MonkeyPatch, request: pytest.FixtureRequest

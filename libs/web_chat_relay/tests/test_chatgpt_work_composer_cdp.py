@@ -6,7 +6,11 @@ import json
 import unittest.mock as mock
 
 import pytest
-from cursor_bridge.dom_composer_paste import dom_click_send
+from cursor_bridge.dom_composer_paste import (
+    _ULG_NORM_COMPOSER_JS,
+    _set_composer_body,
+    dom_click_send,
+)
 from playwright.async_api import async_playwright
 from web_chat_relay.chatgpt_work_composer_cdp import (
     chatgpt_work_insert_and_send,
@@ -652,6 +656,135 @@ async def test_positive_attachment_chip_outside_form_refuses() -> None:
         state = await _preflight(page, html)
         await browser.close()
     assert state.get("reason") == "composer_not_empty"
+
+
+OBSERVED_NO_EDITOR_HTML = """
+<div class="ProseMirror" contenteditable="true" role="textbox">
+  <p><br class="ProseMirror-trailingBreak"></p>
+</div>
+<button aria-label="Send prompt" type="button">Send</button>
+"""
+
+
+@pytest.mark.asyncio
+async def test_observed_no_editor_div_empty_passes_ulg_composer_dom_empty() -> None:
+    async with async_playwright() as pw:
+        browser = await pw.chromium.launch(headless=True)
+        page = await browser.new_page()
+        empty = await page.evaluate(
+            "(() => {\n"
+            + _ULG_NORM_COMPOSER_JS
+            + """
+              const el = document.createElement('div');
+              el.setAttribute('contenteditable', 'true');
+              el.innerHTML = '<p><br class="ProseMirror-trailingBreak"></p>';
+              Object.defineProperty(el, 'innerText', { get() { return '\\n'; } });
+              return ulgComposerDomEmpty(el);
+            })()"""
+        )
+        await browser.close()
+    assert empty is True
+
+
+@pytest.mark.asyncio
+async def test_observed_no_editor_div_generic_insert_refuses_without_mutation() -> None:
+    line = "WAKE — lane probe"
+    setter = _set_composer_body(_PM, line, preserve_newlines=True)
+    async with async_playwright() as pw:
+        browser = await pw.chromium.launch(headless=True)
+        page = await browser.new_page()
+        row = await page.evaluate(
+            """({ norm, js }) => {
+              document.body.innerHTML = '';
+              const el = document.createElement('div');
+              el.className = 'ProseMirror';
+              el.setAttribute('contenteditable', 'true');
+              el.innerHTML = '<p><br class="ProseMirror-trailingBreak"></p>';
+              Object.defineProperty(el, 'innerText', { get() { return '\\n'; } });
+              document.body.appendChild(el);
+              const before = el.innerHTML;
+              window.__ulgOperatorActivity = {};
+              const ret = eval(js);
+              return { ret, before, after: el.innerHTML, calls: el.editor ? 1 : 0 };
+            }""",
+            {"norm": _ULG_NORM_COMPOSER_JS, "js": setter},
+        )
+        await browser.close()
+    assert row["ret"]["reason"] == "insertion_failed"
+    assert row["ret"]["inserted"] is False
+    assert row["before"] == row["after"]
+
+
+@pytest.mark.asyncio
+async def test_observed_no_editor_div_chatgpt_work_inserts_once_with_readback() -> None:
+    line = "ORION-NO-EDITOR"
+    insert_calls: list[str] = []
+
+    class _Ws:
+        def __init__(self, page: object) -> None:
+            self.page = page
+            self._pending: dict[int, dict] = {}
+
+        async def __aenter__(self) -> _Ws:
+            self.session = await self.page.context.new_cdp_session(self.page)
+            return self
+
+        async def __aexit__(self, *_a: object) -> None:
+            return None
+
+        async def send(self, data: str) -> None:
+            msg = json.loads(data)
+            self._pending[msg["id"]] = msg
+
+        async def recv(self) -> str:
+            mid = min(self._pending)
+            msg = self._pending.pop(mid)
+            method = msg.get("method")
+            if method == "Runtime.evaluate":
+                params = msg.get("params") or {}
+                val = await _runtime(
+                    self.page,
+                    params["expression"],
+                    await_promise=bool(params.get("awaitPromise", False)),
+                )
+                return json.dumps({"id": mid, "result": {"result": {"value": val}}})
+            if method == "Input.insertText":
+                text = str((msg.get("params") or {}).get("text") or "")
+                insert_calls.append(text)
+                await self.session.send("Input.insertText", {"text": text})
+                return json.dumps({"id": mid, "result": {}})
+            return json.dumps({"id": mid, "result": {}})
+
+    async with async_playwright() as pw:
+        browser = await pw.chromium.launch(headless=True)
+        page = await browser.new_page()
+        await page.goto(f"https://chatgpt.com/c/{_CONV}")
+        await page.set_content(OBSERVED_NO_EDITOR_HTML)
+
+        async def _bridge(
+            ws_url: str, expression: str, *, await_promise: bool = False, **_k: object
+        ) -> object:
+            del ws_url
+            return await _runtime(page, expression, await_promise=await_promise)
+
+        with mock.patch("websockets.connect", return_value=_Ws(page)), mock.patch(
+            "cursor_bridge.dom_composer_paste._cdp_eval", side_effect=_bridge
+        ):
+            out = await chatgpt_work_insert_and_send(
+                "ws://fake",
+                selector=_PM,
+                line=line,
+                expected_conversation_id=_CONV,
+            )
+        draft = await page.evaluate(
+            "document.querySelector('div.ProseMirror').innerText.trim()"
+        )
+        await browser.close()
+
+    assert len(insert_calls) == 1
+    assert insert_calls[0] == line
+    assert out.get("ok") is True, out
+    assert draft == line
 
 
 @pytest.mark.asyncio

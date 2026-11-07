@@ -20,7 +20,10 @@ from cursor_bridge.dom_composer_paste import (
     operator_activity_suppress_js,
 )
 
-from web_chat_relay.chatgpt_structural_empty_js import STRUCTURAL_COMPOSER_EMPTY_CORE_JS
+from web_chat_relay.chatgpt_structural_empty_js import (
+    STRUCTURAL_COMPOSER_EMPTY_CORE_JS,
+    STRUCTURAL_FOREIGN_EMBED_GUARD_JS,
+)
 
 _INSERT_METHOD = "Input.insertText"
 
@@ -61,7 +64,7 @@ def chatgpt_work_preflight_expression(
     if (hit) {{ el = hit; matchedSelector = s; break; }}
   }}
   if (!el) return {{ ok: false, reason: 'no_composer' }};
-  if (String(el.getAttribute('contenteditable') || '') !== 'true') {{
+  if (String(el.getAttribute('contenteditable') || '').trim().toLowerCase() !== 'true') {{
     return {{ ok: false, reason: 'no_composer' }};
   }}
   window.__ulgChatgptWorkComposer = {{ matchedSelector, composer: el }};
@@ -107,7 +110,8 @@ def chatgpt_work_preflight_expression(
       return {{ ok: false, reason: 'composer_not_empty' }};
     }}
   }}
-  if (el.querySelector('atom,img,svg,a[href],[contenteditable="false"]')) {{
+{STRUCTURAL_FOREIGN_EMBED_GUARD_JS.strip()}
+  if (__ulgHasForeignStructuralEmbed(el)) {{
     return {{ ok: false, reason: 'composer_not_empty' }};
   }}
   const draft = (el.innerText || el.value || '').trim();
