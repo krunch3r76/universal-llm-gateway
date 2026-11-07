@@ -1472,6 +1472,7 @@ def _work_real_dom_html(
     text_input_in_col: bool = False,
     foreign_form_in_layout: bool = False,
     unlabelled_submit_on_body: bool = False,
+    labelled_send_on_body: bool = False,
     footer_stop_testid: bool = False,
     stop_type_submit_in_form: bool = False,
     late_send_ms: int | None = None,
@@ -1524,7 +1525,12 @@ def _work_real_dom_html(
             'onclick="window.__clickCounts.foreign+=1">Send</button></form>'
         )
     body_extra = ""
-    if unlabelled_submit_on_body:
+    if labelled_send_on_body:
+        body_extra = (
+            '<button type="button" aria-label="Send prompt" '
+            'onclick="window.__clickCounts.send+=1">Send</button>'
+        )
+    elif unlabelled_submit_on_body:
         body_extra = (
             '<button type="submit" aria-label="Send" '
             'onclick="window.__clickCounts.body+=1">Go</button>'
@@ -1785,76 +1791,50 @@ def _click_send_with_guard_removed(click_js: str, guard_key: str) -> str:
     return click_js.replace(needle, needle + " return false;", 1)
 
 
-@_NODE_SKIP
+@_PLAYWRIGHT_SKIP
 @pytest.mark.parametrize(
-    "guard_key,fixture",
+    "guard_key,html_kwargs",
     [
-        ("foreign_form", {"foreign_form_in_layout": True, "include_send_prompt": True}),
-        ("foreign_text_control", {"textarea_in_editor_col": True, "include_send_prompt": True}),
+        (
+            "foreign_form",
+            {"foreign_form_in_layout": True, "include_footer_send": True},
+        ),
+        (
+            "foreign_text_control",
+            {"text_input_in_col": True, "include_footer_send": True},
+        ),
+        (
+            "second_composer",
+            {"second_visible_editable": True, "include_footer_send": True},
+        ),
+        (
+            "body_html_boundary",
+            {"include_footer_send": False, "labelled_send_on_body": True},
+        ),
     ],
 )
-def test_work_shape_guard_removal_red_would_click(guard_key: str, fixture: dict) -> None:
-    """Production refuses; neutering the guard in real generated JS must allow a Send click."""
+def test_work_real_dom_guard_removal_red_would_click(
+    guard_key: str, html_kwargs: dict
+) -> None:
+    """Production refuses on real DOM; neutering one guard must allow a Send click."""
+    nonce = f"red-{guard_key}"
     js = _click_send_body(
-        'div.ProseMirror[contenteditable="true"]', "wake", abort_nonce=f"red-{guard_key}"
+        'div.ProseMirror[contenteditable="true"]', "wake", abort_nonce=nonce
     )
-    prod = _run_work_shape_click_send_js(js, composer_text="wake", **fixture)
-    assert prod["ok"] is False
-    assert prod["reason"] == "no_send_button"
-    assert prod["__sendClickCount"] == 0
-    naive = _run_work_shape_click_send_js(
-        _click_send_with_guard_removed(js, guard_key),
-        composer_text="wake",
-        **fixture,
-    )
-    assert int(naive.get("__sendClickCount") or 0) >= 1
-
-
-@_PLAYWRIGHT_SKIP
-def test_work_real_dom_second_composer_guard_removal_red() -> None:
-    """Removing second-composer guard must allow footer Send when rival editable present."""
-    js = _click_send_body(
-        'div.ProseMirror[contenteditable="true"]', "wake", abort_nonce="red-2ce"
-    )
-    html = _work_real_dom_html(
-        composer_text="wake",
-        second_visible_editable=True,
-        include_footer_send=True,
-    )
+    html = _work_real_dom_html(composer_text="wake", **html_kwargs)
     prod = _eval_production_click_send_playwright(
-        js, html, composer_text="wake", abort_nonce="red-2ce"
+        js, html, composer_text="wake", abort_nonce=nonce
     )
+    assert prod.get("reason") == "no_send_button", prod
     assert prod["__sendClickCount"] == 0
-    naive_js = _click_send_with_guard_removed(js, "second_composer")
+    naive_js = _click_send_with_guard_removed(js, guard_key)
     naive = _eval_production_click_send_playwright(
         naive_js,
         html,
         composer_text="wake",
-        abort_nonce=_abort_nonce_from_click_js(naive_js),
+        abort_nonce=_abort_nonce_from_click_js(naive_js) or nonce,
     )
-    assert int(naive.get("__sendClickCount") or 0) >= 1
-
-
-@_NODE_SKIP
-def test_work_shape_body_boundary_guard_removal_red() -> None:
-    """Stripping body/html walk stop must allow clicking body-attached Send (unsafe)."""
-    js = _click_send_body(
-        'div.ProseMirror[contenteditable="true"]', "wake", abort_nonce="red-body"
-    )
-    fixture = {
-        "include_footer_stop": False,
-        "empty_footer": True,
-        "send_on_document_body": True,
-        "include_send_prompt": False,
-    }
-    prod = _run_work_shape_click_send_js(js, composer_text="wake", **fixture)
-    assert prod["__sendClickCount"] == 0
-    naive = _run_work_shape_click_send_js(
-        _click_send_with_guard_removed(js, "body_html_boundary"),
-        composer_text="wake",
-        **fixture,
-    )
-    assert naive.get("send_clicked") is True or int(naive.get("__sendClickCount") or 0) >= 1
+    assert int(naive.get("__sendClickCount") or 0) >= 1, naive
 
 
 @_PLAYWRIGHT_SKIP
