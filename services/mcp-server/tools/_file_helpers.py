@@ -861,7 +861,10 @@ def read_files_batch(
         ended = False
         for rel in paths:
             for sid in list(sections or []):
-                if ended:
+                if ended or flat_idx >= BATCH_MAX_SECTIONS:
+                    if budget_cursor is None:
+                        budget_cursor = flat_idx
+                    ended = True
                     flat.append(
                         _stopped_multi_section_item(rel, sid, root=root)
                     )
@@ -917,6 +920,7 @@ def read_files_batch(
                     if oc == "over_budget":
                         ended = True
                         budget_cursor = flat_idx
+                        omitted.append(f"{rel}:{sid}")
                     flat_idx += 1
                     continue
                 body = str(it.get("content", ""))
@@ -954,6 +958,13 @@ def read_files_batch(
         doc_count = 0
         flat_idx = 0
         for rel in paths:
+            try:
+                if not resolve_files_path(rel, root=root).is_file():
+                    read_file_result(rel, root=root, binary=False)
+            except Exception as exc:
+                items.append({"path": rel, "error": str(exc)})
+                flat_idx += 1
+                continue
             if not _is_sparse_path(rel, root):
                 items.append(_nondocument_export_item(rel, root=root))
                 flat_idx += 1

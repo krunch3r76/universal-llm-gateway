@@ -869,3 +869,152 @@ def test_fs_dispatcher_export_binary_keeps_payload(
     assert exported["items"][1]["outcome"] == "ok"
     assert "omitted" not in exported
     assert "budget_cursor" not in exported
+
+
+def _fs_multi(monkeypatch: pytest.MonkeyPatch, projects: Path, paths: list[str], **extra):
+    from fs_impl import fs_impl
+
+    def _fs_root(surface: str, root_id: str) -> Path:
+        assert root_id == "workspaces"
+        return projects
+
+    monkeypatch.setattr("fs_roots.fs_root_for", _fs_root)
+    return fs_impl(
+        surface="code",
+        overflow_registry={},
+        op="read_multi",
+        sandbox="workspaces",
+        path="",
+        content="",
+        target="",
+        target_sandbox="",
+        line=0,
+        section="",
+        all_occurrences=False,
+        include_untracked=True,
+        binary=False,
+        max_depth=3,
+        offset=0,
+        limit=0,
+        expected_sha256="",
+        if_absent=False,
+        paths=paths,
+        **extra,
+    )
+
+
+def test_fs_dispatcher_read_multi_section_count_cap(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Eighteen small sections across two files stop at the aggregate 16."""
+    projects = tmp_path / "projects"
+    prefix = "universal-llm-gateway/notes"
+    folder = projects / prefix
+    folder.mkdir(parents=True)
+    ids = [f"S{i}" for i in range(9)]
+    bodies = {sid: f"v{sid}" for sid in ids}
+    text = "".join(f"# {sid}\n\n{bodies[sid]}\n\n" for sid in ids)
+    (folder / "x.md").write_text(text, encoding="utf-8")
+    (folder / "y.md").write_text(text, encoding="utf-8")
+    x_rel = f"{prefix}/x.md"
+    y_rel = f"{prefix}/y.md"
+    out = _fs_multi(monkeypatch, projects, [x_rel, y_rel], sections=ids)
+    assert out.get("error") is None, out
+    items = out["items"]
+    assert len(items) == 18
+    assert [item["outcome"] for item in items[:16]] == ["ok"] * 16
+    assert [item["outcome"] for item in items[16:]] == ["over_budget", "over_budget"]
+    assert "content" not in items[16]
+    assert "content" not in items[17]
+    expected = [(x_rel, sid) for sid in ids] + [(y_rel, sid) for sid in ids]
+    assert [(item["path"], item["id"]) for item in items] == expected
+    for item, (_path, sid) in zip(items[:16], expected[:16]):
+        assert item["content"].strip() == bodies[sid]
+    assert out["budget_cursor"] == 16
+    assert out["omitted"] == [f"{y_rel}:S7", f"{y_rel}:S8"]
+
+
+def test_fs_dispatcher_first_oversize_section_is_omitted(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The section that ends the batch is listed in omitted with the later ones."""
+    projects = tmp_path / "projects"
+    prefix = "universal-llm-gateway/notes"
+    folder = projects / prefix
+    folder.mkdir(parents=True)
+    (folder / "a.md").write_text(
+        "# Big\n\n" + ("Z" * 70000) + "\n\n# C\n\nc\n",
+        encoding="utf-8",
+    )
+    (folder / "b.md").write_text("# C\n\nc\n", encoding="utf-8")
+    a_rel = f"{prefix}/a.md"
+    b_rel = f"{prefix}/b.md"
+    out = _fs_multi(monkeypatch, projects, [a_rel, b_rel], sections=["Big", "C"])
+    assert out.get("error") is None, out
+    items = out["items"]
+    assert [(item["path"], item["id"]) for item in items] == [
+        (a_rel, "Big"),
+        (a_rel, "C"),
+        (b_rel, "Big"),
+        (b_rel, "C"),
+    ]
+    assert [item["outcome"] for item in items] == ["over_budget"] * 4
+    assert "content" not in items[0]
+    assert items[0]["oversize"] is True
+    assert items[0]["char_count"] > 65536
+    assert items[0]["fetch"] == {"section": "Big", "chunk_cursor": 0}
+    assert "oversize" not in items[1]
+    assert out["budget_cursor"] == 0
+    assert out["omitted"] == [
+        f"{a_rel}:Big",
+        f"{a_rel}:C",
+        f"{b_rel}:Big",
+        f"{b_rel}:C",
+    ]
+
+
+def test_fs_dispatcher_missing_export_path_stays_inline(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A missing export path is an item error. Valid bodies stay in the batch."""
+    projects = tmp_path / "projects"
+    prefix = "universal-llm-gateway/notes"
+    folder = projects / prefix
+    folder.mkdir(parents=True)
+    a_text = "a" * 40006
+    b_text = "b" * 40006
+    c_text = "charlie-export-body\n"
+    (folder / "a.md").write_text(a_text, encoding="utf-8")
+    (folder / "b.md").write_text(b_text, encoding="utf-8")
+    (folder / "c.md").write_text(c_text, encoding="utf-8")
+    a_rel = f"{prefix}/a.md"
+    b_rel = f"{prefix}/b.md"
+    c_rel = f"{prefix}/c.md"
+    miss_txt = f"{prefix}/missing.txt"
+    miss_md = f"{prefix}/missing.md"
+
+    mixed = [miss_txt, c_rel, miss_md, a_rel]
+    plain = _fs_multi(monkeypatch, projects, mixed, export=False)
+    exported = _fs_multi(monkeypatch, projects, mixed, export=True)
+    assert exported.get("code") is None
+    assert "items" in exported, exported
+    assert [item["path"] for item in exported["items"]] == mixed
+    assert exported["items"][1]["content"] == c_text
+    assert exported["items"][3]["content"] == a_text
+    for index in (0, 2):
+        path = mixed[index]
+        assert exported["items"][index]["error"] == plain["files"][path]["error"]
+        assert exported["items"][index]["error"].startswith("File not found:")
+    assert "omitted" not in exported
+    assert "budget_cursor" not in exported
+
+    budget_paths = [a_rel, miss_txt, b_rel]
+    budget_plain = _fs_multi(monkeypatch, projects, budget_paths, export=False)
+    budget = _fs_multi(monkeypatch, projects, budget_paths, export=True)
+    assert [item["path"] for item in budget["items"]] == budget_paths
+    assert budget["items"][0]["content"] == a_text
+    assert budget["items"][1]["error"] == budget_plain["files"][miss_txt]["error"]
+    assert budget["items"][2]["outcome"] == "over_budget"
+    assert "content" not in budget["items"][2]
+    assert budget["budget_cursor"] == 2
+    assert budget["omitted"] == [b_rel]
