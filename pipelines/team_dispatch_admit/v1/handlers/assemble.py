@@ -53,11 +53,7 @@ def evaluate_assemble(
     plan["admitted"] = True
     row_id = str(plan.get("row_id") or "").strip()
     packet = str(plan.get("packet_markdown") or "")
-    if (
-        plan.get("job") == "conductor"
-        and packet
-        and _ROW_ID_RE.match(row_id)
-    ):
+    if plan.get("job") == "conductor" and packet and _ROW_ID_RE.match(row_id):
         purpose = str(plan.get("ledger_purpose") or "(unstated)")
         prefix = format_ledger_prompt_prefix(row_id=row_id, purpose=purpose)
         if prefix:
