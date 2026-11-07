@@ -566,6 +566,146 @@ async def test_dom_deliver_uses_chatgpt_selector_not_keyboard(
     assert not page.keyboard.inserted
 
 
+@pytest.mark.asyncio
+async def test_dom_deliver_unique_draft_writer_each_attempt(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Each _dom_deliver call must pass a per-attempt writer, not agent bool 'True'."""
+    page = _FakePage()
+    writers: list[str] = []
+
+    class _Port:
+        def list_tabs(self, *, cdp_url: str) -> dict:
+            return {
+                "pages": [
+                    {
+                        "id": "tab-orion",
+                        "url": PINNED,
+                        "web_socket_debugger_url": "ws://127.0.0.1/devtools/page/orion",
+                    }
+                ]
+            }
+
+    async def _insert(ws: str, *, draft_writer: str = "", **_kwargs: object) -> dict:
+        writers.append(str(draft_writer))
+        return {"ok": True}
+
+    async def _baseline(*_a: object, **_k: object) -> dict:
+        return {"user_count": 0}
+
+    async def _verify(*_a: object, **_k: object) -> dict:
+        return {"ok": True, "receipt": "dom_committed"}
+
+    async def _pre(*_a: object, **_k: object) -> dict:
+        return {"ok": True}
+
+    async def _recheck(*_a: object, **_k: object) -> dict:
+        return {"ok": True, "probe": {}}
+
+    @asynccontextmanager
+    async def _lock(_target_id: str, *, timeout_s: float = 120, op: str = ""):
+        yield
+
+    monkeypatch.setattr("web_tab.cdp_actuation.default_actuation_port", lambda: _Port())
+    monkeypatch.setattr(
+        "cursor_bridge.dom_composer_paste.dom_insert_and_send", _insert
+    )
+    monkeypatch.setattr("web_tab.commit_verify.capture_dom_baseline", _baseline)
+    monkeypatch.setattr("web_tab.commit_verify.poll_verify_committed", _verify)
+    monkeypatch.setattr(
+        "web_tab.operator_guard.wait_operator_idle_before_lock", _pre
+    )
+    monkeypatch.setattr(
+        "web_tab.operator_guard.operator_recheck_under_lock", _recheck
+    )
+    monkeypatch.setattr("web_tab.target_lock.target_write_lock", _lock)
+    monkeypatch.setattr(
+        "web_tab.write_ops._created_by_agent_for_target", lambda **_k: True
+    )
+
+    line = build_wake_pointer(thread="21207", turn=1, from_agent="maestro")
+    await _dom_deliver(page, line)
+    await _dom_deliver(page, line)
+    assert len(writers) == 2
+    assert writers[0] != writers[1]
+    assert writers[0] != "True"
+    assert writers[1] != "True"
+    assert all(w.startswith("orion:tab-orion:") for w in writers)
+
+
+@pytest.mark.asyncio
+async def test_dom_deliver_distinct_writer_blocks_used_existing_draft_shortcut(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A new wake attempt must not reuse the prior wake's writer for used_existing_draft."""
+    page = _FakePage()
+    prior_writer = "orion:tab-orion:deadbeef"
+    prior_sig = build_wake_pointer(thread="21207", turn=1, from_agent="maestro")
+
+    class _Port:
+        def list_tabs(self, *, cdp_url: str) -> dict:
+            return {
+                "pages": [
+                    {
+                        "id": "tab-orion",
+                        "url": PINNED,
+                        "web_socket_debugger_url": "ws://127.0.0.1/devtools/page/orion",
+                    }
+                ]
+            }
+
+    async def _insert(
+        ws: str, *, draft_writer: str = "", line: str = "", **_kwargs: object
+    ) -> dict:
+        if draft_writer == prior_writer:
+            return {
+                "ok": True,
+                "used_existing_draft": True,
+                "pasted": True,
+                "inserted": True,
+            }
+        return {
+            "ok": False,
+            "reason": "composer_not_empty",
+            "pasted": False,
+            "phase": "foreign_draft",
+        }
+
+    async def _baseline(*_a: object, **_k: object) -> dict:
+        return {"user_count": 0}
+
+    async def _verify(*_a: object, **_k: object) -> dict:
+        return {"ok": True, "receipt": "dom_committed"}
+
+    async def _pre(*_a: object, **_k: object) -> dict:
+        return {"ok": True}
+
+    async def _recheck(*_a: object, **_k: object) -> dict:
+        return {"ok": True, "probe": {}}
+
+    @asynccontextmanager
+    async def _lock(_target_id: str, *, timeout_s: float = 120, op: str = ""):
+        yield
+
+    monkeypatch.setattr("web_tab.cdp_actuation.default_actuation_port", lambda: _Port())
+    monkeypatch.setattr(
+        "cursor_bridge.dom_composer_paste.dom_insert_and_send", _insert
+    )
+    monkeypatch.setattr("web_tab.commit_verify.capture_dom_baseline", _baseline)
+    monkeypatch.setattr("web_tab.commit_verify.poll_verify_committed", _verify)
+    monkeypatch.setattr(
+        "web_tab.operator_guard.wait_operator_idle_before_lock", _pre
+    )
+    monkeypatch.setattr(
+        "web_tab.operator_guard.operator_recheck_under_lock", _recheck
+    )
+    monkeypatch.setattr("web_tab.target_lock.target_write_lock", _lock)
+
+    out = await _dom_deliver(page, prior_sig)
+    assert out.get("ok") is False
+    assert out.get("pasted") is False
+
+
 def _dom_deliver_port_tab(tab_id: str = "tab-op") -> object:
     class _Port:
         def list_tabs(self, *, cdp_url: str) -> dict:
@@ -2163,6 +2303,7 @@ async def test_dom_deliver_forwards_census_on_no_send_button(
 async def test_wake_inserted_no_send_preserves_pasted_and_census(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """Inserted but unsent wake keeps pasted=true and forwards census metadata."""
     page = _FakePage(url=PINNED)
     page.target_id = "tab-orion"
     census = dict(_SAMPLE_DOM_CENSUS)
@@ -2209,6 +2350,7 @@ async def test_dom_deliver_no_send_without_insert_metadata_is_paste_failed(
 async def test_dom_deliver_insertion_failure_pasted_false(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """Pre-send insertion failure must surface pasted=false through _dom_deliver."""
     page = _FakePage(url=PINNED)
     _dom_deliver_no_send_stubs(monkeypatch, census={}, page=page)
 
@@ -2233,6 +2375,7 @@ async def test_dom_deliver_insertion_failure_pasted_false(
 async def test_wake_no_send_without_insert_metadata_paste_failed(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """Bare no_send_button without insert metadata must classify as paste_failed."""
     page = _FakePage(url=PINNED)
     page.target_id = "tab-orion"
 

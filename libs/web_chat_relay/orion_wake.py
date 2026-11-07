@@ -1039,12 +1039,13 @@ async def _dom_deliver(
                 return transport
             base_users = int(baseline.get("user_count") or 0)
             conv_url = tab_url.split("?", 1)[0]
+            insertion_writer = f"orion:{target_id}:{uuid.uuid4().hex}"
             result = await dom_insert_and_send(
                 ws,
                 selector=selector,
                 line=text,
                 preserve_newlines=preserve_newlines,
-                draft_writer=str(created_by_agent or f"orion:{target_id}"),
+                draft_writer=insertion_writer,
                 work_native_insert=True,
                 expected_conversation_url=conv_url,
             )

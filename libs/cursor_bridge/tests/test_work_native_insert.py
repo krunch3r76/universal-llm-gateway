@@ -293,3 +293,232 @@ def test_dom_set_signals_work_native_unsupported_before_mutation() -> None:
     assert result.get("ok") is False
     assert result.get("reason") == "work_native_unsupported"
     assert text == ""
+
+
+@pytest.mark.asyncio
+async def test_work_native_insert_ack_error_is_insertion_unknown(monkeypatch) -> None:
+    """CDP Input acknowledgement error after dispatch → insertion_unknown, no retry."""
+    fake = _FakeWS(
+        preflight={"ok": True},
+        readback={"ok": True, "pasted": True, "inserted": True},
+    )
+    fake._recv_q = [{"id": 4, "error": {"message": "insert rejected"}}]
+
+    async def _eval(ws: Any, mid: int, expression: str) -> Any:
+        if mid == 1:
+            return None
+        if mid == 2:
+            return fake._preflight
+        if mid in (3, 5):
+            return None
+        return None
+
+    monkeypatch.setattr("cursor_bridge.cdp_composer_input._runtime_eval", _eval)
+
+    class _Connect:
+        async def __aenter__(self) -> _FakeWS:
+            return fake
+
+        async def __aexit__(self, *exc: object) -> None:
+            return None
+
+    monkeypatch.setattr("websockets.connect", lambda *a, **kw: _Connect())
+
+    out = await cdp_work_native_insert_text(
+        "ws://fake",
+        text="hello",
+        expected_url="https://chatgpt.com/c/abc",
+        draft_writer="w",
+    )
+    assert out.get("insertion_unknown") is True
+    assert out.get("pasted") is False
+    assert out["reason"] == "native_insert_error"
+
+
+@pytest.mark.asyncio
+async def test_work_native_readback_transport_is_insertion_unknown(monkeypatch) -> None:
+    """Readback evaluate failure after Input must not assign ownership."""
+    fake = _FakeWS(preflight={"ok": True}, readback={"ok": True})
+
+    async def _eval(ws: Any, mid: int, expression: str) -> Any:
+        if mid == 1:
+            return None
+        if mid == 2:
+            return fake._preflight
+        if mid in (3, 5):
+            return None
+        if mid == 6:
+            raise TimeoutError("readback stalled")
+        return None
+
+    monkeypatch.setattr("cursor_bridge.cdp_composer_input._runtime_eval", _eval)
+
+    class _Connect:
+        async def __aenter__(self) -> _FakeWS:
+            return fake
+
+        async def __aexit__(self, *exc: object) -> None:
+            return None
+
+    monkeypatch.setattr("websockets.connect", lambda *a, **kw: _Connect())
+
+    out = await cdp_work_native_insert_text(
+        "ws://fake",
+        text="hello",
+        expected_url="https://chatgpt.com/c/abc",
+        draft_writer="w",
+    )
+    assert out.get("insertion_unknown") is True
+    assert out["reason"] == "readback_timeout"
+
+
+@pytest.mark.asyncio
+async def test_work_native_cleanup_failure_after_dispatch_unknown(monkeypatch) -> None:
+    """Suppress clear failure after Input dispatch must fence as insertion_unknown."""
+    fake = _FakeWS(preflight={"ok": True}, readback={"ok": True})
+
+    async def _eval(ws: Any, mid: int, expression: str) -> Any:
+        if mid == 1:
+            return None
+        if mid == 2:
+            return fake._preflight
+        if mid == 3:
+            return None
+        if mid == 5:
+            raise RuntimeError("clear failed")
+        return None
+
+    monkeypatch.setattr("cursor_bridge.cdp_composer_input._runtime_eval", _eval)
+
+    class _Connect:
+        async def __aenter__(self) -> _FakeWS:
+            return fake
+
+        async def __aexit__(self, *exc: object) -> None:
+            return None
+
+    monkeypatch.setattr("websockets.connect", lambda *a, **kw: _Connect())
+
+    out = await cdp_work_native_insert_text(
+        "ws://fake",
+        text="hello",
+        expected_url="https://chatgpt.com/c/abc",
+        draft_writer="w",
+    )
+    assert out.get("insertion_unknown") is True
+    assert out["reason"] == "native_insert_cleanup"
+
+
+@_PLAYWRIGHT_SKIP
+def test_work_native_preflight_url_mismatch_refuses() -> None:
+    """Conversation URL drift before insert must refuse without Input."""
+    from playwright.sync_api import sync_playwright
+
+    from cursor_bridge.cdp_composer_input import _work_native_preflight_js
+
+    html = """<!DOCTYPE html><html><body>
+<div contenteditable="true" role="textbox" aria-label="Work with ChatGPT on your tasks"
+  style="min-height:40px;width:200px" id="main"></div>
+</body></html>"""
+    pre_js = _work_native_preflight_js(
+        expected_url="https://chatgpt.com/c/expected",
+        text="wake",
+        draft_writer="w",
+        preserve_newlines=False,
+    )
+    with sync_playwright() as playwright:
+        browser = playwright.chromium.launch(headless=True)
+        page = browser.new_page()
+        page.goto("https://chatgpt.com/c/actual", wait_until="domcontentloaded")
+        page.set_content(html)
+        page.evaluate(
+            "() => { document.getElementById('main').pmViewDesc = {}; "
+            "window.__ulgOperatorActivity = {}; }"
+        )
+        result = page.evaluate(pre_js)
+        browser.close()
+    assert result.get("ok") is False
+    assert result.get("reason") == "url_mismatch"
+
+
+@_PLAYWRIGHT_SKIP
+def test_work_native_readback_rejects_editor_identity_change() -> None:
+    """Readback must not assign ownership if pinned editor no longer matches resolver."""
+    from playwright.sync_api import sync_playwright
+
+    from cursor_bridge.cdp_composer_input import _work_native_readback_js
+
+    html = """<!DOCTYPE html><html><body>
+<div contenteditable="true" role="textbox" aria-label="Work with ChatGPT on your tasks"
+  style="min-height:40px;width:200px" id="main">hello</div>
+</body></html>"""
+    rb_js = _work_native_readback_js(
+        text="hello",
+        draft_writer="w",
+        preserve_newlines=False,
+        expected_url="https://chatgpt.com/c/abc",
+    )
+    with sync_playwright() as playwright:
+        browser = playwright.chromium.launch(headless=True)
+        page = browser.new_page()
+        page.goto("https://chatgpt.com/c/abc", wait_until="domcontentloaded")
+        page.set_content(html)
+        page.evaluate(
+            """() => {
+              const el = document.getElementById('main');
+              window.__ulgWorkNativeEditor = document.createElement('div');
+              window.__ulgOperatorActivity = {};
+            }"""
+        )
+        result = page.evaluate(rb_js)
+        browser.close()
+    assert result.get("ok") is False
+    assert result.get("reason") == "editor_changed"
+
+
+@pytest.mark.asyncio
+async def test_work_native_success_assigns_writer_only_after_readback(monkeypatch) -> None:
+    """Ownership fields are set only when readback confirms exact text."""
+    fake = _FakeWS(
+        preflight={"ok": True},
+        readback={
+            "ok": True,
+            "pasted": True,
+            "inserted": True,
+            "phase": "inserted",
+            "sig": "hello",
+        },
+    )
+
+    async def _eval(ws: Any, mid: int, expression: str) -> Any:
+        if mid == 1:
+            return None
+        if mid == 2:
+            return fake._preflight
+        if mid in (3, 5):
+            return None
+        if mid == 6:
+            return fake._readback
+        return None
+
+    monkeypatch.setattr("cursor_bridge.cdp_composer_input._runtime_eval", _eval)
+
+    class _Connect:
+        async def __aenter__(self) -> _FakeWS:
+            return fake
+
+        async def __aexit__(self, *exc: object) -> None:
+            return None
+
+    monkeypatch.setattr("websockets.connect", lambda *a, **kw: _Connect())
+
+    out = await cdp_work_native_insert_text(
+        "ws://fake",
+        text="hello",
+        expected_url="https://chatgpt.com/c/abc",
+        draft_writer="orion:lane",
+    )
+    assert out.get("ok") is True
+    assert out.get("pasted") is True
+    assert out.get("sig") == "hello"
+    assert len([m for m in fake.sent if m.get("method") == "Input.insertText"]) == 1

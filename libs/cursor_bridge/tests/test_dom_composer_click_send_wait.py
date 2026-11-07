@@ -498,6 +498,7 @@ def test_work_footer_send_prompt_clicks_once() -> None:
     reason="node not installed",
 )
 def test_work_footer_owned_draft_send_prompt_clicks_once() -> None:
+    """Owned-draft send script clicks labelled footer Send prompt once on Work layout."""
     js = _click_send_own_draft_body(
         'div.ProseMirror[contenteditable="true"]',
         draft_writer="orion-wake",
@@ -519,6 +520,7 @@ def test_work_footer_owned_draft_send_prompt_clicks_once() -> None:
     reason="node not installed",
 )
 def test_work_footer_stop_only_no_send_button() -> None:
+    """Stop-only footer must not satisfy send control discovery."""
     js = _click_send_body(
         'div.ProseMirror[contenteditable="true"]', "wake", abort_nonce="stop-only"
     )
@@ -536,6 +538,7 @@ def test_work_footer_stop_only_no_send_button() -> None:
     reason="node not installed",
 )
 def test_work_footer_disabled_send_prompt_not_clicked() -> None:
+    """Permanently disabled footer Send must end as no_send_button without clicks."""
     js = _click_send_body(
         'div.ProseMirror[contenteditable="true"]', "wake", abort_nonce="dis-send"
     )
@@ -591,6 +594,7 @@ def test_work_base_16ccc450_fails_candidate_clicks_once() -> None:
     reason="node not installed",
 )
 def test_work_stop_submit_type_not_clicked() -> None:
+    """Stop control with type=submit must not be treated as Send."""
     js = _click_send_body(
         'div.ProseMirror[contenteditable="true"]', "wake", abort_nonce="stop-submit"
     )
@@ -611,6 +615,7 @@ def test_work_stop_submit_type_not_clicked() -> None:
     reason="node not installed",
 )
 def test_work_foreign_form_blocks_layout_scope() -> None:
+    """Foreign form inside layout blocks ancestor scope even when footer Send exists."""
     js = _click_send_body(
         'div.ProseMirror[contenteditable="true"]', "wake", abort_nonce="fform"
     )
@@ -746,6 +751,7 @@ def test_work_attached_body_send_layout_without_stop_refuses() -> None:
 
 @_NODE_SKIP
 def test_own_form_stop_aria_refuses_generic_submit() -> None:
+    """Stop aria-label must block generic submit in the same form scope."""
     js = _click_send_body('[aria-label="Prompt"][contenteditable="true"]', "hello")
     result = _run_click_send_js(
         js,
@@ -759,6 +765,7 @@ def test_own_form_stop_aria_refuses_generic_submit() -> None:
 
 @_NODE_SKIP
 def test_own_form_stop_testid_refuses() -> None:
+    """Stop data-testid control must not be clicked as Send."""
     js = _click_send_body('[aria-label="Prompt"][contenteditable="true"]', "hello")
     result = _run_click_send_js(
         js,
@@ -771,6 +778,7 @@ def test_own_form_stop_testid_refuses() -> None:
 
 @_NODE_SKIP
 def test_own_form_unlabelled_submit_clicks_once() -> None:
+    """Generic submit inside composer's own form is eligible for exactly one click."""
     js = _click_send_body('[aria-label="Prompt"][contenteditable="true"]', "hello")
     result = _run_click_send_js(
         js,
@@ -799,6 +807,7 @@ def test_form_less_unlabelled_submit_outside_form_refuses() -> None:
 
 
 def test_work_send_on_body_only_outside_composer_chain() -> None:
+    """Body-attached Send outside composer chain must stay out of scope."""
     js = _click_send_body(
         'div.ProseMirror[contenteditable="true"]', "wake", abort_nonce="body-only"
     )
@@ -1748,4 +1757,136 @@ def test_work_real_dom_ambiguous_visible_editors_refuse() -> None:
     )
     assert result["ok"] is False
     assert result["reason"] in {"no_composer", "no_send_button"}
+    assert result["__sendClickCount"] == 0
+
+
+_SEND_GUARD_FN_PATCH: dict[str, str] = {
+    "foreign_form": "function ulgHasForeignForm(root, el) {",
+    "foreign_text_control": "function ulgHasForeignTextControl(root, el) {",
+    "body_html_boundary": "if (cur === document.body || cur === document.documentElement) break;",
+}
+
+
+def _click_send_with_guard_removed(click_js: str, guard_key: str) -> str:
+    """Return production click-send JS with one safety guard neutered (must re-enable unsafe click)."""
+    if guard_key == "second_composer":
+        line = "if (hasSecondComposer(cur)) continue;"
+        if line not in click_js:
+            raise AssertionError("second-composer guard line missing")
+        return click_js.replace(line, "/* guard-removed */", 1)
+    if guard_key == "body_html_boundary":
+        snippet = _SEND_GUARD_FN_PATCH[guard_key]
+        if snippet not in click_js:
+            raise AssertionError("body/html boundary guard missing from production JS")
+        return click_js.replace(snippet, "/* guard-removed */", 1)
+    needle = _SEND_GUARD_FN_PATCH[guard_key]
+    if needle not in click_js:
+        raise AssertionError(f"guard function missing from production JS: {guard_key}")
+    return click_js.replace(needle, needle + " return false;", 1)
+
+
+@_NODE_SKIP
+@pytest.mark.parametrize(
+    "guard_key,fixture",
+    [
+        ("foreign_form", {"foreign_form_in_layout": True, "include_send_prompt": True}),
+        ("foreign_text_control", {"textarea_in_editor_col": True, "include_send_prompt": True}),
+    ],
+)
+def test_work_shape_guard_removal_red_would_click(guard_key: str, fixture: dict) -> None:
+    """Production refuses; neutering the guard in real generated JS must allow a Send click."""
+    js = _click_send_body(
+        'div.ProseMirror[contenteditable="true"]', "wake", abort_nonce=f"red-{guard_key}"
+    )
+    prod = _run_work_shape_click_send_js(js, composer_text="wake", **fixture)
+    assert prod["ok"] is False
+    assert prod["reason"] == "no_send_button"
+    assert prod["__sendClickCount"] == 0
+    naive = _run_work_shape_click_send_js(
+        _click_send_with_guard_removed(js, guard_key),
+        composer_text="wake",
+        **fixture,
+    )
+    assert int(naive.get("__sendClickCount") or 0) >= 1
+
+
+@_PLAYWRIGHT_SKIP
+def test_work_real_dom_second_composer_guard_removal_red() -> None:
+    """Removing second-composer guard must allow footer Send when rival editable present."""
+    js = _click_send_body(
+        'div.ProseMirror[contenteditable="true"]', "wake", abort_nonce="red-2ce"
+    )
+    html = _work_real_dom_html(
+        composer_text="wake",
+        second_visible_editable=True,
+        include_footer_send=True,
+    )
+    prod = _eval_production_click_send_playwright(
+        js, html, composer_text="wake", abort_nonce="red-2ce"
+    )
+    assert prod["__sendClickCount"] == 0
+    naive_js = _click_send_with_guard_removed(js, "second_composer")
+    naive = _eval_production_click_send_playwright(
+        naive_js,
+        html,
+        composer_text="wake",
+        abort_nonce=_abort_nonce_from_click_js(naive_js),
+    )
+    assert int(naive.get("__sendClickCount") or 0) >= 1
+
+
+@_NODE_SKIP
+def test_work_shape_body_boundary_guard_removal_red() -> None:
+    """Stripping body/html walk stop must allow clicking body-attached Send (unsafe)."""
+    js = _click_send_body(
+        'div.ProseMirror[contenteditable="true"]', "wake", abort_nonce="red-body"
+    )
+    fixture = {
+        "include_footer_stop": False,
+        "empty_footer": True,
+        "send_on_document_body": True,
+        "include_send_prompt": False,
+    }
+    prod = _run_work_shape_click_send_js(js, composer_text="wake", **fixture)
+    assert prod["__sendClickCount"] == 0
+    naive = _run_work_shape_click_send_js(
+        _click_send_with_guard_removed(js, "body_html_boundary"),
+        composer_text="wake",
+        **fixture,
+    )
+    assert naive.get("send_clicked") is True or int(naive.get("__sendClickCount") or 0) >= 1
+
+
+@_PLAYWRIGHT_SKIP
+def test_work_real_dom_rejected_parent_fallback_refuses() -> None:
+    """Fail-closed send root must not walk to body-attached Send (parent fallback unsafe)."""
+    js = _click_send_body(
+        'div.ProseMirror[contenteditable="true"]', "wake", abort_nonce="pw-parent"
+    )
+    html = _work_real_dom_html(
+        composer_text="wake",
+        include_footer_send=False,
+        unlabelled_submit_on_body=True,
+    )
+    result = _eval_production_click_send_playwright(
+        js, html, composer_text="wake", abort_nonce="pw-parent"
+    )
+    assert result["ok"] is False
+    assert result["reason"] == "no_send_button"
+    assert result["__bodyClickCount"] == 0
+
+
+@_PLAYWRIGHT_SKIP
+def test_work_real_dom_disabled_send_refusal_includes_census() -> None:
+    """Permanent disabled Send must refuse with census, not timeout-style ambiguity."""
+    js = _click_send_body(
+        'div.ProseMirror[contenteditable="true"]', "wake", abort_nonce="pw-census"
+    )
+    html = _work_real_dom_html(composer_text="wake", send_disabled=True)
+    result = _eval_production_click_send_playwright(
+        js, html, composer_text="wake", abort_nonce="pw-census"
+    )
+    assert result["ok"] is False
+    assert result["reason"] == "no_send_button"
+    assert result.get("census") is not None
     assert result["__sendClickCount"] == 0

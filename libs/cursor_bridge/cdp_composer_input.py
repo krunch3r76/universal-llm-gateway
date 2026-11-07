@@ -115,6 +115,7 @@ async def _runtime_eval(ws: Any, mid: int, expression: str) -> Any:
 def _work_native_preflight_js(
     *, expected_url: str, text: str, draft_writer: str, preserve_newlines: bool
 ) -> str:
+    """Build page JS that validates Work editor identity before native Input.insertText."""
     from cursor_bridge.dom_composer_paste import (
         _ULG_NORM_COMPOSER_JS,
         _WORK_EDITOR_RESOLVE_JS,
@@ -178,6 +179,7 @@ def _work_native_readback_js(
     preserve_newlines: bool,
     expected_url: str,
 ) -> str:
+    """Build page JS that re-validates editor/URL and assigns draft ownership after insert."""
     from cursor_bridge.dom_composer_paste import (
         _ULG_NORM_COMPOSER_JS,
         _WORK_EDITOR_RESOLVE_JS,
