@@ -295,12 +295,14 @@ Isolated from Jupiter **fleet** and from Jupiter **`:3`** (view-only automation 
 |---|---|
 | Xvfb | `io-agent-xvfb-11.service` → **DISPLAY=:11** |
 | VNC | **localhost:5911** on `io`, **interactive** (no `-viewonly`) |
-| Profile | e.g. `~/.gateway/chrome-playground` or `~/.gateway/firefox-oreilly-profile` |
+| CDP | **9341** → `io-agent-playground.service`, profile `~/.gateway/chrome-playground` |
+
+**Provision units (once):** `python scripts/io-agent-playground-provision.py --start`
 
 **Bring up:**
 
 ```bash
-systemctl --user start io-agent-xvfb-11.service io-agent-vnc-5911.service
+systemctl --user start io-agent-xvfb-11.service io-agent-vnc-5911.service io-agent-playground.service
 ```
 
 **Tunnel from laptop** (when not on `io` console):
@@ -309,13 +311,7 @@ systemctl --user start io-agent-xvfb-11.service io-agent-vnc-5911.service
 ssh -N -L 5911:127.0.0.1:5911 io
 ```
 
-Connect VNC client to **127.0.0.1:5911** (no password). Launch browser on `io`:
-
-```bash
-DISPLAY=:11 firefox --profile ~/.gateway/firefox-oreilly-profile 'https://www.oreillyauto.com/' &
-# or Chrome when installed:
-# DISPLAY=:11 google-chrome --user-data-dir=$HOME/.gateway/chrome-playground URL &
-```
+Connect VNC client to **127.0.0.1:5911** (no password). Standing Chrome is `io-agent-playground.service` on **CDP 9341** (`config/web_tab/houses.yaml` → `playground`).
 
 Rare automation for these sites does not get a `pins.toml` lane — operator drives the playground; agents use Jupiter lanes only when a standing runbook requires CDP.
 

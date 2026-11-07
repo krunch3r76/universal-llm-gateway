@@ -101,3 +101,146 @@ def test_rehydrate_rejects_missing_backup(tmp_path: Path) -> None:
         cdp_cookie_seed.rehydrate_fleet_from_backup(
             9222, backup_path=tmp_path / "missing.json"
         )
+
+
+_WALGREENS_COOKIE = {
+    "name": "sid",
+    "value": "xyz",
+    "domain": ".walgreens.com",
+    "path": "/",
+    "secure": True,
+    "httpOnly": True,
+}
+
+_OTHER_COOKIE = {
+    "name": "misc",
+    "value": "1",
+    "domain": ".example.com",
+    "path": "/",
+    "secure": False,
+}
+
+
+def test_profile_cookie_backup_path_expands_user(tmp_path: Path) -> None:
+    path = cdp_cookie_seed.profile_cookie_backup_path(tmp_path / "chrome-playground")
+    assert path.name == cdp_cookie_seed.PROFILE_COOKIE_BACKUP_FILENAME
+    assert path.parent == tmp_path / "chrome-playground"
+
+
+def test_write_profile_cookie_backup_atomic_all_domains(
+    tmp_path: Path, monkeypatch
+) -> None:
+    profile = tmp_path / "profile"
+    profile.mkdir()
+    cookies = [_OTHER_COOKIE, _WALGREENS_COOKIE]
+    monkeypatch.setattr(
+        cdp_cookie_seed,
+        "_cdp_call",
+        lambda port, method, **kw: {"cookies": cookies},
+    )
+
+    count = cdp_cookie_seed.write_profile_cookie_backup(
+        9341, profile, domain_suffixes=()
+    )
+
+    backup = cdp_cookie_seed.profile_cookie_backup_path(profile)
+    assert count == 2
+    assert backup.is_file()
+    payload = json.loads(backup.read_text())
+    assert len(payload["cookies"]) == 2
+    assert payload["source_port"] == 9341
+
+
+def test_write_profile_cookie_backup_domain_filter(tmp_path: Path, monkeypatch) -> None:
+    profile = tmp_path / "profile"
+    profile.mkdir()
+    monkeypatch.setattr(
+        cdp_cookie_seed,
+        "_cdp_call",
+        lambda port, method, **kw: {"cookies": [_OTHER_COOKIE, _WALGREENS_COOKIE]},
+    )
+
+    count = cdp_cookie_seed.write_profile_cookie_backup(
+        9260, profile, domain_suffixes=("walgreens.com",)
+    )
+
+    backup = cdp_cookie_seed.profile_cookie_backup_path(profile)
+    assert count == 1
+    payload = json.loads(backup.read_text())
+    assert payload["cookies"] == [_WALGREENS_COOKIE]
+
+
+def test_rehydrate_profile_from_backup_filtered(tmp_path: Path, monkeypatch) -> None:
+    profile = tmp_path / "profile"
+    profile.mkdir()
+    backup = cdp_cookie_seed.profile_cookie_backup_path(profile)
+    backup.write_text(
+        json.dumps(
+            {
+                "cookies": [_OTHER_COOKIE, _WALGREENS_COOKIE],
+                "source_port": 9260,
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    calls: list[tuple] = []
+
+    def _set(port: int, method: str, params: dict | None = None) -> dict:
+        calls.append((port, method, params))
+        return {}
+
+    monkeypatch.setattr(cdp_cookie_seed, "_cdp_call", _set)
+
+    count = cdp_cookie_seed.rehydrate_profile_from_backup(
+        9260, profile, domain_suffixes=("walgreens.com",)
+    )
+
+    assert count == 1
+    assert calls == [(9260, "Storage.setCookies", {"cookies": [_WALGREENS_COOKIE]})]
+
+
+def test_profile_cookie_rehydrate_fresh(monkeypatch) -> None:
+    monkeypatch.setattr(
+        cdp_cookie_seed,
+        "write_profile_cookie_backup",
+        lambda *a, **k: 2,
+    )
+
+    assert (
+        cdp_cookie_seed.profile_cookie_rehydrate(
+            9341, Path("/tmp/p"), domain_suffixes=()
+        )
+        == "fresh"
+    )
+
+
+def test_profile_cookie_rehydrate_restored(monkeypatch) -> None:
+    def _write(*a, **k):
+        raise cdp_cookie_seed.CookieSeedError("signed out")
+
+    monkeypatch.setattr(cdp_cookie_seed, "write_profile_cookie_backup", _write)
+    monkeypatch.setattr(
+        cdp_cookie_seed,
+        "rehydrate_profile_from_backup",
+        lambda *a, **k: 3,
+    )
+
+    assert (
+        cdp_cookie_seed.profile_cookie_rehydrate(
+            9260, Path("/tmp/p"), domain_suffixes=("walgreens.com",)
+        )
+        == "restored"
+    )
+
+
+def test_profile_cookie_rehydrate_signed_out(monkeypatch) -> None:
+    def _fail(*a, **k):
+        raise cdp_cookie_seed.CookieSeedError("no backup")
+
+    monkeypatch.setattr(cdp_cookie_seed, "write_profile_cookie_backup", _fail)
+    monkeypatch.setattr(cdp_cookie_seed, "rehydrate_profile_from_backup", _fail)
+
+    assert (
+        cdp_cookie_seed.profile_cookie_rehydrate(9341, Path("/tmp/p")) == "signed_out"
+    )

@@ -27,7 +27,7 @@ probe → act. **Do not** `launch()` / `launch_persistent_context()` for flows t
 | **DoorDash** (9758 provisions) | **19270** (`DOORDASH_CDP_URL`) | `cdp-lane-ensure doordash` (gopuff unit) |
 | Google Calendar reconcile | **19290** | `calendar` |
 | Uber on-demand | **19280** | `uber` |
-| Bot-heavy **retail PDP** (O'Reilly, etc.) | **n/a** — **io `:11` system Firefox + VNC 5911** | attended; Playwright `launch()` hits Akamai |
+| Bot-heavy **retail PDP** (O'Reilly, etc.) | **9341** — **io `:11` `io-agent-playground.service` (CDP, profile `~/.gateway/chrome-playground`) + VNC 5911** | attended; Playwright `launch()` hits Akamai |
 | Quick public read | `cursor-ide-browser` | smoke only |
 | Long-form read-only extract | `dispatch(tool="browse")` | fleet profile — not uploads |
 | MCP **`browser_*`** (container Firefox) | **`ENABLE_BROWSER_TOOLS=true`** on mcp-server | Registered on MCP when enabled; may be called — emits `mcp.browser.*` events. Separate cookie jar from Jupiter Chrome; prefer **`browse`** / io CDP for signed-in Jupiter flows (`jupiter-browser-via-mcp`). |

@@ -21,7 +21,10 @@ _REPO = Path(__file__).resolve().parent.parent.parent
 if str(_REPO / "libs") not in sys.path:
     sys.path.insert(0, str(_REPO / "libs"))
 
-from claude_bundles.cdp_cookie_seed import fleet_cookie_rehydrate  # noqa: E402
+from claude_bundles.cdp_cookie_seed import (  # noqa: E402
+    fleet_cookie_rehydrate,
+    profile_cookie_rehydrate,
+)
 from claude_bundles.cdp_lane import chrome_display_env, chrome_launch_argv  # noqa: E402
 
 _POLL_MS = 250
@@ -87,6 +90,13 @@ def main() -> None:
             if lane_name == "fleet":
                 result = fleet_cookie_rehydrate(port)
                 print(f"fleet cookie rehydrate: {result}", file=sys.stderr)
+            else:
+                result = profile_cookie_rehydrate(
+                    port,
+                    profile,
+                    domain_suffixes=tuple(pin.get("cookie_domains") or ()),
+                )
+                print(f"lane {lane_name} cookie rehydrate: {result}", file=sys.stderr)
             print(
                 f"cdp-lane@{lane_name} READY display={display} port={port} profile={profile}",
                 file=sys.stderr,

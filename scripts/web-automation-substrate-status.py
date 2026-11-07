@@ -216,8 +216,11 @@ def build_report() -> dict[str, Any]:
         "resource_census": resource_census,
         "grok_supervision": grok_supervision,
         "attended_retail": {
-            "surface": "io DISPLAY :11, VNC 5911",
-            "browser": "system /usr/bin/firefox (not Playwright launch for bot-heavy PDPs)",
+            "surface": "io DISPLAY :11, VNC 5911, CDP 9341",
+            "browser": (
+                "io-agent-playground.service (Playwright Chromium / Chrome on :11, "
+                "profile ~/.gateway/chrome-playground)"
+            ),
             "note": "Akamai retail: operator-attended; automation documents + opens tabs only",
         },
         "repair_hints": [

@@ -15,12 +15,14 @@ from __future__ import annotations
 
 import json
 import urllib.request
+from collections.abc import Sequence
 from datetime import UTC, datetime
 from pathlib import Path
 
 PRIMARY_CDP_PORT = 9222
 COOKIE_DOMAIN_SUFFIX = "claude.ai"
 FLEET_COOKIE_BACKUP = Path.home() / ".gateway" / "claude-ai-cookies-backup-latest.json"
+PROFILE_COOKIE_BACKUP_FILENAME = ".cdp-cookies-backup-latest.json"
 
 # Storage.setCookies takes CookieParam, a strict subset of the Cookie objects
 # Storage.getCookies returns — `size` and `session` are read-only and rejected.
@@ -94,6 +96,33 @@ def _to_cookie_param(cookie: dict) -> dict:
     if cookie.get("session"):
         param.pop("expires", None)
     return param
+
+
+def profile_cookie_backup_path(profile_dir: Path) -> Path:
+    """Per-Chrome-profile cookie backup file co-located with the user-data dir."""
+    return Path(profile_dir).expanduser() / PROFILE_COOKIE_BACKUP_FILENAME
+
+
+def _cookie_domain_matches(domain: str, domain_suffixes: Sequence[str]) -> bool:
+    if not domain_suffixes:
+        return True
+    host = str(domain or "").lstrip(".")
+    return any(host.endswith(suffix) for suffix in domain_suffixes)
+
+
+def _filter_backup_cookies(
+    cookies: Sequence[dict], domain_suffixes: Sequence[str]
+) -> list[dict]:
+    out: list[dict] = []
+    for c in cookies:
+        if domain_suffixes and not _cookie_domain_matches(
+            str(c.get("domain") or ""), domain_suffixes
+        ):
+            continue
+        param = _to_cookie_param(c) if "name" in c else c
+        if param:
+            out.append(param)
+    return out
 
 
 def read_session_cookies(
@@ -207,6 +236,108 @@ def fleet_cookie_rehydrate(
         try:
             rehydrate_fleet_from_backup(
                 port, backup_path=backup_path, domain_suffix=domain_suffix
+            )
+            return "restored"
+        except CookieSeedError:
+            return "signed_out"
+
+
+def read_profile_cookies(
+    port: int,
+    *,
+    domain_suffixes: Sequence[str] = (),
+) -> list[dict]:
+    """Cookies from CDP on *port*, optionally filtered by ``domain_suffixes``.
+
+    When ``domain_suffixes`` is empty, every non-empty ``CookieParam`` in the jar
+    is returned (playground / pin-all-domain mode). Raises ``CookieSeedError`` when
+    the filtered set is empty.
+    """
+    result = _cdp_call(port, "Storage.getCookies")
+    cookies = [
+        param
+        for c in result.get("cookies") or []
+        if (param := _to_cookie_param(c))
+        and _cookie_domain_matches(str(c.get("domain") or ""), domain_suffixes)
+    ]
+    if not cookies:
+        scope = ", ".join(domain_suffixes) if domain_suffixes else "any domain"
+        raise CookieSeedError(
+            f"CDP :{port} holds no cookies for {scope} — browser may be signed out"
+        )
+    return cookies
+
+
+def write_profile_cookie_backup(
+    port: int,
+    profile_dir: Path,
+    *,
+    domain_suffixes: Sequence[str] = (),
+    backup_path: Path | None = None,
+) -> int:
+    """Persist live cookies from *port* beside the Chrome profile directory."""
+    dest = backup_path or profile_cookie_backup_path(profile_dir)
+    cookies = read_profile_cookies(port, domain_suffixes=domain_suffixes)
+    payload = {
+        "cookies": cookies,
+        "backed_up_at": datetime.now(tz=UTC).isoformat(),
+        "source_port": port,
+        "profile_dir": str(Path(profile_dir).expanduser()),
+        "domain_suffixes": list(domain_suffixes),
+    }
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    tmp = dest.with_suffix(".tmp")
+    tmp.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+    tmp.replace(dest)
+    return len(cookies)
+
+
+def rehydrate_profile_from_backup(
+    port: int,
+    profile_dir: Path,
+    *,
+    domain_suffixes: Sequence[str] = (),
+    backup_path: Path | None = None,
+) -> int:
+    """Install cookies from the profile backup into Chrome on *port*."""
+    src = backup_path or profile_cookie_backup_path(profile_dir)
+    if not src.is_file():
+        raise CookieSeedError(f"no cookie backup at {src}")
+    try:
+        payload = json.loads(src.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise CookieSeedError(f"cookie backup unreadable at {src}: {exc}") from exc
+    cookies = _filter_backup_cookies(payload.get("cookies") or [], domain_suffixes)
+    if not cookies:
+        scope = ", ".join(domain_suffixes) if domain_suffixes else "backup jar"
+        raise CookieSeedError(f"cookie backup at {src} has no cookies for {scope}")
+    _cdp_call(port, "Storage.setCookies", {"cookies": cookies})
+    return len(cookies)
+
+
+def profile_cookie_rehydrate(
+    port: int,
+    profile_dir: Path,
+    *,
+    domain_suffixes: Sequence[str] = (),
+    backup_path: Path | None = None,
+) -> FleetRehydrateResult:
+    """Refresh or restore per-profile cookies after Chrome listens on *port*."""
+    try:
+        write_profile_cookie_backup(
+            port,
+            profile_dir,
+            domain_suffixes=domain_suffixes,
+            backup_path=backup_path,
+        )
+        return "fresh"
+    except CookieSeedError:
+        try:
+            rehydrate_profile_from_backup(
+                port,
+                profile_dir,
+                domain_suffixes=domain_suffixes,
+                backup_path=backup_path,
             )
             return "restored"
         except CookieSeedError:
