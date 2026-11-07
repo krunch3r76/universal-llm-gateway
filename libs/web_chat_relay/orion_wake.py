@@ -1038,11 +1038,15 @@ async def _dom_deliver(
             if transport:
                 return transport
             base_users = int(baseline.get("user_count") or 0)
+            conv_url = tab_url.split("?", 1)[0]
             result = await dom_insert_and_send(
                 ws,
                 selector=selector,
                 line=text,
                 preserve_newlines=preserve_newlines,
+                draft_writer=str(created_by_agent or f"orion:{target_id}"),
+                work_native_insert=True,
+                expected_conversation_url=conv_url,
             )
     except TargetLockBusyError:
         return {"ok": False, "reason": "target_lock_busy", "retryable": True}
@@ -1055,7 +1059,15 @@ async def _dom_deliver(
         census = result.get("census")
         if census is not None:
             failure["census"] = census
-        for key in ("pasted", "delivered", "inserted", "phase", "send_clicked"):
+        for key in (
+            "pasted",
+            "delivered",
+            "inserted",
+            "phase",
+            "send_clicked",
+            "insertion_unknown",
+            "retry_eligible",
+        ):
             if key in result:
                 failure[key] = result[key]
         if result.get("pasted") is True and "delivered" not in failure:
@@ -1399,6 +1411,9 @@ async def deliver_orion_wake(
                 "brought_to_front": tab_sync["brought_to_front"],
                 "tab_reloaded": tab_sync["tab_reloaded"],
             }
+            if dom.get("insertion_unknown") is True:
+                paste_refuse["insertion_unknown"] = True
+                paste_refuse["retry_eligible"] = bool(dom.get("retry_eligible", False))
             if dom.get("census") is not None:
                 paste_refuse["census"] = dom["census"]
             return _refuse("paste_failed", **paste_refuse)

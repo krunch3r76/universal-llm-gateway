@@ -82,6 +82,7 @@ let sendVisibleByTimer = appearAfterMs === null;
 
 class MockEl {{
   constructor(tag, opts = {{}}) {{
+    this.nodeType = 1;
     this.tagName = tag.toUpperCase();
     this.innerText = opts.innerText ?? '';
     this.disabled = opts.disabled ?? false;
@@ -257,10 +258,12 @@ def _run_work_shape_click_send_js(
     empty_footer: bool = False,
     textarea_in_editor_col: bool = False,
     remove_file_chip: bool = False,
+    send_enables_after_ms: int | None = None,
 ) -> dict[str, Any]:
     """ChatGPT Work layout: editor shell has no buttons; footer is several ancestors up."""
     writer = json.dumps(draft_writer)
     abort_nonce = _abort_nonce_from_click_js(js)
+    enable_ms = "null" if send_enables_after_ms is None else int(send_enables_after_ms)
     permit_setup = ""
     if abort_nonce:
         permit_setup = (
@@ -296,6 +299,7 @@ const composerText = {json.dumps(composer_text)};
 const draftWriter = {writer};
 class MockEl {{
   constructor(tag, opts = {{}}) {{
+    this.nodeType = 1;
     this.tagName = tag.toUpperCase();
     this.innerText = opts.innerText ?? '';
     this._attrs = opts.attrs ?? {{}};
@@ -426,6 +430,10 @@ if ({json.dumps(foreign_form_in_layout)}) {{
   layoutChildren.push(foreignForm);
 }}
 const layout = new MockEl('div', {{ attrs: {{ class: 'composer-layout' }}, children: layoutChildren }});
+const sendEnablesAfterMs = {enable_ms};
+if (sendEnablesAfterMs !== null && sendPrompt) {{
+  setTimeout(() => {{ sendPrompt.disabled = false; }}, sendEnablesAfterMs);
+}}
 editorShell._parent = editorCol;
 editorCol._parent = layout;
 footer._parent = layout;
@@ -543,6 +551,22 @@ def test_work_footer_disabled_send_prompt_not_clicked() -> None:
     subprocess.run(["which", "node"], capture_output=True).returncode != 0,
     reason="node not installed",
 )
+def test_work_disabled_send_enables_after_poll_clicks_once() -> None:
+    """F1: scope by send identity while polling for enable — one click after timer."""
+    js = _click_send_body(
+        'div.ProseMirror[contenteditable="true"]', "wake", abort_nonce="late-send"
+    )
+    result = _run_work_shape_click_send_js(
+        js,
+        composer_text="wake",
+        send_disabled=True,
+        send_enables_after_ms=250,
+    )
+    assert result["ok"] is True
+    assert result["send_clicked"] is True
+    assert result["__sendClickCount"] == 1
+
+
 @pytest.mark.skipif(
     subprocess.run(["which", "node"], capture_output=True).returncode != 0,
     reason="node not installed",

@@ -514,7 +514,7 @@ async def test_dom_deliver_uses_chatgpt_selector_not_keyboard(
             }
 
     async def _insert(
-        ws: str, *, selector: str, line: str, preserve_newlines: bool = False
+        ws: str, *, selector: str, line: str, preserve_newlines: bool = False, **_kwargs: object
     ) -> dict:
         insert_calls.append((selector, line, preserve_newlines))
         return {"ok": True}
@@ -595,9 +595,7 @@ async def test_dom_deliver_accepts_visible_idle_operator_tab(
     page = _FakePage()
     insert_calls: list[str] = []
 
-    async def _insert(
-        ws: str, *, selector: str, line: str, preserve_newlines: bool = False
-    ) -> dict:
+    async def _insert(ws: str, *, selector: str, line: str, **_kwargs: object) -> dict:
         insert_calls.append(line)
         return {"ok": True}
 
@@ -2102,9 +2100,7 @@ def _dom_deliver_no_send_stubs(
                 "error": None,
             }
 
-    async def _insert(
-        ws: str, *, selector: str, line: str, preserve_newlines: bool = False
-    ) -> dict:
+    async def _insert(ws: str, *, selector: str, line: str, **_kwargs: object) -> dict:
         return {
             "ok": False,
             "reason": "no_send_button",
@@ -2296,6 +2292,52 @@ def test_ledger_owner_records_unknown_for_inserted_no_send(
         },
     )
     assert recorded == [("unknown", "no_send_button")]
+
+
+def test_owner_records_insertion_unknown_before_refused_branch(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Uncertain native insert must ledger unknown even when ok is false."""
+    recorded: list[tuple[str, str]] = []
+
+    def _record_wake_result(
+        wake_id: str,
+        outcome: str,
+        reason: str,
+        *_rest: object,
+    ) -> None:
+        recorded.append((outcome, reason))
+
+    monkeypatch.setattr(
+        "agent_bus_store.db.orion_wake_owner_adapter.record_wake_result",
+        _record_wake_result,
+    )
+    from agent_bus_store.db.orion_wake_owner_adapter import (
+        LedgerWakeDeliveryOwner,
+        WakeClaimContext,
+    )
+
+    owner = LedgerWakeDeliveryOwner()
+    claim = WakeClaimContext(
+        wake_id="wake-insert-unknown",
+        agent="ai_agent:orion",
+        thread_id="22388",
+        turn_ids=(1,),
+        turn_numbers=(2,),
+        endpoint_url="https://chatgpt.com/c/test",
+    )
+    owner.record_paste_receipt(
+        claim,
+        {
+            "ok": False,
+            "reason": "native_insert_timeout",
+            "insertion_unknown": True,
+            "pasted": False,
+            "delivered": False,
+            "retry_eligible": False,
+        },
+    )
+    assert recorded == [("unknown", "native_insert_timeout")]
 
 
 def _clear_binding_tab_attach_misses() -> None:

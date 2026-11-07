@@ -168,6 +168,22 @@ function ulgHasForeignTextControl(root, el) {
   });
   return bad;
 }
+function ulgScopeSelector(sel) {
+  return String(sel || '').replace(/:not\(\[disabled\]\)/g, '');
+}
+function ulgHasRecognizableSendControl(root, el, btnSels) {
+  if (!root) return false;
+  const ownForm = el.closest && el.closest('form');
+  const allowGenericSubmit = !!(ownForm && root === ownForm);
+  for (const sel of btnSels) {
+    if (!allowGenericSubmit && sel.indexOf('type="submit"') >= 0) continue;
+    const btn = root.querySelector(ulgScopeSelector(sel));
+    if (!btn) continue;
+    if (ulgIsStopControl(btn)) continue;
+    return true;
+  }
+  return false;
+}
 function ulgFindSendBtn(root, el, btnSels) {
   if (!root) return null;
   const ownForm = el.closest && el.closest('form');
@@ -213,7 +229,7 @@ function ulgComposerSendRoot(el) {
     if (ulgHasForeignForm(cur, el)) continue;
     if (ulgHasForeignTextControl(cur, el)) continue;
     if (hasSecondComposer(cur)) continue;
-    if (!ulgFindSendBtn(cur, el, ULG_SEND_BTN_SELECTORS)) continue;
+    if (!ulgHasRecognizableSendControl(cur, el, ULG_SEND_BTN_SELECTORS)) continue;
     return cur;
   }
   return null;
@@ -484,6 +500,45 @@ def _find_composer_js(selector: str) -> str:
     return f"(()=>{{const sels={sels};for(const s of sels){{const el=document.querySelector(s);if(el)return el;}}return null;}})()"
 
 
+_WORK_EDITOR_RESOLVE_JS = r"""
+function ulgResolveVisibleWorkComposer() {
+  const candidates = [];
+  const nodes = document.querySelectorAll('[contenteditable="true"][role="textbox"]');
+  for (const el of nodes) {
+    if (!el || !el.isConnected) continue;
+    if (el.inert) continue;
+    const rect = el.getBoundingClientRect();
+    if (rect.width <= 0 || rect.height <= 0) continue;
+    const label = String(el.getAttribute('aria-label') || '').toLowerCase();
+    if (!label.includes('work with chatgpt')) continue;
+    if (el.querySelector && el.querySelector('textarea,input[type="text"]')) continue;
+    candidates.push(el);
+  }
+  if (!candidates.length) return {ok: false, reason: 'no_composer'};
+  if (candidates.length > 1) return {ok: false, reason: 'ambiguous_work_composer'};
+  return {ok: true, el: candidates[0]};
+}
+"""
+
+
+def work_native_unsupported_probe_js(*, expected_url: str) -> str:
+    """Return whether hydrated Work needs guarded native insert (before any mutation)."""
+    exp = json.dumps(str(expected_url or "").split("?")[0])
+    return (
+        f"(()=>{{{_ULG_NORM_COMPOSER_JS}{_WORK_EDITOR_RESOLVE_JS}"
+        f"const expectUrl={exp};"
+        "const here=String(location.href||'').split('?')[0];"
+        "if(expectUrl&&here!==expectUrl)return{ok:false,eligible:false,reason:'url_mismatch'};"
+        "const resolved=ulgResolveVisibleWorkComposer();"
+        "if(!resolved.ok)return{ok:false,eligible:false,reason:resolved.reason||'no_composer'};"
+        "const el=resolved.el;"
+        "if(el.editor&&el.editor.commands&&typeof el.editor.commands.setContent==='function'){"
+        "return{ok:true,eligible:false,reason:'work_dom_api_available'};}"
+        "if(!el.pmViewDesc)return{ok:false,eligible:false,reason:'work_native_unsupported'};"
+        "return{ok:true,eligible:true};})()"
+    )
+
+
 def _set_composer_body(
     selector: str,
     text: str,
@@ -523,6 +578,8 @@ def _set_composer_body(
         "return{ok:false,reason:'insertion_failed',phase:'insertion_failed',inserted:false,pasted:false,send_clicked:false};}"
         "}else if(el.tagName==='TEXTAREA'||el.tagName==='INPUT'){"
         "el.value=line;el.dispatchEvent(new Event('input',{bubbles:true}));"
+        "}else if(el.pmViewDesc){"
+        "return{ok:false,reason:'work_native_unsupported',phase:'insertion_failed',inserted:false,pasted:false,send_clicked:false};}"
         "}else{"
         "return{ok:false,reason:'insertion_failed',phase:'insertion_failed',inserted:false,pasted:false,send_clicked:false};}"
         "let after=ulgNormalizeComposerText(el.innerText||el.value||'');"
@@ -1057,6 +1114,8 @@ async def dom_insert_and_send(
     line: str,
     preserve_newlines: bool = False,
     draft_writer: str = "",
+    work_native_insert: bool = False,
+    expected_conversation_url: str = "",
 ) -> dict[str, Any]:
     """Insert once via DOM; send via async send-button poll (no Enter, no focus()).
 
@@ -1066,13 +1125,61 @@ async def dom_insert_and_send(
     or ``phase='send_unknown'`` with ``pasted`` true. This function does not
     click a second time.
     """
-    ins = await dom_set_composer_text(
-        ws_url,
-        selector=selector,
-        text=line,
-        preserve_newlines=preserve_newlines,
-        draft_writer=draft_writer,
-    )
+    if work_native_insert:
+        from cursor_bridge.cdp_composer_input import cdp_work_native_insert_text
+
+        probe = await _cdp_eval(
+            ws_url, work_native_unsupported_probe_js(expected_url=expected_conversation_url)
+        )
+        if not isinstance(probe, dict):
+            return {
+                "ok": False,
+                "reason": "work_native_unsupported",
+                "pasted": False,
+                "inserted": False,
+                "phase": "insertion_failed",
+            }
+        if probe.get("eligible") is not True:
+            reason = str(probe.get("reason") or "work_native_unsupported")
+            if reason == "work_dom_api_available":
+                ins = await dom_set_composer_text(
+                    ws_url,
+                    selector=selector,
+                    text=line,
+                    preserve_newlines=preserve_newlines,
+                    draft_writer=draft_writer,
+                )
+            else:
+                return {
+                    "ok": False,
+                    "reason": reason,
+                    "pasted": False,
+                    "inserted": False,
+                    "phase": "insertion_failed",
+                }
+        else:
+            ins = await cdp_work_native_insert_text(
+                ws_url,
+                text=line,
+                expected_url=expected_conversation_url,
+                draft_writer=draft_writer,
+                preserve_newlines=preserve_newlines,
+            )
+        if not isinstance(ins, dict):
+            return {
+                "ok": False,
+                "reason": "insertion_failed",
+                "pasted": False,
+                "inserted": False,
+            }
+    else:
+        ins = await dom_set_composer_text(
+            ws_url,
+            selector=selector,
+            text=line,
+            preserve_newlines=preserve_newlines,
+            draft_writer=draft_writer,
+        )
     if not ins.get("ok"):
         return ins
     if ins.get("used_existing_draft"):
