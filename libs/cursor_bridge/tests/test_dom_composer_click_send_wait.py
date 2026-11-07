@@ -363,10 +363,12 @@ if ({json.dumps(extra_editable_in_editor_col)}) {{
     innerText: 'other',
   }}));
 }}
+let misplacedSend = null;
 if ({json.dumps(misplaced_send_in_editor_col)}) {{
-  editorColChildren.push(new MockEl('button', {{
+  misplacedSend = new MockEl('button', {{
     attrs: {{ 'aria-label': 'Send prompt', type: 'button' }},
-  }}));
+  }});
+  editorColChildren.push(misplacedSend);
 }}
 const editorCol = new MockEl('div', {{ attrs: {{ class: 'editor-col' }}, children: editorColChildren }});
 const layout = new MockEl('div', {{ attrs: {{ class: 'composer-layout' }}, children: [editorCol, footer] }});
@@ -374,22 +376,12 @@ editorShell._parent = editorCol;
 editorCol._parent = layout;
 footer._parent = layout;
 composer._parent = editorShell;
-const bodyEl = {json.dumps("new MockEl('body', { children: [layout] })" if send_on_document_body else "null")};
-if (bodyEl) {{
-  layout._parent = bodyEl;
-  if ({json.dumps(send_on_document_body)})) {{
-    const bodySend = new MockEl('button', {{
-      attrs: {{ 'aria-label': 'Send prompt', type: 'button' }},
-    }});
-    bodyEl._children = [layout, bodySend];
-    bodySend._parent = bodyEl;
-  }}
-}}
+{body_block}
 global.document = {{
   visibilityState: 'visible',
   hasFocus: () => true,
   querySelector: (sel) => (sel.includes('contenteditable') ? composer : null),
-  body: bodyEl,
+  body: {doc_body},
 }};
 global.window = {{
   __ulgOperatorActivity: {{
@@ -407,6 +399,7 @@ global.HTMLInputElement = {{ prototype: {{}} }};
   result.__sendClicked = sendPrompt.clicked;
   result.__stopClicked = stopBtn.clicked;
   result.__sendClickCount = sendPrompt._clickCount || 0;
+  result.__misplacedSendClickCount = misplacedSend ? misplacedSend._clickCount : 0;
   console.log(JSON.stringify(result));
 }})().catch((err) => {{ console.error(err); process.exit(1); }});
 """
@@ -518,6 +511,7 @@ def test_work_send_on_body_only_outside_composer_chain() -> None:
     reason="node not installed",
 )
 def test_work_second_composer_skips_misplaced_send_clicks_footer() -> None:
+    """Two editables under editor-col skip that root; footer Send prompt is used."""
     js = _click_send_body(
         'div.ProseMirror[contenteditable="true"]', "wake", abort_nonce="2edit"
     )
@@ -530,6 +524,7 @@ def test_work_second_composer_skips_misplaced_send_clicks_footer() -> None:
     assert result["ok"] is True
     assert result["send_clicked"] is True
     assert result["__sendClickCount"] == 1
+    assert result["__misplacedSendClickCount"] == 0
     assert result["__stopClicked"] is False
 
 
