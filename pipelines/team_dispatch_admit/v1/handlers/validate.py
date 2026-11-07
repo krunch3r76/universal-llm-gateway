@@ -120,7 +120,9 @@ def evaluate_validate(opts: dict[str, Any]) -> dict[str, Any]:
             status_code=422,
             code="wrap_role_not_admitted",
             field="role",
-            reason=("contract=wrap is only admitted on the cursor-sdk generate branch"),
+            reason=(
+                "contract=wrap is only admitted on the cursor-sdk generate branch"
+            ),
         )
     return {"admitted": True, "phase": "validate"}
 

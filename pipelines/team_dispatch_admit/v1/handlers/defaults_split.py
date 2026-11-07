@@ -102,10 +102,8 @@ def _select_backend(
         return "frontier"
     if role is not None and normalize_agent_slug(role) == "cursor-sdk":
         pass
-    elif (
-        seat is not None
-        and str(seat).strip()
-        and _sdk_admission(role=None, seat=seat, model=None)
+    elif seat is not None and str(seat).strip() and _sdk_admission(
+        role=None, seat=seat, model=None
     ):
         return "cursor_sdk"
     elif is_cursor_substrate_model(model):
