@@ -15,6 +15,8 @@ _AGENT_ID_UUID_RE = re.compile(
     re.I,
 )
 
+_MISMATCH_BASES = frozenset({"vscdb", "env"})
+
 
 def normalized_subscription_display(display: str, *, surface: str = "cursor") -> str:
     """Map a caller display token to the journal-normalized display label."""
@@ -31,13 +33,17 @@ def resolve_cursor_display_for_subscribe(
     thread_scope: str,
     display_override: bool = False,
     display_override_reason: str | None = None,
-) -> tuple[str, dict[str, Any] | None]:
-    """Return display label and optional override event payload for subscribe."""
+) -> tuple[str, dict[str, Any] | None, dict[str, Any]]:
+    """Return display label, optional override event payload, and placement metadata."""
     aid = str(agent_id or "").strip()
     supplied_raw = str(display or "").strip() or None
     placement = resolve_cursor_tab_whereami(transcript_id=aid, root_id=thread_scope)
     resolved_raw = str(placement.get("subscription_display") or "").strip() or None
     basis = str(placement.get("basis") or "").strip()
+    placement_meta = {
+        "placement_basis": basis,
+        "inference_reason": placement.get("inference_reason"),
+    }
 
     if display_override:
         reason = str(display_override_reason or "").strip()
@@ -54,18 +60,18 @@ def resolve_cursor_display_for_subscribe(
             "basis": basis,
             "reason": reason,
         }
-        return normalized, event
+        return normalized, event, placement_meta
 
     if not supplied_raw:
         if not resolved_raw:
             raise SubscribeError("endpoint_display_unresolved")
-        return resolved_raw, None
+        return resolved_raw, None, placement_meta
 
     supplied_norm = normalized_subscription_display(supplied_raw)
     if (
         aid
         and _AGENT_ID_UUID_RE.match(aid)
-        and basis in {"vscdb", "env"}
+        and basis in _MISMATCH_BASES
         and resolved_raw
     ):
         resolved_norm = normalized_subscription_display(resolved_raw)
@@ -75,7 +81,7 @@ def resolve_cursor_display_for_subscribe(
                 resolved_display=resolved_norm,
                 supplied_display=supplied_norm,
             )
-    return supplied_norm, None
+    return supplied_norm, None, placement_meta
 
 
 __all__ = [

@@ -275,7 +275,7 @@ def _policy_gui_host_pinned(policy: dict[str, Any]) -> bool:
 
 def sync_policy_gui_host(
     root_id: str,
-    gui_host: str,
+    gui_host: str | None,
     *,
     watch_dir: Path = WATCH_DIR,
 ) -> None:
@@ -287,6 +287,8 @@ def sync_policy_gui_host(
     true, the stored ``gui_host`` is left unchanged. Endpoint wake routing still
     uses ``detect_cursor_gui_host`` so the live tab keeps its own display.
     """
+    if not str(gui_host or "").strip():
+        return
     path = watch_dir / f"liaison-{root_id}.tick.json"
 
     def mutate(state: dict[str, Any]) -> None:

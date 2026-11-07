@@ -122,14 +122,27 @@ def subscribe_endpoint(
         raise SubscribeError("endpoint_title_or_agent_required")
     display_val = str(display or "").strip() or None
     display_override_event: dict[str, Any] | None = None
+    placement_meta: dict[str, Any] = {}
+    row_evidence = str(evidence or "").strip() or None
     if surface_raw == "cursor" and agent_id:
-        display_val, display_override_event = resolve_cursor_display_for_subscribe(
-            display=display_val,
-            agent_id=agent_id,
-            thread_scope=scope,
-            display_override=display_override,
-            display_override_reason=display_override_reason,
+        display_val, display_override_event, placement_meta = (
+            resolve_cursor_display_for_subscribe(
+                display=display_val,
+                agent_id=agent_id,
+                thread_scope=scope,
+                display_override=display_override,
+                display_override_reason=display_override_reason,
+            )
         )
+        if display_override_event is not None:
+            reason = str(display_override_event.get("reason") or "").strip()
+            tag = f"display_override:{reason}"
+            row_evidence = f"{row_evidence};{tag}" if row_evidence else tag
+        pbasis = str(placement_meta.get("placement_basis") or "").strip()
+        if pbasis == "vscdb_inferred":
+            inf = str(placement_meta.get("inference_reason") or "other_glass_panes")
+            tag = f"placement_basis:vscdb_inferred;inference:{inf}"
+            row_evidence = f"{row_evidence};{tag}" if row_evidence else tag
     elif not display_val:
         raise SubscribeError("endpoint_surface_display_required")
     if surface_raw == "cse":
@@ -219,7 +232,7 @@ def subscribe_endpoint(
                 title,
                 agent_id,
                 bound_by,
-                evidence,
+                row_evidence,
             ),
         )
         new_id = int(cur.lastrowid)
@@ -237,6 +250,8 @@ def subscribe_endpoint(
     }
     if display_override_event is not None:
         out["display_override_event"] = display_override_event
+    if placement_meta:
+        out["placement"] = placement_meta
     return out
 
 
@@ -283,7 +298,9 @@ def unsubscribe_endpoint(
             }
         prior_subscribed = current_d
         prior_subscription_id = (
-            int(prior_subscribed["id"]) if prior_subscribed.get("id") is not None else None
+            int(prior_subscribed["id"])
+            if prior_subscribed.get("id") is not None
+            else None
         )
         cur = conn.execute(
             "INSERT INTO agent_endpoint_subscriptions "
@@ -318,9 +335,7 @@ def unsubscribe_endpoint(
 
 MAIN_WAKE_AGENT = "main-wake"
 MAIN_WAKE_SCOPE = "main-wake"
-MAIN_TARGET_SHA256 = (
-    "170eba02b369eb1485da1e908a55bdf39ba326e54f437759bc03aa75a3d29311"
-)
+MAIN_TARGET_SHA256 = "170eba02b369eb1485da1e908a55bdf39ba326e54f437759bc03aa75a3d29311"
 INSTANCE_TARGET_SHA256 = (
     "2d78994cba5b9a614fd7051e047f3ddaa5ffae822fd4200da03c3ccae0ecf4cc"
 )
@@ -947,4 +962,3 @@ def insert_main_wake_row_for_test(
             evidence="test",
             predecessor_id=predecessor_id,
         )
-

@@ -71,7 +71,10 @@ class SubscribeBody(BaseModel):
             if surface == "cursor" and agent_id and uuid_re.match(agent_id):
                 return self
             raise ValueError("endpoint_surface_display_required")
-        if self.display_override and not str(self.display_override_reason or "").strip():
+        if (
+            self.display_override
+            and not str(self.display_override_reason or "").strip()
+        ):
             raise ValueError("display_override_reason_required")
         return self
 
@@ -149,6 +152,18 @@ async def subscribe_route(body: SubscribeBody) -> dict[str, Any]:
     if result["appended"]:
         row = result["row"]
         prior = result.get("prior") or {}
+        override = result.get("display_override_event")
+        if isinstance(override, dict):
+            emit_endpoint_display_override(
+                agent=row["agent"],
+                thread_scope=row["thread_scope"],
+                agent_id=row.get("agent_id"),
+                subscription_id=int(row["id"]),
+                supplied_display=str(override.get("supplied_display") or ""),
+                resolved_display=override.get("resolved_display"),
+                basis=override.get("basis"),
+                reason=str(override.get("reason") or ""),
+            )
         emit_endpoint_subscribed(
             agent=row["agent"],
             thread_scope=row["thread_scope"],
@@ -164,18 +179,6 @@ async def subscribe_route(body: SubscribeBody) -> dict[str, Any]:
             prior_agent_id=prior.get("agent_id"),
             bound_by=row["bound_by"],
         )
-        override = result.get("display_override_event")
-        if isinstance(override, dict):
-            emit_endpoint_display_override(
-                agent=row["agent"],
-                thread_scope=row["thread_scope"],
-                agent_id=row.get("agent_id"),
-                subscription_id=int(row["id"]),
-                supplied_display=str(override.get("supplied_display") or ""),
-                resolved_display=override.get("resolved_display"),
-                basis=override.get("basis"),
-                reason=str(override.get("reason") or ""),
-            )
     return result
 
 

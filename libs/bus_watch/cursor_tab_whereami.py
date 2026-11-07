@@ -6,6 +6,7 @@ import os
 from typing import Any
 
 from cursor_bridge.cursor_window_config import (
+    is_configured_cursor_glass_host,
     normalize_gui_host,
     subscription_display_for_gui_host,
 )
@@ -18,6 +19,13 @@ from bus_watch.cursor_vscdb import (
 from bus_watch.cursor_xvfb_subscription import gui_host_from_process_env
 
 _BASIS_UNRESOLVED = "unresolved"
+
+
+def _canonical_glass_host(raw: str | None) -> str | None:
+    text = str(raw or "").strip()
+    if not text or not is_configured_cursor_glass_host(text):
+        return None
+    return normalize_gui_host(text)
 
 
 def explicit_policy_gui_host(root_id: str | None) -> str | None:
@@ -38,7 +46,7 @@ def explicit_policy_gui_host(root_id: str | None) -> str | None:
     text = str(raw).strip()
     if not text:
         return None
-    return normalize_gui_host(text)
+    return _canonical_glass_host(text)
 
 
 def _vscdb_diagnostics() -> dict[str, Any]:
@@ -61,20 +69,52 @@ def resolve_cursor_tab_whereami(
     gui_host: str | None = None
     meta: dict[str, Any] = {}
     vscdb_limitation: str | None = None
+    inference_reason: str | None = None
     diagnostics = _vscdb_diagnostics()
 
     if use_process_env:
-        env_host = gui_host_from_process_env()
-        if env_host:
-            gui_host = env_host
-            basis = "env"
+        env_raw = gui_host_from_process_env()
+        if env_raw:
+            canonical = _canonical_glass_host(env_raw)
+            if canonical:
+                gui_host = canonical
+                basis = "env"
+            else:
+                return {
+                    "gui_host": None,
+                    "subscription_display": None,
+                    "transcript_id": tid or None,
+                    "surface": "cursor",
+                    "ssh_client": None,
+                    "ssh_client_derivation": "derived",
+                    "layout": None,
+                    "basis": _BASIS_UNRESOLVED,
+                    "limitation": "unknown_gui_host",
+                    **diagnostics,
+                }
 
     if gui_host is None and tid and TRANSCRIPT_UUID_RE.match(tid):
-        vscdb_host, meta, lim = resolve_gui_host_from_vscdb(tid)
+        vscdb_host, meta, lim, vscdb_basis, inf = resolve_gui_host_from_vscdb(tid)
         vscdb_limitation = lim
+        inference_reason = inf
         if vscdb_host:
-            gui_host = normalize_gui_host(vscdb_host)
-            basis = "vscdb"
+            canonical = _canonical_glass_host(vscdb_host)
+            if canonical:
+                gui_host = canonical
+                basis = str(vscdb_basis or "vscdb")
+            else:
+                return {
+                    "gui_host": None,
+                    "subscription_display": None,
+                    "transcript_id": tid,
+                    "surface": "cursor",
+                    "ssh_client": None,
+                    "ssh_client_derivation": "derived",
+                    "layout": None,
+                    "basis": _BASIS_UNRESOLVED,
+                    "limitation": "unknown_gui_host",
+                    **diagnostics,
+                }
 
     if gui_host is None and root_id:
         policy_host = explicit_policy_gui_host(root_id)
@@ -90,7 +130,9 @@ def resolve_cursor_tab_whereami(
             layout = env_layout
 
     if gui_host is None:
-        if diagnostics["readable_count"] == 0:
+        if not tid and not use_process_env:
+            limitation = "transcript_id_required"
+        elif diagnostics["readable_count"] == 0:
             limitation = "db_unreadable"
         elif vscdb_limitation == "pane_absent":
             limitation = "pane_absent"
@@ -112,10 +154,10 @@ def resolve_cursor_tab_whereami(
         }
 
     subscription_display = subscription_display_for_gui_host(gui_host)
-    if layout is None and basis == "vscdb":
+    if layout is None and basis in {"vscdb", "vscdb_inferred"}:
         layout = "glass"
 
-    return {
+    out: dict[str, Any] = {
         "gui_host": gui_host,
         "subscription_display": subscription_display,
         "transcript_id": tid or None,
@@ -126,6 +168,9 @@ def resolve_cursor_tab_whereami(
         "basis": basis,
         **diagnostics,
     }
+    if inference_reason:
+        out["inference_reason"] = inference_reason
+    return out
 
 
 __all__ = ["explicit_policy_gui_host", "resolve_cursor_tab_whereami"]

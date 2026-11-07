@@ -61,9 +61,15 @@ def test_cursor_subscribe_display_mismatch_422(client: TestClient) -> None:
         "basis": "vscdb",
         "gui_host": "orion-node",
     }
-    with patch(
-        "bus_watch.cursor_tab_whereami.resolve_cursor_tab_whereami",
-        return_value=placement,
+    with (
+        patch(
+            "bus_watch.cursor_tab_whereami.resolve_cursor_tab_whereami",
+            return_value=placement,
+        ),
+        patch(
+            "agent_bus_store.db.cursor_subscribe_placement.resolve_cursor_tab_whereami",
+            return_value=placement,
+        ),
     ):
         resp = client.post(
             "/endpoint-subscriptions",
@@ -81,6 +87,37 @@ def test_cursor_subscribe_display_mismatch_422(client: TestClient) -> None:
     assert detail["code"] == "display_mismatch"
     assert detail["resolved_display"] == "orion-node"
     assert detail["supplied_display"] == "8"
+
+
+def test_cursor_subscribe_inferred_other_panes_accepts_display_eight(
+    client: TestClient, tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import sqlite3
+
+    thread = _thread("cursor-inferred-other")
+    db = tmp_path / "state.vscdb"
+    with sqlite3.connect(db) as conn:
+        conn.execute("CREATE TABLE ItemTable (key TEXT PRIMARY KEY, value BLOB)")
+        conn.execute(
+            "INSERT INTO ItemTable VALUES (?, ?)",
+            ("glass.agentConversationPanes.other-id", b"{}"),
+        )
+    monkeypatch.setenv("CURSOR_VSCDB_PATHS", f"{db}|:8")
+    resp = client.post(
+        "/endpoint-subscriptions",
+        json={
+            "agent": "cursor",
+            "thread_scope": thread,
+            "surface": "cursor",
+            "display": "8",
+            "title": f"{thread} ",
+            "agent_id": _TID,
+        },
+    )
+    assert resp.status_code == 200
+    assert resp.json()["row"]["display"] == "8"
+    evidence = str(resp.json()["row"].get("evidence") or "")
+    assert "placement_basis:vscdb_inferred" in evidence
 
 
 def test_cursor_subscribe_display_override_emits_event(client: TestClient) -> None:

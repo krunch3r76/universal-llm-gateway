@@ -9,6 +9,8 @@ import sqlite3
 from pathlib import Path
 from typing import Any
 
+from cursor_bridge.cursor_window_config import is_configured_cursor_glass_host
+
 TRANSCRIPT_UUID_RE = re.compile(
     r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
     re.I,
@@ -23,6 +25,8 @@ _DEFAULT_VSCDB_BINDINGS: tuple[tuple[str, str], ...] = (
     ("/home/io/.gateway/cursor-orion/User/globalStorage/state.vscdb", "orion-node"),
     ("/home/mcp/.gateway/cursor-io/User/globalStorage/state.vscdb", ":8"),
 )
+
+_GLASS_PANE_GLOB = "glass.agentConversationPanes.*"
 
 
 def parse_vscdb_path_env(raw: str | None = None) -> list[tuple[Path, str]]:
@@ -62,6 +66,12 @@ def vscdb_candidate_bindings() -> list[tuple[Path, str]]:
     return out
 
 
+def host_is_colon_eight_family(gui_host: str) -> bool:
+    """True when the binding label is the tracked ``:8`` Glass family."""
+    key = str(gui_host or "").strip().lstrip(":").lower()
+    return key in {"8", ":8"} or gui_host == ":8"
+
+
 def vscdb_has_pane_key(db_path: Path, transcript_id: str) -> bool:
     """Return whether the Glass pane key exists for one transcript UUID."""
     key = f"glass.agentConversationPanes.{transcript_id}"
@@ -76,7 +86,8 @@ def vscdb_has_any_glass_pane(db_path: Path) -> bool:
     """Return whether any Glass agent conversation pane row exists."""
     with sqlite3.connect(f"file:{db_path}?mode=ro", uri=True) as conn:
         row = conn.execute(
-            "SELECT 1 FROM ItemTable WHERE key LIKE 'glass.agentConversationPanes.%' LIMIT 1"
+            "SELECT 1 FROM ItemTable WHERE key GLOB ? LIMIT 1",
+            (_GLASS_PANE_GLOB,),
         ).fetchone()
     return row is not None
 
@@ -139,8 +150,10 @@ def probe_vscdb_readability() -> dict[str, Any]:
     }
 
 
-def resolve_gui_host_from_vscdb(transcript_id: str) -> tuple[str | None, dict[str, Any], str | None]:
-    """Resolve gui_host from vscdb bindings plus the master other-glass heuristic."""
+def resolve_gui_host_from_vscdb(
+    transcript_id: str,
+) -> tuple[str | None, dict[str, Any], str | None, str | None, str | None]:
+    """Resolve gui_host; returns (host, meta, limitation, basis, inference_reason)."""
     meta: dict[str, Any] = {}
     bindings = vscdb_candidate_bindings()
     readable = 0
@@ -153,27 +166,36 @@ def resolve_gui_host_from_vscdb(transcript_id: str) -> tuple[str | None, dict[st
             readable += 1
         except (OSError, sqlite3.Error):
             continue
+        if not is_configured_cursor_glass_host(host):
+            continue
         try:
             if vscdb_has_pane_key(path, transcript_id):
                 meta = vscdb_pane_metadata(path, transcript_id)
-                return host, meta, None
+                return host, meta, None, "vscdb", None
         except sqlite3.Error:
             continue
-    for path, _host in bindings:
-        if not path.is_file():
+    for path, host in bindings:
+        if not path.is_file() or not host_is_colon_eight_family(host):
             continue
         try:
             if vscdb_has_any_glass_pane(path):
-                return "orion-node", {}, None
+                return (
+                    "orion-node",
+                    {},
+                    None,
+                    "vscdb_inferred",
+                    "other_glass_panes",
+                )
         except sqlite3.Error:
             continue
     if readable == 0:
-        return None, {}, "db_unreadable"
-    return None, {}, "pane_absent"
+        return None, {}, "db_unreadable", None, None
+    return None, {}, "pane_absent", None, None
 
 
 __all__ = [
     "TRANSCRIPT_UUID_RE",
+    "host_is_colon_eight_family",
     "parse_vscdb_path_env",
     "probe_vscdb_readability",
     "resolve_gui_host_from_vscdb",

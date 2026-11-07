@@ -7,7 +7,10 @@ from pathlib import Path
 
 import pytest
 
-from bus_watch.cursor_tab_whereami import explicit_policy_gui_host, resolve_cursor_tab_whereami
+from bus_watch.cursor_tab_whereami import (
+    explicit_policy_gui_host,
+    resolve_cursor_tab_whereami,
+)
 from bus_watch.cursor_vscdb import parse_vscdb_path_env
 
 pytestmark = pytest.mark.offline
@@ -15,15 +18,21 @@ pytestmark = pytest.mark.offline
 _REAL_TID = "7689373a-2499-41f0-9ff6-fccbcf130362"
 
 
-def test_whereami_unresolved_without_transcript(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_whereami_unresolved_without_transcript(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     monkeypatch.setattr(
         "bus_watch.cursor_tab_whereami.probe_vscdb_readability",
-        lambda: {"vscdbs_checked": ["/none.vscdb"], "readable_count": 0, "readable_paths": []},
+        lambda: {
+            "vscdbs_checked": ["/none.vscdb"],
+            "readable_count": 0,
+            "readable_paths": [],
+        },
     )
     out = resolve_cursor_tab_whereami()
     assert out["basis"] == "unresolved"
     assert out["gui_host"] is None
-    assert out["limitation"] == "db_unreadable"
+    assert out["limitation"] == "transcript_id_required"
     assert isinstance(out["vscdbs_checked"], list)
 
 
@@ -63,13 +72,13 @@ def test_whereami_other_glass_pane_heuristic_orion(
         )
     monkeypatch.setenv("CURSOR_VSCDB_PATHS", f"{db}|:8")
     out = resolve_cursor_tab_whereami(transcript_id=_REAL_TID)
-    assert out["basis"] == "vscdb"
+    assert out["basis"] == "vscdb_inferred"
+    assert out["inference_reason"] == "other_glass_panes"
     assert out["gui_host"] == "orion-node"
+    assert out["subscription_display"] == "orion-node"
 
 
 def test_explicit_policy_gui_host_requires_tick_file(tmp_path: Path) -> None:
-    from bus_watch import cursor_tab_whereami as mod
-
     tick = tmp_path / "liaison-22498.tick.json"
     tick.write_text(
         '{"policy": {"gui_host": "orion-node"}}',
