@@ -342,6 +342,7 @@ def _section_write_result(
             result["_warning"] = warning
     if rotation_meta:
         result.update(rotation_meta)
+    result["written_sha256"] = rmw.written_sha256
     return result
 
 
@@ -446,6 +447,7 @@ def _section_patch_result(
     }
     if rotation_meta:
         result.update(rotation_meta)
+    result["written_sha256"] = rmw.written_sha256
     return result
 
 
@@ -503,6 +505,7 @@ def _section_delete_result(
     warning = delete_warning(prior_body)
     if warning:
         result["_warning"] = warning
+    result["written_sha256"] = rmw.written_sha256
     return result
 
 
