@@ -137,6 +137,36 @@ function ulgComposerDomEmpty(el) {
 
   return false;
 }
+function ulgComposerSendRoot(el) {
+  if (!el) return null;
+  const form = el.closest('form');
+  if (form) return form;
+  const isEditable = (n) => {
+    if (!n || n.nodeType !== 1) return false;
+    if (n.isContentEditable) return true;
+    const ce = n.getAttribute && n.getAttribute('contenteditable');
+    return String(ce || '').toLowerCase() === 'true';
+  };
+  const hasSecondComposer = (root) => {
+    if (!root || typeof root.querySelectorAll !== 'function') return false;
+    let count = 0;
+    root.querySelectorAll('[contenteditable="true"]').forEach((node) => {
+      if (isEditable(node)) count += 1;
+    });
+    return count > 1;
+  };
+  const hasSendableButton = (root) => {
+    if (!root || typeof root.querySelector !== 'function') return false;
+    return !!(root.querySelector('button') || root.querySelector('[role=button]'));
+  };
+  let cur = el.parentElement;
+  for (let step = 0; cur && step < 8; step += 1, cur = cur.parentElement) {
+    if (!hasSendableButton(cur)) continue;
+    if (hasSecondComposer(cur)) continue;
+    return cur;
+  }
+  return el.parentElement || null;
+}
 """
 
 
@@ -358,6 +388,7 @@ READ_OPERATOR_BUSY_JS = r"""
 
 _SEND_BTN_SELECTORS = (
     'button[aria-label="Send message"]:not([disabled])',
+    'button[aria-label="Send prompt"]:not([disabled])',
     'button[aria-label="Send"]:not([disabled])',
     'button[data-testid="send-button"]:not([disabled])',
     'button[type="submit"]:not([disabled])',
@@ -488,7 +519,8 @@ def _click_send_own_draft_body(
         "{cleanup();return{ok:false,reason:'draft_not_ours',send_clicked:false,draft,sig};}"
         "if(sendGivenUp())"
         "{cleanup();return{ok:false,reason:'cdp_eval_timeout',send_clicked:false};}"
-        f"const root=el.closest('form')||el.parentElement||document;"
+        "const root=ulgComposerSendRoot(el);"
+        "if(!root){cleanup();return{ok:false,reason:'no_composer',send_clicked:false};}"
         f"const btnSels={btn_sels};"
         "let btn=null;"
         "for(const sel of btnSels){btn=root.querySelector(sel);if(btn)break;}"
@@ -597,7 +629,8 @@ def _click_send_body(
         "normText=ulgNormalizeComposerText(el.innerText||el.value||'');"
         "if(!composerEmpty&&(!normText||(normText!==normLine&&!wakeStale(normText)))){"
         "cleanup();return{ok:false,reason:'composer_text_mismatch',send_clicked:false};}}"
-        f"const root=el.closest('form')||el.parentElement||document;"
+        "const root=ulgComposerSendRoot(el);"
+        "if(!root){cleanup();return{ok:false,reason:'no_composer',send_clicked:false};}"
         f"const btnSels={btn_sels};"
         f"const waitCeilingMs={wait_ceiling};"
         f"const pollIntervalMs={poll_interval};"
@@ -1021,6 +1054,7 @@ async def dom_insert_and_send(
             "send_clicked": bool(send.get("send_clicked")),
             "inserted": True,
             "pasted": True,
+            "delivered": False,
             "phase": "send_unknown" if uncertain else "inserted",
         }
         if send.get("clicked_unknown"):

@@ -264,6 +264,19 @@ def _refuse(reason: str, **extra: Any) -> dict[str, Any]:
     return {"ok": False, "reason": reason, "pasted": False, "delivered": False, **extra}
 
 
+def _dom_inserted_but_unsent(result: dict[str, Any]) -> bool:
+    """True when the composer holds our text but send actuation did not run."""
+    reason = str(result.get("reason") or "")
+    if reason != "no_send_button":
+        return False
+    if result.get("pasted") is True:
+        return True
+    if result.get("inserted") is True:
+        return True
+    phase = str(result.get("phase") or "")
+    return phase in {"inserted", "send_unknown"}
+
+
 _open_lock_registry_guard = asyncio.Lock()
 _open_locks_by_conversation: dict[str, asyncio.Lock] = {}
 _attach_misses: dict[str, int] = {}
@@ -1036,6 +1049,11 @@ async def _dom_deliver(
         census = result.get("census")
         if census is not None:
             failure["census"] = census
+        for key in ("pasted", "delivered", "inserted", "phase", "send_clicked"):
+            if key in result:
+                failure[key] = result[key]
+        if result.get("pasted") is True and "delivered" not in failure:
+            failure["delivered"] = False
         return failure
 
     receipt: str = "dom_paste"
@@ -1353,6 +1371,22 @@ async def deliver_orion_wake(
                     brought_to_front=tab_sync["brought_to_front"],
                     tab_reloaded=tab_sync["tab_reloaded"],
                 )
+            if _dom_inserted_but_unsent(dom):
+                inserted_unsent: dict[str, Any] = {
+                    "ok": False,
+                    "reason": dom_reason,
+                    "pasted": True,
+                    "delivered": False,
+                    "error": dom_reason,
+                    "brought_to_front": tab_sync["brought_to_front"],
+                    "tab_reloaded": tab_sync["tab_reloaded"],
+                }
+                if dom.get("census") is not None:
+                    inserted_unsent["census"] = dom["census"]
+                for key in ("inserted", "phase", "send_clicked"):
+                    if key in dom:
+                        inserted_unsent[key] = dom[key]
+                return inserted_unsent
             paste_refuse: dict[str, Any] = {
                 "error": dom_reason,
                 "pasted": False,

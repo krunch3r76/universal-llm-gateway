@@ -2105,7 +2105,16 @@ def _dom_deliver_no_send_stubs(
     async def _insert(
         ws: str, *, selector: str, line: str, preserve_newlines: bool = False
     ) -> dict:
-        return {"ok": False, "reason": "no_send_button", "census": census}
+        return {
+            "ok": False,
+            "reason": "no_send_button",
+            "census": census,
+            "pasted": True,
+            "delivered": False,
+            "inserted": True,
+            "phase": "inserted",
+            "send_clicked": False,
+        }
 
     async def _baseline(*_a: object, **_k: object) -> dict:
         return {"user_count": 0}
@@ -2148,12 +2157,14 @@ async def test_dom_deliver_forwards_census_on_no_send_button(
     out = await _dom_deliver(page, "wake line")
     assert out["ok"] is False
     assert out["reason"] == "no_send_button"
+    assert out["pasted"] is True
+    assert out["delivered"] is False
     assert out["census"] == census
 
 
 @pytest.mark.asyncio
 @pytest.mark.no_dom_stub
-async def test_wake_paste_failed_includes_dom_census(
+async def test_wake_inserted_no_send_preserves_pasted_and_census(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     page = _FakePage(url=PINNED)
@@ -2166,8 +2177,10 @@ async def test_wake_paste_failed_includes_dom_census(
         from_agent="maestro",
         page=page,
     )
-    assert out["reason"] == "paste_failed"
+    assert out["reason"] == "no_send_button"
     assert out.get("error") == "no_send_button"
+    assert out["pasted"] is True
+    assert out["delivered"] is False
     assert out["census"] == census
 
 

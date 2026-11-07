@@ -21,6 +21,7 @@ from cursor_bridge.dom_composer_paste import (
     SEND_BTN_POLL_INTERVAL_MS,
     SEND_BTN_WAIT_CEILING_MS,
     _click_send_body,
+    _click_send_own_draft_body,
     _composer_send_permit_expression,
     dom_insert_and_send,
 )
@@ -197,6 +198,187 @@ if (appearAfterMs !== null) {{
         raise RuntimeError(proc.stderr or proc.stdout)
     out = json.loads(proc.stdout.strip())
     return out
+
+
+def _run_work_shape_click_send_js(
+    js: str,
+    *,
+    composer_text: str,
+    draft_writer: str = "",
+) -> dict[str, Any]:
+    """ChatGPT Work layout: editor shell has no buttons; footer is several ancestors up."""
+    writer = json.dumps(draft_writer)
+    abort_nonce = _abort_nonce_from_click_js(js)
+    permit_setup = ""
+    if abort_nonce:
+        permit_setup = (
+            f"window.__ulgOperatorActivity.composerSendPermits[{json.dumps(abort_nonce)}] = "
+            "performance.now() + 600000;"
+        )
+    harness = f"""
+const composerText = {json.dumps(composer_text)};
+const draftWriter = {writer};
+class MockEl {{
+  constructor(tag, opts = {{}}) {{
+    this.tagName = tag.toUpperCase();
+    this.innerText = opts.innerText ?? '';
+    this._attrs = opts.attrs ?? {{}};
+    this._children = opts.children ?? [];
+    this._parent = opts.parent ?? null;
+    this.editor = opts.editor ?? null;
+    this.clicked = false;
+    this.disabled = opts.disabled ?? false;
+    for (const c of this._children) c._parent = this;
+  }}
+  get isContentEditable() {{
+    return String(this._attrs.contenteditable || '').toLowerCase() === 'true';
+  }}
+  getAttribute(name) {{ return this._attrs[name] ?? null; }}
+  hasAttribute(name) {{ return Object.prototype.hasOwnProperty.call(this._attrs, name); }}
+  get parentElement() {{ return this._parent; }}
+  closest(sel) {{ return sel === 'form' ? null : null; }}
+  getBoundingClientRect() {{ return {{ width: 10, height: 10 }}; }}
+  matches(sel) {{
+    if (sel.includes('[contenteditable="true"]')) {{
+      return String(this._attrs.contenteditable || '').toLowerCase() === 'true';
+    }}
+    return false;
+  }}
+  querySelector(sel) {{
+    const match = (node) => {{
+      if (!node) return null;
+      if (sel === 'button' && node.tagName === 'BUTTON') return node;
+      if (sel === '[role=button]' && node.getAttribute && node.getAttribute('role') === 'button') {{
+        return node;
+      }}
+      if (node._matchesSendSel && node._matchesSendSel(sel)) return node;
+      for (const c of node._children || []) {{
+        const hit = match(c);
+        if (hit) return hit;
+      }}
+      return null;
+    }};
+    return match(this);
+  }}
+  querySelectorAll(sel) {{
+    const out = [];
+    const walk = (node) => {{
+      if (!node) return;
+      if (sel === '[contenteditable="true"]' && node.isContentEditable) out.push(node);
+      if (
+        sel === 'button,[role=button]'
+        && (node.tagName === 'BUTTON' || (node.getAttribute && node.getAttribute('role') === 'button'))
+      ) {{
+        out.push(node);
+      }}
+      for (const c of node._children || []) walk(c);
+    }};
+    walk(this);
+    return out;
+  }}
+  get outerHTML() {{ return '<div class="work-mock"></div>'; }}
+  click() {{ this.clicked = true; }}
+}}
+function buttonMatches(sel) {{
+  const btn = this;
+  if (!btn || btn.tagName !== 'BUTTON') return false;
+  if (sel.includes(':not([disabled])') && btn.disabled) return false;
+  let m = sel.match(/aria-label="([^"]+)"/);
+  if (m) return btn.getAttribute('aria-label') === m[1];
+  m = sel.match(/data-testid="([^"]+)"/);
+  if (m) return btn.getAttribute('data-testid') === m[1];
+  if (sel.includes('type="submit"')) return btn.getAttribute('type') === 'submit';
+  return false;
+}}
+MockEl.prototype._matchesSendSel = buttonMatches;
+const sendPrompt = new MockEl('button', {{ attrs: {{ 'aria-label': 'Send prompt', type: 'button' }} }});
+const stopBtn = new MockEl('button', {{ attrs: {{ 'aria-label': 'Stop', type: 'button' }} }});
+const footer = new MockEl('div', {{ attrs: {{ class: 'ComposerLayoutFooter' }}, children: [stopBtn, sendPrompt] }});
+const editorShell = new MockEl('div', {{ attrs: {{ class: 'text-size-chat LegacyExpandableEditor' }} }});
+const composer = new MockEl('div', {{
+  attrs: {{ contenteditable: 'true', 'aria-label': 'Work with ChatGPT', role: 'textbox' }},
+  innerText: composerText,
+  parent: editorShell,
+}});
+editorShell._children = [composer];
+const editorCol = new MockEl('div', {{ attrs: {{ class: 'editor-col' }}, children: [editorShell] }});
+const layout = new MockEl('div', {{ attrs: {{ class: 'composer-layout' }}, children: [editorCol, footer] }});
+editorShell._parent = editorCol;
+editorCol._parent = layout;
+footer._parent = layout;
+composer._parent = editorShell;
+global.document = {{
+  visibilityState: 'visible',
+  hasFocus: () => true,
+  querySelector: (sel) => (sel.includes('contenteditable') ? composer : null),
+  body: null,
+}};
+global.window = {{
+  __ulgOperatorActivity: {{
+    ourDraftSig: composerText,
+    ourDraftWriter: draftWriter,
+    composerSendPermits: {{}},
+    composerSendAbortNonces: {{}},
+  }},
+}};
+global.HTMLTextAreaElement = {{ prototype: {{}} }};
+global.HTMLInputElement = {{ prototype: {{}} }};
+{permit_setup}
+(async () => {{
+  const result = {"await " + js if js.lstrip().startswith("(async") else js};
+  result.__sendClicked = sendPrompt.clicked;
+  result.__stopClicked = stopBtn.clicked;
+  result.__sendClickCount = sendPrompt.clicked ? 1 : 0;
+  console.log(JSON.stringify(result));
+}})().catch((err) => {{ console.error(err); process.exit(1); }});
+"""
+    proc = subprocess.run(
+        ["node", "-e", harness],
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=15,
+    )
+    if proc.returncode != 0:
+        raise RuntimeError(proc.stderr or proc.stdout)
+    return json.loads(proc.stdout.strip())
+
+
+@pytest.mark.skipif(
+    subprocess.run(["which", "node"], capture_output=True).returncode != 0,
+    reason="node not installed",
+)
+def test_work_footer_send_prompt_clicks_once() -> None:
+    """Production JS on Work-shaped DOM: Send prompt in ancestor footer, not editor shell."""
+    js = _click_send_body(
+        'div.ProseMirror[contenteditable="true"]', "wake line after idle", abort_nonce="work-n"
+    )
+    result = _run_work_shape_click_send_js(js, composer_text="wake line after idle")
+    assert result["ok"] is True
+    assert result["send_clicked"] is True
+    assert result["__sendClickCount"] == 1
+    assert result["__stopClicked"] is False
+
+
+@pytest.mark.skipif(
+    subprocess.run(["which", "node"], capture_output=True).returncode != 0,
+    reason="node not installed",
+)
+def test_work_footer_owned_draft_send_prompt_clicks_once() -> None:
+    js = _click_send_own_draft_body(
+        'div.ProseMirror[contenteditable="true"]',
+        draft_writer="orion-wake",
+        abort_nonce="work-own",
+    )
+    result = _run_work_shape_click_send_js(
+        js,
+        composer_text="owned draft line",
+        draft_writer="orion-wake",
+    )
+    assert result["ok"] is True
+    assert result["send_clicked"] is True
+    assert result["__sendClickCount"] == 1
+    assert result["__stopClicked"] is False
 
 
 def test_send_control_found_immediately_no_extra_poll() -> None:
@@ -491,6 +673,8 @@ async def test_dom_insert_and_send_forwards_census_on_send_failure() -> None:
         )
     assert out["ok"] is False
     assert out["reason"] == "no_send_button"
+    assert out["pasted"] is True
+    assert out["delivered"] is False
     assert out["census"] == census
 
 
