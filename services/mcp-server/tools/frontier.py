@@ -55,6 +55,7 @@ from ._frontier_intake import (
     require_cursor_sdk_checkout_lane,
     require_dispatch_thread_id,
     require_explicit_cursor_seat_for_handoff,
+    validate_ban_override,
     validate_force,
     validate_inline_prompt_inputs,
     validate_work_key,
@@ -526,6 +527,24 @@ def register_frontier_tools(mcp: FastMCP) -> None:
                     "lane/read_only admit, including contract=freeform; it does "
                     "not select contract=implement. Allowed on every admitted "
                     "generate job."
+                ),
+            ),
+        ] = None,
+        ban_override: Annotated[
+            bool,
+            Field(
+                description=(
+                    "Waive route_policy.yaml model_bans at dispatch admit. "
+                    "Requires ban_override_reason; emits dispatch.model_ban.override."
+                ),
+            ),
+        ] = False,
+        ban_override_reason: Annotated[
+            str | None,
+            Field(
+                description=(
+                    "Audit reason when ban_override=true (operator-authorized "
+                    "model_bans waiver)."
                 ),
             ),
         ] = None,
@@ -1102,6 +1121,10 @@ def register_frontier_tools(mcp: FastMCP) -> None:
         if work_key_err is not None:
             return work_key_err
 
+        ban_override_err = validate_ban_override(ban_override, ban_override_reason)
+        if ban_override_err is not None:
+            return ban_override_err
+
         force_err = validate_force(force, force_reason)
         if force_err is not None:
             return force_err
@@ -1288,6 +1311,8 @@ def register_frontier_tools(mcp: FastMCP) -> None:
                 "suppress_cost_warning",
                 suppress_cost_warning if suppress_cost_warning else None,
             ),
+            ("ban_override", True if ban_override else None),
+            ("ban_override_reason", ban_override_reason),
         ):
             if val is not None:
                 body[key] = val

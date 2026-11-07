@@ -42,6 +42,8 @@ class _DispatchCommon(BaseModel):
     bus_lifecycle: Literal["persistent", "ephemeral"] | None = None
     skills: list[str] | None = None
     server_tools: bool | None = None
+    ban_override: bool = False
+    ban_override_reason: str | None = None
     wake_lane: str | None = Field(
         default=None,
         description=(

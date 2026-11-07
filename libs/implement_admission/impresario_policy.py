@@ -27,20 +27,6 @@ _HYBRID_MECHANICAL_EFFORT = "medium"
 ADVISOR_MODEL = "cursor/gemini-4-argon"
 ADVISOR_LEAN_DISPATCH_LINE = "Use the lean-dispatch skill"
 ADVISOR_FALLBACK_MODEL = "cursor/composer-2.5"
-_ARGON_BARRED_IMPRESARIO_ROLES = frozenset(
-    {
-        "critic",
-        "sketch",
-        "skeptic",
-        "review",
-        "ear",
-        "ear_patrol",
-        "implement",
-        "sweep",
-        "mechanical",
-        "driver",
-    }
-)
 
 
 @dataclass(frozen=True, slots=True)
@@ -502,9 +488,9 @@ def resolve_roles(
 
 def argon_barred_for_role(impresario_role: str | None) -> bool:
     """True when ``impresario_role`` must not use ``cursor/gemini-4-argon``."""
-    if not impresario_role:
-        return False
-    return impresario_role.strip().lower() in _ARGON_BARRED_IMPRESARIO_ROLES
+    from implement_admission.model_ban import argon_role_barred
+
+    return argon_role_barred(impresario_role)
 
 
 def refuse_argon_non_advisor_route(
@@ -513,20 +499,18 @@ def refuse_argon_non_advisor_route(
     impresario_role: str | None,
 ) -> AdvisorAdmitResult | None:
     """Refuse argon when the role is critic, ear, implement, or sweep."""
-    normalized = (model or "").strip()
-    if normalized != ADVISOR_MODEL:
+    from implement_admission.model_ban import impresario_argon_refusal
+
+    refusal = impresario_argon_refusal(model=model, impresario_role=impresario_role)
+    if refusal is None:
         return None
-    role = (impresario_role or "").strip().lower()
-    if role == "advisor":
-        return None
-    if argon_barred_for_role(impresario_role):
-        return AdvisorAdmitResult(
-            admitted=False,
-            resolved_model=None,
-            code="ARGON_ROLE_BARRED",
-            message=f"cursor/gemini-4-argon is barred for impresario role {impresario_role!r}",
-        )
-    return None
+    code, message = refusal
+    return AdvisorAdmitResult(
+        admitted=False,
+        resolved_model=None,
+        code=code,
+        message=message,
+    )
 
 
 def resolve_advisor_provider_fallback(

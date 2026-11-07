@@ -5,6 +5,10 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
+from cursor_capabilities import (
+    cursor_sdk_model_set_details,
+    is_cursor_sdk_model_admitted,
+)
 from implement_admission.conductor_admit_model import (
     resolve_conductor_admit_model,
     resolve_hop_successor_default_from_pipeline,
@@ -28,17 +32,13 @@ from implement_admission.source_ref import todo_slug_from_ref
 from implement_admission.team_dispatch_admit_config import (
     load_conductor_model_defaults,
 )
-from cursor_capabilities import (
-    cursor_sdk_model_set_details,
-    is_cursor_sdk_model_admitted,
-)
 
 from ._envelope import (
-    admit_envelope,
     is_cursor_substrate_model,
     pass_through_reject,
     reject_envelope,
 )
+from .model_ban_gate import apply_model_ban_to_plan, ban_override_reject
 
 
 def _pipeline_conductor(opts: dict[str, Any]) -> dict[str, Any]:
@@ -70,6 +70,10 @@ def evaluate_conductor_defaults(
     prior = pass_through_reject(validate_out)
     if prior.get("admitted") is False:
         return prior
+
+    override_reject = ban_override_reject(opts)
+    if override_reject is not None:
+        return override_reject
 
     conductor_opts = _pipeline_conductor(opts)
     hop_seq = _hop_seq(opts)
@@ -154,6 +158,8 @@ def evaluate_conductor_defaults(
             rows=birth_plan.rows,
         )
 
+    from ._envelope import admit_envelope
+
     plan = admit_envelope(
         backend="cursor_sdk",
         role=None,
@@ -193,11 +199,9 @@ def evaluate_conductor_defaults(
     if hop_seq == 0 and hop_successor_default:
         extra["hop_successor_default"] = hop_successor_default.get("model")
         if hop_successor_default.get("model_knobs"):
-            extra["hop_successor_default_knobs"] = hop_successor_default[
-                "model_knobs"
-            ]
+            extra["hop_successor_default_knobs"] = hop_successor_default["model_knobs"]
     plan.update(extra)
-    return plan
+    return apply_model_ban_to_plan(opts, plan)
 
 
 def validate_conductor_policy_drift(opts: dict[str, Any]) -> dict[str, Any] | None:

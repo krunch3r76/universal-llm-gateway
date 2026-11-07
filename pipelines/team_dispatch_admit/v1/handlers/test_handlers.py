@@ -178,7 +178,7 @@ _GOLDEN_OMIT_TABLE: tuple[tuple[str, str, str], ...] = (
     ("propagate", _AUTO_JUDGMENT, "auto_judgment"),
     ("sketch", _AUTO_JUDGMENT, "auto_judgment"),
     ("none", _AUTO_JUDGMENT, "auto_judgment"),
-    ("conductor", _AUTO_JUDGMENT, "auto_judgment"),
+    ("conductor", _COMPOSER, "auto_judgment"),
     ("implement", "cursor/composer-2.5", "mechanical_implement"),
     ("mechanical", "cursor/composer-2.5", "mechanical_implement"),
     ("investigate", _COMPOSER, "investigate"),
@@ -199,6 +199,10 @@ def test_defaults_golden_omit_by_job() -> None:
                 "request_id": f"golden-{contract}",
             }
         )
+        if expected_model == _AUTO_JUDGMENT:
+            assert plan.get("admitted") is False, plan
+            assert plan.get("code") == "MODEL_BANNED_DEFAULT", contract
+            continue
         assert plan.get("admitted") is True, plan
         assert plan.get("model") == expected_model, contract
         if contract != "conductor":
@@ -397,7 +401,9 @@ def test_assemble_prefixes_ledger_row() -> None:
             "packet_sha256": "old",
         },
     )
-    assert out["packet_markdown"].startswith(f"ledger_row: {row_id}\npurpose: ship it\n")
+    assert out["packet_markdown"].startswith(
+        f"ledger_row: {row_id}\npurpose: ship it\n"
+    )
     assert out["packet_markdown"].endswith(packet)
 
 

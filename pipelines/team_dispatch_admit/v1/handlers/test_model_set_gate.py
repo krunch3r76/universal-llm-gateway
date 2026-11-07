@@ -55,17 +55,30 @@ def test_stargate_admit_refuses_bare_non_member_prefix_check() -> None:
 
 @pytest.mark.offline
 def test_stargate_admit_members() -> None:
-    for model in ("cursor/composer-2.5", "cursor/grok-4.7"):
-        plan = run_full_admit(
-            {
-                "op": "generate",
-                "seat": "cursor-sdk",
-                "model": model,
-                "request_id": f"ms-member-{model}",
-            }
-        )
-        assert plan.get("admitted") is True, plan
-        assert plan.get("model") == model
+    plan = run_full_admit(
+        {
+            "op": "generate",
+            "seat": "cursor-sdk",
+            "model": "cursor/composer-2.5",
+            "request_id": "ms-member-composer",
+        }
+    )
+    assert plan.get("admitted") is True, plan
+    assert plan.get("model") == "cursor/composer-2.5"
+
+
+@pytest.mark.offline
+def test_stargate_admit_grok_member_banned() -> None:
+    plan = run_full_admit(
+        {
+            "op": "generate",
+            "seat": "cursor-sdk",
+            "model": "cursor/grok-4.7",
+            "request_id": "ms-member-grok",
+        }
+    )
+    assert plan.get("admitted") is False
+    assert plan.get("code") == "MODEL_BANNED"
 
 
 @pytest.mark.offline
@@ -109,9 +122,7 @@ def test_conductor_default_still_admits_member() -> None:
     )
     assert plan.get("admitted") is True, plan
     assert plan.get("backend") == "cursor_sdk"
-    from cursor_capabilities import is_cursor_sdk_model_admitted
-
-    assert is_cursor_sdk_model_admitted(str(plan.get("model")))
+    assert plan.get("model") == "cursor/composer-2.5"
 
 
 @pytest.mark.offline
@@ -127,7 +138,10 @@ def test_cdp_conductor_model_not_refused_by_cursor_set_gate() -> None:
         },
         v,
     )
-    assert plan.get("admitted") is not False or plan.get("code") != "sdk_generate_model_invalid"
+    assert (
+        plan.get("admitted") is not False
+        or plan.get("code") != "sdk_generate_model_invalid"
+    )
 
 
 def test_workflow_cursor_models_are_admitted() -> None:
@@ -187,7 +201,7 @@ def test_comment_only_yaml_unchanged() -> None:
         ).stdout
         return yaml.safe_load(raw)
 
-    for rel in ("config/agents.yaml", "config/routing/route_policy.yaml"):
+    for rel in ("config/agents.yaml",):
         assert yaml.safe_load((repo / rel).read_text(encoding="utf-8")) == _master_yaml(
             rel
         )

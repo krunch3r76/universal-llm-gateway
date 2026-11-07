@@ -49,6 +49,9 @@ def _body_to_options(body: Any, *, request_id: str) -> dict[str, Any]:
         "next_admit_verb": getattr(body, "next_admit_verb", None),
         "hop_from": getattr(body, "hop_from", None),
         "dispatch_thread_id": getattr(body, "dispatch_thread_id", None),
+        "ban_override": getattr(body, "ban_override", None),
+        "ban_override_reason": getattr(body, "ban_override_reason", None),
+        "caller_agent": getattr(body, "caller_agent", None),
         "generation_options": gen if isinstance(gen, dict) else {},
         "pipeline_options": pipeline_opts if isinstance(pipeline_opts, dict) else {},
         "conductor": _conductor_opts_from_gen(gen),
@@ -232,6 +235,19 @@ def run_team_dispatch_admit_sync(
             details=(
                 plan.get("details") if isinstance(plan.get("details"), dict) else None
             ),
+        )
+    override = plan.get("model_ban_override")
+    if isinstance(override, dict) and event_publisher is not None:
+        from .events import DispatchModelBanOverride
+
+        event_publisher(
+            DispatchModelBanOverride(
+                request_id=request_id,
+                caller=override.get("caller"),
+                model=str(override.get("model") or ""),
+                reason=str(override.get("reason") or ""),
+                ref=override.get("ref"),
+            )
         )
     return plan
 

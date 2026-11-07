@@ -379,6 +379,28 @@ def validate_work_key(
     return None
 
 
+def validate_ban_override(
+    ban_override: bool,
+    ban_override_reason: str | None,
+) -> dict[str, Any] | None:
+    """``ban_override`` waives ``model_bans``; ``ban_override_reason`` is required."""
+    if not ban_override:
+        if ban_override_reason and str(ban_override_reason).strip():
+            return _validation_error(
+                "ban_override=true is required when ban_override_reason is set",
+                field="ban_override",
+                code="ban_override_required",
+            )
+        return None
+    if not ban_override_reason or not str(ban_override_reason).strip():
+        return _validation_error(
+            "ban_override_reason is required when ban_override=true",
+            field="ban_override_reason",
+            code="ban_override_reason_required",
+        )
+    return None
+
+
 def validate_force(
     force: bool,
     force_reason: str | None,

@@ -23,7 +23,6 @@ from systems.pipeline.core.handlers.builtin import BaseHandler
 from systems.pipeline.core.handlers.protocol import StepOutput
 
 from ._envelope import (
-    admit_envelope,
     is_cursor_substrate_model,
     pass_through_reject,
     reject_envelope,
@@ -37,6 +36,10 @@ from .defaults_split import (
     _select_backend,
     _teach,
 )
+from .model_ban_gate import (
+    admit_with_model_ban,
+    ban_override_reject,
+)
 
 
 def evaluate_defaults(
@@ -45,6 +48,10 @@ def evaluate_defaults(
     prior = pass_through_reject(validate_out)
     if prior.get("admitted") is False:
         return prior
+
+    override_reject = ban_override_reject(opts)
+    if override_reject is not None:
+        return override_reject
 
     if str(opts.get("job") or "").strip().lower() == "conductor":
         return evaluate_conductor_defaults(opts, validate_out)
@@ -58,7 +65,8 @@ def evaluate_defaults(
 
     if op == "to_thread":
         eff_role = role if role is not None and str(role).strip() else "synthesizer"
-        return admit_envelope(
+        return admit_with_model_ban(
+            opts,
             backend="frontier",
             role=eff_role,
             seat=seat,
@@ -68,7 +76,8 @@ def evaluate_defaults(
         )
 
     if op == "spawn":
-        plan = admit_envelope(
+        plan = admit_with_model_ban(
+            opts,
             backend="cursor_ide",
             role=None,
             seat=None,
@@ -147,7 +156,8 @@ def evaluate_defaults(
                         "omit role (model prefix selects transport) or use a cloud model"
                     ),
                 )
-        return admit_envelope(
+        return admit_with_model_ban(
+            opts,
             backend="cdp",
             role=role,
             seat=seat,
@@ -247,7 +257,8 @@ def evaluate_defaults(
                     field=verdict.field,
                     reason=verdict.reason,
                 )
-        return admit_envelope(
+        return admit_with_model_ban(
+            opts,
             backend="cursor_sdk",
             role=role,
             seat=eff_seat or "cursor-sdk",
@@ -273,7 +284,8 @@ def evaluate_defaults(
                     field=verdict.field,
                     reason=verdict.reason,
                 )
-        return admit_envelope(
+        return admit_with_model_ban(
+            opts,
             backend="api_role",
             role=role,
             seat=seat,
@@ -282,7 +294,8 @@ def evaluate_defaults(
             workflow=None,
         )
 
-    return admit_envelope(
+    return admit_with_model_ban(
+        opts,
         backend="frontier",
         role=role,
         seat=seat,

@@ -3,6 +3,36 @@ policy_source: consult-routing
 policy_version: "2026-09-30"
 lead_claim_authority: server_contract_overrides_packet_prose
 
+# Dispatch admit ban list (team_dispatch generate/to_thread/hop). Match after
+# model_id normalization (cursor/grok-4.7 ≡ xai/grok-4.7 slug). Override on the
+# wire: ban_override=true + ban_override_reason (audit event dispatch.model_ban.override).
+model_bans:
+  - model: cursor/grok-4.7
+    scope: all
+    reason: >-
+      Operator ratified codework bar — grok-4.7 must not run dispatch admit
+      without an explicit ban_override audit pair.
+    ref: agent-bus:9956
+    since: "2026-11-07"
+  - model: cursor/gemini-4-argon
+    scope:
+      roles:
+        - critic
+        - sketch
+        - skeptic
+        - review
+        - ear
+        - ear_patrol
+        - implement
+        - sweep
+        - mechanical
+        - driver
+    reason: >-
+      Pattern-A impresario: gemini-4-argon is advisor-wire only; critic/ear/implement
+      and sibling roles must not bind this model.
+    ref: impresario:pattern-a-argon-role-bar
+    since: "2026-11-07"
+
 cdp_reroute:
   enabled: false
   effort: high

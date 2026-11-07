@@ -1153,6 +1153,31 @@ def FrontierAdmitDecided(  # noqa: N802
 
 
 @event_factory
+def DispatchModelBanOverride(  # noqa: N802
+    *,
+    request_id: str,
+    caller: str | None,
+    model: str,
+    reason: str,
+    ref: str | None = None,
+) -> Event:
+    payload: dict[str, Any] = {
+        "request_id": request_id,
+        "caller": caller,
+        "model": model,
+        "reason": reason,
+    }
+    if ref is not None:
+        payload["ref"] = ref
+    return Event(
+        signal="dispatch.model_ban.override",
+        payload=payload,
+        role="coordination",
+        scope="node",
+    )
+
+
+@event_factory
 def FrontierAdmitRejected(  # noqa: N802
     *,
     request_id: str,
