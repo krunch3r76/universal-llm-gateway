@@ -227,6 +227,8 @@ def _run_work_shape_click_send_js(
     misplaced_send_in_editor_col: bool = False,
     send_on_document_body: bool = False,
     detach_from_body: bool = False,
+    stop_type_submit: bool = False,
+    foreign_form_in_layout: bool = False,
 ) -> dict[str, Any]:
     """ChatGPT Work layout: editor shell has no buttons; footer is several ancestors up."""
     writer = json.dumps(draft_writer)
@@ -312,6 +314,7 @@ class MockEl {{
     const walk = (node) => {{
       if (!node) return;
       if (sel === '[contenteditable="true"]' && node.isContentEditable) out.push(node);
+      if (sel === 'form' && node.tagName === 'FORM') out.push(node);
       if (
         sel === 'button,[role=button]'
         && (node.tagName === 'BUTTON' || (node.getAttribute && node.getAttribute('role') === 'button'))
@@ -345,7 +348,9 @@ const sendPrompt = new MockEl('button', {{
   attrs: {{ 'aria-label': 'Send prompt', type: 'button' }},
   disabled: {json.dumps(send_disabled)},
 }});
-const stopBtn = new MockEl('button', {{ attrs: {{ 'aria-label': 'Stop', type: 'button' }} }});
+const stopBtn = new MockEl('button', {{
+  attrs: {json.dumps({'aria-label': 'Stop', 'type': 'submit' if stop_type_submit else 'button'})},
+}});
 const footerChildren = [stopBtn];
 if ({json.dumps(include_send_prompt and not stop_only)}) footerChildren.push(sendPrompt);
 const footer = new MockEl('div', {{ attrs: {{ class: 'ComposerLayoutFooter' }}, children: footerChildren }});
@@ -371,7 +376,13 @@ if ({json.dumps(misplaced_send_in_editor_col)}) {{
   editorColChildren.push(misplacedSend);
 }}
 const editorCol = new MockEl('div', {{ attrs: {{ class: 'editor-col' }}, children: editorColChildren }});
-const layout = new MockEl('div', {{ attrs: {{ class: 'composer-layout' }}, children: [editorCol, footer] }});
+const layoutChildren = [editorCol, footer];
+if ({json.dumps(foreign_form_in_layout)}) {{
+  const foreignSubmit = new MockEl('button', {{ attrs: {{ type: 'submit', 'aria-label': 'Send' }} }});
+  const foreignForm = new MockEl('form', {{ children: [foreignSubmit] }});
+  layoutChildren.push(foreignForm);
+}}
+const layout = new MockEl('div', {{ attrs: {{ class: 'composer-layout' }}, children: layoutChildren }});
 editorShell._parent = editorCol;
 editorCol._parent = layout;
 footer._parent = layout;
@@ -489,6 +500,85 @@ def test_work_footer_disabled_send_prompt_not_clicked() -> None:
     subprocess.run(["which", "node"], capture_output=True).returncode != 0,
     reason="node not installed",
 )
+@pytest.mark.skipif(
+    subprocess.run(["which", "node"], capture_output=True).returncode != 0,
+    reason="node not installed",
+)
+def test_work_base_16ccc450_fails_candidate_clicks_once() -> None:
+    """AC1: base hub head fails; candidate production JS clicks footer once."""
+    selector = 'div.ProseMirror[contenteditable="true"]'
+    line = "wake line after idle"
+    legacy_fn = _legacy_click_send_body_at("16ccc450")
+    base_js = legacy_fn(selector, line, abort_nonce="base-work")
+    base = _run_work_shape_click_send_js(base_js, composer_text=line)
+    assert base["ok"] is False
+    assert base.get("__sendClickCount", 0) == 0
+    js = _click_send_body(selector, line, abort_nonce="cand-work")
+    cand = _run_work_shape_click_send_js(js, composer_text=line)
+    assert cand["ok"] is True
+    assert cand["__sendClickCount"] == 1
+
+
+@pytest.mark.skipif(
+    subprocess.run(["which", "node"], capture_output=True).returncode != 0,
+    reason="node not installed",
+)
+def test_work_stop_submit_type_not_clicked() -> None:
+    js = _click_send_body(
+        'div.ProseMirror[contenteditable="true"]', "wake", abort_nonce="stop-submit"
+    )
+    result = _run_work_shape_click_send_js(
+        js,
+        composer_text="wake",
+        stop_only=True,
+        include_send_prompt=False,
+        stop_type_submit=True,
+    )
+    assert result["ok"] is False
+    assert result["reason"] == "no_send_button"
+    assert result["__stopClicked"] is False
+
+
+@pytest.mark.skipif(
+    subprocess.run(["which", "node"], capture_output=True).returncode != 0,
+    reason="node not installed",
+)
+def test_work_foreign_form_blocks_layout_scope() -> None:
+    js = _click_send_body(
+        'div.ProseMirror[contenteditable="true"]', "wake", abort_nonce="fform"
+    )
+    result = _run_work_shape_click_send_js(
+        js,
+        composer_text="wake",
+        foreign_form_in_layout=True,
+        include_send_prompt=True,
+    )
+    assert result["ok"] is False
+    assert result["reason"] == "no_send_button"
+    assert result["__sendClickCount"] == 0
+
+
+@pytest.mark.skipif(
+    subprocess.run(["which", "node"], capture_output=True).returncode != 0,
+    reason="node not installed",
+)
+def test_work_send_on_body_reachable_but_out_of_scope() -> None:
+    """Send on document.body is reachable but ancestor walk stops before body/html."""
+    js = _click_send_body(
+        'div.ProseMirror[contenteditable="true"]', "wake", abort_nonce="body-reach"
+    )
+    result = _run_work_shape_click_send_js(
+        js,
+        composer_text="wake",
+        send_on_document_body=True,
+        include_send_prompt=False,
+        stop_only=True,
+    )
+    assert result["ok"] is False
+    assert result["reason"] == "no_send_button"
+    assert result["__sendClickCount"] == 0
+
+
 def test_work_send_on_body_only_outside_composer_chain() -> None:
     js = _click_send_body(
         'div.ProseMirror[contenteditable="true"]', "wake", abort_nonce="body-only"

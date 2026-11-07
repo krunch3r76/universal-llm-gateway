@@ -2184,6 +2184,50 @@ async def test_wake_inserted_no_send_preserves_pasted_and_census(
     assert out["census"] == census
 
 
+def test_ledger_owner_records_unknown_for_inserted_no_send(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """AC4: real receipt owner maps pasted=true, delivered=false to outcome unknown."""
+    from agent_bus_store.db.orion_wake_owner_adapter import (
+        LedgerWakeDeliveryOwner,
+        WakeClaimContext,
+    )
+
+    recorded: list[tuple[str, str]] = []
+
+    def _record_wake_result(
+        wake_id: str,
+        outcome: str,
+        reason: str,
+        *_rest: object,
+    ) -> None:
+        recorded.append((outcome, reason))
+
+    monkeypatch.setattr(
+        "agent_bus_store.db.orion_wake_owner_adapter.record_wake_result",
+        _record_wake_result,
+    )
+    owner = LedgerWakeDeliveryOwner()
+    claim = WakeClaimContext(
+        wake_id="wake-test-unknown",
+        agent="ai_agent:orion",
+        thread_id="22388",
+        turn_ids=(1,),
+        turn_numbers=(2,),
+        endpoint_url="https://chatgpt.com/c/test",
+    )
+    owner.record_paste_receipt(
+        claim,
+        {
+            "ok": False,
+            "reason": "no_send_button",
+            "pasted": True,
+            "delivered": False,
+        },
+    )
+    assert recorded == [("unknown", "no_send_button")]
+
+
 def _clear_binding_tab_attach_misses() -> None:
     _attach_misses.clear()
 

@@ -137,6 +137,51 @@ function ulgComposerDomEmpty(el) {
 
   return false;
 }
+function ulgIsStopControl(btn) {
+  if (!btn) return true;
+  const label = String((btn.getAttribute && btn.getAttribute('aria-label')) || '');
+  const testid = String((btn.getAttribute && btn.getAttribute('data-testid')) || '');
+  return /stop/i.test(label) || /stop/i.test(testid);
+}
+function ulgHasForeignForm(root, el) {
+  if (!root || typeof root.querySelectorAll !== 'function') return false;
+  const own = el.closest && el.closest('form');
+  const forms = root.querySelectorAll('form');
+  for (let i = 0; i < forms.length; i += 1) {
+    const f = forms[i];
+    if (own && f === own) continue;
+    return true;
+  }
+  return false;
+}
+function ulgHasForeignTextControl(root, el) {
+  if (!root || typeof root.querySelectorAll !== 'function') return false;
+  let bad = false;
+  root.querySelectorAll('textarea,input').forEach((n) => {
+    if (bad || n === el) return;
+    const tag = String(n.tagName || '').toUpperCase();
+    const typ = String((n.getAttribute && n.getAttribute('type')) || n.type || '')
+      .toLowerCase();
+    if (tag === 'TEXTAREA' || typ === 'text' || typ === 'search' || typ === 'email' || typ === '') {
+      bad = true;
+    }
+  });
+  return bad;
+}
+function ulgFindSendBtn(root, el, btnSels) {
+  if (!root) return null;
+  const ownForm = el.closest && el.closest('form');
+  const allowGenericSubmit = !!(ownForm && root === ownForm);
+  for (const sel of btnSels) {
+    if (!allowGenericSubmit && sel.indexOf('type="submit"') >= 0) continue;
+    const btn = root.querySelector(sel);
+    if (!btn) continue;
+    if (btn.disabled || btn.hasAttribute('disabled')) continue;
+    if (ulgIsStopControl(btn)) continue;
+    return btn;
+  }
+  return null;
+}
 function ulgComposerSendRoot(el) {
   if (!el) return null;
   const form = el.closest('form');
@@ -161,7 +206,10 @@ function ulgComposerSendRoot(el) {
   };
   let cur = el.parentElement;
   for (let step = 0; cur && step < 8; step += 1, cur = cur.parentElement) {
+    if (cur === document.body || cur === document.documentElement) break;
     if (!hasSendableButton(cur)) continue;
+    if (ulgHasForeignForm(cur, el)) continue;
+    if (ulgHasForeignTextControl(cur, el)) continue;
     if (hasSecondComposer(cur)) continue;
     return cur;
   }
@@ -522,8 +570,7 @@ def _click_send_own_draft_body(
         "const root=ulgComposerSendRoot(el);"
         "if(!root){cleanup();return{ok:false,reason:'no_composer',send_clicked:false};}"
         f"const btnSels={btn_sels};"
-        "let btn=null;"
-        "for(const sel of btnSels){btn=root.querySelector(sel);if(btn)break;}"
+        "const btn=ulgFindSendBtn(root,el,btnSels);"
         "if(!btn){cleanup();return{ok:false,reason:'no_send_button',send_clicked:false};}"
         "btn.click();"
         "g.ourDraftSig='';"
@@ -634,11 +681,7 @@ def _click_send_body(
         f"const btnSels={btn_sels};"
         f"const waitCeilingMs={wait_ceiling};"
         f"const pollIntervalMs={poll_interval};"
-        "const findSendBtn=()=>{"
-        "let b=null;"
-        "for(const sel of btnSels){b=root.querySelector(sel);if(b)break;}"
-        "return b;"
-        "};"
+        "const findSendBtn=()=>ulgFindSendBtn(root,el,btnSels);"
         "const buildCensus=(elapsedMs)=>{"
         "const buttons=[];"
         "let buttonsTotal=0;"
