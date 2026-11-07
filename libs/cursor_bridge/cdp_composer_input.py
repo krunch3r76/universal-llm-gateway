@@ -150,34 +150,61 @@ def _work_native_preflight_js(
         "const tag=active.tagName||'';"
         "if(tag==='INPUT'||tag==='TEXTAREA'||(active.isContentEditable&&active!==el)){"
         "return{ok:false,reason:'competing_text_control'};}}"
+        "if(el.querySelector&&el.querySelector('[data-testid*=\"attachment\"],.file-chip,[class*=\"attachment\"]')){"
+        "return{ok:false,reason:'foreign_attachment'};}"
+        "const sel=window.getSelection&&window.getSelection();"
+        "if(sel&&!sel.isCollapsed)return{ok:false,reason:'selection_active'};"
         "el.focus();"
         "const focused=document.activeElement===el||el.contains(document.activeElement);"
         "if(!focused)return{ok:false,reason:'focus_failed'};"
+        "const hereAfter=String(location.href||'').split('?')[0];"
+        "if(expectUrl&&hereAfter!==expectUrl)return{ok:false,reason:'url_mismatch'};"
+        "const resolvedAfter=ulgResolveVisibleWorkComposer();"
+        "if(!resolvedAfter.ok||resolvedAfter.el!==el)return{ok:false,reason:'editor_changed'};"
         "window.__ulgWorkNativeEditor=el;"
-        "return{ok:true,expectLine,expectWriter};})()"
+        "window.__ulgWorkNativeEditorId=String(el.getAttribute('data-ulg-native-id')||'work-0');"
+        "return{ok:true,expectLine,expectWriter,editorId:window.__ulgWorkNativeEditorId};})()"
     )
 
 
-def _work_native_readback_js(*, text: str, draft_writer: str, preserve_newlines: bool) -> str:
-    from cursor_bridge.dom_composer_paste import _ULG_NORM_COMPOSER_JS, _flatten_paste_line
+def _work_native_readback_js(
+    *,
+    text: str,
+    draft_writer: str,
+    preserve_newlines: bool,
+    expected_url: str,
+) -> str:
+    from cursor_bridge.dom_composer_paste import (
+        _ULG_NORM_COMPOSER_JS,
+        _WORK_EDITOR_RESOLVE_JS,
+        _flatten_paste_line,
+    )
 
     line = json.dumps(
         text if preserve_newlines else _flatten_paste_line(text)
     )
     writer = json.dumps(str(draft_writer or ""))
+    exp = json.dumps(str(expected_url or "").split("?")[0])
     return (
-        f"(()=>{{{_ULG_NORM_COMPOSER_JS}"
+        f"(()=>{{{_ULG_NORM_COMPOSER_JS}{_WORK_EDITOR_RESOLVE_JS}"
         f"const expectLine={line};"
         f"const expectWriter={writer};"
-        "const el=window.__ulgWorkNativeEditor;"
-        "if(!el||!el.isConnected)return{ok:false,reason:'no_composer'};"
+        f"const expectUrl={exp};"
+        "const here=String(location.href||'').split('?')[0];"
+        "if(expectUrl&&here!==expectUrl)return{ok:false,reason:'url_mismatch'};"
+        "const resolved=ulgResolveVisibleWorkComposer();"
+        "if(!resolved.ok)return{ok:false,reason:resolved.reason||'no_composer'};"
+        "const el=resolved.el;"
+        "const pinned=window.__ulgWorkNativeEditor;"
+        "const editorId=String(window.__ulgWorkNativeEditorId||'');"
+        "if(!pinned||pinned!==el)return{ok:false,reason:'editor_changed'};"
         "const normDraft=ulgNormalizeComposerText(el.innerText||'');"
         "const normLine=ulgNormalizeComposerText(expectLine);"
         "if(normDraft!==normLine)return{ok:false,reason:'composer_text_mismatch'};"
         "const g=window.__ulgOperatorActivity=window.__ulgOperatorActivity||{};"
         "g.ourDraftSig=normDraft;"
         "g.ourDraftWriter=expectWriter;"
-        "return{ok:true,sig:normDraft,phase:'inserted',inserted:true,pasted:true};})()"
+        "return{ok:true,sig:normDraft,phase:'inserted',inserted:true,pasted:true,editorId};})()"
     )
 
 
@@ -225,6 +252,9 @@ async def cdp_work_native_insert_text(
                 "operator_active",
                 "competing_text_control",
                 "focus_failed",
+                "foreign_attachment",
+                "selection_active",
+                "editor_changed",
             }:
                 return {
                     "ok": False,
@@ -234,6 +264,7 @@ async def cdp_work_native_insert_text(
                     "phase": "insertion_failed",
                 }
             return {**uncertain, "reason": reason_s, "phase": "insertion_unknown"}
+        insert_dispatched = False
         try:
             await _runtime_eval(ws, 3, operator_activity_suppress_js())
             await ws.send(
@@ -256,21 +287,36 @@ async def cdp_work_native_insert_text(
                     "reason": "native_insert_error",
                     "phase": "insertion_unknown",
                 }
+            insert_dispatched = True
         except (asyncio.TimeoutError, TimeoutError):
             return {**uncertain, "reason": "native_insert_timeout", "phase": "insertion_unknown"}
         except Exception:
             return {**uncertain, "reason": "native_insert_transport", "phase": "insertion_unknown"}
         finally:
-            await _runtime_eval(ws, 5, operator_activity_clear_suppress_js())
-        rb = await _runtime_eval(
-            ws,
-            6,
-            _work_native_readback_js(
-                text=text,
-                draft_writer=draft_writer,
-                preserve_newlines=preserve_newlines,
-            ),
-        )
+            try:
+                await _runtime_eval(ws, 5, operator_activity_clear_suppress_js())
+            except Exception:
+                if insert_dispatched:
+                    return {
+                        **uncertain,
+                        "reason": "native_insert_cleanup",
+                        "phase": "insertion_unknown",
+                    }
+        try:
+            rb = await _runtime_eval(
+                ws,
+                6,
+                _work_native_readback_js(
+                    text=text,
+                    draft_writer=draft_writer,
+                    preserve_newlines=preserve_newlines,
+                    expected_url=expected_url,
+                ),
+            )
+        except (asyncio.TimeoutError, TimeoutError):
+            return {**uncertain, "reason": "readback_timeout", "phase": "insertion_unknown"}
+        except Exception:
+            return {**uncertain, "reason": "readback_transport", "phase": "insertion_unknown"}
         if not isinstance(rb, dict) or not rb.get("ok"):
             reason = rb.get("reason") if isinstance(rb, dict) else "readback_failed"
             return {

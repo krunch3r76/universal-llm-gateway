@@ -2294,6 +2294,75 @@ def test_ledger_owner_records_unknown_for_inserted_no_send(
     assert recorded == [("unknown", "no_send_button")]
 
 
+@pytest.mark.asyncio
+@pytest.mark.no_dom_stub
+async def test_wake_deliver_work_insertion_refusal_paste_failed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Insertion failure through deliver_orion_wake stays pasted=false (not unsent send)."""
+    page = _FakePage(url=PINNED)
+    page.target_id = "tab-orion"
+
+    class _Port:
+        def list_tabs(self, *, cdp_url: str) -> dict:
+            return {
+                "pages": [
+                    {
+                        "id": "tab-orion",
+                        "url": PINNED,
+                        "web_socket_debugger_url": "ws://127.0.0.1/devtools/page/orion",
+                    }
+                ]
+            }
+
+    async def _insert(ws: str, *, selector: str, line: str, **_kwargs: object) -> dict:
+        return {
+            "ok": False,
+            "reason": "work_native_unsupported",
+            "pasted": False,
+            "inserted": False,
+            "phase": "insertion_failed",
+        }
+
+    async def _baseline(*_a: object, **_k: object) -> dict:
+        return {"user_count": 0}
+
+    async def _pre(*_a: object, **_k: object) -> dict:
+        return {"ok": True}
+
+    async def _recheck(*_a: object, **_k: object) -> dict:
+        return {"ok": True, "probe": {}}
+
+    @asynccontextmanager
+    async def _lock(_target_id: str, *, timeout_s: float = 120, op: str = ""):
+        yield
+
+    monkeypatch.setattr("web_tab.cdp_actuation.default_actuation_port", lambda: _Port())
+    monkeypatch.setattr(
+        "cursor_bridge.dom_composer_paste.dom_insert_and_send", _insert
+    )
+    monkeypatch.setattr("web_tab.commit_verify.capture_dom_baseline", _baseline)
+    monkeypatch.setattr(
+        "web_tab.operator_guard.wait_operator_idle_before_lock", _pre
+    )
+    monkeypatch.setattr(
+        "web_tab.operator_guard.operator_recheck_under_lock", _recheck
+    )
+    monkeypatch.setattr("web_tab.target_lock.target_write_lock", _lock)
+    monkeypatch.setattr(
+        "web_tab.write_ops._created_by_agent_for_target", lambda **_k: "agent-1"
+    )
+
+    out = await deliver_orion_wake(
+        thread="21207",
+        turn=2,
+        from_agent="maestro",
+        page=page,
+    )
+    assert out.get("pasted") is False
+    assert out.get("reason") in {"paste_failed", "work_native_unsupported"}
+
+
 def test_owner_records_insertion_unknown_before_refused_branch(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

@@ -1444,3 +1444,308 @@ def test_mark_then_click_valid_permit_aborted_nonce_no_click() -> None:
     assert result["reason"] == "cdp_eval_timeout"
     assert result["send_clicked"] is False
     assert result["__sendClicked"] is False
+
+
+_PLAYWRIGHT_SKIP = pytest.mark.skipif(
+    importlib.util.find_spec("playwright") is None,
+    reason="playwright not installed",
+)
+
+
+def _work_real_dom_html(
+    *,
+    composer_text: str = "wake",
+    include_footer_send: bool = True,
+    send_disabled: bool = False,
+    second_visible_editable: bool = False,
+    hidden_twin: bool = False,
+    textarea_in_col: bool = False,
+    text_input_in_col: bool = False,
+    foreign_form_in_layout: bool = False,
+    unlabelled_submit_on_body: bool = False,
+    footer_stop_testid: bool = False,
+    stop_type_submit_in_form: bool = False,
+    late_send_ms: int | None = None,
+    enable_send_after_ms: int | None = None,
+    second_work_labeled_editable: bool = False,
+) -> str:
+    """Build disposable browser HTML for ChatGPT Work-shaped send regression."""
+    editor_bits: list[str] = []
+    if hidden_twin:
+        editor_bits.append(
+            '<div contenteditable="true" role="textbox" '
+            'aria-label="Work with ChatGPT on your tasks" '
+            'style="position:absolute;width:0;height:0;overflow:hidden">twin</div>'
+        )
+    editor_bits.append(
+        f'<div class="ProseMirror" contenteditable="true" role="textbox" '
+        f'aria-label="Work with ChatGPT on your tasks">{composer_text}</div>'
+    )
+    if second_visible_editable:
+        editor_bits.append(
+            '<div contenteditable="true" role="textbox" '
+            'style="min-height:20px">rival editable</div>'
+        )
+    if second_work_labeled_editable:
+        editor_bits.append(
+            '<div contenteditable="true" role="textbox" '
+            'aria-label="Work with ChatGPT on your tasks" '
+            'style="min-height:20px">second work</div>'
+        )
+    if textarea_in_col:
+        editor_bits.append("<textarea></textarea>")
+    if text_input_in_col:
+        editor_bits.append('<input type="text" />')
+    footer_bits: list[str] = []
+    if footer_stop_testid:
+        footer_bits.append(
+            '<button type="button" data-testid="stop-generation" '
+            'aria-label="Stop generating">Stop</button>'
+        )
+    if include_footer_send:
+        dis = " disabled" if send_disabled else ""
+        footer_bits.append(
+            f'<button type="button" aria-label="Send prompt"{dis} '
+            f'onclick="window.__clickCounts.send+=1">Send</button>'
+        )
+    foreign = ""
+    if foreign_form_in_layout:
+        foreign = (
+            '<form><button type="submit" aria-label="Send" '
+            'onclick="window.__clickCounts.foreign+=1">Send</button></form>'
+        )
+    body_extra = ""
+    if unlabelled_submit_on_body:
+        body_extra = (
+            '<button type="submit" aria-label="Send" '
+            'onclick="window.__clickCounts.body+=1">Go</button>'
+        )
+    form_wrap_start = form_wrap_end = ""
+    if stop_type_submit_in_form:
+        form_wrap_start = "<form>"
+        form_wrap_end = (
+            '<button type="submit" data-testid="stop-generation" '
+            'aria-label="Stop generating">Stop</button></form>'
+        )
+    late_script = ""
+    if late_send_ms is not None:
+        late_script = f"""
+<script>
+setTimeout(() => {{
+  const f = document.getElementById('work-footer');
+  const b = document.createElement('button');
+  b.setAttribute('aria-label', 'Send prompt');
+  b.setAttribute('type', 'button');
+  b.onclick = () => {{ window.__clickCounts.send += 1; }};
+  f.appendChild(b);
+}}, {int(late_send_ms)});
+</script>"""
+    enable_script = ""
+    if enable_send_after_ms is not None:
+        enable_script = f"""
+<script>
+setTimeout(() => {{
+  const btn = document.querySelector('#work-footer button[aria-label="Send prompt"]');
+  if (btn) btn.removeAttribute('disabled');
+}}, {int(enable_send_after_ms)});
+</script>"""
+    return f"""<!DOCTYPE html><html><body>
+{body_extra}
+<div class="composer-layout">
+  {form_wrap_start}
+  <div class="editor-col" id="editor-col">
+    <div class="text-size-chat LegacyExpandableEditor">
+      <div class="ProseMirror-shell">{" ".join(editor_bits)}</div>
+    </div>
+  </div>
+  <div class="ComposerLayoutFooter" id="work-footer">{" ".join(footer_bits)}</div>
+  {foreign}
+  {form_wrap_end}
+</div>
+<script>window.__clickCounts = {{send:0,foreign:0,body:0}};</script>
+{enable_script}{late_script}
+</body></html>"""
+
+
+def _eval_production_click_send_playwright(
+    click_js: str,
+    html: str,
+    *,
+    composer_text: str,
+    draft_writer: str = "",
+    abort_nonce: str = "pw-real-dom",
+) -> dict[str, Any]:
+    """Run generated async click-send JS in headless Chromium with a real DOM."""
+    from playwright.sync_api import sync_playwright
+
+    permit_js = _composer_send_permit_expression(abort_nonce, 600_000)
+    with sync_playwright() as playwright:
+        browser = playwright.chromium.launch(headless=True)
+        page = browser.new_page()
+        page.set_content(html)
+        page.evaluate(
+            """({text, writer, permit}) => {
+              window.__ulgOperatorActivity = {
+                ourDraftSig: text,
+                ourDraftWriter: writer,
+                composerSendPermits: {},
+                composerSendAbortNonces: {},
+              };
+              eval(permit);
+            }""",
+            {
+                "text": composer_text,
+                "writer": draft_writer,
+                "permit": permit_js,
+            },
+        )
+        result = page.evaluate(f"async () => {{ return await {click_js}; }}")
+        clicks = page.evaluate("() => window.__clickCounts")
+        browser.close()
+    if isinstance(result, dict) and isinstance(clicks, dict):
+        result["__sendClickCount"] = int(clicks.get("send") or 0)
+        result["__foreignClickCount"] = int(clicks.get("foreign") or 0)
+        result["__bodyClickCount"] = int(clicks.get("body") or 0)
+    return result if isinstance(result, dict) else {}
+
+
+def _real_dom_refusal_flags(refusal: str) -> dict[str, Any]:
+    """Map F2–F5 refusal shapes to real DOM layout flags."""
+    shapes: dict[str, dict[str, Any]] = {
+        "second_editable_with_send": {
+            "second_visible_editable": True,
+            "include_footer_send": True,
+        },
+        "text_input": {"text_input_in_col": True, "include_footer_send": True},
+        "textarea": {"textarea_in_col": True, "include_footer_send": True},
+        "foreign_form": {"foreign_form_in_layout": True, "include_footer_send": True},
+        "unlabelled_submit": {
+            "include_footer_send": False,
+            "unlabelled_submit_on_body": True,
+        },
+        "stop_testid_footer": {
+            "footer_stop_testid": True,
+            "include_footer_send": False,
+        },
+        "own_form_stop_submit": {
+            "stop_type_submit_in_form": True,
+            "include_footer_send": False,
+        },
+        "attached_body_send": {
+            "include_footer_send": False,
+            "unlabelled_submit_on_body": True,
+        },
+        "disabled_send": {"send_disabled": True, "include_footer_send": True},
+        "late_send": {"include_footer_send": False, "late_send_ms": 250},
+    }
+    return dict(shapes[refusal])
+
+
+@_PLAYWRIGHT_SKIP
+def test_work_real_dom_footer_send_clicks_once() -> None:
+    """Production JS on real Work DOM: one Send prompt click."""
+    line = "wake line after idle"
+    js = _click_send_body(
+        'div.ProseMirror[contenteditable="true"]', line, abort_nonce="pw-foot"
+    )
+    html = _work_real_dom_html(composer_text=line)
+    result = _eval_production_click_send_playwright(
+        js, html, composer_text=line, abort_nonce="pw-foot"
+    )
+    assert result["ok"] is True
+    assert result["send_clicked"] is True
+    assert result["__sendClickCount"] == 1
+
+
+@_PLAYWRIGHT_SKIP
+def test_work_real_dom_disabled_then_enabled_clicks_once() -> None:
+    """F1: real DOM retains enable poll — exactly one click after timer."""
+    js = _click_send_body(
+        'div.ProseMirror[contenteditable="true"]', "wake", abort_nonce="pw-dis"
+    )
+    html = _work_real_dom_html(
+        composer_text="wake",
+        send_disabled=True,
+        enable_send_after_ms=250,
+    )
+    result = _eval_production_click_send_playwright(
+        js, html, composer_text="wake", abort_nonce="pw-dis"
+    )
+    assert result["ok"] is True
+    assert result["__sendClickCount"] == 1
+
+
+@_PLAYWRIGHT_SKIP
+def test_work_real_dom_late_mounted_send_clicks_once() -> None:
+    """Late-mounted footer Send still yields one click within the poll ceiling."""
+    js = _click_send_body(
+        'div.ProseMirror[contenteditable="true"]', "wake", abort_nonce="pw-late"
+    )
+    html = _work_real_dom_html(late_send_ms=250)
+    result = _eval_production_click_send_playwright(
+        js, html, composer_text="wake", abort_nonce="pw-late"
+    )
+    assert result["ok"] is True
+    assert result["__sendClickCount"] == 1
+
+
+@_PLAYWRIGHT_SKIP
+@pytest.mark.parametrize(
+    "refusal",
+    [
+        "second_editable_with_send",
+        "text_input",
+        "textarea",
+        "foreign_form",
+        "unlabelled_submit",
+        "stop_testid_footer",
+        "own_form_stop_submit",
+        "attached_body_send",
+        "disabled_send",
+    ],
+)
+def test_work_real_dom_normal_send_refusals(refusal: str) -> None:
+    """Real DOM: rival scopes return no_send_button with zero Send clicks."""
+    js = _click_send_body(
+        'div.ProseMirror[contenteditable="true"]', "wake", abort_nonce=f"pw-{refusal}"
+    )
+    html = _work_real_dom_html(composer_text="wake", **_real_dom_refusal_flags(refusal))
+    result = _eval_production_click_send_playwright(
+        js, html, composer_text="wake", abort_nonce=f"pw-{refusal}"
+    )
+    assert result["ok"] is False
+    assert result["reason"] == "no_send_button"
+    assert result["__sendClickCount"] == 0
+
+
+@_PLAYWRIGHT_SKIP
+def test_work_real_dom_hidden_twin_uses_visible_editor() -> None:
+    """Hidden 0×0 twin is ignored; visible Work editor still sends once."""
+    js = _click_send_body(
+        'div.ProseMirror[contenteditable="true"]', "wake", abort_nonce="pw-twin"
+    )
+    html = _work_real_dom_html(composer_text="wake", hidden_twin=True)
+    result = _eval_production_click_send_playwright(
+        js, html, composer_text="wake", abort_nonce="pw-twin"
+    )
+    assert result["ok"] is True
+    assert result["__sendClickCount"] == 1
+
+
+@_PLAYWRIGHT_SKIP
+def test_work_real_dom_ambiguous_visible_editors_refuse() -> None:
+    """Two visible Work editors → no_composer / no_send_button, zero clicks."""
+    js = _click_send_body(
+        'div.ProseMirror[contenteditable="true"]', "wake", abort_nonce="pw-ambig"
+    )
+    html = _work_real_dom_html(
+        composer_text="wake",
+        second_work_labeled_editable=True,
+        include_footer_send=True,
+    )
+    result = _eval_production_click_send_playwright(
+        js, html, composer_text="wake", abort_nonce="pw-ambig"
+    )
+    assert result["ok"] is False
+    assert result["reason"] in {"no_composer", "no_send_button"}
+    assert result["__sendClickCount"] == 0

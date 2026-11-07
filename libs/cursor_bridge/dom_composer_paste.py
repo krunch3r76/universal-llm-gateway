@@ -208,11 +208,17 @@ function ulgComposerSendRoot(el) {
     const ce = n.getAttribute && n.getAttribute('contenteditable');
     return String(ce || '').toLowerCase() === 'true';
   };
+  const isVisibleEditable = (n) => {
+    if (!isEditable(n)) return false;
+    if (!n.isConnected) return false;
+    const rect = n.getBoundingClientRect();
+    return rect.width > 0 && rect.height > 0;
+  };
   const hasSecondComposer = (root) => {
     if (!root || typeof root.querySelectorAll !== 'function') return false;
     let count = 0;
     root.querySelectorAll('[contenteditable="true"]').forEach((node) => {
-      if (isEditable(node)) count += 1;
+      if (isVisibleEditable(node)) count += 1;
     });
     return count > 1;
   };
@@ -421,7 +427,60 @@ INSTALL_OPERATOR_ACTIVITY_PROBE_JS = rf"""
 }})()
 """
 
-READ_OPERATOR_BUSY_JS = r"""
+_WORK_EDITOR_RESOLVE_JS = r"""
+function ulgWorkEditorLabeled(el) {
+  const label = String((el && el.getAttribute && el.getAttribute('aria-label')) || '').toLowerCase();
+  return label.includes('work with chatgpt');
+}
+function ulgWorkEditorRenderedVisible(el) {
+  if (!el) return false;
+  if (el.isConnected === false) return false;
+  if ('inert' in el && el.inert) return false;
+  let p = el.parentElement;
+  while (p) {
+    if ('inert' in p && p.inert) return false;
+    p = p.parentElement;
+  }
+  const rect = el.getBoundingClientRect();
+  if (rect.width <= 0 || rect.height <= 0) return false;
+  if (typeof window.getComputedStyle === 'function') {
+    const st = window.getComputedStyle(el);
+    if (st.visibility === 'hidden' || st.display === 'none' || Number(st.opacity || '1') === 0) {
+      return false;
+    }
+  }
+  return true;
+}
+function ulgAnyHiddenWorkEditor() {
+  if (!document || typeof document.querySelectorAll !== 'function') return false;
+  const nodes = document.querySelectorAll('[contenteditable="true"][role="textbox"]');
+  for (const el of nodes) {
+    if (!ulgWorkEditorLabeled(el)) continue;
+    if (!ulgWorkEditorRenderedVisible(el)) return true;
+  }
+  return false;
+}
+function ulgResolveVisibleWorkComposer() {
+  if (!document || typeof document.querySelectorAll !== 'function') {
+    return {ok: false, reason: 'no_composer'};
+  }
+  const candidates = [];
+  const nodes = document.querySelectorAll('[contenteditable="true"][role="textbox"]');
+  for (const el of nodes) {
+    if (!el || !ulgWorkEditorLabeled(el)) continue;
+    if (!ulgWorkEditorRenderedVisible(el)) continue;
+    if (el.querySelector && el.querySelector('textarea,input[type="text"]')) continue;
+    candidates.push(el);
+  }
+  if (!candidates.length) return {ok: false, reason: 'no_composer'};
+  if (candidates.length > 1) return {ok: false, reason: 'ambiguous_work_composer'};
+  return {ok: true, el: candidates[0]};
+}
+"""
+
+READ_OPERATOR_BUSY_JS = (
+    _WORK_EDITOR_RESOLVE_JS
+    + r"""
 (() => {
   const g = window.__ulgOperatorActivity || {};
   const now = Date.now();
@@ -430,9 +489,14 @@ READ_OPERATOR_BUSY_JS = r"""
   const operatorActive = last > 0 && (now - last) < idleMs;
   const sels = %SELECTORS%;
   let el = null;
-  for (const s of sels) {
-    el = document.querySelector(s);
-    if (el) break;
+  const work = ulgResolveVisibleWorkComposer();
+  if (work.ok) {
+    el = work.el;
+  } else if (work.reason !== 'ambiguous_work_composer') {
+    for (const s of sels) {
+      el = document.querySelector(s);
+      if (el) break;
+    }
   }
   const draft = el ? (el.innerText || '').trim() : '';
   const sig = String(g.ourDraftSig || '').trim();
@@ -452,6 +516,7 @@ READ_OPERATOR_BUSY_JS = r"""
   };
 })()
 """
+)
 
 _SEND_BTN_SELECTORS = (
     'button[aria-label="Send message"]:not([disabled])',
@@ -496,29 +561,18 @@ def _selector_list(selector: str) -> list[str]:
 
 
 def _find_composer_js(selector: str) -> str:
+    """Resolve composer: visible Work editor first, else selector list (ambiguous Work → null)."""
     sels = json.dumps(_selector_list(selector) or [selector])
-    return f"(()=>{{const sels={sels};for(const s of sels){{const el=document.querySelector(s);if(el)return el;}}return null;}})()"
-
-
-_WORK_EDITOR_RESOLVE_JS = r"""
-function ulgResolveVisibleWorkComposer() {
-  const candidates = [];
-  const nodes = document.querySelectorAll('[contenteditable="true"][role="textbox"]');
-  for (const el of nodes) {
-    if (!el || !el.isConnected) continue;
-    if (el.inert) continue;
-    const rect = el.getBoundingClientRect();
-    if (rect.width <= 0 || rect.height <= 0) continue;
-    const label = String(el.getAttribute('aria-label') || '').toLowerCase();
-    if (!label.includes('work with chatgpt')) continue;
-    if (el.querySelector && el.querySelector('textarea,input[type="text"]')) continue;
-    candidates.push(el);
-  }
-  if (!candidates.length) return {ok: false, reason: 'no_composer'};
-  if (candidates.length > 1) return {ok: false, reason: 'ambiguous_work_composer'};
-  return {ok: true, el: candidates[0]};
-}
-"""
+    return (
+        f"(()=>{{{_WORK_EDITOR_RESOLVE_JS}"
+        f"const sels={sels};"
+        "const work=ulgResolveVisibleWorkComposer();"
+        "if(work.ok)return work.el;"
+        "if(work.reason==='ambiguous_work_composer')return null;"
+        "if(work.reason==='no_composer'&&ulgAnyHiddenWorkEditor())return null;"
+        "for(const s of sels){const el=document.querySelector(s);if(el)return el;}"
+        "return null;})()"
+    )
 
 
 def work_native_unsupported_probe_js(*, expected_url: str) -> str:
@@ -579,7 +633,7 @@ def _set_composer_body(
         "}else if(el.tagName==='TEXTAREA'||el.tagName==='INPUT'){"
         "el.value=line;el.dispatchEvent(new Event('input',{bubbles:true}));"
         "}else if(el.pmViewDesc){"
-        "return{ok:false,reason:'work_native_unsupported',phase:'insertion_failed',inserted:false,pasted:false,send_clicked:false};}"
+        "return{ok:false,reason:'work_native_unsupported',phase:'insertion_failed',inserted:false,pasted:false,send_clicked:false};"
         "}else{"
         "return{ok:false,reason:'insertion_failed',phase:'insertion_failed',inserted:false,pasted:false,send_clicked:false};}"
         "let after=ulgNormalizeComposerText(el.innerText||el.value||'');"
@@ -1141,7 +1195,7 @@ async def dom_insert_and_send(
             }
         if probe.get("eligible") is not True:
             reason = str(probe.get("reason") or "work_native_unsupported")
-            if reason == "work_dom_api_available":
+            if reason in ("work_dom_api_available", "no_composer"):
                 ins = await dom_set_composer_text(
                     ws_url,
                     selector=selector,
@@ -1149,7 +1203,11 @@ async def dom_insert_and_send(
                     preserve_newlines=preserve_newlines,
                     draft_writer=draft_writer,
                 )
-            else:
+            elif reason in (
+                "work_native_unsupported",
+                "url_mismatch",
+                "ambiguous_work_composer",
+            ):
                 return {
                     "ok": False,
                     "reason": reason,
@@ -1157,6 +1215,14 @@ async def dom_insert_and_send(
                     "inserted": False,
                     "phase": "insertion_failed",
                 }
+            else:
+                ins = await dom_set_composer_text(
+                    ws_url,
+                    selector=selector,
+                    text=line,
+                    preserve_newlines=preserve_newlines,
+                    draft_writer=draft_writer,
+                )
         else:
             ins = await cdp_work_native_insert_text(
                 ws_url,
