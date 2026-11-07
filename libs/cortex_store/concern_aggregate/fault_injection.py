@@ -13,6 +13,9 @@ _after_write_intent_insert: Hook | None = None
 _after_head_update: Hook | None = None
 _after_cursor_update: Hook | None = None
 _during_checkpoint_write: Hook | None = None
+_between_resolve_and_admit: Hook | None = None
+_after_begin: Hook | None = None
+_after_controls_read: Hook | None = None
 
 _enabled: bool | None = None
 
@@ -74,14 +77,39 @@ def set_during_checkpoint_write(hook: Hook | None) -> None:
     _during_checkpoint_write = hook
 
 
+def set_between_resolve_and_admit(hook: Hook | None) -> None:
+    global _between_resolve_and_admit
+    if hook is not None:
+        _require_enabled_for_set()
+    _between_resolve_and_admit = hook
+
+
+def set_after_begin(hook: Hook | None) -> None:
+    global _after_begin
+    if hook is not None:
+        _require_enabled_for_set()
+    _after_begin = hook
+
+
+def set_after_controls_read(hook: Hook | None) -> None:
+    global _after_controls_read
+    if hook is not None:
+        _require_enabled_for_set()
+    _after_controls_read = hook
+
+
 def clear_all() -> None:
     global _after_journal_insert, _after_write_intent_insert, _after_head_update
     global _after_cursor_update, _during_checkpoint_write
+    global _between_resolve_and_admit, _after_begin, _after_controls_read
     _after_journal_insert = None
     _after_write_intent_insert = None
     _after_head_update = None
     _after_cursor_update = None
     _during_checkpoint_write = None
+    _between_resolve_and_admit = None
+    _after_begin = None
+    _after_controls_read = None
 
 
 def maybe_after_journal_insert() -> None:
@@ -108,3 +136,18 @@ def maybe_during_checkpoint_write(state: dict[str, Any]) -> None:
     del state
     if is_enabled() and _during_checkpoint_write is not None:
         _during_checkpoint_write()
+
+
+def maybe_between_resolve_and_admit() -> None:
+    if is_enabled() and _between_resolve_and_admit is not None:
+        _between_resolve_and_admit()
+
+
+def maybe_after_begin() -> None:
+    if is_enabled() and _after_begin is not None:
+        _after_begin()
+
+
+def maybe_after_controls_read() -> None:
+    if is_enabled() and _after_controls_read is not None:
+        _after_controls_read()
