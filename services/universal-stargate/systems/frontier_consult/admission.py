@@ -642,6 +642,7 @@ async def verify_thread_writable(
             field="thread",
             reason=f"Agent-bus unreachable during thread check: {exc}",
             status_code=503,
+            code="agent_bus_unreachable",
         ) from exc
     if resp.status_code == 404:
         raise FrontierEndpointError(
@@ -656,6 +657,7 @@ async def verify_thread_writable(
             field="thread",
             reason=f"Thread '{thread}' check failed: HTTP {resp.status_code}.",
             status_code=503,
+            code="agent_bus_error",
         )
     data: dict[str, Any] = resp.json()
     status: str = data.get("status", "")

@@ -1334,8 +1334,7 @@ def test_owed_wake_covers_turn_true_only_for_dispatched_outcome(
         )
         conn.commit()
     assert (
-        _owed_wake_covers_turn(agent="maestro", thread_id="001", turn_number=1)
-        is False
+        _owed_wake_covers_turn(agent="maestro", thread_id="001", turn_number=1) is False
     )
     with store._connect() as conn:
         conn.execute(
@@ -1663,3 +1662,60 @@ def test_skip_reason_returns_seat_superseded_for_superseded_cse_holder(
         ).fetchone()
         assert row is not None
         assert _skip_reason(conn, row) == "seat_superseded"
+
+
+def test_escalate_composer_deferred_stamp_fn_outside_write_connect_no_deadlock(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """stamp_fn may acquire write_connect on another thread without self-deadlock."""
+    from bus_watch.endpoint_wake_composer_defer import (
+        COMPOSER_DEFER_SWEEP,
+        escalate_composer_deferred_on_sweep,
+    )
+
+    monkeypatch.setenv("AGENT_BUS_DB_PATH", str(tmp_path / "bus.db"))
+    init_db()
+    detail = create_thread(thread_id=None, slug="composer-defer-deadlock")
+    assert detail is not None
+    thread = str(detail["id"])
+    turn_id, _ts, number, _c = insert_turn(
+        thread=thread,
+        from_agent="cursor",
+        to_agent="grok-bot-gc1",
+        subject="FACT|x",
+        body="b",
+    )
+    with write_connect() as conn:
+        conn.execute(
+            "INSERT INTO endpoint_wake_ledger "
+            "(agent, thread_id, turn_id, turn_number, state, route, reason, "
+            "decided_by_rule) "
+            "VALUES (?, ?, ?, ?, 'pending', 'exact', ?, ?)",
+            (
+                "grok-bot-gc1",
+                thread,
+                turn_id,
+                number,
+                "composer_not_empty",
+                COMPOSER_DEFER_SWEEP,
+            ),
+        )
+
+    class _Store:
+        def create_turn(self, **kwargs: object) -> dict:
+            nested_ok: dict[str, bool] = {"ok": False}
+
+            def _nested_write() -> None:
+                with write_connect() as conn:
+                    conn.execute("SELECT 1")
+                nested_ok["ok"] = True
+
+            worker = threading.Thread(target=_nested_write)
+            worker.start()
+            worker.join(timeout=1.0)
+            assert not worker.is_alive(), "nested write_connect blocked (deadlock)"
+            assert nested_ok["ok"]
+            return {"ok": True}
+
+    assert escalate_composer_deferred_on_sweep(_Store()) == 1

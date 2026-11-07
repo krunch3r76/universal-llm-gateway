@@ -1307,8 +1307,9 @@ async def create_handoff_thread(
         raise FrontierEndpointError(
             request_id=request_id,
             field="thread",
-            reason=f"Agent-bus unreachable: {exc}",
+            reason=f"Agent-bus unreachable ({type(exc).__name__}): {exc}",
             status_code=503,
+            code="agent_bus_unreachable",
         ) from exc
 
     if resp.status_code >= 400:
@@ -1320,6 +1321,7 @@ async def create_handoff_thread(
                 f"{resp.text[:200]}"
             ),
             status_code=502,
+            code="agent_bus_error",
         )
 
     result: dict[str, Any] = resp.json()
@@ -1331,4 +1333,5 @@ async def create_handoff_thread(
             field="thread",
             reason=f"Agent-bus 2xx response malformed: {exc}",
             status_code=502,
+            code="agent_bus_error",
         ) from exc

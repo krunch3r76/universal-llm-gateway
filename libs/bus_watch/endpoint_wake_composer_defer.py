@@ -123,6 +123,7 @@ def _maestro_escalation_body(row: dict[str, Any]) -> str:
 
 def escalate_composer_deferred_on_sweep(store: Any) -> int:
     """Refuse sweep-eligible composer defers and post one maestro turn per row."""
+    escalated_items: list[dict[str, Any]] = []
     with write_connect() as conn:
         rows = conn.execute(
             "SELECT id, agent, thread_id, turn_number, reason, decided_by_rule "
@@ -132,8 +133,6 @@ def escalate_composer_deferred_on_sweep(store: Any) -> int:
         ).fetchall()
         if not rows:
             return 0
-        stamp_fn = getattr(store, "create_turn", None)
-        count = 0
         for row in rows:
             item = dict(row)
             rid = int(item["id"])
@@ -142,24 +141,28 @@ def escalate_composer_deferred_on_sweep(store: Any) -> int:
                 "decided_by_rule=?, finished_at=datetime('now') WHERE id=?",
                 (COMPOSER_DEFER_ESCALATED, rid),
             )
-            if stamp_fn is None:
-                count += 1
-                continue
-            try:
-                stamp_fn(
-                    thread=str(item["thread_id"]),
-                    from_agent="agent_bus",
-                    to_agent="maestro",
-                    subject=_ESCALATION_SUBJECT,
-                    body=_maestro_escalation_body(item),
-                )
-            except Exception:
-                logger.exception(
-                    "composer_defer escalation failed thread=%s",
-                    item.get("thread_id"),
-                )
+            escalated_items.append(item)
+    stamp_fn = getattr(store, "create_turn", None)
+    count = 0
+    for item in escalated_items:
+        if stamp_fn is None:
             count += 1
-        return count
+            continue
+        try:
+            stamp_fn(
+                thread=str(item["thread_id"]),
+                from_agent="agent_bus",
+                to_agent="maestro",
+                subject=_ESCALATION_SUBJECT,
+                body=_maestro_escalation_body(item),
+            )
+        except Exception:
+            logger.exception(
+                "composer_defer escalation failed thread=%s",
+                item.get("thread_id"),
+            )
+        count += 1
+    return count
 
 
 def notify_composer_empty_for_target(

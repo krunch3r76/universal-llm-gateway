@@ -118,9 +118,7 @@ def test_stage_inputs_prepends_claude_slash_skills(tmp_path, monkeypatch) -> Non
     text = prompt_path.read_text(encoding="utf-8")
     # Spec fork 8 / staging marker (stage_cdp_prompt_with_skills):
     # shared_sync floor is the cdp-required-skills marker, not a leading slash block.
-    assert (
-        "<!--cdp-required-skills:reasoning-posture,consult-posture-->" in text
-    )
+    assert "<!--cdp-required-skills:reasoning-posture,consult-posture-->" in text
     assert "## ask" in text
     assert staged.staged is True
 
@@ -170,9 +168,7 @@ def test_stage_inputs_inlines_non_claude_skills(tmp_path, monkeypatch) -> None:
     # Judgment skill is the marker; caller non-Claude stays inline.
     # stage_cdp_prompt_with_skills (spec acceptance item 3 judgment floor).
     # render_cdp_required_authority: floor plus the inlined non-Claude slug.
-    assert (
-        "<!--cdp-required-skills:reasoning-posture,investigation-economy-->" in text
-    )
+    assert "<!--cdp-required-skills:reasoning-posture,investigation-economy-->" in text
     assert "<skills_inline>" in text
     assert '<skill slug="investigation-economy"' in text
     assert "BODY" in text
@@ -221,9 +217,7 @@ def test_stage_inputs_inlines_code_mcp_skills_with_claude_slash(
     text = prompt_path.read_text(encoding="utf-8")
     # stage_cdp_prompt_with_skills: marker, not a leading slash.
     # render_cdp_required_authority: caller slug then the judgment floor.
-    assert (
-        "<!--cdp-required-skills:investigation-economy,reasoning-posture-->" in text
-    )
+    assert "<!--cdp-required-skills:investigation-economy,reasoning-posture-->" in text
     assert "/investigation-economy" not in text.split("<skills_inline>", 1)[0]
     assert '<skill slug="investigation-economy"' in text
     assert "BODY" in text
@@ -1323,11 +1317,7 @@ def _stub_cdp_generate_after_gate(
     from systems.frontier_consult import cdp_generate as mod
 
     def _ephemeral(execution_id: str):
-        return (
-            tmp_path
-            / "notes/system/ephemeral/cdp-endpoint"
-            / execution_id
-        )
+        return tmp_path / "notes/system/ephemeral/cdp-endpoint" / execution_id
 
     monkeypatch.setattr(staging, "ephemeral_dir", _ephemeral)
     monkeypatch.setattr(staging, "cortex_files_root", lambda: tmp_path)
@@ -2670,9 +2660,7 @@ async def test_supplied_thread_timeout_retry_call_count(
     )
     assert calls["n"] == 2
     turns = get_turns(thread=thread_id)
-    pointer = [
-        t for t in turns if "CDP generate admitted" in (t.get("body") or "")
-    ]
+    pointer = [t for t in turns if "CDP generate admitted" in (t.get("body") or "")]
     assert len(pointer) == 1
 
 
@@ -2748,9 +2736,7 @@ async def test_supplied_thread_read_timeout_retries_one_link(
     assert len(detail["dispatch_links"]) == 1
     assert detail["dispatch_links"][0]["execution_id"] == execution_id
     turns = get_turns(thread=thread_id)
-    pointer = [
-        t for t in turns if "CDP generate admitted" in (t.get("body") or "")
-    ]
+    pointer = [t for t in turns if "CDP generate admitted" in (t.get("body") or "")]
     assert len(pointer) == 1
 
 
@@ -2826,9 +2812,7 @@ async def test_supplied_thread_read_timeout_after_commit_one_pointer_turn(
     assert detail is not None
     assert len(detail["dispatch_links"]) == 1
     turns = get_turns(thread=thread_id)
-    pointer = [
-        t for t in turns if "CDP generate admitted" in (t.get("body") or "")
-    ]
+    pointer = [t for t in turns if "CDP generate admitted" in (t.get("body") or "")]
     assert len(pointer) == 1
     pointer_turn = int(pointer[0]["turn_number"])
     assert captured["after_turn"] == pointer_turn
@@ -2905,9 +2889,7 @@ async def test_supplied_thread_after_turn_is_pointer_turn(
         response=response,
     )
     turns = get_turns(thread=thread_id)
-    pointer = [
-        t for t in turns if "CDP generate admitted" in (t.get("body") or "")
-    ]
+    pointer = [t for t in turns if "CDP generate admitted" in (t.get("body") or "")]
     assert len(pointer) == 1
     assert captured["after_turn"] == int(pointer[0]["turn_number"])
     assert captured["after_turn"] > 1
@@ -3064,6 +3046,100 @@ async def test_post_pointer_turn_transport_error_agent_bus_unreachable(
     assert exc.value.code != "persona_violation"
 
 
+def _failing_bus_client_factory(
+    exc: BaseException,
+) -> Any:
+    import httpx
+
+    class _FailingClient:
+        async def __aenter__(self) -> _FailingClient:
+            return self
+
+        async def __aexit__(self, *args: object) -> None:
+            return None
+
+        async def post(self, *args: Any, **kwargs: Any) -> httpx.Response:
+            raise exc
+
+        async def get(self, *args: Any, **kwargs: Any) -> httpx.Response:
+            raise exc
+
+    def _client(_url: str, *, timeout: float = 10.0) -> _FailingClient:
+        return _FailingClient()
+
+    return _client
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "exc",
+    [
+        pytest.param(
+            __import__("httpx").ConnectError("connection refused"),
+            id="connect_error",
+        ),
+        pytest.param(__import__("httpx").ReadTimeout(""), id="read_timeout_empty"),
+    ],
+)
+async def test_create_handoff_thread_transport_error_agent_bus_unreachable(
+    monkeypatch: pytest.MonkeyPatch,
+    exc: BaseException,
+) -> None:
+    from systems.frontier_consult.handoff import create_handoff_thread
+
+    monkeypatch.setattr(
+        "systems.frontier_consult.handoff.make_async_client",
+        _failing_bus_client_factory(exc),
+    )
+    monkeypatch.setenv("ALLOW_UNSET_AGENT_BUS_TOKEN", "1")
+
+    with pytest.raises(FrontierEndpointError) as raised:
+        await create_handoff_thread(
+            request_id="req-handoff-transport",
+            to_agent="web-anthropic",
+            subject="FACT|handoff",
+            pointer_body="body",
+            caller_agent="dispatch",
+            tags=None,
+            handoff_contract=None,
+        )
+    assert raised.value.code == "agent_bus_unreachable"
+    assert raised.value.code != "persona_violation"
+    assert type(exc).__name__ in raised.value.reason
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "exc",
+    [
+        pytest.param(
+            __import__("httpx").ConnectError("connection refused"),
+            id="connect_error",
+        ),
+        pytest.param(__import__("httpx").ReadTimeout(""), id="read_timeout_empty"),
+    ],
+)
+async def test_verify_thread_writable_transport_error_agent_bus_unreachable(
+    monkeypatch: pytest.MonkeyPatch,
+    exc: BaseException,
+) -> None:
+    from systems.frontier_consult.admission import verify_thread_writable
+
+    monkeypatch.setattr(
+        "systems.frontier_consult.admission.make_async_client",
+        _failing_bus_client_factory(exc),
+    )
+
+    with pytest.raises(FrontierEndpointError) as raised:
+        await verify_thread_writable(
+            "42",
+            request_id="req-thread-check",
+            auth_token="",
+        )
+    assert raised.value.code == "agent_bus_unreachable"
+    assert raised.value.code != "persona_violation"
+
+
 @pytest.mark.asyncio
 async def test_admit_and_post_pointer_turn_missing_pointer_turn_warns(
     monkeypatch: pytest.MonkeyPatch,
@@ -3104,7 +3180,4 @@ async def test_admit_and_post_pointer_turn_missing_pointer_turn_warns(
         pipeline_id="cdp-generate",
     )
     assert after_turn == 0
-    assert any(
-        "missing pointer_turn" in rec.message for rec in caplog.records
-    )
-
+    assert any("missing pointer_turn" in rec.message for rec in caplog.records)
