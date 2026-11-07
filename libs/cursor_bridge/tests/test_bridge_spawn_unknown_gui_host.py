@@ -2,10 +2,9 @@
 
 from __future__ import annotations
 
-import pytest
-
 from unittest.mock import patch
 
+import pytest
 from cursor_bridge.bridge_spawn_relay import relay_spawn_house, relay_spawn_tab
 
 pytestmark = pytest.mark.offline

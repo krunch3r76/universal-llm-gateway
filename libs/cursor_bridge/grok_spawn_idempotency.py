@@ -62,6 +62,8 @@ def begin(key: str, digest: str) -> dict[str, Any]:
                 "code": "create_unknown",
                 "needs_operator": True,
             }
+        if slot.get("owner"):
+            return {"action": "in_flight", "code": "idempotency_in_flight"}
         phase = str(slot.get("steer_phase") or "not_sent")
         if phase in {"attempting", "sent_unknown"}:
             return {
@@ -70,8 +72,6 @@ def begin(key: str, digest: str) -> dict[str, Any]:
                 "needs_operator": True,
                 "agent_id": slot.get("agent_id"),
             }
-        if slot.get("owner"):
-            return {"action": "in_flight", "code": "idempotency_in_flight"}
         if slot.get("state") == "created":
             slot["state"] = "resuming"
             slot["owner"] = token
@@ -101,7 +101,9 @@ def mark_steer(key: str, token: str, phase: str) -> None:
     note(key, token, steer_phase=phase)
 
 
-def release(key: str, token: str, *, outcome: str, receipt: dict[str, Any] | None = None) -> None:
+def release(
+    key: str, token: str, *, outcome: str, receipt: dict[str, Any] | None = None
+) -> None:
     """Drop ownership. Only the matching token may change the phase."""
     with _LOCK:
         slot = _SLOTS.get(key)

@@ -27,6 +27,8 @@ from cursor_bridge.grok_spawn_idempotency import (
 
 logger = get_logger(__name__)
 
+_PROVEN_NO_CREATE = frozenset({"roster_api_missing", "grok_client_missing"})
+
 
 async def run_spawn(
     display: str | int,
@@ -112,6 +114,14 @@ async def run_spawn(
             except asyncio.CancelledError:
                 release(idem, token, outcome="create_unknown")
                 raise
+            except ops.CdpPreSendError as exc:
+                release(idem, token, outcome="drop")
+                return {
+                    "ok": False,
+                    "code": "cdp_unreachable",
+                    "reason": type(exc).__name__,
+                    "display": ops._display_key(display),
+                }
             except (OSError, TimeoutError, URLError, RuntimeError, ValueError) as exc:
                 release(idem, token, outcome="create_unknown")
                 return {
@@ -121,11 +131,28 @@ async def run_spawn(
                     "reason": type(exc).__name__,
                     "display": ops._display_key(display),
                 }
-            if not isinstance(raw, dict) or raw.get("ok") is not True or not raw.get("created"):
-                release(idem, token, outcome="drop")
+            code = str(raw.get("code") or "") if isinstance(raw, dict) else ""
+            created = (
+                isinstance(raw, dict)
+                and raw.get("ok") is True
+                and raw.get("created") is True
+                and bool(raw.get("agent_id"))
+            )
+            if not created:
+                if code in _PROVEN_NO_CREATE:
+                    release(idem, token, outcome="drop")
+                    return {
+                        "ok": False,
+                        "code": code,
+                        "display": ops._display_key(display),
+                        "detail": raw,
+                    }
+                release(idem, token, outcome="create_unknown")
                 return {
                     "ok": False,
-                    "code": str((raw or {}).get("code") if isinstance(raw, dict) else "spawn_failed"),
+                    "code": "create_unknown",
+                    "needs_operator": True,
+                    "reason": code or "spawn_unconfirmed",
                     "display": ops._display_key(display),
                     "detail": raw,
                 }
@@ -267,4 +294,3 @@ async def run_spawn(
         }
     finally:
         release(idem, token, outcome="created" if agent_id else "create_unknown")
-

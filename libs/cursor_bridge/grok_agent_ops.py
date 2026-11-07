@@ -52,16 +52,30 @@ def _unknown(display: str | int) -> dict[str, Any]:
     }
 
 
-async def _eval_display(display: str | int, expression: str, *, timeout_s: float = 30.0) -> Any:
+class CdpPreSendError(OSError):
+    """Page lookup failed before an expression was sent.
+
+    Callers may drop an idempotency slot on this type. Failures from
+    ``_cdp_eval`` stay ordinary transport errors because the expression
+    may already have run.
+    """
+
+
+async def _eval_display(
+    display: str | int, expression: str, *, timeout_s: float = 30.0
+) -> Any:
     """Evaluate on the container-aware Grok page. ``list_pages`` is off-loop."""
     port = _port(display)
     if port is None:
         raise ValueError("unknown display")
     origin = container_cdp_origin(f"http://127.0.0.1:{port}")
-    pages = await asyncio.to_thread(list_pages, origin, timeout_s=5.0)
+    try:
+        pages = await asyncio.to_thread(list_pages, origin, timeout_s=5.0)
+    except (OSError, TimeoutError, URLError, RuntimeError) as exc:
+        raise CdpPreSendError(type(exc).__name__) from exc
     page = _pick_grok_page(pages)
     if page is None or not page.get("web_socket_debugger_url"):
-        raise OSError(f"no Grok Bot CDP page on {origin}")
+        raise CdpPreSendError(f"no Grok Bot CDP page on {origin}")
     return await _cdp_eval(
         str(page["web_socket_debugger_url"]),
         expression,
@@ -96,7 +110,11 @@ async def list_grok_agents_async(
     except (OSError, TimeoutError, URLError, RuntimeError, ValueError) as exc:
         return _cdp_error(display, exc)
     if not isinstance(raw, dict) or raw.get("ok") is not True:
-        return {**(raw if isinstance(raw, dict) else {}), "ok": False, "display": _display_key(display)}
+        return {
+            **(raw if isinstance(raw, dict) else {}),
+            "ok": False,
+            "display": _display_key(display),
+        }
     return {**raw, "display": _display_key(display), "cdp_port": _port(display)}
 
 
@@ -118,7 +136,11 @@ async def select_grok_agent_async(display: str | int, agent_id: str) -> dict[str
     """Select ``agent_id`` and require ``currentAgentId`` to match."""
     aid = str(agent_id or "").strip()
     if not aid:
-        return {"ok": False, "code": "agent_id_required", "reason": "agent_id is required"}
+        return {
+            "ok": False,
+            "code": "agent_id_required",
+            "reason": "agent_id is required",
+        }
     if _port(display) is None:
         return _unknown(display)
     try:
@@ -126,7 +148,11 @@ async def select_grok_agent_async(display: str | int, agent_id: str) -> dict[str
     except (OSError, TimeoutError, URLError, RuntimeError, ValueError) as exc:
         return _cdp_error(display, exc)
     if not isinstance(raw, dict):
-        return {"ok": False, "code": "bad_cdp_payload", "display": _display_key(display)}
+        return {
+            "ok": False,
+            "code": "bad_cdp_payload",
+            "display": _display_key(display),
+        }
     out = {**raw, "display": _display_key(display), "agent_id": aid}
     if raw.get("ok") is not True:
         out.setdefault("code", "selection_failed")
@@ -143,10 +169,17 @@ def _voice_refusal(
 ) -> dict[str, Any] | None:
     voice_s = (voice or "self").strip().lower()
     if voice_s not in {"self", "operator_relay"}:
-        return {"ok": False, "code": "unsupported_voice", "reason": f"unsupported voice: {voice!r}"}
+        return {
+            "ok": False,
+            "code": "unsupported_voice",
+            "reason": f"unsupported voice: {voice!r}",
+        }
     if voice_s == "operator_relay" and text.strip():
         grant_s = (grant or "").strip().lower()
-        if grant_s not in {"operator", "explicit"} or not (authorization_source or "").strip():
+        if (
+            grant_s not in {"operator", "explicit"}
+            or not (authorization_source or "").strip()
+        ):
             return {
                 "ok": False,
                 "code": "watermark_missing_authorization",
@@ -156,7 +189,9 @@ def _voice_refusal(
 
 
 def _digest(**parts: Any) -> str:
-    return hashlib.sha256(json.dumps(parts, sort_keys=True, default=str).encode()).hexdigest()
+    return hashlib.sha256(
+        json.dumps(parts, sort_keys=True, default=str).encode()
+    ).hexdigest()
 
 
 async def spawn_grok_agent_async(
@@ -227,7 +262,9 @@ def spawn_grok_agent(
     )
 
 
-async def retire_grok_agent_async(display: str | int, agent_id: str, *, name: str = "") -> dict[str, Any]:
+async def retire_grok_agent_async(
+    display: str | int, agent_id: str, *, name: str = ""
+) -> dict[str, Any]:
     """Rename with a retired suffix, hide, then unsubscribe matching rows."""
     del name
     aid = str(agent_id or "").strip()
@@ -262,7 +299,9 @@ async def retire_grok_agent_async(display: str | int, agent_id: str, *, name: st
     }
 
 
-def retire_grok_agent(display: str | int, agent_id: str, *, name: str = "") -> dict[str, Any]:
+def retire_grok_agent(
+    display: str | int, agent_id: str, *, name: str = ""
+) -> dict[str, Any]:
     """Synchronous wrapper for :func:`retire_grok_agent_async`."""
     return asyncio.run(retire_grok_agent_async(display, agent_id, name=name))
 

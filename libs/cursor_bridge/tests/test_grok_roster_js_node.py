@@ -48,8 +48,7 @@ const exprs = JSON.parse(process.argv[1]);
 
 def test_node_executes_roster_filters_create_and_retire() -> None:
     node = shutil.which("node")
-    if not node:
-        pytest.skip("node not installed")
+    assert node, "node is required to execute the roster fixture"
     exprs = {
         "list": js_list(include_hidden=False, include_retired=False),
         "spawn": js_spawn(client_nonce="nonce-1", name="Bot", description="", hidden=True),

@@ -19,7 +19,7 @@ def _surface(**extra: Any) -> dict[str, Any]:
         "active_agent_id": "other",
         "titles": ["Other", "Hidden"],
         "title_counts": {"Other": 1, "Hidden": 1},
-        "agent_ids": {"other": "Other", "hidden-uuid": "Hidden"},
+        "agent_ids": {"other": "Other"},
         "composer_draft": "",
         "generating": False,
         "recent_messages": ["ready"],
@@ -48,14 +48,26 @@ async def test_cdp_select_before_sidebar() -> None:
         return {"clicked": True}
 
     with (
-        patch("cursor_bridge.wake_delivery.list_pages", return_value=[{"title": "Grok Bot", "web_socket_debugger_url": "ws://x"}]),
+        patch(
+            "cursor_bridge.wake_delivery.list_pages",
+            return_value=[{"title": "Grok Bot", "web_socket_debugger_url": "ws://x"}],
+        ),
         patch("cursor_bridge.wake_delivery.probe_surface", side_effect=_probe),
         patch("cursor_bridge.wake_delivery.select_grok_agent_async", side_effect=_cdp),
         patch("cursor_bridge.wake_delivery.select_sidebar_target", side_effect=_side),
-        patch("cursor_bridge.wake_delivery.dom_insert_and_send", new_callable=AsyncMock, return_value={"ok": True, "delivered": True, "pasted": True}),
+        patch(
+            "cursor_bridge.wake_delivery.dom_insert_and_send",
+            new_callable=AsyncMock,
+            return_value={"ok": True, "delivered": True, "pasted": True},
+        ),
     ):
         out = await _deliver_locked(
-            target={"ok": True, "display": "9", "app": "grok", "origin": "http://127.0.0.1:9339"},
+            target={
+                "ok": True,
+                "display": "9",
+                "app": "grok",
+                "origin": "http://127.0.0.1:9339",
+            },
             thread_s="1",
             slug_s="",
             title_s="Hidden",
@@ -64,7 +76,9 @@ async def test_cdp_select_before_sidebar() -> None:
             line="hello",
         )
     assert order == ["cdp"]
-    assert out.get("pasted") is not False or out.get("ok") is not False
+    assert "hidden-uuid" not in _surface()["agent_ids"]
+    assert out.get("ok") is True
+    assert out.get("pasted") is True
 
 
 @pytest.mark.asyncio
@@ -72,22 +86,26 @@ async def test_draft_inside_lock_selects_nothing() -> None:
     surfaces = [_surface(), _surface(composer_draft="human words")]
     cdp = AsyncMock()
     side = AsyncMock()
-    with (
-        patch("cursor_bridge.wake_delivery.list_pages", return_value=[{"title": "Grok Bot", "web_socket_debugger_url": "ws://x"}]),
-        patch("cursor_bridge.wake_delivery.probe_surface", side_effect=surfaces.pop(0) if False else None),
-    ):
-        pass
+
     async def _probe(_ws: str) -> dict[str, Any]:
         return surfaces.pop(0)
 
     with (
-        patch("cursor_bridge.wake_delivery.list_pages", return_value=[{"title": "Grok Bot", "web_socket_debugger_url": "ws://x"}]),
+        patch(
+            "cursor_bridge.wake_delivery.list_pages",
+            return_value=[{"title": "Grok Bot", "web_socket_debugger_url": "ws://x"}],
+        ),
         patch("cursor_bridge.wake_delivery.probe_surface", side_effect=_probe),
         patch("cursor_bridge.wake_delivery.select_grok_agent_async", cdp),
         patch("cursor_bridge.wake_delivery.select_sidebar_target", side),
     ):
         out = await _deliver_locked(
-            target={"ok": True, "display": "9", "app": "grok", "origin": "http://127.0.0.1:9339"},
+            target={
+                "ok": True,
+                "display": "9",
+                "app": "grok",
+                "origin": "http://127.0.0.1:9339",
+            },
             thread_s="1",
             slug_s="",
             title_s="Hidden",
@@ -106,13 +124,29 @@ async def test_failed_cdp_falls_back_to_sidebar() -> None:
     surface = _surface()
     side = AsyncMock(return_value={"clicked": False})
     with (
-        patch("cursor_bridge.wake_delivery.list_pages", return_value=[{"title": "Grok Bot", "web_socket_debugger_url": "ws://x"}]),
-        patch("cursor_bridge.wake_delivery.probe_surface", new_callable=AsyncMock, return_value=surface),
-        patch("cursor_bridge.wake_delivery.select_grok_agent_async", new_callable=AsyncMock, return_value={"ok": False}),
+        patch(
+            "cursor_bridge.wake_delivery.list_pages",
+            return_value=[{"title": "Grok Bot", "web_socket_debugger_url": "ws://x"}],
+        ),
+        patch(
+            "cursor_bridge.wake_delivery.probe_surface",
+            new_callable=AsyncMock,
+            return_value=surface,
+        ),
+        patch(
+            "cursor_bridge.wake_delivery.select_grok_agent_async",
+            new_callable=AsyncMock,
+            return_value={"ok": False},
+        ),
         patch("cursor_bridge.wake_delivery.select_sidebar_target", side),
     ):
         await _deliver_locked(
-            target={"ok": True, "display": "9", "app": "grok", "origin": "http://127.0.0.1:9339"},
+            target={
+                "ok": True,
+                "display": "9",
+                "app": "grok",
+                "origin": "http://127.0.0.1:9339",
+            },
             thread_s="1",
             slug_s="",
             title_s="Hidden",
@@ -136,13 +170,21 @@ async def test_same_chat_false_does_not_select() -> None:
     cdp = AsyncMock()
     side = AsyncMock()
     with (
-        patch("cursor_bridge.wake_delivery.list_pages", return_value=[{"title": "Grok Bot", "web_socket_debugger_url": "ws://x"}]),
+        patch(
+            "cursor_bridge.wake_delivery.list_pages",
+            return_value=[{"title": "Grok Bot", "web_socket_debugger_url": "ws://x"}],
+        ),
         patch("cursor_bridge.wake_delivery.probe_surface", side_effect=_probe),
         patch("cursor_bridge.wake_delivery.select_grok_agent_async", cdp),
         patch("cursor_bridge.wake_delivery.select_sidebar_target", side),
     ):
         out = await _deliver_locked(
-            target={"ok": True, "display": "9", "app": "grok", "origin": "http://127.0.0.1:9339"},
+            target={
+                "ok": True,
+                "display": "9",
+                "app": "grok",
+                "origin": "http://127.0.0.1:9339",
+            },
             thread_s="1",
             slug_s="",
             title_s="Hidden",
