@@ -340,7 +340,7 @@ def _build_server(
         size_only: bool = False,
         sections: list[str] | None = None,
         export: bool = False,
-        expected_read_sha256: str = "",
+        expected_read_sha256: str | dict[str, str] = "",
         chunk_cursor: int | None = None,
     ) -> dict[str, Any]:
         """Sandboxed file I/O (cortex, workspaces). Full catalog in tool description."""
