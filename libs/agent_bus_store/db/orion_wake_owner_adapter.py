@@ -428,26 +428,6 @@ class LedgerWakeDeliveryOwner:
             return
         elif str(receipt.get("reason") or "") == "deferred_exhausted":
             return
-<<<<<<< HEAD
-        elif receipt.get("insertion_unknown") is True:
-            outcome = "unknown"
-            reason = str(receipt.get("reason") or "insertion_unknown")
-        elif receipt.get("pasted") and not receipt.get("delivered"):
-            outcome = "unknown"
-            reason_s = str(receipt.get("reason") or "delivery_unconfirmed")
-            reason = _encode_paste_receipt(
-                outcome=outcome, reason_s=reason_s, receipt=receipt
-            )
-        elif receipt.get("ok") is False:
-            outcome = "refused"
-            reason_s = str(receipt.get("reason") or "refused")
-            if is_composer_defer_reason(reason_s):
-                outcome = "pending"
-            reason = _encode_paste_receipt(
-                outcome=outcome, reason_s=reason_s, receipt=receipt
-            )
-=======
->>>>>>> d0b4200cd (fix(orion5944): unified receipt map, defer gate, cdp phase split)
         else:
             outcome, reason_s, map_extra = map_orion_receipt_to_outcomes(receipt)
             if outcome == "skipped":

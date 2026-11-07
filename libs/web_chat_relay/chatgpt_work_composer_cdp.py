@@ -20,6 +20,8 @@ from cursor_bridge.dom_composer_paste import (
     operator_activity_suppress_js,
 )
 
+from web_chat_relay.chatgpt_structural_empty_js import STRUCTURAL_COMPOSER_EMPTY_CORE_JS
+
 _INSERT_METHOD = "Input.insertText"
 
 
@@ -119,42 +121,8 @@ def chatgpt_work_preflight_expression(
   if (draft.length > 0) {{
     return {{ ok: false, reason: 'composer_not_empty' }};
   }}
-  let visibleText = '';
-  const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT);
-  let node;
-  while ((node = walker.nextNode())) {{
-    const t = node.textContent || '';
-    if (node.parentNode === el && /^[\\n\\r\\t\\x20]*$/.test(t)) continue;
-    visibleText += t;
-  }}
-  if (/[\\u00a0\\u200b\\u200c\\u200d\\ufeff\\t]/.test(visibleText)) {{
-    return {{ ok: false, reason: 'composer_not_empty' }};
-  }}
-  if (visibleText.includes(' ')) {{
-    return {{ ok: false, reason: 'composer_not_empty' }};
-  }}
-  if (/[^\\s\\n\\r]/.test(visibleText)) {{
-    return {{ ok: false, reason: 'composer_not_empty' }};
-  }}
-  const blocks = Array.from(el.children).filter((c) => {{
-    const tg = c.tagName;
-    return tg === 'P' || tg === 'DIV' || /^H[1-6]$/.test(tg);
-  }});
-  if (blocks.length !== 1) {{
-    return {{ ok: false, reason: 'composer_not_empty' }};
-  }}
-  const block = blocks[0];
-  const elementKids = Array.from(block.childNodes).filter((n) => n.nodeType === 1);
-  const textKids = Array.from(block.childNodes).filter(
-    (n) => n.nodeType === 3 && (n.textContent || '').replace(/[\\s\\n\\r]/g, '').length > 0
-  );
-  if (textKids.length > 0) {{
-    return {{ ok: false, reason: 'composer_not_empty' }};
-  }}
-  if (elementKids.length === 0) {{
-    return {{ ok: true, state: 'empty', matchedSelector }};
-  }}
-  if (elementKids.length === 1 && elementKids[0].tagName === 'BR') {{
+{STRUCTURAL_COMPOSER_EMPTY_CORE_JS.strip()}
+  if (__ulgStructuralComposerEmptyCore(el)) {{
     return {{ ok: true, state: 'empty', matchedSelector }};
   }}
   return {{ ok: false, reason: 'composer_not_empty' }};

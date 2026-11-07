@@ -1676,7 +1676,11 @@ def record_wake_result(
                 blob = json.loads(prior_reason[len("paste_receipt:") :])
             except json.JSONDecodeError:
                 blob = {}
-            if isinstance(blob, dict) and str(blob.get("outcome") or "") == "unknown":
+            if (
+                isinstance(blob, dict)
+                and str(blob.get("outcome") or "") == "unknown"
+                and outcome_in in {"refused", "unknown", "delivered", "pending", "skipped"}
+            ):
                 return 0
         # Merge with prior delivery_failure_detail when the new payload is thinner.
         prior_detail: dict[str, Any] = {}

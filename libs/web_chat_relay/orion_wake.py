@@ -14,6 +14,8 @@ import uuid
 from typing import Any, Protocol
 from urllib.parse import urlparse
 
+from web_chat_relay.chatgpt_structural_empty_js import STRUCTURAL_COMPOSER_EMPTY_CORE_JS
+
 DEFAULT_ORION_CDP_URL = os.environ.get("ORION_CDP_URL", "http://127.0.0.1:9342")
 PINNED_CONVERSATION_URL = (
     "https://chatgpt.com/g/g-p-6ae3debfee8481918ff3fa45b7d18d3a-ulg-orion"
@@ -27,30 +29,51 @@ _STREAMING_JS = """
 )
 """
 
-_TAB_SYNC_STATE_JS = """
-() => {
+_TAB_SYNC_STATE_JS = f"""
+() => {{
+{STRUCTURAL_COMPOSER_EMPTY_CORE_JS.strip()}
   const composers = [...document.querySelectorAll('[contenteditable="true"]')];
-  const structuralEmpty = (el) => {
-    let visibleText = '';
-    const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT);
-    let node;
-    while ((node = walker.nextNode())) {{
-      const t = node.textContent || '';
-      if (node.parentNode === el && /^[\\n\\r\\t\\x20]*$/.test(t)) continue;
-      visibleText += t;
+  const foreignAttachmentOrChip = (el) => {{
+    const region =
+      el.closest('[data-testid="composer"]') ||
+      el.closest('form') ||
+      el.parentElement?.parentElement ||
+      el.parentElement ||
+      el;
+    const attachSels = [
+      '[data-testid*="attachment" i]',
+      '[class*="attachment" i]',
+      '[data-testid*="file-chip" i]',
+      '[data-testid*="uploaded" i]',
+    ];
+    for (const sel of attachSels) {{
+      for (const node of region.querySelectorAll(sel)) {{
+        if (!node || node.nodeType !== 1) continue;
+        if (node.matches('input[type="file"]')) continue;
+        const tag = String(node.tagName || '').toUpperCase();
+        if (tag === 'INPUT' && String(node.getAttribute('type') || '').toLowerCase() === 'file') continue;
+        const label = (node.getAttribute('aria-label') || node.innerText || '').toLowerCase();
+        if ((tag === 'BUTTON' || node.getAttribute('role') === 'button') &&
+            (label.includes('attach') || label.includes('voice'))) continue;
+        return true;
+      }}
     }}
-    if (/[\\u00a0\\u200b\\u200c\\u200d\\ufeff\\t]/.test(visibleText)) return false;
-    if (visibleText.includes(' ')) return false;
-    if (/[^\\s\\n\\r]/.test(visibleText)) return false;
-    return true;
-  };
+    return false;
+  }};
+  const structuralEmpty = (el) => {{
+    if (foreignAttachmentOrChip(el)) return false;
+    if (el.querySelector('atom,img,svg,a[href],[contenteditable="false"]')) return false;
+    const draft = (el.innerText || el.value || '').trim();
+    if (draft.length > 0) return false;
+    return __ulgStructuralComposerEmptyCore(el);
+  }};
   const composerEmpty = composers.every((el) => structuralEmpty(el));
   return {{
     visibilityState: document.visibilityState,
     composerEmpty,
     pointerLine: String(window.__ulgOrionWakeTabSync?.pointerLine || ''),
   }};
-}
+}}
 """
 
 _OWNED_POINTER_DRAFT_JS = """
@@ -1551,8 +1574,43 @@ async def deliver_orion_wake(
             else:
                 refuse_reason = "paste_failed"
             return _refuse(refuse_reason, **paste_refuse)
-        await page.wait_for_timeout(400)
-        approval = await _handle_approvals(page)
+        try:
+            await page.wait_for_timeout(400)
+        except Exception as exc:
+            if owns_cdp and pw is not None:
+                stop_fn = getattr(pw, "stop", None)
+                if callable(stop_fn):
+                    await stop_fn()
+            wait_exc: dict[str, Any] = {
+                "error": type(exc).__name__,
+                "brought_to_front": tab_sync["brought_to_front"],
+                "tab_reloaded": tab_sync["tab_reloaded"],
+                "insert_attempted": True,
+                "retryable": False,
+                "pasted": True,
+                "delivered": False,
+            }
+            if isinstance(dom, dict) and dom.get("clicked_unknown"):
+                wait_exc["clicked_unknown"] = True
+            return _refuse("insert_outcome_unknown", **wait_exc)
+        try:
+            approval = await _handle_approvals(page)
+        except Exception as exc:
+            if owns_cdp and pw is not None:
+                stop_fn = getattr(pw, "stop", None)
+                if callable(stop_fn):
+                    await stop_fn()
+            exc_refuse: dict[str, Any] = {
+                "error": type(exc).__name__,
+                "brought_to_front": tab_sync["brought_to_front"],
+                "tab_reloaded": tab_sync["tab_reloaded"],
+                "insert_attempted": True,
+                "retryable": False,
+            }
+            if isinstance(dom, dict):
+                if dom.get("clicked_unknown"):
+                    exc_refuse["clicked_unknown"] = True
+            return _refuse("insert_outcome_unknown", **exc_refuse)
     except Exception as exc:
         if owns_cdp and pw is not None:
             stop_fn = getattr(pw, "stop", None)

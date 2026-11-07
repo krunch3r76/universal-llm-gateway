@@ -212,3 +212,85 @@ def test_dispatcher_refused_does_not_overwrite_owner_unknown_paste_receipt(db: s
         ).fetchone()
     assert str(row["state"]) == "unknown"
     assert str(row["reason"]).startswith("paste_receipt:")
+
+
+@pytest.mark.parametrize(
+    "defer_reason",
+    ("operator_active", "composer_selection_active", "no_composer"),
+)
+def test_claim_respects_wake_next_attempt_at_for_bounded_reasons(
+    db: str, defer_reason: str
+) -> None:
+    wake_id, stamp, _tid = _seed_pending_orion(db)
+    record_wake_result(
+        wake_id,
+        "pending",
+        defer_reason,
+        "exact",
+        5944,
+        None,
+        wake_detail={
+            "release_claim_for_retry": True,
+            "composer_defer_reason": defer_reason,
+        },
+        now=stamp,
+    )
+    early = claim_due_wakes(now=stamp)
+    assert early["wake_id"] is None
+    with connect() as conn:
+        nxt = conn.execute(
+            "SELECT wake_next_attempt_at FROM endpoint_wake_ledger WHERE agent='orion' LIMIT 1"
+        ).fetchone()
+    assert nxt is not None and nxt["wake_next_attempt_at"] is not None
+    late = claim_due_wakes(now=str(nxt["wake_next_attempt_at"]))
+    assert late["wake_id"] is not None
+
+
+def test_dispatcher_unknown_does_not_overwrite_owner_unknown_paste_receipt(db: str) -> None:
+    wake_id, stamp, _tid = _seed_pending_orion(db)
+    receipt = {"outcome": "unknown", "reason": "delivery_unconfirmed", "ok": False}
+    encoded = f"paste_receipt:{json.dumps(receipt)}"
+    record_wake_result(
+        wake_id,
+        "unknown",
+        encoded,
+        "exact",
+        5944,
+        None,
+        now=stamp,
+    )
+    n = record_wake_result(
+        wake_id,
+        "unknown",
+        "dispatcher_retry",
+        "exact",
+        5944,
+        None,
+        now="2020-01-01 00:01:00",
+    )
+    assert n == 0
+
+
+def test_dispatcher_delivered_does_not_overwrite_owner_unknown_paste_receipt(db: str) -> None:
+    wake_id, stamp, _tid = _seed_pending_orion(db)
+    receipt = {"outcome": "unknown", "reason": "insert_outcome_unknown", "ok": False}
+    encoded = f"paste_receipt:{json.dumps(receipt)}"
+    record_wake_result(
+        wake_id,
+        "unknown",
+        encoded,
+        "exact",
+        5944,
+        None,
+        now=stamp,
+    )
+    n = record_wake_result(
+        wake_id,
+        "delivered",
+        "late_ok",
+        "exact",
+        5944,
+        None,
+        now="2020-01-01 00:01:00",
+    )
+    assert n == 0

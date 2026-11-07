@@ -172,6 +172,10 @@ class _FakePage:
         steer_visible: bool = False,
         send_visible: bool = False,
         owned_draft_matches_pointer: bool = False,
+        tab_sync_pointer_line: str = "",
+        tab_sync_foreign_file_chip: bool = False,
+        tab_sync_atom_in_composer: bool = False,
+        wait_timeout_error: bool = False,
     ) -> None:
         self.url = url
         self.streaming = streaming
@@ -199,6 +203,10 @@ class _FakePage:
         self.dock_visible = dock_visible
         self._dock_target = False
         self.owned_draft_matches_pointer = owned_draft_matches_pointer
+        self.tab_sync_pointer_line = tab_sync_pointer_line
+        self.tab_sync_foreign_file_chip = tab_sync_foreign_file_chip
+        self.tab_sync_atom_in_composer = tab_sync_atom_in_composer
+        self.wait_timeout_error = wait_timeout_error
 
     def _active_labels(self) -> list[str]:
         if not self.pasted:
@@ -267,6 +275,21 @@ class _FakePage:
             self.streaming = True
 
     async def evaluate(self, expression: str) -> object:
+        if "__ulgOrionWakeTabSync" in expression and "composerEmpty" in expression:
+            if self.reloaded > 0 and self.composer_draft_after_reload is not None:
+                draft = self.composer_draft_after_reload
+            else:
+                draft = self.composer_draft
+            empty = not (draft or "").strip()
+            if self.tab_sync_foreign_file_chip or self.tab_sync_atom_in_composer:
+                empty = False
+            return {
+                "visibilityState": self.visibility_state,
+                "composerEmpty": empty,
+                "pointerLine": str(
+                    getattr(self, "tab_sync_pointer_line", "") or ""
+                ),
+            }
         if "visibilityState" in expression and "composerEmpty" in expression:
             if self.reloaded > 0 and self.composer_draft_after_reload is not None:
                 draft = self.composer_draft_after_reload
@@ -311,6 +334,8 @@ class _FakePage:
         return {}
 
     async def wait_for_timeout(self, _ms: int) -> None:
+        if self.wait_timeout_error:
+            raise RuntimeError("wait_for_timeout probe")
         if self.dom_delivered or self.keyboard.inserted:
             self.pasted = True
         return None
@@ -456,6 +481,91 @@ async def test_hidden_tab_with_empty_composer_brings_to_front_and_reloads_before
     assert page.reloaded == 1
     assert page.dom_delivered
     assert not page.keyboard.inserted
+
+
+@pytest.mark.asyncio
+async def test_hidden_tab_foreign_file_chip_skips_reload(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Attachment/file-chip alone must not count as empty (tab-sync aligns with preflight)."""
+    page = _FakePage(
+        visibility_state="hidden",
+        composer_draft="",
+        tab_sync_foreign_file_chip=True,
+    )
+    page.target_id = "tab-chip"
+
+    class _Port:
+        def list_tabs(self, *, cdp_url: str) -> dict:
+            return {
+                "pages": [
+                    {
+                        "id": "tab-chip",
+                        "url": PINNED,
+                        "web_socket_debugger_url": "ws://fake/chip",
+                    }
+                ],
+                "reachable": True,
+                "error": None,
+            }
+
+    monkeypatch.setattr("web_tab.cdp_actuation.default_actuation_port", lambda: _Port())
+    monkeypatch.setattr(
+        "web_tab.write_ops._created_by_agent_for_target", lambda **kwargs: True
+    )
+    out = await deliver_orion_wake(
+        thread="21207",
+        turn=4,
+        from_agent="maestro",
+        page=page,
+    )
+    assert out["reason"] == "non_empty_composer"
+    assert out["tab_reloaded"] is False
+    assert page.reloaded == 0
+
+
+@pytest.mark.asyncio
+async def test_post_commit_wait_timeout_records_insert_outcome_unknown(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Nit 1: exception after committed send (post-insert wait) -> unknown, no second paste."""
+
+    async def _committed(_page: object, _text: str, **_k: object) -> dict:
+        _page.dom_delivered.append(_text)  # type: ignore[attr-defined]
+        return {"ok": True, "receipt": "dom_committed"}
+
+    monkeypatch.setattr("web_chat_relay.orion_wake._dom_deliver", _committed)
+    page = _FakePage(wait_timeout_error=True, url=PINNED)
+    page.target_id = "tab-wait"
+
+    class _Port:
+        def list_tabs(self, *, cdp_url: str) -> dict:
+            return {
+                "pages": [
+                    {
+                        "id": "tab-wait",
+                        "url": PINNED,
+                        "web_socket_debugger_url": "ws://fake/wait",
+                    }
+                ],
+                "reachable": True,
+                "error": None,
+            }
+
+    monkeypatch.setattr("web_tab.cdp_actuation.default_actuation_port", lambda: _Port())
+    monkeypatch.setattr(
+        "web_tab.write_ops._created_by_agent_for_target", lambda **kwargs: True
+    )
+    out = await deliver_orion_wake(
+        thread="21207",
+        turn=3,
+        from_agent="maestro",
+        page=page,
+    )
+    assert out["reason"] == "insert_outcome_unknown"
+    assert out.get("insert_attempted") is True
+    assert out.get("retryable") is False
+    assert out["pasted"] is True
+    assert out["delivered"] is False
+    assert len(page.dom_delivered) == 1
 
 
 @pytest.mark.asyncio
