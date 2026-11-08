@@ -27,6 +27,8 @@ def WritingPersonaRefused(  # noqa: N802
     reason: str,
     flagged_candidates: list[str] | None = None,
     judged_invented: list[str] | None = None,
+    persona_judgments: list[dict[str, str]] | None = None,
+    detail: str | None = None,
 ) -> Event:
     """Observed when local persona authoring refuses (fail-closed, no fallback).
 
@@ -39,6 +41,10 @@ def WritingPersonaRefused(  # noqa: N802
         payload["flagged_candidates"] = flagged_candidates
     if judged_invented is not None:
         payload["judged_invented"] = judged_invented
+    if persona_judgments is not None:
+        payload["persona_judgments"] = persona_judgments
+    if detail is not None:
+        payload["detail"] = detail
     return Event(
         signal="writing.persona.refused",
         role="observation",

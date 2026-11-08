@@ -326,6 +326,50 @@ def test_validate_date_reformat_ungrounded_basis_refuses() -> None:
     assert verdict.judged_invented == ["10"]
 
 
+def test_basis_vacuous_stopword_basis_treated_invented() -> None:
+    for basis in ("the", "and the"):
+        verdict = _run_validate(
+            "You met Marcus downtown.",
+            judge_caller=_judge_kinds({"Marcus": ("restates_attested", basis)}),
+        )
+        assert verdict.ok is False
+        assert verdict.judged_invented == ["Marcus"]
+
+
+def test_basis_grounded_after_markup_stripped() -> None:
+    glued = {
+        "brief_block": "<brief>Tuesday October 27 2026</brief>",
+        "documents_block": "<documents>P1</documents>",
+        "architect_brief_block": "<architect_brief>P1</architect_brief>",
+    }
+    verdict = _run_validate(
+        "You filed on 10/27/2026.",
+        judge_caller=_judge_kinds({"10": ("restates_attested", "October 27 2026")}),
+        **glued,
+    )
+    assert verdict.ok is True
+
+
+def test_basis_empty_on_restates_treated_invented() -> None:
+    verdict = _run_validate(
+        "You met Marcus downtown.",
+        judge_caller=_judge_kinds({"Marcus": ("restates_attested", "")}),
+    )
+    assert verdict.ok is False
+    assert verdict.judged_invented == ["Marcus"]
+
+
+def test_validate_judge_truncation_maps_unavailable() -> None:
+    from systems.pipeline.core.dag import ResponseTruncatedError
+
+    err = ResponseTruncatedError("persona_judge", 64, 64, "{}")
+    verdict = _run_validate(
+        "You met Marcus downtown.",
+        judge_caller=_judge_raises(err),
+    )
+    assert verdict.refused == "persona_judge_unavailable"
+
+
 def test_validate_mixed_imperative_and_name_partial_invented() -> None:
     prose = "Conclude the note. Marcus is your contact."
     verdict = _run_validate(
@@ -504,6 +548,109 @@ def test_persona_author_fail_closed_skips_branch(
     assert "_skipped" not in payload
     assert published and published[0].signal == "writing.persona.refused"
     assert published[0].role == "observation"
+    assert payload.get("persona_judgments")
+    assert published[0].payload.get("persona_judgments")
+
+
+def test_too_many_candidates_event_carries_detail(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    published: list[Any] = []
+
+    def _capture(_self: object, _ctx: object, event: Any) -> None:
+        published.append(event)
+
+    async def _good_model(
+        _self: object,
+        _model_id: str,
+        _prompt: str,
+        _step: object,
+        _context: object,
+        **_: Any,
+    ) -> object:
+        return type("Result", (), {"content": "Alpha Beta are here."})()
+
+    monkeypatch.setattr(local_persona, "_MAX_PERSONA_CANDIDATES", 1)
+    monkeypatch.setattr(
+        local_persona.WritingLocalPersonaAuthorHandler,
+        "_publish_bus_event",
+        _capture,
+    )
+    monkeypatch.setattr(
+        local_persona.WritingLocalPersonaAuthorHandler,
+        "_call_model",
+        _good_model,
+    )
+    payload = asyncio.run(
+        local_persona.WritingLocalPersonaAuthorHandler(
+            judge_caller=_judge_raises(AssertionError("no judge"))
+        ).execute(None, _correspondence_ctx())
+    ).json
+    assert payload.get("detail") == "too_many_candidates"
+    assert published[0].payload.get("detail") == "too_many_candidates"
+
+
+def test_invoke_persona_judge_offline_call_model(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured: dict[str, Any] = {}
+    models = importlib.import_module("writing_v1_handlers.independence")
+
+    async def _fake_call(
+        _self: object,
+        model_id: str,
+        prompt: str,
+        _step: object,
+        _context: object,
+        **kwargs: Any,
+    ) -> object:
+        captured["model_id"] = model_id
+        captured["prompt"] = prompt
+        captured.update(kwargs)
+        return type("Result", (), {"content": "{}"})()
+
+    monkeypatch.setattr(
+        local_persona.WritingLocalPersonaAuthorHandler,
+        "_call_model",
+        _fake_call,
+    )
+    handler = local_persona.WritingLocalPersonaAuthorHandler()
+    blocks = _blocks_kwargs()
+    prose = "You keep <brief>note</brief> receipts."
+    candidates = [
+        local_persona.Candidate(
+            token="Remember",
+            form="capitalized_word",
+            position="sentence_start",
+            contexts=["You keep receipts."],
+        )
+    ]
+    asyncio.run(
+        handler._invoke_persona_judge(
+            None,
+            None,
+            persona_prose_fenced=local_persona._fence(prose),
+            candidates=candidates,
+            brief_block=blocks["brief_block"],
+            documents_block=blocks["documents_block"],
+            architect_brief_block=blocks["architect_brief_block"],
+        )
+    )
+    loaded = models.load_writing_models()
+    assert captured["model_id"] == str(loaded.get("persona_judge"))
+    assert captured.get("temperature") == 0.0
+    assert captured.get("max_tokens") == 64 + 220 * len(candidates)
+    assert captured.get("call_label") == "persona_judge"
+    assert captured.get("system_prompt")
+    schema = captured.get("json_schema") or {}
+    enum = schema["properties"]["judgments"]["items"]["properties"]["token"]["enum"]
+    assert enum == ["Remember"]
+    prompt = str(captured.get("prompt") or "")
+    assert blocks["brief_block"] in prompt
+    assert blocks["documents_block"] in prompt
+    assert blocks["architect_brief_block"] in prompt
+    assert "candidate_count" in prompt or "1" in prompt
+    assert "&lt;" in prompt or "&lt;brief" in local_persona._fence(prose)
 
 
 def test_refuse_payload_when_bus_publish_raises(
@@ -661,12 +808,23 @@ def test_persona_refused_event_factory() -> None:
         reason="persona_validation_failed",
         flagged_candidates=["Marcus"],
         judged_invented=["Marcus"],
+        persona_judgments=[
+            {
+                "token": "Marcus",
+                "kind": "new_entity_or_fact",
+                "basis": "",
+                "reading": "r",
+            }
+        ],
+        detail="too_many_candidates",
     )
     assert event.signal == "writing.persona.refused"
     assert event.role == "observation"
     assert event.payload["reason"] == "persona_validation_failed"
     assert event.payload["flagged_candidates"] == ["Marcus"]
     assert event.payload["judged_invented"] == ["Marcus"]
+    assert event.payload["persona_judgments"]
+    assert event.payload["detail"] == "too_many_candidates"
 
 
 def test_handler_judge_receives_fenced_prose_and_candidates(

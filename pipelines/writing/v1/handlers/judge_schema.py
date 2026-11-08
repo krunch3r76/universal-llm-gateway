@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import Any
 
 SPEECH_ACTS = ("request", "assertion", "other")
@@ -308,18 +309,14 @@ def persona_judge_schema(tokens: list[str]) -> dict[str, Any]:
     }
 
 
+@dataclass(frozen=True, slots=True)
 class PersonaJudgment:
     """One row from the persona invented-token judge."""
 
-    __slots__ = ("token", "basis", "reading", "kind")
-
-    def __init__(
-        self, *, token: str, basis: str, reading: str, kind: str
-    ) -> None:
-        self.token = token
-        self.basis = basis
-        self.reading = reading
-        self.kind = kind
+    token: str
+    basis: str
+    reading: str
+    kind: str
 
 
 def parse_persona_judgments(

@@ -35,6 +35,8 @@ _JUDGE_THINKING_STRIP = re.compile(
     re.IGNORECASE,
 )
 _MAX_PERSONA_CANDIDATES = 32
+_JUDGMENT_READING_CAP = 240
+_MARKUP_TAG = re.compile(r"<[^>]+>")
 _LOGGER = get_logger(__name__)
 _CAPITAL_STOPWORDS = frozenset(
     {
@@ -167,6 +169,18 @@ def _blocks_word_set(blocks_lower: str) -> set[str]:
     return set(_BLOCKS_WORD_RE.findall(blocks_lower))
 
 
+def _token_in_blocks_words(lower: str, blocks_words: set[str]) -> bool:
+    """True when ``lower`` matches a blocks word, including trailing-s possessives."""
+    if lower in blocks_words:
+        return True
+    variants = {lower}
+    if lower.endswith("'s") and len(lower) > 2:
+        variants.add(lower[:-2])
+    if lower.endswith("s") and len(lower) > 3 and not lower.endswith("'s"):
+        variants.add(lower[:-1])
+    return bool(variants & blocks_words)
+
+
 def _is_sentence_initial_at(text: str, start: int) -> bool:
     """True when the token at ``start`` begins a sentence."""
     if start == 0:
@@ -201,6 +215,7 @@ def _position_label(
     saw_start: bool,
     saw_mid: bool,
 ) -> Literal["sentence_start", "mid_sentence", "both"]:
+    """Map sentence-position flags to a single candidate position label."""
     if saw_start and saw_mid:
         return "both"
     if saw_start:
@@ -220,7 +235,11 @@ def _persona_candidates(
     for match in _NAME.finditer(text):
         token = match.group(0)
         lower = token.lower()
-        if lower in allowed or lower in _CAPITAL_STOPWORDS or lower in blocks_words:
+        if (
+            lower in allowed
+            or lower in _CAPITAL_STOPWORDS
+            or _token_in_blocks_words(lower, blocks_words)
+        ):
             continue
         hits.append((match.start(), token, "capitalized_word"))
 
@@ -286,18 +305,16 @@ def _basis_grounded(basis: str, blocks_text: str) -> bool:
     """True when ``basis`` is attested in the concatenated blocks."""
     if not basis.strip():
         return False
+    plain_blocks = _MARKUP_TAG.sub(" ", blocks_text)
     norm_basis = _normalize_grounding_span(basis)
-    norm_blocks = _normalize_grounding_span(blocks_text)
-    if norm_basis in norm_blocks:
-        return True
-    basis_words = [w for w in norm_basis.split() if len(w) > 2]
-    block_word_set = set(norm_blocks.split())
-    return any(word in block_word_set for word in basis_words)
+    norm_blocks = _normalize_grounding_span(plain_blocks)
+    return norm_basis in norm_blocks
 
 
 def _invented_from_judgments(
     rows: list[PersonaJudgment], *, blocks_text: str
 ) -> list[str]:
+    """Collect tokens the judge marked invented after deterministic basis checks."""
     invented: list[str] = []
     for row in rows:
         if row.kind == "new_entity_or_fact":
@@ -310,10 +327,29 @@ def _invented_from_judgments(
 
 
 def _strip_judge_response(raw: str) -> str:
+    """Remove a leading thinking block before JSON parsing."""
     return _JUDGE_THINKING_STRIP.sub("", raw.strip(), count=1)
 
 
+def _persona_judgments_payload(
+    judgments: tuple[PersonaJudgment, ...] | None,
+) -> list[dict[str, str]] | None:
+    """Serialize judge rows for step and event payloads."""
+    if not judgments:
+        return None
+    return [
+        {
+            "token": row.token,
+            "kind": row.kind,
+            "basis": row.basis,
+            "reading": row.reading[:_JUDGMENT_READING_CAP],
+        }
+        for row in judgments
+    ]
+
+
 def _candidate_payload(candidates: list[Candidate]) -> list[dict[str, Any]]:
+    """Build the flagged-candidates JSON the judge prompt expects."""
     return [
         {
             "token": row.token,
@@ -445,9 +481,11 @@ class WritingLocalPersonaAuthorHandler(BaseHandler):
         error: str | None = None,
         flagged_candidates: list[str] | None = None,
         judged_invented: list[str] | None = None,
+        judgments: tuple[PersonaJudgment, ...] | None = None,
         detail: str | None = None,
     ) -> StepOutput:
         """Build a fail-closed payload and publish an observation event when possible."""
+        persona_judgments = _persona_judgments_payload(judgments)
         try:
             self._publish_bus_event(
                 context,
@@ -455,10 +493,12 @@ class WritingLocalPersonaAuthorHandler(BaseHandler):
                     reason=reason,
                     flagged_candidates=flagged_candidates,
                     judged_invented=judged_invented,
+                    persona_judgments=persona_judgments,
+                    detail=detail,
                 ),
             )
         except Exception as exc:  # noqa: BLE001
-            _LOGGER.debug(
+            _LOGGER.warning(
                 "persona refuse bus publish failed reason=%s: %s",
                 reason,
                 exc,
@@ -478,6 +518,8 @@ class WritingLocalPersonaAuthorHandler(BaseHandler):
             payload["persona_flagged_candidates"] = flagged_candidates
         if judged_invented is not None:
             payload["persona_judged_invented"] = judged_invented
+        if persona_judgments is not None:
+            payload["persona_judgments"] = persona_judgments
         return _step(payload)
 
     async def _invoke_persona_judge(
@@ -515,7 +557,7 @@ class WritingLocalPersonaAuthorHandler(BaseHandler):
         )
         if not model_id:
             raise RuntimeError("persona_model_missing")
-        max_tokens = 64 + 160 * len(candidates)
+        max_tokens = 64 + 220 * len(candidates)
         result = await self._call_model(
             model_id,
             prompt,
@@ -620,6 +662,7 @@ class WritingLocalPersonaAuthorHandler(BaseHandler):
                 rejected_text=verdict.text or raw,
                 flagged_candidates=verdict.flagged_candidates,
                 judged_invented=verdict.judged_invented,
+                judgments=verdict.judgments,
                 detail=verdict.detail,
             )
         prose = verdict.text
