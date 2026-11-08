@@ -135,8 +135,12 @@ def _clear_detect_cursor_gui_host_env(monkeypatch: pytest.MonkeyPatch) -> None:
 @pytest.fixture(autouse=True)
 def _reset_waiter_stamp_cache_between_tests() -> None:
     """Process-level waiter cache must not leak across ``libs/bus_watch`` tests."""
-    from bus_watch.endpoint_wake_dispatcher import _reset_waiter_stamp_cache
+    import sys
 
-    _reset_waiter_stamp_cache()
+    mod = sys.modules.get("bus_watch.endpoint_wake_dispatcher")
+    if mod is not None:
+        mod._reset_waiter_stamp_cache()
     yield
-    _reset_waiter_stamp_cache()
+    mod = sys.modules.get("bus_watch.endpoint_wake_dispatcher")
+    if mod is not None:
+        mod._reset_waiter_stamp_cache()

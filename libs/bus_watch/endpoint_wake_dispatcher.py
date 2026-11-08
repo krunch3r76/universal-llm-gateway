@@ -31,6 +31,10 @@ from web_chat_relay.orion_wake import (
 )
 
 from bus_watch import endpoint_wake_self_sender as self_sender
+from bus_watch.admit_waiter import (
+    coord_admit_subject_matches,
+    parse_waiter_from_admit_body,
+)
 from bus_watch.endpoint_wake_orion_delivery import (
     chatgpt_work_subscription_from_actuation as _orion_synthetic_route_from_actuation,
 )
@@ -1341,11 +1345,6 @@ def _waiter_lookup_enabled(raw_to: str, agent: str) -> bool:
 def _latest_admit_waiter_on_thread(
     store: StoreClient, thread_id: str
 ) -> tuple[int, str] | None:
-    from systems.frontier_consult.admit_provenance import (
-        coord_admit_subject_matches,
-        parse_waiter_from_admit_body,
-    )
-
     turns_fn = getattr(store, "turns", None)
     if turns_fn is None:
         return None
@@ -1404,11 +1403,6 @@ def _reset_waiter_stamp_cache() -> None:
 
 
 def _ingest_waiter_admit_turn(turn: dict[str, Any]) -> None:
-    from systems.frontier_consult.admit_provenance import (
-        coord_admit_subject_matches,
-        parse_waiter_from_admit_body,
-    )
-
     thread = str(turn.get("thread") or "")
     if not thread:
         return
