@@ -1,104 +1,41 @@
-"""Pending-restart admit fence for the lane an intent is still waiting on.
+"""Pending-restart admit fence for the git_integration_worker cursor-sdk route.
 
-Callers are the cursor-sdk admit route (git_integration_worker) and the MCP
-drain middleware. A ``pending_drain`` intent queues the next admit on that
-lane so the idle boundary cannot move forward. ``force_requested`` and every
-other status leave the existing force and drain rules alone. A store read
+A ``pending_drain`` intent queues every new top-level write admit, on any
+lane and for any work key, so the live set only shrinks and the restart
+can fire. Queued rows promote after restart (or on cancel). A store read
 that fails returns no status — the admit starts — so a missing or locked
-intent db cannot wedge the lane.
+intent db cannot wedge admission.
 """
 
 from __future__ import annotations
 
 import os
-from collections.abc import Callable, Collection
+from collections.abc import Callable
 from typing import Any
 
 from .restart_intent_states import STATUS_PENDING_DRAIN
 
-MCP_ADMIT_LANE = "mcp"
-
-
-def blocked_admit_lanes(
-    *,
-    service: str,
-    intent_status: str | None,
-    occupied_lanes: Collection[str] = (),
-) -> frozenset[str]:
-    """Lanes whose next admit must queue while ``intent_status`` is pending.
-
-    MCP has one admit lane. GIW blocks only the occupied cursor lanes the
-    drain is waiting on, so an admit on a different lane still starts.
-    Any other status, including ``force_requested``, blocks nothing.
-    """
-    if intent_status != STATUS_PENDING_DRAIN:
-        return frozenset()
-    if service == "mcp":
-        return frozenset({MCP_ADMIT_LANE})
-    if service == "git_integration_worker":
-        return frozenset(lane for lane in occupied_lanes if str(lane).strip())
-    return frozenset()
-
-
-def pending_intent_queues_admit(
-    *,
-    blocked_lanes: Collection[str],
-    admit_lane: str,
-) -> bool:
-    """True when this admit is on a lane a pending intent is still waiting for.
-
-    An empty ``admit_lane`` does not queue. The caller still has to skip
-    read-only rows: the durable promoter only rehomes write-lease queues.
-    """
-    lane = (admit_lane or "").strip()
-    if not lane:
-        return False
-    return lane in set(blocked_lanes)
-
 
 def queue_kw_for_pending_intent(
     *,
-    service: str,
     intent_status: str | None,
-    occupied_lanes: Collection[str],
-    admit_lane: str,
     armed: bool = False,
     read_only: bool = False,
-    admit_work_key: str | None = None,
-    busy_work_keys: Collection[str] = (),
     nest_under: str | None = None,
 ) -> dict[str, bool]:
     """Ledger kwargs that queue a write admit, or ``{}`` when it should start.
 
     ``armed`` is the in-process GIW signal and counts as ``pending_drain``
     even when the store read missed. Read-only admits are not queued: the
-    write-lease promoter would never rehome them. ``force`` is not an input;
-    this fence does not add or remove a force bypass.
-
-    During restart drain, an admit whose ``admit_work_key`` is not among live
-    ``busy_work_keys`` bypasses the lane queue (independent act). Nested
-    children (non-empty ``nest_under``) also bypass. Unkeyed admits fail closed
-    into the lane queue when the lane is blocked.
+    write-lease promoter would never rehome them. Nested children start so
+    a live parent waiting on its child can finish and let the drain land.
+    ``force`` is not an input; this fence adds no force bypass.
     """
-    if read_only:
-        return {}
-    if str(nest_under or "").strip():
+    if read_only or str(nest_under or "").strip():
         return {}
     status = STATUS_PENDING_DRAIN if armed else intent_status
-    blocked = blocked_admit_lanes(
-        service=service,
-        intent_status=status,
-        occupied_lanes=occupied_lanes,
-    )
-    if not pending_intent_queues_admit(blocked_lanes=blocked, admit_lane=admit_lane):
+    if status != STATUS_PENDING_DRAIN:
         return {}
-    admit_key = str(admit_work_key or "").strip().lower()
-    if admit_key and busy_work_keys:
-        busy_norm = {
-            str(k).strip().lower() for k in busy_work_keys if str(k).strip()
-        }
-        if admit_key not in busy_norm:
-            return {}
     return {"queue_for_pending_intent": True}
 
 

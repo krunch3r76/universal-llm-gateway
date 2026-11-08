@@ -4643,20 +4643,10 @@ async def admit_cursor_dispatch(
     )
 
     intent_status = pending_service_intent_status("git_integration_worker")
-    busy_work_keys = tuple(
-        wk
-        for op in ledger.live_dispatch_projections()
-        if (wk := str(op.get("work_key") or "").strip())
-    )
     intent_fence = queue_kw_for_pending_intent(
-        service="git_integration_worker",
         intent_status=intent_status,
-        occupied_lanes=ledger.occupied_admit_lanes(),
-        admit_lane=selected_lane,
         armed=controller.is_armed(),
         read_only=effective_read_only,
-        admit_work_key=candidate_work_key,
-        busy_work_keys=busy_work_keys,
         nest_under=req.nest_under,
     )
     # Store left pending_drain and this process is not armed: the fence

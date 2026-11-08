@@ -12,8 +12,6 @@ from typing import Any
 import pytest
 
 from scripts.model_manager.ui.controller.intent_admit_fence import (
-    blocked_admit_lanes,
-    pending_intent_queues_admit,
     pending_service_intent_status,
     queue_kw_for_pending_intent,
 )
@@ -125,50 +123,19 @@ def test_pending_intent_queues_next_admit_on_that_lane() -> None:
     assert _status(ledger, nxt.dispatch_id) == "queued"
     assert ledger.occupied_admit_lanes() == {"B"}
 
-    other = _req(dispatch_id="next-a", lane="A")
+
+def test_pending_intent_queues_every_top_level_write() -> None:
+    """Any lane, any work key, idle lane or not: a pending drain queues it."""
+    assert queue_kw_for_pending_intent(intent_status=STATUS_PENDING_DRAIN) == {
+        "queue_for_pending_intent": True
+    }
+    assert queue_kw_for_pending_intent(intent_status=STATUS_FORCE_REQUESTED) == {}
+    assert queue_kw_for_pending_intent(intent_status=None) == {}
     assert (
         queue_kw_for_pending_intent(
-            service="git_integration_worker",
-            intent_status=STATUS_PENDING_DRAIN,
-            occupied_lanes={"B"},
-            admit_lane="A",
+            intent_status=STATUS_PENDING_DRAIN, nest_under="parent-b"
         )
         == {}
-    )
-    assert _admit(ledger, other, lease_key="/wt/lane-a") is None
-    assert _status(ledger, other.dispatch_id) == "admitted"
-
-
-def test_mcp_pending_blocks_mcp_lane_not_giw() -> None:
-    """A pending mcp intent queues the mcp lane and leaves cursor lane B alone."""
-    assert blocked_admit_lanes(service="mcp", intent_status=STATUS_PENDING_DRAIN) == {
-        "mcp"
-    }
-    assert pending_intent_queues_admit(
-        blocked_lanes=blocked_admit_lanes(
-            service="mcp", intent_status=STATUS_PENDING_DRAIN
-        ),
-        admit_lane="mcp",
-    )
-    assert not pending_intent_queues_admit(
-        blocked_lanes=blocked_admit_lanes(
-            service="git_integration_worker",
-            intent_status=STATUS_PENDING_DRAIN,
-            occupied_lanes={"B"},
-        ),
-        admit_lane="mcp",
-    )
-    assert (
-        blocked_admit_lanes(service="mcp", intent_status=STATUS_FORCE_REQUESTED)
-        == frozenset()
-    )
-    assert (
-        blocked_admit_lanes(
-            service="git_integration_worker",
-            intent_status=STATUS_FORCE_REQUESTED,
-            occupied_lanes={"B"},
-        )
-        == frozenset()
     )
 
 
@@ -176,21 +143,14 @@ def test_read_only_and_store_miss_do_not_queue() -> None:
     """Read-only would strand on the write promoter; a store error fails open."""
     assert (
         queue_kw_for_pending_intent(
-            service="git_integration_worker",
             intent_status=STATUS_PENDING_DRAIN,
-            occupied_lanes={"B"},
-            admit_lane="B",
             read_only=True,
         )
         == {}
     )
-    assert queue_kw_for_pending_intent(
-        service="git_integration_worker",
-        intent_status=None,
-        occupied_lanes={"B"},
-        admit_lane="B",
-        armed=True,
-    ) == {"queue_for_pending_intent": True}
+    assert queue_kw_for_pending_intent(intent_status=None, armed=True) == {
+        "queue_for_pending_intent": True
+    }
 
     def _boom(_service: str) -> Any:
         raise OSError("intent db locked")
