@@ -314,8 +314,8 @@ def build_suggested_next(
                     "tool": "agent_bus",
                     "op": "get",
                     "note": (
-                        f"get turn_number={qualifying_reply_turn} — body is often "
-                        "a sidecar pointer."
+                        f"get turn_number={qualifying_reply_turn}, "
+                        'projection="full" — body is often a sidecar pointer.'
                     ),
                 },
                 {
@@ -343,8 +343,8 @@ def build_suggested_next(
                 "tool": "agent_bus",
                 "op": "get",
                 "note": (
-                    f"get turn_number={qualifying_reply_turn} — body is often "
-                    "a sidecar pointer."
+                    f"get turn_number={qualifying_reply_turn}, "
+                    'projection="full" — body is often a sidecar pointer.'
                 ),
             },
             {

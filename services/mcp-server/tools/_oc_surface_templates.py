@@ -107,8 +107,9 @@ When a task has been posted to a thread by another agent (e.g. web-claude), pick
 tool_search(query="agent_bus")
 agent_bus(tool="fetch", arguments='{"thread": "<thread-id>", "compact": true}')
 ```
-Post your reply to the same thread. The dispatching agent will retrieve it via
-`agent_bus(tool="fetch", ...)` on its end.
+Post your reply to the same thread. The dispatching agent opens your turn with
+`agent_bus(tool="get", arguments='{"thread": "<thread-id>", "turn_number": N, "projection": "full"}')`
+(or `turn_numbers` for several).
 
 **Dispatch result polling** (if you issued a `team_dispatch` generate/to_thread):
 ```
@@ -315,7 +316,7 @@ with `field` and `request_id` BEFORE dispatch.
 ```
 team_dispatch(op="to_thread", role=..., dispatch_thread_id="<thread>", contract="freeform", thread="<id>", subject=...)
 ```
-then fetch (headers) then `agent_bus(tool="get", arguments='{"thread": "<id>", "turn_numbers": [N]}')` for the reply body. Stargate posts
+then fetch (headers) then `agent_bus(tool="get", arguments='{"thread": "<id>", "turn_numbers": [N], "projection": "full"}')` for the reply body. Stargate posts
 on the callee's behalf — no `agent_bus.reply` required from the dispatched model.
 
 MCP: `team_dispatch` enables client-side tools by default (non-xAI); some
