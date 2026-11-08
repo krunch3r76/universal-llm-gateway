@@ -108,6 +108,11 @@ class RequestContext:
         # Set from config request_queue.queue_timeout; never capped by hint.
         self.queue_wait_timeout_s: float | None = None
 
+        # Monotonic deadline for eviction + load waiting, independent of the
+        # capacity/queue deadline. Per-request: armed on the first eviction
+        # wait and never reset by the retry loop, so retries share one budget.
+        self._eviction_wait_deadline_mono: float | None = None
+
         # Overflow attempt metadata is only surfaced if routing ends terminally.
         # NOTE: The overflow_load_failed branch has not been observed live after
         # extended monitoring; see agent-bus thread 169. Keep this metadata only
