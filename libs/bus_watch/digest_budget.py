@@ -10,10 +10,13 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import os
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
+
+logger = logging.getLogger(__name__)
 
 import httpx
 import yaml
@@ -30,6 +33,34 @@ _BUDGET_SCOPE = "liaison_seat"
 _BUDGET_RATIO_THRESHOLD = 0.80
 _IDE_BUDGET_RATIO_THRESHOLD = 0.55
 _IDE_TOOL_CALLS_THRESHOLD = 35
+_IDE_TOOL_CALLS_BACKSTOP = 105
+_DEFAULT_IDE_TOOL_RESULT_TOKENS_THRESHOLD = 52_500
+
+
+def _read_ide_tool_result_tokens_threshold() -> int:
+    raw = os.environ.get("ULG_IDE_HOP_TOOL_RESULT_TOKENS", "").strip()
+    if not raw:
+        return _DEFAULT_IDE_TOOL_RESULT_TOKENS_THRESHOLD
+    try:
+        value = int(raw)
+    except ValueError:
+        logger.warning(
+            "ULG_IDE_HOP_TOOL_RESULT_TOKENS invalid (%r); using default %s",
+            raw,
+            _DEFAULT_IDE_TOOL_RESULT_TOKENS_THRESHOLD,
+        )
+        return _DEFAULT_IDE_TOOL_RESULT_TOKENS_THRESHOLD
+    if value <= 0:
+        logger.warning(
+            "ULG_IDE_HOP_TOOL_RESULT_TOKENS non-positive (%s); using default %s",
+            value,
+            _DEFAULT_IDE_TOOL_RESULT_TOKENS_THRESHOLD,
+        )
+        return _DEFAULT_IDE_TOOL_RESULT_TOKENS_THRESHOLD
+    return value
+
+
+_IDE_TOOL_RESULT_TOKENS_THRESHOLD = _read_ide_tool_result_tokens_threshold()
 
 # Gear-3 preset successors allowed to spawn without an operator --set override.
 # 10534 blocks implicit premium models: anything outside this set. The judging
@@ -379,6 +410,8 @@ def seat_budget(
                 glass_model=ide.get("glass_model"),
                 glass_summarized_tokens=ide.get("glass_summarized_tokens"),
                 glass_headers_count=ide.get("glass_headers_count"),
+                glass_prompt_breakdown=ide.get("glass_prompt_breakdown") or {},
+                tool_result_tokens=ide.get("tool_result_tokens"),
                 budget_probe=ide.get("budget_probe"),
             ),
             pct,
@@ -421,13 +454,29 @@ def build_budget_block(
     """
     ratio = used_tokens / window_limit_tokens if window_limit_tokens else 0.0
     tool_calls = int(basis.get("tool_calls") or 0)
+    raw_weight = basis.get("tool_result_tokens")
+    tool_result_tokens = (
+        int(raw_weight) if raw_weight is not None else None
+    )
     # resume_match_count rides in basis for audit only; seat_lock is the stop gate.
     ide_bound = source != "ide.transcript" or basis.get("holder_basis") == "seat_lock"
     ratio_threshold = (
         _IDE_BUDGET_RATIO_THRESHOLD if source == "ide.transcript" else _BUDGET_RATIO_THRESHOLD
     )
     over_ratio = ratio >= ratio_threshold
-    over_tools = source == "ide.transcript" and tool_calls >= _IDE_TOOL_CALLS_THRESHOLD
+    hop_weight_basis: str | None = None
+    if source == "ide.transcript":
+        if tool_result_tokens is not None:
+            hop_weight_basis = "tool_result_tokens"
+            over_tools = (
+                tool_result_tokens >= _IDE_TOOL_RESULT_TOKENS_THRESHOLD
+                or tool_calls >= _IDE_TOOL_CALLS_BACKSTOP
+            )
+        else:
+            hop_weight_basis = "tool_calls"
+            over_tools = tool_calls >= _IDE_TOOL_CALLS_THRESHOLD
+    else:
+        over_tools = False
     glass_summarized = int(basis.get("glass_summarized_tokens") or 0)
     over_summarized = source == "ide.transcript" and glass_summarized > 0
     stop_class = (
@@ -448,6 +497,7 @@ def build_budget_block(
         "epoch": epoch,
         "stop_class": stop_class,
         **basis,
+        "hop_weight_basis": hop_weight_basis,
     }
 
 

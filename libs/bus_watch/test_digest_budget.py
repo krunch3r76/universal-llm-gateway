@@ -2,16 +2,24 @@
 
 from __future__ import annotations
 
+import importlib
+import sys
 from unittest.mock import patch
 
 import pytest
 
+from bus_watch import digest_budget as digest_budget_mod
 from bus_watch.digest_budget import build_budget_block, seat_budget
 
 pytestmark = pytest.mark.offline
 
 
-def _ide_block(*, used_tokens: int, tool_calls: int = 0) -> dict:
+def _ide_block(
+    *,
+    used_tokens: int,
+    tool_calls: int = 0,
+    tool_result_tokens: int | None = None,
+) -> dict:
     return build_budget_block(
         used_tokens=used_tokens,
         window_limit_tokens=256_000,
@@ -22,6 +30,7 @@ def _ide_block(*, used_tokens: int, tool_calls: int = 0) -> dict:
         as_of="2026-10-18T00:00:00Z",
         holder_basis="seat_lock",
         tool_calls=tool_calls,
+        tool_result_tokens=tool_result_tokens,
     )
 
 
@@ -118,6 +127,34 @@ def test_seat_budget_missing_used_tokens_is_incomplete_probe() -> None:
     assert budget["source"] == "ide.transcript"
     assert pct == 0.0
     assert 42_000 not in budget.values()
+
+
+def test_tool_result_tokens_replace_tool_call_count() -> None:
+    budget = _ide_block(used_tokens=10_000, tool_calls=40, tool_result_tokens=5_000)
+    assert budget["stop_class"] is None
+    assert budget["hop_weight_basis"] == "tool_result_tokens"
+
+
+def test_tool_result_tokens_over_threshold_raises() -> None:
+    budget = _ide_block(used_tokens=10_000, tool_calls=8, tool_result_tokens=60_000)
+    assert budget["stop_class"] == "CONTEXT_BUDGET"
+    assert budget["hop_weight_basis"] == "tool_result_tokens"
+
+
+def test_tool_calls_backstop_105_raises_with_weight() -> None:
+    budget = _ide_block(used_tokens=10_000, tool_calls=105, tool_result_tokens=1_000)
+    assert budget["stop_class"] == "CONTEXT_BUDGET"
+    assert budget["hop_weight_basis"] == "tool_result_tokens"
+
+
+def test_tool_result_threshold_env_invalid_falls_back(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("ULG_IDE_HOP_TOOL_RESULT_TOKENS", "nope")
+    reloaded = importlib.reload(digest_budget_mod)
+    assert reloaded._IDE_TOOL_RESULT_TOKENS_THRESHOLD == 52_500
+    monkeypatch.delenv("ULG_IDE_HOP_TOOL_RESULT_TOKENS", raising=False)
+    importlib.reload(sys.modules["bus_watch.digest_budget"])
 
 
 def test_seat_budget_present_used_tokens_keeps_measured_count() -> None:

@@ -133,6 +133,17 @@ def check_cursor_ide_context_hops(
                 "ide_context_hop_monitor: budget failed root=%s", root_id
             )
             continue
+        if budget:
+            safe_emit_ide_tab_budget_sampled(
+                root_id=root_id,
+                transcript_id=str(budget.get("transcript_id") or ""),
+                tool_calls=int(budget.get("tool_calls") or 0),
+                tool_result_tokens=budget.get("tool_result_tokens"),
+                used_tokens=int(budget.get("used_tokens") or 0),
+                window_limit_tokens=budget.get("window_limit_tokens"),
+                stop_class=budget.get("stop_class"),
+                hop_weight_basis=budget.get("hop_weight_basis"),
+            )
         if not budget or budget.get("stop_class") != "CONTEXT_BUDGET":
             continue
         if budget.get("glass_status") == "generating":
@@ -209,6 +220,16 @@ def safe_emit_hop_monitor_tick(*, outcome: str, check_ms: float) -> None:
         logger.exception("ide_context_hop_monitor: tick emit failed")
 
 
+def safe_emit_ide_tab_budget_sampled(**kwargs: Any) -> None:
+    """Emit per-tab budget sample; never raises into the hop check."""
+    try:
+        from bus_watch.events import emit_ide_tab_budget_sampled
+
+        emit_ide_tab_budget_sampled(**kwargs)
+    except Exception:
+        logger.exception("ide_context_hop_monitor: tab budget sample emit failed")
+
+
 async def run_ide_context_hop_monitor() -> None:
     """Background loop: CONTEXT_BUDGET hop checks on their own cadence."""
     store = StoreClient()
@@ -227,4 +248,5 @@ __all__ = [
     "check_cursor_ide_context_hops",
     "run_ide_context_hop_monitor",
     "safe_emit_hop_monitor_tick",
+    "safe_emit_ide_tab_budget_sampled",
 ]

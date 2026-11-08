@@ -15,6 +15,7 @@ from bus_watch.digest_budget import (
 from bus_watch.ide_budget import (
     IDE_BUDGET_SOURCE,
     active_budget_excludes,
+    apply_glass_probe_to_budget,
     ide_holder_idle_s,
     ide_holder_transcript,
     ide_transcript_probe_resolved,
@@ -22,6 +23,7 @@ from bus_watch.ide_budget import (
     measure_transcript,
     newest_resume_transcript,
     pin_retired_resume_transcript,
+    tool_result_tokens_from_breakdown,
 )
 from bus_watch.spawn_pending import idle_ide_forfeit
 
@@ -206,6 +208,40 @@ def test_retired_hop_transcript_excluded_from_newest_resume(tmp_path: Path) -> N
     assert ide is not None
     assert ide["transcript_id"] == _TID
     assert ide["excluded_resume_ids"] == [_OLD]
+
+
+def test_glass_breakdown_sums_tool_categories() -> None:
+    breakdown = {
+        "prose": 1000,
+        "tool_results_misc": 12_000,
+        "ToolOutputs": 3_000,
+    }
+    assert tool_result_tokens_from_breakdown(breakdown) == 15_000
+    budget: dict = {}
+    glass = {
+        "contextTokensUsed": 100,
+        "contextTokenLimit": 200_000,
+        "prompt_breakdown": breakdown,
+    }
+    apply_glass_probe_to_budget(
+        budget, glass, used_tokens_fallback=0, window_limit_fallback=256_000
+    )
+    assert budget["tool_result_tokens"] == 15_000
+    assert budget["glass_prompt_breakdown"] == breakdown
+
+
+def test_glass_breakdown_without_tool_category_is_none() -> None:
+    budget: dict = {}
+    glass = {
+        "contextTokensUsed": 100,
+        "contextTokenLimit": 200_000,
+        "prompt_breakdown": {"prose": 1000, "summarized_conversation": 500},
+    }
+    apply_glass_probe_to_budget(
+        budget, glass, used_tokens_fallback=0, window_limit_fallback=256_000
+    )
+    assert budget["tool_result_tokens"] is None
+    assert budget["glass_prompt_breakdown"] == glass["prompt_breakdown"]
 
 
 def test_glass_summarized_tokens_raises_context_budget() -> None:
