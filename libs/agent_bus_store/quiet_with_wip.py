@@ -40,12 +40,13 @@ SkipReason = Literal[
 ]
 
 _WORKER_AGENTS = frozenset({"dispatch", "cursor-sdk"})
-# FAILED| subjects for transport/http worker reachability — not pre-admission refusals.
-_NON_PRE_ADMISSION_FAILED_CODES = frozenset(
+_PRE_ADMISSION_REFUSED_CODES = frozenset(
     {
-        "CURSOR_WORKER_UNREACHABLE",
-        "CURSOR_WORKER_DISPATCH_FAILED",
-        "CURSOR_DISPATCH_REJECTED",
+        "CURSOR_SOURCE_REF_IN_FLIGHT",
+        "CURSOR_WORK_FINGERPRINT_IN_FLIGHT",
+        "CURSOR_WRITE_LEASE_HELD",
+        "CURSOR_RESUME_BEHIND_CALLER",
+        "CURSOR_RESUME_ALREADY_ADMITTED",
     }
 )
 _FAILED_SUBJECT_CODE_RE = re.compile(r"\bcode=([^|]+)")
@@ -178,12 +179,10 @@ def _links_excluding_seat_holder(
 
 def _turn_binds_execution_id(turn: LaneTurnView, execution_id: str) -> bool:
     """True when the turn subject/body names this dispatch execution."""
-    blob = f"{turn.subject}\n{turn.body}"
-    return (
-        f"execution_id={execution_id}" in blob
-        or f"execution_id: {execution_id}" in blob
-        or execution_id in blob
-    )
+    subj = turn.subject or ""
+    if f"exec={execution_id}" in subj or f"execution_id={execution_id}" in subj:
+        return True
+    return execution_id in (turn.body or "")
 
 
 def _parse_failed_subject_code(subject: str) -> str | None:
@@ -196,7 +195,7 @@ def _parse_failed_subject_code(subject: str) -> str | None:
 def _is_pre_admission_failed_code(code: str | None) -> bool:
     if not code:
         return False
-    return code not in _NON_PRE_ADMISSION_FAILED_CODES
+    return code in _PRE_ADMISSION_REFUSED_CODES
 
 
 def _failed_turn_for_link(
@@ -341,6 +340,11 @@ def evaluate_quiet_with_wip(snap: QuietWithWipSnapshot) -> QuietWithWipVerdict:
         seat=snap.seat, links=snap.links, turns=snap.turns, now=snap.now
     )
     if reason is None:
+        all_links = _links_excluding_seat_holder(snap.links, snap.turns)
+        if all_links and all(
+            _link_is_refused_admit(lnk, snap.turns, snap.seat) for lnk in all_links
+        ):
+            return QuietWithWipVerdict(fire=False, skip_reason="refused_admit")
         return QuietWithWipVerdict(fire=False, skip_reason="no_wip")
 
     seat_turns = [t for t in snap.turns if t.from_agent == snap.seat]

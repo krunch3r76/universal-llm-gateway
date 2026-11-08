@@ -15,6 +15,21 @@ from agent_bus_store.quiet_with_wip import (
 NOW = datetime(2026, 8, 7, 1, 0, 0, tzinfo=UTC)
 THRESHOLD_S = 300.0
 SEAT = "web-anthropic"
+# Specimen thread 22723 turn 6 closeout shape (+ exec= from turn 5 admit).
+_SPECIMEN_22723_T6_DISPATCH = "fca8314b-4448-4f41-a0a2-2ad9976162d9"
+_SPECIMEN_22723_T5_EXEC = "90063c9a-e374-44e7-8f56-a353670fd7cd"
+_CLOSEOUT_SUBJECT_22723_T6 = (
+    "CLOSEOUT|cursor-sdk CLOSEOUT "
+    f"{_SPECIMEN_22723_T6_DISPATCH} exec={_SPECIMEN_22723_T5_EXEC} "
+    "contract=mechanical caller=web-anthropic"
+)
+
+
+def _closeout_subject(exec_id: str, dispatch_id: str = "disp-close") -> str:
+    return (
+        f"CLOSEOUT|cursor-sdk CLOSEOUT {dispatch_id} exec={exec_id} "
+        "contract=mechanical caller=web-anthropic"
+    )
 
 
 def _ts(delta_s: float) -> str:
@@ -535,7 +550,7 @@ def test_refused_admit_specimen_22690_shape_skips_alarm() -> None:
     )
     verdict = evaluate_quiet_with_wip(snap)
     assert verdict.fire is False
-    assert verdict.skip_reason == "no_wip"
+    assert verdict.skip_reason == "refused_admit"
 
 
 def test_refused_link_dropped_inflight_peer_still_alarms() -> None:
@@ -617,17 +632,99 @@ def test_read_at_on_other_execution_does_not_harvest_link() -> None:
             LaneTurnView(
                 turn_number=2,
                 from_agent="cursor-sdk",
-                created_at=_ts(THRESHOLD_S - 1),
-                subject="execution_id=exec-b cursor-sdk dispatch complete",
+                created_at=_ts(THRESHOLD_S / 2 - 1),
+                subject=_closeout_subject("exec-b"),
                 body="status: complete",
-                read_at=_ts(THRESHOLD_S - 1),
+                read_at=_ts(THRESHOLD_S / 2 - 1),
             ),
         ),
     )
     verdict = evaluate_quiet_with_wip(snap)
     assert verdict.fire is True
     assert verdict.reason == "closeout_unharvested"
-    assert "exec-a" in verdict.wip_execution_ids
+    assert verdict.wip_execution_ids == ("exec-a",)
+
+
+def test_refused_admit_plus_unharvested_peer_scoped_alarm() -> None:
+    """B4: refused A + unharvested B ⇒ closeout_unharvested on exec-b only."""
+    term_refused = _ts(THRESHOLD_S)
+    term_b = _ts(THRESHOLD_S / 2)
+    snap = _snap(
+        links=(
+            DispatchLinkView(
+                execution_id="exec-a",
+                terminal_status="failed",
+                terminal_at=term_refused,
+                pipeline_id="cursor-sdk-generate",
+            ),
+            DispatchLinkView(
+                execution_id="exec-b",
+                terminal_status="completed",
+                terminal_at=term_b,
+            ),
+        ),
+        turns=(
+            LaneTurnView(
+                turn_number=1,
+                from_agent=SEAT,
+                created_at=_ts(2 * THRESHOLD_S),
+                subject="go",
+                body="commission",
+            ),
+            LaneTurnView(
+                turn_number=2,
+                from_agent="dispatch",
+                created_at=_ts(THRESHOLD_S),
+                subject=(
+                    "FAILED|execution_id=exec-a|dispatch_id=disp-a|"
+                    "code=CURSOR_SOURCE_REF_IN_FLIGHT|in flight"
+                ),
+                body="refused",
+            ),
+        ),
+    )
+    verdict = evaluate_quiet_with_wip(snap)
+    assert verdict.fire is True
+    assert verdict.reason == "closeout_unharvested"
+    assert verdict.wip_execution_ids == ("exec-b",)
+
+
+def test_git_worker_draining_failed_not_refused_admit_still_alarms() -> None:
+    """B3: GIT_WORKER_DRAINING is not a refused admit — debt must still alarm."""
+    term_at = _ts(THRESHOLD_S)
+    snap = _snap(
+        links=(
+            DispatchLinkView(
+                execution_id="exec-drain",
+                terminal_status="failed",
+                terminal_at=term_at,
+                pipeline_id="cursor-sdk-generate",
+            ),
+        ),
+        turns=(
+            LaneTurnView(
+                turn_number=1,
+                from_agent=SEAT,
+                created_at=_ts(2 * THRESHOLD_S),
+                subject="go",
+                body="commission",
+            ),
+            LaneTurnView(
+                turn_number=2,
+                from_agent="dispatch",
+                created_at=_ts(THRESHOLD_S),
+                subject=(
+                    "FAILED|execution_id=exec-drain|dispatch_id=disp-d|"
+                    "code=GIT_WORKER_DRAINING|draining"
+                ),
+                body="drain",
+            ),
+        ),
+    )
+    verdict = evaluate_quiet_with_wip(snap)
+    assert verdict.fire is True
+    assert verdict.reason == "closeout_unharvested"
+    assert verdict.wip_execution_ids == ("exec-drain",)
 
 
 def test_closeout_read_at_counts_as_harvested_without_seat_turn() -> None:
@@ -653,7 +750,7 @@ def test_closeout_read_at_counts_as_harvested_without_seat_turn() -> None:
                 turn_number=2,
                 from_agent="cursor-sdk",
                 created_at=_ts(THRESHOLD_S - 1),
-                subject="execution_id=exec-read cursor-sdk dispatch complete",
+                subject=_closeout_subject("exec-read"),
                 body="status: complete",
                 read_at=_ts(THRESHOLD_S - 1),
             ),
@@ -665,7 +762,7 @@ def test_closeout_read_at_counts_as_harvested_without_seat_turn() -> None:
     unharvested_snap = _snap(
         links=(
             DispatchLinkView(
-                execution_id="exec-unread",
+                execution_id=_SPECIMEN_22723_T5_EXEC,
                 terminal_status="completed",
                 terminal_at=term_at,
             ),
@@ -682,8 +779,8 @@ def test_closeout_read_at_counts_as_harvested_without_seat_turn() -> None:
                 turn_number=2,
                 from_agent="cursor-sdk",
                 created_at=_ts(THRESHOLD_S - 1),
-                subject="execution_id=exec-unread cursor-sdk dispatch complete",
-                body="status: complete",
+                subject=_CLOSEOUT_SUBJECT_22723_T6,
+                body="status: partial",
                 read_at=None,
             ),
         ),

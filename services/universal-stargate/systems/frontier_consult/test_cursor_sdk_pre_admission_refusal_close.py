@@ -64,6 +64,7 @@ def _routing_bus_and_giw_client(
     giw_status: int,
     giw_body: dict[str, Any],
     bus_journal: list[tuple[str, str, dict[str, Any] | None]],
+    close_status: int = 200,
 ) -> type:
     class _Client:
         def __init__(self, *_a: object, **_k: object) -> None:
@@ -112,6 +113,8 @@ def _routing_bus_and_giw_client(
         ) -> _Resp:
             del headers
             bus_journal.append(("patch", path, json))
+            if path.endswith("/close"):
+                return _Resp(close_status, {"status": "closed", "dispatch_links": []})
             return _Resp(200, {"status": "closed", "dispatch_links": []})
 
     return _Client
@@ -193,3 +196,84 @@ async def test_pre_admission_refusal_leaves_reused_thread_open() -> None:
         )
 
     assert not any(entry[0] == "patch" for entry in bus_journal)
+
+
+@pytest.mark.asyncio
+async def test_pre_admission_refusal_close_5xx_yields_refused_admit_verdict() -> None:
+    """B6/AC3: close 5xx leaves thread active; quiet-with-WIP ⇒ refused_admit."""
+    from datetime import UTC, datetime
+
+    from agent_bus_store.quiet_with_wip import (
+        DispatchLinkView,
+        LaneTurnView,
+        QuietWithWipSnapshot,
+        evaluate_quiet_with_wip,
+    )
+
+    giw_body = {
+        "code": "CURSOR_SOURCE_REF_IN_FLIGHT",
+        "message": "source ref in flight",
+        "data": {"validation_stage": "pre_admission"},
+    }
+    bus_journal: list[tuple[str, str, dict[str, Any] | None]] = []
+    client_cls = _routing_bus_and_giw_client(
+        giw_status=409,
+        giw_body=giw_body,
+        bus_journal=bus_journal,
+        close_status=503,
+    )
+    from .admission import FrontierEndpointError
+
+    with (
+        patch.dict("os.environ", {"ALLOW_UNSET_AGENT_BUS_TOKEN": "1"}, clear=False),
+        patch(
+            "systems.frontier_consult.cursor_sdk_worker_dispatch.make_async_client",
+            client_cls,
+        ),
+        patch(
+            "systems.frontier_consult.handoff.make_async_client",
+            client_cls,
+        ),
+        patch(
+            "systems.frontier_consult.cursor_sdk_generate.emit_sdk_worker_outcome",
+        ),
+        pytest.raises(FrontierEndpointError),
+    ):
+        await _finish_prepared_dispatch(_minted_handle())
+
+    close_patch = [
+        j for j in bus_journal if j[0] == "patch" and j[1].endswith("/close")
+    ]
+    assert len(close_patch) == 1
+
+    term_at = "2026-11-08T20:00:00Z"
+    snap = QuietWithWipSnapshot(
+        thread_id="22690",
+        seat="frontier-admit",
+        now=datetime(2026, 11, 8, 21, 0, 0, tzinfo=UTC),
+        threshold_s=300.0,
+        lifecycle="active",
+        links=(
+            DispatchLinkView(
+                execution_id="exec-pre",
+                terminal_status="failed",
+                terminal_at=term_at,
+                pipeline_id="cursor-sdk-generate",
+            ),
+        ),
+        turns=(
+            LaneTurnView(
+                turn_number=1,
+                from_agent="dispatch",
+                created_at=term_at,
+                subject=(
+                    "FAILED|execution_id=exec-pre|dispatch_id=disp-pre|"
+                    "code=CURSOR_SOURCE_REF_IN_FLIGHT|in flight"
+                ),
+                body="refused",
+            ),
+        ),
+    )
+    verdict = evaluate_quiet_with_wip(snap)
+    assert verdict.fire is False
+    assert verdict.skip_reason == "refused_admit"
