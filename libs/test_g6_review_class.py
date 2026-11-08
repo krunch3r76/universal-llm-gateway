@@ -19,8 +19,9 @@ from g6_review_class import (  # noqa: E402
     refuse_filtered_tools_call,
     review_fallback_model,
 )
+from implement_admission.impresario_policy import load_impresario_policy  # noqa: E402
 
-_CRITIC = "anthropic/claude-sonnet-5-5"
+_CRITIC = load_impresario_policy().critic.model
 _REVIEW = {
     "op": "generate",
     "model": _CRITIC,
@@ -33,16 +34,22 @@ _REVIEW = {
 def test_nested_review_call_is_admitted() -> None:
     assert is_review_class_call(_REVIEW, seat_thread="12988")
     assert is_review_class_call(
+        {**_REVIEW, "model": "anthropic/claude-sonnet-5-5"}, seat_thread="12988"
+    )
+    assert is_review_class_call(
         {**_REVIEW, "model": "anthropic/claude-opus-5-5"}, seat_thread="12988"
     )
     assert is_review_class_call(
         {**_REVIEW, "model": "anthropic/claude-fable-5-1"}, seat_thread="12988"
     )
-    assert not is_review_class_call(
+    assert is_review_class_call(
         {**_REVIEW, "model": "cdp/opus-5.5"}, seat_thread="12988"
     )
     assert not is_review_class_call(
-        {**_REVIEW, "model": "cdp/fable"}, seat_thread="12988"
+        {**_REVIEW, "model": "cursor/grok-4.7"}, seat_thread="12988"
+    )
+    assert not is_review_class_call(
+        {**_REVIEW, "model": "cursor/composer-2.5"}, seat_thread="12988"
     )
     bare = {k: v for k, v in _REVIEW.items() if k != "purpose"}
     assert "purpose" not in bare
@@ -117,7 +124,6 @@ def test_refusal_message_names_contract_not_job_argument() -> None:
     text = refusal["error"]["message"]
     assert "contract=delivery-review" in text
     assert _CRITIC in text
-    assert "do not substitute cdp/" in text
     assert "job=delivery-review," not in text
 
 
@@ -245,21 +251,27 @@ def test_allowlist_refuses_confused_deputy_and_foreign_thread() -> None:
     assert not is_review_class_call({**_REVIEW, "contract": None}, seat_thread="12988")
     assert not is_review_class_call(_REVIEW, seat_thread="999")
     assert is_review_class_call(_REVIEW, seat_thread="12988")
-    opus55 = {**_REVIEW, "model": "anthropic/claude-opus-5-5"}
-    assert is_review_class_call(opus55, seat_thread="12988")
-    assert not is_review_class_call(
+    alt_cdp = {**_REVIEW, "model": "cdp/opus-5"}
+    assert is_review_class_call(alt_cdp, seat_thread="12988")
+    assert is_review_class_call(
+        {**_REVIEW, "model": "anthropic/claude-opus-5-5"}, seat_thread="12988"
+    )
+    assert is_review_class_call(
         {**_REVIEW, "model": "cdp/opus-5.5"}, seat_thread="12988"
     )
     assert not is_review_class_call(
-        {**opus55, "contract": "freeform"}, seat_thread="12988"
+        {**_REVIEW, "model": "cursor/grok-4.7"}, seat_thread="12988"
     )
     assert not is_review_class_call(
-        {**opus55, "contract": "none"}, seat_thread="12988"
+        {**alt_cdp, "contract": "freeform"}, seat_thread="12988"
     )
-    assert not is_review_class_call({**opus55, "prompt": None}, seat_thread="12988")
-    assert not is_review_class_call({**opus55, "prompt": ""}, seat_thread="12988")
     assert not is_review_class_call(
-        {k: v for k, v in opus55.items() if k != "prompt"}, seat_thread="12988"
+        {**alt_cdp, "contract": "none"}, seat_thread="12988"
+    )
+    assert not is_review_class_call({**alt_cdp, "prompt": None}, seat_thread="12988")
+    assert not is_review_class_call({**alt_cdp, "prompt": ""}, seat_thread="12988")
+    assert not is_review_class_call(
+        {k: v for k, v in alt_cdp.items() if k != "prompt"}, seat_thread="12988"
     )
     assert is_review_class_call(
         {**_REVIEW, "parent_thread": "12988"}, seat_thread="12988"

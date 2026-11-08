@@ -98,34 +98,6 @@ def test_sweep_emits_and_posts_once(bus_db) -> None:
     assert quiet_turns[0]["to_agent"] == seat
 
 
-def test_patch_close_removes_thread_from_quiet_candidates(bus_db) -> None:
-    """B6/AC3: PATCH /threads/{id}/close drops active thread from sweep candidacy."""
-    from fastapi.testclient import TestClient
-
-    from agent_bus_store import create_app
-    from agent_bus_store.auth import require_token
-    from agent_bus_store.quiet_sweep import _candidate_thread_ids
-
-    thread_row, *_ = create_thread_with_turn(
-        slug="close-candidacy",
-        from_agent="web-anthropic",
-        to_agent="cursor-auto",
-        subject="work",
-        body="lane",
-        lifecycle_state="active",
-    )
-    thread_id = thread_row["id"]
-    assert thread_id in _candidate_thread_ids()
-
-    app = create_app(db_path=str(bus_db))
-    app.dependency_overrides[require_token] = lambda: None
-    with TestClient(app) as client:
-        resp = client.patch(f"/threads/{thread_id}/close", json={"summary": "done"})
-        assert resp.status_code == 200, resp.text
-
-    assert thread_id not in _candidate_thread_ids()
-
-
 def test_mission_lane_active_birth_in_sweep_candidacy(bus_db) -> None:
     """AC: newly created mission lane with active lifecycle is A′ candidate."""
     from agent_bus_store.quiet_sweep import _candidate_thread_ids

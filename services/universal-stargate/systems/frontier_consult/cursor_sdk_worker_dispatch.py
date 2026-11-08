@@ -210,9 +210,6 @@ def _parse_worker_error(resp: httpx.Response, *, dispatch_id: str) -> dict[str, 
     data = body.get("data") if isinstance(body.get("data"), dict) else {}
     blocking = data.get("blocking_dispatch_id")
     resume_reason = data.get("reason")
-    failure_layer = data.get("failure_layer") or body.get("failure_layer")
-    if not failure_layer and data.get("validation_stage") == "pre_admission":
-        failure_layer = "admission"
     detail: dict[str, Any] = {
         "status_code": resp.status_code,
         "http_status": resp.status_code,
@@ -220,8 +217,7 @@ def _parse_worker_error(resp: httpx.Response, *, dispatch_id: str) -> dict[str, 
         "worker_error_code": str(code),
         "message": str(message),
         "blocking_dispatch_id": blocking,
-        "failure_layer": failure_layer or "http",
-        "validation_stage": data.get("validation_stage"),
+        "failure_layer": "http",
         "dispatch_id": dispatch_id,
         "detail_summary": str(message),
         "source": body.get("source"),

@@ -36,8 +36,9 @@ def policy_review_models() -> frozenset[str]:
     """Delivery-review models for a filtered seat.
 
     Authority is ``impresario.critic`` plus same-prefix ``allowed_critics``
-    in ``config/routing/route_policy.yaml``. A ``cdp/`` id is admitted only
-    when that prefix is the configured critic.
+    in ``config/routing/route_policy.yaml``, union any ``anthropic/*`` entries
+    in ``allowed_critics``. A ``cdp/`` id is admitted only when that prefix is
+    the configured critic.
     """
     from implement_admission.impresario_policy import load_impresario_policy
 
@@ -46,6 +47,11 @@ def policy_review_models() -> frozenset[str]:
     prefix, sep, _rest = critic.partition("/")
     prefix = f"{prefix}/" if sep else critic
     models = {model for model in policy.allowed_critics if model.startswith(prefix)}
+    models |= {
+        model
+        for model in policy.allowed_critics
+        if model.startswith("anthropic/")
+    }
     models.add(critic)
     return frozenset(models)
 
@@ -59,7 +65,7 @@ def refusal_message() -> str:
     return (
         "team_dispatch on a filtered cursor-sdk seat is review-class only "
         "(op=generate, contract=delivery-review, "
-        f"model default {critic} (impresario.critic; do not substitute cdp/), "
+        f"model default {critic} (impresario.critic), "
         f"also admitted {{{admitted}}}, prompt set, "
         "dispatch_thread_id = this seat's thread, parent_thread omitted or equal; "
         "omit purpose and role — put job=delivery-review on a prompt line). "

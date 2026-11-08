@@ -310,8 +310,6 @@ def build_turn_created(
     thread_tags: list[str] | None = None,
     supersedes_turn: int | None = None,
     on_behalf: bool = False,
-    from_agent_id: str | None = None,
-    warning: str | None = None,
 ) -> TurnCreated:
     """Build TurnCreated and emit briefing advisory observation when applicable.
 
@@ -372,8 +370,6 @@ def build_turn_created(
         on_behalf=on_behalf or None,
         superseded_turn_number=superseded_turn_number,
         superseded_turn_id=superseded_turn_id,
-        from_agent_id=from_agent_id,
-        warning=warning,
     )
 
 

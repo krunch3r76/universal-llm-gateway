@@ -1,6 +1,6 @@
 ## Packet
 <!-- width-seat:v1:start -->
-> **Width seat** (generated from `libs/implement_admission/conductor_critic_render.py`; do not hand-edit): critic = `anthropic/claude-sonnet-5-5` · `reasoning_effort=high` · usage channel **Sonnet**. SKETCH (G1) = `anthropic/claude-sonnet-5-5` · `reasoning_effort=high`. SKEPTIC (G4) = `anthropic/claude-sonnet-5-5` · `reasoning_effort=high` (cross-family review). RESTORE = `anthropic/claude-fable-5-1` · `reasoning_effort=high` (operator restore preset).
+> **Width seat** (generated from `libs/implement_admission/conductor_critic_render.py`; do not hand-edit): critic = `cdp/opus-5.5` · `reasoning_effort=high` · usage channel **Opus**. SKETCH (G1) = `cdp/opus-5.5` · `reasoning_effort=high`. SKEPTIC (G4) = `cdp/opus-5.5` · `reasoning_effort=high` (cross-family review). RESTORE = `anthropic/claude-fable-5-1` · `reasoning_effort=high` (operator restore preset).
 <!-- width-seat:v1:end -->
 
 
@@ -43,7 +43,7 @@ Required in `<scope>` / `<invariants>`:
 - **G-row contract honesty** — do not mark a G-row conductor-direct / `owner: cursor-sdk` when `files_expected` includes production code+tests. Conductor binds; Composer implements.
 - **Class reservation (A1 §13′ #2)** — under `work_key=todo:{slug}`, only a seated conductor (`job=conductor`, cursor-sdk) may author G-rows and mutate the scoreboard. An Impresario admits that conductor for a played todo (§ Play in `ide-continuity`) and does not author G-rows, Sketch, or `job=implement`. The conductor nests Composer implement after its own Compose.
 - **Scoreboard G6/G7 (binding)** — **`review harvest ≺ land ≺ DONE`**. After G5
-  implement, **G6** = `team_dispatch(op=generate, model=anthropic/claude-sonnet-5-5, contract=delivery-review, reasoning_effort="high", …)` with prompt line `job=delivery-review` (`impresario.critic`; do not substitute `cdp/`)
+  implement, **G6** = `team_dispatch(op=generate, model=cdp/opus-5.5, contract=delivery-review, reasoning_effort="high", …)` with prompt line `job=delivery-review` (`impresario.critic`; `cdp/` is allowed and preferred for conductor and supervisor legs over `anthropic/*` and over any `cursor/*` model except `cursor/composer-2.5` while it is cheaper. No CDP host ⇒ record `cdp_fail_route=anthropic` and dispatch `anthropic/claude-sonnet-5-5`)
   (**`extra`/`xhigh` floor, `max` if invariant-touching, under
   `conductor_profile=fable-scarce`**) on the **lane branch diff** (sidecar **R1**).
   **G7** = merge/land (sidecar **L1**).
@@ -108,7 +108,7 @@ tip and continuity sidecar. Values: **`plan`** · **`agent`** · **`—`** (CDP 
 |---|---|---|---|
 | G3 recon / bind (pre-ready) | `plan` | `none` \| `recon` \| `seed` \| `consult` | `plan:closeout_verdict=PLAN_COMPLETE` or `PARTIAL` + artifact URIs — **no** land |
 | G5 implement | `agent` | `implement` \| `pure-mechanical` | **Attended:** `SCORE_RESURFACE` (slug in subject; body cites CDP exec + review sha when the tip recorded them) **∧** implement (`ledger:nested_implement` ∨ `git:lane_head`). ¬ tip `DONE` · ¬ steer-inject · ¬ harvest alone · ¬ nested_implement without resurface. **Away:** implement only. Path-explicit commit / `land_disposition` are G7 |
-| G1 · G2 · G4 · G6 | `—` | width-seat critic | harvest URI (G6 = one `team_dispatch(op=generate, model=anthropic/claude-sonnet-5-5, contract=delivery-review, dispatch_thread_id=<worker>, parent_thread=<this worker thread id>, prompt=<body>)`; `impresario.critic`; do not substitute `cdp/`. Prompt body includes a line `job=delivery-review` plus `retrieval_report:` lines. `stop: PARKED_TRANSPORT` applies only when the admitted model prefix is `cdp/`. Distinct from the attended G5 closer) |
+| G1 · G2 · G4 · G6 | `—` | width-seat critic | harvest URI (G6 = one `team_dispatch(op=generate, model=cdp/opus-5.5, contract=delivery-review, dispatch_thread_id=<worker>, parent_thread=<this worker thread id>, prompt=<body>)`; `impresario.critic`; `cdp/` is allowed and preferred for conductor and supervisor legs over `anthropic/*` and over any `cursor/*` model except `cursor/composer-2.5` while it is cheaper. No CDP host ⇒ record `cdp_fail_route=anthropic` and dispatch `anthropic/claude-sonnet-5-5`. Prompt body includes a line `job=delivery-review` plus `retrieval_report:` lines. `stop: PARKED_TRANSPORT` applies only when the admitted model prefix is `cdp/`. Distinct from the attended G5 closer) |
 | Conductor (top-level) | `agent` | `conductor` | scoreboard drive |
 
 **Scoreboard tip template (worked example — sparse birth):**
@@ -260,8 +260,8 @@ Plan closeout **forbids** `landed` / path-explicit commit claims
   Score journal appends require real UTC timestamps (`datetime.now(UTC)` on
   write — authority: `implement_admission.conductor_score_io`).
 - G3→G5 default: in-process width-seat critic score-ratify (do-not-fight / likely-optimal) via
-  `team_dispatch(op=generate, model=anthropic/claude-sonnet-5-5, contract=freeform, dispatch_thread_id=<this worker thread id>)`.
-  Do not substitute `cdp/`.
+  `team_dispatch(op=generate, model=cdp/opus-5.5, contract=freeform, dispatch_thread_id=<this worker thread id>)`.
+  `cdp/` is allowed and preferred for conductor and supervisor legs over `anthropic/*` and over any `cursor/*` model except `cursor/composer-2.5` while it is cheaper. No CDP host ⇒ record `cdp_fail_route=anthropic` and dispatch `anthropic/claude-sonnet-5-5`.
   Explicit see-score → `ROW_PINNED` + ping.
 - **Stronger-model gates (a:32146 · a:32226):** Conductor **MUST break** (halt /
   refuse nest of the next gated G-row · refuse land · refuse terminal `DONE`)
@@ -271,7 +271,7 @@ Plan closeout **forbids** `landed` / path-explicit commit claims
   **Under `conductor_profile=fable-scarce`:**
   G4 still reads ACTIVE, and the ≤1 `anthropic/claude-fable-5-1` leg-per-arc allowance is
   removed. **After-ship code review**
-  (post-implement, on the **lane branch**, before land) = `anthropic/claude-sonnet-5-5` (`impresario.critic`; do not substitute `cdp/`)
+  (post-implement, on the **lane branch**, before land) = `cdp/opus-5.5` (`impresario.critic`; `cdp/` is allowed and preferred for conductor and supervisor legs over `anthropic/*` and over any `cursor/*` model except `cursor/composer-2.5` while it is cheaper. No CDP host ⇒ record `cdp_fail_route=anthropic` and dispatch `anthropic/claude-sonnet-5-5`)
   (xhigh/Extra). Skeptic ≠ code review. Composer cannot self-certify either.
   Same-family effort bumps are **not** the gate.
   **Transport failure ≡ missing harvest (BINDING):** `cdp-ask` down · Chrome
@@ -319,7 +319,7 @@ Ten fields, index-thin: `Anchor` · `Hop` · `Mission` · `Rows` · `In-flight` 
 `Judgment` · `Next-pickup` · `NEXT_ADMIT` · `Stop` · RESUME footer. Optional row
 field under profile **`cdp_fable_legs_arc`** no longer caps legs: the ≤1
 `cdp/fable-5.1` leg-per-arc allowance is removed, and G4 reads ACTIVE.
-Empty / `FAILED body_len=0` leg ⇒ record `cdp_fail_route` on the scoreboard row and escalate at once. Do not retry the CDP pool. `nested-grok` or `operator` as in the after-ship gate above. Field-level
+Empty / `FAILED body_len=0` leg ⇒ record `cdp_fail_route` on the scoreboard row and escalate at once. Do not retry the CDP pool. `anthropic`, `nested-grok`, or `operator` as in the after-ship gate above. Field-level
 content and the why-a-cold-successor-needs-it column:
 `cortex://notes/system/threads/9638-hop-architecture-bind-web-anthropic-20260901T13.md`
 §3. **Not** in it: prose narrative of the row's work (that is the journal), the

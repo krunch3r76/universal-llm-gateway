@@ -96,49 +96,6 @@ def test_lane_current_rejects_missing_thread() -> None:
     assert result["reason"] == "lane_current_thread_required"
 
 
-def test_send_impl_forwards_from_agent_id() -> None:
-    captured: dict[str, object] = {}
-
-    def fake_relay(service, method, path, **kwargs):
-        captured["body"] = kwargs.get("body")
-        return {
-            "send_path": "continue",
-            "thread": {"id": "1"},
-            "turn": {"turn_number": 2},
-        }
-
-    tab = "21060be7-f0a6-4fa1-9058-b117ce4fc526"
-    with (
-        patch("tools.agent_bus.send.relay", side_effect=fake_relay),
-        patch("tools.agent_bus.send.record"),
-        patch(
-            "claude_bundles.mission_close_debrief_auto.attach_mission_debrief_notify",
-            side_effect=lambda result, **_: result,
-        ),
-    ):
-        _send_impl(
-            new_slug=None,
-            thread="1",
-            to="web-anthropic",
-            subject="s",
-            body="b",
-            from_agent="cursor",
-            summary=None,
-            tags=None,
-            lifecycle_state=None,
-            after_turn=0,
-            status="open",
-            mark_read=False,
-            close=False,
-            attachments=None,
-            allow_long_body=False,
-            from_agent_id=tab,
-        )
-    body = captured.get("body")
-    assert isinstance(body, dict)
-    assert body.get("from_agent_id") == tab
-
-
 def test_send_impl_forwards_lane_fields() -> None:
     captured: dict[str, object] = {}
 

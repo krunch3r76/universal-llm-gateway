@@ -55,7 +55,7 @@ rich_seed_field_lists ∈ /todo ∨ decision:todo-creation-rich-seed-contract �
 ## When the width seat defaults (CDP — not a Cursor pool)
 
 <!-- width-seat:v1:start -->
-> **Width seat** (generated from `libs/implement_admission/conductor_critic_render.py`; do not hand-edit): critic = `anthropic/claude-sonnet-5-5` · `reasoning_effort=high` · usage channel **Sonnet**. SKETCH (G1) = `anthropic/claude-sonnet-5-5` · `reasoning_effort=high`. SKEPTIC (G4) = `anthropic/claude-sonnet-5-5` · `reasoning_effort=high` (cross-family review). RESTORE = `anthropic/claude-fable-5-1` · `reasoning_effort=high` (operator restore preset).
+> **Width seat** (generated from `libs/implement_admission/conductor_critic_render.py`; do not hand-edit): critic = `cdp/opus-5.5` · `reasoning_effort=high` · usage channel **Opus**. SKETCH (G1) = `cdp/opus-5.5` · `reasoning_effort=high`. SKEPTIC (G4) = `cdp/opus-5.5` · `reasoning_effort=high` (cross-family review). RESTORE = `anthropic/claude-fable-5-1` · `reasoning_effort=high` (operator restore preset).
 <!-- width-seat:v1:end -->
 
 
@@ -229,7 +229,7 @@ four-condition trigger in `decision:architecture-bind-escalation-chain` holds
 (`cdp-operator-proxy` § Architecture-bind chain) — **pre-authorized, ¬ operator ping**.
 That trigger picks the **seat**, not a second effort gate; once picked, knobs follow
 the grok card (`effort` through `xhigh`). Announce
-model + effort + why. When that CDP consult is refused or fails (with an eligible host, tab asks open a tab instead of waiting on pool mint), do not wait and do not retry the CDP pool. The conductor chooses at once and records `cdp_fail_route` on the scoreboard: `nested-grok` (`cursor/grok-4.7` `contract=freeform` `model_knobs={"effort":"xhigh"}`) or `operator` (question and context on the worker thread `to=web-anthropic`, one-line pointer on `parent_thread` `to=web-anthropic`; the operator answers on the worker thread, which `CONSULT_PENDING` watches). That SOT also binds the **mandatory** independent
+model + effort + why. When that CDP consult is refused or fails (with an eligible host, tab asks open a tab instead of waiting on pool mint), do not wait and do not retry the CDP pool. The conductor chooses at once and records `cdp_fail_route` on the scoreboard: `anthropic`, `nested-grok` (`cursor/grok-4.7` `contract=freeform` `model_knobs={"effort":"xhigh"}`), or `operator` (question and context on the worker thread `to=web-anthropic`, one-line pointer on `parent_thread` `to=web-anthropic`; the operator answers on the worker thread, which `CONSULT_PENDING` watches). That SOT also binds the **mandatory** independent
 check (`cdp/opus-5.5`; `cdp/fable` only when Kaywan asks — an architecture is not self-ratifiable) and verbatim
 densify. ¬ fork those rules here.
 

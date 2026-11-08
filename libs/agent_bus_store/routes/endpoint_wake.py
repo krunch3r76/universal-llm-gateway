@@ -14,7 +14,6 @@ from ..db.endpoint_wake_ledger import (
     claim_due_wakes,
     get_cursor,
     list_wake_ledger_rows,
-    recent_delivered_agent_ids,
     record_wake_result,
 )
 
@@ -75,20 +74,6 @@ async def wake_ledger_route(
         limit=limit,
     )
     return {"rows": rows, "count": len(rows)}
-
-
-@router.get("/endpoint-wake/recent-deliveries")
-async def recent_deliveries_route(
-    thread: str = Query(...),
-    since_s: int = Query(..., ge=1, le=86400),
-    before: str | None = Query(
-        None,
-        description="Anchor stamp (UTC); window ends here instead of now",
-    ),
-) -> dict[str, Any]:
-    """Distinct delivered tab ids on a thread within a recency window (scan helper)."""
-    ids = recent_delivered_agent_ids(thread, since_s, before=before)
-    return {"delivery_agent_ids": ids, "count": len(ids)}
 
 
 @router.post("/endpoint-wake/scan")

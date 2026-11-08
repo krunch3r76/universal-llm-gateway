@@ -216,7 +216,7 @@ When blocked on a fact this seat cannot settle from tools alone:
 | 2c | **GIW serial queue wedge** (`serial_occupant=null` ∧ waiters, or queued_age not advancing) — `agent_bus.send(to=cursor)` attended IDE. Then `COME TO IDE` only if no IDE session is live (inv 40). ¬ step 3. A second `team_dispatch` on the same `work_key` is refused 409 `CURSOR_SOURCE_REF_IN_FLIGHT`; the predecessor keeps running — harvest its closeout on wakes (Poll bullet), not a `poll_hint` loop from this seat. |
 | 3 | **Cowork Ask / push the human principal** — one question + recommended answer — **true operator-only gates only** (credentials, irreversible human acts, IDE Restart / Reload Window, Authorize-triggers click, genuine *what we want* ambiguity after 2b exhausted); ¬ routine routing because Cowork chat might be human; ¬ "I'm stuck" judgment forks; ¬ missing autonomous lifecycle (inv 39); ¬ Auto-wedge `manage` (inv 40) |
 
-**Invariant:** `cdp_consult_refused ∨ cdp_consult_failed ⇒ escalate_at_once(nested-grok ∨ operator)` · `¬ wait` · `¬ retry(CDP pool)` · `human_principal ⇔ operator_only_gate`.
+**Invariant:** `cdp_consult_refused ∨ cdp_consult_failed ⇒ escalate_at_once(anthropic ∨ nested-grok ∨ operator)` · `¬ wait` · `¬ retry(CDP pool)` · `human_principal ⇔ operator_only_gate`.
 
 **Autonomy default (BINDING — inv 39, operator 2026-08-18):** a tool or recon that reports `recovery_path=human`, no systemd/supervisord unit, or manage outside `VALID_SERVICES` is a **substrate deficiency**. Next act is implement a seat-fireable recycle (supervisor or retrying external reexec, wired into `propagate` or a seat-owned verb). It is **not** step 3. tmux `0:0` is a seat recipe when a seat can drive it — never a wake, never an `OPERATOR_GATE`.
 

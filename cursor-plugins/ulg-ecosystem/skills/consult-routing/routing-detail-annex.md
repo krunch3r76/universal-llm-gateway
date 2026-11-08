@@ -51,7 +51,7 @@ Opus frame output: `cortex://…/{slug}/opus-grok-instructions.md`. Grok densify
 
 **Architecture BIND / service-home packets (CDP Fable or Opus):** attach judgment pair **and**
 inline `architecture-invariants` + `ulg-architecture` (both `cursor_only` — CDP inject adds a
-read cue; life Customize does not carry them). When process manager /
+read cue; life Customize does not carry them). **`contract=code-review` on `cdp/`** auto-attaches the same pair when `files_expected` span more than one service dir (`services/<x>` or `libs/<x>` top-level pairs); name the `docs/architecture/*.md` sections to check in the prompt — not only manual BIND packets. When process manager /
 service home / extract is load-bearing, **inline** `[ulg:host-process]` one-liner (manage
 subprocesses except satellites; repo systemd ≠ live). Detail: `claude-ai-cdp-navigation`
 reference-annex packet-class row *ULG service home / placement / extract / hosting BIND*.

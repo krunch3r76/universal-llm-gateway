@@ -544,10 +544,10 @@ def test_review_leg_packet_one_dispatch_then_park(tmp_path: Path) -> None:
     assert "contract=delivery-review" in mp.text
     assert "dispatch_thread_id=" in mp.text
     assert "parent_thread=<this worker thread id>" in mp.text
-    assert "do not substitute cdp/" in mp.text
-    assert "model=cdp/" not in mp.text
+    assert "do not substitute cdp/" not in mp.text
     roles = resolve_roles()
     if roles.review.transport == "cdp_parked":
+        assert f"model={roles.review.model}" in mp.text
         assert "NEXT_ADMIT: harvest" in mp.text
         assert "stop: PARKED_TRANSPORT" in mp.text
     elif roles.review.transport == "api":
@@ -923,7 +923,7 @@ def test_hop_tip_r1_stamp_is_excluded_not_leaked(
         "## Gated deliverables (open)\n\n"
         "| G2 | Frame | plan | OPEN | |\n\n"
         "## Sidecars\n\n"
-        f"| R1 | (pending) | model={PIN_CRITIC.model} (impresario.critic; do not substitute cdp/) |\n"
+        f"| R1 | (pending) | model={PIN_CRITIC.model} (impresario.critic) |\n"
     )
     rem = RematerializeContext(hop_seq=1, summoning_thread_id="21382")
     ctx = load_conductor_context(
@@ -970,8 +970,7 @@ def test_hop_scope_claimed_g6_stamp_excluded(
     )
     hint = (
         "hang R1 pre-land review URI (team_dispatch op=generate, "
-        f"contract=delivery-review, model={PIN_CRITIC.model} (impresario.critic; "
-        "do not substitute cdp/), …; "
+        f"contract=delivery-review, model={PIN_CRITIC.model} (impresario.critic), …; "
         "put job=delivery-review on a prompt line, not as a dispatch argument)"
     )
     rem = RematerializeContext(hop_seq=1, summoning_thread_id="21382")
@@ -993,7 +992,7 @@ def test_hop_scope_claimed_g6_stamp_excluded(
             "## Gated deliverables (open)\n\n"
             "| G1 | Architecture | recon | OPEN | |\n\n"
             "## Sidecars\n\n"
-            f"| R1 | (pending) | model={PIN_CRITIC.model} (impresario.critic; do not substitute cdp/) |\n"
+            f"| R1 | (pending) | model={PIN_CRITIC.model} (impresario.critic) |\n"
         ),
     ).text
     scope = text.split("<scope>")[1].split("</scope>")[0]
@@ -1020,7 +1019,7 @@ def test_hop_scope_claimed_g6_stamp_excluded(
             "## Gated deliverables (open)\n\n"
             "| G1 | Architecture | recon | OPEN | |\n\n"
             "## Sidecars\n\n"
-            f"| R1 | (pending) | model={PIN_CRITIC.model} (impresario.critic; do not substitute cdp/) |\n"
+            f"| R1 | (pending) | model={PIN_CRITIC.model} (impresario.critic) |\n"
         ),
     ).text
     _, n0 = strip_r2_stamps(strip_binds_block(text2))[1:]

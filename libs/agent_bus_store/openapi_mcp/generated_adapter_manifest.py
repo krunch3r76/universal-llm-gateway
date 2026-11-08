@@ -7,7 +7,7 @@ Regenerate:
 
 from __future__ import annotations
 
-OPENAPI_SHA256 = "e1debd5df90676beeca5f79b226bca70995920f01a4464264c5e2271fcce153b"
+OPENAPI_SHA256 = "a145b057024f108a1f31fa655cc51ba220943dd4fb25a3bfd486cac986c20fcf"
 FACADE_TOOL = "agent-bus"
 SERVED_OPS: dict[str, dict[str, str]] = {
     "branch_associate": {
@@ -162,11 +162,10 @@ SERVED_OPS: dict[str, dict[str, str]] = {
     },
 }
 NON_BINDING_PATH_FINGERPRINTS: dict[str, str] = {
-    "@components": "1eedae93ab669eb6d0eda53f795c47821b94fc833217a7f191a576b4653ae546",
+    "@components": "e4f2e6284d3d9cbd5f4e09774833f90241b647cf54b6de21d35dcc69d32007c0",
     "@info": "a8986fa23eba4ccbefb9d1d606b05ebcfa8474d790ceb9a8d83b4b3be5c8e983",
     "GET /dispatch-links/{execution_id}": "bec5bf28fc7e55d2aaae6fdd2f4af55a177f74f7030987e27c7bd9d73ebe86a3",
     "GET /endpoint-wake/cursor": "2f6669d44f555a5e11f50ae4a1e39ee8dd234cb433d2173616b8c067d983d2c6",
-    "GET /endpoint-wake/recent-deliveries": "125a506cc7f1c10999f68e298f260f9fd2e396f98e6bf00108e5fbfa314c99f2",
     "GET /health": "1863eebbca661a08d0f2f879e48af294a3e3619e30ff42052a2ffdb33010d20c",
     "GET /house-actions": "3755f56f54751408e86380e1ad1de6a97930a066632ec5bfe0f4d598cd75fe08",
     "GET /messages": "dfa9edc6b95121bb35b9ecca22260b564c40e4a8c4c180950101cb75619b0aa5",
