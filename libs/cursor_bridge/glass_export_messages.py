@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import errno
 import hashlib
 import json
 import os
+import re
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -17,7 +19,10 @@ from continuity_tape.messages import (
     Tools,
     envelope_wire_dict,
 )
-from cortex_store.transcript_assembly import locate_cursor_transcript_jsonl
+from cortex_store.transcript_assembly import (
+    _is_cursor_project_transcript,
+    locate_cursor_transcript_jsonl,
+)
 
 DEFAULT_GLASS_EXPORT_MAX_BYTES = 8_388_608
 _EXPORT_ORIGIN = "glass_export_mcp"
@@ -33,6 +38,11 @@ _SUPERVISOR_KEY_PREFIXES = (
     "packet:",
     "friction:",
     "decision:",
+)
+
+_TRANSCRIPT_ID_RE = re.compile(
+    r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+    re.IGNORECASE,
 )
 
 _RETRYABLE: dict[str, bool] = {
@@ -78,8 +88,10 @@ def _transcripts_root() -> Path:
 
 
 def _safe_transcript_id(conversation_uuid: str) -> str | None:
+    if "\x00" in conversation_uuid:
+        return None
     text = conversation_uuid.strip()
-    if not text or text in {".", ".."} or "/" in text or "\\" in text:
+    if not text or not _TRANSCRIPT_ID_RE.fullmatch(text):
         return None
     return text
 
@@ -98,6 +110,14 @@ def _valid_supervisor_work_key(key: str) -> bool:
     return any(text.startswith(prefix) for prefix in _SUPERVISOR_KEY_PREFIXES)
 
 
+def _parsed_json_object(text: str) -> bool:
+    try:
+        parsed = json.loads(text)
+    except (json.JSONDecodeError, RecursionError):
+        return False
+    return isinstance(parsed, (dict, list))
+
+
 def _is_standalone_json_record(suffix: bytes) -> bool:
     if not suffix:
         return False
@@ -107,11 +127,7 @@ def _is_standalone_json_record(suffix: bytes) -> bool:
         return False
     if not text:
         return False
-    try:
-        json.loads(text)
-    except json.JSONDecodeError:
-        return False
-    return True
+    return _parsed_json_object(text)
 
 
 def _prefix_jsonl_malformed(complete_prefix: bytes) -> bool:
@@ -121,19 +137,25 @@ def _prefix_jsonl_malformed(complete_prefix: bytes) -> bool:
         text = complete_prefix.decode("utf-8")
     except UnicodeDecodeError:
         return True
-    for line_no, line in enumerate(text.splitlines(), start=1):
+    for line in text.splitlines():
         stripped = line.strip()
         if not stripped:
             continue
-        try:
-            json.loads(stripped)
-        except json.JSONDecodeError:
+        if not _parsed_json_object(stripped):
             return True
     return False
 
 
-def validate_from_byte_offset(
-    path: Path,
+def _map_read_oserror(exc: OSError) -> GlassExportError:
+    if exc.errno == errno.EACCES:
+        return GlassExportError("transcript_unreadable")
+    if exc.errno == errno.ENOENT:
+        return GlassExportError("transcript_removed_between_locate_and_read")
+    return GlassExportError("internal_error", retryable=True)
+
+
+def _validate_offset_on_handle(
+    handle: Any,
     from_byte_offset: int,
     source_size_bytes: int,
 ) -> None:
@@ -141,14 +163,28 @@ def validate_from_byte_offset(
         raise GlassExportError("invalid_request")
     if from_byte_offset == 0 or from_byte_offset == source_size_bytes:
         return
-    with path.open("rb") as handle:
-        handle.seek(from_byte_offset - 1)
-        if handle.read(1) == b"\n":
-            return
-        handle.seek(from_byte_offset)
-        if handle.read(1) == b"\n":
-            return
+    handle.seek(from_byte_offset - 1)
+    if handle.read(1) == b"\n":
+        return
+    handle.seek(from_byte_offset)
+    if handle.read(1) == b"\n":
+        return
     raise GlassExportError("invalid_request")
+
+
+def validate_from_byte_offset(
+    path: Path,
+    from_byte_offset: int,
+    source_size_bytes: int,
+) -> None:
+    """Alignment probe for pagination offsets (opens the file once)."""
+    try:
+        with path.open("rb") as handle:
+            _validate_offset_on_handle(handle, from_byte_offset, source_size_bytes)
+    except GlassExportError:
+        raise
+    except OSError as exc:
+        raise _map_read_oserror(exc) from exc
 
 
 def _split_snapshot_buffer(
@@ -185,7 +221,7 @@ def _split_snapshot_buffer(
 
     if _is_standalone_json_record(suffix):
         return line_bounded + suffix, b"", "complete"
-    if suffix:
+    if suffix.strip():
         return line_bounded, suffix, "partial_live_tail"
     return line_bounded, b"", "complete"
 
@@ -200,24 +236,19 @@ def read_jsonl_snapshot_capped(
     if cap_bytes < 1:
         raise GlassExportError("invalid_request")
     try:
-        source_size_bytes = path.stat().st_size
-    except OSError as exc:
-        if exc.errno == 13:
-            raise GlassExportError("transcript_unreadable") from exc
-        raise GlassExportError("transcript_removed_between_locate_and_read") from exc
-
-    validate_from_byte_offset(path, from_byte_offset, source_size_bytes)
-
-    with path.open("rb") as handle:
-        try:
+        with path.open("rb") as handle:
+            source_size_bytes = os.fstat(handle.fileno()).st_size
+            _validate_offset_on_handle(
+                handle, from_byte_offset, source_size_bytes
+            )
             handle.seek(from_byte_offset)
-            buf = handle.read(cap_bytes + 1)
-        except OSError as exc:
-            if exc.errno == 13:
-                raise GlassExportError("transcript_unreadable") from exc
-            raise GlassExportError(
-                "transcript_removed_between_locate_and_read"
-            ) from exc
+            remaining = max(0, source_size_bytes - from_byte_offset)
+            to_read = min(cap_bytes + 1, remaining)
+            buf = handle.read(to_read)
+    except GlassExportError:
+        raise
+    except OSError as exc:
+        raise _map_read_oserror(exc) from exc
 
     cap_hit = len(buf) > cap_bytes
 
@@ -250,7 +281,22 @@ def _relative_jsonl_path(path: Path) -> str:
 
 
 def _emit_failure(code: str) -> None:
-    glass_export_failed(code=code, origin=_EXPORT_ORIGIN)
+    try:
+        glass_export_failed(code=code, origin=_EXPORT_ORIGIN)
+    except Exception:
+        pass
+
+
+def _jsonl_path_allowed(path: Path) -> bool:
+    resolved = path.resolve()
+    if _is_cursor_project_transcript(resolved):
+        return True
+    root = _transcripts_root()
+    try:
+        resolved.relative_to(root)
+    except ValueError:
+        return False
+    return True
 
 
 def _check_transcripts_root() -> None:
@@ -271,11 +317,41 @@ def export_glass_transcript_messages(
     observed_at: str | None = None,
 ) -> dict[str, Any]:
     """Core export: authorize, resolve, snapshot-read, extract, provenance."""
+    try:
+        return _export_glass_transcript_messages_body(
+            transcript_id=transcript_id,
+            supervisor_work_key=supervisor_work_key,
+            trusted_caller=trusted_caller,
+            tools=tools,
+            strict_dialogue=strict_dialogue,
+            from_byte_offset=from_byte_offset,
+            cap_bytes=cap_bytes,
+            observed_at=observed_at,
+        )
+    except GlassExportError:
+        raise
+    except Exception:
+        _emit_failure("internal_error")
+        raise GlassExportError("internal_error", retryable=True) from None
+
+
+def _export_glass_transcript_messages_body(
+    *,
+    transcript_id: str,
+    supervisor_work_key: str,
+    trusted_caller: str | None,
+    tools: Tools,
+    strict_dialogue: bool,
+    from_byte_offset: int,
+    cap_bytes: int | None,
+    observed_at: str | None,
+) -> dict[str, Any]:
     cap = cap_bytes if cap_bytes is not None else DEFAULT_GLASS_EXPORT_MAX_BYTES
-  # Validate request fields before auth side effects on malformed keys
     if str(tools) == "full":
+        _emit_failure("invalid_request")
         raise GlassExportError("invalid_request")
     if not _valid_supervisor_work_key(supervisor_work_key):
+        _emit_failure("invalid_request")
         raise GlassExportError("invalid_request")
 
     allowlist = _parse_allowlist()
@@ -284,20 +360,33 @@ def export_glass_transcript_messages(
         _emit_failure("export_unauthorized")
         raise GlassExportError("export_unauthorized")
 
-    if _safe_transcript_id(transcript_id) is None:
+    normalized_id = _safe_transcript_id(transcript_id)
+    if normalized_id is None:
+        _emit_failure("transcript_id_invalid")
         raise GlassExportError("transcript_id_invalid")
 
-    _check_transcripts_root()
+    try:
+        _check_transcripts_root()
+    except GlassExportError as exc:
+        _emit_failure(exc.code)
+        raise
 
     try:
-        jsonl_path, locate_code = locate_cursor_transcript_jsonl(transcript_id)
+        jsonl_path, locate_code = locate_cursor_transcript_jsonl(normalized_id)
     except OSError:
+        _emit_failure("transcript_root_unreachable")
         raise GlassExportError("transcript_root_unreachable", retryable=False) from None
+    except ValueError:
+        _emit_failure("transcript_id_invalid")
+        raise GlassExportError("transcript_id_invalid") from None
 
     if locate_code == "checkpoint.window_ambiguous":
         _emit_failure("transcript_ambiguous")
         raise GlassExportError("transcript_ambiguous")
     if jsonl_path is None:
+        _emit_failure("transcript_not_found")
+        raise GlassExportError("transcript_not_found")
+    if not _jsonl_path_allowed(jsonl_path):
         _emit_failure("transcript_not_found")
         raise GlassExportError("transcript_not_found")
 
@@ -323,7 +412,7 @@ def export_glass_transcript_messages(
         envelope: ContinuityMessagesEnvelope = extract_turns_from_jsonl_bytes(
             prefix,
             tools=tools,
-            transcript_id=transcript_id,
+            transcript_id=normalized_id,
             observed_at=now,
             surface="glass",
             strict_dialogue=strict_dialogue,
@@ -334,12 +423,14 @@ def export_glass_transcript_messages(
     except ValueError:
         _emit_failure("jsonl_malformed")
         raise GlassExportError("jsonl_malformed") from None
+    except GlassExportError:
+        raise
     except Exception:
         _emit_failure("internal_error")
         raise GlassExportError("internal_error", retryable=True) from None
 
     provenance = {
-        "transcript_id": transcript_id,
+        "transcript_id": normalized_id,
         "jsonl_path": _relative_jsonl_path(jsonl_path),
         "source_sha256": source_sha256,
         "messages_sha256": envelope.meta.messages_sha256,

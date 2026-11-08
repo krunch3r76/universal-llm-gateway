@@ -17,7 +17,7 @@ if TYPE_CHECKING:
 
 def _trusted_caller() -> str | None:
     meta = current_request_metadata()
-    for key in ("caller_identity", "mcp_caller_identity", "oauth_client_id"):
+    for key in ("caller_identity", "oauth_client_id"):
         value = meta.get(key)
         if isinstance(value, str) and value.strip():
             return value.strip()
@@ -38,6 +38,10 @@ def register_glass_export_transcript_messages_tool(mcp: FastMCP) -> None:
         """Export a Cursor Glass tab JSONL transcript as a continuity messages envelope.
 
         Read-only: no bridge send, steer, or seal. Requires ``GLASS_EXPORT_ALLOWED_AGENTS``.
+        Pages are cut on JSONL **line** boundaries, not dialog turns — stitching multiple
+        pages can surface a fabricated "(no user message)" turn, per-page ``turn_index``,
+        and per-page ``messages_sha256``. ``byte_offset`` in provenance is the resume
+        pointer for the next ``from_byte_offset`` after ``truncated_by_limit``.
         Available via: dispatch(tool="glass_export_transcript_messages", ...)
         """
         try:

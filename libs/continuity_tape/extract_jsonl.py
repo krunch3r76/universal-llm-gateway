@@ -342,8 +342,9 @@ def extract_turns_from_jsonl_bytes(
         source_sha256=source_sha256,
     )
     envelope = ContinuityMessagesEnvelope(messages=messages, index=[], meta=meta)
+    event_surface = surface if event_origin is not None else meta_surface
     continuity_messages_extracted(
-        surface=meta_surface,
+        surface=event_surface,
         transcript_id=transcript_id or "",
         message_count=len(messages),
         turn_count=len(turns),

@@ -2,10 +2,9 @@
 
 from __future__ import annotations
 
-import importlib
+import subprocess
 import sys
 from pathlib import Path
-from types import ModuleType
 from typing import Any
 from unittest.mock import patch
 
@@ -40,53 +39,54 @@ def test_register_exports_named_tool() -> None:
     assert "glass_export_transcript_messages" in names
 
 
-def test_mcp_handler_uses_stamped_caller_not_body() -> None:
+def test_mcp_handler_uses_stamped_caller_not_body(tmp_path: Path) -> None:
     rec = _Recorder()
     register_glass_export_transcript_messages_tool(rec)  # type: ignore[arg-type]
     _, handler = next(
         t for t in rec.tools if t[0] == "glass_export_transcript_messages"
     )
-    root = Path(__file__).resolve().parents[3]
-    jsonl_root = root / "tmp_glass_export_mcp"
+    import json
+
+    jsonl_root = tmp_path / "transcripts"
     tid = "aaaaaaaa-bbbb-cccc-dddd-000000000001"
     path = jsonl_root / tid / f"{tid}.jsonl"
-    path.parent.mkdir(parents=True, exist_ok=True)
     rec_min = {
         "role": "user",
         "message": {"content": [{"type": "text", "text": "x"}]},
     }
-    import json
-
+    path.parent.mkdir(parents=True)
     path.write_text(json.dumps(rec_min) + "\n", encoding="utf-8")
-    try:
-        with bind_request("default", caller_identity="glass-supervisor"):
-            with patch.dict(
-                "os.environ",
-                {
-                    "CURSOR_AGENT_TRANSCRIPTS_ROOT": str(jsonl_root),
-                    "GLASS_EXPORT_ALLOWED_AGENTS": "glass-supervisor",
-                },
-            ):
-                out = handler(
-                    transcript_id=tid,
-                    supervisor_work_key="todo:grok-workflow-glass-supervisor",
-                )
-        assert out["ok"] is True
-    finally:
-        import shutil
-
-        shutil.rmtree(jsonl_root, ignore_errors=True)
+    with bind_request("default", caller_identity="glass-supervisor"):
+        with patch.dict(
+            "os.environ",
+            {
+                "CURSOR_AGENT_TRANSCRIPTS_ROOT": str(jsonl_root),
+                "GLASS_EXPORT_ALLOWED_AGENTS": "glass-supervisor",
+            },
+        ):
+            out = handler(
+                transcript_id=tid,
+                supervisor_work_key="todo:grok-workflow-glass-supervisor",
+            )
+    assert out["ok"] is True
 
 
 def test_registration_module_does_not_import_bridge_send_path() -> None:
-    loaded = {
-        name
-        for name in sys.modules
-        if name.startswith("cursor_bridge.bridge_glass_relay")
-        or name == "tools.cursor_bridge"
-    }
-    mod = importlib.import_module("tools.glass_export_transcript_messages")
-    assert isinstance(mod, ModuleType)
-    assert "tools.cursor_bridge" not in sys.modules or "tools.cursor_bridge" not in (
-        set(sys.modules) - loaded
+    mcp_tools = Path(__file__).resolve().parent
+    mcp_server = mcp_tools.parent
+    libs = Path(__file__).resolve().parents[3] / "libs"
+    script = f"""
+import sys
+sys.path.insert(0, {str(mcp_server)!r})
+sys.path.insert(0, {str(libs)!r})
+import tools.glass_export_transcript_messages  # noqa: F401
+assert "tools.cursor_bridge" not in sys.modules
+assert "cursor_bridge.bridge_glass_relay" not in sys.modules
+"""
+    proc = subprocess.run(
+        [sys.executable, "-c", script],
+        capture_output=True,
+        text=True,
+        check=False,
     )
+    assert proc.returncode == 0, proc.stderr or proc.stdout
