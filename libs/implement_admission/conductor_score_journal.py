@@ -51,7 +51,7 @@ def g6_pre_land_review_text() -> str:
     return (
         "G6 pre-land review witness — team_dispatch op=generate "
         "contract=delivery-review model="
-        f"{model} (impresario.critic; do not substitute cdp/) "
+        f"{model} (impresario.critic) "
         "on the lane branch diff before merge; "
         "harvest ≺ land (a:32226 · a:32146). job=delivery-review is the prompt genre "
         "line inside the body, not a separate call argument."

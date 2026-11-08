@@ -153,7 +153,7 @@ def _render_task_guidance_inner(
             f"team_dispatch(op=generate, model={seats.review_model}, contract=delivery-review, "
             "dispatch_thread_id=<this worker thread id>, "
             "parent_thread=<this worker thread id>). "
-            "impresario.critic; do not substitute cdp/. "
+            "impresario.critic. "
             f"{review_hint} "
             f"{hop_invariant_g3_g5_fragment(resolved_roles)}."
         ),

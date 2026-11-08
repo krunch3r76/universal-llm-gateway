@@ -1,6 +1,6 @@
 ## Interactive entry
 <!-- width-seat:v1:start -->
-> **Width seat** (generated from `libs/implement_admission/conductor_critic_render.py`; do not hand-edit): critic = `anthropic/claude-sonnet-5-5` · `reasoning_effort=high` · usage channel **Sonnet**. SKETCH (G1) = `anthropic/claude-sonnet-5-5` · `reasoning_effort=high`. SKEPTIC (G4) = `anthropic/claude-sonnet-5-5` · `reasoning_effort=high` (cross-family review). RESTORE = `anthropic/claude-fable-5-1` · `reasoning_effort=high` (operator restore preset).
+> **Width seat** (generated from `libs/implement_admission/conductor_critic_render.py`; do not hand-edit): critic = `cdp/opus-5.5` · `reasoning_effort=high` · usage channel **Opus**. SKETCH (G1) = `cdp/opus-5.5` · `reasoning_effort=high`. SKEPTIC (G4) = `cdp/opus-5.5` · `reasoning_effort=high` (cross-family review). RESTORE = `anthropic/claude-fable-5-1` · `reasoning_effort=high` (operator restore preset).
 <!-- width-seat:v1:end -->
 
 
@@ -8,7 +8,7 @@ Command `/conductor` (plugin): orient → ask establishing questions (incl. **mo
 tier**; checkout regime pre-filled **Lane B**, confirm or override to Lane A) →
 draft charter/scoreboard/packet → confirm → admit. Skill body does not re-ask
 when the operator already bound the answers in chat. Scoreboard mint includes
-stronger-model gates (a:32146 · a:32226): G4 Skeptic = ACTIVE; after-ship code review = `anthropic/claude-sonnet-5-5` (`impresario.critic`; do not substitute `cdp/`) — hard, ¬
+stronger-model gates (a:32146 · a:32226): G4 Skeptic = ACTIVE; after-ship code review = `cdp/opus-5.5` (`impresario.critic`; `cdp/` is allowed and preferred for conductor and supervisor legs over `anthropic/*` and over any `cursor/*` model except `cursor/composer-2.5` while it is cheaper. `anthropic/*` is the fallback when no CDP host is available (`cdp_fail_route`)) — hard, ¬
 optional, ¬ Composer self-cert; CDP transport fail ≡ stop past that gate
 (¬ DEFERRED-and-proceed). Profile
 `fable-scarce` ⇒ see § Profile fable-scarce (width rows stay on ACTIVE).

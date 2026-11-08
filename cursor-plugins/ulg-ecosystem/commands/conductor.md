@@ -1,6 +1,6 @@
 Conductor — cursor-sdk as **mission operator** of a continuity root.
 <!-- width-seat:v1:start -->
-> **Width seat** (generated from `libs/implement_admission/conductor_critic_render.py`; do not hand-edit): critic = `anthropic/claude-sonnet-5-5` · `reasoning_effort=high` · usage channel **Sonnet**. SKETCH (G1) = `anthropic/claude-sonnet-5-5` · `reasoning_effort=high`. SKEPTIC (G4) = `anthropic/claude-sonnet-5-5` · `reasoning_effort=high` (cross-family review). RESTORE = `anthropic/claude-fable-5-1` · `reasoning_effort=high` (operator restore preset).
+> **Width seat** (generated from `libs/implement_admission/conductor_critic_render.py`; do not hand-edit): critic = `cdp/opus-5.5` · `reasoning_effort=high` · usage channel **Opus**. SKETCH (G1) = `cdp/opus-5.5` · `reasoning_effort=high`. SKEPTIC (G4) = `cdp/opus-5.5` · `reasoning_effort=high` (cross-family review). RESTORE = `anthropic/claude-fable-5-1` · `reasoning_effort=high` (operator restore preset).
 <!-- width-seat:v1:end -->
 
 
@@ -62,7 +62,7 @@ Ask in one batch; skip any already bound in chat:
    separate ask (skill § Run to completion). Name an exception here if this
    mission needs its merge held for review.
 7. **Explicit seat pin?** — default none (Composer — omit `model=`, `{fast:true}`);
-   judgment nests width seat ACTIVE (`anthropic/claude-sonnet-5-5`, `impresario.critic`); bind/review uses that critic. Do not substitute `cdp/`. An Other-Models pin only
+   judgment nests width seat ACTIVE (`cdp/opus-5.5`, `impresario.critic`); bind/review uses that critic. `cdp/` is allowed and preferred for conductor and supervisor legs over `anthropic/*` and over any `cursor/*` model except `cursor/composer-2.5` while it is cheaper. `anthropic/*` is the fallback when no CDP host is available (`cdp_fail_route`). An Other-Models pin only
    with a named trigger. Sonnet/Opus/Terra remain explicit-pin facts only — never implicit defaults.
 8. **Admit now?** — shape the todo only vs admit after confirm.
 

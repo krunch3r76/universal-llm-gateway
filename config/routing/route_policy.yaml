@@ -58,7 +58,8 @@ impresario:
     - hybrid
   driver: {model: cursor/composer-2.5, fast: false}
   mechanical: {model: cursor/composer-2.5, effort: medium}
-  critic: {model: anthropic/claude-sonnet-5-5, effort: high}
+  # `cdp/` is allowed and preferred for conductor and supervisor legs over `anthropic/*` and over any `cursor/*` model except `cursor/composer-2.5` while it is cheaper. `anthropic/*` is the fallback when no CDP host is available (`cdp_fail_route`).
+  critic: {model: cdp/opus-5.5, effort: high}
   critic_roles:
     sketch: {}
     skeptic: {}

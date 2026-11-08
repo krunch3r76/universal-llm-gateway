@@ -42,7 +42,7 @@ def _render_templates(seat_clause: str) -> tuple[str, str]:
 @pytest.mark.offline
 def test_default_critic_renders_in_clause_and_materialize() -> None:
     roles = resolve_roles()
-    assert roles.critic.model == "anthropic/claude-sonnet-5-5"
+    assert roles.critic.model == "cdp/opus-5.5"
     clause = g3_g5_score_ratify_clause()
     hop, attended = _render_templates(clause)
     for rendered in (
@@ -52,14 +52,15 @@ def test_default_critic_renders_in_clause_and_materialize() -> None:
         hop_invariant_g3_g5_fragment(),
         attended_g3_g5_task_sentence(),
     ):
-        assert "anthropic/claude-sonnet-5-5" in rendered
+        assert "cdp/opus-5.5" in rendered
 
 
 @pytest.mark.offline
 def test_width_seat_block_names_critic_render_module() -> None:
     block = width_seat_block()
     assert "conductor_critic_render.py" in block
-    assert "anthropic/claude-sonnet-5-5" in block
+    assert "cdp/opus-5.5" in block
+    assert "usage channel **Opus**" in block
 
 
 _PLUGIN_ROOT = Path(__file__).resolve().parents[2] / "cursor-plugins" / "ulg-ecosystem"
@@ -71,6 +72,9 @@ _NON_WIDTH_ACTIVE: dict[str, str] = {
     ),
     "cursor-plugins/ulg-ecosystem/rules/dispatch-kernel_ulg.mdc": (
         "alwaysApply per-file ceiling (1100)"
+    ),
+    "cursor-plugins/ulg-ecosystem/commands/conductor.md": (
+        "Leg C1 doctrine cites ACTIVE (`cdp/opus-5.5`) outside width-seat block"
     ),
 }
 
@@ -185,19 +189,12 @@ _HARNESS_CRITIC_FILES = (
 
 @pytest.mark.offline
 def test_harness_critic_matches_route_policy() -> None:
-    """Copy-paste dispatch recipes follow impresario.critic, not cdp/."""
+    """Copy-paste dispatch recipes follow impresario.critic from route_policy."""
     critic = resolve_roles().critic.model
-    assert critic.startswith("anthropic/"), critic
+    assert critic.startswith("cdp/"), critic
     missing: list[str] = []
-    contradicted: list[str] = []
     for rel in _HARNESS_CRITIC_FILES:
         text = (_REPO_ROOT / rel).read_text(encoding="utf-8")
         if critic not in text:
             missing.append(rel)
-        if "model=cdp/opus" in text or "model=cdp/fable" in text:
-            contradicted.append(rel)
     assert missing == [], "harness omits impresario.critic:\n" + "\n".join(missing)
-    assert contradicted == [], (
-        "harness still teaches model=cdp/ as a dispatch recipe:\n"
-        + "\n".join(contradicted)
-    )

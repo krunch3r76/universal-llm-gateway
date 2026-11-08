@@ -125,7 +125,7 @@ def _missing_witness_message(
         return (
             "hang R1 pre-land review URI (team_dispatch op=generate, "
             f"contract=delivery-review, model={model} (impresario.critic; "
-            "do not substitute cdp/), …; "
+            "impresario.critic), …; "
             "put job=delivery-review on a prompt line, not as a dispatch argument)"
         )
     if row_id == "G7":
