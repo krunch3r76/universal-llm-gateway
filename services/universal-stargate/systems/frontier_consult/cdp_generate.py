@@ -738,6 +738,7 @@ async def dispatch_cdp_generate(
                 pipeline_id="cdp-generate",
                 parent_thread_id=parent_thread,
                 provenance_missing=provenance_missing,
+                waiter_transcript_id=getattr(body, "transcript_id", None),
             )
         except FrontierEndpointError as exc:
             if not isinstance(exc.__cause__, httpx.TimeoutException):
@@ -753,6 +754,7 @@ async def dispatch_cdp_generate(
                 pipeline_id="cdp-generate",
                 parent_thread_id=parent_thread,
                 provenance_missing=provenance_missing,
+                waiter_transcript_id=getattr(body, "transcript_id", None),
             )
     else:
         thread_id = await create_handoff_thread(

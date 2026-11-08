@@ -76,6 +76,9 @@ def test_waiter_line_format_and_parse() -> None:
     assert format_waiter_line(None) is None
     assert parse_waiter_from_body(f"waiter: {tid}\nbody") == tid
     assert coord_admit_subject_matches("cursor-sdk generate admitted")
+    assert coord_admit_subject_matches("synthesizer generate — req-abc")
+    assert coord_admit_subject_matches("cdp generate — exec-001")
+    assert not coord_admit_subject_matches("synthesizer reply — lane")
     assert parse_waiter_from_admit_body(
         f"waiter: {tid}\nbody",
         subject="cursor-sdk generate admitted",

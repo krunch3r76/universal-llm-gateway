@@ -37,6 +37,9 @@ from bus_watch.endpoint_wake_transport import StoreClient
 
 @pytest.fixture()
 def db(tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from bus_watch.endpoint_wake_dispatcher import _reset_waiter_stamp_cache
+
+    _reset_waiter_stamp_cache()
     monkeypatch.setenv("AGENT_BUS_DB_PATH", str(tmp_path / "bus.db"))
     monkeypatch.delenv("AGENT_BUS_ENDPOINT_WAKE_DISPATCHER", raising=False)
     init_db()
@@ -4555,6 +4558,15 @@ class _TabScanStore:
             return self._parent_scope
         return None
 
+    def subscriptions(self, agent: str = "cursor") -> list[dict]:
+        from agent_bus_store.db.endpoint_subscriptions import list_subscriptions
+
+        return [
+            r
+            for r in list_subscriptions(agent=agent)
+            if r.get("state") == "subscribed"
+        ]
+
     def turns(self, thread: str, **params: object) -> dict:
         after = int(params.get("after_turn", 0) or 0)  # type: ignore[arg-type]
         limit = int(params.get("last", 50))  # type: ignore[arg-type]
@@ -4698,6 +4710,105 @@ def test_t2_peer_sender_wakes_on_thread_with_tab_bound_cursor_row(db: None) -> N
     assert {r["decided_by_rule"] for r in store.pending} == {"wake_peer_sender"}
 
 
+def _scan_waiter_stamp_delivery(
+    *,
+    admit_subject: str,
+    thread_label: str,
+) -> None:
+    """Shared 43240-style stamp + frontier-admit reply delivery assertion."""
+    from bus_watch.endpoint_wake_dispatcher import _reset_waiter_stamp_cache
+
+    _reset_waiter_stamp_cache()
+    thread = _new_thread(thread_label)
+    _seed_row(agent="cursor", scope=thread, agent_id=_TAB_A)
+    insert_turn(
+        thread=thread,
+        from_agent="dispatch",
+        to_agent="dispatch",
+        subject=admit_subject,
+        body=f"waiter: {_TAB_A}\nWorker admitted",
+    )
+    t_id, _ts, _n, _c = insert_turn(
+        thread=thread,
+        from_agent="synthesizer",
+        to_agent="frontier-admit",
+        subject="synthesizer reply — lane 22510",
+        body="done",
+    )
+    _rewind_cursor()
+    store = _TabScanStore()
+    scan_once(store)  # type: ignore[arg-type]
+    wake = next(r for r in store.pending if r.get("turn_id") == t_id)
+    assert wake["agent"] == "cursor"
+    assert wake["delivery_agent_id"] == _TAB_A
+
+
+def test_waiter_stamp_api_role_new_thread_subject(db: None) -> None:
+    _scan_waiter_stamp_delivery(
+        admit_subject="synthesizer generate — req-new-thread",
+        thread_label="22662-waiter-api-new",
+    )
+
+
+def test_waiter_stamp_api_role_reuse_thread_subject(db: None) -> None:
+    _scan_waiter_stamp_delivery(
+        admit_subject="composer generate — req-reuse-thread",
+        thread_label="22662-waiter-api-reuse",
+    )
+
+
+def test_waiter_stamp_cdp_generate_subject(db: None) -> None:
+    _scan_waiter_stamp_delivery(
+        admit_subject="cdp generate — exec-cdp-001",
+        thread_label="22662-waiter-cdp",
+    )
+
+
+def test_scan_from_cursor_wakes_waiter_not_tombstoned(
+    db: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from bus_watch.endpoint_wake_dispatcher import (
+        RuleVerdict,
+        _reset_waiter_stamp_cache,
+        qualify,
+    )
+
+    _reset_waiter_stamp_cache()
+
+    def _qualify(turn: dict, **kwargs: object) -> RuleVerdict:
+        if str(turn.get("subject") or "") == "RESULT| cursor-peer-probe":
+            return RuleVerdict(True, "wake_peer_sender")
+        return qualify(turn, **kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(
+        "bus_watch.endpoint_wake_dispatcher.qualify",
+        _qualify,
+    )
+    thread = _new_thread("22662-cursor-peer-wake")
+    _seed_row(agent="cursor", scope=thread, agent_id=_TAB_A)
+    insert_turn(
+        thread=thread,
+        from_agent="dispatch",
+        to_agent="dispatch",
+        subject="cursor-sdk generate admitted",
+        body=f"waiter: {_TAB_A}\nWorker admitted",
+    )
+    peer_id, _ts, _n, _c = insert_turn(
+        thread=thread,
+        from_agent="cursor",
+        to_agent="frontier-admit",
+        subject="RESULT| cursor-peer-probe",
+        body="done",
+    )
+    _rewind_cursor()
+    store = _TabScanStore()
+    scan_once(store)  # type: ignore[arg-type]
+    wake = [r for r in store.pending if r.get("turn_id") == peer_id]
+    assert len(wake) == 1
+    assert wake[0].get("state") != "skipped"
+    assert wake[0]["delivery_agent_id"] == _TAB_A
+
+
 def test_waiter_stamp_frontier_admit_synthesizer_reply_wakes_tab(db: None) -> None:
     """Friction 43240: stamped waiter + gate address override delivers to cursor tab."""
     parent = _new_thread("22662-waiter-parent")
@@ -4776,8 +4887,12 @@ def test_scan_drop_waiter_own_seat_tombstone(
         "bus_watch.endpoint_wake_dispatcher.qualify",
         _qualify,
     )
+    from uuid import uuid4
+
+    impresario = f"composer-impresario-{uuid4().hex[:8]}"
     thread = _new_thread("22662-scan-own-seat")
     _seed_row(agent="cursor", scope=thread, agent_id=_TAB_A)
+    _seed_row(agent=impresario, scope=thread, agent_id=_TAB_A)
     insert_turn(
         thread=thread,
         from_agent="dispatch",
@@ -4787,7 +4902,7 @@ def test_scan_drop_waiter_own_seat_tombstone(
     )
     peer_id, _ts, _n, _c = insert_turn(
         thread=thread,
-        from_agent="cursor",
+        from_agent=impresario,
         to_agent="frontier-admit",
         subject="RESULT| waiter-own-seat-probe",
         body="done",
@@ -4805,25 +4920,35 @@ def test_scan_drop_waiter_own_seat_tombstone(
 
 
 def test_is_waiter_own_seat_wake_matches_tab_holders(db: None) -> None:
-    """B3: suppression keys off seats the sender holds, not only ``from=cursor``."""
+    """R2: uuid tab holders and impresario seats suppress; shared ``from=cursor`` does not."""
+    from uuid import uuid4
+
     from bus_watch.endpoint_wake_dispatcher import _is_waiter_own_seat_wake
 
+    impresario = f"composer-impresario-{uuid4().hex[:8]}"
     thread = _new_thread("22662-own-seat-unit")
     _seed_row(agent="cursor", scope=thread, agent_id=_TAB_A)
+    _seed_row(agent=impresario, scope=thread, agent_id=_TAB_A)
     store = _TabScanStore()
-    turn = {
+    base_turn = {
         "thread": thread,
-        "from_agent": "cursor",
         "to_agent": "frontier-admit",
         "subject": "RESULT| peer",
     }
-    resolved = (
+    cursor_resolved = (
         "exact",
         {"agent_id": _TAB_A, "agent": "cursor", "thread_scope": thread},
     )
-    assert _is_waiter_own_seat_wake(store, turn, _TAB_A, resolved)  # type: ignore[arg-type]
-    turn_outsider = {**turn, "from_agent": "synthesizer"}
-    assert not _is_waiter_own_seat_wake(store, turn_outsider, _TAB_A, resolved)  # type: ignore[arg-type]
+    turn_cursor = {**base_turn, "from_agent": "cursor"}
+    assert not _is_waiter_own_seat_wake(store, turn_cursor, _TAB_A, cursor_resolved)  # type: ignore[arg-type]
+    turn_imp = {**base_turn, "from_agent": impresario}
+    imp_resolved = (
+        "exact",
+        {"agent_id": _TAB_A, "agent": impresario, "thread_scope": thread},
+    )
+    assert _is_waiter_own_seat_wake(store, turn_imp, _TAB_A, imp_resolved)  # type: ignore[arg-type]
+    turn_outsider = {**base_turn, "from_agent": "synthesizer"}
+    assert not _is_waiter_own_seat_wake(store, turn_outsider, _TAB_A, cursor_resolved)  # type: ignore[arg-type]
 
 
 def test_waiter_two_admit_stamps_latest_wins(db: None) -> None:
@@ -4930,6 +5055,9 @@ class _CountingNoStampStore(_FrontierAdmitScanStore):
 
 
 def test_no_stamp_scan_skips_waiter_turns_lookup(db: None) -> None:
+    from bus_watch.endpoint_wake_dispatcher import _reset_waiter_stamp_cache
+
+    _reset_waiter_stamp_cache()
     thread = _new_thread("22662-nostamp-io")
     _seed_row(agent="cursor", scope=thread, agent_id=_TAB_A)
     insert_turn(
@@ -4944,6 +5072,36 @@ def test_no_stamp_scan_skips_waiter_turns_lookup(db: None) -> None:
     scan_once(store)  # type: ignore[arg-type]
     assert store.turns_calls == 0
     assert store.route_calls >= 1
+
+
+def test_unstamped_cursor_at_most_one_cold_lookup_across_scans(db: None) -> None:
+    from bus_watch.endpoint_wake_dispatcher import _reset_waiter_stamp_cache
+
+    _reset_waiter_stamp_cache()
+    thread = _new_thread("22662-cursor-cold-once")
+    _seed_row(agent="cursor", scope=thread, agent_id=_TAB_A)
+    insert_turn(
+        thread=thread,
+        from_agent="maestro",
+        to_agent="cursor",
+        subject="REPORT| leg",
+        body="b",
+    )
+    _rewind_cursor()
+    store = _CountingNoStampStore()
+    scan_once(store)  # type: ignore[arg-type]
+    assert store.turns_calls <= 1
+    first = store.turns_calls
+    insert_turn(
+        thread=thread,
+        from_agent="maestro",
+        to_agent="cursor",
+        subject="REPORT| leg-2",
+        body="b2",
+    )
+    _rewind_cursor()
+    scan_once(store)  # type: ignore[arg-type]
+    assert store.turns_calls == first
 
 
 def test_web_anthropic_turn_skips_waiter_turns_lookup(db: None) -> None:

@@ -1393,20 +1393,69 @@ def _latest_admit_waiter_on_thread(
     return best
 
 
-def _parse_waiter_from_admit_turns(store: StoreClient, thread_id: str) -> str | None:
-    """Latest admit-coord stamp on lane or parent (no per-dispatch correlation yet)."""
+_WAITER_THREAD_CACHE: dict[str, tuple[int, str] | None] = {}
+
+
+def _reset_waiter_stamp_cache() -> None:
+    """Test-only reset for process-level waiter cache."""
+    _WAITER_THREAD_CACHE.clear()
+
+
+def _ingest_waiter_admit_turn(turn: dict[str, Any]) -> None:
+    from systems.frontier_consult.admit_provenance import (
+        coord_admit_subject_matches,
+        parse_waiter_from_admit_body,
+    )
+
+    thread = str(turn.get("thread") or "")
+    if not thread:
+        return
+    subject = str(turn.get("subject") or "")
+    if not coord_admit_subject_matches(subject):
+        return
+    waiter = parse_waiter_from_admit_body(str(turn.get("body") or ""), subject=subject)
+    if not waiter:
+        return
+    key = int(turn.get("turn_number") or turn.get("id") or 0)
+    prev = _WAITER_THREAD_CACHE.get(thread)
+    if prev is None or (isinstance(prev, tuple) and key > prev[0]):
+        _WAITER_THREAD_CACHE[thread] = (key, waiter)
+
+
+def _waiter_stamp_for_single_thread(
+    store: StoreClient, thread_id: str
+) -> tuple[int, str] | None:
+    if thread_id in _WAITER_THREAD_CACHE:
+        return _WAITER_THREAD_CACHE[thread_id]
+    hit = _latest_admit_waiter_on_thread(store, thread_id)
+    _WAITER_THREAD_CACHE[thread_id] = hit
+    return hit
+
+
+def _waiter_stamp_for_thread(store: StoreClient, thread_id: str) -> str | None:
     best: tuple[int, str] | None = None
     threads = [thread_id]
-    parent = _lane_parent_of(store, thread_id)
+    try:
+        parent = _lane_parent_of(store, thread_id)
+    except Exception:
+        logger.exception(
+            "endpoint_wake_dispatcher: lane_parent failed thread=%s", thread_id
+        )
+        parent = None
     if parent and parent not in threads:
         threads.append(parent)
     for tid in threads:
-        hit = _latest_admit_waiter_on_thread(store, tid)
+        hit = _waiter_stamp_for_single_thread(store, tid)
         if hit is None:
             continue
         if best is None or hit[0] > best[0]:
             best = hit
     return best[1] if best else None
+
+
+def _parse_waiter_from_admit_turns(store: StoreClient, thread_id: str) -> str | None:
+    """Latest admit-coord stamp on lane or parent (no per-dispatch correlation yet)."""
+    return _waiter_stamp_for_thread(store, thread_id)
 
 
 def _waiters_for_turn(
@@ -1481,9 +1530,6 @@ def _is_waiter_own_seat_wake(
     raw_from = str(turn.get("from_agent") or "")
     senders = self_sender.sender_tab_ids(store, raw_from, scopes)
     if str(waiter_id).strip().lower() in senders:
-        return True
-    seat = normalize_bus_address(str(sub.get("agent") or ""))
-    if seat and normalize_bus_address(raw_from) == seat:
         return True
     return raw_from.strip().lower() == target
 
@@ -1608,8 +1654,8 @@ def scan_once(store: StoreClient, *, idle_mark: dict[str, float] | None = None) 
         pending: list[dict[str, Any]] = []
         tombstones: list[dict[str, Any]] = []
         stale_catchup: dict[str, int] | None = None
-        waiter_cache: dict[str, str | None] = {}
         for turn in turns:
+            _ingest_waiter_admit_turn(turn)
             raw_to = str(turn.get("to_agent") or "")
             subject = str(turn.get("subject") or "")
             head = subject.split("|", 1)[0].strip().upper()
@@ -1621,11 +1667,7 @@ def scan_once(store: StoreClient, *, idle_mark: dict[str, float] | None = None) 
                 cse = True
             else:
                 if _waiter_lookup_enabled(raw_to, agent):
-                    if thread not in waiter_cache:
-                        waiter_cache[thread] = _parse_waiter_from_admit_turns(
-                            store, thread
-                        )
-                    stamped_waiter = waiter_cache[thread]
+                    stamped_waiter = _waiter_stamp_for_thread(store, thread)
                 if agent == "cursor":
                     try:
                         expire_overdue_hop(thread, store=store)

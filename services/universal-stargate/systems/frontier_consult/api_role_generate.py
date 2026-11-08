@@ -238,6 +238,7 @@ async def dispatch_api_role_generate(
             pointer_body=pointer_body,
             caller_agent=body.caller_agent,
             provenance_missing=provenance_missing,
+            waiter_transcript_id=getattr(body, "transcript_id", None),
         )
         thread_id = reuse_id
         after_turn = pointer_turn
