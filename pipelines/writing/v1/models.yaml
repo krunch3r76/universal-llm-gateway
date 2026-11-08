@@ -1,6 +1,8 @@
 models:
   prompt_architect:
     model: qwen3-5-9b-q8-0-131072
+  local_persona_author:
+    model: qwen3-5-9b-q8-0-131072
   writer:
     model: qwen3-5-9b-q8-0-131072
   drafter_local_hermes:

@@ -294,6 +294,8 @@ steps:
         fields: [json]
       - step: prompt_architect
         fields: [json, model_id, prompt_tokens, completion_tokens]
+      - step: local_persona_author
+        fields: [json]
       - step: drafter_openai
         fields: [json, raw, model_id, prompt_tokens, completion_tokens]
       - step: drafter_google

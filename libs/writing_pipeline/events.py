@@ -1,4 +1,4 @@
-"""Domain events for writer-specialist semantic_judge."""
+"""Domain events for writer-specialist semantic_judge and persona author."""
 
 from __future__ import annotations
 
@@ -18,4 +18,12 @@ def WritingJudgeFailed(*, invocation: str, reason: str) -> Event:  # noqa: N802
     return Event(
         signal="writing.judge.failed",
         payload={"invocation": invocation, "reason": reason},
+    )
+
+
+@event_factory
+def WritingPersonaRefused(*, reason: str) -> Event:  # noqa: N802
+    return Event(
+        signal="writing.persona.refused",
+        payload={"reason": reason},
     )

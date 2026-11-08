@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import importlib
 import importlib.util
 import sys
@@ -10,6 +11,9 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+import yaml
+from systems.pipeline.core.conditions import ConditionEvaluator
+from systems.pipeline.core.pipeline_config import PipelineSpec
 from systems.pipeline.core.prompts import PromptBuilder
 
 _PKG = "writing_v1_handlers"
@@ -28,8 +32,14 @@ if _PKG not in sys.modules:
 
 local_persona = importlib.import_module("writing_v1_handlers.local_persona_author")
 prompt_store = importlib.import_module("writing_v1_handlers.prompt_store")
+semantic_judge = importlib.import_module("writing_v1_handlers.semantic_judge")
+judge_events = importlib.import_module("writing_pipeline.events")
 
 pytestmark = pytest.mark.offline
+
+_WRITER_YAML_SHA256 = (
+    "b58cb267182c01c260be856aa3455c33c9124c746494c5bbe917cc4dc23931f9"
+)
 
 _CORRESPONDENCE_INTAKE = {
     "mode": "standard",
@@ -45,6 +55,15 @@ _CORRESPONDENCE_INTAKE = {
     ],
     "standing_limits": "Plain and brief. Use only facts in verbatim_notes.",
 }
+
+_PIN_LEDGER: list[dict[str, Any]] = [
+    {
+        "excerpt": (
+            "Kaywan Joseph Mansubi Assessment Appeals 25.7489 "
+            "Los Gatos October 27 2026"
+        )
+    }
+]
 
 
 class _Out:
@@ -64,18 +83,9 @@ def _correspondence_ctx() -> _Ctx:
                 {
                     "refused": None,
                     "intake": dict(_CORRESPONDENCE_INTAKE),
-                    "pin_ledger": [
-                        {
-                            "excerpt": (
-                                "Kaywan Joseph Mansubi Assessment Appeals 25.7489 "
-                                "Los Gatos October 27 2026"
-                            )
-                        }
-                    ],
+                    "pin_ledger": list(_PIN_LEDGER),
                     "brief_block": "<brief>channel: email</brief>",
                     "documents_block": "<documents><pin id='P1'>Hearing Tuesday</pin></documents>",
-                    "verbatim_notes_block": "",
-                    "source_message_block": "",
                 }
             ),
             "source_obligations": _Out(
@@ -88,6 +98,10 @@ def _correspondence_ctx() -> _Ctx:
             ),
         }
     )
+
+
+def _validate_fixture() -> tuple[dict[str, Any], list[dict[str, Any]]]:
+    return dict(_CORRESPONDENCE_INTAKE), list(_PIN_LEDGER)
 
 
 def test_writer_local_prompt_wiring() -> None:
@@ -106,15 +120,42 @@ def test_writer_local_prompt_wiring() -> None:
     assert "gate" not in rendered.lower()
 
 
-def test_validate_persona_rejects_invented_token() -> None:
-    intake = {"recipient": "Pat", "channel": "email"}
-    pin_ledger: list[dict[str, Any]] = [{"excerpt": "Pat applied on Monday."}]
-    prose = "I am Zaphod Beetlebrox and Pat applied on Monday."
-    _, ok = local_persona._validate_persona_prose(prose, pin_ledger, intake, [])
+def test_validate_accepts_qwen_register_persona() -> None:
+    intake, pins = _validate_fixture()
+    prose = (
+        "You are Kaywan Joseph Mansubi writing to the appeals board. "
+        "The hearing on October 27 2026 is already on your calendar. "
+        "When you sign off, you keep the tone plain and brief."
+    )
+    text, ok = local_persona._validate_persona_prose(prose, pins, intake, [])
+    assert ok is True
+    assert text == prose
+
+
+@pytest.mark.parametrize(
+    ("prose", "label"),
+    [
+        ("Pat met Zaphod Beetlebrox downtown.", "invented_name"),
+        ("Pat filed on March 99 2099.", "invented_number"),
+        ("You write plainly.\n- No lists", "bullet"),
+        ("You write plainly.\n1. Numbered", "numbered"),
+    ],
+)
+def test_validate_rejects_bad_persona(prose: str, label: str) -> None:
+    del label
+    intake, pins = _validate_fixture()
+    intake = {**intake, "recipient": "Pat", "signer": "Pat"}
+    pins = [{"excerpt": "Pat filed on Monday."}]
+    _, ok = local_persona._validate_persona_prose(prose, pins, intake, [])
     assert ok is False
 
 
 def test_persona_author_fail_closed_skips_branch(monkeypatch: pytest.MonkeyPatch) -> None:
+    published: list[Any] = []
+
+    def _capture(_self: object, _ctx: object, event: Any) -> None:
+        published.append(event)
+
     async def _bad_model(
         _self: object,
         _model_id: str,
@@ -127,6 +168,11 @@ def test_persona_author_fail_closed_skips_branch(monkeypatch: pytest.MonkeyPatch
 
     monkeypatch.setattr(
         local_persona.WritingLocalPersonaAuthorHandler,
+        "_publish_bus_event",
+        _capture,
+    )
+    monkeypatch.setattr(
+        local_persona.WritingLocalPersonaAuthorHandler,
         "_call_model",
         _bad_model,
     )
@@ -135,7 +181,41 @@ def test_persona_author_fail_closed_skips_branch(monkeypatch: pytest.MonkeyPatch
     ).json
     assert payload.get("ok") is False
     assert payload.get("refused") == "persona_validation_failed"
-    assert payload.get("_skipped") is True
+    assert payload.get("persona_refused") == "persona_validation_failed"
+    assert payload.get("persona_rejected_text")
+    assert "persona_prose" not in payload
+    assert published and published[0].signal == "writing.persona.refused"
+
+
+def test_persona_author_model_exception_refuses(monkeypatch: pytest.MonkeyPatch) -> None:
+    async def _boom(
+        _self: object,
+        _model_id: str,
+        _prompt: str,
+        _step: object,
+        _context: object,
+        **_: Any,
+    ) -> object:
+        raise RuntimeError("transport_down")
+
+    monkeypatch.setattr(
+        local_persona.WritingLocalPersonaAuthorHandler,
+        "_call_model",
+        _boom,
+    )
+    payload = asyncio.run(
+        local_persona.WritingLocalPersonaAuthorHandler().execute(None, _correspondence_ctx())
+    ).json
+    assert payload.get("ok") is False
+    assert payload.get("persona_refused") == "persona_author_failed"
+
+
+def test_persona_author_missing_prompt_refuses(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(local_persona, "load_prompts", lambda: {})
+    payload = asyncio.run(
+        local_persona.WritingLocalPersonaAuthorHandler().execute(None, _correspondence_ctx())
+    ).json
+    assert payload.get("persona_refused") == "persona_prompt_missing"
 
 
 def test_persona_author_success_emits_block(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -152,7 +232,7 @@ def test_persona_author_success_emits_block(monkeypatch: pytest.MonkeyPatch) -> 
             (),
             {
                 "content": (
-                    "I am Kaywan Joseph Mansubi writing to AABHearing about "
+                    "You are Kaywan Joseph Mansubi writing about "
                     "Assessment Appeals 25.7489 and the October 27 2026 hearing."
                 )
             },
@@ -171,16 +251,65 @@ def test_persona_author_success_emits_block(monkeypatch: pytest.MonkeyPatch) -> 
     assert "<persona_prose>" in str(payload.get("persona_prose_block"))
 
 
-def test_writer_yaml_unchanged_vs_master() -> None:
-    import subprocess
+def test_writer_yaml_sha256_pinned() -> None:
+    digest = hashlib.sha256((_V1 / "prompts" / "writer.yaml").read_bytes()).hexdigest()
+    assert digest == _WRITER_YAML_SHA256
 
-    lane = _V1 / "prompts" / "writer.yaml"
-    master_bytes = subprocess.check_output(
-        [
-            "git",
-            "show",
-            "master:pipelines/writing/v1/prompts/writer.yaml",
-        ],
-        cwd=_V1.parents[2],
+
+def test_fanout_persona_fail_leaves_four_cloud_drafters() -> None:
+    from systems.pipeline.core.handlers.step_output import StepOutput
+
+    raw = yaml.safe_load(
+        (_V1 / "writer-specialist-v1.yaml").read_text(encoding="utf-8")
     )
-    assert lane.read_bytes() == master_bytes
+    by_name = {step.name: step for step in PipelineSpec(**raw).steps}
+    evaluator = ConditionEvaluator()
+
+    def step(data: dict[str, Any]) -> StepOutput:
+        return StepOutput(raw="", json=data)
+
+    ctx = {
+        "assemble": step({"refused": None, "channel": "email"}),
+        "local_persona_author": step(
+            {"ok": False, "persona_refused": "persona_validation_failed"}
+        ),
+    }
+    options = {"output": "envelope", "full_drafter_fanout": True}
+    names = (
+        "drafter_openai",
+        "drafter_google",
+        "drafter_xai",
+        "drafter_local_hermes",
+        "drafter_local_ernie",
+        "drafter_anthropic",
+    )
+    active = [
+        name
+        for name in names
+        if evaluator.evaluate(by_name[name].condition, ctx, options)
+    ]
+    assert active == [
+        "drafter_openai",
+        "drafter_google",
+        "drafter_xai",
+        "drafter_anthropic",
+    ]
+
+
+def test_judge_still_sees_cloud_candidates_after_persona_fail() -> None:
+    outputs = {
+        "drafter_openai": {"raw": "Draft one", "error": None},
+        "drafter_google": {"raw": "Draft two", "error": None},
+        "drafter_xai": {"raw": "Draft three", "error": None},
+        "drafter_anthropic": {"raw": "Draft four", "error": None},
+        "drafter_local_hermes": {"error": "skipped"},
+        "drafter_local_ernie": {"error": "skipped"},
+    }
+    found = semantic_judge._eligible_candidates(outputs)
+    assert len(found) == 4
+
+
+def test_persona_refused_event_factory() -> None:
+    event = judge_events.WritingPersonaRefused(reason="persona_validation_failed")
+    assert event.signal == "writing.persona.refused"
+    assert event.payload["reason"] == "persona_validation_failed"
