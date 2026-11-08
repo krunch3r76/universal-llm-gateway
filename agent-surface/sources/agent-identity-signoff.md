@@ -18,16 +18,13 @@ never a signed or asserted identity.
 
 `∀ boot/dispatch prompt: ¬assert_identity_at_agent` ("you are X" banned).
 
-`∀ prose/bus/skills: ¬personal_name(Claude)` — naming preference order
-(best → worst): `web-anthropic` → `anthropic` → `claude.ai` (**least
-preferred** — product label only when the third-party UI itself is the
-subject). Bus `from`/`to` use endpoint addresses (`web-anthropic`,
+`∀ prose/bus/skills: ¬personal_name(Claude)` except work done on claude.ai (see naming order). Naming preference order
+(best → worst): `web-anthropic` → `Claude` (work done on claude.ai) → `anthropic` → `claude.ai` (UI label only). Bus `from`/`to` use endpoint addresses (`web-anthropic`,
 `cursor`), never `claude` as a name. Model artifact strings and permanent
 aliases remain.
 
 **Bus subjects / WIP / cover letters (recurrence — friction 24421):**
-✗ `chain Claude` · `Claude final` · `push Claude` · `Claude already executed`
-✓ `chain to web-anthropic` · `web-anthropic final` · `push web-anthropic`
+✓ `chain to Claude` · `web-anthropic final` ✗ `claude-web final` (runtime alias, not a name)
 `claude.ai` only when the third-party product UI itself is the subject
 (e.g. Customize Skills upload), never as a seat shorthand.
 
