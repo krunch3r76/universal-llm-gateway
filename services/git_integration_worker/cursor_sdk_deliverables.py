@@ -19,8 +19,11 @@ from services.git_integration_worker.cursor_sdk_closeout_artifacts import (
     body_relocated_meta,
 )
 from services.git_integration_worker.cursor_sdk_closeout_harvest import (
+    EXECUTIVE_ENVELOPE_HEADING,
+    demote_worker_level2_headings,
     partition_closeout_executive_envelope,
     stamp_harvest_status_from_structured,
+    strip_worker_executive_envelope_headings,
 )
 
 logger = get_logger(__name__)
@@ -81,11 +84,23 @@ def full_result_text(body: str, degraded_reason: str | None) -> str:
 def write_repo_sidecar(
     source_repo: Path, dispatch_id: str, content: str
 ) -> tuple[Path, str | None]:
-    """Write the closeout sidecar prose; return path and optional archived raw body."""
+    """Write the repo closeout sidecar and return its path plus optional archive body.
+
+    Line 1 is always ``## executive_envelope``; the harvest partition follows under
+    that heading. When the worker body is archived under ``## closeout_body``, worker
+    level-2 ATX headings are demoted to level 3 first.
+    """
     path = source_repo / _sidecar_rel_path(dispatch_id)
     path.parent.mkdir(parents=True, exist_ok=True)
-    executive, archived = partition_closeout_executive_envelope(content)
-    path.write_text(executive, encoding="utf-8")
+    normalized = strip_worker_executive_envelope_headings(content)
+    executive, archived = partition_closeout_executive_envelope(normalized)
+    executive = demote_worker_level2_headings(executive)
+    path.write_text(
+        f"{EXECUTIVE_ENVELOPE_HEADING}\n\n{executive}",
+        encoding="utf-8",
+    )
+    if archived is not None:
+        archived = demote_worker_level2_headings(archived)
     return path, archived
 
 

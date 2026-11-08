@@ -1,8 +1,9 @@
-"""Harvest preamble for cursor-sdk closeout sidecars.
+"""Harvest fields for cursor-sdk closeout sidecars.
 
-The first section maestro reads is the preamble before the first ATX heading,
-capped at 4000 characters. These helpers keep line-start status, VERDICT, and
-residue inside that window. Moved out of cursor_sdk_deliverables.
+Maestro reads the ``## executive_envelope`` section (text before the next ATX
+heading inside that section), capped at 4000 characters. These helpers keep
+line-start status, VERDICT, and residue inside that window. Moved out of
+cursor_sdk_deliverables.
 """
 
 from __future__ import annotations
@@ -10,14 +11,16 @@ from __future__ import annotations
 import json
 import re
 
-# Maestro step 2 reads the preamble before the first ATX heading, capped at
-# 4000 characters (step-2 budget ~4500 chars; executive envelope stays ≤4000;
+# Maestro step 2 reads the ``## executive_envelope`` section before its next ATX
+# heading, capped at 4000 characters (step-2 budget ~4500 chars; envelope ≤4000;
 # falls through to a line-start VERDICT/status search and skips
 # structured_closeout_full). A verbatim model body can hide those fields past
 # that window — specimen closeout d40fa4c3b9c3-8dcc4e70.md, 153153-char preamble.
 _HARVEST_SECTION_CAP = 4000
 _HARVEST_PREAMBLE_MAX_LINES = 60
 _CLOSEOUT_BODY_HEADING = "## closeout_body"
+EXECUTIVE_ENVELOPE_HEADING = "## executive_envelope"
+_DEMOTE_WORKER_H2_RE = re.compile(r"(?m)^## ")
 _UNSTATED_STATUS_LINE = "status: unstated"
 _EMPTY_RESIDUE_LINE = "residue: none"
 _STATUS_LINE_RE = re.compile(r"(?m)^(status:[^\n]*)$")
@@ -210,6 +213,88 @@ def _clip_harvest_section(section: str) -> str:
     return clipped + "\n"
 
 
+def strip_worker_executive_envelope_headings(content: str) -> str:
+    """Drop unfenced ``## executive_envelope`` lines from the worker head only.
+
+    The head ends at the first unfenced ATX heading whose text is not
+    ``## executive_envelope``. A leading envelope heading also drops following
+    blank lines; mid-head envelope headings drop that line only.
+    """
+    if not content:
+        return content
+    lines = content.splitlines(keepends=True)
+    offsets: list[int] = []
+    pos = 0
+    for line in lines:
+        offsets.append(pos)
+        pos += len(line)
+    spans = _fenced_spans(content)
+
+    def in_fence(offset: int) -> bool:
+        return any(start <= offset < end for start, end in spans)
+
+    head_end = len(lines)
+    for index, line in enumerate(lines):
+        if in_fence(offsets[index]):
+            continue
+        stripped = line.rstrip("\r\n")
+        if re.match(r"^#{1,6}\s+", stripped) and stripped != EXECUTIVE_ENVELOPE_HEADING:
+            head_end = index
+            break
+
+    out_head: list[str] = []
+    index = 0
+    while index < head_end:
+        line = lines[index]
+        if (
+            not in_fence(offsets[index])
+            and line.rstrip("\r\n") == EXECUTIVE_ENVELOPE_HEADING
+        ):
+            if index == 0:
+                index += 1
+                while index < head_end and not lines[index].strip():
+                    index += 1
+                continue
+            index += 1
+            continue
+        out_head.append(line)
+        index += 1
+    return "".join(out_head) + "".join(lines[head_end:])
+
+
+def demote_worker_level2_headings(body: str) -> str:
+    """Rewrite unfenced worker ``## `` ATX headings to ``### ``."""
+    spans = _fenced_spans(body)
+    pieces: list[str] = []
+    last_end = 0
+    for match in _DEMOTE_WORKER_H2_RE.finditer(body):
+        if any(start <= match.start() < end for start, end in spans):
+            continue
+        pieces.append(body[last_end : match.start()])
+        pieces.append("### ")
+        last_end = match.end()
+    pieces.append(body[last_end:])
+    return "".join(pieces)
+
+
+def split_sidecar_executive_envelope(existing: str) -> tuple[str | None, str, str]:
+    """Return (fixed heading or None, harvest section text, remainder of sidecar)."""
+    if existing.startswith(EXECUTIVE_ENVELOPE_HEADING):
+        after_heading = existing[len(EXECUTIVE_ENVELOPE_HEADING) :].lstrip("\n")
+        match = _ATX_HEADING_RE.search(after_heading)
+        if match is None:
+            return EXECUTIVE_ENVELOPE_HEADING, after_heading, ""
+        return (
+            EXECUTIVE_ENVELOPE_HEADING,
+            after_heading[: match.start()],
+            after_heading[match.start() :],
+        )
+    heading_at = _first_atx_offset(existing)
+    section = existing if heading_at is None else existing[:heading_at]
+    rest = "" if heading_at is None else existing[heading_at:]
+    return None, section, rest
+
+
 def _render_residue_line(items: object) -> str | None:
     if isinstance(items, str):
         parts = [items.strip()] if items.strip() else []
@@ -232,9 +317,7 @@ def stamp_harvest_status_from_structured(existing: str, full_body: str) -> str:
     payload = json.loads(full_body)
     if not isinstance(payload, dict):
         return existing
-    heading_at = _first_atx_offset(existing)
-    section = existing if heading_at is None else existing[:heading_at]
-    rest = "" if heading_at is None else existing[heading_at:]
+    envelope_heading, section, rest = split_sidecar_executive_envelope(existing)
     status = payload.get("status")
     if (
         isinstance(status, str)
@@ -247,7 +330,10 @@ def stamp_harvest_status_from_structured(existing: str, full_body: str) -> str:
     residue_line = _render_residue_line(payload.get("propagation_residue"))
     if residue_line and _EMPTY_RESIDUE_LINE in section.splitlines():
         section = _replace_exact_line(section, _EMPTY_RESIDUE_LINE, residue_line)
-    return _clip_harvest_section(section) + rest
+    clipped = _clip_harvest_section(section)
+    if envelope_heading is not None:
+        return f"{envelope_heading}\n\n{clipped}{rest}"
+    return clipped + rest
 
 
 def _non_fenced_summary_lines(body: str, *, max_lines: int) -> list[str]:

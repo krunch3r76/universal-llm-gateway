@@ -16,6 +16,7 @@ from implement_admission.closeout_models import (
 _BOUNDARY_SURFACES = frozenset({"cortex", "fs", "agent_bus"})
 _SIDECAR_REL = "tmp/reviews/closeouts/{dispatch_id}.md"
 _EFFECTS_MANIFEST_HEADING = "## effects_manifest"
+_EFFECTS_MANIFEST_HEADING_RE = re.compile(r"(?m)^## effects_manifest[ \t]*$")
 _JSON_OBJECT_TAIL_RE = re.compile(r"\{[\s\S]*\}\s*$")
 
 
@@ -37,10 +38,10 @@ def _raw_effects_manifest_from_sidecar(sidecar_text: str) -> dict[str, Any] | No
         raw = payload.get("effects_manifest")
         if isinstance(raw, dict):
             return raw
-    marker_idx = sidecar_text.find(_EFFECTS_MANIFEST_HEADING)
-    if marker_idx < 0:
+    marker = _EFFECTS_MANIFEST_HEADING_RE.search(sidecar_text)
+    if marker is None:
         return None
-    tail = sidecar_text[marker_idx + len(_EFFECTS_MANIFEST_HEADING) :].strip()
+    tail = sidecar_text[marker.end() :].strip()
     tail, _, _ = tail.partition("\n## ")
     match = _JSON_OBJECT_TAIL_RE.search(tail)
     if match is None:
