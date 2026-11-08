@@ -25,7 +25,10 @@ from ....events import (
     _emit_routing_model_infeasible_event,
     _emit_routing_resource_gap_event,
 )
-from ....wait_continuation import clamp_eviction_wait_timeout
+from ....wait_continuation import (
+    arm_or_remaining_eviction_budget,
+    get_eviction_wait_budget_s,
+)
 from ....wait_logic import _wait_and_retry_selection
 from .capacity_details import _build_capacity_details
 from .terminal_events import _emit_terminal_failure_events
@@ -122,12 +125,12 @@ async def handle_selection_rejection(
                     failure_reason="Transient capacity contention; entering wait queue",
                 )
             rc = routing_config or {}
-            config_timeout = float(rc.get("eviction_wait_timeout_s", 300.0))
+            config_timeout = get_eviction_wait_budget_s(routing_config)
             starvation_drain_threshold_s = float(
                 rc.get("starvation_drain_threshold_s", 15.0)
             )
             drain_duration_s = float(rc.get("drain_duration_s", 30.0))
-            timeout_s = clamp_eviction_wait_timeout(context, config_timeout)
+            timeout_s = arm_or_remaining_eviction_budget(context, config_timeout)
             selected_gateway, trace, waited_ms = await _wait_and_retry_selection(
                 federated_manager=federated_manager,
                 decision_engine=decision_engine,

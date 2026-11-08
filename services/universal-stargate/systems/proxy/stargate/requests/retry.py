@@ -276,27 +276,6 @@ def _get_capacity_wait_budget_s(proxy: StargateProxy) -> float:
     )
 
 
-def _get_eviction_wait_budget_s(proxy: StargateProxy) -> float:
-    """Return per-request eviction wait budget (seconds).
-
-    Source of truth: routing policy ``eviction_wait_timeout_s`` (default 300s).
-    Armed once on the request retry loop; not reset per upstream retry attempt.
-    """
-    rc = getattr(proxy, "routing_config", None) or {}
-    raw: object = 300.0
-    if isinstance(rc, dict):
-        raw = rc.get("eviction_wait_timeout_s", raw)
-        nested = rc.get("routing")
-        if raw == 300.0 and isinstance(nested, dict):
-            raw = nested.get("eviction_wait_timeout_s", raw)
-    return _read_positive_float(
-        {"eviction_wait_timeout_s": raw},
-        "eviction_wait_timeout_s",
-        300.0,
-        "eviction_wait_timeout_s",
-    )
-
-
 def _get_upstream_retry_timeout_s(proxy: StargateProxy) -> float:
     """
     Return time budget for retryable upstream (502) errors (seconds).

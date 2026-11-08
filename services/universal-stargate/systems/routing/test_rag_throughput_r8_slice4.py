@@ -49,7 +49,7 @@ from systems.proxy.core.nonstreaming.federated_routing.handler.orchestrator.reje
     no_selection_outcome as rejection_mod,
 )
 from systems.proxy.core.nonstreaming.federated_routing.wait_continuation import (
-    clamp_eviction_wait_timeout,
+    arm_or_remaining_eviction_budget,
 )
 from systems.routing.capacity._pool._acquisition import _AcquisitionMixin
 from systems.routing.model_router import ModelRouter
@@ -827,18 +827,24 @@ def test_4_37_eviction_wait_clamped_by_real_capacity_deadline(
         "systems.proxy.core.nonstreaming.capacity_deadline.time.monotonic",
         fake_monotonic,
     )
+    from systems.federation.common.config.schema import EndpointCategory
+
+    ctx.routing_endpoint_category = EndpointCategory.EMBEDDING
     apply_capacity_deadline(
         ctx,
         routing_config={"request_queue": {"queue_timeout": 300.0}},
         request_timeout_hint=2.0,
     )
     assert ctx._capacity_deadline_mono == pytest.approx(1002.0)
-    ctx._eviction_wait_deadline_mono = 1002.0
+    assert ctx._eviction_wait_deadline_mono is None
+    clamped = arm_or_remaining_eviction_budget(ctx, config_timeout=300.0)
+    assert clamped == pytest.approx(2.0, abs=0.01)
+    assert ctx._eviction_wait_deadline_mono == pytest.approx(1002.0)
     mono["v"] = 1001.5
-    clamped = clamp_eviction_wait_timeout(ctx, config_timeout=300.0)
-    assert clamped == pytest.approx(0.5, abs=0.01)
+    clamped_mid = arm_or_remaining_eviction_budget(ctx, config_timeout=300.0)
+    assert clamped_mid == pytest.approx(0.5, abs=0.01)
     mono["v"] = 1003.0
-    clamped_expired = clamp_eviction_wait_timeout(ctx, config_timeout=300.0)
+    clamped_expired = arm_or_remaining_eviction_budget(ctx, config_timeout=300.0)
     assert clamped_expired == 0.0
 
 

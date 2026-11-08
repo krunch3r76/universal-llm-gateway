@@ -16,17 +16,16 @@ from systems.proxy.core.nonstreaming.federated_routing import (
     wait_continuation as wait_continuation_mod,
 )
 from systems.proxy.core.nonstreaming.federated_routing.wait_continuation import (
-    clamp_eviction_wait_timeout,
+    arm_or_remaining_eviction_budget,
+    get_eviction_wait_budget_s,
 )
-from systems.proxy.stargate.requests.retry import (
-    _get_eviction_wait_budget_s,
-    execute_with_retry,
-)
+from systems.proxy.stargate.requests.retry import execute_with_retry
 
 
-def test_missing_routing_config_defaults_eviction_budget_to_300() -> None:
-    proxy = SimpleNamespace(routing_config=None)
-    assert _get_eviction_wait_budget_s(proxy) == 300.0
+def test_missing_routing_config_defaults_eviction_budget_to_300(caplog) -> None:
+    with caplog.at_level("ERROR"):
+        assert get_eviction_wait_budget_s(None) == 300.0
+    assert sum(1 for r in caplog.records if r.levelname == "ERROR") == 1
 
 
 @pytest.mark.asyncio
@@ -46,7 +45,7 @@ async def test_execute_with_retry_defers_eviction_arm_past_queue_wait(
     async def fake_execute(context: SimpleNamespace) -> Response:
         assert context._eviction_wait_deadline_mono is None
         mono["t"] += 400.0
-        clamped.append(clamp_eviction_wait_timeout(context, 300.0))
+        clamped.append(arm_or_remaining_eviction_budget(context, 300.0))
         return Response(content=b"ok", status_code=200)
 
     context = SimpleNamespace(
@@ -59,6 +58,7 @@ async def test_execute_with_retry_defers_eviction_arm_past_queue_wait(
         selected_model=None,
         excluded_gateway_ids=set(),
         excluded_gateway_errors={},
+        routing_endpoint_category=None,
     )
     proxy = SimpleNamespace(
         config=MagicMock(
@@ -96,11 +96,16 @@ async def test_failover_retry_does_not_rearm_eviction_budget(
         return mono["t"]
 
     monkeypatch.setattr(request_retry.time, "monotonic", fake_monotonic)
+    monkeypatch.setattr(wait_continuation_mod.time, "monotonic", fake_monotonic)
     attempts = {"n": 0}
+    clamped: list[float] = []
 
-    async def fake_execute(_context: SimpleNamespace) -> Response:
+    async def fake_execute(context: SimpleNamespace) -> Response:
         attempts["n"] += 1
         if attempts["n"] == 1:
+            clamped.append(arm_or_remaining_eviction_budget(context, 300.0))
+            mono["t"] += 100.0
+            clamped.append(arm_or_remaining_eviction_budget(context, 300.0))
             from fastapi import HTTPException
             from universal_protocol import ErrorCode, error_envelope
 
@@ -114,19 +119,21 @@ async def test_failover_retry_does_not_rearm_eviction_budget(
                     data={"gateway_id": "gw-a"},
                 ),
             )
+        clamped.append(arm_or_remaining_eviction_budget(context, 300.0))
         return Response(content=b"ok", status_code=200)
 
     deadline_at_start = 1000.0 + 300.0
     context = SimpleNamespace(
         request_id="req-failover",
         target_gateway_id="gw-1",
-        _eviction_wait_deadline_mono=deadline_at_start,
+        _eviction_wait_deadline_mono=None,
         _capacity_deadline_mono=None,
         queue_wait_timeout_s=None,
         request_timeout_hint=None,
         selected_model="m",
         excluded_gateway_ids=set(),
         excluded_gateway_errors={},
+        routing_endpoint_category=None,
     )
     proxy = SimpleNamespace(
         config=MagicMock(
@@ -151,4 +158,7 @@ async def test_failover_retry_does_not_rearm_eviction_budget(
         request,
         time.time(),
     )
+    assert clamped[0] == pytest.approx(300.0)
+    assert clamped[1] == pytest.approx(200.0)
+    assert clamped[2] == pytest.approx(200.0)
     assert context._eviction_wait_deadline_mono == deadline_at_start

@@ -5,7 +5,11 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any
 
 from ....selection_errors import raise_capacity_error
-from ...wait_continuation import ContinuationMode, clamp_eviction_wait_timeout
+from ...wait_continuation import (
+    ContinuationMode,
+    arm_or_remaining_eviction_budget,
+    get_eviction_wait_budget_s,
+)
 from ...wait_logic import _wait_and_retry_selection
 
 if TYPE_CHECKING:
@@ -83,8 +87,8 @@ async def requeue_after_transient_eviction(
     if charge_requeue_depth:
         context._eviction_requeue_depth = depth + 1  # noqa: SLF001
 
-    config_timeout = float(rc.get("eviction_wait_timeout_s", 300.0))
-    timeout_s = clamp_eviction_wait_timeout(context, config_timeout)
+    config_timeout = get_eviction_wait_budget_s(routing_config)
+    timeout_s = arm_or_remaining_eviction_budget(context, config_timeout)
     starvation_drain_threshold_s = float(
         rc.get("starvation_drain_threshold_s", 15.0)
     )

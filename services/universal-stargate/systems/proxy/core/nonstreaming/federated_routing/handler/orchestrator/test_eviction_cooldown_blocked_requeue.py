@@ -934,7 +934,9 @@ async def test_abab_swap_inside_120s_holds_then_proceeds_without_early_sticky(
             selected_gateway=None,
             excluded_gateway_ids=set(),
             _capacity_deadline_mono=clock["t"] + 300.0,
+            _eviction_wait_deadline_mono=clock["t"] + 300.0,
             _eviction_requeue_depth=0,
+            routing_endpoint_category=None,
         )
         selected = _gateway(loaded=frozenset({victim}))
         depth_samples.append(
