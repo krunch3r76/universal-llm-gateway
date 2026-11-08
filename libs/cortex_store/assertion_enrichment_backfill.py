@@ -20,6 +20,40 @@ _PIPELINE_ID = "assertion-enrichment"
 
 _QUESTION_PREFIX = re.compile(r"^\s*(what|when|why|how|which)\b", re.I)
 
+_BOILERPLATE_GENERIC = re.compile(
+    r"(?i)"
+    r"(?:\bdownstream processes\b|"
+    r"\bhow might\b.+\baffect\b|"
+    r"\bwhat happens if\b(?!\s+[\w/:.-]{3,})|"
+    r"\bfuture queries about\b(?!\s+[\w/:.-]{3,})|"
+    r"\balso relevant when\b(?!\s+[\w/:.-]{3,}))"
+)
+
+_STOPWORDS = frozenset(
+    {
+        "about",
+        "after",
+        "also",
+        "assertion",
+        "claim",
+        "entity",
+        "future",
+        "might",
+        "relevant",
+        "should",
+        "their",
+        "there",
+        "these",
+        "those",
+        "when",
+        "where",
+        "which",
+        "while",
+        "with",
+        "would",
+    }
+)
+
 
 class SkipClass(StrEnum):
     ASSISTANT_PREFIX = "assistant_prefix"
@@ -51,6 +85,67 @@ def prospective_question_form_share(summaries: list[str | None]) -> float:
         return 0.0
     n_what = sum(1 for s in nonempty if prospective_starts_with_what(s))
     return n_what / len(nonempty)
+
+
+def split_prospective_cues(text: str | None) -> list[str]:
+    if not text or not text.strip():
+        return []
+    parts = re.split(r"(?<=[.?!])\s+", text.strip())
+    return [p.strip() for p in parts if p.strip()]
+
+
+def claim_anchor_tokens(claim: str, entity_id: str | None = None) -> set[str]:
+    anchors: set[str] = set()
+    if entity_id:
+        anchors.add(entity_id)
+        if ":" in entity_id:
+            anchors.add(entity_id.split(":", 1)[1])
+    for match in re.finditer(r"[`'\"]?([\w][\w/:.-]{2,})[`'\"]?", claim):
+        tok = match.group(1)
+        if "/" in tok or ":" in tok or tok[:1].isupper():
+            anchors.add(tok)
+    for word in re.findall(r"[A-Za-z_][A-Za-z0-9_-]{4,}", claim):
+        low = word.lower()
+        if low not in _STOPWORDS:
+            anchors.add(word)
+    return anchors
+
+
+def cue_is_generic(cue: str, *, claim: str, entity_id: str | None = None) -> bool:
+    if _BOILERPLATE_GENERIC.search(cue):
+        return True
+    anchors = claim_anchor_tokens(claim, entity_id)
+    if not anchors:
+        return False
+    cue_norm = cue.lower().replace("-", "_")
+    return not any(a.lower().replace("-", "_") in cue_norm for a in anchors)
+
+
+def prospective_quality_metrics(
+    rows: list[tuple[str | None, str, str | None]],
+) -> tuple[float, float]:
+    """Return (generic_cue_share, length_compliance_share).
+
+    ``rows`` are (summary, claim, entity_id) tuples.
+    """
+    total_cues = 0
+    generic_cues = 0
+    length_ok = 0
+    nonempty = 0
+    for summary, claim, entity_id in rows:
+        if not summary or not summary.strip():
+            continue
+        nonempty += 1
+        cues = split_prospective_cues(summary)
+        if len(cues) <= 2:
+            length_ok += 1
+        for cue in cues:
+            total_cues += 1
+            if cue_is_generic(cue, claim=claim, entity_id=entity_id):
+                generic_cues += 1
+    generic_share = generic_cues / total_cues if total_cues else 0.0
+    length_share = length_ok / nonempty if nonempty else 0.0
+    return generic_share, length_share
 
 
 def _field_gap_sql(kind: Kind) -> str:
@@ -223,8 +318,12 @@ __all__ = [
     "field_populated",
     "load_state",
     "pipeline_payload",
+    "claim_anchor_tokens",
+    "cue_is_generic",
+    "prospective_quality_metrics",
     "prospective_question_form_share",
     "prospective_starts_with_what",
+    "split_prospective_cues",
     "record_outcome",
     "attempts_for",
     "save_state",

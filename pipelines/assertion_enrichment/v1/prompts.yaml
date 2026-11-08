@@ -9,18 +9,19 @@ prompts:
 
       Confidence taxonomy: confirmed (verified), believed (working assumption), suspected (pattern inference), hypothesized (theory).
 
-      Your task: write 1-2 declarative sentences explaining WHEN this assertion would matter
-      again and WHY an agent should retrieve it in a future session — angles the claim text
-      alone would not surface. These sentences are embedded for semantic search at boot and pickup.
+      Your task: write at most TWO retrieval cues (each may be a sentence or a question) for when
+      this assertion should surface again in a future session. Cues are embedded for semantic search
+      at boot and pickup — they must be specific to THIS claim, not generic search advice.
 
       Rules:
-      - Write factual statements only — NOT questions, NOT bullet lists of questions.
-      - Do NOT start any sentence with What, When, Why, How, or Which.
-      - Focus on non-obvious connections: adjacent domains, downstream consequences, failure modes,
-        procedural triggers, migrations, or investigative angles.
-      - For decisions: state what conditions would reopen the choice. For people: future contexts
-        where this relationship or role matters. For legal: deadlines or filings that re-activate relevance.
-      - Keep it dense and specific. No preamble, no hedging.
+      - HARD LIMIT: at most 2 cues total (not a numbered list, not three+ sentences).
+      - Each cue MUST name something concrete from the claim: an entity id/slug, file or API path,
+        tool/service name, decision, deadline, trigger, or situation stated in the claim.
+      - Questions are allowed when they name that concrete hook (e.g. a named service, entity, or path).
+      - FORBIDDEN boilerplate that could match any assertion: "downstream processes",
+        "how might X affect", "what happens if" (without claim-specific nouns), vague "future queries
+        about" without a named artifact, or generic "also relevant when" with no claim anchor.
+      - No preamble, no hedging, no bullet lists beyond the two cues.
     template: |
       Entity: {entity_id}
       Confidence: {confidence}

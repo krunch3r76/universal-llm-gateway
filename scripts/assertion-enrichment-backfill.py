@@ -40,6 +40,7 @@ from cortex_store.assertion_enrichment_backfill import (  # noqa: E402
     field_populated,
     load_state,
     pipeline_payload,
+    prospective_quality_metrics,
     prospective_question_form_share,
     record_outcome,
     save_state,
@@ -257,10 +258,15 @@ async def _validate_prospective_sample(args: argparse.Namespace) -> int:
         (n,),
     ).fetchall()
     conn.close()
-    before = [r["prospective_summary"] for r in rows]
-    share_before = prospective_question_form_share(before)
+    before_rows = [
+        (r["prospective_summary"], r["claim"], r["entity_id"]) for r in rows
+    ]
+    gen_before, len_before = prospective_quality_metrics(before_rows)
+    what_before = prospective_question_form_share([b[0] for b in before_rows])
     print(f"## prospective sample (existing, n={len(rows)})")
-    print(f"- starts with What: {share_before * 100:.1f}%")
+    print(f"- generic_cue_share: {gen_before * 100:.1f}%")
+    print(f"- length_compliance (<=2 cues): {len_before * 100:.1f}%")
+    print(f"- starts with What (diagnostic): {what_before * 100:.1f}%")
 
     kind_list = ["prospective"]
     async with httpx.AsyncClient(timeout=_REQUEST_TIMEOUT) as client:
@@ -285,19 +291,25 @@ async def _validate_prospective_sample(args: argparse.Namespace) -> int:
         after_rows.append(fresh["prospective_summary"] if fresh else None)
     conn.close()
 
-    share_after = prospective_question_form_share(after_rows)
-    print(f"- after redo starts with What: {share_after * 100:.1f}%")
-    examples: list[tuple[int, str, str]] = []
-    for row, before_t, after_t in zip(rows, before, after_rows, strict=True):
+    after_quality_rows = [
+        (after_rows[i], rows[i]["claim"], rows[i]["entity_id"])
+        for i in range(len(rows))
+    ]
+    gen_after, len_after = prospective_quality_metrics(after_quality_rows)
+    what_after = prospective_question_form_share(after_rows)
+    print(f"- after redo generic_cue_share: {gen_after * 100:.1f}%")
+    print(f"- after redo length_compliance: {len_after * 100:.1f}%")
+    print(f"- after redo starts with What (diagnostic): {what_after * 100:.1f}%")
+    examples: list[tuple[int, str, str, str]] = []
+    for row, before_t, after_t in zip(rows, [b[0] for b in before_rows], after_rows, strict=True):
         if len(examples) < 3 and after_t:
-            examples.append((row["id"], before_t or "", after_t or ""))
-    for aid, b, a in examples:
-        print(f"\n### id={aid}\nBEFORE: {b[:400]}\nAFTER:  {a[:400]}")
-    if share_after > 0.15:
-        print(
-            "\nAC4 FAIL: What-share > 15% — run events-only full backfill, "
-            "not prospective redo."
-        )
+            examples.append((row["id"], row["claim"][:120], before_t or "", after_t or ""))
+    for aid, claim, b, a in examples:
+        print(f"\n### id={aid} claim={claim!r}\nBEFORE: {b[:400]}\nAFTER:  {a[:400]}")
+    ac4_pass = gen_after <= 0.15 and len_after >= 0.90
+    print(f"\nAC4 gate (generic<=15% and length>=90%): {'PASS' if ac4_pass else 'FAIL'}")
+    if not ac4_pass:
+        print("Full run: events-only (omit prospective).")
         return 2
     return 0
 
