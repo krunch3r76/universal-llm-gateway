@@ -37,6 +37,9 @@ from systems.proxy.core.nonstreaming.federated_routing.handler.orchestrator impo
 from systems.proxy.core.nonstreaming.federated_routing.wait_continuation import (  # noqa: E402
     continuation_still_transient,
 )
+from systems.proxy.core.nonstreaming.federated_routing import (  # noqa: E402
+    wait_logic as _wait_logic_mod,
+)
 from systems.proxy.core.nonstreaming.federated_routing.wait_logic import (  # noqa: E402
     _wait_and_retry_selection,
 )
@@ -136,6 +139,15 @@ class _FakeFederatedManager:
     def clear_model_loading_optimistic(self, gateway_id: str, model_id: Any) -> None:
         self.clear_calls.append((gateway_id, model_id))
         self.loading_models.discard((gateway_id, str(model_id)))
+
+    def gateway_resource_telemetry_timestamp(self, gateway_id: str) -> float:
+        return 1.0
+
+    async def wait_for_gateway_resource_update(
+        self, _gateway_id: str, _since: float, timeout_s: float
+    ) -> bool:
+        self.wait_timeouts.append(timeout_s)
+        return False
 
 
 def _fed_gateway() -> FederatedGateway:
@@ -469,7 +481,11 @@ async def test_post_load_vram_failure_reenters_finalize_not_direct_load(
 
     reselected = _gateway(loaded=frozenset({TARGET}))
     wait_mock = AsyncMock(return_value=(reselected, _trace(), 5))
-    monkeypatch.setattr(requeue_mod, "_wait_and_retry_selection", wait_mock)
+    monkeypatch.setattr(
+        _wait_logic_mod,
+        "_wait_vram_refusal_and_retry_selection",
+        wait_mock,
+    )
     monkeypatch.setattr(
         admission_mod, "acquire_admission_token", AsyncMock(return_value=reselected)
     )
@@ -658,10 +674,10 @@ async def test_requeue_budget_exhaustion_preserves_peer_optimistic_mark(
 
 
 @pytest.mark.asyncio
-async def test_post_load_vram_spin_hits_requeue_depth_cap(
+async def test_post_load_vram_refusal_does_not_consume_requeue_depth_cap(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """B2: sticky VRAM refusal cannot recurse unboundedly."""
+    """VRAM-refusal requeue is exempt from execution_failure depth charging."""
     load_orchestrator = _FakeLoadOrchestrator()
 
     async def _always_vram(*args: Any, **kwargs: Any) -> bool:
@@ -678,8 +694,12 @@ async def test_post_load_vram_spin_hits_requeue_depth_cap(
     load_orchestrator.ensure_model_loaded_on_remote = _always_vram  # type: ignore[method-assign]
 
     reselected = _gateway(loaded=frozenset())
-    wait_mock = AsyncMock(return_value=(reselected, _trace(), 1))
-    monkeypatch.setattr(requeue_mod, "_wait_and_retry_selection", wait_mock)
+    wait_mock = AsyncMock(return_value=(None, _trace(), 5))
+    monkeypatch.setattr(
+        _wait_logic_mod,
+        "_wait_vram_refusal_and_retry_selection",
+        wait_mock,
+    )
     monkeypatch.setattr(
         admission_mod, "acquire_admission_token", AsyncMock(return_value=reselected)
     )
@@ -709,6 +729,7 @@ async def test_post_load_vram_spin_hits_requeue_depth_cap(
         selected_gateway=None,
         excluded_gateway_ids=set(),
         _capacity_deadline_mono=time.monotonic() + 60.0,
+        _eviction_requeue_depth=0,
     )
 
     with pytest.raises(HTTPException) as exc_info:
@@ -739,8 +760,9 @@ async def test_post_load_vram_spin_hits_requeue_depth_cap(
 
     detail = exc_info.value.detail
     assert detail["code"] == ErrorCode.STICKY_CAPACITY
-    assert detail["data"]["requeue_max_depth"] == 2
-    assert len(load_orchestrator.load_calls) <= 3
+    assert "requeue_max_depth" not in detail.get("data", {})
+    assert getattr(context, "_eviction_requeue_depth", 0) == 0
+    wait_mock.assert_awaited()
 
 
 @pytest.mark.asyncio

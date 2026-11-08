@@ -83,9 +83,7 @@ async def attempt_oom_recovery(
         if m.routing_key != target_routing_key
         and m.routing_key not in busy_routing_keys
     ]
-    idle_candidates.sort(
-        key=lambda m: (is_rag_protected_model(m), str(m)),
-    )
+    # Evict-all idle non-target models; execution order is not encoded in the plan set.
     idle_models = frozenset(idle_candidates)
 
     if not idle_models:

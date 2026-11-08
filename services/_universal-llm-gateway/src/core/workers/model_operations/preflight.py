@@ -35,6 +35,9 @@ async def evaluate_resources(
         return True, None, False
 
     resource_tracker = _get_resource_tracker()
+    from src.core.resources.tracker_queries import refresh_hardware_vram_probe
+
+    refresh_hardware_vram_probe(resource_tracker)
 
     requirements = resource_tracker.get_model_requirements(model_id)
     required_vram = requirements.get("vram_required_mb") or 0

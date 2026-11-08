@@ -98,6 +98,18 @@ class _FederationProgressThrottle:
         self.last_emit_mono = now_mono
 
 
+def _host_from_url(url: object) -> str | None:
+    if not url:
+        return None
+    from urllib.parse import urlparse
+
+    try:
+        parsed = urlparse(str(url))
+    except ValueError:
+        return None
+    return parsed.hostname or None
+
+
 def _gateway_matches(payload: dict[str, Any], gateway_id: str, remote_id: str) -> bool:
     gateway_name = payload.get("gateway_name")
     if gateway_name is not None:
@@ -106,12 +118,14 @@ def _gateway_matches(payload: dict[str, Any], gateway_id: str, remote_id: str) -
             return True
         if name.endswith("-gateway") and name[: -len("-gateway")] == remote_id:
             return True
-    url = payload.get("url")
-    if url:
-        url_s = str(url)
-        if gateway_id in url_s or remote_id in url_s:
-            return True
-    return False
+        return False
+    host = _host_from_url(payload.get("url"))
+    if host is None:
+        return False
+    candidates = {gateway_id, remote_id}
+    if gateway_id.endswith("-gateway"):
+        candidates.add(gateway_id[: -len("-gateway")])
+    return host in candidates
 
 
 def _progress_payload_summary(payload: dict[str, Any]) -> dict[str, Any]:
@@ -372,6 +386,15 @@ async def race_remote_load_with_terminal_events(
 
         if terminal_waiter in done:
             terminal = terminal_waiter.result()
+            if terminal is not None:
+                logger.debug(
+                    "federation_load_race terminal_first request_id=%s gateway=%s "
+                    "outcome=%s http_done=%s",
+                    request_id,
+                    gateway_id,
+                    terminal.outcome.value,
+                    remote_call.done(),
+                )
             if terminal is not None and terminal.outcome != TerminalLoadOutcome.LOADED:
                 remote_call.cancel()
                 with suppress(asyncio.CancelledError):
@@ -388,6 +411,13 @@ async def race_remote_load_with_terminal_events(
             exc = remote_call.exception()
             if exc is not None:
                 raise exc
+            logger.debug(
+                "federation_load_race http_first request_id=%s gateway=%s "
+                "terminal_pending=%s",
+                request_id,
+                gateway_id,
+                not terminal_waiter.done(),
+            )
             return remote_call.result(), None
 
         for task in pending:

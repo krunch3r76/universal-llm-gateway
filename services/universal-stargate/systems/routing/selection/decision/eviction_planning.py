@@ -145,6 +145,7 @@ def _compute_eviction_plan(
         eviction_cooldown_s=eviction_cooldown_s,
         has_demand=has_demand,
         eviction_request_class=eviction_request_class,
+        loading_model_id=placement.model_id,
     )
     if hyst is None:
         return None

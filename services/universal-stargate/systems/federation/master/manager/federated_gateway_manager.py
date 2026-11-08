@@ -1871,8 +1871,33 @@ class FederatedGatewayManager(Sequential):
     ) -> bool:
         baseline = self._load_resource_baseline.get((gw.gateway_id, routing_key))
         if baseline is None:
-            return True
+            return False
         return gw.telemetry_timestamp <= baseline
+
+    def gateway_resource_telemetry_timestamp(self, gateway_id: str) -> float | None:
+        gw = self._gateways.get(gateway_id)
+        return gw.telemetry_timestamp if gw else None
+
+    async def wait_for_gateway_resource_update(
+        self,
+        gateway_id: str,
+        since_timestamp: float,
+        timeout_s: float,
+    ) -> bool:
+        """Return True when *gateway_id* receives RESOURCE_UPDATE after *since_timestamp*."""
+        deadline = asyncio.get_event_loop().time() + max(0.0, timeout_s)
+        while asyncio.get_event_loop().time() < deadline:
+            gw = self._gateways.get(gateway_id)
+            if gw is not None and gw.telemetry_timestamp > since_timestamp:
+                return True
+            state_version = self.get_state_version()
+            remaining = deadline - asyncio.get_event_loop().time()
+            if remaining <= 0:
+                break
+            await self.wait_for_state_change(
+                state_version, min(remaining, 0.25)
+            )
+        return False
 
     def apply_gateway_forensics_snapshot(
         self,

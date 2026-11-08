@@ -81,6 +81,45 @@ def protect_qwen_5b(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(scorer_mod, "is_rag_protected_model", _is_protected)
 
 
+def test_contextualize_does_not_evict_hermes_in_cooldown(protect_qwen_5b: None) -> None:
+    """RAG contextualize must not evict freshly loaded Hermes (cooldown)."""
+    import time
+
+    hermes = _HERMES
+    ctx = _QWEN_5B
+    gw = Gateway(
+        ref=None,
+        name="edge-jupiter-gateway",
+        vram_total_mb=32_607,
+        vram_free_mb=2_000,
+        ram_total_mb=64_000,
+        ram_free_mb=32_000,
+        loaded_models=frozenset({hermes}),
+        busy_models=frozenset(),
+        loading_models=frozenset(),
+        available_models=frozenset({hermes, ctx}),
+        model_details={
+            hermes: {"vram_usage": _HERMES_FOOTPRINT_MB, "ram_usage": 0},
+            ctx: {"vram_usage": 4_200, "ram_usage": 0},
+        },
+        model_loaded_at={hermes: time.monotonic()},
+    )
+    placement = Placement(
+        model_id=ctx,
+        ram_mb=0,
+        vram_mb=4_200,
+        is_gpu=True,
+    )
+    plan = _compute_eviction_plan(
+        gw,
+        placement,
+        _requirements({hermes: (_HERMES_FOOTPRINT_MB, 0), ctx: (4_200, 0)}),
+        eviction_cooldown_s=120.0,
+        eviction_request_class=EvictionRequestClass.REQUIRED,
+    )
+    assert plan is None
+
+
 def test_partial_eviction_first_victim_sufficient(protect_qwen_5b: None) -> None:
     """Three idle loaded models; evicting only non-protected rerank is enough (M1)."""
     rerank = ModelId.parse("baai-bge-reranker-v2-m3")

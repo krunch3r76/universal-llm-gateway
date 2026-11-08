@@ -70,6 +70,19 @@ def test_gateway_matches_rejects_unrelated_gateway() -> None:
     )
 
 
+def test_gateway_matches_url_hostname_not_substring() -> None:
+    assert not _gateway_matches(
+        {"url": "http://relay-jupiter-2:9998/"},
+        "edge-jupiter-gateway",
+        "relay-jupiter",
+    )
+    assert _gateway_matches(
+        {"url": "http://relay-jupiter:9998/"},
+        "edge-jupiter-gateway",
+        "relay-jupiter",
+    )
+
+
 class _FakeEvent:
     def __init__(self, payload: dict) -> None:
         self.payload = payload
@@ -94,8 +107,8 @@ class _FakeBus:
 
 
 @pytest.mark.asyncio
-async def test_specimen_3c9720ac_payload_resolves_within_budget() -> None:
-    """Replay model.load.failed shape from request 3c9720ac (inferred payload)."""
+async def test_terminal_wait_gateway_name_and_relay_remote_pairing() -> None:
+    """Pairing regression: edge-jupiter-gateway name + relay-jupiter remote (inferred)."""
     from src.scheduling.events.model_lifecycle import MODEL_LOAD_FAILED
 
     model = ModelId.parse(

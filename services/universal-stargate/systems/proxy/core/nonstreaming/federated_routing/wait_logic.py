@@ -230,6 +230,121 @@ async def wait_for_model_gateway(
 # Eviction wait queue depth (for routing.eviction.wait.started payload and monitoring).
 _eviction_wait_queue_depth: int = 0
 
+VRAM_REFUSAL_INITIAL_DWELL_S = 2.0
+VRAM_REFUSAL_MAX_DWELL_S = 10.0
+
+
+async def _wait_vram_refusal_and_retry_selection(
+    *,
+    federated_manager: "FederatedGatewayManager",
+    decision_engine: Any,
+    placement: Any,
+    context: "RequestContext",
+    event_bus: "EventBus | None",
+    timeout_s: float,
+    stability_tracker: "StickyPlacementTracker",
+) -> tuple[Any, Any, int]:
+    """Post-load VRAM refusal: dwell/backoff per gateway RESOURCE_UPDATE, then select."""
+    from src.scheduling.events.routing import (
+        RoutingEvictionWaitResolved,
+        RoutingEvictionWaitStarted,
+        RoutingEvictionWaitTimeout,
+    )
+    from systems.routing.selection.stargate_collector import (
+        federated_gateways_to_routing_candidates,
+    )
+
+    global _eviction_wait_queue_depth
+    wait_start = time.monotonic()
+    trace: Any = None
+    dwell_s = VRAM_REFUSAL_INITIAL_DWELL_S
+    refused_gw = getattr(context, "_vram_refusal_gateway_id", None)
+    baseline_ts = float(
+        getattr(context, "_vram_refusal_telemetry_baseline", 0.0) or 0.0
+    )
+
+    _eviction_wait_queue_depth += 1
+    if event_bus:
+        await _emit_event_safe(
+            event_bus,
+            RoutingEvictionWaitStarted(
+                request_id=context.request_id,
+                model_id=str(placement.model_id),
+                timeout_s=timeout_s,
+                queue_depth=_eviction_wait_queue_depth,
+            ),
+            "routing.eviction.wait.started",
+        )
+
+    try:
+        while True:
+            elapsed_s = time.monotonic() - wait_start
+            if elapsed_s >= timeout_s:
+                break
+
+            remaining = timeout_s - elapsed_s
+            wait_slice = min(dwell_s, remaining)
+            if refused_gw and baseline_ts > 0:
+                await federated_manager.wait_for_gateway_resource_update(
+                    refused_gw, baseline_ts, wait_slice
+                )
+            else:
+                await asyncio.sleep(wait_slice)
+
+            fresh_gateways = [
+                g for g in federated_manager.get_all_gateways() if g.dispatchable
+            ]
+            gateways_for_retry = [
+                g
+                for g in federated_gateways_to_routing_candidates(fresh_gateways)
+                if g.name not in (context.excluded_gateway_ids or set())
+            ]
+            selected, trace = decision_engine.select(
+                gateways=gateways_for_retry,
+                placement=placement,
+                request_id=context.request_id,
+                sticky=context.model_sticky,
+                stability_tracker=stability_tracker,
+            )
+            if selected is not None:
+                waited_ms = int((time.monotonic() - wait_start) * 1000)
+                if event_bus:
+                    await _emit_event_safe(
+                        event_bus,
+                        RoutingEvictionWaitResolved(
+                            request_id=context.request_id,
+                            model_id=str(placement.model_id),
+                            gateway_id=selected.name,
+                            waited_ms=waited_ms,
+                        ),
+                        "routing.eviction.wait.resolved",
+                    )
+                return selected, trace, waited_ms
+
+            elapsed_s = time.monotonic() - wait_start
+            if elapsed_s >= timeout_s:
+                break
+            dwell_s = min(dwell_s * 2.0, VRAM_REFUSAL_MAX_DWELL_S)
+    except asyncio.CancelledError:
+        raise
+    finally:
+        _eviction_wait_queue_depth -= 1
+
+    waited_ms = int((time.monotonic() - wait_start) * 1000)
+    if event_bus:
+        await _emit_event_safe(
+            event_bus,
+            RoutingEvictionWaitTimeout(
+                request_id=context.request_id,
+                model_id=str(placement.model_id),
+                waited_ms=waited_ms,
+                exit_reason="budget_exhausted",
+                exit_constraint_summary=build_exit_constraint_summary(trace),
+            ),
+            "routing.eviction.wait.timeout",
+        )
+    return None, trace, waited_ms
+
 
 async def _wait_and_retry_selection(
     *,
