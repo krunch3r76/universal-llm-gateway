@@ -20,6 +20,7 @@ from .schema import build_model_id_ts_index
 logger = logging.getLogger(__name__)
 
 _LIVE_DB = Path("/home/io/.events/events.db").resolve()
+_DEFAULT_QUERY_SOCK = Path("/tmp/universal-protocol/events-query.sock")
 _SESSION_BOUNDARY_SIGNAL = "event.service.started"
 _RETENTION_TABLES = ("events", "request_snapshots", "evaluations")
 _RETENTION_PK = {"events": "seq", "request_snapshots": "seq", "evaluations": "id"}
@@ -33,11 +34,44 @@ def _emit(step: str, **fields: Any) -> None:
     print(json.dumps(payload), flush=True)
 
 
+def _query_sock_path() -> Path:
+    raw = os.environ.get("EVENTS_QUERY_SOCK", str(_DEFAULT_QUERY_SOCK))
+    return Path(os.path.expanduser(raw))
+
+
+def _query_socket_answers(sock: Path | None = None) -> bool:
+    """True when the event-service query UDS responds to GET /health."""
+    path = sock or _query_sock_path()
+    if not path.is_socket():
+        return False
+    try:
+        from transport_utils import make_sync_client
+
+        with make_sync_client(f"unix://{path}", timeout=0.5) as client:
+            resp = client.get("/health")
+            return resp.status_code == 200
+    except Exception:
+        return False
+
+
 def _refuse_live_db(db_path: Path, *, live_window: bool) -> None:
     if db_path.resolve() == _LIVE_DB and not live_window:
         raise SystemExit(
             f"Refusing maintenance on live db {_LIVE_DB}; "
             "pass --live-maintenance-window if intentional"
+        )
+    if db_path.resolve() == _LIVE_DB and live_window and _query_socket_answers():
+        raise SystemExit(
+            "Refusing live maintenance: event-service query socket answered /health; "
+            "stop the service first"
+        )
+
+
+def _refuse_while_query_live(action: str) -> None:
+    if _query_socket_answers():
+        raise SystemExit(
+            f"Refusing {action}: event-service query socket answered /health; "
+            "stop the service first"
         )
 
 
@@ -207,6 +241,7 @@ def run_maintenance(argv: list[str] | None = None) -> int:
     started = time.perf_counter()
     _refuse_live_db(db_path, live_window=args.live_maintenance_window)
     if args.vacuum:
+        _refuse_while_query_live("--vacuum")
         _vacuum_free_space(db_path)
     conn = _preflight_exclusive(db_path)
     _emit("preflight", elapsed_s=time.perf_counter() - started, ok=True)
@@ -227,6 +262,7 @@ def run_maintenance(argv: list[str] | None = None) -> int:
     _emit("retention_execute", elapsed_s=time.perf_counter() - t1, deleted=deleted)
 
     if not args.skip_index:
+        _refuse_while_query_live("idx_model_id_ts build")
         t2 = time.perf_counter()
         created = build_model_id_ts_index(conn)
         _emit("index_model_id_ts", elapsed_s=time.perf_counter() - t2, created=created)

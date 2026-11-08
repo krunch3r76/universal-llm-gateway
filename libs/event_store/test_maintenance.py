@@ -5,6 +5,7 @@ from __future__ import annotations
 import sqlite3
 import time
 from pathlib import Path
+from unittest import mock
 
 import pytest
 
@@ -61,10 +62,38 @@ def test_refuses_when_write_lock_held(tmp_path: Path) -> None:
 
 
 @pytest.mark.offline
+def test_live_window_refuses_when_query_socket_answers(tmp_path: Path) -> None:
+    live = Path("/home/io/.events/events.db")
+    if not live.is_file():
+        pytest.skip("live events.db not present")
+    with (
+        mock.patch(
+            "event_store.maintenance._query_socket_answers", return_value=True
+        ),
+        pytest.raises(SystemExit, match="query socket answered"),
+    ):
+        run_maintenance(["--db", str(live), "--live-maintenance-window"])
+
+
+@pytest.mark.offline
+def test_vacuum_refuses_when_query_socket_answers(tmp_path: Path) -> None:
+    db = tmp_path / "vac.db"
+    _make_db(db)
+    with (
+        mock.patch(
+            "event_store.maintenance._query_socket_answers", return_value=True
+        ),
+        pytest.raises(SystemExit, match="--vacuum"),
+    ):
+        run_maintenance(["--db", str(db), "--execute", "--vacuum"])
+
+
+@pytest.mark.offline
 def test_execute_deletes_and_builds_index(tmp_path: Path) -> None:
     db = tmp_path / "exec.db"
     _make_db(db, rows=20)
-    run_maintenance(["--db", str(db), "--execute", "--days", "3"])
+    with mock.patch("event_store.maintenance._query_socket_answers", return_value=False):
+        run_maintenance(["--db", str(db), "--execute", "--days", "3"])
     conn = sqlite3.connect(db)
     remaining = conn.execute("SELECT COUNT(*) FROM events").fetchone()[0]
     idx = conn.execute(

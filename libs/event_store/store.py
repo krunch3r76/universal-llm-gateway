@@ -252,7 +252,11 @@ class EventStore:
         if now_mono - self._hot_evict_check_mono < _HOT_EVICT_INTERVAL_S:
             return
         self._hot_evict_check_mono = now_mono
-        hot.evict(int(time.time() * 1000))
+        try:
+            hot.evict(int(time.time() * 1000))
+        except Exception as exc:
+            logger.exception("Hot tier eviction failed: %s", exc)
+            hot.mark_degraded(str(exc))
 
     async def build_model_id_ts_index(self) -> bool:
         """Build idx_model_id_ts on the retention connection (explicit maintenance)."""
@@ -553,9 +557,6 @@ class EventStore:
             return []
 
         rows = [item[0] for item in prepared]
-        before_seq = int(
-            self._db.execute("SELECT COALESCE(MAX(seq), 0) FROM events").fetchone()[0]
-        )
         try:
             self._db.executemany(_INSERT_EVENT, rows)
             self._db.commit()
@@ -567,26 +568,26 @@ class EventStore:
                 e,
             )
             accepted = self._insert_prepared_rows(prepared)
-            self._mirror_accepted_to_hot(before_seq)
+            self._mirror_accepted_to_hot()
             return accepted
         except Exception as e:
             self._db.rollback()
             logger.exception("Unexpected batch insert failure: %s", e)
             accepted = self._insert_prepared_rows(prepared)
-            self._mirror_accepted_to_hot(before_seq)
+            self._mirror_accepted_to_hot()
             return accepted
 
         accepted = [item[1] for item in prepared]
-        self._mirror_accepted_to_hot(before_seq)
+        self._mirror_accepted_to_hot()
         self.maybe_evict_hot_tier()
         return accepted
 
-    def _mirror_accepted_to_hot(self, before_seq: int) -> None:
+    def _mirror_accepted_to_hot(self) -> None:
         hot = self._hot
         if hot is None or hot.degraded or self._db is None:
             return
         try:
-            cold_rows = self._db.execute(_HOT_ROW_COLS, (before_seq,)).fetchall()
+            cold_rows = self._db.execute(_HOT_ROW_COLS, (hot.last_seq,)).fetchall()
             floor = hot.floor_ts_ms
             insert_rows = [tuple(row) for row in cold_rows if int(row[5]) >= floor]
             if insert_rows:
@@ -685,10 +686,20 @@ class EventStore:
             try:
                 return hot.execute_query(sql, params, limit=limit)
             except sqlite3.Error as e:
-                logger.error("Hot tier query failed: %s params=%s - %s", sql[:120], params, e)
+                logger.error(
+                    "Hot tier query failed, falling back to cold: %s params=%s - %s",
+                    sql[:120],
+                    params,
+                    e,
+                )
                 if raise_on_error:
                     raise
-                return []
+            except Exception as e:
+                logger.exception(
+                    "Hot tier query failed, falling back to cold: %s", e
+                )
+                if raise_on_error:
+                    raise
 
         state = _ReadCall()
         started = threading.Event()
@@ -885,6 +896,7 @@ class EventStore:
                         cumulative=total,
                         elapsed_ms=elapsed_ms,
                     )
+                    self._mirror_accepted_to_hot()
                 if deleted < batch_size:
                     break
                 if self._retention_stop.wait(max(sleep_s, elapsed_ms / 1000)):

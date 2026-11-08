@@ -171,6 +171,100 @@ def test_hot_insert_failure_degrades_and_cold_intact() -> None:
 
 
 @pytest.mark.offline
+def test_window_signal_query_uses_hot_execute_query() -> None:
+    async def _run() -> None:
+        store = EventStore(":memory:")
+        await store.open()
+        try:
+            now = int(time.time() * 1000)
+            since = now - 30 * 60 * 1000
+            await store.insert_events([_ev(ts=since + 1000)])
+            assert store._hot is not None
+            with mock.patch.object(
+                store._hot, "execute_query", wraps=store._hot.execute_query
+            ) as hot_spy:
+                await _signal_events(
+                    {"signal": _SIGNAL, "since_ts": since, "limit": 50}, store
+                )
+                assert hot_spy.call_count >= 1
+        finally:
+            await store.close()
+
+    asyncio.run(_run())
+
+
+@pytest.mark.offline
+def test_hot_query_error_falls_back_to_cold_rows() -> None:
+    async def _run() -> None:
+        store = EventStore(":memory:")
+        await store.open()
+        try:
+            ts = int(time.time() * 1000)
+            await store.insert_events([_ev(ts=ts), _ev(ts=ts + 1)])
+            hot = store._hot
+            assert hot is not None
+            since = ts - 60_000
+            with mock.patch.object(
+                hot, "execute_query", side_effect=sqlite3.OperationalError("hot boom")
+            ):
+                rows = await store.query(
+                    "SELECT seq FROM events WHERE ts_unix_ms >= ? ORDER BY seq",
+                    (since,),
+                    since_ts_ms=since,
+                )
+            assert len(rows) == 2
+        finally:
+            await store.close()
+
+    asyncio.run(_run())
+
+
+@pytest.mark.offline
+def test_eviction_failure_degrades_without_raising_ingest() -> None:
+    async def _run() -> None:
+        store = EventStore(":memory:")
+        await store.open()
+        try:
+            hot = store._hot
+            assert hot is not None
+            with mock.patch.object(hot, "evict", side_effect=RuntimeError("evict fail")):
+                store.maybe_evict_hot_tier()
+            assert hot.degraded is True
+            await store.insert_events([_ev(ts=int(time.time() * 1000))])
+            n = await store.query("SELECT COUNT(*) AS n FROM events", (), limit=1)
+            assert int(n[0]["n"]) == 1
+        finally:
+            await store.close()
+
+    asyncio.run(_run())
+
+
+@pytest.mark.offline
+def test_retention_batch_event_mirrored_to_hot() -> None:
+    async def _run() -> None:
+        store = EventStore(":memory:")
+        await store.open()
+        try:
+            hot = store._hot
+            assert hot is not None
+            old = int(time.time() * 1000) - 30 * 86400 * 1000
+            await store.insert_events([_ev(ts=old, signal="old.evt")])
+            store._retention_batch_size = 1
+            store._retention_batch_sleep_s = 0
+            await store.run_retention(7 * 86400 * 1000, dry_run=False)
+            assert hot._writer is not None
+            signals = [
+                str(r[0])
+                for r in hot._writer.execute("SELECT signal FROM events").fetchall()
+            ]
+            assert "event.retention.batch" in signals
+        finally:
+            await store.close()
+
+    asyncio.run(_run())
+
+
+@pytest.mark.offline
 def test_hot_tier_disabled_uses_cold() -> None:
     async def _run() -> None:
         with mock.patch.dict(os.environ, {"EVENTS_HOT_TIER": "0"}):

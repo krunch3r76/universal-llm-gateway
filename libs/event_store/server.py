@@ -361,7 +361,10 @@ async def run_service(
                     await asyncio.wait_for(stop_event.wait(), timeout=60.0)
                     return
                 except TimeoutError:
-                    store.maybe_evict_hot_tier()
+                    try:
+                        store.maybe_evict_hot_tier()
+                    except Exception:
+                        logger.exception("Hot tier evict loop iteration failed")
 
         background_tasks.append(asyncio.create_task(_hot_evict_loop()))
         ingest = IngestServer(
@@ -502,7 +505,7 @@ async def run_service(
         for task in background_tasks:
             try:
                 await task
-            except asyncio.CancelledError:
+            except (asyncio.CancelledError, Exception):
                 pass
         if retention_task is not None:
             store.stop_background_work()
