@@ -31,15 +31,27 @@ def _model_measured_vram_from_federated(fg: Any) -> dict[Any, int]:
 def _map_model_resources_to_details(
     model_resources: dict[Any, dict[str, Any]],
 ) -> dict[Any, dict[str, int]]:
-    """Normalize model_resources payload into routing model_details shape."""
-    return {
-        model_id: {
+    """Normalize model_resources payload into routing model_details shape.
+
+    Per-variant footprints (``_variants``: X and X-hybrid collapse onto one
+    ModelId key) are carried as ``variants``: list of (ModelId, footprint).
+    """
+
+    def _footprint(res: dict[str, Any]) -> dict[str, int]:
+        return {
             "vram_usage": int(res.get("vram_usage", 0)),
             "ram_usage": int(res.get("ram_usage", 0)),
             "max_concurrent_requests": int(res.get("max_concurrent_requests", 1)),
         }
-        for model_id, res in model_resources.items()
-    }
+
+    details: dict[Any, dict[str, Any]] = {}
+    for model_id, res in model_resources.items():
+        entry: dict[str, Any] = _footprint(res)
+        variants = res.get("_variants")
+        if variants:
+            entry["variants"] = [(mid, _footprint(v)) for mid, v in variants]
+        details[model_id] = entry
+    return details
 
 
 def stargate_to_gateway(stargate: Stargate) -> Gateway:

@@ -374,6 +374,8 @@ async def execute_with_retry(
         )
     context._capacity_deadline_mono = retry_started + effective_capacity_budget
     context.queue_wait_timeout_s = capacity_timeout_s
+    # _eviction_wait_deadline_mono is deliberately not reset here or per
+    # attempt: the eviction budget is per-request (see wait_continuation).
 
     try:
         while True:

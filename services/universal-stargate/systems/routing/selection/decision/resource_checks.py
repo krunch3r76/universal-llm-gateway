@@ -131,10 +131,20 @@ def resolve_gateway_requirements(
         )
     vram_mb = details.get("vram_usage", 0)
     ram_mb = details.get("ram_usage", 0)
-    variant = (details.get("variants") or {}).get(str(model_id))
-    if variant:
+    variants = details.get("variants") or ()
+    variant = next(
+        (fp for mid, fp in variants if mid.tracking_key == model_id.tracking_key),
+        None,
+    )
+    if variant is not None:
         vram_mb = variant.get("vram_usage", vram_mb)
         ram_mb = variant.get("ram_usage", ram_mb)
+    elif len(variants) > 1:
+        logger.warning(
+            f"⚠️ Gateway {gateway.name} has {len(variants)} variants of "
+            f"{model_id} but none match {model_id.tracking_key}; using "
+            f"collapsed entry vram={vram_mb}MB ram={ram_mb}MB"
+        )
 
     if vram_mb != placement.vram_mb or ram_mb != placement.ram_mb:
         logger.info(

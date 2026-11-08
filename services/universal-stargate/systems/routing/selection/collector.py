@@ -177,11 +177,10 @@ async def collect_gateways(
                 # ModelId equality ignores -hybrid, so X and X-hybrid share one
                 # key; keep each variant's own footprint under "variants".
                 existing = model_details.get(model_id) or {}
-                variants = dict(existing.get("variants") or {})
-                variants[model_id_str] = {
-                    "vram_usage": vram_usage,
-                    "ram_usage": ram_usage,
-                }
+                variants = list(existing.get("variants") or ())
+                variants.append(
+                    (model_id, {"vram_usage": vram_usage, "ram_usage": ram_usage})
+                )
                 model_details[model_id] = {
                     "last_inference_time": last_inf,
                     "vram_usage": vram_usage,
