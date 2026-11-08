@@ -10,7 +10,7 @@ from agent_bus_store.server import create_app
 
 # Bump deliberately when a route gains or loses an x-mcp stamp; the count is the
 # guard against a stamp disappearing silently.
-SERVED_OP_COUNT = 29
+SERVED_OP_COUNT = 30
 
 
 @pytest.mark.offline
@@ -53,7 +53,7 @@ def test_unbound_ops_are_collision_losers_only() -> None:
 
     schema = create_app().openapi()
     unbound = unbound_dispatch_ops(schema)
-    assert unbound == ["add_tags", "remove_tags"]
+    assert unbound == ["add_tags", "remove_tags", "whereami"]
     assert "request" not in unbound
     assert "hop" not in unbound
     assert "substrate_graph_write" not in unbound

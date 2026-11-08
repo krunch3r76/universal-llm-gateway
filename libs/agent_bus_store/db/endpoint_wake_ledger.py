@@ -2069,15 +2069,16 @@ def list_turns_since(after_id: int, limit: int) -> list[dict[str, Any]]:
 
 def recent_delivered_agent_ids(
     thread_id: str,
-    since_s: int,
+    window_s: int,
     *,
+    before: str | None = None,
     now: str | None = None,
 ) -> list[str]:
-    """Distinct tab ids with delivered wakes on ``thread_id`` within ``since_s`` seconds."""
-    if since_s <= 0:
+    """Distinct tab ids with delivered wakes in ``[before-window_s, before]`` (UTC stamps)."""
+    if window_s <= 0:
         return []
-    stamp = _now(now)
-    cutoff = _shift(stamp, -since_s)
+    anchor = _now(before or now)
+    lower = _shift(anchor, -window_s)
     with connect() as conn:
         cols = _ledger_columns(conn)
         if "delivery_agent_id" not in cols:
@@ -2086,8 +2087,9 @@ def recent_delivered_agent_ids(
             "SELECT DISTINCT delivery_agent_id FROM endpoint_wake_ledger "
             "WHERE thread_id=? AND state='delivered' "
             "AND delivery_agent_id IS NOT NULL AND trim(delivery_agent_id) != '' "
-            "AND datetime(finished_at) >= datetime(?)",
-            (thread_id, cutoff),
+            "AND datetime(finished_at) >= datetime(?) "
+            "AND datetime(finished_at) <= datetime(?)",
+            (thread_id, lower, anchor),
         ).fetchall()
     out: list[str] = []
     seen: set[str] = set()

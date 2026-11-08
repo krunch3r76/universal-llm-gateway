@@ -51,9 +51,10 @@ def active_since_window_label(value: str | datetime | None) -> str:
 
 # Self-addressed guard removed — root cause fixed (fix-1, todo:agent-bus-from-attribution-root-cause).
 
-_TAB_POSTER_UUID_RE = re.compile(
+TAB_UUID_RE = re.compile(
     r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
 )
+_TAB_POSTER_UUID_RE = TAB_UUID_RE
 
 
 def prepare_from_agent_id(raw: str | None) -> tuple[str | None, str | None]:

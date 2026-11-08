@@ -9,9 +9,9 @@ from __future__ import annotations
 
 import logging
 import os
-import re
 from typing import Any
 
+from agent_bus_store.turns_models import TAB_UUID_RE
 from agent_seat.registry import normalize_bus_address
 
 logger = logging.getLogger(__name__)
@@ -21,10 +21,7 @@ SELF_SENDER_RECENCY_RULE = "drop_self_sender_recency"
 _TAB_SURFACES = frozenset({"cursor", "grok"})
 # Shared mailbox names: holding one never proves which tab posted.
 _SHARED_SENDER_NAMES = frozenset({"", "cursor", "all", "team"})
-_TAB_UUID_RE = re.compile(
-    r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
-)
-ENDPOINT_WAKE_SELF_RECENCY_S = int(os.environ.get("ENDPOINT_WAKE_SELF_RECENCY_S", "180"))
+ENDPOINT_WAKE_SELF_RECENCY_S = int(os.environ.get("ENDPOINT_WAKE_SELF_RECENCY_S", "90"))
 
 
 def _tab_agent_id(sub: dict[str, Any]) -> str:
@@ -42,7 +39,7 @@ def sender_tab_ids(store: Any, from_agent: str, scopes: set[str]) -> set[str]:
     """
     raw = str(from_agent or "").strip()
     ids: set[str] = set()
-    if _TAB_UUID_RE.match(raw.lower()):
+    if TAB_UUID_RE.match(raw.lower()):
         ids.add(raw.lower())
     if normalize_bus_address(raw) in _SHARED_SENDER_NAMES:
         return ids
@@ -65,17 +62,34 @@ def sender_tab_ids(store: Any, from_agent: str, scopes: set[str]) -> set[str]:
     return ids
 
 
-def _recent_deliveries(store: Any, thread: str, since_s: int) -> list[str]:
+def _recent_deliveries(
+    store: Any,
+    thread: str,
+    window_s: int,
+    before: str,
+) -> list[str]:
+    cache_holder = getattr(store, "_self_wake_recent_cache", None)
+    cache_key = (thread, before, window_s)
+    if isinstance(cache_holder, dict) and cache_key in cache_holder:
+        return list(cache_holder[cache_key])
     recent = getattr(store, "recent_deliveries", None)
     if recent is None:
-        return []
-    try:
-        return [str(x).strip().lower() for x in (recent(thread, since_s) or []) if x]
-    except Exception:
-        logger.exception(
-            "endpoint_wake_self_sender: recent_deliveries failed thread=%s", thread
-        )
-        return []
+        out: list[str] = []
+    else:
+        try:
+            out = [
+                str(x).strip().lower()
+                for x in (recent(thread, window_s, before=before) or [])
+                if x
+            ]
+        except Exception:
+            logger.exception(
+                "endpoint_wake_self_sender: recent_deliveries failed thread=%s", thread
+            )
+            out = []
+    if isinstance(cache_holder, dict):
+        cache_holder[cache_key] = out
+    return out
 
 
 def is_self_wake(
@@ -102,7 +116,13 @@ def is_self_wake(
         return None  # M2 only when poster identity absent
     if normalize_bus_address(from_agent) not in _SHARED_SENDER_NAMES:
         return None
-    recent = _recent_deliveries(store, thread, ENDPOINT_WAKE_SELF_RECENCY_S)
+    window_s = ENDPOINT_WAKE_SELF_RECENCY_S
+    if window_s <= 0:
+        return None
+    before = str(turn.get("created_at") or "").strip()
+    if not before:
+        return None
+    recent = _recent_deliveries(store, thread, window_s, before)
     if len(recent) == 1 and recent[0] == target:
         return SELF_SENDER_RECENCY_RULE
     return None

@@ -81,9 +81,13 @@ async def wake_ledger_route(
 async def recent_deliveries_route(
     thread: str = Query(...),
     since_s: int = Query(..., ge=1, le=86400),
+    before: str | None = Query(
+        None,
+        description="Anchor stamp (UTC); window ends here instead of now",
+    ),
 ) -> dict[str, Any]:
     """Distinct delivered tab ids on a thread within a recency window (scan helper)."""
-    ids = recent_delivered_agent_ids(thread, since_s)
+    ids = recent_delivered_agent_ids(thread, since_s, before=before)
     return {"delivery_agent_ids": ids, "count": len(ids)}
 
 

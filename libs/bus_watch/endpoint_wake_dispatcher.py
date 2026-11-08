@@ -1657,6 +1657,7 @@ def scan_once(store: StoreClient, *, idle_mark: dict[str, float] | None = None) 
         pending: list[dict[str, Any]] = []
         tombstones: list[dict[str, Any]] = []
         stale_catchup: dict[str, int] | None = None
+        setattr(store, "_self_wake_recent_cache", {})
         for turn in turns:
             _ingest_waiter_admit_turn(turn)
             raw_to = str(turn.get("to_agent") or "")
