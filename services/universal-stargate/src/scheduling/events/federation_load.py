@@ -14,6 +14,7 @@ Signals:
     federation.load.requested — Master requested remote load a model
     federation.load.confirmed — remote confirmed model loaded
     federation.load.failed — remote failed to load model
+    federation.load.race_resolved — HTTP vs terminal telemetry race outcome (observation)
     federation.orchestrator.decided — orchestrator routing/load decision
     federation.orchestrator.evicted — orchestrator evicted model from remote
     gateway.resource.updated (federation variant) — reuse signal, federation payload
@@ -77,6 +78,7 @@ Payload: {
 FEDERATION_LOAD_REQUESTED = "federation.load.requested"
 FEDERATION_LOAD_CONFIRMED = "federation.load.confirmed"
 FEDERATION_LOAD_PROGRESS = "federation.load.progress"
+FEDERATION_LOAD_RACE_RESOLVED = "federation.load.race_resolved"
 FEDERATION_LOAD_FAILED = "federation.load.failed"
 
 # Orchestrator decisions
@@ -257,6 +259,39 @@ def FederationLoadConfirmed(
             "model_id": model_id,
             "duration_ms": duration_ms,
         },
+    )
+
+
+@event_factory
+def FederationLoadRaceResolved(
+    request_id: str,
+    model_id: str,
+    gateway_id: str,
+    winner: str,
+    *,
+    terminal_outcome: str | None = None,
+    terminal_pending: bool | None = None,
+    http_arrival_ms: int | None = None,
+    terminal_arrival_ms: int | None = None,
+    arrival_delta_ms: int | None = None,
+) -> Event:
+    """Observation: which side won the federation remote load vs terminal-event race."""
+    payload: dict[str, object] = {
+        "request_id": request_id,
+        "model_id": model_id,
+        "gateway_id": gateway_id,
+        "winner": winner,
+        "terminal_outcome": terminal_outcome,
+        "terminal_pending": terminal_pending,
+        "http_arrival_ms": http_arrival_ms,
+        "terminal_arrival_ms": terminal_arrival_ms,
+        "arrival_delta_ms": arrival_delta_ms,
+    }
+    payload = {k: v for k, v in payload.items() if v is not None}
+    return Event(
+        signal=FEDERATION_LOAD_RACE_RESOLVED,
+        payload=payload,
+        role="observation",
     )
 
 

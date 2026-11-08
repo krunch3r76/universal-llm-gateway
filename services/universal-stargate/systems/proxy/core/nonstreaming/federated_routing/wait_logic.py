@@ -284,10 +284,13 @@ async def _wait_vram_refusal_and_retry_selection(
 
             remaining = timeout_s - elapsed_s
             wait_slice = min(dwell_s, remaining)
+            slice_exit_reason = "dwell_backoff"
             if refused_gw and baseline_ts > 0:
-                await federated_manager.wait_for_gateway_resource_update(
+                updated = await federated_manager.wait_for_gateway_resource_update(
                     refused_gw, baseline_ts, wait_slice
                 )
+                if updated:
+                    slice_exit_reason = "resource_update"
             else:
                 await asyncio.sleep(wait_slice)
 
@@ -316,6 +319,8 @@ async def _wait_vram_refusal_and_retry_selection(
                             model_id=str(placement.model_id),
                             gateway_id=selected.name,
                             waited_ms=waited_ms,
+                            exit_reason=slice_exit_reason,
+                            wait_kind="vram_refusal",
                         ),
                         "routing.eviction.wait.resolved",
                     )

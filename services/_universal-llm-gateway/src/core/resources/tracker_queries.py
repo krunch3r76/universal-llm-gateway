@@ -34,11 +34,6 @@ def refresh_hardware_vram_probe(tracker: ResourceTracker) -> dict[str, int]:
     tracker._last_hardware_available_ram_mb = ram_info[  # noqa: SLF001
         "available_ram_mb"
     ]
-    logger.debug(
-        "hardware_vram_refresh available_vram_mb=%s available_ram_mb=%s",
-        vram_info["available_vram_mb"],
-        ram_info["available_ram_mb"],
-    )
     return {
         "available_vram_mb": int(vram_info["available_vram_mb"]),
         "available_ram_mb": int(ram_info["available_ram_mb"]),

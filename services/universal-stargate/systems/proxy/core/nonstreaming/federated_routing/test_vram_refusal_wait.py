@@ -88,6 +88,63 @@ async def test_vram_refusal_wait_respects_shared_budget_and_dwell(
 
 
 @pytest.mark.asyncio
+async def test_vram_refusal_resolved_event_includes_dwell_exit_reason(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from src.scheduling.events.routing import ROUTING_EVICTION_WAIT_RESOLVED
+
+    monkeypatch.setattr(
+        "systems.routing.selection.stargate_collector.federated_gateways_to_routing_candidates",
+        lambda gateways: [
+            SimpleNamespace(name=g.gateway_id) for g in gateways
+        ],
+    )
+    mgr = _Mgr([_Gw("edge-jupiter-gateway", ts=100.0)])
+    mgr._gateways["edge-jupiter-gateway"].telemetry_timestamp = 101.0
+
+    def _select(**_kwargs):
+        return SimpleNamespace(name="edge-jupiter-gateway"), SimpleNamespace(
+            candidates=()
+        )
+
+    class _Bus:
+        def __init__(self) -> None:
+            self.events: list = []
+
+        async def publish_nowait(self, event) -> None:
+            self.events.append(event)
+
+    bus = _Bus()
+    context = SimpleNamespace(
+        request_id="req-dwell",
+        model_sticky=True,
+        excluded_gateway_ids=set(),
+        _vram_refusal_gateway_id="edge-jupiter-gateway",
+        _vram_refusal_telemetry_baseline=100.0,
+    )
+    placement = SimpleNamespace(model_id="hermes-test")
+
+    selected, _trace, _waited = await _wait_vram_refusal_and_retry_selection(
+        federated_manager=mgr,
+        decision_engine=SimpleNamespace(select=_select),
+        placement=placement,
+        context=context,
+        event_bus=bus,
+        timeout_s=1.0,
+        stability_tracker=SimpleNamespace(),
+    )
+    assert selected is not None
+    resolved = [
+        e
+        for e in bus.events
+        if getattr(e, "signal", None) == ROUTING_EVICTION_WAIT_RESOLVED
+    ]
+    assert len(resolved) == 1
+    assert resolved[0].payload["wait_kind"] == "vram_refusal"
+    assert resolved[0].payload["exit_reason"] == "resource_update"
+
+
+@pytest.mark.asyncio
 async def test_vram_refusal_two_requests_do_not_share_context_state(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

@@ -26,7 +26,9 @@ Payload: {
     "request_id": str,
     "model_id": str,
     "gateway_id": str,
-    "waited_ms": int
+    "waited_ms": int,
+    "exit_reason": str | None,
+    "wait_kind": str | None,
 }
 """
 

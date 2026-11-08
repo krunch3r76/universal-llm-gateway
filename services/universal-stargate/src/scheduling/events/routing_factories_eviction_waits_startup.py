@@ -41,17 +41,26 @@ def RoutingEvictionWaitResolved(
     model_id: str,
     gateway_id: str,
     waited_ms: int,
+    exit_reason: str | None = None,
+    wait_kind: str | None = None,
 ) -> Event:
     """Emit when eviction wait completed and selection succeeded."""
-    return Event(
-        signal=ROUTING_EVICTION_WAIT_RESOLVED,
-        payload={
-            "request_id": request_id,
-            "model_id": model_id,
-            "gateway_id": gateway_id,
-            "waited_ms": waited_ms,
-        },
-    )
+    payload: dict[str, object] = {
+        "request_id": request_id,
+        "model_id": model_id,
+        "gateway_id": gateway_id,
+        "waited_ms": waited_ms,
+        "exit_reason": exit_reason,
+        "wait_kind": wait_kind,
+    }
+    payload = {k: v for k, v in payload.items() if v is not None}
+    if wait_kind == "vram_refusal":
+        return Event(
+            signal=ROUTING_EVICTION_WAIT_RESOLVED,
+            payload=payload,
+            role="observation",
+        )
+    return Event(signal=ROUTING_EVICTION_WAIT_RESOLVED, payload=payload)
 
 
 @event_factory
