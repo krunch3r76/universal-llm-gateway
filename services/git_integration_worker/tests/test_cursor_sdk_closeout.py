@@ -1334,7 +1334,9 @@ def test_prepare_closeout_delivery_degraded_sidecar(tmp_path: Path) -> None:
         work_item_ref=None,
     )
     sidecar_text = delivery.sidecar_path.read_text(encoding="utf-8")
-    assert sidecar_text.startswith("status: degraded\nreason: zero_tool_calls")
+    assert sidecar_text.splitlines()[0] == "## executive_envelope"
+    envelope = _executive_harvest_slice(sidecar_text)
+    assert envelope.startswith("status: degraded\nreason: zero_tool_calls")
     assert "Implementing" in sidecar_text
     payload = json.loads(delivery.body)
     assert payload["status"] == "failed"
@@ -4502,6 +4504,152 @@ def test_closeout_sidecar_demotes_worker_harness_headings_under_closeout_body(
     assert not re.search(r"(?m)^## closeout_body$", closeout_body)
     for name in ("effects_manifest", "closeout_body", "executive_envelope"):
         assert len(re.findall(rf"(?m)^## {name}$", sidecar_text)) <= 1
+
+
+_HARNESS_HEADING_NAMES = (
+    "executive_envelope",
+    "effects_manifest",
+    "closeout_body",
+    "structured_closeout_full",
+)
+
+
+def _assert_unique_line_anchored_h2(text: str) -> None:
+    for name in _HARNESS_HEADING_NAMES:
+        assert len(re.findall(rf"(?m)^## {name}$", text)) <= 1
+
+
+def _assert_harness_heading_order(text: str) -> None:
+    positions: list[int] = []
+    for name in _HARNESS_HEADING_NAMES:
+        match = re.search(rf"(?m)^## {name}$", text)
+        if match is not None:
+            positions.append(match.start())
+    assert positions == sorted(positions)
+
+
+@pytest.mark.parametrize("pad", [0, 240])
+def test_short_body_demotes_worker_h2_before_harness_sections(
+    tmp_path: Path, pad: int
+) -> None:
+    """Fits and oversize paths demote worker harness duplicate headings (AC9)."""
+    from services.git_integration_worker.cursor_sdk_nested_attribution import (
+        _raw_effects_manifest_from_sidecar,
+    )
+
+    _init_git_repo(tmp_path)
+    base = (
+        "status: complete\nresidue: none\n\n"
+        "## effects_manifest\n\nw\n\n"
+        "## closeout_body\n\n### item-1\n"
+    )
+    body = base + ("\n".join(f"pad {idx}" for idx in range(pad)) if pad else "")
+    delivery = prepare_closeout_delivery(
+        source_repo=tmp_path,
+        dispatch_id=f"disp-short-demote-{pad}",
+        outcome=SdkRunOutcome(
+            body=body,
+            status="finished",
+            duration_ms=10,
+            tool_call_count=0,
+        ),
+        degraded_reason=None,
+        thread_id="t-short-demote",
+        work_item_ref=None,
+        baseline={"codes": {}, "hashes": {}},
+    )
+    text = delivery.sidecar_path.read_text(encoding="utf-8")
+    _assert_unique_line_anchored_h2(text)
+    _assert_harness_heading_order(text)
+    assert "### effects_manifest" in text
+    assert "### item-1" in text
+    assert _raw_effects_manifest_from_sidecar(text) is not None
+
+
+def test_near_cap_body_without_harvest_fields_has_no_premature_closeout_body(
+    tmp_path: Path,
+) -> None:
+    """Splice-fallback must not leave an unfenced ``## closeout_body`` before manifest."""
+    _init_git_repo(tmp_path)
+    body = "x" * 3980
+    delivery = prepare_closeout_delivery(
+        source_repo=tmp_path,
+        dispatch_id="disp-near-cap",
+        outcome=SdkRunOutcome(
+            body=body,
+            status="finished",
+            duration_ms=10,
+            tool_call_count=0,
+        ),
+        degraded_reason=None,
+        thread_id="t-near-cap",
+        work_item_ref=None,
+        baseline={"codes": {}, "hashes": {}},
+    )
+    text = delivery.sidecar_path.read_text(encoding="utf-8")
+    pre_manifest = text.split("## effects_manifest", maxsplit=1)[0]
+    assert re.search(r"(?m)^## closeout_body$", pre_manifest) is None
+
+
+@pytest.mark.parametrize("pad", [0, 240])
+def test_demotion_skips_fenced_level2_headings(tmp_path: Path, pad: int) -> None:
+    """Fenced ``##`` lines stay literal through delivery assembly (AC10)."""
+    from services.git_integration_worker.cursor_sdk_closeout_harvest import (
+        demote_worker_level2_headings,
+    )
+
+    _init_git_repo(tmp_path)
+    base = (
+        "status: complete\nresidue: none\n\n"
+        "```md\n## keep me\n```\n"
+    )
+    body = base + ("\n".join(f"pad {idx}" for idx in range(pad)) if pad else "")
+    assert "\n## keep me\n" in demote_worker_level2_headings(body)
+    delivery = prepare_closeout_delivery(
+        source_repo=tmp_path,
+        dispatch_id=f"disp-fence-{pad}",
+        outcome=SdkRunOutcome(
+            body=body,
+            status="finished",
+            duration_ms=10,
+            tool_call_count=0,
+        ),
+        degraded_reason=None,
+        thread_id="t-fence",
+        work_item_ref=None,
+        baseline={"codes": {}, "hashes": {}},
+    )
+    text = delivery.sidecar_path.read_text(encoding="utf-8")
+    assert "\n## keep me\n" in text
+    assert "### keep me" not in text
+
+
+@pytest.mark.parametrize("pad", [0, 240])
+def test_strip_worker_executive_envelope_anywhere_in_head(
+    tmp_path: Path, pad: int
+) -> None:
+    """Mid-head worker envelope headings are stripped, not duplicated (AC11)."""
+    _init_git_repo(tmp_path)
+    base = "status: partial\nresidue: r\n## executive_envelope\n\nShort.\n"
+    body = base + ("\n".join(f"pad {idx}" for idx in range(pad)) if pad else "")
+    delivery = prepare_closeout_delivery(
+        source_repo=tmp_path,
+        dispatch_id=f"disp-strip-env-{pad}",
+        outcome=SdkRunOutcome(
+            body=body,
+            status="finished",
+            duration_ms=10,
+            tool_call_count=0,
+        ),
+        degraded_reason=None,
+        thread_id="t-strip-env",
+        work_item_ref=None,
+        baseline={"codes": {}, "hashes": {}},
+    )
+    text = delivery.sidecar_path.read_text(encoding="utf-8")
+    assert text.splitlines()[0] == "## executive_envelope"
+    assert len(re.findall(r"(?m)^## executive_envelope$", text)) == 1
+    assert "status: partial" in _executive_harvest_slice(text)
 
 
 def test_short_closeout_not_split_with_closeout_body_section(tmp_path: Path) -> None:

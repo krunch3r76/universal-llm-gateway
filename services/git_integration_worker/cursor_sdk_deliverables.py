@@ -23,7 +23,7 @@ from services.git_integration_worker.cursor_sdk_closeout_harvest import (
     demote_worker_level2_headings,
     partition_closeout_executive_envelope,
     stamp_harvest_status_from_structured,
-    strip_worker_leading_executive_envelope,
+    strip_worker_executive_envelope_headings,
 )
 
 logger = get_logger(__name__)
@@ -92,8 +92,9 @@ def write_repo_sidecar(
     """
     path = source_repo / _sidecar_rel_path(dispatch_id)
     path.parent.mkdir(parents=True, exist_ok=True)
-    normalized = strip_worker_leading_executive_envelope(content)
+    normalized = strip_worker_executive_envelope_headings(content)
     executive, archived = partition_closeout_executive_envelope(normalized)
+    executive = demote_worker_level2_headings(executive)
     path.write_text(
         f"{EXECUTIVE_ENVELOPE_HEADING}\n\n{executive}",
         encoding="utf-8",

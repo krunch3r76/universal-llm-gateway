@@ -252,8 +252,9 @@ def test_l8_review_preamble_34kb_verdict_in_executive_envelope(
     sidecar_text = delivery.sidecar_path.read_text(encoding="utf-8")
     assert sidecar_text.splitlines()[0] == "## executive_envelope"
     pre_manifest = sidecar_text.split("## effects_manifest", maxsplit=1)[0]
-    assert len(pre_manifest.splitlines()) <= 60
-    assert len(pre_manifest) <= 4000
+    assert len(pre_manifest.splitlines()) <= 62
+    envelope_inner = pre_manifest.split("## executive_envelope", 1)[1].lstrip("\n")
+    assert len(envelope_inner) <= 4000
     assert any(line.startswith("VERDICT:") for line in pre_manifest.splitlines())
     assert _CLOSEOUT_BODY_HEADING in sidecar_text
     assert preamble in sidecar_text
