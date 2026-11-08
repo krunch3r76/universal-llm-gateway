@@ -2,7 +2,7 @@
 
 Post-wait ``run.usage`` / ``result.usage`` is authoritative on local runs
 (probe 6655 A1 OBSERVED). ``Agent.get_usage`` is an additional cost probe on
-1.0.31+ local agents — it returns ``AgentUsage``; ``cost`` is ``None`` when the
+1.3.1 local agents — it returns ``AgentUsage``; ``cost`` is ``None`` when the
 backend has not reported cost yet. Client-minted ``run-<uuid>`` labels raise
 ``BadRequestError``. A bare UUID ``agentId`` (custom-tool mint) fails
 ``GetUsage`` validation; ``build_agent_options`` mints ``agent-<uuid>`` so

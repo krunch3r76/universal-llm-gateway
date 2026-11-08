@@ -1622,11 +1622,13 @@ def record_wake_result(
         or orion_bounded_defer_reason(merge_reason)
     )
     release_claim = bool(detail.pop("release_claim_for_retry", False))
-    finished = (
-        None
-        if outcome_in == "refused" or (pending_handoff and release_claim)
-        else stamp
-    )
+    if outcome_in == "refused":
+        # friction:42978 — title_mismatch is terminal; other refused composer defers stay open.
+        finished = stamp if reason_s == "title_mismatch" else None
+    elif pending_handoff and release_claim:
+        finished = None
+    else:
+        finished = stamp
     with write_connect() as conn:
         cols = _ledger_columns(conn)
         select_extra = ""

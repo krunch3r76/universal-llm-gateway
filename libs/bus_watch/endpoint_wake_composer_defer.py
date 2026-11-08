@@ -193,13 +193,19 @@ def notify_composer_empty_for_target(
     reasons = composer_defer_reasons_sorted()
     in_sql = composer_defer_reason_in_sql()
     with write_connect() as conn:
-        cur = conn.execute(
+        pending = conn.execute(
             "UPDATE endpoint_wake_ledger SET decided_by_rule=NULL "
             f"WHERE state='pending' AND thread_id=? AND reason IN {in_sql} "
             "AND decided_by_rule LIKE ?",
             (scope, *reasons, f"{_DEFER_PREFIX}%"),
         )
-        return int(cur.rowcount)
+        rearmed = conn.execute(
+            "UPDATE endpoint_wake_ledger SET state='pending', decided_by_rule=NULL, "
+            f"finished_at=NULL WHERE state='refused' AND decided_by_rule=? "
+            f"AND thread_id=? AND reason IN {in_sql}",
+            (COMPOSER_DEFER_ESCALATED, scope, *reasons),
+        )
+        return int(pending.rowcount) + int(rearmed.rowcount)
 
 
 def defer_path_avoids_wall_clock() -> bool:
