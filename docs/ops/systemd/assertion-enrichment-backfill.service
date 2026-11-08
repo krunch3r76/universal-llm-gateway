@@ -1,0 +1,14 @@
+[Unit]
+# Auxiliary operator-managed unit (not a fleet manage service).
+# Detached assertion-enrichment backfill — resumable via state file.
+Description=Assertion enrichment backfill (events + optional prospective)
+
+[Service]
+Type=simple
+WorkingDirectory=/mnt/torus/projects/universal-llm-gateway
+Environment=PYTHONPATH=/mnt/torus/projects/universal-llm-gateway/libs
+Environment=PATH=/home/io/.venvs/universal/bin:/usr/local/bin:/usr/bin:/bin
+Environment=PYTHONUNBUFFERED=1
+ExecStart=/home/io/.venvs/universal/bin/python scripts/assertion-enrichment-backfill.py --redo --kinds events --concurrency 2 --delay-ms 250
+Restart=on-failure
+RestartSec=30

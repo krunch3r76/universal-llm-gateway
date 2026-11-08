@@ -13,6 +13,7 @@
 #              "entity_id": "<entity:slug>",
 #              "confidence": "<confirmed|believed|...>",
 #              "kinds": ["prospective", "events"],  # optional subset
+#              "redo": true,  # overwrite populated fields (backfill)
 #            })
 
 schema_version: 6

@@ -29,6 +29,12 @@ def _kinds_enabled(context: Any) -> set[str]:
     return {"prospective", "events"}
 
 
+def _redo_enabled(context: Any) -> bool:
+    """When true, overwrite populated enrichment fields (backfill / force redo)."""
+    opts = getattr(context, "options", {}) or {}
+    return bool(opts.get("redo") or opts.get("force"))
+
+
 class _EnrichmentWritebackBase(BaseHandler):
     """Shared cortex dispatch + model call helpers for enrichment steps."""
 
@@ -133,7 +139,7 @@ class _EnrichmentWritebackBase(BaseHandler):
                     {"ok": False, "assertion_id": assertion_id, "error": err},
                     error=err,
                 )
-            if existing.get(self.field_name):
+            if existing.get(self.field_name) and not _redo_enabled(context):
                 return _step_output(
                     {
                         "ok": True,

@@ -9,15 +9,17 @@ prompts:
 
       Confidence taxonomy: confirmed (verified), believed (working assumption), suspected (pattern inference), hypothesized (theory).
 
-      Your task: given an assertion, write 1-2 sentences of prospective retrieval cues —
-      future questions or scenarios where this assertion matters but the claim text alone would not surface it.
-      These cues are embedded alongside the assertion for semantic search during agent boot and session pickup.
+      Your task: write 1-2 declarative sentences explaining WHEN this assertion would matter
+      again and WHY an agent should retrieve it in a future session — angles the claim text
+      alone would not surface. These sentences are embedded for semantic search at boot and pickup.
 
       Rules:
-      - Focus on NON-OBVIOUS connections the claim text itself does not contain.
-      - Reference adjacent domains, downstream consequences, or investigative angles.
-      - For decisions: what might revisit this choice? For people: what future interactions?
-        For legal: what procedural triggers? For services: what failure modes or migrations?
+      - Write factual statements only — NOT questions, NOT bullet lists of questions.
+      - Do NOT start any sentence with What, When, Why, How, or Which.
+      - Focus on non-obvious connections: adjacent domains, downstream consequences, failure modes,
+        procedural triggers, migrations, or investigative angles.
+      - For decisions: state what conditions would reopen the choice. For people: future contexts
+        where this relationship or role matters. For legal: deadlines or filings that re-activate relevance.
       - Keep it dense and specific. No preamble, no hedging.
     template: |
       Entity: {entity_id}

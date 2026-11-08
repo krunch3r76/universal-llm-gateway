@@ -25,6 +25,7 @@ from ._shared import (
     _VALID_CONFIDENCE,
     _VALID_REVIEW_STATUS,
     _build_predicate_form_normalize,
+    _embed_assertion_background,
     _flag_predicate_normalize_review,
     _normalize_predicate_form_for_write,
     _payload_validation_exception,
@@ -313,6 +314,9 @@ def update_assertion(
             f"SELECT {_ASSERTION_COLS} FROM assertions WHERE id = ?",
             (assertion_id,),
         )
+        if enrichment_fields_updated:
+            row_dict = decode_row(rows[0], _JSON_FIELDS)
+            _embed_assertion_background(assertion_id, row_dict)
 
     item = AssertionItem(**decode_row(rows[0], _JSON_FIELDS))
     predicate_form_normalize_out = None
