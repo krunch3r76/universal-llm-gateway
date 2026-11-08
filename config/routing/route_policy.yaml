@@ -48,7 +48,6 @@ impresario:
     - cdp/fable-5
     - cursor/muse-wonder-1.0
     - cursor/composer-2.5
-    - cursor/grok-4.7
   cdp_reroute_for_critic: false
   ear: {model: cursor/composer-2.5, fast: false}
   ear_patrol: {model: cursor/composer-2.5, effort: low, fast: true}
@@ -144,15 +143,15 @@ workflows:
     model: cursor/composer-2.5
     jobs: [investigate, recon, seed]
   auto_judgment:
-    # Judgment omit-model defaults to grok-4.7 for cursor-sdk judgment-class
-    # jobs. Effort for these jobs is contract_effort (conductor low;
-    # answer/ask/confer/verify/execute/propagate high).
+    # Judgment omit-model defaults to composer-2.5 for cursor-sdk judgment-class
+    # jobs (grok-4.7 banned at admission). Effort for these jobs is
+    # contract_effort (conductor low; answer/ask/confer/verify/execute/propagate high).
     seat: cursor-sdk
-    model: cursor/grok-4.7
+    model: cursor/composer-2.5
     jobs: [answer, confer, ask, verify, execute, propagate, sketch, none, conductor]
   check_review:
     # Reviewer omit-model follows workflows.check_review (anthropic sonnet).
-    # Cursor-sdk generate admits only composer-2.5 and grok-4.7; other cursor ids
+    # Cursor-sdk generate admits only composer-2.5; other cursor ids
     # (muse, fable, terra, sol, luna) are not cursor-sdk generate targets.
     seat: reviewer
     model: anthropic/claude-sonnet-5-5
@@ -165,7 +164,6 @@ workflows:
 # workflows.*.model reference to it. Re-enable = drop the flag or add the slot.
 models:
   composer-2.5:      {roaming: true}
-  grok-4.7:          {roaming: true}
 
 # Per-contract omit-effort defaults (todo:model-workflow-config-first, P3).
 # Authority for resolve_desired_effort auto/omit — contract-keyed, not workflow-keyed
