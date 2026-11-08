@@ -97,9 +97,7 @@ def test_pipeline_shape() -> None:
     judge_candidates = by_name["semantic_judge_candidates"]
     for name in _DRAFTER_STEPS:
         assert name in judge_candidates.computed_depends_on
-        assert any(
-            entry.step == name for entry in (judge_candidates.reads_from or [])
-        )
+        assert any(entry.step == name for entry in (judge_candidates.reads_from or []))
     assert by_name["prompt_architect"].type == "writing_prompt_architect_v1"
     persona_author = by_name["local_persona_author"]
     assert persona_author.type == "writing_local_persona_author_v1"
@@ -130,9 +128,9 @@ def test_pipeline_shape() -> None:
     for name in ("drafter_local_hermes", "drafter_local_ernie"):
         assert by_name[name].prompt_ref == "writing.v1.writer_local"
         assert "local_persona_author.json.get('ok')" in (by_name[name].condition or "")
-    models_block = yaml.safe_load(
-        (_V1 / "models.yaml").read_text(encoding="utf-8")
-    )["models"]
+    models_block = yaml.safe_load((_V1 / "models.yaml").read_text(encoding="utf-8"))[
+        "models"
+    ]
     for name in _CLOUD_DRAFTERS:
         assert models_block[name].get("prompt_style") == "brief"
     for name in ("drafter_local_hermes", "drafter_local_ernie"):
@@ -188,14 +186,19 @@ def test_go_conditions_on_step_outputs() -> None:
         "independence": step({"refused": None}),
         "fact_ceiling_audit": step({"verdict": "ship", "findings": []}),
     }
-    assert evaluator.evaluate(by_name["fact_ceiling_audit"].condition, clean, {}) is True
+    assert (
+        evaluator.evaluate(by_name["fact_ceiling_audit"].condition, clean, {}) is True
+    )
     assert evaluator.evaluate(by_name["prose_rhythm_pass"].condition, clean, {}) is True
 
     refused_draft = {
         "assemble": step({"refused": None}),
         "draft": step({"refused": "no_draft_candidates"}),
     }
-    assert evaluator.evaluate(by_name["independence"].condition, refused_draft, {}) is False
+    assert (
+        evaluator.evaluate(by_name["independence"].condition, refused_draft, {})
+        is False
+    )
 
     correspondence = {
         "assemble": step(
@@ -237,7 +240,9 @@ def test_go_conditions_on_step_outputs() -> None:
     )
     persona_fail = {
         **correspondence,
-        "local_persona_author": step({"ok": False, "refused": "persona_validation_failed"}),
+        "local_persona_author": step(
+            {"ok": False, "refused": "persona_validation_failed"}
+        ),
     }
     assert (
         evaluator.evaluate(
@@ -258,9 +263,7 @@ def test_go_conditions_on_step_outputs() -> None:
         is True
     )
     assert (
-        evaluator.evaluate(
-            by_name["drafter_anthropic"].condition, filing, opts_default
-        )
+        evaluator.evaluate(by_name["drafter_anthropic"].condition, filing, opts_default)
         is True
     )
 

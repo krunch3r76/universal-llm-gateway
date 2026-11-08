@@ -26,7 +26,7 @@ def WritingPersonaRefused(*, reason: str) -> Event:  # noqa: N802
     """Observed when local persona authoring refuses (fail-closed, no fallback).
 
     reason values: persona_validation_failed, persona_author_failed,
-    persona_prompt_missing.
+    persona_prompt_missing, persona_model_missing.
     """
     return Event(
         signal="writing.persona.refused",

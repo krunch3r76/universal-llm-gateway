@@ -37,9 +37,7 @@ judge_events = importlib.import_module("writing_pipeline.events")
 
 pytestmark = pytest.mark.offline
 
-_WRITER_YAML_SHA256 = (
-    "b58cb267182c01c260be856aa3455c33c9124c746494c5bbe917cc4dc23931f9"
-)
+_WRITER_YAML_SHA256 = "b58cb267182c01c260be856aa3455c33c9124c746494c5bbe917cc4dc23931f9"
 
 _CORRESPONDENCE_INTAKE = {
     "mode": "standard",
@@ -136,7 +134,13 @@ def test_validate_rejects_sentence_initial_marcus() -> None:
     assert ok is False
 
 
-def test_validate_rejects_invented_mid_sentence_after_stopword_open() -> None:
+def test_validate_rejects_kay_not_whole_word_in_kaywan_blocks() -> None:
+    prose = "Kay is your contact."
+    _, ok = local_persona._validate_persona_prose(prose, **_blocks_kwargs())
+    assert ok is False
+
+
+def test_validate_rejects_invented_name_after_you_sentence_initial() -> None:
     prose = "You write plainly. Zaphod agrees with every word."
     _, ok = local_persona._validate_persona_prose(prose, **_blocks_kwargs())
     assert ok is False
@@ -171,7 +175,9 @@ def test_validate_rejects_bad_persona(prose: str) -> None:
     assert ok is False
 
 
-def test_persona_author_fail_closed_skips_branch(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_persona_author_fail_closed_skips_branch(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     published: list[Any] = []
 
     def _capture(_self: object, _ctx: object, event: Any) -> None:
@@ -198,7 +204,9 @@ def test_persona_author_fail_closed_skips_branch(monkeypatch: pytest.MonkeyPatch
         _bad_model,
     )
     payload = asyncio.run(
-        local_persona.WritingLocalPersonaAuthorHandler().execute(None, _correspondence_ctx())
+        local_persona.WritingLocalPersonaAuthorHandler().execute(
+            None, _correspondence_ctx()
+        )
     ).json
     assert payload.get("ok") is False
     assert payload.get("refused") == "persona_validation_failed"
@@ -210,7 +218,30 @@ def test_persona_author_fail_closed_skips_branch(monkeypatch: pytest.MonkeyPatch
     assert published[0].role == "observation"
 
 
-def test_persona_author_model_exception_refuses(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_refuse_payload_when_bus_publish_raises(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def _boom(_self: object, _ctx: object, _event: Any) -> None:
+        raise RuntimeError("bus_down")
+
+    monkeypatch.setattr(
+        local_persona.WritingLocalPersonaAuthorHandler,
+        "_publish_bus_event",
+        _boom,
+    )
+    handler = local_persona.WritingLocalPersonaAuthorHandler()
+    payload = handler._refuse(
+        _Ctx({}),
+        "persona_validation_failed",
+        rejected_text="bad",
+    ).json
+    assert payload.get("ok") is False
+    assert payload.get("persona_refused") == "persona_validation_failed"
+
+
+def test_persona_author_model_exception_refuses(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     async def _boom(
         _self: object,
         _model_id: str,
@@ -227,7 +258,9 @@ def test_persona_author_model_exception_refuses(monkeypatch: pytest.MonkeyPatch)
         _boom,
     )
     payload = asyncio.run(
-        local_persona.WritingLocalPersonaAuthorHandler().execute(None, _correspondence_ctx())
+        local_persona.WritingLocalPersonaAuthorHandler().execute(
+            None, _correspondence_ctx()
+        )
     ).json
     assert payload.get("ok") is False
     assert payload.get("persona_refused") == "persona_author_failed"
@@ -236,7 +269,9 @@ def test_persona_author_model_exception_refuses(monkeypatch: pytest.MonkeyPatch)
 def test_persona_author_missing_prompt_refuses(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(local_persona, "load_prompts", lambda: {})
     payload = asyncio.run(
-        local_persona.WritingLocalPersonaAuthorHandler().execute(None, _correspondence_ctx())
+        local_persona.WritingLocalPersonaAuthorHandler().execute(
+            None, _correspondence_ctx()
+        )
     ).json
     assert payload.get("persona_refused") == "persona_prompt_missing"
 
@@ -267,7 +302,9 @@ def test_persona_author_success_emits_block(monkeypatch: pytest.MonkeyPatch) -> 
         _good_model,
     )
     payload = asyncio.run(
-        local_persona.WritingLocalPersonaAuthorHandler().execute(None, _correspondence_ctx())
+        local_persona.WritingLocalPersonaAuthorHandler().execute(
+            None, _correspondence_ctx()
+        )
     ).json
     assert payload.get("ok") is True
     assert payload.get("persona_prose")

@@ -57,8 +57,6 @@ steps:
     reads_from:
       - step: assemble
         fields: [json]
-      - step: source_obligations
-        fields: [json]
       - step: prompt_architect
         fields: [json]
     condition: "assemble.json.get('refused') is None and options.get('output', 'envelope') != 'packet' and (options.get('full_drafter_fanout', False) is True or assemble.json.get('check_class') == 'sworn' or assemble.json.get('channel') == 'filing')"

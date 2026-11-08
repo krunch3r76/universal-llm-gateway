@@ -9,6 +9,7 @@ from typing import Any
 from systems.pipeline.core.handlers.builtin import BaseHandler
 from systems.pipeline.core.handlers.protocol import StepOutput
 from systems.pipeline.core.prompts import PromptBuilder
+from universal_logging import get_logger
 from writing_pipeline.events import WritingPersonaRefused
 
 from .assemble import _fence
@@ -21,6 +22,8 @@ _NUMBERED = re.compile(r"(?m)^\s*\d+\.\s+\S")
 _NUMBERED_PAREN = re.compile(r"(?m)^\s*\d+\)\s+\S")
 _LETTERED = re.compile(r"(?m)^\s*[a-zA-Z]\.\s+\S")
 _HEADING = re.compile(r"(?m)^\s*#+\s+\S")
+_BLOCKS_WORD_RE = re.compile(r"[a-z][a-z'-]*")
+_LOGGER = get_logger(__name__)
 _CAPITAL_STOPWORDS = frozenset(
     {
         "you",
@@ -118,12 +121,17 @@ def _is_sentence_initial_at(text: str, match: re.Match[str]) -> bool:
     return bool(re.search(r"[.!?]\s*$", prefix))
 
 
+def _blocks_word_set(blocks_lower: str) -> set[str]:
+    """Lowercase words extracted from persona prompt blocks (whole tokens only)."""
+    return set(_BLOCKS_WORD_RE.findall(blocks_lower))
+
+
 def _capital_token_allowed(
     text: str,
     match: re.Match[str],
     *,
     allowed: set[str],
-    blocks_lower: str,
+    blocks_words: set[str],
 ) -> bool:
     """Enforce positional sentence-start rules vs mid-sentence allowlist."""
     token = match.group(0)
@@ -134,7 +142,7 @@ def _capital_token_allowed(
         return False
     if lower in _CAPITAL_STOPWORDS:
         return True
-    return lower in blocks_lower
+    return lower in blocks_words
 
 
 def _validate_persona_prose(
@@ -153,6 +161,7 @@ def _validate_persona_prose(
     blocks_lower = "\n".join(
         (brief_block, documents_block, architect_brief_block)
     ).lower()
+    blocks_words = _blocks_word_set(blocks_lower)
     allowed = _persona_allowed_tokens(
         brief_block=brief_block,
         documents_block=documents_block,
@@ -160,7 +169,7 @@ def _validate_persona_prose(
     )
     for match in _NAME.finditer(text):
         if not _capital_token_allowed(
-            text, match, allowed=allowed, blocks_lower=blocks_lower
+            text, match, allowed=allowed, blocks_words=blocks_words
         ):
             return text, False
     for token in _NUMBER.findall(text):
@@ -175,6 +184,7 @@ class WritingLocalPersonaAuthorHandler(BaseHandler):
     step_type = "writing_local_persona_author_v1"
 
     def __init__(self, caller: Any | None = None) -> None:
+        """Optional ``caller`` injects model output for offline tests."""
         super().__init__()
         self._caller = caller
 
@@ -189,8 +199,12 @@ class WritingLocalPersonaAuthorHandler(BaseHandler):
         """Build a fail-closed payload and publish an observation event when possible."""
         try:
             self._publish_bus_event(context, WritingPersonaRefused(reason=reason))
-        except Exception:  # noqa: BLE001
-            pass
+        except Exception as exc:  # noqa: BLE001
+            _LOGGER.debug(
+                "persona refuse bus publish failed reason=%s: %s",
+                reason,
+                exc,
+            )
         payload: dict[str, Any] = {
             "ok": False,
             "refused": reason,
@@ -207,7 +221,9 @@ class WritingLocalPersonaAuthorHandler(BaseHandler):
         try:
             return await self._execute_impl(step, context)
         except Exception as exc:  # noqa: BLE001
-            return self._refuse(context, "persona_author_failed", error=type(exc).__name__)
+            return self._refuse(
+                context, "persona_author_failed", error=type(exc).__name__
+            )
 
     async def _execute_impl(self, step: Any, context: Any) -> StepOutput:
         """Inner execute body separated for a single exception boundary."""
@@ -225,9 +241,7 @@ class WritingLocalPersonaAuthorHandler(BaseHandler):
             return self._refuse(context, "persona_prompt_missing")
         arch = outputs.get("prompt_architect")
         arch_json = (
-            arch.get("json")
-            if isinstance(arch, dict)
-            else getattr(arch, "json", None)
+            arch.get("json") if isinstance(arch, dict) else getattr(arch, "json", None)
         )
         architect_block = str((arch_json or {}).get("architect_brief_block") or "")
         brief_block = str(assemble_json.get("brief_block") or "")
@@ -242,6 +256,8 @@ class WritingLocalPersonaAuthorHandler(BaseHandler):
         )
         models = load_writing_models()
         model_id = models.get("local_persona_author") or ""
+        if not model_id:
+            return self._refuse(context, "persona_model_missing")
         try:
             if self._caller is not None:
                 content = await self._caller()
