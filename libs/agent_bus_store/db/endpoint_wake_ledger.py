@@ -3,9 +3,12 @@
 from __future__ import annotations
 
 import json
+import math
+import os
 import re
 import sqlite3
 import uuid
+from collections.abc import Sequence
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
@@ -121,25 +124,48 @@ def advance_scan(
             if turn_row is not None and turn_row["read_at"]:
                 continue
             filtered.append(item)
+        ledger_cols = _ledger_columns(conn)
+        has_delivery_agent_id = "delivery_agent_id" in ledger_cols
         for item in filtered:
             state = item.get("state", "pending")
-            conn.execute(
-                "INSERT OR IGNORE INTO endpoint_wake_ledger "
-                "(agent, thread_id, turn_id, turn_number, state, reason, created_at, "
-                "finished_at, decided_by_rule) "
-                "VALUES (?,?,?,?,?,?,?,?,?)",
-                (
-                    item["agent"],
-                    item["thread_id"],
-                    item["turn_id"],
-                    item["turn_number"],
-                    state,
-                    item.get("reason") if state == "skipped" else None,
-                    stamp,
-                    stamp if state == "skipped" else None,
-                    item.get("decided_by_rule"),
-                ),
-            )
+            delivery_id = item.get("delivery_agent_id")
+            if has_delivery_agent_id:
+                conn.execute(
+                    "INSERT OR IGNORE INTO endpoint_wake_ledger "
+                    "(agent, thread_id, turn_id, turn_number, state, reason, created_at, "
+                    "finished_at, decided_by_rule, delivery_agent_id) "
+                    "VALUES (?,?,?,?,?,?,?,?,?,?)",
+                    (
+                        item["agent"],
+                        item["thread_id"],
+                        item["turn_id"],
+                        item["turn_number"],
+                        state,
+                        item.get("reason") if state == "skipped" else None,
+                        stamp,
+                        stamp if state == "skipped" else None,
+                        item.get("decided_by_rule"),
+                        delivery_id if delivery_id else None,
+                    ),
+                )
+            else:
+                conn.execute(
+                    "INSERT OR IGNORE INTO endpoint_wake_ledger "
+                    "(agent, thread_id, turn_id, turn_number, state, reason, created_at, "
+                    "finished_at, decided_by_rule) "
+                    "VALUES (?,?,?,?,?,?,?,?,?)",
+                    (
+                        item["agent"],
+                        item["thread_id"],
+                        item["turn_id"],
+                        item["turn_number"],
+                        state,
+                        item.get("reason") if state == "skipped" else None,
+                        stamp,
+                        stamp if state == "skipped" else None,
+                        item.get("decided_by_rule"),
+                    ),
+                )
         conn.execute(
             "UPDATE endpoint_wake_cursor SET high_water_turn_id=?, updated_at=? "
             "WHERE consumer=?",
@@ -559,6 +585,8 @@ _DELIVERY_BINDING_SOURCE = "agent_bus_store.delivery_bindings_resolve"
 _ORION_WAKE_HOUSE = "21207"
 ENDPOINT_WAKE_DEBOUNCE_S_DEFAULT = 600
 ENDPOINT_WAKE_DEBOUNCE_S_ORION_CHAT = 30
+ENDPOINT_WAKE_TAB_COALESCE_S_DEFAULT = 3.0
+ENDPOINT_WAKE_TAB_COALESCE_MAX_S_DEFAULT = 15.0
 ORION_DEFERRED_STREAMING_MAX_ATTEMPTS = 25
 ORION_COMPOSER_DEFER_MAX_ATTEMPTS = 25
 ORION_DEFERRED_RETRY_BASE_S = 30
@@ -608,6 +636,183 @@ def _orion_pending_coalesce_blocks(
         (agent, thread_id, oldest),
     ).fetchone()
     return prior is None
+
+
+def _endpoint_wake_tab_coalesce_s() -> float:
+    raw = os.environ.get(
+        "ENDPOINT_WAKE_TAB_COALESCE_S", str(ENDPOINT_WAKE_TAB_COALESCE_S_DEFAULT)
+    )
+    try:
+        value = float(raw)
+    except ValueError:
+        return ENDPOINT_WAKE_TAB_COALESCE_S_DEFAULT
+    if not math.isfinite(value) or value <= 0:
+        return ENDPOINT_WAKE_TAB_COALESCE_S_DEFAULT
+    return value
+
+
+def _endpoint_wake_tab_coalesce_max_s() -> float:
+    raw = os.environ.get(
+        "ENDPOINT_WAKE_TAB_COALESCE_MAX_S", str(ENDPOINT_WAKE_TAB_COALESCE_MAX_S_DEFAULT)
+    )
+    try:
+        value = float(raw)
+    except ValueError:
+        return ENDPOINT_WAKE_TAB_COALESCE_MAX_S_DEFAULT
+    if not math.isfinite(value) or value <= 0:
+        return ENDPOINT_WAKE_TAB_COALESCE_MAX_S_DEFAULT
+    return value
+
+
+def _tab_coalesce_applies_to_agent(agent: str) -> bool:
+    """Per-tab burst merge skips Orion and web-anthropic / maestro alias mailboxes."""
+    if normalize_bus_address(agent) == "orion":
+        return False
+    if normalize_bus_address(agent) in MAESTRO_WEB_ALIAS_PAIR:
+        return False
+    return True
+
+
+def _tab_hold_from_rows(
+    rows: Sequence[sqlite3.Row],
+    *,
+    delivery_agent_id: str,
+    stamp: str,
+) -> bool:
+    """Hold until quiet window or max-hold over eligible tab-id rows only."""
+    tab_id = str(delivery_agent_id or "").strip()
+    if not tab_id:
+        return False
+    eligible = [
+        r for r in rows if str(r["delivery_agent_id"] or "").strip() == tab_id
+    ]
+    if not eligible:
+        return False
+    oldest = min(str(r["created_at"]) for r in eligible)
+    newest = max(str(r["created_at"]) for r in eligible)
+    quiet_before = _shift(stamp, -int(_endpoint_wake_tab_coalesce_s()))
+    max_hold_before = _shift(stamp, -int(_endpoint_wake_tab_coalesce_max_s()))
+    return newest > quiet_before and oldest > max_hold_before
+
+
+def _due_wake_group_sql(orion_next_gate: str, *, delivery_agent_id: str | None) -> str:
+    delivery_sql = ""
+    if delivery_agent_id is not None:
+        delivery_sql = " AND COALESCE(p.delivery_agent_id,'')=? AND p.thread_id != '19627' "
+    return f"""
+                SELECT agent, thread_id FROM endpoint_wake_ledger p
+                WHERE p.state='pending'
+                  AND {_pending_retry_ready_sql("p")}
+                  {orion_next_gate}
+                  {delivery_sql}
+                  AND NOT EXISTS (
+                    SELECT 1 FROM endpoint_wake_ledger d
+                    WHERE {_mailbox_agent_sql("d", "p")} AND d.thread_id=p.thread_id
+                      AND d.state='delivered' AND d.finished_at> CASE
+                        WHEN lower(trim(p.agent))='orion' AND p.thread_id=?
+                        THEN ?
+                        ELSE ?
+                      END
+                      AND NOT EXISTS (
+                        SELECT 1 FROM turns t
+                        WHERE datetime(t.created_at) > datetime(d.finished_at)
+                          AND (
+                            lower(trim(t.from_agent))=lower(trim(p.agent))
+                            OR (
+                              lower(trim(t.from_agent)) IN ({_STAGE_MANAGER_SQL})
+                              AND lower(trim(p.agent)) IN ({_STAGE_MANAGER_SQL})
+                            )
+                            OR (
+                              d.route='cse'
+                              AND lower(trim(t.from_agent))='web-anthropic'
+                            )
+                          )
+                      )
+                      AND NOT EXISTS (
+                        SELECT 1 FROM turns tr
+                        WHERE tr.id=d.turn_id AND tr.read_at IS NOT NULL
+                      )
+                      AND NOT (
+                        EXISTS (
+                          SELECT 1 FROM turns tp
+                          WHERE tp.id = p.turn_id AND tp.subject LIKE 'EAR |%'
+                        )
+                        OR EXISTS (
+                          SELECT 1
+                          FROM agent_endpoint_subscriptions s_curr
+                          LEFT JOIN agent_endpoint_subscriptions s_prev
+                            ON s_prev.id = d.subscription_id
+                          WHERE s_curr.agent = p.agent
+                            AND s_curr.state = 'subscribed'
+                            AND (
+                              s_curr.thread_scope = p.thread_id
+                              OR s_curr.thread_scope = '*'
+                            )
+                            AND s_curr.agent_id != ''
+                            AND (
+                              s_prev.agent_id IS NULL
+                              OR s_curr.agent_id != s_prev.agent_id
+                            )
+                          LIMIT 1
+                        )
+                      )
+                  )
+                  AND NOT EXISTS (
+                    SELECT 1 FROM endpoint_wake_ledger u
+                    WHERE {_mailbox_agent_sql("u", "p")} AND u.thread_id=p.thread_id
+                      AND u.state='unknown' AND u.claimed_at> CASE
+                        WHEN lower(trim(p.agent))='orion' AND p.thread_id=?
+                        THEN ?
+                        ELSE ?
+                      END
+                  )
+                  AND NOT EXISTS (
+                    SELECT 1 FROM endpoint_wake_ledger c
+                    WHERE {_mailbox_agent_sql("c", "p")} AND c.thread_id=p.thread_id
+                      AND c.state='claimed' AND c.claimed_at>?
+                  )
+                GROUP BY agent, thread_id
+                ORDER BY MIN(COALESCE(p.finished_at, '')), MIN(p.id)
+                """
+
+
+def _due_wake_group_params(
+    *,
+    stamp: str,
+    retry_before: str,
+    orion_next_params: tuple[Any, ...],
+    debounce_before_orion: str,
+    debounce_before_default: str,
+    ttl_before: str,
+    delivery_agent_id: str | None,
+) -> tuple[Any, ...]:
+    base: tuple[Any, ...] = (
+        stamp,
+        retry_before,
+        *orion_next_params,
+        _ORION_WAKE_HOUSE,
+        debounce_before_orion,
+        debounce_before_default,
+        _ORION_WAKE_HOUSE,
+        debounce_before_orion,
+        debounce_before_default,
+        ttl_before,
+    )
+    if delivery_agent_id is not None:
+        return (
+            stamp,
+            retry_before,
+            *orion_next_params,
+            delivery_agent_id,
+            _ORION_WAKE_HOUSE,
+            debounce_before_orion,
+            debounce_before_default,
+            _ORION_WAKE_HOUSE,
+            debounce_before_orion,
+            debounce_before_default,
+            ttl_before,
+        )
+    return base
 
 
 def _wake_unbound_envelope(envelope: dict[str, Any]) -> dict[str, Any]:
@@ -1285,99 +1490,22 @@ def claim_due_wakes(
             (ttl_before,),
         )
         all_skipped: list[dict[str, Any]] = []
-        for _ in range(_CLAIM_SKIP_GROUP_CAP):
-            group = conn.execute(
-                f"""
-                SELECT agent, thread_id FROM endpoint_wake_ledger p
-                WHERE p.state='pending'
-                  AND {_pending_retry_ready_sql("p")}
-                  {orion_next_gate}
-                  AND NOT EXISTS (
-                    SELECT 1 FROM endpoint_wake_ledger d
-                    WHERE {_mailbox_agent_sql("d", "p")} AND d.thread_id=p.thread_id
-                      AND d.state='delivered' AND d.finished_at> CASE
-                        WHEN lower(trim(p.agent))='orion' AND p.thread_id=?
-                        THEN ?
-                        ELSE ?
-                      END
-                      AND NOT EXISTS (
-                        SELECT 1 FROM turns t
-                        WHERE datetime(t.created_at) > datetime(d.finished_at)
-                          AND (
-                            lower(trim(t.from_agent))=lower(trim(p.agent))
-                            OR (
-                              lower(trim(t.from_agent)) IN ({_STAGE_MANAGER_SQL})
-                              AND lower(trim(p.agent)) IN ({_STAGE_MANAGER_SQL})
-                            )
-                            OR (
-                              d.route='cse'
-                              AND lower(trim(t.from_agent))='web-anthropic'
-                            )
-                          )
-                      )
-                      AND NOT EXISTS (
-                        SELECT 1 FROM turns tr
-                        WHERE tr.id=d.turn_id AND tr.read_at IS NOT NULL
-                      )
-                      AND NOT (
-                        EXISTS (
-                          SELECT 1 FROM turns tp
-                          WHERE tp.id = p.turn_id AND tp.subject LIKE 'EAR |%'
-                        )
-                        OR EXISTS (
-                          SELECT 1
-                          FROM agent_endpoint_subscriptions s_curr
-                          LEFT JOIN agent_endpoint_subscriptions s_prev
-                            ON s_prev.id = d.subscription_id
-                          WHERE s_curr.agent = p.agent
-                            AND s_curr.state = 'subscribed'
-                            AND (
-                              s_curr.thread_scope = p.thread_id
-                              OR s_curr.thread_scope = '*'
-                            )
-                            AND s_curr.agent_id != ''
-                            AND (
-                              s_prev.agent_id IS NULL
-                              OR s_curr.agent_id != s_prev.agent_id
-                            )
-                          LIMIT 1
-                        )
-                      )
-                  )
-                  AND NOT EXISTS (
-                    SELECT 1 FROM endpoint_wake_ledger u
-                    WHERE {_mailbox_agent_sql("u", "p")} AND u.thread_id=p.thread_id
-                      AND u.state='unknown' AND u.claimed_at> CASE
-                        WHEN lower(trim(p.agent))='orion' AND p.thread_id=?
-                        THEN ?
-                        ELSE ?
-                      END
-                  )
-                  AND NOT EXISTS (
-                    SELECT 1 FROM endpoint_wake_ledger c
-                    WHERE {_mailbox_agent_sql("c", "p")} AND c.thread_id=p.thread_id
-                      AND c.state='claimed' AND c.claimed_at>?
-                  )
-                GROUP BY agent, thread_id
-                ORDER BY MIN(COALESCE(p.finished_at, '')), MIN(p.id)
-                LIMIT ?
-                """,
-                (
-                    stamp,
-                    retry_before,
-                    *orion_next_params,
-                    _ORION_WAKE_HOUSE,
-                    debounce_before_orion,
-                    debounce_before_default,
-                    _ORION_WAKE_HOUSE,
-                    debounce_before_orion,
-                    debounce_before_default,
-                    ttl_before,
-                    limit,
-                ),
-            ).fetchone()
-            if group is None:
-                return {"wake_id": None, "rows": all_skipped}
+        group_params_base = _due_wake_group_params(
+            stamp=stamp,
+            retry_before=retry_before,
+            orion_next_params=orion_next_params,
+            debounce_before_orion=debounce_before_orion,
+            debounce_before_default=debounce_before_default,
+            ttl_before=ttl_before,
+            delivery_agent_id=None,
+        )
+        prefetched = conn.execute(
+            _due_wake_group_sql(orion_next_gate, delivery_agent_id=None)
+            + " LIMIT ?",
+            (*group_params_base, _CLAIM_SKIP_GROUP_CAP),
+        ).fetchall()
+        held_tabs: set[str] = set()
+        for group in prefetched:
             if _orion_pending_coalesce_blocks(
                 conn,
                 agent=str(group["agent"]),
@@ -1395,30 +1523,101 @@ def claim_due_wakes(
             )
             skipped: list[dict[str, Any]] = []
             claimable: list[sqlite3.Row] = []
-            for row in rows:
-                from bus_watch.endpoint_wake_composer_defer import (
-                    composer_defer_blocks_claim,
-                )
-
-                if composer_defer_blocks_claim(
-                    reason=str(row["reason"] or ""),
-                    decided_by_rule=str(row["decided_by_rule"] or ""),
-                    agent=str(row["agent"] or ""),
-                ):
+            tab_delivery_id = ""
+            if "delivery_agent_id" in cols:
+                for row in rows:
+                    candidate = str(row["delivery_agent_id"] or "").strip()
+                    if candidate:
+                        tab_delivery_id = candidate
+                        break
+            thread_id = str(group["thread_id"])
+            tab_merge = bool(
+                tab_delivery_id
+                and _tab_coalesce_applies_to_agent(str(group["agent"]))
+                and thread_id != "19627"
+            )
+            groups_to_merge = [group]
+            merge_rows_pool: list[sqlite3.Row] = list(rows)
+            if tab_merge:
+                if tab_delivery_id in held_tabs:
                     continue
-                reason = _skip_reason(conn, row)
-                if reason:
-                    conn.execute(
-                        "UPDATE endpoint_wake_ledger SET state='skipped', reason=?, "
-                        "finished_at=? WHERE id=?",
-                        (reason, stamp, row["id"]),
+                merge_params = _due_wake_group_params(
+                    stamp=stamp,
+                    retry_before=retry_before,
+                    orion_next_params=orion_next_params,
+                    debounce_before_orion=debounce_before_orion,
+                    debounce_before_default=debounce_before_default,
+                    ttl_before=ttl_before,
+                    delivery_agent_id=tab_delivery_id,
+                )
+                groups_to_merge = conn.execute(
+                    _due_wake_group_sql(
+                        orion_next_gate, delivery_agent_id=tab_delivery_id
+                    ),
+                    merge_params,
+                ).fetchall()
+                merge_rows_pool = []
+                for grp in groups_to_merge:
+                    merge_rows_pool.extend(
+                        _group_pending_rows(
+                            conn,
+                            grp,
+                            stamp=stamp,
+                            retry_before=retry_before,
+                            orion_next_gate_sql=group_next_sql,
+                            orion_next_extra_params=orion_group_params,
+                        )
                     )
-                    item = dict(row)
-                    item["state"] = "skipped"
-                    item["reason"] = reason
-                    skipped.append(item)
-                else:
-                    claimable.append(row)
+                if _tab_hold_from_rows(
+                    merge_rows_pool,
+                    delivery_agent_id=tab_delivery_id,
+                    stamp=stamp,
+                ):
+                    held_tabs.add(tab_delivery_id)
+                    continue
+            seen_claim_ids: set[int] = set()
+            for grp in groups_to_merge:
+                grp_rows = (
+                    rows
+                    if grp["agent"] == group["agent"]
+                    and grp["thread_id"] == group["thread_id"]
+                    else _group_pending_rows(
+                        conn,
+                        grp,
+                        stamp=stamp,
+                        retry_before=retry_before,
+                        orion_next_gate_sql=group_next_sql,
+                        orion_next_extra_params=orion_group_params,
+                    )
+                )
+                for row in grp_rows:
+                    row_id = int(row["id"])
+                    if row_id in seen_claim_ids:
+                        continue
+                    from bus_watch.endpoint_wake_composer_defer import (
+                        composer_defer_blocks_claim,
+                    )
+
+                    if composer_defer_blocks_claim(
+                        reason=str(row["reason"] or ""),
+                        decided_by_rule=str(row["decided_by_rule"] or ""),
+                        agent=str(row["agent"] or ""),
+                    ):
+                        continue
+                    reason = _skip_reason(conn, row)
+                    if reason:
+                        conn.execute(
+                            "UPDATE endpoint_wake_ledger SET state='skipped', reason=?, "
+                            "finished_at=? WHERE id=?",
+                            (reason, stamp, row["id"]),
+                        )
+                        item = dict(row)
+                        item["state"] = "skipped"
+                        item["reason"] = reason
+                        skipped.append(item)
+                    else:
+                        seen_claim_ids.add(row_id)
+                        claimable.append(row)
             if not claimable:
                 all_skipped.extend(skipped)
                 continue
@@ -1445,7 +1644,11 @@ def claim_due_wakes(
                     (wake_id,),
                 ).fetchall()
             ]
-            return {"wake_id": wake_id, "rows": claimed}
+            return {
+                "wake_id": wake_id,
+                "rows": claimed,
+                "delivery_agent_id": tab_delivery_id if tab_merge else None,
+            }
         return {"wake_id": None, "rows": all_skipped}
 
 

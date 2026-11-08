@@ -11,8 +11,22 @@ liaison prompt still recognizes it. The message body stays on the agent bus.
 
 from __future__ import annotations
 
+import re
 from collections.abc import Sequence
 from typing import Any
+
+_STALE_WAKE_LINE = re.compile(r"^BRIDGE_WAKE\s+thread=\S+\s+turn=\d+(?:,\d+)*$")
+STALE_WAKE_LINES_JS = (
+    "lines.length>0&&lines.every(l=>/^BRIDGE_WAKE\\s+thread=\\S+\\s+turn=\\d+(?:,\\d+)*$/.test(l))"
+)
+
+
+def stale_wake_lines_js(operand: str) -> str:
+    """JavaScript expression: true when every non-empty line matches the wake regex."""
+    return (
+        f"(()=>{{const lines=String({operand}||'').trim().split(/\\n+/).map(s=>s.trim())"
+        f".filter(Boolean);return {STALE_WAKE_LINES_JS};}})()"
+    )
 
 
 def chat_title(
@@ -107,6 +121,28 @@ def wake_line(thread: str, turn: int | str | Sequence[int]) -> str:
     thread_s = _one_line(thread, "thread")
     turn_s = _format_wake_turns(turn)
     return f"BRIDGE_WAKE thread={thread_s} turn={turn_s}"
+
+
+def wake_lines(groups: Sequence[dict[str, Any]]) -> str:
+    """Multi-line paste: one ``wake_line`` per group in caller order.
+
+    Each group must carry ``thread_id`` and ``turn`` (same shapes as ``wake_line``).
+    A single group is byte-identical to ``wake_line`` for that thread and turn set.
+    """
+    if not groups:
+        raise ValueError("groups must be non-empty")
+    return "\n".join(
+        wake_line(str(g["thread_id"]), g["turn"]) for g in groups
+    )
+
+
+def is_stale_wake_draft(draft: str) -> bool:
+    """True when every non-empty line is a prior wake line (single- or multi-thread)."""
+    text = str(draft or "").strip()
+    if not text:
+        return False
+    lines = [ln.strip() for ln in text.splitlines() if ln.strip()]
+    return bool(lines) and all(_STALE_WAKE_LINE.match(ln) for ln in lines)
 
 
 def _format_wake_turns(turn: int | str | Sequence[int]) -> str:

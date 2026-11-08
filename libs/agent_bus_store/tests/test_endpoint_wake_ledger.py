@@ -1788,3 +1788,463 @@ def test_record_wake_result_title_mismatch_refused_stamps_finished_at(
     assert row["state"] == "refused"
     assert row["reason"] == "title_mismatch"
     assert row["finished_at"] == "2020-01-01 00:00:02"
+
+
+_TAB = "tab-uuid-22716-a"
+
+
+def test_migration_027_adds_delivery_agent_id_idempotent(db: TestClient) -> None:
+    from agent_bus_store.db.migrations import migration_027
+
+    with connect() as conn:
+        migration_027.run(conn)
+        migration_027.run(conn)
+        cols = {
+            str(r[1])
+            for r in conn.execute("PRAGMA table_info(endpoint_wake_ledger)")
+        }
+    assert "delivery_agent_id" in cols
+
+
+def _pending_with_tab(
+    *,
+    agent: str,
+    thread: str,
+    turn_id: int,
+    turn_number: int,
+    tab: str,
+) -> dict:
+    return {
+        "agent": agent,
+        "thread_id": thread,
+        "turn_id": turn_id,
+        "turn_number": turn_number,
+        "delivery_agent_id": tab,
+    }
+
+
+def test_tab_coalesce_holds_until_quiet_window(db: TestClient) -> None:
+    """Break: trickle cross-thread posts would spam separate wakes without hold."""
+    d1 = create_thread(thread_id=None, slug="tab-hold-a")
+    d2 = create_thread(thread_id=None, slug="tab-hold-b")
+    assert d1 and d2
+    t1, _ts, n1, _c = insert_turn(
+        thread=str(d1["id"]),
+        from_agent="cursor",
+        to_agent="cursor-sdk",
+        subject="FACT|a",
+        body="a",
+    )
+    t2, _ts2, n2, _c2 = insert_turn(
+        thread=str(d2["id"]),
+        from_agent="cursor",
+        to_agent="cursor-sdk",
+        subject="FACT|b",
+        body="b",
+    )
+    get_cursor()
+    with connect() as conn:
+        conn.execute("UPDATE endpoint_wake_cursor SET high_water_turn_id=0")
+    advance_scan(
+        "endpoint-wake-dispatcher",
+        0,
+        t1,
+        [_pending_with_tab(agent="cursor-sdk", thread=str(d1["id"]), turn_id=t1, turn_number=n1, tab=_TAB)],
+        now="2020-01-01 00:00:00",
+    )
+    advance_scan(
+        "endpoint-wake-dispatcher",
+        t1,
+        t2,
+        [_pending_with_tab(agent="cursor-sdk", thread=str(d2["id"]), turn_id=t2, turn_number=n2, tab=_TAB)],
+        now="2020-01-01 00:00:01",
+    )
+    assert claim_due_wakes(now="2020-01-01 00:00:02")["wake_id"] is None
+    merged = claim_due_wakes(now="2020-01-01 00:00:04")
+    assert merged["wake_id"]
+    assert {int(r["turn_id"]) for r in merged["rows"]} == {t1, t2}
+
+
+def test_tab_coalesce_merges_cross_thread_burst_into_one_wake(db: TestClient) -> None:
+    d1 = create_thread(thread_id=None, slug="tab-merge-a")
+    d2 = create_thread(thread_id=None, slug="tab-merge-b")
+    assert d1 and d2
+    t1, _ts, n1, _c = insert_turn(
+        thread=str(d1["id"]),
+        from_agent="cursor",
+        to_agent="cursor-sdk",
+        subject="FACT|a",
+        body="a",
+    )
+    t2, _ts2, n2, _c2 = insert_turn(
+        thread=str(d2["id"]),
+        from_agent="cursor",
+        to_agent="cursor-sdk",
+        subject="FACT|b",
+        body="b",
+    )
+    get_cursor()
+    with connect() as conn:
+        conn.execute("UPDATE endpoint_wake_cursor SET high_water_turn_id=0")
+    advance_scan(
+        "endpoint-wake-dispatcher",
+        0,
+        t2,
+        [
+            _pending_with_tab(agent="cursor-sdk", thread=str(d1["id"]), turn_id=t1, turn_number=n1, tab=_TAB),
+            _pending_with_tab(agent="cursor-sdk", thread=str(d2["id"]), turn_id=t2, turn_number=n2, tab=_TAB),
+        ],
+        now="2019-12-31 23:59:50",
+    )
+    wake = claim_due_wakes(now="2020-01-01 00:00:10")
+    assert wake["wake_id"]
+    assert len(wake["rows"]) == 2
+    with connect() as conn:
+        wake_ids = {
+            str(r["wake_id"])
+            for r in conn.execute(
+                "SELECT wake_id FROM endpoint_wake_ledger WHERE turn_id IN (?,?)",
+                (t1, t2),
+            )
+        }
+    assert len(wake_ids) == 1
+
+
+def test_tab_coalesce_max_hold_caps_trickle(db: TestClient) -> None:
+    d1 = create_thread(thread_id=None, slug="tab-cap")
+    assert d1
+    t1, _ts, n1, _c = insert_turn(
+        thread=str(d1["id"]),
+        from_agent="cursor",
+        to_agent="cursor-sdk",
+        subject="FACT|a",
+        body="a",
+    )
+    get_cursor()
+    with connect() as conn:
+        conn.execute("UPDATE endpoint_wake_cursor SET high_water_turn_id=0")
+    advance_scan(
+        "endpoint-wake-dispatcher",
+        0,
+        t1,
+        [_pending_with_tab(agent="cursor-sdk", thread=str(d1["id"]), turn_id=t1, turn_number=n1, tab=_TAB)],
+        now="2020-01-01 00:00:00",
+    )
+    wake = claim_due_wakes(now="2020-01-01 00:00:20")
+    assert wake["wake_id"]
+
+
+def test_tab_coalesce_legacy_rows_keep_thread_grouping(db: TestClient) -> None:
+    detail = create_thread(thread_id=None, slug="legacy-tab")
+    assert detail
+    thread = str(detail["id"])
+    a = _turn(thread, to="cursor-sdk")
+    b = _turn(thread, to="cursor-sdk")
+    get_cursor()
+    with connect() as conn:
+        conn.execute("UPDATE endpoint_wake_cursor SET high_water_turn_id=0")
+    advance_scan(
+        "endpoint-wake-dispatcher",
+        0,
+        b["turn_id"],
+        [a, b],
+        now="2020-01-01 00:00:00",
+    )
+    wake = claim_due_wakes(now="2020-01-01 00:00:01")
+    assert wake["wake_id"]
+    assert len(wake["rows"]) == 2
+    assert {r["thread_id"] for r in wake["rows"]} == {thread}
+
+
+def test_tab_coalesce_claim_is_single_wake_id(db: TestClient) -> None:
+    d1 = create_thread(thread_id=None, slug="single-wake-a")
+    d2 = create_thread(thread_id=None, slug="single-wake-b")
+    assert d1 and d2
+    t1, _ts, n1, _c = insert_turn(
+        thread=str(d1["id"]),
+        from_agent="cursor",
+        to_agent="cursor-sdk",
+        subject="FACT|a",
+        body="a",
+    )
+    t2, _ts2, n2, _c2 = insert_turn(
+        thread=str(d2["id"]),
+        from_agent="cursor",
+        to_agent="cursor-sdk",
+        subject="FACT|b",
+        body="b",
+    )
+    get_cursor()
+    with connect() as conn:
+        conn.execute("UPDATE endpoint_wake_cursor SET high_water_turn_id=0")
+    advance_scan(
+        "endpoint-wake-dispatcher",
+        0,
+        t2,
+        [
+            _pending_with_tab(agent="cursor-sdk", thread=str(d1["id"]), turn_id=t1, turn_number=n1, tab=_TAB),
+            _pending_with_tab(agent="cursor-sdk", thread=str(d2["id"]), turn_id=t2, turn_number=n2, tab=_TAB),
+        ],
+        now="2019-12-31 23:59:50",
+    )
+    wake = claim_due_wakes(now="2020-01-01 00:00:10")
+    wake_id = wake["wake_id"]
+    assert wake_id
+    with connect() as conn:
+        states = [
+            str(r["state"])
+            for r in conn.execute(
+                "SELECT state FROM endpoint_wake_ledger WHERE turn_id IN (?,?)",
+                (t1, t2),
+            )
+        ]
+    assert states == ["claimed", "claimed"]
+    assert len({str(r["wake_id"]) for r in wake["rows"]}) == 1
+
+
+@pytest.mark.parametrize(
+    ("env_name", "fn_name", "default"),
+    [
+        ("ENDPOINT_WAKE_TAB_COALESCE_S", "_endpoint_wake_tab_coalesce_s", 3.0),
+        ("ENDPOINT_WAKE_TAB_COALESCE_MAX_S", "_endpoint_wake_tab_coalesce_max_s", 15.0),
+    ],
+)
+def test_tab_coalesce_env_fallback(
+    monkeypatch: pytest.MonkeyPatch,
+    env_name: str,
+    fn_name: str,
+    default: float,
+) -> None:
+    from agent_bus_store.db import endpoint_wake_ledger as ledger
+
+    monkeypatch.setenv(env_name, "0")
+    assert getattr(ledger, fn_name)() == default
+    monkeypatch.setenv(env_name, "abc")
+    assert getattr(ledger, fn_name)() == default
+    monkeypatch.setenv(env_name, "5")
+    assert getattr(ledger, fn_name)() == 5.0
+
+
+def test_tab_hold_continues_to_next_group(db: TestClient) -> None:
+    """Break: hold at queue head must not spin on the same tab group."""
+    d_tab = create_thread(thread_id=None, slug="hold-tab-a")
+    d_web = create_thread(thread_id=None, slug="hold-web")
+    assert d_tab and d_web
+    t1, _a, n1, _ = insert_turn(
+        thread=str(d_tab["id"]),
+        from_agent="cursor",
+        to_agent="cursor-sdk",
+        subject="FACT|1",
+        body="a",
+    )
+    t2, _b, n2, _ = insert_turn(
+        thread=str(d_tab["id"]),
+        from_agent="cursor",
+        to_agent="cursor-sdk",
+        subject="FACT|2",
+        body="b",
+    )
+    t3, _c, n3, _ = insert_turn(
+        thread=str(d_web["id"]),
+        from_agent="cursor",
+        to_agent="web-anthropic",
+        subject="FACT|3",
+        body="c",
+    )
+    get_cursor()
+    with connect() as conn:
+        conn.execute("UPDATE endpoint_wake_cursor SET high_water_turn_id=0")
+    advance_scan(
+        "endpoint-wake-dispatcher",
+        0,
+        t1,
+        [_pending_with_tab(agent="cursor-sdk", thread=str(d_tab["id"]), turn_id=t1, turn_number=n1, tab=_TAB)],
+        now="2020-01-01 00:00:00",
+    )
+    advance_scan(
+        "endpoint-wake-dispatcher",
+        t1,
+        t2,
+        [_pending_with_tab(agent="cursor-sdk", thread=str(d_tab["id"]), turn_id=t2, turn_number=n2, tab=_TAB)],
+        now="2020-01-01 00:00:01",
+    )
+    advance_scan(
+        "endpoint-wake-dispatcher",
+        t2,
+        t3,
+        [
+            {
+                "agent": "web-anthropic",
+                "thread_id": str(d_web["id"]),
+                "turn_id": t3,
+                "turn_number": n3,
+            }
+        ],
+        now="2020-01-01 00:00:00",
+    )
+    wake = claim_due_wakes(now="2020-01-01 00:00:02")
+    assert wake["wake_id"]
+    assert [int(r["turn_id"]) for r in wake["rows"]] == [t3]
+    with connect() as conn:
+        pending = conn.execute(
+            "SELECT turn_id, state FROM endpoint_wake_ledger WHERE turn_id IN (?,?)",
+            (t1, t2),
+        ).fetchall()
+    assert {int(r["turn_id"]) for r in pending} == {t1, t2}
+    assert all(r["state"] == "pending" for r in pending)
+
+
+def test_tab_hold_ignores_debounced_and_backoff_rows(db: TestClient) -> None:
+    d1 = create_thread(thread_id=None, slug="hold-deb")
+    assert d1
+    thread = str(d1["id"])
+    old_id, _a, old_n, _ = insert_turn(
+        thread=thread,
+        from_agent="cursor",
+        to_agent="cursor-sdk",
+        subject="FACT|old",
+        body="a",
+    )
+    new_id, _b, new_n, _ = insert_turn(
+        thread=thread,
+        from_agent="cursor",
+        to_agent="cursor-sdk",
+        subject="FACT|new",
+        body="b",
+    )
+    get_cursor()
+    with connect() as conn:
+        conn.execute("UPDATE endpoint_wake_cursor SET high_water_turn_id=0")
+    advance_scan(
+        "endpoint-wake-dispatcher",
+        0,
+        old_id,
+        [_pending_with_tab(agent="cursor-sdk", thread=thread, turn_id=old_id, turn_number=old_n, tab=_TAB)],
+        now="2020-01-01 00:00:00",
+    )
+    w1 = claim_due_wakes(now="2020-01-01 00:00:05")
+    assert w1["wake_id"]
+    record_wake_result(
+        w1["wake_id"],
+        "delivered",
+        "ok",
+        "exact",
+        None,
+        None,
+        now="2020-01-01 00:00:06",
+    )
+    with write_connect() as conn:  # back to pending, inside the 60s retry window: a backoff row, not delivered
+        conn.execute(
+            "UPDATE endpoint_wake_ledger SET state='pending', wake_id=NULL, "
+            "finished_at='2020-01-01 00:00:15' WHERE turn_id=?",
+            (old_id,),
+        )
+    advance_scan(
+        "endpoint-wake-dispatcher",
+        old_id,
+        new_id,
+        [_pending_with_tab(agent="cursor-sdk", thread=thread, turn_id=new_id, turn_number=new_n, tab=_TAB)],
+        now="2020-01-01 00:00:19",
+    )
+    assert claim_due_wakes(now="2020-01-01 00:00:20")["wake_id"] is None
+
+
+def test_tab_merge_claims_null_rows_in_selected_group(db: TestClient) -> None:
+    detail = create_thread(thread_id=None, slug="null-in-group")
+    assert detail
+    thread = str(detail["id"])
+    t_null, _a, n_null, _ = insert_turn(
+        thread=thread,
+        from_agent="cursor",
+        to_agent="cursor-sdk",
+        subject="FACT|null",
+        body="a",
+    )
+    t_tab, _b, n_tab, _ = insert_turn(
+        thread=thread,
+        from_agent="cursor",
+        to_agent="cursor-sdk",
+        subject="FACT|tab",
+        body="b",
+    )
+    get_cursor()
+    with connect() as conn:
+        conn.execute("UPDATE endpoint_wake_cursor SET high_water_turn_id=0")
+    advance_scan(
+        "endpoint-wake-dispatcher",
+        0,
+        max(t_null, t_tab),
+        [
+            {
+                "agent": "cursor-sdk",
+                "thread_id": thread,
+                "turn_id": t_null,
+                "turn_number": n_null,
+            },
+            _pending_with_tab(
+                agent="cursor-sdk",
+                thread=thread,
+                turn_id=t_tab,
+                turn_number=n_tab,
+                tab=_TAB,
+            ),
+        ],
+        now="2020-01-01 00:00:00",
+    )
+    wake = claim_due_wakes(now="2020-01-01 00:00:05")
+    assert wake["wake_id"]
+    assert {int(r["turn_id"]) for r in wake["rows"]} == {t_null, t_tab}
+
+
+def test_thread_19627_never_tab_merges(db: TestClient) -> None:
+    create_thread(thread_id="19627", slug="stage-mgr")
+    t1, _a, n1, _ = insert_turn(
+        thread="19627",
+        from_agent="cursor",
+        to_agent="cursor-sdk",
+        subject="FACT|a",
+        body="a",
+    )
+    t2, _b, n2, _ = insert_turn(
+        thread="19627",
+        from_agent="cursor",
+        to_agent="cursor-sdk",
+        subject="FACT|b",
+        body="b",
+    )
+    get_cursor()
+    with connect() as conn:
+        conn.execute("UPDATE endpoint_wake_cursor SET high_water_turn_id=0")
+    tab = "stage-tab"
+    advance_scan(
+        "endpoint-wake-dispatcher",
+        0,
+        t2,
+        [
+            _pending_with_tab(agent="cursor-sdk", thread="19627", turn_id=t1, turn_number=n1, tab=tab),
+            _pending_with_tab(agent="cursor-sdk", thread="19627", turn_id=t2, turn_number=n2, tab=tab),
+        ],
+        now="2019-12-31 23:59:50",
+    )
+    wake = claim_due_wakes(now="2020-01-01 00:00:01")
+    assert wake["wake_id"]
+    assert len(wake["rows"]) == 2
+    assert wake.get("delivery_agent_id") is None
+
+
+def test_19627_member_under_non_19627_head_is_not_merged(db: TestClient) -> None:
+    head = str(create_thread(thread_id=None, slug="head-not-stage")["id"])
+    create_thread(thread_id="19627", slug="stage-mgr-member")
+    t_h, _a, n_h, _ = insert_turn(thread=head, from_agent="cursor", to_agent="cursor-sdk", subject="FACT|h", body="a")
+    t_s, _b, n_s, _ = insert_turn(thread="19627", from_agent="cursor", to_agent="cursor-sdk", subject="FACT|s", body="b")
+    get_cursor()
+    with connect() as conn:
+        conn.execute("UPDATE endpoint_wake_cursor SET high_water_turn_id=0")
+    rows = [(head, t_h, n_h), ("19627", t_s, n_s)]
+    scan = [_pending_with_tab(agent="cursor-sdk", thread=a, turn_id=b, turn_number=c, tab="stage-tab") for a, b, c in rows]
+    advance_scan("endpoint-wake-dispatcher", 0, t_s, scan, now="2019-12-31 23:59:50")
+    wake = claim_due_wakes(now="2020-01-01 00:00:10")
+    assert [int(r["turn_id"]) for r in wake["rows"]] == [t_h] and wake.get("delivery_agent_id") == "stage-tab"
+    with connect() as conn:
+        st = conn.execute("SELECT state FROM endpoint_wake_ledger WHERE turn_id=?", (t_s,)).fetchone()
+    assert st["state"] == "pending"
