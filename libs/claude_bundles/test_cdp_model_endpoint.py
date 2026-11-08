@@ -2822,46 +2822,6 @@ def test_run_cdp_generate_weekly_limit_proof_path_aborts(
     assert retain_calls == [False]
 
 
-def test_stage_multi_service_review_twice_one_architecture_line(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
-    """Re-stage under a new execution_id peels the architecture cue once."""
-    monkeypatch.setenv("CORTEX_FILES_ROOT", str(tmp_path))
-    body = (
-        "## Review\n"
-        "files_expected:\n"
-        "- services/alpha/a.py\n"
-        "- libs/beta/b.py\n"
-        + ("detail " * 40)
-        + "\n"
-    )
-    first = stage_cdp_prompt_with_skills(
-        execution_id="exec-cr-arch-once",
-        prompt_text=body,
-        purpose=None,
-        contract="code-review",
-    )
-    once_path = (
-        tmp_path / "notes/system/ephemeral/cdp-endpoint/exec-cr-arch-once/prompt.md"
-    )
-    once_text = once_path.read_text(encoding="utf-8")
-    second = stage_cdp_prompt_with_skills(
-        execution_id="exec-cr-arch-twice",
-        prompt_text=once_text,
-        purpose=None,
-        contract="code-review",
-    )
-    twice_path = (
-        tmp_path / "notes/system/ephemeral/cdp-endpoint/exec-cr-arch-twice/prompt.md"
-    )
-    twice_text = twice_path.read_text(encoding="utf-8")
-    assert second.staged is True
-    assert twice_text.count("<!--cdp-required-skills:") == 1
-    assert twice_text.count("Architecture check:") == 1
-    assert "that cover libs/beta, services/alpha" in twice_text
-    assert first.prompt_uri.endswith("exec-cr-arch-once/prompt.md")
-
-
 def test_stage_cdp_prompt_twice_yields_single_manifest_block(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:

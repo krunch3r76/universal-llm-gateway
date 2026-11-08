@@ -131,7 +131,7 @@ def _load_lane(
             (thread_id,),
         ).fetchall()
         turn_rows = conn.execute(
-            "SELECT turn_number, from_agent, created_at, subject, body, read_at "
+            "SELECT turn_number, from_agent, created_at, subject, body "
             "FROM turns WHERE thread = ? ORDER BY turn_number ASC",
             (thread_id,),
         ).fetchall()
@@ -152,7 +152,6 @@ def _load_lane(
             created_at=str(r["created_at"]),
             subject=str(r["subject"] or ""),
             body=str(r["body"] or ""),
-            read_at=str(r["read_at"]) if r["read_at"] else None,
         )
         for r in turn_rows
     ]

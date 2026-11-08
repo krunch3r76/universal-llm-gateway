@@ -45,16 +45,8 @@ def _now(now: str | None) -> str:
     return datetime.now(UTC).strftime("%Y-%m-%d %H:%M:%S")
 
 
-def _parse_utc_stamp(stamp: str) -> datetime:
-    """Parse agent-bus stamps: space form or wire ``%Y-%m-%dT%H:%M:%SZ``."""
-    text = stamp.strip()
-    if "T" in text:
-        return datetime.strptime(text, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=UTC)
-    return datetime.strptime(text, "%Y-%m-%d %H:%M:%S").replace(tzinfo=UTC)
-
-
 def _shift(stamp: str, seconds: int) -> str:
-    base = _parse_utc_stamp(stamp)
+    base = datetime.strptime(stamp, "%Y-%m-%d %H:%M:%S").replace(tzinfo=UTC)
     return (base + timedelta(seconds=seconds)).strftime("%Y-%m-%d %H:%M:%S")
 
 
@@ -2061,51 +2053,13 @@ def fold_expired_claims(claim_ttl_s: int = 300, *, now: str | None = None) -> in
 def list_turns_since(after_id: int, limit: int) -> list[dict[str, Any]]:
     """Compact turns newer than after_id, oldest first, without body."""
     with connect() as conn:
-        cols = {
-            str(r[1])
-            for r in conn.execute("PRAGMA table_info(turns)").fetchall()
-        }
-        from_col = ", from_agent_id" if "from_agent_id" in cols else ""
         rows = conn.execute(
-            f"SELECT id, thread, turn_number, from_agent, to_agent, subject, "
-            f"status, read_at, created_at{from_col} FROM turns WHERE id>? "
+            "SELECT id, thread, turn_number, from_agent, to_agent, subject, "
+            "status, read_at, created_at FROM turns WHERE id>? "
             "ORDER BY id ASC LIMIT ?",
             (after_id, limit),
         ).fetchall()
     return [dict(r) for r in rows]
-
-
-def recent_delivered_agent_ids(
-    thread_id: str,
-    window_s: int,
-    *,
-    before: str | None = None,
-    now: str | None = None,
-) -> list[str]:
-    """Distinct tab ids with delivered wakes in ``[before-window_s, before]`` (UTC stamps)."""
-    if window_s <= 0:
-        return []
-    anchor = _now(before or now)
-    with connect() as conn:
-        cols = _ledger_columns(conn)
-        if "delivery_agent_id" not in cols:
-            return []
-        rows = conn.execute(
-            "SELECT DISTINCT delivery_agent_id FROM endpoint_wake_ledger "
-            "WHERE thread_id=? AND state='delivered' "
-            "AND delivery_agent_id IS NOT NULL AND trim(delivery_agent_id) != '' "
-            "AND datetime(finished_at) >= datetime(?, ?) "
-            "AND datetime(finished_at) <= datetime(?)",
-            (thread_id, anchor, f"-{window_s} seconds", anchor),
-        ).fetchall()
-    out: list[str] = []
-    seen: set[str] = set()
-    for row in rows:
-        aid = str(row["delivery_agent_id"]).strip().lower()
-        if aid and aid not in seen:
-            seen.add(aid)
-            out.append(aid)
-    return out
 
 
 def list_wake_ledger_rows(

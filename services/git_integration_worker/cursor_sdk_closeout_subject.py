@@ -55,7 +55,6 @@ def build_sdk_closeout_subject(req: CursorDispatchRequest, *, contract: str) -> 
         "cursor-sdk",
         "CLOSEOUT",
         req.dispatch_id,
-        f"exec={req.execution_id}",
         f"contract={wire_contract}",
     ]
     if handoff and handoff != wire_contract:

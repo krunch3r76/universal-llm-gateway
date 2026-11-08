@@ -55,18 +55,6 @@ def _sample_turn(
     return row
 
 
-def test_header_includes_from_agent_id_only_when_set() -> None:
-    tab = "21060be7-f0a6-4fa1-9058-b117ce4fc526"
-    raw_turns = [
-        _sample_turn(turn_number=1, body_chars=3),
-        _sample_turn(turn_number=2, body_chars=4),
-    ]
-    raw_turns[1]["from_agent_id"] = tab
-    rows = project_turns_header(raw_turns)
-    assert "from_agent_id" not in rows[0]
-    assert rows[1]["from_agent_id"] == tab
-
-
 def test_fetch_default_is_header() -> None:
     captured: dict[str, str] = {}
     raw_turns = [

@@ -27,7 +27,6 @@ channel router — this gate lives here, not there.
 from __future__ import annotations
 
 import logging
-import re
 import shutil
 import sys
 from dataclasses import dataclass
@@ -40,13 +39,7 @@ from consult_substrate_notice import (
 from durable_io.atomic import durable_write_bytes, durable_write_text
 from implement_admission.closeout_helpers import cortex_files_root, workspaces_root
 
-from claude_bundles.cdp_skill_profiles import (
-    REVIEW_CONTRACT_SKILL_FLOOR,
-    parse_files_expected_from_prompt,
-    profile_slugs_for_purpose,
-    service_dirs,
-)
-from claude_bundles.sealed_cdp_prefix import format_review_architecture_check_line
+from claude_bundles.cdp_skill_profiles import profile_slugs_for_purpose
 
 _EPHEMERAL_PREFIX = "notes/system/ephemeral/cdp-endpoint"
 
@@ -371,27 +364,11 @@ def _body_is_cortex_prompt_uri(
     return str(prompt_uri).strip().startswith("cortex://")
 
 
-_CDP_REQUIRED_MARKER = re.compile(r"<!--cdp-required-skills:[^\n]*-->\r?\n?")
-
-
-def _insert_review_architecture_check_line(prompt: str, *, dirs: frozenset[str]) -> str:
-    match = _CDP_REQUIRED_MARKER.search(prompt)
-    if match is None:
-        return prompt
-    end = match.end()
-    after = prompt[end:]
-    if after.lstrip().startswith("Architecture check:"):
-        return prompt
-    line = format_review_architecture_check_line(dirs)
-    return f"{prompt[:end]}{line}{after}"
-
-
 def ensure_cdp_judgment_skills(
     skills: list[str] | None,
     *,
     purpose: str | None = None,
     contract: str | None = None,
-    files_expected: list[str] | None = None,
 ) -> list[str]:
     """Merge purpose-keyed skill floor into CDP ``skills=`` (idempotent).
 
@@ -402,11 +379,7 @@ def ensure_cdp_judgment_skills(
     """
     caller = [str(s).strip() for s in (skills or []) if str(s).strip()]
     have = {s.lstrip("/").lower() for s in caller}
-    floor = profile_slugs_for_purpose(
-        purpose,
-        contract=contract,
-        files_expected=files_expected,
-    )
+    floor = profile_slugs_for_purpose(purpose, contract=contract)
     missing = [slug for slug in floor if slug not in have]
     return missing + caller
 
@@ -447,7 +420,6 @@ def stage_cdp_prompt_with_skills(
     skills: list[str] | None = None,
     purpose: str | None = None,
     contract: str | None = None,
-    files_expected: list[str] | None = None,
     dispatch_thread_id: str | None = None,
 ) -> StagedPrompt:
     """Stage CDP input and seal the required-skill marker.
@@ -507,21 +479,13 @@ def stage_cdp_prompt_with_skills(
                 ),
             )
 
+    effective = ensure_cdp_judgment_skills(skills, purpose=purpose, contract=contract)
     body = read_prompt_text(
         prompt_text=prompt_text,
         prompt_uri=prompt_uri,
         packet_path=packet_path,
         sidecar_ref=sidecar_ref,
         dispatch_thread_id=dispatch_thread_id,
-    )
-    resolved_files = list(files_expected) if files_expected else []
-    if not resolved_files:
-        resolved_files = parse_files_expected_from_prompt(body)
-    effective = ensure_cdp_judgment_skills(
-        skills,
-        purpose=purpose,
-        contract=contract,
-        files_expected=resolved_files,
     )
 
     if is_operator_proxy_mission_purpose(purpose):
@@ -579,16 +543,6 @@ def stage_cdp_prompt_with_skills(
             effective,
             omit_slash_prefix=omit_slash,
         )
-        contract_key = (contract or "").strip().lower()
-        if (
-            not (purpose or "").strip()
-            and contract_key in REVIEW_CONTRACT_SKILL_FLOOR
-            and len(service_dirs(resolved_files)) > 1
-        ):
-            merged = _insert_review_architecture_check_line(
-                merged,
-                dirs=service_dirs(resolved_files),
-            )
         # a:37183 A1 — shape from author body; charter skip uses same source.
         merged = ensure_review_reading_charter(
             merged,

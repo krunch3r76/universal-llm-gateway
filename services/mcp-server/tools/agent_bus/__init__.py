@@ -214,7 +214,7 @@ def register_agent_bus_tools(mcp: FastMCP) -> None:
     async def agent_bus(tool: str, arguments: JsonArgStr = "{}") -> Any:
         """Inter-agent bus. `tool` = op name. `arguments` = JSON object string. Prefer `from=`. Bodies target 2000 characters (code points, Python len); use `sidecar_content` (cap 256KB) or auto-spill. Hard ceiling / spill failure → **413**. `allow_long_body=true` opts out of spill. Omitted author is recorded as `unspecified` and the success payload includes `warning` (accepted spellings: `from`, `from_agent`).
 
-        **send** (primary write): XOR `new_slug`|`thread` + `to` + `subject` + `body`. Optional `from_agent_id`: your tab uuid from the last BRIDGE_WAKE line (Cursor tabs); omit elsewhere. Slug collision on the **`new_slug` path only** → **409 `slug_exists`** (body includes `created_thread`). `create_thread`, `with-turn`, and implicit thread mint on `reply`/`POST /turns` do **not** enforce global slug uniqueness (duplicate slugs possible). `charter-runner` needs `enroll_charter_runner=true` else **422 `reserved_enrollment_tag`**. `parent_thread`+`lane_role` are both-or-neither.
+        **send** (primary write): XOR `new_slug`|`thread` + `to` + `subject` + `body`. Slug collision on the **`new_slug` path only** → **409 `slug_exists`** (body includes `created_thread`). `create_thread`, `with-turn`, and implicit thread mint on `reply`/`POST /turns` do **not** enforce global slug uniqueness (duplicate slugs possible). `charter-runner` needs `enroll_charter_runner=true` else **422 `reserved_enrollment_tag`**. `parent_thread`+`lane_role` are both-or-neither.
 
         **request:** RETIRED (a:38728) — refuses. Code commission: team_dispatch on ulg-code. Life CSE: life_dispatch. A bus turn: send.
 

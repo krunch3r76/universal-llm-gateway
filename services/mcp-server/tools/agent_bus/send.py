@@ -50,7 +50,6 @@ def _send_impl(
     idempotency_key: str | None = None,
     attested_by: str | None = None,
     user_agent: str | None = None,
-    from_agent_id: str | None = None,
 ) -> dict[str, Any]:
     """Relay to POST /threads/send."""
     payload: dict[str, Any] = {
@@ -102,8 +101,6 @@ def _send_impl(
         payload["attested_by"] = attested_by
     if user_agent is not None:
         payload["user_agent"] = user_agent
-    if from_agent_id is not None:
-        payload["from_agent_id"] = from_agent_id
 
     result = relay("agent-bus", "POST", "/threads/send", body=payload)
     if "error" in result:
@@ -171,7 +168,6 @@ def _send_dispatch(
     idempotency_key: str | None = None,
     attested_by: str | None = None,
     user_agent: str | None = None,
-    from_agent_id: str | None = None,
 ) -> dict[str, Any]:
     if isinstance(thread, int):
         thread = str(thread)
@@ -313,7 +309,6 @@ def _send_dispatch(
         idempotency_key=idempotency_key,
         attested_by=attested_by,
         user_agent=user_agent,
-        from_agent_id=from_agent_id,
     )
     if author_omitted and isinstance(result, dict):
         return stamp_omitted_author_warning(result, AUTHOR_OMITTED_WARNING)

@@ -354,9 +354,6 @@ def project_turns_header(turns: list[dict[str, Any]]) -> list[dict[str, Any]]:
         supersedes = turn.get("supersedes_turn")
         if supersedes is not None:
             row["supersedes_turn"] = supersedes
-        fa_id = turn.get("from_agent_id")
-        if fa_id:
-            row["from_agent_id"] = fa_id
         projected.append(row)
     return projected
 

@@ -1806,53 +1806,6 @@ def test_migration_027_adds_delivery_agent_id_idempotent(db: TestClient) -> None
     assert "delivery_agent_id" in cols
 
 
-def test_migration_028_adds_from_agent_id_idempotent(db: TestClient) -> None:
-    from agent_bus_store.db.migrations import migration_028
-
-    with connect() as conn:
-        migration_028.run(conn)
-        migration_028.run(conn)
-        cols = {str(r[1]) for r in conn.execute("PRAGMA table_info(turns)")}
-    assert "from_agent_id" in cols
-
-    with connect() as conn:
-        turn_cols = {str(r[1]) for r in conn.execute("PRAGMA table_info(turns)")}
-        if "from_agent_id" not in turn_cols:
-            conn.execute("ALTER TABLE turns ADD COLUMN from_agent_id TEXT")
-            conn.commit()
-        conn.execute("DROP INDEX IF EXISTS idx_endpoint_wake_thread_state_finished")
-        conn.commit()
-        migration_028.run(conn)
-        migration_028.run(conn)
-        indexes = {
-            str(r[0])
-            for r in conn.execute(
-                "SELECT name FROM sqlite_master WHERE type='index' "
-                "AND tbl_name='endpoint_wake_ledger'"
-            )
-        }
-    assert "idx_endpoint_wake_thread_state_finished" in indexes
-
-
-def test_recent_deliveries_route_accepts_wire_format_before(db: TestClient) -> None:
-    """R1: ``before`` in bus wire format must not 500 the recency helper route."""
-    detail = create_thread(thread_id=None, slug="recent-wire-before")
-    assert detail is not None
-    thread = str(detail["id"])
-    resp = db.get(
-        "/endpoint-wake/recent-deliveries",
-        params={
-            "thread": thread,
-            "since_s": 90,
-            "before": "2026-11-08T12:00:30Z",
-        },
-    )
-    assert resp.status_code == 200
-    body = resp.json()
-    assert body["count"] == 0
-    assert body["delivery_agent_ids"] == []
-
-
 def _pending_with_tab(
     *,
     agent: str,
