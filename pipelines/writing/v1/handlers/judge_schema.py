@@ -269,3 +269,88 @@ def flatten_quality_judgment(
 ) -> list[dict[str, Any]]:
     _ = multi_candidate
     return [dict(row) for row in obj.get("findings") or [] if isinstance(row, dict)]
+
+
+PERSONA_JUDGE_KINDS = frozenset(
+    {"ordinary_language", "restates_attested", "new_entity_or_fact"}
+)
+_PERSONA_JUDGMENT_KEYS = frozenset({"token", "basis", "reading", "kind"})
+
+
+def persona_judge_schema(tokens: list[str]) -> dict[str, Any]:
+    """Build per-call JSON schema with pinned row count and token enum."""
+    count = len(tokens)
+    return {
+        "type": "object",
+        "additionalProperties": False,
+        "properties": {
+            "judgments": {
+                "type": "array",
+                "minItems": count,
+                "maxItems": count,
+                "items": {
+                    "type": "object",
+                    "additionalProperties": False,
+                    "properties": {
+                        "token": {"type": "string", "enum": list(tokens)},
+                        "basis": {"type": "string", "maxLength": 160},
+                        "reading": {"type": "string", "maxLength": 240},
+                        "kind": {
+                            "type": "string",
+                            "enum": sorted(PERSONA_JUDGE_KINDS),
+                        },
+                    },
+                    "required": ["token", "basis", "reading", "kind"],
+                },
+            }
+        },
+        "required": ["judgments"],
+    }
+
+
+class PersonaJudgment:
+    """One row from the persona invented-token judge."""
+
+    __slots__ = ("token", "basis", "reading", "kind")
+
+    def __init__(
+        self, *, token: str, basis: str, reading: str, kind: str
+    ) -> None:
+        self.token = token
+        self.basis = basis
+        self.reading = reading
+        self.kind = kind
+
+
+def parse_persona_judgments(
+    obj: Any, tokens: list[str]
+) -> list[PersonaJudgment] | None:
+    """Parse judge output; None when coverage, keys, or enum are invalid."""
+    if not isinstance(obj, dict):
+        return None
+    raw_rows = obj.get("judgments")
+    if not isinstance(raw_rows, list) or len(raw_rows) != len(tokens):
+        return None
+    expected = list(tokens)
+    seen: list[str] = []
+    parsed: list[PersonaJudgment] = []
+    for row in raw_rows:
+        if not isinstance(row, dict) or set(row.keys()) != _PERSONA_JUDGMENT_KEYS:
+            return None
+        token = row.get("token")
+        basis = row.get("basis")
+        reading = row.get("reading")
+        kind = row.get("kind")
+        if not all(isinstance(x, str) for x in (token, basis, reading, kind)):
+            return None
+        if kind not in PERSONA_JUDGE_KINDS:
+            return None
+        if token not in expected:
+            return None
+        seen.append(token)
+        parsed.append(
+            PersonaJudgment(token=token, basis=basis, reading=reading, kind=kind)
+        )
+    if sorted(seen) != sorted(expected) or len(set(seen)) != len(seen):
+        return None
+    return parsed

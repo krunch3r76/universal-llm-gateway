@@ -6,6 +6,7 @@ import asyncio
 import hashlib
 import importlib
 import importlib.util
+import json
 import sys
 from pathlib import Path
 from typing import Any
@@ -75,6 +76,60 @@ def _blocks_kwargs() -> dict[str, str]:
     }
 
 
+def _judge_kinds(kinds: dict[str, tuple[str, str]]) -> Any:
+    async def _caller(_fenced: str, candidates: list[local_persona.Candidate]) -> str:
+        rows = []
+        for cand in candidates:
+            kind, basis = kinds.get(cand.token, ("ordinary_language", ""))
+            rows.append(
+                {
+                    "token": cand.token,
+                    "basis": basis,
+                    "reading": "Unit-test reading.",
+                    "kind": kind,
+                }
+            )
+        return json.dumps({"judgments": rows})
+
+    return _caller
+
+
+def _judge_invented(tokens: list[str]) -> Any:
+    return _judge_kinds({t: ("new_entity_or_fact", "") for t in tokens})
+
+
+def _judge_raw(content: str) -> Any:
+    async def _caller(_fenced: str, _candidates: list[local_persona.Candidate]) -> str:
+        return content
+
+    return _caller
+
+
+def _judge_raises(exc: BaseException) -> Any:
+    async def _caller(_fenced: str, _candidates: list[local_persona.Candidate]) -> str:
+        raise exc
+
+    return _caller
+
+
+def _run_validate(
+    prose: str,
+    *,
+    judge_caller: Any = None,
+    **blocks: str,
+) -> local_persona.PersonaValidationResult:
+    kw = blocks or _blocks_kwargs()
+    return asyncio.run(
+        local_persona.validate_persona_prose(
+            prose,
+            brief_block=kw["brief_block"],
+            documents_block=kw["documents_block"],
+            architect_brief_block=kw["architect_brief_block"],
+            judge_caller=judge_caller,
+        )
+    )
+
+
 class _Out:
     def __init__(self, payload: dict[str, Any]) -> None:
         self.json = payload
@@ -123,15 +178,77 @@ def test_validate_accepts_qwen_register_persona() -> None:
         "The hearing on October 27 2026 is already on your calendar. "
         "When you sign off, you keep the tone plain and brief."
     )
-    text, ok = local_persona._validate_persona_prose(prose, **_blocks_kwargs())
-    assert ok is True
-    assert text == prose
+    verdict = _run_validate(
+        prose, judge_caller=_judge_raises(AssertionError("no judge"))
+    )
+    assert verdict.ok is True
+    assert verdict.text == prose
+    assert verdict.judge_called is False
 
 
-def test_validate_rejects_sentence_initial_marcus() -> None:
-    prose = "Marcus is your contact for this filing."
-    _, ok = local_persona._validate_persona_prose(prose, **_blocks_kwargs())
-    assert ok is False
+def test_persona_candidates_remember_sentence_start() -> None:
+    prose = "You keep receipts. Remember to cite exhibits."
+    blocks = _blocks_kwargs()
+    allowed = local_persona._persona_allowed_tokens(
+        brief_block=blocks["brief_block"],
+        documents_block=blocks["documents_block"],
+        architect_brief_block=blocks["architect_brief_block"],
+    )
+    blocks_words = local_persona._blocks_word_set("\n".join(blocks.values()).lower())
+    candidates = local_persona._persona_candidates(
+        prose, allowed=allowed, blocks_words=blocks_words
+    )
+    assert [row.token for row in candidates] == ["Remember"]
+    assert candidates[0].form == "capitalized_word"
+    assert candidates[0].position == "sentence_start"
+    assert any("Remember" in ctx for ctx in candidates[0].contexts)
+
+
+def test_validate_no_candidates_skips_judge() -> None:
+    prose = (
+        "You are Kaywan Joseph Mansubi writing to the appeals board. "
+        "The hearing on October 27 2026 is already on your calendar."
+    )
+    verdict = _run_validate(
+        prose, judge_caller=_judge_raises(AssertionError("no judge"))
+    )
+    assert verdict.ok is True
+    assert verdict.judge_called is False
+
+
+def test_validate_judge_empty_invented_accepts_candidates() -> None:
+    prose = "You keep receipts attached. Conclude the message with thanks."
+    verdict = _run_validate(prose, judge_caller=_judge_kinds({}))
+    assert verdict.ok is True
+    assert verdict.judge_called is True
+    assert verdict.flagged_candidates
+
+
+def test_validate_judge_invented_zaphod_refuses() -> None:
+    prose = "You write plainly with Zaphod on every revision."
+    verdict = _run_validate(prose, judge_caller=_judge_invented(["Zaphod"]))
+    assert verdict.ok is False
+    assert verdict.refused == "persona_validation_failed"
+    assert verdict.judged_invented == ["Zaphod"]
+
+
+def test_validate_judge_exception_unavailable() -> None:
+    verdict = _run_validate(
+        "You met Marcus downtown.",
+        judge_caller=_judge_raises(RuntimeError("transport_down")),
+    )
+    assert verdict.ok is False
+    assert verdict.refused == "persona_judge_unavailable"
+    assert verdict.judge_called is True
+
+
+def test_validate_judge_bad_json_invalid() -> None:
+    verdict = _run_validate(
+        "You met Marcus downtown.",
+        judge_caller=_judge_raw("not-json"),
+    )
+    assert verdict.ok is False
+    assert verdict.refused == "persona_judge_invalid"
 
 
 @pytest.mark.parametrize(
@@ -146,9 +263,25 @@ def test_validate_rejects_sentence_initial_marcus() -> None:
     ],
 )
 def test_validate_accepts_sentence_initial_imperative_operators(prose: str) -> None:
-    """Ordinary capitals at sentence start are not invented proper nouns."""
-    _, ok = local_persona._validate_persona_prose(prose, **_blocks_kwargs())
-    assert ok is True
+    verdict = _run_validate(prose, judge_caller=_judge_kinds({}))
+    assert verdict.ok is True
+    assert verdict.judge_called is True
+
+
+def test_validate_judge_rejects_kay_truncation() -> None:
+    verdict = _run_validate(
+        "Kay is your contact.", judge_caller=_judge_invented(["Kay"])
+    )
+    assert verdict.ok is False
+    assert verdict.refused == "persona_validation_failed"
+
+
+def test_validate_judge_rejects_marcus_invented() -> None:
+    verdict = _run_validate(
+        "Marcus is your contact for this filing.",
+        judge_caller=_judge_invented(["Marcus"]),
+    )
+    assert verdict.ok is False
 
 
 def test_validate_rejects_dual_capital_name_sentence_initial_and_mid() -> None:
@@ -156,38 +289,62 @@ def test_validate_rejects_dual_capital_name_sentence_initial_and_mid() -> None:
         "You already emailed Marcus about the filing. "
         "Marcus is still your point of contact on exhibits."
     )
-    _, ok = local_persona._validate_persona_prose(prose, **_blocks_kwargs())
-    assert ok is False
+    verdict = _run_validate(prose, judge_caller=_judge_invented(["Marcus"]))
+    assert verdict.ok is False
 
 
-def test_validate_rejects_kay_not_whole_word_in_kaywan_blocks() -> None:
-    prose = "Kay is your contact."
-    _, ok = local_persona._validate_persona_prose(prose, **_blocks_kwargs())
-    assert ok is False
-
-
-def test_validate_rejects_invented_name_mid_sentence() -> None:
-    """Invented names must appear mid-sentence; sentence-initial-only caps are exempt."""
-    prose = "You write plainly with Zaphod on every revision."
-    _, ok = local_persona._validate_persona_prose(prose, **_blocks_kwargs())
-    assert ok is False
-
-
-def test_validate_rejects_invented_number_only() -> None:
+def test_validate_number_candidate_judged_invented() -> None:
     pat_blocks = {
         "brief_block": "<brief>Pat signer</brief>",
         "documents_block": "<documents>Pat filed on Monday.</documents>",
         "architect_brief_block": "<architect_brief>lead_pin_id P1</architect_brief>",
     }
-    prose = "Pat filed on Monday 99 times."
-    _, ok = local_persona._validate_persona_prose(prose, **pat_blocks)
-    assert ok is False
+    verdict = _run_validate(
+        "Pat filed on Monday 99 times.",
+        judge_caller=_judge_invented(["99"]),
+        **pat_blocks,
+    )
+    assert verdict.ok is False
+    assert verdict.judged_invented == ["99"]
+    assert verdict.judge_called is True
+
+
+def test_validate_date_reformat_grounded_basis_accepts() -> None:
+    verdict = _run_validate(
+        "You filed on 10/27/2026.",
+        judge_caller=_judge_kinds({"10": ("restates_attested", "October 27 2026")}),
+    )
+    assert verdict.ok is True
+
+
+def test_validate_date_reformat_ungrounded_basis_refuses() -> None:
+    verdict = _run_validate(
+        "You filed on 10/27/2026.",
+        judge_caller=_judge_kinds({"10": ("restates_attested", "Oct 27")}),
+    )
+    assert verdict.ok is False
+    assert verdict.judged_invented == ["10"]
+
+
+def test_validate_mixed_imperative_and_name_partial_invented() -> None:
+    prose = "Conclude the note. Marcus is your contact."
+    verdict = _run_validate(
+        prose,
+        judge_caller=_judge_kinds(
+            {
+                "Conclude": ("ordinary_language", ""),
+                "Marcus": ("new_entity_or_fact", ""),
+            }
+        ),
+    )
+    assert verdict.ok is False
+    assert verdict.flagged_candidates == ["Conclude", "Marcus"]
+    assert verdict.judged_invented == ["Marcus"]
 
 
 @pytest.mark.parametrize(
     "prose",
     [
-        "Pat met Zaphod Beetlebrox downtown.",
         "You write plainly.\n- No lists",
         "You write plainly.\n1. Numbered",
     ],
@@ -198,8 +355,113 @@ def test_validate_rejects_bad_persona(prose: str) -> None:
         "documents_block": "<documents>Pat filed on Monday.</documents>",
         "architect_brief_block": "<architect_brief>lead_pin_id P1</architect_brief>",
     }
-    _, ok = local_persona._validate_persona_prose(prose, **pat_blocks)
-    assert ok is False
+    verdict = _run_validate(
+        prose,
+        judge_caller=_judge_raises(AssertionError("no judge")),
+        **pat_blocks,
+    )
+    assert verdict.ok is False
+    assert verdict.judge_called is False
+
+
+def test_validate_candidates_without_judge_caller_unavailable() -> None:
+    verdict = _run_validate("You met Marcus downtown.", judge_caller=None)
+    assert verdict.ok is False
+    assert verdict.refused == "persona_judge_unavailable"
+
+
+def test_validate_thinking_preamble_fails_without_judge() -> None:
+    verdict = _run_validate(
+        "<think>x</think> You are Kaywan.",
+        judge_caller=_judge_raises(AssertionError("no judge")),
+    )
+    assert verdict.ok is False
+    assert verdict.judge_called is False
+
+
+def test_validate_judge_strips_thinking_before_parse() -> None:
+    body = json.dumps(
+        {
+            "judgments": [
+                {
+                    "token": "Marcus",
+                    "basis": "",
+                    "reading": "r",
+                    "kind": "new_entity_or_fact",
+                }
+            ]
+        }
+    )
+    verdict = _run_validate(
+        "You met Marcus downtown.",
+        judge_caller=_judge_raw(f"<think>t</think>{body}"),
+    )
+    assert verdict.refused == "persona_validation_failed"
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        '{"judgments": []}',
+        '{"judgments": [{"token": "Marcus", "basis": "", "reading": "r", "kind": "new_entity_or_fact"}, {"token": "Marcus", "basis": "", "reading": "r", "kind": "new_entity_or_fact"}]}',
+        '{"judgments": [{"token": "Zaphod", "basis": "", "reading": "r", "kind": "new_entity_or_fact"}]}',
+        '{"judgments": [{"token": "Marcus", "basis": "", "reading": "r", "kind": "bogus"}]}',
+    ],
+)
+def test_validate_judge_invalid_coverage(payload: str) -> None:
+    verdict = _run_validate(
+        "You met Marcus downtown.",
+        judge_caller=_judge_raw(payload),
+    )
+    assert verdict.refused == "persona_judge_invalid"
+
+
+def test_persona_judge_schema_pins_rows_and_enums() -> None:
+    judge_schema = importlib.import_module("writing_v1_handlers.judge_schema")
+    schema = judge_schema.persona_judge_schema(["Conclude", "10"])
+    judgments = schema["properties"]["judgments"]
+    assert judgments["minItems"] == judgments["maxItems"] == 2
+    props = judgments["items"]["properties"]
+    assert props["token"]["enum"] == ["Conclude", "10"]
+    assert list(props.keys()) == ["token", "basis", "reading", "kind"]
+
+
+def test_persona_judge_prompt_placeholders() -> None:
+    row = prompt_store.load_prompts()["persona_invented_judge"]
+    template = str(row["template"])
+    placeholders = PromptBuilder().get_placeholders(template)
+    assert placeholders == {
+        "brief",
+        "documents",
+        "architect_brief",
+        "persona_prose",
+        "flagged_candidates",
+        "candidate_count",
+    }
+    PromptBuilder().render(
+        template,
+        {
+            "brief": "<brief>x</brief>",
+            "documents": "<documents>x</documents>",
+            "architect_brief": "<architect_brief>x</architect_brief>",
+            "persona_prose": "prose",
+            "flagged_candidates": "[]",
+            "candidate_count": "0",
+        },
+    )
+
+
+def test_validate_too_many_candidates_refuses_without_judge(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(local_persona, "_MAX_PERSONA_CANDIDATES", 1)
+    verdict = _run_validate(
+        "Alpha Beta are named.",
+        judge_caller=_judge_raises(AssertionError("no judge")),
+    )
+    assert verdict.refused == "persona_validation_failed"
+    assert verdict.detail == "too_many_candidates"
+    assert verdict.judge_called is False
 
 
 def test_persona_author_fail_closed_skips_branch(
@@ -230,11 +492,10 @@ def test_persona_author_fail_closed_skips_branch(
         "_call_model",
         _bad_model,
     )
-    payload = asyncio.run(
-        local_persona.WritingLocalPersonaAuthorHandler().execute(
-            None, _correspondence_ctx()
-        )
-    ).json
+    handler = local_persona.WritingLocalPersonaAuthorHandler(
+        judge_caller=_judge_invented(["Zaphod", "Beetlebrox", "Mars"])
+    )
+    payload = asyncio.run(handler.execute(None, _correspondence_ctx())).json
     assert payload.get("ok") is False
     assert payload.get("refused") == "persona_validation_failed"
     assert payload.get("persona_refused") == "persona_validation_failed"
@@ -328,11 +589,10 @@ def test_persona_author_success_emits_block(monkeypatch: pytest.MonkeyPatch) -> 
         "_call_model",
         _good_model,
     )
-    payload = asyncio.run(
-        local_persona.WritingLocalPersonaAuthorHandler().execute(
-            None, _correspondence_ctx()
-        )
-    ).json
+    handler = local_persona.WritingLocalPersonaAuthorHandler(
+        judge_caller=_judge_kinds({})
+    )
+    payload = asyncio.run(handler.execute(None, _correspondence_ctx())).json
     assert payload.get("ok") is True
     assert payload.get("persona_prose")
     assert "<persona_prose>" in str(payload.get("persona_prose_block"))
@@ -397,7 +657,65 @@ def test_judge_still_sees_cloud_candidates_after_persona_fail() -> None:
 
 
 def test_persona_refused_event_factory() -> None:
-    event = judge_events.WritingPersonaRefused(reason="persona_validation_failed")
+    event = judge_events.WritingPersonaRefused(
+        reason="persona_validation_failed",
+        flagged_candidates=["Marcus"],
+        judged_invented=["Marcus"],
+    )
     assert event.signal == "writing.persona.refused"
     assert event.role == "observation"
     assert event.payload["reason"] == "persona_validation_failed"
+    assert event.payload["flagged_candidates"] == ["Marcus"]
+    assert event.payload["judged_invented"] == ["Marcus"]
+
+
+def test_handler_judge_receives_fenced_prose_and_candidates(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured: dict[str, Any] = {}
+
+    async def _good_model(
+        _self: object,
+        _model_id: str,
+        _prompt: str,
+        _step: object,
+        _context: object,
+        **_: Any,
+    ) -> object:
+        return type(
+            "Result",
+            (),
+            {
+                "content": (
+                    "You keep <brief>note</brief> receipts. Remember to cite exhibits."
+                )
+            },
+        )()
+
+    async def _judge(fenced: str, candidates: list[local_persona.Candidate]) -> str:
+        captured["fenced"] = fenced
+        captured["tokens"] = [row.token for row in candidates]
+        captured["contexts"] = [row.contexts for row in candidates]
+        return json.dumps(
+            {
+                "judgments": [
+                    {
+                        "token": row.token,
+                        "basis": "",
+                        "reading": "r",
+                        "kind": "ordinary_language",
+                    }
+                    for row in candidates
+                ]
+            }
+        )
+
+    monkeypatch.setattr(
+        local_persona.WritingLocalPersonaAuthorHandler,
+        "_call_model",
+        _good_model,
+    )
+    handler = local_persona.WritingLocalPersonaAuthorHandler(judge_caller=_judge)
+    asyncio.run(handler.execute(None, _correspondence_ctx()))
+    assert captured.get("tokens") == ["Remember"]
+    assert "&lt;brief" in (captured.get("fenced") or "")
