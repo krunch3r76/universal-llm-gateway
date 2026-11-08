@@ -10,6 +10,8 @@ from .routing_signal_constants_eviction_hysteresis import (
     EVICTION_COOLDOWN_OVERRIDDEN,
     EVICTION_DEMAND_APPLIED,
     ROUTING_EVICTION_EXECUTE_FAILED,
+    ROUTING_EVICTION_EXECUTE_FINISHED,
+    ROUTING_EVICTION_EXECUTE_STARTED,
 )
 
 
@@ -102,6 +104,62 @@ def EvictionCooldownOverridden(
             "remaining_s": remaining_s,
             "requester": requester,
             "gateway_id": gateway_id,
+            "timestamp": timestamp,
+        },
+    )
+
+
+@event_factory
+def RoutingEvictionExecuteStarted(
+    *,
+    request_id: str,
+    model_id: str,
+    gateway_id: str,
+    victim_model_ids: list[str],
+    freed_vram_mb: int,
+    freed_ram_mb: int,
+    timestamp: float,
+) -> Event:
+    """Emit when T2 finalize-time eviction execution starts."""
+    return Event(
+        signal=ROUTING_EVICTION_EXECUTE_STARTED,
+        payload={
+            "request_id": request_id,
+            "model_id": model_id,
+            "gateway_id": gateway_id,
+            "victim_model_ids": victim_model_ids,
+            "freed_vram_mb": freed_vram_mb,
+            "freed_ram_mb": freed_ram_mb,
+            "timestamp": timestamp,
+        },
+    )
+
+
+@event_factory
+def RoutingEvictionExecuteFinished(
+    *,
+    request_id: str,
+    model_id: str,
+    gateway_id: str,
+    victim_model_ids: list[str],
+    freed_vram_mb: int,
+    freed_ram_mb: int,
+    outcome: str,
+    elapsed_ms: float,
+    timestamp: float,
+) -> Event:
+    """Emit when T2 finalize-time eviction execution completes."""
+    return Event(
+        signal=ROUTING_EVICTION_EXECUTE_FINISHED,
+        payload={
+            "request_id": request_id,
+            "model_id": model_id,
+            "gateway_id": gateway_id,
+            "victim_model_ids": victim_model_ids,
+            "freed_vram_mb": freed_vram_mb,
+            "freed_ram_mb": freed_ram_mb,
+            "outcome": outcome,
+            "elapsed_ms": elapsed_ms,
             "timestamp": timestamp,
         },
     )

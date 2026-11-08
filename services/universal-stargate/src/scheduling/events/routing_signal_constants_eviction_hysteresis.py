@@ -66,6 +66,22 @@ Payload: {
 }
 """
 
+ROUTING_EVICTION_EXECUTE_STARTED = "routing.eviction.execute.started"
+"""
+T2 finalize-time eviction execution began (observation).
+
+Payload: request_id, model_id, gateway_id, victim_model_ids, freed_vram_mb,
+freed_ram_mb, timestamp
+"""
+
+ROUTING_EVICTION_EXECUTE_FINISHED = "routing.eviction.execute.finished"
+"""
+T2 finalize-time eviction execution completed (observation).
+
+Payload: request_id, model_id, gateway_id, victim_model_ids, freed_vram_mb,
+freed_ram_mb, outcome, elapsed_ms, timestamp
+"""
+
 ROUTING_EVICTION_EXECUTE_FAILED = "routing.eviction.execute.failed"
 """
 Eviction execution failed at T2 finalize after admission.

@@ -36,7 +36,8 @@ def emit_decision_trace(
         from src.scheduling.events import RoutingDecision
 
         event_data = trace.to_event_payload(
-            include_candidates=include_candidate_details,
+            include_candidates=include_candidate_details
+            or not getattr(trace, "selected_gateway", None),
         )
 
         # Emit every selection attempt as scheduler.routing.decided, even when

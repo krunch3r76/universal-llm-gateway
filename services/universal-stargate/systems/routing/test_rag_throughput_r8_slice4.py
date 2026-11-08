@@ -833,6 +833,7 @@ def test_4_37_eviction_wait_clamped_by_real_capacity_deadline(
         request_timeout_hint=2.0,
     )
     assert ctx._capacity_deadline_mono == pytest.approx(1002.0)
+    ctx._eviction_wait_deadline_mono = 1002.0
     mono["v"] = 1001.5
     clamped = clamp_eviction_wait_timeout(ctx, config_timeout=300.0)
     assert clamped == pytest.approx(0.5, abs=0.01)
