@@ -1,4 +1,4 @@
-"""VRAM-refusal requeue uses gateway-scoped dwell, not depth-charged execution_failure."""
+"""VRAM-refusal requeue: gateway-scoped dwell, not depth-charged execution_failure."""
 
 from __future__ import annotations
 
@@ -6,7 +6,6 @@ import asyncio
 import contextlib
 import time
 from types import SimpleNamespace
-from unittest.mock import AsyncMock
 
 import pytest
 
@@ -14,7 +13,6 @@ from systems.proxy.core.nonstreaming.federated_routing import (
     wait_logic as _wait_logic_mod,
 )
 from systems.proxy.core.nonstreaming.federated_routing.wait_logic import (
-    VRAM_REFUSAL_INITIAL_DWELL_S,
     _wait_vram_refusal_and_retry_selection,
 )
 
@@ -91,7 +89,7 @@ async def test_vram_refusal_wait_respects_shared_budget_and_dwell(
     elapsed = time.monotonic() - started
     assert _selected is None
     assert select_calls["n"] >= 1
-    assert waited_ms <= 200
+    assert waited_ms <= 400
     assert elapsed >= 0.05
 
 

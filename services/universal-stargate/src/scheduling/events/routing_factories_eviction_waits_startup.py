@@ -1,4 +1,4 @@
-"""Stargate scheduling routing events — split module covering drain-initiated eviction waits and startup queuing: eviction-wait started/cancelled/resolved/timeout signals alongside startup-queue queued/resolved/timeout signals, built as `Event` objects for the routing scheduler."""
+"""Eviction-wait and startup-queue event factories for the routing scheduler."""
 
 # ruff: noqa: N802
 

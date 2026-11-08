@@ -245,7 +245,7 @@ async def _wait_vram_refusal_and_retry_selection(
     timeout_s: float,
     stability_tracker: "StickyPlacementTracker",
 ) -> tuple[Any, Any, int]:
-    """Post-load VRAM refusal: dwell/backoff per gateway RESOURCE_UPDATE, then select."""
+    """Post-load VRAM refusal: dwell/backoff on gateway RESOURCE_UPDATE, then select."""
     from src.scheduling.events.routing import (
         RoutingEvictionVramRefusalWaitResolved,
         RoutingEvictionWaitCancelled,

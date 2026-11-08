@@ -55,7 +55,6 @@ async def attempt_oom_recovery(
     INVARIANT: gateway.is_cloud ⇒ ¬evict (cloud APIs have no VRAM)
     """
     from systems.routing.eviction.executor import execute_eviction_plan
-    from systems.routing.rag_protected_models import is_rag_protected_model
     from systems.routing.selection.decision.types import EvictionPlanSummary
 
     gateway_id = gateway.gateway_id

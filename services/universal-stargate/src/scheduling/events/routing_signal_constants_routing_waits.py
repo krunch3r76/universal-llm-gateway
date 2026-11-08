@@ -1,4 +1,4 @@
-"""Signal string constants for Stargate routing waits: drain-initiated and eviction-wait started/cancelled/resolved/timeout signals, startup-queue queued/resolved/timeout signals, and model grace-period queued/resolved/timeout signals. Consumed by `routing_factories_eviction_waits_startup.py` and `routing_factories_model_grace.py`'s event factories."""
+"""Signal constants for routing eviction waits, startup queue, and model grace."""
 
 # ruff: noqa: N802
 

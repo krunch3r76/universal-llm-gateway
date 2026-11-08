@@ -119,7 +119,7 @@ class FederatedGatewayManager(Sequential):
         # INV: cleared on gateway disconnect/reconnect only (session lifetime)
         self._inference_banned: dict[str, set[str]] = {}
 
-        # telemetry_timestamp at load start; RESOURCE_UPDATE after baseline skips forensics VRAM
+        # Load-start telemetry_ts; RESOURCE_UPDATE after baseline skips forensics VRAM
         self._load_resource_baseline: dict[tuple[str, str], float] = {}
 
         # Consecutive GATEWAY_SNAPSHOT count where model is absent from loaded+loading
@@ -1884,7 +1884,7 @@ class FederatedGatewayManager(Sequential):
         since_timestamp: float,
         timeout_s: float,
     ) -> bool:
-        """Return True when *gateway_id* receives RESOURCE_UPDATE after *since_timestamp*."""
+        """True when gateway_id gets RESOURCE_UPDATE after since_timestamp."""
         deadline = asyncio.get_event_loop().time() + max(0.0, timeout_s)
         while asyncio.get_event_loop().time() < deadline:
             gw = self._gateways.get(gateway_id)

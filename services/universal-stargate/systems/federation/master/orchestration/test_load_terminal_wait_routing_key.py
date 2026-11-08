@@ -108,7 +108,7 @@ class _FakeBus:
 
 @pytest.mark.asyncio
 async def test_terminal_wait_gateway_name_and_relay_remote_pairing() -> None:
-    """Pairing regression: edge-jupiter-gateway name + relay-jupiter remote (inferred)."""
+    """Pairing: edge-jupiter gateway_name + relay-jupiter remote (inferred)."""
     from src.scheduling.events.model_lifecycle import MODEL_LOAD_FAILED
 
     model = ModelId.parse(

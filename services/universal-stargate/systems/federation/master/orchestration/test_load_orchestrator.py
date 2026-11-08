@@ -63,7 +63,9 @@ class _FakeEventBus:
     def __init__(self) -> None:
         self._handlers: dict[str, list[Any]] = {}
 
-    def subscribe_async(self, signal: str, handler: Any, **_kwargs: Any) -> _FakeSubscription:
+    def subscribe_async(
+        self, signal: str, handler: Any, **_kwargs: Any
+    ) -> _FakeSubscription:
         self._handlers.setdefault(signal, []).append(handler)
         return _FakeSubscription()
 

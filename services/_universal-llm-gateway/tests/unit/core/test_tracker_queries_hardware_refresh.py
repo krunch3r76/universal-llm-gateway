@@ -10,7 +10,7 @@ _root = Path(__file__).resolve().parents[3]
 if str(_root) not in sys.path:
     sys.path.insert(0, str(_root))
 
-from src.core.resources.tracker_queries import refresh_hardware_vram_probe
+from src.core.resources.tracker_queries import refresh_hardware_vram_probe  # noqa: E402
 
 
 def test_refresh_hardware_vram_probe_records_probe() -> None:

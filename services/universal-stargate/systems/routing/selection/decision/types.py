@@ -80,7 +80,7 @@ class EvictionPlanSummary:
     """Summary of eviction plan for a candidate."""
 
     models_to_evict: frozenset[ModelId]
-    freed_vram_mb: int  # estimate (catalog and/or hardware correction; not a ledger debit)
+    freed_vram_mb: int  # estimate (catalog/hardware correction; not ledger debit)
     freed_ram_mb: int
     estimated_cost: float  # Penalty score for this eviction
     # Observability for hardware-based correction (when applied)

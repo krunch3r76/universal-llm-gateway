@@ -7,18 +7,20 @@ from types import SimpleNamespace
 import pytest
 from model_id import ModelId
 
-from systems.routing.selection.decision.config import RoutingPolicy, ScoringWeights
-from systems.routing.selection.decision.engine.core import DecisionEngine
+import systems.routing.rag_protected_models as rag_protected_models
 from systems.routing.selection.decision import (
     eviction_planning,
     eviction_victim_select,
+)
+from systems.routing.selection.decision import (
     scorer as scorer_mod,
 )
-from systems.routing.selection.decision.eviction_planning import _compute_eviction_plan
-import systems.routing.rag_protected_models as rag_protected_models
+from systems.routing.selection.decision.config import RoutingPolicy, ScoringWeights
+from systems.routing.selection.decision.engine.core import DecisionEngine
 from systems.routing.selection.decision.eviction_cooldown_policy import (
     EvictionRequestClass,
 )
+from systems.routing.selection.decision.eviction_planning import _compute_eviction_plan
 from systems.routing.selection.decision.feasibility import evaluate_feasibility
 from systems.routing.selection.decision.scorer import calculate_utility
 from systems.routing.selection.decision.types import (
@@ -217,7 +219,9 @@ def test_busy_protected_model_not_evicted(protect_qwen_5b: None) -> None:
         eviction_cooldown_s=0.0,
         eviction_request_class=EvictionRequestClass.REQUIRED,
     )
-    victims = plan.models_to_evict if isinstance(plan, EvictionPlanSummary) else frozenset()
+    victims = (
+        plan.models_to_evict if isinstance(plan, EvictionPlanSummary) else frozenset()
+    )
     assert _QWEN_5B not in victims
 
 

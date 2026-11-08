@@ -14,7 +14,7 @@ Signals:
     federation.load.requested — Master requested remote load a model
     federation.load.confirmed — remote confirmed model loaded
     federation.load.failed — remote failed to load model
-    federation.load.race_resolved — HTTP vs terminal telemetry race outcome (observation)
+    federation.load.race_resolved — HTTP/terminal load race outcome (observation)
     federation.orchestrator.decided — orchestrator routing/load decision
     federation.orchestrator.evicted — orchestrator evicted model from remote
     gateway.resource.updated (federation variant) — reuse signal, federation payload

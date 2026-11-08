@@ -1,4 +1,4 @@
-"""Forensics snapshot: VRAM overlay only when RESOURCE_UPDATE has not refreshed master."""
+"""Forensics snapshot: skip VRAM overlay when RESOURCE_UPDATE already refreshed."""
 
 from __future__ import annotations
 

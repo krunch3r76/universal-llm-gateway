@@ -22,6 +22,9 @@ from model_id import ModelId  # noqa: E402
 from universal_protocol import ErrorCode  # noqa: E402
 
 from systems.federation.common.types import FederatedGateway  # noqa: E402
+from systems.proxy.core.nonstreaming.federated_routing import (  # noqa: E402
+    wait_logic as _wait_logic_mod,
+)
 from systems.proxy.core.nonstreaming.federated_routing.handler.orchestrator import (  # noqa: E402
     admission as admission_mod,
 )
@@ -36,9 +39,6 @@ from systems.proxy.core.nonstreaming.federated_routing.handler.orchestrator impo
 )
 from systems.proxy.core.nonstreaming.federated_routing.wait_continuation import (  # noqa: E402
     continuation_still_transient,
-)
-from systems.proxy.core.nonstreaming.federated_routing import (  # noqa: E402
-    wait_logic as _wait_logic_mod,
 )
 from systems.proxy.core.nonstreaming.federated_routing.wait_logic import (  # noqa: E402
     _wait_and_retry_selection,
