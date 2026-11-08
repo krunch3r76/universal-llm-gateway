@@ -152,6 +152,7 @@ def _validate_generation_params(pipeline) -> list[str]:
         "stream",
         "presence_penalty",
         "frequency_penalty",
+        "chat_template_kwargs",
         # Handler-specific params
         "similarity_threshold",
         "embedding_model",

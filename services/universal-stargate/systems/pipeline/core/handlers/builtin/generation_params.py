@@ -44,6 +44,8 @@ ALLOWED_GENERATION_PARAMS: set[str] = {
     # The cloud-proxy Anthropic adapter forwards this untouched; other
     # providers ignore it (adapter-level filter).
     "thinking",
+    # llama.cpp / vLLM chat-template toggles (e.g. qwen3 enable_thinking).
+    "chat_template_kwargs",
 }
 
 
