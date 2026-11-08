@@ -62,7 +62,7 @@ Ask in one batch; skip any already bound in chat:
    separate ask (skill § Run to completion). Name an exception here if this
    mission needs its merge held for review.
 7. **Explicit seat pin?** — default none (Composer — omit `model=`, `{fast:true}`);
-   judgment nests width seat ACTIVE (`cdp/opus-5.5`, `impresario.critic`); bind/review uses that critic. `cdp/` is allowed and preferred for conductor and supervisor legs over `anthropic/*` and over any `cursor/*` model except `cursor/composer-2.5` while it is cheaper. `anthropic/*` is the fallback when no CDP host is available (`cdp_fail_route`). An Other-Models pin only
+   judgment nests width seat ACTIVE (`impresario.critic`); bind/review uses that critic. `cdp/` is allowed and preferred for conductor and supervisor legs over `anthropic/*` and over any `cursor/*` model except `cursor/composer-2.5` while it is cheaper. No CDP host ⇒ record `cdp_fail_route=anthropic` and dispatch `anthropic/claude-sonnet-5-5`. An Other-Models pin only
    with a named trigger. Sonnet/Opus/Terra remain explicit-pin facts only — never implicit defaults.
 8. **Admit now?** — shape the todo only vs admit after confirm.
 
@@ -139,4 +139,4 @@ closeout, not a mid-mission pause. Codify residuals on the root entity.
 Ring **7310** (`7244-ide-resolution`): Lane A finish of 7186 residual; packet
 `tmp/reviews/7310-conductor-packet.md`; sibling 7281 cite-only. Early dogfood
 admitted Opus — standing seat is Composer (omit `model=`); judgment nests CDP
-(width seat ACTIVE `anthropic/claude-sonnet-5-5`; bind-review is that critic, not `cdp/`) unless an Other-Models pin names a trigger.
+(width seat ACTIVE `impresario.critic`; bind-review is that critic) unless an Other-Models pin names a trigger.

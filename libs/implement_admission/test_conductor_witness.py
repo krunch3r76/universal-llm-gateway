@@ -1448,6 +1448,14 @@ def test_g4_stamped_route_ignores_clearing_commentary(tmp_path: Path) -> None:
     )
 
 
+def test_cdp_fail_route_parses_anthropic() -> None:
+    """Amendment v2: no-CDP-host stamp is a first-class route token."""
+    from implement_admission.conductor_witness_table import _cdp_fail_route
+
+    tip = _gated_tip(g4_stops="", g6_stops="cdp_fail_route=anthropic", sidecars="")
+    assert _cdp_fail_route(tip, "G6") == "anthropic"
+
+
 def test_run_to_completion_names_route_on_artifact_and_stops() -> None:
     """U8 map: Run to completion → reference-run-to-completion.md."""
     skill = (

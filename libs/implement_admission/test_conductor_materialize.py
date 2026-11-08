@@ -970,8 +970,7 @@ def test_hop_scope_claimed_g6_stamp_excluded(
     )
     hint = (
         "hang R1 pre-land review URI (team_dispatch op=generate, "
-        f"contract=delivery-review, model={PIN_CRITIC.model} (impresario.critic; "
-        "impresario.critic), …; "
+        f"contract=delivery-review, model={PIN_CRITIC.model} (impresario.critic), …; "
         "put job=delivery-review on a prompt line, not as a dispatch argument)"
     )
     rem = RematerializeContext(hop_seq=1, summoning_thread_id="21382")

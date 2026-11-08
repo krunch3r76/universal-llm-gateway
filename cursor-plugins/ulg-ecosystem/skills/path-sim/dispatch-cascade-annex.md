@@ -142,7 +142,7 @@ These are **three surfaces** — conflating them is a cascade defect (dogfood 20
 | **Gate-6 bypasses** | Alternate admit proofs | `gate6_ratification_uri` or hash-matched `recon_waived` | Implement admission — **¬** path-sim R |
 
 **Panel substrate on code (operator 2026-07-26).** A review pass **on code** defaults to
-`cursor/*` on cursor-sdk — that substrate holds the live checkout, which is what makes a
+`cursor/*` on cursor-sdk — the live checkout on that seat is what makes a
 code review effective. API roles are reserved for **architecture / bird's-eye** reasoning
 and checkout-free self-contained recon; CDP web-anthropic keeps R-admit. `openai/*` is
 metered and is **not** the code-review default; `xai/*` MCP support is weak. Where any

@@ -72,7 +72,7 @@ _G6_STANDALONE_VERDICT_RE = re.compile(
 # Skill cdp_fail_route vocabulary. U3 stamps hop_reason=cdp_probe_indeterminate
 # (a different fact) and does not name which verdict governs.
 _CDP_FAIL_ROUTE_RE = re.compile(
-    r"(?<![A-Za-z0-9_])cdp_fail_route=(?P<route>nested-grok|operator)"
+    r"(?<![A-Za-z0-9_])cdp_fail_route=(?P<route>nested-grok|operator|anthropic)"
     r"(?![A-Za-z0-9_-])"
 )
 

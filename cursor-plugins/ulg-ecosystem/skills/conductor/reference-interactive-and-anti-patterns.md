@@ -8,7 +8,7 @@ Command `/conductor` (plugin): orient → ask establishing questions (incl. **mo
 tier**; checkout regime pre-filled **Lane B**, confirm or override to Lane A) →
 draft charter/scoreboard/packet → confirm → admit. Skill body does not re-ask
 when the operator already bound the answers in chat. Scoreboard mint includes
-stronger-model gates (a:32146 · a:32226): G4 Skeptic = ACTIVE; after-ship code review = `cdp/opus-5.5` (`impresario.critic`; `cdp/` is allowed and preferred for conductor and supervisor legs over `anthropic/*` and over any `cursor/*` model except `cursor/composer-2.5` while it is cheaper. `anthropic/*` is the fallback when no CDP host is available (`cdp_fail_route`)) — hard, ¬
+stronger-model gates (a:32146 · a:32226): G4 Skeptic = ACTIVE; after-ship code review = `cdp/opus-5.5` (`impresario.critic`; `cdp/` is allowed and preferred for conductor and supervisor legs over `anthropic/*` and over any `cursor/*` model except `cursor/composer-2.5` while it is cheaper. No CDP host ⇒ record `cdp_fail_route=anthropic` and dispatch `anthropic/claude-sonnet-5-5`) — hard, ¬
 optional, ¬ Composer self-cert; CDP transport fail ≡ stop past that gate
 (¬ DEFERRED-and-proceed). Profile
 `fable-scarce` ⇒ see § Profile fable-scarce (width rows stay on ACTIVE).
@@ -75,6 +75,6 @@ optional, ¬ Composer self-cert; CDP transport fail ≡ stop past that gate
 | Land a named `todo:` and leave the card `open` | Stamp `todo-close` / LANDED on that entity in the same turn |
 | Assume `ROW_HOP` ⇒ immediate successor while a CDP gate still streams on the mission lane | Reactor skip `live_external_gate` is correct — harvest the gate first |
 | Self-report "gate clear" in closeout to unblock hop | Occupancy is a substrate read from the CDP lane snap, not closeout prose |
-| Fire a second `anthropic/claude-sonnet-5-5` review while the first gate is still live on the lane | 409 `cdp_external_gate_live` — wait for harvest |
+| Fire a second `cdp/opus-5.5` review while the first gate is still live on the lane | 409 `cdp_external_gate_live` — wait for harvest |
 
 **Work-complete finishing (last).** Default: land → path-explicit commit of session paths → recycle serving processes. Recycle-from-dirty-tree is exceptional. `work_complete` / terminal DONE without quoted commit + recycle (or named skip) is invalid.

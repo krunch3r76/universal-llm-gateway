@@ -6,7 +6,7 @@ apply_tier: required_gate
 ---
 # Endpoint provenance
 
-`∀ turn closure: ¬sign_off` · `∀ boot/dispatch prompt: ¬assert_identity_at_agent` (duty is a seat/function, ¬ a persona) · `∀ prose/bus/skills: ¬personal_name(Claude)`.
+`∀ turn closure: ¬sign_off` · `∀ boot/dispatch prompt: ¬assert_identity_at_agent` (duty is a seat/function, ¬ a persona) · `∀ prose/bus/skills: ¬personal_name(Claude)` except work done on claude.ai (see naming order).
 
 Naming, best → worst: `web-anthropic` → `Claude` (work done on claude.ai) → `anthropic` → `claude.ai` (UI label only). Bus `from`/`to` are endpoint addresses. Model artifact strings (`claude-opus-…`) and runtime aliases (`claude-web` → `web-anthropic`) remain.
 

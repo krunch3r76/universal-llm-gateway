@@ -73,9 +73,6 @@ _NON_WIDTH_ACTIVE: dict[str, str] = {
     "cursor-plugins/ulg-ecosystem/rules/dispatch-kernel_ulg.mdc": (
         "alwaysApply per-file ceiling (1100)"
     ),
-    "cursor-plugins/ulg-ecosystem/commands/conductor.md": (
-        "Leg C1 doctrine cites ACTIVE (`cdp/opus-5.5`) outside width-seat block"
-    ),
 }
 
 _P1 = re.compile(r"\bACTIVE(?:\.model)?\**[^;,.|]{0,12}?cdp/", re.IGNORECASE)
@@ -183,7 +180,6 @@ _HARNESS_CRITIC_FILES = (
     "cursor-plugins/ulg-ecosystem/skills/conductor/reference-run-to-completion.md",
     "cursor-plugins/ulg-ecosystem/skills/conductor/reference-model-tier.md",
     "cursor-plugins/ulg-ecosystem/skills/conductor/reference-packet.md",
-    "cursor-plugins/ulg-ecosystem/commands/conductor.md",
 )
 
 
