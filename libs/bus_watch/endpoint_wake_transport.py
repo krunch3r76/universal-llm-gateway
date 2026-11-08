@@ -15,6 +15,7 @@ _COMPOSER_DEFER_DISPLAY = frozenset(
     {"active_chat_busy", "composer_busy", "composer_not_empty"}
 )
 _RETRIABLE_DISPLAY = {
+    "agent_running",
     "debug_unreachable",
     "no_active_chat",
     "no_composer",

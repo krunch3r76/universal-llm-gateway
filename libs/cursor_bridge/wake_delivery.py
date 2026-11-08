@@ -4,8 +4,10 @@ Callers are the ``display-chat-wake`` pipeline step. The debug port is
 chosen from ``app`` and ``display``; the sidebar observation comes from
 ``probe_surface``. When ``select=True`` (default) and the target row is
 present in the sidebar, the step can switch to that row provided the
-currently active chat's composer is empty (streaming/generating does not
-block steering or row selection). A match pastes
+currently active chat's composer is empty. A Cursor target whose own agent
+is mid-turn, or whose workspace instance cannot be resolved, is refused
+before any row click (``agent_running`` / ``workspace_unresolved``) so the
+wake is held instead of starting a second run. A match pastes
 ``BRIDGE_WAKE thread=<id> turn=<n>`` into that app's composer, submits it,
 and verifies delivery. A Glass timer win is not a refusal: the submit
 went out and was not confirmed, so the result keeps ``pasted`` true,
@@ -40,6 +42,10 @@ from cursor_bridge.display_interaction_locks import (
 from cursor_bridge.dom_composer_paste import (
     composer_selector,
     dom_insert_and_send,
+)
+from cursor_bridge.glass_agent_run_state import (
+    probe_agent_run_state,
+    run_state_hold_reason,
 )
 from cursor_bridge.grok_agent_ops import select_grok_agent_async
 
@@ -196,8 +202,9 @@ async def deliver_wake(
 ) -> dict[str, Any]:
     """Paste one wake into the target sidebar chat and report whether it landed.
 
-    Cursor submits through Glass with steerIntent and ignoreQueuing on every
-    submit (not gated on handle status). When the submit race is won by the timer,
+    Cursor submits through Glass with steerIntent and ignoreQueuing, only after
+    the agent's handle in its own workspace instance reads idle. When the submit
+    race is won by the timer,
     the return keeps ``pasted`` true, ``delivered`` false, and
     ``race_winner`` ``timer`` so callers do not treat the in-flight submit
     as never sent. ``classify_display`` then records unknown. Other failures
@@ -279,6 +286,10 @@ async def _deliver_locked(
         return _refuse(
             "surface_probe_failed", display=disp, app=app, detail=type(exc).__name__
         )
+    if app == "cursor" and aid_s:
+        hold = run_state_hold_reason(await probe_agent_run_state(ws_url, aid_s))
+        if hold:
+            return _refuse(hold, display=disp, app=app, agent_id=aid_s)
     if _busy_or_draft_reason(surface) is None:
         try:
             from bus_watch.endpoint_wake_composer_defer import (

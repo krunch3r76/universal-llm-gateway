@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import json
 
+from cursor_bridge.glass_agent_run_state import AGENT_RUN_STATE_FN
+
 GLASS_SERVICE_MAP_FN = r"""
 function glassServiceMap(startEl) {
   const fiberKey = (el) => Object.keys(el).find((k) => k.startsWith('__reactFiber$')) || null;
@@ -68,6 +70,14 @@ function resolveWorkspaceServices(rootMap, agentId) {
       if (env) targetEnv = env;
     } catch (e) {}
   }
+  const envKey = (env) => String((env && env.uri && (env.uri.path || env.uri.fsPath)) || (env && env.id) || '');
+  if (targetEnv && wcs && typeof wcs.getWorkspaceInstances === 'function') {
+    try {
+      const want = envKey(targetEnv);
+      const list = [...(wcs.getWorkspaceInstances() || [])];
+      matchedInst = list.find((inst) => want && envKey(inst && inst.workspaceIdentifier) === want) || null;
+    } catch (e) {}
+  }
   if (!targetEnv && wcs && typeof wcs.getWorkspaceInstances === 'function') {
     try {
       const instances = wcs.getWorkspaceInstances();
@@ -120,7 +130,8 @@ function resolveWorkspaceServices(rootMap, agentId) {
   } else if (wcs && targetEnv && typeof wcs.getWorkspaceInstance === 'function') {
     try { mergeFromInst(wcs.getWorkspaceInstance(targetEnv)); } catch (e) {}
   }
-  return { services: merged, targetEnv, agentId: resolvedAgentId };
+  return { services: merged, targetEnv, agentId: resolvedAgentId,
+    instanceMatched: merged !== rootMap };
 }
 """
 
@@ -616,6 +627,7 @@ def submit_wake_line_js(line: str, agent_id: str = "") -> str:
         f"{GLASS_SERVICE_MAP_FN}\n"
         f"{RESOLVE_WORKSPACE_SERVICES_FN}\n"
         f"{RESOLVE_COMPOSER_FOR_AGENT_FN}\n"
+        f"{AGENT_RUN_STATE_FN}\n"
         f"  const text = {text};\n"
         f"  const scopedId = {aid};\n"
         "  let agentId = scopedId;\n"
@@ -640,6 +652,13 @@ def submit_wake_line_js(line: str, agent_id: str = "") -> str:
         "    agentId = (prompt.getAttribute('data-sidebar-file-drop-editor-agent-id') || '').trim();\n"
         "  }\n"
         "  if (!agentId) return {ok: false, reason: 'no_agent_id'};\n"
+        "  const run = await agentRunState(byId, agentId);\n"
+        "  if (!run.ok && run.reason === 'workspace_unresolved') {\n"
+        "    return {ok: false, reason: run.reason, agent_id: agentId};\n"
+        "  }\n"
+        "  if (run.running) {\n"
+        "    return {ok: false, reason: 'agent_running', agent_id: agentId, status: run.status};\n"
+        "  }\n"
         "  const resolved = await resolveComposerForAgent(byId, agentId);\n"
         "  if (!resolved.ok) return resolved;\n"
         "  agentId = resolved.agent_id;\n"
