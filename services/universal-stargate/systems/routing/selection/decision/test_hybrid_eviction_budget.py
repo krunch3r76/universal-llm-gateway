@@ -29,9 +29,12 @@ def _context(**kwargs: float | None) -> SimpleNamespace:
 
 
 def test_exhausted_queue_deadline_still_yields_eviction_wait() -> None:
-    context = _context(_capacity_deadline_mono=time.monotonic() - 1.0)
+    now = time.monotonic()
+    context = _context(
+        _capacity_deadline_mono=now - 1.0,
+        _eviction_wait_deadline_mono=now + 300.0,
+    )
     assert clamp_eviction_wait_timeout(context, 300.0) > 0.0
-    assert context._eviction_wait_deadline_mono is not None
 
 
 def test_eviction_budget_shared_across_requeues() -> None:

@@ -225,7 +225,8 @@ async def test_blocked_eviction_skips_load_command(
         )
 
     monkeypatch.setattr(
-        "systems.proxy.core.nonstreaming.federated_routing.handler.orchestrator.eviction_execution.execute_master_eviction",
+        eviction_mod,
+        "execute_master_eviction",
         _blocked_eviction,
     )
 
@@ -277,7 +278,8 @@ async def test_evicted_path_dispatches_exactly_one_load(
         )
 
     monkeypatch.setattr(
-        "systems.proxy.core.nonstreaming.federated_routing.handler.orchestrator.eviction_execution.execute_master_eviction",
+        eviction_mod,
+        "execute_master_eviction",
         _evicted,
     )
 

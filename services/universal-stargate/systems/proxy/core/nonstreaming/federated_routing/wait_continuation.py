@@ -45,14 +45,13 @@ def clamp_eviction_wait_timeout(
     The eviction budget is independent of the pre-route queue / capacity
     deadline: a request whose queue wait exhausted ``_capacity_deadline_mono``
     still gets ``config_timeout`` seconds for eviction + load. The budget is
-    armed on first use and shared across requeues and retry attempts of the
-    same request (the retry loop does not reset it).
+    armed once per request in ``execute_with_retry`` and shared across requeues
+    and upstream retry attempts (the retry loop does not reset it).
     """
-    now = time.monotonic()
     deadline = getattr(context, "_eviction_wait_deadline_mono", None)
     if deadline is None:
-        deadline = now + config_timeout
-        context._eviction_wait_deadline_mono = deadline  # noqa: SLF001
+        return config_timeout
+    now = time.monotonic()
     return min(config_timeout, max(0.0, deadline - now))
 
 

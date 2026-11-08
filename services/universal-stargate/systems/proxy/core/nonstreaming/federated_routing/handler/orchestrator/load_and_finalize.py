@@ -180,6 +180,31 @@ async def finalize_selection_and_load(
                         reason="eviction_execute_victim_pin",
                     )
 
+            eviction_started = time.monotonic()
+            victim_ids = (
+                [str(m) for m in plan.models_to_evict]
+                if plan and plan.models_to_evict
+                else []
+            )
+            freed_vram = plan.freed_vram_mb if plan else 0
+            freed_ram = plan.freed_ram_mb if plan else 0
+            if event_bus and victim_ids:
+                from src.scheduling.events.routing import (
+                    RoutingEvictionExecuteFinished,
+                    RoutingEvictionExecuteStarted,
+                )
+
+                await event_bus.publish_nowait(
+                    RoutingEvictionExecuteStarted(
+                        request_id=context.request_id,
+                        model_id=str(model_id),
+                        gateway_id=selected_gateway.name,
+                        victim_model_ids=victim_ids,
+                        freed_vram_mb=freed_vram,
+                        freed_ram_mb=freed_ram,
+                        timestamp=time.time(),
+                    )
+                )
             eviction_result = await execute_master_eviction(
                 federation_forwarder=federation_forwarder,
                 federated_manager=federated_manager,
@@ -189,6 +214,22 @@ async def finalize_selection_and_load(
                 event_bus=event_bus,
                 eviction_cooldown_s=eviction_cooldown_s,
             )
+            if event_bus and victim_ids:
+                from src.scheduling.events.routing import RoutingEvictionExecuteFinished
+
+                await event_bus.publish_nowait(
+                    RoutingEvictionExecuteFinished(
+                        request_id=context.request_id,
+                        model_id=str(model_id),
+                        gateway_id=selected_gateway.name,
+                        victim_model_ids=victim_ids,
+                        freed_vram_mb=freed_vram,
+                        freed_ram_mb=freed_ram,
+                        outcome=eviction_result.outcome.value,
+                        elapsed_ms=(time.monotonic() - eviction_started) * 1000,
+                        timestamp=time.time(),
+                    )
+                )
             if eviction_result.outcome == MasterEvictionOutcome.BLOCKED:
                 can_requeue = (
                     federated_manager is not None
@@ -439,6 +480,22 @@ async def _ensure_remote_model_loaded(
 
     Finalize owns mark release and the requeue call so peer marks are not wiped.
     """
+    load_started = time.monotonic()
+    gateway_url = getattr(selected_gateway.ref, "remote_stargate_url", "unknown")
+    event_bus = getattr(federated_load_orchestrator, "_event_bus", None)
+    if event_bus:
+        from src.scheduling.events import ModelLoadInitiated
+
+        await event_bus.publish_nowait(
+            ModelLoadInitiated(
+                model_id=str(context.selected_model),
+                gateway_url=gateway_url,
+                gateway_name=selected_gateway.name,
+                timestamp=time.time(),
+                already_loaded=context.selected_model in selected_gateway.loaded_models,
+                request_id=context.request_id,
+            )
+        )
     try:
         await federated_load_orchestrator.ensure_model_loaded_on_remote(
             selected_gateway.ref,
@@ -455,5 +512,36 @@ async def _ensure_remote_model_loaded(
             and federated_manager is not None
         ):
             return _POST_LOAD_NEEDS_REQUEUE
+        if event_bus:
+            from src.scheduling.events import ModelLoadCompleted
+
+            elapsed_ms = (time.monotonic() - load_started) * 1000
+            await event_bus.publish_nowait(
+                ModelLoadCompleted(
+                    model_id=str(context.selected_model),
+                    gateway_url=gateway_url,
+                    gateway_name=selected_gateway.name,
+                    timestamp=time.time(),
+                    success=False,
+                    load_time_ms=elapsed_ms,
+                    error=str(exc.detail) if exc.detail else str(exc),
+                    request_id=context.request_id,
+                )
+            )
         raise
+    if event_bus:
+        from src.scheduling.events import ModelLoadCompleted
+
+        elapsed_ms = (time.monotonic() - load_started) * 1000
+        await event_bus.publish_nowait(
+            ModelLoadCompleted(
+                model_id=str(context.selected_model),
+                gateway_url=gateway_url,
+                gateway_name=selected_gateway.name,
+                timestamp=time.time(),
+                success=True,
+                load_time_ms=elapsed_ms,
+                request_id=context.request_id,
+            )
+        )
     return None

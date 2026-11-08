@@ -76,6 +76,7 @@ Payload: {
 # Model load orchestration
 FEDERATION_LOAD_REQUESTED = "federation.load.requested"
 FEDERATION_LOAD_CONFIRMED = "federation.load.confirmed"
+FEDERATION_LOAD_PROGRESS = "federation.load.progress"
 FEDERATION_LOAD_FAILED = "federation.load.failed"
 
 # Orchestrator decisions
@@ -202,6 +203,29 @@ def FederationLoadRequested(
             "request_id": request_id,
             "target_remote": target_remote,
             "model_id": model_id,
+        },
+    )
+
+
+@event_factory
+def FederationLoadProgress(
+    request_id: str,
+    remote_id: str,
+    model_id: str,
+    phase: str,
+    pct: float,
+    elapsed_ms: int,
+) -> Event:
+    """Observation heartbeat while awaiting remote model load."""
+    return Event(
+        signal=FEDERATION_LOAD_PROGRESS,
+        payload={
+            "request_id": request_id,
+            "remote_id": remote_id,
+            "model_id": model_id,
+            "phase": phase,
+            "pct": pct,
+            "elapsed_ms": elapsed_ms,
         },
     )
 

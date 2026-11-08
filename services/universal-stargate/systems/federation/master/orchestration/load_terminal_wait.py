@@ -210,6 +210,8 @@ async def race_remote_load_with_terminal_events(
     remote_id: str,
     backstop_timeout_s: float,
     idle_budget_s: float | None = None,
+    request_id: str | None = None,
+    load_started_mono: float | None = None,
 ) -> tuple[Any | None, TerminalLoadResolution | None]:
     """Race remote HTTP load against terminal lifecycle events until backstop."""
     progress_tracker: _ProgressTracker | None = None
@@ -235,6 +237,22 @@ async def race_remote_load_with_terminal_events(
             if not phase or pct is None:
                 return
             progress_tracker.record(payload)
+            if request_id and load_started_mono is not None:
+                from src.scheduling.events import FederationLoadProgress
+
+                elapsed_ms = int(
+                    (asyncio.get_running_loop().time() - load_started_mono) * 1000
+                )
+                await event_bus.publish_nowait(
+                    FederationLoadProgress(
+                        request_id=request_id,
+                        remote_id=remote_id,
+                        model_id=str(payload.get("model_id", routing_key)),
+                        phase=str(phase),
+                        pct=float(pct),
+                        elapsed_ms=elapsed_ms,
+                    )
+                )
 
         progress_subscription = event_bus.subscribe_async(
             MODEL_LOADING_PROGRESS, on_progress
@@ -357,6 +375,8 @@ async def await_remote_load_with_wall_clock(
     backstop_timeout_s: float,
     model_label: str,
     idle_budget_s: float | None = None,
+    request_id: str | None = None,
+    load_started_mono: float | None = None,
 ) -> tuple[Any | None, TerminalLoadResolution | None]:
     """Await remote load; wall-clock expiry raises WallClockLoadTimeout."""
     if event_bus is None:
@@ -385,6 +405,8 @@ async def await_remote_load_with_wall_clock(
             remote_id=remote_id,
             backstop_timeout_s=backstop_timeout_s,
             idle_budget_s=idle_budget_s,
+            request_id=request_id,
+            load_started_mono=load_started_mono,
         )
     except IdleLoadTimeout:
         raise

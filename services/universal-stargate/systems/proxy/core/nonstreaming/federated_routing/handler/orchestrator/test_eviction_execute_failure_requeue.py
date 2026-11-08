@@ -260,7 +260,8 @@ async def test_execution_failed_publishes_event_and_requeues_without_client_erro
         )
 
     monkeypatch.setattr(
-        "systems.proxy.core.nonstreaming.federated_routing.handler.orchestrator.eviction_execution.execute_master_eviction",
+        eviction_mod,
+        "execute_master_eviction",
         _exec_toggle,
     )
     monkeypatch.setattr(requeue_mod, "_wait_and_retry_selection", wait_mock)
@@ -334,7 +335,8 @@ async def test_execution_failed_deadline_exhaustion_raises_capacity_not_eviction
         )
 
     monkeypatch.setattr(
-        "systems.proxy.core.nonstreaming.federated_routing.handler.orchestrator.eviction_execution.execute_master_eviction",
+        eviction_mod,
+        "execute_master_eviction",
         _exec_failed,
     )
     monkeypatch.setattr(
