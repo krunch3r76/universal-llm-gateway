@@ -14,6 +14,7 @@ from .assemble import WritingAssembleHandler
 from .draft_selector import WritingDraftSelectorHandler
 from .finalize import WritingFinalizeHandler
 from .independence import WritingIndependenceHandler
+from .local_persona_author import WritingLocalPersonaAuthorHandler
 from .obligation_coverage import WritingObligationCoverageHandler
 from .prompt_architect import WritingPromptArchitectHandler
 from .prose_rhythm import WritingProseRhythmHandler
@@ -53,6 +54,11 @@ def register_handlers(router: DomainRouter) -> None:
         "writing",
         "writing_prompt_architect_v1",
         WritingPromptArchitectHandler,
+    )
+    router.register_domain_handler_class(
+        "writing",
+        "writing_local_persona_author_v1",
+        WritingLocalPersonaAuthorHandler,
     )
     router.register_domain_handler_class(
         "writing",
