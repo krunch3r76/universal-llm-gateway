@@ -12,6 +12,7 @@ from claude_bundles.cdp_model_endpoint_staging import (
 )
 from claude_bundles.cdp_skill_profiles import (
     infer_cdp_purpose,
+    parse_files_expected_from_prompt,
     profile_slugs_for_purpose,
     profile_slugs_for_session,
     service_dirs,
@@ -180,4 +181,62 @@ def test_stage_multi_service_code_review_appends_architecture_check_line(
     ).read_text(encoding="utf-8")
     assert staged.staged is True
     assert "Architecture check: md_list docs/architecture/" in text
-    assert "libs/beta, services/alpha" in text
+    assert "that cover libs/beta, services/alpha" in text
+
+
+def test_service_dirs_ignores_top_level_lib_file_and_repo_prefix() -> None:
+    assert service_dirs(
+        [
+            "libs/claude_bundles/a.py",
+            "libs/reasoning_posture_contracts.py",
+        ]
+    ) == frozenset({"libs/claude_bundles"})
+    assert service_dirs(["universal-llm-gateway/libs/x/a.py"]) == frozenset({"libs/x"})
+
+
+def test_parse_files_expected_header_shapes() -> None:
+    body = "\n".join(
+        [
+            'files_expected (span 2 service dirs — spec): services/a/x.py, libs/b/y.py',
+            "- files_expected: `services/one/a.py`",
+            '"files_expected": services/two/b.py',
+            "**files_expected:**",
+            "- services/three/c.py",
+            "1. libs/four/d.py",
+            "files_expected: n/a",
+            "See files_expected mid-sentence is not a header line.",
+        ]
+    )
+    paths = parse_files_expected_from_prompt(body)
+    assert "services/a/x.py" in paths
+    assert "libs/b/y.py" in paths
+    assert "services/one/a.py" in paths
+    assert "services/two/b.py" in paths
+    assert "services/three/c.py" in paths
+    assert "libs/four/d.py" in paths
+    assert not any("mid-sentence" in p for p in paths)
+
+
+def test_stage_single_service_code_review_no_architecture_line(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setenv("CORTEX_FILES_ROOT", str(tmp_path))
+    body = (
+        "## Review\n"
+        "files_expected:\n"
+        "- services/alpha/a.py\n"
+        "- services/alpha/b.py\n"
+        + ("detail " * 40)
+        + "\n"
+    )
+    stage_cdp_prompt_with_skills(
+        execution_id="exec-cr-single",
+        prompt_text=body,
+        purpose=None,
+        contract="code-review",
+    )
+    text = (
+        tmp_path / "notes/system/ephemeral/cdp-endpoint/exec-cr-single/prompt.md"
+    ).read_text(encoding="utf-8")
+    assert "Architecture check:" not in text

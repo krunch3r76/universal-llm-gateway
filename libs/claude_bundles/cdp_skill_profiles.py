@@ -46,11 +46,55 @@ REVIEW_CONTRACT_SKILL_FLOOR = frozenset(
 
 _REVIEW_ARCH_PAIR: tuple[str, ...] = ("architecture-invariants", "ulg-architecture")
 _PRODUCTION_ROOT = frozenset({"services", "libs"})
-_FILES_EXPECTED_HDR = re.compile(r"^\s*files_expected\s*:\s*(.*)$", re.IGNORECASE)
-_PATH_UNDER_PRODUCTION = re.compile(
-    r"(?:^|[\s,;`-])((?:services|libs)/[^\s,;|`\"']+)",
+_REPO_PREFIX = re.compile(
+    r"^(?:workspaces://)?universal-llm-gateway/",
     re.IGNORECASE,
 )
+_FILES_EXPECTED_HDR = re.compile(
+    r"^\s*(?:[-*]|\d+\.)?\s*(?:\*\*)?[\"']?files_expected[\"']?"
+    r"(?:\s*\([^)]*\))?\s*(?:\*\*)?\s*:\s*(.*)$",
+    re.IGNORECASE,
+)
+_LIST_CONTINUATION = re.compile(r"^\s*(?:[-*]|\d+\.)\s+")
+_PATH_UNDER_PRODUCTION = re.compile(
+    r"(?:^|[\s,;`(])((?:services|libs)/[^\s,;|`\"']+)",
+    re.IGNORECASE,
+)
+_NA_VALUES = frozenset({"n/a", "none", "n/a.", "none."})
+
+
+def _normalize_ship_path(raw: str) -> str:
+    p = str(raw).strip().replace("\\", "/")
+    if not p:
+        return ""
+    p = _REPO_PREFIX.sub("", p)
+    if "://" in p:
+        _scheme, remainder = p.split("://", 1)
+        if "/" in remainder:
+            p = remainder.split("/", 1)[1]
+        else:
+            p = remainder
+        p = _REPO_PREFIX.sub("", p)
+    return p
+
+
+def _paths_from_fragment(fragment: str) -> list[str]:
+    text = fragment.strip()
+    if not text:
+        return []
+    lowered = text.lower().rstrip(".")
+    if lowered in _NA_VALUES or lowered.startswith(("n/a ", "none ")):
+        return []
+    paths: list[str] = []
+    paths.extend(re.findall(r"`([^`]+)`", text))
+    for chunk in re.split(r",\s*", text):
+        chunk = chunk.strip()
+        if not chunk:
+            continue
+        paths.extend(_PATH_UNDER_PRODUCTION.findall(chunk))
+    if not paths:
+        paths.extend(_PATH_UNDER_PRODUCTION.findall(text))
+    return paths
 
 
 def service_dirs(files_expected: Iterable[str] | None) -> frozenset[str]:
@@ -63,17 +107,13 @@ def service_dirs(files_expected: Iterable[str] | None) -> frozenset[str]:
         return frozenset()
     out: set[str] = set()
     for raw in files_expected:
-        p = str(raw).strip().replace("\\", "/")
+        p = _normalize_ship_path(str(raw))
         if not p:
             continue
-        if "://" in p:
-            _scheme, remainder = p.split("://", 1)
-            if "/" in remainder:
-                p = remainder.split("/", 1)[1]
-            else:
-                p = remainder
         parts = [seg for seg in p.split("/") if seg]
-        if len(parts) >= 2 and parts[0].lower() in _PRODUCTION_ROOT:
+        if len(parts) < 3:
+            continue
+        if parts[0].lower() in _PRODUCTION_ROOT:
             out.add(f"{parts[0]}/{parts[1]}")
     return frozenset(out)
 
@@ -88,19 +128,22 @@ def parse_files_expected_from_prompt(packet_text: str | None) -> list[str]:
         header = _FILES_EXPECTED_HDR.match(line)
         if header:
             tail = header.group(1).strip()
-            in_block = not tail
-            if tail:
-                paths.extend(re.findall(r"`([^`]+)`", tail))
-                paths.extend(_PATH_UNDER_PRODUCTION.findall(tail))
+            extracted = _paths_from_fragment(tail) if tail else []
+            if extracted:
+                paths.extend(extracted)
+                in_block = False
+            elif tail and tail.lower().rstrip(".") in _NA_VALUES:
+                in_block = False
+            else:
+                in_block = True
             continue
         if in_block:
             stripped = line.strip()
             if not stripped:
                 in_block = False
                 continue
-            if stripped.startswith("-"):
-                paths.extend(re.findall(r"`([^`]+)`", line))
-                paths.extend(_PATH_UNDER_PRODUCTION.findall(line))
+            if _LIST_CONTINUATION.match(line):
+                paths.extend(_paths_from_fragment(line))
             else:
                 in_block = False
     return paths

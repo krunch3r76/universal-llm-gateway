@@ -46,6 +46,7 @@ from claude_bundles.cdp_skill_profiles import (
     profile_slugs_for_purpose,
     service_dirs,
 )
+from claude_bundles.sealed_cdp_prefix import format_review_architecture_check_line
 
 _EPHEMERAL_PREFIX = "notes/system/ephemeral/cdp-endpoint"
 
@@ -374,15 +375,15 @@ _CDP_REQUIRED_MARKER = re.compile(r"<!--cdp-required-skills:[^\n]*-->\r?\n?")
 
 
 def _insert_review_architecture_check_line(prompt: str, *, dirs: frozenset[str]) -> str:
-    line = (
-        "Architecture check: md_list docs/architecture/ then md_read "
-        f"the sections for: {', '.join(sorted(dirs))}.\n"
-    )
     match = _CDP_REQUIRED_MARKER.search(prompt)
     if match is None:
         return prompt
     end = match.end()
-    return f"{prompt[:end]}{line}{prompt[end:]}"
+    after = prompt[end:]
+    if after.lstrip().startswith("Architecture check:"):
+        return prompt
+    line = format_review_architecture_check_line(dirs)
+    return f"{prompt[:end]}{line}{after}"
 
 
 def ensure_cdp_judgment_skills(
