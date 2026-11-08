@@ -12,7 +12,6 @@ from __future__ import annotations
 
 import json
 import os
-import threading
 from typing import TYPE_CHECKING
 
 import httpx
@@ -54,7 +53,6 @@ def _chat_completion(system: str, user: str) -> str | None:
             {"role": "system", "content": system},
             {"role": "user", "content": user},
         ],
-        "max_tokens": 256,
         "temperature": 0.3,
     }
 
@@ -300,9 +298,7 @@ def enrich_background(
     """Fire enrichment in a daemon thread — delegates to pipeline dispatch."""
     from .enrichment_dispatch import dispatch_assertion_enrichment_background
 
-    dispatch_assertion_enrichment_background(
-        assertion_id, claim, entity_id, confidence
-    )
+    dispatch_assertion_enrichment_background(assertion_id, claim, entity_id, confidence)
 
 
 def enrich_old_assertion_events(conn: sqlite3.Connection, assertion_id: int) -> None:

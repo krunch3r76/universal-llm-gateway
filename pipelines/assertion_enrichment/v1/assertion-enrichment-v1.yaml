@@ -36,7 +36,9 @@ steps:
     prompt_ref: assertion_enrichment.v1.prospective
     generation_parameters:
       temperature: 0.3
-      max_tokens: 256
+      # Explicitly suppress qwen3 thinking; profile (qwen3-instruct) also sets this via chat_template_kwargs, but certain inputs bypass profile-level suppression.
+      chat_template_kwargs:
+        enable_thinking: false
 
   - name: events
     type: assertion_enrichment_events_v1
@@ -44,4 +46,6 @@ steps:
     prompt_ref: assertion_enrichment.v1.events
     generation_parameters:
       temperature: 0.3
-      max_tokens: 512
+      # Explicitly suppress qwen3 thinking; profile (qwen3-instruct) also sets this via chat_template_kwargs, but certain inputs bypass profile-level suppression.
+      chat_template_kwargs:
+        enable_thinking: false

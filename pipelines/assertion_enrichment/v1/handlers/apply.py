@@ -36,7 +36,9 @@ class _EnrichmentWritebackBase(BaseHandler):
     kind_name: str = ""
 
     async def _load_assertion(self, client: Any, assertion_id: int) -> dict[str, Any]:
-        return await self._dispatch(client, "assertion_get", {"assertion_id": assertion_id})
+        return await self._dispatch(
+            client, "assertion_get", {"assertion_id": assertion_id}
+        )
 
     @staticmethod
     async def _dispatch(
@@ -80,14 +82,18 @@ class _EnrichmentWritebackBase(BaseHandler):
         rendered = self._render_prompt(step.prompt_ref, template_vars, context)
         model_id = self._resolve_model_alias(step.model_ref, context)
         gen = step.generation_parameters or {}
+        model_kwargs: dict[str, float | int] = {}
+        if "temperature" in gen:
+            model_kwargs["temperature"] = gen["temperature"]
+        if "max_tokens" in gen:
+            model_kwargs["max_tokens"] = gen["max_tokens"]
         llm_result = await self._call_model(
             model_id,
             rendered.user_prompt,
             step,
             context,
             system_prompt=rendered.system_prompt,
-            temperature=gen.get("temperature", 0.3),
-            max_tokens=gen.get("max_tokens", 256),
+            **model_kwargs,
         )
         content = (llm_result.content or "").strip()
         if not content:
