@@ -132,6 +132,53 @@ def test_stale_wake_draft_multi_turn() -> None:
     assert _busy_or_draft_reason({"composer_draft": stale}) is None
 
 
+@pytest.mark.asyncio
+async def test_deliver_wake_free_text_gate_unchanged() -> None:
+    out = await deliver_wake(
+        display="8",
+        app="cursor",
+        thread="22517",
+        title="t",
+        turn=1,
+        text="x",
+    )
+    assert out["reason"] == "exchange_paste_cursor_stage_manager_only"
+    bad = await deliver_wake(
+        display="8",
+        app="cursor",
+        thread="1\n2",
+        title="t",
+        turn=1,
+        wake_groups=[{"thread_id": "1\n2", "turn": 1}],
+    )
+    assert bad["reason"] == "bad_options"
+    both = await deliver_wake(
+        display="8",
+        app="cursor",
+        thread="22517",
+        title="t",
+        turn=1,
+        text="x",
+        wake_groups=[{"thread_id": "22517", "turn": 1}],
+    )
+    assert both["reason"] == "bad_options"
+
+
+def test_stale_wake_predicate_shared_by_all_sites() -> None:
+    from cursor_bridge import dom_composer_paste as dcp
+    from cursor_bridge import glass_services_js as gsj
+    from cursor_bridge import wake_delivery as wd
+    from cursor_bridge.chat_target import STALE_WAKE_LINES_JS
+
+    assert STALE_WAKE_LINES_JS in wd._COMPOSER_JS["grok"]
+    assert STALE_WAKE_LINES_JS in wd._send_fallback_js("BRIDGE_WAKE thread=1 turn=1")
+    js = dcp.operator_busy_probe_js(selector='[aria-label="Prompt"][contenteditable="true"]')
+    assert STALE_WAKE_LINES_JS in js
+    insert = dcp._set_composer_body('[aria-label="Prompt"]', "line")
+    assert STALE_WAKE_LINES_JS in insert
+    assert STALE_WAKE_LINES_JS in gsj.launch_new_agent_tab_js("BRIDGE_WAKE thread=1 turn=1", "")
+
+
 def test_wake_lines_multi_thread_stale_draft_detected() -> None:
     from cursor_bridge.chat_target import wake_lines
 

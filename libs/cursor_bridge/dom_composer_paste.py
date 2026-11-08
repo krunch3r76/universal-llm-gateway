@@ -532,10 +532,7 @@ READ_OPERATOR_BUSY_JS = (
   }
   const draft = ulgComposerSurfaceText(el).trim();
   const sig = String(g.ourDraftSig || '').trim();
-  const staleWake = (() => {
-    const lines = draft.split(/\\n+/).map(s => s.trim()).filter(Boolean);
-    return lines.length > 0 && lines.every(l => /^BRIDGE_WAKE\\s+thread=\\S+\\s+turn=\\d+(?:,\\d+)*$/.test(l));
-  })();
+  const staleWake = %STALE_WAKE_JS%;
   const watermark = %WATERMARK%;
   const ours = sig && draft === sig;
   const foreignDraft = draft.length > 0 && !staleWake && !ours
@@ -650,6 +647,9 @@ def _set_composer_body(
     line = _dom_paste_text(text, preserve_newlines=preserve_newlines)
     msg = json.dumps(line)
     writer = json.dumps(str(draft_writer or ""))
+    from cursor_bridge.chat_target import stale_wake_lines_js
+
+    stale_js = stale_wake_lines_js("normDraft")
     return (
         f"(()=>{{{_ULG_NORM_COMPOSER_JS}"
         f"const el=({find});"
@@ -660,8 +660,7 @@ def _set_composer_body(
         "const normLine=ulgNormalizeComposerText(line);"
         "const draftRaw=(el.innerText||el.value||'');"
         "const normDraft=ulgNormalizeComposerText(draftRaw);"
-        "const stale=(()=>{const ls=normDraft.split(/\\n+/).map(s=>s.trim()).filter(Boolean);"
-        "return ls.length>0&&ls.every(l=>/^BRIDGE_WAKE\\s+thread=\\S+\\s+turn=\\d+(?:,\\d+)*$/.test(l));})();"
+        f"const stale={stale_js};"
         "const composerEmpty=ulgComposerDomEmpty(el);"
         "if(!composerEmpty&&!stale){"
         "const writer=String(g.ourDraftWriter||'').trim();"
@@ -899,9 +898,12 @@ def _click_send_body(
 
 
 def operator_busy_probe_js(*, selector: str, watermark: str = "") -> str:
+    from cursor_bridge.chat_target import stale_wake_lines_js
+
     sels = _selector_list(selector) or [selector]
     body = READ_OPERATOR_BUSY_JS.replace("%SELECTORS%", json.dumps(sels))
-    return body.replace("%WATERMARK%", json.dumps(watermark or ""))
+    body = body.replace("%WATERMARK%", json.dumps(watermark or ""))
+    return body.replace("%STALE_WAKE_JS%", stale_wake_lines_js("draft"))
 
 
 def operator_activity_suppress_js(*, duration_ms: int = 5000) -> str:

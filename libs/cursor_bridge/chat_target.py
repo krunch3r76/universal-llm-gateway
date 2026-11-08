@@ -16,6 +16,17 @@ from collections.abc import Sequence
 from typing import Any
 
 _STALE_WAKE_LINE = re.compile(r"^BRIDGE_WAKE\s+thread=\S+\s+turn=\d+(?:,\d+)*$")
+STALE_WAKE_LINES_JS = (
+    "lines.length>0&&lines.every(l=>/^BRIDGE_WAKE\\s+thread=\\S+\\s+turn=\\d+(?:,\\d+)*$/.test(l))"
+)
+
+
+def stale_wake_lines_js(operand: str) -> str:
+    """JavaScript expression: true when every non-empty line matches the wake regex."""
+    return (
+        f"(()=>{{const lines=String({operand}||'').trim().split(/\\n+/).map(s=>s.trim())"
+        f".filter(Boolean);return {STALE_WAKE_LINES_JS};}})()"
+    )
 
 
 def chat_title(
@@ -112,35 +123,16 @@ def wake_line(thread: str, turn: int | str | Sequence[int]) -> str:
     return f"BRIDGE_WAKE thread={thread_s} turn={turn_s}"
 
 
-def _max_turn_in_group(turn: int | str | Sequence[int]) -> int:
-    if isinstance(turn, bool) or not isinstance(turn, int):
-        if isinstance(turn, str):
-            nums = [
-                int(p)
-                for p in turn.split(",")
-                if p.strip().isdigit() and int(p.strip()) >= 1
-            ]
-            return max(nums) if nums else 0
-        if isinstance(turn, Sequence):
-            nums = [
-                int(x) for x in turn if isinstance(x, int) and not isinstance(x, bool)
-            ]
-            return max(nums) if nums else 0
-        return 0
-    return turn if turn >= 1 else 0
-
-
 def wake_lines(groups: Sequence[dict[str, Any]]) -> str:
-    """Multi-line paste: one ``wake_line`` per group, ordered by max turn ascending.
+    """Multi-line paste: one ``wake_line`` per group in caller order.
 
     Each group must carry ``thread_id`` and ``turn`` (same shapes as ``wake_line``).
     A single group is byte-identical to ``wake_line`` for that thread and turn set.
     """
     if not groups:
         raise ValueError("groups must be non-empty")
-    ordered = sorted(groups, key=lambda g: _max_turn_in_group(g["turn"]))
     return "\n".join(
-        wake_line(str(g["thread_id"]), g["turn"]) for g in ordered
+        wake_line(str(g["thread_id"]), g["turn"]) for g in groups
     )
 
 

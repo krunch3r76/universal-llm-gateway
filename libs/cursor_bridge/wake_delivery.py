@@ -33,7 +33,12 @@ from cursor_bridge.chat_surface import (
     select_sidebar_target,
     wake_decision,
 )
-from cursor_bridge.chat_target import is_stale_wake_draft, wake_line
+from cursor_bridge.chat_target import (
+    is_stale_wake_draft,
+    stale_wake_lines_js,
+    wake_line,
+    wake_lines,
+)
 from cursor_bridge.display_interaction_locks import (
     agent_paste_lock,
     display_switch_lock,
@@ -65,8 +70,7 @@ def _composer_focus_js(selector: str) -> str:
     return (
         f"(()=>{{const el=document.querySelector({sel});"
         "if(!el)return{ok:false};const draft=(el.innerText||'').trim();"
-        "const stale=(()=>{const lines=draft.split(/\\n+/).map(s=>s.trim()).filter(Boolean);"
-        "return lines.length>0&&lines.every(l=>/^BRIDGE_WAKE\\s+thread=\\S+\\s+turn=\\d+(?:,\\d+)*$/.test(l));})();"
+        f"const stale={stale_wake_lines_js('draft')};"
         "if(draft.length>0&&!stale)return{ok:false,reason:'composer_not_empty',draft};"
         "el.focus();const sel=window.getSelection();"
         "if(sel){const range=document.createRange();range.selectNodeContents(el);"
@@ -178,14 +182,34 @@ def _send_fallback_js(line: str) -> str:
         '(()=>{const el=document.querySelector(\'[aria-label="Prompt"][contenteditable="true"]\');'
         "if(!el)return{ok:true,send_fallback_clicked:false};"
         f"const text=(el.innerText||'').trim(),line={lj};"
-        "const staleLines=(t)=>{const ls=String(t||'').trim().split(/\\n+/).map(s=>s.trim()).filter(Boolean);"
-        "return ls.length>0&&ls.every(l=>/^BRIDGE_WAKE\\s+thread=\\S+\\s+turn=\\d+(?:,\\d+)*$/.test(l));};"
-        "if(!text||(text!==line.trim()&&!staleLines(text)))"
+        f"const staleText={stale_wake_lines_js('text')};"
+        "if(!text||(text!==line.trim()&&!staleText))"
         "return{ok:true,send_fallback_clicked:false};"
         f"const btn=document.querySelector('{sel}');"
         "if(!btn)return{ok:true,send_fallback_clicked:false};btn.click();"
         "return{ok:true,send_fallback_clicked:true};})()"
     )
+
+
+def _normalize_wake_groups(
+    raw: object,
+) -> list[dict[str, Any]] | None:
+    if raw is None:
+        return None
+    if not isinstance(raw, list) or not raw:
+        return None
+    groups: list[dict[str, Any]] = []
+    for item in raw:
+        if not isinstance(item, dict):
+            return None
+        thread_id = str(item.get("thread_id") or "").strip()
+        if not thread_id or "\n" in thread_id:
+            return None
+        turn = item.get("turn")
+        if turn is None:
+            return None
+        groups.append({"thread_id": thread_id, "turn": turn})
+    return groups
 
 
 async def deliver_wake(
@@ -199,6 +223,7 @@ async def deliver_wake(
     select: bool = True,
     turn: object,
     text: str = "",
+    wake_groups: object = None,
 ) -> dict[str, Any]:
     """Paste one wake into the target sidebar chat and report whether it landed.
 
@@ -232,6 +257,11 @@ async def deliver_wake(
     if number is None or not thread_s or (not title_s and not slug_s and not aid_s):
         return _refuse("bad_options", display=target["display"], app=target["app"])
     text_s = (text or "").strip()
+    groups = _normalize_wake_groups(wake_groups)
+    if wake_groups is not None and groups is None:
+        return _refuse("bad_options", display=target["display"], app=target["app"])
+    if text_s and groups is not None:
+        return _refuse("bad_options", display=target["display"], app=target["app"])
     if text_s:
         if target["app"] != "cursor" or thread_s != "19627":
             return _refuse(
@@ -240,6 +270,11 @@ async def deliver_wake(
                 app=target["app"],
             )
         line = text_s
+    elif groups is not None:
+        try:
+            line = wake_lines(groups)
+        except ValueError:
+            return _refuse("bad_options", display=target["display"], app=target["app"])
     else:
         try:
             line = wake_line(thread_s, number)

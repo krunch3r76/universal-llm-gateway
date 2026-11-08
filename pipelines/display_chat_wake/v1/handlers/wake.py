@@ -43,6 +43,7 @@ class DisplayChatWakeHandler(BaseHandler):
             select=True if select_opt is None else bool(select_opt),
             turn=opts.get("turn"),
             text=str(opts.get("text") or ""),
+            wake_groups=opts.get("wake_groups"),
         )
         raw = json.dumps(result)
         return StepOutput(raw=raw, json=result)

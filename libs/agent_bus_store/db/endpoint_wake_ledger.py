@@ -9,6 +9,7 @@ import re
 import sqlite3
 import uuid
 from datetime import UTC, datetime, timedelta
+from collections.abc import Sequence
 from typing import Any
 
 from agent_seat.registry import STAGE_MANAGER_ADDRESSES, normalize_bus_address
@@ -672,32 +673,25 @@ def _tab_coalesce_applies_to_agent(agent: str) -> bool:
     return True
 
 
-def _tab_pending_coalesce_blocks(
-    conn: sqlite3.Connection,
+def _tab_hold_from_rows(
+    rows: Sequence[sqlite3.Row],
     *,
     delivery_agent_id: str,
     stamp: str,
 ) -> bool:
-    """Hold tab claims until quiet window or max-hold cap (fresh pending burst)."""
+    """Hold until quiet window or max-hold over eligible tab-id rows only."""
     tab_id = str(delivery_agent_id or "").strip()
     if not tab_id:
         return False
-    row = conn.execute(
-        "SELECT MIN(datetime(created_at)) AS oldest, MAX(datetime(created_at)) AS newest "
-        "FROM endpoint_wake_ledger "
-        "WHERE state='pending' AND delivery_agent_id=?",
-        (tab_id,),
-    ).fetchone()
-    oldest = row["oldest"] if row else None
-    newest = row["newest"] if row else None
-    if oldest is None or newest is None:
+    eligible = [
+        r for r in rows if str(r["delivery_agent_id"] or "").strip() == tab_id
+    ]
+    if not eligible:
         return False
-    quiet_before = _shift(
-        stamp, -int(_endpoint_wake_tab_coalesce_s())
-    )
-    max_hold_before = _shift(
-        stamp, -int(_endpoint_wake_tab_coalesce_max_s())
-    )
+    oldest = min(str(r["created_at"]) for r in eligible)
+    newest = max(str(r["created_at"]) for r in eligible)
+    quiet_before = _shift(stamp, -int(_endpoint_wake_tab_coalesce_s()))
+    max_hold_before = _shift(stamp, -int(_endpoint_wake_tab_coalesce_max_s()))
     return newest > quiet_before and oldest > max_hold_before
 
 
@@ -1505,13 +1499,13 @@ def claim_due_wakes(
             ttl_before=ttl_before,
             delivery_agent_id=None,
         )
-        for _ in range(_CLAIM_SKIP_GROUP_CAP):
-            group = conn.execute(
-                _due_wake_group_sql(orion_next_gate, delivery_agent_id=None) + " LIMIT ?",
-                (*group_params_base, limit),
-            ).fetchone()
-            if group is None:
-                return {"wake_id": None, "rows": all_skipped}
+        prefetched = conn.execute(
+            _due_wake_group_sql(orion_next_gate, delivery_agent_id=None)
+            + " LIMIT ?",
+            (*group_params_base, _CLAIM_SKIP_GROUP_CAP),
+        ).fetchall()
+        held_tabs: set[str] = set()
+        for group in prefetched:
             if _orion_pending_coalesce_blocks(
                 conn,
                 agent=str(group["agent"]),
@@ -1536,16 +1530,17 @@ def claim_due_wakes(
                     if candidate:
                         tab_delivery_id = candidate
                         break
+            thread_id = str(group["thread_id"])
             tab_merge = bool(
                 tab_delivery_id
                 and _tab_coalesce_applies_to_agent(str(group["agent"]))
+                and thread_id != "19627"
             )
-            if tab_merge and _tab_pending_coalesce_blocks(
-                conn, delivery_agent_id=tab_delivery_id, stamp=stamp
-            ):
-                continue
             groups_to_merge = [group]
+            merge_rows_pool: list[sqlite3.Row] = list(rows)
             if tab_merge:
+                if tab_delivery_id in held_tabs:
+                    continue
                 merge_params = _due_wake_group_params(
                     stamp=stamp,
                     retry_before=retry_before,
@@ -1561,6 +1556,25 @@ def claim_due_wakes(
                     ),
                     merge_params,
                 ).fetchall()
+                merge_rows_pool = []
+                for grp in groups_to_merge:
+                    merge_rows_pool.extend(
+                        _group_pending_rows(
+                            conn,
+                            grp,
+                            stamp=stamp,
+                            retry_before=retry_before,
+                            orion_next_gate_sql=group_next_sql,
+                            orion_next_extra_params=orion_group_params,
+                        )
+                    )
+                if _tab_hold_from_rows(
+                    merge_rows_pool,
+                    delivery_agent_id=tab_delivery_id,
+                    stamp=stamp,
+                ):
+                    held_tabs.add(tab_delivery_id)
+                    continue
             seen_claim_ids: set[int] = set()
             for grp in groups_to_merge:
                 grp_rows = (
@@ -1579,10 +1593,6 @@ def claim_due_wakes(
                 for row in grp_rows:
                     row_id = int(row["id"])
                     if row_id in seen_claim_ids:
-                        continue
-                    if tab_merge and str(row["delivery_agent_id"] or "").strip() != (
-                        tab_delivery_id
-                    ):
                         continue
                     from bus_watch.endpoint_wake_composer_defer import (
                         composer_defer_blocks_claim,
@@ -1634,7 +1644,11 @@ def claim_due_wakes(
                     (wake_id,),
                 ).fetchall()
             ]
-            return {"wake_id": wake_id, "rows": claimed}
+            return {
+                "wake_id": wake_id,
+                "rows": claimed,
+                "delivery_agent_id": tab_delivery_id if tab_merge else None,
+            }
         return {"wake_id": None, "rows": all_skipped}
 
 

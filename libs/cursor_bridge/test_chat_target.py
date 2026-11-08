@@ -10,7 +10,7 @@ def test_wake_lines_single_group_matches_wake_line() -> None:
     assert wake_lines(groups) == wake_line("15851", "1647,1648,1649")
 
 
-def test_wake_lines_orders_by_max_turn() -> None:
+def test_wake_lines_preserves_caller_order() -> None:
     groups = [
         {"thread_id": "200", "turn": 5},
         {"thread_id": "100", "turn": 10},

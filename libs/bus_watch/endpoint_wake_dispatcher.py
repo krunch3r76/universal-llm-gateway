@@ -1564,7 +1564,8 @@ def _pending_item(
         agent_id = str(sub.get("agent_id") or "").strip()
         if display:
             item["display"] = display
-        if agent_id:
+        surface = str(sub.get("surface") or "").strip().lower()
+        if agent_id and surface in ("cursor", "grok"):
             item["delivery_agent_id"] = agent_id
     return item
 
@@ -1815,10 +1816,13 @@ def _display_post(
     turn: int | str,
     *,
     text: str = "",
+    wake_groups: list[dict[str, Any]] | None = None,
 ) -> tuple[str, str]:
     _display_started = time.monotonic()
     try:
-        return _display_post_body(row, sub, turn, text=text)
+        return _display_post_body(
+            row, sub, turn, text=text, wake_groups=wake_groups
+        )
     finally:
         from bus_watch.endpoint_wake_pass_timing import note_display_post_duration
 
@@ -1831,6 +1835,7 @@ def _display_post_body(
     turn: int | str,
     *,
     text: str = "",
+    wake_groups: list[dict[str, Any]] | None = None,
 ) -> tuple[str, str]:
     options = {
         "display": sub.get("display"),
@@ -1843,6 +1848,8 @@ def _display_post_body(
     }
     if (text or "").strip():
         options["text"] = text.strip()
+    if wake_groups:
+        options["wake_groups"] = wake_groups
     body = {
         "model": "display-chat-wake",
         "messages": [{"role": "user", "content": "wake"}],
@@ -2246,7 +2253,16 @@ def fire_due_wakes(store: StoreClient) -> dict[str, Any] | None:
     wake_id = claimed.get("wake_id")
     if not wake_id or not rows:
         return claimed
-    primary = max(rows, key=lambda r: (int(r["turn_number"]), int(r["turn_id"])))
+    delivery_tab = str(claimed.get("delivery_agent_id") or "").strip()
+    if delivery_tab:
+        tab_rows = [
+            r
+            for r in rows
+            if str(r.get("delivery_agent_id") or "").strip() == delivery_tab
+        ]
+        primary = max(tab_rows or rows, key=lambda r: int(r["turn_id"]))
+    else:
+        primary = max(rows, key=lambda r: int(r["turn_id"]))
     agent = primary["agent"]
     thread = primary["thread_id"]
     decided_by_rule = str(rows[0].get("decided_by_rule") or "").strip() or None
@@ -2480,15 +2496,13 @@ def fire_due_wakes(store: StoreClient) -> dict[str, Any] | None:
     wake_groups: list[dict[str, Any]] = []
     for tid, trows in sorted(
         by_thread.items(),
-        key=lambda kv: max(int(x["turn_number"]) for x in kv[1]),
+        key=lambda kv: max(int(x["turn_id"]) for x in kv[1]),
     ):
         nums = sorted({int(x["turn_number"]) for x in trows})
         turn_part: int | str = (
             nums[0] if len(nums) == 1 else ",".join(str(n) for n in nums)
         )
         wake_groups.append({"thread_id": tid, "turn": turn_part})
-    from cursor_bridge.chat_target import wake_lines
-
     primary_nums = sorted(
         {
             int(r["turn_number"])
@@ -2501,16 +2515,19 @@ def fire_due_wakes(store: StoreClient) -> dict[str, Any] | None:
         if len(primary_nums) == 1
         else ",".join(str(n) for n in primary_nums)
     )
-    paste_text = ""
     if (
         len(by_thread) == 1
         and str(primary["thread_id"]) == "19627"
         and str(sub.get("surface") or "") == "cursor"
     ):
         paste_text = exchange_lines(rows)
+        state, reason = _display_post(primary, sub, turn_arg, text=paste_text)
+    elif len(by_thread) > 1:
+        state, reason = _display_post(
+            primary, sub, turn_arg, text="", wake_groups=wake_groups
+        )
     else:
-        paste_text = wake_lines(wake_groups)
-    state, reason = _display_post(primary, sub, turn_arg, text=paste_text)
+        state, reason = _display_post(primary, sub, turn_arg)
     display_reachable_age = _note_display_post_reason(reason)
     if _update_no_composer_streak_and_gate_unsubscribe(
         sub, thread, reason, display_reachable_age=display_reachable_age

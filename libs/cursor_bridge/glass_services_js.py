@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 
+from cursor_bridge.chat_target import stale_wake_lines_js
 from cursor_bridge.glass_agent_run_state import AGENT_RUN_STATE_FN
 
 GLASS_SERVICE_MAP_FN = r"""
@@ -525,7 +526,7 @@ def launch_new_agent_tab_js(
         '    \'[aria-label="Prompt"][contenteditable="true"][data-sidebar-file-drop-editor-agent-id="\' + agentId + \'"]\'\n'
         "  );\n"
         "  const hasDomEditor = prompt && prompt.editor && prompt.editor.commands;\n"
-        "  const stale = /^BRIDGE_WAKE\\s+thread=\\S+\\s+turn=\\d+(?:,\\d+)*$/.test(String(text || '').trim());\n"
+        f"  const stale = {stale_wake_lines_js('text')};\n"
         "  if (hasDomEditor) {\n"
         "    const existing = (prompt.innerText || '').trim();\n"
         "    if (existing.length > 0 && !stale && existing !== String(text || '').trim()) {\n"
