@@ -1853,6 +1853,61 @@ class FederatedGatewayManager(Sequential):
             )
         return gw
 
+    def apply_gateway_forensics_snapshot(
+        self,
+        gateway_id: str,
+        snapshot: dict[str, Any] | None,
+    ) -> None:
+        """Apply edge-captured gateway_state_snapshot to master routing view."""
+        if not snapshot:
+            return
+        gw = self._gateways.get(gateway_id)
+        if gw is None:
+            return
+        merged = self._merge_forensics_gateway_snapshot(gw, snapshot)
+        if merged is not gw:
+            self._gateways[gateway_id] = merged
+
+    def _merge_forensics_gateway_snapshot(
+        self,
+        gw: FederatedGateway,
+        snapshot: dict[str, Any],
+    ) -> FederatedGateway:
+        """Overlay resources and model sets from edge load-failure forensics."""
+        updates: dict[str, Any] = {}
+        resources = snapshot.get("resources")
+        if isinstance(resources, dict):
+            if resources.get("available_vram_mb") is not None:
+                updates["vram_free_mb"] = int(resources["available_vram_mb"])
+            if resources.get("available_ram_mb") is not None:
+                updates["ram_free_mb"] = int(resources["available_ram_mb"])
+            if resources.get("total_vram_mb") is not None:
+                updates["vram_total_mb"] = int(resources["total_vram_mb"])
+            if resources.get("total_ram_mb") is not None:
+                updates["ram_total_mb"] = int(resources["total_ram_mb"])
+
+        for field, key in (
+            ("loaded_models", "loaded_models"),
+            ("loading_models", "loading_models"),
+            ("busy_models", "busy_models"),
+        ):
+            raw = snapshot.get(key)
+            if isinstance(raw, list):
+                try:
+                    updates[field] = frozenset(ModelId.parse(str(mid)) for mid in raw)
+                except (ValueError, TypeError):
+                    continue
+
+        if not updates:
+            return gw
+        logger.info(
+            "📊 Forensics snapshot for %s: vram_free=%sMB (was %sMB)",
+            gw.gateway_id,
+            updates.get("vram_free_mb", gw.vram_free_mb),
+            gw.vram_free_mb,
+        )
+        return self._replace_gateway(gw, **updates)
+
     def _apply_model_load_failed(
         self, gw: FederatedGateway, parsed: dict[str, Any]
     ) -> FederatedGateway:
@@ -1864,6 +1919,9 @@ class FederatedGatewayManager(Sequential):
         model_id = parsed.get("model_id")
         if not model_id:
             return gw
+        snapshot_raw = parsed.get("gateway_state_snapshot")
+        if isinstance(snapshot_raw, dict):
+            gw = self._merge_forensics_gateway_snapshot(gw, snapshot_raw)
         gw = self._replace_gateway(
             gw,
             loading_models=gw.loading_models - {model_id},

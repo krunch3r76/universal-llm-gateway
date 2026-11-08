@@ -61,14 +61,14 @@ def _model_matches(payload: dict[str, Any], expected: ModelId | str) -> bool:
     if not model_id:
         return False
     if isinstance(expected, str):
-        expected_id = ModelId.parse(expected)
+        expected_key = ModelId.parse(expected).routing_key
     else:
-        expected_id = expected
+        expected_key = expected.routing_key
     try:
         event_id = ModelId.parse(str(model_id))
+        return event_id.routing_key == expected_key
     except (ValueError, TypeError):
-        return False
-    return event_id == expected_id
+        return str(model_id) == expected_key
 
 
 @dataclass

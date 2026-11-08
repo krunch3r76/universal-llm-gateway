@@ -183,6 +183,47 @@ async def test_terminal_load_failed_resolves_without_load_timeout() -> None:
 
 
 @pytest.mark.asyncio
+async def test_terminal_load_failed_hybrid_event_id_resolves_fast() -> None:
+    """Federation telemetry may carry -hybrid suffix while wait key is routing_key."""
+    base = "hermes-3-llama-3-1-70b-uncensored-q4-k-m-32768"
+    model = _FakeModelId(f"{base}-hybrid")
+    event_bus = _FakeEventBus()
+    orchestrator = FederatedLoadOrchestrator(
+        _HangingForwarder(),
+        config=OrchestrationConfig(
+            load_retry_count=0,
+            load_timeout=MODEL_LOAD_BACKSTOP_TIMEOUT_S,
+        ),
+        event_bus=event_bus,
+    )
+
+    async def emit_failure() -> None:
+        await asyncio.sleep(0.01)
+        from src.scheduling.events.model_lifecycle import MODEL_LOAD_FAILED
+
+        await event_bus.publish(
+            _FakeEvent(
+                MODEL_LOAD_FAILED,
+                {
+                    "model_id": f"{base}-hybrid",
+                    "error": "VRAM: need 30184MB, have 11980MB",
+                    "gateway_name": "edge-jupiter-gateway",
+                },
+            )
+        )
+
+    emit_task = asyncio.create_task(emit_failure())
+    started = asyncio.get_running_loop().time()
+    with pytest.raises(HTTPException) as excinfo:
+        await orchestrator.ensure_model_loaded_on_remote(_gateway(), model)
+    elapsed = asyncio.get_running_loop().time() - started
+    await emit_task
+
+    assert excinfo.value.detail["code"] == "INSUFFICIENT_VRAM"
+    assert elapsed < 2.0
+
+
+@pytest.mark.asyncio
 async def test_terminal_loaded_first_does_not_false_load_timeout() -> None:
     """LOADED wins while HTTP hangs — must not return false LOAD_TIMEOUT.
 
