@@ -46,6 +46,11 @@ def policy_review_models() -> frozenset[str]:
     prefix, sep, _rest = critic.partition("/")
     prefix = f"{prefix}/" if sep else critic
     models = {model for model in policy.allowed_critics if model.startswith(prefix)}
+    models |= {
+        model
+        for model in policy.allowed_critics
+        if model.startswith("anthropic/")
+    }
     models.add(critic)
     return frozenset(models)
 

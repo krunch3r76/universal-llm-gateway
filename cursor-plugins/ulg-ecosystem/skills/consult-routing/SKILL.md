@@ -33,9 +33,9 @@ Cognitive routing on every seat; CODE_EXTRA = **code MCP only**. On life: in-sea
 
 ### CDP transport (MCP `project_ask` removed)
 
-This section is the `cdp/` substrate (web-anthropic-cdp). Conductor and review default is `impresario.critic` (`cdp/opus-5.5`) and `workflows.*.model` in `config/routing/route_policy.yaml`. `cdp/` is allowed and preferred for conductor and supervisor legs over `anthropic/*` and over `cursor/*` except `cursor/composer-2.5` while cheaper. No CDP host ⇒ record `cdp_fail_route=anthropic` and dispatch `anthropic/claude-sonnet-5-5`.
+This section is the `cdp/` substrate (web-anthropic-cdp). Conductor and review default is `impresario.critic` (`cdp/opus-5.5`) and `workflows.*.model` in `config/routing/route_policy.yaml`. `cdp/` is allowed and preferred for conductor and supervisor legs over `anthropic/*` and over any `cursor/*` model except `cursor/composer-2.5` while it is cheaper. No CDP host ⇒ record `cdp_fail_route=anthropic` and dispatch `anthropic/claude-sonnet-5-5`.
 
-`cdp/` wires: `cdp/opus-5.5`, `cdp/fable-5.1`, `cdp/sonnet`, `cdp/sonnet-5.5` → poll `poll_hint`. `cdp/sonnet` is Sonnet 5.5; `cdp/sonnet-5` is the older generation.
+`cdp/` wires: `cdp/opus-5.5`, `cdp/fable-5.1`, `cdp/sonnet`, `cdp/sonnet-5.5` → poll `poll_hint`. `cdp/sonnet` is Sonnet 5.5; `cdp/sonnet-5` is legacy.
 
 Reasoning strength, low → high. Walk effort `high` → `extra` → `max` inside a rung before the next wire. Opus 5 reasons harder than Opus 5.5. Fable 5 reasons harder than Fable 5.1. Opus versions share one usage channel; Fable versions share the other. Fable can exhaust while Opus remains. Name the full wire. Bare `cdp/opus` → `cdp/opus-5.5`; bare `cdp/fable` → `cdp/fable-5.1`.
 

@@ -15,7 +15,6 @@ from g6_review_class import (  # noqa: E402
     adopt_review_fallback,
     fallback_wall_s,
     is_review_class_call,
-    policy_review_models,
     refuse_filtered_team_dispatch,
     refuse_filtered_tools_call,
     review_fallback_model,
@@ -33,14 +32,21 @@ _REVIEW = {
 
 
 def test_nested_review_call_is_admitted() -> None:
-    admitted = policy_review_models()
     assert is_review_class_call(_REVIEW, seat_thread="12988")
-    for model in sorted(admitted):
-        assert is_review_class_call(
-            {**_REVIEW, "model": model}, seat_thread="12988"
-        ), model
-    assert not is_review_class_call(
+    assert is_review_class_call(
         {**_REVIEW, "model": "anthropic/claude-sonnet-5-5"}, seat_thread="12988"
+    )
+    assert is_review_class_call(
+        {**_REVIEW, "model": "anthropic/claude-opus-5-5"}, seat_thread="12988"
+    )
+    assert is_review_class_call(
+        {**_REVIEW, "model": "anthropic/claude-fable-5-1"}, seat_thread="12988"
+    )
+    assert is_review_class_call(
+        {**_REVIEW, "model": "cdp/opus-5.5"}, seat_thread="12988"
+    )
+    assert not is_review_class_call(
+        {**_REVIEW, "model": "cursor/grok-4.7"}, seat_thread="12988"
     )
     assert not is_review_class_call(
         {**_REVIEW, "model": "cursor/composer-2.5"}, seat_thread="12988"
@@ -247,8 +253,14 @@ def test_allowlist_refuses_confused_deputy_and_foreign_thread() -> None:
     assert is_review_class_call(_REVIEW, seat_thread="12988")
     alt_cdp = {**_REVIEW, "model": "cdp/opus-5"}
     assert is_review_class_call(alt_cdp, seat_thread="12988")
-    assert not is_review_class_call(
+    assert is_review_class_call(
         {**_REVIEW, "model": "anthropic/claude-opus-5-5"}, seat_thread="12988"
+    )
+    assert is_review_class_call(
+        {**_REVIEW, "model": "cdp/opus-5.5"}, seat_thread="12988"
+    )
+    assert not is_review_class_call(
+        {**_REVIEW, "model": "cursor/grok-4.7"}, seat_thread="12988"
     )
     assert not is_review_class_call(
         {**alt_cdp, "contract": "freeform"}, seat_thread="12988"

@@ -231,9 +231,9 @@ Gear-3 ticker fires on: unread **live** lane · finished **work** lane closeout 
 | Long-context reasoning inside work tab | `cursor/grok-4.7` (card 256k, knob 500k) | **`cdp/fable`** only when Kaywan asks — ¬ `cursor/claude-*` |
 | Successor (this tab must end) | attended: CHECKPOINT + `scripts/liaison-ide-hop.py --root R --row "<NOW>" --transcript-id <uuid>`; autonomous: § Headless successor | — |
 
-**Reasoning recon** (2026-09-10): before judgment bind, wide read to `cdp/opus-5.5` (`impresario.critic`); premium seat spends window on the bind, not breadth.
+**Reasoning recon** (2026-09-10): before judgment bind, read to `cdp/opus-5.5` (`impresario.critic`); premium seat spends on bind, ¬ breadth.
 
-Reasoning strength low→high on `cdp/`: `cdp/opus-5.5`, `cdp/fable-5.1`. Walk `high` → `extra` → `max` inside a rung before the next wire. `cdp/` is allowed and preferred for conductor and supervisor legs over `anthropic/*` and over `cursor/*` except `cursor/composer-2.5` while cheaper. No CDP host ⇒ record `cdp_fail_route=anthropic` and dispatch `anthropic/claude-sonnet-5-5`.
+Reasoning strength low→high on `cdp/`: `cdp/opus-5.5`, `cdp/fable-5.1`. Walk `high` → `extra` → `max` inside a rung before the next wire. `cdp/` is allowed and preferred for conductor and supervisor legs over `anthropic/*` and over any `cursor/*` model except `cursor/composer-2.5` while it is cheaper. No CDP host ⇒ record `cdp_fail_route=anthropic` and dispatch `anthropic/claude-sonnet-5-5`.
 
 Model walls: default judgment wire = `cdp/opus-5.5` (`impresario.critic`). `anthropic/claude-fable-5-1` only when operator names it. `cursor/claude-fable-5-1` ≠ escalation / `team_dispatch model=`. Same input failed twice ⇒ ¬ retry(same_input); one attempt(different_kind: replace_input) before REPEATED_FAILURE; third same-input retry forbidden.
 
