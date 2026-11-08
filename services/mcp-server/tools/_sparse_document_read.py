@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import difflib
 import json
 import re
 from dataclasses import dataclass
@@ -23,6 +24,11 @@ BATCH_MAX_CONTENT_CHARS = 64 * 1024
 # 65536 code points × 4 UTF-8 bytes max (BMP scalar) — defensive wire ceiling.
 SPARSE_MAX_CONTENT_BYTES = 262_144
 SPARSE_POLICY_SLICE1 = "slice1_document_and_entity_preview"
+
+_ID_FORMAT_HINT = (
+    "Section ids are heading paths 'Parent/Child'; duplicate headings get '#n'. "
+    "Call md_list to enumerate ids."
+)
 
 _HEADING_RE = re.compile(r"^(#{1,6})[ \t]+(.+?)[ \t]*#*[ \t]*$")
 
@@ -183,6 +189,43 @@ def _assign_section_ids(sections: list[Any]) -> list[_IndexedSection]:
             )
         )
     return indexed
+
+
+def _id_last_segment(section_id: str) -> str:
+    base = section_id.rsplit("#", 1)[0]
+    return base.rsplit("/", 1)[-1]
+
+
+def _nearest_section_ids(sid: str, indexed: list[_IndexedSection], *, limit: int = 5) -> list[str]:
+    """Rank document section ids to help callers recover from a miss.
+
+    Order: case-insensitive exact id, ``difflib`` close matches (cutoff 0.5),
+    then ids whose last path segment matches the request. At most ``limit`` ids,
+    all from the document index.
+    """
+    doc_ids = [r.section_id for r in indexed]
+    if not doc_ids:
+        return []
+    ranked: list[str] = []
+    seen: set[str] = set()
+
+    def _append(candidates: list[str]) -> None:
+        for cid in candidates:
+            if cid in seen or cid not in doc_ids:
+                continue
+            seen.add(cid)
+            ranked.append(cid)
+            if len(ranked) >= limit:
+                return
+
+    lower = sid.lower()
+    _append([i for i in doc_ids if i.lower() == lower])
+    if len(ranked) < limit:
+        _append(difflib.get_close_matches(sid, doc_ids, n=limit, cutoff=0.5))
+    if len(ranked) < limit:
+        req_tail = _id_last_segment(sid)
+        _append([i for i in doc_ids if _id_last_segment(i) == req_tail])
+    return ranked[:limit]
 
 
 def _preamble_span_len(text: str) -> int:
@@ -803,11 +846,21 @@ def resolve_document_read(
                     "data": {"candidates": candidates},
                     "items": [{"id": sid, "outcome": "duplicate_ambiguous"}],
                     "selection": "section",
+                    "nearest_ids": candidates,
+                    "id_format_hint": _ID_FORMAT_HINT,
                 }
             )
         if outcome != "ok" or body is None:
             missing_outcome = (
                 "duplicate_ambiguous" if outcome == "duplicate_ambiguous" else "missing"
+            )
+            miss_recovery = (
+                {
+                    "nearest_ids": _nearest_section_ids(sid, indexed),
+                    "id_format_hint": _ID_FORMAT_HINT,
+                }
+                if missing_outcome == "missing"
+                else {}
             )
             return finalize_sparse_document_payload(
                 {
@@ -820,6 +873,7 @@ def resolve_document_read(
                     "sandbox": sandbox,
                     "read_sha256": read_sha256,
                     **span_meta,
+                    **miss_recovery,
                 }
             )
 
