@@ -40,6 +40,15 @@ SkipReason = Literal[
 ]
 
 _WORKER_AGENTS = frozenset({"dispatch", "cursor-sdk"})
+# FAILED| subjects for transport/http worker reachability — not pre-admission refusals.
+_NON_PRE_ADMISSION_FAILED_CODES = frozenset(
+    {
+        "CURSOR_WORKER_UNREACHABLE",
+        "CURSOR_WORKER_DISPATCH_FAILED",
+        "CURSOR_DISPATCH_REJECTED",
+    }
+)
+_FAILED_SUBJECT_CODE_RE = re.compile(r"\bcode=([^|]+)")
 
 
 @dataclass(frozen=True, slots=True)
@@ -167,12 +176,69 @@ def _links_excluding_seat_holder(
     return [lnk for lnk in links if lnk.execution_id != holder]
 
 
+def _turn_binds_execution_id(turn: LaneTurnView, execution_id: str) -> bool:
+    """True when the turn subject/body names this dispatch execution."""
+    blob = f"{turn.subject}\n{turn.body}"
+    return (
+        f"execution_id={execution_id}" in blob
+        or f"execution_id: {execution_id}" in blob
+        or execution_id in blob
+    )
+
+
+def _parse_failed_subject_code(subject: str) -> str | None:
+    if not (subject or "").startswith("FAILED|"):
+        return None
+    match = _FAILED_SUBJECT_CODE_RE.search(subject)
+    return match.group(1).strip() if match else None
+
+
+def _is_pre_admission_failed_code(code: str | None) -> bool:
+    if not code:
+        return False
+    return code not in _NON_PRE_ADMISSION_FAILED_CODES
+
+
+def _failed_turn_for_link(
+    lnk: DispatchLinkView, turns: Sequence[LaneTurnView]
+) -> LaneTurnView | None:
+    for turn in turns:
+        subject = turn.subject or ""
+        if not subject.startswith("FAILED|"):
+            continue
+        if not _turn_binds_execution_id(turn, lnk.execution_id):
+            continue
+        return turn
+    return None
+
+
+def _link_is_refused_admit(
+    lnk: DispatchLinkView,
+    turns: Sequence[LaneTurnView],
+    seat: str,
+) -> bool:
+    """Refused pre-admission: FAILED| for this execution, pre-admit code, no seat harvest."""
+    if lnk.pipeline_id != "cursor-sdk-generate" or lnk.terminal_status != "failed":
+        return False
+    if not lnk.terminal_at:
+        return False
+    term_at = parse_iso_ts(lnk.terminal_at)
+    if any(
+        t.from_agent == seat and parse_iso_ts(t.created_at) > term_at for t in turns
+    ):
+        return False
+    failed_turn = _failed_turn_for_link(lnk, turns)
+    if failed_turn is None:
+        return False
+    return _is_pre_admission_failed_code(_parse_failed_subject_code(failed_turn.subject))
+
+
 def _link_harvested(
     lnk: DispatchLinkView,
     turns: Sequence[LaneTurnView],
     seat: str,
 ) -> bool:
-    """True when the seat answered after terminal or a worker closeout was read."""
+    """True when the seat answered after terminal or this link's closeout was read."""
     if not lnk.terminal_at:
         return False
     term_at = parse_iso_ts(lnk.terminal_at)
@@ -184,38 +250,14 @@ def _link_harvested(
     for turn in turns:
         if turn.from_agent not in _WORKER_AGENTS:
             continue
+        if not _turn_binds_execution_id(turn, lnk.execution_id):
+            continue
         created = parse_iso_ts(turn.created_at)
         if created < window_start:
             continue
         if turn.read_at:
             return True
     return False
-
-
-def _thread_is_refused_admit(
-    links: Sequence[DispatchLinkView],
-    turns: Sequence[LaneTurnView],
-) -> bool:
-    """True when the lane is only an admit plus a FAILED| turn (pre-admission refusal)."""
-    generate_failed = any(
-        lnk.pipeline_id == "cursor-sdk-generate" and lnk.terminal_status == "failed"
-        for lnk in links
-    )
-    if not generate_failed:
-        return False
-    worker_turns = sorted(
-        (t for t in turns if t.from_agent in _WORKER_AGENTS),
-        key=lambda t: t.turn_number,
-    )
-    if len(worker_turns) != 2:
-        return False
-    admit_turn, failed_turn = worker_turns
-    if not (failed_turn.subject or "").startswith("FAILED|"):
-        return False
-    delta_s = (
-        parse_iso_ts(failed_turn.created_at) - parse_iso_ts(admit_turn.created_at)
-    ).total_seconds()
-    return 0 <= delta_s <= 60.0
 
 
 def _link_counts_as_live_wip(lnk: DispatchLinkView, *, now: datetime) -> bool:
@@ -248,6 +290,7 @@ def _classify_wip(
     removed before either in-flight or unharvested classification.
     """
     counted = _links_excluding_seat_holder(links, turns)
+    counted = [lnk for lnk in counted if not _link_is_refused_admit(lnk, turns, seat)]
     in_flight = [lnk for lnk in counted if _link_counts_as_live_wip(lnk, now=now)]
     if in_flight:
         return (
@@ -293,8 +336,6 @@ def evaluate_quiet_with_wip(snap: QuietWithWipSnapshot) -> QuietWithWipVerdict:
         return QuietWithWipVerdict(fire=False, skip_reason="alarm_open")
     if snap.licensed_park:
         return QuietWithWipVerdict(fire=False, skip_reason="licensed_park")
-    if _thread_is_refused_admit(snap.links, snap.turns):
-        return QuietWithWipVerdict(fire=False, skip_reason="refused_admit")
 
     reason, exec_ids, unbound_labels = _classify_wip(
         seat=snap.seat, links=snap.links, turns=snap.turns, now=snap.now

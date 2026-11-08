@@ -495,7 +495,7 @@ def test_latest_stamp_without_execution_id_returns_none() -> None:
 
 
 def test_refused_admit_specimen_22690_shape_skips_alarm() -> None:
-    """AC1: admit + FAILED| within 4s, terminal failed link ⇒ skip refused_admit."""
+    """AC1: frontier-admit pointer + FAILED| for link execution ⇒ no alarm debt."""
     term_at = _ts(THRESHOLD_S)
     snap = _snap(
         links=(
@@ -509,7 +509,7 @@ def test_refused_admit_specimen_22690_shape_skips_alarm() -> None:
         turns=(
             LaneTurnView(
                 turn_number=1,
-                from_agent="dispatch",
+                from_agent="frontier-admit",
                 created_at=_ts(THRESHOLD_S + 4),
                 subject="cdp generate",
                 body="admit",
@@ -526,7 +526,7 @@ def test_refused_admit_specimen_22690_shape_skips_alarm() -> None:
             ),
             LaneTurnView(
                 turn_number=3,
-                from_agent=SEAT,
+                from_agent="frontier-admit",
                 created_at=_ts(2 * THRESHOLD_S),
                 subject="commission",
                 body="still waiting",
@@ -535,7 +535,99 @@ def test_refused_admit_specimen_22690_shape_skips_alarm() -> None:
     )
     verdict = evaluate_quiet_with_wip(snap)
     assert verdict.fire is False
-    assert verdict.skip_reason == "refused_admit"
+    assert verdict.skip_reason == "no_wip"
+
+
+def test_refused_link_dropped_inflight_peer_still_alarms() -> None:
+    """A2: refused link must not suppress wip_in_flight on a sibling link."""
+    term_at = _ts(THRESHOLD_S)
+    snap = _snap(
+        links=(
+            DispatchLinkView(
+                execution_id="exec-refused",
+                terminal_status="failed",
+                terminal_at=term_at,
+                pipeline_id="cursor-sdk-generate",
+            ),
+            DispatchLinkView(
+                execution_id="exec-live",
+                terminal_status=None,
+                linked_at=_ts(30),
+                liveness_witness="live",
+            ),
+        ),
+        turns=(
+            LaneTurnView(
+                turn_number=1,
+                from_agent="frontier-admit",
+                created_at=_ts(THRESHOLD_S + 30),
+                subject="go",
+                body="commission",
+            ),
+            LaneTurnView(
+                turn_number=2,
+                from_agent="cursor-sdk",
+                created_at=_ts(THRESHOLD_S + 20),
+                subject="execution_id=exec-live ack",
+                body="running",
+            ),
+            LaneTurnView(
+                turn_number=3,
+                from_agent="dispatch",
+                created_at=_ts(THRESHOLD_S),
+                subject=(
+                    "FAILED|execution_id=exec-refused|dispatch_id=disp-1|"
+                    "code=CURSOR_SOURCE_REF_IN_FLIGHT|in flight"
+                ),
+                body="refused",
+            ),
+        ),
+    )
+    verdict = evaluate_quiet_with_wip(snap)
+    assert verdict.fire is True
+    assert verdict.reason == "wip_in_flight"
+    assert verdict.wip_execution_ids == ("exec-live",)
+
+
+def test_read_at_on_other_execution_does_not_harvest_link() -> None:
+    """A3: mark_read on link B's closeout must not clear link A unharvested debt."""
+    term_a = _ts(THRESHOLD_S)
+    term_b = _ts(THRESHOLD_S / 2)
+    snap = _snap(
+        links=(
+            DispatchLinkView(
+                execution_id="exec-a",
+                terminal_status="completed",
+                terminal_at=term_a,
+            ),
+            DispatchLinkView(
+                execution_id="exec-b",
+                terminal_status="completed",
+                terminal_at=term_b,
+            ),
+        ),
+        turns=(
+            LaneTurnView(
+                turn_number=1,
+                from_agent=SEAT,
+                created_at=_ts(2 * THRESHOLD_S),
+                subject="go",
+                body="commission",
+            ),
+            LaneTurnView(
+                turn_number=2,
+                from_agent="cursor-sdk",
+                created_at=_ts(THRESHOLD_S - 1),
+                subject="execution_id=exec-b cursor-sdk dispatch complete",
+                body="status: complete",
+                read_at=_ts(THRESHOLD_S - 1),
+            ),
+        ),
+    )
+    verdict = evaluate_quiet_with_wip(snap)
+    assert verdict.fire is True
+    assert verdict.reason == "closeout_unharvested"
+    assert "exec-a" in verdict.wip_execution_ids
 
 
 def test_closeout_read_at_counts_as_harvested_without_seat_turn() -> None:
@@ -561,7 +653,7 @@ def test_closeout_read_at_counts_as_harvested_without_seat_turn() -> None:
                 turn_number=2,
                 from_agent="cursor-sdk",
                 created_at=_ts(THRESHOLD_S - 1),
-                subject="cursor-sdk dispatch complete",
+                subject="execution_id=exec-read cursor-sdk dispatch complete",
                 body="status: complete",
                 read_at=_ts(THRESHOLD_S - 1),
             ),
@@ -590,7 +682,7 @@ def test_closeout_read_at_counts_as_harvested_without_seat_turn() -> None:
                 turn_number=2,
                 from_agent="cursor-sdk",
                 created_at=_ts(THRESHOLD_S - 1),
-                subject="cursor-sdk dispatch complete",
+                subject="execution_id=exec-unread cursor-sdk dispatch complete",
                 body="status: complete",
                 read_at=None,
             ),
