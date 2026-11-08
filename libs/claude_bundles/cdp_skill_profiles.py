@@ -6,6 +6,9 @@ judgment-only floor so existing callers do not grow an arch pair.
 
 from __future__ import annotations
 
+import re
+from collections.abc import Iterable
+
 from claude_bundles.chat_model_match import normalize_picker_request
 
 CDP_PURPOSE_PROFILES: dict[str, tuple[str, ...]] = {
@@ -41,6 +44,79 @@ REVIEW_CONTRACT_SKILL_FLOOR = frozenset(
     {"code-review", "delivery-review", "check-review"}
 )
 
+_REVIEW_ARCH_PAIR: tuple[str, ...] = ("architecture-invariants", "ulg-architecture")
+_PRODUCTION_ROOT = frozenset({"services", "libs"})
+_FILES_EXPECTED_HDR = re.compile(r"^\s*files_expected\s*:\s*(.*)$", re.IGNORECASE)
+_PATH_UNDER_PRODUCTION = re.compile(
+    r"(?:^|[\s,;`-])((?:services|libs)/[^\s,;|`\"']+)",
+    re.IGNORECASE,
+)
+
+
+def service_dirs(files_expected: Iterable[str] | None) -> frozenset[str]:
+    """First two segments for paths under ``services/`` or ``libs/``.
+
+    ``services/mcp-server/foo`` → ``services/mcp-server``;
+    ``services/x/tests/t.py`` → ``services/x`` (tests do not add a segment).
+    """
+    if not files_expected:
+        return frozenset()
+    out: set[str] = set()
+    for raw in files_expected:
+        p = str(raw).strip().replace("\\", "/")
+        if not p:
+            continue
+        if "://" in p:
+            _scheme, remainder = p.split("://", 1)
+            if "/" in remainder:
+                p = remainder.split("/", 1)[1]
+            else:
+                p = remainder
+        parts = [seg for seg in p.split("/") if seg]
+        if len(parts) >= 2 and parts[0].lower() in _PRODUCTION_ROOT:
+            out.add(f"{parts[0]}/{parts[1]}")
+    return frozenset(out)
+
+
+def parse_files_expected_from_prompt(packet_text: str | None) -> list[str]:
+    """Collect production paths from ``files_expected:`` lines in a packet body."""
+    if not packet_text or not packet_text.strip():
+        return []
+    paths: list[str] = []
+    in_block = False
+    for line in packet_text.splitlines():
+        header = _FILES_EXPECTED_HDR.match(line)
+        if header:
+            tail = header.group(1).strip()
+            in_block = not tail
+            if tail:
+                paths.extend(re.findall(r"`([^`]+)`", tail))
+                paths.extend(_PATH_UNDER_PRODUCTION.findall(tail))
+            continue
+        if in_block:
+            stripped = line.strip()
+            if not stripped:
+                in_block = False
+                continue
+            if stripped.startswith("-"):
+                paths.extend(re.findall(r"`([^`]+)`", line))
+                paths.extend(_PATH_UNDER_PRODUCTION.findall(line))
+            else:
+                in_block = False
+    return paths
+
+
+def _merge_review_arch_floor(review_floor: tuple[str, ...]) -> tuple[str, ...]:
+    seen: set[str] = set()
+    merged: list[str] = []
+    for slug in _REVIEW_ARCH_PAIR + review_floor:
+        key = slug.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        merged.append(slug)
+    return tuple(merged)
+
 
 def infer_cdp_purpose(purpose: str | None, model: str | None) -> str:
     """Explicit purpose wins; omitted + Sonnet → produce; else ask."""
@@ -57,19 +133,24 @@ def profile_slugs_for_purpose(
     purpose: str | None,
     *,
     contract: str | None = None,
+    files_expected: Iterable[str] | None = None,
 ) -> tuple[str, ...]:
     """Return the staging floor for a purpose tag.
 
     ``None`` / blank / unknown → judgment skill only, except review-class
     ``contract`` without ``purpose`` (K30 — ``leg.purpose`` stays unset).
+    Multi-service ``files_expected`` on that path prepends the arch pair.
     """
     key = (purpose or "").strip().lower()
-    if not key:
-        contract_key = (contract or "").strip().lower()
-        if contract_key in REVIEW_CONTRACT_SKILL_FLOOR:
-            return CDP_PURPOSE_PROFILES["review"]
-        return _DEFAULT_FLOOR
-    return CDP_PURPOSE_PROFILES.get(key, _DEFAULT_FLOOR)
+    if key:
+        return CDP_PURPOSE_PROFILES.get(key, _DEFAULT_FLOOR)
+    contract_key = (contract or "").strip().lower()
+    if contract_key in REVIEW_CONTRACT_SKILL_FLOOR:
+        review_floor = CDP_PURPOSE_PROFILES["review"]
+        if len(service_dirs(files_expected)) > 1:
+            return _merge_review_arch_floor(review_floor)
+        return review_floor
+    return _DEFAULT_FLOOR
 
 
 def profile_slugs_for_session(session: str | None) -> tuple[str, ...]:

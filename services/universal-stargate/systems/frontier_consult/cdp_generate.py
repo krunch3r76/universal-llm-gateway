@@ -413,6 +413,7 @@ def _stage_inputs(
     skills: list[str] | None = None,
     purpose: str | None = None,
     contract: str | None = None,
+    files_expected: list[str] | None = None,
     request_id: str | None = None,
     dispatch_thread_id: str | None = None,
     ledger_row_id: str | None = None,
@@ -468,6 +469,7 @@ def _stage_inputs(
             skills=skills if isinstance(skills, list) else None,
             purpose=purpose,
             contract=contract,
+            files_expected=files_expected,
             dispatch_thread_id=dispatch_thread_id,
         )
     except CdpStagingError:
@@ -607,6 +609,11 @@ async def dispatch_cdp_generate(
             packet_path=packet_path if isinstance(packet_path, str) else None,
             dispatch_thread_id=getattr(body, "dispatch_thread_id", None),
         )
+        from claude_bundles.cdp_skill_profiles import parse_files_expected_from_prompt
+
+        files_expected: list[str] | None = None
+        if isinstance(prompt, str) and prompt.strip():
+            files_expected = parse_files_expected_from_prompt(prompt)
         staged = _stage_inputs(
             execution_id=execution_id,
             prompt=prompt,
@@ -615,6 +622,7 @@ async def dispatch_cdp_generate(
             skills=skills if isinstance(skills, list) else None,
             purpose=purpose,
             contract=contract,
+            files_expected=files_expected or None,
             request_id=request_id,
             dispatch_thread_id=getattr(body, "dispatch_thread_id", None),
             ledger_row_id=cdp_row_id,
