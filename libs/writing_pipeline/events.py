@@ -23,7 +23,13 @@ def WritingJudgeFailed(*, invocation: str, reason: str) -> Event:  # noqa: N802
 
 @event_factory
 def WritingPersonaRefused(*, reason: str) -> Event:  # noqa: N802
+    """Observed when local persona authoring refuses (fail-closed, no fallback).
+
+    reason values: persona_validation_failed, persona_author_failed,
+    persona_prompt_missing.
+    """
     return Event(
         signal="writing.persona.refused",
+        role="observation",
         payload={"reason": reason},
     )

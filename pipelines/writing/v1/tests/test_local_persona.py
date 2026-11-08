@@ -56,14 +56,25 @@ _CORRESPONDENCE_INTAKE = {
     "standing_limits": "Plain and brief. Use only facts in verbatim_notes.",
 }
 
-_PIN_LEDGER: list[dict[str, Any]] = [
-    {
-        "excerpt": (
-            "Kaywan Joseph Mansubi Assessment Appeals 25.7489 "
-            "Los Gatos October 27 2026"
-        )
+_BRIEF_BLOCK = (
+    "<brief>Kaywan Joseph Mansubi channel email "
+    "Assessment Appeals 25.7489 October 27 2026</brief>"
+)
+_DOCS_BLOCK = (
+    "<documents><pin id='P1'>Kaywan Joseph Mansubi hearing "
+    "Tuesday October 27 2026</pin></documents>"
+)
+_ARCH_BLOCK = (
+    "<architect_brief>lead_pin_id: P1 Assessment Appeals 25.7489</architect_brief>"
+)
+
+
+def _blocks_kwargs() -> dict[str, str]:
+    return {
+        "brief_block": _BRIEF_BLOCK,
+        "documents_block": _DOCS_BLOCK,
+        "architect_brief_block": _ARCH_BLOCK,
     }
-]
 
 
 class _Out:
@@ -83,25 +94,13 @@ def _correspondence_ctx() -> _Ctx:
                 {
                     "refused": None,
                     "intake": dict(_CORRESPONDENCE_INTAKE),
-                    "pin_ledger": list(_PIN_LEDGER),
-                    "brief_block": "<brief>channel: email</brief>",
-                    "documents_block": "<documents><pin id='P1'>Hearing Tuesday</pin></documents>",
+                    "brief_block": _BRIEF_BLOCK,
+                    "documents_block": _DOCS_BLOCK,
                 }
             ),
-            "source_obligations": _Out(
-                {"obligations": [], "source_obligations_block": ""}
-            ),
-            "prompt_architect": _Out(
-                {
-                    "architect_brief_block": "<architect_brief>lead_pin_id: P1</architect_brief>"
-                }
-            ),
+            "prompt_architect": _Out({"architect_brief_block": _ARCH_BLOCK}),
         }
     )
-
-
-def _validate_fixture() -> tuple[dict[str, Any], list[dict[str, Any]]]:
-    return dict(_CORRESPONDENCE_INTAKE), list(_PIN_LEDGER)
 
 
 def test_writer_local_prompt_wiring() -> None:
@@ -121,32 +120,54 @@ def test_writer_local_prompt_wiring() -> None:
 
 
 def test_validate_accepts_qwen_register_persona() -> None:
-    intake, pins = _validate_fixture()
     prose = (
         "You are Kaywan Joseph Mansubi writing to the appeals board. "
         "The hearing on October 27 2026 is already on your calendar. "
         "When you sign off, you keep the tone plain and brief."
     )
-    text, ok = local_persona._validate_persona_prose(prose, pins, intake, [])
+    text, ok = local_persona._validate_persona_prose(prose, **_blocks_kwargs())
     assert ok is True
     assert text == prose
 
 
+def test_validate_rejects_sentence_initial_marcus() -> None:
+    prose = "Marcus is your contact for this filing."
+    _, ok = local_persona._validate_persona_prose(prose, **_blocks_kwargs())
+    assert ok is False
+
+
+def test_validate_rejects_invented_mid_sentence_after_stopword_open() -> None:
+    prose = "You write plainly. Zaphod agrees with every word."
+    _, ok = local_persona._validate_persona_prose(prose, **_blocks_kwargs())
+    assert ok is False
+
+
+def test_validate_rejects_invented_number_only() -> None:
+    pat_blocks = {
+        "brief_block": "<brief>Pat signer</brief>",
+        "documents_block": "<documents>Pat filed on Monday.</documents>",
+        "architect_brief_block": "<architect_brief>lead_pin_id P1</architect_brief>",
+    }
+    prose = "Pat filed on Monday 99 times."
+    _, ok = local_persona._validate_persona_prose(prose, **pat_blocks)
+    assert ok is False
+
+
 @pytest.mark.parametrize(
-    ("prose", "label"),
+    "prose",
     [
-        ("Pat met Zaphod Beetlebrox downtown.", "invented_name"),
-        ("Pat filed on March 99 2099.", "invented_number"),
-        ("You write plainly.\n- No lists", "bullet"),
-        ("You write plainly.\n1. Numbered", "numbered"),
+        "Pat met Zaphod Beetlebrox downtown.",
+        "You write plainly.\n- No lists",
+        "You write plainly.\n1. Numbered",
     ],
 )
-def test_validate_rejects_bad_persona(prose: str, label: str) -> None:
-    del label
-    intake, pins = _validate_fixture()
-    intake = {**intake, "recipient": "Pat", "signer": "Pat"}
-    pins = [{"excerpt": "Pat filed on Monday."}]
-    _, ok = local_persona._validate_persona_prose(prose, pins, intake, [])
+def test_validate_rejects_bad_persona(prose: str) -> None:
+    pat_blocks = {
+        "brief_block": "<brief>Pat signer</brief>",
+        "documents_block": "<documents>Pat filed on Monday.</documents>",
+        "architect_brief_block": "<architect_brief>lead_pin_id P1</architect_brief>",
+    }
+    _, ok = local_persona._validate_persona_prose(prose, **pat_blocks)
     assert ok is False
 
 
@@ -184,7 +205,9 @@ def test_persona_author_fail_closed_skips_branch(monkeypatch: pytest.MonkeyPatch
     assert payload.get("persona_refused") == "persona_validation_failed"
     assert payload.get("persona_rejected_text")
     assert "persona_prose" not in payload
+    assert "_skipped" not in payload
     assert published and published[0].signal == "writing.persona.refused"
+    assert published[0].role == "observation"
 
 
 def test_persona_author_model_exception_refuses(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -312,4 +335,5 @@ def test_judge_still_sees_cloud_candidates_after_persona_fail() -> None:
 def test_persona_refused_event_factory() -> None:
     event = judge_events.WritingPersonaRefused(reason="persona_validation_failed")
     assert event.signal == "writing.persona.refused"
+    assert event.role == "observation"
     assert event.payload["reason"] == "persona_validation_failed"
