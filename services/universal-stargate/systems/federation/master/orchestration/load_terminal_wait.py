@@ -8,9 +8,15 @@ from dataclasses import dataclass
 from enum import StrEnum
 from typing import Any
 
+from model_id import ModelId
 from universal_logging import get_logger
 
+from src.scheduling.events import FederationLoadProgress
+
 logger = get_logger(__name__)
+
+_FEDERATION_PROGRESS_PCT_STEP = 5.0
+_FEDERATION_PROGRESS_MIN_INTERVAL_S = 5.0
 
 _TERMINAL_RESOLVE_SLACK_S = 2.0
 
@@ -50,15 +56,46 @@ class TerminalLoadResolution:
     payload: dict[str, Any] | None = None
 
 
-def _model_matches(payload: dict[str, Any], routing_key: str) -> bool:
+def _model_matches(payload: dict[str, Any], expected: ModelId | str) -> bool:
     model_id = payload.get("model_id")
     if not model_id:
         return False
-    model_text = str(model_id)
-    if model_text == routing_key or model_text.startswith(f"{routing_key}-"):
-        return True
-    # Lifecycle telemetry often emits the base id without -hybrid / context suffix
-    return routing_key == model_text or routing_key.startswith(f"{model_text}-")
+    if isinstance(expected, str):
+        expected_id = ModelId.parse(expected)
+    else:
+        expected_id = expected
+    try:
+        event_id = ModelId.parse(str(model_id))
+    except (ValueError, TypeError):
+        return False
+    return event_id == expected_id
+
+
+@dataclass
+class _FederationProgressThrottle:
+    last_phase: str | None = None
+    last_pct: float | None = None
+    last_emit_mono: float | None = None
+
+    def should_emit(self, *, phase: str, pct: float, now_mono: float) -> bool:
+        if self.last_phase != phase:
+            return True
+        if (
+            self.last_pct is not None
+            and pct - self.last_pct >= _FEDERATION_PROGRESS_PCT_STEP
+        ):
+            return True
+        if (
+            self.last_emit_mono is None
+            or now_mono - self.last_emit_mono >= _FEDERATION_PROGRESS_MIN_INTERVAL_S
+        ):
+            return True
+        return False
+
+    def record_emit(self, *, phase: str, pct: float, now_mono: float) -> None:
+        self.last_phase = phase
+        self.last_pct = pct
+        self.last_emit_mono = now_mono
 
 
 def _gateway_matches(payload: dict[str, Any], gateway_id: str, remote_id: str) -> bool:
@@ -210,6 +247,8 @@ async def race_remote_load_with_terminal_events(
     remote_id: str,
     backstop_timeout_s: float,
     idle_budget_s: float | None = None,
+    request_id: str | None = None,
+    load_started_mono: float | None = None,
 ) -> tuple[Any | None, TerminalLoadResolution | None]:
     """Race remote HTTP load against terminal lifecycle events until backstop."""
     progress_tracker: _ProgressTracker | None = None
@@ -221,6 +260,7 @@ async def race_remote_load_with_terminal_events(
 
         loop = asyncio.get_running_loop()
         progress_tracker = _ProgressTracker(loop)
+        progress_throttle = _FederationProgressThrottle()
 
         async def on_progress(event: Any) -> None:
             if progress_tracker is None:
@@ -235,6 +275,37 @@ async def race_remote_load_with_terminal_events(
             if not phase or pct is None:
                 return
             progress_tracker.record(payload)
+            if request_id and load_started_mono is not None:
+                try:
+                    pct_value = float(pct)
+                except (TypeError, ValueError):
+                    return
+                now_mono = asyncio.get_running_loop().time()
+                if not progress_throttle.should_emit(
+                    phase=str(phase), pct=pct_value, now_mono=now_mono
+                ):
+                    return
+                elapsed_ms = int((now_mono - load_started_mono) * 1000)
+                try:
+                    await event_bus.publish_nowait(
+                        FederationLoadProgress(
+                            request_id=request_id,
+                            remote_id=remote_id,
+                            model_id=str(payload.get("model_id", routing_key)),
+                            phase=str(phase),
+                            pct=pct_value,
+                            elapsed_ms=elapsed_ms,
+                        )
+                    )
+                    progress_throttle.record_emit(
+                        phase=str(phase), pct=pct_value, now_mono=now_mono
+                    )
+                except Exception as exc:  # pragma: no cover - defensive
+                    logger.warning(
+                        "Failed to publish federation.load.progress: %s",
+                        exc,
+                        exc_info=True,
+                    )
 
         progress_subscription = event_bus.subscribe_async(
             MODEL_LOADING_PROGRESS, on_progress
@@ -357,6 +428,8 @@ async def await_remote_load_with_wall_clock(
     backstop_timeout_s: float,
     model_label: str,
     idle_budget_s: float | None = None,
+    request_id: str | None = None,
+    load_started_mono: float | None = None,
 ) -> tuple[Any | None, TerminalLoadResolution | None]:
     """Await remote load; wall-clock expiry raises WallClockLoadTimeout."""
     if event_bus is None:
@@ -385,6 +458,8 @@ async def await_remote_load_with_wall_clock(
             remote_id=remote_id,
             backstop_timeout_s=backstop_timeout_s,
             idle_budget_s=idle_budget_s,
+            request_id=request_id,
+            load_started_mono=load_started_mono,
         )
     except IdleLoadTimeout:
         raise

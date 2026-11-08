@@ -26,19 +26,34 @@ def _now() -> str:
     return datetime.now(UTC).strftime("%Y-%m-%d %H:%M:%S")
 
 
-def _encode_paste_receipt(receipt: dict[str, Any]) -> str:
+def _encode_paste_receipt(
+    *, outcome: str, reason_s: str, receipt: dict[str, Any]
+) -> str:
     payload = {
         k: receipt[k]
         for k in (
             "ok",
             "delivered",
             "pasted",
+            "inserted",
+            "insert_attempted",
+            "pasted_dom",
             "reason",
             "pointer_len",
             "conversation_id",
+            "receipt",
+            "phase",
+            "uncertain_side_effect",
+            "delivery_unconfirmed",
+            "retryable",
+            "clicked_unknown",
+            "send_fallback_clicked",
+            "error",
         )
         if k in receipt
     }
+    payload["outcome"] = outcome
+    payload["reason"] = reason_s
     return f"{_RECEIPT_PREFIX}{json.dumps(payload, sort_keys=True)}"
 
 
@@ -362,17 +377,42 @@ class LedgerWakeDeliveryOwner:
     def record_paste_receipt(
         self, claim: WakeClaimContext, receipt: dict[str, Any]
     ) -> None:
+        from bus_watch.endpoint_wake_composer_defer import is_composer_defer_reason
+        from bus_watch.orion_wake_bounded_defer import orion_bounded_defer_reason
+        from bus_watch.orion_wake_receipt_map import map_orion_receipt_to_outcomes
+
         if str(receipt.get("reason") or "") == "duplicate_suppressed":
             return
+        map_extra: dict[str, Any] = {}
+        sub_id: int | None = None
+        bind_ref = str(claim.binding_reference or "").strip()
+        if bind_ref.startswith("agent_endpoint_subscriptions:"):
+            try:
+                sub_id = int(bind_ref.split(":", 1)[1])
+            except (TypeError, ValueError):
+                sub_id = None
+        if sub_id is None:
+            binding = resolve_orion_chat_wake(
+                claim.thread_id, agent=claim.normalized_agent()
+            )
+            if str(binding.get("state") or "") == "bound":
+                cur = dict(binding.get("current") or {})
+                sid = cur.get("subscription_id")
+                if sid is not None:
+                    sub_id = int(sid)
         if receipt.get("delivered") is True:
             outcome = "delivered"
-            reason = _encode_paste_receipt(receipt)
+            reason = _encode_paste_receipt(
+                outcome=outcome,
+                reason_s=str(receipt.get("reason") or "delivered"),
+                receipt=receipt,
+            )
         elif str(receipt.get("reason") or "") == "deferred_streaming":
             # Why: live paste steers by default; deferral is for legacy ledger retries only.
             sched = record_orion_deferred_streaming(
                 claim.wake_id,
                 "exact",
-                None,
+                sub_id,
                 None,
             )
             if sched.get("exhausted"):
@@ -386,22 +426,51 @@ class LedgerWakeDeliveryOwner:
             return
         elif str(receipt.get("reason") or "") == "deferred_exhausted":
             return
-        elif receipt.get("pasted") and not receipt.get("delivered"):
-            outcome = "unknown"
-            reason = str(receipt.get("reason") or "delivery_unconfirmed")
-        elif receipt.get("ok") is False:
-            outcome = "refused"
-            reason = str(receipt.get("reason") or "refused")
         else:
-            outcome = "unknown"
-            reason = str(receipt.get("reason") or "unnamed")
+            outcome, reason_s, map_extra = map_orion_receipt_to_outcomes(receipt)
+            if outcome == "skipped":
+                return
+            reason = _encode_paste_receipt(
+                outcome=outcome, reason_s=reason_s, receipt=receipt
+            )
+        detail_keys = (
+            "receipt",
+            "insert_attempted",
+            "retryable",
+            "clicked_unknown",
+            "owned_draft_retained",
+            "send_fallback_clicked",
+            "phase",
+            "uncertain_side_effect",
+            "inserted",
+            "pasted",
+            "delivery_unconfirmed",
+            "error",
+        )
+        wake_detail = {
+            k: receipt[k]
+            for k in detail_keys
+            if k in receipt and receipt[k] is not None
+        }
+        wake_detail = {**wake_detail, **map_extra}
+        defer_reason = str(
+            receipt.get("composer_defer_reason") or receipt.get("reason") or ""
+        )
+        if outcome == "pending" and (
+            is_composer_defer_reason(defer_reason)
+            or orion_bounded_defer_reason(defer_reason)
+            or defer_reason == "cdp_transport_error"
+        ):
+            wake_detail["release_claim_for_retry"] = True
+            wake_detail["composer_defer_reason"] = reason_s
         record_wake_result(
             claim.wake_id,
             outcome,
             reason,
             "exact",
+            sub_id,
             None,
-            None,
+            wake_detail=wake_detail or None,
         )
 
 

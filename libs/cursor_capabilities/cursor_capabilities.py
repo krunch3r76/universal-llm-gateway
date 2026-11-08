@@ -40,8 +40,9 @@ __all__ = [
 
 DESCRIPTOR_VERSION: Final[str] = "2026-09-25"
 
-# Emergency denylist for cursor-sdk substrate admission. Entries are bare wire ids
-# (no cursor/ prefix); membership is checked after prefix strip + lowercase.
+# Emergency denylist for cursor-sdk substrate admission (bare ids, lowercased).
+# Dispatch refuse/override for barred models lives in route_policy ``model_bans``;
+# keep this empty so admit gates — not sdk_generate_model_invalid — govern bans.
 CURSOR_DENIED_MODELS: Final[frozenset[str]] = frozenset()
 
 # Cursor-sdk generate admits only these bare wire ids (pair allowlist).
@@ -53,6 +54,7 @@ CURSOR_SDK_ADMITTED_MODELS_PREFIXED: Final[tuple[str, ...]] = (
     "cursor/composer-2.5",
     "cursor/grok-4.7",
 )
+
 
 def cursor_sdk_model_set_fix_hint(*, explicit_pin: bool = False) -> str:
     """Actionable hint when a cursor-sdk model pin fails admission."""

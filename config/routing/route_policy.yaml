@@ -204,8 +204,6 @@ workflows:
 # workflows.*.model reference to it. Re-enable = drop the flag or add the slot.
 models:
   composer-2.5:      {roaming: true}
-  # roaming is a capability flag for dispatch_bounds waivers — not dispatch admit allow.
-  grok-4.7:          {roaming: true}
 
 # Per-contract omit-effort defaults (todo:model-workflow-config-first, P3).
 # Authority for resolve_desired_effort auto/omit — contract-keyed, not workflow-keyed

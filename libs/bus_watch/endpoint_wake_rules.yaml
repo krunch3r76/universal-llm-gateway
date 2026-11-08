@@ -27,6 +27,8 @@ rules:
     action: wake
   - id: drop_dispatch_intermediate
     action: suppress
+  - id: wake_on_behalf_execution_reply
+    action: wake
   - id: wake_peer_sender
     action: wake
   - id: drop_routine_hop_closeout

@@ -235,12 +235,12 @@ GIW Auto lane `resolve_desired_model(auto)` for judgment contracts).
 
 | workflow | seat | model | contracts |
 |---|---|---|---|
-| auto_judgment | cursor-sdk | cursor/grok-4.7 | answer, confer, ask, verify, execute, propagate, sketch, none, conductor |
+| auto_judgment | cursor-sdk | cursor/composer-2.5 | answer, confer, ask, verify, execute, propagate, sketch, none, conductor |
 | check_review | reviewer | anthropic/claude-sonnet-5-5 | — |
 | investigate | cursor-sdk | cursor/composer-2.5 | investigate, recon, seed |
 | mechanical_implement | cursor-sdk | cursor/composer-2.5 | implement |
 
-**Roaming bare ids:** `composer-2.5`, `grok-4.7`
+**Roaming bare ids:** `composer-2.5`
 
 **contract_effort** (omit/auto defaults; contract-keyed, not per-workflow):
 
@@ -265,7 +265,15 @@ GIW Auto lane `resolve_desired_model(auto)` for judgment contracts).
 (or `check-review` / `delivery-review`); `dispatch_thread_id`; one of
 `prompt`|`packet_path`|`sidecar_ref`; `reasoning_effort=high`. Omit `purpose` and **`role`**
 — `role=reviewer` → 422 `job_unknown`. The registry **seat** column is omit-model routing,
-not a `team_dispatch` `role=` argument.
+not a `team_dispatch` `role=` argument. API-substrate critics read hub master by default
+and lane files via fs(sandbox=workspaces, thread=<lane thread>, …). op=read uses
+path=universal-llm-gateway/<rel>; op=list and op=search use repo-relative paths;
+op=recent_commits uses the same thread= and must match head_sha or the verdict
+notes mismatch. Hub master uses the same read path without thread=. Packets name
+review_thread:, review_head:, review_base: and/or implicit lane tokens. Admit outcomes:
+review_target block with fs(thread=) calls, no-op when merged, or **422
+REVIEW_TARGET_UNREACHABLE** (kind target|ambiguous|infra). Removed worktrees: fs op=copy
+workspaces→cortex and cite the copy.
 
 ## Non-primary model gate — discriminator
 

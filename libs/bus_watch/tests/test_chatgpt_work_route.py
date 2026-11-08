@@ -35,7 +35,7 @@ def db(tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
 
 def test_work_route_uses_explicit_url_not_glass(db: None) -> None:
     create_thread(thread_id=_HOME, slug="work-route")
-    insert_chatgpt_work_row_for_test(
+    row = insert_chatgpt_work_row_for_test(
         instance_id=_INST,
         home_house_id=_HOME,
         conversation_url=_URL,
@@ -46,6 +46,7 @@ def test_work_route_uses_explicit_url_not_glass(db: None) -> None:
     assert route is not None
     _, sub = route
     assert sub["title"] == _URL
+    assert sub.get("id") == row["id"]
 
 
 def test_maestro_recipient_does_not_self_route_instance(db: None) -> None:

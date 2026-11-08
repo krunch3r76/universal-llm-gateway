@@ -24,6 +24,8 @@ from .routing_factories_eviction_hysteresis import (
     EvictionCooldownOverridden,
     EvictionDemandApplied,
     RoutingEvictionExecuteFailed,
+    RoutingEvictionExecuteFinished,
+    RoutingEvictionExecuteStarted,
 )
 from .routing_factories_eviction_waits_startup import (
     RoutingDrainInitiated,
@@ -74,6 +76,8 @@ from .routing_signal_constants_eviction_hysteresis import (
     EVICTION_COOLDOWN_OVERRIDDEN,
     EVICTION_DEMAND_APPLIED,
     ROUTING_EVICTION_EXECUTE_FAILED,
+    ROUTING_EVICTION_EXECUTE_FINISHED,
+    ROUTING_EVICTION_EXECUTE_STARTED,
 )
 from .routing_signal_constants_metrics import (
     GATEWAY_PHANTOM_MODEL_CLEANED,
@@ -122,6 +126,8 @@ __all__ = [
     "ROUTING_DEQUEUED",
     "ROUTING_DRAIN_INITIATED",
     "ROUTING_EVICTION_EXECUTE_FAILED",
+    "ROUTING_EVICTION_EXECUTE_FINISHED",
+    "ROUTING_EVICTION_EXECUTE_STARTED",
     "ROUTING_EVICTION_WAIT_CANCELLED",
     "ROUTING_EVICTION_WAIT_RESOLVED",
     "ROUTING_EVICTION_WAIT_STARTED",
@@ -158,6 +164,8 @@ __all__ = [
     "RoutingDequeued",
     "RoutingDrainInitiated",
     "RoutingEvictionExecuteFailed",
+    "RoutingEvictionExecuteFinished",
+    "RoutingEvictionExecuteStarted",
     "RoutingEvictionWaitCancelled",
     "RoutingEvictionWaitResolved",
     "RoutingEvictionWaitStarted",

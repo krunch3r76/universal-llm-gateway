@@ -92,6 +92,7 @@ from .subscriptions import (
     _subscribe_dispatch,
     _subscriptions_dispatch,
     _unsubscribe_dispatch,
+    _whereami_dispatch,
 )
 from .threads import (
     _create_thread_dispatch,
@@ -140,6 +141,7 @@ AGENT_BUS_OPS: dict[str, Callable[..., Any]] = {
     "subscribe": _subscribe_dispatch,
     "unsubscribe": _unsubscribe_dispatch,
     "subscriptions": _subscriptions_dispatch,
+    "whereami": _whereami_dispatch,
 }
 
 

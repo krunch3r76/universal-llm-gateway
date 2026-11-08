@@ -1,7 +1,8 @@
 """Mint, sweep, and repair lifecycle for propagation validations.
 
 Callers are manage drain (`mint_activation_validation`) and tests. Invariant:
-stored `code_ref` is the propagate row SHA; occupied pending reuse is refused.
+stored `code_ref` is the propagate row SHA; occupied pending reuse is refused,
+and a pending bound to another restart intent is superseded, never reused.
 """
 
 from __future__ import annotations
@@ -71,7 +72,7 @@ def mint_pending_validation_for_intent(
     try:
         existing = conn.execute(
             """
-            SELECT validation_id, row_id FROM propagation_validation
+            SELECT validation_id, row_id, restart_intent FROM propagation_validation
             WHERE service=? AND code_ref=? AND outcome='pending'
             ORDER BY CASE
               WHEN row_id IS NULL THEN 0
@@ -82,7 +83,14 @@ def mint_pending_validation_for_intent(
             """,
             (service, resolved, row_id),
         ).fetchone()
-        if existing is not None and _pending_reusable(existing["row_id"], row_id):
+        # A pending left by another intent (expired / cancelled) is invisible
+        # to latest_validation_for_intent at kill time; reuse would make the
+        # restart terminate as missing_validation_at_arm.
+        if (
+            existing is not None
+            and existing["restart_intent"] in (None, str(intent.intent_id))
+            and _pending_reusable(existing["row_id"], row_id)
+        ):
             return str(existing["validation_id"])
         if existing is not None:
             advance_validation(

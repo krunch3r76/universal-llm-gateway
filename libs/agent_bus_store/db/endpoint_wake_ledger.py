@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import re
 import sqlite3
 import uuid
@@ -20,6 +21,7 @@ from .lane_associations import get_current_lane
 
 CONSUMER = "endpoint-wake-dispatcher"
 _CLAIM_STATES = ("claimed", "unknown")
+_SCAN_ITEM_STATES = frozenset({"pending", "skipped"})
 _CLAIM_SKIP_GROUP_CAP = 32
 _STAGE_MANAGER_SQL = ", ".join(f"'{a}'" for a in sorted(STAGE_MANAGER_ADDRESSES))
 _MAESTRO_WEB_SQL = ", ".join(f"'{a}'" for a in sorted(MAESTRO_WEB_ALIAS_PAIR))
@@ -43,6 +45,31 @@ def _now(now: str | None) -> str:
 def _shift(stamp: str, seconds: int) -> str:
     base = datetime.strptime(stamp, "%Y-%m-%d %H:%M:%S").replace(tzinfo=UTC)
     return (base + timedelta(seconds=seconds)).strftime("%Y-%m-%d %H:%M:%S")
+
+
+def _ledger_columns(conn: sqlite3.Connection) -> set[str]:
+    rows = conn.execute("PRAGMA table_info(endpoint_wake_ledger)").fetchall()
+    return {str(r[1]) for r in rows}
+
+
+def _encode_delivery_failure_detail(
+    reason: str | None, **fields: Any
+) -> str | None:
+    """Stable JSON blob for agent_bus_read / advisory tooling (nullable)."""
+    base = str(reason or "").strip()
+    if not base and not fields:
+        return None
+    payload: dict[str, Any] = {"reason_code": base} if base else {}
+    for key, val in fields.items():
+        if val is None:
+            continue
+        payload[key] = val
+    if len(payload) <= 1 and not base:
+        return None
+    try:
+        return json.dumps(payload, sort_keys=True)
+    except (TypeError, ValueError):
+        return base or None
 
 
 def get_cursor(consumer: str = CONSUMER, *, now: str | None = None) -> dict[str, Any]:
@@ -69,8 +96,15 @@ def advance_scan(
     *,
     now: str | None = None,
 ) -> dict[str, Any]:
-    """CAS the cursor and insert pending rows. 409 on a stale high water."""
+    """CAS the cursor and insert pending rows. 409 on a stale high water.
+
+    An item with ``state='skipped'`` is a scan-time suppression tombstone: it is
+    inserted terminal with its ``reason`` so the decision is visible on the ledger.
+    """
     stamp = _now(now)
+    for item in pending:
+        if item.get("state", "pending") not in _SCAN_ITEM_STATES:
+            raise ValueError(f"advance_scan: unsupported item state {item['state']!r}")
     with write_connect() as conn:
         row = conn.execute(
             "SELECT high_water_turn_id FROM endpoint_wake_cursor WHERE consumer=?",
@@ -88,17 +122,21 @@ def advance_scan(
                 continue
             filtered.append(item)
         for item in filtered:
+            state = item.get("state", "pending")
             conn.execute(
                 "INSERT OR IGNORE INTO endpoint_wake_ledger "
-                "(agent, thread_id, turn_id, turn_number, state, created_at, "
-                "decided_by_rule) "
-                "VALUES (?,?,?,?, 'pending', ?, ?)",
+                "(agent, thread_id, turn_id, turn_number, state, reason, created_at, "
+                "finished_at, decided_by_rule) "
+                "VALUES (?,?,?,?,?,?,?,?,?)",
                 (
                     item["agent"],
                     item["thread_id"],
                     item["turn_id"],
                     item["turn_number"],
+                    state,
+                    item.get("reason") if state == "skipped" else None,
                     stamp,
+                    stamp if state == "skipped" else None,
                     item.get("decided_by_rule"),
                 ),
             )
@@ -403,12 +441,23 @@ def _skip_reason(conn: sqlite3.Connection, row: sqlite3.Row) -> str | None:
 
 
 def _pending_retry_ready_sql(alias: str = "") -> str:
-    """Orion deferred_streaming uses finished_at as next-attempt time (wall clock)."""
+    """Orion ``deferred_streaming`` uses ``finished_at`` as next-attempt time (wall clock)."""
     prefix = f"{alias}." if alias else ""
     return f"""(
       {prefix}finished_at IS NULL
       OR ({prefix}reason='deferred_streaming' AND {prefix}finished_at<=?)
       OR (COALESCE({prefix}reason,'')!='deferred_streaming' AND {prefix}finished_at<=?)
+    )"""
+
+
+def _orion_composer_defer_claim_ready_sql(alias: str, *, in_sql: str) -> str:
+    """Orion bounded-retry pending rows wait until ``wake_next_attempt_at`` (026+)."""
+    ap = f"{alias}." if alias else ""
+    return f"""(
+      lower(trim({ap}agent)) != 'orion'
+      OR {ap}reason NOT IN {in_sql}
+      OR {ap}wake_next_attempt_at IS NULL
+      OR datetime({ap}wake_next_attempt_at) <= datetime(?)
     )"""
 
 
@@ -418,22 +467,26 @@ def _group_pending_rows(
     *,
     stamp: str,
     retry_before: str,
+    orion_next_gate_sql: str = "",
+    orion_next_extra_params: tuple[Any, ...] = (),
 ) -> list[sqlite3.Row]:
     """All pending ledger rows for the (agent, thread_id) group eligible to claim together."""
     ga, tid = str(group["agent"]), group["thread_id"]
-    filt = f"AND state='pending' AND {_pending_retry_ready_sql()}"
+    filt = f"AND state='pending' AND {_pending_retry_ready_sql()}{orion_next_gate_sql}"
     if normalize_bus_address(ga) in STAGE_MANAGER_ADDRESSES:
         q = (
             f"SELECT * FROM endpoint_wake_ledger WHERE thread_id=? {filt} "
             f"AND (agent=? OR lower(trim(agent)) IN ({_STAGE_MANAGER_SQL})) "
             "ORDER BY turn_id"
         )
-        return conn.execute(q, (tid, stamp, retry_before, ga)).fetchall()
+        params = (tid, stamp, retry_before, *orion_next_extra_params, ga)
+        return conn.execute(q, params).fetchall()
     q = (
         f"SELECT * FROM endpoint_wake_ledger WHERE agent=? AND thread_id=? {filt} "
         "ORDER BY turn_id"
     )
-    return conn.execute(q, (ga, tid, stamp, retry_before)).fetchall()
+    params2 = (ga, tid, stamp, retry_before, *orion_next_extra_params)
+    return conn.execute(q, params2).fetchall()
 
 
 def resolve_subscription_for_thread(
@@ -500,9 +553,11 @@ _ORION_WAKE_HOUSE = "21207"
 ENDPOINT_WAKE_DEBOUNCE_S_DEFAULT = 600
 ENDPOINT_WAKE_DEBOUNCE_S_ORION_CHAT = 30
 ORION_DEFERRED_STREAMING_MAX_ATTEMPTS = 25
+ORION_COMPOSER_DEFER_MAX_ATTEMPTS = 25
 ORION_DEFERRED_RETRY_BASE_S = 30
 ORION_DEFERRED_RETRY_MAX_S = 300
 _ORION_DEFERRED_ATTEMPT_PREFIX = "orion_deferred_attempt:"
+_ORION_COMPOSER_DEFER_ATTEMPT_PREFIX = "orion_composer_defer_attempt:"
 
 
 def _is_orion_chat_wake_group(agent: str, thread_id: str) -> bool:
@@ -1197,6 +1252,26 @@ def claim_due_wakes(
     ttl_before = _shift(stamp, -claim_ttl_s)
     retry_before = _shift(stamp, -60)
     with write_connect() as conn:
+        cols = _ledger_columns(conn)
+        orion_next_gate = ""
+        orion_next_params: tuple[Any, ...] = ()
+        group_next_sql = ""
+        orion_group_params: tuple[Any, ...] = ()
+        if "wake_next_attempt_at" in cols:
+            from bus_watch.orion_wake_bounded_defer import (
+                orion_bounded_defer_reasons_sql_sorted,
+            )
+
+            _reasons = orion_bounded_defer_reasons_sql_sorted()
+            _bounded_in_sql = f"({','.join('?' * len(_reasons))})"
+            orion_next_gate = (
+                f" AND {_orion_composer_defer_claim_ready_sql('p', in_sql=_bounded_in_sql)}"
+            )
+            group_next_sql = (
+                f" AND {_orion_composer_defer_claim_ready_sql('', in_sql=_bounded_in_sql)}"
+            )
+            orion_next_params = (*_reasons, stamp)
+            orion_group_params = orion_next_params
         conn.execute(
             "UPDATE endpoint_wake_ledger SET state='unknown' "
             "WHERE state='claimed' AND claimed_at<=?",
@@ -1209,6 +1284,7 @@ def claim_due_wakes(
                 SELECT agent, thread_id FROM endpoint_wake_ledger p
                 WHERE p.state='pending'
                   AND {_pending_retry_ready_sql("p")}
+                  {orion_next_gate}
                   AND NOT EXISTS (
                     SELECT 1 FROM endpoint_wake_ledger d
                     WHERE {_mailbox_agent_sql("d", "p")} AND d.thread_id=p.thread_id
@@ -1282,6 +1358,7 @@ def claim_due_wakes(
                 (
                     stamp,
                     retry_before,
+                    *orion_next_params,
                     _ORION_WAKE_HOUSE,
                     debounce_before_orion,
                     debounce_before_default,
@@ -1302,7 +1379,12 @@ def claim_due_wakes(
             ):
                 continue
             rows = _group_pending_rows(
-                conn, group, stamp=stamp, retry_before=retry_before
+                conn,
+                group,
+                stamp=stamp,
+                retry_before=retry_before,
+                orion_next_gate_sql=group_next_sql,
+                orion_next_extra_params=orion_group_params,
             )
             skipped: list[dict[str, Any]] = []
             claimable: list[sqlite3.Row] = []
@@ -1314,6 +1396,7 @@ def claim_due_wakes(
                 if composer_defer_blocks_claim(
                     reason=str(row["reason"] or ""),
                     decided_by_rule=str(row["decided_by_rule"] or ""),
+                    agent=str(row["agent"] or ""),
                 ):
                     continue
                 reason = _skip_reason(conn, row)
@@ -1366,6 +1449,16 @@ def parse_orion_deferred_attempt(decided_by_rule: str | None) -> int:
         return 0
     try:
         return max(0, int(text[len(_ORION_DEFERRED_ATTEMPT_PREFIX) :]))
+    except ValueError:
+        return 0
+
+
+def parse_orion_composer_defer_attempt(decided_by_rule: str | None) -> int:
+    text = str(decided_by_rule or "")
+    if not text.startswith(_ORION_COMPOSER_DEFER_ATTEMPT_PREFIX):
+        return 0
+    try:
+        return max(0, int(text[len(_ORION_COMPOSER_DEFER_ATTEMPT_PREFIX) :]))
     except ValueError:
         return 0
 
@@ -1423,17 +1516,30 @@ def record_orion_deferred_streaming(
         thread_id = str(eligible[0]["thread_id"])
         turn_numbers = sorted({int(r["turn_number"]) for r in eligible})
         ids = [int(r["id"]) for r in eligible]
+        cols = _ledger_columns(conn)
         if attempt > ORION_DEFERRED_STREAMING_MAX_ATTEMPTS:
+            telem_sets = ""
+            telem_vals: tuple[Any, ...] = ()
+            if "wake_last_attempt_at" in cols:
+                telem_sets += ", wake_last_attempt_at=?"
+                telem_vals += (stamp,)
+            if "wake_next_attempt_at" in cols:
+                telem_sets += ", wake_next_attempt_at=?"
+                telem_vals += (None,)
+            if "wake_attempt_count" in cols:
+                telem_sets += ", wake_attempt_count=?"
+                telem_vals += (attempt,)
             conn.execute(
                 f"UPDATE endpoint_wake_ledger SET state='refused', reason='deferred_exhausted', "
                 f"route=?, subscription_id=?, cse_registration_id=?, finished_at=?, "
-                f"decided_by_rule=? WHERE id IN ({','.join('?' * len(ids))})",
+                f"decided_by_rule=?{telem_sets} WHERE id IN ({','.join('?' * len(ids))})",
                 (
                     route,
                     subscription_id,
                     cse_registration_id,
                     stamp,
                     f"{_ORION_DEFERRED_ATTEMPT_PREFIX}{attempt}",
+                    *telem_vals,
                     *ids,
                 ),
             )
@@ -1447,10 +1553,21 @@ def record_orion_deferred_streaming(
                 "turn_numbers": turn_numbers,
             }
         retry_at = _shift(stamp, orion_deferred_retry_delay_s(attempt))
+        telem_sets = ""
+        telem_vals = ()
+        if "wake_last_attempt_at" in cols:
+            telem_sets += ", wake_last_attempt_at=?"
+            telem_vals += (stamp,)
+        if "wake_next_attempt_at" in cols:
+            telem_sets += ", wake_next_attempt_at=?"
+            telem_vals += (retry_at,)
+        if "wake_attempt_count" in cols:
+            telem_sets += ", wake_attempt_count=?"
+            telem_vals += (attempt,)
         conn.execute(
             f"UPDATE endpoint_wake_ledger SET state='pending', reason='deferred_streaming', "
             f"route=?, subscription_id=?, cse_registration_id=?, finished_at=?, "
-            f"decided_by_rule=?, wake_id=NULL, claimed_at=NULL "
+            f"decided_by_rule=?, wake_id=NULL, claimed_at=NULL{telem_sets} "
             f"WHERE id IN ({','.join('?' * len(ids))})",
             (
                 route,
@@ -1458,6 +1575,7 @@ def record_orion_deferred_streaming(
                 cse_registration_id,
                 retry_at,
                 f"{_ORION_DEFERRED_ATTEMPT_PREFIX}{attempt}",
+                *telem_vals,
                 *ids,
             ),
         )
@@ -1479,47 +1597,233 @@ def record_wake_result(
     cse_registration_id: str | None,
     *,
     decided_by_rule: str | None = None,
+    wake_detail: dict[str, Any] | None = None,
     now: str | None = None,
 ) -> int:
     """Persist a result on claimed rows, or unknown rows folded from that claim."""
     from bus_watch.endpoint_wake_composer_defer import (
+        is_composer_defer_reason,
         merge_composer_defer_decided_by_rule,
     )
+    from bus_watch.orion_wake_bounded_defer import orion_bounded_defer_reason
 
-    decided_by_rule = merge_composer_defer_decided_by_rule(
-        decided_by_rule, reason=reason
-    )
     stamp = _now(now)
-    finished = None if outcome == "refused" else stamp
+    detail = dict(wake_detail or {})
+    merge_reason = str(detail.pop("composer_defer_reason", "") or "").strip() or str(
+        reason or ""
+    ).strip()
+    decided_by_rule = merge_composer_defer_decided_by_rule(
+        decided_by_rule, reason=merge_reason
+    )
+    outcome_in = str(outcome or "").strip().lower()
+    reason_s = str(reason or "").strip()
+    pending_handoff = outcome_in == "pending" and (
+        is_composer_defer_reason(merge_reason)
+        or orion_bounded_defer_reason(merge_reason)
+    )
+    release_claim = bool(detail.pop("release_claim_for_retry", False))
+    if outcome_in == "refused":
+        # friction:42978 — title_mismatch is terminal; other refused composer defers stay open.
+        finished = stamp if reason_s == "title_mismatch" else None
+    elif pending_handoff and release_claim:
+        finished = None
+    else:
+        finished = stamp
     with write_connect() as conn:
+        cols = _ledger_columns(conn)
+        select_extra = ""
+        if "wake_attempt_count" in cols:
+            select_extra = ", wake_attempt_count"
+        detail_select = (
+            ", delivery_failure_detail" if "delivery_failure_detail" in cols else ""
+        )
         rows = conn.execute(
-            "SELECT id, state FROM endpoint_wake_ledger WHERE wake_id=?",
+            f"SELECT id, state, agent, thread_id, turn_number, subscription_id, reason, "
+            f"decided_by_rule{detail_select}{select_extra} "
+            f"FROM endpoint_wake_ledger WHERE wake_id=?",
             (wake_id,),
         ).fetchall()
         eligible = [r for r in rows if r["state"] in _CLAIM_STATES]
         if not eligible:
             raise WakeConflictError("wake_not_claimed")
         ids = [int(r["id"]) for r in eligible]
+        prior_attempt = 0
+        for r in eligible:
+            if "wake_attempt_count" in cols and r["wake_attempt_count"] is not None:
+                try:
+                    prior_attempt = max(prior_attempt, int(r["wake_attempt_count"]))
+                except (TypeError, ValueError):
+                    pass
+            prior_attempt = max(
+                prior_attempt, parse_orion_deferred_attempt(r["decided_by_rule"])
+            )
+        next_attempt = detail.pop("wake_next_attempt_at", None)
+        last_attempt = detail.pop("wake_last_attempt_at", None)
+        if last_attempt is None:
+            last_attempt = stamp
+        attempt_count = detail.pop("wake_attempt_count", None)
+        if attempt_count is None and "wake_attempt_count" in cols:
+            attempt_count = prior_attempt + 1
+        sub_for_row = subscription_id
+        if sub_for_row is None and "subscription_id" in cols:
+            for r in eligible:
+                sid = r["subscription_id"]
+                if sid is not None:
+                    sub_for_row = int(sid)
+                    break
+        # Single authoritative writer: dispatcher must not overwrite owner unknown.
+        prior_row = eligible[0]
+        prior_reason = str(prior_row["reason"] or "")
+        if prior_reason.startswith("paste_receipt:"):
+            try:
+                blob = json.loads(prior_reason[len("paste_receipt:") :])
+            except json.JSONDecodeError:
+                blob = {}
+            if (
+                isinstance(blob, dict)
+                and str(blob.get("outcome") or "") == "unknown"
+                and outcome_in in {"refused", "unknown", "delivered", "pending", "skipped"}
+            ):
+                return 0
+        # Merge with prior delivery_failure_detail when the new payload is thinner.
+        prior_detail: dict[str, Any] = {}
+        if "delivery_failure_detail" in cols:
+            raw_prior = prior_row["delivery_failure_detail"]
+            if raw_prior:
+                try:
+                    parsed = json.loads(str(raw_prior))
+                    if isinstance(parsed, dict):
+                        prior_detail = parsed
+                except json.JSONDecodeError:
+                    prior_detail = {}
+        merged_detail = {**prior_detail, **detail}
+        detail_blob = _encode_delivery_failure_detail(merge_reason, **merged_detail)
+        row_reason = (
+            merge_reason
+            if pending_handoff and release_claim
+            else reason_s
+        )
         set_rule = (
             ", decided_by_rule=COALESCE(?, decided_by_rule)" if decided_by_rule else ""
         )
+        telem = ""
+        telem_params: list[Any] = []
+        if "wake_last_attempt_at" in cols:
+            telem += ", wake_last_attempt_at=?"
+            telem_params.append(last_attempt)
+        if "wake_next_attempt_at" in cols:
+            telem += ", wake_next_attempt_at=?"
+            telem_params.append(next_attempt)
+        if "wake_attempt_count" in cols:
+            telem += ", wake_attempt_count=?"
+            telem_params.append(attempt_count)
+        if "delivery_failure_detail" in cols:
+            telem += ", delivery_failure_detail=?"
+            telem_params.append(detail_blob)
         params: list[Any] = [
-            outcome,
-            reason,
+            outcome_in,
+            row_reason,
             route,
-            subscription_id,
+            sub_for_row,
             cse_registration_id,
             finished,
         ]
         if decided_by_rule:
             params.append(decided_by_rule)
+        params.extend(telem_params)
         params.extend(ids)
         conn.execute(
             f"UPDATE endpoint_wake_ledger SET state=?, reason=?, route=?, "
-            f"subscription_id=?, cse_registration_id=?, finished_at=?{set_rule} "
+            f"subscription_id=?, cse_registration_id=?, finished_at=?{set_rule}{telem} "
             f"WHERE id IN ({','.join('?' * len(ids))})",
             tuple(params),
         )
+        if pending_handoff and release_claim:
+            from bus_watch.endpoint_wake_composer_defer import COMPOSER_DEFER_ARMED
+
+            comp_prior = 0
+            for r in eligible:
+                comp_prior = max(
+                    comp_prior, parse_orion_composer_defer_attempt(r["decided_by_rule"])
+                )
+                if "wake_attempt_count" in cols and r["wake_attempt_count"] is not None:
+                    try:
+                        comp_prior = max(comp_prior, int(r["wake_attempt_count"]))
+                    except (TypeError, ValueError):
+                        pass
+            ac_val = max(1, comp_prior + 1)
+            next_wall = _shift(stamp, orion_deferred_retry_delay_s(ac_val))
+            orion_agent = normalize_bus_address(str(eligible[0]["agent"])) == "orion"
+            exhausted_orion = orion_agent and orion_bounded_defer_reason(
+                merge_reason
+            ) and ac_val > ORION_COMPOSER_DEFER_MAX_ATTEMPTS
+            if exhausted_orion:
+                thread_id = str(eligible[0]["thread_id"])
+                turn_numbers = sorted({int(r["turn_number"]) for r in eligible})
+                ex_sets = (
+                    "state='refused', reason='composer_defer_exhausted', wake_id=NULL, "
+                    "claimed_at=NULL, finished_at=?"
+                )
+                ex_params: list[Any] = [stamp]
+                if "wake_last_attempt_at" in cols:
+                    ex_sets += ", wake_last_attempt_at=?"
+                    ex_params.append(stamp)
+                if "wake_next_attempt_at" in cols:
+                    ex_sets += ", wake_next_attempt_at=?"
+                    ex_params.append(None)
+                if "wake_attempt_count" in cols:
+                    ex_sets += ", wake_attempt_count=?"
+                    ex_params.append(ac_val)
+                ex_sets += ", decided_by_rule=?"
+                ex_params.append(f"{_ORION_COMPOSER_DEFER_ATTEMPT_PREFIX}{ac_val}")
+                conn.execute(
+                    f"UPDATE endpoint_wake_ledger SET {ex_sets} "
+                    f"WHERE id IN ({','.join('?' * len(ids))})",
+                    (*ex_params, *ids),
+                )
+                post_orion_wake_undelivered_notices(
+                    thread_id=thread_id,
+                    turn_numbers=turn_numbers,
+                )
+            else:
+                release_sets = (
+                    "state='pending', wake_id=NULL, claimed_at=NULL, "
+                    "reason=?, decided_by_rule=?"
+                )
+                release_params: list[Any] = [merge_reason, COMPOSER_DEFER_ARMED]
+                if "wake_last_attempt_at" in cols:
+                    release_sets += ", wake_last_attempt_at=?"
+                    release_params.append(stamp)
+                if "wake_next_attempt_at" in cols:
+                    release_sets += ", wake_next_attempt_at=?"
+                    release_params.append(next_wall)
+                if "wake_attempt_count" in cols:
+                    release_sets += ", wake_attempt_count=?"
+                    release_params.append(ac_val)
+                elif "wake_next_attempt_at" not in cols:
+                    release_sets += ", finished_at=?"
+                    release_params.append(next_wall)
+                conn.execute(
+                    f"UPDATE endpoint_wake_ledger SET {release_sets} "
+                    f"WHERE id IN ({','.join('?' * len(ids))})",
+                    (*release_params, *ids),
+                )
+        try:
+            from agent_bus_store.events.publisher import emit
+
+            emit(
+                "endpoint_wake.lifecycle",
+                {
+                    "wake_id": wake_id,
+                    "outcome": outcome_in,
+                    "reason": merge_reason,
+                    "subscription_id": sub_for_row,
+                    "attempt_count": attempt_count,
+                    "wake_next_attempt_at": next_attempt,
+                },
+            )
+        except Exception:
+            pass
     return len(ids)
 
 
@@ -1577,14 +1881,30 @@ def list_wake_ledger_rows(
         clauses.append("state = ?")
         params.append(str(state).strip())
     where = f" WHERE {' AND '.join(clauses)}" if clauses else ""
-    sql = (
-        "SELECT id, agent, thread_id, turn_id, turn_number, state, wake_id, route, "
-        "subscription_id, cse_registration_id, reason, decided_by_rule, "
-        "created_at, claimed_at, finished_at "
-        f"FROM endpoint_wake_ledger{where} ORDER BY id DESC LIMIT ?"
-    )
     params.append(cap)
     with connect() as conn:
+        cols = _ledger_columns(conn)
+        extra = [
+            c
+            for c in (
+                "wake_last_attempt_at",
+                "wake_next_attempt_at",
+                "wake_attempt_count",
+                "delivery_failure_detail",
+            )
+            if c in cols
+        ]
+        select_cols = (
+            "id, agent, thread_id, turn_id, turn_number, state, wake_id, route, "
+            "subscription_id, cse_registration_id, reason, decided_by_rule, "
+            "created_at, claimed_at, finished_at"
+        )
+        if extra:
+            select_cols += ", " + ", ".join(extra)
+        sql = (
+            f"SELECT {select_cols} FROM endpoint_wake_ledger{where} "
+            "ORDER BY id DESC LIMIT ?"
+        )
         rows = conn.execute(sql, params).fetchall()
     out: list[dict[str, Any]] = []
     for row in rows:

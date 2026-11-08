@@ -102,36 +102,19 @@ def test_raise_if_restart_busy_blocks_same_key() -> None:
     assert exc.value.code == "restart_busy_deferred"
 
 
-def test_queue_kw_unkeyed_fails_closed_on_blocked_lane() -> None:
-    assert queue_kw_for_pending_intent(
-        service="git_integration_worker",
-        intent_status=STATUS_PENDING_DRAIN,
-        occupied_lanes={"B"},
-        admit_lane="B",
-        admit_work_key=None,
-        busy_work_keys=("todo:drain",),
-    ) == {"queue_for_pending_intent": True}
+def test_queue_kw_pending_drain_queues_top_level_write() -> None:
+    assert queue_kw_for_pending_intent(intent_status=STATUS_PENDING_DRAIN) == {
+        "queue_for_pending_intent": True
+    }
 
 
-def test_queue_kw_independent_work_key_bypasses_lane_queue() -> None:
-    assert queue_kw_for_pending_intent(
-        service="git_integration_worker",
-        intent_status=STATUS_PENDING_DRAIN,
-        occupied_lanes={"B"},
-        admit_lane="B",
-        admit_work_key="todo:other",
-        busy_work_keys=("todo:drain",),
-    ) == {}
-
-
-def test_queue_kw_nest_under_bypasses_lane_queue() -> None:
-    assert queue_kw_for_pending_intent(
-        service="git_integration_worker",
-        intent_status=STATUS_PENDING_DRAIN,
-        occupied_lanes={"B"},
-        admit_lane="B",
-        nest_under="parent-id",
-    ) == {}
+def test_queue_kw_nest_under_bypasses_queue() -> None:
+    assert (
+        queue_kw_for_pending_intent(
+            intent_status=STATUS_PENDING_DRAIN, nest_under="parent-id"
+        )
+        == {}
+    )
 
 
 @pytest.mark.asyncio

@@ -187,6 +187,13 @@ async def dispatch_api_role_generate(
         sidecar_ref=getattr(body, "sidecar_ref", None),
     )
     last_user = prompt_resolution.text
+    review_target_payload: dict[str, Any] | None = None
+    if contract in ("code-review", "check-review", "delivery-review"):
+        from .review_target_admit import review_target_api_admit
+
+        last_user, review_target_payload = await review_target_api_admit(
+            request_id, last_user, FrontierEndpointError
+        )
 
     provenance_missing = (
         admit_provenance.missing if admit_provenance is not None else ()
@@ -379,6 +386,8 @@ async def dispatch_api_role_generate(
         max_wall_s=api_max_wall,
     )
     attach_registry_next(result, relay_body)
+    if review_target_payload is not None:
+        result["review_target"] = review_target_payload
     return result
 
 

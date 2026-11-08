@@ -148,6 +148,8 @@ def _walk_turns_legacy(
     turns: list[dict[str, str]] = []
     current: dict[str, list[str]] | None = None
     for record in records:
+        if not isinstance(record, dict):
+            continue
         role = record.get("role")
         message = record.get("message") or {}
         content = message.get("content")
@@ -201,6 +203,8 @@ def _walk_turns(
     turns: list[dict[str, str]] = []
     current: dict[str, list[str]] | None = None
     for record in records:
+        if not isinstance(record, dict):
+            continue
         message = record.get("message") or {}
         rec_type = record.get("type")
         if bool(record.get("isMeta")) or bool(record.get("isSidechain")):
@@ -311,6 +315,8 @@ def extract_turns_from_jsonl_bytes(
     observed_at: str | None = None,
     surface: str = "cursor",
     strict_dialogue: bool = False,
+    event_origin: str | None = None,
+    event_truncated: bool | None = None,
 ) -> ContinuityMessagesEnvelope:
     """Parse agent-transcript JSONL bytes into a continuity messages envelope."""
     source_sha256 = hashlib.sha256(raw).hexdigest()
@@ -324,6 +330,7 @@ def extract_turns_from_jsonl_bytes(
     now = observed_at or datetime.now(tz=UTC).isoformat()
     sha = seal_messages_sha256(messages)
     meta_surface = _normalize_envelope_surface(surface)
+    truncated = False if event_truncated is None else bool(event_truncated)
     meta = EnvelopeMeta(
         surface=meta_surface,
         tools=tools,
@@ -331,7 +338,7 @@ def extract_turns_from_jsonl_bytes(
         extras=False,
         turn_count=len(turns),
         message_count=len(messages),
-        truncated=False,
+        truncated=truncated,
         messages_sha256=sha,
         transcript_id=transcript_id,
         session_id=session_id,
@@ -339,15 +346,17 @@ def extract_turns_from_jsonl_bytes(
         source_sha256=source_sha256,
     )
     envelope = ContinuityMessagesEnvelope(messages=messages, index=[], meta=meta)
+    event_surface = surface if event_origin is not None else meta_surface
     continuity_messages_extracted(
-        surface=meta_surface,
+        surface=event_surface,
         transcript_id=transcript_id or "",
         message_count=len(messages),
         turn_count=len(turns),
         user_turns=len(turns),
         tools=tools,
-        truncated=False,
-        source=_SOURCE,
+        truncated=truncated,
+        source=event_origin or _SOURCE,
+        origin=event_origin,
     )
     return envelope
 

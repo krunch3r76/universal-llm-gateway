@@ -1,9 +1,11 @@
-"""Thin relays for endpoint subscription ops."""
+"""Thin relays for endpoint subscription ops and cursor tab whereami."""
 
 from __future__ import annotations
 
 from typing import Any
 from urllib.parse import urlencode
+
+from bus_watch.cursor_tab_whereami import resolve_cursor_tab_whereami
 
 from ._shared import _structured_relay_error, relay
 
@@ -81,6 +83,11 @@ def _unsubscribe_dispatch(
         ),
         "unsubscribe",
     )
+
+
+def _whereami_dispatch(*, transcript_id: str | None = None) -> dict[str, Any]:
+    """Resolve Glass host and subscription display for the calling Cursor tab."""
+    return resolve_cursor_tab_whereami(transcript_id=transcript_id)
 
 
 def _subscriptions_dispatch(

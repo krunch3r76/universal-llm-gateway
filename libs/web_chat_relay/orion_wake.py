@@ -7,11 +7,17 @@ Does not import ``orion_session`` or ``orion_cli`` (untracked helpers). Uses
 from __future__ import annotations
 
 import asyncio
+import json
 import os
 import re
 import uuid
 from typing import Any, Protocol
 from urllib.parse import urlparse
+
+from web_chat_relay.chatgpt_structural_empty_js import (
+    STRUCTURAL_COMPOSER_EMPTY_CORE_JS,
+    STRUCTURAL_FOREIGN_EMBED_GUARD_JS,
+)
 
 DEFAULT_ORION_CDP_URL = os.environ.get("ORION_CDP_URL", "http://127.0.0.1:9342")
 PINNED_CONVERSATION_URL = (
@@ -26,13 +32,86 @@ _STREAMING_JS = """
 )
 """
 
-_TAB_SYNC_STATE_JS = """
-() => {
+_TAB_SYNC_STATE_JS = f"""
+() => {{
+{STRUCTURAL_COMPOSER_EMPTY_CORE_JS.strip()}
+{STRUCTURAL_FOREIGN_EMBED_GUARD_JS.strip()}
   const composers = [...document.querySelectorAll('[contenteditable="true"]')];
-  const composerEmpty = composers.every(el => !(el.innerText || '').trim());
-  return { visibilityState: document.visibilityState, composerEmpty };
+  const foreignAttachmentOrChip = (el) => {{
+    const region =
+      el.closest('[data-testid="composer"]') ||
+      el.closest('form') ||
+      el.parentElement?.parentElement ||
+      el.parentElement ||
+      el;
+    const attachSels = [
+      '[data-testid*="attachment" i]',
+      '[class*="attachment" i]',
+      '[data-testid*="file-chip" i]',
+      '[data-testid*="uploaded" i]',
+    ];
+    for (const sel of attachSels) {{
+      for (const node of region.querySelectorAll(sel)) {{
+        if (!node || node.nodeType !== 1) continue;
+        if (node.matches('input[type="file"]')) continue;
+        const tag = String(node.tagName || '').toUpperCase();
+        if (tag === 'INPUT' && String(node.getAttribute('type') || '').toLowerCase() === 'file') continue;
+        const label = (node.getAttribute('aria-label') || node.innerText || '').toLowerCase();
+        if ((tag === 'BUTTON' || node.getAttribute('role') === 'button') &&
+            (label.includes('attach') || label.includes('voice'))) continue;
+        return true;
+      }}
+    }}
+    return false;
+  }};
+  const structuralEmpty = (el) => {{
+    if (foreignAttachmentOrChip(el)) return false;
+    if (__ulgHasForeignStructuralEmbed(el)) return false;
+    const draft = (el.innerText || el.value || '').trim();
+    if (draft.length > 0) return false;
+    return __ulgStructuralComposerEmptyCore(el);
+  }};
+  const composerEmpty = composers.every((el) => structuralEmpty(el));
+  return {{
+    visibilityState: document.visibilityState,
+    composerEmpty,
+    pointerLine: String(window.__ulgOrionWakeTabSync?.pointerLine || ''),
+  }};
+}}
+"""
+
+_OWNED_POINTER_DRAFT_JS = """
+() => {
+  const line = String(window.__ulgOrionWakeTabSync?.pointerLine || '').trim();
+  const g = window.__ulgOperatorActivity || {};
+  const sig = String(g.ourDraftSig || '').trim();
+  const composers = [...document.querySelectorAll('[contenteditable="true"]')];
+  const text = composers.map((c) => (c.innerText || '')).join('\\n').trim();
+  if (!line || text !== line) return { ok: false };
+  if (sig !== line) return { ok: false };
+  return { ok: true };
 }
 """
+
+
+def _tab_sync_state_eval(pointer_line: str) -> str:
+    pl = json.dumps(str(pointer_line or ""))
+    fn = _TAB_SYNC_STATE_JS.strip()
+    return f"""(() => {{
+  window.__ulgOrionWakeTabSync = {{ pointerLine: {pl} }};
+  const sync = {fn};
+  return sync();
+}})()"""
+
+
+def _owned_pointer_draft_eval(pointer_line: str) -> str:
+    pl = json.dumps(str(pointer_line or ""))
+    return f"""(() => {{
+  window.__ulgOrionWakeTabSync = {{ pointerLine: {pl} }};
+  const check = {_OWNED_POINTER_DRAFT_JS.strip()};
+  return check();
+}})()"""
+
 
 _DIALOG_SCAN_JS = """
 () => {
@@ -262,6 +341,35 @@ def build_wake_pointer(
 
 def _refuse(reason: str, **extra: Any) -> dict[str, Any]:
     return {"ok": False, "reason": reason, "pasted": False, "delivered": False, **extra}
+
+
+def _dom_inserted_but_unsent(result: dict[str, Any]) -> bool:
+    """True when insertion succeeded but send actuation did not run.
+
+    Requires ``reason=no_send_button`` plus ``pasted``, ``inserted``, or
+    ``phase`` inserted/send_unknown from the inner DOM layer — not bare
+    ``no_send_button`` alone.
+    """
+    reason = str(result.get("reason") or "")
+    if reason != "no_send_button":
+        return False
+    if result.get("pasted") is True:
+        return True
+    if result.get("inserted") is True:
+        return True
+    phase = str(result.get("phase") or "")
+    return phase in {"inserted", "send_unknown"}
+
+
+async def _safe_playwright_stop(pw: Any) -> None:
+    """Best-effort Playwright shutdown; must not mask post-commit unknown outcomes."""
+    stop_fn = getattr(pw, "stop", None)
+    if not callable(stop_fn):
+        return
+    try:
+        await stop_fn()
+    except Exception:
+        return
 
 
 _open_lock_registry_guard = asyncio.Lock()
@@ -811,6 +919,7 @@ async def _sync_tab_before_paste(
     page: OrionPage,
     *,
     target_id: str,
+    pointer_line: str,
     policy_just_opened: bool = False,
     allow_bring_to_front: bool = True,
 ) -> dict[str, Any]:
@@ -818,7 +927,7 @@ async def _sync_tab_before_paste(
     brought_to_front = False
     tab_reloaded = False
 
-    raw = await page.evaluate(_TAB_SYNC_STATE_JS)
+    raw = await page.evaluate(_tab_sync_state_eval(pointer_line))
     if isinstance(raw, dict):
         visibility = str(raw.get("visibilityState") or "visible")
         composer_empty_raw = raw.get("composerEmpty")
@@ -869,7 +978,7 @@ async def _sync_tab_before_paste(
                 ),
             }
 
-        post_raw = await page.evaluate(_TAB_SYNC_STATE_JS)
+        post_raw = await page.evaluate(_tab_sync_state_eval(pointer_line))
         if isinstance(post_raw, dict):
             composer_empty_raw = post_raw.get("composerEmpty")
             composer_empty = (
@@ -877,6 +986,13 @@ async def _sync_tab_before_paste(
             )
 
     if not composer_empty:
+        own = await page.evaluate(_owned_pointer_draft_eval(pointer_line))
+        if isinstance(own, dict) and own.get("ok"):
+            return {
+                "brought_to_front": brought_to_front,
+                "tab_reloaded": tab_reloaded,
+                "owned_draft_already_inserted": True,
+            }
         return {
             "brought_to_front": brought_to_front,
             "tab_reloaded": tab_reloaded,
@@ -927,14 +1043,41 @@ async def _prepare_composer(page: OrionPage) -> dict[str, Any]:
     return receipt
 
 
-def _cdp_transport_refusal(raw: dict[str, Any]) -> dict[str, Any] | None:
+def _cdp_transport_refusal(
+    raw: dict[str, Any], *, phase: str = "pre_insert"
+) -> dict[str, Any] | None:
     if raw.get("error"):
         return {
             "ok": False,
             "reason": "cdp_transport_error",
             "retryable": True,
+            "phase": phase,
+        }
+    code = str(raw.get("code") or "").strip()
+    if code == "cdp_transport_error":
+        return {
+            "ok": False,
+            "reason": "cdp_transport_error",
+            "retryable": bool(raw.get("retryable", True)),
+            "phase": phase,
         }
     return None
+
+
+def _dom_indicates_committed_send(dom: dict[str, Any]) -> bool:
+    if dom.get("ok"):
+        return True
+    if dom.get("insert_attempted"):
+        return True
+    if dom.get("send_fallback_clicked"):
+        return True
+    reason = str(dom.get("reason") or "")
+    phase = str(dom.get("phase") or "")
+    if reason == "delivery_unconfirmed":
+        return True
+    if reason == "cdp_transport_error" and phase == "post_insert":
+        return True
+    return False
 
 
 async def _dom_deliver(
@@ -944,11 +1087,11 @@ async def _dom_deliver(
     cdp_url: str = DEFAULT_ORION_CDP_URL,
     preserve_newlines: bool = False,
 ) -> dict[str, Any]:
-    """Paste via ChatGPT DOM helpers (same sequence as web_tab execute_paste submit path).
+    """Paste via ChatGPT DOM helpers (web_tab execute_paste submit sequence).
 
-    On dom_insert_and_send failure, forwards census unchanged when the inner result includes it.
+    Uses ChatGPT-specific CDP Input.insertText when the composer is structurally empty;
+    forwards census, pasted, delivered, inserted, phase, and send_clicked when present.
     """
-    from cursor_bridge.dom_composer_paste import dom_insert_and_send
     from web_tab.cdp_actuation import default_actuation_port
     from web_tab.commit_verify import capture_dom_baseline, poll_verify_committed
     from web_tab.operator_guard import (
@@ -957,6 +1100,8 @@ async def _dom_deliver(
     )
     from web_tab.provider_selectors import composer_selector_for_site, match_tab_by_url
     from web_tab.target_lock import TargetLockBusyError, target_write_lock
+
+    from web_chat_relay.chatgpt_work_composer_cdp import chatgpt_work_insert_and_send
 
     tab_url = str(getattr(page, "url", "") or "")
     impl = default_actuation_port()
@@ -1015,15 +1160,18 @@ async def _dom_deliver(
                     "after_lock": True,
                 }
             baseline = await capture_dom_baseline(impl, ws_url=ws, site=site)
-            transport = _cdp_transport_refusal(baseline)
+            transport = _cdp_transport_refusal(baseline, phase="pre_insert")
             if transport:
                 return transport
             base_users = int(baseline.get("user_count") or 0)
-            result = await dom_insert_and_send(
+            want_cid = (conversation_id_from_url(tab_url) or "").lower()
+            result = await chatgpt_work_insert_and_send(
                 ws,
                 selector=selector,
                 line=text,
                 preserve_newlines=preserve_newlines,
+                expected_conversation_id=want_cid,
+                expected_target_id=target_id,
             )
     except TargetLockBusyError:
         return {"ok": False, "reason": "target_lock_busy", "retryable": True}
@@ -1033,12 +1181,34 @@ async def _dom_deliver(
             "ok": False,
             "reason": str(result.get("reason") or "paste_failed"),
         }
+        if result.get("insert_attempted"):
+            failure["insert_attempted"] = True
+        if result.get("retryable") is True:
+            failure["retryable"] = True
+        elif result.get("retryable") is False:
+            failure["retryable"] = False
+        if result.get("clicked_unknown"):
+            failure["clicked_unknown"] = True
+        if result.get("owned_draft_retained"):
+            failure["owned_draft_retained"] = True
         census = result.get("census")
         if census is not None:
             failure["census"] = census
+        for key in (
+            "pasted",
+            "delivered",
+            "inserted",
+            "phase",
+            "send_clicked",
+            "insertion_unknown",
+            "retry_eligible",
+        ):
+            if key in result:
+                failure[key] = result[key]
+        if result.get("pasted") is True and "delivered" not in failure:
+            failure["delivered"] = False
         return failure
 
-    receipt: str = "dom_paste"
     verify = await poll_verify_committed(
         impl,
         ws_url=ws,
@@ -1046,14 +1216,26 @@ async def _dom_deliver(
         prompt_text=verify_text,
         baseline_user_count=base_users,
     )
-    transport = _cdp_transport_refusal(verify)
+    transport = _cdp_transport_refusal(verify, phase="post_insert")
     if transport:
+        transport["insert_attempted"] = True
+        if result.get("send_fallback_clicked"):
+            transport["send_fallback_clicked"] = True
         return transport
-    if verify.get("receipt") == "dom_committed":
-        receipt = "dom_committed"
+    receipt = str(verify.get("receipt") or "dom_paste")
+    if receipt != "dom_committed":
+        unconfirmed: dict[str, Any] = {
+            "ok": False,
+            "reason": "delivery_unconfirmed",
+            "receipt": receipt,
+            "insert_attempted": True,
+        }
+        if result.get("send_fallback_clicked"):
+            unconfirmed["send_fallback_clicked"] = True
+        return unconfirmed
     return {
         "ok": True,
-        "receipt": receipt,
+        "receipt": "dom_committed",
         "target_id": target_id,
         "selector": selector,
     }
@@ -1249,6 +1431,11 @@ async def deliver_orion_wake(
 
     assert page is not None
     page_cid = conversation_id_from_url(page.url or "")
+    pointer_line = (
+        paste_text
+        if paste_text is not None
+        else build_wake_pointer(thread=thread_s, turn=turn, from_agent=from_agent)
+    )
     if page_cid != target_id:
         if owns_cdp and pw is not None:
             stop_fn = getattr(pw, "stop", None)
@@ -1306,6 +1493,7 @@ async def deliver_orion_wake(
     tab_sync = await _sync_tab_before_paste(
         page,
         target_id=target_id,
+        pointer_line=pointer_line,
         policy_just_opened=policy_just_opened,
         allow_bring_to_front=allow_bring_to_front,
     )
@@ -1321,16 +1509,25 @@ async def deliver_orion_wake(
         }
 
     layout_receipt = await _prepare_composer(page)
-    line = (
-        paste_text
-        if paste_text is not None
-        else build_wake_pointer(thread=thread_s, turn=turn, from_agent=from_agent)
-    )
+    line = pointer_line
+    if await _is_streaming(page):
+        if owns_cdp and pw is not None:
+            stop_fn = getattr(pw, "stop", None)
+            if callable(stop_fn):
+                await stop_fn()
+        return _refuse(
+            "deferred_streaming",
+            error="active_generation",
+            pasted=False,
+            brought_to_front=tab_sync["brought_to_front"],
+            tab_reloaded=tab_sync["tab_reloaded"],
+        )
+    dom: dict[str, Any] | None = None
     try:
         dom = await _dom_deliver(page, line, cdp_url=cdp_url, preserve_newlines=False)
         if not dom.get("ok"):
             if owns_cdp and pw is not None:
-                await pw.stop()
+                await _safe_playwright_stop(pw)
             dom_reason = str(dom.get("reason") or "paste_failed")
             visibility_only = (
                 dom_reason
@@ -1344,7 +1541,14 @@ async def deliver_orion_wake(
                     brought_to_front=tab_sync["brought_to_front"],
                     tab_reloaded=tab_sync["tab_reloaded"],
                 )
-            if dom.get("after_lock") and not visibility_only:
+            if (
+                dom.get("after_lock")
+                and not visibility_only
+                and not (
+                    dom_reason == "cdp_transport_error"
+                    and str(dom.get("phase") or "") == "post_insert"
+                )
+            ):
                 return _refuse(
                     "deferred_streaming",
                     error=dom_reason,
@@ -1353,31 +1557,122 @@ async def deliver_orion_wake(
                     brought_to_front=tab_sync["brought_to_front"],
                     tab_reloaded=tab_sync["tab_reloaded"],
                 )
+            if _dom_inserted_but_unsent(dom):
+                inserted_unsent: dict[str, Any] = {
+                    "ok": False,
+                    "reason": dom_reason,
+                    "pasted": True,
+                    "delivered": False,
+                    "error": dom_reason,
+                    "brought_to_front": tab_sync["brought_to_front"],
+                    "tab_reloaded": tab_sync["tab_reloaded"],
+                }
+                if dom.get("census") is not None:
+                    inserted_unsent["census"] = dom["census"]
+                for key in ("inserted", "phase", "send_clicked"):
+                    if key in dom:
+                        inserted_unsent[key] = dom[key]
+                return inserted_unsent
             paste_refuse: dict[str, Any] = {
                 "error": dom_reason,
                 "pasted": False,
                 "brought_to_front": tab_sync["brought_to_front"],
                 "tab_reloaded": tab_sync["tab_reloaded"],
             }
+            if dom.get("insertion_unknown") is True:
+                paste_refuse["insertion_unknown"] = True
+                paste_refuse["retry_eligible"] = bool(dom.get("retry_eligible", False))
             if dom.get("census") is not None:
                 paste_refuse["census"] = dom["census"]
-            return _refuse("paste_failed", **paste_refuse)
-        await page.wait_for_timeout(400)
-        approval = await _handle_approvals(page)
+            if dom.get("insert_attempted"):
+                paste_refuse["insert_attempted"] = True
+            if dom.get("retryable") is True:
+                paste_refuse["retryable"] = True
+            elif dom.get("retryable") is False:
+                paste_refuse["retryable"] = False
+            if dom.get("clicked_unknown"):
+                paste_refuse["clicked_unknown"] = True
+            if dom.get("owned_draft_retained"):
+                paste_refuse["owned_draft_retained"] = True
+            if dom.get("send_fallback_clicked"):
+                paste_refuse["send_fallback_clicked"] = True
+            if dom.get("phase") is not None:
+                paste_refuse["phase"] = dom.get("phase")
+            if dom_reason == "cdp_transport_error":
+                if dom.get("retryable") is True and str(dom.get("phase") or "") != "post_insert":
+                    refuse_reason = "cdp_transport_error"
+                else:
+                    refuse_reason = "insert_outcome_unknown"
+            elif dom_reason == "insert_outcome_unknown":
+                refuse_reason = "insert_outcome_unknown"
+            elif dom_reason == "send_button_disabled":
+                refuse_reason = "deferred_streaming"
+            elif dom_reason == "delivery_unconfirmed":
+                refuse_reason = "delivery_unconfirmed"
+            else:
+                refuse_reason = "paste_failed"
+            return _refuse(refuse_reason, **paste_refuse)
+        try:
+            await page.wait_for_timeout(400)
+        except Exception as exc:
+            if owns_cdp and pw is not None:
+                await _safe_playwright_stop(pw)
+            wait_exc: dict[str, Any] = {
+                "error": type(exc).__name__,
+                "brought_to_front": tab_sync["brought_to_front"],
+                "tab_reloaded": tab_sync["tab_reloaded"],
+                "insert_attempted": True,
+                "retryable": False,
+                "pasted": True,
+                "delivered": False,
+            }
+            if isinstance(dom, dict) and dom.get("clicked_unknown"):
+                wait_exc["clicked_unknown"] = True
+            return _refuse("insert_outcome_unknown", **wait_exc)
+        try:
+            approval = await _handle_approvals(page)
+        except Exception as exc:
+            if owns_cdp and pw is not None:
+                await _safe_playwright_stop(pw)
+            exc_refuse: dict[str, Any] = {
+                "error": type(exc).__name__,
+                "brought_to_front": tab_sync["brought_to_front"],
+                "tab_reloaded": tab_sync["tab_reloaded"],
+                "insert_attempted": True,
+                "retryable": False,
+            }
+            if isinstance(dom, dict):
+                if dom.get("clicked_unknown"):
+                    exc_refuse["clicked_unknown"] = True
+            return _refuse("insert_outcome_unknown", **exc_refuse)
     except Exception as exc:
         if owns_cdp and pw is not None:
-            stop_fn = getattr(pw, "stop", None)
-            if callable(stop_fn):
-                await stop_fn()
+            await _safe_playwright_stop(pw)
+        exc_refuse_pre: dict[str, Any] = {
+            "error": type(exc).__name__,
+            "brought_to_front": tab_sync["brought_to_front"],
+            "tab_reloaded": tab_sync["tab_reloaded"],
+        }
+        if isinstance(dom, dict):
+            if _dom_indicates_committed_send(dom):
+                exc_refuse_pre["insert_attempted"] = True
+                exc_refuse_pre["retryable"] = False
+                exc_refuse_pre["pasted"] = True
+                exc_refuse_pre["delivered"] = False
+            if dom.get("insert_attempted"):
+                exc_refuse_pre["insert_attempted"] = True
+                exc_refuse_pre["retryable"] = dom.get("retryable") is False
+            if dom.get("clicked_unknown"):
+                exc_refuse_pre["clicked_unknown"] = True
         return _refuse(
-            "paste_failed",
-            error=type(exc).__name__,
-            brought_to_front=tab_sync["brought_to_front"],
-            tab_reloaded=tab_sync["tab_reloaded"],
+            "insert_outcome_unknown"
+            if exc_refuse_pre.get("insert_attempted")
+            else "paste_failed",
+            **exc_refuse_pre,
         )
 
     if owns_cdp and pw is not None:
-        await pw.stop()
+        await _safe_playwright_stop(pw)
 
     sync_flags = {
         "brought_to_front": tab_sync["brought_to_front"],
@@ -1542,8 +1837,8 @@ async def deliver_orion_chat_wake(
         stored_endpoint=open_endpoint,
         binding_reference=claim.binding_reference,
     )
-    # Why: live deliver_orion_wake steers during streaming; deferred_streaming receipts
-    # remain for legacy in-flight ledger retry rows and injected pipeline responses.
+    # Active-generation tabs defer before insert (I1); coalesce to retry-eligible
+    # receipt for the owner/ledger path.
     if receipt.get("reason") == "deferred_streaming":
         receipt = {**receipt, "ok": False, "retry_eligible": True}
     owner.record_paste_receipt(claim, receipt)

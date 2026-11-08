@@ -112,6 +112,401 @@ async def _runtime_eval(ws: Any, mid: int, expression: str) -> Any:
     return ((raw.get("result") or {}).get("result") or {}).get("value")
 
 
+_PRE_INPUT_REFUSAL_REASONS = frozenset(
+    {
+        "url_mismatch",
+        "no_composer",
+        "ambiguous_work_composer",
+        "work_native_unsupported",
+        "work_dom_api_available",
+        "composer_not_empty",
+        "operator_active",
+        "competing_text_control",
+        "focus_failed",
+        "foreign_attachment",
+        "selection_active",
+        "editor_changed",
+    }
+)
+
+_WORK_ATTACHMENT_JS = r"""
+function ulgAttachmentTextIsFile(text) {
+  const t = String(text || '').replace(/\s+/g, ' ').trim();
+  if (!t) return false;
+  const low = t.toLowerCase();
+  if (
+    low === 'attach' || low === 'attachment' || low === 'add'
+    || low === 'add files' || low === 'upload'
+  ) return false;
+  return /\.[a-z0-9]{1,8}\b/i.test(t);
+}
+function ulgIsRemoveControl(node) {
+  if (!node || typeof node.getAttribute !== 'function') return false;
+  const label = String(node.getAttribute('aria-label') || '');
+  const testid = String(node.getAttribute('data-testid') || '');
+  const cls = String(node.getAttribute('class') || '');
+  return /remove|dismiss/i.test(label) || /remove|dismiss/i.test(testid) || /remove/i.test(cls);
+}
+function ulgNodeIsPopulatedFile(node) {
+  if (!node) return false;
+  if (ulgIsRemoveControl(node)) return true;
+  if (typeof node.querySelector === 'function') {
+    const fileInput = node.querySelector('input[type="file"]');
+    if (fileInput && fileInput.files && fileInput.files.length > 0) return true;
+    if (node.querySelector(
+      '[aria-label*="remove" i],[aria-label*="dismiss" i],[data-testid*="remove" i]'
+    )) return true;
+  }
+  return ulgAttachmentTextIsFile(node.innerText || '');
+}
+function ulgEditorFooterRegion(el) {
+  let region = (el && el.parentElement) ? el.parentElement : el;
+  let cur = el;
+  for (let step = 0; cur && step < 8; step += 1) {
+    const parent = cur.parentElement;
+    if (!parent || parent === document.body || parent === document.documentElement) break;
+    cur = parent;
+    region = cur;
+    if (typeof cur.querySelector === 'function' && cur.querySelector(
+      '.ComposerLayoutFooter,[class*="Footer"],[class*="footer" i],button[aria-label*="Send" i],button[aria-label*="Stop" i]'
+    )) return cur;
+  }
+  return region;
+}
+function ulgHasPopulatedAttachment(el) {
+  const region = ulgEditorFooterRegion(el);
+  if (!region || region === document.body || region === document.documentElement) return false;
+  if (typeof region.querySelectorAll !== 'function') return false;
+  const nodes = region.querySelectorAll(
+    '[data-testid*="attachment" i],.file-chip,[class*="file-chip" i],[class*="attachment" i]'
+  );
+  for (const node of nodes) {
+    if (!node || node === el) continue;
+    if (ulgNodeIsPopulatedFile(node)) return true;
+  }
+  const controls = region.querySelectorAll('button,[role="button"],input[type="file"]');
+  for (const node of controls) {
+    if (!node || node === el) continue;
+    const tag = String(node.tagName || '');
+    if (tag === 'INPUT') {
+      const type = String(node.getAttribute('type') || '').toLowerCase();
+      if (type === 'file' && node.files && node.files.length > 0) return true;
+      continue;
+    }
+    if (ulgIsRemoveControl(node)) return true;
+  }
+  return false;
+}
+"""
+
+
+def _work_native_preflight_js(
+    *, expected_url: str, text: str, draft_writer: str, preserve_newlines: bool
+) -> str:
+    """Build page JS that validates Work editor identity before native Input.insertText."""
+    from cursor_bridge.dom_composer_paste import (
+        _ULG_NORM_COMPOSER_JS,
+        _WORK_EDITOR_RESOLVE_JS,
+        _flatten_paste_line,
+    )
+
+    exp = json.dumps(str(expected_url or "").split("?")[0])
+    line = json.dumps(
+        text if preserve_newlines else _flatten_paste_line(text)
+    )
+    writer = json.dumps(str(draft_writer or ""))
+    return (
+        f"(()=>{{{_ULG_NORM_COMPOSER_JS}{_WORK_EDITOR_RESOLVE_JS}{_WORK_ATTACHMENT_JS}"
+        f"const expectUrl={exp};"
+        f"const expectLine={line};"
+        f"const expectWriter={writer};"
+        "const here=String(location.href||'').split('?')[0];"
+        "if(expectUrl&&here!==expectUrl)return{ok:false,reason:'url_mismatch'};"
+        "const resolved=ulgResolveVisibleWorkComposer();"
+        "if(!resolved.ok)return{ok:false,reason:resolved.reason||'no_composer'};"
+        "const el=resolved.el;"
+        "if(ulgIsHiddenWorkHit(el))return{ok:false,reason:'no_composer'};"
+        "if(el.editor&&el.editor.commands&&typeof el.editor.commands.setContent==='function'){"
+        "return{ok:false,reason:'work_dom_api_available'};}"
+        "if(!el.pmViewDesc)return{ok:false,reason:'work_native_unsupported'};"
+        "if(!ulgComposerDomEmpty(el)){"
+        "return{ok:false,reason:'composer_not_empty'};}"
+        "const g=window.__ulgOperatorActivity=window.__ulgOperatorActivity||{};"
+        "const now=Date.now();"
+        "const last=Number(g.lastInputMs||0);"
+        "if(last>0&&(now-last)<10000)return{ok:false,reason:'operator_active'};"
+        "const active=document.activeElement;"
+        "if(active&&active!==el&&!el.contains(active)){"
+        "const tag=active.tagName||'';"
+        "if(tag==='INPUT'||tag==='TEXTAREA'||(active.isContentEditable&&active!==el)){"
+        "return{ok:false,reason:'competing_text_control'};}}"
+        "if(ulgHasPopulatedAttachment(el))return{ok:false,reason:'foreign_attachment'};"
+        "const sel=window.getSelection&&window.getSelection();"
+        "if(sel&&!sel.isCollapsed)return{ok:false,reason:'selection_active'};"
+        "el.focus();"
+        "const focused=document.activeElement===el||el.contains(document.activeElement);"
+        "if(!focused)return{ok:false,reason:'focus_failed'};"
+        "const hereAfter=String(location.href||'').split('?')[0];"
+        "if(expectUrl&&hereAfter!==expectUrl)return{ok:false,reason:'url_mismatch'};"
+        "const resolvedAfter=ulgResolveVisibleWorkComposer();"
+        "if(!resolvedAfter.ok||resolvedAfter.el!==el)return{ok:false,reason:'editor_changed'};"
+        "window.__ulgWorkNativeEditor=el;"
+        "window.__ulgWorkNativeEditorId=String(el.getAttribute('data-ulg-native-id')||'work-0');"
+        "return{ok:true,expectLine,expectWriter,editorId:window.__ulgWorkNativeEditorId};})()"
+    )
+
+
+def _work_native_insert_gate_js(
+    *, expected_url: str, text: str, draft_writer: str, preserve_newlines: bool
+) -> str:
+    """Build the last page eval before Input.insertText.
+
+    Rechecks the pinned visible Work editor, exact URL, focus, operator idle,
+    emptiness, and populated attachments. Suppress is armed only after those
+    checks, in this same script, so no later unguarded eval runs before insert.
+    ``text`` and ``draft_writer`` stay in the closure for the caller contract;
+    this gate does not write them.
+    """
+    from cursor_bridge.dom_composer_paste import (
+        _ULG_NORM_COMPOSER_JS,
+        _WORK_EDITOR_RESOLVE_JS,
+        _flatten_paste_line,
+    )
+
+    exp = json.dumps(str(expected_url or "").split("?")[0])
+    line = json.dumps(text if preserve_newlines else _flatten_paste_line(text))
+    writer = json.dumps(str(draft_writer or ""))
+    return (
+        f"(()=>{{{_ULG_NORM_COMPOSER_JS}{_WORK_EDITOR_RESOLVE_JS}{_WORK_ATTACHMENT_JS}"
+        f"const expectUrl={exp};"
+        f"const expectLine={line};"
+        f"const expectWriter={writer};"
+        "const pinned=window.__ulgWorkNativeEditor;"
+        "const here=String(location.href||'').split('?')[0];"
+        "if(expectUrl&&here!==expectUrl)return{ok:false,reason:'url_mismatch'};"
+        "const resolved=ulgResolveVisibleWorkComposer();"
+        "if(!resolved.ok)return{ok:false,reason:resolved.reason||'no_composer'};"
+        "const el=resolved.el;"
+        "if(ulgIsHiddenWorkHit(el))return{ok:false,reason:'no_composer'};"
+        "if(!pinned||pinned!==el)return{ok:false,reason:'editor_changed'};"
+        "if(el.editor&&el.editor.commands&&typeof el.editor.commands.setContent==='function'){"
+        "return{ok:false,reason:'work_dom_api_available'};}"
+        "if(!el.pmViewDesc)return{ok:false,reason:'work_native_unsupported'};"
+        "if(!ulgComposerDomEmpty(el))return{ok:false,reason:'composer_not_empty'};"
+        "const g=window.__ulgOperatorActivity=window.__ulgOperatorActivity||{};"
+        "const now=Date.now();"
+        "const last=Number(g.lastInputMs||0);"
+        "if(last>0&&(now-last)<10000)return{ok:false,reason:'operator_active'};"
+        "if(ulgHasPopulatedAttachment(el))return{ok:false,reason:'foreign_attachment'};"
+        "const sel=window.getSelection&&window.getSelection();"
+        "if(sel&&!sel.isCollapsed)return{ok:false,reason:'selection_active'};"
+        "const active=document.activeElement;"
+        "const focused=active===el||(el.contains&&el.contains(active));"
+        "if(!focused)return{ok:false,reason:'focus_failed'};"
+        "const hereAfter=String(location.href||'').split('?')[0];"
+        "if(expectUrl&&hereAfter!==expectUrl)return{ok:false,reason:'url_mismatch'};"
+        "const resolvedAfter=ulgResolveVisibleWorkComposer();"
+        "if(!resolvedAfter.ok||resolvedAfter.el!==el||ulgIsHiddenWorkHit(resolvedAfter.el)){"
+        "return{ok:false,reason:'editor_changed'};}"
+        "const activeAfter=document.activeElement;"
+        "if(!(activeAfter===el||(el.contains&&el.contains(activeAfter)))){"
+        "return{ok:false,reason:'focus_failed'};}"
+        "g.suppressUntilMs=Date.now()+5000;"
+        "return{ok:true,expectLine,expectWriter};})()"
+    )
+
+
+def _work_native_readback_js(
+    *,
+    text: str,
+    draft_writer: str,
+    preserve_newlines: bool,
+    expected_url: str,
+) -> str:
+    """Build page JS that re-validates editor/URL and assigns draft ownership after insert."""
+    from cursor_bridge.dom_composer_paste import (
+        _ULG_NORM_COMPOSER_JS,
+        _WORK_EDITOR_RESOLVE_JS,
+        _flatten_paste_line,
+    )
+
+    line = json.dumps(
+        text if preserve_newlines else _flatten_paste_line(text)
+    )
+    writer = json.dumps(str(draft_writer or ""))
+    exp = json.dumps(str(expected_url or "").split("?")[0])
+    return (
+        f"(()=>{{{_ULG_NORM_COMPOSER_JS}{_WORK_EDITOR_RESOLVE_JS}"
+        f"const expectLine={line};"
+        f"const expectWriter={writer};"
+        f"const expectUrl={exp};"
+        "const here=String(location.href||'').split('?')[0];"
+        "if(expectUrl&&here!==expectUrl)return{ok:false,reason:'url_mismatch'};"
+        "const resolved=ulgResolveVisibleWorkComposer();"
+        "if(!resolved.ok)return{ok:false,reason:resolved.reason||'no_composer'};"
+        "const el=resolved.el;"
+        "if(ulgIsHiddenWorkHit(el))return{ok:false,reason:'no_composer'};"
+        "const pinned=window.__ulgWorkNativeEditor;"
+        "const editorId=String(window.__ulgWorkNativeEditorId||'');"
+        "if(!pinned||pinned!==el)return{ok:false,reason:'editor_changed'};"
+        "const normDraft=ulgNormalizeComposerText(el.innerText||'');"
+        "const normLine=ulgNormalizeComposerText(expectLine);"
+        "if(normDraft!==normLine)return{ok:false,reason:'composer_text_mismatch'};"
+        "const g=window.__ulgOperatorActivity=window.__ulgOperatorActivity||{};"
+        "g.ourDraftSig=normDraft;"
+        "g.ourDraftWriter=expectWriter;"
+        "return{ok:true,sig:normDraft,phase:'inserted',inserted:true,pasted:true,editorId};})()"
+    )
+
+
+async def cdp_work_native_insert_text(
+    ws_url: str,
+    *,
+    text: str,
+    expected_url: str,
+    draft_writer: str,
+    preserve_newlines: bool = False,
+) -> dict[str, Any]:
+    """Insert text once into a hydrated Work composer after a final page gate.
+
+    The gate is the last Runtime.evaluate before Input.insertText. It rechecks
+    the same visible editor, URL, focus, operator idle, emptiness, and
+    attachments, and arms input suppression only inside that script. A failed
+    gate does not insert. Uncertainty after the insert command is fenced.
+    """
+    import websockets
+
+    uncertain = {
+        "ok": False,
+        "insertion_unknown": True,
+        "pasted": False,
+        "inserted": False,
+        "delivered": False,
+        "retry_eligible": False,
+    }
+    async with websockets.connect(ws_url, max_size=2_000_000) as ws:
+        await _runtime_eval(ws, 1, INSTALL_OPERATOR_ACTIVITY_PROBE_JS)
+        pre = await _runtime_eval(
+            ws,
+            2,
+            _work_native_preflight_js(
+                expected_url=expected_url,
+                text=text,
+                draft_writer=draft_writer,
+                preserve_newlines=preserve_newlines,
+            ),
+        )
+        if not isinstance(pre, dict) or not pre.get("ok"):
+            reason = pre.get("reason") if isinstance(pre, dict) else "preflight_failed"
+            reason_s = str(reason or "preflight_failed")
+            if reason_s in _PRE_INPUT_REFUSAL_REASONS:
+                return {
+                    "ok": False,
+                    "reason": reason_s,
+                    "pasted": False,
+                    "inserted": False,
+                    "phase": "insertion_failed",
+                }
+            return {**uncertain, "reason": reason_s, "phase": "insertion_unknown"}
+        try:
+            gate = await _runtime_eval(
+                ws,
+                3,
+                _work_native_insert_gate_js(
+                    expected_url=expected_url,
+                    text=text,
+                    draft_writer=draft_writer,
+                    preserve_newlines=preserve_newlines,
+                ),
+            )
+        except TimeoutError:
+            return {
+                "ok": False,
+                "reason": "insert_gate_timeout",
+                "pasted": False,
+                "inserted": False,
+                "phase": "insertion_failed",
+            }
+        except Exception:
+            return {
+                "ok": False,
+                "reason": "insert_gate_failed",
+                "pasted": False,
+                "inserted": False,
+                "phase": "insertion_failed",
+            }
+        if not isinstance(gate, dict) or not gate.get("ok"):
+            reason = gate.get("reason") if isinstance(gate, dict) else "insert_gate_failed"
+            reason_s = str(reason or "insert_gate_failed")
+            return {
+                "ok": False,
+                "reason": reason_s,
+                "pasted": False,
+                "inserted": False,
+                "phase": "insertion_failed",
+            }
+        insert_dispatched = False
+        try:
+            await ws.send(
+                json.dumps(
+                    {
+                        "id": 4,
+                        "method": _INSERT_METHOD,
+                        "params": {
+                            "text": text
+                            if preserve_newlines
+                            else " ".join(text.splitlines()).strip()
+                        },
+                    }
+                )
+            )
+            insert_resp = await asyncio.wait_for(_cdp_response(ws, 4), 8.0)
+            if insert_resp.get("error"):
+                return {
+                    **uncertain,
+                    "reason": "native_insert_error",
+                    "phase": "insertion_unknown",
+                }
+            insert_dispatched = True
+        except TimeoutError:
+            return {**uncertain, "reason": "native_insert_timeout", "phase": "insertion_unknown"}
+        except Exception:
+            return {**uncertain, "reason": "native_insert_transport", "phase": "insertion_unknown"}
+        finally:
+            try:
+                await _runtime_eval(ws, 5, operator_activity_clear_suppress_js())
+            except Exception:
+                if insert_dispatched:
+                    return {
+                        **uncertain,
+                        "reason": "native_insert_cleanup",
+                        "phase": "insertion_unknown",
+                    }
+        try:
+            rb = await _runtime_eval(
+                ws,
+                6,
+                _work_native_readback_js(
+                    text=text,
+                    draft_writer=draft_writer,
+                    preserve_newlines=preserve_newlines,
+                    expected_url=expected_url,
+                ),
+            )
+        except TimeoutError:
+            return {**uncertain, "reason": "readback_timeout", "phase": "insertion_unknown"}
+        except Exception:
+            return {**uncertain, "reason": "readback_transport", "phase": "insertion_unknown"}
+        if not isinstance(rb, dict) or not rb.get("ok"):
+            reason = rb.get("reason") if isinstance(rb, dict) else "readback_failed"
+            return {
+                **uncertain,
+                "reason": str(reason or "composer_text_mismatch"),
+                "phase": "insertion_unknown",
+            }
+    return rb
+
+
 async def cdp_insert_text(
     ws_url: str, *, selector: str, text: str, restore_focus: bool = True
 ) -> dict[str, Any]:
@@ -300,6 +695,7 @@ __all__ = [
     "cdp_dispatch_enter",
     "cdp_dispatch_enter_guarded",
     "cdp_insert_text",
+    "cdp_work_native_insert_text",
     "clear_our_composer_draft",
     "clear_our_composer_draft_js",
 ]

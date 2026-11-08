@@ -13,6 +13,8 @@ from agent_seat.registry import normalize_bus_address
 from cursor_bridge.wake_delivery import normalize_target
 
 from .connection import connect, write_connect
+from .cursor_subscribe_placement import resolve_cursor_display_for_subscribe
+from .subscribe_errors import SubscribeError
 
 _IDENTITY = ("state", "surface", "display", "title", "agent_id")
 # Broadcast and non-Grok seats never take a grok ``*`` row: a cursor/grok
@@ -30,14 +32,6 @@ _GROK_WILDCARD_RESERVED = frozenset(
         "frontier-admit",
     }
 )
-
-
-class SubscribeError(Exception):
-    """Refused subscribe. ``code`` is the HTTP detail code."""
-
-    def __init__(self, code: str) -> None:
-        super().__init__(code)
-        self.code = code
 
 
 def _row(row: sqlite3.Row | None) -> dict[str, Any] | None:
@@ -100,16 +94,23 @@ def _same(current: dict[str, Any], nxt: dict[str, Any]) -> bool:
     return all(current.get(k) == nxt.get(k) for k in _IDENTITY)
 
 
+def _evidence_tag_value(text: str) -> str:
+    """Encode values embedded in semicolon-separated subscribe evidence tags."""
+    return str(text or "").strip().replace(";", "%3B")
+
+
 def subscribe_endpoint(
     *,
     agent: str,
     thread_scope: str,
     surface: str,
-    display: str,
+    display: str | None = None,
     title: str | None = None,
     agent_id: str | None = None,
     bound_by: str | None = None,
     evidence: str | None = None,
+    display_override: bool = False,
+    display_override_reason: str | None = None,
 ) -> dict[str, Any]:
     """Append a subscribed row, or return the current row when identical."""
     canon = normalize_bus_address(agent)
@@ -124,13 +125,42 @@ def subscribe_endpoint(
         raise SubscribeError("endpoint_wildcard_refused")
     if not (title or agent_id):
         raise SubscribeError("endpoint_title_or_agent_required")
+    display_val = str(display or "").strip() or None
+    display_override_event: dict[str, Any] | None = None
+    placement_meta: dict[str, Any] = {}
+    row_evidence = str(evidence or "").strip() or None
+    if surface_raw == "cursor" and agent_id:
+        display_val, display_override_event, placement_meta = (
+            resolve_cursor_display_for_subscribe(
+                display=display_val,
+                agent_id=agent_id,
+                thread_scope=scope,
+                display_override=display_override,
+                display_override_reason=display_override_reason,
+            )
+        )
+        if display_override_event is not None:
+            reason = _evidence_tag_value(
+                str(display_override_event.get("reason") or "")
+            )
+            tag = f"display_override:{reason}"
+            row_evidence = f"{row_evidence};{tag}" if row_evidence else tag
+        pbasis = str(placement_meta.get("placement_basis") or "").strip()
+        if pbasis == "vscdb_inferred":
+            inf = _evidence_tag_value(
+                str(placement_meta.get("inference_reason") or "other_glass_panes")
+            )
+            tag = f"placement_basis:vscdb_inferred;inference:{inf}"
+            row_evidence = f"{row_evidence};{tag}" if row_evidence else tag
+    elif not display_val:
+        raise SubscribeError("endpoint_surface_display_required")
     if surface_raw == "cse":
         if not agent_id:
             raise SubscribeError("endpoint_title_or_agent_required")
         surface_n = "cse"
-        display_n = str(display or "cse").strip().lower() or "cse"
+        display_n = str(display_val or "cse").strip().lower() or "cse"
     else:
-        target = normalize_target(display, surface)
+        target = normalize_target(display_val, surface)
         if not target.get("ok"):
             raise SubscribeError("endpoint_target_refused")
         surface_n = str(target["app"])
@@ -163,17 +193,16 @@ def subscribe_endpoint(
                 "prior": None,
                 "prior_subscription_id": None,
             }
-        prior_subscribed = conn.execute(
-            "SELECT * FROM agent_endpoint_subscriptions "
-            "WHERE agent=? AND thread_scope=? AND actuation IS NULL "
-            "AND state='subscribed' "
-            "AND (agent_id IS NULL OR agent_id != ?) "
-            "ORDER BY id DESC LIMIT 1",
-            (canon, scope, agent_id),
-        ).fetchone()
-        prior_before_supersede = _row(prior_subscribed)
         prior_for_response: dict[str, Any] | None = None
         prior_subscription_id: int | None = None
+        if (
+            current_d is not None
+            and current_d.get("state") == "subscribed"
+            and not _same(current_d, proposed)
+        ):
+            prior_for_response = current_d
+            if current_d.get("id") is not None:
+                prior_subscription_id = int(current_d["id"])
         if (
             current_d is not None
             and current_d.get("state") == "subscribed"
@@ -199,18 +228,6 @@ def subscribe_endpoint(
                     tomb_evidence,
                 ),
             )
-            if (
-                prior_before_supersede is not None
-                and prior_before_supersede.get("id") is not None
-            ):
-                prior_subscription_id = int(prior_before_supersede["id"])
-            prior_for_response = _row(
-                conn.execute(
-                    "SELECT * FROM agent_endpoint_subscriptions "
-                    "WHERE agent=? AND thread_scope=? ORDER BY id DESC LIMIT 1",
-                    (canon, scope),
-                ).fetchone()
-            )
         cur = conn.execute(
             "INSERT INTO agent_endpoint_subscriptions "
             "(agent, thread_scope, state, surface, display, title, agent_id, bound_by, evidence) "
@@ -224,7 +241,7 @@ def subscribe_endpoint(
                 title,
                 agent_id,
                 bound_by,
-                evidence,
+                row_evidence,
             ),
         )
         new_id = int(cur.lastrowid)
@@ -234,12 +251,17 @@ def subscribe_endpoint(
             ).fetchone()
         )
     assert row is not None
-    return {
+    out: dict[str, Any] = {
         "appended": True,
         "row": row,
         "prior": prior_for_response,
         "prior_subscription_id": prior_subscription_id,
     }
+    if display_override_event is not None:
+        out["display_override_event"] = display_override_event
+    if placement_meta:
+        out["placement"] = placement_meta
+    return out
 
 
 def unsubscribe_endpoint(
@@ -267,12 +289,28 @@ def unsubscribe_endpoint(
         ).fetchone()
         current_d = _row(current)
         if current_d is None or current_d["state"] == "unsubscribed":
-            return {"appended": False, "row": current_d, "prior": current_d}
+            return {
+                "appended": False,
+                "row": current_d,
+                "prior": None,
+                "prior_subscription_id": None,
+            }
         if (
             expected is not None
             and str(current_d.get("agent_id") or "").strip() != expected
         ):
-            return {"appended": False, "row": current_d, "prior": current_d}
+            return {
+                "appended": False,
+                "row": current_d,
+                "prior": None,
+                "prior_subscription_id": None,
+            }
+        prior_subscribed = current_d
+        prior_subscription_id = (
+            int(prior_subscribed["id"])
+            if prior_subscribed.get("id") is not None
+            else None
+        )
         cur = conn.execute(
             "INSERT INTO agent_endpoint_subscriptions "
             "(agent, thread_scope, state, surface, display, title, agent_id, bound_by, evidence) "
@@ -296,14 +334,17 @@ def unsubscribe_endpoint(
             ).fetchone()
         )
     assert row is not None
-    return {"appended": True, "row": row, "prior": current_d}
+    return {
+        "appended": True,
+        "row": row,
+        "prior": prior_subscribed,
+        "prior_subscription_id": prior_subscription_id,
+    }
 
 
 MAIN_WAKE_AGENT = "main-wake"
 MAIN_WAKE_SCOPE = "main-wake"
-MAIN_TARGET_SHA256 = (
-    "170eba02b369eb1485da1e908a55bdf39ba326e54f437759bc03aa75a3d29311"
-)
+MAIN_TARGET_SHA256 = "170eba02b369eb1485da1e908a55bdf39ba326e54f437759bc03aa75a3d29311"
 INSTANCE_TARGET_SHA256 = (
     "2d78994cba5b9a614fd7051e047f3ddaa5ffae822fd4200da03c3ccae0ecf4cc"
 )
@@ -930,4 +971,3 @@ def insert_main_wake_row_for_test(
             evidence="test",
             predecessor_id=predecessor_id,
         )
-

@@ -947,6 +947,43 @@ def FrontierReviewChildPromptBind(  # noqa: N802
 
 
 @event_factory
+def FrontierWorkerSubscriptionMirror(  # noqa: N802
+    *,
+    coord_thread_id: str,
+    worker_thread_id: str,
+    serving_to_agent: str | None,
+    outcome: str,
+    bind_evidence: str | None,
+    resolved_agent_id: str | None,
+    eligible_agents: list[str],
+    mirrored_agents: list[str],
+    failed_agents: list[str],
+    error: str | None,
+) -> Event:
+    """Coord→worker endpoint-subscription mirror attempt (cursor-sdk admit).
+
+    ``outcome`` is one of: ``mirrored``, ``partial``, ``failed``,
+    ``skipped_unresolved``, ``no_rows``, ``fetch_failed``.
+    """
+    return Event(
+        signal="frontier.worker_subscription_mirror",
+        payload={
+            "coord_thread_id": coord_thread_id,
+            "worker_thread_id": worker_thread_id,
+            "serving_to_agent": serving_to_agent,
+            "outcome": outcome,
+            "bind_evidence": bind_evidence,
+            "resolved_agent_id": resolved_agent_id,
+            "eligible_agents": eligible_agents,
+            "mirrored_agents": mirrored_agents,
+            "failed_agents": failed_agents,
+            "error": error,
+        },  # fmt: compact
+        scope="node",
+    )
+
+
+@event_factory
 def FrontierAdmitPointerLoopClosure(  # noqa: N802
     *,
     request_id: str | None,

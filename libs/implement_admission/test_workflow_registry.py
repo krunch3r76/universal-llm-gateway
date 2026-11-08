@@ -68,7 +68,7 @@ def test_load_live_registry_slots_and_roaming() -> None:
         "investigate",
         "auto_judgment",
     }
-    assert reg.roaming_bare_models() == frozenset({"composer-2.5", "grok-4.7"})
+    assert reg.roaming_bare_models() == frozenset({"composer-2.5"})
 
 
 def test_parse_raises_on_errors() -> None:

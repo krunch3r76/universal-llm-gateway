@@ -10,6 +10,7 @@
 #
 # Usage:
 #   scripts/cortex/chatgpt-orion-sync-io preflight
+#   scripts/cortex/chatgpt-orion-sync-io billing-probe
 #   scripts/cortex/chatgpt-orion-sync-io login
 #   scripts/cortex/chatgpt-orion-sync-io refresh-connectors   # stub until MCP UI automated
 #

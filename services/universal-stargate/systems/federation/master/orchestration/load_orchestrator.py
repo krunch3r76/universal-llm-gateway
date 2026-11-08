@@ -135,6 +135,7 @@ async def _await_remote_load_attempt(
     request_id: str,
 ) -> dict:
     """Await remote load, resolving early on terminal lifecycle events when wired."""
+    load_started_mono = time.monotonic()
     remote_call = asyncio.create_task(
         orchestrator._forwarder.forward_model_load_request(
             gateway=gateway,
@@ -152,6 +153,8 @@ async def _await_remote_load_attempt(
         backstop_timeout_s=orchestrator._config.load_timeout,
         idle_budget_s=orchestrator._config.load_idle_budget,
         model_label=str(model_id),
+        request_id=request_id,
+        load_started_mono=load_started_mono,
     )
     if terminal is not None and terminal.outcome != TerminalLoadOutcome.LOADED:
         raise _terminal_load_error(terminal, model_id, gateway.gateway_id)

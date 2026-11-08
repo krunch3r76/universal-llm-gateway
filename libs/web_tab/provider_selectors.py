@@ -44,6 +44,7 @@ _SEND_BTN_SELECTORS = [
 
 _USER_TURN_SELECTOR_LISTS: dict[ProviderSite, list[str]] = {
     "chatgpt": [
+        "[class*='group/user-message']",
         "[data-message-author-role='user']",
         "[class*='text-user-message']",
         ".rich-text-user-turn",
@@ -145,13 +146,28 @@ def _turn_helpers_js(*, site: ProviderSite) -> str:
       for (const el of document.querySelectorAll(sel)) {{
         const t = (el.innerText || '').trim();
         if (!t) continue;
-        const key = t.slice(0, 800);
+        const key = t;
         if (seen.has(key)) continue;
         seen.add(key);
         out.push(t);
       }}
     }}
     return out;
+  }};
+  const latestUserText = () => {{
+    let latest = null;
+    let latestText = '';
+    for (const sel of userSels) {{
+      for (const el of document.querySelectorAll(sel)) {{
+        const t = (el.innerText || '').trim();
+        if (!t) continue;
+        if (!latest || (latest.compareDocumentPosition(el) & Node.DOCUMENT_POSITION_FOLLOWING)) {{
+          latest = el;
+          latestText = t;
+        }}
+      }}
+    }}
+    return latestText;
   }};
   const assistantNodes = () => {{
     const nodes = [];
@@ -270,11 +286,28 @@ def verify_committed_js(
     ? ((composer.value !== undefined ? composer.value : composer.innerText) || '').trim()
     : '';
   const texts = dedupeTexts(userSels);
-  const latest = texts.length ? texts[texts.length - 1] : '';
+  const latest = latestUserText();
   const newTurn = texts.length > {base};
   const exact = latest === {needle};
   const composer_empty = !draft;
   let receipt = 'dom_paste';
+  let committedId = null;
+  if (isChatgpt && newTurn && exact) {{
+    let hit = null;
+    for (const sel of userSels) {{
+      for (const el of document.querySelectorAll(sel)) {{
+        const t = (el.innerText || '').trim();
+        if (t !== {needle}) continue;
+        if (!hit || (hit.compareDocumentPosition(el) & Node.DOCUMENT_POSITION_FOLLOWING)) {{
+          hit = el;
+        }}
+      }}
+    }}
+    if (hit) {{
+      const art = hit.closest('article[data-turn]');
+      committedId = art ? String(art.getAttribute('data-turn') || '') : null;
+    }}
+  }}
   if (newTurn && exact && composer_empty) receipt = 'dom_committed';
   return {{
     ok: true,
@@ -284,6 +317,7 @@ def verify_committed_js(
     draft_len: draft.length,
     latest_user: latest,
     user_count: texts.length,
+    committed_message_id: committedId,
   }};
 }})()
 """

@@ -51,7 +51,7 @@ def test_orion_post_includes_wake_id_and_covered_turns() -> None:
     client.__exit__ = lambda *a: None
 
     with patch(
-        "bus_watch.endpoint_wake_dispatcher.make_sync_client", return_value=client
+        "bus_watch.endpoint_wake_orion_delivery.make_sync_client", return_value=client
     ):
         state, reason = _orion_post(
             rows,
@@ -65,4 +65,4 @@ def test_orion_post_includes_wake_id_and_covered_turns() -> None:
     assert opts["wake_id"] == "wake-abc"
     assert opts["turn_ids"] == [10, 11]
     assert opts["covered_turn_ids"] == [10, 11]
-    assert opts["binding_reference"] == "42"
+    assert opts["binding_reference"] == "agent_endpoint_subscriptions:42"

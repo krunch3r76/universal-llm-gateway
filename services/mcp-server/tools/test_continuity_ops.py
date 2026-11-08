@@ -16,6 +16,7 @@ pytestmark = pytest.mark.offline
 
 _TID = "db36e9f8-e76f-49e7-bd57-c9c4ffa88195"
 
+
 @contextmanager
 def _rebind_noop():
     with (
@@ -247,6 +248,19 @@ def test_maybe_subscribe_on_checkpoint() -> None:
         bound_by="continuity-checkpoint",
         evidence="continuity(op=checkpoint)",
     )
+
+
+def test_subscribe_xvfb_tab_gui_host_unresolved() -> None:
+    from tools.continuity_ops import _subscribe_xvfb_tab
+
+    with patch("tools.continuity_ops.detect_cursor_gui_host", return_value=None):
+        out = _subscribe_xvfb_tab(
+            "22502",
+            "7689373a-2499-41f0-9ff6-fccbcf130362",
+            bound_by="test",
+            evidence="test",
+        )
+    assert out == {"ok": False, "reason": "gui_host_unresolved"}
 
 
 def test_maybe_subscribe_on_checkpoint_skips_on_error() -> None:

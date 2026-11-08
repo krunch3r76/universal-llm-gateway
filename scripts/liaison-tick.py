@@ -405,7 +405,7 @@ def main() -> int:
                 transcript_id=holder_agent_id or None,
                 root_id=root_for_lock,
             )
-            if is_cursor_xvfb_host(gui_host):
+            if gui_host is not None and is_cursor_xvfb_host(gui_host):
                 sync_policy_gui_host(root_for_lock, gui_host)
                 prev_uuid = parse_ide_holder_agent_id(prev_holder)
                 retired_agent_ids: list[str] | None = None

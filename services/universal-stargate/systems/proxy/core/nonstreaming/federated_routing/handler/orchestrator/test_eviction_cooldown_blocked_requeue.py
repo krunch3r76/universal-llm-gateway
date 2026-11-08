@@ -345,7 +345,8 @@ async def test_blocked_transient_requeues_after_release(
         )
 
     monkeypatch.setattr(
-        "systems.proxy.core.nonstreaming.federated_routing.handler.orchestrator.eviction_execution.execute_master_eviction",
+        eviction_mod,
+        "execute_master_eviction",
         _exec_toggle,
     )
     monkeypatch.setattr(requeue_mod, "_wait_and_retry_selection", wait_mock)
@@ -409,7 +410,8 @@ async def test_blocked_deadline_past_raises_capacity_without_load(
         )
 
     monkeypatch.setattr(
-        "systems.proxy.core.nonstreaming.federated_routing.handler.orchestrator.eviction_execution.execute_master_eviction",
+        eviction_mod,
+        "execute_master_eviction",
         _blocked,
     )
     monkeypatch.setattr(
@@ -487,7 +489,8 @@ async def test_post_load_vram_failure_reenters_finalize_not_direct_load(
         )
 
     monkeypatch.setattr(
-        "systems.proxy.core.nonstreaming.federated_routing.handler.orchestrator.eviction_execution.execute_master_eviction",
+        eviction_mod,
+        "execute_master_eviction",
         _always_evict,
     )
 
@@ -563,7 +566,8 @@ async def test_blocked_wait_cancelled_emits_and_clears_mark(
         raise asyncio.CancelledError()
 
     monkeypatch.setattr(
-        "systems.proxy.core.nonstreaming.federated_routing.handler.orchestrator.eviction_execution.execute_master_eviction",
+        eviction_mod,
+        "execute_master_eviction",
         _blocked,
     )
     monkeypatch.setattr(requeue_mod, "_wait_and_retry_selection", _cancel_wait)
@@ -615,7 +619,8 @@ async def test_requeue_budget_exhaustion_preserves_peer_optimistic_mark(
         return None, _trace(), 50
 
     monkeypatch.setattr(
-        "systems.proxy.core.nonstreaming.federated_routing.handler.orchestrator.eviction_execution.execute_master_eviction",
+        eviction_mod,
+        "execute_master_eviction",
         _blocked,
     )
     monkeypatch.setattr(requeue_mod, "_wait_and_retry_selection", _wait_then_timeout)
@@ -691,7 +696,8 @@ async def test_post_load_vram_spin_hits_requeue_depth_cap(
         )
 
     monkeypatch.setattr(
-        "systems.proxy.core.nonstreaming.federated_routing.handler.orchestrator.eviction_execution.execute_master_eviction",
+        eviction_mod,
+        "execute_master_eviction",
         _always_evict,
     )
 
@@ -756,7 +762,8 @@ async def test_config_blocked_does_not_requeue(
         )
 
     monkeypatch.setattr(
-        "systems.proxy.core.nonstreaming.federated_routing.handler.orchestrator.eviction_execution.execute_master_eviction",
+        eviction_mod,
+        "execute_master_eviction",
         _config_block,
     )
 
@@ -889,7 +896,8 @@ async def test_abab_swap_inside_120s_holds_then_proceeds_without_early_sticky(
         )
 
     monkeypatch.setattr(
-        "systems.proxy.core.nonstreaming.federated_routing.handler.orchestrator.eviction_execution.execute_master_eviction",
+        eviction_mod,
+        "execute_master_eviction",
         _exec_realistic,
     )
 
@@ -926,7 +934,9 @@ async def test_abab_swap_inside_120s_holds_then_proceeds_without_early_sticky(
             selected_gateway=None,
             excluded_gateway_ids=set(),
             _capacity_deadline_mono=clock["t"] + 300.0,
+            _eviction_wait_deadline_mono=clock["t"] + 300.0,
             _eviction_requeue_depth=0,
+            routing_endpoint_category=None,
         )
         selected = _gateway(loaded=frozenset({victim}))
         depth_samples.append(

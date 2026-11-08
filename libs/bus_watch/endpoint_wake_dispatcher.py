@@ -26,17 +26,21 @@ from claude_bundles.holder_strings import holder_id_from_chat_url
 from cursor_bridge.chat_target import exchange_lines
 from transport_utils import DEFAULT_STARGATE_URL, make_sync_client
 from web_chat_relay.orion_wake import (
-    DEFAULT_ORION_CDP_URL,
     conversation_id_from_url,
-    holder_conversation_url,
 )
 
+from bus_watch import endpoint_wake_self_sender as self_sender
+from bus_watch.endpoint_wake_orion_delivery import (
+    chatgpt_work_subscription_from_actuation as _orion_synthetic_route_from_actuation,
+)
+from bus_watch.endpoint_wake_orion_delivery import (
+    orion_chat_wake_post as _orion_post,
+)
 from bus_watch.endpoint_wake_transport import (
     StoreClient,
     agent_id_matches_composer_suffix,
     classify_cse,
     classify_display,
-    classify_orion,
     glass_agent_id_suffix_candidates,
 )
 from bus_watch.ide_hop_land import expire_overdue_hop, expire_overdue_hops
@@ -206,6 +210,23 @@ _PEER_WAKE_FROM = frozenset(
         "orion",
     }
 )
+
+
+_API_GENERATE_PEER_WAKE_FALLBACK = frozenset(
+    {"artisan", "skeptic", "synthesizer", "reviewer"}
+)
+
+
+@lru_cache(maxsize=1)
+def _api_generate_peer_wake_from() -> frozenset[str]:
+    """API ``team_dispatch(op=generate)`` roles (config/agents.yaml via dispatch_role_catalog)."""
+    try:
+        from agent_seat.dispatch_role_catalog import generate_roles
+
+        return frozenset(generate_roles())
+    except Exception as exc:
+        logger.warning("generate_roles unavailable; API peer-wake fallback: %s", exc)
+        return _API_GENERATE_PEER_WAKE_FALLBACK
 _ORION_PEER_WAKE_HEADS = frozenset({"ANSWER"})
 _POLL_S = 2.0
 
@@ -750,6 +771,11 @@ def peer_operator_wake_from(from_agent: str, *, subject: str | None = None) -> b
         return True
     if from_agent.endswith("-impresario"):
         return True
+    if from_agent in _api_generate_peer_wake_from():
+        subj = str(subject or "")
+        if _INTERMEDIATE_SUBJECT_RE.search(subj):
+            return False
+        return True
     return False
 
 
@@ -858,6 +884,7 @@ _FALLBACK_WAKE_RULE_IDS: tuple[str, ...] = (
     "drop_maestro_telemetry",
     "wake_cursor_gate_on_interm",
     "drop_dispatch_intermediate",
+    "wake_on_behalf_execution_reply",
     "wake_peer_sender",
     "drop_routine_hop_closeout",
     "wake_gate_or_directive",
@@ -1020,14 +1047,18 @@ def qualify(
         return RuleVerdict(False, "drop_dispatch_intermediate")
     if _is_cursor_sdk_generate_admit_echo(subject):
         return RuleVerdict(False, "drop_dispatch_intermediate")
-    if peer_operator_wake_from(from_agent, subject=subject):
-        return RuleVerdict(True, "wake_peer_sender")
     if (
         to_agent == "orion"
         and _is_on_behalf_execution_reply(subject)
         and not _INTERMEDIATE_SUBJECT_RE.search(subject)
     ):
         return RuleVerdict(True, "wake_on_behalf_execution_reply")
+    if to_agent == "orion" and from_agent in _api_generate_peer_wake_from():
+        api_head = str(subject or "").split("|", 1)[0].strip().upper().split(" ", 1)[0]
+        if api_head not in _ORION_PEER_WAKE_HEADS:
+            return RuleVerdict(False, "default_suppress")
+    if peer_operator_wake_from(from_agent, subject=subject):
+        return RuleVerdict(True, "wake_peer_sender")
     if _is_routine_conductor_hop_closeout(subject):
         return RuleVerdict(False, "drop_routine_hop_closeout")
     allow_rule = _subject_allowed_rule_id(subject, cse=cse, to_agent=to_agent)
@@ -1117,6 +1148,7 @@ def record(
     subscription_id: int | None,
     cse_registration_id: str | None,
     decided_by_rule: str | None = None,
+    wake_detail: dict[str, Any] | None = None,
 ) -> Any:
     """Thin handler: persist delivery outcome on claimed ledger rows."""
     return store.result(
@@ -1127,6 +1159,7 @@ def record(
         subscription_id=subscription_id,
         cse_registration_id=cse_registration_id,
         decided_by_rule=decided_by_rule,
+        wake_detail=wake_detail,
     )
 
 
@@ -1189,27 +1222,6 @@ def _orion_seat_registration_url_for_route(
     return hit[0] if hit is not None else None
 
 
-def _orion_synthetic_route_from_actuation(
-    actuation: dict[str, Any],
-) -> tuple[str, dict[str, Any]] | None:
-    url = str(actuation.get("conversation_url") or "").split("?", 1)[0]
-    conv_id = conversation_id_from_url(url) or str(
-        actuation.get("conversation_id") or ""
-    )
-    if not url or not conv_id:
-        return None
-    return (
-        "exact",
-        {
-            "surface": "chatgpt",
-            "display": "12",
-            "title": url,
-            "agent_id": conv_id,
-            "state": "subscribed",
-        },
-    )
-
-
 def _orion_synthetic_route(
     agent: str,
     thread: str,
@@ -1226,7 +1238,12 @@ def _orion_synthetic_route(
     basis = str(binding.get("basis") or "")
     if basis == "chatgpt_work" and str(binding.get("state") or "") == "bound":
         actuation = dict((binding.get("current") or {}).get("actuation") or {})
-        routed = _orion_synthetic_route_from_actuation(actuation)
+        current = dict(binding.get("current") or {})
+        sid = current.get("subscription_id")
+        sid_i = int(sid) if sid is not None else None
+        routed = _orion_synthetic_route_from_actuation(
+            actuation, subscription_id=sid_i
+        )
         if routed is not None:
             return routed
 
@@ -1247,7 +1264,12 @@ def _orion_synthetic_route(
 
     if str(binding.get("state") or "") == "bound":
         actuation = dict((binding.get("current") or {}).get("actuation") or {})
-        return _orion_synthetic_route_from_actuation(actuation)
+        current = dict(binding.get("current") or {})
+        sid = current.get("subscription_id")
+        sid_i = int(sid) if sid is not None else None
+        return _orion_synthetic_route_from_actuation(
+            actuation, subscription_id=sid_i
+        )
     return None
 
 
@@ -1267,16 +1289,18 @@ def _chatgpt_work_route(agent: str, thread: str) -> tuple[str, dict[str, Any]] |
     )
     if not url or not conv_id:
         return None
-    return (
-        "exact",
-        {
-            "surface": "chatgpt",
-            "display": "12",
-            "title": url,
-            "agent_id": conv_id,
-            "state": "subscribed",
-        },
-    )
+    current = dict(binding.get("current") or {})
+    sid = current.get("subscription_id")
+    sub: dict[str, Any] = {
+        "surface": "chatgpt",
+        "display": "12",
+        "title": url,
+        "agent_id": conv_id,
+        "state": "subscribed",
+    }
+    if sid is not None:
+        sub["id"] = int(sid)
+    return ("exact", sub)
 
 
 def _window_binding_route(agent: str) -> tuple[str, dict[str, Any]] | None:
@@ -1406,6 +1430,7 @@ def scan_once(store: StoreClient, *, idle_mark: dict[str, float] | None = None) 
         if not turns:
             return
         pending: list[dict[str, Any]] = []
+        tombstones: list[dict[str, Any]] = []
         stale_catchup: dict[str, int] | None = None
         for turn in turns:
             raw_to = str(turn.get("to_agent") or "")
@@ -1448,6 +1473,12 @@ def scan_once(store: StoreClient, *, idle_mark: dict[str, float] | None = None) 
                         to_agent=agent,
                         rule_id=verdict.rule_id,
                         subject_head=head,
+                    )
+                    tombstones.append(
+                        self_sender.suppressed_item(
+                            _pending_item(turn, decided_by_rule=verdict.rule_id),
+                            verdict.rule_id,
+                        )
                     )
                 continue
             if turn.get("read_at"):
@@ -1493,9 +1524,19 @@ def scan_once(store: StoreClient, *, idle_mark: dict[str, float] | None = None) 
                 stale_catchup["max"] = max(stale_catchup["max"], tid)
                 continue
             _remap, resolved = _cursor_tab_route(store, raw_to, resolved)
-            pending.append(
-                _pending_item(turn, decided_by_rule=verdict.rule_id, route=resolved)
-            )
+            item = _pending_item(turn, decided_by_rule=verdict.rule_id, route=resolved)
+            if self_sender.is_self_wake(store, turn, resolved):
+                rule = self_sender.SELF_SENDER_RULE
+                _observe_endpoint_wake_suppressed(
+                    thread_id=thread,
+                    turn_id=_turn_id_of(turn),
+                    to_agent=agent,
+                    rule_id=rule,
+                    subject_head=head,
+                )
+                tombstones.append(self_sender.suppressed_item(item, rule))
+                continue
+            pending.append(item)
         if stale_catchup is not None and stale_catchup["count"] > 0:
             _observe_drop_stale_catchup_aggregate(
                 count=stale_catchup["count"],
@@ -1504,16 +1545,32 @@ def scan_once(store: StoreClient, *, idle_mark: dict[str, float] | None = None) 
             )
         new_hw = int(turns[-1]["id"])
         if pending:
-            store.scan(high, new_hw, pending)
+            store.scan(high, new_hw, pending + tombstones)
             return
         if time.monotonic() - mark.get("at", 0.0) < 60:
-            store.scan(high, new_hw, pending)
+            store.scan(high, new_hw, tombstones)
             return
         mark["at"] = time.monotonic()
-        store.scan(high, new_hw, pending)
+        store.scan(high, new_hw, tombstones)
 
 
 def _display_post(
+    row: dict[str, Any],
+    sub: dict[str, Any],
+    turn: int | str,
+    *,
+    text: str = "",
+) -> tuple[str, str]:
+    _display_started = time.monotonic()
+    try:
+        return _display_post_body(row, sub, turn, text=text)
+    finally:
+        from bus_watch.endpoint_wake_pass_timing import note_display_post_duration
+
+        note_display_post_duration((time.monotonic() - _display_started) * 1000.0)
+
+
+def _display_post_body(
     row: dict[str, Any],
     sub: dict[str, Any],
     turn: int | str,
@@ -1554,75 +1611,6 @@ def _display_post(
     except httpx.ConnectError as exc:
         return classify_display(0, None, exc)
     except Exception as exc:  # noqa: BLE001 — table classifies; never raise
-        return "unknown", type(exc).__name__
-
-
-def _orion_post(
-    rows: list[dict[str, Any]],
-    sub: dict[str, Any],
-    turn: int | str,
-    *,
-    from_agent: str,
-    wake_id: str | None,
-) -> tuple[str, str]:
-    row = rows[0]
-    turn_ids = sorted({int(r["turn_id"]) for r in rows})
-    turn_numbers = sorted({int(r["turn_number"]) for r in rows})
-    options: dict[str, Any] = {
-        "thread": row["thread_id"],
-        "turn": turn,
-        "from_agent": from_agent,
-        "conversation_url": holder_conversation_url(sub),
-        "cdp_url": DEFAULT_ORION_CDP_URL,
-        "wake_id": wake_id,
-        "agent": row.get("agent") or "orion",
-        "turn_ids": turn_ids,
-        "covered_turn_ids": turn_ids,
-        "turn_numbers": turn_numbers,
-        "binding_reference": str(sub.get("id") or "") or None,
-    }
-    body = {
-        "model": "orion-chat-wake",
-        "messages": [{"role": "user", "content": "wake"}],
-        "pipeline_options": options,
-    }
-    try:
-        with make_sync_client(DEFAULT_STARGATE_URL, timeout=45.0) as client:
-            last_status = 0
-            parsed: Any = None
-            for attempt in range(2):
-                response = client.post(
-                    "/v1/chat/completions",
-                    json=body,
-                    headers={"X-ULG-Surface": "code"},
-                )
-                last_status = int(response.status_code)
-                try:
-                    payload = response.json()
-                    content = payload["choices"][0]["message"]["content"]
-                    parsed = (
-                        json.loads(content) if isinstance(content, str) else content
-                    )
-                except (
-                    KeyError,
-                    IndexError,
-                    TypeError,
-                    json.JSONDecodeError,
-                    ValueError,
-                ):
-                    parsed = None
-                if last_status < 400 and isinstance(parsed, dict):
-                    return classify_orion(parsed)
-                if attempt == 0:
-                    continue
-                return classify_orion(
-                    parsed if isinstance(parsed, dict) else None,
-                    http_status=last_status,
-                )
-            return classify_orion(None, http_status=last_status or 500)
-    except httpx.ConnectError:
-        return "pending", "connect"
-    except Exception as exc:  # noqa: BLE001
         return "unknown", type(exc).__name__
 
 
@@ -2278,36 +2266,72 @@ async def run_dispatcher() -> None:
         finalize_composer_defer_pass,
         normalize_legacy_pending_wakes,
     )
+    from bus_watch.endpoint_wake_pass_timing import (
+        begin_pass,
+        begin_phase,
+        end_phase,
+        note_fire_due_wakes_iteration,
+        safe_emit_pass_duration,
+    )
     from bus_watch.ide_context_hop_monitor import check_cursor_ide_context_hops
 
     store = StoreClient()
     idle: dict[str, float] = {}
     hop_mark: dict[str, float] = {}
     while True:
+        begin_pass()
         stage = "init"
         try:
+            begin_phase("normalize_legacy_pending_wakes")
             stage = "normalize_legacy_pending_wakes"
             await asyncio.to_thread(normalize_legacy_pending_wakes)
+            end_phase("normalize_legacy_pending_wakes")
+            begin_phase("escalate_composer_deferred_on_sweep")
             stage = "escalate_composer_deferred_on_sweep"
             await asyncio.to_thread(escalate_composer_deferred_on_sweep, store)
+            end_phase("escalate_composer_deferred_on_sweep")
+            begin_phase("expire_overdue_hops")
             stage = "expire_overdue_hops"
             await asyncio.to_thread(expire_overdue_hops, store)
+            end_phase("expire_overdue_hops")
+            begin_phase("scan_once")
             stage = "scan_once"
             await asyncio.to_thread(scan_once, store, idle_mark=idle)
+            end_phase("scan_once")
+            begin_phase("fire_due_wakes")
             stage = "fire_due_wakes"
             for _ in range(5):
+                note_fire_due_wakes_iteration()
                 claimed = await asyncio.to_thread(fire_due_wakes, store)
                 if not isinstance(claimed, dict) or not claimed.get("wake_id"):
                     break
+            end_phase("fire_due_wakes")
+            begin_phase("finalize_composer_defer_pass")
             stage = "finalize_composer_defer_pass"
             await asyncio.to_thread(finalize_composer_defer_pass)
+            end_phase("finalize_composer_defer_pass")
+            begin_phase("check_cursor_ide_context_hops")
             stage = "check_cursor_ide_context_hops"
             await asyncio.to_thread(check_cursor_ide_context_hops, store, mark=hop_mark)
+            end_phase("check_cursor_ide_context_hops")
             from bus_watch.impresario_ear_patrol import run_patrol_pass
 
+            begin_phase("run_patrol_pass")
             stage = "run_patrol_pass"
             await asyncio.to_thread(run_patrol_pass, store)
+            end_phase("run_patrol_pass")
         except Exception as exc:
+            if stage in {
+                "normalize_legacy_pending_wakes",
+                "escalate_composer_deferred_on_sweep",
+                "expire_overdue_hops",
+                "scan_once",
+                "fire_due_wakes",
+                "finalize_composer_defer_pass",
+                "check_cursor_ide_context_hops",
+                "run_patrol_pass",
+            }:
+                end_phase(stage)
             logger.exception("endpoint_wake_dispatcher pass failed")
             try:
                 from bus_watch.events import emit_endpoint_wake_pass_failed
@@ -2319,4 +2343,6 @@ async def run_dispatcher() -> None:
                 )
             except Exception:
                 logger.exception("endpoint_wake pass_failed emit failed")
+        finally:
+            safe_emit_pass_duration()
         await asyncio.sleep(_POLL_S)

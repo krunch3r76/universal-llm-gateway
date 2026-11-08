@@ -81,3 +81,38 @@ def emit_endpoint_unsubscribed(**kwargs: Any) -> None:
     """Publish after an unsubscribe tombstone is appended."""
     event = AgentBusEndpointUnsubscribed(**kwargs)
     _publish(event.signal, event.payload, role=event.role or "observation")
+
+
+@event_factory
+def AgentBusEndpointDisplayOverride(  # noqa: N802
+    agent: str,
+    thread_scope: str,
+    agent_id: str | None,
+    subscription_id: int,
+    supplied_display: str,
+    resolved_display: str | None,
+    basis: str | None,
+    reason: str,
+) -> Event:
+    """Signal: mcp.agentbus.endpoint.display_override"""
+    payload: dict[str, Any] = {
+        "agent": agent,
+        "thread_scope": thread_scope,
+        "agent_id": agent_id,
+        "subscription_id": subscription_id,
+        "supplied_display": supplied_display,
+        "resolved_display": resolved_display,
+        "basis": basis,
+        "reason": reason,
+    }
+    return Event(
+        signal="mcp.agentbus.endpoint.display_override",
+        payload=payload,
+        role="observation",
+    )
+
+
+def emit_endpoint_display_override(**kwargs: Any) -> None:
+    """Publish when subscribe used an explicit display override escape hatch."""
+    event = AgentBusEndpointDisplayOverride(**kwargs)
+    _publish(event.signal, event.payload, role=event.role or "observation")

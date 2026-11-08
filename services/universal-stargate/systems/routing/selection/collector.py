@@ -174,11 +174,19 @@ async def collect_gateways(
                     return
 
                 vram_usage, ram_usage = requirements
+                # ModelId equality ignores -hybrid, so X and X-hybrid share one
+                # key; keep each variant's own footprint under "variants".
+                existing = model_details.get(model_id) or {}
+                variants = list(existing.get("variants") or ())
+                variants.append(
+                    (model_id, {"vram_usage": vram_usage, "ram_usage": ram_usage})
+                )
                 model_details[model_id] = {
                     "last_inference_time": last_inf,
                     "vram_usage": vram_usage,
                     "ram_usage": ram_usage,
                     "status": status_value,
+                    "variants": variants,
                 }
 
             # MUST include all loaded models even if last_inference_time missing

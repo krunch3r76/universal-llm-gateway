@@ -9,7 +9,7 @@
     "dev": "agent-sdk dev"
   },
   "dependencies": {
-    "@grok/agent-sdk": "^0.3.0",
+    "@grok/agent-sdk": "^0.6.0",
     "zod": "^4.6.5"
   },
   "devDependencies": {

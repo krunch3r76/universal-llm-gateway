@@ -3907,6 +3907,68 @@ def test_scan_once_enqueues_dispatch_to_worker_closeout_on_house_scope() -> None
     assert store.pending[0]["display"] == "8"
 
 
+_UUID_MAILBOX_SENDER = "f47ac10b-58cc-4372-a567-0e02b2c3d479"
+_SUPERVISOR_GATE_RULES = frozenset({"wake_grok_allowlist", "wake_gate_or_directive"})
+
+
+def test_uuid_sender_supervisor_head_parity_contract() -> None:
+    """UUID mailbox senders must use allowlisted heads to wake a :8 cursor supervisor (friction:42964 Leg B)."""
+    base = {
+        "to_agent": "cursor",
+        "from_agent": _UUID_MAILBOX_SENDER,
+        "thread": "22514",
+    }
+    for head in (
+        "PLAN",
+        "BLOCKED",
+        "RESULT",
+        "REPORT",
+        "READY",
+        "VERDICT",
+        "REVIEW",
+        "ESCALATE",
+        "DONE",
+        "FAILED",
+        "QUESTION",
+        "CLOSEOUT",
+    ):
+        verdict = qualify({**base, "subject": f"{head}|supervisor-gate-probe"}, cse=False, store=None)
+        assert verdict.wake is True, head
+        assert verdict.rule_id in _SUPERVISOR_GATE_RULES, (head, verdict.rule_id)
+    # Intentional: RECEIPT/CHECKPOINT are ack-class; UUID senders do not wake :8 on them.
+    for subject in ("RECEIPT|coord-ack", "CHECKPOINT|leg-boundary"):
+        verdict = qualify({**base, "subject": subject}, cse=False, store=None)
+        assert verdict.wake is False, subject
+        assert verdict.rule_id == "default_suppress", subject
+    api_base = {
+        "to_agent": "cursor",
+        "from_agent": "artisan",
+        "thread": "22554",
+    }
+    api_done = qualify({**api_base, "subject": "DONE|api-role-final"}, cse=False, store=None)
+    assert api_done.wake is True
+    assert api_done.rule_id == "wake_peer_sender"
+    api_cp = qualify(
+        {**api_base, "subject": "CHECKPOINT|api-role-intermediate"},
+        cse=False,
+        store=None,
+    )
+    assert api_cp.wake is False
+    assert api_cp.rule_id == "default_suppress"
+    receipt = qualify(
+        {
+            "to_agent": "cursor",
+            "from_agent": "grok-bot-gc1",
+            "subject": "RECEIPT|peer-ack",
+            "thread": "22514",
+        },
+        cse=False,
+        store=None,
+    )
+    assert receipt.wake is True
+    assert receipt.rule_id == "wake_peer_sender"
+
+
 def test_orion_answer_to_cursor_wakes_peer() -> None:
     verdict = qualify(
         {
@@ -4580,7 +4642,9 @@ def test_t1_plain_ack_to_maestro_still_drops_as_ack_route_coord(db: None) -> Non
     _rewind_cursor()
     store = _TabScanStore(holder={"agent": "maestro"})
     scan_once(store)  # type: ignore[arg-type]
-    assert store.pending == []
+    assert [(r["state"], r["reason"]) for r in store.pending] == [
+        ("skipped", "suppressed:drop_ack_route_coord")
+    ]
 
 
 def test_t2_peer_sender_wakes_on_thread_with_tab_bound_cursor_row(db: None) -> None:

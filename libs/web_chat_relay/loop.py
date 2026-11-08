@@ -198,7 +198,9 @@ async def _relay_tick(cfg: RelayConfig, state: RelayState, grok_page) -> None:
     result = await asyncio.to_thread(
         claude_leg.ask_and_wait, prompt_text=body, base_url=cfg.project_ask_url
     )
-    claude_body = claude_leg.strip_chrome(str(result.get("body") or ""))
+    from chat_harvest.chrome import strip_chrome
+
+    claude_body = strip_chrome(str(result.get("body") or ""))
     state.last_to_claude = grok_sha
     state.relays += 1
     _write_state(cfg, claude_chat_url=str(result.get("url") or ""), relays=state.relays)

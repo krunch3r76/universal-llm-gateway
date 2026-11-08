@@ -81,6 +81,7 @@ def continuity_messages_extracted(
     truncated: bool,
     source: str,
     chat_url_sha: str | None = None,
+    origin: str | None = None,
 ) -> Event:
     payload: dict[str, object] = {
         "surface": surface,
@@ -94,11 +95,25 @@ def continuity_messages_extracted(
     }
     if chat_url_sha is not None:
         payload["chat_url_sha"] = chat_url_sha
+    if origin is not None:
+        payload["origin"] = origin
     ev = Event(
         signal="continuity.messages.extracted",
         role="observation",
         scope="global",
         payload=payload,
+    )
+    record(ev.signal, **ev.payload)
+    return ev
+
+
+@event_factory
+def glass_export_failed(*, code: str, origin: str) -> Event:
+    ev = Event(
+        signal="glass.export.failed",
+        role="observation",
+        scope="global",
+        payload={"code": code, "origin": origin},
     )
     record(ev.signal, **ev.payload)
     return ev
@@ -119,6 +134,7 @@ __all__ = [
     "stargate_continuity_tape_read_served",
     "mcp_continuity_tape_read_requested",
     "continuity_messages_extracted",
+    "glass_export_failed",
     "stargate_continuity_checkpoint_admitted",
     "stargate_continuity_checkpoint_sealed",
     "stargate_continuity_checkpoint_card_patched",

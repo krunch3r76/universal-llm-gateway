@@ -7,6 +7,7 @@ from agent_bus_store.db import create_thread, init_db, insert_turn
 from agent_bus_store.db.connection import connect
 from agent_bus_store.db.endpoint_subscriptions import insert_chatgpt_work_row_for_test
 from agent_bus_store.db.endpoint_wake_ledger import advance_scan, get_cursor
+
 from bus_watch.endpoint_wake_dispatcher import qualify, scan_once
 from bus_watch.endpoint_wake_transport import classify_orion
 
@@ -26,10 +27,37 @@ def db(tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
     init_db()
 
 
+def test_classify_orion_insert_outcome_unknown_not_pending() -> None:
+    state, reason = classify_orion(
+        {"ok": False, "reason": "insert_outcome_unknown", "insert_attempted": True}
+    )
+    assert state == "unknown"
+    assert reason == "insert_outcome_unknown"
+
+
+def test_classify_orion_send_button_disabled_pending() -> None:
+    state, reason = classify_orion(
+        {
+            "ok": False,
+            "reason": "send_button_disabled",
+            "insert_attempted": True,
+            "retryable": True,
+        }
+    )
+    assert state == "pending"
+    assert reason == "send_button_disabled"
+
+
 def test_classify_orion_non_empty_composer_defers(db: None) -> None:
     state, reason = classify_orion({"ok": False, "reason": "non_empty_composer"})
     assert state == "pending"
     assert reason == "non_empty_composer"
+
+
+def test_classify_orion_active_generation_maps_to_deferred_streaming(db: None) -> None:
+    state, reason = classify_orion({"ok": False, "reason": "active_generation"})
+    assert state == "pending"
+    assert reason == "deferred_streaming"
 
 
 def test_qualify_native_api_on_behalf_execution_reply(db: None) -> None:
