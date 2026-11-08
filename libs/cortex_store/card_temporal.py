@@ -87,6 +87,11 @@ def assertion_interval_contains(
     return True
 
 
+def instant_key(raw: object) -> datetime:
+    """Parse a timestamp for ordering (public alias of ``_parse_instant``)."""
+    return _parse_instant(raw)
+
+
 def install_card_temporal_function(conn: sqlite3.Connection) -> None:
     """Register ``assertion_interval_contains`` on ``conn`` (idempotent per connection)."""
 

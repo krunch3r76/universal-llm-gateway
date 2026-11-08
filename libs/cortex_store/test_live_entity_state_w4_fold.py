@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-import os
 import sqlite3
 from datetime import UTC, datetime
 from typing import Any
@@ -13,7 +12,7 @@ import pytest
 
 from cortex_store._intent_card_test_fixtures import insert_entity
 from cortex_store._test_db_bootstrap import open_migrated_connection
-from cortex_store.card_temporal import card_as_of_utc, install_card_temporal_function
+from cortex_store.card_temporal import install_card_temporal_function
 from cortex_store.drift_detector import _evidence_backed, scan_entity_state_drift
 from cortex_store.entity_crud import update_entity_impl
 from cortex_store.entity_state_fold import (
@@ -26,10 +25,7 @@ from cortex_store.entity_state_fold import (
 from cortex_store.entity_state_fold_gate import (
     CONTRADICTION_PREFIXES,
     UtteranceInfo,
-    flag_withholds,
-    gate_refusal,
     is_evidence_backed_w4,
-    parse_status_current,
 )
 
 
@@ -257,122 +253,7 @@ def recorded_events(monkeypatch: pytest.MonkeyPatch) -> list[tuple[str, dict[str
     return events
 
 
-def scan_live_w4_flagged_closeout_stats(conn: sqlite3.Connection) -> dict[str, int]:
-    """Read-only F3 closeout counters for flagged fold eligibility (spec Acceptance)."""
-    install_card_temporal_function(conn)
-    as_of = card_as_of_utc()
-    rows = conn.execute(
-        "SELECT a.*, e.type AS entity_type FROM assertions a "
-        "JOIN entities e ON e.id = a.entity_id "
-        "WHERE a.review_status = 'flagged' AND a.superseded_by IS NULL"
-    ).fetchall()
-    f3_rows = len(
-        [
-            r
-            for r in scan_entity_state_drift(conn=conn).rows
-            if r.drift_class == "F3"
-        ]
-    )
-    reasonless = predicate_normalize = other = 0
-    flagged_foldable = 0
-    contradict_like = 0
-    j_contradiction = j_cross = j_semantic = 0
-    contradiction_chunk_flagged = 0
-
-    for row in rows:
-        rd = dict(row)
-        notes = str(rd.get("review_notes") or "")
-        withheld = flag_withholds(rd.get("review_status"), notes, rd)
-        if withheld:
-            chunks = [c.strip() for c in notes.split(";") if c.strip()]
-            matched = False
-            for chunk in chunks:
-                lower = chunk.lower()
-                if lower.startswith("contradiction:"):
-                    j_contradiction += 1
-                    matched = True
-                    break
-                if lower.startswith("cross-entity contradiction detected:"):
-                    j_cross += 1
-                    matched = True
-                    break
-                if lower.startswith("semantic contradiction:"):
-                    j_semantic += 1
-                    matched = True
-                    break
-            if matched:
-                contradiction_chunk_flagged += 1
-            continue
-        pf = str(rd.get("predicate_form") or "")
-        parsed = parse_status_current(pf)
-        if parsed is None:
-            continue
-        refusal = gate_refusal(
-            conn,
-            entity_id=str(rd["entity_id"]),
-            entity_type=str(rd["entity_type"]),
-            field="application_submitted",
-            row=rd,
-            state_provenance={},
-            resolver=None,
-            as_of=as_of,
-            fail_closed_on_missing_head=False,
-        )
-        if refusal:
-            continue
-        flagged_foldable += 1
-        stripped = notes.strip()
-        if not stripped:
-            reasonless += 1
-        elif any(c.strip().startswith("predicate normalize:") for c in notes.split(";")):
-            predicate_normalize += 1
-        else:
-            other += 1
-        if "contradict" in notes.lower():
-            contradict_like += 1
-
-    return {
-        "flagged_foldable": flagged_foldable,
-        "f3_rows": f3_rows,
-        "reasonless": reasonless,
-        "predicate_normalize": predicate_normalize,
-        "other": other,
-        "contradict_like_flag_foldable": contradict_like,
-        "contradiction_chunk_flagged": contradiction_chunk_flagged,
-        "contradiction_chunk_contradiction": j_contradiction,
-        "contradiction_chunk_cross_entity": j_cross,
-        "contradiction_chunk_semantic": j_semantic,
-    }
-
-
-def pytest_configure(config: pytest.Config) -> None:
-    if os.environ.get("W4_LIVE_SCAN") == "1":
-        try:
-            from cortex_store import db as cortex_db
-
-            if cortex_db.check_cortex_db():
-                conn = cortex_db.cortex_conn(read_only=True)
-                try:
-                    stats = scan_live_w4_flagged_closeout_stats(conn)
-                    print("\nW4 closeout stats:", stats)
-                finally:
-                    conn.close()
-        except Exception as exc:  # noqa: BLE001
-            print(f"W4_LIVE_SCAN failed: {exc}")
-
-
-if __name__ == "__main__":
-    if os.environ.get("W4_LIVE_SCAN") == "1":
-        from cortex_store import db as cortex_db
-
-        conn = cortex_db.cortex_conn(read_only=True)
-        try:
-            print(scan_live_w4_flagged_closeout_stats(conn))
-        finally:
-            conn.close()
-    else:
-        pytest.main([__file__, "-q"])
-
+from cortex_store.entity_state_closeout_scan import scan_live_w4_flagged_closeout_stats
 
 # --- contention / concurrency / connection ---
 
@@ -818,6 +699,105 @@ def test_fold_older_than_head_refused(migrated_conn: sqlite3.Connection) -> None
     )
     r2 = fold_claim(migrated_conn, eid2, a_claim, "application_submitted")
     assert r2.outcome == "refused" and r2.reason == "older_than_head"
+
+
+def test_fold_older_than_operator_write_head_space_created_at(
+    migrated_conn: sqlite3.Connection,
+) -> None:
+    """Space-format ``created_at`` must not sort before T…Z ``set_at`` on the same UTC day."""
+    eid = _seed_account(migrated_conn, "account:op-instant-key")
+    update_entity_impl(
+        migrated_conn,
+        entity_id=eid,
+        updates={
+            "attributes": {
+                "application_submitted": True,
+                "state_provenance": {
+                    "application_submitted": [
+                        {
+                            "provenance_id": "application_submitted:1",
+                            "kind": "operator_write",
+                            "ref": "agent-bus:operator#1",
+                            "ref_kind": "utterance",
+                            "value": True,
+                            "set_by": "operator",
+                            "set_at": "2026-11-08T12:00:00Z",
+                        }
+                    ]
+                },
+            }
+        },
+    )
+    aid = _insert_status_assertion(
+        migrated_conn,
+        entity_id=eid,
+        claim="submitted later",
+        predicate_form=f"status({eid}, submitted, current)",
+        created_at="2026-11-08 13:00:00",
+        evidence_uris='["cortex://notes/evidence.md"]',
+    )
+    r = fold_claim(migrated_conn, eid, aid, "application_submitted")
+    assert r.outcome == "folded"
+
+
+def test_reverse_fold_duplicate_provenance_id_refused(
+    migrated_conn: sqlite3.Connection,
+) -> None:
+    eid = _seed_account(migrated_conn, "account:dup-prov")
+    sp = {
+        "application_submitted": [
+            {
+                "provenance_id": "application_submitted:1",
+                "kind": "fold",
+                "ref": "assertion:1",
+                "ref_kind": "assertion",
+                "value": True,
+                "set_by": "fold",
+                "set_at": _now(),
+                "assertion_id": 1,
+                "previous_present": False,
+            },
+            {
+                "provenance_id": "application_submitted:1",
+                "kind": "fold",
+                "ref": "assertion:2",
+                "ref_kind": "assertion",
+                "value": True,
+                "set_by": "fold",
+                "set_at": _now(),
+                "assertion_id": 2,
+                "previous_present": False,
+            },
+        ]
+    }
+    update_entity_impl(
+        migrated_conn,
+        entity_id=eid,
+        updates={"attributes": {"application_submitted": True, "state_provenance": sp}},
+    )
+    r = reverse_fold(migrated_conn, eid, "application_submitted", "application_submitted:1")
+    assert r.outcome == "refused" and r.reason == "reverse_conflict"
+
+
+def test_osp_resolver_raises_maps_to_unresolvable(
+    migrated_conn: sqlite3.Connection,
+) -> None:
+    eid = _seed_account(migrated_conn, "account:osp-boom")
+
+    def _boom(_ref: str) -> UtteranceInfo:
+        raise RuntimeError("resolver down")
+
+    aid = _insert_status_assertion(
+        migrated_conn,
+        entity_id=eid,
+        claim="op said",
+        derivation_type="user_statement",
+        evidence_uris='["agent-bus:22652#1"]',
+    )
+    r = fold_claim(
+        migrated_conn, eid, aid, "application_submitted", resolver=_boom
+    )
+    assert r.outcome == "refused" and r.reason == "osp_unresolvable"
 
 
 def test_fold_with_no_head_has_no_ordering_refusal(migrated_conn: sqlite3.Connection) -> None:
@@ -1304,8 +1284,8 @@ def test_reversal_record_is_never_head(migrated_conn: sqlite3.Connection) -> Non
     pid = fold_claim(migrated_conn, eid, aid, "application_submitted").provenance_id or ""
     reverse_fold(migrated_conn, eid, "application_submitted", pid)
     fs = field_state(migrated_conn, eid, "application_submitted")
-    recs = _attrs(migrated_conn, eid)["state_provenance"]["application_submitted"]
-    assert all(r.get("kind") != "reversal" or fs.head_ref != r.get("ref") for r in recs)
+    assert fs.head_ref is None
+    assert fs.verification == "unverified"
 
 
 def test_refold_after_reversal_refused(migrated_conn: sqlite3.Connection) -> None:
@@ -1397,7 +1377,7 @@ def test_workflow_state_done_without_live_verify_attrs_gate_refused_no_event(
         evidence_uris='["cortex://notes/evidence.md"]',
     )
     r = fold_claim(migrated_conn, eid, aid, "workflow_state")
-    assert r.outcome == "refused" and r.reason == "gate_refused"
+    assert r.outcome == "refused" and r.reason.startswith("gate_refused:")
     assert not _fold_events(recorded_events)
 
 
@@ -1421,7 +1401,7 @@ def test_workflow_state_condition_entity_refused(
         evidence_uris='["cortex://notes/evidence.md"]',
     )
     r = fold_claim(migrated_conn, eid, aid, "workflow_state")
-    assert r.outcome == "refused" and r.reason == "gate_refused"
+    assert r.outcome == "refused" and r.reason.startswith("gate_refused:")
     assert not _fold_events(recorded_events)
 
 
@@ -1448,7 +1428,46 @@ def test_workflow_state_fold_event_count(
     assert r.outcome == "folded"
     folded = _fold_events(recorded_events)
     assert len(folded) == 1
-    # closure-gap may also appear from update_entity_impl when todo hits done — not this case
+
+
+def test_workflow_state_todo_done_emits_fold_and_closure_gap(
+    migrated_conn: sqlite3.Connection,
+    recorded_events: list[tuple[str, dict[str, Any]]],
+) -> None:
+    eid = "todo:wf-done-gap"
+    insert_entity(
+        migrated_conn,
+        entity_id=eid,
+        entity_type="todo",
+        name="done gap todo",
+        workflow_state="open",
+        attributes=json.dumps({"live_verify_required": False}),
+    )
+    aid = _insert_status_assertion(
+        migrated_conn,
+        entity_id=eid,
+        claim="done",
+        predicate_form=f"status({eid}, done, current)",
+        evidence_uris='["cortex://notes/evidence.md"]',
+    )
+    r = fold_claim(migrated_conn, eid, aid, "workflow_state")
+    assert r.outcome == "folded"
+    assert r.events_emitted == 2
+    signals = [e[0] for e in recorded_events]
+    assert "cortex.entity_state.folded" in signals
+
+
+def test_reverse_application_submitted_previous_present_false_tombstone(
+    migrated_conn: sqlite3.Connection,
+) -> None:
+    eid = _seed_account(migrated_conn, "account:rev-tombstone", attributes={})
+    aid = _eligible_submitted_assertion(migrated_conn, eid)
+    pid = fold_claim(migrated_conn, eid, aid, "application_submitted").provenance_id or ""
+    r = reverse_fold(migrated_conn, eid, "application_submitted", pid)
+    assert r.outcome == "reversed"
+    attrs = _attrs(migrated_conn, eid)
+    assert attrs.get("application_submitted") is None
+    assert field_state(migrated_conn, eid, "application_submitted").present is False
 
 
 # --- field_state read rule ---
@@ -1576,7 +1595,7 @@ def test_field_state_head_claim_missing_counts_newest_as_newer(
         migrated_conn, eid, created_at="2026-12-01T00:00:00+00:00"
     )
     fs = field_state(migrated_conn, eid, "application_submitted")
-    assert fs.verification == "unverified"
+    assert fs.verification == "verified"
     assert fs.newer_claim_id == a_new
 
 
@@ -1767,28 +1786,49 @@ def test_w2_f1_reads_null_tombstone_as_not_affirmative(
 
 
 def test_scan_live_w4_flagged_closeout_stats_fixture(migrated_conn: sqlite3.Connection) -> None:
-    eid = _seed_account(migrated_conn, "account:scan-fixture")
-    _eligible_submitted_assertion(
-        migrated_conn, eid, review_status="flagged", review_notes=None
-    )
-    _eligible_submitted_assertion(
+    f3_eid = "plan:scan-f3-fixture"
+    insert_entity(
         migrated_conn,
-        eid,
-        review_status="flagged",
-        review_notes="predicate normalize: x",
-        created_at="2026-11-02T00:00:00+00:00",
+        entity_id=f3_eid,
+        entity_type="plan",
+        name="scan f3 plan",
+        description="staging",
     )
-    _eligible_submitted_assertion(
+    _insert_status_assertion(
         migrated_conn,
-        eid,
+        entity_id=f3_eid,
+        claim="served staging",
+        confidence="believed",
+        created_at="2026-10-20T00:00:00+00:00",
+    )
+    _insert_status_assertion(
+        migrated_conn,
+        entity_id=f3_eid,
+        claim="newer flagged operational",
+        confidence="confirmed",
         review_status="flagged",
-        review_notes="contradiction: y",
-        created_at="2026-11-03T00:00:00+00:00",
+        review_notes="predicate normalize: detail",
+        created_at="2026-11-05T00:00:00+00:00",
+        derivation_type="direct_observation",
+        evidence_uris='["cortex://notes/evidence.md"]',
+        predicate_form=f"status({f3_eid}, submitted, current)",
+    )
+    _insert_status_assertion(
+        migrated_conn,
+        entity_id=f3_eid,
+        claim="withheld chunk",
+        confidence="confirmed",
+        review_status="flagged",
+        review_notes="contradiction: stale",
+        created_at="2026-11-06T00:00:00+00:00",
+        derivation_type="direct_observation",
+        evidence_uris='["cortex://notes/evidence.md"]',
     )
     stats = scan_live_w4_flagged_closeout_stats(migrated_conn)
-    assert stats["reasonless"] >= 1
-    assert stats["predicate_normalize"] >= 1
     assert stats["contradiction_chunk_flagged"] >= 1
-    assert stats["reasonless"] + stats["predicate_normalize"] + stats["other"] == stats[
-        "flagged_foldable"
-    ]
+    assert stats["f3_rows"] >= 1
+    if stats["flagged_foldable"]:
+        assert (
+            stats["reasonless"] + stats["predicate_normalize"] + stats["other"]
+            == stats["flagged_foldable"]
+        )

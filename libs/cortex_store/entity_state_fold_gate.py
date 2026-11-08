@@ -8,7 +8,10 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
 
-from cortex_store.card_temporal import assertion_interval_contains, card_as_of_utc
+from cortex_store.card_temporal import (
+    assertion_interval_contains,
+    instant_key,
+)
 from cortex_store.entity_state_flag_rule import (
     CONTRADICTION_PREFIXES,
     flag_fold_marker,
@@ -21,6 +24,7 @@ from cortex_store.entity_state_provenance import (
     parse_status_current,
     provenance_head,
 )
+
 _INFERENCE_DERIVATION = "inference"
 _USER_STATEMENT = "user_statement"
 
@@ -33,6 +37,10 @@ class UtteranceInfo:
 
 
 ResolveUtterance = Callable[[str], UtteranceInfo | None]
+
+
+class OspResolverError(Exception):
+    """Injected OSP resolver raised — fail closed as ``osp_unresolvable``."""
 
 
 def _parse_evidence_uris(raw: object) -> list[str]:
@@ -68,10 +76,16 @@ def is_evidence_backed_w4(row: dict[str, Any]) -> bool:
 
 
 def is_osp_pointer(ref: str, resolver: ResolveUtterance | None) -> bool:
-    """True when *ref* resolves to an operator utterance via injected resolver."""
+    """True when *ref* resolves to an operator utterance via injected resolver.
+
+    The resolver must be cheap — it may run under ``BEGIN IMMEDIATE``.
+    """
     if resolver is None:
         return False
-    info = resolver(ref)
+    try:
+        info = resolver(ref)
+    except Exception as exc:
+        raise OspResolverError(str(exc)) from exc
     return info is not None and info.operator_seat
 
 
@@ -82,9 +96,12 @@ def is_osp_claim(row: dict[str, Any], resolver: ResolveUtterance | None) -> bool
         "flagged", str(row.get("review_notes") or ""), row
     ):
         return False
-    for ref in _parse_evidence_uris(row.get("evidence_uris")):
-        if is_osp_pointer(ref, resolver):
-            return True
+    try:
+        for ref in _parse_evidence_uris(row.get("evidence_uris")):
+            if is_osp_pointer(ref, resolver):
+                return True
+    except OspResolverError:
+        raise
     return False
 
 
@@ -138,11 +155,12 @@ def gate_refusal(
     if row.get("derivation_type") == _USER_STATEMENT and not is_evidence_backed_w4(row):
         if resolver is None and _parse_evidence_uris(row.get("evidence_uris")):
             return "osp_unresolvable"
-    evidence = is_evidence_backed_w4(row)
-    osp = is_osp_claim(row, resolver)
+    try:
+        evidence = is_evidence_backed_w4(row)
+        osp = is_osp_claim(row, resolver)
+    except OspResolverError:
+        return "osp_unresolvable"
     if not evidence and not osp:
-        return "not_evidence_backed"
-    if row.get("derivation_type") == _USER_STATEMENT and not evidence and not osp:
         return "not_evidence_backed"
     field_records = state_provenance.get(field)
     records: list[dict[str, Any]] = (
@@ -163,19 +181,19 @@ def gate_refusal(
                     if fail_closed_on_missing_head:
                         return "head_claim_missing"
                     return None
-                hc = str(head_row["created_at"])
                 hid = int(head_row["id"])
-                if int(head_assertion) != claim_id and (claim_created, claim_id) <= (
-                    hc,
-                    hid,
-                ):
-                    return "older_than_head"
+                if int(head_assertion) != claim_id:
+                    hc_key = instant_key(head_row["created_at"])
+                    claim_key = instant_key(claim_created)
+                    if (claim_key, claim_id) <= (hc_key, hid):
+                        return "older_than_head"
             else:
                 return "head_claim_missing"
         elif head.get("kind") == "operator_write":
-            head_at = str(head.get("set_at") or "")
-            if claim_created and head_at and claim_created <= head_at:
-                return "older_than_head"
+            head_at = head.get("set_at")
+            if claim_created and head_at:
+                if instant_key(claim_created) <= instant_key(head_at):
+                    return "older_than_head"
     for rec in records:
         if rec.get("kind") == "fold" and rec.get("assertion_id") == row.get("id"):
             revs = {r.get("reverses") for r in records if r.get("kind") == "reversal"}
@@ -195,14 +213,12 @@ def __getattr__(name: str) -> object:
 __all__ = [
     "CONTRADICTION_PREFIXES",
     "DENYLIST_FIELDS",
-    "FieldState",
     "ResolveUtterance",
     "UtteranceInfo",
     "claim_binds_field",
     "claim_is_current",
     "derive_fold_value",
     "entity_is_concern",
-    "field_state",
     "flag_fold_marker",
     "flag_withholds",
     "gate_refusal",

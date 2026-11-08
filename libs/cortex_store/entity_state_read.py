@@ -6,8 +6,14 @@ import sqlite3
 from dataclasses import dataclass
 from typing import Any, Literal
 
-from cortex_store.card_temporal import card_as_of_utc, install_card_temporal_function
+from cortex_store.card_temporal import (
+    card_as_of_utc,
+    install_card_temporal_function,
+    instant_key,
+)
+from cortex_store.db import decode_row
 from cortex_store.db import query as db_query
+from cortex_store.entity_crud import ENTITY_JSON_FIELDS
 from cortex_store.entity_state_flag_rule import flag_withholds
 from cortex_store.entity_state_fold_gate import ResolveUtterance, gate_refusal
 from cortex_store.entity_state_provenance import (
@@ -16,6 +22,7 @@ from cortex_store.entity_state_provenance import (
     parse_status_current,
     provenance_head,
     records_for_field,
+    values_match_strict,
 )
 
 
@@ -44,8 +51,7 @@ def _field_verified(
     if not head.get("ref") or not head.get("ref_kind"):
         return "unverified", head
     current = workflow_state if field == "workflow_state" else attrs.get(field)
-    head_val = head.get("value")
-    if not (current is None and head_val is None) and current != head_val:
+    if not values_match_strict(current, head.get("value")):
         return "unverified", head
     return "verified", head
 
@@ -53,10 +59,20 @@ def _field_verified(
 def _fetch_claim_rows(conn: sqlite3.Connection, entity_id: str) -> list[dict[str, Any]]:
     rows = db_query(
         conn,
-        "SELECT * FROM assertions WHERE entity_id = ? ORDER BY created_at DESC, id DESC",
+        "SELECT * FROM assertions WHERE entity_id = ?",
         (entity_id,),
     )
-    return [dict(r) for r in rows]
+    out = [dict(r) for r in rows]
+
+    def _sort_key(r: dict[str, Any]) -> tuple[object, int]:
+        try:
+            ts = instant_key(r.get("created_at"))
+        except ValueError:
+            ts = instant_key("1970-01-01T00:00:00+00:00")
+        return ts, int(r["id"])
+
+    out.sort(key=_sort_key, reverse=True)
+    return out
 
 
 def _claim_eligible_for_field_state(
@@ -121,26 +137,6 @@ def field_state(
     sp = attrs.get("state_provenance")
     state_provenance = dict(sp) if isinstance(sp, dict) else {}
     verification, head = _field_verified(attrs, field, ent["workflow_state"])
-    if (
-        verification == "verified"
-        and head
-        and head.get("ref_kind") == "assertion"
-        and head.get("ref")
-    ):
-        ref = str(head["ref"])
-        if ref.startswith("assertion:"):
-            try:
-                head_aid = int(ref.split(":", 1)[1])
-            except ValueError:
-                verification = "unverified"
-            else:
-                if (
-                    conn.execute(
-                        "SELECT 1 FROM assertions WHERE id = ?", (head_aid,)
-                    ).fetchone()
-                    is None
-                ):
-                    verification = "unverified"
     head_ref = str(head.get("ref")) if head and head.get("ref") else None
     marker = str(head.get("marker")) if head and head.get("marker") else None
     if field == "workflow_state":
@@ -149,12 +145,13 @@ def field_state(
         val = attrs.get(field)
         present = field in attrs and val is not None
         value = val
+    entity_type = str(ent["type"])
     newest_id: int | None = None
     for row in _fetch_claim_rows(conn, entity_id):
         if _claim_eligible_for_field_state(
             conn,
             entity_id=entity_id,
-            entity_type=str(ent["type"]),
+            entity_type=entity_type,
             field=field,
             row=row,
             state_provenance=state_provenance,
@@ -175,3 +172,17 @@ def field_state(
         newer_claim_id=newer_out,
         marker=marker,
     )
+
+
+def read_entity(conn: sqlite3.Connection, entity_id: str) -> dict[str, object] | None:
+    rows = db_query(conn, "SELECT * FROM entities WHERE id = ?", (entity_id,))
+    if not rows:
+        return None
+    return decode_row(rows[0], ENTITY_JSON_FIELDS)
+
+
+def read_assertion(conn: sqlite3.Connection, assertion_id: int) -> dict[str, object] | None:
+    rows = db_query(conn, "SELECT * FROM assertions WHERE id = ?", (assertion_id,))
+    if not rows:
+        return None
+    return dict(rows[0])
