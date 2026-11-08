@@ -47,10 +47,6 @@ def test_run_dispatcher_emits_one_pass_duration_per_pass(
         _noop,
     )
     monkeypatch.setattr(
-        "bus_watch.ide_context_hop_monitor.check_cursor_ide_context_hops",
-        _noop,
-    )
-    monkeypatch.setattr(
         "bus_watch.impresario_ear_patrol.run_patrol_pass",
         _noop,
     )
@@ -123,10 +119,6 @@ def test_pass_duration_emit_error_does_not_break_pass(
     )
     monkeypatch.setattr(
         "bus_watch.endpoint_wake_composer_defer.finalize_composer_defer_pass",
-        _noop,
-    )
-    monkeypatch.setattr(
-        "bus_watch.ide_context_hop_monitor.check_cursor_ide_context_hops",
         _noop,
     )
     monkeypatch.setattr(

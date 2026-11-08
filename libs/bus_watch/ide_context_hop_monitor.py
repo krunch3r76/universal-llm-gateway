@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import re
 import subprocess
 import sys
+import threading
 import time
 from typing import Any
 
@@ -22,6 +24,10 @@ _HOP_SCRIPT = _REPO / "scripts" / "liaison-ide-hop.py"
 _ROOT_SCOPE_RE = re.compile(r"^\d+$")
 _HOP_CHECK_INTERVAL_S = 60.0
 _HOP_COOLDOWN_S = 300.0
+# Must stay below _HOP_CHECK_INTERVAL_S so a root due at 60s is seen on the next tick, not +60s later.
+_HOP_MONITOR_LOOP_CADENCE_S = 20.0
+
+_check_in_flight = threading.Lock()
 
 
 def _numeric_root_subscriptions(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -174,4 +180,51 @@ def check_cursor_ide_context_hops(
             )
 
 
-__all__ = ["check_cursor_ide_context_hops"]
+def _guarded_hop_check(
+    store: StoreClient, hop_mark: dict[str, float]
+) -> tuple[str, float]:
+    """Run one hop check if the previous invocation finished; else skip."""
+    if not _check_in_flight.acquire(blocking=False):
+        return "skipped_overlap", 0.0
+    started = time.monotonic()
+    outcome = "ok"
+    try:
+        check_cursor_ide_context_hops(store, mark=hop_mark)
+    except Exception:
+        outcome = "error"
+        logger.exception("ide_context_hop_monitor: guarded check failed")
+    finally:
+        _check_in_flight.release()
+    duration_ms = (time.monotonic() - started) * 1000.0
+    return outcome, duration_ms
+
+
+def safe_emit_hop_monitor_tick(*, outcome: str, check_ms: float) -> None:
+    """Emit hop-monitor timing; never raises into the monitor loop."""
+    try:
+        from bus_watch.events import emit_ide_context_hop_monitor_tick
+
+        emit_ide_context_hop_monitor_tick(outcome=outcome, check_ms=round(check_ms, 3))
+    except Exception:
+        logger.exception("ide_context_hop_monitor: tick emit failed")
+
+
+async def run_ide_context_hop_monitor() -> None:
+    """Background loop: CONTEXT_BUDGET hop checks on their own cadence."""
+    store = StoreClient()
+    hop_mark: dict[str, float] = {}
+    while True:
+        tick_started = time.monotonic()
+        outcome, check_ms = await asyncio.to_thread(
+            _guarded_hop_check, store, hop_mark
+        )
+        safe_emit_hop_monitor_tick(outcome=outcome, check_ms=check_ms)
+        elapsed = time.monotonic() - tick_started
+        await asyncio.sleep(max(0.0, _HOP_MONITOR_LOOP_CADENCE_S - elapsed))
+
+
+__all__ = [
+    "check_cursor_ide_context_hops",
+    "run_ide_context_hop_monitor",
+    "safe_emit_hop_monitor_tick",
+]

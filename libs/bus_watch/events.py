@@ -451,3 +451,26 @@ def EndpointWakePassDuration(  # noqa: N802
 def emit_endpoint_wake_pass_duration(**kwargs: Any) -> None:
     """Publish per-pass duration breakdown for endpoint_wake_dispatcher."""
     _emit(EndpointWakePassDuration(**kwargs))
+
+
+@event_factory
+def IdeContextHopMonitorTick(  # noqa: N802
+    *,
+    outcome: str,
+    check_ms: float,
+) -> Event:
+    """Observation: one ide_context_hop_monitor background tick."""
+    return Event(
+        signal="ide_context_hop_monitor.tick",
+        role="observation",
+        payload={
+            "outcome": outcome,
+            "check_ms": check_ms,
+        },
+        scope="global",
+    )
+
+
+def emit_ide_context_hop_monitor_tick(**kwargs: Any) -> None:
+    """Publish timing for one ide_context_hop_monitor tick."""
+    _emit(IdeContextHopMonitorTick(**kwargs))

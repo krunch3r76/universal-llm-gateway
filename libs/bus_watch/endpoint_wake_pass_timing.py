@@ -19,7 +19,7 @@ PASS_PHASES: tuple[str, ...] = (
     "scan_once",
     "fire_due_wakes",
     "finalize_composer_defer_pass",
-    "check_cursor_ide_context_hops",
+    "check_cursor_ide_context_hops",  # legacy phase field; always 0.0 (hop monitor is off-thread)
     "run_patrol_pass",
 )
 

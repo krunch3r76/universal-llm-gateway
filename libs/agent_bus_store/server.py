@@ -68,14 +68,23 @@ def create_app(*, db_path: str | None = None) -> FastAPI:
             logger.exception("orphan reconcile failed at startup")
         watchdog_task = asyncio.create_task(run_watchdog())
         wake_task: asyncio.Task[None] | None = None
+        hop_monitor_task: asyncio.Task[None] | None = None
         if os.environ.get("AGENT_BUS_ENDPOINT_WAKE_DISPATCHER") == "1":
             from background_supervisor import supervise
             from bus_watch.endpoint_wake_dispatcher import run_dispatcher
+            from bus_watch.ide_context_hop_monitor import run_ide_context_hop_monitor
 
             wake_task = supervise(
                 _app,
                 "endpoint_wake_dispatcher",
                 run_dispatcher,
+                restart=True,
+                max_restarts=None,
+            )
+            hop_monitor_task = supervise(
+                _app,
+                "ide_context_hop_monitor",
+                run_ide_context_hop_monitor,
                 restart=True,
                 max_restarts=None,
             )
@@ -86,11 +95,16 @@ def create_app(*, db_path: str | None = None) -> FastAPI:
             watchdog_task.cancel()
             if wake_task is not None:
                 wake_task.cancel()
+            if hop_monitor_task is not None:
+                hop_monitor_task.cancel()
             with contextlib.suppress(asyncio.CancelledError):
                 await watchdog_task
             if wake_task is not None:
                 with contextlib.suppress(asyncio.CancelledError):
                     await wake_task
+            if hop_monitor_task is not None:
+                with contextlib.suppress(asyncio.CancelledError):
+                    await hop_monitor_task
 
     app = FastAPI(
         title="agent-bus",
