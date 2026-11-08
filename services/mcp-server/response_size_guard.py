@@ -38,6 +38,7 @@ from request_profile import (
 from response_overflow_manifest import (
     STRUCTURE_BUDGET_BYTES,
     _extract_primary_text,
+    primary_text_basis,
     try_markdown_overflow_replacement,
 )
 from tool_access import CURSOR_SAFE_PROFILE
@@ -75,6 +76,9 @@ _CONTENT_LEAN_FLOOR_BYTES: int = int(
     os.getenv("MCP_CONTENT_LEAN_FLOOR_BYTES", str(2 * 1024))
 )
 _PER_CALL_FLOOR_BYTES: int = int(os.getenv("MCP_PER_CALL_FLOOR_BYTES", "2048"))
+_PER_CALL_CEILING_TOOLS: frozenset[str] = frozenset(
+    {"fs_read", "agent_bus_read", "cortex_read"}
+)
 _MIRROR_PLACEHOLDER: str = '{"_mirror":"suppressed","read":"structuredContent"}'
 _MIRROR_SUPPRESS_TOOLS: frozenset[str] = frozenset(
     t.strip()
@@ -301,21 +305,25 @@ def _normalize_optional_int(value: Any) -> int | None:
 
 
 def _per_call_ceiling(
-    context: MiddlewareContext[Any], effective_limit: int
+    context: MiddlewareContext[Any], limit: int, tool_name: str
 ) -> tuple[int, str]:
-    """Lower the effective byte ceiling when the caller sets max_response_bytes.
+    """Return the hard byte ceiling for this tool call (profile limit unless lowered).
 
-    Per-call values never raise the profile limit; invalid or non-positive values
-    are treated as absent. The floor prevents unusably small manifests.
+    Only read companions honor ``max_response_bytes``; invalid values, booleans,
+    and non-positive numbers are treated as absent so master behavior is preserved.
     """
+    if tool_name not in _PER_CALL_CEILING_TOOLS:
+        return limit, "profile"
     arguments = context.message.arguments
     if not isinstance(arguments, dict):
-        return effective_limit, "profile"
-    requested = _normalize_optional_int(arguments.get("max_response_bytes"))
+        return limit, "profile"
+    raw = arguments.get("max_response_bytes")
+    if isinstance(raw, bool):
+        return limit, "profile"
+    requested = _normalize_optional_int(raw)
     if requested is None or requested <= 0:
-        return effective_limit, "profile"
-    ceiling = max(_PER_CALL_FLOOR_BYTES, min(requested, effective_limit))
-    return ceiling, "per_call"
+        return limit, "profile"
+    return max(_PER_CALL_FLOOR_BYTES, min(requested, limit)), "per_call"
 
 
 def _adaptive_limit(
@@ -1109,11 +1117,12 @@ class ResponseSizeGuard(Middleware):
         threshold = _threshold_for_profile()
         reasoning_target = _reasoning_target_bytes(threshold)
         needs_semantic_guard = tool_name in _SEMANTIC_GUARD_TOOLS
-        effective_limit = reasoning_target if needs_semantic_guard else threshold
-        ceiling, ceiling_source = _per_call_ceiling(context, effective_limit)
+        hard, ceiling_source = _per_call_ceiling(context, threshold, tool_name)
+        effective = min(reasoning_target, hard) if needs_semantic_guard else hard
+        allow_fast_path = ceiling_source != "per_call"
 
         if tool_name == "agent_bus":
-            windowed = _try_window_agent_bus_result(result, threshold=ceiling)
+            windowed = _try_window_agent_bus_result(result, threshold=hard)
             if windowed is not None:
                 result = windowed
 
@@ -1127,11 +1136,16 @@ class ResponseSizeGuard(Middleware):
             )
 
         try:
-            size = self._estimate_size(result, ceiling, needs_semantic_guard)
+            size = self._estimate_size(
+                result,
+                effective,
+                needs_semantic_guard,
+                allow_fast_path=allow_fast_path,
+            )
             if size is None:
                 return _lean_content(result, tool_name=tool_name)
 
-            if size <= ceiling:
+            if size <= effective:
                 return _lean_content(result, tool_name=tool_name)
         except Exception:
             logger.warning(
@@ -1161,18 +1175,19 @@ class ResponseSizeGuard(Middleware):
             )
             return _lean_content(result, tool_name=tool_name)
 
-        replacement = _replacement_result(ref_id, tool_name, size, ceiling, result)
+        replacement = _replacement_result(ref_id, tool_name, size, hard, result)
         guarded_kwargs: dict[str, Any] = {
             "tool_name": tool_name,
             "profile": current_profile(),
             "original_bytes": size,
             "threshold_bytes": threshold,
-            "ceiling_bytes": ceiling,
+            "ceiling_bytes": hard,
+            "effective_bytes": effective,
             "ceiling_source": ceiling_source,
             "reasoning_target_bytes": reasoning_target,
             "ref_id": ref_id,
             "store_count": len(_store),
-            "semantic_guard": needs_semantic_guard and size <= threshold,
+            "semantic_guard": needs_semantic_guard and size <= hard,
         }
         structured = replacement.structured_content
         if (
@@ -1191,14 +1206,21 @@ class ResponseSizeGuard(Middleware):
         result: ToolResult,
         threshold: int,
         needs_semantic_guard: bool,
+        *,
+        allow_fast_path: bool = True,
     ) -> int | None:
         """Return measured byte size, or None when the result is safe to pass through.
 
         For semantic-guard tools (agent_bus, cortex) we always measure fully —
         no fast-path early exit.  For other tools, a quick structured_content
         estimate skips the expensive full serialization when clearly under limit.
+        Per-call ceilings disable the fast path so lowered limits cannot be skipped.
         """
-        if not needs_semantic_guard and result.structured_content is not None:
+        if (
+            allow_fast_path
+            and not needs_semantic_guard
+            and result.structured_content is not None
+        ):
             estimate = len(
                 json.dumps(result.structured_content, default=str).encode("utf-8")
             )
@@ -1229,6 +1251,25 @@ def _retrieve_selective(
     now: float,
 ) -> dict[str, Any]:
     """Read a portion of a stored response without popping the entry."""
+    basis = primary_text_basis(stored.result, stored.tool_name)
+    if basis != "content":
+        record(
+            "mcp.response.retrieve_refused",
+            tool_name=stored.tool_name,
+            ref_id=ref_id,
+            selection_basis=basis,
+        )
+        return {
+            "error": (
+                "Selective retrieve (section/offset/limit) needs a response with a "
+                "top-level string `content`; "
+                f"{stored.tool_name!r} returned a structured payload. "
+                f"Re-call {stored.tool_name!r} narrower (read-only), or "
+                f'bare retrieve(id="{ref_id}") for the whole response.'
+            ),
+            "ref_id": ref_id,
+            "selection_basis": basis,
+        }
     text = _extract_primary_text(stored.result, stored.tool_name)
     if text is None:
         return {
@@ -1285,7 +1326,7 @@ def register_response_guard(mcp: FastMCP) -> None:
         ``limit`` to read a window without consuming the store slot.
         """
         now = time.monotonic()
-        selective = bool(section.strip()) or limit > 0
+        selective = bool(section.strip()) or limit > 0 or offset > 0
         expired_events: list[_ExpiredEvent]
         with _lock:
             expired_events = _prune_expired(now)
