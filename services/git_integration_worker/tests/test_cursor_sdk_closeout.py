@@ -1150,6 +1150,19 @@ def _closeout_first_section(text: str) -> str:
     return text if match is None else text[: match.start()]
 
 
+def _executive_harvest_slice(text: str) -> str:
+    """Harvest prose inside ``## executive_envelope`` or legacy preamble."""
+    from services.git_integration_worker.cursor_sdk_closeout_harvest import (
+        EXECUTIVE_ENVELOPE_HEADING,
+    )
+
+    if text.startswith(EXECUTIVE_ENVELOPE_HEADING):
+        after = text[len(EXECUTIVE_ENVELOPE_HEADING) :].lstrip("\n")
+        match = re.search(r"(?m)^## ", after)
+        return after if match is None else after[: match.start()]
+    return _closeout_first_section(text)
+
+
 def test_closeout_preamble_over_4500_exposes_line_start_status_in_bounded_section(
     tmp_path: Path,
 ) -> None:
@@ -1167,7 +1180,7 @@ def test_closeout_preamble_over_4500_exposes_line_start_status_in_bounded_sectio
     )
     written, archived = write_repo_sidecar(tmp_path, "disp-preamble", emitted)
     text = written.read_text(encoding="utf-8")
-    first = _closeout_first_section(text)
+    first = _executive_harvest_slice(text)
     assert len(first) <= 4500
     assert "status: complete" in first.splitlines()
     assert "VERDICT: approve-harvest" in first.splitlines()
@@ -1189,7 +1202,7 @@ def test_closeout_preamble_over_4500_exposes_line_start_status_in_bounded_sectio
         work_item_ref=None,
     )
     silent_text = silent.sidecar_path.read_text(encoding="utf-8")
-    silent_first = _closeout_first_section(silent_text)
+    silent_first = _executive_harvest_slice(silent_text)
     assert len(silent_first) <= 4500
     payload = json.loads(silent.body)
     assert f"status: {payload['status']}" in silent_first.splitlines()
@@ -1205,7 +1218,7 @@ def test_quoted_verdict_is_not_the_harvest_line(tmp_path: Path) -> None:
     rebuilt preamble once ## closeout_body exceeds 4500 characters.
     """
     fenced = ("q" * 5000) + "\nVERDICT: APPROVE\n\n```\nVERDICT: REQUEST_CHANGES\n```\n"
-    fenced_first = _closeout_first_section(
+    fenced_first = _executive_harvest_slice(
         write_repo_sidecar(tmp_path, "disp-verdict-fence", fenced)[0].read_text(
             encoding="utf-8"
         )
@@ -1216,7 +1229,7 @@ def test_quoted_verdict_is_not_the_harvest_line(tmp_path: Path) -> None:
     disagree = (
         "q" * 5000
     ) + "\nVERDICT: APPROVE\n\nReviewed artifact:\nVERDICT: REQUEST_CHANGES\n"
-    disagree_first = _closeout_first_section(
+    disagree_first = _executive_harvest_slice(
         write_repo_sidecar(tmp_path, "disp-verdict-disagree", disagree)[0].read_text(
             encoding="utf-8"
         )
@@ -1224,7 +1237,7 @@ def test_quoted_verdict_is_not_the_harvest_line(tmp_path: Path) -> None:
     assert not any(line.startswith("VERDICT:") for line in disagree_first.splitlines())
 
     code_status = ("p" * 5000) + "\nstatus: ExecutionStatus\n"
-    code_first = _closeout_first_section(
+    code_first = _executive_harvest_slice(
         write_repo_sidecar(tmp_path, "disp-code-status", code_status)[0].read_text(
             encoding="utf-8"
         )
@@ -1233,7 +1246,7 @@ def test_quoted_verdict_is_not_the_harvest_line(tmp_path: Path) -> None:
     assert "status: ExecutionStatus" not in code_first.splitlines()
 
     leading_code = "status: ExecutionStatus\n" + ("p" * 5000) + "\n"
-    leading_first = _closeout_first_section(
+    leading_first = _executive_harvest_slice(
         write_repo_sidecar(
             tmp_path, "disp-leading-code-status", leading_code
         )[0].read_text(encoding="utf-8")
@@ -1242,7 +1255,7 @@ def test_quoted_verdict_is_not_the_harvest_line(tmp_path: Path) -> None:
     assert "status: ExecutionStatus" not in leading_first.splitlines()
 
     short_code = "status: ExecutionStatus\nresidue: none\n"
-    short_first = _closeout_first_section(
+    short_first = _executive_harvest_slice(
         write_repo_sidecar(
             tmp_path, "disp-leading-code-status-short", short_code
         )[0].read_text(encoding="utf-8")
@@ -1251,7 +1264,7 @@ def test_quoted_verdict_is_not_the_harvest_line(tmp_path: Path) -> None:
     assert "status: ExecutionStatus" not in short_first.splitlines()
 
     kept = "status: complete\nresidue: none\n"
-    kept_first = _closeout_first_section(
+    kept_first = _executive_harvest_slice(
         write_repo_sidecar(tmp_path, "disp-leading-complete", kept)[0].read_text(
             encoding="utf-8"
         )
@@ -1280,7 +1293,7 @@ def test_prepare_closeout_delivery_writes_sidecar_and_bounds_body(
     assert delivery.sidecar_ref == sidecar_workspaces_ref("disp-big")
     sidecar_text = delivery.sidecar_path.read_text(encoding="utf-8")
     assert outcome.body in sidecar_text
-    assert len(_closeout_first_section(sidecar_text)) <= 4500
+    assert len(_executive_harvest_slice(sidecar_text)) <= 4500
     assert "## structured_closeout_full" in sidecar_text
     assert delivery.sidecar_ref in delivery.body
 
@@ -4436,14 +4449,59 @@ def test_multi_heading_closeout_executive_envelope_before_effects_manifest(
         baseline={"codes": {}, "hashes": {}},
     )
     sidecar_text = delivery.sidecar_path.read_text(encoding="utf-8")
+    assert sidecar_text.splitlines()[0] == "## executive_envelope"
     pre_manifest = sidecar_text.split("## effects_manifest", maxsplit=1)[0]
-    assert len(pre_manifest.splitlines()) <= 60
+    assert len(_executive_harvest_slice(sidecar_text).splitlines()) <= 60
+    assert len(pre_manifest) <= 4000
     assert "## closeout_body" in sidecar_text
-    assert agent_body in sidecar_text
+    assert "detail line 0" in sidecar_text
     manifest_idx = sidecar_text.index("## effects_manifest")
     body_idx = sidecar_text.index("## closeout_body")
     structured_idx = sidecar_text.index("## structured_closeout_full")
     assert manifest_idx < body_idx < structured_idx
+    assert sidecar_text.count("\n## effects_manifest") == 1
+    assert sidecar_text.count("\n## closeout_body") == 1
+
+
+def test_closeout_sidecar_demotes_worker_harness_headings_under_closeout_body(
+    tmp_path: Path,
+) -> None:
+    """Worker ``##`` harness headings become ``###`` under ``## closeout_body``."""
+    _init_git_repo(tmp_path)
+    worker = (
+        "## executive_envelope\n\n"
+        "status: complete\nresidue: none\n\n"
+        "## effects_manifest\n\nignored\n\n"
+        "## closeout_body\n\n"
+        "### item-1\n\none\n"
+    )
+    oversized = worker + "\n" + "\n".join(f"pad {idx}" for idx in range(240))
+    outcome = SdkRunOutcome(
+        body=oversized,
+        status="finished",
+        duration_ms=50,
+        tool_call_count=0,
+    )
+    delivery = prepare_closeout_delivery(
+        source_repo=tmp_path,
+        dispatch_id="disp-demote-h2",
+        outcome=outcome,
+        degraded_reason=None,
+        thread_id="t-demote",
+        work_item_ref=None,
+        baseline={"codes": {}, "hashes": {}},
+    )
+    sidecar_text = delivery.sidecar_path.read_text(encoding="utf-8")
+    lines = sidecar_text.splitlines()
+    assert lines[0] == "## executive_envelope"
+    assert sidecar_text.count("\n## effects_manifest\n") == 1
+    assert sidecar_text.count("\n## closeout_body\n") == 1
+    closeout_body = sidecar_text.split("## closeout_body", maxsplit=1)[1]
+    assert "### item-1" in closeout_body
+    assert not re.search(r"(?m)^## effects_manifest$", closeout_body)
+    assert not re.search(r"(?m)^## closeout_body$", closeout_body)
+    for name in ("effects_manifest", "closeout_body", "executive_envelope"):
+        assert len(re.findall(rf"(?m)^## {name}$", sidecar_text)) <= 1
 
 
 def test_short_closeout_not_split_with_closeout_body_section(tmp_path: Path) -> None:

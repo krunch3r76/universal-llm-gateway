@@ -18,6 +18,8 @@ import re
 _HARVEST_SECTION_CAP = 4000
 _HARVEST_PREAMBLE_MAX_LINES = 60
 _CLOSEOUT_BODY_HEADING = "## closeout_body"
+EXECUTIVE_ENVELOPE_HEADING = "## executive_envelope"
+_DEMOTE_WORKER_H2_RE = re.compile(r"(?m)^## (?!#)")
 _UNSTATED_STATUS_LINE = "status: unstated"
 _EMPTY_RESIDUE_LINE = "residue: none"
 _STATUS_LINE_RE = re.compile(r"(?m)^(status:[^\n]*)$")
@@ -210,6 +212,46 @@ def _clip_harvest_section(section: str) -> str:
     return clipped + "\n"
 
 
+def strip_worker_leading_executive_envelope(content: str) -> str:
+    """Drop a worker-authored ``## executive_envelope`` heading at column 0.
+
+    The following lines remain partition input; the heading is not demoted into
+    ``## closeout_body``.
+    """
+    if not content.startswith(EXECUTIVE_ENVELOPE_HEADING):
+        return content
+    first = content.splitlines(keepends=True)
+    if not first or first[0].strip() != EXECUTIVE_ENVELOPE_HEADING:
+        return content
+    index = 1
+    while index < len(first) and not first[index].strip():
+        index += 1
+    return "".join(first[index:]) if index < len(first) else ""
+
+
+def demote_worker_level2_headings(body: str) -> str:
+    """Rewrite worker ``## `` ATX headings to ``### `` (level-3 and deeper unchanged)."""
+    return _DEMOTE_WORKER_H2_RE.sub("### ", body)
+
+
+def _split_sidecar_executive_envelope(existing: str) -> tuple[str | None, str, str]:
+    """Return (fixed heading or None, harvest section text, remainder of sidecar)."""
+    if existing.startswith(EXECUTIVE_ENVELOPE_HEADING):
+        after_heading = existing[len(EXECUTIVE_ENVELOPE_HEADING) :].lstrip("\n")
+        match = _ATX_HEADING_RE.search(after_heading)
+        if match is None:
+            return EXECUTIVE_ENVELOPE_HEADING, after_heading, ""
+        return (
+            EXECUTIVE_ENVELOPE_HEADING,
+            after_heading[: match.start()],
+            after_heading[match.start() :],
+        )
+    heading_at = _first_atx_offset(existing)
+    section = existing if heading_at is None else existing[:heading_at]
+    rest = "" if heading_at is None else existing[heading_at:]
+    return None, section, rest
+
+
 def _render_residue_line(items: object) -> str | None:
     if isinstance(items, str):
         parts = [items.strip()] if items.strip() else []
@@ -232,9 +274,7 @@ def stamp_harvest_status_from_structured(existing: str, full_body: str) -> str:
     payload = json.loads(full_body)
     if not isinstance(payload, dict):
         return existing
-    heading_at = _first_atx_offset(existing)
-    section = existing if heading_at is None else existing[:heading_at]
-    rest = "" if heading_at is None else existing[heading_at:]
+    envelope_heading, section, rest = _split_sidecar_executive_envelope(existing)
     status = payload.get("status")
     if (
         isinstance(status, str)
@@ -247,7 +287,10 @@ def stamp_harvest_status_from_structured(existing: str, full_body: str) -> str:
     residue_line = _render_residue_line(payload.get("propagation_residue"))
     if residue_line and _EMPTY_RESIDUE_LINE in section.splitlines():
         section = _replace_exact_line(section, _EMPTY_RESIDUE_LINE, residue_line)
-    return _clip_harvest_section(section) + rest
+    clipped = _clip_harvest_section(section)
+    if envelope_heading is not None:
+        return f"{envelope_heading}\n\n{clipped}{rest}"
+    return clipped + rest
 
 
 def _non_fenced_summary_lines(body: str, *, max_lines: int) -> list[str]:
