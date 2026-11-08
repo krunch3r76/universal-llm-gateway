@@ -116,6 +116,11 @@ def test_stale_wake_draft_recognized_and_allowed() -> None:
 
 def test_wake_line_single_and_multi_turn() -> None:
     assert wake_line("15851", 1647) == "BRIDGE_WAKE thread=15851 turn=1647"
+    tab = "21060be7-f0a6-4fa1-9058-b117ce4fc526"
+    assert (
+        wake_line("15851", 1647, tab=tab)
+        == f"BRIDGE_WAKE thread=15851 turn=1647 tab={tab}"
+    )
     assert (
         wake_line("15851", "1647,1648,1649")
         == "BRIDGE_WAKE thread=15851 turn=1647,1648,1649"
@@ -123,6 +128,13 @@ def test_wake_line_single_and_multi_turn() -> None:
     assert (
         wake_line("15851", [1649, 1647, 1648])
         == "BRIDGE_WAKE thread=15851 turn=1647,1648,1649"
+    )
+    from cursor_bridge.chat_target import wake_lines
+
+    tab = "21060be7-f0a6-4fa1-9058-b117ce4fc526"
+    groups = [{"thread_id": "1", "turn": 1}, {"thread_id": "2", "turn": 2}]
+    assert wake_lines(groups, tab=tab) == (
+        f"BRIDGE_WAKE thread=1 turn=1 tab={tab}\nBRIDGE_WAKE thread=2 turn=2"
     )
 
 

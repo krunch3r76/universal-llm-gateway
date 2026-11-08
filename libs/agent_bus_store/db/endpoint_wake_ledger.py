@@ -2053,13 +2053,50 @@ def fold_expired_claims(claim_ttl_s: int = 300, *, now: str | None = None) -> in
 def list_turns_since(after_id: int, limit: int) -> list[dict[str, Any]]:
     """Compact turns newer than after_id, oldest first, without body."""
     with connect() as conn:
+        cols = {
+            str(r[1])
+            for r in conn.execute("PRAGMA table_info(turns)").fetchall()
+        }
+        from_col = ", from_agent_id" if "from_agent_id" in cols else ""
         rows = conn.execute(
-            "SELECT id, thread, turn_number, from_agent, to_agent, subject, "
-            "status, read_at, created_at FROM turns WHERE id>? "
+            f"SELECT id, thread, turn_number, from_agent, to_agent, subject, "
+            f"status, read_at, created_at{from_col} FROM turns WHERE id>? "
             "ORDER BY id ASC LIMIT ?",
             (after_id, limit),
         ).fetchall()
     return [dict(r) for r in rows]
+
+
+def recent_delivered_agent_ids(
+    thread_id: str,
+    since_s: int,
+    *,
+    now: str | None = None,
+) -> list[str]:
+    """Distinct tab ids with delivered wakes on ``thread_id`` within ``since_s`` seconds."""
+    if since_s <= 0:
+        return []
+    stamp = _now(now)
+    cutoff = _shift(stamp, -since_s)
+    with connect() as conn:
+        cols = _ledger_columns(conn)
+        if "delivery_agent_id" not in cols:
+            return []
+        rows = conn.execute(
+            "SELECT DISTINCT delivery_agent_id FROM endpoint_wake_ledger "
+            "WHERE thread_id=? AND state='delivered' "
+            "AND delivery_agent_id IS NOT NULL AND trim(delivery_agent_id) != '' "
+            "AND datetime(finished_at) >= datetime(?)",
+            (thread_id, cutoff),
+        ).fetchall()
+    out: list[str] = []
+    seen: set[str] = set()
+    for row in rows:
+        aid = str(row["delivery_agent_id"]).strip().lower()
+        if aid and aid not in seen:
+            seen.add(aid)
+            out.append(aid)
+    return out
 
 
 def list_wake_ledger_rows(

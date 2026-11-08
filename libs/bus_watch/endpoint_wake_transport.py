@@ -161,6 +161,14 @@ class StoreClient:
         )
         return list(payload.get("turns") or [])
 
+    def recent_deliveries(self, thread: str, since_s: int) -> list[str]:
+        payload = self._bus(
+            "GET",
+            "/endpoint-wake/recent-deliveries",
+            params={"thread": thread, "since_s": since_s},
+        )
+        return list(payload.get("delivery_agent_ids") or [])
+
     def scan(self, expected: int, new_hw: int, pending: list[dict[str, Any]]) -> Any:
         return self._bus(
             "POST",

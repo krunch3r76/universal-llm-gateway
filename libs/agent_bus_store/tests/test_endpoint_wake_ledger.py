@@ -1806,6 +1806,16 @@ def test_migration_027_adds_delivery_agent_id_idempotent(db: TestClient) -> None
     assert "delivery_agent_id" in cols
 
 
+def test_migration_028_adds_from_agent_id_idempotent(db: TestClient) -> None:
+    from agent_bus_store.db.migrations import migration_028
+
+    with connect() as conn:
+        migration_028.run(conn)
+        migration_028.run(conn)
+        cols = {str(r[1]) for r in conn.execute("PRAGMA table_info(turns)")}
+    assert "from_agent_id" in cols
+
+
 def _pending_with_tab(
     *,
     agent: str,

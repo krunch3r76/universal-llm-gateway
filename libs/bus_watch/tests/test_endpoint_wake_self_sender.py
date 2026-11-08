@@ -34,7 +34,7 @@ class _Store:
         with connect() as c:
             rows = c.execute(
                 "SELECT id, thread, turn_number, from_agent, to_agent, subject, "
-                "body, read_at FROM turns WHERE id>? ORDER BY id LIMIT ?",
+                "body, read_at, from_agent_id FROM turns WHERE id>? ORDER BY id LIMIT ?",
                 (after_id, limit),
             ).fetchall()
         return [dict(r) for r in rows]
@@ -52,6 +52,11 @@ class _Store:
         return [
             r for r in list_subscriptions(agent=agent) if r.get("state") == "subscribed"
         ]
+
+    def recent_deliveries(self, thread: str, since_s: int) -> list[str]:
+        from agent_bus_store.db.endpoint_wake_ledger import recent_delivered_agent_ids
+
+        return recent_delivered_agent_ids(thread, since_s)
 
     def holder(self, lane: str) -> dict | None:
         return None
@@ -288,6 +293,87 @@ def test_routine_dispatch_chatter_still_default_suppress(db: None) -> None:
     assert [(r["state"], r["reason"], r["decided_by_rule"]) for r in rows] == [
         ("skipped", "suppressed:default_suppress", "default_suppress")
     ]
+
+
+def test_cursor_shared_mailbox_with_from_agent_id_is_tombstoned(db: None) -> None:
+    """AC2: ``from_agent_id`` proves self tab even when ``from_agent`` is ``cursor``."""
+    thread = _thread("f43033-m1")
+    _subscribe("grok-bot-window-arc-coordinator", thread, TAB)
+    _subscribe("cursor", thread, TAB)
+    insert_turn(
+        thread=thread,
+        from_agent="cursor",
+        to_agent="grok-bot-window-arc-coordinator",
+        subject="DONE|x",
+        body="x",
+        from_agent_id=TAB,
+    )
+    _rewind_cursor()
+
+    scan_once(_Store())  # type: ignore[arg-type]
+
+    rows = _ledger(thread)
+    assert len(rows) == 1
+    assert rows[0]["state"] == "skipped"
+    assert rows[0]["reason"] == "suppressed:drop_self_sender"
+
+
+def test_recency_fallback_single_tab_suppresses_shared_cursor(db: None) -> None:
+    """AC3: one recent delivered tab on thread suppresses bare ``cursor`` post."""
+    thread = _thread("f43033-m2-one")
+    _subscribe("grok-bot-window-arc-coordinator", thread, TAB)
+    _subscribe("cursor", thread, TAB)
+    wake_turn, _ts, wake_n, _c = insert_turn(
+        thread=thread,
+        from_agent="web-anthropic",
+        to_agent="cursor",
+        subject="DONE|wake",
+        body="w",
+    )
+    with connect() as conn:
+        conn.execute(
+            "INSERT INTO endpoint_wake_ledger "
+            "(agent, thread_id, turn_id, turn_number, state, created_at, "
+            "finished_at, delivery_agent_id) VALUES (?,?,?,?,?,?,?,?)",
+            (
+                "cursor",
+                thread,
+                wake_turn,
+                wake_n,
+                "delivered",
+                "2020-01-01 00:00:30",
+                "2020-01-01 00:00:30",
+                TAB,
+            ),
+        )
+    post_id, _ts2, _n2, _c2 = insert_turn(
+        thread=thread,
+        from_agent="cursor",
+        to_agent="grok-bot-window-arc-coordinator",
+        subject="DONE|self",
+        body="x",
+    )
+    _rewind_cursor()
+
+    class _RecencyStore(_Store):
+        def recent_deliveries(self, thread_id: str, since_s: int) -> list[str]:
+            from agent_bus_store.db.endpoint_wake_ledger import (
+                recent_delivered_agent_ids,
+            )
+
+            return recent_delivered_agent_ids(
+                thread_id, since_s, now="2020-01-01 00:01:00"
+            )
+
+    scan_once(_RecencyStore())  # type: ignore[arg-type]
+    with connect() as conn:
+        row = conn.execute(
+            "SELECT state, reason FROM endpoint_wake_ledger WHERE turn_id=?",
+            (post_id,),
+        ).fetchone()
+    assert row is not None
+    assert row["state"] == "skipped"
+    assert row["reason"] == "suppressed:drop_self_sender_recency"
 
 
 def test_advance_scan_rejects_unknown_item_state(db: None) -> None:

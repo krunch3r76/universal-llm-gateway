@@ -8,6 +8,7 @@ a new user turn while the sender is mid-turn and starts a parallel run.
 from __future__ import annotations
 
 import logging
+import os
 import re
 from typing import Any
 
@@ -16,12 +17,14 @@ from agent_seat.registry import normalize_bus_address
 logger = logging.getLogger(__name__)
 
 SELF_SENDER_RULE = "drop_self_sender"
+SELF_SENDER_RECENCY_RULE = "drop_self_sender_recency"
 _TAB_SURFACES = frozenset({"cursor", "grok"})
 # Shared mailbox names: holding one never proves which tab posted.
 _SHARED_SENDER_NAMES = frozenset({"", "cursor", "all", "team"})
 _TAB_UUID_RE = re.compile(
     r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
 )
+ENDPOINT_WAKE_SELF_RECENCY_S = int(os.environ.get("ENDPOINT_WAKE_SELF_RECENCY_S", "180"))
 
 
 def _tab_agent_id(sub: dict[str, Any]) -> str:
@@ -62,21 +65,47 @@ def sender_tab_ids(store: Any, from_agent: str, scopes: set[str]) -> set[str]:
     return ids
 
 
+def _recent_deliveries(store: Any, thread: str, since_s: int) -> list[str]:
+    recent = getattr(store, "recent_deliveries", None)
+    if recent is None:
+        return []
+    try:
+        return [str(x).strip().lower() for x in (recent(thread, since_s) or []) if x]
+    except Exception:
+        logger.exception(
+            "endpoint_wake_self_sender: recent_deliveries failed thread=%s", thread
+        )
+        return []
+
+
 def is_self_wake(
     store: Any,
     turn: dict[str, Any],
     resolved: tuple[str, dict[str, Any]] | None,
-) -> bool:
-    """True when the resolved recipient tab is a tab the sender itself holds."""
+) -> str | None:
+    """Rule id when the resolved recipient tab is the sender's own tab, else None."""
     if resolved is None:
-        return False
+        return None
     sub = resolved[1]
     target = _tab_agent_id(sub)
     if not target:
-        return False
+        return None
+    poster = str(turn.get("from_agent_id") or "").strip().lower()
+    if poster and poster == target:
+        return SELF_SENDER_RULE
     thread = str(turn.get("thread") or "")
     scopes = {thread, str(sub.get("thread_scope") or thread)}
-    return target in sender_tab_ids(store, str(turn.get("from_agent") or ""), scopes)
+    from_agent = str(turn.get("from_agent") or "")
+    if target in sender_tab_ids(store, from_agent, scopes):
+        return SELF_SENDER_RULE
+    if poster:
+        return None  # M2 only when poster identity absent
+    if normalize_bus_address(from_agent) not in _SHARED_SENDER_NAMES:
+        return None
+    recent = _recent_deliveries(store, thread, ENDPOINT_WAKE_SELF_RECENCY_S)
+    if len(recent) == 1 and recent[0] == target:
+        return SELF_SENDER_RECENCY_RULE
+    return None
 
 
 def suppressed_item(item: dict[str, Any], rule_id: str) -> dict[str, Any]:
