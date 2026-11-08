@@ -1502,7 +1502,11 @@ def record_wake_result(
         decided_by_rule, reason=reason
     )
     stamp = _now(now)
-    finished = None if outcome == "refused" else stamp
+    if outcome == "refused":
+        # title_mismatch is a terminal display refusal; composer defers record outcome=pending.
+        finished = stamp if str(reason or "").strip() == "title_mismatch" else None
+    else:
+        finished = stamp
     with write_connect() as conn:
         rows = conn.execute(
             "SELECT id, state FROM endpoint_wake_ledger WHERE wake_id=?",
