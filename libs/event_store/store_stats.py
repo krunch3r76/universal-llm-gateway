@@ -27,8 +27,13 @@ async def query_seq_bounds(store: EventStore) -> dict[str, int | None]:
     }
 
 
-async def query_event_count(store: EventStore) -> int:
-    rows = await store.query("SELECT COUNT(*) AS count FROM events", (), limit=1)
-    if not rows:
+def estimate_event_count(bounds: dict[str, int | None]) -> int:
+    """Upper-bound row count from seq bounds; avoids a COUNT(*) full scan.
+
+    Retention deletes leave gaps, so this can exceed the true count.
+    """
+    max_seq = bounds.get("max_seq")
+    min_seq = bounds.get("min_seq")
+    if max_seq is None or min_seq is None:
         return 0
-    return int(rows[0].get("count") or 0)
+    return max_seq - min_seq + 1

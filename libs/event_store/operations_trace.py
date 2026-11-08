@@ -16,7 +16,8 @@ from .operation_parameters import (
     signal_prefix_range,
 )
 from .store import EventStore
-from .store_stats import query_event_count, query_seq_bounds
+from .errors import EventStoreBusyError, EventStoreReadDeadlineError
+from .store_stats import estimate_event_count, query_seq_bounds
 
 logger = get_logger(__name__)
 
@@ -28,8 +29,22 @@ _STARTUP_SIGNALS: tuple[str, ...] = (
 
 
 async def _event_store_floor(store: EventStore) -> dict[str, Any]:
+    """Retention floor for not-found traces; a slow or locked read degrades, never raises."""
+    try:
+        return await _event_store_floor_read(store)
+    except (EventStoreReadDeadlineError, EventStoreBusyError) as exc:
+        logger.warning("event-store floor read unavailable: %s", exc)
+        return {
+            "event_count": None,
+            "floor_ts_unix_ms": None,
+            "floor_timestamp": None,
+            "error": "floor_unavailable",
+        }
+
+
+async def _event_store_floor_read(store: EventStore) -> dict[str, Any]:
     bounds = await query_seq_bounds(store)
-    count = await query_event_count(store)
+    count = estimate_event_count(bounds)
     min_seq = bounds.get("min_seq")
     if min_seq is None:
         return {

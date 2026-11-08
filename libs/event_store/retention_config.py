@@ -1,4 +1,9 @@
-"""Live retention settings from ~/.gateway/event-service.yaml (not gateway event-service.yaml)."""
+"""Live retention settings from ~/.gateway/event-service.yaml.
+
+Fails closed: only an explicit string ``run`` enables deletes. A missing file,
+parse error, non-mapping body, missing or mistyped ``automatic``, or YAML
+``false``/``off``/``no`` resolves to ``dry_run`` or ``off`` — never ``run``.
+"""
 
 from __future__ import annotations
 
@@ -12,6 +17,7 @@ logger = logging.getLogger(__name__)
 
 _DEFAULT_CONFIG = Path.home() / ".gateway" / "event-service.yaml"
 _VALID_AUTOMATIC = frozenset({"dry_run", "run", "off"})
+_OFF_WORDS = frozenset({"off", "false", "no", "0"})
 
 
 @dataclass(frozen=True, slots=True)
@@ -28,75 +34,77 @@ def _config_path() -> Path:
     return Path(raw).expanduser()
 
 
-def _parse_boolish_automatic(raw: Any, *, file_present: bool) -> str:
+def _parse_automatic(raw: Any) -> str:
+    """Map a yaml ``automatic`` value to a mode; anything unrecognized is dry_run."""
+    if raw is False:
+        return "off"
     if isinstance(raw, str):
         mode = raw.strip().lower()
         if mode in _VALID_AUTOMATIC:
             return mode
+        if mode in _OFF_WORDS:
+            return "off"
+    if raw is not None:
+        logger.error("retention.automatic=%r is not dry_run|run|off; using dry_run", raw)
+    return "dry_run"
+
+
+def _positive_int(raw: Any, fallback: int, key: str) -> int:
     if raw is None:
-        return "run" if file_present else "dry_run"
-    logger.error(
-        "retention.automatic=%r is not dry_run|run|off; using %s",
-        raw,
-        "run" if file_present else "dry_run",
-    )
-    return "run" if file_present else "dry_run"
+        return fallback
+    if isinstance(raw, bool) or not isinstance(raw, int | str):
+        logger.error("retention.%s=%r is not an integer; using %d", key, raw, fallback)
+        return fallback
+    try:
+        value = int(raw)
+    except ValueError:
+        logger.error("retention.%s=%r is not an integer; using %d", key, raw, fallback)
+        return fallback
+    return max(1, value)
 
 
 def load_retention_settings(
     *,
-    cli_retention_days: int | None = None,
-    cli_max_sessions: int | None = None,
+    cli_retention_days: int = 7,
+    cli_max_sessions: int = 2,
 ) -> RetentionSettings:
     """Load retention.days / max_sessions / automatic from the live gateway file.
 
-    CLI values from the spawning manage invocation apply only when the config
-    file is absent. ``EVENTS_RETENTION_STARTUP`` overrides ``automatic`` when set.
+    Missing or invalid ``days`` / ``max_sessions`` fall back to the CLI values
+    the service was spawned with. ``EVENTS_RETENTION_STARTUP`` overrides
+    ``automatic`` only when it is a valid mode.
     """
+    fallback = RetentionSettings(
+        retention_days=max(1, int(cli_retention_days)),
+        max_sessions=max(1, int(cli_max_sessions)),
+        automatic=_env_automatic_override() or "dry_run",
+    )
     path = _config_path()
-    fallback_days = int(cli_retention_days if cli_retention_days is not None else 7)
-    fallback_sessions = int(cli_max_sessions if cli_max_sessions is not None else 2)
     if not path.is_file():
-        return RetentionSettings(
-            retention_days=fallback_days,
-            max_sessions=fallback_sessions,
-            automatic=_env_automatic_override() or "dry_run",
-        )
+        return fallback
     try:
         import yaml
 
         raw = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
     except Exception:
         logger.exception("Failed to parse event-service config: %s", path)
-        return RetentionSettings(
-            retention_days=fallback_days,
-            max_sessions=fallback_sessions,
-            automatic=_env_automatic_override() or "run",
-        )
+        return fallback
     if not isinstance(raw, dict):
-        return RetentionSettings(
-            retention_days=fallback_days,
-            max_sessions=fallback_sessions,
-            automatic=_env_automatic_override() or "run",
-        )
+        logger.error("event-service config %s is not a mapping; using dry_run", path)
+        return fallback
     retention = raw.get("retention", {})
     if not isinstance(retention, dict):
-        retention = {}
-    try:
-        days = int(retention.get("days", 2))
-    except (TypeError, ValueError):
-        days = 2
-    try:
-        max_sessions = int(retention.get("max_sessions", 2))
-    except (TypeError, ValueError):
-        max_sessions = 2
-    automatic = _env_automatic_override() or _parse_boolish_automatic(
-        retention.get("automatic"), file_present=True
-    )
+        logger.error("retention section in %s is not a mapping; using dry_run", path)
+        return fallback
     return RetentionSettings(
-        retention_days=max(1, days),
-        max_sessions=max(1, max_sessions),
-        automatic=automatic,
+        retention_days=_positive_int(
+            retention.get("days"), fallback.retention_days, "days"
+        ),
+        max_sessions=_positive_int(
+            retention.get("max_sessions"), fallback.max_sessions, "max_sessions"
+        ),
+        automatic=_env_automatic_override()
+        or _parse_automatic(retention.get("automatic")),
     )
 
 

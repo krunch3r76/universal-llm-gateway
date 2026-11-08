@@ -31,8 +31,9 @@ from .errors import EventStoreBusyError, EventStoreReadDeadlineError, is_sqlite_
 from .retention import HEARTBEAT_SIGNALS
 from .schema import (
     _SCHEMA_SQL,
+    build_model_id_ts_index,
+    has_model_id_ts_index,
     migrate_correlation_taxonomy_columns,
-    migrate_model_id_ts_index,
 )
 
 logger = logging.getLogger(__name__)
@@ -134,7 +135,9 @@ _MAX_PAYLOAD_BYTES = 64 * 1024
 _READ_POOL_SIZE = int(os.environ.get("EVENTS_READ_POOL_SIZE", "4"))
 _READ_DEADLINE_S = float(os.environ.get("EVENTS_QUERY_DEADLINE_S", "5"))
 _READ_QUEUE_DEADLINE_S = float(os.environ.get("EVENTS_QUERY_QUEUE_DEADLINE_S", "5"))
-_RETENTION_BATCH_SIZE = int(os.environ.get("EVENTS_RETENTION_BATCH_SIZE", "5000"))
+_RETENTION_BATCH_SIZE = int(os.environ.get("EVENTS_RETENTION_BATCH_SIZE", "1000"))
+_RETENTION_CACHE_KIB = 65536
+_RETENTION_MMAP_BYTES = 256 * 1024**2
 _RETENTION_BATCH_SLEEP_S = float(
     os.environ.get("EVENTS_RETENTION_BATCH_SLEEP_S", "0.05")
 )
@@ -207,13 +210,28 @@ class EventStore:
             self._db.execute("PRAGMA busy_timeout=5000")
             self._db.executescript(_SCHEMA_SQL)
             migrate_correlation_taxonomy_columns(self._db)
-            if self._db_path != ":memory:":
-                migrate_model_id_ts_index(self._db)
             self._db.commit()
         except Exception:
             self._db.rollback()
             raise
+        if not has_model_id_ts_index(self._db):
+            logger.warning(
+                "EventStore %s lacks idx_model_id_ts; model_id window reads sort "
+                "in a temp b-tree until POST /api/v1/maintenance/model-id-ts-index",
+                self._db_path,
+            )
         logger.info("EventStore opened: %s", self._db_path)
+
+    async def build_model_id_ts_index(self) -> bool:
+        """Build idx_model_id_ts on the retention connection (explicit maintenance)."""
+        if self._db is None:
+            raise RuntimeError("EventStore is not open")
+
+        def work() -> bool:
+            return build_model_id_ts_index(self._retention_connection())
+
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(self._retention_pool(), work)
 
     def stop_background_work(self) -> None:
         """Unblock retention and readers so shutdown does not wait out grace.
@@ -300,6 +318,12 @@ class EventStore:
             conn.row_factory = sqlite3.Row
             conn.execute("PRAGMA busy_timeout=5000")
             conn.execute("PRAGMA journal_mode=WAL")
+            conn.execute(f"PRAGMA cache_size={-_RETENTION_CACHE_KIB}")
+            if os.environ.get("EVENTS_SQLITE_NFS_PIN") == "1":
+                conn.execute("PRAGMA mmap_size=0")
+            else:
+                conn.execute(f"PRAGMA mmap_size={_RETENTION_MMAP_BYTES}")
+            conn.execute("PRAGMA temp_store=MEMORY")
             self._retention_conn = conn
         return self._retention_conn
 
@@ -333,16 +357,21 @@ class EventStore:
         self._track_reader(connection)
         return connection
 
+    @staticmethod
     def _insert_retention_batch_event(
-        self,
+        conn: sqlite3.Connection,
         *,
         table: str,
         deleted: int,
         cumulative: int,
         elapsed_ms: int,
     ) -> None:
-        """Persist one coordination row per retention delete batch (write connection)."""
-        if self._db is None or deleted <= 0:
+        """Persist one coordination row per delete batch on the retention connection.
+
+        Runs on the retention thread; the ingest connection ``self._db`` is
+        owned by the event loop and must not be used here.
+        """
+        if deleted <= 0:
             return
         ts_ms = int(time.time() * 1000)
         ts_iso = (
@@ -355,7 +384,7 @@ class EventStore:
             "elapsed_ms": elapsed_ms,
         }
         try:
-            self._db.execute(
+            conn.execute(
                 _INSERT_EVENT,
                 (
                     None,
@@ -368,9 +397,9 @@ class EventStore:
                     json.dumps(payload),
                 ),
             )
-            self._db.commit()
+            conn.commit()
         except sqlite3.Error as exc:
-            self._db.rollback()
+            conn.rollback()
             logger.warning("Retention batch event insert failed: %s", exc)
 
     def push_realtime(self, event: dict[str, Any]) -> None:
@@ -766,6 +795,7 @@ class EventStore:
                 )
                 if not dry_run and deleted > 0:
                     self._insert_retention_batch_event(
+                        conn,
                         table=table,
                         deleted=deleted,
                         cumulative=total,

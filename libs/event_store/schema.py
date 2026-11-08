@@ -31,7 +31,6 @@ CREATE INDEX IF NOT EXISTS idx_execution_id ON events(execution_id) WHERE execut
 CREATE INDEX IF NOT EXISTS idx_role_scope_ts ON events(role, scope, ts_unix_ms);
 CREATE INDEX IF NOT EXISTS idx_source_ts ON events(source, ts_unix_ms);
 CREATE INDEX IF NOT EXISTS idx_model_id ON events(model_id) WHERE model_id IS NOT NULL;
-CREATE INDEX IF NOT EXISTS idx_model_id_ts ON events(model_id, ts_unix_ms) WHERE model_id IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_seq ON events(seq DESC);
 CREATE INDEX IF NOT EXISTS idx_ts_unix_ms ON events(ts_unix_ms DESC);
 
@@ -96,17 +95,38 @@ _CORRELATION_TAXONOMY_INDEXES: tuple[str, ...] = (
 )
 
 
-def migrate_model_id_ts_index(db: sqlite3.Connection) -> None:
-    """Add composite (model_id, ts_unix_ms) index on existing databases.
+MODEL_ID_TS_INDEX = "idx_model_id_ts"
 
-    ``CREATE INDEX IF NOT EXISTS`` is online-safe under WAL: readers and writers
-    continue; SQLite builds the index incrementally without requiring a full
-    table rebuild. New connections pick up the index as soon as the build finishes.
+
+def has_model_id_ts_index(db: sqlite3.Connection) -> bool:
+    """Return True when the composite (model_id, ts_unix_ms) index exists."""
+    row = db.execute(
+        "SELECT 1 FROM sqlite_master WHERE type = 'index' AND name = ?",
+        (MODEL_ID_TS_INDEX,),
+    ).fetchone()
+    return row is not None
+
+
+def build_model_id_ts_index(db: sqlite3.Connection) -> bool:
+    """Build the composite index. Explicit maintenance only, never on open.
+
+    The build holds the write lock for its whole duration, so ingest stalls
+    until it finishes; run it after retention has shrunk the table. The sort
+    spills to disk (``temp_store=FILE``) instead of RAM. Returns True when the
+    index was created, False when it already existed.
     """
-    db.execute(
-        "CREATE INDEX IF NOT EXISTS idx_model_id_ts ON events(model_id, ts_unix_ms) "
-        "WHERE model_id IS NOT NULL"
-    )
+    if has_model_id_ts_index(db):
+        return False
+    db.execute("PRAGMA temp_store=FILE")
+    try:
+        db.execute(
+            f"CREATE INDEX IF NOT EXISTS {MODEL_ID_TS_INDEX} "
+            "ON events(model_id, ts_unix_ms) WHERE model_id IS NOT NULL"
+        )
+        db.commit()
+    finally:
+        db.execute("PRAGMA temp_store=MEMORY")
+    return True
 
 
 def migrate_correlation_taxonomy_columns(db: sqlite3.Connection) -> None:

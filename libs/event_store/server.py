@@ -16,6 +16,7 @@ import asyncio
 import logging
 import os
 import signal
+import threading
 import time
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
@@ -247,10 +248,14 @@ async def _retention_loop(
     *,
     cli_retention_days: int = 7,
     cli_max_sessions: int = 2,
+    armed: threading.Event | None = None,
 ) -> None:
     """Automatic retention. Policy is reloaded from live gateway config each pass.
 
-    ``POST /api/v1/retention/run`` is the one-shot live pass (always deletes).
+    An automatic pass never makes the first real delete. Until an operator
+    ``POST /api/v1/retention/run`` has completed in this process (``armed``
+    set), every automatic pass is a dry run that logs would-delete counts,
+    even with ``automatic: run``.
     """
     async def _automatic(*, startup: bool) -> None:
         settings = _resolve_retention_settings(
@@ -264,11 +269,17 @@ async def _retention_loop(
                 startup,
             )
             return
+        is_armed = armed is not None and armed.is_set()
+        if mode == "run" and not is_armed:
+            logger.info(
+                "Retention automatic=run is not armed; dry run until "
+                "POST /api/v1/retention/run completes"
+            )
         await run_retention_pass(
             store,
             retention_days=settings.retention_days,
             max_sessions=settings.max_sessions,
-            dry_run=mode != "run",
+            dry_run=not (mode == "run" and is_armed),
         )
 
     await _automatic(startup=True)
@@ -325,6 +336,7 @@ async def run_service(
     bridge: Any = None
     serve_tasks: list[asyncio.Task[None]] = []
     retention_task: asyncio.Task[None] | None = None
+    retention_armed = threading.Event()
     started = False
     stop_event = asyncio.Event()
     loop = asyncio.get_running_loop()
@@ -355,12 +367,14 @@ async def run_service(
                 cli_retention_days=retention_days,
                 cli_max_sessions=max_sessions,
             )
-            return await run_retention_pass(
+            counts = await run_retention_pass(
                 store,
                 retention_days=settings.retention_days,
                 max_sessions=settings.max_sessions,
                 dry_run=False,
             )
+            retention_armed.set()
+            return counts
 
         app = create_app(
             store,
@@ -444,6 +458,7 @@ async def run_service(
                     store,
                     cli_retention_days=retention_days,
                     cli_max_sessions=max_sessions,
+                    armed=retention_armed,
                 )
             )
 
