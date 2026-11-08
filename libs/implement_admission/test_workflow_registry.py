@@ -30,7 +30,9 @@ def test_live_file_conformance() -> None:
 
 
 def test_load_auto_judgment_default_model_live() -> None:
-    assert load_auto_judgment_default_model(load_route_policy()) == "cursor/grok-4.7"
+    assert (
+        load_auto_judgment_default_model(load_route_policy()) == "cursor/composer-2.5"
+    )
 
 
 def test_assert_workflow_registry_boot_conformance_passes() -> None:
@@ -66,16 +68,12 @@ def test_load_live_registry_slots_and_roaming() -> None:
         "investigate",
         "auto_judgment",
     }
-    assert reg.roaming_bare_models() == frozenset({"composer-2.5", "grok-4.7"})
+    assert reg.roaming_bare_models() == frozenset({"composer-2.5"})
 
 
 def test_parse_raises_on_errors() -> None:
     with pytest.raises(ValueError, match="workflows must be a non-empty mapping"):
         parse_workflow_registry({})
-
-
-
-
 
 
 def _base_policy() -> dict:
@@ -236,10 +234,6 @@ def test_configured_effort_for_job_reads_table_or_none() -> None:
     assert reg.configured_effort_for_job("conductor") == "low"
     assert reg.configured_effort_for_job("freeform") == "low"
     assert reg.configured_effort_for_job("not-a-job") is None
-
-
-
-
 
 
 def test_render_workflow_registry_block_lists_live_slots() -> None:
