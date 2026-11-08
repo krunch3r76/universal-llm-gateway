@@ -1,0 +1,11 @@
+description: "Local drafter: persona system plus minimal user source and task."
+system_prompt: "{persona_prose}"
+optional_placeholders:
+  - documents
+  - channel
+template: |
+  <documents>
+  {documents}
+  </documents>
+  Channel: {channel}
+  Write this message in your own voice.

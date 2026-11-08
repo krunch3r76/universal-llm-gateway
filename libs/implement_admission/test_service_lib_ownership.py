@@ -157,6 +157,7 @@ def test_stargate_may_import_libs_stay_out_of_serves_libs() -> None:
             "web_chat_relay",
             "web_tab",
             "writing_intake",
+            "writing_pipeline",
         }
     )
     for lib in sorted(added):
@@ -328,6 +329,7 @@ _SERVES_LIBS_VERIFY_XFAIL_PAIRS = frozenset(
         # writing_intake reaches stargate via pipelines/writing handlers (dynamic load);
         # static verify walks services/universal-stargate/ only (21170 finding 3).
         ("stargate", "writing_intake"),
+        ("stargate", "writing_pipeline"),
         # ("stargate", "web_tab") left this set at 838ff66: static verify now
         # reaches web_tab via endpoint_wake_ledger -> web_chat_relay.orion_wake
         # (_dom_deliver imports web_tab.*), so strict xfail would XPASS.

@@ -129,6 +129,7 @@ def build_finalize_payload(
     filing_text: str | None,
     selected_body: str,
     obl_refusal: dict[str, Any] | None,
+    persona_refused: str | None = None,
 ) -> dict[str, Any]:
     payload: dict[str, Any] = {
         "coverage_map": coverage_map,
@@ -190,4 +191,6 @@ def build_finalize_payload(
     if obl_refusal is not None:
         payload["refused"] = obl_refusal["refused"]
         payload["ship_gate"]["pass"] = False
+    if persona_refused:
+        payload["persona_refused"] = persona_refused
     return payload

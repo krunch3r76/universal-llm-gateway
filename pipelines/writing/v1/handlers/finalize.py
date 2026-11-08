@@ -380,6 +380,14 @@ class WritingFinalizeHandler(BaseHandler):
             name: _usage_of(_raw_step(outputs, name)) for name, _role in _GENERATE_STEPS
         }
         est_cost, cost_note = _cost(outputs, usage, models)
+        persona_step = _json_of(outputs, "local_persona_author") or {}
+        persona_refused = None
+        if isinstance(persona_step, dict) and persona_step.get("ok") is False:
+            persona_refused = str(
+                persona_step.get("persona_refused")
+                or persona_step.get("refused")
+                or "persona_failed"
+            )
         payload = build_finalize_payload(
             coverage_map=coverage_map,
             draft=draft,
@@ -410,5 +418,6 @@ class WritingFinalizeHandler(BaseHandler):
             filing_text=filing_text,
             selected_body=selected_body,
             obl_refusal=obl_refusal,
+            persona_refused=persona_refused,
         )
         return _step(_attach_status(payload))
