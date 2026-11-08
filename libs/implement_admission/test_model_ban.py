@@ -345,6 +345,16 @@ def test_emit_override_refused_without_publisher() -> None:
     assert exc.value.code == "model_ban_override_unaudited"
 
 
+def test_loader_malformed_yaml_fail_closed() -> None:
+    """Break: corrupt route_policy.yaml (yaml.safe_load) must not crash admit."""
+    with tempfile.TemporaryDirectory() as tmp:
+        path = Path(tmp) / "route_policy.yaml"
+        path.write_text("model_bans:\n  - model: [\n", encoding="utf-8")
+        with pytest.raises(ModelBansUnloadableError) as exc:
+            load_model_bans_strict(path=path)
+        assert exc.value.code == "MODEL_BANS_UNLOADABLE"
+
+
 def test_loader_missing_key_fail_closed() -> None:
     with tempfile.TemporaryDirectory() as tmp:
         path = Path(tmp) / "route_policy.yaml"

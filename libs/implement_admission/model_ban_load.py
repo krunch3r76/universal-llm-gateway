@@ -7,6 +7,7 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
+import yaml
 from model_id import ModelId
 from model_id.entity import canonical_model_slug
 
@@ -134,6 +135,8 @@ def load_model_bans_strict(*, path: Path | None = None) -> tuple[ModelBanEntry, 
         return parse_model_bans(policy)
     except ModelBansUnloadableError:
         raise
+    except yaml.YAMLError as exc:
+        raise ModelBansUnloadableError(str(exc)) from exc
     except ValueError as exc:
         raise ModelBansUnloadableError(str(exc)) from exc
     except OSError as exc:
