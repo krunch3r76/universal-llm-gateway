@@ -6,8 +6,13 @@ import logging
 import time
 from types import SimpleNamespace
 
+import pytest
 from model_id import ModelId
+
 from systems.federation.common.types import parse_telemetry_payload
+from systems.proxy.core.nonstreaming.federated_routing import (
+    wait_continuation as wait_continuation_mod,
+)
 from systems.proxy.core.nonstreaming.federated_routing.wait_continuation import (
     clamp_eviction_wait_timeout,
 )
@@ -30,11 +35,26 @@ def _context(**kwargs: float | None) -> SimpleNamespace:
 
 def test_exhausted_queue_deadline_still_yields_eviction_wait() -> None:
     now = time.monotonic()
-    context = _context(
-        _capacity_deadline_mono=now - 1.0,
-        _eviction_wait_deadline_mono=now + 300.0,
-    )
-    assert clamp_eviction_wait_timeout(context, 300.0) > 0.0
+    context = _context(_capacity_deadline_mono=now - 1.0)
+    assert context._eviction_wait_deadline_mono is None
+    assert clamp_eviction_wait_timeout(context, 300.0) == pytest.approx(300.0)
+
+
+def test_eviction_deadline_arms_once(monkeypatch: pytest.MonkeyPatch) -> None:
+    ticks = {"t": 1000.0}
+
+    def fake_mono() -> float:
+        return ticks["t"]
+
+    monkeypatch.setattr(wait_continuation_mod.time, "monotonic", fake_mono)
+    context = _context()
+    first = clamp_eviction_wait_timeout(context, 300.0)
+    assert first == pytest.approx(300.0)
+    armed = context._eviction_wait_deadline_mono
+    ticks["t"] = 1100.0
+    second = clamp_eviction_wait_timeout(context, 300.0)
+    assert context._eviction_wait_deadline_mono == armed
+    assert second == pytest.approx(200.0)
 
 
 def test_eviction_budget_shared_across_requeues() -> None:

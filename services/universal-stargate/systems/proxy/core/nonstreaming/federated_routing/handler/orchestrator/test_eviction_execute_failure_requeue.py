@@ -474,3 +474,123 @@ async def test_model_absent_from_all_catalogs_raises_model_not_found(
     detail = exc_info.value.detail
     assert detail["code"] == ErrorCode.MODEL_NOT_FOUND
     assert detail["retryable"] is False
+
+
+@pytest.mark.asyncio
+async def test_eviction_bookend_survives_start_publish_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class _FlakyBus(_FakeEventBus):
+        async def publish_nowait(self, event: Any) -> None:
+            if getattr(event, "signal", None) == "routing.eviction.execute.started":
+                raise RuntimeError("bus unavailable")
+            await super().publish_nowait(event)
+
+    event_bus = _FlakyBus()
+    load_orchestrator = _FakeLoadOrchestrator()
+    pool = _FakeCapacityPool()
+    token = _FakeToken("edge-jupiter-gateway")
+    context = SimpleNamespace(
+        request_id="req-publish-fail",
+        selected_model=TARGET,
+        model_sticky=False,
+        capacity_token=token,
+        selected_gateway=None,
+        excluded_gateway_ids=set(),
+        _capacity_deadline_mono=time.monotonic() + 60.0,
+    )
+    reselected = _gateway()
+    wait_mock = AsyncMock(return_value=(reselected, _trace(), 42))
+    exec_calls = {"n": 0}
+
+    async def _exec_toggle(**_kwargs: Any) -> Any:
+        exec_calls["n"] += 1
+        if exec_calls["n"] == 1:
+            return eviction_mod.MasterEvictionResult(
+                outcome=eviction_mod.MasterEvictionOutcome.EXECUTION_FAILED,
+                gateway_id="edge-jupiter-gateway",
+                requester="req-publish-fail",
+            )
+        return eviction_mod.MasterEvictionResult(
+            outcome=eviction_mod.MasterEvictionOutcome.EVICTED,
+            gateway_id="edge-jupiter-gateway",
+            requester="req-publish-fail",
+        )
+
+    monkeypatch.setattr(eviction_mod, "execute_master_eviction", _exec_toggle)
+    monkeypatch.setattr(requeue_mod, "_wait_and_retry_selection", wait_mock)
+    admission_mock = AsyncMock(return_value=reselected)
+    monkeypatch.setattr(admission_mod, "acquire_admission_token", admission_mock)
+    monkeypatch.setattr(
+        "systems.routing.selection.stargate_collector.federated_gateways_to_routing_candidates",
+        lambda gateways: [reselected],
+    )
+    fed_gw = SimpleNamespace(
+        gateway_id="edge-jupiter-gateway",
+        dispatchable=True,
+        available_models=frozenset({TARGET, GEMMA}),
+    )
+
+    await load_mod.finalize_selection_and_load(
+        context=context,
+        selected_gateway=_gateway(),
+        trace=_trace(),
+        event_bus=event_bus,
+        federated_manager=_FakeFederatedManager([fed_gw]),
+        federated_load_orchestrator=load_orchestrator,
+        federation_forwarder=_FakeForwarder(),
+        routing_config={"drain_duration_s": 30.0},
+        decision_engine=SimpleNamespace(),
+        placement=SimpleNamespace(model_id=TARGET),
+        stability_tracker=SimpleNamespace(get_current_best=lambda _m: None),
+        routing_start_time=time.time(),
+        eviction_cooldown_s=120.0,
+        capacity_pool=pool,
+    )
+
+    finished = [
+        e
+        for e in event_bus.events
+        if getattr(e, "signal", None) == "routing.eviction.execute.finished"
+    ]
+    assert finished
+    wait_mock.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_retryable_load_failure_emits_model_load_completed() -> None:
+    event_bus = _FakeEventBus()
+
+    class _FailingLoadOrchestrator(_FakeLoadOrchestrator):
+        async def ensure_model_loaded_on_remote(
+            self, *args: Any, **kwargs: Any
+        ) -> bool:
+            raise HTTPException(
+                status_code=503,
+                detail={
+                    "code": ErrorCode.RESOURCE_UNAVAILABLE,
+                    "retryable": True,
+                    "message": "transient",
+                },
+            )
+
+    context = SimpleNamespace(
+        request_id="req-load-requeue",
+        selected_model=TARGET,
+        model_sticky=False,
+    )
+    outcome = await load_mod._ensure_remote_model_loaded(
+        context=context,
+        selected_gateway=_gateway(),
+        federated_manager=_FakeFederatedManager(),
+        federated_load_orchestrator=_FailingLoadOrchestrator(),
+        event_bus=event_bus,
+    )
+    assert outcome is load_mod._POST_LOAD_NEEDS_REQUEUE
+    completed = [
+        e
+        for e in event_bus.events
+        if getattr(e, "signal", None) == "model.load.completed"
+    ]
+    assert len(completed) == 1
+    assert completed[0].payload["success"] is False

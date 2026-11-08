@@ -395,9 +395,6 @@ async def execute_with_retry(
         )
     context._capacity_deadline_mono = retry_started + effective_capacity_budget
     context.queue_wait_timeout_s = capacity_timeout_s
-    if context._eviction_wait_deadline_mono is None:
-        eviction_budget_s = _get_eviction_wait_budget_s(proxy)
-        context._eviction_wait_deadline_mono = retry_started + eviction_budget_s
 
     try:
         while True:
