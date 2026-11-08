@@ -182,7 +182,9 @@ def _turn_binds_execution_id(turn: LaneTurnView, execution_id: str) -> bool:
     subj = turn.subject or ""
     if f"exec={execution_id}" in subj or f"execution_id={execution_id}" in subj:
         return True
-    return execution_id in (turn.body or "")
+    if subj.startswith("CLOSEOUT|") or subj.startswith("FAILED|"):
+        return execution_id in (turn.body or "")
+    return False
 
 
 def _parse_failed_subject_code(subject: str) -> str | None:

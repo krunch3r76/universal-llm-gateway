@@ -733,35 +733,6 @@ def test_closeout_read_at_counts_as_harvested_without_seat_turn() -> None:
     harvested_snap = _snap(
         links=(
             DispatchLinkView(
-                execution_id="exec-read",
-                terminal_status="completed",
-                terminal_at=term_at,
-            ),
-        ),
-        turns=(
-            LaneTurnView(
-                turn_number=1,
-                from_agent=SEAT,
-                created_at=_ts(2 * THRESHOLD_S),
-                subject="go",
-                body="commission",
-            ),
-            LaneTurnView(
-                turn_number=2,
-                from_agent="cursor-sdk",
-                created_at=_ts(THRESHOLD_S - 1),
-                subject=_closeout_subject("exec-read"),
-                body="status: complete",
-                read_at=_ts(THRESHOLD_S - 1),
-            ),
-        ),
-    )
-    assert evaluate_quiet_with_wip(harvested_snap).fire is False
-    assert evaluate_quiet_with_wip(harvested_snap).skip_reason == "no_wip"
-
-    unharvested_snap = _snap(
-        links=(
-            DispatchLinkView(
                 execution_id=_SPECIMEN_22723_T5_EXEC,
                 terminal_status="completed",
                 terminal_at=term_at,
@@ -780,6 +751,35 @@ def test_closeout_read_at_counts_as_harvested_without_seat_turn() -> None:
                 from_agent="cursor-sdk",
                 created_at=_ts(THRESHOLD_S - 1),
                 subject=_CLOSEOUT_SUBJECT_22723_T6,
+                body="status: complete",
+                read_at=_ts(THRESHOLD_S - 1),
+            ),
+        ),
+    )
+    assert evaluate_quiet_with_wip(harvested_snap).fire is False
+    assert evaluate_quiet_with_wip(harvested_snap).skip_reason == "no_wip"
+
+    unharvested_snap = _snap(
+        links=(
+            DispatchLinkView(
+                execution_id="exec-read",
+                terminal_status="completed",
+                terminal_at=term_at,
+            ),
+        ),
+        turns=(
+            LaneTurnView(
+                turn_number=1,
+                from_agent=SEAT,
+                created_at=_ts(2 * THRESHOLD_S),
+                subject="go",
+                body="commission",
+            ),
+            LaneTurnView(
+                turn_number=2,
+                from_agent="cursor-sdk",
+                created_at=_ts(THRESHOLD_S - 1),
+                subject=_closeout_subject("exec-read"),
                 body="status: partial",
                 read_at=None,
             ),
@@ -788,6 +788,55 @@ def test_closeout_read_at_counts_as_harvested_without_seat_turn() -> None:
     unread = evaluate_quiet_with_wip(unharvested_snap)
     assert unread.fire is True
     assert unread.reason == "closeout_unharvested"
+
+
+def test_read_quiet_alarm_does_not_harvest_unread_closeout() -> None:
+    """Seat mark_read on the quiet alarm must not clear unharvested closeout debt."""
+    exec_id = "exec-unread-closeout"
+    term_at = _ts(THRESHOLD_S)
+    alarm_id = "qwa-testalarm01"
+    snap = _snap(
+        links=(
+            DispatchLinkView(
+                execution_id=exec_id,
+                terminal_status="completed",
+                terminal_at=term_at,
+            ),
+        ),
+        turns=(
+            LaneTurnView(
+                turn_number=1,
+                from_agent=SEAT,
+                created_at=_ts(2 * THRESHOLD_S),
+                subject="go",
+                body="commission",
+            ),
+            LaneTurnView(
+                turn_number=2,
+                from_agent="cursor-sdk",
+                created_at=_ts(THRESHOLD_S - 1),
+                subject=_closeout_subject(exec_id),
+                body="status: complete",
+                read_at=None,
+            ),
+            LaneTurnView(
+                turn_number=3,
+                from_agent="dispatch",
+                created_at=_ts(THRESHOLD_S / 2),
+                subject="Quiet with work in flight",
+                body=(
+                    f"Quiet with work in flight — seat={SEAT} reason=closeout_unharvested "
+                    f"execution_ids=[{exec_id}] alarm_id={alarm_id}. "
+                    "Harvest or act; silence with WIP is the defect this turn names."
+                ),
+                read_at=_ts(THRESHOLD_S / 4),
+            ),
+        ),
+    )
+    verdict = evaluate_quiet_with_wip(snap)
+    assert verdict.fire is True
+    assert verdict.reason == "closeout_unharvested"
+    assert verdict.wip_execution_ids == (exec_id,)
 
 
 def test_seat_holding_id_accepts_equals_separator() -> None:
