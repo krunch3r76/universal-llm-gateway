@@ -1747,6 +1747,174 @@ def test_fire_due_wakes_passes_coalesced_turn_numbers_to_display_post(db: None) 
     assert turn_args[0] == expected
 
 
+def test_fire_due_wakes_pastes_one_line_per_thread(db: None) -> None:
+    """Break: cross-thread tab coalesce must paste ordered multi-line BRIDGE_WAKE."""
+    from unittest.mock import patch
+
+    from agent_bus_store.db import create_thread, insert_turn
+    from agent_bus_store.db.connection import connect
+    from agent_bus_store.db.endpoint_wake_ledger import (
+        advance_scan,
+        claim_due_wakes,
+        get_cursor,
+        record_wake_result,
+    )
+    from cursor_bridge.chat_target import wake_lines
+
+    tab = "paste-tab-22716"
+    d1 = create_thread(thread_id=None, slug="paste-a")
+    d2 = create_thread(thread_id=None, slug="paste-b")
+    assert d1 and d2
+    t1, _ts, n1, _c = insert_turn(
+        thread=str(d1["id"]),
+        from_agent="cursor",
+        to_agent="cursor-sdk",
+        subject="FACT|a",
+        body="a",
+    )
+    t2, _ts2, n2, _c2 = insert_turn(
+        thread=str(d2["id"]),
+        from_agent="cursor",
+        to_agent="cursor-sdk",
+        subject="FACT|b",
+        body="b",
+    )
+    get_cursor()
+    with connect() as conn:
+        conn.execute("UPDATE endpoint_wake_cursor SET high_water_turn_id=0")
+    advance_scan(
+        "endpoint-wake-dispatcher",
+        0,
+        t2,
+        [
+            {
+                "agent": "cursor-sdk",
+                "thread_id": str(d1["id"]),
+                "turn_id": t1,
+                "turn_number": n1,
+                "delivery_agent_id": tab,
+            },
+            {
+                "agent": "cursor-sdk",
+                "thread_id": str(d2["id"]),
+                "turn_id": t2,
+                "turn_number": n2,
+                "delivery_agent_id": tab,
+            },
+        ],
+        now="2019-12-31 23:59:50",
+    )
+    claimed = claim_due_wakes(now="2020-01-01 00:00:10")
+    assert claimed["wake_id"]
+    paste_texts: list[str] = []
+
+    class Store:
+        def claim(self) -> dict:
+            return claimed
+
+        def subscription(self, agent: str, thread_id: str):
+            if agent == "cursor-sdk":
+                return (
+                    "exact",
+                    {
+                        "id": 9,
+                        "surface": "cursor",
+                        "display": "8",
+                        "title": "Agent",
+                        "agent_id": tab,
+                    },
+                )
+            return None
+
+        def result(self, **payload: object) -> int:
+            return record_wake_result(
+                str(payload["wake_id"]),
+                str(payload["outcome"]),
+                str(payload["reason"]) if payload["reason"] is not None else None,
+                str(payload["route"]) if payload["route"] is not None else None,
+                payload["subscription_id"],  # type: ignore[arg-type]
+                payload["cse_registration_id"],  # type: ignore[arg-type]
+            )
+
+    def _capture(row: dict, sub: dict, turn: int | str, *, text: str = "") -> tuple[str, str]:
+        del row, sub, turn
+        paste_texts.append(text)
+        return ("delivered", "match")
+
+    expected = wake_lines(
+        [
+            {"thread_id": str(d1["id"]), "turn": n1},
+            {"thread_id": str(d2["id"]), "turn": n2},
+        ]
+    )
+    with patch(
+        "bus_watch.endpoint_wake_dispatcher._display_post",
+        side_effect=_capture,
+    ):
+        fire_due_wakes(Store())  # type: ignore[arg-type]
+    assert paste_texts == [expected]
+    with connect() as conn:
+        states = [
+            str(r["state"])
+            for r in conn.execute(
+                "SELECT state FROM endpoint_wake_ledger WHERE wake_id=?",
+                (claimed["wake_id"],),
+            )
+        ]
+    assert states == ["delivered", "delivered"]
+
+    d3 = create_thread(thread_id=None, slug="paste-fail")
+    assert d3
+    t3, _ts3, n3, _c3 = insert_turn(
+        thread=str(d3["id"]),
+        from_agent="cursor",
+        to_agent="cursor-sdk",
+        subject="FACT|c",
+        body="c",
+    )
+    advance_scan(
+        "endpoint-wake-dispatcher",
+        t2,
+        t3,
+        [
+            {
+                "agent": "cursor-sdk",
+                "thread_id": str(d3["id"]),
+                "turn_id": t3,
+                "turn_number": n3,
+                "delivery_agent_id": tab,
+            },
+        ],
+        now="2020-01-01 00:20:00",
+    )
+    claimed2 = claim_due_wakes(now="2020-01-01 00:20:10")
+
+    class Store2:
+        def claim(self) -> dict:
+            return claimed2
+
+        def subscription(self, agent: str, thread_id: str):
+            return Store().subscription(agent, thread_id)
+
+        def result(self, **payload: object) -> int:
+            return Store().result(**payload)
+
+    with patch(
+        "bus_watch.endpoint_wake_dispatcher._display_post",
+        return_value=("refused", "title_mismatch"),
+    ):
+        fire_due_wakes(Store2())  # type: ignore[arg-type]
+    with connect() as conn:
+        fail_states = [
+            str(r["state"])
+            for r in conn.execute(
+                "SELECT state FROM endpoint_wake_ledger WHERE wake_id=?",
+                (claimed2["wake_id"],),
+            )
+        ]
+    assert fail_states == ["refused"]
+
+
 def test_insyncerator_peer_wake_uses_window_binding_not_cursor_sdk_filter() -> None:
     assert qualifies(
         {"to_agent": "insyncerator", "from_agent": "grok-bot", "subject": "WAKE|inbox"},

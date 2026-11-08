@@ -374,11 +374,10 @@ _EXPECT_DRAFT_SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 
 GROK_PROMPT_SELECTOR = '[aria-label="Prompt"][contenteditable="true"]'
 OPERATOR_PROBE_VERSION = 2
-_STALE_WAKE_DRAFT = re.compile(r"^BRIDGE_WAKE\s+thread=\S+\s+turn=\d+(?:,\d+)*$")
-
-
 def _is_stale_wake_draft(draft: str) -> bool:
-    return bool(_STALE_WAKE_DRAFT.match(str(draft or "").strip()))
+    from cursor_bridge.chat_target import is_stale_wake_draft
+
+    return is_stale_wake_draft(draft)
 
 
 def composer_draft_sha256_hex(draft: str) -> str:
@@ -533,7 +532,10 @@ READ_OPERATOR_BUSY_JS = (
   }
   const draft = ulgComposerSurfaceText(el).trim();
   const sig = String(g.ourDraftSig || '').trim();
-  const staleWake = /^BRIDGE_WAKE\s+thread=\S+\s+turn=\d+(?:,\d+)*$/.test(draft);
+  const staleWake = (() => {
+    const lines = draft.split(/\\n+/).map(s => s.trim()).filter(Boolean);
+    return lines.length > 0 && lines.every(l => /^BRIDGE_WAKE\\s+thread=\\S+\\s+turn=\\d+(?:,\\d+)*$/.test(l));
+  })();
   const watermark = %WATERMARK%;
   const ours = sig && draft === sig;
   const foreignDraft = draft.length > 0 && !staleWake && !ours
@@ -658,7 +660,8 @@ def _set_composer_body(
         "const normLine=ulgNormalizeComposerText(line);"
         "const draftRaw=(el.innerText||el.value||'');"
         "const normDraft=ulgNormalizeComposerText(draftRaw);"
-        "const stale=/^BRIDGE_WAKE\\s+thread=\\S+\\s+turn=\\d+(?:,\\d+)*$/.test(normDraft);"
+        "const stale=(()=>{const ls=normDraft.split(/\\n+/).map(s=>s.trim()).filter(Boolean);"
+        "return ls.length>0&&ls.every(l=>/^BRIDGE_WAKE\\s+thread=\\S+\\s+turn=\\d+(?:,\\d+)*$/.test(l));})();"
         "const composerEmpty=ulgComposerDomEmpty(el);"
         "if(!composerEmpty&&!stale){"
         "const writer=String(g.ourDraftWriter||'').trim();"

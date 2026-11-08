@@ -33,7 +33,7 @@ from cursor_bridge.chat_surface import (
     select_sidebar_target,
     wake_decision,
 )
-from cursor_bridge.chat_target import wake_line
+from cursor_bridge.chat_target import is_stale_wake_draft, wake_line
 from cursor_bridge.display_interaction_locks import (
     agent_paste_lock,
     display_switch_lock,
@@ -65,7 +65,8 @@ def _composer_focus_js(selector: str) -> str:
     return (
         f"(()=>{{const el=document.querySelector({sel});"
         "if(!el)return{ok:false};const draft=(el.innerText||'').trim();"
-        "const stale=/^BRIDGE_WAKE\\s+thread=\\S+\\s+turn=\\d+(?:,\\d+)*$/.test(draft);"
+        "const stale=(()=>{const lines=draft.split(/\\n+/).map(s=>s.trim()).filter(Boolean);"
+        "return lines.length>0&&lines.every(l=>/^BRIDGE_WAKE\\s+thread=\\S+\\s+turn=\\d+(?:,\\d+)*$/.test(l));})();"
         "if(draft.length>0&&!stale)return{ok:false,reason:'composer_not_empty',draft};"
         "el.focus();const sel=window.getSelection();"
         "if(sel){const range=document.createRange();range.selectNodeContents(el);"
@@ -154,11 +155,8 @@ def _pick_page(pages: list[dict[str, str]], app: str) -> dict[str, str] | None:
     return usable[0] if len(usable) == 1 else None
 
 
-_STALE_WAKE_DRAFT = re.compile(r"^BRIDGE_WAKE\s+thread=\S+\s+turn=\d+(?:,\d+)*$")
-
-
 def _is_stale_wake_draft(draft: str) -> bool:
-    return bool(_STALE_WAKE_DRAFT.match(str(draft or "").strip()))
+    return is_stale_wake_draft(draft)
 
 
 def _busy_or_draft_reason(surface: dict[str, Any]) -> str | None:
@@ -180,7 +178,9 @@ def _send_fallback_js(line: str) -> str:
         '(()=>{const el=document.querySelector(\'[aria-label="Prompt"][contenteditable="true"]\');'
         "if(!el)return{ok:true,send_fallback_clicked:false};"
         f"const text=(el.innerText||'').trim(),line={lj};"
-        "if(!text||(text!==line.trim()&&!/^BRIDGE_WAKE\\s+thread=\\S+\\s+turn=\\d+(?:,\\d+)*$/.test(text)))"
+        "const staleLines=(t)=>{const ls=String(t||'').trim().split(/\\n+/).map(s=>s.trim()).filter(Boolean);"
+        "return ls.length>0&&ls.every(l=>/^BRIDGE_WAKE\\s+thread=\\S+\\s+turn=\\d+(?:,\\d+)*$/.test(l));};"
+        "if(!text||(text!==line.trim()&&!staleLines(text)))"
         "return{ok:true,send_fallback_clicked:false};"
         f"const btn=document.querySelector('{sel}');"
         "if(!btn)return{ok:true,send_fallback_clicked:false};btn.click();"

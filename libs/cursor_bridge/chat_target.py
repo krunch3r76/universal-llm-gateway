@@ -11,8 +11,11 @@ liaison prompt still recognizes it. The message body stays on the agent bus.
 
 from __future__ import annotations
 
+import re
 from collections.abc import Sequence
 from typing import Any
+
+_STALE_WAKE_LINE = re.compile(r"^BRIDGE_WAKE\s+thread=\S+\s+turn=\d+(?:,\d+)*$")
 
 
 def chat_title(
@@ -107,6 +110,47 @@ def wake_line(thread: str, turn: int | str | Sequence[int]) -> str:
     thread_s = _one_line(thread, "thread")
     turn_s = _format_wake_turns(turn)
     return f"BRIDGE_WAKE thread={thread_s} turn={turn_s}"
+
+
+def _max_turn_in_group(turn: int | str | Sequence[int]) -> int:
+    if isinstance(turn, bool) or not isinstance(turn, int):
+        if isinstance(turn, str):
+            nums = [
+                int(p)
+                for p in turn.split(",")
+                if p.strip().isdigit() and int(p.strip()) >= 1
+            ]
+            return max(nums) if nums else 0
+        if isinstance(turn, Sequence):
+            nums = [
+                int(x) for x in turn if isinstance(x, int) and not isinstance(x, bool)
+            ]
+            return max(nums) if nums else 0
+        return 0
+    return turn if turn >= 1 else 0
+
+
+def wake_lines(groups: Sequence[dict[str, Any]]) -> str:
+    """Multi-line paste: one ``wake_line`` per group, ordered by max turn ascending.
+
+    Each group must carry ``thread_id`` and ``turn`` (same shapes as ``wake_line``).
+    A single group is byte-identical to ``wake_line`` for that thread and turn set.
+    """
+    if not groups:
+        raise ValueError("groups must be non-empty")
+    ordered = sorted(groups, key=lambda g: _max_turn_in_group(g["turn"]))
+    return "\n".join(
+        wake_line(str(g["thread_id"]), g["turn"]) for g in ordered
+    )
+
+
+def is_stale_wake_draft(draft: str) -> bool:
+    """True when every non-empty line is a prior wake line (single- or multi-thread)."""
+    text = str(draft or "").strip()
+    if not text:
+        return False
+    lines = [ln.strip() for ln in text.splitlines() if ln.strip()]
+    return bool(lines) and all(_STALE_WAKE_LINE.match(ln) for ln in lines)
 
 
 def _format_wake_turns(turn: int | str | Sequence[int]) -> str:

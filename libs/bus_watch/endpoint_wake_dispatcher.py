@@ -2246,8 +2246,9 @@ def fire_due_wakes(store: StoreClient) -> dict[str, Any] | None:
     wake_id = claimed.get("wake_id")
     if not wake_id or not rows:
         return claimed
-    agent = rows[0]["agent"]
-    thread = rows[0]["thread_id"]
+    primary = max(rows, key=lambda r: (int(r["turn_number"]), int(r["turn_id"])))
+    agent = primary["agent"]
+    thread = primary["thread_id"]
     decided_by_rule = str(rows[0].get("decided_by_rule") or "").strip() or None
 
     def _finish(
@@ -2473,19 +2474,43 @@ def fire_due_wakes(store: StoreClient) -> dict[str, Any] | None:
     route, sub = resolved
     if remap_reason is not None:
         route = "remapped"
-    turn_numbers = sorted({int(r["turn_number"]) for r in rows})
-    turn_arg = (
-        turn_numbers[0]
-        if len(turn_numbers) == 1
-        else ",".join(str(n) for n in turn_numbers)
+    by_thread: dict[str, list[dict[str, Any]]] = {}
+    for row in rows:
+        by_thread.setdefault(str(row["thread_id"]), []).append(row)
+    wake_groups: list[dict[str, Any]] = []
+    for tid, trows in sorted(
+        by_thread.items(),
+        key=lambda kv: max(int(x["turn_number"]) for x in kv[1]),
+    ):
+        nums = sorted({int(x["turn_number"]) for x in trows})
+        turn_part: int | str = (
+            nums[0] if len(nums) == 1 else ",".join(str(n) for n in nums)
+        )
+        wake_groups.append({"thread_id": tid, "turn": turn_part})
+    from cursor_bridge.chat_target import wake_lines
+
+    primary_nums = sorted(
+        {
+            int(r["turn_number"])
+            for r in rows
+            if str(r["thread_id"]) == str(primary["thread_id"])
+        }
+    )
+    turn_arg: int | str = (
+        primary_nums[0]
+        if len(primary_nums) == 1
+        else ",".join(str(n) for n in primary_nums)
     )
     paste_text = ""
     if (
-        str(rows[0]["thread_id"]) == "19627"
+        len(by_thread) == 1
+        and str(primary["thread_id"]) == "19627"
         and str(sub.get("surface") or "") == "cursor"
     ):
         paste_text = exchange_lines(rows)
-    state, reason = _display_post(rows[0], sub, turn_arg, text=paste_text)
+    else:
+        paste_text = wake_lines(wake_groups)
+    state, reason = _display_post(primary, sub, turn_arg, text=paste_text)
     display_reachable_age = _note_display_post_reason(reason)
     if _update_no_composer_streak_and_gate_unsubscribe(
         sub, thread, reason, display_reachable_age=display_reachable_age

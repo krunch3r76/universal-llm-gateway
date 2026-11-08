@@ -132,6 +132,22 @@ def test_stale_wake_draft_multi_turn() -> None:
     assert _busy_or_draft_reason({"composer_draft": stale}) is None
 
 
+def test_wake_lines_multi_thread_stale_draft_detected() -> None:
+    from cursor_bridge.chat_target import wake_lines
+
+    stale = wake_lines(
+        [
+            {"thread_id": "100", "turn": 1},
+            {"thread_id": "200", "turn": 2},
+        ]
+    )
+    assert _is_stale_wake_draft(stale)
+    assert _busy_or_draft_reason({"composer_draft": stale}) is None
+    assert _busy_or_draft_reason({"composer_draft": stale + "\nextra line"}) == (
+        "composer_not_empty"
+    )
+
+
 def test_grok_composer_js_clears_stale_wake_draft() -> None:
     js = wd._COMPOSER_JS["grok"]
     assert "execCommand('delete',false,null)" in js
