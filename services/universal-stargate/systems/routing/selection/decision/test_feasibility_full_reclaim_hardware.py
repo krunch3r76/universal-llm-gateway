@@ -2,11 +2,7 @@
 
 from __future__ import annotations
 
-import pytest
 from model_id import ModelId
-
-from systems.routing import rag_protected_models
-from systems.routing.selection.decision import eviction_planning, feasibility_reclaim
 
 from systems.routing.selection.decision.admission_verdict import (
     AdmissionVerdict,
@@ -34,15 +30,6 @@ _QWEN_5B = ModelId.parse("qwen3-5-9b-q8-0-131072")
 
 _HERMES_FOOTPRINT_MB = 30_184
 # 2% capped margin → 603MB; needed 30_787MB matches production scheduler event.
-
-
-@pytest.fixture(autouse=True)
-def _disable_rag_eviction_shield(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Specimen had both qwens evictable; isolate from live rag yaml routing keys."""
-    noop = lambda _m: False
-    monkeypatch.setattr(rag_protected_models, "is_rag_protected_model", noop)
-    monkeypatch.setattr(feasibility_reclaim, "is_rag_protected_model", noop)
-    monkeypatch.setattr(eviction_planning, "is_rag_protected_model", noop)
 
 
 def _requirements(

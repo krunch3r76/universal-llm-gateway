@@ -77,13 +77,16 @@ async def attempt_oom_recovery(
 
     # Build eviction candidates: loaded models minus target and busy
     target_routing_key = model_id.routing_key
-    idle_models = frozenset(
+    idle_candidates = [
         m
         for m in gateway.loaded_models
         if m.routing_key != target_routing_key
         and m.routing_key not in busy_routing_keys
-        and not is_rag_protected_model(m)
+    ]
+    idle_candidates.sort(
+        key=lambda m: (is_rag_protected_model(m), str(m)),
     )
+    idle_models = frozenset(idle_candidates)
 
     if not idle_models:
         logger.warning(

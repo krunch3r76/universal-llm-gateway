@@ -11,6 +11,8 @@ from typing import TYPE_CHECKING
 
 from universal_logging import get_logger
 
+from systems.routing.rag_protected_models import is_rag_protected_model
+
 from .resource_checks import resolve_gateway_requirements
 from .types import (
     ConstraintFailure,
@@ -98,9 +100,16 @@ def calculate_utility(
     eviction_score = 0.0
     if tier == FeasibilityTier.T2_FEASIBLE_EVICT and eviction_plan:
         eviction_count = len(eviction_plan.models_to_evict)
+        protected_evictions = sum(
+            1 for m in eviction_plan.models_to_evict if is_rag_protected_model(m)
+        )
         eviction_score = weights.eviction_base + (
             weights.eviction_per_model * eviction_count
         )
+        if protected_evictions:
+            eviction_score += (
+                weights.rag_protected_eviction_extra * protected_evictions
+            )
 
     # Component: Cold-load spreading
     # Only apply for cold loads (model not already loaded)

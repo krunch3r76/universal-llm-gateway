@@ -120,23 +120,19 @@ def _compute_eviction_plan(
         return None
 
     target_model_id = placement.model_id
-    evictable = [
-        mid
-        for mid in idle
-        if mid != target_model_id and not is_rag_protected_model(mid)
-    ]
+    evictable = [mid for mid in idle if mid != target_model_id]
 
     logger.debug(
         f"After filtering target variants: evictable={evictable}, "
         f"target_key={target_model_id}"
     )
-    protected_excluded = sum(1 for mid in idle if is_rag_protected_model(mid))
+    protected_deferred = sum(1 for mid in evictable if is_rag_protected_model(mid))
     logger.info(
         f"🔍 EVICTION CANDIDATES: {len(evictable)} evictable models "
         f"(after filtering {len(gateway.busy_models)} busy, "
         f"{stale_busy_count} stale-busy reclassified idle, "
-        f"{protected_excluded} rag-protected, "
-        f"{len(idle) - len(evictable) - protected_excluded} same routing key)"
+        f"{protected_deferred} rag-protected evict-last, "
+        f"{len(idle) - len(evictable)} same routing key)"
     )
 
     if not evictable:

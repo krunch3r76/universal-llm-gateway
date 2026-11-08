@@ -12,6 +12,8 @@ from typing import TYPE_CHECKING
 from model_id import ModelId
 from universal_logging import get_logger
 
+from systems.routing.rag_protected_models import is_rag_protected_model
+
 from .admission_verdict import (
     compute_non_evictable_vram_reserve_mb,
     evaluate_ram_reclaim,
@@ -69,7 +71,10 @@ def select_eviction_victims(
     vram_target = vram_admission.needed_mb
     ram_target = int(gw_ram_mb * (1.0 + ram_margin_pct / 100))
 
-    evictable_with_resources.sort(key=lambda x: (-x[1], -x[2]))
+    # Evict non-protected victims before RAG embedding/contextualize models.
+    evictable_with_resources.sort(
+        key=lambda x: (is_rag_protected_model(x[0]), -x[1], -x[2])
+    )
 
     catalog_freed_vram = 0
     freed_ram_catalog = 0
@@ -127,6 +132,7 @@ def select_eviction_victims(
     )
     corrected_freed_ram = ram_evaluation.freeable_mb
     non_evictable_ram_reserve_mb = ram_evaluation.reserve_mb
+    hardware_used_ram_mb: int | None = None
     if gateway.ram_total_mb > 0 and set(models_to_evict) == set(gateway.loaded_models):
         hardware_used_ram_mb = max(0, gateway.ram_total_mb - gateway.ram_free_mb)
 
