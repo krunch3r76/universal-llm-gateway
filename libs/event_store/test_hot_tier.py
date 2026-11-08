@@ -13,7 +13,9 @@ from unittest import mock
 
 import pytest
 
+from event_store.hot_tier import _SELECT_WARM, _WARM_CHUNK
 from event_store.operations_impl import _model_timeline, _request_trace, _signal_events
+from event_store.schema import _SCHEMA_SQL
 from event_store.store import EventStore
 
 _HOURS_MS = 24 * 60 * 60 * 1000
@@ -330,6 +332,126 @@ def test_open_warms_before_ingest_ordering_comment() -> None:
             assert store._hot is not None
             assert store._hot.row_count() >= 0
             assert store._db is not None
+        finally:
+            await store.close()
+
+    asyncio.run(_run())
+
+
+WARM_PLAN_TEXT: str | None = None
+
+
+@pytest.mark.offline
+def test_concurrent_ingest_retention_hot_not_degraded(tmp_path: Path) -> None:
+    async def _run() -> None:
+        db = tmp_path / "events.db"
+        store = EventStore(db)
+        await store.open()
+        try:
+            now = int(time.time() * 1000)
+            old = now - 30 * 86400 * 1000
+            await store.insert_events([_ev(ts=old + i) for i in range(40)])
+            hot = store._hot
+            assert hot is not None
+            store._retention_batch_size = 5
+            store._retention_batch_sleep_s = 0
+
+            async def _ingest() -> None:
+                for i in range(30):
+                    await store.insert_events([_ev(ts=now - 60_000 + i)])
+                    await asyncio.sleep(0)
+
+            await asyncio.gather(
+                _ingest(),
+                store.run_retention(7 * 86400 * 1000, dry_run=False),
+            )
+            assert hot.degraded is False
+            floor = hot.floor_ts_ms
+            cold = store._db.execute(
+                "SELECT seq FROM events WHERE ts_unix_ms >= ? ORDER BY seq",
+                (floor,),
+            ).fetchall()
+            hot_rows = hot._writer.execute(
+                "SELECT seq FROM events WHERE ts_unix_ms >= ? ORDER BY seq",
+                (floor,),
+            ).fetchall()
+            assert [int(r[0]) for r in hot_rows] == [int(r[0]) for r in cold]
+        finally:
+            await store.close()
+
+    asyncio.run(_run())
+
+
+@pytest.mark.offline
+def test_mirror_after_empty_warm_reads_at_most_new_rows(tmp_path: Path) -> None:
+    async def _run() -> None:
+        db = tmp_path / "events.db"
+        conn = sqlite3.connect(db)
+        conn.executescript(_SCHEMA_SQL)
+        old_ts = int(time.time() * 1000) - 10 * 86400 * 1000
+        for i in range(200):
+            conn.execute(
+                "INSERT INTO events (signal, role, scope, ts_unix_ms, timestamp, source, payload) "
+                "VALUES (?, 'observation', 'global', ?, 't', 'test', '{}')",
+                ("old.evt", old_ts + i),
+            )
+        conn.commit()
+        conn.close()
+
+        store = EventStore(db)
+        await store.open()
+        try:
+            hot = store._hot
+            assert hot is not None
+            assert hot.row_count() == 0
+            assert hot.last_seq == 200
+            now = int(time.time() * 1000)
+            await store.insert_events([_ev(ts=now)])
+            assert hot.last_seq == 201
+            assert hot.row_count() == 1
+        finally:
+            await store.close()
+
+    asyncio.run(_run())
+
+
+@pytest.mark.offline
+def test_warm_select_uses_idx_ts_unix_ms_explain() -> None:
+    global WARM_PLAN_TEXT
+    conn = sqlite3.connect(":memory:")
+    conn.executescript(_SCHEMA_SQL)
+    floor = int(time.time() * 1000) - 60_000
+    plan = conn.execute(
+        "EXPLAIN QUERY PLAN " + _SELECT_WARM, (floor, floor, floor, 0, _WARM_CHUNK)
+    ).fetchall()
+    WARM_PLAN_TEXT = " ".join(str(cell) for row in plan for cell in row)
+    assert "idx_ts_unix_ms" in WARM_PLAN_TEXT.lower()
+
+
+@pytest.mark.offline
+def test_hot_budget_interrupt_falls_back_to_cold_with_raise_on_error() -> None:
+    async def _run() -> None:
+        store = EventStore(":memory:")
+        await store.open()
+        try:
+            ts = int(time.time() * 1000)
+            await store.insert_events([_ev(ts=ts), _ev(ts=ts + 1)])
+            hot = store._hot
+            assert hot is not None
+            since = ts - 60_000
+
+            with mock.patch.object(
+                hot,
+                "execute_query",
+                side_effect=sqlite3.OperationalError("interrupted"),
+            ):
+                rows = await store.query(
+                    "SELECT seq FROM events WHERE ts_unix_ms >= ? ORDER BY seq",
+                    (since,),
+                    since_ts_ms=since,
+                    raise_on_error=True,
+                )
+            assert len(rows) == 2
         finally:
             await store.close()
 

@@ -146,10 +146,19 @@ _RETENTION_TABLES = frozenset({"events", "request_snapshots", "evaluations"})
 _RETENTION_PK = {"events": "seq", "request_snapshots": "seq", "evaluations": "id"}
 _HOT_TIER_HOURS = float(os.environ.get("EVENTS_HOT_TIER_HOURS", "24"))
 _HOT_EVICT_INTERVAL_S = 60.0
+_HOT_MIRROR_CHUNK = 5000
 _HOT_ROW_COLS = (
     "SELECT seq, event_id, signal, role, scope, ts_unix_ms, timestamp, source, payload "
-    "FROM events WHERE seq > ? ORDER BY seq"
+    "FROM events WHERE seq > ? ORDER BY seq LIMIT ?"
 )
+
+
+def _hot_read_budget_interrupt(exc: BaseException) -> bool:
+    """True when the hot-tier progress handler stopped the read for the budget."""
+    if not isinstance(exc, sqlite3.OperationalError):
+        return False
+    msg = str(exc).lower()
+    return "interrupted" in msg or "abort" in msg
 
 
 def _ts_ms_from_iso(iso: str) -> int:
@@ -587,11 +596,27 @@ class EventStore:
         if hot is None or hot.degraded or self._db is None:
             return
         try:
-            cold_rows = self._db.execute(_HOT_ROW_COLS, (hot.last_seq,)).fetchall()
             floor = hot.floor_ts_ms
-            insert_rows = [tuple(row) for row in cold_rows if int(row[5]) >= floor]
-            if insert_rows:
-                hot.insert_rows(insert_rows)
+            cursor_seq = hot.last_seq
+            while True:
+                cold_rows = self._db.execute(
+                    _HOT_ROW_COLS, (cursor_seq, _HOT_MIRROR_CHUNK)
+                ).fetchall()
+                if not cold_rows:
+                    break
+                max_seen = cursor_seq
+                insert_rows: list[tuple[Any, ...]] = []
+                for row in cold_rows:
+                    seq = int(row[0])
+                    max_seen = max(max_seen, seq)
+                    if int(row[5]) >= floor:
+                        insert_rows.append(tuple(row))
+                hot.last_seq = max_seen
+                if insert_rows:
+                    hot.insert_rows(insert_rows)
+                cursor_seq = max_seen
+                if len(cold_rows) < _HOT_MIRROR_CHUNK:
+                    break
         except sqlite3.Error as exc:
             logger.exception("Hot tier mirror after ingest failed: %s", exc)
             hot.mark_degraded(str(exc))
@@ -692,7 +717,7 @@ class EventStore:
                     params,
                     e,
                 )
-                if raise_on_error:
+                if raise_on_error and not _hot_read_budget_interrupt(e):
                     raise
             except Exception as e:
                 logger.exception(
@@ -826,6 +851,7 @@ class EventStore:
         pk = _RETENTION_PK[table]
         batch_size = max(1, int(self._retention_batch_size))
         sleep_s = max(0.0, float(self._retention_batch_sleep_s))
+        loop = asyncio.get_running_loop()
         count_sql = f"SELECT COUNT(*) AS n FROM {table} WHERE {where_sql}"
         select_sql = (
             f"SELECT {pk} FROM {table} WHERE {pk} > ? AND ({where_sql}) "
@@ -896,14 +922,13 @@ class EventStore:
                         cumulative=total,
                         elapsed_ms=elapsed_ms,
                     )
-                    self._mirror_accepted_to_hot()
+                    loop.call_soon_threadsafe(self._mirror_accepted_to_hot)
                 if deleted < batch_size:
                     break
                 if self._retention_stop.wait(max(sleep_s, elapsed_ms / 1000)):
                     return total
             return total
 
-        loop = asyncio.get_running_loop()
         return await loop.run_in_executor(self._retention_pool(), work)
 
     async def checkpoint_wal_truncate(self) -> None:

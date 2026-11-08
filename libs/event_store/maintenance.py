@@ -39,8 +39,8 @@ def _query_sock_path() -> Path:
     return Path(os.path.expanduser(raw))
 
 
-def _query_socket_answers(sock: Path | None = None) -> bool:
-    """True when the event-service query UDS responds to GET /health."""
+def _query_socket_live(sock: Path | None = None) -> bool:
+    """True when the event-service query UDS accepts a connection (service up)."""
     path = sock or _query_sock_path()
     if not path.is_socket():
         return False
@@ -48,10 +48,18 @@ def _query_socket_answers(sock: Path | None = None) -> bool:
         from transport_utils import make_sync_client
 
         with make_sync_client(f"unix://{path}", timeout=0.5) as client:
-            resp = client.get("/health")
-            return resp.status_code == 200
-    except Exception:
+            try:
+                resp = client.get("/health")
+                return resp.status_code == 200
+            except Exception:
+                # Connect succeeded; a slow handler still means the service is live.
+                return True
+    except (FileNotFoundError, ConnectionRefusedError):
         return False
+    except OSError as exc:
+        if exc.errno in (2, 111):  # ENOENT, ECONNREFUSED
+            return False
+        return True
 
 
 def _refuse_live_db(db_path: Path, *, live_window: bool) -> None:
@@ -60,17 +68,19 @@ def _refuse_live_db(db_path: Path, *, live_window: bool) -> None:
             f"Refusing maintenance on live db {_LIVE_DB}; "
             "pass --live-maintenance-window if intentional"
         )
-    if db_path.resolve() == _LIVE_DB and live_window and _query_socket_answers():
+    if db_path.resolve() == _LIVE_DB and live_window and _query_socket_live():
         raise SystemExit(
-            "Refusing live maintenance: event-service query socket answered /health; "
+            "Refusing live maintenance: event-service query socket is live; "
             "stop the service first"
         )
 
 
-def _refuse_while_query_live(action: str) -> None:
-    if _query_socket_answers():
+def _refuse_while_query_live(action: str, *, db_path: Path) -> None:
+    if db_path.resolve() != _LIVE_DB:
+        return
+    if _query_socket_live():
         raise SystemExit(
-            f"Refusing {action}: event-service query socket answered /health; "
+            f"Refusing {action}: event-service query socket is live; "
             "stop the service first"
         )
 
@@ -241,7 +251,7 @@ def run_maintenance(argv: list[str] | None = None) -> int:
     started = time.perf_counter()
     _refuse_live_db(db_path, live_window=args.live_maintenance_window)
     if args.vacuum:
-        _refuse_while_query_live("--vacuum")
+        _refuse_while_query_live("--vacuum", db_path=db_path)
         _vacuum_free_space(db_path)
     conn = _preflight_exclusive(db_path)
     _emit("preflight", elapsed_s=time.perf_counter() - started, ok=True)
@@ -262,7 +272,7 @@ def run_maintenance(argv: list[str] | None = None) -> int:
     _emit("retention_execute", elapsed_s=time.perf_counter() - t1, deleted=deleted)
 
     if not args.skip_index:
-        _refuse_while_query_live("idx_model_id_ts build")
+        _refuse_while_query_live("idx_model_id_ts build", db_path=db_path)
         t2 = time.perf_counter()
         created = build_model_id_ts_index(conn)
         _emit("index_model_id_ts", elapsed_s=time.perf_counter() - t2, created=created)

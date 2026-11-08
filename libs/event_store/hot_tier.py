@@ -31,7 +31,7 @@ _EVENT_COLS = (
     "payload",
 )
 _INSERT_HOT = (
-    "INSERT INTO events (seq, event_id, signal, role, scope, ts_unix_ms, "
+    "INSERT OR IGNORE INTO events (seq, event_id, signal, role, scope, ts_unix_ms, "
     "timestamp, source, payload) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)"
 )
 _SELECT_WARM = (
@@ -89,13 +89,13 @@ class HotTier:
         floor = now_ms - self.window_ms
         self.floor_ts_ms = floor
         self._warm_started_floor = floor
-        last_ts = floor - 1
+        last_ts = floor
         last_seq = 0
         total = 0
         max_seq = 0
         while True:
             rows = cold.execute(
-                _SELECT_WARM, (floor, last_ts, last_ts, last_seq, _WARM_CHUNK)
+                _SELECT_WARM, (last_ts, last_ts, last_ts, last_seq, _WARM_CHUNK)
             ).fetchall()
             if not rows:
                 break
@@ -108,7 +108,11 @@ class HotTier:
             total += len(rows)
             if len(rows) < _WARM_CHUNK:
                 break
-        self.last_seq = max_seq
+        max_cold_row = cold.execute(
+            "SELECT COALESCE(MAX(seq), 0) FROM events"
+        ).fetchone()
+        cold_max_seq = int(max_cold_row[0] if max_cold_row is not None else 0)
+        self.last_seq = max(max_seq, cold_max_seq)
         elapsed_s = time.perf_counter() - t0
         logger.info(
             "Hot tier warmed rows=%d floor_ts_ms=%d window_ms=%d elapsed_s=%.3f",
@@ -159,7 +163,7 @@ class HotTier:
                 return 1
             return 0
 
-        conn.set_progress_handler(_progress_handler, 1)
+        conn.set_progress_handler(_progress_handler, 1000)
         try:
             cursor = conn.execute(sql, params)
             return [dict(row) for row in cursor.fetchmany(limit)]

@@ -9,7 +9,7 @@ from unittest import mock
 
 import pytest
 
-from event_store.maintenance import run_maintenance
+from event_store.maintenance import _query_socket_live, run_maintenance
 from event_store.schema import _SCHEMA_SQL
 
 
@@ -68,31 +68,32 @@ def test_live_window_refuses_when_query_socket_answers(tmp_path: Path) -> None:
         pytest.skip("live events.db not present")
     with (
         mock.patch(
-            "event_store.maintenance._query_socket_answers", return_value=True
+            "event_store.maintenance._query_socket_live", return_value=True
         ),
-        pytest.raises(SystemExit, match="query socket answered"),
+        pytest.raises(SystemExit, match="query socket"),
     ):
         run_maintenance(["--db", str(live), "--live-maintenance-window"])
 
 
 @pytest.mark.offline
 def test_vacuum_refuses_when_query_socket_answers(tmp_path: Path) -> None:
-    db = tmp_path / "vac.db"
-    _make_db(db)
+    live = Path("/home/io/.events/events.db")
+    if not live.is_file():
+        pytest.skip("live events.db not present")
     with (
         mock.patch(
-            "event_store.maintenance._query_socket_answers", return_value=True
+            "event_store.maintenance._query_socket_live", return_value=True
         ),
-        pytest.raises(SystemExit, match="--vacuum"),
+        pytest.raises(SystemExit, match="query socket is live"),
     ):
-        run_maintenance(["--db", str(db), "--execute", "--vacuum"])
+        run_maintenance(["--db", str(live), "--execute", "--vacuum", "--live-maintenance-window"])
 
 
 @pytest.mark.offline
 def test_execute_deletes_and_builds_index(tmp_path: Path) -> None:
     db = tmp_path / "exec.db"
     _make_db(db, rows=20)
-    with mock.patch("event_store.maintenance._query_socket_answers", return_value=False):
+    with mock.patch("event_store.maintenance._query_socket_live", return_value=False):
         run_maintenance(["--db", str(db), "--execute", "--days", "3"])
     conn = sqlite3.connect(db)
     remaining = conn.execute("SELECT COUNT(*) FROM events").fetchone()[0]
@@ -102,3 +103,75 @@ def test_execute_deletes_and_builds_index(tmp_path: Path) -> None:
     conn.close()
     assert remaining < 20
     assert idx is not None
+
+
+@pytest.mark.offline
+def test_query_socket_probe_no_socket(tmp_path: Path) -> None:
+    missing = tmp_path / "missing.sock"
+    assert _query_socket_live(missing) is False
+
+
+@pytest.mark.offline
+def test_query_socket_probe_stale_socket_file(tmp_path: Path) -> None:
+    stale = tmp_path / "stale.sock"
+    stale.write_text("not a socket", encoding="utf-8")
+    assert _query_socket_live(stale) is False
+
+
+@pytest.mark.offline
+def test_query_socket_probe_live_unix_server(tmp_path: Path) -> None:
+    import socket
+    import threading
+
+    sock_path = tmp_path / "live.sock"
+
+    def _serve() -> None:
+        srv = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        srv.bind(str(sock_path))
+        srv.listen(1)
+        conn, _ = srv.accept()
+        conn.recv(4096)
+        conn.sendall(b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok")
+        conn.close()
+        srv.close()
+
+    thread = threading.Thread(target=_serve, daemon=True)
+    thread.start()
+    deadline = time.time() + 2.0
+    while not sock_path.exists() and time.time() < deadline:
+        time.sleep(0.01)
+    assert _query_socket_live(sock_path) is True
+    thread.join(timeout=2.0)
+
+
+@pytest.mark.offline
+def test_query_socket_probe_slow_server_still_live(tmp_path: Path) -> None:
+    import socket
+    import threading
+
+    sock_path = tmp_path / "slow.sock"
+
+    def _serve() -> None:
+        srv = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        srv.bind(str(sock_path))
+        srv.listen(1)
+        conn, _ = srv.accept()
+        time.sleep(2.0)
+        conn.close()
+        srv.close()
+
+    thread = threading.Thread(target=_serve, daemon=True)
+    thread.start()
+    deadline = time.time() + 2.0
+    while not sock_path.exists() and time.time() < deadline:
+        time.sleep(0.01)
+    assert _query_socket_live(sock_path) is True
+    thread.join(timeout=3.0)
+
+
+@pytest.mark.offline
+def test_vacuum_on_copy_not_blocked_by_live_probe(tmp_path: Path) -> None:
+    db = tmp_path / "copy.db"
+    _make_db(db)
+    with mock.patch("event_store.maintenance._query_socket_live", return_value=True):
+        run_maintenance(["--db", str(db), "--execute", "--vacuum", "--days", "365"])
