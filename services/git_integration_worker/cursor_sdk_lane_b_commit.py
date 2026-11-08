@@ -242,12 +242,225 @@ def packet_scopes_cursor_skill_path(packet_text: str | None, rel_path: str) -> b
     return False
 
 
-def _drop_unscoped_cursor_skills(wt: Path, packet_text: str | None) -> str | None:
-    """Unstage ``.cursor/skills/`` paths the packet does not scope in.
+def _lane_terminal_message(dispatch_id: str) -> str:
+    """Commit subject stamped by :func:`commit_on_terminal`."""
+    return f"cursor-sdk: lane-b terminal {dispatch_id}"
 
-    Returns an error string when git fails, else None. Paths the packet
-    names in ``files_expected:`` stay staged.
+
+def _head_commit_subject(wt: Path) -> str | None:
+    proc = subprocess.run(
+        ["git", "-C", str(wt), "log", "-1", "--format=%s"],
+        capture_output=True,
+        text=True,
+        timeout=_GIT_TIMEOUT_S,
+        check=False,
+    )
+    if proc.returncode != 0:
+        return None
+    subject = proc.stdout.strip()
+    return subject or None
+
+
+def _commits_ahead_of_branch_point(wt: Path, branch_point: str) -> int | None:
+    proc = subprocess.run(
+        [
+            "git",
+            "-C",
+            str(wt),
+            "rev-list",
+            "--count",
+            f"{branch_point}..HEAD",
+        ],
+        capture_output=True,
+        text=True,
+        timeout=_GIT_TIMEOUT_S,
+        check=False,
+    )
+    if proc.returncode != 0:
+        return None
+    raw = proc.stdout.strip()
+    if not raw.isdigit():
+        return None
+    return int(raw)
+
+
+def _lookup_branch_point(dispatch_id: str) -> str | None:
+    from services.git_integration_worker.cursor_sdk_worktree import (
+        lookup_dispatch_worktree,
+    )
+
+    record = lookup_dispatch_worktree(dispatch_id=dispatch_id)
+    if record is None:
+        return None
+    return record.branch_point or None
+
+
+def _canon_repo_path(rel_path: str) -> str:
+    """Normalize packet and git paths for scope comparison.
+
+    ``extract_instructed_paths`` may drop the leading dot from ``.cursor/…``;
+    git always reports the dotted form.
     """
+    norm = _normalize_repo_rel(rel_path)
+    if norm.startswith("cursor/"):
+        return "." + norm
+    return norm
+
+
+def _repo_files_expected(packet_text: str | None) -> tuple[str, ...]:
+    """Repo-relative paths from ``files_expected:``, ignoring scheme URIs."""
+    if not packet_text:
+        return ()
+    from services.git_integration_worker.cursor_sdk_residual_deliverable_capture import (
+        extract_instructed_paths,
+    )
+
+    ordered: list[str] = []
+    for raw in extract_instructed_paths(packet_text):
+        if "://" in raw:
+            continue
+        norm = _canon_repo_path(raw)
+        if norm and norm not in ordered:
+            ordered.append(norm)
+    return tuple(ordered)
+
+
+def _path_matches_files_expected(
+    rel_path: str, expected_paths: tuple[str, ...]
+) -> bool:
+    norm = _canon_repo_path(rel_path)
+    for exp in expected_paths:
+        canon_exp = _canon_repo_path(exp)
+        if (
+            norm == canon_exp
+            or norm.startswith(canon_exp + "/")
+            or canon_exp.startswith(norm + "/")
+        ):
+            return True
+    return False
+
+
+def _path_scoped_by_packet(
+    packet_text: str | None,
+    rel_path: str,
+    *,
+    respect_skill_scope: bool,
+) -> bool:
+    repo_expected = _repo_files_expected(packet_text)
+    norm = _normalize_repo_rel(rel_path)
+    if repo_expected:
+        return _path_matches_files_expected(norm, repo_expected)
+    if respect_skill_scope and _is_cursor_skills_path(norm):
+        return packet_scopes_cursor_skill_path(packet_text, norm)
+    return True
+
+
+def _worker_commit_already_on_lane(
+    wt: Path,
+    *,
+    branch_point: str | None,
+    dispatch_id: str,
+    terminal_message: str,
+) -> bool:
+    """True when the lane already carries a worker commit — no stacked terminal."""
+    if not branch_point:
+        return False
+    ahead = _commits_ahead_of_branch_point(wt, branch_point)
+    if ahead is None or ahead == 0:
+        return False
+    subject = _head_commit_subject(wt) or ""
+    if subject == terminal_message and ahead == 1:
+        return False
+    return True
+
+
+def _porcelain_path_field(rest: str) -> str:
+    if " -> " in rest:
+        return rest.split(" -> ", 1)[1].strip()
+    return rest.strip()
+
+
+def _terminal_skip_after_worker_commit(
+    wt: Path,
+    *,
+    packet_text: str | None,
+    respect_skill_scope: bool,
+    head_sha: str | None,
+) -> SalvageResult:
+    """Skip or refuse terminal salvage when worker already committed and tree is dirty."""
+    repo_expected = _repo_files_expected(packet_text)
+    proc = subprocess.run(
+        ["git", "-C", str(wt), "status", "--porcelain"],
+        capture_output=True,
+        text=True,
+        timeout=_GIT_TIMEOUT_S,
+        check=False,
+    )
+    if proc.returncode != 0:
+        return SalvageResult(
+            committed=False,
+            head_sha=head_sha,
+            refused=True,
+            error=_truncate(proc.stderr.strip() or "status --porcelain failed"),
+        )
+    out_of_scope: list[str] = []
+    deletions: list[str] = []
+    for line in proc.stdout.splitlines():
+        if len(line) < 4:
+            continue
+        xy = line[:2]
+        path = _porcelain_path_field(line[3:])
+        if not path:
+            continue
+        tracked = xy != "??" and xy != "?!"
+        is_deletion = xy[0] == "D" or xy[1] == "D"
+        if is_deletion and tracked:
+            if repo_expected:
+                if not _path_matches_files_expected(path, repo_expected):
+                    deletions.append(path)
+            else:
+                deletions.append(path)
+            continue
+        if not tracked:
+            continue
+        if repo_expected and not _path_scoped_by_packet(
+            packet_text, path, respect_skill_scope=respect_skill_scope
+        ):
+            out_of_scope.append(path)
+    if deletions:
+        listed = ", ".join(sorted(deletions)[:8])
+        suffix = "…" if len(deletions) > 8 else ""
+        return SalvageResult(
+            committed=False,
+            head_sha=head_sha,
+            refused=True,
+            error=_truncate(
+                f"lane_b_terminal: unrequested deletion(s) after worker commit: "
+                f"{listed}{suffix}"
+            ),
+        )
+    if out_of_scope:
+        listed = ", ".join(sorted(out_of_scope)[:8])
+        suffix = "…" if len(out_of_scope) > 8 else ""
+        return SalvageResult(
+            committed=False,
+            head_sha=head_sha,
+            refused=True,
+            error=_truncate(
+                f"lane_b_terminal: out-of-scope dirty path(s) after worker commit: "
+                f"{listed}{suffix}"
+            ),
+        )
+    return SalvageResult(committed=False, head_sha=head_sha, refused=False)
+
+
+def _drop_unscoped_staged_paths(
+    wt: Path,
+    packet_text: str | None,
+    *,
+    respect_skill_scope: bool,
+) -> str | None:
+    """Unstage paths outside ``files_expected`` (or unscoped skills)."""
     listed = subprocess.run(
         ["git", "-C", str(wt), "diff", "--cached", "--name-only", "-z"],
         capture_output=True,
@@ -261,8 +474,9 @@ def _drop_unscoped_cursor_skills(wt: Path, packet_text: str | None) -> str | Non
         name
         for name in listed.stdout.split("\0")
         if name
-        and _is_cursor_skills_path(name)
-        and not packet_scopes_cursor_skill_path(packet_text, name)
+        and not _path_scoped_by_packet(
+            packet_text, name, respect_skill_scope=respect_skill_scope
+        )
     ]
     if not drop:
         return None
@@ -274,8 +488,57 @@ def _drop_unscoped_cursor_skills(wt: Path, packet_text: str | None) -> str | Non
         check=False,
     )
     if reset.returncode != 0:
-        return _truncate(reset.stderr.strip() or "reset unscoped skills failed")
+        return _truncate(reset.stderr.strip() or "reset unscoped paths failed")
     return None
+
+
+def _refuse_unrequested_cached_deletions(
+    wt: Path,
+    packet_text: str | None,
+) -> str | None:
+    """Refuse when the index stages deletions outside ``files_expected``."""
+    listed = subprocess.run(
+        [
+            "git",
+            "-C",
+            str(wt),
+            "diff",
+            "--cached",
+            "--diff-filter=D",
+            "--name-only",
+            "-z",
+        ],
+        capture_output=True,
+        text=True,
+        timeout=_GIT_TIMEOUT_S,
+        check=False,
+    )
+    if listed.returncode != 0:
+        return _truncate(listed.stderr.strip() or "diff --cached -D failed")
+    repo_expected = _repo_files_expected(packet_text)
+    deletions = [name for name in listed.stdout.split("\0") if name]
+    if not deletions:
+        return None
+    if not repo_expected:
+        listed_paths = ", ".join(sorted(deletions)[:8])
+        suffix = "…" if len(deletions) > 8 else ""
+        return (
+            f"lane_b_salvage: staged file deletion(s) without files_expected scope: "
+            f"{listed_paths}{suffix}"
+        )
+    bad = [
+        name
+        for name in deletions
+        if not _path_matches_files_expected(name, repo_expected)
+    ]
+    if not bad:
+        return None
+    listed_paths = ", ".join(sorted(bad)[:8])
+    suffix = "…" if len(bad) > 8 else ""
+    return (
+        f"lane_b_salvage: staged deletion(s) outside files_expected: "
+        f"{listed_paths}{suffix}"
+    )
 
 
 def salvage_commit(
@@ -322,6 +585,30 @@ def salvage_commit(
             error=_truncate(f"lane_b_identity: {identity_reason}"),
         )
 
+    branch_point = _lookup_branch_point(dispatch_id)
+    terminal_msg = _lane_terminal_message(dispatch_id)
+    if _worker_commit_already_on_lane(
+        wt,
+        branch_point=branch_point,
+        dispatch_id=dispatch_id,
+        terminal_message=terminal_msg,
+    ):
+        blocked = _terminal_skip_after_worker_commit(
+            wt,
+            packet_text=packet_text,
+            respect_skill_scope=respect_skill_scope,
+            head_sha=head,
+        )
+        if blocked.refused or not blocked.committed:
+            logger.info(
+                "lane_b terminal skipped after worker commit path=%s dispatch_id=%s "
+                "refused=%s",
+                wt,
+                dispatch_id,
+                blocked.refused,
+            )
+            return blocked
+
     from services.git_integration_worker.giw_f821_gate import run_giw_subtree_f821_check
 
     f821 = run_giw_subtree_f821_check(wt)
@@ -357,11 +644,30 @@ def salvage_commit(
             error=_truncate(err),
         )
 
-    if respect_skill_scope:
-        dropped = _drop_unscoped_cursor_skills(wt, packet_text)
+    deletion_err = _refuse_unrequested_cached_deletions(wt, packet_text)
+    if deletion_err:
+        logger.error(
+            "lane_b salvage deletion refused path=%s err=%s",
+            wt,
+            deletion_err,
+        )
+        return SalvageResult(
+            committed=False,
+            head_sha=head,
+            refused=True,
+            error=_truncate(deletion_err),
+        )
+
+    repo_expected = _repo_files_expected(packet_text)
+    if respect_skill_scope or repo_expected:
+        dropped = _drop_unscoped_staged_paths(
+            wt,
+            packet_text,
+            respect_skill_scope=respect_skill_scope,
+        )
         if dropped:
             logger.error(
-                "lane_b salvage skill unstage refused path=%s err=%s",
+                "lane_b salvage unstage refused path=%s err=%s",
                 wt,
                 dropped,
             )
@@ -406,9 +712,11 @@ def commit_on_terminal(
 ) -> SalvageResult:
     """Durability commit at terminal after porcelain capture (Lane-B only).
 
-    ``.cursor/skills/`` stays unstaged unless ``files_expected:`` in
-    *packet_text* scopes that path in. Mint-time skill-tree copies are not
-    packet work (friction a:36881).
+    When the worker already committed on the lane, a stacked ``git add -A``
+    terminal snapshot is skipped (friction a:43156). Otherwise staged paths
+    must fall inside ``files_expected:`` when declared, and unrequested file
+    deletions are refused. ``.cursor/skills/`` stays unstaged unless scoped
+    (friction a:36881).
     """
     message = f"cursor-sdk: lane-b terminal {dispatch_id}"
     return salvage_commit(

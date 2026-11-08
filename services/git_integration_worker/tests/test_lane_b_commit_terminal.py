@@ -355,12 +355,10 @@ def test_read_only_review_salvage_omits_cursor_skills_and_does_not_merge(
         dispatch_id=dispatch_id,
         worktree_path=wt,
         branch_name=branch,
-        packet_text="files_expected:\n- services/unrelated.py\n",
+        packet_text="files_expected:\n- review_note.txt\n",
     )
     assert result.committed
-    names = _git(
-        "show", "--name-only", "--format=", "HEAD", cwd=wt
-    ).stdout.splitlines()
+    names = _git("show", "--name-only", "--format=", "HEAD", cwd=wt).stdout.splitlines()
     assert "review_note.txt" in names
     assert not any(name.startswith(".cursor/skills/") for name in names)
     assert skill.read_text(encoding="utf-8") == "# stray\n"
@@ -405,9 +403,7 @@ def test_commit_on_terminal_keeps_scoped_cursor_skill(
         packet_text="files_expected:\n- .cursor/skills/wanted/SKILL.md\n",
     )
     assert result.committed
-    names = _git(
-        "show", "--name-only", "--format=", "HEAD", cwd=wt
-    ).stdout.splitlines()
+    names = _git("show", "--name-only", "--format=", "HEAD", cwd=wt).stdout.splitlines()
     assert ".cursor/skills/wanted/SKILL.md" in names
     assert ".cursor/skills/stray/SKILL.md" not in names
 
@@ -721,9 +717,7 @@ def test_lane_b_commit_refusal_blocks_shipped_grade(
     )
 
 
-def test_ac4_identity_match_commits(
-    source_repo: Path, tmp_path: Path
-) -> None:
+def test_ac4_identity_match_commits(source_repo: Path, tmp_path: Path) -> None:
     worktree_root = tmp_path / "worktrees"
     dispatch_id = "ac4-ok"
     wt = mint_dispatch_worktree(
@@ -907,7 +901,10 @@ def test_ac4_settle_write_tree_mismatch_skips_commit(
     )
     head = _git("rev-parse", "HEAD", cwd=wt).stdout.strip()
     log = _git("log", "-1", "--oneline", cwd=wt).stdout
-    assert "real.py" not in log or head == _git("rev-parse", record.branch_name, cwd=source_repo).stdout.strip()
+    assert (
+        "real.py" not in log
+        or head == _git("rev-parse", record.branch_name, cwd=source_repo).stdout.strip()
+    )
 
 
 def test_ac4_release_wrong_caller_path_refuses(
@@ -944,3 +941,118 @@ def test_ac4_release_wrong_caller_path_refuses(
     assert not result.released
     assert result.salvage_refused
     assert captured
+
+
+def test_terminal_skips_after_worker_commit_with_stale_deletions(
+    source_repo: Path, tmp_path: Path
+) -> None:
+    """Worker commit on lane + stale deleted paths must not stack terminal deletions."""
+    (source_repo / "libs" / "keep.py").parent.mkdir(parents=True, exist_ok=True)
+    (source_repo / "libs" / "keep.py").write_text("on master\n", encoding="utf-8")
+    _git("add", "libs/keep.py", cwd=source_repo)
+    _git("commit", "-m", "add keep", cwd=source_repo)
+
+    worktree_root = tmp_path / "worktrees"
+    dispatch_id = "friction-43156-worker"
+    wt = mint_dispatch_worktree(
+        source_repo=source_repo,
+        worktree_root=worktree_root,
+        dispatch_id=dispatch_id,
+    )
+    branch = f"cursor-sdk/lane-{dispatch_id}"
+    record = lookup_dispatch_worktree(dispatch_id=dispatch_id)
+    assert record is not None
+    rel = "services/git_integration_worker/packet_touch.py"
+    (wt / rel).parent.mkdir(parents=True, exist_ok=True)
+    (wt / rel).write_text("# worker touch\n", encoding="utf-8")
+    _git("add", rel, cwd=wt)
+    worker_head = _git("rev-parse", "HEAD", cwd=wt).stdout.strip()
+    _git(
+        "commit",
+        "-m",
+        "cursor-sdk: bridge commit",
+        cwd=wt,
+    )
+    worker_sha = _git("rev-parse", "HEAD", cwd=wt).stdout.strip()
+    assert worker_sha != worker_head
+
+    keep_in_wt = wt / "libs" / "keep.py"
+    assert keep_in_wt.is_file()
+    keep_in_wt.unlink()
+
+    packet = f"files_expected:\n- {rel}\n"
+    result = commit_on_terminal(
+        dispatch_id=dispatch_id,
+        worktree_path=wt,
+        branch_name=branch,
+        packet_text=packet,
+    )
+    assert not result.committed
+    assert result.refused
+    assert result.error is not None
+    assert "libs/keep.py" in result.error
+    tip = _git("rev-parse", "HEAD", cwd=wt).stdout.strip()
+    assert tip == worker_sha
+    show = _git("show", "HEAD:libs/keep.py", cwd=wt)
+    assert show.stdout.strip() == "on master"
+    terminal_subject = f"cursor-sdk: lane-b terminal {dispatch_id}"
+    log = _git("log", "-1", "--format=%s", cwd=wt).stdout.strip()
+    assert log != terminal_subject
+
+
+def test_terminal_refuses_staged_mass_deletion_with_files_expected(
+    source_repo: Path, tmp_path: Path
+) -> None:
+    (source_repo / "libs" / "stale.py").parent.mkdir(parents=True, exist_ok=True)
+    (source_repo / "libs" / "stale.py").write_text("drop me\n", encoding="utf-8")
+    _git("add", "libs/stale.py", cwd=source_repo)
+    _git("commit", "-m", "add stale", cwd=source_repo)
+
+    worktree_root = tmp_path / "worktrees"
+    dispatch_id = "friction-43156-delete"
+    wt = mint_dispatch_worktree(
+        source_repo=source_repo,
+        worktree_root=worktree_root,
+        dispatch_id=dispatch_id,
+    )
+    branch = f"cursor-sdk/lane-{dispatch_id}"
+    rel = "services/only_expected.py"
+    (wt / rel).parent.mkdir(parents=True, exist_ok=True)
+    (wt / rel).write_text("ok\n", encoding="utf-8")
+    (wt / "libs" / "stale.py").unlink()
+
+    result = commit_on_terminal(
+        dispatch_id=dispatch_id,
+        worktree_path=wt,
+        branch_name=branch,
+        packet_text=f"files_expected:\n- {rel}\n",
+    )
+    assert not result.committed
+    assert result.refused
+    assert result.error is not None
+    assert "deletion" in result.error.lower()
+
+
+def test_terminal_commits_in_scope_when_worker_did_not_commit(
+    source_repo: Path, tmp_path: Path
+) -> None:
+    worktree_root = tmp_path / "worktrees"
+    dispatch_id = "friction-43156-ok"
+    wt = mint_dispatch_worktree(
+        source_repo=source_repo,
+        worktree_root=worktree_root,
+        dispatch_id=dispatch_id,
+    )
+    branch = f"cursor-sdk/lane-{dispatch_id}"
+    rel = "services/in_scope.py"
+    (wt / rel).parent.mkdir(parents=True, exist_ok=True)
+    (wt / rel).write_text("payload\n", encoding="utf-8")
+    result = commit_on_terminal(
+        dispatch_id=dispatch_id,
+        worktree_path=wt,
+        branch_name=branch,
+        packet_text=f"files_expected:\n- {rel}\n",
+    )
+    assert result.committed
+    names = _git("show", "--name-only", "--format=", "HEAD", cwd=wt).stdout.splitlines()
+    assert rel in names
