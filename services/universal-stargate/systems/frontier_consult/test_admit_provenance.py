@@ -66,10 +66,35 @@ def test_full_provenance_keeps_dispatch_fallback() -> None:
 
 
 def test_waiter_line_format_and_parse() -> None:
+    from .admit_provenance import (
+        coord_admit_subject_matches,
+        parse_waiter_from_admit_body,
+    )
+
     tid = "550e8400-e29b-41d4-a716-446655440000"
     assert format_waiter_line(tid) == f"waiter: {tid}"
     assert format_waiter_line(None) is None
-    assert parse_waiter_from_body(f"pre\nwaiter: {tid}\npost") == tid
+    assert parse_waiter_from_body(f"waiter: {tid}\nbody") == tid
+    assert coord_admit_subject_matches("cursor-sdk generate admitted")
+    assert parse_waiter_from_admit_body(
+        f"waiter: {tid}\nbody",
+        subject="cursor-sdk generate admitted",
+    ) == tid
+    assert (
+        parse_waiter_from_admit_body(
+            f"body\nwaiter: {tid}",
+            subject="cursor-sdk generate admitted",
+        )
+        is None
+    )
+    assert (
+        parse_waiter_from_admit_body(
+            "waiter: not-a-uuid\nbody",
+            subject="cursor-sdk generate admitted",
+        )
+        is None
+    )
+    assert parse_waiter_from_admit_body("waiter: x", subject="CLOSEOUT| x") is None
 
 
 def test_stamp_admit_turn_body_waiter_optional() -> None:

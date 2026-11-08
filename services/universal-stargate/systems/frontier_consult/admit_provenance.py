@@ -7,8 +7,15 @@ seat is blank.
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 from typing import Any
+
+COORD_GENERATE_ADMIT_SUBJECT = "cursor-sdk generate admitted"
+_WAITER_UUID_RE = re.compile(
+    r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+    re.IGNORECASE,
+)
 
 PROVENANCE_MISSING_PREFIX = "PROVENANCE_MISSING:"
 # Non-dispatch ``from`` when caller_agent is blank but the admit is flagged.
@@ -74,19 +81,44 @@ def format_waiter_line(waiter_transcript_id: str | None) -> str | None:
     return f"waiter: {tid}"
 
 
-def parse_waiter_from_body(body: str | None) -> str | None:
-    """Return the tab uuid from the latest ``waiter:`` line in ``body``, if any."""
-    if not body:
+def coord_admit_subject_matches(subject: str | None) -> bool:
+    """True for cursor-sdk coord-thread admit pointer subjects."""
+    text = (subject or "").strip()
+    if not text:
+        return False
+    head = COORD_GENERATE_ADMIT_SUBJECT
+    return text == head or text.startswith(f"{head}|") or text.startswith(f"{head} ")
+
+
+def parse_waiter_from_admit_body(
+    body: str | None,
+    *,
+    subject: str | None,
+) -> str | None:
+    """First UUID ``waiter:`` in the leading header block of an admit turn body."""
+    if not body or not coord_admit_subject_matches(subject):
         return None
-    found: str | None = None
     for line in body.splitlines():
         stripped = line.strip()
-        if not stripped.lower().startswith("waiter:"):
+        if not stripped:
             continue
-        value = stripped.split(":", 1)[1].strip()
-        if value:
-            found = value
-    return found
+        lower = stripped.lower()
+        if lower.startswith(("work_key:", PROVENANCE_MISSING_PREFIX.lower())):
+            continue
+        if lower.startswith("waiter:"):
+            value = stripped.split(":", 1)[1].strip()
+            if _WAITER_UUID_RE.match(value):
+                return value
+            return None
+        break
+    return None
+
+
+def parse_waiter_from_body(body: str | None) -> str | None:
+    """Parse waiter stamp when ``body`` is known to be from a coord admit turn."""
+    return parse_waiter_from_admit_body(
+        body, subject=COORD_GENERATE_ADMIT_SUBJECT
+    )
 
 
 def stamp_admit_turn_body(

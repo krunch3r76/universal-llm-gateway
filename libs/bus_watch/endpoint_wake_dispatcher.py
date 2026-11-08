@@ -1134,10 +1134,12 @@ def resolve_target(
     *,
     raw_to: str | None = None,
     delivery_agent_id: str | None = None,
+    stamped_waiter_id: str | None = None,
 ) -> tuple[str, dict[str, Any]] | None:
     """Thin handler: subscription row or synthetic grok window binding."""
     aid = str(delivery_agent_id or "").strip() or None
-    if aid:
+    stamp = str(stamped_waiter_id or "").strip() or None
+    if aid and stamp and aid == stamp:
         from agent_bus_store.db.endpoint_wake_ledger import (
             resolve_subscription_for_thread,
         )
@@ -1330,80 +1332,112 @@ def _window_binding_route(agent: str) -> tuple[str, dict[str, Any]] | None:
     )
 
 
-def _parse_waiter_line_from_body(body: str | None) -> str | None:
-    if not body:
+_WAITER_STAMP_RAW_TOS = frozenset({"frontier-admit"})
+_WAITER_TURN_PAGE = 100
+
+
+def _waiter_lookup_enabled(raw_to: str, agent: str) -> bool:
+    if normalize_bus_address(agent) == "web-anthropic":
+        return False
+    if normalize_bus_address(raw_to) in _WAITER_STAMP_RAW_TOS:
+        return True
+    return normalize_bus_address(agent) == "cursor"
+
+
+def _latest_admit_waiter_on_thread(
+    store: StoreClient, thread_id: str
+) -> tuple[int, str] | None:
+    from systems.frontier_consult.admit_provenance import (
+        coord_admit_subject_matches,
+        parse_waiter_from_admit_body,
+    )
+
+    turns_fn = getattr(store, "turns", None)
+    if turns_fn is None:
         return None
-    found: str | None = None
-    for line in body.splitlines():
-        stripped = line.strip()
-        if not stripped.lower().startswith("waiter:"):
+    after = 0
+    best: tuple[int, str] | None = None
+    while True:
+        try:
+            payload = turns_fn(thread_id, after_turn=after, last=_WAITER_TURN_PAGE)
+        except Exception:
+            logger.exception(
+                "endpoint_wake_dispatcher: waiter scan failed thread=%s", thread_id
+            )
+            break
+        turns = payload.get("turns") if isinstance(payload, dict) else None
+        if not isinstance(turns, list) or not turns:
+            break
+        for turn in turns:
+            if not isinstance(turn, dict):
+                continue
+            subject = str(turn.get("subject") or "")
+            if not coord_admit_subject_matches(subject):
+                continue
+            waiter = parse_waiter_from_admit_body(
+                str(turn.get("body") or ""), subject=subject
+            )
+            if not waiter:
+                continue
+            key = int(turn.get("turn_number") or turn.get("id") or 0)
+            if best is None or key > best[0]:
+                best = (key, waiter)
+        next_after = payload.get("next_after_turn") if isinstance(payload, dict) else None
+        if next_after is not None:
+            after = int(next_after)
             continue
-        value = stripped.split(":", 1)[1].strip()
-        if value:
-            found = value
-    return found
+        if payload.get("truncated") and turns:
+            after = int(turns[-1]["turn_number"])
+            continue
+        break
+    return best
 
 
 def _parse_waiter_from_admit_turns(store: StoreClient, thread_id: str) -> str | None:
-    """Latest ``waiter:`` stamp on this lane or its coord parent."""
+    """Latest admit-coord stamp on lane or parent (no per-dispatch correlation yet)."""
+    best: tuple[int, str] | None = None
     threads = [thread_id]
     parent = _lane_parent_of(store, thread_id)
     if parent and parent not in threads:
         threads.append(parent)
-    turns_fn = getattr(store, "turns", None)
-    if turns_fn is None:
-        return None
     for tid in threads:
-        try:
-            payload = turns_fn(tid, last=100)
-        except Exception:
-            logger.exception(
-                "endpoint_wake_dispatcher: waiter scan failed thread=%s", tid
-            )
+        hit = _latest_admit_waiter_on_thread(store, tid)
+        if hit is None:
             continue
-        turns = payload.get("turns") if isinstance(payload, dict) else None
-        if not isinstance(turns, list):
-            continue
-        for turn in reversed(turns):
-            if not isinstance(turn, dict):
-                continue
-            waiter = _parse_waiter_line_from_body(str(turn.get("body") or ""))
-            if waiter:
-                return waiter
-    return None
+        if best is None or hit[0] > best[0]:
+            best = hit
+    return best[1] if best else None
 
 
 def _waiters_for_turn(
     store: StoreClient,
     turn: dict[str, Any],
+    *,
+    waiter_id: str,
 ) -> list[tuple[str, dict[str, Any]]]:
-    """Ordered delivery routes: stamped waiter, else present seat, else newest."""
+    """Stamped waiter route, else present seat / newest (master ``_resolve_delivery_route``)."""
     thread = str(turn["thread"])
     raw_to = str(turn.get("to_agent") or "")
     subject = str(turn.get("subject") or "")
     resolve_agent = _effective_to_agent(raw_to, subject)
-    waiter_id = _parse_waiter_from_admit_turns(store, thread)
-    if waiter_id and normalize_bus_address(raw_to) in _GATE_WAKE_REMAP_ADDRESSES:
+    if normalize_bus_address(raw_to) == "frontier-admit":
         resolve_agent = "cursor"
-    if waiter_id:
-        from agent_bus_store.db.endpoint_wake_ledger import (
-            resolve_subscription_for_thread,
-        )
-
-        resolved = resolve_subscription_for_thread(
-            resolve_agent, thread, agent_id=waiter_id
-        )
-        if resolved is None:
-            parent = _lane_parent_of(store, thread)
-            if parent:
-                resolved = resolve_subscription_for_thread(
-                    resolve_agent, parent, agent_id=waiter_id
-                )
-        if resolved is not None:
-            return [resolved]
-    route = _resolve_delivery_route(
-        store, resolve_agent, thread, raw_to=raw_to
+    from agent_bus_store.db.endpoint_wake_ledger import (
+        resolve_subscription_for_thread,
     )
+
+    resolved = resolve_subscription_for_thread(
+        resolve_agent, thread, agent_id=waiter_id
+    )
+    if resolved is None:
+        parent = _lane_parent_of(store, thread)
+        if parent:
+            resolved = resolve_subscription_for_thread(
+                resolve_agent, parent, agent_id=waiter_id
+            )
+    if resolved is not None:
+        return [resolved]
+    route = _resolve_delivery_route(store, resolve_agent, thread, raw_to=raw_to)
     if route is not None:
         return [route]
     return []
@@ -1420,7 +1454,7 @@ def _effective_wake_agent(
     if (
         waiter_id
         and resolved is not None
-        and normalize_bus_address(raw_to) in _GATE_WAKE_REMAP_ADDRESSES
+        and normalize_bus_address(raw_to) == "frontier-admit"
     ):
         return "cursor"
     return _effective_to_agent(raw_to, subject)
@@ -1430,20 +1464,28 @@ _WAITER_OWN_SEAT_RULE = "drop_waiter_own_seat"
 
 
 def _is_waiter_own_seat_wake(
+    store: StoreClient,
     turn: dict[str, Any],
     waiter_id: str | None,
     resolved: tuple[str, dict[str, Any]] | None,
 ) -> bool:
-    """Stamped waiter tab must not wake on turns from its own subscription seat."""
+    """Stamped waiter tab must not wake on turns from seats it already holds."""
     if not waiter_id or resolved is None:
         return False
     sub = resolved[1]
     target = str(sub.get("agent_id") or "").strip().lower()
     if target != str(waiter_id).strip().lower():
         return False
-    seat = normalize_bus_address(str(sub.get("agent") or "cursor"))
-    from_agent = normalize_bus_address(str(turn.get("from_agent") or ""))
-    return from_agent == seat
+    thread = str(turn.get("thread") or "")
+    scopes = {thread, str(sub.get("thread_scope") or thread)}
+    raw_from = str(turn.get("from_agent") or "")
+    senders = self_sender.sender_tab_ids(store, raw_from, scopes)
+    if str(waiter_id).strip().lower() in senders:
+        return True
+    seat = normalize_bus_address(str(sub.get("agent") or ""))
+    if seat and normalize_bus_address(raw_from) == seat:
+        return True
+    return raw_from.strip().lower() == target
 
 
 def _pending_item(
@@ -1452,6 +1494,7 @@ def _pending_item(
     decided_by_rule: str,
     route: tuple[str, dict[str, Any]] | None = None,
     wake_agent: str | None = None,
+    stamped_waiter_id: str | None = None,
 ) -> dict[str, Any]:
     subject = str(turn.get("subject") or "")
     item: dict[str, Any] = {
@@ -1473,6 +1516,8 @@ def _pending_item(
             item["display"] = display
         if agent_id:
             item["delivery_agent_id"] = agent_id
+    if stamped_waiter_id:
+        item["stamped_waiter_id"] = stamped_waiter_id
     return item
 
 
@@ -1563,21 +1608,24 @@ def scan_once(store: StoreClient, *, idle_mark: dict[str, float] | None = None) 
         pending: list[dict[str, Any]] = []
         tombstones: list[dict[str, Any]] = []
         stale_catchup: dict[str, int] | None = None
+        waiter_cache: dict[str, str | None] = {}
         for turn in turns:
             raw_to = str(turn.get("to_agent") or "")
             subject = str(turn.get("subject") or "")
             head = subject.split("|", 1)[0].strip().upper()
             thread = str(turn["thread"])
-            waiter_id = _parse_waiter_from_admit_turns(store, thread)
-            waiter_routes = _waiters_for_turn(store, turn)
-            resolved = waiter_routes[0] if waiter_routes else None
-            agent = _effective_wake_agent(
-                turn, waiter_id=waiter_id, resolved=resolved
-            )
+            agent = _effective_to_agent(raw_to, subject)
+            stamped_waiter: str | None = None
             if agent == "web-anthropic":
                 resolved = None
                 cse = True
             else:
+                if _waiter_lookup_enabled(raw_to, agent):
+                    if thread not in waiter_cache:
+                        waiter_cache[thread] = _parse_waiter_from_admit_turns(
+                            store, thread
+                        )
+                    stamped_waiter = waiter_cache[thread]
                 if agent == "cursor":
                     try:
                         expire_overdue_hop(thread, store=store)
@@ -1586,6 +1634,18 @@ def scan_once(store: StoreClient, *, idle_mark: dict[str, float] | None = None) 
                             "ide_hop_land: expire overdue hop failed root=%s",
                             thread,
                         )
+                if stamped_waiter:
+                    waiter_routes = _waiters_for_turn(
+                        store, turn, waiter_id=stamped_waiter
+                    )
+                    resolved = waiter_routes[0] if waiter_routes else None
+                    agent = _effective_wake_agent(
+                        turn, waiter_id=stamped_waiter, resolved=resolved
+                    )
+                else:
+                    resolved = _resolve_delivery_route(
+                        store, agent, thread, raw_to=raw_to
+                    )
                 cse = (
                     resolved is not None
                     and str(resolved[1].get("surface") or "") == "cse"
@@ -1664,8 +1724,11 @@ def scan_once(store: StoreClient, *, idle_mark: dict[str, float] | None = None) 
                 decided_by_rule=verdict.rule_id,
                 route=resolved,
                 wake_agent=agent,
+                stamped_waiter_id=(
+                    stamped_waiter if stamped_waiter and resolved is not None else None
+                ),
             )
-            if _is_waiter_own_seat_wake(turn, waiter_id, resolved):
+            if _is_waiter_own_seat_wake(store, turn, stamped_waiter, resolved):
                 rule = _WAITER_OWN_SEAT_RULE
                 _observe_endpoint_wake_suppressed(
                     thread_id=thread,
@@ -2216,9 +2279,14 @@ def fire_due_wakes(store: StoreClient) -> dict[str, Any] | None:
             cse_registration_id=reg,
         )
     delivery_agent_id = str(rows[0].get("delivery_agent_id") or "").strip() or None
-    if delivery_agent_id:
+    stamped_waiter_id = str(rows[0].get("stamped_waiter_id") or "").strip() or None
+    if delivery_agent_id and stamped_waiter_id:
         resolved = resolve_target(
-            store, agent, thread, delivery_agent_id=delivery_agent_id
+            store,
+            agent,
+            thread,
+            delivery_agent_id=delivery_agent_id,
+            stamped_waiter_id=stamped_waiter_id,
         )
     else:
         resolved = resolve_target(store, agent, thread)

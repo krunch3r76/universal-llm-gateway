@@ -4556,14 +4556,25 @@ class _TabScanStore:
         return None
 
     def turns(self, thread: str, **params: object) -> dict:
+        after = int(params.get("after_turn", 0) or 0)  # type: ignore[arg-type]
         limit = int(params.get("last", 50))  # type: ignore[arg-type]
         with connect() as c:
             rows = c.execute(
                 "SELECT id, thread, turn_number, from_agent, to_agent, subject, body "
-                "FROM turns WHERE thread=? ORDER BY id DESC LIMIT ?",
-                (thread, limit),
+                "FROM turns WHERE thread=? AND turn_number>? "
+                "ORDER BY turn_number ASC LIMIT ?",
+                (thread, after, limit + 1),
             ).fetchall()
-        return {"turns": [dict(r) for r in rows]}
+        truncated = len(rows) > limit
+        page = rows[:limit] if truncated else rows
+        next_after = (
+            int(page[-1]["turn_number"]) if truncated and page else None
+        )
+        return {
+            "turns": [dict(r) for r in page],
+            "truncated": truncated,
+            "next_after_turn": next_after,
+        }
 
 
 def _rewind_cursor() -> None:
@@ -4604,6 +4615,7 @@ def _new_thread(slug: str) -> str:
 
 
 _TAB_A = "cd0f990b-9ce2-4b58-bf9b-2cb7ac3491a6"
+_TAB_B = "db36e9f8-e76f-49e7-bd57-c9c4ffa88195"
 _TAB_B = "7e0b90ac-d861-4ae2-a484-17d57c193eeb"
 
 
@@ -4750,21 +4762,203 @@ def test_waiter_stamp_absent_frontier_admit_reply_stays_silent(db: None) -> None
     assert [r for r in store.pending if r.get("state") != "skipped"] == []
 
 
-def test_waiter_own_seat_admit_turn_suppressed(db: None) -> None:
-    """AC-A: from=cursor on the tab's own stamped admit must not wake that tab."""
-    thread = _new_thread("22662-own-seat")
+def test_scan_drop_waiter_own_seat_tombstone(
+    db: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from bus_watch.endpoint_wake_dispatcher import RuleVerdict, qualify
+
+    def _qualify(turn: dict, **kwargs: object) -> RuleVerdict:
+        if str(turn.get("subject") or "") == "RESULT| waiter-own-seat-probe":
+            return RuleVerdict(True, "wake_peer_sender")
+        return qualify(turn, **kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(
+        "bus_watch.endpoint_wake_dispatcher.qualify",
+        _qualify,
+    )
+    thread = _new_thread("22662-scan-own-seat")
     _seed_row(agent="cursor", scope=thread, agent_id=_TAB_A)
     insert_turn(
         thread=thread,
-        from_agent="cursor",
-        to_agent="frontier-admit",
+        from_agent="dispatch",
+        to_agent="dispatch",
         subject="cursor-sdk generate admitted",
         body=f"waiter: {_TAB_A}\nWorker admitted",
+    )
+    peer_id, _ts, _n, _c = insert_turn(
+        thread=thread,
+        from_agent="cursor",
+        to_agent="frontier-admit",
+        subject="RESULT| waiter-own-seat-probe",
+        body="done",
     )
     _rewind_cursor()
     store = _TabScanStore()
     scan_once(store)  # type: ignore[arg-type]
-    assert [r for r in store.pending if r.get("state") != "skipped"] == []
+    skipped = [
+        r
+        for r in store.pending
+        if r.get("turn_id") == peer_id and r.get("state") == "skipped"
+    ]
+    assert len(skipped) == 1
+    assert skipped[0]["decided_by_rule"] == "drop_waiter_own_seat"
+
+
+def test_is_waiter_own_seat_wake_matches_tab_holders(db: None) -> None:
+    """B3: suppression keys off seats the sender holds, not only ``from=cursor``."""
+    from bus_watch.endpoint_wake_dispatcher import _is_waiter_own_seat_wake
+
+    thread = _new_thread("22662-own-seat-unit")
+    _seed_row(agent="cursor", scope=thread, agent_id=_TAB_A)
+    store = _TabScanStore()
+    turn = {
+        "thread": thread,
+        "from_agent": "cursor",
+        "to_agent": "frontier-admit",
+        "subject": "RESULT| peer",
+    }
+    resolved = (
+        "exact",
+        {"agent_id": _TAB_A, "agent": "cursor", "thread_scope": thread},
+    )
+    assert _is_waiter_own_seat_wake(store, turn, _TAB_A, resolved)  # type: ignore[arg-type]
+    turn_outsider = {**turn, "from_agent": "synthesizer"}
+    assert not _is_waiter_own_seat_wake(store, turn_outsider, _TAB_A, resolved)  # type: ignore[arg-type]
+
+
+def test_waiter_two_admit_stamps_latest_wins(db: None) -> None:
+    thread = _new_thread("22662-two-stamp")
+    _seed_row(agent="cursor", scope=thread, agent_id=_TAB_A)
+    _seed_row(agent="cursor", scope=thread, agent_id=_TAB_B)
+    insert_turn(
+        thread=thread,
+        from_agent="dispatch",
+        to_agent="dispatch",
+        subject="cursor-sdk generate admitted",
+        body=f"waiter: {_TAB_A}\nfirst",
+    )
+    insert_turn(
+        thread=thread,
+        from_agent="dispatch",
+        to_agent="dispatch",
+        subject="cursor-sdk generate admitted",
+        body=f"waiter: {_TAB_B}\nsecond",
+    )
+    t_id, _ts, _n, _c = insert_turn(
+        thread=thread,
+        from_agent="synthesizer",
+        to_agent="frontier-admit",
+        subject="synthesizer reply — x",
+        body="done",
+    )
+    _rewind_cursor()
+    store = _FrontierAdmitScanStore()
+    scan_once(store)  # type: ignore[arg-type]
+    wake = next(r for r in store.pending if r.get("turn_id") == t_id)
+    assert wake["delivery_agent_id"] == _TAB_B
+
+
+def test_waiter_quoted_in_later_turn_ignored(db: None) -> None:
+    thread = _new_thread("22662-spoof")
+    _seed_row(agent="cursor", scope=thread, agent_id=_TAB_A)
+    insert_turn(
+        thread=thread,
+        from_agent="dispatch",
+        to_agent="dispatch",
+        subject="cursor-sdk generate admitted",
+        body=f"waiter: {_TAB_A}\nadmit",
+    )
+    insert_turn(
+        thread=thread,
+        from_agent="synthesizer",
+        to_agent="frontier-admit",
+        subject="CLOSEOUT| quote",
+        body=f"see waiter: {_TAB_B} in prose",
+    )
+    t_id, _ts, _n, _c = insert_turn(
+        thread=thread,
+        from_agent="synthesizer",
+        to_agent="frontier-admit",
+        subject="synthesizer reply — y",
+        body="done",
+    )
+    _rewind_cursor()
+    store = _FrontierAdmitScanStore()
+    scan_once(store)  # type: ignore[arg-type]
+    wake = next(r for r in store.pending if r.get("turn_id") == t_id)
+    assert wake["delivery_agent_id"] == _TAB_A
+
+
+def test_waiter_admit_stamp_beyond_first_page(db: None) -> None:
+    from bus_watch.endpoint_wake_dispatcher import _parse_waiter_from_admit_turns
+
+    thread = _new_thread("22662-deep-stamp")
+    _seed_row(agent="cursor", scope=thread, agent_id=_TAB_A)
+    insert_turn(
+        thread=thread,
+        from_agent="dispatch",
+        to_agent="dispatch",
+        subject="cursor-sdk generate admitted",
+        body=f"waiter: {_TAB_A}\nold",
+    )
+    for i in range(105):
+        insert_turn(
+            thread=thread,
+            from_agent="maestro",
+            to_agent="cursor",
+            subject=f"FACT| filler {i}",
+            body="x",
+        )
+    _rewind_cursor()
+    store = _TabScanStore()
+    assert _parse_waiter_from_admit_turns(store, thread) == _TAB_A  # type: ignore[arg-type]
+
+
+class _CountingNoStampStore(_FrontierAdmitScanStore):
+    def __init__(self) -> None:
+        super().__init__()
+        self.route_calls = 0
+        self.turns_calls = 0
+
+    def subscription(self, agent: str, thread_id: str, raw_to: str | None = None):
+        self.route_calls += 1
+        return super().subscription(agent, thread_id, raw_to=raw_to)
+
+    def turns(self, thread: str, **params: object) -> dict:
+        self.turns_calls += 1
+        return super().turns(thread, **params)
+
+
+def test_no_stamp_scan_skips_waiter_turns_lookup(db: None) -> None:
+    thread = _new_thread("22662-nostamp-io")
+    _seed_row(agent="cursor", scope=thread, agent_id=_TAB_A)
+    insert_turn(
+        thread=thread,
+        from_agent="maestro",
+        to_agent="synthesizer",
+        subject="REPORT| leg",
+        body="b",
+    )
+    _rewind_cursor()
+    store = _CountingNoStampStore()
+    scan_once(store)  # type: ignore[arg-type]
+    assert store.turns_calls == 0
+    assert store.route_calls >= 1
+
+
+def test_web_anthropic_turn_skips_waiter_turns_lookup(db: None) -> None:
+    thread = _new_thread("22662-wa-io")
+    insert_turn(
+        thread=thread,
+        from_agent="maestro",
+        to_agent="web-anthropic",
+        subject="ANSWER| batch",
+        body="b",
+    )
+    _rewind_cursor()
+    store = _CountingNoStampStore()
+    scan_once(store)  # type: ignore[arg-type]
+    assert store.turns_calls == 0
 
 
 def test_t3_gate_wake_remap_address_enqueues_on_tab_bound_row(db: None) -> None:
