@@ -487,6 +487,7 @@ def IdeTabBudgetSampled(  # noqa: N802
     window_limit_tokens: int | None,
     stop_class: str | None,
     hop_weight_basis: str | None,
+    matched_categories: list[str],
 ) -> Event:
     """Observation: one per-tab CONTEXT_BUDGET probe during ide_context_hop_monitor."""
     return Event(
@@ -501,6 +502,7 @@ def IdeTabBudgetSampled(  # noqa: N802
             "window_limit_tokens": window_limit_tokens,
             "stop_class": stop_class,
             "hop_weight_basis": hop_weight_basis,
+            "matched_categories": matched_categories,
         },
         scope="global",
     )

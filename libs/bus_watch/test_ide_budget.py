@@ -216,7 +216,9 @@ def test_glass_breakdown_sums_tool_categories() -> None:
         "tool_results_misc": 12_000,
         "ToolOutputs": 3_000,
     }
-    assert tool_result_tokens_from_breakdown(breakdown) == 15_000
+    tokens, cats = tool_result_tokens_from_breakdown(breakdown)
+    assert tokens == 15_000
+    assert cats == ["tool_results_misc", "ToolOutputs"]
     budget: dict = {}
     glass = {
         "contextTokensUsed": 100,
@@ -228,6 +230,20 @@ def test_glass_breakdown_sums_tool_categories() -> None:
     )
     assert budget["tool_result_tokens"] == 15_000
     assert budget["glass_prompt_breakdown"] == breakdown
+
+
+def test_glass_breakdown_matched_categories_tools_only() -> None:
+    budget: dict = {}
+    glass = {
+        "contextTokensUsed": 100,
+        "contextTokenLimit": 200_000,
+        "prompt_breakdown": {"tools": 18_000, "conversation": 90_000},
+    }
+    apply_glass_probe_to_budget(
+        budget, glass, used_tokens_fallback=0, window_limit_fallback=256_000
+    )
+    assert budget["matched_categories"] == ["tools"]
+    assert budget["tool_result_tokens"] == 18_000
 
 
 def test_glass_breakdown_without_tool_category_is_none() -> None:

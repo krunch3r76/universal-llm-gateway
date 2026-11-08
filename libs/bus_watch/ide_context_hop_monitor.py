@@ -143,6 +143,7 @@ def check_cursor_ide_context_hops(
                 window_limit_tokens=budget.get("window_limit_tokens"),
                 stop_class=budget.get("stop_class"),
                 hop_weight_basis=budget.get("hop_weight_basis"),
+                matched_categories=list(budget.get("matched_categories") or []),
             )
         if not budget or budget.get("stop_class") != "CONTEXT_BUDGET":
             continue

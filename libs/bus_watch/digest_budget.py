@@ -16,13 +16,13 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-logger = logging.getLogger(__name__)
-
 import httpx
 import yaml
 
 from bus_watch.fable_lock import MAX_HOPS_PER_NIGHT
 from bus_watch.giw_liaison_urls import liaison_giw_usage_live_url
+
+logger = logging.getLogger(__name__)
 
 _AGENT_BUS_SOCK = os.environ.get(
     "AGENT_BUS_SOCK", "/tmp/universal-protocol/agent-bus.sock"
@@ -412,6 +412,7 @@ def seat_budget(
                 glass_headers_count=ide.get("glass_headers_count"),
                 glass_prompt_breakdown=ide.get("glass_prompt_breakdown") or {},
                 tool_result_tokens=ide.get("tool_result_tokens"),
+                matched_categories=list(ide.get("matched_categories") or []),
                 budget_probe=ide.get("budget_probe"),
             ),
             pct,

@@ -147,10 +147,11 @@ def test_tool_calls_backstop_105_raises_with_weight() -> None:
     assert budget["hop_weight_basis"] == "tool_result_tokens"
 
 
+@pytest.mark.parametrize("bad_value", ["nope", "0", "-5"])
 def test_tool_result_threshold_env_invalid_falls_back(
-    monkeypatch: pytest.MonkeyPatch,
+    monkeypatch: pytest.MonkeyPatch, bad_value: str
 ) -> None:
-    monkeypatch.setenv("ULG_IDE_HOP_TOOL_RESULT_TOKENS", "nope")
+    monkeypatch.setenv("ULG_IDE_HOP_TOOL_RESULT_TOKENS", bad_value)
     reloaded = importlib.reload(digest_budget_mod)
     assert reloaded._IDE_TOOL_RESULT_TOKENS_THRESHOLD == 52_500
     monkeypatch.delenv("ULG_IDE_HOP_TOOL_RESULT_TOKENS", raising=False)

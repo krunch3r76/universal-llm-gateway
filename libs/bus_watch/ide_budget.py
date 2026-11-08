@@ -231,18 +231,22 @@ def estimate_tokens(measure: dict[str, Any], *, tokens_per_tool_call: int) -> in
     ) * int(tokens_per_tool_call)
 
 
-def tool_result_tokens_from_breakdown(breakdown: dict[str, Any]) -> int | None:
-    """Sum Glass category token estimates whose id matches ``tool``; ``None`` if none."""
+def tool_result_tokens_from_breakdown(
+    breakdown: dict[str, Any],
+) -> tuple[int | None, list[str]]:
+    """Sum token estimates for categories matching ``tool``; ids in ``matched_categories``."""
     if not breakdown:
-        return None
+        return None, []
     total = 0
-    matched = False
+    matched_categories: list[str] = []
     for key, raw in breakdown.items():
         if not key or not _TOOL_CATEGORY_RE.search(str(key)):
             continue
-        matched = True
+        matched_categories.append(str(key))
         total += int(raw or 0)
-    return total if matched else None
+    if not matched_categories:
+        return None, []
+    return total, matched_categories
 
 
 def apply_glass_probe_to_budget(
@@ -266,7 +270,9 @@ def apply_glass_probe_to_budget(
     if not isinstance(breakdown, dict):
         breakdown = {}
     budget["glass_prompt_breakdown"] = dict(breakdown)
-    budget["tool_result_tokens"] = tool_result_tokens_from_breakdown(breakdown)
+    tool_tokens, matched_categories = tool_result_tokens_from_breakdown(breakdown)
+    budget["tool_result_tokens"] = tool_tokens
+    budget["matched_categories"] = matched_categories
     budget["budget_probe"] = "glass.cdp"
 
 
