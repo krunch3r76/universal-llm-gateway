@@ -12,7 +12,7 @@ description: Resolve a named transcript handoff before agent-bus fetch, file gre
 "resume transcript:…"): the **first** action is
 
 ```
-cortex(tool="entity_get", arguments='{"entity_id":"transcript:{id}","include_edges":true}')
+cortex(tool="entity_get", arguments='{"entity_id":"transcript:{id}","intent":"full","include_edges":true}')
 ```
 
 then read `attributes.handoff_prompt` — load its anchor + **state/deferred

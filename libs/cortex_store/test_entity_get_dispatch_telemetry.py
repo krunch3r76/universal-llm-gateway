@@ -87,11 +87,11 @@ def test_entity_get_card_emits_intent_and_served_counts(
 
 
 @pytest.mark.offline
-def test_entity_get_default_intent_is_card(
+def test_entity_get_default_intent_is_preview(
     monkeypatch: pytest.MonkeyPatch,
     migrated_conn: sqlite3.Connection,
 ) -> None:
-    entity_id = "todo:telemetry-default-card"
+    entity_id = "todo:telemetry-default-preview"
     _seed_entity_with_assertions(migrated_conn, entity_id)
     captured = _capture_records(monkeypatch)
 
@@ -99,18 +99,13 @@ def test_entity_get_default_intent_is_card(
         result = execute_op("entity_get", {"entity_id": entity_id})
 
     assert "error" not in result
-    assert result.get("intent") == "card"
-    assert "assertion_counts" in result
-    assert "top_k_assertions" in result
+    assert result.get("intent") == "preview"
+    assert result.get("selection") == "preview"
+    assert "attributes" not in result
+    assert "top_k_assertions" not in result
 
     served = _served_events(captured)
-    assert served[0]["intent"] == "card"
-    assert served[0]["active_count"] == (
-        result.get("assertion_counts") or {}
-    ).get("active")
-    assert served[0]["superseded_count"] == (
-        result.get("assertion_counts") or {}
-    ).get("superseded")
+    assert served[0]["intent"] == "preview"
 
 
 @pytest.mark.offline

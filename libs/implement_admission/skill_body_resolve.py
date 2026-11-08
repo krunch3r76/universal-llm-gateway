@@ -5,6 +5,8 @@ from __future__ import annotations
 import hashlib
 from typing import Any
 
+from cortex_store.db import cortex_conn
+
 from implement_admission.skill_catalog_resolver import (
     SkillCatalogResolveError,
     canonical_catalog_slug,
@@ -85,19 +87,18 @@ def resolve_skill_body_from_catalog(
     (HTTP 200 contract).
     """
     from cortex_store.confidence_field import DISCOVERABLE_SKILL_LIFECYCLE
-    from cortex_store.db import cortex_conn
     from cortex_store.routes.boot._skill_trigger import _resolve_skill_file
 
     raw = slug_or_entity_id.strip()
     key = canonical_catalog_slug(raw)
     entity_id_hint = raw if ":" in raw else f"agent_skill:{key}"
 
-    source_uri: str | None
+    catalog_source_uri: str | None
     try:
-        source_uri = resolve_canonical_source_uri(key)
+        catalog_source_uri = resolve_canonical_source_uri(key)
     except (SkillCatalogResolveError, FileNotFoundError, OSError, ValueError):
         # URI hint failed — still attempt agent-skills / plugin fallback chain.
-        source_uri = None
+        catalog_source_uri = None
 
     own_conn = conn is None
     if own_conn:
@@ -114,12 +115,23 @@ def resolve_skill_body_from_catalog(
     is_skill = entity_type in ("agent_skill", "skill") if row else True
     discoverable = (not is_skill) or (lifecycle == DISCOVERABLE_SKILL_LIFECYCLE)
 
+    row_source_uri = None
+    if row:
+        su = row.get("source_uri")
+        if isinstance(su, str) and su.strip():
+            row_source_uri = su.strip()
+
+    # Prefer the entity row's durable location over the catalog hint so tests
+    # and staged rows that point at explicit paths resolve before catalog SOT.
+    resolve_uri = row_source_uri or catalog_source_uri
+
     if is_skill and row is not None and not discoverable and not include_non_active:
+        withheld_uri = resolve_uri
         return (
             {
                 "id": entity_id,
-                "source_uri": source_uri,
-                "digest": body_digest(source_uri, key),
+                "source_uri": withheld_uri,
+                "digest": body_digest(withheld_uri, key),
                 "body": None,
                 "lifecycle": lifecycle,
                 "discoverable": False,
@@ -128,7 +140,7 @@ def resolve_skill_body_from_catalog(
             None,
         )
 
-    path = _resolve_skill_file(source_uri, key)
+    path = _resolve_skill_file(resolve_uri, key)
     if path is None:
         return None, "body_missing"
     try:
@@ -136,6 +148,7 @@ def resolve_skill_body_from_catalog(
     except OSError:
         return None, "body_missing"
 
+    source_uri = resolve_uri
     if source_uri is None:
         # Prefer a workspaces URI when the body was found only via fallbacks.
         try:

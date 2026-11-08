@@ -19,7 +19,7 @@ CORTEX_TOOL_QUICKREF = """\
 Cortex tool quick-reference (CRITICAL — read before calling any Cortex tool):
 
   cortex(tool="search", arguments='{"query": "...", "limit": 10}')
-  cortex(tool="entity_get", arguments='{"entity_id": "type:slug"}')
+  cortex(tool="entity_get", arguments='{"entity_id": "type:slug", "intent": "card"}')
   cortex(tool="assertions", arguments='{"entity_id": "type:slug", "limit": 20}')
   cortex(tool="observe", arguments='{"entity_id": "...", "claim": "...", "agent": "web"}')
   cortex(tool="assert", arguments='{"entity_id": "...", "claim": "...", "confidence": "believed", "evidence": "..."}')

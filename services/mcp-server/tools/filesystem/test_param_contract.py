@@ -19,6 +19,7 @@ from tools.filesystem._fs_dispatch import (
 _DEFAULTS: dict[str, object] = {
     "target": "",
     "section": "",
+    "sections": [],
     "line": 0,
     "heading": "",
     "level": 0,
@@ -27,12 +28,16 @@ _DEFAULTS: dict[str, object] = {
     "mode": "",
     "include_worktrees": False,
     "size_only": False,
+    "export": False,
+    "chunk_cursor": None,
+    "expected_read_sha256": "",
 }
 
 # A non-default value per contract param, for the "provided" assertions.
 _PROVIDED: dict[str, object] = {
     "target": "x",
     "section": "Heading",
+    "sections": ["A"],
     "line": 3,
     "heading": "New",
     "level": 2,
@@ -41,6 +46,9 @@ _PROVIDED: dict[str, object] = {
     "mode": "content",
     "include_worktrees": True,
     "size_only": True,
+    "export": True,
+    "chunk_cursor": 0,
+    "expected_read_sha256": "a" * 64,
 }
 
 

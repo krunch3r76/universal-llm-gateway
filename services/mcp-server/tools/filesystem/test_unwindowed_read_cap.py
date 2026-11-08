@@ -69,17 +69,10 @@ def test_large_unwindowed_markdown_lists_sections(tmp_path: Path) -> None:
     (root / rel).write_text(body, encoding="utf-8")
 
     result = read_file_result(rel, root=root)
-    assert result["unwindowed_oversized"] is True
-    assert result["kind"] == "markdown_sections"
-    assert result["truncated"] is True
-    assert result.get("first_section_truncated") is True
+    assert result["selection"] == "manifest"
+    assert "content" not in result
     assert len(result["sections"]) >= 3
-    assert result["first_section"]["heading"] in {"Doc", "[Preamble]"}
-    assert result["section_reads"]
-    assert all("md_read" in call for call in result["section_reads"])
-    assert "effects_manifest" in result["section_reads"][0] or any(
-        "effects_manifest" in c for c in result["section_reads"]
-    )
+    assert "content" in result["omitted"]
 
 
 def test_minified_json_single_line_gets_next_read(tmp_path: Path) -> None:
@@ -152,8 +145,8 @@ def test_under_threshold_markdown_unchanged(tmp_path: Path) -> None:
     text = "## One\nhello\n"
     (root / "tiny.md").write_text(text, encoding="utf-8")
     result = read_file_result("tiny.md", root=root)
-    assert result["content"] == text
-    assert "unwindowed_oversized" not in result
+    assert result["selection"] == "manifest"
+    assert "content" not in result
 
 
 def test_small_unwindowed_markdown_matches_frozen_fixture(tmp_path: Path) -> None:
@@ -163,12 +156,9 @@ def test_small_unwindowed_markdown_matches_frozen_fixture(tmp_path: Path) -> Non
     root.mkdir()
     (root / "tiny.md").write_text(fixture["content"], encoding="utf-8")
     result = read_file_result("tiny.md", root=root)
-    comparable = {
-        "content": result["content"],
-        "path": "tiny.md",
-        "read_sha256": result["read_sha256"],
-    }
-    assert comparable == fixture
+    assert result["selection"] == "manifest"
+    assert result["read_sha256"] == fixture["read_sha256"]
+    assert "content" not in result
 
 
 def test_first_section_truncation_ends_on_line_boundary(tmp_path: Path) -> None:
@@ -185,14 +175,8 @@ def test_first_section_truncation_ends_on_line_boundary(tmp_path: Path) -> None:
     rel = "wide-first.md"
     (root / rel).write_text(body, encoding="utf-8")
     result = read_file_result(rel, root=root)
-    assert result.get("first_section_truncated") is True
-    assert result.get("first_section_line_aligned") is True
-    content = result["content"]
-    assert content.endswith("\n")
-    assert "complete tail line" not in content
-    last_line = content.rstrip("\n").split("\n")[-1]
-    assert last_line.startswith("row-")
-    assert last_line.endswith("x" * 600)
+    assert result["selection"] == "manifest"
+    assert "content" not in result
 
 
 def test_first_section_single_long_line_not_line_aligned(tmp_path: Path) -> None:
@@ -203,6 +187,5 @@ def test_first_section_single_long_line_not_line_aligned(tmp_path: Path) -> None
     rel = "single-line-first.md"
     (root / rel).write_text(body, encoding="utf-8")
     result = read_file_result(rel, root=root)
-    assert result.get("first_section_truncated") is True
-    assert result.get("first_section_line_aligned") is False
-    assert result["content"]
+    assert result["selection"] == "manifest"
+    assert "content" not in result

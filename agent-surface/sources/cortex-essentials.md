@@ -25,7 +25,7 @@ Hold `session_id` from `cortex_brief` for the full session — pass to `supersed
 
 ```
 # Fetch entity with assertions (add include_edges: true for reasoning connections)
-cortex(tool="entity_get", arguments='{"entity_id": "decision:my-slug"}')
+cortex(tool="entity_get", arguments='{"entity_id": "decision:my-slug", "intent": "card"}')
 
 # Hybrid search (FTS5 + vector, CombMAX scoring)
 cortex(tool="search", arguments='{"query": "UDS transport invariant", "limit": 10}')

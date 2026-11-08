@@ -70,10 +70,13 @@ def sandbox_op_names(sandbox: str) -> str:
 # Per-op descriptor metadata. Keys MUST match OP_SANDBOXES exactly (enforced by test).
 OP_DOC: dict[str, tuple[str, str]] = {
     "read": (
-        "(path, offset?, limit?)",
-        "read file (text or PDF/DOCX/ODT/EML/HTML)",
+        "(path, offset?, limit?, sections?, export?, chunk_cursor?, expected_read_sha256?)",
+        "read file (text or PDF/DOCX/ODT/EML/HTML); markdown/converted docs default to manifest",
     ),
-    "read_multi": ("(paths: list)", "read multiple files"),
+    "read_multi": (
+        "(paths: list, sections?, export?, chunk_cursor?, expected_read_sha256?)",
+        "read multiple files",
+    ),
     "write": ("(path, content)", "write/create file"),
     "append": ("(path, content)", "append to file"),
     "prepend": ("(path, content)", "prepend to file"),
@@ -115,10 +118,13 @@ OP_DOC: dict[str, tuple[str, str]] = {
     ),
     "md_list": ("(path)", "list sections/TOC (see Markdown section ops below)"),
     "md_read": (
-        "(path, section?)",
-        "read one section (see Markdown section ops below)",
+        "(path, section?, sections?, export?, chunk_cursor?, expected_read_sha256?)",
+        "read manifest or expand sections (see Markdown section ops below)",
     ),
-    "md_to_dict": ("(path)", "nested heading dict (see Markdown section ops below)"),
+    "md_to_dict": (
+        "(path, expected_read_sha256?)",
+        "heading tree manifest without bodies; expected_read_sha256 is param_not_applicable",
+    ),
     "md_replace": (
         "(path, section, target, content, all_occurrences?)",
         "patch target substring within section body (see Markdown section ops below)",
@@ -152,6 +158,10 @@ OP_DOC: dict[str, tuple[str, str]] = {
 CONTRACT_PARAMS: tuple[str, ...] = (
     "target",
     "section",
+    "sections",
+    "export",
+    "chunk_cursor",
+    "expected_read_sha256",
     "line",
     "heading",
     "level",
@@ -179,12 +189,23 @@ PARAM_PURPOSE: dict[str, str] = {
         "ulg-arc-worktrees paths"
     ),
     "size_only": "size-only list_sections flag for md_list",
+    "sections": "batched section ids for document read expansion",
+    "export": "explicit full-document export on read/md_read",
+    "chunk_cursor": (
+        "code-point cursor for chunked export or single-section chunk path "
+        "(read, md_read, markdown read_section)"
+    ),
+    "expected_read_sha256": "optional full-file hash precondition for reads",
 }
 
 # unified op -> confusable params it actually consumes
 OP_CONSUMES: dict[str, frozenset[str]] = {
-    "read": frozenset(),
-    "read_multi": frozenset(),
+    "read": frozenset(
+        {"section", "sections", "export", "chunk_cursor", "expected_read_sha256"}
+    ),
+    "read_multi": frozenset(
+        {"section", "sections", "export", "chunk_cursor", "expected_read_sha256"}
+    ),
     "write": frozenset(),
     "write_binary": frozenset(),
     "append_binary": frozenset(),
@@ -201,8 +222,10 @@ OP_CONSUMES: dict[str, frozenset[str]] = {
     "copy": frozenset({"target"}),
     "delete": frozenset(),
     "md_list": frozenset({"size_only"}),
-    "md_read": frozenset({"section"}),
-    "md_to_dict": frozenset(),
+    "md_read": frozenset(
+        {"section", "sections", "export", "chunk_cursor", "expected_read_sha256"}
+    ),
+    "md_to_dict": frozenset({"expected_read_sha256"}),
     "md_replace": frozenset({"section", "target", "all_occurrences"}),
     "md_rewrite_section": frozenset({"section"}),
     "md_append": frozenset({"section"}),
@@ -266,8 +289,16 @@ def _param_provided(name: str, value: Any) -> bool:
     """True when a contract param carries a non-default (caller-supplied) value."""
     if name in ("line", "level"):
         return bool(value)  # int sentinel is 0
-    if name in ("all_occurrences", "include_worktrees", "size_only"):
+    if name == "chunk_cursor":
+        return value is not None and value != ""
+    if name in ("all_occurrences", "include_worktrees", "size_only", "export"):
         return value is True
+    if name == "sections":
+        return bool(value)
+    if name == "expected_read_sha256":
+        if value is None:
+            return False
+        return bool(str(value).strip())
     if name == "section":
         return bool(str(value).strip())
     return bool(value)
@@ -340,13 +371,13 @@ def md_section_op_doc() -> str:
     return (
         "Markdown section ops (for large docs):\n"
         "  md_list    (path)                    — list sections/TOC (PDFs: embedded outline; markdown: ATX headings plus line-anchored XML blocks such as `<scope>` / `<task_guidance>` on six-block handoff packets)\n"
-        '  md_read    (path, section?)          — read one section; empty/absent section => full document (text/markdown; PDFs still require a section). XML block keys: `<tag>` or bare `tag` (e.g. section="<task_guidance>" or section="task_guidance")\n'
-        "  md_to_dict (path)                    — nested heading dict (PDFs: outline-driven; others: ATX sections)\n"
-        "  md_replace (path, section, target, content, all_occurrences?)  — patch target substring within the section body only; target required; cannot truncate unmentioned content\n"
-        "  md_rewrite_section (path, section, content)  — replace the entire section body (explicit rewrite after md_read); response includes mutation and _warning when body shrinks by >50%\n"
+        '  md_read    (path, section?, sections?, export?, expected_read_sha256?) — default manifest; section/sections/export expand. XML block keys: `<tag>` or bare `tag`\n'
+        "  md_to_dict (path, expected_read_sha256?) — heading tree manifest without bodies; expected_read_sha256 is param_not_applicable\n"
+        "  md_replace (path, section, target, content, all_occurrences?)  — patch target substring within the section body only; target required; cannot truncate unmentioned content; the section span includes child headings\n"
+        "  md_rewrite_section (path, section, content)  — replace the entire section body (explicit rewrite after md_read); response includes mutation and _warning when body shrinks by >50% or children_removed when the rewrite drops nested headings; the section span includes child headings\n"
         "  md_append  (path, section, content)  — append to section body (text files only); same heading-less-content contract as md_replace\n"
         "  md_insert  (path, heading, level, position, section?, content?) — insert a new section (text files only); position: end|after|before; section is anchor for after/before; same heading-less-content contract as md_replace\n"
-        "  md_delete  (path, section)           — delete section (text files only); response includes mutation summary of removed body\n"
+        "  md_delete  (path, section)           — delete section (text files only); response includes mutation summary of removed body; the section span includes child headings\n"
         "md_replace/md_rewrite_section/md_delete REQUIRE a non-empty section — "
         "md_replace patches via target= within the section; md_rewrite_section "
         "replaces the entire named-section body; an empty section means the file preamble "
@@ -392,6 +423,12 @@ def dispatch_workspaces_op(
     mode: str = "",
     since: str = "",
     include_worktrees: bool = False,
+    *,
+    section: str = "",
+    sections: list[str] | None = None,
+    export: bool = False,
+    chunk_cursor: int | None = None,
+    expected_read_sha256: str = "",
 ) -> dict[str, Any]:
     """Dispatch a workspaces-sandbox fs op via the project adapter.
 
@@ -408,21 +445,38 @@ def dispatch_workspaces_op(
         fn = overflow_registry.get("read_project_file")
         if fn is None:
             return {"error": "read_project_file tool not available"}
-        return fn(path, binary=binary, offset=offset, limit=limit)
+        return fn(
+            path,
+            binary=binary,
+            offset=offset,
+            limit=limit,
+            section=section or None,
+            sections=sections,
+            export=export,
+            chunk_cursor=chunk_cursor,
+            expected_read_sha256=expected_read_sha256 or None,
+        )
 
     if op == "read_multi":
         if not paths:
             return {"error": "'paths' is required for read_multi"}
-        fn = overflow_registry.get("read_project_file")
+        fn = overflow_registry.get("read_project_multi")
         if fn is None:
-            return {"error": "read_project_file tool not available"}
-        results: dict[str, Any] = {}
-        for p in paths:
-            try:
-                results[p] = fn(p, binary=binary)
-            except Exception as exc:
-                results[p] = {"error": str(exc)}
-        return {"files": results}
+            return {"error": "read_project_multi tool not available"}
+        try:
+            return fn(
+                paths,
+                binary=binary,
+                offset=offset,
+                limit=limit,
+                section=section or None,
+                sections=sections,
+                export=export,
+                chunk_cursor=chunk_cursor,
+                expected_read_sha256=expected_read_sha256 or None,
+            )
+        except Exception as exc:
+            return {"error": str(exc)}
 
     if op == "write":
         fn = overflow_registry.get("write_project_file")

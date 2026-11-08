@@ -50,7 +50,8 @@ class StargateCortexReader:
         # Entity-seed normalize (todo:/plan:/plan_phase:) reads the entity here.
         # Without this method, _normalize_entity's broad except surfaces the
         # AttributeError as source_not_found — the bug stub readers masked.
-        return self._dispatch("entity_get", entity_id, **kwargs)
+        intent = kwargs.pop("intent", "preview")
+        return self._dispatch("entity_get", entity_id, intent=intent, **kwargs)
 
     def list_relationships(
         self,

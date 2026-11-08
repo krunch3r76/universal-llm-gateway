@@ -67,6 +67,63 @@ def shrink_warning(prior_body: str, new_body: str, *, op: str) -> str | None:
     )
 
 
+def direct_child_headings(text: str, section_path: str) -> list[str]:
+    """Direct child headings of ``section_path`` in document order."""
+    from markdown_sections import SectionError, parse_sections, resolve_section
+
+    try:
+        parent = resolve_section(text, section_path)
+    except SectionError:
+        return []
+    if parent.level <= 0:
+        return []
+    headings: list[str] = []
+    for sec in parse_sections(text):
+        if sec.level != parent.level + 1:
+            continue
+        if sec.start <= parent.start or sec.start >= parent.end:
+            continue
+        headings.append(sec.heading)
+    return headings
+
+
+def _descendant_section_ids(text: str, section_path: str) -> list[str]:
+    """Section ids inside ``section_path``, document order, duplicates kept."""
+    from markdown_sections import SectionError, parse_sections, resolve_section
+
+    try:
+        parent = resolve_section(text, section_path)
+    except SectionError:
+        return []
+    if parent.level <= 0:
+        return []
+    ids: list[str] = []
+    for sec in parse_sections(text):
+        if sec.level <= parent.level:
+            continue
+        if sec.start <= parent.start or sec.start >= parent.end:
+            continue
+        if sec.path:
+            ids.append(sec.path)
+    return ids
+
+
+def removed_child_headings(before: str, after: str, section_path: str) -> list[str]:
+    """Ordered section ids removed under ``section_path``, including descendants.
+
+    Duplicate headings stay as repeated ids. A kept child does not hide a
+    dropped grandchild.
+    """
+    remaining = _descendant_section_ids(after, section_path)
+    removed: list[str] = []
+    for sid in _descendant_section_ids(before, section_path):
+        if sid in remaining:
+            remaining.remove(sid)
+        else:
+            removed.append(sid)
+    return removed
+
+
 def delete_warning(prior_body: str) -> str | None:
     """Warn when deleting a non-trivial section body."""
     prior_chars = len(prior_body)

@@ -152,7 +152,7 @@ def render_briefing_card(
                     "Prose intentionally not inlined (decision 8384); pull "
                     "the flagged surface via "
                     f"`cortex(tool='entity_get', arguments='{{\"entity_id\": "
-                    f'"{entity_id}"}}\')`.'
+                    f'"{entity_id}\",\"intent\":\"card\"}}\')`.'
                 )
         elif (
             isinstance(surface, dict)
@@ -167,7 +167,7 @@ def render_briefing_card(
                 "handoff is reviewed or falsified. Prose intentionally not "
                 "inlined (decision 8384); pull the flagged surface via "
                 f"`cortex(tool='entity_get', arguments='{{\"entity_id\": "
-                f'"{entity_id}"}}\')`.'
+                f'"{entity_id}\",\"intent\":\"card\"}}\')`.'
             )
         summary = tc.get("summary", tc.get("description", ""))
         if summary:

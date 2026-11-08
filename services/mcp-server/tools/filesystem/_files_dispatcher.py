@@ -36,6 +36,11 @@ def dispatch_files_op(
     expected_sha256: str = "",
     if_absent: bool = False,
     mode: str = "",
+    section: str = "",
+    sections: list[str] | None = None,
+    export: bool = False,
+    chunk_cursor: int | None = None,
+    expected_read_sha256: str = "",
 ) -> dict[str, Any]:
     """Dispatch a cortex ``files`` op (MCP tool body + unit-test entry).
 
@@ -50,14 +55,32 @@ def dispatch_files_op(
     if op == "read":
         if not path:
             raise ValueError("'path' is required for read")
-        result = read_file_impl(path, binary=binary, offset=offset, limit=limit)
+        result = read_file_impl(
+            path,
+            binary=binary,
+            offset=offset,
+            limit=limit,
+            section=section or None,
+            sections=sections,
+            export=export,
+            chunk_cursor=chunk_cursor,
+            expected_read_sha256=expected_read_sha256 or None,
+        )
         if path.startswith("dropbox/"):
             result["_next"] = DROPBOX_READ_HINT
         return result
     if op == "read_multi":
         if not paths:
             raise ValueError("'paths' is required for read_multi")
-        return read_files_batch_impl(paths, binary=binary)
+        return read_files_batch_impl(
+            paths,
+            binary=binary,
+            section=section or None,
+            sections=sections,
+            export=export,
+            chunk_cursor=chunk_cursor,
+            expected_read_sha256=expected_read_sha256 or None,
+        )
     if op == "write":
         if not path:
             raise ValueError("'path' is required for write")
@@ -195,6 +218,11 @@ def register_files_tool(mcp: FastMCP) -> None:
         expected_sha256: str = "",
         if_absent: bool = False,
         mode: str = "",
+        section: str = "",
+        sections: list[str] | None = None,
+        export: bool = False,
+        chunk_cursor: int | None = None,
+        expected_read_sha256: str = "",
     ) -> dict[str, Any]:
         """Unified file operations for the sandboxed /data/files directory.
 
@@ -291,4 +319,9 @@ def register_files_tool(mcp: FastMCP) -> None:
             expected_sha256=expected_sha256,
             if_absent=if_absent,
             mode=mode,
+            section=section,
+            sections=sections,
+            export=export,
+            chunk_cursor=chunk_cursor,
+            expected_read_sha256=expected_read_sha256,
         )

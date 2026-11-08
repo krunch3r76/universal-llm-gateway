@@ -24,11 +24,11 @@ _TURNS_PAGE = 80
 _TURNS_MAX_PAGES = 8
 
 
-class WitnessCortexUnavailable(RuntimeError):
+class WitnessCortexUnavailableError(RuntimeError):
     """Cortex API read failed. Fold must not report a clean OPEN."""
 
 
-class WitnessEntityMissing(LookupError):  # noqa: N818 — pairs with WitnessCortexUnavailable
+class WitnessEntityMissing(LookupError):  # noqa: N818 — pairs with WitnessCortexUnavailableError
     """Cortex has no such entity (HTTP 404). Not an outage."""
 
 
@@ -92,28 +92,28 @@ def _cortex_dispatch(tool: str, arguments: dict[str, Any]) -> dict[str, Any]:
             if resp.status_code == 404:
                 raise WitnessEntityMissing(f"cortex {tool} HTTP 404")
             if resp.status_code >= 400:
-                raise WitnessCortexUnavailable(
+                raise WitnessCortexUnavailableError(
                     f"cortex {tool} HTTP {resp.status_code}: {resp.text[:300]}"
                 )
             payload = resp.json()
-    except (WitnessCortexUnavailable, WitnessEntityMissing):
+    except (WitnessCortexUnavailableError, WitnessEntityMissing):
         raise
     except (OSError, ValueError) as exc:
-        raise WitnessCortexUnavailable(f"cortex {tool} failed: {exc}") from exc
+        raise WitnessCortexUnavailableError(f"cortex {tool} failed: {exc}") from exc
     except Exception as exc:
         import httpx
 
         if isinstance(exc, httpx.HTTPError):
-            raise WitnessCortexUnavailable(f"cortex {tool} failed: {exc}") from exc
+            raise WitnessCortexUnavailableError(f"cortex {tool} failed: {exc}") from exc
         raise
     if not isinstance(payload, dict):
-        raise WitnessCortexUnavailable(f"cortex {tool} returned a non-object")
+        raise WitnessCortexUnavailableError(f"cortex {tool} returned a non-object")
     if payload.get("error"):
         err = str(payload.get("error"))
         lowered = err.lower()
         if "not found" in lowered or lowered.strip() in {"404", "missing"}:
             raise WitnessEntityMissing(f"cortex {tool}: {err}")
-        raise WitnessCortexUnavailable(f"cortex {tool}: {err}")
+        raise WitnessCortexUnavailableError(f"cortex {tool}: {err}")
     return payload
 
 
@@ -122,11 +122,11 @@ class DefaultWitnessCortex:
 
     Reads go through the cortex API. Dispatch HOME cannot open the sqlite
     file (``unable to open database file``); a down API raises
-    ``WitnessCortexUnavailable`` so the fold can report failure.
+    ``WitnessCortexUnavailableError`` so the fold can report failure.
     """
 
     def entity_get(self, entity_id: str, **kwargs: Any) -> dict[str, Any]:
-        arguments: dict[str, Any] = {"entity_id": entity_id}
+        arguments: dict[str, Any] = {"entity_id": entity_id, "intent": "preview"}
         arguments.update(kwargs)
         return _cortex_dispatch("entity_get", arguments)
 
@@ -142,7 +142,7 @@ class DefaultWitnessCortex:
         payload = _cortex_dispatch("relationships", arguments)
         items = payload.get("items")
         if not isinstance(items, list):
-            raise WitnessCortexUnavailable("cortex relationships: missing items")
+            raise WitnessCortexUnavailableError("cortex relationships: missing items")
         return [item for item in items if isinstance(item, dict)]
 
 
@@ -312,5 +312,5 @@ def closeout_witnesses_for_slug(
         body = tip[0] if tip else ""
     try:
         return row_witnesses(slug, tip_body=body or "", deps=deps, files_root=root)
-    except WitnessCortexUnavailable:
+    except WitnessCortexUnavailableError:
         raise

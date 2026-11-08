@@ -109,8 +109,8 @@ Stored as: rs_ea08ab (expires in 10 min).
 
 | Operation | Verify with |
 |---|---|
-| `cortex(tool="session_close", ...)` | `cortex(tool="entity_get", arguments='{"entity_id": "transcript:YYYY-MM-DD-HHmm"}')` — 200 + entity present = succeeded |
-| `cortex(tool="assert", ...)` | `cortex(tool="entity_get", arguments='{"entity_id": "..."}')` — assertion appears in entity = succeeded |
+| `cortex(tool="session_close", ...)` | `cortex(tool="entity_get", arguments='{"entity_id": "transcript:YYYY-MM-DD-HHmm", "intent": "card"}')` — 200 + entity present = succeeded |
+| `cortex(tool="assert", ...)` | `cortex(tool="entity_get", arguments='{"entity_id": "...", "intent": "card"}')` — assertion appears in entity = succeeded |
 | `fs(op="write", ...)` | `fs(op="read", ...)` same path — content present = succeeded |
 | `agent_bus(tool="reply", ...)` | Response contains `turn_number` field = succeeded |
 

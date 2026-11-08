@@ -686,7 +686,7 @@ def _cortex_manifest(
         first_id = str(items[0].get("id", "") or "") if items else ""
         if first_id:
             selective_options.append(
-                f'cortex(tool="entity_get", arguments=\'{{"entity_id":"{first_id}"}}\')'
+                f'cortex(tool="entity_get", arguments=\'{{"entity_id":"{first_id}","intent":"card"}}\')'
             )
         manifest["request_particular_payload"] = bool(first_id)
         manifest["selective_options"] = selective_options or [
@@ -782,7 +782,7 @@ def _cortex_manifest(
             first_id = str(provisional[0].get("id", "") or "")
             if first_id:
                 selective_options.append(
-                    f'cortex(tool="entity_get", arguments=\'{{"entity_id":"{first_id}"}}\')'
+                    f'cortex(tool="entity_get", arguments=\'{{"entity_id":"{first_id}","intent":"card"}}\')'
                 )
         manifest["selective_options"] = selective_options
         return manifest
@@ -895,6 +895,61 @@ def _replacement_result(
 
 _SEMANTIC_GUARD_TOOLS: frozenset[str] = frozenset({"agent_bus", "cortex"})
 
+_SPARSE_SLICE1_POLICY = "slice1_document_and_entity_preview"
+
+
+def _node_is_sparse_document_payload(node: dict[str, Any]) -> bool:
+    """Passthrough requires the root marker. Nested selection and flag-only payloads do not qualify."""
+    if node.get("code") == "sparse_payload_over_byte_ceiling":
+        return True
+    if node.get("sparse_policy") != _SPARSE_SLICE1_POLICY:
+        return False
+    return node.get("selection") in {
+        "manifest",
+        "section",
+        "sections",
+        "export",
+        "multi",
+    }
+
+
+def _content_base64_nodes(node: Any) -> bool:
+    """True when a non-document binary body is sitting on this payload."""
+    if isinstance(node, dict):
+        if isinstance(node.get("content_base64"), str):
+            return True
+        return any(_content_base64_nodes(value) for value in node.values())
+    if isinstance(node, list):
+        return any(_content_base64_nodes(value) for value in node)
+    return False
+
+
+def _sparse_document_read_passthrough(result: ToolResult) -> bool:
+    """Root-marked sparse document reads must not be re-clipped by the byte guard.
+
+    A nested dict that would qualify on its own does not earn passthrough.
+    ``sparse_section_batch`` / ``sparse_explicit_export`` without the root
+    ``sparse_policy`` marker do not earn it either. ``selection=multi`` covers
+    read_multi export and default manifests, not only section batches.
+
+    A large non-document ``content_base64`` does not earn passthrough either.
+    The marker stays on the payload so the stored copy keeps sparse provenance,
+    and the real size check below externalizes it. Document text under the
+    sparse ceiling still passes through: it has no ``content_base64``.
+    """
+    structured = result.structured_content
+    if not isinstance(structured, dict):
+        return False
+    if not _node_is_sparse_document_payload(structured):
+        return False
+    if _content_base64_nodes(structured):
+        try:
+            if _measure_result(result) > _threshold_for_profile():
+                return False
+        except Exception:
+            return False
+    return True
+
 
 def _is_single_json_mirror_text(result: ToolResult) -> tuple[str, Any] | None:
     """Return (text, structured_content) when content is one JSON mirror of structured_content."""
@@ -935,9 +990,7 @@ def _lean_content(result: ToolResult, *, tool_name: str) -> ToolResult:
             from mcp.types import TextContent
 
             candidate = result.model_copy(
-                update={
-                    "content": [TextContent(type="text", text=_MIRROR_PLACEHOLDER)]
-                }
+                update={"content": [TextContent(type="text", text=_MIRROR_PLACEHOLDER)]}
             )
             threshold = _threshold_for_profile()
             target = (
@@ -1024,6 +1077,8 @@ class ResponseSizeGuard(Middleware):
             return result
         if _is_tape_read_exempt(context):
             return result
+        if _sparse_document_read_passthrough(result):
+            return _lean_content(result, tool_name=tool_name)
 
         threshold = _threshold_for_profile()
         if tool_name == "agent_bus":

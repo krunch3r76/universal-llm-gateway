@@ -120,6 +120,9 @@ def register_fs_read_tool(mcp: FastMCP, surface: Surface) -> None:
         since: str = "",
         include_worktrees: bool = False,
         size_only: bool = False,
+        sections: list[str] | None = None,
+        export: bool = False,
+        expected_read_sha256: str = "",
     ) -> dict[str, Any]:
         """Read-only fs ops — auto-approvable companion to fs.
 
@@ -196,6 +199,9 @@ def register_fs_read_tool(mcp: FastMCP, surface: Surface) -> None:
                 since=since,
                 include_worktrees=include_worktrees,
                 size_only=size_only,
+                sections=sections,
+                export=export,
+                expected_read_sha256=expected_read_sha256,
             )
         except Exception as exc:
             err = str(exc) or type(exc).__name__

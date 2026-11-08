@@ -22,7 +22,10 @@ def entity_detail_sha256(card: dict[str, Any]) -> str:
 
 def entity_update_card_call(entity_id: str) -> str:
     """Exact ``entity_get`` invocation for the hashed EntityDetail projection."""
-    args = json.dumps({"entity_id": entity_id}, separators=(",", ":"))
+    args = json.dumps(
+        {"entity_id": entity_id, "intent": "full"},
+        separators=(",", ":"),
+    )
     return f'cortex(tool="entity_get", arguments=\'{args}\')'
 
 

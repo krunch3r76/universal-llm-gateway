@@ -250,7 +250,7 @@ def execute_op(
             "error": f"Unknown cortex tool {tool!r}. Available: {sorted(_OPS)}",
             **({"hint": hint} if hint else {}),
             "format_example": (
-                'cortex(tool="entity_get", arguments=\'{"entity_id": "type:slug"}\')'
+                'cortex(tool="entity_get", arguments=\'{"entity_id": "type:slug", "intent": "card"}\')'
             ),
         }
 

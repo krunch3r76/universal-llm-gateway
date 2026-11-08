@@ -189,7 +189,9 @@ def test_get_skill_body_active_returns_body_and_discoverable(
     )
     conn.commit()
 
-    with patch("cortex_store.routes.skills.cortex_conn", return_value=conn):
+    with patch(
+        "implement_admission.skill_body_resolve.cortex_conn", return_value=conn
+    ):
         out = get_skill_body(id="agent_skill:active-body", expected_digest=None)
     assert out["body"] == "active body"
     assert out["discoverable"] is True
@@ -208,7 +210,9 @@ def test_get_skill_body_inactive_default_withholds_body(lifecycle: str | None) -
     )
     conn.commit()
 
-    with patch("cortex_store.routes.skills.cortex_conn", return_value=conn):
+    with patch(
+        "implement_admission.skill_body_resolve.cortex_conn", return_value=conn
+    ):
         out = get_skill_body(id=f"agent_skill:{suffix}-body", expected_digest=None)
     assert out["body"] is None
     assert out["discoverable"] is False
@@ -230,7 +234,9 @@ def test_get_skill_body_include_non_active_returns_inactive_body(
     )
     conn.commit()
 
-    with patch("cortex_store.routes.skills.cortex_conn", return_value=conn):
+    with patch(
+        "implement_admission.skill_body_resolve.cortex_conn", return_value=conn
+    ):
         out = get_skill_body(
             id="agent_skill:draft-body",
             expected_digest=None,
@@ -254,7 +260,9 @@ def test_get_skill_body_rule_unaffected_by_lifecycle_gate(tmp_path: Path) -> Non
     )
     conn.commit()
 
-    with patch("cortex_store.routes.skills.cortex_conn", return_value=conn):
+    with patch(
+        "implement_admission.skill_body_resolve.cortex_conn", return_value=conn
+    ):
         out = get_skill_body(id="rule:test-rule", expected_digest=None)
     assert out["body"] == "rule body"
     assert out["discoverable"] is True
@@ -283,7 +291,7 @@ def test_op_entity_get_stamps_discoverable(migrated_conn: sqlite3.Connection) ->
         "cortex_store.dispatch_ops.ops_entities.cortex_conn",
         return_value=migrated_conn,
     ):
-        out = _op_entity_get(entity_id="agent_skill:draft-op")
+        out = _op_entity_get(entity_id="agent_skill:draft-op", intent="card")
     assert out["discoverable"] is False
 
 

@@ -35,6 +35,7 @@ def _stub_fn(*_args: object, **_kwargs: object) -> dict:
 
 _STUB_REGISTRY: dict = {
     "read_project_file": _stub_fn,
+    "read_project_multi": _stub_fn,
     "write_project_file": _stub_fn,
     "list_project_files": _stub_fn,
     "search_project_files": _stub_fn,

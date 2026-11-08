@@ -106,3 +106,61 @@ def test_unknown_selector_raises(tmp_path: Path) -> None:
     pdf = _make_pdf(tmp_path, 1, toc=[[1, "Alpha", 1]])
     with pytest.raises(PdfSectionError):
         read_pdf_section(pdf, "Missing")
+
+
+def test_outline_manifest_ids_round_trip(tmp_path: Path) -> None:
+    """Manifest ids are TOC paths, and sections= expands that same id."""
+    from tools._pdf_sections import resolve_pdf_outline_read
+
+    pdf = _make_pdf(
+        tmp_path,
+        3,
+        toc=[[1, "Alpha", 1], [2, "Alpha Child", 2], [1, "Beta", 3]],
+    )
+    manifest = resolve_pdf_outline_read(
+        file_path=pdf,
+        path="doc.pdf",
+        sandbox="workspace",
+        read_sha256="a" * 64,
+    )
+    rows = manifest["sections"]
+    assert [row["id"] for row in rows] == ["Alpha", "Alpha/Alpha Child", "Beta"]
+    alpha = rows[0]
+    assert alpha["children"] == ["Alpha/Alpha Child"]
+    assert isinstance(alpha["subtree_char_count"], int)
+    assert alpha["subtree_char_count"] >= alpha["char_count"]
+    assert isinstance(manifest["total_chars"], int)
+    assert manifest["total_chars"] > 0
+
+    expanded = resolve_pdf_outline_read(
+        file_path=pdf,
+        path="doc.pdf",
+        sandbox="workspace",
+        read_sha256="a" * 64,
+        sections=["Alpha"],
+    )
+    assert expanded["selection"] == "sections"
+    item = expanded["items"][0]
+    assert item["id"] == "Alpha"
+    assert item["outcome"] == "ok"
+    assert "page 1" in item["content"]
+    assert "page 2" not in item["content"]
+    assert item["includes_children"] is False
+
+
+def test_sidecar_does_not_replace_outline_ids(tmp_path: Path) -> None:
+    """A readable PDF keeps TOC ids when a sidecar markdown file also exists."""
+    from tools._file_helpers import read_file_result
+
+    pdf = _make_pdf(tmp_path, 2, toc=[[1, "Alpha", 1], [1, "Beta", 2]])
+    pdf.with_name("doc-readable.md").write_text(
+        "# Sidecar Only\n\nnot the outline\n",
+        encoding="utf-8",
+    )
+    manifest = read_file_result("doc.pdf", root=tmp_path)
+    ids = [row["id"] for row in manifest["sections"]]
+    assert ids == ["Alpha", "Beta"]
+    assert "Sidecar Only" not in ids
+    expanded = read_file_result("doc.pdf", root=tmp_path, sections=["Alpha"])
+    assert expanded["items"][0]["id"] == "Alpha"
+    assert "page 1" in expanded["items"][0]["content"]

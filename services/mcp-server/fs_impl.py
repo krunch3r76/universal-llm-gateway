@@ -127,6 +127,10 @@ def fs_impl(
     since: str = "",
     include_worktrees: bool = False,
     size_only: bool = False,
+    sections: list[str] | None = None,
+    export: bool = False,
+    expected_read_sha256: str | dict[str, str] = "",
+    chunk_cursor: int | None = None,
 ) -> dict[str, Any]:
     if not op:
         return {"error": "'op' is required"}
@@ -217,6 +221,10 @@ def fs_impl(
             "mode": mode,
             "include_worktrees": include_worktrees,
             "size_only": size_only,
+            "sections": sections,
+            "export": export,
+            "chunk_cursor": chunk_cursor,
+            "expected_read_sha256": expected_read_sha256,
         },
     )
     if contract_error is not None:
@@ -258,6 +266,10 @@ def fs_impl(
                     target=target,
                     all_occurrences=all_occurrences,
                     size_only=size_only,
+                    sections=sections,
+                    export=export,
+                    chunk_cursor=chunk_cursor,
+                    expected_read_sha256=expected_read_sha256,
                 )
             if isinstance(result, dict) and "error" not in result:
                 result.update(ingress_meta)
@@ -281,6 +293,10 @@ def fs_impl(
             target=target,
             all_occurrences=all_occurrences,
             size_only=size_only,
+            sections=sections,
+            export=export,
+            chunk_cursor=chunk_cursor,
+            expected_read_sha256=expected_read_sha256,
         )
         if isinstance(result, dict) and "error" not in result:
             result.update(ingress_meta)
@@ -345,6 +361,11 @@ def fs_impl(
                 mode=mode,
                 since=since,
                 include_worktrees=include_worktrees,
+                section=section,
+                sections=sections,
+                export=export,
+                chunk_cursor=chunk_cursor,
+                expected_read_sha256=expected_read_sha256,
             )
         if isinstance(result, dict) and "error" not in result:
             attach_batch_key_remap(
@@ -381,6 +402,11 @@ def fs_impl(
             expected_sha256=expected_sha256,
             if_absent=if_absent,
             mode=mode,
+            section=section,
+            sections=sections,
+            export=export,
+            chunk_cursor=chunk_cursor,
+            expected_read_sha256=expected_read_sha256,
         )
         if isinstance(result, dict) and "error" not in result:
             attach_batch_key_remap(
