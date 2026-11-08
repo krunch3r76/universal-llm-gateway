@@ -53,7 +53,7 @@ def test_unbound_ops_are_collision_losers_only() -> None:
 
     schema = create_app().openapi()
     unbound = unbound_dispatch_ops(schema)
-    assert unbound == ["add_tags", "remove_tags", "whereami"]
+    assert unbound == ["add_tags", "remove_tags"]
     assert "request" not in unbound
     assert "hop" not in unbound
     assert "substrate_graph_write" not in unbound

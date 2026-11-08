@@ -373,6 +373,46 @@ def _cursor_self_post(
     return post_id, post_n
 
 
+def test_recency_wire_format_created_at_suppresses_shared_cursor(db: None) -> None:
+    """R1: ``insert_turn`` wire ``created_at`` (T…Z) must participate in M2 suppression."""
+    thread = _thread("f43033-m2-wire")
+    _subscribe("grok-bot-window-arc-coordinator", thread, TAB)
+    _subscribe("cursor", thread, TAB)
+    wake_turn, _, wake_n, _ = insert_turn(
+        thread=thread,
+        from_agent="web-anthropic",
+        to_agent="cursor",
+        subject="DONE|wake",
+        body="w",
+    )
+    _delivered_row(
+        thread,
+        turn_id=wake_turn,
+        turn_number=wake_n,
+        finished_at=_stamp(30),
+        tab=TAB,
+    )
+    post_id, post_created_at, _, _ = insert_turn(
+        thread=thread,
+        from_agent="cursor",
+        to_agent="grok-bot-window-arc-coordinator",
+        subject="DONE|self",
+        body="x",
+    )
+    assert "T" in post_created_at and post_created_at.endswith("Z")
+    _rewind_cursor()
+
+    scan_once(_Store())  # type: ignore[arg-type]
+    with connect() as conn:
+        row = conn.execute(
+            "SELECT state, reason FROM endpoint_wake_ledger WHERE turn_id=?",
+            (post_id,),
+        ).fetchone()
+    assert row is not None
+    assert row["state"] == "skipped"
+    assert row["reason"] == "suppressed:drop_self_sender_recency"
+
+
 def test_recency_fallback_single_tab_suppresses_shared_cursor(db: None) -> None:
     """AC3: one delivered tab in [created_at−N, created_at] suppresses bare ``cursor``."""
     thread = _thread("f43033-m2-one")
@@ -512,12 +552,9 @@ def test_recency_delivery_after_created_at_not_suppressed(db: None) -> None:
 
 def test_recency_disabled_when_env_zero(db: None, monkeypatch: pytest.MonkeyPatch) -> None:
     """AC3: ``ENDPOINT_WAKE_SELF_RECENCY_S=0`` disables M2."""
-    monkeypatch.setenv("ENDPOINT_WAKE_SELF_RECENCY_S", "0")
-    import importlib
-
     import bus_watch.endpoint_wake_self_sender as self_sender
 
-    importlib.reload(self_sender)
+    monkeypatch.setattr(self_sender, "ENDPOINT_WAKE_SELF_RECENCY_S", 0)
     thread = _thread("f43033-m2-off")
     _subscribe("grok-bot-window-arc-coordinator", thread, TAB)
     _subscribe("cursor", thread, TAB)
@@ -547,7 +584,6 @@ def test_recency_disabled_when_env_zero(db: None, monkeypatch: pytest.MonkeyPatc
         ).fetchone()
     assert row is not None
     assert row["state"] == "pending"
-    importlib.reload(self_sender)
 
 
 def test_advance_scan_rejects_unknown_item_state(db: None) -> None:

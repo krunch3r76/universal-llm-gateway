@@ -1816,6 +1816,25 @@ def test_migration_028_adds_from_agent_id_idempotent(db: TestClient) -> None:
     assert "from_agent_id" in cols
 
 
+def test_recent_deliveries_route_accepts_wire_format_before(db: TestClient) -> None:
+    """R1: ``before`` in bus wire format must not 500 the recency helper route."""
+    detail = create_thread(thread_id=None, slug="recent-wire-before")
+    assert detail is not None
+    thread = str(detail["id"])
+    resp = db.get(
+        "/endpoint-wake/recent-deliveries",
+        params={
+            "thread": thread,
+            "since_s": 90,
+            "before": "2026-11-08T12:00:30Z",
+        },
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["count"] == 0
+    assert body["delivery_agent_ids"] == []
+
+
 def _pending_with_tab(
     *,
     agent: str,

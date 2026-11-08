@@ -15,7 +15,10 @@ import re
 from collections.abc import Sequence
 from typing import Any
 
-_TAB_WAKE_SUFFIX = r"(?:\s+tab=[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})?"
+from agent_bus_store.turns_models import TAB_UUID_RE
+
+_TAB_UUID = TAB_UUID_RE.pattern.removeprefix("^").removesuffix("$")
+_TAB_WAKE_SUFFIX = rf"(?:\s+tab={_TAB_UUID})?"
 _STALE_WAKE_LINE = re.compile(
     rf"^BRIDGE_WAKE\s+thread=\S+\s+turn=\d+(?:,\d+)*{_TAB_WAKE_SUFFIX}$"
 )
@@ -131,10 +134,7 @@ def wake_line(
     line = f"BRIDGE_WAKE thread={thread_s} turn={turn_s}"
     if tab:
         tab_s = str(tab).strip().lower()
-        if re.fullmatch(
-            r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}",
-            tab_s,
-        ):
+        if TAB_UUID_RE.match(tab_s):
             line += f" tab={tab_s}"
     return line
 

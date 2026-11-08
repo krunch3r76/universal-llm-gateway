@@ -54,7 +54,6 @@ def active_since_window_label(value: str | datetime | None) -> str:
 TAB_UUID_RE = re.compile(
     r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
 )
-_TAB_POSTER_UUID_RE = TAB_UUID_RE
 
 
 def prepare_from_agent_id(raw: str | None) -> tuple[str | None, str | None]:
@@ -62,7 +61,7 @@ def prepare_from_agent_id(raw: str | None) -> tuple[str | None, str | None]:
     text = str(raw or "").strip().lower()
     if not text:
         return None, None
-    if _TAB_POSTER_UUID_RE.match(text):
+    if TAB_UUID_RE.match(text):
         return text, None
     return None, "from_agent_id_ignored"
 

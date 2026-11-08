@@ -45,8 +45,16 @@ def _now(now: str | None) -> str:
     return datetime.now(UTC).strftime("%Y-%m-%d %H:%M:%S")
 
 
+def _parse_utc_stamp(stamp: str) -> datetime:
+    """Parse agent-bus stamps: space form or wire ``%Y-%m-%dT%H:%M:%SZ``."""
+    text = stamp.strip()
+    if "T" in text:
+        return datetime.strptime(text, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=UTC)
+    return datetime.strptime(text, "%Y-%m-%d %H:%M:%S").replace(tzinfo=UTC)
+
+
 def _shift(stamp: str, seconds: int) -> str:
-    base = datetime.strptime(stamp, "%Y-%m-%d %H:%M:%S").replace(tzinfo=UTC)
+    base = _parse_utc_stamp(stamp)
     return (base + timedelta(seconds=seconds)).strftime("%Y-%m-%d %H:%M:%S")
 
 
@@ -2078,7 +2086,6 @@ def recent_delivered_agent_ids(
     if window_s <= 0:
         return []
     anchor = _now(before or now)
-    lower = _shift(anchor, -window_s)
     with connect() as conn:
         cols = _ledger_columns(conn)
         if "delivery_agent_id" not in cols:
@@ -2087,9 +2094,9 @@ def recent_delivered_agent_ids(
             "SELECT DISTINCT delivery_agent_id FROM endpoint_wake_ledger "
             "WHERE thread_id=? AND state='delivered' "
             "AND delivery_agent_id IS NOT NULL AND trim(delivery_agent_id) != '' "
-            "AND datetime(finished_at) >= datetime(?) "
+            "AND datetime(finished_at) >= datetime(?, ?) "
             "AND datetime(finished_at) <= datetime(?)",
-            (thread_id, lower, anchor),
+            (thread_id, anchor, f"-{window_s} seconds", anchor),
         ).fetchall()
     out: list[str] = []
     seen: set[str] = set()

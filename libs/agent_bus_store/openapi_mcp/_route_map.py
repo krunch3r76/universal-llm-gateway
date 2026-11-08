@@ -29,6 +29,7 @@ UNTYPEABLE_OPS: frozenset[str] = frozenset(
         "substrate_graph_write",
         "substrate_friction_file",
         "substrate_entity_mint",
+        "whereami",
     }
 )
 

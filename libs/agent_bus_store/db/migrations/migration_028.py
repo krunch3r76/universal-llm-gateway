@@ -18,9 +18,6 @@ def run(conn: sqlite3.Connection) -> None:
         "SELECT 1 FROM sqlite_master WHERE type='table' AND name='turns'"
     ).fetchone():
         return
-    if _has_column(conn, "turns", "from_agent_id"):
-        return
-    conn.execute("ALTER TABLE turns ADD COLUMN from_agent_id TEXT")
     if conn.execute(
         "SELECT 1 FROM sqlite_master WHERE type='table' AND name='endpoint_wake_ledger'"
     ).fetchone():
@@ -28,3 +25,6 @@ def run(conn: sqlite3.Connection) -> None:
             "CREATE INDEX IF NOT EXISTS idx_endpoint_wake_thread_state_finished "
             "ON endpoint_wake_ledger(thread_id, state, finished_at)"
         )
+    if _has_column(conn, "turns", "from_agent_id"):
+        return
+    conn.execute("ALTER TABLE turns ADD COLUMN from_agent_id TEXT")
