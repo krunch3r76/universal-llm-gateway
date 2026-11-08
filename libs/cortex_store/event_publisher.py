@@ -342,6 +342,33 @@ def cortex_search_vector_degraded(
 
 
 @event_factory
+def cortex_entity_state_folded(
+    entity_id: str,
+    field: str,
+    provenance_id: str,
+    assertion_id: int | None,
+    value: str,
+    change: str = "folded",
+) -> Event:
+    """cortex.entity_state.folded — observation after a successful fold or reverse."""
+    ev = Event(
+        signal="cortex.entity_state.folded",
+        role="observation",
+        scope="global",
+        payload={
+            "entity_id": entity_id,
+            "field": field,
+            "provenance_id": provenance_id,
+            "value": value,
+            "change": change,
+            **({"assertion_id": assertion_id} if assertion_id is not None else {}),
+        },
+    )
+    record(ev.signal, **ev.payload)
+    return ev
+
+
+@event_factory
 def cortex_entity_source_changed(
     entity_id: str,
     change: str,
