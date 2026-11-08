@@ -6,6 +6,7 @@ import os
 from typing import TYPE_CHECKING
 
 from endpoint_surface import Surface
+from interlocutor.mcp_tool import register_interlocutor_tool
 from tools._agent_bus_read import register_agent_bus_read_tool
 from tools._cortex_read import register_cortex_read_tool
 from tools._fs_read import register_fs_read_tool
@@ -19,7 +20,6 @@ from tools.context import register_context_tools
 from tools.continuity import register_continuity_tools
 from tools.cortex import register_cortex_tools
 from tools.cortex_named_tools import register_cortex_named_tools
-from interlocutor.mcp_tool import register_interlocutor_tool
 from tools.cse_session import register_cse_session_tool
 from tools.cursor_request import register_operator_request_tool
 from tools.delegate import register_delegate_schema_transform, register_delegate_tools
@@ -31,6 +31,9 @@ from tools.fleet_liveness import register_fleet_liveness_tools
 from tools.frontier import register_frontier_tools
 from tools.frontier_imagine import register_imagine_tools
 from tools.git_integrate import register_git_integrate_tools
+from tools.glass_export_transcript_messages import (
+    register_glass_export_transcript_messages_tool,
+)
 from tools.imprint import register_imprint_tools
 from tools.ingest_dropbox import register_ingest_dropbox_tools
 from tools.life_dispatch import register_life_dispatch_tools
@@ -148,6 +151,7 @@ def register_tools_for_surface(mcp: FastMCP, surface: Surface) -> None:
         register_frontier_tools(mcp)
         register_panel_dispatch_tools(mcp)
         register_git_integrate_tools(mcp)
+        register_glass_export_transcript_messages_tool(mcp)
         register_quality_tools(mcp)
         register_imagine_tools(mcp)
         register_security_tools(mcp)
