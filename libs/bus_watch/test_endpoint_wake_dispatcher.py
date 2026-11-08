@@ -37,9 +37,6 @@ from bus_watch.endpoint_wake_transport import StoreClient
 
 @pytest.fixture()
 def db(tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
-    from bus_watch.endpoint_wake_dispatcher import _reset_waiter_stamp_cache
-
-    _reset_waiter_stamp_cache()
     monkeypatch.setenv("AGENT_BUS_DB_PATH", str(tmp_path / "bus.db"))
     monkeypatch.delenv("AGENT_BUS_ENDPOINT_WAKE_DISPATCHER", raising=False)
     init_db()
@@ -5102,6 +5099,56 @@ def test_unstamped_cursor_at_most_one_cold_lookup_across_scans(db: None) -> None
     _rewind_cursor()
     scan_once(store)  # type: ignore[arg-type]
     assert store.turns_calls == first
+
+
+def test_waiter_stamp_retries_after_transient_turns_failure(db: None) -> None:
+    """B1: a failed cold lookup is not cached; the next scan finds the stamp."""
+    from bus_watch.endpoint_wake_dispatcher import (
+        _WAITER_THREAD_CACHE,
+        _reset_waiter_stamp_cache,
+    )
+
+    thread = _new_thread("22662-turns-flaky")
+    _seed_row(agent="cursor", scope=thread, agent_id=_TAB_A)
+    insert_turn(
+        thread=thread,
+        from_agent="dispatch",
+        to_agent="dispatch",
+        subject="synthesizer generate — flaky-req",
+        body=f"waiter: {_TAB_A}\nWorker admitted",
+    )
+    _rewind_cursor()
+    scan_once(_TabScanStore())  # type: ignore[arg-type]
+    _reset_waiter_stamp_cache()
+
+    t_id, _ts, _n, _c = insert_turn(
+        thread=thread,
+        from_agent="synthesizer",
+        to_agent="frontier-admit",
+        subject="synthesizer reply — flaky",
+        body="done",
+    )
+
+    class _FlakyTurnsStore(_TabScanStore):
+        def __init__(self) -> None:
+            super().__init__()
+            self.turns_failures = 0
+
+        def turns(self, thread: str, **params: object) -> dict:
+            self.turns_failures += 1
+            if self.turns_failures == 1:
+                raise OSError("agent-bus warming up")
+            return super().turns(thread, **params)
+
+    store = _FlakyTurnsStore()
+    scan_once(store)  # type: ignore[arg-type]
+    assert store.turns_failures == 1
+    assert thread not in _WAITER_THREAD_CACHE
+
+    _rewind_cursor()
+    scan_once(store)  # type: ignore[arg-type]
+    wake = next(r for r in store.pending if r.get("turn_id") == t_id)
+    assert wake["delivery_agent_id"] == _TAB_A
 
 
 def test_web_anthropic_turn_skips_waiter_turns_lookup(db: None) -> None:

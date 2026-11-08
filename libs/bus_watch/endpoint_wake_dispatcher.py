@@ -9,6 +9,7 @@ import math
 import os
 import re
 import time
+from collections import OrderedDict
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from functools import lru_cache
@@ -1133,20 +1134,8 @@ def resolve_target(
     thread: str,
     *,
     raw_to: str | None = None,
-    delivery_agent_id: str | None = None,
-    stamped_waiter_id: str | None = None,
 ) -> tuple[str, dict[str, Any]] | None:
     """Thin handler: subscription row or synthetic grok window binding."""
-    aid = str(delivery_agent_id or "").strip() or None
-    stamp = str(stamped_waiter_id or "").strip() or None
-    if aid and stamp and aid == stamp:
-        from agent_bus_store.db.endpoint_wake_ledger import (
-            resolve_subscription_for_thread,
-        )
-
-        resolved = resolve_subscription_for_thread(agent, thread, agent_id=aid)
-        if resolved is not None:
-            return resolved
     return _resolve_delivery_route(store, agent, thread, raw_to=raw_to)
 
 
@@ -1334,6 +1323,11 @@ def _window_binding_route(agent: str) -> tuple[str, dict[str, Any]] | None:
 
 _WAITER_STAMP_RAW_TOS = frozenset({"frontier-admit"})
 _WAITER_TURN_PAGE = 100
+_WAITER_THREAD_CACHE_MAX = 4096
+
+
+class WaiterAdmitScanError(Exception):
+    """``store.turns`` failed before the waiter history scan finished."""
 
 
 def _waiter_lookup_enabled(raw_to: str, agent: str) -> bool:
@@ -1364,7 +1358,7 @@ def _latest_admit_waiter_on_thread(
             logger.exception(
                 "endpoint_wake_dispatcher: waiter scan failed thread=%s", thread_id
             )
-            break
+            raise WaiterAdmitScanError(thread_id) from None
         turns = payload.get("turns") if isinstance(payload, dict) else None
         if not isinstance(turns, list) or not turns:
             break
@@ -1393,7 +1387,15 @@ def _latest_admit_waiter_on_thread(
     return best
 
 
-_WAITER_THREAD_CACHE: dict[str, tuple[int, str] | None] = {}
+_WAITER_THREAD_CACHE: OrderedDict[str, tuple[int, str] | None] = OrderedDict()
+
+
+def _waiter_cache_set(thread_id: str, value: tuple[int, str] | None) -> None:
+    if thread_id in _WAITER_THREAD_CACHE:
+        _WAITER_THREAD_CACHE.move_to_end(thread_id)
+    _WAITER_THREAD_CACHE[thread_id] = value
+    while len(_WAITER_THREAD_CACHE) > _WAITER_THREAD_CACHE_MAX:
+        _WAITER_THREAD_CACHE.popitem(last=False)
 
 
 def _reset_waiter_stamp_cache() -> None:
@@ -1417,18 +1419,27 @@ def _ingest_waiter_admit_turn(turn: dict[str, Any]) -> None:
     if not waiter:
         return
     key = int(turn.get("turn_number") or turn.get("id") or 0)
-    prev = _WAITER_THREAD_CACHE.get(thread)
-    if prev is None or (isinstance(prev, tuple) and key > prev[0]):
-        _WAITER_THREAD_CACHE[thread] = (key, waiter)
+    cached = _WAITER_THREAD_CACHE.get(thread)
+    if cached is None and thread not in _WAITER_THREAD_CACHE:
+        _waiter_cache_set(thread, (key, waiter))
+        return
+    if isinstance(cached, tuple) and key > cached[0]:
+        _waiter_cache_set(thread, (key, waiter))
+    elif cached is None:
+        _waiter_cache_set(thread, (key, waiter))
 
 
 def _waiter_stamp_for_single_thread(
     store: StoreClient, thread_id: str
 ) -> tuple[int, str] | None:
     if thread_id in _WAITER_THREAD_CACHE:
+        _WAITER_THREAD_CACHE.move_to_end(thread_id)
         return _WAITER_THREAD_CACHE[thread_id]
-    hit = _latest_admit_waiter_on_thread(store, thread_id)
-    _WAITER_THREAD_CACHE[thread_id] = hit
+    try:
+        hit = _latest_admit_waiter_on_thread(store, thread_id)
+    except WaiterAdmitScanError:
+        return None
+    _waiter_cache_set(thread_id, hit)
     return hit
 
 
@@ -1540,7 +1551,6 @@ def _pending_item(
     decided_by_rule: str,
     route: tuple[str, dict[str, Any]] | None = None,
     wake_agent: str | None = None,
-    stamped_waiter_id: str | None = None,
 ) -> dict[str, Any]:
     subject = str(turn.get("subject") or "")
     item: dict[str, Any] = {
@@ -1562,8 +1572,6 @@ def _pending_item(
             item["display"] = display
         if agent_id:
             item["delivery_agent_id"] = agent_id
-    if stamped_waiter_id:
-        item["stamped_waiter_id"] = stamped_waiter_id
     return item
 
 
@@ -1766,9 +1774,6 @@ def scan_once(store: StoreClient, *, idle_mark: dict[str, float] | None = None) 
                 decided_by_rule=verdict.rule_id,
                 route=resolved,
                 wake_agent=agent,
-                stamped_waiter_id=(
-                    stamped_waiter if stamped_waiter and resolved is not None else None
-                ),
             )
             if _is_waiter_own_seat_wake(store, turn, stamped_waiter, resolved):
                 rule = _WAITER_OWN_SEAT_RULE
@@ -2320,18 +2325,7 @@ def fire_due_wakes(store: StoreClient) -> dict[str, Any] | None:
             subscription_id=None,
             cse_registration_id=reg,
         )
-    delivery_agent_id = str(rows[0].get("delivery_agent_id") or "").strip() or None
-    stamped_waiter_id = str(rows[0].get("stamped_waiter_id") or "").strip() or None
-    if delivery_agent_id and stamped_waiter_id:
-        resolved = resolve_target(
-            store,
-            agent,
-            thread,
-            delivery_agent_id=delivery_agent_id,
-            stamped_waiter_id=stamped_waiter_id,
-        )
-    else:
-        resolved = resolve_target(store, agent, thread)
+    resolved = resolve_target(store, agent, thread)
     if resolved is None:
         return _finish(
             outcome="skipped",

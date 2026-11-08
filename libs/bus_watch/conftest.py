@@ -130,3 +130,13 @@ def _clear_detect_cursor_gui_host_env(monkeypatch: pytest.MonkeyPatch) -> None:
     """``detect_cursor_gui_host`` tests set only the env signals they assert on."""
     for key in _CURSOR_GUI_HOST_ENV_KEYS:
         monkeypatch.delenv(key, raising=False)
+
+
+@pytest.fixture(autouse=True)
+def _reset_waiter_stamp_cache_between_tests() -> None:
+    """Process-level waiter cache must not leak across ``libs/bus_watch`` tests."""
+    from bus_watch.endpoint_wake_dispatcher import _reset_waiter_stamp_cache
+
+    _reset_waiter_stamp_cache()
+    yield
+    _reset_waiter_stamp_cache()
