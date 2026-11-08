@@ -22,9 +22,11 @@ _TAB_WAKE_SUFFIX = rf"(?:\s+tab={_TAB_UUID})?"
 _STALE_WAKE_LINE = re.compile(
     rf"^BRIDGE_WAKE\s+thread=\S+\s+turn=\d+(?:,\d+)*{_TAB_WAKE_SUFFIX}$"
 )
+_STALE_WAKE_PREFIX_JS = r"^BRIDGE_WAKE\s+thread=\S+\s+turn=\d+(?:,\d+)*"
+_TAB_WAKE_SUFFIX_JS = rf"(?:\s+tab={_TAB_UUID})?"
 STALE_WAKE_LINES_JS = (
     "lines.length>0&&lines.every(l=>"
-    r"/^BRIDGE_WAKE\s+thread=\S+\s+turn=\d+(?:,\d+)*(?:\s+tab=[0-9a-f-]{36})?$/.test(l)"
+    f"/{_STALE_WAKE_PREFIX_JS}{_TAB_WAKE_SUFFIX_JS}$/.test(l)"
     ")"
 )
 
