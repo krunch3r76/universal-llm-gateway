@@ -430,6 +430,68 @@ def test_transcript_root_unreachable(
     assert exc.value.retryable is False
 
 
+def test_array_jsonl_line_jsonl_malformed_not_retryable(
+    transcripts_root: Path,
+) -> None:
+    jsonl = transcripts_root / _TID / f"{_TID}.jsonl"
+    _write_jsonl(jsonl, b"[1]\n")
+    with pytest.raises(GlassExportError) as exc:
+        export_glass_transcript_messages(
+            transcript_id=_TID,
+            supervisor_work_key="todo:x",
+            trusted_caller="glass-supervisor",
+        )
+    assert exc.value.code == "jsonl_malformed"
+    assert exc.value.retryable is False
+
+
+def test_symlink_escape_outside_transcripts_root_refused(
+    transcripts_root: Path, tmp_path: Path
+) -> None:
+    outside = tmp_path / "outside.jsonl"
+    _write_jsonl(outside, _minimal_jsonl_line())
+    link = transcripts_root / _TID / f"{_TID}.jsonl"
+    link.parent.mkdir(parents=True, exist_ok=True)
+    link.symlink_to(outside)
+    with pytest.raises(GlassExportError) as exc:
+        export_glass_transcript_messages(
+            transcript_id=_TID,
+            supervisor_work_key="todo:x",
+            trusted_caller="glass-supervisor",
+        )
+    assert exc.value.code == "transcript_not_found"
+
+
+def test_cursor_project_fallback_outside_transcripts_root_allowed(
+    transcripts_root: Path, tmp_path: Path
+) -> None:
+    projects_root = tmp_path / "cursor_projects"
+    jsonl = (
+        projects_root
+        / "satellite-ws"
+        / "agent-transcripts"
+        / _TID
+        / f"{_TID}.jsonl"
+    )
+    _write_jsonl(jsonl, _minimal_jsonl_line())
+    with (
+        patch(
+            "cursor_bridge.glass_export_messages.locate_cursor_transcript_jsonl",
+            return_value=(jsonl, None),
+        ),
+        patch(
+            "cortex_store.transcript_assembly._cursor_projects_root",
+            return_value=projects_root,
+        ),
+    ):
+        out = export_glass_transcript_messages(
+            transcript_id=_TID,
+            supervisor_work_key="todo:x",
+            trusted_caller="glass-supervisor",
+        )
+    assert out["ok"] is True
+
+
 def test_transcript_not_found_emits(transcripts_root: Path) -> None:
     with patch("cursor_bridge.glass_export_messages.glass_export_failed") as fail:
         with pytest.raises(GlassExportError) as exc:
@@ -497,6 +559,7 @@ def test_tool_result_secret_not_in_envelope_tools_none(
         ("transcript_not_found", False, "missing"),
         ("transcript_ambiguous", False, "ambiguous"),
         ("jsonl_malformed", False, "malformed"),
+        ("jsonl_malformed", False, "array_line"),
         ("export_limit_exceeded", False, "limit"),
         ("transcript_root_unreachable", False, "root"),
         ("transcript_unreadable", False, "unreadable"),
@@ -566,6 +629,17 @@ def test_error_taxonomy_retryable_flags(
     elif factory == "malformed":
         jsonl = transcripts_root / _TID / f"{_TID}.jsonl"
         _write_jsonl(jsonl, b"12\n")
+        try:
+            export_glass_transcript_messages(
+                transcript_id=_TID,
+                supervisor_work_key="todo:x",
+                trusted_caller="glass-supervisor",
+            )
+        except GlassExportError as e:
+            exc = e
+    elif factory == "array_line":
+        jsonl = transcripts_root / _TID / f"{_TID}.jsonl"
+        _write_jsonl(jsonl, b"[1]\n")
         try:
             export_glass_transcript_messages(
                 transcript_id=_TID,

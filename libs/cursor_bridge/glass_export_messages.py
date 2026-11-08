@@ -118,6 +118,14 @@ def _parsed_json_object(text: str) -> bool:
     return isinstance(parsed, (dict, list))
 
 
+def _parsed_json_line_record(text: str) -> bool:
+    try:
+        parsed = json.loads(text)
+    except (json.JSONDecodeError, RecursionError):
+        return False
+    return isinstance(parsed, dict)
+
+
 def _is_standalone_json_record(suffix: bytes) -> bool:
     if not suffix:
         return False
@@ -141,7 +149,7 @@ def _prefix_jsonl_malformed(complete_prefix: bytes) -> bool:
         stripped = line.strip()
         if not stripped:
             continue
-        if not _parsed_json_object(stripped):
+        if not _parsed_json_line_record(stripped):
             return True
     return False
 
@@ -287,16 +295,17 @@ def _emit_failure(code: str) -> None:
         pass
 
 
-def _jsonl_path_allowed(path: Path) -> bool:
+def _resolve_allowed_jsonl_path(path: Path) -> Path:
+    """Resolve once and return the path that passed containment (TOCTOU-safe read target)."""
     resolved = path.resolve()
     if _is_cursor_project_transcript(resolved):
-        return True
+        return resolved
     root = _transcripts_root()
     try:
         resolved.relative_to(root)
     except ValueError:
-        return False
-    return True
+        raise GlassExportError("transcript_not_found") from None
+    return resolved
 
 
 def _check_transcripts_root() -> None:
@@ -386,13 +395,15 @@ def _export_glass_transcript_messages_body(
     if jsonl_path is None:
         _emit_failure("transcript_not_found")
         raise GlassExportError("transcript_not_found")
-    if not _jsonl_path_allowed(jsonl_path):
-        _emit_failure("transcript_not_found")
-        raise GlassExportError("transcript_not_found")
+    try:
+        resolved_jsonl = _resolve_allowed_jsonl_path(jsonl_path)
+    except GlassExportError as exc:
+        _emit_failure(exc.code)
+        raise
 
     try:
         snapshot = read_jsonl_snapshot_capped(
-            jsonl_path,
+            resolved_jsonl,
             cap_bytes=cap,
             from_byte_offset=from_byte_offset,
         )
@@ -431,7 +442,7 @@ def _export_glass_transcript_messages_body(
 
     provenance = {
         "transcript_id": normalized_id,
-        "jsonl_path": _relative_jsonl_path(jsonl_path),
+        "jsonl_path": _relative_jsonl_path(resolved_jsonl),
         "source_sha256": source_sha256,
         "messages_sha256": envelope.meta.messages_sha256,
         "observed_at": now,

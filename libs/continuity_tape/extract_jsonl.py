@@ -148,6 +148,8 @@ def _walk_turns_legacy(
     turns: list[dict[str, str]] = []
     current: dict[str, list[str]] | None = None
     for record in records:
+        if not isinstance(record, dict):
+            continue
         role = record.get("role")
         message = record.get("message") or {}
         content = message.get("content")
@@ -201,6 +203,8 @@ def _walk_turns(
     turns: list[dict[str, str]] = []
     current: dict[str, list[str]] | None = None
     for record in records:
+        if not isinstance(record, dict):
+            continue
         message = record.get("message") or {}
         rec_type = record.get("type")
         if bool(record.get("isMeta")) or bool(record.get("isSidechain")):
