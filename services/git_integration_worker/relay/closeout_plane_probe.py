@@ -18,6 +18,9 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Literal
 
+from services.git_integration_worker.cursor_sdk_closeout_harvest import (
+    split_sidecar_executive_envelope,
+)
 from services.git_integration_worker.relay.closeout_status_polarity import (
     annotate_status_claim_discrepancy,
     merge_plane_discrepancy_markers,
@@ -846,8 +849,8 @@ def rewrite_receipt_preamble_file(
 ) -> None:
     """Rewrite the sidecar preamble's land claims. A write failure is logged.
 
-    Only the bytes before the first ATX heading change, so a later structured
-    JSON section is not scanned. The ahead-meter is forwarded to
+    For enveloped sidecars, only the harvest section under ``## executive_envelope``
+    changes (legacy sidecars: bytes before the first ATX heading). The ahead-meter is forwarded to
     ``project_receipt_land_claims``; omitting it keeps the ancestry-only
     projection. OSError leaves the previous preamble in place; the closeout
     path must not raise. No event: one file per dispatch, and a failed write
@@ -858,11 +861,7 @@ def rewrite_receipt_preamble_file(
     except OSError:
         logger.warning("receipt land-claim rewrite unreadable path=%s", path)
         return
-    match = _ATX_HEADING_RE.search(existing)
-    if match is None:
-        section, rest = existing, ""
-    else:
-        section, rest = existing[: match.start()], existing[match.start() :]
+    heading, section, rest = split_sidecar_executive_envelope(existing)
     projected = project_receipt_land_claims(
         section,
         repo=repo,
@@ -877,7 +876,10 @@ def rewrite_receipt_preamble_file(
     if rest and projected and not projected.endswith("\n"):
         projected += "\n"
     try:
-        path.write_text(projected + rest, encoding="utf-8")
+        if heading is not None:
+            path.write_text(f"{heading}\n\n{projected}{rest}", encoding="utf-8")
+        else:
+            path.write_text(projected + rest, encoding="utf-8")
     except OSError:
         logger.warning("receipt land-claim rewrite failed path=%s", path)
 
