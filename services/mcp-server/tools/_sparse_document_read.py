@@ -192,6 +192,7 @@ def _assign_section_ids(sections: list[Any]) -> list[_IndexedSection]:
 
 
 def _id_last_segment(section_id: str) -> str:
+    """Last heading label in a section id, without ``#ordinal`` or parent path."""
     base = section_id.rsplit("#", 1)[0]
     return base.rsplit("/", 1)[-1]
 
@@ -763,6 +764,13 @@ def resolve_document_read(
     chunk_cursor_provided: bool = False,
     expected_read_sha256: str | None = None,
 ) -> dict[str, Any]:
+    """Manifest-first markdown/document read dispatcher (single section and batch).
+
+    When a single ``section`` id is missing, the payload includes ``nearest_ids``
+    (up to five ranked ids from the document) and ``id_format_hint`` (how ids
+    are formed). When the id is ``duplicate_ambiguous``, the early return carries
+    the colliding ids in ``nearest_ids`` plus the same hint.
+    """
     has_section = bool(section and str(section).strip())
     has_sections = bool(sections)
     range_requested = offset > 0 or limit > 0
@@ -851,29 +859,19 @@ def resolve_document_read(
                 }
             )
         if outcome != "ok" or body is None:
-            missing_outcome = (
-                "duplicate_ambiguous" if outcome == "duplicate_ambiguous" else "missing"
-            )
-            miss_recovery = (
-                {
-                    "nearest_ids": _nearest_section_ids(sid, indexed),
-                    "id_format_hint": _ID_FORMAT_HINT,
-                }
-                if missing_outcome == "missing"
-                else {}
-            )
             return finalize_sparse_document_payload(
                 {
                     "ok": False,
-                    "outcome": missing_outcome,
+                    "outcome": "missing",
                     "error": f"Section not found: {sid!r}",
                     "selection": "section",
                     "section": sid,
                     "path": path,
                     "sandbox": sandbox,
                     "read_sha256": read_sha256,
+                    "nearest_ids": _nearest_section_ids(sid, indexed),
+                    "id_format_hint": _ID_FORMAT_HINT,
                     **span_meta,
-                    **miss_recovery,
                 }
             )
 

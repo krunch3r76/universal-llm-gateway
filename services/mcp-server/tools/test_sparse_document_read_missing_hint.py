@@ -9,7 +9,6 @@ import pytest
 from fastmcp import FastMCP
 from markdown_sections import parse_sections
 
-from tools._hashing import sha256_hex_of_bytes
 from tools._sparse_document_read import (
     _ID_FORMAT_HINT,
     _assign_section_ids,
@@ -84,7 +83,6 @@ def test_duplicate_ambiguous_lists_colliding_ids_in_nearest_ids(md_tool) -> None
     fn, root = md_tool
     dup = "# A\n\nfirst\n\n# A\n\nsecond\n"
     root.joinpath("dup.md").write_text(dup, encoding="utf-8")
-    _ = sha256_hex_of_bytes(dup.encode("utf-8"))
     res = fn(op="read_section", path="dup.md", sandbox="cortex", section="A")
     assert res.get("code") == "duplicate_ambiguous"
     assert set(res["nearest_ids"]) == {"A#1", "A#2"}
