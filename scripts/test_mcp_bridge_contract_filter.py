@@ -23,10 +23,12 @@ from scripts.mcp_bridge_contract_filter import (  # noqa: E402
     ULG_MCP_CONTRACT_ENV,
     _copy_downstream,
     filter_tools_list_payload,
+    ledger_dispatch_holder_lookup,
     read_framed_message,
     refuse_conductor_descended_manage,
     should_filter_stdio,
     stamp_resume_caller_dispatch_id,
+    stamp_team_dispatch_claim_defaults,
     write_framed_message,
 )
 
@@ -395,6 +397,171 @@ def test_bridge_stamps_caller_on_resume_of_generate_and_omits_to_thread(
         dispatch_id="holder-live",
     )
     assert "caller_dispatch_id" not in bare["params"]["arguments"]
+
+
+def test_bridge_stamps_claim_update_defaults_from_ledger(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("ULG_STAMP_CALLER_DISPATCH_ID", "1")
+    import sqlite3
+
+    db = tmp_path / "dispatch.db"
+    conn = sqlite3.connect(db)
+    conn.execute(
+        "CREATE TABLE cursor_sdk_dispatches (dispatch_id TEXT, caller_agent TEXT)"
+    )
+    conn.execute(
+        "INSERT INTO cursor_sdk_dispatches VALUES (?, ?)",
+        ("holder-live", "cursor"),
+    )
+    conn.commit()
+    conn.close()
+    monkeypatch.setenv("CURSOR_SDK_DISPATCH_LEDGER", str(db))
+    stamped = stamp_team_dispatch_claim_defaults(
+        _tools_call({"op": "claim_update", "work_status": "landed"}),
+        dispatch_id="holder-live",
+    )
+    args = stamped["params"]["arguments"]
+    assert args["claim_id"] == "holder-live"
+    assert args["caller_dispatch_id"] == "holder-live"
+    assert args["caller_agent"] == "cursor"
+
+    explicit = stamp_team_dispatch_claim_defaults(
+        _tools_call(
+            {
+                "op": "claim_release",
+                "outcome": "completed",
+                "claim_id": "other",
+                "caller_agent": "web-claude",
+            }
+        ),
+        dispatch_id="holder-live",
+    )
+    ex_args = explicit["params"]["arguments"]
+    assert ex_args["claim_id"] == "other"
+    assert ex_args["caller_dispatch_id"] == "holder-live"
+    assert ex_args["caller_agent"] == "web-claude"
+
+    partial = stamp_team_dispatch_claim_defaults(
+        _tools_call({"op": "claim_release", "outcome": "failed"}),
+        dispatch_id="holder-live",
+    )
+    part = partial["params"]["arguments"]
+    assert part["caller_agent"] == "cursor"
+    assert part["caller_dispatch_id"] == "holder-live"
+
+
+def test_bridge_claim_defaults_explicit_house_claim_no_caller_agent_inject(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Explicit claim-<hash> must not receive bridge caller_agent injection."""
+    monkeypatch.setenv("ULG_STAMP_CALLER_DISPATCH_ID", "1")
+    house = stamp_team_dispatch_claim_defaults(
+        _tools_call({"op": "claim_update", "claim_id": "claim-deadbeef", "work_status": "active"}),
+        dispatch_id="holder-live",
+    )
+    args = house["params"]["arguments"]
+    assert args["claim_id"] == "claim-deadbeef"
+    assert args["caller_dispatch_id"] == "holder-live"
+    assert "caller_agent" not in args
+
+
+def test_bridge_claim_defaults_overwrites_model_caller_dispatch_id(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("ULG_STAMP_CALLER_DISPATCH_ID", "1")
+    stamped = stamp_team_dispatch_claim_defaults(
+        _tools_call(
+            {
+                "op": "claim_update",
+                "claim_id": "holder-live",
+                "caller_dispatch_id": "model-wrong",
+                "work_status": "landed",
+            }
+        ),
+        dispatch_id="holder-live",
+    )
+    assert stamped["params"]["arguments"]["caller_dispatch_id"] == "holder-live"
+
+
+def test_bridge_claim_defaults_whitespace_stamp_passthrough() -> None:
+    raw = _tools_call({"op": "claim_update", "work_status": "landed"})
+    assert (
+        stamp_team_dispatch_claim_defaults(raw, dispatch_id="   ")["params"]["arguments"]
+        == raw["params"]["arguments"]
+    )
+
+
+def test_bridge_claim_defaults_no_stamp_passthrough() -> None:
+    raw = _tools_call({"op": "claim_update", "work_status": "landed"})
+    assert (
+        stamp_team_dispatch_claim_defaults(raw, dispatch_id="")["params"]["arguments"]
+        == raw["params"]["arguments"]
+    )
+
+
+def test_stamp_off_hides_caller_dispatch_id_from_claim_ops(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("ULG_STAMP_CALLER_DISPATCH_ID", raising=False)
+    stamped = stamp_team_dispatch_claim_defaults(
+        _tools_call(
+            {
+                "op": "claim_update",
+                "caller_dispatch_id": "model-wrong",
+                "work_status": "landed",
+            }
+        ),
+        dispatch_id="holder-live",
+    )
+    args = stamped["params"]["arguments"]
+    assert args["claim_id"] == "holder-live"
+    assert "caller_dispatch_id" not in args
+
+
+def test_stamp_on_stamps_caller_dispatch_id_on_claim_ops(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("ULG_STAMP_CALLER_DISPATCH_ID", "1")
+    stamped = stamp_team_dispatch_claim_defaults(
+        _tools_call({"op": "claim_update", "work_status": "active"}),
+        dispatch_id="holder-live",
+    )
+    assert stamped["params"]["arguments"]["caller_dispatch_id"] == "holder-live"
+
+
+def test_ledger_dispatch_holder_lookup_import_failure_returns_none(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import services.git_integration_worker.cursor_dispatch_ledger as ledger_mod
+
+    def _boom() -> None:
+        raise RuntimeError("ledger unavailable")
+
+    monkeypatch.setattr(ledger_mod, "resolve_cursor_sdk_dispatch_ledger_path", _boom)
+    stamped = stamp_team_dispatch_claim_defaults(
+        _tools_call({"op": "claim_update", "work_status": "landed"}),
+        dispatch_id="holder-live",
+    )
+    args = stamped["params"]["arguments"]
+    assert args["claim_id"] == "holder-live"
+    assert "caller_agent" not in args
+
+
+def test_ledger_dispatch_holder_lookup_absent_row(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import sqlite3
+
+    db = tmp_path / "empty.db"
+    conn = sqlite3.connect(db)
+    conn.execute(
+        "CREATE TABLE cursor_sdk_dispatches (dispatch_id TEXT, caller_agent TEXT)"
+    )
+    conn.commit()
+    conn.close()
+    monkeypatch.setenv("CURSOR_SDK_DISPATCH_LEDGER", str(db))
+    assert ledger_dispatch_holder_lookup("missing") is None
 
 
 def test_stamp_off_hides_caller_dispatch_id_from_old_signature(

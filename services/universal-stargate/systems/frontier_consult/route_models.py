@@ -256,6 +256,7 @@ class TeamDispatchClaimReleaseBody(_DispatchCommon):
 
     op: Literal["claim_release"]
     claim_id: str
+    caller_dispatch_id: str | None = None
     outcome: Literal["completed", "failed", "withdrawn"]
 
 
@@ -275,6 +276,7 @@ class TeamDispatchClaimUpdateBody(_DispatchCommon):
 
     op: Literal["claim_update"]
     claim_id: str
+    caller_dispatch_id: str | None = None
     work_status: str | None = None
     address_patch: dict[str, Any] | None = None
     note: str | None = None

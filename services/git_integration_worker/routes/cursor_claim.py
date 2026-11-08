@@ -49,6 +49,7 @@ class ClaimUpdateBody(BaseModel):
     """Body for ``POST /claim/{id}/update`` — metadata patch or terminal release."""
 
     holder_agent: str
+    caller_dispatch_id: str | None = None
     work_status: str | None = None
     address_patch: dict[str, Any] | None = None
     note: str | None = None
@@ -101,6 +102,7 @@ class ReleaseBody(BaseModel):
     """
 
     holder_agent: str
+    caller_dispatch_id: str | None = None
     outcome: Literal["completed", "failed", "withdrawn"]
 
 
@@ -157,6 +159,7 @@ def post_claim_update(claim_id: str, body: ClaimUpdateBody) -> Any:
             work_status=body.work_status,
             address_patch=body.address_patch,
             note=body.note,
+            caller_dispatch_id=body.caller_dispatch_id,
         )
     except ClaimError as exc:
         return JSONResponse(
@@ -221,7 +224,12 @@ def post_claim_release(claim_id: str, body: ReleaseBody) -> Any:
     if not body.holder_agent.strip():
         return _invalid("INVALID_CLAIM", "holder_agent is required")
     try:
-        return release(claim_id, body.holder_agent.strip(), body.outcome)
+        return release(
+            claim_id,
+            body.holder_agent.strip(),
+            body.outcome,
+            caller_dispatch_id=body.caller_dispatch_id,
+        )
     except ClaimError as exc:
         return JSONResponse(
             status_code=exc.http_status,

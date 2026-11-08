@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import json
 import os
+import sqlite3
 import subprocess
 import sys
 import threading
@@ -201,6 +202,99 @@ def _copy_upstream(
                 write_framed_message(downstream, message)
 
 
+def _argument_blank(value: Any) -> bool:
+    return not (isinstance(value, str) and value.strip())
+
+
+def ledger_dispatch_holder_lookup(dispatch_id: str) -> str | None:
+    """Read ``caller_agent`` for a dispatch row from the cursor-sdk ledger."""
+    try:
+        from services.git_integration_worker.cursor_dispatch_ledger import (
+            resolve_cursor_sdk_dispatch_ledger_path,
+        )
+
+        stamp = (dispatch_id or "").strip()
+        if not stamp:
+            return None
+        db_path = resolve_cursor_sdk_dispatch_ledger_path()
+        if not db_path.is_file():
+            return None
+        try:
+            conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True, timeout=2.0)
+        except sqlite3.Error:
+            return None
+        try:
+            conn.row_factory = sqlite3.Row
+            row = conn.execute(
+                "SELECT caller_agent FROM cursor_sdk_dispatches WHERE dispatch_id=?",
+                (stamp,),
+            ).fetchone()
+        except sqlite3.Error:
+            return None
+        finally:
+            conn.close()
+        if row is None:
+            return None
+        holder = str(row["caller_agent"] or "").strip()
+        return holder or None
+    except Exception:
+        return None
+
+
+def stamp_team_dispatch_claim_defaults(
+    message: dict[str, Any],
+    *,
+    dispatch_id: str,
+) -> dict[str, Any]:
+    """Stamp claim_update/claim_release with bridge dispatch identity.
+
+    When ``dispatch_id`` is non-empty after strip: always set
+    ``caller_dispatch_id``; default ``claim_id`` only when blank; inject
+    ``caller_agent`` from the ledger only when ``claim_id`` was defaulted.
+    The hub MCP server must not read ``CURSOR_SDK_DISPATCH_ID``.
+    """
+    if message.get("method") != "tools/call":
+        return message
+    params = message.get("params")
+    if not isinstance(params, dict) or params.get("name") != "team_dispatch":
+        return message
+    arguments = params.get("arguments")
+    if isinstance(arguments, str):
+        try:
+            arguments = json.loads(arguments)
+        except json.JSONDecodeError:
+            return message
+    if not isinstance(arguments, dict):
+        return message
+    op = arguments.get("op")
+    if op not in ("claim_update", "claim_release"):
+        return message
+    stamp = (dispatch_id or "").strip()
+    if not stamp:
+        return message
+    stamped = dict(arguments)
+    bridge_defaulted_claim_id = _argument_blank(arguments.get("claim_id"))
+    if bridge_defaulted_claim_id:
+        stamped["claim_id"] = stamp
+    if caller_dispatch_id_stamp_enabled():
+        stamped["caller_dispatch_id"] = stamp
+    elif "caller_dispatch_id" in stamped:
+        stripped = dict(stamped)
+        stripped.pop("caller_dispatch_id", None)
+        stamped = stripped
+    if bridge_defaulted_claim_id and _argument_blank(stamped.get("caller_agent")):
+        holder = ledger_dispatch_holder_lookup(stamp)
+        if holder:
+            stamped["caller_agent"] = holder
+    if stamped == arguments:
+        return message
+    new_params = dict(params)
+    new_params["arguments"] = stamped
+    new_message = dict(message)
+    new_message["params"] = new_params
+    return new_message
+
+
 def refuse_conductor_descended_manage(
     message: dict[str, Any],
     *,
@@ -360,6 +454,9 @@ def _copy_downstream(
                         write_framed_message(client_out, refusal)
                 continue
         message = stamp_resume_caller_dispatch_id(
+            message, dispatch_id=conductor_dispatch_id
+        )
+        message = stamp_team_dispatch_claim_defaults(
             message, dispatch_id=conductor_dispatch_id
         )
         msg_id = message.get("id")

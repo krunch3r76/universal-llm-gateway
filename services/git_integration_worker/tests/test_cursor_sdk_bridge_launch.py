@@ -251,6 +251,26 @@ def test_build_bridge_command_omits_optional_pairs(tmp_path, monkeypatch) -> Non
     )
 
 
+def test_build_bridge_command_child_dispatch_id_overrides_parent_env(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Nested launches must not inherit the parent CURSOR_SDK_DISPATCH_ID stamp."""
+    monkeypatch.setenv("CURSOR_SDK_DISPATCH_ID", "parent-dispatch")
+    command = build_bridge_command(
+        bridge_bin=sys.executable,
+        dispatch_home=tmp_path,
+        repo_venv=None,
+        real_home=tmp_path,
+        dispatch_id="child-dispatch",
+    )
+    home_token = f"HOME={tmp_path}"
+    assert home_token in command
+    home_idx = command.index(home_token)
+    assert "-u" not in command[home_idx:]
+    assert "CURSOR_SDK_DISPATCH_ID=child-dispatch" in command
+    assert "CURSOR_SDK_DISPATCH_ID=parent-dispatch" not in command
+
+
 def test_build_bridge_command_sets_playwright_browsers_path_when_cache_exists(
     tmp_path: Path,
 ) -> None:

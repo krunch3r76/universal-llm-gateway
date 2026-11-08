@@ -60,7 +60,8 @@ WORK_REGISTRY_RULE = (
 _REGISTRY_NEXT_TEMPLATE = (
     'Work registry: read team_dispatch(op=registry, work_key_prefix=<key>) before starting '
     "work on a work_key; claim with op=claim (seat_name, address) and keep it current with "
-    "op=claim_update; this dispatch was auto-recorded as {row_id}."
+    "op=claim_update (acting-row updates require the bridge caller_dispatch_id stamp — "
+    "unstamped callers get 409); this dispatch was auto-recorded as {row_id}."
 )
 
 

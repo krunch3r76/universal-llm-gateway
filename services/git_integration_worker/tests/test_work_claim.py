@@ -23,6 +23,7 @@ from services.git_integration_worker.cursor_sdk_gate import (
 )
 from services.git_integration_worker.cursor_sdk_orphan import _bridge_is_owned
 from services.git_integration_worker.cursor_sdk_work_claim import (
+    ClaimError,
     WorkKeyHeld,
     claim,
     claim_id_for,
@@ -648,6 +649,115 @@ def test_registry_s1_update_landed_and_holder_guard() -> None:
     assert landed.status_code == 200
     assert landed.json()["released"]["status"] == "completed"
     assert _status(ledger, cid) == "completed"
+
+
+def test_acting_dispatch_row_claim_update_landed() -> None:
+    """Auto-recorded dispatch rows (queued/admitted/running) accept claim_update landed."""
+    ledger = _ledger()
+    dispatch_id = "disp-acting-land-22537"
+    _admit(ledger, dispatch_id=dispatch_id, work_key="todo:acting-land-22537")
+    result = update(
+        dispatch_id,
+        "seat-a",
+        work_status="landed",
+        caller_dispatch_id=dispatch_id,
+        ledger=ledger,
+    )
+    assert result["released"]["status"] == "completed"
+    assert _status(ledger, dispatch_id) == "completed"
+
+
+def test_acting_row_claim_update_without_caller_dispatch_id_refused() -> None:
+    ledger = _ledger()
+    dispatch_id = "disp-acting-missing-caller-42965"
+    _admit(ledger, dispatch_id=dispatch_id, work_key="todo:acting-missing-caller")
+    with pytest.raises(ClaimError) as excinfo:
+        update(
+            dispatch_id,
+            "seat-a",
+            work_status="landed",
+            ledger=ledger,
+        )
+    assert excinfo.value.code == "CLAIM_NOT_HELD"
+
+
+def test_acting_row_own_stamp_claim_update_ok() -> None:
+    ledger = _ledger()
+    dispatch_id = "disp-acting-own-stamp-42965"
+    _admit(ledger, dispatch_id=dispatch_id, work_key="todo:acting-own-stamp")
+    out = update(
+        dispatch_id,
+        "seat-a",
+        work_status="active",
+        note="progress",
+        caller_dispatch_id=dispatch_id,
+        ledger=ledger,
+    )
+    assert out["claim_id"] == dispatch_id
+
+
+def test_running_row_claim_landed_closeout_merge_survives_terminal_paths() -> None:
+    """Early claim_update landed must not block later executor closeout record merge.
+
+    Breaks when a registry landed flip leaves guarded terminal marks or
+    already_terminal cancel paths that drop or clobber closeout fields.
+    """
+    ledger = _ledger()
+    dispatch_id = "disp-landed-closeout-42965"
+    work_key = "todo:landed-closeout-42965"
+    _admit(ledger, dispatch_id=dispatch_id, work_key=work_key)
+    with ledger._connect() as conn:
+        conn.execute(
+            "UPDATE cursor_sdk_dispatches SET status='running' WHERE dispatch_id=?",
+            (dispatch_id,),
+        )
+        conn.commit()
+    update(
+        dispatch_id,
+        "seat-a",
+        work_status="landed",
+        caller_dispatch_id=dispatch_id,
+        ledger=ledger,
+    )
+    assert _status(ledger, dispatch_id) == "completed"
+    closeout_patch = {
+        "closeout_stop_tokens": ["status: complete"],
+        "work_verdict": "shipped",
+    }
+    ledger.merge_record_json(dispatch_id=dispatch_id, patch=closeout_patch)
+    guarded = ledger.mark_terminal_checked(
+        dispatch_id=dispatch_id,
+        terminal_status="completed",
+        only_from_statuses=("queued", "admitted", "running"),
+    )
+    assert guarded.marked is False
+    cancel = ledger.cancel_dispatch(dispatch_id=dispatch_id)
+    assert cancel.outcome == "already_terminal"
+    ledger.mark_terminal(dispatch_id=dispatch_id, terminal_status="completed")
+    with ledger._connect() as conn:
+        row = conn.execute(
+            "SELECT status, record_json FROM cursor_sdk_dispatches WHERE dispatch_id=?",
+            (dispatch_id,),
+        ).fetchone()
+    assert row is not None
+    rec = json.loads(row["record_json"])
+    assert rec["work_verdict"] == "shipped"
+    assert row["status"] == "completed"
+
+
+def test_cross_dispatch_release_refused_with_mismatched_caller_dispatch_id() -> None:
+    ledger = _ledger()
+    other_id = "disp-other-live-42965"
+    _admit(ledger, dispatch_id=other_id, work_key="todo:cross-dispatch-42965")
+    with pytest.raises(ClaimError) as excinfo:
+        release(
+            other_id,
+            "seat-a",
+            "completed",
+            caller_dispatch_id="stamp-not-other",
+            ledger=ledger,
+        )
+    assert excinfo.value.code == "CLAIM_NOT_HELD"
 
 
 def test_registry_s1_invalid_address_and_secret_key() -> None:
