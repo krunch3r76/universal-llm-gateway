@@ -17,6 +17,8 @@ from pathlib import Path
 
 import pytest
 
+from scripts.cortex._skill_git_guard import PERSONAL_SKILL_SLUGS
+
 _ENTITY_ID_KEY = re.compile(r"""['\"]entity_id['\"]\s*:""")
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -309,6 +311,12 @@ def _non_py_violations() -> list[str]:
             if not path.is_file() or path.suffix.lower() not in _NON_PY_SUFFIXES:
                 continue
             if "tmp" in path.parts:
+                continue
+            if (
+                ".cursor" in path.parts
+                and "skills" in path.parts
+                and path.parent.name in PERSONAL_SKILL_SLUGS
+            ):
                 continue
             try:
                 text = path.read_text(encoding="utf-8")
