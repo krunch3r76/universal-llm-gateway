@@ -60,6 +60,8 @@ _NON_PY_ROOTS = (
 
 _NON_PY_SUFFIXES = {".md", ".mdc", ".txt", ".yml", ".yaml"}
 
+_PREVIEW_SOURCE_URI_ONLY = frozenset({"source_uri"})
+
 
 def _production_py_files() -> list[Path]:
     out: list[Path] = []
@@ -150,6 +152,81 @@ def _allowed(rel: str, segment: str) -> bool:
     )
 
 
+def _enclosing_function(
+    node: ast.AST, parents: dict[ast.AST, ast.AST]
+) -> ast.FunctionDef | ast.AsyncFunctionDef | None:
+    current: ast.AST | None = node
+    while current in parents:
+        current = parents[current]
+        if isinstance(current, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            return current
+    return None
+
+
+def _get_accessed_keys(
+    root: ast.AST, bound_names: frozenset[str]
+) -> set[str] | None:
+    """Return ``.get('key')`` string keys read from ``bound_names``, or None if unknown."""
+    keys: set[str] = set()
+    for child in ast.walk(root):
+        if not isinstance(child, ast.Call):
+            continue
+        if not isinstance(child.func, ast.Attribute) or child.func.attr != "get":
+            continue
+        base = child.func.value
+        if isinstance(base, ast.Name) and base.id in bound_names:
+            if not child.args:
+                return None
+            key_node = child.args[0]
+            if isinstance(key_node, ast.Constant) and isinstance(key_node.value, str):
+                keys.add(key_node.value)
+            else:
+                return None
+        if base == root and child.args:
+            key_node = child.args[0]
+            if isinstance(key_node, ast.Constant) and isinstance(key_node.value, str):
+                keys.add(key_node.value)
+            else:
+                return None
+    return keys
+
+
+def _preview_sufficient_entity_get(
+    call: ast.Call,
+    parents: dict[ast.AST, ast.AST],
+) -> bool:
+    """Call omits intent but only reads ``source_uri`` from the preview default."""
+    parent = parents.get(call)
+    if parent is None:
+        return False
+    if isinstance(parent, ast.Call) and isinstance(parent.func, ast.Attribute):
+        if parent.func.attr == "get" and parent.func.value == call:
+            keys = _get_accessed_keys(parent, frozenset())
+            return keys == _PREVIEW_SOURCE_URI_ONLY if keys is not None else False
+    bound: set[str] = set()
+    if isinstance(parent, ast.Assign):
+        for target in parent.targets:
+            if isinstance(target, ast.Name):
+                bound.add(target.id)
+    if not bound:
+        return False
+    func = _enclosing_function(call, parents)
+    if func is None:
+        return False
+    keys: set[str] = set()
+    for child in ast.walk(func):
+        if not isinstance(child, ast.Call):
+            continue
+        if not isinstance(child.func, ast.Attribute) or child.func.attr != "get":
+            continue
+        if isinstance(child.func.value, ast.Name) and child.func.value.id in bound:
+            accessed = _get_accessed_keys(child, bound)
+            if accessed is None:
+                return False
+            keys |= accessed
+    return bool(keys) and keys <= _PREVIEW_SOURCE_URI_ONLY
+
+
 def _violations_in_py(path: Path) -> list[str]:
     source = path.read_text(encoding="utf-8")
     try:
@@ -175,6 +252,8 @@ def _violations_in_py(path: Path) -> list[str]:
         if isinstance(node, ast.Call) and _call_is_entity_get(node):
             present = _payload_has_intent(node)
             if present is True:
+                continue
+            if present is False and _preview_sufficient_entity_get(node, parents):
                 continue
             segment = ast.get_source_segment(source, node) or ""
             if _allowed(rel, segment):

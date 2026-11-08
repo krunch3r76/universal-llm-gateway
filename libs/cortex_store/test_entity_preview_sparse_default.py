@@ -48,6 +48,40 @@ def test_omitted_intent_returns_preview(migrated_conn: sqlite3.Connection) -> No
 
 
 @pytest.mark.offline
+def test_preview_includes_source_uri(migrated_conn: sqlite3.Connection) -> None:
+    entity_id = "todo:sparse-preview-source-uri"
+    uri = "notes/legal/case-a/index.md"
+    insert_entity(migrated_conn, entity_id=entity_id, entity_type="todo")
+    migrated_conn.execute(
+        "UPDATE entities SET source_uri = ? WHERE id = ?",
+        (uri, entity_id),
+    )
+    migrated_conn.commit()
+    with _patched_conn(migrated_conn):
+        result = execute_op("entity_get", {"entity_id": entity_id})
+    assert result.get("source_uri") == uri
+
+
+@pytest.mark.offline
+def test_preview_source_uri_null_when_absent(migrated_conn: sqlite3.Connection) -> None:
+    entity_id = "todo:sparse-preview-no-uri"
+    insert_entity(migrated_conn, entity_id=entity_id, entity_type="todo")
+    with _patched_conn(migrated_conn):
+        result = execute_op("entity_get", {"entity_id": entity_id})
+    assert result.get("source_uri") is None
+
+
+@pytest.mark.offline
+def test_empty_string_intent_returns_preview(migrated_conn: sqlite3.Connection) -> None:
+    entity_id = "todo:sparse-preview-empty-intent"
+    insert_entity(migrated_conn, entity_id=entity_id, entity_type="todo")
+    with _patched_conn(migrated_conn):
+        result = execute_op("entity_get", {"entity_id": entity_id, "intent": ""})
+    assert result.get("intent") == "preview"
+    assert result.get("selection") == "preview"
+
+
+@pytest.mark.offline
 def test_explicit_preview_intent(migrated_conn: sqlite3.Connection) -> None:
     entity_id = "todo:sparse-preview-explicit"
     insert_entity(migrated_conn, entity_id=entity_id, entity_type="todo")

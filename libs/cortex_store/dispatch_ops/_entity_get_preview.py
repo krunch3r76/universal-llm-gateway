@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import sqlite3
 from typing import Any
 
@@ -69,7 +70,13 @@ def _parse_assertion_node(node: object) -> int | None:
     return int(raw)
 
 
-def _conflict_slot(conn: sqlite3.Connection, entity_id: str) -> dict[str, Any]:
+def _conflict_slot(
+    conn: sqlite3.Connection,
+    entity_id: str,
+    *,
+    live_ids: set[int],
+    freshest: dict[str, Any] | None,
+) -> dict[str, Any]:
     """Live ``contradicts`` edges. Assertion confidence has no ``contradicts`` value.
 
     A pair counts only when both endpoints are live (not superseded) assertions
@@ -81,18 +88,16 @@ def _conflict_slot(conn: sqlite3.Connection, entity_id: str) -> dict[str, Any]:
         "conflict_assertion_id": None,
         "conflict_marker": None,
     }
-    live = query(
-        conn,
-        "SELECT id FROM assertions WHERE entity_id = ? AND superseded_by IS NULL",
-        (entity_id,),
-    )
-    live_ids = {int(row["id"]) for row in live}
     if not live_ids:
         return empty
+    nodes = [f"assertion:{aid}" for aid in sorted(live_ids)]
+    node_placeholders = ",".join("?" for _ in nodes)
     edges = query(
         conn,
         "SELECT from_node, to_node FROM session_edges "
-        "WHERE edge_type = 'contradicts' AND valid_until IS NULL",
+        "WHERE edge_type = 'contradicts' AND valid_until IS NULL "
+        f"AND (from_node IN ({node_placeholders}) OR to_node IN ({node_placeholders}))",
+        tuple(nodes) + tuple(nodes),
     )
     pair_ids: list[tuple[int, int]] = []
     needed: set[int] = set()
@@ -117,7 +122,6 @@ def _conflict_slot(conn: sqlite3.Connection, entity_id: str) -> dict[str, Any]:
         tuple(needed),
     )
     by_id = {int(row["id"]): row for row in loaded if row.get("superseded_by") is None}
-    freshest = _freshest_assertion(conn, entity_id)
     candidates: list[dict[str, Any]] = []
     counted = 0
     for left, right in pair_ids:
@@ -156,7 +160,8 @@ def build_entity_preview(
     rows = query(
         conn,
         "SELECT id, type, name, description, workflow_state, confidence_band, "
-        "lifecycle, updated_at, content_hash, attributes FROM entities WHERE id = ?",
+        "lifecycle, updated_at, content_hash, attributes, source_uri FROM entities "
+        "WHERE id = ?",
         (entity_id,),
     )
     if not rows:
@@ -175,8 +180,6 @@ def build_entity_preview(
     raw_attrs = row.get("attributes")
     if isinstance(raw_attrs, str) and raw_attrs.strip():
         try:
-            import json
-
             parsed = json.loads(raw_attrs)
             if isinstance(parsed, dict):
                 attr_count = len(parsed)
@@ -184,12 +187,14 @@ def build_entity_preview(
                 attr_count = len(parsed)
         except json.JSONDecodeError:
             attr_count = 0
-    assertion_rows = query(
+    live_assertions = query(
         conn,
-        "SELECT COUNT(*) AS n FROM assertions WHERE entity_id = ? AND superseded_by IS NULL",
+        "SELECT id, claim, observed_at, confidence, review_status, entity_id "
+        "FROM assertions WHERE entity_id = ? AND superseded_by IS NULL",
         (entity_id,),
     )
-    assertion_count = int(assertion_rows[0]["n"]) if assertion_rows else 0
+    live_ids = {int(row["id"]) for row in live_assertions}
+    assertion_count = len(live_assertions)
     rel_rows = query(
         conn,
         "SELECT COUNT(*) AS n FROM relationships "
@@ -204,7 +209,13 @@ def build_entity_preview(
         (entity_id,),
     )
     child_count = int(child_rows[0]["n"]) if child_rows else 0
-    freshest = _freshest_assertion(conn, entity_id)
+    freshest = _freshest_of(live_assertions)
+    raw_source_uri = row.get("source_uri")
+    if raw_source_uri is None or not str(raw_source_uri).strip():
+        preview_source_uri = None
+    else:
+        clipped, _, _ = _clip_summary(str(raw_source_uri))
+        preview_source_uri = clipped or None
     preview: dict[str, Any] = {
         "entity_id": entity_id,
         "id": entity_id,
@@ -221,6 +232,7 @@ def build_entity_preview(
         "updated_at": row.get("updated_at"),
         "revision": revision,
         "content_hash": row.get("content_hash"),
+        "source_uri": preview_source_uri,
         "freshest_assertion_id": int(freshest["id"]) if freshest else None,
         "confidence": freshest.get("confidence") if freshest else None,
         "review_status": freshest.get("review_status") if freshest else None,
@@ -239,5 +251,12 @@ def build_entity_preview(
         "selection": "preview",
         "omitted": list(_PREVIEW_OMITTED),
     }
-    preview.update(_conflict_slot(conn, entity_id))
+    preview.update(
+        _conflict_slot(
+            conn,
+            entity_id,
+            live_ids=live_ids,
+            freshest=freshest,
+        )
+    )
     return preview

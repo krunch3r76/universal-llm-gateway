@@ -609,7 +609,7 @@ def _entity_get_batch(
     if batch_intent not in _BATCH_SUPPORTED_INTENTS | {"preview"}:
         return {
             "error": "batch_intent_unsupported",
-            "supported": sorted(_BATCH_SUPPORTED_INTENTS),
+            "supported": sorted(_BATCH_SUPPORTED_INTENTS | {"preview"}),
             "status_code": 400,
         }
     if batch_intent in {"card", "card-md"} and (
@@ -746,7 +746,7 @@ def _op_entity_get(
     from ._entity_get_param_surface import attach_entity_get_param_warnings
 
     dropped_keys = sorted(extra.keys())
-    resolved_intent = "preview" if intent is None else intent
+    resolved_intent = "preview" if intent is None or intent == "" else intent
     if entity_ids is not None and entity_id is not None:
         return {"error": "both_entity_id_and_entity_ids", "status_code": 400}
     rev_parse_err, exp_rev_coerced, er_coerced = _parse_entity_get_revision_params(

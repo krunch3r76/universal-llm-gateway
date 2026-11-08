@@ -336,9 +336,22 @@ def test_batch_nonexistent_returns_ok_false_item_not_500(
 
 
 @pytest.mark.offline
+def test_batch_empty_string_intent_preview(migrated_conn: sqlite3.Connection) -> None:
+    entity_id = "todo:batch-empty-intent"
+    insert_entity(migrated_conn, entity_id=entity_id, entity_type="todo")
+    with _patched_conn(migrated_conn):
+        result = execute_op(
+            "entity_get",
+            {"entity_ids": [entity_id], "intent": ""},
+        )
+    assert result["count"] == 1
+    assert result["items"][0].get("intent") == "preview"
+
+
+@pytest.mark.offline
 def test_batch_intent_unsupported_lists_supported() -> None:
     result = execute_op(
         "entity_get",
         {"entity_ids": ["todo:a"], "intent": "full"},
     )
-    assert result["supported"] == ["body", "card"]
+    assert result["supported"] == ["body", "card", "preview"]
