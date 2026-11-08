@@ -30,6 +30,8 @@ import unicodedata
 import uuid
 from typing import Any
 
+from cursor_bridge.chat_target import stale_wake_lines_js
+
 logger = logging.getLogger(__name__)
 
 _ULG_NORM_COMPOSER_JS = r"""
@@ -806,7 +808,6 @@ def _click_send_body(
     """
     find = _find_composer_js(selector)
     lj = json.dumps(_dom_paste_text(line, preserve_newlines=preserve_newlines))
-    from cursor_bridge.chat_target import stale_wake_lines_js
 
     stale_js = stale_wake_lines_js("t")
     btn_sels = json.dumps(list(_SEND_BTN_SELECTORS))
@@ -901,7 +902,6 @@ def _click_send_body(
 
 
 def operator_busy_probe_js(*, selector: str, watermark: str = "") -> str:
-    from cursor_bridge.chat_target import stale_wake_lines_js
 
     sels = _selector_list(selector) or [selector]
     body = READ_OPERATOR_BUSY_JS.replace("%SELECTORS%", json.dumps(sels))

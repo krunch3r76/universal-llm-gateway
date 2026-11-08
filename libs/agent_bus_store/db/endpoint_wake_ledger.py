@@ -8,8 +8,8 @@ import os
 import re
 import sqlite3
 import uuid
-from datetime import UTC, datetime, timedelta
 from collections.abc import Sequence
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from agent_seat.registry import STAGE_MANAGER_ADDRESSES, normalize_bus_address

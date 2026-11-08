@@ -12,13 +12,13 @@ from unittest.mock import AsyncMock
 import pytest
 
 from cursor_bridge import wake_delivery as wd
+from cursor_bridge.chat_surface import classify_surface
+from cursor_bridge.chat_target import wake_line
+from cursor_bridge.composer_witness import composer_witness_expression
 from cursor_bridge.display_interaction_locks import (
     _DISPLAY_SWITCH_DEPTH,
     display_switch_lock,
 )
-from cursor_bridge.chat_surface import classify_surface
-from cursor_bridge.chat_target import wake_line
-from cursor_bridge.composer_witness import composer_witness_expression
 from cursor_bridge.glass_services_js import submit_wake_line_js
 from cursor_bridge.wake_delivery import (
     _busy_or_draft_reason,
