@@ -117,11 +117,11 @@ def test_callback_test_stays_suppressed(db: None) -> None:
     store_cls = _store_factory(subscription=None)
     scan_once(store_cls())  # type: ignore[arg-type]
     with connect() as conn:
-        row = conn.execute(
-            "SELECT COUNT(*) AS n FROM endpoint_wake_ledger WHERE turn_id=?",
+        rows = conn.execute(
+            "SELECT state, reason FROM endpoint_wake_ledger WHERE turn_id=?",
             (t_id,),
-        ).fetchone()
-    assert int(row["n"]) == 0
+        ).fetchall()
+    assert [tuple(r) for r in rows] == [("skipped", "suppressed:default_suppress")]
 
 
 def test_closeout_to_orion_enqueues_pending_with_work_route(db: None) -> None:

@@ -20,6 +20,7 @@ from .lane_associations import get_current_lane
 
 CONSUMER = "endpoint-wake-dispatcher"
 _CLAIM_STATES = ("claimed", "unknown")
+_SCAN_ITEM_STATES = frozenset({"pending", "skipped"})
 _CLAIM_SKIP_GROUP_CAP = 32
 _STAGE_MANAGER_SQL = ", ".join(f"'{a}'" for a in sorted(STAGE_MANAGER_ADDRESSES))
 _MAESTRO_WEB_SQL = ", ".join(f"'{a}'" for a in sorted(MAESTRO_WEB_ALIAS_PAIR))
@@ -69,8 +70,15 @@ def advance_scan(
     *,
     now: str | None = None,
 ) -> dict[str, Any]:
-    """CAS the cursor and insert pending rows. 409 on a stale high water."""
+    """CAS the cursor and insert pending rows. 409 on a stale high water.
+
+    An item with ``state='skipped'`` is a scan-time suppression tombstone: it is
+    inserted terminal with its ``reason`` so the decision is visible on the ledger.
+    """
     stamp = _now(now)
+    for item in pending:
+        if item.get("state", "pending") not in _SCAN_ITEM_STATES:
+            raise ValueError(f"advance_scan: unsupported item state {item['state']!r}")
     with write_connect() as conn:
         row = conn.execute(
             "SELECT high_water_turn_id FROM endpoint_wake_cursor WHERE consumer=?",
@@ -88,17 +96,21 @@ def advance_scan(
                 continue
             filtered.append(item)
         for item in filtered:
+            state = item.get("state", "pending")
             conn.execute(
                 "INSERT OR IGNORE INTO endpoint_wake_ledger "
-                "(agent, thread_id, turn_id, turn_number, state, created_at, "
-                "decided_by_rule) "
-                "VALUES (?,?,?,?, 'pending', ?, ?)",
+                "(agent, thread_id, turn_id, turn_number, state, reason, created_at, "
+                "finished_at, decided_by_rule) "
+                "VALUES (?,?,?,?,?,?,?,?,?)",
                 (
                     item["agent"],
                     item["thread_id"],
                     item["turn_id"],
                     item["turn_number"],
+                    state,
+                    item.get("reason") if state == "skipped" else None,
                     stamp,
+                    stamp if state == "skipped" else None,
                     item.get("decided_by_rule"),
                 ),
             )

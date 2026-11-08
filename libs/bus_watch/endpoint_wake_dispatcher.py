@@ -31,6 +31,7 @@ from web_chat_relay.orion_wake import (
     holder_conversation_url,
 )
 
+from bus_watch import endpoint_wake_self_sender as self_sender
 from bus_watch.endpoint_wake_transport import (
     StoreClient,
     agent_id_matches_composer_suffix,
@@ -1406,6 +1407,7 @@ def scan_once(store: StoreClient, *, idle_mark: dict[str, float] | None = None) 
         if not turns:
             return
         pending: list[dict[str, Any]] = []
+        tombstones: list[dict[str, Any]] = []
         stale_catchup: dict[str, int] | None = None
         for turn in turns:
             raw_to = str(turn.get("to_agent") or "")
@@ -1448,6 +1450,12 @@ def scan_once(store: StoreClient, *, idle_mark: dict[str, float] | None = None) 
                         to_agent=agent,
                         rule_id=verdict.rule_id,
                         subject_head=head,
+                    )
+                    tombstones.append(
+                        self_sender.suppressed_item(
+                            _pending_item(turn, decided_by_rule=verdict.rule_id),
+                            verdict.rule_id,
+                        )
                     )
                 continue
             if turn.get("read_at"):
@@ -1493,9 +1501,19 @@ def scan_once(store: StoreClient, *, idle_mark: dict[str, float] | None = None) 
                 stale_catchup["max"] = max(stale_catchup["max"], tid)
                 continue
             _remap, resolved = _cursor_tab_route(store, raw_to, resolved)
-            pending.append(
-                _pending_item(turn, decided_by_rule=verdict.rule_id, route=resolved)
-            )
+            item = _pending_item(turn, decided_by_rule=verdict.rule_id, route=resolved)
+            if self_sender.is_self_wake(store, turn, resolved):
+                rule = self_sender.SELF_SENDER_RULE
+                _observe_endpoint_wake_suppressed(
+                    thread_id=thread,
+                    turn_id=_turn_id_of(turn),
+                    to_agent=agent,
+                    rule_id=rule,
+                    subject_head=head,
+                )
+                tombstones.append(self_sender.suppressed_item(item, rule))
+                continue
+            pending.append(item)
         if stale_catchup is not None and stale_catchup["count"] > 0:
             _observe_drop_stale_catchup_aggregate(
                 count=stale_catchup["count"],
@@ -1504,13 +1522,13 @@ def scan_once(store: StoreClient, *, idle_mark: dict[str, float] | None = None) 
             )
         new_hw = int(turns[-1]["id"])
         if pending:
-            store.scan(high, new_hw, pending)
+            store.scan(high, new_hw, pending + tombstones)
             return
         if time.monotonic() - mark.get("at", 0.0) < 60:
-            store.scan(high, new_hw, pending)
+            store.scan(high, new_hw, tombstones)
             return
         mark["at"] = time.monotonic()
-        store.scan(high, new_hw, pending)
+        store.scan(high, new_hw, tombstones)
 
 
 def _display_post(
