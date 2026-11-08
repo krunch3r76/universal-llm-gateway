@@ -2273,11 +2273,8 @@ async def run_dispatcher() -> None:
         note_fire_due_wakes_iteration,
         safe_emit_pass_duration,
     )
-    from bus_watch.ide_context_hop_monitor import check_cursor_ide_context_hops
-
     store = StoreClient()
     idle: dict[str, float] = {}
-    hop_mark: dict[str, float] = {}
     while True:
         begin_pass()
         stage = "init"
@@ -2310,10 +2307,6 @@ async def run_dispatcher() -> None:
             stage = "finalize_composer_defer_pass"
             await asyncio.to_thread(finalize_composer_defer_pass)
             end_phase("finalize_composer_defer_pass")
-            begin_phase("check_cursor_ide_context_hops")
-            stage = "check_cursor_ide_context_hops"
-            await asyncio.to_thread(check_cursor_ide_context_hops, store, mark=hop_mark)
-            end_phase("check_cursor_ide_context_hops")
             from bus_watch.impresario_ear_patrol import run_patrol_pass
 
             begin_phase("run_patrol_pass")
@@ -2328,7 +2321,6 @@ async def run_dispatcher() -> None:
                 "scan_once",
                 "fire_due_wakes",
                 "finalize_composer_defer_pass",
-                "check_cursor_ide_context_hops",
                 "run_patrol_pass",
             }:
                 end_phase(stage)

@@ -102,12 +102,16 @@ def test_patrol_cooldown_allows_new_turn_hash(tmp_path: Path) -> None:
     assert patrol_cooldown_active(fp_new, now=1000.0 + 30.0) is False
 
 
-def test_run_dispatcher_pass_calls_patrol_beside_context_hops() -> None:
+def test_run_dispatcher_pass_calls_patrol_without_inline_hop_check() -> None:
     from bus_watch import endpoint_wake_dispatcher as disp
+    from bus_watch import ide_context_hop_monitor as hop_mon
 
-    src = inspect.getsource(disp.run_dispatcher)
-    assert "check_cursor_ide_context_hops" in src
-    assert "run_patrol_pass" in src
+    disp_src = inspect.getsource(disp.run_dispatcher)
+    assert "check_cursor_ide_context_hops" not in disp_src
+    assert "run_patrol_pass" in disp_src
+    assert "run_ide_context_hop_monitor" in inspect.getsource(
+        hop_mon.run_ide_context_hop_monitor
+    )
 
 
 def test_prescreen_lane_commit_review_suppressed_flag_blocks_imperative(
