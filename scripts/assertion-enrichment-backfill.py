@@ -20,9 +20,11 @@ import argparse
 import asyncio
 import os
 import random
+import signal
 import sqlite3
 import sys
 import time
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -31,19 +33,27 @@ import httpx
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "libs"))
 
 from cortex_store.assertion_enrichment_backfill import (  # noqa: E402
+    MAX_PERMANENT_ATTEMPTS,
+    PAUSE_BACKOFF_CAP_S,
     BackfillCountReport,
+    DispatchErrorClass,
     Kind,
     attempts_for,
     count_backfill_candidates,
     events_array_len,
     fetch_candidate_batch,
+    fetch_rows_by_ids,
     field_populated,
     load_state,
+    parse_dispatch_exception,
+    parse_dispatch_http,
     pipeline_payload,
     prospective_quality_metrics,
     prospective_question_form_share,
     record_outcome,
+    requeue_failed_outcomes,
     save_state,
+    terminal_outcome_ids,
 )
 from cortex_store.db import _CORTEX_DB  # noqa: E402
 from cortex_store.event_publisher import record as emit_event  # noqa: E402
@@ -53,7 +63,43 @@ DEFAULT_STATE = Path.home() / ".cortex" / "assertion-enrichment-backfill.state.j
 DEFAULT_LOG = Path.home() / ".cortex" / "assertion-enrichment-backfill.log"
 STARGATE_URL = os.environ.get("STARGATE_URL", "http://localhost:9999")
 _REQUEST_TIMEOUT = 120.0
-_MAX_ATTEMPTS = 3  # initial + 2 retries
+
+
+class _OutageCoordinator:
+    """Global pause when Stargate returns transient errors."""
+
+    def __init__(self) -> None:
+        self._lock = asyncio.Lock()
+        self._backoff_s = 1.0
+
+    async def handle_transient(
+        self,
+        client: httpx.AsyncClient,
+        detail: str,
+        log: Callable[[str], None],
+    ) -> None:
+        async with self._lock:
+            self._backoff_s = min(self._backoff_s * 2.0, PAUSE_BACKOFF_CAP_S)
+            sleep_s = self._backoff_s + random.uniform(0, 1.0)
+            log(
+                f"TRANSIENT global pause (cap={PAUSE_BACKOFF_CAP_S:.0f}s) "
+                f"{detail[:160]} sleep={sleep_s:.1f}s"
+            )
+        await asyncio.sleep(sleep_s)
+        while True:
+            try:
+                resp = await client.get(f"{STARGATE_URL}/health", timeout=15.0)
+                if resp.status_code < 400:
+                    log("stargate health OK — resuming")
+                    async with self._lock:
+                        self._backoff_s = 1.0
+                    return
+            except Exception as exc:
+                log(f"stargate health probe ERR {exc}")
+            await asyncio.sleep(5.0)
+
+
+_OUTAGE = _OutageCoordinator()
 
 
 def _parse_kinds(raw: str) -> tuple[Kind, ...]:
@@ -90,21 +136,23 @@ async def _dispatch(
     *,
     kinds: list[str],
     redo: bool,
-) -> tuple[int, bool, str]:
+):
     aid = int(row["id"])
     payload = pipeline_payload(row, kinds=kinds, redo=redo)
     try:
         resp = await client.post(
             f"{STARGATE_URL}/v1/chat/completions", json=payload
         )
-        ok = resp.status_code < 400
-        detail = "OK" if ok else f"HTTP {resp.status_code}"
-        if not ok:
-            detail += f" {resp.text[:200]}"
+        return aid, parse_dispatch_http(resp.status_code, resp.text)
     except Exception as exc:
-        ok = False
-        detail = f"ERR {exc}"
-    return aid, ok, detail
+        return aid, parse_dispatch_exception(exc)
+
+
+def _should_skip_failed(state: dict[str, Any], aid: int, *, allow_failed: bool) -> bool:
+    if allow_failed:
+        return False
+    entry = state.get("outcomes", {}).get(str(aid), {})
+    return entry.get("status") == "failed"
 
 
 async def _run_rows(
@@ -118,62 +166,83 @@ async def _run_rows(
     state_path: Path,
     log_path: Path,
     state: dict[str, Any],
+    allow_failed: bool = False,
 ) -> None:
     sem = asyncio.Semaphore(concurrency)
     kind_list = list(kinds)
-    permanent_failed: set[int] = set()
 
-    for key, entry in list(state.get("outcomes", {}).items()):
-        if entry.get("status") == "failed":
-            permanent_failed.add(int(key))
+    def log(line: str) -> None:
+        _log(log_path, line)
 
     async def _one(row: dict[str, Any], client: httpx.AsyncClient) -> None:
         aid = int(row["id"])
-        if aid in permanent_failed:
+        if _should_skip_failed(state, aid, allow_failed=allow_failed):
             return
-        prior_attempts = attempts_for(state, aid)
-        if prior_attempts >= _MAX_ATTEMPTS:
-            permanent_failed.add(aid)
-            return
+        permanent_attempts = attempts_for(state, aid)
 
         async with sem:
-            for attempt in range(prior_attempts, _MAX_ATTEMPTS):
-                _, ok, detail = await _dispatch(
+            while permanent_attempts < MAX_PERMANENT_ATTEMPTS:
+                _, result = await _dispatch(
                     client, row, kinds=kind_list, redo=redo
                 )
-                if ok:
+                if result.ok:
                     conn = sqlite3.connect(str(db_path))
                     conn.row_factory = sqlite3.Row
                     verified = all(field_populated(conn, aid, k) for k in kinds)
                     conn.close()
                     if verified:
-                        record_outcome(state, aid, "ok", attempts=attempt + 1)
+                        record_outcome(state, aid, "ok", attempts=permanent_attempts + 1)
                         state["stats"]["ok"] = state["stats"].get("ok", 0) + 1
                         state["cursor_id"] = max(state.get("cursor_id", 0), aid)
                         save_state(state_path, state)
-                        _log(log_path, f"id={aid} ok attempt={attempt + 1}")
+                        log(f"id={aid} ok permanent_attempts={permanent_attempts + 1}")
                         break
-                    ok = False
-                    detail = "pipeline OK but field not written"
-                if not ok:
-                    if attempt < _MAX_ATTEMPTS - 1:
-                        backoff = (2**attempt) + random.uniform(0, 0.5)
-                        _log(
-                            log_path,
-                            f"id={aid} retry {detail} sleep={backoff:.1f}s",
-                        )
-                        await asyncio.sleep(backoff)
-                        continue
-                    record_outcome(state, aid, "failed", attempts=attempt + 1)
-                    state["stats"]["failed"] = state["stats"].get("failed", 0) + 1
-                    permanent_failed.add(aid)
-                    save_state(state_path, state)
-                    _log(log_path, f"id={aid} failed {detail}")
-                if delay_ms > 0:
-                    await asyncio.sleep(delay_ms / 1000.0)
+                    result = parse_dispatch_http(
+                        500, "pipeline OK but field not written"
+                    )
+                if not result.ok and (
+                    result.error_class == DispatchErrorClass.TRANSIENT
+                ):
+                    await _OUTAGE.handle_transient(client, result.detail, log)
+                    continue
+                permanent_attempts += 1
+                if permanent_attempts < MAX_PERMANENT_ATTEMPTS:
+                    backoff = (2 ** (permanent_attempts - 1)) + random.uniform(0, 0.5)
+                    log(
+                        f"id={aid} PERMANENT retry ({permanent_attempts}/"
+                        f"{MAX_PERMANENT_ATTEMPTS}) {result.detail[:120]} "
+                        f"sleep={backoff:.1f}s"
+                    )
+                    await asyncio.sleep(backoff)
+                    continue
+                record_outcome(
+                    state,
+                    aid,
+                    "failed",
+                    attempts=permanent_attempts,
+                    last_error=result.detail,
+                    error_class=DispatchErrorClass.PERMANENT.value,
+                )
+                state["stats"]["failed"] = state["stats"].get("failed", 0) + 1
+                save_state(state_path, state)
+                log(f"id={aid} failed permanent {result.detail[:200]}")
+                break
+            if delay_ms > 0:
+                await asyncio.sleep(delay_ms / 1000.0)
 
     async with httpx.AsyncClient(timeout=_REQUEST_TIMEOUT) as client:
         await asyncio.gather(*[_one(r, client) for r in rows])
+
+
+def _install_sigterm_save(
+    state_path: Path, log_path: Path, state_holder: list[dict[str, Any]]
+) -> None:
+    def _handler(_signum: int, _frame: object) -> None:
+        save_state(state_path, state_holder[0])
+        _log(log_path, "SIGTERM saved state")
+        raise SystemExit(143)
+
+    signal.signal(signal.SIGTERM, _handler)
 
 
 async def _main_run(args: argparse.Namespace) -> int:
@@ -196,8 +265,34 @@ async def _main_run(args: argparse.Namespace) -> int:
     state_path = Path(args.state).expanduser()
     log_path = Path(args.log).expanduser()
     state = load_state(state_path)
-    cursor = int(state.get("cursor_id", 0))
+    state_holder = [state]
+    _install_sigterm_save(state_path, log_path, state_holder)
 
+    requeued_ids: list[int] = requeue_failed_outcomes(state, transient_only=True)
+    if args.retry_failed:
+        requeued_ids.extend(
+            requeue_failed_outcomes(state, transient_only=False)
+        )
+    requeued_ids = sorted(set(requeued_ids))
+    if requeued_ids:
+        save_state(state_path, state)
+        _log(log_path, f"requeued_failed count={len(requeued_ids)} ids={requeued_ids[:20]}")
+        warmup = fetch_rows_by_ids(conn, requeued_ids)
+        if warmup:
+            await _run_rows(
+                warmup,
+                kinds=kinds,
+                redo=redo,
+                concurrency=args.concurrency,
+                delay_ms=args.delay_ms,
+                db_path=db_path,
+                state_path=state_path,
+                log_path=log_path,
+                state=state,
+                allow_failed=True,
+            )
+
+    cursor = int(state.get("cursor_id", 0))
     processed = 0
     limit = args.limit
 
@@ -226,12 +321,42 @@ async def _main_run(args: argparse.Namespace) -> int:
             log_path=log_path,
             state=state,
         )
-        cursor = max(int(r["id"]) for r in rows)
+        terminals = terminal_outcome_ids(state)
+        batch_high = max(
+            (int(r["id"]) for r in rows if int(r["id"]) in terminals),
+            default=cursor,
+        )
+        cursor = max(cursor, batch_high)
         state["cursor_id"] = cursor
         save_state(state_path, state)
         processed += len(rows)
         if limit and processed >= limit:
             break
+
+    failed_ids = [
+        int(k)
+        for k, v in state.get("outcomes", {}).items()
+        if v.get("status") == "failed"
+    ]
+    if failed_ids and not state.get("retry_sweep_done"):
+        sweep_ids = requeue_failed_outcomes(state, transient_only=False)
+        _log(log_path, f"end-of-pass retry sweep requeued={len(sweep_ids)}")
+        retry_rows = fetch_rows_by_ids(conn, sweep_ids or failed_ids)
+        if retry_rows:
+            await _run_rows(
+                retry_rows,
+                kinds=kinds,
+                redo=redo,
+                concurrency=args.concurrency,
+                delay_ms=args.delay_ms,
+                db_path=db_path,
+                state_path=state_path,
+                log_path=log_path,
+                state=state,
+                allow_failed=True,
+            )
+        state["retry_sweep_done"] = True
+        save_state(state_path, state)
 
     conn.close()
     summary = {
@@ -378,6 +503,11 @@ def _parse() -> argparse.Namespace:
     p.add_argument("--delay-ms", type=int, default=250)
     p.add_argument("--validate-prospective-sample", type=int, default=0)
     p.add_argument("--sample-events", type=int, default=0)
+    p.add_argument(
+        "--retry-failed",
+        action="store_true",
+        help="Requeue all failed rows before the main pass",
+    )
     return p.parse_args()
 
 
