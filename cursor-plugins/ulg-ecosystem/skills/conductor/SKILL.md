@@ -29,7 +29,7 @@ related_skills:
 
 ## Before acting (kernel)
 
-Kernel bullets (run/land, ROW_HOP, width-seat critic, review≺land, G5 witness, lane=B) → `reference-overview.md` § Before acting (kernel).
+Kernel bullets (run/land, ROW_HOP, width-seat critic `cdp/opus-5.5` (`impresario.critic`), review≺land, G5 witness, lane=B) → `reference-overview.md` § Before acting (kernel).
 
 ## Guardrails
 
@@ -51,7 +51,7 @@ Author/admit packet, drive G-rows, `/conductor`, or `follow up` / `page me when 
 
 2. **Invariant + RTC.** → `reference-invariant.md`, `reference-run-to-completion.md`.
    Falsifier: failed CDP consult waits, retries pool, or DEFERRED while lane continues; nested G6 holds MCP wait until -32001 or ROW_HOPs while that execution_id is still live.
-   Specimen: `cdp_fail_route` `nested-grok` and `operator`.
+   Specimen: `cdp_fail_route` `anthropic`, `nested-grok`, or `operator`.
 
 3. **When, tier, roles.** → `reference-when.md`, `reference-model-tier.md`, `reference-role-split.md`.
    Falsifier: refused effort pin swapped to another rung, or conductor writes a mechanical G-row.

@@ -63,7 +63,7 @@ played(row) ∧ landed(master) ⇒ todo-close ≺ add_next_ungated ∧ play
 register=attended ∨ autonomous ⇒ land_on_green; HOLD_MERGE ⇔ operator_explicit_hold
 go_under ⇔ operator_overnight_or_departure; CONTEXT_BUDGET(attended, work_left) ⇒ ide-hop (¬go_under)
 ide_chain ⇒ ready=false; ticker ⇒ ready=true via --go-under only
-below_Opus ∧ judgment_fork ⇒ anthropic/claude-sonnet-5-5 first (impresario.critic; do not substitute cdp/; credit gate still applies)
+below_Opus ∧ judgment_fork ⇒ cdp/opus-5.5 first (`impresario.critic`; consult-routing § CDP transport; credit gate still applies)
 same_input_failed_twice ⇒ ¬retry(same_input); one attempt(different_kind: replace_input) before REPEATED_FAILURE
 open_fork(design ∨ strategy ∨ retry_same_AC) ∧ ¬mechanical ⇒ pipeline(divergent-ideation-v1) ≺ bind
 outbound_prose(high_stakes) ⇒ outbound-voice-spec ≺ pipeline(divergent-ideation-v1) ≺ pipeline(writer-specialist-v1)
@@ -215,27 +215,27 @@ Gear-3 ticker fires on: unread **live** lane · finished **work** lane closeout 
 
 ## Dispatch ladder (cost ↓, cycle time ↓)
 
-`attended IDE ∧ team_dispatch ∧ checkout ∧ played(todo) ⇒ admit(job=conductor)` (§ Play). Code AutoJob admit = `agent_bus(tool="request")`. Life implement = `cursor_request`.
+`attended IDE ∧ team_dispatch ∧ checkout ∧ played(todo) ⇒ admit(job=conductor)` (§ Play). Code AutoJob = `agent_bus(tool="request")`. Life implement = `cursor_request`.
 
 | Work | Executor | Bind / review |
 |---|---|---|
-| Seed / shape unshaped `todo:{slug}` or actionable `friction` | `cursor/gemini-4-argon` (`Use the lean-dispatch skill`) | stamps Fast (`G5` `mechanical`), Mid (`G2` `derived_from`), or Slow (`G1`) (`decision:argon-advisor-todo-seeding` · `a:40189`) |
-| Read / recon / ≥3 files | `Task(subagent_type="explore")` in-tab | none |
-| Trivial / local edit (<20 lines, no served path) | in-seat (Opus-class default; successor **dispatches** instead) | none — commit path-explicit same turn |
+| Seed / shape unshaped `todo:{slug}` or actionable `friction` | `cursor/gemini-4-argon` (`Use the lean-dispatch skill`) | stamps Fast (`G5` `mechanical`), Mid (`G2` `derived_from`), or Slow (`G1`) (`decision:argon-advisor-todo-seeding` · a:40189) |
+| Read / recon / ≥3 files | `Task(subagent_type="explore")` | none |
+| Trivial / local edit (<20 lines, no served path) | in-seat (Opus-class; successor dispatches instead) | none — commit path-explicit same turn |
 | Play a `todo:{slug}` | `team_dispatch(… contract=conductor, lane="B", source_ref=todo:…, dispatch_thread_id=R)` then end | conductor nests Sketch, Compose, densify, implement |
 | Mechanical implement with dense spec | conductor's nest, not this seat | none — Fable-densified packets skip skeptic |
-| Repo write when this seat lacks `team_dispatch` or checkout (life) | **`cursor_request(job=implement)`** — ¬ STAY, ¬ needs-attended | Attended IDE with both: skill `liaison-cursor`. ¬ this row |
+| Repo write when this seat lacks `team_dispatch` or checkout (life) | **`cursor_request(job=implement)`** — ¬ STAY, ¬ needs-attended | attended IDE + both: `liaison-cursor`. ¬ this row |
 | Design / judgment fork on played row | conductor's nest | one round inside conductor; disagreement ⇒ CONSULT_PENDING |
-| Judgment fork (independent check) | inline when Opus-class; below Opus, § Reasoning recon first | independent check only if invariant-touching ∨ cross-agent ∨ recurrence ≥2 |
+| Judgment fork (independent check) | inline when Opus-class; below Opus, § Reasoning recon first | independent check if invariant-touching ∨ cross-agent ∨ recurrence ≥2 |
 | Independent check / CDP judgment | **`team_dispatch(model=cdp/opus-5.5)`** — announce `CDP: <trigger> — <why>` | one round; disagreement ⇒ CONSULT_PENDING |
 | Long-context reasoning inside work tab | `cursor/grok-4.7` (card 256k, knob 500k) | **`cdp/fable`** only when Kaywan asks — ¬ `cursor/claude-*` |
 | Successor (this tab must end) | attended: CHECKPOINT + `scripts/liaison-ide-hop.py --root R --row "<NOW>" --transcript-id <uuid>`; autonomous: § Headless successor | — |
 
-**Reasoning recon** (2026-09-10): before judgment bind, send the wide read to `anthropic/claude-sonnet-5-5` (`impresario.critic`; do not substitute `cdp/`). Premium seat spends window on the bind, not breadth.
+**Reasoning recon** (2026-09-10): before judgment bind, read to `cdp/opus-5.5` (`impresario.critic`); premium seat spends on bind, ¬ breadth.
 
-Reasoning strength low→high on that prefix: `anthropic/claude-sonnet-5-5`, `anthropic/claude-opus-5-5`, `anthropic/claude-fable-5-1`. Walk `high` → `extra` → `max` inside a rung before the next wire.
+Reasoning strength low→high on `cdp/`: `cdp/opus-5.5`, `cdp/fable-5.1`. Walk `high` → `extra` → `max` inside a rung before the next wire. `cdp/` is allowed and preferred for conductor and supervisor legs over `anthropic/*` and over any `cursor/*` model except `cursor/composer-2.5` while it is cheaper. No CDP host ⇒ record `cdp_fail_route=anthropic` and dispatch `anthropic/claude-sonnet-5-5`.
 
-Model walls: default judgment wire = `anthropic/claude-sonnet-5-5` (`impresario.critic`). `anthropic/claude-fable-5-1` only when the operator names it. `cdp/` is the web-anthropic-cdp substrate, not this default. `cursor/claude-fable-5-1` ≠ escalation / `team_dispatch model=`. Same input failed twice ⇒ ¬ retry(same_input); one attempt(different_kind: replace_input) before REPEATED_FAILURE; third retry of same input forbidden.
+Model walls: default judgment wire = `cdp/opus-5.5` (`impresario.critic`). `anthropic/claude-fable-5-1` only when operator names it. `cursor/claude-fable-5-1` ≠ escalation / `team_dispatch model=`. Same input failed twice ⇒ ¬ retry(same_input); one attempt(different_kind: replace_input) before REPEATED_FAILURE; third same-input retry forbidden.
 
 ## Economy gears
 
@@ -246,7 +246,7 @@ Successor model = **policy, never a constant**. `--set gear=<name>` (or `--set k
 | `1-fable-mvp` | `cursor/grok-4.7` (`effort=high`, `fast=false`) | ≤ 5 ticks / 60 min / poll 600 s | **¬ overnight** — use gear 3; Cursor Fable credit closed |
 | `3-wake-on-attention` | **`cursor/grok-4.7`** (`effort=high`, `fast=false`) from preset; first play admit passes same `successor_model`+knobs (¬ omit `model=`). Override `--set successor_model=<slug>` | poll 120 s via `--loop --spawn-on-wake`; ticker holds `liaison-ticker-<root>.lock`, **not** seat mutex | **armed only by explicit `ready`** (`--set ready=true` or `--go-under`). IDE chain ⇒ `ready=false`; ticker ⇒ `--go-under` |
 
-Shift takes effect at **next** hop. Live `--loop` absorbs `--set` / `--mark-*` on next poll (`absorb_operator_edits`). `SPEND_CAP` (`policy.max_dispatches_per_night`) **off by default** — positive cap = designed stop (page, ¬ silent downshift). ¬ let successor pick a model; refused model = INFO + stop, never fallback.
+Shift takes effect at **next** hop. Live `--loop` absorbs `--set` / `--mark-*` on next poll (`absorb_operator_edits`). `SPEND_CAP` (`policy.max_dispatches_per_night`) **off by default** — positive cap = designed stop (page, ¬ silent downshift). ¬ let successor pick a model; refused model = INFO + stop, ¬ fallback.
 
 ## Objectives (autonomous queue)
 

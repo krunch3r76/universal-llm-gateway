@@ -1,6 +1,6 @@
 # Path-sim L3 annex
 <!-- width-seat:v1:start -->
-> **Width seat** (generated from `libs/implement_admission/conductor_critic_render.py`; do not hand-edit): critic = `anthropic/claude-sonnet-5-5` · `reasoning_effort=high` · usage channel **Sonnet**. SKETCH (G1) = `anthropic/claude-sonnet-5-5` · `reasoning_effort=high`. SKEPTIC (G4) = `anthropic/claude-sonnet-5-5` · `reasoning_effort=high` (cross-family review). RESTORE = `anthropic/claude-fable-5-1` · `reasoning_effort=high` (operator restore preset).
+> **Width seat** (generated from `libs/implement_admission/conductor_critic_render.py`; do not hand-edit): critic = `cdp/opus-5.5` · `reasoning_effort=high` · usage channel **Opus**. SKETCH (G1) = `cdp/opus-5.5` · `reasoning_effort=high`. SKEPTIC (G4) = `cdp/opus-5.5` · `reasoning_effort=high` (cross-family review). RESTORE = `anthropic/claude-fable-5-1` · `reasoning_effort=high` (operator restore preset).
 <!-- width-seat:v1:end -->
  — dispatch cascade (Q → A → R-admit → implement → R-after)
 
@@ -142,7 +142,7 @@ These are **three surfaces** — conflating them is a cascade defect (dogfood 20
 | **Gate-6 bypasses** | Alternate admit proofs | `gate6_ratification_uri` or hash-matched `recon_waived` | Implement admission — **¬** path-sim R |
 
 **Panel substrate on code (operator 2026-07-26).** A review pass **on code** defaults to
-`cursor/*` on cursor-sdk — that substrate holds the live checkout, which is what makes a
+`cursor/*` on cursor-sdk — the live checkout on that seat is what makes a
 code review effective. API roles are reserved for **architecture / bird's-eye** reasoning
 and checkout-free self-contained recon; CDP web-anthropic keeps R-admit. `openai/*` is
 metered and is **not** the code-review default; `xai/*` MCP support is weak. Where any
