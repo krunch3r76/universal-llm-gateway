@@ -45,6 +45,8 @@ config/env/*.local
 !.env.example
 !.env.*.example
 tmp/
+# Personal / life corpus on disk — use cortex:// or CORTEX_FILES_ROOT, not repo root
+/documents/
 docs/engram/
 docs/prompts/
 docs/research/

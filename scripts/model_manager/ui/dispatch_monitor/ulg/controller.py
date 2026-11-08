@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import time
 from collections.abc import Callable
+from dataclasses import replace
 from typing import Any
 
 from scripts.model_manager.ui.dispatch_monitor.core.codec import ProjectionCodec
@@ -34,6 +35,11 @@ from scripts.model_manager.ui.dispatch_monitor.ulg.terminal_backfill import (
 from scripts.model_manager.ui.dispatch_monitor.ulg.transport_events import (
     replay_truncated_event,
 )
+from scripts.model_manager.ui.dispatch_monitor.ulg.work_registry_snapshot import (
+    fetch_work_registry_live,
+    registry_fingerprint,
+    registry_poll_interval_s,
+)
 
 
 class LiveClock:
@@ -61,6 +67,9 @@ class MonitorController:
         self._reconcile = reconcile
         self._last_fingerprint: str | None = None
         self._last_frame = None
+        self._last_registry_fp: tuple[Any, ...] | None = None
+        self._work_registry = fetch_work_registry_live()
+        self._last_registry_fetch_mono = 0.0
         self._apply_lock = asyncio.Lock()
         self._pending_drop_hint = False
 
@@ -91,18 +100,33 @@ class MonitorController:
             minutes=max(self.seed_minutes, 24 * 60),
         )
 
+    def _maybe_refresh_work_registry(self) -> None:
+        now = time.monotonic()
+        if now - self._last_registry_fetch_mono < registry_poll_interval_s():
+            return
+        self._last_registry_fetch_mono = now
+        fresh = fetch_work_registry_live()
+        if fresh or self._work_registry:
+            self._work_registry = fresh
+
     def tick(self) -> bool:
         """Derive once; publish when fingerprint changes. Returns whether a frame emitted."""
         if lease_released_without_terminal_ids(self.model.sdk):
             self._backfill_live_terminals()
+        self._maybe_refresh_work_registry()
         frame = self.model.derive(self.clock.now_ms(), previous=self._last_frame)
         if self._pending_drop_hint:
             frame = hints_after_drop(frame)
             self._pending_drop_hint = False
-        if frame.fingerprint == self._last_fingerprint:
+        frame = replace(frame, work_registry=self._work_registry)
+        registry_fp = registry_fingerprint(frame.work_registry)
+        same_fold = frame.fingerprint == self._last_fingerprint
+        same_registry = registry_fp == self._last_registry_fp
+        if same_fold and same_registry:
             self._last_frame = frame
             return False
         self._last_fingerprint = frame.fingerprint
+        self._last_registry_fp = registry_fp
         self._last_frame = frame
         self.hub.publish(frame)
         return True

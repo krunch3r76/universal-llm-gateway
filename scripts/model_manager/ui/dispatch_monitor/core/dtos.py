@@ -266,6 +266,20 @@ class RelationEdge:
 
 
 @dataclass(frozen=True)
+class WorkRegistryRow:
+    """One live work-registry entry (GIW ``GET /cursor/registry``), view overlay only."""
+
+    row_id: str
+    kind: str = "dispatch"
+    status: str = "?"
+    work_key: str = ""
+    work_key_display: str = ""
+    thread_id: str | None = None
+    caller_agent: str | None = None
+    seat_name: str | None = None
+
+
+@dataclass(frozen=True)
 class SupervisorProjection:
     """One immutable frame. The whole of what a View is allowed to know.
 
@@ -293,6 +307,8 @@ class SupervisorProjection:
     relations: tuple[RelationEdge, ...] = ()
     arcs: Mapping[str, PathSimArcRow] = field(default_factory=dict)
     changed_hints: tuple[str, ...] = ()
+    # Live GIW work-registry rows; injected by the controller (not in fold fingerprint).
+    work_registry: tuple[WorkRegistryRow, ...] = ()
 
 
 def severity_rank(severity: str) -> int:

@@ -16,6 +16,7 @@ from .dtos import (
     HealthProjection,
     RelationEdge,
     SdkDispatchRow,
+    WorkRegistryRow,
 )
 from .sdk_posture import (
     ROW_TAG,
@@ -255,6 +256,44 @@ def _short_emitter(name: str) -> str:
     return name
 
 
+def registry_holder_label(row: WorkRegistryRow) -> str:
+    if row.seat_name:
+        return row.seat_name
+    if row.caller_agent:
+        return row.caller_agent
+    return "?"
+
+
+def registry_by_dispatch_id(
+    rows: tuple[WorkRegistryRow, ...],
+) -> dict[str, WorkRegistryRow]:
+    return {r.row_id: r for r in rows}
+
+
+def work_registry_line(row: WorkRegistryRow, width: int = 120) -> str:
+    holder = clip_text(registry_holder_label(row), 36)
+    wk = clip_text(row.work_key_display or row.work_key or "-", 42)
+    core = (
+        f"  {wk} {row.status} th={row.thread_id or '-'} "
+        f"holder={holder} id={row.row_id[:8]}"
+    )
+    return clip_text(core, width)
+
+
+def registry_holder_token(
+    dispatch_id: str,
+    registry: tuple[WorkRegistryRow, ...],
+) -> str | None:
+    row = registry_by_dispatch_id(registry).get(dispatch_id)
+    if row is None:
+        return None
+    holder = registry_holder_label(row)
+    wk = row.work_key_display or row.work_key
+    if wk:
+        return f"holder={clip_text(holder, 28)} wk={clip_text(wk, 32)}"
+    return f"holder={clip_text(holder, 40)}"
+
+
 def _sdk_identity_suffix(row: SdkDispatchRow) -> str:
     parts: list[str] = []
     if row.checkout_lane:
@@ -311,6 +350,7 @@ def sdk_live_line(
     posture: SdkMultiPosture | None = None,
     width: int = 120,
     relations: tuple[RelationEdge, ...] | None = None,
+    work_registry: tuple[WorkRegistryRow, ...] = (),
 ) -> str:
     peers = live if live is not None else [row]
     multi = posture if posture is not None else classify_sdk_live(peers)
@@ -345,6 +385,9 @@ def sdk_live_line(
         tool_col = f"tool={_truncate(tool, 14)}"
     identity = _sdk_identity_suffix(row).strip()
     optional: list[str] = []
+    holder_tok = registry_holder_token(row.dispatch_id, work_registry)
+    if holder_tok:
+        optional.append(holder_tok)
     if pointer:
         optional.append(pointer)
     optional.extend(sdk_relation_tags(row, relations))

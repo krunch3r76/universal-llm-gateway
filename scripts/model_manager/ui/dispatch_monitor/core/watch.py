@@ -95,6 +95,14 @@ def _sdk_line(row: SdkDispatchRow) -> str:
     )
 
 
+def _sdk_row_line(row: SdkDispatchRow, projection: SupervisorProjection) -> str:
+    if row.terminal_ms is None:
+        from .board_lines import sdk_live_line
+
+        return sdk_live_line(row, width=200, work_registry=projection.work_registry)
+    return _sdk_line(row)
+
+
 def cdp_id_legend() -> str:
     """One-line CDP identity legend. Does not name CSE or checkout lanes."""
     return (
@@ -168,10 +176,16 @@ def render(projection: SupervisorProjection) -> str:
         lines.append(f"skips: {histogram}")
     if health.degraded:
         lines.append(f"DEGRADED: {', '.join(health.degraded)}")
+    holders = [r for r in projection.work_registry if r.work_key or r.seat_name]
+    if holders:
+        from .board_lines import work_registry_line
+
+        lines.append(f"-- work holders ({len(holders)}) --")
+        lines.extend(work_registry_line(row) for row in holders[:12])
     lines.append(f"-- roots ({len(projection.roots)}) --")
     lines.extend(_root_line(row) for row in projection.roots)
     lines.append(f"-- sdk dispatches ({len(projection.sdk)}) --")
-    lines.extend(_sdk_line(row) for row in projection.sdk)
+    lines.extend(_sdk_row_line(row, projection) for row in projection.sdk)
     lines.append(f"-- cdp legs ({len(projection.cdp)}) --")
     if projection.cdp:
         lines.append(cdp_id_legend())

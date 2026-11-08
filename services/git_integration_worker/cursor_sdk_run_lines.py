@@ -7,6 +7,8 @@ cursor without a spool file and without folding the text into a snapshot.
 
 from __future__ import annotations
 
+import os
+import sqlite3
 import threading
 from collections.abc import Mapping
 from dataclasses import dataclass
@@ -92,6 +94,8 @@ def conversation_tail(dispatch_id: str, after: int) -> dict[str, Any]:
 
     Source is ``sdk.run_lines``: the drain's retained assistant text and thinking,
     not ``run.conversation()``, which drops thinking and may be empty until wait.
+    Frontier/api_role rows with no run log fall back to agent-bus turns on the
+    ledger thread_id (source agent-bus.turns; after is after_turn).
     """
     from services.git_integration_worker.cursor_sdk_supersede import (
         live_run_for_dispatch,
@@ -100,6 +104,9 @@ def conversation_tail(dispatch_id: str, after: int) -> dict[str, Any]:
     record = live_run_for_dispatch(dispatch_id)
     log = record.lines if record is not None else _finished_log(dispatch_id)
     if log is None:
+        bus = _bus_conversation_tail(dispatch_id, after)
+        if bus is not None:
+            return bus
         return {
             "lines": [],
             "cursor": after,
@@ -115,6 +122,125 @@ def conversation_tail(dispatch_id: str, after: int) -> dict[str, Any]:
         "cursor": cursor,
         "eof": record is None,
         "source": "sdk.run_lines",
+    }
+
+
+_TERMINAL_DISPATCH = frozenset(
+    {"completed", "failed", "cancelled", "timeout", "orphaned", "claimed"}
+)
+
+
+def _ledger_row(dispatch_id: str) -> tuple[str | None, str | None]:
+    from services.git_integration_worker.cursor_dispatch_ledger import (
+        CursorDispatchLedger,
+    )
+
+    with CursorDispatchLedger.instance()._connect() as conn:
+        row = conn.execute(
+            "SELECT thread_id, status FROM cursor_sdk_dispatches WHERE dispatch_id=?",
+            (dispatch_id,),
+        ).fetchone()
+    if row is None:
+        return None, None
+    thread = str(row["thread_id"] or "").strip() or None
+    status = str(row["status"] or "").strip().lower() or None
+    return thread, status
+
+
+def _agent_bus_db_path() -> str:
+    return os.environ.get(
+        "AGENT_BUS_DB_PATH",
+        os.path.expanduser("~/.agent-bus/messages.db"),
+    )
+
+
+def _bus_turns_sqlite(thread_id: str, after_turn: int, *, limit: int = 80) -> list[dict]:
+    path = _agent_bus_db_path()
+    if not os.path.isfile(path):
+        return []
+    try:
+        conn = sqlite3.connect(f"file:{path}?mode=ro", uri=True, timeout=2.0)
+        conn.row_factory = sqlite3.Row
+    except sqlite3.Error:
+        return []
+    try:
+        rows = conn.execute(
+            "SELECT turn_number, from_agent, to_agent, subject, body "
+            "FROM turns WHERE thread=? AND turn_number>? "
+            "ORDER BY turn_number ASC LIMIT ?",
+            (thread_id, after_turn, limit),
+        ).fetchall()
+    except sqlite3.Error:
+        return []
+    finally:
+        conn.close()
+    return [
+        {
+            "turn_number": int(row["turn_number"]),
+            "from_agent": row["from_agent"],
+            "to": row["to_agent"],
+            "subject": row["subject"],
+            "body": row["body"],
+        }
+        for row in rows
+    ]
+
+
+def _fetch_bus_turns(thread_id: str, after_turn: int) -> list[dict]:
+    token = os.environ.get("AGENT_BUS_TOKEN", "").strip()
+    if token:
+        try:
+            from services.git_integration_worker.cursor_sdk_await_reply import (
+                _default_bus_turns,
+            )
+
+            turns = _default_bus_turns(thread_id, after_turn)
+            if turns:
+                return turns
+        except Exception:
+            pass
+    return _bus_turns_sqlite(thread_id, after_turn)
+
+
+def _bus_conversation_tail(dispatch_id: str, after_turn: int) -> dict[str, Any] | None:
+    thread_id, status = _ledger_row(dispatch_id)
+    if not thread_id:
+        return None
+    turns = _fetch_bus_turns(thread_id, after_turn)
+    lines: list[dict[str, Any]] = []
+    cursor = after_turn
+    for turn in turns:
+        if not isinstance(turn, dict):
+            continue
+        num = turn.get("turn_number")
+        if not isinstance(num, int):
+            continue
+        cursor = max(cursor, num)
+        body = turn.get("body")
+        body_text = body.strip() if isinstance(body, str) else ""
+        subject = turn.get("subject")
+        subj = subject.strip() if isinstance(subject, str) else ""
+        frm = turn.get("from_agent") or turn.get("from") or "?"
+        parts = [f"turn {num} · {frm}"]
+        if subj:
+            parts.append(subj)
+        if body_text:
+            parts.append(body_text)
+        text = "\n".join(parts)
+        if not text.strip():
+            continue
+        lines.append({"index": num, "kind": str(frm), "text": text})
+    from services.git_integration_worker.cursor_sdk_supersede import (
+        live_run_for_dispatch as _live_run,
+    )
+
+    live = _live_run(dispatch_id) is not None
+    eof = not live and status not in ("running", "parked_waiting", "queued")
+    return {
+        "lines": lines,
+        "cursor": cursor,
+        "eof": eof,
+        "source": "agent-bus.turns",
     }
 
 

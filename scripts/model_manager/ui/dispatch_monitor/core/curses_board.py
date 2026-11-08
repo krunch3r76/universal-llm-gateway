@@ -36,6 +36,7 @@ from .board_lines import (
     sdk_unstarted_line,
     section_bar,
     tick_objective_line,
+    work_registry_line,
 )
 from .curses_sections import _section_bar_attr, paint_attention, paint_lease
 from .dtos import CdpLegRow, CharterRootRow, SdkDispatchRow, SupervisorProjection
@@ -208,6 +209,8 @@ class CursesBoard:
             y = self._paint_lease(
                 projection, y, width, height, focused_section=focused_section
             )
+        if _show("registry") and projection.work_registry:
+            y = self._paint_work_registry(projection, y, width, height)
         if _show("sdk"):
             y = self._paint_sdk(
                 projection,
@@ -421,6 +424,35 @@ class CursesBoard:
             self, projection, y, width, height, focused_section=focused_section
         )
 
+    def _paint_work_registry(
+        self,
+        projection: SupervisorProjection,
+        y: int,
+        width: int,
+        height: int,
+        *,
+        row_cap: int = 8,
+    ) -> int:
+        rows = [r for r in projection.work_registry if r.work_key or r.seat_name]
+        if y >= height - 1 or not rows:
+            return y
+        with_wk = [r for r in rows if r.work_key]
+        live_n = len(with_wk) if with_wk else len(rows)
+        bar = section_bar("WORK HOLDERS", live_n, len(rows), width, unit="rows")
+        self._safe_addstr(y, 0, bar[: width - 1], 4)
+        y += 1
+        shown = 0
+        for row in rows:
+            if y >= height - 1 or shown >= row_cap:
+                break
+            self._safe_addstr(y, 0, work_registry_line(row, width=width - 1), 0)
+            y += 1
+            shown += 1
+        if shown < len(rows) and y < height - 1:
+            self._safe_addstr(y, 0, f"  … +{len(rows) - shown} more", 0)
+            y += 1
+        return y
+
     def _paint_sdk(
         self,
         projection: SupervisorProjection,
@@ -471,6 +503,7 @@ class CursesBoard:
                 posture=posture,
                 width=width - 1,
                 relations=projection.relations,
+                work_registry=projection.work_registry,
             )
             attr = curses.A_REVERSE if row.dispatch_id == selected_key else 0
             if row.dispatch_id == selected_key:
