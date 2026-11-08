@@ -140,6 +140,9 @@ def test_validate_rejects_sentence_initial_marcus() -> None:
         "You keep receipts attached. Conclude the message with brief thanks.",
         "Maintain the tone plain and brief throughout.",
         "Since the hearing is already set, you keep logistics direct.",
+        "You keep receipts on file. Remember to cite exhibit numbers.",
+        "You shift to a calmer register. Offer to follow up by email.",
+        "You sign as Kaywan Joseph Mansubi. Keep it brief on logistics.",
     ],
 )
 def test_validate_accepts_sentence_initial_imperative_operators(prose: str) -> None:
@@ -163,8 +166,9 @@ def test_validate_rejects_kay_not_whole_word_in_kaywan_blocks() -> None:
     assert ok is False
 
 
-def test_validate_rejects_invented_name_after_you_sentence_initial() -> None:
-    prose = "You write plainly. Zaphod agrees with every word."
+def test_validate_rejects_invented_name_mid_sentence() -> None:
+    """Invented names must appear mid-sentence; sentence-initial-only caps are exempt."""
+    prose = "You write plainly with Zaphod on every revision."
     _, ok = local_persona._validate_persona_prose(prose, **_blocks_kwargs())
     assert ok is False
 

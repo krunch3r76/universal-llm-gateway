@@ -76,8 +76,6 @@ _CAPITAL_STOPWORDS = frozenset(
         "been",
         "does",
         "did",
-        "conclude",
-        "since",
     }
 )
 
@@ -154,16 +152,6 @@ def _invented_name_is_opener(text: str, match: re.Match[str]) -> bool:
     return bool(re.match(r"\s+is\b", tail, re.I) or re.match(r"\s+was\b", tail, re.I))
 
 
-def _capital_follows_completed_sentence(text: str, match: re.Match[str]) -> bool:
-    """True when the token starts a sentence after prior text with closing punctuation."""
-    if match.start() == 0:
-        return False
-    before = text[: match.start()]
-    if re.search(r"\n\s*$", before):
-        return True
-    return bool(re.search(r"[.!?:]\s*$", before.rstrip()))
-
-
 def _blocks_word_set(blocks_lower: str) -> set[str]:
     """Lowercase words extracted from persona prompt blocks (whole tokens only)."""
     return set(_BLOCKS_WORD_RE.findall(blocks_lower))
@@ -192,12 +180,6 @@ def _capital_token_allowed(
     if _allowed_name_prefix_collision(lower, allowed):
         return False
     if _invented_name_is_opener(text, match):
-        return False
-    if lower in _CAPITAL_STOPWORDS or lower in blocks_words:
-        return True
-    if _capital_follows_completed_sentence(
-        text, match
-    ) and not _token_capitalized_non_initial(text, token):
         return False
     return True
 
