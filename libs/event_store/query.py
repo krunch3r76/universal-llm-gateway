@@ -25,6 +25,7 @@ from .query_client_errors import ERROR_CLASS_LOCK_WAIT
 from .query_path_health import record_query_completed
 from .query_path_health import snapshot as query_path_snapshot
 from .store import EventStore
+from .store_stats import hot_tier_health
 
 logger = logging.getLogger(__name__)
 
@@ -133,16 +134,18 @@ def create_query_router(
         """Liveness + code identity + process pid for process_live settlement."""
         metrics = ingest.get_metrics() if ingest else {}
         subs = len(subscriber_queues)
-        return JSONResponse(
-            {
-                "status": "ok",
-                "subscribers": subs,
-                **metrics,
-                "query_path": query_path_snapshot(),
-                "code_version": resolve_code_version(),
-                "pid": os.getpid(),
-            }
-        )
+        hot = hot_tier_health(store)
+        body: dict[str, Any] = {
+            "status": "ok",
+            "subscribers": subs,
+            **metrics,
+            "query_path": query_path_snapshot(),
+            "code_version": resolve_code_version(),
+            "pid": os.getpid(),
+        }
+        if hot is not None:
+            body["hot_tier"] = hot
+        return JSONResponse(body)
 
     @router.get("/metrics")
     async def metrics_handler() -> JSONResponse:

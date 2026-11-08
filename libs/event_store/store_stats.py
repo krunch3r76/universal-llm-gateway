@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from typing import Any
-
 from .store import EventStore
 
 _SEQ_BOUNDS_SQL = (
@@ -25,6 +23,11 @@ async def query_seq_bounds(store: EventStore) -> dict[str, int | None]:
         "max_seq": int(max_seq) if max_seq is not None else None,
         "min_seq": int(min_seq) if min_seq is not None else None,
     }
+
+
+def hot_tier_health(store: EventStore) -> dict[str, object] | None:
+    """Cheap hot-tier stats for /health when the tier is enabled."""
+    return store.hot_tier_stats()
 
 
 def estimate_event_count(bounds: dict[str, int | None]) -> int:

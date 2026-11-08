@@ -27,9 +27,9 @@ import uvicorn
 from fastapi import FastAPI
 
 from .ingest import IngestServer
-from .retention_config import RetentionSettings, load_retention_settings
 from .query import create_query_router
 from .query_path_health import run_event_loop_lag_probe
+from .retention_config import RetentionSettings, load_retention_settings
 from .store import EventStore
 from .subscribe import (
     _DEFAULT_SUBSCRIBER_QUEUE_SIZE,
@@ -336,6 +336,7 @@ async def run_service(
     bridge: Any = None
     serve_tasks: list[asyncio.Task[None]] = []
     retention_task: asyncio.Task[None] | None = None
+    background_tasks: list[asyncio.Task[None]] = []
     retention_armed = threading.Event()
     started = False
     stop_event = asyncio.Event()
@@ -353,6 +354,16 @@ async def run_service(
 
     try:
         await store.open()
+
+        async def _hot_evict_loop() -> None:
+            while not stop_event.is_set():
+                try:
+                    await asyncio.wait_for(stop_event.wait(), timeout=60.0)
+                    return
+                except TimeoutError:
+                    store.maybe_evict_hot_tier()
+
+        background_tasks.append(asyncio.create_task(_hot_evict_loop()))
         ingest = IngestServer(
             store,
             ingest_sock,
@@ -486,6 +497,13 @@ async def run_service(
             await bridge.stop()
             _log_shutdown_phase("bridge stopped", phase)
         phase = time.monotonic()
+        for task in background_tasks:
+            task.cancel()
+        for task in background_tasks:
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
         if retention_task is not None:
             store.stop_background_work()
             retention_task.cancel()

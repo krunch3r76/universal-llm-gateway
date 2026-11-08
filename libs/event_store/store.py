@@ -28,6 +28,7 @@ from pathlib import Path
 from typing import Any
 
 from .errors import EventStoreBusyError, EventStoreReadDeadlineError, is_sqlite_busy
+from .hot_tier import HotTier
 from .retention import HEARTBEAT_SIGNALS
 from .schema import (
     _SCHEMA_SQL,
@@ -143,6 +144,12 @@ _RETENTION_BATCH_SLEEP_S = float(
 )
 _RETENTION_TABLES = frozenset({"events", "request_snapshots", "evaluations"})
 _RETENTION_PK = {"events": "seq", "request_snapshots": "seq", "evaluations": "id"}
+_HOT_TIER_HOURS = float(os.environ.get("EVENTS_HOT_TIER_HOURS", "24"))
+_HOT_EVICT_INTERVAL_S = 60.0
+_HOT_ROW_COLS = (
+    "SELECT seq, event_id, signal, role, scope, ts_unix_ms, timestamp, source, payload "
+    "FROM events WHERE seq > ? ORDER BY seq"
+)
 
 
 def _ts_ms_from_iso(iso: str) -> int:
@@ -193,6 +200,8 @@ class EventStore:
         self._realtime_buffer: deque[dict[str, Any]] = deque(
             maxlen=_REALTIME_BUFFER_SIZE
         )
+        self._hot: HotTier | None = None
+        self._hot_evict_check_mono = 0.0
 
     async def open(self) -> None:
         """Open SQLite, apply performance pragmas, and ensure schema exists."""
@@ -220,7 +229,30 @@ class EventStore:
                 "in a temp b-tree until POST /api/v1/maintenance/model-id-ts-index",
                 self._db_path,
             )
+        if int(os.environ.get("EVENTS_HOT_TIER", "1")) != 0:
+            window_ms = int(
+                float(os.environ.get("EVENTS_HOT_TIER_HOURS", str(_HOT_TIER_HOURS)))
+                * 3600
+                * 1000
+            )
+            self._hot = HotTier(window_ms=window_ms)
+            self._hot.open(self._db)
         logger.info("EventStore opened: %s", self._db_path)
+
+    def hot_tier_stats(self) -> dict[str, Any] | None:
+        if self._hot is None:
+            return None
+        return self._hot.stats()
+
+    def maybe_evict_hot_tier(self) -> None:
+        hot = self._hot
+        if hot is None or hot.degraded:
+            return
+        now_mono = time.monotonic()
+        if now_mono - self._hot_evict_check_mono < _HOT_EVICT_INTERVAL_S:
+            return
+        self._hot_evict_check_mono = now_mono
+        hot.evict(int(time.time() * 1000))
 
     async def build_model_id_ts_index(self) -> bool:
         """Build idx_model_id_ts on the retention connection (explicit maintenance)."""
@@ -276,6 +308,9 @@ class EventStore:
         if self._retention_conn is not None:
             self._retention_conn.close()
             self._retention_conn = None
+        if self._hot is not None:
+            self._hot.close()
+            self._hot = None
         if db is not None:
             db.close()
             self._db = None
@@ -518,6 +553,9 @@ class EventStore:
             return []
 
         rows = [item[0] for item in prepared]
+        before_seq = int(
+            self._db.execute("SELECT COALESCE(MAX(seq), 0) FROM events").fetchone()[0]
+        )
         try:
             self._db.executemany(_INSERT_EVENT, rows)
             self._db.commit()
@@ -528,16 +566,40 @@ class EventStore:
                 len(rows),
                 e,
             )
-            return self._insert_prepared_rows(prepared)
+            accepted = self._insert_prepared_rows(prepared)
+            self._mirror_accepted_to_hot(before_seq)
+            return accepted
         except Exception as e:
             self._db.rollback()
             logger.exception("Unexpected batch insert failure: %s", e)
-            return self._insert_prepared_rows(prepared)
+            accepted = self._insert_prepared_rows(prepared)
+            self._mirror_accepted_to_hot(before_seq)
+            return accepted
 
-        return [item[1] for item in prepared]
+        accepted = [item[1] for item in prepared]
+        self._mirror_accepted_to_hot(before_seq)
+        self.maybe_evict_hot_tier()
+        return accepted
+
+    def _mirror_accepted_to_hot(self, before_seq: int) -> None:
+        hot = self._hot
+        if hot is None or hot.degraded or self._db is None:
+            return
+        try:
+            cold_rows = self._db.execute(_HOT_ROW_COLS, (before_seq,)).fetchall()
+            floor = hot.floor_ts_ms
+            insert_rows = [tuple(row) for row in cold_rows if int(row[5]) >= floor]
+            if insert_rows:
+                hot.insert_rows(insert_rows)
+        except sqlite3.Error as exc:
+            logger.exception("Hot tier mirror after ingest failed: %s", exc)
+            hot.mark_degraded(str(exc))
+        except Exception as exc:
+            logger.exception("Unexpected hot tier mirror failure: %s", exc)
+            hot.mark_degraded(str(exc))
 
     async def insert_snapshot(self, snap: dict[str, Any]) -> None:
-        """Insert a request snapshot record."""
+        """Insert a request snapshot record (not mirrored to the hot tier)."""
         if not self._db:
             logger.error(
                 "insert_snapshot called before EventStore.open(); request_id=%s phase=%s",
@@ -582,6 +644,7 @@ class EventStore:
         *,
         limit: int = 1000,
         raise_on_error: bool = False,
+        since_ts_ms: int | None = None,
     ) -> list[dict[str, Any]]:
         """Execute a read query and return rows as dicts.
 
@@ -605,6 +668,27 @@ class EventStore:
             if raise_on_error:
                 raise sqlite3.OperationalError("EventStore not open")
             return []
+
+        hot = self._hot
+        sql_lower = sql.lower()
+        use_hot = (
+            hot is not None
+            and not hot.degraded
+            and since_ts_ms is not None
+            and since_ts_ms >= hot.floor_ts_ms
+            and "events" in sql_lower
+            and "request_snapshots" not in sql_lower
+            and "evaluations" not in sql_lower
+        )
+        if use_hot:
+            assert hot is not None
+            try:
+                return hot.execute_query(sql, params, limit=limit)
+            except sqlite3.Error as e:
+                logger.error("Hot tier query failed: %s params=%s - %s", sql[:120], params, e)
+                if raise_on_error:
+                    raise
+                return []
 
         state = _ReadCall()
         started = threading.Event()

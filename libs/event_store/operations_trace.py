@@ -8,6 +8,7 @@ from typing import Any
 from universal_logging import get_logger
 
 from .dispatch_journal import fetch_dispatch_journal_summary
+from .errors import EventStoreBusyError, EventStoreReadDeadlineError
 from .operation_parameters import (
     _coerce_limit,
     _coerce_since_ts,
@@ -16,7 +17,6 @@ from .operation_parameters import (
     signal_prefix_range,
 )
 from .store import EventStore
-from .errors import EventStoreBusyError, EventStoreReadDeadlineError
 from .store_stats import estimate_event_count, query_seq_bounds
 
 logger = get_logger(__name__)
@@ -238,6 +238,7 @@ async def _federation_health(
     rows = await store.query(
         sql,
         tuple(query_params),
+        since_ts_ms=since_ts,
     )
     return {"rows": rows, "count": len(rows)}
 
@@ -264,6 +265,7 @@ async def _capacity_snapshot(
     rows = await store.query(
         sql,
         tuple(query_params),
+        since_ts_ms=since_ts,
     )
     return {"rows": rows, "count": len(rows)}
 
@@ -290,6 +292,7 @@ async def _provider_health(params: dict[str, Any], store: EventStore) -> dict[st
         "ORDER BY seq DESC",
         (cutoff,),
         limit=5000,
+        since_ts_ms=cutoff,
     )
 
     providers: dict[str, dict[str, Any]] = {}
@@ -410,7 +413,7 @@ async def _verify_tool_execution(
         query_params.append(since_ts)
     sql += " ORDER BY seq DESC LIMIT 1"
 
-    rows = await store.query(sql, tuple(query_params))
+    rows = await store.query(sql, tuple(query_params), since_ts_ms=since_ts)
     if not rows:
         return {"verified": False, "signal_prefix": signal_prefix, "event": None}
 

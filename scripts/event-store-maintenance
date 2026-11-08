@@ -1,0 +1,9 @@
+#!/usr/bin/env python3
+"""Thin wrapper: python -m event_store.maintenance with repo PYTHONPATH."""
+
+from __future__ import annotations
+
+from event_store.maintenance import main
+
+if __name__ == "__main__":
+    main()

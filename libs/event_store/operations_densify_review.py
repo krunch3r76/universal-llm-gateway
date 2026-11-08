@@ -21,6 +21,7 @@ async def _densify_review_admitted(
         "SELECT * FROM events WHERE signal = ? AND ts_unix_ms > ? "
         "ORDER BY seq DESC LIMIT ?",
         (_ADMITTED_SIGNAL, cutoff, limit),
+        since_ts_ms=cutoff,
     )
     total = len(rows)
     opt_out_count = 0
@@ -62,6 +63,7 @@ async def _densify_review_outcome(
         "SELECT * FROM events WHERE signal = ? AND ts_unix_ms > ? "
         "ORDER BY seq DESC LIMIT ?",
         (_OUTCOME_SIGNAL, cutoff, limit),
+        since_ts_ms=cutoff,
     )
     total = len(rows)
     rubber_stamp_count = 0
