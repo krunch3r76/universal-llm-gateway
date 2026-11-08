@@ -112,6 +112,8 @@ INTENTIONAL_OVERFLOW: frozenset[str] = frozenset(
         "sqlite_schema",
         # panel_dispatch / team_dispatch are canonicalized
         # (standalone domains in canonical.yaml) — do not add here
+        # Glass supervisor read-only JSONL export (overflow until canonicalized)
+        "glass_export_transcript_messages",
         # MCP server heartbeat — infra-internal, not a domain tool
         "health",
         # Models listing tool not yet canonicalized
