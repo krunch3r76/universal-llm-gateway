@@ -44,9 +44,10 @@ from cortex_store.assertion_enrichment_backfill import (  # noqa: E402
     record_outcome,
     save_state,
 )
+from cortex_store.db import _CORTEX_DB  # noqa: E402
 from cortex_store.event_publisher import record as emit_event  # noqa: E402
 
-CORTEX_DB = Path.home() / ".cortex" / "cortex.db"
+CORTEX_DB = _CORTEX_DB
 DEFAULT_STATE = Path.home() / ".cortex" / "assertion-enrichment-backfill.state.json"
 DEFAULT_LOG = Path.home() / ".cortex" / "assertion-enrichment-backfill.log"
 STARGATE_URL = os.environ.get("STARGATE_URL", "http://localhost:9999")
