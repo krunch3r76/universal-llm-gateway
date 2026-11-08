@@ -17,6 +17,27 @@ from typing import Any, Literal
 Kind = Literal["events", "prospective"]
 
 _PIPELINE_ID = "assertion-enrichment"
+MAX_PERMANENT_ATTEMPTS = 3
+PAUSE_BACKOFF_CAP_S = 300.0
+
+_TRANSIENT_BODY_MARKERS = (
+    "503",
+    "not loaded",
+    "unavailable",
+    "token counting failed",
+)
+
+
+class DispatchErrorClass(StrEnum):
+    TRANSIENT = "transient"
+    PERMANENT = "permanent"
+
+
+@dataclass
+class DispatchResult:
+    ok: bool
+    detail: str
+    error_class: DispatchErrorClass | None = None
 
 _QUESTION_PREFIX = re.compile(r"^\s*(what|when|why|how|which)\b", re.I)
 
@@ -288,17 +309,119 @@ def pipeline_payload(
     }
 
 
+def classify_dispatch_error(
+    *,
+    status_code: int | None,
+    body: str,
+    exc: BaseException | None,
+) -> DispatchErrorClass:
+    if exc is not None:
+        if isinstance(exc, (TimeoutError, OSError)):
+            return DispatchErrorClass.TRANSIENT
+        exc_name = type(exc).__name__.lower()
+        if "timeout" in exc_name or "connect" in exc_name or "read" in exc_name:
+            return DispatchErrorClass.TRANSIENT
+        return DispatchErrorClass.PERMANENT
+    if status_code is None:
+        return DispatchErrorClass.PERMANENT
+    if status_code in (502, 503, 504):
+        return DispatchErrorClass.TRANSIENT
+    body_low = (body or "").lower()
+    if status_code == 500 and any(m in body_low for m in _TRANSIENT_BODY_MARKERS):
+        return DispatchErrorClass.TRANSIENT
+    if status_code >= 400:
+        if any(m in body_low for m in _TRANSIENT_BODY_MARKERS):
+            return DispatchErrorClass.TRANSIENT
+        return DispatchErrorClass.PERMANENT
+    return DispatchErrorClass.PERMANENT
+
+
+def parse_dispatch_http(status_code: int, body: str) -> DispatchResult:
+    if status_code < 400:
+        return DispatchResult(ok=True, detail="OK")
+    detail = f"HTTP {status_code} {body[:300]}"
+    err = classify_dispatch_error(status_code=status_code, body=body, exc=None)
+    return DispatchResult(ok=False, detail=detail, error_class=err)
+
+
+def parse_dispatch_exception(exc: BaseException) -> DispatchResult:
+    err = classify_dispatch_error(status_code=None, body="", exc=exc)
+    return DispatchResult(ok=False, detail=f"ERR {exc}", error_class=err)
+
+
+def is_transient_failure_record(entry: dict[str, Any]) -> bool:
+    if entry.get("error_class") == DispatchErrorClass.TRANSIENT.value:
+        return True
+    detail = str(entry.get("last_error") or "")
+    if not detail:
+        return (
+            entry.get("status") == "failed"
+            and int(entry.get("attempts", 0)) >= MAX_PERMANENT_ATTEMPTS
+        )
+    return (
+        classify_dispatch_error(status_code=500, body=detail, exc=None)
+        == DispatchErrorClass.TRANSIENT
+    )
+
+
+def requeue_failed_outcomes(
+    state: dict[str, Any],
+    *,
+    transient_only: bool,
+) -> list[int]:
+    outcomes = state.setdefault("outcomes", {})
+    removed_ids: list[int] = []
+    for key, entry in list(outcomes.items()):
+        if entry.get("status") != "failed":
+            continue
+        if transient_only and not is_transient_failure_record(entry):
+            continue
+        del outcomes[key]
+        removed_ids.append(int(key))
+    if removed_ids:
+        stats = state.setdefault("stats", {})
+        stats["failed"] = max(0, int(stats.get("failed", 0)) - len(removed_ids))
+    return removed_ids
+
+
+def terminal_outcome_ids(state: dict[str, Any]) -> set[int]:
+    terminals: set[int] = set()
+    for key, entry in state.get("outcomes", {}).items():
+        if entry.get("status") in ("ok", "failed"):
+            terminals.add(int(key))
+    return terminals
+
+
+def fetch_rows_by_ids(conn: sqlite3.Connection, ids: list[int]) -> list[dict[str, Any]]:
+    if not ids:
+        return []
+    placeholders = ",".join("?" * len(ids))
+    rows = conn.execute(
+        "SELECT id, claim, entity_id, confidence, prospective_summary, events_json "
+        f"FROM assertions WHERE id IN ({placeholders}) AND superseded_by IS NULL",
+        ids,
+    ).fetchall()
+    out = [dict(r) for r in rows if enrichment_skip_reason(r["claim"]) is None]
+    return sorted(out, key=lambda r: int(r["id"]))
+
+
 def record_outcome(
     state: dict[str, Any],
     assertion_id: int,
     outcome: str,
     *,
     attempts: int | None = None,
+    last_error: str | None = None,
+    error_class: str | None = None,
 ) -> None:
     outcomes = state.setdefault("outcomes", {})
     entry: dict[str, Any] = {"status": outcome}
     if attempts is not None:
         entry["attempts"] = attempts
+    if last_error:
+        entry["last_error"] = last_error[:500]
+    if error_class:
+        entry["error_class"] = error_class
     outcomes[str(assertion_id)] = entry
 
 
@@ -309,8 +432,19 @@ def attempts_for(state: dict[str, Any], assertion_id: int) -> int:
 
 __all__ = [
     "BackfillCountReport",
+    "DispatchErrorClass",
+    "DispatchResult",
+    "MAX_PERMANENT_ATTEMPTS",
+    "PAUSE_BACKOFF_CAP_S",
     "Kind",
     "SkipClass",
+    "classify_dispatch_error",
+    "fetch_rows_by_ids",
+    "is_transient_failure_record",
+    "parse_dispatch_exception",
+    "parse_dispatch_http",
+    "requeue_failed_outcomes",
+    "terminal_outcome_ids",
     "count_backfill_candidates",
     "enrichment_skip_reason",
     "events_array_len",

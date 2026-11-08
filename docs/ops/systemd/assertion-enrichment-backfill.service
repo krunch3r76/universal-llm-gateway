@@ -1,14 +1,17 @@
 [Unit]
-# Auxiliary operator-managed unit (not a fleet manage service).
-# Detached assertion-enrichment backfill — resumable via state file.
-Description=Assertion enrichment backfill (events + optional prospective)
+# Auxiliary user-managed unit (not a fleet manage service).
+Description=Assertion enrichment backfill (events + prospective)
 
 [Service]
 Type=simple
 WorkingDirectory=/mnt/torus/projects/universal-llm-gateway
 Environment=PYTHONPATH=/mnt/torus/projects/universal-llm-gateway/libs
 Environment=PATH=/home/io/.venvs/universal/bin:/usr/local/bin:/usr/bin:/bin
+Environment=CORTEX_DB_PATH=/home/io/.cortex/cortex.db
 Environment=PYTHONUNBUFFERED=1
-ExecStart=/home/io/.venvs/universal/bin/python scripts/assertion-enrichment-backfill.py --db /home/io/.cortex/cortex.db --redo --kinds events --concurrency 2 --delay-ms 250
+ExecStart=/home/io/.venvs/universal/bin/python scripts/assertion-enrichment-backfill.py --redo --kinds events,prospective --concurrency 2 --delay-ms 250 --db /home/io/.cortex/cortex.db --state /home/io/.cortex/assertion-enrichment-backfill.state.json
 Restart=on-failure
 RestartSec=30
+
+[Install]
+WantedBy=default.target
