@@ -29,7 +29,7 @@ related_skills:
 
 ## Before acting (kernel)
 
-Kernel bullets (run/land, ROW_HOP, width-seat critic, review≺land, G5 witness, lane=B) → `reference-overview.md` § Before acting (kernel).
+Kernel bullets (run/land, ROW_HOP, width-seat critic `cdp/opus-5.5` (`impresario.critic`), review≺land, G5 witness, lane=B) → `reference-overview.md` § Before acting (kernel).
 
 ## Guardrails
 

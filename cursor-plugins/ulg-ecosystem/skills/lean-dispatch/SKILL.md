@@ -40,7 +40,7 @@ In a Cursor IDE tab use `team_dispatch` (`seat="cursor-sdk"`, `lane="B"`, or an 
 
 ## Grok Bot seats
 
-Balance load across maestro, bot, cursor-sdk, CDP — ¬ outsource everything. Sizeable legs leave as packets. Keep judgment, coordination, and bot-only tools (browser/desktop, SendToAgent wake, connected apps, registered machine); peer-bot handoff only for those. Weekly usage is capped — spread pools.
+Balance load across bot, cursor-sdk, CDP (maestro paused — do not route) — ¬ outsource everything. Sizeable legs leave as packets. Keep judgment, coordination, and bot-only tools (browser/desktop, SendToAgent wake, connected apps, registered machine); peer-bot handoff only for those. Weekly usage is capped — spread pools.
 
 ## Duty → wire
 
@@ -51,9 +51,11 @@ Labels are routing shorthand. Address a child with its **packet**, never its lab
 | ripieno | `cursor/composer-2.5` | sweeps, renames, test scaffolds, repetitive edits — mechanical, spec in hand |
 | continuo | `cursor/grok-4.7` low **or** `cursor/composer-2.5` | bug-class sweep across a service; applying a reviewed diff pattern |
 | concertino | `cursor/grok-4.7` high+ | two plausible root causes; a fix shape to choose |
-| critic | `anthropic/claude-sonnet-5-5` high | independent review (default reviewer; `impresario.critic`; do not substitute `cdp/`; Fix-loop step 4) |
+| critic | `cdp/opus-5.5` high | independent review (default reviewer; `impresario.critic`; Fix-loop step 4) |
 | advisor | `anthropic/claude-sonnet-5-5` high, `cost_intent=deliberate_high_cost` (a:41413) | `todo:{slug}` seeding, intent-to-plan, open fork, stuck leg; `Use the lean-dispatch skill` |
-| dramaturg | `anthropic/claude-fable-5-1` | architecture-open / stack-killing **consult only**; never an implement leg; do not substitute `cdp/fable` |
+| dramaturg | `cdp/fable-5.1` | architecture-open / stack-killing consult only; never an implement leg |
+
+`cdp/` is allowed and preferred for conductor and supervisor legs over `anthropic/*` and over any `cursor/*` model except `cursor/composer-2.5` while it is cheaper. `anthropic/*` is the fallback when no CDP host is available (`cdp_fail_route`).
 
 Lowest sufficient tier first. ¬ paste this table into system prompts or Grok Bot profile descriptions.
 

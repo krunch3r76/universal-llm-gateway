@@ -18,14 +18,15 @@ apply_tier: required_gate
 
 Mechanical implement: `lane="B"` `contract=implement` `model=cursor/composer-2.5` (omit `model=` resolves `workflows.mechanical_implement`, `cursor/composer-2.5`); throwaway worktree per top-level generate; `lane="A"` only on scope refusal or explicit shared-master request. Autonomous.
 Investigate and conductor omit-model is `cursor/composer-2.5` (`workflows.investigate` / `workflows.auto_judgment`). Conductor effort is `contract_effort.conductor` (low). `OPEN FORK:` only. Autonomous.
-Independent check: width-seat critic **`anthropic/claude-sonnet-5-5`** (`impresario.critic` in `config/routing/route_policy.yaml`). Do not substitute `cdp/`.
+Independent check: width-seat critic **`cdp/opus-5.5`** (`impresario.critic` in `config/routing/route_policy.yaml`). `cdp/` is allowed and preferred for conductor and supervisor legs over `anthropic/*` and over any `cursor/*` model except `cursor/composer-2.5` while it is cheaper. `anthropic/*` is the fallback when no CDP host is available (`cdp_fail_route`).
 Live checkout: `cursor/grok-4.7` `contract=freeform` on cursor-sdk (explicit file:line pin, not the omit-model default).
-Binder: `anthropic/claude-sonnet-5-5` → `anthropic/claude-opus-5-5` → **`anthropic/claude-fable-5-1`** (same-prefix `allowed_critics`; no bare `cdp/fable` unless Kaywan asks). `seat_unsure ⇒ consult(independent_binder)`; `binder_unsure ⇒ human`. A `cdp/` admit that fails ⇒ no wait/retry; `cdp_fail_route`: `nested-grok` or `operator` (worker + `parent_thread` → web-anthropic). That route is not a reason to retarget the critic onto `cdp/`. ¬ Cowork Ask.
+Binder: `cdp/opus-5.5` → `cdp/fable-5.1` (consult only) → **`anthropic/*` fallback** (`allowed_critics`; `anthropic/claude-fable-5-1` only when Kaywan asks on the anthropic prefix). `seat_unsure ⇒ consult(independent_binder)`; `binder_unsure ⇒ human`. A `cdp/` admit that fails ⇒ no wait/retry; `cdp_fail_route`: `nested-grok` or `operator` (worker + `parent_thread` → web-anthropic). ¬ Cowork Ask.
 detail: skill `consult-routing` § Dispatch kernel.
 
 ## Hard walls
 
-- Critic default is `anthropic/*` (`impresario.critic`). `cdp/` is a different substrate, not a stand-in for that default. `anthropic/*` API still requires a healthy credit gate.
+- Critic default is `cdp/opus-5.5` (`impresario.critic`). `cdp/` is allowed and preferred for conductor and supervisor legs over `anthropic/*` and over any `cursor/*` model except `cursor/composer-2.5` while it is cheaper. `anthropic/*` is the fallback when no CDP host is available (`cdp_fail_route`). `anthropic/*` API still requires a healthy credit gate.
+- maestro and its house are paused indefinitely — do not route to maestro.
 - Non-primary `cursor/*` bind ⇒ **operator-gated** unless a standing rule/skill names the default.
 - `judgment_closed ∧ mechanical_remainder ⇒ split`: bind (`none`) → nested `cursor-sdk` implement (`nest_under` lease holder).
 - Before **any** `team_dispatch`: consult-routing gate; `busy_status` shows `agent_bus` + `stargate` + `git_integration_worker` up.
