@@ -46,6 +46,7 @@ services:
       # Recreate mcp-server to pick up a new bind mount (restart does not). Start
       # cdp-gateway-forwarder before mcp-server.
       - ${MCP_PROJECT_DIR:?MCP_PROJECT_DIR required}/libs/cursor_bridge/cdp_gateway_forwarder.py:/app/libs/cursor_bridge/cdp_gateway_forwarder.py:ro
+      - /home/io/.cursor/projects/mnt-torus-projects-universal-llm-gateway/agent-transcripts:/transcripts:ro
     environment:
       - MCP_AUTH_TOKEN=${MCP_AUTH_TOKEN:?MCP_AUTH_TOKEN required}
       - VORTEX_BEARER_TOKENS=${VORTEX_BEARER_TOKENS:-}
@@ -103,6 +104,8 @@ services:
       # Cortex DB paths — ~/.cortex is mounted at /data/cortex.
       - CORTEX_DB_PATH=/data/cortex/cortex.db
       - TODOS_DB_PATH=/data/cortex/todos.db
+      - CURSOR_AGENT_TRANSCRIPTS_ROOT=/transcripts
+      - GLASS_EXPORT_ALLOWED_AGENTS=static
     extra_hosts:
       - "host.docker.internal:host-gateway"
     deploy:
