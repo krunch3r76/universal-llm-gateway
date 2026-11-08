@@ -24,7 +24,8 @@ _HOP_SCRIPT = _REPO / "scripts" / "liaison-ide-hop.py"
 _ROOT_SCOPE_RE = re.compile(r"^\d+$")
 _HOP_CHECK_INTERVAL_S = 60.0
 _HOP_COOLDOWN_S = 300.0
-_HOP_MONITOR_LOOP_CADENCE_S = 60.0
+# Must stay below _HOP_CHECK_INTERVAL_S so a root due at 60s is seen on the next tick, not +60s later.
+_HOP_MONITOR_LOOP_CADENCE_S = 20.0
 
 _check_in_flight = threading.Lock()
 

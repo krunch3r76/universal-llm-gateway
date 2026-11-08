@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import asyncio
+import threading
 import time
 from typing import Any
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -51,9 +53,17 @@ def test_wake_pass_does_not_await_slow_hop_check(
     from bus_watch.ide_context_hop_monitor import run_ide_context_hop_monitor
 
     _stub_dispatcher_noops(monkeypatch)
+    monkeypatch.setattr(
+        "bus_watch.ide_context_hop_monitor.StoreClient",
+        MagicMock,
+    )
+
+    entered = threading.Event()
+    release = threading.Event()
 
     def _slow_check(*_a: object, **_k: object) -> None:
-        time.sleep(5)
+        entered.set()
+        release.wait(timeout=5.0)
 
     monkeypatch.setattr(
         "bus_watch.ide_context_hop_monitor.check_cursor_ide_context_hops",
@@ -75,6 +85,7 @@ def test_wake_pass_does_not_await_slow_hop_check(
     )
 
     disp_sleeps = {"n": 0}
+    real_sleep = asyncio.sleep
 
     async def _sleep(delay: float) -> None:
         if delay >= 1.5:
@@ -82,15 +93,21 @@ def test_wake_pass_does_not_await_slow_hop_check(
             if disp_sleeps["n"] >= 3:
                 raise asyncio.CancelledError()
             return
+        await real_sleep(min(delay, 0.01))
 
     monkeypatch.setattr(asyncio, "sleep", _sleep)
 
     async def _main() -> None:
         hop_task = asyncio.create_task(run_ide_context_hop_monitor())
+        deadline = time.monotonic() + 2.0
+        while not entered.is_set() and time.monotonic() < deadline:
+            await asyncio.sleep(0.01)
+        assert entered.is_set(), "hop monitor did not enter slow check"
         try:
             with pytest.raises(asyncio.CancelledError):
                 await run_dispatcher()
         finally:
+            release.set()
             hop_task.cancel()
             with pytest.raises(asyncio.CancelledError):
                 await hop_task
@@ -165,3 +182,67 @@ def test_hop_monitor_skips_overlapping_check(monkeypatch: pytest.MonkeyPatch) ->
 
     outcomes = asyncio.run(_two_threads())
     assert "skipped_overlap" in {o[0] for o in outcomes}
+
+
+def test_guarded_hop_check_releases_lock_after_ok(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from bus_watch.ide_context_hop_monitor import _check_in_flight, _guarded_hop_check
+
+    monkeypatch.setattr(
+        "bus_watch.ide_context_hop_monitor.check_cursor_ide_context_hops",
+        lambda *_a, **_k: None,
+    )
+    _guarded_hop_check(MagicMock(), {})
+    assert _check_in_flight.acquire(blocking=False)
+    _check_in_flight.release()
+
+
+def test_guarded_hop_check_releases_lock_after_exception(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from bus_watch.ide_context_hop_monitor import _check_in_flight, _guarded_hop_check
+
+    def _boom(*_a: object, **_k: object) -> None:
+        raise RuntimeError("check exploded")
+
+    monkeypatch.setattr(
+        "bus_watch.ide_context_hop_monitor.check_cursor_ide_context_hops",
+        _boom,
+    )
+    outcome, _ms = _guarded_hop_check(MagicMock(), {})
+    assert outcome == "error"
+    assert _check_in_flight.acquire(blocking=False)
+    _check_in_flight.release()
+
+
+@patch("bus_watch.ide_context_hop_monitor._budget_for_root")
+def test_root_rechecked_at_60s_not_delayed_past_next_tick(
+    mock_budget: MagicMock,
+) -> None:
+    """Loop cadence 20s + per-root 60s: due at t+60, not t+120."""
+    from bus_watch.ide_context_hop_monitor import (
+        _HOP_CHECK_INTERVAL_S,
+        _HOP_MONITOR_LOOP_CADENCE_S,
+        check_cursor_ide_context_hops,
+    )
+
+    assert _HOP_MONITOR_LOOP_CADENCE_S < _HOP_CHECK_INTERVAL_S
+    mock_budget.return_value = None
+    store = MagicMock()
+    store.subscriptions.return_value = [
+        {
+            "surface": "cursor",
+            "thread_scope": "18291",
+            "display": "8",
+            "state": "subscribed",
+        }
+    ]
+    mark: dict[str, float] = {}
+    t0 = 1000.0
+    check_cursor_ide_context_hops(store, mark=mark, now=t0)
+    assert mock_budget.call_count == 1
+    check_cursor_ide_context_hops(store, mark=mark, now=t0 + 59.9)
+    assert mock_budget.call_count == 1
+    check_cursor_ide_context_hops(store, mark=mark, now=t0 + 60.0)
+    assert mock_budget.call_count == 2
