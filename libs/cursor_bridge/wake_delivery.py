@@ -528,7 +528,10 @@ async def _deliver_locked(
                     app=app,
                     agent_id=str(verdict.get("expected_agent_id") or aid_s or ""),
                 )
-                paste_res = await dom_insert_and_send(ws_url, selector=sel, line=line)
+                keep_nl = "\n" in line and _is_stale_wake_draft(line)
+                paste_res = await dom_insert_and_send(
+                    ws_url, selector=sel, line=line, preserve_newlines=keep_nl
+                )
         except (TimeoutError, RuntimeError, OSError) as exc:
             return _refuse(
                 "paste_failed",

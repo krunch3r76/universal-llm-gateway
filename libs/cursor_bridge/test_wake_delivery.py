@@ -177,6 +177,8 @@ def test_stale_wake_predicate_shared_by_all_sites() -> None:
     insert = dcp._set_composer_body('[aria-label="Prompt"]', "line")
     assert STALE_WAKE_LINES_JS in insert
     assert STALE_WAKE_LINES_JS in gsj.launch_new_agent_tab_js("BRIDGE_WAKE thread=1 turn=1", "")
+    click = dcp._click_send_body('[aria-label="Prompt"]', "line")
+    assert STALE_WAKE_LINES_JS in click and "wakeStale=(t)=>/^" not in click
 
 
 def test_wake_lines_multi_thread_stale_draft_detected() -> None:
@@ -201,6 +203,22 @@ def test_grok_composer_js_clears_stale_wake_draft() -> None:
     assert "el.innerText=''" in js
     assert "composer_not_empty" in js
     assert "BRIDGE_WAKE" in js
+
+
+def test_click_send_body_wake_stale_accepts_multi_line_wake_draft() -> None:
+    import shutil
+    import subprocess
+
+    from cursor_bridge.dom_composer_paste import _click_send_body
+
+    if shutil.which("node") is None:
+        pytest.skip("node not installed")
+    body = _click_send_body('[aria-label="Prompt"]', "BRIDGE_WAKE thread=3 turn=3")
+    fn = re.search(r"const wakeStale=\(t\)=>(.+?);const composerEmpty=", body).group(1)
+    w2, hu = "'BRIDGE_WAKE thread=1 turn=1\\nBRIDGE_WAKE thread=2 turn=2'", "'BRIDGE_WAKE thread=1 turn=1\\nhello'"
+    js = f"const w=(t)=>{fn};process.stdout.write(JSON.stringify([w({w2}),w({hu})]));"
+    out = subprocess.run(["node", "-e", js], capture_output=True, text=True, timeout=20, check=False)
+    assert (out.returncode, out.stdout) == (0, "[true,false]"), out.stderr
 
 
 def _cdp_msg(mid: int, value: Any) -> str:
@@ -740,6 +758,27 @@ async def test_deliver_wake_paste_runs_under_display_switch_lock_grok(
 
     assert out.get("pasted") is True
     assert lock_depth_at_paste == [1]
+
+
+@pytest.mark.asyncio
+async def test_deliver_wake_grok_two_thread_paste_keeps_newline(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    match = _stale_match_surface("15851 slug")
+    probes = iter([match])
+    dom = AsyncMock(return_value={"ok": True, "send_fallback_clicked": False})
+    monkeypatch.setattr(wd, "list_pages", lambda _o: _wake_list_pages("grok"))
+    monkeypatch.setattr(
+        wd, "probe_surface", AsyncMock(side_effect=lambda _u: next(probes, {**match, "composer_draft": ""}))
+    )
+    monkeypatch.setattr(wd, "dom_insert_and_send", dom)
+    groups = [{"thread_id": "15851", "turn": 290}, {"thread_id": "15852", "turn": 3}]
+    out = await deliver_wake(
+        display="9", app="grok", thread="15851", slug="slug", turn=290, wake_groups=groups
+    )
+    kw = dom.await_args.kwargs
+    assert out.get("pasted") is True and kw["line"] == wake_line("15851", 290) + "\n" + wake_line("15852", 3)
+    assert kw.get("preserve_newlines") is True
 
 
 @pytest.mark.asyncio

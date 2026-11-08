@@ -806,6 +806,9 @@ def _click_send_body(
     """
     find = _find_composer_js(selector)
     lj = json.dumps(_dom_paste_text(line, preserve_newlines=preserve_newlines))
+    from cursor_bridge.chat_target import stale_wake_lines_js
+
+    stale_js = stale_wake_lines_js("t")
     btn_sels = json.dumps(list(_SEND_BTN_SELECTORS))
     wait_ceiling = int(SEND_BTN_WAIT_CEILING_MS)
     poll_interval = int(SEND_BTN_POLL_INTERVAL_MS)
@@ -830,7 +833,7 @@ def _click_send_body(
         f"const line={lj};"
         "const normLine=ulgNormalizeComposerText(line);"
         "let normText=ulgNormalizeComposerText(el.innerText||el.value||'');"
-        "const wakeStale=(t)=>/^BRIDGE_WAKE\\s+thread=\\S+\\s+turn=\\d+(?:,\\d+)*$/.test(t);"
+        f"const wakeStale=(t)=>{stale_js};"
         "const composerEmpty=ulgComposerDomEmpty(el);"
         "if(!composerEmpty&&(!normText||(normText!==normLine&&!wakeStale(normText)))){"
         "normText=ulgNormalizeComposerText(el.innerText||el.value||'');"

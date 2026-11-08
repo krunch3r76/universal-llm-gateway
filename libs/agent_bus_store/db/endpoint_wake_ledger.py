@@ -698,7 +698,7 @@ def _tab_hold_from_rows(
 def _due_wake_group_sql(orion_next_gate: str, *, delivery_agent_id: str | None) -> str:
     delivery_sql = ""
     if delivery_agent_id is not None:
-        delivery_sql = " AND COALESCE(p.delivery_agent_id,'')=? "
+        delivery_sql = " AND COALESCE(p.delivery_agent_id,'')=? AND p.thread_id != '19627' "
     return f"""
                 SELECT agent, thread_id FROM endpoint_wake_ledger p
                 WHERE p.state='pending'

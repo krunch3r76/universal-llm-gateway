@@ -2133,14 +2133,20 @@ def test_tab_hold_ignores_debounced_and_backoff_rows(db: TestClient) -> None:
         None,
         now="2020-01-01 00:00:06",
     )
+    with write_connect() as conn:  # back to pending, inside the 60s retry window: a backoff row, not delivered
+        conn.execute(
+            "UPDATE endpoint_wake_ledger SET state='pending', wake_id=NULL, "
+            "finished_at='2020-01-01 00:00:15' WHERE turn_id=?",
+            (old_id,),
+        )
     advance_scan(
         "endpoint-wake-dispatcher",
         old_id,
         new_id,
         [_pending_with_tab(agent="cursor-sdk", thread=thread, turn_id=new_id, turn_number=new_n, tab=_TAB)],
-        now="2020-01-01 00:00:07",
+        now="2020-01-01 00:00:19",
     )
-    assert claim_due_wakes(now="2020-01-01 00:00:08")["wake_id"] is None
+    assert claim_due_wakes(now="2020-01-01 00:00:20")["wake_id"] is None
 
 
 def test_tab_merge_claims_null_rows_in_selected_group(db: TestClient) -> None:
@@ -2224,3 +2230,21 @@ def test_thread_19627_never_tab_merges(db: TestClient) -> None:
     assert wake["wake_id"]
     assert len(wake["rows"]) == 2
     assert wake.get("delivery_agent_id") is None
+
+
+def test_19627_member_under_non_19627_head_is_not_merged(db: TestClient) -> None:
+    head = str(create_thread(thread_id=None, slug="head-not-stage")["id"])
+    create_thread(thread_id="19627", slug="stage-mgr-member")
+    t_h, _a, n_h, _ = insert_turn(thread=head, from_agent="cursor", to_agent="cursor-sdk", subject="FACT|h", body="a")
+    t_s, _b, n_s, _ = insert_turn(thread="19627", from_agent="cursor", to_agent="cursor-sdk", subject="FACT|s", body="b")
+    get_cursor()
+    with connect() as conn:
+        conn.execute("UPDATE endpoint_wake_cursor SET high_water_turn_id=0")
+    rows = [(head, t_h, n_h), ("19627", t_s, n_s)]
+    scan = [_pending_with_tab(agent="cursor-sdk", thread=a, turn_id=b, turn_number=c, tab="stage-tab") for a, b, c in rows]
+    advance_scan("endpoint-wake-dispatcher", 0, t_s, scan, now="2019-12-31 23:59:50")
+    wake = claim_due_wakes(now="2020-01-01 00:00:10")
+    assert [int(r["turn_id"]) for r in wake["rows"]] == [t_h] and wake.get("delivery_agent_id") == "stage-tab"
+    with connect() as conn:
+        st = conn.execute("SELECT state FROM endpoint_wake_ledger WHERE turn_id=?", (t_s,)).fetchone()
+    assert st["state"] == "pending"
