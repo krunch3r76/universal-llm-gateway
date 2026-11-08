@@ -5,8 +5,8 @@ from __future__ import annotations
 import hashlib
 import json
 import sqlite3
-from datetime import UTC, datetime
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from typing import Any, Final, Literal
 
 from predicate_form.registry import is_status_functor

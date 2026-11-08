@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from cortex_store.entity_crud import update_entity_impl  # noqa: F401 — test patch hook
 from cortex_store.entity_state_fold_tx import fold_claim, reverse_fold
 from cortex_store.entity_state_provenance import FoldResult, state_sha256
 from cortex_store.entity_state_read import FieldState, field_state

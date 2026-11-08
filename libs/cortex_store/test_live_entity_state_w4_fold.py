@@ -386,11 +386,14 @@ def test_fold_holds_write_lock_second_connection_supersede_busy(
         migrated_conn, eid, created_at="2026-12-02T00:00:00+00:00"
     )
     peer = _peer_conn(migrated_conn)
-    import cortex_store.entity_state_fold as fold_mod
+    import cortex_store.entity_state_fold_tx as fold_tx_mod
 
-    original = fold_mod.update_entity_impl
+    original = fold_tx_mod.update_entity_impl
+    called = False
 
     def wrapper(conn: sqlite3.Connection, **kwargs: Any) -> dict[str, object]:
+        nonlocal called
+        called = True
         peer.execute("PRAGMA busy_timeout=0")
         with pytest.raises(sqlite3.OperationalError):
             peer.execute(
@@ -399,8 +402,9 @@ def test_fold_holds_write_lock_second_connection_supersede_busy(
             )
         return original(conn, **kwargs)
 
-    with patch.object(fold_mod, "update_entity_impl", side_effect=wrapper):
+    with patch.object(fold_tx_mod, "update_entity_impl", side_effect=wrapper):
         r = fold_claim(migrated_conn, eid, aid, "application_submitted")
+    assert called
     assert r.outcome == "folded"
     peer.close()
 
@@ -738,6 +742,51 @@ def test_fold_older_than_operator_write_head_space_created_at(
     )
     r = fold_claim(migrated_conn, eid, aid, "application_submitted")
     assert r.outcome == "folded"
+
+
+def test_fold_operator_write_garbage_set_at_refused_ordering_unparseable(
+    migrated_conn: sqlite3.Connection,
+) -> None:
+    eid = _seed_account(migrated_conn, "account:garbage-set-at")
+    update_entity_impl(
+        migrated_conn,
+        entity_id=eid,
+        updates={
+            "attributes": {
+                "state_provenance": {
+                    "application_submitted": [
+                        {
+                            "provenance_id": "application_submitted:1",
+                            "kind": "operator_write",
+                            "ref": "agent-bus:operator#1",
+                            "ref_kind": "utterance",
+                            "value": True,
+                            "set_by": "operator",
+                            "set_at": "garbage",
+                        }
+                    ]
+                },
+            }
+        },
+    )
+    aid = _eligible_submitted_assertion(migrated_conn, eid)
+    r = fold_claim(migrated_conn, eid, aid, "application_submitted")
+    assert r.outcome == "refused" and r.reason == "ordering_unparseable"
+
+
+def test_field_state_empty_created_at_claim_ineligible(
+    migrated_conn: sqlite3.Connection,
+) -> None:
+    eid = _seed_account(migrated_conn, "account:empty-created-at")
+    aid = _insert_status_assertion(
+        migrated_conn,
+        entity_id=eid,
+        claim="empty ts",
+        evidence_uris='["cortex://notes/evidence.md"]',
+    )
+    migrated_conn.execute("UPDATE assertions SET created_at = ? WHERE id = ?", ("", aid))
+    fs = field_state(migrated_conn, eid, "application_submitted")
+    assert fs.newer_claim_id is None
 
 
 def test_reverse_fold_duplicate_provenance_id_refused(
@@ -1824,11 +1873,36 @@ def test_scan_live_w4_flagged_closeout_stats_fixture(migrated_conn: sqlite3.Conn
         derivation_type="direct_observation",
         evidence_uris='["cortex://notes/evidence.md"]',
     )
+    exclude_eid = "account:scan-gate-not-f3"
+    insert_entity(
+        migrated_conn,
+        entity_id=exclude_eid,
+        entity_type="account",
+        name="scan exclude",
+        description="flagged, gate-clear, not F3 newer",
+    )
+    _insert_status_assertion(
+        migrated_conn,
+        entity_id=exclude_eid,
+        claim="flagged foldable not f3",
+        confidence="confirmed",
+        review_status="flagged",
+        review_notes="predicate normalize: excluded from f3 subset",
+        created_at="2026-11-07T00:00:00+00:00",
+        derivation_type="direct_observation",
+        evidence_uris='["cortex://notes/evidence.md"]',
+        predicate_form=f"status({exclude_eid}, submitted, current)",
+    )
+    drift_rows = [
+        r for r in scan_entity_state_drift(conn=migrated_conn).rows if r.drift_class == "F3"
+    ]
+    assert any(r.right_cite.startswith("assertion:") for r in drift_rows)
     stats = scan_live_w4_flagged_closeout_stats(migrated_conn)
     assert stats["contradiction_chunk_flagged"] >= 1
     assert stats["f3_rows"] >= 1
-    if stats["flagged_foldable"]:
-        assert (
-            stats["reasonless"] + stats["predicate_normalize"] + stats["other"]
-            == stats["flagged_foldable"]
-        )
+    assert stats["flagged_foldable"] == 1
+    assert stats["predicate_normalize"] == 1
+    assert (
+        stats["reasonless"] + stats["predicate_normalize"] + stats["other"]
+        == stats["flagged_foldable"]
+    )

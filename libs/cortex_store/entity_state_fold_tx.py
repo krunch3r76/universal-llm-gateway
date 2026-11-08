@@ -29,6 +29,7 @@ from cortex_store.entity_state_provenance import (
     provenance_head,
     state_sha256,
     utc_now_iso,
+    values_match_strict,
 )
 from cortex_store.entity_state_read import read_assertion, read_entity
 from cortex_store.event_publisher import cortex_entity_state_folded
@@ -272,7 +273,7 @@ def reverse_fold(
                 conn.rollback()
                 return _refused("reverse_conflict", field)
             current = entity.get("workflow_state") if field == "workflow_state" else attrs.get(field)
-            if current != target.get("value"):
+            if not values_match_strict(current, target.get("value")):
                 conn.rollback()
                 return _refused("reverse_conflict", field)
             restored = target.get("previous_value") if target.get("previous_present") else None

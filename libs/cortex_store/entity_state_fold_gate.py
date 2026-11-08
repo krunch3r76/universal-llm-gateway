@@ -169,6 +169,10 @@ def gate_refusal(
     head = provenance_head(records)
     claim_created = str(row.get("created_at") or "")
     claim_id = int(row["id"])
+    try:
+        instant_key(claim_created)
+    except ValueError:
+        return "ordering_unparseable"
     if head is not None:
         if head.get("kind") == "fold":
             head_assertion = head.get("assertion_id")
@@ -183,8 +187,11 @@ def gate_refusal(
                     return None
                 hid = int(head_row["id"])
                 if int(head_assertion) != claim_id:
-                    hc_key = instant_key(head_row["created_at"])
-                    claim_key = instant_key(claim_created)
+                    try:
+                        hc_key = instant_key(head_row["created_at"])
+                        claim_key = instant_key(claim_created)
+                    except ValueError:
+                        return "ordering_unparseable"
                     if (claim_key, claim_id) <= (hc_key, hid):
                         return "older_than_head"
             else:
@@ -192,8 +199,11 @@ def gate_refusal(
         elif head.get("kind") == "operator_write":
             head_at = head.get("set_at")
             if claim_created and head_at:
-                if instant_key(claim_created) <= instant_key(head_at):
-                    return "older_than_head"
+                try:
+                    if instant_key(claim_created) <= instant_key(head_at):
+                        return "older_than_head"
+                except ValueError:
+                    return "ordering_unparseable"
     for rec in records:
         if rec.get("kind") == "fold" and rec.get("assertion_id") == row.get("id"):
             revs = {r.get("reverses") for r in records if r.get("kind") == "reversal"}
