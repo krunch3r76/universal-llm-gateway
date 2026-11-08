@@ -36,8 +36,9 @@ def policy_review_models() -> frozenset[str]:
     """Delivery-review models for a filtered seat.
 
     Authority is ``impresario.critic`` plus same-prefix ``allowed_critics``
-    in ``config/routing/route_policy.yaml``. A ``cdp/`` id is admitted only
-    when that prefix is the configured critic.
+    in ``config/routing/route_policy.yaml``, union any ``anthropic/*`` entries
+    in ``allowed_critics``. A ``cdp/`` id is admitted only when that prefix is
+    the configured critic.
     """
     from implement_admission.impresario_policy import load_impresario_policy
 
