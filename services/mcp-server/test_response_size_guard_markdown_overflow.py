@@ -239,3 +239,16 @@ def test_manifest_builder_returns_none_for_plain_text() -> None:
         "rs_plain1", "fs", 200_000, _DEFAULT_THRESHOLD, original
     )
     assert manifest is None
+
+
+def test_selective_options_without_uri_include_retrieve_section() -> None:
+    text = _nested_markdown(body_repeat=4_000)
+    original = _fs_overflow_result(text, uri="", path="")
+    original.structured_content.pop("uri", None)
+    original.structured_content["path"] = ""
+    manifest = build_markdown_overflow_manifest(
+        "rs_nouri1", "fs", 200_000, 4096, original, structure_budget=2048
+    )
+    assert manifest is not None
+    options = manifest.get("selective_options", [])
+    assert any('retrieve(id="rs_nouri1", section=' in opt for opt in options)

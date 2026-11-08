@@ -167,6 +167,10 @@ def _build_selective_options(
                     f'fs(op="md_read", path="{location}", section="{section_path}")'
                 )
         options.append(f'fs(op="read", path="{location}", offset=0, limit=80)')
+    if not location and sections:
+        section_path = str(sections[0].get("path", "")).strip()
+        if section_path:
+            options.append(f'retrieve(id="{ref_id}", section="{section_path}")')
     options.append(f'retrieve(id="{ref_id}")')
     return options
 
@@ -177,6 +181,8 @@ def build_markdown_overflow_manifest(
     size: int,
     threshold: int,
     result: ToolResult,
+    *,
+    structure_budget: int = STRUCTURE_BUDGET_BYTES,
 ) -> dict[str, Any] | None:
     """Return a markdown structure manifest, or None when not eligible."""
     text = _extract_primary_text(result, tool_name)
@@ -192,7 +198,7 @@ def build_markdown_overflow_manifest(
     capped_rows, truncated = _cap_sections(
         rows,
         max_sections=STRUCTURE_MAX_SECTIONS,
-        max_bytes=STRUCTURE_BUDGET_BYTES,
+        max_bytes=structure_budget,
     )
     uri, path = _resolve_durable_location(result)
     selective_options = _build_selective_options(
@@ -274,10 +280,16 @@ def try_markdown_overflow_replacement(
     result: ToolResult,
     *,
     measure_result: Callable[[ToolResult], int],
+    structure_budget: int = STRUCTURE_BUDGET_BYTES,
 ) -> ToolResult | None:
     """Build a markdown structure replacement when it fits under the active threshold."""
     manifest = build_markdown_overflow_manifest(
-        ref_id, tool_name, size, threshold, result
+        ref_id,
+        tool_name,
+        size,
+        threshold,
+        result,
+        structure_budget=structure_budget,
     )
     if manifest is None:
         return None

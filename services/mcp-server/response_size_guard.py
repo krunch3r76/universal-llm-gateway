@@ -28,13 +28,18 @@ from fastmcp.server.middleware.middleware import CallNext, Middleware, Middlewar
 from fastmcp.tools.base import ToolResult
 from markdown_sections import SectionError
 from markdown_sections import list_sections as md_list_sections
+from markdown_sections import read_section as md_read_section
 from mcp_events import record
 from request_profile import (
     current_profile,
     current_request_metadata,
     current_structured_capable,
 )
-from response_overflow_manifest import try_markdown_overflow_replacement
+from response_overflow_manifest import (
+    STRUCTURE_BUDGET_BYTES,
+    _extract_primary_text,
+    try_markdown_overflow_replacement,
+)
 from tool_access import CURSOR_SAFE_PROFILE
 
 if TYPE_CHECKING:
@@ -69,6 +74,7 @@ _CONTENT_LEAN_TOOLS: frozenset[str] = frozenset({"cortex", "agent_bus", "fs", "r
 _CONTENT_LEAN_FLOOR_BYTES: int = int(
     os.getenv("MCP_CONTENT_LEAN_FLOOR_BYTES", str(2 * 1024))
 )
+_PER_CALL_FLOOR_BYTES: int = int(os.getenv("MCP_PER_CALL_FLOOR_BYTES", "2048"))
 _MIRROR_PLACEHOLDER: str = '{"_mirror":"suppressed","read":"structuredContent"}'
 _MIRROR_SUPPRESS_TOOLS: frozenset[str] = frozenset(
     t.strip()
@@ -292,6 +298,24 @@ def _normalize_optional_int(value: Any) -> int | None:
     if isinstance(value, str) and value.isdigit():
         return int(value)
     return None
+
+
+def _per_call_ceiling(
+    context: MiddlewareContext[Any], effective_limit: int
+) -> tuple[int, str]:
+    """Lower the effective byte ceiling when the caller sets max_response_bytes.
+
+    Per-call values never raise the profile limit; invalid or non-positive values
+    are treated as absent. The floor prevents unusably small manifests.
+    """
+    arguments = context.message.arguments
+    if not isinstance(arguments, dict):
+        return effective_limit, "profile"
+    requested = _normalize_optional_int(arguments.get("max_response_bytes"))
+    if requested is None or requested <= 0:
+        return effective_limit, "profile"
+    ceiling = max(_PER_CALL_FLOOR_BYTES, min(requested, effective_limit))
+    return ceiling, "per_call"
 
 
 def _adaptive_limit(
@@ -872,6 +896,7 @@ def _replacement_result(
         )
         return ToolResult(content="\n".join(note_lines), structured_content=manifest)
 
+    structure_budget = min(STRUCTURE_BUDGET_BYTES, max(threshold // 2, 1))
     markdown_replacement = try_markdown_overflow_replacement(
         ref_id,
         tool_name,
@@ -879,6 +904,7 @@ def _replacement_result(
         threshold,
         result,
         measure_result=_measure_result,
+        structure_budget=structure_budget,
     )
     if markdown_replacement is not None:
         return markdown_replacement
@@ -1081,8 +1107,13 @@ class ResponseSizeGuard(Middleware):
             return _lean_content(result, tool_name=tool_name)
 
         threshold = _threshold_for_profile()
+        reasoning_target = _reasoning_target_bytes(threshold)
+        needs_semantic_guard = tool_name in _SEMANTIC_GUARD_TOOLS
+        effective_limit = reasoning_target if needs_semantic_guard else threshold
+        ceiling, ceiling_source = _per_call_ceiling(context, effective_limit)
+
         if tool_name == "agent_bus":
-            windowed = _try_window_agent_bus_result(result, threshold=threshold)
+            windowed = _try_window_agent_bus_result(result, threshold=ceiling)
             if windowed is not None:
                 result = windowed
 
@@ -1095,16 +1126,12 @@ class ResponseSizeGuard(Middleware):
                 )
             )
 
-        reasoning_target = _reasoning_target_bytes(threshold)
-        needs_semantic_guard = tool_name in _SEMANTIC_GUARD_TOOLS
-
         try:
-            size = self._estimate_size(result, threshold, needs_semantic_guard)
+            size = self._estimate_size(result, ceiling, needs_semantic_guard)
             if size is None:
                 return _lean_content(result, tool_name=tool_name)
 
-            effective_limit = reasoning_target if needs_semantic_guard else threshold
-            if size <= effective_limit:
+            if size <= ceiling:
                 return _lean_content(result, tool_name=tool_name)
         except Exception:
             logger.warning(
@@ -1134,12 +1161,14 @@ class ResponseSizeGuard(Middleware):
             )
             return _lean_content(result, tool_name=tool_name)
 
-        replacement = _replacement_result(ref_id, tool_name, size, threshold, result)
+        replacement = _replacement_result(ref_id, tool_name, size, ceiling, result)
         guarded_kwargs: dict[str, Any] = {
             "tool_name": tool_name,
             "profile": current_profile(),
             "original_bytes": size,
             "threshold_bytes": threshold,
+            "ceiling_bytes": ceiling,
+            "ceiling_source": ceiling_source,
             "reasoning_target_bytes": reasoning_target,
             "ref_id": ref_id,
             "store_count": len(_store),
@@ -1179,6 +1208,64 @@ class ResponseSizeGuard(Middleware):
         return _measure_result(result)
 
 
+def _line_window(text: str, offset: int, limit: int) -> tuple[str, int]:
+    """Return a slice of *text* by line index and the total line count."""
+    lines = text.splitlines(keepends=True)
+    total = len(lines)
+    if total == 0:
+        return text, 0
+    start = max(0, offset)
+    end = total if limit <= 0 else min(total, start + limit)
+    return "".join(lines[start:end]), total
+
+
+def _retrieve_selective(
+    stored: _StoredResponse,
+    ref_id: str,
+    *,
+    section: str,
+    offset: int,
+    limit: int,
+    now: float,
+) -> dict[str, Any]:
+    """Read a portion of a stored response without popping the entry."""
+    text = _extract_primary_text(stored.result, stored.tool_name)
+    if text is None:
+        return {
+            "error": (
+                f"Stored response {ref_id!r} has no readable text for selective retrieval."
+            )
+        }
+    remaining_ttl_s = max(0.0, round(_TTL_SECONDS - (now - stored.stored_at), 1))
+    if section.strip():
+        try:
+            content = md_read_section(text, section.strip())
+        except SectionError as exc:
+            return {"error": str(exc)}
+        selection = "section"
+        _, total_lines = _line_window(text, 0, 0)
+    else:
+        content, total_lines = _line_window(text, offset, limit)
+        selection = "lines"
+    record(
+        "mcp.response.retrieved",
+        tool_name=stored.tool_name,
+        ref_id=ref_id,
+        profile=stored.profile,
+        size_bytes=stored.size_bytes,
+        age_s=round(now - stored.stored_at, 1),
+        selective=True,
+        selection=selection,
+    )
+    return {
+        "ref_id": ref_id,
+        "selection": selection,
+        "content": content,
+        "total_lines": total_lines,
+        "remaining_ttl_s": remaining_ttl_s,
+    }
+
+
 def register_response_guard(mcp: FastMCP) -> None:
     """Register the retrieve tool and response size guard middleware on the server.
 
@@ -1189,13 +1276,23 @@ def register_response_guard(mcp: FastMCP) -> None:
     """
 
     @mcp.tool(title="Retrieve Oversized Response")
-    def retrieve(id: str) -> ToolResult | dict[str, str]:
-        """Retrieve a stored oversized tool response by reference ID (pop semantics, 10min TTL)."""
+    def retrieve(
+        id: str, section: str = "", offset: int = 0, limit: int = 0
+    ) -> ToolResult | dict[str, Any]:
+        """Retrieve a stored oversized tool response by reference ID.
+
+        Bare ``retrieve(id)`` pops the entry (10 min TTL). Pass ``section`` or
+        ``limit`` to read a window without consuming the store slot.
+        """
         now = time.monotonic()
+        selective = bool(section.strip()) or limit > 0
         expired_events: list[_ExpiredEvent]
         with _lock:
             expired_events = _prune_expired(now)
-            stored = _store.pop(id, None)
+            if selective:
+                stored = _store.get(id)
+            else:
+                stored = _store.pop(id, None)
         _emit_expired_events(expired_events)
         if stored is None:
             return {
@@ -1204,6 +1301,15 @@ def register_response_guard(mcp: FastMCP) -> None:
                     "It may have expired or already been retrieved."
                 )
             }
+        if selective:
+            return _retrieve_selective(
+                stored,
+                id,
+                section=section,
+                offset=offset,
+                limit=limit,
+                now=now,
+            )
         record(
             "mcp.response.retrieved",
             tool_name=stored.tool_name,

@@ -123,12 +123,17 @@ def register_fs_read_tool(mcp: FastMCP, surface: Surface) -> None:
         sections: list[str] | None = None,
         export: bool = False,
         expected_read_sha256: str = "",
+        max_response_bytes: int | None = None,
     ) -> dict[str, Any]:
         """Read-only fs ops — auto-approvable companion to fs.
 
         Same parameters as fs; only non-mutating ops are admitted.
         For write/delete/move/copy use fs.
+
+        max_response_bytes lowers (never raises) the per-call response ceiling for
+        this invocation; the guard middleware enforces it.
         """
+        _ = max_response_bytes
         op_name = str(op or "").strip()
         if op_name not in FS_READ_OPS:
             record(

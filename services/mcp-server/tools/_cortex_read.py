@@ -71,6 +71,7 @@ CORTEX_READ_OPS_BY_SURFACE: dict[Surface, frozenset[str]] = {
 
 
 def cortex_read_admitted_ops(surface: Surface) -> frozenset[str]:
+    """Return the read-only cortex dispatch op names allowed for *surface*."""
     return CORTEX_READ_OPS_BY_SURFACE[surface]
 
 
@@ -93,8 +94,17 @@ def register_cortex_read_tool(mcp: FastMCP, surface: Surface = "life") -> None:
         title="Cortex (read-only)",
         annotations=ToolAnnotations(readOnlyHint=True),
     )
-    def cortex_read(tool: str, arguments: JsonArgStr = "{}") -> Any:
-        """Read-only cortex ops — auto-approvable companion to cortex."""
+    def cortex_read(
+        tool: str,
+        arguments: JsonArgStr = "{}",
+        max_response_bytes: int | None = None,
+    ) -> Any:
+        """Read-only cortex ops — auto-approvable companion to cortex.
+
+        max_response_bytes lowers (never raises) the per-call response ceiling for
+        this invocation; the guard middleware enforces it.
+        """
+        _ = max_response_bytes
         op = str(tool or "").strip()
         if op not in admitted:
             record(

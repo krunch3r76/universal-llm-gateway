@@ -79,8 +79,15 @@ def register_agent_bus_read_tool(mcp: FastMCP) -> None:
         title="Agent Bus (read-only)",
         annotations=ToolAnnotations(readOnlyHint=True),
     )
-    def agent_bus_read(tool: str, arguments: JsonArgStr = "{}") -> Any:
+    def agent_bus_read(
+        tool: str,
+        arguments: JsonArgStr = "{}",
+        max_response_bytes: int | None = None,
+    ) -> Any:
         """Read-only agent-bus ops — auto-approvable companion to agent_bus.
+
+        max_response_bytes lowers (never raises) the per-call response ceiling for
+        this invocation; the guard middleware enforces it.
 
         Same calling convention as agent_bus: tool=<op>, arguments=<json>.
         Exposes ONLY non-mutating ops so approval-gating harnesses can
@@ -110,6 +117,7 @@ def register_agent_bus_read_tool(mcp: FastMCP) -> None:
         - `cursor-sdk-thread-consolidation` — fs(sandbox="workspaces", op="read", path="universal-llm-gateway/cursor-plugins/ulg-ecosystem/skills/cursor-sdk-thread-consolidation/SKILL.md")
         «/verb-orientation:agent_bus_read»
         """
+        _ = max_response_bytes
         from ._agent_tools import (
             dispatch_arguments_error,
             parse_dispatch_arguments,
