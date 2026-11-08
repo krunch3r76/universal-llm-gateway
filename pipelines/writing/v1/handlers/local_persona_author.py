@@ -76,6 +76,8 @@ _CAPITAL_STOPWORDS = frozenset(
         "been",
         "does",
         "did",
+        "conclude",
+        "since",
     }
 )
 
@@ -114,11 +116,52 @@ def _has_list_structure(text: str) -> bool:
 
 
 def _is_sentence_initial_at(text: str, match: re.Match[str]) -> bool:
-    """True when the match begins a sentence (start of text or after .!? )."""
-    prefix = text[: match.start()].rstrip()
+    """True when the match begins a sentence (text start, .!?/:, or newline)."""
+    if match.start() == 0:
+        return True
+    before = text[: match.start()]
+    if re.search(r"\n\s*$", before):
+        return True
+    prefix = before.rstrip()
     if not prefix:
         return True
-    return bool(re.search(r"[.!?]\s*$", prefix))
+    return bool(re.search(r"[.!?:]\s*$", prefix))
+
+
+def _token_capitalized_non_initial(text: str, spelling: str) -> bool:
+    """True when ``spelling`` appears capitalized mid-sentence in ``text``."""
+    for other in _NAME.finditer(text):
+        if other.group(0) != spelling:
+            continue
+        if not _is_sentence_initial_at(text, other):
+            return True
+    return False
+
+
+def _allowed_name_prefix_collision(lower: str, allowed: set[str]) -> bool:
+    """True when ``lower`` is a strict prefix of an allowed proper-noun token."""
+    for token in allowed:
+        if len(token) > len(lower) and token.startswith(lower):
+            return True
+    return False
+
+
+def _invented_name_is_opener(text: str, match: re.Match[str]) -> bool:
+    """True when a capitalized token opens a sentence with ``is`` / ``was``."""
+    if not _is_sentence_initial_at(text, match):
+        return False
+    tail = text[match.end() :]
+    return bool(re.match(r"\s+is\b", tail, re.I) or re.match(r"\s+was\b", tail, re.I))
+
+
+def _capital_follows_completed_sentence(text: str, match: re.Match[str]) -> bool:
+    """True when the token starts a sentence after prior text with closing punctuation."""
+    if match.start() == 0:
+        return False
+    before = text[: match.start()]
+    if re.search(r"\n\s*$", before):
+        return True
+    return bool(re.search(r"[.!?:]\s*$", before.rstrip()))
 
 
 def _blocks_word_set(blocks_lower: str) -> set[str]:
@@ -140,9 +183,23 @@ def _capital_token_allowed(
         return True
     if not _is_sentence_initial_at(text, match):
         return False
-    if lower in _CAPITAL_STOPWORDS:
+    if _token_capitalized_non_initial(text, token):
+        if lower in _CAPITAL_STOPWORDS:
+            return True
+        if lower in blocks_words:
+            return True
+        return False
+    if _allowed_name_prefix_collision(lower, allowed):
+        return False
+    if _invented_name_is_opener(text, match):
+        return False
+    if lower in _CAPITAL_STOPWORDS or lower in blocks_words:
         return True
-    return lower in blocks_words
+    if _capital_follows_completed_sentence(
+        text, match
+    ) and not _token_capitalized_non_initial(text, token):
+        return False
+    return True
 
 
 def _validate_persona_prose(

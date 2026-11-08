@@ -134,6 +134,29 @@ def test_validate_rejects_sentence_initial_marcus() -> None:
     assert ok is False
 
 
+@pytest.mark.parametrize(
+    "prose",
+    [
+        "You keep receipts attached. Conclude the message with brief thanks.",
+        "Maintain the tone plain and brief throughout.",
+        "Since the hearing is already set, you keep logistics direct.",
+    ],
+)
+def test_validate_accepts_sentence_initial_imperative_operators(prose: str) -> None:
+    """Ordinary capitals at sentence start are not invented proper nouns."""
+    _, ok = local_persona._validate_persona_prose(prose, **_blocks_kwargs())
+    assert ok is True
+
+
+def test_validate_rejects_dual_capital_name_sentence_initial_and_mid() -> None:
+    prose = (
+        "You already emailed Marcus about the filing. "
+        "Marcus is still your point of contact on exhibits."
+    )
+    _, ok = local_persona._validate_persona_prose(prose, **_blocks_kwargs())
+    assert ok is False
+
+
 def test_validate_rejects_kay_not_whole_word_in_kaywan_blocks() -> None:
     prose = "Kay is your contact."
     _, ok = local_persona._validate_persona_prose(prose, **_blocks_kwargs())
