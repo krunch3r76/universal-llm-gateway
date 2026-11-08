@@ -231,6 +231,7 @@ def insert_turn(
     idempotent_first_turn: bool = False,
     attested_by: str | None = None,
     user_agent: str | None = None,
+    from_agent_id: str | None = None,
 ) -> tuple[int, str, int, bool]:
     """Returns (turn_id, created_at, turn_number, claimed_existing).
 
@@ -363,8 +364,8 @@ def insert_turn(
                 "INSERT INTO turns "
                 "(thread, turn_number, from_agent, to_agent, subject, body, "
                 "status, supersedes_turn, created_at, read_at, attested_by, user_agent, "
-                "notice_closeout_key) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                "notice_closeout_key, from_agent_id) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     thread,
                     turn_number,
@@ -379,6 +380,7 @@ def insert_turn(
                     attested_by,
                     user_agent,
                     notice_key,
+                    from_agent_id,
                 ),
             )
         except sqlite3.IntegrityError:
@@ -497,7 +499,7 @@ def get_turns(
         select = (
             "id, thread, turn_number, from_agent, to_agent, subject, status, "
             "supersedes_turn, created_at, read_at, attested_by, user_agent, "
-            "length(body) AS body_chars"
+            "from_agent_id, length(body) AS body_chars"
         )
     else:
         select = "*"
@@ -1101,6 +1103,7 @@ def create_turn(
     mark_read: bool = False,
     attested_by: str | None = None,
     user_agent: str | None = None,
+    from_agent_id: str | None = None,
 ) -> tuple[dict[str, Any], int, str, int, int, bool]:
     """Post a turn to an existing thread for POST /threads/send continue path.
 
@@ -1128,6 +1131,7 @@ def create_turn(
         attachments=attachments,
         attested_by=attested_by,
         user_agent=user_agent,
+        from_agent_id=from_agent_id,
     )
 
     if claimed_existing:

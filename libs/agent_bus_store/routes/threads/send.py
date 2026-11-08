@@ -122,6 +122,9 @@ async def send_route(body: TurnSendCreate) -> TurnSendCreated:
             )
         _validate_lane_bind_pre_mint(body)
         _raise_if_turn_body_over_limit(body.body, allow_long_body=body.allow_long_body)
+        from ...turns_models import prepare_from_agent_id as _prep_fa_id
+
+        stored_fa_id, fa_warning = _prep_fa_id(body.from_agent_id)
         try:
             thread_row, turn_id, ts, turn_number, prepared = await asyncio.to_thread(
                 run_new_thread_send,
@@ -143,6 +146,7 @@ async def send_route(body: TurnSendCreate) -> TurnSendCreated:
                 idempotency_key=body.idempotency_key,
                 attested_by=body.attested_by,
                 user_agent=body.user_agent,
+                from_agent_id=stored_fa_id,
             )
         except (EnrollmentTagError, ThreadClassificationError) as exc:
             _raise_enrollment_denied(exc)
@@ -172,6 +176,8 @@ async def send_route(body: TurnSendCreate) -> TurnSendCreated:
                 from_agent=body.from_agent,
                 to_agent=body.to,
                 subject=body.subject,
+                from_agent_id=stored_fa_id,
+                warning=fa_warning,
             ),
             sidecar_uri=prepared.sidecar_uri,
             sidecar_sha256=prepared.sidecar_sha256,
@@ -290,6 +296,9 @@ async def send_route(body: TurnSendCreate) -> TurnSendCreated:
         turn_number=body.supersedes_turn,
         turn_id_alias=body.supersedes_turn_id,
     )
+    from ...turns_models import prepare_from_agent_id
+
+    stored_from_agent_id, from_agent_warning = prepare_from_agent_id(body.from_agent_id)
     try:
         prepared = await asyncio.to_thread(
             prepare_body_for_insert,
@@ -358,6 +367,7 @@ async def send_route(body: TurnSendCreate) -> TurnSendCreated:
             mark_read=body.mark_read,
             attested_by=body.attested_by,
             user_agent=body.user_agent,
+            from_agent_id=stored_from_agent_id,
         )
         if claimed_existing:
             from ...db.turns import get_turn_by_notice_closeout_key
@@ -476,6 +486,8 @@ async def send_route(body: TurnSendCreate) -> TurnSendCreated:
         superseded_turn_id=echo_turn_id,
         thread_tags=thread_tags,
         supersedes_turn=echo_turn_number,
+        from_agent_id=stored_from_agent_id,
+        warning=from_agent_warning,
     )
     if body.fence_id:
         await asyncio.to_thread(

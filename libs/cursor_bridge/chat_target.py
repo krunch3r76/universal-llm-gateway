@@ -15,9 +15,19 @@ import re
 from collections.abc import Sequence
 from typing import Any
 
-_STALE_WAKE_LINE = re.compile(r"^BRIDGE_WAKE\s+thread=\S+\s+turn=\d+(?:,\d+)*$")
+from agent_bus_store.turns_models import TAB_UUID_RE
+
+_TAB_UUID = TAB_UUID_RE.pattern.removeprefix("^").removesuffix("$")
+_TAB_WAKE_SUFFIX = rf"(?:\s+tab={_TAB_UUID})?"
+_STALE_WAKE_LINE = re.compile(
+    rf"^BRIDGE_WAKE\s+thread=\S+\s+turn=\d+(?:,\d+)*{_TAB_WAKE_SUFFIX}$"
+)
+_STALE_WAKE_PREFIX_JS = r"^BRIDGE_WAKE\s+thread=\S+\s+turn=\d+(?:,\d+)*"
+_TAB_WAKE_SUFFIX_JS = rf"(?:\s+tab={_TAB_UUID})?"
 STALE_WAKE_LINES_JS = (
-    "lines.length>0&&lines.every(l=>/^BRIDGE_WAKE\\s+thread=\\S+\\s+turn=\\d+(?:,\\d+)*$/.test(l))"
+    "lines.length>0&&lines.every(l=>"
+    f"/{_STALE_WAKE_PREFIX_JS}{_TAB_WAKE_SUFFIX_JS}$/.test(l)"
+    ")"
 )
 
 
@@ -111,29 +121,42 @@ def exchange_lines(rows: Sequence[dict[str, Any]]) -> str:
     return "\n\n".join(blocks)
 
 
-def wake_line(thread: str, turn: int | str | Sequence[int]) -> str:
+def wake_line(
+    thread: str, turn: int | str | Sequence[int], *, tab: str | None = None
+) -> str:
     """Fixed paste for one or more bus turns. The turn body is not included.
 
     ``turn`` may be a positive int, a comma-separated string of positive ints,
     or a non-empty sequence of positive ints (sorted and deduplicated).
-    The thread id is a single line. No I/O.
+    The thread id is a single line. Optional ``tab`` appends one `` tab=<uuid>``.
+    No I/O.
     """
     thread_s = _one_line(thread, "thread")
     turn_s = _format_wake_turns(turn)
-    return f"BRIDGE_WAKE thread={thread_s} turn={turn_s}"
+    line = f"BRIDGE_WAKE thread={thread_s} turn={turn_s}"
+    if tab:
+        tab_s = str(tab).strip().lower()
+        if TAB_UUID_RE.match(tab_s):
+            line += f" tab={tab_s}"
+    return line
 
 
-def wake_lines(groups: Sequence[dict[str, Any]]) -> str:
+def wake_lines(
+    groups: Sequence[dict[str, Any]], *, tab: str | None = None
+) -> str:
     """Multi-line paste: one ``wake_line`` per group in caller order.
 
     Each group must carry ``thread_id`` and ``turn`` (same shapes as ``wake_line``).
     A single group is byte-identical to ``wake_line`` for that thread and turn set.
+    Optional ``tab`` is appended on the first line only.
     """
     if not groups:
         raise ValueError("groups must be non-empty")
-    return "\n".join(
-        wake_line(str(g["thread_id"]), g["turn"]) for g in groups
-    )
+    lines = [
+        wake_line(str(g["thread_id"]), g["turn"], tab=tab if i == 0 else None)
+        for i, g in enumerate(groups)
+    ]
+    return "\n".join(lines)
 
 
 def is_stale_wake_draft(draft: str) -> bool:

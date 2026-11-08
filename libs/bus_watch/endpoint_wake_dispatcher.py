@@ -1657,6 +1657,7 @@ def scan_once(store: StoreClient, *, idle_mark: dict[str, float] | None = None) 
         pending: list[dict[str, Any]] = []
         tombstones: list[dict[str, Any]] = []
         stale_catchup: dict[str, int] | None = None
+        setattr(store, "_self_wake_recent_cache", {})
         for turn in turns:
             _ingest_waiter_admit_turn(turn)
             raw_to = str(turn.get("to_agent") or "")
@@ -1781,8 +1782,7 @@ def scan_once(store: StoreClient, *, idle_mark: dict[str, float] | None = None) 
                 )
                 tombstones.append(self_sender.suppressed_item(item, rule))
                 continue
-            if self_sender.is_self_wake(store, turn, resolved):
-                rule = self_sender.SELF_SENDER_RULE
+            if (rule := self_sender.is_self_wake(store, turn, resolved)):
                 _observe_endpoint_wake_suppressed(
                     thread_id=thread,
                     turn_id=_turn_id_of(turn),
