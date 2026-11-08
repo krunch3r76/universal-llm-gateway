@@ -319,7 +319,7 @@ Ten fields, index-thin: `Anchor` · `Hop` · `Mission` · `Rows` · `In-flight` 
 `Judgment` · `Next-pickup` · `NEXT_ADMIT` · `Stop` · RESUME footer. Optional row
 field under profile **`cdp_fable_legs_arc`** no longer caps legs: the ≤1
 `cdp/fable-5.1` leg-per-arc allowance is removed, and G4 reads ACTIVE.
-Empty / `FAILED body_len=0` leg ⇒ record `cdp_fail_route` on the scoreboard row and escalate at once. Do not retry the CDP pool. `nested-grok` or `operator` as in the after-ship gate above. Field-level
+Empty / `FAILED body_len=0` leg ⇒ record `cdp_fail_route` on the scoreboard row and escalate at once. Do not retry the CDP pool. `anthropic`, `nested-grok`, or `operator` as in the after-ship gate above. Field-level
 content and the why-a-cold-successor-needs-it column:
 `cortex://notes/system/threads/9638-hop-architecture-bind-web-anthropic-20260901T13.md`
 §3. **Not** in it: prose narrative of the row's work (that is the journal), the

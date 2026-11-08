@@ -1,5 +1,5 @@
 ---
-description: No sign-offs, no "you are X", never a personal name for the model — use endpoint addresses.
+description: No sign-offs, no "you are X" — `Claude` names work on claude.ai; otherwise endpoint names.
 alwaysApply: true
 rule_category: session
 apply_tier: required_gate

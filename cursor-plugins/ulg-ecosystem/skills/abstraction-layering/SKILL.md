@@ -283,7 +283,7 @@ record harvest on sidecar **R1**. Reserve `cdp/fable-5.1` for expanding detent (
 | Posture | Do |
 |---|---|
 | Conductor / unattended | **Fire G6** — latency is not a skip; poll/hop+watcher until R1 harvest |
-| CDP consult refused or failed | Escalate at once (`cdp_fail_route` `nested-grok` or `operator` on the scoreboard). Do not wait and do not retry the CDP pool. ¬ land (G7) on an empty harvest |
+| CDP consult refused or failed | Escalate at once (`cdp_fail_route` `anthropic`, `nested-grok`, or `operator` on the scoreboard). Do not wait and do not retry the CDP pool. ¬ land (G7) on an empty harvest |
 
 Recipe: `consult-routing` § M3 pre-go-live · M4 S1.
 

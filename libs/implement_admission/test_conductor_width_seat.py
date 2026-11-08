@@ -173,6 +173,7 @@ def test_width_seat_named_files_carry_block() -> None:
 
 
 _HARNESS_CRITIC_FILES = (
+    "cursor-plugins/ulg-ecosystem/commands/conductor.md",
     "cursor-plugins/ulg-ecosystem/rules/dispatch-kernel_ulg.mdc",
     "cursor-plugins/ulg-ecosystem/skills/lean-dispatch/SKILL.md",
     "cursor-plugins/ulg-ecosystem/skills/consult-routing/SKILL.md",

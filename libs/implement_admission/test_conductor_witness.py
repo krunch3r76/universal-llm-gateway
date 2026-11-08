@@ -1456,6 +1456,30 @@ def test_cdp_fail_route_parses_anthropic() -> None:
     assert _cdp_fail_route(tip, "G6") == "anthropic"
 
 
+def test_g6_fold_anthropic_fallback_without_reroute_flag(tmp_path: Path) -> None:
+    """Amendment v3: anthropic fail route folds like default critic when reroute off."""
+    files_root = tmp_path / "cortex"
+    anthropic_uri, anthropic_sha = _sha_file(
+        files_root,
+        "notes/system/reviews/g6-anthropic-fallback.md",
+        _REROUTE_RATIFY + "anthropic-fallback\n",
+    )
+    tip = _gated_tip(
+        g4_stops="",
+        g6_stops="cdp_fail_route=anthropic",
+        sidecars=_sidecar("G6-REVIEW-anthropic", anthropic_uri, anthropic_sha),
+    )
+    witnesses = row_witnesses(
+        "anthropic-fallback-fold",
+        tip_body=tip,
+        deps=_reroute_deps(tmp_path),
+        files_root=files_root,
+    )
+    assert witnesses.get("G6") is not None
+    assert witnesses["G6"].detail == anthropic_uri
+    assert witnesses["G6"].source == f"artifact:G6-REVIEW-anthropic"
+
+
 def test_run_to_completion_names_route_on_artifact_and_stops() -> None:
     """U8 map: Run to completion → reference-run-to-completion.md."""
     skill = (

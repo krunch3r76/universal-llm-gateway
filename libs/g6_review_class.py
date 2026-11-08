@@ -59,7 +59,7 @@ def refusal_message() -> str:
     return (
         "team_dispatch on a filtered cursor-sdk seat is review-class only "
         "(op=generate, contract=delivery-review, "
-        f"model default {critic} (impresario.critic; do not substitute cdp/), "
+        f"model default {critic} (impresario.critic), "
         f"also admitted {{{admitted}}}, prompt set, "
         "dispatch_thread_id = this seat's thread, parent_thread omitted or equal; "
         "omit purpose and role — put job=delivery-review on a prompt line). "
