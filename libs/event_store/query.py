@@ -115,6 +115,19 @@ def create_query_router(
         counts = await retention_runner()
         return JSONResponse({"dry_run": False, **counts})
 
+    @router.post("/api/v1/maintenance/model-id-ts-index")
+    async def build_model_id_ts_index() -> JSONResponse:
+        """Explicit operator build of idx_model_id_ts; holds the write lock."""
+        started = time.perf_counter()
+        created = await store.build_model_id_ts_index()
+        return JSONResponse(
+            {
+                "index": "idx_model_id_ts",
+                "created": created,
+                "elapsed_ms": int((time.perf_counter() - started) * 1000),
+            }
+        )
+
     @router.get("/health")
     async def health_handler() -> JSONResponse:
         """Liveness + code identity + process pid for process_live settlement."""

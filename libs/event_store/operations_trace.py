@@ -16,6 +16,8 @@ from .operation_parameters import (
     signal_prefix_range,
 )
 from .store import EventStore
+from .errors import EventStoreBusyError, EventStoreReadDeadlineError
+from .store_stats import estimate_event_count, query_seq_bounds
 
 logger = get_logger(__name__)
 
@@ -27,20 +29,51 @@ _STARTUP_SIGNALS: tuple[str, ...] = (
 
 
 async def _event_store_floor(store: EventStore) -> dict[str, Any]:
+    """Retention floor for not-found traces; a slow or locked read degrades, never raises."""
+    try:
+        return await _event_store_floor_read(store)
+    except (EventStoreReadDeadlineError, EventStoreBusyError) as exc:
+        logger.warning("event-store floor read unavailable: %s", exc)
+        return {
+            "event_count": None,
+            "floor_ts_unix_ms": None,
+            "floor_timestamp": None,
+            "error": "floor_unavailable",
+        }
+
+
+async def _event_store_floor_read(store: EventStore) -> dict[str, Any]:
+    bounds = await query_seq_bounds(store)
+    count = estimate_event_count(bounds)
+    min_seq = bounds.get("min_seq")
+    if min_seq is None:
+        return {
+            "event_count": count,
+            "floor_ts_unix_ms": None,
+            "floor_timestamp": None,
+            "max_seq": bounds.get("max_seq"),
+            "min_seq": None,
+        }
     rows = await store.query(
-        "SELECT seq, ts_unix_ms, timestamp FROM events ORDER BY ts_unix_ms ASC, seq ASC LIMIT 1",
-        (),
+        "SELECT ts_unix_ms, timestamp FROM events WHERE seq = ?",
+        (min_seq,),
         limit=1,
     )
-    count_rows = await store.query("SELECT COUNT(*) AS count FROM events", (), limit=1)
-    count = int(count_rows[0].get("count") or 0) if count_rows else 0
     if not rows:
-        return {"event_count": count, "floor_ts_unix_ms": None, "floor_timestamp": None}
+        return {
+            "event_count": count,
+            "floor_ts_unix_ms": None,
+            "floor_timestamp": None,
+            "max_seq": bounds.get("max_seq"),
+            "min_seq": min_seq,
+        }
     row = rows[0]
     return {
         "event_count": count,
         "floor_ts_unix_ms": row.get("ts_unix_ms"),
         "floor_timestamp": row.get("timestamp"),
+        "max_seq": bounds.get("max_seq"),
+        "min_seq": min_seq,
     }
 
 

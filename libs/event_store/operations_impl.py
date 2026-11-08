@@ -95,7 +95,7 @@ async def _model_timeline(params: dict[str, Any], store: EventStore) -> dict[str
     if since_ts is not None:
         sql += " AND ts_unix_ms >= ?"
         query_params.append(since_ts)
-    sql += " ORDER BY seq"
+    sql += " ORDER BY ts_unix_ms, seq"
     rows = await store.query(sql, tuple(query_params))
     return {"rows": rows, "count": len(rows), "model_id": model_id}
 
