@@ -4627,7 +4627,9 @@ def test_t1_plain_ack_to_maestro_still_drops_as_ack_route_coord(db: None) -> Non
     _rewind_cursor()
     store = _TabScanStore(holder={"agent": "maestro"})
     scan_once(store)  # type: ignore[arg-type]
-    assert store.pending == []
+    assert [(r["state"], r["reason"]) for r in store.pending] == [
+        ("skipped", "suppressed:drop_ack_route_coord")
+    ]
 
 
 def test_t2_peer_sender_wakes_on_thread_with_tab_bound_cursor_row(db: None) -> None:

@@ -89,12 +89,13 @@ def test_probe_glass_composer_budget_js_reads_composer_fields() -> None:
 
 
 def test_submit_wake_line_js_idle_tab_submits_with_steer_and_ignore_queuing() -> None:
-    """Idle tab (not generating): steerIntent and ignoreQueuing without status gate."""
-    for js in (
-        submit_wake_line_js("BRIDGE_WAKE thread=1 turn=2", "agent-1"),
-        launch_new_agent_tab_js("hello", ""),
-    ):
-        assert "status === 'generating'" not in js
+    """Idle tab: steerIntent and ignoreQueuing; a wake is gated on agent run state."""
+    wake_js = submit_wake_line_js("BRIDGE_WAKE thread=1 turn=2", "agent-1")
+    launch_js = launch_new_agent_tab_js("hello", "")
+    assert "status === 'generating'" not in launch_js
+    gate = wake_js.index("await agentRunState(byId, agentId)")
+    assert gate < wake_js.index("const submitOpts")
+    for js in (wake_js, launch_js):
         assert "steerIntent: true" in js
         assert "ignoreQueuing: true" in js
         opts_start = js.index("const submitOpts")
@@ -104,11 +105,11 @@ def test_submit_wake_line_js_idle_tab_submits_with_steer_and_ignore_queuing() ->
         assert "ignoreQueuing: true" in opts_block
 
 
-def test_submit_wake_line_js_always_steers_and_clears_draft() -> None:
+def test_submit_wake_line_js_steers_and_clears_draft() -> None:
     js = submit_wake_line_js("BRIDGE_WAKE thread=1 turn=2", "agent-1")
     assert "steerIntent: true" in js
     assert "ignoreQueuing: true" in js
-    assert "status === 'generating'" not in js
+    assert js.index("reason: 'agent_running'") < js.index("submitChatMaybeAbortCurrent")
     assert "clearContent" in js
     assert "composerUtilsService.clearText" in js
     assert "setContent" not in js
