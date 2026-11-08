@@ -99,7 +99,7 @@ def test_orion_post_pipeline_error_retries_once_then_pending() -> None:
     client.__exit__ = lambda *a: None
 
     with patch(
-        "bus_watch.endpoint_wake_dispatcher.make_sync_client", return_value=client
+        "bus_watch.endpoint_wake_orion_delivery.make_sync_client", return_value=client
     ):
         state, reason = _orion_post(rows, sub, "69", from_agent="maestro", wake_id="w1")
     assert len(calls) == 2
@@ -142,7 +142,7 @@ def test_orion_post_turn_ids_list_in_payload() -> None:
     client.__exit__ = lambda *a: None
 
     with patch(
-        "bus_watch.endpoint_wake_dispatcher.make_sync_client", return_value=client
+        "bus_watch.endpoint_wake_orion_delivery.make_sync_client", return_value=client
     ):
         _orion_post(rows, sub, "69,70", from_agent="maestro", wake_id="w2")
     opts = captured["options"]

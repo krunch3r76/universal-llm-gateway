@@ -51,7 +51,7 @@ def test_orion_post_includes_wake_id_and_covered_turns() -> None:
     client.__exit__ = lambda *a: None
 
     with patch(
-        "bus_watch.endpoint_wake_dispatcher.make_sync_client", return_value=client
+        "bus_watch.endpoint_wake_orion_delivery.make_sync_client", return_value=client
     ):
         state, reason = _orion_post(
             rows,
