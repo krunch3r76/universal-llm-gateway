@@ -28,6 +28,12 @@ from web_chat_relay.chatgpt_structural_empty_js import (
 _INSERT_METHOD = "Input.insertText"
 
 
+def _next_cdp_msg_id(ws: Any) -> int:
+    n = int(getattr(ws, "_ulg_cdp_seq", 0)) + 1
+    setattr(ws, "_ulg_cdp_seq", n)
+    return n
+
+
 def _selector_list(selector: str) -> list[str]:
     return [s.strip() for s in selector.split(",") if s.strip()]
 
@@ -295,10 +301,10 @@ async def chatgpt_work_insert_and_send(
 
     try:
         async with websockets.connect(ws_url, max_size=2_000_000) as ws:
-            await _runtime_eval_ws(ws, 1, INSTALL_OPERATOR_ACTIVITY_PROBE_JS)
+            await _runtime_eval_ws(ws, _next_cdp_msg_id(ws), INSTALL_OPERATOR_ACTIVITY_PROBE_JS)
             pre = await _runtime_eval_ws(
                 ws,
-                2,
+                _next_cdp_msg_id(ws),
                 chatgpt_work_preflight_expression(
                     selector=selector,
                     line=line,
@@ -320,7 +326,7 @@ async def chatgpt_work_insert_and_send(
             if need_insert:
                 before = await _runtime_eval_ws(
                     ws,
-                    3,
+                    _next_cdp_msg_id(ws),
                     chatgpt_work_pre_insert_expression(
                         line=line,
                         preserve_newlines=preserve_newlines,
@@ -333,12 +339,14 @@ async def chatgpt_work_insert_and_send(
                         reason = str(before["reason"])
                     return {"ok": False, "reason": reason}
 
-                await _runtime_eval_ws(ws, 4, operator_activity_suppress_js())
+                await _runtime_eval_ws(ws, _next_cdp_msg_id(ws), operator_activity_suppress_js())
                 insert_attempted = True
                 try:
-                    ins = await _input_insert_text_ws(ws, 5, line)
+                    ins = await _input_insert_text_ws(ws, _next_cdp_msg_id(ws), line)
                 finally:
-                    await _runtime_eval_ws(ws, 6, operator_activity_clear_suppress_js())
+                    await _runtime_eval_ws(
+                        ws, _next_cdp_msg_id(ws), operator_activity_clear_suppress_js()
+                    )
                 if not ins.get("ok"):
                     ins.setdefault("insert_attempted", True)
                     ins.setdefault("retryable", False)
@@ -346,7 +354,7 @@ async def chatgpt_work_insert_and_send(
 
             readback = await _runtime_eval_ws(
                 ws,
-                7,
+                _next_cdp_msg_id(ws),
                 chatgpt_work_readback_expression_with_attempt(
                     line=line,
                     preserve_newlines=preserve_newlines,
@@ -360,8 +368,6 @@ async def chatgpt_work_insert_and_send(
                 if isinstance(readback, dict) and readback.get("reason"):
                     reason = str(readback["reason"])
                 return {"ok": False, "reason": reason}
-
-            setattr(ws, "_ulg_cdp_seq", 7)
 
             try:
                 send = await dom_click_send(

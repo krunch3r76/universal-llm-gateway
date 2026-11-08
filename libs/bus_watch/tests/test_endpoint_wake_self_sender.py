@@ -196,6 +196,69 @@ def test_api_role_reply_wakes_subscribed_recipient(db: None, from_agent: str) ->
     assert [r["state"] for r in rows] == ["pending"]
 
 
+def test_api_role_intermediate_subjects_not_peer_wake() -> None:
+    from bus_watch.endpoint_wake_dispatcher import peer_operator_wake_from
+
+    assert not peer_operator_wake_from("artisan", subject="CHECKPOINT|leg-boundary")
+    assert not peer_operator_wake_from("skeptic", subject="progress|batch-2")
+    assert peer_operator_wake_from("artisan", subject="DONE|final-reply")
+
+
+def test_api_generate_peer_wake_from_catalog_fallback(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from bus_watch.endpoint_wake_dispatcher import (
+        _API_GENERATE_PEER_WAKE_FALLBACK,
+        _api_generate_peer_wake_from,
+    )
+
+    _api_generate_peer_wake_from.cache_clear()
+
+    def _boom() -> list[str]:
+        raise RuntimeError("catalog unavailable")
+
+    monkeypatch.setattr(
+        "agent_seat.dispatch_role_catalog.generate_roles",
+        _boom,
+    )
+    assert _api_generate_peer_wake_from() == _API_GENERATE_PEER_WAKE_FALLBACK
+    _api_generate_peer_wake_from.cache_clear()
+
+
+def test_api_role_to_orion_intermediate_not_woken() -> None:
+    from bus_watch.endpoint_wake_dispatcher import qualify
+
+    verdict = qualify(
+        {
+            "from_agent": "synthesizer",
+            "to_agent": "orion",
+            "subject": "STATUS|not-an-answer",
+            "thread": "22388",
+        },
+        cse=False,
+        store=None,
+    )
+    assert verdict.wake is False
+    assert verdict.rule_id == "default_suppress"
+
+
+def test_api_role_self_echo_drops_before_peer_wake() -> None:
+    from bus_watch.endpoint_wake_dispatcher import qualify
+
+    verdict = qualify(
+        {
+            "from_agent": "artisan",
+            "to_agent": "artisan",
+            "subject": "DONE|self",
+            "thread": "22554",
+        },
+        cse=False,
+        store=None,
+    )
+    assert verdict.wake is False
+    assert verdict.rule_id == "drop_self_or_broadcast"
+
+
 def test_peer_wake_from_non_glass_surfaces_unchanged() -> None:
     from bus_watch.endpoint_wake_dispatcher import peer_operator_wake_from
 

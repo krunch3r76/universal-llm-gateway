@@ -3940,6 +3940,21 @@ def test_uuid_sender_supervisor_head_parity_contract() -> None:
         verdict = qualify({**base, "subject": subject}, cse=False, store=None)
         assert verdict.wake is False, subject
         assert verdict.rule_id == "default_suppress", subject
+    api_base = {
+        "to_agent": "cursor",
+        "from_agent": "artisan",
+        "thread": "22554",
+    }
+    api_done = qualify({**api_base, "subject": "DONE|api-role-final"}, cse=False, store=None)
+    assert api_done.wake is True
+    assert api_done.rule_id == "wake_peer_sender"
+    api_cp = qualify(
+        {**api_base, "subject": "CHECKPOINT|api-role-intermediate"},
+        cse=False,
+        store=None,
+    )
+    assert api_cp.wake is False
+    assert api_cp.rule_id == "default_suppress"
     receipt = qualify(
         {
             "to_agent": "cursor",

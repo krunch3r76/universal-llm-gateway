@@ -953,10 +953,11 @@ async def _mark_composer_send_abort(ws: Any, nonce: str) -> None:
     if not nonce:
         return
     try:
+        mid = _next_cdp_msg_id(ws)
         await ws.send(
             json.dumps(
                 {
-                    "id": 2,
+                    "id": mid,
                     "method": "Runtime.evaluate",
                     "params": {
                         "expression": _composer_send_abort_expression(nonce),
@@ -966,7 +967,7 @@ async def _mark_composer_send_abort(ws: Any, nonce: str) -> None:
                 }
             )
         )
-        await asyncio.wait_for(_cdp_response(ws, 2), 1.0)
+        await asyncio.wait_for(_cdp_response(ws, mid), 1.0)
     except Exception:
         return
 

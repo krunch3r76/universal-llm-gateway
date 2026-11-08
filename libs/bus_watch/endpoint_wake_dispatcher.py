@@ -212,12 +212,21 @@ _PEER_WAKE_FROM = frozenset(
 )
 
 
+_API_GENERATE_PEER_WAKE_FALLBACK = frozenset(
+    {"artisan", "skeptic", "synthesizer", "reviewer"}
+)
+
+
 @lru_cache(maxsize=1)
 def _api_generate_peer_wake_from() -> frozenset[str]:
     """API ``team_dispatch(op=generate)`` roles (config/agents.yaml via dispatch_role_catalog)."""
-    from agent_seat.dispatch_role_catalog import generate_roles
+    try:
+        from agent_seat.dispatch_role_catalog import generate_roles
 
-    return frozenset(generate_roles())
+        return frozenset(generate_roles())
+    except Exception as exc:
+        logger.warning("generate_roles unavailable; API peer-wake fallback: %s", exc)
+        return _API_GENERATE_PEER_WAKE_FALLBACK
 _ORION_PEER_WAKE_HEADS = frozenset({"ANSWER"})
 _POLL_S = 2.0
 
@@ -763,6 +772,9 @@ def peer_operator_wake_from(from_agent: str, *, subject: str | None = None) -> b
     if from_agent.endswith("-impresario"):
         return True
     if from_agent in _api_generate_peer_wake_from():
+        subj = str(subject or "")
+        if _INTERMEDIATE_SUBJECT_RE.search(subj):
+            return False
         return True
     return False
 
@@ -872,6 +884,7 @@ _FALLBACK_WAKE_RULE_IDS: tuple[str, ...] = (
     "drop_maestro_telemetry",
     "wake_cursor_gate_on_interm",
     "drop_dispatch_intermediate",
+    "wake_on_behalf_execution_reply",
     "wake_peer_sender",
     "drop_routine_hop_closeout",
     "wake_gate_or_directive",
@@ -1040,6 +1053,10 @@ def qualify(
         and not _INTERMEDIATE_SUBJECT_RE.search(subject)
     ):
         return RuleVerdict(True, "wake_on_behalf_execution_reply")
+    if to_agent == "orion" and from_agent in _api_generate_peer_wake_from():
+        api_head = str(subject or "").split("|", 1)[0].strip().upper().split(" ", 1)[0]
+        if api_head not in _ORION_PEER_WAKE_HEADS:
+            return RuleVerdict(False, "default_suppress")
     if peer_operator_wake_from(from_agent, subject=subject):
         return RuleVerdict(True, "wake_peer_sender")
     if _is_routine_conductor_hop_closeout(subject):
