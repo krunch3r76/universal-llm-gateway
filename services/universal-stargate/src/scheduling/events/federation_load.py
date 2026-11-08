@@ -274,8 +274,12 @@ def FederationLoadRaceResolved(
     http_arrival_ms: int | None = None,
     terminal_arrival_ms: int | None = None,
     arrival_delta_ms: int | None = None,
+    http_exception_class: str | None = None,
 ) -> Event:
-    """Observation: which side won the federation remote load vs terminal-event race."""
+    """Observation: which side won the federation remote load vs terminal-event race.
+
+    winner ∈ {terminal_first, http_first, http_error_first}.
+    """
     payload: dict[str, object] = {
         "request_id": request_id,
         "model_id": model_id,
@@ -286,6 +290,7 @@ def FederationLoadRaceResolved(
         "http_arrival_ms": http_arrival_ms,
         "terminal_arrival_ms": terminal_arrival_ms,
         "arrival_delta_ms": arrival_delta_ms,
+        "http_exception_class": http_exception_class,
     }
     payload = {k: v for k, v in payload.items() if v is not None}
     return Event(

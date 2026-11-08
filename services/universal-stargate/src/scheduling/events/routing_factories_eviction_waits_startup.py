@@ -6,6 +6,7 @@ from universal_event_bus import Event, event_factory
 
 from .routing_signal_constants_routing_waits import (
     ROUTING_DRAIN_INITIATED,
+    ROUTING_EVICTION_VRAM_REFUSAL_WAIT_RESOLVED,
     ROUTING_EVICTION_WAIT_CANCELLED,
     ROUTING_EVICTION_WAIT_RESOLVED,
     ROUTING_EVICTION_WAIT_STARTED,
@@ -41,26 +42,44 @@ def RoutingEvictionWaitResolved(
     model_id: str,
     gateway_id: str,
     waited_ms: int,
-    exit_reason: str | None = None,
-    wait_kind: str | None = None,
 ) -> Event:
     """Emit when eviction wait completed and selection succeeded."""
-    payload: dict[str, object] = {
-        "request_id": request_id,
-        "model_id": model_id,
-        "gateway_id": gateway_id,
-        "waited_ms": waited_ms,
-        "exit_reason": exit_reason,
-        "wait_kind": wait_kind,
-    }
-    payload = {k: v for k, v in payload.items() if v is not None}
-    if wait_kind == "vram_refusal":
-        return Event(
-            signal=ROUTING_EVICTION_WAIT_RESOLVED,
-            payload=payload,
-            role="observation",
-        )
-    return Event(signal=ROUTING_EVICTION_WAIT_RESOLVED, payload=payload)
+    return Event(
+        signal=ROUTING_EVICTION_WAIT_RESOLVED,
+        payload={
+            "request_id": request_id,
+            "model_id": model_id,
+            "gateway_id": gateway_id,
+            "waited_ms": waited_ms,
+        },
+    )
+
+
+@event_factory
+def RoutingEvictionVramRefusalWaitResolved(
+    request_id: str,
+    model_id: str,
+    gateway_id: str,
+    waited_ms: int,
+    exit_reason: str,
+) -> Event:
+    """Emit when VRAM-refusal dwell wait completes with a gateway selection.
+
+    exit_reason is the dwell slice that immediately preceded success:
+      - resource_update: gateway RESOURCE_UPDATE newer than refusal baseline
+      - dwell_backoff: timed dwell slice elapsed without fresher telemetry
+    """
+    return Event(
+        signal=ROUTING_EVICTION_VRAM_REFUSAL_WAIT_RESOLVED,
+        payload={
+            "request_id": request_id,
+            "model_id": model_id,
+            "gateway_id": gateway_id,
+            "waited_ms": waited_ms,
+            "exit_reason": exit_reason,
+        },
+        role="observation",
+    )
 
 
 @event_factory

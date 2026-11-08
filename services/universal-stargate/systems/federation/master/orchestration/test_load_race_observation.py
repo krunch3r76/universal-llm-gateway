@@ -132,3 +132,39 @@ async def test_federation_load_race_observation_terminal_first() -> None:
     assert payload["terminal_pending"] is False
     assert payload["terminal_arrival_ms"] is not None
     assert payload.get("http_arrival_ms") is None
+
+
+@pytest.mark.asyncio
+async def test_federation_load_race_observation_http_error_first() -> None:
+    bus = _RaceBus()
+    model = ModelId.parse("qwen3-14b-q4-k-m-40960")
+    loop = asyncio.get_running_loop()
+    t0 = loop.time()
+
+    async def http_fail() -> None:
+        await asyncio.sleep(0.02)
+        raise RuntimeError("edge refused")
+
+    async def slow_terminal_publish() -> None:
+        await asyncio.sleep(0.2)
+
+    remote = asyncio.create_task(http_fail())
+    asyncio.create_task(slow_terminal_publish())
+    with pytest.raises(RuntimeError, match="edge refused"):
+        await race_remote_load_with_terminal_events(
+            bus,
+            remote,
+            expected_model=model,
+            gateway_id="edge-jupiter-gateway",
+            remote_id="relay-jupiter",
+            backstop_timeout_s=1.0,
+            request_id="req-http-err",
+            load_started_mono=t0,
+        )
+    race = [e for e in bus.published if e.signal == "federation.load.race_resolved"]
+    assert len(race) == 1
+    payload = race[0].payload
+    assert payload["winner"] == "http_error_first"
+    assert payload["http_exception_class"] == "RuntimeError"
+    assert payload["http_arrival_ms"] is not None
+    assert payload["http_arrival_ms"] < 100

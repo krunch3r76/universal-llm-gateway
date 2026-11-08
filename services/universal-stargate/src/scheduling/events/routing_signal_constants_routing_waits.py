@@ -27,8 +27,24 @@ Payload: {
     "model_id": str,
     "gateway_id": str,
     "waited_ms": int,
-    "exit_reason": str | None,
-    "wait_kind": str | None,
+}
+"""
+
+ROUTING_EVICTION_VRAM_REFUSAL_WAIT_RESOLVED = (
+    "routing.eviction.vram_refusal_wait.resolved"
+)
+"""
+VRAM-refusal post-load dwell wait completed with a new gateway selection.
+
+Observation-only (role=observation). Distinct from routing.eviction.wait.resolved
+so busy-block coordination events keep their default role.
+
+Payload: {
+    "request_id": str,
+    "model_id": str,
+    "gateway_id": str,
+    "waited_ms": int,
+    "exit_reason": str,  # "resource_update" | "dwell_backoff"
 }
 """
 

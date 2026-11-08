@@ -276,6 +276,7 @@ async def _emit_federation_load_race_observation(
     load_started_mono: float,
     http_done_mono: float | None,
     terminal_done_mono: float | None,
+    http_exception_class: str | None = None,
 ) -> None:
     """Publish once per completed HTTP/terminal race (observation, low frequency)."""
     if event_bus is None or not request_id:
@@ -306,6 +307,7 @@ async def _emit_federation_load_race_observation(
                 http_arrival_ms=http_ms,
                 terminal_arrival_ms=terminal_ms,
                 arrival_delta_ms=delta_ms,
+                http_exception_class=http_exception_class,
             )
         )
     except Exception as exc:  # pragma: no cover - defensive
@@ -490,6 +492,19 @@ async def race_remote_load_with_terminal_events(
                     await terminal_waiter
             exc = remote_call.exception()
             if exc is not None:
+                await _emit_federation_load_race_observation(
+                    event_bus,
+                    request_id=request_id,
+                    expected_model=expected_model,
+                    gateway_id=gateway_id,
+                    winner="http_error_first",
+                    terminal=None,
+                    terminal_pending=terminal_pending_before_cancel,
+                    load_started_mono=race_t0,
+                    http_done_mono=http_done_mono,
+                    terminal_done_mono=terminal_done_mono,
+                    http_exception_class=type(exc).__name__,
+                )
                 raise exc
             await _emit_federation_load_race_observation(
                 event_bus,

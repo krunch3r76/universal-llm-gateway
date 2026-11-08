@@ -246,7 +246,8 @@ async def _wait_vram_refusal_and_retry_selection(
 ) -> tuple[Any, Any, int]:
     """Post-load VRAM refusal: dwell/backoff per gateway RESOURCE_UPDATE, then select."""
     from src.scheduling.events.routing import (
-        RoutingEvictionWaitResolved,
+        RoutingEvictionVramRefusalWaitResolved,
+        RoutingEvictionWaitCancelled,
         RoutingEvictionWaitStarted,
         RoutingEvictionWaitTimeout,
     )
@@ -284,6 +285,7 @@ async def _wait_vram_refusal_and_retry_selection(
 
             remaining = timeout_s - elapsed_s
             wait_slice = min(dwell_s, remaining)
+            slice_start = time.monotonic()
             slice_exit_reason = "dwell_backoff"
             if refused_gw and baseline_ts > 0:
                 updated = await federated_manager.wait_for_gateway_resource_update(
@@ -293,6 +295,11 @@ async def _wait_vram_refusal_and_retry_selection(
                     slice_exit_reason = "resource_update"
             else:
                 await asyncio.sleep(wait_slice)
+
+            slice_elapsed = time.monotonic() - slice_start
+            pad_s = wait_slice - slice_elapsed
+            if pad_s > 0:
+                await asyncio.sleep(pad_s)
 
             fresh_gateways = [
                 g for g in federated_manager.get_all_gateways() if g.dispatchable
@@ -314,23 +321,40 @@ async def _wait_vram_refusal_and_retry_selection(
                 if event_bus:
                     await _emit_event_safe(
                         event_bus,
-                        RoutingEvictionWaitResolved(
+                        RoutingEvictionVramRefusalWaitResolved(
                             request_id=context.request_id,
                             model_id=str(placement.model_id),
                             gateway_id=selected.name,
                             waited_ms=waited_ms,
                             exit_reason=slice_exit_reason,
-                            wait_kind="vram_refusal",
                         ),
-                        "routing.eviction.wait.resolved",
+                        "routing.eviction.vram_refusal_wait.resolved",
                     )
                 return selected, trace, waited_ms
+
+            if refused_gw:
+                refreshed = federated_manager.gateway_resource_telemetry_timestamp(
+                    refused_gw
+                )
+                if refreshed is not None:
+                    baseline_ts = refreshed
 
             elapsed_s = time.monotonic() - wait_start
             if elapsed_s >= timeout_s:
                 break
             dwell_s = min(dwell_s * 2.0, VRAM_REFUSAL_MAX_DWELL_S)
     except asyncio.CancelledError:
+        waited_ms = int((time.monotonic() - wait_start) * 1000)
+        if event_bus:
+            await _emit_event_safe(
+                event_bus,
+                RoutingEvictionWaitCancelled(
+                    request_id=context.request_id,
+                    model_id=str(placement.model_id),
+                    waited_ms=waited_ms,
+                ),
+                "routing.eviction.wait.cancelled",
+            )
         raise
     finally:
         _eviction_wait_queue_depth -= 1
