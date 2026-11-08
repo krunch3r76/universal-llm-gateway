@@ -60,15 +60,15 @@ def _model_matches(payload: dict[str, Any], expected: ModelId | str) -> bool:
     model_id = payload.get("model_id")
     if not model_id:
         return False
-    if isinstance(expected, str):
-        expected_key = ModelId.parse(expected).routing_key
+    if isinstance(expected, ModelId):
+        expected_id = expected
     else:
-        expected_key = expected.routing_key
+        expected_id = ModelId.parse(str(expected))
     try:
         event_id = ModelId.parse(str(model_id))
-        return event_id.routing_key == expected_key
     except (ValueError, TypeError):
-        return str(model_id) == expected_key
+        return False
+    return event_id == expected_id
 
 
 @dataclass
@@ -100,12 +100,18 @@ class _FederationProgressThrottle:
 
 def _gateway_matches(payload: dict[str, Any], gateway_id: str, remote_id: str) -> bool:
     gateway_name = payload.get("gateway_name")
-    if gateway_name and str(gateway_name) in {gateway_id, remote_id}:
-        return True
+    if gateway_name is not None:
+        name = str(gateway_name)
+        if name in {gateway_id, remote_id}:
+            return True
+        if name.endswith("-gateway") and name[: -len("-gateway")] == remote_id:
+            return True
     url = payload.get("url")
-    if url and (gateway_id in str(url) or remote_id in str(url)):
-        return True
-    return gateway_name is None and payload.get("url") is None
+    if url:
+        url_s = str(url)
+        if gateway_id in url_s or remote_id in url_s:
+            return True
+    return False
 
 
 def _progress_payload_summary(payload: dict[str, Any]) -> dict[str, Any]:
@@ -179,7 +185,7 @@ async def _wait_for_idle_timeout(
 async def wait_for_terminal_load_event(
     event_bus: Any,
     *,
-    routing_key: str,
+    expected_model: ModelId | str,
     gateway_id: str,
     remote_id: str,
     timeout_s: float,
@@ -202,7 +208,7 @@ async def wait_for_terminal_load_event(
         if future.done():
             return
         payload = getattr(event, "payload", None) or {}
-        if not _model_matches(payload, routing_key):
+        if not _model_matches(payload, expected_model):
             return
         if not _gateway_matches(payload, gateway_id, remote_id):
             return
@@ -242,7 +248,7 @@ async def race_remote_load_with_terminal_events(
     event_bus: Any,
     remote_call: asyncio.Task[Any],
     *,
-    routing_key: str,
+    expected_model: ModelId | str,
     gateway_id: str,
     remote_id: str,
     backstop_timeout_s: float,
@@ -266,7 +272,7 @@ async def race_remote_load_with_terminal_events(
             if progress_tracker is None:
                 return
             payload = getattr(event, "payload", None) or {}
-            if not _model_matches(payload, routing_key):
+            if not _model_matches(payload, expected_model):
                 return
             if not _gateway_matches(payload, gateway_id, remote_id):
                 return
@@ -291,7 +297,14 @@ async def race_remote_load_with_terminal_events(
                         FederationLoadProgress(
                             request_id=request_id,
                             remote_id=remote_id,
-                            model_id=str(payload.get("model_id", routing_key)),
+                            model_id=str(
+                                payload.get(
+                                    "model_id",
+                                    expected_model
+                                    if isinstance(expected_model, str)
+                                    else str(expected_model),
+                                )
+                            ),
                             phase=str(phase),
                             pct=pct_value,
                             elapsed_ms=elapsed_ms,
@@ -317,7 +330,7 @@ async def race_remote_load_with_terminal_events(
     terminal_waiter = asyncio.create_task(
         wait_for_terminal_load_event(
             event_bus,
-            routing_key=routing_key,
+            expected_model=expected_model,
             gateway_id=gateway_id,
             remote_id=remote_id,
             timeout_s=backstop_timeout_s,
@@ -422,7 +435,7 @@ async def await_remote_load_with_wall_clock(
     *,
     remote_call: asyncio.Task[Any],
     event_bus: Any | None,
-    routing_key: str,
+    expected_model: ModelId | str,
     gateway_id: str,
     remote_id: str,
     backstop_timeout_s: float,
@@ -453,7 +466,7 @@ async def await_remote_load_with_wall_clock(
         result, terminal = await race_remote_load_with_terminal_events(
             event_bus,
             remote_call,
-            routing_key=routing_key,
+            expected_model=expected_model,
             gateway_id=gateway_id,
             remote_id=remote_id,
             backstop_timeout_s=backstop_timeout_s,

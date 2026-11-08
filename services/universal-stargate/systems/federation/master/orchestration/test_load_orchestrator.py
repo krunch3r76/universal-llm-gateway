@@ -380,6 +380,76 @@ async def test_progress_silence_triggers_idle_load_timeout_payload() -> None:
     assert "Progress silence" in detail["message"]
 
 
+class _CallCountingVramRefusalForwarder:
+    def __init__(self) -> None:
+        self.calls = 0
+
+    async def forward_model_load_request(self, **_: Any) -> dict[str, Any]:
+        self.calls += 1
+        return {
+            "status": "failed",
+            "status_code": 503,
+            "message": "RESOURCE UNAVAILABLE: VRAM: need 30184MB, have 11980MB",
+        }
+
+
+class _CallCountingGeneric503Forwarder:
+    def __init__(self) -> None:
+        self.calls = 0
+
+    async def forward_model_load_request(self, **_: Any) -> dict[str, Any]:
+        self.calls += 1
+        await asyncio.sleep(0.01)
+        return {
+            "status": "failed",
+            "status_code": 503,
+            "message": "upstream connection reset",
+        }
+
+
+@pytest.mark.asyncio
+async def test_vram_capacity_refusal_does_not_retry_in_orchestrator() -> None:
+    model = _FakeModelId("hermes-3-llama-3-1-70b-uncensored-q4-k-m-32768")
+    forwarder = _CallCountingVramRefusalForwarder()
+    orchestrator = FederatedLoadOrchestrator(
+        forwarder,
+        config=OrchestrationConfig(load_retry_count=2, load_retry_delay=0.01),
+    )
+    with pytest.raises(HTTPException) as excinfo:
+        await orchestrator._call_remote_load(_gateway(), model, True, "req-vram")
+    assert forwarder.calls == 1
+    assert excinfo.value.detail["code"] == "RESOURCE_UNAVAILABLE"
+
+
+@pytest.mark.asyncio
+async def test_non_vram_5xx_still_retries_in_orchestrator() -> None:
+    model = _FakeModelId("qwen3-32b-32768")
+    forwarder = _CallCountingGeneric503Forwarder()
+    orchestrator = FederatedLoadOrchestrator(
+        forwarder,
+        config=OrchestrationConfig(
+            load_retry_count=1,
+            load_retry_delay=0.01,
+            load_retry_max_delay=0.02,
+        ),
+    )
+    with pytest.raises(HTTPException):
+        await orchestrator._call_remote_load(_gateway(), model, True, "req-5xx")
+    assert forwarder.calls == 2
+
+
+def test_is_vram_capacity_refusal_narrow() -> None:
+    assert FederatedLoadOrchestrator._is_vram_capacity_refusal(
+        "RESOURCE UNAVAILABLE: VRAM: need 30184MB, have 11980MB"
+    )
+    assert not FederatedLoadOrchestrator._is_vram_capacity_refusal(
+        "upstream connection reset"
+    )
+    assert not FederatedLoadOrchestrator._is_vram_capacity_refusal(
+        "insufficient resources for batch"
+    )
+
+
 def test_outer_backstop_strictly_exceeds_inner_budget() -> None:
     assert MODEL_LOAD_BACKSTOP_TIMEOUT_S > MODEL_LOAD_INNER_BUDGET_S
     config = OrchestrationConfig()

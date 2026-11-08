@@ -147,7 +147,7 @@ async def _await_remote_load_attempt(
     result, terminal = await await_remote_load_with_wall_clock(
         remote_call=remote_call,
         event_bus=orchestrator._event_bus,
-        routing_key=model_id.routing_key,
+        expected_model=model_id,
         gateway_id=gateway.gateway_id,
         remote_id=gateway.remote_stargate_id,
         backstop_timeout_s=orchestrator._config.load_timeout,
@@ -157,12 +157,6 @@ async def _await_remote_load_attempt(
         load_started_mono=load_started_mono,
     )
     if terminal is not None and terminal.outcome != TerminalLoadOutcome.LOADED:
-        if orchestrator._gateway_manager is not None and terminal.payload:
-            snapshot = terminal.payload.get("gateway_state_snapshot")
-            if isinstance(snapshot, dict):
-                orchestrator._gateway_manager.apply_gateway_forensics_snapshot(
-                    gateway.gateway_id, snapshot
-                )
         raise _terminal_load_error(terminal, model_id, gateway.gateway_id)
     if result is not None:
         return result
@@ -226,24 +220,18 @@ class FederatedLoadOrchestrator:
         self._metrics = metrics
         self._event_bus = event_bus
         self._request_tracker = request_tracker
-        self._telemetry_freshness_waiter: Any | None = None
 
         # Single-flight mechanism
         self._pending_loads: dict[tuple[str, str], asyncio.Future[bool]] = {}
 
     @staticmethod
     def _is_vram_capacity_refusal(message: str | None) -> bool:
-        lower = (message or "").lower()
-        return "vram" in lower or "insufficient resources" in lower
-
-    async def _wait_for_capacity_telemetry(self, timeout_s: float) -> None:
-        if not self._event_bus or timeout_s <= 0:
-            return
-        from systems.routing.telemetry.freshness_waiter import TelemetryFreshnessWaiter
-
-        if self._telemetry_freshness_waiter is None:
-            self._telemetry_freshness_waiter = TelemetryFreshnessWaiter(self._event_bus)
-        await self._telemetry_freshness_waiter.wait_for_telemetry_update(timeout_s)
+        if not message:
+            return False
+        lower = message.lower()
+        if "vram" not in lower:
+            return False
+        return "need" in lower and "have" in lower
 
     def _track_routing_key(
         self, gateway_id: str, request_id: str, routing_key: str
@@ -497,6 +485,10 @@ class FederatedLoadOrchestrator:
                     str(model_id),
                     request_id,
                 )
+                if self._gateway_manager:
+                    self._gateway_manager.note_load_resource_baseline(
+                        gateway.gateway_id, routing_key
+                    )
                 await self._call_remote_load(gateway, model_id, sticky, request_id)
                 duration = time.monotonic() - start_time
                 duration_ms = int(duration * 1000)
@@ -513,6 +505,9 @@ class FederatedLoadOrchestrator:
 
                 if self._gateway_manager:
                     self._gateway_manager.restore_model_capacity(gateway, model_id)
+                    self._gateway_manager.clear_load_resource_baseline(
+                        gateway.gateway_id, routing_key
+                    )
 
                 # Emit load confirmed event
                 if self._event_bus:
@@ -849,27 +844,23 @@ class FederatedLoadOrchestrator:
                         gateway.gateway_id,
                     )
 
+                    fail_message = str(result.get("message", ""))
+                    if self._is_vram_capacity_refusal(fail_message):
+                        logger.info(
+                            "VRAM capacity refusal for %s on %s — "
+                            "returning retryable error for federated requeue "
+                            "(no orchestrator telemetry spin)",
+                            model_id,
+                            gateway.gateway_id,
+                        )
+                        if self._metrics:
+                            self._metrics.record_load_operation_failure(elapsed_ms)
+                        raise last_error
+
                     if attempt_index < max_attempts:
                         # retry_index: attempt 1 → 1, attempt 2 → 2, etc.
                         retry_index = attempt_index
                         delay = self._config.calculate_retry_delay(retry_index)
-                        fail_message = str(result.get("message", ""))
-                        if self._is_vram_capacity_refusal(fail_message):
-                            telemetry_wait = min(
-                                max(delay, 2.0),
-                                self._config.load_retry_max_delay,
-                            )
-                            logger.info(
-                                "VRAM capacity refusal for %s on %s — "
-                                "waiting up to %.1fs for RESOURCE telemetry "
-                                "before retry %s/%s",
-                                model_id,
-                                gateway.gateway_id,
-                                telemetry_wait,
-                                attempt_index + 1,
-                                max_attempts,
-                            )
-                            await self._wait_for_capacity_telemetry(telemetry_wait)
                         logger.warning(
                             f"⚠️ Load attempt {attempt_index} failed ({status_code}), "
                             f"retrying in {delay:.1f}s..."

@@ -119,6 +119,9 @@ class FederatedGatewayManager(Sequential):
         # INV: cleared on gateway disconnect/reconnect only (session lifetime)
         self._inference_banned: dict[str, set[str]] = {}
 
+        # telemetry_timestamp at load start; RESOURCE_UPDATE after baseline skips forensics VRAM
+        self._load_resource_baseline: dict[tuple[str, str], float] = {}
+
         # Consecutive GATEWAY_SNAPSHOT count where model is absent from loaded+loading
         self._cold_absent_snapshot_streak: dict[tuple[str, str], int] = {}
 
@@ -1853,18 +1856,43 @@ class FederatedGatewayManager(Sequential):
             )
         return gw
 
+    def note_load_resource_baseline(self, gateway_id: str, routing_key: str) -> None:
+        """Record master telemetry_timestamp when a remote load starts."""
+        gw = self._gateways.get(gateway_id)
+        if gw is None:
+            return
+        self._load_resource_baseline[(gateway_id, routing_key)] = gw.telemetry_timestamp
+
+    def clear_load_resource_baseline(self, gateway_id: str, routing_key: str) -> None:
+        self._load_resource_baseline.pop((gateway_id, routing_key), None)
+
+    def _forensics_resources_allowed(
+        self, gw: FederatedGateway, routing_key: str
+    ) -> bool:
+        baseline = self._load_resource_baseline.get((gw.gateway_id, routing_key))
+        if baseline is None:
+            return True
+        return gw.telemetry_timestamp <= baseline
+
     def apply_gateway_forensics_snapshot(
         self,
         gateway_id: str,
         snapshot: dict[str, Any] | None,
+        *,
+        routing_key: str | None = None,
     ) -> None:
-        """Apply edge-captured gateway_state_snapshot to master routing view."""
+        """Apply edge-captured gateway_state_snapshot resources (never model sets)."""
         if not snapshot:
             return
         gw = self._gateways.get(gateway_id)
         if gw is None:
             return
-        merged = self._merge_forensics_gateway_snapshot(gw, snapshot)
+        apply_resources = True
+        if routing_key is not None:
+            apply_resources = self._forensics_resources_allowed(gw, routing_key)
+        merged = self._merge_forensics_gateway_snapshot(
+            gw, snapshot, apply_resources=apply_resources
+        )
         if merged is not gw:
             self._gateways[gateway_id] = merged
 
@@ -1872,31 +1900,22 @@ class FederatedGatewayManager(Sequential):
         self,
         gw: FederatedGateway,
         snapshot: dict[str, Any],
+        *,
+        apply_resources: bool = True,
     ) -> FederatedGateway:
-        """Overlay resources and model sets from edge load-failure forensics."""
+        """Overlay VRAM/RAM only from edge load-failure forensics when allowed."""
         updates: dict[str, Any] = {}
-        resources = snapshot.get("resources")
-        if isinstance(resources, dict):
-            if resources.get("available_vram_mb") is not None:
-                updates["vram_free_mb"] = int(resources["available_vram_mb"])
-            if resources.get("available_ram_mb") is not None:
-                updates["ram_free_mb"] = int(resources["available_ram_mb"])
-            if resources.get("total_vram_mb") is not None:
-                updates["vram_total_mb"] = int(resources["total_vram_mb"])
-            if resources.get("total_ram_mb") is not None:
-                updates["ram_total_mb"] = int(resources["total_ram_mb"])
-
-        for field, key in (
-            ("loaded_models", "loaded_models"),
-            ("loading_models", "loading_models"),
-            ("busy_models", "busy_models"),
-        ):
-            raw = snapshot.get(key)
-            if isinstance(raw, list):
-                try:
-                    updates[field] = frozenset(ModelId.parse(str(mid)) for mid in raw)
-                except (ValueError, TypeError):
-                    continue
+        if apply_resources:
+            resources = snapshot.get("resources")
+            if isinstance(resources, dict):
+                if resources.get("available_vram_mb") is not None:
+                    updates["vram_free_mb"] = int(resources["available_vram_mb"])
+                if resources.get("available_ram_mb") is not None:
+                    updates["ram_free_mb"] = int(resources["available_ram_mb"])
+                if resources.get("total_vram_mb") is not None:
+                    updates["vram_total_mb"] = int(resources["total_vram_mb"])
+                if resources.get("total_ram_mb") is not None:
+                    updates["ram_total_mb"] = int(resources["total_ram_mb"])
 
         if not updates:
             return gw
@@ -1916,16 +1935,26 @@ class FederatedGatewayManager(Sequential):
 
         Clears loading state since model won't be loaded.
         """
-        model_id = parsed.get("model_id")
-        if not model_id:
+        raw_model_id = parsed.get("model_id")
+        if not raw_model_id:
             return gw
+        model_id = (
+            raw_model_id
+            if isinstance(raw_model_id, ModelId)
+            else ModelId.parse(str(raw_model_id))
+        )
+        routing_key = model_id.routing_key
         snapshot_raw = parsed.get("gateway_state_snapshot")
         if isinstance(snapshot_raw, dict):
-            gw = self._merge_forensics_gateway_snapshot(gw, snapshot_raw)
+            apply_resources = self._forensics_resources_allowed(gw, routing_key)
+            gw = self._merge_forensics_gateway_snapshot(
+                gw, snapshot_raw, apply_resources=apply_resources
+            )
         gw = self._replace_gateway(
             gw,
             loading_models=gw.loading_models - {model_id},
         )
+        self.clear_load_resource_baseline(gw.gateway_id, routing_key)
         logger.debug(
             f"📊 Telemetry MODEL_LOAD_FAILED: cleared loading for {model_id} "
             f"on {gw.gateway_id} (loading_count={len(gw.loading_models)})"

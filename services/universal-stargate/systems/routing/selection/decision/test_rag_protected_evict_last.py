@@ -21,7 +21,10 @@ from systems.routing.selection.decision.eviction_cooldown_policy import (
 )
 from systems.routing.selection.decision.feasibility import evaluate_feasibility
 from systems.routing.selection.decision.scorer import calculate_utility
-from systems.routing.selection.decision.types import EvictionPlanSummary, FeasibilityTier
+from systems.routing.selection.decision.types import (
+    EvictionPlanSummary,
+    FeasibilityTier,
+)
 from systems.routing.selection.types import Gateway, Placement
 
 _SPECIMEN_MARGINS = {
@@ -76,6 +79,52 @@ def protect_qwen_5b(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(eviction_planning, "is_rag_protected_model", _is_protected)
     monkeypatch.setattr(eviction_victim_select, "is_rag_protected_model", _is_protected)
     monkeypatch.setattr(scorer_mod, "is_rag_protected_model", _is_protected)
+
+
+def test_partial_eviction_first_victim_sufficient(protect_qwen_5b: None) -> None:
+    """Three idle loaded models; evicting only non-protected rerank is enough (M1)."""
+    rerank = ModelId.parse("baai-bge-reranker-v2-m3")
+    target_vram = 12_000
+    placement = Placement(
+        model_id=_QWEN_14B,
+        ram_mb=0,
+        vram_mb=target_vram,
+        is_gpu=True,
+    )
+    gw = Gateway(
+        ref=None,
+        name="edge-jupiter-gateway",
+        vram_total_mb=32_607,
+        vram_free_mb=12_500,
+        ram_total_mb=64_000,
+        ram_free_mb=32_000,
+        loaded_models=frozenset({_QWEN_14B, _QWEN_5B, rerank}),
+        busy_models=frozenset(),
+        loading_models=frozenset(),
+        available_models=frozenset({_QWEN_14B, _QWEN_5B, rerank}),
+        model_details={
+            _QWEN_14B: {"vram_usage": target_vram, "ram_usage": 0},
+            _QWEN_5B: {"vram_usage": 4_200, "ram_usage": 0},
+            rerank: {"vram_usage": 2_000, "ram_usage": 0},
+        },
+    )
+    plan = _compute_eviction_plan(
+        gw,
+        placement,
+        _requirements(
+            {
+                _QWEN_14B: (target_vram, 0),
+                _QWEN_5B: (4_200, 0),
+                rerank: (2_000, 0),
+            }
+        ),
+        eviction_cooldown_s=0.0,
+        eviction_request_class=EvictionRequestClass.REQUIRED,
+    )
+    assert isinstance(plan, EvictionPlanSummary)
+    assert rerank in plan.models_to_evict
+    assert _QWEN_5B not in plan.models_to_evict
+    assert _QWEN_14B not in plan.models_to_evict
 
 
 def test_jupiter_evicts_protected_qwen_when_required(protect_qwen_5b: None) -> None:
