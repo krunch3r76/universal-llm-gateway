@@ -50,6 +50,29 @@ def _seed_thread(*, n: int, slug: str = "fetch-tail") -> str:
     return thread_id
 
 
+def test_turn_from_row_carries_body_chars() -> None:
+    from agent_bus_store.routes.turns import _turn_from_row
+
+    with_chars = {
+        "id": 1,
+        "thread": "t",
+        "turn_number": 1,
+        "from_agent": "a",
+        "to_agent": "b",
+        "subject": "s",
+        "status": "open",
+        "supersedes_turn": None,
+        "created_at": "2026-01-01T00:00:00Z",
+        "read_at": None,
+        "body_chars": 7,
+    }
+    dumped = _turn_from_row(with_chars).model_dump(by_alias=True)
+    assert dumped["body_chars"] == 7
+    without = dict(with_chars)
+    without.pop("body_chars")
+    assert _turn_from_row(without).model_dump(by_alias=True)["body_chars"] is None
+
+
 def test_compact_rows_carry_body_chars(tmp_path, monkeypatch) -> None:
     db_path = tmp_path / "bus.db"
     monkeypatch.setenv("AGENT_BUS_DB_PATH", str(db_path))

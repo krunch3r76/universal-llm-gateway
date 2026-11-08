@@ -315,7 +315,7 @@ with `field` and `request_id` BEFORE dispatch.
 ```
 team_dispatch(op="to_thread", role=..., dispatch_thread_id="<thread>", contract="freeform", thread="<id>", subject=...)
 ```
-then `agent_bus(tool="fetch", arguments='{"thread": "<id>"}')`. Stargate posts
+then fetch (headers) then `agent_bus(tool="get", arguments='{"thread": "<id>", "turn_numbers": [N]}')` for the reply body. Stargate posts
 on the callee's behalf — no `agent_bus.reply` required from the dispatched model.
 
 MCP: `team_dispatch` enables client-side tools by default (non-xAI); some

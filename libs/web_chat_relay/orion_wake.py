@@ -300,6 +300,33 @@ def parse_turn_numbers(raw: Any) -> list[int] | None:
     return None
 
 
+def _turn_picks(turn_s: str) -> list[int] | None:
+    """Parse a turn label into ≤10 pick integers, or None when unparseable/over cap."""
+    text = str(turn_s).strip()
+    if not text:
+        return None
+    for sep in ("–", "-"):
+        if sep in text and "," not in text:
+            left, right = text.split(sep, 1)
+            try:
+                start = int(left.strip())
+                end = int(right.strip())
+            except ValueError:
+                return None
+            if start < 1 or end < 1 or end < start:
+                return None
+            picks = list(range(start, end + 1))
+            if len(picks) > 10:
+                return None
+            return picks
+    parsed = parse_turn_numbers(text)
+    if parsed is None:
+        return None
+    if len(parsed) > 10:
+        return None
+    return parsed
+
+
 def format_turn_pointer_label(turn_numbers: list[int]) -> str:
     """Human batch label for pointer text, e.g. 69–73 for a contiguous run."""
     nums = sorted(set(int(n) for n in turn_numbers))
@@ -331,9 +358,14 @@ def build_wake_pointer(
     else:
         first_sender = sender.split(",")[0].strip() or "unknown"
         reply_target = normalize_bus_address(first_sender)
+    picks = _turn_picks(turn_s)
+    if picks:
+        read_cmd = f"agent_bus_read get thread {thread} turn_numbers {picks}"
+    else:
+        read_cmd = f'agent_bus_read fetch thread {thread} projection="full"'
     return (
         f"WAKE — agent-bus thread {thread} {turn_word} {turn_s} (from {sender}). "
-        f"Use your ulg-code connector: agent_bus_read fetch thread {thread}, "
+        f"Use your ulg-code connector: {read_cmd}, "
         f"read {turn_word} {turn_s} only. Reply on thread {thread} to={reply_target} with "
         f"subject ANSWER|… per that turn. Do not paste letter drafts."
     )

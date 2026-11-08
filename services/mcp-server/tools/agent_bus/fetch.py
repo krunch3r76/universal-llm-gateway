@@ -94,9 +94,16 @@ def _resolve_fetch_projection(
                 "error": f"fetch: unknown projection {projection!r}",
                 "reason": "fetch_projection_invalid",
             }
-    if compact is True and explicit == "full":
+    compact_mode: str | None = None
+    if compact is True:
+        compact_mode = "header"
+    elif compact is False:
+        compact_mode = "full"
+    if compact is not None and explicit is not None and compact_mode != explicit:
         return None, {
-            "error": "fetch: compact=true conflicts with projection=full",
+            "error": (
+                f"fetch: compact={compact!r} conflicts with projection={projection!r}"
+            ),
             "reason": "fetch_projection_conflict",
         }
     if explicit is not None:
@@ -127,12 +134,25 @@ def _project_fetch_result(result: Any, mode: str) -> Any:
     else:
         return result
     if mode == "header":
-        return {
-            "selection": "headers",
-            "projection": "header",
-            "projection_available": ["compact", "full"],
-            "turns": project_turns_header(turns),
-        }
+        header_turns = project_turns_header(turns)
+        body_hint = (
+            'bodies: get(thread, turn_numbers=[…]) or fetch projection="full"'
+        )
+        if envelope is None:
+            return {
+                "selection": "headers",
+                "projection": "header",
+                "projection_available": ["compact", "full"],
+                "body_hint": body_hint,
+                "turns": header_turns,
+            }
+        out = {key: value for key, value in envelope.items() if key != "turns"}
+        out["selection"] = "headers"
+        out["projection"] = "header"
+        out["projection_available"] = ["compact", "full"]
+        out["body_hint"] = body_hint
+        out["turns"] = header_turns
+        return out
     projected = [
         project_turn_body(turn, projection="compact")
         if isinstance(turn, dict)
@@ -157,7 +177,7 @@ def _fetch_impl(
     after_turn: int | None = None,
     mark_read_seat: str | None = None,
     limit: int | None = None,
-    resolved_projection: str = "header",
+    resolved_projection: str,
 ) -> dict[str, Any]:
     if to is None and thread is None:
         return {"error": "fetch requires at least one of: to, thread"}
@@ -206,7 +226,7 @@ def _fetch_impl(
         thread=thread or "",
         count=count,
         mark_read=mark_read,
-        projection=resolved_projection,
+        mode=resolved_projection,
     )
     return result
 
@@ -268,11 +288,14 @@ def _get_impl(
     if isinstance(result, dict) and "error" in result:
         structured = _structured_relay_error(result, op="get")
         if structured is not None:
+            relay_reason = result.get("reason")
+            if relay_reason and structured.get("reason") is None:
+                structured["reason"] = relay_reason
             return structured
         return {"error": f"agent-bus error: {result['error']}"}
     advisories: list[str] = []
     if mark_read and isinstance(result, dict):
-        to_agent = str(result.get("to_agent") or "")
+        to_agent = str(result.get("to") or result.get("to_agent") or "")
         if reader_agent and turn_mark_read_eligible(
             seat=reader_agent, to_agent=to_agent
         ):
@@ -350,6 +373,7 @@ def _fetch_unread_dispatch(
         if author_err is not None:
             return author_err
         mark_read_seat = reader if apply_mark else None
+    record_mode = "store_compact" if compact else "full"
     result = _fetch_impl(
         to=effective_to,
         thread=effective_thread,
@@ -359,6 +383,7 @@ def _fetch_unread_dispatch(
         compact=compact,
         mark_read_seat=mark_read_seat,
         limit=limit,
+        resolved_projection=record_mode,
     )
     return _merge_advisories(result, advisories)
 
@@ -397,7 +422,11 @@ def _fetch_dispatch(
     )
     if projection_err is not None:
         return projection_err
-    assert mode is not None
+    if mode is None:
+        return {
+            "error": "fetch: projection resolution failed",
+            "reason": "fetch_projection_invalid",
+        }
     relay_compact = mode == "header"
     mark_read_seat: str | None = None
     advisories: list[str] = []
@@ -437,6 +466,31 @@ def _dedupe_turn_numbers(turn_numbers: list[int]) -> list[int]:
     return ordered
 
 
+def _validate_turn_numbers(
+    turn_numbers: list[Any],
+) -> tuple[list[int] | None, dict[str, Any] | None]:
+    picks: list[int] = []
+    for item in turn_numbers:
+        if isinstance(item, bool) or not isinstance(item, int):
+            return None, {
+                "error": "get: turn_numbers must be a list of int >= 1",
+                "reason": "get_turn_numbers_invalid",
+            }
+        if item < 1:
+            return None, {
+                "error": "get: turn_numbers must be a list of int >= 1",
+                "reason": "get_turn_numbers_invalid",
+            }
+        picks.append(item)
+    deduped = _dedupe_turn_numbers(picks)
+    if len(deduped) > _GET_TURN_NUMBERS_CAP:
+        return None, {
+            "error": f"get: turn_numbers cap is {_GET_TURN_NUMBERS_CAP}",
+            "reason": "get_turn_numbers_over_cap",
+        }
+    return deduped, None
+
+
 def _get_dispatch(
     *,
     thread: str | int = "",
@@ -456,10 +510,13 @@ def _get_dispatch(
                 "error": "get: pass either turn_number or turn_numbers, not both",
                 "reason": "get_turn_selector_conflict",
             }
-        if len(turn_numbers) > _GET_TURN_NUMBERS_CAP:
+        picks, pick_err = _validate_turn_numbers(turn_numbers)
+        if pick_err is not None:
+            return pick_err
+        if picks is None:
             return {
-                "error": f"get: turn_numbers cap is {_GET_TURN_NUMBERS_CAP}",
-                "reason": "get_turn_numbers_over_cap",
+                "error": "get: turn_numbers validation failed",
+                "reason": "get_turn_numbers_invalid",
             }
         reader_agent = ""
         advisories: list[str] = []
@@ -475,19 +532,29 @@ def _get_dispatch(
             if author_err is not None:
                 return author_err
             reader_agent = reader_agent_resolved or ""
-        picks = _dedupe_turn_numbers(turn_numbers)
         turns_out: list[Any] = []
         partial = False
         for pick in picks:
-            picked = _get_impl(
-                thread=thread,
-                turn_number=pick,
-                mark_read=apply_mark,
-                reader_agent=reader_agent,
-                projection=projection,
-            )
+            try:
+                picked = _get_impl(
+                    thread=thread,
+                    turn_number=pick,
+                    mark_read=apply_mark,
+                    reader_agent=reader_agent,
+                    projection=projection,
+                )
+            except Exception as exc:  # noqa: BLE001 — per-pick failure surface
+                turns_out.append({"turn_number": pick, "error": str(exc)})
+                partial = True
+                continue
             if isinstance(picked, dict) and "error" in picked and "turn" not in picked:
-                turns_out.append({"turn_number": pick, "error": picked["error"]})
+                err_entry: dict[str, Any] = {
+                    "turn_number": pick,
+                    "error": picked["error"],
+                }
+                if picked.get("reason") is not None:
+                    err_entry["reason"] = picked["reason"]
+                turns_out.append(err_entry)
                 partial = True
                 continue
             if isinstance(picked, dict) and picked.get("argument_rewrite_advisory"):
@@ -496,7 +563,10 @@ def _get_dispatch(
                 )
             turn = picked.get("turn") if isinstance(picked, dict) else picked
             if isinstance(turn, dict) and "error" in turn:
-                turns_out.append({"turn_number": pick, "error": turn["error"]})
+                err_entry = {"turn_number": pick, "error": turn["error"]}
+                if turn.get("reason") is not None:
+                    err_entry["reason"] = turn["reason"]
+                turns_out.append(err_entry)
                 partial = True
             else:
                 turns_out.append(turn)

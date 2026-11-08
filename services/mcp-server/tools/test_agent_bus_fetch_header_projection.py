@@ -22,7 +22,11 @@ from tools.agent_bus._closeout_projection import (  # noqa: E402
     project_turn_body,
     project_turns_header,
 )
-from tools.agent_bus.fetch import _fetch_dispatch, _get_dispatch  # noqa: E402
+from tools.agent_bus.fetch import (  # noqa: E402
+    _fetch_dispatch,
+    _fetch_unread_dispatch,
+    _get_dispatch,
+)
 
 
 def _sample_turn(
@@ -36,8 +40,8 @@ def _sample_turn(
         "id": f"id-{turn_number}",
         "thread": "1",
         "turn_number": turn_number,
-        "from_agent": "cursor",
-        "to_agent": "web-anthropic",
+        "from": "cursor",
+        "to": "web-anthropic",
         "subject": f"subject-{turn_number}",
         "status": "open",
         "created_at": "2026-01-01T00:00:00Z",
@@ -73,6 +77,8 @@ def test_fetch_default_is_header() -> None:
         assert "body" not in turn
         allowed = set(_HEADER_FIELDS) | {"supersedes_turn"}
         assert set(turn.keys()) <= allowed
+        assert turn.get("from") == "cursor"
+        assert turn.get("to") == "web-anthropic"
 
 
 def test_fetch_projection_full_passthrough() -> None:
@@ -112,6 +118,8 @@ def test_fetch_compact_alias_and_conflict() -> None:
 
     conflict = _fetch_dispatch(thread="T", compact=True, projection="full")
     assert conflict.get("reason") == "fetch_projection_conflict"
+    conflict2 = _fetch_dispatch(thread="T", compact=False, projection="header")
+    assert conflict2.get("reason") == "fetch_projection_conflict"
 
 
 def test_fetch_mark_read_defaults_full() -> None:
@@ -150,10 +158,16 @@ def test_get_turn_numbers_picks() -> None:
 
     assert [t["turn_number"] for t in out["turns"]] == [5, 3]
     assert out["turns"][0] == project_turn_body(t5, projection=None)
+    deduped = _get_dispatch(thread="1", turn_numbers=[5] * 11)
+    assert len(deduped["turns"]) == 1
     over = _get_dispatch(thread="1", turn_numbers=list(range(1, 12)))
     assert over.get("reason") == "get_turn_numbers_over_cap"
     both = _get_dispatch(thread="1", turn_number=2, turn_numbers=[2])
     assert both.get("reason") == "get_turn_selector_conflict"
+    bad_mix = _get_dispatch(thread="1", turn_numbers=[1, "x"])
+    assert bad_mix.get("reason") == "get_turn_numbers_invalid"
+    bad_bool = _get_dispatch(thread="1", turn_numbers=[True])
+    assert bad_bool.get("reason") == "get_turn_numbers_invalid"
 
 
 def test_get_turn_numbers_partial_failure() -> None:
@@ -165,7 +179,11 @@ def test_get_turn_numbers_partial_failure() -> None:
         number = int(qs["turn_number"][0])
         if number == 1:
             return good
-        return {"error": "HTTP 404", "detail": "missing"}
+        return {
+            "error": "HTTP 404",
+            "detail": "missing",
+            "reason": "turn_not_found",
+        }
 
     with patch("tools.agent_bus.fetch.relay", side_effect=relay):
         out = _get_dispatch(thread="1", turn_numbers=[1, 2])
@@ -174,6 +192,24 @@ def test_get_turn_numbers_partial_failure() -> None:
     assert out["turns"][0]["turn_number"] == 1
     assert out["turns"][1]["turn_number"] == 2
     assert "error" in out["turns"][1]
+    assert out["turns"][1].get("reason") is not None
+
+
+def test_get_turn_numbers_pick_exception() -> None:
+    call_count = 0
+
+    def boom(*args: Any, **kwargs: Any) -> dict[str, Any]:
+        nonlocal call_count
+        call_count += 1
+        if call_count == 2:
+            raise RuntimeError("pick blew up")
+        return {"turn": _sample_turn(turn_number=1, body="ok")}
+
+    with patch("tools.agent_bus.fetch._get_impl", side_effect=boom):
+        out = _get_dispatch(thread="1", turn_numbers=[1, 2])
+
+    assert out["partial"] is True
+    assert len(out["turns"]) == 2
 
 
 def test_header_tolerates_missing_body_chars() -> None:
@@ -220,7 +256,7 @@ def test_fetch_records_projection() -> None:
             _fetch_dispatch(thread="T", projection="compact")
 
     fetched = [e for e in events if e[0] == "mcp.agentbus.turns.fetched"]
-    assert fetched and fetched[-1][1].get("projection") == "compact"
+    assert fetched and fetched[-1][1].get("mode") == "compact"
 
 
 @pytest.fixture
@@ -252,3 +288,127 @@ def test_agent_bus_read_accepts_new_args(agent_bus_read_fn) -> None:
         )
     assert "unsupported argument" not in str(get_out.get("error", ""))
     assert len(get_out.get("turns", [])) == 2
+
+
+def test_fetch_impl_label_truthful() -> None:
+    import pytest as pt
+
+    with pt.raises(TypeError):
+        from tools.agent_bus.fetch import _fetch_impl
+
+        _fetch_impl(
+            to=None,
+            thread="1",
+            last=1,
+            unread=False,
+            mark_read=False,
+            compact=False,
+        )
+
+
+def test_header_live_shape_via_turn_serializer() -> None:
+    from agent_bus_store.routes.turns import _rows_to_turns
+    from agent_bus_store.turns_models import TurnList
+
+    db_row = {
+        "id": 1,
+        "thread": "T",
+        "turn_number": 1,
+        "from_agent": "a",
+        "to_agent": "b",
+        "subject": "s",
+        "status": "open",
+        "supersedes_turn": None,
+        "created_at": "2026-01-01T00:00:00Z",
+        "read_at": None,
+        "body": None,
+        "body_chars": 42,
+        "attested_by": None,
+        "user_agent": None,
+    }
+    wire = TurnList(turns=_rows_to_turns([db_row])).model_dump(mode="json")
+
+    with patch("tools.agent_bus.fetch.relay", return_value=wire):
+        out = _fetch_dispatch(thread="T")
+
+    turn = out["turns"][0]
+    assert turn["from"] == "a"
+    assert turn["to"] == "b"
+    assert turn["body_chars"] == 42
+
+
+def test_header_keeps_envelope_keys() -> None:
+    relay_payload = {
+        "turns": [_sample_turn(turn_number=1, body_chars=3)],
+        "truncated": True,
+        "next_after_turn": 21,
+    }
+    with patch("tools.agent_bus.fetch.relay", return_value=relay_payload):
+        out = _fetch_dispatch(thread="T")
+    assert out["truncated"] is True
+    assert out["next_after_turn"] == 21
+    assert "body_hint" in out
+
+
+def test_fetch_unread_unprojected() -> None:
+    from tools.agent_bus.fetch import _fetch_unread_dispatch
+
+    payload = {"turns": [_sample_turn(turn_number=1, body="x")]}
+    with patch("tools.agent_bus.fetch.relay", return_value=payload):
+        out = _fetch_unread_dispatch(thread="T")
+    assert out == payload
+    assert "selection" not in out
+
+
+def test_fetch_unread_records_store_mode() -> None:
+    events: list[tuple[Any, ...]] = []
+
+    def _record(signal: str, **fields: Any) -> None:
+        events.append((signal, fields))
+
+    with patch("tools.agent_bus.fetch.record", side_effect=_record):
+        with patch("tools.agent_bus.fetch.relay", return_value={"turns": []}):
+            _fetch_unread_dispatch(thread="T", compact=True)
+    fetched = [e for e in events if e[0] == "mcp.agentbus.turns.fetched"]
+    assert fetched[-1][1].get("mode") == "store_compact"
+
+
+def test_cursor_bridge_status_reads_bodies() -> None:
+    from urllib.parse import parse_qs, urlparse
+
+    from tools.cursor_bridge import _status
+
+    captured: dict[str, str] = {}
+    body = "preview-body-text"
+
+    def relay(service: str, method: str, path: str, **kwargs) -> dict[str, Any]:
+        del service, method, kwargs
+        captured.update({k: v[0] for k, v in parse_qs(urlparse(path).query).items()})
+        return {
+            "turns": [
+                {
+                    "turn_number": 1,
+                    "from": "a",
+                    "to": "b",
+                    "subject": "s",
+                    "created_at": "2026-01-01T00:00:00Z",
+                    "body": body,
+                }
+            ]
+        }
+
+    with patch("tools.agent_bus.fetch.relay", side_effect=relay):
+        out = _status(thread="9", last=5)
+
+    assert "compact" not in captured
+    assert out["turns"][0]["body_preview"]
+
+
+def test_prompt_sites_pick_turns() -> None:
+    from tools._oc_knowledge_templates import AGENT_BUS_COMPACT
+    from tools._oc_surface_templates import FRONTIER_MODEL_ROUTING
+    from tools.frontier import __doc__ as frontier_doc
+
+    combined = f"{FRONTIER_MODEL_ROUTING}\n{AGENT_BUS_COMPACT}\n{frontier_doc}"
+    assert "turn_numbers" in combined
+    assert "fetch (headers)" in combined or "Fetch inbox headers" in combined

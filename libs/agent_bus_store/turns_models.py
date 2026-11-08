@@ -453,6 +453,7 @@ class Turn(BaseModel):
     attachments: list[Attachment] | None = None
     attested_by: str | None = None
     user_agent: str | None = None
+    body_chars: int | None = None
 
 
 class TurnList(BaseModel):

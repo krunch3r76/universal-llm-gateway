@@ -43,6 +43,7 @@ def test_fetch_impl_forwards_compact_and_last_on_thread_only_path() -> None:
             unread=False,
             mark_read=False,
             compact=True,
+            resolved_projection="store_compact",
         )
 
     assert captured["thread"] == "1138"

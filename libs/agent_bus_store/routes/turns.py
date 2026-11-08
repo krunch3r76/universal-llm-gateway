@@ -80,6 +80,7 @@ def _turn_from_row(r: dict[str, Any]) -> Turn:
             "attachments": attachments,
             "attested_by": r.get("attested_by"),
             "user_agent": r.get("user_agent"),
+            "body_chars": r.get("body_chars"),
         }
     )
 
