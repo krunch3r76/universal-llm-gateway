@@ -4,5 +4,4 @@
 # Re-run install-ecosystem-plugin.sh. It syncs these dests and warns if a host is unreachable.
 
 orion-node:/home/krunch3r/.cursor/plugins/local/ulg-ecosystem
-# jupiter omitted: its Cursor reaches ULG via Remote-SSH to io, which already loads io's copy;
-# a client-side copy double-loads every always-apply rule and skill.
+jupiter:/home/krunch3r/.cursor/plugins/local/ulg-ecosystem
