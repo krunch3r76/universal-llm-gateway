@@ -2,9 +2,8 @@
 
 from __future__ import annotations
 
-import pytest
-
 import cursor_capabilities.cursor_capabilities as cap_mod
+import pytest
 from cursor_capabilities import (
     CURSOR_MODEL_CAPABILITIES,
     CURSOR_SDK_ADMITTED_MODELS,
@@ -81,8 +80,7 @@ def test_explicit_pin_admits_other_models_pool() -> None:
 
 def test_explicit_pin_admits_all_other_models_pool_including_advisor() -> None:
     assert (
-        is_cursor_sdk_model_admitted("cursor/gemini-4-argon", explicit_pin=True)
-        is True
+        is_cursor_sdk_model_admitted("cursor/gemini-4-argon", explicit_pin=True) is True
     )
     assert is_cursor_sdk_model_admitted("cursor/gemini-4-argon") is False
 
