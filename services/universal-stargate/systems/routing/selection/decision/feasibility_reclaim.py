@@ -18,6 +18,7 @@ from .admission_verdict import (
     AdmissionVerdict,
     evaluate_ram_reclaim,
     evaluate_vram_admission,
+    evaluate_vram_reclaim,
 )
 from .resource_checks import _compute_loading_reservation, resolve_gateway_requirements
 from .types import ConstraintFailure
@@ -69,11 +70,13 @@ def can_fit_after_eviction_including_busy(
     )
     vram_needed = admission.needed_mb
 
-    reclaimable_vram = effective_vram_free
+    catalog_reclaimable_vram = 0
     catalog_reclaimable_ram = 0
+    evictable_loaded_count = 0
     for loaded_model_id in gateway.loaded_models:
         if is_rag_protected_model(loaded_model_id):
             continue
+        evictable_loaded_count += 1
         measured_vram = gateway.model_measured_vram.get(loaded_model_id)
         catalog_vram, catalog_ram = gateway.get_model_resource_usage(loaded_model_id)
         catalog_req_vram_mb, catalog_req_ram_mb = requirements_lookup(loaded_model_id)
@@ -83,8 +86,23 @@ def can_fit_after_eviction_including_busy(
             else max(catalog_req_vram_mb, catalog_vram)
         )
         effective_ram = catalog_req_ram_mb if catalog_req_ram_mb > 0 else catalog_ram
-        reclaimable_vram += max(effective_vram, 0)
+        catalog_reclaimable_vram += max(effective_vram, 0)
         catalog_reclaimable_ram += max(effective_ram, 0)
+
+    full_evict = (
+        evictable_loaded_count > 0
+        and evictable_loaded_count == len(gateway.loaded_models)
+    )
+    vram_reclaim = evaluate_vram_reclaim(
+        needed_mb=vram_needed,
+        catalog_freeable_mb=catalog_reclaimable_vram,
+        vram_free_mb=gateway.vram_free_mb,
+        vram_total_mb=gateway.vram_total_mb,
+        effective_free_mb=effective_vram_free,
+        full_evict=full_evict,
+        loading_reservation_mb=vram_reserved,
+    )
+    reclaimable_vram = effective_vram_free + vram_reclaim.freeable_mb
 
     ram_admission = evaluate_ram_reclaim(
         needed_mb=ram_needed,
@@ -92,7 +110,7 @@ def can_fit_after_eviction_including_busy(
         ram_free_mb=gateway.ram_free_mb,
         ram_total_mb=gateway.ram_total_mb,
         loading_reservation_mb=ram_reserved,
-        full_evict=bool(gateway.loaded_models),
+        full_evict=full_evict,
         resource_margins=margins,
     )
     reclaimable_ram = effective_ram_free + ram_admission.freeable_mb
@@ -110,6 +128,7 @@ def can_fit_after_eviction_including_busy(
         "vram_reserved_loading": vram_reserved,
         "ram_reserved_loading": ram_reserved,
         **admission.to_payload(),
+        **vram_reclaim.to_payload(),
         **ram_admission.to_payload(),
     }
     return vram_ok and ram_ok, diagnostics

@@ -58,6 +58,29 @@ class AdmissionEvaluation:
 
 
 @dataclass(frozen=True, slots=True)
+class VramReclaimEvaluation:
+    """Hardware-corrected VRAM reclaimable from evicting loaded models."""
+
+    catalog_freeable_mb: int
+    freeable_mb: int
+    deficit_mb: int
+    reserve_mb: int
+    hardware_used_mb: int | None
+    correction_applied: bool
+    correction_basis: str
+
+    def to_payload(self) -> dict[str, Any]:
+        return {
+            "vram_catalog_freeable_mb": self.catalog_freeable_mb,
+            "vram_reclaim_freeable_mb": self.freeable_mb,
+            "vram_non_evictable_reserve_mb": self.reserve_mb,
+            "vram_correction_applied": self.correction_applied,
+            "vram_correction_basis": self.correction_basis,
+            "hardware_used_vram_mb": self.hardware_used_mb,
+        }
+
+
+@dataclass(frozen=True, slots=True)
 class RamAdmissionEvaluation:
     """Structured RAM reclaim decision with namespaced diagnostic fields."""
 
@@ -103,6 +126,11 @@ def _nonreclaimable_overhead_mb(vram_total_mb: int) -> int:
         _MIN_NONRECLAIMABLE_VRAM_MB,
         int(vram_total_mb * _NONRECLAIMABLE_VRAM_RATIO),
     )
+
+
+def compute_non_evictable_vram_reserve_mb(vram_total_mb: int) -> int:
+    """Return conservative VRAM reserve that eviction must not assume freeable."""
+    return _nonreclaimable_overhead_mb(vram_total_mb)
 
 
 def _attainable_ceiling_mb(vram_total_mb: int, vram_free_mb: int) -> int:
@@ -192,6 +220,45 @@ def evaluate_ram_reclaim(
         freeable_mb=freeable_mb,
         deficit_mb=deficit_mb,
         reserve_mb=reserve_mb,
+        correction_applied=correction_applied,
+        correction_basis=correction_basis,
+    )
+
+
+def evaluate_vram_reclaim(
+    *,
+    needed_mb: int,
+    catalog_freeable_mb: int,
+    vram_free_mb: int,
+    vram_total_mb: int,
+    effective_free_mb: int,
+    full_evict: bool,
+    loading_reservation_mb: int = 0,
+) -> VramReclaimEvaluation:
+    """Apply full-evict hardware VRAM ceiling when catalog sums understate usage."""
+    reserve_mb = compute_non_evictable_vram_reserve_mb(vram_total_mb)
+    correction_applied = False
+    correction_basis = "catalog"
+    freeable_mb = max(0, catalog_freeable_mb)
+    hardware_used_mb: int | None = None
+
+    if vram_total_mb > 0 and full_evict and loading_reservation_mb == 0:
+        hardware_used_mb = max(0, vram_total_mb - vram_free_mb)
+        hardware_freeable_mb = max(0, hardware_used_mb - reserve_mb)
+        if hardware_freeable_mb > freeable_mb:
+            freeable_mb = hardware_freeable_mb
+            correction_applied = True
+            correction_basis = "corrected"
+
+    available_mb = effective_free_mb + freeable_mb
+    deficit_mb = max(0, needed_mb - available_mb)
+
+    return VramReclaimEvaluation(
+        catalog_freeable_mb=max(0, catalog_freeable_mb),
+        freeable_mb=freeable_mb,
+        deficit_mb=deficit_mb,
+        reserve_mb=reserve_mb,
+        hardware_used_mb=hardware_used_mb,
         correction_applied=correction_applied,
         correction_basis=correction_basis,
     )

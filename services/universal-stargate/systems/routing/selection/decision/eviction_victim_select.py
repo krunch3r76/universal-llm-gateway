@@ -12,7 +12,12 @@ from typing import TYPE_CHECKING
 from model_id import ModelId
 from universal_logging import get_logger
 
-from .admission_verdict import evaluate_ram_reclaim
+from .admission_verdict import (
+    compute_non_evictable_vram_reserve_mb,
+    evaluate_ram_reclaim,
+    evaluate_vram_admission,
+    evaluate_vram_reclaim,
+)
 from .eviction_hysteresis import HysteresisResult
 from .types import EvictionPlanAbort, EvictionPlanSummary
 
@@ -22,18 +27,8 @@ if TYPE_CHECKING:
 
 logger = get_logger(__name__)
 
-_MIN_NON_EVICTABLE_VRAM_RESERVE_MB = 512
-_NON_EVICTABLE_VRAM_RESERVE_RATIO = 0.02
-
-
-def compute_non_evictable_vram_reserve_mb(vram_total_mb: int) -> int:
-    """Return conservative VRAM reserve that eviction must not assume freeable."""
-    if vram_total_mb <= 0:
-        return _MIN_NON_EVICTABLE_VRAM_RESERVE_MB
-    return max(
-        _MIN_NON_EVICTABLE_VRAM_RESERVE_MB,
-        int(vram_total_mb * _NON_EVICTABLE_VRAM_RESERVE_RATIO),
-    )
+# Re-export for callers that import from this module.
+__all__ = ["compute_non_evictable_vram_reserve_mb", "select_eviction_victims"]
 
 
 def select_eviction_victims(
@@ -62,12 +57,16 @@ def select_eviction_victims(
         evictable_with_resources.append((model_id, vram_usage, ram_usage))
 
     _margins = resource_margins or {}
-    vram_margin_pct = _margins.get("vram_margin_pct", 5)
-    vram_headroom_mb = int(_margins.get("vram_headroom_mb", 2048))
-    ram_margin_pct = _margins.get("ram_margin_pct", 3)
-
-    vram_pct = int(gw_vram_mb * (1.0 + vram_margin_pct / 100))
-    vram_target = (vram_pct + vram_headroom_mb) if gw_vram_mb > 0 else 0
+    ram_margin_pct = int(_margins.get("ram_margin_pct", 3))
+    loading_vram_reserved = max(0, gateway.vram_free_mb - effective_vram_free)
+    vram_admission = evaluate_vram_admission(
+        footprint_est_mb=gw_vram_mb,
+        vram_free_mb=gateway.vram_free_mb,
+        vram_total_mb=gateway.vram_total_mb,
+        reserved_mb=loading_vram_reserved,
+        resource_margins=resource_margins,
+    )
+    vram_target = vram_admission.needed_mb
     ram_target = int(gw_ram_mb * (1.0 + ram_margin_pct / 100))
 
     evictable_with_resources.sort(key=lambda x: (-x[1], -x[2]))
@@ -89,33 +88,32 @@ def select_eviction_victims(
         if vram_covered and ram_covered:
             break
 
-    corrected_freed_vram = catalog_freed_vram
+    full_evict = bool(models_to_evict) and set(models_to_evict) == set(
+        gateway.loaded_models
+    )
+    vram_reclaim = evaluate_vram_reclaim(
+        needed_mb=vram_target,
+        catalog_freeable_mb=catalog_freed_vram,
+        vram_free_mb=gateway.vram_free_mb,
+        vram_total_mb=gateway.vram_total_mb,
+        effective_free_mb=effective_vram_free,
+        full_evict=full_evict,
+        loading_reservation_mb=loading_vram_reserved,
+    )
+    corrected_freed_vram = vram_reclaim.freeable_mb
     corrected_freed_ram = freed_ram_catalog
-    hardware_used_vram_mb: int | None = None
-    hardware_used_ram_mb: int | None = None
-    non_evictable_vram_reserve_mb = 0
-    hardware_correction_applied = False
-
-    if gateway.vram_total_mb > 0 and set(models_to_evict) == set(gateway.loaded_models):
-        hardware_used_vram_mb = max(0, gateway.vram_total_mb - gateway.vram_free_mb)
-        non_evictable_vram_reserve_mb = compute_non_evictable_vram_reserve_mb(
-            gateway.vram_total_mb
+    hardware_used_vram_mb = vram_reclaim.hardware_used_mb
+    non_evictable_vram_reserve_mb = vram_reclaim.reserve_mb
+    hardware_correction_applied = vram_reclaim.correction_applied
+    if hardware_correction_applied:
+        logger.info(
+            f"📊 Hardware correction for {gateway.name}: "
+            f"catalog freeable={catalog_freed_vram}MB, "
+            f"hardware_used={hardware_used_vram_mb}MB, "
+            f"reserve={non_evictable_vram_reserve_mb}MB, "
+            f"hardware_upper_bound={corrected_freed_vram}MB. "
+            f"Applying corrected freeable VRAM estimate."
         )
-        hardware_freeable_upper_bound = max(
-            0, hardware_used_vram_mb - non_evictable_vram_reserve_mb
-        )
-
-        if hardware_freeable_upper_bound > corrected_freed_vram:
-            logger.info(
-                f"📊 Hardware correction for {gateway.name}: "
-                f"catalog freeable={catalog_freed_vram}MB, "
-                f"hardware_used={hardware_used_vram_mb}MB, "
-                f"reserve={non_evictable_vram_reserve_mb}MB, "
-                f"hardware_upper_bound={hardware_freeable_upper_bound}MB. "
-                f"Applying corrected freeable VRAM estimate."
-            )
-            corrected_freed_vram = hardware_freeable_upper_bound
-            hardware_correction_applied = True
 
     ram_evaluation = evaluate_ram_reclaim(
         needed_mb=ram_target,

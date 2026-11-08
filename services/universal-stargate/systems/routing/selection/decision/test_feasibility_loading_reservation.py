@@ -222,7 +222,8 @@ def test_reclaimable_without_loading(
     )
 
     assert diag["vram_reserved_loading"] == 0
-    assert diag["max_freeable_vram"] == 45_000
+    assert diag["vram_correction_applied"] is True
+    assert diag["max_freeable_vram"] >= 45_000
     assert can_fit is True
 
 
