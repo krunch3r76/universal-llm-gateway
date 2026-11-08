@@ -42,10 +42,17 @@ def is_composer_defer_reason(reason: str | None) -> bool:
 
 
 def composer_defer_blocks_claim(
-    *, reason: str | None, decided_by_rule: str | None
+    *,
+    reason: str | None,
+    decided_by_rule: str | None,
+    agent: str | None = None,
 ) -> bool:
     """Pending composer-defers are not re-claimed until empty-event redrive or sweep refuse."""
     if not is_composer_defer_reason(reason):
+        return False
+    if str(agent or "").strip().lower() == "orion":
+        # Orion/chatgpt_work uses bounded wall-clock deferred_streaming + owner retries;
+        # do not feed the generic display sweep that terminalizes on one pass.
         return False
     rule = str(decided_by_rule or "")
     return rule.startswith(_DEFER_PREFIX)
@@ -76,6 +83,7 @@ def normalize_legacy_pending_wakes() -> dict[str, int]:
         composer = conn.execute(
             "UPDATE endpoint_wake_ledger SET decided_by_rule=? "
             f"WHERE state='pending' AND reason IN {in_sql} "
+            "AND lower(trim(agent)) <> 'orion' "
             "AND (decided_by_rule IS NULL OR decided_by_rule NOT LIKE ?)",
             (
                 COMPOSER_DEFER_ARMED,
@@ -104,7 +112,8 @@ def finalize_composer_defer_pass() -> int:
     with write_connect() as conn:
         cur = conn.execute(
             "UPDATE endpoint_wake_ledger SET decided_by_rule=? "
-            f"WHERE state='pending' AND reason IN {in_sql} AND decided_by_rule=?",
+            f"WHERE state='pending' AND reason IN {in_sql} AND decided_by_rule=? "
+            "AND lower(trim(agent)) <> 'orion'",
             (
                 COMPOSER_DEFER_SWEEP,
                 *reasons,
@@ -128,7 +137,8 @@ def escalate_composer_deferred_on_sweep(store: Any) -> int:
         rows = conn.execute(
             "SELECT id, agent, thread_id, turn_number, reason, decided_by_rule "
             "FROM endpoint_wake_ledger "
-            "WHERE state='pending' AND decided_by_rule=?",
+            "WHERE state='pending' AND decided_by_rule=? "
+            "AND lower(trim(agent)) <> 'orion'",
             (COMPOSER_DEFER_SWEEP,),
         ).fetchall()
         if not rows:
