@@ -210,6 +210,14 @@ _PEER_WAKE_FROM = frozenset(
         "orion",
     }
 )
+
+
+@lru_cache(maxsize=1)
+def _api_generate_peer_wake_from() -> frozenset[str]:
+    """API ``team_dispatch(op=generate)`` roles (config/agents.yaml via dispatch_role_catalog)."""
+    from agent_seat.dispatch_role_catalog import generate_roles
+
+    return frozenset(generate_roles())
 _ORION_PEER_WAKE_HEADS = frozenset({"ANSWER"})
 _POLL_S = 2.0
 
@@ -753,6 +761,8 @@ def peer_operator_wake_from(from_agent: str, *, subject: str | None = None) -> b
     if from_agent.startswith("grok-bot-"):
         return True
     if from_agent.endswith("-impresario"):
+        return True
+    if from_agent in _api_generate_peer_wake_from():
         return True
     return False
 

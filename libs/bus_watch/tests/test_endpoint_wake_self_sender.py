@@ -176,15 +176,45 @@ def test_bare_cursor_sender_is_not_resolved_to_a_tab(db: None) -> None:
     assert [r["state"] for r in _ledger(thread)] == ["pending"]
 
 
-def test_rule_suppressed_turn_to_subscribed_seat_leaves_ledger_row(db: None) -> None:
-    """Specimen 22471#91: default_suppress left no ledger trace at all."""
-    thread = _thread("f43076-ledger-gap")
+@pytest.mark.parametrize("from_agent", ["skeptic", "synthesizer", "artisan", "reviewer"])
+def test_api_role_reply_wakes_subscribed_recipient(db: None, from_agent: str) -> None:
+    """Friction 43079: API generate roles enqueue wakes like peer operators (22471#91/#92)."""
+    thread = _thread(f"f43079-{from_agent}")
     _subscribe("cursor-glass-opus-coordinator-08", thread, TAB)
     insert_turn(
         thread=thread,
-        from_agent="artisan",
+        from_agent=from_agent,
         to_agent="cursor-glass-opus-coordinator-08",
         subject="W4 fold-path spec: amendments folded (DONE)",
+        body="x",
+    )
+    _rewind_cursor()
+
+    scan_once(_Store())  # type: ignore[arg-type]
+
+    rows = _ledger(thread)
+    assert [r["state"] for r in rows] == ["pending"]
+
+
+def test_peer_wake_from_non_glass_surfaces_unchanged() -> None:
+    from bus_watch.endpoint_wake_dispatcher import peer_operator_wake_from
+
+    assert peer_operator_wake_from("grok-bot-gc1", subject="MEMO|x")
+    assert peer_operator_wake_from("web-anthropic", subject="MEMO|x")
+    assert not peer_operator_wake_from("cursor-sdk", subject="CLOSEOUT|x")
+    assert not peer_operator_wake_from("conductor-hop", subject="DONE|x")
+    assert not peer_operator_wake_from("orion", subject="STATUS|x")
+    assert peer_operator_wake_from("orion", subject="ANSWER|x")
+
+
+def test_routine_dispatch_chatter_still_default_suppress(db: None) -> None:
+    thread = _thread("f43079-routine")
+    _subscribe("cursor-glass-opus-coordinator-08", thread, TAB)
+    insert_turn(
+        thread=thread,
+        from_agent="conductor-hop",
+        to_agent="cursor-glass-opus-coordinator-08",
+        subject="dispatch status",
         body="x",
     )
     _rewind_cursor()
