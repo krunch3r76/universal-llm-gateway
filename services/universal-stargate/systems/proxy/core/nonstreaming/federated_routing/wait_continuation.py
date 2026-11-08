@@ -40,11 +40,20 @@ def clamp_eviction_wait_timeout(
     context: RequestContext,
     config_timeout: float,
 ) -> float:
-    """Clamp eviction wait budget to the client capacity deadline when set."""
-    deadline = getattr(context, "_capacity_deadline_mono", None)
-    if deadline is not None:
-        return min(config_timeout, max(0.0, deadline - time.monotonic()))
-    return config_timeout
+    """Return the remaining eviction wait budget for this request.
+
+    The eviction budget is independent of the pre-route queue / capacity
+    deadline: a request whose queue wait exhausted ``_capacity_deadline_mono``
+    still gets ``config_timeout`` seconds for eviction + load. The budget is
+    armed on first use and shared across requeues and retry attempts of the
+    same request (the retry loop does not reset it).
+    """
+    now = time.monotonic()
+    deadline = getattr(context, "_eviction_wait_deadline_mono", None)
+    if deadline is None:
+        deadline = now + config_timeout
+        context._eviction_wait_deadline_mono = deadline  # noqa: SLF001
+    return min(config_timeout, max(0.0, deadline - now))
 
 
 def _is_permanent_resource_or_structural(candidate: Any) -> bool:

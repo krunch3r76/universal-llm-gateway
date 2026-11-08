@@ -253,11 +253,17 @@ def parse_telemetry_payload(_msg_type: str, data: dict[str, Any]) -> dict[str, A
     # PHASE 2 FIX: Parse model_resources dict (ModelId keys)
     # model_resources: {model_id_str: {vram_usage: int, ram_usage: int}}
     if "model_resources" in parsed and isinstance(parsed["model_resources"], dict):
+        # ModelId equality ignores -hybrid, so X and X-hybrid share one key;
+        # each entry keeps every variant's own footprint under "_variants".
         try:
-            parsed["model_resources"] = {
-                ModelId.parse(model_id): resource_dict
-                for model_id, resource_dict in parsed["model_resources"].items()
-            }
+            resources: dict[ModelId, dict[str, Any]] = {}
+            for model_id, resource_dict in parsed["model_resources"].items():
+                mid = ModelId.parse(model_id)
+                prior = resources.get(mid)
+                variants = list(prior.get("_variants", ())) if prior else []
+                variants.append((mid, dict(resource_dict)))
+                resources[mid] = {**resource_dict, "_variants": variants}
+            parsed["model_resources"] = resources
         except (TypeError, ValueError) as e:
             logger.warning(f"Failed to parse model_resources: {e}")
             parsed["model_resources"] = {}
