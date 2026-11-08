@@ -205,6 +205,7 @@ async def test_vram_refusal_instant_resource_wake_still_awaits_dwell_slice(
         _vram_refusal_telemetry_baseline=100.0,
     )
     placement = SimpleNamespace(model_id="hermes-test")
+    timeout_s = 0.55
     try:
         await _wait_vram_refusal_and_retry_selection(
             federated_manager=mgr,
@@ -212,7 +213,7 @@ async def test_vram_refusal_instant_resource_wake_still_awaits_dwell_slice(
             placement=placement,
             context=context,
             event_bus=None,
-            timeout_s=0.2,
+            timeout_s=timeout_s,
             stability_tracker=SimpleNamespace(),
         )
     finally:
@@ -220,8 +221,77 @@ async def test_vram_refusal_instant_resource_wake_still_awaits_dwell_slice(
         with contextlib.suppress(asyncio.CancelledError):
             await tick
 
+    pad_floor = _wait_logic_mod.VRAM_REFUSAL_DWELL_PAD_FLOOR_S
+    dwell_s = _wait_logic_mod.VRAM_REFUSAL_INITIAL_DWELL_S
+    iter_min_s = min(dwell_s, pad_floor)
+    max_select = int(timeout_s / iter_min_s) + 1
     assert select_calls["n"] >= 2
+    assert select_calls["n"] <= max_select, (
+        f"select spam bound: timeout/min(dwell,pad_floor)+1 = "
+        f"{timeout_s}/{iter_min_s}+1 => {max_select} (pad_floor={pad_floor})"
+    )
     assert ticker_s["elapsed"] >= 0.06
+
+
+@pytest.mark.asyncio
+async def test_vram_refusal_fast_resource_wake_selects_before_half_dwell_slice(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """RESOURCE_UPDATE after ~10ms must not block first select until full dwell (R1)."""
+    dwell_slice_s = 2.0
+    monkeypatch.setattr(_wait_logic_mod, "VRAM_REFUSAL_INITIAL_DWELL_S", dwell_slice_s)
+    monkeypatch.setattr(
+        "systems.routing.selection.stargate_collector.federated_gateways_to_routing_candidates",
+        lambda gateways: [
+            SimpleNamespace(name=g.gateway_id) for g in gateways
+        ],
+    )
+
+    class _FastWakeMgr(_Mgr):
+        def __init__(self, gateways: list[_Gw]) -> None:
+            super().__init__(gateways)
+            self._ts = gateways[0].telemetry_timestamp + 1.0
+
+        async def wait_for_gateway_resource_update(
+            self, gateway_id: str, since_timestamp: float, timeout_s: float
+        ) -> bool:
+            _ = (gateway_id, since_timestamp, timeout_s)
+            await asyncio.sleep(0.01)
+            self._gateways["edge-jupiter-gateway"].telemetry_timestamp = self._ts
+            return True
+
+        def gateway_resource_telemetry_timestamp(self, gateway_id: str) -> float:
+            return self._gateways[gateway_id].telemetry_timestamp
+
+    mgr = _FastWakeMgr([_Gw("edge-jupiter-gateway", ts=100.0)])
+    select_at: list[float] = []
+
+    def _select(**_kwargs):
+        select_at.append(time.monotonic() - loop_start)
+        return SimpleNamespace(name="edge-jupiter-gateway"), SimpleNamespace(
+            candidates=()
+        )
+
+    context = SimpleNamespace(
+        request_id="req-r1-fast",
+        model_sticky=True,
+        excluded_gateway_ids=set(),
+        _vram_refusal_gateway_id="edge-jupiter-gateway",
+        _vram_refusal_telemetry_baseline=100.0,
+    )
+    placement = SimpleNamespace(model_id="hermes-test")
+    loop_start = time.monotonic()
+    await _wait_vram_refusal_and_retry_selection(
+        federated_manager=mgr,
+        decision_engine=SimpleNamespace(select=_select),
+        placement=placement,
+        context=context,
+        event_bus=None,
+        timeout_s=5.0,
+        stability_tracker=SimpleNamespace(),
+    )
+    assert len(select_at) == 1
+    assert select_at[0] < 0.5 * dwell_slice_s
 
 
 @pytest.mark.asyncio

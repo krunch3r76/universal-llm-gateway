@@ -168,3 +168,4 @@ async def test_federation_load_race_observation_http_error_first() -> None:
     assert payload["http_exception_class"] == "RuntimeError"
     assert payload["http_arrival_ms"] is not None
     assert payload["http_arrival_ms"] < 100
+    assert payload["terminal_pending"] is True

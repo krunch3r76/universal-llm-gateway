@@ -232,6 +232,7 @@ _eviction_wait_queue_depth: int = 0
 
 VRAM_REFUSAL_INITIAL_DWELL_S = 2.0
 VRAM_REFUSAL_MAX_DWELL_S = 10.0
+VRAM_REFUSAL_DWELL_PAD_FLOOR_S = 0.25
 
 
 async def _wait_vram_refusal_and_retry_selection(
@@ -297,7 +298,8 @@ async def _wait_vram_refusal_and_retry_selection(
                 await asyncio.sleep(wait_slice)
 
             slice_elapsed = time.monotonic() - slice_start
-            pad_s = wait_slice - slice_elapsed
+            pad_target_s = min(wait_slice, VRAM_REFUSAL_DWELL_PAD_FLOOR_S)
+            pad_s = max(0.0, pad_target_s - slice_elapsed)
             if pad_s > 0:
                 await asyncio.sleep(pad_s)
 
