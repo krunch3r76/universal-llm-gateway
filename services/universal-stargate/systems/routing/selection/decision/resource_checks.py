@@ -131,6 +131,10 @@ def resolve_gateway_requirements(
         )
     vram_mb = details.get("vram_usage", 0)
     ram_mb = details.get("ram_usage", 0)
+    variant = (details.get("variants") or {}).get(str(model_id))
+    if variant:
+        vram_mb = variant.get("vram_usage", vram_mb)
+        ram_mb = variant.get("ram_usage", ram_mb)
 
     if vram_mb != placement.vram_mb or ram_mb != placement.ram_mb:
         logger.info(

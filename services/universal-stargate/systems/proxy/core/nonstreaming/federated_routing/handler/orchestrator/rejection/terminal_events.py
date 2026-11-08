@@ -59,7 +59,7 @@ async def _emit_terminal_routing_failure(
 
     await event_bus.publish_nowait(
         RoutingDecisionFailed(
-            model_id=context.selected_model.routing_key,
+            model_id=str(context.selected_model),
             candidate_count=candidate_count,
             evaluation_time_ms=evaluation_time_ms,
             timestamp=timestamp,
