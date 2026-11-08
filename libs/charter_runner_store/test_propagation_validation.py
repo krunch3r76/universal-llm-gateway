@@ -206,6 +206,27 @@ def test_mint_refuses_occupied_pending_5139a3e6_shape(monkeypatch, tmp_path) -> 
 
 
 @pytest.mark.offline
+def test_mint_supersedes_pending_left_by_other_intent(monkeypatch, tmp_path) -> None:
+    """An expired intent's unbound pending is not handed to the next intent."""
+    monkeypatch.setenv("CHARTER_RUNNER_DATA_DIR", str(tmp_path))
+    _mute_probe(monkeypatch)
+    stale_id = propagation_validation.record_validation(
+        service="git_integration_worker",
+        code_ref=_ROW_SHA,
+        restart_intent="intent-expired",
+        outcome="pending",
+    )
+    intent = SimpleNamespace(service="git_integration_worker", intent_id="intent-new")
+    new_id = mint_pending_validation_for_intent(intent, code_ref=_ROW_SHA)
+    assert new_id != stale_id
+    stale = get_validation(stale_id)
+    assert stale is not None and stale.outcome == "superseded"
+    found = propagation_validation.latest_validation_for_intent("intent-new")
+    assert found is not None and found.validation_id == new_id
+    assert mint_pending_validation_for_intent(intent, code_ref=_ROW_SHA) == new_id
+
+
+@pytest.mark.offline
 def test_head_lookup_does_not_return_foreign_bound_validation(
     monkeypatch, tmp_path
 ) -> None:
