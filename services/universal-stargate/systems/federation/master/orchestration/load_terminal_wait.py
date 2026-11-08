@@ -60,10 +60,10 @@ def _model_matches(payload: dict[str, Any], expected: ModelId | str) -> bool:
     model_id = payload.get("model_id")
     if not model_id:
         return False
-    if isinstance(expected, str):
-        expected_id = ModelId.parse(expected)
-    else:
+    if isinstance(expected, ModelId):
         expected_id = expected
+    else:
+        expected_id = ModelId.parse(str(expected))
     try:
         event_id = ModelId.parse(str(model_id))
     except (ValueError, TypeError):
@@ -98,14 +98,34 @@ class _FederationProgressThrottle:
         self.last_emit_mono = now_mono
 
 
+def _host_from_url(url: object) -> str | None:
+    if not url:
+        return None
+    from urllib.parse import urlparse
+
+    try:
+        parsed = urlparse(str(url))
+    except ValueError:
+        return None
+    return parsed.hostname or None
+
+
 def _gateway_matches(payload: dict[str, Any], gateway_id: str, remote_id: str) -> bool:
     gateway_name = payload.get("gateway_name")
-    if gateway_name and str(gateway_name) in {gateway_id, remote_id}:
-        return True
-    url = payload.get("url")
-    if url and (gateway_id in str(url) or remote_id in str(url)):
-        return True
-    return gateway_name is None and payload.get("url") is None
+    if gateway_name is not None:
+        name = str(gateway_name)
+        if name in {gateway_id, remote_id}:
+            return True
+        if name.endswith("-gateway") and name[: -len("-gateway")] == remote_id:
+            return True
+        return False
+    host = _host_from_url(payload.get("url"))
+    if host is None:
+        return False
+    candidates = {gateway_id, remote_id}
+    if gateway_id.endswith("-gateway"):
+        candidates.add(gateway_id[: -len("-gateway")])
+    return host in candidates
 
 
 def _progress_payload_summary(payload: dict[str, Any]) -> dict[str, Any]:
@@ -179,7 +199,7 @@ async def _wait_for_idle_timeout(
 async def wait_for_terminal_load_event(
     event_bus: Any,
     *,
-    routing_key: str,
+    expected_model: ModelId | str,
     gateway_id: str,
     remote_id: str,
     timeout_s: float,
@@ -202,7 +222,7 @@ async def wait_for_terminal_load_event(
         if future.done():
             return
         payload = getattr(event, "payload", None) or {}
-        if not _model_matches(payload, routing_key):
+        if not _model_matches(payload, expected_model):
             return
         if not _gateway_matches(payload, gateway_id, remote_id):
             return
@@ -238,11 +258,71 @@ async def wait_for_terminal_load_event(
             subscription.unsubscribe()
 
 
+def _elapsed_ms_since(load_started_mono: float, done_mono: float | None) -> int | None:
+    if done_mono is None:
+        return None
+    return int((done_mono - load_started_mono) * 1000)
+
+
+async def _emit_federation_load_race_observation(
+    event_bus: Any,
+    *,
+    request_id: str | None,
+    expected_model: ModelId | str,
+    gateway_id: str,
+    winner: str,
+    terminal: TerminalLoadResolution | None,
+    terminal_pending: bool,
+    load_started_mono: float,
+    http_done_mono: float | None,
+    terminal_done_mono: float | None,
+    http_exception_class: str | None = None,
+) -> None:
+    """Publish once per completed HTTP/terminal race (observation, low frequency)."""
+    if event_bus is None or not request_id:
+        return
+    from src.scheduling.events import FederationLoadRaceResolved
+
+    http_ms = _elapsed_ms_since(load_started_mono, http_done_mono)
+    terminal_ms = _elapsed_ms_since(load_started_mono, terminal_done_mono)
+    delta_ms: int | None = None
+    if http_ms is not None and terminal_ms is not None:
+        delta_ms = terminal_ms - http_ms
+    model_id = (
+        str(expected_model)
+        if isinstance(expected_model, str)
+        else str(expected_model)
+    )
+    try:
+        await event_bus.publish_nowait(
+            FederationLoadRaceResolved(
+                request_id=request_id,
+                model_id=model_id,
+                gateway_id=gateway_id,
+                winner=winner,
+                terminal_outcome=(
+                    terminal.outcome.value if terminal is not None else None
+                ),
+                terminal_pending=terminal_pending,
+                http_arrival_ms=http_ms,
+                terminal_arrival_ms=terminal_ms,
+                arrival_delta_ms=delta_ms,
+                http_exception_class=http_exception_class,
+            )
+        )
+    except Exception as exc:  # pragma: no cover - defensive
+        logger.warning(
+            "Failed to publish federation.load.race_resolved: %s",
+            exc,
+            exc_info=True,
+        )
+
+
 async def race_remote_load_with_terminal_events(
     event_bus: Any,
     remote_call: asyncio.Task[Any],
     *,
-    routing_key: str,
+    expected_model: ModelId | str,
     gateway_id: str,
     remote_id: str,
     backstop_timeout_s: float,
@@ -254,6 +334,22 @@ async def race_remote_load_with_terminal_events(
     progress_tracker: _ProgressTracker | None = None
     idle_task: asyncio.Task[IdleLoadTimeoutInfo] | None = None
     progress_subscription: Any | None = None
+    loop = asyncio.get_running_loop()
+    race_t0 = load_started_mono if load_started_mono is not None else loop.time()
+    http_done_mono: float | None = None
+    terminal_done_mono: float | None = None
+
+    def _mark_http_done(task: asyncio.Task[Any]) -> None:
+        nonlocal http_done_mono
+        if not task.cancelled():
+            http_done_mono = loop.time()
+
+    def _mark_terminal_done(task: asyncio.Task[Any]) -> None:
+        nonlocal terminal_done_mono
+        if not task.cancelled():
+            terminal_done_mono = loop.time()
+
+    remote_call.add_done_callback(_mark_http_done)
 
     if event_bus is not None and idle_budget_s is not None:
         from src.scheduling.events.model_lifecycle import MODEL_LOADING_PROGRESS
@@ -266,7 +362,7 @@ async def race_remote_load_with_terminal_events(
             if progress_tracker is None:
                 return
             payload = getattr(event, "payload", None) or {}
-            if not _model_matches(payload, routing_key):
+            if not _model_matches(payload, expected_model):
                 return
             if not _gateway_matches(payload, gateway_id, remote_id):
                 return
@@ -291,7 +387,14 @@ async def race_remote_load_with_terminal_events(
                         FederationLoadProgress(
                             request_id=request_id,
                             remote_id=remote_id,
-                            model_id=str(payload.get("model_id", routing_key)),
+                            model_id=str(
+                                payload.get(
+                                    "model_id",
+                                    expected_model
+                                    if isinstance(expected_model, str)
+                                    else str(expected_model),
+                                )
+                            ),
                             phase=str(phase),
                             pct=pct_value,
                             elapsed_ms=elapsed_ms,
@@ -317,12 +420,13 @@ async def race_remote_load_with_terminal_events(
     terminal_waiter = asyncio.create_task(
         wait_for_terminal_load_event(
             event_bus,
-            routing_key=routing_key,
+            expected_model=expected_model,
             gateway_id=gateway_id,
             remote_id=remote_id,
             timeout_s=backstop_timeout_s,
         )
     )
+    terminal_waiter.add_done_callback(_mark_terminal_done)
     wait_set: set[asyncio.Task[Any]] = {remote_call, terminal_waiter}
     if idle_task is not None:
         wait_set.add(idle_task)
@@ -359,6 +463,19 @@ async def race_remote_load_with_terminal_events(
 
         if terminal_waiter in done:
             terminal = terminal_waiter.result()
+            if terminal is not None:
+                await _emit_federation_load_race_observation(
+                    event_bus,
+                    request_id=request_id,
+                    expected_model=expected_model,
+                    gateway_id=gateway_id,
+                    winner="terminal_first",
+                    terminal=terminal,
+                    terminal_pending=False,
+                    load_started_mono=race_t0,
+                    http_done_mono=http_done_mono,
+                    terminal_done_mono=terminal_done_mono,
+                )
             if terminal is not None and terminal.outcome != TerminalLoadOutcome.LOADED:
                 remote_call.cancel()
                 with suppress(asyncio.CancelledError):
@@ -368,13 +485,39 @@ async def race_remote_load_with_terminal_events(
                 return await _resolve_after_terminal_loaded(remote_call, terminal)
 
         if remote_call in done:
+            terminal_pending_before_cancel = not terminal_waiter.done()
             if not terminal_waiter.done():
                 terminal_waiter.cancel()
                 with suppress(asyncio.CancelledError):
                     await terminal_waiter
             exc = remote_call.exception()
             if exc is not None:
+                await _emit_federation_load_race_observation(
+                    event_bus,
+                    request_id=request_id,
+                    expected_model=expected_model,
+                    gateway_id=gateway_id,
+                    winner="http_error_first",
+                    terminal=None,
+                    terminal_pending=terminal_pending_before_cancel,
+                    load_started_mono=race_t0,
+                    http_done_mono=http_done_mono,
+                    terminal_done_mono=terminal_done_mono,
+                    http_exception_class=type(exc).__name__,
+                )
                 raise exc
+            await _emit_federation_load_race_observation(
+                event_bus,
+                request_id=request_id,
+                expected_model=expected_model,
+                gateway_id=gateway_id,
+                winner="http_first",
+                terminal=None,
+                terminal_pending=terminal_pending_before_cancel,
+                load_started_mono=race_t0,
+                http_done_mono=http_done_mono,
+                terminal_done_mono=terminal_done_mono,
+            )
             return remote_call.result(), None
 
         for task in pending:
@@ -422,7 +565,7 @@ async def await_remote_load_with_wall_clock(
     *,
     remote_call: asyncio.Task[Any],
     event_bus: Any | None,
-    routing_key: str,
+    expected_model: ModelId | str,
     gateway_id: str,
     remote_id: str,
     backstop_timeout_s: float,
@@ -453,7 +596,7 @@ async def await_remote_load_with_wall_clock(
         result, terminal = await race_remote_load_with_terminal_events(
             event_bus,
             remote_call,
-            routing_key=routing_key,
+            expected_model=expected_model,
             gateway_id=gateway_id,
             remote_id=remote_id,
             backstop_timeout_s=backstop_timeout_s,

@@ -425,6 +425,9 @@ class ModelUnloader:
         """Publish SYSTEM_RESOURCES_UPDATED event with current VRAM/RAM info."""
         try:
             resource_tracker = _get_resource_tracker()
+            from src.core.resources.tracker_queries import refresh_hardware_vram_probe
+
+            refresh_hardware_vram_probe(resource_tracker)
             # get_system_resources() publishes SYSTEM_RESOURCES_UPDATED event internally
             await resource_tracker.get_system_resources()
             logger.debug("Published resource update after model unload")

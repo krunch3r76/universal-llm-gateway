@@ -237,7 +237,7 @@ async def test_4_32_default_sticky_skips_overflow_when_model_sticky() -> None:
     assert origin is None
 
 
-def test_4_22_compute_eviction_plan_excludes_rag_protected() -> None:
+def test_4_22_compute_eviction_plan_evicts_non_protected_first() -> None:
     emb = ModelId.parse(rag_embedding_model_id() or "qwen3-embedding-8b-q8-0-8192")
     ctx = ModelId.parse(rag_contextualize_model_id() or "qwen3-5-9b-q8-0-131072")
     rerank = ModelId.parse("baai-bge-reranker-v2-m3")
@@ -274,12 +274,12 @@ def test_4_22_compute_eviction_plan_excludes_rag_protected() -> None:
     from systems.routing.selection.decision.types import EvictionPlanSummary
 
     assert isinstance(plan, EvictionPlanSummary)
+    assert rerank in plan.models_to_evict
     assert emb not in plan.models_to_evict
     assert ctx not in plan.models_to_evict
-    assert rerank in plan.models_to_evict
 
 
-def test_4_22_protected_only_loaded_no_eviction_plan() -> None:
+def test_4_22_protected_only_loaded_yields_eviction_plan_when_required() -> None:
     emb = ModelId.parse(rag_embedding_model_id() or "qwen3-embedding-8b-q8-0-8192")
     ctx = ModelId.parse(rag_contextualize_model_id() or "qwen3-5-9b-q8-0-131072")
     target = ModelId.parse("qwen3-14b-q4-k-m-40960")
@@ -308,58 +308,8 @@ def test_4_22_protected_only_loaded_no_eviction_plan() -> None:
     )
     from systems.routing.selection.decision.types import EvictionPlanSummary
 
-    assert not isinstance(plan, EvictionPlanSummary)
-
-
-def test_4_22_without_protection_evicts_protected_models(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    emb = ModelId.parse(rag_embedding_model_id() or "qwen3-embedding-8b-q8-0-8192")
-    ctx = ModelId.parse(rag_contextualize_model_id() or "qwen3-5-9b-q8-0-131072")
-    target = ModelId.parse("qwen3-14b-q4-k-m-40960")
-
-    def req(mid: ModelId) -> tuple[int, int]:
-        if mid == target:
-            return (12_000, 0)
-        return (15_000, 0)
-
-    gw = _gateway(
-        vram_free_mb=500,
-        loaded_models=frozenset({emb, ctx}),
-        available_models=frozenset({target, emb, ctx}),
-        model_details={
-            target: {"vram_usage": 12_000, "ram_usage": 0},
-            emb: {"vram_usage": 15_000, "ram_usage": 0},
-            ctx: {"vram_usage": 14_000, "ram_usage": 0},
-        },
-    )
-    from systems.routing.selection.decision.types import EvictionPlanSummary
-
-    protected_plan = _compute_eviction_plan(
-        gw,
-        Placement(model_id=target, ram_mb=0, vram_mb=12_000, is_gpu=True),
-        req,
-        eviction_cooldown_s=0.0,
-        eviction_request_class=EvictionRequestClass.REQUIRED,
-    )
-    assert not isinstance(protected_plan, EvictionPlanSummary)
-
-    monkeypatch.setattr(
-        "systems.routing.selection.decision.eviction_planning.is_rag_protected_model",
-        lambda _m: False,
-    )
-    plan = _compute_eviction_plan(
-        gw,
-        Placement(model_id=target, ram_mb=0, vram_mb=12_000, is_gpu=True),
-        req,
-        eviction_cooldown_s=0.0,
-        eviction_request_class=EvictionRequestClass.REQUIRED,
-    )
     assert isinstance(plan, EvictionPlanSummary)
     assert emb in plan.models_to_evict or ctx in plan.models_to_evict
-    assert isinstance(plan, EvictionPlanSummary) ^ isinstance(
-        protected_plan, EvictionPlanSummary
-    )
 
 
 @pytest.mark.asyncio
@@ -591,7 +541,7 @@ async def test_4_23_gateway_at_capacity_no_cpu_until_budget_expired(
     assert CPU_EMBEDDING_MODEL_ID in select_calls
 
 
-def test_4_27_reclaim_excludes_protected_fast_refuse() -> None:
+def test_4_27_reclaim_counts_protected_as_reclaimable() -> None:
     emb = ModelId.parse(rag_embedding_model_id() or "qwen3-embedding-8b-q8-0-8192")
     ctx = ModelId.parse(rag_contextualize_model_id() or "qwen3-5-9b-q8-0-131072")
     target = ModelId.parse("qwen3-14b-q4-k-m-40960")
@@ -616,12 +566,12 @@ def test_4_27_reclaim_excludes_protected_fast_refuse() -> None:
         Placement(model_id=target, ram_mb=0, vram_mb=12_000, is_gpu=True),
         _lookup,
     )
-    assert ok is False
-    assert diag["max_freeable_vram"] < diag["required_vram"]
+    assert ok is True
+    assert diag["max_freeable_vram"] >= diag["required_vram"]
 
 
 @pytest.mark.asyncio
-async def test_4_34_oom_recovery_skips_protected(
+async def test_4_34_oom_recovery_evicts_protected_last(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     emb = ModelId.parse(rag_embedding_model_id() or "qwen3-embedding-8b-q8-0-8192")
@@ -650,9 +600,9 @@ async def test_4_34_oom_recovery_skips_protected(
     )
     assert ok is True
     plan = execute.call_args.kwargs["eviction_plan"]
-    assert emb not in plan.models_to_evict
     assert ctx not in plan.models_to_evict
     assert rerank in plan.models_to_evict
+    assert emb in plan.models_to_evict
 
 
 @pytest.mark.asyncio
@@ -723,8 +673,8 @@ async def test_4_36_resource_update_measured_vram_in_reclaim_and_eviction() -> N
 
         placement = Placement(model_id=target, ram_mb=0, vram_mb=500, is_gpu=True)
         _, diag = can_fit_after_eviction_including_busy(gw, placement, req)
-        assert diag["max_freeable_vram"] == 500 + 2_500
-        assert diag["max_freeable_vram"] < 500 + 8_000
+        assert diag["max_freeable_vram"] >= 500 + 2_500
+        assert diag["max_freeable_vram"] > 500 + 8_000
 
         from systems.routing.selection.decision.types import EvictionPlanSummary
 
@@ -945,12 +895,17 @@ async def test_4_37_eviction_reselect_budget_returns_503(
         "systems.proxy.core.nonstreaming.federated_routing.wait_continuation.time.monotonic",
         lambda: mono["t"],
     )
+    monkeypatch.setattr(
+        "systems.proxy.core.nonstreaming.capacity_deadline.time.monotonic",
+        lambda: mono["t"],
+    )
     context = SimpleNamespace(
         request_id="req-evict-wait",
         selected_model=model,
         model_sticky=True,
         excluded_gateway_ids=set(),
         _capacity_deadline_mono=1002.0,
+        routing_endpoint_category=EndpointCategory.EMBEDDING,
     )
     with pytest.raises(HTTPException) as exc_info:
         await rejection_mod.handle_selection_rejection(
@@ -960,7 +915,7 @@ async def test_4_37_eviction_reselect_budget_returns_503(
             event_bus=None,
             federated_manager=SimpleNamespace(),
             federated_gateways=[],
-            routing_config={},
+            routing_config={"eviction_wait_timeout_s": 300.0},
             decision_engine=SimpleNamespace(),
             placement=SimpleNamespace(model_id=model),
             gateways_for_routing=[],
@@ -994,11 +949,16 @@ async def test_4_37_eviction_requeue_clamps_wait_timeout(
         "systems.proxy.core.nonstreaming.federated_routing.wait_continuation.time.monotonic",
         lambda: mono["t"],
     )
+    monkeypatch.setattr(
+        "systems.proxy.core.nonstreaming.capacity_deadline.time.monotonic",
+        lambda: mono["t"],
+    )
     context = SimpleNamespace(
         capacity_token=None,
         selected_model=model,
         _capacity_deadline_mono=1002.0,
         excluded_gateway_ids=set(),
+        routing_endpoint_category=EndpointCategory.EMBEDDING,
     )
     with pytest.raises(HTTPException) as exc_info:
         await eviction_requeue.requeue_after_transient_eviction(

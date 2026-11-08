@@ -28,6 +28,7 @@ ContinuationMode = Literal[
     "execution_failure",
     "transient_capacity",
     "cooldown_blocked",
+    "vram_refusal",
 ]
 
 _TRANSIENT_CAPACITY_CONSTRAINTS: frozenset[str] = frozenset(
@@ -151,6 +152,9 @@ def continuation_still_transient(
             if oscillation_hold_remaining_s(cooldown_hold_key) > 0.0:
                 return True
         mode = "execution_failure"
+
+    if mode == "vram_refusal":
+        return True
 
     candidates = getattr(trace, "candidates", ()) or ()
     if mode == "busy_block":

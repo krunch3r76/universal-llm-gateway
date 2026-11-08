@@ -118,6 +118,7 @@ class ScoringWeights:
     # Eviction-specific
     eviction_base: float = -30.0  # Base penalty for any eviction
     eviction_per_model: float = -20.0  # Per-model eviction penalty
+    rag_protected_eviction_extra: float = -50.0  # Per protected model in eviction plan
 
     # Cold-load spreading weights
     empty_gateway: float = 300.0  # High weight to prefer empty gateways for cold loads
@@ -257,6 +258,9 @@ def load_routing_policy(config: dict[str, Any]) -> RoutingPolicy:
         stability=weight_dict.get("stability", 5.0),
         eviction_base=eviction_dict.get("base", -30.0),
         eviction_per_model=eviction_dict.get("per_model", -20.0),
+        rag_protected_eviction_extra=eviction_dict.get(
+            "rag_protected_eviction_extra", -50.0
+        ),
         empty_gateway=weight_dict.get("empty_gateway", 300.0),
         busy_models=weight_dict.get("busy_models", 20.0),
     )

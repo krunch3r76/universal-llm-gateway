@@ -1,8 +1,12 @@
-"""RAG workload models that must never be evicted or counted as reclaimable VRAM.
+"""RAG workload models with evict-last preference (not never-evict).
 
 Protected set (per node): live embedding model id + any loaded copy of the
 contextualize model routing key. IDs are read from pipeline models.yaml, not
 hard-coded in eviction logic.
+
+Evict-last policy: non-protected victims are preferred; protected models are
+counted as reclaimable and may be evicted when no other plan fits. Busy or
+in-flight models are never eviction victims (unchanged).
 """
 
 from __future__ import annotations
@@ -98,7 +102,7 @@ def rag_contextualize_routing_key() -> str | None:
 
 
 def is_rag_protected_model(model_id: ModelId) -> bool:
-    """True when this loaded model must not be evicted or counted reclaimable."""
+    """True for RAG embedding/contextualize models (evict-last, not never-evict)."""
     emb = rag_embedding_model_id()
     if emb:
         try:

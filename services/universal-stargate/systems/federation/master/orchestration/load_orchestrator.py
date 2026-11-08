@@ -147,7 +147,7 @@ async def _await_remote_load_attempt(
     result, terminal = await await_remote_load_with_wall_clock(
         remote_call=remote_call,
         event_bus=orchestrator._event_bus,
-        routing_key=model_id.routing_key,
+        expected_model=model_id,
         gateway_id=gateway.gateway_id,
         remote_id=gateway.remote_stargate_id,
         backstop_timeout_s=orchestrator._config.load_timeout,
@@ -223,6 +223,15 @@ class FederatedLoadOrchestrator:
 
         # Single-flight mechanism
         self._pending_loads: dict[tuple[str, str], asyncio.Future[bool]] = {}
+
+    @staticmethod
+    def _is_vram_capacity_refusal(message: str | None) -> bool:
+        if not message:
+            return False
+        lower = message.lower()
+        if "vram" not in lower:
+            return False
+        return "need" in lower and "have" in lower
 
     def _track_routing_key(
         self, gateway_id: str, request_id: str, routing_key: str
@@ -476,6 +485,10 @@ class FederatedLoadOrchestrator:
                     str(model_id),
                     request_id,
                 )
+                if self._gateway_manager:
+                    self._gateway_manager.note_load_resource_baseline(
+                        gateway.gateway_id, routing_key
+                    )
                 await self._call_remote_load(gateway, model_id, sticky, request_id)
                 duration = time.monotonic() - start_time
                 duration_ms = int(duration * 1000)
@@ -492,6 +505,9 @@ class FederatedLoadOrchestrator:
 
                 if self._gateway_manager:
                     self._gateway_manager.restore_model_capacity(gateway, model_id)
+                    self._gateway_manager.clear_load_resource_baseline(
+                        gateway.gateway_id, routing_key
+                    )
 
                 # Emit load confirmed event
                 if self._event_bus:
@@ -827,6 +843,19 @@ class FederatedLoadOrchestrator:
                         model_id,
                         gateway.gateway_id,
                     )
+
+                    fail_message = str(result.get("message", ""))
+                    if self._is_vram_capacity_refusal(fail_message):
+                        logger.info(
+                            "VRAM capacity refusal for %s on %s — "
+                            "returning retryable error for federated requeue "
+                            "(no orchestrator telemetry spin)",
+                            model_id,
+                            gateway.gateway_id,
+                        )
+                        if self._metrics:
+                            self._metrics.record_load_operation_failure(elapsed_ms)
+                        raise last_error
 
                     if attempt_index < max_attempts:
                         # retry_index: attempt 1 → 1, attempt 2 → 2, etc.

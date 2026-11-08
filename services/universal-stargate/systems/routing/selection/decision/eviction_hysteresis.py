@@ -15,6 +15,8 @@ from typing import TYPE_CHECKING
 from model_id import ModelId
 from universal_logging import get_logger
 
+from systems.routing.rag_protected_models import is_rag_protected_model
+
 from .eviction_cooldown_policy import (
     COOLDOWN_HARD_FLOOR_S,
     EvictionRequestClass,
@@ -51,6 +53,7 @@ def filter_evictable_with_hysteresis(
     eviction_cooldown_s: float,
     has_demand: Callable[[str], bool] | None,
     eviction_request_class: EvictionRequestClass,
+    loading_model_id: ModelId | None = None,
 ) -> HysteresisResult | None:
     """Apply cooldown + demand filters and class-gated escape hatches.
 
@@ -115,6 +118,13 @@ def filter_evictable_with_hysteresis(
             logger.info(
                 f"🛡️ Opportunistic eviction blocked: all idle candidates in cooldown "
                 f"on {gateway.name}"
+            )
+            return None
+
+        if loading_model_id is not None and is_rag_protected_model(loading_model_id):
+            logger.info(
+                f"🛡️ RAG protected load blocked: only cooldown-protected victims on "
+                f"{gateway.name}"
             )
             return None
 

@@ -1,4 +1,4 @@
-"""Stargate scheduling routing events — split module covering drain-initiated eviction waits and startup queuing: eviction-wait started/cancelled/resolved/timeout signals alongside startup-queue queued/resolved/timeout signals, built as `Event` objects for the routing scheduler."""
+"""Eviction-wait and startup-queue event factories for the routing scheduler."""
 
 # ruff: noqa: N802
 
@@ -6,6 +6,7 @@ from universal_event_bus import Event, event_factory
 
 from .routing_signal_constants_routing_waits import (
     ROUTING_DRAIN_INITIATED,
+    ROUTING_EVICTION_VRAM_REFUSAL_WAIT_RESOLVED,
     ROUTING_EVICTION_WAIT_CANCELLED,
     ROUTING_EVICTION_WAIT_RESOLVED,
     ROUTING_EVICTION_WAIT_STARTED,
@@ -51,6 +52,33 @@ def RoutingEvictionWaitResolved(
             "gateway_id": gateway_id,
             "waited_ms": waited_ms,
         },
+    )
+
+
+@event_factory
+def RoutingEvictionVramRefusalWaitResolved(
+    request_id: str,
+    model_id: str,
+    gateway_id: str,
+    waited_ms: int,
+    exit_reason: str,
+) -> Event:
+    """Emit when VRAM-refusal dwell wait completes with a gateway selection.
+
+    exit_reason is the dwell slice that immediately preceded success:
+      - resource_update: gateway RESOURCE_UPDATE newer than refusal baseline
+      - dwell_backoff: timed dwell slice elapsed without fresher telemetry
+    """
+    return Event(
+        signal=ROUTING_EVICTION_VRAM_REFUSAL_WAIT_RESOLVED,
+        payload={
+            "request_id": request_id,
+            "model_id": model_id,
+            "gateway_id": gateway_id,
+            "waited_ms": waited_ms,
+            "exit_reason": exit_reason,
+        },
+        role="observation",
     )
 
 

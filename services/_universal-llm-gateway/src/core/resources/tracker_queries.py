@@ -23,6 +23,23 @@ if TYPE_CHECKING:
 logger = get_logger(__name__)
 
 
+def refresh_hardware_vram_probe(tracker: ResourceTracker) -> dict[str, int]:
+    """Force fresh GPU/RAM probe before preflight or post-unload RESOURCE_UPDATE."""
+    vram_info = get_vram_info()
+    ram_info = get_ram_info()
+    tracker._last_hardware_probe_mono = time.monotonic()  # noqa: SLF001
+    tracker._last_hardware_available_vram_mb = vram_info[  # noqa: SLF001
+        "available_vram_mb"
+    ]
+    tracker._last_hardware_available_ram_mb = ram_info[  # noqa: SLF001
+        "available_ram_mb"
+    ]
+    return {
+        "available_vram_mb": int(vram_info["available_vram_mb"]),
+        "available_ram_mb": int(ram_info["available_ram_mb"]),
+    }
+
+
 def _tracking_key(model_id: str | ModelId) -> str:
     """Per-variant key for state machines and ModelResourceInfo."""
     from src.core.resources.tracker import _tracking_key

@@ -401,6 +401,16 @@ async def finalize_selection_and_load(
                     optimistic_mark_model_id = None
                     marked_loading = False
                 assert federated_manager is not None
+                refused_gw_id = getattr(
+                    selected_gateway.ref, "gateway_id", selected_gateway.name
+                )
+                context._vram_refusal_gateway_id = refused_gw_id  # noqa: SLF001
+                baseline = federated_manager.gateway_resource_telemetry_timestamp(
+                    refused_gw_id
+                )
+                context._vram_refusal_telemetry_baseline = (  # noqa: SLF001
+                    baseline if baseline is not None else 0.0
+                )
                 return await requeue_after_transient_eviction(
                     context=context,
                     federated_manager=federated_manager,
@@ -415,7 +425,7 @@ async def finalize_selection_and_load(
                     eviction_cooldown_s=eviction_cooldown_s,
                     capacity_pool=capacity_pool,
                     routing_key_tracker=routing_key_tracker,
-                    continuation_mode="execution_failure",
+                    continuation_mode="vram_refusal",
                     timeout_reason="eviction_queue_timeout_post_load_fail",
                 )
 

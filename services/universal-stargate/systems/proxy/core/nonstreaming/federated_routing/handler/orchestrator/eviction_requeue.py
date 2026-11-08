@@ -73,7 +73,10 @@ async def requeue_after_transient_eviction(
     )
     # Oscillation-breaker holds sleep in _wait_and_retry_selection; they must not
     # consume the VRAM-spin requeue budget (G3 dual-5090 writing queue-only path).
-    charge_requeue_depth = continuation_mode != "cooldown_blocked"
+    charge_requeue_depth = continuation_mode not in (
+        "cooldown_blocked",
+        "vram_refusal",
+    )
     if charge_requeue_depth and depth >= max_depth:
         raise_capacity_error(
             str(context.selected_model),
@@ -94,27 +97,39 @@ async def requeue_after_transient_eviction(
     )
     drain_duration_s = float(rc.get("drain_duration_s", 30.0))
 
-    # No hold key ⇒ force a state-change wait before the first select so a
-    # post-load VRAM refusal cannot immediately re-select the same gateway.
-    defer_first_select = cooldown_hold_key is None
+    if continuation_mode == "vram_refusal":
+        from ...wait_logic import _wait_vram_refusal_and_retry_selection
 
-    selected_gateway, trace, waited_ms = await _wait_and_retry_selection(
-        federated_manager=federated_manager,
-        decision_engine=decision_engine,
-        placement=placement,
-        context=context,
-        event_bus=event_bus,
-        timeout_s=timeout_s,
-        stability_tracker=stability_tracker,
-        capacity_pool=capacity_pool,
-        routing_key_tracker=routing_key_tracker,
-        starvation_drain_threshold_s=starvation_drain_threshold_s,
-        drain_duration_s=drain_duration_s,
-        continuation_mode=continuation_mode,
-        cooldown_hold_key=cooldown_hold_key,
-        per_wake_cap_s=per_wake_cap_s,
-        defer_first_select=defer_first_select,
-    )
+        selected_gateway, trace, waited_ms = (
+            await _wait_vram_refusal_and_retry_selection(
+                federated_manager=federated_manager,
+                decision_engine=decision_engine,
+                placement=placement,
+                context=context,
+                event_bus=event_bus,
+                timeout_s=timeout_s,
+                stability_tracker=stability_tracker,
+            )
+        )
+    else:
+        defer_first_select = cooldown_hold_key is None
+        selected_gateway, trace, waited_ms = await _wait_and_retry_selection(
+            federated_manager=federated_manager,
+            decision_engine=decision_engine,
+            placement=placement,
+            context=context,
+            event_bus=event_bus,
+            timeout_s=timeout_s,
+            stability_tracker=stability_tracker,
+            capacity_pool=capacity_pool,
+            routing_key_tracker=routing_key_tracker,
+            starvation_drain_threshold_s=starvation_drain_threshold_s,
+            drain_duration_s=drain_duration_s,
+            continuation_mode=continuation_mode,
+            cooldown_hold_key=cooldown_hold_key,
+            per_wake_cap_s=per_wake_cap_s,
+            defer_first_select=defer_first_select,
+        )
     if selected_gateway is None:
         raise_capacity_error(
             str(context.selected_model),

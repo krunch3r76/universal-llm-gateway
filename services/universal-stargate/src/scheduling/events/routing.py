@@ -29,6 +29,7 @@ from .routing_factories_eviction_hysteresis import (
 )
 from .routing_factories_eviction_waits_startup import (
     RoutingDrainInitiated,
+    RoutingEvictionVramRefusalWaitResolved,
     RoutingEvictionWaitCancelled,
     RoutingEvictionWaitResolved,
     RoutingEvictionWaitStarted,
@@ -168,6 +169,7 @@ __all__ = [
     "RoutingEvictionExecuteStarted",
     "RoutingEvictionWaitCancelled",
     "RoutingEvictionWaitResolved",
+    "RoutingEvictionVramRefusalWaitResolved",
     "RoutingEvictionWaitStarted",
     "RoutingEvictionWaitTimeout",
     "RoutingModelGraceQueued",
