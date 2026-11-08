@@ -18,7 +18,7 @@ from __future__ import annotations
 import re
 from collections.abc import Sequence
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Literal
 
 from claude_bundles.pickup_awaits import (
@@ -36,9 +36,20 @@ SkipReason = Literal[
     "licensed_park",
     "not_silent",
     "no_wip",
+    "refused_admit",
 ]
 
 _WORKER_AGENTS = frozenset({"dispatch", "cursor-sdk"})
+_PRE_ADMISSION_REFUSED_CODES = frozenset(
+    {
+        "CURSOR_SOURCE_REF_IN_FLIGHT",
+        "CURSOR_WORK_FINGERPRINT_IN_FLIGHT",
+        "CURSOR_WRITE_LEASE_HELD",
+        "CURSOR_RESUME_BEHIND_CALLER",
+        "CURSOR_RESUME_ALREADY_ADMITTED",
+    }
+)
+_FAILED_SUBJECT_CODE_RE = re.compile(r"\bcode=([^|]+)")
 
 
 @dataclass(frozen=True, slots=True)
@@ -62,6 +73,7 @@ class LaneTurnView:
     created_at: str
     subject: str = ""
     body: str = ""
+    read_at: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -165,6 +177,90 @@ def _links_excluding_seat_holder(
     return [lnk for lnk in links if lnk.execution_id != holder]
 
 
+def _turn_binds_execution_id(turn: LaneTurnView, execution_id: str) -> bool:
+    """True when the turn subject/body names this dispatch execution."""
+    subj = turn.subject or ""
+    if f"exec={execution_id}" in subj or f"execution_id={execution_id}" in subj:
+        return True
+    if subj.startswith("CLOSEOUT|") or subj.startswith("FAILED|"):
+        return execution_id in (turn.body or "")
+    return False
+
+
+def _parse_failed_subject_code(subject: str) -> str | None:
+    if not (subject or "").startswith("FAILED|"):
+        return None
+    match = _FAILED_SUBJECT_CODE_RE.search(subject)
+    return match.group(1).strip() if match else None
+
+
+def _is_pre_admission_failed_code(code: str | None) -> bool:
+    if not code:
+        return False
+    return code in _PRE_ADMISSION_REFUSED_CODES
+
+
+def _failed_turn_for_link(
+    lnk: DispatchLinkView, turns: Sequence[LaneTurnView]
+) -> LaneTurnView | None:
+    for turn in turns:
+        subject = turn.subject or ""
+        if not subject.startswith("FAILED|"):
+            continue
+        if not _turn_binds_execution_id(turn, lnk.execution_id):
+            continue
+        return turn
+    return None
+
+
+def _link_is_refused_admit(
+    lnk: DispatchLinkView,
+    turns: Sequence[LaneTurnView],
+    seat: str,
+) -> bool:
+    """Refused pre-admission: FAILED| for this execution, pre-admit code, no seat harvest."""
+    if lnk.pipeline_id != "cursor-sdk-generate" or lnk.terminal_status != "failed":
+        return False
+    if not lnk.terminal_at:
+        return False
+    term_at = parse_iso_ts(lnk.terminal_at)
+    if any(
+        t.from_agent == seat and parse_iso_ts(t.created_at) > term_at for t in turns
+    ):
+        return False
+    failed_turn = _failed_turn_for_link(lnk, turns)
+    if failed_turn is None:
+        return False
+    return _is_pre_admission_failed_code(_parse_failed_subject_code(failed_turn.subject))
+
+
+def _link_harvested(
+    lnk: DispatchLinkView,
+    turns: Sequence[LaneTurnView],
+    seat: str,
+) -> bool:
+    """True when the seat answered after terminal or this link's closeout was read."""
+    if not lnk.terminal_at:
+        return False
+    term_at = parse_iso_ts(lnk.terminal_at)
+    if any(
+        t.from_agent == seat and parse_iso_ts(t.created_at) > term_at for t in turns
+    ):
+        return True
+    window_start = term_at - timedelta(seconds=5)
+    for turn in turns:
+        if turn.from_agent not in _WORKER_AGENTS:
+            continue
+        if not _turn_binds_execution_id(turn, lnk.execution_id):
+            continue
+        created = parse_iso_ts(turn.created_at)
+        if created < window_start:
+            continue
+        if turn.read_at:
+            return True
+    return False
+
+
 def _link_counts_as_live_wip(lnk: DispatchLinkView, *, now: datetime) -> bool:
     """True only when the link carries a positive liveness signal.
 
@@ -195,6 +291,7 @@ def _classify_wip(
     removed before either in-flight or unharvested classification.
     """
     counted = _links_excluding_seat_holder(links, turns)
+    counted = [lnk for lnk in counted if not _link_is_refused_admit(lnk, turns, seat)]
     in_flight = [lnk for lnk in counted if _link_counts_as_live_wip(lnk, now=now)]
     if in_flight:
         return (
@@ -207,11 +304,7 @@ def _classify_wip(
     for lnk in counted:
         if lnk.terminal_status is None or not lnk.terminal_at:
             continue
-        term_at = parse_iso_ts(lnk.terminal_at)
-        answered = any(
-            t.from_agent == seat and parse_iso_ts(t.created_at) > term_at for t in turns
-        )
-        if not answered:
+        if not _link_harvested(lnk, turns, seat):
             unharvested.append(lnk)
     if unharvested:
         return (
@@ -249,6 +342,11 @@ def evaluate_quiet_with_wip(snap: QuietWithWipSnapshot) -> QuietWithWipVerdict:
         seat=snap.seat, links=snap.links, turns=snap.turns, now=snap.now
     )
     if reason is None:
+        all_links = _links_excluding_seat_holder(snap.links, snap.turns)
+        if all_links and all(
+            _link_is_refused_admit(lnk, snap.turns, snap.seat) for lnk in all_links
+        ):
+            return QuietWithWipVerdict(fire=False, skip_reason="refused_admit")
         return QuietWithWipVerdict(fire=False, skip_reason="no_wip")
 
     seat_turns = [t for t in snap.turns if t.from_agent == snap.seat]

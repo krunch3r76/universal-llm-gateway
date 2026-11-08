@@ -51,6 +51,20 @@ def active_since_window_label(value: str | datetime | None) -> str:
 
 # Self-addressed guard removed — root cause fixed (fix-1, todo:agent-bus-from-attribution-root-cause).
 
+TAB_UUID_RE = re.compile(
+    r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+)
+
+
+def prepare_from_agent_id(raw: str | None) -> tuple[str | None, str | None]:
+    """Normalize optional tab poster uuid; return (stored, warning)."""
+    text = str(raw or "").strip().lower()
+    if not text:
+        return None, None
+    if TAB_UUID_RE.match(text):
+        return text, None
+    return None, "from_agent_id_ignored"
+
 # Free-form strings. The agent_bus docstring documents a `namespace:value`
 # convention (e.g. `project:claudeburst`, `type:bug`, `agent:cursor`) but
 # nothing is enforced here — tags are normalized in the DB layer
@@ -378,6 +392,7 @@ class TurnCreate(BaseModel):
     on_behalf: bool = False
     attested_by: str | None = None
     user_agent: str | None = None
+    from_agent_id: str | None = None
 
 
 class TurnCreated(BaseModel):
@@ -434,6 +449,14 @@ class TurnCreated(BaseModel):
         default=None,
         description="True when the post bypassed the poster inbox unread gate.",
     )
+    from_agent_id: str | None = Field(
+        default=None,
+        description="Cursor tab uuid when the poster echoed BRIDGE_WAKE tab=.",
+    )
+    warning: str | None = Field(
+        default=None,
+        description="Non-fatal post advisory (e.g. from_agent_id_ignored).",
+    )
 
 
 class Turn(BaseModel):
@@ -454,6 +477,7 @@ class Turn(BaseModel):
     attested_by: str | None = None
     user_agent: str | None = None
     body_chars: int | None = None
+    from_agent_id: str | None = None
 
 
 class TurnList(BaseModel):
@@ -726,6 +750,7 @@ class TurnSendCreate(BaseModel):
     idempotency_key: str | None = Field(default=None, min_length=8, max_length=128)
     attested_by: str | None = None
     user_agent: str | None = None
+    from_agent_id: str | None = None
 
 
 class TurnSendCreated(BaseModel):

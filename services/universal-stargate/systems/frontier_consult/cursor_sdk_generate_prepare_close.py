@@ -245,4 +245,8 @@ async def complete_cursor_sdk_generate_prepare(
         ban_override=bool(bound.get("ban_override")),
         ban_override_reason=bound.get("ban_override_reason"),
         model_ban_override_event_id=bound.get("model_ban_override_event_id"),
+        worker_thread_reused=(
+            reuse_thread is not None
+            and str(thread_id).strip() == str(reuse_thread).strip()
+        ),
     )

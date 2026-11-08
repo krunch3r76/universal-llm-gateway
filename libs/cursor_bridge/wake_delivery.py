@@ -271,12 +271,12 @@ async def deliver_wake(
         line = text_s
     elif groups is not None:
         try:
-            line = wake_lines(groups)
+            line = wake_lines(groups, tab=aid_s or None)
         except ValueError:
             return _refuse("bad_options", display=target["display"], app=target["app"])
     else:
         try:
-            line = wake_line(thread_s, number)
+            line = wake_line(thread_s, number, tab=aid_s or None)
         except ValueError:
             return _refuse("bad_options", display=target["display"], app=target["app"])
 
