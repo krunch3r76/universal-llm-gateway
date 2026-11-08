@@ -1034,14 +1034,14 @@ def qualify(
         return RuleVerdict(False, "drop_dispatch_intermediate")
     if _is_cursor_sdk_generate_admit_echo(subject):
         return RuleVerdict(False, "drop_dispatch_intermediate")
-    if peer_operator_wake_from(from_agent, subject=subject):
-        return RuleVerdict(True, "wake_peer_sender")
     if (
         to_agent == "orion"
         and _is_on_behalf_execution_reply(subject)
         and not _INTERMEDIATE_SUBJECT_RE.search(subject)
     ):
         return RuleVerdict(True, "wake_on_behalf_execution_reply")
+    if peer_operator_wake_from(from_agent, subject=subject):
+        return RuleVerdict(True, "wake_peer_sender")
     if _is_routine_conductor_hop_closeout(subject):
         return RuleVerdict(False, "drop_routine_hop_closeout")
     allow_rule = _subject_allowed_rule_id(subject, cse=cse, to_agent=to_agent)
