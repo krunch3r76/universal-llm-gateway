@@ -1,8 +1,9 @@
 """Event store server - UDS ingest + FastAPI/uvicorn query server.
 
-Automatic retention reads ``EVENTS_RETENTION_STARTUP`` (``dry_run``, ``run``,
-or ``off``; default ``dry_run``). ``dry_run`` logs each table's would-delete
-count and does not delete. ``off`` skips the automatic pass. ``run`` deletes.
+Automatic retention reads ``~/.gateway/event-service.yaml`` on each pass
+(``retention.days``, ``max_sessions``, ``automatic``). ``EVENTS_RETENTION_STARTUP``
+overrides ``automatic`` when set. ``dry_run`` logs would-delete counts;
+``run`` deletes in bounded batches; ``off`` skips the automatic pass.
 The daily loop uses the same gate, so a restart does not start the multi-million
 row delete. One live pass is ``POST /api/v1/retention/run`` on the query
 socket; that route ignores the gate and runs age retention before the session
@@ -15,6 +16,7 @@ import asyncio
 import logging
 import os
 import signal
+import threading
 import time
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
@@ -27,6 +29,7 @@ from fastapi import FastAPI
 from .ingest import IngestServer
 from .query import create_query_router
 from .query_path_health import run_event_loop_lag_probe
+from .retention_config import RetentionSettings, load_retention_settings
 from .store import EventStore
 from .subscribe import (
     _DEFAULT_SUBSCRIBER_QUEUE_SIZE,
@@ -119,20 +122,27 @@ def create_app(
     return app
 
 
-def retention_startup_mode() -> str:
-    """Return ``dry_run``, ``run``, or ``off`` from ``EVENTS_RETENTION_STARTUP``.
+def retention_startup_mode(
+    *,
+    cli_retention_days: int = 7,
+    cli_max_sessions: int = 2,
+) -> str:
+    """Return automatic retention mode from live config (env overrides yaml)."""
+    return load_retention_settings(
+        cli_retention_days=cli_retention_days,
+        cli_max_sessions=cli_max_sessions,
+    ).automatic
 
-    An unset or unknown value is ``dry_run``, so a restart logs counts and
-    does not delete.
-    """
-    raw = os.environ.get("EVENTS_RETENTION_STARTUP", "dry_run").strip().lower()
-    if raw in ("dry_run", "run", "off"):
-        return raw
-    logger.error(
-        "EVENTS_RETENTION_STARTUP=%s is not dry_run|run|off; using dry_run",
-        raw,
+
+def _resolve_retention_settings(
+    *,
+    cli_retention_days: int,
+    cli_max_sessions: int,
+) -> RetentionSettings:
+    return load_retention_settings(
+        cli_retention_days=cli_retention_days,
+        cli_max_sessions=cli_max_sessions,
     )
-    return "dry_run"
 
 
 def _log_shutdown_phase(phase: str, started: float) -> None:
@@ -236,29 +246,40 @@ async def run_retention_pass(
 async def _retention_loop(
     store: EventStore,
     *,
-    retention_days: int = 7,
-    max_sessions: int = 2,
+    cli_retention_days: int = 7,
+    cli_max_sessions: int = 2,
+    armed: threading.Event | None = None,
 ) -> None:
-    """Automatic retention. The startup gate decides whether it deletes.
+    """Automatic retention. Policy is reloaded from live gateway config each pass.
 
-    ``dry_run`` (the default) logs would-delete counts and writes nothing.
-    ``run`` deletes. ``off`` skips the pass. The same mode applies to the
-    daily iteration. ``POST /api/v1/retention/run`` is the one-shot live pass.
+    An automatic pass never makes the first real delete. Until an operator
+    ``POST /api/v1/retention/run`` has completed in this process (``armed``
+    set), every automatic pass is a dry run that logs would-delete counts,
+    even with ``automatic: run``.
     """
-    mode = retention_startup_mode()
-
     async def _automatic(*, startup: bool) -> None:
+        settings = _resolve_retention_settings(
+            cli_retention_days=cli_retention_days,
+            cli_max_sessions=cli_max_sessions,
+        )
+        mode = settings.automatic
         if mode == "off":
             logger.info(
-                "Retention automatic pass skipped startup=%s EVENTS_RETENTION_STARTUP=off",
+                "Retention automatic pass skipped startup=%s automatic=off",
                 startup,
             )
             return
+        is_armed = armed is not None and armed.is_set()
+        if mode == "run" and not is_armed:
+            logger.info(
+                "Retention automatic=run is not armed; dry run until "
+                "POST /api/v1/retention/run completes"
+            )
         await run_retention_pass(
             store,
-            retention_days=retention_days,
-            max_sessions=max_sessions,
-            dry_run=mode != "run",
+            retention_days=settings.retention_days,
+            max_sessions=settings.max_sessions,
+            dry_run=not (mode == "run" and is_armed),
         )
 
     await _automatic(startup=True)
@@ -315,6 +336,8 @@ async def run_service(
     bridge: Any = None
     serve_tasks: list[asyncio.Task[None]] = []
     retention_task: asyncio.Task[None] | None = None
+    background_tasks: list[asyncio.Task[None]] = []
+    retention_armed = threading.Event()
     started = False
     stop_event = asyncio.Event()
     loop = asyncio.get_running_loop()
@@ -331,6 +354,16 @@ async def run_service(
 
     try:
         await store.open()
+
+        async def _hot_evict_loop() -> None:
+            while not stop_event.is_set():
+                try:
+                    await asyncio.wait_for(stop_event.wait(), timeout=60.0)
+                    return
+                except TimeoutError:
+                    store.maybe_evict_hot_tier()
+
+        background_tasks.append(asyncio.create_task(_hot_evict_loop()))
         ingest = IngestServer(
             store,
             ingest_sock,
@@ -341,12 +374,18 @@ async def run_service(
         await ingest.start()
 
         async def _operator_retention() -> dict[str, int]:
-            return await run_retention_pass(
+            settings = _resolve_retention_settings(
+                cli_retention_days=retention_days,
+                cli_max_sessions=max_sessions,
+            )
+            counts = await run_retention_pass(
                 store,
-                retention_days=retention_days,
-                max_sessions=max_sessions,
+                retention_days=settings.retention_days,
+                max_sessions=settings.max_sessions,
                 dry_run=False,
             )
+            retention_armed.set()
+            return counts
 
         app = create_app(
             store,
@@ -428,8 +467,9 @@ async def run_service(
             retention_task = asyncio.create_task(
                 _retention_loop(
                     store,
-                    retention_days=retention_days,
-                    max_sessions=max_sessions,
+                    cli_retention_days=retention_days,
+                    cli_max_sessions=max_sessions,
+                    armed=retention_armed,
                 )
             )
 
@@ -457,6 +497,13 @@ async def run_service(
             await bridge.stop()
             _log_shutdown_phase("bridge stopped", phase)
         phase = time.monotonic()
+        for task in background_tasks:
+            task.cancel()
+        for task in background_tasks:
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
         if retention_task is not None:
             store.stop_background_work()
             retention_task.cancel()

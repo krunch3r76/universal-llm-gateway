@@ -88,7 +88,12 @@ def test_run_retention_batches_and_yields_the_event_loop(
             with caplog.at_level("INFO", logger="event_store.store"):
                 deleted, _ticker = await asyncio.gather(run_ret(), ticker())
             rows = await store.query("SELECT signal FROM events", ())
-            assert {r["signal"] for r in rows} == {"fresh"}
+            signals = {
+                r["signal"]
+                for r in rows
+                if r["signal"] not in ("event.retention.batch",)
+            }
+            assert signals == {"fresh"}
             return deleted, order
         finally:
             await store.close()
@@ -98,7 +103,32 @@ def test_run_retention_batches_and_yields_the_event_loop(
     assert order == ["tick", "ret"]
     batch_lines = [r.message for r in caplog.records if "Retention batch" in r.message]
     assert len(batch_lines) >= 3
-    assert any("elapsed_ms=" in line for line in batch_lines)
+
+
+@pytest.mark.offline
+def test_retention_batch_emits_coordination_event() -> None:
+    async def _run() -> int:
+        store = EventStore(":memory:")
+        store._retention_batch_size = 2
+        store._retention_batch_sleep_s = 0
+        await store.open()
+        try:
+            now_ms = int(time.time() * 1000)
+            old = now_ms - 10_000
+            await store.insert_events(
+                [_ev(f"old.{i}", "observation", old) for i in range(3)]
+            )
+            await store.run_retention(1_000)
+            rows = await store.query(
+                "SELECT signal FROM events WHERE signal = ?",
+                ("event.retention.batch",),
+            )
+            return len(rows)
+        finally:
+            await store.close()
+
+    count = asyncio.run(_run())
+    assert count >= 2
 
 
 @pytest.mark.offline
@@ -237,7 +267,7 @@ def test_boundary_deadline_returns_zero_and_loop_continues(
             store.prune_debug_events = boom  # type: ignore[method-assign]
             store.run_retention = age  # type: ignore[method-assign]
             task = asyncio.create_task(
-                _retention_loop(store, retention_days=7, max_sessions=2)
+                _retention_loop(store, cli_retention_days=7, cli_max_sessions=2)
             )
             await asyncio.sleep(0.2)
             alive = not task.done()
@@ -273,7 +303,7 @@ def test_startup_dry_run_logs_would_delete_and_keeps_rows(
             )
             with caplog.at_level("INFO"):
                 task = asyncio.create_task(
-                    _retention_loop(store, retention_days=1, max_sessions=2)
+                    _retention_loop(store, cli_retention_days=1, cli_max_sessions=2)
                 )
                 await asyncio.sleep(0.3)
                 task.cancel()

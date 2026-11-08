@@ -95,6 +95,40 @@ _CORRELATION_TAXONOMY_INDEXES: tuple[str, ...] = (
 )
 
 
+MODEL_ID_TS_INDEX = "idx_model_id_ts"
+
+
+def has_model_id_ts_index(db: sqlite3.Connection) -> bool:
+    """Return True when the composite (model_id, ts_unix_ms) index exists."""
+    row = db.execute(
+        "SELECT 1 FROM sqlite_master WHERE type = 'index' AND name = ?",
+        (MODEL_ID_TS_INDEX,),
+    ).fetchone()
+    return row is not None
+
+
+def build_model_id_ts_index(db: sqlite3.Connection) -> bool:
+    """Build the composite index. Explicit maintenance only, never on open.
+
+    The build holds the write lock for its whole duration, so ingest stalls
+    until it finishes; run it after retention has shrunk the table. The sort
+    spills to disk (``temp_store=FILE``) instead of RAM. Returns True when the
+    index was created, False when it already existed.
+    """
+    if has_model_id_ts_index(db):
+        return False
+    db.execute("PRAGMA temp_store=FILE")
+    try:
+        db.execute(
+            f"CREATE INDEX IF NOT EXISTS {MODEL_ID_TS_INDEX} "
+            "ON events(model_id, ts_unix_ms) WHERE model_id IS NOT NULL"
+        )
+        db.commit()
+    finally:
+        db.execute("PRAGMA temp_store=MEMORY")
+    return True
+
+
 def migrate_correlation_taxonomy_columns(db: sqlite3.Connection) -> None:
     """Add correlation projections and indexes to an existing event database."""
     existing = {

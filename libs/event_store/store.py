@@ -23,17 +23,24 @@ import time
 from collections import deque
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
 from .errors import EventStoreBusyError, EventStoreReadDeadlineError, is_sqlite_busy
+from .hot_tier import HotTier
 from .retention import HEARTBEAT_SIGNALS
-from .schema import _SCHEMA_SQL, migrate_correlation_taxonomy_columns
+from .schema import (
+    _SCHEMA_SQL,
+    build_model_id_ts_index,
+    has_model_id_ts_index,
+    migrate_correlation_taxonomy_columns,
+)
 
 logger = logging.getLogger(__name__)
 
 _SESSION_BOUNDARY_SIGNAL = "event.service.started"
+_RETENTION_BATCH_SIGNAL = "event.retention.batch"
 _write_fail_hook: Callable[[int, list[str], str], None] | None = None
 _coerce_notice_hook: Callable[[dict[str, Any]], None] | None = None
 _coerce_notice_interval_sec: float = 1.0
@@ -129,12 +136,20 @@ _MAX_PAYLOAD_BYTES = 64 * 1024
 _READ_POOL_SIZE = int(os.environ.get("EVENTS_READ_POOL_SIZE", "4"))
 _READ_DEADLINE_S = float(os.environ.get("EVENTS_QUERY_DEADLINE_S", "5"))
 _READ_QUEUE_DEADLINE_S = float(os.environ.get("EVENTS_QUERY_QUEUE_DEADLINE_S", "5"))
-_RETENTION_BATCH_SIZE = int(os.environ.get("EVENTS_RETENTION_BATCH_SIZE", "5000"))
+_RETENTION_BATCH_SIZE = int(os.environ.get("EVENTS_RETENTION_BATCH_SIZE", "1000"))
+_RETENTION_CACHE_KIB = 65536
+_RETENTION_MMAP_BYTES = 256 * 1024**2
 _RETENTION_BATCH_SLEEP_S = float(
     os.environ.get("EVENTS_RETENTION_BATCH_SLEEP_S", "0.05")
 )
 _RETENTION_TABLES = frozenset({"events", "request_snapshots", "evaluations"})
 _RETENTION_PK = {"events": "seq", "request_snapshots": "seq", "evaluations": "id"}
+_HOT_TIER_HOURS = float(os.environ.get("EVENTS_HOT_TIER_HOURS", "24"))
+_HOT_EVICT_INTERVAL_S = 60.0
+_HOT_ROW_COLS = (
+    "SELECT seq, event_id, signal, role, scope, ts_unix_ms, timestamp, source, payload "
+    "FROM events WHERE seq > ? ORDER BY seq"
+)
 
 
 def _ts_ms_from_iso(iso: str) -> int:
@@ -185,6 +200,8 @@ class EventStore:
         self._realtime_buffer: deque[dict[str, Any]] = deque(
             maxlen=_REALTIME_BUFFER_SIZE
         )
+        self._hot: HotTier | None = None
+        self._hot_evict_check_mono = 0.0
 
     async def open(self) -> None:
         """Open SQLite, apply performance pragmas, and ensure schema exists."""
@@ -206,7 +223,47 @@ class EventStore:
         except Exception:
             self._db.rollback()
             raise
+        if not has_model_id_ts_index(self._db):
+            logger.warning(
+                "EventStore %s lacks idx_model_id_ts; model_id window reads sort "
+                "in a temp b-tree until POST /api/v1/maintenance/model-id-ts-index",
+                self._db_path,
+            )
+        if int(os.environ.get("EVENTS_HOT_TIER", "1")) != 0:
+            window_ms = int(
+                float(os.environ.get("EVENTS_HOT_TIER_HOURS", str(_HOT_TIER_HOURS)))
+                * 3600
+                * 1000
+            )
+            self._hot = HotTier(window_ms=window_ms)
+            self._hot.open(self._db)
         logger.info("EventStore opened: %s", self._db_path)
+
+    def hot_tier_stats(self) -> dict[str, Any] | None:
+        if self._hot is None:
+            return None
+        return self._hot.stats()
+
+    def maybe_evict_hot_tier(self) -> None:
+        hot = self._hot
+        if hot is None or hot.degraded:
+            return
+        now_mono = time.monotonic()
+        if now_mono - self._hot_evict_check_mono < _HOT_EVICT_INTERVAL_S:
+            return
+        self._hot_evict_check_mono = now_mono
+        hot.evict(int(time.time() * 1000))
+
+    async def build_model_id_ts_index(self) -> bool:
+        """Build idx_model_id_ts on the retention connection (explicit maintenance)."""
+        if self._db is None:
+            raise RuntimeError("EventStore is not open")
+
+        def work() -> bool:
+            return build_model_id_ts_index(self._retention_connection())
+
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(self._retention_pool(), work)
 
     def stop_background_work(self) -> None:
         """Unblock retention and readers so shutdown does not wait out grace.
@@ -251,6 +308,9 @@ class EventStore:
         if self._retention_conn is not None:
             self._retention_conn.close()
             self._retention_conn = None
+        if self._hot is not None:
+            self._hot.close()
+            self._hot = None
         if db is not None:
             db.close()
             self._db = None
@@ -293,6 +353,12 @@ class EventStore:
             conn.row_factory = sqlite3.Row
             conn.execute("PRAGMA busy_timeout=5000")
             conn.execute("PRAGMA journal_mode=WAL")
+            conn.execute(f"PRAGMA cache_size={-_RETENTION_CACHE_KIB}")
+            if os.environ.get("EVENTS_SQLITE_NFS_PIN") == "1":
+                conn.execute("PRAGMA mmap_size=0")
+            else:
+                conn.execute(f"PRAGMA mmap_size={_RETENTION_MMAP_BYTES}")
+            conn.execute("PRAGMA temp_store=MEMORY")
             self._retention_conn = conn
         return self._retention_conn
 
@@ -325,6 +391,51 @@ class EventStore:
         self._reader_local.connection = connection
         self._track_reader(connection)
         return connection
+
+    @staticmethod
+    def _insert_retention_batch_event(
+        conn: sqlite3.Connection,
+        *,
+        table: str,
+        deleted: int,
+        cumulative: int,
+        elapsed_ms: int,
+    ) -> None:
+        """Persist one coordination row per delete batch on the retention connection.
+
+        Runs on the retention thread; the ingest connection ``self._db`` is
+        owned by the event loop and must not be used here.
+        """
+        if deleted <= 0:
+            return
+        ts_ms = int(time.time() * 1000)
+        ts_iso = (
+            datetime.now(UTC).isoformat(timespec="milliseconds").replace("+00:00", "Z")
+        )
+        payload = {
+            "table": table,
+            "deleted": deleted,
+            "cumulative": cumulative,
+            "elapsed_ms": elapsed_ms,
+        }
+        try:
+            conn.execute(
+                _INSERT_EVENT,
+                (
+                    None,
+                    _RETENTION_BATCH_SIGNAL,
+                    "coordination",
+                    "global",
+                    ts_ms,
+                    ts_iso,
+                    "event_service",
+                    json.dumps(payload),
+                ),
+            )
+            conn.commit()
+        except sqlite3.Error as exc:
+            conn.rollback()
+            logger.warning("Retention batch event insert failed: %s", exc)
 
     def push_realtime(self, event: dict[str, Any]) -> None:
         """Push an event into the in-memory realtime ring buffer (no SQLite)."""
@@ -442,6 +553,9 @@ class EventStore:
             return []
 
         rows = [item[0] for item in prepared]
+        before_seq = int(
+            self._db.execute("SELECT COALESCE(MAX(seq), 0) FROM events").fetchone()[0]
+        )
         try:
             self._db.executemany(_INSERT_EVENT, rows)
             self._db.commit()
@@ -452,16 +566,40 @@ class EventStore:
                 len(rows),
                 e,
             )
-            return self._insert_prepared_rows(prepared)
+            accepted = self._insert_prepared_rows(prepared)
+            self._mirror_accepted_to_hot(before_seq)
+            return accepted
         except Exception as e:
             self._db.rollback()
             logger.exception("Unexpected batch insert failure: %s", e)
-            return self._insert_prepared_rows(prepared)
+            accepted = self._insert_prepared_rows(prepared)
+            self._mirror_accepted_to_hot(before_seq)
+            return accepted
 
-        return [item[1] for item in prepared]
+        accepted = [item[1] for item in prepared]
+        self._mirror_accepted_to_hot(before_seq)
+        self.maybe_evict_hot_tier()
+        return accepted
+
+    def _mirror_accepted_to_hot(self, before_seq: int) -> None:
+        hot = self._hot
+        if hot is None or hot.degraded or self._db is None:
+            return
+        try:
+            cold_rows = self._db.execute(_HOT_ROW_COLS, (before_seq,)).fetchall()
+            floor = hot.floor_ts_ms
+            insert_rows = [tuple(row) for row in cold_rows if int(row[5]) >= floor]
+            if insert_rows:
+                hot.insert_rows(insert_rows)
+        except sqlite3.Error as exc:
+            logger.exception("Hot tier mirror after ingest failed: %s", exc)
+            hot.mark_degraded(str(exc))
+        except Exception as exc:
+            logger.exception("Unexpected hot tier mirror failure: %s", exc)
+            hot.mark_degraded(str(exc))
 
     async def insert_snapshot(self, snap: dict[str, Any]) -> None:
-        """Insert a request snapshot record."""
+        """Insert a request snapshot record (not mirrored to the hot tier)."""
         if not self._db:
             logger.error(
                 "insert_snapshot called before EventStore.open(); request_id=%s phase=%s",
@@ -506,6 +644,7 @@ class EventStore:
         *,
         limit: int = 1000,
         raise_on_error: bool = False,
+        since_ts_ms: int | None = None,
     ) -> list[dict[str, Any]]:
         """Execute a read query and return rows as dicts.
 
@@ -529,6 +668,27 @@ class EventStore:
             if raise_on_error:
                 raise sqlite3.OperationalError("EventStore not open")
             return []
+
+        hot = self._hot
+        sql_lower = sql.lower()
+        use_hot = (
+            hot is not None
+            and not hot.degraded
+            and since_ts_ms is not None
+            and since_ts_ms >= hot.floor_ts_ms
+            and "events" in sql_lower
+            and "request_snapshots" not in sql_lower
+            and "evaluations" not in sql_lower
+        )
+        if use_hot:
+            assert hot is not None
+            try:
+                return hot.execute_query(sql, params, limit=limit)
+            except sqlite3.Error as e:
+                logger.error("Hot tier query failed: %s params=%s - %s", sql[:120], params, e)
+                if raise_on_error:
+                    raise
+                return []
 
         state = _ReadCall()
         started = threading.Event()
@@ -717,6 +877,14 @@ class EventStore:
                     total,
                     elapsed_ms,
                 )
+                if not dry_run and deleted > 0:
+                    self._insert_retention_batch_event(
+                        conn,
+                        table=table,
+                        deleted=deleted,
+                        cumulative=total,
+                        elapsed_ms=elapsed_ms,
+                    )
                 if deleted < batch_size:
                     break
                 if self._retention_stop.wait(max(sleep_s, elapsed_ms / 1000)):
