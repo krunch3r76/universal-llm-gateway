@@ -31,6 +31,7 @@ CREATE INDEX IF NOT EXISTS idx_execution_id ON events(execution_id) WHERE execut
 CREATE INDEX IF NOT EXISTS idx_role_scope_ts ON events(role, scope, ts_unix_ms);
 CREATE INDEX IF NOT EXISTS idx_source_ts ON events(source, ts_unix_ms);
 CREATE INDEX IF NOT EXISTS idx_model_id ON events(model_id) WHERE model_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_model_id_ts ON events(model_id, ts_unix_ms) WHERE model_id IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_seq ON events(seq DESC);
 CREATE INDEX IF NOT EXISTS idx_ts_unix_ms ON events(ts_unix_ms DESC);
 
@@ -93,6 +94,19 @@ _CORRELATION_TAXONOMY_INDEXES: tuple[str, ...] = (
     "CREATE INDEX IF NOT EXISTS idx_http_status_ts ON events(http_status, ts_unix_ms)",
     "CREATE INDEX IF NOT EXISTS idx_worker_error_code_ts ON events(worker_error_code, ts_unix_ms)",
 )
+
+
+def migrate_model_id_ts_index(db: sqlite3.Connection) -> None:
+    """Add composite (model_id, ts_unix_ms) index on existing databases.
+
+    ``CREATE INDEX IF NOT EXISTS`` is online-safe under WAL: readers and writers
+    continue; SQLite builds the index incrementally without requiring a full
+    table rebuild. New connections pick up the index as soon as the build finishes.
+    """
+    db.execute(
+        "CREATE INDEX IF NOT EXISTS idx_model_id_ts ON events(model_id, ts_unix_ms) "
+        "WHERE model_id IS NOT NULL"
+    )
 
 
 def migrate_correlation_taxonomy_columns(db: sqlite3.Connection) -> None:
