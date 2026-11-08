@@ -25,7 +25,7 @@ Callers:
   on-behalf delivery (friction #17396).
 - For ``op="to_thread"``: Stargate posts the model's reply on the role's behalf
   when the dispatch completes. Read with
-  ``agent_bus(tool="fetch", arguments={"thread": ...})``.
+  fetch (headers) then ``agent_bus(tool="get", arguments={"thread": ..., "turn_numbers": [N], "projection": "full"})`` for the reply body.
 - For ``op="handoff"``: poll via ``agent_bus(tool="wait", …)`` from ``poll_hint``.
 
 Persona-free ``/api/v1/frontier/dispatch`` remains on Stargate for internal

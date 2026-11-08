@@ -48,7 +48,13 @@ from transport_utils import (
     make_sync_client,
 )
 
-from bus_watch.digest_budget import POLICY_DEFAULTS, agent_bus_bearer_headers
+from bus_watch.digest_budget import (
+    POLICY_DEFAULTS,
+    _IDE_TOOL_CALLS_BACKSTOP,
+    _IDE_TOOL_CALLS_THRESHOLD,
+    _IDE_TOOL_RESULT_TOKENS_THRESHOLD,
+    agent_bus_bearer_headers,
+)
 from bus_watch.doorbell_skills import primary_liaison_slug
 from bus_watch.fable_lock import (
     HOUSE_LABEL_PREFIX,
@@ -385,8 +391,10 @@ def build_ide_hop_message(
         skill_block,
         (
             "HOP: When the operator tells this tab to hop (`hop`, `ide-hop`, `hop now`) "
-            "or when budget.stop_class == 'CONTEXT_BUDGET' (tool_calls >= 35 or "
-            "used_tokens >= 55%), immediately seal and hop on this Glass "
+            "or when budget.stop_class == 'CONTEXT_BUDGET' "
+            f"(tool-result tokens >= {_IDE_TOOL_RESULT_TOKENS_THRESHOLD} when Glass measures them, "
+            f"else tool_calls >= {_IDE_TOOL_CALLS_THRESHOLD}; backstop tool_calls >= {_IDE_TOOL_CALLS_BACKSTOP}; "
+            "or used_tokens >= 55%), immediately seal and hop on this Glass "
             f"({host_label}) interface "
             f'via: "$HOME/.venvs/universal/bin/python" scripts/liaison-ide-hop.py '
             f'--root {root_id} --row "{row}" --transcript-id <uuid> '

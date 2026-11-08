@@ -52,6 +52,17 @@ def test_build_wake_pointer_batch_wording() -> None:
     assert "to=maestro" in line
 
 
+def test_orion_wake_line_picks_turns() -> None:
+    ranged = build_wake_pointer(thread="9", turn="69–73", from_agent="x")
+    assert "turn_numbers [69, 70, 71, 72, 73]" in ranged
+    assert "read turns 69–73 only" in ranged
+    single = build_wake_pointer(thread="9", turn="7", from_agent="x")
+    assert "turn_numbers [7]" in single
+    wide = build_wake_pointer(thread="9", turn="1–20", from_agent="x")
+    assert 'projection="full"' in wide
+    assert "turn_numbers" not in wide
+
+
 def test_build_wake_pointer_reply_to_waking_sender_not_hardcoded_maestro() -> None:
     line = build_wake_pointer(thread=_ORION_HOUSE, turn=321, from_agent="cursor")
     assert "from cursor" in line

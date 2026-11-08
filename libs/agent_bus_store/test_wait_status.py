@@ -103,6 +103,27 @@ def test_status_ignores_read_at_when_no_later_turn():
     assert derive_status(thread, replied, after_turn=1, completion=comp) == "complete"
 
 
+def test_consult_step_gets_reply_turn():
+    thread = {"status": ThreadStatus.ACTIVE, "tags": ["bus_lifecycle:persistent"]}
+    comp = {"mode": "first_reply_from", "from_agent": "claude-cursor"}
+    turns = [_turn(1, "cursor"), _turn(2, "claude-cursor")]
+    nudge = build_suggested_next(
+        thread,
+        complete=True,
+        completion=comp,
+        qualifying_reply_turn=2,
+        after_turn=1,
+        turns=turns,
+    )
+    assert nudge is not None
+    consult_steps = [
+        s for s in nudge["steps"] if s.get("action") == "fetch_consult_turn"
+    ]
+    assert consult_steps
+    assert consult_steps[0]["op"] == "get"
+    assert "2" in consult_steps[0]["note"]
+
+
 def test_suggested_next_names_consult_turn_not_pointer():
     thread = {"status": ThreadStatus.ACTIVE, "tags": ["bus_lifecycle:persistent"]}
     comp = {"mode": "first_reply_from", "from_agent": "claude-cursor"}
