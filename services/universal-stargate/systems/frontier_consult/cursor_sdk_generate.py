@@ -450,5 +450,6 @@ async def dispatch_cursor_sdk_generate(
         ban_override=ban_override,
         ban_override_reason=ban_override_reason,
         model_ban_override_event_id=model_ban_override_event_id,
+        transcript_id=transcript_id,
     )
     return await dispatch_prepared_cursor_sdk(handle, transcript_id=transcript_id)

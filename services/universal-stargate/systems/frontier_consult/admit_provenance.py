@@ -67,17 +67,43 @@ def format_work_key_line(work_key: str | None) -> str | None:
     return f"work_key: {key}"
 
 
+def format_waiter_line(waiter_transcript_id: str | None) -> str | None:
+    tid = _strip(waiter_transcript_id)
+    if not tid:
+        return None
+    return f"waiter: {tid}"
+
+
+def parse_waiter_from_body(body: str | None) -> str | None:
+    """Return the tab uuid from the latest ``waiter:`` line in ``body``, if any."""
+    if not body:
+        return None
+    found: str | None = None
+    for line in body.splitlines():
+        stripped = line.strip()
+        if not stripped.lower().startswith("waiter:"):
+            continue
+        value = stripped.split(":", 1)[1].strip()
+        if value:
+            found = value
+    return found
+
+
 def stamp_admit_turn_body(
     body: str,
     *,
     work_key: str | None,
     provenance_missing: tuple[str, ...],
+    waiter_transcript_id: str | None = None,
 ) -> str:
-    """Prepend ``work_key:`` when present; append provenance markers for blanks."""
+    """Prepend ``work_key:`` / ``waiter:`` when present; append provenance markers."""
     stamped = body
-    line = format_work_key_line(work_key)
-    if line:
-        stamped = f"{line}\n{body}" if body else line
+    work_line = format_work_key_line(work_key)
+    waiter_line = format_waiter_line(waiter_transcript_id)
+    prefix_lines = [ln for ln in (work_line, waiter_line) if ln]
+    if prefix_lines:
+        prefix = "\n".join(prefix_lines)
+        stamped = f"{prefix}\n{body}" if body else prefix
     return append_provenance_marker(stamped, provenance_missing)
 
 

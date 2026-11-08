@@ -194,6 +194,7 @@ def test_take_over_preempts_live_attended_holder(watch_dir: Path) -> None:
         "ide:tab-b", hop=False, root_id="10479", take_over=True
     )
     assert requested["ok"] is True
+    assert requested.get("displaced_holder") == "ide:tab-a"
     assert fl.read_lock("10479").get("holder") == "ide:tab-b"
     assert fl.read_lock("10479").get("preempt_by") is None
 

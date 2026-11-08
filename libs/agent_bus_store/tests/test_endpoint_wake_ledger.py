@@ -623,6 +623,36 @@ def test_record_wake_result_parent_and_window_binding_routes(db: TestClient) -> 
         )
 
 
+def test_resolve_subscription_for_thread_scoped_agent_id(db: TestClient) -> None:
+    from agent_bus_store.db.endpoint_subscriptions import subscribe_endpoint
+    from agent_bus_store.db.endpoint_wake_ledger import resolve_subscription_for_thread
+
+    thread = create_thread(thread_id=None, slug="agent-id-scope")
+    assert thread is not None
+    tid = str(thread["id"])
+    subscribe_endpoint(
+        agent="cursor",
+        thread_scope=tid,
+        surface="cursor",
+        display="8",
+        title="a",
+        agent_id="tab-a",
+        bound_by="test",
+    )
+    subscribe_endpoint(
+        agent="cursor",
+        thread_scope=tid,
+        surface="cursor",
+        display="8",
+        title="b",
+        agent_id="tab-b",
+        bound_by="test",
+    )
+    picked = resolve_subscription_for_thread("cursor", tid, agent_id="tab-b")
+    assert picked is not None
+    assert picked[1]["agent_id"] == "tab-b"
+
+
 def test_child_lane_closeout_matches_parent_thread_subscription(db: TestClient) -> None:
     """Parent-scoped Impresario subscription must cover child-lane CLOSEOUT turns."""
     from agent_bus_store.db.endpoint_subscriptions import subscribe_endpoint

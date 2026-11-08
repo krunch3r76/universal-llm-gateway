@@ -845,6 +845,7 @@ async def post_pointer_turn(
     caller_agent: str | None,
     provenance_missing: tuple[str, ...] = (),
     work_key: str | None = None,
+    waiter_transcript_id: str | None = None,
 ) -> int:
     """POST a pointer turn onto an EXISTING thread (reuse_thread path). POST /turns.
 
@@ -874,7 +875,10 @@ async def post_pointer_turn(
         "to": to_agent,
         "subject": subject,
         "body": stamp_admit_turn_body(
-            pointer_body, work_key=work_key, provenance_missing=provenance_missing
+            pointer_body,
+            work_key=work_key,
+            provenance_missing=provenance_missing,
+            waiter_transcript_id=waiter_transcript_id,
         ),
         "status": "open",
     }
@@ -945,6 +949,7 @@ async def claim_and_post_pointer_turn(
     parent_thread_id: str | None = None,
     provenance_missing: tuple[str, ...] = (),
     work_key: str | None = None,
+    waiter_transcript_id: str | None = None,
 ) -> int:
     """POST /threads/{id}/dispatch-claim-and-post — atomic claim + pointer turn.
 
@@ -978,7 +983,10 @@ async def claim_and_post_pointer_turn(
         "to_agent": to_agent,
         "subject": subject,
         "body": stamp_admit_turn_body(
-            pointer_body, work_key=work_key, provenance_missing=provenance_missing
+            pointer_body,
+            work_key=work_key,
+            provenance_missing=provenance_missing,
+            waiter_transcript_id=waiter_transcript_id,
         ),
     }
     if parent_thread_id is not None:
@@ -1059,6 +1067,7 @@ async def admit_and_post_pointer_turn(
     parent_thread_id: str | None = None,
     provenance_missing: tuple[str, ...] = (),
     work_key: str | None = None,
+    waiter_transcript_id: str | None = None,
 ) -> int:
     """POST /threads/{id}/dispatch-admit-and-post — atomic link + pointer turn."""
     token = os.getenv("AGENT_BUS_TOKEN", "").strip()
@@ -1088,7 +1097,10 @@ async def admit_and_post_pointer_turn(
         "to_agent": to_agent,
         "subject": subject,
         "body": stamp_admit_turn_body(
-            pointer_body, work_key=work_key, provenance_missing=provenance_missing
+            pointer_body,
+            work_key=work_key,
+            provenance_missing=provenance_missing,
+            waiter_transcript_id=waiter_transcript_id,
         ),
     }
     if parent_thread_id is not None:
@@ -1208,6 +1220,7 @@ async def create_handoff_thread(
     bus_lifecycle: Literal["persistent", "ephemeral"] | None = None,
     provenance_missing: tuple[str, ...] = (),
     work_key: str | None = None,
+    waiter_transcript_id: str | None = None,
 ) -> str:
     """POST to agent-bus /threads/with-turn; return thread_id.
 
@@ -1244,7 +1257,10 @@ async def create_handoff_thread(
         caller_agent, provenance_missing=provenance_missing
     )
     pointer_body = stamp_admit_turn_body(
-        pointer_body, work_key=work_key, provenance_missing=provenance_missing
+        pointer_body,
+        work_key=work_key,
+        provenance_missing=provenance_missing,
+        waiter_transcript_id=waiter_transcript_id,
     )
     from agent_bus_store.disposition import append_bus_lifecycle_tags
 

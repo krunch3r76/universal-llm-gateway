@@ -253,6 +253,7 @@ async def dispatch_api_role_generate(
             tags=[f"agent:{role}", "type:generate", f"contract:{contract}"],
             handoff_contract=contract,
             bus_lifecycle=getattr(body, "bus_lifecycle", None),
+            waiter_transcript_id=getattr(body, "transcript_id", None),
         )
         after_turn = 1
         if body.dispatch_thread_id and body.dispatch_thread_id.strip().isdigit():

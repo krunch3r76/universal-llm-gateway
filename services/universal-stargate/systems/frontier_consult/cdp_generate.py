@@ -769,6 +769,7 @@ async def dispatch_cdp_generate(
             ],
             handoff_contract=contract,
             bus_lifecycle=getattr(body, "bus_lifecycle", None),
+            waiter_transcript_id=getattr(body, "transcript_id", None),
         )
         after_turn = 1
         if is_operator_proxy_mission_purpose(purpose) or (

@@ -4551,7 +4551,19 @@ class _TabScanStore:
         return self._holder
 
     def lane_parent(self, lane: str) -> str | None:
+        if self._parent_scope and lane != self._parent_scope:
+            return self._parent_scope
         return None
+
+    def turns(self, thread: str, **params: object) -> dict:
+        limit = int(params.get("last", 50))  # type: ignore[arg-type]
+        with connect() as c:
+            rows = c.execute(
+                "SELECT id, thread, turn_number, from_agent, to_agent, subject, body "
+                "FROM turns WHERE thread=? ORDER BY id DESC LIMIT ?",
+                (thread, limit),
+            ).fetchall()
+        return {"turns": [dict(r) for r in rows]}
 
 
 def _rewind_cursor() -> None:
@@ -4672,6 +4684,87 @@ def test_t2_peer_sender_wakes_on_thread_with_tab_bound_cursor_row(db: None) -> N
     scan_once(store)  # type: ignore[arg-type]
     assert [r["turn_id"] for r in store.pending] == [a_id, b_id]
     assert {r["decided_by_rule"] for r in store.pending} == {"wake_peer_sender"}
+
+
+def test_waiter_stamp_frontier_admit_synthesizer_reply_wakes_tab(db: None) -> None:
+    """Friction 43240: stamped waiter + gate address override delivers to cursor tab."""
+    parent = _new_thread("22662-waiter-parent")
+    child = _new_thread("22662-waiter-child")
+    from agent_bus_store.db.lane_associations import associate_lane
+
+    associate_lane(
+        thread_id=child,
+        parent_thread_id=parent,
+        lane_role="sub_mission",
+        bound_by="test",
+    )
+    _seed_row(agent="cursor", scope=parent, agent_id=_TAB_A)
+    insert_turn(
+        thread=parent,
+        from_agent="dispatch",
+        to_agent="dispatch",
+        subject="cursor-sdk generate admitted",
+        body=f"waiter: {_TAB_A}\nWorker `{child}`",
+    )
+    t_id, _ts, _n, _c = insert_turn(
+        thread=child,
+        from_agent="synthesizer",
+        to_agent="frontier-admit",
+        subject="synthesizer reply — lane 22510",
+        body="done",
+    )
+    _rewind_cursor()
+    store = _TabScanStore(parent_scope=parent)
+    scan_once(store)  # type: ignore[arg-type]
+    assert [r["turn_id"] for r in store.pending if r.get("state") != "skipped"] == [
+        t_id
+    ]
+    wake = next(r for r in store.pending if r.get("turn_id") == t_id)
+    assert wake["agent"] == "cursor"
+    assert wake["delivery_agent_id"] == _TAB_A
+
+
+class _FrontierAdmitScanStore(_TabScanStore):
+    """No synthetic cursor fallback for ``frontier-admit`` (43240 negative)."""
+
+    def subscription(self, agent: str, thread_id: str, raw_to: str | None = None):
+        if agent == "frontier-admit":
+            return None
+        return super().subscription(agent, thread_id, raw_to=raw_to)
+
+
+def test_waiter_stamp_absent_frontier_admit_reply_stays_silent(db: None) -> None:
+    """Rollout window: without ``waiter:`` stamp, frontier-admit synthesizer is silent."""
+    thread = _new_thread("22662-no-waiter")
+    _seed_row(agent="cursor", scope=thread, agent_id=_TAB_A)
+    insert_turn(
+        thread=thread,
+        from_agent="synthesizer",
+        to_agent="frontier-admit",
+        subject="synthesizer reply — lane 22510",
+        body="done",
+    )
+    _rewind_cursor()
+    store = _FrontierAdmitScanStore()
+    scan_once(store)  # type: ignore[arg-type]
+    assert [r for r in store.pending if r.get("state") != "skipped"] == []
+
+
+def test_waiter_own_seat_admit_turn_suppressed(db: None) -> None:
+    """AC-A: from=cursor on the tab's own stamped admit must not wake that tab."""
+    thread = _new_thread("22662-own-seat")
+    _seed_row(agent="cursor", scope=thread, agent_id=_TAB_A)
+    insert_turn(
+        thread=thread,
+        from_agent="cursor",
+        to_agent="frontier-admit",
+        subject="cursor-sdk generate admitted",
+        body=f"waiter: {_TAB_A}\nWorker admitted",
+    )
+    _rewind_cursor()
+    store = _TabScanStore()
+    scan_once(store)  # type: ignore[arg-type]
+    assert [r for r in store.pending if r.get("state") != "skipped"] == []
 
 
 def test_t3_gate_wake_remap_address_enqueues_on_tab_bound_row(db: None) -> None:

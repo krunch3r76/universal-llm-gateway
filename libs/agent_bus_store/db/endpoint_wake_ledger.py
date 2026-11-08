@@ -490,7 +490,10 @@ def _group_pending_rows(
 
 
 def resolve_subscription_for_thread(
-    agent: str, thread_id: str
+    agent: str,
+    thread_id: str,
+    *,
+    agent_id: str | None = None,
 ) -> tuple[str, dict[str, Any]] | None:
     """Best subscribed row for ``thread_id``, including parent-thread scope."""
     parent_thread: str | None = None
@@ -499,6 +502,7 @@ def resolve_subscription_for_thread(
         parent_thread = lane.get("parent_thread")
     except LookupError:
         parent_thread = None
+    aid_filter = str(agent_id or "").strip() or None
     with connect() as conn:
         rows = conn.execute(
             """
@@ -516,6 +520,7 @@ def resolve_subscription_for_thread(
                 OR s.thread_scope = ?
                 OR (? IS NOT NULL AND s.thread_scope = ?)
               )
+              AND (? IS NULL OR s.agent_id = ?)
             ORDER BY
               CASE
                 WHEN s.thread_scope = ? THEN 0
@@ -531,6 +536,8 @@ def resolve_subscription_for_thread(
                 thread_id,
                 parent_thread,
                 parent_thread,
+                aid_filter,
+                aid_filter,
                 thread_id,
             ),
         ).fetchall()

@@ -15,8 +15,11 @@ from .admit_provenance import (
     admit_turn_from_agent,
     append_provenance_marker,
     build_team_dispatch_admit_provenance,
+    format_waiter_line,
     missing_admit_provenance,
+    parse_waiter_from_body,
     provenance_missing_marker,
+    stamp_admit_turn_body,
 )
 from .cursor_sdk_coord_notify import post_coord_admit_pointer
 from .route import (
@@ -60,6 +63,28 @@ def test_provenance_marker_and_from_agent_when_flagged() -> None:
 def test_full_provenance_keeps_dispatch_fallback() -> None:
     assert admit_turn_from_agent(None, provenance_missing=()) == "dispatch"
     assert provenance_missing_marker(()) is None
+
+
+def test_waiter_line_format_and_parse() -> None:
+    tid = "550e8400-e29b-41d4-a716-446655440000"
+    assert format_waiter_line(tid) == f"waiter: {tid}"
+    assert format_waiter_line(None) is None
+    assert parse_waiter_from_body(f"pre\nwaiter: {tid}\npost") == tid
+
+
+def test_stamp_admit_turn_body_waiter_optional() -> None:
+    tid = "550e8400-e29b-41d4-a716-446655440000"
+    body = stamp_admit_turn_body(
+        "hello",
+        work_key="todo:x",
+        provenance_missing=(),
+        waiter_transcript_id=tid,
+    )
+    assert body.startswith("work_key: todo:x\nwaiter:")
+    assert f"waiter: {tid}" in body
+    assert "waiter:" not in stamp_admit_turn_body(
+        "hello", work_key=None, provenance_missing=()
+    )
 
 
 @pytest.mark.asyncio
@@ -122,6 +147,29 @@ async def test_coord_admit_full_provenance_no_marker(
     payload = post_turn.await_args.args[1]
     assert payload["from"] == "claude-web"
     assert "PROVENANCE_MISSING" not in payload["body"]
+
+
+@pytest.mark.asyncio
+async def test_coord_admit_stamps_waiter_transcript_id(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    post_turn = AsyncMock()
+    monkeypatch.setattr(
+        "systems.frontier_consult.cursor_sdk_coord_notify.make_async_client",
+        lambda *a, **k: _ClientCtx(post_turn),
+    )
+    monkeypatch.setenv("AGENT_BUS_TOKEN", "test-token")
+    tid = "550e8400-e29b-41d4-a716-446655440000"
+    await post_coord_admit_pointer(
+        coord_thread_id="16416",
+        worker_thread_id="18185",
+        to_agent="dispatch",
+        caller_agent="cursor-auto",
+        contract="implement",
+        transcript_id=tid,
+    )
+    payload = post_turn.await_args.args[1]
+    assert f"waiter: {tid}" in payload["body"]
 
 
 @pytest.mark.asyncio
