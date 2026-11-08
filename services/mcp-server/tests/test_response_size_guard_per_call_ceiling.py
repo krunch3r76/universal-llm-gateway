@@ -161,6 +161,7 @@ def test_fast_path_uses_ceiling(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr("response_size_guard._measure_result", spy)
     body_len = 2800
     size = 0
+    body = ""
     payload = ToolResult(structured_content={"content": "", "path": "x"})
     while body_len < 20_000:
         body = "q" * body_len
@@ -175,7 +176,9 @@ def test_fast_path_uses_ceiling(monkeypatch: pytest.MonkeyPatch) -> None:
     )
     assert measure_calls == [1]
     assert not [e for e in events if e[0] == "mcp.response.guarded"]
-    assert out.structured_content is not None or size <= 8192
+    structured = out.structured_content
+    assert isinstance(structured, dict)
+    assert structured.get("content") == body
 
 
 def test_small_ceiling_keeps_section_tree(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -261,22 +264,37 @@ def test_retrieve_slice_pop_race() -> None:
     mcp = _register_retrieve()
     retrieve = _retrieve_fn(mcp)
     barrier = threading.Barrier(4)
-    errors: list[BaseException] = []
+    slice_errors: list[BaseException] = []
+    popper_errors: list[BaseException] = []
+    slice_results: list[dict[str, object]] = []
 
     def slice_worker() -> None:
         try:
             barrier.wait()
-            retrieve(id=ref_id, offset=0, limit=3)
+            out = retrieve(id=ref_id, offset=0, limit=3)
+            if isinstance(out, dict) and "content" in out:
+                slice_results.append(out)
         except BaseException as exc:
-            errors.append(exc)
+            slice_errors.append(exc)
 
-    popper = threading.Thread(target=lambda: (barrier.wait(), retrieve(id=ref_id)))
+    def pop_worker() -> None:
+        try:
+            barrier.wait()
+            retrieve(id=ref_id)
+        except BaseException as exc:
+            popper_errors.append(exc)
+
     slices = [threading.Thread(target=slice_worker) for _ in range(3)]
+    popper = threading.Thread(target=pop_worker)
     for thread in slices + [popper]:
         thread.start()
     for thread in slices + [popper]:
         thread.join()
-    assert not errors
+    assert not slice_errors
+    assert not popper_errors
+    for out in slice_results:
+        assert str(out["content"]).startswith("line 0")
+        assert "line 2" in str(out["content"])
     assert retrieve(id=ref_id, offset=0, limit=1)["error"]  # type: ignore[index]
 
 
@@ -317,6 +335,7 @@ def test_no_knob_agent_bus_window_unchanged_vs_master(
 
     events: list[tuple[str, dict]] = []
     monkeypatch.setattr("response_size_guard._try_window_agent_bus_result", spy)
+    monkeypatch.setattr("response_size_guard._OVERRIDE_THRESHOLD", None)
     monkeypatch.setattr(
         "response_size_guard.record",
         lambda signal, **kwargs: events.append((signal, dict(kwargs))),
@@ -402,7 +421,13 @@ def test_per_call_knob_disables_fast_path(monkeypatch: pytest.MonkeyPatch) -> No
         "response_size_guard.record",
         lambda signal, **kwargs: events.append((signal, dict(kwargs))),
     )
-    quoted = ToolResult(structured_content={"content": '"' * 8000, "path": "y"})
+    n = 700
+    nq = int(n * 0.3)
+    quote_body = '"' * nq + "a" * (n - nq)
+    quoted = ToolResult(structured_content={"content": quote_body, "path": "y"})
+    estimate = len(json.dumps(quoted.structured_content).encode())
+    assert estimate < 1024
+    assert _measure_result(quoted) > 2048
     asyncio.run(_guard("fs_read", quoted, arguments={"max_response_bytes": 2048}))
     assert [e for e in events if e[0] == "mcp.response.guarded" and e[1].get("ceiling_source") == "per_call"]
 
