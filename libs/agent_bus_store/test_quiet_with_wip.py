@@ -494,6 +494,113 @@ def test_latest_stamp_without_execution_id_returns_none() -> None:
     assert seat_holding_execution_id(turns) is None
 
 
+def test_refused_admit_specimen_22690_shape_skips_alarm() -> None:
+    """AC1: admit + FAILED| within 4s, terminal failed link ⇒ skip refused_admit."""
+    term_at = _ts(THRESHOLD_S)
+    snap = _snap(
+        links=(
+            DispatchLinkView(
+                execution_id="exec-refused",
+                terminal_status="failed",
+                terminal_at=term_at,
+                pipeline_id="cursor-sdk-generate",
+            ),
+        ),
+        turns=(
+            LaneTurnView(
+                turn_number=1,
+                from_agent="dispatch",
+                created_at=_ts(THRESHOLD_S + 4),
+                subject="cdp generate",
+                body="admit",
+            ),
+            LaneTurnView(
+                turn_number=2,
+                from_agent="dispatch",
+                created_at=_ts(THRESHOLD_S),
+                subject=(
+                    "FAILED|execution_id=exec-refused|dispatch_id=disp-1|"
+                    "code=CURSOR_SOURCE_REF_IN_FLIGHT|in flight"
+                ),
+                body="refused",
+            ),
+            LaneTurnView(
+                turn_number=3,
+                from_agent=SEAT,
+                created_at=_ts(2 * THRESHOLD_S),
+                subject="commission",
+                body="still waiting",
+            ),
+        ),
+    )
+    verdict = evaluate_quiet_with_wip(snap)
+    assert verdict.fire is False
+    assert verdict.skip_reason == "refused_admit"
+
+
+def test_closeout_read_at_counts_as_harvested_without_seat_turn() -> None:
+    """AC2: worker closeout with read_at ⇒ no_wip; without read_at ⇒ unharvested alarm."""
+    term_at = _ts(THRESHOLD_S)
+    harvested_snap = _snap(
+        links=(
+            DispatchLinkView(
+                execution_id="exec-read",
+                terminal_status="completed",
+                terminal_at=term_at,
+            ),
+        ),
+        turns=(
+            LaneTurnView(
+                turn_number=1,
+                from_agent=SEAT,
+                created_at=_ts(2 * THRESHOLD_S),
+                subject="go",
+                body="commission",
+            ),
+            LaneTurnView(
+                turn_number=2,
+                from_agent="cursor-sdk",
+                created_at=_ts(THRESHOLD_S - 1),
+                subject="cursor-sdk dispatch complete",
+                body="status: complete",
+                read_at=_ts(THRESHOLD_S - 1),
+            ),
+        ),
+    )
+    assert evaluate_quiet_with_wip(harvested_snap).fire is False
+    assert evaluate_quiet_with_wip(harvested_snap).skip_reason == "no_wip"
+
+    unharvested_snap = _snap(
+        links=(
+            DispatchLinkView(
+                execution_id="exec-unread",
+                terminal_status="completed",
+                terminal_at=term_at,
+            ),
+        ),
+        turns=(
+            LaneTurnView(
+                turn_number=1,
+                from_agent=SEAT,
+                created_at=_ts(2 * THRESHOLD_S),
+                subject="go",
+                body="commission",
+            ),
+            LaneTurnView(
+                turn_number=2,
+                from_agent="cursor-sdk",
+                created_at=_ts(THRESHOLD_S - 1),
+                subject="cursor-sdk dispatch complete",
+                body="status: complete",
+                read_at=None,
+            ),
+        ),
+    )
+    unread = evaluate_quiet_with_wip(unharvested_snap)
+    assert unread.fire is True
+    assert unread.reason == "closeout_unharvested"
+
+
 def test_seat_holding_id_accepts_equals_separator() -> None:
     """An execution_id= token mid-body is the holder id.
 

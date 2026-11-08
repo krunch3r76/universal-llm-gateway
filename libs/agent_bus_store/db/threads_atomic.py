@@ -224,6 +224,8 @@ def close_thread(
         lifecycle = row["bus_lifecycle_state"]
         if lifecycle == "active":
             _transition_lifecycle_state(conn, thread_id, "completed", lifecycle_trigger)
+        elif lifecycle == "admitted":
+            _transition_lifecycle_state(conn, thread_id, "abandoned", lifecycle_trigger)
 
     detail = get_thread_with_links(thread_id)
     # Observation: CLI / direct HTTP /close previously emitted nothing when
