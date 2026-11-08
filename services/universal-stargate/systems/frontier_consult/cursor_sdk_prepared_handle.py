@@ -74,6 +74,8 @@ class PreparedCursorSdkHandle:
     ban_override: bool = False
     ban_override_reason: str | None = None
     model_ban_override_event_id: str | None = None
+    #: False when generate minted a fresh worker thread (not explicit ``reuse_thread``).
+    worker_thread_reused: bool = False
 
 
 def mint_cursor_sdk_ids(*, request_id: str) -> tuple[str, str]:
@@ -155,6 +157,7 @@ def handle_to_dict(handle: PreparedCursorSdkHandle) -> dict[str, Any]:
         "ban_override": handle.ban_override,
         "ban_override_reason": handle.ban_override_reason,
         "model_ban_override_event_id": handle.model_ban_override_event_id,
+        "worker_thread_reused": handle.worker_thread_reused,
     }
 
 
@@ -221,4 +224,5 @@ def handle_from_dict(data: dict[str, Any]) -> PreparedCursorSdkHandle:
         ban_override=bool(data.get("ban_override", False)),
         ban_override_reason=data.get("ban_override_reason"),
         model_ban_override_event_id=data.get("model_ban_override_event_id"),
+        worker_thread_reused=bool(data.get("worker_thread_reused", False)),
     )
