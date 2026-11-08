@@ -68,13 +68,8 @@ def test_fetch_dispatch_applies_last_by_default() -> None:
     assert "unread" not in captured
 
 
-def test_fetch_dispatch_defaults_compact_false_projects_body() -> None:
-    """BUG 4 (thread 1154): fetch must default compact=false so bodies are projected.
-
-    A compact=True default silently nulled turn `body` on windowed/thread-only
-    fetches, making a populated thread read as empty. The MCP fetch op must match
-    fetch_unread, get, and the CLI (all bodies-by-default).
-    """
+def test_fetch_dispatch_defaults_header_projection() -> None:
+    """Default fetch relays compact store rows and returns a header envelope."""
     captured: dict[str, str] = {}
 
     def relay(service: str, method: str, path: str, **kwargs) -> dict:
@@ -84,10 +79,12 @@ def test_fetch_dispatch_defaults_compact_false_projects_body() -> None:
         return {"turns": []}
 
     with patch("tools.agent_bus._relay", side_effect=relay):
-        _fetch_dispatch(thread="1161", last=10)
+        out = _fetch_dispatch(thread="1161", last=10)
 
-    assert "compact" not in captured
+    assert captured.get("compact") == "true"
     assert captured["last"] == "10"
+    assert out["selection"] == "headers"
+    assert out["projection"] == "header"
 
 
 def test_fetch_dispatch_unread_true_omits_last() -> None:

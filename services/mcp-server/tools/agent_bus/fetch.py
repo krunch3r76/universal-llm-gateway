@@ -10,10 +10,13 @@ from agent_bus_store.recipients import turn_mark_read_eligible
 from mcp_events import record
 
 from .._agent_bus_author import UNSPECIFIED_AUTHOR, resolve_dispatch_from_agent
-from ._closeout_projection import project_turn_body
+from ._closeout_projection import project_turn_body, project_turns_header
 from ._shared import _FETCH_CONTEXT_CAP, _structured_relay_error, relay
 
 logger = logging.getLogger(__name__)
+
+_FETCH_PROJECTIONS = frozenset({"header", "compact", "full"})
+_GET_TURN_NUMBERS_CAP = 10
 
 
 def _merge_advisories(result: dict[str, Any], advisories: list[str]) -> dict[str, Any]:
@@ -76,6 +79,73 @@ def _resolve_mark_reader(
     return reader, advisories, None, True
 
 
+def _resolve_fetch_projection(
+    *,
+    projection: str | None,
+    compact: bool | None,
+    mark_read: bool,
+) -> tuple[str | None, dict[str, Any] | None]:
+    """Return resolved projection mode or a structured error."""
+    explicit: str | None = None
+    if projection is not None:
+        explicit = projection.strip().lower()
+        if explicit not in _FETCH_PROJECTIONS:
+            return None, {
+                "error": f"fetch: unknown projection {projection!r}",
+                "reason": "fetch_projection_invalid",
+            }
+    if compact is True and explicit == "full":
+        return None, {
+            "error": "fetch: compact=true conflicts with projection=full",
+            "reason": "fetch_projection_conflict",
+        }
+    if explicit is not None:
+        mode = explicit
+    elif compact is True:
+        mode = "header"
+    elif compact is False:
+        mode = "full"
+    elif mark_read:
+        mode = "full"
+    else:
+        mode = "header"
+    return mode, None
+
+
+def _project_fetch_result(result: Any, mode: str) -> Any:
+    """Apply header or compact shaping; full mode returns the relay payload unchanged."""
+    if isinstance(result, dict) and "error" in result:
+        return result
+    if mode == "full":
+        return result
+    if isinstance(result, list):
+        turns = result
+        envelope: dict[str, Any] | None = None
+    elif isinstance(result, dict):
+        turns = result.get("turns", [])
+        envelope = result
+    else:
+        return result
+    if mode == "header":
+        return {
+            "selection": "headers",
+            "projection": "header",
+            "projection_available": ["compact", "full"],
+            "turns": project_turns_header(turns),
+        }
+    projected = [
+        project_turn_body(turn, projection="compact")
+        if isinstance(turn, dict)
+        else turn
+        for turn in turns
+    ]
+    if envelope is None:
+        return projected
+    shaped = dict(envelope)
+    shaped["turns"] = projected
+    return shaped
+
+
 def _fetch_impl(
     *,
     to: str | None,
@@ -87,6 +157,7 @@ def _fetch_impl(
     after_turn: int | None = None,
     mark_read_seat: str | None = None,
     limit: int | None = None,
+    resolved_projection: str = "header",
 ) -> dict[str, Any]:
     if to is None and thread is None:
         return {"error": "fetch requires at least one of: to, thread"}
@@ -135,6 +206,7 @@ def _fetch_impl(
         thread=thread or "",
         count=count,
         mark_read=mark_read,
+        projection=resolved_projection,
     )
     return result
 
@@ -298,7 +370,8 @@ def _fetch_dispatch(
     last: int = 10,
     unread: bool = False,
     mark_read: bool = False,
-    compact: bool = False,
+    compact: bool | None = None,
+    projection: str | None = None,
     all: bool = False,
     after_turn: int | None = None,
     from_agent: str = "",
@@ -317,6 +390,15 @@ def _fetch_dispatch(
         effective_last = None
     else:
         effective_last = max(1, min(last, _FETCH_CONTEXT_CAP))
+    mode, projection_err = _resolve_fetch_projection(
+        projection=projection,
+        compact=compact,
+        mark_read=mark_read,
+    )
+    if projection_err is not None:
+        return projection_err
+    assert mode is not None
+    relay_compact = mode == "header"
     mark_read_seat: str | None = None
     advisories: list[str] = []
     apply_mark = False
@@ -335,17 +417,31 @@ def _fetch_dispatch(
         last=effective_last,
         unread=unread,
         mark_read=apply_mark,
-        compact=compact,
+        compact=relay_compact,
         after_turn=after_turn,
         mark_read_seat=mark_read_seat,
+        resolved_projection=mode,
     )
+    result = _project_fetch_result(result, mode)
     return _merge_advisories(result, advisories)
+
+
+def _dedupe_turn_numbers(turn_numbers: list[int]) -> list[int]:
+    seen: set[int] = set()
+    ordered: list[int] = []
+    for number in turn_numbers:
+        if number in seen:
+            continue
+        seen.add(number)
+        ordered.append(number)
+    return ordered
 
 
 def _get_dispatch(
     *,
     thread: str | int = "",
     turn_number: int | str = 0,
+    turn_numbers: list[int] | None = None,
     mark_read: bool = False,
     from_agent: str = "",
     projection: str | None = None,
@@ -354,6 +450,60 @@ def _get_dispatch(
         thread = str(thread)
     if not thread:
         return {"error": "get requires: thread (str)"}
+    if turn_numbers is not None:
+        if turn_number not in (0, "", None):
+            return {
+                "error": "get: pass either turn_number or turn_numbers, not both",
+                "reason": "get_turn_selector_conflict",
+            }
+        if len(turn_numbers) > _GET_TURN_NUMBERS_CAP:
+            return {
+                "error": f"get: turn_numbers cap is {_GET_TURN_NUMBERS_CAP}",
+                "reason": "get_turn_numbers_over_cap",
+            }
+        reader_agent = ""
+        advisories: list[str] = []
+        apply_mark = mark_read
+        if mark_read:
+            reader_agent_resolved, advisories, author_err, apply_mark = (
+                _resolve_mark_reader(
+                    op="get",
+                    from_agent=from_agent,
+                    to_seat=None,
+                )
+            )
+            if author_err is not None:
+                return author_err
+            reader_agent = reader_agent_resolved or ""
+        picks = _dedupe_turn_numbers(turn_numbers)
+        turns_out: list[Any] = []
+        partial = False
+        for pick in picks:
+            picked = _get_impl(
+                thread=thread,
+                turn_number=pick,
+                mark_read=apply_mark,
+                reader_agent=reader_agent,
+                projection=projection,
+            )
+            if isinstance(picked, dict) and "error" in picked and "turn" not in picked:
+                turns_out.append({"turn_number": pick, "error": picked["error"]})
+                partial = True
+                continue
+            if isinstance(picked, dict) and picked.get("argument_rewrite_advisory"):
+                advisories.extend(
+                    str(picked["argument_rewrite_advisory"]).split("; ")
+                )
+            turn = picked.get("turn") if isinstance(picked, dict) else picked
+            if isinstance(turn, dict) and "error" in turn:
+                turns_out.append({"turn_number": pick, "error": turn["error"]})
+                partial = True
+            else:
+                turns_out.append(turn)
+        payload: dict[str, Any] = {"turns": turns_out}
+        if partial:
+            payload["partial"] = True
+        return _merge_advisories(payload, advisories)
     if turn_number in (0, "", None):
         return {
             "error": "get requires: turn_number (int >= 1 or 'latest')",

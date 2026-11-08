@@ -50,6 +50,23 @@ def _seed_thread(*, n: int, slug: str = "fetch-tail") -> str:
     return thread_id
 
 
+def test_compact_rows_carry_body_chars(tmp_path, monkeypatch) -> None:
+    db_path = tmp_path / "bus.db"
+    monkeypatch.setenv("AGENT_BUS_DB_PATH", str(db_path))
+    init_db()
+    body = "x" * 42
+    thread_id = _seed_thread(n=1, slug="body-chars")
+    with write_connect() as conn:
+        conn.execute(
+            "UPDATE turns SET body = ? WHERE thread = ? AND turn_number = 1",
+            (body, thread_id),
+        )
+    rows = get_turns(thread=thread_id, last=3, compact=True)
+    assert len(rows) == 1
+    assert rows[0]["body"] is None
+    assert rows[0]["body_chars"] == len(body)
+
+
 def test_high_turn_tip_last_three_compact(bus_client) -> None:
     """≥~1900 turns: last=3 compact returns tip without scanning the whole thread."""
     n = 1900

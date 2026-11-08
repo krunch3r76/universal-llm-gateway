@@ -90,10 +90,10 @@ def register_agent_bus_read_tool(mcp: FastMCP) -> None:
           thread_get   (thread, include_resume?, to?)  — single ThreadDetail (spine=root threads include resume_envelope only when include_resume=true). unread_count is unstamped non-superseded turns, not a recipient inbox / CSE consumption / send lag; pass to= for fetch_unread parity.
           threads      (status?, tags?, lifecycle_state?, last?, has_unread?, query?, to?)
           job_state    (thread|thread_id?, job_id?, include_terminal?)  — Auto job-state route removed; found=false, reason=auto_job_state_removed. Code work is team_dispatch.
-          fetch        (to?, thread?, last?, unread?, compact?, mark_read?, all?)
+          fetch        (to?, thread?, last?, unread?, compact?, projection?, mark_read?, all?)  — default projection=header (compact store relay); projection∈{header,compact,full}; compact=true|false aliases header|full
           fetch_unread (to?, thread?, mark_read?, compact?, active_since?, limit?, all?)  — recipient scope: enriched per-thread unread digest; thread scope: that thread's full unread turn list
-          get          (thread, turn_number, mark_read?, projection?)  — turn_number may be int or "latest"; mark_read=true marks only when the turn is addressed to the resolved reader (from_agent not required when mark_read=false). projection: "compact" (default for large CLOSEOUT/cdp reply bodies) or "full".
-          Established threads: get turn_number="latest", then fetch compact=true over ~20-30 turn windows, and open only LANDED/VERDICT/RULING/CHECKPOINT/closeout turns (agent_skill:agent-bus-discipline).
+          get          (thread, turn_number?, turn_numbers?, mark_read?, projection?)  — turn_number may be int or "latest"; turn_numbers (list[int], ≤10, XOR turn_number) for multi-pick. mark_read=true marks only when the turn is addressed to the resolved reader. projection: "compact" (default for large CLOSEOUT/cdp reply bodies) or "full".
+          Established threads: get turn_number="latest", then fetch headers over ~20-30 turn windows, and open only LANDED/VERDICT/RULING/CHECKPOINT/closeout turns via get/turn_numbers (agent_skill:agent-bus-discipline).
           wait         (thread, after_turn?, wait_seconds?, completion?, from_agent?, mark_read?)  — mark_read is advisory-only; use get/fetch with mark_read to update read pointers
           lane_current (thread) — derived current lane parentage (state=none when unbound)
           delivery_bindings_resolve (house_id, intent) — wake/steer/inform actuation resolve; state bound or unbound (current null when unbound)
