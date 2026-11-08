@@ -19,8 +19,8 @@ from .cursor_sdk_admit_loop import (
     increment_admit_pointer_would_have_refused,
 )
 from .cursor_sdk_generate_signals import publish_frontier_event
-from .cursor_sdk_lane_subscription import resolve_worker_subscription_agent_id
 from .events import FrontierAdmitPointerLoopClosure
+from .worker_subscription_mirror_event import mirror_coord_subscriptions_to_worker
 
 logger = get_logger(__name__)
 
@@ -143,90 +143,6 @@ def emit_loop_closure_admission(
     )
 
 
-async def _mirror_coord_subscriptions_to_worker(
-    *,
-    coord_thread_id: str,
-    worker_thread_id: str,
-    serving_to_agent: str | None = None,
-) -> None:
-    """Copy active coord ``thread_scope`` subscriptions onto the worker lane (Rec 1)."""
-    if not _bus_token_configured() or not coord_thread_id or not worker_thread_id:
-        return
-    if coord_thread_id == worker_thread_id:
-        return
-    try:
-        async with make_async_client(DEFAULT_AGENT_BUS_URL, timeout=10.0) as client:
-            headers = _bus_headers()
-            resp = await client.get(
-                "/endpoint-subscriptions",
-                params={"thread_scope": coord_thread_id},
-                headers=headers,
-            )
-            resp.raise_for_status()
-            payload = resp.json()
-            rows = payload.get("subscriptions") if isinstance(payload, dict) else None
-            if not isinstance(rows, list):
-                return
-            for row in rows:
-                if not isinstance(row, dict):
-                    continue
-                if str(row.get("state") or "") != "subscribed":
-                    continue
-                agent = str(row.get("agent") or "").strip()
-                if not agent:
-                    continue
-                resolved_aid, bind_evidence = (
-                    await resolve_worker_subscription_agent_id(
-                        client,
-                        worker_thread_id=worker_thread_id,
-                        serving_to_agent=serving_to_agent,
-                        headers=headers,
-                    )
-                )
-                if not resolved_aid:
-                    logger.info(
-                        "worker subscription mirror skipped unresolved agent_id: "
-                        "coord=%s worker=%s agent=%s parent_agent_id=%s evidence=%s",
-                        coord_thread_id,
-                        worker_thread_id,
-                        agent,
-                        row.get("agent_id"),
-                        bind_evidence,
-                    )
-                    continue
-                body: dict[str, Any] = {
-                    "agent": agent,
-                    "thread_scope": worker_thread_id,
-                    "surface": str(row.get("surface") or ""),
-                    "display": str(row.get("display") or ""),
-                    "title": row.get("title"),
-                    "bound_by": "cursor-sdk-admit",
-                    "evidence": bind_evidence,
-                    "agent_id": resolved_aid,
-                }
-                try:
-                    sub_resp = await client.post(
-                        "/endpoint-subscriptions", json=body, headers=headers
-                    )
-                    sub_resp.raise_for_status()
-                except httpx.HTTPError as exc:
-                    logger.warning(
-                        "worker-scoped subscribe failed: coord=%s worker=%s "
-                        "agent=%s err=%s",
-                        coord_thread_id,
-                        worker_thread_id,
-                        agent,
-                        exc,
-                    )
-    except httpx.HTTPError as exc:
-        logger.warning(
-            "coord subscription mirror failed: coord=%s worker=%s err=%s",
-            coord_thread_id,
-            worker_thread_id,
-            exc,
-        )
-
-
 async def _post_coord_turn(
     *,
     coord_thread_id: str,
@@ -323,8 +239,17 @@ async def post_coord_admit_pointer(
             coord_thread_id,
             exc,
         )
-    await _mirror_coord_subscriptions_to_worker(
-        coord_thread_id=coord_thread_id,
-        worker_thread_id=worker_thread_id,
-        serving_to_agent=to_agent,
-    )
+    try:
+        await mirror_coord_subscriptions_to_worker(
+            coord_thread_id=coord_thread_id,
+            worker_thread_id=worker_thread_id,
+            serving_to_agent=to_agent,
+        )
+    except Exception as exc:
+        logger.warning(
+            "worker subscription mirror raised; admit continues: coord=%s worker=%s "
+            "err=%s",
+            coord_thread_id,
+            worker_thread_id,
+            exc,
+        )

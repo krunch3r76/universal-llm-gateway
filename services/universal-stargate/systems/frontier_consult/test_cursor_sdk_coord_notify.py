@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import logging
 from unittest.mock import AsyncMock
 
 import pytest
@@ -15,6 +14,18 @@ from .cursor_sdk_admit_loop import (
 from .cursor_sdk_coord_notify import post_coord_admit_pointer
 from .handoff import post_pointer_turn
 
+_MIRROR_SIGNAL = "frontier.worker_subscription_mirror"
+
+_BUS_CLIENT_PATCH_TARGETS = (
+    "systems.frontier_consult.cursor_sdk_coord_notify.make_async_client",
+    "systems.frontier_consult.worker_subscription_mirror_event.make_async_client",
+)
+
+
+def _patch_bus_clients(monkeypatch: pytest.MonkeyPatch, factory: object) -> None:
+    for target in _BUS_CLIENT_PATCH_TARGETS:
+        monkeypatch.setattr(target, factory)
+
 
 @pytest.fixture(autouse=True)
 def _reset_counter() -> None:
@@ -26,10 +37,7 @@ async def test_coord_admit_skips_when_same_thread(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     post_turn = AsyncMock()
-    monkeypatch.setattr(
-        "systems.frontier_consult.cursor_sdk_coord_notify.make_async_client",
-        lambda *a, **k: _ClientCtx(post_turn),
-    )
+    _patch_bus_clients(monkeypatch, lambda *a, **k: _ClientCtx(post_turn))
     await post_coord_admit_pointer(
         coord_thread_id="1959",
         worker_thread_id="1959",
@@ -45,10 +53,7 @@ async def test_coord_admit_posts_when_threads_differ(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     post_turn = AsyncMock()
-    monkeypatch.setattr(
-        "systems.frontier_consult.cursor_sdk_coord_notify.make_async_client",
-        lambda *a, **k: _ClientCtx(post_turn),
-    )
+    _patch_bus_clients(monkeypatch, lambda *a, **k: _ClientCtx(post_turn))
     monkeypatch.setenv("AGENT_BUS_TOKEN", "test-token")
     await post_coord_admit_pointer(
         coord_thread_id="1959",
@@ -71,10 +76,7 @@ async def test_coord_admit_non_implement_omits_todo_line(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     post_turn = AsyncMock()
-    monkeypatch.setattr(
-        "systems.frontier_consult.cursor_sdk_coord_notify.make_async_client",
-        lambda *a, **k: _ClientCtx(post_turn),
-    )
+    _patch_bus_clients(monkeypatch, lambda *a, **k: _ClientCtx(post_turn))
     monkeypatch.setenv("AGENT_BUS_TOKEN", "test-token")
     await post_coord_admit_pointer(
         coord_thread_id="1959",
@@ -95,10 +97,7 @@ async def test_a6655_loop_closure_refuses_and_does_not_post(
     post_turn = AsyncMock()
     published: list[str] = []
 
-    monkeypatch.setattr(
-        "systems.frontier_consult.cursor_sdk_coord_notify.make_async_client",
-        lambda *a, **k: _ClientCtx(post_turn),
-    )
+    _patch_bus_clients(monkeypatch, lambda *a, **k: _ClientCtx(post_turn))
     monkeypatch.setenv("AGENT_BUS_TOKEN", "test-token")
 
     def _capture(event: object) -> None:
@@ -135,10 +134,7 @@ async def test_coord_admit_and_worker_turn1_stamp_work_key(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     post_turn = AsyncMock()
-    monkeypatch.setattr(
-        "systems.frontier_consult.cursor_sdk_coord_notify.make_async_client",
-        lambda *a, **k: _ClientCtx(post_turn),
-    )
+    _patch_bus_clients(monkeypatch, lambda *a, **k: _ClientCtx(post_turn))
     monkeypatch.setattr(
         "systems.frontier_consult.handoff.make_async_client",
         lambda *a, **k: _ClientCtx(post_turn),
@@ -182,20 +178,24 @@ async def test_coord_admit_and_worker_turn1_stamp_work_key(
 
 
 @pytest.mark.asyncio
-async def test_a6655_frozen_same_thread_silent_no_event(
+async def test_a6655_frozen_same_thread_admits_without_loop_closure_emits_mirror(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     post_turn = AsyncMock()
     published: list[str] = []
 
-    monkeypatch.setattr(
-        "systems.frontier_consult.cursor_sdk_coord_notify.make_async_client",
-        lambda *a, **k: _ClientCtx(post_turn),
-    )
+    _patch_bus_clients(monkeypatch, lambda *a, **k: _ClientCtx(post_turn))
     monkeypatch.setenv("AGENT_BUS_TOKEN", "test-token")
+    def _capture(event: object) -> None:
+        published.append(getattr(event, "signal", ""))
+
     monkeypatch.setattr(
         "systems.frontier_consult.cursor_sdk_coord_notify.publish_frontier_event",
-        lambda event: published.append(getattr(event, "signal", "")),
+        _capture,
+    )
+    monkeypatch.setattr(
+        "systems.frontier_consult.worker_subscription_mirror_event.publish_frontier_event",
+        _capture,
     )
 
     await post_coord_admit_pointer(
@@ -210,8 +210,21 @@ async def test_a6655_frozen_same_thread_silent_no_event(
         has_explicit_prompt_source=False,
     )
     post_turn.assert_awaited_once()
-    assert published == []
+    assert "frontier.admit_pointer.loop_closure" not in published
+    assert published == [_MIRROR_SIGNAL]
     assert admit_pointer_would_have_refused_total() == 0
+
+
+def _mirror_event_payload(published: list[object]) -> dict:
+    mirror = [
+        e
+        for e in published
+        if getattr(e, "signal", "") == _MIRROR_SIGNAL
+    ]
+    assert len(mirror) == 1
+    payload = getattr(mirror[0], "payload", {})
+    assert isinstance(payload, dict)
+    return payload
 
 
 class _ClientCtx:
@@ -220,9 +233,17 @@ class _ClientCtx:
         post_turn: AsyncMock,
         *,
         coord_subscriptions: list[dict] | None = None,
+        subscription_list_invalid: bool = False,
+        subscription_get_raises: bool = False,
+        subscription_json_raises: bool = False,
+        subscription_post_fail_agents: frozenset[str] = frozenset(),
     ) -> None:
         self._post_turn = post_turn
         self._coord_subscriptions = list(coord_subscriptions or [])
+        self._subscription_list_invalid = subscription_list_invalid
+        self._subscription_get_raises = subscription_get_raises
+        self._subscription_json_raises = subscription_json_raises
+        self._subscription_post_fail_agents = subscription_post_fail_agents
         self.subscription_posts: list[dict] = []
 
     async def __aenter__(self) -> _ClientCtx:
@@ -233,7 +254,13 @@ class _ClientCtx:
 
     async def get(self, path: str, **kwargs: object) -> object:
         if path == "/endpoint-subscriptions":
+            if self._subscription_get_raises:
+                import httpx
+
+                raise httpx.HTTPError("get failed")
             subs = self._coord_subscriptions
+            list_invalid = self._subscription_list_invalid
+            json_raises = self._subscription_json_raises
 
             class _Resp:
                 status_code = 200
@@ -242,6 +269,10 @@ class _ClientCtx:
                     return None
 
                 def json(self) -> dict:
+                    if list_invalid:
+                        return {"subscriptions": "not-a-list"}
+                    if json_raises:
+                        raise ValueError("invalid json payload")
                     return {"subscriptions": subs}
 
             return _Resp()
@@ -253,6 +284,11 @@ class _ClientCtx:
         elif path == "/endpoint-subscriptions":
             payload = kwargs.get("json")
             if isinstance(payload, dict):
+                agent = str(payload.get("agent") or "")
+                if agent in self._subscription_post_fail_agents:
+                    import httpx
+
+                    raise httpx.HTTPError(f"post failed for {agent}")
                 self.subscription_posts.append(payload)
         return type(
             "Resp",
@@ -265,41 +301,55 @@ class _ClientCtx:
         )()
 
 
-@pytest.mark.asyncio
-async def test_coord_admit_mirrors_worker_scoped_subscription(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    post_turn = AsyncMock()
-    coord_row = {
-        "agent": "cursor",
+def _two_coord_subscription_rows(
+    *,
+    parent_agent_id: str = "composer-impresario-dbbfc4c2",
+) -> list[dict]:
+    base = {
         "thread_scope": "20995",
         "state": "subscribed",
         "surface": "cursor",
         "display": "orion-node",
-        "title": "20995 impresario",
-        "agent_id": "composer-impresario-dbbfc4c2",
+        "agent_id": parent_agent_id,
     }
+    return [
+        {**base, "agent": "cursor", "title": "20995 impresario"},
+        {**base, "agent": "dispatch", "title": "20995 dispatch"},
+    ]
+
+
+@pytest.mark.asyncio
+async def test_worker_subscription_mirror_outcome_mirrored(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    post_turn = AsyncMock()
+    coord_rows = _two_coord_subscription_rows()
     ctx_holder: list[_ClientCtx] = []
+    resolve_calls = 0
+    published: list[object] = []
+    serving_uuid = "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
 
     def _factory(*_a: object, **_k: object) -> _ClientCtx:
-        ctx = _ClientCtx(post_turn, coord_subscriptions=[coord_row])
+        ctx = _ClientCtx(post_turn, coord_subscriptions=coord_rows)
         ctx_holder.append(ctx)
         return ctx
 
-    monkeypatch.setattr(
-        "systems.frontier_consult.cursor_sdk_coord_notify.make_async_client",
-        _factory,
-    )
+    _patch_bus_clients(monkeypatch, _factory)
     monkeypatch.setenv("AGENT_BUS_TOKEN", "test-token")
-    serving_uuid = "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
+    monkeypatch.setattr(
+        "systems.frontier_consult.worker_subscription_mirror_event.publish_frontier_event",
+        lambda event: published.append(event),
+    )
 
     async def _resolve(_client, *, worker_thread_id, serving_to_agent, headers):
+        nonlocal resolve_calls
+        resolve_calls += 1
         assert worker_thread_id == "21015"
         assert serving_to_agent == "composer-impresario-dbbfc4c2"
         return serving_uuid, f"serving_to_agent:{serving_uuid}"
 
     monkeypatch.setattr(
-        "systems.frontier_consult.cursor_sdk_coord_notify.resolve_worker_subscription_agent_id",
+        "systems.frontier_consult.worker_subscription_mirror_event.resolve_worker_subscription_agent_id",
         _resolve,
     )
     await post_coord_admit_pointer(
@@ -309,17 +359,26 @@ async def test_coord_admit_mirrors_worker_scoped_subscription(
         caller_agent="composer-impresario-dbbfc4c2",
         contract="implement",
     )
-    post_turn.assert_awaited_once()
+    assert resolve_calls == 1
     posts = []
     for ctx in ctx_holder:
         posts.extend(ctx.subscription_posts)
-    assert len(posts) == 1
-    assert posts[0]["thread_scope"] == "21015"
-    assert posts[0]["agent"] == "cursor"
-    assert posts[0]["bound_by"] == "cursor-sdk-admit"
-    assert posts[0]["evidence"] == f"serving_to_agent:{serving_uuid}"
-    assert posts[0]["agent_id"] == serving_uuid
-    assert posts[0]["agent_id"] != coord_row["agent_id"]
+    assert len(posts) == 2
+    evidence = f"serving_to_agent:{serving_uuid}"
+    for post in posts:
+        assert post["agent_id"] == serving_uuid
+        assert post["agent_id"] != coord_rows[0]["agent_id"]
+        assert post["bound_by"] == "cursor-sdk-admit"
+        assert post["evidence"] == evidence
+        assert post["thread_scope"] == "21015"
+    payload = _mirror_event_payload(published)
+    assert payload["outcome"] == "mirrored"
+    assert payload["eligible_agents"] == ["cursor", "dispatch"]
+    assert payload["mirrored_agents"] == ["cursor", "dispatch"]
+    assert payload["failed_agents"] == []
+    assert payload["resolved_agent_id"] == serving_uuid
+    assert payload["bind_evidence"] == evidence
+    assert payload.get("error") is None
 
 
 @pytest.mark.parametrize(
@@ -333,59 +392,411 @@ async def test_coord_admit_mirrors_worker_scoped_subscription(
 @pytest.mark.asyncio
 async def test_coord_admit_mirror_skips_unresolved_worker_agent_id(
     monkeypatch: pytest.MonkeyPatch,
-    caplog: pytest.LogCaptureFixture,
     coord_parent_agent_id: str | None,
 ) -> None:
     post_turn = AsyncMock()
-    coord_row: dict = {
-        "agent": "cursor",
-        "thread_scope": "20995",
-        "state": "subscribed",
-        "surface": "cursor",
-        "display": "orion-node",
-        "title": "20995 impresario",
-    }
-    if coord_parent_agent_id != "omit_key":
-        coord_row["agent_id"] = coord_parent_agent_id
+    coord_rows = _two_coord_subscription_rows()
+    if coord_parent_agent_id == "omit_key":
+        for row in coord_rows:
+            row.pop("agent_id", None)
+    elif coord_parent_agent_id is None:
+        for row in coord_rows:
+            row["agent_id"] = None
+    resolve_calls = 0
+    published: list[object] = []
     ctx_holder: list[_ClientCtx] = []
 
     def _factory(*_a: object, **_k: object) -> _ClientCtx:
-        ctx = _ClientCtx(post_turn, coord_subscriptions=[coord_row])
+        ctx = _ClientCtx(post_turn, coord_subscriptions=coord_rows)
         ctx_holder.append(ctx)
         return ctx
 
-    monkeypatch.setattr(
-        "systems.frontier_consult.cursor_sdk_coord_notify.make_async_client",
-        _factory,
-    )
+    _patch_bus_clients(monkeypatch, _factory)
     monkeypatch.setenv("AGENT_BUS_TOKEN", "test-token")
+    monkeypatch.setattr(
+        "systems.frontier_consult.worker_subscription_mirror_event.publish_frontier_event",
+        lambda event: published.append(event),
+    )
 
     async def _resolve_unresolved(
         _client, *, worker_thread_id, serving_to_agent, headers
     ):
+        nonlocal resolve_calls
+        resolve_calls += 1
         return None, "serving_to_agent:missing"
 
     monkeypatch.setattr(
-        "systems.frontier_consult.cursor_sdk_coord_notify.resolve_worker_subscription_agent_id",
+        "systems.frontier_consult.worker_subscription_mirror_event.resolve_worker_subscription_agent_id",
         _resolve_unresolved,
     )
-    with caplog.at_level(logging.INFO):
-        await post_coord_admit_pointer(
-            coord_thread_id="20995",
-            worker_thread_id="21015",
-            to_agent="composer-impresario-dbbfc4c2",
-            caller_agent="composer-impresario-dbbfc4c2",
-            contract="implement",
-        )
+    await post_coord_admit_pointer(
+        coord_thread_id="20995",
+        worker_thread_id="21015",
+        to_agent="composer-impresario-dbbfc4c2",
+        caller_agent="composer-impresario-dbbfc4c2",
+        contract="implement",
+    )
     post_turn.assert_awaited_once()
-    posts = []
+    assert resolve_calls == 1
+    posts: list[dict] = []
     for ctx in ctx_holder:
         posts.extend(ctx.subscription_posts)
     assert len(posts) == 0
-    assert any(
-        "worker subscription mirror skipped unresolved agent_id" in rec.message
-        for rec in caplog.records
+    payload = _mirror_event_payload(published)
+    assert payload["outcome"] == "skipped_unresolved"
+    assert payload["bind_evidence"] == "serving_to_agent:missing"
+    assert payload["resolved_agent_id"] is None
+
+
+@pytest.mark.asyncio
+async def test_worker_subscription_mirror_outcome_partial(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    post_turn = AsyncMock()
+    coord_rows = _two_coord_subscription_rows()
+    resolve_calls = 0
+    published: list[object] = []
+    serving_uuid = "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
+
+    _patch_bus_clients(
+        monkeypatch,
+        lambda *a, **k: _ClientCtx(
+            post_turn,
+            coord_subscriptions=coord_rows,
+            subscription_post_fail_agents=frozenset({"dispatch"}),
+        ),
     )
+    monkeypatch.setenv("AGENT_BUS_TOKEN", "test-token")
+    monkeypatch.setattr(
+        "systems.frontier_consult.worker_subscription_mirror_event.publish_frontier_event",
+        lambda event: published.append(event),
+    )
+
+    async def _resolve(_client, *, worker_thread_id, serving_to_agent, headers):
+        nonlocal resolve_calls
+        resolve_calls += 1
+        return serving_uuid, f"serving_to_agent:{serving_uuid}"
+
+    monkeypatch.setattr(
+        "systems.frontier_consult.worker_subscription_mirror_event.resolve_worker_subscription_agent_id",
+        _resolve,
+    )
+    await post_coord_admit_pointer(
+        coord_thread_id="20995",
+        worker_thread_id="21015",
+        to_agent="composer-impresario-dbbfc4c2",
+        caller_agent="composer-impresario-dbbfc4c2",
+        contract="implement",
+    )
+    assert resolve_calls == 1
+    evidence = f"serving_to_agent:{serving_uuid}"
+    payload = _mirror_event_payload(published)
+    assert payload["outcome"] == "partial"
+    assert payload["eligible_agents"] == ["cursor", "dispatch"]
+    assert payload["mirrored_agents"] == ["cursor"]
+    assert payload["failed_agents"] == ["dispatch"]
+    assert payload["resolved_agent_id"] == serving_uuid
+    assert payload["bind_evidence"] == evidence
+    assert payload["error"] is not None
+
+
+@pytest.mark.asyncio
+async def test_worker_subscription_mirror_outcome_no_rows(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    post_turn = AsyncMock()
+    resolve_calls = 0
+    published: list[object] = []
+
+    _patch_bus_clients(
+        monkeypatch, lambda *a, **k: _ClientCtx(post_turn, coord_subscriptions=[])
+    )
+    monkeypatch.setenv("AGENT_BUS_TOKEN", "test-token")
+    monkeypatch.setattr(
+        "systems.frontier_consult.worker_subscription_mirror_event.publish_frontier_event",
+        lambda event: published.append(event),
+    )
+
+    async def _must_not_resolve(*_a, **_k):
+        nonlocal resolve_calls
+        resolve_calls += 1
+        raise AssertionError("resolver must not run")
+
+    monkeypatch.setattr(
+        "systems.frontier_consult.worker_subscription_mirror_event.resolve_worker_subscription_agent_id",
+        _must_not_resolve,
+    )
+
+    await post_coord_admit_pointer(
+        coord_thread_id="20995",
+        worker_thread_id="21015",
+        to_agent="composer-impresario-dbbfc4c2",
+        caller_agent="composer-impresario-dbbfc4c2",
+        contract="implement",
+    )
+    assert resolve_calls == 0
+    payload = _mirror_event_payload(published)
+    assert payload["outcome"] == "no_rows"
+    assert payload["eligible_agents"] == []
+
+
+@pytest.mark.asyncio
+async def test_worker_subscription_mirror_outcome_fetch_failed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    post_turn = AsyncMock()
+    resolve_calls = 0
+    published: list[object] = []
+
+    _patch_bus_clients(
+        monkeypatch,
+        lambda *a, **k: _ClientCtx(
+            post_turn,
+            coord_subscriptions=[],
+            subscription_list_invalid=True,
+        ),
+    )
+    monkeypatch.setenv("AGENT_BUS_TOKEN", "test-token")
+    monkeypatch.setattr(
+        "systems.frontier_consult.worker_subscription_mirror_event.publish_frontier_event",
+        lambda event: published.append(event),
+    )
+
+    async def _must_not_resolve(*_a, **_k):
+        nonlocal resolve_calls
+        resolve_calls += 1
+        raise AssertionError("resolver must not run")
+
+    monkeypatch.setattr(
+        "systems.frontier_consult.worker_subscription_mirror_event.resolve_worker_subscription_agent_id",
+        _must_not_resolve,
+    )
+
+    await post_coord_admit_pointer(
+        coord_thread_id="20995",
+        worker_thread_id="21015",
+        to_agent="composer-impresario-dbbfc4c2",
+        caller_agent="composer-impresario-dbbfc4c2",
+        contract="implement",
+    )
+    payload = _mirror_event_payload(published)
+    assert payload["outcome"] == "fetch_failed"
+    assert payload["error"] == "subscriptions payload not a list"
+
+
+@pytest.mark.asyncio
+async def test_worker_subscription_mirror_outcome_fetch_failed_subscription_get(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    post_turn = AsyncMock()
+    resolve_calls = 0
+    published: list[object] = []
+
+    _patch_bus_clients(
+        monkeypatch,
+        lambda *a, **k: _ClientCtx(
+            post_turn,
+            coord_subscriptions=[],
+            subscription_get_raises=True,
+        ),
+    )
+    monkeypatch.setenv("AGENT_BUS_TOKEN", "test-token")
+    monkeypatch.setattr(
+        "systems.frontier_consult.worker_subscription_mirror_event.publish_frontier_event",
+        lambda event: published.append(event),
+    )
+
+    async def _must_not_resolve(*_a, **_k):
+        nonlocal resolve_calls
+        resolve_calls += 1
+        raise AssertionError("resolver must not run")
+
+    monkeypatch.setattr(
+        "systems.frontier_consult.worker_subscription_mirror_event.resolve_worker_subscription_agent_id",
+        _must_not_resolve,
+    )
+
+    await post_coord_admit_pointer(
+        coord_thread_id="20995",
+        worker_thread_id="21015",
+        to_agent="composer-impresario-dbbfc4c2",
+        caller_agent="composer-impresario-dbbfc4c2",
+        contract="implement",
+    )
+    assert resolve_calls == 0
+    payload = _mirror_event_payload(published)
+    assert payload["outcome"] == "fetch_failed"
+    assert payload["error"] is not None
+
+
+@pytest.mark.asyncio
+async def test_worker_subscription_mirror_outcome_failed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    post_turn = AsyncMock()
+    coord_rows = _two_coord_subscription_rows()
+    resolve_calls = 0
+    published: list[object] = []
+    serving_uuid = "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
+
+    _patch_bus_clients(
+        monkeypatch,
+        lambda *a, **k: _ClientCtx(
+            post_turn,
+            coord_subscriptions=coord_rows,
+            subscription_post_fail_agents=frozenset({"cursor", "dispatch"}),
+        ),
+    )
+    monkeypatch.setenv("AGENT_BUS_TOKEN", "test-token")
+    monkeypatch.setattr(
+        "systems.frontier_consult.worker_subscription_mirror_event.publish_frontier_event",
+        lambda event: published.append(event),
+    )
+
+    async def _resolve(_client, *, worker_thread_id, serving_to_agent, headers):
+        nonlocal resolve_calls
+        resolve_calls += 1
+        return serving_uuid, f"serving_to_agent:{serving_uuid}"
+
+    monkeypatch.setattr(
+        "systems.frontier_consult.worker_subscription_mirror_event.resolve_worker_subscription_agent_id",
+        _resolve,
+    )
+    await post_coord_admit_pointer(
+        coord_thread_id="20995",
+        worker_thread_id="21015",
+        to_agent="composer-impresario-dbbfc4c2",
+        caller_agent="composer-impresario-dbbfc4c2",
+        contract="implement",
+    )
+    assert resolve_calls == 1
+    payload = _mirror_event_payload(published)
+    assert payload["outcome"] == "failed"
+    assert payload["failed_agents"] == ["cursor", "dispatch"]
+    assert payload["mirrored_agents"] == []
+    assert payload["error"] is not None
+
+
+@pytest.mark.asyncio
+async def test_worker_subscription_mirror_resolver_error_skipped_unresolved(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    post_turn = AsyncMock()
+    coord_rows = _two_coord_subscription_rows()
+    resolve_calls = 0
+    published: list[object] = []
+    ctx_holder: list[_ClientCtx] = []
+
+    def _factory(*_a: object, **_k: object) -> _ClientCtx:
+        ctx = _ClientCtx(post_turn, coord_subscriptions=coord_rows)
+        ctx_holder.append(ctx)
+        return ctx
+
+    _patch_bus_clients(monkeypatch, _factory)
+    monkeypatch.setenv("AGENT_BUS_TOKEN", "test-token")
+    monkeypatch.setattr(
+        "systems.frontier_consult.worker_subscription_mirror_event.publish_frontier_event",
+        lambda event: published.append(event),
+    )
+
+    async def _resolve_raises(*_a, **_k):
+        nonlocal resolve_calls
+        resolve_calls += 1
+        import httpx
+
+        raise httpx.HTTPError("resolver down")
+
+    monkeypatch.setattr(
+        "systems.frontier_consult.worker_subscription_mirror_event.resolve_worker_subscription_agent_id",
+        _resolve_raises,
+    )
+    await post_coord_admit_pointer(
+        coord_thread_id="20995",
+        worker_thread_id="21015",
+        to_agent="composer-impresario-dbbfc4c2",
+        caller_agent="composer-impresario-dbbfc4c2",
+        contract="implement",
+    )
+    assert resolve_calls == 1
+    posts: list[dict] = []
+    for ctx in ctx_holder:
+        posts.extend(ctx.subscription_posts)
+    assert len(posts) == 0
+    payload = _mirror_event_payload(published)
+    assert payload["outcome"] == "skipped_unresolved"
+    assert payload["bind_evidence"] == "unresolved:resolver_error"
+    assert payload["resolved_agent_id"] is None
+
+
+@pytest.mark.asyncio
+async def test_worker_subscription_mirror_json_value_error_one_event(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    post_turn = AsyncMock()
+    resolve_calls = 0
+    published: list[object] = []
+
+    _patch_bus_clients(
+        monkeypatch,
+        lambda *a, **k: _ClientCtx(
+            post_turn,
+            coord_subscriptions=[],
+            subscription_json_raises=True,
+        ),
+    )
+    monkeypatch.setenv("AGENT_BUS_TOKEN", "test-token")
+    monkeypatch.setattr(
+        "systems.frontier_consult.worker_subscription_mirror_event.publish_frontier_event",
+        lambda event: published.append(event),
+    )
+
+    async def _must_not_resolve(*_a, **_k):
+        nonlocal resolve_calls
+        resolve_calls += 1
+        raise AssertionError("resolver must not run")
+
+    monkeypatch.setattr(
+        "systems.frontier_consult.worker_subscription_mirror_event.resolve_worker_subscription_agent_id",
+        _must_not_resolve,
+    )
+    await post_coord_admit_pointer(
+        coord_thread_id="20995",
+        worker_thread_id="21015",
+        to_agent="composer-impresario-dbbfc4c2",
+        caller_agent="composer-impresario-dbbfc4c2",
+        contract="implement",
+    )
+    assert resolve_calls == 0
+    payload = _mirror_event_payload(published)
+    assert payload["outcome"] == "fetch_failed"
+    assert "ValueError" in (payload.get("error") or "")
+
+
+@pytest.mark.asyncio
+async def test_worker_subscription_mirror_emission_failure_does_not_break_admit(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    post_turn = AsyncMock()
+
+    def _raise_publish(_event: object) -> None:
+        raise RuntimeError("event bus down")
+
+    _patch_bus_clients(
+        monkeypatch, lambda *a, **k: _ClientCtx(post_turn, coord_subscriptions=[])
+    )
+    monkeypatch.setenv("AGENT_BUS_TOKEN", "test-token")
+    monkeypatch.setattr(
+        "systems.frontier_consult.worker_subscription_mirror_event.publish_frontier_event",
+        _raise_publish,
+    )
+    await post_coord_admit_pointer(
+        coord_thread_id="20995",
+        worker_thread_id="21015",
+        to_agent="composer-impresario-dbbfc4c2",
+        caller_agent="composer-impresario-dbbfc4c2",
+        contract="implement",
+    )
+    post_turn.assert_awaited_once()
 
 
 @pytest.mark.asyncio
@@ -403,11 +814,11 @@ async def test_house_land_wake_budget_coord_admit_and_worker_closeout_qualify(
         return serving_uuid, f"serving_to_agent:{serving_uuid}"
 
     monkeypatch.setattr(
-        "systems.frontier_consult.cursor_sdk_coord_notify.resolve_worker_subscription_agent_id",
+        "systems.frontier_consult.worker_subscription_mirror_event.resolve_worker_subscription_agent_id",
         _resolve,
     )
-    monkeypatch.setattr(
-        "systems.frontier_consult.cursor_sdk_coord_notify.make_async_client",
+    _patch_bus_clients(
+        monkeypatch,
         lambda *a, **k: _ClientCtx(
             post_turn,
             coord_subscriptions=[
