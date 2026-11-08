@@ -76,7 +76,8 @@ logger = get_logger(__name__)
 _REGISTRY_NEXT_TEMPLATE = (
     "Work registry: read team_dispatch(op=registry, work_key_prefix=<key>) before starting "
     "work on a work_key; claim with op=claim (seat_name, address) and keep it current with "
-    "op=claim_update; this dispatch was auto-recorded as {row_id}."
+    "op=claim_update (acting-row updates require the bridge caller_dispatch_id stamp — "
+    "unstamped callers get 409); this dispatch was auto-recorded as {row_id}."
 )
 
 
@@ -407,9 +408,10 @@ def register_frontier_tools(mcp: FastMCP) -> None:
             Field(
                 description=(
                     "Live cursor-sdk dispatch id of the seat calling "
-                    "team_dispatch. Forwarded on generate only when resume_of "
-                    "is set. The stdio bridge overwrites a model-supplied value "
-                    "from its own dispatch stamp. Omitted on to_thread."
+                    "team_dispatch. Forwarded on generate when resume_of is set "
+                    "and on claim_update/claim_release to GIW. The stdio bridge "
+                    "overwrites a model-supplied value from CURSOR_SDK_DISPATCH_ID "
+                    "for those claim ops. Omitted on to_thread."
                 ),
             ),
         ] = None,
@@ -686,9 +688,9 @@ def register_frontier_tools(mcp: FastMCP) -> None:
 
         **claim:** `work_key` + `thread`. Holder is `caller_agent`. Optional `seat_name`, `address`, `work_status`. 409 `WORK_KEY_HELD`. 422 `INVALID_WORK_KEY`, `INVALID_TTL`, or `ADDRESS_UNREACHABLE_SHAPE`.
 
-        **claim_release:** `claim_id` + `outcome`∈{completed,failed,withdrawn}. 404 `CLAIM_NOT_FOUND`. 409 `CLAIM_NOT_HELD`. 422 bad outcome.
+        **claim_release:** `claim_id` + `outcome`∈{completed,failed,withdrawn}. 404 `CLAIM_NOT_FOUND`. 409 `CLAIM_NOT_HELD`. 422 bad outcome. On cursor-sdk stdio seats the per-dispatch MCP bridge may inject `claim_id` (bridge `CURSOR_SDK_DISPATCH_ID`) and `caller_agent` (ledger row holder) when omitted — the hub never reads that env.
 
-        **claim_update:** `claim_id` + `caller_agent`. Patch `work_status`, `address_patch`, `note`. `work_status=landed|abandoned` releases the claim.
+        **claim_update:** `claim_id` + `caller_agent`. Patch `work_status`, `address_patch`, `note`. `work_status=landed|abandoned` releases the claim. Same bridge injection as `claim_release` when args are omitted.
 
         **occupancy:** `work_key`. 422 `INVALID_WORK_KEY`. Returns occupancy, not progress.
 
@@ -704,7 +706,7 @@ def register_frontier_tools(mcp: FastMCP) -> None:
 
         **handoff:** `seat`∈{`web-anthropic`,`cursor`}. Requires `subject` + (`seat`|`role`) + (`packet_path`|`source_ref`). Packet AC with no contract signal → **422 `handoff_contract_ambiguous`**. `packet_path` = repo-relative from checkout root (strip leading `universal-llm-gateway/`). `source_ref`: `todo:`|`plan:`|`plan_phase:`|`plan:{slug}/phase-N`|`agent-bus:`|`packet:`. Bare path → **422 `source_ref_unparseable`**. `pointer_body` is handoff-only.
 
-        **generate:** On `seat=cursor-sdk`, omit `wake_lane` and do not pass `reasoning_effort`. `wake_lane_unavailable` / ReadTimeout and `reasoning_effort_not_supported` are call-shape errors, not model outages. Shape: consult-routing § Cursor-sdk generate shape. `wake_lane` remains a numeric `role:root` thread for other seats; a worker closeout pastes a pointer memo there. `contract`∈{GENERATE_JOBS}. **Code review** is this call: `op=generate`, `model` = `impresario.critic` in `config/routing/route_policy.yaml` (default `anthropic/claude-sonnet-5-5`; do not substitute `cdp/`), `contract=code-review`, `dispatch_thread_id`, one of `prompt`|`packet_path`|`sidecar_ref`, `reasoning_effort=high`; omit `purpose` and `role` (escalate on the critic's provider prefix in `allowed_critics`: `anthropic/claude-opus-5-5`, then `anthropic/claude-fable-5-1`). API-substrate reviewers read hub master by default; lane fs uses thread=<lane thread> where op=read takes path=universal-llm-gateway/<rel>, op=list and op=search take repo-relative paths, and op=recent_commits must match head_sha or the verdict notes mismatch; hub master read uses the same path without thread=. Packets carry line-start review_thread:, review_head:, or review_base: plus implicit lane tokens. Admit appends a review_target block, no-ops when merged, or **422 REVIEW_TARGET_UNREACHABLE** with details.kind target|ambiguous|infra; if the worktree was removed after land, fs op=copy workspaces→cortex and cite the copy. After-ship review is the same call with `contract=delivery-review`. `purpose=ask` is only the CDP submit tag when `purpose` is omitted; `purpose=review` and `role=reviewer` → 422 `job_unknown`. `contract=implement` is the materialized work-item path (`source_ref` required; the server owns the packet; inline `prompt` → 422 `inline_prompt_not_supported`). It is not a generic repo-write. An ad-hoc edit uses `contract=freeform` with `prompt` or `packet_path`, `lane=B`, and `work_key`. `wrap`/`sketch`/`conductor` are materializer contracts too (`source_ref`, no inline prompt). `wrap` forbids `packet_path`, `density_triage`, `review_opt_out_reason_code`, `auto_review_child`; `dispatch_thread_id` exempt. `seat=cursor` is handoff-only. Manual web seats → **422 `web_seat_not_generate_target`**. `model=cursor/…` still needs `lane=` or **422 `lane_required`**. Lane B is the only checkout for top-level cursor-sdk generate, including `contract=freeform` and plan-mode read-only admits. Lane A is refused at admit (422 `CURSOR_LANE_A_REFUSED`). CHECKPOINT tip: `seat=cursor-sdk`, `model=cursor/grok-4.7`, `contract=freeform`, `lane=B`, `model_knobs.fast=true`. API roles (regen `scripts/gen-mcp-dispatch-role-docs`): reviewer, synthesizer, artisan, skeptic; auto seat `cursor-sdk`.
+        **generate:** On `seat=cursor-sdk`, omit `wake_lane` and do not pass `reasoning_effort`. `wake_lane_unavailable` / ReadTimeout and `reasoning_effort_not_supported` are call-shape errors, not model outages. Shape: consult-routing § Cursor-sdk generate shape. `wake_lane` remains a numeric `role:root` thread for other seats; a worker closeout pastes a pointer memo there. `contract`∈{GENERATE_JOBS}. **Code review** is this call: `op=generate`, `model` = `impresario.critic` in `config/routing/route_policy.yaml` (default `anthropic/claude-sonnet-5-5`; do not substitute `cdp/`), `contract=code-review`, `dispatch_thread_id`, one of `prompt`|`packet_path`|`sidecar_ref`, `reasoning_effort=high`; omit `purpose` and `role` (escalate on the critic's provider prefix in `allowed_critics`: `anthropic/claude-opus-5-5`, then `anthropic/claude-fable-5-1`). After-ship review is the same call with `contract=delivery-review`. `purpose=ask` is only the CDP submit tag when `purpose` is omitted; `purpose=review` and `role=reviewer` → 422 `job_unknown`. `contract=implement` is the materialized work-item path (`source_ref` required; the server owns the packet; inline `prompt` → 422 `inline_prompt_not_supported`). It is not a generic repo-write. An ad-hoc edit uses `contract=freeform` with `prompt` or `packet_path`, `lane=B`, and `work_key`. `wrap`/`sketch`/`conductor` are materializer contracts too (`source_ref`, no inline prompt). `wrap` forbids `packet_path`, `density_triage`, `review_opt_out_reason_code`, `auto_review_child`; `dispatch_thread_id` exempt. `seat=cursor` is handoff-only. Manual web seats → **422 `web_seat_not_generate_target`**. `model=cursor/…` still needs `lane=` or **422 `lane_required`**. Lane B is the only checkout for top-level cursor-sdk generate, including `contract=freeform` and plan-mode read-only admits. Lane A is refused at admit (422 `CURSOR_LANE_A_REFUSED`). CHECKPOINT tip: `seat=cursor-sdk`, `model=cursor/grok-4.7`, `contract=freeform`, `lane=B`, `model_knobs.fast=true`. API roles (regen `scripts/gen-mcp-dispatch-role-docs`): reviewer, synthesizer, artisan, skeptic; auto seat `cursor-sdk`.
 
         **to_thread:** `contract`∈{TO_THREAD_JOBS}. `thread` required.
 
@@ -796,6 +798,7 @@ def register_frontier_tools(mcp: FastMCP) -> None:
             "registry",
             "ledger",
         ):
+            relay_caller_agent = caller_agent
             if op == "claim" and (not work_key or not thread):
                 return {
                     "error": {
@@ -872,8 +875,10 @@ def register_frontier_tools(mcp: FastMCP) -> None:
                 claim_body["state"] = state
             if work_key_prefix is not None and op == "registry":
                 claim_body["work_key_prefix"] = work_key_prefix
-            if caller_agent is not None:
-                claim_body["caller_agent"] = caller_agent
+            if relay_caller_agent is not None:
+                claim_body["caller_agent"] = relay_caller_agent
+            if caller_dispatch_id and op in ("claim_update", "claim_release"):
+                claim_body["caller_dispatch_id"] = caller_dispatch_id
             record("mcp.team.claim.called", op=op)
             return await _relay(
                 endpoint="/api/v1/team/dispatch",

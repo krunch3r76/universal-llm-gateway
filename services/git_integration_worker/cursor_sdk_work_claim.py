@@ -70,6 +70,26 @@ _UPDATE_RELEASE = {
     "abandoned": "withdrawn",
 }
 _REGISTRY_BUDGET_BYTES = 5120
+_ACTING_IN = ",".join(repr(s) for s in _ACTING_DISPATCH)
+
+
+def _holder_owns_row(
+    row: Any,
+    claim_id: str,
+    holder_agent: str,
+    caller_dispatch_id: str | None = None,
+) -> bool:
+    """True when *holder_agent* may update or release *claim_id* on *row*."""
+    if (row["caller_agent"] or "") != holder_agent:
+        return False
+    if row["status"] == CLAIM_STATUS:
+        return True
+    if row["status"] not in _ACTING_DISPATCH:
+        return False
+    caller = (caller_dispatch_id or "").strip()
+    if not caller:
+        return False
+    return caller == claim_id
 
 Poster = Callable[[dict[str, Any]], None]
 
@@ -495,6 +515,7 @@ def release(
     holder_agent: str,
     outcome: str,
     *,
+    caller_dispatch_id: str | None = None,
     ledger: CursorDispatchLedger | None = None,
     now: str | None = None,
 ) -> dict[str, Any]:
@@ -535,7 +556,9 @@ def release(
         if not isinstance(record, dict):
             record = {}
         prior = record.get("claim_release")
-        if row["status"] != CLAIM_STATUS:
+        if not _holder_owns_row(
+            row, claim_id, holder_agent, caller_dispatch_id=caller_dispatch_id
+        ):
             if prior == outcome and row["caller_agent"] == holder_agent:
                 conn.commit()
                 return {
@@ -549,19 +572,22 @@ def release(
                 http_status=409,
                 message="claim is not held by this caller",
             )
-        if row["caller_agent"] != holder_agent:
-            raise ClaimError(
-                code="CLAIM_NOT_HELD",
-                http_status=409,
-                message="claim is held by a different agent",
+        if row["status"] == CLAIM_STATUS:
+            conn.execute(
+                "UPDATE cursor_sdk_dispatches SET status=?, terminal_status=?, "
+                "terminal_at=?, record_json=json_set(COALESCE(record_json,'{}'), "
+                "'$.claim_release', ?) WHERE dispatch_id=? AND status='claimed' "
+                "AND caller_agent=?",
+                (status, status, stamp, outcome, claim_id, holder_agent),
             )
-        conn.execute(
-            "UPDATE cursor_sdk_dispatches SET status=?, terminal_status=?, "
-            "terminal_at=?, record_json=json_set(COALESCE(record_json,'{}'), "
-            "'$.claim_release', ?) WHERE dispatch_id=? AND status='claimed' "
-            "AND caller_agent=?",
-            (status, status, stamp, outcome, claim_id, holder_agent),
-        )
+        else:
+            conn.execute(
+                "UPDATE cursor_sdk_dispatches SET status=?, terminal_status=?, "
+                "terminal_at=?, record_json=json_set(COALESCE(record_json,'{}'), "
+                f"'$.claim_release', ?) WHERE dispatch_id=? AND status IN ({_ACTING_IN}) "
+                "AND caller_agent=?",
+                (status, status, stamp, outcome, claim_id, holder_agent),
+            )
         conn.commit()
     return {
         "claim_id": claim_id,
@@ -738,6 +764,7 @@ def update(
     work_status: str | None = None,
     address_patch: dict[str, Any] | None = None,
     note: str | None = None,
+    caller_dispatch_id: str | None = None,
     ledger: CursorDispatchLedger | None = None,
     now: str | None = None,
 ) -> dict[str, Any]:
@@ -777,7 +804,9 @@ def update(
                     http_status=404,
                     message=f"claim {claim_id!r} not found",
                 )
-            if row["status"] != CLAIM_STATUS or row["caller_agent"] != holder_agent:
+            if not _holder_owns_row(
+                row, claim_id, holder_agent, caller_dispatch_id=caller_dispatch_id
+            ):
                 raise ClaimError(
                     code="CLAIM_NOT_HELD",
                     http_status=409,
@@ -805,7 +834,14 @@ def update(
                 )
                 conn.commit()
         outcome = _UPDATE_RELEASE[work_status]
-        released = release(claim_id, holder_agent, outcome, ledger=led, now=stamp)
+        released = release(
+            claim_id,
+            holder_agent,
+            outcome,
+            caller_dispatch_id=caller_dispatch_id,
+            ledger=led,
+            now=stamp,
+        )
         return {
             "claim_id": claim_id,
             "work_status": work_status,
@@ -836,17 +872,13 @@ def update(
                 http_status=404,
                 message=f"claim {claim_id!r} not found",
             )
-        if row["status"] != CLAIM_STATUS:
+        if not _holder_owns_row(
+            row, claim_id, holder_agent, caller_dispatch_id=caller_dispatch_id
+        ):
             raise ClaimError(
                 code="CLAIM_NOT_HELD",
                 http_status=409,
                 message="claim is not held by this caller",
-            )
-        if row["caller_agent"] != holder_agent:
-            raise ClaimError(
-                code="CLAIM_NOT_HELD",
-                http_status=409,
-                message="claim is held by a different agent",
             )
         prior = _parse_record_json(row["record_json"])
         if merged_address is not None and isinstance(prior.get("address"), dict):
@@ -867,9 +899,13 @@ def update(
             work_status=prior.get("work_status"),
             status_history=list(prior.get("status_history") or []),
         )
+        if row["status"] == CLAIM_STATUS:
+            where_status = "status='claimed'"
+        else:
+            where_status = f"status IN ({_ACTING_IN})"
         conn.execute(
-            "UPDATE cursor_sdk_dispatches SET record_json=? "
-            "WHERE dispatch_id=? AND status='claimed' AND caller_agent=?",
+            f"UPDATE cursor_sdk_dispatches SET record_json=? "
+            f"WHERE dispatch_id=? AND {where_status} AND caller_agent=?",
             (record, claim_id, holder_agent),
         )
         conn.commit()

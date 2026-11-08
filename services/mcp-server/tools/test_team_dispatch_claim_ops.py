@@ -188,3 +188,71 @@ async def test_generate_top_level_claim_id_does_not_override_generation_options(
         )
     body = relay.await_args.kwargs["body"]
     assert body["generation_options"]["claim_id"] == "claim-explicit"
+
+
+@pytest.mark.asyncio
+async def test_claim_update_without_claim_id_requires_explicit_id(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fn = _tool()
+    monkeypatch.setenv("CURSOR_SDK_DISPATCH_ID", "disp-env-22533")
+    result = await fn(op="claim_update", work_status="landed")
+    assert result["error"]["code"] == "validation_error"
+    assert result["field"] == "claim_id"
+
+
+@pytest.mark.asyncio
+async def test_claim_release_without_claim_id_requires_explicit_id(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fn = _tool()
+    monkeypatch.setenv("CURSOR_SDK_DISPATCH_ID", "disp-env-22533")
+    result = await fn(op="claim_release", outcome="completed")
+    assert result["error"]["code"] == "validation_error"
+    assert result["field"] == "claim_id"
+
+
+@pytest.mark.asyncio
+async def test_claim_update_hub_passthrough_explicit_args(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fn = _tool()
+    relay = AsyncMock(return_value={"status_code": 200})
+    monkeypatch.setenv("CURSOR_SDK_DISPATCH_ID", "disp-env-22533")
+    with patch("tools.frontier._relay", relay):
+        await fn(
+            op="claim_update",
+            claim_id="claim-explicit",
+            work_status="landed",
+            caller_agent="web-claude",
+        )
+    body = relay.await_args.kwargs["body"]
+    assert body["caller_agent"] == "web-claude"
+    assert body["claim_id"] == "claim-explicit"
+
+
+@pytest.mark.asyncio
+async def test_claim_update_and_release_forward_caller_dispatch_id() -> None:
+    fn = _tool()
+    relay = AsyncMock(return_value={"status_code": 200})
+    with patch("tools.frontier._relay", relay):
+        await fn(
+            op="claim_update",
+            claim_id="disp-1",
+            work_status="landed",
+            caller_agent="cursor-sdk",
+            caller_dispatch_id="disp-1",
+        )
+        upd = relay.await_args.kwargs["body"]
+        assert upd["caller_dispatch_id"] == "disp-1"
+
+        relay.reset_mock()
+        await fn(
+            op="claim_release",
+            claim_id="disp-1",
+            outcome="completed",
+            caller_agent="cursor-sdk",
+            caller_dispatch_id="disp-1",
+        )
+        rel = relay.call_args.kwargs["body"]
+        assert rel["caller_dispatch_id"] == "disp-1"

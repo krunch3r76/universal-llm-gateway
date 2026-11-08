@@ -146,6 +146,7 @@ async def team_dispatch(
             request_id=request_id,
             op=body.op,
             holder_agent=holder,
+            caller_dispatch_id=getattr(body, "caller_dispatch_id", None),
             work_key=getattr(body, "work_key", None),
             thread_id=getattr(body, "thread", None),
             claim_id=getattr(body, "claim_id", None),

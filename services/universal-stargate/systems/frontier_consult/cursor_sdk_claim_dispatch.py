@@ -40,6 +40,7 @@ async def relay_house_claim(
     request_id: str,
     op: str,
     holder_agent: str,
+    caller_dispatch_id: str | None = None,
     work_key: str | None = None,
     thread_id: str | None = None,
     claim_id: str | None = None,
@@ -80,7 +81,9 @@ async def relay_house_claim(
     elif op == "claim_update":
         path = f"/api/v1/cursor/claim/{claim_id}/update"
         method = "POST"
-        payload = {"holder_agent": holder_agent}
+        payload: dict[str, Any] = {"holder_agent": holder_agent}
+        if caller_dispatch_id:
+            payload["caller_dispatch_id"] = caller_dispatch_id
         if work_status is not None:
             payload["work_status"] = work_status
         if address_patch is not None:
@@ -92,6 +95,8 @@ async def relay_house_claim(
         path = f"/api/v1/cursor/claim/{claim_id}/release"
         method = "POST"
         payload = {"holder_agent": holder_agent, "outcome": outcome}
+        if caller_dispatch_id:
+            payload["caller_dispatch_id"] = caller_dispatch_id
         ident = claim_id or ""
     elif op == "occupancy":
         path = "/api/v1/cursor/occupancy"

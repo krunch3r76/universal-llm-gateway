@@ -45,6 +45,7 @@ from services.git_integration_worker.cursor_home import (
     dispatch_git_env_vars,
 )
 from services.git_integration_worker.cursor_sdk_context import (
+    CURSOR_SDK_DISPATCH_ID_ENV,
     SDK_AGENT_STRIPPED_ENV_KEYS,
     steer_spool_dir,
 )
@@ -162,7 +163,9 @@ def build_bridge_command(
         command.append(f"VIRTUAL_ENV={repo_venv}")
         command.append(f"PATH={path_value}")
     if dispatch_id is not None:
-        command.append(f"CURSOR_SDK_DISPATCH_ID={dispatch_id}")
+        # Later NAME=VALUE overrides inherited CURSOR_SDK_DISPATCH_ID from the parent shim.
+        # Bridge filter injects claim_update/claim_release defaults from this stamp.
+        command.append(f"{CURSOR_SDK_DISPATCH_ID_ENV}={dispatch_id}")
         command.extend(
             f"{k}={v}" for k, v in dispatch_git_env_vars(dispatch_id).items()
         )
