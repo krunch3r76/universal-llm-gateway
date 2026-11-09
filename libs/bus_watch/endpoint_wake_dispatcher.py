@@ -234,6 +234,8 @@ def _api_generate_peer_wake_from() -> frozenset[str]:
         return _API_GENERATE_PEER_WAKE_FALLBACK
 _ORION_PEER_WAKE_HEADS = frozenset({"ANSWER"})
 _POLL_S = 2.0
+_SCAN_HOLDER_PROMOTE_GROUPS_PER_PASS = 20
+_scan_holder_group_cursor: tuple[str, str] | None = None
 
 
 def _endpoint_wake_catchup_max_age_s() -> float:
@@ -1668,14 +1670,86 @@ def _display_seated(store: StoreClient, thread: str) -> bool:
 
 
 def _promote_scan_holder_skips_safe(store: StoreClient) -> None:
+    global _scan_holder_group_cursor
     if not os.environ.get("AGENT_BUS_DB_PATH"):
         return
     try:
         from agent_bus_store.db.endpoint_wake_ledger import (
-            promote_routable_scan_holder_skips,
+            expire_scan_holder_tombstones,
+            list_scan_holder_candidates,
+            promote_scan_holder_rows,
         )
 
-        promote_routable_scan_holder_skips(store)
+        max_age_s = _endpoint_wake_catchup_max_age_s()
+        now_epoch = time.time()
+        cutoff_epoch = now_epoch - max_age_s
+        cutoff_stamp = datetime.fromtimestamp(cutoff_epoch, tz=UTC).strftime(
+            "%Y-%m-%d %H:%M:%S"
+        )
+
+        expire_scan_holder_tombstones(cutoff_stamp)
+        candidates = list_scan_holder_candidates(cutoff_stamp)
+
+        expire_ids: list[int] = []
+        by_group: dict[tuple[str, str], list[dict[str, Any]]] = {}
+        for row in candidates:
+            row_id = int(row["id"])
+            turn_epoch = _turn_created_at_epoch(row.get("created_at"))
+            if turn_epoch is not None and (now_epoch - turn_epoch) > max_age_s:
+                expire_ids.append(row_id)
+                continue
+            agent = str(row.get("agent") or "")
+            thread_id = str(row.get("thread_id") or "")
+            if not agent or not thread_id:
+                continue
+            by_group.setdefault((agent, thread_id), []).append(row)
+
+        def _group_order_key(key: tuple[str, str]) -> int:
+            return min(int(r["id"]) for r in by_group[key])
+
+        groups_sorted = sorted(by_group.keys(), key=_group_order_key)
+        n_groups = len(groups_sorted)
+        start_idx = 0
+        if _scan_holder_group_cursor is not None and n_groups:
+            try:
+                start_idx = groups_sorted.index(_scan_holder_group_cursor) + 1
+            except ValueError:
+                start_idx = 0
+            if start_idx >= n_groups:
+                start_idx = 0
+
+        promote_ids: list[int] = []
+        resolved_this_pass = 0
+        last_group: tuple[str, str] | None = None
+        for offset in range(min(_SCAN_HOLDER_PROMOTE_GROUPS_PER_PASS, n_groups)):
+            gidx = (start_idx + offset) % n_groups
+            agent, thread_id = groups_sorted[gidx]
+            try:
+                resolved = _resolve_delivery_route(store, agent, thread_id)
+            except Exception:
+                break
+            last_group = (agent, thread_id)
+            resolved_this_pass += 1
+            if resolved is not None:
+                _route_kind, sub = resolved
+                if str(sub.get("surface") or "") == "cse":
+                    try:
+                        target = resolve_cse_wake_target(
+                            store,
+                            sub,
+                            wake_thread=thread_id,
+                            delivery_phase=False,
+                        )
+                    except Exception:
+                        break
+                    if target is not None:
+                        for item in by_group[(agent, thread_id)]:
+                            promote_ids.append(int(item["id"]))
+
+        if resolved_this_pass and last_group is not None:
+            _scan_holder_group_cursor = last_group
+
+        promote_scan_holder_rows(promote_ids, expire_ids)
     except Exception:
         logger.exception("endpoint_wake_dispatcher: promote scan_holder skips failed")
 

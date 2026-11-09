@@ -252,60 +252,63 @@ def advance_scan(
         return {"high_water_turn_id": new_high_water, "inserted": len(filtered)}
 
 
-_SCAN_HOLDER_PROMOTE_LIMIT = 50
-
-
-def promote_routable_scan_holder_skips(store: Any) -> int:
-    """Re-queue fresh ``no_route:scan_holder`` tombstones once a CSE holder is resolvable."""
-    import time
-
-    from bus_watch.endpoint_wake_dispatcher import (
-        _endpoint_wake_catchup_max_age_s,
-        _turn_created_at_epoch,
-        resolve_cse_wake_target,
-    )
-
-    promoted = 0
-    max_age_s = _endpoint_wake_catchup_max_age_s()
-    now_epoch = time.time()
+def expire_scan_holder_tombstones(cutoff_stamp: str) -> int:
+    """Terminal-expire ledger-stale ``no_route:scan_holder`` rows (no row LIMIT)."""
     with write_connect() as conn:
+        stamp = _now(None)
+        cur = conn.execute(
+            "UPDATE endpoint_wake_ledger SET state='skipped', "
+            "reason='no_route:scan_holder_expired', finished_at=? "
+            "WHERE state='skipped' AND reason='no_route:scan_holder' "
+            "AND created_at < ?",
+            (stamp, cutoff_stamp),
+        )
+        return int(cur.rowcount)
+
+
+def list_scan_holder_candidates(cutoff_stamp: str) -> list[dict[str, Any]]:
+    """Fresh scan-holder tombstones (read-only connect; no LIMIT)."""
+    with connect() as conn:
         rows = conn.execute(
             "SELECT l.id, l.agent, l.thread_id, l.turn_id, t.created_at "
             "FROM endpoint_wake_ledger l "
             "JOIN turns t ON t.id = l.turn_id "
             "WHERE l.state='skipped' AND l.reason='no_route:scan_holder' "
-            "ORDER BY l.id LIMIT ?",
-            (_SCAN_HOLDER_PROMOTE_LIMIT,),
+            "AND l.created_at >= ? "
+            "ORDER BY l.id",
+            (cutoff_stamp,),
         ).fetchall()
-        for row in rows:
-            created_epoch = _turn_created_at_epoch(row["created_at"])
-            if created_epoch is not None and (now_epoch - created_epoch) > max_age_s:
-                continue
-            agent = str(row["agent"] or "")
-            thread_id = str(row["thread_id"] or "")
-            if not agent or not thread_id:
-                continue
-            try:
-                resolved = store.subscription(agent, thread_id)
-            except TypeError:
-                resolved = store.subscription(agent, thread_id, raw_to=None)
-            except Exception:
-                continue
-            if resolved is None:
-                continue
-            _kind, sub = resolved
-            if str(sub.get("surface") or "") != "cse":
-                continue
-            if (
-                resolve_cse_wake_target(store, sub, wake_thread=thread_id) is None
-            ):
-                continue
+    return [dict(r) for r in rows]
+
+
+def promote_scan_holder_rows(
+    promote_ids: Sequence[int],
+    expire_ids: Sequence[int],
+) -> int:
+    """CAS-promote or expire scan-holder rows in one short write ticket."""
+    if not promote_ids and not expire_ids:
+        return 0
+    stamp = _now(None)
+    promoted = 0
+    with write_connect() as conn:
+        if promote_ids:
+            placeholders = ",".join("?" * len(promote_ids))
             cur = conn.execute(
-                "UPDATE endpoint_wake_ledger SET state='pending', reason=NULL, "
-                "finished_at=NULL WHERE id=? AND state='skipped'",
-                (row["id"],),
+                f"UPDATE endpoint_wake_ledger SET state='pending', reason=NULL, "
+                f"finished_at=NULL WHERE id IN ({placeholders}) "
+                f"AND state='skipped' AND reason='no_route:scan_holder'",
+                tuple(int(i) for i in promote_ids),
             )
-            promoted += int(cur.rowcount)
+            promoted = int(cur.rowcount)
+        if expire_ids:
+            placeholders = ",".join("?" * len(expire_ids))
+            conn.execute(
+                f"UPDATE endpoint_wake_ledger SET state='skipped', "
+                f"reason='no_route:scan_holder_expired', finished_at=? "
+                f"WHERE id IN ({placeholders}) "
+                f"AND state='skipped' AND reason='no_route:scan_holder'",
+                (stamp, *(int(i) for i in expire_ids)),
+            )
     return promoted
 
 
