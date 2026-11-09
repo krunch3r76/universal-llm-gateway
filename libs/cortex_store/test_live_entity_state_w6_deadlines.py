@@ -7,11 +7,13 @@ import sqlite3
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
+
 import pytest
 
 from cortex_store._intent_card_test_fixtures import insert_entity
 from cortex_store._test_db_bootstrap import copy_template_db
 from cortex_store.conftest import bind_cortex_db
+from cortex_store.drift_detector import open_deadline_items
 from cortex_store.entity_state_fold import fold_claim, reverse_fold
 from cortex_store.entity_state_read import _field_verified
 from cortex_store.routes.deadlines import (
@@ -76,7 +78,10 @@ def _seed_deadline_pair(
         name="W6 subject",
         attributes=json.dumps(subject_attrs or {}),
     )
-    d_attrs = {"deadline_date": deadline_date or _future_date(), **(deadline_attrs or {})}
+    d_attrs = {
+        "deadline_date": deadline_date or _future_date(),
+        **(deadline_attrs or {}),
+    }
     insert_entity(
         conn,
         entity_id=deadline_id,
@@ -100,6 +105,17 @@ def _listed_ids(*, include_resolved: bool = False) -> set[str]:
     }
 
 
+def _open_deadline_ids_route() -> set[str]:
+    return {
+        str(i["deadline_id"])
+        for i in _list_deadlines_impl(include_resolved=False)["items"]
+    }
+
+
+def _open_deadline_ids_drift(conn: sqlite3.Connection) -> set[str]:
+    return {str(i.deadline_id) for i in open_deadline_items(conn)}
+
+
 def _resolved_row(deadline_id: str) -> dict[str, Any] | None:
     rows = _list_deadlines_impl(include_resolved=True)["items"]
     for row in rows:
@@ -111,7 +127,9 @@ def _resolved_row(deadline_id: str) -> dict[str, Any] | None:
 # --- parity / unit helpers ---
 
 
-def test_w6_head_closes_matches_field_verified(migrated_conn: sqlite3.Connection) -> None:
+def test_w6_head_closes_matches_field_verified(
+    migrated_conn: sqlite3.Connection,
+) -> None:
     dup_attrs = {
         "state_provenance": {
             "application_submitted": [
@@ -180,7 +198,9 @@ def test_w6_head_closes_matches_field_verified(migrated_conn: sqlite3.Connection
 # --- legacy + claims ---
 
 
-def test_legacy_outcome_without_provenance_stays_closed(migrated_conn: sqlite3.Connection) -> None:
+def test_legacy_outcome_without_provenance_stays_closed(
+    migrated_conn: sqlite3.Connection,
+) -> None:
     _, deadline_id = _seed_deadline_pair(
         migrated_conn,
         deadline_attrs={"outcome": "met"},
@@ -204,7 +224,9 @@ def test_unresolved_claim_does_not_close(migrated_conn: sqlite3.Connection) -> N
     assert deadline_id in _listed_ids()
 
 
-def test_resolved_claim_closes_and_cites_assertion_id(migrated_conn: sqlite3.Connection) -> None:
+def test_resolved_claim_closes_and_cites_assertion_id(
+    migrated_conn: sqlite3.Connection,
+) -> None:
     _, deadline_id = _seed_deadline_pair(migrated_conn)
     cur = migrated_conn.execute(
         "INSERT INTO assertions (entity_id, claim, confidence, superseded_by, created_at) "
@@ -226,7 +248,10 @@ def test_resolved_claim_closes_and_cites_assertion_id(migrated_conn: sqlite3.Con
 def test_workflow_state_head_closes_deadline(migrated_conn: sqlite3.Connection) -> None:
     subject_id, deadline_id = _seed_deadline_pair(migrated_conn, deadline_wf="open")
     aid = _insert_status_assertion(
-        migrated_conn, entity_id=deadline_id, token="done", evidence_uris='["cortex://notes/e.md"]'
+        migrated_conn,
+        entity_id=deadline_id,
+        token="done",
+        evidence_uris='["cortex://notes/e.md"]',
     )
     migrated_conn.execute(
         "UPDATE assertions SET predicate_form = ? WHERE id = ?",
@@ -274,7 +299,12 @@ def test_fold_claim_fixture_default_list_omits_include_resolved_cites_fold(
 def test_reversed_fold_reopens_deadline(migrated_conn: sqlite3.Connection) -> None:
     subject_id, deadline_id = _seed_deadline_pair(migrated_conn)
     aid = _insert_status_assertion(migrated_conn, entity_id=subject_id)
-    pid = fold_claim(migrated_conn, subject_id, aid, "application_submitted").provenance_id or ""
+    pid = (
+        fold_claim(
+            migrated_conn, subject_id, aid, "application_submitted"
+        ).provenance_id
+        or ""
+    )
     assert deadline_id not in _listed_ids()
     reverse_fold(migrated_conn, subject_id, "application_submitted", pid)
     assert deadline_id in _listed_ids()
@@ -309,27 +339,128 @@ def test_application_submitted_head_via_inactive_edge_does_not_close(
     assert deadline_id in _listed_ids()
 
 
-def test_fulfillment_claim_without_fold_stays_open(migrated_conn: sqlite3.Connection) -> None:
+def test_fulfillment_claim_without_fold_stays_open(
+    migrated_conn: sqlite3.Connection,
+) -> None:
     subject_id, deadline_id = _seed_deadline_pair(migrated_conn)
     _insert_status_assertion(migrated_conn, entity_id=subject_id)
     assert deadline_id in _listed_ids()
 
 
-def test_forged_state_provenance_does_not_close(migrated_conn: sqlite3.Connection) -> None:
-    forged = {
+@pytest.mark.parametrize(
+    ("subject_attrs", "case"),
+    [
+        (
+            {
+                "application_submitted": False,
+                "state_provenance": {
+                    "application_submitted": [
+                        {
+                            "provenance_id": "application_submitted:1",
+                            "kind": "fold",
+                            "ref": "a:1",
+                            "ref_kind": "assertion",
+                            "value": True,
+                            "assertion_id": 1,
+                        }
+                    ]
+                },
+            },
+            "mismatched_value",
+        ),
+        (
+            {
+                "application_submitted": True,
+                "state_provenance": {
+                    "application_submitted": [
+                        {
+                            "provenance_id": "application_submitted:1",
+                            "kind": "fold",
+                            "ref_kind": "assertion",
+                            "value": True,
+                            "assertion_id": 1,
+                        }
+                    ]
+                },
+            },
+            "missing_ref",
+        ),
+        (
+            {
+                "application_submitted": True,
+                "state_provenance": {
+                    "application_submitted": [
+                        {
+                            "provenance_id": "application_submitted:1",
+                            "kind": "fold",
+                            "ref": "a:1",
+                            "value": True,
+                            "assertion_id": 1,
+                        }
+                    ]
+                },
+            },
+            "missing_ref_kind",
+        ),
+    ],
+    ids=["mismatched_value", "missing_ref", "missing_ref_kind"],
+)
+def test_forged_state_provenance_does_not_close(
+    migrated_conn: sqlite3.Connection,
+    subject_attrs: dict[str, Any],
+    case: str,
+) -> None:
+    del case
+    _, deadline_id = _seed_deadline_pair(migrated_conn, subject_attrs=subject_attrs)
+    assert deadline_id in _listed_ids()
+
+
+@pytest.mark.parametrize("workflow_state", ["open", "in_progress"])
+def test_workflow_state_fold_head_non_terminal_does_not_close(
+    migrated_conn: sqlite3.Connection,
+    workflow_state: str,
+) -> None:
+    attrs = {
+        "state_provenance": {
+            "workflow_state": [
+                {
+                    "provenance_id": "workflow_state:1",
+                    "kind": "fold",
+                    "ref": "a:1",
+                    "ref_kind": "assertion",
+                    "value": workflow_state,
+                    "assertion_id": 1,
+                }
+            ]
+        }
+    }
+    _, deadline_id = _seed_deadline_pair(
+        migrated_conn,
+        deadline_wf=workflow_state,
+        deadline_attrs=attrs,
+    )
+    assert deadline_id in _listed_ids()
+
+
+def test_application_submitted_fold_head_value_false_does_not_close(
+    migrated_conn: sqlite3.Connection,
+) -> None:
+    subject_attrs = {
+        "application_submitted": False,
         "state_provenance": {
             "application_submitted": [
                 {
                     "provenance_id": "application_submitted:1",
                     "kind": "fold",
-                    "value": True,
+                    "ref": "a:1",
+                    "ref_kind": "assertion",
+                    "value": False,
                     "assertion_id": 1,
                 }
             ]
         },
-        "application_submitted": False,
     }
-    _, deadline_id = _seed_deadline_pair(migrated_conn, subject_attrs=forged)
+    _, deadline_id = _seed_deadline_pair(migrated_conn, subject_attrs=subject_attrs)
     assert deadline_id in _listed_ids()
 
 
@@ -397,7 +528,9 @@ def test_todo_legacy_outcome_met_is_omitted(migrated_conn: sqlite3.Connection) -
     assert eid not in _listed_ids()
 
 
-def test_todo_application_submitted_head_on_todo_closes(migrated_conn: sqlite3.Connection) -> None:
+def test_todo_application_submitted_head_on_todo_closes(
+    migrated_conn: sqlite3.Connection,
+) -> None:
     eid = "todo:w6-fold-self"
     insert_entity(
         migrated_conn,
@@ -415,7 +548,9 @@ def test_todo_application_submitted_head_on_todo_closes(migrated_conn: sqlite3.C
 # --- batch / infra ---
 
 
-def test_resolved_assertion_ids_chunks_large_batches(migrated_conn: sqlite3.Connection) -> None:
+def test_resolved_assertion_ids_chunks_large_batches(
+    migrated_conn: sqlite3.Connection,
+) -> None:
     ids: list[str] = []
     for i in range(520):
         dl = f"deadline:chunk-{i}"
@@ -441,7 +576,9 @@ def test_resolved_assertion_ids_chunks_large_batches(migrated_conn: sqlite3.Conn
 def test_include_resolved_returns_resolved_by_and_resolved_via(
     migrated_conn: sqlite3.Connection,
 ) -> None:
-    _, deadline_id = _seed_deadline_pair(migrated_conn, deadline_attrs={"outcome": "met"})
+    _, deadline_id = _seed_deadline_pair(
+        migrated_conn, deadline_attrs={"outcome": "met"}
+    )
     open_only = _list_deadlines_impl(include_resolved=False)["items"]
     assert deadline_id not in {i["deadline_id"] for i in open_only}
     all_rows = _list_deadlines_impl(include_resolved=True)["items"]
@@ -451,7 +588,6 @@ def test_include_resolved_returns_resolved_by_and_resolved_via(
 
 
 def test_list_deadlines_query_count_is_constant(
-    migrated_db_path: Path,
     migrated_db_template: Path,
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -459,64 +595,135 @@ def test_list_deadlines_query_count_is_constant(
     bind_db = tmp_path / "w6_qcount.db"
     copy_template_db(migrated_db_template, bind_db)
     bind_cortex_db(monkeypatch, bind_db)
-    conn = sqlite3.connect(bind_db)
+    conn = sqlite3.connect(str(bind_db))
     conn.row_factory = sqlite3.Row
-    for i in range(20):
-        insert_entity(
-            conn,
-            entity_id=f"todo:q{i}",
-            entity_type="todo",
-            name=f"todo {i}",
-            workflow_state="open",
-            attributes=json.dumps({"deadline_date": _future_date()}),
-        )
-    conn.commit()
-    counts: list[int] = []
+    select_count = 0
 
     def _trace(sql: str) -> None:
+        nonlocal select_count
         if sql.strip().upper().startswith("SELECT"):
-            counts.append(1)
+            select_count += 1
 
-    def _run() -> int:
-        counts.clear()
-        conn.set_trace_callback(_trace)
-        bind_cortex_db(monkeypatch, bind_db)
-        _list_deadlines_impl(include_resolved=False)
-        conn.set_trace_callback(None)
-        return len(counts)
+    def _traced_cortex_conn() -> sqlite3.Connection:
+        traced = sqlite3.connect(str(bind_db))
+        traced.row_factory = sqlite3.Row
+        traced.set_trace_callback(_trace)
+        return traced
 
-    conn.execute("DELETE FROM entities WHERE id LIKE 'todo:q%'").connection.commit()
-    insert_entity(
-        conn,
-        entity_id="todo:q-one",
-        entity_type="todo",
-        name="one",
-        workflow_state="open",
-        attributes=json.dumps({"deadline_date": _future_date()}),
+    monkeypatch.setattr(
+        "cortex_store.routes.deadlines.cortex_conn",
+        _traced_cortex_conn,
     )
-    conn.commit()
-    one = _run()
-    for i in range(19):
-        insert_entity(
-            conn,
-            entity_id=f"todo:q-extra-{i}",
-            entity_type="todo",
-            name=f"x{i}",
-            workflow_state="open",
-            attributes=json.dumps({"deadline_date": _future_date()}),
-        )
-    conn.commit()
-    twenty = _run()
+
+    def _run_after_seed(pairs: int) -> int:
+        nonlocal select_count
+        select_count = 0
+        _list_deadlines_impl(include_resolved=False)
+        return select_count
+
+    def _seed_arm1_pairs(n: int, *, with_resolved_claim: bool) -> None:
+        conn.execute("DELETE FROM relationships")
+        conn.execute("DELETE FROM assertions WHERE entity_id LIKE 'deadline:w6-q%'")
+        conn.execute("DELETE FROM entities WHERE id LIKE 'deadline:w6-q%'")
+        conn.execute("DELETE FROM entities WHERE id LIKE 'account:w6-q%'")
+        conn.commit()
+        for i in range(n):
+            subject_id = f"account:w6-q-sub-{i}"
+            deadline_id = f"deadline:w6-q-{i}"
+            insert_entity(
+                conn,
+                entity_id=subject_id,
+                entity_type="account",
+                name=f"sub {i}",
+            )
+            insert_entity(
+                conn,
+                entity_id=deadline_id,
+                entity_type="deadline",
+                name=f"dl {i}",
+                attributes=json.dumps({"deadline_date": _future_date()}),
+            )
+            conn.execute(
+                "INSERT INTO relationships (from_entity, to_entity, type, active) "
+                "VALUES (?, ?, 'deadline_for', 1)",
+                (deadline_id, subject_id),
+            )
+        if with_resolved_claim and n > 0:
+            conn.execute(
+                "INSERT INTO assertions (entity_id, claim, confidence, superseded_by, created_at) "
+                "VALUES ('deadline:w6-q-0', 'Deadline RESOLVED', 'confirmed', NULL, ?)",
+                (_now(),),
+            )
+        conn.commit()
+
+    _seed_arm1_pairs(1, with_resolved_claim=True)
+    one = _run_after_seed(1)
+    assert one > 0
+    _seed_arm1_pairs(20, with_resolved_claim=True)
+    twenty = _run_after_seed(20)
     assert one == twenty
+
+
+def test_open_deadline_items_matches_list_deadlines_open_set(
+    migrated_conn: sqlite3.Connection,
+) -> None:
+    """Drift open_deadline_items filter matches list_deadlines(include_resolved=False)."""
+    subject_id, deadline_fold_closed = _seed_deadline_pair(
+        migrated_conn,
+        subject_id="account:w6-fold-closed-sub",
+        deadline_id="deadline:w6-fold-closed",
+    )
+    aid_close = _insert_status_assertion(migrated_conn, entity_id=subject_id)
+    fold_claim(migrated_conn, subject_id, aid_close, "application_submitted")
+    assert deadline_fold_closed not in _open_deadline_ids_route()
+    assert deadline_fold_closed not in _open_deadline_ids_drift(migrated_conn)
+    assert _open_deadline_ids_drift(migrated_conn) == _open_deadline_ids_route()
+
+    _, deadline_unresolved = _seed_deadline_pair(
+        migrated_conn,
+        subject_id="account:w6-unres-sub",
+        deadline_id="deadline:w6-unres",
+    )
+    migrated_conn.execute(
+        "INSERT INTO assertions (entity_id, claim, confidence, superseded_by, created_at) "
+        "VALUES (?, 'Item UNRESOLVED pending', 'confirmed', NULL, ?)",
+        (deadline_unresolved, _now()),
+    )
+    migrated_conn.commit()
+    drift_open = _open_deadline_ids_drift(migrated_conn)
+    route_open = _open_deadline_ids_route()
+    assert deadline_unresolved in drift_open
+    assert drift_open == route_open
+
+    _, deadline_inactive = _seed_deadline_pair(
+        migrated_conn,
+        subject_id="account:w6-inact-sub",
+        deadline_id="deadline:w6-inact",
+        edge_active=0,
+    )
+    aid = _insert_status_assertion(migrated_conn, entity_id="account:w6-inact-sub")
+    fold_claim(migrated_conn, "account:w6-inact-sub", aid, "application_submitted")
+    drift_open = _open_deadline_ids_drift(migrated_conn)
+    route_open = _open_deadline_ids_route()
+    assert deadline_inactive in drift_open
+    assert drift_open == route_open
 
 
 def test_list_deadlines_does_not_write(migrated_conn: sqlite3.Connection) -> None:
     _seed_deadline_pair(migrated_conn)
-    entities_before = migrated_conn.execute("SELECT COUNT(*) FROM entities").fetchone()[0]
-    assertions_before = migrated_conn.execute("SELECT COUNT(*) FROM assertions").fetchone()[0]
+    entities_before = migrated_conn.execute("SELECT COUNT(*) FROM entities").fetchone()[
+        0
+    ]
+    assertions_before = migrated_conn.execute(
+        "SELECT COUNT(*) FROM assertions"
+    ).fetchone()[0]
     _list_deadlines_impl(include_resolved=False)
-    entities_after = migrated_conn.execute("SELECT COUNT(*) FROM entities").fetchone()[0]
-    assertions_after = migrated_conn.execute("SELECT COUNT(*) FROM assertions").fetchone()[0]
+    entities_after = migrated_conn.execute("SELECT COUNT(*) FROM entities").fetchone()[
+        0
+    ]
+    assertions_after = migrated_conn.execute(
+        "SELECT COUNT(*) FROM assertions"
+    ).fetchone()[0]
     assert entities_after == entities_before
     assert assertions_after == assertions_before
 
