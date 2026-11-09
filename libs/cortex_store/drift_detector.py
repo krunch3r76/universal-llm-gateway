@@ -188,10 +188,16 @@ def _detect_f1(entity_id: str, card: dict[str, object]) -> list[DriftRow]:
     ):
         return []
     out: list[DriftRow] = []
-    for surface, text in (
+    surfaces: list[tuple[str, str]] = [
         ("summary_row", str(card.get("summary_row") or "")),
         ("predicate_summary", str(card.get("predicate_summary") or "")),
-    ):
+    ]
+    authored = card.get("authored_note")
+    if isinstance(authored, dict):
+        note_text = str(authored.get("text") or "")
+        if note_text:
+            surfaces.append(("authored_note", note_text))
+    for surface, text in surfaces:
         if text and _NEGATION_RE.search(text):
             cite = ",".join(
                 k

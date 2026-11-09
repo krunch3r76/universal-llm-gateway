@@ -43,7 +43,9 @@ from .compaction import (
 from .concern_aggregate.views import read_head
 from .confidence_field import agent_skill_is_discoverable
 from .db import json_decode, query
+from .entity_state_flag_rule import extract_flag_reason
 from .models import (
+    AuthoredNote,
     CardAssertion,
     CardAssertionCounts,
     CardDebug,
@@ -142,16 +144,28 @@ def _extract_state_from_predicate(predicate_form: str) -> str | None:
     return status_functor_state_token(p.args, p.name)
 
 
-def _extract_flag_reason(review_notes: str) -> str | None:
-    if not review_notes:
-        return None
-    for part in review_notes.split(";"):
-        chunk = part.strip()
-        if chunk.startswith("predicate normalize:"):
-            remainder = chunk.removeprefix("predicate normalize:").strip()
-            token = remainder.split(":", 1)[0].strip()
-            return token or None
-    return None
+def _pin_withhold_suffix(current_status: CurrentStatus, view: object) -> str:
+    from .entity_state_render import StatusView as _StatusView
+
+    if not isinstance(view, _StatusView):
+        return ""
+    if not current_status.withheld_newer:
+        return ""
+    by_id = {int(w.assertion_id): w for w in current_status.withheld_newer}
+    suffix_parts: list[str] = []
+    emitted: set[int] = set()
+    for field in sorted(view.rendered_fields):
+        fs = view.field_states.get(field)
+        if fs is None:
+            continue
+        nid = fs.newer_claim_id
+        if nid is None or nid not in by_id or nid in emitted:
+            continue
+        emitted.add(nid)
+        entry = by_id[nid]
+        reason = entry.reason or "flagged-no-parsed-reason"
+        suffix_parts.append(f" · pin withholds a:{nid} ({reason})")
+    return "".join(suffix_parts)
 
 
 def _entity_is_concern_typed(
@@ -210,7 +224,7 @@ def _fetch_qualified_current_status(
                 WithheldStatusEntry(
                     assertion_id=int(row["id"]),  # type: ignore[arg-type]
                     state=_extract_state_from_predicate(pf),
-                    reason=_extract_flag_reason(str(row.get("review_notes") or "")),
+                    reason=extract_flag_reason(str(row.get("review_notes") or "")),
                     observed_at=str(row.get("observed_at") or row_created or ""),
                 )
             )
@@ -423,6 +437,9 @@ def get_entity_card(
     all_active_claims = [str(r["claim"]) for r in a_rows]
     surfaced_rows: list[dict[str, object]] = []
     current_status = CurrentStatus()
+    from .entity_state_render import StatusView, try_derive_status_view
+
+    status_view: StatusView | None = None
     if active_n > 0 and is_tombstone_only(all_active_claims):
         summary_rows = query(
             conn,
@@ -442,7 +459,9 @@ def get_entity_card(
             else "tombstoned"
         )
     else:
-        if _entity_is_concern_typed(conn, entity_id=entity_id, entity_type=str(e["type"])):
+        if _entity_is_concern_typed(
+            conn, entity_id=entity_id, entity_type=str(e["type"])
+        ):
             current_status = _fetch_concern_typed_current_status(
                 conn, entity_id=entity_id
             )
@@ -459,6 +478,7 @@ def get_entity_card(
             )
         surfaced_rows = _merge_current_status_slot(a_rows, e_row, top_k=top_k)
         top_k_for_card = [_card_assertion(r) for r in surfaced_rows]
+        status_view = try_derive_status_view(conn, entity_id, dict(e), site="card read")
         predicate_summary, _summary_withheld = aggregate_predicate_summary(
             top_k_assertions=a_rows,
             et_type_counts=[
@@ -467,7 +487,31 @@ def get_entity_card(
             archives_to_children=archives_to_children,
             entity_id=entity_id,
             pin_withheld_count=current_status.withheld_count,
+            suppress_status_tokens=(
+                status_view.suppress_status_tokens if status_view is not None else None
+            ),
+            derived_field_values=(
+                {
+                    f: status_view.field_states[f].value
+                    for f in status_view.rendered_fields
+                    if f in status_view.field_states
+                }
+                if status_view is not None
+                else None
+            ),
         )
+
+    summary_row = adapter.summary_row(dict(e))
+    authored_note: AuthoredNote | None = None
+    if status_view is not None:
+        summary_row = status_view.sentence + _pin_withhold_suffix(
+            current_status, status_view
+        )
+        desc = str(e.get("description") or "").strip()
+        if desc:
+            authored_note = AuthoredNote(
+                text=desc, updated_at=str(e.get("updated_at") or "")
+            )
 
     debug_payload: CardDebug | None = None
     if debug:
@@ -488,7 +532,8 @@ def get_entity_card(
         type=str(e["type"]),
         name=str(e["name"]),
         attributes=_entity_attributes_for_card(e.get("attributes")),
-        summary_row=adapter.summary_row(dict(e)),
+        summary_row=summary_row,
+        authored_note=authored_note,
         status_summary=adapter.status_summary(dict(e)),
         top_k_assertions=top_k_for_card,
         current_status=current_status,

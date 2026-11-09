@@ -17,6 +17,7 @@ from cortex_store.entity_crud import ENTITY_JSON_FIELDS
 from cortex_store.entity_state_flag_rule import flag_withholds
 from cortex_store.entity_state_fold_gate import ResolveUtterance, gate_refusal
 from cortex_store.entity_state_provenance import (
+    FOLD_FIELDS,
     claim_binds_field,
     parse_attributes,
     parse_status_current,
@@ -36,6 +37,8 @@ class FieldState:
     head_ref: str | None
     newer_claim_id: int | None
     marker: str | None = None
+    newer_review_status: str | None = None
+    newer_claim_created_at: str | None = None
 
 
 def _field_verified(
@@ -59,7 +62,7 @@ def _field_verified(
 def _fetch_claim_rows(conn: sqlite3.Connection, entity_id: str) -> list[dict[str, Any]]:
     rows = db_query(
         conn,
-        "SELECT * FROM assertions WHERE entity_id = ?",
+        "SELECT * FROM assertions WHERE entity_id = ? AND superseded_by IS NULL",
         (entity_id,),
     )
     out = [dict(r) for r in rows]
@@ -118,36 +121,31 @@ def _claim_eligible_for_field_state(
     return True
 
 
-def field_state(
+def _field_state_core(
     conn: sqlite3.Connection,
-    entity_id: str,
-    field: str,
     *,
-    resolver: ResolveUtterance | None = None,
+    entity_id: str,
+    entity_type: str,
+    attrs: dict[str, Any],
+    workflow_state: str | None,
+    field: str,
+    claim_rows: list[dict[str, Any]],
+    state_provenance: dict[str, Any],
+    resolver: ResolveUtterance | None,
 ) -> FieldState:
-    """Read-only field head + newest eligible claim (decision 13)."""
-    install_card_temporal_function(conn)
-    ent = conn.execute(
-        "SELECT type, attributes, workflow_state FROM entities WHERE id = ?",
-        (entity_id,),
-    ).fetchone()
-    if ent is None:
-        return FieldState(None, False, "unverified", None, None)
-    attrs = parse_attributes(ent["attributes"])
-    sp = attrs.get("state_provenance")
-    state_provenance = dict(sp) if isinstance(sp, dict) else {}
-    verification, head = _field_verified(attrs, field, ent["workflow_state"])
+    verification, head = _field_verified(attrs, field, workflow_state)
     head_ref = str(head.get("ref")) if head and head.get("ref") else None
     marker = str(head.get("marker")) if head and head.get("marker") else None
     if field == "workflow_state":
-        value, present = ent["workflow_state"], ent["workflow_state"] is not None
+        value, present = workflow_state, workflow_state is not None
     else:
         val = attrs.get(field)
         present = field in attrs and val is not None
         value = val
-    entity_type = str(ent["type"])
     newest_id: int | None = None
-    for row in _fetch_claim_rows(conn, entity_id):
+    newest_rs: str | None = None
+    newest_created: str | None = None
+    for row in claim_rows:
         if _claim_eligible_for_field_state(
             conn,
             entity_id=entity_id,
@@ -158,12 +156,22 @@ def field_state(
             resolver=resolver,
         ):
             newest_id = int(row["id"])
+            newest_rs = (
+                str(row.get("review_status")) if row.get("review_status") is not None else None
+            )
+            newest_created = str(row.get("created_at") or "") or None
             break
     newer_out: int | None = None
+    newer_rs_out: str | None = None
+    newer_created_out: str | None = None
     if verification == "unverified":
         newer_out = newest_id
+        newer_rs_out = newest_rs
+        newer_created_out = newest_created
     elif newest_id is not None and head and head.get("assertion_id") != newest_id:
         newer_out = newest_id
+        newer_rs_out = newest_rs
+        newer_created_out = newest_created
     return FieldState(
         value=value,
         present=present,
@@ -171,7 +179,59 @@ def field_state(
         head_ref=head_ref,
         newer_claim_id=newer_out,
         marker=marker,
+        newer_review_status=newer_rs_out,
+        newer_claim_created_at=newer_created_out,
     )
+
+
+def field_states(
+    conn: sqlite3.Connection,
+    entity_id: str,
+    fields: frozenset[str] = FOLD_FIELDS,
+    *,
+    resolver: ResolveUtterance | None = None,
+) -> dict[str, FieldState]:
+    """Batch field_state for fold fields (one entity SELECT, one claim fetch)."""
+    install_card_temporal_function(conn)
+    ent = conn.execute(
+        "SELECT type, attributes, workflow_state FROM entities WHERE id = ?",
+        (entity_id,),
+    ).fetchone()
+    if ent is None:
+        return {}
+    attrs = parse_attributes(ent["attributes"])
+    sp = attrs.get("state_provenance")
+    state_provenance = dict(sp) if isinstance(sp, dict) else {}
+    entity_type = str(ent["type"])
+    claim_rows = _fetch_claim_rows(conn, entity_id)
+    out: dict[str, FieldState] = {}
+    for field in fields:
+        out[field] = _field_state_core(
+            conn,
+            entity_id=entity_id,
+            entity_type=entity_type,
+            attrs=attrs,
+            workflow_state=ent["workflow_state"],
+            field=field,
+            claim_rows=claim_rows,
+            state_provenance=state_provenance,
+            resolver=resolver,
+        )
+    return out
+
+
+def field_state(
+    conn: sqlite3.Connection,
+    entity_id: str,
+    field: str,
+    *,
+    resolver: ResolveUtterance | None = None,
+) -> FieldState:
+    """Read-only field head + newest eligible claim (decision 13)."""
+    states = field_states(conn, entity_id, frozenset({field}), resolver=resolver)
+    if field not in states:
+        return FieldState(None, False, "unverified", None, None)
+    return states[field]
 
 
 def read_entity(conn: sqlite3.Connection, entity_id: str) -> dict[str, object] | None:
