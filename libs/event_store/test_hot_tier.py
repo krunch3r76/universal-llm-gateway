@@ -48,7 +48,9 @@ def _ev(
 @pytest.mark.parametrize(
     "op",
     [
-        lambda s, since: _signal_events({"signal": _SIGNAL, "since_ts": since, "limit": 50}, s),
+        lambda s, since: _signal_events(
+            {"signal": _SIGNAL, "since_ts": since, "limit": 50}, s
+        ),
         lambda s, since: _model_timeline({"model_id": _MODEL, "since_ts": since}, s),
         lambda s, _: _request_trace({"request_id": "req-parity", "limit": 50}, s),
     ],
@@ -61,8 +63,7 @@ def test_hot_and_cold_parity_window_queries(op) -> None:
             now = int(time.time() * 1000)
             since = now - 30 * 60 * 1000
             rows = [
-                _ev(ts=since + i * 1000, request_id="req-parity")
-                for i in range(30)
+                _ev(ts=since + i * 1000, request_id="req-parity") for i in range(30)
             ]
             await store.insert_events(rows)
             assert store._hot is not None
@@ -136,7 +137,10 @@ def test_warm_start_keeps_recent_only() -> None:
                 assert hot is not None
                 assert hot.row_count() == 1
                 row = await store2.query(
-                    "SELECT ts_unix_ms FROM events", (), limit=10, since_ts_ms=hot.floor_ts_ms
+                    "SELECT ts_unix_ms FROM events",
+                    (),
+                    limit=10,
+                    since_ts_ms=hot.floor_ts_ms,
                 )
                 assert len(row) == 1
                 assert int(row[0]["ts_unix_ms"]) == recent
@@ -154,7 +158,9 @@ def test_hot_insert_failure_degrades_and_cold_intact() -> None:
         try:
             hot = store._hot
             assert hot is not None
-            with mock.patch.object(hot, "insert_rows", side_effect=sqlite3.OperationalError("boom")):
+            with mock.patch.object(
+                hot, "insert_rows", side_effect=sqlite3.OperationalError("boom")
+            ):
                 await store.insert_events([_ev(ts=int(time.time() * 1000))])
             assert hot.degraded is True
             n = await store.query("SELECT COUNT(*) AS n FROM events", (), limit=1)
@@ -229,7 +235,9 @@ def test_eviction_failure_degrades_without_raising_ingest() -> None:
         try:
             hot = store._hot
             assert hot is not None
-            with mock.patch.object(hot, "evict", side_effect=RuntimeError("evict fail")):
+            with mock.patch.object(
+                hot, "evict", side_effect=RuntimeError("evict fail")
+            ):
                 store.maybe_evict_hot_tier()
             assert hot.degraded is True
             await store.insert_events([_ev(ts=int(time.time() * 1000))])
@@ -304,9 +312,7 @@ def test_hot_signal_read_latency_under_5ms() -> None:
                 "FROM events WHERE signal = ? AND ts_unix_ms >= ? ORDER BY ts_unix_ms DESC LIMIT ?"
             )
             params = (_SIGNAL, since, 50)
-            plan = store._db.execute(
-                "EXPLAIN QUERY PLAN " + sql, params
-            ).fetchall()
+            plan = store._db.execute("EXPLAIN QUERY PLAN " + sql, params).fetchall()
             plan_text = " ".join(str(r[-1]) for r in plan).lower()
             assert "idx_signal_ts" in plan_text or "signal" in plan_text
             await store.query(sql, params, since_ts_ms=since, limit=50)
@@ -325,6 +331,7 @@ def test_hot_signal_read_latency_under_5ms() -> None:
 @pytest.mark.offline
 def test_open_warms_before_ingest_ordering_comment() -> None:
     """Warm completes inside open(); server.run_service calls open() before ingest.start()."""
+
     async def _run() -> None:
         store = EventStore(":memory:")
         await store.open()
@@ -336,9 +343,6 @@ def test_open_warms_before_ingest_ordering_comment() -> None:
             await store.close()
 
     asyncio.run(_run())
-
-
-WARM_PLAN_TEXT: str | None = None
 
 
 @pytest.mark.offline
@@ -417,41 +421,85 @@ def test_mirror_after_empty_warm_reads_at_most_new_rows(tmp_path: Path) -> None:
 
 @pytest.mark.offline
 def test_warm_select_uses_idx_ts_unix_ms_explain() -> None:
-    global WARM_PLAN_TEXT
     conn = sqlite3.connect(":memory:")
     conn.executescript(_SCHEMA_SQL)
     floor = int(time.time() * 1000) - 60_000
     plan = conn.execute(
         "EXPLAIN QUERY PLAN " + _SELECT_WARM, (floor, floor, floor, 0, _WARM_CHUNK)
     ).fetchall()
-    WARM_PLAN_TEXT = " ".join(str(cell) for row in plan for cell in row)
-    assert "idx_ts_unix_ms" in WARM_PLAN_TEXT.lower()
+    plan_text = " ".join(str(cell) for row in plan for cell in row)
+    lower = plan_text.lower()
+    assert "idx_ts_unix_ms" in lower
+    assert "use temp b-tree for order by" not in lower
 
 
 @pytest.mark.offline
-def test_hot_budget_interrupt_falls_back_to_cold_with_raise_on_error() -> None:
+def test_hot_progress_handler_budget_falls_back_to_cold(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr("event_store.hot_tier._HOT_READ_BUDGET_S", 0.0)
+
     async def _run() -> None:
         store = EventStore(":memory:")
         await store.open()
         try:
             ts = int(time.time() * 1000)
-            await store.insert_events([_ev(ts=ts), _ev(ts=ts + 1)])
+            since = ts - 60_000
+            await store.insert_events([_ev(ts=since + i) for i in range(4000)])
+            hot = store._hot
+            assert hot is not None
+            sql = (
+                "WITH RECURSIVE cnt(n) AS ("
+                "  SELECT 1 UNION ALL SELECT n + 1 FROM cnt WHERE n < 120000"
+                ") "
+                "SELECT e.seq FROM events e "
+                "JOIN cnt ON cnt.n % 11 = (e.seq % 11) "
+                "WHERE e.ts_unix_ms >= ? "
+                "ORDER BY e.seq LIMIT 4000"
+            )
+            rows = await store.query(
+                sql,
+                (since,),
+                since_ts_ms=since,
+                raise_on_error=True,
+                limit=4000,
+            )
+            assert hot.degraded is False
+            expected = store._db.execute(
+                "SELECT COUNT(*) FROM events WHERE ts_unix_ms >= ?", (since,)
+            ).fetchone()[0]
+            assert len(rows) == expected
+        finally:
+            await store.close()
+
+    asyncio.run(_run())
+
+
+@pytest.mark.offline
+def test_hot_non_budget_operational_error_still_raises() -> None:
+    async def _run() -> None:
+        store = EventStore(":memory:")
+        await store.open()
+        try:
+            ts = int(time.time() * 1000)
+            await store.insert_events([_ev(ts=ts)])
             hot = store._hot
             assert hot is not None
             since = ts - 60_000
-
-            with mock.patch.object(
-                hot,
-                "execute_query",
-                side_effect=sqlite3.OperationalError("interrupted"),
+            with (
+                mock.patch.object(
+                    hot,
+                    "execute_query",
+                    side_effect=sqlite3.OperationalError("abort at line 1"),
+                ),
+                pytest.raises(sqlite3.OperationalError),
             ):
-                rows = await store.query(
-                    "SELECT seq FROM events WHERE ts_unix_ms >= ? ORDER BY seq",
+                await store.query(
+                    "SELECT seq FROM events WHERE ts_unix_ms >= ?",
                     (since,),
                     since_ts_ms=since,
                     raise_on_error=True,
                 )
-            assert len(rows) == 2
         finally:
             await store.close()
 

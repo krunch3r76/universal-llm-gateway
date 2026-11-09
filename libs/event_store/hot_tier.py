@@ -17,6 +17,11 @@ from .schema import (
 
 logger = logging.getLogger(__name__)
 
+
+class HotTierReadBudgetExceeded(sqlite3.OperationalError):
+    """Hot-tier read stopped by the progress-handler time budget."""
+
+
 _WARM_CHUNK = 5000
 _HOT_READ_BUDGET_S = 0.25
 _EVENT_COLS = (
@@ -124,7 +129,9 @@ class HotTier:
 
     def mark_degraded(self, reason: str) -> None:
         if not self.degraded:
-            logger.error("Hot tier degraded; routing to cold until next warm: %s", reason)
+            logger.error(
+                "Hot tier degraded; routing to cold until next warm: %s", reason
+            )
         self.degraded = True
 
     def row_count(self) -> int:
@@ -157,9 +164,12 @@ class HotTier:
     ) -> list[dict[str, Any]]:
         conn = self._reader_connection()
         deadline = time.monotonic() + _HOT_READ_BUDGET_S
+        budget_armed = False
 
         def _progress_handler() -> int:
+            nonlocal budget_armed
             if time.monotonic() >= deadline:
+                budget_armed = True
                 return 1
             return 0
 
@@ -167,6 +177,10 @@ class HotTier:
         try:
             cursor = conn.execute(sql, params)
             return [dict(row) for row in cursor.fetchmany(limit)]
+        except sqlite3.OperationalError as exc:
+            if budget_armed or "interrupted" in str(exc).lower():
+                raise HotTierReadBudgetExceeded(str(exc)) from exc
+            raise
         finally:
             conn.set_progress_handler(None, 0)
 

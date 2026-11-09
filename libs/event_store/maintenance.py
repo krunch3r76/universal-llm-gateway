@@ -7,6 +7,7 @@ import json
 import logging
 import os
 import shutil
+import socket
 import sqlite3
 import sys
 import time
@@ -40,26 +41,22 @@ def _query_sock_path() -> Path:
 
 
 def _query_socket_live(sock: Path | None = None) -> bool:
-    """True when the event-service query UDS accepts a connection (service up)."""
+    """True when the event-service query UDS likely has a listener (fail closed)."""
     path = sock or _query_sock_path()
     if not path.is_socket():
         return False
+    client = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    client.settimeout(0.5)
     try:
-        from transport_utils import make_sync_client
-
-        with make_sync_client(f"unix://{path}", timeout=0.5) as client:
-            try:
-                resp = client.get("/health")
-                return resp.status_code == 200
-            except Exception:
-                # Connect succeeded; a slow handler still means the service is live.
-                return True
-    except (FileNotFoundError, ConnectionRefusedError):
-        return False
-    except OSError as exc:
-        if exc.errno in (2, 111):  # ENOENT, ECONNREFUSED
+        try:
+            client.connect(str(path))
+            return True
+        except (FileNotFoundError, ConnectionRefusedError):
             return False
-        return True
+        except OSError:
+            return True
+    finally:
+        client.close()
 
 
 def _refuse_live_db(db_path: Path, *, live_window: bool) -> None:
@@ -120,15 +117,23 @@ def _session_cutoff(conn: sqlite3.Connection) -> int | None:
     return int(row["ts"])
 
 
-def _count_where(conn: sqlite3.Connection, table: str, where: str, params: tuple[Any, ...]) -> int:
-    row = conn.execute(f"SELECT COUNT(*) AS n FROM {table} WHERE {where}", params).fetchone()
+def _count_where(
+    conn: sqlite3.Connection, table: str, where: str, params: tuple[Any, ...]
+) -> int:
+    row = conn.execute(
+        f"SELECT COUNT(*) AS n FROM {table} WHERE {where}", params
+    ).fetchone()
     return int(row["n"] if row is not None else 0)
 
 
-def _dry_run_counts(conn: sqlite3.Connection, *, age_cutoff: int, session_cutoff: int | None) -> dict[str, int]:
+def _dry_run_counts(
+    conn: sqlite3.Connection, *, age_cutoff: int, session_cutoff: int | None
+) -> dict[str, int]:
     counts: dict[str, int] = {}
     for table in _RETENTION_TABLES:
-        counts[f"age_{table}"] = _count_where(conn, table, "ts_unix_ms < ?", (age_cutoff,))
+        counts[f"age_{table}"] = _count_where(
+            conn, table, "ts_unix_ms < ?", (age_cutoff,)
+        )
     if session_cutoff is not None:
         counts["debug"] = _count_where(
             conn,
@@ -182,10 +187,14 @@ def _delete_keyset(
     return total
 
 
-def _execute_retention(conn: sqlite3.Connection, *, age_cutoff: int, session_cutoff: int | None) -> dict[str, int]:
+def _execute_retention(
+    conn: sqlite3.Connection, *, age_cutoff: int, session_cutoff: int | None
+) -> dict[str, int]:
     deleted: dict[str, int] = {}
     for table in _RETENTION_TABLES:
-        deleted[f"age_{table}"] = _delete_keyset(conn, table, "ts_unix_ms < ?", (age_cutoff,))
+        deleted[f"age_{table}"] = _delete_keyset(
+            conn, table, "ts_unix_ms < ?", (age_cutoff,)
+        )
     if session_cutoff is not None:
         deleted["debug"] = _delete_keyset(
             conn,
@@ -234,8 +243,12 @@ def run_maintenance(argv: list[str] | None = None) -> int:
         action="store_true",
         help="Apply deletes and maintenance (default is dry-run counts only)",
     )
-    parser.add_argument("--vacuum", action="store_true", help="Run VACUUM after deletes")
-    parser.add_argument("--skip-index", action="store_true", help="Skip idx_model_id_ts build")
+    parser.add_argument(
+        "--vacuum", action="store_true", help="Run VACUUM after deletes"
+    )
+    parser.add_argument(
+        "--skip-index", action="store_true", help="Skip idx_model_id_ts build"
+    )
     parser.add_argument(
         "--live-maintenance-window",
         action="store_true",
@@ -268,7 +281,9 @@ def run_maintenance(argv: list[str] | None = None) -> int:
         return 0
 
     t1 = time.perf_counter()
-    deleted = _execute_retention(conn, age_cutoff=age_cutoff, session_cutoff=session_cutoff)
+    deleted = _execute_retention(
+        conn, age_cutoff=age_cutoff, session_cutoff=session_cutoff
+    )
     _emit("retention_execute", elapsed_s=time.perf_counter() - t1, deleted=deleted)
 
     if not args.skip_index:

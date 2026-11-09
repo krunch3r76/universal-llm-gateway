@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import socket
 import sqlite3
+import threading
 import time
 from pathlib import Path
 from unittest import mock
@@ -67,9 +69,7 @@ def test_live_window_refuses_when_query_socket_answers(tmp_path: Path) -> None:
     if not live.is_file():
         pytest.skip("live events.db not present")
     with (
-        mock.patch(
-            "event_store.maintenance._query_socket_live", return_value=True
-        ),
+        mock.patch("event_store.maintenance._query_socket_live", return_value=True),
         pytest.raises(SystemExit, match="query socket"),
     ):
         run_maintenance(["--db", str(live), "--live-maintenance-window"])
@@ -81,12 +81,12 @@ def test_vacuum_refuses_when_query_socket_answers(tmp_path: Path) -> None:
     if not live.is_file():
         pytest.skip("live events.db not present")
     with (
-        mock.patch(
-            "event_store.maintenance._query_socket_live", return_value=True
-        ),
+        mock.patch("event_store.maintenance._query_socket_live", return_value=True),
         pytest.raises(SystemExit, match="query socket is live"),
     ):
-        run_maintenance(["--db", str(live), "--execute", "--vacuum", "--live-maintenance-window"])
+        run_maintenance(
+            ["--db", str(live), "--execute", "--vacuum", "--live-maintenance-window"]
+        )
 
 
 @pytest.mark.offline
@@ -113,60 +113,118 @@ def test_query_socket_probe_no_socket(tmp_path: Path) -> None:
 
 @pytest.mark.offline
 def test_query_socket_probe_stale_socket_file(tmp_path: Path) -> None:
+    plain = tmp_path / "not-a-socket.txt"
+    plain.write_text("not a socket", encoding="utf-8")
+    assert _query_socket_live(plain) is False
+
     stale = tmp_path / "stale.sock"
-    stale.write_text("not a socket", encoding="utf-8")
+    bound = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    bound.bind(str(stale))
+    bound.close()
+    assert stale.is_socket()
     assert _query_socket_live(stale) is False
+
+
+def _uds_accept_loop(sock_path: Path, on_conn) -> None:
+    srv = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    srv.bind(str(sock_path))
+    srv.listen(1)
+    stop = threading.Event()
+
+    def _serve() -> None:
+        while not stop.is_set():
+            try:
+                srv.settimeout(0.5)
+                conn, _ = srv.accept()
+            except TimeoutError:
+                continue
+            except OSError:
+                break
+            try:
+                on_conn(conn)
+            except OSError:
+                pass
+            finally:
+                try:
+                    conn.close()
+                except OSError:
+                    pass
+        try:
+            srv.close()
+        except OSError:
+            pass
+
+    thread = threading.Thread(target=_serve, daemon=True)
+    thread.start()
+    return stop, thread, srv
 
 
 @pytest.mark.offline
 def test_query_socket_probe_live_unix_server(tmp_path: Path) -> None:
-    import socket
-    import threading
-
     sock_path = tmp_path / "live.sock"
 
-    def _serve() -> None:
-        srv = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-        srv.bind(str(sock_path))
-        srv.listen(1)
-        conn, _ = srv.accept()
-        conn.recv(4096)
-        conn.sendall(b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok")
-        conn.close()
-        srv.close()
+    def _handle(conn: socket.socket) -> None:
+        try:
+            conn.recv(4096)
+        except OSError:
+            return
+        try:
+            conn.sendall(b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok")
+        except OSError:
+            pass
 
-    thread = threading.Thread(target=_serve, daemon=True)
-    thread.start()
-    deadline = time.time() + 2.0
-    while not sock_path.exists() and time.time() < deadline:
-        time.sleep(0.01)
-    assert _query_socket_live(sock_path) is True
-    thread.join(timeout=2.0)
+    stop, thread, srv = _uds_accept_loop(sock_path, _handle)
+    try:
+        assert _query_socket_live(sock_path) is True
+    finally:
+        stop.set()
+        srv.close()
+        thread.join(timeout=2.0)
 
 
 @pytest.mark.offline
-def test_query_socket_probe_slow_server_still_live(tmp_path: Path) -> None:
-    import socket
-    import threading
+def test_query_socket_probe_http_503_listener_live(tmp_path: Path) -> None:
+    sock_path = tmp_path / "503.sock"
 
+    def _handle(conn: socket.socket) -> None:
+        try:
+            conn.recv(4096)
+        except OSError:
+            return
+        try:
+            conn.sendall(
+                b"HTTP/1.1 503 Service Unavailable\r\nContent-Length: 0\r\n\r\n"
+            )
+        except OSError:
+            pass
+
+    stop, thread, srv = _uds_accept_loop(sock_path, _handle)
+    try:
+        assert _query_socket_live(sock_path) is True
+    finally:
+        stop.set()
+        srv.close()
+        thread.join(timeout=2.0)
+
+
+@pytest.mark.offline
+def test_query_socket_probe_slow_accept_still_live(tmp_path: Path) -> None:
     sock_path = tmp_path / "slow.sock"
 
-    def _serve() -> None:
-        srv = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-        srv.bind(str(sock_path))
-        srv.listen(1)
-        conn, _ = srv.accept()
+    def _handle(conn: socket.socket) -> None:
         time.sleep(2.0)
-        conn.close()
-        srv.close()
+        try:
+            conn.close()
+        except OSError:
+            pass
 
-    thread = threading.Thread(target=_serve, daemon=True)
-    thread.start()
-    deadline = time.time() + 2.0
-    while not sock_path.exists() and time.time() < deadline:
-        time.sleep(0.01)
-    assert _query_socket_live(sock_path) is True
-    thread.join(timeout=3.0)
+    stop, thread, srv = _uds_accept_loop(sock_path, _handle)
+    try:
+        assert _query_socket_live(sock_path) is True
+    finally:
+        stop.set()
+        srv.close()
+        thread.join(timeout=3.0)
 
 
 @pytest.mark.offline

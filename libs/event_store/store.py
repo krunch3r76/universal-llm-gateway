@@ -28,7 +28,7 @@ from pathlib import Path
 from typing import Any
 
 from .errors import EventStoreBusyError, EventStoreReadDeadlineError, is_sqlite_busy
-from .hot_tier import HotTier
+from .hot_tier import HotTier, HotTierReadBudgetExceeded
 from .retention import HEARTBEAT_SIGNALS
 from .schema import (
     _SCHEMA_SQL,
@@ -155,10 +155,11 @@ _HOT_ROW_COLS = (
 
 def _hot_read_budget_interrupt(exc: BaseException) -> bool:
     """True when the hot-tier progress handler stopped the read for the budget."""
-    if not isinstance(exc, sqlite3.OperationalError):
-        return False
-    msg = str(exc).lower()
-    return "interrupted" in msg or "abort" in msg
+    if isinstance(exc, HotTierReadBudgetExceeded):
+        return True
+    if isinstance(exc, sqlite3.OperationalError):
+        return "interrupted" in str(exc).lower()
+    return False
 
 
 def _ts_ms_from_iso(iso: str) -> int:
@@ -720,9 +721,7 @@ class EventStore:
                 if raise_on_error and not _hot_read_budget_interrupt(e):
                     raise
             except Exception as e:
-                logger.exception(
-                    "Hot tier query failed, falling back to cold: %s", e
-                )
+                logger.exception("Hot tier query failed, falling back to cold: %s", e)
                 if raise_on_error:
                     raise
 
@@ -922,7 +921,10 @@ class EventStore:
                         cumulative=total,
                         elapsed_ms=elapsed_ms,
                     )
-                    loop.call_soon_threadsafe(self._mirror_accepted_to_hot)
+                    try:
+                        loop.call_soon_threadsafe(self._mirror_accepted_to_hot)
+                    except RuntimeError:
+                        pass
                 if deleted < batch_size:
                     break
                 if self._retention_stop.wait(max(sleep_s, elapsed_ms / 1000)):
