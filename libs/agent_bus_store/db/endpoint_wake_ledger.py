@@ -134,10 +134,61 @@ def advance_scan(
             filtered.append(item)
         ledger_cols = _ledger_columns(conn)
         has_delivery_agent_id = "delivery_agent_id" in ledger_cols
+        has_subscription_id = "subscription_id" in ledger_cols
         for item in filtered:
             state = item.get("state", "pending")
             delivery_id = item.get("delivery_agent_id")
-            if has_delivery_agent_id:
+            subscription_id = item.get("subscription_id")
+            if state == "pending":
+                existing = conn.execute(
+                    "SELECT id, state, reason FROM endpoint_wake_ledger "
+                    "WHERE agent=? AND thread_id=? AND turn_id=?",
+                    (item["agent"], item["thread_id"], item["turn_id"]),
+                ).fetchone()
+                if (
+                    existing is not None
+                    and str(existing["state"] or "") == "skipped"
+                    and str(existing["reason"] or "") == "no_route:scan_holder"
+                ):
+                    if has_subscription_id:
+                        conn.execute(
+                            "UPDATE endpoint_wake_ledger SET state='pending', reason=NULL, "
+                            "finished_at=NULL, decided_by_rule=?, subscription_id=COALESCE(?, "
+                            "subscription_id) WHERE id=?",
+                            (
+                                item.get("decided_by_rule"),
+                                subscription_id,
+                                existing["id"],
+                            ),
+                        )
+                    else:
+                        conn.execute(
+                            "UPDATE endpoint_wake_ledger SET state='pending', reason=NULL, "
+                            "finished_at=NULL, decided_by_rule=? WHERE id=?",
+                            (item.get("decided_by_rule"), existing["id"]),
+                        )
+                    continue
+            if has_delivery_agent_id and has_subscription_id:
+                conn.execute(
+                    "INSERT OR IGNORE INTO endpoint_wake_ledger "
+                    "(agent, thread_id, turn_id, turn_number, state, reason, created_at, "
+                    "finished_at, decided_by_rule, delivery_agent_id, subscription_id) "
+                    "VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+                    (
+                        item["agent"],
+                        item["thread_id"],
+                        item["turn_id"],
+                        item["turn_number"],
+                        state,
+                        item.get("reason") if state == "skipped" else None,
+                        stamp,
+                        stamp if state == "skipped" else None,
+                        item.get("decided_by_rule"),
+                        delivery_id if delivery_id else None,
+                        subscription_id,
+                    ),
+                )
+            elif has_delivery_agent_id:
                 conn.execute(
                     "INSERT OR IGNORE INTO endpoint_wake_ledger "
                     "(agent, thread_id, turn_id, turn_number, state, reason, created_at, "
@@ -154,6 +205,25 @@ def advance_scan(
                         stamp if state == "skipped" else None,
                         item.get("decided_by_rule"),
                         delivery_id if delivery_id else None,
+                    ),
+                )
+            elif has_subscription_id:
+                conn.execute(
+                    "INSERT OR IGNORE INTO endpoint_wake_ledger "
+                    "(agent, thread_id, turn_id, turn_number, state, reason, created_at, "
+                    "finished_at, decided_by_rule, subscription_id) "
+                    "VALUES (?,?,?,?,?,?,?,?,?,?)",
+                    (
+                        item["agent"],
+                        item["thread_id"],
+                        item["turn_id"],
+                        item["turn_number"],
+                        state,
+                        item.get("reason") if state == "skipped" else None,
+                        stamp,
+                        stamp if state == "skipped" else None,
+                        item.get("decided_by_rule"),
+                        subscription_id,
                     ),
                 )
             else:
@@ -180,6 +250,46 @@ def advance_scan(
             (new_high_water, stamp, consumer),
         )
         return {"high_water_turn_id": new_high_water, "inserted": len(filtered)}
+
+
+def promote_routable_scan_holder_skips(store: Any) -> int:
+    """Re-queue ``no_route:scan_holder`` tombstones once a CSE holder is resolvable."""
+    from bus_watch.endpoint_wake_dispatcher import resolve_cse_wake_target
+
+    promoted = 0
+    with write_connect() as conn:
+        rows = conn.execute(
+            "SELECT id, agent, thread_id FROM endpoint_wake_ledger "
+            "WHERE state='skipped' AND reason='no_route:scan_holder'"
+        ).fetchall()
+        for row in rows:
+            agent = str(row["agent"] or "")
+            thread_id = str(row["thread_id"] or "")
+            if not agent or not thread_id:
+                continue
+            try:
+                resolved = store.subscription(agent, thread_id)
+            except TypeError:
+                resolved = store.subscription(agent, thread_id, raw_to=None)
+            except Exception:
+                continue
+            if resolved is None:
+                continue
+            _kind, sub = resolved
+            if str(sub.get("surface") or "") != "cse":
+                continue
+            if (
+                resolve_cse_wake_target(store, sub, wake_thread=thread_id) is None
+            ):
+                continue
+            conn.execute(
+                "UPDATE endpoint_wake_ledger SET state='pending', reason=NULL, "
+                "finished_at=NULL WHERE id=? AND state='skipped'",
+                (row["id"],),
+            )
+            if conn.total_changes:
+                promoted += 1
+    return promoted
 
 
 def _same_wake_agent(left: str, right: str) -> bool:

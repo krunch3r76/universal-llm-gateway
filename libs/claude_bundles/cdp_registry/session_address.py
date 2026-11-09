@@ -408,6 +408,14 @@ def commit_reattach_driving_seat(
         if not isinstance(row, dict):
             return "committed"
         if lane_key:
+            parent = str(row.get("parent_thread") or "").strip()
+            if parent and parent != lane_key:
+                return "refused"
+            if not parent:
+                row = dict(row)
+                row["parent_thread"] = lane_key
+                active[rid] = row
+        if lane_key:
             current_id, current_bound = _open_seat_holder(active, lane_key)
             snapshot_matches = (current_id, current_bound) == (
                 snapshot_holder_id,
@@ -460,6 +468,30 @@ def commit_reattach_driving_seat(
                 rid,
             )
     return "committed"
+
+
+def commit_followup_lane_seat(
+    registration_id: str,
+    *,
+    chat_url: str,
+    lane: str,
+    snapshot_holder_id: str | None,
+    snapshot_seat_bound_at: float | None,
+    execution_id: str | None = None,
+) -> str:
+    """Seat after explicit ``retain_lane`` followup on a vacant ``parent_thread`` lane.
+
+    Same second-gate rules as ``commit_reattach_driving_seat`` (4642af06). Callers
+    on the non-reattach paste path use this when identity is explicit.
+    """
+    return commit_reattach_driving_seat(
+        registration_id,
+        chat_url=chat_url,
+        lane=lane,
+        snapshot_holder_id=snapshot_holder_id,
+        snapshot_seat_bound_at=snapshot_seat_bound_at,
+        execution_id=execution_id,
+    )
 
 
 def _next_seat_bound_at(ts: float, released: list[dict[str, Any]]) -> float:

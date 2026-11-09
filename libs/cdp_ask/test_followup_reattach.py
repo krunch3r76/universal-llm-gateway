@@ -3531,6 +3531,61 @@ def _vacant_lane_registration(lane: str) -> tuple[Any, Any]:
     return reg, host
 
 
+@pytest.mark.asyncio
+async def test_explicit_retain_lane_commits_seat_without_reattach(
+    isolated_registry: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Explicit retain_lane followup seats a vacant parent_thread without reattach."""
+    from claude_bundles.cdp_registry.models import seat_open
+
+    lane = "43491-explicit-retain"
+    reg, host = _vacant_lane_registration(lane)
+    store = ExecutionStore()
+    _upsert_spy(monkeypatch)
+    page = MagicMock()
+    page.url = CSE_TARGET_38282
+    pw = AsyncMock()
+    pw.stop = AsyncMock()
+    monkeypatch.setattr(
+        "cdp_ask.followup.find_page_on_lane", AsyncMock(return_value=(page, pw))
+    )
+    monkeypatch.setattr(
+        "cdp_ask.followup.send_followup_paste_half",
+        AsyncMock(
+            return_value={
+                "send_verified": True,
+                "receipt": "dom_paste",
+                "streaming_at_paste": False,
+                "url": CSE_TARGET_38282,
+                "pasted_at": 1.0,
+            }
+        ),
+    )
+    monkeypatch.setattr("cdp_ask.followup.emit_followup_event", lambda _e: None)
+    monkeypatch.setattr(
+        "cdp_ask.followup_resolve.scan_lane_cse_urls",
+        AsyncMock(return_value=[CSE_TARGET_38282]),
+    )
+    resp = await execute_followup(
+        FollowupProjectAskRequest(
+            prompt_text="memo",
+            parent_thread=lane,
+            chat_url=CSE_TARGET_38282,
+            registration_id=host.registration_id,
+            purpose="operator-proxy",
+            retain_lane=True,
+            reattach=False,
+        ),
+        store,
+    )
+    assert resp.ok is True
+    assert resp.reattach_used is False
+    assert resp.seated is True
+    assert resp.lane_holder == host.registration_id
+    assert seat_open(reg._store.load_active()[host.registration_id], lane)
+
+
 def test_commit_vacant_snapshot_null_to_null_commits(
     isolated_registry: Path,
     monkeypatch: pytest.MonkeyPatch,

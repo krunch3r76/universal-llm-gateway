@@ -1542,6 +1542,29 @@ def _is_waiter_own_seat_wake(
     return raw_from.strip().lower() == target
 
 
+def _scan_holder_skip_item(
+    turn: dict[str, Any],
+    *,
+    decided_by_rule: str,
+    resolved: tuple[str, dict[str, Any]],
+    wake_agent: str,
+) -> dict[str, Any]:
+    """Scan tombstone when a CSE subscription qualifies but routing finds no holder."""
+    _, sub = resolved
+    item = _pending_item(
+        turn,
+        decided_by_rule=decided_by_rule,
+        route=resolved,
+        wake_agent=wake_agent,
+    )
+    return {
+        **item,
+        "state": "skipped",
+        "reason": "no_route:scan_holder",
+        "subscription_id": sub.get("id"),
+    }
+
+
 def _pending_item(
     turn: dict[str, Any],
     *,
@@ -1644,11 +1667,25 @@ def _display_seated(store: StoreClient, thread: str) -> bool:
     return resolved is not None and str(resolved[1].get("surface") or "") != "cse"
 
 
+def _promote_scan_holder_skips_safe(store: StoreClient) -> None:
+    if not os.environ.get("AGENT_BUS_DB_PATH"):
+        return
+    try:
+        from agent_bus_store.db.endpoint_wake_ledger import (
+            promote_routable_scan_holder_skips,
+        )
+
+        promote_routable_scan_holder_skips(store)
+    except Exception:
+        logger.exception("endpoint_wake_dispatcher: promote scan_holder skips failed")
+
+
 def scan_once(store: StoreClient, *, idle_mark: dict[str, float] | None = None) -> None:
     """Read new turns and CAS pending rows. Store and GIW errors propagate."""
     import time
 
     expire_overdue_hops(store)
+    _promote_scan_holder_skips_safe(store)
     mark = idle_mark if idle_mark is not None else {}
     max_passes = 20
     for _pass in range(max_passes):
@@ -1750,6 +1787,14 @@ def scan_once(store: StoreClient, *, idle_mark: dict[str, float] | None = None) 
                             rule_id=verdict.rule_id,
                             subject=subject,
                         )
+                    tombstones.append(
+                        _scan_holder_skip_item(
+                            turn,
+                            decided_by_rule=verdict.rule_id,
+                            resolved=resolved,
+                            wake_agent=agent,
+                        )
+                    )
                     continue
             elif resolved is None:
                 if direct_maestro:

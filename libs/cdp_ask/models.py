@@ -487,3 +487,14 @@ class FollowupProjectAskResponse(BaseModel):
             "the mint stays on today's resolved target."
         ),
     )
+    seated: bool | None = Field(
+        default=None,
+        description=(
+            "True when this followup committed the registration as lane seat holder "
+            "(explicit retain_lane path)."
+        ),
+    )
+    lane_holder: str | None = Field(
+        default=None,
+        description="Registration id holding parent_thread after a seated followup.",
+    )
