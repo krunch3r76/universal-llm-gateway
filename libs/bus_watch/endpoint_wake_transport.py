@@ -209,6 +209,18 @@ class StoreClient:
         response.raise_for_status()
         return response.json().get("holder")
 
+    def holder_by_registration(self, registration_id: str) -> dict[str, Any] | None:
+        reg = str(registration_id or "").strip()
+        if not reg:
+            return None
+        with make_sync_client(self.giw_url, timeout=10.0) as client:
+            response = client.get(
+                "/api/v1/git/admin/cse-holders",
+                params={"registration_id": reg},
+            )
+        response.raise_for_status()
+        return response.json().get("holder")
+
     def lane_parent(self, thread_id: str) -> str | None:
         """Return lane-current parent_thread, or None when the thread is unbound or the read fails."""
         try:

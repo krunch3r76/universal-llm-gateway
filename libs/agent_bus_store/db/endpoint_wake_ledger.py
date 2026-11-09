@@ -386,19 +386,25 @@ def _seat_superseded_skip_reason(
     _route, sub = resolved
     if str(sub.get("surface") or "") != "cse":
         return None
-    lane = str(sub.get("agent_id") or thread_id).strip()
-    if not lane:
+    agent_id = str(sub.get("agent_id") or thread_id).strip()
+    if not agent_id:
         return None
     try:
+        import re
+
         from services.git_integration_worker.cse_session_holders import (
             _ledger_conn,
             ensure_schema,
             get_driving_holder_for_lane,
+            resolve_holder_by_registration,
         )
 
         with _ledger_conn() as hconn:
             ensure_schema(hconn)
-            holder = get_driving_holder_for_lane(hconn, lane)
+            if re.fullmatch(r"^\d{1,10}$", agent_id):
+                holder = get_driving_holder_for_lane(hconn, agent_id)
+            else:
+                holder = resolve_holder_by_registration(hconn, agent_id)
     except Exception:
         return None
     if holder is None:

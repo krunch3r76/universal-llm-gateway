@@ -6375,3 +6375,131 @@ def test_scan_once_drop_stale_catchup_enqueues_fresh_only(
     assert fresh_row is not None
     assert fresh_row["state"] == "pending"
     assert stale_n and fresh_n
+
+
+def test_resolve_cse_wake_target_registration_not_lane(db: None) -> None:
+    from unittest.mock import patch
+
+    from bus_watch.endpoint_wake_dispatcher import resolve_cse_wake_target
+
+    reg = "583b411df34247f9a48bc044b6518be3"
+    chat = "https://claude.ai/cowork/cse_01TestHouseless"
+    sub = {
+        "surface": "cse",
+        "agent_id": reg,
+        "thread_scope": "22760",
+        "state": "subscribed",
+    }
+
+    class Store:
+        def holder(self, lane_thread_id: str) -> dict:
+            raise AssertionError(f"lane holder must not run for reg id: {lane_thread_id}")
+
+        def holder_by_registration(self, registration_id: str) -> dict:
+            assert registration_id == reg
+            return None
+
+    with patch(
+        "bus_watch.endpoint_wake_dispatcher._registry_holder_for_registration",
+        return_value={"registration_id": reg, "chat_url": chat, "seat_state": "driving"},
+    ):
+        target = resolve_cse_wake_target(Store(), sub, wake_thread="22760")  # type: ignore[arg-type]
+    assert target is not None
+    lane, holder = target
+    assert lane == "22760"
+    assert holder["registration_id"] == reg
+    assert holder["chat_url"] == chat
+
+
+def test_scan_once_cse_subscription_registration_agent_id_enqueues_pending(
+    db: None,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from agent_bus_store.db.endpoint_subscriptions import subscribe_endpoint
+
+    reg = "583b411df34247f9a48bc044b6518be3"
+    chat = "https://claude.ai/cowork/cse_01TestHouseless"
+    detail = create_thread(thread_id=None, slug="houseless-mailbox")
+    assert detail is not None
+    thread = str(detail["id"])
+    subscribe_endpoint(
+        agent="ulg-cortex-symbiosis",
+        thread_scope=thread,
+        surface="cse",
+        display="cse",
+        title="cowork",
+        agent_id=reg,
+        bound_by="test",
+    )
+    turn_id, _ts, _num, _c = insert_turn(
+        thread=thread,
+        from_agent="houseless-driver",
+        to_agent="ulg-cortex-symbiosis",
+        subject="QUESTION|wake probe",
+        body="body",
+    )
+    get_cursor()
+    with connect() as conn:
+        conn.execute("UPDATE endpoint_wake_cursor SET high_water_turn_id=0")
+
+    pending: list[dict[str, object]] = []
+
+    class Store:
+        def cursor(self) -> dict:
+            return get_cursor()
+
+        def since(self, after_id: int, limit: int = 50) -> list[dict]:
+            with connect() as c:
+                rows = c.execute(
+                    "SELECT id, thread, turn_number, from_agent, to_agent, subject, "
+                    "body, read_at FROM turns WHERE id>? ORDER BY id LIMIT ?",
+                    (after_id, limit),
+                ).fetchall()
+            return [dict(r) for r in rows]
+
+        def scan(self, expected: int, new_hw: int, rows: list[dict]) -> dict:
+            pending.extend(rows)
+            return advance_scan(
+                "endpoint-wake-dispatcher",
+                expected,
+                new_hw,
+                rows,
+                now="2020-01-01 20:00:00",
+            )
+
+        def subscription(self, agent: str, thread_id: str, raw_to: str | None = None):
+            from agent_bus_store.db.endpoint_subscriptions import current_subscription
+
+            row = current_subscription(agent, thread_id)
+            if row and row.get("state") == "subscribed":
+                return ("exact", row)
+            return None
+
+        def holder(self, lane_thread_id: str) -> dict | None:
+            return None
+
+        def lane_parent(self, thread_id: str) -> str | None:
+            return None
+
+    monkeypatch.setattr(
+        "bus_watch.endpoint_wake_dispatcher._registry_holder_for_registration",
+        lambda rid: (
+            {
+                "registration_id": rid,
+                "chat_url": chat,
+                "seat_state": "driving",
+            }
+            if rid == reg
+            else None
+        ),
+    )
+    scan_once(Store())  # type: ignore[arg-type]
+    assert [int(p["turn_id"]) for p in pending] == [turn_id]
+    with connect() as conn:
+        row = conn.execute(
+            "SELECT state, agent FROM endpoint_wake_ledger WHERE turn_id=?",
+            (turn_id,),
+        ).fetchone()
+    assert row is not None
+    assert row["state"] == "pending"
+    assert row["agent"] == "ulg-cortex-symbiosis"

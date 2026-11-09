@@ -357,6 +357,7 @@ def _maestro_direct_address_turn(
 
 _LANE_NAME_ALIASES = frozenset({"maestro", "web-anthropic", "claude-web"})
 _ADDRESS_WALK_HOPS = 8
+_CSE_LANE_THREAD_RE = re.compile(r"^\d{1,10}$")
 _CURSOR_SDK_CLOSEOUT_RE = re.compile(r"(?i)^(?:CLOSEOUT\|)?cursor-sdk CLOSEOUT\b")
 _ON_BEHALF_EXECUTION_REPLY_RE = re.compile(
     r"^[a-zA-Z0-9][a-zA-Z0-9._-]* reply — execution [0-9a-fA-F]{8}$"
@@ -1733,8 +1734,10 @@ def scan_once(store: StoreClient, *, idle_mark: dict[str, float] | None = None) 
             elif (
                 resolved is not None and str(resolved[1].get("surface") or "") == "cse"
             ):
-                lane = str(resolved[1].get("agent_id") or "").strip()
-                if not lane or not store.holder(lane):
+                cse_target = resolve_cse_wake_target(
+                    store, resolved[1], wake_thread=thread
+                )
+                if cse_target is None:
                     if direct_maestro:
                         _observe_maestro_wake_drop(
                             thread=thread,
@@ -2128,6 +2131,96 @@ def post_wake_registration_refused_alerts(
             )
 
 
+def _is_cse_lane_thread_id(agent_id: str) -> bool:
+    return bool(_CSE_LANE_THREAD_RE.fullmatch((agent_id or "").strip()))
+
+
+def _registry_holder_for_registration(registration_id: str) -> dict[str, Any] | None:
+    """Synthetic holder from CDP registry when GIW has no lane-bound row (houseless)."""
+    reg = (registration_id or "").strip()
+    if not reg:
+        return None
+    from claude_bundles.cdp_registry.session_address import chat_url_for_registration
+
+    chat_url = chat_url_for_registration(reg)
+    if not chat_url:
+        return None
+    return {
+        "registration_id": reg,
+        "chat_url": chat_url,
+        "seat_state": "driving",
+    }
+
+
+def _holder_for_cse_registration(
+    store: StoreClient, registration_id: str
+) -> dict[str, Any] | None:
+    reg = (registration_id or "").strip()
+    if not reg:
+        return None
+    lookup = getattr(store, "holder_by_registration", None)
+    if callable(lookup):
+        try:
+            row = lookup(reg)
+            if isinstance(row, dict) and row:
+                return row
+        except Exception:
+            logger.exception(
+                "endpoint_wake_dispatcher: holder_by_registration failed reg=%s",
+                reg,
+            )
+    try:
+        from services.git_integration_worker.cse_session_holders import (
+            resolve_superseded_holder_live,
+        )
+
+        row = resolve_superseded_holder_live(reg)
+        if isinstance(row, dict) and row:
+            state = str(row.get("seat_state") or "")
+            if state in {"driving", "dormant"}:
+                return row
+    except Exception:
+        logger.debug(
+            "endpoint_wake_dispatcher: local holder lookup failed reg=%s",
+            reg,
+            exc_info=True,
+        )
+    return _registry_holder_for_registration(reg)
+
+
+def resolve_cse_wake_target(
+    store: StoreClient,
+    sub: dict[str, Any],
+    *,
+    wake_thread: str | None = None,
+) -> tuple[str, dict[str, Any]] | None:
+    """Resolve (delivery lane, holder) for a CSE subscription row.
+
+    ``agent_id`` is either a driving lane thread (role:root houses) or a CSE
+    registration id (houseless mailbox threads).
+    """
+    agent_id = str(sub.get("agent_id") or "").strip()
+    if not agent_id:
+        return None
+    scope = str(sub.get("thread_scope") or wake_thread or "").strip()
+    if _is_cse_lane_thread_id(agent_id):
+        try:
+            holder = store.holder(agent_id)
+        except Exception:
+            logger.exception(
+                "endpoint_wake_dispatcher: holder probe failed lane=%s", agent_id
+            )
+            return None
+        if not isinstance(holder, dict) or not holder:
+            return None
+        return agent_id, holder
+    holder = _holder_for_cse_registration(store, agent_id)
+    if not isinstance(holder, dict) or not holder:
+        return None
+    lane = str(holder.get("lane_thread_id") or "").strip() or scope or agent_id
+    return lane, holder
+
+
 def deliver(
     rows: list[dict[str, Any]],
     holder: dict[str, Any],
@@ -2347,8 +2440,8 @@ def fire_due_wakes(store: StoreClient) -> dict[str, Any] | None:
         )
     route, sub = resolved
     if str(sub.get("surface") or "") == "cse":
-        lane = str(sub.get("agent_id") or "").strip()
-        if not lane:
+        cse_target = resolve_cse_wake_target(store, sub, wake_thread=thread)
+        if cse_target is None:
             return _finish(
                 outcome="skipped",
                 reason="no_route",
@@ -2356,24 +2449,7 @@ def fire_due_wakes(store: StoreClient) -> dict[str, Any] | None:
                 subscription_id=None,
                 cse_registration_id=None,
             )
-        try:
-            holder = store.holder(lane)
-        except Exception as exc:
-            return _finish(
-                outcome="unknown",
-                reason=type(exc).__name__,
-                route="cse",
-                subscription_id=sub.get("id"),
-                cse_registration_id=None,
-            )
-        if not holder:
-            return _finish(
-                outcome="skipped",
-                reason="no_route",
-                route=route,
-                subscription_id=sub.get("id"),
-                cse_registration_id=None,
-            )
+        lane, holder = cse_target
         if str(holder.get("seat_state") or "") == "superseded":
             return _finish(
                 outcome="skipped",
