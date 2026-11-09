@@ -30,6 +30,7 @@ import httpx
 from universal_logging import get_logger
 
 from .compaction import synthesize_predicate_summary
+from .entity_state_provenance import parse_status_current
 
 logger = get_logger("cortex-api.predicate_summary")
 
@@ -100,6 +101,33 @@ def _tier1_infer(claim: str, entity_id: str) -> str | None:
     return None
 
 
+def _attribute_predicate(entity_id: str, field: str, value: object) -> str:
+    if isinstance(value, bool):
+        val = "true" if value else "false"
+    elif value is None:
+        val = "null"
+    else:
+        val = str(value)
+    return f"has_attribute({entity_id}, {field}, {val})"
+
+
+def _should_suppress_form(
+    predicate_form: str,
+    entity_id: str,
+    suppress: dict[str, frozenset[str]],
+) -> bool:
+    parsed = parse_status_current(str(predicate_form))
+    if parsed is None:
+        return False
+    bound, token = parsed
+    if bound != entity_id:
+        return False
+    app_tokens = suppress.get("application_submitted")
+    if app_tokens is not None and token in app_tokens:
+        return True
+    return "workflow_state" in suppress
+
+
 def aggregate_predicate_summary(
     top_k_assertions: list[dict[str, Any]],
     et_type_counts: list[dict[str, Any]],
@@ -107,6 +135,8 @@ def aggregate_predicate_summary(
     *,
     entity_id: str | None = None,
     pin_withheld_count: int = 0,
+    suppress_status_tokens: dict[str, frozenset[str]] | None = None,
+    derived_field_values: dict[str, object] | None = None,
 ) -> tuple[str, int]:
     """Aggregate predicate_forms from top-K assertions into a predicate_summary string.
 
@@ -125,6 +155,15 @@ def aggregate_predicate_summary(
 
     Returns empty string when no signal available — never None.
     """
+    prepend: list[str] = []
+    if (
+        suppress_status_tokens
+        and derived_field_values
+        and entity_id
+    ):
+        for field in sorted(derived_field_values):
+            prepend.append(_attribute_predicate(entity_id, field, derived_field_values[field]))
+
     forms: list[str] = []
     tier1_used = False
     skipped_flagged = 0
@@ -137,7 +176,14 @@ def aggregate_predicate_summary(
             continue
         pf = row.get("predicate_form")
         if pf:
-            forms.append(str(pf))
+            pf_str = str(pf)
+            if (
+                suppress_status_tokens
+                and entity_id
+                and _should_suppress_form(pf_str, entity_id, suppress_status_tokens)
+            ):
+                continue
+            forms.append(pf_str)
         elif not tier1_used:
             # Tier 1: attempt sync enrichment for the first missing row only.
             # ∃! sync call per card read — cap enforced by tier1_used flag.
@@ -149,8 +195,9 @@ def aggregate_predicate_summary(
 
     withheld_count = pin_withheld_count if pin_withheld_count else skipped_flagged
 
-    if forms:
-        return "; ".join(forms), withheld_count
+    merged = prepend + forms
+    if merged:
+        return "; ".join(merged), withheld_count
 
     # Tier 2: zero predicate_forms available after Tier 0 + Tier 1.
     # Edge-only heuristic — no claim-text inspection (§6.7 scope-narrow).

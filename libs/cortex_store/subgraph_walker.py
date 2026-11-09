@@ -359,6 +359,16 @@ def _truncate_summary(text: str | None) -> str | None:
 
 
 def _root_predicate_summary(conn: sqlite3.Connection, root: str) -> str:
+    entity_rows = query(
+        conn,
+        "SELECT id, type, attributes, workflow_state, description FROM entities WHERE id = ?",
+        (root,),
+    )
+    status_view = None
+    if entity_rows:
+        from .entity_state_render import derive_status_view
+
+        status_view = derive_status_view(conn, root, dict(entity_rows[0]))
     a_rows = query(
         conn,
         "SELECT claim, predicate_form, entrenchment_score, observed_at, "
@@ -388,6 +398,18 @@ def _root_predicate_summary(conn: sqlite3.Connection, root: str) -> str:
         ],
         archives_to_children=[str(r["to_entity"]) for r in arc_rows],
         entity_id=root,
+        suppress_status_tokens=(
+            status_view.suppress_status_tokens if status_view is not None else None
+        ),
+        derived_field_values=(
+            {
+                f: status_view.field_states[f].value
+                for f in status_view.rendered_fields
+                if f in status_view.field_states
+            }
+            if status_view is not None
+            else None
+        ),
     )
     return summary
 

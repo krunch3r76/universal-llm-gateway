@@ -9,6 +9,7 @@ from typing import Any
 from fastapi import HTTPException
 
 from ..db import query
+from ..entity_state_render import derive_status_view
 
 _PREVIEW_OMITTED = ("attributes", "assertions", "journal", "relations", "content")
 _SUMMARY_CAP = 500
@@ -167,8 +168,13 @@ def build_entity_preview(
     if not rows:
         raise HTTPException(status_code=404, detail=f"Entity not found: {entity_id}")
     row = rows[0]
+    entity_row = dict(row)
+    view = derive_status_view(conn, entity_id, entity_row)
     description = str(row.get("description") or "")
-    if description.strip():
+    if view is not None:
+        summary_field = "derived_status"
+        summary_text = view.sentence
+    elif description.strip():
         summary_field = "description"
         summary_text = description
     else:
@@ -216,15 +222,25 @@ def build_entity_preview(
     else:
         clipped, _, _ = _clip_summary(str(raw_source_uri))
         preview_source_uri = clipped or None
+    wf_fs = view.field_states.get("workflow_state") if view is not None else None
+    if view is not None and wf_fs is not None and "workflow_state" in view.rendered_fields:
+        if wf_fs.verification == "verified":
+            current_state = wf_fs.value
+        else:
+            current_state = f"{wf_fs.value} (unverified)"
+    else:
+        current_state = (
+            row.get("workflow_state")
+            or row.get("lifecycle")
+            or row.get("confidence_band")
+        )
     preview: dict[str, Any] = {
         "entity_id": entity_id,
         "id": entity_id,
         "type": row["type"],
         "title": row.get("name"),
         "name": row.get("name"),
-        "current_state": row.get("workflow_state")
-        or row.get("lifecycle")
-        or row.get("confidence_band"),
+        "current_state": current_state,
         "short_summary": summary,
         "summary_truncated": truncated,
         "summary_source": {"field": summary_field, "revision": revision},
@@ -236,6 +252,9 @@ def build_entity_preview(
         "freshest_assertion_id": int(freshest["id"]) if freshest else None,
         "confidence": freshest.get("confidence") if freshest else None,
         "review_status": freshest.get("review_status") if freshest else None,
+        "conflict_review_status": (
+            view.conflict_review_status if view is not None else None
+        ),
         "facet_counts": {
             "attributes": attr_count,
             "assertions": assertion_count,
