@@ -358,6 +358,8 @@ def _maestro_direct_address_turn(
 _LANE_NAME_ALIASES = frozenset({"maestro", "web-anthropic", "claude-web"})
 _ADDRESS_WALK_HOPS = 8
 _CSE_LANE_THREAD_RE = re.compile(r"^\d{1,10}$")
+_CSE_LIVE_SEAT_STATES = frozenset({"driving", "dormant"})
+_GIW_HOLDER_LOOKUP_FAILED = "_giw_holder_lookup_failed"
 _CURSOR_SDK_CLOSEOUT_RE = re.compile(r"(?i)^(?:CLOSEOUT\|)?cursor-sdk CLOSEOUT\b")
 _ON_BEHALF_EXECUTION_REPLY_RE = re.compile(
     r"^[a-zA-Z0-9][a-zA-Z0-9._-]* reply — execution [0-9a-fA-F]{8}$"
@@ -2140,10 +2142,30 @@ def _registry_holder_for_registration(registration_id: str) -> dict[str, Any] | 
     reg = (registration_id or "").strip()
     if not reg:
         return None
-    from claude_bundles.cdp_registry.session_address import chat_url_for_registration
+    try:
+        from claude_bundles.cdp_registry import cdp_registry_store as _reg_store
+        from claude_bundles.cdp_registry.models import (
+            _HOST_LISTABLE_STATUSES,
+            seat_open,
+        )
+        from claude_bundles.cdp_registry.session_address import (
+            chat_url_for_registration,
+        )
 
-    chat_url = chat_url_for_registration(reg)
-    if not chat_url:
+        chat_url = chat_url_for_registration(reg)
+        if not chat_url:
+            return None
+        active = _reg_store.load_active()
+        row = active.get(reg) if isinstance(active, dict) else None
+        if not isinstance(row, dict):
+            return None
+        status = str(row.get("status") or "")
+        if status not in _HOST_LISTABLE_STATUSES or not seat_open(row):
+            return None
+    except Exception:
+        logger.exception(
+            "endpoint_wake_dispatcher: registry holder lookup failed reg=%s", reg
+        )
         return None
     return {
         "registration_id": reg,
@@ -2152,16 +2174,38 @@ def _registry_holder_for_registration(registration_id: str) -> dict[str, Any] | 
     }
 
 
+def _giw_holder_lookup_failed_marker(registration_id: str) -> dict[str, Any]:
+    return {
+        "registration_id": registration_id,
+        _GIW_HOLDER_LOOKUP_FAILED: True,
+    }
+
+
+def _holder_seat_state(holder: dict[str, Any]) -> str:
+    return str(holder.get("seat_state") or "").strip()
+
+
+def _holder_is_live(holder: dict[str, Any]) -> bool:
+    if holder.get(_GIW_HOLDER_LOOKUP_FAILED):
+        return False
+    state = _holder_seat_state(holder)
+    if not state:
+        return True
+    return state in _CSE_LIVE_SEAT_STATES
+
+
 def _holder_for_cse_registration(
     store: StoreClient, registration_id: str
 ) -> dict[str, Any] | None:
     reg = (registration_id or "").strip()
     if not reg:
         return None
+    giw_answered = False
     lookup = getattr(store, "holder_by_registration", None)
     if callable(lookup):
         try:
             row = lookup(reg)
+            giw_answered = True
             if isinstance(row, dict) and row:
                 return row
         except Exception:
@@ -2169,16 +2213,39 @@ def _holder_for_cse_registration(
                 "endpoint_wake_dispatcher: holder_by_registration failed reg=%s",
                 reg,
             )
+            return _giw_holder_lookup_failed_marker(reg)
+    if giw_answered:
+        try:
+            from services.git_integration_worker.cse_session_holders import (
+                _ledger_conn,
+                ensure_schema,
+                resolve_holder_by_registration,
+            )
+
+            with _ledger_conn() as conn:
+                ensure_schema(conn)
+                row = resolve_holder_by_registration(conn, reg)
+            if isinstance(row, dict) and row:
+                return row
+        except Exception:
+            logger.debug(
+                "endpoint_wake_dispatcher: local holder lookup failed reg=%s",
+                reg,
+                exc_info=True,
+            )
+        return _registry_holder_for_registration(reg)
     try:
         from services.git_integration_worker.cse_session_holders import (
-            resolve_superseded_holder_live,
+            _ledger_conn,
+            ensure_schema,
+            resolve_holder_by_registration,
         )
 
-        row = resolve_superseded_holder_live(reg)
+        with _ledger_conn() as conn:
+            ensure_schema(conn)
+            row = resolve_holder_by_registration(conn, reg)
         if isinstance(row, dict) and row:
-            state = str(row.get("seat_state") or "")
-            if state in {"driving", "dormant"}:
-                return row
+            return row
     except Exception:
         logger.debug(
             "endpoint_wake_dispatcher: local holder lookup failed reg=%s",
@@ -2193,6 +2260,7 @@ def resolve_cse_wake_target(
     sub: dict[str, Any],
     *,
     wake_thread: str | None = None,
+    delivery_phase: bool = False,
 ) -> tuple[str, dict[str, Any]] | None:
     """Resolve (delivery lane, holder) for a CSE subscription row.
 
@@ -2204,19 +2272,30 @@ def resolve_cse_wake_target(
         return None
     scope = str(sub.get("thread_scope") or wake_thread or "").strip()
     if _is_cse_lane_thread_id(agent_id):
-        try:
+        if delivery_phase:
             holder = store.holder(agent_id)
-        except Exception:
-            logger.exception(
-                "endpoint_wake_dispatcher: holder probe failed lane=%s", agent_id
-            )
-            return None
+        else:
+            try:
+                holder = store.holder(agent_id)
+            except Exception:
+                logger.exception(
+                    "endpoint_wake_dispatcher: holder probe failed lane=%s", agent_id
+                )
+                return None
         if not isinstance(holder, dict) or not holder:
             return None
         return agent_id, holder
     holder = _holder_for_cse_registration(store, agent_id)
     if not isinstance(holder, dict) or not holder:
         return None
+    if holder.get(_GIW_HOLDER_LOOKUP_FAILED):
+        if not delivery_phase:
+            return None
+        lane = scope or agent_id
+        return lane, holder
+    if not _holder_is_live(holder):
+        if not delivery_phase:
+            return None
     lane = str(holder.get("lane_thread_id") or "").strip() or scope or agent_id
     return lane, holder
 
@@ -2440,7 +2519,18 @@ def fire_due_wakes(store: StoreClient) -> dict[str, Any] | None:
         )
     route, sub = resolved
     if str(sub.get("surface") or "") == "cse":
-        cse_target = resolve_cse_wake_target(store, sub, wake_thread=thread)
+        try:
+            cse_target = resolve_cse_wake_target(
+                store, sub, wake_thread=thread, delivery_phase=True
+            )
+        except Exception as exc:
+            return _finish(
+                outcome="unknown",
+                reason=type(exc).__name__,
+                route="cse",
+                subscription_id=sub.get("id"),
+                cse_registration_id=None,
+            )
         if cse_target is None:
             return _finish(
                 outcome="skipped",
@@ -2450,10 +2540,26 @@ def fire_due_wakes(store: StoreClient) -> dict[str, Any] | None:
                 cse_registration_id=None,
             )
         lane, holder = cse_target
-        if str(holder.get("seat_state") or "") == "superseded":
+        if holder.get(_GIW_HOLDER_LOOKUP_FAILED):
+            return _finish(
+                outcome="unknown",
+                reason="HolderLookupError",
+                route="cse",
+                subscription_id=sub.get("id"),
+                cse_registration_id=None,
+            )
+        seat_state = _holder_seat_state(holder)
+        if seat_state and seat_state not in _CSE_LIVE_SEAT_STATES:
+            reason = (
+                "seat_superseded"
+                if seat_state == "superseded"
+                else "seat_released"
+                if seat_state == "released"
+                else "seat_not_live"
+            )
             return _finish(
                 outcome="skipped",
-                reason="seat_superseded",
+                reason=reason,
                 route=route,
                 subscription_id=sub.get("id"),
                 cse_registration_id=None,

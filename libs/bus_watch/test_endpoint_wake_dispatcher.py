@@ -6503,3 +6503,195 @@ def test_scan_once_cse_subscription_registration_agent_id_enqueues_pending(
     assert row is not None
     assert row["state"] == "pending"
     assert row["agent"] == "ulg-cortex-symbiosis"
+
+
+def test_resolve_cse_wake_target_giw_error_fail_closed() -> None:
+    from bus_watch.endpoint_wake_dispatcher import resolve_cse_wake_target
+
+    reg = "583b411df34247f9a48bc044b6518be3"
+    sub = {"surface": "cse", "agent_id": reg, "thread_scope": "22760"}
+
+    class Store:
+        def holder_by_registration(self, registration_id: str) -> dict:
+            raise TimeoutError("giw down")
+
+    assert resolve_cse_wake_target(Store(), sub, wake_thread="22760") is None  # type: ignore[arg-type]
+    delivery = resolve_cse_wake_target(
+        Store(), sub, wake_thread="22760", delivery_phase=True  # type: ignore[arg-type]
+    )
+    assert delivery is not None
+    _lane, holder = delivery
+    assert holder.get("_giw_holder_lookup_failed") is True
+
+
+def test_resolve_cse_wake_target_released_holder_no_wake() -> None:
+    from bus_watch.endpoint_wake_dispatcher import resolve_cse_wake_target
+
+    reg = "583b411df34247f9a48bc044b6518be3"
+    sub = {"surface": "cse", "agent_id": reg, "thread_scope": "22760"}
+
+    class Store:
+        def holder_by_registration(self, registration_id: str) -> dict:
+            return {"registration_id": reg, "seat_state": "released"}
+
+    assert resolve_cse_wake_target(Store(), sub, wake_thread="22760") is None  # type: ignore[arg-type]
+    delivery = resolve_cse_wake_target(
+        Store(), sub, wake_thread="22760", delivery_phase=True  # type: ignore[arg-type]
+    )
+    assert delivery is not None
+    _, holder = delivery
+    assert holder["seat_state"] == "released"
+
+
+def test_resolve_cse_wake_target_live_registration_uses_giw_row() -> None:
+    from bus_watch.endpoint_wake_dispatcher import resolve_cse_wake_target
+
+    reg = "583b411df34247f9a48bc044b6518be3"
+    chat = "https://claude.ai/cowork/cse_01TestLive"
+    sub = {"surface": "cse", "agent_id": reg, "thread_scope": "22760"}
+
+    class Store:
+        def holder_by_registration(self, registration_id: str) -> dict:
+            return {
+                "registration_id": reg,
+                "chat_url": chat,
+                "seat_state": "driving",
+                "lane_thread_id": "22760",
+            }
+
+    target = resolve_cse_wake_target(Store(), sub, wake_thread="22760")  # type: ignore[arg-type]
+    assert target is not None
+    lane, holder = target
+    assert lane == "22760"
+    assert holder["registration_id"] == reg
+    assert holder["seat_state"] == "driving"
+
+
+def test_fire_due_wakes_giw_holder_by_registration_error_records_unknown(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from bus_watch.endpoint_wake_dispatcher import fire_due_wakes
+
+    recorded: list[dict] = []
+
+    class Store:
+        def claim(self) -> dict:
+            return {
+                "wake_id": "wake-giw-err",
+                "rows": [
+                    {
+                        "state": "claimed",
+                        "agent": "maestro",
+                        "thread_id": "22760",
+                        "turn_id": 1,
+                        "turn_number": 2,
+                        "decided_by_rule": "wake_cse_allowlist",
+                    }
+                ],
+            }
+
+        def holder_by_registration(self, _reg: str) -> dict:
+            raise TimeoutError("giw down")
+
+    reg = "583b411df34247f9a48bc044b6518be3"
+    monkeypatch.setattr(
+        "bus_watch.endpoint_wake_dispatcher.resolve_target",
+        lambda _store, _agent, _thread: (
+            "exact",
+            {"surface": "cse", "agent_id": reg, "id": 42, "thread_scope": "22760"},
+        ),
+    )
+    monkeypatch.setattr(
+        "bus_watch.endpoint_wake_dispatcher.record",
+        lambda store, **kw: recorded.append(kw),
+    )
+    fire_due_wakes(Store())  # type: ignore[arg-type]
+    assert recorded[0]["outcome"] == "unknown"
+    assert recorded[0]["reason"] == "HolderLookupError"
+    assert recorded[0]["subscription_id"] == 42
+
+
+def test_fire_due_wakes_cse_registration_released_skipped(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from bus_watch.endpoint_wake_dispatcher import fire_due_wakes
+
+    recorded: list[dict] = []
+
+    class Store:
+        def claim(self) -> dict:
+            return {
+                "wake_id": "wake-released",
+                "rows": [
+                    {
+                        "state": "claimed",
+                        "agent": "maestro",
+                        "thread_id": "22760",
+                        "turn_id": 1,
+                        "turn_number": 2,
+                        "decided_by_rule": "wake_cse_allowlist",
+                    }
+                ],
+            }
+
+        def holder_by_registration(self, reg: str) -> dict:
+            return {"registration_id": reg, "seat_state": "released"}
+
+    reg = "583b411df34247f9a48bc044b6518be3"
+    monkeypatch.setattr(
+        "bus_watch.endpoint_wake_dispatcher.resolve_target",
+        lambda _store, _agent, _thread: (
+            "exact",
+            {"surface": "cse", "agent_id": reg, "id": 9},
+        ),
+    )
+    monkeypatch.setattr(
+        "bus_watch.endpoint_wake_dispatcher.record",
+        lambda store, **kw: recorded.append(kw),
+    )
+    fire_due_wakes(Store())  # type: ignore[arg-type]
+    assert recorded[0]["outcome"] == "skipped"
+    assert recorded[0]["reason"] == "seat_released"
+
+
+def test_fire_due_wakes_lane_holder_probe_error_records_unknown(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from bus_watch.endpoint_wake_dispatcher import fire_due_wakes
+
+    recorded: list[dict] = []
+
+    class Store:
+        def claim(self) -> dict:
+            return {
+                "wake_id": "wake-lane-err",
+                "rows": [
+                    {
+                        "state": "claimed",
+                        "agent": "maestro",
+                        "thread_id": "18460",
+                        "turn_id": 1,
+                        "turn_number": 2,
+                        "decided_by_rule": "wake_cse_allowlist",
+                    }
+                ],
+            }
+
+        def holder(self, _lane: str) -> dict:
+            raise TimeoutError("giw down")
+
+    monkeypatch.setattr(
+        "bus_watch.endpoint_wake_dispatcher.resolve_target",
+        lambda _store, _agent, _thread: (
+            "exact",
+            {"surface": "cse", "agent_id": "18460", "id": 11},
+        ),
+    )
+    monkeypatch.setattr(
+        "bus_watch.endpoint_wake_dispatcher.record",
+        lambda store, **kw: recorded.append(kw),
+    )
+    fire_due_wakes(Store())  # type: ignore[arg-type]
+    assert recorded[0]["outcome"] == "unknown"
+    assert recorded[0]["reason"] == "TimeoutError"
+    assert recorded[0]["subscription_id"] == 11
