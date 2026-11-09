@@ -357,7 +357,6 @@ def _references_wake_turn(
     nxt: sqlite3.Row,
     *,
     thread_id: str,
-    turn_id: int,
     turn_number: int,
 ) -> bool:
     text = f"{nxt['subject'] or ''}\n{nxt['body'] or ''}"
@@ -634,7 +633,6 @@ def _skip_reason(conn: sqlite3.Connection, row: sqlite3.Row) -> str | None:
         ) and _references_wake_turn(
             nxt,
             thread_id=thread_id,
-            turn_id=wake_turn_id,
             turn_number=wake_turn_number,
         ):
             return "already_answered"
