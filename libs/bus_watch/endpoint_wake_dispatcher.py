@@ -2270,7 +2270,7 @@ def _registry_holder_for_registration(registration_id: str) -> dict[str, Any] | 
     if not reg:
         return None
     try:
-        from claude_bundles.cdp_registry import cdp_registry_store as _reg_store
+        from claude_bundles import cdp_registry_store as _reg_store
         from claude_bundles.cdp_registry.models import (
             _HOST_LISTABLE_STATUSES,
             seat_open,
@@ -2283,11 +2283,17 @@ def _registry_holder_for_registration(registration_id: str) -> dict[str, Any] | 
         if not chat_url:
             return None
         active = _reg_store.load_active()
+        from claude_bundles.what_is_running_view import is_houseless_purpose
+
         row = active.get(reg) if isinstance(active, dict) else None
         if not isinstance(row, dict):
             return None
+        if not is_houseless_purpose(row.get("purpose")):
+            return None
         status = str(row.get("status") or "")
-        if status not in _HOST_LISTABLE_STATUSES or not seat_open(row):
+        if status not in _HOST_LISTABLE_STATUSES:
+            return None
+        if seat_open(row):
             return None
     except Exception:
         logger.exception(

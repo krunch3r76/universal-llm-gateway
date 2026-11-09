@@ -18,6 +18,12 @@ from typing import Any
 SCHEMA = "what-is-running/v1"
 SNAPSHOT_URI = "cortex://notes/system/operational/what-is-running.json"
 OPERATOR_PURPOSES = frozenset({"operator-proxy", "mission"})
+# Non-operator registry tags: mailbox CSE rows that receive bus wakes without a lane seat.
+HOUSELESS_PURPOSES = frozenset({"houseless"})
+
+
+def is_houseless_purpose(purpose: str | None) -> bool:
+    return str(purpose or "").strip().lower() in HOUSELESS_PURPOSES
 # Statuses whose row may still own a running Chrome process (X clients, ports).
 _LIVE_HOST_STATUSES = frozenset(
     {"allocating", "active", "retained", "orphaned_alive", "orphaned_retry"}

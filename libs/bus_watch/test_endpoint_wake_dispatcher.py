@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from pathlib import Path
 
 import httpx
 import pytest
@@ -6565,6 +6566,63 @@ def test_resolve_cse_wake_target_live_registration_uses_giw_row() -> None:
     assert lane == "22760"
     assert holder["registration_id"] == reg
     assert holder["seat_state"] == "driving"
+
+
+def test_registry_holder_for_registration_requires_houseless_purpose(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from bus_watch.endpoint_wake_dispatcher import (
+        _registry_holder_for_registration,
+        resolve_cse_wake_target,
+    )
+
+    reg_id = "583b411df34247f9a48bc044b6518be3"
+    chat = "https://claude.ai/cowork/cse_01HouselessTag"
+    root = tmp_path / "cdp-registry"
+    root.mkdir()
+    (root / "ports.lock").write_text("", encoding="utf-8")
+    import claude_bundles.cdp_registry_store as store
+
+    monkeypatch.setattr(store, "REGISTRY_DIR", root)
+    monkeypatch.setattr(store, "ACTIVE_JSON", root / "active.json")
+    monkeypatch.setattr(store, "PORTS_LOCK", root / "ports.lock")
+    store.write_active(
+        {
+            reg_id: {
+                "registration_id": reg_id,
+                "status": "active",
+                "purpose": "ask",
+                "chat_url": chat,
+            }
+        }
+    )
+    assert _registry_holder_for_registration(reg_id) is None
+
+    tagged = {
+        reg_id: {
+            "registration_id": reg_id,
+            "status": "active",
+            "purpose": "houseless",
+            "chat_url": chat,
+        }
+    }
+    store.write_active(tagged)
+    holder = _registry_holder_for_registration(reg_id)
+    assert holder is not None
+    assert holder["registration_id"] == reg_id
+    assert holder["chat_url"] == chat
+
+    sub = {"surface": "cse", "agent_id": reg_id, "thread_scope": "22760"}
+
+    class Store:
+        def holder_by_registration(self, registration_id: str) -> dict | None:
+            return None
+
+    assert resolve_cse_wake_target(Store(), sub, wake_thread="22760") is not None  # type: ignore[arg-type]
+    store.write_active(
+        {reg_id: {**tagged[reg_id], "status": "released", "chat_url": chat}}
+    )
+    assert _registry_holder_for_registration(reg_id) is None
 
 
 def test_fire_due_wakes_giw_holder_by_registration_error_records_unknown(

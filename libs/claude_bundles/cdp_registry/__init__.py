@@ -44,7 +44,12 @@ _LAZY_ATTRS: dict[str, tuple[str, str]] = {
     "deregister_lane": (".lifecycle", "deregister_lane"),
     "reattach": (".lifecycle", "reattach"),
     "register_lane": (".lifecycle", "register_lane"),
+    "require_registry_tag_purpose": (
+        ".registry_purpose",
+        "require_registry_tag_purpose",
+    ),
     "reserve_allocating_row": (".lifecycle", "reserve_allocating_row"),
+    "set_registration_purpose": (".registry_purpose", "set_registration_purpose"),
     # models
     "DormantSeat": (".models", "DormantSeat"),
     "HygieneReclaimResult": (".models", "HygieneReclaimResult"),
