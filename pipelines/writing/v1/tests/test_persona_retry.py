@@ -514,9 +514,61 @@ def test_validate_exception_preserves_persona_attempts(
         handler.execute(None, _monterey_ctx(persona_retry=True))
     ).json
     assert payload.get("persona_refused") == "persona_validator_failed"
+    assert payload.get("error") == "RuntimeError"
+    assert payload.get("persona_rejected_text")
     assert len(payload.get("persona_attempts") or []) == 1
     assert payload["persona_attempts"][0].get("error") == "RuntimeError"
     assert payload["persona_attempts"][0].get("refused") == "persona_validator_failed"
+
+
+def test_attempt2_judge_raises_after_validation_retry(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    token = _FIXTURE["judged_invented_token"]
+    author_calls = 0
+    judge_calls = 0
+    published: list[Any] = []
+
+    def _capture(_self: object, _ctx: object, event: Any) -> None:
+        published.append(event)
+
+    monkeypatch.setattr(
+        local_persona.WritingLocalPersonaAuthorHandler,
+        "_publish_bus_event",
+        _capture,
+    )
+
+    async def _caller(prompt: str) -> str:
+        nonlocal author_calls
+        author_calls += 1
+        if "Your prior attempt introduced" in prompt:
+            return _FIXTURE["attempt2_prose"]
+        return _FIXTURE["attempt1_prose"]
+
+    async def _judge(
+        _fenced: str, candidates: list[local_persona.Candidate]
+    ) -> str:
+        nonlocal judge_calls
+        judge_calls += 1
+        if judge_calls == 1:
+            return await _judge_invented(token)(_fenced, candidates)
+        raise RuntimeError("judge_down")
+
+    handler = local_persona.WritingLocalPersonaAuthorHandler(
+        caller=_caller,
+        judge_caller=_judge,
+    )
+    payload = asyncio.run(
+        handler.execute(None, _monterey_ctx(persona_retry=True))
+    ).json
+    assert payload.get("ok") is False
+    assert payload.get("persona_refused") == "persona_judge_unavailable"
+    attempts = payload.get("persona_attempts") or []
+    assert len(attempts) == 2
+    assert attempts[0].get("refused") == "persona_validation_failed"
+    assert attempts[1].get("refused") == "persona_judge_unavailable"
+    assert author_calls == 2
+    assert len(published) == 1
 
 
 def test_attempt2_author_raises_after_validation_retry(

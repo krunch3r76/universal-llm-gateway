@@ -431,9 +431,15 @@ def test_finalize_manifest_exception_sets_participation_error(
         raise ValueError("manifest_boom")
 
     monkeypatch.setattr(finalize_payload, "build_participation_manifest", _boom)
+    valid_attempts = [
+        {"attempt": 1, "ok": False, "refused": "persona_validation_failed"},
+        {"attempt": 2, "ok": True, "refused": None},
+    ]
     outputs = {
         "assemble": _Out(_sworn_assemble()),
-        "local_persona_author": _Out({"ok": True, "persona_prose": "voice"}),
+        "local_persona_author": _Out(
+            {"ok": True, "persona_prose": "voice", "persona_attempts": valid_attempts}
+        ),
     }
     payload = finalize_payload.build_finalize_payload(
         **_minimal_finalize_kwargs(outputs)
@@ -441,3 +447,4 @@ def test_finalize_manifest_exception_sets_participation_error(
     assert payload.get("participation") is None
     assert payload.get("participation_summary") is None
     assert payload.get("participation_error") == "ValueError"
+    assert payload.get("persona_attempts") == valid_attempts
