@@ -9,16 +9,6 @@ from cdp_ask.houseless_resolve import HouselessResolution, resolve_houseless_tar
 
 pytestmark = pytest.mark.offline
 
-
-@pytest.fixture(autouse=True)
-def _clear_houseless_memo() -> None:
-    from cdp_ask.houseless_resolve import clear_houseless_resolve_memo
-
-    clear_houseless_resolve_memo()
-    yield
-    clear_houseless_resolve_memo()
-
-
 _REG = "583b411df34247f9a48bc044b6518be3"
 _CHAT = "https://claude.ai/cowork/cse_houseless_mailbox"
 
@@ -99,7 +89,20 @@ def test_resolve_houseless_cdp_ask_unreachable() -> None:
         _REG,
         client=_FakeClient(exc=CdpAskClientError("down")),
     )
-    assert res == HouselessResolution(ok=False, reason="no_row")
+    assert res == HouselessResolution(ok=False, reason="provenance_unreachable")
+
+
+def test_resolve_houseless_fresh_memo_bypasses_scan_cache() -> None:
+    from cdp_ask.houseless_resolve import _RESOLVE_MEMO, clear_houseless_resolve_memo
+
+    clear_houseless_resolve_memo()
+    _RESOLVE_MEMO[_REG] = HouselessResolution(ok=False, reason="no_row")
+    bad = resolve_houseless_target(_REG, client=_FakeClient(payload=_ok_payload()))
+    assert bad.reason == "no_row"
+    fresh = resolve_houseless_target(
+        _REG, client=_FakeClient(payload=_ok_payload()), memo={}
+    )
+    assert fresh.ok is True
 
 
 def test_resolve_houseless_memoizes_per_registration() -> None:

@@ -8,7 +8,7 @@ from typing import Any
 from claude_bundles.cdp_registry.models import _HOST_LISTABLE_STATUSES
 from claude_bundles.what_is_running_view import is_houseless_purpose
 
-from cdp_ask.operator_seat_resolve import _provenance_get
+from cdp_ask.operator_seat_resolve import _provenance_get_checked
 
 _DEFAULT_TIMEOUT_S = 5.0
 
@@ -33,9 +33,9 @@ def _provenance_payload(
     *,
     timeout_s: float = _DEFAULT_TIMEOUT_S,
     client: Any | None = None,
-) -> dict[str, Any] | None:
-    """Authoritative Jupiter provenance GET with identity match."""
-    return _provenance_get(registration_id, timeout_s=timeout_s, client=client)
+) -> tuple[dict[str, Any] | None, bool]:
+    """Authoritative Jupiter provenance GET; second flag is transport unreachable."""
+    return _provenance_get_checked(registration_id, timeout_s=timeout_s, client=client)
 
 
 def resolve_houseless_target(
@@ -52,35 +52,47 @@ def resolve_houseless_target(
     cache = _RESOLVE_MEMO if memo is None else memo
     if rid in cache:
         return cache[rid]
-    data = _provenance_payload(rid, timeout_s=timeout_s, client=client)
+    data, unreachable = _provenance_payload(rid, timeout_s=timeout_s, client=client)
+    if unreachable:
+        out = HouselessResolution(ok=False, reason="provenance_unreachable")
+        if memo is None:
+            cache[rid] = out
+        return out
     if not data:
         out = HouselessResolution(ok=False, reason="no_row")
-        cache[rid] = out
+        if memo is None:
+            cache[rid] = out
         return out
     if "purpose" not in data:
         out = HouselessResolution(ok=False, reason="purpose_not_houseless")
-        cache[rid] = out
+        if memo is None:
+            cache[rid] = out
         return out
     if not is_houseless_purpose(data.get("purpose")):
         out = HouselessResolution(ok=False, reason="purpose_not_houseless")
-        cache[rid] = out
+        if memo is None:
+            cache[rid] = out
         return out
     status = str(data.get("status") or "")
     if status not in _HOST_LISTABLE_STATUSES:
         out = HouselessResolution(ok=False, reason="status_unlisted")
-        cache[rid] = out
+        if memo is None:
+            cache[rid] = out
         return out
     if bool(data.get("seat_open")):
         out = HouselessResolution(ok=False, reason="seat_open")
-        cache[rid] = out
+        if memo is None:
+            cache[rid] = out
         return out
     chat_url = str(data.get("chat_url") or "").strip() or None
     if not chat_url:
         out = HouselessResolution(ok=False, reason="no_chat_url")
-        cache[rid] = out
+        if memo is None:
+            cache[rid] = out
         return out
     out = HouselessResolution(ok=True, reason="ok", chat_url=chat_url)
-    cache[rid] = out
+    if memo is None:
+        cache[rid] = out
     return out
 
 

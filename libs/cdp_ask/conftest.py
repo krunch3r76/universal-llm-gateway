@@ -50,6 +50,15 @@ def _targets_display_chat_paste_routes(request: pytest.FixtureRequest) -> bool:
 
 
 @pytest.fixture(autouse=True)
+def _clear_houseless_resolve_memo_autouse() -> None:
+    from cdp_ask.houseless_resolve import clear_houseless_resolve_memo
+
+    clear_houseless_resolve_memo()
+    yield
+    clear_houseless_resolve_memo()
+
+
+@pytest.fixture(autouse=True)
 def _display_chat_paste_routes_loopback_guard(
     request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch
 ) -> None:

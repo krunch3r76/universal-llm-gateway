@@ -6607,16 +6607,19 @@ def test_resolve_cse_wake_target_houseless_provenance_route_no_episode(
 
     def _provenance_no_episode(
         registration_id: str, **_kwargs: object
-    ) -> dict[str, object]:
-        return {
-            "registration_id": registration_id,
-            "purpose": "houseless",
-            "status": "active",
-            "seat_open": False,
-            "chat_url": chat,
-            "state": "unresolved",
-            "reason": "no_episode",
-        }
+    ) -> tuple[dict[str, object], bool]:
+        return (
+            {
+                "registration_id": registration_id,
+                "purpose": "houseless",
+                "status": "active",
+                "seat_open": False,
+                "chat_url": chat,
+                "state": "unresolved",
+                "reason": "no_episode",
+            },
+            False,
+        )
 
     monkeypatch.setattr(
         "cdp_ask.houseless_resolve._provenance_payload",
@@ -6639,6 +6642,97 @@ def test_resolve_cse_wake_target_houseless_provenance_route_no_episode(
     assert target is not None
     _lane, holder = target
     assert holder["seat_state"] == "houseless"
+
+
+def test_resolve_cse_wake_target_delivery_phase_bypasses_scan_memo(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from cdp_ask.houseless_resolve import (
+        _RESOLVE_MEMO,
+        HouselessResolution,
+        clear_houseless_resolve_memo,
+        resolve_houseless_target,
+    )
+
+    from bus_watch.endpoint_wake_dispatcher import resolve_cse_wake_target
+
+    reg_id = "583b411df34247f9a48bc044b6518be3"
+    chat = "https://claude.ai/cowork/cse_delivery_fresh"
+    clear_houseless_resolve_memo()
+    _RESOLVE_MEMO[reg_id] = HouselessResolution(ok=False, reason="no_row")
+
+    def _provenance_ok(
+        registration_id: str, **_kwargs: object
+    ) -> tuple[dict[str, object], bool]:
+        return (
+            {
+                "registration_id": registration_id,
+                "purpose": "houseless",
+                "status": "active",
+                "seat_open": False,
+                "chat_url": chat,
+            },
+            False,
+        )
+
+    monkeypatch.setattr(
+        "cdp_ask.houseless_resolve._provenance_payload",
+        _provenance_ok,
+    )
+    monkeypatch.setattr(
+        "bus_watch.endpoint_wake_dispatcher.resolve_houseless_target",
+        resolve_houseless_target,
+    )
+    assert resolve_houseless_target(reg_id).reason == "no_row"
+    sub = {"surface": "cse", "agent_id": reg_id, "thread_scope": "22760"}
+
+    class Store:
+        def holder_by_registration(self, registration_id: str) -> dict | None:
+            return None
+
+    target = resolve_cse_wake_target(  # type: ignore[arg-type]
+        Store(), sub, wake_thread="22760", delivery_phase=True
+    )
+    assert target is not None
+    _lane, holder = target
+    assert holder["seat_state"] == "houseless"
+
+
+def test_resolve_cse_wake_target_provenance_unreachable_delivery_unknown(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from cdp_ask.houseless_resolve import resolve_houseless_target
+
+    from bus_watch.endpoint_wake_dispatcher import (
+        _GIW_HOLDER_LOOKUP_FAILED,
+        resolve_cse_wake_target,
+    )
+
+    reg_id = "583b411df34247f9a48bc044b6518be3"
+
+    def _provenance_down(*_a: object, **_k: object) -> tuple[None, bool]:
+        return None, True
+
+    monkeypatch.setattr(
+        "cdp_ask.houseless_resolve._provenance_payload",
+        _provenance_down,
+    )
+    monkeypatch.setattr(
+        "bus_watch.endpoint_wake_dispatcher.resolve_houseless_target",
+        resolve_houseless_target,
+    )
+    sub = {"surface": "cse", "agent_id": reg_id, "thread_scope": "22760"}
+
+    class Store:
+        def holder_by_registration(self, registration_id: str) -> dict | None:
+            return None
+
+    target = resolve_cse_wake_target(  # type: ignore[arg-type]
+        Store(), sub, wake_thread="22760", delivery_phase=True
+    )
+    assert target is not None
+    _lane, holder = target
+    assert holder.get(_GIW_HOLDER_LOOKUP_FAILED) is True
 
 
 def test_resolve_cse_wake_target_houseless_via_provenance_resolver(
@@ -6920,7 +7014,7 @@ def test_scan_cse_no_open_seat_writes_scan_holder_skip(db: None) -> None:
     monkeypatch = pytest.MonkeyPatch()
     monkeypatch.setattr(
         "bus_watch.endpoint_wake_dispatcher._holder_for_cse_registration",
-        lambda _store, rid: None if rid == reg else None,
+        lambda _store, rid, *, delivery_phase=False: None,
     )
     try:
         scan_once(Store())  # type: ignore[arg-type]

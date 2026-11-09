@@ -106,6 +106,15 @@ def _isolate_dispatch_ledger(tmp_path_factory: pytest.TempPathFactory):
 
 
 @pytest.fixture(autouse=True)
+def _clear_houseless_resolve_memo_autouse() -> None:
+    from cdp_ask.houseless_resolve import clear_houseless_resolve_memo
+
+    clear_houseless_resolve_memo()
+    yield
+    clear_houseless_resolve_memo()
+
+
+@pytest.fixture(autouse=True)
 def _pin_liaison_pager_socket(monkeypatch: pytest.MonkeyPatch) -> None:
     """Keep liaison pager off a live email-bridge socket even if env is poisoned."""
     import bus_watch.liaison_pager as liaison_pager

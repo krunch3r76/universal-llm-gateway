@@ -265,12 +265,19 @@ async def test_execute_followup_houseless_no_reattach_never_registers_lane(
         AsyncMock(return_value=[]),
     )
 
+    monkeypatch.setattr(
+        "cdp_ask.followup_dormant.unique_bound_registration", lambda _u: reg
+    )
+    monkeypatch.setattr(
+        "claude_bundles.cdp_registry.dormant_for_chat_url", lambda _u: None
+    )
+
     async def _resolve_target(req, store, **kwargs):  # type: ignore[no-untyped-def]
         from cdp_ask.models import FollowupProjectAskResponse
 
         return (
             None,
-            FollowupProjectAskResponse(ok=False, error="no_active_target"),
+            FollowupProjectAskResponse(ok=False, error="cse_not_found_on_lane"),
             "test",
             None,
         )
@@ -288,8 +295,8 @@ async def test_execute_followup_houseless_no_reattach_never_registers_lane(
         ExecutionStore(),
     )
     assert resp.ok is False
-    assert resp.error == "no_active_target"
-    assert resp.error != "houseless_no_attach"
+    assert resp.error == "cse_not_found_on_lane"
+    assert resp.reattach_skipped_reason == "houseless_no_attach"
     assert not mint_calls
 
 

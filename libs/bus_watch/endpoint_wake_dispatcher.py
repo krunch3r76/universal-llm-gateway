@@ -2307,14 +2307,20 @@ def _synthetic_houseless_holder(reg: str, chat_url: str) -> dict[str, Any]:
 
 
 def _holder_for_cse_registration(
-    store: StoreClient, registration_id: str
+    store: StoreClient,
+    registration_id: str,
+    *,
+    delivery_phase: bool = False,
 ) -> dict[str, Any] | None:
     reg = (registration_id or "").strip()
     if not reg:
         return None
-    hres = resolve_houseless_target(reg)
+    memo = {} if delivery_phase else None
+    hres = resolve_houseless_target(reg, memo=memo)
     if hres.ok and hres.chat_url:
         return _synthetic_houseless_holder(reg, hres.chat_url)
+    if hres.reason == "provenance_unreachable":
+        return _giw_holder_lookup_failed_marker(reg)
     if hres.reason != "purpose_not_houseless":
         return {_HOUSELESS_NO_ROUTE: f"houseless_{hres.reason}"}
     giw_answered = False
@@ -2384,7 +2390,9 @@ def resolve_cse_wake_target(
         if not isinstance(holder, dict) or not holder:
             return None
         return agent_id, holder
-    holder = _holder_for_cse_registration(store, agent_id)
+    holder = _holder_for_cse_registration(
+        store, agent_id, delivery_phase=delivery_phase
+    )
     if not isinstance(holder, dict) or not holder:
         return None
     if holder.get(_HOUSELESS_NO_ROUTE):

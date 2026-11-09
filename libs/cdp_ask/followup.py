@@ -256,20 +256,23 @@ def _registry_row_for_registration(registration_id: str) -> dict | None:
     return row if isinstance(row, dict) else None
 
 
+def _is_houseless_row(req: FollowupProjectAskRequest) -> bool:
+    from claude_bundles.what_is_running_view import is_houseless_purpose
+
+    rid = (req.registration_id or "").strip()
+    if not rid:
+        return False
+    row = _registry_row_for_registration(rid)
+    return isinstance(row, dict) and is_houseless_purpose(row.get("purpose"))
+
+
 def _houseless_followup_refusal(
     req: FollowupProjectAskRequest,
 ) -> FollowupProjectAskResponse | None:
     """Refuse operator attach paths for houseless rows; neutral wakes proceed."""
-    from claude_bundles.what_is_running_view import (
-        OPERATOR_PURPOSES,
-        is_houseless_purpose,
-    )
+    from claude_bundles.what_is_running_view import OPERATOR_PURPOSES
 
-    rid = (req.registration_id or "").strip()
-    if not rid:
-        return None
-    row = _registry_row_for_registration(rid)
-    if row is None or not is_houseless_purpose(row.get("purpose")):
+    if not _is_houseless_row(req):
         return None
     purpose = str(req.purpose or "").strip().lower()
     if not req.reattach and purpose not in OPERATOR_PURPOSES:
@@ -295,9 +298,14 @@ async def _maybe_reattach(
     err: FollowupProjectAskResponse,
 ) -> tuple[ReattachOutcome | None, FollowupProjectAskResponse | None]:
     """Reattach when the error is eligible and a dormant/bound seat or opt-in allows it."""
-    houseless_refusal = _houseless_followup_refusal(req)
-    if houseless_refusal is not None:
-        return None, houseless_refusal
+    if _is_houseless_row(req):
+        return None, fail_followup(
+            err.error or "followup_failed",
+            detail=err.detail,
+            candidates=err.candidates,
+            url=err.url or req.chat_url,
+            reattach_skipped_reason="houseless_no_attach",
+        )
     if err.error not in _REATTACH_ELIGIBLE_ERRORS:
         return None, err
     chat_url = reattach_chat_url(req, err)
