@@ -203,11 +203,6 @@ def build_finalize_payload(
         persona_refused = persona_refused_reason(
             persona_step if isinstance(persona_step, dict) else None
         )
-        persona_attempts = (
-            list(persona_step.get("persona_attempts") or [])
-            if isinstance(persona_step, dict)
-            else None
-        )
         try:
             participation = build_participation_manifest(
                 outputs_for_participation,
@@ -215,14 +210,21 @@ def build_finalize_payload(
                 models=models,
             )
             participation_summary = build_participation_summary(participation)
+            if isinstance(persona_step, dict):
+                raw_attempts = persona_step.get("persona_attempts")
+                if raw_attempts is not None:
+                    if not isinstance(raw_attempts, list):
+                        payload["persona_attempts_type_error"] = type(
+                            raw_attempts
+                        ).__name__
+                    else:
+                        payload["persona_attempts"] = list(raw_attempts)
         except Exception as exc:  # noqa: BLE001
             participation = None
             participation_summary = None
             payload["participation_error"] = type(exc).__name__
         if persona_refused:
             payload["persona_refused"] = persona_refused
-        if persona_attempts is not None:
-            payload["persona_attempts"] = persona_attempts
         payload["participation"] = participation
         payload["participation_summary"] = participation_summary
     return payload

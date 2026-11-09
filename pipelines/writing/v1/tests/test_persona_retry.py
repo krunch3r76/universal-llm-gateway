@@ -320,7 +320,7 @@ def test_persona_retry_string_false_not_enabled() -> None:
     assert persona_retry.persona_retry_enabled({"persona_retry": True}) is True
 
 
-def test_deterministic_list_failure_retries_then_refuses() -> None:
+def test_deterministic_list_failure_retries_then_recovers() -> None:
     calls = {"judge": 0, "author": 0}
     list_prose = (
         "You write as Pat Rivera about the Monterey restaurant.\n"
@@ -403,9 +403,17 @@ def test_prompt_missing_no_retry(monkeypatch: pytest.MonkeyPatch) -> None:
 
 def test_list_structure_exhaustion_no_bypass(monkeypatch: pytest.MonkeyPatch) -> None:
     list_prose = "You write plainly.\n1. First item"
+    judge_calls = 0
 
     async def _caller(_prompt: str) -> str:
         return list_prose
+
+    async def _judge(
+        _fenced: str, candidates: list[local_persona.Candidate]
+    ) -> str:
+        nonlocal judge_calls
+        judge_calls += 1
+        return await _judge_accepts_all()(_fenced, candidates)
 
     published: list[Any] = []
 
@@ -419,15 +427,22 @@ def test_list_structure_exhaustion_no_bypass(monkeypatch: pytest.MonkeyPatch) ->
     )
     handler = local_persona.WritingLocalPersonaAuthorHandler(
         caller=_caller,
-        judge_caller=_judge_accepts_all(),
+        judge_caller=_judge,
     )
     payload = asyncio.run(
         handler.execute(None, _monterey_ctx(persona_retry=True))
     ).json
+    assert payload.get("ok") is False
     assert payload.get("persona_refused") == "persona_validation_failed"
     assert payload.get("detail") == "list_structure"
     assert len(payload.get("persona_attempts") or []) == 2
     assert payload["persona_attempts"][0]["detail"] == "list_structure"
+    assert len(published) == 1
+    event = published[0]
+    assert event.payload["reason"] == "persona_validation_failed"
+    assert event.payload.get("detail") == "list_structure"
+    assert payload.get("persona_prose") is None
+    assert judge_calls == 0
 
 
 def test_judge_call_counts_and_attempt_tokens() -> None:
@@ -498,6 +513,130 @@ def test_validate_exception_preserves_persona_attempts(
     payload = asyncio.run(
         handler.execute(None, _monterey_ctx(persona_retry=True))
     ).json
-    assert payload.get("persona_refused") == "persona_author_failed"
+    assert payload.get("persona_refused") == "persona_validator_failed"
     assert len(payload.get("persona_attempts") or []) == 1
     assert payload["persona_attempts"][0].get("error") == "RuntimeError"
+    assert payload["persona_attempts"][0].get("refused") == "persona_validator_failed"
+
+
+def test_attempt2_author_raises_after_validation_retry(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    token = _FIXTURE["judged_invented_token"]
+    calls = {"n": 0}
+    published: list[Any] = []
+
+    def _capture(_self: object, _ctx: object, event: Any) -> None:
+        published.append(event)
+
+    monkeypatch.setattr(
+        local_persona.WritingLocalPersonaAuthorHandler,
+        "_publish_bus_event",
+        _capture,
+    )
+
+    async def _caller(prompt: str) -> str:
+        calls["n"] += 1
+        if "Your prior attempt introduced" in prompt:
+            raise RuntimeError("transport_down")
+        return _FIXTURE["attempt1_prose"]
+
+    handler = local_persona.WritingLocalPersonaAuthorHandler(
+        caller=_caller,
+        judge_caller=_judge_invented(token),
+    )
+    payload = asyncio.run(
+        handler.execute(None, _monterey_ctx(persona_retry=True))
+    ).json
+    attempts = payload.get("persona_attempts") or []
+    assert len(attempts) == 2
+    assert attempts[1].get("refused") == "persona_author_failed"
+    assert attempts[1].get("error") == "RuntimeError"
+    assert payload.get("ok") is False
+    assert len(published) == 1
+
+
+def test_attempt2_judge_invalid_after_validation_retry(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    token = _FIXTURE["judged_invented_token"]
+    judge_calls = 0
+    published: list[Any] = []
+
+    def _capture(_self: object, _ctx: object, event: Any) -> None:
+        published.append(event)
+
+    monkeypatch.setattr(
+        local_persona.WritingLocalPersonaAuthorHandler,
+        "_publish_bus_event",
+        _capture,
+    )
+
+    async def _caller(prompt: str) -> str:
+        if "Your prior attempt introduced" in prompt:
+            return _FIXTURE["attempt2_prose"]
+        return _FIXTURE["attempt1_prose"]
+
+    async def _judge(
+        _fenced: str, candidates: list[local_persona.Candidate]
+    ) -> str:
+        nonlocal judge_calls
+        judge_calls += 1
+        if judge_calls == 1:
+            return await _judge_invented(token)(_fenced, candidates)
+        return "not-json"
+
+    handler = local_persona.WritingLocalPersonaAuthorHandler(
+        caller=_caller,
+        judge_caller=_judge,
+    )
+    payload = asyncio.run(
+        handler.execute(None, _monterey_ctx(persona_retry=True))
+    ).json
+    attempts = payload.get("persona_attempts") or []
+    assert len(attempts) == 2
+    assert attempts[1].get("refused") == "persona_judge_invalid"
+    assert payload.get("persona_refused") == "persona_judge_invalid"
+    assert payload.get("ok") is False
+    assert len(published) == 1
+
+
+@pytest.mark.parametrize(
+    ("prose", "detail"),
+    [
+        ("", "empty_prose"),
+        ("<thinking>\nDrafting voice.\n</thinking>\nYou write as Pat.", "thinking_preamble"),
+        ("You write plainly.\n- first bullet", "list_structure"),
+    ],
+)
+def test_deterministic_refusal_detail_additive_default_off(
+    monkeypatch: pytest.MonkeyPatch,
+    prose: str,
+    detail: str,
+) -> None:
+    published: list[Any] = []
+
+    def _capture(_self: object, _ctx: object, event: Any) -> None:
+        published.append(event)
+
+    monkeypatch.setattr(
+        local_persona.WritingLocalPersonaAuthorHandler,
+        "_publish_bus_event",
+        _capture,
+    )
+
+    async def _caller(_prompt: str) -> str:
+        return prose
+
+    handler = local_persona.WritingLocalPersonaAuthorHandler(
+        caller=_caller,
+        judge_caller=_judge_accepts_all(),
+    )
+    payload = asyncio.run(
+        handler.execute(None, _monterey_ctx(persona_retry=False))
+    ).json
+    assert payload.get("persona_refused") == "persona_validation_failed"
+    assert payload.get("detail") == detail
+    assert len(published) == 1
+    assert published[0].payload["reason"] == "persona_validation_failed"
+    assert published[0].payload.get("detail") == detail

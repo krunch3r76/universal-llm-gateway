@@ -278,6 +278,7 @@ def _persona_candidates(
 
 
 def _persona_deterministic_failure(text: str) -> tuple[str, str] | None:
+    # detail is additive/optional; reason-keyed consumers ignore it; tolerate absent detail.
     """Return refused reason and detail when prose fails non-judgment checks."""
     if not text:
         return "persona_validation_failed", "empty_prose"
@@ -645,14 +646,13 @@ class WritingLocalPersonaAuthorHandler(BaseHandler):
                     refused,
                     persona_attempts=persona_attempts,
                 )
-            if refused == "persona_author_failed":
-                err = None
-                if persona_attempts:
-                    err = persona_attempts[-1].get("error")
+            if refused in ("persona_author_failed", "persona_validator_failed"):
+                last = persona_attempts[-1] if persona_attempts else {}
                 return self._refuse(
                     context,
                     refused,
-                    error=str(err) if err else "author_caller_failed",
+                    error=str(last.get("error") or "author_caller_failed"),
+                    rejected_text=last.get("rejected_text") or None,
                     persona_attempts=persona_attempts,
                 )
             return self._refuse(

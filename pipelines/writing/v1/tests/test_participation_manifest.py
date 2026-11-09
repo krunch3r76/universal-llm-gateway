@@ -204,6 +204,8 @@ def test_manifest_order_matches_yaml() -> None:
 
 
 def test_manifest_order_ignores_shuffled_outputs() -> None:
+    import hashlib
+
     shuffled = {
         "drafter_anthropic": _Out(None, raw="z", completion_tokens=1, model_id="m"),
         "drafter_openai": _Out(None, raw="a", completion_tokens=1, model_id="m"),
@@ -226,6 +228,10 @@ def test_manifest_order_ignores_shuffled_outputs() -> None:
         "drafter_local_ernie",
         "drafter_anthropic",
     ]
+    for row in rows:
+        step = row["step"]
+        raw = shuffled[step].raw
+        assert row["candidate_sha256"] == hashlib.sha256(raw.encode()).hexdigest()
 
 
 def test_requested_models_from_writing_models_yaml() -> None:
@@ -281,21 +287,51 @@ def test_conditions_match_participation_states() -> None:
             assert row["state"].startswith("skipped_")
 
 
-def test_load_writing_models_uses_parent_not_v1_models_yaml() -> None:
-    v1_models_path = _V1 / "models.yaml"
-    original = v1_models_path.read_text(encoding="utf-8")
+def test_load_writing_models_uses_parent_not_v1_models_yaml(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    parent_path = _V1.parent / "models.yaml"
+    v1_path = _V1 / "models.yaml"
+    parent_table = independence.load_writing_models(parent_path)
     sentinel = "openai/LEG1A-SENTINEL-ONLY-IN-V1"
-    divergent = original.replace("openai/gpt-5.4", sentinel, 1)
-    try:
-        v1_models_path.write_text(divergent, encoding="utf-8")
-        table = independence.load_writing_models()
-        assert table["drafter_openai"] == "openai/gpt-5.4"
-        assert table["reviser"] == "qwen3-5-9b-q8-0-131072"
-    finally:
-        v1_models_path.write_text(original, encoding="utf-8")
+    sentinel_v1 = parent_path.read_text(encoding="utf-8").replace(
+        "openai/gpt-5.4", sentinel, 1
+    )
+    divergent_tmp = tmp_path / "models.yaml"
+    divergent_tmp.write_text(sentinel_v1, encoding="utf-8")
+
+    real_read_text = Path.read_text
+
+    def _patched_read_text(self: Path, *args: Any, **kwargs: Any) -> str:
+        if self.resolve() == v1_path.resolve():
+            return sentinel_v1
+        return real_read_text(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "read_text", _patched_read_text)
+    assert independence.load_writing_models() == parent_table
+    assert independence.load_writing_models(divergent_tmp)["drafter_openai"] == sentinel
 
 
-def test_missing_condition_row_skipped_unconfigured(
+def test_absent_condition_no_output_skipped_unconfigured(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    conds = participation._load_conditions().copy()
+    del conds["drafter_google"]
+    monkeypatch.setattr(participation, "_CONDITIONS", conds)
+    outputs = {
+        "assemble": _Out(_sworn_assemble()),
+        "local_persona_author": _Out({"ok": True, "persona_prose": "voice"}),
+    }
+    rows = participation.build_participation_manifest(
+        outputs,
+        options={"output": "envelope", "full_drafter_fanout": True},
+    )
+    google = next(r for r in rows if r["step"] == "drafter_google")
+    assert google["state"] == "skipped_unconfigured"
+
+
+def test_present_empty_condition_with_output_executed(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     conds = participation._load_conditions().copy()
@@ -311,7 +347,43 @@ def test_missing_condition_row_skipped_unconfigured(
         options={"output": "envelope", "full_drafter_fanout": True},
     )
     google = next(r for r in rows if r["step"] == "drafter_google")
-    assert google["state"] == "skipped_unconfigured"
+    assert google["state"] == "executed"
+
+
+def test_absent_condition_with_output_not_skipped(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    conds = participation._load_conditions().copy()
+    del conds["drafter_google"]
+    monkeypatch.setattr(participation, "_CONDITIONS", conds)
+    outputs = {
+        "assemble": _Out(_sworn_assemble()),
+        "local_persona_author": _Out({"ok": True, "persona_prose": "voice"}),
+        "drafter_google": _Out(None, raw="text", completion_tokens=2, model_id="m"),
+    }
+    rows = participation.build_participation_manifest(
+        outputs,
+        options={"output": "envelope", "full_drafter_fanout": True},
+    )
+    google = next(r for r in rows if r["step"] == "drafter_google")
+    assert google["state"] == "executed"
+
+
+@pytest.mark.parametrize("bad_attempts", [42, "abc", {"n": 1}])
+def test_finalize_bad_persona_attempts_type(
+    bad_attempts: Any,
+) -> None:
+    outputs = {
+        "assemble": _Out(_sworn_assemble()),
+        "local_persona_author": _Out(
+            {"ok": True, "persona_prose": "voice", "persona_attempts": bad_attempts}
+        ),
+    }
+    payload = finalize_payload.build_finalize_payload(
+        **_minimal_finalize_kwargs(outputs)
+    )
+    assert "persona_attempts" not in payload
+    assert payload.get("persona_attempts_type_error") == type(bad_attempts).__name__
 
 
 def _minimal_finalize_kwargs(

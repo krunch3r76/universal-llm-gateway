@@ -204,7 +204,7 @@ async def run_persona_attempts(
                 judge_caller=judge_caller,
             )
         except Exception as exc:
-            verdict = _failed_verdict("persona_author_failed")
+            verdict = _failed_verdict("persona_validator_failed")
             record = attempt_record(
                 attempt,
                 verdict,

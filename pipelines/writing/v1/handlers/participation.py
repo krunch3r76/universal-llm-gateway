@@ -121,10 +121,33 @@ def _persona_dependency(persona_step: dict[str, Any] | None) -> str | None:
     return f"local_persona_author:{reason}"
 
 
+def _output_execution_state(
+    outputs: dict[str, Any], name: str
+) -> tuple[str, str | None]:
+    raw = _raw_step(outputs, name)
+    if raw is None:
+        return "failed", None
+    if not _step_ok(raw):
+        return "failed", None
+    text = _raw_text(raw)
+    if not text:
+        return "failed", None
+    _, completion = _tokens(raw)
+    if completion is not None and completion > 0:
+        return "executed", None
+    return "executed_unmetered", None
+
+
+def _step_has_output(outputs: dict[str, Any], name: str) -> bool:
+    raw = _raw_step(outputs, name)
+    return raw is not None and bool(_raw_text(raw).strip())
+
+
 def _classify_state(
     *,
     name: str,
     condition: str,
+    configured: bool,
     outputs: dict[str, Any],
     options: dict[str, Any],
     persona_step: dict[str, Any] | None,
@@ -132,22 +155,15 @@ def _classify_state(
 ) -> tuple[str, str | None]:
     ctx = _outputs_for_conditions(outputs)
     opts = dict(options or {})
+    if not configured:
+        if not _step_has_output(outputs, name):
+            return "skipped_unconfigured", None
+        return _output_execution_state(outputs, name)
     if not condition:
-        return "skipped_unconfigured", None
+        return _output_execution_state(outputs, name)
     active = evaluator.evaluate(condition, ctx, opts)
     if active:
-        raw = _raw_step(outputs, name)
-        if raw is None:
-            return "failed", None
-        if not _step_ok(raw):
-            return "failed", None
-        text = _raw_text(raw)
-        if not text:
-            return "failed", None
-        _, completion = _tokens(raw)
-        if completion is not None and completion > 0:
-            return "executed", None
-        return "executed_unmetered", None
+        return _output_execution_state(outputs, name)
     persona_ok = dict(persona_step or {})
     persona_ok["ok"] = True
     patched = dict(ctx)
@@ -177,9 +193,11 @@ def build_participation_manifest(
     for step_name, alias in _DRAFTER_ROWS:
         raw = _raw_step(outputs, step_name)
         prompt_tokens, completion_tokens = _tokens(raw)
+        configured = step_name in conditions
         state, dependency = _classify_state(
             name=step_name,
             condition=conditions.get(step_name, ""),
+            configured=configured,
             outputs=outputs,
             options=opts,
             persona_step=persona_json,
