@@ -7,8 +7,8 @@ from typing import Any
 
 from systems.pipeline.core.prompts import PromptBuilder
 
-from .judge_schema import PersonaJudgment
 from . import prompt_store
+from .judge_schema import PersonaJudgment
 
 _JUDGMENT_READING_CAP = 240
 MAX_PERSONA_ATTEMPTS = 2
