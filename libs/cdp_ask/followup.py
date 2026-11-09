@@ -259,14 +259,20 @@ def _registry_row_for_registration(registration_id: str) -> dict | None:
 def _houseless_followup_refusal(
     req: FollowupProjectAskRequest,
 ) -> FollowupProjectAskResponse | None:
-    """Fail closed when the target registration is a houseless mailbox row."""
-    from claude_bundles.what_is_running_view import is_houseless_purpose
+    """Refuse operator attach paths for houseless rows; neutral wakes proceed."""
+    from claude_bundles.what_is_running_view import (
+        OPERATOR_PURPOSES,
+        is_houseless_purpose,
+    )
 
     rid = (req.registration_id or "").strip()
     if not rid:
         return None
     row = _registry_row_for_registration(rid)
     if row is None or not is_houseless_purpose(row.get("purpose")):
+        return None
+    purpose = str(req.purpose or "").strip().lower()
+    if not req.reattach and purpose not in OPERATOR_PURPOSES:
         return None
     return fail_followup(
         "houseless_no_attach",

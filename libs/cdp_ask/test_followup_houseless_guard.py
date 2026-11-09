@@ -61,3 +61,59 @@ async def test_houseless_operator_proxy_refuses_reattach_and_mint(
     assert resp.error == "houseless_no_attach"
     assert not mint_calls
     assert not attach_calls
+
+
+@pytest.mark.asyncio
+async def test_houseless_neutral_wake_reaches_resolve_followup_target(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from cdp_ask.execution_store import ExecutionStore
+    from cdp_ask.followup import execute_followup
+    from cdp_ask.models import FollowupProjectAskRequest
+
+    reg = "583b411df34247f9a48bc044b6518be3"
+    chat = "https://claude.ai/cowork/cse_houseless_mailbox"
+    monkeypatch.setattr(
+        "claude_bundles.cdp_registry_store.load_active",
+        lambda: {
+            reg: {
+                "registration_id": reg,
+                "purpose": "houseless",
+                "status": "active",
+            }
+        },
+    )
+    resolve_calls: list[object] = []
+
+    async def _resolve_target(req, store, **kwargs):  # type: ignore[no-untyped-def]
+        resolve_calls.append(req)
+        from cdp_ask.models import FollowupProjectAskResponse
+
+        return (
+            None,
+            FollowupProjectAskResponse(
+                ok=False,
+                error="no_active_target",
+            ),
+            "test",
+            None,
+        )
+
+    monkeypatch.setattr("cdp_ask.followup.resolve_followup_target", _resolve_target)
+    monkeypatch.setattr(
+        "cdp_ask.followup.ensure_cse_attached",
+        AsyncMock(side_effect=AssertionError("ensure_cse_attached must not run")),
+    )
+    resp = await execute_followup(
+        FollowupProjectAskRequest(
+            prompt_text="wake turns 2",
+            parent_thread="22760",
+            chat_url=chat,
+            registration_id=reg,
+            purpose=None,
+            reattach=False,
+        ),
+        ExecutionStore(),
+    )
+    assert resolve_calls, "resolve_followup_target must run for neutral houseless wake"
+    assert resp.error != "houseless_no_attach"

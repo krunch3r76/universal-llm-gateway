@@ -196,9 +196,14 @@ async def resolve_public_provenance(
     enrich = _registry_projection(reg_for_projection)
     if enrich:
         merged = {**resolved.model_dump(), **enrich}
+        queried_reg = (registration_id or "").strip()
+        if queried_reg and not str(merged.get("registration_id") or "").strip():
+            merged["registration_id"] = queried_reg
         resolved = ProvenanceResponse(
             **{k: v for k, v in merged.items() if k in ProvenanceResponse.model_fields}
         )
+    elif registration_id and not str(resolved.registration_id or "").strip():
+        resolved = resolved.model_copy(update={"registration_id": registration_id})
     emit(
         mcp_cse_session_resolved(
             registration_id=resolved.registration_id,

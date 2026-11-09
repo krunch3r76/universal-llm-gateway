@@ -23,7 +23,10 @@ from agent_bus_store.routes.threads.send_prep import (
     maestro_subject_head,
 )
 from agent_seat.registry import STAGE_MANAGER_ADDRESSES, normalize_bus_address
-from cdp_ask.houseless_resolve import resolve_houseless_target
+from cdp_ask.houseless_resolve import (
+    clear_houseless_resolve_memo,
+    resolve_houseless_target,
+)
 from claude_bundles.holder_strings import holder_id_from_chat_url
 from cursor_bridge.chat_target import exchange_lines
 from transport_utils import DEFAULT_STARGATE_URL, make_sync_client
@@ -1765,6 +1768,7 @@ def scan_once(store: StoreClient, *, idle_mark: dict[str, float] | None = None) 
     mark = idle_mark if idle_mark is not None else {}
     max_passes = 20
     for _pass in range(max_passes):
+        clear_houseless_resolve_memo()
         cursor = store.cursor()
         high = int(cursor["high_water_turn_id"])
         turns = store.since(high)

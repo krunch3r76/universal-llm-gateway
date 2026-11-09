@@ -231,12 +231,23 @@ async def test_execute_followup_houseless_no_reattach_never_registers_lane(
     from cdp_ask.followup import execute_followup
     from cdp_ask.models import FollowupProjectAskRequest
 
+    reg = "583b411df34247f9a48bc044b6518be3"
     mint_calls: list[dict] = []
 
     def _forbidden_register_lane(*_a: object, **_k: object) -> object:
         mint_calls.append(dict(_k))
         raise AssertionError("register_lane must not run for houseless delivery")
 
+    monkeypatch.setattr(
+        "claude_bundles.cdp_registry_store.load_active",
+        lambda: {
+            reg: {
+                "registration_id": reg,
+                "purpose": "houseless",
+                "status": "active",
+            }
+        },
+    )
     monkeypatch.setattr(
         "claude_bundles.cdp_registry.register_lane",
         _forbidden_register_lane,
@@ -253,18 +264,32 @@ async def test_execute_followup_houseless_no_reattach_never_registers_lane(
         "cdp_ask.followup_resolve.scan_lane_cse_urls",
         AsyncMock(return_value=[]),
     )
+
+    async def _resolve_target(req, store, **kwargs):  # type: ignore[no-untyped-def]
+        from cdp_ask.models import FollowupProjectAskResponse
+
+        return (
+            None,
+            FollowupProjectAskResponse(ok=False, error="no_active_target"),
+            "test",
+            None,
+        )
+
+    monkeypatch.setattr("cdp_ask.followup.resolve_followup_target", _resolve_target)
     resp = await execute_followup(
         FollowupProjectAskRequest(
             prompt_text="wake turns 2",
             parent_thread="22760",
             chat_url="https://claude.ai/cowork/cse_closed",
-            registration_id="583b411df34247f9a48bc044b6518be3",
+            registration_id=reg,
             purpose=None,
             reattach=False,
         ),
         ExecutionStore(),
     )
     assert resp.ok is False
+    assert resp.error == "no_active_target"
+    assert resp.error != "houseless_no_attach"
     assert not mint_calls
 
 

@@ -163,3 +163,28 @@ async def test_n_seat_candidates(monkeypatch, tmp_path: Path) -> None:
     for row in candidates:
         prov = row.get("provenance") or {}
         assert prov.get("state") != "conflict", row
+
+
+@pytest.mark.asyncio
+async def test_provenance_echoes_registration_id_without_episode(monkeypatch) -> None:
+    reg = "reg-houseless-no-episode"
+    chat = "https://claude.ai/cowork/cse_mailbox_only"
+    monkeypatch.setattr(
+        "claude_bundles.cdp_registry_store.load_active",
+        lambda: {
+            reg: {
+                "registration_id": reg,
+                "purpose": "houseless",
+                "status": "active",
+                "chat_url": chat,
+            }
+        },
+    )
+    monkeypatch.setattr(
+        "claude_bundles.cdp_registry.session_address.chat_url_for_registration",
+        lambda _rid: chat,
+    )
+    result = await resolve_public_provenance(ProvenanceQuery(registration_id=reg))
+    assert result.registration_id == reg
+    assert result.purpose == "houseless"
+    assert result.reason == "no_episode"

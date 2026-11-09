@@ -57,6 +57,7 @@ def boot_reconcile(conn: sqlite3.Connection) -> dict[str, Any]:
     active_urls: set[str] = set()
     dormant_urls: set[str] = set()
     registry_by_url: dict[str, dict[str, Any]] = {}
+    # io-local registry snapshot only (best-effort); Jupiter cdp_ask is authoritative.
     for reg in list_active():
         if is_houseless_purpose(getattr(reg, "purpose", None)):
             continue
@@ -132,6 +133,7 @@ def boot_reconcile(conn: sqlite3.Connection) -> dict[str, Any]:
         str(row["holder_id"])
         for row in conn.execute("SELECT holder_id FROM cse_session_holders").fetchall()
     }
+    # Skip houseless adopt rows from the same io-local snapshot (best-effort).
     for url, reg in registry_by_url.items():
         if is_houseless_purpose(reg.get("purpose")):
             continue

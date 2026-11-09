@@ -125,9 +125,14 @@ def test_driving_seat_refuses_houseless(
         )
 
 
-def test_lane_seat_holder_ignores_houseless() -> None:
+def test_lane_seat_holder_ignores_houseless(monkeypatch: pytest.MonkeyPatch) -> None:
     from cdp_ask.lane_admission import lane_seat_holder
     from cdp_ask.operator_seat_resolve import resolve_operator_seat
+
+    monkeypatch.setattr(
+        "cdp_ask.operator_seat_resolve._provenance_get",
+        lambda *_a, **_k: None,
+    )
 
     snap = {
         "observed_at": "2026-11-09T00:00:00Z",

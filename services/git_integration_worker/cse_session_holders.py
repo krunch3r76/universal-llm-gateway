@@ -162,6 +162,7 @@ def upsert_holder(
         raise ValueError(f"invalid CSE chat_url: {chat_url!r}")
     reg = (registration_id or "").strip() or None
     if reg:
+        # Best-effort belt-and-braces on io-local registry; authority is cdp_ask on Jupiter.
         try:
             from claude_bundles import cdp_registry_store as _reg_store
             from claude_bundles.what_is_running_view import is_houseless_purpose
@@ -176,8 +177,12 @@ def upsert_holder(
                 )
         except ValueError:
             raise
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.warning(
+                "upsert_holder: io-local registry houseless check skipped reg=%s: %s",
+                reg,
+                exc,
+            )
     now = _now()
     existing = get_holder(conn, hid)
     exec_id = (execution_id or "").strip() or None
@@ -706,9 +711,6 @@ def occupancy_projections(conn: sqlite3.Connection) -> list[dict[str, Any]]:
     ).fetchall()
     out: list[dict[str, Any]] = []
     for row in rows:
-        state = str(row["seat_state"] or "")
-        if state == "houseless":
-            continue
         hid = str(row["holder_id"])
         out.append(
             {
