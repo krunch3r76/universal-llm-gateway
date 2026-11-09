@@ -8,6 +8,7 @@ from typing import Any
 
 from fastapi import HTTPException
 
+from ..compaction import is_tombstone_only
 from ..db import query
 from ..entity_state_render import derive_status_view
 
@@ -169,7 +170,17 @@ def build_entity_preview(
         raise HTTPException(status_code=404, detail=f"Entity not found: {entity_id}")
     row = rows[0]
     entity_row = dict(row)
-    view = derive_status_view(conn, entity_id, entity_row)
+    live_assertions = query(
+        conn,
+        "SELECT id, claim, observed_at, confidence, review_status, entity_id "
+        "FROM assertions WHERE entity_id = ? AND superseded_by IS NULL",
+        (entity_id,),
+    )
+    live_claims = [str(r.get("claim") or "") for r in live_assertions]
+    if live_assertions and is_tombstone_only(live_claims):
+        view = None
+    else:
+        view = derive_status_view(conn, entity_id, entity_row)
     description = str(row.get("description") or "")
     if view is not None:
         summary_field = "derived_status"
@@ -193,12 +204,6 @@ def build_entity_preview(
                 attr_count = len(parsed)
         except json.JSONDecodeError:
             attr_count = 0
-    live_assertions = query(
-        conn,
-        "SELECT id, claim, observed_at, confidence, review_status, entity_id "
-        "FROM assertions WHERE entity_id = ? AND superseded_by IS NULL",
-        (entity_id,),
-    )
     live_ids = {int(row["id"]) for row in live_assertions}
     assertion_count = len(live_assertions)
     rel_rows = query(
@@ -223,8 +228,18 @@ def build_entity_preview(
         clipped, _, _ = _clip_summary(str(raw_source_uri))
         preview_source_uri = clipped or None
     wf_fs = view.field_states.get("workflow_state") if view is not None else None
-    if view is not None and wf_fs is not None and "workflow_state" in view.rendered_fields:
-        if wf_fs.verification == "verified":
+    if (
+        view is not None
+        and wf_fs is not None
+        and "workflow_state" in view.rendered_fields
+    ):
+        if wf_fs.value is None:
+            current_state = (
+                row.get("workflow_state")
+                or row.get("lifecycle")
+                or row.get("confidence_band")
+            )
+        elif wf_fs.verification == "verified":
             current_state = wf_fs.value
         else:
             current_state = f"{wf_fs.value} (unverified)"

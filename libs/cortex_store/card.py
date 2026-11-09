@@ -153,10 +153,15 @@ def _pin_withhold_suffix(current_status: CurrentStatus, view: object) -> str:
         return ""
     by_id = {int(w.assertion_id): w for w in current_status.withheld_newer}
     suffix_parts: list[str] = []
-    for fs in view.field_states.values():
-        nid = fs.newer_claim_id
-        if nid is None or nid not in by_id:
+    emitted: set[int] = set()
+    for field in sorted(view.rendered_fields):
+        fs = view.field_states.get(field)
+        if fs is None:
             continue
+        nid = fs.newer_claim_id
+        if nid is None or nid not in by_id or nid in emitted:
+            continue
+        emitted.add(nid)
         entry = by_id[nid]
         reason = entry.reason or "flagged-no-parsed-reason"
         suffix_parts.append(f" · pin withholds a:{nid} ({reason})")
@@ -454,7 +459,9 @@ def get_entity_card(
             else "tombstoned"
         )
     else:
-        if _entity_is_concern_typed(conn, entity_id=entity_id, entity_type=str(e["type"])):
+        if _entity_is_concern_typed(
+            conn, entity_id=entity_id, entity_type=str(e["type"])
+        ):
             current_status = _fetch_concern_typed_current_status(
                 conn, entity_id=entity_id
             )
@@ -471,7 +478,15 @@ def get_entity_card(
             )
         surfaced_rows = _merge_current_status_slot(a_rows, e_row, top_k=top_k)
         top_k_for_card = [_card_assertion(r) for r in surfaced_rows]
-        status_view = derive_status_view(conn, entity_id, dict(e))
+        try:
+            status_view = derive_status_view(conn, entity_id, dict(e))
+        except Exception:
+            logger.warning(
+                "derive_status_view failed for %s (card read)",
+                entity_id,
+                exc_info=True,
+            )
+            status_view = None
         predicate_summary, _summary_withheld = aggregate_predicate_summary(
             top_k_assertions=a_rows,
             et_type_counts=[
@@ -497,10 +512,14 @@ def get_entity_card(
     summary_row = adapter.summary_row(dict(e))
     authored_note: AuthoredNote | None = None
     if status_view is not None:
-        summary_row = status_view.sentence + _pin_withhold_suffix(current_status, status_view)
+        summary_row = status_view.sentence + _pin_withhold_suffix(
+            current_status, status_view
+        )
         desc = str(e.get("description") or "").strip()
         if desc:
-            authored_note = AuthoredNote(text=desc, updated_at=str(e.get("updated_at") or ""))
+            authored_note = AuthoredNote(
+                text=desc, updated_at=str(e.get("updated_at") or "")
+            )
 
     debug_payload: CardDebug | None = None
     if debug:

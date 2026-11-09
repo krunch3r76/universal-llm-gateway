@@ -25,6 +25,14 @@ def _format_value(value: object) -> str:
     return str(value)
 
 
+def _newer_claim_created_date(created_at: str | None) -> str:
+    if not created_at:
+        return ""
+    if "T" in created_at:
+        return created_at.split("T", 1)[0]
+    return created_at[:10] if len(created_at) >= 10 else created_at
+
+
 def _render_field_part(field: str, fs: FieldState) -> str | None:
     if field == "workflow_state" and fs.value is None and not fs.newer_claim_id:
         return None
@@ -33,9 +41,11 @@ def _render_field_part(field: str, fs: FieldState) -> str | None:
     head_bit = f", head {fs.head_ref}" if fs.head_ref else ""
     body = f"{field}={_format_value(fs.value)} [{fs.verification}{head_bit}]"
     if fs.newer_claim_id is not None:
-        created = fs.newer_claim_created_at or ""
-        rs = fs.newer_review_status if fs.newer_review_status is not None else ""
-        body += f" · newer claim a:{fs.newer_claim_id} ({created}, review_status={rs})"
+        created = _newer_claim_created_date(fs.newer_claim_created_at)
+        body += f" · newer claim a:{fs.newer_claim_id} ({created}"
+        if fs.newer_review_status is not None and fs.newer_review_status != "":
+            body += f", review_status={fs.newer_review_status}"
+        body += ")"
     return body
 
 
@@ -43,7 +53,7 @@ def _should_render_workflow_state(fs: FieldState, attrs: dict[str, Any]) -> bool
     if fs.newer_claim_id is not None:
         return True
     if records_for_field(attrs, "workflow_state"):
-        return fs.present or fs.newer_claim_id is not None
+        return fs.present
     return False
 
 
