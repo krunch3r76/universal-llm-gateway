@@ -16,6 +16,8 @@ class DeadlineItem(BaseModel):
     deadline_description: str | None = None
     urgency: str | None = None
     outcome: str | None = None
+    resolved_by: list[int] = []
+    resolved_via: list[str] = []
 
 
 class DeadlineList(BaseModel):
