@@ -11,6 +11,7 @@ from universal_logging import get_logger
 
 from ..common.config import StargateMode
 from ..common.connection_manager import ConnectionManager
+from ..common.protocol.message import FederationMessageType
 
 if TYPE_CHECKING:
     from gateway_websocket import GatewayWebSocketClient
@@ -208,11 +209,15 @@ class RemoteIntegration:
             msg_type: Telemetry message type (resource_update, model_loaded, etc.)
             data: Telemetry data
         """
-        # Cache GATEWAY_SNAPSHOT for resend on Master reconnection.
-        # The Edge builds this with current loaded_models state; caching it
-        # ensures the Relay can restore Master state after transient disconnects.
-        if msg_type == "telemetry.gateway.snapshot":
-            self._cached_edge_snapshot = {"msg_type": msg_type, "data": data.copy()}
+        # Cache GATEWAY_SNAPSHOT for resend on Master reconnection; keep cache
+        # write-through on subsequent model/resource telemetry (mirrors Edge server).
+        if msg_type == FederationMessageType.GATEWAY_SNAPSHOT.value:
+            self._cached_edge_snapshot = {
+                "msg_type": msg_type,
+                "data": self._copy_snapshot_data(data),
+            }
+        elif self._cached_edge_snapshot is not None:
+            self._update_cached_edge_snapshot(msg_type, data)
 
         # Also ingest Edge telemetry for HTTP polling mode.
         #
@@ -300,6 +305,72 @@ class RemoteIntegration:
                 exc_info=True,
             )
 
+    @staticmethod
+    def _copy_snapshot_data(data: dict[str, Any]) -> dict[str, Any]:
+        """Return a shallow copy of snapshot payload with list fields detached."""
+        snap = dict(data)
+        for key in ("loaded_models", "busy_models", "loading_models"):
+            if key in snap and snap[key] is not None:
+                snap[key] = list(snap[key])
+        return snap
+
+    def _update_cached_edge_snapshot(self, msg_type: str, data: dict[str, Any]) -> None:
+        """
+        Apply incremental Edge telemetry to the cached GATEWAY_SNAPSHOT.
+
+        INVARIANT: reconnect resend matches HTTP-ingest loaded/busy state.
+        """
+        if not self._cached_edge_snapshot:
+            return
+
+        snap_data = self._cached_edge_snapshot.setdefault("data", {})
+
+        if msg_type == FederationMessageType.RESOURCE_UPDATE.value:
+            for key in (
+                "available_vram_mb",
+                "available_ram_mb",
+                "total_vram_mb",
+                "total_ram_mb",
+                "active_requests",
+            ):
+                if key in data:
+                    snap_data[key] = data[key]
+            if "loaded_models" in data:
+                snap_data["loaded_models"] = list(data["loaded_models"])
+            if "busy_models" in data:
+                snap_data["busy_models"] = list(data["busy_models"])
+            return
+
+        model_id = data.get("model_id")
+        if not model_id:
+            return
+
+        loaded_models = set(snap_data.get("loaded_models", []))
+        busy_models = set(snap_data.get("busy_models", []))
+        loading_models = set(snap_data.get("loading_models", []))
+
+        if msg_type == FederationMessageType.MODEL_LOADED.value:
+            loaded_models.add(model_id)
+            loading_models.discard(model_id)
+        elif msg_type == FederationMessageType.MODEL_UNLOADED.value:
+            loaded_models.discard(model_id)
+            busy_models.discard(model_id)
+            loading_models.discard(model_id)
+        elif msg_type == FederationMessageType.MODEL_BUSY.value:
+            busy_models.add(model_id)
+        elif msg_type == FederationMessageType.MODEL_IDLE.value:
+            busy_models.discard(model_id)
+        elif msg_type == FederationMessageType.MODEL_LOADING_STARTED.value:
+            loading_models.add(model_id)
+        elif msg_type == FederationMessageType.MODEL_LOAD_FAILED.value:
+            loading_models.discard(model_id)
+        else:
+            return
+
+        snap_data["loaded_models"] = list(loaded_models)
+        snap_data["busy_models"] = list(busy_models)
+        snap_data["loading_models"] = list(loading_models)
+
     async def _on_edge_connected(self) -> None:
         """
         Handle Edge connection or reconnection.
@@ -327,6 +398,12 @@ class RemoteIntegration:
         from .api.telemetry import handle_edge_disconnected
 
         previously_loaded = handle_edge_disconnected()
+
+        if self._cached_edge_snapshot is not None:
+            snap_data = self._cached_edge_snapshot.setdefault("data", {})
+            snap_data["loaded_models"] = []
+            snap_data["busy_models"] = []
+            snap_data["loading_models"] = []
 
         edge_id = (
             self._config.local_edge.stargate_id if self._config.local_edge else None
