@@ -95,36 +95,47 @@ def test_enforce_model_set_absent_in_production_giw() -> None:
     assert hits == []
 
 
-def test_http_explicit_other_models_argon_passes_model_set(
+def test_http_explicit_other_models_refused_pool_fence(
     client: TestClient, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     bridge = MagicMock()
     monkeypatch.setattr(route_mod, "launch_sdk_bridge", bridge)
     resp = client.post(
         "/api/v1/cursor/dispatch",
-        json=_dispatch_body(model="cursor/gemini-4-argon"),
+        json=_dispatch_body(model="cursor/claude-fable-5"),
     )
+    assert resp.status_code == 422
     payload = resp.json()
-    if resp.status_code == 422:
-        assert payload.get("code") != "CURSOR_MODEL_UNTRUSTED"
-        data = payload.get("data") or {}
-        assert data.get("validation_stage") != "model_set"
-    else:
-        assert resp.status_code in {200, 201, 202}
+    assert payload.get("code") == "other_models_pool_denied"
+    bridge.assert_not_called()
 
 
-def test_http_admits_bare_other_models_pool_id(
+def test_http_admits_composer_primary_pool(
     client: TestClient, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     bridge = MagicMock()
     monkeypatch.setattr(route_mod, "launch_sdk_bridge", bridge)
     resp = client.post(
         "/api/v1/cursor/dispatch",
-        json=_dispatch_body(model="gemini-4-argon"),
+        json=_dispatch_body(model="composer-2.5"),
     )
     assert resp.status_code == 200
     body = resp.json()
     assert body.get("code") != "CURSOR_MODEL_UNTRUSTED"
+
+
+def test_http_bare_other_models_pool_id_refused(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    bridge = MagicMock()
+    monkeypatch.setattr(route_mod, "launch_sdk_bridge", bridge)
+    resp = client.post(
+        "/api/v1/cursor/dispatch",
+        json=_dispatch_body(model="claude-fable-5"),
+    )
+    assert resp.status_code == 422
+    assert resp.json().get("code") == "other_models_pool_denied"
+    bridge.assert_not_called()
 
 
 def test_http_refuses_untrusted_bare_model(
@@ -217,17 +228,17 @@ def _seed_parked_non_member(
 
 
 @pytest.mark.asyncio
-async def test_t7_1_park_resume_admits_stored_other_models_pool(
+async def test_t7_1_park_resume_refuses_stored_other_models_pool(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Park re-admit admits stored Other Models pool rows."""
+    """Park re-admit refuses stored Other Models pool rows when policy is deny."""
     bridge = MagicMock()
     monkeypatch.setattr(route_mod, "launch_sdk_bridge", bridge)
     _seed_parked_non_member(
-        "p-argon",
+        "p-other",
         tmp_path=tmp_path,
-        stored_model="cursor/gemini-4-argon",
-        resolved_model="gemini-4-argon",
+        stored_model="cursor/claude-fable-5",
+        resolved_model="claude-fable-5",
     )
     started = (datetime.now(UTC) - timedelta(hours=1)).isoformat()
     summary = await resume_parked_dispatches(
@@ -241,7 +252,8 @@ async def test_t7_1_park_resume_admits_stored_other_models_pool(
         code_version="gate-test",
         bus=_bus(),
     )
-    assert ("p-argon", "p-argon-r1") in summary.admitted
+    assert ("p-other", "other_models_pool_denied") in summary.refused
+    bridge.assert_not_called()
 
 
 @pytest.mark.asyncio

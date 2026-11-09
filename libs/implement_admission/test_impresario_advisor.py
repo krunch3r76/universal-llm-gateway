@@ -19,11 +19,17 @@ from implement_admission.routing import load_route_policy
 
 pytestmark = pytest.mark.offline
 
+_ARGON = "cursor/gemini-4-argon"
+
 _TRIGGERED_PACKET = (
     "Intent to plan: how to land K74.\n"
     f"{ADVISOR_LEAN_DISPATCH_LINE}\n"
     "Scope: route policy only.\n"
 )
+
+
+def test_advisor_wire_is_cdp_fable() -> None:
+    assert advisor_model_wire() == "cdp/fable-5.1"
 
 
 def test_advisor_admits_when_unpaused_with_lean_dispatch_line() -> None:
@@ -63,7 +69,7 @@ def test_advisor_rejects_packet_without_lean_dispatch_line() -> None:
     assert result.code == "ADVISOR_LEAN_DISPATCH_REQUIRED"
 
 
-def test_advisor_rejects_when_item_author_is_argon() -> None:
+def test_advisor_rejects_when_item_author_matches_advisor_wire() -> None:
     result = evaluate_advisor_dispatch_admission(
         model=advisor_model_wire(),
         packet_body=_TRIGGERED_PACKET,
@@ -78,9 +84,7 @@ def test_advisor_rejects_when_item_author_is_argon() -> None:
     ["critic", "ear", "implement", "sweep", "sketch", "skeptic", "review"],
 )
 def test_argon_barred_for_non_advisor_roles(role: str) -> None:
-    result = refuse_argon_non_advisor_route(
-        model=advisor_model_wire(), impresario_role=role
-    )
+    result = refuse_argon_non_advisor_route(model=_ARGON, impresario_role=role)
     assert result is not None
     assert result.admitted is False
     assert result.code == "ARGON_ROLE_BARRED"

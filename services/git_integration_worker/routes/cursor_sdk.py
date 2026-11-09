@@ -4092,6 +4092,30 @@ async def admit_cursor_dispatch(
             retryable=False,
             extra_data=cursor_sdk_model_set_extra_data(),
         )
+    from services.git_integration_worker.cursor_sdk_pool_fence import (
+        other_models_pool_dispatch_rejected,
+    )
+
+    if other_models_pool_dispatch_rejected(req, resolved_bare_model=config.model_id):
+        return _reject_pre_admission(
+            req,
+            worker_error_code="other_models_pool_denied",
+            failure_layer="validation",
+            http_status=422,
+            detail_summary=(
+                "cursor-sdk Other Models pool is retired "
+                "(cursor_sdk_other_models_pool=deny)"
+            ),
+            invalid_fields=["model"],
+            validation_stage="other_models_pool",
+            retryable=False,
+            extra_data={
+                "code": "other_models_pool_denied",
+                "requested_model": req.model,
+                "resolved_model": f"cursor/{config.model_id}",
+                "pool": "other_models",
+            },
+        )
 
     card_entry = CURSOR_MODEL_CAPABILITIES.get(config.model_id)
     if card_entry is None:

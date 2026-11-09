@@ -98,8 +98,6 @@ def resolve_cdp_reroute(
             if not isinstance(raw_target, str) or not raw_target.strip():
                 return None
             target_model = raw_target.strip()
-            if target_model == "cursor/gemini-4-argon":
-                return None
             if impresario_role:
                 from implement_admission.impresario_events import (
                     ImpresarioCriticResolved,
@@ -197,9 +195,7 @@ async def _harvest_sdk_body(
         raw = sidecar.read_text(encoding="utf-8")
     else:
         raw = (
-            await fetch_sdk_closeout_body(
-                thread_id=thread_id, dispatch_id=dispatch_id
-            )
+            await fetch_sdk_closeout_body(thread_id=thread_id, dispatch_id=dispatch_id)
             or ""
         )
     text = full_result_text(raw, None).strip()
@@ -259,8 +255,10 @@ async def run_cdp_reroute_via_cursor_sdk(
 
     message = _REROUTE_HEADER + prompt_text
     request_id = f"cdp-reroute-{execution_id[:8]}-{uuid.uuid4().hex[:6]}"
-    wall = float(max_wall_s) if max_wall_s is not None else float(
-        os.environ.get("CDP_REROUTE_MAX_WALL_S", "3600")
+    wall = (
+        float(max_wall_s)
+        if max_wall_s is not None
+        else float(os.environ.get("CDP_REROUTE_MAX_WALL_S", "3600"))
     )
 
     try:
