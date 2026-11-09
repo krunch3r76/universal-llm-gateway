@@ -352,6 +352,28 @@ def open_lane_seat_holder(lane: str) -> tuple[str | None, float | None]:
     return _open_seat_holder(_store.load_active(), lane)
 
 
+def _vacant_snapshot_allows_commit(
+    *,
+    registration_id: str,
+    snapshot_holder_id: str | None,
+    current_holder_id: str | None,
+) -> bool:
+    """Whether a null-holder reattach snapshot may commit after a lane re-read.
+
+    When the snapshot saw no open holder, commit still proceeds if the lane
+    remains vacant or the reattaching registration itself now holds the seat.
+    A different live holder still refuses (second-gate safety).
+    """
+    snap_id = (snapshot_holder_id or "").strip() or None
+    if snap_id is not None:
+        return False
+    cur_id = (current_holder_id or "").strip() or None
+    rid = (registration_id or "").strip()
+    if cur_id is None:
+        return True
+    return cur_id == rid
+
+
 def commit_reattach_driving_seat(
     registration_id: str,
     *,
@@ -363,9 +385,11 @@ def commit_reattach_driving_seat(
 ) -> str:
     """Seat and upsert after reattach, or refuse when the lane seat moved.
 
-    Under ``ports_lock``, the open holder ``(registration_id, seat_bound_at)``
-    must still match the reattach snapshot.     A mismatch returns ``refused``
-    without seating or upserting. A missing registry row returns ``committed``
+    Under ``ports_lock``, re-read the lane's open holder. When the snapshot
+    saw an occupant, ``(registration_id, seat_bound_at)`` must still match or
+    the commit returns ``refused``. When the snapshot saw a vacant lane, commit
+    proceeds if the lane is still vacant or the reattaching row now holds the
+    seat; a different holder returns ``refused``. A missing registry row returns ``committed``
     without writing: the chat_url bind did not persist a row. When
     ``apply_driving_seat_bind`` no-ops (closed seat, empty lane, or non-operator
     purpose) the result is ``not_seated`` and the holder is not upserted.
@@ -384,11 +408,27 @@ def commit_reattach_driving_seat(
         if not isinstance(row, dict):
             return "committed"
         if lane_key:
+            parent = str(row.get("parent_thread") or "").strip()
+            if parent and parent != lane_key:
+                return "refused"
+            if not parent:
+                if seat_open(row) and not seat_open(row, lane_key):
+                    return "refused"
+                row = dict(row)
+                row["parent_thread"] = lane_key
+                active[rid] = row
+        if lane_key:
             current_id, current_bound = _open_seat_holder(active, lane_key)
-            if (current_id, current_bound) != (
+            snapshot_matches = (current_id, current_bound) == (
                 snapshot_holder_id,
                 snapshot_seat_bound_at,
-            ):
+            )
+            vacant_snapshot_ok = _vacant_snapshot_allows_commit(
+                registration_id=rid,
+                snapshot_holder_id=snapshot_holder_id,
+                current_holder_id=current_id,
+            )
+            if not snapshot_matches and not vacant_snapshot_ok:
                 return "refused"
         bound_row, released_rows = apply_driving_seat_bind(active, rid)
         if bound_row is None:
@@ -426,6 +466,89 @@ def commit_reattach_driving_seat(
         if upsert_result is RemoteUpsert.LANE_CONFLICT:
             logger.warning(
                 "commit_reattach_driving_seat holder upsert lane_conflict "
+                "registration_id=%s",
+                rid,
+            )
+    return "committed"
+
+
+def commit_followup_lane_seat(
+    registration_id: str,
+    *,
+    chat_url: str,
+    lane: str,
+    snapshot_holder_id: str | None,
+    snapshot_seat_bound_at: float | None,
+    execution_id: str | None = None,
+) -> str:
+    """Seat after explicit ``retain_lane`` followup on a vacant or self-held lane.
+
+    Unlike reattach CAS, commits only when the lane has no open holder or the
+    open holder is this registration. A missing registry row returns ``not_seated``.
+    """
+    rid = (registration_id or "").strip()
+    url = (chat_url or "").strip()
+    lane_key = (lane or "").strip()
+    if not rid or not url:
+        return "missing"
+    bound_row: dict[str, Any] | None = None
+    released_rows: list[dict[str, Any]] = []
+    with _store.ports_lock():
+        active = _store.load_active()
+        row = active.get(rid)
+        if not isinstance(row, dict):
+            return "not_seated"
+        if lane_key:
+            parent = str(row.get("parent_thread") or "").strip()
+            if parent and parent != lane_key:
+                return "refused"
+            if not parent:
+                if seat_open(row) and not seat_open(row, lane_key):
+                    return "refused"
+                row = dict(row)
+                row["parent_thread"] = lane_key
+                active[rid] = row
+        if lane_key:
+            current_id, _current_bound = _open_seat_holder(active, lane_key)
+            cur_id = (current_id or "").strip() or None
+            if cur_id is not None and cur_id != rid:
+                return "refused"
+        bound_row, released_rows = apply_driving_seat_bind(active, rid)
+        if bound_row is None:
+            return "not_seated"
+        _store.require_seat_authority(operation="commit_followup_lane_seat")
+        _store.write_active(active)
+        _store.append_seat_transition_journal(
+            registration_id=rid,
+            seat_lane=str(bound_row.get("seat_lane") or ""),
+            seat_bound_at=bound_row.get("seat_bound_at"),
+            superseded=[
+                str(r.get("registration_id") or "")
+                for r in released_rows
+                if r.get("registration_id")
+            ],
+        )
+    _emit_seat_axis_events(bound_row, released_rows)
+    from services.git_integration_worker.cse_session_holders import (
+        RemoteUpsert,
+        upsert_holder_remote,
+    )
+
+    try:
+        upsert_result = upsert_holder_remote(
+            chat_url=url,
+            registration_id=rid,
+            execution_id=execution_id,
+        )
+    except Exception:
+        logger.exception(
+            "commit_followup_lane_seat holder upsert failed registration_id=%s",
+            rid,
+        )
+    else:
+        if upsert_result is RemoteUpsert.LANE_CONFLICT:
+            logger.warning(
+                "commit_followup_lane_seat holder upsert lane_conflict "
                 "registration_id=%s",
                 rid,
             )

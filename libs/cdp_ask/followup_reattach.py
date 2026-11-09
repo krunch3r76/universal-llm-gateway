@@ -521,7 +521,10 @@ async def ensure_cse_attached(
     followup and harvest attach opt in; resume and poll recovery do not.
 
     Chat URL is bound without seating. The lane seat snapshot is taken before
-    navigation so a later commit can refuse if that holder moved.
+    navigation; ``commit_reattach_driving_seat`` re-reads the holder at commit
+    and refuses only when a different occupant took the seat. Explicit
+    ``retain_lane`` followups that paste without reattach commit via
+    ``commit_followup_lane_seat`` in ``followup.execute_followup``.
     """
     from claude_bundles.cdp_registry.session_address import open_lane_seat_holder
 

@@ -186,14 +186,28 @@ async def cse_holder_release(req: CseHolderReleaseRequest) -> dict[str, object]:
 
 
 @router.get("/cse-holders", summary="Driving CSE holder for one lane thread.")
-async def cse_holders(lane_thread_id: str) -> dict[str, object]:
-    """Read-only wrap of get_driving_holder_for_lane."""
+async def cse_holders(
+    lane_thread_id: str | None = None,
+    registration_id: str | None = None,
+) -> dict[str, object]:
+    """Read-only holder lookup by lane thread or CSE registration id."""
     from services.git_integration_worker.cse_session_holders import (
         get_driving_holder_for_lane,
+        resolve_holder_by_registration,
     )
 
+    lane = (lane_thread_id or "").strip() or None
+    reg = (registration_id or "").strip() or None
+    if not lane and not reg:
+        raise HTTPException(
+            status_code=422,
+            detail="lane_thread_id or registration_id required",
+        )
     with CursorDispatchLedger.instance()._connect() as conn:
-        holder = get_driving_holder_for_lane(conn, lane_thread_id)
+        if reg:
+            holder = resolve_holder_by_registration(conn, reg)
+        else:
+            holder = get_driving_holder_for_lane(conn, lane)  # type: ignore[arg-type]
     return {"holder": holder}
 
 

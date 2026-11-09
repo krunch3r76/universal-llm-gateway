@@ -234,6 +234,8 @@ def _api_generate_peer_wake_from() -> frozenset[str]:
         return _API_GENERATE_PEER_WAKE_FALLBACK
 _ORION_PEER_WAKE_HEADS = frozenset({"ANSWER"})
 _POLL_S = 2.0
+_SCAN_HOLDER_PROMOTE_GROUPS_PER_PASS = 20
+_scan_holder_group_cursor: tuple[str, str] | None = None
 
 
 def _endpoint_wake_catchup_max_age_s() -> float:
@@ -357,6 +359,9 @@ def _maestro_direct_address_turn(
 
 _LANE_NAME_ALIASES = frozenset({"maestro", "web-anthropic", "claude-web"})
 _ADDRESS_WALK_HOPS = 8
+_CSE_LANE_THREAD_RE = re.compile(r"^\d{1,10}$")
+_CSE_LIVE_SEAT_STATES = frozenset({"driving", "dormant"})
+_GIW_HOLDER_LOOKUP_FAILED = "_giw_holder_lookup_failed"
 _CURSOR_SDK_CLOSEOUT_RE = re.compile(r"(?i)^(?:CLOSEOUT\|)?cursor-sdk CLOSEOUT\b")
 _ON_BEHALF_EXECUTION_REPLY_RE = re.compile(
     r"^[a-zA-Z0-9][a-zA-Z0-9._-]* reply — execution [0-9a-fA-F]{8}$"
@@ -1539,6 +1544,29 @@ def _is_waiter_own_seat_wake(
     return raw_from.strip().lower() == target
 
 
+def _scan_holder_skip_item(
+    turn: dict[str, Any],
+    *,
+    decided_by_rule: str,
+    resolved: tuple[str, dict[str, Any]],
+    wake_agent: str,
+) -> dict[str, Any]:
+    """Scan tombstone when a CSE subscription qualifies but routing finds no holder."""
+    _, sub = resolved
+    item = _pending_item(
+        turn,
+        decided_by_rule=decided_by_rule,
+        route=resolved,
+        wake_agent=wake_agent,
+    )
+    return {
+        **item,
+        "state": "skipped",
+        "reason": "no_route:scan_holder",
+        "subscription_id": sub.get("id"),
+    }
+
+
 def _pending_item(
     turn: dict[str, Any],
     *,
@@ -1641,11 +1669,97 @@ def _display_seated(store: StoreClient, thread: str) -> bool:
     return resolved is not None and str(resolved[1].get("surface") or "") != "cse"
 
 
+def _promote_scan_holder_skips_safe(store: StoreClient) -> None:
+    global _scan_holder_group_cursor
+    if not os.environ.get("AGENT_BUS_DB_PATH"):
+        return
+    try:
+        from agent_bus_store.db.endpoint_wake_ledger import (
+            expire_scan_holder_tombstones,
+            list_scan_holder_candidates,
+            promote_scan_holder_rows,
+        )
+
+        max_age_s = _endpoint_wake_catchup_max_age_s()
+        now_epoch = time.time()
+        cutoff_epoch = now_epoch - max_age_s
+        cutoff_stamp = datetime.fromtimestamp(cutoff_epoch, tz=UTC).strftime(
+            "%Y-%m-%d %H:%M:%S"
+        )
+
+        expire_scan_holder_tombstones(cutoff_stamp)
+        candidates = list_scan_holder_candidates(cutoff_stamp)
+
+        expire_ids: list[int] = []
+        by_group: dict[tuple[str, str], list[dict[str, Any]]] = {}
+        for row in candidates:
+            row_id = int(row["id"])
+            turn_epoch = _turn_created_at_epoch(row.get("created_at"))
+            if turn_epoch is not None and (now_epoch - turn_epoch) > max_age_s:
+                expire_ids.append(row_id)
+                continue
+            agent = str(row.get("agent") or "")
+            thread_id = str(row.get("thread_id") or "")
+            if not agent or not thread_id:
+                continue
+            by_group.setdefault((agent, thread_id), []).append(row)
+
+        def _group_order_key(key: tuple[str, str]) -> int:
+            return min(int(r["id"]) for r in by_group[key])
+
+        groups_sorted = sorted(by_group.keys(), key=_group_order_key)
+        n_groups = len(groups_sorted)
+        start_idx = 0
+        if _scan_holder_group_cursor is not None and n_groups:
+            try:
+                start_idx = groups_sorted.index(_scan_holder_group_cursor) + 1
+            except ValueError:
+                start_idx = 0
+            if start_idx >= n_groups:
+                start_idx = 0
+
+        promote_ids: list[int] = []
+        resolved_this_pass = 0
+        last_group: tuple[str, str] | None = None
+        for offset in range(min(_SCAN_HOLDER_PROMOTE_GROUPS_PER_PASS, n_groups)):
+            gidx = (start_idx + offset) % n_groups
+            agent, thread_id = groups_sorted[gidx]
+            last_group = (agent, thread_id)
+            try:
+                resolved = _resolve_delivery_route(store, agent, thread_id)
+            except Exception:
+                break
+            resolved_this_pass += 1
+            if resolved is not None:
+                _route_kind, sub = resolved
+                if str(sub.get("surface") or "") == "cse":
+                    try:
+                        target = resolve_cse_wake_target(
+                            store,
+                            sub,
+                            wake_thread=thread_id,
+                            delivery_phase=False,
+                        )
+                    except Exception:
+                        break
+                    if target is not None:
+                        for item in by_group[(agent, thread_id)]:
+                            promote_ids.append(int(item["id"]))
+
+        if last_group is not None:
+            _scan_holder_group_cursor = last_group
+
+        promote_scan_holder_rows(promote_ids, expire_ids)
+    except Exception:
+        logger.exception("endpoint_wake_dispatcher: promote scan_holder skips failed")
+
+
 def scan_once(store: StoreClient, *, idle_mark: dict[str, float] | None = None) -> None:
     """Read new turns and CAS pending rows. Store and GIW errors propagate."""
     import time
 
     expire_overdue_hops(store)
+    _promote_scan_holder_skips_safe(store)
     mark = idle_mark if idle_mark is not None else {}
     max_passes = 20
     for _pass in range(max_passes):
@@ -1733,8 +1847,18 @@ def scan_once(store: StoreClient, *, idle_mark: dict[str, float] | None = None) 
             elif (
                 resolved is not None and str(resolved[1].get("surface") or "") == "cse"
             ):
-                lane = str(resolved[1].get("agent_id") or "").strip()
-                if not lane or not store.holder(lane):
+                cse_target = resolve_cse_wake_target(
+                    store, resolved[1], wake_thread=thread
+                )
+                if cse_target is None:
+                    if _turn_is_stale_catchup(turn):
+                        tid = int(turn["id"])
+                        if stale_catchup is None:
+                            stale_catchup = {"count": 0, "min": tid, "max": tid}
+                        stale_catchup["count"] += 1
+                        stale_catchup["min"] = min(stale_catchup["min"], tid)
+                        stale_catchup["max"] = max(stale_catchup["max"], tid)
+                        continue
                     if direct_maestro:
                         _observe_maestro_wake_drop(
                             thread=thread,
@@ -1745,6 +1869,14 @@ def scan_once(store: StoreClient, *, idle_mark: dict[str, float] | None = None) 
                             rule_id=verdict.rule_id,
                             subject=subject,
                         )
+                    tombstones.append(
+                        _scan_holder_skip_item(
+                            turn,
+                            decided_by_rule=verdict.rule_id,
+                            resolved=resolved,
+                            wake_agent=agent,
+                        )
+                    )
                     continue
             elif resolved is None:
                 if direct_maestro:
@@ -2128,6 +2260,179 @@ def post_wake_registration_refused_alerts(
             )
 
 
+def _is_cse_lane_thread_id(agent_id: str) -> bool:
+    return bool(_CSE_LANE_THREAD_RE.fullmatch((agent_id or "").strip()))
+
+
+def _registry_holder_for_registration(registration_id: str) -> dict[str, Any] | None:
+    """Synthetic holder from CDP registry when GIW has no lane-bound row (houseless)."""
+    reg = (registration_id or "").strip()
+    if not reg:
+        return None
+    try:
+        from claude_bundles import cdp_registry_store as _reg_store
+        from claude_bundles.cdp_registry.models import (
+            _HOST_LISTABLE_STATUSES,
+            seat_open,
+        )
+        from claude_bundles.cdp_registry.session_address import (
+            chat_url_for_registration,
+        )
+
+        chat_url = chat_url_for_registration(reg)
+        if not chat_url:
+            return None
+        active = _reg_store.load_active()
+        from claude_bundles.what_is_running_view import is_houseless_purpose
+
+        row = active.get(reg) if isinstance(active, dict) else None
+        if not isinstance(row, dict):
+            return None
+        if not is_houseless_purpose(row.get("purpose")):
+            return None
+        status = str(row.get("status") or "")
+        if status not in _HOST_LISTABLE_STATUSES:
+            return None
+        if seat_open(row):
+            return None
+    except Exception:
+        logger.exception(
+            "endpoint_wake_dispatcher: registry holder lookup failed reg=%s", reg
+        )
+        return None
+    return {
+        "registration_id": reg,
+        "chat_url": chat_url,
+        "seat_state": "driving",
+    }
+
+
+def _giw_holder_lookup_failed_marker(registration_id: str) -> dict[str, Any]:
+    return {
+        "registration_id": registration_id,
+        _GIW_HOLDER_LOOKUP_FAILED: True,
+    }
+
+
+def _holder_seat_state(holder: dict[str, Any]) -> str:
+    return str(holder.get("seat_state") or "").strip()
+
+
+def _holder_is_live(holder: dict[str, Any]) -> bool:
+    if holder.get(_GIW_HOLDER_LOOKUP_FAILED):
+        return False
+    state = _holder_seat_state(holder)
+    if not state:
+        return True
+    return state in _CSE_LIVE_SEAT_STATES
+
+
+def _holder_for_cse_registration(
+    store: StoreClient, registration_id: str
+) -> dict[str, Any] | None:
+    reg = (registration_id or "").strip()
+    if not reg:
+        return None
+    giw_answered = False
+    lookup = getattr(store, "holder_by_registration", None)
+    if callable(lookup):
+        try:
+            row = lookup(reg)
+            giw_answered = True
+            if isinstance(row, dict) and row:
+                return row
+        except Exception:
+            logger.exception(
+                "endpoint_wake_dispatcher: holder_by_registration failed reg=%s",
+                reg,
+            )
+            return _giw_holder_lookup_failed_marker(reg)
+    if giw_answered:
+        try:
+            from services.git_integration_worker.cse_session_holders import (
+                _ledger_conn,
+                ensure_schema,
+                resolve_holder_by_registration,
+            )
+
+            with _ledger_conn() as conn:
+                ensure_schema(conn)
+                row = resolve_holder_by_registration(conn, reg)
+            if isinstance(row, dict) and row:
+                return row
+        except Exception:
+            logger.debug(
+                "endpoint_wake_dispatcher: local holder lookup failed reg=%s",
+                reg,
+                exc_info=True,
+            )
+        return _registry_holder_for_registration(reg)
+    try:
+        from services.git_integration_worker.cse_session_holders import (
+            _ledger_conn,
+            ensure_schema,
+            resolve_holder_by_registration,
+        )
+
+        with _ledger_conn() as conn:
+            ensure_schema(conn)
+            row = resolve_holder_by_registration(conn, reg)
+        if isinstance(row, dict) and row:
+            return row
+    except Exception:
+        logger.debug(
+            "endpoint_wake_dispatcher: local holder lookup failed reg=%s",
+            reg,
+            exc_info=True,
+        )
+    return _registry_holder_for_registration(reg)
+
+
+def resolve_cse_wake_target(
+    store: StoreClient,
+    sub: dict[str, Any],
+    *,
+    wake_thread: str | None = None,
+    delivery_phase: bool = False,
+) -> tuple[str, dict[str, Any]] | None:
+    """Resolve (delivery lane, holder) for a CSE subscription row.
+
+    ``agent_id`` is either a driving lane thread (role:root houses) or a CSE
+    registration id (houseless mailbox threads).
+    """
+    agent_id = str(sub.get("agent_id") or "").strip()
+    if not agent_id:
+        return None
+    scope = str(sub.get("thread_scope") or wake_thread or "").strip()
+    if _is_cse_lane_thread_id(agent_id):
+        if delivery_phase:
+            holder = store.holder(agent_id)
+        else:
+            try:
+                holder = store.holder(agent_id)
+            except Exception:
+                logger.exception(
+                    "endpoint_wake_dispatcher: holder probe failed lane=%s", agent_id
+                )
+                return None
+        if not isinstance(holder, dict) or not holder:
+            return None
+        return agent_id, holder
+    holder = _holder_for_cse_registration(store, agent_id)
+    if not isinstance(holder, dict) or not holder:
+        return None
+    if holder.get(_GIW_HOLDER_LOOKUP_FAILED):
+        if not delivery_phase:
+            return None
+        lane = scope or agent_id
+        return lane, holder
+    if not _holder_is_live(holder):
+        if not delivery_phase:
+            return None
+    lane = str(holder.get("lane_thread_id") or "").strip() or scope or agent_id
+    return lane, holder
+
+
 def deliver(
     rows: list[dict[str, Any]],
     holder: dict[str, Any],
@@ -2347,17 +2652,10 @@ def fire_due_wakes(store: StoreClient) -> dict[str, Any] | None:
         )
     route, sub = resolved
     if str(sub.get("surface") or "") == "cse":
-        lane = str(sub.get("agent_id") or "").strip()
-        if not lane:
-            return _finish(
-                outcome="skipped",
-                reason="no_route",
-                route=None,
-                subscription_id=None,
-                cse_registration_id=None,
-            )
         try:
-            holder = store.holder(lane)
+            cse_target = resolve_cse_wake_target(
+                store, sub, wake_thread=thread, delivery_phase=True
+            )
         except Exception as exc:
             return _finish(
                 outcome="unknown",
@@ -2366,18 +2664,35 @@ def fire_due_wakes(store: StoreClient) -> dict[str, Any] | None:
                 subscription_id=sub.get("id"),
                 cse_registration_id=None,
             )
-        if not holder:
+        if cse_target is None:
             return _finish(
                 outcome="skipped",
                 reason="no_route",
-                route=route,
+                route=None,
+                subscription_id=None,
+                cse_registration_id=None,
+            )
+        lane, holder = cse_target
+        if holder.get(_GIW_HOLDER_LOOKUP_FAILED):
+            return _finish(
+                outcome="unknown",
+                reason="HolderLookupError",
+                route="cse",
                 subscription_id=sub.get("id"),
                 cse_registration_id=None,
             )
-        if str(holder.get("seat_state") or "") == "superseded":
+        seat_state = _holder_seat_state(holder)
+        if seat_state and seat_state not in _CSE_LIVE_SEAT_STATES:
+            reason = (
+                "seat_superseded"
+                if seat_state == "superseded"
+                else "seat_released"
+                if seat_state == "released"
+                else "seat_not_live"
+            )
             return _finish(
                 outcome="skipped",
-                reason="seat_superseded",
+                reason=reason,
                 route=route,
                 subscription_id=sub.get("id"),
                 cse_registration_id=None,

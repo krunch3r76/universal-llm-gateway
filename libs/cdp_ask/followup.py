@@ -196,6 +196,44 @@ def _commit_reattach_seat(outcome: ReattachOutcome, lane: str) -> str:
     )
 
 
+def _commit_explicit_retain_lane_seat(
+    registration_id: str,
+    chat_url: str,
+    lane: str,
+    lane_pin: dict,
+) -> str:
+    from claude_bundles.cdp_registry.session_address import commit_followup_lane_seat
+
+    return commit_followup_lane_seat(
+        registration_id,
+        chat_url=chat_url,
+        lane=lane,
+        snapshot_holder_id=lane_pin.get("seat_snapshot_holder_id"),
+        snapshot_seat_bound_at=lane_pin.get("seat_snapshot_bound_at"),
+    )
+
+
+def _not_seated_detail(*, explicit_retain: bool) -> str:
+    if explicit_retain:
+        return "explicit followup cannot bind driving seat on lane"
+    return "reattach host cannot bind driving seat on lane"
+
+
+def _explicit_retain_lane_seat_wanted(
+    req: FollowupProjectAskRequest,
+    *,
+    binding: TargetBinding,
+    reattach_used: bool,
+) -> bool:
+    if reattach_used or not req.retain_lane:
+        return False
+    if not (req.parent_thread or "").strip():
+        return False
+    if not identity_supplied(req):
+        return False
+    return binding == "explicit"
+
+
 def _skip_borrow_restore_for_inflight_paste(outcome: ReattachOutcome) -> bool:
     """Skip restore when another followup holds the lane lock on this bind."""
     reg_id = (outcome.registration_id or "").strip()
@@ -402,6 +440,15 @@ async def execute_followup(
     )
 
     lane_pin: dict = {}
+    _parent_lane = (req.parent_thread or "").strip()
+    if req.retain_lane and _parent_lane and identity_supplied(req):
+        from claude_bundles.cdp_registry.session_address import open_lane_seat_holder
+
+        snap_holder, snap_bound = await asyncio.to_thread(
+            open_lane_seat_holder, _parent_lane
+        )
+        lane_pin["seat_snapshot_holder_id"] = snap_holder
+        lane_pin["seat_snapshot_bound_at"] = snap_bound
     target, err, resolution_path, target_binding = await resolve_followup_target(
         req, store, lane_pin=lane_pin
     )
@@ -464,6 +511,7 @@ async def execute_followup(
     binding: TargetBinding = target_binding or target.target_binding
     if reattach_used and lane_created and binding != "resolver":
         binding = "explicit"
+    seat_extra: dict[str, bool | str | None] = {}
     extra = response_extra(reattach_used=reattach_used, lane_created=lane_created)
 
     if (
@@ -509,6 +557,7 @@ async def execute_followup(
     pw = None
     paste_delivered = False
     seat_committed = False
+    seat_commit_detail: str | None = None
     try:
         found = await find_page_on_lane(target.cdp_url, target.chat_url)
         if found is None:
@@ -582,13 +631,75 @@ async def execute_followup(
                     detail=f"{type(exc).__name__}: {exc}",
                     **extra,
                 )
-            if status != "committed":
+            if status == "not_seated":
+                seat_commit_detail = _not_seated_detail(explicit_retain=False)
+                seat_extra = response_extra(
+                    reattach_used=reattach_used,
+                    lane_created=lane_created,
+                    seated=False,
+                )
+                extra = {**extra, **seat_extra}
+            elif status == "refused":
                 return fail_followup(
                     "reattach_seat_changed",
                     detail="lane seat holder changed since reattach",
                     **extra,
                 )
-            seat_committed = True
+            elif status != "committed":
+                return fail_followup(
+                    "reattach_seat_commit_failed",
+                    detail=f"unexpected commit status: {status}",
+                    **extra,
+                )
+            else:
+                seat_committed = True
+                seat_extra = response_extra(
+                    reattach_used=reattach_used,
+                    lane_created=lane_created,
+                    seated=True,
+                    lane_holder=target.registration_id,
+                )
+                extra = seat_extra
+        elif _explicit_retain_lane_seat_wanted(
+            req, binding=binding, reattach_used=reattach_used
+        ):
+            lane = _parent_lane
+            status = await asyncio.to_thread(
+                _commit_explicit_retain_lane_seat,
+                target.registration_id,
+                target.chat_url,
+                lane,
+                lane_pin,
+            )
+            if status == "not_seated":
+                seat_commit_detail = _not_seated_detail(explicit_retain=True)
+                seat_extra = response_extra(
+                    reattach_used=reattach_used,
+                    lane_created=lane_created,
+                    seated=False,
+                )
+                extra = {**extra, **seat_extra}
+            elif status == "refused":
+                return fail_followup(
+                    "followup_seat_changed",
+                    detail="lane seat holder changed since followup opened",
+                    **extra,
+                )
+            elif status not in ("committed", "missing"):
+                return fail_followup(
+                    "followup_seat_commit_failed",
+                    detail=f"unexpected commit status: {status}",
+                    **extra,
+                )
+            elif status == "committed":
+                seat_committed = True
+                seat_extra = response_extra(
+                    reattach_used=reattach_used,
+                    lane_created=lane_created,
+                    seated=True,
+                    lane_holder=target.registration_id,
+                )
+                extra = seat_extra
 
         paste = await send_followup_paste_half(page, prompt)
         paste_delivered = True
@@ -649,7 +760,13 @@ async def execute_followup(
             target_binding=binding,
             standdown_token_for=token_for,
             superseded_count=superseded_count,
+            seated=seat_extra.get("seated") if seat_extra else None,
+            lane_holder=seat_extra.get("lane_holder") if seat_extra else None,
         )
+        if seat_commit_detail is not None:
+            resp = resp.model_copy(
+                update={"detail": seat_commit_detail, "seated": False}
+            )
 
         if (
             resp.ok
