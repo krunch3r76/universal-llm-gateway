@@ -22,6 +22,13 @@ from ..recipients import MAESTRO_WEB_ALIAS_PAIR
 from .connection import connect, write_connect
 from .lane_associations import get_current_lane
 
+# Reply subjects that count as answering a wake turn (plus turn reference or supersedes).
+# Excludes PROGRESS/STATUS/CHECKPOINT and other milestone heads that may cite a turn.
+_WAKE_REPLY_SUBJECT_HEADS = frozenset(
+    {"ACK", "ANSWER", "REPLY", "RESPONSE", "CONSULT_REPLY"}
+)
+_CDP_REPLY_SUBJECT_RE = re.compile(r"^cdp reply\s*[—-]\s*", re.I)
+
 CONSUMER = "endpoint-wake-dispatcher"
 _CLAIM_STATES = ("claimed", "unknown")
 _SCAN_ITEM_STATES = frozenset({"pending", "skipped"})
@@ -324,6 +331,28 @@ def _same_wake_agent(left: str, right: str) -> bool:
     )
 
 
+def _wake_reply_subject_head(subject: str | None) -> str:
+    """Subject prefix before ``|`` (matches ``maestro_subject_head`` in send_prep)."""
+    head = str(subject or "").split("|", 1)[0].strip().upper()
+    if not head:
+        return ""
+    return head.split()[0]
+
+
+def _is_wake_reply_acknowledgement(subject: str | None) -> bool:
+    """True when the subject marks an explicit answer/ack, not status or progress."""
+    subj = str(subject or "").strip()
+    if not subj:
+        return False
+    if _CDP_REPLY_SUBJECT_RE.match(subj):
+        return True
+    return _wake_reply_subject_head(subj) in _WAKE_REPLY_SUBJECT_HEADS
+
+
+def _supersedes_wake_turn(nxt: sqlite3.Row, *, turn_id: int) -> bool:
+    return nxt["supersedes_turn"] is not None and int(nxt["supersedes_turn"]) == turn_id
+
+
 def _references_wake_turn(
     nxt: sqlite3.Row,
     *,
@@ -331,8 +360,6 @@ def _references_wake_turn(
     turn_id: int,
     turn_number: int,
 ) -> bool:
-    if nxt["supersedes_turn"] is not None and int(nxt["supersedes_turn"]) == turn_id:
-        return True
     text = f"{nxt['subject'] or ''}\n{nxt['body'] or ''}"
     pattern = (
         rf"(?i)(?:(?:^|(?<![\w#])){re.escape(thread_id)}#{turn_number}\b"
@@ -598,8 +625,12 @@ def _skip_reason(conn: sqlite3.Connection, row: sqlite3.Row) -> str | None:
     wake_turn_id = int(row["turn_id"])
     wake_turn_number = turn_number
     for nxt in later:
-        if _same_wake_agent(
-            str(nxt["from_agent"] or ""), agent
+        if not _same_wake_agent(str(nxt["from_agent"] or ""), agent):
+            continue
+        if _supersedes_wake_turn(nxt, turn_id=wake_turn_id):
+            return "already_answered"
+        if _is_wake_reply_acknowledgement(
+            str(nxt["subject"] or "")
         ) and _references_wake_turn(
             nxt,
             thread_id=thread_id,

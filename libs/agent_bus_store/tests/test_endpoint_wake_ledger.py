@@ -321,6 +321,178 @@ def test_stage_manager_equivalence_already_answered_and_debounce(
     assert w4["wake_id"] is not None
 
 
+def test_progress_status_checkpoint_do_not_skip_pending_wake(db: TestClient) -> None:
+    detail = create_thread(thread_id=None, slug="progress-no-skip")
+    assert detail is not None
+    thread = str(detail["id"])
+    t1_id, _ts, t1_n, _c = insert_turn(
+        thread=thread,
+        from_agent="maestro",
+        to_agent="grok-bot-cc1",
+        subject="REQUEST|wake-me",
+        body="pending body",
+    )
+    get_cursor()
+    with connect() as conn:
+        conn.execute("UPDATE endpoint_wake_cursor SET high_water_turn_id=0")
+    advance_scan(
+        "endpoint-wake-dispatcher",
+        0,
+        t1_id,
+        [
+            {
+                "agent": "grok-bot-cc1",
+                "thread_id": thread,
+                "turn_id": t1_id,
+                "turn_number": t1_n,
+            }
+        ],
+        now="2020-01-01 18:00:00",
+    )
+    for subject, body in (
+        (
+            "PROGRESS|parent still pending",
+            f"thread {thread}#{t1_n} not answered yet; wake outstanding",
+        ),
+        ("STATUS|checkpoint", f"re #{t1_n} still open"),
+        ("CHECKPOINT|leg", f"{thread}#{t1_n} unchanged"),
+    ):
+        insert_turn(
+            thread=thread,
+            from_agent="grok-bot-cc1",
+            to_agent="maestro",
+            subject=subject,
+            body=body,
+        )
+        claimed = claim_due_wakes(now="2020-01-01 18:00:05")
+        assert claimed["wake_id"] is not None, subject
+        with write_connect() as conn:
+            conn.execute(
+                "UPDATE endpoint_wake_ledger SET state='pending', wake_id=NULL, "
+                "claimed_at=NULL, reason=NULL, finished_at=NULL WHERE turn_id=?",
+                (t1_id,),
+            )
+
+
+def test_supersedes_turn_skips_without_reply_subject(db: TestClient) -> None:
+    detail = create_thread(thread_id=None, slug="supersedes-skip")
+    assert detail is not None
+    thread = str(detail["id"])
+    t1_id, _ts, t1_n, _c = insert_turn(
+        thread=thread,
+        from_agent="cursor",
+        to_agent="grok-bot-cc1",
+        subject="REQUEST|x",
+        body="b",
+    )
+    get_cursor()
+    with connect() as conn:
+        conn.execute("UPDATE endpoint_wake_cursor SET high_water_turn_id=0")
+    advance_scan(
+        "endpoint-wake-dispatcher",
+        0,
+        t1_id,
+        [
+            {
+                "agent": "grok-bot-cc1",
+                "thread_id": thread,
+                "turn_id": t1_id,
+                "turn_number": t1_n,
+            }
+        ],
+        now="2020-01-01 18:10:00",
+    )
+    insert_turn(
+        thread=thread,
+        from_agent="grok-bot-cc1",
+        to_agent="cursor",
+        subject="PLAN|supersede",
+        body="no ack head",
+        supersedes_turn=t1_id,
+    )
+    skipped = claim_due_wakes(now="2020-01-01 18:10:01")
+    assert skipped["wake_id"] is None
+    assert skipped["rows"][0]["reason"] == "already_answered"
+
+
+def test_wrong_thread_reference_does_not_skip_pending_wake(db: TestClient) -> None:
+    detail = create_thread(thread_id=None, slug="wrong-thread-ref")
+    assert detail is not None
+    thread = str(detail["id"])
+    t1_id, _ts, t1_n, _c = insert_turn(
+        thread=thread,
+        from_agent="maestro",
+        to_agent="grok-bot-cc1",
+        subject="REQUEST|x",
+        body="b",
+    )
+    get_cursor()
+    with connect() as conn:
+        conn.execute("UPDATE endpoint_wake_cursor SET high_water_turn_id=0")
+    advance_scan(
+        "endpoint-wake-dispatcher",
+        0,
+        t1_id,
+        [
+            {
+                "agent": "grok-bot-cc1",
+                "thread_id": thread,
+                "turn_id": t1_id,
+                "turn_number": t1_n,
+            }
+        ],
+        now="2020-01-01 18:20:00",
+    )
+    insert_turn(
+        thread=thread,
+        from_agent="grok-bot-cc1",
+        to_agent="maestro",
+        subject="ACK|other lane",
+        body=f"other-thread-999#{t1_n} done",
+    )
+    claimed = claim_due_wakes(now="2020-01-01 18:20:01")
+    assert claimed["wake_id"] is not None
+
+
+def test_other_sender_ack_does_not_skip_pending_wake(db: TestClient) -> None:
+    detail = create_thread(thread_id=None, slug="other-sender-ack")
+    assert detail is not None
+    thread = str(detail["id"])
+    t1_id, _ts, t1_n, _c = insert_turn(
+        thread=thread,
+        from_agent="maestro",
+        to_agent="grok-bot-cc1",
+        subject="REQUEST|x",
+        body="b",
+    )
+    get_cursor()
+    with connect() as conn:
+        conn.execute("UPDATE endpoint_wake_cursor SET high_water_turn_id=0")
+    advance_scan(
+        "endpoint-wake-dispatcher",
+        0,
+        t1_id,
+        [
+            {
+                "agent": "grok-bot-cc1",
+                "thread_id": thread,
+                "turn_id": t1_id,
+                "turn_number": t1_n,
+            }
+        ],
+        now="2020-01-01 18:30:00",
+    )
+    insert_turn(
+        thread=thread,
+        from_agent="cursor",
+        to_agent="maestro",
+        subject=f"ACK|re #{t1_n}",
+        body="done",
+    )
+    claimed = claim_due_wakes(now="2020-01-01 18:30:01")
+    assert claimed["wake_id"] is not None
+
+
 def test_unrelated_same_seat_post_on_shared_root_does_not_skip_pending_wake(
     db: TestClient,
 ) -> None:
