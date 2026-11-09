@@ -50,6 +50,7 @@ async def manage_charter_tick_audit(
                 _AUDIT_SQL,
                 (signal, cutoff, limit),
                 limit=limit,
+                since_ts_ms=cutoff,
             )
         )
     rows.sort(key=lambda row: int(row.get("seq") or 0), reverse=True)

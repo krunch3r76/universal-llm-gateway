@@ -47,6 +47,7 @@ async def _recent_failures(params: dict[str, Any], store: EventStore) -> dict[st
         + " AND ".join(where)
         + " ORDER BY seq DESC LIMIT ?",
         tuple(query_params),
+        since_ts_ms=since_ts,
     )
     return {"rows": rows, "count": len(rows)}
 
@@ -58,6 +59,7 @@ async def _noise_profile(params: dict[str, Any], store: EventStore) -> dict[str,
         "WHERE ts_unix_ms > ? AND role NOT IN ('debug', 'realtime') "
         "GROUP BY signal ORDER BY count DESC",
         (cutoff,),
+        since_ts_ms=cutoff,
     )
     return {"signals": rows, "minutes": minutes}
 
@@ -79,6 +81,7 @@ async def _coordination_audit(
     rows = await store.query(
         sql,
         tuple(query_params),
+        since_ts_ms=since_ts,
     )
     return {"rows": rows, "count": len(rows)}
 
@@ -95,8 +98,8 @@ async def _model_timeline(params: dict[str, Any], store: EventStore) -> dict[str
     if since_ts is not None:
         sql += " AND ts_unix_ms >= ?"
         query_params.append(since_ts)
-    sql += " ORDER BY seq"
-    rows = await store.query(sql, tuple(query_params))
+    sql += " ORDER BY ts_unix_ms, seq"
+    rows = await store.query(sql, tuple(query_params), since_ts_ms=since_ts)
     return {"rows": rows, "count": len(rows), "model_id": model_id}
 
 
@@ -184,7 +187,7 @@ async def _signal_events(params: dict[str, Any], store: EventStore) -> dict[str,
     sql += " ORDER BY ts_unix_ms DESC LIMIT ?"
     query_params.append(limit)
 
-    rows = await store.query(sql, tuple(query_params))
+    rows = await store.query(sql, tuple(query_params), since_ts_ms=since_ts)
     out_rows: list[dict[str, Any]] = []
     for row in rows:
         row_dict = dict(row)
