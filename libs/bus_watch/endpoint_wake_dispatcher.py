@@ -23,6 +23,7 @@ from agent_bus_store.routes.threads.send_prep import (
     maestro_subject_head,
 )
 from agent_seat.registry import STAGE_MANAGER_ADDRESSES, normalize_bus_address
+from cdp_ask.houseless_resolve import resolve_houseless_target
 from claude_bundles.holder_strings import holder_id_from_chat_url
 from cursor_bridge.chat_target import exchange_lines
 from transport_utils import DEFAULT_STARGATE_URL, make_sync_client
@@ -364,6 +365,7 @@ _ADDRESS_WALK_HOPS = 8
 _CSE_LANE_THREAD_RE = re.compile(r"^\d{1,10}$")
 _CSE_LIVE_SEAT_STATES = frozenset({"driving", "dormant", "houseless"})
 _GIW_HOLDER_LOOKUP_FAILED = "_giw_holder_lookup_failed"
+_HOUSELESS_NO_ROUTE = "_houseless_no_route_reason"
 _CURSOR_SDK_CLOSEOUT_RE = re.compile(r"(?i)^(?:CLOSEOUT\|)?cursor-sdk CLOSEOUT\b")
 _ON_BEHALF_EXECUTION_REPLY_RE = re.compile(
     r"^[a-zA-Z0-9][a-zA-Z0-9._-]* reply — execution [0-9a-fA-F]{8}$"
@@ -2290,12 +2292,27 @@ def _holder_is_live(holder: dict[str, Any]) -> bool:
     return state in _CSE_LIVE_SEAT_STATES
 
 
+def _synthetic_houseless_holder(reg: str, chat_url: str) -> dict[str, Any]:
+    return {
+        "registration_id": reg,
+        "chat_url": chat_url,
+        "purpose": "houseless",
+        "seat_state": "houseless",
+        "holder": f"houseless:{reg}",
+    }
+
+
 def _holder_for_cse_registration(
     store: StoreClient, registration_id: str
 ) -> dict[str, Any] | None:
     reg = (registration_id or "").strip()
     if not reg:
         return None
+    hres = resolve_houseless_target(reg)
+    if hres.ok and hres.chat_url:
+        return _synthetic_houseless_holder(reg, hres.chat_url)
+    if hres.reason != "purpose_not_houseless":
+        return {_HOUSELESS_NO_ROUTE: f"houseless_{hres.reason}"}
     giw_answered = False
     lookup = getattr(store, "holder_by_registration", None)
     if callable(lookup):
@@ -2366,6 +2383,11 @@ def resolve_cse_wake_target(
     holder = _holder_for_cse_registration(store, agent_id)
     if not isinstance(holder, dict) or not holder:
         return None
+    if holder.get(_HOUSELESS_NO_ROUTE):
+        if not delivery_phase:
+            return None
+        lane = scope or agent_id
+        return lane, holder
     if holder.get(_GIW_HOLDER_LOOKUP_FAILED):
         if not delivery_phase:
             return None
@@ -2417,6 +2439,7 @@ def _deliver_cse(
         induction,
         lane,
         dry_run=True,
+        houseless_delivery=houseless,
         **followup_kw,
     )
     if dry.get("error") == "no_identity" and dry.get("source") == "unavailable":
@@ -2431,6 +2454,7 @@ def _deliver_cse(
         induction,
         lane,
         dry_run=False,
+        houseless_delivery=houseless,
         **followup_kw,
     )
     state, reason = classify_cse(live if isinstance(live, dict) else {})
@@ -2624,6 +2648,14 @@ def fire_due_wakes(store: StoreClient) -> dict[str, Any] | None:
                 cse_registration_id=None,
             )
         lane, holder = cse_target
+        if holder.get(_HOUSELESS_NO_ROUTE):
+            return _finish(
+                outcome="skipped",
+                reason=str(holder.get(_HOUSELESS_NO_ROUTE) or "no_route"),
+                route=None,
+                subscription_id=sub.get("id"),
+                cse_registration_id=None,
+            )
         if holder.get(_GIW_HOLDER_LOOKUP_FAILED):
             return _finish(
                 outcome="unknown",

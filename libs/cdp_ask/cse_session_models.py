@@ -79,6 +79,9 @@ class ProvenanceResponse(BaseModel):
     is_predecessor: bool | None = None
     is_successor: bool | None = None
     same_lane: bool | None = None
+    purpose: str | None = None
+    status: str | None = None
+    seat_open: bool | None = None
 
 
 class HarvestIdentity(BaseModel):

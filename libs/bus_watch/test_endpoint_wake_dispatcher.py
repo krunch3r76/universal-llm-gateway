@@ -36,6 +36,19 @@ from bus_watch.endpoint_wake_dispatcher import (
 from bus_watch.endpoint_wake_transport import StoreClient
 
 
+@pytest.fixture(autouse=True)
+def _houseless_resolve_default_non_houseless(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Offline tests default to ledger path unless they patch houseless resolution."""
+    from cdp_ask.houseless_resolve import HouselessResolution
+
+    monkeypatch.setattr(
+        "bus_watch.endpoint_wake_dispatcher.resolve_houseless_target",
+        lambda _reg, **_: HouselessResolution(ok=False, reason="purpose_not_houseless"),
+    )
+
+
 @pytest.fixture()
 def db(tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("AGENT_BUS_DB_PATH", str(tmp_path / "bus.db"))
@@ -6381,7 +6394,11 @@ def test_scan_once_drop_stale_catchup_enqueues_fresh_only(
     assert stale_n and fresh_n
 
 
-def test_resolve_cse_wake_target_registration_not_lane(db: None) -> None:
+def test_resolve_cse_wake_target_registration_not_lane(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from cdp_ask.houseless_resolve import HouselessResolution
+
     from bus_watch.endpoint_wake_dispatcher import resolve_cse_wake_target
 
     reg = "583b411df34247f9a48bc044b6518be3"
@@ -6392,6 +6409,10 @@ def test_resolve_cse_wake_target_registration_not_lane(db: None) -> None:
         "thread_scope": "22760",
         "state": "subscribed",
     }
+    monkeypatch.setattr(
+        "bus_watch.endpoint_wake_dispatcher.resolve_houseless_target",
+        lambda _reg, **_: HouselessResolution(ok=True, reason="ok", chat_url=chat),
+    )
 
     class Store:
         def holder(self, lane_thread_id: str) -> dict:
@@ -6400,13 +6421,7 @@ def test_resolve_cse_wake_target_registration_not_lane(db: None) -> None:
             )
 
         def holder_by_registration(self, registration_id: str) -> dict:
-            assert registration_id == reg
-            return {
-                "registration_id": reg,
-                "chat_url": chat,
-                "purpose": "houseless",
-                "seat_state": "houseless",
-            }
+            raise AssertionError("GIW holder lookup must not run when resolver ok")
 
     target = resolve_cse_wake_target(Store(), sub, wake_thread="22760")  # type: ignore[arg-type]
     assert target is not None
@@ -6577,29 +6592,35 @@ def test_resolve_cse_wake_target_live_registration_uses_giw_row() -> None:
     assert holder["seat_state"] == "driving"
 
 
-def test_resolve_cse_wake_target_houseless_giw_holder_by_registration() -> None:
+def test_resolve_cse_wake_target_houseless_via_provenance_resolver(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from cdp_ask.houseless_resolve import HouselessResolution
+
     from bus_watch.endpoint_wake_dispatcher import resolve_cse_wake_target
 
     reg_id = "583b411df34247f9a48bc044b6518be3"
     chat = "https://claude.ai/cowork/cse_01HouselessTag"
     sub = {"surface": "cse", "agent_id": reg_id, "thread_scope": "22760"}
-    houseless_holder = {
-        "registration_id": reg_id,
-        "chat_url": chat,
-        "purpose": "houseless",
-        "seat_state": "houseless",
-    }
+    monkeypatch.setattr(
+        "bus_watch.endpoint_wake_dispatcher.resolve_houseless_target",
+        lambda _reg, **_: HouselessResolution(ok=True, reason="ok", chat_url=chat),
+    )
 
     class Store:
         def holder_by_registration(self, registration_id: str) -> dict | None:
-            if registration_id != reg_id:
-                return None
-            return dict(houseless_holder)
+            raise AssertionError("GIW lookup must not run when resolver ok")
 
     assert resolve_cse_wake_target(Store(), sub, wake_thread="22760") is not None  # type: ignore[arg-type]
     lane, holder = resolve_cse_wake_target(Store(), sub, wake_thread="22760")  # type: ignore[arg-type]
     assert lane == "22760"
     assert holder["seat_state"] == "houseless"
+    assert holder["holder"] == f"houseless:{reg_id}"
+
+    monkeypatch.setattr(
+        "bus_watch.endpoint_wake_dispatcher.resolve_houseless_target",
+        lambda _reg, **_: HouselessResolution(ok=False, reason="no_row"),
+    )
 
     class EmptyStore:
         def holder_by_registration(self, registration_id: str) -> dict | None:
@@ -7488,6 +7509,18 @@ def test_promote_scan_holder_no_http_under_ticket_ac3(
         "agent_bus_store.db.endpoint_wake_ledger.write_connect",
         tracking_write_connect,
     )
+    resolve_calls_under_ticket = {"n": 0}
+    from cdp_ask.houseless_resolve import HouselessResolution
+
+    def _tracking_resolve(_reg: str, **_: object) -> HouselessResolution:
+        if ticket_open["flag"]:
+            resolve_calls_under_ticket["n"] += 1
+        return HouselessResolution(ok=False, reason="purpose_not_houseless")
+
+    monkeypatch.setattr(
+        "bus_watch.endpoint_wake_dispatcher.resolve_houseless_target",
+        _tracking_resolve,
+    )
 
     class Store:
         def subscription(self, agent: str, thread_id: str, raw_to: str | None = None):
@@ -7519,6 +7552,7 @@ def test_promote_scan_holder_no_http_under_ticket_ac3(
 
     _promote_scan_holder_skips_safe(Store())  # type: ignore[arg-type]
     assert write_entries["n"] <= 2
+    assert resolve_calls_under_ticket["n"] == 0
     with connect() as conn:
         row = conn.execute(
             "SELECT state FROM endpoint_wake_ledger WHERE turn_id=?",
@@ -7526,6 +7560,109 @@ def test_promote_scan_holder_no_http_under_ticket_ac3(
         ).fetchone()
     assert row is not None
     assert row["state"] == "pending"
+
+
+def test_resolve_cse_wake_target_houseless_resolver_wins_over_giw_ledger(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from cdp_ask.houseless_resolve import HouselessResolution
+
+    from bus_watch.endpoint_wake_dispatcher import resolve_cse_wake_target
+
+    reg = "ac2houseless583b411df34247f9a48bc044b6518be3"
+    chat = "https://claude.ai/cowork/cse_ac2_houseless"
+    sub = {"surface": "cse", "agent_id": reg, "thread_scope": "22760"}
+    monkeypatch.setattr(
+        "bus_watch.endpoint_wake_dispatcher.resolve_houseless_target",
+        lambda _reg, **_: HouselessResolution(ok=True, reason="ok", chat_url=chat),
+    )
+
+    class Store:
+        def holder_by_registration(self, registration_id: str) -> dict:
+            return {
+                "registration_id": registration_id,
+                "chat_url": "https://claude.ai/cowork/cse_driving",
+                "seat_state": "driving",
+                "lane_thread_id": "99999",
+            }
+
+    _lane, holder = resolve_cse_wake_target(Store(), sub, wake_thread="22760")  # type: ignore[arg-type]
+    assert holder["seat_state"] == "houseless"
+    assert holder["chat_url"] == chat
+
+
+@pytest.mark.parametrize(
+    "fail_reason",
+    [
+        "no_row",
+        "purpose_not_houseless",
+        "status_unlisted",
+        "seat_open",
+        "no_chat_url",
+        "cdp_ask_unreachable",
+    ],
+)
+def test_resolve_cse_wake_target_houseless_resolver_fail_closed(
+    monkeypatch: pytest.MonkeyPatch, fail_reason: str
+) -> None:
+    from cdp_ask.houseless_resolve import HouselessResolution
+
+    from bus_watch.endpoint_wake_dispatcher import resolve_cse_wake_target
+
+    reg = "583b411df34247f9a48bc044b6518be3"
+    sub = {"surface": "cse", "agent_id": reg, "thread_scope": "22760"}
+    monkeypatch.setattr(
+        "bus_watch.endpoint_wake_dispatcher.resolve_houseless_target",
+        lambda _reg, **_: HouselessResolution(ok=False, reason=fail_reason),
+    )
+
+    class Store:
+        def holder_by_registration(self, registration_id: str) -> dict | None:
+            return None
+
+    if fail_reason == "purpose_not_houseless":
+        assert (
+            resolve_cse_wake_target(Store(), sub, wake_thread="22760")  # type: ignore[arg-type]
+            is None
+        )
+        return
+    target = resolve_cse_wake_target(
+        Store(), sub, wake_thread="22760", delivery_phase=True
+    )
+    assert target is not None
+    _lane, holder = target
+    assert str(holder.get("_houseless_no_route_reason") or "").startswith(
+        f"houseless_{fail_reason}"
+    )
+
+
+def test_deliver_cse_houseless_resolver_precedence_followup_kw(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from bus_watch.endpoint_wake_dispatcher import _deliver_cse
+
+    captured: list[dict[str, Any]] = []
+    reg = "583b411df34247f9a48bc044b6518be3"
+
+    def _fire(*_args: object, **kwargs: Any) -> dict[str, Any]:
+        captured.append(dict(kwargs))
+        if kwargs.get("dry_run"):
+            return {"ok": True, "dry_run": True, "registration_id": reg}
+        return {"ok": False, "error": "no_target", "registration_id": reg}
+
+    monkeypatch.setattr("bus_watch.cse_followup.fire_cse_followup", _fire)
+    holder = {
+        "registration_id": reg,
+        "chat_url": "https://claude.ai/cowork/cse_syn",
+        "purpose": "houseless",
+        "seat_state": "houseless",
+        "holder": f"houseless:{reg}",
+    }
+    rows = [{"thread_id": "22760", "turn_number": 2}]
+    _deliver_cse(rows, holder, target_lane="22760")
+    assert captured[0]["purpose"] is None
+    assert captured[0]["reattach"] is False
+    assert captured[0].get("houseless_delivery") is True
 
 
 def test_promote_scan_holder_cas_ac4(db: None, monkeypatch: pytest.MonkeyPatch) -> None:

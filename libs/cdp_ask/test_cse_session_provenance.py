@@ -52,6 +52,32 @@ async def test_claim_proven_separation(monkeypatch, tmp_path: Path) -> None:
 
 
 @pytest.mark.asyncio
+async def test_provenance_registry_projection_fields(monkeypatch) -> None:
+    from cdp_ask.cse_session_provenance import _registry_projection
+
+    reg = "reg-houseless-proj"
+    monkeypatch.setattr(
+        "claude_bundles.cdp_registry_store.load_active",
+        lambda: {
+            reg: {
+                "registration_id": reg,
+                "purpose": "houseless",
+                "status": "active",
+                "chat_url": "https://claude.ai/cowork/cse_proj",
+            }
+        },
+    )
+    monkeypatch.setattr(
+        "claude_bundles.cdp_registry.session_address.chat_url_for_registration",
+        lambda _rid: "https://claude.ai/cowork/cse_proj",
+    )
+    fields = _registry_projection(reg)
+    assert fields["purpose"] == "houseless"
+    assert fields["status"] == "active"
+    assert fields["seat_open"] is False
+
+
+@pytest.mark.asyncio
 async def test_self_supersession_conflict(monkeypatch, tmp_path: Path) -> None:
     result = await resolve_public_provenance(
         ProvenanceQuery(

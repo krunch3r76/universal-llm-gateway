@@ -246,6 +246,34 @@ def _skip_borrow_restore_for_inflight_paste(outcome: ReattachOutcome) -> bool:
     return normalize_cse_url(held) == normalize_cse_url(bound)
 
 
+def _registry_row_for_registration(registration_id: str) -> dict | None:
+    rid = (registration_id or "").strip()
+    if not rid:
+        return None
+    from claude_bundles import cdp_registry_store as registry_store
+
+    row = registry_store.load_active().get(rid)
+    return row if isinstance(row, dict) else None
+
+
+def _houseless_followup_refusal(
+    req: FollowupProjectAskRequest,
+) -> FollowupProjectAskResponse | None:
+    """Fail closed when the target registration is a houseless mailbox row."""
+    from claude_bundles.what_is_running_view import is_houseless_purpose
+
+    rid = (req.registration_id or "").strip()
+    if not rid:
+        return None
+    row = _registry_row_for_registration(rid)
+    if row is None or not is_houseless_purpose(row.get("purpose")):
+        return None
+    return fail_followup(
+        "houseless_no_attach",
+        detail="houseless registry rows cannot operator-reattach",
+    )
+
+
 async def _resolve_holder(req: FollowupProjectAskRequest, store: ExecutionStore) -> str:
     """Holder for ``register_lane`` during reattach — prefer the originating execution."""
     if req.execution_id:
@@ -261,6 +289,9 @@ async def _maybe_reattach(
     err: FollowupProjectAskResponse,
 ) -> tuple[ReattachOutcome | None, FollowupProjectAskResponse | None]:
     """Reattach when the error is eligible and a dormant/bound seat or opt-in allows it."""
+    houseless_refusal = _houseless_followup_refusal(req)
+    if houseless_refusal is not None:
+        return None, houseless_refusal
     if err.error not in _REATTACH_ELIGIBLE_ERRORS:
         return None, err
     chat_url = reattach_chat_url(req, err)
@@ -428,6 +459,10 @@ async def execute_followup(
 
     if req.reattach and not (req.chat_url or "").strip():
         return fail_followup("reattach_requires_chat_url")
+
+    houseless_refusal = _houseless_followup_refusal(req)
+    if houseless_refusal is not None:
+        return houseless_refusal
 
     if req.min_receipt == "human_visible":
         return fail_followup("human_visible_receipt_unavailable")

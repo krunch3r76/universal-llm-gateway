@@ -160,9 +160,26 @@ def upsert_holder(
     hid = holder_id_from_chat_url(url)
     if not hid:
         raise ValueError(f"invalid CSE chat_url: {chat_url!r}")
+    reg = (registration_id or "").strip() or None
+    if reg:
+        try:
+            from claude_bundles import cdp_registry_store as _reg_store
+            from claude_bundles.what_is_running_view import is_houseless_purpose
+
+            active = _reg_store.load_active()
+            reg_row = active.get(reg) if isinstance(active, dict) else None
+            if isinstance(reg_row, dict) and is_houseless_purpose(
+                reg_row.get("purpose")
+            ):
+                raise ValueError(
+                    f"houseless registration must not be persisted in GIW ledger: {reg}"
+                )
+        except ValueError:
+            raise
+        except Exception:
+            pass
     now = _now()
     existing = get_holder(conn, hid)
-    reg = (registration_id or "").strip() or None
     exec_id = (execution_id or "").strip() or None
     lane = (lane_thread_id or "").strip() or None
     if existing is not None:
@@ -689,6 +706,9 @@ def occupancy_projections(conn: sqlite3.Connection) -> list[dict[str, Any]]:
     ).fetchall()
     out: list[dict[str, Any]] = []
     for row in rows:
+        state = str(row["seat_state"] or "")
+        if state == "houseless":
+            continue
         hid = str(row["holder_id"])
         out.append(
             {
@@ -884,51 +904,6 @@ def resolve_maestro_holder_id_for_lane(lane_thread_id: str | None) -> str | None
     return str(row.get("holder_id") or "") or None
 
 
-def registry_houseless_holder_for_registration(
-    registration_id: str,
-) -> dict[str, Any] | None:
-    """Synthetic holder when the CDP registry row is houseless and unseated."""
-    reg = (registration_id or "").strip()
-    if not reg:
-        return None
-    try:
-        from claude_bundles import cdp_registry_store as _reg_store
-        from claude_bundles.cdp_registry.models import (
-            _HOST_LISTABLE_STATUSES,
-            seat_open,
-        )
-        from claude_bundles.cdp_registry.session_address import (
-            chat_url_for_registration,
-        )
-        from claude_bundles.what_is_running_view import is_houseless_purpose
-
-        chat_url = chat_url_for_registration(reg)
-        if not chat_url:
-            return None
-        active = _reg_store.load_active()
-        row = active.get(reg) if isinstance(active, dict) else None
-        if not isinstance(row, dict):
-            return None
-        if not is_houseless_purpose(row.get("purpose")):
-            return None
-        status = str(row.get("status") or "")
-        if status not in _HOST_LISTABLE_STATUSES:
-            return None
-        if seat_open(row):
-            return None
-    except Exception:
-        logger.exception(
-            "registry_houseless_holder_for_registration failed reg=%s", reg
-        )
-        return None
-    return {
-        "registration_id": reg,
-        "chat_url": chat_url,
-        "purpose": "houseless",
-        "seat_state": "houseless",
-    }
-
-
 def resolve_holder_by_registration(
     conn: sqlite3.Connection, registration_id: str
 ) -> dict[str, Any] | None:
@@ -940,10 +915,7 @@ def resolve_holder_by_registration(
         "ORDER BY last_transition_at DESC LIMIT 1",
         (reg,),
     ).fetchone()
-    ledger_row = _row_to_dict(row)
-    if ledger_row is not None:
-        return ledger_row
-    return registry_houseless_holder_for_registration(reg)
+    return _row_to_dict(row)
 
 
 def lookup_holder_for_owed_wake(holder_id: str) -> dict[str, Any] | None:

@@ -18,6 +18,34 @@ from cdp_ask.cse_session_models import ProvenanceQuery, ProvenanceResponse
 from cdp_ask.execution_store import ExecutionStore
 
 
+def _registry_projection(registration_id: str | None) -> dict[str, Any]:
+    """Authoritative registry fields for provenance (Jupiter local store)."""
+    reg = (registration_id or "").strip()
+    if not reg:
+        return {}
+    try:
+        from claude_bundles import cdp_registry_store as registry_store
+        from claude_bundles.cdp_registry.models import seat_open
+        from claude_bundles.cdp_registry.session_address import (
+            chat_url_for_registration,
+        )
+    except Exception:
+        return {}
+    active = registry_store.load_active()
+    row = active.get(reg) if isinstance(active, dict) else None
+    if not isinstance(row, dict):
+        return {}
+    bound = (
+        chat_url_for_registration(reg) or row.get("chat_url") or ""
+    ).strip() or None
+    return {
+        "purpose": row.get("purpose"),
+        "status": row.get("status"),
+        "seat_open": seat_open(row),
+        "chat_url": bound,
+    }
+
+
 def _execution_id_for_registration(
     execution_id: str | None,
     store: ExecutionStore | None,
@@ -70,6 +98,7 @@ def _list_candidates() -> list[dict[str, Any]]:
             registration_id=lane.registration_id,
             host_listable=is_row_present,
         )
+        row_extra = _registry_projection(lane.registration_id)
         rows.append(
             {
                 "registration_id": lane.registration_id,
@@ -77,6 +106,7 @@ def _list_candidates() -> list[dict[str, Any]]:
                 "holder": lane.holder,
                 "purpose": lane.purpose,
                 "provenance": prov,
+                **{k: v for k, v in row_extra.items() if k != "chat_url" or not bound},
             }
         )
     for seat in cdp_registry.list_dormant():
@@ -101,13 +131,17 @@ def _list_candidates() -> list[dict[str, Any]]:
     return rows
 
 
-def _project(raw: dict[str, Any], *, execution_id: str | None = None) -> ProvenanceResponse:
+def _project(
+    raw: dict[str, Any], *, execution_id: str | None = None
+) -> ProvenanceResponse:
     payload = dict(raw)
     if execution_id:
         payload["execution_id"] = execution_id
     elif "execution_id" in payload:
         payload.pop("execution_id", None)
-    return ProvenanceResponse(**{k: v for k, v in payload.items() if k in ProvenanceResponse.model_fields})
+    return ProvenanceResponse(
+        **{k: v for k, v in payload.items() if k in ProvenanceResponse.model_fields}
+    )
 
 
 async def resolve_public_provenance(
@@ -154,6 +188,17 @@ async def resolve_public_provenance(
         raw,
         execution_id=_execution_id_for_registration(execution_id, store),
     )
+    reg_for_projection = (
+        (resolved.registration_id or "").strip()
+        or (registration_id or "").strip()
+        or None
+    )
+    enrich = _registry_projection(reg_for_projection)
+    if enrich:
+        merged = {**resolved.model_dump(), **enrich}
+        resolved = ProvenanceResponse(
+            **{k: v for k, v in merged.items() if k in ProvenanceResponse.model_fields}
+        )
     emit(
         mcp_cse_session_resolved(
             registration_id=resolved.registration_id,

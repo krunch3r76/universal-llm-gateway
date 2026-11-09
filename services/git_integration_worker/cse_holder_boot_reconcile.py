@@ -52,11 +52,14 @@ def boot_reconcile(conn: sqlite3.Connection) -> dict[str, Any]:
         chat_url_for_registration,
         list_active,
     )
+    from claude_bundles.what_is_running_view import is_houseless_purpose
 
     active_urls: set[str] = set()
     dormant_urls: set[str] = set()
     registry_by_url: dict[str, dict[str, Any]] = {}
     for reg in list_active():
+        if is_houseless_purpose(getattr(reg, "purpose", None)):
+            continue
         url = (chat_url_for_registration(reg.registration_id) or "").strip()
         if not url:
             continue
@@ -65,6 +68,7 @@ def boot_reconcile(conn: sqlite3.Connection) -> dict[str, Any]:
         registry_by_url[norm] = {
             "registration_id": reg.registration_id,
             "execution_id": getattr(reg, "execution_id", None),
+            "purpose": getattr(reg, "purpose", None),
         }
     for seat in list_dormant():
         url = normalize_cse_url(str(seat.chat_url or ""))
@@ -129,6 +133,8 @@ def boot_reconcile(conn: sqlite3.Connection) -> dict[str, Any]:
         for row in conn.execute("SELECT holder_id FROM cse_session_holders").fetchall()
     }
     for url, reg in registry_by_url.items():
+        if is_houseless_purpose(reg.get("purpose")):
+            continue
         hid = holder_id_from_chat_url(url)
         if not hid or hid in existing_ids:
             continue

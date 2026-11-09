@@ -246,7 +246,7 @@ async def test_execute_followup_houseless_no_reattach_never_registers_lane(
         raise AssertionError("ensure_cse_attached must not run")
 
     monkeypatch.setattr(
-        "cdp_ask.followup_reattach.ensure_cse_attached",
+        "cdp_ask.followup.ensure_cse_attached",
         _forbidden_reattach,
     )
     monkeypatch.setattr(
