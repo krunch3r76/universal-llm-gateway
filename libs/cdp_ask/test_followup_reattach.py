@@ -3590,7 +3590,6 @@ def test_commit_followup_lane_seat_refuses_foreign_holder(
     isolated_registry: Path,
 ) -> None:
     """Explicit commit refuses when the lane holder is a different registration."""
-    from claude_bundles.cdp_registry.models import seat_open
     from claude_bundles.cdp_registry.session_address import (
         commit_followup_lane_seat,
         open_lane_seat_holder,
