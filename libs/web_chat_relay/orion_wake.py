@@ -489,17 +489,33 @@ def _field_qualifies_as_stored_conversation_url(raw: str) -> bool:
     return bool(conversation_id_from_url(text))
 
 
+_BINDING_REF_PREFIX = "agent_endpoint_subscriptions:"
+
+
+def _subscription_id_from_binding_reference(binding_reference: str) -> int | None:
+    """Parse ``agent_endpoint_subscriptions`` row id from a delivery binding_reference."""
+    ref = str(binding_reference or "").strip()
+    if not ref:
+        return None
+    if ref.startswith(_BINDING_REF_PREFIX):
+        ref = ref[len(_BINDING_REF_PREFIX) :].strip()
+    try:
+        return int(ref)
+    except (TypeError, ValueError):
+        return None
+
+
 def _stored_endpoint_from_delivery_binding(binding_reference: str) -> str:
     """Read subscription row URL fields by id; no synthesis or pinned fallback."""
     from agent_bus_store.db.connection import connect
 
-    ref = str(binding_reference or "").strip()
-    if not ref:
+    sub_id = _subscription_id_from_binding_reference(binding_reference)
+    if sub_id is None:
         return ""
     with connect() as conn:
         row = conn.execute(
             "SELECT * FROM agent_endpoint_subscriptions WHERE id=? LIMIT 1",
-            (ref,),
+            (sub_id,),
         ).fetchone()
     if row is None:
         return ""
@@ -523,8 +539,8 @@ def _refuse_unless_binding_row_matches_claim(
     from agent_bus_store.db.connection import connect
 
     claim_norm = _normalize_stored_endpoint(claim_endpoint)
-    ref = str(binding_reference or "").strip()
-    if not ref:
+    sub_id = _subscription_id_from_binding_reference(binding_reference)
+    if sub_id is None:
         return _refuse(
             "bad_conversation_url",
             stored_endpoint="",
@@ -533,7 +549,7 @@ def _refuse_unless_binding_row_matches_claim(
     with connect() as conn:
         row = conn.execute(
             "SELECT * FROM agent_endpoint_subscriptions WHERE id=? LIMIT 1",
-            (ref,),
+            (sub_id,),
         ).fetchone()
     if row is None:
         return _refuse(
