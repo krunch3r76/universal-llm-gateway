@@ -6990,12 +6990,22 @@ def test_promote_skips_stale_scan_holder_tombstone(
     db: None,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """AC5 — fresh ledger row + turn older than catchup max_age expires, not promotes."""
+    from datetime import UTC, datetime
+
     from agent_bus_store.db.connection import write_connect
     from agent_bus_store.db.endpoint_subscriptions import subscribe_endpoint
 
     from bus_watch.endpoint_wake_dispatcher import _promote_scan_holder_skips_safe
 
     monkeypatch.setenv("ENDPOINT_WAKE_CATCHUP_MAX_AGE_S", "900")
+    fixed_now = datetime(2033, 6, 1, 12, 0, 0, tzinfo=UTC)
+    monkeypatch.setattr(
+        "bus_watch.endpoint_wake_dispatcher.time.time",
+        lambda: fixed_now.timestamp(),
+    )
+    fresh_ledger_stamp = "2033-06-01 11:50:00"
+    stale_turn_stamp = "2020-01-01 00:00:00"
     reg = "583b411df34247f9a48bc044b6518be3"
     chat = "https://claude.ai/cowork/cse_01HouselessPromoteStale"
     detail = create_thread(thread_id=None, slug="houseless-promote-stale")
@@ -7020,27 +7030,22 @@ def test_promote_skips_stale_scan_holder_tombstone(
     with write_connect() as conn:
         conn.execute(
             "UPDATE turns SET created_at=? WHERE id=?",
-            ("2020-01-01 00:00:00", turn_id),
+            (stale_turn_stamp, turn_id),
         )
-    cursor = get_cursor()
-    expected_hw = int(cursor["high_water_turn_id"])
-    advance_scan(
-        "endpoint-wake-dispatcher",
-        expected_hw,
-        turn_id,
-        [
-            {
-                "agent": "ulg-cortex-symbiosis",
-                "thread_id": thread,
-                "turn_id": turn_id,
-                "turn_number": turn_num,
-                "state": "skipped",
-                "reason": "no_route:scan_holder",
-                "decided_by_rule": "wake.default",
-            }
-        ],
-        now="2020-01-01 21:05:00",
-    )
+        conn.execute(
+            "INSERT INTO endpoint_wake_ledger "
+            "(agent, thread_id, turn_id, turn_number, state, reason, created_at, "
+            "finished_at, decided_by_rule) "
+            "VALUES (?,?,?,?, 'skipped', 'no_route:scan_holder', ?, ?, 'wake.default')",
+            (
+                "ulg-cortex-symbiosis",
+                thread,
+                turn_id,
+                turn_num,
+                fresh_ledger_stamp,
+                fresh_ledger_stamp,
+            ),
+        )
 
     class Store:
         def subscription(self, agent: str, thread_id: str, raw_to: str | None = None):
@@ -7059,6 +7064,12 @@ def test_promote_skips_stale_scan_holder_tombstone(
                     "seat_state": "driving",
                     "lane_thread_id": thread,
                 }
+            return None
+
+        def holder(self, lane: str) -> dict | None:
+            return None
+
+        def lane_parent(self, thread_id: str) -> str | None:
             return None
 
     _promote_scan_holder_skips_safe(Store())  # type: ignore[arg-type]
@@ -7580,11 +7591,16 @@ def test_promote_scan_holder_parent_route_ac6(
 def test_promote_scan_holder_fail_fast_ac7(
     db: None, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """AC7 — resolver error stops the pass without escaping scan_once."""
+    """AC7 — resolver error stops the pass; cursor advances so later groups promote."""
     from datetime import UTC, datetime
 
+    from agent_bus_store.db.endpoint_subscriptions import subscribe_endpoint
+
     from bus_watch import endpoint_wake_dispatcher as dispatch_mod
-    from bus_watch.endpoint_wake_dispatcher import scan_once
+    from bus_watch.endpoint_wake_dispatcher import (
+        _promote_scan_holder_skips_safe,
+        scan_once,
+    )
 
     dispatch_mod._scan_holder_group_cursor = None
     fixed_now = datetime(2033, 6, 1, 12, 0, 0, tzinfo=UTC)
@@ -7593,30 +7609,106 @@ def test_promote_scan_holder_fail_fast_ac7(
         lambda: fixed_now.timestamp(),
     )
     fresh_stamp = "2033-06-01 11:50:00"
-    groups: list[tuple[str, str]] = []
-    for i in range(3):
-        lane = create_thread(thread_id=None, slug=f"ac7-{i}")
-        assert lane is not None
-        tid = str(lane["id"])
-        turn_id, _ts, turn_num, _c = insert_turn(
-            thread=tid,
-            from_agent="houseless-driver",
-            to_agent="ulg-cortex-symbiosis",
-            subject=f"QUESTION|{i}",
-            body="body",
-        )
-        _insert_scan_holder_tombstone(
-            agent="ulg-cortex-symbiosis",
-            thread_id=tid,
-            turn_id=turn_id,
-            turn_number=turn_num,
-            created_at=fresh_stamp,
-        )
-        groups.append(("ulg-cortex-symbiosis", tid))
+    reg = "ac7reg583b411df34247f9a48bc044b6518be3"
+    chat = "https://claude.ai/cowork/cse_ac7"
+    fail_lane = create_thread(thread_id=None, slug="ac7-fail")
+    routable_lane = create_thread(thread_id=None, slug="ac7-routable")
+    assert fail_lane is not None and routable_lane is not None
+    fail_tid = str(fail_lane["id"])
+    routable_tid = str(routable_lane["id"])
+    subscribe_endpoint(
+        agent="ulg-cortex-symbiosis",
+        thread_scope=routable_tid,
+        surface="cse",
+        display="cse",
+        title="cowork",
+        agent_id=reg,
+        bound_by="test",
+    )
+    fail_turn_id, _ts, fail_num, _c = insert_turn(
+        thread=fail_tid,
+        from_agent="houseless-driver",
+        to_agent="ulg-cortex-symbiosis",
+        subject="QUESTION|fail",
+        body="body",
+    )
+    fail_ledger = _insert_scan_holder_tombstone(
+        agent="ulg-cortex-symbiosis",
+        thread_id=fail_tid,
+        turn_id=fail_turn_id,
+        turn_number=fail_num,
+        created_at=fresh_stamp,
+    )
+    routable_turn_id, _ts, routable_num, _c = insert_turn(
+        thread=routable_tid,
+        from_agent="houseless-driver",
+        to_agent="ulg-cortex-symbiosis",
+        subject="QUESTION|routable",
+        body="body",
+    )
+    routable_ledger = _insert_scan_holder_tombstone(
+        agent="ulg-cortex-symbiosis",
+        thread_id=routable_tid,
+        turn_id=routable_turn_id,
+        turn_number=routable_num,
+        created_at=fresh_stamp,
+    )
+    group_fail = ("ulg-cortex-symbiosis", fail_tid)
+    group_ok = ("ulg-cortex-symbiosis", routable_tid)
+    groups = [group_fail, group_ok]
 
     resolve_order: list[tuple[str, str]] = []
 
-    class Store:
+    class PromoteStore:
+        def subscription(self, agent: str, thread_id: str, raw_to: str | None = None):
+            key = (agent, thread_id)
+            resolve_order.append(key)
+            if key == group_fail:
+                raise RuntimeError("resolver blow")
+            from agent_bus_store.db.endpoint_subscriptions import current_subscription
+
+            row = current_subscription(agent, thread_id)
+            if row and row.get("state") == "subscribed":
+                return ("exact", row)
+            return None
+
+        def holder_by_registration(self, registration_id: str) -> dict | None:
+            if registration_id == reg:
+                return {
+                    "registration_id": reg,
+                    "chat_url": chat,
+                    "seat_state": "driving",
+                    "lane_thread_id": routable_tid,
+                }
+            return None
+
+        def holder(self, lane: str) -> dict | None:
+            return None
+
+        def lane_parent(self, thread_id: str) -> str | None:
+            return None
+
+    promote_store = PromoteStore()  # type: ignore[assignment]
+    promoted = False
+    for pass_idx in range(2):
+        _promote_scan_holder_skips_safe(promote_store)
+        with connect() as conn:
+            row = conn.execute(
+                "SELECT state FROM endpoint_wake_ledger WHERE id=?",
+                (routable_ledger,),
+            ).fetchone()
+        if row and row["state"] == "pending":
+            promoted = True
+            assert pass_idx == 1
+            break
+    assert promoted
+    assert resolve_order[0] == group_fail
+    assert group_ok in resolve_order
+
+    dispatch_mod._scan_holder_group_cursor = None
+    scan_resolve_order: list[tuple[str, str]] = []
+
+    class ScanStore:
         def cursor(self) -> dict:
             return get_cursor()
 
@@ -7630,8 +7722,8 @@ def test_promote_scan_holder_fail_fast_ac7(
 
         def subscription(self, agent: str, thread_id: str, raw_to: str | None = None):
             key = (agent, thread_id)
-            resolve_order.append(key)
-            if key == groups[0]:
+            scan_resolve_order.append(key)
+            if key == group_fail:
                 raise RuntimeError("resolver blow")
             return None
 
@@ -7644,5 +7736,12 @@ def test_promote_scan_holder_fail_fast_ac7(
         def lane_parent(self, thread_id: str) -> str | None:
             return None
 
-    scan_once(Store())  # type: ignore[arg-type]
-    assert resolve_order == [groups[0]]
+    scan_once(ScanStore())  # type: ignore[arg-type]
+    assert scan_resolve_order == [group_fail]
+    with connect() as conn:
+        fail_row = conn.execute(
+            "SELECT state FROM endpoint_wake_ledger WHERE id=?",
+            (fail_ledger,),
+        ).fetchone()
+    assert fail_row is not None
+    assert fail_row["state"] == "skipped"

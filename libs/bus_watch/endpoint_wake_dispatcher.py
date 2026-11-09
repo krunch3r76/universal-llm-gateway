@@ -1724,11 +1724,11 @@ def _promote_scan_holder_skips_safe(store: StoreClient) -> None:
         for offset in range(min(_SCAN_HOLDER_PROMOTE_GROUPS_PER_PASS, n_groups)):
             gidx = (start_idx + offset) % n_groups
             agent, thread_id = groups_sorted[gidx]
+            last_group = (agent, thread_id)
             try:
                 resolved = _resolve_delivery_route(store, agent, thread_id)
             except Exception:
                 break
-            last_group = (agent, thread_id)
             resolved_this_pass += 1
             if resolved is not None:
                 _route_kind, sub = resolved
@@ -1746,7 +1746,7 @@ def _promote_scan_holder_skips_safe(store: StoreClient) -> None:
                         for item in by_group[(agent, thread_id)]:
                             promote_ids.append(int(item["id"]))
 
-        if resolved_this_pass and last_group is not None:
+        if last_group is not None:
             _scan_holder_group_cursor = last_group
 
         promote_scan_holder_rows(promote_ids, expire_ids)
