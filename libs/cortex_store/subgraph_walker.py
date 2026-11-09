@@ -17,6 +17,7 @@ from typing import Any
 from universal_logging import get_logger
 
 from .card_adapters import get_adapter
+from .compaction import is_tombstone_only
 from .confidence_field import confidence_field
 from .db import query
 from .event_publisher import (
@@ -186,7 +187,9 @@ def walk_subgraph(
 
     entity_rows = _fetch_entity_rows(conn, list(visited))
     assn_counts = _batch_assertion_counts(conn, list(visited)) if include_counts else {}
-    rel_counts = _batch_relationship_counts(conn, list(visited)) if include_counts else {}
+    rel_counts = (
+        _batch_relationship_counts(conn, list(visited)) if include_counts else {}
+    )
     edge_labels = _edge_labels_by_node(edges_sorted, root=r)
 
     nodes = _build_nodes(
@@ -229,9 +232,7 @@ def walk_subgraph(
 
 
 def _fail(walk_id: str, root: str, reason: str, hops: int) -> None:
-    cortex_subgraph_walk_failed(
-        walk_id=walk_id, root=root, reason=reason, hops=hops
-    )
+    cortex_subgraph_walk_failed(walk_id=walk_id, root=root, reason=reason, hops=hops)
 
 
 def _validate_params(
@@ -335,9 +336,7 @@ def _batch_relationship_counts(
     return {str(row["entity_id"]): int(row["n"]) for row in rows}
 
 
-def _edge_labels_by_node(
-    edges: list[WalkedEdge], *, root: str
-) -> dict[str, list[str]]:
+def _edge_labels_by_node(edges: list[WalkedEdge], *, root: str) -> dict[str, list[str]]:
     labels: dict[str, set[str]] = {}
     for edge in edges:
         for node_id in (edge.source_id, edge.target_id):
@@ -366,9 +365,18 @@ def _root_predicate_summary(conn: sqlite3.Connection, root: str) -> str:
     )
     status_view = None
     if entity_rows:
-        from .entity_state_render import derive_status_view
+        from .entity_state_render import try_derive_status_view
 
-        status_view = derive_status_view(conn, root, dict(entity_rows[0]))
+        tomb_rows = query(
+            conn,
+            "SELECT claim FROM assertions WHERE entity_id = ? AND superseded_by IS NULL",
+            (root,),
+        )
+        tomb_claims = [str(r.get("claim") or "") for r in tomb_rows]
+        if not (tomb_claims and is_tombstone_only(tomb_claims)):
+            status_view = try_derive_status_view(
+                conn, root, dict(entity_rows[0]), site="subgraph root"
+            )
     a_rows = query(
         conn,
         "SELECT claim, predicate_form, entrenchment_score, observed_at, "
@@ -469,9 +477,7 @@ def _build_nodes(
     return nodes
 
 
-def _render_markdown_table(
-    nodes: list[WalkedNode], edges: list[WalkedEdge]
-) -> str:
+def _render_markdown_table(nodes: list[WalkedNode], edges: list[WalkedEdge]) -> str:
     lines = [
         "| id | name | type | hop | assns | rels | edges |",
         "| --- | --- | --- | ---: | ---: | ---: | --- |",

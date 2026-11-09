@@ -14,7 +14,10 @@ import pytest
 
 from cortex_store._intent_card_test_fixtures import insert_entity
 from cortex_store.card import get_entity_card
-from cortex_store.dispatch_ops._entity_get_preview import build_entity_preview
+from cortex_store.dispatch_ops._entity_get_preview import (
+    _clip_summary,
+    build_entity_preview,
+)
 from cortex_store.entity_state_fold import fold_claim, reverse_fold
 from cortex_store.entity_state_render import derive_status_view
 from cortex_store.predicate_summary import aggregate_predicate_summary
@@ -129,6 +132,45 @@ def _seed_specimen_one(
     return newer
 
 
+def _seed_concern_with_fold_status(
+    conn: sqlite3.Connection,
+    *,
+    eid: str,
+    description: str,
+) -> None:
+    """Concern typed + fold-field state that would render but for the concern gate."""
+    insert_entity(
+        conn,
+        entity_id=eid,
+        entity_type="concern",
+        name="Concern",
+        description=description,
+        attributes=json.dumps({"application_submitted": True}),
+    )
+    conn.execute(
+        "INSERT INTO concern_head (concern_id, record_ref, revision) VALUES (?, ?, 1)",
+        (eid, "cortex://notes/concern.md"),
+    )
+    conn.commit()
+    base = _insert_status_assertion(
+        conn,
+        entity_id=eid,
+        claim="served status",
+        confidence="believed",
+        created_at="2026-10-01T00:00:00+00:00",
+        predicate_form=f"status({eid}, submitted, current)",
+    )
+    fold_claim(conn, eid, base, "application_submitted")
+    _insert_status_assertion(
+        conn,
+        entity_id=eid,
+        claim="newer flagged",
+        review_status="flagged",
+        created_at="2026-11-06T00:00:00+00:00",
+        predicate_form=f"status({eid}, not_submitted, current)",
+    )
+
+
 def test_import_card_without_cycle() -> None:
     out = subprocess.run(
         [sys.executable, "-c", "import cortex_store.card"],
@@ -149,7 +191,7 @@ def test_specimen_one_template_sentence(migrated_conn: sqlite3.Connection) -> No
     assert f"a:{newer}" in summary_row
     assert card.get("authored_note", {}).get("text", "").startswith("IDR application")
     assert "not_submitted" not in summary_row
-    assert summary_row.count("pin withholds") <= 1
+    assert summary_row.count("pin withholds") == 1
     row = dict(
         migrated_conn.execute("SELECT * FROM entities WHERE id = ?", (eid,)).fetchone()
     )
@@ -270,13 +312,13 @@ def test_legacy_todo_workflow_state_without_provenance_keeps_description(
     row = dict(
         migrated_conn.execute("SELECT * FROM entities WHERE id = ?", (eid,)).fetchone()
     )
-    preview_before = build_entity_preview(migrated_conn, entity_id=eid)
+    legacy_preview = build_entity_preview(migrated_conn, entity_id=eid)
     card = get_entity_card(migrated_conn, entity_id=eid, source="boot")
     assert derive_status_view(migrated_conn, eid, row) is None
     assert card.get("summary_row") == desc
     assert card.get("authored_note") is None
-    assert preview_before["short_summary"] == desc
-    assert preview_before["current_state"] == "open"
+    assert legacy_preview["short_summary"] == desc
+    assert legacy_preview["current_state"] == "open"
 
 
 @pytest.mark.offline
@@ -327,20 +369,15 @@ def test_render_does_not_update_entities_row(migrated_conn: sqlite3.Connection) 
 @pytest.mark.offline
 def test_concern_head_branch_unchanged(migrated_conn: sqlite3.Connection) -> None:
     eid = "concern:specimen-w5"
-    insert_entity(
-        migrated_conn,
-        entity_id=eid,
-        entity_type="concern",
-        name="Concern",
-        description="Concern prose",
+    prose = "Concern prose"
+    _seed_concern_with_fold_status(migrated_conn, eid=eid, description=prose)
+    row = dict(
+        migrated_conn.execute("SELECT * FROM entities WHERE id = ?", (eid,)).fetchone()
     )
-    migrated_conn.execute(
-        "INSERT INTO concern_head (concern_id, record_ref, revision) VALUES (?, ?, 1)",
-        (eid, "cortex://notes/concern.md"),
-    )
-    migrated_conn.commit()
+    assert derive_status_view(migrated_conn, eid, row) is None
     card = get_entity_card(migrated_conn, entity_id=eid, source="boot")
-    assert card.get("summary_row") == "Concern prose"
+    assert card.get("summary_row") == prose
+    assert "application_submitted=true" not in (card.get("summary_row") or "")
     assert card.get("authored_note") is None
 
 
@@ -382,16 +419,34 @@ def test_workflow_state_reversed_to_null_renders_absent(
 def test_preview_matches_card_summary_without_pin_suffix_f1(
     migrated_conn: sqlite3.Connection,
 ) -> None:
-    eid = "account:specimen-w5-f1-preview"
+    eid = "todo:specimen-w5-f1-preview"
     desc = "Payment not submitted on file."
     insert_entity(
         migrated_conn,
         entity_id=eid,
-        entity_type="account",
+        entity_type="todo",
         name="F1 preview",
         description=desc,
+        workflow_state=None,
         attributes=json.dumps({"application_submitted": True}),
     )
+    migrated_conn.execute(
+        "UPDATE entities SET confidence_band = ? WHERE id = ?", ("open", eid)
+    )
+    migrated_conn.commit()
+    wf_served = _insert_status_assertion(
+        migrated_conn,
+        entity_id=eid,
+        claim="wf served",
+        confidence="confirmed",
+        created_at="2026-10-01T00:00:00+00:00",
+        predicate_form=f"status({eid}, in_progress, current)",
+        evidence_uris='["cortex://notes/evidence.md"]',
+    )
+    pid = (
+        fold_claim(migrated_conn, eid, wf_served, "workflow_state").provenance_id or ""
+    )
+    assert reverse_fold(migrated_conn, eid, "workflow_state", pid).outcome == "reversed"
     _insert_status_assertion(
         migrated_conn,
         entity_id=eid,
@@ -400,6 +455,14 @@ def test_preview_matches_card_summary_without_pin_suffix_f1(
         review_notes=None,
         created_at="2026-11-04T00:00:00+00:00",
     )
+    _insert_status_assertion(
+        migrated_conn,
+        entity_id=eid,
+        claim="wf newer",
+        review_status="flagged",
+        created_at="2026-11-04T12:00:00+00:00",
+        predicate_form=f"status({eid}, blocked, current)",
+    )
     card = get_entity_card(migrated_conn, entity_id=eid, source="boot")
     preview = build_entity_preview(migrated_conn, entity_id=eid)
     row = dict(
@@ -407,7 +470,9 @@ def test_preview_matches_card_summary_without_pin_suffix_f1(
     )
     view = derive_status_view(migrated_conn, eid, row)
     assert view is not None
-    assert preview["short_summary"] == view.sentence
+    assert "workflow_state" in view.rendered_fields
+    assert preview["short_summary"] == _clip_summary(view.sentence)[0]
+    assert preview["current_state"] == "open"
     assert _strip_pin_withhold_suffix(card.get("summary_row") or "") == view.sentence
 
 
@@ -422,6 +487,7 @@ def test_preview_matches_card_summary_without_pin_suffix_f3(
         entity_type="plan",
         name="F3 preview",
         description="Staging",
+        workflow_state="staging",
         attributes=json.dumps({"application_submitted": True}),
     )
     _insert_status_assertion(
@@ -432,6 +498,16 @@ def test_preview_matches_card_summary_without_pin_suffix_f3(
         created_at="2026-10-01T00:00:00+00:00",
         predicate_form=f"status({eid}, not_submitted, current)",
     )
+    wf_verified = _insert_status_assertion(
+        migrated_conn,
+        entity_id=eid,
+        claim="wf verified",
+        confidence="confirmed",
+        created_at="2026-10-02T00:00:00+00:00",
+        predicate_form=f"status({eid}, active, current)",
+        evidence_uris='["cortex://notes/evidence.md"]',
+    )
+    fold_claim(migrated_conn, eid, wf_verified, "workflow_state")
     _insert_status_assertion(
         migrated_conn,
         entity_id=eid,
@@ -447,7 +523,9 @@ def test_preview_matches_card_summary_without_pin_suffix_f3(
     )
     view = derive_status_view(migrated_conn, eid, row)
     assert view is not None
-    assert preview["short_summary"] == view.sentence
+    assert "workflow_state" in view.rendered_fields
+    assert preview["short_summary"] == _clip_summary(view.sentence)[0]
+    assert preview["current_state"] == "active"
     assert _strip_pin_withhold_suffix(card.get("summary_row") or "") == view.sentence
 
 
@@ -456,27 +534,19 @@ def test_concern_fixture_derive_view_none_on_card_and_preview(
     migrated_conn: sqlite3.Connection,
 ) -> None:
     eid = "concern:specimen-w5-preview"
-    insert_entity(
-        migrated_conn,
-        entity_id=eid,
-        entity_type="concern",
-        name="Concern preview",
-        description="Concern prose",
-    )
-    migrated_conn.execute(
-        "INSERT INTO concern_head (concern_id, record_ref, revision) VALUES (?, ?, 1)",
-        (eid, "cortex://notes/concern.md"),
-    )
-    migrated_conn.commit()
+    prose = "Concern prose"
+    _seed_concern_with_fold_status(migrated_conn, eid=eid, description=prose)
     row = dict(
         migrated_conn.execute("SELECT * FROM entities WHERE id = ?", (eid,)).fetchone()
     )
     assert derive_status_view(migrated_conn, eid, row) is None
     preview = build_entity_preview(migrated_conn, entity_id=eid)
-    assert preview["short_summary"] == "Concern prose"
+    assert preview["short_summary"] == _clip_summary(prose)[0]
+    assert "application_submitted=true" not in preview["short_summary"]
     card = get_entity_card(migrated_conn, entity_id=eid, source="boot")
     assert derive_status_view(migrated_conn, eid, row) is None
-    assert card.get("summary_row") == "Concern prose"
+    assert card.get("summary_row") == prose
+    assert "application_submitted=true" not in (card.get("summary_row") or "")
 
 
 @pytest.mark.offline
@@ -500,11 +570,9 @@ def test_render_db_error_does_not_write_description(
         ).fetchone()
     )
 
-    def _boom(*_a: object, **_k: object) -> None:
-        raise sqlite3.OperationalError("simulated read failure")
-
     with patch(
-        "cortex_store.entity_state_render.derive_status_view", side_effect=_boom
+        "cortex_store.entity_state_render.field_states",
+        side_effect=sqlite3.OperationalError("simulated field_states read failure"),
     ):
         card = get_entity_card(migrated_conn, entity_id=eid, source="boot")
     after = dict(
@@ -516,21 +584,80 @@ def test_render_db_error_does_not_write_description(
     assert card.get("summary_row") == desc
     assert card.get("authored_note") is None
 
+    with patch(
+        "cortex_store.entity_state_render.field_states",
+        side_effect=ValueError("simulated logic failure"),
+    ):
+        with pytest.raises(ValueError, match="simulated logic failure"):
+            get_entity_card(migrated_conn, entity_id=eid, source="boot")
+
 
 @pytest.mark.offline
-def test_predicate_summary_suppress_and_has_attribute_prepend() -> None:
-    entity_id = "account:psum-w5"
+def test_preview_tombstone_with_attributes_keeps_description_summary(
+    migrated_conn: sqlite3.Connection,
+) -> None:
+    eid = "account:specimen-w5-tomb-preview"
+    desc = "Archived account prose."
+    insert_entity(
+        migrated_conn,
+        entity_id=eid,
+        entity_type="account",
+        name="Tomb",
+        description=desc,
+        attributes=json.dumps({"application_submitted": True}),
+    )
+    _insert_status_assertion(
+        migrated_conn,
+        entity_id=eid,
+        claim="Compacted into archive summary 99",
+        predicate_form=None,
+    )
+    row = dict(
+        migrated_conn.execute("SELECT * FROM entities WHERE id = ?", (eid,)).fetchone()
+    )
+    assert derive_status_view(migrated_conn, eid, row) is not None
+    preview = build_entity_preview(migrated_conn, entity_id=eid)
+    assert preview["short_summary"] == _clip_summary(desc)[0]
+    assert "application_submitted=true" not in preview["short_summary"]
+
+
+@pytest.mark.offline
+def test_predicate_summary_suppress_application_submitted_branch() -> None:
+    entity_id = "account:psum-w5-app"
     suppress = {
         "application_submitted": frozenset(
             {"submitted", "not_submitted", "unsubmitted"}
         ),
-        "workflow_state": frozenset(),
     }
     top_k = [
         {
             "id": 1,
             "claim": "status row",
             "predicate_form": f"status({entity_id}, submitted, current)",
+            "review_status": None,
+        },
+    ]
+    summary, _ = aggregate_predicate_summary(
+        top_k,
+        [],
+        [],
+        entity_id=entity_id,
+        suppress_status_tokens=suppress,
+        derived_field_values={"application_submitted": True},
+    )
+    assert f"has_attribute({entity_id}, application_submitted, true)" in summary
+    assert f"status({entity_id}, submitted" not in summary
+
+
+@pytest.mark.offline
+def test_predicate_summary_suppress_workflow_state_branch() -> None:
+    entity_id = "todo:psum-w5-wf"
+    suppress = {"workflow_state": frozenset()}
+    top_k = [
+        {
+            "id": 1,
+            "claim": "status row",
+            "predicate_form": f"status({entity_id}, in_progress, current)",
             "review_status": None,
         },
         {
@@ -546,8 +673,7 @@ def test_predicate_summary_suppress_and_has_attribute_prepend() -> None:
         [],
         entity_id=entity_id,
         suppress_status_tokens=suppress,
-        derived_field_values={"application_submitted": True},
+        derived_field_values={"workflow_state": "in_progress"},
     )
-    assert f"has_attribute({entity_id}, application_submitted, true)" in summary
-    assert f"status({entity_id}, submitted" not in summary
+    assert f"status({entity_id}, in_progress" not in summary
     assert f"describes({entity_id}, x)" in summary

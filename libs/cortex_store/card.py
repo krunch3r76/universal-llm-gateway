@@ -437,7 +437,7 @@ def get_entity_card(
     all_active_claims = [str(r["claim"]) for r in a_rows]
     surfaced_rows: list[dict[str, object]] = []
     current_status = CurrentStatus()
-    from .entity_state_render import StatusView, derive_status_view
+    from .entity_state_render import StatusView, try_derive_status_view
 
     status_view: StatusView | None = None
     if active_n > 0 and is_tombstone_only(all_active_claims):
@@ -478,15 +478,7 @@ def get_entity_card(
             )
         surfaced_rows = _merge_current_status_slot(a_rows, e_row, top_k=top_k)
         top_k_for_card = [_card_assertion(r) for r in surfaced_rows]
-        try:
-            status_view = derive_status_view(conn, entity_id, dict(e))
-        except Exception:
-            logger.warning(
-                "derive_status_view failed for %s (card read)",
-                entity_id,
-                exc_info=True,
-            )
-            status_view = None
+        status_view = try_derive_status_view(conn, entity_id, dict(e), site="card read")
         predicate_summary, _summary_withheld = aggregate_predicate_summary(
             top_k_assertions=a_rows,
             et_type_counts=[

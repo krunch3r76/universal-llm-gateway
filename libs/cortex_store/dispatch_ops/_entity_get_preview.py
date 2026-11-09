@@ -10,7 +10,7 @@ from fastapi import HTTPException
 
 from ..compaction import is_tombstone_only
 from ..db import query
-from ..entity_state_render import derive_status_view
+from ..entity_state_render import try_derive_status_view
 
 _PREVIEW_OMITTED = ("attributes", "assertions", "journal", "relations", "content")
 _SUMMARY_CAP = 500
@@ -180,7 +180,7 @@ def build_entity_preview(
     if live_assertions and is_tombstone_only(live_claims):
         view = None
     else:
-        view = derive_status_view(conn, entity_id, entity_row)
+        view = try_derive_status_view(conn, entity_id, entity_row, site="preview")
     description = str(row.get("description") or "")
     if view is not None:
         summary_field = "derived_status"

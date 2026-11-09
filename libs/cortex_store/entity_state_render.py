@@ -6,6 +6,8 @@ import sqlite3
 from dataclasses import dataclass
 from typing import Any
 
+from universal_logging import get_logger
+
 from cortex_store.entity_state_fold_gate import entity_is_concern
 from cortex_store.entity_state_provenance import (
     FOLD_FIELDS,
@@ -13,6 +15,8 @@ from cortex_store.entity_state_provenance import (
     records_for_field,
 )
 from cortex_store.entity_state_read import FieldState, field_states
+
+logger = get_logger("cortex_store.entity_state_render")
 
 _APP_SUBMIT_SUPPRESS = frozenset({"submitted", "not_submitted", "unsubmitted"})
 
@@ -34,7 +38,7 @@ def _newer_claim_created_date(created_at: str | None) -> str:
 
 
 def _render_field_part(field: str, fs: FieldState) -> str | None:
-    if field == "workflow_state" and fs.value is None and not fs.newer_claim_id:
+    if field == "workflow_state" and fs.value is None and fs.newer_claim_id is None:
         return None
     if not fs.present and fs.newer_claim_id is None:
         return None
@@ -77,6 +81,26 @@ class StatusView:
     rendered_fields: frozenset[str]
     suppress_status_tokens: dict[str, frozenset[str]]
     conflict_review_status: str | None = None
+
+
+def try_derive_status_view(
+    conn: sqlite3.Connection,
+    entity_id: str,
+    entity_row: dict[str, Any],
+    *,
+    site: str,
+) -> StatusView | None:
+    """Call ``derive_status_view``; map ``sqlite3.Error`` to None with a warning."""
+    try:
+        return derive_status_view(conn, entity_id, entity_row)
+    except sqlite3.Error:
+        logger.warning(
+            "derive_status_view failed for %s (%s)",
+            entity_id,
+            site,
+            exc_info=True,
+        )
+        return None
 
 
 def derive_status_view(
