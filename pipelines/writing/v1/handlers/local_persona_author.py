@@ -17,6 +17,7 @@ from writing_pipeline.events import WritingPersonaRefused
 from .assemble import _fence
 from .independence import load_writing_models
 from .judge_schema import PersonaJudgment, parse_persona_judgments, persona_judge_schema
+from .persona_retry import run_persona_attempts
 from .prompt_architect import _NAME, _NUMBER
 from .prompt_store import load_prompts
 
@@ -123,14 +124,6 @@ class PersonaValidationResult:
 def _step(payload: dict[str, Any]) -> StepOutput:
     """Wrap a JSON dict as a pipeline step output."""
     return StepOutput(raw=json.dumps(payload), json=payload)
-
-
-def _persona_template() -> str:
-    """Load the local_persona_author user template or return empty when missing."""
-    row = load_prompts().get("local_persona_author")
-    if not isinstance(row, dict):
-        return ""
-    return str(row.get("template") or "").strip()
 
 
 def _persona_judge_template() -> tuple[str, str]:
@@ -483,26 +476,29 @@ class WritingLocalPersonaAuthorHandler(BaseHandler):
         judged_invented: list[str] | None = None,
         judgments: tuple[PersonaJudgment, ...] | None = None,
         detail: str | None = None,
+        persona_attempts: list[dict[str, Any]] | None = None,
+        publish_event: bool = True,
     ) -> StepOutput:
         """Build a fail-closed payload and publish an observation event when possible."""
         persona_judgments = _persona_judgments_payload(judgments)
-        try:
-            self._publish_bus_event(
-                context,
-                WritingPersonaRefused(
-                    reason=reason,
-                    flagged_candidates=flagged_candidates,
-                    judged_invented=judged_invented,
-                    persona_judgments=persona_judgments,
-                    detail=detail,
-                ),
-            )
-        except Exception as exc:  # noqa: BLE001
-            _LOGGER.warning(
-                "persona refuse bus publish failed reason=%s: %s",
-                reason,
-                exc,
-            )
+        if publish_event:
+            try:
+                self._publish_bus_event(
+                    context,
+                    WritingPersonaRefused(
+                        reason=reason,
+                        flagged_candidates=flagged_candidates,
+                        judged_invented=judged_invented,
+                        persona_judgments=persona_judgments,
+                        detail=detail,
+                    ),
+                )
+            except Exception as exc:  # noqa: BLE001
+                _LOGGER.warning(
+                    "persona refuse bus publish failed reason=%s: %s",
+                    reason,
+                    exc,
+                )
         payload: dict[str, Any] = {
             "ok": False,
             "refused": reason,
@@ -520,6 +516,8 @@ class WritingLocalPersonaAuthorHandler(BaseHandler):
             payload["persona_judged_invented"] = judged_invented
         if persona_judgments is not None:
             payload["persona_judgments"] = persona_judgments
+        if persona_attempts is not None:
+            payload["persona_attempts"] = persona_attempts
         return _step(payload)
 
     async def _invoke_persona_judge(
@@ -592,9 +590,6 @@ class WritingLocalPersonaAuthorHandler(BaseHandler):
         )
         if not isinstance(assemble_json, dict) or assemble_json.get("refused"):
             return _step({"ok": False, "skipped": True, "_skipped": True})
-        template = _persona_template()
-        if not template:
-            return self._refuse(context, "persona_prompt_missing")
         arch = outputs.get("prompt_architect")
         arch_json = (
             arch.get("json") if isinstance(arch, dict) else getattr(arch, "json", None)
@@ -602,37 +597,11 @@ class WritingLocalPersonaAuthorHandler(BaseHandler):
         architect_block = str((arch_json or {}).get("architect_brief_block") or "")
         brief_block = str(assemble_json.get("brief_block") or "")
         documents_block = str(assemble_json.get("documents_block") or "")
-        prompt = PromptBuilder().render(
-            template,
-            {
-                "brief": brief_block,
-                "documents": documents_block,
-                "architect_brief": architect_block,
-            },
-        )
         models = load_writing_models()
         model_id = models.get("local_persona_author") or ""
         if not model_id:
             return self._refuse(context, "persona_model_missing")
-        try:
-            if self._caller is not None:
-                content = await self._caller()
-            else:
-                result = await self._call_model(
-                    model_id,
-                    prompt,
-                    step,
-                    context,
-                    temperature=0.2,
-                )
-                content = result.content
-        except Exception as exc:  # noqa: BLE001
-            return self._refuse(
-                context,
-                "persona_author_failed",
-                error=type(exc).__name__,
-            )
-        raw = content if isinstance(content, str) else str(content or "")
+        options = getattr(context, "options", {}) or {}
 
         async def _bound_judge(persona_fenced: str, candidates: list[Candidate]) -> str:
             if self._judge_caller is not None:
@@ -647,23 +616,54 @@ class WritingLocalPersonaAuthorHandler(BaseHandler):
                 architect_brief_block=architect_block,
             )
 
-        verdict = await validate_persona_prose(
-            raw,
+        async def _author_caller(prompt: str) -> Any:
+            if self._caller is not None:
+                return await self._caller(prompt)
+            return await self._call_model(
+                model_id,
+                prompt,
+                step,
+                context,
+                temperature=0.2,
+            )
+
+        verdict, persona_attempts = await run_persona_attempts(
+            options=options,
             brief_block=brief_block,
             documents_block=documents_block,
             architect_brief_block=architect_block,
+            author_caller=_author_caller,
             judge_caller=_bound_judge,
+            validate_persona_prose=validate_persona_prose,
         )
 
         if not verdict.ok:
+            refused = verdict.refused or "persona_validation_failed"
+            if refused == "persona_prompt_missing":
+                return self._refuse(
+                    context,
+                    refused,
+                    persona_attempts=persona_attempts,
+                )
+            if refused == "persona_author_failed":
+                err = None
+                if persona_attempts:
+                    err = persona_attempts[-1].get("error")
+                return self._refuse(
+                    context,
+                    refused,
+                    error=str(err) if err else "author_caller_failed",
+                    persona_attempts=persona_attempts,
+                )
             return self._refuse(
                 context,
-                verdict.refused or "persona_validation_failed",
-                rejected_text=verdict.text or raw,
+                refused,
+                rejected_text=verdict.text or None,
                 flagged_candidates=verdict.flagged_candidates,
                 judged_invented=verdict.judged_invented,
                 judgments=verdict.judgments,
                 detail=verdict.detail,
+                persona_attempts=persona_attempts,
             )
         prose = verdict.text
         return _step(
@@ -671,5 +671,6 @@ class WritingLocalPersonaAuthorHandler(BaseHandler):
                 "ok": True,
                 "persona_prose": prose,
                 "persona_prose_block": f"<persona_prose>\n{_fence(prose)}\n</persona_prose>",
+                "persona_attempts": persona_attempts,
             }
         )

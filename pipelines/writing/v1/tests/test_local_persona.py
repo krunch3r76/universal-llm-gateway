@@ -703,7 +703,8 @@ def test_persona_author_model_exception_refuses(
 
 
 def test_persona_author_missing_prompt_refuses(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(local_persona, "load_prompts", lambda: {})
+    prompt_store = importlib.import_module("writing_v1_handlers.prompt_store")
+    monkeypatch.setattr(prompt_store, "load_prompts", lambda: {})
     payload = asyncio.run(
         local_persona.WritingLocalPersonaAuthorHandler().execute(
             None, _correspondence_ctx()

@@ -1,0 +1,20 @@
+{
+  "intake": {
+    "mode": "standard",
+    "channel": "email",
+    "recipient": "Planning Department",
+    "signer": "Pat Rivera",
+    "objective": "Confirm Monterey restaurant operations schedule.",
+    "verbatim_notes": [
+      "The restaurant is open six operating days each week.",
+      "Hours run Tuesday through Sunday."
+    ],
+    "standing_limits": "Use only facts in verbatim_notes."
+  },
+  "brief_block": "<brief>Monterey restaurant six operating days Tuesday through Sunday</brief>",
+  "documents_block": "<documents><pin id='P1'>Open six operating days; closed one day weekly.</pin></documents>",
+  "architect_brief_block": "<architect_brief>lead_pin_id: P1 Monterey schedule</architect_brief>",
+  "attempt1_prose": "You write as Pat Rivera about the Monterey restaurant, open Monday through Saturday with one day off.",
+  "attempt2_prose": "You write as Pat Rivera about the Monterey restaurant, open six operating days from Tuesday through Sunday.",
+  "judged_invented_token": "Monday"
+}
