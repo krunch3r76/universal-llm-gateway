@@ -127,9 +127,7 @@ def _pin_liaison_pager_socket(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 @pytest.fixture(autouse=True)
-def _isolate_liaison_watch_dir(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> Path:
+def _isolate_liaison_watch_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     """Keep ``sync_policy_gui_host`` / fable lock paths off live ``tmp/watchers``."""
     return apply_xvfb_policy_test_isolation(tmp_path, monkeypatch)
 

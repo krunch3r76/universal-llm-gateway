@@ -110,9 +110,7 @@ def _display_chat_paste_routes_hub_httpx_recorder(
         async def __aexit__(self, *args: object) -> None:
             return None
 
-        async def post(
-            self, url: str, *args: object, **kwargs: object
-        ) -> object:
+        async def post(self, url: str, *args: object, **kwargs: object) -> object:
             hub_paste_http_calls.append(
                 {
                     "method": "POST",

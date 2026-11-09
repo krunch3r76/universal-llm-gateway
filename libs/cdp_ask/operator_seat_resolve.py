@@ -165,7 +165,9 @@ def _resolve_from_http(
         from claude_bundles import cdp_registry_events as _events
 
         with contextlib.suppress(Exception):
-            _events.emit(_events.cdp_seat_authority_unreachable(parent_thread=parent_thread))
+            _events.emit(
+                _events.cdp_seat_authority_unreachable(parent_thread=parent_thread)
+            )
         return _unavailable_identity()
     if not isinstance(snap, dict):
         return _null_identity()
@@ -183,10 +185,9 @@ def _resolve_from_http(
     if not reg_id:
         return _null_identity(observed_at=observed_at)
     seat_rows = seat_rows_raw
-    chat_url = (
-        _chat_url_from_provenance(reg_id, timeout_s=timeout_s, client=client)
-        or _chat_url_for_registration(reg_id)
-    )
+    chat_url = _chat_url_from_provenance(
+        reg_id, timeout_s=timeout_s, client=client
+    ) or _chat_url_for_registration(reg_id)
     row_source = "http"
     for row in seat_rows:
         if isinstance(row, dict) and str(row.get("registration_id") or "") == reg_id:

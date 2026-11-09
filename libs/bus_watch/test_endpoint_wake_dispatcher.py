@@ -7220,7 +7220,7 @@ def test_stale_cse_no_holder_skips_scan_holder_tombstone(
 
     monkeypatch.setattr(
         "bus_watch.endpoint_wake_dispatcher._holder_for_cse_registration",
-        lambda _store, _rid: None,
+        lambda _store, _rid, *, delivery_phase=False: None,
     )
     scan_once(Store())  # type: ignore[arg-type]
     with connect() as conn:
