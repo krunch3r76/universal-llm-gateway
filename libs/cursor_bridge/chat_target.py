@@ -15,7 +15,12 @@ import re
 from collections.abc import Sequence
 from typing import Any
 
-from agent_bus_store.turns_models import TAB_UUID_RE
+# Leaf constant: must match agent_bus_store.turns_models.TAB_UUID_RE. Do not import
+# turns_models here — that loads agent_bus_store.__init__ → server → endpoint_subscriptions
+# → wake_delivery while chat_surface is still initializing (cdp_ask / interlocutor crash).
+TAB_UUID_RE = re.compile(
+    r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+)
 
 _TAB_UUID = TAB_UUID_RE.pattern.removeprefix("^").removesuffix("$")
 _TAB_WAKE_SUFFIX = rf"(?:\s+tab={_TAB_UUID})?"
