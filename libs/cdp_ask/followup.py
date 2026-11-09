@@ -201,6 +201,10 @@ def _commit_explicit_retain_lane_seat(
     chat_url: str,
     lane: str,
     lane_pin: dict,
+    *,
+    purpose: str | None = None,
+    cdp_url: str | None = None,
+    holder: str | None = None,
 ) -> str:
     from claude_bundles.cdp_registry.session_address import commit_followup_lane_seat
 
@@ -210,7 +214,22 @@ def _commit_explicit_retain_lane_seat(
         lane=lane,
         snapshot_holder_id=lane_pin.get("seat_snapshot_holder_id"),
         snapshot_seat_bound_at=lane_pin.get("seat_snapshot_bound_at"),
+        purpose=purpose,
+        cdp_url=cdp_url,
+        holder=holder,
     )
+
+
+def _seat_refusal_detail(status: str, *, explicit_retain: bool) -> str | None:
+    if status == "not_seated":
+        if explicit_retain:
+            return "explicit followup cannot bind driving seat on lane"
+        return "reattach host cannot bind driving seat on lane"
+    if status == "refused":
+        if explicit_retain:
+            return "lane seat holder changed since followup opened"
+        return "lane seat holder changed since reattach"
+    return None
 
 
 def _explicit_retain_lane_seat_wanted(
@@ -551,6 +570,7 @@ async def execute_followup(
     pw = None
     paste_delivered = False
     seat_committed = False
+    seat_commit_detail: str | None = None
     try:
         found = await find_page_on_lane(target.cdp_url, target.chat_url)
         if found is None:
@@ -624,32 +644,31 @@ async def execute_followup(
                     detail=f"{type(exc).__name__}: {exc}",
                     **extra,
                 )
-            if status == "not_seated":
-                return fail_followup(
-                    "reattach_not_seated",
-                    detail="reattach host cannot bind driving seat on lane",
-                    **extra,
+            if status == "not_seated" or status == "refused":
+                seat_commit_detail = _seat_refusal_detail(
+                    status, explicit_retain=False
                 )
-            if status == "refused":
-                return fail_followup(
-                    "reattach_seat_changed",
-                    detail="lane seat holder changed since reattach",
-                    **extra,
+                seat_extra = response_extra(
+                    reattach_used=reattach_used,
+                    lane_created=lane_created,
+                    seated=False,
                 )
-            if status != "committed":
+                extra = {**extra, **seat_extra}
+            elif status != "committed":
                 return fail_followup(
                     "reattach_seat_commit_failed",
                     detail=f"unexpected commit status: {status}",
                     **extra,
                 )
-            seat_committed = True
-            seat_extra = response_extra(
-                reattach_used=reattach_used,
-                lane_created=lane_created,
-                seated=True,
-                lane_holder=target.registration_id,
-            )
-            extra = seat_extra
+            else:
+                seat_committed = True
+                seat_extra = response_extra(
+                    reattach_used=reattach_used,
+                    lane_created=lane_created,
+                    seated=True,
+                    lane_holder=target.registration_id,
+                )
+                extra = seat_extra
         elif _explicit_retain_lane_seat_wanted(
             req, binding=binding, reattach_used=reattach_used
         ):
@@ -660,26 +679,27 @@ async def execute_followup(
                 target.chat_url,
                 lane,
                 lane_pin,
+                purpose=req.purpose,
+                cdp_url=target.cdp_url,
+                holder=target.holder,
             )
-            if status == "not_seated":
-                return fail_followup(
-                    "followup_not_seated",
-                    detail="explicit followup cannot bind driving seat on lane",
-                    **extra,
+            if status == "not_seated" or status == "refused":
+                seat_commit_detail = _seat_refusal_detail(
+                    status, explicit_retain=True
                 )
-            if status == "refused":
-                return fail_followup(
-                    "followup_seat_changed",
-                    detail="lane seat holder changed since followup opened",
-                    **extra,
+                seat_extra = response_extra(
+                    reattach_used=reattach_used,
+                    lane_created=lane_created,
+                    seated=False,
                 )
-            if status not in ("committed", "missing"):
+                extra = {**extra, **seat_extra}
+            elif status not in ("committed", "missing"):
                 return fail_followup(
                     "followup_seat_commit_failed",
                     detail=f"unexpected commit status: {status}",
                     **extra,
                 )
-            if status == "committed":
+            elif status == "committed":
                 seat_committed = True
                 seat_extra = response_extra(
                     reattach_used=reattach_used,
@@ -751,6 +771,10 @@ async def execute_followup(
             seated=seat_extra.get("seated") if seat_extra else None,
             lane_holder=seat_extra.get("lane_holder") if seat_extra else None,
         )
+        if seat_commit_detail is not None:
+            resp = resp.model_copy(
+                update={"detail": seat_commit_detail, "seated": False}
+            )
 
         if (
             resp.ok

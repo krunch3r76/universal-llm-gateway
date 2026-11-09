@@ -472,6 +472,90 @@ def commit_reattach_driving_seat(
     return "committed"
 
 
+def _port_from_cdp_url(cdp_url: str | None) -> int | None:
+    """Extract the Chrome debug port from a ``http://127.0.0.1:<port>`` CDP URL."""
+    raw = (cdp_url or "").strip()
+    if not raw:
+        return None
+    try:
+        from urllib.parse import urlparse
+
+        parsed = urlparse(raw)
+        if parsed.port is not None:
+            return int(parsed.port)
+        host = (parsed.netloc or "").split(":")[-1]
+        return int(host) if host.isdigit() else None
+    except (TypeError, ValueError):
+        return None
+
+
+def _prepare_followup_lane_registry_row(
+    active: dict[str, dict[str, Any]],
+    registration_id: str,
+    *,
+    chat_url: str,
+    lane: str,
+    purpose: str | None,
+    cdp_url: str | None,
+    holder: str | None,
+) -> dict[str, Any] | None:
+    """Attach or enrich a host-listable row so explicit followup can bind a seat.
+
+    Chrome minted without ``purpose`` or ``parent_thread`` (houseless generate)
+    still lists as active; seating requires operator purpose and lane parent.
+    When the row key is absent but *cdp_url* carries a live port, mint a minimal
+    active stub so ``bind_session_address`` semantics can proceed without reattach.
+    """
+    from claude_bundles.what_is_running_view import OPERATOR_PURPOSES
+
+    rid = (registration_id or "").strip()
+    url = (chat_url or "").strip()
+    lane_key = (lane or "").strip()
+    purpose_fallback = str(purpose or "operator-proxy").strip() or "operator-proxy"
+    if purpose_fallback not in OPERATOR_PURPOSES:
+        purpose_fallback = "operator-proxy"
+    row = active.get(rid)
+    if not isinstance(row, dict):
+        port = _port_from_cdp_url(cdp_url)
+        if port is None:
+            return None
+        row = {
+            "registration_id": rid,
+            "status": "active",
+            "port": port,
+            "holder": (holder or "cdp-ask-satellite").strip() or "cdp-ask-satellite",
+            "purpose": purpose_fallback,
+            "started_at": time.time(),
+        }
+        active[rid] = row
+        _store.append_log(
+            "followup_lane_row_attached",
+            {
+                "registration_id": rid,
+                "chat_url": url,
+                "lane": lane_key or None,
+                "port": port,
+            },
+        )
+    row = dict(active[rid])
+    changed = False
+    purpose_norm = str(row.get("purpose") or "").strip()
+    if purpose_norm not in OPERATOR_PURPOSES:
+        row["purpose"] = purpose_fallback
+        changed = True
+    if url:
+        prior = str(row.get("chat_url") or "").strip()
+        if not prior or normalize_cse_url(prior) != normalize_cse_url(url):
+            if not prior:
+                assert_attachment_unique(active, url, registration_id=rid)
+                row["chat_url"] = url
+                row["chat_url_bound_at"] = time.time()
+                changed = True
+    if changed:
+        active[rid] = row
+    return row
+
+
 def commit_followup_lane_seat(
     registration_id: str,
     *,
@@ -480,11 +564,15 @@ def commit_followup_lane_seat(
     snapshot_holder_id: str | None,
     snapshot_seat_bound_at: float | None,
     execution_id: str | None = None,
+    purpose: str | None = None,
+    cdp_url: str | None = None,
+    holder: str | None = None,
 ) -> str:
     """Seat after explicit ``retain_lane`` followup on a vacant or self-held lane.
 
     Unlike reattach CAS, commits only when the lane has no open holder or the
-    open holder is this registration. A missing registry row returns ``not_seated``.
+    open holder is this registration. When the row is missing but *cdp_url*
+    proves a live port, a minimal active row is attached before seating.
     """
     rid = (registration_id or "").strip()
     url = (chat_url or "").strip()
@@ -495,8 +583,16 @@ def commit_followup_lane_seat(
     released_rows: list[dict[str, Any]] = []
     with _store.ports_lock():
         active = _store.load_active()
-        row = active.get(rid)
-        if not isinstance(row, dict):
+        row = _prepare_followup_lane_registry_row(
+            active,
+            rid,
+            chat_url=url,
+            lane=lane_key,
+            purpose=purpose,
+            cdp_url=cdp_url,
+            holder=holder,
+        )
+        if row is None:
             return "not_seated"
         if lane_key:
             parent = str(row.get("parent_thread") or "").strip()
