@@ -6701,7 +6701,6 @@ def test_scan_cse_no_open_seat_writes_scan_holder_skip(db: None) -> None:
     from agent_bus_store.db.endpoint_subscriptions import subscribe_endpoint
 
     reg = "583b411df34247f9a48bc044b6518be3"
-    chat = "https://claude.ai/cowork/cse_01HouselessNoSeat"
     detail = create_thread(thread_id=None, slug="houseless-no-seat")
     assert detail is not None
     thread = str(detail["id"])
@@ -6868,3 +6867,183 @@ def test_promote_scan_holder_skip_when_holder_appears(db: None) -> None:
     assert row is not None
     assert row["state"] == "pending"
     assert row["reason"] is None
+
+
+def test_stale_cse_no_holder_skips_scan_holder_tombstone(
+    db: None,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from agent_bus_store.db.connection import write_connect
+    from agent_bus_store.db.endpoint_subscriptions import subscribe_endpoint
+
+    monkeypatch.setenv("ENDPOINT_WAKE_CATCHUP_MAX_AGE_S", "900")
+    from datetime import UTC, datetime
+
+    fixed_now = datetime(2033, 6, 1, 12, 0, 0, tzinfo=UTC).timestamp()
+    monkeypatch.setattr(
+        "bus_watch.endpoint_wake_dispatcher.time.time",
+        lambda: fixed_now,
+    )
+    reg = "583b411df34247f9a48bc044b6518be3"
+    detail = create_thread(thread_id=None, slug="houseless-stale-skip")
+    assert detail is not None
+    thread = str(detail["id"])
+    subscribe_endpoint(
+        agent="ulg-cortex-symbiosis",
+        thread_scope=thread,
+        surface="cse",
+        display="cse",
+        title="cowork",
+        agent_id=reg,
+        bound_by="test",
+    )
+    turn_id, _ts, _num, _c = insert_turn(
+        thread=thread,
+        from_agent="houseless-driver",
+        to_agent="ulg-cortex-symbiosis",
+        subject="QUESTION|stale holder skip",
+        body="body",
+    )
+    with write_connect() as conn:
+        conn.execute(
+            "UPDATE turns SET created_at=? WHERE id=?",
+            ("2020-01-01 00:00:00", turn_id),
+        )
+        conn.execute("UPDATE endpoint_wake_cursor SET high_water_turn_id=0")
+
+    class Store:
+        def cursor(self) -> dict:
+            return get_cursor()
+
+        def since(self, after_id: int, limit: int = 50) -> list[dict]:
+            with connect() as c:
+                rows = c.execute(
+                    "SELECT id, thread, turn_number, from_agent, to_agent, subject, "
+                    "body, read_at, created_at FROM turns WHERE id>? ORDER BY id LIMIT ?",
+                    (after_id, limit),
+                ).fetchall()
+            return [dict(r) for r in rows]
+
+        def scan(self, expected: int, new_hw: int, rows: list[dict]) -> dict:
+            return advance_scan(
+                "endpoint-wake-dispatcher",
+                expected,
+                new_hw,
+                rows,
+                now="2020-01-01 21:00:00",
+            )
+
+        def subscription(self, agent: str, thread_id: str, raw_to: str | None = None):
+            from agent_bus_store.db.endpoint_subscriptions import current_subscription
+
+            row = current_subscription(agent, thread_id)
+            if row and row.get("state") == "subscribed":
+                return ("exact", row)
+            return None
+
+        def holder(self, lane_thread_id: str) -> dict | None:
+            return None
+
+        def holder_by_registration(self, registration_id: str) -> dict | None:
+            return None
+
+        def lane_parent(self, thread_id: str) -> str | None:
+            return None
+
+    monkeypatch.setattr(
+        "bus_watch.endpoint_wake_dispatcher._holder_for_cse_registration",
+        lambda _store, _rid: None,
+    )
+    scan_once(Store())  # type: ignore[arg-type]
+    with connect() as conn:
+        row = conn.execute(
+            "SELECT state, reason FROM endpoint_wake_ledger WHERE turn_id=?",
+            (turn_id,),
+        ).fetchone()
+    assert row is None
+
+
+def test_promote_skips_stale_scan_holder_tombstone(
+    db: None,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from agent_bus_store.db.connection import write_connect
+    from agent_bus_store.db.endpoint_subscriptions import subscribe_endpoint
+    from agent_bus_store.db.endpoint_wake_ledger import promote_routable_scan_holder_skips
+
+    monkeypatch.setenv("ENDPOINT_WAKE_CATCHUP_MAX_AGE_S", "900")
+    reg = "583b411df34247f9a48bc044b6518be3"
+    chat = "https://claude.ai/cowork/cse_01HouselessPromoteStale"
+    detail = create_thread(thread_id=None, slug="houseless-promote-stale")
+    assert detail is not None
+    thread = str(detail["id"])
+    subscribe_endpoint(
+        agent="ulg-cortex-symbiosis",
+        thread_scope=thread,
+        surface="cse",
+        display="cse",
+        title="cowork",
+        agent_id=reg,
+        bound_by="test",
+    )
+    turn_id, _ts, turn_num, _c = insert_turn(
+        thread=thread,
+        from_agent="houseless-driver",
+        to_agent="ulg-cortex-symbiosis",
+        subject="QUESTION|stale promote",
+        body="body",
+    )
+    with write_connect() as conn:
+        conn.execute(
+            "UPDATE turns SET created_at=? WHERE id=?",
+            ("2020-01-01 00:00:00", turn_id),
+        )
+    cursor = get_cursor()
+    expected_hw = int(cursor["high_water_turn_id"])
+    advance_scan(
+        "endpoint-wake-dispatcher",
+        expected_hw,
+        turn_id,
+        [
+            {
+                "agent": "ulg-cortex-symbiosis",
+                "thread_id": thread,
+                "turn_id": turn_id,
+                "turn_number": turn_num,
+                "state": "skipped",
+                "reason": "no_route:scan_holder",
+                "decided_by_rule": "wake.default",
+            }
+        ],
+        now="2020-01-01 21:05:00",
+    )
+
+    class Store:
+        def subscription(self, agent: str, thread_id: str, raw_to: str | None = None):
+            from agent_bus_store.db.endpoint_subscriptions import current_subscription
+
+            row = current_subscription(agent, thread_id)
+            if row and row.get("state") == "subscribed":
+                return ("exact", row)
+            return None
+
+        def holder_by_registration(self, registration_id: str) -> dict | None:
+            if registration_id == reg:
+                return {
+                    "registration_id": reg,
+                    "chat_url": chat,
+                    "seat_state": "driving",
+                    "lane_thread_id": thread,
+                }
+            return None
+
+    promoted = promote_routable_scan_holder_skips(Store())  # type: ignore[arg-type]
+    assert promoted == 0
+    with connect() as conn:
+        row = conn.execute(
+            "SELECT state, reason FROM endpoint_wake_ledger WHERE turn_id=?",
+            (turn_id,),
+        ).fetchone()
+    assert row is not None
+    assert row["state"] == "skipped"
+    assert row["reason"] == "no_route:scan_holder"

@@ -412,6 +412,8 @@ def commit_reattach_driving_seat(
             if parent and parent != lane_key:
                 return "refused"
             if not parent:
+                if seat_open(row) and not seat_open(row, lane_key):
+                    return "refused"
                 row = dict(row)
                 row["parent_thread"] = lane_key
                 active[rid] = row
@@ -479,19 +481,78 @@ def commit_followup_lane_seat(
     snapshot_seat_bound_at: float | None,
     execution_id: str | None = None,
 ) -> str:
-    """Seat after explicit ``retain_lane`` followup on a vacant ``parent_thread`` lane.
+    """Seat after explicit ``retain_lane`` followup on a vacant or self-held lane.
 
-    Same second-gate rules as ``commit_reattach_driving_seat`` (4642af06). Callers
-    on the non-reattach paste path use this when identity is explicit.
+    Unlike reattach CAS, commits only when the lane has no open holder or the
+    open holder is this registration. A missing registry row returns ``not_seated``.
     """
-    return commit_reattach_driving_seat(
-        registration_id,
-        chat_url=chat_url,
-        lane=lane,
-        snapshot_holder_id=snapshot_holder_id,
-        snapshot_seat_bound_at=snapshot_seat_bound_at,
-        execution_id=execution_id,
+    rid = (registration_id or "").strip()
+    url = (chat_url or "").strip()
+    lane_key = (lane or "").strip()
+    if not rid or not url:
+        return "missing"
+    bound_row: dict[str, Any] | None = None
+    released_rows: list[dict[str, Any]] = []
+    with _store.ports_lock():
+        active = _store.load_active()
+        row = active.get(rid)
+        if not isinstance(row, dict):
+            return "not_seated"
+        if lane_key:
+            parent = str(row.get("parent_thread") or "").strip()
+            if parent and parent != lane_key:
+                return "refused"
+            if not parent:
+                if seat_open(row) and not seat_open(row, lane_key):
+                    return "refused"
+                row = dict(row)
+                row["parent_thread"] = lane_key
+                active[rid] = row
+        if lane_key:
+            current_id, _current_bound = _open_seat_holder(active, lane_key)
+            cur_id = (current_id or "").strip() or None
+            if cur_id is not None and cur_id != rid:
+                return "refused"
+        bound_row, released_rows = apply_driving_seat_bind(active, rid)
+        if bound_row is None:
+            return "not_seated"
+        _store.require_seat_authority(operation="commit_followup_lane_seat")
+        _store.write_active(active)
+        _store.append_seat_transition_journal(
+            registration_id=rid,
+            seat_lane=str(bound_row.get("seat_lane") or ""),
+            seat_bound_at=bound_row.get("seat_bound_at"),
+            superseded=[
+                str(r.get("registration_id") or "")
+                for r in released_rows
+                if r.get("registration_id")
+            ],
+        )
+    _emit_seat_axis_events(bound_row, released_rows)
+    from services.git_integration_worker.cse_session_holders import (
+        RemoteUpsert,
+        upsert_holder_remote,
     )
+
+    try:
+        upsert_result = upsert_holder_remote(
+            chat_url=url,
+            registration_id=rid,
+            execution_id=execution_id,
+        )
+    except Exception:
+        logger.exception(
+            "commit_followup_lane_seat holder upsert failed registration_id=%s",
+            rid,
+        )
+    else:
+        if upsert_result is RemoteUpsert.LANE_CONFLICT:
+            logger.warning(
+                "commit_followup_lane_seat holder upsert lane_conflict "
+                "registration_id=%s",
+                rid,
+            )
+    return "committed"
 
 
 def _next_seat_bound_at(ts: float, released: list[dict[str, Any]]) -> float:

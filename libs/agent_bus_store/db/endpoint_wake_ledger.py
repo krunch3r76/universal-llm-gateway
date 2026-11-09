@@ -252,17 +252,35 @@ def advance_scan(
         return {"high_water_turn_id": new_high_water, "inserted": len(filtered)}
 
 
+_SCAN_HOLDER_PROMOTE_LIMIT = 50
+
+
 def promote_routable_scan_holder_skips(store: Any) -> int:
-    """Re-queue ``no_route:scan_holder`` tombstones once a CSE holder is resolvable."""
-    from bus_watch.endpoint_wake_dispatcher import resolve_cse_wake_target
+    """Re-queue fresh ``no_route:scan_holder`` tombstones once a CSE holder is resolvable."""
+    import time
+
+    from bus_watch.endpoint_wake_dispatcher import (
+        _endpoint_wake_catchup_max_age_s,
+        _turn_created_at_epoch,
+        resolve_cse_wake_target,
+    )
 
     promoted = 0
+    max_age_s = _endpoint_wake_catchup_max_age_s()
+    now_epoch = time.time()
     with write_connect() as conn:
         rows = conn.execute(
-            "SELECT id, agent, thread_id FROM endpoint_wake_ledger "
-            "WHERE state='skipped' AND reason='no_route:scan_holder'"
+            "SELECT l.id, l.agent, l.thread_id, l.turn_id, t.created_at "
+            "FROM endpoint_wake_ledger l "
+            "JOIN turns t ON t.id = l.turn_id "
+            "WHERE l.state='skipped' AND l.reason='no_route:scan_holder' "
+            "ORDER BY l.id LIMIT ?",
+            (_SCAN_HOLDER_PROMOTE_LIMIT,),
         ).fetchall()
         for row in rows:
+            created_epoch = _turn_created_at_epoch(row["created_at"])
+            if created_epoch is not None and (now_epoch - created_epoch) > max_age_s:
+                continue
             agent = str(row["agent"] or "")
             thread_id = str(row["thread_id"] or "")
             if not agent or not thread_id:
@@ -282,13 +300,12 @@ def promote_routable_scan_holder_skips(store: Any) -> int:
                 resolve_cse_wake_target(store, sub, wake_thread=thread_id) is None
             ):
                 continue
-            conn.execute(
+            cur = conn.execute(
                 "UPDATE endpoint_wake_ledger SET state='pending', reason=NULL, "
                 "finished_at=NULL WHERE id=? AND state='skipped'",
                 (row["id"],),
             )
-            if conn.total_changes:
-                promoted += 1
+            promoted += int(cur.rowcount)
     return promoted
 
 

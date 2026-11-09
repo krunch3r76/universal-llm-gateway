@@ -1777,6 +1777,14 @@ def scan_once(store: StoreClient, *, idle_mark: dict[str, float] | None = None) 
                     store, resolved[1], wake_thread=thread
                 )
                 if cse_target is None:
+                    if _turn_is_stale_catchup(turn):
+                        tid = int(turn["id"])
+                        if stale_catchup is None:
+                            stale_catchup = {"count": 0, "min": tid, "max": tid}
+                        stale_catchup["count"] += 1
+                        stale_catchup["min"] = min(stale_catchup["min"], tid)
+                        stale_catchup["max"] = max(stale_catchup["max"], tid)
+                        continue
                     if direct_maestro:
                         _observe_maestro_wake_drop(
                             thread=thread,
