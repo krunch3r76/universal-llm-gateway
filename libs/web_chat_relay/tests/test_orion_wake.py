@@ -2199,19 +2199,40 @@ async def test_binding_reference_prefix_resolves_subscription_row(
         assert opened == [pinned]
 
 
+@pytest.mark.parametrize(
+    "binding_id",
+    [
+        "agent_endpoint_subscriptions:not-a-id",
+        "not-numeric",
+        "agent_endpoint_subscriptions:",
+        " 6 ",
+        "-1",
+        "+6",
+        "6_1",
+        "6152abc",
+        "agent_endpoint_subscriptions: 6 ",
+        "\u0663",
+        "agent_endpoint_subscriptions:\u06636152",
+    ],
+    ids=lambda b: repr(b),
+)
 @pytest.mark.asyncio
 async def test_binding_reference_malformed_refuses_without_crash(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: pytest.TempPathFactory
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: pytest.TempPathFactory,
+    binding_id: str,
 ) -> None:
-    """Non-numeric binding_reference after prefix strip must refuse cleanly."""
+    """Strict ASCII-digit binding_reference must refuse before opening a tab."""
     import os
 
     from agent_bus_store.db.connection import init_db
+    from web_chat_relay.orion_wake import _normalize_stored_endpoint
     from web_chat_relay.orion_wake_owner import InMemoryWakeDeliveryOwner
 
     os.environ["AGENT_BUS_DB_PATH"] = str(tmp_path / "bus.sqlite")
     init_db()
     pinned = PINNED_CONVERSATION_URL
+    expected_opened = _normalize_stored_endpoint(pinned)
     opened: list[str] = []
 
     class _Port:
@@ -2228,28 +2249,67 @@ async def test_binding_reference_malformed_refuses_without_crash(
     from agent_bus_store.db.orion_wake_owner_adapter import wake_claim_from_options
 
     owner = InMemoryWakeDeliveryOwner()
-    for binding_id in ("agent_endpoint_subscriptions:not-a-id", "not-numeric"):
-        opts = {
-            "wake_id": f"wake-bad-{binding_id}",
-            "thread": "21207",
-            "turn": 12,
-            "turn_id": 912,
-            "turn_ids": [912],
-            "turn_numbers": [12],
-            "agent": "orion",
-            "conversation_url": pinned,
-            "binding_reference": binding_id,
-        }
-        owner.register_claim(wake_claim_from_options(opts))
-        out = await deliver_orion_chat_wake(
-            thread="21207",
-            turn=12,
-            from_agent="maestro",
-            pipeline_options=opts,
-            delivery_owner=owner,
-        )
-        assert out["reason"] == "bad_conversation_url"
-        assert opened == []
+    opts = {
+        "wake_id": f"wake-bad-{hash(binding_id) & 0xFFFF}",
+        "thread": "21207",
+        "turn": 12,
+        "turn_id": 912,
+        "turn_ids": [912],
+        "turn_numbers": [12],
+        "agent": "orion",
+        "conversation_url": pinned,
+        "binding_reference": binding_id,
+    }
+    owner.register_claim(wake_claim_from_options(opts))
+    refused = await deliver_orion_chat_wake(
+        thread="21207",
+        turn=12,
+        from_agent="maestro",
+        pipeline_options=opts,
+        delivery_owner=owner,
+    )
+    assert refused["reason"] == "bad_conversation_url"
+    assert refused["stored_endpoint"] == ""
+    assert refused["opened_url"] == expected_opened
+    assert opened == []
+
+
+@pytest.mark.parametrize(
+    "binding_id",
+    [
+        "",
+        "   ",
+        " 6 ",
+        "agent_endpoint_subscriptions:",
+        "-1",
+        "+6",
+        "6_1",
+        "6152abc",
+        "\u0663",
+        "agent_endpoint_subscriptions:\u06636152",
+        "agent_endpoint_subscriptions: 6 ",
+        "not-numeric",
+    ],
+    ids=lambda b: repr(b),
+)
+def test_subscription_id_from_binding_reference_strict_rejects(
+    binding_id: str,
+) -> None:
+    from web_chat_relay.orion_wake import _subscription_id_from_binding_reference
+
+    assert _subscription_id_from_binding_reference(binding_id) is None
+
+
+@pytest.mark.parametrize(
+    "binding_id,expected",
+    [("6152", 6152), ("agent_endpoint_subscriptions:6152", 6152)],
+)
+def test_subscription_id_from_binding_reference_strict_accepts(
+    binding_id: str, expected: int
+) -> None:
+    from web_chat_relay.orion_wake import _subscription_id_from_binding_reference
+
+    assert _subscription_id_from_binding_reference(binding_id) == expected
 
 
 @pytest.mark.asyncio

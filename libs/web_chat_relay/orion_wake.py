@@ -494,15 +494,14 @@ _BINDING_REF_PREFIX = "agent_endpoint_subscriptions:"
 
 def _subscription_id_from_binding_reference(binding_reference: str) -> int | None:
     """Parse ``agent_endpoint_subscriptions`` row id from a delivery binding_reference."""
-    ref = str(binding_reference or "").strip()
+    ref = str(binding_reference or "")
     if not ref:
         return None
     if ref.startswith(_BINDING_REF_PREFIX):
-        ref = ref[len(_BINDING_REF_PREFIX) :].strip()
-    try:
-        return int(ref)
-    except (TypeError, ValueError):
+        ref = ref[len(_BINDING_REF_PREFIX) :]
+    if re.fullmatch(r"[0-9]+", ref, re.ASCII) is None:
         return None
+    return int(ref)
 
 
 def _stored_endpoint_from_delivery_binding(binding_reference: str) -> str:
