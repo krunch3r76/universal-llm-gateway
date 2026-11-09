@@ -211,13 +211,20 @@ class RemoteIntegration:
         """
         # Cache GATEWAY_SNAPSHOT for resend on Master reconnection; keep cache
         # write-through on subsequent model/resource telemetry (mirrors Edge server).
-        if msg_type == FederationMessageType.GATEWAY_SNAPSHOT.value:
-            self._cached_edge_snapshot = {
-                "msg_type": msg_type,
-                "data": self._copy_snapshot_data(data),
-            }
-        elif self._cached_edge_snapshot is not None:
-            self._update_cached_edge_snapshot(msg_type, data)
+        try:
+            if msg_type == FederationMessageType.GATEWAY_SNAPSHOT.value:
+                self._cached_edge_snapshot = {
+                    "msg_type": msg_type,
+                    "data": self._copy_snapshot_data(data),
+                }
+            elif self._cached_edge_snapshot is not None:
+                self._update_cached_edge_snapshot(msg_type, data)
+        except Exception:
+            logger.error(
+                "Edge snapshot cache update failed",
+                extra={"msg_type": msg_type, "peer_id": peer_id},
+                exc_info=True,
+            )
 
         # Also ingest Edge telemetry for HTTP polling mode.
         #
@@ -310,15 +317,17 @@ class RemoteIntegration:
         """Return a shallow copy of snapshot payload with list fields detached."""
         snap = dict(data)
         for key in ("loaded_models", "busy_models", "loading_models"):
-            if key in snap and snap[key] is not None:
-                snap[key] = list(snap[key])
+            if key in snap:
+                snap[key] = list(snap.get(key) or [])
         return snap
 
     def _update_cached_edge_snapshot(self, msg_type: str, data: dict[str, Any]) -> None:
         """
         Apply incremental Edge telemetry to the cached GATEWAY_SNAPSHOT.
 
-        INVARIANT: reconnect resend matches HTTP-ingest loaded/busy state.
+        RESOURCE_UPDATE handling mirrors Master ``_apply_resource_update`` (metrics
+        only; never overwrites model lifecycle lists). Model lifecycle events mirror
+        ``EdgeFederationServer._update_cached_snapshot_model_state``.
         """
         if not self._cached_edge_snapshot:
             return
@@ -333,21 +342,20 @@ class RemoteIntegration:
                 "total_ram_mb",
                 "active_requests",
             ):
-                if key in data:
+                if key in data and data[key] is not None:
                     snap_data[key] = data[key]
-            if "loaded_models" in data:
-                snap_data["loaded_models"] = list(data["loaded_models"])
-            if "busy_models" in data:
-                snap_data["busy_models"] = list(data["busy_models"])
+            model_vram = data.get("model_vram")
+            if model_vram is not None:
+                snap_data["model_vram"] = dict(model_vram)
             return
 
         model_id = data.get("model_id")
         if not model_id:
             return
 
-        loaded_models = set(snap_data.get("loaded_models", []))
-        busy_models = set(snap_data.get("busy_models", []))
-        loading_models = set(snap_data.get("loading_models", []))
+        loaded_models = set(snap_data.get("loaded_models") or [])
+        busy_models = set(snap_data.get("busy_models") or [])
+        loading_models = set(snap_data.get("loading_models") or [])
 
         if msg_type == FederationMessageType.MODEL_LOADED.value:
             loaded_models.add(model_id)
@@ -487,7 +495,6 @@ class RemoteIntegration:
         """
         return self._local_edge_client
 
-    @property
     @property
     def connection_manager(self) -> ConnectionManager | None:
         """Returns the ConnectionManager instance."""

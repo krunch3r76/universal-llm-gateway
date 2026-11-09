@@ -126,3 +126,164 @@ async def test_on_edge_disconnected_clears_cached_model_lists(
     assert snap_data["loaded_models"] == []
     assert snap_data["busy_models"] == []
     assert snap_data["loading_models"] == []
+
+
+def _wire_forward_mock(relay_integration: RemoteIntegration) -> AsyncMock:
+    forward_mock = AsyncMock()
+    telemetry_sender = MagicMock()
+    telemetry_sender.forward_edge_telemetry = forward_mock
+    remote_client = MagicMock(spec=RemoteWebSocketClient)
+    remote_client.telemetry_sender = telemetry_sender
+    relay_integration._connection_manager = MagicMock(remote_client=remote_client)
+    return forward_mock
+
+
+@pytest.mark.asyncio
+async def test_resource_update_does_not_overwrite_model_lists(
+    relay_integration: RemoteIntegration,
+):
+    """Stale loaded/busy in RESOURCE_UPDATE must not clobber lifecycle cache."""
+    relay_integration._cached_edge_snapshot = {
+        "msg_type": "telemetry.gateway.snapshot",
+        "data": {
+            "loaded_models": [HERMES],
+            "busy_models": [HERMES],
+            "loading_models": [],
+            "available_vram_mb": 2000,
+        },
+    }
+
+    with patch("systems.federation.remote.api.telemetry.ingest_edge_telemetry"):
+        await relay_integration._forward_edge_telemetry(
+            "edge-jupiter",
+            "telemetry.resource.updated",
+            {
+                "available_vram_mb": 1500,
+                "loaded_models": [QWEN_14B, QWEN_59B],
+                "busy_models": [QWEN_14B],
+            },
+        )
+
+    snap = relay_integration._cached_edge_snapshot["data"]
+    assert snap["loaded_models"] == [HERMES]
+    assert snap["busy_models"] == [HERMES]
+    assert snap["available_vram_mb"] == 1500
+
+
+@pytest.mark.asyncio
+async def test_model_lifecycle_transitions_update_cached_snapshot(
+    relay_integration: RemoteIntegration,
+):
+    """Busy, idle, loading.started, and loading.failed update the resend cache."""
+    relay_integration._cached_edge_snapshot = {
+        "msg_type": "telemetry.gateway.snapshot",
+        "data": {
+            "loaded_models": [HERMES],
+            "busy_models": [],
+            "loading_models": [],
+        },
+    }
+    peer_id = "edge-jupiter"
+
+    with patch("systems.federation.remote.api.telemetry.ingest_edge_telemetry"):
+        await relay_integration._forward_edge_telemetry(
+            peer_id,
+            "telemetry.model.busy",
+            {"model_id": HERMES},
+        )
+        await relay_integration._forward_edge_telemetry(
+            peer_id,
+            "telemetry.model.idle",
+            {"model_id": HERMES},
+        )
+        await relay_integration._forward_edge_telemetry(
+            peer_id,
+            "telemetry.model.loading.started",
+            {"model_id": QWEN_14B},
+        )
+        await relay_integration._forward_edge_telemetry(
+            peer_id,
+            "telemetry.model.loading.failed",
+            {"model_id": QWEN_14B},
+        )
+
+    snap = relay_integration._cached_edge_snapshot["data"]
+    assert snap["loaded_models"] == [HERMES]
+    assert snap["busy_models"] == []
+    assert snap["loading_models"] == []
+
+
+@pytest.mark.asyncio
+async def test_forward_edge_telemetry_with_none_loading_models_still_forwards(
+    relay_integration: RemoteIntegration,
+):
+    """None-valued list fields must not block REL-TEL-01 forward to Master."""
+    relay_integration._cached_edge_snapshot = {
+        "msg_type": "telemetry.gateway.snapshot",
+        "data": {
+            "loaded_models": [HERMES],
+            "busy_models": None,
+            "loading_models": None,
+        },
+    }
+    forward_mock = _wire_forward_mock(relay_integration)
+
+    with patch("systems.federation.remote.api.telemetry.ingest_edge_telemetry"):
+        await relay_integration._forward_edge_telemetry(
+            "edge-jupiter",
+            "telemetry.model.busy",
+            {"model_id": HERMES},
+        )
+
+    snap = relay_integration._cached_edge_snapshot["data"]
+    assert HERMES in (snap.get("busy_models") or [])
+    forward_mock.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_disconnect_clear_then_fresh_snapshot_repopulates_cache(
+    relay_integration: RemoteIntegration,
+):
+    """After disconnect clears lists, a new GATEWAY_SNAPSHOT replaces cache state."""
+    relay_integration._cached_edge_snapshot = {
+        "msg_type": "telemetry.gateway.snapshot",
+        "data": {
+            "loaded_models": [QWEN_14B],
+            "busy_models": [],
+            "loading_models": [],
+        },
+    }
+
+    with (
+        patch(
+            "systems.federation.remote.api.telemetry.handle_edge_disconnected",
+            return_value=[QWEN_14B],
+        ),
+        patch.object(
+            relay_integration,
+            "_forward_edge_telemetry",
+            new_callable=AsyncMock,
+        ),
+    ):
+        await relay_integration._on_edge_disconnected()
+
+    assert relay_integration._cached_edge_snapshot["data"]["loaded_models"] == []
+
+    fresh = {
+        "gateway_id": "gw-jupiter",
+        "loaded_models": [HERMES],
+        "busy_models": [],
+        "loading_models": [],
+        "available_vram_mb": 5000,
+    }
+
+    with patch("systems.federation.remote.api.telemetry.ingest_edge_telemetry"):
+        await relay_integration._forward_edge_telemetry(
+            "edge-jupiter",
+            "telemetry.gateway.snapshot",
+            fresh,
+        )
+
+    snap = relay_integration._cached_edge_snapshot["data"]
+    assert snap["loaded_models"] == [HERMES]
+    assert snap["available_vram_mb"] == 5000
