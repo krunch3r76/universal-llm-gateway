@@ -25,7 +25,7 @@ def _failed_verdict(refused: str) -> Any:
 def persona_retry_enabled(options: dict[str, Any] | None) -> bool:
     """True when the pipeline option explicitly enables persona retry."""
     opts = options or {}
-    return bool(opts.get("persona_retry", False))
+    return opts.get("persona_retry") is True
 
 
 def retriable_persona_refusal(verdict: Any) -> bool:
@@ -44,7 +44,7 @@ def build_retry_feedback(verdict: Any) -> str:
             "Your prior attempt introduced tokens not present in the source blocks. "
             f"Do not introduce: {tokens}."
         )
-    detail = verdict.detail or "invented_or_invalid_prose"
+    detail = verdict.detail or "persona_validation_failed"
     return (
         "Your prior attempt failed persona validation. "
         f"Do not repeat this failure mode ({detail})."
@@ -115,6 +115,7 @@ def attempt_record(
     }
     if verdict.ok:
         row["refused"] = None
+        row["rejected_text"] = None
     return row
 
 
@@ -194,18 +195,32 @@ async def run_persona_attempts(
             break
         prompt_tokens, completion_tokens = _tokens_from_result(raw_result)
         raw = _content_from_result(raw_result)
-        verdict = await validate_persona_prose(
-            raw,
-            brief_block=brief_block,
-            documents_block=documents_block,
-            architect_brief_block=architect_brief_block,
-            judge_caller=judge_caller,
-        )
+        try:
+            verdict = await validate_persona_prose(
+                raw,
+                brief_block=brief_block,
+                documents_block=documents_block,
+                architect_brief_block=architect_brief_block,
+                judge_caller=judge_caller,
+            )
+        except Exception as exc:
+            verdict = _failed_verdict("persona_author_failed")
+            record = attempt_record(
+                attempt,
+                verdict,
+                rejected_text=raw,
+                prompt_tokens=prompt_tokens,
+                completion_tokens=completion_tokens,
+            )
+            record["error"] = type(exc).__name__
+            attempts.append(record)
+            break
+        rejected = None if verdict.ok else (verdict.text or raw)
         attempts.append(
             attempt_record(
                 attempt,
                 verdict,
-                rejected_text=verdict.text or raw,
+                rejected_text=rejected or "",
                 prompt_tokens=prompt_tokens,
                 completion_tokens=completion_tokens,
             )

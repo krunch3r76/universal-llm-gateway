@@ -277,14 +277,14 @@ def _persona_candidates(
     ]
 
 
-def _persona_deterministic_failure(text: str) -> str | None:
-    """Return a refuse reason when prose fails non-judgment checks."""
+def _persona_deterministic_failure(text: str) -> tuple[str, str] | None:
+    """Return refused reason and detail when prose fails non-judgment checks."""
     if not text:
-        return "persona_validation_failed"
+        return "persona_validation_failed", "empty_prose"
     if _THINKING_PREAMBLE.search(text):
-        return "persona_validation_failed"
+        return "persona_validation_failed", "thinking_preamble"
     if _has_list_structure(text):
-        return "persona_validation_failed"
+        return "persona_validation_failed", "list_structure"
     return None
 
 
@@ -374,7 +374,8 @@ async def validate_persona_prose(
     )
     failure = _persona_deterministic_failure(text)
     if failure:
-        return PersonaValidationResult(text=text, ok=False, refused=failure)
+        refused, detail = failure
+        return PersonaValidationResult(text=text, ok=False, refused=refused, detail=detail)
     candidates = _persona_candidates(text, allowed=allowed, blocks_words=blocks_words)
     flagged = [row.token for row in candidates]
     if len(candidates) > _MAX_PERSONA_CANDIDATES:
@@ -580,7 +581,6 @@ class WritingLocalPersonaAuthorHandler(BaseHandler):
             )
 
     async def _execute_impl(self, step: Any, context: Any) -> StepOutput:
-        """Inner execute body separated for a single exception boundary."""
         outputs = getattr(context, "outputs", {}) or {}
         assemble = outputs.get("assemble")
         assemble_json = (

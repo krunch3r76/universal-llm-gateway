@@ -133,7 +133,7 @@ def _classify_state(
     ctx = _outputs_for_conditions(outputs)
     opts = dict(options or {})
     if not condition:
-        return "failed", None
+        return "skipped_unconfigured", None
     active = evaluator.evaluate(condition, ctx, opts)
     if active:
         raw = _raw_step(outputs, name)

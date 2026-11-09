@@ -28,6 +28,8 @@ if _PKG not in sys.modules:
 
 local_persona = importlib.import_module("writing_v1_handlers.local_persona_author")
 persona_retry = importlib.import_module("writing_v1_handlers.persona_retry")
+participation = importlib.import_module("writing_v1_handlers.participation")
+independence = importlib.import_module("writing_v1_handlers.independence")
 
 pytestmark = pytest.mark.offline
 
@@ -38,14 +40,14 @@ _FIXTURE = json.loads(
 )
 
 
-class _Out:
-    def __init__(self, payload: dict[str, Any]) -> None:
+class _StepOut:
+    def __init__(self, payload: dict[str, Any] | None, **_: Any) -> None:
         self.json = payload
 
 
 class _Ctx:
     def __init__(
-        self, outputs: dict[str, _Out], *, options: dict[str, Any] | None = None
+        self, outputs: dict[str, _StepOut], *, options: dict[str, Any] | None = None
     ) -> None:
         self.outputs = outputs
         self.options = options or {}
@@ -55,7 +57,7 @@ def _monterey_ctx(*, persona_retry: bool) -> _Ctx:
     data = dict(_FIXTURE)
     return _Ctx(
         {
-            "assemble": _Out(
+            "assemble": _StepOut(
                 {
                     "refused": None,
                     "intake": dict(data["intake"]),
@@ -63,7 +65,7 @@ def _monterey_ctx(*, persona_retry: bool) -> _Ctx:
                     "documents_block": data["documents_block"],
                 }
             ),
-            "prompt_architect": _Out(
+            "prompt_architect": _StepOut(
                 {"architect_brief_block": data["architect_brief_block"]}
             ),
         },
@@ -154,21 +156,6 @@ def test_second_attempt_recovers(monkeypatch: pytest.MonkeyPatch) -> None:
     def _capture(_self: object, _ctx: object, event: Any) -> None:
         published.append(event)
 
-    async def _good_model(
-        _self: object,
-        _model_id: str,
-        _prompt: str,
-        _step: object,
-        _context: object,
-        **_: Any,
-    ) -> object:
-        return type("Result", (), {"content": _FIXTURE["attempt2_prose"]})()
-
-    monkeypatch.setattr(
-        local_persona.WritingLocalPersonaAuthorHandler,
-        "_call_model",
-        _good_model,
-    )
     monkeypatch.setattr(
         local_persona.WritingLocalPersonaAuthorHandler,
         "_publish_bus_event",
@@ -185,13 +172,16 @@ def test_second_attempt_recovers(monkeypatch: pytest.MonkeyPatch) -> None:
     assert len(payload.get("persona_attempts") or []) == 2
     assert payload["persona_attempts"][0]["ok"] is False
     assert payload["persona_attempts"][1]["ok"] is True
+    assert payload["persona_attempts"][1].get("rejected_text") is None
     assert published == []
 
 
 def test_retry_exhaustion_skips_locals(monkeypatch: pytest.MonkeyPatch) -> None:
     token = _FIXTURE["judged_invented_token"]
+    prompts_seen: list[str] = []
 
     async def _caller(prompt: str) -> str:
+        prompts_seen.append(prompt)
         return _FIXTURE["attempt1_prose"]
 
     published: list[Any] = []
@@ -210,8 +200,41 @@ def test_retry_exhaustion_skips_locals(monkeypatch: pytest.MonkeyPatch) -> None:
     )
     payload = asyncio.run(handler.execute(None, _monterey_ctx(persona_retry=True))).json
     assert payload.get("ok") is False
+    assert payload.get("persona_refused") == "persona_validation_failed"
+    assert len(prompts_seen) == 2
+    assert token in prompts_seen[1]
+    assert f"Do not introduce: {token}" in prompts_seen[1]
     assert len(payload.get("persona_attempts") or []) == 2
     assert len(published) == 1
+    event = published[0]
+    assert event.payload["reason"] == "persona_validation_failed"
+    assert event.payload.get("judged_invented") == [token]
+    manifest_out = {
+        "assemble": _StepOut(
+            {
+                "refused": None,
+                "intake": dict(_FIXTURE["intake"]),
+                "brief_block": _FIXTURE["brief_block"],
+                "documents_block": _FIXTURE["documents_block"],
+                "check_class": "sworn",
+                "channel": "email",
+            }
+        ),
+        "local_persona_author": _StepOut(payload),
+    }
+    rows = participation.build_participation_manifest(
+        manifest_out,
+        options={"output": "envelope", "full_drafter_fanout": True},
+    )
+    hermes = next(r for r in rows if r["step"] == "drafter_local_hermes")
+    ernie = next(r for r in rows if r["step"] == "drafter_local_ernie")
+    assert hermes["state"] == "skipped_dependency"
+    assert ernie["state"] == "skipped_dependency"
+    assert hermes["completion_tokens"] in (0, None)
+    assert ernie["completion_tokens"] in (0, None)
+    summary = participation.build_participation_summary(rows)
+    assert "drafter_local_hermes" in summary
+    assert "drafter_local_ernie" in summary
 
 
 def test_judge_down_no_retry() -> None:
@@ -277,3 +300,204 @@ def test_build_retry_feedback_lists_invented() -> None:
     text = persona_retry.build_retry_feedback(verdict)
     assert "Monday" in text
     assert "Do not introduce" in text
+    assert "invented_or_invalid_prose" not in text
+
+
+def test_build_retry_feedback_names_deterministic_detail() -> None:
+    verdict = local_persona.PersonaValidationResult(
+        text="- bullet",
+        ok=False,
+        refused="persona_validation_failed",
+        detail="list_structure",
+    )
+    text = persona_retry.build_retry_feedback(verdict)
+    assert "list_structure" in text
+    assert "invented_or_invalid_prose" not in text
+
+
+def test_persona_retry_string_false_not_enabled() -> None:
+    assert persona_retry.persona_retry_enabled({"persona_retry": "false"}) is False
+    assert persona_retry.persona_retry_enabled({"persona_retry": True}) is True
+
+
+def test_deterministic_list_failure_retries_then_refuses() -> None:
+    calls = {"judge": 0, "author": 0}
+    list_prose = (
+        "You write as Pat Rivera about the Monterey restaurant.\n"
+        "- open Tuesday through Sunday"
+    )
+    good = _FIXTURE["attempt2_prose"]
+
+    async def _caller(prompt: str) -> str:
+        calls["author"] += 1
+        if "list_structure" in prompt:
+            return good
+        return list_prose
+
+    async def _judge(
+        _fenced: str, candidates: list[local_persona.Candidate]
+    ) -> str:
+        calls["judge"] += 1
+        rows = [
+            {
+                "token": cand.token,
+                "basis": "",
+                "reading": "ok",
+                "kind": "ordinary_language",
+            }
+            for cand in candidates
+        ]
+        return json.dumps({"judgments": rows})
+
+    handler = local_persona.WritingLocalPersonaAuthorHandler(
+        caller=_caller, judge_caller=_judge
+    )
+    payload = asyncio.run(
+        handler.execute(None, _monterey_ctx(persona_retry=True))
+    ).json
+    assert calls["author"] == 2
+    assert calls["judge"] == 1
+    assert payload.get("ok") is True
+
+
+def test_judge_invalid_no_retry() -> None:
+    calls = {"author": 0, "judge": 0}
+
+    async def _caller(prompt: str) -> str:
+        calls["author"] += 1
+        return _FIXTURE["attempt1_prose"]
+
+    async def _judge(
+        _fenced: str, _candidates: list[local_persona.Candidate]
+    ) -> str:
+        calls["judge"] += 1
+        return "not-json"
+
+    handler = local_persona.WritingLocalPersonaAuthorHandler(
+        caller=_caller, judge_caller=_judge
+    )
+    payload = asyncio.run(
+        handler.execute(None, _monterey_ctx(persona_retry=True))
+    ).json
+    assert payload.get("persona_refused") == "persona_judge_invalid"
+    assert calls["author"] == 1
+    assert calls["judge"] == 1
+    assert len(payload.get("persona_attempts") or []) == 1
+
+
+def test_prompt_missing_no_retry(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(persona_retry, "render_persona_prompt", lambda **_k: "")
+
+    async def _caller(prompt: str) -> str:
+        return _FIXTURE["attempt1_prose"]
+
+    handler = local_persona.WritingLocalPersonaAuthorHandler(
+        caller=_caller, judge_caller=_judge_accepts_all()
+    )
+    payload = asyncio.run(
+        handler.execute(None, _monterey_ctx(persona_retry=True))
+    ).json
+    assert payload.get("persona_refused") == "persona_prompt_missing"
+    assert len(payload.get("persona_attempts") or []) == 1
+
+
+def test_list_structure_exhaustion_no_bypass(monkeypatch: pytest.MonkeyPatch) -> None:
+    list_prose = "You write plainly.\n1. First item"
+
+    async def _caller(_prompt: str) -> str:
+        return list_prose
+
+    published: list[Any] = []
+
+    def _capture(_self: object, _ctx: object, event: Any) -> None:
+        published.append(event)
+
+    monkeypatch.setattr(
+        local_persona.WritingLocalPersonaAuthorHandler,
+        "_publish_bus_event",
+        _capture,
+    )
+    handler = local_persona.WritingLocalPersonaAuthorHandler(
+        caller=_caller,
+        judge_caller=_judge_accepts_all(),
+    )
+    payload = asyncio.run(
+        handler.execute(None, _monterey_ctx(persona_retry=True))
+    ).json
+    assert payload.get("persona_refused") == "persona_validation_failed"
+    assert payload.get("detail") == "list_structure"
+    assert len(payload.get("persona_attempts") or []) == 2
+    assert payload["persona_attempts"][0]["detail"] == "list_structure"
+
+
+def test_judge_call_counts_and_attempt_tokens() -> None:
+    judge_calls: list[int] = []
+    token = _FIXTURE["judged_invented_token"]
+
+    class _AuthorResult:
+        def __init__(self, content: str, *, attempt: int) -> None:
+            self.content = content
+            self.prompt_tokens = 11 * attempt
+            self.completion_tokens = 7 * attempt
+
+    async def _caller(prompt: str) -> _AuthorResult:
+        attempt = 1 if "Your prior attempt" not in prompt else 2
+        body = _FIXTURE["attempt1_prose"] if attempt == 1 else _FIXTURE["attempt2_prose"]
+        return _AuthorResult(body, attempt=attempt)
+
+    async def _judge(
+        _fenced: str, candidates: list[local_persona.Candidate]
+    ) -> str:
+        judge_calls.append(len(candidates))
+        rows = []
+        for cand in candidates:
+            kind = (
+                "new_entity_or_fact"
+                if cand.token == token and len(judge_calls) == 1
+                else "ordinary_language"
+            )
+            rows.append(
+                {
+                    "token": cand.token,
+                    "basis": "",
+                    "reading": "ok",
+                    "kind": kind,
+                }
+            )
+        return json.dumps({"judgments": rows})
+
+    handler = local_persona.WritingLocalPersonaAuthorHandler(
+        caller=_caller, judge_caller=_judge
+    )
+    payload = asyncio.run(
+        handler.execute(None, _monterey_ctx(persona_retry=True))
+    ).json
+    assert payload.get("ok") is True
+    assert len(judge_calls) == 2
+    attempts = payload.get("persona_attempts") or []
+    assert attempts[0]["prompt_tokens"] == 11
+    assert attempts[0]["completion_tokens"] == 7
+    assert attempts[1]["prompt_tokens"] == 22
+    assert attempts[1]["completion_tokens"] == 14
+
+
+def test_validate_exception_preserves_persona_attempts(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def _boom(*_a: Any, **_k: Any) -> local_persona.PersonaValidationResult:
+        raise RuntimeError("validate_exploded")
+
+    monkeypatch.setattr(local_persona, "validate_persona_prose", _boom)
+
+    async def _caller(_prompt: str) -> str:
+        return _FIXTURE["attempt1_prose"]
+
+    handler = local_persona.WritingLocalPersonaAuthorHandler(
+        caller=_caller, judge_caller=_judge_accepts_all()
+    )
+    payload = asyncio.run(
+        handler.execute(None, _monterey_ctx(persona_retry=True))
+    ).json
+    assert payload.get("persona_refused") == "persona_author_failed"
+    assert len(payload.get("persona_attempts") or []) == 1
+    assert payload["persona_attempts"][0].get("error") == "RuntimeError"

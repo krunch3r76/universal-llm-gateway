@@ -208,12 +208,17 @@ def build_finalize_payload(
             if isinstance(persona_step, dict)
             else None
         )
-        participation = build_participation_manifest(
-            outputs_for_participation,
-            options=options,
-            models=models,
-        )
-        participation_summary = build_participation_summary(participation)
+        try:
+            participation = build_participation_manifest(
+                outputs_for_participation,
+                options=options,
+                models=models,
+            )
+            participation_summary = build_participation_summary(participation)
+        except Exception as exc:  # noqa: BLE001
+            participation = None
+            participation_summary = None
+            payload["participation_error"] = type(exc).__name__
         if persona_refused:
             payload["persona_refused"] = persona_refused
         if persona_attempts is not None:
