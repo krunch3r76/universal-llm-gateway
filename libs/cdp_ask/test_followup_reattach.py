@@ -3259,7 +3259,7 @@ async def test_concurrent_seat_change_refuses_commit_without_seating(
     isolated_registry: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Seat_bound_at change after reattach refuses commit but still pastes."""
+    """AC3: seat_bound_at change after reattach refuses commit; no paste."""
     from claude_bundles.cdp_registry.models import seat_open
 
     import cdp_ask.followup as followup_mod
@@ -3292,15 +3292,14 @@ async def test_concurrent_seat_change_refuses_commit_without_seating(
         ),
         store,
     )
-    assert resp.ok is True
-    assert resp.seated is False
-    assert "holder changed" in (resp.detail or "").lower()
-    assert "paste" in order
+    assert resp.ok is False
+    assert resp.error == "reattach_seat_changed"
+    assert "paste" not in order
     active = reg._store.load_active()
     assert seat_open(active[holder.registration_id], lane)
     assert seat_open(active[borrowed.registration_id], lane)
     assert active[holder.registration_id]["seat_bound_at"] == 99.0
-    assert reg.chat_url_for_registration(borrowed.registration_id) == CSE_TARGET_38282
+    assert reg.chat_url_for_registration(borrowed.registration_id) is None
 
 
 @pytest.mark.asyncio
@@ -3587,67 +3586,6 @@ async def test_explicit_retain_lane_commits_seat_without_reattach(
     assert seat_open(reg._store.load_active()[host.registration_id], lane)
 
 
-@pytest.mark.asyncio
-async def test_explicit_retain_lane_null_purpose_seats_and_pastes(
-    isolated_registry: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """Regression: active rows minted without purpose still seat on retain_lane."""
-    from claude_bundles.cdp_registry.models import seat_open
-
-    lane = "43491-houseless-purpose"
-    reg, host = _vacant_lane_registration(lane)
-    with reg._store.ports_lock():
-        active = reg._store.load_active()
-        row = dict(active[host.registration_id])
-        row["purpose"] = None
-        row["parent_thread"] = None
-        active[host.registration_id] = row
-        reg._store.write_active(active)
-    store = ExecutionStore()
-    _upsert_spy(monkeypatch)
-    page = MagicMock()
-    page.url = CSE_TARGET_38282
-    pw = AsyncMock()
-    pw.stop = AsyncMock()
-    monkeypatch.setattr(
-        "cdp_ask.followup.find_page_on_lane", AsyncMock(return_value=(page, pw))
-    )
-    monkeypatch.setattr(
-        "cdp_ask.followup.send_followup_paste_half",
-        AsyncMock(
-            return_value={
-                "send_verified": True,
-                "receipt": "dom_committed",
-                "streaming_at_paste": False,
-                "url": CSE_TARGET_38282,
-                "pasted_at": 1.0,
-            }
-        ),
-    )
-    monkeypatch.setattr("cdp_ask.followup.emit_followup_event", lambda _e: None)
-    monkeypatch.setattr(
-        "cdp_ask.followup_resolve.scan_lane_cse_urls",
-        AsyncMock(return_value=[CSE_TARGET_38282]),
-    )
-    resp = await execute_followup(
-        FollowupProjectAskRequest(
-            prompt_text="memo",
-            parent_thread=lane,
-            chat_url=CSE_TARGET_38282,
-            registration_id=host.registration_id,
-            purpose="operator-proxy",
-            retain_lane=True,
-            reattach=False,
-        ),
-        store,
-    )
-    assert resp.ok is True
-    assert resp.seated is True
-    assert resp.lane_holder == host.registration_id
-    assert seat_open(reg._store.load_active()[host.registration_id], lane)
-
-
 def test_commit_followup_lane_seat_refuses_foreign_holder(
     isolated_registry: Path,
 ) -> None:
@@ -3694,67 +3632,6 @@ def test_commit_followup_missing_registry_row_not_seated(
         snapshot_seat_bound_at=None,
     )
     assert status == "not_seated"
-
-
-def test_commit_followup_null_purpose_vacant_lane_commits(
-    isolated_registry: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """Houseless rows with null purpose seat after operator purpose backfill."""
-    from claude_bundles.cdp_registry.models import seat_open
-    from claude_bundles.cdp_registry.session_address import commit_followup_lane_seat
-
-    lane = "43491-null-purpose"
-    reg, host = _vacant_lane_registration(lane)
-    with reg._store.ports_lock():
-        active = reg._store.load_active()
-        row = dict(active[host.registration_id])
-        row["purpose"] = None
-        row["parent_thread"] = None
-        active[host.registration_id] = row
-        reg._store.write_active(active)
-    _upsert_spy(monkeypatch)
-    status = commit_followup_lane_seat(
-        host.registration_id,
-        chat_url=CSE_TARGET_38282,
-        lane=lane,
-        snapshot_holder_id=None,
-        snapshot_seat_bound_at=None,
-        purpose="operator-proxy",
-    )
-    assert status == "committed"
-    row_after = reg._store.load_active()[host.registration_id]
-    assert row_after.get("purpose") == "operator-proxy"
-    assert seat_open(row_after, lane)
-
-
-def test_commit_followup_attaches_missing_row_when_cdp_url_given(
-    isolated_registry: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    from claude_bundles.cdp_registry.models import seat_open
-    from claude_bundles.cdp_registry.session_address import commit_followup_lane_seat
-
-    lane = "43491-attach-missing"
-    reg, host = _vacant_lane_registration(lane)
-    cdp_url = host.cdp_url
-    with reg._store.ports_lock():
-        active = reg._store.load_active()
-        active.pop(host.registration_id, None)
-        reg._store.write_active(active)
-    _upsert_spy(monkeypatch)
-    status = commit_followup_lane_seat(
-        host.registration_id,
-        chat_url=CSE_TARGET_38282,
-        lane=lane,
-        snapshot_holder_id=None,
-        snapshot_seat_bound_at=None,
-        purpose="operator-proxy",
-        cdp_url=cdp_url,
-        holder="cdp-ask-satellite",
-    )
-    assert status == "committed"
-    assert seat_open(reg._store.load_active()[host.registration_id], lane)
 
 
 def test_commit_followup_refuses_parent_backfill_cross_lane_seat(
@@ -3820,18 +3697,6 @@ async def test_explicit_followup_chat_url_only_refuses_occupied_lane(
         "cdp_ask.followup_resolve.scan_lane_cse_urls",
         AsyncMock(return_value=[CSE_TARGET_38282]),
     )
-    monkeypatch.setattr(
-        "cdp_ask.followup.send_followup_paste_half",
-        AsyncMock(
-            return_value={
-                "send_verified": True,
-                "receipt": "dom_committed",
-                "streaming_at_paste": False,
-                "url": CSE_TARGET_38282,
-                "pasted_at": 1.0,
-            }
-        ),
-    )
     resp = await execute_followup(
         FollowupProjectAskRequest(
             prompt_text="memo",
@@ -3843,9 +3708,8 @@ async def test_explicit_followup_chat_url_only_refuses_occupied_lane(
         ),
         store,
     )
-    assert resp.ok is True
-    assert resp.seated is False
-    assert "holder changed" in (resp.detail or "").lower()
+    assert resp.ok is False
+    assert resp.error == "followup_seat_changed"
     assert seat_open(reg._store.load_active()[holder.registration_id], lane)
 
 
@@ -3941,7 +3805,7 @@ async def test_followup_commit_not_seated_maps_reattach_not_seated(
     isolated_registry: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """not_seated from commit surfaces as reattach_not_seated, not seat_changed."""
+    """not_seated still pastes with seated=false and not_seated detail."""
     import cdp_ask.followup as followup_mod
 
     lane = "43491-d"
@@ -3963,6 +3827,74 @@ async def test_followup_commit_not_seated_maps_reattach_not_seated(
     assert resp.seated is False
     assert "driving seat" in (resp.detail or "").lower()
     assert "paste" in order
+
+
+@pytest.mark.asyncio
+async def test_explicit_retain_not_seated_pastes_without_registry_mutation(
+    isolated_registry: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Null-purpose row: not_seated pastes; purpose and active census unchanged."""
+    import claude_bundles.cdp_registry as cdp_registry
+
+    lane = "43491-houseless-not-seated"
+    reg, host = _vacant_lane_registration(lane)
+    with reg._store.ports_lock():
+        active = reg._store.load_active()
+        row = dict(active[host.registration_id])
+        row["purpose"] = None
+        row["parent_thread"] = None
+        active[host.registration_id] = row
+        reg._store.write_active(active)
+    before_ids = set(reg._store.load_active())
+    before_purpose = reg._store.load_active()[host.registration_id].get("purpose")
+    list_before = {r.registration_id for r in cdp_registry.list_active()}
+    store = ExecutionStore()
+    order: list[str] = []
+    page = MagicMock()
+    page.url = CSE_TARGET_38282
+    pw = AsyncMock()
+    pw.stop = AsyncMock()
+    monkeypatch.setattr(
+        "cdp_ask.followup.find_page_on_lane", AsyncMock(return_value=(page, pw))
+    )
+
+    async def _paste(*_args: Any, **_kwargs: Any) -> dict[str, Any]:
+        order.append("paste")
+        return {
+            "send_verified": True,
+            "receipt": "dom_committed",
+            "streaming_at_paste": False,
+            "url": CSE_TARGET_38282,
+            "pasted_at": 1.0,
+        }
+
+    monkeypatch.setattr("cdp_ask.followup.send_followup_paste_half", _paste)
+    monkeypatch.setattr("cdp_ask.followup.emit_followup_event", lambda _e: None)
+    monkeypatch.setattr(
+        "cdp_ask.followup_resolve.scan_lane_cse_urls",
+        AsyncMock(return_value=[CSE_TARGET_38282]),
+    )
+    resp = await execute_followup(
+        FollowupProjectAskRequest(
+            prompt_text="memo",
+            parent_thread=lane,
+            chat_url=CSE_TARGET_38282,
+            registration_id=host.registration_id,
+            purpose="operator-proxy",
+            retain_lane=True,
+            reattach=False,
+        ),
+        store,
+    )
+    assert resp.ok is True
+    assert resp.seated is False
+    assert "driving seat" in (resp.detail or "").lower()
+    assert "paste" in order
+    after = reg._store.load_active()
+    assert set(after) == before_ids
+    assert after[host.registration_id].get("purpose") == before_purpose
+    assert {r.registration_id for r in cdp_registry.list_active()} == list_before
 
 
 def test_commit_noop_bind_returns_not_seated(
