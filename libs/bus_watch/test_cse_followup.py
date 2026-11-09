@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
 import pytest
@@ -194,6 +194,78 @@ def test_fire_cse_followup_response_registration_overrides_request() -> None:
         out = fire_cse_followup("WAKE 10479", "10479", post=_post)
     assert out["registration_id"] == "reg-reattached"
     assert out["url"] == "https://claude.ai/cowork/cse_new"
+
+
+def test_fire_cse_followup_houseless_omits_operator_purpose() -> None:
+    with (
+        patch(
+            "bus_watch.cse_followup.resolve_cse_identity",
+            return_value={
+                "chat_url": "https://claude.ai/cowork/cse_houseless",
+                "registration_id": "reg-houseless",
+                "url": "https://claude.ai/cowork/cse_houseless",
+            },
+        ),
+        patch(
+            "bus_watch.cse_followup.project_ask_base_url",
+            return_value="http://127.0.0.1:9191",
+        ),
+    ):
+        out = fire_cse_followup(
+            "wake turns 2",
+            "22760",
+            dry_run=True,
+            purpose=None,
+            reattach=False,
+        )
+    assert out["ok"] is True
+    assert "purpose" not in out["body"]
+    assert out["body"]["reattach"] is False
+
+
+@pytest.mark.asyncio
+async def test_execute_followup_houseless_no_reattach_never_registers_lane(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from cdp_ask.execution_store import ExecutionStore
+    from cdp_ask.followup import execute_followup
+    from cdp_ask.models import FollowupProjectAskRequest
+
+    mint_calls: list[dict] = []
+
+    def _forbidden_register_lane(*_a: object, **_k: object) -> object:
+        mint_calls.append(dict(_k))
+        raise AssertionError("register_lane must not run for houseless delivery")
+
+    monkeypatch.setattr(
+        "claude_bundles.cdp_registry.register_lane",
+        _forbidden_register_lane,
+    )
+
+    def _forbidden_reattach(*_a: object, **_k: object) -> object:
+        raise AssertionError("ensure_cse_attached must not run")
+
+    monkeypatch.setattr(
+        "cdp_ask.followup_reattach.ensure_cse_attached",
+        _forbidden_reattach,
+    )
+    monkeypatch.setattr(
+        "cdp_ask.followup_resolve.scan_lane_cse_urls",
+        AsyncMock(return_value=[]),
+    )
+    resp = await execute_followup(
+        FollowupProjectAskRequest(
+            prompt_text="wake turns 2",
+            parent_thread="22760",
+            chat_url="https://claude.ai/cowork/cse_closed",
+            registration_id="583b411df34247f9a48bc044b6518be3",
+            purpose=None,
+            reattach=False,
+        ),
+        ExecutionStore(),
+    )
+    assert resp.ok is False
+    assert not mint_calls
 
 
 def test_fire_cse_followup_transport_error_never_raises() -> None:

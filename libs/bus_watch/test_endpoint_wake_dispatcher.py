@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-from pathlib import Path
+from typing import Any
 
 import httpx
 import pytest
@@ -2136,6 +2136,7 @@ def test_fire_due_wakes_multi_thread_real_display_path(db: None) -> None:
         record_wake_result,
     )
     from cursor_bridge.chat_target import wake_line, wake_lines
+
     from pipelines.display_chat_wake.v1.handlers.wake import DisplayChatWakeHandler
 
     tab = "real-path-tab"
@@ -2221,7 +2222,11 @@ def test_fire_due_wakes_multi_thread_real_display_path(db: None) -> None:
         def json() -> dict:
             return {
                 "choices": [
-                    {"message": {"content": json.dumps({"ok": True, "delivered": True})}}
+                    {
+                        "message": {
+                            "content": json.dumps({"ok": True, "delivered": True})
+                        }
+                    }
                 ]
             }
 
@@ -2311,9 +2316,7 @@ def test_fire_due_wakes_multi_thread_real_display_path(db: None) -> None:
     class _OptsClient:
         def post(self, *_a: object, **kwargs: object) -> _FakeResponse:
             posts.append((kwargs.get("json") or {})["pipeline_options"])
-            lines_captured.append(
-                wake_line(str(d3["id"]), n3)
-            )
+            lines_captured.append(wake_line(str(d3["id"]), n3))
             return _FakeResponse()
 
         def __enter__(self) -> _OptsClient:
@@ -4541,7 +4544,9 @@ def test_uuid_sender_supervisor_head_parity_contract() -> None:
         "QUESTION",
         "CLOSEOUT",
     ):
-        verdict = qualify({**base, "subject": f"{head}|supervisor-gate-probe"}, cse=False, store=None)
+        verdict = qualify(
+            {**base, "subject": f"{head}|supervisor-gate-probe"}, cse=False, store=None
+        )
         assert verdict.wake is True, head
         assert verdict.rule_id in _SUPERVISOR_GATE_RULES, (head, verdict.rule_id)
     # Intentional: RECEIPT/CHECKPOINT are ack-class; UUID senders do not wake :8 on them.
@@ -4554,7 +4559,9 @@ def test_uuid_sender_supervisor_head_parity_contract() -> None:
         "from_agent": "artisan",
         "thread": "22554",
     }
-    api_done = qualify({**api_base, "subject": "DONE|api-role-final"}, cse=False, store=None)
+    api_done = qualify(
+        {**api_base, "subject": "DONE|api-role-final"}, cse=False, store=None
+    )
     assert api_done.wake is True
     assert api_done.rule_id == "wake_peer_sender"
     api_cp = qualify(
@@ -5168,9 +5175,7 @@ class _TabScanStore:
         from agent_bus_store.db.endpoint_subscriptions import list_subscriptions
 
         return [
-            r
-            for r in list_subscriptions(agent=agent)
-            if r.get("state") == "subscribed"
+            r for r in list_subscriptions(agent=agent) if r.get("state") == "subscribed"
         ]
 
     def turns(self, thread: str, **params: object) -> dict:
@@ -5185,9 +5190,7 @@ class _TabScanStore:
             ).fetchall()
         truncated = len(rows) > limit
         page = rows[:limit] if truncated else rows
-        next_after = (
-            int(page[-1]["turn_number"]) if truncated and page else None
-        )
+        next_after = int(page[-1]["turn_number"]) if truncated and page else None
         return {
             "turns": [dict(r) for r in page],
             "truncated": truncated,
@@ -6379,8 +6382,6 @@ def test_scan_once_drop_stale_catchup_enqueues_fresh_only(
 
 
 def test_resolve_cse_wake_target_registration_not_lane(db: None) -> None:
-    from unittest.mock import patch
-
     from bus_watch.endpoint_wake_dispatcher import resolve_cse_wake_target
 
     reg = "583b411df34247f9a48bc044b6518be3"
@@ -6394,17 +6395,20 @@ def test_resolve_cse_wake_target_registration_not_lane(db: None) -> None:
 
     class Store:
         def holder(self, lane_thread_id: str) -> dict:
-            raise AssertionError(f"lane holder must not run for reg id: {lane_thread_id}")
+            raise AssertionError(
+                f"lane holder must not run for reg id: {lane_thread_id}"
+            )
 
         def holder_by_registration(self, registration_id: str) -> dict:
             assert registration_id == reg
-            return None
+            return {
+                "registration_id": reg,
+                "chat_url": chat,
+                "purpose": "houseless",
+                "seat_state": "houseless",
+            }
 
-    with patch(
-        "bus_watch.endpoint_wake_dispatcher._registry_holder_for_registration",
-        return_value={"registration_id": reg, "chat_url": chat, "seat_state": "driving"},
-    ):
-        target = resolve_cse_wake_target(Store(), sub, wake_thread="22760")  # type: ignore[arg-type]
+    target = resolve_cse_wake_target(Store(), sub, wake_thread="22760")  # type: ignore[arg-type]
     assert target is not None
     lane, holder = target
     assert lane == "22760"
@@ -6482,19 +6486,18 @@ def test_scan_once_cse_subscription_registration_agent_id_enqueues_pending(
         def lane_parent(self, thread_id: str) -> str | None:
             return None
 
-    monkeypatch.setattr(
-        "bus_watch.endpoint_wake_dispatcher._registry_holder_for_registration",
-        lambda rid: (
-            {
-                "registration_id": rid,
+    class StoreWithHolder(Store):
+        def holder_by_registration(self, registration_id: str) -> dict | None:
+            if registration_id != reg:
+                return None
+            return {
+                "registration_id": reg,
                 "chat_url": chat,
-                "seat_state": "driving",
+                "purpose": "houseless",
+                "seat_state": "houseless",
             }
-            if rid == reg
-            else None
-        ),
-    )
-    scan_once(Store())  # type: ignore[arg-type]
+
+    scan_once(StoreWithHolder())  # type: ignore[arg-type]
     assert [int(p["turn_id"]) for p in pending] == [turn_id]
     with connect() as conn:
         row = conn.execute(
@@ -6518,7 +6521,10 @@ def test_resolve_cse_wake_target_giw_error_fail_closed() -> None:
 
     assert resolve_cse_wake_target(Store(), sub, wake_thread="22760") is None  # type: ignore[arg-type]
     delivery = resolve_cse_wake_target(
-        Store(), sub, wake_thread="22760", delivery_phase=True  # type: ignore[arg-type]
+        Store(),
+        sub,
+        wake_thread="22760",
+        delivery_phase=True,  # type: ignore[arg-type]
     )
     assert delivery is not None
     _lane, holder = delivery
@@ -6537,7 +6543,10 @@ def test_resolve_cse_wake_target_released_holder_no_wake() -> None:
 
     assert resolve_cse_wake_target(Store(), sub, wake_thread="22760") is None  # type: ignore[arg-type]
     delivery = resolve_cse_wake_target(
-        Store(), sub, wake_thread="22760", delivery_phase=True  # type: ignore[arg-type]
+        Store(),
+        sub,
+        wake_thread="22760",
+        delivery_phase=True,  # type: ignore[arg-type]
     )
     assert delivery is not None
     _, holder = delivery
@@ -6568,61 +6577,75 @@ def test_resolve_cse_wake_target_live_registration_uses_giw_row() -> None:
     assert holder["seat_state"] == "driving"
 
 
-def test_registry_holder_for_registration_requires_houseless_purpose(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
-    from bus_watch.endpoint_wake_dispatcher import (
-        _registry_holder_for_registration,
-        resolve_cse_wake_target,
-    )
+def test_resolve_cse_wake_target_houseless_giw_holder_by_registration() -> None:
+    from bus_watch.endpoint_wake_dispatcher import resolve_cse_wake_target
 
     reg_id = "583b411df34247f9a48bc044b6518be3"
     chat = "https://claude.ai/cowork/cse_01HouselessTag"
-    root = tmp_path / "cdp-registry"
-    root.mkdir()
-    (root / "ports.lock").write_text("", encoding="utf-8")
-    import claude_bundles.cdp_registry_store as store
-
-    monkeypatch.setattr(store, "REGISTRY_DIR", root)
-    monkeypatch.setattr(store, "ACTIVE_JSON", root / "active.json")
-    monkeypatch.setattr(store, "PORTS_LOCK", root / "ports.lock")
-    store.write_active(
-        {
-            reg_id: {
-                "registration_id": reg_id,
-                "status": "active",
-                "purpose": "ask",
-                "chat_url": chat,
-            }
-        }
-    )
-    assert _registry_holder_for_registration(reg_id) is None
-
-    tagged = {
-        reg_id: {
-            "registration_id": reg_id,
-            "status": "active",
-            "purpose": "houseless",
-            "chat_url": chat,
-        }
-    }
-    store.write_active(tagged)
-    holder = _registry_holder_for_registration(reg_id)
-    assert holder is not None
-    assert holder["registration_id"] == reg_id
-    assert holder["chat_url"] == chat
-
     sub = {"surface": "cse", "agent_id": reg_id, "thread_scope": "22760"}
+    houseless_holder = {
+        "registration_id": reg_id,
+        "chat_url": chat,
+        "purpose": "houseless",
+        "seat_state": "houseless",
+    }
 
     class Store:
         def holder_by_registration(self, registration_id: str) -> dict | None:
-            return None
+            if registration_id != reg_id:
+                return None
+            return dict(houseless_holder)
 
     assert resolve_cse_wake_target(Store(), sub, wake_thread="22760") is not None  # type: ignore[arg-type]
-    store.write_active(
-        {reg_id: {**tagged[reg_id], "status": "released", "chat_url": chat}}
-    )
-    assert _registry_holder_for_registration(reg_id) is None
+    lane, holder = resolve_cse_wake_target(Store(), sub, wake_thread="22760")  # type: ignore[arg-type]
+    assert lane == "22760"
+    assert holder["seat_state"] == "houseless"
+
+    class EmptyStore:
+        def holder_by_registration(self, registration_id: str) -> dict | None:
+            return None
+
+    assert resolve_cse_wake_target(EmptyStore(), sub, wake_thread="22760") is None  # type: ignore[arg-type]
+
+
+def test_deliver_cse_houseless_followup_neutral_purpose(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from bus_watch.endpoint_wake_dispatcher import _deliver_cse
+
+    captured: list[dict[str, Any]] = []
+
+    reg = "583b411df34247f9a48bc044b6518be3"
+
+    def _fire(*_args: object, **kwargs: Any) -> dict[str, Any]:
+        captured.append(dict(kwargs))
+        if kwargs.get("dry_run"):
+            return {
+                "ok": True,
+                "dry_run": True,
+                "registration_id": reg,
+            }
+        return {
+            "ok": False,
+            "error": "no_target",
+            "registration_id": reg,
+        }
+
+    monkeypatch.setattr("bus_watch.cse_followup.fire_cse_followup", _fire)
+    holder = {
+        "registration_id": reg,
+        "chat_url": "https://claude.ai/cowork/cse_01Houseless",
+        "purpose": "houseless",
+        "seat_state": "houseless",
+    }
+    rows = [{"thread_id": "22760", "turn_number": 2}]
+    state, reason, _reg = _deliver_cse(rows, holder, target_lane="22760")
+    assert captured[0]["purpose"] is None
+    assert captured[0]["reattach"] is False
+    assert captured[1]["purpose"] is None
+    assert captured[1]["reattach"] is False
+    assert state == "unknown"
+    assert reason == "no_target"
 
 
 def test_fire_due_wakes_giw_holder_by_registration_error_records_unknown(
@@ -7175,7 +7198,9 @@ def _insert_scan_holder_tombstone(
         return int(cur.lastrowid)
 
 
-def test_promote_scan_holder_starvation_ac1(db: None, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_promote_scan_holder_starvation_ac1(
+    db: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """AC1 — ledger-stale tombstones expire; fresh routable row promotes in one pass."""
     from datetime import UTC, datetime
 
@@ -7713,7 +7738,6 @@ def test_promote_scan_holder_fail_fast_ac7(
     )
     group_fail = ("ulg-cortex-symbiosis", fail_tid)
     group_ok = ("ulg-cortex-symbiosis", routable_tid)
-    groups = [group_fail, group_ok]
 
     resolve_order: list[tuple[str, str]] = []
 

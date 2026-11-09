@@ -232,6 +232,8 @@ def _api_generate_peer_wake_from() -> frozenset[str]:
     except Exception as exc:
         logger.warning("generate_roles unavailable; API peer-wake fallback: %s", exc)
         return _API_GENERATE_PEER_WAKE_FALLBACK
+
+
 _ORION_PEER_WAKE_HEADS = frozenset({"ANSWER"})
 _POLL_S = 2.0
 _SCAN_HOLDER_PROMOTE_GROUPS_PER_PASS = 20
@@ -360,7 +362,7 @@ def _maestro_direct_address_turn(
 _LANE_NAME_ALIASES = frozenset({"maestro", "web-anthropic", "claude-web"})
 _ADDRESS_WALK_HOPS = 8
 _CSE_LANE_THREAD_RE = re.compile(r"^\d{1,10}$")
-_CSE_LIVE_SEAT_STATES = frozenset({"driving", "dormant"})
+_CSE_LIVE_SEAT_STATES = frozenset({"driving", "dormant", "houseless"})
 _GIW_HOLDER_LOOKUP_FAILED = "_giw_holder_lookup_failed"
 _CURSOR_SDK_CLOSEOUT_RE = re.compile(r"(?i)^(?:CLOSEOUT\|)?cursor-sdk CLOSEOUT\b")
 _ON_BEHALF_EXECUTION_REPLY_RE = re.compile(
@@ -1251,9 +1253,7 @@ def _orion_synthetic_route(
         current = dict(binding.get("current") or {})
         sid = current.get("subscription_id")
         sid_i = int(sid) if sid is not None else None
-        routed = _orion_synthetic_route_from_actuation(
-            actuation, subscription_id=sid_i
-        )
+        routed = _orion_synthetic_route_from_actuation(actuation, subscription_id=sid_i)
         if routed is not None:
             return routed
 
@@ -1277,9 +1277,7 @@ def _orion_synthetic_route(
         current = dict(binding.get("current") or {})
         sid = current.get("subscription_id")
         sid_i = int(sid) if sid is not None else None
-        return _orion_synthetic_route_from_actuation(
-            actuation, subscription_id=sid_i
-        )
+        return _orion_synthetic_route_from_actuation(actuation, subscription_id=sid_i)
     return None
 
 
@@ -1380,7 +1378,9 @@ def _latest_admit_waiter_on_thread(
             key = int(turn.get("turn_number") or turn.get("id") or 0)
             if best is None or key > best[0]:
                 best = (key, waiter)
-        next_after = payload.get("next_after_turn") if isinstance(payload, dict) else None
+        next_after = (
+            payload.get("next_after_turn") if isinstance(payload, dict) else None
+        )
         if next_after is not None:
             after = int(next_after)
             continue
@@ -1914,7 +1914,7 @@ def scan_once(store: StoreClient, *, idle_mark: dict[str, float] | None = None) 
                 )
                 tombstones.append(self_sender.suppressed_item(item, rule))
                 continue
-            if (rule := self_sender.is_self_wake(store, turn, resolved)):
+            if rule := self_sender.is_self_wake(store, turn, resolved):
                 _observe_endpoint_wake_suppressed(
                     thread_id=thread,
                     turn_id=_turn_id_of(turn),
@@ -1952,9 +1952,7 @@ def _display_post(
 ) -> tuple[str, str]:
     _display_started = time.monotonic()
     try:
-        return _display_post_body(
-            row, sub, turn, text=text, wake_groups=wake_groups
-        )
+        return _display_post_body(row, sub, turn, text=text, wake_groups=wake_groups)
     finally:
         from bus_watch.endpoint_wake_pass_timing import note_display_post_duration
 
@@ -2264,49 +2262,6 @@ def _is_cse_lane_thread_id(agent_id: str) -> bool:
     return bool(_CSE_LANE_THREAD_RE.fullmatch((agent_id or "").strip()))
 
 
-def _registry_holder_for_registration(registration_id: str) -> dict[str, Any] | None:
-    """Synthetic holder from CDP registry when GIW has no lane-bound row (houseless)."""
-    reg = (registration_id or "").strip()
-    if not reg:
-        return None
-    try:
-        from claude_bundles import cdp_registry_store as _reg_store
-        from claude_bundles.cdp_registry.models import (
-            _HOST_LISTABLE_STATUSES,
-            seat_open,
-        )
-        from claude_bundles.cdp_registry.session_address import (
-            chat_url_for_registration,
-        )
-
-        chat_url = chat_url_for_registration(reg)
-        if not chat_url:
-            return None
-        active = _reg_store.load_active()
-        from claude_bundles.what_is_running_view import is_houseless_purpose
-
-        row = active.get(reg) if isinstance(active, dict) else None
-        if not isinstance(row, dict):
-            return None
-        if not is_houseless_purpose(row.get("purpose")):
-            return None
-        status = str(row.get("status") or "")
-        if status not in _HOST_LISTABLE_STATUSES:
-            return None
-        if seat_open(row):
-            return None
-    except Exception:
-        logger.exception(
-            "endpoint_wake_dispatcher: registry holder lookup failed reg=%s", reg
-        )
-        return None
-    return {
-        "registration_id": reg,
-        "chat_url": chat_url,
-        "seat_state": "driving",
-    }
-
-
 def _giw_holder_lookup_failed_marker(registration_id: str) -> dict[str, Any]:
     return {
         "registration_id": registration_id,
@@ -2316,6 +2271,14 @@ def _giw_holder_lookup_failed_marker(registration_id: str) -> dict[str, Any]:
 
 def _holder_seat_state(holder: dict[str, Any]) -> str:
     return str(holder.get("seat_state") or "").strip()
+
+
+def _holder_is_houseless(holder: dict[str, Any]) -> bool:
+    from claude_bundles.what_is_running_view import is_houseless_purpose
+
+    if is_houseless_purpose(holder.get("purpose")):
+        return True
+    return _holder_seat_state(holder) == "houseless"
 
 
 def _holder_is_live(holder: dict[str, Any]) -> bool:
@@ -2348,25 +2311,7 @@ def _holder_for_cse_registration(
             )
             return _giw_holder_lookup_failed_marker(reg)
     if giw_answered:
-        try:
-            from services.git_integration_worker.cse_session_holders import (
-                _ledger_conn,
-                ensure_schema,
-                resolve_holder_by_registration,
-            )
-
-            with _ledger_conn() as conn:
-                ensure_schema(conn)
-                row = resolve_holder_by_registration(conn, reg)
-            if isinstance(row, dict) and row:
-                return row
-        except Exception:
-            logger.debug(
-                "endpoint_wake_dispatcher: local holder lookup failed reg=%s",
-                reg,
-                exc_info=True,
-            )
-        return _registry_holder_for_registration(reg)
+        return None
     try:
         from services.git_integration_worker.cse_session_holders import (
             _ledger_conn,
@@ -2385,7 +2330,7 @@ def _holder_for_cse_registration(
             reg,
             exc_info=True,
         )
-    return _registry_holder_for_registration(reg)
+    return None
 
 
 def resolve_cse_wake_target(
@@ -2460,12 +2405,19 @@ def _deliver_cse(
         induction = f"wake turns {numbers}"
     fallback_url = holder.get("chat_url")
     fallback_reg = holder.get("registration_id")
+    houseless = _holder_is_houseless(holder)
+    followup_kw: dict[str, Any] = {
+        "fallback_chat_url": str(fallback_url) if fallback_url else None,
+        "fallback_registration_id": str(fallback_reg) if fallback_reg else None,
+    }
+    if houseless:
+        followup_kw["purpose"] = None
+        followup_kw["reattach"] = False
     dry = fire_cse_followup(
         induction,
         lane,
         dry_run=True,
-        fallback_chat_url=str(fallback_url) if fallback_url else None,
-        fallback_registration_id=str(fallback_reg) if fallback_reg else None,
+        **followup_kw,
     )
     if dry.get("error") == "no_identity" and dry.get("source") == "unavailable":
         return "pending", "connect", None
@@ -2479,8 +2431,7 @@ def _deliver_cse(
         induction,
         lane,
         dry_run=False,
-        fallback_chat_url=str(fallback_url) if fallback_url else None,
-        fallback_registration_id=str(fallback_reg) if fallback_reg else None,
+        **followup_kw,
     )
     state, reason = classify_cse(live if isinstance(live, dict) else {})
     return state, reason, str(live.get("registration_id") or "") or None
@@ -2885,6 +2836,7 @@ async def run_dispatcher() -> None:
         note_fire_due_wakes_iteration,
         safe_emit_pass_duration,
     )
+
     store = StoreClient()
     idle: dict[str, float] = {}
     while True:

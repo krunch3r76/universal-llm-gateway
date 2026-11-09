@@ -68,6 +68,8 @@ def fire_cse_followup(
     timeout_s: float = _DEFAULT_TIMEOUT_S,
     fallback_chat_url: str | None = None,
     fallback_registration_id: str | None = None,
+    purpose: str | None = "operator-proxy",
+    reattach: bool | None = None,
 ) -> dict[str, Any]:
     """POST induction to the liaison CSE on ``parent_thread=root_id``; never raises."""
     root = str(root_id or "").strip()
@@ -109,12 +111,14 @@ def fire_cse_followup(
             "send_verified": False,
         }
 
+    eff_reattach = True if reattach is None else reattach
     body: dict[str, Any] = {
         "prompt_text": prompt,
-        "purpose": "operator-proxy",
         "timeout_s": int(timeout_s),
-        "reattach": True,
+        "reattach": eff_reattach,
     }
+    if purpose is not None:
+        body["purpose"] = purpose
     if chat_url:
         body["chat_url"] = chat_url
     if registration_id:

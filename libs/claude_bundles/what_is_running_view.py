@@ -24,6 +24,8 @@ HOUSELESS_PURPOSES = frozenset({"houseless"})
 
 def is_houseless_purpose(purpose: str | None) -> bool:
     return str(purpose or "").strip().lower() in HOUSELESS_PURPOSES
+
+
 # Statuses whose row may still own a running Chrome process (X clients, ports).
 _LIVE_HOST_STATUSES = frozenset(
     {"allocating", "active", "retained", "orphaned_alive", "orphaned_retry"}

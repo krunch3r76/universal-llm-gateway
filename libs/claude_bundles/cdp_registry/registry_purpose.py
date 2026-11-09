@@ -12,7 +12,13 @@ from claude_bundles.what_is_running_view import (
     is_houseless_purpose,
 )
 
-from .models import Registration, RegistryError, _row_to_registration, seat_open
+from .models import (
+    _HOST_LISTABLE_STATUSES,
+    Registration,
+    RegistryError,
+    _row_to_registration,
+    seat_open,
+)
 
 # Purposes admissible via ``set_registration_purpose`` (operator seats use other paths).
 REGISTRY_TAG_PURPOSES = HOUSELESS_PURPOSES
@@ -60,6 +66,17 @@ def set_registration_purpose(registration_id: str, purpose: str) -> Registration
                 f"registration {rid!r} is {status!r}; refusing purpose tag"
             )
         if is_houseless_purpose(purpose_norm):
+            if status not in _HOST_LISTABLE_STATUSES:
+                raise RegistryError(
+                    f"registration {rid!r} status {status!r} is not host-listable; "
+                    "refusing houseless tag"
+                )
+            prior_purpose = str(row.get("purpose") or "").strip().lower()
+            if prior_purpose and prior_purpose != "ask":
+                raise RegistryError(
+                    f"registration {rid!r} prior purpose {prior_purpose!r} is not "
+                    "admissible for houseless tag"
+                )
             assert_houseless_row_admissible(row)
         row = dict(row)
         row["purpose"] = purpose_norm

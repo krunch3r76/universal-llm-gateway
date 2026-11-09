@@ -418,3 +418,85 @@ def test_close_owed_wake_on_lane_activity_closes_open_row(
         seat_agent="maestro",
     )
     assert store.close_owed_wake_for_holder("holder-maestro") == 0
+
+
+def test_registry_houseless_holder_for_registration(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from services.git_integration_worker.cse_session_holders import (
+        registry_houseless_holder_for_registration,
+    )
+
+    reg = "583b411df34247f9a48bc044b6518be3"
+    chat = "https://claude.ai/cowork/cse_01HouselessMailbox"
+    monkeypatch.setattr(
+        "claude_bundles.cdp_registry.session_address.chat_url_for_registration",
+        lambda rid: chat if rid == reg else None,
+    )
+    monkeypatch.setattr(
+        "claude_bundles.cdp_registry_store.load_active",
+        lambda: {
+            reg: {
+                "registration_id": reg,
+                "status": "active",
+                "purpose": "houseless",
+            }
+        },
+    )
+    holder = registry_houseless_holder_for_registration(reg)
+    assert holder is not None
+    assert holder["registration_id"] == reg
+    assert holder["chat_url"] == chat
+    assert holder["purpose"] == "houseless"
+    assert holder["seat_state"] == "houseless"
+
+    monkeypatch.setattr(
+        "claude_bundles.cdp_registry_store.load_active",
+        lambda: {
+            reg: {
+                "registration_id": reg,
+                "status": "active",
+                "purpose": "houseless",
+                "seat_lane": "22760",
+                "seat_bound_at": 1.0,
+            }
+        },
+    )
+    assert registry_houseless_holder_for_registration(reg) is None
+
+    monkeypatch.setattr(
+        "claude_bundles.cdp_registry.session_address.chat_url_for_registration",
+        lambda _rid: None,
+    )
+    assert registry_houseless_holder_for_registration(reg) is None
+
+
+def test_resolve_holder_by_registration_falls_back_to_registry_houseless(
+    ledger: CursorDispatchLedger,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from services.git_integration_worker.cse_session_holders import (
+        resolve_holder_by_registration,
+    )
+
+    reg = "583b411df34247f9a48bc044b6518be3"
+    chat = "https://claude.ai/cowork/cse_01HouselessMailbox"
+    monkeypatch.setattr(
+        "claude_bundles.cdp_registry.session_address.chat_url_for_registration",
+        lambda rid: chat if rid == reg else None,
+    )
+    monkeypatch.setattr(
+        "claude_bundles.cdp_registry_store.load_active",
+        lambda: {
+            reg: {
+                "registration_id": reg,
+                "status": "active",
+                "purpose": "houseless",
+            }
+        },
+    )
+    with ledger._connect() as conn:
+        ensure_schema(conn)
+        holder = resolve_holder_by_registration(conn, reg)
+    assert holder is not None
+    assert holder["seat_state"] == "houseless"

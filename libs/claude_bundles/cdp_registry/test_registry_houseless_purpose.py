@@ -58,6 +58,42 @@ def test_set_registration_purpose_accepts_houseless(
     assert row["purpose"] == "houseless"
 
 
+def test_set_registration_purpose_rejects_non_listable_status(
+    isolated_registry: Path,
+) -> None:
+    host = reg.register_lane(holder="mailbox", purpose="ask", launch=False)
+    reg_id = host.registration_id
+    reg._store.write_active(
+        {
+            **reg._store.load_active(),
+            reg_id: {
+                **reg._store.load_active()[reg_id],
+                "status": "allocating",
+            },
+        }
+    )
+    with pytest.raises(RegistryError, match="not host-listable"):
+        set_registration_purpose(reg_id, "houseless")
+
+
+def test_set_registration_purpose_rejects_prior_operator_purpose(
+    isolated_registry: Path,
+) -> None:
+    host = reg.register_lane(holder="mailbox", purpose="ask", launch=False)
+    reg_id = host.registration_id
+    reg._store.write_active(
+        {
+            **reg._store.load_active(),
+            reg_id: {
+                **reg._store.load_active()[reg_id],
+                "purpose": "operator-proxy",
+            },
+        }
+    )
+    with pytest.raises(RegistryError, match="not admissible"):
+        set_registration_purpose(reg_id, "houseless")
+
+
 def test_set_registration_purpose_rejects_seated_row(
     isolated_registry: Path,
 ) -> None:
@@ -118,7 +154,9 @@ def test_lane_seat_holder_ignores_houseless() -> None:
 def test_register_lane_houseless_rejects_parent_thread(
     isolated_registry: Path,
 ) -> None:
-    with pytest.raises(RegistryError, match="houseless purpose cannot bind parent_thread"):
+    with pytest.raises(
+        RegistryError, match="houseless purpose cannot bind parent_thread"
+    ):
         reg.register_lane(
             holder="mailbox",
             purpose="houseless",
