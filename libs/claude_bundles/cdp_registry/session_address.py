@@ -352,6 +352,28 @@ def open_lane_seat_holder(lane: str) -> tuple[str | None, float | None]:
     return _open_seat_holder(_store.load_active(), lane)
 
 
+def _vacant_snapshot_allows_commit(
+    *,
+    registration_id: str,
+    snapshot_holder_id: str | None,
+    current_holder_id: str | None,
+) -> bool:
+    """Whether a null-holder reattach snapshot may commit after a lane re-read.
+
+    When the snapshot saw no open holder, commit still proceeds if the lane
+    remains vacant or the reattaching registration itself now holds the seat.
+    A different live holder still refuses (second-gate safety).
+    """
+    snap_id = (snapshot_holder_id or "").strip() or None
+    if snap_id is not None:
+        return False
+    cur_id = (current_holder_id or "").strip() or None
+    rid = (registration_id or "").strip()
+    if cur_id is None:
+        return True
+    return cur_id == rid
+
+
 def commit_reattach_driving_seat(
     registration_id: str,
     *,
@@ -363,9 +385,11 @@ def commit_reattach_driving_seat(
 ) -> str:
     """Seat and upsert after reattach, or refuse when the lane seat moved.
 
-    Under ``ports_lock``, the open holder ``(registration_id, seat_bound_at)``
-    must still match the reattach snapshot.     A mismatch returns ``refused``
-    without seating or upserting. A missing registry row returns ``committed``
+    Under ``ports_lock``, re-read the lane's open holder. When the snapshot
+    saw an occupant, ``(registration_id, seat_bound_at)`` must still match or
+    the commit returns ``refused``. When the snapshot saw a vacant lane, commit
+    proceeds if the lane is still vacant or the reattaching row now holds the
+    seat; a different holder returns ``refused``. A missing registry row returns ``committed``
     without writing: the chat_url bind did not persist a row. When
     ``apply_driving_seat_bind`` no-ops (closed seat, empty lane, or non-operator
     purpose) the result is ``not_seated`` and the holder is not upserted.
@@ -385,10 +409,16 @@ def commit_reattach_driving_seat(
             return "committed"
         if lane_key:
             current_id, current_bound = _open_seat_holder(active, lane_key)
-            if (current_id, current_bound) != (
+            snapshot_matches = (current_id, current_bound) == (
                 snapshot_holder_id,
                 snapshot_seat_bound_at,
-            ):
+            )
+            vacant_snapshot_ok = _vacant_snapshot_allows_commit(
+                registration_id=rid,
+                snapshot_holder_id=snapshot_holder_id,
+                current_holder_id=current_id,
+            )
+            if not snapshot_matches and not vacant_snapshot_ok:
                 return "refused"
         bound_row, released_rows = apply_driving_seat_bind(active, rid)
         if bound_row is None:

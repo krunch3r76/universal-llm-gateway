@@ -3513,6 +3513,141 @@ def test_closed_same_lane_seat_is_not_carved_out(isolated_registry: Path) -> Non
     assert holder.registration_id != borrowed.registration_id
 
 
+def _vacant_lane_registration(lane: str) -> tuple[Any, Any]:
+    """Operator host on *lane* with chat_url bound and no open seat."""
+    from claude_bundles import cdp_registry as reg
+    from claude_bundles.cdp_registry.models import seat_open
+
+    host = reg.register_lane(
+        holder="vacant-bind",
+        purpose="operator-proxy",
+        parent_thread=lane,
+        launch_chrome=_noop_launch,
+        is_listening=lambda _p: False,
+    )
+    assert reg.bind_chat_url_only(host.registration_id, chat_url=CSE_TARGET_38282)
+    active = reg._store.load_active()
+    assert not seat_open(active[host.registration_id], lane)
+    return reg, host
+
+
+def test_commit_vacant_snapshot_null_to_null_commits(
+    isolated_registry: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Vacant lane at snapshot and commit: seat write proceeds."""
+    from claude_bundles.cdp_registry.models import seat_open
+    from claude_bundles.cdp_registry.session_address import commit_reattach_driving_seat
+
+    lane = "43491-a"
+    reg, host = _vacant_lane_registration(lane)
+    _upsert_spy(monkeypatch)
+    status = commit_reattach_driving_seat(
+        host.registration_id,
+        chat_url=CSE_TARGET_38282,
+        lane=lane,
+        snapshot_holder_id=None,
+        snapshot_seat_bound_at=None,
+    )
+    assert status == "committed"
+    assert seat_open(reg._store.load_active()[host.registration_id], lane)
+
+
+def test_commit_vacant_snapshot_null_to_self_commits(
+    isolated_registry: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Interim self-seat between snapshot and commit still commits."""
+    from claude_bundles.cdp_registry.models import seat_open
+    from claude_bundles.cdp_registry.session_address import commit_reattach_driving_seat
+
+    lane = "43491-b"
+    reg, host = _vacant_lane_registration(lane)
+    with reg._store.ports_lock():
+        active = reg._store.load_active()
+        row = dict(active[host.registration_id])
+        row["seat_lane"] = lane
+        row["seat_bound_at"] = 12.0
+        row["seat_closed_at"] = None
+        active[host.registration_id] = row
+        reg._store.write_active(active)
+    _upsert_spy(monkeypatch)
+    status = commit_reattach_driving_seat(
+        host.registration_id,
+        chat_url=CSE_TARGET_38282,
+        lane=lane,
+        snapshot_holder_id=None,
+        snapshot_seat_bound_at=None,
+    )
+    assert status == "committed"
+    assert seat_open(reg._store.load_active()[host.registration_id], lane)
+
+
+def test_commit_vacant_snapshot_null_to_other_refuses(
+    isolated_registry: Path,
+) -> None:
+    """A different holder after a vacant snapshot refuses without seating borrow."""
+    from claude_bundles.cdp_registry.models import seat_open
+    from claude_bundles.cdp_registry.session_address import commit_reattach_driving_seat
+
+    lane = "43491-c"
+    reg, host = _vacant_lane_registration(lane)
+    intruder = reg.register_lane(
+        holder="intruder",
+        purpose="operator-proxy",
+        parent_thread=lane,
+        launch_chrome=_noop_launch,
+        is_listening=lambda _p: False,
+    )
+    with reg._store.ports_lock():
+        active = reg._store.load_active()
+        row = dict(active[intruder.registration_id])
+        row["seat_lane"] = lane
+        row["seat_bound_at"] = 99.0
+        row["seat_closed_at"] = None
+        active[intruder.registration_id] = row
+        reg._store.write_active(active)
+    status = commit_reattach_driving_seat(
+        host.registration_id,
+        chat_url=CSE_TARGET_38282,
+        lane=lane,
+        snapshot_holder_id=None,
+        snapshot_seat_bound_at=None,
+    )
+    assert status == "refused"
+    assert not seat_open(reg._store.load_active()[host.registration_id], lane)
+
+
+@pytest.mark.asyncio
+async def test_followup_commit_not_seated_maps_reattach_not_seated(
+    isolated_registry: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """not_seated from commit surfaces as reattach_not_seated, not seat_changed."""
+    import cdp_ask.followup as followup_mod
+
+    lane = "43491-d"
+    reg, _holder, borrowed = _open_operator_pair(lane)
+    store = ExecutionStore()
+    order = _arm_split_borrow(monkeypatch, reg, borrowed.registration_id, store=store)
+    monkeypatch.setattr(followup_mod, "_commit_reattach_seat", lambda *_a, **_k: "not_seated")
+    resp = await execute_followup(
+        FollowupProjectAskRequest(
+            prompt_text="memo",
+            parent_thread=lane,
+            chat_url=CSE_TARGET_38282,
+            reattach=True,
+            purpose="operator-proxy",
+        ),
+        store,
+    )
+    assert resp.ok is False
+    assert resp.error == "reattach_not_seated"
+    assert resp.error != "reattach_seat_changed"
+    assert "driving seat" in (resp.detail or "").lower()
+    assert "paste" not in order
+
+
 def test_commit_noop_bind_returns_not_seated(
     isolated_registry: Path,
     monkeypatch: pytest.MonkeyPatch,

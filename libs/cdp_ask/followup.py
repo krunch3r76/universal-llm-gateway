@@ -582,10 +582,22 @@ async def execute_followup(
                     detail=f"{type(exc).__name__}: {exc}",
                     **extra,
                 )
-            if status != "committed":
+            if status == "not_seated":
+                return fail_followup(
+                    "reattach_not_seated",
+                    detail="reattach host cannot bind driving seat on lane",
+                    **extra,
+                )
+            if status == "refused":
                 return fail_followup(
                     "reattach_seat_changed",
                     detail="lane seat holder changed since reattach",
+                    **extra,
+                )
+            if status != "committed":
+                return fail_followup(
+                    "reattach_seat_commit_failed",
+                    detail=f"unexpected commit status: {status}",
                     **extra,
                 )
             seat_committed = True
