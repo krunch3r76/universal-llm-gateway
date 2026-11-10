@@ -676,6 +676,16 @@ def _turn_id_of(turn: dict[str, Any]) -> int | None:
         return None
 
 
+def _turn_number_of(turn: dict[str, Any]) -> int:
+    raw = turn.get("turn_number")
+    if raw is None:
+        return 0
+    try:
+        return int(raw)
+    except (TypeError, ValueError):
+        return 0
+
+
 def _address_route_verdict(
     turn: dict[str, Any],
     store: StoreClient | None,
@@ -1593,7 +1603,7 @@ def _scan_wake_drop(
         "agent": agent,
         "thread_id": str(turn["thread"]),
         "turn_id": int(turn["id"]),
-        "turn_number": int(turn["turn_number"]),
+        "turn_number": _turn_number_of(turn),
         "rule_id": rule_id,
         "reason": reason,
         "subscription_id": subscription_id,

@@ -8687,3 +8687,358 @@ def test_scan_drops_paths_2_to_7_unique_reasons(db: None) -> None:
             drop = _scan_drop_row(conn, tid, reason)
             assert drop is not None, (path, reason, tid)
             assert _ledger_row(conn, tid) is None
+
+
+def _ledger_rows_for_turn(conn, turn_id: int) -> list[dict]:
+    rows = conn.execute(
+        "SELECT agent, turn_id, state, reason FROM endpoint_wake_ledger "
+        "WHERE turn_id=? ORDER BY id",
+        (turn_id,),
+    ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def _scan_drop_rows_for_turn(conn, turn_id: int) -> list[dict]:
+    try:
+        rows = conn.execute(
+            "SELECT agent, turn_id, reason, COUNT(*) AS count "
+            "FROM endpoint_wake_scan_drops WHERE turn_id=? "
+            "GROUP BY agent, turn_id, reason ORDER BY reason",
+            (turn_id,),
+        ).fetchall()
+    except Exception as exc:
+        if "no such table" in str(exc).lower():
+            return []
+        raise
+    return [dict(r) for r in rows]
+
+
+def _three_pass_path_setup(
+    path: int,
+    *,
+    slug: str,
+) -> tuple[str, int, dict]:
+    """Return thread, turn_id, and path-local knobs for passes 1–3."""
+    from agent_bus_store.db.connection import write_connect
+    from agent_bus_store.db.endpoint_subscriptions import subscribe_endpoint
+
+    from datetime import UTC, datetime
+
+    fixed_now = datetime(2033, 6, 1, 12, 0, 0, tzinfo=UTC).timestamp()
+
+    configs: dict[int, dict] = {
+        2: dict(
+            to_agent="maestro",
+            subject="QUESTION|tp2",
+            read_at="2020-01-01 00:00:00",
+        ),
+        3: dict(
+            to_agent="web-anthropic",
+            subject="QUESTION|tp3",
+            display_pass1=True,
+        ),
+        4: dict(
+            to_agent="web-anthropic",
+            subject="QUESTION|tp4",
+            no_holder_pass1=True,
+        ),
+        5: dict(
+            to_agent="ulg-cortex-symbiosis",
+            subject="QUESTION|tp5",
+            stale=True,
+            cse_sub=True,
+            cse_no_holder_pass1=True,
+            fixed_now=fixed_now,
+        ),
+        6: dict(
+            to_agent="cursor",
+            subject="QUESTION|tp6",
+            no_sub_pass1=True,
+        ),
+        7: dict(
+            to_agent="maestro",
+            subject="QUESTION|tp7",
+            stale=True,
+            fixed_now=fixed_now,
+        ),
+    }
+    cfg = dict(configs[path])
+    detail = create_thread(thread_id=None, slug=slug)
+    assert detail is not None
+    thread = str(detail["id"])
+    turn_id, _ts, _n, _c = insert_turn(
+        thread=thread,
+        from_agent="grok-bot-gc1",
+        to_agent=str(cfg["to_agent"]),
+        subject=str(cfg["subject"]),
+        body="b",
+    )
+    if cfg.get("read_at"):
+        with write_connect() as conn:
+            conn.execute(
+                "UPDATE turns SET read_at=? WHERE id=?",
+                (cfg["read_at"], turn_id),
+            )
+    if cfg.get("stale"):
+        with write_connect() as conn:
+            conn.execute(
+                "UPDATE turns SET created_at=? WHERE id=?",
+                ("2020-01-01 00:00:00", turn_id),
+            )
+    if cfg.get("cse_sub"):
+        subscribe_endpoint(
+            agent="ulg-cortex-symbiosis",
+            thread_scope=thread,
+            surface="cse",
+            display="cse",
+            title="cowork",
+            agent_id="583b411df34247f9a48bc044b6518be3",
+            bound_by="test",
+        )
+    get_cursor()
+    with write_connect() as conn:
+        conn.execute("UPDATE endpoint_wake_cursor SET high_water_turn_id=0")
+    cfg["thread"] = thread
+    cfg["turn_id"] = turn_id
+    return thread, turn_id, cfg
+
+
+def _three_pass_apply_pass2_db(path: int, turn_id: int, cfg: dict) -> None:
+    from agent_bus_store.db.connection import write_connect
+    from agent_bus_store.db.endpoint_subscriptions import subscribe_endpoint
+
+    if path == 2:
+        with write_connect() as conn:
+            conn.execute("UPDATE turns SET read_at=NULL WHERE id=?", (turn_id,))
+    elif path in (5, 7):
+        with write_connect() as conn:
+            conn.execute(
+                "UPDATE turns SET created_at=? WHERE id=?",
+                ("2033-06-01T11:59:00Z", turn_id),
+            )
+
+
+class _ThreePassProbeStore:
+    def __init__(self, cfg: dict, *, phase: int) -> None:
+        self.cfg = cfg
+        self.phase = phase
+
+    def cursor(self) -> dict:
+        return get_cursor()
+
+    def since(self, after_id: int, limit: int = 50) -> list[dict]:
+        with connect() as c:
+            rows = c.execute(
+                "SELECT id, thread, turn_number, from_agent, to_agent, subject, "
+                "body, read_at, created_at FROM turns WHERE id>? ORDER BY id LIMIT ?",
+                (after_id, limit),
+            ).fetchall()
+        return [dict(r) for r in rows]
+
+    def scan(self, expected: int, new_hw: int, rows: list[dict]) -> dict:
+        return advance_scan(
+            "endpoint-wake-dispatcher",
+            expected,
+            new_hw,
+            rows,
+            now="2033-06-01 12:00:01",
+        )
+
+    def holder(self, lane: str) -> dict | None:
+        if self.cfg.get("no_holder_pass1") and self.phase == 1:
+            return None
+        if self.cfg.get("cse_no_holder_pass1") and self.phase == 1:
+            return None
+        return {"registration_id": "reg-live", "seat_state": "driving"}
+
+    def lane_parent(self, thread_id: str) -> None:
+        return None
+
+    def subscription(self, agent: str, thread_id: str, raw_to: str | None = None):
+        if self.cfg.get("no_sub_pass1") and self.phase == 1:
+            return None
+        if self.cfg.get("cse_sub"):
+            from agent_bus_store.db.endpoint_subscriptions import current_subscription
+
+            row = current_subscription(agent, thread_id)
+            if row and row.get("state") == "subscribed":
+                return ("exact", row)
+        if agent in {"maestro", "cursor"} and not self.cfg.get("cse_sub"):
+            return (
+                "cse",
+                {
+                    "surface": "cse",
+                    "agent_id": thread_id,
+                    "id": 1,
+                    "state": "subscribed",
+                },
+            )
+        return None
+
+    def holder_by_registration(self, registration_id: str) -> dict | None:
+        if self.cfg.get("cse_no_holder_pass1") and self.phase == 1:
+            return None
+        return {"registration_id": registration_id, "seat_state": "driving"}
+
+
+def _three_pass_probe_monkeypatch(
+    mp: pytest.MonkeyPatch,
+    path: int,
+    cfg: dict,
+    *,
+    phase: int,
+) -> None:
+    import bus_watch.endpoint_wake_dispatcher as ew
+
+    if cfg.get("fixed_now"):
+        mp.setattr(ew.time, "time", lambda: cfg["fixed_now"])
+    if path == 3:
+        seated = bool(cfg.get("display_pass1") and phase == 1)
+        mp.setattr(ew, "_display_seated", lambda _s, _t: seated)
+    if path == 4:
+        mp.setattr(ew, "_display_seated", lambda _s, _t: False)
+        if cfg.get("no_holder_pass1") and phase == 1:
+            mp.setattr(
+                "bus_watch.endpoint_wake_dispatcher.resolve_turn_address",
+                lambda _t, _s: None,
+            )
+    if path == 5 and cfg.get("cse_no_holder_pass1") and phase == 1:
+        mp.setattr(
+            ew,
+            "_holder_for_cse_registration",
+            lambda _store, rid, *, delivery_phase=False: None,
+        )
+
+
+def run_three_pass_path_probe(
+    path: int,
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    slug: str | None = None,
+) -> tuple[list[dict], list[dict]]:
+    """Three-pass probe; returns (final ledger rows, all scan_drop rows for turn)."""
+    _thread, turn_id, cfg = _three_pass_path_setup(
+        path, slug=slug or f"three-pass-p{path}"
+    )
+    drop_trace: list[dict] = []
+    for phase in (1, 2, 3):
+        mp = pytest.MonkeyPatch()
+        try:
+            _three_pass_probe_monkeypatch(mp, path, cfg, phase=phase)
+            if phase == 2:
+                _three_pass_apply_pass2_db(path, turn_id, cfg)
+            store = _ThreePassProbeStore(cfg, phase=phase if phase < 3 else 2)
+            if phase == 1:
+                scan_once(store)  # type: ignore[arg-type]
+            elif phase == 2:
+                scan_once(store)  # type: ignore[arg-type]
+            else:
+                _rewind_cursor_hw(turn_id - 1)
+                scan_once(store)  # type: ignore[arg-type]
+        finally:
+            mp.undo()
+        with connect() as conn:
+            drop_trace.extend(_scan_drop_rows_for_turn(conn, turn_id))
+    with connect() as conn:
+        ledger = _ledger_rows_for_turn(conn, turn_id)
+    return ledger, drop_trace
+
+
+# Observed on detached master @ 9e8c6cdb2a02 (three-pass probe).
+MASTER_THREE_PASS_LEDGER: dict[int, list[dict]] = {
+    2: [{"agent": "maestro", "state": "pending", "reason": None}],
+    3: [{"agent": "web-anthropic", "state": "pending", "reason": None}],
+    4: [{"agent": "web-anthropic", "state": "pending", "reason": None}],
+    5: [{"agent": "ulg-cortex-symbiosis", "state": "pending", "reason": None}],
+    6: [{"agent": "cursor", "state": "pending", "reason": None}],
+    7: [{"agent": "maestro", "state": "pending", "reason": None}],
+}
+
+
+def _normalize_ledger_probe(rows: list[dict], turn_id: int) -> list[dict]:
+    out: list[dict] = []
+    for r in rows:
+        out.append(
+            {
+                "agent": r["agent"],
+                "turn_id": int(r["turn_id"]),
+                "state": r["state"],
+                "reason": r.get("reason"),
+            }
+        )
+    assert all(r["turn_id"] == turn_id for r in out)
+    return out
+
+
+@pytest.mark.parametrize("path", [2, 3, 4, 5, 6, 7])
+def test_three_pass_ledger_master_parity(
+    path: int,
+    db: None,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    ledger, _drops = run_three_pass_path_probe(path, monkeypatch)
+    assert ledger, f"path {path}: expected pending ledger row after pass 3"
+    turn_id = int(ledger[0]["turn_id"])
+    normalized = _normalize_ledger_probe(ledger, turn_id)
+    master_tpl = MASTER_THREE_PASS_LEDGER[path]
+    expected: list[dict] = []
+    for row in master_tpl:
+        expected.append({**row, "turn_id": turn_id})
+    assert normalized == expected
+
+
+def test_scan_wake_drop_missing_turn_number_does_not_abort_scan(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
+) -> None:
+    """Malformed since row without turn_number must not stop scan (live API always supplies it)."""
+    monkeypatch.setenv("AGENT_BUS_DB_PATH", str(tmp_path / "bus.db"))
+    monkeypatch.delenv("AGENT_BUS_ENDPOINT_WAKE_DISPATCHER", raising=False)
+    init_db()
+    turn = {
+        "id": 501,
+        "thread": "missing-tn",
+        "from_agent": "grok-bot-gc1",
+        "to_agent": "maestro",
+        "subject": "QUESTION|x",
+        "read_at": "2020-01-01 00:00:00",
+    }
+
+    class Store:
+        def __init__(self) -> None:
+            self.last: list[dict] = []
+
+        def cursor(self) -> dict:
+            return {"high_water_turn_id": 0}
+
+        def since(self, _high: int) -> list[dict]:
+            return [turn]
+
+        def scan(self, _high: int, new_hw: int, rows: list[dict]) -> None:
+            self.last = list(rows)
+
+        def holder(self, lane: str) -> dict:
+            return {"registration_id": "r", "seat_state": "driving"}
+
+        def subscription(self, agent: str, thread_id: str) -> None:
+            return (
+                "cse",
+                {
+                    "surface": "cse",
+                    "agent_id": thread_id,
+                    "id": 1,
+                    "state": "subscribed",
+                },
+            )
+
+    store = Store()
+    scan_once(store)  # type: ignore[arg-type]
+    assert store.last == []
+    with connect() as conn:
+        drop = conn.execute(
+            "SELECT turn_number, reason FROM endpoint_wake_scan_drops WHERE turn_id=?",
+            (501,),
+        ).fetchone()
+    assert drop is not None
+    assert drop["turn_number"] == 0
+    assert drop["reason"] == "skipped:already_read"
