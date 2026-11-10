@@ -493,6 +493,71 @@ def test_other_sender_ack_does_not_skip_pending_wake(db: TestClient) -> None:
     assert claimed["wake_id"] is not None
 
 
+@pytest.mark.parametrize(
+    ("case_id", "subject_tpl", "expect_skip"),
+    [
+        ("answer", "ANSWER|re #{n}", True),
+        ("reply", "REPLY|re #{n}", True),
+        ("response", "RESPONSE|re #{n}", True),
+        ("consult_reply", "CONSULT_REPLY|re #{n}", True),
+        ("lowercase_ack", "ack | re #{n}", True),
+        ("cdp_reply_em_dash", "cdp reply — #{n}", True),
+        ("acknowledged", "ACKNOWLEDGED|#{n}", False),
+        ("plan_ack", "PLAN|ack #{n}", False),
+        ("result", "RESULT|re #{n}", False),
+        ("closeout", "CLOSEOUT|re #{n}", False),
+        ("verdict", "VERDICT|re #{n}", False),
+    ],
+)
+def test_wake_reply_subject_gate_already_answered(
+    db: TestClient,
+    case_id: str,
+    subject_tpl: str,
+    expect_skip: bool,
+) -> None:
+    """Reply-subject gate: explicit ack heads skip; milestones still claim."""
+    detail = create_thread(thread_id=None, slug=f"reply-gate-{case_id}")
+    assert detail is not None
+    thread = str(detail["id"])
+    t1_id, _ts, t1_n, _c = insert_turn(
+        thread=thread,
+        from_agent="maestro",
+        to_agent="grok-bot-cc1",
+        subject="REQUEST|wake-me",
+        body="pending body",
+    )
+    get_cursor()
+    with connect() as conn:
+        conn.execute("UPDATE endpoint_wake_cursor SET high_water_turn_id=0")
+    advance_scan(
+        "endpoint-wake-dispatcher",
+        0,
+        t1_id,
+        [
+            {
+                "agent": "grok-bot-cc1",
+                "thread_id": thread,
+                "turn_id": t1_id,
+                "turn_number": t1_n,
+            }
+        ],
+        now="2020-01-01 19:00:00",
+    )
+    insert_turn(
+        thread=thread,
+        from_agent="grok-bot-cc1",
+        to_agent="maestro",
+        subject=subject_tpl.format(n=t1_n),
+        body=f"re #{t1_n}",
+    )
+    outcome = claim_due_wakes(now="2020-01-01 19:00:01")
+    if expect_skip:
+        assert outcome["wake_id"] is None, case_id
+        assert outcome["rows"][0]["reason"] == "already_answered", case_id
+    else:
+        assert outcome["wake_id"] is not None, case_id
+
+
 def test_unrelated_same_seat_post_on_shared_root_does_not_skip_pending_wake(
     db: TestClient,
 ) -> None:
