@@ -1580,35 +1580,35 @@ def _scan_holder_skip_item(
     }
 
 
-def _qualified_wake_skip_item(
+def _scan_wake_drop(
     turn: dict[str, Any],
     *,
-    decided_by_rule: str,
+    agent: str,
+    rule_id: str,
     reason: str,
-    route: tuple[str, dict[str, Any]] | None = None,
-    wake_agent: str | None = None,
     subscription_id: int | None = None,
 ) -> dict[str, Any]:
-    """Ledger tombstone when scan qualifies a wake but exits before enqueue."""
-    item = _pending_item(
-        turn,
-        decided_by_rule=decided_by_rule,
-        route=route,
-        wake_agent=wake_agent,
-    )
-    row: dict[str, Any] = {
-        **item,
-        "state": "skipped",
+    """Qualified-wake scan exit recorded off the claim ledger."""
+    return {
+        "agent": agent,
+        "thread_id": str(turn["thread"]),
+        "turn_id": int(turn["id"]),
+        "turn_number": int(turn["turn_number"]),
+        "rule_id": rule_id,
         "reason": reason,
+        "subscription_id": subscription_id,
     }
-    if subscription_id is not None:
-        row["subscription_id"] = subscription_id
-    elif route is not None:
-        _, sub = route
-        sub_id = sub.get("id")
-        if sub_id is not None:
-            row["subscription_id"] = sub_id
-    return row
+
+
+def _record_scan_drops_safe(drops: list[dict[str, Any]]) -> None:
+    if not drops:
+        return
+    try:
+        from agent_bus_store.db.endpoint_wake_ledger import record_scan_drops
+
+        record_scan_drops(drops)
+    except Exception:
+        logger.exception("endpoint_wake_dispatcher: record_scan_drops failed")
 
 
 def _pending_item(
@@ -1815,6 +1815,7 @@ def scan_once(store: StoreClient, *, idle_mark: dict[str, float] | None = None) 
             return
         pending: list[dict[str, Any]] = []
         tombstones: list[dict[str, Any]] = []
+        drops: list[dict[str, Any]] = []
         stale_catchup: dict[str, int] | None = None
         setattr(store, "_self_wake_recent_cache", {})
         for turn in turns:
@@ -1882,34 +1883,34 @@ def scan_once(store: StoreClient, *, idle_mark: dict[str, float] | None = None) 
                     )
                 continue
             if turn.get("read_at"):
-                tombstones.append(
-                    _qualified_wake_skip_item(
+                drops.append(
+                    _scan_wake_drop(
                         turn,
-                        decided_by_rule=verdict.rule_id,
-                        reason="already_read",
-                        wake_agent=agent,
+                        agent=agent,
+                        rule_id=verdict.rule_id,
+                        reason="skipped:already_read",
                     )
                 )
                 continue
             if agent == "web-anthropic":
                 if _display_seated(store, thread):
-                    tombstones.append(
-                        _qualified_wake_skip_item(
+                    drops.append(
+                        _scan_wake_drop(
                             turn,
-                            decided_by_rule=verdict.rule_id,
-                            reason="display_seated",
-                            wake_agent=agent,
+                            agent=agent,
+                            rule_id=verdict.rule_id,
+                            reason="skipped:display_seated",
                         )
                     )
                     continue
                 address = resolve_turn_address(thread, store)
                 if address is None and not store.holder(thread):
-                    tombstones.append(
-                        _qualified_wake_skip_item(
+                    drops.append(
+                        _scan_wake_drop(
                             turn,
-                            decided_by_rule=verdict.rule_id,
-                            reason="no_route",
-                            wake_agent=agent,
+                            agent=agent,
+                            rule_id=verdict.rule_id,
+                            reason="skipped:no_route_web_anthropic",
                         )
                     )
                     continue
@@ -1928,13 +1929,12 @@ def scan_once(store: StoreClient, *, idle_mark: dict[str, float] | None = None) 
                         stale_catchup["min"] = min(stale_catchup["min"], tid)
                         stale_catchup["max"] = max(stale_catchup["max"], tid)
                         _, sub = resolved
-                        tombstones.append(
-                            _qualified_wake_skip_item(
+                        drops.append(
+                            _scan_wake_drop(
                                 turn,
-                                decided_by_rule=verdict.rule_id,
+                                agent=agent,
+                                rule_id=verdict.rule_id,
                                 reason="skipped:stale_catchup_cse_no_target",
-                                route=resolved,
-                                wake_agent=agent,
                                 subscription_id=sub.get("id"),
                             )
                         )
@@ -1967,12 +1967,12 @@ def scan_once(store: StoreClient, *, idle_mark: dict[str, float] | None = None) 
                         rule_id=verdict.rule_id,
                         subject=subject,
                     )
-                tombstones.append(
-                    _qualified_wake_skip_item(
+                drops.append(
+                    _scan_wake_drop(
                         turn,
-                        decided_by_rule=verdict.rule_id,
-                        reason="no_route",
-                        wake_agent=agent,
+                        agent=agent,
+                        rule_id=verdict.rule_id,
+                        reason="skipped:no_route",
                     )
                 )
                 continue
@@ -1983,13 +1983,17 @@ def scan_once(store: StoreClient, *, idle_mark: dict[str, float] | None = None) 
                 stale_catchup["count"] += 1
                 stale_catchup["min"] = min(stale_catchup["min"], tid)
                 stale_catchup["max"] = max(stale_catchup["max"], tid)
-                tombstones.append(
-                    _qualified_wake_skip_item(
+                sub_id = None
+                if resolved is not None:
+                    _, sub = resolved
+                    sub_id = sub.get("id")
+                drops.append(
+                    _scan_wake_drop(
                         turn,
-                        decided_by_rule=verdict.rule_id,
+                        agent=agent,
+                        rule_id=verdict.rule_id,
                         reason="skipped:stale_catchup",
-                        route=resolved,
-                        wake_agent=agent,
+                        subscription_id=sub_id,
                     )
                 )
                 continue
@@ -2031,12 +2035,15 @@ def scan_once(store: StoreClient, *, idle_mark: dict[str, float] | None = None) 
         new_hw = int(turns[-1]["id"])
         if pending:
             store.scan(high, new_hw, pending + tombstones)
+            _record_scan_drops_safe(drops)
             return
         if time.monotonic() - mark.get("at", 0.0) < 60:
             store.scan(high, new_hw, tombstones)
+            _record_scan_drops_safe(drops)
             return
         mark["at"] = time.monotonic()
         store.scan(high, new_hw, tombstones)
+        _record_scan_drops_safe(drops)
 
 
 def _display_post(

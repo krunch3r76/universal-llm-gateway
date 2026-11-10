@@ -2333,3 +2333,35 @@ def list_wake_ledger_rows(
         item["rule_id"] = item.pop("decided_by_rule", None)
         out.append(item)
     return out
+
+
+def record_scan_drops(rows: list[dict[str, Any]], *, now: str | None = None) -> int:
+    """Insert qualified-wake scan drops (separate from claim ledger rows).
+
+    Uses ``INSERT OR IGNORE`` on ``(agent, thread_id, turn_id, reason)`` so repeat
+    scans stay idempotent and never occupy the ledger unique key.
+    """
+    if not rows:
+        return 0
+    stamp = _now(now)
+    inserted = 0
+    with write_connect() as conn:
+        for row in rows:
+            cur = conn.execute(
+                "INSERT OR IGNORE INTO endpoint_wake_scan_drops "
+                "(agent, thread_id, turn_id, turn_number, rule_id, reason, "
+                "subscription_id, scanned_at) "
+                "VALUES (?,?,?,?,?,?,?,?)",
+                (
+                    str(row["agent"]),
+                    str(row["thread_id"]),
+                    int(row["turn_id"]),
+                    row.get("turn_number"),
+                    row.get("rule_id"),
+                    str(row["reason"]),
+                    row.get("subscription_id"),
+                    stamp,
+                ),
+            )
+            inserted += int(cur.rowcount or 0)
+    return inserted
