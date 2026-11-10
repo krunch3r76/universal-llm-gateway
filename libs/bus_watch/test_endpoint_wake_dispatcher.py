@@ -8386,6 +8386,281 @@ def test_cse_wake_thread_holder_bus_lookup_failed_falls_through_fire(
     assert target[1]["registration_id"] == giw_reg
 
 
+def test_cse_wake_thread_holder_p7_emit_on_agent_id_fallback_scan(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from cdp_ask.houseless_resolve import HouselessResolution
+
+    from bus_watch.endpoint_wake_dispatcher import resolve_cse_wake_target
+
+    bus_reg = "bus583b411df34247f9a48bc044b6518be3"
+    agent_reg = "agent583b411df34247f9a48bc044b6518be4"
+    thread = "22760"
+    sub = _thread_scoped_cse_sub(agent_reg, thread)
+    emitted: list[dict[str, Any]] = []
+
+    monkeypatch.setattr(
+        "bus_watch.endpoint_wake_dispatcher._local_bus_cse_registration",
+        lambda _t: bus_reg,
+    )
+    monkeypatch.setattr(
+        "bus_watch.endpoint_wake_dispatcher.resolve_houseless_target",
+        lambda reg, **_: (
+            HouselessResolution(ok=False, reason="no_row")
+            if reg == bus_reg
+            else HouselessResolution(ok=False, reason="purpose_not_houseless")
+        ),
+    )
+    monkeypatch.setattr(
+        "bus_watch.endpoint_wake_dispatcher._observe_cse_wake_holder_resolution",
+        lambda **kw: emitted.append(kw),
+    )
+
+    class Store:
+        def holder_by_registration(self, registration_id: str) -> dict[str, Any] | None:
+            if registration_id == agent_reg:
+                return _driving_holder(agent_reg)
+            return None
+
+    target = resolve_cse_wake_target(Store(), sub, wake_thread=thread)  # type: ignore[arg-type]
+    assert target is not None
+    assert target[1]["registration_id"] == agent_reg
+    assert len(emitted) == 1
+    assert emitted[0]["chosen_source"] == "subscription_agent_id"
+    assert emitted[0]["bus_registration"] == bus_reg
+
+
+def test_cse_wake_thread_holder_p7_emit_on_agent_id_fallback_fire(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from cdp_ask.houseless_resolve import HouselessResolution
+
+    from bus_watch.endpoint_wake_dispatcher import resolve_cse_wake_target
+
+    bus_reg = "bus583b411df34247f9a48bc044b6518be3"
+    agent_reg = "agent583b411df34247f9a48bc044b6518be4"
+    thread = "22760"
+    sub = _thread_scoped_cse_sub(agent_reg, thread)
+    emitted: list[dict[str, Any]] = []
+
+    monkeypatch.setattr(
+        "bus_watch.endpoint_wake_dispatcher._local_bus_cse_registration",
+        lambda _t: bus_reg,
+    )
+    monkeypatch.setattr(
+        "bus_watch.endpoint_wake_dispatcher.resolve_houseless_target",
+        lambda reg, **_: (
+            HouselessResolution(ok=False, reason="no_row")
+            if reg == bus_reg
+            else HouselessResolution(ok=False, reason="purpose_not_houseless")
+        ),
+    )
+    monkeypatch.setattr(
+        "bus_watch.endpoint_wake_dispatcher._observe_cse_wake_holder_resolution",
+        lambda **kw: emitted.append(kw),
+    )
+
+    class Store:
+        def holder_by_registration(self, registration_id: str) -> dict[str, Any] | None:
+            if registration_id == agent_reg:
+                return _driving_holder(agent_reg)
+            return None
+
+    target = resolve_cse_wake_target(
+        Store(),
+        sub,
+        wake_thread=thread,
+        delivery_phase=True,  # type: ignore[arg-type]
+    )
+    assert target is not None
+    assert target[1]["registration_id"] == agent_reg
+    assert len(emitted) == 1
+    assert emitted[0]["chosen_source"] == "subscription_agent_id"
+
+
+def test_cse_wake_thread_holder_bus_holder_lookup_once_per_resolve(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from bus_watch.endpoint_wake_dispatcher import (
+        _holder_for_cse_registration,
+        resolve_cse_wake_target,
+    )
+
+    bus_reg = "bus583b411df34247f9a48bc044b6518be3"
+    agent_reg = "agent583b411df34247f9a48bc044b6518be4"
+    thread = "22760"
+    sub = _thread_scoped_cse_sub(agent_reg, thread)
+    bus_lookups: list[str] = []
+    real = _holder_for_cse_registration
+
+    def _counting(
+        store: object, registration_id: str, *, delivery_phase: bool = False
+    ) -> dict[str, Any] | None:
+        if registration_id == bus_reg:
+            bus_lookups.append(registration_id)
+        return real(store, registration_id, delivery_phase=delivery_phase)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(
+        "bus_watch.endpoint_wake_dispatcher._holder_for_cse_registration", _counting
+    )
+    monkeypatch.setattr(
+        "bus_watch.endpoint_wake_dispatcher._local_bus_cse_registration",
+        lambda _t: bus_reg,
+    )
+    monkeypatch.setattr(
+        "bus_watch.endpoint_wake_dispatcher._observe_cse_wake_holder_resolution",
+        lambda **_kw: None,
+    )
+
+    class Store:
+        def holder_by_registration(self, registration_id: str) -> dict[str, Any] | None:
+            if registration_id == bus_reg:
+                return {"registration_id": bus_reg, "seat_state": "released"}
+            if registration_id == agent_reg:
+                return _driving_holder(agent_reg)
+            return None
+
+    assert (
+        resolve_cse_wake_target(Store(), sub, wake_thread=thread) is not None  # type: ignore[arg-type]
+    )
+    assert bus_lookups == [bus_reg]
+
+
+def test_fire_due_wakes_cse_thread_holder_bus_released_giw_live_delivers(
+    db: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from unittest.mock import patch
+
+    from agent_bus_store.db.cse_associations import associate_cse
+    from agent_bus_store.db.endpoint_subscriptions import subscribe_endpoint
+
+    bus_reg = "bus583b411df34247f9a48bc044b6518be3"
+    giw_reg = "giw583b411df34247f9a48bc044b6518be4"
+    pred = "pred583b411df34247f9a48bc044b6518be5"
+    chat = "https://claude.ai/cowork/cse_bus"
+    detail = create_thread(thread_id=None, slug="p9-fire-bus-giw")
+    assert detail is not None
+    thread = str(detail["id"])
+    subscribe_endpoint(
+        agent="ulg-cortex-symbiosis",
+        thread_scope=thread,
+        surface="cse",
+        display="cse",
+        title="cowork",
+        agent_id=pred,
+        bound_by="test",
+    )
+    associate_cse(
+        thread_id=thread,
+        cse_chat_url=chat,
+        cse_registration_id=bus_reg,
+        bound_by="test",
+    )
+    turn_id, _ts, turn_num, _c = insert_turn(
+        thread=thread,
+        from_agent="driver",
+        to_agent="ulg-cortex-symbiosis",
+        subject="QUESTION|p9",
+        body="body",
+    )
+    get_cursor()
+    with connect() as conn:
+        rewind_wake_cursor_for_test(conn, CONSUMER, to=0)
+
+    emitted: list[dict[str, Any]] = []
+
+    class ScanStore:
+        def cursor(self) -> dict:
+            return get_cursor()
+
+        def since(self, after_id: int, limit: int = 50) -> list[dict]:
+            with connect() as c:
+                rows = c.execute(
+                    "SELECT id, thread, turn_number, from_agent, to_agent, subject, "
+                    "body, read_at FROM turns WHERE id>? ORDER BY id LIMIT ?",
+                    (after_id, limit),
+                ).fetchall()
+            return [dict(r) for r in rows]
+
+        def scan(self, expected: int, new_hw: int, rows: list[dict]) -> dict:
+            return advance_scan(
+                "endpoint-wake-dispatcher",
+                expected,
+                new_hw,
+                rows,
+                now="2020-01-01 20:00:00",
+            )
+
+        def subscription(self, agent: str, thread_id: str, raw_to: str | None = None):
+            from agent_bus_store.db.endpoint_subscriptions import current_subscription
+
+            row = current_subscription(agent, thread_id)
+            if row and row.get("state") == "subscribed":
+                return ("exact", row)
+            return None
+
+        def holder(self, lane_thread_id: str, **kwargs: object) -> dict | None:
+            if lane_thread_id == thread:
+                return _driving_holder(giw_reg, lane=thread)
+            return None
+
+        def holder_by_registration(self, registration_id: str) -> dict | None:
+            if registration_id == bus_reg:
+                return {"registration_id": bus_reg, "seat_state": "released"}
+            if registration_id == giw_reg:
+                return _driving_holder(giw_reg, lane=thread)
+            if registration_id == pred:
+                return {"registration_id": pred, "seat_state": "released"}
+            return None
+
+        def lane_parent(self, thread_id: str) -> str | None:
+            return None
+
+    scan_once(ScanStore())  # type: ignore[arg-type]
+    claimed = claim_due_wakes(now="2020-01-01 20:00:01")
+    assert claimed.get("wake_id")
+
+    monkeypatch.setattr(
+        "bus_watch.endpoint_wake_dispatcher._observe_cse_wake_holder_resolution",
+        lambda **kw: emitted.append(kw),
+    )
+
+    class FireStore(ScanStore):
+        def claim(self) -> dict:
+            return claimed
+
+        def result(self, **payload: object) -> int:
+            return record_wake_result(
+                str(payload["wake_id"]),
+                str(payload["outcome"]),
+                str(payload["reason"]) if payload.get("reason") is not None else None,
+                str(payload["route"]) if payload.get("route") is not None else None,
+                payload.get("subscription_id"),  # type: ignore[arg-type]
+                payload.get("cse_registration_id"),  # type: ignore[arg-type]
+                now="2020-01-01 20:01:00",
+            )
+
+    def _cse_ok(_induction: str, _lane: str, **kwargs: object) -> dict[str, Any]:
+        if kwargs.get("dry_run"):
+            return {"ok": True, "dry_run": True, "registration_id": giw_reg}
+        return {"ok": True, "registration_id": giw_reg, "send_verified": True}
+
+    with patch("bus_watch.cse_followup.fire_cse_followup", side_effect=_cse_ok):
+        fire_due_wakes(FireStore())  # type: ignore[arg-type]
+
+    with connect() as conn:
+        row = conn.execute(
+            "SELECT state, reason FROM endpoint_wake_ledger WHERE wake_id=?",
+            (claimed["wake_id"],),
+        ).fetchone()
+    assert row is not None
+    assert row["state"] == "delivered"
+    assert emitted
+    assert emitted[0]["chosen_source"] == "giw_by_thread"
+    assert emitted[0]["bus_registration"] == bus_reg
+    assert emitted[0]["giw_by_thread_registration"] == giw_reg
+
+
 def test_cse_wake_thread_holder_fire_bus_released_giw_live(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

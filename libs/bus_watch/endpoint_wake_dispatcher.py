@@ -2727,11 +2727,38 @@ def _resolve_cse_wake_target_thread_scoped(
     bus_registration = _memoized_bus_registration(store, thread, memo)
     giw_by_thread_registration: str | None = None
     giw_by_thread_error: str | None = None
+    bus_holder_cached: dict[str, Any] | None = None
+    bus_holder_lookup_done = False
+
+    def _cached_bus_holder() -> dict[str, Any] | None:
+        nonlocal bus_holder_cached, bus_holder_lookup_done
+        if not bus_registration:
+            return None
+        if not bus_holder_lookup_done:
+            bus_holder_lookup_done = True
+            row = _holder_for_cse_registration(
+                store,
+                bus_registration,
+                delivery_phase=delivery_phase,
+            )
+            bus_holder_cached = row if isinstance(row, dict) else None
+        return bus_holder_cached
+
+    def _bus_candidate_eligible() -> bool:
+        holder = _cached_bus_holder()
+        return (
+            isinstance(holder, dict)
+            and bool(holder)
+            and _holder_eligible_for_thread_wake_source(holder)
+        )
 
     def _try_registration(reg: str, source: str) -> tuple[str, dict[str, Any]] | None:
-        holder = _holder_for_cse_registration(
-            store, reg, delivery_phase=delivery_phase
-        )
+        if source == "bus_association" and reg == bus_registration:
+            holder = _cached_bus_holder()
+        else:
+            holder = _holder_for_cse_registration(
+                store, reg, delivery_phase=delivery_phase
+            )
         if not isinstance(holder, dict) or not holder:
             return None
         if not _holder_eligible_for_thread_wake_source(holder):
@@ -2745,13 +2772,7 @@ def _resolve_cse_wake_target_thread_scoped(
         reg_out = str(holder.get("registration_id") or reg).strip() or reg
         should_emit = False
         if source != "bus_association":
-            bus_live = False
-            if bus_registration:
-                bus_holder = _holder_for_cse_registration(
-                    store, bus_registration, delivery_phase=delivery_phase
-                )
-                bus_live = isinstance(bus_holder, dict) and _holder_is_live(bus_holder)
-            if not bus_registration or not bus_live:
+            if not bus_registration or not _bus_candidate_eligible():
                 should_emit = True
         if (
             giw_by_thread_registration
@@ -2792,15 +2813,9 @@ def _resolve_cse_wake_target_thread_scoped(
     if target is not None:
         _holder = target[1]
         chosen_reg = str(_holder.get("registration_id") or agent_id).strip()
-        bus_live = False
-        if bus_registration:
-            bus_holder = _holder_for_cse_registration(
-                store, bus_registration, delivery_phase=delivery_phase
-            )
-            bus_live = isinstance(bus_holder, dict) and _holder_is_live(bus_holder)
         should_emit = (
             not bus_registration
-            or not bus_live
+            or not _bus_candidate_eligible()
             or giw_by_thread_registration is not None
             or giw_by_thread_error is not None
         )
