@@ -760,6 +760,13 @@ def release_holder_for_registration(
     )
 
 
+def _remote_holder_write_blocked_under_pytest() -> bool:
+    """True when pytest is active and remote holder HTTP is not explicitly opted in."""
+    if not os.environ.get("PYTEST_CURRENT_TEST"):
+        return False
+    return os.environ.get("ULG_ALLOW_REMOTE_HOLDER_WRITE_UNDER_PYTEST") != "1"
+
+
 def release_holder_remote(
     *,
     chat_url: str,
@@ -767,6 +774,11 @@ def release_holder_remote(
     reason: str | None = None,
 ) -> bool:
     """Fail-open HTTP release for out-of-process ``detach``."""
+    if _remote_holder_write_blocked_under_pytest():
+        logger.warning(
+            "release_holder_remote: remote holder write skipped under pytest"
+        )
+        return False
     base = os.environ.get("GIT_INTEGRATION_WORKER_URL", "http://127.0.0.1:8091").rstrip(
         "/"
     )
@@ -823,6 +835,11 @@ def upsert_holder_remote(
     HTTP 409 with ``lane_conflict`` returns ``RemoteUpsert.LANE_CONFLICT`` so
     callers do not treat a live cross-lane refusal as success or as GIW-down.
     """
+    if _remote_holder_write_blocked_under_pytest():
+        logger.warning(
+            "upsert_holder_remote: remote holder write skipped under pytest"
+        )
+        return RemoteUpsert.UNAVAILABLE
     base = os.environ.get("GIT_INTEGRATION_WORKER_URL", "http://127.0.0.1:8091").rstrip(
         "/"
     )

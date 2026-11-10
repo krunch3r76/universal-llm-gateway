@@ -27,7 +27,10 @@ def _http_error(*, code: int, body: dict) -> urllib.error.HTTPError:
 
 
 @pytest.mark.offline
-def test_upsert_holder_remote_409_lane_conflict() -> None:
+def test_upsert_holder_remote_409_lane_conflict(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("ULG_ALLOW_REMOTE_HOLDER_WRITE_UNDER_PYTEST", "1")
     conflict_body = {
         "detail": {
             "reason": "lane_conflict",
@@ -51,7 +54,10 @@ def test_upsert_holder_remote_409_lane_conflict() -> None:
 
 
 @pytest.mark.offline
-def test_upsert_holder_remote_urlerror_unavailable() -> None:
+def test_upsert_holder_remote_urlerror_unavailable(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("ULG_ALLOW_REMOTE_HOLDER_WRITE_UNDER_PYTEST", "1")
     with patch(
         "services.git_integration_worker.cse_session_holders.urllib.request.urlopen",
         side_effect=urllib.error.URLError("connection refused"),
