@@ -1189,3 +1189,60 @@ def test_hop_relay_raises_records_thread_read_failed_event() -> None:
     assert len(failed) == 1
     assert failed[0].kwargs.get("exception_class") == "TimeoutError"
     assert failed[0].kwargs.get("thread") == "77"
+
+
+@pytest.mark.offline
+def test_hop_relay_error_dict_records_thread_read_failed_on_paste() -> None:
+    """Relay error envelopes (no exception) admit, not-recorded paste, one failure event."""
+    captured: dict[str, Any] = {}
+
+    async def fake_relay(**kwargs: Any) -> dict[str, str]:
+        captured.update(kwargs)
+        return {"execution_id": "ex-hop-relay-error-dict"}
+
+    def _error_relay(service: str, method: str, path: str, **kwargs: Any) -> dict[str, str]:
+        del service, method, path, kwargs
+        return {"error": "Connection failed to agent-bus"}
+
+    record_mock_holder: dict[str, Any] = {}
+
+    async def run() -> dict[str, Any]:
+        with (
+            patch("tools.agent_bus.hop.assess_standing_handoff", return_value=_HANDOFF),
+            patch(
+                "tools.agent_bus.hop._resolve_hop_seat_request_refusal",
+                return_value=None,
+            ),
+            patch("tools.agent_bus.hop.record") as record_mock,
+            patch("tools.frontier._relay", side_effect=fake_relay),
+            patch("tools.agent_bus._shared.relay", side_effect=_error_relay),
+            _patch_no_consumption_window(),
+        ):
+            record_mock_holder["mock"] = record_mock
+            return await _hop_dispatch(
+                thread="77",
+                reason="relay-error-dict",
+                from_agent="web-anthropic",
+            )
+
+    result = asyncio.run(run())
+    assert result.get("continuity_hop") is True, result
+    handoff_prompt = str(captured["body"]["prompt"])
+    paste = ensure_operator_proxy_mission_prompt(
+        handoff_prompt,
+        roster_text="",
+        fetch_turns=_noop_fetch,
+        journal_text="",
+        register_text="",
+    )
+    _admitted, responsibility = _admit_and_responsibility_lines_after_title(paste)
+    assert responsibility == "RESPONSIBILITY: not recorded"
+    record_mock = record_mock_holder["mock"]
+    failed = [
+        c
+        for c in record_mock.call_args_list
+        if c.args and c.args[0] == "mcp.agentbus.hop.thread_read_failed"
+    ]
+    assert len(failed) == 1
+    assert failed[0].kwargs.get("exception_class") == "RuntimeError"
+    assert failed[0].kwargs.get("thread") == "77"
