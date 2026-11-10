@@ -3862,6 +3862,9 @@ def test_advance_scan_persists_decided_by_rule(db: None) -> None:
 
 
 def test_scan_once_does_not_enqueue_already_read_turn(db: None) -> None:
+    """Path 2: wake-qualified + read_at → skipped batch row (ledger insert filtered)."""
+    from agent_bus_store.db.connection import write_connect
+
     detail = create_thread(thread_id=None, slug="40226-scan-read")
     assert detail is not None
     thread = str(detail["id"])
@@ -3872,12 +3875,16 @@ def test_scan_once_does_not_enqueue_already_read_turn(db: None) -> None:
         subject="QUESTION|40226",
         body="b",
     )
-    with connect() as conn:
+    with write_connect() as conn:
         conn.execute(
             "UPDATE turns SET read_at=? WHERE id=?",
             ("2020-01-01 18:00:00", t_id),
         )
+    get_cursor()
+    with write_connect() as conn:
         conn.execute("UPDATE endpoint_wake_cursor SET high_water_turn_id=0")
+
+    scanned: list[dict] = []
 
     class Store:
         def cursor(self) -> dict:
@@ -3893,6 +3900,7 @@ def test_scan_once_does_not_enqueue_already_read_turn(db: None) -> None:
             return [dict(r) for r in rows]
 
         def scan(self, expected: int, new_hw: int, pending: list[dict]) -> dict:
+            scanned.extend(pending)
             return advance_scan(
                 "endpoint-wake-dispatcher",
                 expected,
@@ -3916,6 +3924,10 @@ def test_scan_once_does_not_enqueue_already_read_turn(db: None) -> None:
             )
 
     scan_once(Store())  # type: ignore[arg-type]
+    skip = [r for r in scanned if r.get("state") == "skipped" and r["turn_id"] == t_id]
+    assert len(skip) == 1
+    assert skip[0]["reason"] == "already_read"
+    assert skip[0]["decided_by_rule"] is not None
     with connect() as conn:
         row = conn.execute(
             "SELECT state FROM endpoint_wake_ledger WHERE turn_id=?", (t_id,)
@@ -6413,7 +6425,6 @@ def test_scan_once_drop_stale_catchup_enqueues_fresh_only(
         subject="QUESTION|fresh",
         body="new",
     )
-    get_cursor()
     with write_connect() as conn:
         conn.execute(
             "UPDATE turns SET created_at=? WHERE id=?",
@@ -6423,6 +6434,8 @@ def test_scan_once_drop_stale_catchup_enqueues_fresh_only(
             "UPDATE turns SET created_at=? WHERE id=?",
             ("2033-06-01T11:59:00Z", fresh_id),
         )
+    get_cursor()
+    with write_connect() as conn:
         conn.execute("UPDATE endpoint_wake_cursor SET high_water_turn_id=0")
 
     pending: list[dict] = []
@@ -6467,18 +6480,23 @@ def test_scan_once_drop_stale_catchup_enqueues_fresh_only(
             )
 
     scan_once(Store())  # type: ignore[arg-type]
-    assert [p["turn_id"] for p in pending] == [fresh_id]
+    assert [
+        p["turn_id"] for p in pending if p.get("state", "pending") == "pending"
+    ] == [fresh_id]
     assert scan_calls[-1][1] == fresh_id
     cursor = get_cursor()
     assert int(cursor["high_water_turn_id"]) == fresh_id
     with connect() as conn:
         stale_row = conn.execute(
-            "SELECT state FROM endpoint_wake_ledger WHERE turn_id=?", (stale_id,)
+            "SELECT state, reason FROM endpoint_wake_ledger WHERE turn_id=?",
+            (stale_id,),
         ).fetchone()
         fresh_row = conn.execute(
             "SELECT state FROM endpoint_wake_ledger WHERE turn_id=?", (fresh_id,)
         ).fetchone()
-    assert stale_row is None
+    assert stale_row is not None
+    assert stale_row["state"] == "skipped"
+    assert stale_row["reason"] == "skipped:stale_catchup"
     assert fresh_row is not None
     assert fresh_row["state"] == "pending"
     assert stale_n and fresh_n
@@ -8197,3 +8215,478 @@ def test_promote_scan_holder_fail_fast_ac7(
         ).fetchone()
     assert fail_row is not None
     assert fail_row["state"] == "skipped"
+
+
+def _assert_one_qualified_wake_skip(
+    batch: list[dict],
+    *,
+    turn_id: int,
+    reason: str,
+    rule_id: str,
+) -> dict:
+    hits = [
+        r
+        for r in batch
+        if r.get("state") == "skipped" and int(r["turn_id"]) == turn_id
+    ]
+    assert len(hits) == 1, batch
+    assert hits[0]["reason"] == reason
+    assert hits[0]["decided_by_rule"] == rule_id
+    return hits[0]
+
+
+def test_scan_path1_suppress_unsubscribed_adds_no_ledger_item() -> None:
+    turn = {
+        "id": 99,
+        "thread": "path1",
+        "turn_number": 1,
+        "from_agent": "orion",
+        "to_agent": "orion",
+        "subject": "DONE|noop",
+    }
+
+    class Store:
+        def __init__(self) -> None:
+            self.batch: list[dict] = []
+
+        def cursor(self) -> dict:
+            return {"high_water_turn_id": 0}
+
+        def since(self, _high: int) -> list[dict]:
+            return [turn]
+
+        def subscription(self, agent: str, thread: str) -> None:
+            return None
+
+        def scan(self, _high: int, _new_hw: int, rows: list[dict]) -> None:
+            self.batch = list(rows)
+
+    store = Store()
+    scan_once(store)  # type: ignore[arg-type]
+    assert store.batch == []
+    assert not qualify(turn, cse=False).wake
+
+
+def test_scan_path2_already_read_skipped_in_batch_only() -> None:
+    turn = {
+        "id": 2,
+        "thread": "p2",
+        "turn_number": 1,
+        "from_agent": "grok-bot-gc1",
+        "to_agent": "maestro",
+        "subject": "QUESTION|p2",
+        "read_at": "2020-01-01 00:00:00",
+    }
+    verdict = qualify(turn, cse=False)
+
+    class Store:
+        def __init__(self) -> None:
+            self.batch: list[dict] = []
+
+        def cursor(self) -> dict:
+            return {"high_water_turn_id": 0}
+
+        def since(self, _high: int) -> list[dict]:
+            return [turn]
+
+        def subscription(self, agent: str, thread: str):
+            return (
+                "cse",
+                {"surface": "cse", "agent_id": thread, "id": 1, "state": "subscribed"},
+            )
+
+        def scan(self, _high: int, _new_hw: int, rows: list[dict]) -> None:
+            self.batch = list(rows)
+
+    store = Store()
+    scan_once(store)  # type: ignore[arg-type]
+    assert verdict.wake
+    _assert_one_qualified_wake_skip(
+        store.batch, turn_id=2, reason="already_read", rule_id=verdict.rule_id
+    )
+
+
+def test_scan_path3_display_seated_skipped(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    turn = {
+        "id": 3,
+        "thread": "p3",
+        "turn_number": 1,
+        "from_agent": "grok-bot-gc1",
+        "to_agent": "web-anthropic",
+        "subject": "QUESTION|path3",
+    }
+    verdict = qualify(turn, cse=False)
+    monkeypatch.setattr(
+        "bus_watch.endpoint_wake_dispatcher._display_seated",
+        lambda _s, _t: True,
+    )
+
+    class Store:
+        def __init__(self) -> None:
+            self.batch: list[dict] = []
+
+        def cursor(self) -> dict:
+            return {"high_water_turn_id": 0}
+
+        def since(self, _high: int) -> list[dict]:
+            return [turn]
+
+        def scan(self, _high: int, _new_hw: int, rows: list[dict]) -> None:
+            self.batch = list(rows)
+
+    store = Store()
+    scan_once(store)  # type: ignore[arg-type]
+    assert verdict.wake
+    _assert_one_qualified_wake_skip(
+        store.batch, turn_id=3, reason="display_seated", rule_id=verdict.rule_id
+    )
+
+
+def test_scan_path4_web_anthropic_no_holder_no_route(db: None) -> None:
+    from agent_bus_store.db.connection import write_connect
+
+    detail = create_thread(thread_id=None, slug="path4-no-holder")
+    assert detail is not None
+    thread = str(detail["id"])
+    turn_id, _ts, turn_n, _c = insert_turn(
+        thread=thread,
+        from_agent="grok-bot-gc1",
+        to_agent="web-anthropic",
+        subject="QUESTION|path4",
+        body="b",
+    )
+    get_cursor()
+    with write_connect() as conn:
+        conn.execute("UPDATE endpoint_wake_cursor SET high_water_turn_id=0")
+
+    turn_dict = {
+        "id": turn_id,
+        "thread": thread,
+        "turn_number": turn_n,
+        "from_agent": "grok-bot-gc1",
+        "to_agent": "web-anthropic",
+        "subject": "QUESTION|path4",
+    }
+    verdict = qualify(turn_dict, cse=False)
+    scanned: list[dict] = []
+
+    class Store:
+        def cursor(self) -> dict:
+            return get_cursor()
+
+        def since(self, after_id: int, limit: int = 50) -> list[dict]:
+            with connect() as c:
+                rows = c.execute(
+                    "SELECT id, thread, turn_number, from_agent, to_agent, subject, "
+                    "body, read_at FROM turns WHERE id>? ORDER BY id LIMIT ?",
+                    (after_id, limit),
+                ).fetchall()
+            return [dict(r) for r in rows]
+
+        def scan(self, expected: int, new_hw: int, rows: list[dict]) -> dict:
+            scanned.extend(rows)
+            return advance_scan(
+                "endpoint-wake-dispatcher",
+                expected,
+                new_hw,
+                rows,
+                now="2020-01-01 12:00:01",
+            )
+
+        def holder(self, lane: str) -> None:
+            return None
+
+        def lane_parent(self, thread_id: str) -> None:
+            return None
+
+    mp = pytest.MonkeyPatch()
+    mp.setattr(
+        "bus_watch.endpoint_wake_dispatcher.resolve_turn_address",
+        lambda _t, _s: None,
+    )
+    mp.setattr(
+        "bus_watch.endpoint_wake_dispatcher._display_seated",
+        lambda _s, _t: False,
+    )
+    try:
+        scan_once(Store())  # type: ignore[arg-type]
+    finally:
+        mp.undo()
+    assert verdict.wake
+    _assert_one_qualified_wake_skip(
+        scanned, turn_id=turn_id, reason="no_route", rule_id=verdict.rule_id
+    )
+    with connect() as conn:
+        row = conn.execute(
+            "SELECT state, reason FROM endpoint_wake_ledger WHERE turn_id=?",
+            (turn_id,),
+        ).fetchone()
+    assert row is not None
+    assert row["state"] == "skipped"
+    assert row["reason"] == "no_route"
+
+
+def test_scan_path5_stale_catchup_cse_no_target(
+    db: None,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from datetime import UTC, datetime
+
+    from agent_bus_store.db.connection import write_connect
+    from agent_bus_store.db.endpoint_subscriptions import subscribe_endpoint
+
+    monkeypatch.setenv("ENDPOINT_WAKE_CATCHUP_MAX_AGE_S", "900")
+    fixed_now = datetime(2033, 6, 1, 12, 0, 0, tzinfo=UTC).timestamp()
+    monkeypatch.setattr(
+        "bus_watch.endpoint_wake_dispatcher.time.time",
+        lambda: fixed_now,
+    )
+    reg = "583b411df34247f9a48bc044b6518be3"
+    detail = create_thread(thread_id=None, slug="path5-stale-cse")
+    assert detail is not None
+    thread = str(detail["id"])
+    subscribe_endpoint(
+        agent="ulg-cortex-symbiosis",
+        thread_scope=thread,
+        surface="cse",
+        display="cse",
+        title="cowork",
+        agent_id=reg,
+        bound_by="test",
+    )
+    turn_id, _ts, turn_n, _c = insert_turn(
+        thread=thread,
+        from_agent="houseless-driver",
+        to_agent="ulg-cortex-symbiosis",
+        subject="QUESTION|stale-cse",
+        body="body",
+    )
+    get_cursor()
+    with write_connect() as conn:
+        conn.execute(
+            "UPDATE turns SET created_at=? WHERE id=?",
+            ("2020-01-01 00:00:00", turn_id),
+        )
+    with write_connect() as conn:
+        conn.execute("UPDATE endpoint_wake_cursor SET high_water_turn_id=0")
+
+    scanned: list[dict] = []
+    drops: list[int] = []
+
+    class Store:
+        def cursor(self) -> dict:
+            return get_cursor()
+
+        def since(self, after_id: int, limit: int = 50) -> list[dict]:
+            with connect() as c:
+                rows = c.execute(
+                    "SELECT id, thread, turn_number, from_agent, to_agent, subject, "
+                    "body, read_at, created_at FROM turns WHERE id>? ORDER BY id LIMIT ?",
+                    (after_id, limit),
+                ).fetchall()
+            return [dict(r) for r in rows]
+
+        def scan(self, expected: int, new_hw: int, rows: list[dict]) -> dict:
+            scanned.extend(rows)
+            return advance_scan(
+                "endpoint-wake-dispatcher",
+                expected,
+                new_hw,
+                rows,
+                now="2033-06-01 12:00:01",
+            )
+
+        def subscription(self, agent: str, thread_id: str, raw_to: str | None = None):
+            from agent_bus_store.db.endpoint_subscriptions import current_subscription
+
+            row = current_subscription(agent, thread_id)
+            if row and row.get("state") == "subscribed":
+                return ("exact", row)
+            return None
+
+        def holder(self, lane_thread_id: str) -> None:
+            return None
+
+        def holder_by_registration(self, registration_id: str) -> None:
+            return None
+
+        def lane_parent(self, thread_id: str) -> None:
+            return None
+
+    monkeypatch.setattr(
+        "bus_watch.endpoint_wake_dispatcher._holder_for_cse_registration",
+        lambda _store, rid, *, delivery_phase=False: None,
+    )
+    monkeypatch.setattr(
+        "bus_watch.endpoint_wake_dispatcher._observe_drop_stale_catchup_aggregate",
+        lambda **kw: drops.append(int(kw["count"])),
+    )
+    scan_once(Store())  # type: ignore[arg-type]
+    assert drops == [1]
+    skip = _assert_one_qualified_wake_skip(
+        scanned,
+        turn_id=turn_id,
+        reason="skipped:stale_catchup_cse_no_target",
+        rule_id=qualify(
+            {
+                "id": turn_id,
+                "thread": thread,
+                "turn_number": turn_n,
+                "from_agent": "houseless-driver",
+                "to_agent": "ulg-cortex-symbiosis",
+                "subject": "QUESTION|stale-cse",
+                "created_at": "2020-01-01 00:00:00",
+            },
+            cse=True,
+        ).rule_id,
+    )
+    assert skip.get("subscription_id") is not None
+
+
+def test_scan_path6_resolved_none_no_route(db: None) -> None:
+    from agent_bus_store.db.connection import write_connect
+
+    detail = create_thread(thread_id=None, slug="path6-nosub")
+    assert detail is not None
+    thread = str(detail["id"])
+    turn_id, _ts, turn_n, _c = insert_turn(
+        thread=thread,
+        from_agent="grok-bot-gc1",
+        to_agent="cursor",
+        subject="QUESTION|path6",
+        body="b",
+    )
+    get_cursor()
+    with write_connect() as conn:
+        conn.execute("UPDATE endpoint_wake_cursor SET high_water_turn_id=0")
+
+    scanned: list[dict] = []
+
+    class Store:
+        def cursor(self) -> dict:
+            return get_cursor()
+
+        def since(self, after_id: int, limit: int = 50) -> list[dict]:
+            with connect() as c:
+                rows = c.execute(
+                    "SELECT id, thread, turn_number, from_agent, to_agent, subject, "
+                    "body, read_at FROM turns WHERE id>? ORDER BY id LIMIT ?",
+                    (after_id, limit),
+                ).fetchall()
+            return [dict(r) for r in rows]
+
+        def scan(self, expected: int, new_hw: int, rows: list[dict]) -> dict:
+            scanned.extend(rows)
+            return advance_scan(
+                "endpoint-wake-dispatcher",
+                expected,
+                new_hw,
+                rows,
+                now="2020-01-01 12:00:01",
+            )
+
+        def subscription(self, agent: str, thread_id: str) -> None:
+            return None
+
+    scan_once(Store())  # type: ignore[arg-type]
+    verdict = qualify(
+        {
+            "id": turn_id,
+            "thread": thread,
+            "turn_number": turn_n,
+            "from_agent": "grok-bot-gc1",
+            "to_agent": "cursor",
+            "subject": "QUESTION|path6",
+        },
+        cse=False,
+    )
+    assert verdict.wake
+    _assert_one_qualified_wake_skip(
+        scanned, turn_id=turn_id, reason="no_route", rule_id=verdict.rule_id
+    )
+
+
+def test_scan_path7_stale_catchup_after_route_idempotent_two_passes(
+    db: None,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from datetime import UTC, datetime
+
+    from agent_bus_store.db.connection import write_connect
+
+    monkeypatch.setenv("ENDPOINT_WAKE_CATCHUP_MAX_AGE_S", "900")
+    fixed_now = datetime(2033, 6, 1, 12, 0, 0, tzinfo=UTC).timestamp()
+    monkeypatch.setattr(
+        "bus_watch.endpoint_wake_dispatcher.time.time",
+        lambda: fixed_now,
+    )
+    detail = create_thread(thread_id=None, slug="path7-idem")
+    assert detail is not None
+    thread = str(detail["id"])
+    turn_id, _ts, turn_n, _c = insert_turn(
+        thread=thread,
+        from_agent="grok-bot-gc1",
+        to_agent="maestro",
+        subject="QUESTION|path7",
+        body="b",
+    )
+    get_cursor()
+    with write_connect() as conn:
+        conn.execute(
+            "UPDATE turns SET created_at=? WHERE id=?",
+            ("2020-01-01 00:00:00", turn_id),
+        )
+    with write_connect() as conn:
+        conn.execute("UPDATE endpoint_wake_cursor SET high_water_turn_id=0")
+
+    class Store:
+        def cursor(self) -> dict:
+            return get_cursor()
+
+        def since(self, after_id: int, limit: int = 50) -> list[dict]:
+            with connect() as c:
+                rows = c.execute(
+                    "SELECT id, thread, turn_number, from_agent, to_agent, subject, "
+                    "body, read_at, created_at FROM turns WHERE id>? ORDER BY id LIMIT ?",
+                    (after_id, limit),
+                ).fetchall()
+            return [dict(r) for r in rows]
+
+        def scan(self, expected: int, new_hw: int, rows: list[dict]) -> dict:
+            return advance_scan(
+                "endpoint-wake-dispatcher",
+                expected,
+                new_hw,
+                rows,
+                now="2033-06-01 12:00:01",
+            )
+
+        def holder(self, lane: str) -> dict:
+            return {"registration_id": "reg-live", "seat_state": "driving"}
+
+        def subscription(self, agent: str, thread_id: str):
+            return (
+                "cse",
+                {
+                    "surface": "cse",
+                    "agent_id": thread_id,
+                    "id": 1,
+                    "state": "subscribed",
+                },
+            )
+
+    store = Store()
+    scan_once(store)  # type: ignore[arg-type]
+    with write_connect() as conn:
+        conn.execute("UPDATE endpoint_wake_cursor SET high_water_turn_id=0")
+    scan_once(store)  # type: ignore[arg-type]
+    with connect() as conn:
+        rows = conn.execute(
+            "SELECT state, reason FROM endpoint_wake_ledger WHERE turn_id=?",
+            (turn_id,),
+        ).fetchall()
+    assert len(rows) == 1
+    assert rows[0]["state"] == "skipped"
+    assert rows[0]["reason"] == "skipped:stale_catchup"

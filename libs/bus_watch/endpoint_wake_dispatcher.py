@@ -1580,6 +1580,37 @@ def _scan_holder_skip_item(
     }
 
 
+def _qualified_wake_skip_item(
+    turn: dict[str, Any],
+    *,
+    decided_by_rule: str,
+    reason: str,
+    route: tuple[str, dict[str, Any]] | None = None,
+    wake_agent: str | None = None,
+    subscription_id: int | None = None,
+) -> dict[str, Any]:
+    """Ledger tombstone when scan qualifies a wake but exits before enqueue."""
+    item = _pending_item(
+        turn,
+        decided_by_rule=decided_by_rule,
+        route=route,
+        wake_agent=wake_agent,
+    )
+    row: dict[str, Any] = {
+        **item,
+        "state": "skipped",
+        "reason": reason,
+    }
+    if subscription_id is not None:
+        row["subscription_id"] = subscription_id
+    elif route is not None:
+        _, sub = route
+        sub_id = sub.get("id")
+        if sub_id is not None:
+            row["subscription_id"] = sub_id
+    return row
+
+
 def _pending_item(
     turn: dict[str, Any],
     *,
@@ -1851,12 +1882,36 @@ def scan_once(store: StoreClient, *, idle_mark: dict[str, float] | None = None) 
                     )
                 continue
             if turn.get("read_at"):
+                tombstones.append(
+                    _qualified_wake_skip_item(
+                        turn,
+                        decided_by_rule=verdict.rule_id,
+                        reason="already_read",
+                        wake_agent=agent,
+                    )
+                )
                 continue
             if agent == "web-anthropic":
                 if _display_seated(store, thread):
+                    tombstones.append(
+                        _qualified_wake_skip_item(
+                            turn,
+                            decided_by_rule=verdict.rule_id,
+                            reason="display_seated",
+                            wake_agent=agent,
+                        )
+                    )
                     continue
                 address = resolve_turn_address(thread, store)
                 if address is None and not store.holder(thread):
+                    tombstones.append(
+                        _qualified_wake_skip_item(
+                            turn,
+                            decided_by_rule=verdict.rule_id,
+                            reason="no_route",
+                            wake_agent=agent,
+                        )
+                    )
                     continue
             elif (
                 resolved is not None and str(resolved[1].get("surface") or "") == "cse"
@@ -1872,6 +1927,17 @@ def scan_once(store: StoreClient, *, idle_mark: dict[str, float] | None = None) 
                         stale_catchup["count"] += 1
                         stale_catchup["min"] = min(stale_catchup["min"], tid)
                         stale_catchup["max"] = max(stale_catchup["max"], tid)
+                        _, sub = resolved
+                        tombstones.append(
+                            _qualified_wake_skip_item(
+                                turn,
+                                decided_by_rule=verdict.rule_id,
+                                reason="skipped:stale_catchup_cse_no_target",
+                                route=resolved,
+                                wake_agent=agent,
+                                subscription_id=sub.get("id"),
+                            )
+                        )
                         continue
                     if direct_maestro:
                         _observe_maestro_wake_drop(
@@ -1901,6 +1967,14 @@ def scan_once(store: StoreClient, *, idle_mark: dict[str, float] | None = None) 
                         rule_id=verdict.rule_id,
                         subject=subject,
                     )
+                tombstones.append(
+                    _qualified_wake_skip_item(
+                        turn,
+                        decided_by_rule=verdict.rule_id,
+                        reason="no_route",
+                        wake_agent=agent,
+                    )
+                )
                 continue
             if _turn_is_stale_catchup(turn):
                 tid = int(turn["id"])
@@ -1909,6 +1983,15 @@ def scan_once(store: StoreClient, *, idle_mark: dict[str, float] | None = None) 
                 stale_catchup["count"] += 1
                 stale_catchup["min"] = min(stale_catchup["min"], tid)
                 stale_catchup["max"] = max(stale_catchup["max"], tid)
+                tombstones.append(
+                    _qualified_wake_skip_item(
+                        turn,
+                        decided_by_rule=verdict.rule_id,
+                        reason="skipped:stale_catchup",
+                        route=resolved,
+                        wake_agent=agent,
+                    )
+                )
                 continue
             _remap, resolved = _cursor_tab_route(store, raw_to, resolved)
             item = _pending_item(
