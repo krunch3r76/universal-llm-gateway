@@ -20,6 +20,7 @@ from hop_handoff import (
     build_continuity_handoff_body,
     parse_successor_birth_id,
 )
+from hop_handoff.body import parse_hop_admitted_at, parse_responsibility
 
 from tools.agent_bus.hop import _hop_dispatch, resolve_hop_successor_model
 from tools.agent_bus.request_intake import reset_request_id_registry_for_tests
@@ -477,6 +478,8 @@ def test_hop_relays_full_handoff_prompt(reason: str, tmp_path) -> None:
         standing_handoff_identity=handoff.identity,
         inflight_rows=None,
         arc_hub=None,
+        hop_admitted_at=parse_hop_admitted_at(prompt),
+        responsibility=parse_responsibility(prompt),
     )
     assert "TYPE: CONTINUITY_HANDOFF" not in INLINE_CONTRACT_PREFIXES
 
@@ -746,3 +749,117 @@ def test_hop_relays_prompt_past_long_turn_cap() -> None:
     result = asyncio.run(run())
     assert result.get("continuity_hop") is True, result
     assert len(str(captured["body"]["prompt"])) > MAX_LONG_TURN_BODY_CHARS
+
+
+def test_hop_body_carries_admit_stamp_and_responsibility_from_summary() -> None:
+    """Thread summary RESPONSIBILITY line and one admit stamp land on the handoff."""
+    from datetime import UTC, datetime
+
+    captured: dict[str, Any] = {}
+    fixed = datetime(2026, 3, 15, 12, 34, 56, tzinfo=UTC)
+
+    async def fake_relay(**kwargs: Any) -> dict[str, str]:
+        captured.update(kwargs)
+        return {"execution_id": "ex-hop-meta"}
+
+    async def run() -> dict[str, Any]:
+        with (
+            patch("tools.agent_bus.hop.assess_standing_handoff", return_value=_HANDOFF),
+            patch(
+                "tools.agent_bus.hop._resolve_hop_seat_request_refusal",
+                return_value=None,
+            ),
+            patch("tools.agent_bus.hop.record"),
+            patch("tools.frontier._relay", side_effect=fake_relay),
+            patch(
+                "agent_bus_store.db.threads.get_thread",
+                return_value={
+                    "tags": [],
+                    "summary": "lane arc\nRESPONSIBILITY: hold the operator seat",
+                },
+            ),
+            patch("tools.agent_bus.hop.datetime") as dt_mock,
+            _patch_no_consumption_window(),
+        ):
+            dt_mock.UTC = UTC
+            dt_mock.now.return_value = fixed
+            return await _hop_dispatch(
+                thread="77",
+                reason="stamp-responsibility",
+                from_agent="web-anthropic",
+            )
+
+    result = asyncio.run(run())
+    assert result.get("continuity_hop") is True, result
+    prompt = str(captured["body"]["prompt"])
+    assert "hop_admitted_at: 2026-03-15T12:34:56Z" in prompt
+    assert "responsibility: hold the operator seat" in prompt
+
+
+def test_hop_admits_when_thread_read_raises() -> None:
+    captured: dict[str, Any] = {}
+
+    async def fake_relay(**kwargs: Any) -> dict[str, str]:
+        captured.update(kwargs)
+        return {"execution_id": "ex-hop-no-thread"}
+
+    def _raise(_thread: str) -> dict[str, object]:
+        raise OSError("db down")
+
+    async def run() -> dict[str, Any]:
+        with (
+            patch("tools.agent_bus.hop.assess_standing_handoff", return_value=_HANDOFF),
+            patch(
+                "tools.agent_bus.hop._resolve_hop_seat_request_refusal",
+                return_value=None,
+            ),
+            patch("tools.agent_bus.hop.record"),
+            patch("tools.frontier._relay", side_effect=fake_relay),
+            patch("agent_bus_store.db.threads.get_thread", side_effect=_raise),
+            _patch_no_consumption_window(),
+        ):
+            return await _hop_dispatch(
+                thread="77",
+                reason="thread-read-fail",
+                from_agent="web-anthropic",
+            )
+
+    result = asyncio.run(run())
+    assert result.get("continuity_hop") is True, result
+    prompt = str(captured["body"]["prompt"])
+    assert "hop_admitted_at:" in prompt
+    assert "responsibility:" not in prompt
+
+
+def test_hop_null_summary_omits_responsibility_line() -> None:
+    captured: dict[str, Any] = {}
+
+    async def fake_relay(**kwargs: Any) -> dict[str, str]:
+        captured.update(kwargs)
+        return {"execution_id": "ex-hop-null-summary"}
+
+    async def run() -> dict[str, Any]:
+        with (
+            patch("tools.agent_bus.hop.assess_standing_handoff", return_value=_HANDOFF),
+            patch(
+                "tools.agent_bus.hop._resolve_hop_seat_request_refusal",
+                return_value=None,
+            ),
+            patch("tools.agent_bus.hop.record"),
+            patch("tools.frontier._relay", side_effect=fake_relay),
+            patch(
+                "agent_bus_store.db.threads.get_thread",
+                return_value={"tags": [], "summary": None},
+            ),
+            _patch_no_consumption_window(),
+        ):
+            return await _hop_dispatch(
+                thread="77",
+                reason="null-summary",
+                from_agent="web-anthropic",
+            )
+
+    result = asyncio.run(run())
+    assert result.get("continuity_hop") is True, result
+    prompt = str(captured["body"]["prompt"])
+    assert "responsibility:" not in prompt

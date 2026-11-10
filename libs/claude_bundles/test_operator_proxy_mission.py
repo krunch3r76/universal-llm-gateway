@@ -1046,6 +1046,45 @@ def test_mission_preamble_unchanged_when_hop_kind_omitted_golden() -> None:
     )
 
 
+def test_hop_paste_shows_admit_stamp_and_responsibility_from_body() -> None:
+    caller = (
+        "TYPE: CONTINUITY_HANDOFF\n"
+        "thread_id: 12286\n"
+        "hop_admitted_at: 2026-04-01T09:08:07Z\n"
+        "responsibility: operator continuity\n"
+        f"successor_birth_id: {'f' * 32}\n"
+    )
+    out = ensure_operator_proxy_mission_prompt(
+        caller,
+        roster_text="",
+        fetch_turns=_noop_fetch,
+        journal_text="",
+        register_text="",
+    )
+    title, admitted, resp, _rest = out.split("\n", 3)
+    assert title.startswith("# Hop on agent-bus:")
+    assert admitted == "Hop admitted: 2026-04-01T09:08:07Z"
+    assert resp == "RESPONSIBILITY: operator continuity"
+
+
+def test_hop_paste_legacy_body_shows_not_recorded_for_missing_fields() -> None:
+    caller = (
+        "TYPE: CONTINUITY_HANDOFF\n"
+        "thread_id: 12286\n"
+        f"successor_birth_id: {'a' * 32}\n"
+    )
+    out = ensure_operator_proxy_mission_prompt(
+        caller,
+        roster_text="",
+        fetch_turns=_noop_fetch,
+        journal_text="",
+        register_text="",
+    )
+    lines = out.splitlines()
+    assert lines[1] == "Hop admitted: not recorded"
+    assert lines[2] == "RESPONSIBILITY: not recorded"
+
+
 def test_hop_successor_template_has_single_refusals_marker() -> None:
     """Module split assumes one canonical refusals heading in the raw template."""
     assert _HOP_SUCCESSOR_TEMPLATE.count(_HOP_REFUSALS_MARKER) == 1
@@ -1065,6 +1104,8 @@ def test_render_splice_ignores_marker_in_verbatim(quote: str) -> None:
     house_rules = f"## HOUSE RULES\n{quote}\ntail"
     fields = {
         "lane": "1",
+        "hop_admitted_at_display": "not recorded",
+        "responsibility_display": "not recorded",
         "successor_birth_id": "b",
         "execution_clause": "",
         "running_now_line": "## What is running now",

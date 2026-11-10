@@ -14,7 +14,9 @@ from pathlib import Path
 from typing import Any
 
 from hop_handoff.body import (
+    parse_hop_admitted_at,
     parse_hop_kind,
+    parse_responsibility,
     parse_successor_birth_id,
     parse_superseded_registration_id,
 )
@@ -266,6 +268,10 @@ def hop_successor_fields(
     lane = extract_thread_id(prompt_text) or UNKNOWN_FIELD
     birth = parse_successor_birth_id(prompt_text) or UNKNOWN_FIELD
     hop_kind = parse_hop_kind(prompt_text)
+    admitted_raw = parse_hop_admitted_at(prompt_text)
+    responsibility_raw = parse_responsibility(prompt_text)
+    hop_admitted_at_display = admitted_raw if admitted_raw else "not recorded"
+    responsibility_display = responsibility_raw if responsibility_raw else "not recorded"
     handoff_failure = (
         standing_handoff_text
         if _is_standing_handoff_failure(standing_handoff_text)
@@ -489,6 +495,8 @@ def hop_successor_fields(
     return {
         "hop_kind": hop_kind,
         "lane": lane,
+        "hop_admitted_at_display": hop_admitted_at_display,
+        "responsibility_display": responsibility_display,
         "successor_birth_id": birth,
         "execution_clause": execution_clause,
         "handoff_sha": digest,
