@@ -148,23 +148,31 @@ def test_rewind_helper_allows_pytest_tmp_without_explicit_roots(tmp_path: Path) 
     conn.close()
 
 
-def test_rewind_helper_refuses_home_path(tmp_path: Path) -> None:
+def test_rewind_helper_refuses_home_path(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import agent_bus_store.testing.wake_cursor_test_support as support_mod
+
     home_io = Path("/home/io")
     outside = (
         home_io / "wake-rewind-guard-scratch.db"
         if home_io.is_dir()
         else Path("/var/tmp") / "agent-bus-rewind-guard-outside.db"
     )
+    monkeypatch.setattr(
+        support_mod, "_pytest_tmp_roots", [tmp_path / "only-this-subdir"]
+    )
     conn = sqlite3.connect(outside)
     conn.executescript(
         "CREATE TABLE endpoint_wake_cursor "
         "(consumer TEXT PRIMARY KEY, high_water_turn_id INTEGER, updated_at TEXT)"
     )
-    set_pytest_tmp_roots(tmp_path / "only-this-subdir")
-    with pytest.raises(RuntimeError, match="refuses DB outside pytest tmp"):
-        rewind_wake_cursor_for_test(conn, CONSUMER, to=0)
-    conn.close()
-    outside.unlink(missing_ok=True)
+    try:
+        with pytest.raises(RuntimeError, match="refuses DB outside pytest tmp"):
+            rewind_wake_cursor_for_test(conn, CONSUMER, to=0)
+    finally:
+        conn.close()
+        outside.unlink(missing_ok=True)
 
 
 def test_refuse_live_agent_bus_path_under_pytest(
@@ -204,6 +212,7 @@ def test_pass_duration_emit_isolated_under_fixture(
     import bus_watch.events as bw_events
     from agent_bus_store.testing.wake_cursor_test_support import (
         _import_mcp_events_module,
+        isolate_endpoint_wake_event_emit_for_pytest,
     )
     from bus_watch.endpoint_wake_pass_timing import (
         begin_pass,
@@ -213,13 +222,19 @@ def test_pass_duration_emit_isolated_under_fixture(
     )
 
     _import_mcp_events_module()
-    isolate_endpoint_wake_event_emit_for_pytest(monkeypatch, tmp_path)
-    monkeypatch.setattr(bw_events, "record", lambda *_a, **_k: None)
+    uds_calls: list[tuple[str, dict[str, object]]] = []
+
+    def _spy(signal: str, payload: dict[str, object]) -> None:
+        uds_calls.append((signal, payload))
+
+    bw_events.register_uds_publisher(_spy)
     enqueued = track_uds_put_nowait(monkeypatch)
+    isolate_endpoint_wake_event_emit_for_pytest(monkeypatch, tmp_path)
     reset_pass_timing_for_tests()
     begin_pass()
     end_phase("scan_once")
     safe_emit_pass_duration()
+    assert len(uds_calls) == 0
     assert len(enqueued) == 0
 
 
@@ -238,6 +253,12 @@ def test_pass_duration_emit_negative_control_records_enqueue(
     )
 
     mcp_events = _import_mcp_events_module()
+    uds_calls: list[tuple[str, dict[str, object]]] = []
+
+    def _spy(signal: str, payload: dict[str, object]) -> None:
+        uds_calls.append((signal, payload))
+
+    bw_events.register_uds_publisher(_spy)
     enqueued = track_uds_put_nowait(monkeypatch)
     monkeypatch.setattr(bw_events, "record", mcp_events.record)
     mcp_events._publisher = mcp_events._UDSPublisher(
@@ -247,7 +268,7 @@ def test_pass_duration_emit_negative_control_records_enqueue(
     begin_pass()
     end_phase("scan_once")
     safe_emit_pass_duration()
-    assert len(enqueued) >= 1
+    assert len(uds_calls) >= 1 or len(enqueued) >= 1
 
 
 def test_insert_or_replace_lower_high_water_refused(
@@ -325,6 +346,85 @@ def test_delete_then_insert_lower_high_water_ok(
             (CONSUMER,),
         ).fetchone()[0]
     assert int(hw) == 5
+
+
+def test_get_cursor_after_newest_turn_deleted_keeps_stored_high_water(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("AGENT_BUS_DB_PATH", str(tmp_path / "bus.db"))
+    init_db()
+    detail = create_thread(thread_id=None, slug="del-turn")
+    assert detail is not None
+    thread = str(detail["id"])
+    turn_id, *_tn, num, _c = insert_turn(
+        thread=thread, from_agent="a", to_agent="b", subject="FACT|x", body="b"
+    )
+    item = {
+        "agent": "b",
+        "thread_id": thread,
+        "turn_id": turn_id,
+        "turn_number": num,
+    }
+    with connect() as conn:
+        rewind_wake_cursor_for_test(conn, CONSUMER, to=0)
+    advance_scan(CONSUMER, 0, turn_id, [item])
+    from agent_bus_store.db.turns import delete_turn
+
+    delete_turn(turn_id, force=True)
+    cursor = get_cursor()
+    assert int(cursor["high_water_turn_id"]) == turn_id
+
+
+def test_get_cursor_route_ok_after_newest_turn_deleted(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from agent_bus_store.auth import require_token
+    from agent_bus_store.server import create_app
+    from fastapi.testclient import TestClient
+
+    monkeypatch.setenv("AGENT_BUS_DB_PATH", str(tmp_path / "bus.db"))
+    init_db()
+    app = create_app()
+    app.dependency_overrides[require_token] = lambda: None
+    client = TestClient(app)
+    detail = create_thread(thread_id=None, slug="del-route")
+    assert detail is not None
+    thread = str(detail["id"])
+    turn_id, *_tn, num, _c = insert_turn(
+        thread=thread, from_agent="a", to_agent="b", subject="FACT|x", body="b"
+    )
+    item = {
+        "agent": "b",
+        "thread_id": thread,
+        "turn_id": turn_id,
+        "turn_number": num,
+    }
+    with connect() as conn:
+        rewind_wake_cursor_for_test(conn, CONSUMER, to=0)
+    advance_scan(CONSUMER, 0, turn_id, [item])
+    from agent_bus_store.db.turns import delete_turn
+
+    delete_turn(turn_id, force=True)
+    resp = client.get("/endpoint-wake/cursor")
+    assert resp.status_code == 200
+    assert int(resp.json()["high_water_turn_id"]) == turn_id
+
+
+def test_get_cursor_keeps_stored_when_turns_table_empty(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("AGENT_BUS_DB_PATH", str(tmp_path / "bus.db"))
+    init_db()
+    stamp = "2020-01-01T00:00:00Z"
+    with connect() as conn:
+        conn.execute(
+            "INSERT INTO endpoint_wake_cursor (consumer, high_water_turn_id, updated_at) "
+            "VALUES (?, ?, ?)",
+            (CONSUMER, 42, stamp),
+        )
+        conn.execute("DELETE FROM turns")
+    cursor = get_cursor()
+    assert int(cursor["high_water_turn_id"]) == 42
 
 
 def test_get_cursor_cold_start_seeds_max_turn_id(

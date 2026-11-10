@@ -171,16 +171,16 @@ def isolate_endpoint_wake_event_emit_for_pytest(
     monkeypatch.setenv("MCP_EVENTS_ENABLED", "0")
     monkeypatch.setenv("EVENTS_INGEST_SOCK", str(noop_sock))
 
+    def _noop_record(*_a: object, **_k: object) -> None:
+        return None
+
     try:
         import bus_watch.events as bw_events
+        from agent_bus_store.events import publisher as abs_publisher
 
-        try:
-            mcp_events = _import_mcp_events_module()
-        except ImportError:
-            mcp_events = None
-        if mcp_events is not None and bw_events.record is mcp_events.record:
-            monkeypatch.setattr(bw_events, "record", lambda *_a, **_k: None)
-            monkeypatch.setattr(mcp_events, "_publisher", None)
+        monkeypatch.setattr(bw_events, "record", _noop_record)
+        monkeypatch.setattr(bw_events, "_uds_publisher", None)
+        monkeypatch.setattr(abs_publisher, "_publisher", None)
     except ImportError:
         pass
 

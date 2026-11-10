@@ -95,9 +95,10 @@ def get_cursor(consumer: str = CONSUMER, *, now: str | None = None) -> dict[str,
     stamp = _now(now)
     with write_connect() as conn:
         conn.execute(
-            "INSERT OR IGNORE INTO endpoint_wake_cursor "
-            "SELECT ?, COALESCE(MAX(id), 0), ? FROM turns",
-            (consumer, stamp),
+            "INSERT INTO endpoint_wake_cursor (consumer, high_water_turn_id, updated_at) "
+            "SELECT ?, m, ? FROM (SELECT COALESCE(MAX(id), 0) AS m FROM turns) "
+            "WHERE NOT EXISTS (SELECT 1 FROM endpoint_wake_cursor WHERE consumer = ?)",
+            (consumer, stamp, consumer),
         )
         row = conn.execute(
             "SELECT * FROM endpoint_wake_cursor WHERE consumer=?", (consumer,)
