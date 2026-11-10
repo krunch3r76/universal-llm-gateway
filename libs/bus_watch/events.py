@@ -345,6 +345,39 @@ def emit_endpoint_wake_address_route(**kwargs: Any) -> None:
 
 
 @event_factory
+def EndpointWakeCseHolderResolution(  # noqa: N802
+    *,
+    thread: str,
+    subscription_id: int | None,
+    chosen_registration: str,
+    chosen_source: str,
+    bus_registration: str | None = None,
+    giw_by_thread_registration: str | None = None,
+    giw_by_thread_error: str | None = None,
+) -> Event:
+    """Observation: thread-scoped CSE wake picked a holder off the subscription agent_id."""
+    return Event(
+        signal="endpoint_wake.cse_holder_resolution",
+        role="observation",
+        payload={
+            "thread": thread,
+            "subscription_id": subscription_id,
+            "chosen_registration": chosen_registration,
+            "chosen_source": chosen_source,
+            "bus_registration": bus_registration,
+            "giw_by_thread_registration": giw_by_thread_registration,
+            "giw_by_thread_error": giw_by_thread_error,
+        },
+        scope="global",
+    )
+
+
+def emit_endpoint_wake_cse_holder_resolution(**kwargs: Any) -> None:
+    """Publish how a thread-scoped CSE wake resolved its delivery holder."""
+    _emit(EndpointWakeCseHolderResolution(**kwargs))
+
+
+@event_factory
 def EndpointWakeSuppressed(  # noqa: N802
     *,
     thread_id: str,

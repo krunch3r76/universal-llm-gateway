@@ -1818,6 +1818,7 @@ def scan_once(store: StoreClient, *, idle_mark: dict[str, float] | None = None) 
     max_passes = 20
     for _pass in range(max_passes):
         clear_houseless_resolve_memo()
+        clear_cse_wake_thread_holder_memo(store)
         cursor = store.cursor()
         high = int(cursor["high_water_turn_id"])
         turns = store.since(high)
@@ -2468,18 +2469,168 @@ def _holder_for_cse_registration(
     return None
 
 
-def resolve_cse_wake_target(
+_CSE_WAKE_THREAD_HOLDER_MEMO = "_cse_wake_thread_holder_memo"
+_CSE_WAKE_GIW_BY_THREAD_TIMEOUT_S = 2.0
+
+
+def clear_cse_wake_thread_holder_memo(store: StoreClient) -> None:
+    """Reset per-thread bus/GIW holder reads for one dispatcher scan pass."""
+    setattr(store, _CSE_WAKE_THREAD_HOLDER_MEMO, {})
+
+
+def _cse_sub_thread_scoped(sub: dict[str, Any]) -> bool:
+    if str(sub.get("surface") or "") != "cse":
+        return False
+    scope_kind = str(sub.get("scope_kind") or "thread").strip().lower()
+    return scope_kind == "thread"
+
+
+def _thread_holder_memo(store: StoreClient) -> dict[str, dict[str, Any]]:
+    memo = getattr(store, _CSE_WAKE_THREAD_HOLDER_MEMO, None)
+    if not isinstance(memo, dict):
+        memo = {}
+        setattr(store, _CSE_WAKE_THREAD_HOLDER_MEMO, memo)
+    return memo
+
+
+def _local_bus_cse_registration(thread_id: str) -> str | None:
+    if not os.environ.get("AGENT_BUS_DB_PATH"):
+        return None
+    try:
+        from agent_bus_store.db.cse_associations import get_current_cse
+
+        row = get_current_cse(thread_id=thread_id)
+    except LookupError:
+        return None
+    except Exception:
+        logger.debug(
+            "endpoint_wake_dispatcher: local get_current_cse failed thread=%s",
+            thread_id,
+            exc_info=True,
+        )
+        return None
+    if str(row.get("state") or "") == "none":
+        return None
+    reg = str(row.get("cse_registration_id") or "").strip()
+    return reg or None
+
+
+def _memoized_bus_registration(
+    store: StoreClient, thread_id: str, memo: dict[str, dict[str, Any]]
+) -> str | None:
+    slot = memo.setdefault(thread_id, {})
+    if "bus_registration" not in slot:
+        slot["bus_registration"] = _local_bus_cse_registration(thread_id)
+    reg = slot.get("bus_registration")
+    return str(reg).strip() if reg else None
+
+
+def _memoized_giw_by_thread_registration(
+    store: StoreClient, thread_id: str, memo: dict[str, dict[str, Any]]
+) -> tuple[str | None, str | None]:
+    slot = memo.setdefault(thread_id, {})
+    if "giw_by_thread_registration" in slot:
+        return (
+            slot.get("giw_by_thread_registration"),
+            slot.get("giw_by_thread_error"),
+        )
+    giw_reg: str | None = None
+    giw_error: str | None = None
+    holder_get = getattr(store, "holder", None)
+    if callable(holder_get):
+        try:
+            row = holder_get(thread_id, timeout=_CSE_WAKE_GIW_BY_THREAD_TIMEOUT_S)
+            if isinstance(row, dict) and row:
+                raw = str(row.get("registration_id") or "").strip()
+                giw_reg = raw or None
+        except TypeError:
+            try:
+                row = holder_get(thread_id)
+                if isinstance(row, dict) and row:
+                    raw = str(row.get("registration_id") or "").strip()
+                    giw_reg = raw or None
+            except Exception as exc:
+                giw_error = type(exc).__name__
+                logger.debug(
+                    "endpoint_wake_dispatcher: giw by-thread holder failed thread=%s",
+                    thread_id,
+                    exc_info=True,
+                )
+        except Exception as exc:
+            giw_error = type(exc).__name__
+            logger.debug(
+                "endpoint_wake_dispatcher: giw by-thread holder failed thread=%s",
+                thread_id,
+                exc_info=True,
+            )
+    slot["giw_by_thread_registration"] = giw_reg
+    slot["giw_by_thread_error"] = giw_error
+    return giw_reg, giw_error
+
+
+def _cse_wake_target_from_holder(
+    sub: dict[str, Any],
+    *,
+    wake_thread: str,
+    agent_id: str,
+    holder: dict[str, Any],
+    delivery_phase: bool,
+) -> tuple[str, dict[str, Any]] | None:
+    scope = str(sub.get("thread_scope") or wake_thread or "").strip()
+    if holder.get(_HOUSELESS_NO_ROUTE):
+        if not delivery_phase:
+            return None
+        lane = scope or agent_id
+        return lane, holder
+    if holder.get(_GIW_HOLDER_LOOKUP_FAILED):
+        if not delivery_phase:
+            return None
+        lane = scope or agent_id
+        return lane, holder
+    if not _holder_is_live(holder):
+        if not delivery_phase:
+            return None
+    lane = str(holder.get("lane_thread_id") or "").strip() or scope or agent_id
+    return lane, holder
+
+
+def _observe_cse_wake_holder_resolution(
+    *,
+    thread: str,
+    sub: dict[str, Any],
+    chosen_registration: str,
+    chosen_source: str,
+    bus_registration: str | None,
+    giw_by_thread_registration: str | None,
+    giw_by_thread_error: str | None,
+) -> None:
+    try:
+        from bus_watch.events import emit_endpoint_wake_cse_holder_resolution
+
+        sub_id = sub.get("id")
+        emit_endpoint_wake_cse_holder_resolution(
+            thread=thread,
+            subscription_id=int(sub_id) if sub_id is not None else None,
+            chosen_registration=chosen_registration,
+            chosen_source=chosen_source,
+            bus_registration=bus_registration,
+            giw_by_thread_registration=giw_by_thread_registration,
+            giw_by_thread_error=giw_by_thread_error,
+        )
+    except Exception:
+        logger.exception(
+            "endpoint_wake_dispatcher: cse_holder_resolution emit failed thread=%s",
+            thread,
+        )
+
+
+def _resolve_cse_wake_target_from_agent_id(
     store: StoreClient,
     sub: dict[str, Any],
     *,
-    wake_thread: str | None = None,
-    delivery_phase: bool = False,
+    wake_thread: str | None,
+    delivery_phase: bool,
 ) -> tuple[str, dict[str, Any]] | None:
-    """Resolve (delivery lane, holder) for a CSE subscription row.
-
-    ``agent_id`` is either a driving lane thread (role:root houses) or a CSE
-    registration id (houseless mailbox threads).
-    """
     agent_id = str(sub.get("agent_id") or "").strip()
     if not agent_id:
         return None
@@ -2503,21 +2654,161 @@ def resolve_cse_wake_target(
     )
     if not isinstance(holder, dict) or not holder:
         return None
-    if holder.get(_HOUSELESS_NO_ROUTE):
-        if not delivery_phase:
+    return _cse_wake_target_from_holder(
+        sub,
+        wake_thread=scope or agent_id,
+        agent_id=agent_id,
+        holder=holder,
+        delivery_phase=delivery_phase,
+    )
+
+
+def _resolve_cse_wake_target_thread_scoped(
+    store: StoreClient,
+    sub: dict[str, Any],
+    *,
+    wake_thread: str,
+    delivery_phase: bool,
+) -> tuple[str, dict[str, Any]] | None:
+    """Thread-scoped CSE wake holder resolution.
+
+    Candidate order: (1) bus ``get_current_cse`` registration when
+    ``AGENT_BUS_DB_PATH`` is set; (2) GIW by-thread ``registration_id`` only when
+    (1) yields no live holder; (3) subscription ``agent_id``. Each registration
+    candidate is gated by ``_holder_for_cse_registration``. GIW by-thread errors
+    are contained here and resolution falls through to (3).
+    """
+    agent_id = str(sub.get("agent_id") or "").strip()
+    thread = str(wake_thread).strip()
+    if not thread:
+        return _resolve_cse_wake_target_from_agent_id(
+            store, sub, wake_thread=wake_thread, delivery_phase=delivery_phase
+        )
+    memo = _thread_holder_memo(store)
+    bus_registration = _memoized_bus_registration(store, thread, memo)
+    giw_by_thread_registration: str | None = None
+    giw_by_thread_error: str | None = None
+
+    def _try_registration(reg: str, source: str) -> tuple[str, dict[str, Any]] | None:
+        holder = _holder_for_cse_registration(
+            store, reg, delivery_phase=delivery_phase
+        )
+        if not isinstance(holder, dict) or not holder:
             return None
-        lane = scope or agent_id
-        return lane, holder
-    if holder.get(_GIW_HOLDER_LOOKUP_FAILED):
-        if not delivery_phase:
+        target = _cse_wake_target_from_holder(
+            sub,
+            wake_thread=thread,
+            agent_id=agent_id,
+            holder=holder,
+            delivery_phase=delivery_phase,
+        )
+        if target is None:
             return None
-        lane = scope or agent_id
-        return lane, holder
-    if not _holder_is_live(holder):
-        if not delivery_phase:
-            return None
-    lane = str(holder.get("lane_thread_id") or "").strip() or scope or agent_id
-    return lane, holder
+        reg_out = str(holder.get("registration_id") or reg).strip() or reg
+        should_emit = False
+        if source != "bus_association":
+            bus_live = False
+            if bus_registration:
+                bus_holder = _holder_for_cse_registration(
+                    store, bus_registration, delivery_phase=delivery_phase
+                )
+                bus_live = isinstance(bus_holder, dict) and _holder_is_live(bus_holder)
+            if not bus_registration or not bus_live:
+                should_emit = True
+        if (
+            giw_by_thread_registration
+            and bus_registration
+            and giw_by_thread_registration != bus_registration
+        ):
+            should_emit = True
+        if giw_by_thread_error and source == "subscription_agent_id":
+            should_emit = True
+        if should_emit:
+            _observe_cse_wake_holder_resolution(
+                thread=thread,
+                sub=sub,
+                chosen_registration=reg_out,
+                chosen_source=source,
+                bus_registration=bus_registration,
+                giw_by_thread_registration=giw_by_thread_registration,
+                giw_by_thread_error=giw_by_thread_error,
+            )
+        return target
+
+    if bus_registration:
+        hit = _try_registration(bus_registration, "bus_association")
+        if hit is not None:
+            return hit
+
+    giw_by_thread_registration, giw_by_thread_error = (
+        _memoized_giw_by_thread_registration(store, thread, memo)
+    )
+    if giw_by_thread_registration:
+        hit = _try_registration(giw_by_thread_registration, "giw_by_thread")
+        if hit is not None:
+            return hit
+
+    target = _resolve_cse_wake_target_from_agent_id(
+        store, sub, wake_thread=wake_thread, delivery_phase=delivery_phase
+    )
+    if target is not None:
+        _holder = target[1]
+        chosen_reg = str(_holder.get("registration_id") or agent_id).strip()
+        bus_live = False
+        if bus_registration:
+            bus_holder = _holder_for_cse_registration(
+                store, bus_registration, delivery_phase=delivery_phase
+            )
+            bus_live = isinstance(bus_holder, dict) and _holder_is_live(bus_holder)
+        should_emit = (
+            not bus_registration
+            or not bus_live
+            or giw_by_thread_registration is not None
+            or giw_by_thread_error is not None
+        )
+        if (
+            giw_by_thread_registration
+            and bus_registration
+            and giw_by_thread_registration != bus_registration
+        ):
+            should_emit = True
+        if should_emit and chosen_reg:
+            _observe_cse_wake_holder_resolution(
+                thread=thread,
+                sub=sub,
+                chosen_registration=chosen_reg,
+                chosen_source="subscription_agent_id",
+                bus_registration=bus_registration,
+                giw_by_thread_registration=giw_by_thread_registration,
+                giw_by_thread_error=giw_by_thread_error,
+            )
+    return target
+
+
+def resolve_cse_wake_target(
+    store: StoreClient,
+    sub: dict[str, Any],
+    *,
+    wake_thread: str | None = None,
+    delivery_phase: bool = False,
+) -> tuple[str, dict[str, Any]] | None:
+    """Resolve (delivery lane, holder) for a CSE subscription row.
+
+    For thread-scoped CSE subscriptions with ``wake_thread``, candidates are tried
+  in order: bus association registration, GIW by-thread registration id, then
+    ``agent_id``. Each registration is liveness-gated via
+    ``_holder_for_cse_registration``; GIW by-thread failures are contained and fall
+    through. Otherwise ``agent_id`` is either a driving lane thread or a registration
+    id (houseless mailbox threads).
+    """
+    thread = str(wake_thread or "").strip()
+    if thread and _cse_sub_thread_scoped(sub):
+        return _resolve_cse_wake_target_thread_scoped(
+            store, sub, wake_thread=thread, delivery_phase=delivery_phase
+        )
+    return _resolve_cse_wake_target_from_agent_id(
+        store, sub, wake_thread=wake_thread, delivery_phase=delivery_phase
+    )
 
 
 def deliver(

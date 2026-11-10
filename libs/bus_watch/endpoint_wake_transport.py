@@ -200,8 +200,12 @@ class StoreClient:
     def result(self, **payload: Any) -> Any:
         return self._bus("POST", "/endpoint-wake/result", json=payload)
 
-    def holder(self, lane_thread_id: str) -> dict[str, Any] | None:
-        with make_sync_client(self.giw_url, timeout=10.0) as client:
+    def holder(
+        self, lane_thread_id: str, *, timeout: float | None = None
+    ) -> dict[str, Any] | None:
+        """GIW by-thread holder row. Optional ``timeout`` (default 10s) for wake resolution only."""
+        client_timeout = 10.0 if timeout is None else timeout
+        with make_sync_client(self.giw_url, timeout=client_timeout) as client:
             response = client.get(
                 "/api/v1/git/admin/cse-holders",
                 params={"lane_thread_id": lane_thread_id},
