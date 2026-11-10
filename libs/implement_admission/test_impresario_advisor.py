@@ -29,7 +29,7 @@ _TRIGGERED_PACKET = (
 
 
 def test_advisor_wire_is_cdp_fable() -> None:
-    assert advisor_model_wire() == "cdp/fable-5.1"
+    assert advisor_model_wire() == "cdp/fable"
 
 
 def test_advisor_admits_when_unpaused_with_lean_dispatch_line() -> None:

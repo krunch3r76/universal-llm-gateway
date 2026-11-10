@@ -8,6 +8,7 @@ Not a contract token.
 from __future__ import annotations
 
 import re
+from datetime import UTC, datetime
 from typing import Any
 
 from hop_handoff import (
@@ -15,7 +16,7 @@ from hop_handoff import (
     build_continuity_handoff_body,
     parse_successor_birth_id,
 )
-from hop_handoff.body import VALID_HOP_KINDS
+from hop_handoff.body import VALID_HOP_KINDS, responsibility_from_thread_summary
 from job_grammar import resolve_job_token
 from job_vocab.records import job_record
 from mcp_events import record
@@ -302,12 +303,28 @@ async def _hop_dispatch(
         thread_id,
         superseded_registration_id=cse_registration_id,
     )
-    arc_hub = None
+    hop_admitted_at = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+    responsibility: str | None = None
+    thread_row: dict[str, Any] | None = None
     try:
         from agent_bus_store.db.threads import get_thread
-        from hop_handoff.arc_hub import assess_arc_hub, parse_arc_hub_tag
 
         thread_row = get_thread(thread_id)
+        responsibility = responsibility_from_thread_summary(
+            (thread_row or {}).get("summary")
+        )
+    except Exception:  # noqa: BLE001 — admit without responsibility metadata
+        responsibility = None
+
+    arc_hub = None
+    try:
+        from hop_handoff.arc_hub import assess_arc_hub, parse_arc_hub_tag
+
+        if thread_row is None:
+            from agent_bus_store.db.threads import get_thread
+
+            thread_row = get_thread(thread_id)
         lane_tags = list((thread_row or {}).get("tags") or [])
         arc_hub = assess_arc_hub(parse_arc_hub_tag(lane_tags))
     except Exception:  # noqa: BLE001 — omit arc_hub lines when not computed
@@ -366,6 +383,8 @@ async def _hop_dispatch(
         inflight_rows=inflight_count,
         arc_hub=arc_hub,
         consumption_missing=consumption_missing,
+        hop_admitted_at=hop_admitted_at,
+        responsibility=responsibility,
     )
     # mission_kind=hop arms Stargate hop_own_generate so the caller's own
     # live generate is excluded (a:37182). predecessor_registration_id names

@@ -539,3 +539,40 @@ def test_hop_dispatch_empty_successor_relay_fields() -> None:
     assert succ.get("execution_id") is None
     assert succ.get("registration_id") is None
     assert succ.get("chat_url") is None
+
+
+def test_handoff_body_emits_hop_admitted_at_and_responsibility() -> None:
+    body = build_continuity_handoff_body(
+        thread_id=_THREAD,
+        trigger="stamp",
+        source="agent-bus-hop-verb",
+        handoff=_handoff("current"),
+        hop_admitted_at="2026-01-02T03:04:05Z",
+        responsibility="watch the lane",
+        successor_birth_id="d" * 32,
+    )
+    assert "hop_admitted_at: 2026-01-02T03:04:05Z" in body
+    assert "responsibility: watch the lane" in body
+
+
+def test_responsibility_from_thread_summary_line() -> None:
+    from hop_handoff.body import (
+        parse_hop_admitted_at,
+        parse_responsibility,
+        responsibility_from_thread_summary,
+    )
+
+    summary = "notes\nRESPONSIBILITY: keep continuity\nmore"
+    assert responsibility_from_thread_summary(summary) == "keep continuity"
+    assert responsibility_from_thread_summary(None) is None
+    assert responsibility_from_thread_summary("no marker") is None
+
+    legacy = build_continuity_handoff_body(
+        thread_id=_THREAD,
+        trigger="legacy",
+        source="agent-bus-hop-verb",
+        handoff=_handoff("current"),
+        successor_birth_id="e" * 32,
+    )
+    assert parse_hop_admitted_at(legacy) is None
+    assert parse_responsibility(legacy) is None

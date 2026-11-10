@@ -581,7 +581,7 @@ The gate returns False — verification is NOT independent and must NOT count as
 
 The independence check compares seats at **`(model_identity, effort_rung)`**, not at seat or platform level. Folding is implemented in `check_review_substrate.py`:
 
-- **`model_identity(model)`** — strips substrate prefixes (`cursor/`, `anthropic/`, `openai/`, …), CDP picker aliases (`cdp/fable` ≡ `cursor/claude-fable-5-1`), cloud-proxy effort suffixes, and trailing effort tokens; maps vendor spelling via catalog aliases. Unparseable or unknown catalog ids fold to `"unknown"`.
+- **`model_identity(model)`** — strips substrate prefixes (`cursor/`, `anthropic/`, `openai/`, …), CDP picker aliases (`cdp/fable` ≡ `cursor/claude-fable-5-2` via the shared alias table), cloud-proxy effort suffixes, and trailing effort tokens; maps vendor spelling via catalog aliases. Unparseable or unknown catalog ids fold to `"unknown"`.
 - **`consultant_rung(model, knobs)`** — normalized effort token from explicit effort-like knobs, model-id suffixes, or substrate defaults; `None` when the seat exposes no measurable effort knob.
 - **`ConsultantIdentity(model_identity, rung)`** — the pair used everywhere the gate runs.
 - **`independently_measured(left, right)`** — True when identities differ by `model_identity` OR by `effort_rung` on the same model; False when `"unknown"` appears on either side or either `rung` is `None` (fail-closed).
@@ -590,7 +590,7 @@ The independence check compares seats at **`(model_identity, effort_rung)`**, no
 |---|---|---|
 | `cursor/claude-opus-4-7` (web seat) | `claude-opus-4-7` | e.g. `high` |
 | `cursor/claude-opus-4-7` (cursor seat, same rung) | `claude-opus-4-7` | same → **not independent** vs web author |
-| `cdp/fable@max` vs `cursor/claude-fable-5-1@max` | both `claude-fable-5-1` | same rung → **not independent** (alias fold) |
+| `cdp/fable@max` vs `cursor/claude-fable-5-2@max` | both `claude-fable-5-2` | same rung → **not independent** (alias fold) |
 | `openai/gpt-5.5` vs `openai/gpt-5.1` | different identities | independent |
 | `claude-opus-4-7@high` vs `claude-opus-4-7@low` | same identity | different rung → panel-diverse (R-PANEL), not blind verifier corroboration |
 

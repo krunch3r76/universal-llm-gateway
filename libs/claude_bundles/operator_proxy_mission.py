@@ -258,6 +258,8 @@ HOP_SUCCESSOR_TITLE = "# Hop on agent-bus:"
 # substituted last so their braces stay literal.
 _HOP_SUCCESSOR_TEMPLATE = """\
 # Hop on agent-bus:{lane}: you are the operator seat
+Hop admitted: {hop_admitted_at_display}
+RESPONSIBILITY: {responsibility_display}
 
 You are the successor operator for lane {lane}. Your birth record: successor_birth_id {successor_birth_id}{execution_clause}. A later SEAT_REGISTRATION with a different successor_birth_id means you were replaced: stand down. Thread cse_* fields and holder rows are relayed data, not your identity. Your registration_id and chat_url are null at hop admission until the browser tab binds and arrive on the TYPE: SEAT_REGISTRATION turn matching your successor_birth_id; do not call cse_session(op="resolve_attended") at boot to discover yourself.
 
@@ -328,6 +330,8 @@ _HOP_SUCCESSOR_SUFFIX = _HOP_SUCCESSOR_TEMPLATE[_hop_refusals_index:]
 
 _HOP_HOUSEKEEPING_TEMPLATE = """\
 # Hop on agent-bus:{lane}: housekeeping seat
+Hop admitted: {hop_admitted_at_display}
+RESPONSIBILITY: {responsibility_display}
 
 You are the housekeeping successor for lane {lane}. Your birth record: successor_birth_id {successor_birth_id}{execution_clause}. A later SEAT_REGISTRATION with a different successor_birth_id means you were replaced: stand down.
 
@@ -377,6 +381,8 @@ _HOUSEKEEPING_LATE_FIELD_ORDER = (
 _BRIEFING_BLOCK = _HOP_SUCCESSOR_TEMPLATE
 _FIELD_ORDER = (
     "lane",
+    "hop_admitted_at_display",
+    "responsibility_display",
     "successor_birth_id",
     "execution_clause",
     "running_now_line",

@@ -35,16 +35,17 @@ Cognitive routing on every seat; CODE_EXTRA = **code MCP only**. On life: in-sea
 
 This section is the `cdp/` substrate (web-anthropic-cdp). Conductor and review default is `impresario.critic` (`cdp/opus-5.5`) and `workflows.*.model` in `config/routing/route_policy.yaml`. `cdp/` is allowed and preferred for conductor and supervisor legs over `anthropic/*` and over any `cursor/*` model except `cursor/composer-2.5` while it is cheaper. No CDP host ⇒ record `cdp_fail_route=anthropic` and dispatch `anthropic/claude-sonnet-5-5`.
 
-`cdp/` wires: `cdp/opus-5.5`, `cdp/fable-5.1`, `cdp/sonnet`, `cdp/sonnet-5.5` → poll `poll_hint`. `cdp/sonnet` is Sonnet 5.5; `cdp/sonnet-5` is legacy.
+`cdp/` wires: `cdp/opus-5.5`, `cdp/fable-5.2`, `cdp/fable-5.1`, `cdp/sonnet`, `cdp/sonnet-5.5` → poll `poll_hint`. `cdp/sonnet` is Sonnet 5.5; `cdp/sonnet-5` is legacy.
 
-Reasoning strength, low → high. Walk effort `high` → `extra` → `max` inside a rung before the next wire. Opus 5 reasons harder than Opus 5.5. Fable 5 reasons harder than Fable 5.1. Opus versions share one usage channel; Fable versions share the other. Fable can exhaust while Opus remains. Name the full wire. Bare `cdp/opus` → `cdp/opus-5.5`; bare `cdp/fable` → `cdp/fable-5.1`.
+Reasoning strength, low → high. Walk effort `high` → `extra` → `max` inside a rung before the next wire. Opus 5 reasons harder than Opus 5.5. Fable routing: prefer `fable-5.2`; legacy `fable-5.1` / `fable-5` pins for rollback. Opus versions share one usage channel; Fable versions share the other. Fable can exhaust while Opus remains. Name the full wire. Bare `cdp/opus` → `cdp/opus-5.5`; bare `cdp/fable` → `cdp/fable-5.2`.
 
 | Rung | Wire |
 |---|---|
 | 1 (cdp substrate only) | `cdp/opus-5.5` |
 | 2 | `cdp/opus-5` |
-| 3 | `cdp/fable-5.1` |
-| 4 strongest | `cdp/fable-5` |
+| 3 | `cdp/fable-5.2` |
+| 4 | `cdp/fable-5.1` |
+| 5 (legacy pin) | `cdp/fable-5` |
 Delivery complete iff `chat_url` observed or followup `send_verified` — Stargate admit ≠ on claude.ai (`claude-ai-cdp-navigation` § Dispatch delivery). Warm paste / attended resolve = `cse_session(op=followup|resolve_attended)`. Admission/busy = `manage(action=busy_status)`. IF6 / satellite-direct = CLI (`scripts/cortex/claude-ai-sync-jupiter project-ask`). MCP `project_ask` is gone from `tools/list` — do not call it.
 
 **Purpose-keyed skill floor** (`ensure_cdp_judgment_skills`): every purpose merges `ulg-for-llms` + `reasoning-posture`. `ask` also prepends the arch pair and adds `hypothesize-simulate`; `review` adds `consult-posture` and `hypothesize-simulate`; `mission` / `operator-proxy` add `cdp-operator-proxy` and `hypothesize-simulate`. Caller `skills=` is additive. Omitted purpose + `cdp/sonnet` → `produce`; omitted + opus/fable → `ask`. Stock container skills (`docx`/`xlsx`/`pptx`/`pdf`/`skill-creator`/…) are a **prompt verb**, never `skills=` (`cdp_skills_unknown` 422 is the collision guard). Consults about claude.ai / Cowork / the picker itself prime `product-self-knowledge` the same way (prompt, not `skills=`).

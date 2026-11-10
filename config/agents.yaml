@@ -419,6 +419,7 @@ roles:
       - openai/gpt-5.6-luna
       - openai/gpt-5.5
       - cursor/claude-fable-5-1
+      - cursor/claude-fable-5-2
       - cursor/gpt-5.6-terra
       - cursor/gpt-5.6-sol
       - cursor/gpt-5.6-luna
@@ -456,6 +457,7 @@ roles:
       - anthropic/claude-opus-4-8
       - anthropic/claude-haiku-5-5
       - anthropic/claude-fable-5-1
+      - anthropic/claude-fable-5-2
 
   artisan:
     default_effort: high
