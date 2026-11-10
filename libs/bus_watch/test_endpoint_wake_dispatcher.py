@@ -8252,7 +8252,7 @@ def _rewind_cursor_hw(hw: int) -> None:
         )
 
 
-def test_scan_path1_suppress_unsubscribed_adds_no_ledger_item() -> None:
+def test_scan_path1_suppress_unsubscribed_adds_no_ledger_item(db: None) -> None:
     turn = {
         "id": 99,
         "thread": "path1",
