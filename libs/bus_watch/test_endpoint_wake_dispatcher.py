@@ -3674,15 +3674,90 @@ def test_grok_wildcard_no_composer_retries_pending_without_unsubscribing(
 def test_declared_rule_map_loads_address_rules(db: None) -> None:
     from bus_watch.endpoint_wake_dispatcher import _FALLBACK_WAKE_RULE_IDS
 
-    assert _declared_wake_rule_ids() == _FALLBACK_WAKE_RULE_IDS
-    assert len(_declared_wake_rule_ids()) == 18
-    assert _declared_wake_rule_ids()[1] == "drop_orion_echo"
-    assert _declared_wake_rule_ids()[6] == "wake_by_address"
-    assert _declared_wake_rule_ids()[7] == "wake_by_name"
-    assert _declared_wake_rule_ids()[8] == "refuse_address_mismatch"
-    assert _declared_wake_rule_ids()[13] == "drop_routine_hop_closeout"
-    assert _declared_wake_rule_ids()[12] == "wake_peer_sender"
-    assert _declared_wake_rule_ids()[-1] == "default_suppress"
+    declared = _declared_wake_rule_ids()
+    assert declared == _FALLBACK_WAKE_RULE_IDS
+    assert len(declared) == len(_FALLBACK_WAKE_RULE_IDS)
+    assert declared[1] == "drop_orion_echo"
+    assert declared[6] == "wake_by_address"
+    assert declared[7] == "wake_by_name"
+    assert declared[8] == "refuse_address_mismatch"
+    assert declared[14] == "drop_routine_hop_closeout"
+    assert declared[13] == "wake_peer_sender"
+    assert declared[-1] == "default_suppress"
+
+
+def test_cursor_sdk_closeout_to_non_cursor_cse_wakes_gate() -> None:
+    """Phase 1a: worker CLOSEOUT wakes addressed non-cursor seats when cse=True."""
+    verdict = qualify(
+        {
+            "to_agent": "grok-bot-gc1",
+            "from_agent": "cursor-sdk",
+            "subject": "cursor-sdk CLOSEOUT a1b2c3d4 | giw pointer",
+            "thread": "22794",
+        },
+        cse=True,
+        store=None,
+    )
+    assert verdict.wake is True
+    assert verdict.rule_id == "wake_gate_or_directive"
+
+
+def test_cdp_reply_outside_peer_set_cse_wakes_gate() -> None:
+    verdict = qualify(
+        {
+            "to_agent": "grok-bot-gc1",
+            "from_agent": "external-relay",
+            "subject": "cdp reply — 8fec4c00",
+            "thread": "22794",
+        },
+        cse=True,
+        store=None,
+    )
+    assert verdict.wake is True
+    assert verdict.rule_id == "wake_gate_or_directive"
+
+
+def test_closeout_subject_with_intermediate_token_still_drops() -> None:
+    verdict = qualify(
+        {
+            "to_agent": "grok-bot-gc1",
+            "from_agent": "cursor-sdk",
+            "subject": "cursor-sdk CLOSEOUT a1b2 | admitted leg",
+            "thread": "22794",
+        },
+        cse=True,
+        store=None,
+    )
+    assert verdict.wake is False
+    assert verdict.rule_id == "drop_dispatch_intermediate"
+
+
+def test_routine_conductor_hop_closeout_still_drops() -> None:
+    verdict = qualify(
+        {
+            "to_agent": "grok-bot-gc1",
+            "from_agent": "cursor-sdk",
+            "subject": (
+                "cursor-sdk CLOSEOUT 2d1f2c04d3ff-15c30a1d "
+                "contract=conductor caller=conductor-hop"
+            ),
+            "thread": "22794",
+        },
+        cse=True,
+        store=None,
+    )
+    assert verdict.wake is False
+    assert verdict.rule_id == "drop_routine_hop_closeout"
+
+
+def test_quiet_with_work_in_flight_cse_matches_non_cse_qualify() -> None:
+    turn = {
+        "to_agent": "git-integration-worker",
+        "from_agent": "dispatch",
+        "subject": "Quiet with work in flight",
+        "thread": "19510",
+    }
+    assert qualify(turn, cse=True, store=None) == qualify(turn, cse=False, store=None)
 
 
 def test_qualify_matches_legacy_over_qualification_matrix(db: None) -> None:
@@ -4114,8 +4189,8 @@ def test_closeout_without_lane_holder_falls_back_to_alias_names() -> None:
         cse=True,
         store=store,  # type: ignore[arg-type]
     )
-    assert outsider.wake is False
-    assert outsider.rule_id == "default_suppress"
+    assert outsider.wake is True
+    assert outsider.rule_id == "wake_gate_or_directive"
     cursor = qualify(
         _specimen_turn(to_agent="cursor"),
         cse=False,

@@ -813,7 +813,7 @@ def subject_allowed(
         if agent == "cursor" and _CURSOR_GATE_WAKE_RE.search(text):
             return True
         return False
-    if _CURSOR_GATE_WAKE_RE.search(text) and (agent == "cursor" or not cse):
+    if _CURSOR_GATE_WAKE_RE.search(text):
         return True
     if text.startswith("TYPE: DIRECTIVE"):
         return True
@@ -958,7 +958,7 @@ def _subject_allowed_rule_id(
         if agent == "cursor" and _CURSOR_GATE_WAKE_RE.search(text):
             return "wake_gate_or_directive"
         return None
-    if _CURSOR_GATE_WAKE_RE.search(text) and (agent == "cursor" or not cse):
+    if _CURSOR_GATE_WAKE_RE.search(text):
         return "wake_gate_or_directive"
     if text.startswith("TYPE: DIRECTIVE"):
         return "wake_gate_or_directive"
