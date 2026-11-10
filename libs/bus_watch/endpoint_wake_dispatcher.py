@@ -1813,12 +1813,12 @@ def scan_once(store: StoreClient, *, idle_mark: dict[str, float] | None = None) 
     import time
 
     expire_overdue_hops(store)
+    clear_cse_wake_thread_holder_memo(store)
     _promote_scan_holder_skips_safe(store)
     mark = idle_mark if idle_mark is not None else {}
     max_passes = 20
     for _pass in range(max_passes):
         clear_houseless_resolve_memo()
-        clear_cse_wake_thread_holder_memo(store)
         cursor = store.cursor()
         high = int(cursor["high_water_turn_id"])
         turns = store.since(high)

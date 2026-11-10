@@ -8238,6 +8238,50 @@ def test_cse_wake_thread_holder_memo_one_bus_and_giw_per_pass(
     assert giw_reads == [thread]
 
 
+def test_cse_wake_thread_holder_bus_no_route_falls_through_to_giw(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from cdp_ask.houseless_resolve import HouselessResolution
+
+    from bus_watch.endpoint_wake_dispatcher import resolve_cse_wake_target
+
+    bus_reg = "bus583b411df34247f9a48bc044b6518be3"
+    giw_reg = "giw583b411df34247f9a48bc044b6518be4"
+    thread = "22760"
+    sub = _thread_scoped_cse_sub(bus_reg, thread)
+    monkeypatch.setattr(
+        "bus_watch.endpoint_wake_dispatcher._local_bus_cse_registration",
+        lambda _t: bus_reg,
+    )
+    monkeypatch.setattr(
+        "bus_watch.endpoint_wake_dispatcher.resolve_houseless_target",
+        lambda reg, **_: (
+            HouselessResolution(ok=False, reason="no_row")
+            if reg == bus_reg
+            else HouselessResolution(ok=False, reason="purpose_not_houseless")
+        ),
+    )
+
+    class Store:
+        def holder(self, lane_thread_id: str, **kwargs: object) -> dict[str, Any]:
+            return _driving_holder(giw_reg)
+
+        def holder_by_registration(self, registration_id: str) -> dict[str, Any] | None:
+            if registration_id == giw_reg:
+                return _driving_holder(giw_reg)
+            return None
+
+    for delivery_phase in (False, True):
+        target = resolve_cse_wake_target(
+            Store(),
+            sub,
+            wake_thread=thread,
+            delivery_phase=delivery_phase,  # type: ignore[arg-type]
+        )
+        assert target is not None
+        assert target[1]["registration_id"] == giw_reg
+
+
 def test_cse_wake_thread_holder_fire_bus_released_giw_live(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
