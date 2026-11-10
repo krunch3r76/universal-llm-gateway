@@ -444,3 +444,36 @@ def test_get_cursor_cold_start_seeds_max_turn_id(
         conn.execute("DELETE FROM endpoint_wake_cursor")
     cursor = get_cursor()
     assert int(cursor["high_water_turn_id"]) == turn_id
+
+
+def test_isolation_keeps_agent_bus_emit_in_process_without_sender_thread(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Under the autouse isolation a wired emit is captured and no sender thread exists."""
+    import json
+
+    from agent_bus_store.events import publisher
+    from agent_bus_store.server import wire_bus_watch_event_publisher
+    from bus_watch.endpoint_wake_pass_timing import (
+        begin_pass,
+        end_phase,
+        reset_pass_timing_for_tests,
+        safe_emit_pass_duration,
+    )
+
+    assert publisher._publisher is not None
+    assert publisher._publisher._thread is None
+    assert publisher._publisher._sock_path != "/tmp/universal-protocol/events.sock"
+    queued: list[dict[str, object]] = []
+
+    def _capture_put(self: object, line: str) -> None:
+        queued.append(json.loads(line.strip()))
+
+    monkeypatch.setattr(publisher._UDSPublisher, "put_nowait", _capture_put)
+    wire_bus_watch_event_publisher()
+    reset_pass_timing_for_tests()
+    begin_pass()
+    end_phase("scan_once")
+    safe_emit_pass_duration()
+    signals = [str(e.get("signal")) for e in queued]
+    assert "endpoint_wake.pass_duration" in signals

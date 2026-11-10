@@ -3,10 +3,35 @@
 from __future__ import annotations
 
 import os
+import tempfile
 from pathlib import Path
 from typing import Any
 
 import pytest
+
+_PIN_ENV = "PYTEST_EVENTS_INGEST_SOCK_PIN"
+
+
+def _pin_events_ingest_sock_off_live() -> None:
+    """Point ``EVENTS_INGEST_SOCK`` at a fresh tmp path before agent_bus_store imports.
+
+    ``agent_bus_store.events.publisher`` and ``mcp_events`` read the variable at
+    import time and start a sender thread that connects at once. pytest loads
+    this conftest before any ``libs/bus_watch`` test module, and this module
+    imports agent_bus_store only inside fixtures, so the pin is in place first.
+    The same pin lives in ``libs/agent_bus_store/conftest.py``; a second call is
+    a no-op.
+    """
+    pinned = os.environ.get(_PIN_ENV)
+    if pinned and os.environ.get("EVENTS_INGEST_SOCK") == pinned:
+        return
+    pin_dir = tempfile.mkdtemp(prefix="pytest-events-ingest-")
+    pinned = os.path.join(pin_dir, "events.sock")
+    os.environ[_PIN_ENV] = pinned
+    os.environ["EVENTS_INGEST_SOCK"] = pinned
+
+
+_pin_events_ingest_sock_off_live()
 
 _CURSOR_GUI_HOST_ENV_KEYS = (
     "VSCODE_AGENT_FOLDER",

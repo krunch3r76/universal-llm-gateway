@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import os
 import pwd
+import queue
 import sqlite3
+import sys
 import tempfile
 from datetime import UTC, datetime
 from pathlib import Path
@@ -162,28 +164,66 @@ def isolate_agent_bus_db_for_pytest(
     return db_path
 
 
+def _inert_uds_publisher(publisher_cls: type, sock_path: str, maxsize: int) -> Any:
+    """Build ``publisher_cls`` without starting its sender thread.
+
+    ``emit()`` still reaches ``publisher_cls.put_nowait``, so a test that patches
+    that method sees every line in-process. Unpatched lines wait in a queue that
+    no thread drains, so nothing is sent to any socket.
+    """
+    inert = publisher_cls.__new__(publisher_cls)
+    inert._sock_path = sock_path
+    inert._q = queue.Queue(maxsize=maxsize)
+    inert._thread = None
+    return inert
+
+
 def isolate_endpoint_wake_event_emit_for_pytest(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
-    """Keep endpoint_wake pass-duration observations off the live event ingest socket."""
-    noop_sock = tmp_path / "pytest-events-ingest.sock"
-    monkeypatch.setenv("MCP_EVENTS_ENABLED", "0")
-    monkeypatch.setenv("EVENTS_INGEST_SOCK", str(noop_sock))
+    """Cut event emits off the live ingest socket at the transport; keep them observable.
 
-    def _noop_record(*_a: object, **_k: object) -> None:
-        return None
+    - ``agent_bus_store.events.publisher._publisher`` becomes an inert
+      ``_UDSPublisher`` with no sender thread. The emit that
+      ``wire_bus_watch_event_publisher()`` registers (server.py lifespan) lands
+      here, so a test that patches ``_UDSPublisher.put_nowait`` still sees it.
+    - ``bus_watch.events._uds_publisher`` is cleared for each test; a test may
+      register its own publisher or call ``wire_bus_watch_event_publisher()``.
+    - ``bus_watch.events.record`` is left alone, so emits still reach whatever
+      publisher the test installed.
+    - ``mcp_events._publisher`` is set to None when mcp_events is already
+      imported; ``MCP_EVENTS_ENABLED=0`` makes a later import build none.
+    - ``EVENTS_INGEST_SOCK`` points under ``tmp_path`` for readers that look it
+      up at call time. Readers that look it up at import time are covered by the
+      module-level pin in ``libs/agent_bus_store/conftest.py`` and
+      ``libs/bus_watch/conftest.py``.
+    """
+    sock = str(tmp_path / "pytest-events-ingest.sock")
+    monkeypatch.setenv("MCP_EVENTS_ENABLED", "0")
+    monkeypatch.setenv("EVENTS_INGEST_SOCK", sock)
+
+    from agent_bus_store.events import publisher as abs_publisher
+
+    monkeypatch.setattr(abs_publisher, "_EVENTS_SOCK", sock)
+    monkeypatch.setattr(
+        abs_publisher,
+        "_publisher",
+        _inert_uds_publisher(
+            abs_publisher._UDSPublisher, sock, abs_publisher._QUEUE_MAX
+        ),
+    )
 
     try:
         import bus_watch.events as bw_events
-
-        from agent_bus_store.events import publisher as abs_publisher
-
-        monkeypatch.setattr(bw_events, "record", _noop_record)
-        monkeypatch.setattr(bw_events, "_uds_publisher", None)
-        monkeypatch.setattr(abs_publisher, "_publisher", None)
     except ImportError:
-        pass
+        bw_events = None
+    if bw_events is not None:
+        monkeypatch.setattr(bw_events, "_uds_publisher", None)
+
+    mcp_events = sys.modules.get("mcp_events")
+    if mcp_events is not None and hasattr(mcp_events, "_publisher"):
+        monkeypatch.setattr(mcp_events, "_publisher", None)
 
 
 def _import_mcp_events_module():
