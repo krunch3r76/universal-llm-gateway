@@ -3750,14 +3750,29 @@ def test_routine_conductor_hop_closeout_still_drops() -> None:
     assert verdict.rule_id == "drop_routine_hop_closeout"
 
 
-def test_quiet_with_work_in_flight_cse_matches_non_cse_qualify() -> None:
-    turn = {
-        "to_agent": "git-integration-worker",
-        "from_agent": "dispatch",
-        "subject": "Quiet with work in flight",
-        "thread": "19510",
-    }
-    assert qualify(turn, cse=True, store=None) == qualify(turn, cse=False, store=None)
+@pytest.mark.parametrize(
+    "subject",
+    (
+        "Quiet with work in flight",
+        "PARKED | lane 22794",
+        "HOLD_MERGE | lane 22794",
+        "OPERATOR_GATE | lane 22794",
+    ),
+)
+def test_non_closeout_gate_subjects_cse_random_seat_suppressed(subject: str) -> None:
+    """CSE Cowork seats must not wake on non-CLOSEOUT gate vocabulary."""
+    verdict = qualify(
+        {
+            "to_agent": "random-seat",
+            "from_agent": "dispatch",
+            "subject": subject,
+            "thread": "22794",
+        },
+        cse=True,
+        store=None,
+    )
+    assert verdict.wake is False
+    assert verdict.rule_id == "default_suppress"
 
 
 def test_qualify_matches_legacy_over_qualification_matrix(db: None) -> None:

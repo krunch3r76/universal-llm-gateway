@@ -201,6 +201,10 @@ _CURSOR_GATE_WAKE_RE = re.compile(
     r"cdp (?:reply|FAILED|UNVERIFIED|DELIVERY FAILED)\b|"
     r"Quiet with work in flight)"
 )
+# Worker CLOSEOUT and CDP reply/ failure heads wake the addressed seat on CSE and Grok alike.
+_GATE_WAKE_ALL_PLATFORMS_RE = re.compile(
+    r"(?i)(?:CLOSEOUT|cdp (?:reply|FAILED|UNVERIFIED|DELIVERY FAILED)\b)"
+)
 _ROUTINE_DISPATCH_FROM = frozenset({"cursor-sdk", "conductor-hop", "dispatch"})
 _GATE_WAKE_REMAP_ADDRESSES = frozenset(
     {"dispatch", "conductor-hop", "git-integration-worker", "frontier-admit"}
@@ -813,7 +817,9 @@ def subject_allowed(
         if agent == "cursor" and _CURSOR_GATE_WAKE_RE.search(text):
             return True
         return False
-    if _CURSOR_GATE_WAKE_RE.search(text):
+    if _CURSOR_GATE_WAKE_RE.search(text) and (
+        agent == "cursor" or not cse or _GATE_WAKE_ALL_PLATFORMS_RE.search(text)
+    ):
         return True
     if text.startswith("TYPE: DIRECTIVE"):
         return True
@@ -958,7 +964,9 @@ def _subject_allowed_rule_id(
         if agent == "cursor" and _CURSOR_GATE_WAKE_RE.search(text):
             return "wake_gate_or_directive"
         return None
-    if _CURSOR_GATE_WAKE_RE.search(text):
+    if _CURSOR_GATE_WAKE_RE.search(text) and (
+        agent == "cursor" or not cse or _GATE_WAKE_ALL_PLATFORMS_RE.search(text)
+    ):
         return "wake_gate_or_directive"
     if text.startswith("TYPE: DIRECTIVE"):
         return "wake_gate_or_directive"
