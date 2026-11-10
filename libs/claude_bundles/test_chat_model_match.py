@@ -53,8 +53,9 @@ def test_normalize_picker_request_strips_cdp_prefix() -> None:
     assert normalize_picker_request("opus") == "opus-5.5"
     assert normalize_picker_request("cdp/fable-5") == "fable-5"
     assert normalize_picker_request("cdp/fable-5.1") == "fable-5.1"
-    assert normalize_picker_request("cdp/fable") == "fable-5.1"
-    assert normalize_picker_request("fable") == "fable-5.1"
+    assert normalize_picker_request("cdp/fable-5.2") == "fable-5.2"
+    assert normalize_picker_request("cdp/fable") == "fable-5.2"
+    assert normalize_picker_request("fable") == "fable-5.2"
     assert normalize_picker_request("opus-5") == "opus-5"
     assert normalize_picker_request("cdp/sonnet") == "sonnet-5.5"
     assert normalize_picker_request("cdp/sonnet5") == "sonnet-5.5"
@@ -77,7 +78,8 @@ def test_normalize_picker_request_strips_cdp_prefix() -> None:
         ("cdp/opus-5", None, "cdp/opus-5"),
         ("cdp/opus-5", "", "cdp/opus-5"),
         ("cdp/opus-5-max", "high", "cdp/opus-5-max"),
-        ("cdp/fable", "max", "cdp/fable-5.1-max"),
+        ("cdp/fable", "max", "cdp/fable-5.2-max"),
+        ("cdp/fable-5.2", "medium", "cdp/fable-5.2-medium"),
         ("cdp/fable-5", "max", "cdp/fable-5-max"),
         ("cdp/fable-5.1", "max", "cdp/fable-5.1-max"),
         ("cdp/fable-5.1", "low", "cdp/fable-5.1-low"),

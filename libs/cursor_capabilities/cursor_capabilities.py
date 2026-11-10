@@ -340,6 +340,23 @@ CURSOR_MODEL_CAPABILITIES: Final[dict[str, ModelCapability]] = {
         # Live ListModels probe 2026-10-03.
         probed_at="2026-10-03",
     ),
+    # Fable 5.2 (Anthropic launch 2026-11-09). Cursor pool/price unlisted; rate
+    # row mirrors API (8/40/0.20). Card is for provenance fold + explicit pins
+    # under cursor_sdk_other_models_pool deny.
+    "claude-fable-5-2": ModelCapability(
+        knobs={
+            "thinking": KnobSpec(accepted=("false", "true"), default="true"),
+            "context": KnobSpec(accepted=("300k", "1m"), default="1m"),
+            "effort": KnobSpec(accepted=_FULL_EFFORT),
+        },
+        default_variant={
+            "thinking": "true",
+            "context": "1m",
+            "effort": "high",
+        },
+        instruction_profile="reasoner",
+        probed_at="2026-11-10",
+    ),
     # Routed-but-untrusted consult models (team_dispatch reviewer/skeptic/cheap-recon
     # targets) promoted into the trusted dispatch allowlist. Allowlist = trust/route
     # boundary, not a catalog mirror — narrow set wins on reversibility + trust hygiene
@@ -531,6 +548,7 @@ CARD_TO_LIVE_MODEL_ID: Final[dict[str, str]] = {"auto": "default"}
 # Spelling aliases → CURSOR_MODEL_CAPABILITIES keys. Applied after cursor/
 # strip + lowercase. Hyphen and dotted vendor slugs both fold.
 CURSOR_BARE_ALIASES: Final[dict[str, str]] = {
+    "fable-5.2": "claude-fable-5-2",
     "fable-5.1": "claude-fable-5-1",
     "fable-5": "claude-fable-5",
     "opus-5": "claude-opus-5",

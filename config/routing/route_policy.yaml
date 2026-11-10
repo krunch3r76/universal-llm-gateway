@@ -57,7 +57,7 @@ impresario:
     skeptic: {}
     review: {}
   advisor:
-    model: cdp/fable-5.1
+    model: cdp/fable
     effort: high
     paused: false
     role_sentence: >-
@@ -71,9 +71,11 @@ impresario:
     - anthropic/claude-sonnet-5-5
     - anthropic/claude-opus-5-5
     - anthropic/claude-fable-5-1
+    - anthropic/claude-fable-5-2
     - cdp/opus-5.5
     - cdp/opus-5.1
     - cdp/opus-5
+    - cdp/fable-5.2
     - cdp/fable-5.1
     - cdp/fable-5
     - cursor/muse-wonder-1.0

@@ -167,7 +167,7 @@ def test_advisor_wire_is_cdp_not_cursor_sdk_admitted() -> None:
     from cursor_capabilities import is_cursor_sdk_model_admitted
 
     wire = advisor_model_wire()
-    assert wire == "cdp/fable-5.1"
+    assert wire == "cdp/fable"
     assert is_cursor_sdk_model_admitted(wire) is False
     assert is_cursor_sdk_model_admitted(wire, explicit_pin=True) is False
 

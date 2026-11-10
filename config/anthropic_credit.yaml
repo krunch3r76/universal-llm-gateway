@@ -30,7 +30,8 @@ metered_models:
   - anthropic/claude-haiku-5-5
   - anthropic/claude-opus-5-5
   - anthropic/claude-fable-5-1
+  - anthropic/claude-fable-5-2
   - anthropic/claude-fable-5
 standard_models: [anthropic/claude-sonnet-5-5, anthropic/claude-haiku-5-5]   # filled by leg B
-high_cost_models: [anthropic/claude-opus-5-5, anthropic/claude-fable-5-1, anthropic/claude-fable-5]   # still need deliberate_high_cost
+high_cost_models: [anthropic/claude-opus-5-5, anthropic/claude-fable-5-1, anthropic/claude-fable-5-2, anthropic/claude-fable-5]   # still need deliberate_high_cost
 fail_mode: closed
