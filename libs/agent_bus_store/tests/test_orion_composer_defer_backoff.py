@@ -1,21 +1,22 @@
 """Orion composer-defer bounded backoff uses wake_next_attempt_at (migration_026)."""
 
 from __future__ import annotations
-from agent_bus_store.testing.wake_cursor_test_support import rewind_wake_cursor_for_test
 
 import json
 
-import pytest
 import agent_bus_store.db.endpoint_wake_ledger as _ewl_mod
+import pytest
 from agent_bus_store.db import create_thread, init_db, insert_turn
 from agent_bus_store.db.connection import connect, write_connect
-from agent_bus_store.db.endpoint_wake_ledger import (CONSUMER, 
+from agent_bus_store.db.endpoint_wake_ledger import (
+    CONSUMER,
     ORION_COMPOSER_DEFER_MAX_ATTEMPTS,
     advance_scan,
     claim_due_wakes,
     get_cursor,
     record_wake_result,
 )
+from agent_bus_store.testing.wake_cursor_test_support import rewind_wake_cursor_for_test
 from bus_watch.endpoint_wake_composer_defer import COMPOSER_DEFER_ARMED
 
 pytestmark = pytest.mark.offline

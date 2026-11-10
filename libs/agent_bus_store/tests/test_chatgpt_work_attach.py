@@ -1,7 +1,6 @@
 """Production attach_instance_wake_head and POST /endpoint-subscriptions chatgpt_work."""
 
 from __future__ import annotations
-from agent_bus_store.testing.wake_cursor_test_support import rewind_wake_cursor_for_test
 
 import threading
 
@@ -15,7 +14,8 @@ from agent_bus_store.db.endpoint_subscriptions import (
     insert_chatgpt_work_row_for_test,
     insert_main_wake_row_for_test,
 )
-from agent_bus_store.db.endpoint_wake_ledger import (CONSUMER, 
+from agent_bus_store.db.endpoint_wake_ledger import (
+    CONSUMER,
     advance_scan,
     claim_due_wakes,
     get_cursor,
@@ -27,6 +27,7 @@ from agent_bus_store.db.orion_wake_owner_adapter import (
     shared_wake_delivery_owner,
 )
 from agent_bus_store.server import create_app
+from agent_bus_store.testing.wake_cursor_test_support import rewind_wake_cursor_for_test
 from bus_watch.endpoint_wake_dispatcher import _chatgpt_work_route, resolve_target
 from fastapi.testclient import TestClient
 from web_chat_relay.orion_wake import PINNED_CONVERSATION_URL

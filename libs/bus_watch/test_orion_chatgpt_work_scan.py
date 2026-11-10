@@ -1,13 +1,13 @@
 """Real scan_once path for Orion chatgpt_work coordinator wakes."""
 
 from __future__ import annotations
-from agent_bus_store.testing.wake_cursor_test_support import rewind_wake_cursor_for_test
 
 import pytest
 from agent_bus_store.db import create_thread, init_db, insert_turn
 from agent_bus_store.db.connection import connect
 from agent_bus_store.db.endpoint_subscriptions import insert_chatgpt_work_row_for_test
 from agent_bus_store.db.endpoint_wake_ledger import CONSUMER, advance_scan, get_cursor
+from agent_bus_store.testing.wake_cursor_test_support import rewind_wake_cursor_for_test
 
 from bus_watch.endpoint_wake_dispatcher import qualify, scan_once
 from bus_watch.endpoint_wake_transport import classify_orion

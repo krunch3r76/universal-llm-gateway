@@ -1,7 +1,6 @@
 """Dispatcher allowlist, debounce, retry, lifespan, and outcome table."""
 
 from __future__ import annotations
-from agent_bus_store.testing.wake_cursor_test_support import rewind_wake_cursor_for_test
 
 import asyncio
 from typing import Any
@@ -10,13 +9,15 @@ import httpx
 import pytest
 from agent_bus_store.db import create_thread, init_db, insert_turn
 from agent_bus_store.db.connection import connect
-from agent_bus_store.db.endpoint_wake_ledger import (CONSUMER, 
+from agent_bus_store.db.endpoint_wake_ledger import (
+    CONSUMER,
     advance_scan,
     claim_due_wakes,
     get_cursor,
     record_wake_result,
 )
 from agent_bus_store.server import create_app
+from agent_bus_store.testing.wake_cursor_test_support import rewind_wake_cursor_for_test
 from background_supervisor import supervise
 
 from bus_watch.endpoint_wake_dispatcher import (
@@ -8717,10 +8718,10 @@ def _three_pass_path_setup(
     slug: str,
 ) -> tuple[str, int, dict]:
     """Return thread, turn_id, and path-local knobs for passes 1–3."""
+    from datetime import UTC, datetime
+
     from agent_bus_store.db.connection import write_connect
     from agent_bus_store.db.endpoint_subscriptions import subscribe_endpoint
-
-    from datetime import UTC, datetime
 
     fixed_now = datetime(2033, 6, 1, 12, 0, 0, tzinfo=UTC).timestamp()
 
@@ -8803,7 +8804,6 @@ def _three_pass_path_setup(
 
 def _three_pass_apply_pass2_db(path: int, turn_id: int, cfg: dict) -> None:
     from agent_bus_store.db.connection import write_connect
-    from agent_bus_store.db.endpoint_subscriptions import subscribe_endpoint
 
     if path == 2:
         with write_connect() as conn:

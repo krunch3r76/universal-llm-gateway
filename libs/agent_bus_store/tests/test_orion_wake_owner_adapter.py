@@ -1,12 +1,12 @@
 """Offline tests for shared_wake_delivery_owner (20995 ledger owner API)."""
 
 from __future__ import annotations
-from agent_bus_store.testing.wake_cursor_test_support import rewind_wake_cursor_for_test
 
 import pytest
 from agent_bus_store.db import create_thread, init_db, insert_turn
 from agent_bus_store.db.connection import connect, write_connect
-from agent_bus_store.db.endpoint_wake_ledger import (CONSUMER, 
+from agent_bus_store.db.endpoint_wake_ledger import (
+    CONSUMER,
     _latest_orion_seat_registration_on_thread,
     advance_scan,
     claim_due_wakes,
@@ -17,6 +17,7 @@ from agent_bus_store.db.orion_wake_owner_adapter import (
     WakeClaimContext,
     shared_wake_delivery_owner,
 )
+from agent_bus_store.testing.wake_cursor_test_support import rewind_wake_cursor_for_test
 from bus_watch.endpoint_wake_dispatcher import _orion_synthetic_route, resolve_target
 from web_chat_relay.orion_wake import (
     PINNED_CONVERSATION_ID,

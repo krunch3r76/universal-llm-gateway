@@ -1,7 +1,6 @@
 """Dispatcher chatgpt_work route uses explicit conversation URL."""
 
 from __future__ import annotations
-from agent_bus_store.testing.wake_cursor_test_support import rewind_wake_cursor_for_test
 
 from unittest.mock import patch
 
@@ -9,11 +8,13 @@ import pytest
 from agent_bus_store.db import create_thread, init_db, insert_turn
 from agent_bus_store.db.connection import connect
 from agent_bus_store.db.endpoint_subscriptions import insert_chatgpt_work_row_for_test
-from agent_bus_store.db.endpoint_wake_ledger import (CONSUMER, 
+from agent_bus_store.db.endpoint_wake_ledger import (
+    CONSUMER,
     advance_scan,
     get_cursor,
     resolve_orion_chat_wake,
 )
+from agent_bus_store.testing.wake_cursor_test_support import rewind_wake_cursor_for_test
 from bus_watch.endpoint_wake_dispatcher import (
     _chatgpt_work_route,
     resolve_target,

@@ -1,14 +1,14 @@
 """Operator observability ledger — producer 1/2 owed_wake behavior."""
 
 from __future__ import annotations
-from agent_bus_store.testing.wake_cursor_test_support import rewind_wake_cursor_for_test
 
 from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
-
 from agent_bus_store.db.endpoint_wake_ledger import CONSUMER
+from agent_bus_store.testing.wake_cursor_test_support import rewind_wake_cursor_for_test
+
 from scripts.model_manager.ui.controller import owed_wake_ledger as owed_wake_mod
 from scripts.model_manager.ui.controller.owed_wake_ledger import (
     OwedWakeDeps,
@@ -999,7 +999,8 @@ def test_cross_path_order_a_owed_dispatch_then_endpoint_claim_skips(
     """Pending ledger row must not block owed dispatch; claim dedupes after owed delivered."""
     from agent_bus_store.db import create_thread, init_db, insert_turn
     from agent_bus_store.db.connection import connect
-    from agent_bus_store.db.endpoint_wake_ledger import (CONSUMER, 
+    from agent_bus_store.db.endpoint_wake_ledger import (
+        CONSUMER,
         advance_scan,
         claim_due_wakes,
         get_cursor,

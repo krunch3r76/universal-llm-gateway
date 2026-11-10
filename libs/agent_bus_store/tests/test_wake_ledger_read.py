@@ -1,7 +1,6 @@
 """GET /endpoint-wake/ledger — read-only wake ledger for agent_bus_read."""
 
 from __future__ import annotations
-from agent_bus_store.testing.wake_cursor_test_support import rewind_wake_cursor_for_test
 
 import pytest
 from agent_bus_store.auth import require_token
@@ -9,6 +8,7 @@ from agent_bus_store.db import create_thread, init_db, insert_turn
 from agent_bus_store.db.connection import connect
 from agent_bus_store.db.endpoint_wake_ledger import CONSUMER, advance_scan, get_cursor
 from agent_bus_store.server import create_app
+from agent_bus_store.testing.wake_cursor_test_support import rewind_wake_cursor_for_test
 from fastapi.testclient import TestClient
 
 

@@ -6,6 +6,7 @@ from .wake_cursor_test_support import (
     refuse_live_agent_bus_db_under_pytest,
     rewind_wake_cursor_for_test,
     set_pytest_tmp_roots,
+    track_uds_put_nowait,
 )
 
 __all__ = [
@@ -14,4 +15,5 @@ __all__ = [
     "refuse_live_agent_bus_db_under_pytest",
     "rewind_wake_cursor_for_test",
     "set_pytest_tmp_roots",
+    "track_uds_put_nowait",
 ]

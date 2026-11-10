@@ -1,18 +1,19 @@
 """HTTP tests for GET /turns/unread-toc (recipient-scoped unread digest)."""
 
 from __future__ import annotations
-from agent_bus_store.testing.wake_cursor_test_support import rewind_wake_cursor_for_test
 
 from fastapi.testclient import TestClient
 
 from agent_bus_store import create_app
 from agent_bus_store.auth import require_token
 from agent_bus_store.db.connection import connect
-from agent_bus_store.db.endpoint_wake_ledger import (CONSUMER, 
+from agent_bus_store.db.endpoint_wake_ledger import (
+    CONSUMER,
     advance_scan,
     claim_due_wakes,
     get_cursor,
 )
+from agent_bus_store.testing.wake_cursor_test_support import rewind_wake_cursor_for_test
 
 
 def _app(tmp_path):

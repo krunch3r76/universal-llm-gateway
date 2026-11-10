@@ -1,7 +1,6 @@
 """Scan-time self-wake guard and suppression tombstones (friction:43076)."""
 
 from __future__ import annotations
-from agent_bus_store.testing.wake_cursor_test_support import rewind_wake_cursor_for_test
 
 from datetime import UTC, datetime, timedelta
 
@@ -14,6 +13,7 @@ from agent_bus_store.db.endpoint_subscriptions import (
     subscribe_endpoint,
 )
 from agent_bus_store.db.endpoint_wake_ledger import CONSUMER, advance_scan, get_cursor
+from agent_bus_store.testing.wake_cursor_test_support import rewind_wake_cursor_for_test
 from bus_watch.endpoint_wake_dispatcher import scan_once
 
 TAB = "21060be7-f0a6-4fa1-9058-b117ce4fc526"

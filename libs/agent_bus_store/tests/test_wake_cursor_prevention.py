@@ -4,31 +4,33 @@ from __future__ import annotations
 
 import sqlite3
 from pathlib import Path
-from unittest.mock import patch
 
 import pytest
 from agent_bus_store.db import create_thread, init_db, insert_turn
 from agent_bus_store.db.connection import connect, write_connect
 from agent_bus_store.db.endpoint_wake_ledger import CONSUMER, advance_scan, get_cursor
 from agent_bus_store.testing.wake_cursor_test_support import (
+    isolate_endpoint_wake_event_emit_for_pytest,
     refuse_live_agent_bus_db_under_pytest,
     rewind_wake_cursor_for_test,
     set_pytest_tmp_roots,
+    track_uds_put_nowait,
 )
 
 
-def test_migration_030_installs_no_rewind_trigger(tmp_path: Path) -> None:
-    db_path = tmp_path / "m030.db"
-    import os
-
-    os.environ["AGENT_BUS_DB_PATH"] = str(db_path)
+def test_migration_030_installs_no_rewind_trigger(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("AGENT_BUS_DB_PATH", str(tmp_path / "m030.db"))
     init_db()
     with connect() as conn:
-        row = conn.execute(
-            "SELECT name FROM sqlite_master WHERE type='trigger' AND name=?",
-            ("endpoint_wake_cursor_no_rewind",),
-        ).fetchone()
-    assert row is not None
+        rows = conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='trigger' AND name LIKE ?",
+            ("endpoint_wake_cursor_no_rewind%",),
+        ).fetchall()
+    names = {r[0] for r in rows}
+    assert "endpoint_wake_cursor_no_rewind" in names
+    assert "endpoint_wake_cursor_no_rewind_insert" in names
 
 
 def test_backward_high_water_update_refused(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -130,19 +132,39 @@ def test_advance_scan_still_advances(tmp_path: Path, monkeypatch: pytest.MonkeyP
     assert int(cursor["high_water_turn_id"]) == turn_id
 
 
-def test_rewind_helper_refuses_db_outside_pytest_tmp(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    outside = tmp_path.parent / "outside-wake.db"
+def test_rewind_helper_allows_pytest_tmp_without_explicit_roots(tmp_path: Path) -> None:
+    db_path = tmp_path / "rewrite.db"
+    conn = sqlite3.connect(db_path)
+    conn.executescript(
+        "CREATE TABLE endpoint_wake_cursor "
+        "(consumer TEXT PRIMARY KEY, high_water_turn_id INTEGER, updated_at TEXT)"
+    )
+    rewind_wake_cursor_for_test(conn, CONSUMER, to=0)
+    hw = conn.execute(
+        "SELECT high_water_turn_id FROM endpoint_wake_cursor WHERE consumer=?",
+        (CONSUMER,),
+    ).fetchone()[0]
+    assert int(hw) == 0
+    conn.close()
+
+
+def test_rewind_helper_refuses_home_path(tmp_path: Path) -> None:
+    home_io = Path("/home/io")
+    outside = (
+        home_io / "wake-rewind-guard-scratch.db"
+        if home_io.is_dir()
+        else Path("/var/tmp") / "agent-bus-rewind-guard-outside.db"
+    )
     conn = sqlite3.connect(outside)
     conn.executescript(
         "CREATE TABLE endpoint_wake_cursor "
         "(consumer TEXT PRIMARY KEY, high_water_turn_id INTEGER, updated_at TEXT)"
     )
-    set_pytest_tmp_roots(tmp_path / "allowed-only")
+    set_pytest_tmp_roots(tmp_path / "only-this-subdir")
     with pytest.raises(RuntimeError, match="refuses DB outside pytest tmp"):
         rewind_wake_cursor_for_test(conn, CONSUMER, to=0)
     conn.close()
+    outside.unlink(missing_ok=True)
 
 
 def test_refuse_live_agent_bus_path_under_pytest(
@@ -162,6 +184,12 @@ def test_connect_refuses_live_db_when_env_points_at_home(
 ) -> None:
     import pwd
 
+    import agent_bus_store.db.connection as conn_mod
+
+    def _sqlite_must_not_open(*_a: object, **_k: object) -> None:
+        raise AssertionError("sqlite3.connect must not run when live guard tripped")
+
+    monkeypatch.setattr(conn_mod.sqlite3, "connect", _sqlite_must_not_open)
     home = Path(pwd.getpwuid(__import__("os").getuid()).pw_dir)
     live = home / ".agent-bus" / "messages.db"
     monkeypatch.setenv("AGENT_BUS_DB_PATH", str(live))
@@ -170,11 +198,12 @@ def test_connect_refuses_live_db_when_env_points_at_home(
             pass
 
 
-def test_pass_duration_emit_does_not_open_live_event_store(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+def test_pass_duration_emit_isolated_under_fixture(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    import bus_watch.events as bw_events
     from agent_bus_store.testing.wake_cursor_test_support import (
-        isolate_endpoint_wake_event_emit_for_pytest,
+        _import_mcp_events_module,
     )
     from bus_watch.endpoint_wake_pass_timing import (
         begin_pass,
@@ -183,28 +212,136 @@ def test_pass_duration_emit_does_not_open_live_event_store(
         safe_emit_pass_duration,
     )
 
+    _import_mcp_events_module()
     isolate_endpoint_wake_event_emit_for_pytest(monkeypatch, tmp_path)
-    opens: list[str] = []
+    monkeypatch.setattr(bw_events, "record", lambda *_a, **_k: None)
+    enqueued = track_uds_put_nowait(monkeypatch)
+    reset_pass_timing_for_tests()
+    begin_pass()
+    end_phase("scan_once")
+    safe_emit_pass_duration()
+    assert len(enqueued) == 0
 
-    try:
-        from event_store.store import EventStore
-    except ImportError:
-        pytest.skip("event_store not importable")
-        return
 
-    original_init = EventStore.__init__
+def test_pass_duration_emit_negative_control_records_enqueue(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import bus_watch.events as bw_events
+    from agent_bus_store.testing.wake_cursor_test_support import (
+        _import_mcp_events_module,
+    )
+    from bus_watch.endpoint_wake_pass_timing import (
+        begin_pass,
+        end_phase,
+        reset_pass_timing_for_tests,
+        safe_emit_pass_duration,
+    )
 
-    def _track_init(self, db_path, *args, **kwargs):  # type: ignore[no-untyped-def]
-        opens.append(str(db_path))
-        return original_init(self, db_path, *args, **kwargs)
+    mcp_events = _import_mcp_events_module()
+    enqueued = track_uds_put_nowait(monkeypatch)
+    monkeypatch.setattr(bw_events, "record", mcp_events.record)
+    mcp_events._publisher = mcp_events._UDSPublisher(
+        "/nonexistent/negative-control.sock"
+    )
+    reset_pass_timing_for_tests()
+    begin_pass()
+    end_phase("scan_once")
+    safe_emit_pass_duration()
+    assert len(enqueued) >= 1
 
-    with patch.object(EventStore, "__init__", _track_init):
-        reset_pass_timing_for_tests()
-        begin_pass()
-        end_phase("scan_once")
-        safe_emit_pass_duration()
 
-    import pwd
+def test_insert_or_replace_lower_high_water_refused(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("AGENT_BUS_DB_PATH", str(tmp_path / "bus.db"))
+    init_db()
+    stamp = "2020-01-01T00:00:00Z"
+    with connect() as conn:
+        conn.execute(
+            "INSERT INTO endpoint_wake_cursor (consumer, high_water_turn_id, updated_at) "
+            "VALUES (?, ?, ?)",
+            (CONSUMER, 100, stamp),
+        )
+    with pytest.raises(sqlite3.IntegrityError, match="backward high_water insert refused"):
+        with connect() as conn:
+            conn.execute(
+                "INSERT OR REPLACE INTO endpoint_wake_cursor "
+                "(consumer, high_water_turn_id, updated_at) VALUES (?, ?, ?)",
+                (CONSUMER, 50, stamp),
+            )
+    with connect() as conn:
+        hw = conn.execute(
+            "SELECT high_water_turn_id FROM endpoint_wake_cursor WHERE consumer=?",
+            (CONSUMER,),
+        ).fetchone()[0]
+    assert int(hw) == 100
 
-    home = str(Path(pwd.getpwuid(__import__("os").getuid()).pw_dir))
-    assert not any(p.startswith(home) and "events" in p for p in opens)
+
+def test_insert_or_replace_equal_and_forward_high_water_ok(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("AGENT_BUS_DB_PATH", str(tmp_path / "bus.db"))
+    init_db()
+    stamp = "2020-01-01T00:00:00Z"
+    with connect() as conn:
+        conn.execute(
+            "INSERT INTO endpoint_wake_cursor (consumer, high_water_turn_id, updated_at) "
+            "VALUES (?, ?, ?)",
+            (CONSUMER, 100, stamp),
+        )
+        conn.execute(
+            "INSERT OR REPLACE INTO endpoint_wake_cursor "
+            "(consumer, high_water_turn_id, updated_at) VALUES (?, ?, ?)",
+            (CONSUMER, 100, stamp),
+        )
+        conn.execute(
+            "INSERT OR REPLACE INTO endpoint_wake_cursor "
+            "(consumer, high_water_turn_id, updated_at) VALUES (?, ?, ?)",
+            (CONSUMER, 200, stamp),
+        )
+    with connect() as conn:
+        hw = conn.execute(
+            "SELECT high_water_turn_id FROM endpoint_wake_cursor WHERE consumer=?",
+            (CONSUMER,),
+        ).fetchone()[0]
+    assert int(hw) == 200
+
+
+def test_delete_then_insert_lower_high_water_ok(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("AGENT_BUS_DB_PATH", str(tmp_path / "bus.db"))
+    init_db()
+    stamp = "2020-01-01T00:00:00Z"
+    with connect() as conn:
+        conn.execute(
+            "INSERT INTO endpoint_wake_cursor (consumer, high_water_turn_id, updated_at) "
+            "VALUES (?, ?, ?)",
+            (CONSUMER, 100, stamp),
+        )
+        rewind_wake_cursor_for_test(conn, CONSUMER, to=5)
+        hw = conn.execute(
+            "SELECT high_water_turn_id FROM endpoint_wake_cursor WHERE consumer=?",
+            (CONSUMER,),
+        ).fetchone()[0]
+    assert int(hw) == 5
+
+
+def test_get_cursor_cold_start_seeds_max_turn_id(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("AGENT_BUS_DB_PATH", str(tmp_path / "bus.db"))
+    init_db()
+    detail = create_thread(thread_id=None, slug="cold")
+    assert detail is not None
+    turn_id, *_ = insert_turn(
+        thread=str(detail["id"]),
+        from_agent="a",
+        to_agent="b",
+        subject="FACT|x",
+        body="b",
+    )
+    with connect() as conn:
+        conn.execute("DELETE FROM endpoint_wake_cursor")
+    cursor = get_cursor()
+    assert int(cursor["high_water_turn_id"]) == turn_id

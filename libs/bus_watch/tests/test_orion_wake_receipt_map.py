@@ -1,11 +1,11 @@
 """Pinned Orion receipt → ledger outcomes; offline ledger row for owner path."""
 
 from __future__ import annotations
-from agent_bus_store.testing.wake_cursor_test_support import rewind_wake_cursor_for_test
 
 import json
 
 import pytest
+from agent_bus_store.testing.wake_cursor_test_support import rewind_wake_cursor_for_test
 from bus_watch.endpoint_wake_transport import classify_orion
 from bus_watch.orion_wake_receipt_map import map_orion_receipt_to_outcomes
 
@@ -153,7 +153,8 @@ async def test_deliver_classify_persists_unknown_row(
     """After committed _dom_deliver, approval exception → unknown paste_receipt on ledger."""
     from agent_bus_store.db import create_thread, insert_turn
     from agent_bus_store.db.connection import connect
-    from agent_bus_store.db.endpoint_wake_ledger import (CONSUMER, 
+    from agent_bus_store.db.endpoint_wake_ledger import (
+        CONSUMER,
         advance_scan,
         claim_due_wakes,
         get_cursor,
