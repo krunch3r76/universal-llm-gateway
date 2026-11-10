@@ -31,6 +31,18 @@ HOP_JOB_ABSENT = "absent"
 _VERB_SOURCE = "agent-bus-hop-verb"
 _DEFAULT_SUCCESSOR_MODEL = "cdp/opus-5.5-high"
 _HOP_MODEL_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._+/-]*$")
+_THREAD_DETAIL_RESUME = "false"
+
+
+def _fetch_thread_detail_for_responsibility(thread_id: str) -> dict[str, Any]:
+    """Load thread metadata via agent-bus HTTP relay (no resume envelope)."""
+    from ._shared import relay
+
+    return relay(
+        "agent-bus",
+        "GET",
+        f"/threads/{thread_id}?include_resume={_THREAD_DETAIL_RESUME}",
+    )
 
 
 def continuity_contract_line(body: str) -> str | None:
@@ -308,13 +320,20 @@ async def _hop_dispatch(
     responsibility: str | None = None
     thread_row: dict[str, Any] | None = None
     try:
-        from agent_bus_store.db.threads import get_thread
-
-        thread_row = get_thread(thread_id)
-        responsibility = responsibility_from_thread_summary(
-            (thread_row or {}).get("summary")
+        detail = _fetch_thread_detail_for_responsibility(thread_id)
+        if not isinstance(detail, dict):
+            raise TypeError(
+                f"thread relay returned {type(detail).__name__}, expected dict"
+            )
+        if "error" in detail:
+            raise RuntimeError(str(detail.get("error")))
+        responsibility = responsibility_from_thread_summary(detail.get("summary"))
+    except Exception as exc:  # noqa: BLE001 — admit without responsibility metadata
+        record(
+            "mcp.agentbus.hop.thread_read_failed",
+            thread=thread_id,
+            exception_class=type(exc).__name__,
         )
-    except Exception:  # noqa: BLE001 — admit without responsibility metadata
         responsibility = None
 
     arc_hub = None
