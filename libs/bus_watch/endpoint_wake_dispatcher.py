@@ -3343,6 +3343,7 @@ async def run_dispatcher() -> None:
             end_phase("scan_once")
             begin_phase("fire_due_wakes")
             stage = "fire_due_wakes"
+            clear_cse_wake_thread_holder_memo(store)
             for _ in range(5):
                 note_fire_due_wakes_iteration()
                 claimed = await asyncio.to_thread(fire_due_wakes, store)

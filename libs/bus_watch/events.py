@@ -355,7 +355,8 @@ def EndpointWakeCseHolderResolution(  # noqa: N802
     giw_by_thread_registration: str | None = None,
     giw_by_thread_error: str | None = None,
 ) -> Event:
-    """Observation: thread-scoped CSE wake chose a delivery registration after consulting bus and/or GIW by-thread."""
+    """Observation: holder pick for a thread-scoped CSE wake when ``chosen_source`` is
+    ``bus_association``, ``giw_by_thread``, or ``subscription_agent_id`` after bus/GIW consult."""
     return Event(
         signal="endpoint_wake.cse_holder_resolution",
         role="observation",
