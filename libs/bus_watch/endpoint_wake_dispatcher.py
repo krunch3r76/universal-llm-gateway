@@ -2478,14 +2478,47 @@ def clear_cse_wake_thread_holder_memo(store: StoreClient) -> None:
     setattr(store, _CSE_WAKE_THREAD_HOLDER_MEMO, {})
 
 
-def _cse_sub_thread_scoped(sub: dict[str, Any]) -> bool:
+def _cse_sub_thread_scoped(sub: dict[str, Any], *, wake_thread: str) -> bool:
+    """True when this CSE row may use bus→GIW→agent_id holder resolution for ``wake_thread``."""
     if str(sub.get("surface") or "") != "cse":
         return False
     scope_kind = str(sub.get("scope_kind") or "thread").strip().lower()
-    return scope_kind == "thread"
+    if scope_kind != "thread":
+        return False
+    scope = str(sub.get("thread_scope") or "").strip()
+    thread = str(wake_thread or "").strip()
+    if not scope or scope == "*" or not thread or scope != thread:
+        return False
+    agent_id = str(sub.get("agent_id") or "").strip()
+    if not agent_id or _is_cse_lane_thread_id(agent_id):
+        return False
+    return True
+
+
+def _holder_eligible_for_thread_wake_source(holder: dict[str, Any]) -> bool:
+    """Whether bus/GIW candidates avoid today's seat_* skip reasons (sources 1–2 only)."""
+    if holder.get(_HOUSELESS_NO_ROUTE):
+        return False
+    if holder.get(_GIW_HOLDER_LOOKUP_FAILED):
+        return False
+    return _holder_is_live(holder)
+
+
+def _cse_wake_target_from_live_holder(
+    sub: dict[str, Any],
+    *,
+    wake_thread: str,
+    agent_id: str,
+    holder: dict[str, Any],
+) -> tuple[str, dict[str, Any]]:
+    """Return (lane, holder) when the holder is already known live (bus/GIW picks)."""
+    scope = str(sub.get("thread_scope") or wake_thread or "").strip()
+    lane = str(holder.get("lane_thread_id") or "").strip() or scope or agent_id
+    return lane, holder
 
 
 def _thread_holder_memo(store: StoreClient) -> dict[str, dict[str, Any]]:
+    """Per-store memo dict for bus/GIW reads within one scan or fire invocation."""
     memo = getattr(store, _CSE_WAKE_THREAD_HOLDER_MEMO, None)
     if not isinstance(memo, dict):
         memo = {}
@@ -2494,6 +2527,7 @@ def _thread_holder_memo(store: StoreClient) -> dict[str, dict[str, Any]]:
 
 
 def _local_bus_cse_registration(thread_id: str) -> str | None:
+    """Local ``get_current_cse`` registration id, or None when unset/none/unreadable."""
     if not os.environ.get("AGENT_BUS_DB_PATH"):
         return None
     try:
@@ -2518,6 +2552,7 @@ def _local_bus_cse_registration(thread_id: str) -> str | None:
 def _memoized_bus_registration(
     store: StoreClient, thread_id: str, memo: dict[str, dict[str, Any]]
 ) -> str | None:
+    """Read bus association registration once per thread per dispatcher memo pass."""
     slot = memo.setdefault(thread_id, {})
     if "bus_registration" not in slot:
         slot["bus_registration"] = _local_bus_cse_registration(thread_id)
@@ -2528,6 +2563,7 @@ def _memoized_bus_registration(
 def _memoized_giw_by_thread_registration(
     store: StoreClient, thread_id: str, memo: dict[str, dict[str, Any]]
 ) -> tuple[str | None, str | None]:
+    """Read GIW by-thread ``registration_id`` once per thread per memo pass (≤2s timeout)."""
     slot = memo.setdefault(thread_id, {})
     if "giw_by_thread_registration" in slot:
         return (
@@ -2576,6 +2612,7 @@ def _cse_wake_target_from_holder(
     holder: dict[str, Any],
     delivery_phase: bool,
 ) -> tuple[str, dict[str, Any]] | None:
+    """Map a resolved holder to (lane, holder); source 3 keeps delivery-phase non-live rows."""
     scope = str(sub.get("thread_scope") or wake_thread or "").strip()
     if holder.get(_HOUSELESS_NO_ROUTE):
         if not delivery_phase:
@@ -2604,6 +2641,7 @@ def _observe_cse_wake_holder_resolution(
     giw_by_thread_registration: str | None,
     giw_by_thread_error: str | None,
 ) -> None:
+    """Emit holder-resolution telemetry when wake used a fallback source (AC3)."""
     try:
         from bus_watch.events import emit_endpoint_wake_cse_holder_resolution
 
@@ -2631,6 +2669,7 @@ def _resolve_cse_wake_target_from_agent_id(
     wake_thread: str | None,
     delivery_phase: bool,
 ) -> tuple[str, dict[str, Any]] | None:
+    """Legacy resolve path keyed on ``sub['agent_id']`` only (source 3 / non-thread-scoped)."""
     agent_id = str(sub.get("agent_id") or "").strip()
     if not agent_id:
         return None
@@ -2695,15 +2734,14 @@ def _resolve_cse_wake_target_thread_scoped(
         )
         if not isinstance(holder, dict) or not holder:
             return None
-        target = _cse_wake_target_from_holder(
+        if not _holder_eligible_for_thread_wake_source(holder):
+            return None
+        target = _cse_wake_target_from_live_holder(
             sub,
             wake_thread=thread,
             agent_id=agent_id,
             holder=holder,
-            delivery_phase=delivery_phase,
         )
-        if target is None:
-            return None
         reg_out = str(holder.get("registration_id") or reg).strip() or reg
         should_emit = False
         if source != "bus_association":
@@ -2802,7 +2840,7 @@ def resolve_cse_wake_target(
     id (houseless mailbox threads).
     """
     thread = str(wake_thread or "").strip()
-    if thread and _cse_sub_thread_scoped(sub):
+    if thread and _cse_sub_thread_scoped(sub, wake_thread=thread):
         return _resolve_cse_wake_target_thread_scoped(
             store, sub, wake_thread=thread, delivery_phase=delivery_phase
         )
@@ -2939,6 +2977,7 @@ def fire_due_wakes(store: StoreClient) -> dict[str, Any] | None:
     The display branch re-runs the tab check on the fire-time route and records
     ``route='remapped'`` when delivery used a stale or bare name on an exact row.
     """
+    clear_cse_wake_thread_holder_memo(store)
     claimed = store.claim()
     rows = [r for r in claimed.get("rows") or [] if r.get("state") == "claimed"]
     wake_id = claimed.get("wake_id")
