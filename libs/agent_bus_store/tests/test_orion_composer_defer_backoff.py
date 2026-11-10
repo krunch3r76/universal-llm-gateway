@@ -1,6 +1,7 @@
 """Orion composer-defer bounded backoff uses wake_next_attempt_at (migration_026)."""
 
 from __future__ import annotations
+from agent_bus_store.testing.wake_cursor_test_support import rewind_wake_cursor_for_test
 
 import json
 
@@ -8,7 +9,7 @@ import pytest
 import agent_bus_store.db.endpoint_wake_ledger as _ewl_mod
 from agent_bus_store.db import create_thread, init_db, insert_turn
 from agent_bus_store.db.connection import connect, write_connect
-from agent_bus_store.db.endpoint_wake_ledger import (
+from agent_bus_store.db.endpoint_wake_ledger import (CONSUMER, 
     ORION_COMPOSER_DEFER_MAX_ATTEMPTS,
     advance_scan,
     claim_due_wakes,
@@ -39,7 +40,7 @@ def _seed_pending_orion(db_path: str) -> tuple[str, str, int]:
     )
     get_cursor()
     with connect() as conn:
-        conn.execute("UPDATE endpoint_wake_cursor SET high_water_turn_id=0")
+        rewind_wake_cursor_for_test(conn, CONSUMER, to=0)
     advance_scan(
         "endpoint-wake-dispatcher",
         0,

@@ -1,6 +1,7 @@
 """Production attach_instance_wake_head and POST /endpoint-subscriptions chatgpt_work."""
 
 from __future__ import annotations
+from agent_bus_store.testing.wake_cursor_test_support import rewind_wake_cursor_for_test
 
 import threading
 
@@ -14,7 +15,7 @@ from agent_bus_store.db.endpoint_subscriptions import (
     insert_chatgpt_work_row_for_test,
     insert_main_wake_row_for_test,
 )
-from agent_bus_store.db.endpoint_wake_ledger import (
+from agent_bus_store.db.endpoint_wake_ledger import (CONSUMER, 
     advance_scan,
     claim_due_wakes,
     get_cursor,
@@ -292,7 +293,7 @@ def test_ac9_dispatcher_delivery_route(db: None) -> None:
     )
     get_cursor()
     with connect() as conn:
-        conn.execute("UPDATE endpoint_wake_cursor SET high_water_turn_id=0")
+        rewind_wake_cursor_for_test(conn, CONSUMER, to=0)
     advance_scan(
         "endpoint-wake-dispatcher",
         0,

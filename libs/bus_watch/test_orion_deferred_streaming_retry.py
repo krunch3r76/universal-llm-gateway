@@ -1,13 +1,14 @@
 """Orion deferred_streaming: ledger retry until idle, coalesce, exhaustion NOTICE."""
 
 from __future__ import annotations
+from agent_bus_store.testing.wake_cursor_test_support import rewind_wake_cursor_for_test
 
 from unittest.mock import patch
 
 import pytest
 from agent_bus_store.db import create_thread, init_db, insert_turn
 from agent_bus_store.db.connection import connect
-from agent_bus_store.db.endpoint_wake_ledger import (
+from agent_bus_store.db.endpoint_wake_ledger import (CONSUMER, 
     ORION_DEFERRED_STREAMING_MAX_ATTEMPTS,
     advance_scan,
     claim_due_wakes,
@@ -69,7 +70,7 @@ def test_deferred_streaming_redelivers_after_retry_at(db: None) -> None:
     )
     get_cursor()
     with connect() as conn:
-        conn.execute("UPDATE endpoint_wake_cursor SET high_water_turn_id=0")
+        rewind_wake_cursor_for_test(conn, CONSUMER, to=0)
     _scan_orion_turn(turn_id=turn_id, turn_number=number, hw=0, now="2020-01-01 00:00:00")
     first = claim_due_wakes(now="2020-01-01 00:00:30")
     wake_id = str(first["wake_id"])
@@ -134,7 +135,7 @@ def test_three_wakes_during_stream_one_claim_batch(db: None) -> None:
         specs.append((int(tid), int(num)))
     get_cursor()
     with connect() as conn:
-        conn.execute("UPDATE endpoint_wake_cursor SET high_water_turn_id=0")
+        rewind_wake_cursor_for_test(conn, CONSUMER, to=0)
     hw = 0
     for offset, (tid, num) in zip((0, 5, 10), specs, strict=True):
         _scan_orion_turn(
@@ -163,7 +164,7 @@ def test_never_idle_exhaustion_notice(db: None) -> None:
     )
     get_cursor()
     with connect() as conn:
-        conn.execute("UPDATE endpoint_wake_cursor SET high_water_turn_id=0")
+        rewind_wake_cursor_for_test(conn, CONSUMER, to=0)
     _scan_orion_turn(turn_id=turn_id, turn_number=number, hw=0, now="2020-01-01 00:00:00")
     claimed = claim_due_wakes(now="2020-01-01 00:00:30")
     wake_id = str(claimed["wake_id"])
@@ -208,7 +209,7 @@ def test_restart_mid_wait_pending_survives(db: None) -> None:
     )
     get_cursor()
     with connect() as conn:
-        conn.execute("UPDATE endpoint_wake_cursor SET high_water_turn_id=0")
+        rewind_wake_cursor_for_test(conn, CONSUMER, to=0)
     _scan_orion_turn(turn_id=turn_id, turn_number=number, hw=0, now="2020-01-01 00:00:00")
     wake_id = str(claim_due_wakes(now="2020-01-01 00:00:30")["wake_id"])
     sched = record_orion_deferred_streaming(
@@ -232,7 +233,7 @@ def test_dispatcher_does_not_refuse_second_deferred(db: None) -> None:
     )
     get_cursor()
     with connect() as conn:
-        conn.execute("UPDATE endpoint_wake_cursor SET high_water_turn_id=0")
+        rewind_wake_cursor_for_test(conn, CONSUMER, to=0)
     _scan_orion_turn(turn_id=turn_id, turn_number=number, hw=0, now="2020-01-01 00:00:00")
     first = claim_due_wakes(now="2020-01-01 00:00:30")
     wake_id = str(first["wake_id"])

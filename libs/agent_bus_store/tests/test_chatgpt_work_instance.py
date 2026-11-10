@@ -1,6 +1,7 @@
 """Instance-scope chatgpt_work heads (satellite houses)."""
 
 from __future__ import annotations
+from agent_bus_store.testing.wake_cursor_test_support import rewind_wake_cursor_for_test
 
 import pytest
 from agent_bus_store.db import create_thread, init_db, insert_turn
@@ -9,7 +10,7 @@ from agent_bus_store.db.endpoint_subscriptions import (
     ChatgptWorkCasError,
     insert_chatgpt_work_row_for_test,
 )
-from agent_bus_store.db.endpoint_wake_ledger import (
+from agent_bus_store.db.endpoint_wake_ledger import (CONSUMER, 
     _latest_orion_seat_registration_on_thread,
     advance_scan,
     claim_due_wakes,
@@ -153,7 +154,7 @@ def test_three_consumer_parity(db: None) -> None:
     )
     get_cursor()
     with connect() as conn:
-        conn.execute("UPDATE endpoint_wake_cursor SET high_water_turn_id=0")
+        rewind_wake_cursor_for_test(conn, CONSUMER, to=0)
     advance_scan(
         "endpoint-wake-dispatcher",
         0,

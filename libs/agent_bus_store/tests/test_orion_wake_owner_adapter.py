@@ -1,11 +1,12 @@
 """Offline tests for shared_wake_delivery_owner (20995 ledger owner API)."""
 
 from __future__ import annotations
+from agent_bus_store.testing.wake_cursor_test_support import rewind_wake_cursor_for_test
 
 import pytest
 from agent_bus_store.db import create_thread, init_db, insert_turn
 from agent_bus_store.db.connection import connect, write_connect
-from agent_bus_store.db.endpoint_wake_ledger import (
+from agent_bus_store.db.endpoint_wake_ledger import (CONSUMER, 
     _latest_orion_seat_registration_on_thread,
     advance_scan,
     claim_due_wakes,
@@ -48,7 +49,7 @@ def _claim_orion_turn(
     )
     get_cursor()
     with connect() as conn:
-        conn.execute("UPDATE endpoint_wake_cursor SET high_water_turn_id=0")
+        rewind_wake_cursor_for_test(conn, CONSUMER, to=0)
     advance_scan(
         "endpoint-wake-dispatcher",
         0,
@@ -366,7 +367,7 @@ def test_ledger_identity_unique_per_turn(db: None) -> None:
     }
     get_cursor()
     with write_connect() as conn:
-        conn.execute("UPDATE endpoint_wake_cursor SET high_water_turn_id=0")
+        rewind_wake_cursor_for_test(conn, CONSUMER, to=0)
     advance_scan(
         "endpoint-wake-dispatcher", 0, turn_id, [item], now="2020-01-01 00:00:00"
     )

@@ -1,6 +1,7 @@
 """Dispatcher allowlist, debounce, retry, lifespan, and outcome table."""
 
 from __future__ import annotations
+from agent_bus_store.testing.wake_cursor_test_support import rewind_wake_cursor_for_test
 
 import asyncio
 from typing import Any
@@ -9,7 +10,7 @@ import httpx
 import pytest
 from agent_bus_store.db import create_thread, init_db, insert_turn
 from agent_bus_store.db.connection import connect
-from agent_bus_store.db.endpoint_wake_ledger import (
+from agent_bus_store.db.endpoint_wake_ledger import (CONSUMER, 
     advance_scan,
     claim_due_wakes,
     get_cursor,
@@ -460,7 +461,7 @@ def test_scan_once_emits_endpoint_wake_suppressed_for_subscribed_thread(
     )
     get_cursor()
     with connect() as conn:
-        conn.execute("UPDATE endpoint_wake_cursor SET high_water_turn_id=0")
+        rewind_wake_cursor_for_test(conn, CONSUMER, to=0)
 
     class Store:
         def cursor(self) -> dict:
@@ -1149,7 +1150,7 @@ def test_composer_defer_blocks_wall_clock_reclaim_until_empty_event(db: None) ->
     }
     get_cursor()
     with connect() as conn:
-        conn.execute("UPDATE endpoint_wake_cursor SET high_water_turn_id=0")
+        rewind_wake_cursor_for_test(conn, CONSUMER, to=0)
     advance_scan(
         "endpoint-wake-dispatcher", 0, turn_id, [item], now="2020-01-01 00:00:00"
     )
@@ -1210,7 +1211,7 @@ def test_debounce_cleared_after_target_reply(db: None) -> None:
     )
     get_cursor()
     with connect() as conn:
-        conn.execute("UPDATE endpoint_wake_cursor SET high_water_turn_id=0")
+        rewind_wake_cursor_for_test(conn, CONSUMER, to=0)
     advance_scan(
         "endpoint-wake-dispatcher",
         0,
@@ -1324,7 +1325,7 @@ def test_cse_route_debounce_cleared_by_web_anthropic_reply(db: None) -> None:
     )
     get_cursor()
     with connect() as conn:
-        conn.execute("UPDATE endpoint_wake_cursor SET high_water_turn_id=0")
+        rewind_wake_cursor_for_test(conn, CONSUMER, to=0)
     advance_scan(
         "endpoint-wake-dispatcher",
         0,
@@ -1404,7 +1405,7 @@ def test_debounce_second_turn_waits(db: None) -> None:
     )
     get_cursor()
     with connect() as conn:
-        conn.execute("UPDATE endpoint_wake_cursor SET high_water_turn_id=0")
+        rewind_wake_cursor_for_test(conn, CONSUMER, to=0)
     advance_scan(
         "endpoint-wake-dispatcher",
         0,
@@ -1518,7 +1519,7 @@ def test_fire_holders_exception_records_unknown_and_does_not_propagate(
     )
     get_cursor()
     with connect() as conn:
-        conn.execute("UPDATE endpoint_wake_cursor SET high_water_turn_id=0")
+        rewind_wake_cursor_for_test(conn, CONSUMER, to=0)
     advance_scan(
         "endpoint-wake-dispatcher",
         0,
@@ -1620,7 +1621,7 @@ def test_fire_due_wakes_insyncerator_ledger_finds_grok_bot_gc2_subscription(
     )
     get_cursor()
     with connect() as conn:
-        conn.execute("UPDATE endpoint_wake_cursor SET high_water_turn_id=0")
+        rewind_wake_cursor_for_test(conn, CONSUMER, to=0)
     advance_scan(
         "endpoint-wake-dispatcher",
         0,
@@ -1708,7 +1709,7 @@ def test_fire_due_wakes_passes_coalesced_turn_numbers_to_display_post(db: None) 
     numbers = [p["turn_number"] for p in pending]
     get_cursor()
     with connect() as conn:
-        conn.execute("UPDATE endpoint_wake_cursor SET high_water_turn_id=0")
+        rewind_wake_cursor_for_test(conn, CONSUMER, to=0)
     advance_scan(
         "endpoint-wake-dispatcher", 0, last_id, pending, now="2020-01-01 00:00:00"
     )
@@ -1795,7 +1796,7 @@ def test_fire_due_wakes_pastes_one_line_per_thread(db: None) -> None:
     )
     get_cursor()
     with connect() as conn:
-        conn.execute("UPDATE endpoint_wake_cursor SET high_water_turn_id=0")
+        rewind_wake_cursor_for_test(conn, CONSUMER, to=0)
     advance_scan(
         "endpoint-wake-dispatcher",
         0,
@@ -1969,7 +1970,7 @@ def test_fire_due_wakes_primary_is_tab_row(db: None) -> None:
     )
     get_cursor()
     with connect() as conn:
-        conn.execute("UPDATE endpoint_wake_cursor SET high_water_turn_id=0")
+        rewind_wake_cursor_for_test(conn, CONSUMER, to=0)
     advance_scan(
         "endpoint-wake-dispatcher",
         0,
@@ -2060,7 +2061,7 @@ def test_fire_due_wakes_orders_threads_by_turn_id(db: None) -> None:
     )
     get_cursor()
     with connect() as conn:
-        conn.execute("UPDATE endpoint_wake_cursor SET high_water_turn_id=0")
+        rewind_wake_cursor_for_test(conn, CONSUMER, to=0)
     advance_scan(
         "endpoint-wake-dispatcher",
         0,
@@ -2172,7 +2173,7 @@ def test_fire_due_wakes_multi_thread_real_display_path(db: None) -> None:
     )
     get_cursor()
     with connect() as conn:
-        conn.execute("UPDATE endpoint_wake_cursor SET high_water_turn_id=0")
+        rewind_wake_cursor_for_test(conn, CONSUMER, to=0)
     advance_scan(
         "endpoint-wake-dispatcher",
         0,
@@ -2555,7 +2556,7 @@ def test_fire_maestro_cse_routes_holder_agent_id(db: None) -> None:
     )
     get_cursor()
     with connect() as conn:
-        conn.execute("UPDATE endpoint_wake_cursor SET high_water_turn_id=0")
+        rewind_wake_cursor_for_test(conn, CONSUMER, to=0)
     advance_scan(
         "endpoint-wake-dispatcher",
         0,
@@ -2641,7 +2642,7 @@ def test_fire_maestro_cse_stale_and_foreign_holder_skips_delivery_and_alerts(
     )
     get_cursor()
     with connect() as conn:
-        conn.execute("UPDATE endpoint_wake_cursor SET high_water_turn_id=0")
+        rewind_wake_cursor_for_test(conn, CONSUMER, to=0)
     advance_scan(
         "endpoint-wake-dispatcher",
         0,
@@ -2698,7 +2699,7 @@ def test_fire_maestro_cse_missing_seat_registration_stamp_skips_and_alerts(
     )
     get_cursor()
     with connect() as conn:
-        conn.execute("UPDATE endpoint_wake_cursor SET high_water_turn_id=0")
+        rewind_wake_cursor_for_test(conn, CONSUMER, to=0)
     advance_scan(
         "endpoint-wake-dispatcher",
         0,
@@ -2834,7 +2835,7 @@ def test_specimen_18460_no_composer_records_pending_and_drops_dead_agent_id(
     )
     get_cursor()
     with connect() as conn:
-        conn.execute("UPDATE endpoint_wake_cursor SET high_water_turn_id=0")
+        rewind_wake_cursor_for_test(conn, CONSUMER, to=0)
     advance_scan(
         "endpoint-wake-dispatcher",
         0,
@@ -3244,7 +3245,7 @@ def _cursor_no_composer_wake_fixture(
     )
     get_cursor()
     with connect() as conn:
-        conn.execute("UPDATE endpoint_wake_cursor SET high_water_turn_id=0")
+        rewind_wake_cursor_for_test(conn, CONSUMER, to=0)
     advance_scan(
         "endpoint-wake-dispatcher",
         0,
@@ -3606,7 +3607,7 @@ def test_grok_wildcard_no_composer_retries_pending_without_unsubscribing(
     )
     get_cursor()
     with connect() as conn:
-        conn.execute("UPDATE endpoint_wake_cursor SET high_water_turn_id=0")
+        rewind_wake_cursor_for_test(conn, CONSUMER, to=0)
     advance_scan(
         "endpoint-wake-dispatcher",
         0,
@@ -3836,7 +3837,7 @@ def test_advance_scan_persists_decided_by_rule(db: None) -> None:
     )
     get_cursor()
     with connect() as conn:
-        conn.execute("UPDATE endpoint_wake_cursor SET high_water_turn_id=0")
+        rewind_wake_cursor_for_test(conn, CONSUMER, to=0)
     advance_scan(
         "endpoint-wake-dispatcher",
         0,
@@ -3881,7 +3882,7 @@ def test_scan_once_does_not_enqueue_already_read_turn(db: None) -> None:
         )
     get_cursor()
     with write_connect() as conn:
-        conn.execute("UPDATE endpoint_wake_cursor SET high_water_turn_id=0")
+        rewind_wake_cursor_for_test(conn, CONSUMER, to=0)
 
     scanned: list[dict] = []
 
@@ -3950,7 +3951,7 @@ def test_claim_skips_maestro_already_read_after_pending_insert(db: None) -> None
     )
     get_cursor()
     with connect() as conn:
-        conn.execute("UPDATE endpoint_wake_cursor SET high_water_turn_id=0")
+        rewind_wake_cursor_for_test(conn, CONSUMER, to=0)
     advance_scan(
         "endpoint-wake-dispatcher",
         0,
@@ -3994,7 +3995,7 @@ def test_claim_skips_when_owed_wake_dispatched_same_turn(db: None, tmp_path) -> 
     )
     get_cursor()
     with connect() as conn:
-        conn.execute("UPDATE endpoint_wake_cursor SET high_water_turn_id=0")
+        rewind_wake_cursor_for_test(conn, CONSUMER, to=0)
     advance_scan(
         "endpoint-wake-dispatcher",
         0,
@@ -4328,7 +4329,7 @@ def test_scan_once_enqueues_worker_closeout_for_parent_holder(db: None) -> None:
     )
     get_cursor()
     with connect() as conn:
-        conn.execute("UPDATE endpoint_wake_cursor SET high_water_turn_id=0")
+        rewind_wake_cursor_for_test(conn, CONSUMER, to=0)
     pending: list[dict] = []
 
     class Store:
@@ -4927,7 +4928,7 @@ def test_agent_id_mismatch_records_refused_not_pending(db: None) -> None:
     )
     get_cursor()
     with connect() as conn:
-        conn.execute("UPDATE endpoint_wake_cursor SET high_water_turn_id=0")
+        rewind_wake_cursor_for_test(conn, CONSUMER, to=0)
     advance_scan(
         "endpoint-wake-dispatcher",
         0,
@@ -4983,7 +4984,7 @@ def test_composer_defer_sweep_escalates_once_to_maestro(db: None) -> None:
     )
     get_cursor()
     with connect() as conn:
-        conn.execute("UPDATE endpoint_wake_cursor SET high_water_turn_id=0")
+        rewind_wake_cursor_for_test(conn, CONSUMER, to=0)
     advance_scan(
         "endpoint-wake-dispatcher",
         0,
@@ -5318,7 +5319,7 @@ class _TabScanStore:
 def _rewind_cursor() -> None:
     get_cursor()
     with connect() as conn:
-        conn.execute("UPDATE endpoint_wake_cursor SET high_water_turn_id=0")
+        rewind_wake_cursor_for_test(conn, CONSUMER, to=0)
 
 
 class _TabFireStore(_TabScanStore):
@@ -6438,7 +6439,7 @@ def test_scan_once_drop_stale_catchup_enqueues_fresh_only(
         )
     get_cursor()
     with write_connect() as conn:
-        conn.execute("UPDATE endpoint_wake_cursor SET high_water_turn_id=0")
+        rewind_wake_cursor_for_test(conn, CONSUMER, to=0)
 
     pending: list[dict] = []
     scan_calls: list[tuple[int, int, list]] = []
@@ -6574,7 +6575,7 @@ def test_scan_once_cse_subscription_registration_agent_id_enqueues_pending(
     )
     get_cursor()
     with connect() as conn:
-        conn.execute("UPDATE endpoint_wake_cursor SET high_water_turn_id=0")
+        rewind_wake_cursor_for_test(conn, CONSUMER, to=0)
 
     pending: list[dict[str, object]] = []
 
@@ -7081,7 +7082,7 @@ def test_scan_cse_no_open_seat_writes_scan_holder_skip(db: None) -> None:
     )
     get_cursor()
     with connect() as conn:
-        conn.execute("UPDATE endpoint_wake_cursor SET high_water_turn_id=0")
+        rewind_wake_cursor_for_test(conn, CONSUMER, to=0)
 
     scanned: list[dict[str, object]] = []
 
@@ -7291,7 +7292,7 @@ def test_stale_cse_no_holder_skips_scan_holder_tombstone(
             "UPDATE turns SET created_at=? WHERE id=?",
             ("2020-01-01 00:00:00", turn_id),
         )
-        conn.execute("UPDATE endpoint_wake_cursor SET high_water_turn_id=0")
+        rewind_wake_cursor_for_test(conn, CONSUMER, to=0)
 
     class Store:
         def cursor(self) -> dict:
@@ -8246,10 +8247,7 @@ def _rewind_cursor_hw(hw: int) -> None:
 
     get_cursor()
     with write_connect() as conn:
-        conn.execute(
-            "UPDATE endpoint_wake_cursor SET high_water_turn_id=?",
-            (int(hw),),
-        )
+        rewind_wake_cursor_for_test(conn, CONSUMER, to=int(hw))
 
 
 def test_scan_path1_suppress_unsubscribed_adds_no_ledger_item(db: None) -> None:
@@ -8305,7 +8303,7 @@ def test_scan_store_batch_master_parity_path2_no_skips_in_scan(db: None) -> None
         )
     get_cursor()
     with write_connect() as conn:
-        conn.execute("UPDATE endpoint_wake_cursor SET high_water_turn_id=0")
+        rewind_wake_cursor_for_test(conn, CONSUMER, to=0)
 
     batches: list[list[dict]] = []
 
@@ -8372,7 +8370,7 @@ def test_three_pass_ledger_pending_path4_web_anthropic(
     )
     get_cursor()
     with write_connect() as conn:
-        conn.execute("UPDATE endpoint_wake_cursor SET high_water_turn_id=0")
+        rewind_wake_cursor_for_test(conn, CONSUMER, to=0)
 
     class Store:
         def cursor(self) -> dict:
@@ -8447,7 +8445,7 @@ def test_orion_path6_scan_drop_ledger_claimable(db: None) -> None:
     )
     get_cursor()
     with write_connect() as conn:
-        conn.execute("UPDATE endpoint_wake_cursor SET high_water_turn_id=0")
+        rewind_wake_cursor_for_test(conn, CONSUMER, to=0)
 
     class Store:
         def cursor(self) -> dict:
@@ -8595,7 +8593,7 @@ def test_scan_drops_paths_2_to_7_unique_reasons(db: None) -> None:
             )
         get_cursor()
         with write_connect() as conn:
-            conn.execute("UPDATE endpoint_wake_cursor SET high_water_turn_id=0")
+            rewind_wake_cursor_for_test(conn, CONSUMER, to=0)
 
         class Store:
             def __init__(self, thread_id: str, path_cfg: dict) -> None:
@@ -8797,7 +8795,7 @@ def _three_pass_path_setup(
         )
     get_cursor()
     with write_connect() as conn:
-        conn.execute("UPDATE endpoint_wake_cursor SET high_water_turn_id=0")
+        rewind_wake_cursor_for_test(conn, CONSUMER, to=0)
     cfg["thread"] = thread
     cfg["turn_id"] = turn_id
     return thread, turn_id, cfg

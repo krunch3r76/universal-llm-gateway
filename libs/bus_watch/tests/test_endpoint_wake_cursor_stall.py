@@ -1,6 +1,7 @@
 """Cursor must advance through suppressed turns; Work journal wakes stay eligible."""
 
 from __future__ import annotations
+from agent_bus_store.testing.wake_cursor_test_support import rewind_wake_cursor_for_test
 
 import pytest
 from agent_bus_store.db import create_thread, init_db, insert_turn
@@ -9,7 +10,7 @@ from agent_bus_store.db.endpoint_subscriptions import (
     insert_chatgpt_work_row_for_test,
     list_subscriptions,
 )
-from agent_bus_store.db.endpoint_wake_ledger import advance_scan, get_cursor
+from agent_bus_store.db.endpoint_wake_ledger import CONSUMER, advance_scan, get_cursor
 from bus_watch.endpoint_wake_dispatcher import qualify, scan_once
 
 pytestmark = pytest.mark.offline
@@ -75,7 +76,7 @@ def test_suppressed_backlog_advances_cursor_without_pending(
         )
     get_cursor()
     with write_connect() as conn:
-        conn.execute("UPDATE endpoint_wake_cursor SET high_water_turn_id=0")
+        rewind_wake_cursor_for_test(conn, CONSUMER, to=0)
     mono = {"t": 1000.0}
     import bus_watch.endpoint_wake_dispatcher as ew
 
@@ -102,7 +103,7 @@ def test_callback_test_stays_suppressed(db: None) -> None:
     )
     get_cursor()
     with write_connect() as conn:
-        conn.execute("UPDATE endpoint_wake_cursor SET high_water_turn_id=0")
+        rewind_wake_cursor_for_test(conn, CONSUMER, to=0)
     verdict = qualify(
         {
             "to_agent": "orion",
@@ -140,7 +141,7 @@ def test_closeout_to_orion_enqueues_pending_with_work_route(db: None) -> None:
     )
     get_cursor()
     with write_connect() as conn:
-        conn.execute("UPDATE endpoint_wake_cursor SET high_water_turn_id=0")
+        rewind_wake_cursor_for_test(conn, CONSUMER, to=0)
     captured: list[dict] = []
 
     class Store(_store_factory(subscription=None)):

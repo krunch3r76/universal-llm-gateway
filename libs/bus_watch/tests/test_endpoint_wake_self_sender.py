@@ -1,6 +1,7 @@
 """Scan-time self-wake guard and suppression tombstones (friction:43076)."""
 
 from __future__ import annotations
+from agent_bus_store.testing.wake_cursor_test_support import rewind_wake_cursor_for_test
 
 from datetime import UTC, datetime, timedelta
 
@@ -12,7 +13,7 @@ from agent_bus_store.db.endpoint_subscriptions import (
     list_subscriptions,
     subscribe_endpoint,
 )
-from agent_bus_store.db.endpoint_wake_ledger import advance_scan, get_cursor
+from agent_bus_store.db.endpoint_wake_ledger import CONSUMER, advance_scan, get_cursor
 from bus_watch.endpoint_wake_dispatcher import scan_once
 
 TAB = "21060be7-f0a6-4fa1-9058-b117ce4fc526"
@@ -91,7 +92,7 @@ def _subscribe(agent: str, thread: str, agent_id: str) -> None:
 def _rewind_cursor() -> None:
     get_cursor()
     with connect() as conn:
-        conn.execute("UPDATE endpoint_wake_cursor SET high_water_turn_id=0")
+        rewind_wake_cursor_for_test(conn, CONSUMER, to=0)
 
 
 def _ledger(thread: str) -> list[dict]:

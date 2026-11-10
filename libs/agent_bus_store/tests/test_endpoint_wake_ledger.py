@@ -8,7 +8,9 @@ import pytest
 from agent_bus_store.auth import require_token
 from agent_bus_store.db import create_thread, init_db, insert_turn
 from agent_bus_store.db.connection import connect, write_connect
+from agent_bus_store.testing.wake_cursor_test_support import rewind_wake_cursor_for_test
 from agent_bus_store.db.endpoint_wake_ledger import (
+    CONSUMER,
     WakeConflictError,
     advance_scan,
     claim_due_wakes,
@@ -86,7 +88,7 @@ def test_turns_since_shape_and_stale_scan(db: TestClient) -> None:
         conn.execute("DELETE FROM endpoint_wake_cursor")
     get_cursor(now="2020-01-01 00:00:00")
     with connect() as conn:
-        conn.execute("UPDATE endpoint_wake_cursor SET high_water_turn_id=0")
+        rewind_wake_cursor_for_test(conn, CONSUMER, to=0)
     resp = db.get("/turns/since", params={"after_id": first["turn_id"] - 1, "limit": 2})
     rows = resp.json()["turns"]
     assert [r["id"] for r in rows] == [first["turn_id"], second["turn_id"]]
@@ -109,7 +111,7 @@ def test_claim_once_and_ttl_folds_unknown(db: TestClient) -> None:
     item = _turn(str(detail["id"]))
     get_cursor()
     with connect() as conn:
-        conn.execute("UPDATE endpoint_wake_cursor SET high_water_turn_id=0")
+        rewind_wake_cursor_for_test(conn, CONSUMER, to=0)
     advance_scan(
         "endpoint-wake-dispatcher",
         0,
@@ -162,7 +164,7 @@ def test_claim_includes_turn_body_and_from_agent(db: TestClient) -> None:
     }
     get_cursor()
     with connect() as conn:
-        conn.execute("UPDATE endpoint_wake_cursor SET high_water_turn_id=0")
+        rewind_wake_cursor_for_test(conn, CONSUMER, to=0)
     advance_scan(
         "endpoint-wake-dispatcher",
         0,
@@ -193,7 +195,7 @@ def test_stage_manager_equivalence_already_answered_and_debounce(
     )
     get_cursor()
     with connect() as conn:
-        conn.execute("UPDATE endpoint_wake_cursor SET high_water_turn_id=0")
+        rewind_wake_cursor_for_test(conn, CONSUMER, to=0)
     advance_scan(
         "endpoint-wake-dispatcher",
         0,
@@ -334,7 +336,7 @@ def test_progress_status_checkpoint_do_not_skip_pending_wake(db: TestClient) -> 
     )
     get_cursor()
     with connect() as conn:
-        conn.execute("UPDATE endpoint_wake_cursor SET high_water_turn_id=0")
+        rewind_wake_cursor_for_test(conn, CONSUMER, to=0)
     advance_scan(
         "endpoint-wake-dispatcher",
         0,
@@ -387,7 +389,7 @@ def test_supersedes_turn_skips_without_reply_subject(db: TestClient) -> None:
     )
     get_cursor()
     with connect() as conn:
-        conn.execute("UPDATE endpoint_wake_cursor SET high_water_turn_id=0")
+        rewind_wake_cursor_for_test(conn, CONSUMER, to=0)
     advance_scan(
         "endpoint-wake-dispatcher",
         0,
@@ -428,7 +430,7 @@ def test_wrong_thread_reference_does_not_skip_pending_wake(db: TestClient) -> No
     )
     get_cursor()
     with connect() as conn:
-        conn.execute("UPDATE endpoint_wake_cursor SET high_water_turn_id=0")
+        rewind_wake_cursor_for_test(conn, CONSUMER, to=0)
     advance_scan(
         "endpoint-wake-dispatcher",
         0,
@@ -467,7 +469,7 @@ def test_other_sender_ack_does_not_skip_pending_wake(db: TestClient) -> None:
     )
     get_cursor()
     with connect() as conn:
-        conn.execute("UPDATE endpoint_wake_cursor SET high_water_turn_id=0")
+        rewind_wake_cursor_for_test(conn, CONSUMER, to=0)
     advance_scan(
         "endpoint-wake-dispatcher",
         0,
@@ -528,7 +530,7 @@ def test_wake_reply_subject_gate_already_answered(
     )
     get_cursor()
     with connect() as conn:
-        conn.execute("UPDATE endpoint_wake_cursor SET high_water_turn_id=0")
+        rewind_wake_cursor_for_test(conn, CONSUMER, to=0)
     advance_scan(
         "endpoint-wake-dispatcher",
         0,
@@ -573,7 +575,7 @@ def test_unrelated_same_seat_post_on_shared_root_does_not_skip_pending_wake(
     )
     get_cursor()
     with connect() as conn:
-        conn.execute("UPDATE endpoint_wake_cursor SET high_water_turn_id=0")
+        rewind_wake_cursor_for_test(conn, CONSUMER, to=0)
     advance_scan(
         "endpoint-wake-dispatcher",
         0,
@@ -639,7 +641,7 @@ def test_stage_manager_alias_rows_coalesce_in_one_claim(db: TestClient) -> None:
     )
     get_cursor()
     with connect() as conn:
-        conn.execute("UPDATE endpoint_wake_cursor SET high_water_turn_id=0")
+        rewind_wake_cursor_for_test(conn, CONSUMER, to=0)
     advance_scan(
         "endpoint-wake-dispatcher",
         0,
@@ -683,7 +685,7 @@ def test_debounce_clears_on_cross_thread_reply(db: TestClient) -> None:
     )
     get_cursor()
     with connect() as conn:
-        conn.execute("UPDATE endpoint_wake_cursor SET high_water_turn_id=0")
+        rewind_wake_cursor_for_test(conn, CONSUMER, to=0)
     advance_scan(
         "endpoint-wake-dispatcher",
         0,
@@ -760,7 +762,7 @@ def test_debounce_clears_when_delivered_turn_marked_read(db: TestClient) -> None
     )
     get_cursor()
     with connect() as conn:
-        conn.execute("UPDATE endpoint_wake_cursor SET high_water_turn_id=0")
+        rewind_wake_cursor_for_test(conn, CONSUMER, to=0)
     advance_scan(
         "endpoint-wake-dispatcher",
         0,
@@ -832,7 +834,7 @@ def test_record_wake_result_parent_and_window_binding_routes(db: TestClient) -> 
         )
         get_cursor()
         with connect() as conn:
-            conn.execute("UPDATE endpoint_wake_cursor SET high_water_turn_id=0")
+            rewind_wake_cursor_for_test(conn, CONSUMER, to=0)
         advance_scan(
             "endpoint-wake-dispatcher",
             0,
@@ -929,7 +931,7 @@ def test_child_lane_closeout_matches_parent_thread_subscription(db: TestClient) 
     )
     get_cursor()
     with connect() as conn:
-        conn.execute("UPDATE endpoint_wake_cursor SET high_water_turn_id=0")
+        rewind_wake_cursor_for_test(conn, CONSUMER, to=0)
     advance_scan(
         "endpoint-wake-dispatcher",
         0,
@@ -964,7 +966,7 @@ def test_grok_bot_wake_skipped_already_read_when_turn_stamped(
     )
     get_cursor()
     with connect() as conn:
-        conn.execute("UPDATE endpoint_wake_cursor SET high_water_turn_id=0")
+        rewind_wake_cursor_for_test(conn, CONSUMER, to=0)
     advance_scan(
         "endpoint-wake-dispatcher",
         0,
@@ -1005,7 +1007,7 @@ def test_maestro_wake_skipped_already_read_when_turn_stamped(
     )
     get_cursor()
     with connect() as conn:
-        conn.execute("UPDATE endpoint_wake_cursor SET high_water_turn_id=0")
+        rewind_wake_cursor_for_test(conn, CONSUMER, to=0)
     advance_scan(
         "endpoint-wake-dispatcher",
         0,
@@ -1046,7 +1048,7 @@ def test_web_anthropic_wake_skipped_already_read_when_turn_stamped(
     )
     get_cursor()
     with connect() as conn:
-        conn.execute("UPDATE endpoint_wake_cursor SET high_water_turn_id=0")
+        rewind_wake_cursor_for_test(conn, CONSUMER, to=0)
     advance_scan(
         "endpoint-wake-dispatcher",
         0,
@@ -1087,7 +1089,7 @@ def _seed_maestro_pair_pending_wake(
     )
     get_cursor()
     with connect() as conn:
-        conn.execute("UPDATE endpoint_wake_cursor SET high_water_turn_id=0")
+        rewind_wake_cursor_for_test(conn, CONSUMER, to=0)
     advance_scan(
         "endpoint-wake-dispatcher",
         0,
@@ -1203,7 +1205,7 @@ def test_pair_mark_read_skips_peer_pending_wake_ledger(db: TestClient) -> None:
     )
     get_cursor()
     with connect() as conn:
-        conn.execute("UPDATE endpoint_wake_cursor SET high_water_turn_id=0")
+        rewind_wake_cursor_for_test(conn, CONSUMER, to=0)
     advance_scan(
         "endpoint-wake-dispatcher",
         0,
@@ -1246,7 +1248,7 @@ def test_web_anthropic_reply_skips_maestro_wake_already_answered(
     )
     get_cursor()
     with connect() as conn:
-        conn.execute("UPDATE endpoint_wake_cursor SET high_water_turn_id=0")
+        rewind_wake_cursor_for_test(conn, CONSUMER, to=0)
     advance_scan(
         "endpoint-wake-dispatcher",
         0,
@@ -1287,7 +1289,7 @@ def test_maestro_wake_still_skipped_already_answered(db: TestClient) -> None:
     )
     get_cursor()
     with connect() as conn:
-        conn.execute("UPDATE endpoint_wake_cursor SET high_water_turn_id=0")
+        rewind_wake_cursor_for_test(conn, CONSUMER, to=0)
     advance_scan(
         "endpoint-wake-dispatcher",
         0,
@@ -1394,7 +1396,7 @@ def test_claim_due_wakes_prefers_untried_group_over_retried(db: TestClient) -> N
     )
     get_cursor()
     with connect() as conn:
-        conn.execute("UPDATE endpoint_wake_cursor SET high_water_turn_id=0")
+        rewind_wake_cursor_for_test(conn, CONSUMER, to=0)
     advance_scan(
         "endpoint-wake-dispatcher",
         0,
@@ -1450,7 +1452,7 @@ def test_claim_due_wakes_skips_all_read_group_then_claims_next(
     )
     get_cursor()
     with connect() as conn:
-        conn.execute("UPDATE endpoint_wake_cursor SET high_water_turn_id=0")
+        rewind_wake_cursor_for_test(conn, CONSUMER, to=0)
     advance_scan(
         "endpoint-wake-dispatcher",
         0,
@@ -1503,7 +1505,7 @@ def test_endpoint_wake_covers_turn_false_for_pending(db: TestClient) -> None:
     )
     get_cursor()
     with connect() as conn:
-        conn.execute("UPDATE endpoint_wake_cursor SET high_water_turn_id=0")
+        rewind_wake_cursor_for_test(conn, CONSUMER, to=0)
     advance_scan(
         "endpoint-wake-dispatcher",
         0,
@@ -1542,7 +1544,7 @@ def test_suppress_endpoint_wake_for_turn_marks_pending_skipped(db: TestClient) -
     )
     get_cursor()
     with connect() as conn:
-        conn.execute("UPDATE endpoint_wake_cursor SET high_water_turn_id=0")
+        rewind_wake_cursor_for_test(conn, CONSUMER, to=0)
     advance_scan(
         "endpoint-wake-dispatcher",
         0,
@@ -1724,7 +1726,7 @@ def test_seat_superseded_skip_reason_grok_tombstone_does_not_block_orion(
     )
     get_cursor()
     with connect() as conn:
-        conn.execute("UPDATE endpoint_wake_cursor SET high_water_turn_id=0")
+        rewind_wake_cursor_for_test(conn, CONSUMER, to=0)
     advance_scan(
         "endpoint-wake-dispatcher",
         0,
@@ -1833,7 +1835,7 @@ def test_skip_reason_returns_seat_superseded_for_tombstone_subscription(
     unsubscribe_endpoint(agent="maestro", thread_scope=thread)
     get_cursor()
     with connect() as conn:
-        conn.execute("UPDATE endpoint_wake_cursor SET high_water_turn_id=0")
+        rewind_wake_cursor_for_test(conn, CONSUMER, to=0)
     advance_scan(
         "endpoint-wake-dispatcher",
         0,
@@ -1907,7 +1909,7 @@ def test_skip_reason_returns_seat_superseded_for_superseded_cse_holder(
     )
     get_cursor()
     with connect() as conn:
-        conn.execute("UPDATE endpoint_wake_cursor SET high_water_turn_id=0")
+        rewind_wake_cursor_for_test(conn, CONSUMER, to=0)
     advance_scan(
         "endpoint-wake-dispatcher",
         0,
@@ -1998,7 +2000,7 @@ def test_record_wake_result_title_mismatch_refused_stamps_finished_at(
     made = _turn(thread)
     get_cursor()
     with connect() as conn:
-        conn.execute("UPDATE endpoint_wake_cursor SET high_water_turn_id=0")
+        rewind_wake_cursor_for_test(conn, CONSUMER, to=0)
     advance_scan(
         "endpoint-wake-dispatcher",
         0,
@@ -2128,7 +2130,7 @@ def test_tab_coalesce_holds_until_quiet_window(db: TestClient) -> None:
     )
     get_cursor()
     with connect() as conn:
-        conn.execute("UPDATE endpoint_wake_cursor SET high_water_turn_id=0")
+        rewind_wake_cursor_for_test(conn, CONSUMER, to=0)
     advance_scan(
         "endpoint-wake-dispatcher",
         0,
@@ -2169,7 +2171,7 @@ def test_tab_coalesce_merges_cross_thread_burst_into_one_wake(db: TestClient) ->
     )
     get_cursor()
     with connect() as conn:
-        conn.execute("UPDATE endpoint_wake_cursor SET high_water_turn_id=0")
+        rewind_wake_cursor_for_test(conn, CONSUMER, to=0)
     advance_scan(
         "endpoint-wake-dispatcher",
         0,
@@ -2206,7 +2208,7 @@ def test_tab_coalesce_max_hold_caps_trickle(db: TestClient) -> None:
     )
     get_cursor()
     with connect() as conn:
-        conn.execute("UPDATE endpoint_wake_cursor SET high_water_turn_id=0")
+        rewind_wake_cursor_for_test(conn, CONSUMER, to=0)
     advance_scan(
         "endpoint-wake-dispatcher",
         0,
@@ -2226,7 +2228,7 @@ def test_tab_coalesce_legacy_rows_keep_thread_grouping(db: TestClient) -> None:
     b = _turn(thread, to="cursor-sdk")
     get_cursor()
     with connect() as conn:
-        conn.execute("UPDATE endpoint_wake_cursor SET high_water_turn_id=0")
+        rewind_wake_cursor_for_test(conn, CONSUMER, to=0)
     advance_scan(
         "endpoint-wake-dispatcher",
         0,
@@ -2260,7 +2262,7 @@ def test_tab_coalesce_claim_is_single_wake_id(db: TestClient) -> None:
     )
     get_cursor()
     with connect() as conn:
-        conn.execute("UPDATE endpoint_wake_cursor SET high_water_turn_id=0")
+        rewind_wake_cursor_for_test(conn, CONSUMER, to=0)
     advance_scan(
         "endpoint-wake-dispatcher",
         0,
@@ -2337,7 +2339,7 @@ def test_tab_hold_continues_to_next_group(db: TestClient) -> None:
     )
     get_cursor()
     with connect() as conn:
-        conn.execute("UPDATE endpoint_wake_cursor SET high_water_turn_id=0")
+        rewind_wake_cursor_for_test(conn, CONSUMER, to=0)
     advance_scan(
         "endpoint-wake-dispatcher",
         0,
@@ -2398,7 +2400,7 @@ def test_tab_hold_ignores_debounced_and_backoff_rows(db: TestClient) -> None:
     )
     get_cursor()
     with connect() as conn:
-        conn.execute("UPDATE endpoint_wake_cursor SET high_water_turn_id=0")
+        rewind_wake_cursor_for_test(conn, CONSUMER, to=0)
     advance_scan(
         "endpoint-wake-dispatcher",
         0,
@@ -2453,7 +2455,7 @@ def test_tab_merge_claims_null_rows_in_selected_group(db: TestClient) -> None:
     )
     get_cursor()
     with connect() as conn:
-        conn.execute("UPDATE endpoint_wake_cursor SET high_water_turn_id=0")
+        rewind_wake_cursor_for_test(conn, CONSUMER, to=0)
     advance_scan(
         "endpoint-wake-dispatcher",
         0,
@@ -2498,7 +2500,7 @@ def test_thread_19627_never_tab_merges(db: TestClient) -> None:
     )
     get_cursor()
     with connect() as conn:
-        conn.execute("UPDATE endpoint_wake_cursor SET high_water_turn_id=0")
+        rewind_wake_cursor_for_test(conn, CONSUMER, to=0)
     tab = "stage-tab"
     advance_scan(
         "endpoint-wake-dispatcher",
@@ -2523,7 +2525,7 @@ def test_19627_member_under_non_19627_head_is_not_merged(db: TestClient) -> None
     t_s, _b, n_s, _ = insert_turn(thread="19627", from_agent="cursor", to_agent="cursor-sdk", subject="FACT|s", body="b")
     get_cursor()
     with connect() as conn:
-        conn.execute("UPDATE endpoint_wake_cursor SET high_water_turn_id=0")
+        rewind_wake_cursor_for_test(conn, CONSUMER, to=0)
     rows = [(head, t_h, n_h), ("19627", t_s, n_s)]
     scan = [_pending_with_tab(agent="cursor-sdk", thread=a, turn_id=b, turn_number=c, tab="stage-tab") for a, b, c in rows]
     advance_scan("endpoint-wake-dispatcher", 0, t_s, scan, now="2019-12-31 23:59:50")

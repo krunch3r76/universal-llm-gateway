@@ -140,6 +140,19 @@ def _clear_detect_cursor_gui_host_env(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 @pytest.fixture(autouse=True)
+def _isolate_agent_bus_db_for_bus_watch(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from agent_bus_store.testing.wake_cursor_test_support import (
+        isolate_agent_bus_db_for_pytest,
+        isolate_endpoint_wake_event_emit_for_pytest,
+    )
+
+    isolate_agent_bus_db_for_pytest(monkeypatch, tmp_path)
+    isolate_endpoint_wake_event_emit_for_pytest(monkeypatch, tmp_path)
+
+
+@pytest.fixture(autouse=True)
 def _reset_waiter_stamp_cache_between_tests() -> None:
     """Process-level waiter cache must not leak across ``libs/bus_watch`` tests."""
     import sys

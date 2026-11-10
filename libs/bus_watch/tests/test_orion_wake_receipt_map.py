@@ -1,6 +1,7 @@
 """Pinned Orion receipt → ledger outcomes; offline ledger row for owner path."""
 
 from __future__ import annotations
+from agent_bus_store.testing.wake_cursor_test_support import rewind_wake_cursor_for_test
 
 import json
 
@@ -152,7 +153,7 @@ async def test_deliver_classify_persists_unknown_row(
     """After committed _dom_deliver, approval exception → unknown paste_receipt on ledger."""
     from agent_bus_store.db import create_thread, insert_turn
     from agent_bus_store.db.connection import connect
-    from agent_bus_store.db.endpoint_wake_ledger import (
+    from agent_bus_store.db.endpoint_wake_ledger import (CONSUMER, 
         advance_scan,
         claim_due_wakes,
         get_cursor,
@@ -186,7 +187,7 @@ async def test_deliver_classify_persists_unknown_row(
     )
     get_cursor()
     with connect() as conn:
-        conn.execute("UPDATE endpoint_wake_cursor SET high_water_turn_id=0")
+        rewind_wake_cursor_for_test(conn, CONSUMER, to=0)
     advance_scan(
         "endpoint-wake-dispatcher",
         0,
