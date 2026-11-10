@@ -196,8 +196,8 @@ def isolate_endpoint_wake_event_emit_for_pytest(
       imported; ``MCP_EVENTS_ENABLED=0`` makes a later import build none.
     - ``EVENTS_INGEST_SOCK`` points under ``tmp_path`` for readers that look it
       up at call time. Readers that look it up at import time are covered by the
-      module-level pin in ``libs/agent_bus_store/conftest.py`` and
-      ``libs/bus_watch/conftest.py``.
+      module-level pin in ``libs/conftest.py``, which runs before any libs
+      package ``__init__`` imports a publisher.
     """
     sock = str(tmp_path / "pytest-events-ingest.sock")
     monkeypatch.setenv("MCP_EVENTS_ENABLED", "0")
