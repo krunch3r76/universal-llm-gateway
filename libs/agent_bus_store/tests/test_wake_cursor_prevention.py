@@ -212,7 +212,6 @@ def test_pass_duration_emit_isolated_under_fixture(
     import bus_watch.events as bw_events
     from agent_bus_store.testing.wake_cursor_test_support import (
         _import_mcp_events_module,
-        isolate_endpoint_wake_event_emit_for_pytest,
     )
     from bus_watch.endpoint_wake_pass_timing import (
         begin_pass,

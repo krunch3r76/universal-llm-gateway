@@ -176,6 +176,7 @@ def isolate_endpoint_wake_event_emit_for_pytest(
 
     try:
         import bus_watch.events as bw_events
+
         from agent_bus_store.events import publisher as abs_publisher
 
         monkeypatch.setattr(bw_events, "record", _noop_record)
