@@ -98,7 +98,7 @@ audit). Non-blocking — current production paths are clean.
 
 - Spec `docs/architecture/entity-backed-claim-provenance.md` § 5.2,
   § 10.5
-- Audit assertion `cortex://assertion/9243`
+- Audit assertion `assertion:9243` (`assertion_get(9243)`)
 - Source `libs/provenance/assertions.py` `is_independent` docstring
   (contains the granularity rule inline)
 - Agent skill `lawyer-stance` — adjacent

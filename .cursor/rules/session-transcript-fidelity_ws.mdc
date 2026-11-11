@@ -66,9 +66,9 @@ Server-side enforcement (`mcp.session.close.rejected` reasons):
 **Transcript:** gemini-cursor-YYYY-MM-DD-HHmm
 ```
 
-Size: kilobytes. ∀ `session_summary_md` exceeding ~10 KB: you're
-probably writing the verbatim layer into the wrong field. Stop, trim
-to decisions / files / open items, and trust the server.
+Size: keep the structural layer compact (decisions, files, open items).
+If narration reads like a verbatim turn log, you're probably writing the
+verbatim layer into the wrong field. Stop, trim to outcomes, and trust the server.
 
 ---
 
