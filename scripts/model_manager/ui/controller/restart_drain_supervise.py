@@ -222,6 +222,17 @@ async def supervise_until_lifecycle(
             from .restart_terminal_owed_wake import maybe_producer2_after_terminal
 
             maybe_producer2_after_terminal(store, store.get(intent_id))
+            service = getattr(intent, "service", None) or getattr(
+                store.get(intent_id), "service", None
+            )
+            if service is not None and str(service) != "git_integration_worker":
+                from .git_worker_activation_verify import (
+                    schedule_resolve_validation_after_lifecycle,
+                )
+
+                schedule_resolve_validation_after_lifecycle(
+                    store, intent_id, str(service)
+                )
         if escalated:
             logger.info(
                 "stargate drain supervisor completed after idle-ceiling force "
