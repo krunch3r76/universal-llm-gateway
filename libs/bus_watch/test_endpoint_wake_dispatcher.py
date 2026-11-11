@@ -3685,6 +3685,7 @@ def test_declared_rule_map_loads_address_rules(db: None) -> None:
     assert declared[8] == "refuse_address_mismatch"
     assert declared[14] == "drop_routine_hop_closeout"
     assert declared[13] == "wake_peer_sender"
+    assert declared[15] == "wake_coord_subscriber"
     assert declared[-1] == "default_suppress"
 
 

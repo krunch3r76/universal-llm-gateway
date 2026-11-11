@@ -70,9 +70,7 @@ def _ledger_columns(conn: sqlite3.Connection) -> set[str]:
     return {str(r[1]) for r in rows}
 
 
-def _encode_delivery_failure_detail(
-    reason: str | None, **fields: Any
-) -> str | None:
+def _encode_delivery_failure_detail(reason: str | None, **fields: Any) -> str | None:
     """Stable JSON blob for agent_bus_read / advisory tooling (nullable)."""
     base = str(reason or "").strip()
     if not base and not fields:
@@ -752,6 +750,81 @@ def resolve_subscription_for_thread(
     else:
         route = "parent"
     return route, row
+
+
+def list_subscribed_thread_scoped_agents(thread_id: str) -> list[dict[str, Any]]:
+    """Newest subscribed row per agent on an exact ``thread_id`` scope (no wildcards)."""
+    scope = str(thread_id or "").strip()
+    if not scope or scope == "*":
+        return []
+    with connect() as conn:
+        rows = conn.execute(
+            """
+            SELECT s.* FROM agent_endpoint_subscriptions s
+            WHERE s.thread_scope = ?
+              AND s.actuation IS NULL
+              AND s.state = 'subscribed'
+              AND s.id IN (
+                SELECT MAX(id) FROM agent_endpoint_subscriptions
+                WHERE thread_scope = ?
+                  AND actuation IS NULL
+                GROUP BY agent
+              )
+            ORDER BY s.id DESC
+            """,
+            (scope, scope),
+        ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def newest_subscribed_thread_scoped_subscription(
+    thread_id: str,
+) -> tuple[str, dict[str, Any]] | None:
+    """Newest exact thread-scope subscription across agents, if any."""
+    rows = list_subscribed_thread_scoped_agents(thread_id)
+    if not rows:
+        return None
+    row = rows[0]
+    return str(row.get("agent") or "").strip(), row
+
+
+COORD_SUBSCRIBER_WAKE_COOLDOWN_S = 60.0
+
+
+def coord_subscriber_wake_in_cooldown(
+    agent: str,
+    thread_id: str,
+    *,
+    within_s: float = COORD_SUBSCRIBER_WAKE_COOLDOWN_S,
+) -> bool:
+    """True when a recent ``wake_coord_subscriber`` ledger row exists for the pair.
+
+    Bounded ping-pong guard: COORD→B must not immediately re-wake A COORD→A. Uses
+    wall-clock ``created_at`` on ``endpoint_wake_ledger``; hermetic when
+    ``AGENT_BUS_DB_PATH`` is unset (always False).
+    """
+    if not os.environ.get("AGENT_BUS_DB_PATH"):
+        return False
+    canon = normalize_bus_address(agent)
+    scope = str(thread_id or "").strip()
+    if not canon or not scope:
+        return False
+    try:
+        window = f"-{int(within_s)} seconds"
+        with connect() as conn:
+            row = conn.execute(
+                """
+                SELECT 1 FROM endpoint_wake_ledger
+                WHERE agent = ? AND thread_id = ?
+                  AND decided_by_rule = 'wake_coord_subscriber'
+                  AND datetime(created_at) >= datetime('now', ?)
+                LIMIT 1
+                """,
+                (canon, scope, window),
+            ).fetchone()
+    except sqlite3.Error:
+        return False
+    return row is not None
 
 
 _WAKE_DELIVERY_AGENT = "cursor"
@@ -1650,12 +1723,8 @@ def claim_due_wakes(
 
             _reasons = orion_bounded_defer_reasons_sql_sorted()
             _bounded_in_sql = f"({','.join('?' * len(_reasons))})"
-            orion_next_gate = (
-                f" AND {_orion_composer_defer_claim_ready_sql('p', in_sql=_bounded_in_sql)}"
-            )
-            group_next_sql = (
-                f" AND {_orion_composer_defer_claim_ready_sql('', in_sql=_bounded_in_sql)}"
-            )
+            orion_next_gate = f" AND {_orion_composer_defer_claim_ready_sql('p', in_sql=_bounded_in_sql)}"
+            group_next_sql = f" AND {_orion_composer_defer_claim_ready_sql('', in_sql=_bounded_in_sql)}"
             orion_next_params = (*_reasons, stamp)
             orion_group_params = orion_next_params
         conn.execute(
@@ -1993,9 +2062,10 @@ def record_wake_result(
 
     stamp = _now(now)
     detail = dict(wake_detail or {})
-    merge_reason = str(detail.pop("composer_defer_reason", "") or "").strip() or str(
-        reason or ""
-    ).strip()
+    merge_reason = (
+        str(detail.pop("composer_defer_reason", "") or "").strip()
+        or str(reason or "").strip()
+    )
     decided_by_rule = merge_composer_defer_decided_by_rule(
         decided_by_rule, reason=merge_reason
     )
@@ -2066,7 +2136,8 @@ def record_wake_result(
             if (
                 isinstance(blob, dict)
                 and str(blob.get("outcome") or "") == "unknown"
-                and outcome_in in {"refused", "unknown", "delivered", "pending", "skipped"}
+                and outcome_in
+                in {"refused", "unknown", "delivered", "pending", "skipped"}
             ):
                 return 0
         # Merge with prior delivery_failure_detail when the new payload is thinner.
@@ -2082,11 +2153,7 @@ def record_wake_result(
                     prior_detail = {}
         merged_detail = {**prior_detail, **detail}
         detail_blob = _encode_delivery_failure_detail(merge_reason, **merged_detail)
-        row_reason = (
-            merge_reason
-            if pending_handoff and release_claim
-            else reason_s
-        )
+        row_reason = merge_reason if pending_handoff and release_claim else reason_s
         set_rule = (
             ", decided_by_rule=COALESCE(?, decided_by_rule)" if decided_by_rule else ""
         )
@@ -2138,9 +2205,11 @@ def record_wake_result(
             ac_val = max(1, comp_prior + 1)
             next_wall = _shift(stamp, orion_deferred_retry_delay_s(ac_val))
             orion_agent = normalize_bus_address(str(eligible[0]["agent"])) == "orion"
-            exhausted_orion = orion_agent and orion_bounded_defer_reason(
-                merge_reason
-            ) and ac_val > ORION_COMPOSER_DEFER_MAX_ATTEMPTS
+            exhausted_orion = (
+                orion_agent
+                and orion_bounded_defer_reason(merge_reason)
+                and ac_val > ORION_COMPOSER_DEFER_MAX_ATTEMPTS
+            )
             if exhausted_orion:
                 thread_id = str(eligible[0]["thread_id"])
                 turn_numbers = sorted({int(r["turn_number"]) for r in eligible})

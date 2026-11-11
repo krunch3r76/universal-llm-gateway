@@ -209,6 +209,15 @@ _ROUTINE_DISPATCH_FROM = frozenset({"cursor-sdk", "conductor-hop", "dispatch"})
 _GATE_WAKE_REMAP_ADDRESSES = frozenset(
     {"dispatch", "conductor-hop", "git-integration-worker", "frontier-admit"}
 )
+_CLOSEOUT_WORKER_TO_LABELS = _GATE_WAKE_REMAP_ADDRESSES | frozenset({"cursor-sdk"})
+_WORKER_LABEL_REROUTE_SUBJECT_RE = re.compile(
+    r"(?i)(?:^|[\|\s])PARKED(?=[\s(|]|$)|cdp reply\b"
+)
+_WAKE_COORD_SUBSCRIBER_RULE = "wake_coord_subscriber"
+_WAKE_WORKER_LABEL_THREAD_SUBSCRIBER_RULE = "wake_worker_label_thread_subscriber"
+_SUPPRESS_LEDGER_VISIBILITY_RULES = frozenset(
+    {"default_suppress", "drop_dispatch_intermediate"}
+)
 _TAB_REMAP_STALE_NAME = "stale_name"
 _TAB_REMAP_BARE_NAME = "bare_name"
 _PEER_WAKE_FROM = frozenset(
@@ -368,6 +377,21 @@ def _maestro_direct_address_turn(
 
 
 _LANE_NAME_ALIASES = frozenset({"maestro", "web-anthropic", "claude-web"})
+_COORD_WAKE_EXCLUDED_TO = (
+    _CLOSEOUT_WORKER_TO_LABELS
+    | STAGE_MANAGER_ADDRESSES
+    | _LANE_NAME_ALIASES
+    | frozenset(
+        {
+            "cursor",
+            "orion",
+            "coordinator",
+            "liaison",
+            "impresario",
+            "sidekick",
+        }
+    )
+)
 _ADDRESS_WALK_HOPS = 8
 _CSE_LANE_THREAD_RE = re.compile(r"^\d{1,10}$")
 _CSE_LIVE_SEAT_STATES = frozenset({"driving", "dormant", "houseless"})
@@ -471,6 +495,107 @@ def resolve_turn_address(thread: str, store: StoreClient | None) -> TurnAddress 
     return None
 
 
+@dataclass(frozen=True)
+class _WorkerLabelRerouteNote:
+    raw_to: str
+    chosen_agent: str
+    subject: str
+
+
+def _worker_label_reroute_subject(subject: str) -> bool:
+    if _is_cursor_sdk_generate_admit_echo(subject):
+        return False
+    if _subject_is_closeout(subject):
+        return True
+    text = subject or ""
+    if _WORKER_LABEL_REROUTE_SUBJECT_RE.search(text):
+        return True
+    if _GATE_WAKE_ALL_PLATFORMS_RE.search(text):
+        return True
+    return False
+
+
+def _route_needs_thread_subscriber_preempt(
+    resolved: tuple[str, dict[str, Any]] | None,
+    *,
+    thread: str,
+) -> bool:
+    if resolved is None:
+        return True
+    kind, sub = resolved
+    scope = str(sub.get("thread_scope") or "")
+    if kind == "exact" and scope == thread:
+        return False
+    return True
+
+
+def _newest_thread_subscriber_for_reroute(
+    thread: str,
+    *,
+    lookup: Any | None = None,
+) -> tuple[str, dict[str, Any]] | None:
+    """Hermetic unless ``AGENT_BUS_DB_PATH`` is set (or tests inject ``lookup``)."""
+    if lookup is not None:
+        try:
+            return lookup(thread)
+        except Exception:
+            logger.exception(
+                "endpoint_wake_dispatcher: injected thread subscriber lookup failed"
+            )
+            return None
+    if not os.environ.get("AGENT_BUS_DB_PATH"):
+        return None
+    try:
+        from agent_bus_store.db.endpoint_wake_ledger import (
+            newest_subscribed_thread_scoped_subscription,
+        )
+
+        return newest_subscribed_thread_scoped_subscription(thread)
+    except Exception:
+        logger.exception(
+            "endpoint_wake_dispatcher: thread subscriber lookup failed thread=%s",
+            thread,
+        )
+        return None
+
+
+def _maybe_reroute_worker_label_to_thread_subscriber(
+    *,
+    store: StoreClient,
+    turn: dict[str, Any],
+    raw_to: str,
+    subject: str,
+    thread: str,
+    agent: str,
+    resolved: tuple[str, dict[str, Any]] | None,
+    lookup: Any | None = None,
+) -> tuple[str, tuple[str, dict[str, Any]] | None, _WorkerLabelRerouteNote | None]:
+    """Reroute worker-label gate wakes onto the newest exact thread-scoped subscriber."""
+    if normalize_bus_address(raw_to) not in _CLOSEOUT_WORKER_TO_LABELS:
+        return agent, resolved, None
+    if not _worker_label_reroute_subject(subject):
+        return agent, resolved, None
+    if not _route_needs_thread_subscriber_preempt(resolved, thread=thread):
+        return agent, resolved, None
+    from_agent = normalize_bus_address(str(turn.get("from_agent") or ""))
+    picked = _newest_thread_subscriber_for_reroute(thread, lookup=lookup)
+    if picked is None:
+        return agent, resolved, None
+    chosen_agent, row = picked
+    reroute_agent = normalize_bus_address(chosen_agent)
+    if not reroute_agent or from_agent == reroute_agent:
+        return agent, resolved, None
+    new_resolved = _resolve_delivery_route(store, reroute_agent, thread, raw_to=raw_to)
+    if new_resolved is None:
+        new_resolved = _apply_grok_window_overlay(reroute_agent, ("exact", row))
+    if new_resolved is None:
+        return agent, resolved, None
+    note = _WorkerLabelRerouteNote(
+        raw_to=raw_to, chosen_agent=reroute_agent, subject=subject
+    )
+    return reroute_agent, new_resolved, note
+
+
 def _observe_address_route(
     *,
     thread: str,
@@ -481,7 +606,7 @@ def _observe_address_route(
     subject: str = "",
     registration_id: str = "",
 ) -> None:
-    """Observation event for an address match, a name-alias match, or a refusal.
+    """Observation for address match, alias match, thread-subscriber reroute, or refusal.
 
     A publisher outage must not change the wake verdict, so emit failures are logged
     and swallowed.
@@ -664,6 +789,37 @@ def _subscribed_for_wake_scan(
             "endpoint_wake_dispatcher: holder probe failed thread=%s", thread
         )
     return resolve_turn_address(thread, store) is not None
+
+
+def _wake_suppress_tombstone_warranted(
+    store: StoreClient,
+    agent: str,
+    thread: str,
+    *,
+    resolved: tuple[str, dict[str, Any]] | None,
+    rule_id: str,
+) -> bool:
+    if _subscribed_for_wake_scan(store, agent, thread, resolved=resolved):
+        return True
+    if rule_id not in _SUPPRESS_LEDGER_VISIBILITY_RULES:
+        return False
+    return resolved is not None and str(resolved[1].get("state") or "") == "subscribed"
+
+
+def _is_real_subscribed_wake_target(
+    store: StoreClient | None,
+    to_agent: str,
+    thread: str,
+) -> bool:
+    if store is None or not thread.strip():
+        return False
+    if to_agent in _COORD_WAKE_EXCLUDED_TO:
+        return False
+    try:
+        route = store.subscription(to_agent, thread)
+    except Exception:
+        return False
+    return route is not None and str(route[1].get("state") or "") == "subscribed"
 
 
 def _turn_id_of(turn: dict[str, Any]) -> int | None:
@@ -920,6 +1076,7 @@ _FALLBACK_WAKE_RULE_IDS: tuple[str, ...] = (
     "wake_on_behalf_execution_reply",
     "wake_peer_sender",
     "drop_routine_hop_closeout",
+    "wake_coord_subscriber",
     "wake_gate_or_directive",
     "wake_cse_allowlist",
     "wake_grok_allowlist",
@@ -1096,6 +1253,21 @@ def qualify(
         return RuleVerdict(True, "wake_peer_sender")
     if _is_routine_conductor_hop_closeout(subject):
         return RuleVerdict(False, "drop_routine_hop_closeout")
+    if head == "COORD" or head.startswith("COORD "):
+        thread = str(turn.get("thread") or "")
+        if _is_real_subscribed_wake_target(store, to_agent, thread):
+            try:
+                from agent_bus_store.db.endpoint_wake_ledger import (
+                    coord_subscriber_wake_in_cooldown,
+                )
+
+                if not coord_subscriber_wake_in_cooldown(to_agent, thread):
+                    return RuleVerdict(True, _WAKE_COORD_SUBSCRIBER_RULE)
+            except Exception:
+                logger.exception(
+                    "endpoint_wake_dispatcher: coord cooldown probe failed thread=%s",
+                    thread,
+                )
     allow_rule = _subject_allowed_rule_id(subject, cse=cse, to_agent=to_agent)
     if allow_rule is not None:
         return RuleVerdict(True, allow_rule)
@@ -1837,6 +2009,7 @@ def scan_once(store: StoreClient, *, idle_mark: dict[str, float] | None = None) 
             thread = str(turn["thread"])
             agent = _effective_to_agent(raw_to, subject)
             stamped_waiter: str | None = None
+            reroute_note: _WorkerLabelRerouteNote | None = None
             if agent == "web-anthropic":
                 resolved = None
                 cse = True
@@ -1863,12 +2036,36 @@ def scan_once(store: StoreClient, *, idle_mark: dict[str, float] | None = None) 
                     resolved = _resolve_delivery_route(
                         store, agent, thread, raw_to=raw_to
                     )
+                agent, resolved, reroute_note = (
+                    _maybe_reroute_worker_label_to_thread_subscriber(
+                        store=store,
+                        turn=turn,
+                        raw_to=raw_to,
+                        subject=subject,
+                        thread=thread,
+                        agent=agent,
+                        resolved=resolved,
+                    )
+                )
                 cse = (
                     resolved is not None
                     and str(resolved[1].get("surface") or "") == "cse"
                 )
             direct_maestro = _maestro_direct_address_turn(turn, store)
             verdict = qualify(turn, cse=cse, store=store)
+            if verdict.wake and reroute_note is not None:
+                _observe_address_route(
+                    thread=thread,
+                    turn_id=_turn_id_of(turn),
+                    match="thread_subscriber",
+                    reason=(
+                        f"worker_label_reroute:{reroute_note.chosen_agent}"
+                        f":from_to={reroute_note.raw_to}"
+                    ),
+                    rule_id=_WAKE_WORKER_LABEL_THREAD_SUBSCRIBER_RULE,
+                    subject=reroute_note.subject,
+                    registration_id=reroute_note.chosen_agent,
+                )
             if not verdict.wake:
                 if direct_maestro:
                     _observe_maestro_wake_drop(
@@ -1878,7 +2075,13 @@ def scan_once(store: StoreClient, *, idle_mark: dict[str, float] | None = None) 
                         rule_id=verdict.rule_id,
                         subject=subject,
                     )
-                if _subscribed_for_wake_scan(store, agent, thread, resolved=resolved):
+                if _wake_suppress_tombstone_warranted(
+                    store,
+                    agent,
+                    thread,
+                    resolved=resolved,
+                    rule_id=verdict.rule_id,
+                ):
                     _observe_endpoint_wake_suppressed(
                         thread_id=thread,
                         turn_id=_turn_id_of(turn),
@@ -1886,11 +2089,12 @@ def scan_once(store: StoreClient, *, idle_mark: dict[str, float] | None = None) 
                         rule_id=verdict.rule_id,
                         subject_head=head,
                     )
+                    suppressed = _pending_item(
+                        turn, decided_by_rule=verdict.rule_id, route=resolved
+                    )
+                    suppressed["agent"] = agent
                     tombstones.append(
-                        self_sender.suppressed_item(
-                            _pending_item(turn, decided_by_rule=verdict.rule_id),
-                            verdict.rule_id,
-                        )
+                        self_sender.suppressed_item(suppressed, verdict.rule_id)
                     )
                 continue
             if turn.get("read_at"):
