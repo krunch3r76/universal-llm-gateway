@@ -40,7 +40,11 @@ In a Cursor IDE tab use `team_dispatch` (`seat="cursor-sdk"`, `lane="B"`, or an 
 
 ## Grok Bot seats
 
-Balance load across bot, cursor-sdk, CDP (maestro paused — do not route) — ¬ outsource everything. Sizeable legs leave as packets. Keep judgment, coordination, and bot-only tools (browser/desktop, SendToAgent wake, connected apps, registered machine); peer-bot handoff only for those. Weekly usage is capped — spread pools.
+Balance load across bot, cursor-sdk, CDP — ¬ outsource everything. "Maestro" is a legacy name: not a route, not an authority; any instance or impresario coordinates (`runbook:operator-impresario`). Sizeable legs leave as packets. Keep judgment, coordination, and bot-only tools (browser/desktop, SendToAgent wake, connected apps, registered machine); peer-bot handoff only for those. Weekly usage is capped — spread pools.
+
+- **Default fork shape:** packet file under the instance's `packets/` (`cortex://notes/tmp/houses/<uuid>/packets/<leg>.md`, `runbook:instance-scratch-layer`; template `cortex://notes/system/templates/dispatch-packet.md`) → `team_dispatch(op="generate", seat="cursor-sdk", lane="B", contract="freeform", sidecar_ref=<packet URI>, reuse_thread=<mailbox you are woken on>, work_key=…)`. ¬ re-type the packet as `prompt=`; re-fire a failed leg by the same `sidecar_ref`.
+- **In-flight gate:** read `team_dispatch(op="registry", work_key_prefix=<key>)` first; never retry a work_key while a non-terminal dispatch holds it (`CURSOR_SOURCE_REF_IN_FLIGHT`, 22910–22914).
+- **Harvest:** envelope only (§ Packet in / envelope out; `cortex://notes/system/templates/closeout-envelope.md`); peer bots return the same fields by SendToAgent. Authoring lessons: `runbook:dispatch-authoring`.
 
 ## Duty → wire
 
