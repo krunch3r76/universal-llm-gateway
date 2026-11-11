@@ -1,14 +1,28 @@
 # Routing System Architecture — Post-P0 Targeted Refresh (Step 9)
 
-<!-- GENERATED:START source_corpus=doc-excerpts-consolidated.md source_sha256=871f957be6cfd5b4fb147364f91af9606b84ca4f022edb2311c0a1e2a20c968e generated=2026-07-20 session=cursor-2026-07-20-032652-83d -->
-_Generated from docstrings, signatures, and imports; claims reflect what the source **declares**, not verified runtime behavior. CDP Sonnet draft verifies doc↔declaration consistency, not docstring↔behavior truth._
+<!-- GENERATED:START generated=2026-11-10 method=targeted-refresh source_commit=c75e3fc82d555f4c9e8bf3e6e82ad7949fe5338a refreshed_by=agent-bus:22999 coverage=57/57 -->
+_Generated from module docstrings at HEAD; claims reflect what the source **declares**, not verified runtime behavior._
 
 ## Scope of this pass
 
-This is a **targeted refresh**, not a full re-projection of the subsystem. The staged corpus for step 9 covers **18 modules** (routing decision core + eviction chain + package root + catalog + stargate collector + queue re-export + capacity shim) — the subset needed to re-project the five Post-P0 bind items below. It does **not** re-stage the remaining ~38 modules the prior provisional draft (`source/routing.md`, `inventory_sha=a71d07ced6db`, 2026-07-19) covered, including `capacity/_pool/*` internals, `selection/decision/engine/*`, `selection/decision/scorer.py`, `config.py`, `stability.py`, `requirements.py`, `resource_checks.py`, `eviction_cooldown_policy.py`, `model_checks.py`, `selection/collector.py`, `telemetry/freshness_waiter.py`, `queue/verification.py`, `queue/request_queue/{runtime,maintenance,types}.py`, and `aggregate_model_availability.py`. Those sections are **not reproduced here** — see `missing_coverage` below rather than treating their absence as a retraction of the prior draft's claims about them (which were separately spot-checked clean in arch-doc review 5427, 0 Critical / 2 Warning / 4 Suggestion).
+**Targeted refresh** (Kaywan 2026-11-10) of `docs/architecture/routing.md` against `services/universal-stargate/systems/routing` at source commit `c75e3fc8`. This pass adds a **full module inventory (57/57)** and prose for admission/eviction work landed after the prior `generated=2026-07-20` stamp. Detailed class/method sections below remain anchored on the Post-P0 Step 9 subset where noted; symbols in modules outside that subset are summarized only in the inventory table unless called out in **Material changes since 2026-07-20**.
 
-**Package path:** `services/universal-stargate/systems/routing`
-**Staged module count (this pass):** 18 of 56 scanned (per `doc-scan-summary.txt`, 2026-07-20 rescan: 56/56 modularize-green)
+**Package path:** `services/universal-stargate/systems/routing` (proxy admission paths that delegate here are covered in `stargate.md` / `systems/proxy/`).
+**Module count (HEAD):** 57 production `.py` modules (excludes `test_*.py` under this tree).
+
+---
+
+## Material changes since 2026-07-20 (admission / eviction / RAG)
+
+Commits on the admission and eviction path after the July stamp include `953f0fa06` (verdict-classed VRAM admission), `71b7cb362` (RAM reclaim admission and eviction abort semantics), `d43f2df5a` (full-evict VRAM reclaim when catalog understates hardware usage), and `4c3e03866` (RAG protected models evict-last).
+
+**`selection/decision/admission_verdict.py`** — Centralizes verdict-classed VRAM and RAM admission: `AdmissionVerdict` (`admit`, `insufficient_transient`, `insufficient_margin`, `insufficient_structural`), structured `AdmissionEvaluation` / `RamAdmissionEvaluation` / `VramReclaimEvaluation` payloads for traces, capped headroom via `compute_capped_margin_mb`, non-evictable reserves (`compute_non_evictable_vram_reserve_mb`, `compute_non_evictable_ram_reserve_mb`), and `evaluate_vram_admission`, `evaluate_vram_reclaim`, and `evaluate_ram_reclaim` (hardware ceiling on full idle eviction when catalog freeable MB is low).
+
+**`selection/decision/feasibility_reclaim.py`** — `can_fit_after_eviction_including_busy` calls the admission helpers so transient vs structural cannot-fit is distinguished when loaded **and** busy models must be evicted to admit a placement; loading-model reservations are subtracted before reclaim math (mirrors `resource_checks` / `eviction_planning`).
+
+**`selection/decision/eviction_victim_select.py`** — Victim selection uses `evaluate_vram_reclaim` / `evaluate_ram_reclaim` for hardware-corrected freeable estimates; integrates RAG evict-last ordering via `rag_protected_models` (protected models remain reclaimable but sort last).
+
+**`rag_protected_models.py`** — Defines the per-node protected set from `pipelines/rag/models.yaml` and `pipelines/rag_contextualize/models.yaml` (embedding + contextualize routing keys). Policy is **evict-last**, not never-evict; busy/in-flight models are still never victims (`eviction_hysteresis.py` imports `is_rag_protected_model` for ordering/filter metadata).
 
 ---
 
@@ -24,30 +38,67 @@ This is a **targeted refresh**, not a full re-projection of the subsystem. The s
 
 ---
 
-## Module Inventory (staged this pass)
+## Module Inventory (57/57)
 
 | Module | Description |
 |---|---|
-| `__init__.py` | Package root; re-exports `ModelRouter`, `DecisionEngine`, `evaluate_feasibility`, `calculate_utility`, `FeasibilityTier`, `ScoreComponents`. Declares corrected system-level invariants. |
-| `model_router.py` | Unified model router (Predicate-Score Pipeline); central orchestration for gateway selection, eviction, and federated routing. |
-| `capacity/pool.py` | Shim re-exporting `CapacityPool`, `CapacityToken`, `QueueFullError` from the `_pool` package; preserves the historical `systems.routing.capacity.pool` import path. Internals (`_pool/*`) not staged this pass. |
-| `eviction/__init__.py` | Exports typed eviction helpers for federated unload paths: `EvictionWaiter`, `UnloadResult`, `EvictionInflightRegistry`, `EvictionOutcome`, `EvictionStatus`, `execute_eviction_plan`, `get_eviction_plan_for_gateway`. **No `unload_models` export.** |
-| `eviction/event_waiter.py` | Unified event-driven eviction waiter for local and federated gateways; subscribes to `MODEL_UNLOADED` EventBus events. |
-| `eviction/executor.py` | Eviction execution for federated gateways (HTTP unload + event confirmation); fail-closed when EventBus is absent. |
-| `queue/request_queue/__init__.py` | Exposes the `RequestQueue` API (composition of runtime + maintenance). Submodule internals not staged this pass. |
-| `selection/catalog.py` | Aggregates model availability from the local gateway and federation peers into a unified per-request catalog view. |
-| `selection/stargate_collector.py` | Collects `Stargate` snapshots from federated gateways; converts to `Gateway` snapshots for `DecisionEngine`. |
-| `selection/decision/types.py` | Immutable decision types: `FeasibilityTier`, `ConstraintFailure`, `ScoreComponents`, `EvictionPlanSummary`, `GatewayCandidate`, `DecisionTrace`. |
-| `selection/decision/admission_verdict.py` | Verdict-classed VRAM admission (admit / transient / margin / structural-insufficient) using capped headroom and attainable ceiling. |
-| `selection/decision/busy_view.py` | Tracker-over-telemetry busy/idle classification for eviction planning. |
-| `selection/decision/feasibility.py` | Classifies gateways into T0/T1/T2 tiers; concurrency is explicitly out of tier scope. |
-| `selection/decision/feasibility_gates.py` | Early T0/T1 short-circuit gates (circuit-breaker, health, catalog miss, already-loaded, loading-in-progress). |
-| `selection/decision/feasibility_reclaim.py` | Distinguishes transient (reclaimable) vs. structural cannot-fit eviction failure. |
-| `selection/decision/eviction_hysteresis.py` | Cooldown + demand-aware protection filters applied before victim selection. |
-| `selection/decision/eviction_planning.py` | Computes an eviction plan to free VRAM/RAM headroom for a new model load. |
-| `selection/decision/eviction_victim_select.py` | Greedy minimum idle-model eviction selection with hardware-freeable correction. |
-
-*(Each row is grounded in `excerpts/<module>.md`; see per-module citations below. `queue/request_queue.py`, `selection/selector.py`, and the various `__init__.py`/`test_*.py` shims in the full 56-module scan are outside this pass's staged set.)*
+| `__init__.py` | Routing system package root: feasibility tiers, gateway scoring, eviction orchestration; re-exports decision-engine surface. |
+| `aggregate_model_availability.py` | Emits aggregate model-availability union deltas for Stargate routing telemetry. |
+| `capacity/__init__.py` | Per-model admission control API for Master Stargate concurrency slots. |
+| `capacity/pool.py` | Shim preserving `systems.routing.capacity.pool` imports into `_pool`. |
+| `capacity/_pool/__init__.py` | Capacity pool package public re-exports. |
+| `capacity/_pool/_acquisition.py` | `CapacityPool` mixin: acquire/wait loop and pause gating. |
+| `capacity/_pool/_bookkeeping.py` | Slot maps, availability queries, reconcile helpers. |
+| `capacity/_pool/_cancellation.py` | Cancelled waiters and leaked-slot recovery. |
+| `capacity/_pool/_diagnostics.py` | Read-only pool/admission diagnostics. |
+| `capacity/_pool/_events_admission.py` | EventBus admission lifecycle signals (pause/resume/leak). |
+| `capacity/_pool/_events_queue.py` | EventBus queue lifecycle telemetry. |
+| `capacity/_pool/_pause.py` | Admission pause/resume for starvation relief. |
+| `capacity/_pool/_pool_class.py` | Event-driven `CapacityPool` with self-releasing tokens. |
+| `capacity/_pool/_release_dispatch.py` | Token release and FIFO waiter dispatch. |
+| `capacity/_pool/_types.py` | `CapacityToken`, `QueueFullError`, shared pool types. |
+| `eviction/__init__.py` | Typed federated eviction exports (`EvictionOutcome`, `execute_eviction_plan`, …). |
+| `eviction/event_waiter.py` | `MODEL_UNLOADED` waiter; `UnloadResult.SHUTDOWN` distinct from confirmed unload. |
+| `eviction/executor.py` | HTTP unload + EventBus confirmation; `UNCONFIRMED_NO_BUS` fail-closed. |
+| `model_router.py` | Unified predicate–score router for selection, eviction, and federation. |
+| `queue/__init__.py` | Request queue with verification and backpressure. |
+| `queue/request_queue/__init__.py` | `RequestQueue` API export. |
+| `queue/request_queue/maintenance.py` | Shutdown drain and in-flight cancel. |
+| `queue/request_queue/runtime.py` | Enqueue/dequeue/process loop and metrics. |
+| `queue/request_queue/types.py` | `QueuedRequest` and queue item types. |
+| `queue/verification.py` | Post-selection resource verification against footprints. |
+| `rag_protected_models.py` | RAG workload IDs with **evict-last** (not never-evict) policy. |
+| `selection/__init__.py` | Gateway selection package; DecisionEngine entry. |
+| `selection/catalog.py` | Federated catalog union for routing decisions. |
+| `selection/collector.py` | Live `GatewayInstance` → `Gateway` snapshot bridge. |
+| `selection/selector.py` | Legacy stub; logic moved to `decision/`. |
+| `selection/stargate_collector.py` | `Stargate` snapshot collection and collision checks. |
+| `selection/types.py` | `Placement`, `Gateway`, `ModelDetails` dataclasses. |
+| `selection/decision/__init__.py` | Decision engine package exports. |
+| `selection/decision/admission_verdict.py` | Verdict-classed VRAM/RAM admission and reclaim evaluation. |
+| `selection/decision/busy_view.py` | Tracker-over-telemetry busy/idle matrix for eviction. |
+| `selection/decision/config.py` | Affinity/routing policy loaded from `stargate_config.yaml`. |
+| `selection/decision/engine/__init__.py` | Engine package-shadow exports. |
+| `selection/decision/engine/capacity_constraints.py` | Sticky routing temporary-capacity classification. |
+| `selection/decision/engine/core.py` | `DecisionEngine` orchestration (feasibility → score → select). |
+| `selection/decision/engine/selection_rules.py` | Deterministic best-candidate selection rules. |
+| `selection/decision/engine/trace_emission.py` | `ROUTING_DECISION` trace EventBus helpers. |
+| `selection/decision/eviction_cooldown_policy.py` | REQUIRED vs OPPORTUNISTIC cooldown classes. |
+| `selection/decision/eviction_hysteresis.py` | Cooldown/demand filters before victim select. |
+| `selection/decision/eviction_planning.py` | `_compute_eviction_plan` VRAM/RAM headroom planning. |
+| `selection/decision/eviction_victim_select.py` | Greedy victims + hardware freeable correction. |
+| `selection/decision/feasibility.py` | T0/T1/T2 tier evaluation pipeline. |
+| `selection/decision/feasibility_gates.py` | Early T0/T1 short-circuit gates (incl. cloud T1). |
+| `selection/decision/feasibility_reclaim.py` | Transient vs structural cannot-fit after busy eviction. |
+| `selection/decision/model_checks.py` | Catalog/resident model checks for gates. |
+| `selection/decision/protocols.py` | Duck-typed tracker protocols. |
+| `selection/decision/requirements.py` | VRAM/RAM requirements lookup cache. |
+| `selection/decision/resource_checks.py` | Footprints, loading reservations, admission calls. |
+| `selection/decision/scorer.py` | Weighted utility scoring components. |
+| `selection/decision/stability.py` | `StickyPlacementTracker` hysteresis bindings. |
+| `selection/decision/types.py` | `GatewayCandidate`, `DecisionTrace`, feasibility types. |
+| `telemetry/__init__.py` | Routing telemetry package. |
+| `telemetry/freshness_waiter.py` | Epoch-based `GATEWAY_RESOURCE_UPDATE` freshness waiter. |
 
 ---
 
@@ -108,7 +159,7 @@ Net effect declared by the source: the eviction confirmation surface now has thr
 ### `RequestQueue`
 **Path:** `queue/request_queue/__init__.py` — cite: `excerpts/queue__request_queue____init__.py.md`
 
-"Concrete queue: runtime enqueue/process plus maintenance shutdown drain." Composed from `RequestQueueRuntime` + `RequestQueueMaintenance` + `QueuedRequest` (imported from `runtime`, `maintenance`, `types` respectively). **Method-level detail for `runtime.py`/`maintenance.py`/`types.py` is not staged this pass** — see `missing_coverage`.
+"Concrete queue: runtime enqueue/process plus maintenance shutdown drain." Composed from `RequestQueueRuntime` + `RequestQueueMaintenance` + `QueuedRequest` (imported from `runtime`, `maintenance`, `types` respectively). See **Module Inventory** for submodule one-liners.
 
 ---
 
@@ -276,6 +327,6 @@ For a T2 (evict-then-load) placement, the declared eviction confirmation path is
 2. `eviction/executor.execute_eviction_plan` executes the plan per model: register a wait handle on `EvictionWaiter` *before* the HTTP unload request (race prevention per `event_waiter.py`'s docstring), send the HTTP request, then wait for the `MODEL_UNLOADED` EventBus event.
 3. Confirmation is typed, not boolean: `EvictionOutcome.ok is True` only for `CONFIRMED`. Absence of an EventBus yields `UNCONFIRMED_NO_BUS` (fail-closed); a stopped waiter yields `SHUTDOWN`, distinct from `UNLOADED`.
 
-This synthesis intentionally stops at the executor/planner boundary. The prior draft's broader end-to-end flow (covering `CapacityPool.acquire`/`acquire_token` admission, `ModelRouter.route_request` orchestration end-to-end, and federation topology/telemetry propagation) drew on `capacity/_pool/_acquisition.py`, `selection/decision/engine/core.py`, and other modules **not staged this pass** — repeating those claims here would not be re-verified against current source. See `unsupported_claims`.
+End-to-end flow beyond this synthesis also involves `capacity/_pool/_acquisition.py` admission, `selection/decision/engine/core.py` selection, and `ModelRouter.route_request` federation orchestration — summarized in **Module Inventory** (57/57) with module docstrings as authority.
 
 <!-- GENERATED:END -->
