@@ -165,6 +165,9 @@ README_REVISED.md
 !/docs/architecture/*.md
 !/docs/architecture/appendices/*.md
 !/docs/architecture/design/*.md
+!/docs/archive/
+!/docs/archive/architecture/
+!/docs/archive/architecture/**
 # Public-promoted reference docs (linked from README; see docs-write-guard_ws.mdc)
 !/docs/agm-compliance-report.md
 !/docs/stack-detail.md
