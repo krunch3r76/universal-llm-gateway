@@ -433,3 +433,9 @@ def test_unconfirmed_mcp_intent_hold_fails_open_at_max_age() -> None:
         assert drain.pending_mcp_intent_id() is None
     finally:
         drain.reset_drain_for_tests()
+
+
+def test_list_restart_intents_in_valid_manage_actions() -> None:
+    from tools.manage import _VALID_ACTIONS
+
+    assert "list_restart_intents" in _VALID_ACTIONS
