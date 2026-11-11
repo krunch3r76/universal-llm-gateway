@@ -112,6 +112,8 @@ _LAZY_ATTRS: dict[str, tuple[str, str]] = {
         ".session_address",
         "backfill_attachment_from_chat_url",
     ),
+    "retire_dormant_binding": (".binding_retire", "retire_dormant_binding"),
+    "resolve_retire_target": (".binding_retire", "resolve_retire_target"),
     "chat_url_for_registration": (".session_address", "chat_url_for_registration"),
     "current_seat_for_lane": (".session_address", "current_seat_for_lane"),
     "detach": (".lifecycle", "detach"),

@@ -321,6 +321,22 @@ def restore_session_address(
                 "prior_chat_url": current,
             },
         )
+        if not target_restore:
+            from claude_bundles.cse_provenance_retire import (
+                append_binding_retired_episode,
+            )
+
+            append_binding_retired_episode(
+                chat_url=current,
+                registration_id=rid,
+                cdp_url=str(updated.get("cdp_url") or ""),
+                reason="session_address_cleared",
+                audit={
+                    "before": {"chat_url": current},
+                    "after": {"chat_url": None},
+                    "event": "session_address_restored",
+                },
+            )
     return "restored"
 
 
@@ -406,6 +422,19 @@ def retire_misbound_dormant_attachment(registration_id: str) -> bool:
                 "prior_chat_url": prior_url,
             },
         )
+    from claude_bundles.cse_provenance_retire import append_binding_retired_episode
+
+    append_binding_retired_episode(
+        chat_url=prior_url,
+        registration_id=rid,
+        cdp_url=str(updated.get("cdp_url") or ""),
+        reason="misbound_dormant_attachment_retired",
+        audit={
+            "before": {"chat_url": prior_url},
+            "after": {"chat_url": None},
+            "seat_close_reason": "dormant_holder_misbound",
+        },
+    )
     return True
 
 

@@ -44,6 +44,15 @@ class CseSessionTurn(BaseModel):
     ordinal: int | None = None
 
 
+class RetireBindingRequest(BaseModel):
+    """Sanctioned dormant binding retire — idempotent, never opens Cowork."""
+
+    registration_id: str | None = None
+    chat_url: str | None = None
+    reason: str = "sanctioned_dormant_retire"
+    dry_run: bool = False
+
+
 class ProvenanceQuery(BaseModel):
     """Identity keys for provenance read — all optional; omitted returns candidates."""
 

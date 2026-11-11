@@ -26,7 +26,13 @@ def register_cse_session_tool(mcp: FastMCP) -> None:
     @mcp.tool(title="CSE Session")
     def cse_session(
         op: Literal[
-            "provenance", "harvest", "paste", "followup", "resolve_attended", "detach"
+            "provenance",
+            "harvest",
+            "paste",
+            "followup",
+            "resolve_attended",
+            "detach",
+            "retire_binding",
         ],
         reason: str | None = None,
         chat_url: str | None = None,
@@ -57,6 +63,7 @@ def register_cse_session_tool(mcp: FastMCP) -> None:
         min_receipt: Literal[
             "dom_paste", "dom_committed", "human_visible"
         ] = "dom_paste",
+        dry_run: bool = False,
     ) -> dict[str, Any]:
         """CSE provenance, harvest, hop-pair paste, warm followup, attended resolve.
 
@@ -152,6 +159,38 @@ def register_cse_session_tool(mcp: FastMCP) -> None:
                 "mcp.cse_session.detach",
                 registration_id=registration_id,
                 ok=result.get("registration_id") == registration_id,
+            )
+            return result
+
+        if op == "retire_binding":
+            if not registration_id and not chat_url:
+                return {
+                    "ok": False,
+                    "code": "identity_required",
+                    "error": "retire_binding requires registration_id and/or chat_url",
+                }
+            body = {
+                k: v
+                for k, v in {
+                    "registration_id": registration_id,
+                    "chat_url": chat_url,
+                    "reason": (reason or "sanctioned_dormant_retire").strip(),
+                    "dry_run": dry_run,
+                }.items()
+                if v is not None and v is not False
+            }
+            # FastMCP passes dry_run via tool kw only when exposed — accept reason prefix
+            result = _relay(
+                "POST",
+                "/v1/cse-session/retire-binding",
+                json_body=body,
+                failure_signal=_CSE_RELAY_FAILURE,
+                error_prefix="cse-session",
+            )
+            record(
+                "mcp.cse_session.retire_binding",
+                registration_id=result.get("registration_id"),
+                outcome=result.get("outcome"),
             )
             return result
 
