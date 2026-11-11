@@ -344,7 +344,7 @@ def refresh_routing(workspace: Path, refreshed_by: str = _REFRESHED_BY) -> str:
         pre_key,
     )
     pre_key = re.sub(
-        r"source commit `c75e3fc8`",
+        r"source commit `[0-9a-f]{7,40}`",
         f"source commit `{head}`",
         pre_key,
     )
