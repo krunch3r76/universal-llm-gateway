@@ -12,6 +12,7 @@ from agent_seat.body_injection import (
     INJECTED_BODY_BUDGET_BYTES,
     RequiredBodyUnresolved,
     emit_layer_a_fs_line,
+    render_skill_entity_pointer,
 )
 from agent_seat.inject_registry import (
     CallerSkillUnresolvedError,
@@ -67,6 +68,7 @@ from .corpus_inline import (
 from .dispatch_messages import extract_last_user_message, wire_latest_user_turn
 from .events import (
     DispatchSkillsChannelResolved,
+    DispatchSkillsInlineOverflow,
     DispatchSkillsInlineRejected,
     DispatchSkillsInlineResolved,
     DispatchSkillsMounted,
@@ -181,17 +183,7 @@ def _resolve_skills_mount(
     if skills_mount_backend(effective_model) == "anthropic_container":
         from skills_mount.anthropic_container import resolve_container_skill_entries
 
-        try:
-            entries = resolve_container_skill_entries(mount_skill_ids)
-        except SkillMountResolveError as exc:
-            raise FrontierEndpointError(
-                request_id=request_id,
-                field="skills",
-                reason=str(exc),
-                status_code=422,
-                code="skills_anthropic_container_unmapped",
-                details={"reason_code": "skills_anthropic_container_unmapped"},
-            ) from exc
+        entries = resolve_container_skill_entries(mount_skill_ids)
         mount_slugs = frozenset(mount_skill_ids)
         if event_publisher is not None:
             event_publisher(
@@ -425,6 +417,87 @@ def _required_body_infra_error(request_id: str) -> FrontierEndpointError:
     )
 
 
+def _anthropic_container_mount(model: str) -> bool:
+    from model_capabilities import skills_mount_backend
+
+    return skills_mount_backend(model) == "anthropic_container"
+
+
+def _caller_layer_c_budget_only(
+    dropped: list[dict[str, Any]],
+    caller_canonical_set: frozenset[str],
+) -> bool:
+    if not dropped:
+        return False
+    for entry in dropped:
+        if entry.get("reason") != "layer_c_budget":
+            return False
+        if _dropped_entry_canonical(entry) not in caller_canonical_set:
+            return False
+    return True
+
+
+def _render_caller_layer_c_budget_pointers(
+    dropped: list[dict[str, Any]],
+    caller_canonical_set: frozenset[str],
+) -> str:
+    from agent_seat.guidance_entity import entity_slug_from_id
+
+    parts: list[str] = []
+    for entry in dropped:
+        if entry.get("reason") != "layer_c_budget":
+            continue
+        canonical = _dropped_entry_canonical(entry)
+        if canonical not in caller_canonical_set:
+            continue
+        slug = entry.get("slug")
+        if not slug:
+            slug = entity_slug_from_id(canonical)
+        entity_id = str(entry.get("id") or f"agent_skill:{slug}")
+        parts.append(render_skill_entity_pointer(str(slug), entity_id))
+    return "".join(parts)
+
+
+def _try_anthropic_layer_c_budget_entity_pointers(
+    dropped: list[dict[str, Any]],
+    caller_canonical_set: frozenset[str],
+    *,
+    model: str,
+    request_id: str,
+    role: str | None,
+    budget_bytes: int | None,
+    event_publisher: EventPublisher | None,
+) -> str | None:
+    """Anthropic /*: degrade caller Layer-C budget overflow to entity pointers."""
+    if not _anthropic_container_mount(model):
+        return None
+    if not _caller_layer_c_budget_only(dropped, caller_canonical_set):
+        return None
+    pointer_md = _render_caller_layer_c_budget_pointers(dropped, caller_canonical_set)
+    if not pointer_md:
+        return None
+    effective_budget = (
+        INJECTED_BODY_BUDGET_BYTES if budget_bytes is None else budget_bytes
+    )
+    overflow_skills = _caller_origin_overflow_skills(dropped, caller_canonical_set)
+    if event_publisher is not None:
+        from implement_admission.skill_catalog_resolver import canonical_agent_skill_id
+
+        event_publisher(
+            DispatchSkillsInlineOverflow(
+                request_id=request_id,
+                role=role,
+                model=model,
+                canonical_slugs=[
+                    canonical_agent_skill_id(s) for s in overflow_skills
+                ],
+                requested_bytes=0,
+                budget_bytes=effective_budget,
+            )
+        )
+    return pointer_md
+
+
 def _raise_required_body_unresolved(
     dropped: list[dict[str, Any]],
     caller_canonical_set: frozenset[str],
@@ -434,7 +507,18 @@ def _raise_required_body_unresolved(
     model: str,
     budget_bytes: int | None = None,
     event_publisher: EventPublisher | None = None,
-) -> None:
+) -> str | None:
+    pointer_md = _try_anthropic_layer_c_budget_entity_pointers(
+        dropped,
+        caller_canonical_set,
+        model=model,
+        request_id=request_id,
+        role=role,
+        budget_bytes=budget_bytes,
+        event_publisher=event_publisher,
+    )
+    if pointer_md is not None:
+        return pointer_md
     overflow_err = _classify_required_body_overflow(
         dropped,
         caller_canonical_set,
@@ -727,19 +811,6 @@ async def build_dispatch_body(
                     "reason_code": "capability_card_value_invalid",
                 },
             ) from exc
-        except SkillMountResolveError as exc:
-            from model_capabilities import skills_mount_backend
-
-            if skills_mount_backend(effective_model) != "anthropic_container":
-                raise
-            raise FrontierEndpointError(
-                request_id=request_id,
-                field="skills",
-                reason=str(exc),
-                status_code=422,
-                code="skills_anthropic_container_unmapped",
-                details={"reason_code": "skills_anthropic_container_unmapped"},
-            ) from exc
         channel_rows = skill_partition.rows
         provider_mount_slugs = skill_partition.provider_mount_slugs
         caller_layer_c_ids = caller_skill_ids_for_layer_c(
@@ -824,8 +895,9 @@ async def build_dispatch_body(
                     ),
                 )
             )
+        budget_pointer_md: str | None = None
         if bundle.required_body_unresolved:
-            _raise_required_body_unresolved(
+            budget_pointer_md = _raise_required_body_unresolved(
                 bundle.required_body_dropped or [],
                 layer_c_caller_canonical,
                 request_id=request_id,
@@ -835,6 +907,8 @@ async def build_dispatch_body(
                 event_publisher=event_publisher,
             )
         injected_bodies_md = bundle.injected_bodies_md
+        if budget_pointer_md:
+            injected_bodies_md = f"{injected_bodies_md or ''}{budget_pointer_md}"
         system_assembled = assemble_system_prompt(
             req.role,
             briefing_card_md=bundle.briefing_card_md,
@@ -894,6 +968,10 @@ async def build_dispatch_body(
         )
 
     elif skill_partition is not None:
+        from agent_seat.inject_registry import InjectResolution
+
+        resolution: InjectResolution | None = None
+        inline_dropped: list[dict[str, Any]] = []
         try:
             resolution = resolve_injected_bodies(
                 "",
@@ -934,7 +1012,7 @@ async def build_dispatch_body(
                 ) from exc
             raise
         except RequiredBodyUnresolved as exc:
-            _raise_required_body_unresolved(
+            pointer_md = _raise_required_body_unresolved(
                 exc.dropped,
                 layer_c_caller_canonical,
                 request_id=request_id,
@@ -943,8 +1021,15 @@ async def build_dispatch_body(
                 budget_bytes=_inline_skill_budget_bytes(req.generation_options),
                 event_publisher=event_publisher,
             )
-        if resolution.block_md:
-            system_assembled = f"{system_assembled}{resolution.block_md}"
+            if pointer_md:
+                system_assembled = f"{system_assembled}{pointer_md}"
+                inline_dropped = list(exc.dropped)
+            else:
+                raise AssertionError("unreachable: _raise_required_body_unresolved")
+        if resolution is not None:
+            if resolution.block_md:
+                system_assembled = f"{system_assembled}{resolution.block_md}"
+            inline_dropped = list(resolution.dropped)
         if skill_partition.layer_a:
             layer_a_block = "".join(
                 emit_layer_a_fs_line(skill_id)
@@ -952,11 +1037,8 @@ async def build_dispatch_body(
             )
             if layer_a_block:
                 system_assembled = f"{system_assembled}{layer_a_block}"
-        channel_rows = enrich_rows_with_inline_drops(
-            channel_rows,
-            resolution.dropped,
-        )
-        if event_publisher is not None and (
+        channel_rows = enrich_rows_with_inline_drops(channel_rows, inline_dropped)
+        if resolution is not None and event_publisher is not None and (
             resolution.injected or resolution.dropped
         ):
             event_publisher(
@@ -983,7 +1065,7 @@ async def build_dispatch_body(
             role=req.role,
             model=effective_model,
             skip_rows=predicated_skip_rows,
-            dropped=resolution.dropped,
+            dropped=inline_dropped,
             event_publisher=event_publisher,
         )
 
