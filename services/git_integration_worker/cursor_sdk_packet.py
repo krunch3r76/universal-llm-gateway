@@ -87,7 +87,7 @@ _DELIVERABLE_ROUTING_PREAMBLE = (
 _LEAN_DISPATCH_PREAMBLE = (
     "Use the lean-dispatch skill: hold diagnosis and land only; ≤2 targeted reads "
     "to formulate a packet; 0 in-seat ssh/host mutations or pytest runs; read "
-    "closeout sidecars with offset=0, limit=60."
+    "closeout sidecars via fs md_read section=__preamble__ (after md_list when needed)."
 )
 
 # Deterministic in-seat budgets surfaced in Tier-B preambles (instruction tripwire).

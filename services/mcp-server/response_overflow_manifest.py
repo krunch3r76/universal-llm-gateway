@@ -195,7 +195,9 @@ def _build_selective_options(
                 options.append(
                     f'fs(op="md_read", path="{location}", section="{section_path}")'
                 )
-        options.append(f'fs(op="read", path="{location}", offset=0, limit=80)')
+        options.append(
+            f'fs(op="md_read", path="{location}", section="__preamble__")'
+        )
     if not location and sections and text_basis == "content":
         section_path = str(sections[0].get("path", "")).strip()
         if section_path:
