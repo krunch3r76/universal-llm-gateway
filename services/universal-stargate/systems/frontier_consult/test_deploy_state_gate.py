@@ -125,40 +125,51 @@ def test_empty_surfaces_declaration_passes(mock_cortex: MagicMock) -> None:
 
 _SHA = "a28906fc180db15916f61f00eb61a633b7781689"
 _SYNCED = "2026-11-11T10:00:00Z"
+_OTHER_SYNCED = "2026-11-11T11:00:00Z"
 
 
-def test_dual_merge_get_and_manage_agree_no_mismatch(
-    caplog: pytest.LogCaptureFixture,
-) -> None:
+def test_dual_merge_get_and_manage_agree_no_mismatch() -> None:
     payload = {
         "deploy_mode": "source_synced",
         "source_synced_at": _SYNCED,
-        "source_ref": f"git:{_SHA}",
     }
     merged = _dual_merge_deploy_identity(payload, dict(payload), producer="mcp")
-    assert merged["source_ref"] == f"git:{_SHA}"
-    assert "dual_read_mismatch" not in caplog.text
+    assert merged["source_synced_at"] == _SYNCED
 
 
 def test_dual_merge_get_empty_manage_fills_gap() -> None:
     manage = {
         "deploy_mode": "source_synced",
         "source_synced_at": _SYNCED,
-        "source_ref": f"git:{_SHA}",
     }
     merged = _dual_merge_deploy_identity(manage, {}, producer="mcp")
-    assert merged["source_ref"] == f"git:{_SHA}"
+    assert merged["source_synced_at"] == _SYNCED
 
 
-def test_dual_merge_disagreement_get_wins_and_logs(
-    caplog: pytest.LogCaptureFixture,
+def test_dual_merge_disagreement_get_wins_and_emits_event(
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    other = "b" * 40
-    manage = {"source_ref": f"git:{_SHA}"}
-    get_h = {"source_ref": f"git:{other}"}
+    emitted: list[dict[str, str]] = []
+
+    def _capture(**kwargs: str) -> None:
+        emitted.append(dict(kwargs))
+
+    monkeypatch.setattr(
+        "systems.frontier_consult.deploy_state_gate.emit_deploy_state_gate_dual_read_mismatch",
+        _capture,
+    )
+    manage = {"source_synced_at": _SYNCED}
+    get_h = {"source_synced_at": _OTHER_SYNCED}
     merged = _dual_merge_deploy_identity(manage, get_h, producer="mcp")
-    assert merged["source_ref"] == f"git:{other}"
-    assert "deploy_state_gate.dual_read_mismatch" in caplog.text
+    assert merged["source_synced_at"] == _OTHER_SYNCED
+    assert emitted == [
+        {
+            "producer": "mcp",
+            "field": "source_synced_at",
+            "get_value": _OTHER_SYNCED,
+            "manage_value": _SYNCED,
+        }
+    ]
 
 
 def test_identity_passes_on_manage_fields_when_get_empty() -> None:
@@ -168,7 +179,6 @@ def test_identity_passes_on_manage_fields_when_get_empty() -> None:
     manage = {
         "deploy_mode": "source_synced",
         "source_synced_at": _SYNCED,
-        "source_ref": f"git:{_SHA}",
     }
     merged = _dual_merge_deploy_identity(manage, {}, producer="mcp")
     passed, _ = _identity_passes(
@@ -212,7 +222,6 @@ def test_restart_failed_not_fresh_when_manage_not_healthy(
             "detail": "restart failed",
             "deploy_mode": "source_synced",
             "source_synced_at": _SYNCED,
-            "source_ref": f"git:{_SHA}",
         },
     )
     monkeypatch.setattr(
@@ -241,7 +250,6 @@ def test_mcp_dual_read_passes_manage_only(
             "status": "running",
             "deploy_mode": "source_synced",
             "source_synced_at": _SYNCED,
-            "source_ref": f"git:{_SHA}",
         },
     )
     monkeypatch.setattr(
@@ -264,3 +272,51 @@ def test_mcp_dual_read_passes_manage_only(
         closeout=_closeout(files_modified=["services/mcp-server/tools/foo.py"]),
         cortex=mock_cortex,
     )
+
+
+def test_stamp_newer_than_process_fails_even_when_get_has_identity(
+    mock_cortex: MagicMock,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    mock_cortex.entity_get.return_value = {"attributes": {}}
+    monkeypatch.setattr(
+        "systems.frontier_consult.deploy_state_gate._call_manage_health",
+        lambda _p: {
+            "status": "running",
+            "deploy_stamp_reason": "stamp_newer_than_process",
+        },
+    )
+    monkeypatch.setattr(
+        "systems.frontier_consult.deploy_state_gate._fetch_producer_health_json",
+        lambda _p: {
+            "deploy_mode": "source_synced",
+            "source_synced_at": _SYNCED,
+        },
+    )
+    with pytest.raises(FrontierEndpointError) as exc:
+        require_deploy_state(
+            request_id="r-stamp-newer",
+            source_ref="todo:stamp-order",
+            closeout=_closeout(files_modified=["services/mcp-server/tools/foo.py"]),
+            cortex=mock_cortex,
+        )
+    assert exc.value.code == "deploy_state_pending"
+    assert "stamp_newer_than_process" in exc.value.reason
+
+
+def test_deploy_state_gate_dual_read_mismatch_event_factory() -> None:
+    from .deploy_state_gate_events import DeployStateGateDualReadMismatch
+
+    event = DeployStateGateDualReadMismatch(
+        producer="mcp",
+        field="source_synced_at",
+        get_value="a",
+        manage_value="b",
+    )
+    assert event.signal == "deploy_state_gate.dual_read_mismatch"
+    assert event.payload == {
+        "producer": "mcp",
+        "field": "source_synced_at",
+        "get_value": "a",
+        "manage_value": "b",
+    }
