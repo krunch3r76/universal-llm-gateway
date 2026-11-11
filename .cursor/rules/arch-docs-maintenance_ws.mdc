@@ -14,16 +14,18 @@ globs:
 
 | Directory | Contents | Write authority |
 |---|---|---|
-| `docs/architecture/*.md` | Subsystem docs (one per overhaul target) | `/overhaul` only — ¬direct edits |
+| `docs/architecture/*.md` | Subsystem docs (one per overhaul target) | `/overhaul {service_dir}` **or** stamped targeted refresh (see below) |
 | `docs/architecture/appendices/` | Cross-cutting reference (config, tools, libs, events) | `/doc-check` factual corrections via `StrReplace` |
 | `docs/architecture/design/` | Historical design docs and proposals | User-directed only |
 
 ## Subsystem Docs — Write Authority (CRITICAL)
 
-**Invariant**: ∀ files in `docs/architecture/*.md`: written ONLY via `/overhaul {service_dir}`
+**Invariant**: ∀ files in `docs/architecture/*.md`: written ONLY via:
 
-The `/overhaul` command runs `doc-generate` (extract docstrings → draft → review → merge).
-Direct writes by the agent — even accurate ones — bypass this pipeline and create:
+1. **`/overhaul {service_dir}`** — runs `doc-generate` (extract docstrings → draft → review → merge), or
+2. **Stamped targeted refresh** — `<!-- GENERATED:START method=targeted-refresh … -->` blocks grounded in current source via `libs/doc_extraction` inventory projection (same docstring/signature corpus as doc-generate; ¬ unsourced prose).
+
+Ad-hoc direct edits — even accurate ones — bypass this pipeline and create:
 - Docs not grounded in source docstrings (will drift silently)
 - No staleness baseline (doc-check can't detect when they go stale)
 - Precedent that undermines the quality pipeline
@@ -33,9 +35,16 @@ Direct writes by the agent — even accurate ones — bypass this pipeline and c
 - ✅ Draft goes to `tmp/prompts/{slug}-architecture-draft.md` as input for the overhaul pass
 - ❌ Do NOT write directly to `docs/architecture/`
 
-¬exceptions. If `/doc-check` finds staleness in a subsystem doc, note it in the
-commit body ("docs/architecture/{file}.md may need updating via /overhaul") but
-do NOT edit the file.
+**Targeted refresh:** prefer updating generating source (docstrings and/or `libs/doc_extraction/targeted_refresh.py`) then re-running:
+
+```bash
+"$HOME/.venvs/universal/bin/python" libs/doc_extraction/targeted_refresh.py gateway "$PWD"
+"$HOME/.venvs/universal/bin/python" libs/doc_extraction/targeted_refresh.py routing "$PWD"
+```
+
+Stamp must include `method=targeted-refresh`, `source_commit`, `refreshed_by`, and coverage counts. Direct edits to generated bodies are last-resort only.
+
+If `/doc-check` finds staleness in a subsystem doc, note it in the commit body ("docs/architecture/{file}.md may need updating via /overhaul or targeted refresh") but do NOT edit the file without one of the paths above.
 
 ## Appendices — Write Authority
 
@@ -86,12 +95,12 @@ Active proposals: `async-pipeline-dispatch.md`, `http-first-agent-substrate.md`.
 ## On `/commit` — Architecture Doc Check
 
 `/commit` step 3 invokes `/doc-check`, which detects staleness, coverage gaps,
-and broken references. See `.cursor/commands/doc-check.md` for the full procedure.
+and broken references. See `cursor-plugins/ulg-ecosystem/commands/doc-check.md` for the full procedure.
 
 Summary: ∀ commit touching `services/`, `libs/`, `tools/`, `scripts/`, `pipelines/`:
 
 **Subsystem docs** (`docs/architecture/*.md`):
-- STALE → note in commit body: "docs/architecture/{file}.md may need updating via /overhaul". ¬edit directly.
+- STALE → note in commit body: "docs/architecture/{file}.md may need updating via /overhaul or targeted refresh". ¬edit directly.
 - COVERAGE GAPS → propose `/overhaul` or note the gap
 - BROKEN REFERENCES → note in commit body (same as STALE)
 
