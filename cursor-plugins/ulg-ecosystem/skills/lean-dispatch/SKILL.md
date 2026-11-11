@@ -28,7 +28,7 @@ related_skills:
 
 `author(freeform packet ∨ freeform prompt) ⇒ Use the retrieval-before-authoring skill` first; firing `contract=freeform` with an already-authored body does not re-trigger.
 
-Child packet carries: work key (`todo:…` / `friction:…` / greenfield), `files_expected`, one-line bounded scope, numbered AC, skill Use-lines, return shape. `implement_admission.packet_is_sufficient` is the floor.
+Child packet carries: work key (`todo:…` / `friction:…` / greenfield), `files_expected`, one-line bounded scope, `arch_context:` line on code packets (pointer to `document:ulg-architecture-context`, cortex://notes/system/architecture/index.md, naming the `[universal:*]`/`[ulg:*]` tags in play; ¬ inline tables), numbered AC, skill Use-lines, return shape. `implement_admission.packet_is_sufficient` is the floor.
 
 `fs(op="md_read", path="workspaces://universal-llm-gateway/tmp/reviews/closeouts/<dispatch_id>.md", sections=["executive_envelope", "executive_envelope/effects_manifest"])` (md_list first when ids differ; never read top-level `effects_manifest` or `structured_closeout_full`)
 
