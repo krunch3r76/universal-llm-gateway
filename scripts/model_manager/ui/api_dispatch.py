@@ -16,6 +16,7 @@ from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any
 
 from deploy_identity.code_version import process_age_s, resolve_code_version
+from deploy_identity.stamp_identity import read_mcp_container_deploy_identity
 
 from .controller.drain_timeout_keep_await import (
     preempt_giw_keep_await_if_needed,
@@ -179,6 +180,14 @@ async def execute(
                 "status": info.status.value,
                 "detail": info.detail,
             }
+            if service == "mcp":
+                stamp_fields, stamp_reason = await asyncio.to_thread(
+                    read_mcp_container_deploy_identity
+                )
+                if stamp_fields:
+                    result.update(stamp_fields)
+                if stamp_reason:
+                    result["deploy_stamp_reason"] = stamp_reason
             if service == "gateway":
                 result["build"] = await asyncio.to_thread(_gateway_build_status, ctl)
             return result

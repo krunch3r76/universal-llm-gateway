@@ -78,6 +78,13 @@ _PRODUCER_HEALTH_URLS: dict[str, str] = {
     "stargate": DEFAULT_STARGATE_URL,
 }
 
+_IDENTITY_FIELDS: tuple[str, ...] = (
+    "deploy_mode",
+    "source_synced_at",
+    "source_ref",
+    "source_tree_hash",
+)
+
 
 def _glob_match(path: str, pattern: str) -> bool:
     normalized = path.lstrip("/")
@@ -180,6 +187,49 @@ def _fetch_producer_health_json(producer: str) -> dict[str, Any]:
             return payload if isinstance(payload, dict) else {}
     except Exception:
         return {}
+
+
+def _identity_field_value(payload: dict[str, Any], field: str) -> str:
+    if field == "source_tree_hash":
+        return str(
+            payload.get("source_tree_hash") or payload.get("source_tree_sha") or ""
+        ).strip()
+    return str(payload.get(field) or "").strip()
+
+
+def _field_non_empty(value: str) -> bool:
+    return bool(value)
+
+
+def _dual_merge_deploy_identity(
+    manage_result: dict[str, Any],
+    get_health: dict[str, Any],
+    *,
+    producer: str,
+) -> dict[str, Any]:
+    """Merge manage substrate read with producer GET; non-empty GET wins per field."""
+    merged = dict(manage_result)
+    for field in _IDENTITY_FIELDS:
+        get_val = _identity_field_value(get_health, field)
+        manage_val = _identity_field_value(manage_result, field)
+        if _field_non_empty(get_val) and _field_non_empty(manage_val):
+            if get_val != manage_val:
+                logger.info(
+                    "deploy_state_gate.dual_read_mismatch",
+                    extra={
+                        "event": "deploy_state_gate.dual_read_mismatch",
+                        "producer": producer,
+                        "field": field,
+                        "get_value": get_val,
+                        "manage_value": manage_val,
+                    },
+                )
+            merged[field] = get_val
+        elif _field_non_empty(get_val):
+            merged[field] = get_val
+        elif _field_non_empty(manage_val):
+            merged[field] = manage_val
+    return merged
 
 
 def _classify_health_state(
@@ -584,7 +634,9 @@ def require_deploy_state(
             continue
 
         health = _fetch_producer_health_json(producer)
-        merged = {**manage_result, **health}
+        merged = _dual_merge_deploy_identity(
+            manage_result, health, producer=producer
+        )
         passed, _ = _identity_passes(
             merged,
             source_ref=effective_ref or "",
