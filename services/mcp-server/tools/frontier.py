@@ -175,6 +175,27 @@ def _assert_density_triage_canonical() -> None:
 _assert_density_triage_canonical()
 # --- end density_triage drift guard ---
 
+_WORKER_REFUSAL_SURFACE_KEYS = (
+    "queued",
+    "reason_code",
+    "retry_after_s",
+    "resubmit",
+    "fix_hint",
+    "dispatch_id",
+    "admitted",
+)
+
+
+def _surface_worker_refusal_fields(payload: dict[str, Any]) -> dict[str, Any]:
+    """Project Stargate ``details`` onto the MCP envelope for worker refusals."""
+    details = payload.get("details")
+    if not isinstance(details, dict):
+        return payload
+    for key in _WORKER_REFUSAL_SURFACE_KEYS:
+        if key not in payload and details.get(key) is not None:
+            payload[key] = details[key]
+    return payload
+
 
 async def _relay(
     *,
@@ -256,7 +277,9 @@ async def _relay(
             error="upstream",
             status=resp.status_code,
         )
-        return payload if isinstance(payload, dict) else {"error": payload}
+        if isinstance(payload, dict):
+            return _surface_worker_refusal_fields(payload)
+        return {"error": payload}
 
     if resp.status_code >= 400:
         if isinstance(payload, dict) and "error" in payload:
@@ -304,7 +327,9 @@ async def _relay(
             status=resp.status_code,
             field=field,
         )
-        return detail_obj if isinstance(detail_obj, dict) else {"error": payload}
+        if isinstance(detail_obj, dict):
+            return _surface_worker_refusal_fields(detail_obj)
+        return {"error": payload}
 
     if isinstance(payload, dict) and payload.get("status") == "queued":
         record(
@@ -721,7 +746,7 @@ def register_frontier_tools(mcp: FastMCP) -> None:
 
         **Global (generate/to_thread):** exactly one of `role`|`seat` · `contract` REQUIRED (no derivation) · `dispatch_thread_id` required (exempt `contract=wrap`) · at most one explicit of `packet_path`|`prompt`|`sidecar_ref` (else latest gated bus turn on `dispatch_thread_id`) · `messages[]` ¬a param · `transcript_id` provenance-only (¬forwarded to role). MCP `contract` forwards as Stargate body `job` (generate/to_thread/handoff); `purpose` forwards as body `purpose` on generate only.
 
-        **steer:** `dispatch_id` + `steer`∈{`park_for_restart`,`cancel_discard`,`inject`} + `reason`. `directive` required iff `inject`. `ttl_s` default 300. GIW 404/409/422/503 fail-closed. `inject`→202. `park_for_restart` keeps the inherited `execution_id` until the resume CLOSEOUT. `cancel_discard` ends the link.
+        **steer:** `dispatch_id` + `steer`∈{`park_for_restart`,`cancel_discard`,`inject`} + `reason`. `directive` required iff `inject`. `ttl_s` default 300. GIW 404/409/422/503 fail-closed. `inject`→202. `park_for_restart` keeps the inherited `execution_id` until the resume CLOSEOUT. `cancel_discard` ends the link. 503 `GIT_WORKER_DRAINING` = refused, not queued (`details.queued=false`, `reason_code=giw_draining`): resubmit once after `retry_after_s`; a 202/`status=queued` response is the only queued, do not resubmit signal.
 
         **handoff:** `seat`∈{`web-anthropic`,`cursor`}. Requires `subject` + (`seat`|`role`) + (`packet_path`|`source_ref`). Packet AC with no contract signal → **422 `handoff_contract_ambiguous`**. `packet_path` = repo-relative from checkout root (strip leading `universal-llm-gateway/`). `source_ref`: `todo:`|`plan:`|`plan_phase:`|`plan:{slug}/phase-N`|`agent-bus:`|`packet:`. Bare path → **422 `source_ref_unparseable`**. `pointer_body` is handoff-only.
 

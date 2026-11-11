@@ -11,8 +11,11 @@ covered by ``test_gate_serialization.py``.
 
 from __future__ import annotations
 
+import asyncio
+import json
 import pathlib
 from types import SimpleNamespace
+from unittest.mock import MagicMock
 
 import pytest
 from fastapi.testclient import TestClient
@@ -37,6 +40,20 @@ _INTEGRATE_BODY = {
     "expected_diff_sha256": "a" * 64,
     "remove_worktree": False,
 }
+
+
+@pytest.fixture(autouse=True)
+def _silence_drain_telemetry(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Block git_worker.drain.* from reaching live telemetry in unit tests."""
+    monkeypatch.setattr(
+        drain_events, "emit_drain_started", lambda **_k: None, raising=False
+    )
+    monkeypatch.setattr(
+        drain_events, "emit_drain_completed", lambda **_k: None, raising=False
+    )
+    monkeypatch.setattr(
+        drain_events, "emit_admission_rejected", lambda **_k: None, raising=False
+    )
 
 
 @pytest.fixture(autouse=True)
@@ -77,6 +94,44 @@ def _controller() -> WorkAdmissionController:
         pid=1234,
         worker_started_at="2026-01-01T00:00:00+00:00",
     )
+
+
+def _stub_sdk_dispatch_spawn(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Prevent un-awaited _run_sdk_dispatch_gated coroutines from route admit tests."""
+    from services.git_integration_worker.routes import cursor_sdk as route_mod
+
+    async def _noop_runner() -> None:
+        return None
+
+    def _fake_close(
+        coro: object, *, controller: object, op_id: str, **kwargs: object
+    ) -> object:
+        if asyncio.iscoroutine(coro):
+            coro.close()
+        return _noop_runner()
+
+    monkeypatch.setattr(route_mod, "_close_ticket_after", _fake_close)
+
+    def _close_tracked(
+        _self: object, _coro: object, *, op_id: str, **kwargs: object
+    ) -> MagicMock:
+        if asyncio.iscoroutine(_coro):
+            _coro.close()
+        mock = MagicMock()
+        mock.done.return_value = True
+        mock.get_name.return_value = f"tracked-{op_id}"
+        return mock
+
+    monkeypatch.setattr(WorkAdmissionController, "create_tracked_task", _close_tracked)
+
+
+def _ledger_row(dispatch_id: str) -> object | None:
+    ledger = CursorDispatchLedger.instance()
+    with ledger._connect() as conn:  # noqa: SLF001 — test fixture
+        return conn.execute(
+            "SELECT dispatch_id FROM cursor_sdk_dispatches WHERE dispatch_id=?",
+            (dispatch_id,),
+        ).fetchone()
 
 
 def _admit_ledger_dispatch(ledger: CursorDispatchLedger, dispatch_id: str) -> None:
@@ -451,3 +506,175 @@ def test_release_clears_armed_without_draining(events: SimpleNamespace) -> None:
     assert released["armed"] is False
     assert released["draining"] is False
     assert controller.maybe_activate_armed_drain(dispatch_id="h1") is False
+
+
+# ------------------------------------------------------------------ s3 drain refusal contract
+
+
+def test_cursor_draining_503_refused_not_queued_envelope() -> None:
+    """Early drain 503 must carry explicit refused-not-queued contract fields."""
+    from services.git_integration_worker.admission import Draining503
+    from services.git_integration_worker.routes.cursor_sdk import _draining_response
+
+    controller = _controller()
+    controller.try_admit(
+        "cursor_sdk", op_id="hold-disp", route="/api/v1/cursor/dispatch"
+    )
+    controller.begin_drain(
+        reason="test", intent_id="a6a1cbdd-test", drain_epoch=controller.next_epoch()
+    )
+    response = _draining_response(
+        Draining503("git-integration-worker is draining (epoch=3)"),
+        controller=controller,
+        dispatch_id="disp-refused",
+        drain_epoch=3,
+    )
+    assert response.status_code == 503
+    body = json.loads(response.body)
+    assert body["code"] == "GIT_WORKER_DRAINING"
+    data = body["data"]
+    assert data["queued"] is False
+    assert data["admitted"] is False
+    assert data["reason_code"] == "giw_draining"
+    assert data["dispatch_id"] == "disp-refused"
+    assert data["drain_epoch"] == 3
+    assert data["resubmit"] == "safe"
+    assert "retry_after_s" in data
+    assert data["drain_intent_id"] == "a6a1cbdd-test"
+    assert data["drain_started_at"]
+    assert data["drain_elapsed_s"] is not None
+    assert data["holder_count"] >= 1
+    assert data["holders"][0]["id"] == "hold-disp"
+    assert data["holders"][0]["route"] == "/api/v1/cursor/dispatch"
+    assert "no live ledger row" in data["fix_hint"]
+
+
+def test_cursor_early_drain_leaves_no_ledger_row(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """GIT_WORKER_DRAINING before ledger.admit must not create a dispatch row."""
+    from services.git_integration_worker.routes import cursor_sdk as route_mod
+
+    app = create_app()
+    controller = _controller()
+    controller.begin_drain(
+        reason="test", intent_id="i-drain", drain_epoch=controller.next_epoch()
+    )
+    app.state.admission_controller = controller
+
+    async def _noop_acquire(**_kwargs: object) -> str:
+        return "slot"
+
+    monkeypatch.setattr(route_mod, "acquire_sdk_dispatch_slot", _noop_acquire)
+    monkeypatch.setattr(
+        route_mod, "release_or_restore_for_child_sync", lambda *_a, **_k: "released"
+    )
+
+    dispatch_body = {
+        "thread_id": "1558",
+        "model": "cursor/composer-2.5",
+        "dispatch_id": "disp-early-drain",
+        "execution_id": "exec-early-drain",
+        "message": "hello",
+    }
+    client = TestClient(app)
+    resp = client.post("/api/v1/cursor/dispatch", json=dispatch_body)
+    assert resp.status_code == 503
+    assert resp.json()["data"]["queued"] is False
+    assert _ledger_row("disp-early-drain") is None
+
+
+def test_cursor_drain_refusal_then_admit_new_id_one_row(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """After a draining refusal, a new dispatch_id for the same work_key admits once."""
+    from services.git_integration_worker.routes import cursor_sdk as route_mod
+
+    app = create_app()
+    controller = _controller()
+    app.state.admission_controller = controller
+
+    async def _noop_acquire(**_kwargs: object) -> str:
+        return "slot"
+
+    monkeypatch.setattr(route_mod, "acquire_sdk_dispatch_slot", _noop_acquire)
+    monkeypatch.setattr(
+        route_mod, "release_or_restore_for_child_sync", lambda *_a, **_k: "released"
+    )
+    _stub_sdk_dispatch_spawn(monkeypatch)
+
+    work_key = "todo:drain-refusal-idem"
+    body_refused = {
+        "thread_id": "1558",
+        "model": "cursor/composer-2.5",
+        "dispatch_id": "disp-refused-a",
+        "execution_id": "exec-refused-a",
+        "message": "hello",
+        "work_key": work_key,
+    }
+    body_admitted = {
+        **body_refused,
+        "dispatch_id": "disp-admitted-b",
+        "execution_id": "exec-admitted-b",
+    }
+    client = TestClient(app)
+    controller.begin_drain(
+        reason="test", intent_id="i1", drain_epoch=controller.next_epoch()
+    )
+    resp = client.post("/api/v1/cursor/dispatch", json=body_refused)
+    assert resp.status_code == 503
+    assert _ledger_row("disp-refused-a") is None
+
+    controller.release_drain(intent_id="i1", drain_epoch=controller.drain_epoch)
+    ok = client.post("/api/v1/cursor/dispatch", json=body_admitted)
+    assert ok.status_code == 200
+    assert _ledger_row("disp-admitted-b") is not None
+    ledger = CursorDispatchLedger.instance()
+    with ledger._connect() as conn:  # noqa: SLF001 — test inspects row count
+        rows = conn.execute(
+            "SELECT dispatch_id FROM cursor_sdk_dispatches WHERE work_key=?",
+            (work_key,),
+        ).fetchall()
+    assert len(rows) == 1
+    assert rows[0]["dispatch_id"] == "disp-admitted-b"
+
+
+def test_cursor_resubmit_same_dispatch_id_after_drain_idempotent(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Reusing dispatch_id after drain ends hits ledger fingerprint idempotency."""
+    from services.git_integration_worker.routes import cursor_sdk as route_mod
+
+    app = create_app()
+    controller = _controller()
+    app.state.admission_controller = controller
+
+    async def _noop_acquire(**_kwargs: object) -> str:
+        return "slot"
+
+    monkeypatch.setattr(route_mod, "acquire_sdk_dispatch_slot", _noop_acquire)
+    monkeypatch.setattr(
+        route_mod, "release_or_restore_for_child_sync", lambda *_a, **_k: "released"
+    )
+    _stub_sdk_dispatch_spawn(monkeypatch)
+
+    payload = {
+        "thread_id": "1558",
+        "model": "cursor/composer-2.5",
+        "dispatch_id": "disp-idem",
+        "execution_id": "exec-idem",
+        "message": "hello",
+    }
+    client = TestClient(app)
+    epoch = controller.next_epoch()
+    controller.begin_drain(reason="test", intent_id="i-idem", drain_epoch=epoch)
+    assert client.post("/api/v1/cursor/dispatch", json=payload).status_code == 503
+
+    controller.release_drain(intent_id="i-idem", drain_epoch=epoch)
+    first = client.post("/api/v1/cursor/dispatch", json=payload)
+    second = client.post("/api/v1/cursor/dispatch", json=payload)
+    assert first.status_code == 200
+    assert second.status_code == 200
+    assert first.json()["dispatch_id"] == second.json()["dispatch_id"] == "disp-idem"
+    assert first.json()["admitted"] is True
+    assert second.json()["admitted"] is True

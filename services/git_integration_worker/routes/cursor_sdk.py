@@ -535,8 +535,70 @@ def _controller(request: Request) -> WorkAdmissionController:
     return controller
 
 
-def _draining_response(exc: Draining503) -> JSONResponse:
+_DRAIN_REFUSAL_FIX_HINT = (
+    "Refused, not queued: nothing will run for this dispatch_id "
+    "(no live ledger row, park or intent). Safe to resubmit after "
+    "retry_after_s; do not cancel the refused id."
+)
+
+_HOLDERS_CAP = 5
+
+
+def _drain_refusal_holder_snapshot(
+    controller: WorkAdmissionController,
+) -> dict[str, object]:
+    """In-memory drain holder projection for a refusal 503 (no I/O)."""
+    state = controller.drain_state()
+    started_mono = state.get("drain_started_monotonic")
+    elapsed: float | None = None
+    if started_mono is not None:
+        elapsed = round(time.monotonic() - float(started_mono), 3)
+    holders: list[dict[str, str]] = []
+    for op in (state.get("active_ops") or [])[:_HOLDERS_CAP]:
+        if not isinstance(op, dict):
+            continue
+        op_id = op.get("op_id") or op.get("dispatch_id")
+        if not op_id:
+            continue
+        entry: dict[str, str] = {
+            "kind": str(op.get("kind") or "unknown"),
+            "id": str(op_id),
+        }
+        route = op.get("route")
+        if route:
+            entry["route"] = str(route)
+        holders.append(entry)
+    active_count = int(state.get("active_count") or len(holders))
+    return {
+        "drain_intent_id": state.get("intent_id"),
+        "drain_started_at": state.get("drain_started_at"),
+        "drain_elapsed_s": elapsed,
+        "holders": holders,
+        "holder_count": active_count,
+    }
+
+
+def _draining_response(
+    exc: Draining503,
+    *,
+    controller: WorkAdmissionController,
+    dispatch_id: str | None = None,
+    drain_epoch: int | None = None,
+) -> JSONResponse:
     """503 envelope + ``Retry-After`` for a dispatch rejected by drain."""
+    epoch = 0 if drain_epoch is None else int(drain_epoch)
+    holder = _drain_refusal_holder_snapshot(controller)
+    data: dict[str, object] = {
+        "queued": False,
+        "admitted": False,
+        "reason_code": "giw_draining",
+        "dispatch_id": dispatch_id,
+        "drain_epoch": epoch,
+        "retry_after_s": _DRAIN_RETRY_AFTER_S,
+        "resubmit": "safe",
+        "fix_hint": _DRAIN_REFUSAL_FIX_HINT,
+        **holder,
+    }
     return JSONResponse(
         status_code=503,
         content=error_envelope(
@@ -544,7 +606,7 @@ def _draining_response(exc: Draining503) -> JSONResponse:
             message=str(exc),
             source="gateway",
             retryable=True,
-            data={"retry_after_s": _DRAIN_RETRY_AFTER_S},
+            data=data,
         ),
         headers={"Retry-After": str(_DRAIN_RETRY_AFTER_S)},
     )
@@ -4217,7 +4279,10 @@ async def admit_cursor_dispatch(
         return _draining_response(
             Draining503(
                 f"git-integration-worker is draining (epoch={controller.drain_epoch})"
-            )
+            ),
+            controller=controller,
+            dispatch_id=req.dispatch_id,
+            drain_epoch=controller.drain_epoch,
         )
 
     debt_refusal = await asyncio.to_thread(_branch_debt_refusal, req)
@@ -5251,7 +5316,12 @@ async def admit_cursor_dispatch(
             request=request,
             emit_tag="CURSOR_DRAINING503_ADMIT",
         )
-        return _draining_response(exc)
+        return _draining_response(
+            exc,
+            controller=controller,
+            dispatch_id=req.dispatch_id,
+            drain_epoch=controller.drain_epoch,
+        )
 
     bus = CursorBusClient()
     task = controller.create_tracked_task(

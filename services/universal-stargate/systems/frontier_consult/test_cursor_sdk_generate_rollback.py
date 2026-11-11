@@ -91,6 +91,33 @@ _LANE_A_FIX_HINT = (
 )
 
 
+def test_worker_dispatch_error_projects_drain_refusal_fields() -> None:
+    """Worker refusal data keys land on FrontierEndpointError.details."""
+    from .admission import FrontierEndpointError
+    from .cursor_sdk_generate import _worker_dispatch_error
+
+    with pytest.raises(FrontierEndpointError) as exc:
+        _worker_dispatch_error(
+            request_id="req-drain",
+            detail={
+                "status_code": 503,
+                "code": "GIT_WORKER_DRAINING",
+                "message": "draining",
+                "queued": False,
+                "reason_code": "giw_draining",
+                "retry_after_s": 5,
+                "resubmit": "safe",
+                "dispatch_id": "disp-x",
+            },
+        )
+    details = exc.value.details or {}
+    assert details["queued"] is False
+    assert details["reason_code"] == "giw_draining"
+    assert details["retry_after_s"] == 5
+    assert details["resubmit"] == "safe"
+    assert details["dispatch_id"] == "disp-x"
+
+
 def test_worker_dispatch_error_projects_fix_hint() -> None:
     """Worker data.fix_hint is copied onto FrontierEndpointError.details."""
     from .admission import FrontierEndpointError

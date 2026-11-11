@@ -46,6 +46,21 @@ def _stamp_model_knobs_requested(
     return stamped or None
 
 
+_WORKER_ERROR_DETAIL_KEYS = (
+    "status_code",
+    "code",
+    "blocking_dispatch_id",
+    "queued",
+    "admitted",
+    "reason_code",
+    "retry_after_s",
+    "resubmit",
+    "dispatch_id",
+    "fix_hint",
+    "retryable",
+)
+
+
 def _worker_dispatch_error(
     *,
     request_id: str,
@@ -55,14 +70,24 @@ def _worker_dispatch_error(
 
     details = {
         k: detail[k]
-        for k in ("status_code", "code", "blocking_dispatch_id")
+        for k in _WORKER_ERROR_DETAIL_KEYS
         if detail.get(k) is not None
     }
     data = detail.get("data")
     if isinstance(data, dict):
-        fix_hint = data.get("fix_hint")
-        if isinstance(fix_hint, str) and fix_hint:
-            details["fix_hint"] = fix_hint
+        for key in (
+            "fix_hint",
+            "queued",
+            "admitted",
+            "reason_code",
+            "retry_after_s",
+            "resubmit",
+            "dispatch_id",
+        ):
+            if key not in details and data.get(key) is not None:
+                details[key] = data[key]
+    if details.get("queued") is not True:
+        details["queued"] = False
     raise FrontierEndpointError(
         request_id=request_id,
         field="worker_dispatch",
@@ -235,6 +260,7 @@ async def _finish_prepared_dispatch(
             execution_id=handle.execution_id,
             dispatch_id=handle.dispatch_id,
             worker_detail=worker_detail,
+            supersedes_turn=handle.poll_after_turn,
         )
         if (
             is_pre_admission_worker_refusal(worker_detail)

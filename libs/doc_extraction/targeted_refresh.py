@@ -22,6 +22,7 @@ from doc_extraction.inventory import extract_file_inventory, extract_subsystem_i
 _GATEWAY_ROOT = "services/_universal-llm-gateway"
 _ROUTING_ROOT = "services/universal-stargate/systems/routing"
 _REFRESHED_BY = "agent-bus:23032"
+SCOPE_SOURCE_COMMIT_PATTERN = r"source commit `[0-9a-f]{7,40}`"
 
 
 def _git_head(workspace: Path) -> str:
@@ -117,9 +118,7 @@ def render_gateway_package_sections(
                     lines.append(f"| `{cls['name']}` | `{sig}` |")
                     for method in cls.get("methods", [])[:8]:
                         msig = method.get("signature", "").replace("|", "\\|")
-                        lines.append(
-                            f"| `.{method['name']}` | `{msig}` |"
-                        )
+                        lines.append(f"| `.{method['name']}` | `{msig}` |")
                     if len(cls.get("methods", [])) > 8:
                         lines.append(f"| … | ({len(cls['methods'])} methods total) |")
             if inv["functions"]:
@@ -237,7 +236,14 @@ def _render_imports_inventory(inv: dict[str, Any]) -> list[str]:
         stmt = row["import"]
         if stmt.startswith("from ") or stmt.startswith("import "):
             top = stmt.split()[1].split(".")[0]
-            if top in {"asyncio", "dataclasses", "enum", "typing", "uuid", "__future__"}:
+            if top in {
+                "asyncio",
+                "dataclasses",
+                "enum",
+                "typing",
+                "uuid",
+                "__future__",
+            }:
                 ext.add(top)
             elif top.startswith(("universal_", "model_id", "services")):
                 internal.add(stmt)
@@ -280,7 +286,9 @@ def refresh_routing(workspace: Path, refreshed_by: str = _REFRESHED_BY) -> str:
     mod_n = len(py_files)
     inv = extract_subsystem_inventory(routing_dir, workspace)
     inv["modules"] = [
-        m for m in inv["modules"] if "test" not in m["path"] and not m["path"].startswith("test_")
+        m
+        for m in inv["modules"]
+        if "test" not in m["path"] and not m["path"].startswith("test_")
     ]
     inv["functions"] = [f for f in inv["functions"] if "test" not in f["path"]]
     inv["classes"] = [c for c in inv["classes"] if "test" not in c["path"]]
@@ -344,7 +352,7 @@ def refresh_routing(workspace: Path, refreshed_by: str = _REFRESHED_BY) -> str:
         pre_key,
     )
     pre_key = re.sub(
-        r"source commit `c75e3fc8`",
+        SCOPE_SOURCE_COMMIT_PATTERN,
         f"source commit `{head}`",
         pre_key,
     )

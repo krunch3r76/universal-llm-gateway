@@ -96,7 +96,7 @@ def assemble_cursor_sdk_generate_tags(
 def _classify_transport_error(exc: httpx.HTTPError) -> str:
     if isinstance(exc, httpx.TimeoutException):
         return "timeout"
-    if isinstance(exc, (httpx.RemoteProtocolError, httpx.DecodingError)):
+    if isinstance(exc, httpx.RemoteProtocolError | httpx.DecodingError):
         return "bad_response"
     if isinstance(exc, httpx.ConnectError):
         err_str = str(exc).lower()
@@ -198,6 +198,17 @@ def derive_cursor_sdk_prompt_preamble(
     return f"{injected_section}\n{preamble}"
 
 
+_WORKER_REFUSAL_DATA_KEYS = (
+    "queued",
+    "admitted",
+    "reason_code",
+    "retry_after_s",
+    "resubmit",
+    "dispatch_id",
+    "fix_hint",
+)
+
+
 def _parse_worker_error(resp: httpx.Response, *, dispatch_id: str) -> dict[str, Any]:
     try:
         body = resp.json()
@@ -231,6 +242,11 @@ def _parse_worker_error(resp: httpx.Response, *, dispatch_id: str) -> dict[str, 
     }
     if resume_reason is not None:
         detail["resume_reason"] = resume_reason
+    for key in _WORKER_REFUSAL_DATA_KEYS:
+        if key in data and data[key] is not None:
+            detail[key] = data[key]
+    if data.get("queued") is not True:
+        detail["queued"] = False
     return detail
 
 
@@ -523,6 +539,21 @@ async def dispatch_cursor_sdk_worker_message(
     return False, _parse_worker_error(resp, dispatch_id=effective_dispatch_id)
 
 
+def _emit_refusal_turn_unposted(
+    *,
+    thread_id: str,
+    dispatch_id: str | None,
+    reason: str,
+) -> None:
+    from .cursor_sdk_generate_signals import emit_sdk_refusal_turn_unposted
+
+    emit_sdk_refusal_turn_unposted(
+        thread_id=thread_id,
+        dispatch_id=dispatch_id,
+        reason=reason,
+    )
+
+
 async def post_worker_failure_turn(
     *,
     thread_id: str,
@@ -531,6 +562,7 @@ async def post_worker_failure_turn(
     execution_id: str | None = None,
     dispatch_id: str | None = None,
     worker_detail: dict[str, Any] | None = None,
+    supersedes_turn: int | None = None,
 ) -> None:
     """Best-effort failure turn when worker dispatch does not admit."""
     token = os.getenv("AGENT_BUS_TOKEN", "").strip()
@@ -539,27 +571,58 @@ async def post_worker_failure_turn(
         "true",
         "yes",
     )
-    if not token and not allow_unset:
-        return
     detail = worker_detail or {}
+    disp_part = str(dispatch_id or detail.get("dispatch_id") or "unknown")
+    if not token and not allow_unset:
+        logger.warning(
+            "cursor-sdk refusal turn not posted (no bus token): "
+            "thread=%s dispatch_id=%s",
+            thread_id,
+            disp_part,
+        )
+        _emit_refusal_turn_unposted(
+            thread_id=thread_id,
+            dispatch_id=disp_part if disp_part != "unknown" else None,
+            reason="agent_bus_token_unset",
+        )
+        return
     code = str(detail.get("code") or "CURSOR_WORKER_DISPATCH_FAILED")
     message = str(detail.get("message") or "worker dispatch failed")
     exec_part = execution_id or "unknown"
-    disp_part = dispatch_id or detail.get("dispatch_id") or "unknown"
-    subject = (
-        f"FAILED|execution_id={exec_part}|dispatch_id={disp_part}|code={code}|{message}"
-    )
-    payload = {
+    data = detail.get("data")
+    retry_after_s = detail.get("retry_after_s")
+    if retry_after_s is None and isinstance(data, dict):
+        retry_after_s = data.get("retry_after_s")
+    if str(code) == "GIT_WORKER_DRAINING":
+        retry_s = retry_after_s if retry_after_s is not None else "?"
+        subject = (
+            f"REFUSED|queued=false|code=GIT_WORKER_DRAINING|retry_after_s={retry_s}|"
+            f"execution_id={exec_part}|dispatch_id={disp_part}"
+        )
+        body = (
+            "Refused, not queued. Nothing will run for this execution_id/dispatch_id. "
+            f"Safe to resubmit after {retry_s}s."
+        )
+    else:
+        queued_false = "|queued=false" if detail.get("queued") is not True else ""
+        subject = (
+            f"FAILED{queued_false}|execution_id={exec_part}|dispatch_id={disp_part}|"
+            f"code={code}|{message}"
+        )
+        body = (
+            f"Cursor-sdk worker dispatch failed ({request_id}): {code} — {message}"
+        )
+    payload: dict[str, Any] = {
         "thread": thread_id,
         "from": "dispatch",
         "to": to_agent,
         "subject": subject,
-        "body": (
-            f"Cursor-sdk worker dispatch failed ({request_id}): {code} — {message}"
-        ),
+        "body": body,
         "status": "open",
         "after_turn": 0,
     }
+    if supersedes_turn is not None and int(supersedes_turn) > 0:
+        payload["supersedes_turn"] = int(supersedes_turn)
     headers = {"Authorization": f"Bearer {token}"} if token else {}
     try:
         async with make_async_client(DEFAULT_AGENT_BUS_URL, timeout=10.0) as client:
@@ -569,14 +632,24 @@ async def post_worker_failure_turn(
                 "cursor-sdk failure turn bus non-success: thread=%s dispatch_id=%s "
                 "status=%s body=%s",
                 thread_id,
-                dispatch_id or disp_part,
+                disp_part,
                 resp.status_code,
                 getattr(resp, "text", "")[:200],
+            )
+            _emit_refusal_turn_unposted(
+                thread_id=thread_id,
+                dispatch_id=disp_part if disp_part != "unknown" else None,
+                reason=f"bus_http_{resp.status_code}",
             )
     except Exception as exc:
         logger.warning(
             "cursor-sdk failure turn not posted: thread=%s dispatch_id=%s err=%s",
             thread_id,
-            dispatch_id or disp_part,
+            disp_part,
             exc,
+        )
+        _emit_refusal_turn_unposted(
+            thread_id=thread_id,
+            dispatch_id=disp_part if disp_part != "unknown" else None,
+            reason=str(exc)[:200],
         )
