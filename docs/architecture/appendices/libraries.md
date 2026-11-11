@@ -64,7 +64,7 @@ session-close RAG-query appendix.
 
 Embeddable Event Service library. Can run standalone
 (`python -m event_store serve`). Backing store and query layer for the Event
-Service. Used by the `event_service` systemd service.
+Service. The `event_service` fleet unit is a **manage host-process** (`scripts/model_manager/ui/controller/service_ctl/authority_identity.py` — `_HOST_PID_FILES`); not a standalone systemd unit in the manage substrate.
 `operations_trace` uses `dispatch_journal` helpers to read cold
 `pipeline-dispatch.db` summaries when warm SQLite rows no longer cover an
 `execution_id` (aged-out pipeline traces).
