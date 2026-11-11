@@ -13,7 +13,6 @@ from agent_seat.body_injection import (
     RequiredBodyUnresolved,
     build_dispatch_skill_context,
     emit_layer_a_fs_line,
-    render_skill_entity_pointer,
     skill_invoke_surface,
 )
 from agent_seat.inject_registry import (
@@ -31,6 +30,7 @@ from agent_seat.skills_merge import (
     partition_skill_channels,
     resolve_effective_skills,
 )
+from implement_admission.skill_delivery_channels import render_skill_entity_pointer
 from llm_adapters.capability_dispatch import project_knob_resolution
 from model_capabilities import CapabilityCardError
 from model_id import (
@@ -497,7 +497,9 @@ def _render_caller_layer_c_budget_pointers(
         if not slug:
             slug = entity_slug_from_id(canonical)
         entity_id = str(entry.get("id") or f"agent_skill:{slug}")
-        parts.append(render_skill_entity_pointer(str(slug), entity_id))
+        parts.append(
+            render_skill_entity_pointer(str(slug), entity_id, index_marker=True)
+        )
     return "".join(parts)
 
 

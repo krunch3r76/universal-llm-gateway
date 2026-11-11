@@ -14,7 +14,6 @@ from agent_seat.registry import is_lead_agent
 from .body_injection import (
     RequiredBodyUnresolved,
     _slug_from_entry,
-    render_skill_entity_pointer,
 )
 
 # Migration: WEB_BOOT_INJECT_ENTITY_IDS, INVARIANT_PAIR_ENTITY_IDS, and
@@ -365,7 +364,9 @@ def _fetch_registry_entry(
 
 
 def _index_entry(slug: str, entity_id: str) -> str:
-    return render_skill_entity_pointer(slug, entity_id)
+    from implement_admission.skill_delivery_channels import render_skill_entity_pointer
+
+    return render_skill_entity_pointer(slug, entity_id, index_marker=True)
 
 
 def _pack_tiered_bodies(
