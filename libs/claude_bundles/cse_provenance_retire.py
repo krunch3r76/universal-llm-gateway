@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from typing import Any
-
 from claude_bundles.cse_provenance import (
     ProvenanceEpisode,
     append_episode,
@@ -29,6 +27,17 @@ def latest_binding_closed(*, chat_url: str | None = None) -> bool:
     return latest is not None and binding_closed_by_episode(latest)
 
 
+def latest_open_binding_episode(chat_url: str) -> ProvenanceEpisode | None:
+    """Newest non-retired episode for the URL, if any."""
+    target = normalize_cse_url(chat_url)
+    if not target:
+        return None
+    for episode in reversed(episodes_for_chat_url(target)):
+        if not binding_closed_by_episode(episode):
+            return episode
+    return None
+
+
 def append_binding_retired_episode(
     *,
     chat_url: str,
@@ -36,15 +45,8 @@ def append_binding_retired_episode(
     cdp_url: str = "",
     reason: str,
     attribution_source: str = "cdp-registry",
-    actor: str | None = None,
-    audit: dict[str, Any] | None = None,
 ) -> ProvenanceEpisode:
     """Append a journal episode that closes provenance for one CSE URL binding."""
-    detail = dict(audit or {})
-    if actor:
-        detail["actor"] = actor
-    detail["reason"] = reason
-    audit_reason = reason if not detail else f"{reason}|{detail!r}"
     return append_episode(
         chat_url=chat_url,
         registration_id=registration_id,
@@ -52,15 +54,6 @@ def append_binding_retired_episode(
         lane_thread=None,
         lineage_state="unresolved",
         state="retired",
-        reason=audit_reason,
+        reason=reason,
         attribution_source=attribution_source,
     )
-
-
-def episodes_for_chat_url_open(chat_url: str) -> list:
-    """Episodes for a URL excluding those after the latest retire/unbound marker."""
-    episodes = episodes_for_chat_url(chat_url)
-    for index in range(len(episodes) - 1, -1, -1):
-        if binding_closed_by_episode(episodes[index]):
-            return episodes[: index + 1]
-    return episodes

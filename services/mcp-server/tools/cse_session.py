@@ -64,8 +64,13 @@ def register_cse_session_tool(mcp: FastMCP) -> None:
             "dom_paste", "dom_committed", "human_visible"
         ] = "dom_paste",
         dry_run: bool = False,
+        caller_agent: str | None = None,
     ) -> dict[str, Any]:
         """CSE provenance, harvest, hop-pair paste, warm followup, attended resolve.
+
+        ``retire_binding`` = sanctioned dormant URL-binding retire on the
+        satellite registry (``/v1/cse-session/retire-binding``); pass
+        ``dry_run=true`` for a read-only resolve preview.
 
         ``paste`` = hop-pair / grant authorized paste (``/v1/cse-session/paste``).
         ``followup`` = warm wake into a retained or dormant Cowork CSE
@@ -176,6 +181,7 @@ def register_cse_session_tool(mcp: FastMCP) -> None:
                     "chat_url": chat_url,
                     "reason": (reason or "sanctioned_dormant_retire").strip(),
                     "dry_run": dry_run,
+                    "caller_agent": caller_agent,
                 }.items()
                 if v is not None and v is not False
             }

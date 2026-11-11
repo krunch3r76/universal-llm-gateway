@@ -310,6 +310,16 @@ def restore_session_address(
         else:
             updated.pop("chat_url", None)
             updated.pop("chat_url_bound_at", None)
+            from claude_bundles.cse_provenance_retire import (
+                append_binding_retired_episode,
+            )
+
+            append_binding_retired_episode(
+                chat_url=current,
+                registration_id=rid,
+                cdp_url=str(updated.get("cdp_url") or ""),
+                reason="session_address_cleared",
+            )
         active[rid] = updated
         _store.write_active(active)
         _store.append_log(
@@ -321,22 +331,6 @@ def restore_session_address(
                 "prior_chat_url": current,
             },
         )
-        if not target_restore:
-            from claude_bundles.cse_provenance_retire import (
-                append_binding_retired_episode,
-            )
-
-            append_binding_retired_episode(
-                chat_url=current,
-                registration_id=rid,
-                cdp_url=str(updated.get("cdp_url") or ""),
-                reason="session_address_cleared",
-                audit={
-                    "before": {"chat_url": current},
-                    "after": {"chat_url": None},
-                    "event": "session_address_restored",
-                },
-            )
     return "restored"
 
 
@@ -411,8 +405,14 @@ def retire_misbound_dormant_attachment(registration_id: str) -> bool:
         prior_url = str(updated.get("chat_url") or "").strip() or None
         if not prior_url:
             return False
-        updated.pop("chat_url", None)
-        updated.pop("chat_url_bound_at", None)
+        from claude_bundles.cse_provenance_retire import append_binding_retired_episode
+
+        episode = append_binding_retired_episode(
+            chat_url=prior_url,
+            registration_id=rid,
+            cdp_url=str(updated.get("cdp_url") or ""),
+            reason="misbound_dormant_attachment_retired",
+        )
         active[rid] = updated
         _store.write_active(active)
         _store.append_log(
@@ -420,21 +420,9 @@ def retire_misbound_dormant_attachment(registration_id: str) -> bool:
             {
                 "registration_id": rid,
                 "prior_chat_url": prior_url,
+                "episode_id": episode.episode_id,
             },
         )
-    from claude_bundles.cse_provenance_retire import append_binding_retired_episode
-
-    append_binding_retired_episode(
-        chat_url=prior_url,
-        registration_id=rid,
-        cdp_url=str(updated.get("cdp_url") or ""),
-        reason="misbound_dormant_attachment_retired",
-        audit={
-            "before": {"chat_url": prior_url},
-            "after": {"chat_url": None},
-            "seat_close_reason": "dormant_holder_misbound",
-        },
-    )
     return True
 
 

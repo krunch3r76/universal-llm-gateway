@@ -181,6 +181,9 @@ def append_episode(
     store.append_log("cse_provenance_episode", _episode_record(episode))
     from claude_bundles import cdp_registry_events
 
+    if state in {"retired", "unbound"}:
+        return episode
+
     cdp_registry_events.emit(
         cdp_registry_events.cdp_provenance_bound(
             episode_id=episode.episode_id,

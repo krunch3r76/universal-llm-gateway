@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import Any, Literal
 
 from chat_harvest.models import ConflictDetail
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 AckClass = Literal["typed_ack", "ordinary_content", "no_proof"]
 HarvestOutcome = Literal[
@@ -49,8 +49,20 @@ class RetireBindingRequest(BaseModel):
 
     registration_id: str | None = None
     chat_url: str | None = None
-    reason: str = "sanctioned_dormant_retire"
+    reason: str = Field(min_length=1, default="sanctioned_dormant_retire")
     dry_run: bool = False
+    caller_agent: str | None = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def _identity_present(cls, values: object) -> object:
+        if not isinstance(values, dict):
+            return values
+        reg = str(values.get("registration_id") or "").strip()
+        url = str(values.get("chat_url") or "").strip()
+        if not reg and not url:
+            raise ValueError("registration_id and/or chat_url required")
+        return values
 
 
 class ProvenanceQuery(BaseModel):

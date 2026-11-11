@@ -18,7 +18,10 @@ from claude_bundles.cse_provenance_projection import (
     _claim_episode,
     _episode_projection,
 )
-from claude_bundles.cse_provenance_retire import binding_closed_by_episode
+from claude_bundles.cse_provenance_retire import (
+    binding_closed_by_episode,
+    latest_open_binding_episode,
+)
 from claude_bundles.cse_url import normalize_cse_url
 
 _ROW_PRESENT_STATUSES = frozenset({"active", "orphaned_alive", "retained", "dormant"})
@@ -265,21 +268,25 @@ def resolve(
                     if episode.registration_id == newest_reg_id
                 ]
 
-    current = episodes[-1]
-
-    if binding_closed_by_episode(current):
-        return {
-            "state": "unbound",
-            "chat_url": target or current.chat_url,
-            "registration_id": current.registration_id,
-            "episode_id": current.episode_id,
-            "evidence_class": current.evidence_class,
-            "attribution_source": current.attribution_source,
-            "reason": current.reason or "binding_retired",
-            "host_state": "not_listable",
-            "lineage_state": "unresolved",
-            "observed_at": current.observed_at,
-        }
+    newest = episodes[-1]
+    holder = latest_open_binding_episode(target) if target else None
+    current = newest
+    if binding_closed_by_episode(newest):
+        if holder is not None and newest.registration_id != holder.registration_id:
+            current = holder
+        else:
+            return {
+                "state": "unbound",
+                "chat_url": target or newest.chat_url,
+                "registration_id": newest.registration_id,
+                "episode_id": newest.episode_id,
+                "evidence_class": newest.evidence_class,
+                "attribution_source": newest.attribution_source,
+                "reason": newest.reason or "binding_retired",
+                "host_state": "not_listable",
+                "lineage_state": "unresolved",
+                "observed_at": newest.observed_at,
+            }
 
     if target and registration_id and current.registration_id != registration_id:
         candidate_count = len({episode.registration_id for episode in episodes})
