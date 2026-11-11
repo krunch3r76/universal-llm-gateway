@@ -522,6 +522,175 @@ async def test_restricted_resume_does_not_navigate_other_cse_host(
     assert outcome.registration_id == "reg-bound"
 
 
+def _skip_dormant_wake(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        "cdp_ask.followup_reattach.cdp_registry.dormant_for_chat_url",
+        lambda _url: None,
+    )
+    monkeypatch.setattr(
+        "cdp_ask.followup_reattach._wake_dormant_seat",
+        AsyncMock(return_value=None),
+    )
+
+
+def _two_lane_nav_setup(
+    monkeypatch: pytest.MonkeyPatch,
+) -> tuple[_FakeReg, _FakeReg]:
+    first = _reg("reg-first", cdp="http://127.0.0.1:9223")
+    second = _reg("reg-second", cdp="http://127.0.0.1:9224")
+    monkeypatch.setattr(
+        "cdp_ask.followup_reattach.cdp_registry.list_active",
+        lambda: [first, second],
+    )
+    monkeypatch.setattr(
+        "cdp_ask.followup_reattach.find_page_on_lane",
+        AsyncMock(return_value=None),
+    )
+
+    async def _nav(lane: _FakeReg, _chat_url: str) -> tuple[Any, Any]:
+        page = _FakePage()
+        page.url = _chat_url
+        return page, _FakePw()
+
+    monkeypatch.setattr("cdp_ask.followup_reattach._navigate_new_page", _nav)
+    return first, second
+
+
+@pytest.mark.asyncio
+@pytest.mark.no_bind_mock
+async def test_reattach_tries_next_lane_after_bind_refusal(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """First candidate bind refusal must not block a later lane."""
+    _skip_dormant_wake(monkeypatch)
+    first, second = _two_lane_nav_setup(monkeypatch)
+
+    def _bind(rid: str, *, chat_url: str) -> bool:
+        return rid == second.registration_id
+
+    monkeypatch.setattr(
+        "cdp_ask.followup_reattach.cdp_registry.bind_chat_url_only",
+        _bind,
+    )
+    register = MagicMock()
+    monkeypatch.setattr(
+        "cdp_ask.followup_reattach.cdp_registry.register_lane", register
+    )
+
+    outcome = await ensure_cse_attached(CSE_A, holder="h", purpose="operator-proxy")
+    assert outcome.ok is True
+    assert outcome.registration_id == second.registration_id
+    assert outcome.attempted_registration_ids == (first.registration_id,)
+    register.assert_not_called()
+
+
+@pytest.mark.asyncio
+@pytest.mark.no_bind_mock
+async def test_reattach_mints_after_all_lane_binds_refuse(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _skip_dormant_wake(monkeypatch)
+    _two_lane_nav_setup(monkeypatch)
+    monkeypatch.setattr(
+        "cdp_ask.followup_reattach.cdp_registry.bind_chat_url_only",
+        lambda _rid, **_: False,
+    )
+    minted = _reg("reg-minted")
+    register = MagicMock(return_value=minted)
+    monkeypatch.setattr(
+        "cdp_ask.followup_reattach.cdp_registry.register_lane", register
+    )
+
+    def _bind_mint_only(rid: str, *, chat_url: str) -> bool:
+        return rid == minted.registration_id
+
+    monkeypatch.setattr(
+        "cdp_ask.followup_reattach.cdp_registry.bind_chat_url_only",
+        _bind_mint_only,
+    )
+
+    outcome = await ensure_cse_attached(
+        CSE_A,
+        holder="h",
+        purpose="operator-proxy",
+        parent_thread="22938",
+        allow_mint=True,
+    )
+    assert outcome.ok is True
+    assert outcome.lane_created is True
+    assert outcome.registration_id == minted.registration_id
+    register.assert_called_once_with(
+        holder="h",
+        purpose="operator-proxy",
+        parent_thread="22938",
+        mission_kind=None,
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.no_bind_mock
+async def test_reattach_mint_bind_refusal_deregisters_and_lists_attempts(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _skip_dormant_wake(monkeypatch)
+    first, second = _two_lane_nav_setup(monkeypatch)
+    monkeypatch.setattr(
+        "cdp_ask.followup_reattach.cdp_registry.bind_chat_url_only",
+        lambda _rid, **_: False,
+    )
+    minted = _reg("reg-minted")
+    register = MagicMock(return_value=minted)
+    monkeypatch.setattr(
+        "cdp_ask.followup_reattach.cdp_registry.register_lane", register
+    )
+    deregister = MagicMock()
+    monkeypatch.setattr(
+        "cdp_ask.followup_reattach.cdp_registry.deregister_lane", deregister
+    )
+
+    outcome = await ensure_cse_attached(CSE_A, holder="h", allow_mint=True)
+    assert outcome.ok is False
+    assert outcome.error == "attachment.refused"
+    assert outcome.registration_id == minted.registration_id
+    assert outcome.attempted_registration_ids == (
+        first.registration_id,
+        second.registration_id,
+        minted.registration_id,
+    )
+    deregister.assert_called_once_with(minted.registration_id)
+
+
+@pytest.mark.asyncio
+@pytest.mark.no_bind_mock
+async def test_reattach_all_lane_refusals_no_mint_returns_last_refusal(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _skip_dormant_wake(monkeypatch)
+    first, second = _two_lane_nav_setup(monkeypatch)
+    monkeypatch.setattr(
+        "cdp_ask.followup_reattach.cdp_registry.bind_chat_url_only",
+        lambda _rid, **_: False,
+    )
+    register = MagicMock()
+    monkeypatch.setattr(
+        "cdp_ask.followup_reattach.cdp_registry.register_lane", register
+    )
+
+    outcome = await ensure_cse_attached(
+        CSE_A,
+        holder="h",
+        allow_mint=False,
+    )
+    assert outcome.ok is False
+    assert outcome.error == "attachment.refused"
+    assert outcome.registration_id == second.registration_id
+    assert outcome.attempted_registration_ids == (
+        first.registration_id,
+        second.registration_id,
+    )
+    register.assert_not_called()
+
+
 @pytest.mark.asyncio
 async def test_launch_path_registers_lane(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr("claude_bundles.cdp_registry.list_active", lambda: [])
@@ -1433,6 +1602,7 @@ async def test_k44_parent_thread_followup_resolves_successor_after_predecessor_p
     )
     monkeypatch.setattr("cdp_ask.followup.send_followup_paste_half", paste)
     monkeypatch.setattr("cdp_ask.followup.emit_followup_event", lambda _e: None)
+
     async def _find_page(_cdp: str, url: str) -> tuple[Any, Any]:
         from claude_bundles.cse_url import normalize_cse_url
 
@@ -3811,7 +3981,9 @@ async def test_followup_commit_not_seated_maps_reattach_not_seated(
     reg, _holder, borrowed = _open_operator_pair(lane)
     store = ExecutionStore()
     order = _arm_split_borrow(monkeypatch, reg, borrowed.registration_id, store=store)
-    monkeypatch.setattr(followup_mod, "_commit_reattach_seat", lambda *_a, **_k: "not_seated")
+    monkeypatch.setattr(
+        followup_mod, "_commit_reattach_seat", lambda *_a, **_k: "not_seated"
+    )
     resp = await execute_followup(
         FollowupProjectAskRequest(
             prompt_text="memo",
