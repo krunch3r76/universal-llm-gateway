@@ -510,6 +510,13 @@ async def dispatch_cdp_generate(
         model=model,
         request_id=request_id,
     )
+    from .claude_code_dispatch_gate import reject_claude_code_dispatch_if_prohibited
+
+    reject_claude_code_dispatch_if_prohibited(
+        request_id=request_id,
+        claude_surface=getattr(body, "claude_surface", None),
+        model=model,
+    )
     raw_job = getattr(body, "job", None)
     contract = raw_job.strip() if isinstance(raw_job, str) and raw_job.strip() else None
     if contract in {"implement", "wrap"}:
@@ -738,6 +745,7 @@ async def dispatch_cdp_generate(
                 pipeline_id="cdp-generate",
                 parent_thread_id=parent_thread,
                 provenance_missing=provenance_missing,
+                waiter_transcript_id=getattr(body, "transcript_id", None),
             )
         except FrontierEndpointError as exc:
             if not isinstance(exc.__cause__, httpx.TimeoutException):
@@ -753,6 +761,7 @@ async def dispatch_cdp_generate(
                 pipeline_id="cdp-generate",
                 parent_thread_id=parent_thread,
                 provenance_missing=provenance_missing,
+                waiter_transcript_id=getattr(body, "transcript_id", None),
             )
     else:
         thread_id = await create_handoff_thread(
@@ -769,6 +778,7 @@ async def dispatch_cdp_generate(
             ],
             handoff_contract=contract,
             bus_lifecycle=getattr(body, "bus_lifecycle", None),
+            waiter_transcript_id=getattr(body, "transcript_id", None),
         )
         after_turn = 1
         if is_operator_proxy_mission_purpose(purpose) or (

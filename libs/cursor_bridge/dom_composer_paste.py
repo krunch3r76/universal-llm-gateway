@@ -30,6 +30,8 @@ import unicodedata
 import uuid
 from typing import Any
 
+from cursor_bridge.chat_target import stale_wake_lines_js
+
 logger = logging.getLogger(__name__)
 
 _ULG_NORM_COMPOSER_JS = r"""
@@ -374,11 +376,10 @@ _EXPECT_DRAFT_SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 
 GROK_PROMPT_SELECTOR = '[aria-label="Prompt"][contenteditable="true"]'
 OPERATOR_PROBE_VERSION = 2
-_STALE_WAKE_DRAFT = re.compile(r"^BRIDGE_WAKE\s+thread=\S+\s+turn=\d+(?:,\d+)*$")
-
-
 def _is_stale_wake_draft(draft: str) -> bool:
-    return bool(_STALE_WAKE_DRAFT.match(str(draft or "").strip()))
+    from cursor_bridge.chat_target import is_stale_wake_draft
+
+    return is_stale_wake_draft(draft)
 
 
 def composer_draft_sha256_hex(draft: str) -> str:
@@ -533,7 +534,7 @@ READ_OPERATOR_BUSY_JS = (
   }
   const draft = ulgComposerSurfaceText(el).trim();
   const sig = String(g.ourDraftSig || '').trim();
-  const staleWake = /^BRIDGE_WAKE\s+thread=\S+\s+turn=\d+(?:,\d+)*$/.test(draft);
+  const staleWake = %STALE_WAKE_JS%;
   const watermark = %WATERMARK%;
   const ours = sig && draft === sig;
   const foreignDraft = draft.length > 0 && !staleWake && !ours
@@ -648,6 +649,9 @@ def _set_composer_body(
     line = _dom_paste_text(text, preserve_newlines=preserve_newlines)
     msg = json.dumps(line)
     writer = json.dumps(str(draft_writer or ""))
+    from cursor_bridge.chat_target import stale_wake_lines_js
+
+    stale_js = stale_wake_lines_js("normDraft")
     return (
         f"(()=>{{{_ULG_NORM_COMPOSER_JS}"
         f"const el=({find});"
@@ -658,7 +662,7 @@ def _set_composer_body(
         "const normLine=ulgNormalizeComposerText(line);"
         "const draftRaw=(el.innerText||el.value||'');"
         "const normDraft=ulgNormalizeComposerText(draftRaw);"
-        "const stale=/^BRIDGE_WAKE\\s+thread=\\S+\\s+turn=\\d+(?:,\\d+)*$/.test(normDraft);"
+        f"const stale={stale_js};"
         "const composerEmpty=ulgComposerDomEmpty(el);"
         "if(!composerEmpty&&!stale){"
         "const writer=String(g.ourDraftWriter||'').trim();"
@@ -804,6 +808,8 @@ def _click_send_body(
     """
     find = _find_composer_js(selector)
     lj = json.dumps(_dom_paste_text(line, preserve_newlines=preserve_newlines))
+
+    stale_js = stale_wake_lines_js("t")
     btn_sels = json.dumps(list(_SEND_BTN_SELECTORS))
     wait_ceiling = int(SEND_BTN_WAIT_CEILING_MS)
     poll_interval = int(SEND_BTN_POLL_INTERVAL_MS)
@@ -828,7 +834,7 @@ def _click_send_body(
         f"const line={lj};"
         "const normLine=ulgNormalizeComposerText(line);"
         "let normText=ulgNormalizeComposerText(el.innerText||el.value||'');"
-        "const wakeStale=(t)=>/^BRIDGE_WAKE\\s+thread=\\S+\\s+turn=\\d+(?:,\\d+)*$/.test(t);"
+        f"const wakeStale=(t)=>{stale_js};"
         "const composerEmpty=ulgComposerDomEmpty(el);"
         "if(!composerEmpty&&(!normText||(normText!==normLine&&!wakeStale(normText)))){"
         "normText=ulgNormalizeComposerText(el.innerText||el.value||'');"
@@ -896,9 +902,11 @@ def _click_send_body(
 
 
 def operator_busy_probe_js(*, selector: str, watermark: str = "") -> str:
+
     sels = _selector_list(selector) or [selector]
     body = READ_OPERATOR_BUSY_JS.replace("%SELECTORS%", json.dumps(sels))
-    return body.replace("%WATERMARK%", json.dumps(watermark or ""))
+    body = body.replace("%WATERMARK%", json.dumps(watermark or ""))
+    return body.replace("%STALE_WAKE_JS%", stale_wake_lines_js("draft"))
 
 
 def operator_activity_suppress_js(*, duration_ms: int = 5000) -> str:

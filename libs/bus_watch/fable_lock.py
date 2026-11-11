@@ -253,6 +253,7 @@ def claim_fable_lock(
     live = bool(current.get("holder")) and not seat_lock_free(
         current, max_hop_minutes=max_hop_minutes, root_id=rid
     )
+    displaced_holder: str | None = None
     if live and current.get("holder") != holder:
         live_holder = str(current.get("holder"))
         attended = holder.startswith("ide:")
@@ -267,6 +268,7 @@ def claim_fable_lock(
                 current["preempt_by"] = holder
                 path.write_text(json.dumps(current, indent=2), encoding="utf-8")
                 return {"ok": False, "reason": "held_preempt_requested", "lock": current}
+            displaced_holder = live_holder
         else:
             return {"ok": False, "reason": "held", "lock": current}
     hops = _hops_for_night(current, night) + (1 if hop else 0)
@@ -288,11 +290,14 @@ def claim_fable_lock(
     }
     WATCH_DIR.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
-    return {
+    out: dict[str, Any] = {
         "ok": True,
         "lock": {**payload, "age_s": 0.0},
         "stale_broken": bool(current.get("holder")) and not live,
     }
+    if displaced_holder:
+        out["displaced_holder"] = displaced_holder
+    return out
 
 
 def refresh_fable_lock(

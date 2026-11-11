@@ -142,6 +142,75 @@ def test_maybe_subscribe_claim_failure_still_subscribes() -> None:
     assert out["xvfb_subscription"]["ok"] is True
 
 
+def test_maybe_subscribe_prefers_displaced_holder_for_rebind() -> None:
+    prior_tab = "aaaa1111-1111-4111-8111-111111111111"
+    with (
+        patch("tools.continuity_ops.detect_cursor_gui_host", return_value=":8"),
+        patch("tools.continuity_ops.is_cursor_xvfb_host", return_value=True),
+        patch(
+            "tools.continuity_ops.claim_fable_lock",
+            return_value={"ok": True, "displaced_holder": f"ide:{prior_tab}"},
+        ),
+        patch(
+            "tools.continuity_ops.cleanup_xvfb_sidebar_on_holder_claim",
+            return_value={"ok": True},
+        ),
+        patch(
+            "tools.continuity_ops.subscribe_cursor_xvfb_house",
+            return_value={"ok": True},
+        ),
+        patch(
+            "tools.continuity_ops.rebind_predecessor_subscriptions",
+            return_value={"ok": True, "repointed": []},
+        ) as mock_rebind,
+        patch(
+            "tools.continuity_ops.current_root_subscription_agent_id",
+            return_value="should-not-use",
+        ),
+        patch("tools.continuity_ops._count_subscribed_root_heads", return_value=1),
+    ):
+        maybe_subscribe_cursor_xvfb_on_resume(
+            thread="18528",
+            transcript_id=_TID,
+            surface="cursor",
+            resume_result={"fence_id": "f1"},
+        )
+    assert mock_rebind.call_args.kwargs["prior_agent_id"] == prior_tab
+
+
+def test_maybe_subscribe_ambiguous_prior_skips_rebind() -> None:
+    with (
+        patch("tools.continuity_ops.detect_cursor_gui_host", return_value=":8"),
+        patch("tools.continuity_ops.is_cursor_xvfb_host", return_value=True),
+        patch("tools.continuity_ops.claim_fable_lock", return_value={"ok": True}),
+        patch(
+            "tools.continuity_ops.cleanup_xvfb_sidebar_on_holder_claim",
+            return_value={"ok": True},
+        ),
+        patch(
+            "tools.continuity_ops.subscribe_cursor_xvfb_house",
+            return_value={"ok": True},
+        ),
+        patch(
+            "tools.continuity_ops.rebind_predecessor_subscriptions",
+            return_value={"ok": True},
+        ) as mock_rebind,
+        patch(
+            "tools.continuity_ops.current_root_subscription_agent_id",
+            return_value="other-tab",
+        ),
+        patch("tools.continuity_ops._count_subscribed_root_heads", return_value=2),
+    ):
+        out = maybe_subscribe_cursor_xvfb_on_resume(
+            thread="18528",
+            transcript_id=_TID,
+            surface="cursor",
+            resume_result={"fence_id": "f1"},
+        )
+    mock_rebind.assert_not_called()
+    assert out["child_lane_rebind"] == {"ok": False, "reason": "ambiguous_prior"}
+
+
 def test_maybe_subscribe_claim_fable_lock_args() -> None:
     with (
         patch("tools.continuity_ops.detect_cursor_gui_host", return_value=":8"),

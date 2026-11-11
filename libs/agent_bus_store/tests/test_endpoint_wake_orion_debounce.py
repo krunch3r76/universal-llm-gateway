@@ -6,12 +6,14 @@ import pytest
 from agent_bus_store.db import create_thread, init_db, insert_turn
 from agent_bus_store.db.connection import connect
 from agent_bus_store.db.endpoint_wake_ledger import (
+    CONSUMER,
     ENDPOINT_WAKE_DEBOUNCE_S_ORION_CHAT,
     advance_scan,
     claim_due_wakes,
     get_cursor,
     record_wake_result,
 )
+from agent_bus_store.testing.wake_cursor_test_support import rewind_wake_cursor_for_test
 
 pytestmark = pytest.mark.offline
 
@@ -67,7 +69,7 @@ def test_orion_chat_claim_after_delivery_eligible_at_30s_not_29s(db: None) -> No
     )
     get_cursor()
     with connect() as conn:
-        conn.execute("UPDATE endpoint_wake_cursor SET high_water_turn_id=0")
+        rewind_wake_cursor_for_test(conn, CONSUMER, to=0)
     _scan_orion_pending(turn_id=a_id, turn_number=a_n, now="2020-01-01 00:00:00")
     wake = claim_due_wakes(now="2020-01-01 00:00:30")
     assert wake["wake_id"]
@@ -104,7 +106,7 @@ def test_non_orion_wake_still_debounces_600s_after_delivery(db: None) -> None:
     )
     get_cursor()
     with connect() as conn:
-        conn.execute("UPDATE endpoint_wake_cursor SET high_water_turn_id=0")
+        rewind_wake_cursor_for_test(conn, CONSUMER, to=0)
     advance_scan(
         "endpoint-wake-dispatcher",
         0,
@@ -157,7 +159,7 @@ def test_orion_three_turns_within_30s_one_claim(db: None) -> None:
         turn_specs.append((int(turn_id), int(number)))
     get_cursor()
     with connect() as conn:
-        conn.execute("UPDATE endpoint_wake_cursor SET high_water_turn_id=0")
+        rewind_wake_cursor_for_test(conn, CONSUMER, to=0)
     hw = 0
     for (turn_id, number), offset_s in zip(turn_specs, (0, 10, 20), strict=True):
         _scan_orion_pending(

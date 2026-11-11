@@ -8,6 +8,7 @@ Not a contract token.
 from __future__ import annotations
 
 import re
+from datetime import UTC, datetime
 from typing import Any
 
 from hop_handoff import (
@@ -15,7 +16,7 @@ from hop_handoff import (
     build_continuity_handoff_body,
     parse_successor_birth_id,
 )
-from hop_handoff.body import VALID_HOP_KINDS
+from hop_handoff.body import VALID_HOP_KINDS, responsibility_from_thread_summary
 from job_grammar import resolve_job_token
 from job_vocab.records import job_record
 from mcp_events import record
@@ -30,6 +31,18 @@ HOP_JOB_ABSENT = "absent"
 _VERB_SOURCE = "agent-bus-hop-verb"
 _DEFAULT_SUCCESSOR_MODEL = "cdp/opus-5.5-high"
 _HOP_MODEL_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._+/-]*$")
+_THREAD_DETAIL_RESUME = "false"
+
+
+def _fetch_thread_detail_for_responsibility(thread_id: str) -> dict[str, Any]:
+    """Load thread metadata via agent-bus HTTP relay (no resume envelope)."""
+    from ._shared import relay
+
+    return relay(
+        "agent-bus",
+        "GET",
+        f"/threads/{thread_id}?include_resume={_THREAD_DETAIL_RESUME}",
+    )
 
 
 def continuity_contract_line(body: str) -> str | None:
@@ -302,12 +315,35 @@ async def _hop_dispatch(
         thread_id,
         superseded_registration_id=cse_registration_id,
     )
+    hop_admitted_at = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+    responsibility: str | None = None
+    thread_row: dict[str, Any] | None = None
+    try:
+        detail = _fetch_thread_detail_for_responsibility(thread_id)
+        if not isinstance(detail, dict):
+            raise TypeError(
+                f"thread relay returned {type(detail).__name__}, expected dict"
+            )
+        if "error" in detail:
+            raise RuntimeError(str(detail.get("error")))
+        responsibility = responsibility_from_thread_summary(detail.get("summary"))
+    except Exception as exc:  # noqa: BLE001 — admit without responsibility metadata
+        record(
+            "mcp.agentbus.hop.thread_read_failed",
+            thread=thread_id,
+            exception_class=type(exc).__name__,
+        )
+        responsibility = None
+
     arc_hub = None
     try:
-        from agent_bus_store.db.threads import get_thread
         from hop_handoff.arc_hub import assess_arc_hub, parse_arc_hub_tag
 
-        thread_row = get_thread(thread_id)
+        if thread_row is None:
+            from agent_bus_store.db.threads import get_thread
+
+            thread_row = get_thread(thread_id)
         lane_tags = list((thread_row or {}).get("tags") or [])
         arc_hub = assess_arc_hub(parse_arc_hub_tag(lane_tags))
     except Exception:  # noqa: BLE001 — omit arc_hub lines when not computed
@@ -366,6 +402,8 @@ async def _hop_dispatch(
         inflight_rows=inflight_count,
         arc_hub=arc_hub,
         consumption_missing=consumption_missing,
+        hop_admitted_at=hop_admitted_at,
+        responsibility=responsibility,
     )
     # mission_kind=hop arms Stargate hop_own_generate so the caller's own
     # live generate is excluded (a:37182). predecessor_registration_id names

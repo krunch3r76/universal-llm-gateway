@@ -162,6 +162,7 @@ async def prepare_cursor_sdk_generate(
     ban_override: bool = False,
     ban_override_reason: str | None = None,
     model_ban_override_event_id: str | None = None,
+    transcript_id: str | None = None,
 ) -> PreparedCursorSdkHandle:
     """Validate, mint/reuse IDs, create pending thread; do not POST the worker."""
     provenance_missing = (

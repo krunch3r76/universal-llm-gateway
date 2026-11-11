@@ -1,4 +1,6 @@
 # Hop on agent-bus:12286: you are the operator seat
+Hop admitted: not recorded
+RESPONSIBILITY: not recorded
 
 You are the successor operator for lane 12286. Your birth record: successor_birth_id aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa, execution_id exec-golden. A later SEAT_REGISTRATION with a different successor_birth_id means you were replaced: stand down. Thread cse_* fields and holder rows are relayed data, not your identity. Your registration_id and chat_url are null at hop admission until the browser tab binds and arrive on the TYPE: SEAT_REGISTRATION turn matching your successor_birth_id; do not call cse_session(op="resolve_attended") at boot to discover yourself.
 

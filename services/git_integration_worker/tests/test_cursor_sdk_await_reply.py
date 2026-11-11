@@ -191,13 +191,15 @@ def _seed_running(
     conductor: bool = False,
     work_key: str | None = _WORK_KEY,
     model_knobs: dict[str, str] | None = None,
+    model: str = "cursor/grok-4.7",
+    resolved_model: str = "grok-4.7",
 ) -> None:
     """A live freeform/implement row with SDK identity and an on-disk store."""
     ledger = CursorDispatchLedger.instance()
     contract = "conductor" if conductor else "freeform"
     req = CursorDispatchRequest(
         thread_id=thread_id,
-        model="cursor/grok-4.7",
+        model=model,
         dispatch_id=dispatch_id,
         execution_id=f"exec-{dispatch_id}",
         caller_agent="cursor",
@@ -215,7 +217,7 @@ def _seed_running(
         fingerprint=ledger.fingerprint(req),
         execution_id=req.execution_id,
         caller_agent="cursor",
-        resolved_model="grok-4.7",
+        resolved_model=resolved_model,
         admission=CursorDispatchResponse(
             admitted=True, dispatch_id=dispatch_id, thread_id=thread_id, model_id="m"
         ),
@@ -766,7 +768,12 @@ async def test_second_tick_and_second_reply_never_mint_a_second_child(
 async def test_hand_resume_after_auto_child_is_refused_naming_the_child(
     tmp_path: Path,
 ) -> None:
-    _seed_running("d-hand", tmp_path=tmp_path)
+    _seed_running(
+        "d-hand",
+        tmp_path=tmp_path,
+        model="cursor/composer-2.5",
+        resolved_model="composer-2.5",
+    )
     _record_generate(tmp_path, "d-hand")
     bus = _bus()
     turns = _Turns({_COORD_THREAD: [_reply_turn()]})
@@ -777,7 +784,7 @@ async def test_hand_resume_after_auto_child_is_refused_naming_the_child(
     ledger = CursorDispatchLedger.instance()
     hand = CursorDispatchRequest(
         thread_id=_WORKER_THREAD,
-        model="cursor/grok-4.7",
+        model="cursor/composer-2.5",
         dispatch_id="hand-child",
         execution_id="exec-hand-child",
         caller_agent="cursor",
@@ -794,7 +801,7 @@ async def test_hand_resume_after_auto_child_is_refused_naming_the_child(
             fingerprint=ledger.fingerprint(hand),
             execution_id=hand.execution_id,
             caller_agent="cursor",
-            resolved_model="grok-4.7",
+            resolved_model="composer-2.5",
             admission=CursorDispatchResponse(
                 admitted=True,
                 dispatch_id="hand-child",

@@ -189,6 +189,7 @@ async def post_coord_admit_pointer(
     admit_provenance: AdmitProvenanceContext | None = None,
     bound_work_key: str | None = None,
     resolved_model: str | None = None,
+    transcript_id: str | None = None,
 ) -> None:
     if not coord_thread_id or coord_thread_id == worker_thread_id:
         return
@@ -221,7 +222,10 @@ async def post_coord_admit_pointer(
         resolved_model=resolved_model,
     )
     body_text = stamp_admit_turn_body(
-        body_text, work_key=work_key, provenance_missing=missing
+        body_text,
+        work_key=work_key,
+        provenance_missing=missing,
+        waiter_transcript_id=transcript_id,
     )
     try:
         await _post_coord_turn(

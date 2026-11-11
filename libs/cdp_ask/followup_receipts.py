@@ -79,9 +79,23 @@ def apply_receipt_caps(
     return _cap_receipt_for_unbound(capped, target_binding=target_binding)
 
 
-def response_extra(*, reattach_used: bool, lane_created: bool) -> dict[str, bool]:
+def response_extra(
+    *,
+    reattach_used: bool,
+    lane_created: bool,
+    seated: bool | None = None,
+    lane_holder: str | None = None,
+) -> dict[str, bool | str | None]:
     """Reattach provenance fields carried on every followup response."""
-    return {"reattach_used": reattach_used, "lane_created": lane_created}
+    extra: dict[str, bool | str | None] = {
+        "reattach_used": reattach_used,
+        "lane_created": lane_created,
+    }
+    if seated is not None:
+        extra["seated"] = seated
+    if lane_holder is not None:
+        extra["lane_holder"] = lane_holder
+    return extra
 
 
 def paste_response(
@@ -97,6 +111,8 @@ def paste_response(
     target_binding: TargetBinding | None,
     standdown_token_for: str | None = None,
     superseded_count: int | None = None,
+    seated: bool | None = None,
+    lane_holder: str | None = None,
 ) -> FollowupProjectAskResponse:
     """Build followup response from proven receipt and caller gate.
 
@@ -120,7 +136,12 @@ def paste_response(
         )
     send_verified = receipt is not None
     ok = receipt_meets(receipt, req.min_receipt)
-    extra = response_extra(reattach_used=reattach_used, lane_created=lane_created)
+    extra = response_extra(
+        reattach_used=reattach_used,
+        lane_created=lane_created,
+        seated=seated,
+        lane_holder=lane_holder,
+    )
     return FollowupProjectAskResponse(
         ok=ok,
         url=url,

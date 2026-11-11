@@ -239,6 +239,13 @@ class CardAssertionCounts(BaseModel):
     superseded: int = 0
 
 
+class AuthoredNote(BaseModel):
+    """Stored description surfaced separately from derived status (W5 demote)."""
+
+    text: str
+    updated_at: str
+
+
 class EntityCard(BaseModel):
     """Card v0 payload (v2.4 §6.3)."""
 
@@ -250,6 +257,7 @@ class EntityCard(BaseModel):
     # type-specific projection and does not replace this object.
     attributes: dict[str, Any] | None = None
     summary_row: str | None = None
+    authored_note: AuthoredNote | None = None
     status_summary: dict[str, Any] | None = None
     top_k_assertions: list[CardAssertion] = Field(default_factory=list)
     current_status: CurrentStatus = Field(default_factory=CurrentStatus)

@@ -3,9 +3,12 @@
 from __future__ import annotations
 
 import json
+import math
+import os
 import re
 import sqlite3
 import uuid
+from collections.abc import Sequence
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
@@ -18,6 +21,13 @@ from cursor_bridge.cursor_window_config import (
 from ..recipients import MAESTRO_WEB_ALIAS_PAIR
 from .connection import connect, write_connect
 from .lane_associations import get_current_lane
+
+# Reply subjects that count as answering a wake turn (plus turn reference or supersedes).
+# Excludes PROGRESS/STATUS/CHECKPOINT and other milestone heads that may cite a turn.
+_WAKE_REPLY_SUBJECT_HEADS = frozenset(
+    {"ACK", "ANSWER", "REPLY", "RESPONSE", "CONSULT_REPLY"}
+)
+_CDP_REPLY_SUBJECT_RE = re.compile(r"^cdp reply\s*[—-]\s*", re.I)
 
 CONSUMER = "endpoint-wake-dispatcher"
 _CLAIM_STATES = ("claimed", "unknown")
@@ -42,8 +52,16 @@ def _now(now: str | None) -> str:
     return datetime.now(UTC).strftime("%Y-%m-%d %H:%M:%S")
 
 
+def _parse_utc_stamp(stamp: str) -> datetime:
+    """Parse agent-bus stamps: space form or wire ``%Y-%m-%dT%H:%M:%SZ``."""
+    text = stamp.strip()
+    if "T" in text:
+        return datetime.strptime(text, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=UTC)
+    return datetime.strptime(text, "%Y-%m-%d %H:%M:%S").replace(tzinfo=UTC)
+
+
 def _shift(stamp: str, seconds: int) -> str:
-    base = datetime.strptime(stamp, "%Y-%m-%d %H:%M:%S").replace(tzinfo=UTC)
+    base = _parse_utc_stamp(stamp)
     return (base + timedelta(seconds=seconds)).strftime("%Y-%m-%d %H:%M:%S")
 
 
@@ -77,9 +95,10 @@ def get_cursor(consumer: str = CONSUMER, *, now: str | None = None) -> dict[str,
     stamp = _now(now)
     with write_connect() as conn:
         conn.execute(
-            "INSERT OR IGNORE INTO endpoint_wake_cursor "
-            "SELECT ?, COALESCE(MAX(id), 0), ? FROM turns",
-            (consumer, stamp),
+            "INSERT INTO endpoint_wake_cursor (consumer, high_water_turn_id, updated_at) "
+            "SELECT ?, m, ? FROM (SELECT COALESCE(MAX(id), 0) AS m FROM turns) "
+            "WHERE NOT EXISTS (SELECT 1 FROM endpoint_wake_cursor WHERE consumer = ?)",
+            (consumer, stamp, consumer),
         )
         row = conn.execute(
             "SELECT * FROM endpoint_wake_cursor WHERE consumer=?", (consumer,)
@@ -121,31 +140,184 @@ def advance_scan(
             if turn_row is not None and turn_row["read_at"]:
                 continue
             filtered.append(item)
+        ledger_cols = _ledger_columns(conn)
+        has_delivery_agent_id = "delivery_agent_id" in ledger_cols
+        has_subscription_id = "subscription_id" in ledger_cols
         for item in filtered:
             state = item.get("state", "pending")
-            conn.execute(
-                "INSERT OR IGNORE INTO endpoint_wake_ledger "
-                "(agent, thread_id, turn_id, turn_number, state, reason, created_at, "
-                "finished_at, decided_by_rule) "
-                "VALUES (?,?,?,?,?,?,?,?,?)",
-                (
-                    item["agent"],
-                    item["thread_id"],
-                    item["turn_id"],
-                    item["turn_number"],
-                    state,
-                    item.get("reason") if state == "skipped" else None,
-                    stamp,
-                    stamp if state == "skipped" else None,
-                    item.get("decided_by_rule"),
-                ),
-            )
+            delivery_id = item.get("delivery_agent_id")
+            subscription_id = item.get("subscription_id")
+            if state == "pending":
+                existing = conn.execute(
+                    "SELECT id, state, reason FROM endpoint_wake_ledger "
+                    "WHERE agent=? AND thread_id=? AND turn_id=?",
+                    (item["agent"], item["thread_id"], item["turn_id"]),
+                ).fetchone()
+                if (
+                    existing is not None
+                    and str(existing["state"] or "") == "skipped"
+                    and str(existing["reason"] or "") == "no_route:scan_holder"
+                ):
+                    if has_subscription_id:
+                        conn.execute(
+                            "UPDATE endpoint_wake_ledger SET state='pending', reason=NULL, "
+                            "finished_at=NULL, decided_by_rule=?, subscription_id=COALESCE(?, "
+                            "subscription_id) WHERE id=?",
+                            (
+                                item.get("decided_by_rule"),
+                                subscription_id,
+                                existing["id"],
+                            ),
+                        )
+                    else:
+                        conn.execute(
+                            "UPDATE endpoint_wake_ledger SET state='pending', reason=NULL, "
+                            "finished_at=NULL, decided_by_rule=? WHERE id=?",
+                            (item.get("decided_by_rule"), existing["id"]),
+                        )
+                    continue
+            if has_delivery_agent_id and has_subscription_id:
+                conn.execute(
+                    "INSERT OR IGNORE INTO endpoint_wake_ledger "
+                    "(agent, thread_id, turn_id, turn_number, state, reason, created_at, "
+                    "finished_at, decided_by_rule, delivery_agent_id, subscription_id) "
+                    "VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+                    (
+                        item["agent"],
+                        item["thread_id"],
+                        item["turn_id"],
+                        item["turn_number"],
+                        state,
+                        item.get("reason") if state == "skipped" else None,
+                        stamp,
+                        stamp if state == "skipped" else None,
+                        item.get("decided_by_rule"),
+                        delivery_id if delivery_id else None,
+                        subscription_id,
+                    ),
+                )
+            elif has_delivery_agent_id:
+                conn.execute(
+                    "INSERT OR IGNORE INTO endpoint_wake_ledger "
+                    "(agent, thread_id, turn_id, turn_number, state, reason, created_at, "
+                    "finished_at, decided_by_rule, delivery_agent_id) "
+                    "VALUES (?,?,?,?,?,?,?,?,?,?)",
+                    (
+                        item["agent"],
+                        item["thread_id"],
+                        item["turn_id"],
+                        item["turn_number"],
+                        state,
+                        item.get("reason") if state == "skipped" else None,
+                        stamp,
+                        stamp if state == "skipped" else None,
+                        item.get("decided_by_rule"),
+                        delivery_id if delivery_id else None,
+                    ),
+                )
+            elif has_subscription_id:
+                conn.execute(
+                    "INSERT OR IGNORE INTO endpoint_wake_ledger "
+                    "(agent, thread_id, turn_id, turn_number, state, reason, created_at, "
+                    "finished_at, decided_by_rule, subscription_id) "
+                    "VALUES (?,?,?,?,?,?,?,?,?,?)",
+                    (
+                        item["agent"],
+                        item["thread_id"],
+                        item["turn_id"],
+                        item["turn_number"],
+                        state,
+                        item.get("reason") if state == "skipped" else None,
+                        stamp,
+                        stamp if state == "skipped" else None,
+                        item.get("decided_by_rule"),
+                        subscription_id,
+                    ),
+                )
+            else:
+                conn.execute(
+                    "INSERT OR IGNORE INTO endpoint_wake_ledger "
+                    "(agent, thread_id, turn_id, turn_number, state, reason, created_at, "
+                    "finished_at, decided_by_rule) "
+                    "VALUES (?,?,?,?,?,?,?,?,?)",
+                    (
+                        item["agent"],
+                        item["thread_id"],
+                        item["turn_id"],
+                        item["turn_number"],
+                        state,
+                        item.get("reason") if state == "skipped" else None,
+                        stamp,
+                        stamp if state == "skipped" else None,
+                        item.get("decided_by_rule"),
+                    ),
+                )
         conn.execute(
             "UPDATE endpoint_wake_cursor SET high_water_turn_id=?, updated_at=? "
             "WHERE consumer=?",
             (new_high_water, stamp, consumer),
         )
         return {"high_water_turn_id": new_high_water, "inserted": len(filtered)}
+
+
+def expire_scan_holder_tombstones(cutoff_stamp: str) -> int:
+    """Terminal-expire ledger-stale ``no_route:scan_holder`` rows (no row LIMIT)."""
+    with write_connect() as conn:
+        stamp = _now(None)
+        cur = conn.execute(
+            "UPDATE endpoint_wake_ledger SET state='skipped', "
+            "reason='no_route:scan_holder_expired', finished_at=? "
+            "WHERE state='skipped' AND reason='no_route:scan_holder' "
+            "AND created_at < ?",
+            (stamp, cutoff_stamp),
+        )
+        return int(cur.rowcount)
+
+
+def list_scan_holder_candidates(cutoff_stamp: str) -> list[dict[str, Any]]:
+    """Fresh scan-holder tombstones (read-only connect; no LIMIT)."""
+    with connect() as conn:
+        rows = conn.execute(
+            "SELECT l.id, l.agent, l.thread_id, l.turn_id, t.created_at "
+            "FROM endpoint_wake_ledger l "
+            "JOIN turns t ON t.id = l.turn_id "
+            "WHERE l.state='skipped' AND l.reason='no_route:scan_holder' "
+            "AND l.created_at >= ? "
+            "ORDER BY l.id",
+            (cutoff_stamp,),
+        ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def promote_scan_holder_rows(
+    promote_ids: Sequence[int],
+    expire_ids: Sequence[int],
+) -> int:
+    """CAS-promote or expire scan-holder rows in one short write ticket."""
+    if not promote_ids and not expire_ids:
+        return 0
+    stamp = _now(None)
+    promoted = 0
+    with write_connect() as conn:
+        if promote_ids:
+            placeholders = ",".join("?" * len(promote_ids))
+            cur = conn.execute(
+                f"UPDATE endpoint_wake_ledger SET state='pending', reason=NULL, "
+                f"finished_at=NULL WHERE id IN ({placeholders}) "
+                f"AND state='skipped' AND reason='no_route:scan_holder'",
+                tuple(int(i) for i in promote_ids),
+            )
+            promoted = int(cur.rowcount)
+        if expire_ids:
+            placeholders = ",".join("?" * len(expire_ids))
+            conn.execute(
+                f"UPDATE endpoint_wake_ledger SET state='skipped', "
+                f"reason='no_route:scan_holder_expired', finished_at=? "
+                f"WHERE id IN ({placeholders}) "
+                f"AND state='skipped' AND reason='no_route:scan_holder'",
+                (stamp, *(int(i) for i in expire_ids)),
+            )
+    return promoted
 
 
 def _same_wake_agent(left: str, right: str) -> bool:
@@ -160,15 +332,34 @@ def _same_wake_agent(left: str, right: str) -> bool:
     )
 
 
+def _wake_reply_subject_head(subject: str | None) -> str:
+    """Subject prefix before ``|`` (matches ``maestro_subject_head`` in send_prep)."""
+    head = str(subject or "").split("|", 1)[0].strip().upper()
+    if not head:
+        return ""
+    return head.split()[0]
+
+
+def _is_wake_reply_acknowledgement(subject: str | None) -> bool:
+    """True when the subject marks an explicit answer/ack, not status or progress."""
+    subj = str(subject or "").strip()
+    if not subj:
+        return False
+    if _CDP_REPLY_SUBJECT_RE.match(subj):
+        return True
+    return _wake_reply_subject_head(subj) in _WAKE_REPLY_SUBJECT_HEADS
+
+
+def _supersedes_wake_turn(nxt: sqlite3.Row, *, turn_id: int) -> bool:
+    return nxt["supersedes_turn"] is not None and int(nxt["supersedes_turn"]) == turn_id
+
+
 def _references_wake_turn(
     nxt: sqlite3.Row,
     *,
     thread_id: str,
-    turn_id: int,
     turn_number: int,
 ) -> bool:
-    if nxt["supersedes_turn"] is not None and int(nxt["supersedes_turn"]) == turn_id:
-        return True
     text = f"{nxt['subject'] or ''}\n{nxt['body'] or ''}"
     pattern = (
         rf"(?i)(?:(?:^|(?<![\w#])){re.escape(thread_id)}#{turn_number}\b"
@@ -352,19 +543,25 @@ def _seat_superseded_skip_reason(
     _route, sub = resolved
     if str(sub.get("surface") or "") != "cse":
         return None
-    lane = str(sub.get("agent_id") or thread_id).strip()
-    if not lane:
+    agent_id = str(sub.get("agent_id") or thread_id).strip()
+    if not agent_id:
         return None
     try:
+        import re
+
         from services.git_integration_worker.cse_session_holders import (
             _ledger_conn,
             ensure_schema,
             get_driving_holder_for_lane,
+            resolve_holder_by_registration,
         )
 
         with _ledger_conn() as hconn:
             ensure_schema(hconn)
-            holder = get_driving_holder_for_lane(hconn, lane)
+            if re.fullmatch(r"^\d{1,10}$", agent_id):
+                holder = get_driving_holder_for_lane(hconn, agent_id)
+            else:
+                holder = resolve_holder_by_registration(hconn, agent_id)
     except Exception:
         return None
     if holder is None:
@@ -428,12 +625,15 @@ def _skip_reason(conn: sqlite3.Connection, row: sqlite3.Row) -> str | None:
     wake_turn_id = int(row["turn_id"])
     wake_turn_number = turn_number
     for nxt in later:
-        if _same_wake_agent(
-            str(nxt["from_agent"] or ""), agent
+        if not _same_wake_agent(str(nxt["from_agent"] or ""), agent):
+            continue
+        if _supersedes_wake_turn(nxt, turn_id=wake_turn_id):
+            return "already_answered"
+        if _is_wake_reply_acknowledgement(
+            str(nxt["subject"] or "")
         ) and _references_wake_turn(
             nxt,
             thread_id=thread_id,
-            turn_id=wake_turn_id,
             turn_number=wake_turn_number,
         ):
             return "already_answered"
@@ -490,7 +690,10 @@ def _group_pending_rows(
 
 
 def resolve_subscription_for_thread(
-    agent: str, thread_id: str
+    agent: str,
+    thread_id: str,
+    *,
+    agent_id: str | None = None,
 ) -> tuple[str, dict[str, Any]] | None:
     """Best subscribed row for ``thread_id``, including parent-thread scope."""
     parent_thread: str | None = None
@@ -499,6 +702,7 @@ def resolve_subscription_for_thread(
         parent_thread = lane.get("parent_thread")
     except LookupError:
         parent_thread = None
+    aid_filter = str(agent_id or "").strip() or None
     with connect() as conn:
         rows = conn.execute(
             """
@@ -516,6 +720,7 @@ def resolve_subscription_for_thread(
                 OR s.thread_scope = ?
                 OR (? IS NOT NULL AND s.thread_scope = ?)
               )
+              AND (? IS NULL OR s.agent_id = ?)
             ORDER BY
               CASE
                 WHEN s.thread_scope = ? THEN 0
@@ -531,6 +736,8 @@ def resolve_subscription_for_thread(
                 thread_id,
                 parent_thread,
                 parent_thread,
+                aid_filter,
+                aid_filter,
                 thread_id,
             ),
         ).fetchall()
@@ -552,6 +759,8 @@ _DELIVERY_BINDING_SOURCE = "agent_bus_store.delivery_bindings_resolve"
 _ORION_WAKE_HOUSE = "21207"
 ENDPOINT_WAKE_DEBOUNCE_S_DEFAULT = 600
 ENDPOINT_WAKE_DEBOUNCE_S_ORION_CHAT = 30
+ENDPOINT_WAKE_TAB_COALESCE_S_DEFAULT = 3.0
+ENDPOINT_WAKE_TAB_COALESCE_MAX_S_DEFAULT = 15.0
 ORION_DEFERRED_STREAMING_MAX_ATTEMPTS = 25
 ORION_COMPOSER_DEFER_MAX_ATTEMPTS = 25
 ORION_DEFERRED_RETRY_BASE_S = 30
@@ -601,6 +810,183 @@ def _orion_pending_coalesce_blocks(
         (agent, thread_id, oldest),
     ).fetchone()
     return prior is None
+
+
+def _endpoint_wake_tab_coalesce_s() -> float:
+    raw = os.environ.get(
+        "ENDPOINT_WAKE_TAB_COALESCE_S", str(ENDPOINT_WAKE_TAB_COALESCE_S_DEFAULT)
+    )
+    try:
+        value = float(raw)
+    except ValueError:
+        return ENDPOINT_WAKE_TAB_COALESCE_S_DEFAULT
+    if not math.isfinite(value) or value <= 0:
+        return ENDPOINT_WAKE_TAB_COALESCE_S_DEFAULT
+    return value
+
+
+def _endpoint_wake_tab_coalesce_max_s() -> float:
+    raw = os.environ.get(
+        "ENDPOINT_WAKE_TAB_COALESCE_MAX_S", str(ENDPOINT_WAKE_TAB_COALESCE_MAX_S_DEFAULT)
+    )
+    try:
+        value = float(raw)
+    except ValueError:
+        return ENDPOINT_WAKE_TAB_COALESCE_MAX_S_DEFAULT
+    if not math.isfinite(value) or value <= 0:
+        return ENDPOINT_WAKE_TAB_COALESCE_MAX_S_DEFAULT
+    return value
+
+
+def _tab_coalesce_applies_to_agent(agent: str) -> bool:
+    """Per-tab burst merge skips Orion and web-anthropic / maestro alias mailboxes."""
+    if normalize_bus_address(agent) == "orion":
+        return False
+    if normalize_bus_address(agent) in MAESTRO_WEB_ALIAS_PAIR:
+        return False
+    return True
+
+
+def _tab_hold_from_rows(
+    rows: Sequence[sqlite3.Row],
+    *,
+    delivery_agent_id: str,
+    stamp: str,
+) -> bool:
+    """Hold until quiet window or max-hold over eligible tab-id rows only."""
+    tab_id = str(delivery_agent_id or "").strip()
+    if not tab_id:
+        return False
+    eligible = [
+        r for r in rows if str(r["delivery_agent_id"] or "").strip() == tab_id
+    ]
+    if not eligible:
+        return False
+    oldest = min(str(r["created_at"]) for r in eligible)
+    newest = max(str(r["created_at"]) for r in eligible)
+    quiet_before = _shift(stamp, -int(_endpoint_wake_tab_coalesce_s()))
+    max_hold_before = _shift(stamp, -int(_endpoint_wake_tab_coalesce_max_s()))
+    return newest > quiet_before and oldest > max_hold_before
+
+
+def _due_wake_group_sql(orion_next_gate: str, *, delivery_agent_id: str | None) -> str:
+    delivery_sql = ""
+    if delivery_agent_id is not None:
+        delivery_sql = " AND COALESCE(p.delivery_agent_id,'')=? AND p.thread_id != '19627' "
+    return f"""
+                SELECT agent, thread_id FROM endpoint_wake_ledger p
+                WHERE p.state='pending'
+                  AND {_pending_retry_ready_sql("p")}
+                  {orion_next_gate}
+                  {delivery_sql}
+                  AND NOT EXISTS (
+                    SELECT 1 FROM endpoint_wake_ledger d
+                    WHERE {_mailbox_agent_sql("d", "p")} AND d.thread_id=p.thread_id
+                      AND d.state='delivered' AND d.finished_at> CASE
+                        WHEN lower(trim(p.agent))='orion' AND p.thread_id=?
+                        THEN ?
+                        ELSE ?
+                      END
+                      AND NOT EXISTS (
+                        SELECT 1 FROM turns t
+                        WHERE datetime(t.created_at) > datetime(d.finished_at)
+                          AND (
+                            lower(trim(t.from_agent))=lower(trim(p.agent))
+                            OR (
+                              lower(trim(t.from_agent)) IN ({_STAGE_MANAGER_SQL})
+                              AND lower(trim(p.agent)) IN ({_STAGE_MANAGER_SQL})
+                            )
+                            OR (
+                              d.route='cse'
+                              AND lower(trim(t.from_agent))='web-anthropic'
+                            )
+                          )
+                      )
+                      AND NOT EXISTS (
+                        SELECT 1 FROM turns tr
+                        WHERE tr.id=d.turn_id AND tr.read_at IS NOT NULL
+                      )
+                      AND NOT (
+                        EXISTS (
+                          SELECT 1 FROM turns tp
+                          WHERE tp.id = p.turn_id AND tp.subject LIKE 'EAR |%'
+                        )
+                        OR EXISTS (
+                          SELECT 1
+                          FROM agent_endpoint_subscriptions s_curr
+                          LEFT JOIN agent_endpoint_subscriptions s_prev
+                            ON s_prev.id = d.subscription_id
+                          WHERE s_curr.agent = p.agent
+                            AND s_curr.state = 'subscribed'
+                            AND (
+                              s_curr.thread_scope = p.thread_id
+                              OR s_curr.thread_scope = '*'
+                            )
+                            AND s_curr.agent_id != ''
+                            AND (
+                              s_prev.agent_id IS NULL
+                              OR s_curr.agent_id != s_prev.agent_id
+                            )
+                          LIMIT 1
+                        )
+                      )
+                  )
+                  AND NOT EXISTS (
+                    SELECT 1 FROM endpoint_wake_ledger u
+                    WHERE {_mailbox_agent_sql("u", "p")} AND u.thread_id=p.thread_id
+                      AND u.state='unknown' AND u.claimed_at> CASE
+                        WHEN lower(trim(p.agent))='orion' AND p.thread_id=?
+                        THEN ?
+                        ELSE ?
+                      END
+                  )
+                  AND NOT EXISTS (
+                    SELECT 1 FROM endpoint_wake_ledger c
+                    WHERE {_mailbox_agent_sql("c", "p")} AND c.thread_id=p.thread_id
+                      AND c.state='claimed' AND c.claimed_at>?
+                  )
+                GROUP BY agent, thread_id
+                ORDER BY MIN(COALESCE(p.finished_at, '')), MIN(p.id)
+                """
+
+
+def _due_wake_group_params(
+    *,
+    stamp: str,
+    retry_before: str,
+    orion_next_params: tuple[Any, ...],
+    debounce_before_orion: str,
+    debounce_before_default: str,
+    ttl_before: str,
+    delivery_agent_id: str | None,
+) -> tuple[Any, ...]:
+    base: tuple[Any, ...] = (
+        stamp,
+        retry_before,
+        *orion_next_params,
+        _ORION_WAKE_HOUSE,
+        debounce_before_orion,
+        debounce_before_default,
+        _ORION_WAKE_HOUSE,
+        debounce_before_orion,
+        debounce_before_default,
+        ttl_before,
+    )
+    if delivery_agent_id is not None:
+        return (
+            stamp,
+            retry_before,
+            *orion_next_params,
+            delivery_agent_id,
+            _ORION_WAKE_HOUSE,
+            debounce_before_orion,
+            debounce_before_default,
+            _ORION_WAKE_HOUSE,
+            debounce_before_orion,
+            debounce_before_default,
+            ttl_before,
+        )
+    return base
 
 
 def _wake_unbound_envelope(envelope: dict[str, Any]) -> dict[str, Any]:
@@ -1278,99 +1664,22 @@ def claim_due_wakes(
             (ttl_before,),
         )
         all_skipped: list[dict[str, Any]] = []
-        for _ in range(_CLAIM_SKIP_GROUP_CAP):
-            group = conn.execute(
-                f"""
-                SELECT agent, thread_id FROM endpoint_wake_ledger p
-                WHERE p.state='pending'
-                  AND {_pending_retry_ready_sql("p")}
-                  {orion_next_gate}
-                  AND NOT EXISTS (
-                    SELECT 1 FROM endpoint_wake_ledger d
-                    WHERE {_mailbox_agent_sql("d", "p")} AND d.thread_id=p.thread_id
-                      AND d.state='delivered' AND d.finished_at> CASE
-                        WHEN lower(trim(p.agent))='orion' AND p.thread_id=?
-                        THEN ?
-                        ELSE ?
-                      END
-                      AND NOT EXISTS (
-                        SELECT 1 FROM turns t
-                        WHERE datetime(t.created_at) > datetime(d.finished_at)
-                          AND (
-                            lower(trim(t.from_agent))=lower(trim(p.agent))
-                            OR (
-                              lower(trim(t.from_agent)) IN ({_STAGE_MANAGER_SQL})
-                              AND lower(trim(p.agent)) IN ({_STAGE_MANAGER_SQL})
-                            )
-                            OR (
-                              d.route='cse'
-                              AND lower(trim(t.from_agent))='web-anthropic'
-                            )
-                          )
-                      )
-                      AND NOT EXISTS (
-                        SELECT 1 FROM turns tr
-                        WHERE tr.id=d.turn_id AND tr.read_at IS NOT NULL
-                      )
-                      AND NOT (
-                        EXISTS (
-                          SELECT 1 FROM turns tp
-                          WHERE tp.id = p.turn_id AND tp.subject LIKE 'EAR |%'
-                        )
-                        OR EXISTS (
-                          SELECT 1
-                          FROM agent_endpoint_subscriptions s_curr
-                          LEFT JOIN agent_endpoint_subscriptions s_prev
-                            ON s_prev.id = d.subscription_id
-                          WHERE s_curr.agent = p.agent
-                            AND s_curr.state = 'subscribed'
-                            AND (
-                              s_curr.thread_scope = p.thread_id
-                              OR s_curr.thread_scope = '*'
-                            )
-                            AND s_curr.agent_id != ''
-                            AND (
-                              s_prev.agent_id IS NULL
-                              OR s_curr.agent_id != s_prev.agent_id
-                            )
-                          LIMIT 1
-                        )
-                      )
-                  )
-                  AND NOT EXISTS (
-                    SELECT 1 FROM endpoint_wake_ledger u
-                    WHERE {_mailbox_agent_sql("u", "p")} AND u.thread_id=p.thread_id
-                      AND u.state='unknown' AND u.claimed_at> CASE
-                        WHEN lower(trim(p.agent))='orion' AND p.thread_id=?
-                        THEN ?
-                        ELSE ?
-                      END
-                  )
-                  AND NOT EXISTS (
-                    SELECT 1 FROM endpoint_wake_ledger c
-                    WHERE {_mailbox_agent_sql("c", "p")} AND c.thread_id=p.thread_id
-                      AND c.state='claimed' AND c.claimed_at>?
-                  )
-                GROUP BY agent, thread_id
-                ORDER BY MIN(COALESCE(p.finished_at, '')), MIN(p.id)
-                LIMIT ?
-                """,
-                (
-                    stamp,
-                    retry_before,
-                    *orion_next_params,
-                    _ORION_WAKE_HOUSE,
-                    debounce_before_orion,
-                    debounce_before_default,
-                    _ORION_WAKE_HOUSE,
-                    debounce_before_orion,
-                    debounce_before_default,
-                    ttl_before,
-                    limit,
-                ),
-            ).fetchone()
-            if group is None:
-                return {"wake_id": None, "rows": all_skipped}
+        group_params_base = _due_wake_group_params(
+            stamp=stamp,
+            retry_before=retry_before,
+            orion_next_params=orion_next_params,
+            debounce_before_orion=debounce_before_orion,
+            debounce_before_default=debounce_before_default,
+            ttl_before=ttl_before,
+            delivery_agent_id=None,
+        )
+        prefetched = conn.execute(
+            _due_wake_group_sql(orion_next_gate, delivery_agent_id=None)
+            + " LIMIT ?",
+            (*group_params_base, _CLAIM_SKIP_GROUP_CAP),
+        ).fetchall()
+        held_tabs: set[str] = set()
+        for group in prefetched:
             if _orion_pending_coalesce_blocks(
                 conn,
                 agent=str(group["agent"]),
@@ -1388,30 +1697,101 @@ def claim_due_wakes(
             )
             skipped: list[dict[str, Any]] = []
             claimable: list[sqlite3.Row] = []
-            for row in rows:
-                from bus_watch.endpoint_wake_composer_defer import (
-                    composer_defer_blocks_claim,
-                )
-
-                if composer_defer_blocks_claim(
-                    reason=str(row["reason"] or ""),
-                    decided_by_rule=str(row["decided_by_rule"] or ""),
-                    agent=str(row["agent"] or ""),
-                ):
+            tab_delivery_id = ""
+            if "delivery_agent_id" in cols:
+                for row in rows:
+                    candidate = str(row["delivery_agent_id"] or "").strip()
+                    if candidate:
+                        tab_delivery_id = candidate
+                        break
+            thread_id = str(group["thread_id"])
+            tab_merge = bool(
+                tab_delivery_id
+                and _tab_coalesce_applies_to_agent(str(group["agent"]))
+                and thread_id != "19627"
+            )
+            groups_to_merge = [group]
+            merge_rows_pool: list[sqlite3.Row] = list(rows)
+            if tab_merge:
+                if tab_delivery_id in held_tabs:
                     continue
-                reason = _skip_reason(conn, row)
-                if reason:
-                    conn.execute(
-                        "UPDATE endpoint_wake_ledger SET state='skipped', reason=?, "
-                        "finished_at=? WHERE id=?",
-                        (reason, stamp, row["id"]),
+                merge_params = _due_wake_group_params(
+                    stamp=stamp,
+                    retry_before=retry_before,
+                    orion_next_params=orion_next_params,
+                    debounce_before_orion=debounce_before_orion,
+                    debounce_before_default=debounce_before_default,
+                    ttl_before=ttl_before,
+                    delivery_agent_id=tab_delivery_id,
+                )
+                groups_to_merge = conn.execute(
+                    _due_wake_group_sql(
+                        orion_next_gate, delivery_agent_id=tab_delivery_id
+                    ),
+                    merge_params,
+                ).fetchall()
+                merge_rows_pool = []
+                for grp in groups_to_merge:
+                    merge_rows_pool.extend(
+                        _group_pending_rows(
+                            conn,
+                            grp,
+                            stamp=stamp,
+                            retry_before=retry_before,
+                            orion_next_gate_sql=group_next_sql,
+                            orion_next_extra_params=orion_group_params,
+                        )
                     )
-                    item = dict(row)
-                    item["state"] = "skipped"
-                    item["reason"] = reason
-                    skipped.append(item)
-                else:
-                    claimable.append(row)
+                if _tab_hold_from_rows(
+                    merge_rows_pool,
+                    delivery_agent_id=tab_delivery_id,
+                    stamp=stamp,
+                ):
+                    held_tabs.add(tab_delivery_id)
+                    continue
+            seen_claim_ids: set[int] = set()
+            for grp in groups_to_merge:
+                grp_rows = (
+                    rows
+                    if grp["agent"] == group["agent"]
+                    and grp["thread_id"] == group["thread_id"]
+                    else _group_pending_rows(
+                        conn,
+                        grp,
+                        stamp=stamp,
+                        retry_before=retry_before,
+                        orion_next_gate_sql=group_next_sql,
+                        orion_next_extra_params=orion_group_params,
+                    )
+                )
+                for row in grp_rows:
+                    row_id = int(row["id"])
+                    if row_id in seen_claim_ids:
+                        continue
+                    from bus_watch.endpoint_wake_composer_defer import (
+                        composer_defer_blocks_claim,
+                    )
+
+                    if composer_defer_blocks_claim(
+                        reason=str(row["reason"] or ""),
+                        decided_by_rule=str(row["decided_by_rule"] or ""),
+                        agent=str(row["agent"] or ""),
+                    ):
+                        continue
+                    reason = _skip_reason(conn, row)
+                    if reason:
+                        conn.execute(
+                            "UPDATE endpoint_wake_ledger SET state='skipped', reason=?, "
+                            "finished_at=? WHERE id=?",
+                            (reason, stamp, row["id"]),
+                        )
+                        item = dict(row)
+                        item["state"] = "skipped"
+                        item["reason"] = reason
+                        skipped.append(item)
+                    else:
+                        seen_claim_ids.add(row_id)
+                        claimable.append(row)
             if not claimable:
                 all_skipped.extend(skipped)
                 continue
@@ -1438,7 +1818,11 @@ def claim_due_wakes(
                     (wake_id,),
                 ).fetchall()
             ]
-            return {"wake_id": wake_id, "rows": claimed}
+            return {
+                "wake_id": wake_id,
+                "rows": claimed,
+                "delivery_agent_id": tab_delivery_id if tab_merge else None,
+            }
         return {"wake_id": None, "rows": all_skipped}
 
 
@@ -1843,13 +2227,51 @@ def fold_expired_claims(claim_ttl_s: int = 300, *, now: str | None = None) -> in
 def list_turns_since(after_id: int, limit: int) -> list[dict[str, Any]]:
     """Compact turns newer than after_id, oldest first, without body."""
     with connect() as conn:
+        cols = {
+            str(r[1])
+            for r in conn.execute("PRAGMA table_info(turns)").fetchall()
+        }
+        from_col = ", from_agent_id" if "from_agent_id" in cols else ""
         rows = conn.execute(
-            "SELECT id, thread, turn_number, from_agent, to_agent, subject, "
-            "status, read_at, created_at FROM turns WHERE id>? "
+            f"SELECT id, thread, turn_number, from_agent, to_agent, subject, "
+            f"status, read_at, created_at{from_col} FROM turns WHERE id>? "
             "ORDER BY id ASC LIMIT ?",
             (after_id, limit),
         ).fetchall()
     return [dict(r) for r in rows]
+
+
+def recent_delivered_agent_ids(
+    thread_id: str,
+    window_s: int,
+    *,
+    before: str | None = None,
+    now: str | None = None,
+) -> list[str]:
+    """Distinct tab ids with delivered wakes in ``[before-window_s, before]`` (UTC stamps)."""
+    if window_s <= 0:
+        return []
+    anchor = _now(before or now)
+    with connect() as conn:
+        cols = _ledger_columns(conn)
+        if "delivery_agent_id" not in cols:
+            return []
+        rows = conn.execute(
+            "SELECT DISTINCT delivery_agent_id FROM endpoint_wake_ledger "
+            "WHERE thread_id=? AND state='delivered' "
+            "AND delivery_agent_id IS NOT NULL AND trim(delivery_agent_id) != '' "
+            "AND datetime(finished_at) >= datetime(?, ?) "
+            "AND datetime(finished_at) <= datetime(?)",
+            (thread_id, anchor, f"-{window_s} seconds", anchor),
+        ).fetchall()
+    out: list[str] = []
+    seen: set[str] = set()
+    for row in rows:
+        aid = str(row["delivery_agent_id"]).strip().lower()
+        if aid and aid not in seen:
+            seen.add(aid)
+            out.append(aid)
+    return out
 
 
 def list_wake_ledger_rows(
@@ -1912,3 +2334,35 @@ def list_wake_ledger_rows(
         item["rule_id"] = item.pop("decided_by_rule", None)
         out.append(item)
     return out
+
+
+def record_scan_drops(rows: list[dict[str, Any]], *, now: str | None = None) -> int:
+    """Insert qualified-wake scan drops (separate from claim ledger rows).
+
+    Uses ``INSERT OR IGNORE`` on ``(agent, thread_id, turn_id, reason)`` so repeat
+    scans stay idempotent and never occupy the ledger unique key.
+    """
+    if not rows:
+        return 0
+    stamp = _now(now)
+    inserted = 0
+    with write_connect() as conn:
+        for row in rows:
+            cur = conn.execute(
+                "INSERT OR IGNORE INTO endpoint_wake_scan_drops "
+                "(agent, thread_id, turn_id, turn_number, rule_id, reason, "
+                "subscription_id, scanned_at) "
+                "VALUES (?,?,?,?,?,?,?,?)",
+                (
+                    str(row["agent"]),
+                    str(row["thread_id"]),
+                    int(row["turn_id"]),
+                    row.get("turn_number"),
+                    row.get("rule_id"),
+                    str(row["reason"]),
+                    row.get("subscription_id"),
+                    stamp,
+                ),
+            )
+            inserted += int(cur.rowcount or 0)
+    return inserted

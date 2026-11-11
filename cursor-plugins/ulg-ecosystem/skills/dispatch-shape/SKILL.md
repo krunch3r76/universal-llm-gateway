@@ -37,7 +37,7 @@ Dispatch-style tools use two levels:
 agent_bus(tool="wait", arguments={"thread":"1271","after_turn":1})
 
 # right
-cortex(tool="entity_get", arguments='{"entity_id":"decision:foo"}')
+cortex(tool="entity_get", arguments='{"entity_id":"decision:foo","intent":"card"}')
 agent_bus(tool="fetch", arguments='{"thread":"1271","last":3,"compact":true}')
 ```
 

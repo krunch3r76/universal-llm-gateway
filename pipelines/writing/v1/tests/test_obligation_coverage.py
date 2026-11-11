@@ -570,6 +570,10 @@ def test_two_drafter_default_vs_six_on_correspondence() -> None:
     ]
     assert active == ["drafter_anthropic"]
     options["full_drafter_fanout"] = True
+    ctx_persona = {
+        **ctx,
+        "local_persona_author": step({"ok": True, "persona_prose": "Plain voice."}),
+    }
     active_all = [
         name
         for name in (
@@ -580,7 +584,7 @@ def test_two_drafter_default_vs_six_on_correspondence() -> None:
             "drafter_local_ernie",
             "drafter_anthropic",
         )
-        if evaluator.evaluate(by_name[name].condition, ctx, options)
+        if evaluator.evaluate(by_name[name].condition, ctx_persona, options)
     ]
     assert len(active_all) == 6
 

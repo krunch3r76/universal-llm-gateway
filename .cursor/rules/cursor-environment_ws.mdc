@@ -168,7 +168,7 @@ configured.
 Identify which window you inhabit via `gui_host`, bus `/endpoint-subscriptions`
 `display`, or the CDP port your tools target.
 
-**Environment detection (Impresario / liaison):** `detect_cursor_gui_host` in
+**Environment detection (Impresario):** `detect_cursor_gui_host` in
 `libs/bus_watch/cursor_xvfb_subscription.py` resolves `orion-node` vs `:8` from
 an explicit override, the process environment (Remote-SSH vs Xvfb `:8`),
 `:8` `state.vscdb` pane keys for a `transcript_id`, then

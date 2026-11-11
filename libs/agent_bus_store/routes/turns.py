@@ -44,6 +44,7 @@ from ..turns_models import (
     TurnCreate,
     TurnCreated,
     TurnList,
+    prepare_from_agent_id,
     TurnReadStateBulk,
     TurnReadStateBulkResult,
     TurnStatus,
@@ -80,6 +81,8 @@ def _turn_from_row(r: dict[str, Any]) -> Turn:
             "attachments": attachments,
             "attested_by": r.get("attested_by"),
             "user_agent": r.get("user_agent"),
+            "body_chars": r.get("body_chars"),
+            "from_agent_id": r.get("from_agent_id"),
         }
     )
 
@@ -198,6 +201,7 @@ async def create_turn(turn: TurnCreate) -> TurnCreated:
     if duplicate is not None:
         return json_turn_replay(duplicate)
     att_dicts = [a.model_dump() for a in turn.attachments] if turn.attachments else None
+    stored_from_agent_id, from_agent_warning = prepare_from_agent_id(turn.from_agent_id)
     try:
         turn_id, ts, turn_number, claimed_existing = await asyncio.to_thread(
             insert_turn,
@@ -214,6 +218,7 @@ async def create_turn(turn: TurnCreate) -> TurnCreated:
             on_behalf=turn.on_behalf,
             attested_by=turn.attested_by,
             user_agent=turn.user_agent,
+            from_agent_id=stored_from_agent_id,
         )
         if claimed_existing:
             from ..db.turns import get_turn_by_notice_closeout_key
@@ -322,7 +327,7 @@ async def create_turn(turn: TurnCreate) -> TurnCreated:
             turn_number,
             exc_info=True,
         )
-    return await asyncio.to_thread(
+    created = await asyncio.to_thread(
         build_turn_created,
         prepared,
         turn_id=turn_id,
@@ -337,7 +342,10 @@ async def create_turn(turn: TurnCreate) -> TurnCreated:
         thread_tags=thread_tags,
         supersedes_turn=turn.supersedes_turn or turn.supersedes_turn_id,
         on_behalf=turn.on_behalf,
+        from_agent_id=stored_from_agent_id,
+        warning=from_agent_warning,
     )
+    return created
 
 
 def _maybe_trigger_implement_closeout(*, thread: str, body: str | None) -> None:

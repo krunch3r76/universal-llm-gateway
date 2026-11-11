@@ -17,6 +17,8 @@ from .executor_resolution import (
     _read_packet_executor_inputs,
     should_emit_executor_override_audit,
 )
+from agent_seat.skills_merge import normalize_caller_skill_ids
+
 from .handoff import (
     _mcp_packet_seats,
     _resolve_packet_file,
@@ -50,6 +52,32 @@ from .poll_hint_events import emit_poll_hint_from_handoff
 from .service import FrontierEndpointError
 
 
+def normalize_caller_handoff_skills(skills: list[str] | None) -> tuple[str, ...]:
+    """Canonical catalog slugs from handoff ``skills=``; empty when omitted."""
+    from claude_bundles.catalog import get_skill_catalog
+    from implement_admission.skill_catalog_resolver import (
+        SkillCatalogResolveError,
+        canonical_catalog_slug,
+    )
+
+    raw_ids = normalize_caller_skill_ids(skills)
+    if not raw_ids:
+        return ()
+    catalog = get_skill_catalog()
+    out: list[str] = []
+    for raw in raw_ids:
+        slug = canonical_catalog_slug(raw)
+        try:
+            catalog.get(slug)
+        except KeyError as exc:
+            raise SkillCatalogResolveError(
+                f"canonical slug {slug!r} absent from skill catalog"
+            ) from exc
+        if slug not in out:
+            out.append(slug)
+    return tuple(out)
+
+
 async def continue_handoff_admission(
     *,
     request_id: str,
@@ -77,6 +105,19 @@ async def continue_handoff_admission(
 
     enrich_result = None
     enrich_eligible = to_agent in _mcp_packet_seats() or is_life_web_receiver(to_agent)
+    caller_skills = normalize_caller_handoff_skills(getattr(body, "skills", None))
+    if caller_skills and not enrich_eligible:
+        raise FrontierEndpointError(
+            request_id=request_id,
+            field="skills",
+            reason=(
+                "skills= on op=handoff is supported only for MCP packet seats and "
+                "web-anthropic life handoffs"
+            ),
+            status_code=422,
+            code="skills_handoff_unsupported",
+            details={"to_agent": to_agent, "skills": list(caller_skills)},
+        )
     if enrich_eligible:
         packet_file = _resolve_packet_file(workspaces_root.resolve(), packet_path)
         if packet_file is not None:
@@ -93,6 +134,7 @@ async def continue_handoff_admission(
                     to_agent=to_agent,
                     skill_delivery=skill_delivery,
                     handoff_contract=handoff_contract,
+                    caller_skills=caller_skills,
                 )
             except SkillInlineBudgetExceeded as exc:
                 publish(

@@ -41,6 +41,34 @@ def _walk_strings(obj: Any) -> list[str]:
     return []
 
 
+def primary_text_basis(result: ToolResult, tool_name: str = "") -> str:
+    """Classify how selective retrieve can interpret a stored ToolResult.
+
+    Returns ``content`` when a single top-level string body is authoritative,
+    ``longest_string_leaf`` when markdown sectioning would be misleading, or
+    ``none`` when no text can be extracted.
+    """
+    structured = result.structured_content
+    if isinstance(structured, dict):
+        content = structured.get("content")
+        if isinstance(content, str) and content.strip():
+            return "content"
+    if structured is None:
+        if isinstance(result.content, str) and result.content.strip():
+            return "content"
+        if isinstance(result.content, list):
+            texts = [
+                getattr(item, "text", None)
+                for item in result.content
+                if getattr(item, "text", None)
+            ]
+            if len(texts) == 1 and isinstance(texts[0], str) and texts[0].strip():
+                return "content"
+    if _extract_primary_text(result, tool_name) is None:
+        return "none"
+    return "longest_string_leaf"
+
+
 def _extract_primary_text(result: ToolResult, tool_name: str) -> str | None:
     """Return the best markdown candidate string from a ToolResult, if any."""
     structured = result.structured_content
@@ -154,6 +182,7 @@ def _build_selective_options(
     uri: str | None,
     path: str | None,
     sections: list[dict[str, Any]],
+    text_basis: str = "content",
 ) -> list[str]:
     """Build selective follow-up hints for markdown overflow replacements."""
     location = uri or path
@@ -166,7 +195,13 @@ def _build_selective_options(
                 options.append(
                     f'fs(op="md_read", path="{location}", section="{section_path}")'
                 )
-        options.append(f'fs(op="read", path="{location}", offset=0, limit=80)')
+        options.append(
+            f'fs(op="md_read", path="{location}", section="__preamble__")'
+        )
+    if not location and sections and text_basis == "content":
+        section_path = str(sections[0].get("path", "")).strip()
+        if section_path:
+            options.append(f'retrieve(id="{ref_id}", section="{section_path}")')
     options.append(f'retrieve(id="{ref_id}")')
     return options
 
@@ -177,6 +212,8 @@ def build_markdown_overflow_manifest(
     size: int,
     threshold: int,
     result: ToolResult,
+    *,
+    structure_budget: int = STRUCTURE_BUDGET_BYTES,
 ) -> dict[str, Any] | None:
     """Return a markdown structure manifest, or None when not eligible."""
     text = _extract_primary_text(result, tool_name)
@@ -192,14 +229,16 @@ def build_markdown_overflow_manifest(
     capped_rows, truncated = _cap_sections(
         rows,
         max_sections=STRUCTURE_MAX_SECTIONS,
-        max_bytes=STRUCTURE_BUDGET_BYTES,
+        max_bytes=structure_budget,
     )
     uri, path = _resolve_durable_location(result)
+    text_basis = primary_text_basis(result, tool_name)
     selective_options = _build_selective_options(
         ref_id=ref_id,
         uri=uri,
         path=path,
         sections=capped_rows,
+        text_basis=text_basis,
     )
 
     manifest: dict[str, Any] = {
@@ -274,10 +313,16 @@ def try_markdown_overflow_replacement(
     result: ToolResult,
     *,
     measure_result: Callable[[ToolResult], int],
+    structure_budget: int = STRUCTURE_BUDGET_BYTES,
 ) -> ToolResult | None:
     """Build a markdown structure replacement when it fits under the active threshold."""
     manifest = build_markdown_overflow_manifest(
-        ref_id, tool_name, size, threshold, result
+        ref_id,
+        tool_name,
+        size,
+        threshold,
+        result,
+        structure_budget=structure_budget,
     )
     if manifest is None:
         return None

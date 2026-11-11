@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 from pathlib import Path
 from typing import Any
 
@@ -89,8 +90,13 @@ def test_read_multi_cortex_uri_resolves_like_single_read(cortex_root: Path) -> N
     assert "error" not in result, result
     files = result["files"]
     assert uri in files
-    assert files[uri] == body
-    assert "File not found" not in str(files[uri])
+    entry = files[uri]
+    assert isinstance(entry, dict)
+    assert "File not found" not in str(entry)
+    assert entry["path"] == rel
+    assert entry["selection"] == "manifest"
+    assert "content" not in entry
+    assert entry["read_sha256"] == hashlib.sha256(body.encode()).hexdigest()
 
 
 def test_read_multi_relative_plus_sandbox_still_works(cortex_root: Path) -> None:
@@ -103,7 +109,12 @@ def test_read_multi_relative_plus_sandbox_still_works(cortex_root: Path) -> None
     result = fs_impl(**_fs_kwargs(sandbox="cortex", paths=[rel]))
 
     assert "error" not in result, result
-    assert result["files"][rel] == body
+    entry = result["files"][rel]
+    assert isinstance(entry, dict)
+    assert entry["path"] == rel
+    assert entry["selection"] == "manifest"
+    assert "content" not in entry
+    assert entry["read_sha256"] == hashlib.sha256(body.encode()).hexdigest()
 
 
 def test_read_multi_absent_still_reports_missing(cortex_root: Path) -> None:
@@ -169,3 +180,92 @@ def test_life_read_multi_schemeless_still_defaults_cortex(
     assert call.error is None, call.error
     assert call.sandbox == "cortex"
     assert call.paths == [rel]
+
+
+def test_read_multi_omitted_cursor_returns_body_explicit_zero_rejects(
+    cortex_root: Path,
+) -> None:
+    """Omitted chunk_cursor reads the body. Explicit 0 is still a cursor."""
+    rel = "notes/system/specs/a37216-cursor.md"
+    body = "cursor-omitted-body\n"
+    target = cortex_root / rel
+    target.parent.mkdir(parents=True)
+    target.write_text(body, encoding="utf-8")
+    uri = f"cortex://{rel}"
+
+    omitted = fs_impl(**_fs_kwargs(paths=[uri]))
+
+    assert omitted.get("code") != "param_not_applicable"
+    entry = omitted["files"][uri]
+    assert entry["selection"] == "manifest"
+    assert "content" not in entry
+    assert entry["read_sha256"] == hashlib.sha256(body.encode()).hexdigest()
+
+    explicit = fs_impl(**_fs_kwargs(paths=[uri], chunk_cursor=0))
+
+    assert explicit["code"] == "param_not_applicable"
+    assert explicit["data"]["parameter"] == "chunk_cursor"
+    assert "files" not in explicit
+
+
+def _forward_batch(cortex_root: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Root rebind that forwards selectors, matching the production call."""
+    from tools._read_files_batch import read_files_batch as real_batch
+
+    def _forward(
+        paths: list[str],
+        batch_root: Path | None = None,
+        *,
+        binary: bool = False,
+        **kwargs: Any,
+    ) -> dict[str, Any]:
+        return real_batch(
+            paths,
+            root=batch_root if batch_root is not None else cortex_root,
+            binary=binary,
+            **kwargs,
+        )
+
+    monkeypatch.setattr(_ops_text, "read_files_batch", _forward)
+
+
+def _empty_sections_doc(cortex_root: Path, name: str) -> str:
+    rel = f"notes/system/specs/{name}.md"
+    target = cortex_root / rel
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(f"## Alpha\n\n{name} body\n", encoding="utf-8")
+    return f"cortex://{rel}"
+
+
+def _assert_empty_sections_error(result: dict[str, Any], uri: str) -> None:
+    entry = result["files"][uri]
+    assert entry["code"] == "invalid_selector_combo"
+    assert entry["message"] == "sections must be a non-empty list when provided"
+    assert "content" not in entry
+    assert entry.get("selection") != "manifest"
+
+
+def test_read_multi_empty_sections_one_path_is_invalid_selector(
+    cortex_root: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """sections=[] on one document is an error, not a manifest."""
+    _forward_batch(cortex_root, monkeypatch)
+    uri = _empty_sections_doc(cortex_root, "empty-sections-one")
+    single = fs_impl(**_fs_kwargs(paths=[uri], sections=[]))
+    assert single.get("selection") != "manifest"
+    _assert_empty_sections_error(single, uri)
+
+
+def test_read_multi_empty_sections_two_paths_stay_per_path(
+    cortex_root: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """sections=[] on two documents stays a multi result of per-path errors."""
+    _forward_batch(cortex_root, monkeypatch)
+    first = _empty_sections_doc(cortex_root, "empty-sections-a")
+    second = _empty_sections_doc(cortex_root, "empty-sections-b")
+    paired = fs_impl(**_fs_kwargs(paths=[first, second], sections=[]))
+    assert paired["selection"] == "multi"
+    assert paired["read_multi"] is True
+    assert "content" not in paired
+    _assert_empty_sections_error(paired, first)
+    _assert_empty_sections_error(paired, second)

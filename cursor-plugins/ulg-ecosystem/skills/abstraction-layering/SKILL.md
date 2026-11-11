@@ -109,7 +109,7 @@ owns R-admit machinery only — codework does not route through path-sim process
 
 ## Arc (G1–G7)
 <!-- width-seat:v1:start -->
-> **Width seat** (generated from `libs/implement_admission/conductor_critic_render.py`; do not hand-edit): critic = `anthropic/claude-sonnet-5-5` · `reasoning_effort=high` · usage channel **Sonnet**. SKETCH (G1) = `anthropic/claude-sonnet-5-5` · `reasoning_effort=high`. SKEPTIC (G4) = `anthropic/claude-sonnet-5-5` · `reasoning_effort=high` (cross-family review). RESTORE = `anthropic/claude-fable-5-1` · `reasoning_effort=high` (operator restore preset).
+> **Width seat** (generated from `libs/implement_admission/conductor_critic_render.py`; do not hand-edit): critic = `cdp/opus-5.5` · `reasoning_effort=high` · usage channel **Opus**. SKETCH (G1) = `cdp/opus-5.5` · `reasoning_effort=high`. SKEPTIC (G4) = `cdp/opus-5.5` · `reasoning_effort=high` (cross-family review). RESTORE = `anthropic/claude-fable-5-1` · `reasoning_effort=high` (operator restore preset).
 <!-- width-seat:v1:end -->
 
 
@@ -283,7 +283,7 @@ record harvest on sidecar **R1**. Reserve `cdp/fable-5.1` for expanding detent (
 | Posture | Do |
 |---|---|
 | Conductor / unattended | **Fire G6** — latency is not a skip; poll/hop+watcher until R1 harvest |
-| CDP consult refused or failed | Escalate at once (`cdp_fail_route` `nested-grok` or `operator` on the scoreboard). Do not wait and do not retry the CDP pool. ¬ land (G7) on an empty harvest |
+| CDP consult refused or failed | Escalate at once (`cdp_fail_route` `anthropic`, `nested-grok`, or `operator` on the scoreboard). Do not wait and do not retry the CDP pool. ¬ land (G7) on an empty harvest |
 
 Recipe: `consult-routing` § M3 pre-go-live · M4 S1.
 

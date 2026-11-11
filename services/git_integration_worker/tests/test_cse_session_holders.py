@@ -418,3 +418,61 @@ def test_close_owed_wake_on_lane_activity_closes_open_row(
         seat_agent="maestro",
     )
     assert store.close_owed_wake_for_holder("holder-maestro") == 0
+
+
+def test_upsert_holder_refuses_houseless_registry_row(
+    ledger: CursorDispatchLedger, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    reg = "583b411df34247f9a48bc044b6518be3"
+    url = "https://claude.ai/cowork/cse_01HouselessMailbox"
+    monkeypatch.setattr(
+        "claude_bundles.cdp_registry_store.load_active",
+        lambda: {reg: {"registration_id": reg, "purpose": "houseless"}},
+    )
+    with ledger._connect() as conn:
+        ensure_schema(conn)
+        with pytest.raises(ValueError, match="houseless"):
+            upsert_holder(conn, chat_url=url, registration_id=reg)
+
+
+def test_boot_reconcile_skips_houseless_registry_adopt(
+    ledger: CursorDispatchLedger, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from types import SimpleNamespace
+
+    reg = SimpleNamespace(
+        registration_id="reg-houseless",
+        execution_id=None,
+        purpose="houseless",
+    )
+    with ledger._connect() as conn:
+        ensure_schema(conn)
+    adopt_calls: list[str] = []
+    real_upsert = upsert_holder
+
+    def _spy_upsert(conn, **kwargs):  # type: ignore[no-untyped-def]
+        adopt_calls.append(str(kwargs.get("registration_id")))
+        return real_upsert(conn, **kwargs)
+
+    monkeypatch.setattr(
+        "services.git_integration_worker.cse_holder_boot_reconcile.upsert_holder",
+        _spy_upsert,
+    )
+    with (
+        patch(
+            "claude_bundles.cdp_registry.session_address.list_active",
+            return_value=[reg],
+        ),
+        patch(
+            "claude_bundles.cdp_registry.session_address.chat_url_for_registration",
+            return_value=_CSE_URL,
+        ),
+        patch(
+            "claude_bundles.cdp_registry.dormant.list_dormant",
+            return_value=[],
+        ),
+    ):
+        with ledger._connect() as conn:
+            summary = boot_reconcile(conn)
+    assert summary["adopted"] == 0
+    assert adopt_calls == []

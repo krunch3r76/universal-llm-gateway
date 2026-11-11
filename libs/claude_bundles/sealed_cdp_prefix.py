@@ -13,6 +13,9 @@ _INLINE_SKILL_SLUG = re.compile(r'<skill slug="([^"]+)"')
 _LEADING_AUTHORITY = re.compile(
     r"^(?:\r?\n)*<!--cdp-required-skills:([^\n]*?)-->\r?\n?"
 )
+_LEADING_ARCHITECTURE_CHECK = re.compile(
+    r"^Architecture check: md_list docs/architecture/.*\n",
+)
 _LEADING_SKILL_HASH = re.compile(
     r"^Hash these skills from your local skill server and quote each digest before you answer:.*\n"
 )
@@ -37,6 +40,15 @@ _USE_LINE_DELIVERY_RE = re.compile(
 )
 _HOUSE_READ_FIRST_HEADING = "## House (read first)"
 _HOP_SUCCESSOR_HEADING = "# Hop on agent-bus:"
+
+
+def format_review_architecture_check_line(dirs: frozenset[str]) -> str:
+    """One-line architecture doc cue after the required-skills marker."""
+    listed = ", ".join(sorted(dirs))
+    return (
+        "Architecture check: md_list docs/architecture/ and read the sections "
+        f"that cover {listed}; if none covers them, state that in the review.\n"
+    )
 
 
 def split_leading_slash_skills(text: str) -> tuple[list[str], str]:
@@ -98,6 +110,9 @@ def peel_delivery_prefix(text: str) -> str:
         auth = _LEADING_AUTHORITY.match(rest)
         if auth is not None:
             rest = rest[auth.end() :]
+            arch = _LEADING_ARCHITECTURE_CHECK.match(rest)
+            if arch is not None:
+                rest = rest[arch.end() :]
             continue
         tokens, after = split_leading_slash_skills(rest)
         if tokens:
@@ -151,6 +166,9 @@ def peel_sealed_cdp_skill_prefix(
         auth = _LEADING_AUTHORITY.match(rest)
         if auth is not None:
             rest = rest[auth.end() :]
+            arch = _LEADING_ARCHITECTURE_CHECK.match(rest)
+            if arch is not None:
+                rest = rest[arch.end() :]
             continue
         tokens, after = split_leading_slash_skills(rest)
         if tokens:

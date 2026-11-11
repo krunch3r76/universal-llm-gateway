@@ -17,7 +17,9 @@ cowork-paste-resolve
 paste-resolve-cse-followup
 conductor
 ide-continuity
+# liaison-cursor — deprecated legacy alias; use impresario (runbook:operator-impresario)
 liaison-cursor
+# liaison — deprecated legacy alias; use impresario (runbook:operator-impresario)
 liaison
 completion-provenance-discipline
 consult-posture

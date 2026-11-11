@@ -54,11 +54,13 @@ def test_read_offset_does_not_change_read_sha256(
     target.parent.mkdir(parents=True)
     target.write_text(content, encoding="utf-8")
 
-    full = read_file_result(rel, root=sandbox_root)
+    manifest = read_file_result(rel, root=sandbox_root)
     window = read_file_result(rel, root=sandbox_root, offset=1, limit=1)
 
-    assert full["read_sha256"] == window["read_sha256"] == _expected_hex(target)
-    assert full["content"] != window["content"]
+    assert manifest["read_sha256"] == window["read_sha256"] == _expected_hex(target)
+    assert manifest["selection"] == "manifest"
+    assert "content" not in manifest
+    assert window["content"] == "beta"
     assert window["line_range"]["returned"] == 1
 
 

@@ -7,12 +7,14 @@ from agent_bus_store.auth import require_token
 from agent_bus_store.db import create_thread, init_db, insert_turn
 from agent_bus_store.db.connection import write_connect
 from agent_bus_store.db.endpoint_wake_ledger import (
+    CONSUMER,
     advance_scan,
     claim_due_wakes,
     get_cursor,
     record_wake_result,
 )
 from agent_bus_store.server import create_app
+from agent_bus_store.testing.wake_cursor_test_support import rewind_wake_cursor_for_test
 from fastapi.testclient import TestClient
 
 pytestmark = pytest.mark.offline
@@ -41,7 +43,7 @@ def test_claim_due_wakes_releases_ear_inside_cooldown(db: TestClient) -> None:
     )
     get_cursor()
     with write_connect() as conn:
-        conn.execute("UPDATE endpoint_wake_cursor SET high_water_turn_id=0")
+        rewind_wake_cursor_for_test(conn, CONSUMER, to=0)
     advance_scan(
         "endpoint-wake-dispatcher",
         0,
@@ -104,7 +106,7 @@ def test_claim_due_wakes_holds_ordinary_inside_cooldown(db: TestClient) -> None:
     )
     get_cursor()
     with write_connect() as conn:
-        conn.execute("UPDATE endpoint_wake_cursor SET high_water_turn_id=0")
+        rewind_wake_cursor_for_test(conn, CONSUMER, to=0)
     advance_scan(
         "endpoint-wake-dispatcher",
         0,
@@ -166,7 +168,7 @@ def test_claim_due_wakes_releases_on_agent_id_rotation(db: TestClient) -> None:
     )
     get_cursor()
     with write_connect() as conn:
-        conn.execute("UPDATE endpoint_wake_cursor SET high_water_turn_id=0")
+        rewind_wake_cursor_for_test(conn, CONSUMER, to=0)
         conn.execute(
             "INSERT INTO agent_endpoint_subscriptions "
             "(agent, thread_scope, agent_id, state, surface) "

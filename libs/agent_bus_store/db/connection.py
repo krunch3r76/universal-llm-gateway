@@ -17,6 +17,16 @@ def _db_path() -> str:
     return os.environ.get("AGENT_BUS_DB_PATH", _DEFAULT_DB_PATH)
 
 
+def _refuse_live_agent_bus_under_pytest(path: str) -> None:
+    try:
+        from agent_bus_store.testing.wake_cursor_test_support import (
+            refuse_live_agent_bus_db_under_pytest,
+        )
+    except ImportError:
+        return
+    refuse_live_agent_bus_db_under_pytest(path)
+
+
 _MESSAGES_SCHEMA = """\
 CREATE TABLE IF NOT EXISTS messages (
     id          INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -103,7 +113,9 @@ def init_db() -> None:
 
 @contextmanager
 def connect() -> Generator[sqlite3.Connection, None, None]:
-    conn = sqlite3.connect(_db_path())
+    path = _db_path()
+    _refuse_live_agent_bus_under_pytest(path)
+    conn = sqlite3.connect(path)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA journal_mode=WAL")
     conn.execute("PRAGMA foreign_keys=ON")
@@ -149,7 +161,9 @@ def write_connect() -> Generator[sqlite3.Connection, None, None]:
     try:
         ticket_event = wt.enqueue_and_wait()
         wait_finished = True
-        conn = sqlite3.connect(_db_path(), isolation_level=None)
+        path = _db_path()
+        _refuse_live_agent_bus_under_pytest(path)
+        conn = sqlite3.connect(path, isolation_level=None)
         conn.row_factory = sqlite3.Row
         conn.execute("PRAGMA journal_mode=WAL")
         conn.execute("PRAGMA foreign_keys=ON")

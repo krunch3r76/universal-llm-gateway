@@ -47,9 +47,8 @@ def score_play_seat_lines(
         f"G6 delivery-review reads `{resolved.review.model}`.",
         "- The house driver enumerates and does not rank rival designs — write "
         "`OPEN FORK:` and stop.",
-        "- BIND is one width-seat critic turn (impresario.critic; not a cdp/ "
-        "substitute); a second critic turn on one row means ENUMERATE "
-        "was underspecified.",
+        "- BIND is one width-seat critic turn (impresario.critic); a second "
+        "critic turn on one row means ENUMERATE was underspecified.",
     )
 
 
@@ -157,7 +156,7 @@ def _render_invariants(ctx: ConductorMaterializeContext) -> str:
         f"- {G7_RESTART_OWED_RULE}",
         (
             "- Before authoring the FIRST nested width prompt (G1/G2/G4/G6; model is "
-            "the width-seat critic, not a cdp/ substitute) when no "
+            "the width-seat critic via impresario.critic) when no "
             "mission retrieval report exists yet, Use the retrieval-before-authoring "
             "skill once (`target: todo:<slug>` in the report sidecar) and reuse that "
             "`retrieval_report: cortex://…` URI across later G4/G6 gates without "
@@ -242,7 +241,7 @@ def _render_mcp_capabilities(ctx: ConductorMaterializeContext) -> str:
             "Use the `architecture-invariants` skill",
             "Use the `ulg-architecture` skill",
             "Use the `retrieval-before-authoring` skill (before authoring a nested prompt)",
-            "Nested width prompts use the width-seat critic (impresario.critic; do not substitute cdp/): cite `retrieval_report: cortex://…` (Queries/Yields/Choice-to-evidence); contract path libs/claude_bundles/nested_cdp_prompt_gate.py (the row does not search the repo for it); ¬ delivery chrome on G4/SKEPTIC (a:37183)",
+            "Nested width prompts use the width-seat critic (impresario.critic): cite `retrieval_report: cortex://…` (Queries/Yields/Choice-to-evidence); contract path libs/claude_bundles/nested_cdp_prompt_gate.py (the row does not search the repo for it); ¬ delivery chrome on G4/SKEPTIC (a:37183)",
             f'Scoreboard tip: fs(op="read", path="{scoreboard_tip_uri(ctx.slug)}")',
             f'Journal: fs(op="read", path="cortex://notes/system/scoreboards/{ctx.slug}-score-journal.md")',
         ]

@@ -85,8 +85,8 @@ Tier-M tool asks (no file scope) clear the scope gate with `tool_op: <tool>.<op>
 `send` writes a bus turn and NOTHING ELSE — it never arms Auto. Use it for attended seats and ordinary correspondence.
 New thread: `agent_bus(tool="send", arguments='{{"new_slug": "topic", "to": "cursor", "subject": "…", "body": "…", "from_agent": "{agent}"}}')`
 Continue thread: `agent_bus(tool="send", arguments='{{"thread": "ID", "to": "cursor", "subject": "…", "body": "…", "after_turn": N, "from_agent": "{agent}"}}')`
-Fetch inbox: `agent_bus(tool="fetch", arguments='{{"to": "{agent}", "last": 5, "unread": true}}')`
-Always pass `mark_read: true` when fetching turns you intend to act on — stale unread counts create false urgency.
+Fetch inbox headers: `agent_bus(tool="fetch", arguments='{{"to": "{agent}", "last": 5, "unread": true}}')`; open the turns you will act on with `get` + `turn_numbers` + `mark_read: true`.
+Always pass `mark_read: true` when opening turns you intend to act on — stale unread counts create false urgency.
 **Outgoing body rule — turns are briefings, not documents (body ≤ ~1KB).**
 Substantive content (specs, reviews, analysis, debriefs, long responses) belongs in a sidecar:
 1. Write to `notes/system/threads/<slug>-<subject>.md` via `fs(sandbox="cortex", op="write", …)` OR pass `sidecar_content` on `send` (preferred).

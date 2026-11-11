@@ -312,8 +312,11 @@ def build_suggested_next(
                 {
                     "action": "fetch_consult_turn",
                     "tool": "agent_bus",
-                    "op": "fetch",
-                    "note": "Turn body is often a sidecar pointer, not full findings.",
+                    "op": "get",
+                    "note": (
+                        f"get turn_number={qualifying_reply_turn}, "
+                        'projection="full" — body is often a sidecar pointer.'
+                    ),
                 },
                 {
                     "action": "apply_findings",
@@ -338,8 +341,11 @@ def build_suggested_next(
             {
                 "action": "fetch_consult_turn",
                 "tool": "agent_bus",
-                "op": "fetch",
-                "note": "Turn body is often a sidecar pointer, not full findings.",
+                "op": "get",
+                "note": (
+                    f"get turn_number={qualifying_reply_turn}, "
+                    'projection="full" — body is often a sidecar pointer.'
+                ),
             },
             {
                 "action": "apply_findings",

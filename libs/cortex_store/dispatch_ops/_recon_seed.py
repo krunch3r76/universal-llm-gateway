@@ -44,7 +44,7 @@ def seed_recon_todo(
     from .ops_entities import _op_entity_create, _op_entity_get
     from .ops_relationships import _op_relationship_create
 
-    existing = _op_entity_get(entity_id=todo_id)
+    existing = _op_entity_get(entity_id=todo_id, intent="preview")
     if isinstance(existing, dict) and "error" not in existing:
         return None
 
@@ -100,7 +100,7 @@ def seed_recon_todo(
         # Concurrent-create dedup: a racing close may have created the todo
         # between our preflight-get and this create. Treat post-conflict
         # existence as the dedup path (None), not a hard failure.
-        post = _op_entity_get(entity_id=todo_id)
+        post = _op_entity_get(entity_id=todo_id, intent="preview")
         if isinstance(post, dict) and "error" not in post:
             return None
         logger.warning(

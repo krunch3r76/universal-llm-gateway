@@ -52,6 +52,7 @@ class ReattachOutcome:
     seat_snapshot_bound_at: float | None = None
     page_only_borrow: bool = False
     page_only_close_tab: bool = False
+    attempted_registration_ids: tuple[str, ...] = ()
 
 
 def _lane_order(
@@ -354,9 +355,7 @@ async def _attach_k44_predecessor_page_only(
             registration_id=successor_id,
         )
     lane = lanes[0]
-    prior = (
-        cdp_registry.chat_url_for_registration(successor_id) or ""
-    ).strip() or None
+    prior = (cdp_registry.chat_url_for_registration(successor_id) or "").strip() or None
     found = await find_page_on_lane(lane.cdp_url, chat_url)
     if found is not None:
         page, pw = found
@@ -521,7 +520,10 @@ async def ensure_cse_attached(
     followup and harvest attach opt in; resume and poll recovery do not.
 
     Chat URL is bound without seating. The lane seat snapshot is taken before
-    navigation so a later commit can refuse if that holder moved.
+    navigation; ``commit_reattach_driving_seat`` re-reads the holder at commit
+    and refuses only when a different occupant took the seat. Explicit
+    ``retain_lane`` followups that paste without reattach commit via
+    ``commit_followup_lane_seat`` in ``followup.execute_followup``.
     """
     from claude_bundles.cdp_registry.session_address import open_lane_seat_holder
 
@@ -615,7 +617,23 @@ async def ensure_cse_attached(
             for lane in lanes
             if lane.registration_id == restrict_to_registration_id
         ]
+    refusals: list[tuple[str, str]] = []
+
+    def attempted_ids() -> tuple[str, ...]:
+        return tuple(rid for rid, _ in refusals)
+
+    target_norm = normalize_cse_url(chat_url)
     for lane in _lane_order(lanes, purpose, chat_url):
+        current = (
+            cdp_registry.chat_url_for_registration(lane.registration_id) or ""
+        ).strip()
+        if current and normalize_cse_url(current) != target_norm:
+            logger.info(
+                "reattach skipping %s: lane holds another chat_url",
+                lane.registration_id,
+            )
+            refusals.append((lane.registration_id, "lane_holds_other_chat_url"))
+            continue
         found = await find_page_on_lane(lane.cdp_url, chat_url)
         if found is not None:
             page, pw = found
@@ -623,7 +641,13 @@ async def ensure_cse_attached(
                 lane.registration_id, chat_url, page, pw
             )
             if err:
-                return ReattachOutcome(ok=False, error=err)
+                logger.info(
+                    "reattach bind refused on %s: %s; trying next lane",
+                    lane.registration_id,
+                    err,
+                )
+                refusals.append((lane.registration_id, err))
+                continue
             return _done(
                 ReattachOutcome(
                     ok=True,
@@ -636,6 +660,7 @@ async def ensure_cse_attached(
                     reattach_bound_chat_url=bound,
                     page_only_borrow=page_only,
                     page_only_close_tab=False,
+                    attempted_registration_ids=attempted_ids(),
                 )
             )
         opened = await _navigate_new_page(lane, chat_url)
@@ -646,7 +671,13 @@ async def ensure_cse_attached(
             lane.registration_id, chat_url, page, pw
         )
         if err:
-            return ReattachOutcome(ok=False, error=err)
+            logger.info(
+                "reattach bind refused on %s: %s; trying next lane",
+                lane.registration_id,
+                err,
+            )
+            refusals.append((lane.registration_id, err))
+            continue
         return _done(
             ReattachOutcome(
                 ok=True,
@@ -659,10 +690,19 @@ async def ensure_cse_attached(
                 reattach_bound_chat_url=bound,
                 page_only_borrow=page_only,
                 page_only_close_tab=page_only,
+                attempted_registration_ids=attempted_ids(),
             )
         )
 
     if not allow_mint:
+        if refusals:
+            last_id, last_err = refusals[-1]
+            return ReattachOutcome(
+                ok=False,
+                error=last_err,
+                registration_id=last_id,
+                attempted_registration_ids=attempted_ids(),
+            )
         return ReattachOutcome(ok=False, error="reattach_no_host_available")
 
     reg = cdp_registry.register_lane(
@@ -672,16 +712,27 @@ async def ensure_cse_attached(
         mission_kind=mission_kind,
     )
     opened = await _navigate_new_page(reg, chat_url)
+    mint_attempted = attempted_ids() + (reg.registration_id,)
     if opened is None:
         cdp_registry.deregister_lane(reg.registration_id)
-        return ReattachOutcome(ok=False, error="reattach_navigate_failed")
+        return ReattachOutcome(
+            ok=False,
+            error="reattach_navigate_failed",
+            registration_id=reg.registration_id,
+            attempted_registration_ids=mint_attempted,
+        )
     page, pw = opened
     err, prior, bound, page_only = await _bind_or_drop(
         reg.registration_id, chat_url, page, pw
     )
     if err:
         cdp_registry.deregister_lane(reg.registration_id)
-        return ReattachOutcome(ok=False, error=err)
+        return ReattachOutcome(
+            ok=False,
+            error=err,
+            registration_id=reg.registration_id,
+            attempted_registration_ids=mint_attempted,
+        )
     return _done(
         ReattachOutcome(
             ok=True,
@@ -694,5 +745,6 @@ async def ensure_cse_attached(
             reattach_bound_chat_url=bound,
             page_only_borrow=page_only,
             page_only_close_tab=page_only,
+            attempted_registration_ids=attempted_ids(),
         )
     )

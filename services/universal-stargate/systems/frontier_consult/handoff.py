@@ -737,6 +737,73 @@ async def admit_handoff_dispatch(
         return AdmitHandoffResult(admitted=False, reason="transport")
 
 
+def is_pre_admission_worker_refusal(worker_detail: dict[str, Any]) -> bool:
+    """True when GIW refused before worker admit (409/422 admission layer)."""
+    if str(worker_detail.get("failure_layer") or "") == "admission":
+        return True
+    data = worker_detail.get("data")
+    if (
+        isinstance(data, dict)
+        and data.get("validation_stage") == "pre_admission"
+    ):
+        return True
+    if str(worker_detail.get("validation_stage") or "") == "pre_admission":
+        return True
+    envelope = worker_detail.get("envelope")
+    if isinstance(envelope, dict):
+        env_data = envelope.get("data")
+        if (
+            isinstance(env_data, dict)
+            and env_data.get("validation_stage") == "pre_admission"
+        ):
+            return True
+    return False
+
+
+async def close_worker_thread_after_pre_admission_refusal(
+    *,
+    request_id: str,
+    thread_id: str,
+    worker_detail: dict[str, Any],
+) -> None:
+    """Close an auto-minted worker thread after FAILED| (fail-open on transport)."""
+    code = str(worker_detail.get("code") or "refused")
+    summary = f"cursor-sdk pre-admission refusal ({code})"
+    token = os.getenv("AGENT_BUS_TOKEN", "").strip()
+    allow_unset = os.getenv("ALLOW_UNSET_AGENT_BUS_TOKEN", "").strip().lower() in (
+        "1",
+        "true",
+        "yes",
+    )
+    if not token and not allow_unset:
+        return
+    headers = {"Authorization": f"Bearer {token}"} if token else {}
+    payload = {"summary": summary, "mark_all_read": True}
+    try:
+        async with make_async_client(DEFAULT_AGENT_BUS_URL, timeout=10.0) as client:
+            resp = await client.patch(
+                f"/threads/{thread_id}/close",
+                headers=headers,
+                json=payload,
+            )
+        if resp.status_code not in (200, 201):
+            logger.warning(
+                "pre-admission refusal thread close non-success: request_id=%s "
+                "thread=%s status=%s body=%s",
+                request_id,
+                thread_id,
+                resp.status_code,
+                getattr(resp, "text", "")[:200],
+            )
+    except httpx.HTTPError as exc:
+        logger.warning(
+            "pre-admission refusal thread close failed: request_id=%s thread=%s err=%s",
+            request_id,
+            thread_id,
+            exc,
+        )
+
+
 async def rollback_admitted_dispatch_links(
     *,
     request_id: str,
@@ -845,6 +912,7 @@ async def post_pointer_turn(
     caller_agent: str | None,
     provenance_missing: tuple[str, ...] = (),
     work_key: str | None = None,
+    waiter_transcript_id: str | None = None,
 ) -> int:
     """POST a pointer turn onto an EXISTING thread (reuse_thread path). POST /turns.
 
@@ -874,7 +942,10 @@ async def post_pointer_turn(
         "to": to_agent,
         "subject": subject,
         "body": stamp_admit_turn_body(
-            pointer_body, work_key=work_key, provenance_missing=provenance_missing
+            pointer_body,
+            work_key=work_key,
+            provenance_missing=provenance_missing,
+            waiter_transcript_id=waiter_transcript_id,
         ),
         "status": "open",
     }
@@ -945,6 +1016,7 @@ async def claim_and_post_pointer_turn(
     parent_thread_id: str | None = None,
     provenance_missing: tuple[str, ...] = (),
     work_key: str | None = None,
+    waiter_transcript_id: str | None = None,
 ) -> int:
     """POST /threads/{id}/dispatch-claim-and-post — atomic claim + pointer turn.
 
@@ -978,7 +1050,10 @@ async def claim_and_post_pointer_turn(
         "to_agent": to_agent,
         "subject": subject,
         "body": stamp_admit_turn_body(
-            pointer_body, work_key=work_key, provenance_missing=provenance_missing
+            pointer_body,
+            work_key=work_key,
+            provenance_missing=provenance_missing,
+            waiter_transcript_id=waiter_transcript_id,
         ),
     }
     if parent_thread_id is not None:
@@ -1059,6 +1134,7 @@ async def admit_and_post_pointer_turn(
     parent_thread_id: str | None = None,
     provenance_missing: tuple[str, ...] = (),
     work_key: str | None = None,
+    waiter_transcript_id: str | None = None,
 ) -> int:
     """POST /threads/{id}/dispatch-admit-and-post — atomic link + pointer turn."""
     token = os.getenv("AGENT_BUS_TOKEN", "").strip()
@@ -1088,7 +1164,10 @@ async def admit_and_post_pointer_turn(
         "to_agent": to_agent,
         "subject": subject,
         "body": stamp_admit_turn_body(
-            pointer_body, work_key=work_key, provenance_missing=provenance_missing
+            pointer_body,
+            work_key=work_key,
+            provenance_missing=provenance_missing,
+            waiter_transcript_id=waiter_transcript_id,
         ),
     }
     if parent_thread_id is not None:
@@ -1208,6 +1287,7 @@ async def create_handoff_thread(
     bus_lifecycle: Literal["persistent", "ephemeral"] | None = None,
     provenance_missing: tuple[str, ...] = (),
     work_key: str | None = None,
+    waiter_transcript_id: str | None = None,
 ) -> str:
     """POST to agent-bus /threads/with-turn; return thread_id.
 
@@ -1244,7 +1324,10 @@ async def create_handoff_thread(
         caller_agent, provenance_missing=provenance_missing
     )
     pointer_body = stamp_admit_turn_body(
-        pointer_body, work_key=work_key, provenance_missing=provenance_missing
+        pointer_body,
+        work_key=work_key,
+        provenance_missing=provenance_missing,
+        waiter_transcript_id=waiter_transcript_id,
     )
     from agent_bus_store.disposition import append_bus_lifecycle_tags
 

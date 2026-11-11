@@ -47,7 +47,7 @@ Stripping persona ≠ neutral-tool voice. Keep conviction and urgency pointed at
 
    Watcher: Use `runbook:bus-consult-watcher` (cursor-sdk → `--dispatch-id`; CDP/bus-consult → `--execution-id`; tail; relay) — never restate here.
 
-   Then **exit**. Cheap = legs 1–2 + lean heartbeat (`loop` skill event path). Costly = holding this turn on `wait`, or short-cadence full-agent `/loop`. Complements a:31104. ¬ a:31024 always-on Impresario. **Impresario CDP failure:** stronger-model gate refused or failed / empty FAILED ⇒ escalate at once (`cdp_fail_route` `nested-grok` or `operator` on the scoreboard). Do not wait and do not retry the CDP pool (`conductor` skill).
+   Then **exit**. Cheap = legs 1–2 + lean heartbeat (`loop` skill event path). Costly = holding this turn on `wait`, or short-cadence full-agent `/loop`. Complements a:31104. ¬ a:31024 always-on Impresario. **Impresario CDP failure:** stronger-model gate refused or failed / empty FAILED ⇒ escalate at once (`cdp_fail_route` `anthropic`, `nested-grok`, or `operator` on the scoreboard). Do not wait and do not retry the CDP pool (`conductor` skill).
 
    **Pickup / boot:** before new work, scan **owned** watcher labels only (`{root}-*` · `house-{root}-*` · `state.thread == root` · tip-CHECKPOINT-named `L`; same ownership as `departing_watcher_labels` plus house/CHECKPOINT) — any terminal status not yet relayed ⇒ leg 3 immediately (do not re-arm). Any still-`polling`/`predicate_unmet` **owned** label with **no** living background `watch-supervise.sh tail` on **this** IDE tab ⇒ same-turn leg 2 (`tail --label L`, no `notify_on_output`) before claiming armed — prior-tab poller ≠ this-tab wake (a:38172 Tab-orphan). Never attach tails for foreign labels in the shared `tmp/watchers/` dir.
 

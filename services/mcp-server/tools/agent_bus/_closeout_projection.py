@@ -328,6 +328,39 @@ def _apply_compact_closeout(turn: dict[str, Any], raw_body: str) -> dict[str, An
     return projected
 
 
+_HEADER_FIELDS = (
+    "id",
+    "thread",
+    "turn_number",
+    "from",
+    "to",
+    "subject",
+    "status",
+    "created_at",
+    "read_at",
+    "body_chars",
+)
+
+
+def project_turns_header(turns: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Shrink each turn to metadata fields plus optional ``supersedes_turn``."""
+    projected: list[dict[str, Any]] = []
+    for turn in turns:
+        if not isinstance(turn, dict):
+            continue
+        row = {field: turn[field] for field in _HEADER_FIELDS if field in turn}
+        if "body_chars" not in row:
+            row["body_chars"] = turn.get("body_chars")
+        supersedes = turn.get("supersedes_turn")
+        if supersedes is not None:
+            row["supersedes_turn"] = supersedes
+        fa_id = turn.get("from_agent_id")
+        if fa_id:
+            row["from_agent_id"] = fa_id
+        projected.append(row)
+    return projected
+
+
 def project_turn_body(
     turn: dict[str, Any],
     *,

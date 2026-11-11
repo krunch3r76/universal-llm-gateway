@@ -159,6 +159,7 @@ from services.git_integration_worker.cursor_sdk_events import (
     emit_sdk_lane_selected,
     emit_sdk_restart_bridge_reap_failed,  # noqa: F401 — route_mod monkeypatch surface
     emit_sdk_skills_mounted,
+    emit_sdk_skills_tier_prune_overrides,
     emit_sdk_worker_completed,
     emit_sdk_worker_delivery_failed,
     emit_sdk_worker_failed,
@@ -1308,6 +1309,7 @@ def _run_sdk_sync(
             workspace_roots=()
             if is_bare
             else (ctx.dispatch_workspace, ctx.workspace_root),
+            delegation_tier=delegation_tier,
         )
     except Exception as exc:  # skill mount is advisory; never kill the dispatch
         logger.warning(
@@ -1325,6 +1327,14 @@ def _run_sdk_sync(
                 result=mount_result,
                 execution_id=execution_id,
             )
+            if mount_result.tier_prune_overrides:
+                emit_sdk_skills_tier_prune_overrides(
+                    dispatch_id=ctx.dispatch_id,
+                    thread_id=ctx.thread_id,
+                    resolved_model=resolved_model,
+                    result=mount_result,
+                    execution_id=execution_id,
+                )
     # After overlay (inside setup) and skills= staging. Shared by generate,
     # queued promote, hop successor admits, the hop watchdog, and park-resume
     # children — each reaches this function.
@@ -4091,6 +4101,30 @@ async def admit_cursor_dispatch(
             validation_stage="model_set",
             retryable=False,
             extra_data=cursor_sdk_model_set_extra_data(),
+        )
+    from services.git_integration_worker.cursor_sdk_pool_fence import (
+        other_models_pool_dispatch_rejected,
+    )
+
+    if other_models_pool_dispatch_rejected(req, resolved_bare_model=config.model_id):
+        return _reject_pre_admission(
+            req,
+            worker_error_code="other_models_pool_denied",
+            failure_layer="validation",
+            http_status=422,
+            detail_summary=(
+                "cursor-sdk Other Models pool is retired "
+                "(cursor_sdk_other_models_pool=deny)"
+            ),
+            invalid_fields=["model"],
+            validation_stage="other_models_pool",
+            retryable=False,
+            extra_data={
+                "code": "other_models_pool_denied",
+                "requested_model": req.model,
+                "resolved_model": f"cursor/{config.model_id}",
+                "pool": "other_models",
+            },
         )
 
     card_entry = CURSOR_MODEL_CAPABILITIES.get(config.model_id)

@@ -76,6 +76,32 @@ def _chat_url_for_registration(registration_id: str) -> str | None:
     return (chat_url_for_registration(registration_id) or "").strip() or None
 
 
+def _provenance_get_checked(
+    registration_id: str,
+    *,
+    timeout_s: float = _DEFAULT_TIMEOUT_S,
+    client: CdpAskClient | None = None,
+) -> tuple[dict[str, Any] | None, bool]:
+    """GET provenance; return (payload, unreachable)."""
+    from urllib.parse import quote
+
+    rid = (registration_id or "").strip()
+    if not rid:
+        return None, False
+    try:
+        http = client or CdpAskClient(timeout_s=timeout_s)
+        path = f"/v1/cse-session/provenance?registration_id={quote(rid, safe='')}"
+        data = http._request("GET", path)
+        if not isinstance(data, dict):
+            return None, False
+        resp_reg = str(data.get("registration_id") or "").strip()
+        if resp_reg != rid:
+            return None, False
+        return data, False
+    except (CdpAskClientError, OSError, ValueError, TypeError):
+        return None, True
+
+
 def _provenance_get(
     registration_id: str,
     *,
@@ -83,23 +109,12 @@ def _provenance_get(
     client: CdpAskClient | None = None,
 ) -> dict[str, Any] | None:
     """Best-effort GET /v1/cse-session/provenance when identity matches."""
-    from urllib.parse import quote
-
-    rid = (registration_id or "").strip()
-    if not rid:
+    data, unreachable = _provenance_get_checked(
+        registration_id, timeout_s=timeout_s, client=client
+    )
+    if unreachable:
         return None
-    try:
-        http = client or CdpAskClient(timeout_s=timeout_s)
-        path = f"/v1/cse-session/provenance?registration_id={quote(rid, safe='')}"
-        data = http._request("GET", path)
-        if not isinstance(data, dict):
-            return None
-        resp_reg = str(data.get("registration_id") or "").strip()
-        if resp_reg != rid:
-            return None
-        return data
-    except (CdpAskClientError, OSError, ValueError, TypeError):
-        return None
+    return data
 
 
 def _chat_url_from_provenance(
@@ -112,16 +127,6 @@ def _chat_url_from_provenance(
     if data is None:
         return None
     return str(data.get("chat_url") or "").strip() or None
-
-
-def registration_resolvable_via_provenance(
-    registration_id: str,
-    *,
-    timeout_s: float = _DEFAULT_TIMEOUT_S,
-    client: CdpAskClient | None = None,
-) -> bool:
-    """True when remote provenance confirms *registration_id* (GIW listable leg)."""
-    return _provenance_get(registration_id, timeout_s=timeout_s, client=client) is not None
 
 
 def _candidates_from_seat_rows(
@@ -160,7 +165,9 @@ def _resolve_from_http(
         from claude_bundles import cdp_registry_events as _events
 
         with contextlib.suppress(Exception):
-            _events.emit(_events.cdp_seat_authority_unreachable(parent_thread=parent_thread))
+            _events.emit(
+                _events.cdp_seat_authority_unreachable(parent_thread=parent_thread)
+            )
         return _unavailable_identity()
     if not isinstance(snap, dict):
         return _null_identity()
@@ -178,10 +185,9 @@ def _resolve_from_http(
     if not reg_id:
         return _null_identity(observed_at=observed_at)
     seat_rows = seat_rows_raw
-    chat_url = (
-        _chat_url_from_provenance(reg_id, timeout_s=timeout_s, client=client)
-        or _chat_url_for_registration(reg_id)
-    )
+    chat_url = _chat_url_from_provenance(
+        reg_id, timeout_s=timeout_s, client=client
+    ) or _chat_url_for_registration(reg_id)
     row_source = "http"
     for row in seat_rows:
         if isinstance(row, dict) and str(row.get("registration_id") or "") == reg_id:
@@ -228,4 +234,4 @@ def resolve_operator_seat(
     )
 
 
-__all__ = ["registration_resolvable_via_provenance", "resolve_operator_seat"]
+__all__ = ["resolve_operator_seat"]

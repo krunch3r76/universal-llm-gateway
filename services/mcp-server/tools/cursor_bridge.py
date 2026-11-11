@@ -376,6 +376,7 @@ def _status(*, thread: str | None, last: int) -> dict[str, Any]:
         unread=False,
         mark_read=False,
         compact=False,
+        resolved_projection="full",
     )
     if isinstance(result, dict) and "error" in result:
         return result

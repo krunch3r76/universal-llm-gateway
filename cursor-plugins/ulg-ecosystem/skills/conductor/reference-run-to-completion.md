@@ -1,6 +1,6 @@
 ## Run to completion (binding default)
 <!-- width-seat:v1:start -->
-> **Width seat** (generated from `libs/implement_admission/conductor_critic_render.py`; do not hand-edit): critic = `anthropic/claude-sonnet-5-5` · `reasoning_effort=high` · usage channel **Sonnet**. SKETCH (G1) = `anthropic/claude-sonnet-5-5` · `reasoning_effort=high`. SKEPTIC (G4) = `anthropic/claude-sonnet-5-5` · `reasoning_effort=high` (cross-family review). RESTORE = `anthropic/claude-fable-5-1` · `reasoning_effort=high` (operator restore preset).
+> **Width seat** (generated from `libs/implement_admission/conductor_critic_render.py`; do not hand-edit): critic = `cdp/opus-5.5` · `reasoning_effort=high` · usage channel **Opus**. SKETCH (G1) = `cdp/opus-5.5` · `reasoning_effort=high`. SKEPTIC (G4) = `cdp/opus-5.5` · `reasoning_effort=high` (cross-family review). RESTORE = `anthropic/claude-fable-5-1` · `reasoning_effort=high` (operator restore preset).
 <!-- width-seat:v1:end -->
 
 
@@ -36,8 +36,8 @@ per-G-row one. Default posture once running:
 - Owed stops win at a boundary:
   `stop_after` ⇒ `ROW_PINNED`; explicit see-score or `OPERATOR_GATE` ⇒
   `ROW_PINNED`; G3→G5 fires in-process score-ratify on the width-seat critic
-  (`anthropic/claude-sonnet-5-5`, `impresario.critic`; do not substitute `cdp/`)
-  via `team_dispatch(op=generate, model=anthropic/claude-sonnet-5-5, contract=freeform, dispatch_thread_id=<this worker thread id>)` then continues — a live summoning chat is not a
+  (`cdp/opus-5.5`, `impresario.critic`; `cdp/` is allowed and preferred for conductor and supervisor legs over `anthropic/*` and over any `cursor/*` model except `cursor/composer-2.5` while it is cheaper. No CDP host ⇒ record `cdp_fail_route=anthropic` and dispatch `anthropic/claude-sonnet-5-5`)
+  via `team_dispatch(op=generate, model=cdp/opus-5.5, contract=freeform, dispatch_thread_id=<this worker thread id>)` then continues — a live summoning chat is not a
   human stop; named
   hold ⇒ `HOLD_MERGE`. A live nested child (W3) is a cursor-sdk dispatch
   admitted with nest_under equal to this conductor dispatch_id (status queued,
@@ -53,7 +53,7 @@ per-G-row one. Default posture once running:
   (arc-only) and not a separate "ok to merge?"
 - **Stop only for a true operator-only gate** — credentials, an irreversible
   non-revertible act, or a genuine unranked fork. Forks go to the judgment
-  ladder (width-seat critic `anthropic/claude-sonnet-5-5`; `anthropic/claude-fable-5-1` only when Kaywan asks) first; `needs-attended`
+  ladder (width-seat critic `cdp/opus-5.5`; `cdp/fable-5.1` (consult only), then `anthropic/*` fallback; `anthropic/claude-fable-5-1` only when Kaywan asks) first; `needs-attended`
   is for the human-only remainder, not for "should I proceed" or "should I
   merge."
 - **Named exception overrides the default.** If a mission genuinely needs the
@@ -67,11 +67,11 @@ per-G-row one. Default posture once running:
   G-row starts — zero files touched, nothing nested — is the same violation
   as skipping straight to a merge ask (refuse-and-close, incident 7419;
   distinct from absorb, incident 7407, which hand-codes instead of nesting).
-- **After-ship width-seat critic code review (`anthropic/claude-sonnet-5-5`, a:32146) is a stronger-model gate, not
+- **After-ship width-seat critic code review (`cdp/opus-5.5`, a:32146) is a stronger-model gate, not
   a background nicety.** On codework that claims land / cert / terminal `DONE`:
   **review harvest ≺ land ≺ DONE** (dogfood 10013 / a:32221–32222; 9638 hop3 /
   a:32226). Fire `team_dispatch` with `op=generate`, `contract=delivery-review`,
-  `model=anthropic/claude-sonnet-5-5` (`impresario.critic`; do not substitute `cdp/`), prompt set, and
+  `model=cdp/opus-5.5` (`impresario.critic`; `cdp/` is allowed and preferred for conductor and supervisor legs over `anthropic/*` and over any `cursor/*` model except `cursor/composer-2.5` while it is cheaper. No CDP host ⇒ record `cdp_fail_route=anthropic` and dispatch `anthropic/claude-sonnet-5-5`), prompt set, and
   `dispatch_thread_id` equal to this worker thread. Omit `purpose`, `role`, and
   `parent_thread`, or set `parent_thread` equal to that thread. `job=delivery-review`
   is the genre line inside the prompt, not a separate call argument.
@@ -83,14 +83,14 @@ per-G-row one. Default posture once running:
   `/mcp/code`. A consult already admitted and still healthy is not a skip.
   Review leg — one dispatch, then park while live.
   1. Evidence before the dispatch. Before the single G6 team_dispatch, write an evidence block into the review body: git diff --stat <base>..HEAD; the pre-land suite summary lines the spec names (same command on base and on tip); and gen-event-catalog check output when the diff touches a docstring that feeds a generated catalog region. A line that was not run is `evidence: absent — <name>` only when it cannot run in this row — name why. Run that missing command before the review dispatch. Do not discover the gap by receiving a WITHHOLD and then starting another row.
-  2. One dispatch. G6 is team_dispatch(op=generate, model=anthropic/claude-sonnet-5-5, contract=delivery-review, dispatch_thread_id=<this worker thread id>, parent_thread=<this worker thread id>, prompt=<body>); filtered nested implement seats must not set a foreign summoning parent. The model is `impresario.critic`. Do not substitute `cdp/`. The body carries job=delivery-review and retrieval_report: cortex://… each on its own line, plus the evidence block. Cite libs/claude_bundles/nested_cdp_prompt_gate.py. The row does not search the repo for that contract. G5 ratify stays the freeform sentence above.
+  2. One dispatch. G6 is team_dispatch(op=generate, model=cdp/opus-5.5, contract=delivery-review, dispatch_thread_id=<this worker thread id>, parent_thread=<this worker thread id>, prompt=<body>); filtered nested implement seats must not set a foreign summoning parent. The model is `impresario.critic`. `cdp/` is allowed and preferred for conductor and supervisor legs over `anthropic/*` and over any `cursor/*` model except `cursor/composer-2.5` while it is cheaper. No CDP host ⇒ record `cdp_fail_route=anthropic` and dispatch `anthropic/claude-sonnet-5-5`. The body carries job=delivery-review and retrieval_report: cortex://… each on its own line, plus the evidence block. Cite libs/claude_bundles/nested_cdp_prompt_gate.py. The row does not search the repo for that contract. G5 ratify stays the freeform sentence above.
   3. Stamp and park while live. After G6 admit, write poll_hint and execution_id into the CHECKPOINT, add NEXT_ADMIT: harvest <execution_id>. Optional wait_seconds=0 snapshot may copy status; it is not a harvest. If that snapshot is already complete, harvest in this dispatch. If the execution_id is still live, stop: PARKED_TRANSPORT (not ROW_HOP) with the stamped poll_hint. Do not block MCP agent_bus wait (wait_seconds>0 or default blocking wait) until -32001 / httpx.ReadTimeout. Timeout is a transport clock, not harvest failure: while execution_id is live, do not second-dispatch G6 and do not treat CDP as dead. GIW park-harvest continue admits the successor when a web-anthropic turn lands on this worker thread after the closeout turn (park_harvest_continue_owed); that successor harvests the stamped id. Attended harvest of that id arms runbook:bus-consult-watcher; the conductor seat does not hold wait. Do not chain agent_bus_read. A successor whose CHECKPOINT carries a G6 execution_id harvests that id and does not dispatch G6. A second verdict on the same gate is commentary unless the scoreboard Stops stamp changes.
   CDP consult refused or failed (`Chrome on :9225 did not reach CDP`, empty body,
   `stall_stage=mark_terminal`, `stall_stage=completed_without_proof`): do not wait and do not retry the CDP pool.
   Choose at once by the question and record `cdp_fail_route` on the scoreboard row.
   `nested-grok`: nested `team_dispatch` `seat=cursor-sdk` `model=cursor/grok-4.7` `contract=freeform` `model_knobs={"effort":"xhigh"}`.
   `operator`: post the question and its context on this worker thread `to=web-anthropic`, plus a one-line pointer on the operator lane (`parent_thread`) `to=web-anthropic`. The operator answers on the worker thread. `CONSULT_PENDING` watches that reply.
-  Name that route in the artifact id (`G4-REVIEW-nested-grok`, `G4-REVIEW-operator`, `G6-REVIEW-nested-grok`, `G6-REVIEW-operator`) and in the Gated row's Stops cell as `cdp_fail_route=<route>`. The fold records `witness:BIND:<id>:route=<route>` for the artifact that matches the stamp. A second verdict on the same gate is commentary unless that Stops stamp changes later.
+  Name that route in the artifact id (`G4-REVIEW-anthropic`, `G4-REVIEW-nested-grok`, `G4-REVIEW-operator`, `G6-REVIEW-anthropic`, `G6-REVIEW-nested-grok`, `G6-REVIEW-operator`) and in the Gated row's Stops cell as `cdp_fail_route=<route>`. The fold records `witness:BIND:<id>:route=<route>` for the artifact that matches the stamp. A second verdict on the same gate is commentary unless that Stops stamp changes later.
   Do not label DEFERRED and continue. Do not substitute Composer. Do not `PARKED_TRANSPORT` on this failure. Do not discard the lane.
   Optional Sidecar overlays that the
   scoreboard marks non-blocking remain commentary only — they do not replace

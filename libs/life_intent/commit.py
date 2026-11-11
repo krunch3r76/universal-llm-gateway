@@ -102,7 +102,10 @@ def _create_entity(seed: dict[str, Any]) -> str:
 
 def _entity_exists(entity_id: str) -> bool:
     try:
-        body = _cortex_dispatch("entity_get", {"entity_id": entity_id})
+        body = _cortex_dispatch(
+            "entity_get",
+            {"entity_id": entity_id, "intent": "preview"},
+        )
     except Exception:
         return False
     if not isinstance(body, dict):

@@ -72,7 +72,7 @@ _G6_STANDALONE_VERDICT_RE = re.compile(
 # Skill cdp_fail_route vocabulary. U3 stamps hop_reason=cdp_probe_indeterminate
 # (a different fact) and does not name which verdict governs.
 _CDP_FAIL_ROUTE_RE = re.compile(
-    r"(?<![A-Za-z0-9_])cdp_fail_route=(?P<route>nested-grok|operator)"
+    r"(?<![A-Za-z0-9_])cdp_fail_route=(?P<route>nested-grok|operator|anthropic)"
     r"(?![A-Za-z0-9_-])"
 )
 
@@ -590,7 +590,7 @@ def _row_witnesses_g_ladder(
             repo=repo,
             route=g6_route,
         )
-        rerouted = bool(g6_route)
+        rerouted = g6_route not in (None, "anthropic")
         if rerouted and not _cdp_reroute_for_critic_enabled():
             g6_id = None
             g6_uri = None
@@ -607,7 +607,7 @@ def _row_witnesses_g_ladder(
             g6_source = (
                 f"witness:{_WITNESS_KIND_BIND}:{g6_id}:route={g6_route}:rerouted=True"
                 f":endpoint={g6_route}"
-                if g6_route
+                if rerouted
                 else f"artifact:{g6_id}"
             )
             witnesses["G6"] = Witness(row="G6", source=g6_source, detail=g6_uri)

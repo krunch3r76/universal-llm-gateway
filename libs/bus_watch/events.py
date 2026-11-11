@@ -345,6 +345,39 @@ def emit_endpoint_wake_address_route(**kwargs: Any) -> None:
 
 
 @event_factory
+def EndpointWakeCseHolderResolution(  # noqa: N802
+    *,
+    thread: str,
+    subscription_id: int | None,
+    chosen_registration: str,
+    chosen_source: str,
+    bus_registration: str | None = None,
+    giw_by_thread_registration: str | None = None,
+    giw_by_thread_error: str | None = None,
+) -> Event:
+    """Observation: thread-scoped CSE wake chose a fallback holder; ``chosen_source`` is ``giw_by_thread`` or ``subscription_agent_id``."""
+    return Event(
+        signal="endpoint_wake.cse_holder_resolution",
+        role="observation",
+        payload={
+            "thread": thread,
+            "subscription_id": subscription_id,
+            "chosen_registration": chosen_registration,
+            "chosen_source": chosen_source,
+            "bus_registration": bus_registration,
+            "giw_by_thread_registration": giw_by_thread_registration,
+            "giw_by_thread_error": giw_by_thread_error,
+        },
+        scope="global",
+    )
+
+
+def emit_endpoint_wake_cse_holder_resolution(**kwargs: Any) -> None:
+    """Publish how a thread-scoped CSE wake resolved its delivery holder."""
+    _emit(EndpointWakeCseHolderResolution(**kwargs))
+
+
+@event_factory
 def EndpointWakeSuppressed(  # noqa: N802
     *,
     thread_id: str,
@@ -474,3 +507,40 @@ def IdeContextHopMonitorTick(  # noqa: N802
 def emit_ide_context_hop_monitor_tick(**kwargs: Any) -> None:
     """Publish timing for one ide_context_hop_monitor tick."""
     _emit(IdeContextHopMonitorTick(**kwargs))
+
+
+@event_factory
+def IdeTabBudgetSampled(  # noqa: N802
+    *,
+    root_id: str,
+    transcript_id: str,
+    tool_calls: int,
+    tool_result_tokens: int | None,
+    used_tokens: int,
+    window_limit_tokens: int | None,
+    stop_class: str | None,
+    hop_weight_basis: str | None,
+    matched_categories: list[str],
+) -> Event:
+    """Observation: one per-tab CONTEXT_BUDGET probe during ide_context_hop_monitor."""
+    return Event(
+        signal="ide.tab.budget.sampled",
+        role="observation",
+        payload={
+            "root_id": root_id,
+            "transcript_id": transcript_id,
+            "tool_calls": tool_calls,
+            "tool_result_tokens": tool_result_tokens,
+            "used_tokens": used_tokens,
+            "window_limit_tokens": window_limit_tokens,
+            "stop_class": stop_class,
+            "hop_weight_basis": hop_weight_basis,
+            "matched_categories": matched_categories,
+        },
+        scope="global",
+    )
+
+
+def emit_ide_tab_budget_sampled(**kwargs: Any) -> None:
+    """Publish a per-tab IDE budget sample from the context-hop monitor."""
+    _emit(IdeTabBudgetSampled(**kwargs))

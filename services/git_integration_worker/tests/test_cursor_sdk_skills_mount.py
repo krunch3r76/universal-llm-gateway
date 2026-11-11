@@ -22,6 +22,7 @@ _PLUGIN_SLUG = "reasoning-posture"
 _CURSOR_SLUG = "ulg-architecture"
 _LIFE_SLUG = "prose-discipline"
 _LIFE_SLUG_2 = "outbound-voice-spec"
+_LEAN_DISPATCH = "lean-dispatch"
 
 
 @pytest.fixture
@@ -252,6 +253,132 @@ def test_entity_id_form_invokes_bare_slug() -> None:
 
     assert f"Use the `{_LIFE_SLUG}` skill." in preamble
     assert "agent_skill:" not in preamble
+
+
+@pytest.mark.offline
+def test_tier_b_lean_dispatch_staged_with_prune_override_recorded(
+    tmp_path: Path,
+) -> None:
+    """Tier B overlay removes lean-dispatch; explicit ``skills=`` re-stages it."""
+    hub = tmp_path / "hub"
+    skill = hub / "cursor-plugins/ulg-ecosystem/skills" / _LEAN_DISPATCH / "SKILL.md"
+    skill.parent.mkdir(parents=True)
+    skill.write_text(f"---\nname: {_LEAN_DISPATCH}\n---\n", encoding="utf-8")
+
+    cursor_dir = tmp_path / "home" / ".cursor"
+    cursor_dir.mkdir(parents=True)
+    # Plugin census has no lean-dispatch — post tier-B overlay shape.
+    census_other = (
+        cursor_dir / "plugins" / "local" / "ulg-ecosystem" / "skills" / "reasoning-posture"
+    )
+    census_other.mkdir(parents=True)
+    (census_other / "SKILL.md").write_text("---\nname: reasoning-posture\n---\n", "utf-8")
+
+    result = stage_dispatch_skills(
+        cursor_dir,
+        [_LEAN_DISPATCH],
+        source_repo=hub,
+        delegation_tier="B",
+    )
+
+    dest = cursor_dir / HOME_SKILLS_DIRNAME / _LEAN_DISPATCH / "SKILL.md"
+    assert dest.is_file()
+    assert result.staged_slugs == (_LEAN_DISPATCH,)
+    assert result.tier_prune_overrides == ((_LEAN_DISPATCH, "B"),)
+    assert result.rows[0].tier_prune_override == "B"
+
+
+@pytest.mark.offline
+def test_tier_b_without_explicit_skills_leaves_lean_dispatch_absent(
+    tmp_path: Path,
+) -> None:
+    from services.git_integration_worker.cursor_seat_overlay import (
+        apply_cursor_sdk_seat_overlay,
+        ECOSYSTEM_PLUGIN_RELPATH,
+    )
+
+    cursor_dir = tmp_path / "home" / ".cursor"
+    plugin_root = cursor_dir / ECOSYSTEM_PLUGIN_RELPATH
+    lean = plugin_root / "skills" / _LEAN_DISPATCH
+    lean.mkdir(parents=True)
+    (lean / "SKILL.md").write_text("---\nname: lean-dispatch\n---\n", "utf-8")
+
+    overlay = tmp_path / "overlay"
+    (overlay / "rules").mkdir(parents=True)
+    (overlay / "skills" / "interagent-posture").mkdir(parents=True)
+    (overlay / "skills" / "interagent-posture" / "SKILL.md").write_text(
+        "---\nname: interagent-posture\n---\n", "utf-8"
+    )
+    (overlay / "rules" / "interagent_ulg.mdc").write_text("---\n", "utf-8")
+
+    apply_cursor_sdk_seat_overlay(
+        cursor_dir, overlay_root=overlay, delegation_tier="B", lane="B"
+    )
+    assert not (plugin_root / "skills" / _LEAN_DISPATCH).exists()
+    result = stage_dispatch_skills(cursor_dir, None, source_repo=tmp_path / "hub")
+    assert result.rows == ()
+    assert not (cursor_dir / HOME_SKILLS_DIRNAME / _LEAN_DISPATCH).exists()
+
+
+@pytest.mark.offline
+def test_tier_a_staging_lean_dispatch_is_not_tier_override(tmp_path: Path) -> None:
+    hub = tmp_path / "hub"
+    skill = hub / "cursor-plugins/ulg-ecosystem/skills" / _LEAN_DISPATCH / "SKILL.md"
+    skill.parent.mkdir(parents=True)
+    skill.write_text(f"---\nname: {_LEAN_DISPATCH}\n---\n", encoding="utf-8")
+    cursor_dir = tmp_path / "home" / ".cursor"
+    cursor_dir.mkdir(parents=True)
+
+    result = stage_dispatch_skills(
+        cursor_dir,
+        [_LEAN_DISPATCH],
+        source_repo=hub,
+        delegation_tier="A",
+    )
+
+    assert result.staged_slugs == (_LEAN_DISPATCH,)
+    assert result.tier_prune_overrides == ()
+
+
+@pytest.mark.offline
+def test_dispatch_skills_override_event_emitted_per_slug(
+    cursor_dir: Path, hub: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from services.git_integration_worker.cursor_sdk_events import (
+        emit_sdk_skills_tier_prune_overrides,
+    )
+
+    hub_skill = (
+        hub / "cursor-plugins/ulg-ecosystem/skills" / _LEAN_DISPATCH / "SKILL.md"
+    )
+    hub_skill.parent.mkdir(parents=True, exist_ok=True)
+    hub_skill.write_text(f"---\nname: {_LEAN_DISPATCH}\n---\n", encoding="utf-8")
+
+    captured: list[object] = []
+    monkeypatch.setattr(
+        "services.git_integration_worker.cursor_sdk_events._emit",
+        captured.append,
+    )
+    result = stage_dispatch_skills(
+        cursor_dir,
+        [_LEAN_DISPATCH],
+        source_repo=hub,
+        delegation_tier="B",
+    )
+    emit_sdk_skills_tier_prune_overrides(
+        dispatch_id="d1",
+        thread_id="22987",
+        resolved_model="cursor/composer-2.5",
+        result=result,
+        execution_id="e1",
+    )
+
+    assert len(captured) == 1
+    event = captured[0]
+    assert event.signal == "dispatch.skills.override"
+    assert event.payload["slug"] == _LEAN_DISPATCH
+    assert event.payload["delegation_tier"] == "B"
+    assert result.tier_prune_overrides == ((_LEAN_DISPATCH, "B"),)
 
 
 @pytest.mark.offline

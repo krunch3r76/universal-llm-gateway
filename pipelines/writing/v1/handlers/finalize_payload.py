@@ -9,9 +9,15 @@ from .finalize_support import (
     _GENERATE_STEPS,
     _REQUIRED_ASK_KINDS,
     _apply_architect_omit_with_reason,
+    _json_of,
     _model_of,
     _rates,
     _raw_step,
+)
+from .participation import (
+    build_participation_manifest,
+    build_participation_summary,
+    persona_refused_reason,
 )
 
 
@@ -129,6 +135,8 @@ def build_finalize_payload(
     filing_text: str | None,
     selected_body: str,
     obl_refusal: dict[str, Any] | None,
+    outputs_for_participation: dict[str, Any] | None = None,
+    options: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     payload: dict[str, Any] = {
         "coverage_map": coverage_map,
@@ -190,4 +198,33 @@ def build_finalize_payload(
     if obl_refusal is not None:
         payload["refused"] = obl_refusal["refused"]
         payload["ship_gate"]["pass"] = False
+    if outputs_for_participation is not None:
+        persona_step = _json_of(outputs_for_participation, "local_persona_author") or {}
+        persona_refused = persona_refused_reason(
+            persona_step if isinstance(persona_step, dict) else None
+        )
+        if isinstance(persona_step, dict):
+            raw_attempts = persona_step.get("persona_attempts")
+            if raw_attempts is not None:
+                if not isinstance(raw_attempts, list):
+                    payload["persona_attempts_type_error"] = type(
+                        raw_attempts
+                    ).__name__
+                else:
+                    payload["persona_attempts"] = list(raw_attempts)
+        try:
+            participation = build_participation_manifest(
+                outputs_for_participation,
+                options=options,
+                models=models,
+            )
+            participation_summary = build_participation_summary(participation)
+        except Exception as exc:  # noqa: BLE001
+            participation = None
+            participation_summary = None
+            payload["participation_error"] = type(exc).__name__
+        if persona_refused:
+            payload["persona_refused"] = persona_refused
+        payload["participation"] = participation
+        payload["participation_summary"] = participation_summary
     return payload

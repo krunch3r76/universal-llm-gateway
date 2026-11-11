@@ -24,6 +24,7 @@ CSE_A = "https://claude.ai/cowork/cse_abc123"
 CSE_PRIOR_38282 = "https://claude.ai/cowork/cse_prior38282"
 CSE_TARGET_38282 = "https://claude.ai/cowork/cse_target38282"
 CSE_K44_SUCC = "https://claude.ai/cowork/cse_k44_successor"
+CSE_OTHER = "https://claude.ai/cowork/cse_otherseat"
 K44_LANE = "12286"
 
 
@@ -211,6 +212,21 @@ def _borrow_seat_mismatch_setup(
     )
     monkeypatch.setattr("cdp_ask.followup_reattach.connect_cdp", _connect_factory())
     return reg, reg_borrowed, reg_holder_id, store
+
+
+def _arm_reattach_mint_lane(monkeypatch: pytest.MonkeyPatch, reg: Any) -> Any:
+    """Pre-register mint fallback — reattach must not launch Chrome under pytest."""
+    minted = reg.register_lane(
+        holder="mint-reattach-fallback",
+        purpose="operator-proxy",
+        launch_chrome=_noop_launch,
+        is_listening=lambda _p: False,
+    )
+    monkeypatch.setattr(
+        "cdp_ask.followup_reattach.cdp_registry.register_lane",
+        lambda **_kwargs: minted,
+    )
+    return minted
 
 
 def _connect_factory(*, fail: bool = False, bad_url: bool = False):
@@ -520,6 +536,325 @@ async def test_restricted_resume_does_not_navigate_other_cse_host(
     assert outcome.ok is True
     assert navigated == ["reg-bound"]
     assert outcome.registration_id == "reg-bound"
+
+
+def _skip_dormant_wake(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        "cdp_ask.followup_reattach.cdp_registry.dormant_for_chat_url",
+        lambda _url: None,
+    )
+    monkeypatch.setattr(
+        "cdp_ask.followup_reattach._wake_dormant_seat",
+        AsyncMock(return_value=None),
+    )
+
+
+def _two_lane_nav_setup(
+    monkeypatch: pytest.MonkeyPatch,
+) -> tuple[_FakeReg, _FakeReg]:
+    first = _reg("reg-first", cdp="http://127.0.0.1:9223")
+    second = _reg("reg-second", cdp="http://127.0.0.1:9224")
+    monkeypatch.setattr(
+        "cdp_ask.followup_reattach.cdp_registry.list_active",
+        lambda: [first, second],
+    )
+    monkeypatch.setattr(
+        "cdp_ask.followup_reattach.find_page_on_lane",
+        AsyncMock(return_value=None),
+    )
+
+    async def _nav(lane: _FakeReg, _chat_url: str) -> tuple[Any, Any]:
+        page = _FakePage()
+        page.url = _chat_url
+        return page, _FakePw()
+
+    monkeypatch.setattr("cdp_ask.followup_reattach._navigate_new_page", _nav)
+    return first, second
+
+
+@pytest.mark.asyncio
+@pytest.mark.no_bind_mock
+async def test_reattach_tries_next_lane_after_bind_refusal(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """First candidate bind refusal must not block a later lane."""
+    _skip_dormant_wake(monkeypatch)
+    first, second = _two_lane_nav_setup(monkeypatch)
+
+    def _bind(rid: str, *, chat_url: str) -> bool:
+        return rid == second.registration_id
+
+    monkeypatch.setattr(
+        "cdp_ask.followup_reattach.cdp_registry.bind_chat_url_only",
+        _bind,
+    )
+    register = MagicMock()
+    monkeypatch.setattr(
+        "cdp_ask.followup_reattach.cdp_registry.register_lane", register
+    )
+
+    outcome = await ensure_cse_attached(CSE_A, holder="h", purpose="operator-proxy")
+    assert outcome.ok is True
+    assert outcome.registration_id == second.registration_id
+    assert outcome.attempted_registration_ids == (first.registration_id,)
+    register.assert_not_called()
+
+
+@pytest.mark.asyncio
+@pytest.mark.no_bind_mock
+async def test_reattach_mints_after_all_lane_binds_refuse(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _skip_dormant_wake(monkeypatch)
+    _two_lane_nav_setup(monkeypatch)
+    monkeypatch.setattr(
+        "cdp_ask.followup_reattach.cdp_registry.bind_chat_url_only",
+        lambda _rid, **_: False,
+    )
+    minted = _reg("reg-minted")
+    register = MagicMock(return_value=minted)
+    monkeypatch.setattr(
+        "cdp_ask.followup_reattach.cdp_registry.register_lane", register
+    )
+
+    def _bind_mint_only(rid: str, *, chat_url: str) -> bool:
+        return rid == minted.registration_id
+
+    monkeypatch.setattr(
+        "cdp_ask.followup_reattach.cdp_registry.bind_chat_url_only",
+        _bind_mint_only,
+    )
+
+    outcome = await ensure_cse_attached(
+        CSE_A,
+        holder="h",
+        purpose="operator-proxy",
+        parent_thread="22938",
+        allow_mint=True,
+    )
+    assert outcome.ok is True
+    assert outcome.lane_created is True
+    assert outcome.registration_id == minted.registration_id
+    register.assert_called_once_with(
+        holder="h",
+        purpose="operator-proxy",
+        parent_thread="22938",
+        mission_kind=None,
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.no_bind_mock
+async def test_reattach_mint_bind_refusal_deregisters_and_lists_attempts(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _skip_dormant_wake(monkeypatch)
+    first, second = _two_lane_nav_setup(monkeypatch)
+    monkeypatch.setattr(
+        "cdp_ask.followup_reattach.cdp_registry.bind_chat_url_only",
+        lambda _rid, **_: False,
+    )
+    minted = _reg("reg-minted")
+    register = MagicMock(return_value=minted)
+    monkeypatch.setattr(
+        "cdp_ask.followup_reattach.cdp_registry.register_lane", register
+    )
+    deregister = MagicMock()
+    monkeypatch.setattr(
+        "cdp_ask.followup_reattach.cdp_registry.deregister_lane", deregister
+    )
+
+    outcome = await ensure_cse_attached(CSE_A, holder="h", allow_mint=True)
+    assert outcome.ok is False
+    assert outcome.error == "attachment.refused"
+    assert outcome.registration_id == minted.registration_id
+    assert outcome.attempted_registration_ids == (
+        first.registration_id,
+        second.registration_id,
+        minted.registration_id,
+    )
+    deregister.assert_called_once_with(minted.registration_id)
+
+
+@pytest.mark.asyncio
+@pytest.mark.no_bind_mock
+async def test_reattach_skips_lane_holding_other_chat_url_mints(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Must not CDP-touch a host registered to another seat's CSE URL."""
+    _skip_dormant_wake(monkeypatch)
+    other_bound = _reg("reg-other-chat")
+    unbound = _reg("reg-unbound", cdp="http://127.0.0.1:9224")
+    monkeypatch.setattr(
+        "cdp_ask.followup_reattach.cdp_registry.list_active",
+        lambda: [other_bound, unbound],
+    )
+
+    def _url_for(rid: str) -> str | None:
+        if rid == other_bound.registration_id:
+            return CSE_OTHER
+        return None
+
+    monkeypatch.setattr(
+        "cdp_ask.followup_reattach.cdp_registry.chat_url_for_registration",
+        _url_for,
+    )
+    find_calls: list[str] = []
+    nav_calls: list[str] = []
+
+    async def _find(cdp_url: str, _chat_url: str) -> None:
+        if cdp_url == other_bound.cdp_url:
+            find_calls.append(other_bound.registration_id)
+        return None
+
+    async def _nav(lane: _FakeReg, _chat_url: str) -> tuple[Any, Any]:
+        nav_calls.append(lane.registration_id)
+        page = _FakePage()
+        page.url = _chat_url
+        return page, _FakePw()
+
+    monkeypatch.setattr("cdp_ask.followup_reattach.find_page_on_lane", _find)
+    monkeypatch.setattr("cdp_ask.followup_reattach._navigate_new_page", _nav)
+    monkeypatch.setattr(
+        "cdp_ask.followup_reattach.cdp_registry.bind_chat_url_only",
+        lambda _rid, **_: False,
+    )
+    minted = _reg("reg-minted")
+    register = MagicMock(return_value=minted)
+    monkeypatch.setattr(
+        "cdp_ask.followup_reattach.cdp_registry.register_lane", register
+    )
+
+    def _bind_mint_only(rid: str, *, chat_url: str) -> bool:
+        return rid == minted.registration_id
+
+    monkeypatch.setattr(
+        "cdp_ask.followup_reattach.cdp_registry.bind_chat_url_only",
+        _bind_mint_only,
+    )
+
+    outcome = await ensure_cse_attached(
+        CSE_A,
+        holder="h",
+        parent_thread="22938",
+        allow_mint=True,
+    )
+    assert other_bound.registration_id not in find_calls
+    assert other_bound.registration_id not in nav_calls
+    assert unbound.registration_id in nav_calls
+    assert outcome.ok is True
+    assert outcome.registration_id == minted.registration_id
+    register.assert_called_once_with(
+        holder="h",
+        purpose=None,
+        parent_thread="22938",
+        mission_kind=None,
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.no_bind_mock
+async def test_reattach_same_bound_chat_url_lane_still_used(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _skip_dormant_wake(monkeypatch)
+    bound = _reg("reg-bound-same")
+    monkeypatch.setattr(
+        "cdp_ask.followup_reattach.cdp_registry.list_active",
+        lambda: [bound],
+    )
+    monkeypatch.setattr(
+        "cdp_ask.followup_reattach.cdp_registry.chat_url_for_registration",
+        lambda rid: CSE_A if rid == bound.registration_id else None,
+    )
+    find_calls: list[str] = []
+
+    async def _find(cdp_url: str, _chat_url: str) -> tuple[Any, Any]:
+        find_calls.append(cdp_url)
+        page = _FakePage()
+        page.url = CSE_A
+        return page, _FakePw()
+
+    nav = AsyncMock()
+    monkeypatch.setattr("cdp_ask.followup_reattach.find_page_on_lane", _find)
+    monkeypatch.setattr("cdp_ask.followup_reattach._navigate_new_page", nav)
+    monkeypatch.setattr(
+        "cdp_ask.followup_reattach.cdp_registry.bind_chat_url_only",
+        lambda _rid, **_: True,
+    )
+
+    outcome = await ensure_cse_attached(CSE_A, holder="h", allow_mint=False)
+    assert outcome.ok is True
+    assert find_calls == [bound.cdp_url]
+    nav.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+@pytest.mark.no_bind_mock
+async def test_reattach_unbound_lane_still_navigated(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _skip_dormant_wake(monkeypatch)
+    unbound = _reg("reg-unbound-only")
+    monkeypatch.setattr(
+        "cdp_ask.followup_reattach.cdp_registry.list_active",
+        lambda: [unbound],
+    )
+    monkeypatch.setattr(
+        "cdp_ask.followup_reattach.cdp_registry.chat_url_for_registration",
+        lambda _rid: None,
+    )
+    find = AsyncMock(return_value=None)
+    nav_calls: list[str] = []
+
+    async def _nav(lane: _FakeReg, _chat_url: str) -> tuple[Any, Any]:
+        nav_calls.append(lane.registration_id)
+        page = _FakePage()
+        page.url = _chat_url
+        return page, _FakePw()
+
+    monkeypatch.setattr("cdp_ask.followup_reattach.find_page_on_lane", find)
+    monkeypatch.setattr("cdp_ask.followup_reattach._navigate_new_page", _nav)
+    monkeypatch.setattr(
+        "cdp_ask.followup_reattach.cdp_registry.bind_chat_url_only",
+        lambda _rid, **_: True,
+    )
+
+    outcome = await ensure_cse_attached(CSE_A, holder="h", allow_mint=False)
+    assert outcome.ok is True
+    assert nav_calls == [unbound.registration_id]
+    find.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+@pytest.mark.no_bind_mock
+async def test_reattach_all_lane_refusals_no_mint_returns_last_refusal(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _skip_dormant_wake(monkeypatch)
+    first, second = _two_lane_nav_setup(monkeypatch)
+    monkeypatch.setattr(
+        "cdp_ask.followup_reattach.cdp_registry.bind_chat_url_only",
+        lambda _rid, **_: False,
+    )
+    register = MagicMock()
+    monkeypatch.setattr(
+        "cdp_ask.followup_reattach.cdp_registry.register_lane", register
+    )
+
+    outcome = await ensure_cse_attached(
+        CSE_A,
+        holder="h",
+        allow_mint=False,
+    )
+    assert outcome.ok is False
+    assert outcome.error == "attachment.refused"
+    assert outcome.registration_id == second.registration_id
+    assert outcome.attempted_registration_ids == (
+        first.registration_id,
+        second.registration_id,
+    )
+    register.assert_not_called()
 
 
 @pytest.mark.asyncio
@@ -1433,6 +1768,7 @@ async def test_k44_parent_thread_followup_resolves_successor_after_predecessor_p
     )
     monkeypatch.setattr("cdp_ask.followup.send_followup_paste_half", paste)
     monkeypatch.setattr("cdp_ask.followup.emit_followup_event", lambda _e: None)
+
     async def _find_page(_cdp: str, url: str) -> tuple[Any, Any]:
         from claude_bundles.cse_url import normalize_cse_url
 
@@ -2413,10 +2749,11 @@ async def test_borrow_reattach_restores_prior_chat_url_on_seat_mismatch(
     isolated_registry: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Borrow bind to target URL must not stick when second resolve refuses seat."""
+    """Prior-bound host is skipped; minted bind must not stick after seat refusal."""
     reg, reg_borrowed, reg_holder_id, store = _borrow_seat_mismatch_setup(
         isolated_registry, monkeypatch, bind_prior=True
     )
+    minted = _arm_reattach_mint_lane(monkeypatch, reg)
     lane = "15364"
     events: list[Any] = []
 
@@ -2451,13 +2788,10 @@ async def test_borrow_reattach_restores_prior_chat_url_on_seat_mismatch(
     restored_events = _registry_events(
         isolated_registry, event="session_address_restored", registration_id=rid
     )
-    assert [e.get("chat_url") for e in bound_events] == [
-        CSE_PRIOR_38282,
-        CSE_TARGET_38282,
-    ]
-    assert restored_events
-    assert restored_events[-1].get("restore_to") == CSE_PRIOR_38282
+    assert [e.get("chat_url") for e in bound_events] == [CSE_PRIOR_38282]
+    assert restored_events == []
     assert reg.chat_url_for_registration(rid) == CSE_PRIOR_38282
+    assert reg.chat_url_for_registration(minted.registration_id) is None
 
 
 @pytest.mark.asyncio
@@ -2495,10 +2829,11 @@ async def test_borrow_reattach_refusal_with_retain_lane_restores_binding(
     isolated_registry: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """retain_lane=True still restores registry chat_url after seat refusal."""
+    """Prior-bound host is never borrowed; seat refusal does not move its chat_url."""
     reg, reg_borrowed, reg_holder_id, store = _borrow_seat_mismatch_setup(
         isolated_registry, monkeypatch, bind_prior=True
     )
+    _arm_reattach_mint_lane(monkeypatch, reg)
     lane = "15364"
     monkeypatch.setattr("cdp_ask.followup.emit_followup_event", lambda _e: None)
     monkeypatch.setattr("cdp_ask.followup_resolve.emit_followup_event", lambda _e: None)
@@ -2652,10 +2987,11 @@ async def test_second_resolve_exception_runs_restore_teardown(
     isolated_registry: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Snapshot failure after borrow must restore and disconnect Playwright."""
+    """Snapshot failure after minted reattach must restore and disconnect Playwright."""
     reg, reg_borrowed, reg_holder_id, store = _borrow_seat_mismatch_setup(
         isolated_registry, monkeypatch, bind_prior=True
     )
+    _arm_reattach_mint_lane(monkeypatch, reg)
     lane = "15364"
     pw = AsyncMock()
     pw.stop = AsyncMock()
@@ -2721,10 +3057,11 @@ async def test_paste_miss_after_reattach_restores_borrowed_chat_url(
     isolated_registry: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Page gone after lock must restore a borrow bind (finding 6)."""
+    """Prior-bound host skipped for reattach; page miss tears down minted bind only."""
     reg, reg_borrowed, reg_holder_id, store = _borrow_seat_mismatch_setup(
         isolated_registry, monkeypatch, bind_prior=True
     )
+    _arm_reattach_mint_lane(monkeypatch, reg)
     lane = "15364"
 
     async def _snap_ok() -> dict[str, Any]:
@@ -2763,7 +3100,7 @@ async def test_paste_miss_after_reattach_restores_borrowed_chat_url(
         ),
         store,
     )
-    assert resp.error == "cse_not_found_on_lane"
+    assert resp.error == "operator_seat_mismatch"
     assert resp.reattach_used is True
     assert (
         reg.chat_url_for_registration(reg_borrowed.registration_id) == CSE_PRIOR_38282
@@ -3511,6 +3848,551 @@ def test_closed_same_lane_seat_is_not_carved_out(isolated_registry: Path) -> Non
     assert err is not None
     assert err.error == "operator_seat_mismatch"
     assert holder.registration_id != borrowed.registration_id
+
+
+def _dormant_misbound_lane_pair(
+    lane: str,
+    *,
+    holder_chat: str,
+    mint_chat: str | None,
+) -> tuple[Any, Any, Any]:
+    from claude_bundles import cdp_registry as reg
+    from claude_bundles.cdp_registry.models import seat_open
+
+    holder = reg.register_lane(
+        holder="dormant-holder",
+        purpose="operator-proxy",
+        parent_thread=lane,
+        launch_chrome=_noop_launch,
+        is_listening=lambda _p: False,
+    )
+    minted = reg.register_lane(
+        holder="reattach-mint",
+        purpose="operator-proxy",
+        parent_thread=lane,
+        launch_chrome=_noop_launch,
+        is_listening=lambda _p: False,
+    )
+    with reg._store.ports_lock():
+        active = reg._store.load_active()
+        hrow = dict(active[holder.registration_id])
+        hrow["parent_thread"] = lane
+        hrow["seat_lane"] = lane
+        hrow["seat_bound_at"] = 20.0
+        hrow["seat_closed_at"] = None
+        hrow["chat_url"] = holder_chat
+        hrow["chat_url_bound_at"] = 1.0
+        active[holder.registration_id] = hrow
+        mrow = dict(active[minted.registration_id])
+        mrow["parent_thread"] = lane
+        mrow["purpose"] = "operator-proxy"
+        if mint_chat is not None:
+            mrow["chat_url"] = mint_chat
+            mrow["chat_url_bound_at"] = 2.0
+        for key in ("seat_lane", "seat_bound_at", "seat_closed_at"):
+            mrow.pop(key, None)
+        active[minted.registration_id] = mrow
+        reg._store.write_active(active)
+    reg._release_driver_lock(holder.registration_id)
+    assert (
+        reg.make_dormant(holder.registration_id, is_listening=lambda _port: False)
+        is not None
+    )
+    active = reg._store.load_active()
+    assert seat_open(active[holder.registration_id], lane)
+    assert not seat_open(active[minted.registration_id], lane)
+    return reg, holder, minted
+
+
+def test_dormant_misbound_holder_carve_out_seats_mint_without_holder_page(
+    isolated_registry: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Dormant holder on another chat: gate accepts mint and closes predecessor."""
+    from claude_bundles.cdp_registry.models import seat_open
+
+    from cdp_ask.followup_resolve import _lane_seat_followup_gate
+
+    lane = "22778"
+    holder_chat = "https://claude.ai/cowork/cse_01AroaPf5M91QkzySgHNZMKf"
+    mint_chat = CSE_TARGET_38282
+    reg, holder, minted = _dormant_misbound_lane_pair(
+        lane, holder_chat=holder_chat, mint_chat=mint_chat
+    )
+    nav_calls: list[str] = []
+
+    async def _nav(*_args: Any, **_kwargs: Any) -> None:
+        nav_calls.append("nav")
+
+    monkeypatch.setattr("cdp_ask.followup_reattach._navigate_new_page", _nav)
+    req = FollowupProjectAskRequest(
+        prompt_text="memo",
+        parent_thread=lane,
+        chat_url=mint_chat,
+        registration_id=minted.registration_id,
+        purpose="operator-proxy",
+        reattach=True,
+    )
+    _out, err, _path = _lane_seat_followup_gate(
+        req,
+        {"reattach_used": True, "outcome_reg": minted.registration_id},
+        _snap_from_active(reg),
+    )
+    assert err is None
+    active = reg._store.load_active()
+    assert not seat_open(active[holder.registration_id], lane)
+    assert seat_open(active[minted.registration_id], lane)
+    assert active[holder.registration_id].get("seat_close_reason") == (
+        "dormant_holder_misbound"
+    )
+    assert nav_calls == []
+
+
+def test_dormant_same_chat_still_mismatches(
+    isolated_registry: Path,
+) -> None:
+    """Dormant holder on the requested chat keeps operator_seat_mismatch."""
+    from cdp_ask.followup_resolve import _lane_seat_followup_gate
+
+    lane = "22778"
+    chat = CSE_TARGET_38282
+    reg, holder, minted = _dormant_misbound_lane_pair(
+        lane, holder_chat=chat, mint_chat=None
+    )
+    req = FollowupProjectAskRequest(
+        prompt_text="memo",
+        parent_thread=lane,
+        chat_url=chat,
+        registration_id=minted.registration_id,
+        purpose="operator-proxy",
+        reattach=True,
+    )
+    _out, err, _path = _lane_seat_followup_gate(
+        req,
+        {"reattach_used": True, "outcome_reg": minted.registration_id},
+        _snap_from_active(reg),
+    )
+    assert err is not None
+    assert err.error == "operator_seat_mismatch"
+    assert holder.registration_id != minted.registration_id
+
+
+def test_active_holder_still_mismatches(
+    isolated_registry: Path,
+) -> None:
+    """Live holder still refuses a same-lane mint on a different chat."""
+    from cdp_ask.followup_resolve import _lane_seat_followup_gate
+
+    lane = "22778"
+    reg, holder, _borrowed = _open_operator_pair(lane)
+    minted = reg.register_lane(
+        holder="reattach-mint",
+        purpose="operator-proxy",
+        parent_thread=lane,
+        launch_chrome=_noop_launch,
+        is_listening=lambda _p: False,
+    )
+    req = FollowupProjectAskRequest(
+        prompt_text="memo",
+        parent_thread=lane,
+        chat_url=CSE_TARGET_38282,
+        registration_id=minted.registration_id,
+        purpose="operator-proxy",
+        reattach=True,
+    )
+    _out, err, _path = _lane_seat_followup_gate(
+        req,
+        {"reattach_used": True, "outcome_reg": minted.registration_id},
+        _snap_from_active(reg),
+    )
+    assert err is not None
+    assert err.error == "operator_seat_mismatch"
+    assert reg._store.load_active()[holder.registration_id].get("status") == "active"
+
+
+def _vacant_lane_registration(lane: str) -> tuple[Any, Any]:
+    """Operator host on *lane* with chat_url bound and no open seat."""
+    from claude_bundles import cdp_registry as reg
+    from claude_bundles.cdp_registry.models import seat_open
+
+    host = reg.register_lane(
+        holder="vacant-bind",
+        purpose="operator-proxy",
+        parent_thread=lane,
+        launch_chrome=_noop_launch,
+        is_listening=lambda _p: False,
+    )
+    assert reg.bind_chat_url_only(host.registration_id, chat_url=CSE_TARGET_38282)
+    active = reg._store.load_active()
+    assert not seat_open(active[host.registration_id], lane)
+    return reg, host
+
+
+@pytest.mark.asyncio
+async def test_explicit_retain_lane_commits_seat_without_reattach(
+    isolated_registry: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Explicit retain_lane followup seats a vacant parent_thread without reattach."""
+    from claude_bundles.cdp_registry.models import seat_open
+
+    lane = "43491-explicit-retain"
+    reg, host = _vacant_lane_registration(lane)
+    store = ExecutionStore()
+    _upsert_spy(monkeypatch)
+    page = MagicMock()
+    page.url = CSE_TARGET_38282
+    pw = AsyncMock()
+    pw.stop = AsyncMock()
+    monkeypatch.setattr(
+        "cdp_ask.followup.find_page_on_lane", AsyncMock(return_value=(page, pw))
+    )
+    monkeypatch.setattr(
+        "cdp_ask.followup.send_followup_paste_half",
+        AsyncMock(
+            return_value={
+                "send_verified": True,
+                "receipt": "dom_paste",
+                "streaming_at_paste": False,
+                "url": CSE_TARGET_38282,
+                "pasted_at": 1.0,
+            }
+        ),
+    )
+    monkeypatch.setattr("cdp_ask.followup.emit_followup_event", lambda _e: None)
+    monkeypatch.setattr(
+        "cdp_ask.followup_resolve.scan_lane_cse_urls",
+        AsyncMock(return_value=[CSE_TARGET_38282]),
+    )
+    resp = await execute_followup(
+        FollowupProjectAskRequest(
+            prompt_text="memo",
+            parent_thread=lane,
+            chat_url=CSE_TARGET_38282,
+            registration_id=host.registration_id,
+            purpose="operator-proxy",
+            retain_lane=True,
+            reattach=False,
+        ),
+        store,
+    )
+    assert resp.ok is True
+    assert resp.reattach_used is False
+    assert resp.seated is True
+    assert resp.lane_holder == host.registration_id
+    assert seat_open(reg._store.load_active()[host.registration_id], lane)
+
+
+def test_commit_followup_lane_seat_refuses_foreign_holder(
+    isolated_registry: Path,
+) -> None:
+    """Explicit commit refuses when the lane holder is a different registration."""
+    from claude_bundles.cdp_registry.session_address import (
+        commit_followup_lane_seat,
+        open_lane_seat_holder,
+    )
+
+    lane = "43491-explicit-foreign"
+    reg, holder, borrowed = _open_operator_pair(lane)
+    with reg._store.ports_lock():
+        active = reg._store.load_active()
+        row = dict(active[borrowed.registration_id])
+        row["chat_url"] = CSE_TARGET_38282
+        row["chat_url_bound_at"] = 1.0
+        active[borrowed.registration_id] = row
+        reg._store.write_active(active)
+    snap_holder, snap_bound = open_lane_seat_holder(lane)
+    assert snap_holder == holder.registration_id
+    status = commit_followup_lane_seat(
+        borrowed.registration_id,
+        chat_url=CSE_TARGET_38282,
+        lane=lane,
+        snapshot_holder_id=snap_holder,
+        snapshot_seat_bound_at=snap_bound,
+    )
+    assert status == "refused"
+    after_holder, _ = open_lane_seat_holder(lane)
+    assert after_holder == holder.registration_id
+
+
+def test_commit_followup_missing_registry_row_not_seated(
+    isolated_registry: Path,
+) -> None:
+    from claude_bundles.cdp_registry.session_address import commit_followup_lane_seat
+
+    status = commit_followup_lane_seat(
+        "no-such-registration",
+        chat_url=CSE_TARGET_38282,
+        lane="43491-missing",
+        snapshot_holder_id=None,
+        snapshot_seat_bound_at=None,
+    )
+    assert status == "not_seated"
+
+
+def test_commit_followup_refuses_parent_backfill_cross_lane_seat(
+    isolated_registry: Path,
+) -> None:
+    """parent_thread backfill must not rewrite a seat held on another lane."""
+    from claude_bundles.cdp_registry.models import seat_open
+    from claude_bundles.cdp_registry.session_address import commit_followup_lane_seat
+
+    lane_a = "43491-seat-a"
+    lane_b = "43491-seat-b"
+    reg, host = _vacant_lane_registration(lane_a)
+    with reg._store.ports_lock():
+        active = reg._store.load_active()
+        row = dict(active[host.registration_id])
+        row["parent_thread"] = ""
+        row["seat_lane"] = lane_a
+        row["seat_bound_at"] = 50.0
+        row["seat_closed_at"] = None
+        active[host.registration_id] = row
+        reg._store.write_active(active)
+    assert seat_open(reg._store.load_active()[host.registration_id], lane_a)
+    status = commit_followup_lane_seat(
+        host.registration_id,
+        chat_url=CSE_TARGET_38282,
+        lane=lane_b,
+        snapshot_holder_id=None,
+        snapshot_seat_bound_at=None,
+    )
+    assert status == "refused"
+    row_after = reg._store.load_active()[host.registration_id]
+    assert str(row_after.get("parent_thread") or "").strip() != lane_b
+    assert seat_open(row_after, lane_a)
+
+
+@pytest.mark.asyncio
+async def test_explicit_followup_chat_url_only_refuses_occupied_lane(
+    isolated_registry: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """chat_url-only explicit followup cannot supersede another live lane holder."""
+    from claude_bundles.cdp_registry.models import seat_open
+
+    lane = "43491-explicit-occupied"
+    reg, holder, borrowed = _open_operator_pair(lane)
+    with reg._store.ports_lock():
+        active = reg._store.load_active()
+        row = dict(active[borrowed.registration_id])
+        row["chat_url"] = CSE_TARGET_38282
+        row["chat_url_bound_at"] = 1.0
+        active[borrowed.registration_id] = row
+        reg._store.write_active(active)
+    store = ExecutionStore()
+    page = MagicMock()
+    page.url = CSE_TARGET_38282
+    pw = AsyncMock()
+    pw.stop = AsyncMock()
+    monkeypatch.setattr(
+        "cdp_ask.followup.find_page_on_lane", AsyncMock(return_value=(page, pw))
+    )
+    monkeypatch.setattr("cdp_ask.followup.emit_followup_event", lambda _e: None)
+    monkeypatch.setattr(
+        "cdp_ask.followup_resolve.scan_lane_cse_urls",
+        AsyncMock(return_value=[CSE_TARGET_38282]),
+    )
+    resp = await execute_followup(
+        FollowupProjectAskRequest(
+            prompt_text="memo",
+            parent_thread=lane,
+            chat_url=CSE_TARGET_38282,
+            purpose="operator-proxy",
+            retain_lane=True,
+            reattach=False,
+        ),
+        store,
+    )
+    assert resp.ok is False
+    assert resp.error == "followup_seat_changed"
+    assert seat_open(reg._store.load_active()[holder.registration_id], lane)
+
+
+def test_commit_vacant_snapshot_null_to_null_commits(
+    isolated_registry: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Vacant lane at snapshot and commit: seat write proceeds."""
+    from claude_bundles.cdp_registry.models import seat_open
+    from claude_bundles.cdp_registry.session_address import commit_reattach_driving_seat
+
+    lane = "43491-a"
+    reg, host = _vacant_lane_registration(lane)
+    _upsert_spy(monkeypatch)
+    status = commit_reattach_driving_seat(
+        host.registration_id,
+        chat_url=CSE_TARGET_38282,
+        lane=lane,
+        snapshot_holder_id=None,
+        snapshot_seat_bound_at=None,
+    )
+    assert status == "committed"
+    assert seat_open(reg._store.load_active()[host.registration_id], lane)
+
+
+def test_commit_vacant_snapshot_null_to_self_commits(
+    isolated_registry: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Interim self-seat between snapshot and commit still commits."""
+    from claude_bundles.cdp_registry.models import seat_open
+    from claude_bundles.cdp_registry.session_address import commit_reattach_driving_seat
+
+    lane = "43491-b"
+    reg, host = _vacant_lane_registration(lane)
+    with reg._store.ports_lock():
+        active = reg._store.load_active()
+        row = dict(active[host.registration_id])
+        row["seat_lane"] = lane
+        row["seat_bound_at"] = 12.0
+        row["seat_closed_at"] = None
+        active[host.registration_id] = row
+        reg._store.write_active(active)
+    _upsert_spy(monkeypatch)
+    status = commit_reattach_driving_seat(
+        host.registration_id,
+        chat_url=CSE_TARGET_38282,
+        lane=lane,
+        snapshot_holder_id=None,
+        snapshot_seat_bound_at=None,
+    )
+    assert status == "committed"
+    assert seat_open(reg._store.load_active()[host.registration_id], lane)
+
+
+def test_commit_vacant_snapshot_null_to_other_refuses(
+    isolated_registry: Path,
+) -> None:
+    """A different holder after a vacant snapshot refuses without seating borrow."""
+    from claude_bundles.cdp_registry.models import seat_open
+    from claude_bundles.cdp_registry.session_address import commit_reattach_driving_seat
+
+    lane = "43491-c"
+    reg, host = _vacant_lane_registration(lane)
+    intruder = reg.register_lane(
+        holder="intruder",
+        purpose="operator-proxy",
+        parent_thread=lane,
+        launch_chrome=_noop_launch,
+        is_listening=lambda _p: False,
+    )
+    with reg._store.ports_lock():
+        active = reg._store.load_active()
+        row = dict(active[intruder.registration_id])
+        row["seat_lane"] = lane
+        row["seat_bound_at"] = 99.0
+        row["seat_closed_at"] = None
+        active[intruder.registration_id] = row
+        reg._store.write_active(active)
+    status = commit_reattach_driving_seat(
+        host.registration_id,
+        chat_url=CSE_TARGET_38282,
+        lane=lane,
+        snapshot_holder_id=None,
+        snapshot_seat_bound_at=None,
+    )
+    assert status == "refused"
+    assert not seat_open(reg._store.load_active()[host.registration_id], lane)
+
+
+@pytest.mark.asyncio
+async def test_followup_commit_not_seated_maps_reattach_not_seated(
+    isolated_registry: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """not_seated still pastes with seated=false and not_seated detail."""
+    import cdp_ask.followup as followup_mod
+
+    lane = "43491-d"
+    reg, _holder, borrowed = _open_operator_pair(lane)
+    store = ExecutionStore()
+    order = _arm_split_borrow(monkeypatch, reg, borrowed.registration_id, store=store)
+    monkeypatch.setattr(
+        followup_mod, "_commit_reattach_seat", lambda *_a, **_k: "not_seated"
+    )
+    resp = await execute_followup(
+        FollowupProjectAskRequest(
+            prompt_text="memo",
+            parent_thread=lane,
+            chat_url=CSE_TARGET_38282,
+            reattach=True,
+            purpose="operator-proxy",
+        ),
+        store,
+    )
+    assert resp.ok is True
+    assert resp.seated is False
+    assert "driving seat" in (resp.detail or "").lower()
+    assert "paste" in order
+
+
+@pytest.mark.asyncio
+async def test_explicit_retain_not_seated_pastes_without_registry_mutation(
+    isolated_registry: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Null-purpose row: not_seated pastes; purpose and active census unchanged."""
+    import claude_bundles.cdp_registry as cdp_registry
+
+    lane = "43491-houseless-not-seated"
+    reg, host = _vacant_lane_registration(lane)
+    with reg._store.ports_lock():
+        active = reg._store.load_active()
+        row = dict(active[host.registration_id])
+        row["purpose"] = None
+        row["parent_thread"] = None
+        active[host.registration_id] = row
+        reg._store.write_active(active)
+    before_ids = set(reg._store.load_active())
+    before_purpose = reg._store.load_active()[host.registration_id].get("purpose")
+    list_before = {r.registration_id for r in cdp_registry.list_active()}
+    store = ExecutionStore()
+    order: list[str] = []
+    page = MagicMock()
+    page.url = CSE_TARGET_38282
+    pw = AsyncMock()
+    pw.stop = AsyncMock()
+    monkeypatch.setattr(
+        "cdp_ask.followup.find_page_on_lane", AsyncMock(return_value=(page, pw))
+    )
+
+    async def _paste(*_args: Any, **_kwargs: Any) -> dict[str, Any]:
+        order.append("paste")
+        return {
+            "send_verified": True,
+            "receipt": "dom_committed",
+            "streaming_at_paste": False,
+            "url": CSE_TARGET_38282,
+            "pasted_at": 1.0,
+        }
+
+    monkeypatch.setattr("cdp_ask.followup.send_followup_paste_half", _paste)
+    monkeypatch.setattr("cdp_ask.followup.emit_followup_event", lambda _e: None)
+    monkeypatch.setattr(
+        "cdp_ask.followup_resolve.scan_lane_cse_urls",
+        AsyncMock(return_value=[CSE_TARGET_38282]),
+    )
+    resp = await execute_followup(
+        FollowupProjectAskRequest(
+            prompt_text="memo",
+            parent_thread=lane,
+            chat_url=CSE_TARGET_38282,
+            registration_id=host.registration_id,
+            purpose="operator-proxy",
+            retain_lane=True,
+            reattach=False,
+        ),
+        store,
+    )
+    assert resp.ok is True
+    assert resp.seated is False
+    assert "driving seat" in (resp.detail or "").lower()
+    assert "paste" in order
+    after = reg._store.load_active()
+    assert set(after) == before_ids
+    assert after[host.registration_id].get("purpose") == before_purpose
+    assert {r.registration_id for r in cdp_registry.list_active()} == list_before
 
 
 def test_commit_noop_bind_returns_not_seated(

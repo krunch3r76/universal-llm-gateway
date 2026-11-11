@@ -126,6 +126,9 @@ async def finish_cursor_sdk_generate_prepare(
         if admit_provenance is not None
         else (work_key.strip() if work_key and work_key.strip() else None)
     )
+    waiter_transcript_id = (
+        str(bound.get("transcript_id") or "").strip() or None
+    )
 
     # Wrap skips prompt resolution for packets; classify/coord share this mode.
     if packet_path is not None and not prompt_bind_mode:
@@ -205,6 +208,7 @@ async def finish_cursor_sdk_generate_prepare(
                     parent_thread_id=parent_dispatch_thread_id,
                     provenance_missing=provenance_missing,
                     work_key=admit_work_key,
+                    waiter_transcript_id=waiter_transcript_id,
                 )
                 claimed_via_atomic = True
                 _prepare.emit_sdk_thread_created(
@@ -232,6 +236,7 @@ async def finish_cursor_sdk_generate_prepare(
                     bus_lifecycle=effective_bus_lifecycle,
                     provenance_missing=provenance_missing,
                     work_key=admit_work_key,
+                    waiter_transcript_id=waiter_transcript_id,
                 )
                 _prepare.emit_sdk_thread_created(
                     request_id=request_id,
@@ -249,6 +254,7 @@ async def finish_cursor_sdk_generate_prepare(
                 caller_agent=caller_agent,
                 provenance_missing=provenance_missing,
                 work_key=admit_work_key,
+                waiter_transcript_id=waiter_transcript_id,
             )
             _prepare.emit_sdk_thread_created(
                 request_id=request_id,
@@ -275,6 +281,7 @@ async def finish_cursor_sdk_generate_prepare(
             bus_lifecycle=effective_bus_lifecycle,
             provenance_missing=provenance_missing,
             work_key=admit_work_key,
+            waiter_transcript_id=waiter_transcript_id,
         )
         _prepare.emit_sdk_thread_created(
             request_id=request_id,
@@ -298,6 +305,7 @@ async def finish_cursor_sdk_generate_prepare(
         admit_provenance=admit_provenance,
         bound_work_key=work_key,
         resolved_model=str(resolved_model) if resolved_model else None,
+        transcript_id=waiter_transcript_id,
     )
 
     from implement_admission.check_review_substrate import consultant_rung

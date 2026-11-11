@@ -8,10 +8,12 @@ from agent_bus_store import create_app
 from agent_bus_store.auth import require_token
 from agent_bus_store.db.connection import connect
 from agent_bus_store.db.endpoint_wake_ledger import (
+    CONSUMER,
     advance_scan,
     claim_due_wakes,
     get_cursor,
 )
+from agent_bus_store.testing.wake_cursor_test_support import rewind_wake_cursor_for_test
 
 
 def _app(tmp_path):
@@ -179,7 +181,7 @@ def test_fetch_unread_toc_mark_read_skips_peer_pending_wake(tmp_path) -> None:
         t_n = int(turn["turn_number"])
         get_cursor()
         with connect() as conn:
-            conn.execute("UPDATE endpoint_wake_cursor SET high_water_turn_id=0")
+            rewind_wake_cursor_for_test(conn, CONSUMER, to=0)
         advance_scan(
             "endpoint-wake-dispatcher",
             0,

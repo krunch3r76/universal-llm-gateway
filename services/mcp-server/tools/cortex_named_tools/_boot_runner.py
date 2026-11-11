@@ -815,7 +815,7 @@ def run_cortex_brief(
             **tc_summary,
             "fetch_hint": (
                 f"cortex(tool='entity_get', "
-                f'arguments=\'{{"entity_id": "{tc_summary["entity_id"]}"}}\')'
+                f'arguments=\'{{"entity_id": "{tc_summary["entity_id"]}", "intent": "card"}}\')'
             ),
         }
 

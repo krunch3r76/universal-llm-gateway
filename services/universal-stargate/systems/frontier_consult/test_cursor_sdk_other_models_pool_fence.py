@@ -15,6 +15,21 @@ from systems.frontier_consult.cursor_sdk_pool_fence import (
 )
 
 
+def _patch_explicit_pin_only_pool_mode(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        "implement_admission.cursor_sdk_other_models_pool."
+        "load_cursor_sdk_other_models_pool_mode",
+        lambda *_a, **_k: "explicit_pin_only",
+    )
+    import systems.frontier_consult.cursor_sdk_pool_fence as fence_mod
+
+    monkeypatch.setattr(
+        fence_mod,
+        "load_cursor_sdk_other_models_pool_mode",
+        lambda *_a, **_k: "explicit_pin_only",
+    )
+
+
 def _patch_prepare_deps(
     monkeypatch: pytest.MonkeyPatch,
     *,
@@ -91,9 +106,39 @@ def _patch_prepare_deps(
         "cursor/claude-fable-5",
     ],
 )
+def test_fence_explicit_other_models_pin_denied_by_default(
+    monkeypatch: pytest.MonkeyPatch, model: str
+) -> None:
+    published: list[object] = []
+    monkeypatch.setattr(
+        "systems.frontier_consult.cursor_sdk_generate_signals.publish_frontier_event",
+        lambda event: published.append(event),
+    )
+    with pytest.raises(FrontierEndpointError) as excinfo:
+        reject_other_models_pool_generate(
+            request_id="req-deny-pin",
+            role="cursor-sdk",
+            seat=None,
+            model=model,
+            resolved_model=model,
+        )
+    assert excinfo.value.code == "other_models_pool_denied"
+    assert [getattr(ev, "signal", "") for ev in published] == [
+        "frontier.sdk.pool.denied"
+    ]
+
+
+@pytest.mark.parametrize(
+    "model",
+    [
+        "cursor/claude-sonnet-5",
+        "cursor/claude-fable-5",
+    ],
+)
 def test_fence_explicit_other_models_pin_admitted_with_exempted_event(
     monkeypatch: pytest.MonkeyPatch, model: str
 ) -> None:
+    _patch_explicit_pin_only_pool_mode(monkeypatch)
     published: list[object] = []
     monkeypatch.setattr(
         "systems.frontier_consult.cursor_sdk_generate_signals.publish_frontier_event",
@@ -180,6 +225,7 @@ async def test_prepare_explicit_other_models_pin_reaches_mint(
     resolved: str,
     admit_other_cursor_models: None,
 ) -> None:
+    _patch_explicit_pin_only_pool_mode(monkeypatch)
     probes = _patch_prepare_deps(monkeypatch, resolved_model=resolved)
     try:
         await prepare_mod.prepare_cursor_sdk_generate(

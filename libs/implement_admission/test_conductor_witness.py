@@ -1448,6 +1448,49 @@ def test_g4_stamped_route_ignores_clearing_commentary(tmp_path: Path) -> None:
     )
 
 
+def test_cdp_fail_route_parses_anthropic() -> None:
+    """Amendment v2: no-CDP-host stamp is a first-class route token."""
+    from implement_admission.conductor_witness_table import _cdp_fail_route
+
+    tip = _gated_tip(g4_stops="", g6_stops="cdp_fail_route=anthropic", sidecars="")
+    assert _cdp_fail_route(tip, "G6") == "anthropic"
+
+
+def test_g6_fold_anthropic_fallback_without_reroute_flag(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Amendment v3: anthropic fail route folds like default critic when reroute off."""
+    from implement_admission import impresario_policy
+
+    policy = impresario_policy.load_impresario_policy()
+    assert policy.cdp_reroute_for_critic is False
+    monkeypatch.setattr(
+        impresario_policy,
+        "load_impresario_policy",
+        lambda *args, **kwargs: policy,
+    )
+    files_root = tmp_path / "cortex"
+    anthropic_uri, anthropic_sha = _sha_file(
+        files_root,
+        "notes/system/reviews/g6-anthropic-fallback.md",
+        _REROUTE_RATIFY + "anthropic-fallback\n",
+    )
+    tip = _gated_tip(
+        g4_stops="",
+        g6_stops="cdp_fail_route=anthropic",
+        sidecars=_sidecar("G6-REVIEW-anthropic", anthropic_uri, anthropic_sha),
+    )
+    witnesses = row_witnesses(
+        "anthropic-fallback-fold",
+        tip_body=tip,
+        deps=_reroute_deps(tmp_path),
+        files_root=files_root,
+    )
+    assert witnesses.get("G6") is not None
+    assert witnesses["G6"].detail == anthropic_uri
+    assert witnesses["G6"].source == "artifact:G6-REVIEW-anthropic"
+
+
 def test_run_to_completion_names_route_on_artifact_and_stops() -> None:
     """U8 map: Run to completion → reference-run-to-completion.md."""
     skill = (
@@ -1470,13 +1513,13 @@ def test_sqlite_open_failure_surfaces_in_fold_and_closeout(
     ``cortex_conn`` raising ``unable to open database file`` must not leave
     G7 OPEN as a witnessed land, and must not journal ``FOLD_FAILED`` into
     the tip. An API failure sets ``fold_failed`` and raises
-    ``WitnessCortexUnavailable`` from closeout.
+    ``WitnessCortexUnavailableError`` from closeout.
     """
     import sqlite3
 
     from implement_admission.conductor_witness_defaults import (
         DefaultWitnessCortex,
-        WitnessCortexUnavailable,
+        WitnessCortexUnavailableError,
         closeout_witnesses_for_slug,
     )
 
@@ -1529,7 +1572,7 @@ def test_sqlite_open_failure_surfaces_in_fold_and_closeout(
     from implement_admission.conductor_witness import resolve_entry_gate_from_fold
 
     assert resolve_entry_gate_from_fold(fold) is None
-    with pytest.raises(WitnessCortexUnavailable, match="cortex api unreachable"):
+    with pytest.raises(WitnessCortexUnavailableError, match="cortex api unreachable"):
         closeout_witnesses_for_slug(
             _SLUG, tip_body=tip, deps=deps, files_root=files_root
         )
@@ -1541,7 +1584,7 @@ def test_connect_error_is_cortex_unavailable(monkeypatch: pytest.MonkeyPatch) ->
 
     from implement_admission.conductor_witness_defaults import (
         DefaultWitnessCortex,
-        WitnessCortexUnavailable,
+        WitnessCortexUnavailableError,
     )
 
     class _Connect:
@@ -1558,7 +1601,7 @@ def test_connect_error_is_cortex_unavailable(monkeypatch: pytest.MonkeyPatch) ->
         "transport_utils.make_sync_client",
         lambda *_a, **_k: _Connect(),
     )
-    with pytest.raises(WitnessCortexUnavailable, match="connection refused"):
+    with pytest.raises(WitnessCortexUnavailableError, match="connection refused"):
         DefaultWitnessCortex().entity_get("todo:missing-transport")
 
 

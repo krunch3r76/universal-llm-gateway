@@ -8,7 +8,7 @@ from urllib.parse import quote, urlencode
 from cortex_store.handoff_surface import build_handoff_surface
 
 from .._cortex_relay import cx
-from .._file_helpers import read_files_batch
+from .._file_helpers import read_file_result
 
 
 def resolve_transcript(
@@ -43,10 +43,110 @@ def resolve_transcript(
     source_uri = entity_raw.get("source_uri") or ""
     composed_md = ""
     if source_uri:
-        md_results = read_files_batch([source_uri])
-        md_content = md_results.get(source_uri)
-        if isinstance(md_content, str):
-            composed_md = md_content
+        rel = source_uri.lstrip("/")
+        chunks: list[str] = []
+        cursor: int | None = None
+        pinned_hash: str | None = None
+        seen_cursors: set[int] = set()
+        read_out: dict[str, Any] = {}
+        while True:
+            if cursor is not None and cursor in seen_cursors:
+                return {
+                    "error": "transcript_export_cursor_stuck",
+                    "transcript_id": clean_id,
+                    "transcript_entity_id": entity_key,
+                    "detail": (
+                        "Transcript export chunk_cursor did not advance; "
+                        "refusing to stitch a mixed or stuck body."
+                    ),
+                    "read_sha256": pinned_hash,
+                }
+            if cursor is not None:
+                seen_cursors.add(cursor)
+            read_kwargs: dict[str, Any] = {"export": True}
+            if cursor is not None:
+                read_kwargs["chunk_cursor"] = cursor
+                read_kwargs["chunk_cursor_provided"] = True
+                if pinned_hash:
+                    read_kwargs["expected_read_sha256"] = pinned_hash
+            read_out = read_file_result(rel, **read_kwargs)
+            file_hash = read_out.get("read_sha256")
+            if isinstance(file_hash, str) and file_hash:
+                if pinned_hash is None:
+                    pinned_hash = file_hash
+                elif file_hash != pinned_hash:
+                    return {
+                        "error": "transcript_export_revision_changed",
+                        "transcript_id": clean_id,
+                        "transcript_entity_id": entity_key,
+                        "detail": (
+                            "Transcript export read_sha256 changed between chunks; "
+                            "refusing to join two revisions."
+                        ),
+                        "read_sha256": file_hash,
+                        "expected_read_sha256": pinned_hash,
+                    }
+            if read_out.get("code") == "sparse_manifest_requires_expansion":
+                return {
+                    "error": "transcript_source_sparse_manifest",
+                    "transcript_id": clean_id,
+                    "transcript_entity_id": entity_key,
+                    "detail": (
+                        "Transcript source_uri read returned manifest without body; "
+                        "export=true failed or source is not expandable."
+                    ),
+                    "read_sha256": read_out.get("read_sha256"),
+                }
+            if "error" in read_out or read_out.get("code"):
+                return {
+                    "error": "transcript_source_read_failed",
+                    "transcript_id": clean_id,
+                    "transcript_entity_id": entity_key,
+                    "detail": str(read_out.get("error") or read_out.get("message")),
+                }
+            body = read_out.get("content")
+            if not isinstance(body, str):
+                return {
+                    "error": "transcript_source_empty",
+                    "transcript_id": clean_id,
+                    "transcript_entity_id": entity_key,
+                    "detail": "Transcript markdown body empty after explicit export read.",
+                }
+            chunks.append(body)
+            if not read_out.get("truncated"):
+                break
+            nxt = read_out.get("chunk_cursor_next")
+            if not isinstance(nxt, int):
+                return {
+                    "error": "transcript_export_truncated",
+                    "transcript_id": clean_id,
+                    "transcript_entity_id": entity_key,
+                    "detail": (
+                        "Transcript export was truncated without chunk_cursor_next; "
+                        "refusing to clip the body silently."
+                    ),
+                    "read_sha256": read_out.get("read_sha256"),
+                }
+            if cursor is not None and nxt <= cursor:
+                return {
+                    "error": "transcript_export_cursor_stuck",
+                    "transcript_id": clean_id,
+                    "transcript_entity_id": entity_key,
+                    "detail": (
+                        "Transcript export chunk_cursor did not advance; "
+                        "refusing to stitch a mixed or stuck body."
+                    ),
+                    "read_sha256": pinned_hash,
+                }
+            cursor = nxt
+        composed_md = "".join(chunks)
+        if not composed_md.strip():
+            return {
+                "error": "transcript_source_empty",
+                "transcript_id": clean_id,
+                "transcript_entity_id": entity_key,
+                "detail": "Transcript markdown body empty after explicit export read.",
+            }
 
     chain_qs = urlencode({"node": entity_key, "edge_type": "continues", "hops": 5})
     chain_raw = cx("GET", f"/edges/traverse?{chain_qs}")

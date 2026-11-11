@@ -300,6 +300,33 @@ def parse_turn_numbers(raw: Any) -> list[int] | None:
     return None
 
 
+def _turn_picks(turn_s: str) -> list[int] | None:
+    """Parse a turn label into ≤10 pick integers, or None when unparseable/over cap."""
+    text = str(turn_s).strip()
+    if not text:
+        return None
+    for sep in ("–", "-"):
+        if sep in text and "," not in text:
+            left, right = text.split(sep, 1)
+            try:
+                start = int(left.strip())
+                end = int(right.strip())
+            except ValueError:
+                return None
+            if start < 1 or end < 1 or end < start:
+                return None
+            picks = list(range(start, end + 1))
+            if len(picks) > 10:
+                return None
+            return picks
+    parsed = parse_turn_numbers(text)
+    if parsed is None:
+        return None
+    if len(parsed) > 10:
+        return None
+    return parsed
+
+
 def format_turn_pointer_label(turn_numbers: list[int]) -> str:
     """Human batch label for pointer text, e.g. 69–73 for a contiguous run."""
     nums = sorted(set(int(n) for n in turn_numbers))
@@ -331,9 +358,14 @@ def build_wake_pointer(
     else:
         first_sender = sender.split(",")[0].strip() or "unknown"
         reply_target = normalize_bus_address(first_sender)
+    picks = _turn_picks(turn_s)
+    if picks:
+        read_cmd = f"agent_bus_read get thread {thread} turn_numbers {picks}"
+    else:
+        read_cmd = f'agent_bus_read fetch thread {thread} projection="full"'
     return (
         f"WAKE — agent-bus thread {thread} {turn_word} {turn_s} (from {sender}). "
-        f"Use your ulg-code connector: agent_bus_read fetch thread {thread}, "
+        f"Use your ulg-code connector: {read_cmd}, "
         f"read {turn_word} {turn_s} only. Reply on thread {thread} to={reply_target} with "
         f"subject ANSWER|… per that turn. Do not paste letter drafts."
     )
@@ -457,17 +489,32 @@ def _field_qualifies_as_stored_conversation_url(raw: str) -> bool:
     return bool(conversation_id_from_url(text))
 
 
+_BINDING_REF_PREFIX = "agent_endpoint_subscriptions:"
+
+
+def _subscription_id_from_binding_reference(binding_reference: str) -> int | None:
+    """Parse ``agent_endpoint_subscriptions`` row id from a delivery binding_reference."""
+    ref = str(binding_reference or "")
+    if not ref:
+        return None
+    if ref.startswith(_BINDING_REF_PREFIX):
+        ref = ref[len(_BINDING_REF_PREFIX) :]
+    if re.fullmatch(r"[0-9]+", ref, re.ASCII) is None:
+        return None
+    return int(ref)
+
+
 def _stored_endpoint_from_delivery_binding(binding_reference: str) -> str:
     """Read subscription row URL fields by id; no synthesis or pinned fallback."""
     from agent_bus_store.db.connection import connect
 
-    ref = str(binding_reference or "").strip()
-    if not ref:
+    sub_id = _subscription_id_from_binding_reference(binding_reference)
+    if sub_id is None:
         return ""
     with connect() as conn:
         row = conn.execute(
             "SELECT * FROM agent_endpoint_subscriptions WHERE id=? LIMIT 1",
-            (ref,),
+            (sub_id,),
         ).fetchone()
     if row is None:
         return ""
@@ -491,8 +538,8 @@ def _refuse_unless_binding_row_matches_claim(
     from agent_bus_store.db.connection import connect
 
     claim_norm = _normalize_stored_endpoint(claim_endpoint)
-    ref = str(binding_reference or "").strip()
-    if not ref:
+    sub_id = _subscription_id_from_binding_reference(binding_reference)
+    if sub_id is None:
         return _refuse(
             "bad_conversation_url",
             stored_endpoint="",
@@ -501,7 +548,7 @@ def _refuse_unless_binding_row_matches_claim(
     with connect() as conn:
         row = conn.execute(
             "SELECT * FROM agent_endpoint_subscriptions WHERE id=? LIMIT 1",
-            (ref,),
+            (sub_id,),
         ).fetchone()
     if row is None:
         return _refuse(

@@ -193,7 +193,7 @@ Only reserved spine tag: `role:root`. Other `role:*` tags are rejected on write.
 | Read, in order | Kind |
 |---|---|
 | a `watches:<id>` tag | monitor of that thread |
-| `lane:liaison` and `role:root`, and no `watches:` tag | Impresario house |
+| `lane:liaison` (legacy tag; birth still sets this) and `role:root`, and no `watches:` tag | Impresario house |
 | anything else | neither |
 
 `type:monitor` without `watches:<id>` is not a monitor. `lane:liaison` on a child lane that lacks `role:root` is not an Impresario house. Birth of a monitor sets `type:monitor` and `watches:<id>` and does not set `type:continuity`. Birth of an Impresario house sets `lane:liaison` and `role:root`. `watch:<id>` is the same key as `watches:<id>`.

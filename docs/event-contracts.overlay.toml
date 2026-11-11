@@ -254,6 +254,7 @@
 "mcp.response.guard.init_failed" = "Response size guard middleware failed to initialize at startup"
 "mcp.response.guarded" = "Tool response exceeded profile threshold; stored in memory, reference returned"
 "mcp.response.retrieved" = "Consumer retrieved a stored oversized response via `retrieve` tool"
+"mcp.response.retrieve_refused" = "Selective retrieve refused: stored payload lacks top-level string content for section/line windows"
 "mcp.server.claude.manifest.boot" = "Claude dispatcher manifest derived at MCP boot; `names_sha256 = sha256(json.dumps(sorted(tool_names)))` for drift detection"
 "mcp.server.grok.manifest.boot" = "Grok flat manifest derived at MCP boot; `names_sha256 = sha256(json.dumps(sorted(canonical_names)))` for drift detection"
 "mcp.session.close.atomic" = "Session closed successfully — transcript assembled, written to disk, and journal row + entity created atomically. Fires once per successful `session_close` op. `content_hash` is the SHA-256 of the on-disk markdown (`sha256:<hex>`); `turn_count` and `byte_count` come from the verbatim assembly."

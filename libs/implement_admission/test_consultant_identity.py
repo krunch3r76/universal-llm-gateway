@@ -17,11 +17,11 @@ pytestmark = pytest.mark.offline
 
 def test_alias_fold_cdp_fable_vs_cursor_fable_same_effort_not_independent() -> None:
     cdp_id = consultant_identity("cdp/fable")
-    cursor_id = consultant_identity("cursor/claude-fable-5-1")
-    cursor_knob = consultant_identity("cursor/claude-fable-5-1", {"effort": "high"})
-    assert cdp_id.model_identity == "claude-fable-5-1"
-    assert cursor_id.model_identity == "claude-fable-5-1"
-    assert cursor_knob.model_identity == "claude-fable-5-1"
+    cursor_id = consultant_identity("cursor/claude-fable-5-2")
+    cursor_knob = consultant_identity("cursor/claude-fable-5-2", {"effort": "high"})
+    assert cdp_id.model_identity == "claude-fable-5-2"
+    assert cursor_id.model_identity == "claude-fable-5-2"
+    assert cursor_knob.model_identity == "claude-fable-5-2"
     assert cdp_id.rung == "high"
     assert cursor_id.rung == "high"
     assert cursor_knob.rung == "high"

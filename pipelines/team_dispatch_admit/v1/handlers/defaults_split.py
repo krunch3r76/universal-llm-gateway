@@ -163,6 +163,14 @@ def _resolve_sdk_target(
                 if explicit_pin
                 else "sdk_generate_model_invalid"
             )
+        from implement_admission.cursor_sdk_other_models_pool import (
+            other_models_pool_generate_admitted,
+        )
+
+        if not other_models_pool_generate_admitted(
+            model_pin=model, resolved_model=resolved
+        ):
+            raise ValueError("other_models_pool_denied")
     elif profile.allowed_models and resolved not in profile.allowed_models:
         raise ValueError("sdk_generate_model_invalid")
     if workflow_override:
@@ -198,6 +206,17 @@ def _seat_field_error(exc: ValueError) -> dict[str, Any]:
             code="sdk_substrate_required",
             field="seat",
             reason="SDK substrate required",
+        )
+    if code == "other_models_pool_denied":
+        return reject_envelope(
+            status_code=422,
+            code="other_models_pool_denied",
+            field="model",
+            reason=(
+                "cursor-sdk Other Models pool is retired "
+                "(cursor_sdk_other_models_pool=deny)"
+            ),
+            details={"pool": "other_models"},
         )
     if code in {"sdk_generate_model_invalid", "sdk_generate_model_invalid_explicit"}:
         explicit = code.endswith("_explicit")

@@ -94,6 +94,69 @@ def test_md_rewrite_section_warns_on_accidental_truncation(md_tool) -> None:
     assert "_warning" in res
 
 
+def test_md_rewrite_parent_discloses_removed_children(md_tool) -> None:
+    fn, root = md_tool
+    _write(
+        root,
+        "parent.md",
+        "# Parent\n\nparent own body that is long enough to matter.\n\n## Child\n\nchild text\n",
+    )
+    dropped = fn(
+        op="rewrite_section",
+        path="parent.md",
+        sandbox="cortex",
+        section="Parent",
+        content="parent own body only\n",
+    )
+    assert dropped["children_removed"] == ["Parent/Child"]
+    assert "includes child headings" in dropped["_warning"]
+    kept = fn(
+        op="rewrite_section",
+        path="parent.md",
+        sandbox="cortex",
+        section="Parent",
+        content="parent own body only\n\n## Child\n\nchild text\n",
+    )
+    assert "children_removed" not in kept
+
+
+def test_children_removed_are_ordered_ids_including_nested_duplicates(md_tool) -> None:
+    fn, root = md_tool
+    _write(
+        root,
+        "tree.md",
+        "# Parent\n\nown\n\n## Child\n\nkept child\n\n### Grand\n\ngone\n\n"
+        "## Twin\n\none\n\n## Twin\n\ntwo\n",
+    )
+    nested = fn(
+        op="rewrite_section",
+        path="tree.md",
+        sandbox="cortex",
+        section="Parent",
+        content="own\n\n## Child\n\nkept child\n\n## Twin\n\none\n\n## Twin\n\ntwo\n",
+    )
+    assert nested["children_removed"] == ["Parent/Child/Grand"]
+    _write(
+        root,
+        "tree.md",
+        "# Parent\n\nown\n\n## Child\n\nkept child\n\n### Grand\n\ngone\n\n"
+        "## Twin\n\none\n\n## Twin\n\ntwo\n",
+    )
+    both = fn(
+        op="rewrite_section",
+        path="tree.md",
+        sandbox="cortex",
+        section="Parent",
+        content="own only\n",
+    )
+    assert both["children_removed"] == [
+        "Parent/Child",
+        "Parent/Child/Grand",
+        "Parent/Twin",
+        "Parent/Twin",
+    ]
+
+
 def test_md_delete_reports_removed_body(md_tool) -> None:
     fn, root = md_tool
     _write(root, "charter.md", DOC)

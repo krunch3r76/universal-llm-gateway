@@ -1,11 +1,11 @@
-"""Friction 19936 — md_read empty/absent section returns the full document.
+"""Friction 19936 — prior contract: empty section returned the full document.
 
 The fs ``md_read`` op defaults ``section`` to ``""``; in the text/markdown path
 that value also selected the (often empty) preamble, so a bare ``md_read`` on a
-heading-first doc silently returned ``{"content": ""}``. The read surface now
-treats omitted/empty/whitespace section as a full-document request, while the
-markdown-section write primitive keeps ``""`` = preamble and the PDF navigator
-keeps its explicit empty-selector refusal.
+heading-first doc silently returned ``{"content": ""}``. Slice 1 sparse default
+returns ``selection=manifest`` without a ``content`` key; the markdown-section write
+primitive keeps ``""`` = preamble and the PDF navigator keeps its explicit
+empty-selector refusal.
 """
 
 from __future__ import annotations
@@ -39,40 +39,41 @@ def _write(root: Path, name: str, text: str) -> None:
     (root / name).write_text(text, encoding="utf-8")
 
 
-def test_empty_section_returns_full_document(md_tool) -> None:
+def test_empty_section_returns_manifest(md_tool) -> None:
     fn, root = md_tool
     _write(root, "kernel.md", HEADING_FIRST)
     res = fn(op="read_section", path="kernel.md", sandbox="cortex", section="")
-    assert res["content"] == HEADING_FIRST
-    assert res["section"] is None
-    assert res["selection"] == "full_document"
+    assert "content" not in res
+    assert res["selection"] == "manifest"
+    assert "read_sha256" in res
+    assert "content" in res["omitted"]
 
 
-def test_omitted_section_returns_full_document(md_tool) -> None:
+def test_omitted_section_returns_manifest(md_tool) -> None:
     fn, root = md_tool
     _write(root, "kernel.md", HEADING_FIRST)
     res = fn(op="read_section", path="kernel.md", sandbox="cortex")
-    assert res["content"] == HEADING_FIRST
-    assert res["section"] is None
-    assert res["selection"] == "full_document"
+    assert "content" not in res
+    assert res["selection"] == "manifest"
 
 
-def test_whitespace_only_section_returns_full_document(md_tool) -> None:
+def test_whitespace_only_section_returns_manifest(md_tool) -> None:
     fn, root = md_tool
     _write(root, "kernel.md", HEADING_FIRST)
     res = fn(op="read_section", path="kernel.md", sandbox="cortex", section="   ")
-    assert res["content"] == HEADING_FIRST
-    assert res["selection"] == "full_document"
+    assert "content" not in res
+    assert res["selection"] == "manifest"
 
 
-def test_preamble_present_empty_section_returns_whole_document(md_tool) -> None:
+def test_preamble_present_empty_section_returns_manifest_not_preamble_body(
+    md_tool,
+) -> None:
     fn, root = md_tool
     _write(root, "doc.md", PREAMBLE_DOC)
     res = fn(op="read_section", path="doc.md", sandbox="cortex", section="")
-    # whole document, not merely the leading preamble paragraph
-    assert res["content"] == PREAMBLE_DOC
-    assert "Section body." in res["content"]
-    assert res["selection"] == "full_document"
+    assert "content" not in res
+    assert res["selection"] == "manifest"
+    assert res.get("preamble") is True
 
 
 def test_real_section_unchanged_and_unmarked(md_tool) -> None:
@@ -81,7 +82,7 @@ def test_real_section_unchanged_and_unmarked(md_tool) -> None:
     res = fn(op="read_section", path="doc.md", sandbox="cortex", section="Title")
     assert "Section body." in res["content"]
     assert res["section"] == "Title"
-    assert "selection" not in res
+    assert res["selection"] == "section"
 
 
 def test_nonexistent_section_errors_without_fallback(md_tool) -> None:

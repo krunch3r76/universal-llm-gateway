@@ -7,9 +7,36 @@ must patch the HTTP client or set GIT_INTEGRATION_WORKER_URL in the test.
 
 from __future__ import annotations
 
+import os
+import tempfile
 from pathlib import Path
 
 import pytest
+
+_PIN_ENV = "PYTEST_EVENTS_INGEST_SOCK_PIN"
+
+
+def _pin_events_ingest_sock_off_live() -> None:
+    """Point ``EVENTS_INGEST_SOCK`` at a fresh tmp path before any libs package imports.
+
+    ``agent_bus_store.events.publisher``, ``cortex_store.event_publisher`` and
+    ``mcp_events`` read the variable at import time and start a sender thread
+    that connects at once (default ``/tmp/universal-protocol/events.sock``).
+    ``libs/`` has no ``__init__.py``, so pytest loads this conftest before it
+    imports ``bus_watch.conftest`` or ``agent_bus_store.conftest``, whose
+    package ``__init__`` modules already pull a publisher in. A second call
+    in the same process is a no-op.
+    """
+    pinned = os.environ.get(_PIN_ENV)
+    if pinned and os.environ.get("EVENTS_INGEST_SOCK") == pinned:
+        return
+    pin_dir = tempfile.mkdtemp(prefix="pytest-events-ingest-")
+    pinned = os.path.join(pin_dir, "events.sock")
+    os.environ[_PIN_ENV] = pinned
+    os.environ["EVENTS_INGEST_SOCK"] = pinned
+
+
+_pin_events_ingest_sock_off_live()
 
 
 @pytest.fixture(autouse=True)

@@ -112,3 +112,33 @@ def test_off_master_worker_landed_line_is_not_an_unmarked_claim(tmp_path: Path) 
     assert _UNMARKED_LAND_CLAIM.search(receipt) is None
     assert "off master" in receipt.lower()
     assert f"landed: {tip}" not in receipt
+
+
+def test_envelope_sidecar_land_claim_rewrite_projects_through_envelope(
+    tmp_path: Path,
+) -> None:
+    """Land-claim rewrite must read the envelope section, not bytes before line 1 (AC12)."""
+    from services.git_integration_worker.cursor_sdk_deliverables import write_repo_sidecar
+    from services.git_integration_worker.relay.closeout_plane_probe import (
+        rewrite_receipt_preamble_file,
+    )
+
+    repo = _init_hub(tmp_path)
+    branch = "cursor-sdk/lane-amend-land"
+    tip = _one_commit_lane(repo, branch)
+    path, _archived = write_repo_sidecar(
+        repo,
+        "d-amend",
+        "status: complete\nresidue: none\nlanded: true\n",
+    )
+    rewrite_receipt_preamble_file(
+        path,
+        repo=repo,
+        sha=tip,
+        branch=branch,
+    )
+    text = path.read_text(encoding="utf-8")
+    assert text.splitlines()[0] == "## executive_envelope"
+    assert len(re.findall(r"(?m)^## executive_envelope$", text)) == 1
+    assert _UNMARKED_LAND_CLAIM.search(text) is None
+    assert "off master" in text.lower()

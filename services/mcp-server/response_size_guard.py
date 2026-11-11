@@ -28,13 +28,19 @@ from fastmcp.server.middleware.middleware import CallNext, Middleware, Middlewar
 from fastmcp.tools.base import ToolResult
 from markdown_sections import SectionError
 from markdown_sections import list_sections as md_list_sections
+from markdown_sections import read_section as md_read_section
 from mcp_events import record
 from request_profile import (
     current_profile,
     current_request_metadata,
     current_structured_capable,
 )
-from response_overflow_manifest import try_markdown_overflow_replacement
+from response_overflow_manifest import (
+    STRUCTURE_BUDGET_BYTES,
+    _extract_primary_text,
+    primary_text_basis,
+    try_markdown_overflow_replacement,
+)
 from tool_access import CURSOR_SAFE_PROFILE
 
 if TYPE_CHECKING:
@@ -68,6 +74,10 @@ _DISABLED: bool = os.getenv("MCP_RESPONSE_SIZE_GUARD_DISABLE", "").strip().lower
 _CONTENT_LEAN_TOOLS: frozenset[str] = frozenset({"cortex", "agent_bus", "fs", "rag"})
 _CONTENT_LEAN_FLOOR_BYTES: int = int(
     os.getenv("MCP_CONTENT_LEAN_FLOOR_BYTES", str(2 * 1024))
+)
+_PER_CALL_FLOOR_BYTES: int = int(os.getenv("MCP_PER_CALL_FLOOR_BYTES", "2048"))
+_PER_CALL_CEILING_TOOLS: frozenset[str] = frozenset(
+    {"fs_read", "agent_bus_read", "cortex_read"}
 )
 _MIRROR_PLACEHOLDER: str = '{"_mirror":"suppressed","read":"structuredContent"}'
 _MIRROR_SUPPRESS_TOOLS: frozenset[str] = frozenset(
@@ -292,6 +302,28 @@ def _normalize_optional_int(value: Any) -> int | None:
     if isinstance(value, str) and value.isdigit():
         return int(value)
     return None
+
+
+def _per_call_ceiling(
+    context: MiddlewareContext[Any], limit: int, tool_name: str
+) -> tuple[int, str]:
+    """Return the hard byte ceiling for this tool call (profile limit unless lowered).
+
+    Only read companions honor ``max_response_bytes``; invalid values, booleans,
+    and non-positive numbers are treated as absent so master behavior is preserved.
+    """
+    if tool_name not in _PER_CALL_CEILING_TOOLS:
+        return limit, "profile"
+    arguments = context.message.arguments
+    if not isinstance(arguments, dict):
+        return limit, "profile"
+    raw = arguments.get("max_response_bytes")
+    if isinstance(raw, bool):
+        return limit, "profile"
+    requested = _normalize_optional_int(raw)
+    if requested is None or requested <= 0:
+        return limit, "profile"
+    return max(_PER_CALL_FLOOR_BYTES, min(requested, limit)), "per_call"
 
 
 def _adaptive_limit(
@@ -686,7 +718,7 @@ def _cortex_manifest(
         first_id = str(items[0].get("id", "") or "") if items else ""
         if first_id:
             selective_options.append(
-                f'cortex(tool="entity_get", arguments=\'{{"entity_id":"{first_id}"}}\')'
+                f'cortex(tool="entity_get", arguments=\'{{"entity_id":"{first_id}","intent":"card"}}\')'
             )
         manifest["request_particular_payload"] = bool(first_id)
         manifest["selective_options"] = selective_options or [
@@ -782,7 +814,7 @@ def _cortex_manifest(
             first_id = str(provisional[0].get("id", "") or "")
             if first_id:
                 selective_options.append(
-                    f'cortex(tool="entity_get", arguments=\'{{"entity_id":"{first_id}"}}\')'
+                    f'cortex(tool="entity_get", arguments=\'{{"entity_id":"{first_id}","intent":"card"}}\')'
                 )
         manifest["selective_options"] = selective_options
         return manifest
@@ -872,6 +904,7 @@ def _replacement_result(
         )
         return ToolResult(content="\n".join(note_lines), structured_content=manifest)
 
+    structure_budget = min(STRUCTURE_BUDGET_BYTES, max(threshold // 2, 1))
     markdown_replacement = try_markdown_overflow_replacement(
         ref_id,
         tool_name,
@@ -879,6 +912,7 @@ def _replacement_result(
         threshold,
         result,
         measure_result=_measure_result,
+        structure_budget=structure_budget,
     )
     if markdown_replacement is not None:
         return markdown_replacement
@@ -894,6 +928,61 @@ def _replacement_result(
 
 
 _SEMANTIC_GUARD_TOOLS: frozenset[str] = frozenset({"agent_bus", "cortex"})
+
+_SPARSE_SLICE1_POLICY = "slice1_document_and_entity_preview"
+
+
+def _node_is_sparse_document_payload(node: dict[str, Any]) -> bool:
+    """Passthrough requires the root marker. Nested selection and flag-only payloads do not qualify."""
+    if node.get("code") == "sparse_payload_over_byte_ceiling":
+        return True
+    if node.get("sparse_policy") != _SPARSE_SLICE1_POLICY:
+        return False
+    return node.get("selection") in {
+        "manifest",
+        "section",
+        "sections",
+        "export",
+        "multi",
+    }
+
+
+def _content_base64_nodes(node: Any) -> bool:
+    """True when a non-document binary body is sitting on this payload."""
+    if isinstance(node, dict):
+        if isinstance(node.get("content_base64"), str):
+            return True
+        return any(_content_base64_nodes(value) for value in node.values())
+    if isinstance(node, list):
+        return any(_content_base64_nodes(value) for value in node)
+    return False
+
+
+def _sparse_document_read_passthrough(result: ToolResult) -> bool:
+    """Root-marked sparse document reads must not be re-clipped by the byte guard.
+
+    A nested dict that would qualify on its own does not earn passthrough.
+    ``sparse_section_batch`` / ``sparse_explicit_export`` without the root
+    ``sparse_policy`` marker do not earn it either. ``selection=multi`` covers
+    read_multi export and default manifests, not only section batches.
+
+    A large non-document ``content_base64`` does not earn passthrough either.
+    The marker stays on the payload so the stored copy keeps sparse provenance,
+    and the real size check below externalizes it. Document text under the
+    sparse ceiling still passes through: it has no ``content_base64``.
+    """
+    structured = result.structured_content
+    if not isinstance(structured, dict):
+        return False
+    if not _node_is_sparse_document_payload(structured):
+        return False
+    if _content_base64_nodes(structured):
+        try:
+            if _measure_result(result) > _threshold_for_profile():
+                return False
+        except Exception:
+            return False
+    return True
 
 
 def _is_single_json_mirror_text(result: ToolResult) -> tuple[str, Any] | None:
@@ -935,9 +1024,7 @@ def _lean_content(result: ToolResult, *, tool_name: str) -> ToolResult:
             from mcp.types import TextContent
 
             candidate = result.model_copy(
-                update={
-                    "content": [TextContent(type="text", text=_MIRROR_PLACEHOLDER)]
-                }
+                update={"content": [TextContent(type="text", text=_MIRROR_PLACEHOLDER)]}
             )
             threshold = _threshold_for_profile()
             target = (
@@ -1024,10 +1111,18 @@ class ResponseSizeGuard(Middleware):
             return result
         if _is_tape_read_exempt(context):
             return result
+        if _sparse_document_read_passthrough(result):
+            return _lean_content(result, tool_name=tool_name)
 
         threshold = _threshold_for_profile()
+        reasoning_target = _reasoning_target_bytes(threshold)
+        needs_semantic_guard = tool_name in _SEMANTIC_GUARD_TOOLS
+        hard, ceiling_source = _per_call_ceiling(context, threshold, tool_name)
+        effective = min(reasoning_target, hard) if needs_semantic_guard else hard
+        allow_fast_path = ceiling_source != "per_call"
+
         if tool_name == "agent_bus":
-            windowed = _try_window_agent_bus_result(result, threshold=threshold)
+            windowed = _try_window_agent_bus_result(result, threshold=hard)
             if windowed is not None:
                 result = windowed
 
@@ -1040,16 +1135,17 @@ class ResponseSizeGuard(Middleware):
                 )
             )
 
-        reasoning_target = _reasoning_target_bytes(threshold)
-        needs_semantic_guard = tool_name in _SEMANTIC_GUARD_TOOLS
-
         try:
-            size = self._estimate_size(result, threshold, needs_semantic_guard)
+            size = self._estimate_size(
+                result,
+                effective,
+                needs_semantic_guard,
+                allow_fast_path=allow_fast_path,
+            )
             if size is None:
                 return _lean_content(result, tool_name=tool_name)
 
-            effective_limit = reasoning_target if needs_semantic_guard else threshold
-            if size <= effective_limit:
+            if size <= effective:
                 return _lean_content(result, tool_name=tool_name)
         except Exception:
             logger.warning(
@@ -1079,16 +1175,19 @@ class ResponseSizeGuard(Middleware):
             )
             return _lean_content(result, tool_name=tool_name)
 
-        replacement = _replacement_result(ref_id, tool_name, size, threshold, result)
+        replacement = _replacement_result(ref_id, tool_name, size, hard, result)
         guarded_kwargs: dict[str, Any] = {
             "tool_name": tool_name,
             "profile": current_profile(),
             "original_bytes": size,
             "threshold_bytes": threshold,
+            "ceiling_bytes": hard,
+            "effective_bytes": effective,
+            "ceiling_source": ceiling_source,
             "reasoning_target_bytes": reasoning_target,
             "ref_id": ref_id,
             "store_count": len(_store),
-            "semantic_guard": needs_semantic_guard and size <= threshold,
+            "semantic_guard": needs_semantic_guard and size <= hard,
         }
         structured = replacement.structured_content
         if (
@@ -1107,14 +1206,21 @@ class ResponseSizeGuard(Middleware):
         result: ToolResult,
         threshold: int,
         needs_semantic_guard: bool,
+        *,
+        allow_fast_path: bool = True,
     ) -> int | None:
         """Return measured byte size, or None when the result is safe to pass through.
 
         For semantic-guard tools (agent_bus, cortex) we always measure fully —
         no fast-path early exit.  For other tools, a quick structured_content
         estimate skips the expensive full serialization when clearly under limit.
+        Per-call ceilings disable the fast path so lowered limits cannot be skipped.
         """
-        if not needs_semantic_guard and result.structured_content is not None:
+        if (
+            allow_fast_path
+            and not needs_semantic_guard
+            and result.structured_content is not None
+        ):
             estimate = len(
                 json.dumps(result.structured_content, default=str).encode("utf-8")
             )
@@ -1122,6 +1228,83 @@ class ResponseSizeGuard(Middleware):
                 return None
 
         return _measure_result(result)
+
+
+def _line_window(text: str, offset: int, limit: int) -> tuple[str, int]:
+    """Return a slice of *text* by line index and the total line count."""
+    lines = text.splitlines(keepends=True)
+    total = len(lines)
+    if total == 0:
+        return text, 0
+    start = max(0, offset)
+    end = total if limit <= 0 else min(total, start + limit)
+    return "".join(lines[start:end]), total
+
+
+def _retrieve_selective(
+    stored: _StoredResponse,
+    ref_id: str,
+    *,
+    section: str,
+    offset: int,
+    limit: int,
+    now: float,
+) -> dict[str, Any]:
+    """Read a portion of a stored response without popping the entry."""
+    basis = primary_text_basis(stored.result, stored.tool_name)
+    if basis != "content":
+        record(
+            "mcp.response.retrieve_refused",
+            tool_name=stored.tool_name,
+            ref_id=ref_id,
+            selection_basis=basis,
+        )
+        return {
+            "error": (
+                "Selective retrieve (section/offset/limit) needs a response with a "
+                "top-level string `content`; "
+                f"{stored.tool_name!r} returned a structured payload. "
+                f"Re-call {stored.tool_name!r} narrower (read-only), or "
+                f'bare retrieve(id="{ref_id}") for the whole response.'
+            ),
+            "ref_id": ref_id,
+            "selection_basis": basis,
+        }
+    text = _extract_primary_text(stored.result, stored.tool_name)
+    if text is None:
+        return {
+            "error": (
+                f"Stored response {ref_id!r} has no readable text for selective retrieval."
+            )
+        }
+    remaining_ttl_s = max(0.0, round(_TTL_SECONDS - (now - stored.stored_at), 1))
+    if section.strip():
+        try:
+            content = md_read_section(text, section.strip())
+        except SectionError as exc:
+            return {"error": str(exc)}
+        selection = "section"
+        _, total_lines = _line_window(text, 0, 0)
+    else:
+        content, total_lines = _line_window(text, offset, limit)
+        selection = "lines"
+    record(
+        "mcp.response.retrieved",
+        tool_name=stored.tool_name,
+        ref_id=ref_id,
+        profile=stored.profile,
+        size_bytes=stored.size_bytes,
+        age_s=round(now - stored.stored_at, 1),
+        selective=True,
+        selection=selection,
+    )
+    return {
+        "ref_id": ref_id,
+        "selection": selection,
+        "content": content,
+        "total_lines": total_lines,
+        "remaining_ttl_s": remaining_ttl_s,
+    }
 
 
 def register_response_guard(mcp: FastMCP) -> None:
@@ -1134,13 +1317,23 @@ def register_response_guard(mcp: FastMCP) -> None:
     """
 
     @mcp.tool(title="Retrieve Oversized Response")
-    def retrieve(id: str) -> ToolResult | dict[str, str]:
-        """Retrieve a stored oversized tool response by reference ID (pop semantics, 10min TTL)."""
+    def retrieve(
+        id: str, section: str = "", offset: int = 0, limit: int = 0
+    ) -> ToolResult | dict[str, Any]:
+        """Retrieve a stored oversized tool response by reference ID.
+
+        Bare ``retrieve(id)`` pops the entry (10 min TTL). Pass ``section`` or
+        ``limit`` to read a window without consuming the store slot.
+        """
         now = time.monotonic()
+        selective = bool(section.strip()) or limit > 0 or offset > 0
         expired_events: list[_ExpiredEvent]
         with _lock:
             expired_events = _prune_expired(now)
-            stored = _store.pop(id, None)
+            if selective:
+                stored = _store.get(id)
+            else:
+                stored = _store.pop(id, None)
         _emit_expired_events(expired_events)
         if stored is None:
             return {
@@ -1149,6 +1342,15 @@ def register_response_guard(mcp: FastMCP) -> None:
                     "It may have expired or already been retrieved."
                 )
             }
+        if selective:
+            return _retrieve_selective(
+                stored,
+                id,
+                section=section,
+                offset=offset,
+                limit=limit,
+                now=now,
+            )
         record(
             "mcp.response.retrieved",
             tool_name=stored.tool_name,

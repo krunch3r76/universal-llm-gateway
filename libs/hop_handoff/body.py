@@ -22,6 +22,8 @@ _BIRTH_ID_PREFIX = "successor_birth_id:"
 _OCCUPY_TARGET_PREFIX = "occupy_target:"
 _SUPSERSED_REG_PREFIX = "superseded_registration_id:"
 _HOP_KIND_PREFIX = "hop_kind:"
+_HOP_ADMITTED_AT_PREFIX = "hop_admitted_at:"
+_RESPONSIBILITY_PREFIX = "responsibility:"
 VALID_HOP_KINDS = frozenset({"mission", "housekeeping"})
 
 
@@ -70,6 +72,37 @@ def parse_hop_kind(body: str) -> str:
     return "mission"
 
 
+def parse_hop_admitted_at(body: str) -> str | None:
+    """Return the ``hop_admitted_at`` header from a continuity handoff body, or None."""
+    for line in (body or "").splitlines():
+        if line.startswith(_HOP_ADMITTED_AT_PREFIX):
+            value = line.split(":", 1)[1].strip()
+            return value or None
+    return None
+
+
+def parse_responsibility(body: str) -> str | None:
+    """Return the ``responsibility`` header from a continuity handoff body, or None."""
+    for line in (body or "").splitlines():
+        if line.startswith(_RESPONSIBILITY_PREFIX):
+            value = line.split(":", 1)[1].strip()
+            return value or None
+    return None
+
+
+def responsibility_from_thread_summary(summary: str | None) -> str | None:
+    """Parse the first ``RESPONSIBILITY:`` line in a thread summary, if any."""
+    if not summary:
+        return None
+    for line in str(summary).splitlines():
+        if "RESPONSIBILITY:" not in line:
+            continue
+        _before, _sep, rest = line.partition("RESPONSIBILITY:")
+        text = rest.strip()
+        return text or None
+    return None
+
+
 def build_continuity_handoff_body(
     *,
     thread_id: str,
@@ -91,6 +124,8 @@ def build_continuity_handoff_body(
     successor_chat_url: str | None = None,
     arc_hub: ArcHubTip | None = None,
     consumption_missing: str | None = None,
+    hop_admitted_at: str | None = None,
+    responsibility: str | None = None,
 ) -> str:
     """Author a first-line ``TYPE: CONTINUITY_HANDOFF`` body for one hop fire.
 
@@ -111,6 +146,10 @@ def build_continuity_handoff_body(
     invents one. Picked up by ``operator_proxy_hop_status`` as the ``mission``
     field on the successor's This-hop card.
 
+    ``hop_admitted_at`` is the ISO-8601 UTC stamp for when the hop verb admitted
+    the commission. ``responsibility`` carries the thread-summary RESPONSIBILITY
+    line when present. Both are echoed on the successor opening paste.
+
     ``occupy_target`` names the existing holder row the hop must occupy (CSE
     chat_url). ``you_are`` is intentionally omitted from the handoff — seating
     confirmation arrives only via ``TYPE: SEAT_REGISTRATION`` after the GIW
@@ -125,6 +164,12 @@ def build_continuity_handoff_body(
         f"trigger: {trigger}",
         f"thread_id: {thread_id}",
     ]
+    admitted = (hop_admitted_at or "").strip()
+    if admitted:
+        lines.append(f"{_HOP_ADMITTED_AT_PREFIX} {admitted}")
+    resp = (responsibility or "").strip()
+    if resp:
+        lines.append(f"{_RESPONSIBILITY_PREFIX} {resp}")
     resolved_mission = (mission or "").strip()
     if resolved_mission:
         lines.append(f"mission: {resolved_mission}")

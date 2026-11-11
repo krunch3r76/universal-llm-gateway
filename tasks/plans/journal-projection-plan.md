@@ -272,7 +272,7 @@ Not written by this leg. Apply only after H3 PLAN, lean-verifier VERDICT, and AC
 
 ### Step 2
 
-**Carries today** (whole step): poll completion, `get` the turn (`tool_call_count`, `usage`, `source_ref`), closeout path `workspaces://…/tmp/reviews/closeouts/<dispatch_id>.md` offset 0 limit 40, the 2026-10-02 note that the older `cortex://notes/system/threads/<child>-cursor-sdk-closeout-<dispatch_id>.md` path 404'd, propagate reads only `executions[].status` and sha fields, overflow files offset 0 limit 40, lean verifier when the verdict is not in those lines, never paginate past line 40.
+**Carries today** (whole step): poll completion, `get` the turn (`tool_call_count`, `usage`, `source_ref`), closeout path `workspaces://…/tmp/reviews/closeouts/<dispatch_id>.md` via `md_list` then `sections=["executive_envelope","executive_envelope/effects_manifest"]` with `expected_read_sha256` from the manifest (or `export=true` + `chunk_cursor` for large bodies), the 2026-10-02 note that the older `cortex://notes/system/threads/<child>-cursor-sdk-closeout-<dispatch_id>.md` path 404'd, propagate reads only `executions[].status` and sha fields, overflow markdown the same md-window recipe, lean verifier when the verdict is not in those lines, never offset/limit a whole `.md` without `expected_read_sha256`.
 
 **After:** the paragraph above, unchanged, plus this sentence at the end: "A journal-projector run is polled with `pipeline(op=result, execution_id, wait_seconds)` taken from its `poll_hint` (clamp 60, same as `pipeline.py:568`). `predicate_unmet`, `no_new_turn`, and status `running` are not failure; re-call the hint. `provider_error` in the closeout's first lines, `TrackerCapacityError`, and a failed durable append are failure. The hop reads the journal file, not the tracker result."
 
@@ -288,7 +288,7 @@ Not written by this leg. Apply only after H3 PLAN, lean-verifier VERDICT, and AC
 
 ### Step 9
 
-**Not replaced wholesale.** The step carries KERNEL-H counters (closeouts ≥6, skill reload, spill, summarize-not-quote, tool-call thresholds, 3rd result over 5 KB), idle definition, hop model `cdp/opus-5.5-extra`, replace CURRENT STATE before the hop, idle hop-and-stop, PARK plus one send_later, compact fetch, fleet_liveness filters, closeout offset 0 limit 40, E8/R3 prompt authorship, 290s sleep, Cowork bash timeout, the Arms paragraph, and the falsifier "a second fetch_unread while nothing is in flight".
+**Not replaced wholesale.** The step carries KERNEL-H counters (closeouts ≥6, skill reload, spill, summarize-not-quote, tool-call thresholds, 3rd result over 5 KB), idle definition, hop model `cdp/opus-5.5-extra`, replace CURRENT STATE before the hop, idle hop-and-stop, PARK plus one send_later, compact fetch, fleet_liveness filters, closeout harvest via md window gate (`md_list` → `sections`/`expected_read_sha256` or `export`/`chunk_cursor`), E8/R3 prompt authorship, 290s sleep, Cowork bash timeout, the Arms paragraph, and the falsifier "a second fetch_unread while nothing is in flight".
 
 **Span that changes** — the no-house sentence: "When no house is live (specimen: 2026-10-08 11:46Z onward), the seat-side rules above apply. On wake with a live house, read its brief first; read the handoff head and journal only if the brief names a gap (a:38890)."
 
@@ -317,7 +317,7 @@ Not written by this leg. Apply only after H3 PLAN, lean-verifier VERDICT, and AC
 
 There is no `## HOUSE RULES` heading. `house_rules_section` (`operator_proxy_hop_status.py:104-109`) therefore returns None on the live file.
 
-**After:** insert `## HOUSE RULES` as the first heading. Item 1's journal clause becomes: "Lessons and Register are already in the hop body; open the journal only for one named specimen." Keep items 2–8 of SUNDAY RESUME (gc1 queue, lean dispatch models, VERDICT+shas, closeout limit 40, fetch_unread compact, no thread_get, hop desired_model, houses through gc1). CURRENT LEG / CURRENT STATE / First acts stay where they are and are still replaced as a block (step 6), never prepended.
+**After:** insert `## HOUSE RULES` as the first heading. Item 1's journal clause becomes: "Lessons and Register are already in the hop body; open the journal only for one named specimen." Keep items 2–8 of SUNDAY RESUME (gc1 queue, lean dispatch models, VERDICT+shas, closeout via md window gate not blind offset/limit, fetch_unread compact, no thread_get, hop desired_model, houses through gc1). CURRENT LEG / CURRENT STATE / First acts stay where they are and are still replaced as a block (step 6), never prepended.
 
 **HOUSE RULES content:** move, byte-for-byte, the four journal sections whose headings are:
 

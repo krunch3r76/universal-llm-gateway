@@ -191,10 +191,15 @@ def reserve_allocating_row(
     the dormant relaunch path keeps its profile and CSE binding through
     ``carry``. *expect_status* compare-and-set runs before any claim or write.
     """
-    from claude_bundles.what_is_running_view import OPERATOR_PURPOSES
+    from claude_bundles.what_is_running_view import (
+        HOUSELESS_PURPOSES,
+        OPERATOR_PURPOSES,
+    )
 
     parent = str(parent_thread or "").strip()
-    purpose_norm = str(purpose or "").strip()
+    purpose_norm = str(purpose or "").strip().lower()
+    if purpose_norm in HOUSELESS_PURPOSES and parent:
+        raise RegistryError("houseless purpose cannot bind parent_thread")
     kind_norm = str(mission_kind or "").strip().lower()
     join_eligible = (
         join

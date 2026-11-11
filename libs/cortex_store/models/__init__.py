@@ -59,6 +59,7 @@ from .assertions import (
 from .deadlines import DeadlineItem, DeadlineList
 from .edges import EdgeCreate, EdgeItem, EdgeList, EdgeRetire, EdgeUpdate
 from .entities import (
+    AuthoredNote,
     CardAssertion,
     CardAssertionCounts,
     CardDebug,
@@ -210,6 +211,7 @@ __all__ = [
     "CardSection",
     "ConcernHeadPin",
     "CurrentStatus",
+    "AuthoredNote",
     "EntityCard",
     "EntityCreate",
     "EntityDetail",

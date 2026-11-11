@@ -27,7 +27,7 @@ session transcript.
 
 2. **Entity resolution** (per `/create-implementation-plan` entity-resolution rule):
    ```
-   cortex(tool="entity_get", arguments='{"entity_id": "todo:{slug}", "include_edges": true}')
+   cortex(tool="entity_get", arguments='{"entity_id": "todo:{slug}", "intent": "full", "include_edges": true}')
    ```
    Follow `source_uri` → read the stub spec (Problem / Scope / Acceptance).
    Traverse edges: `references → decision:*` for rationale, `relates_to → service:*`

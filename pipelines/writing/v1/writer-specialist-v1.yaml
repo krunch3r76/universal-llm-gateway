@@ -52,6 +52,15 @@ steps:
         fields: [json]
     condition: "assemble.json.get('refused') is None and options.get('output', 'envelope') != 'packet'"
 
+  - name: local_persona_author
+    type: writing_local_persona_author_v1
+    reads_from:
+      - step: assemble
+        fields: [json]
+      - step: prompt_architect
+        fields: [json]
+    condition: "assemble.json.get('refused') is None and options.get('output', 'envelope') != 'packet' and (options.get('full_drafter_fanout', False) is True or assemble.json.get('check_class') == 'sworn' or assemble.json.get('channel') == 'filing')"
+
   - name: drafter_openai
     type: generate
     model_ref: drafter_openai
@@ -100,30 +109,24 @@ steps:
   - name: drafter_local_hermes
     type: generate
     model_ref: drafter_local_hermes
-    prompt_ref: writing.v1.writer
-    condition: "assemble.json.get('refused') is None and options.get('output', 'envelope') != 'packet' and (options.get('full_drafter_fanout', False) is True or assemble.json.get('check_class') == 'sworn' or assemble.json.get('channel') == 'filing')"
+    prompt_ref: writing.v1.writer_local
+    condition: "assemble.json.get('refused') is None and options.get('output', 'envelope') != 'packet' and (options.get('full_drafter_fanout', False) is True or assemble.json.get('check_class') == 'sworn' or assemble.json.get('channel') == 'filing') and local_persona_author.json.get('ok') is True"
     handler_inputs:
       documents: assemble.json.documents_block
-      brief: assemble.json.brief_block
-      architect_brief: prompt_architect.json.architect_brief_block
-      verbatim_notes: assemble.json.verbatim_notes_block
-      source_message: assemble.json.source_message_block
-      source_obligations: source_obligations.json.source_obligations_block
+      persona_prose: local_persona_author.json.persona_prose
+      channel: assemble.json.intake.channel
     generation_parameters:
       temperature: 0.4
 
   - name: drafter_local_ernie
     type: generate
     model_ref: drafter_local_ernie
-    prompt_ref: writing.v1.writer
-    condition: "assemble.json.get('refused') is None and options.get('output', 'envelope') != 'packet' and (options.get('full_drafter_fanout', False) is True or assemble.json.get('check_class') == 'sworn' or assemble.json.get('channel') == 'filing')"
+    prompt_ref: writing.v1.writer_local
+    condition: "assemble.json.get('refused') is None and options.get('output', 'envelope') != 'packet' and (options.get('full_drafter_fanout', False) is True or assemble.json.get('check_class') == 'sworn' or assemble.json.get('channel') == 'filing') and local_persona_author.json.get('ok') is True"
     handler_inputs:
       documents: assemble.json.documents_block
-      brief: assemble.json.brief_block
-      architect_brief: prompt_architect.json.architect_brief_block
-      verbatim_notes: assemble.json.verbatim_notes_block
-      source_message: assemble.json.source_message_block
-      source_obligations: source_obligations.json.source_obligations_block
+      persona_prose: local_persona_author.json.persona_prose
+      channel: assemble.json.intake.channel
     generation_parameters:
       temperature: 0.4
 
@@ -289,6 +292,8 @@ steps:
         fields: [json]
       - step: prompt_architect
         fields: [json, model_id, prompt_tokens, completion_tokens]
+      - step: local_persona_author
+        fields: [json]
       - step: drafter_openai
         fields: [json, raw, model_id, prompt_tokens, completion_tokens]
       - step: drafter_google

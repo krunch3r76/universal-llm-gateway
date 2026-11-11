@@ -410,5 +410,7 @@ class WritingFinalizeHandler(BaseHandler):
             filing_text=filing_text,
             selected_body=selected_body,
             obl_refusal=obl_refusal,
+            outputs_for_participation=outputs,
+            options=options,
         )
         return _step(_attach_status(payload))

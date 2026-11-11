@@ -68,6 +68,9 @@ def fire_cse_followup(
     timeout_s: float = _DEFAULT_TIMEOUT_S,
     fallback_chat_url: str | None = None,
     fallback_registration_id: str | None = None,
+    purpose: str | None = "operator-proxy",
+    reattach: bool | None = None,
+    houseless_delivery: bool = False,
 ) -> dict[str, Any]:
     """POST induction to the liaison CSE on ``parent_thread=root_id``; never raises."""
     root = str(root_id or "").strip()
@@ -75,17 +78,34 @@ def fire_cse_followup(
     if not prompt:
         return {"ok": False, "error": "no_prompt", "root": root}
 
-    identity = resolve_cse_identity(root)
-    chat_url = (
-        identity.get("chat_url")
-        or (str(fallback_chat_url).strip() if fallback_chat_url else None)
-        or None
-    )
-    registration_id = (
-        identity.get("registration_id")
-        or (str(fallback_registration_id).strip() if fallback_registration_id else None)
-        or None
-    )
+    if houseless_delivery:
+        chat_url = (
+            str(fallback_chat_url).strip() if fallback_chat_url else None
+        ) or None
+        registration_id = (
+            str(fallback_registration_id).strip() if fallback_registration_id else None
+        ) or None
+        identity: dict[str, Any] = {
+            "chat_url": chat_url,
+            "registration_id": registration_id,
+            "source": "houseless_fallback",
+        }
+    else:
+        identity = resolve_cse_identity(root)
+        chat_url = (
+            identity.get("chat_url")
+            or (str(fallback_chat_url).strip() if fallback_chat_url else None)
+            or None
+        )
+        registration_id = (
+            identity.get("registration_id")
+            or (
+                str(fallback_registration_id).strip()
+                if fallback_registration_id
+                else None
+            )
+            or None
+        )
     url = identity.get("url") or chat_url
     if not chat_url and not registration_id:
         return {
@@ -109,12 +129,14 @@ def fire_cse_followup(
             "send_verified": False,
         }
 
+    eff_reattach = True if reattach is None else reattach
     body: dict[str, Any] = {
         "prompt_text": prompt,
-        "purpose": "operator-proxy",
         "timeout_s": int(timeout_s),
-        "reattach": True,
+        "reattach": eff_reattach,
     }
+    if purpose is not None:
+        body["purpose"] = purpose
     if chat_url:
         body["chat_url"] = chat_url
     if registration_id:

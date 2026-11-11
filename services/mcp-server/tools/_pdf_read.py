@@ -11,6 +11,7 @@ import os
 from concurrent.futures import ThreadPoolExecutor
 from concurrent.futures import TimeoutError as FutureTimeoutError
 from pathlib import Path
+from typing import Any
 
 from mcp_events import monotonic_now, record
 
@@ -197,3 +198,60 @@ def _read_pdf_text(path: Path) -> str:
     """Adapter for ``_FORMAT_READERS`` — returns text only, discards method tag."""
     text, _method = read_pdf(path)
     return text
+
+
+def _attach_pdf_read_metadata(
+    result: dict[str, Any],
+    *,
+    path: str,
+    content: str,
+    pdf_method: str,
+    sidecar_path: Path | None,
+) -> None:
+    content_stripped = content.strip()
+    is_empty = len(content_stripped) < 50
+    result["extraction_method"] = pdf_method
+    if sidecar_path:
+        result["sidecar_path"] = str(sidecar_path)
+    if pdf_method == PDF_METHOD_SIDECAR:
+        advisory_prefix = "Read from pre-extracted markdown sidecar. "
+    elif pdf_method == PDF_METHOD_LAYOUT:
+        advisory_prefix = "Extracted with pymupdf4llm (prose-oriented). "
+    elif pdf_method == PDF_METHOD_PLAINTEXT_GATED:
+        advisory_prefix = (
+            "Extracted with pymupdf plaintext — file exceeded "
+            f"{PDF_LAYOUT_MAX_BYTES} bytes, layout pass skipped. "
+        )
+    elif pdf_method == PDF_METHOD_PLAINTEXT_TIMEOUT:
+        advisory_prefix = (
+            "Extracted with pymupdf plaintext — pymupdf4llm layout pass "
+            f"exceeded {PDF_READ_TIMEOUT_S:.0f}s, fallback used. "
+        )
+    elif pdf_method == PDF_METHOD_PLAINTEXT_EMPTY:
+        advisory_prefix = (
+            "Extracted with pymupdf plaintext — pymupdf4llm returned "
+            "empty/scaffolding output, fallback used. "
+        )
+    elif pdf_method:
+        advisory_prefix = "Extracted from PDF. "
+    else:
+        advisory_prefix = ""
+    if pdf_method:
+        result["extraction"] = {
+            "method": pdf_method,
+            "kind": "prose_oriented",
+            "advisory": advisory_prefix
+            + (
+                "If output has garbled tables or columns, try "
+                'finance(op="inspect", path=...) for pdfplumber-based '
+                "tabular extraction."
+            ),
+        }
+    if is_empty:
+        rel_path = str(Path(path))
+        result["_next"] = (
+            f"This PDF has no text layer (scanned or image-only). "
+            f'Use dispatch(tool="extract_document", '
+            f'arguments=\'{{"path": "{rel_path}"}}\') '
+            f"to OCR and persist as a reusable markdown sidecar."
+        )

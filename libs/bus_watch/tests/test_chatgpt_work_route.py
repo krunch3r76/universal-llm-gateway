@@ -9,10 +9,12 @@ from agent_bus_store.db import create_thread, init_db, insert_turn
 from agent_bus_store.db.connection import connect
 from agent_bus_store.db.endpoint_subscriptions import insert_chatgpt_work_row_for_test
 from agent_bus_store.db.endpoint_wake_ledger import (
+    CONSUMER,
     advance_scan,
     get_cursor,
     resolve_orion_chat_wake,
 )
+from agent_bus_store.testing.wake_cursor_test_support import rewind_wake_cursor_for_test
 from bus_watch.endpoint_wake_dispatcher import (
     _chatgpt_work_route,
     resolve_target,
@@ -84,7 +86,7 @@ def test_scan_once_maestro_answer_skips_instance_chatgpt_route(db: None) -> None
         body="done",
     )
     with connect() as conn:
-        conn.execute("UPDATE endpoint_wake_cursor SET high_water_turn_id=0")
+        rewind_wake_cursor_for_test(conn, CONSUMER, to=0)
     captured: list[dict] = []
 
     class Store:

@@ -430,6 +430,7 @@ _SERVICE_OWNERSHIP: dict[str, ServiceOwnership] = {
                 "prompt_expand_consume",
                 "provenance",
                 "reasoning_posture_contracts",
+                "review_layer",
                 "role_lint",
                 "skills_mount",
                 "sse",
@@ -460,6 +461,7 @@ _SERVICE_OWNERSHIP: dict[str, ServiceOwnership] = {
                 "web_chat_relay",
                 "web_tab",
                 "writing_intake",
+                "writing_pipeline",
             }
         ),
     ),

@@ -6,7 +6,7 @@ First-run seed for `doc-generate` (thread 4750). Inventory basename maps
 surface (not replaced by this file): `docs/architecture/design/async-pipeline-dispatch.md`.
 <!-- AUTHORED:END -->
 
-<!-- GENERATED:START inventory_sha=61793257e8f1 generated=2026-07-09 -->
+<!-- GENERATED:START inventory_sha=ec043e4f6258 generated=2026-11-10 method=targeted-refresh source=c75e3fc8 refreshed_by=agent-bus:22999 coverage=287/287 -->
 _Generated from docstrings, signatures, and imports; claims reflect what the source **declares**, not verified runtime behavior. doc-generate verifies doc<->docstring consistency, not docstring<->behavior truth._
 
 ## Scope
@@ -23,6 +23,8 @@ registry.load()
 executor = PipelineExecutor(registry, request_executor, proxy)
 response = await executor.execute(context)
 ```
+
+Post-2026-07 refresh notes (targeted): `registry/snapshot.py` and `registry/capability_source.py` persist and project the live registry for Stargate restarts and capability listing; `core/step_controls.py` adds request-time step enablement; `core/execution/dispatch_journal_transitions.py` folds non-terminal journal transitions beside `dispatch_journal.py`; `core/events/prompt_expand.py` emits prompt-expand lifecycle bus events.
 
 ---
 
@@ -55,6 +57,7 @@ response = await executor.execute(context)
 | `core/prompts.py` | Generic prompt template rendering via regex substitution. |
 | `core/schemas.py` | Compatibility exports for pipeline core schemas. |
 | `core/step_config/` | `StepConfig` package: schema, parsing validators, model resolution, map config builder. |
+| `core/step_controls.py` | Request-time per-step enablement via `pipeline_options.step_controls` overrides on YAML `enabled`. |
 | `core/step_types.py` | Shared step-related data types. |
 | `core/validation.py` | Parse-time validation for pipeline configuration. |
 | **core/events/** | |
@@ -71,6 +74,7 @@ response = await executor.execute(context)
 | `core/events/lifecycle.py` | Pipeline and step lifecycle events + data capture events. |
 | `core/events/map.py` | Map step progress events. |
 | `core/events/pipeline.py` | Pipeline lifecycle events. |
+| `core/events/prompt_expand.py` | prompt-expand pipeline bus event factories (`expand.admitted`, retrieve/author completion). |
 | `core/events/recorder.py` | Event recorder: persists pipeline events to per-execution JSONL files. |
 | `core/events/refusal.py` | Frontier refusal anomaly events. |
 | `core/events/step/` | Package re-exports for step, fallback, consensus, and RAG bus event factories (29 symbols). |
@@ -88,6 +92,7 @@ response = await executor.execute(context)
 | `core/execution/dag_executor/` | DAG executor package. Modularized: executor shell, lifecycle, scheduling, completions, step runner, map step. |
 | `core/execution/disconnect_monitor.py` | Client disconnection monitoring for pipeline execution. |
 | `core/execution/dispatch_journal.py` | Persistent SQLite journal for terminal async-dispatch tracker records. |
+| `core/execution/dispatch_journal_transitions.py` | Non-terminal dispatch journal transitions (started fold + append log); terminal writes stay in `dispatch_journal.py`. |
 | `core/execution/errors/` | Pipeline error hierarchy with structured serialization. |
 | `core/execution/executor.py` | Backward-compatible `DAGExecutor` import path. |
 | `core/execution/fallback_eligibility.py` | Classify whether a failed model invocation should trigger ranked fallback. |
@@ -115,6 +120,7 @@ response = await executor.execute(context)
 | `core/executor/prepared.py` | Shared prepared-state, protocols, and named loggers for the executor package. |
 | **core/handlers/** | |
 | `core/handlers/__init__.py` | Step handlers package. Provides plugin-based step type execution. |
+| `core/handlers/_handler_input_resolve.py` | Shared `handler_inputs` resolution helpers for archive turn handlers. |
 | `core/handlers/archive_assistant_turn.py` | `archive_assistant_turn_v1` — persist the assistant turn. |
 | `core/handlers/archive_user_turn.py` | `archive_user_turn_v1` — persist the user turn (artifact + assertion). |
 | `core/handlers/assemble_thread.py` | `assemble_thread_v1` — resolve chat anchor and build message prefix. |
@@ -149,8 +155,10 @@ response = await executor.execute(context)
 | **registry/** | |
 | `registry/__init__.py` | Pipeline registry - loads and manages pipeline configurations. |
 | `registry/access.py` | Pipeline access logic for the registry subsystem. |
+| `registry/capability_source.py` | Project the live pipeline registry into a capability tree for Stargate capability listing. |
 | `registry/core.py` | Core `PipelineRegistry` orchestration. |
 | `registry/loader.py` | Pipeline loading logic for the registry subsystem. |
+| `registry/snapshot.py` | On-disk snapshot of a built `PipelineRegistry` for Stargate health restarts. |
 | `registry/validator.py` | Pipeline validation logic for the registry subsystem. |
 
 ---

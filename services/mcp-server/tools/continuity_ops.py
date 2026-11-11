@@ -13,6 +13,7 @@ from bus_watch.cursor_xvfb_subscription import (
 )
 from bus_watch.fable_lock import claim_fable_lock
 from bus_watch.hop_rebind import (
+    _list_cursor_subscriptions,
     current_root_subscription_agent_id,
     rebind_predecessor_subscriptions,
 )
@@ -20,6 +21,33 @@ from bus_watch.ide_hop import cleanup_xvfb_sidebar_on_holder_claim
 from bus_watch.ide_hop_retire import retire_departing_tab
 from bus_watch.liaison_continuity import liaison_ide_hop, liaison_tick_once
 from cursor_bridge.cursor_agents_hop import is_cursor_xvfb_host
+
+
+def _prior_agent_id_from_displaced(displaced_holder: str | None) -> str | None:
+    raw = str(displaced_holder or "").strip()
+    if not raw:
+        return None
+    if raw.startswith("ide:"):
+        return raw[4:].strip() or None
+    if ":" in raw:
+        return raw.split(":", 1)[1].strip() or None
+    return raw
+
+
+def _count_subscribed_root_heads(root: str) -> int:
+    root_s = str(root or "").strip()
+    if not root_s:
+        return 0
+    try:
+        rows = _list_cursor_subscriptions()
+    except (Exception, SystemExit):
+        return 0
+    return sum(
+        1
+        for row in rows
+        if str(row.get("thread_scope") or "").strip() == root_s
+        and str(row.get("state") or "") == "subscribed"
+    )
 
 
 def _subscribe_xvfb_tab(
@@ -80,11 +108,20 @@ def maybe_subscribe_cursor_xvfb_on_resume(
             "ok": False,
             "reason": f"claim_failed:{type(exc).__name__}",
         }
-    prior_root_agent_id: str | None = None
-    try:
-        prior_root_agent_id = current_root_subscription_agent_id(thread)
-    except (Exception, SystemExit):
-        prior_root_agent_id = None
+    lock_claim = out.get("fable_lock_claim") if isinstance(out.get("fable_lock_claim"), dict) else {}
+    displaced = lock_claim.get("displaced_holder")
+    prior_root_agent_id = _prior_agent_id_from_displaced(
+        str(displaced) if displaced else None
+    )
+    ambiguous_prior = False
+    if not prior_root_agent_id:
+        if _count_subscribed_root_heads(thread) > 1:
+            ambiguous_prior = True
+        else:
+            try:
+                prior_root_agent_id = current_root_subscription_agent_id(thread)
+            except (Exception, SystemExit):
+                prior_root_agent_id = None
     sub = _subscribe_xvfb_tab(
         thread,
         tid,
@@ -92,17 +129,20 @@ def maybe_subscribe_cursor_xvfb_on_resume(
         evidence="continuity(op=resume)",
     )
     out["xvfb_subscription"] = sub
-    try:
-        out["child_lane_rebind"] = rebind_predecessor_subscriptions(
-            thread,
-            tid,
-            prior_agent_id=prior_root_agent_id,
-        )
-    except (Exception, SystemExit) as exc:
-        out["child_lane_rebind"] = {
-            "ok": False,
-            "reason": f"rebind_failed:{type(exc).__name__}",
-        }
+    if ambiguous_prior:
+        out["child_lane_rebind"] = {"ok": False, "reason": "ambiguous_prior"}
+    else:
+        try:
+            out["child_lane_rebind"] = rebind_predecessor_subscriptions(
+                thread,
+                tid,
+                prior_agent_id=prior_root_agent_id,
+            )
+        except (Exception, SystemExit) as exc:
+            out["child_lane_rebind"] = {
+                "ok": False,
+                "reason": f"rebind_failed:{type(exc).__name__}",
+            }
     prior = str(prior_root_agent_id or "").strip()
     if prior and prior != tid:
         try:

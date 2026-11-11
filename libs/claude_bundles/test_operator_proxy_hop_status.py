@@ -694,6 +694,34 @@ def test_journal_archive_path_oserror_does_not_abort_hop() -> None:
     assert out.startswith("# Hop on agent-bus:")
 
 
+def test_hop_successor_fields_parses_admit_and_responsibility() -> None:
+    prompt = (
+        "TYPE: CONTINUITY_HANDOFF\n"
+        "thread_id: 99\n"
+        "hop_admitted_at: 2026-05-10T11:22:33Z\n"
+        "responsibility: seat record\n"
+    )
+    fields = hop_successor_fields(
+        prompt,
+        roster_text="",
+        fetch_turns=_noop_fetch,
+        journal_text="",
+        register_text="",
+    )
+    assert fields["hop_admitted_at_display"] == "2026-05-10T11:22:33Z"
+    assert fields["responsibility_display"] == "seat record"
+
+    legacy = hop_successor_fields(
+        "thread_id: 99\n",
+        roster_text="",
+        fetch_turns=_noop_fetch,
+        journal_text="",
+        register_text="",
+    )
+    assert legacy["hop_admitted_at_display"] == "not recorded"
+    assert legacy["responsibility_display"] == "not recorded"
+
+
 def test_hop_successor_fields_parses_hop_kind_and_body_metadata() -> None:
     prompt = (
         "TYPE: CONTINUITY_HANDOFF\n"

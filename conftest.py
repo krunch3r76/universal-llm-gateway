@@ -172,6 +172,12 @@ def _pin_isolated_dispatch_ledger_per_test(
 
 
 @pytest.fixture(autouse=True)
+def _isolate_giw_http_url(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Point ``GIT_INTEGRATION_WORKER_URL`` at a discard port for every test."""
+    monkeypatch.setenv("GIT_INTEGRATION_WORKER_URL", "http://127.0.0.1:9")
+
+
+@pytest.fixture(autouse=True)
 def _pager_notify_isolated_state(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

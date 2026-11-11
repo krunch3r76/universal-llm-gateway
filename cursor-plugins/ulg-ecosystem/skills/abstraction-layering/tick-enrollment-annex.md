@@ -55,7 +55,7 @@ TYPE: CHECKPOINT
 ## State
 **Primary OPEN:** G{ENTRY}–G7 (abstraction layering).
 **WIP:** none.
-**G6 (binding):** pre-land `cdp/opus-5` `contract=delivery-review` `reasoning_effort="high"` on lane branch diff — R1 sidecar. If that consult is refused or fails, escalate at once (`cdp_fail_route` `nested-grok` or `operator`). Do not wait and do not retry the CDP pool. ¬ land (G7) on an empty harvest. ¬ background overlay · ¬ defer-and-proceed.
+**G6 (binding):** pre-land `cdp/opus-5` `contract=delivery-review` `reasoning_effort="high"` on lane branch diff — R1 sidecar. If that consult is refused or fails, escalate at once (`cdp_fail_route` `anthropic`, `nested-grok`, or `operator`). Do not wait and do not retry the CDP pool. ¬ land (G7) on an empty harvest. ¬ background overlay · ¬ defer-and-proceed.
 
 
 ## Steps

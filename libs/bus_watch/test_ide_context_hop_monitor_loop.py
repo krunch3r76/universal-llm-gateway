@@ -216,6 +216,107 @@ def test_guarded_hop_check_releases_lock_after_exception(
     _check_in_flight.release()
 
 
+@pytest.mark.parametrize("emit_raises", [False, True])
+@patch("bus_watch.ide_context_hop_monitor._run_ide_hop")
+@patch("bus_watch.ide_context_hop_monitor._budget_for_root")
+def test_hop_monitor_emits_tab_budget_sample(
+    mock_budget: MagicMock,
+    mock_hop: MagicMock,
+    emit_raises: bool,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from bus_watch.ide_context_hop_monitor import check_cursor_ide_context_hops
+
+    budget = {
+      "stop_class": "CONTEXT_BUDGET",
+      "transcript_id": "tid-1",
+      "tool_calls": 40,
+      "tool_result_tokens": 50_000,
+      "used_tokens": 10_000,
+      "window_limit_tokens": 256_000,
+      "hop_weight_basis": "tool_result_tokens",
+      "glass_status": "completed",
+    }
+    mock_budget.return_value = budget
+    mock_hop.return_value = MagicMock(returncode=0, stdout="", stderr="")
+    emitted: list[dict] = []
+    hop_calls: list[object] = []
+
+    def _record_emit(**kw: object) -> None:
+        emitted.append(dict(kw))
+        if emit_raises:
+            raise RuntimeError("emit failed")
+
+    def _hop(*_a: object, **_k: object) -> MagicMock:
+        hop_calls.append(True)
+        return mock_hop.return_value
+
+    monkeypatch.setattr(
+        "bus_watch.events.emit_ide_tab_budget_sampled",
+        _record_emit,
+    )
+    monkeypatch.setattr(
+        "bus_watch.ide_context_hop_monitor._run_ide_hop",
+        _hop,
+    )
+    store = MagicMock()
+    store.subscriptions.return_value = [
+        {
+            "surface": "cursor",
+            "thread_scope": "18291",
+            "display": "8",
+            "state": "subscribed",
+        }
+    ]
+    mark: dict[str, float] = {}
+    check_cursor_ide_context_hops(store, mark=mark, now=1000.0)
+    assert len(emitted) == 1
+    assert emitted[0]["root_id"] == "18291"
+    assert emitted[0]["hop_weight_basis"] == "tool_result_tokens"
+    assert len(hop_calls) == 1
+    assert hop_calls, "hop should run after sample emit"
+
+
+@patch("bus_watch.ide_context_hop_monitor._run_ide_hop")
+@patch("bus_watch.ide_context_hop_monitor._budget_for_root")
+def test_tab_budget_sample_matched_categories(
+    mock_budget: MagicMock,
+    mock_hop: MagicMock,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from bus_watch.ide_context_hop_monitor import check_cursor_ide_context_hops
+
+    mock_budget.return_value = {
+        "stop_class": None,
+        "transcript_id": "tid-2",
+        "tool_calls": 2,
+        "tool_result_tokens": 18_000,
+        "matched_categories": ["tools"],  # from prompt_breakdown tools/conversation
+        "used_tokens": 5000,
+        "window_limit_tokens": 256_000,
+        "hop_weight_basis": "tool_result_tokens",
+        "glass_status": "completed",
+    }
+    mock_hop.return_value = MagicMock(returncode=0, stdout="", stderr="")
+    emitted: list[dict] = []
+    monkeypatch.setattr(
+        "bus_watch.events.emit_ide_tab_budget_sampled",
+        lambda **kw: emitted.append(dict(kw)),
+    )
+    store = MagicMock()
+    store.subscriptions.return_value = [
+        {
+            "surface": "cursor",
+            "thread_scope": "18291",
+            "display": "8",
+            "state": "subscribed",
+        }
+    ]
+    check_cursor_ide_context_hops(store, mark={}, now=1000.0)
+    assert len(emitted) == 1
+    assert emitted[0]["matched_categories"] == ["tools"]
+
+
 @patch("bus_watch.ide_context_hop_monitor._budget_for_root")
 def test_root_rechecked_at_60s_not_delayed_past_next_tick(
     mock_budget: MagicMock,

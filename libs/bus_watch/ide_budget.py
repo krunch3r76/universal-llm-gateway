@@ -40,6 +40,7 @@ from bus_watch.ide_budget_exclude import (
 
 IDE_BUDGET_SOURCE = "ide.transcript"
 _UUID_RE = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")
+_TOOL_CATEGORY_RE = re.compile(r"tool", re.I)
 _TIP_CP_RE = re.compile(r"tip_cp=(\d+)(?!\d)")
 _TIP_CP_NEEDLE_RE = re.compile(r"^tip_cp=(\d+)$")
 
@@ -230,6 +231,24 @@ def estimate_tokens(measure: dict[str, Any], *, tokens_per_tool_call: int) -> in
     ) * int(tokens_per_tool_call)
 
 
+def tool_result_tokens_from_breakdown(
+    breakdown: dict[str, Any],
+) -> tuple[int | None, list[str]]:
+    """Sum token estimates for categories matching ``tool``; ids in ``matched_categories``."""
+    if not breakdown:
+        return None, []
+    total = 0
+    matched_categories: list[str] = []
+    for key, raw in breakdown.items():
+        if not key or not _TOOL_CATEGORY_RE.search(str(key)):
+            continue
+        matched_categories.append(str(key))
+        total += int(raw or 0)
+    if not matched_categories:
+        return None, []
+    return total, matched_categories
+
+
 def apply_glass_probe_to_budget(
     budget: dict[str, Any],
     glass: dict[str, Any],
@@ -247,6 +266,13 @@ def apply_glass_probe_to_budget(
     budget["glass_model"] = glass.get("model")
     budget["glass_summarized_tokens"] = int(glass.get("glass_summarized_tokens") or 0)
     budget["glass_headers_count"] = int(glass.get("glass_headers_count") or 0)
+    breakdown = glass.get("prompt_breakdown")
+    if not isinstance(breakdown, dict):
+        breakdown = {}
+    budget["glass_prompt_breakdown"] = dict(breakdown)
+    tool_tokens, matched_categories = tool_result_tokens_from_breakdown(breakdown)
+    budget["tool_result_tokens"] = tool_tokens
+    budget["matched_categories"] = matched_categories
     budget["budget_probe"] = "glass.cdp"
 
 
@@ -403,6 +429,7 @@ __all__ = [
     "measure_ide_tab",
     "measure_transcript",
     "probe_glass_composer_budget",
+    "tool_result_tokens_from_breakdown",
     "newest_resume_transcript",
     "pin_retired_resume_transcript",
     "resume_match_count",

@@ -15,6 +15,7 @@ from agent_bus_store.db.endpoint_subscriptions import (
     insert_main_wake_row_for_test,
 )
 from agent_bus_store.db.endpoint_wake_ledger import (
+    CONSUMER,
     advance_scan,
     claim_due_wakes,
     get_cursor,
@@ -26,6 +27,7 @@ from agent_bus_store.db.orion_wake_owner_adapter import (
     shared_wake_delivery_owner,
 )
 from agent_bus_store.server import create_app
+from agent_bus_store.testing.wake_cursor_test_support import rewind_wake_cursor_for_test
 from bus_watch.endpoint_wake_dispatcher import _chatgpt_work_route, resolve_target
 from fastapi.testclient import TestClient
 from web_chat_relay.orion_wake import PINNED_CONVERSATION_URL
@@ -292,7 +294,7 @@ def test_ac9_dispatcher_delivery_route(db: None) -> None:
     )
     get_cursor()
     with connect() as conn:
-        conn.execute("UPDATE endpoint_wake_cursor SET high_water_turn_id=0")
+        rewind_wake_cursor_for_test(conn, CONSUMER, to=0)
     advance_scan(
         "endpoint-wake-dispatcher",
         0,

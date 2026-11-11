@@ -83,10 +83,12 @@ def test_witnessed_g1_done_not_degraded(monkeypatch) -> None:
 
 def test_witness_cortex_outage_is_partial(monkeypatch) -> None:
     """Cortex down during grading is PARTIAL, not a failed closeout."""
-    from implement_admission.conductor_witness_defaults import WitnessCortexUnavailable
+    from implement_admission.conductor_witness_defaults import (
+        WitnessCortexUnavailableError,
+    )
 
     def _down(*_a: object, **_k: object) -> None:
-        raise WitnessCortexUnavailable("cortex api unreachable")
+        raise WitnessCortexUnavailableError("cortex api unreachable")
 
     monkeypatch.setattr(
         "implement_admission.conductor_witness.closeout_witnesses_for_slug",

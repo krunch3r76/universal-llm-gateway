@@ -26,7 +26,7 @@ Track B — …
 Parent join — synthesize <L0 table | verdict | ranked bind>; ¬ re-open tracks.
 ```
 
-Cross-ref: `expand-growth-loop_ws.mdc` · `agent-bus-multitask` (our seat's fan — different substrate).
+Cross-ref: `expand-growth-loop_ws.mdc` · `agent-bus-multitask` (our seat's fan — distinct transport).
 
 ## Chat vs Cowork — mechanics detail
 

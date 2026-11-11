@@ -266,6 +266,9 @@ def _send_with_sidecar(body: TurnSendCreate) -> tuple[TurnSendCreated, dict | No
         turn_number=body.supersedes_turn,
         turn_id_alias=body.supersedes_turn_id,
     )
+    from ...turns_models import prepare_from_agent_id
+
+    stored_from_agent_id, from_agent_warning = prepare_from_agent_id(body.from_agent_id)
     try:
         turn_id, ts, turn_number, claimed_existing = insert_turn(
             thread=thread_id,
@@ -280,6 +283,7 @@ def _send_with_sidecar(body: TurnSendCreate) -> tuple[TurnSendCreated, dict | No
             idempotent_first_turn=claim_first_turn,
             attested_by=body.attested_by,
             user_agent=body.user_agent,
+            from_agent_id=stored_from_agent_id,
         )
     except UnreadTurnsExist as exc:
         detail = exc.to_detail()
@@ -410,6 +414,8 @@ def _send_with_sidecar(body: TurnSendCreate) -> tuple[TurnSendCreated, dict | No
         superseded_turn_id=echo_turn_id,
         thread_tags=thread_tags,
         supersedes_turn=echo_turn_number,
+        from_agent_id=stored_from_agent_id,
+        warning=from_agent_warning,
     )
     thread_row = get_thread(thread_id)
     if thread_row is None:

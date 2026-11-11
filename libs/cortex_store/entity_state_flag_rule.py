@@ -4,8 +4,6 @@ from __future__ import annotations
 
 from typing import Any, Final
 
-from cortex_store.card import _extract_flag_reason
-
 CONTRADICTION_PREFIXES: Final[tuple[str, ...]] = (
     "contradiction:",
     "Cross-entity contradiction detected:",
@@ -25,6 +23,19 @@ def _chunk_has_contradiction_prefix(chunk: str) -> bool:
         if lower.startswith(prefix.lower()):
             return True
     return False
+
+
+def extract_flag_reason(review_notes: str) -> str | None:
+    """Parse a withhold reason token from review_notes (predicate normalize chunk)."""
+    if not review_notes:
+        return None
+    for part in review_notes.split(";"):
+        chunk = part.strip()
+        if chunk.startswith("predicate normalize:"):
+            remainder = chunk.removeprefix("predicate normalize:").strip()
+            token = remainder.split(":", 1)[0].strip()
+            return token or None
+    return None
 
 
 def flag_withholds(
@@ -57,5 +68,5 @@ def flag_fold_marker(
     if review_status != "flagged":
         return None, None
     notes_raw = str(review_notes or "")
-    token = _extract_flag_reason(notes_raw)
+    token = extract_flag_reason(notes_raw)
     return "flagged, no reason", {"notes": review_notes, "token": token}

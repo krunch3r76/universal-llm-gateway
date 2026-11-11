@@ -1041,7 +1041,9 @@ async def test_dispatch_consult_zero_tool_calls_not_degraded(
     )
     assert payload["evidence_uris"]["artifact_paths"] == [sidecar_ref]
     sidecar = source_repo / "tmp/reviews/closeouts/disp-consult.md"
-    assert sidecar.read_text(encoding="utf-8").startswith("Findings only")
+    sidecar_text = sidecar.read_text(encoding="utf-8")
+    assert sidecar_text.splitlines()[0] == "## executive_envelope"
+    assert "Findings only" in sidecar_text
     assert emitted[0]["outcome"] == "ok"
 
 
@@ -1438,13 +1440,23 @@ def test_run_sdk_sync_trims_with_contract_and_admit_skills(
         return ()
 
     monkeypatch.setattr(route_mod, "resolve_repo_venv", lambda **_: repo_venv)
-    monkeypatch.setattr(route_mod, "setup_cursor_dispatch_home", lambda _d, **_: dispatch_home)
+    monkeypatch.setattr(
+        route_mod, "setup_cursor_dispatch_home", lambda _d, **_: dispatch_home
+    )
     monkeypatch.setattr(route_mod, "validate_dispatch_context", lambda *_a, **_k: {})
-    monkeypatch.setattr(route_mod, "resolve_cursor", lambda _m: MagicMock(model_id="composer-2.5"))
-    monkeypatch.setattr(route_mod, "build_model_selection", lambda _c, _o: MagicMock(params=[]))
-    monkeypatch.setattr(route_mod, "build_agent_options", lambda *_a, **_k: MagicMock(local=True))
+    monkeypatch.setattr(
+        route_mod, "resolve_cursor", lambda _m: MagicMock(model_id="composer-2.5")
+    )
+    monkeypatch.setattr(
+        route_mod, "build_model_selection", lambda _c, _o: MagicMock(params=[])
+    )
+    monkeypatch.setattr(
+        route_mod, "build_agent_options", lambda *_a, **_k: MagicMock(local=True)
+    )
     monkeypatch.setattr(route_mod, "trim_conductor_skill_catalog", _record)
-    monkeypatch.setattr(route_mod, "_start_heartbeat", lambda **_kw: (MagicMock(), MagicMock()))
+    monkeypatch.setattr(
+        route_mod, "_start_heartbeat", lambda **_kw: (MagicMock(), MagicMock())
+    )
 
     def _fake_launch(*_a: object, command: list[str], **_k: object) -> MagicMock:
         class _Run:
@@ -1496,10 +1508,7 @@ def test_qualified_skills_id_keeps_preexisting_plugin_copy(
 
     repo_venv = _fake_repo_venv(tmp_path)
     dispatch_home = tmp_path / "dispatch-home"
-    skill = (
-        dispatch_home
-        / ".cursor/plugins/local/ulg-ecosystem/skills/foo/SKILL.md"
-    )
+    skill = dispatch_home / ".cursor/plugins/local/ulg-ecosystem/skills/foo/SKILL.md"
     skill.parent.mkdir(parents=True)
     skill.write_text("---\nname: foo\n---\n", encoding="utf-8")
 
@@ -1518,12 +1527,22 @@ def test_qualified_skills_id_keeps_preexisting_plugin_copy(
 
     monkeypatch.setattr(mount_mod, "classify_cursor_skills", _classify)
     monkeypatch.setattr(route_mod, "resolve_repo_venv", lambda **_: repo_venv)
-    monkeypatch.setattr(route_mod, "setup_cursor_dispatch_home", lambda _d, **_: dispatch_home)
+    monkeypatch.setattr(
+        route_mod, "setup_cursor_dispatch_home", lambda _d, **_: dispatch_home
+    )
     monkeypatch.setattr(route_mod, "validate_dispatch_context", lambda *_a, **_k: {})
-    monkeypatch.setattr(route_mod, "resolve_cursor", lambda _m: MagicMock(model_id="composer-2.5"))
-    monkeypatch.setattr(route_mod, "build_model_selection", lambda _c, _o: MagicMock(params=[]))
-    monkeypatch.setattr(route_mod, "build_agent_options", lambda *_a, **_k: MagicMock(local=True))
-    monkeypatch.setattr(route_mod, "_start_heartbeat", lambda **_kw: (MagicMock(), MagicMock()))
+    monkeypatch.setattr(
+        route_mod, "resolve_cursor", lambda _m: MagicMock(model_id="composer-2.5")
+    )
+    monkeypatch.setattr(
+        route_mod, "build_model_selection", lambda _c, _o: MagicMock(params=[])
+    )
+    monkeypatch.setattr(
+        route_mod, "build_agent_options", lambda *_a, **_k: MagicMock(local=True)
+    )
+    monkeypatch.setattr(
+        route_mod, "_start_heartbeat", lambda **_kw: (MagicMock(), MagicMock())
+    )
 
     def _fake_launch(*_a: object, command: list[str], **_k: object) -> MagicMock:
         class _Run:
@@ -2748,9 +2767,14 @@ def test_ac_p1_6_conductor_summoning_thread_from_packet_not_worker(
     return_value=MagicMock(done=lambda: False),
 )
 def test_conductor_explicit_fable_pin_admits(
-    _mock_task: MagicMock, client: TestClient
+    _mock_task: MagicMock, client: TestClient, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Explicit Other Models pin on conductor admits under explicit_pin_only (pins mode)."""
+    monkeypatch.setattr(
+        "implement_admission.cursor_sdk_other_models_pool."
+        "load_cursor_sdk_other_models_pool_mode",
+        lambda *_a, **_k: "explicit_pin_only",
+    )
     resp = client.post(
         "/api/v1/cursor/dispatch",
         json=_dispatch_body(

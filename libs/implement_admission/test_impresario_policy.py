@@ -18,21 +18,21 @@ from implement_admission.workflow_registry import registry_errors
 pytestmark = pytest.mark.offline
 
 
-def test_default_critic_is_anthropic_sonnet_high() -> None:
+def test_default_critic_is_cdp_opus_high() -> None:
     roles = resolve_roles()
-    assert roles.critic.model == "anthropic/claude-sonnet-5-5"
+    assert roles.critic.model == "cdp/opus-5.5"
     assert roles.critic.effort_rung == "high"
 
 
 def test_empty_skeptic_inherits_high_not_extra() -> None:
     roles = resolve_roles()
-    assert roles.skeptic.model == "anthropic/claude-sonnet-5-5"
+    assert roles.skeptic.model == "cdp/opus-5.5"
     assert roles.skeptic.effort_rung == "high"
 
 
-def test_explicit_extra_on_anthropic_critic_resolves() -> None:
+def test_explicit_extra_on_critic_resolves() -> None:
     roles = resolve_roles(critic_effort="extra")
-    assert roles.critic.model == "anthropic/claude-sonnet-5-5"
+    assert roles.critic.model == "cdp/opus-5.5"
 
 
 def test_hybrid_mechanical_binds_composer() -> None:
@@ -65,23 +65,14 @@ def test_cdp_reroute_for_critic_default_false() -> None:
     assert load_impresario_policy().cdp_reroute_for_critic is False
 
 
-def test_default_critic_standard_anthropic_not_high_cost() -> None:
+def test_default_critic_is_cdp_not_anthropic_credit_bucket() -> None:
     from anthropic_credit.config import load_credit_config
-    from systems.frontier_consult.anthropic_override_gate import (
-        evaluate_anthropic_override,
-    )
+    from implement_admission.conductor_critic_render import _usage_channel
 
     critic_model = resolve_roles().critic.model
     cfg = load_credit_config()
-    assert critic_model == "anthropic/claude-sonnet-5-5"
-    assert critic_model in cfg.standard_models
+    assert critic_model == "cdp/opus-5.5"
+    assert critic_model.startswith("cdp/")
+    assert critic_model not in cfg.standard_models
     assert critic_model not in cfg.high_cost_models
-    verdict = evaluate_anthropic_override(
-        model=critic_model,
-        profile_provider="cursor",
-        profile_allowed_models=frozenset(),
-        credit_healthy=True,
-        standard_models=frozenset(cfg.standard_models),
-    )
-    assert verdict.admitted is True
-    assert verdict.code is None
+    assert _usage_channel(critic_model) == "Opus"

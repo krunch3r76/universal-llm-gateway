@@ -20,7 +20,11 @@ from .cursor_sdk_worker_dispatch import (
     dispatch_cursor_sdk_worker_message,
     post_worker_failure_turn,
 )
-from .handoff import rollback_admitted_dispatch_links
+from .handoff import (
+    close_worker_thread_after_pre_admission_refusal,
+    is_pre_admission_worker_refusal,
+    rollback_admitted_dispatch_links,
+)
 from .handoff_response import (
     build_handoff_result,
     build_sdk_generate_result,
@@ -232,6 +236,15 @@ async def _finish_prepared_dispatch(
             dispatch_id=handle.dispatch_id,
             worker_detail=worker_detail,
         )
+        if (
+            is_pre_admission_worker_refusal(worker_detail)
+            and not handle.worker_thread_reused
+        ):
+            await close_worker_thread_after_pre_admission_refusal(
+                request_id=handle.request_id,
+                thread_id=handle.thread_id,
+                worker_detail=worker_detail,
+            )
         _worker_dispatch_error(request_id=handle.request_id, detail=worker_detail)
 
     queued = bool(worker_detail.get("queued"))
@@ -450,5 +463,6 @@ async def dispatch_cursor_sdk_generate(
         ban_override=ban_override,
         ban_override_reason=ban_override_reason,
         model_ban_override_event_id=model_ban_override_event_id,
+        transcript_id=transcript_id,
     )
     return await dispatch_prepared_cursor_sdk(handle, transcript_id=transcript_id)

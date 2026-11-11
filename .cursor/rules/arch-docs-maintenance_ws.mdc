@@ -65,13 +65,12 @@ It is indexed into RAG and consumed by consultation models.
 
 | File | Covers | Overhaul target |
 |---|---|---|
-| `overview.md` | System-level: services, roles, request flow | — (system-level) |
-| `stargate.md` | Stargate internals: proxy, routing, lifecycle | `services/universal-stargate/` |
 | `gateway.md` | Gateway: workers, model management, inference | `services/_universal-llm-gateway/` |
-| `federation.md` | Federation: roles, routing, telemetry, config | `systems/federation/` |
-| `routing.md` | Routing + capacity: feasibility, admission, sticky | `systems/routing/` + `systems/proxy/` |
-| `pipeline.md` | Pipelines: DAG, handlers, registry, events | `systems/pipeline/` |
-| `handlers.md` | Doc-generate pipeline handlers | `pipelines/doc_generate/handlers/` |
+| `pipeline.md` | Pipelines: DAG, handlers, registry, events | `services/universal-stargate/systems/pipeline/` |
+| `rag.md` | RAG indexing, scopes, extraction | `services/rag/` |
+| `routing.md` | Routing + capacity: feasibility, admission, sticky | `services/universal-stargate/systems/routing/` + `services/universal-stargate/systems/proxy/` |
+| `universal-stargate-src.md` | Stargate `src/` scheduling, events, schemas | `services/universal-stargate/src/` |
+| `execution-owner-conformance.md` | Execution intent ledger / owner conformance | `libs/execution_conformance/` |
 
 ### Appendices (`docs/architecture/appendices/`)
 
@@ -82,7 +81,7 @@ It is indexed into RAG and consumed by consultation models.
 
 ### Design docs (`docs/architecture/design/`)
 
-Historical. See `docs/architecture/README_AI.md` for the full list.
+Active proposals: `async-pipeline-dispatch.md`, `http-first-agent-substrate.md`. Archived proofs and superseded specs: `docs/archive/architecture/` (see `docs/archive/architecture/README.md`).
 
 ## On `/commit` — Architecture Doc Check
 

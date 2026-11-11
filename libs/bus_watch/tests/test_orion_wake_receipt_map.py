@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 
 import pytest
+from agent_bus_store.testing.wake_cursor_test_support import rewind_wake_cursor_for_test
 from bus_watch.endpoint_wake_transport import classify_orion
 from bus_watch.orion_wake_receipt_map import map_orion_receipt_to_outcomes
 
@@ -153,6 +154,7 @@ async def test_deliver_classify_persists_unknown_row(
     from agent_bus_store.db import create_thread, insert_turn
     from agent_bus_store.db.connection import connect
     from agent_bus_store.db.endpoint_wake_ledger import (
+        CONSUMER,
         advance_scan,
         claim_due_wakes,
         get_cursor,
@@ -186,7 +188,7 @@ async def test_deliver_classify_persists_unknown_row(
     )
     get_cursor()
     with connect() as conn:
-        conn.execute("UPDATE endpoint_wake_cursor SET high_water_turn_id=0")
+        rewind_wake_cursor_for_test(conn, CONSUMER, to=0)
     advance_scan(
         "endpoint-wake-dispatcher",
         0,

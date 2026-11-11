@@ -128,6 +128,7 @@ MODEL_CAPABILITY_CARDS: Final[dict[str, ModelCapabilityCard]] = {
     "anthropic/claude-mythos-preview": _ANTHROPIC_API,
     "anthropic/claude-fable-5": _ANTHROPIC_API,
     "anthropic/claude-fable-5-1": _ANTHROPIC_API,
+    "anthropic/claude-fable-5-2": _ANTHROPIC_API,
     "anthropic/claude-opus-4": _ANTHROPIC_API,
     "anthropic/claude-3-5-sonnet": _ANTHROPIC_API,
     "openai/gpt-5.6-sol": _OPENAI_API,

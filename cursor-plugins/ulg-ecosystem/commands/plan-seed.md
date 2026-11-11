@@ -60,7 +60,7 @@ notice, NOT a failure. Verify durable effect regardless:
 
 - Inspect the pipeline result `json`: `ok == true`, `errors == []`.
 - Read back the entities: `cortex(tool="entity_get",
-  arguments='{"entity_id":"plan:{slug}","include_edges":true}')` — confirm the
+  arguments='{"entity_id":"plan:{slug}","intent":"full","include_edges":true}')` — confirm the
   entity exists and the `derived_from` edge to `todo:{slug}` is present.
 - Confirm the spec file exists: `fs`/read `cortex://notes/system/specs/{slug}.md`.
 

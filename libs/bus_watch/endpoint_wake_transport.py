@@ -161,6 +161,19 @@ class StoreClient:
         )
         return list(payload.get("turns") or [])
 
+    def recent_deliveries(
+        self, thread: str, since_s: int, *, before: str | None = None
+    ) -> list[str]:
+        params: dict[str, Any] = {"thread": thread, "since_s": since_s}
+        if before:
+            params["before"] = before
+        payload = self._bus(
+            "GET",
+            "/endpoint-wake/recent-deliveries",
+            params=params,
+        )
+        return list(payload.get("delivery_agent_ids") or [])
+
     def scan(self, expected: int, new_hw: int, pending: list[dict[str, Any]]) -> Any:
         return self._bus(
             "POST",
@@ -187,11 +200,27 @@ class StoreClient:
     def result(self, **payload: Any) -> Any:
         return self._bus("POST", "/endpoint-wake/result", json=payload)
 
-    def holder(self, lane_thread_id: str) -> dict[str, Any] | None:
-        with make_sync_client(self.giw_url, timeout=10.0) as client:
+    def holder(
+        self, lane_thread_id: str, *, timeout: float | None = None
+    ) -> dict[str, Any] | None:
+        """GIW by-thread holder row. Optional ``timeout`` (default 10s) for wake resolution only."""
+        client_timeout = 10.0 if timeout is None else timeout
+        with make_sync_client(self.giw_url, timeout=client_timeout) as client:
             response = client.get(
                 "/api/v1/git/admin/cse-holders",
                 params={"lane_thread_id": lane_thread_id},
+            )
+        response.raise_for_status()
+        return response.json().get("holder")
+
+    def holder_by_registration(self, registration_id: str) -> dict[str, Any] | None:
+        reg = str(registration_id or "").strip()
+        if not reg:
+            return None
+        with make_sync_client(self.giw_url, timeout=10.0) as client:
+            response = client.get(
+                "/api/v1/git/admin/cse-holders",
+                params={"registration_id": reg},
             )
         response.raise_for_status()
         return response.json().get("holder")

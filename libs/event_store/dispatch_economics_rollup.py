@@ -257,7 +257,7 @@ async def _query_signal_rows(
         sql += " AND dispatch_id = ?"
         query_params.append(dispatch_id)
     sql += " ORDER BY seq DESC LIMIT 5000"
-    rows = await store.query(sql, tuple(query_params))
+    rows = await store.query(sql, tuple(query_params), since_ts_ms=since_ts)
     return [{**dict(row), "payload": _parse_payload(row)} for row in rows]
 
 

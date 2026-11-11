@@ -311,6 +311,37 @@ def test_finalize_ship_without_revision() -> None:
     assert payload["est_cost_usd"] == 0.0
 
 
+def test_finalize_surfaces_persona_refused() -> None:
+    payload = _run(
+        {
+            "assemble": _Out(_assemble()),
+            "local_persona_author": _Out(
+                {
+                    "ok": False,
+                    "persona_refused": "persona_validation_failed",
+                }
+            ),
+            "draft": _Out(
+                _draft(),
+                prompt_tokens=5,
+                completion_tokens=2,
+                model_id=_HERMES,
+                model_call_count=1,
+            ),
+            "provenance_check": _Out({"violations": [], "pass": True}),
+            "independence": _Out({"refused": None, "independence": "full"}),
+            "review": _Out(
+                {"findings": [], "verdict": "ship"},
+                prompt_tokens=3,
+                completion_tokens=1,
+                model_id=_QWEN,
+                model_call_count=1,
+            ),
+        }
+    )
+    assert payload.get("persona_refused") == "persona_validation_failed"
+
+
 def test_finalize_refused_envelope() -> None:
     payload = _run(
         {

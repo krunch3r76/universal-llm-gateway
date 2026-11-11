@@ -15,7 +15,8 @@ from .db import json_decode, query
 from .models.deadlines import DeadlineItem
 from .routes.deadlines import (
     _DEADLINES_SQL,
-    _is_resolved,
+    _deadline_item_from_row,
+    _deadline_row_resolution,
     _resolved_assertion_ids,
 )
 
@@ -99,14 +100,21 @@ def enumerate_entity_ids(conn: sqlite3.Connection) -> list[str]:
 def open_deadline_items(conn: sqlite3.Connection) -> list[DeadlineItem]:
     """Open deadlines mirroring list_deadlines(include_resolved=False) filters."""
     rows = query(conn, _DEADLINES_SQL)
-    resolved = _resolved_assertion_ids(
-        conn, [str(r["deadline_id"]) for r in rows if r.get("deadline_id")]
+    row_dicts = [dict(r) for r in rows]
+    claim_map = _resolved_assertion_ids(
+        conn, [str(r["deadline_id"]) for r in row_dicts if r.get("deadline_id")]
     )
     out: list[DeadlineItem] = []
-    for row in rows:
-        item = DeadlineItem(**row)
-        if item.deadline_id and not _is_resolved(item) and item.deadline_id not in resolved:
-            out.append(item)
+    for row in row_dicts:
+        dl_id = str(row.get("deadline_id") or "")
+        claim_ids = claim_map.get(dl_id, [])
+        is_closed, resolved_by, resolved_via = _deadline_row_resolution(row, claim_ids)
+        if not is_closed:
+            out.append(
+                _deadline_item_from_row(
+                    row, resolved_by=resolved_by, resolved_via=resolved_via
+                )
+            )
     return out
 
 
@@ -180,10 +188,16 @@ def _detect_f1(entity_id: str, card: dict[str, object]) -> list[DriftRow]:
     ):
         return []
     out: list[DriftRow] = []
-    for surface, text in (
+    surfaces: list[tuple[str, str]] = [
         ("summary_row", str(card.get("summary_row") or "")),
         ("predicate_summary", str(card.get("predicate_summary") or "")),
-    ):
+    ]
+    authored = card.get("authored_note")
+    if isinstance(authored, dict):
+        note_text = str(authored.get("text") or "")
+        if note_text:
+            surfaces.append(("authored_note", note_text))
+    for surface, text in surfaces:
         if text and _NEGATION_RE.search(text):
             cite = ",".join(
                 k

@@ -14,6 +14,15 @@ lead_claim_authority: server_contract_overrides_packet_prose
 # only: ban_override=true + ban_override_reason (audit event
 # dispatch.model_ban.override), echoed on cursor-sdk worker POST.
 # scope: all — every role at the covered entry points above (not unlisted surfaces).
+# cursor_sdk_other_models_pool: deny (default) hard-422s Other Models pool on
+# cursor-sdk generate omit and explicit pins; explicit_pin_only restores sparing
+# operator pins (frontier.sdk.pool.exempted).
+cursor_sdk_other_models_pool: explicit_pin_only
+
+# claude.ai/code compose dispatch (team_dispatch claude_surface=code on model=cdp/…).
+# prohibit (default when absent) → 422 CLAUDE_CODE_DISPATCH_PROHIBITED; allow restores.
+claude_code_dispatch: prohibit
+
 model_bans:
   - model: cursor/grok-4.7
     scope: all
@@ -23,23 +32,10 @@ model_bans:
     ref: agent-bus:9956
     since: "2026-11-07"
   - model: cursor/gemini-4-argon
-    scope:
-      roles:
-        - critic
-        - sketch
-        - skeptic
-        - review
-        - ear
-        - ear_patrol
-        - implement
-        - sweep
-        - mechanical
-        - driver
-    reason: >-
-      Pattern-A impresario: gemini-4-argon is advisor-wire only; critic/ear/implement
-      and sibling roles must not bind this model.
-    ref: impresario:pattern-a-argon-role-bar
-    since: "2026-11-07"
+    scope: all
+    reason: Other Models pool retired (operator 2026-11-09)
+    ref: operator:2026-11-09
+    since: "2026-11-09"
 
 cdp_reroute:
   enabled: false
@@ -58,15 +54,15 @@ impresario:
     - hybrid
   driver: {model: cursor/composer-2.5, fast: false}
   mechanical: {model: cursor/composer-2.5, effort: medium}
-  critic: {model: anthropic/claude-sonnet-5-5, effort: high}
+  # `cdp/` is allowed and preferred for conductor and supervisor legs over `anthropic/*` and over any `cursor/*` model except `cursor/composer-2.5` while it is cheaper. No CDP host ⇒ record `cdp_fail_route=anthropic` and dispatch `anthropic/claude-sonnet-5-5`.
+  critic: {model: cdp/opus-5.5, effort: high}
   critic_roles:
     sketch: {}
     skeptic: {}
     review: {}
   advisor:
-    model: cursor/gemini-4-argon
+    model: cdp/fable
     effort: high
-    fast: false
     paused: false
     role_sentence: >-
       You advise the next move. You do not author the change and you do not review it.
@@ -79,9 +75,11 @@ impresario:
     - anthropic/claude-sonnet-5-5
     - anthropic/claude-opus-5-5
     - anthropic/claude-fable-5-1
+    - anthropic/claude-fable-5-2
     - cdp/opus-5.5
     - cdp/opus-5.1
     - cdp/opus-5
+    - cdp/fable-5.2
     - cdp/fable-5.1
     - cdp/fable-5
     - cursor/muse-wonder-1.0

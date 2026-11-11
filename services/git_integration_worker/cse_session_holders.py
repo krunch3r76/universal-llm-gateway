@@ -160,9 +160,31 @@ def upsert_holder(
     hid = holder_id_from_chat_url(url)
     if not hid:
         raise ValueError(f"invalid CSE chat_url: {chat_url!r}")
+    reg = (registration_id or "").strip() or None
+    if reg:
+        # Best-effort belt-and-braces on io-local registry; authority is cdp_ask on Jupiter.
+        try:
+            from claude_bundles import cdp_registry_store as _reg_store
+            from claude_bundles.what_is_running_view import is_houseless_purpose
+
+            active = _reg_store.load_active()
+            reg_row = active.get(reg) if isinstance(active, dict) else None
+            if isinstance(reg_row, dict) and is_houseless_purpose(
+                reg_row.get("purpose")
+            ):
+                raise ValueError(
+                    f"houseless registration must not be persisted in GIW ledger: {reg}"
+                )
+        except ValueError:
+            raise
+        except Exception as exc:
+            logger.warning(
+                "upsert_holder: io-local registry houseless check skipped reg=%s: %s",
+                reg,
+                exc,
+            )
     now = _now()
     existing = get_holder(conn, hid)
-    reg = (registration_id or "").strip() or None
     exec_id = (execution_id or "").strip() or None
     lane = (lane_thread_id or "").strip() or None
     if existing is not None:
@@ -738,6 +760,13 @@ def release_holder_for_registration(
     )
 
 
+def _remote_holder_write_blocked_under_pytest() -> bool:
+    """True when pytest is active and remote holder HTTP is not explicitly opted in."""
+    if not os.environ.get("PYTEST_CURRENT_TEST"):
+        return False
+    return os.environ.get("ULG_ALLOW_REMOTE_HOLDER_WRITE_UNDER_PYTEST") != "1"
+
+
 def release_holder_remote(
     *,
     chat_url: str,
@@ -745,6 +774,11 @@ def release_holder_remote(
     reason: str | None = None,
 ) -> bool:
     """Fail-open HTTP release for out-of-process ``detach``."""
+    if _remote_holder_write_blocked_under_pytest():
+        logger.warning(
+            "release_holder_remote: remote holder write skipped under pytest"
+        )
+        return False
     base = os.environ.get("GIT_INTEGRATION_WORKER_URL", "http://127.0.0.1:8091").rstrip(
         "/"
     )
@@ -801,6 +835,11 @@ def upsert_holder_remote(
     HTTP 409 with ``lane_conflict`` returns ``RemoteUpsert.LANE_CONFLICT`` so
     callers do not treat a live cross-lane refusal as success or as GIW-down.
     """
+    if _remote_holder_write_blocked_under_pytest():
+        logger.warning(
+            "upsert_holder_remote: remote holder write skipped under pytest"
+        )
+        return RemoteUpsert.UNAVAILABLE
     base = os.environ.get("GIT_INTEGRATION_WORKER_URL", "http://127.0.0.1:8091").rstrip(
         "/"
     )

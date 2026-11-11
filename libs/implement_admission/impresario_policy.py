@@ -495,7 +495,7 @@ def resolve_roles(
 
 
 def argon_barred_for_role(impresario_role: str | None) -> bool:
-    """True when ``impresario_role`` must not use ``cursor/gemini-4-argon``."""
+    """True when the role is barred from the retired Other-Models argon wire."""
     from implement_admission.model_ban_impresario import argon_role_barred
 
     return argon_role_barred(impresario_role)

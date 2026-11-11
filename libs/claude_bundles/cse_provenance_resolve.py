@@ -20,9 +20,7 @@ from claude_bundles.cse_provenance_projection import (
 )
 from claude_bundles.cse_url import normalize_cse_url
 
-_ROW_PRESENT_STATUSES = frozenset(
-    {"active", "orphaned_alive", "retained", "dormant"}
-)
+_ROW_PRESENT_STATUSES = frozenset({"active", "orphaned_alive", "retained", "dormant"})
 _HISTORICAL_STATUSES = frozenset({"released", "orphaned_retry"})
 
 
@@ -66,7 +64,9 @@ def _host_state(
     return "listable" if host_listable(registration_id) else "not_listable"
 
 
-def _emit_conflict(chat_url: str, candidate_count: int, correlation_id: str | None) -> None:
+def _emit_conflict(
+    chat_url: str, candidate_count: int, correlation_id: str | None
+) -> None:
     from claude_bundles import cdp_registry_events
 
     cdp_registry_events.emit(
@@ -186,10 +186,17 @@ def _resolve_lineage_state(
 
     if not lineage_reader:
         stored = episode.lineage_state or "unresolved"
-        return stored if stored in {"claimed", "unresolved", "proven"} else "unresolved", None, None, None
+        return (
+            stored if stored in {"claimed", "unresolved", "proven"} else "unresolved",
+            None,
+            None,
+            None,
+        )
 
     if not episode.lane_thread:
-        _emit_unresolved(episode.chat_url, "lane_lineage_missing", episode.correlation_id)
+        _emit_unresolved(
+            episode.chat_url, "lane_lineage_missing", episode.correlation_id
+        )
         return "unresolved", None, "lane_lineage_missing", None
 
     lineage, unresolved_reason = _reader_lineage(episode, lineage_reader)
@@ -227,12 +234,16 @@ def resolve(
                 "evidence_class": "observed",
                 "reason": "no_episode",
             }
-        return {
+        payload: dict[str, Any] = {
             "state": "unresolved",
             "chat_url": target,
             "evidence_class": "observed",
             "reason": "no_episode",
         }
+        reg = (registration_id or "").strip()
+        if reg:
+            payload["registration_id"] = reg
+        return payload
 
     if target and len({episode.registration_id for episode in episodes}) > 1:
         candidates = _candidates_for_url(target, episodes, host_listable)
@@ -273,10 +284,12 @@ def resolve(
         latest_registration_id=current.registration_id,
     )
     host_state = _host_state(current.registration_id, host_listable)
-    lineage_state, overlay_lineage, unresolved_reason, overlay_source = _resolve_lineage_state(
-        current,
-        binding_state=binding_state,
-        lineage_reader=lineage_reader,
+    lineage_state, overlay_lineage, unresolved_reason, overlay_source = (
+        _resolve_lineage_state(
+            current,
+            binding_state=binding_state,
+            lineage_reader=lineage_reader,
+        )
     )
 
     claim_episode = _claim_episode(current, episodes)

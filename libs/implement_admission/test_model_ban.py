@@ -38,6 +38,7 @@ pytestmark = pytest.mark.offline
 
 GROK_SLUG = "grok-4.7"
 ADVISOR = advisor_model_wire()
+_ARGON = "cursor/gemini-4-argon"
 
 
 def test_normalize_matches_xai_and_cursor_grok_slug() -> None:
@@ -85,7 +86,7 @@ def test_load_model_bans_includes_grok_and_argon() -> None:
     bans = load_model_bans()
     slugs = {b.match_slug for b in bans}
     assert normalize_model_for_ban("cursor/grok-4.7") in slugs
-    assert normalize_model_for_ban(ADVISOR) in slugs
+    assert normalize_model_for_ban(_ARGON) in slugs
 
 
 def test_explicit_grok_refused_with_403() -> None:
@@ -184,7 +185,6 @@ def test_pipeline_model_defaults_exclude_scope_all_bans() -> None:
     policy = load_route_policy()
     imp = policy.get("impresario") or {}
     critics = imp.get("allowed_critics") or []
-    argon_slug = normalize_model_for_ban(ADVISOR)
     if isinstance(critics, list):
         for model in critics:
             ms = str(model).strip()
@@ -192,9 +192,6 @@ def test_pipeline_model_defaults_exclude_scope_all_bans() -> None:
                 continue
             if normalize_model_for_ban(ms) in banned:
                 offenders.append(f"impresario.allowed_critics {ms!r}")
-            # role-scoped argon ban exempt within advisor role wire listing
-            if normalize_model_for_ban(ms) == argon_slug:
-                continue
     assert offenders == [], offenders
 
 
@@ -278,10 +275,10 @@ def test_generation_options_ban_override_ignored() -> None:
 
 
 def test_argon_role_bar_from_config() -> None:
-    result = refuse_argon_non_advisor_route(model=ADVISOR, impresario_role="critic")
+    result = refuse_argon_non_advisor_route(model=_ARGON, impresario_role="critic")
     assert result is not None
     assert result.code == "ARGON_ROLE_BARRED"
-    assert "advisor" in (result.message or "").lower()
+    assert "other models" in (result.message or "").lower()
 
 
 def test_override_pair_incomplete() -> None:
@@ -298,12 +295,11 @@ def test_override_pair_incomplete() -> None:
     assert reject.get("code") == "ban_override_reason_required"
 
 
-@pytest.mark.parametrize("role", ["critic", "implement", "sweep"])
-def test_argon_ban_scoped_roles_only(role: str) -> None:
-    entry = find_matching_ban(ADVISOR, role=role)
+@pytest.mark.parametrize("role", ["critic", "implement", "sweep", "advisor"])
+def test_argon_ban_scope_all(role: str) -> None:
+    entry = find_matching_ban(_ARGON, role=role)
     assert entry is not None
-    entry_adv = find_matching_ban(ADVISOR, role="advisor")
-    assert entry_adv is None
+    assert entry.scope_all is True
 
 
 def test_loader_missing_policy_file_fail_closed_safe(

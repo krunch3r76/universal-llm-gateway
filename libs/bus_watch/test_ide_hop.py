@@ -11,7 +11,12 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from bus_watch.digest_budget import POLICY_DEFAULTS
+from bus_watch.digest_budget import (
+    POLICY_DEFAULTS,
+    _IDE_TOOL_CALLS_BACKSTOP,
+    _IDE_TOOL_CALLS_THRESHOLD,
+    _IDE_TOOL_RESULT_TOKENS_THRESHOLD,
+)
 from bus_watch.ide_context_hop_monitor import check_cursor_ide_context_hops
 from bus_watch.ide_hop import (
     OPERATOR_LOOP,
@@ -36,6 +41,18 @@ def test_policy_defaults_gui_host_is_xvfb_eight() -> None:
 
 def test_policy_defaults_judgment_posture_is_distributed() -> None:
     assert POLICY_DEFAULTS["judgment_posture"] == "distributed"
+
+
+def test_hop_prose_names_tool_result_rule() -> None:
+    msg = build_ide_hop_message(
+        "18291",
+        row="R1 test row",
+        arm_labels=[],
+        register="attended",
+    )
+    assert f"tool-result tokens >= {_IDE_TOOL_RESULT_TOKENS_THRESHOLD}" in msg
+    assert f"tool_calls >= {_IDE_TOOL_CALLS_THRESHOLD}" in msg
+    assert f"backstop tool_calls >= {_IDE_TOOL_CALLS_BACKSTOP}" in msg
 
 
 def test_build_ide_hop_message_default_includes_advisor_triggers() -> None:

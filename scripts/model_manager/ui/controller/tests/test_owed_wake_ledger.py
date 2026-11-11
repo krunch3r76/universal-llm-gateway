@@ -6,6 +6,8 @@ from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
+from agent_bus_store.db.endpoint_wake_ledger import CONSUMER
+from agent_bus_store.testing.wake_cursor_test_support import rewind_wake_cursor_for_test
 
 from scripts.model_manager.ui.controller import owed_wake_ledger as owed_wake_mod
 from scripts.model_manager.ui.controller.owed_wake_ledger import (
@@ -998,6 +1000,7 @@ def test_cross_path_order_a_owed_dispatch_then_endpoint_claim_skips(
     from agent_bus_store.db import create_thread, init_db, insert_turn
     from agent_bus_store.db.connection import connect
     from agent_bus_store.db.endpoint_wake_ledger import (
+        CONSUMER,
         advance_scan,
         claim_due_wakes,
         get_cursor,
@@ -1018,7 +1021,7 @@ def test_cross_path_order_a_owed_dispatch_then_endpoint_claim_skips(
     )
     get_cursor()
     with connect() as conn:
-        conn.execute("UPDATE endpoint_wake_cursor SET high_water_turn_id=0")
+        rewind_wake_cursor_for_test(conn, CONSUMER, to=0)
     advance_scan(
         "endpoint-wake-dispatcher",
         0,
@@ -1083,7 +1086,7 @@ def test_cross_path_order_b_endpoint_delivered_then_owed_skips(
     )
     get_cursor()
     with connect() as conn:
-        conn.execute("UPDATE endpoint_wake_cursor SET high_water_turn_id=0")
+        rewind_wake_cursor_for_test(conn, CONSUMER, to=0)
     advance_scan(
         "endpoint-wake-dispatcher",
         0,
@@ -1152,7 +1155,7 @@ def test_cross_path_order_c_held_no_live_seat_endpoint_still_claims(
     )
     get_cursor()
     with connect() as conn:
-        conn.execute("UPDATE endpoint_wake_cursor SET high_water_turn_id=0")
+        rewind_wake_cursor_for_test(conn, CONSUMER, to=0)
     advance_scan(
         "endpoint-wake-dispatcher",
         0,
@@ -1224,7 +1227,7 @@ def test_scan_once_pending_then_held_no_live_seat_still_claims(
     )
     get_cursor()
     with connect() as conn:
-        conn.execute("UPDATE endpoint_wake_cursor SET high_water_turn_id=0")
+        rewind_wake_cursor_for_test(conn, CONSUMER, to=0)
 
     class Store:
         def cursor(self) -> dict:

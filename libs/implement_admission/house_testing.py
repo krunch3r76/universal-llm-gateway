@@ -56,7 +56,7 @@ SEAM_MODULES: tuple[str, ...] = (
 )
 
 R2_STAMP_RE = re.compile(
-    r"model=\S+ \(impresario\.critic; do not substitute cdp/\)"
+    r"model=\S+ \(impresario\.critic\)"
 )
 
 

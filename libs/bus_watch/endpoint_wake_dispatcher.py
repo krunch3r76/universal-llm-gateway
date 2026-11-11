@@ -9,6 +9,7 @@ import math
 import os
 import re
 import time
+from collections import OrderedDict
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from functools import lru_cache
@@ -22,6 +23,10 @@ from agent_bus_store.routes.threads.send_prep import (
     maestro_subject_head,
 )
 from agent_seat.registry import STAGE_MANAGER_ADDRESSES, normalize_bus_address
+from cdp_ask.houseless_resolve import (
+    clear_houseless_resolve_memo,
+    resolve_houseless_target,
+)
 from claude_bundles.holder_strings import holder_id_from_chat_url
 from cursor_bridge.chat_target import exchange_lines
 from transport_utils import DEFAULT_STARGATE_URL, make_sync_client
@@ -30,6 +35,10 @@ from web_chat_relay.orion_wake import (
 )
 
 from bus_watch import endpoint_wake_self_sender as self_sender
+from bus_watch.admit_waiter import (
+    coord_admit_subject_matches,
+    parse_waiter_from_admit_body,
+)
 from bus_watch.endpoint_wake_orion_delivery import (
     chatgpt_work_subscription_from_actuation as _orion_synthetic_route_from_actuation,
 )
@@ -192,6 +201,10 @@ _CURSOR_GATE_WAKE_RE = re.compile(
     r"cdp (?:reply|FAILED|UNVERIFIED|DELIVERY FAILED)\b|"
     r"Quiet with work in flight)"
 )
+# Worker CLOSEOUT and CDP reply/ failure heads wake the addressed seat on CSE and Grok alike.
+_GATE_WAKE_ALL_PLATFORMS_RE = re.compile(
+    r"(?i)(?:CLOSEOUT|cdp (?:reply|FAILED|UNVERIFIED|DELIVERY FAILED)\b)"
+)
 _ROUTINE_DISPATCH_FROM = frozenset({"cursor-sdk", "conductor-hop", "dispatch"})
 _GATE_WAKE_REMAP_ADDRESSES = frozenset(
     {"dispatch", "conductor-hop", "git-integration-worker", "frontier-admit"}
@@ -227,8 +240,12 @@ def _api_generate_peer_wake_from() -> frozenset[str]:
     except Exception as exc:
         logger.warning("generate_roles unavailable; API peer-wake fallback: %s", exc)
         return _API_GENERATE_PEER_WAKE_FALLBACK
+
+
 _ORION_PEER_WAKE_HEADS = frozenset({"ANSWER"})
 _POLL_S = 2.0
+_SCAN_HOLDER_PROMOTE_GROUPS_PER_PASS = 20
+_scan_holder_group_cursor: tuple[str, str] | None = None
 
 
 def _endpoint_wake_catchup_max_age_s() -> float:
@@ -352,6 +369,10 @@ def _maestro_direct_address_turn(
 
 _LANE_NAME_ALIASES = frozenset({"maestro", "web-anthropic", "claude-web"})
 _ADDRESS_WALK_HOPS = 8
+_CSE_LANE_THREAD_RE = re.compile(r"^\d{1,10}$")
+_CSE_LIVE_SEAT_STATES = frozenset({"driving", "dormant", "houseless"})
+_GIW_HOLDER_LOOKUP_FAILED = "_giw_holder_lookup_failed"
+_HOUSELESS_NO_ROUTE = "_houseless_no_route_reason"
 _CURSOR_SDK_CLOSEOUT_RE = re.compile(r"(?i)^(?:CLOSEOUT\|)?cursor-sdk CLOSEOUT\b")
 _ON_BEHALF_EXECUTION_REPLY_RE = re.compile(
     r"^[a-zA-Z0-9][a-zA-Z0-9._-]* reply — execution [0-9a-fA-F]{8}$"
@@ -655,6 +676,16 @@ def _turn_id_of(turn: dict[str, Any]) -> int | None:
         return None
 
 
+def _turn_number_of(turn: dict[str, Any]) -> int:
+    raw = turn.get("turn_number")
+    if raw is None:
+        return 0
+    try:
+        return int(raw)
+    except (TypeError, ValueError):
+        return 0
+
+
 def _address_route_verdict(
     turn: dict[str, Any],
     store: StoreClient | None,
@@ -796,7 +827,9 @@ def subject_allowed(
         if agent == "cursor" and _CURSOR_GATE_WAKE_RE.search(text):
             return True
         return False
-    if _CURSOR_GATE_WAKE_RE.search(text) and (agent == "cursor" or not cse):
+    if _CURSOR_GATE_WAKE_RE.search(text) and (
+        agent == "cursor" or not cse or _GATE_WAKE_ALL_PLATFORMS_RE.search(text)
+    ):
         return True
     if text.startswith("TYPE: DIRECTIVE"):
         return True
@@ -941,7 +974,9 @@ def _subject_allowed_rule_id(
         if agent == "cursor" and _CURSOR_GATE_WAKE_RE.search(text):
             return "wake_gate_or_directive"
         return None
-    if _CURSOR_GATE_WAKE_RE.search(text) and (agent == "cursor" or not cse):
+    if _CURSOR_GATE_WAKE_RE.search(text) and (
+        agent == "cursor" or not cse or _GATE_WAKE_ALL_PLATFORMS_RE.search(text)
+    ):
         return "wake_gate_or_directive"
     if text.startswith("TYPE: DIRECTIVE"):
         return "wake_gate_or_directive"
@@ -1241,9 +1276,7 @@ def _orion_synthetic_route(
         current = dict(binding.get("current") or {})
         sid = current.get("subscription_id")
         sid_i = int(sid) if sid is not None else None
-        routed = _orion_synthetic_route_from_actuation(
-            actuation, subscription_id=sid_i
-        )
+        routed = _orion_synthetic_route_from_actuation(actuation, subscription_id=sid_i)
         if routed is not None:
             return routed
 
@@ -1267,9 +1300,7 @@ def _orion_synthetic_route(
         current = dict(binding.get("current") or {})
         sid = current.get("subscription_id")
         sid_i = int(sid) if sid is not None else None
-        return _orion_synthetic_route_from_actuation(
-            actuation, subscription_id=sid_i
-        )
+        return _orion_synthetic_route_from_actuation(actuation, subscription_id=sid_i)
     return None
 
 
@@ -1320,15 +1351,290 @@ def _window_binding_route(agent: str) -> tuple[str, dict[str, Any]] | None:
     )
 
 
+_WAITER_STAMP_RAW_TOS = frozenset({"frontier-admit"})
+_WAITER_TURN_PAGE = 100
+_WAITER_THREAD_CACHE_MAX = 4096
+
+
+class WaiterAdmitScanError(Exception):
+    """``store.turns`` failed before the waiter history scan finished."""
+
+
+def _waiter_lookup_enabled(raw_to: str, agent: str) -> bool:
+    if normalize_bus_address(agent) == "web-anthropic":
+        return False
+    if normalize_bus_address(raw_to) in _WAITER_STAMP_RAW_TOS:
+        return True
+    return normalize_bus_address(agent) == "cursor"
+
+
+def _latest_admit_waiter_on_thread(
+    store: StoreClient, thread_id: str
+) -> tuple[int, str] | None:
+    turns_fn = getattr(store, "turns", None)
+    if turns_fn is None:
+        return None
+    after = 0
+    best: tuple[int, str] | None = None
+    while True:
+        try:
+            payload = turns_fn(thread_id, after_turn=after, last=_WAITER_TURN_PAGE)
+        except Exception:
+            logger.exception(
+                "endpoint_wake_dispatcher: waiter scan failed thread=%s", thread_id
+            )
+            raise WaiterAdmitScanError(thread_id) from None
+        turns = payload.get("turns") if isinstance(payload, dict) else None
+        if not isinstance(turns, list) or not turns:
+            break
+        for turn in turns:
+            if not isinstance(turn, dict):
+                continue
+            subject = str(turn.get("subject") or "")
+            if not coord_admit_subject_matches(subject):
+                continue
+            waiter = parse_waiter_from_admit_body(
+                str(turn.get("body") or ""), subject=subject
+            )
+            if not waiter:
+                continue
+            key = int(turn.get("turn_number") or turn.get("id") or 0)
+            if best is None or key > best[0]:
+                best = (key, waiter)
+        next_after = (
+            payload.get("next_after_turn") if isinstance(payload, dict) else None
+        )
+        if next_after is not None:
+            after = int(next_after)
+            continue
+        if payload.get("truncated") and turns:
+            after = int(turns[-1]["turn_number"])
+            continue
+        break
+    return best
+
+
+_WAITER_THREAD_CACHE: OrderedDict[str, tuple[int, str] | None] = OrderedDict()
+
+
+def _waiter_cache_set(thread_id: str, value: tuple[int, str] | None) -> None:
+    if thread_id in _WAITER_THREAD_CACHE:
+        _WAITER_THREAD_CACHE.move_to_end(thread_id)
+    _WAITER_THREAD_CACHE[thread_id] = value
+    while len(_WAITER_THREAD_CACHE) > _WAITER_THREAD_CACHE_MAX:
+        _WAITER_THREAD_CACHE.popitem(last=False)
+
+
+def _reset_waiter_stamp_cache() -> None:
+    """Test-only reset for process-level waiter cache."""
+    _WAITER_THREAD_CACHE.clear()
+
+
+def _ingest_waiter_admit_turn(turn: dict[str, Any]) -> None:
+    thread = str(turn.get("thread") or "")
+    if not thread:
+        return
+    subject = str(turn.get("subject") or "")
+    if not coord_admit_subject_matches(subject):
+        return
+    waiter = parse_waiter_from_admit_body(str(turn.get("body") or ""), subject=subject)
+    if not waiter:
+        return
+    key = int(turn.get("turn_number") or turn.get("id") or 0)
+    cached = _WAITER_THREAD_CACHE.get(thread)
+    if cached is None and thread not in _WAITER_THREAD_CACHE:
+        _waiter_cache_set(thread, (key, waiter))
+        return
+    if isinstance(cached, tuple) and key > cached[0]:
+        _waiter_cache_set(thread, (key, waiter))
+    elif cached is None:
+        _waiter_cache_set(thread, (key, waiter))
+
+
+def _waiter_stamp_for_single_thread(
+    store: StoreClient, thread_id: str
+) -> tuple[int, str] | None:
+    if thread_id in _WAITER_THREAD_CACHE:
+        _WAITER_THREAD_CACHE.move_to_end(thread_id)
+        return _WAITER_THREAD_CACHE[thread_id]
+    try:
+        hit = _latest_admit_waiter_on_thread(store, thread_id)
+    except WaiterAdmitScanError:
+        return None
+    _waiter_cache_set(thread_id, hit)
+    return hit
+
+
+def _waiter_stamp_for_thread(store: StoreClient, thread_id: str) -> str | None:
+    best: tuple[int, str] | None = None
+    threads = [thread_id]
+    try:
+        parent = _lane_parent_of(store, thread_id)
+    except Exception:
+        logger.exception(
+            "endpoint_wake_dispatcher: lane_parent failed thread=%s", thread_id
+        )
+        parent = None
+    if parent and parent not in threads:
+        threads.append(parent)
+    for tid in threads:
+        hit = _waiter_stamp_for_single_thread(store, tid)
+        if hit is None:
+            continue
+        if best is None or hit[0] > best[0]:
+            best = hit
+    return best[1] if best else None
+
+
+def _parse_waiter_from_admit_turns(store: StoreClient, thread_id: str) -> str | None:
+    """Latest admit-coord stamp on lane or parent (no per-dispatch correlation yet)."""
+    return _waiter_stamp_for_thread(store, thread_id)
+
+
+def _waiters_for_turn(
+    store: StoreClient,
+    turn: dict[str, Any],
+    *,
+    waiter_id: str,
+) -> list[tuple[str, dict[str, Any]]]:
+    """Stamped waiter route, else present seat / newest (master ``_resolve_delivery_route``)."""
+    thread = str(turn["thread"])
+    raw_to = str(turn.get("to_agent") or "")
+    subject = str(turn.get("subject") or "")
+    resolve_agent = _effective_to_agent(raw_to, subject)
+    if normalize_bus_address(raw_to) == "frontier-admit":
+        resolve_agent = "cursor"
+    from agent_bus_store.db.endpoint_wake_ledger import (
+        resolve_subscription_for_thread,
+    )
+
+    resolved = resolve_subscription_for_thread(
+        resolve_agent, thread, agent_id=waiter_id
+    )
+    if resolved is None:
+        parent = _lane_parent_of(store, thread)
+        if parent:
+            resolved = resolve_subscription_for_thread(
+                resolve_agent, parent, agent_id=waiter_id
+            )
+    if resolved is not None:
+        return [resolved]
+    route = _resolve_delivery_route(store, resolve_agent, thread, raw_to=raw_to)
+    if route is not None:
+        return [route]
+    return []
+
+
+def _effective_wake_agent(
+    turn: dict[str, Any],
+    *,
+    waiter_id: str | None,
+    resolved: tuple[str, dict[str, Any]] | None,
+) -> str:
+    raw_to = str(turn.get("to_agent") or "")
+    subject = str(turn.get("subject") or "")
+    if (
+        waiter_id
+        and resolved is not None
+        and normalize_bus_address(raw_to) == "frontier-admit"
+    ):
+        return "cursor"
+    return _effective_to_agent(raw_to, subject)
+
+
+_WAITER_OWN_SEAT_RULE = "drop_waiter_own_seat"
+
+
+def _is_waiter_own_seat_wake(
+    store: StoreClient,
+    turn: dict[str, Any],
+    waiter_id: str | None,
+    resolved: tuple[str, dict[str, Any]] | None,
+) -> bool:
+    """Stamped waiter tab must not wake on turns from seats it already holds."""
+    if not waiter_id or resolved is None:
+        return False
+    sub = resolved[1]
+    target = str(sub.get("agent_id") or "").strip().lower()
+    if target != str(waiter_id).strip().lower():
+        return False
+    thread = str(turn.get("thread") or "")
+    scopes = {thread, str(sub.get("thread_scope") or thread)}
+    raw_from = str(turn.get("from_agent") or "")
+    senders = self_sender.sender_tab_ids(store, raw_from, scopes)
+    if str(waiter_id).strip().lower() in senders:
+        return True
+    return raw_from.strip().lower() == target
+
+
+def _scan_holder_skip_item(
+    turn: dict[str, Any],
+    *,
+    decided_by_rule: str,
+    resolved: tuple[str, dict[str, Any]],
+    wake_agent: str,
+) -> dict[str, Any]:
+    """Scan tombstone when a CSE subscription qualifies but routing finds no holder."""
+    _, sub = resolved
+    item = _pending_item(
+        turn,
+        decided_by_rule=decided_by_rule,
+        route=resolved,
+        wake_agent=wake_agent,
+    )
+    return {
+        **item,
+        "state": "skipped",
+        "reason": "no_route:scan_holder",
+        "subscription_id": sub.get("id"),
+    }
+
+
+def _scan_wake_drop(
+    turn: dict[str, Any],
+    *,
+    agent: str,
+    rule_id: str,
+    reason: str,
+    subscription_id: int | None = None,
+) -> dict[str, Any]:
+    """Qualified-wake scan exit recorded off the claim ledger."""
+    return {
+        "agent": agent,
+        "thread_id": str(turn["thread"]),
+        "turn_id": int(turn["id"]),
+        "turn_number": _turn_number_of(turn),
+        "rule_id": rule_id,
+        "reason": reason,
+        "subscription_id": subscription_id,
+    }
+
+
+def _record_scan_drops_safe(drops: list[dict[str, Any]]) -> None:
+    if not drops:
+        return
+    try:
+        from agent_bus_store.db.endpoint_wake_ledger import record_scan_drops
+
+        record_scan_drops(drops)
+    except Exception:
+        logger.exception("endpoint_wake_dispatcher: record_scan_drops failed")
+
+
 def _pending_item(
     turn: dict[str, Any],
     *,
     decided_by_rule: str,
     route: tuple[str, dict[str, Any]] | None = None,
+    wake_agent: str | None = None,
 ) -> dict[str, Any]:
     subject = str(turn.get("subject") or "")
     item: dict[str, Any] = {
-        "agent": _effective_to_agent(turn.get("to_agent"), subject),
+        "agent": (
+            wake_agent
+            if wake_agent is not None
+            else _effective_to_agent(turn.get("to_agent"), subject)
+        ),
         "thread_id": str(turn["thread"]),
         "turn_id": int(turn["id"]),
         "turn_number": int(turn["turn_number"]),
@@ -1340,7 +1646,8 @@ def _pending_item(
         agent_id = str(sub.get("agent_id") or "").strip()
         if display:
             item["display"] = display
-        if agent_id:
+        surface = str(sub.get("surface") or "").strip().lower()
+        if agent_id and surface in ("cursor", "grok"):
             item["delivery_agent_id"] = agent_id
     return item
 
@@ -1416,14 +1723,102 @@ def _display_seated(store: StoreClient, thread: str) -> bool:
     return resolved is not None and str(resolved[1].get("surface") or "") != "cse"
 
 
+def _promote_scan_holder_skips_safe(store: StoreClient) -> None:
+    global _scan_holder_group_cursor
+    if not os.environ.get("AGENT_BUS_DB_PATH"):
+        return
+    try:
+        from agent_bus_store.db.endpoint_wake_ledger import (
+            expire_scan_holder_tombstones,
+            list_scan_holder_candidates,
+            promote_scan_holder_rows,
+        )
+
+        max_age_s = _endpoint_wake_catchup_max_age_s()
+        now_epoch = time.time()
+        cutoff_epoch = now_epoch - max_age_s
+        cutoff_stamp = datetime.fromtimestamp(cutoff_epoch, tz=UTC).strftime(
+            "%Y-%m-%d %H:%M:%S"
+        )
+
+        expire_scan_holder_tombstones(cutoff_stamp)
+        candidates = list_scan_holder_candidates(cutoff_stamp)
+
+        expire_ids: list[int] = []
+        by_group: dict[tuple[str, str], list[dict[str, Any]]] = {}
+        for row in candidates:
+            row_id = int(row["id"])
+            turn_epoch = _turn_created_at_epoch(row.get("created_at"))
+            if turn_epoch is not None and (now_epoch - turn_epoch) > max_age_s:
+                expire_ids.append(row_id)
+                continue
+            agent = str(row.get("agent") or "")
+            thread_id = str(row.get("thread_id") or "")
+            if not agent or not thread_id:
+                continue
+            by_group.setdefault((agent, thread_id), []).append(row)
+
+        def _group_order_key(key: tuple[str, str]) -> int:
+            return min(int(r["id"]) for r in by_group[key])
+
+        groups_sorted = sorted(by_group.keys(), key=_group_order_key)
+        n_groups = len(groups_sorted)
+        start_idx = 0
+        if _scan_holder_group_cursor is not None and n_groups:
+            try:
+                start_idx = groups_sorted.index(_scan_holder_group_cursor) + 1
+            except ValueError:
+                start_idx = 0
+            if start_idx >= n_groups:
+                start_idx = 0
+
+        promote_ids: list[int] = []
+        resolved_this_pass = 0
+        last_group: tuple[str, str] | None = None
+        for offset in range(min(_SCAN_HOLDER_PROMOTE_GROUPS_PER_PASS, n_groups)):
+            gidx = (start_idx + offset) % n_groups
+            agent, thread_id = groups_sorted[gidx]
+            last_group = (agent, thread_id)
+            try:
+                resolved = _resolve_delivery_route(store, agent, thread_id)
+            except Exception:
+                break
+            resolved_this_pass += 1
+            if resolved is not None:
+                _route_kind, sub = resolved
+                if str(sub.get("surface") or "") == "cse":
+                    try:
+                        target = resolve_cse_wake_target(
+                            store,
+                            sub,
+                            wake_thread=thread_id,
+                            delivery_phase=False,
+                        )
+                    except Exception:
+                        break
+                    if target is not None:
+                        for item in by_group[(agent, thread_id)]:
+                            promote_ids.append(int(item["id"]))
+
+        if last_group is not None:
+            _scan_holder_group_cursor = last_group
+
+        promote_scan_holder_rows(promote_ids, expire_ids)
+    except Exception:
+        logger.exception("endpoint_wake_dispatcher: promote scan_holder skips failed")
+
+
 def scan_once(store: StoreClient, *, idle_mark: dict[str, float] | None = None) -> None:
     """Read new turns and CAS pending rows. Store and GIW errors propagate."""
     import time
 
     expire_overdue_hops(store)
+    clear_cse_wake_thread_holder_memo(store)
+    _promote_scan_holder_skips_safe(store)
     mark = idle_mark if idle_mark is not None else {}
     max_passes = 20
     for _pass in range(max_passes):
+        clear_houseless_resolve_memo()
         cursor = store.cursor()
         high = int(cursor["high_water_turn_id"])
         turns = store.since(high)
@@ -1431,17 +1826,23 @@ def scan_once(store: StoreClient, *, idle_mark: dict[str, float] | None = None) 
             return
         pending: list[dict[str, Any]] = []
         tombstones: list[dict[str, Any]] = []
+        drops: list[dict[str, Any]] = []
         stale_catchup: dict[str, int] | None = None
+        setattr(store, "_self_wake_recent_cache", {})
         for turn in turns:
+            _ingest_waiter_admit_turn(turn)
             raw_to = str(turn.get("to_agent") or "")
             subject = str(turn.get("subject") or "")
             head = subject.split("|", 1)[0].strip().upper()
-            agent = _effective_to_agent(raw_to, subject)
             thread = str(turn["thread"])
+            agent = _effective_to_agent(raw_to, subject)
+            stamped_waiter: str | None = None
             if agent == "web-anthropic":
                 resolved = None
                 cse = True
             else:
+                if _waiter_lookup_enabled(raw_to, agent):
+                    stamped_waiter = _waiter_stamp_for_thread(store, thread)
                 if agent == "cursor":
                     try:
                         expire_overdue_hop(thread, store=store)
@@ -1450,7 +1851,18 @@ def scan_once(store: StoreClient, *, idle_mark: dict[str, float] | None = None) 
                             "ide_hop_land: expire overdue hop failed root=%s",
                             thread,
                         )
-                resolved = _resolve_delivery_route(store, agent, thread, raw_to=raw_to)
+                if stamped_waiter:
+                    waiter_routes = _waiters_for_turn(
+                        store, turn, waiter_id=stamped_waiter
+                    )
+                    resolved = waiter_routes[0] if waiter_routes else None
+                    agent = _effective_wake_agent(
+                        turn, waiter_id=stamped_waiter, resolved=resolved
+                    )
+                else:
+                    resolved = _resolve_delivery_route(
+                        store, agent, thread, raw_to=raw_to
+                    )
                 cse = (
                     resolved is not None
                     and str(resolved[1].get("surface") or "") == "cse"
@@ -1482,18 +1894,62 @@ def scan_once(store: StoreClient, *, idle_mark: dict[str, float] | None = None) 
                     )
                 continue
             if turn.get("read_at"):
+                drops.append(
+                    _scan_wake_drop(
+                        turn,
+                        agent=agent,
+                        rule_id=verdict.rule_id,
+                        reason="skipped:already_read",
+                    )
+                )
                 continue
             if agent == "web-anthropic":
                 if _display_seated(store, thread):
+                    drops.append(
+                        _scan_wake_drop(
+                            turn,
+                            agent=agent,
+                            rule_id=verdict.rule_id,
+                            reason="skipped:display_seated",
+                        )
+                    )
                     continue
                 address = resolve_turn_address(thread, store)
                 if address is None and not store.holder(thread):
+                    drops.append(
+                        _scan_wake_drop(
+                            turn,
+                            agent=agent,
+                            rule_id=verdict.rule_id,
+                            reason="skipped:no_route_web_anthropic",
+                        )
+                    )
                     continue
             elif (
                 resolved is not None and str(resolved[1].get("surface") or "") == "cse"
             ):
-                lane = str(resolved[1].get("agent_id") or "").strip()
-                if not lane or not store.holder(lane):
+                cse_target = resolve_cse_wake_target(
+                    store, resolved[1], wake_thread=thread
+                )
+                if cse_target is None:
+                    if _turn_is_stale_catchup(turn):
+                        tid = int(turn["id"])
+                        if stale_catchup is None:
+                            stale_catchup = {"count": 0, "min": tid, "max": tid}
+                        stale_catchup["count"] += 1
+                        stale_catchup["min"] = min(stale_catchup["min"], tid)
+                        stale_catchup["max"] = max(stale_catchup["max"], tid)
+                        _, sub = resolved
+                        drops.append(
+                            _scan_wake_drop(
+                                turn,
+                                agent=agent,
+                                rule_id=verdict.rule_id,
+                                reason="skipped:stale_catchup_cse_no_target",
+                                subscription_id=sub.get("id"),
+                            )
+                        )
+                        continue
                     if direct_maestro:
                         _observe_maestro_wake_drop(
                             thread=thread,
@@ -1504,6 +1960,14 @@ def scan_once(store: StoreClient, *, idle_mark: dict[str, float] | None = None) 
                             rule_id=verdict.rule_id,
                             subject=subject,
                         )
+                    tombstones.append(
+                        _scan_holder_skip_item(
+                            turn,
+                            decided_by_rule=verdict.rule_id,
+                            resolved=resolved,
+                            wake_agent=agent,
+                        )
+                    )
                     continue
             elif resolved is None:
                 if direct_maestro:
@@ -1514,6 +1978,14 @@ def scan_once(store: StoreClient, *, idle_mark: dict[str, float] | None = None) 
                         rule_id=verdict.rule_id,
                         subject=subject,
                     )
+                drops.append(
+                    _scan_wake_drop(
+                        turn,
+                        agent=agent,
+                        rule_id=verdict.rule_id,
+                        reason="skipped:no_route",
+                    )
+                )
                 continue
             if _turn_is_stale_catchup(turn):
                 tid = int(turn["id"])
@@ -1522,11 +1994,39 @@ def scan_once(store: StoreClient, *, idle_mark: dict[str, float] | None = None) 
                 stale_catchup["count"] += 1
                 stale_catchup["min"] = min(stale_catchup["min"], tid)
                 stale_catchup["max"] = max(stale_catchup["max"], tid)
+                sub_id = None
+                if resolved is not None:
+                    _, sub = resolved
+                    sub_id = sub.get("id")
+                drops.append(
+                    _scan_wake_drop(
+                        turn,
+                        agent=agent,
+                        rule_id=verdict.rule_id,
+                        reason="skipped:stale_catchup",
+                        subscription_id=sub_id,
+                    )
+                )
                 continue
             _remap, resolved = _cursor_tab_route(store, raw_to, resolved)
-            item = _pending_item(turn, decided_by_rule=verdict.rule_id, route=resolved)
-            if self_sender.is_self_wake(store, turn, resolved):
-                rule = self_sender.SELF_SENDER_RULE
+            item = _pending_item(
+                turn,
+                decided_by_rule=verdict.rule_id,
+                route=resolved,
+                wake_agent=agent,
+            )
+            if _is_waiter_own_seat_wake(store, turn, stamped_waiter, resolved):
+                rule = _WAITER_OWN_SEAT_RULE
+                _observe_endpoint_wake_suppressed(
+                    thread_id=thread,
+                    turn_id=_turn_id_of(turn),
+                    to_agent=agent,
+                    rule_id=rule,
+                    subject_head=head,
+                )
+                tombstones.append(self_sender.suppressed_item(item, rule))
+                continue
+            if rule := self_sender.is_self_wake(store, turn, resolved):
                 _observe_endpoint_wake_suppressed(
                     thread_id=thread,
                     turn_id=_turn_id_of(turn),
@@ -1546,12 +2046,15 @@ def scan_once(store: StoreClient, *, idle_mark: dict[str, float] | None = None) 
         new_hw = int(turns[-1]["id"])
         if pending:
             store.scan(high, new_hw, pending + tombstones)
+            _record_scan_drops_safe(drops)
             return
         if time.monotonic() - mark.get("at", 0.0) < 60:
             store.scan(high, new_hw, tombstones)
+            _record_scan_drops_safe(drops)
             return
         mark["at"] = time.monotonic()
         store.scan(high, new_hw, tombstones)
+        _record_scan_drops_safe(drops)
 
 
 def _display_post(
@@ -1560,10 +2063,11 @@ def _display_post(
     turn: int | str,
     *,
     text: str = "",
+    wake_groups: list[dict[str, Any]] | None = None,
 ) -> tuple[str, str]:
     _display_started = time.monotonic()
     try:
-        return _display_post_body(row, sub, turn, text=text)
+        return _display_post_body(row, sub, turn, text=text, wake_groups=wake_groups)
     finally:
         from bus_watch.endpoint_wake_pass_timing import note_display_post_duration
 
@@ -1576,6 +2080,7 @@ def _display_post_body(
     turn: int | str,
     *,
     text: str = "",
+    wake_groups: list[dict[str, Any]] | None = None,
 ) -> tuple[str, str]:
     options = {
         "display": sub.get("display"),
@@ -1588,6 +2093,8 @@ def _display_post_body(
     }
     if (text or "").strip():
         options["text"] = text.strip()
+    if wake_groups:
+        options["wake_groups"] = wake_groups
     body = {
         "model": "display-chat-wake",
         "messages": [{"role": "user", "content": "wake"}],
@@ -1866,6 +2373,497 @@ def post_wake_registration_refused_alerts(
             )
 
 
+def _is_cse_lane_thread_id(agent_id: str) -> bool:
+    return bool(_CSE_LANE_THREAD_RE.fullmatch((agent_id or "").strip()))
+
+
+def _giw_holder_lookup_failed_marker(registration_id: str) -> dict[str, Any]:
+    return {
+        "registration_id": registration_id,
+        _GIW_HOLDER_LOOKUP_FAILED: True,
+    }
+
+
+def _holder_seat_state(holder: dict[str, Any]) -> str:
+    return str(holder.get("seat_state") or "").strip()
+
+
+def _holder_is_houseless(holder: dict[str, Any]) -> bool:
+    from claude_bundles.what_is_running_view import is_houseless_purpose
+
+    if is_houseless_purpose(holder.get("purpose")):
+        return True
+    return _holder_seat_state(holder) == "houseless"
+
+
+def _holder_is_live(holder: dict[str, Any]) -> bool:
+    if holder.get(_GIW_HOLDER_LOOKUP_FAILED):
+        return False
+    state = _holder_seat_state(holder)
+    if not state:
+        return True
+    return state in _CSE_LIVE_SEAT_STATES
+
+
+def _synthetic_houseless_holder(reg: str, chat_url: str) -> dict[str, Any]:
+    return {
+        "registration_id": reg,
+        "chat_url": chat_url,
+        "purpose": "houseless",
+        "seat_state": "houseless",
+        "holder": f"houseless:{reg}",
+    }
+
+
+def _holder_for_cse_registration(
+    store: StoreClient,
+    registration_id: str,
+    *,
+    delivery_phase: bool = False,
+) -> dict[str, Any] | None:
+    reg = (registration_id or "").strip()
+    if not reg:
+        return None
+    memo = {} if delivery_phase else None
+    hres = resolve_houseless_target(reg, memo=memo)
+    if hres.ok and hres.chat_url:
+        return _synthetic_houseless_holder(reg, hres.chat_url)
+    if hres.reason == "provenance_unreachable":
+        return _giw_holder_lookup_failed_marker(reg)
+    if hres.reason != "purpose_not_houseless":
+        return {_HOUSELESS_NO_ROUTE: f"houseless_{hres.reason}"}
+    giw_answered = False
+    lookup = getattr(store, "holder_by_registration", None)
+    if callable(lookup):
+        try:
+            row = lookup(reg)
+            giw_answered = True
+            if isinstance(row, dict) and row:
+                return row
+        except Exception:
+            logger.exception(
+                "endpoint_wake_dispatcher: holder_by_registration failed reg=%s",
+                reg,
+            )
+            return _giw_holder_lookup_failed_marker(reg)
+    if giw_answered:
+        return None
+    try:
+        from services.git_integration_worker.cse_session_holders import (
+            _ledger_conn,
+            ensure_schema,
+            resolve_holder_by_registration,
+        )
+
+        with _ledger_conn() as conn:
+            ensure_schema(conn)
+            row = resolve_holder_by_registration(conn, reg)
+        if isinstance(row, dict) and row:
+            return row
+    except Exception:
+        logger.debug(
+            "endpoint_wake_dispatcher: local holder lookup failed reg=%s",
+            reg,
+            exc_info=True,
+        )
+    return None
+
+
+_CSE_WAKE_THREAD_HOLDER_MEMO = "_cse_wake_thread_holder_memo"
+_CSE_WAKE_GIW_BY_THREAD_TIMEOUT_S = 2.0
+
+
+def clear_cse_wake_thread_holder_memo(store: StoreClient) -> None:
+    """Reset per-thread bus/GIW holder reads for one dispatcher scan pass."""
+    setattr(store, _CSE_WAKE_THREAD_HOLDER_MEMO, {})
+
+
+def _cse_sub_thread_scoped(sub: dict[str, Any], *, wake_thread: str) -> bool:
+    """True when this CSE row may use bus→GIW→agent_id holder resolution for ``wake_thread``."""
+    if str(sub.get("surface") or "") != "cse":
+        return False
+    scope_kind = str(sub.get("scope_kind") or "thread").strip().lower()
+    if scope_kind != "thread":
+        return False
+    scope = str(sub.get("thread_scope") or "").strip()
+    thread = str(wake_thread or "").strip()
+    if not scope or scope == "*" or not thread or scope != thread:
+        return False
+    agent_id = str(sub.get("agent_id") or "").strip()
+    if not agent_id or _is_cse_lane_thread_id(agent_id):
+        return False
+    return True
+
+
+def _holder_eligible_for_thread_wake_source(holder: dict[str, Any]) -> bool:
+    """Whether bus/GIW candidates avoid today's seat_* skip reasons (sources 1–2 only)."""
+    if holder.get(_HOUSELESS_NO_ROUTE):
+        return False
+    if holder.get(_GIW_HOLDER_LOOKUP_FAILED):
+        return False
+    return _holder_is_live(holder)
+
+
+def _cse_wake_target_from_live_holder(
+    sub: dict[str, Any],
+    *,
+    wake_thread: str,
+    agent_id: str,
+    holder: dict[str, Any],
+) -> tuple[str, dict[str, Any]]:
+    """Return (lane, holder) when the holder is already known live (bus/GIW picks)."""
+    scope = str(sub.get("thread_scope") or wake_thread or "").strip()
+    lane = str(holder.get("lane_thread_id") or "").strip() or scope or agent_id
+    return lane, holder
+
+
+def _thread_holder_memo(store: StoreClient) -> dict[str, dict[str, Any]]:
+    """Per-store memo dict for bus/GIW reads within one scan or fire invocation."""
+    memo = getattr(store, _CSE_WAKE_THREAD_HOLDER_MEMO, None)
+    if not isinstance(memo, dict):
+        memo = {}
+        setattr(store, _CSE_WAKE_THREAD_HOLDER_MEMO, memo)
+    return memo
+
+
+def _local_bus_cse_registration(thread_id: str) -> str | None:
+    """Local ``get_current_cse`` registration id, or None when unset/none/unreadable."""
+    if not os.environ.get("AGENT_BUS_DB_PATH"):
+        return None
+    try:
+        from agent_bus_store.db.cse_associations import get_current_cse
+
+        row = get_current_cse(thread_id=thread_id)
+    except LookupError:
+        return None
+    except Exception:
+        logger.debug(
+            "endpoint_wake_dispatcher: local get_current_cse failed thread=%s",
+            thread_id,
+            exc_info=True,
+        )
+        return None
+    if str(row.get("state") or "") == "none":
+        return None
+    reg = str(row.get("cse_registration_id") or "").strip()
+    return reg or None
+
+
+def _memoized_bus_registration(
+    store: StoreClient, thread_id: str, memo: dict[str, dict[str, Any]]
+) -> str | None:
+    """Read bus association registration once per thread per dispatcher memo pass."""
+    slot = memo.setdefault(thread_id, {})
+    if "bus_registration" not in slot:
+        slot["bus_registration"] = _local_bus_cse_registration(thread_id)
+    reg = slot.get("bus_registration")
+    return str(reg).strip() if reg else None
+
+
+def _memoized_giw_by_thread_registration(
+    store: StoreClient, thread_id: str, memo: dict[str, dict[str, Any]]
+) -> tuple[str | None, str | None]:
+    """Read GIW by-thread ``registration_id`` once per thread per memo pass (≤2s timeout)."""
+    slot = memo.setdefault(thread_id, {})
+    if "giw_by_thread_registration" in slot:
+        return (
+            slot.get("giw_by_thread_registration"),
+            slot.get("giw_by_thread_error"),
+        )
+    giw_reg: str | None = None
+    giw_error: str | None = None
+    holder_get = getattr(store, "holder", None)
+    if callable(holder_get):
+        try:
+            row = holder_get(thread_id, timeout=_CSE_WAKE_GIW_BY_THREAD_TIMEOUT_S)
+            if isinstance(row, dict) and row:
+                raw = str(row.get("registration_id") or "").strip()
+                giw_reg = raw or None
+        except TypeError:
+            try:
+                row = holder_get(thread_id)
+                if isinstance(row, dict) and row:
+                    raw = str(row.get("registration_id") or "").strip()
+                    giw_reg = raw or None
+            except Exception as exc:
+                giw_error = type(exc).__name__
+                logger.debug(
+                    "endpoint_wake_dispatcher: giw by-thread holder failed thread=%s",
+                    thread_id,
+                    exc_info=True,
+                )
+        except Exception as exc:
+            giw_error = type(exc).__name__
+            logger.debug(
+                "endpoint_wake_dispatcher: giw by-thread holder failed thread=%s",
+                thread_id,
+                exc_info=True,
+            )
+    slot["giw_by_thread_registration"] = giw_reg
+    slot["giw_by_thread_error"] = giw_error
+    return giw_reg, giw_error
+
+
+def _cse_wake_target_from_holder(
+    sub: dict[str, Any],
+    *,
+    wake_thread: str,
+    agent_id: str,
+    holder: dict[str, Any],
+    delivery_phase: bool,
+) -> tuple[str, dict[str, Any]] | None:
+    """Map a resolved holder to (lane, holder); source 3 keeps delivery-phase non-live rows."""
+    scope = str(sub.get("thread_scope") or wake_thread or "").strip()
+    if holder.get(_HOUSELESS_NO_ROUTE):
+        if not delivery_phase:
+            return None
+        lane = scope or agent_id
+        return lane, holder
+    if holder.get(_GIW_HOLDER_LOOKUP_FAILED):
+        if not delivery_phase:
+            return None
+        lane = scope or agent_id
+        return lane, holder
+    if not _holder_is_live(holder):
+        if not delivery_phase:
+            return None
+    lane = str(holder.get("lane_thread_id") or "").strip() or scope or agent_id
+    return lane, holder
+
+
+def _observe_cse_wake_holder_resolution(
+    *,
+    thread: str,
+    sub: dict[str, Any],
+    chosen_registration: str,
+    chosen_source: str,
+    bus_registration: str | None,
+    giw_by_thread_registration: str | None,
+    giw_by_thread_error: str | None,
+) -> None:
+    """Emit holder-resolution telemetry when wake used a fallback source (AC3)."""
+    try:
+        from bus_watch.events import emit_endpoint_wake_cse_holder_resolution
+
+        sub_id = sub.get("id")
+        emit_endpoint_wake_cse_holder_resolution(
+            thread=thread,
+            subscription_id=int(sub_id) if sub_id is not None else None,
+            chosen_registration=chosen_registration,
+            chosen_source=chosen_source,
+            bus_registration=bus_registration,
+            giw_by_thread_registration=giw_by_thread_registration,
+            giw_by_thread_error=giw_by_thread_error,
+        )
+    except Exception:
+        logger.exception(
+            "endpoint_wake_dispatcher: cse_holder_resolution emit failed thread=%s",
+            thread,
+        )
+
+
+def _resolve_cse_wake_target_from_agent_id(
+    store: StoreClient,
+    sub: dict[str, Any],
+    *,
+    wake_thread: str | None,
+    delivery_phase: bool,
+) -> tuple[str, dict[str, Any]] | None:
+    """Legacy resolve path keyed on ``sub['agent_id']`` only (source 3 / non-thread-scoped)."""
+    agent_id = str(sub.get("agent_id") or "").strip()
+    if not agent_id:
+        return None
+    scope = str(sub.get("thread_scope") or wake_thread or "").strip()
+    if _is_cse_lane_thread_id(agent_id):
+        if delivery_phase:
+            holder = store.holder(agent_id)
+        else:
+            try:
+                holder = store.holder(agent_id)
+            except Exception:
+                logger.exception(
+                    "endpoint_wake_dispatcher: holder probe failed lane=%s", agent_id
+                )
+                return None
+        if not isinstance(holder, dict) or not holder:
+            return None
+        return agent_id, holder
+    holder = _holder_for_cse_registration(
+        store, agent_id, delivery_phase=delivery_phase
+    )
+    if not isinstance(holder, dict) or not holder:
+        return None
+    return _cse_wake_target_from_holder(
+        sub,
+        wake_thread=scope or agent_id,
+        agent_id=agent_id,
+        holder=holder,
+        delivery_phase=delivery_phase,
+    )
+
+
+def _resolve_cse_wake_target_thread_scoped(
+    store: StoreClient,
+    sub: dict[str, Any],
+    *,
+    wake_thread: str,
+    delivery_phase: bool,
+) -> tuple[str, dict[str, Any]] | None:
+    """Thread-scoped CSE wake holder resolution.
+
+    Candidate order: (1) bus ``get_current_cse`` registration when
+    ``AGENT_BUS_DB_PATH`` is set; (2) GIW by-thread ``registration_id`` only when
+    (1) yields no live holder; (3) subscription ``agent_id``. Each registration
+    candidate is gated by ``_holder_for_cse_registration``. GIW by-thread errors
+    are contained here and resolution falls through to (3).
+    """
+    agent_id = str(sub.get("agent_id") or "").strip()
+    thread = str(wake_thread).strip()
+    if not thread:
+        return _resolve_cse_wake_target_from_agent_id(
+            store, sub, wake_thread=wake_thread, delivery_phase=delivery_phase
+        )
+    memo = _thread_holder_memo(store)
+    bus_registration = _memoized_bus_registration(store, thread, memo)
+    giw_by_thread_registration: str | None = None
+    giw_by_thread_error: str | None = None
+    bus_holder_cached: dict[str, Any] | None = None
+    bus_holder_lookup_done = False
+
+    def _cached_bus_holder() -> dict[str, Any] | None:
+        nonlocal bus_holder_cached, bus_holder_lookup_done
+        if not bus_registration:
+            return None
+        if not bus_holder_lookup_done:
+            bus_holder_lookup_done = True
+            row = _holder_for_cse_registration(
+                store,
+                bus_registration,
+                delivery_phase=delivery_phase,
+            )
+            bus_holder_cached = row if isinstance(row, dict) else None
+        return bus_holder_cached
+
+    def _bus_candidate_eligible() -> bool:
+        holder = _cached_bus_holder()
+        return (
+            isinstance(holder, dict)
+            and bool(holder)
+            and _holder_eligible_for_thread_wake_source(holder)
+        )
+
+    def _try_registration(reg: str, source: str) -> tuple[str, dict[str, Any]] | None:
+        if source == "bus_association" and reg == bus_registration:
+            holder = _cached_bus_holder()
+        else:
+            holder = _holder_for_cse_registration(
+                store, reg, delivery_phase=delivery_phase
+            )
+        if not isinstance(holder, dict) or not holder:
+            return None
+        if not _holder_eligible_for_thread_wake_source(holder):
+            return None
+        target = _cse_wake_target_from_live_holder(
+            sub,
+            wake_thread=thread,
+            agent_id=agent_id,
+            holder=holder,
+        )
+        reg_out = str(holder.get("registration_id") or reg).strip() or reg
+        should_emit = False
+        if source != "bus_association":
+            if not bus_registration or not _bus_candidate_eligible():
+                should_emit = True
+        if (
+            giw_by_thread_registration
+            and bus_registration
+            and giw_by_thread_registration != bus_registration
+        ):
+            should_emit = True
+        if giw_by_thread_error and source == "subscription_agent_id":
+            should_emit = True
+        if should_emit:
+            _observe_cse_wake_holder_resolution(
+                thread=thread,
+                sub=sub,
+                chosen_registration=reg_out,
+                chosen_source=source,
+                bus_registration=bus_registration,
+                giw_by_thread_registration=giw_by_thread_registration,
+                giw_by_thread_error=giw_by_thread_error,
+            )
+        return target
+
+    if bus_registration:
+        hit = _try_registration(bus_registration, "bus_association")
+        if hit is not None:
+            return hit
+
+    giw_by_thread_registration, giw_by_thread_error = (
+        _memoized_giw_by_thread_registration(store, thread, memo)
+    )
+    if giw_by_thread_registration:
+        hit = _try_registration(giw_by_thread_registration, "giw_by_thread")
+        if hit is not None:
+            return hit
+
+    target = _resolve_cse_wake_target_from_agent_id(
+        store, sub, wake_thread=wake_thread, delivery_phase=delivery_phase
+    )
+    if target is not None:
+        _holder = target[1]
+        chosen_reg = str(_holder.get("registration_id") or agent_id).strip()
+        should_emit = (
+            not bus_registration
+            or not _bus_candidate_eligible()
+            or giw_by_thread_registration is not None
+            or giw_by_thread_error is not None
+        )
+        if (
+            giw_by_thread_registration
+            and bus_registration
+            and giw_by_thread_registration != bus_registration
+        ):
+            should_emit = True
+        if should_emit and chosen_reg:
+            _observe_cse_wake_holder_resolution(
+                thread=thread,
+                sub=sub,
+                chosen_registration=chosen_reg,
+                chosen_source="subscription_agent_id",
+                bus_registration=bus_registration,
+                giw_by_thread_registration=giw_by_thread_registration,
+                giw_by_thread_error=giw_by_thread_error,
+            )
+    return target
+
+
+def resolve_cse_wake_target(
+    store: StoreClient,
+    sub: dict[str, Any],
+    *,
+    wake_thread: str | None = None,
+    delivery_phase: bool = False,
+) -> tuple[str, dict[str, Any]] | None:
+    """Resolve (delivery lane, holder) for a CSE subscription row.
+
+    For thread-scoped CSE subscriptions with ``wake_thread``, candidates are tried
+  in order: bus association registration, GIW by-thread registration id, then
+    ``agent_id``. Each registration is liveness-gated via
+    ``_holder_for_cse_registration``; GIW by-thread failures are contained and fall
+    through. Otherwise ``agent_id`` is either a driving lane thread or a registration
+    id (houseless mailbox threads).
+    """
+    thread = str(wake_thread or "").strip()
+    if thread and _cse_sub_thread_scoped(sub, wake_thread=thread):
+        return _resolve_cse_wake_target_thread_scoped(
+            store, sub, wake_thread=thread, delivery_phase=delivery_phase
+        )
+    return _resolve_cse_wake_target_from_agent_id(
+        store, sub, wake_thread=wake_thread, delivery_phase=delivery_phase
+    )
+
+
 def deliver(
     rows: list[dict[str, Any]],
     holder: dict[str, Any],
@@ -1893,12 +2891,20 @@ def _deliver_cse(
         induction = f"wake turns {numbers}"
     fallback_url = holder.get("chat_url")
     fallback_reg = holder.get("registration_id")
+    houseless = _holder_is_houseless(holder)
+    followup_kw: dict[str, Any] = {
+        "fallback_chat_url": str(fallback_url) if fallback_url else None,
+        "fallback_registration_id": str(fallback_reg) if fallback_reg else None,
+    }
+    if houseless:
+        followup_kw["purpose"] = None
+        followup_kw["reattach"] = False
     dry = fire_cse_followup(
         induction,
         lane,
         dry_run=True,
-        fallback_chat_url=str(fallback_url) if fallback_url else None,
-        fallback_registration_id=str(fallback_reg) if fallback_reg else None,
+        houseless_delivery=houseless,
+        **followup_kw,
     )
     if dry.get("error") == "no_identity" and dry.get("source") == "unavailable":
         return "pending", "connect", None
@@ -1912,8 +2918,8 @@ def _deliver_cse(
         induction,
         lane,
         dry_run=False,
-        fallback_chat_url=str(fallback_url) if fallback_url else None,
-        fallback_registration_id=str(fallback_reg) if fallback_reg else None,
+        houseless_delivery=houseless,
+        **followup_kw,
     )
     state, reason = classify_cse(live if isinstance(live, dict) else {})
     return state, reason, str(live.get("registration_id") or "") or None
@@ -1986,13 +2992,24 @@ def fire_due_wakes(store: StoreClient) -> dict[str, Any] | None:
     The display branch re-runs the tab check on the fire-time route and records
     ``route='remapped'`` when delivery used a stale or bare name on an exact row.
     """
+    clear_cse_wake_thread_holder_memo(store)
     claimed = store.claim()
     rows = [r for r in claimed.get("rows") or [] if r.get("state") == "claimed"]
     wake_id = claimed.get("wake_id")
     if not wake_id or not rows:
         return claimed
-    agent = rows[0]["agent"]
-    thread = rows[0]["thread_id"]
+    delivery_tab = str(claimed.get("delivery_agent_id") or "").strip()
+    if delivery_tab:
+        tab_rows = [
+            r
+            for r in rows
+            if str(r.get("delivery_agent_id") or "").strip() == delivery_tab
+        ]
+        primary = max(tab_rows or rows, key=lambda r: int(r["turn_id"]))
+    else:
+        primary = max(rows, key=lambda r: int(r["turn_id"]))
+    agent = primary["agent"]
+    thread = primary["thread_id"]
     decided_by_rule = str(rows[0].get("decided_by_rule") or "").strip() or None
 
     def _finish(
@@ -2075,17 +3092,10 @@ def fire_due_wakes(store: StoreClient) -> dict[str, Any] | None:
         )
     route, sub = resolved
     if str(sub.get("surface") or "") == "cse":
-        lane = str(sub.get("agent_id") or "").strip()
-        if not lane:
-            return _finish(
-                outcome="skipped",
-                reason="no_route",
-                route=None,
-                subscription_id=None,
-                cse_registration_id=None,
-            )
         try:
-            holder = store.holder(lane)
+            cse_target = resolve_cse_wake_target(
+                store, sub, wake_thread=thread, delivery_phase=True
+            )
         except Exception as exc:
             return _finish(
                 outcome="unknown",
@@ -2094,18 +3104,43 @@ def fire_due_wakes(store: StoreClient) -> dict[str, Any] | None:
                 subscription_id=sub.get("id"),
                 cse_registration_id=None,
             )
-        if not holder:
+        if cse_target is None:
             return _finish(
                 outcome="skipped",
                 reason="no_route",
-                route=route,
+                route=None,
+                subscription_id=None,
+                cse_registration_id=None,
+            )
+        lane, holder = cse_target
+        if holder.get(_HOUSELESS_NO_ROUTE):
+            return _finish(
+                outcome="skipped",
+                reason=str(holder.get(_HOUSELESS_NO_ROUTE) or "no_route"),
+                route=None,
                 subscription_id=sub.get("id"),
                 cse_registration_id=None,
             )
-        if str(holder.get("seat_state") or "") == "superseded":
+        if holder.get(_GIW_HOLDER_LOOKUP_FAILED):
+            return _finish(
+                outcome="unknown",
+                reason="HolderLookupError",
+                route="cse",
+                subscription_id=sub.get("id"),
+                cse_registration_id=None,
+            )
+        seat_state = _holder_seat_state(holder)
+        if seat_state and seat_state not in _CSE_LIVE_SEAT_STATES:
+            reason = (
+                "seat_superseded"
+                if seat_state == "superseded"
+                else "seat_released"
+                if seat_state == "released"
+                else "seat_not_live"
+            )
             return _finish(
                 outcome="skipped",
-                reason="seat_superseded",
+                reason=reason,
                 route=route,
                 subscription_id=sub.get("id"),
                 cse_registration_id=None,
@@ -2218,19 +3253,44 @@ def fire_due_wakes(store: StoreClient) -> dict[str, Any] | None:
     route, sub = resolved
     if remap_reason is not None:
         route = "remapped"
-    turn_numbers = sorted({int(r["turn_number"]) for r in rows})
-    turn_arg = (
-        turn_numbers[0]
-        if len(turn_numbers) == 1
-        else ",".join(str(n) for n in turn_numbers)
+    by_thread: dict[str, list[dict[str, Any]]] = {}
+    for row in rows:
+        by_thread.setdefault(str(row["thread_id"]), []).append(row)
+    wake_groups: list[dict[str, Any]] = []
+    for tid, trows in sorted(
+        by_thread.items(),
+        key=lambda kv: max(int(x["turn_id"]) for x in kv[1]),
+    ):
+        nums = sorted({int(x["turn_number"]) for x in trows})
+        turn_part: int | str = (
+            nums[0] if len(nums) == 1 else ",".join(str(n) for n in nums)
+        )
+        wake_groups.append({"thread_id": tid, "turn": turn_part})
+    primary_nums = sorted(
+        {
+            int(r["turn_number"])
+            for r in rows
+            if str(r["thread_id"]) == str(primary["thread_id"])
+        }
     )
-    paste_text = ""
+    turn_arg: int | str = (
+        primary_nums[0]
+        if len(primary_nums) == 1
+        else ",".join(str(n) for n in primary_nums)
+    )
     if (
-        str(rows[0]["thread_id"]) == "19627"
+        len(by_thread) == 1
+        and str(primary["thread_id"]) == "19627"
         and str(sub.get("surface") or "") == "cursor"
     ):
         paste_text = exchange_lines(rows)
-    state, reason = _display_post(rows[0], sub, turn_arg, text=paste_text)
+        state, reason = _display_post(primary, sub, turn_arg, text=paste_text)
+    elif len(by_thread) > 1:
+        state, reason = _display_post(
+            primary, sub, turn_arg, text="", wake_groups=wake_groups
+        )
+    else:
+        state, reason = _display_post(primary, sub, turn_arg)
     display_reachable_age = _note_display_post_reason(reason)
     if _update_no_composer_streak_and_gate_unsubscribe(
         sub, thread, reason, display_reachable_age=display_reachable_age
@@ -2273,6 +3333,7 @@ async def run_dispatcher() -> None:
         note_fire_due_wakes_iteration,
         safe_emit_pass_duration,
     )
+
     store = StoreClient()
     idle: dict[str, float] = {}
     while True:
@@ -2297,6 +3358,7 @@ async def run_dispatcher() -> None:
             end_phase("scan_once")
             begin_phase("fire_due_wakes")
             stage = "fire_due_wakes"
+            clear_cse_wake_thread_holder_memo(store)
             for _ in range(5):
                 note_fire_due_wakes_iteration()
                 claimed = await asyncio.to_thread(fire_due_wakes, store)

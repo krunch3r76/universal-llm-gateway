@@ -10,7 +10,13 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 
-PROVENANCE_MISSING_PREFIX = "PROVENANCE_MISSING:"
+from bus_watch import admit_waiter as _admit_waiter
+
+COORD_GENERATE_ADMIT_SUBJECT = _admit_waiter.COORD_GENERATE_ADMIT_SUBJECT
+PROVENANCE_MISSING_PREFIX = _admit_waiter.PROVENANCE_MISSING_PREFIX
+coord_admit_subject_matches = _admit_waiter.coord_admit_subject_matches
+parse_waiter_from_admit_body = _admit_waiter.parse_waiter_from_admit_body
+
 # Non-dispatch ``from`` when caller_agent is blank but the admit is flagged.
 MISSING_CALLER_FROM_AGENT = "frontier-admit"
 
@@ -67,17 +73,35 @@ def format_work_key_line(work_key: str | None) -> str | None:
     return f"work_key: {key}"
 
 
+def format_waiter_line(waiter_transcript_id: str | None) -> str | None:
+    tid = _strip(waiter_transcript_id)
+    if not tid:
+        return None
+    return f"waiter: {tid}"
+
+
+def parse_waiter_from_body(body: str | None) -> str | None:
+    """Parse waiter stamp when ``body`` is known to be from a coord admit turn."""
+    return parse_waiter_from_admit_body(
+        body, subject=COORD_GENERATE_ADMIT_SUBJECT
+    )
+
+
 def stamp_admit_turn_body(
     body: str,
     *,
     work_key: str | None,
     provenance_missing: tuple[str, ...],
+    waiter_transcript_id: str | None = None,
 ) -> str:
-    """Prepend ``work_key:`` when present; append provenance markers for blanks."""
+    """Prepend ``work_key:`` / ``waiter:`` when present; append provenance markers."""
     stamped = body
-    line = format_work_key_line(work_key)
-    if line:
-        stamped = f"{line}\n{body}" if body else line
+    work_line = format_work_key_line(work_key)
+    waiter_line = format_waiter_line(waiter_transcript_id)
+    prefix_lines = [ln for ln in (work_line, waiter_line) if ln]
+    if prefix_lines:
+        prefix = "\n".join(prefix_lines)
+        stamped = f"{prefix}\n{body}" if body else prefix
     return append_provenance_marker(stamped, provenance_missing)
 
 

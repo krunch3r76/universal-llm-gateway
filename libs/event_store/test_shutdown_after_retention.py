@@ -128,18 +128,40 @@ def test_stop_during_retention_batch_sleep_exits_under_5s(tmp_path: Path) -> Non
         tmp_path / "ingest.sock",
         tmp_path / "query.sock",
         {
-            "EVENTS_RETENTION_STARTUP": "run",
+            "EVENTS_RETENTION_STARTUP": "off",
             "EVENTS_RETENTION_BATCH_SIZE": "1",
             "EVENTS_RETENTION_BATCH_SLEEP_S": "30",
         },
     )
+    retention_req: subprocess.Popen[str] | None = None
     try:
-        _wait_log(proc, "Retention batch table=events", 10)
+        _wait_log(proc, "Event service started", 10)
+        retention_req = subprocess.Popen(
+            [
+                "curl",
+                "--silent",
+                "--show-error",
+                "--max-time",
+                "120",
+                "--unix-socket",
+                str(tmp_path / "query.sock"),
+                "-X",
+                "POST",
+                "http://localhost/api/v1/retention/run",
+            ],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+        )
+        _wait_log(proc, "Retention batch table=events", 15)
         elapsed = _sigterm_exit_s(proc)
     finally:
         if proc.poll() is None:
             proc.kill()
             proc.wait(timeout=2)
+        if retention_req is not None and retention_req.poll() is None:
+            retention_req.kill()
+            retention_req.wait(timeout=2)
     assert elapsed < 5
 
 

@@ -37,7 +37,7 @@ from implement_admission.conductor_score_table import (
 from implement_admission.conductor_witness_defaults import (
     DefaultWitnessCortex,
     DefaultWitnessGit,
-    WitnessCortexUnavailable,
+    WitnessCortexUnavailableError,
     closeout_witnesses_for_slug,
 )
 from implement_admission.conductor_witness_table import (
@@ -70,7 +70,7 @@ logger = logging.getLogger(__name__)
 
 __all__ = [
     "DefaultWitnessCortex",
-    "WitnessCortexUnavailable",
+    "WitnessCortexUnavailableError",
     "DefaultWitnessGit",
     "FoldDeps",
     "FoldResult",
@@ -124,8 +124,7 @@ def _missing_witness_message(
         model = load_impresario_policy().critic.model
         return (
             "hang R1 pre-land review URI (team_dispatch op=generate, "
-            f"contract=delivery-review, model={model} (impresario.critic; "
-            "do not substitute cdp/), …; "
+            f"contract=delivery-review, model={model} (impresario.critic), …; "
             "put job=delivery-review on a prompt line, not as a dispatch argument)"
         )
     if row_id == "G7":
@@ -192,7 +191,7 @@ def _scoreboard_rows(
         entity = deps.cortex.entity_get(source_ref, intent="full")
         raw_attrs = entity.get("attributes") if isinstance(entity, dict) else None
         attrs = raw_attrs if isinstance(raw_attrs, dict) else {}
-    except WitnessCortexUnavailable:
+    except WitnessCortexUnavailableError:
         raise
     except Exception:  # noqa: BLE001 — fold is advisory; G-ladder is the floor
         attrs = {}
@@ -230,7 +229,7 @@ def _fold_cortex_unavailable(
     slug: str,
     *,
     raw_body: str,
-    exc: WitnessCortexUnavailable,
+    exc: WitnessCortexUnavailableError,
 ) -> FoldResult:
     """Cortex unread: flag the fold; leave the tip bytes alone.
 
@@ -325,7 +324,7 @@ def fold_scoreboard(
             files_root=root,
             rows=rows,
         )
-    except WitnessCortexUnavailable as exc:
+    except WitnessCortexUnavailableError as exc:
         return _fold_cortex_unavailable(
             slug,
             raw_body=raw_body,

@@ -43,6 +43,17 @@ def main(argv: list[str] | None = None) -> int:
     p_dereg.add_argument("--registration-id", required=True)
     p_dereg.add_argument("--kill", action="store_true")
 
+    p_tag = sub.add_parser(
+        "set-purpose",
+        help="Tag an existing registration with a non-operator registry purpose",
+    )
+    p_tag.add_argument("--registration-id", required=True)
+    p_tag.add_argument(
+        "--purpose",
+        required=True,
+        help="Non-operator tag (currently: houseless)",
+    )
+
     sub.add_parser("list", help="List active registrations")
 
     p_boot = sub.add_parser(
@@ -101,6 +112,13 @@ def main(argv: list[str] | None = None) -> int:
     if args.cmd == "deregister":
         cdp_registry.deregister_lane(args.registration_id, kill=args.kill)
         print(f"deregistered registration_id={args.registration_id} kill={args.kill}")
+        return 0
+
+    if args.cmd == "set-purpose":
+        reg = cdp_registry.set_registration_purpose(
+            args.registration_id, args.purpose
+        )
+        print(f"purpose={reg.purpose} registration_id={reg.registration_id}")
         return 0
 
     if args.cmd == "list":
