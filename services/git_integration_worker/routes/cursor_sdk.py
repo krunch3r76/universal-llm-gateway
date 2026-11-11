@@ -159,6 +159,7 @@ from services.git_integration_worker.cursor_sdk_events import (
     emit_sdk_lane_selected,
     emit_sdk_restart_bridge_reap_failed,  # noqa: F401 — route_mod monkeypatch surface
     emit_sdk_skills_mounted,
+    emit_sdk_skills_tier_prune_overrides,
     emit_sdk_worker_completed,
     emit_sdk_worker_delivery_failed,
     emit_sdk_worker_failed,
@@ -1308,6 +1309,7 @@ def _run_sdk_sync(
             workspace_roots=()
             if is_bare
             else (ctx.dispatch_workspace, ctx.workspace_root),
+            delegation_tier=delegation_tier,
         )
     except Exception as exc:  # skill mount is advisory; never kill the dispatch
         logger.warning(
@@ -1325,6 +1327,14 @@ def _run_sdk_sync(
                 result=mount_result,
                 execution_id=execution_id,
             )
+            if mount_result.tier_prune_overrides:
+                emit_sdk_skills_tier_prune_overrides(
+                    dispatch_id=ctx.dispatch_id,
+                    thread_id=ctx.thread_id,
+                    resolved_model=resolved_model,
+                    result=mount_result,
+                    execution_id=execution_id,
+                )
     # After overlay (inside setup) and skills= staging. Shared by generate,
     # queued promote, hop successor admits, the hop watchdog, and park-resume
     # children — each reaches this function.

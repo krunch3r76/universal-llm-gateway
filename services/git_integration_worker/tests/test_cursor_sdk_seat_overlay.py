@@ -20,6 +20,7 @@ from services.git_integration_worker.cursor_seat_overlay import (
     PRUNED_PLUGIN_PATHS,
     SeatOverlayConfigError,
     apply_cursor_sdk_seat_overlay,
+    resolve_caller_skills_override_slugs,
     resolve_seat_overlay_pruned_paths,
     seat_overlay_root,
 )
@@ -222,6 +223,11 @@ def test_tier_b_overlay_prunes_lean_dispatch_keeps_dispatch_kernel(
     plugin_root = cursor_dir / ECOSYSTEM_PLUGIN_RELPATH
     assert not (plugin_root / "skills" / "lean-dispatch").exists()
     assert (plugin_root / "rules" / "dispatch-kernel_ulg.mdc").is_file()
+
+
+def test_resolve_caller_skills_override_slugs_tier_b_includes_lean_dispatch() -> None:
+    assert "lean-dispatch" in resolve_caller_skills_override_slugs(delegation_tier="B")
+    assert resolve_caller_skills_override_slugs(delegation_tier="A") == frozenset()
 
 
 def test_tier_c_lane_b_overlay_prunes_lean_dispatch_kernel_and_restart_drain(

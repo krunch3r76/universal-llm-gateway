@@ -115,6 +115,12 @@ TIER_C_LEAF_PRUNED_PLUGIN_PATHS: tuple[Path, ...] = (
     Path("skills") / "lean-dispatch",
     Path("rules") / "dispatch-kernel_ulg.mdc",
 )
+#: Skill slugs a caller may restore via explicit ``skills=`` after tier overlay prune.
+#: Ruling: cortex://notes/rulings/skills-delivery-2026-11-10.md (interpretation item 6).
+CALLER_SKILLS_OVERRIDE_PRUNE_PATHS_BY_TIER: dict[str, tuple[Path, ...]] = {
+    "B": TIER_B_PRUNED_PLUGIN_PATHS,
+    "C": TIER_C_LEAF_PRUNED_PLUGIN_PATHS,
+}
 UNMERGED_LANE_B_LEAF_PRUNED_PLUGIN_PATHS: tuple[Path, ...] = (
     Path("rules") / "restart-drain-discipline_ulg.mdc",
 )
@@ -170,6 +176,24 @@ def resolve_seat_overlay_pruned_paths(
         seen.add(relpath)
         ordered.append(relpath)
     return tuple(ordered)
+
+
+def resolve_caller_skills_override_slugs(
+    *,
+    delegation_tier: str = "A",
+) -> frozenset[str]:
+    """Skill slugs tier B/C overlay removes that ``skills=`` may deliberately re-stage.
+
+    Global and lead-only prunes are excluded — only the named tier/lane economy
+    prune set is restorable by an explicit caller ``skills=`` list.
+    """
+    tier = (delegation_tier or "A").strip().upper()
+    paths = CALLER_SKILLS_OVERRIDE_PRUNE_PATHS_BY_TIER.get(tier, ())
+    slugs: set[str] = set()
+    for relpath in paths:
+        if len(relpath.parts) >= 2 and relpath.parts[0] == "skills":
+            slugs.add(relpath.parts[1])
+    return frozenset(slugs)
 
 
 def _graft_entries(overlay_root: Path) -> list[tuple[Path, Path]]:

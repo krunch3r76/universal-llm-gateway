@@ -33,6 +33,7 @@ from universal_logging import get_logger
 
 from services.git_integration_worker.cursor_seat_overlay import (
     ECOSYSTEM_PLUGIN_RELPATH,
+    resolve_caller_skills_override_slugs,
 )
 
 logger = get_logger(__name__)
@@ -56,6 +57,9 @@ class SkillMountRow:
     layer: str | None = None
     dest: str | None = None
     reason: str | None = None
+    #: When set, caller ``skills=`` re-staged this slug after tier overlay removed it
+    #: from the HOME plugin copy (see ``resolve_caller_skills_override_slugs``).
+    tier_prune_override: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -89,6 +93,15 @@ class SkillsMountResult:
             if r.disposition in ("staged", "preexisting")
         )
 
+    @property
+    def tier_prune_overrides(self) -> tuple[tuple[str, str], ...]:
+        """(slug, delegation_tier) pairs where ``skills=`` overrode tier overlay prune."""
+        return tuple(
+            (r.canonical_slug, r.tier_prune_override)
+            for r in self.rows
+            if r.tier_prune_override
+        )
+
     def as_event_payload(self) -> list[dict[str, str | None]]:
         return [
             {
@@ -97,6 +110,7 @@ class SkillsMountResult:
                 "disposition": r.disposition,
                 "layer": r.layer,
                 "reason": r.reason,
+                "tier_prune_override": r.tier_prune_override,
             }
             for r in self.rows
         ]
@@ -133,8 +147,14 @@ def stage_dispatch_skills(
     *,
     source_repo: Path,
     workspace_roots: Sequence[Path] = (),
+    delegation_tier: str | None = None,
 ) -> SkillsMountResult:
     """Copy requested skill bodies into ``{cursor_dir}/skills/{slug}/SKILL.md``.
+
+    Explicit caller ``skills=`` may re-stage slugs the seat overlay tier-pruned from
+    the HOME plugin copy; those rows carry ``tier_prune_override`` and emit
+    ``dispatch.skills.override`` downstream (ruling
+    ``cortex://notes/rulings/skills-delivery-2026-11-10.md``, interpretation item 6).
 
     Args:
         cursor_dir: The dispatch HOME's ``.cursor`` directory.
@@ -144,6 +164,7 @@ def stage_dispatch_skills(
             from every Lane-B worktree.
         workspace_roots: Trees whose ``.cursor/skills`` the seat already reads
             (``dispatch_workspace``, ``workspace_root``).
+        delegation_tier: Tier letter for tier-prune override detection (``B``/``C``).
 
     Returns:
         One row per requested slug. Unresolvable slugs are recorded, never raised:
@@ -158,6 +179,8 @@ def stage_dispatch_skills(
     resolution = classify_cursor_skills(requested, repo_root=source_repo)
     present_dirs = discoverable_skill_dirs(cursor_dir, workspace_roots=workspace_roots)
     staged_root = cursor_dir / HOME_SKILLS_DIRNAME
+    tier_norm = (delegation_tier or "A").strip().upper()
+    override_slugs = resolve_caller_skills_override_slugs(delegation_tier=tier_norm)
 
     rows: list[SkillMountRow] = []
     for slug, reason in resolution.unresolved:
@@ -210,6 +233,11 @@ def stage_dispatch_skills(
                 )
             )
             continue
+        tier_override = (
+            tier_norm
+            if sot.canonical_slug in override_slugs and tier_norm in ("B", "C")
+            else None
+        )
         rows.append(
             SkillMountRow(
                 requested_id=sot.requested_id,
@@ -217,6 +245,7 @@ def stage_dispatch_skills(
                 disposition="staged",
                 layer=sot.layer,
                 dest=str(dest),
+                tier_prune_override=tier_override,
             )
         )
 
