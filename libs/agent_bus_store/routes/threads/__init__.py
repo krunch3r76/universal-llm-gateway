@@ -23,6 +23,7 @@ from . import (  # noqa: E402,F401
     lineage,
     open_children,
     resume_fence,
+    seat,
     send,
     send_prep,
     send_sidecar,
