@@ -26,11 +26,45 @@ def test_stale_messages_not_attributed() -> None:
     ) is False
 
 
-def test_fingerprint_change_attributed() -> None:
+def test_fingerprint_change_attributed_with_positive_binding() -> None:
     surface = {
         "active_agent_id": "new-id",
         "recent_messages": ["fresh line"],
+        "has_active_chat": True,
     }
     assert grok_conversation_attributed(
-        surface, expected_agent_id="new-id", prior_message_fp="deadbeef"
+        surface,
+        expected_agent_id="new-id",
+        prior_message_fp="deadbeef",
+        prior_generating=False,
     ) is True
+
+
+def test_fingerprint_change_without_binding_not_attributed() -> None:
+    surface = {
+        "active_agent_id": "new-id",
+        "recent_messages": ["fresh line"],
+        "has_active_chat": False,
+    }
+    assert grok_conversation_attributed(
+        surface,
+        expected_agent_id="new-id",
+        prior_message_fp="deadbeef",
+        prior_generating=None,
+    ) is False
+
+
+def test_fingerprint_change_while_other_bot_streaming_not_attributed() -> None:
+    """Sidebar shows target Y but page prose still grows from bot X."""
+    surface = {
+        "active_agent_id": "bot-y",
+        "recent_messages": ["bot-x streaming grew this line"],
+        "has_active_chat": True,
+        "generating": True,
+    }
+    assert grok_conversation_attributed(
+        surface,
+        expected_agent_id="bot-y",
+        prior_message_fp="older-fp",
+        prior_generating=True,
+    ) is False

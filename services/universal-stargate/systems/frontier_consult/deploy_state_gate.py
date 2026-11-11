@@ -22,6 +22,7 @@ from transport_utils import (
 from universal_logging import get_logger
 
 from .admission import FrontierEndpointError
+from .deploy_state_gate_events import emit_deploy_state_gate_dual_read_mismatch
 from .handoff import _workspaces_root
 from .implement_admission_bridge import _repo_base
 from .stargate_cortex_reader import StargateCortexReader
@@ -190,10 +191,6 @@ def _fetch_producer_health_json(producer: str) -> dict[str, Any]:
 
 
 def _identity_field_value(payload: dict[str, Any], field: str) -> str:
-    if field == "source_tree_hash":
-        return str(
-            payload.get("source_tree_hash") or payload.get("source_tree_sha") or ""
-        ).strip()
     return str(payload.get(field) or "").strip()
 
 
@@ -214,15 +211,11 @@ def _dual_merge_deploy_identity(
         manage_val = _identity_field_value(manage_result, field)
         if _field_non_empty(get_val) and _field_non_empty(manage_val):
             if get_val != manage_val:
-                logger.info(
-                    "deploy_state_gate.dual_read_mismatch",
-                    extra={
-                        "event": "deploy_state_gate.dual_read_mismatch",
-                        "producer": producer,
-                        "field": field,
-                        "get_value": get_val,
-                        "manage_value": manage_val,
-                    },
+                emit_deploy_state_gate_dual_read_mismatch(
+                    producer=producer,
+                    field=field,
+                    get_value=get_val,
+                    manage_value=manage_val,
                 )
             merged[field] = get_val
         elif _field_non_empty(get_val):
@@ -376,6 +369,14 @@ def _expected_tree_hash(source_ref: str | None, *, gate_files: set[str]) -> str 
     except (OSError, subprocess.SubprocessError):
         return None
     return tree.stdout.strip() if tree.returncode == 0 else None
+
+
+def _manage_stamp_identity_blocked(manage_result: dict[str, Any]) -> str | None:
+    """Fail closed when manage omitted stamp identity and recorded a reason."""
+    reason = str(manage_result.get("deploy_stamp_reason") or "").strip()
+    if reason:
+        return reason
+    return None
 
 
 def _identity_passes(
@@ -633,6 +634,13 @@ def require_deploy_state(
             failures.append(f"{producer}: {state}")
             continue
 
+        stamp_block = _manage_stamp_identity_blocked(manage_result)
+        if stamp_block:
+            failures.append(
+                f"{producer}: source identity not fresh ({stamp_block})"
+            )
+            continue
+
         health = _fetch_producer_health_json(producer)
         merged = _dual_merge_deploy_identity(
             manage_result, health, producer=producer
@@ -644,7 +652,9 @@ def require_deploy_state(
             expected_tree_hash=expected_tree,
         )
         if not passed:
-            failures.append(f"{producer}: source identity not fresh")
+            stamp_reason = str(manage_result.get("deploy_stamp_reason") or "").strip()
+            suffix = f" ({stamp_reason})" if stamp_reason else ""
+            failures.append(f"{producer}: source identity not fresh{suffix}")
 
     if failures:
         logger.warning(

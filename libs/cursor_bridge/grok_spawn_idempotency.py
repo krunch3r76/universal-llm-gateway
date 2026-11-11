@@ -69,6 +69,8 @@ def begin(key: str, digest: str) -> dict[str, Any]:
             return {"action": "conflict", "code": "idempotency_conflict"}
         if slot.get("state") == "verified":
             return {"action": "duplicate", "receipt": dict(slot.get("receipt") or {})}
+        if slot.get("owner"):
+            return {"action": "in_flight", "code": "idempotency_in_flight"}
         if slot.get("state") == "create_unknown":
             slot["owner"] = token
             return {
@@ -78,8 +80,6 @@ def begin(key: str, digest: str) -> dict[str, Any]:
                 "hide_ok": bool(slot.get("hide_ok")),
                 "sub_done": bool(slot.get("sub_done")),
             }
-        if slot.get("owner"):
-            return {"action": "in_flight", "code": "idempotency_in_flight"}
         phase = str(slot.get("steer_phase") or "not_sent")
         if phase in {"attempting", "sent_unknown"}:
             return {
