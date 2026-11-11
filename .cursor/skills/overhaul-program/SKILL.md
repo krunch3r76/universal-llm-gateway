@@ -74,8 +74,7 @@ Wave 0 code order is unchanged; the docstring half is open on both.
 
 **Architecture inventory** (`docs/architecture/`): subsystem docs are overhaul-generated
 only — see `arch-docs-maintenance_ws.mdc`. Current committed set includes
-`async-pipeline-dispatch.md`, `cortex-provenance-substrate-v1.md`,
-`entity-backed-claim-provenance.md`, plus `appendices/` cross-cutting refs.
+`async-pipeline-dispatch.md`, `http-first-agent-substrate.md`, plus `appendices/` cross-cutting refs; archived superseded specs under `docs/archive/architecture/design/`.
 
 **Tracker / continuity:** open `task:*` arcs and recent agent-bus threads on overhaul
 topics; boot `cortex_brief` surfaces in-flight work. Program doc + MVW row (this file)
