@@ -1,11 +1,13 @@
 # RAG Service Architecture
 
-<!-- GENERATED:START inventory_sha=4c6a06a51ed0 generated=2026-07-19 -->
+<!-- GENERATED:START inventory_sha=96a3a98e3d25 generated=2026-11-10 method=targeted-refresh source=c75e3fc8 refreshed_by=agent-bus:22999 coverage=177/177 -->
 _Generated from docstrings, signatures, and imports; claims reflect what the source **declares**, not verified runtime behavior. doc-generate verifies doc<->docstring consistency, not docstring<->behavior truth._
 
 ## Scope
 
 This document covers the `services/rag` subsystem: a FastAPI-based Retrieval-Augmented Generation service responsible for document ingestion, chunking, embedding, indexing, knowledge extraction, and hybrid search. The service coordinates ChromaDB (vector store), SQLite (metadata and property index, FTS5), and Stargate (LLM gateway) to provide searchable, enriched document corpora.
+
+Post-2026-07 refresh notes (targeted): `chunkers/projected_messages.py` and `messages_chunker.py` index continuity and projected message transcripts; `contextualize_budget.py` enforces a FIFO contextualize permit cap; `chroma_writer.py` serializes blocking Chroma writes off the asyncio loop; `openapi_mcp/` holds generated MCP adapter manifests; embed indexing uses content-addressed diff gating via `rag_service/indexing/embed_diff.py`.
 
 ---
 
@@ -19,6 +21,7 @@ This document covers the `services/rag` subsystem: a FastAPI-based Retrieval-Aug
 | `services/rag/admin_routes/_extraction_export.py` | Bulk extraction export route: `GET /extraction_export` |
 | `services/rag/admin_routes/_helpers.py` | Shared helpers and validators for admin routes |
 | `services/rag/admin_routes/articles.py` | Article metadata and source deletion routes |
+| `services/rag/admin_routes/extraction_queue.py` | Extraction queue admin routes — operator reset of exhausted sources. |
 | `services/rag/admin_routes/failures.py` | Indexing failure management routes: `/indexing_failures` |
 | `services/rag/admin_routes/indexing.py` | File and directory indexing routes: `/index`, `/reindex`, `/index_directory`, etc. |
 | `services/rag/admin_routes/status.py` | Status and monitoring routes: `/indexing/status`, `/coverage`, `/source-status`, `/watch/status` |
@@ -29,6 +32,7 @@ This document covers the `services/rag` subsystem: a FastAPI-based Retrieval-Aug
 | `services/rag/admission_gate/_state_changes.py` | Gate open/close state mutations and first-burst emission |
 | `services/rag/admission_gate/gate.py` | Event-driven admission gate for batch contextualization workers. Subscribes to Stargate coordination-role signals over the Event Service WebSocket. |
 | `services/rag/article_registry.py` | Article registry helpers for YAML migration and DB-backed runtime lookups |
+| `services/rag/chroma_writer.py` | Single-thread Chroma writer executor routing blocking `collection.*` calls off the event loop. |
 | `services/rag/chunk_filters.py` | Noise chunk detection for index-time tagging and retrieval fallback |
 | `services/rag/chunker_ast_metadata.py` | AST metadata helpers for Python chunk annotation |
 | `services/rag/chunkers/__init__.py` | Document chunking for RAG indexing |
@@ -36,13 +40,17 @@ This document covers the `services/rag` subsystem: a FastAPI-based Retrieval-Aug
 | `services/rag/chunkers/code_chunking.py` | Code AST and line-based chunking |
 | `services/rag/chunkers/epub_html.py` | EPUB and HTML chunking |
 | `services/rag/chunkers/markdown_pdf.py` | Markdown and PDF chunking |
+| `services/rag/chunkers/messages_chunker.py` | Chunk `ulg.continuity.messages/1` continuity seal files into RAG dialogue exchanges. |
 | `services/rag/chunkers/office_dispatch.py` | Office formats and extension dispatch |
 | `services/rag/chunkers/paragraph_utils.py` | Paragraph splitting utilities and `Chunk` type |
+| `services/rag/chunkers/projected_messages.py` | Sniff messages-format JSON and chunk projected markdown transcripts. |
 | `services/rag/config/__init__.py` | RAG service configuration: YAML parsing and dataclass definitions. Loads `~/.gateway/rag.yaml` into typed dataclasses. |
 | `services/rag/config/_loader.py` | RAG config loading and persistence: `load_config` and `save_scope` |
 | `services/rag/config/_models.py` | RAG configuration dataclasses and module-level defaults |
 | `services/rag/config/_parsing.py` | RAG config YAML parsing: watch directories, scopes, knowledge extraction |
+| `services/rag/config/prefix_coverage.py` | Indexed-source coverage against merged RAG scope prefixes (`orphan_source_prefixes` guard). |
 | `services/rag/contextualize.py` | LLM-based contextual embedding enrichment for RAG chunks |
+| `services/rag/contextualize_budget.py` | FIFO weighted permit budget for rag-contextualize pipeline calls (cap 8). |
 | `services/rag/contextualize_cache.py` | Pure planner and merger for the contextualize prefix cache |
 | `services/rag/corpus_hints/__init__.py` | Corpus hints: term co-occurrence statistics for vocabulary-aware retrieval |
 | `services/rag/corpus_hints/cli.py` | CLI entry for one-shot corpus hints generation and Chroma backfill |
@@ -51,6 +59,8 @@ This document covers the `services/rag` subsystem: a FastAPI-based Retrieval-Aug
 | `services/rag/corpus_hints/formatting.py` | Format corpus hints and register vocabulary for prompt injection |
 | `services/rag/corpus_hints/freshness.py` | Scope freshness hashing and watch-path overlap for corpus hint refresh |
 | `services/rag/corpus_hints/loaders.py` | Read corpus hints and scope vocabulary from the metadata SQLite database |
+| `services/rag/corpus_hints/rebuild_gate.py` | Serialize corpus-hint rebuilds; collapse waiters into one rerun. |
+| `services/rag/corpus_hints/stats_read.py` | Corpus-hint statistics read on a private SQLite connection. |
 | `services/rag/corpus_hints/term_scoring.py` | Term noise filtering and IDF-style scoring for corpus hint selection |
 | `services/rag/corpus_hints/update.py` | Persist discriminative corpus hints from property-index term statistics |
 | `services/rag/directory_ops.py` | Shared directory-level source discovery and cleanup helpers for RAG |
@@ -58,6 +68,7 @@ This document covers the `services/rag` subsystem: a FastAPI-based Retrieval-Aug
 | `services/rag/embeddings/batch_post.py` | Gateway POST batching with retry, split-on-500, and zero-vector fallback |
 | `services/rag/embeddings/chunk_embed.py` | Index-time chunk embedding with token-aware batching |
 | `services/rag/embeddings/constants.py` | Embedding client tunables and scope instruction templates |
+| `services/rag/embeddings/cosine_similarity.py` | Cosine similarity helpers for embedding parity probes. |
 | `services/rag/embeddings/errors.py` | Embedding client exception types |
 | `services/rag/embeddings/health.py` | Startup health gating for the configured embedding model |
 | `services/rag/embeddings/model_id.py` | Model ID parsing and batch token limits for embedding requests |
@@ -89,6 +100,7 @@ This document covers the `services/rag` subsystem: a FastAPI-based Retrieval-Aug
 | `services/rag/extraction/__init__.py` | Helpers for the async decoupled knowledge extraction worker |
 | `services/rag/extraction/capacity_envelope.py` | Classify HTTP error envelopes as capacity-class vs structural |
 | `services/rag/extraction/chroma_source.py` | Run extraction for one Chroma source |
+| `services/rag/extraction/oversize_skip.py` | Detect `Prompt too large` map failures for extraction skip policy. |
 | `services/rag/extraction/property_entries.py` | Map extracted knowledge into property-index quads |
 | `services/rag/extraction/record_failure.py` | Persist extraction failure and emit queue event |
 | `services/rag/extraction/worker_loop.py` | Main asyncio loop for the decoupled extraction worker |
@@ -104,9 +116,17 @@ This document covers the `services/rag` subsystem: a FastAPI-based Retrieval-Aug
 | `services/rag/models/articles_ops.py` | Article metadata, embed/rerank, corpus hints refresh, and coverage DTOs |
 | `services/rag/models/extraction_admin.py` | Extraction export, chunk admin, indexing failures, and extraction queue DTOs |
 | `services/rag/models/search_index.py` | Search, indexing, stats, and scope listing DTOs for the RAG HTTP API |
+| `services/rag/openapi_mcp/__init__.py` | OpenAPI-first MCP adapter machinery for rag dispatch retirement. |
+| `services/rag/openapi_mcp/_ops.py` | RAG dispatch op names — denominator for openapi_mcp stamping. |
+| `services/rag/openapi_mcp/_route_map.py` | Served-op derivation for rag from binding declarations (no hand-maintained route table). |
+| `services/rag/openapi_mcp/codegen.py` | Build-time OpenAPI → MCP adapter manifest generation for rag. |
+| `services/rag/openapi_mcp/generated_adapter_manifest.py` | Generated MCP adapter manifest (regenerate via `openapi_mcp_codegen`). |
 | `services/rag/property_index/__init__.py` | RAG `PropertyIndex`: SQLite property/chunk/queue metadata |
+| `services/rag/property_index/__main__.py` | CLI entry: `python -m services.rag.property_index --rescope` operator maintenance. |
 | `services/rag/property_index/_spec.py` | SQLite-backed property inverted index for structured RAG |
-| `services/rag/property_index/mixin_01.py` – `mixin_09_articles_ops.py` | `PropertyIndex` method chunks (SLOC split); assembled via multiple inheritance |
+| `services/rag/property_index/mixin_00_sqlite_access.py` – `mixin_09_articles_ops.py` | `PropertyIndex` method chunks (SLOC split); assembled via multiple inheritance |
+| `services/rag/property_index/queue_policy.py` | Exhaustion policy for the source-level extraction queue. |
+| `services/rag/property_index/queue_redrive.py` | One-shot re-drive of extraction-queue rows past the fast budget. |
 | `services/rag/property_index/sql_block.py` | Property index: DDL / migration SQL strings |
 | `services/rag/rag_service/__init__.py` | Package entrypoint for the RAG FastAPI service |
 | `services/rag/rag_service/api.py` | FastAPI router definitions for the RAG service |
@@ -121,6 +141,7 @@ This document covers the `services/rag` subsystem: a FastAPI-based Retrieval-Aug
 | `services/rag/rag_service/indexing/contextualize_cache.py` | Contextualize-cache load/store and partial-failure persistence for indexing |
 | `services/rag/rag_service/indexing/delete.py` | File deletion and extraction-queue helpers for the indexing pipeline |
 | `services/rag/rag_service/indexing/embed.py` | Embed phase: chunk preparation, noise tagging, contextualization, Chroma upsert, FTS |
+| `services/rag/rag_service/indexing/embed_diff.py` | Embed-phase diff gate: content-addressed chunk IDs and skip partition helpers. |
 | `services/rag/rag_service/indexing/failure_ops.py` | Failure classification and persistence helpers for the indexing pipeline |
 | `services/rag/rag_service/indexing/file_guards.py` | Pre-chunking and post-chunking guard helpers for `_index_file_impl` |
 | `services/rag/rag_service/indexing/finalize.py` | Post-commit success path for a completed index funnel run |
@@ -128,6 +149,7 @@ This document covers the `services/rag` subsystem: a FastAPI-based Retrieval-Aug
 | `services/rag/rag_service/indexing/source_identity.py` | Shared helpers reused across indexing sub-modules |
 | `services/rag/rag_service/lifecycle.py` | RAG service lifecycle orchestration |
 | `services/rag/rag_service/lifecycle_constants.py` | Shared constants for RAG lifecycle, watcher startup, and dependency activation |
+| `services/rag/rag_service/loop_instrumentation.py` | Event-loop and GIL gap instrumentation for RAG health measurement. |
 | `services/rag/rag_service/main.py` | RAG service application assembly |
 | `services/rag/rag_service/scope_freshness.py` | Startup / reconcile / watcher automatic scope-freshness repair hooks |
 | `services/rag/rag_service/search.py` | Search execution for RAG query endpoints |
@@ -135,12 +157,15 @@ This document covers the `services/rag` subsystem: a FastAPI-based Retrieval-Aug
 | `services/rag/rag_service/startup_cleanup.py` | Startup reconciliation, orphan / exclusion purges, and watch chunk-token resolution |
 | `services/rag/rag_service/state.py` | Shared state and helpers for the RAG service package |
 | `services/rag/rag_service/watcher_runtime.py` | Watcher, extraction worker, and post-activation background cleanup |
+| `services/rag/scripts/__init__.py` | Operator scripts package (module invocation, not import surface). |
+| `services/rag/scripts/rag_corpus_id_reindex.py` | One-time corpus sweep migrating chunk IDs to content-addressed scheme. |
 | `services/rag/search_scope/__init__.py` | Search scope resolution, property boost, BM25 sidecar, and recency sort |
 | `services/rag/search_scope/bm25_sidecar.py` | BM25 sparse sidecar merged with dense results via mini-RRF |
 | `services/rag/search_scope/prefix_filter.py` | Source-prefix and max-distance filters for search result lists |
 | `services/rag/search_scope/property_boost.py` | Property-index distance boost for hybrid search |
 | `services/rag/search_scope/recency.py` | Recency-weighted distance adjustment for search ranking |
 | `services/rag/search_scope/scope_resolution.py` | Named scope resolution for search requests |
+| `services/rag/search_scope/vector_window.py` | Bounded Chroma vector window for scoped and unscoped search. |
 | `services/rag/tier_weighting.py` | Provenance-tier distance weighting for RAG retrieval |
 | `services/rag/vocabulary/__init__.py` | LLM scope vocabulary classification and automatic gap repair |
 | `services/rag/vocabulary/_categories.py` | Per-category descriptions and default taxonomy for vocabulary classification |
@@ -255,10 +280,13 @@ Manages `HotReloadWatcher` instances for configured directories. Composed from `
 - `chunk_epub(path, ...)` — extract EPUB chapters via ebooklib, normalize to markdown, then chunk
 - `chunk_code_ast(path, content, ...)` (`chunkers/code_chunking.py`) — AST-aware Python chunker using tree-sitter (cAST split-merge algorithm)
 - `chunk_code(path, content, ...)` — code chunker: AST-aware for Python, line-based fallback for others
+- `chunk_messages(path, content, ...)` (`chunkers/messages_chunker.py`) — chunk continuity seal JSON into dialogue exchanges
+- `chunk_json_file(path)` (`chunkers/projected_messages.py`) — classify messages-format JSON and chunk projected transcripts (via `chunk_file` dispatch)
 
 ### Contextualization
 
 - `contextualize_chunks(chunks, source, model, ...)` (`contextualize.py`) — generate context prefixes for chunks via the rag-contextualize pipeline; returns `ContextualizationResult`
+- `contextualize_weighted_budget(chunk_count)` (`contextualize_budget.py`) — async context manager acquiring FIFO weighted permits for contextualize pipeline submissions
 - `build_context_cache_plan(...)` (`contextualize_cache.py`) — build a reuse plan by matching chunk_hash metadata against cached prefixes
 - `merge_computed_contexts(...)` — return a new contexts list with recomputed prefixes merged into miss positions
 - `build_stored_context_rows(...)` — build persistence rows for non-empty computed prefixes
