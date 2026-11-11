@@ -2,18 +2,37 @@
 
 from __future__ import annotations
 
+import os
 import sys
+import tempfile
 from pathlib import Path
 
 import pytest
 
-from services.git_integration_worker.cursor_sdk_capture_binding import CaptureBinding
-from services.git_integration_worker.cursor_sdk_dispatch_context import (
+from services.git_integration_worker.tests.events_sink_hermetic import (
+    LIVE_EVENTS_INGEST_SOCK,
+)
+
+# Before GIW (and transitive libs) resolve ingest at import time, stay off live UDS.
+_ORIGINAL_EVENTS_INGEST_SOCK = os.environ.get(
+    "EVENTS_INGEST_SOCK", LIVE_EVENTS_INGEST_SOCK
+)
+_PIN_DIR = tempfile.mkdtemp(prefix="giw-pytest-events-ingest-")
+_GIW_PYTEST_EVENTS_SOCK = os.path.join(_PIN_DIR, "events.sock")
+os.environ["EVENTS_INGEST_SOCK"] = _GIW_PYTEST_EVENTS_SOCK
+
+from services.git_integration_worker.cursor_sdk_capture_binding import (  # noqa: E402
+    CaptureBinding,
+)
+from services.git_integration_worker.cursor_sdk_dispatch_context import (  # noqa: E402
     SdkDispatchContext,
 )
-from services.git_integration_worker.tests.cursor_bus_hermetic import (
+from services.git_integration_worker.tests.cursor_bus_hermetic import (  # noqa: E402
     install_cursor_bus_hermetic,
     skip_cursor_bus_hermetic_for_node,
+)
+from services.git_integration_worker.tests.events_sink_hermetic import (  # noqa: E402
+    install_events_sink_hermetic,
 )
 
 _REPO_ROOT = Path(__file__).resolve().parents[3]
@@ -80,6 +99,18 @@ def _cursor_card_probed_at_for_admit_tests(monkeypatch: pytest.MonkeyPatch) -> N
             stamped[model_id] = replace(cap, probed_at="test-probe-stamp")
     monkeypatch.setattr(cap_mod, "CURSOR_MODEL_CAPABILITIES", stamped)
     monkeypatch.setattr(cursor_capabilities, "CURSOR_MODEL_CAPABILITIES", stamped)
+
+
+@pytest.fixture(autouse=True)
+def _events_sink_default_off_live(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> str:
+    """Block live event-ingest UDS; redirect publishes to a per-test tmp socket."""
+    return install_events_sink_hermetic(
+        monkeypatch,
+        tmp_path,
+        original_events_ingest_sock=_ORIGINAL_EVENTS_INGEST_SOCK,
+    )
 
 
 @pytest.fixture(autouse=True)
