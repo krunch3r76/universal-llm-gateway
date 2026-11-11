@@ -191,8 +191,8 @@ async def test_manage_result_arms_and_clears_the_admit_fence() -> None:
     the flag. The process is not draining; the hold comes only from the flag
     the manage result sets.
     """
-    from middleware import drain
-    from tools.manage import note_mcp_pending_intent
+    from middleware import drain  # noqa: I001
+    from tools.manage import note_mcp_pending_intent  # noqa: I001
 
     drain.reset_drain_for_tests()
 
@@ -351,8 +351,8 @@ async def test_refused_cancel_of_terminal_intent_clears_the_admit_fence() -> Non
     intent has left ``pending_drain``. That refusal is the signal the intent
     is dead; the fence must not stay up.
     """
-    from middleware import drain
-    from tools.manage import note_mcp_pending_intent
+    from middleware import drain  # noqa: I001
+    from tools.manage import note_mcp_pending_intent  # noqa: I001
 
     drain.reset_drain_for_tests()
 
@@ -417,8 +417,8 @@ async def test_refused_cancel_of_terminal_intent_clears_the_admit_fence() -> Non
 @pytest.mark.asyncio
 async def test_expired_cancel_of_terminal_intent_clears_the_admit_fence() -> None:
     """Idempotent cancel of an already-expired mcp intent reopens tools/call."""
-    from middleware import drain
-    from tools.manage import note_mcp_pending_intent
+    from middleware import drain  # noqa: I001
+    from tools.manage import note_mcp_pending_intent  # noqa: I001
 
     drain.reset_drain_for_tests()
 
