@@ -53,6 +53,7 @@ class ReattachOutcome:
     page_only_borrow: bool = False
     page_only_close_tab: bool = False
     attempted_registration_ids: tuple[str, ...] = ()
+    detail: str | None = None
 
 
 def _lane_order(
@@ -696,12 +697,14 @@ async def ensure_cse_attached(
 
     if not allow_mint:
         if refusals:
-            last_id, last_err = refusals[-1]
+            refusal_detail = "; ".join(f"{rid}:{code}" for rid, code in refusals)
+            last_id, _last_err = refusals[-1]
             return ReattachOutcome(
                 ok=False,
-                error=last_err,
+                error="reattach_no_host_available",
                 registration_id=last_id,
                 attempted_registration_ids=attempted_ids(),
+                detail=refusal_detail,
             )
         return ReattachOutcome(ok=False, error="reattach_no_host_available")
 

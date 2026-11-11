@@ -3,13 +3,14 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any
 from unittest.mock import AsyncMock, patch
 
 import pytest
 
 from cdp_ask.execution_store import ExecutionStore
 from cdp_ask.followup import _maybe_reattach
-from cdp_ask.followup_reattach import ReattachOutcome
+from cdp_ask.followup_reattach import ReattachOutcome, ensure_cse_attached
 from cdp_ask.models import FollowupProjectAskRequest, FollowupProjectAskResponse
 
 _CSE = "https://claude.ai/cowork/cse_test_reattach_no_host"
@@ -131,6 +132,56 @@ async def test_stand_down_reattach_no_host_listening_up_writes_no_token(
     assert resp.detail == f"cdp_lane.is_listening({_PORT})=true"
     with reg._store.ports_lock():
         assert has_standdown_token(_PRED) is False
+
+
+@pytest.mark.asyncio
+async def test_standdown_exhausted_refusals_maps_to_reattach_no_host_available(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Exhausted lane scans with allow_mint=False surface reattach_no_host_available."""
+
+    _isolated_registry(monkeypatch, tmp_path)
+    from dataclasses import dataclass
+
+    @dataclass(frozen=True)
+    class _Lane:
+        registration_id: str
+        cdp_url: str = "http://127.0.0.1:9223"
+        purpose: str = "operator-proxy"
+
+    host_id = "host-standdown-exhausted"
+    monkeypatch.setattr(
+        "cdp_ask.followup_reattach.cdp_registry.list_active",
+        lambda: [_Lane(host_id)],
+    )
+    monkeypatch.setattr(
+        "cdp_ask.followup_reattach.cdp_registry.chat_url_for_registration",
+        lambda rid: (
+            "https://claude.ai/cowork/cse_other"
+            if rid == host_id
+            else None
+        ),
+    )
+    target = "https://claude.ai/cowork/cse_standdown_exhausted"
+
+    async def _find_page(*_a: Any, **_k: Any) -> None:
+        return None
+
+    monkeypatch.setattr("cdp_ask.followup_reattach.find_page_on_lane", _find_page)
+    monkeypatch.setattr(
+        "cdp_ask.followup_reattach._navigate_new_page", AsyncMock(return_value=None)
+    )
+
+    outcome = await ensure_cse_attached(
+        target,
+        holder="standdown",
+        purpose="operator-proxy",
+        allow_mint=False,
+    )
+    assert outcome.ok is False
+    assert outcome.error == "reattach_no_host_available"
+    assert outcome.detail is not None
+    assert "lane_holds_other_chat_url" in (outcome.detail or "")
 
 
 @pytest.mark.asyncio

@@ -369,12 +369,12 @@ def _gate_seated_allows_commit(
     snapshot_holder_id: str | None,
     current_holder_id: str | None,
     row: dict[str, Any],
+    gate_seated_at: float | None = None,
 ) -> bool:
-    """Whether a same-call followup gate seated *registration_id* before commit.
+    """Whether the reattach gate accepted a mint over a different lane holder.
 
-    The dormant-misbound carve-out may close a predecessor and seat the mint
-    between the reattach snapshot and ``commit_reattach_driving_seat``. That
-    holder change is expected, not a foreign seat move.
+  ``gate_seated_at``, when set, requires the row's ``seat_bound_at`` to match —
+  concurrent re-seating between gate and commit still refuses.
     """
     rid = (registration_id or "").strip()
     lane_key = (lane or "").strip()
@@ -386,7 +386,79 @@ def _gate_seated_allows_commit(
     cur_id = (current_holder_id or "").strip() or None
     if cur_id != rid:
         return False
-    return seat_open(row, lane_key)
+    if not seat_open(row, lane_key):
+        return False
+    if gate_seated_at is None:
+        return True
+    try:
+        return float(row.get("seat_bound_at")) == float(gate_seated_at)
+    except (TypeError, ValueError):
+        return False
+
+
+def dormant_holder_misbound_evidence(
+    active: dict[str, dict[str, Any]],
+    holder_reg: str,
+    *,
+    lane: str,
+    successor_id: str,
+) -> bool:
+    """Positive evidence that a dormant holder's ``chat_url`` is misbound on this lane."""
+    holder = active.get(holder_reg)
+    if not isinstance(holder, dict):
+        return False
+    if str(holder.get("superseded_by") or "").strip():
+        return False
+    holder_url = normalize_cse_url(str(holder.get("chat_url") or ""))
+    if not holder_url:
+        return False
+    lane_key = (lane or "").strip()
+    for rid, row in active.items():
+        if rid in (holder_reg, successor_id) or not isinstance(row, dict):
+            continue
+        other_lane = str(row.get("parent_thread") or "").strip()
+        if not other_lane or other_lane == lane_key:
+            continue
+        if normalize_cse_url(str(row.get("chat_url") or "")) == holder_url:
+            return True
+    from claude_bundles.cse_provenance import episodes_for_chat_url
+
+    for ep in episodes_for_chat_url(holder_url):
+        ep_rid = (ep.registration_id or "").strip()
+        if not ep_rid or ep_rid == holder_reg:
+            continue
+        other = active.get(ep_rid)
+        if not isinstance(other, dict):
+            continue
+        other_lane = str(other.get("parent_thread") or "").strip()
+        if other_lane and other_lane != lane_key:
+            return True
+    return False
+
+
+def _drop_misbound_chat_url_locked(
+    active: dict[str, dict[str, Any]], registration_id: str
+) -> None:
+    row = active.get(registration_id)
+    if not isinstance(row, dict):
+        return
+    if str(row.get("seat_close_reason") or "") != "dormant_holder_misbound":
+        return
+    prior_url = str(row.get("chat_url") or "").strip() or None
+    if not prior_url:
+        return
+    from claude_bundles.cse_provenance_retire import append_binding_retired_episode
+
+    updated = dict(row)
+    append_binding_retired_episode(
+        chat_url=prior_url,
+        registration_id=registration_id,
+        cdp_url=str(updated.get("cdp_url") or ""),
+        reason="misbound_dormant_attachment_retired",
+    )
+    updated.pop("chat_url", None)
+    updated.pop("chat_url_bound_at", None)
+    active[registration_id] = updated
 
 
 def retire_misbound_dormant_attachment(registration_id: str) -> bool:
@@ -458,6 +530,9 @@ def commit_reattach_driving_seat(
     snapshot_holder_id: str | None,
     snapshot_seat_bound_at: float | None,
     execution_id: str | None = None,
+    misbound_holder_reg: str | None = None,
+    misbound_carve_out: bool = False,
+    gate_seated_at: float | None = None,
 ) -> str:
     """Seat and upsert after reattach, or refuse when the lane seat moved.
 
@@ -510,10 +585,39 @@ def commit_reattach_driving_seat(
                 snapshot_holder_id=snapshot_holder_id,
                 current_holder_id=current_id,
                 row=row,
+                gate_seated_at=gate_seated_at,
             )
             if not snapshot_matches and not vacant_snapshot_ok and not gate_seated_ok:
                 return "refused"
-        bound_row, released_rows = apply_driving_seat_bind(active, rid)
+        misbound_holder = (misbound_holder_reg or "").strip() or None
+        if misbound_carve_out and misbound_holder:
+            holder_row = active.get(misbound_holder)
+            if isinstance(holder_row, dict) and seat_open(holder_row, lane_key):
+                close_ts = time.time()
+                close_reason = (
+                    "dormant_holder_misbound"
+                    if dormant_holder_misbound_evidence(
+                        active,
+                        misbound_holder,
+                        lane=lane_key,
+                        successor_id=rid,
+                    )
+                    else "superseded"
+                )
+                closed = dict(holder_row)
+                closed["seat_closed_at"] = close_ts
+                closed["seat_close_reason"] = close_reason
+                closed["superseded_by"] = rid
+                active[misbound_holder] = closed
+                released_rows.append(closed)
+                if close_reason == "dormant_holder_misbound":
+                    _drop_misbound_chat_url_locked(active, misbound_holder)
+        bound_row, bind_released = apply_driving_seat_bind(
+            active,
+            rid,
+            close_lane_predecessors=not bool(misbound_carve_out and misbound_holder),
+        )
+        released_rows.extend(bind_released)
         if bound_row is None:
             return "not_seated"
         _store.require_seat_authority(operation="commit_reattach_driving_seat")
@@ -660,6 +764,8 @@ def apply_driving_seat_bind(
     *,
     now: float | None = None,
     predecessor_close_reason: str = "superseded",
+    close_lane_predecessors: bool = True,
+    only_close_predecessor_ids: tuple[str, ...] | None = None,
 ) -> tuple[dict[str, Any] | None, list[dict[str, Any]]]:
     """Mutate *active* to bind a driving-operator seat and close predecessors.
 
@@ -683,10 +789,19 @@ def apply_driving_seat_bind(
     updated["seat_lane"] = lane
     updated["seat_closed_at"] = None
     released: list[dict[str, Any]] = []
-    for other_id, other in list(active.items()):
-        if other_id == registration_id or not isinstance(other, dict):
-            continue
-        if seat_open(other, lane):
+    close_ids = (
+        frozenset(only_close_predecessor_ids or ())
+        if only_close_predecessor_ids is not None
+        else None
+    )
+    if close_lane_predecessors or close_ids is not None:
+        for other_id, other in list(active.items()):
+            if other_id == registration_id or not isinstance(other, dict):
+                continue
+            if close_ids is not None and other_id not in close_ids:
+                continue
+            if not seat_open(other, lane):
+                continue
             closed = dict(other)
             closed["seat_closed_at"] = ts
             closed["seat_close_reason"] = predecessor_close_reason
