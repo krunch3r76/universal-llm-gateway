@@ -2,7 +2,8 @@
 
 Connects to /tmp/universal-protocol/manage.sock (JSON-RPC 2.0 over UDS).
 Exposes status, health, start, stop, restart, sync_restart, rebuild,
-wait_healthy, busy_status, cancel_restart_intent, whoami, and recycle_giw for
+wait_healthy, busy_status, list_restart_intents, cancel_restart_intent, whoami,
+and recycle_giw for
 gateway-managed services. Life seats should prefer the dedicated
 ``recycle_giw`` tool; this action exists for already-admitted code seats.
 Single entry point reduces agent context overhead.
@@ -42,6 +43,7 @@ _VALID_ACTIONS = frozenset(
         "wait_healthy",
         "busy_status",
         "restart_intent_status",
+        "list_restart_intents",
         "cancel_restart_intent",
         "whoami",
         "recycle_giw",
@@ -349,7 +351,11 @@ def note_mcp_pending_intent(
         result, service=service, intent_id=intent_id, armed_id=armed_id
     ):
         return
-    if action == "cancel_restart_intent" and result.get("status") == "cancelled":
+    if action == "cancel_restart_intent" and (
+        result.get("status") == "cancelled"
+        or result.get("already_terminal")
+        or result.get("status") == "expired"
+    ):
         set_pending_mcp_intent(False)
         return
     if result.get("status") == "refused" or result.get("reason") == "intent_not_found":
@@ -467,11 +473,12 @@ def register_manage_tools(mcp: FastMCP) -> None:
                    out a heartbeating job. Non-eligible occupants drain-wait.
                    Default True. Pass false to drain-wait every occupant.
         wait_for_boundary: for git_integration_worker — defer begin_drain until
-                   GIW active_count==0 (idle/row boundary). Admits stay open until
-                   drain_epoch is set. Default False. When True, arm has no 600s
-                   expiry unless intent_ttl_s > 0 (a:37197).
-        intent_ttl_s: optional arm TTL seconds. 0/omit = default (600s, or none
-                   when wait_for_boundary). Positive = caller-set expiry window.
+                   GIW active_count==0. While the intent is pending, new top-level
+                   write admits queue (nested children still start). Arm expires
+                   after 900s by default (intent_ttl_s > 0 overrides); expiry
+                   releases the hold. Default False.
+        intent_ttl_s: optional arm TTL seconds. 0/omit = default (600s; 900s when
+                   wait_for_boundary). Positive = caller-set expiry window.
                    This is arm expiry, separate from the idle ceiling. A stargate
                    idle-drain ceiling extends a busy deadline and does not
                    self-preempt. Still busy at the ceiling waits until active-work
@@ -486,7 +493,8 @@ def register_manage_tools(mcp: FastMCP) -> None:
                    return state=busy with no intent.
         caller_thread_id: agent-bus thread for force-gate notices (defaults to
                    ULG_DISPATCH_THREAD_ID env when set).
-        intent_id: required for cancel_restart_intent (restart-intent retraction)
+        intent_id: full id, unique ≥8-char prefix, or omit when service= targets
+                   the live row (cancel_restart_intent / restart_intent_status)
 
         Actions:
           status        (no service needed) — running/stopped for all services
@@ -604,13 +612,16 @@ def register_manage_tools(mcp: FastMCP) -> None:
                                              retry_after_s, elapsed_s}. Reads the
                                              drain probes WITHOUT acquiring any
                                              restart slot — safe to poll live.
-          cancel_restart_intent (intent_id, service?) — retract a deferred
-                                             restart intent: writes status=cancelled,
-                                             aborts the drain supervisor before
-                                             SIGTERM, and when a drain epoch is set
-                                             releases worker ``_draining`` via
-                                             cancel-drain (pairing required). Refused
-                                             after final epoch-check ok /
+          list_restart_intents (service?) — read-only list of pending intents
+                                             with id, service, status, armed_at,
+                                             expires_at, ttl_remaining_s, expired,
+                                             wait_for_boundary, drain_epoch,
+                                             caller_agent, plus newest terminal per
+                                             service. No mutation.
+          cancel_restart_intent (intent_id | unique ≥8-char prefix | service) —
+                                             idempotent retract: release-then-cancel
+                                             with drain-state recovery when the worker
+                                             already released. Refused after
                                              drained_restarting. Force remains a
                                              separate affordance.
           whoami        (no service needed) — read-only identity for the manage API
@@ -746,7 +757,12 @@ def register_manage_tools(mcp: FastMCP) -> None:
         if effective_thread and action in {"stop", "restart", "sync_restart"}:
             params["caller_thread_id"] = effective_thread
         if action == "cancel_restart_intent":
-            params["intent_id"] = intent_id
+            if intent_id:
+                params["intent_id"] = intent_id
+            if service:
+                params["service"] = service
+        if action == "list_restart_intents" and service:
+            params["service"] = service
         if action == "restart_intent_status":
             if intent_id:
                 params["intent_id"] = intent_id

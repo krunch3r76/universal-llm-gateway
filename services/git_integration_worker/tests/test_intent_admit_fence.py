@@ -7,6 +7,7 @@ because the write-lease promoter would never rehome it.
 
 from __future__ import annotations
 
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import pytest
@@ -14,8 +15,11 @@ import pytest
 from scripts.model_manager.ui.controller.intent_admit_fence import (
     pending_service_intent_status,
     queue_kw_for_pending_intent,
+    release_expired_arm,
 )
+from scripts.model_manager.ui.controller.restart_intent_expiry import intent_expired
 from scripts.model_manager.ui.controller.restart_intent_states import (
+    STATUS_EXPIRED,
     STATUS_FORCE_REQUESTED,
     STATUS_PENDING_DRAIN,
 )
@@ -165,6 +169,156 @@ def test_read_only_and_store_miss_do_not_queue() -> None:
         == STATUS_PENDING_DRAIN
     )
     assert pending_service_intent_status("mcp", loader=lambda _service: None) is None
+
+
+def test_expired_pending_intent_returns_no_status() -> None:
+    class _Expired:
+        status = STATUS_PENDING_DRAIN
+        wait_for_boundary = True
+        expires_at = None
+        armed_at = (datetime.now(UTC) - timedelta(hours=2)).isoformat()
+
+    assert intent_expired(_Expired())
+    assert (
+        pending_service_intent_status(
+            "git_integration_worker", loader=lambda _s: _Expired()
+        )
+        is None
+    )
+
+
+def test_release_expired_arm_expired_row_null_epoch_releases_and_unqueues() -> None:
+    class _Row:
+        status = STATUS_EXPIRED
+        intent_id = "intent-exp"
+        drain_epoch = None
+        expires_at = (datetime.now(UTC) - timedelta(seconds=30)).isoformat()
+        armed_at = datetime.now(UTC).isoformat()
+
+    class _Controller:
+        def __init__(self) -> None:
+            self._armed = True
+            self.released: list[tuple[str, int]] = []
+
+        def drain_state(self) -> dict[str, object]:
+            return {
+                "draining": False,
+                "armed": self._armed,
+                "intent_id": "intent-exp",
+                "drain_epoch": 2,
+            }
+
+        def is_armed(self) -> bool:
+            return self._armed
+
+        def release_drain(
+            self, *, intent_id: str, drain_epoch: int
+        ) -> dict[str, object]:
+            self.released.append((intent_id, drain_epoch))
+            self._armed = False
+            return {"armed": False}
+
+    controller = _Controller()
+    assert release_expired_arm(controller, get_intent=lambda _sid: _Row())
+    assert controller.released == [("intent-exp", 2)]
+    assert not controller.is_armed()
+    assert (
+        queue_kw_for_pending_intent(intent_status=None, armed=controller.is_armed())
+        == {}
+    )
+
+
+def test_release_expired_arm_terminal_expired_row() -> None:
+    class _Row:
+        status = STATUS_EXPIRED
+        intent_id = "intent-term"
+
+    class _Controller:
+        released: list[tuple[str, int]] = []
+
+        def drain_state(self) -> dict[str, object]:
+            return {
+                "draining": True,
+                "armed": True,
+                "intent_id": "intent-term",
+                "drain_epoch": 1,
+            }
+
+        def release_drain(
+            self, *, intent_id: str, drain_epoch: int
+        ) -> dict[str, object]:
+            self.released.append((intent_id, drain_epoch))
+            return {}
+
+    controller = _Controller()
+    assert release_expired_arm(controller, get_intent=lambda _sid: _Row())
+    assert controller.released == [("intent-term", 1)]
+
+
+def test_release_expired_arm_skips_pending_unexpired() -> None:
+    class _Row:
+        status = STATUS_PENDING_DRAIN
+        expires_at = (datetime.now(UTC) + timedelta(hours=1)).isoformat()
+        armed_at = datetime.now(UTC).isoformat()
+
+    class _Controller:
+        def drain_state(self) -> dict[str, object]:
+            return {
+                "armed": True,
+                "draining": False,
+                "intent_id": "live",
+                "drain_epoch": 1,
+            }
+
+        def release_drain(self, **_kwargs: object) -> dict[str, object]:
+            raise AssertionError("must not release")
+
+    assert not release_expired_arm(_Controller(), get_intent=lambda _sid: _Row())
+
+
+def test_release_expired_arm_skips_when_store_row_missing() -> None:
+    class _Controller:
+        def drain_state(self) -> dict[str, object]:
+            return {
+                "armed": True,
+                "draining": False,
+                "intent_id": "gone",
+                "drain_epoch": 1,
+            }
+
+        def release_drain(self, **_kwargs: object) -> dict[str, object]:
+            raise AssertionError("must not release")
+
+    assert not release_expired_arm(_Controller(), get_intent=lambda _sid: None)
+
+
+def test_release_expired_arm_loads_controller_intent_id_only() -> None:
+    """Never consult active_for_service; only ``get_intent(controller.intent_id)``."""
+
+    class _ExpiredA:
+        status = STATUS_EXPIRED
+        intent_id = "intent-a"
+
+    class _Controller:
+        def drain_state(self) -> dict[str, object]:
+            return {
+                "draining": True,
+                "armed": True,
+                "intent_id": "intent-b",
+                "drain_epoch": 1,
+            }
+
+        def release_drain(self, **_kwargs: object) -> dict[str, object]:
+            raise AssertionError("must not release")
+
+    seen: list[str] = []
+
+    def _get(sid: str) -> _ExpiredA | None:
+        seen.append(sid)
+        return _ExpiredA() if sid == "intent-a" else None
+
+    assert not release_expired_arm(_Controller(), get_intent=_get)
+    assert seen == ["intent-b"]
 
 
 def test_fence_does_not_park_nest_parent() -> None:

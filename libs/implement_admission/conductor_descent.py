@@ -21,6 +21,7 @@ READ_ONLY_MANAGE_ACTIONS = frozenset(
         "wait_healthy",
         "busy_status",
         "restart_intent_status",
+        "list_restart_intents",
         "whoami",
         "charter_hold_status",
         "charter_root_status",

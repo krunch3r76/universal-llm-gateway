@@ -21,8 +21,10 @@ from scripts.model_manager.ui.controller.restart_intent_consumer import (
     drain_deferred_result,
 )
 from scripts.model_manager.ui.controller.restart_intent_expiry import (
+    BOUNDARY_INTENT_TTL_S,
     expire_via_cancel,
     intent_expired,
+    join_expires_at,
     resolve_intent_ttl_s,
 )
 from scripts.model_manager.ui.controller.restart_intent_migrate import (
@@ -113,13 +115,62 @@ async def _supervise_until(
             raise task.exception()  # type: ignore[misc]
 
 
-def test_resolve_ttl_wait_for_boundary_defaults_unbounded() -> None:
-    assert resolve_intent_ttl_s(wait_for_boundary=True, intent_ttl_s=None) is None
+def test_resolve_ttl_wait_for_boundary_defaults_bounded() -> None:
+    assert (
+        resolve_intent_ttl_s(wait_for_boundary=True, intent_ttl_s=None)
+        == BOUNDARY_INTENT_TTL_S
+    )
     assert (
         resolve_intent_ttl_s(wait_for_boundary=False, intent_ttl_s=None)
         == INTENT_EXPIRY_WINDOW_S
     )
     assert resolve_intent_ttl_s(wait_for_boundary=True, intent_ttl_s=120.0) == 120.0
+
+
+def test_join_expires_at_stamps_boundary_when_prior_null() -> None:
+    now = datetime.now(UTC)
+    stamped = join_expires_at(
+        wait_for_boundary=True,
+        intent_ttl_s=None,
+        prior_expires_at=None,
+        now=now,
+    )
+    assert stamped is not None
+    assert datetime.fromisoformat(stamped) - now >= timedelta(seconds=895)
+
+
+def test_legacy_boundary_row_expires_via_armed_at(tmp_path) -> None:
+    store = RestartIntentStore(tmp_path / "restart-intents.db")
+    intent = store.create_intent(
+        service="git_integration_worker",
+        action="sync_restart",
+        deadline_at="ceiling",
+        reason="legacy",
+        wait_for_boundary=True,
+        caller_agent="cursor",
+    )
+    old_armed = (datetime.now(UTC) - timedelta(seconds=BOUNDARY_INTENT_TTL_S + 5)).isoformat()
+    store._update(intent.intent_id, expires_at=None, armed_at=old_armed)
+    legacy = store.get(intent.intent_id)
+    assert legacy is not None
+    assert legacy.expires_at is None
+    assert intent_expired(legacy)
+
+
+def test_fresh_legacy_boundary_row_not_expired(tmp_path) -> None:
+    store = RestartIntentStore(tmp_path / "restart-intents.db")
+    intent = store.create_intent(
+        service="git_integration_worker",
+        action="sync_restart",
+        deadline_at="ceiling",
+        reason="legacy-fresh",
+        wait_for_boundary=True,
+        caller_agent="cursor",
+    )
+    store._update(intent.intent_id, expires_at=None)
+    fresh = store.get(intent.intent_id)
+    assert fresh is not None
+    assert not intent_expired(fresh)
 
 
 def test_create_intent_wait_for_boundary_no_expires(tmp_path) -> None:
@@ -134,7 +185,7 @@ def test_create_intent_wait_for_boundary_no_expires(tmp_path) -> None:
         caller_agent="cursor",
     )
     assert intent.wait_for_boundary is True
-    assert intent.expires_at is None
+    assert intent.expires_at is not None
     assert not intent_expired(intent)
     env = drain_deferred_result(intent)
     assert env["state"] == "waiting_for_boundary"
@@ -159,7 +210,7 @@ def test_create_intent_caller_ttl_on_wait_mode(tmp_path) -> None:
 
 
 def test_schema_reopen_preserves_null_expires_for_wait_mode(tmp_path) -> None:
-    """Service-down / store reopen must not stamp 600s onto wait_for_boundary nulls."""
+    """Service-down / store reopen must not stamp 600s onto legacy wait_mode nulls."""
     db = tmp_path / "restart-intents.db"
     store = RestartIntentStore(db)
     intent = store.create_intent(
@@ -170,7 +221,7 @@ def test_schema_reopen_preserves_null_expires_for_wait_mode(tmp_path) -> None:
         wait_for_boundary=True,
         caller_agent="cursor",
     )
-    assert intent.expires_at is None
+    store._update(intent.intent_id, expires_at=None)
     # Simulate manage process recycle: new store + schema apply.
     again = RestartIntentStore(db)
     with again._connect() as conn:

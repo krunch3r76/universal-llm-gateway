@@ -1,9 +1,11 @@
 """Restart-intent arm clock.
 
-Past ``expires_at``, a live ``pending_drain`` arm (non wait-for-boundary without
-a window, or caller TTL) terminalizes as ``expired``, emits
-``manage.restart.expired``, and releases the restart gate via supervise exit.
-Lazy expiry on re-arm covers rows the sweep has not yet visited.
+Past the effective expiry instant, a live ``pending_drain`` arm terminalizes as
+``expired``, emits ``manage.restart.expired``, and releases the restart gate via
+supervise exit. ``wait_for_boundary`` rows default to ``BOUNDARY_INTENT_TTL_S``
+(900s); legacy rows with null ``expires_at`` inherit ``armed_at + 900s``. Caller
+``intent_ttl_s > 0`` always wins. Lazy expiry on re-arm covers rows the sweep has
+not yet visited.
 """
 
 from __future__ import annotations
@@ -20,18 +22,20 @@ from .restart_intent_states import STATUS_EXPIRED, STATUS_PENDING_DRAIN
 
 logger = get_logger(__name__)
 
+BOUNDARY_INTENT_TTL_S = 900.0
+
 ReleaseDrain = Callable[[str, int], Awaitable[Any]]
 
 
 def resolve_intent_ttl_s(
     *, wait_for_boundary: bool, intent_ttl_s: float | None
-) -> float | None:
-    """Default 600s arm; wait_for_boundary defaults to no expiry; caller TTL wins."""
+) -> float:
+    """Default arm TTL. Caller TTL wins; boundary mode defaults to 900s."""
     if intent_ttl_s is not None:
         return float(intent_ttl_s)
     if wait_for_boundary:
-        return None
-    return INTENT_EXPIRY_WINDOW_S
+        return BOUNDARY_INTENT_TTL_S
+    return float(INTENT_EXPIRY_WINDOW_S)
 
 
 def join_expires_at(
@@ -50,7 +54,12 @@ def join_expires_at(
         _agent, _armed, expires = arm_stamps("join", now=now, ttl_s=float(intent_ttl_s))
         return expires
     if wait_for_boundary:
-        return prior_expires_at
+        if prior_expires_at:
+            return prior_expires_at
+        _agent, _armed, expires = arm_stamps(
+            "join", now=now, ttl_s=BOUNDARY_INTENT_TTL_S
+        )
+        return expires
     _agent, _armed, expires = arm_stamps("join", now=now, ttl_s=INTENT_EXPIRY_WINDOW_S)
     return expires
 
@@ -70,23 +79,40 @@ def arm_stamps(
     return agent, armed, expires
 
 
+def effective_expires_at(
+    intent: Any, *, now: datetime | None = None
+) -> datetime | None:
+    """Parsed ``expires_at``, or legacy boundary ``armed_at + BOUNDARY_INTENT_TTL_S``."""
+    del now  # clock does not shift the effective instant
+    expires_at = getattr(intent, "expires_at", None)
+    if isinstance(expires_at, str) and expires_at:
+        try:
+            expires = datetime.fromisoformat(expires_at)
+        except ValueError:
+            return None
+        if expires.tzinfo is None:
+            expires = expires.replace(tzinfo=UTC)
+        return expires
+    if getattr(intent, "wait_for_boundary", False):
+        armed_at = getattr(intent, "armed_at", None)
+        if isinstance(armed_at, str) and armed_at:
+            try:
+                armed = datetime.fromisoformat(armed_at)
+            except ValueError:
+                return None
+            if armed.tzinfo is None:
+                armed = armed.replace(tzinfo=UTC)
+            return armed + timedelta(seconds=BOUNDARY_INTENT_TTL_S)
+    return None
+
+
 def intent_expired(intent: Any, *, now: datetime | None = None) -> bool:
-    """True when a pending arm is past ``expires_at``. Missing window is not due."""
+    """True when a pending arm is past its effective expiry instant."""
     if getattr(intent, "status", None) != STATUS_PENDING_DRAIN:
         return False
-    if getattr(intent, "wait_for_boundary", False) and not getattr(
-        intent, "expires_at", None
-    ):
+    expires = effective_expires_at(intent, now=now)
+    if expires is None:
         return False
-    expires_at = getattr(intent, "expires_at", None)
-    if not isinstance(expires_at, str) or not expires_at:
-        return False
-    try:
-        expires = datetime.fromisoformat(expires_at)
-    except ValueError:
-        return False
-    if expires.tzinfo is None:
-        expires = expires.replace(tzinfo=UTC)
     clock = now or datetime.now(UTC)
     return expires <= clock
 
@@ -127,7 +153,7 @@ async def giw_cancel_drain(intent_id: str, drain_epoch: int) -> dict[str, Any]:
 
     from .restart_drain import GIT_INTEGRATION_WORKER_URL
 
-    async with make_async_client(GIT_INTEGRATION_WORKER_URL, timeout=10.0) as client:
+    async with make_async_client(GIT_INTEGRATION_WORKER_URL, timeout=30.0) as client:
         resp = await client.post(
             "/api/v1/git/admin/cancel-drain",
             json={"intent_id": intent_id, "drain_epoch": drain_epoch},

@@ -2,9 +2,9 @@
 
 A ``pending_drain`` intent queues every new top-level write admit, on any
 lane and for any work key, so the live set only shrinks and the restart
-can fire. Queued rows promote after restart (or on cancel). A store read
-that fails returns no status — the admit starts — so a missing or locked
-intent db cannot wedge admission.
+can fire. Expired arms never queue. Queued rows promote after restart (or on
+cancel). A store read that fails returns no status — the admit starts — so a
+missing or locked intent db cannot wedge admission.
 """
 
 from __future__ import annotations
@@ -13,7 +13,8 @@ import os
 from collections.abc import Callable
 from typing import Any
 
-from .restart_intent_states import STATUS_PENDING_DRAIN
+from .restart_intent_expiry import intent_expired
+from .restart_intent_states import STATUS_EXPIRED, STATUS_PENDING_DRAIN
 
 
 def queue_kw_for_pending_intent(
@@ -64,4 +65,69 @@ def pending_service_intent_status(
     if intent is None:
         return None
     status = getattr(intent, "status", None)
+    if status == STATUS_PENDING_DRAIN and intent_expired(intent):
+        return None
     return str(status) if status else None
+
+
+def _expired_row_needs_in_process_release(row: Any) -> bool:
+    if row is None:
+        return False
+    status = getattr(row, "status", None)
+    if status == STATUS_EXPIRED:
+        return True
+    if status == STATUS_PENDING_DRAIN and intent_expired(row):
+        return True
+    return False
+
+
+def release_expired_arm(
+    controller: Any,
+    *,
+    get_intent: Callable[[str], Any] | None = None,
+) -> bool:
+    """Release the in-process GIW arm keyed on ``controller`` identity, not the live store row."""
+    from universal_logging import get_logger
+
+    log = get_logger(__name__)
+    try:
+        state = controller.drain_state()
+    except Exception:
+        log.warning("release_expired_arm: drain_state failed", exc_info=True)
+        return False
+    if not (state.get("draining") or state.get("armed")):
+        return False
+    sid = state.get("intent_id")
+    if not isinstance(sid, str) or not sid.strip():
+        return False
+    epoch = state.get("drain_epoch")
+    if epoch is None:
+        return False
+    if get_intent is None and os.environ.get("PYTEST_CURRENT_TEST"):
+        return False
+    try:
+        if get_intent is None:
+            from .restart_intent_store import RestartIntentStore
+
+            row = RestartIntentStore.instance().get(sid)
+        else:
+            row = get_intent(sid)
+    except Exception:
+        log.warning(
+            "release_expired_arm: intent load failed intent_id=%s",
+            sid,
+            exc_info=True,
+        )
+        return False
+    if not _expired_row_needs_in_process_release(row):
+        return False
+    try:
+        controller.release_drain(intent_id=sid, drain_epoch=int(epoch))
+        return True
+    except Exception:
+        log.warning(
+            "release_expired_arm: release_drain failed intent_id=%s",
+            sid,
+            exc_info=True,
+        )
+        return False

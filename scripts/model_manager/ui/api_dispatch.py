@@ -18,7 +18,6 @@ from typing import TYPE_CHECKING, Any
 from deploy_identity.code_version import process_age_s, resolve_code_version
 
 from .controller.drain_timeout_keep_await import (
-    cancel_or_join_supervise_task,
     preempt_giw_keep_await_if_needed,
     preempt_stargate_idle_drain_if_needed,
 )
@@ -40,15 +39,10 @@ from .controller.restart_drain import (
     sole_cdp_self_holder_matches,
 )
 from .controller.restart_drain_force_gate import enforce_force_reason_if_needed
+from .controller.restart_intent_cancel_support import orchestrate_cancel_restart_intent
 from .controller.restart_intent_consumer import project_restart_intent_consumer
-from .controller.restart_intent_store import (
-    STATUS_CANCELLED,
-    STATUS_PENDING_DRAIN,
-    RestartIntentCancelError,
-    RestartIntentStore,
-)
+from .controller.restart_intent_list import list_restart_intents
 from .controller.restart_window_ctl import (
-    clear_service_windows,
     lifecycle_with_restart_window,
 )
 from .lifecycle_envelope import start_envelope
@@ -509,6 +503,9 @@ async def execute(
         case "cancel_restart_intent":
             return await _cancel_restart_intent(ctl, params)
 
+        case "list_restart_intents":
+            return _list_restart_intents(ctl, params)
+
         case "whoami":
             return _whoami()
 
@@ -523,7 +520,7 @@ async def execute(
                 f"Unknown method: '{method}'. "
                 "Valid: status, health, wait_healthy, start, stop, restart, "
                 "sync_restart, rebuild, busy_status, restart_intent_status, "
-                "cancel_restart_intent, "
+                "list_restart_intents, cancel_restart_intent, "
                 "whoami, recycle_giw, "
                 "fleet_sync_restart, fleet_rebuild_deploy"
             )
@@ -932,7 +929,7 @@ def giw_wait_for_boundary_from_params(params: dict[str, Any]) -> bool:
 
 
 def giw_intent_ttl_s_from_params(params: dict[str, Any]) -> float | None:
-    """Optional caller arm TTL. Absent or ≤0 → default (600s, or none when wait_for_boundary)."""
+    """Optional caller arm TTL. Absent or ≤0 → default (600s; 900s when wait_for_boundary)."""
     raw = params.get("intent_ttl_s")
     if raw is None or raw == "":
         return None
@@ -1101,6 +1098,18 @@ async def _restart_intent_status(
     return {"restart_intent": project_restart_intent_consumer(intent, now=now)}
 
 
+async def _giw_probe_drain_state() -> dict[str, Any]:
+    """GET worker drain-state for cancel release recovery."""
+    from transport_utils import make_async_client
+
+    from .controller.restart_drain import GIT_INTEGRATION_WORKER_URL
+
+    async with make_async_client(GIT_INTEGRATION_WORKER_URL, timeout=10.0) as client:
+        resp = await client.get("/api/v1/git/admin/drain-state")
+        resp.raise_for_status()
+        return resp.json()
+
+
 async def _cancel_restart_intent(
     ctl: ServiceController, params: dict[str, Any]
 ) -> dict[str, Any]:
@@ -1111,117 +1120,26 @@ async def _cancel_restart_intent(
     refused after kill commit (``drained_restarting`` / other terminals).
     """
     intent_id = str(params.get("intent_id") or "").strip()
-    if not intent_id:
-        raise ValueError("cancel_restart_intent requires 'intent_id'")
     service_param = str(params.get("service") or "").strip() or None
+    if not intent_id and not service_param:
+        raise ValueError("cancel_restart_intent requires 'intent_id' or 'service'")
+    from .controller.restart_intent_expiry import giw_cancel_drain
+
     return await orchestrate_cancel_restart_intent(
         ctl.restart_intent_store,
         intent_id=intent_id,
         service=service_param,
-        release_drain=_worker_cancel_drain,
+        release_drain=giw_cancel_drain,
+        probe_drain_state=_giw_probe_drain_state,
     )
 
 
-async def _worker_cancel_drain(intent_id: str, drain_epoch: int) -> dict[str, Any]:
-    """POST worker admin cancel-drain for the matching intent generation."""
-    from transport_utils import make_async_client
-
-    from .controller.restart_drain import GIT_INTEGRATION_WORKER_URL
-
-    async with make_async_client(GIT_INTEGRATION_WORKER_URL, timeout=10.0) as client:
-        resp = await client.post(
-            "/api/v1/git/admin/cancel-drain",
-            json={"intent_id": intent_id, "drain_epoch": drain_epoch},
-        )
-        resp.raise_for_status()
-        return resp.json()
-
-
-async def orchestrate_cancel_restart_intent(
-    store: RestartIntentStore,
-    *,
-    intent_id: str,
-    service: str | None = None,
-    release_drain: Callable[[str, int], Awaitable[dict[str, Any]]] | None = None,
+def _list_restart_intents(
+    ctl: ServiceController, params: dict[str, Any]
 ) -> dict[str, Any]:
-    """Pure cancel orchestration — release (when epoch set) then store cancel.
-
-    Extracted for unit tests that inject a fake ``release_drain`` without a live
-    worker. Fail-closed: if release raises, the store is left uncancelled.
-    """
-    intent = store.get(intent_id)
-    if intent is None:
-        return {
-            "status": "error",
-            "reason": "intent_not_found",
-            "intent_id": intent_id,
-        }
-    if service is not None and intent.service != service:
-        return {
-            "status": "error",
-            "reason": "service_mismatch",
-            "intent_id": intent_id,
-            "service": intent.service,
-            "requested_service": service,
-        }
-    if intent.status == STATUS_CANCELLED:
-        return {
-            "status": "cancelled",
-            "intent_id": intent.intent_id,
-            "service": intent.service,
-            "already_cancelled": True,
-            "drain_release": None,
-        }
-    if intent.status != STATUS_PENDING_DRAIN:
-        return {
-            "status": "refused",
-            "reason": "cancel_refused_after_final_check_or_terminal",
-            "intent_id": intent.intent_id,
-            "intent_status": intent.status,
-        }
-
-    drain_release: dict[str, Any] | None = None
-    if intent.drain_epoch is not None:
-        if release_drain is None:
-            return {
-                "status": "error",
-                "reason": "drain_release_unavailable",
-                "intent_id": intent.intent_id,
-                "drain_epoch": intent.drain_epoch,
-            }
-        try:
-            drain_release = await release_drain(intent.intent_id, intent.drain_epoch)
-        except Exception as exc:  # noqa: BLE001 — fail closed; do not cancel store
-            return {
-                "status": "error",
-                "reason": "drain_release_failed",
-                "intent_id": intent.intent_id,
-                "drain_epoch": intent.drain_epoch,
-                "error": str(exc),
-            }
-
-    try:
-        cancelled = store.cancel(intent_id, reason="cancelled_by_operator")
-    except RestartIntentCancelError as exc:
-        return {
-            "status": "refused",
-            "reason": exc.reason,
-            "intent_id": intent_id,
-            "intent_status": exc.status,
-            "drain_release": drain_release,
-        }
-    if cancelled.service == "stargate":
-        await cancel_or_join_supervise_task(cancelled.service)
-        await clear_service_windows(store, cancelled.service, reason="intent_cancelled")
-    return {
-        "status": "cancelled",
-        "intent_id": cancelled.intent_id,
-        "service": cancelled.service,
-        "intent_status": cancelled.status,
-        "drain_epoch": cancelled.drain_epoch,
-        "drain_release": drain_release,
-        "already_cancelled": False,
-    }
+    """Read-only list of pending restart intents."""
+    service = str(params.get("service") or "").strip() or None
+    return list_restart_intents(ctl.restart_intent_store, service=service)
 
 
 async def _fleet(ctl: ServiceController, *, build: bool, scope: str) -> dict[str, Any]:
