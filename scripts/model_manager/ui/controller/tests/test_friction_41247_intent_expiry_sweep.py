@@ -101,7 +101,7 @@ async def test_lazy_rearm_mints_fresh_intent_after_expiry(tmp_path, monkeypatch)
     assert store.active_for_service("agent_bus").intent_id == new_id  # type: ignore[union-attr]
 
 
-def test_wait_for_boundary_null_expires_not_due(tmp_path) -> None:
+def test_wait_for_boundary_legacy_null_expires_not_due_when_fresh(tmp_path) -> None:
     store = RestartIntentStore(tmp_path / "intents.db")
     intent = store.create_intent(
         service="git_integration_worker",
@@ -110,8 +110,11 @@ def test_wait_for_boundary_null_expires_not_due(tmp_path) -> None:
         reason="armed",
         wait_for_boundary=True,
     )
-    assert intent.expires_at is None
-    assert not intent_expired(intent, now=datetime.now(UTC) + timedelta(days=1))
+    store._update(intent.intent_id, expires_at=None)
+    row = store.get(intent.intent_id)
+    assert row is not None
+    assert row.expires_at is None
+    assert not intent_expired(row, now=datetime.now(UTC) + timedelta(seconds=30))
 
 
 @pytest.mark.asyncio

@@ -363,9 +363,7 @@ def _ensure_expired_status(conn: sqlite3.Connection) -> None:
             f"SELECT {col_csv} FROM restart_intents"
         )
         conn.execute("DROP TABLE restart_intents")
-        conn.execute(
-            f"ALTER TABLE {_EXPIRED_MIGRATION_TEMP} RENAME TO restart_intents"
-        )
+        conn.execute(f"ALTER TABLE {_EXPIRED_MIGRATION_TEMP} RENAME TO restart_intents")
         _ensure_kill_cas_indexes(conn)
 
 
@@ -382,9 +380,10 @@ def _ensure_arming_lanes_column(conn: sqlite3.Connection) -> None:
 def _ensure_arm_columns(conn: sqlite3.Connection) -> None:
     """Add arm columns. Legacy null windows get a fresh bound only once.
 
-    ``wait_for_boundary`` arms may keep ``expires_at`` NULL (no hard expiry).
+    ``wait_for_boundary`` arms may keep legacy ``expires_at`` NULL; expiry is
+    enforced at read time via ``effective_expires_at`` (``armed_at + 900s``).
     Backfill runs only when ``expires_at`` is first introduced — not on every
-    schema apply — so intentional nulls survive store reopen (a:37197).
+    schema apply — so intentional nulls survive store reopen.
     """
     cols = {
         row[1] for row in conn.execute("PRAGMA table_info(restart_intents)").fetchall()
@@ -449,7 +448,7 @@ def _ensure_owed_wake_attempt_columns(conn: sqlite3.Connection) -> None:
 
 
 def _ensure_wait_for_boundary_column(conn: sqlite3.Connection) -> None:
-    """a:37197 — defer begin_drain until GIW idle; optional unbounded arm."""
+    """a:37197 — defer begin_drain until GIW idle; default 900s boundary TTL."""
     cols = {
         row[1] for row in conn.execute("PRAGMA table_info(restart_intents)").fetchall()
     }

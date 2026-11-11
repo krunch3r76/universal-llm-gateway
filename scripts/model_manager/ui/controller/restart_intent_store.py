@@ -261,9 +261,9 @@ class RestartIntentStore:
         """INSERT ``pending_drain``, or refresh the existing row's window.
 
         A joining request does not replace ``caller_agent`` or clear
-        ``wait_for_boundary``. Expiry is not applied here — that is the cancel
-        path, not insert. ``wait_for_boundary`` defaults to no hard expiry
-        unless ``intent_ttl_s`` is set (a:37197).
+        ``wait_for_boundary``. New rows default to ``BOUNDARY_INTENT_TTL_S`` (900s)
+        when wait mode is set; legacy NULL ``expires_at`` rows still expire via
+        ``effective_expires_at``. Caller ``intent_ttl_s`` overrides.
         """
         from .restart_intent_expiry import (
             arm_stamps,
@@ -590,7 +590,8 @@ class RestartIntentStore:
 
         A joining ``create_intent`` does this. The supervisor's 30s progress
         tick must not — an abandoned intent with only that tick expires.
-        ``wait_for_boundary`` without a prior TTL stays unbounded.
+        ``wait_for_boundary`` keeps a prior ``expires_at``; legacy NULL rows
+        expire at ``armed_at + BOUNDARY_INTENT_TTL_S``.
         """
         from .restart_intent_expiry import arm_stamps, join_expires_at
 

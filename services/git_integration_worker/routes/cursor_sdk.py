@@ -4753,8 +4753,10 @@ async def admit_cursor_dispatch(
     from scripts.model_manager.ui.controller.intent_admit_fence import (
         pending_service_intent_status,
         queue_kw_for_pending_intent,
+        release_expired_arm,
     )
 
+    released_expired = release_expired_arm(controller)
     intent_status = pending_service_intent_status("git_integration_worker")
     intent_fence = queue_kw_for_pending_intent(
         intent_status=intent_status,
@@ -4769,6 +4771,7 @@ async def admit_cursor_dispatch(
             controller=controller,
             request=request,
             intent_status=intent_status,
+            released=released_expired,
         )
     hand_claim = None
     if req.resume_of:
