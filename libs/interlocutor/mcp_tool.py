@@ -35,6 +35,7 @@ def register_interlocutor_tool(mcp: FastMCP) -> None:
         after_turn: int | None = None,
         limit: int = 10,
         text: str | None = None,
+        text_uri: str | None = None,
         voice: Literal["self", "operator_relay"] = "self",
         grant: Literal["operator", "explicit"] | None = None,
         authorization_source: str | None = None,
@@ -93,13 +94,22 @@ def register_interlocutor_tool(mcp: FastMCP) -> None:
                 mailbox=mailbox,
                 thread_scope=thread_scope,
                 text=text,
+                text_uri=text_uri,
                 voice=voice,
                 grant=grant,
                 authorization_source=authorization_source,
                 idempotency_key=idempotency_key,
             )
             outcome = "refused" if result.get("ok") is False else "completed"
-            _record(f"interlocutor.spawn.{outcome}", target=target)
+            if result.get("ok") is False:
+                _record(
+                    "interlocutor.spawn.refused",
+                    target=target,
+                    code=result.get("code"),
+                    reason=result.get("reason"),
+                )
+            else:
+                _record(f"interlocutor.spawn.{outcome}", target=target)
             return {**result, "op": "spawn", "target": target}
 
         if op == "retire":
@@ -108,18 +118,19 @@ def register_interlocutor_tool(mcp: FastMCP) -> None:
             _record(f"interlocutor.retire.{outcome}", target=target)
             return {**result, "op": "retire", "target": target}
 
-        if not (text or "").strip():
+        if not (text or "").strip() and not (text_uri or "").strip():
             refuse = {
                 "ok": False,
                 "code": "text_required",
-                "reason": "steer requires text",
+                "reason": "steer requires text or text_uri",
             }
             _record("interlocutor.steer.refused", target=target, code="text_required")
             return {**refuse, "op": "steer", "target": target}
 
         result = execute_steer(
             target=target,
-            text=str(text),
+            text=str(text or ""),
+            text_uri=text_uri,
             voice=voice,
             grant=grant,
             authorization_source=authorization_source,

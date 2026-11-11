@@ -43,6 +43,10 @@ from cursor_bridge.dom_composer_paste import (
     composer_text_semantic_equals,
     dom_insert_and_send,
 )
+from cursor_bridge.electron_chat_grok_wait import (
+    messages_fingerprint,
+    probe_grok_after_select,
+)
 from cursor_bridge.grok_agent_ops import select_grok_agent_async
 from cursor_bridge.grok_computer import probe_grok_computer, resolve_grok_cdp_port
 from cursor_bridge.wake_delivery import (
@@ -239,20 +243,32 @@ async def _resolve_and_select_endpoint(
                 "active_agent_id": verdict.get("active_agent_id"),
                 "titles": verdict.get("titles"),
             }
+        prior_fp = messages_fingerprint(surface) if app == "grok" else ""
         async with display_switch_lock(disp):
             if app == "grok" and str(endpoint.agent_id or "").strip():
                 cdp_pick = await select_grok_agent_async(disp, str(endpoint.agent_id))
                 if cdp_pick.get("ok"):
                     selected = True
-                    await asyncio.sleep(0.15)
-                    surface = await probe_surface(ws_url)
-                    verdict = wake_decision(
-                        surface,
-                        thread=endpoint.thread,
-                        slug=endpoint.slug,
-                        title=endpoint.title or None,
-                        agent_id=endpoint.agent_id or None,
+                    grok_wait = await probe_grok_after_select(
+                        ws_url,
+                        endpoint=endpoint,
+                        expected_agent_id=str(endpoint.agent_id),
+                        prior_message_fp=prior_fp,
                     )
+                    surface = grok_wait["surface"]
+                    verdict = grok_wait["verdict"]
+                    if grok_wait.get("stale_dom"):
+                        return {
+                            "ok": False,
+                            "code": "conversation_unconfirmed",
+                            "reason": "conversation DOM stale after select",
+                            "endpoint": endpoint.label,
+                            "display": disp,
+                            "app": app,
+                            "selected": selected,
+                            "active_agent_id": verdict.get("active_agent_id"),
+                            "stale_dom": True,
+                        }
             if verdict.get("ok"):
                 click_res = {"clicked": False}
             else:
@@ -304,11 +320,14 @@ async def read_endpoint_turn(
         if not res.get("ok"):
             return res
         surface, verdict = res["surface"], res["verdict"]
-        messages = [
-            str(m).strip()
-            for m in (surface.get("recent_messages") or [])
-            if str(m).strip()
-        ]
+        if surface.get("stale_dom"):
+            messages: list[str] = []
+        else:
+            messages = [
+                str(m).strip()
+                for m in (surface.get("recent_messages") or [])
+                if str(m).strip()
+            ]
         latest = messages[-1] if messages else ""
         out: dict[str, Any] = {
             "ok": True,

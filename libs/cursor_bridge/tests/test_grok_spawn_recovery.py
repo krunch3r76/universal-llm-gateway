@@ -95,14 +95,17 @@ async def test_cancel_during_create_blocks_retry() -> None:
     with patch("cursor_bridge.grok_agent_ops._eval_display", side_effect=_eval):
         with pytest.raises(asyncio.CancelledError):
             await spawn_grok_agent_async("9", "bot", idempotency_key="cancel-create")
-    with patch(
-        "cursor_bridge.grok_agent_ops._eval_display", new_callable=AsyncMock
-    ) as ev:
+    async def _empty_list(_display: object, expr: str, **_kw: Any) -> dict[str, Any]:
+        if "agents" in expr:
+            return {"ok": True, "agents": [], "currentAgentId": None}
+        return {"ok": True}
+
+    with patch("cursor_bridge.grok_agent_ops._eval_display", side_effect=_empty_list):
         retry = await spawn_grok_agent_async(
             "9", "bot", idempotency_key="cancel-create"
         )
-    assert retry["code"] == "create_unknown"
-    ev.assert_not_awaited()
+    assert retry["code"] == "adopt_not_found"
+    assert retry["needs_operator"] is True
 
 
 @pytest.mark.asyncio
@@ -167,23 +170,147 @@ def _unconfirmed_create(store: dict[str, Any], raw: Any) -> Any:
 
 
 @pytest.mark.asyncio
-async def test_create_agent_no_id_blocks_second_create() -> None:
-    store: dict[str, Any] = {}
-    raw = {"ok": False, "code": "create_agent_no_id", "created": False}
-    with patch(
-        "cursor_bridge.grok_agent_ops._eval_display",
-        side_effect=_unconfirmed_create(store, raw),
-    ):
-        first = await spawn_grok_agent_async("9", "bot", idempotency_key="no-id")
-    with patch(
-        "cursor_bridge.grok_agent_ops._eval_display", new_callable=AsyncMock
-    ) as ev:
-        second = await spawn_grok_agent_async("9", "bot", idempotency_key="no-id")
+async def test_create_agent_no_id_adopts_on_retry_without_second_create() -> None:
+    store: dict[str, Any] = {"creates": 0}
+
+    lists = {"n": 0}
+
+    async def _eval(_display: object, expr: str, **_kw: Any) -> Any:
+        if "createAgent" in expr:
+            store["creates"] += 1
+            return {"ok": False, "code": "create_agent_no_id", "created": False}
+        if "setAgentHiddenFromSidebar" in expr:
+            return {"ok": True, "hidden": True, "code": "hidden"}
+        if "agents" in expr and "currentAgentId" in expr:
+            lists["n"] += 1
+            if lists["n"] <= 2:
+                return {"ok": True, "agents": [], "currentAgentId": None}
+            return {
+                "ok": True,
+                "agents": [{"id": "adopted-1", "name": "bot"}],
+                "currentAgentId": "adopted-1",
+            }
+        return {"ok": True, "currentAgentId": "adopted-1"}
+
+    with patch("cursor_bridge.grok_agent_ops._eval_display", side_effect=_eval):
+        first = await spawn_grok_agent_async(
+            "9", "bot", idempotency_key="no-id", hidden=True
+        )
+        second = await spawn_grok_agent_async(
+            "9", "bot", idempotency_key="no-id", hidden=True
+        )
     assert first["code"] == "create_unknown"
     assert first["needs_operator"] is True
-    assert second["code"] == "create_unknown"
+    assert second["ok"] is True
+    assert second["agent_id"] == "adopted-1"
     assert store["creates"] == 1
-    ev.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_preexisting_same_name_not_adopted_on_retry() -> None:
+    store: dict[str, Any] = {"creates": 0}
+
+    async def _eval(_display: object, expr: str, **_kw: Any) -> Any:
+        if "createAgent" in expr:
+            store["creates"] += 1
+            return {"ok": False, "code": "create_agent_no_id", "created": False}
+        if "agents" in expr and "currentAgentId" in expr:
+            return {
+                "ok": True,
+                "agents": [{"id": "old-bot", "name": "bot"}],
+                "currentAgentId": "old-bot",
+            }
+        return {"ok": True, "currentAgentId": "old-bot"}
+
+    with patch("cursor_bridge.grok_agent_ops._eval_display", side_effect=_eval):
+        first = await spawn_grok_agent_async(
+            "9", "bot", idempotency_key="preexist", hidden=True
+        )
+        second = await spawn_grok_agent_async(
+            "9", "bot", idempotency_key="preexist", hidden=True
+        )
+    assert first["code"] == "create_unknown"
+    assert second["code"] == "adopt_preexisting_only"
+    assert second["needs_operator"] is True
+    assert store["creates"] == 1
+
+
+@pytest.mark.asyncio
+async def test_first_call_roster_diff_hide_subscribe_steer_once() -> None:
+    store: dict[str, Any] = {"creates": 0, "subs": 0}
+    steer = AsyncMock(return_value={"ok": True, "delivered": True, "pasted": True})
+
+    async def _eval(_display: object, expr: str, **_kw: Any) -> Any:
+        if "createAgent" in expr:
+            store["creates"] += 1
+            return {
+                "ok": True,
+                "created": True,
+                "agent_id": "recovered-1",
+                "recovered": "roster_diff",
+            }
+        if "setAgentHiddenFromSidebar" in expr:
+            return {"ok": True, "hidden": True, "code": "hidden"}
+        if "agents" in expr and "currentAgentId" in expr:
+            return {"ok": True, "agents": [], "currentAgentId": None}
+        return {"ok": True, "currentAgentId": "recovered-1"}
+
+    def _sub(**_k: object) -> dict[str, Any]:
+        store["subs"] += 1
+        return {"ok": True, "status_code": 200}
+
+    with (
+        patch("cursor_bridge.grok_agent_ops._eval_display", side_effect=_eval),
+        patch("cursor_bridge.grok_spawn_steps.preflight_subscriptions", return_value={"ok": True}),
+        patch("cursor_bridge.grok_spawn_steps.subscribe_grok", side_effect=_sub),
+        patch("interlocutor.display_adapter.steer_display", steer),
+    ):
+        out = await spawn_grok_agent_async(
+            "9",
+            "bot",
+            text="hello",
+            mailbox="box",
+            thread_scope="t1",
+            idempotency_key="recover-first",
+            hidden=True,
+        )
+    assert out["ok"] is True
+    assert out["agent_id"] == "recovered-1"
+    assert store["creates"] == 1
+    assert store["subs"] == 1
+    steer.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_adopt_ambiguous_stays_needs_operator() -> None:
+    store: dict[str, Any] = {"creates": 0}
+    lists = {"n": 0}
+
+    async def _eval(_display: object, expr: str, **_kw: Any) -> Any:
+        if "createAgent" in expr:
+            store["creates"] += 1
+            return {"ok": False, "code": "create_agent_no_id", "created": False}
+        if "agents" in expr and "currentAgentId" in expr:
+            lists["n"] += 1
+            if lists["n"] == 1:
+                return {"ok": True, "agents": [], "currentAgentId": None}
+            return {
+                "ok": True,
+                "agents": [
+                    {"id": "a1", "name": "bot"},
+                    {"id": "a2", "name": "bot"},
+                ],
+                "currentAgentId": "a1",
+            }
+        return {"ok": True}
+
+    with patch("cursor_bridge.grok_agent_ops._eval_display", side_effect=_eval):
+        await spawn_grok_agent_async("9", "bot", idempotency_key="ambig-adopt")
+        second = await spawn_grok_agent_async(
+            "9", "bot", idempotency_key="ambig-adopt", hidden=True
+        )
+    assert second["code"] == "adopt_ambiguous"
+    assert store["creates"] == 1
 
 
 @pytest.mark.asyncio
@@ -195,13 +322,13 @@ async def test_non_dict_create_blocks_second_create() -> None:
     ):
         first = await spawn_grok_agent_async("9", "bot", idempotency_key="non-dict")
     with patch(
-        "cursor_bridge.grok_agent_ops._eval_display", new_callable=AsyncMock
-    ) as ev:
+        "cursor_bridge.grok_agent_ops._eval_display",
+        side_effect=_unconfirmed_create(store, {"ok": True, "agents": [], "currentAgentId": None}),
+    ):
         second = await spawn_grok_agent_async("9", "bot", idempotency_key="non-dict")
     assert first["code"] == "create_unknown"
-    assert second["code"] == "create_unknown"
+    assert second["code"] == "adopt_not_found"
     assert store["creates"] == 1
-    ev.assert_not_awaited()
 
 
 @pytest.mark.asyncio
@@ -235,13 +362,15 @@ async def test_ambiguous_eval_error_burns_key() -> None:
 
     with patch("cursor_bridge.grok_agent_ops._eval_display", side_effect=_eval):
         first = await spawn_grok_agent_async("9", "bot", idempotency_key="ambig")
-    with patch(
-        "cursor_bridge.grok_agent_ops._eval_display", new_callable=AsyncMock
-    ) as ev:
+    async def _adopt_eval(_display: object, expr: str, **_kw: Any) -> dict[str, Any]:
+        if "agents" in expr:
+            return {"ok": True, "agents": [], "currentAgentId": None}
+        return {"ok": True}
+
+    with patch("cursor_bridge.grok_agent_ops._eval_display", side_effect=_adopt_eval):
         second = await spawn_grok_agent_async("9", "bot", idempotency_key="ambig")
     assert first["code"] == "create_unknown"
-    assert second["code"] == "create_unknown"
-    ev.assert_not_awaited()
+    assert second["code"] == "adopt_not_found"
 
 
 @pytest.mark.asyncio

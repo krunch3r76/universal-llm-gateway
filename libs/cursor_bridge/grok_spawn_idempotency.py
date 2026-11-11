@@ -41,7 +41,20 @@ def _new_slot(digest: str, nonce: str, token: str) -> dict[str, Any]:
         "sub_done": False,
         "steer_phase": "not_sent",
         "receipt": None,
+        "pre_create_roster_ids": None,
     }
+
+
+def roster_snapshot_for(key: str, token: str) -> frozenset[str] | None:
+    """Pre-create roster id set for ``key`` when ``token`` owns the slot."""
+    with _LOCK:
+        slot = _SLOTS.get(key)
+        if slot is None or slot.get("owner") != token:
+            return None
+        raw = slot.get("pre_create_roster_ids")
+        if raw is None:
+            return None
+        return frozenset(str(i) for i in raw if str(i).strip())
 
 
 def begin(key: str, digest: str) -> dict[str, Any]:
@@ -57,10 +70,13 @@ def begin(key: str, digest: str) -> dict[str, Any]:
         if slot.get("state") == "verified":
             return {"action": "duplicate", "receipt": dict(slot.get("receipt") or {})}
         if slot.get("state") == "create_unknown":
+            slot["owner"] = token
             return {
-                "action": "blocked",
-                "code": "create_unknown",
-                "needs_operator": True,
+                "action": "adopt",
+                "token": token,
+                "nonce": slot.get("nonce"),
+                "hide_ok": bool(slot.get("hide_ok")),
+                "sub_done": bool(slot.get("sub_done")),
             }
         if slot.get("owner"):
             return {"action": "in_flight", "code": "idempotency_in_flight"}
@@ -145,4 +161,5 @@ __all__ = [
     "mark_steer",
     "note",
     "release",
+    "roster_snapshot_for",
 ]

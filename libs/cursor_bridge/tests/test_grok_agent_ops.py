@@ -93,7 +93,7 @@ async def test_spawn_idempotency_duplicate() -> None:
         )
     assert first["ok"] is True
     assert second.get("duplicate") is True
-    assert calls["n"] == 3  # create, hide readback, select
+    assert calls["n"] == 4  # pre-create list, create, hide readback, select
 
 
 @pytest.mark.asyncio
@@ -227,7 +227,7 @@ async def test_spawn_key_conflict_and_operator_relay_before_create() -> None:
         )
     assert clash["code"] == "idempotency_conflict"
     assert refused["code"] == "watermark_missing_authorization"
-    assert ev.await_count == 2
+    assert ev.await_count == 3  # pre-create list, createAgent, hide readback
 
 
 def test_list_defaults_include_hidden_not_retired() -> None:

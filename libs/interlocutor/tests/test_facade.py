@@ -48,6 +48,23 @@ def test_steer_operator_relay_refuses_without_authorization() -> None:
     assert out["code"] == "watermark_missing_authorization"
 
 
+def test_steer_text_uri_resolves_before_idempotency() -> None:
+    with (
+        patch("interlocutor.text_body.resolve_interlocutor_text") as resolve,
+        patch("interlocutor.facade.display_adapter.steer_display_sync") as steer,
+    ):
+        resolve.return_value = {"ok": True, "body": "from-uri"}
+        steer.return_value = {"ok": True, "delivered": True}
+        out = execute_steer(
+            target="display:8/agent-1",
+            text="",
+            text_uri="cortex://notes/tmp/x.md",
+        )
+        assert out["ok"] is True
+        resolve.assert_called_once()
+        assert steer.call_args.kwargs["text"] == "from-uri"
+
+
 def test_steer_self_voice_does_not_watermark_display_paste() -> None:
     with patch("interlocutor.facade.display_adapter.steer_display_sync") as steer:
         steer.return_value = {"ok": True, "watermarked": False, "voice": "self"}

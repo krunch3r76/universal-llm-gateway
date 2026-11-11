@@ -40,6 +40,144 @@ def test_should_stop_for_bus_handoff_detects_markers() -> None:
 
 
 @pytest.mark.asyncio
+async def test_read_grok_stale_conversation_after_select_not_prior_messages() -> None:
+    """Break: prior chat lines visible after CDP select must not be returned as read."""
+    ep = ElectronEndpoint(
+        label="gc2",
+        app="grok",
+        display="10",
+        title="Fresh Bot",
+        agent_id="new-agent-id",
+    )
+    stale_line = "stale transcript line from previous chat"
+    surfaces = [
+        {
+            "state": "chat_list",
+            "active_title": "Other Chat",
+            "active_agent_id": "other-uuid",
+            "titles": ["Other Chat", "Fresh Bot"],
+            "composer_draft": "",
+            "generating": False,
+            "recent_messages": [stale_line],
+        },
+        {
+            "state": "chat_list",
+            "active_title": "Fresh Bot",
+            "active_agent_id": "new-agent-id",
+            "titles": ["Other Chat", "Fresh Bot"],
+            "composer_draft": "",
+            "generating": False,
+            "recent_messages": [stale_line],
+        },
+    ]
+    pages = [{"title": "Grok Bot", "web_socket_debugger_url": "ws://fake"}]
+
+    async def _fake_probe(_ws: str) -> dict[str, Any]:
+        if len(surfaces) > 1:
+            return dict(surfaces.pop(0))
+        return dict(surfaces[0])
+
+    async def _fake_select_grok(_display: object, _agent_id: str) -> dict[str, Any]:
+        return {"ok": True, "currentAgentId": "new-agent-id"}
+
+    stale_surface = surfaces[-1]
+    stale_verdict = {
+        "ok": True,
+        "active_agent_id": "new-agent-id",
+        "active_title": "Fresh Bot",
+    }
+
+    with (
+        patch("cursor_bridge.electron_chat_relay.list_pages", return_value=pages),
+        patch("cursor_bridge.electron_chat_relay.probe_surface", side_effect=_fake_probe),
+        patch(
+            "cursor_bridge.electron_chat_relay.select_grok_agent_async",
+            new_callable=AsyncMock,
+            side_effect=_fake_select_grok,
+        ),
+        patch(
+            "cursor_bridge.electron_chat_relay.probe_grok_after_select",
+            new_callable=AsyncMock,
+            return_value={
+                "ok": False,
+                "stale_dom": True,
+                "code": "conversation_unconfirmed",
+                "surface": stale_surface,
+                "verdict": stale_verdict,
+            },
+        ),
+        patch("cursor_bridge.electron_chat_relay.agent_paste_lock", _noop_lock),
+    ):
+        snap = await read_endpoint_turn(ep, select=True)
+
+    assert snap["ok"] is False
+    assert snap["code"] == "conversation_unconfirmed"
+    assert stale_line not in (snap.get("recent_messages") or [])
+
+
+@pytest.mark.asyncio
+async def test_read_grok_empty_dom_ok_after_select() -> None:
+    ep = ElectronEndpoint(
+        label="gc2",
+        app="grok",
+        display="10",
+        title="Empty Bot",
+        agent_id="empty-agent-id",
+    )
+    empty = {
+        "state": "chat_list",
+        "active_title": "Empty Bot",
+        "active_agent_id": "empty-agent-id",
+        "titles": ["Empty Bot"],
+        "composer_draft": "",
+        "generating": False,
+        "recent_messages": [],
+    }
+    pages = [{"title": "Grok Bot", "web_socket_debugger_url": "ws://fake"}]
+    probe_calls = {"n": 0}
+
+    async def _fake_probe(_ws: str) -> dict[str, Any]:
+        probe_calls["n"] += 1
+        return dict(empty)
+
+    async def _fake_select_grok(_display: object, _agent_id: str) -> dict[str, Any]:
+        return {"ok": True, "currentAgentId": "empty-agent-id"}
+
+    good_verdict = {
+        "ok": True,
+        "active_agent_id": "empty-agent-id",
+        "active_title": "Empty Bot",
+    }
+
+    with (
+        patch("cursor_bridge.electron_chat_relay.list_pages", return_value=pages),
+        patch("cursor_bridge.electron_chat_relay.probe_surface", side_effect=_fake_probe),
+        patch(
+            "cursor_bridge.electron_chat_relay.select_grok_agent_async",
+            new_callable=AsyncMock,
+            side_effect=_fake_select_grok,
+        ),
+        patch(
+            "cursor_bridge.electron_chat_relay.probe_grok_after_select",
+            new_callable=AsyncMock,
+            return_value={
+                "ok": True,
+                "stale_dom": False,
+                "surface": empty,
+                "verdict": good_verdict,
+            },
+        ),
+        patch("cursor_bridge.electron_chat_relay.agent_paste_lock", _noop_lock),
+    ):
+        snap = await read_endpoint_turn(ep, select=True)
+
+    assert snap["ok"] is True
+    assert snap["active_agent_id"] == "empty-agent-id"
+    assert snap["recent_messages"] == []
+    assert snap["latest_message"] == ""
+
+
+@pytest.mark.asyncio
 async def test_read_endpoint_turn_selects_and_reads_latest_prose() -> None:
     gc2 = ElectronEndpoint(
         label="gc2",
@@ -95,14 +233,32 @@ async def test_read_endpoint_turn_selects_and_reads_latest_prose() -> None:
         assert expected_title == "Stage Manager (gc2)"
         return {"clicked": True}
 
+    picked = surfaces[-1]
+    pick_verdict = {
+        "ok": True,
+        "active_agent_id": "gc2-agent-uuid",
+        "active_title": "Stage Manager (gc2)",
+    }
+
     with (
         patch("cursor_bridge.electron_chat_relay.list_pages", return_value=pages),
         patch(
             "cursor_bridge.electron_chat_relay.probe_surface", side_effect=_fake_probe
         ),
         patch(
-            "cursor_bridge.electron_chat_relay.select_sidebar_target",
-            side_effect=_fake_select,
+            "cursor_bridge.electron_chat_relay.select_grok_agent_async",
+            new_callable=AsyncMock,
+            return_value={"ok": True, "currentAgentId": "gc2-agent-uuid"},
+        ),
+        patch(
+            "cursor_bridge.electron_chat_relay.probe_grok_after_select",
+            new_callable=AsyncMock,
+            return_value={
+                "ok": True,
+                "stale_dom": False,
+                "surface": picked,
+                "verdict": pick_verdict,
+            },
         ),
     ):
         snap = await read_endpoint_turn(gc2, select=True)
