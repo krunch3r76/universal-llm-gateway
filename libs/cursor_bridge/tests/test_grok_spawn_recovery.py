@@ -183,7 +183,7 @@ async def test_create_agent_no_id_adopts_on_retry_without_second_create() -> Non
             return {"ok": True, "hidden": True, "code": "hidden"}
         if "agents" in expr and "currentAgentId" in expr:
             lists["n"] += 1
-            if lists["n"] < 2:
+            if lists["n"] <= 2:
                 return {"ok": True, "agents": [], "currentAgentId": None}
             return {
                 "ok": True,
@@ -207,14 +207,93 @@ async def test_create_agent_no_id_adopts_on_retry_without_second_create() -> Non
 
 
 @pytest.mark.asyncio
-async def test_adopt_ambiguous_stays_needs_operator() -> None:
+async def test_preexisting_same_name_not_adopted_on_retry() -> None:
     store: dict[str, Any] = {"creates": 0}
 
     async def _eval(_display: object, expr: str, **_kw: Any) -> Any:
         if "createAgent" in expr:
             store["creates"] += 1
             return {"ok": False, "code": "create_agent_no_id", "created": False}
-        if "agents" in expr:
+        if "agents" in expr and "currentAgentId" in expr:
+            return {
+                "ok": True,
+                "agents": [{"id": "old-bot", "name": "bot"}],
+                "currentAgentId": "old-bot",
+            }
+        return {"ok": True, "currentAgentId": "old-bot"}
+
+    with patch("cursor_bridge.grok_agent_ops._eval_display", side_effect=_eval):
+        first = await spawn_grok_agent_async(
+            "9", "bot", idempotency_key="preexist", hidden=True
+        )
+        second = await spawn_grok_agent_async(
+            "9", "bot", idempotency_key="preexist", hidden=True
+        )
+    assert first["code"] == "create_unknown"
+    assert second["code"] == "adopt_preexisting_only"
+    assert second["needs_operator"] is True
+    assert store["creates"] == 1
+
+
+@pytest.mark.asyncio
+async def test_first_call_roster_diff_hide_subscribe_steer_once() -> None:
+    store: dict[str, Any] = {"creates": 0, "subs": 0}
+    steer = AsyncMock(return_value={"ok": True, "delivered": True, "pasted": True})
+
+    async def _eval(_display: object, expr: str, **_kw: Any) -> Any:
+        if "createAgent" in expr:
+            store["creates"] += 1
+            return {
+                "ok": True,
+                "created": True,
+                "agent_id": "recovered-1",
+                "recovered": "roster_diff",
+            }
+        if "setAgentHiddenFromSidebar" in expr:
+            return {"ok": True, "hidden": True, "code": "hidden"}
+        if "agents" in expr and "currentAgentId" in expr:
+            return {"ok": True, "agents": [], "currentAgentId": None}
+        return {"ok": True, "currentAgentId": "recovered-1"}
+
+    def _sub(**_k: object) -> dict[str, Any]:
+        store["subs"] += 1
+        return {"ok": True, "status_code": 200}
+
+    with (
+        patch("cursor_bridge.grok_agent_ops._eval_display", side_effect=_eval),
+        patch("cursor_bridge.grok_spawn_steps.preflight_subscriptions", return_value={"ok": True}),
+        patch("cursor_bridge.grok_spawn_steps.subscribe_grok", side_effect=_sub),
+        patch("interlocutor.display_adapter.steer_display", steer),
+    ):
+        out = await spawn_grok_agent_async(
+            "9",
+            "bot",
+            text="hello",
+            mailbox="box",
+            thread_scope="t1",
+            idempotency_key="recover-first",
+            hidden=True,
+        )
+    assert out["ok"] is True
+    assert out["agent_id"] == "recovered-1"
+    assert store["creates"] == 1
+    assert store["subs"] == 1
+    steer.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_adopt_ambiguous_stays_needs_operator() -> None:
+    store: dict[str, Any] = {"creates": 0}
+    lists = {"n": 0}
+
+    async def _eval(_display: object, expr: str, **_kw: Any) -> Any:
+        if "createAgent" in expr:
+            store["creates"] += 1
+            return {"ok": False, "code": "create_agent_no_id", "created": False}
+        if "agents" in expr and "currentAgentId" in expr:
+            lists["n"] += 1
+            if lists["n"] == 1:
+                return {"ok": True, "agents": [], "currentAgentId": None}
             return {
                 "ok": True,
                 "agents": [

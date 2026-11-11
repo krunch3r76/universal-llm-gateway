@@ -41,7 +41,20 @@ def _new_slot(digest: str, nonce: str, token: str) -> dict[str, Any]:
         "sub_done": False,
         "steer_phase": "not_sent",
         "receipt": None,
+        "pre_create_roster_ids": None,
     }
+
+
+def roster_snapshot_for(key: str, token: str) -> frozenset[str] | None:
+    """Pre-create roster id set for ``key`` when ``token`` owns the slot."""
+    with _LOCK:
+        slot = _SLOTS.get(key)
+        if slot is None or slot.get("owner") != token:
+            return None
+        raw = slot.get("pre_create_roster_ids")
+        if raw is None:
+            return None
+        return frozenset(str(i) for i in raw if str(i).strip())
 
 
 def begin(key: str, digest: str) -> dict[str, Any]:
@@ -148,4 +161,5 @@ __all__ = [
     "mark_steer",
     "note",
     "release",
+    "roster_snapshot_for",
 ]

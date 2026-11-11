@@ -24,6 +24,7 @@ from cursor_bridge.grok_spawn_idempotency import (
     mark_steer,
     note,
     release,
+    roster_snapshot_for,
 )
 
 logger = get_logger(__name__)
@@ -99,9 +100,13 @@ async def run_spawn(
     nonce = str(claim.get("nonce") or idem)
     hide_ok = bool(claim.get("hide_ok"))
     sub_done = bool(claim.get("sub_done"))
+    async def _adopt() -> dict[str, Any]:
+        snap = roster_snapshot_for(idem, token)
+        return await adopt_agent_by_name(display, nm, pre_create_ids=snap)
+
     try:
         if action == "adopt":
-            adopted = await adopt_agent_by_name(display, nm)
+            adopted = await _adopt()
             if adopted.get("ok") is not True:
                 release(idem, token, outcome="create_unknown")
                 return {
@@ -114,6 +119,16 @@ async def run_spawn(
             agent_id = str(adopted.get("agent_id") or "")
             note(idem, token, agent_id=agent_id, nonce=nonce)
         elif action == "create":
+            pre_list = await ops.list_grok_agents_async(
+                display, include_hidden=True, include_retired=False
+            )
+            if pre_list.get("ok") is True:
+                pre_ids = [
+                    str(row.get("id") or "").strip()
+                    for row in (pre_list.get("agents") or [])
+                    if isinstance(row, dict) and str(row.get("id") or "").strip()
+                ]
+                note(idem, token, pre_create_roster_ids=pre_ids)
             try:
                 raw = await ops._eval_display(
                     display,
@@ -171,7 +186,7 @@ async def run_spawn(
                         "display": ops._display_key(display),
                         "detail": raw,
                     }
-                adopted = await adopt_agent_by_name(display, nm)
+                adopted = await _adopt()
                 if adopted.get("ok") is True:
                     agent_id = str(adopted.get("agent_id") or "")
                     note(idem, token, agent_id=agent_id, nonce=nonce)

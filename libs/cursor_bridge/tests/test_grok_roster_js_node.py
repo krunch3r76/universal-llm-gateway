@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-import os
 import shutil
 import subprocess
 from pathlib import Path
@@ -16,6 +15,7 @@ from cursor_bridge.grok_roster_js import (
     js_select,
     js_spawn,
 )
+
 
 def _node_bin() -> str:
     for candidate in (
@@ -56,7 +56,14 @@ const client = {
     async createAgent(payload) {
       captured.payload = payload;
       if (captured.latePersist) {
-        rows.push({id: "late-1", name: payload.name, isHiddenFromSidebar: false});
+        if (captured.lateDuplicate) {
+          rows.push({id: "late-a", name: payload.name, isHiddenFromSidebar: false});
+          rows.push({id: "late-b", name: payload.name, isHiddenFromSidebar: false});
+        } else if (captured.leftoverNew) {
+          rows.push({id: "stray-new", name: "Unrelated", isHiddenFromSidebar: false});
+        } else {
+          rows.push({id: "late-1", name: payload.name, isHiddenFromSidebar: false});
+        }
         return captured.createResult === undefined ? {} : captured.createResult;
       }
       return captured.createResult === undefined ? { id: "new-1" } : captured.createResult;
@@ -79,6 +86,8 @@ const script = JSON.parse(process.argv[1]);
 if (script.createResult !== undefined) captured.createResult = script.createResult;
 if (script.skipHideFlip) captured.skipHideFlip = true;
 if (script.latePersist) captured.latePersist = true;
+if (script.lateDuplicate) captured.lateDuplicate = true;
+if (script.leftoverNew) captured.leftoverNew = true;
 (async () => {
   const out = {};
   for (const [key, expr] of Object.entries(script.exprs)) {
@@ -140,8 +149,20 @@ def test_node_executes_roster_filters_create_and_retire() -> None:
         ({"_inner": {"agentId": "in-1"}}, "in-1"),
         ({"composerId": "cmp-1"}, "cmp-1"),
         ({"stableId": "st-1"}, "st-1"),
+        ({"agent": {"id": "agent-wrap-1"}}, "agent-wrap-1"),
+        ({"data": {"id": "data-wrap-1"}}, "data-wrap-1"),
     ],
-    ids=["string", "agentId", "id", "header", "inner", "composerId", "stableId"],
+    ids=[
+        "string",
+        "agentId",
+        "id",
+        "header",
+        "inner",
+        "composerId",
+        "stableId",
+        "agent.id",
+        "data.id",
+    ],
 )
 def test_node_spawn_id_extract_shapes(create_result: object, expected_id: str) -> None:
     out = _run_node(
@@ -169,6 +190,38 @@ def test_node_spawn_late_roster_diff_finds_id() -> None:
     assert out["spawn"]["ok"] is True
     assert out["spawn"]["agent_id"] == "late-1"
     assert out["spawn"]["recovered"] == "roster_diff"
+
+
+def test_node_spawn_leftover_new_rows_ambiguous() -> None:
+    out = _run_node(
+        {
+            "latePersist": True,
+            "leftoverNew": True,
+            "createResult": {},
+            "exprs": {
+                "spawn": js_spawn(client_nonce="left", name="Bot", description="", hidden=True),
+            },
+        }
+    )
+    assert out["spawn"]["ok"] is False
+    assert out["spawn"]["code"] == "create_agent_ambiguous"
+    assert out["spawn"]["needs_operator"] is True
+
+
+def test_node_spawn_late_duplicate_names_ambiguous() -> None:
+    out = _run_node(
+        {
+            "latePersist": True,
+            "lateDuplicate": True,
+            "createResult": {},
+            "exprs": {
+                "spawn": js_spawn(client_nonce="dup", name="Bot", description="", hidden=True),
+            },
+        }
+    )
+    assert out["spawn"]["ok"] is False
+    assert out["spawn"]["code"] == "create_agent_ambiguous"
+    assert out["spawn"]["needs_operator"] is True
 
 
 def test_node_spawn_create_agent_no_id() -> None:
