@@ -18,7 +18,7 @@ _ORIGINAL_EVENTS_INGEST_SOCK = os.environ.get(
     "EVENTS_INGEST_SOCK", LIVE_EVENTS_INGEST_SOCK
 )
 _PIN_DIR = tempfile.mkdtemp(prefix="giw-pytest-events-ingest-")
-_GIW_PYTEST_EVENTS_SOCK = os.path.join(_PIN_DIR, "events.sock")
+_GIW_PYTEST_EVENTS_SOCK = os.path.join(_PIN_DIR, "e.sock")
 os.environ["EVENTS_INGEST_SOCK"] = _GIW_PYTEST_EVENTS_SOCK
 
 from services.git_integration_worker.cursor_sdk_capture_binding import (  # noqa: E402
@@ -33,6 +33,7 @@ from services.git_integration_worker.tests.cursor_bus_hermetic import (  # noqa:
 )
 from services.git_integration_worker.tests.events_sink_hermetic import (  # noqa: E402
     install_events_sink_hermetic,
+    live_connect_attempts,
 )
 
 _REPO_ROOT = Path(__file__).resolve().parents[3]
@@ -106,11 +107,17 @@ def _events_sink_default_off_live(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> str:
     """Block live event-ingest UDS; redirect publishes to a per-test tmp socket."""
-    return install_events_sink_hermetic(
+    isolated = install_events_sink_hermetic(
         monkeypatch,
         tmp_path,
         original_events_ingest_sock=_ORIGINAL_EVENTS_INGEST_SOCK,
     )
+    yield isolated
+    if live_connect_attempts:
+        pytest.fail(
+            "blocked live event-ingest connect(s): "
+            + ", ".join(live_connect_attempts)
+        )
 
 
 @pytest.fixture(autouse=True)

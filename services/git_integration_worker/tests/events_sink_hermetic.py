@@ -23,7 +23,7 @@ def install_events_sink_hermetic(
     original_events_ingest_sock: str,
 ) -> str:
     """Redirect event publishes off the live ingest socket for one test."""
-    isolated = str(tmp_path / "pytest-events-ingest.sock")
+    isolated = str(tmp_path / "e.sock")
     live_connect_attempts.clear()
 
     monkeypatch.setenv("EVENTS_INGEST_SOCK", isolated)
