@@ -25,7 +25,7 @@ description: On any task touching libs/provenance::is_independent, cross-model v
 Seat, session, or platform decorators MUST NOT be baked into the
 comparison string. **Same model on different seats does NOT satisfy
 independence.** See spec § 10.5 of
-`docs/architecture/entity-backed-claim-provenance.md` for the empirical
+`docs/archive/architecture/design/entity-backed-claim-provenance.md` for the empirical
 illustration that motivated this rule.
 
 ---
@@ -96,7 +96,7 @@ audit). Non-blocking — current production paths are clean.
 
 ## Related
 
-- Spec `docs/architecture/entity-backed-claim-provenance.md` § 5.2,
+- Spec `docs/archive/architecture/design/entity-backed-claim-provenance.md` § 5.2,
   § 10.5
 - Audit assertion `assertion:9243` (`assertion_get(9243)`)
 - Source `libs/provenance/assertions.py` `is_independent` docstring

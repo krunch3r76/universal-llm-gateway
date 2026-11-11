@@ -377,7 +377,7 @@ ULG_STEER_NATIVE_HOOK_ENV = "ULG_STEER_NATIVE_HOOK"
 _STEER_HOOK_TIMEOUT_S = 5
 # additional_context delivery is proven only on these cursor-sdk releases.
 # Keep in lockstep with the pin in requirements.host.txt.
-STEER_NATIVE_HOOK_TESTED_SDK_VERSIONS = frozenset({"1.0.31"})
+STEER_NATIVE_HOOK_TESTED_SDK_VERSIONS = frozenset({"1.0.31", "1.3.1"})
 
 
 def _steer_native_hook_enabled() -> bool:

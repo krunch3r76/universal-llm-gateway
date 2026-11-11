@@ -94,7 +94,7 @@ def _registry_pairs_for_chat_url(
         ]
         out: list[FollowupCandidate] = []
         for rid in conflict_ids:
-            bound = cdp_registry.chat_url_for_registration(rid) or chat_url
+            bound = chat_url
             lane = cdp_registry.list_active()
             cdp = next(
                 (r.cdp_url for r in lane if r.registration_id == rid),
@@ -123,7 +123,7 @@ def _registry_pairs_for_chat_url(
         return []
     if cdp_url and reg.cdp_url != cdp_url:
         return []
-    bound = cdp_registry.chat_url_for_registration(reg.registration_id) or chat_url
+    bound = chat_url
     return [
         FollowupCandidate(
             registration_id=reg.registration_id,
@@ -271,10 +271,24 @@ def stale_registration_id_conflict(
         return False
     if execution_id:
         return False
+    stored = cdp_registry.chat_url_for_registration(registration_id)
+    if stored and normalize_cse_url(chat_url) != normalize_cse_url(stored):
+        return False
     matches = _registry_pairs_for_chat_url(chat_url, cdp_url=cdp_url)
     if len(matches) != 1:
         return False
     return matches[0].registration_id == chosen.registration_id
+
+
+def registration_chat_identity_mismatch(req: FollowupProjectAskRequest) -> bool:
+    """True when caller names both ``registration_id`` and a different ``chat_url``."""
+    chat_url, registration_id, _, _ = identity_keys(req)
+    if not chat_url or not registration_id:
+        return False
+    stored = cdp_registry.chat_url_for_registration(registration_id)
+    if not stored:
+        return False
+    return normalize_cse_url(chat_url) != normalize_cse_url(stored)
 
 
 def _lane_current_chat_url(body: dict | None) -> str | None:
@@ -366,6 +380,7 @@ def _dormant_misbound_holder_carve_out(
     *,
     reattach_used: bool,
     outcome_reg: str,
+    lane_pin: dict | None = None,
 ) -> bool:
     """Accept a same-lane mint over a dormant holder bound to a different CSE.
 
@@ -403,6 +418,16 @@ def _dormant_misbound_holder_carve_out(
         reg_id,
         predecessor_close_reason="dormant_holder_misbound",
     )
+    from claude_bundles.cdp_registry.session_address import (
+        retire_misbound_dormant_attachment,
+    )
+
+    retire_misbound_dormant_attachment(holder_reg)
+    if isinstance(lane_pin, dict):
+        active = cdp_registry._store.load_active()
+        seated = active.get(reg_id) or {}
+        lane_pin["gate_seated_reg"] = reg_id
+        lane_pin["gate_seated_at"] = seated.get("seat_bound_at")
     return True
 
 
@@ -471,6 +496,7 @@ def _lane_seat_followup_gate(
             holder_reg,
             reattach_used=reattach_used,
             outcome_reg=outcome_reg,
+            lane_pin=lane_pin,
         ):
             return req, None, None
         emit_followup_event(
@@ -667,6 +693,14 @@ async def resolve_followup_target(
 
     chat_url, registration_id, execution_id, cdp_url = identity_keys(req)
 
+    if registration_chat_identity_mismatch(req):
+        return (
+            None,
+            fail_followup("identity_mismatch"),
+            "registration_id",
+            None,
+        )
+
     mapped_reg = None
     if execution_id and not registration_id:
         mapped_reg = await resolve_execution_registration(execution_id, store)
@@ -729,10 +763,16 @@ async def resolve_followup_target(
 
     chosen = candidates[0]
     if conflicting_keys(req, chosen, mapped_reg=mapped_reg):
+        _chat, _reg, _, _ = identity_keys(req)
+        code = (
+            "identity_mismatch"
+            if _chat and _reg and chosen.registration_id != _reg
+            else "ambiguous_identity"
+        )
         infos = [c.as_info() for c in candidates]
         return (
             None,
-            fail_followup("ambiguous_identity", candidates=infos),
+            fail_followup(code, candidates=infos),
             resolution_path,
             None,
         )
