@@ -20,7 +20,7 @@ from bus_watch.hop_rebind import (
 from bus_watch.ide_hop import cleanup_xvfb_sidebar_on_holder_claim
 from bus_watch.ide_hop_retire import retire_departing_tab
 from bus_watch.liaison_continuity import liaison_ide_hop, liaison_tick_once
-from cursor_bridge.cursor_agents_hop import is_cursor_xvfb_host
+from host_predicates.cursor_hosts import is_cursor_xvfb_host
 
 
 def _prior_agent_id_from_displaced(displaced_holder: str | None) -> str | None:

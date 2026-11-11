@@ -14,11 +14,10 @@ import json
 import uuid
 from typing import Any
 
+from host_predicates.cursor_hosts import is_cursor_xvfb_host
+
 from cursor_bridge.cdp_pages import list_pages
-from cursor_bridge.cursor_window_config import (
-    cdp_origin_for_gui_host,
-    is_configured_cursor_glass_host,
-)
+from cursor_bridge.cursor_window_config import cdp_origin_for_gui_host
 from cursor_bridge.glass_services_js import (
     GLASS_SERVICE_MAP_FN,
     launch_new_agent_tab_js,
@@ -30,11 +29,6 @@ _CURSOR_AGENTS_TITLE = "Cursor Agents"
 def cursor_debug_url_for_gui_host(gui_host: str | None) -> str:
     """Map a GUI host label to the local CDP origin for Cursor Agents."""
     return cdp_origin_for_gui_host(gui_host)
-
-
-def is_cursor_xvfb_host(gui_host: str | None) -> bool:
-    """True when ``gui_host`` names a Glass Cursor Agents CDP target."""
-    return is_configured_cursor_glass_host(gui_host)
 
 
 def pick_chat_page(

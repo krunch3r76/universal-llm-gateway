@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import ast
 from contextlib import contextmanager
+from pathlib import Path
 from unittest.mock import ANY, patch
 
 import pytest
@@ -342,3 +344,21 @@ def test_maybe_subscribe_on_checkpoint_skips_on_error() -> None:
     )
     assert out == base
     assert "xvfb_subscription" not in out
+
+
+def test_continuity_ops_does_not_import_cursor_agents_hop() -> None:
+    path = Path(__file__).resolve().parent / "continuity_ops.py"
+    tree = ast.parse(path.read_text(encoding="utf-8"))
+    forbidden = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ImportFrom) and node.module:
+            mod = node.module
+            if mod == "cursor_bridge.cursor_agents_hop" or mod.startswith(
+                "cursor_bridge.cursor_agents_hop."
+            ):
+                forbidden.append(ast.get_source_segment(path.read_text(encoding="utf-8"), node))
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                if alias.name.startswith("cursor_bridge.cursor_agents_hop"):
+                    forbidden.append(alias.name)
+    assert forbidden == []
