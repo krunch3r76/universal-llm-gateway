@@ -125,7 +125,7 @@ the handoff. Either way: **¬ mint a second private lane.**
 **mcp tooling-surface restart ⇒ continuity after healthy (BINDING — operator 2026-08-02;
 force rule K48 2026-10-18).** SOT: `runbook:restart-drain` § Force rule. No service is
 forced by default; wait for the G1 busy gate. A force needs a coordinator `force_reason`
-announced to Kaywan or maestro first (manage refuses caller force over busy G1 without one, 409).
+made by the impresario or house-running instance (houseless restart authority a:43558, 2026-11-10); no announce to Kaywan or maestro is needed (manage refuses caller force over busy G1 without one, 409).
 The window classification tells you only what recovery to expect:
 
 | Blocker | Move |
