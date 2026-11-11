@@ -5615,7 +5615,7 @@ async with capture_exception("stargate", handler="proxy_request", event_bus=bus)
 <!-- GENERATED:START region=deploy_state_gate inventory_sha=acf377265348 generated=2026-11-11T11:25:42Z -->
 | Signal | Required Payload | Optional Payload |
 |--------|------------------|------------------|
-| `deploy_state_gate.dual_read_mismatch` | `producer`, `field`, `get_value`, `manage_value` | Manage vs producer GET disagree on a deploy-identity field. |
+| `deploy_state_gate.dual_read_mismatch` | `producer`, `field`, `get_value`, `manage_value`, `request_id?` | Manage vs producer GET disagree on a deploy-identity field. |
 <!-- GENERATED:END region=deploy_state_gate -->
 
 ## Ordering Guarantees
