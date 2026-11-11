@@ -57,10 +57,13 @@ def begin(key: str, digest: str) -> dict[str, Any]:
         if slot.get("state") == "verified":
             return {"action": "duplicate", "receipt": dict(slot.get("receipt") or {})}
         if slot.get("state") == "create_unknown":
+            slot["owner"] = token
             return {
-                "action": "blocked",
-                "code": "create_unknown",
-                "needs_operator": True,
+                "action": "adopt",
+                "token": token,
+                "nonce": slot.get("nonce"),
+                "hide_ok": bool(slot.get("hide_ok")),
+                "sub_done": bool(slot.get("sub_done")),
             }
         if slot.get("owner"):
             return {"action": "in_flight", "code": "idempotency_in_flight"}

@@ -77,13 +77,69 @@ def js_spawn(*, client_nonce: str, name: str, description: str, hidden: bool) ->
         "creationRoute": {"kind": "box"},
         "isKickstartRequested": False,
     }
+    nm = json.dumps(name)
     return f"""(async () => {{
   const client = {_client()};
   if (!client?.roster?.createAgent) return {{ok: false, code: "roster_api_missing", created: false}};
+  const rosterRows = () => {{
+    const rows = client.roster?.snapshots?.get ? (client.roster.snapshots.get()?.agents?.rows || []) : [];
+    return rows.map((r) => ({{id: String(r.id || ''), name: String(r.name || '')}}));
+  }};
+  const beforeIds = new Set(rosterRows().map((r) => r.id).filter(Boolean));
+  const extractAgentId = (created) => {{
+    if (typeof created === 'string') {{
+      const s = created.trim();
+      return s || null;
+    }}
+    if (!created || typeof created !== 'object') return null;
+    const h = created.header;
+    const inner = created._inner;
+    const fromAgent = created.agent && created.agent.id;
+    const fromData = created.data && created.data.id;
+    return (h && h.id) || (inner && inner.agentId) || created.agentId
+      || created.composerId || created.id || created.stableId || fromAgent || fromData || null;
+  }};
+  const createShape = (created) => {{
+    if (created === null || created === undefined) return {{kind: 'null'}};
+    if (typeof created === 'string') return {{kind: 'string', len: created.length}};
+    if (typeof created === 'object') return {{kind: 'object', keys: Object.keys(created).slice(0, 12)}};
+    return {{kind: typeof created}};
+  }};
   const created = await client.roster.createAgent({json.dumps(payload)});
-  const agentId = created?.id || created?.agentId || null;
-  if (!agentId) return {{ok: false, code: "create_agent_no_id", created: false}};
-  return {{ok: true, created: true, agent_id: agentId, clientNonce: {json.dumps(client_nonce)}, hidden_requested: {json.dumps(bool(hidden))}}};
+  let agentId = extractAgentId(created);
+  let recovered = agentId ? 'return_value' : null;
+  const idleCap = 8;
+  if (!agentId) {{
+    let prev = JSON.stringify(rosterRows());
+    for (let i = 0; i < idleCap; i++) {{
+      await Promise.resolve();
+      const after = rosterRows();
+      const newRows = after.filter((r) => r.id && !beforeIds.has(r.id));
+      const byName = newRows.filter((r) => r.name === {nm});
+      if (byName.length === 1) {{
+        agentId = byName[0].id;
+        recovered = 'roster_diff';
+        break;
+      }}
+      if (byName.length > 1) {{
+        return {{ok: false, code: 'create_agent_ambiguous', needs_operator: true, created: true,
+          create_shape: createShape(created), clientNonce: {json.dumps(client_nonce)}}};
+      }}
+      const snap = JSON.stringify(after);
+      if (snap === prev) break;
+      prev = snap;
+    }}
+  }}
+  if (!agentId) {{
+    const added = rosterRows().filter((r) => r.id && !beforeIds.has(r.id));
+    if (added.length > 0) {{
+      return {{ok: false, code: 'create_agent_ambiguous', needs_operator: true, created: true,
+        create_shape: createShape(created), clientNonce: {json.dumps(client_nonce)}}};
+    }}
+    return {{ok: false, code: 'create_agent_no_id', created: false, create_shape: createShape(created)}};
+  }}
+  return {{ok: true, created: true, agent_id: agentId, recovered, create_shape: createShape(created),
+    clientNonce: {json.dumps(client_nonce)}, hidden_requested: {json.dumps(bool(hidden))}}};
 }})()"""
 
 

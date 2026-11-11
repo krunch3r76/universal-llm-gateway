@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import json
+import os
 import shutil
 import subprocess
+from pathlib import Path
 
 import pytest
 from cursor_bridge.grok_roster_js import (
@@ -15,7 +17,26 @@ from cursor_bridge.grok_roster_js import (
     js_spawn,
 )
 
-pytestmark = pytest.mark.offline
+def _node_bin() -> str:
+    for candidate in (
+        shutil.which("node"),
+        "/home/io/.nvm/versions/node/v24.14.0/bin/node",
+        "/usr/bin/node",
+    ):
+        if candidate and Path(candidate).is_file():
+            return candidate
+    nvm = Path("/home/io/.nvm/versions/node")
+    if nvm.is_dir():
+        found = sorted(nvm.glob("*/bin/node"), reverse=True)
+        if found:
+            return str(found[0])
+    return ""
+
+
+pytestmark = [
+    pytest.mark.offline,
+    pytest.mark.skipif(not _node_bin(), reason="node is required to execute roster JS"),
+]
 
 _BASE_HARNESS = r"""
 const captured = {};
@@ -34,6 +55,10 @@ const client = {
     snapshots: { get() { return { agents: { rows } }; } },
     async createAgent(payload) {
       captured.payload = payload;
+      if (captured.latePersist) {
+        rows.push({id: "late-1", name: payload.name, isHiddenFromSidebar: false});
+        return captured.createResult === undefined ? {} : captured.createResult;
+      }
       return captured.createResult === undefined ? { id: "new-1" } : captured.createResult;
     },
     async updateAgent(id, patch) {
@@ -53,6 +78,7 @@ global.document = { getElementById() { return root; }, body: { firstElementChild
 const script = JSON.parse(process.argv[1]);
 if (script.createResult !== undefined) captured.createResult = script.createResult;
 if (script.skipHideFlip) captured.skipHideFlip = true;
+if (script.latePersist) captured.latePersist = true;
 (async () => {
   const out = {};
   for (const [key, expr] of Object.entries(script.exprs)) {
@@ -65,7 +91,7 @@ if (script.skipHideFlip) captured.skipHideFlip = true;
 
 
 def _run_node(script: dict[str, object]) -> dict[str, object]:
-    node = shutil.which("node")
+    node = _node_bin()
     assert node, "node is required to execute the roster fixture"
     proc = subprocess.run(
         [node, "-e", _BASE_HARNESS, json.dumps(script)],
@@ -102,6 +128,47 @@ def test_node_executes_roster_filters_create_and_retire() -> None:
     assert out["retire"]["name"].endswith(" (retired)")
     assert out["again"]["name"] == out["retire"]["name"]
     assert out["again"]["name"].count("(retired)") == 1
+
+
+@pytest.mark.parametrize(
+    "create_result,expected_id",
+    [
+        ("str-9", "str-9"),
+        ({"agentId": "aid-1"}, "aid-1"),
+        ({"id": "id-1"}, "id-1"),
+        ({"header": {"id": "hdr-1"}}, "hdr-1"),
+        ({"_inner": {"agentId": "in-1"}}, "in-1"),
+        ({"composerId": "cmp-1"}, "cmp-1"),
+        ({"stableId": "st-1"}, "st-1"),
+    ],
+    ids=["string", "agentId", "id", "header", "inner", "composerId", "stableId"],
+)
+def test_node_spawn_id_extract_shapes(create_result: object, expected_id: str) -> None:
+    out = _run_node(
+        {
+            "createResult": create_result,
+            "exprs": {
+                "spawn": js_spawn(client_nonce="n", name="Bot", description="", hidden=True),
+            },
+        }
+    )
+    assert out["spawn"]["ok"] is True
+    assert out["spawn"]["agent_id"] == expected_id
+
+
+def test_node_spawn_late_roster_diff_finds_id() -> None:
+    out = _run_node(
+        {
+            "latePersist": True,
+            "createResult": {},
+            "exprs": {
+                "spawn": js_spawn(client_nonce="late", name="Bot", description="", hidden=True),
+            },
+        }
+    )
+    assert out["spawn"]["ok"] is True
+    assert out["spawn"]["agent_id"] == "late-1"
+    assert out["spawn"]["recovered"] == "roster_diff"
 
 
 def test_node_spawn_create_agent_no_id() -> None:

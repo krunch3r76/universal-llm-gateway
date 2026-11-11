@@ -73,7 +73,21 @@ def execute_steer(
     authorization_source: str | None = None,
     scope: str | None = None,
     idempotency_key: str | None = None,
+    text_uri: str | None = None,
 ) -> dict[str, Any]:
+    from interlocutor.text_body import resolve_interlocutor_text
+
+    body_res = resolve_interlocutor_text(text=text, text_uri=text_uri)
+    if body_res.get("ok") is not True:
+        return {
+            "ok": False,
+            "code": str(body_res.get("code") or "text_required"),
+            "reason": str(body_res.get("reason") or body_res.get("code") or "text_required"),
+            "delivered": False,
+            "pasted": False,
+        }
+    body = str(body_res.get("body") or "")
+
     resolved = resolve_target(target)
     if isinstance(resolved, ClassifyRefuse):
         return _refuse(resolved)
@@ -93,7 +107,7 @@ def execute_steer(
     decision = idempotency.reserve(
         target=target,
         idempotency_key=idempotency_key,
-        text=text,
+        text=body,
         voice=voice_s,
     )
     action = str(decision.get("action") or "")
@@ -113,7 +127,7 @@ def execute_steer(
         if isinstance(resolved, DisplayEightTarget):
             result = display_adapter.steer_display_sync(
                 resolved,
-                text=text,
+                text=body,
                 voice=voice_s,
                 grant=grant,
                 authorization_source=authorization_source,
@@ -121,11 +135,11 @@ def execute_steer(
             )
         elif isinstance(resolved, CoworkMaestroTarget):
             result = cowork_adapter.followup(
-                prompt_text=text,
+                prompt_text=body,
                 parent_thread=resolved.parent_thread,
             )
         elif isinstance(resolved, CoworkUrlTarget):
-            result = cowork_adapter.followup(prompt_text=text, chat_url=resolved.url)
+            result = cowork_adapter.followup(prompt_text=body, chat_url=resolved.url)
         else:
             result = _refuse(
                 ClassifyRefuse(code="unsupported_target", reason="unresolved adapter")
@@ -134,7 +148,7 @@ def execute_steer(
         idempotency.settle(
             target=target,
             idempotency_key=idempotency_key,
-            text=text,
+            text=body,
             voice=voice_s,
             receipt={"ok": False, "code": "unknown", "delivered": False},
         )
@@ -142,10 +156,12 @@ def execute_steer(
     idempotency.settle(
         target=target,
         idempotency_key=idempotency_key,
-        text=text,
+        text=body,
         voice=voice_s,
         receipt=result,
     )
+    if body_res.get("large_delivered_via_pointer"):
+        result = {**result, "large_delivered_via_pointer": True, "text_uri": text_uri}
     return result
 
 
@@ -178,24 +194,40 @@ def execute_spawn(
     grant: str | None = None,
     authorization_source: str | None = None,
     idempotency_key: str | None = None,
+    text_uri: str | None = None,
 ) -> dict[str, Any]:
     """Spawn on a configured Grok window. Voice uses the existing steer contract."""
+    from interlocutor.text_body import resolve_interlocutor_text
+
     resolved = resolve_grok_window_target(target)
     if isinstance(resolved, ClassifyRefuse):
         return _refuse(resolved)
-    return display_adapter.spawn_grok_window_sync(
+    steer_text = (text or "").strip()
+    if text_uri or steer_text:
+        body_res = resolve_interlocutor_text(text=text, text_uri=text_uri)
+        if body_res.get("ok") is not True:
+            return {
+                "ok": False,
+                "code": str(body_res.get("code") or "text_required"),
+                "reason": str(body_res.get("reason") or body_res.get("code")),
+            }
+        steer_text = str(body_res.get("body") or "")
+    out = display_adapter.spawn_grok_window_sync(
         resolved,
         name=name,
         description=description,
         hidden=hidden,
         mailbox=mailbox,
         thread_scope=thread_scope,
-        text=text,
+        text=steer_text or None,
         voice=voice,
         grant=grant,
         authorization_source=authorization_source,
         idempotency_key=idempotency_key,
     )
+    if text_uri and steer_text:
+        out = {**out, "text_uri": text_uri}
+    return out
 
 
 def execute_retire(*, target: str) -> dict[str, Any]:

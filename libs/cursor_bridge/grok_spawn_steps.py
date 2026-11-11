@@ -17,6 +17,7 @@ from cursor_bridge.grok_agent_subscriptions import (
     subscribe_grok,
 )
 from cursor_bridge.grok_roster_js import js_ensure_hidden, js_spawn
+from cursor_bridge.grok_spawn_adopt import adopt_agent_by_name
 from cursor_bridge.grok_spawn_idempotency import (
     begin,
     known_not_sent,
@@ -99,7 +100,20 @@ async def run_spawn(
     hide_ok = bool(claim.get("hide_ok"))
     sub_done = bool(claim.get("sub_done"))
     try:
-        if action == "create":
+        if action == "adopt":
+            adopted = await adopt_agent_by_name(display, nm)
+            if adopted.get("ok") is not True:
+                release(idem, token, outcome="create_unknown")
+                return {
+                    "ok": False,
+                    "code": str(adopted.get("code") or "adopt_failed"),
+                    "needs_operator": bool(adopted.get("needs_operator")),
+                    "display": ops._display_key(display),
+                    "detail": adopted,
+                }
+            agent_id = str(adopted.get("agent_id") or "")
+            note(idem, token, agent_id=agent_id, nonce=nonce)
+        elif action == "create":
             try:
                 raw = await ops._eval_display(
                     display,
@@ -147,17 +161,42 @@ async def run_spawn(
                         "display": ops._display_key(display),
                         "detail": raw,
                     }
-                release(idem, token, outcome="create_unknown")
-                return {
-                    "ok": False,
-                    "code": "create_unknown",
-                    "needs_operator": True,
-                    "reason": code or "spawn_unconfirmed",
-                    "display": ops._display_key(display),
-                    "detail": raw,
-                }
-            agent_id = str(raw.get("agent_id") or "")
-            note(idem, token, agent_id=agent_id, nonce=nonce)
+                if code == "create_agent_ambiguous":
+                    release(idem, token, outcome="create_unknown")
+                    return {
+                        "ok": False,
+                        "code": "create_unknown",
+                        "needs_operator": True,
+                        "reason": code,
+                        "display": ops._display_key(display),
+                        "detail": raw,
+                    }
+                adopted = await adopt_agent_by_name(display, nm)
+                if adopted.get("ok") is True:
+                    agent_id = str(adopted.get("agent_id") or "")
+                    note(idem, token, agent_id=agent_id, nonce=nonce)
+                else:
+                    release(idem, token, outcome="create_unknown")
+                    return {
+                        "ok": False,
+                        "code": "create_unknown",
+                        "needs_operator": True,
+                        "reason": code or "spawn_unconfirmed",
+                        "display": ops._display_key(display),
+                        "detail": raw,
+                        "adopt": adopted,
+                    }
+            elif created:
+                agent_id = str(raw.get("agent_id") or "")
+                note(idem, token, agent_id=agent_id, nonce=nonce)
+        if not agent_id:
+            release(idem, token, outcome="create_unknown")
+            return {
+                "ok": False,
+                "code": "create_unknown",
+                "needs_operator": True,
+                "display": ops._display_key(display),
+            }
         if bool(hidden) and not hide_ok:
             try:
                 hid = await ops._eval_display(display, js_ensure_hidden(agent_id))
