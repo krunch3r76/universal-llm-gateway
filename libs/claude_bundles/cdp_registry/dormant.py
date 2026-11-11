@@ -13,7 +13,6 @@ from __future__ import annotations
 
 import contextlib
 import time
-from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
@@ -72,12 +71,19 @@ def _place_display(registration_id: str, display: str) -> None:
         _store.write_active(active)
 
 
+def _dormant_row_revivable(row: dict[str, Any]) -> bool:
+    """False when a dormant row must not be resumed by ``chat_url`` lookup."""
+    if str(row.get("seat_close_reason") or "") == "dormant_holder_misbound":
+        return False
+    return bool(str(row.get("chat_url") or "").strip())
+
+
 def list_dormant() -> list[DormantSeat]:
     """Return dormant seats newest first, so the freshest binding wins a tie."""
     rows = [
         _row_to_dormant_seat(row)
         for row in _store.load_active().values()
-        if row.get("status") == STATUS_DORMANT and row.get("chat_url")
+        if row.get("status") == STATUS_DORMANT and _dormant_row_revivable(row)
     ]
     return sorted(rows, key=lambda seat: seat.dormant_at or 0.0, reverse=True)
 

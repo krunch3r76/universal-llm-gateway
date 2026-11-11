@@ -3945,7 +3945,134 @@ def test_dormant_misbound_holder_carve_out_seats_mint_without_holder_page(
     assert active[holder.registration_id].get("seat_close_reason") == (
         "dormant_holder_misbound"
     )
+    assert reg.chat_url_for_registration(holder.registration_id) is None
+    assert reg.dormant_for_chat_url(holder_chat) is None
     assert nav_calls == []
+
+
+def test_commit_gate_seated_misbound_carve_out_commits(
+    isolated_registry: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Gate carve-out seating the mint is not ``reattach_seat_changed`` at commit."""
+    from claude_bundles.cdp_registry.models import seat_open
+    from claude_bundles.cdp_registry.session_address import (
+        commit_reattach_driving_seat,
+        open_lane_seat_holder,
+    )
+
+    lane = "22778"
+    holder_chat = "https://claude.ai/cowork/cse_01AroaPf5M91QkzySgHNZMKf"
+    mint_chat = CSE_TARGET_38282
+    reg, holder, minted = _dormant_misbound_lane_pair(
+        lane, holder_chat=holder_chat, mint_chat=mint_chat
+    )
+    from cdp_ask.followup_resolve import _lane_seat_followup_gate
+
+    req = FollowupProjectAskRequest(
+        prompt_text="memo",
+        parent_thread=lane,
+        chat_url=mint_chat,
+        registration_id=minted.registration_id,
+        purpose="operator-proxy",
+        reattach=True,
+    )
+    snap_holder_id, snap_bound = open_lane_seat_holder(lane)
+    assert snap_holder_id == holder.registration_id
+    _lane_seat_followup_gate(
+        req,
+        {"reattach_used": True, "outcome_reg": minted.registration_id},
+        _snap_from_active(reg),
+    )
+    _upsert_spy(monkeypatch)
+    status = commit_reattach_driving_seat(
+        minted.registration_id,
+        chat_url=mint_chat,
+        lane=lane,
+        snapshot_holder_id=snap_holder_id,
+        snapshot_seat_bound_at=snap_bound,
+    )
+    assert status == "committed"
+    active = reg._store.load_active()
+    assert seat_open(active[minted.registration_id], lane)
+    assert not seat_open(active[holder.registration_id], lane)
+
+
+@pytest.mark.asyncio
+async def test_dormant_misbound_full_followup_pastes_and_seats(
+    isolated_registry: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Dormant misbound holder + reattach through execute_followup succeeds."""
+    from claude_bundles.cdp_registry.models import seat_open
+    from claude_bundles.cdp_registry.session_address import open_lane_seat_holder
+
+    import cdp_ask.followup as followup_mod
+
+    lane = "22778"
+    holder_chat = "https://claude.ai/cowork/cse_01AroaPf5M91QkzySgHNZMKf"
+    mint_chat = CSE_TARGET_38282
+    reg, holder, minted = _dormant_misbound_lane_pair(
+        lane, holder_chat=holder_chat, mint_chat=None
+    )
+    assert reg.bind_chat_url_only(minted.registration_id, chat_url=mint_chat)
+    store = ExecutionStore()
+    order = _arm_split_borrow(monkeypatch, reg, minted.registration_id, store=store)
+
+    snap_holder, snap_bound = open_lane_seat_holder(lane)
+    assert snap_holder == holder.registration_id
+
+    real_resolve = followup_mod.resolve_followup_target
+    resolve_pass = 0
+
+    async def _resolve_twice(*args: Any, **kwargs: Any) -> Any:
+        nonlocal resolve_pass
+        resolve_pass += 1
+        if resolve_pass == 1:
+            from cdp_ask.followup_envelope import fail_followup
+
+            return None, fail_followup("attended_dormant"), "attended_dormant", None
+        return await real_resolve(*args, **kwargs)
+
+    monkeypatch.setattr(followup_mod, "resolve_followup_target", _resolve_twice)
+
+    async def _attach(
+        chat_url: str,
+        **kwargs: Any,
+    ) -> ReattachOutcome:
+        page = _FakePage()
+        page.url = chat_url
+        return ReattachOutcome(
+            ok=True,
+            registration_id=minted.registration_id,
+            cdp_url=minted.cdp_url,
+            reattach_bound_chat_url=chat_url,
+            seat_snapshot_holder_id=snap_holder,
+            seat_snapshot_bound_at=snap_bound,
+            page=page,
+            pw=_FakePw(),
+            lane_created=False,
+        )
+
+    monkeypatch.setattr(followup_mod, "ensure_cse_attached", _attach)
+
+    resp = await execute_followup(
+        FollowupProjectAskRequest(
+            prompt_text="memo",
+            parent_thread=lane,
+            chat_url=mint_chat,
+            purpose="operator-proxy",
+            reattach=True,
+        ),
+        store,
+    )
+    assert resp.ok is True, resp.error
+    assert resp.error != "reattach_seat_changed"
+    assert "paste" in order
+    active = reg._store.load_active()
+    assert seat_open(active[minted.registration_id], lane)
+    assert not seat_open(active[holder.registration_id], lane)
+    assert reg.chat_url_for_registration(holder.registration_id) is None
 
 
 def test_dormant_same_chat_still_mismatches(
