@@ -5502,6 +5502,73 @@ tools:
   - mcp_claude
   skill_uri: agent_skill:claude-ai-cdp-navigation
   cache_priority: on_demand
+- canonical_name: cse_session_detach
+  domain: cse_session
+  operation: detach
+  dispatcher_call_shape:
+    tool: cse_session
+    dispatch_key: op
+    dispatch_value: detach
+  flat_call_shape:
+    tool: cse_session_detach
+    substrate_qualified: user-vortex__cse_session_detach
+  fol_descriptor: "Authority-side registry detach after stand-down — seals predecessor tape when configured. See agent_skill:claude-ai-cdp-navigation.\n"
+  json_schema:
+    type: object
+    properties:
+      op:
+        type: string
+        enum:
+        - detach
+      registration_id:
+        type: string
+      reason:
+        type: string
+    required:
+    - op
+    - registration_id
+  mandate_safety: write
+  seat_visibility:
+  - mcp
+  - mcp_claude
+  skill_uri: agent_skill:claude-ai-cdp-navigation
+  cache_priority: on_demand
+- canonical_name: cse_session_retire_binding
+  domain: cse_session
+  operation: retire_binding
+  dispatcher_call_shape:
+    tool: cse_session
+    dispatch_key: op
+    dispatch_value: retire_binding
+  flat_call_shape:
+    tool: cse_session_retire_binding
+    substrate_qualified: user-vortex__cse_session_retire_binding
+  fol_descriptor: "Sanctioned dormant CSE URL-binding retire on the satellite registry — idempotent, never opens Cowork. dry_run for preview. See agent_skill:claude-ai-cdp-navigation.\n"
+  json_schema:
+    type: object
+    properties:
+      op:
+        type: string
+        enum:
+        - retire_binding
+      chat_url:
+        type: string
+      registration_id:
+        type: string
+      reason:
+        type: string
+      dry_run:
+        type: boolean
+      caller_agent:
+        type: string
+    required:
+    - op
+  mandate_safety: write
+  seat_visibility:
+  - mcp
+  - mcp_claude
+  skill_uri: agent_skill:claude-ai-cdp-navigation
+  cache_priority: on_demand
 - canonical_name: chat_session_harvest
   domain: chat_session
   operation: harvest

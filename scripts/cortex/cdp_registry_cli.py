@@ -86,6 +86,28 @@ def main(argv: list[str] | None = None) -> int:
         help="Skip orphan profile-dir sweep",
     )
 
+    p_retire = sub.add_parser(
+        "retire-dormant-binding",
+        help="Sanctioned single-row dormant URL binding retire (idempotent)",
+    )
+    p_retire.add_argument("--registration-id", default=None)
+    p_retire.add_argument("--chat-url", default=None)
+    p_retire.add_argument(
+        "--reason",
+        default="sanctioned_dormant_retire",
+        help="Audit reason stamped on the journal episode",
+    )
+    p_retire.add_argument(
+        "--caller-agent",
+        default=None,
+        help="Seat or agent id for audit (caller_agent)",
+    )
+    p_retire.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Resolve and report without mutating registry or journal",
+    )
+
     args = parser.parse_args(argv)
 
     if args.cmd == "register":
@@ -159,6 +181,34 @@ def main(argv: list[str] | None = None) -> int:
                 indent=2,
             )
         )
+        return 0
+
+    if args.cmd == "retire-dormant-binding":
+        if not args.registration_id and not args.chat_url:
+            print(
+                "pass --registration-id and/or --chat-url",
+                file=sys.stderr,
+            )
+            return 2
+        if not str(args.reason or "").strip():
+            print("reason must be non-empty", file=sys.stderr)
+            return 2
+        try:
+            result = cdp_registry.retire_dormant_binding(
+                registration_id=args.registration_id,
+                chat_url=args.chat_url,
+                reason=args.reason,
+                dry_run=args.dry_run,
+                caller_agent=args.caller_agent,
+            )
+        except Exception as exc:
+            from universal_protocol.errors import ProtocolError
+
+            if isinstance(exc, ProtocolError):
+                print(json.dumps(exc.to_dict(), indent=2, sort_keys=True), file=sys.stderr)
+                return 2
+            raise
+        print(json.dumps(result, indent=2, sort_keys=True))
         return 0
 
     parser.error(f"unknown cmd {args.cmd}")
