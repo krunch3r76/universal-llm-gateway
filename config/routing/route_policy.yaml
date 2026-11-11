@@ -17,7 +17,7 @@ lead_claim_authority: server_contract_overrides_packet_prose
 # cursor_sdk_other_models_pool: deny (default) hard-422s Other Models pool on
 # cursor-sdk generate omit and explicit pins; explicit_pin_only restores sparing
 # operator pins (frontier.sdk.pool.exempted).
-cursor_sdk_other_models_pool: deny
+cursor_sdk_other_models_pool: explicit_pin_only
 
 model_bans:
   - model: cursor/grok-4.7
