@@ -485,6 +485,26 @@ def DispatchSkillsChannelResolved(  # noqa: N802
 
 
 @event_factory
+def DispatchSkillsInvokeSurfaceSelected(  # noqa: N802
+    request_id: str,
+    model: str,
+    surface: str,
+    layer_a_slugs: list[str],
+) -> Event:
+    """Layer-A invoke form chosen for this dispatch (Use line vs entity pointer)."""
+    return Event(
+        signal="dispatch.skills.invoke.surface",
+        payload={
+            "request_id": request_id,
+            "model": model,
+            "surface": surface,
+            "layer_a_slugs": layer_a_slugs,
+        },
+        scope="node",
+    )
+
+
+@event_factory
 def DispatchSkillsPredicatedRejected(  # noqa: N802
     request_id: str,
     role: str | None,

@@ -101,10 +101,15 @@ def test_consult_enrich_stamps_libs_and_pipeline_notice() -> None:
 
 
 def test_canonical_skill_invariant_line_shape() -> None:
-    line = _canonical_skill_invariant_line("consult-routing")
-    assert "`consult-routing`" in line
-    assert "canonical slug" in line
-    assert "agent-skills/" not in line
+    cursor = _canonical_skill_invariant_line("consult-routing", to_agent="cursor")
+    assert "`consult-routing`" in cursor
+    assert "canonical slug" in cursor
+    web = _canonical_skill_invariant_line(
+        "consult-routing", to_agent="web-anthropic"
+    )
+    assert "agent_skill:consult-routing" in web
+    assert "md_list, then md_read" in web
+    assert "agent-skills/" not in web
 
 
 def test_enrich_adds_skills_and_thread_fetch() -> None:
@@ -148,6 +153,21 @@ def test_enrich_idempotent() -> None:
     first = enrich_handoff_packet(_THIN_WEB_PACKET, cortex=cortex)
     second = enrich_handoff_packet(first.text, cortex=cortex)
     assert not second.changed
+
+
+def test_enrich_merges_caller_skills_as_web_pointers() -> None:
+    cortex = _StubCortex()
+    result = enrich_handoff_packet(
+        _THIN_WEB_PACKET,
+        cortex=cortex,
+        to_agent="web-anthropic",
+        skill_delivery="inline_authoritative",
+        caller_skills=("recording-posture",),
+    )
+    inv = result.text.split("<invariants>", 1)[1].split("</invariants>", 1)[0]
+    assert "agent_skill:recording-posture" in inv
+    assert "Use the `recording-posture` skill" not in inv
+    assert "recording-posture" in result.skills_added
 
 
 def test_enrich_injects_handoff_packet_authoring_by_default() -> None:
@@ -457,13 +477,15 @@ def test_enrich_inline_rewrites_pointer_lines_to_orientation() -> None:
     result = enrich_handoff_packet(
         packet,
         cortex=cortex,
+        to_agent="web-anthropic",
         skill_delivery="inline_authoritative",
     )
     invariants = result.text.split("<invariants>", 1)[1].rsplit("</invariants>", 1)[0]
     assert "bodies inlined below" in invariants
     scan = text_without_inline_payload_regions(result.text)
     assert "- Use the `consult-routing` skill (canonical slug" not in scan
-    assert "Use the `lead-seat-boot` skill" in invariants
+    assert "agent_skill:lead-seat-boot" in invariants
+    assert "Use the `lead-seat-boot` skill" not in invariants
 
 
 def test_enrich_inline_removes_task_guidance_skill_pointer() -> None:

@@ -11,8 +11,10 @@ from agent_seat import AgentMeta, assemble_system_prompt, hydrate_agent
 from agent_seat.body_injection import (
     INJECTED_BODY_BUDGET_BYTES,
     RequiredBodyUnresolved,
+    build_dispatch_skill_context,
     emit_layer_a_fs_line,
     render_skill_entity_pointer,
+    skill_invoke_surface,
 )
 from agent_seat.inject_registry import (
     CallerSkillUnresolvedError,
@@ -71,6 +73,7 @@ from .events import (
     DispatchSkillsInlineOverflow,
     DispatchSkillsInlineRejected,
     DispatchSkillsInlineResolved,
+    DispatchSkillsInvokeSurfaceSelected,
     DispatchSkillsMounted,
     DispatchSkillsPredicatedRejected,
     DispatchSkillsPredicatedSkipped,
@@ -223,6 +226,46 @@ def _resolve_skills_mount(
             )
         )
     return neutral, mount_slugs, total_bytes
+
+
+def _append_layer_a_skill_block(
+    system_assembled: str,
+    *,
+    layer_a: tuple[str, ...],
+    request_id: str,
+    effective_model: str,
+    mcp_enabled: bool,
+    role: str | None,
+    platform: str,
+    inject_profile: str | None,
+    code_touching: bool,
+    provider_mount_slugs: frozenset[str],
+    event_publisher: EventPublisher | None,
+) -> str:
+    if not layer_a:
+        return system_assembled
+    ctx = build_dispatch_skill_context(
+        model=effective_model,
+        mcp_enabled=mcp_enabled,
+        role=role,
+        platform=platform,
+        inject_profile=inject_profile,
+        code_touching=code_touching,
+        provider_mount_slugs=provider_mount_slugs,
+    )
+    layer_a_block = "".join(
+        emit_layer_a_fs_line(skill_id, ctx=ctx) for skill_id in layer_a
+    )
+    if event_publisher is not None and layer_a_block:
+        event_publisher(
+            DispatchSkillsInvokeSurfaceSelected(
+                request_id=request_id,
+                model=effective_model,
+                surface=skill_invoke_surface(ctx).value,
+                layer_a_slugs=list(layer_a),
+            )
+        )
+    return f"{system_assembled}{layer_a_block}"
 
 
 def _emit_skills_channel_resolved(
@@ -918,12 +961,19 @@ async def build_dispatch_body(
             injected_bodies_md=injected_bodies_md,
         )
         if skill_partition is not None and skill_partition.layer_a:
-            layer_a_block = "".join(
-                emit_layer_a_fs_line(skill_id)
-                for skill_id in skill_partition.layer_a
+            system_assembled = _append_layer_a_skill_block(
+                system_assembled,
+                layer_a=skill_partition.layer_a,
+                request_id=request_id,
+                effective_model=effective_model,
+                mcp_enabled=mcp_enabled,
+                role=req.role,
+                platform=platform,
+                inject_profile=inject_profile,
+                code_touching=code_touching,
+                provider_mount_slugs=provider_mount_slugs,
+                event_publisher=event_publisher,
             )
-            if layer_a_block:
-                system_assembled = f"{system_assembled}{layer_a_block}"
         if bundle.injection_meta:
             channel_rows = enrich_rows_with_inline_drops(
                 channel_rows,
@@ -1031,12 +1081,19 @@ async def build_dispatch_body(
                 system_assembled = f"{system_assembled}{resolution.block_md}"
             inline_dropped = list(resolution.dropped)
         if skill_partition.layer_a:
-            layer_a_block = "".join(
-                emit_layer_a_fs_line(skill_id)
-                for skill_id in skill_partition.layer_a
+            system_assembled = _append_layer_a_skill_block(
+                system_assembled,
+                layer_a=skill_partition.layer_a,
+                request_id=request_id,
+                effective_model=effective_model,
+                mcp_enabled=mcp_enabled,
+                role=req.role,
+                platform=platform,
+                inject_profile=inject_profile,
+                code_touching=code_touching,
+                provider_mount_slugs=provider_mount_slugs,
+                event_publisher=event_publisher,
             )
-            if layer_a_block:
-                system_assembled = f"{system_assembled}{layer_a_block}"
         channel_rows = enrich_rows_with_inline_drops(channel_rows, inline_dropped)
         if resolution is not None and event_publisher is not None and (
             resolution.injected or resolution.dropped
