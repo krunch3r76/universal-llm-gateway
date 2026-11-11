@@ -96,7 +96,7 @@ def assemble_cursor_sdk_generate_tags(
 def _classify_transport_error(exc: httpx.HTTPError) -> str:
     if isinstance(exc, httpx.TimeoutException):
         return "timeout"
-    if isinstance(exc, (httpx.RemoteProtocolError, httpx.DecodingError)):
+    if isinstance(exc, httpx.RemoteProtocolError | httpx.DecodingError):
         return "bad_response"
     if isinstance(exc, httpx.ConnectError):
         err_str = str(exc).lower()
