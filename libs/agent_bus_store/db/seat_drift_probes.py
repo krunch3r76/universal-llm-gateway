@@ -76,7 +76,10 @@ def _normalize_holder_row(holder: dict[str, Any]) -> dict[str, Any]:
 def fetch_giw_holders_map(*, timeout: float = 5.0) -> tuple[str, dict[str, dict[str, Any]]]:
     """Single GIW HTTP fetch; map lane thread id → holder row (may be partial)."""
     try:
-        from bus_watch.roster import fetch_giw_active_work_payload, _holders_from_active_work
+        from bus_watch.roster import (
+            _holders_from_active_work,
+            fetch_giw_active_work_payload,
+        )
 
         payload = fetch_giw_active_work_payload()
         if payload is None:
