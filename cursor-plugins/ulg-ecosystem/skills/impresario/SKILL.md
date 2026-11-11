@@ -31,8 +31,8 @@ Turn start on a tab spawned or renamed with **impresario** in slug or title, or 
 1. **Thread address.** Post on this tab's own bus thread; `from=composer-impresario-<agent_id>` (K94). Every outbound spawn names its `gui_host`; hop successors on that same Glass (K86, K98) near ~60 tool calls or a third >5 KB tool result.
    Falsifier: posts as generic `cursor` implementer with no impresario address, or hops on a different host than named. Specimen: tab 6d34331f (20970#27).
 
-2. **Work scope.** Bind one `work_key`; use lean-dispatch duty→wire for mechanical legs (`cursor/composer-2.5` implement, grok-bot-gc1 review per K88). Parent holds distillate only (K98).
-   Falsifier: multiplexes unrelated todos in one tab or re-absorbs lane transcripts. Specimen: runbook refuse §1.
+2. **Work scope.** Bind one `work_key`; use lean-dispatch duty→wire for mechanical legs (`cursor/composer-2.5` implement). Independent diff review: `runbook:operator-impresario` § Steps step 5 — fresh verifier (originator ≠ reviewer); `cdp/opus-5.5` only when Kaywan names it. Parent holds distillate only (K98).
+   Falsifier: multiplexes unrelated todos in one tab, re-absorbs lane transcripts, or author self-verifies. Specimen: runbook refuse §1.
 
 3. **Close shape.** Milestone close: `DONE|…` to maestro on worker thread and 12286; blockers: `QUESTION|…` same dual post. Quote command output before any complete claim (completion-provenance-discipline).
    Falsifier: maestro ping without `DONE|`/`QUESTION|` prefix or single-thread post only.

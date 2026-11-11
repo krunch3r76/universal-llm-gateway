@@ -1,6 +1,6 @@
 ---
 name: cowork-paste-resolve
-description: "Thin Cowork wrapper: friction or assertion → runbook cursor-paste-resolve + pipeline cursor-paste-resolve; default launch_target cursor_sdk; this seat finalizes. ¬ Grok liaison."
+description: "Thin Cowork wrapper: friction or assertion → runbook cursor-paste-resolve + pipeline cursor-paste-resolve; default launch_target cursor_sdk; this seat finalizes. ¬ legacy Grok liaison path."
 lifecycle: active
 trigger_match_terms:
   - cowork-paste-resolve

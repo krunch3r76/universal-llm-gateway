@@ -27,7 +27,7 @@ Topic overlap ≠ thread continuity. Prior thread can be evidence context; new t
 
 ## Dispatch polling
 
-Polling is removed on the **Castle maestro operator seat**. Do not call `agent_bus` `wait` or `poll_hint` loops from the Castle maestro operator seat. Milestones and exceptions go `to=maestro` per L17 allowlist. `predicate_unmet` is not a reason to re-poll on that seat. Watcher and liveness: `universal-llm-gateway/cursor-plugins/ulg-ecosystem/skills/cdp-operator-proxy/reference.md` § **How this seat works**.
+Polling is removed on the **Castle operator house** (lane `12286`, `web-anthropic` — impresario/proxy model). Do not call `agent_bus` `wait` or `poll_hint` loops from that seat. Milestones and exceptions go `to=maestro` per L17 allowlist (bus-addressing refresh deferred). `predicate_unmet` is not a reason to re-poll on that seat. Watcher and liveness: `universal-llm-gateway/cursor-plugins/ulg-ecosystem/skills/cdp-operator-proxy/reference.md` § **How this seat works**.
 
 ## Pre-flight before reply
 

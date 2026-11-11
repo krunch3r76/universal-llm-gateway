@@ -8,8 +8,7 @@ On **house resume**, **liaison tick**, or **IDE hop**, do **not** read this file
 
 # Impresario — the tab that runs the house
 
-**Roles (orchestra vocabulary).** **Maestro** = executive on the **Castle** only (house `12286`,
-`web-anthropic`) — never one maestro per house. **House** = any other durable body of work (`role:root`).
+**Roles (orchestra vocabulary).** **Maestro** is a **legacy name**, not an authority, route, or addressee (2026-11-10 ruling). House `12286` (`web-anthropic`) is the Castle operator lane — coordinate via impresario/runbook model, not “Maestro” as executive. **House** = any other durable body of work (`role:root`).
 **Impresario** = this reasoning agent in the IDE tab: coordinates a house or mints one if missing; infers
 gear internally. **Conductor** = session that plays one `todo:` score until a designed stop. **Metronome** =
 gear-3 overnight ticker (`liaison-tick.py --loop --spawn-on-wake` after `--go-under`). New unrelated `:8` missions use `cursor_bridge(op=spawn_house)` / `spawn_tab` instead of multiplexing `now_row` onto an occupied single-mission house (`16416` included). **Stage manager** =
@@ -17,8 +16,7 @@ the one Jupiter fleet watcher (lane `15851`).
 
 ## Gear inference (Light / Attended / Overnight)
 
-Infer gear before arming loops or loading the tick-protocol body. Machine paths (`/liaison`, `/orchestrate`),
-script names, and registers (`attended`|`autonomous`) stay unchanged.
+Infer gear before arming loops or loading the tick-protocol body. Machine paths: **`/orchestrate` primary**; `/liaison` deprecated alias (same Impresario entry). Script names (`liaison-tick.py`, …) and registers (`attended`|`autonomous`) stay unchanged.
 
 | Gear | When | Loads |
 |---|---|---|
@@ -32,8 +30,8 @@ not birth.
 
 **Tab title (attended Cursor only).** Once this tab's root id and slug are known (`thread_get`), `rename_chat` `{id} {slug}` before other work. Switchboard erect and house birth are that ask. Detail: `operator-posture` Step 0. Headless ⇒ no-op.
 
-`liaison ≡ seat(root:role:root) ∧ register ∈ {attended, autonomous}`. Conductors do the work;
-the Impresario (liaison seat) **harvests → folds → decides → admits one conductor → checkpoints → hops**. ¬ linear-read a thread;
+`impresario_seat ≡ seat(root:role:root) ∧ register ∈ {attended, autonomous}` (legacy prose may say “liaison seat” for the same mutex). Conductors do the work;
+the **Impresario seat** **harvests → folds → decides → admits one conductor → checkpoints → hops**. ¬ linear-read a thread;
 ¬ implement what a live dispatch owns (`in-flight-work-guard`). Consolidated name for *coordinator*;
 Cortex: `agent_skill:conductor` #31004 (liaison register), #30549 (conductor = session to a designed stop),
 `decision:conductor-attended-vs-unattended-routing`.
@@ -92,7 +90,7 @@ Overnight leftover = **hold | play | sit** (`spawn_wake.play_classify`): hold = 
 
 **Come up** (operator "I'm back" / "come up" / "stop the ticker" / "take the house" — **not** `resume R`, which is check-in and leaves ticker driving): (1) SIGTERM `--loop --spawn-on-wake` ticker; (2) `--register attended --set ready=false`; (3) drop `induction_binds` that forbid IDE hop; (4) then `resume R` may `--take-over`. One driver: IDE-hop ⇒ `ready=false`; ticker ⇒ `--go-under` only on overnight/departure. Check-in `resume R` while UNDER must not run this sequence.
 
-**Operator guide.** "How do I use …" / "what changed" / new ruling ⇒ **LOAD AND EXECUTE** `runbook:liaison-operator-guide` this turn. Attended IDE tab = override; gear-3 headless = fallback. GIW doorbell schedule retired/refuses. Ticker = only house wake.
+**Operator guide.** "How do I use …" / "what changed" / new ruling ⇒ **LOAD AND EXECUTE** `runbook:operator-impresario` this turn. Attended IDE tab = override; gear-3 headless = fallback. GIW doorbell schedule retired/refuses. Ticker = only house wake.
 
 ## Tick protocol (one wake = one digest)
 
