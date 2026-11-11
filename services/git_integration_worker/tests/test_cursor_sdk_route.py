@@ -332,17 +332,17 @@ def test_dispatch_admits_and_spawns_task(
     "services.git_integration_worker.admission.WorkAdmissionController.create_tracked_task",
     return_value=MagicMock(done=lambda: False),
 )
-def test_dispatch_opus_5_5_alias_admits(
+def test_dispatch_composer_2_5_alias_admits(
     _mock_task: MagicMock, client: TestClient
 ) -> None:
-    """Rule A: member alias under the pair allowlist (was opus-5-5 pre gate)."""
+    """Rule A: admitted member bare alias (cursor/COMPOSER-2.5 → composer-2.5)."""
     resp = client.post(
         "/api/v1/cursor/dispatch",
-        json=_dispatch_body(model="cursor/grok-4.7"),
+        json=_dispatch_body(model="cursor/COMPOSER-2.5"),
     )
     assert resp.status_code == 200
     assert resp.json()["admitted"] is True
-    assert resp.json()["model_id"] == "grok-4.7"
+    assert resp.json()["model_id"] == "composer-2.5"
 
 
 @patch(
@@ -2747,14 +2747,14 @@ def test_ac_p1_6_conductor_summoning_thread_from_packet_not_worker(
     "services.git_integration_worker.admission.WorkAdmissionController.create_tracked_task",
     return_value=MagicMock(done=lambda: False),
 )
-def test_conductor_explicit_grok_pin_admits(
+def test_conductor_explicit_fable_pin_admits(
     _mock_task: MagicMock, client: TestClient
 ) -> None:
-    """Explicit grok pin on conductor packet still admits (rare pin path)."""
+    """Explicit Other Models pin on conductor admits under explicit_pin_only (pins mode)."""
     resp = client.post(
         "/api/v1/cursor/dispatch",
         json=_dispatch_body(
-            model="cursor/grok-4.7",
+            model="cursor/claude-fable-5",
             handoff_contract="none",
             message=(
                 "---\npacket_kind: conductor\ncontract: conductor\n---\n"
