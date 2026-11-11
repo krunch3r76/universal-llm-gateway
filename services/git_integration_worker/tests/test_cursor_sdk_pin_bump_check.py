@@ -33,7 +33,9 @@ def mod():
 
 def test_parse_pin_line_reads_requirements(mod, tmp_path: Path) -> None:
     req = tmp_path / "requirements.host.txt"
-    req.write_text("# pin probe\n.cursor-sdk==ignored\ncursor-sdk==9.8.7\n", encoding="utf-8")
+    req.write_text(
+        "# pin probe\n.cursor-sdk==ignored\ncursor-sdk==9.8.7\n", encoding="utf-8"
+    )
     assert mod.parse_pin_line(req) == "9.8.7"
 
 

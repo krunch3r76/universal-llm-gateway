@@ -243,5 +243,7 @@ def test_conductor_preamble_without_house_critic_matches_global_clause(
 def test_house_tick_read_failure_falls_back_without_raise(
     house_watch_dir: Path,
 ) -> None:
-    (house_watch_dir / "liaison-21558.tick.json").write_text("{not json", encoding="utf-8")
+    (house_watch_dir / "liaison-21558.tick.json").write_text(
+        "{not json", encoding="utf-8"
+    )
     assert _conductor_width_roles_for_summoning_thread("21558") is None

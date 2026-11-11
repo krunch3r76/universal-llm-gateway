@@ -6,23 +6,24 @@ import inspect
 import json
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from fastapi.testclient import TestClient
 
 from services.git_integration_worker.admission import WorkAdmissionController
+from services.git_integration_worker.app import create_app
 from services.git_integration_worker.config import load_config
 from services.git_integration_worker.cursor_dispatch_ledger import CursorDispatchLedger
 from services.git_integration_worker.cursor_sdk_park_ledger import mark_parked
-from services.git_integration_worker.cursor_sdk_park_resume import resume_parked_dispatches
+from services.git_integration_worker.cursor_sdk_park_resume import (
+    resume_parked_dispatches,
+)
 from services.git_integration_worker.models.cursor_api import (
     CursorDispatchRequest,
     CursorDispatchResponse,
 )
 from services.git_integration_worker.routes import cursor_sdk as route_mod
-from services.git_integration_worker.app import create_app
 from services.git_integration_worker.tests.test_cursor_sdk_route import _dispatch_body
 
 # Not in CURSOR_MODEL_CAPABILITIES — park/nest/await refusal tests stay valid.
@@ -167,7 +168,9 @@ def test_http_refuses_untrusted_bare_model(
 
 def _bus() -> AsyncMock:
     bus = AsyncMock()
-    bus.reply = AsyncMock(return_value=MagicMock(status_code=201, body={"turn_number": 1}))
+    bus.reply = AsyncMock(
+        return_value=MagicMock(status_code=201, body={"turn_number": 1})
+    )
     bus.terminate_dispatch = AsyncMock(return_value=MagicMock(status_code=200, body={}))
     return bus
 
@@ -390,6 +393,7 @@ async def test_t7_4_member_forms_not_model_set_refused_on_readmit(
     from services.git_integration_worker.cursor_sdk_park_resume import (
         build_park_resume_request,
     )
+
     parent = f"mem-{stored_model.replace('/', '-')}"
     _seed_member_row(
         parent,
@@ -630,10 +634,12 @@ async def test_t7_3_nest_refuses_non_member_and_releases_handed_slot_once(
     monkeypatch.setattr(
         "services.git_integration_worker.cursor_sdk_gate._LANE_GATES", gates
     )
-    release = MagicMock(wraps=__import__(
-        "services.git_integration_worker.cursor_sdk_nest_resume",
-        fromlist=["x"],
-    )._release_handed_slot)
+    release = MagicMock(
+        wraps=__import__(
+            "services.git_integration_worker.cursor_sdk_nest_resume",
+            fromlist=["x"],
+        )._release_handed_slot
+    )
     monkeypatch.setattr(
         "services.git_integration_worker.cursor_sdk_nest_resume._release_handed_slot",
         release,
@@ -678,7 +684,10 @@ async def test_t7_3_nest_refuses_non_member_and_releases_handed_slot_once(
         parent_id,
         child_id=child_id,
         controller=WorkAdmissionController(
-            ledger=ledger, worker_id="w", pid=0, worker_started_at=datetime.now(UTC).isoformat()
+            ledger=ledger,
+            worker_id="w",
+            pid=0,
+            worker_started_at=datetime.now(UTC).isoformat(),
         ),
         cfg=load_config(),
     )
@@ -706,7 +715,9 @@ async def test_t7_2_await_refusal_cap_expires_non_member(
         AWAIT_REPLY_FLAG_ENV,
         resume_await_parked_dispatches,
     )
-    from services.git_integration_worker.tests import test_cursor_sdk_await_reply as await_h
+    from services.git_integration_worker.tests import (
+        test_cursor_sdk_await_reply as await_h,
+    )
 
     monkeypatch.setenv(AWAIT_REPLY_FLAG_ENV, "1")
     monkeypatch.setattr(await_mod, "_MAX_RESUME_ATTEMPTS", 2)
@@ -740,4 +751,6 @@ async def test_t7_2_await_refusal_cap_expires_non_member(
     )
     assert second.refused == [(dispatch_id, "CURSOR_MODEL_UNTRUSTED")]
     assert second.expired == [dispatch_id]
-    assert json.loads(await_h._row(dispatch_id)["record_json"])["park"].get("expired_at")
+    assert json.loads(await_h._row(dispatch_id)["record_json"])["park"].get(
+        "expired_at"
+    )
