@@ -177,13 +177,29 @@ def associate_cse(
         prior_association_id=prior_id,
         bound_by=bound_by,
     )
-    return {
+    result = {
         "thread_id": thread_id,
         "cse_chat_url": url,
         "cse_registration_id": registration_id,
         "id": association_id,
         "state": "associated",
     }
+    try:
+        from .seat_ledger import shadow_hook_associate_cse
+
+        shadow_hook_associate_cse(
+            thread_id=thread_id,
+            url=url,
+            bound_by=bound_by,
+            prior_url=str(prior["cse_chat_url"] or "") if prior is not None else None,
+            appended=True,
+            association_id=association_id,
+        )
+    except Exception:
+        from .seat_ledger import _record_shadow_hook_error
+
+        _record_shadow_hook_error(where="associate_cse", thread_id=thread_id)
+    return result
 
 
 def get_current_cse(*, thread_id: str) -> dict[str, Any]:

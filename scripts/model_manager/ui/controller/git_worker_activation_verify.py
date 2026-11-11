@@ -46,7 +46,52 @@ logger = get_logger(__name__)
 
 ACTIVATION_IDLE_TIMEOUT_S = 120.0
 _VERIFY_TASKS: set[asyncio.Task[None]] = set()
+_RESOLVE_TASKS: set[asyncio.Task[None]] = set()
 _VERIFY_ACTIONS = frozenset({"restart", "sync_restart"})
+_GIW_SERVICE = "git_integration_worker"
+
+
+def _activation_mint_code_ref(code_ref: str, *, service: str) -> str:
+    """Resolve mint-time ``code_ref`` without binding HEAD to manage's import seal."""
+    raw = str(code_ref or "").strip()
+    if raw.upper() == "HEAD":
+        from deploy_identity.code_ref_relation import resolve_commit_sha
+
+        master = resolve_commit_sha("refs/heads/master")
+        if master is None:
+            from charter_runner_store.propagation_code_ref_mint import (
+                UnresolvableCodeRefError,
+            )
+
+            raise UnresolvableCodeRefError("HEAD", service=service)
+        return master
+    from charter_runner_store.propagation_validation.model import store_code_ref
+
+    return store_code_ref(code_ref, service=service)
+
+
+def code_ref_on_master(resolved_code_ref: str) -> bool:
+    """True when ``resolved_code_ref`` is an ancestor of or equal to ``refs/heads/master``."""
+    from deploy_identity.code_ref_relation import code_ref_relation, resolve_commit_sha
+
+    master = resolve_commit_sha("refs/heads/master")
+    if master is None:
+        return False
+    return code_ref_relation(resolved_code_ref, master) in {"equal", "ancestor"}
+
+
+def code_ref_master_relation(code_ref: str, *, service: str) -> str:
+    """How ``code_ref`` relates to the hub ``refs/heads/master`` tip after mint resolve."""
+    from deploy_identity.code_ref_relation import code_ref_relation, resolve_commit_sha
+
+    try:
+        resolved = _activation_mint_code_ref(code_ref, service=service)
+    except Exception:
+        return "ref_unresolvable"
+    master = resolve_commit_sha("refs/heads/master")
+    if master is None:
+        return "unknown"
+    return code_ref_relation(resolved, master)
 
 
 def mint_activation_validation(
@@ -69,9 +114,18 @@ def mint_activation_validation(
         occupied = existing.row_id
         if occupied is None or (row_id is not None and occupied == row_id):
             return existing.validation_id
+    resolved_ref = _activation_mint_code_ref(code_ref, service=str(intent.service))
+    if not code_ref_on_master(resolved_ref):
+        logger.warning(
+            "activation validation mint: code_ref not on master history "
+            "resolved=%s service=%s intent_id=%s",
+            resolved_ref,
+            intent.service,
+            intent.intent_id,
+        )
     return mint_pending_validation_for_intent(
         intent,
-        code_ref=code_ref,
+        code_ref=resolved_ref,
         row_id=row_id,
         advance_intent_fn=store.advance_if_status,
     )
@@ -421,6 +475,77 @@ def _terminal_unverified(
     )
 
 
+async def resolve_validation_after_lifecycle(
+    store: RestartIntentStore,
+    intent_id: str,
+    service: str,
+    *,
+    idle_timeout_s: float = ACTIVATION_IDLE_TIMEOUT_S,
+) -> None:
+    """Probe and close a pending validation after generic supervisor lifecycle (non-GIW)."""
+    if service == _GIW_SERVICE:
+        return
+    validation = latest_validation_for_intent(intent_id)
+    if validation is None or validation.outcome != "pending":
+        return
+    from deploy_identity.code_ref_relation import code_ref_relation_from_observed
+
+    from services.git_integration_worker.relay.propagation_probe import (
+        probe_process_live,
+    )
+
+    deadline = time.monotonic() + idle_timeout_s
+    validation_id = validation.validation_id
+    while time.monotonic() < deadline:
+        validation = get_validation(validation_id)
+        if validation is None or validation.outcome != "pending":
+            return
+        payload = probe_process_live(service)
+        if payload is not None:
+            observed = payload.get("code_version")
+            relation = code_ref_relation_from_observed(validation.code_ref, observed)
+            if relation in {"equal", "ancestor"}:
+                if advance_validation(
+                    validation_id,
+                    outcome="validated",
+                    post_observation=payload,
+                    observed_code_version=str(observed) if observed else None,
+                    code_ref_relation=relation,
+                    identity_measurement="measured",
+                ):
+                    publish_activation_event(
+                        ManageRestartActivationValidated(
+                            intent_id=intent_id,
+                            validation_id=validation_id,
+                            code_ref_relation=relation,
+                            identity_measurement="measured",
+                        )
+                    )
+                return
+        await asyncio.sleep(0.5)
+
+
+def schedule_resolve_validation_after_lifecycle(
+    store: RestartIntentStore, intent_id: str, service: str
+) -> None:
+    """Schedule post-lifecycle validation resolve without holding the restart gate."""
+
+    async def _task() -> None:
+        try:
+            await resolve_validation_after_lifecycle(store, intent_id, service)
+        except Exception:
+            logger.exception(
+                "activation validation resolve after lifecycle failed "
+                "intent_id=%s service=%s",
+                intent_id,
+                service,
+            )
+
+    task = asyncio.create_task(_task())
+    _RESOLVE_TASKS.add(task)
+    task.add_done_callback(_RESOLVE_TASKS.discard)
+
+
 def schedule_activation_verify(
     store: RestartIntentStore, intent_id: str, validation_id: str
 ) -> None:
@@ -522,11 +647,15 @@ def arms_activation_verify(action: str) -> bool:
 __all__ = [
     "ACTIVATION_IDLE_TIMEOUT_S",
     "arms_activation_verify",
+    "code_ref_master_relation",
+    "code_ref_on_master",
     "mint_activation_validation",
     "record_kill_boundary_and_arm_verify",
     "arm_verify_after_generation_gone",
+    "resolve_validation_after_lifecycle",
     "resume_activation_verify",
     "run_activation_verify",
     "schedule_activation_verify",
+    "schedule_resolve_validation_after_lifecycle",
     "reconcile_out_of_band_start",
 ]

@@ -380,6 +380,7 @@ def _dormant_misbound_holder_carve_out(
     *,
     reattach_used: bool,
     outcome_reg: str,
+    lane_pin: dict | None = None,
 ) -> bool:
     """Accept a same-lane mint over a dormant holder bound to a different CSE.
 
@@ -417,6 +418,16 @@ def _dormant_misbound_holder_carve_out(
         reg_id,
         predecessor_close_reason="dormant_holder_misbound",
     )
+    from claude_bundles.cdp_registry.session_address import (
+        retire_misbound_dormant_attachment,
+    )
+
+    retire_misbound_dormant_attachment(holder_reg)
+    if isinstance(lane_pin, dict):
+        active = cdp_registry._store.load_active()
+        seated = active.get(reg_id) or {}
+        lane_pin["gate_seated_reg"] = reg_id
+        lane_pin["gate_seated_at"] = seated.get("seat_bound_at")
     return True
 
 
@@ -485,6 +496,7 @@ def _lane_seat_followup_gate(
             holder_reg,
             reattach_used=reattach_used,
             outcome_reg=outcome_reg,
+            lane_pin=lane_pin,
         ):
             return req, None, None
         emit_followup_event(

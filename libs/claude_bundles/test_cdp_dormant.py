@@ -197,6 +197,28 @@ def test_dormant_for_chat_url_prefers_the_newest_binding(
     assert found.registration_id == newer.registration_id
 
 
+def test_misbound_dormant_seat_close_excluded_from_chat_url_wake(
+    isolated_registry: Path,
+) -> None:
+    """Rows closed as misbound must not resume via ``dormant_for_chat_url``."""
+    from claude_bundles.cdp_registry.session_address import (
+        retire_misbound_dormant_attachment,
+    )
+
+    url = "https://claude.ai/cowork/cse_misbound"
+    seat = _seat(chat_url=url)
+    reg.make_dormant(seat.registration_id, is_listening=lambda _p: False)
+    with reg._store.ports_lock():
+        active = reg._store.load_active()
+        row = dict(active[seat.registration_id])
+        row["seat_closed_at"] = 1.0
+        row["seat_close_reason"] = "dormant_holder_misbound"
+        active[seat.registration_id] = row
+        reg._store.write_active(active)
+    assert retire_misbound_dormant_attachment(seat.registration_id) is True
+    assert reg.dormant_for_chat_url(url) is None
+
+
 def test_reclaim_dormant_rows_by_ttl_and_cap(isolated_registry: Path) -> None:
     ids: list[str] = []
     for index in range(3):

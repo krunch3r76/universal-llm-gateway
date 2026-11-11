@@ -352,6 +352,63 @@ def open_lane_seat_holder(lane: str) -> tuple[str | None, float | None]:
     return _open_seat_holder(_store.load_active(), lane)
 
 
+def _gate_seated_allows_commit(
+    *,
+    registration_id: str,
+    lane: str,
+    snapshot_holder_id: str | None,
+    current_holder_id: str | None,
+    row: dict[str, Any],
+) -> bool:
+    """Whether a same-call followup gate seated *registration_id* before commit.
+
+    The dormant-misbound carve-out may close a predecessor and seat the mint
+    between the reattach snapshot and ``commit_reattach_driving_seat``. That
+    holder change is expected, not a foreign seat move.
+    """
+    rid = (registration_id or "").strip()
+    lane_key = (lane or "").strip()
+    if not rid or not lane_key:
+        return False
+    snap_id = (snapshot_holder_id or "").strip() or None
+    if snap_id is None or snap_id == rid:
+        return False
+    cur_id = (current_holder_id or "").strip() or None
+    if cur_id != rid:
+        return False
+    return seat_open(row, lane_key)
+
+
+def retire_misbound_dormant_attachment(registration_id: str) -> bool:
+    """Drop ``chat_url`` from a dormant row closed as misbound so URL wake cannot resume it."""
+    rid = (registration_id or "").strip()
+    if not rid:
+        return False
+    with _store.ports_lock():
+        active = _store.load_active()
+        row = active.get(rid)
+        if not isinstance(row, dict):
+            return False
+        if str(row.get("seat_close_reason") or "") != "dormant_holder_misbound":
+            return False
+        updated = dict(row)
+        prior_url = str(updated.get("chat_url") or "").strip() or None
+        if not prior_url:
+            return False
+        updated.pop("chat_url", None)
+        updated.pop("chat_url_bound_at", None)
+        active[rid] = updated
+        _store.write_active(active)
+        _store.append_log(
+            "misbound_dormant_attachment_retired",
+            {
+                "registration_id": rid,
+                "prior_chat_url": prior_url,
+            },
+        )
+    return True
+
+
 def _vacant_snapshot_allows_commit(
     *,
     registration_id: str,
@@ -428,7 +485,14 @@ def commit_reattach_driving_seat(
                 snapshot_holder_id=snapshot_holder_id,
                 current_holder_id=current_id,
             )
-            if not snapshot_matches and not vacant_snapshot_ok:
+            gate_seated_ok = _gate_seated_allows_commit(
+                registration_id=rid,
+                lane=lane_key,
+                snapshot_holder_id=snapshot_holder_id,
+                current_holder_id=current_id,
+                row=row,
+            )
+            if not snapshot_matches and not vacant_snapshot_ok and not gate_seated_ok:
                 return "refused"
         bound_row, released_rows = apply_driving_seat_bind(active, rid)
         if bound_row is None:
