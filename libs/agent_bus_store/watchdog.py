@@ -115,6 +115,15 @@ def _reap_single(
             (ts, thread_id),
         )
 
+    try:
+        from .db.seat_ledger import shadow_hook_thread_close
+
+        shadow_hook_thread_close(thread_id=thread_id)
+    except Exception:
+        from .db.seat_ledger import _record_shadow_hook_error
+
+        _record_shadow_hook_error(where="watchdog_reap", thread_id=thread_id)
+
     emit_thread_abandoned(
         thread=thread_id,
         reason=reason,

@@ -246,6 +246,7 @@ def insert_turn(
     key is not wedged.
     """
     ts = now()
+    thread_reopened_from_closed = False
     with write_connect() as conn:
         row = conn.execute(
             "SELECT id, status, bus_lifecycle_state FROM threads WHERE id = ?",
@@ -265,6 +266,7 @@ def insert_turn(
             thread = actual_id
         elif row["status"] == "closed":
             # Replying to a closed thread reopens it — matches session-close protocol.
+            thread_reopened_from_closed = True
             conn.execute(
                 "UPDATE threads SET status = 'active', updated_at = ? WHERE id = ?",
                 (ts, thread),
@@ -463,6 +465,15 @@ def insert_turn(
     maybe_enqueue_continuity_consolidate(
         thread_id=thread, turn_number=turn_number, subject=subject
     )
+    if thread_reopened_from_closed:
+        try:
+            from .seat_ledger import shadow_hook_thread_reopen
+
+            shadow_hook_thread_reopen(thread_id=thread)
+        except Exception:
+            from .seat_ledger import _record_shadow_hook_error
+
+            _record_shadow_hook_error(where="reopen_turn", thread_id=thread)
     return turn_id, ts, turn_number, False
 
 

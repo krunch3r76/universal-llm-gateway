@@ -548,15 +548,39 @@ def _subscription_drift(conn: sqlite3.Connection, thread_id: str) -> bool:
     return False
 
 
+def _lanes_missing_open_ledger_seat(
+    conn: sqlite3.Connection,
+    *,
+    open_thread_ids: set[str],
+    giw_probe: str,
+    giw_by_lane: dict[str, dict[str, Any]],
+) -> int:
+    """Lanes with CSE association or GIW holder but no open ledger seat."""
+    missing: set[str] = set()
+    cse_rows = conn.execute(
+        "SELECT DISTINCT thread_id FROM thread_cse_associations"
+    ).fetchall()
+    for row in cse_rows:
+        tid = str(row["thread_id"])
+        if tid not in open_thread_ids:
+            missing.add(tid)
+    if giw_probe == "ok":
+        for lane, holder in giw_by_lane.items():
+            if holder and lane not in open_thread_ids:
+                missing.add(lane)
+    return len(missing)
+
+
 def seat_drift_summary() -> dict[str, Any]:
     """GET-only divergence counters: ledger vs CSE fold, subscriptions, GIW, registry."""
     if not seat_ledger_shadow_writes_enabled():
         return _drift_summary_disabled()
 
     from .seat_drift_probes import (
+        fetch_giw_holders_map,
         giw_holder_chat,
         ledger_matches_chat,
-        probe_giw_holder,
+        load_registry_active,
         probe_registry_chat,
     )
 
@@ -569,8 +593,22 @@ def seat_drift_summary() -> dict[str, Any]:
     mismatched_threads: list[str] = []
 
     open_rows = list_open_seats(state="open")
+    open_thread_ids = {str(seat["thread_id"]) for seat in open_rows}
+
+    giw_probe, giw_by_lane = fetch_giw_holders_map()
+    try:
+        registry_active = load_registry_active()
+    except Exception:
+        registry_active = None
+        registry_probe = "unavailable"
 
     with connect() as conn:
+        ledger_missing_count = _lanes_missing_open_ledger_seat(
+            conn,
+            open_thread_ids=open_thread_ids,
+            giw_probe=giw_probe,
+            giw_by_lane=giw_by_lane,
+        )
         for seat in open_rows:
             tid = str(seat["thread_id"])
             seat_url = seat.get("chat_url")
@@ -591,9 +629,12 @@ def seat_drift_summary() -> dict[str, Any]:
                 if cse_row is not None
                 else ""
             )
-            reg_status, reg_url, reg_chat_id = probe_registry_chat(
-                reg_id or None
-            )
+            if registry_active is not None:
+                reg_status, reg_url, reg_chat_id = probe_registry_chat(
+                    reg_id or None, active=registry_active
+                )
+            else:
+                reg_status, reg_url, reg_chat_id = ("unavailable", None, None)
             if reg_status == "unavailable":
                 registry_probe = "unavailable"
             elif reg_id and not ledger_matches_chat(
@@ -604,26 +645,25 @@ def seat_drift_summary() -> dict[str, Any]:
             ):
                 registry_mismatch += 1
 
-    giw_pending: list[tuple[str | None, str | None, dict[str, Any] | None]] = []
-    for seat in open_rows:
-        tid = str(seat["thread_id"])
-        giw_status, holder = probe_giw_holder(tid)
-        if giw_status == "unavailable":
-            giw_probe = "unavailable"
-            break
-        giw_pending.append((seat.get("chat_url"), seat.get("chat_id"), holder))
-    else:
-        for seat_url, seat_chat_id, holder in giw_pending:
+    if giw_probe == "ok":
+        for seat in open_rows:
+            tid = str(seat["thread_id"])
+            holder = giw_by_lane.get(tid)
             giw_url, giw_chat_id = giw_holder_chat(holder)
             if not ledger_matches_chat(
-                seat_chat_url=seat_url,
-                seat_chat_id=seat_chat_id,
+                seat_chat_url=seat.get("chat_url"),
+                seat_chat_id=seat.get("chat_id"),
                 other_url=giw_url,
                 other_chat_id=giw_chat_id,
             ):
-                if seat_url or giw_url or seat_chat_id or giw_chat_id:
+                if (
+                    seat.get("chat_url")
+                    or giw_url
+                    or seat.get("chat_id")
+                    or giw_chat_id
+                ):
                     giw_mismatch += 1
-    if giw_probe == "unavailable":
+    else:
         giw_mismatch = 0
 
     return {
@@ -637,6 +677,7 @@ def seat_drift_summary() -> dict[str, Any]:
         "contested_wake_quarantine_count": durable_wake_quarantine_count(),
         "mismatched_thread_ids": sorted(set(mismatched_threads)),
         "open_seat_count": len(open_rows),
+        "ledger_missing_count": ledger_missing_count,
     }
 
 
@@ -652,6 +693,7 @@ def _drift_summary_disabled() -> dict[str, Any]:
         "contested_wake_quarantine_count": 0,
         "mismatched_thread_ids": [],
         "open_seat_count": 0,
+        "ledger_missing_count": 0,
     }
 
 
@@ -663,6 +705,7 @@ def seat_drift_cli_lines(summary: dict[str, Any] | None = None) -> list[str]:
         "subscription_mismatch_count",
         "giw_holder_mismatch_count",
         "registry_mismatch_count",
+        "ledger_missing_count",
         "contested_wake_quarantine_count",
         "shadow_hook_error_count",
         "giw_probe",
@@ -738,3 +781,33 @@ def shadow_hook_thread_close(*, thread_id: str) -> None:
         )
     except SeatLedgerError:
         raise
+
+
+def shadow_hook_thread_reopen(*, thread_id: str) -> None:
+    """Fail-open: birth an open ledger seat after a closed thread accepts a reply."""
+    if not seat_ledger_shadow_writes_enabled():
+        return
+    current = current_seat(thread_id=thread_id)
+    if current.get("state") == "open":
+        return
+    chat_url = current.get("chat_url")
+    if not chat_url:
+        with connect() as conn:
+            row = conn.execute(
+                "SELECT cse_chat_url FROM thread_cse_associations "
+                "WHERE thread_id = ? ORDER BY id DESC LIMIT 1",
+                (thread_id,),
+            ).fetchone()
+            if row is not None:
+                chat_url = row["cse_chat_url"]
+    if not chat_url:
+        return
+    epoch = current.get("epoch")
+    request_id = f"shadow.thread_reopen.{thread_id}.{epoch or 0}"
+    transition_seat(
+        thread_id=thread_id,
+        transition="birth",
+        chat_url=str(chat_url),
+        actor="shadow.thread_reopen",
+        request_id=request_id,
+    )

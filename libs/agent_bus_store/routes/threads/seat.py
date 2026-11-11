@@ -87,5 +87,5 @@ async def seats_list_route(
 
 
 @router.get("/seats/drift")
-async def seats_drift_route() -> dict[str, Any]:
+def seats_drift_route() -> dict[str, Any]:
     return seat_drift_summary()
