@@ -114,6 +114,14 @@ def emit_layer_a_fs_line(slug_or_entity_id: str) -> str:
     return skill_use_instruction(slug_or_entity_id, leading_newline=True)
 
 
+def render_skill_entity_pointer(slug: str, entity_id: str) -> str:
+    """Layer-C entity pointer when inline body exceeds budget (skills-delivery ruling)."""
+    return (
+        f"\n\n<!-- injected-index:{slug} entity_id={entity_id} -->"
+        f"\n- `{slug}` — {skill_use_instruction(slug)}"
+    )
+
+
 def filter_double_load_excluded(
     slugs: tuple[str, ...],
     *,
