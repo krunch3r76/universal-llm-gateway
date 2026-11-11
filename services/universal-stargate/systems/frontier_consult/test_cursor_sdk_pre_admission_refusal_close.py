@@ -158,7 +158,7 @@ async def test_pre_admission_refusal_integration_closes_and_stamps_failed() -> N
     assert terminate[2]["terminal_status"] == "failed"
     assert terminate[2]["execution_id"] == "exec-pre"
     failed_turn = next(j for j in bus_journal if j[0] == "post" and j[1] == "/turns")
-    assert failed_turn[2]["subject"].startswith("FAILED|")
+    assert failed_turn[2]["subject"].startswith("FAILED|queued=false|")
     assert "CURSOR_SOURCE_REF_IN_FLIGHT" in failed_turn[2]["subject"]
 
 
@@ -277,3 +277,102 @@ async def test_pre_admission_refusal_close_5xx_yields_refused_admit_verdict() ->
     verdict = evaluate_quiet_with_wip(snap)
     assert verdict.fire is False
     assert verdict.skip_reason == "refused_admit"
+
+
+@pytest.mark.asyncio
+async def test_giw_draining_posts_refused_turn_with_supersedes() -> None:
+    """GIT_WORKER_DRAINING ⇒ REFUSED| subject, supersedes pointer, details on error."""
+    giw_body = {
+        "code": "GIT_WORKER_DRAINING",
+        "message": "draining",
+        "retryable": True,
+        "data": {
+            "queued": False,
+            "admitted": False,
+            "reason_code": "giw_draining",
+            "retry_after_s": 5,
+            "resubmit": "safe",
+            "dispatch_id": "disp-pre",
+        },
+    }
+    bus_journal: list[tuple[str, str, dict[str, Any] | None]] = []
+    client_cls = _routing_bus_and_giw_client(
+        giw_status=503, giw_body=giw_body, bus_journal=bus_journal
+    )
+    from .admission import FrontierEndpointError
+
+    with (
+        patch.dict("os.environ", {"ALLOW_UNSET_AGENT_BUS_TOKEN": "1"}, clear=False),
+        patch(
+            "systems.frontier_consult.cursor_sdk_worker_dispatch.make_async_client",
+            client_cls,
+        ),
+        patch(
+            "systems.frontier_consult.handoff.make_async_client",
+            client_cls,
+        ),
+        patch(
+            "systems.frontier_consult.cursor_sdk_generate.emit_sdk_worker_outcome",
+        ),
+        pytest.raises(FrontierEndpointError) as excinfo,
+    ):
+        await _finish_prepared_dispatch(
+            _minted_handle(poll_after_turn=65, worker_thread_reused=True)
+        )
+
+    err = excinfo.value
+    assert err.details is not None
+    assert err.details["queued"] is False
+    assert err.details["reason_code"] == "giw_draining"
+    assert err.details["retry_after_s"] == 5
+    assert err.details["resubmit"] == "safe"
+
+    refused = next(j for j in bus_journal if j[0] == "post" and j[1] == "/turns")
+    subj = refused[2]["subject"]
+    assert subj.startswith("REFUSED|queued=false|code=GIT_WORKER_DRAINING|")
+    assert refused[2]["supersedes_turn"] == 65
+    assert "Refused, not queued" in refused[2]["body"]
+
+
+@pytest.mark.asyncio
+async def test_giw_draining_refusal_turn_unposted_emits_telemetry() -> None:
+    """Missing bus token ⇒ frontier.sdk.refusal_turn.unposted (no silent skip)."""
+    giw_body = {
+        "code": "GIT_WORKER_DRAINING",
+        "message": "draining",
+        "data": {"queued": False, "retry_after_s": 5},
+    }
+    bus_journal: list[tuple[str, str, dict[str, Any] | None]] = []
+    client_cls = _routing_bus_and_giw_client(
+        giw_status=503, giw_body=giw_body, bus_journal=bus_journal
+    )
+    from .admission import FrontierEndpointError
+
+    events: list[object] = []
+
+    with (
+        patch.dict("os.environ", {}, clear=True),
+        patch(
+            "systems.frontier_consult.cursor_sdk_worker_dispatch.make_async_client",
+            client_cls,
+        ),
+        patch(
+            "systems.frontier_consult.handoff.make_async_client",
+            client_cls,
+        ),
+        patch(
+            "systems.frontier_consult.cursor_sdk_generate.emit_sdk_worker_outcome",
+        ),
+        patch(
+            "systems.frontier_consult.cursor_sdk_generate_signals.publish_frontier_event",
+            lambda ev: events.append(ev),
+        ),
+        pytest.raises(FrontierEndpointError),
+    ):
+        await _finish_prepared_dispatch(_minted_handle(worker_thread_reused=True))
+
+    assert not any(j[1] == "/turns" for j in bus_journal if j[0] == "post")
+    assert any(
+        getattr(ev, "signal", None) == "frontier.sdk.refusal_turn.unposted"
+        for ev in events
+    )

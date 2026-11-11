@@ -14,6 +14,7 @@ from .events import (
     FrontierSdkPoolDenied,
     FrontierSdkPoolExempted,
     FrontierSdkReasoningEffortRejected,
+    FrontierSdkRefusalTurnUnposted,
     FrontierSdkWorkerDispatched,
     FrontierSdkWorkerDispatchFailed,
     FrontierSdkWorkerQueued,
@@ -153,6 +154,21 @@ def emit_sdk_worker_outcome(
             or worker_detail.get("message"),
             http_status=worker_detail.get("http_status"),
             worker_error_code=worker_detail.get("worker_error_code"),
+        )
+    )
+
+
+def emit_sdk_refusal_turn_unposted(
+    *,
+    thread_id: str,
+    dispatch_id: str | None = None,
+    reason: str | None = None,
+) -> None:
+    publish_frontier_event(
+        FrontierSdkRefusalTurnUnposted(
+            thread_id=thread_id,
+            dispatch_id=dispatch_id,
+            reason=reason,
         )
     )
 

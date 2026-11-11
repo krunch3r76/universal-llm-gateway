@@ -342,12 +342,13 @@ async def test_reclaim_completed_nest_child_resumes_instead_of_failing(
 
 def _draining_admit() -> JSONResponse:
     """503 envelope a live drain returns from ``admit_cursor_dispatch``."""
-    return JSONResponse(
-        status_code=503,
-        content={
-            "code": "GIT_WORKER_DRAINING",
-            "message": "git-integration-worker is draining (epoch=1)",
-        },
+    from services.git_integration_worker.admission import Draining503
+    from services.git_integration_worker.routes.cursor_sdk import _draining_response
+
+    return _draining_response(
+        Draining503("git-integration-worker is draining (epoch=1)"),
+        dispatch_id="stub-dispatch",
+        drain_epoch=1,
     )
 
 

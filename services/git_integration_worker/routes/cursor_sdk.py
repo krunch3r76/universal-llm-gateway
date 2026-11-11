@@ -535,8 +535,21 @@ def _controller(request: Request) -> WorkAdmissionController:
     return controller
 
 
-def _draining_response(exc: Draining503) -> JSONResponse:
+_DRAIN_REFUSAL_FIX_HINT = (
+    "Refused, not queued: no ledger row, park or intent was created. "
+    "Safe to resubmit the same request after retry_after_s; do not cancel the "
+    "refused id."
+)
+
+
+def _draining_response(
+    exc: Draining503,
+    *,
+    dispatch_id: str | None = None,
+    drain_epoch: int | None = None,
+) -> JSONResponse:
     """503 envelope + ``Retry-After`` for a dispatch rejected by drain."""
+    epoch = 0 if drain_epoch is None else int(drain_epoch)
     return JSONResponse(
         status_code=503,
         content=error_envelope(
@@ -544,7 +557,16 @@ def _draining_response(exc: Draining503) -> JSONResponse:
             message=str(exc),
             source="gateway",
             retryable=True,
-            data={"retry_after_s": _DRAIN_RETRY_AFTER_S},
+            data={
+                "queued": False,
+                "admitted": False,
+                "reason_code": "giw_draining",
+                "dispatch_id": dispatch_id,
+                "drain_epoch": epoch,
+                "retry_after_s": _DRAIN_RETRY_AFTER_S,
+                "resubmit": "safe",
+                "fix_hint": _DRAIN_REFUSAL_FIX_HINT,
+            },
         ),
         headers={"Retry-After": str(_DRAIN_RETRY_AFTER_S)},
     )
@@ -4217,7 +4239,9 @@ async def admit_cursor_dispatch(
         return _draining_response(
             Draining503(
                 f"git-integration-worker is draining (epoch={controller.drain_epoch})"
-            )
+            ),
+            dispatch_id=req.dispatch_id,
+            drain_epoch=controller.drain_epoch,
         )
 
     debt_refusal = await asyncio.to_thread(_branch_debt_refusal, req)
@@ -5248,7 +5272,11 @@ async def admit_cursor_dispatch(
             request=request,
             emit_tag="CURSOR_DRAINING503_ADMIT",
         )
-        return _draining_response(exc)
+        return _draining_response(
+            exc,
+            dispatch_id=req.dispatch_id,
+            drain_epoch=controller.drain_epoch,
+        )
 
     bus = CursorBusClient()
     task = controller.create_tracked_task(

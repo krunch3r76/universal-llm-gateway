@@ -287,6 +287,25 @@ def FrontierSdkWorkerDispatchFailed(  # noqa: N802
 
 
 @event_factory
+def FrontierSdkRefusalTurnUnposted(  # noqa: N802
+    thread_id: str,
+    dispatch_id: str | None = None,
+    reason: str | None = None,
+) -> Event:
+    """Worker refusal turn could not be posted on the bus thread."""
+    payload: dict[str, object] = {"thread_id": thread_id}
+    if dispatch_id is not None:
+        payload["dispatch_id"] = dispatch_id
+    if reason is not None:
+        payload["reason"] = reason
+    return Event(
+        signal="frontier.sdk.refusal_turn.unposted",
+        payload=payload,
+        scope="node",
+    )
+
+
+@event_factory
 def FrontierSdkWorkerQueued(  # noqa: N802
     request_id: str,
     thread_id: str,
