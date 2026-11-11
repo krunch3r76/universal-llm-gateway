@@ -21,10 +21,38 @@ def sandbox_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
 
 
 def _closeout_body() -> str:
+    """Minimal doc for window-gate tests (not a real sidecar shape)."""
     lines = ["status: complete", "line two", ""]
     lines.append("## effects_manifest")
     lines.extend(f"effect {i}" for i in range(5))
     return "\n".join(lines)
+
+
+def _realistic_closeout_sidecar() -> str:
+    return "\n".join(
+        [
+            "## executive_envelope",
+            "",
+            "status: complete",
+            "commit: deadbeef",
+            "",
+            "### effects_manifest",
+            "",
+            "short summary only",
+            "",
+            "## effects_manifest",
+            "",
+            "TOP_LEVEL_EFFECTS_BLOB " + ("x" * 200),
+            "",
+            "## usage",
+            "",
+            "usage block",
+            "",
+            "## structured_closeout_full",
+            "",
+            "full dump",
+        ]
+    )
 
 
 def test_md_window_without_hash_returns_gated_manifest(sandbox_root: Path) -> None:
@@ -81,14 +109,30 @@ def test_py_window_unchanged_without_hash(sandbox_root: Path) -> None:
     assert out.get("selection") != "manifest"
 
 
-def test_preamble_section_covers_executive_envelope(sandbox_root: Path) -> None:
+def test_closeout_sections_recipe_returns_executive_envelope(
+    sandbox_root: Path,
+) -> None:
     rel = "tmp/reviews/closeouts/sample.md"
     (sandbox_root / rel).parent.mkdir(parents=True, exist_ok=True)
-    (sandbox_root / rel).write_text(_closeout_body(), encoding="utf-8")
-    pre = read_file_result(rel, root=sandbox_root, section="__preamble__")
-    assert pre.get("outcome") == "ok"
-    assert "status: complete" in pre.get("content", "")
-    assert "effects_manifest" not in pre.get("content", "")
+    (sandbox_root / rel).write_text(_realistic_closeout_sidecar(), encoding="utf-8")
+    manifest = read_file_result(rel, root=sandbox_root)
+    assert manifest.get("selection") == "manifest"
+    assert "__preamble__" not in {row.get("id") for row in manifest.get("sections", [])}
+    ids = {row.get("id") for row in manifest.get("sections", [])}
+    assert "executive_envelope" in ids
+    batch = read_file_result(
+        rel,
+        root=sandbox_root,
+        sections=["executive_envelope", "executive_envelope/effects_manifest"],
+    )
+    assert batch.get("selection") == "sections"
+    bodies = "".join(item.get("content", "") for item in batch.get("items", []))
+    assert "status: complete" in bodies
+    assert "short summary only" in bodies
+    assert "TOP_LEVEL_EFFECTS_BLOB" not in bodies
+    assert "structured_closeout_full" not in bodies
+    top_level = read_file_result(rel, root=sandbox_root, section="effects_manifest")
+    assert "TOP_LEVEL_EFFECTS_BLOB" in top_level.get("content", "")
 
 
 def test_fs_read_schema_exposes_sparse_selectors(monkeypatch: pytest.MonkeyPatch) -> None:
