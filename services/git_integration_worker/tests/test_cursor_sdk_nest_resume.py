@@ -53,7 +53,7 @@ def _isolated_ledger(tmp_path, monkeypatch: pytest.MonkeyPatch):
 def _req(dispatch_id: str) -> CursorDispatchRequest:
     return CursorDispatchRequest(
         thread_id="18533",
-        model="cursor/grok-4.7",
+        model="cursor/composer-2.5",
         dispatch_id=dispatch_id,
         execution_id=f"exec-{dispatch_id}",
         message=f"msg-{dispatch_id}",
@@ -79,12 +79,12 @@ def _admit(
         fingerprint=ledger.fingerprint(req),
         execution_id=req.execution_id,
         caller_agent="pipeline:cursor-paste-resolve",
-        resolved_model="grok-4.7",
+        resolved_model="composer-2.5",
         admission=CursorDispatchResponse(
             admitted=True,
             dispatch_id=dispatch_id,
             thread_id=req.thread_id,
-            model_id="grok-4.7",
+            model_id="composer-2.5",
         ),
         contract=contract,
         source_repo=lease,
@@ -557,7 +557,7 @@ def _insert_queued(
                 ledger.fingerprint(req),
                 req.thread_id,
                 req.execution_id,
-                "grok-4.7",
+                "composer-2.5",
                 json.dumps({"model": req.model, "message": req.message}),
                 lease_key,
                 lease_key,

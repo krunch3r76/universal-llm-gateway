@@ -1,7 +1,7 @@
 Orchestrate a durable continuity root or formal mission lane.
 
-**Shared Impresario entry.** `/orchestrate` and `/liaison` are the same tab entry for the
-**Impresario** (the reasoning agent in the IDE tab). The Impresario infers **Light**, **Attended**, or
+**Shared Impresario entry.** `/orchestrate` is primary; `/liaison` is a **deprecated legacy alias** (same tab entry).
+The **Impresario** (the reasoning agent in the IDE tab) infers **Light**, **Attended**, or
 **Overnight** internally — the operator does not pick a gear or a separate birth mode ahead of time.
 
 | Gear | Trigger (inferred) | Behavior |

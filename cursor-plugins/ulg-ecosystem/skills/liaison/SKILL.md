@@ -1,8 +1,10 @@
 ---
 name: liaison
-description: "Per-REQUEST grok-bot liaison under a Maestro Sidekick: carry one REQUEST end to end, route each leg, report to the owning Sidekick, never post on its lane."
+description: "Deprecated legacy alias — use impresario (runbook:operator-impresario). Was: per-REQUEST grok-bot carrier under a Sidekick."
 ---
-# Maestro Sidekick — grok-bot liaison
+> **Deprecated legacy alias — use impresario (`runbook:operator-impresario`).** File retained for resolvable slug; live routing and review follow that runbook + conductor.
+
+# Maestro Sidekick — grok-bot liaison (legacy alias)
 
 Seat: per-REQUEST successor `msk<N>-<work_key>`; MCP only, no checkout shell. Listener, lanes, spawn: `runbook:maestro-sidekick`. IDE house seat on a continuity root ⇒ `ide-continuity`, not this.
 
@@ -34,7 +36,7 @@ A Sidekick packet hands you `REQUEST|<contract>|<work_key>` from its lane, or an
    | few edits, files in view, no checkout process | own `fs` edit |
    | checkout process or multi-file implement | `team_dispatch seat=cursor-sdk lane=B contract=freeform work_key=…` |
    | one friction end to end | `/cursor-paste-resolve friction <id> cursor_sdk` |
-   | a `todo:` arc | conductor per `runbook:maestro-loop` §5a; poll `poll_hint`; hand re-admit only at CONSULT_PENDING, nest-close-while-parked, `next_admit_blocked`; rulings by `steer inject` |
+   | a `todo:` arc | conductor per `runbook:operator-impresario` + `conductor` skill; poll `poll_hint`; hand re-admit only at CONSULT_PENDING, nest-close-while-parked, `next_admit_blocked`; rulings by `steer inject` |
    | diff review | fresh grok-bot per-REQUEST successor (not author) sends `VERDICT\|<work_key>` to Sidekick; `cdp/opus-5.5` when REQUEST names it |
    | next REQUEST in a chain | propose to owning Sidekick |
    | open design / strategy / retry(same_AC) fork | `pipeline(op="run", pipeline_id="divergent-ideation-v1", messages=[{"role": "user", "content": "<Schema-P JSON>"}])` before binding |

@@ -17,7 +17,11 @@ lead_claim_authority: server_contract_overrides_packet_prose
 # cursor_sdk_other_models_pool: deny (default) hard-422s Other Models pool on
 # cursor-sdk generate omit and explicit pins; explicit_pin_only restores sparing
 # operator pins (frontier.sdk.pool.exempted).
-cursor_sdk_other_models_pool: deny
+cursor_sdk_other_models_pool: explicit_pin_only
+
+# claude.ai/code compose dispatch (team_dispatch claude_surface=code on model=cdp/…).
+# prohibit (default when absent) → 422 CLAUDE_CODE_DISPATCH_PROHIBITED; allow restores.
+claude_code_dispatch: prohibit
 
 model_bans:
   - model: cursor/grok-4.7

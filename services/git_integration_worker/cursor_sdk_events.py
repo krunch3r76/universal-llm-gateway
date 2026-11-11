@@ -224,6 +224,36 @@ def FrontierSdkWorkerSkillsMounted(  # noqa: N802
 
 
 @event_factory
+def DispatchSkillsOverride(  # noqa: N802
+    dispatch_id: str,
+    thread_id: str,
+    resolved_model: str,
+    slug: str,
+    delegation_tier: str,
+    execution_id: str | None = None,
+) -> Event:
+    """Caller ``skills=`` re-staged a tier-pruned skill into the dispatch HOME user layer.
+
+    Ruling: cortex://notes/rulings/skills-delivery-2026-11-10.md (interpretation item 6).
+    Tier overlay remains authoritative; explicit ``skills=`` is the named exception.
+    """
+    payload: dict[str, object] = {
+        "dispatch_id": dispatch_id,
+        "thread_id": thread_id,
+        "resolved_model": resolved_model,
+        "slug": slug,
+        "delegation_tier": delegation_tier,
+    }
+    if execution_id:
+        payload["execution_id"] = execution_id
+    return Event(
+        signal="dispatch.skills.override",
+        payload=payload,
+        scope="node",
+    )
+
+
+@event_factory
 def FrontierSdkWorkerFailed(  # noqa: N802
     dispatch_id: str,
     thread_id: str,
@@ -349,6 +379,28 @@ def emit_sdk_skills_mounted(
             execution_id=execution_id,
         )
     )
+
+
+def emit_sdk_skills_tier_prune_overrides(
+    *,
+    dispatch_id: str,
+    thread_id: str,
+    resolved_model: str,
+    result: Any,
+    execution_id: str | None = None,
+) -> None:
+    """Publish one ``dispatch.skills.override`` per tier-prune restore in *result*."""
+    for slug, tier in result.tier_prune_overrides:
+        _emit(
+            DispatchSkillsOverride(
+                dispatch_id=dispatch_id,
+                thread_id=thread_id,
+                resolved_model=resolved_model,
+                slug=slug,
+                delegation_tier=tier,
+                execution_id=execution_id,
+            )
+        )
 
 
 def emit_sdk_worker_completed(

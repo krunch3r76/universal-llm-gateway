@@ -71,7 +71,8 @@ def sandbox_op_names(sandbox: str) -> str:
 OP_DOC: dict[str, tuple[str, str]] = {
     "read": (
         "(path, offset?, limit?, sections?, export?, chunk_cursor?, expected_read_sha256?)",
-        "read file (text or PDF/DOCX/ODT/EML/HTML); markdown/converted docs default to manifest",
+        "read file (text or PDF/DOCX/ODT/EML/HTML); markdown/converted docs default to "
+        "manifest — offset/limit windows need expected_read_sha256 from that manifest",
     ),
     "read_multi": (
         "(paths: list, sections?, export?, chunk_cursor?, expected_read_sha256?)",
@@ -190,12 +191,18 @@ PARAM_PURPOSE: dict[str, str] = {
     ),
     "size_only": "size-only list_sections flag for md_list",
     "sections": "batched section ids for document read expansion",
-    "export": "explicit full-document export on read/md_read",
+    "export": (
+        "sanctioned override: explicit whole-document export in bounded chunks; "
+        "continue with chunk_cursor"
+    ),
     "chunk_cursor": (
         "code-point cursor for chunked export or single-section chunk path "
         "(read, md_read, markdown read_section)"
     ),
-    "expected_read_sha256": "optional full-file hash precondition for reads",
+    "expected_read_sha256": (
+        "full-file hash precondition; required to open an offset/limit window on "
+        "markdown/converted documents (proof of prior md_list)"
+    ),
 }
 
 # unified op -> confusable params it actually consumes

@@ -96,14 +96,10 @@ def read_file_result(
             parameter=inapplicable[0],
             keys=inapplicable,
         )
-    if document and expected_read_sha256 and range_requested:
-        return param_not_applicable_error(
-            parameter="expected_read_sha256",
-            keys=["expected_read_sha256"],
-        )
     if (
         document
         and expected_read_sha256
+        and not range_requested
         and not sha256_hex_equal(read_sha256, expected_read_sha256)
     ):
         stale = _stale_read_root(

@@ -1,6 +1,6 @@
 ---
 name: skill-authoring-gate
-description: "Before writing or landing a skill body — refuse the write when it exceeds the byte ceiling, when a dated invariant is still in the body, or when the body is not trigger, refuse, steps, and falsifier."
+description: "Before writing or landing a skill body — refuse when a dated invariant is still in the body, or when the body is not trigger, refuse, steps, and falsifier. Large bodies: md_list gate / link out (¬ numeric byte ceiling rule)."
 trigger_match_terms: ["write a skill", "land a skill", "SKILL.md", "skill body", "dated invariant", "skill ceiling"]
 related_skills: ["lane-act-gates", "retrieval-before-authoring"]
 ---
@@ -15,15 +15,15 @@ About to write, amend, or land a `SKILL.md` under `cursor-plugins/ulg-ecosystem/
 
 ## Refuse
 
-- Refuse a new skill body over 4096 bytes, or any write that grows a body already over 4096 bytes (legacy: bytes_after ≤ bytes_before may land).
+- Refuse a skill body that should be split but was pasted whole without `md_list` / link-out navigation (¬ a fixed byte ceiling).
 - Land a numbered invariant that carries a bind date.
 - Land a BINDING section, seat map, or checklist as the body.
 - Treat "keep it short" as the gate.
 
 ## Steps
 
-1. **Ceiling at the write.** Count bytes before and after. New body: refuse if after > 4096. Legacy body already > 4096: refuse only if after > before.
-   Falsifier: landed growth on a legacy body, or any new body over 4096. Specimen: a:39282 cdp-operator-proxy counter drift.
+1. **Size at the write.** Oversized skill prose must use `md_list` then section `md_read`, or link out to annex/sidecar paths — refuse monolithic paste that bypasses that gate.
+   Falsifier: a new skill lands as one unreadable blob with no section manifest. Specimen: a:39282 cdp-operator-proxy counter drift (historical byte rule retired 2026-11-10).
 
 2. **Dated invariant is a decision.** A numbered line (`1.` …) that also carries a bind date (`YYYY-MM-DD`, `BINDING — operator`, or `Operator-ratified`) is minted as `decision:<slug>` before the write. The skill keeps one line naming that decision and one specimen line. The bind's prose does not remain.
    Falsifier: the landed body still has a numbered invariant and a bind date on the same line. Specimen: invariant 40, operator 2026-08-20, agent-bus:9501.
@@ -37,6 +37,6 @@ About to write, amend, or land a `SKILL.md` under `cursor-plugins/ulg-ecosystem/
 
 ## Falsifier
 
-This body failed to bind if a skill over 4096 bytes landed, a dated numbered invariant remains in a skill, or a numbered-invariant section without per-step falsifiers was accepted as procedure.
+This body failed to bind if a skill lands without md_list/link-out navigation where sections exist, a dated numbered invariant remains in a skill, or a numbered-invariant section without per-step falsifiers was accepted as procedure.
 
 Applied at authoring to `cdp-operator-proxy/SKILL.md` (66646 bytes, 648 lines). A procedure line is a line containing `Falsifier:` that is not a numbered invariant carrying a bind date. That count is 15. Numbered invariants: 40. Of those, 1 carries a bind date (item 40) and becomes a `decision:`. The other 39 are not procedure. Step 1 refuses the write, so those 15 lines do not land.

@@ -73,6 +73,7 @@ class TeamHandoffBody(BaseModel):
     tags: list[str] | None = None
     caller_agent: str | None = None
     bus_lifecycle: Literal["persistent", "ephemeral"] | None = None
+    skills: list[str] | None = None
 
 
 @team_router.post("/handoff", status_code=200, response_model=None)
@@ -320,6 +321,21 @@ async def team_handoff(
             exc.reason,
         )
         return JSONResponse(status_code=exc.status_code, content=exc.to_dict())
+    except Exception as exc:
+        from implement_admission.skill_catalog_resolver import SkillCatalogResolveError
+
+        if not isinstance(exc, SkillCatalogResolveError):
+            raise
+        return JSONResponse(
+            status_code=422,
+            content=FrontierEndpointError(
+                request_id=request_id,
+                field="skills",
+                reason=str(exc),
+                status_code=422,
+                code="skills_handoff_unsupported",
+            ).to_dict(),
+        )
 
     return assemble_handoff_result(
         request_id=request_id,

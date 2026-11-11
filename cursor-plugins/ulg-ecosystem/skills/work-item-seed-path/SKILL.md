@@ -400,7 +400,7 @@ drop list — the command stays punch-then-spawn.
 |---|---|
 | Fable answer on disk, no `derived_from` | S5 attach ≺ G1 skip claim |
 | Spawn conductor before S4a | S4a first |
-| Rewrite `/work-item-seed` into a liaison drop-list | Seed stays spawn; conductor fault → operator names the lane to the sitting liaison |
+| Rewrite `/work-item-seed` into an impresario drop-list | Seed stays spawn; conductor fault → operator names the lane to the sitting impresario |
 | Halt S4a until Fable harvest | Mode B = Fable-before-S4b; identity always fires |
 | Feature vs bug as two workflows | One path; kind attribute |
 | Copy rich-seed field lists into this skill | Point `/todo` + rich-seed decision |

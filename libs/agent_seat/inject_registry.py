@@ -364,12 +364,9 @@ def _fetch_registry_entry(
 
 
 def _index_entry(slug: str, entity_id: str) -> str:
-    from agent_seat.body_injection import skill_use_instruction
+    from implement_admission.skill_delivery_channels import render_skill_entity_pointer
 
-    return (
-        f"\n\n<!-- injected-index:{slug} entity_id={entity_id} -->"
-        f"\n- `{slug}` — {skill_use_instruction(slug)}"
-    )
+    return render_skill_entity_pointer(slug, entity_id, index_marker=True)
 
 
 def _pack_tiered_bodies(

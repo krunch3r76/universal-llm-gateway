@@ -510,6 +510,13 @@ async def dispatch_cdp_generate(
         model=model,
         request_id=request_id,
     )
+    from .claude_code_dispatch_gate import reject_claude_code_dispatch_if_prohibited
+
+    reject_claude_code_dispatch_if_prohibited(
+        request_id=request_id,
+        claude_surface=getattr(body, "claude_surface", None),
+        model=model,
+    )
     raw_job = getattr(body, "job", None)
     contract = raw_job.strip() if isinstance(raw_job, str) and raw_job.strip() else None
     if contract in {"implement", "wrap"}:

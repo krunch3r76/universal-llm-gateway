@@ -30,6 +30,13 @@ _ID_FORMAT_HINT = (
     "Call md_list to enumerate ids."
 )
 
+_WINDOW_GATE_NEXT = (
+    "Markdown/document windows need expected_read_sha256=<read_sha256 from this "
+    "manifest> (proof you listed first). Or read named sections (md_read "
+    "section=/sections=), or pass export=true (sanctioned whole-document override, "
+    "chunked via chunk_cursor)."
+)
+
 _HEADING_RE = re.compile(r"^(#{1,6})[ \t]+(.+?)[ \t]*#*[ \t]*$")
 
 
@@ -931,12 +938,33 @@ def resolve_document_read(
         )
 
     if range_requested:
-        if expected_read_sha256:
-            return param_not_applicable_error(parameter="expected_read_sha256")
+        if not expected_read_sha256:
+            manifest = build_document_manifest(
+                path=path,
+                sandbox=sandbox,
+                text=text,
+                read_sha256=read_sha256,
+            )
+            manifest["window_gated"] = True
+            manifest["window_requested"] = {"offset": offset, "limit": limit}
+            manifest["_next"] = _WINDOW_GATE_NEXT
+            return finalize_sparse_document_payload(manifest)
+        if not sha256_hex_equal(read_sha256, expected_read_sha256):
+            return finalize_sparse_document_payload(
+                {
+                    "ok": False,
+                    "outcome": "stale_handle",
+                    "read_sha256": read_sha256,
+                    "expected_read_sha256": expected_read_sha256,
+                    "selection": "window",
+                    "path": path,
+                    "sandbox": sandbox,
+                }
+            )
         from tools._line_range import apply_line_range
 
         window, meta = apply_line_range(text, offset, limit)
-        out = {
+        out: dict[str, Any] = {
             "content": window,
             "path": path,
             "sandbox": sandbox,
@@ -944,7 +972,7 @@ def resolve_document_read(
             "read_sha256": read_sha256,
         }
         out.update(meta)
-        return out
+        return finalize_sparse_document_payload(out)
     manifest = build_document_manifest(
         path=path,
         sandbox=sandbox,
