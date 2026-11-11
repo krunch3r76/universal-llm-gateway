@@ -49,6 +49,7 @@ def mint_pending_validation_for_intent(
     *,
     code_ref: str = "HEAD",
     row_id: str | None = None,
+    code_ref_master_relation: str | None = None,
     advance_intent_fn=None,
 ) -> str:
     """Mint a pending validation keyed to ``code_ref``, or reuse a compatible one.
@@ -129,23 +130,47 @@ def mint_pending_validation_for_intent(
                     conn=conn,
                 )
         validation_id = str(uuid.uuid4())
-        conn.execute(
-            """
-            INSERT INTO propagation_validation (
-              validation_id, row_id, service, code_ref, restart_intent,
-              pre_observation, outcome, created_at, updated_at
-            ) VALUES (?, NULL, ?, ?, ?, ?, 'pending', ?, ?)
-            """,
-            (
-                validation_id,
-                service,
-                resolved,
-                str(intent.intent_id),
-                json.dumps(pre_obs),
-                now,
-                now,
-            ),
-        )
+        cols = {
+            row[1] for row in conn.execute("PRAGMA table_info(propagation_validation)")
+        }
+        if "code_ref_master_relation" in cols:
+            conn.execute(
+                """
+                INSERT INTO propagation_validation (
+                  validation_id, row_id, service, code_ref, restart_intent,
+                  code_ref_master_relation, pre_observation, outcome,
+                  created_at, updated_at
+                ) VALUES (?, NULL, ?, ?, ?, ?, ?, 'pending', ?, ?)
+                """,
+                (
+                    validation_id,
+                    service,
+                    resolved,
+                    str(intent.intent_id),
+                    code_ref_master_relation,
+                    json.dumps(pre_obs),
+                    now,
+                    now,
+                ),
+            )
+        else:
+            conn.execute(
+                """
+                INSERT INTO propagation_validation (
+                  validation_id, row_id, service, code_ref, restart_intent,
+                  pre_observation, outcome, created_at, updated_at
+                ) VALUES (?, NULL, ?, ?, ?, ?, 'pending', ?, ?)
+                """,
+                (
+                    validation_id,
+                    service,
+                    resolved,
+                    str(intent.intent_id),
+                    json.dumps(pre_obs),
+                    now,
+                    now,
+                ),
+            )
         conn.commit()
         return validation_id
     finally:

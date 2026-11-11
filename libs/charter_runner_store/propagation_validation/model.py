@@ -28,6 +28,7 @@ class PropagationValidation:
     post_observation: dict[str, Any] | None
     observed_code_version: str | None
     code_ref_relation: str | None
+    code_ref_master_relation: str | None
     identity_measurement: str | None
     outcome: str
     failure_reason: str | None
@@ -59,6 +60,11 @@ def from_row(row) -> PropagationValidation:
         post_observation=parse(row["post_observation"]),
         observed_code_version=row["observed_code_version"],
         code_ref_relation=row["code_ref_relation"],
+        code_ref_master_relation=(
+            row["code_ref_master_relation"]
+            if "code_ref_master_relation" in keys
+            else None
+        ),
         identity_measurement=row["identity_measurement"],
         outcome=str(row["outcome"]),
         failure_reason=row["failure_reason"],

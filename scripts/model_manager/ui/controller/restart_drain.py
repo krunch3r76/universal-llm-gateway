@@ -55,6 +55,23 @@ _drain_deferred_result = drain_deferred_result
 
 logger = get_logger(__name__)
 
+
+def _drain_deferred_with_activation(
+    intent: Any,
+    validation_id: str,
+    **kwargs: Any,
+) -> dict[str, Any]:
+    from charter_runner_store.propagation_validation import get_validation
+
+    row = get_validation(validation_id)
+    relation = row.code_ref_master_relation if row is not None else None
+    return drain_deferred_result(
+        intent,
+        activation_validation_id=validation_id,
+        code_ref_master_relation=relation,
+        **kwargs,
+    )
+
 # Vocabulary aligned with the MCP drain contract (middleware/drain.py).
 RETRY_AFTER_S = 30
 _PROBE_TIMEOUT_S = 5.0
@@ -1190,10 +1207,10 @@ async def run_gated_stargate_idle_drain_supervised(
             validation_id = mint_activation_validation(
                 store, existing, code_ref=code_ref, row_id=row_id
             )
-            deferred = drain_deferred_result(
+            deferred = _drain_deferred_with_activation(
                 existing,
+                validation_id,
                 reason="drain already in progress for this service",
-                activation_validation_id=validation_id,
             )
             deferred["cdp_legs_orphaned"] = orphaned
             return deferred
@@ -1220,7 +1237,7 @@ async def run_gated_stargate_idle_drain_supervised(
         raise
     await open_service_window(store, "stargate", reason=f"stargate idle drain {action}")
     _spawn_supervised(gate, "stargate", supervisor, intent)
-    result = drain_deferred_result(intent, activation_validation_id=validation_id)
+    result = _drain_deferred_with_activation(intent, validation_id)
     result["cdp_legs_orphaned"] = orphaned
     result["idle_ceiling_s"] = supervisor.deadline_s
     result["guidance"] = (
@@ -1356,10 +1373,10 @@ async def run_gated_self_holder_drain_supervised(
             validation_id = mint_activation_validation(
                 store, existing, code_ref=code_ref, row_id=row_id
             )
-            return drain_deferred_result(
+            return _drain_deferred_with_activation(
                 existing,
+                validation_id,
                 reason="drain already in progress for this service",
-                activation_validation_id=validation_id,
             )
         return outcome.to_result()
 
@@ -1382,7 +1399,7 @@ async def run_gated_self_holder_drain_supervised(
         raise
     await open_service_window(store, service, reason=f"self-holder drain {action}")
     _spawn_supervised(gate, service, supervisor, intent)
-    return drain_deferred_result(intent, activation_validation_id=validation_id)
+    return _drain_deferred_with_activation(intent, validation_id)
 
 
 async def run_gated_drain_supervised(
@@ -1417,10 +1434,10 @@ async def run_gated_drain_supervised(
             validation_id = mint_activation_validation(
                 store, existing, code_ref=code_ref, row_id=row_id
             )
-            return drain_deferred_result(
+            return _drain_deferred_with_activation(
                 existing,
+                validation_id,
                 reason="drain already in progress for this service",
-                activation_validation_id=validation_id,
             )
         return outcome.to_result()
 
@@ -1446,7 +1463,7 @@ async def run_gated_drain_supervised(
         raise
     await open_service_window(store, service, reason=f"git-worker drain {action}")
     _spawn_supervised(gate, service, supervisor, intent)
-    return drain_deferred_result(intent, activation_validation_id=validation_id)
+    return _drain_deferred_with_activation(intent, validation_id)
 
 
 async def run_gated_drain_supervised_blocking(

@@ -21,6 +21,7 @@ from .queries import (
     pending_unbound_validation_for_ref,
     pending_validation_for_row,
     pending_validations,
+    pending_validations_for_intent,
 )
 from .records import advance_validation, record_validation, set_kill_boundary
 
@@ -38,6 +39,7 @@ __all__ = [
     "pending_unbound_validation_for_ref",
     "pending_validation_for_row",
     "pending_validations",
+    "pending_validations_for_intent",
     "discharge_intents_without_validation",
     "reconcile_pending_validations_at_boot",
     "reconcile_pending_validations_for_terminal_intents",

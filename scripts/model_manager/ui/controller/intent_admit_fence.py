@@ -14,7 +14,14 @@ from collections.abc import Callable
 from typing import Any
 
 from .restart_intent_expiry import intent_expired
-from .restart_intent_states import STATUS_EXPIRED, STATUS_PENDING_DRAIN
+from .restart_intent_states import (
+    STATUS_CANCELLED,
+    STATUS_DRAINED_RESTARTING,
+    STATUS_EXPIRED,
+    STATUS_FAILED,
+    STATUS_FORCE_REQUESTED,
+    STATUS_PENDING_DRAIN,
+)
 
 
 def queue_kw_for_pending_intent(
@@ -74,7 +81,9 @@ def _expired_row_needs_in_process_release(row: Any) -> bool:
     if row is None:
         return False
     status = getattr(row, "status", None)
-    if status == STATUS_EXPIRED:
+    if status in (STATUS_DRAINED_RESTARTING, STATUS_FORCE_REQUESTED):
+        return False
+    if status in (STATUS_EXPIRED, STATUS_CANCELLED, STATUS_FAILED):
         return True
     if status == STATUS_PENDING_DRAIN and intent_expired(row):
         return True
@@ -95,7 +104,9 @@ def release_expired_arm(
     except Exception:
         log.warning("release_expired_arm: drain_state failed", exc_info=True)
         return False
-    if not (state.get("draining") or state.get("armed")):
+    if not state.get("armed"):
+        return False
+    if state.get("draining"):
         return False
     sid = state.get("intent_id")
     if not isinstance(sid, str) or not sid.strip():

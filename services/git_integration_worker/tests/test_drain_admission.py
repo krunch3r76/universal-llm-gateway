@@ -208,6 +208,48 @@ def test_cancel_drain_route(events: SimpleNamespace) -> None:
     assert resp.json()["draining"] is False
 
 
+@pytest.mark.asyncio
+async def test_cancel_restart_intent_returns_after_release_before_promote(
+    events: SimpleNamespace, monkeypatch
+) -> None:
+    """cancel-drain must return right after release_drain, not after fence promote."""
+    import asyncio
+    import time
+
+    from services.git_integration_worker.routes import cursor_sdk as cursor_sdk_routes
+
+    app = create_app()
+    controller = _controller()
+    app.state.admission_controller = controller
+    epoch = controller.next_epoch()
+    controller.begin_drain(reason="r", intent_id="i-fast", drain_epoch=epoch)
+
+    scheduled: list[str] = []
+    original_create = WorkAdmissionController.create_tracked_task
+
+    def defer_promote(self, coro, *, op_id: str):
+        scheduled.append(op_id)
+        coro.close()
+        return original_create(self, asyncio.sleep(0), op_id=f"noop-{op_id}")
+
+    monkeypatch.setattr(
+        WorkAdmissionController,
+        "create_tracked_task",
+        defer_promote,
+    )
+    client = TestClient(app)
+    t0 = time.monotonic()
+    resp = client.post(
+        "/api/v1/git/admin/cancel-drain",
+        json={"intent_id": "i-fast", "drain_epoch": epoch},
+    )
+    elapsed = time.monotonic() - t0
+    assert resp.status_code == 200
+    assert resp.json()["draining"] is False
+    assert elapsed < 1.0
+    assert scheduled == ["cancel-drain-promote-i-fast"]
+
+
 # --------------------------------------------------------------------- AC-1
 def test_admit_rejected_when_draining(events: SimpleNamespace) -> None:
     """Mutating routes 503 while draining; read-only routes still serve 200."""

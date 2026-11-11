@@ -351,9 +351,15 @@ async def cancel_drain(req: CancelDrainRequest, request: Request) -> dict[str, A
             promote_queued_when_fence_lifts,
         )
 
-        await promote_queued_when_fence_lifts(
-            controller=controller,
-            request=request,
-            released=True,
+        async def _promote_after_cancel_drain() -> None:
+            await promote_queued_when_fence_lifts(
+                controller=controller,
+                request=request,
+                released=True,
+            )
+
+        controller.create_tracked_task(
+            _promote_after_cancel_drain(),
+            op_id=f"cancel-drain-promote-{req.intent_id}",
         )
     return state
