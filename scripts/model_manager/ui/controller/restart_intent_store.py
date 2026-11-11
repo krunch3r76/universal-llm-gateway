@@ -563,13 +563,23 @@ class RestartIntentStore:
             try:
                 matched = conn.execute(
                     """
-                    SELECT status FROM restart_intents
+                    SELECT status, expires_at, armed_at, wait_for_boundary
+                    FROM restart_intents
                     WHERE intent_id=? AND status IN (?, ?)
                     """,
                     (intent_id, STATUS_PENDING_DRAIN, STATUS_TIMEOUT),
                 ).fetchone()
                 if matched is None:
                     return False
+                if str(matched["status"]) == STATUS_PENDING_DRAIN:
+                    from .restart_intent_expiry import intent_expired
+
+                    probe = conn.execute(
+                        "SELECT * FROM restart_intents WHERE intent_id=?",
+                        (intent_id,),
+                    ).fetchone()
+                    if probe is not None and intent_expired(_row_to_intent(probe)):
+                        return False
                 changed = append_kill_commit(conn, intent_id)
             except sqlite3.IntegrityError:
                 return False

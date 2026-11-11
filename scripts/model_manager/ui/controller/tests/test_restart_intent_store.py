@@ -181,3 +181,30 @@ def test_arm_not_applicable_is_atomic(tmp_path) -> None:
     assert got.status == STATUS_COMPLETED
     assert got.kill_boundary_at == "2026-01-01T00:00:00+00:00"
     assert got.status_reason == "activation_not_applicable:once"
+
+
+def test_claim_kill_cas_rejects_when_expires_at_passed(tmp_path) -> None:
+    store = RestartIntentStore(db_path=tmp_path / "restart-intents.db")
+    intent = store.create_intent(
+        service="git_integration_worker",
+        action="restart",
+        deadline_at="d",
+        reason="r",
+    )
+    store.set_drain_epoch(
+        intent.intent_id,
+        drain_epoch=2,
+        worker_id="w",
+        worker_started_at="t0",
+    )
+    past = (datetime.now(UTC) - timedelta(seconds=5)).isoformat()
+    store._update(intent.intent_id, expires_at=past)
+    assert not store.claim_kill(
+        intent.intent_id,
+        worker_id="w",
+        worker_started_at="t0",
+        drain_epoch=2,
+    )
+    got = store.get(intent.intent_id)
+    assert got is not None
+    assert got.status == STATUS_PENDING_DRAIN

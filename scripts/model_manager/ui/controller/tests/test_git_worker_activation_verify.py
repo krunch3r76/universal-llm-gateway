@@ -778,3 +778,106 @@ def test_resolve_validation_after_lifecycle_skips_giw(tmp_path, monkeypatch) -> 
             )
         )
     assert get_validation(validation_id).outcome == "pending"
+
+
+def test_resolve_closes_all_pending_rows_for_the_same_intent(
+    tmp_path, monkeypatch
+) -> None:
+    """Every pending validation for one intent must close on a matching probe tick."""
+    from charter_runner_store.propagation_validation.records import record_validation
+
+    monkeypatch.setenv("CHARTER_RUNNER_DATA_DIR", str(tmp_path))
+    store = RestartIntentStore(db_path=tmp_path / "intents.db")
+    intent = store.create_intent(
+        service="mcp",
+        action="sync_restart",
+        deadline_at="d",
+        reason="r",
+    )
+    store.advance_if_status(
+        intent.intent_id,
+        from_status="pending_drain",
+        to_status="completed",
+        reason="done",
+    )
+    vid_a = record_validation(
+        service="mcp",
+        code_ref=_RESOLVABLE_CODE_REF,
+        restart_intent=intent.intent_id,
+        outcome="pending",
+    )
+    _alt_ref = "df65023ea1f02c2a514d27879b44754ee846d0e5"
+    vid_b = record_validation(
+        service="mcp",
+        code_ref=_alt_ref,
+        restart_intent=intent.intent_id,
+        outcome="pending",
+    )
+    reachable = {
+        "probe_reachable": True,
+        "code_version": _RESOLVABLE_CODE_REF,
+        "pid": 1,
+    }
+
+    def fake_probe(_service: str) -> dict[str, object]:
+        return reachable
+
+    with (
+        patch(
+            "services.git_integration_worker.relay.propagation_probe.probe_process_live",
+            side_effect=fake_probe,
+        ),
+        patch(
+            "deploy_identity.code_ref_relation.code_ref_relation_from_observed",
+            return_value="equal",
+        ),
+    ):
+        _run(
+            resolve_validation_after_lifecycle(
+                store, intent.intent_id, "mcp", idle_timeout_s=1.0
+            )
+        )
+    assert get_validation(vid_a).outcome == "validated"
+    assert get_validation(vid_b).outcome == "validated"
+
+
+def test_second_parent_merge_is_not_first_parent_and_relation_is_persisted(
+    tmp_path, monkeypatch
+) -> None:
+    from scripts.model_manager.ui.controller.restart_intent_consumer import (
+        drain_deferred_result,
+    )
+
+    _patch_master_resolve(monkeypatch)
+    monkeypatch.setenv("CHARTER_RUNNER_DATA_DIR", str(tmp_path / "ledger"))
+    monkeypatch.setattr(
+        "services.git_integration_worker.relay.propagation_probe.probe_process_live",
+        lambda _service: {"probe_reachable": False},
+    )
+    with (
+        patch(
+            "deploy_identity.code_ref_relation.code_ref_relation",
+            return_value="ancestor",
+        ),
+        patch(
+            "deploy_identity.code_ref_relation.code_ref_on_master_first_parent",
+            return_value=False,
+        ),
+    ):
+        store = RestartIntentStore(db_path=tmp_path / "intents.db")
+        intent = store.create_intent(
+            service="mcp",
+            action="sync_restart",
+            deadline_at="d",
+            reason="r",
+        )
+        validation_id = mint_activation_validation(store, intent, code_ref=_LANE_TIP)
+    row = get_validation(validation_id)
+    assert row is not None
+    assert row.code_ref_master_relation == "merge-second-parent"
+    envelope = drain_deferred_result(
+        intent,
+        activation_validation_id=validation_id,
+        code_ref_master_relation=row.code_ref_master_relation,
+    )
+    assert envelope["code_ref_master_relation"] == "merge-second-parent"

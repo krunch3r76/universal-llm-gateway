@@ -244,6 +244,7 @@ async def _resolve_and_select_endpoint(
                 "titles": verdict.get("titles"),
             }
         prior_fp = messages_fingerprint(surface) if app == "grok" else ""
+        prior_generating = bool(surface.get("generating")) if app == "grok" else None
         async with display_switch_lock(disp):
             if app == "grok" and str(endpoint.agent_id or "").strip():
                 cdp_pick = await select_grok_agent_async(disp, str(endpoint.agent_id))
@@ -254,6 +255,7 @@ async def _resolve_and_select_endpoint(
                         endpoint=endpoint,
                         expected_agent_id=str(endpoint.agent_id),
                         prior_message_fp=prior_fp,
+                        prior_generating=prior_generating,
                     )
                     surface = grok_wait["surface"]
                     verdict = grok_wait["verdict"]

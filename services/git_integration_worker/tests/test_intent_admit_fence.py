@@ -7,6 +7,7 @@ because the write-lease promoter would never rehome it.
 
 from __future__ import annotations
 
+import asyncio
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
@@ -19,7 +20,10 @@ from scripts.model_manager.ui.controller.intent_admit_fence import (
 )
 from scripts.model_manager.ui.controller.restart_intent_expiry import intent_expired
 from scripts.model_manager.ui.controller.restart_intent_states import (
+    STATUS_CANCELLED,
+    STATUS_DRAINED_RESTARTING,
     STATUS_EXPIRED,
+    STATUS_FAILED,
     STATUS_FORCE_REQUESTED,
     STATUS_PENDING_DRAIN,
 )
@@ -238,7 +242,7 @@ def test_release_expired_arm_terminal_expired_row() -> None:
 
         def drain_state(self) -> dict[str, object]:
             return {
-                "draining": True,
+                "draining": False,
                 "armed": True,
                 "intent_id": "intent-term",
                 "drain_epoch": 1,
@@ -253,6 +257,69 @@ def test_release_expired_arm_terminal_expired_row() -> None:
     controller = _Controller()
     assert release_expired_arm(controller, get_intent=lambda _sid: _Row())
     assert controller.released == [("intent-term", 1)]
+
+
+def test_release_expired_arm_does_not_release_while_draining() -> None:
+    class _Row:
+        status = STATUS_PENDING_DRAIN
+        expires_at = (datetime.now(UTC) - timedelta(seconds=30)).isoformat()
+        armed_at = datetime.now(UTC).isoformat()
+
+    class _Controller:
+        def drain_state(self) -> dict[str, object]:
+            return {
+                "draining": True,
+                "armed": True,
+                "intent_id": "live",
+                "drain_epoch": 1,
+            }
+
+        def release_drain(self, **_kwargs: object) -> dict[str, object]:
+            raise AssertionError("must not release while draining")
+
+    assert not release_expired_arm(_Controller(), get_intent=lambda _sid: _Row())
+
+
+def test_release_arm_on_cancelled_or_failed_intent_not_on_drained_restarting() -> None:
+    class _Cancelled:
+        status = STATUS_CANCELLED
+
+    class _Failed:
+        status = STATUS_FAILED
+
+    class _Drained:
+        status = STATUS_DRAINED_RESTARTING
+
+    class _Force:
+        status = STATUS_FORCE_REQUESTED
+
+    class _Controller:
+        def __init__(self) -> None:
+            self.released: list[tuple[str, int]] = []
+
+        def drain_state(self) -> dict[str, object]:
+            return {
+                "draining": False,
+                "armed": True,
+                "intent_id": "i",
+                "drain_epoch": 3,
+            }
+
+        def release_drain(
+            self, *, intent_id: str, drain_epoch: int
+        ) -> dict[str, object]:
+            self.released.append((intent_id, drain_epoch))
+            return {}
+
+    for row in (_Cancelled(), _Failed()):
+        ctl = _Controller()
+        assert release_expired_arm(ctl, get_intent=lambda _sid, r=row: r)
+        assert ctl.released == [("i", 3)]
+
+    for row in (_Drained(), _Force()):
+        ctl = _Controller()
+        assert not release_expired_arm(ctl, get_intent=lambda _sid, r=row: r)
+        assert ctl.released == []
 
 
 def test_release_expired_arm_skips_pending_unexpired() -> None:
@@ -302,7 +369,7 @@ def test_release_expired_arm_loads_controller_intent_id_only() -> None:
     class _Controller:
         def drain_state(self) -> dict[str, object]:
             return {
-                "draining": True,
+                "draining": False,
                 "armed": True,
                 "intent_id": "intent-b",
                 "drain_epoch": 1,
@@ -484,6 +551,11 @@ async def test_cancel_promotes_fence_queue_on_a_free_lease(
     await cancel_drain(
         CancelDrainRequest(intent_id="intent-cancel", drain_epoch=epoch),
         request,  # type: ignore[arg-type]
+    )
+    await route_mod.promote_queued_when_fence_lifts(
+        controller=controller,
+        request=request,
+        released=True,
     )
     assert controller.is_armed() is False
     assert _status(ledger, queued_req.dispatch_id) == "admitted"

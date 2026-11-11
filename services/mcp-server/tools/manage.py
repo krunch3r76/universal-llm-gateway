@@ -781,6 +781,8 @@ def register_manage_tools(mcp: FastMCP) -> None:
             }
             else _DEFAULT_TIMEOUT
         )
+        if action == "cancel_restart_intent":
+            sock_timeout = 10.0
 
         raw = _call_manage(
             {"jsonrpc": "2.0", "method": action, "params": params, "id": 1},
