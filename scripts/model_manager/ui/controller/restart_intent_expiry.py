@@ -153,7 +153,7 @@ async def giw_cancel_drain(intent_id: str, drain_epoch: int) -> dict[str, Any]:
 
     from .restart_drain import GIT_INTEGRATION_WORKER_URL
 
-    async with make_async_client(GIT_INTEGRATION_WORKER_URL, timeout=30.0) as client:
+    async with make_async_client(GIT_INTEGRATION_WORKER_URL, timeout=10.0) as client:
         resp = await client.post(
             "/api/v1/git/admin/cancel-drain",
             json={"intent_id": intent_id, "drain_epoch": drain_epoch},

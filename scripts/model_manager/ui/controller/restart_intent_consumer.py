@@ -127,6 +127,7 @@ def drain_deferred_result(
     *,
     reason: str | None = None,
     activation_validation_id: str | None = None,
+    code_ref_master_relation: str | None = None,
 ) -> dict[str, Any]:
     """The 202 envelope for a deferred, drain-supervised git-worker restart."""
     projected = project_restart_intent_consumer(intent)
@@ -172,6 +173,8 @@ def drain_deferred_result(
     }
     if activation_validation_id is not None:
         result["activation_validation_id"] = activation_validation_id
+    if code_ref_master_relation is not None:
+        result["code_ref_master_relation"] = code_ref_master_relation
     return result
 
 

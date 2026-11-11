@@ -66,6 +66,27 @@ def latest_validation_for_intent(
             db.close()
 
 
+def pending_validations_for_intent(
+    restart_intent: str, *, conn=None
+) -> list[PropagationValidation]:
+    """Return every pending validation row for one restart intent id."""
+    own_conn = conn is None
+    db = conn or open_ledger_db()
+    try:
+        rows = db.execute(
+            """
+            SELECT * FROM propagation_validation
+            WHERE restart_intent=? AND outcome='pending'
+            ORDER BY created_at
+            """,
+            (restart_intent,),
+        ).fetchall()
+        return [from_row(row) for row in rows]
+    finally:
+        if own_conn:
+            db.close()
+
+
 def pending_validations(*, conn=None) -> list[PropagationValidation]:
     """List all pending validation rows ordered by creation time."""
     own_conn = conn is None

@@ -127,6 +127,39 @@ def code_ref_relation(code_ref: str, observed: str) -> CodeRefRelation:
     return "unrelated"
 
 
+def code_ref_on_master_first_parent(code_ref: str) -> bool:
+    """True when ``code_ref`` is on ``refs/heads/master``'s first-parent line."""
+    resolved = resolve_commit_sha(code_ref)
+    master = resolve_commit_sha("refs/heads/master")
+    if resolved is None or master is None:
+        return False
+    if resolved == master:
+        return True
+    if not _git_is_ancestor(resolved, master):
+        return False
+    try:
+        root = get_workspace_root()
+    except RuntimeError:
+        return False
+    proc = subprocess.run(
+        [
+            "git",
+            "-C",
+            str(root),
+            "rev-list",
+            "--first-parent",
+            master,
+        ],
+        capture_output=True,
+        text=True,
+        timeout=5.0,
+    )
+    if proc.returncode != 0:
+        return False
+    first_parent_line = {line.strip().lower() for line in proc.stdout.splitlines() if line.strip()}
+    return resolved in first_parent_line
+
+
 def code_ref_satisfied(code_ref: str, observed: str) -> bool:
     """True when at least the requested code is live (equal or ancestor)."""
     return code_ref_relation(code_ref, observed) in {"equal", "ancestor"}
@@ -144,6 +177,7 @@ def code_ref_relation_from_observed(
 
 __all__ = [
     "CodeRefRelation",
+    "code_ref_on_master_first_parent",
     "code_ref_relation",
     "code_ref_relation_from_observed",
     "code_ref_satisfied",

@@ -82,7 +82,11 @@ def code_ref_on_master(resolved_code_ref: str) -> bool:
 
 def code_ref_master_relation(code_ref: str, *, service: str) -> str:
     """How ``code_ref`` relates to the hub ``refs/heads/master`` tip after mint resolve."""
-    from deploy_identity.code_ref_relation import code_ref_relation, resolve_commit_sha
+    from deploy_identity.code_ref_relation import (
+        code_ref_on_master_first_parent,
+        code_ref_relation,
+        resolve_commit_sha,
+    )
 
     try:
         resolved = _activation_mint_code_ref(code_ref, service=service)
@@ -91,7 +95,12 @@ def code_ref_master_relation(code_ref: str, *, service: str) -> str:
     master = resolve_commit_sha("refs/heads/master")
     if master is None:
         return "unknown"
-    return code_ref_relation(resolved, master)
+    relation = code_ref_relation(resolved, master)
+    if relation in {"equal", "ancestor"} and not code_ref_on_master_first_parent(
+        resolved
+    ):
+        return "merge-second-parent"
+    return relation
 
 
 def mint_activation_validation(
@@ -123,10 +132,12 @@ def mint_activation_validation(
             intent.service,
             intent.intent_id,
         )
+    master_relation = code_ref_master_relation(code_ref, service=str(intent.service))
     return mint_pending_validation_for_intent(
         intent,
         code_ref=resolved_ref,
         row_id=row_id,
+        code_ref_master_relation=master_relation,
         advance_intent_fn=store.advance_if_status,
     )
 
@@ -485,9 +496,9 @@ async def resolve_validation_after_lifecycle(
     """Probe and close a pending validation after generic supervisor lifecycle (non-GIW)."""
     if service == _GIW_SERVICE:
         return
-    validation = latest_validation_for_intent(intent_id)
-    if validation is None or validation.outcome != "pending":
-        return
+    from charter_runner_store.propagation_validation.queries import (
+        pending_validations_for_intent,
+    )
     from deploy_identity.code_ref_relation import code_ref_relation_from_observed
 
     from services.git_integration_worker.relay.propagation_probe import (
@@ -495,32 +506,38 @@ async def resolve_validation_after_lifecycle(
     )
 
     deadline = time.monotonic() + idle_timeout_s
-    validation_id = validation.validation_id
     while time.monotonic() < deadline:
-        validation = get_validation(validation_id)
-        if validation is None or validation.outcome != "pending":
+        pending = pending_validations_for_intent(intent_id)
+        if not pending:
             return
         payload = probe_process_live(service)
         if payload is not None:
             observed = payload.get("code_version")
-            relation = code_ref_relation_from_observed(validation.code_ref, observed)
-            if relation in {"equal", "ancestor"}:
-                if advance_validation(
-                    validation_id,
-                    outcome="validated",
-                    post_observation=payload,
-                    observed_code_version=str(observed) if observed else None,
-                    code_ref_relation=relation,
-                    identity_measurement="measured",
-                ):
-                    publish_activation_event(
-                        ManageRestartActivationValidated(
-                            intent_id=intent_id,
-                            validation_id=validation_id,
-                            code_ref_relation=relation,
-                            identity_measurement="measured",
+            for validation in pending:
+                if validation.outcome != "pending":
+                    continue
+                relation = code_ref_relation_from_observed(
+                    validation.code_ref, observed
+                )
+                if relation in {"equal", "ancestor"}:
+                    if advance_validation(
+                        validation.validation_id,
+                        outcome="validated",
+                        post_observation=payload,
+                        observed_code_version=str(observed) if observed else None,
+                        code_ref_relation=relation,
+                        identity_measurement="measured",
+                    ):
+                        publish_activation_event(
+                            ManageRestartActivationValidated(
+                                intent_id=intent_id,
+                                validation_id=validation.validation_id,
+                                code_ref_relation=relation,
+                                identity_measurement="measured",
+                            )
                         )
-                    )
+            pending = pending_validations_for_intent(intent_id)
+            if not pending:
                 return
         await asyncio.sleep(0.5)
 

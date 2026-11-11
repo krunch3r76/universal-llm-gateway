@@ -23,7 +23,7 @@ globs:
 **Invariant**: ∀ files in `docs/architecture/*.md`: written ONLY via:
 
 1. **`/overhaul {service_dir}`** — runs `doc-generate` (extract docstrings → draft → review → merge), or
-2. **Stamped targeted refresh** — `<!-- GENERATED:START method=targeted-refresh … -->` blocks grounded in current source via `libs/doc_extraction` inventory projection (same docstring/signature corpus as doc-generate; ¬ unsourced prose).
+2. **Stamped targeted refresh** — `<!-- GENERATED:START method=targeted-refresh … -->` blocks grounded in current source via `libs/doc_extraction` inventory projection (same docstring/signature corpus as doc-generate; ¬ unsourced prose). Carried narrative (e.g. gateway §1–§10) must be wrapped `<!-- AUTHORED carried_from=… -->`; stamps list `regenerated=…` and coverage as **rows rendered / files found** (never `mod_n/mod_n` alone).
 
 Ad-hoc direct edits — even accurate ones — bypass this pipeline and create:
 - Docs not grounded in source docstrings (will drift silently)
@@ -38,11 +38,13 @@ Ad-hoc direct edits — even accurate ones — bypass this pipeline and create:
 **Targeted refresh:** prefer updating generating source (docstrings and/or `libs/doc_extraction/targeted_refresh.py`) then re-running:
 
 ```bash
-"$HOME/.venvs/universal/bin/python" libs/doc_extraction/targeted_refresh.py gateway "$PWD"
-"$HOME/.venvs/universal/bin/python" libs/doc_extraction/targeted_refresh.py routing "$PWD"
+"$HOME/.venvs/universal/bin/python" libs/doc_extraction/targeted_refresh.py gateway "$PWD" \
+  --refreshed-by <lane-or-seat>
+"$HOME/.venvs/universal/bin/python" libs/doc_extraction/targeted_refresh.py routing "$PWD" \
+  --refreshed-by <lane-or-seat>
 ```
 
-Stamp must include `method=targeted-refresh`, `source_commit`, `refreshed_by`, and coverage counts. Direct edits to generated bodies are last-resort only.
+`--refreshed-by` is required (exit 2 if omitted). Stamp must include `method=targeted-refresh`, `source_commit`, `refreshed_by`, `regenerated=…`, and coverage counts (`modules=` or `coverage=` as rows/files). Direct edits to generated bodies are last-resort only.
 
 If `/doc-check` finds staleness in a subsystem doc, note it in the commit body ("docs/architecture/{file}.md may need updating via /overhaul or targeted refresh") but do NOT edit the file without one of the paths above.
 
