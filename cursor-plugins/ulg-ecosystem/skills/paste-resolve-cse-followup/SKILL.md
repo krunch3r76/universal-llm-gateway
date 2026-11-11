@@ -1,11 +1,11 @@
 ---
 name: paste-resolve-cse-followup
-description: "Exportable Maestro/Grok finalize recipe after cursor-paste-resolve: cse_session followup with prompt_text (not box paths), HTTP 417 shorten-retry, continuous agent_bus wait over cron bus-watch."
+description: "Exportable impresario/Grok finalize recipe after cursor-paste-resolve: cse_session followup with prompt_text (not box paths), HTTP 417 shorten-retry, continuous agent_bus wait over cron bus-watch."
 lifecycle: active
 trigger_match_terms:
   - paste-resolve followup
   - cse_session followup
-  - maestro finalize
+  - impresario finalize
   - grok paste-resolve
   - no_prompt followup
   - HTTP 417 followup
@@ -18,7 +18,7 @@ related_skills:
 
 # Paste-resolve CSE followup (finalize seats)
 
-Genre: thin exportable recipe. Reader = Maestro / Grok (or any host) that **finalizes** after `pipeline_id=cursor-paste-resolve` admits `cursor_sdk` — not the Cursor implementer tab.
+Genre: thin exportable recipe. Reader = impresario / Grok (or any host) that **finalizes** after `pipeline_id=cursor-paste-resolve` admits `cursor_sdk` — not the Cursor implementer tab.
 
 Parent entry: Use `cowork-paste-resolve` for compose, launch, and watcher arm. This slug covers **optional warm CSE followup** and **closeout watch posture** only.
 

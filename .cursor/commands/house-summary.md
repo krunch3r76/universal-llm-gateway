@@ -3,7 +3,7 @@
 **LOAD AND EXECUTE:** `runbook:house-summary`  
 Body: `cortex://notes/runbooks/house-summary.md` (`fs` sandbox `cortex`, or `cortex(entity_get, entity_id=runbook:house-summary)`).
 
-Produce a **browser-open HTML** summary of an agent-bus **continuity house** (root thread with `role:root` / liaison lane). Emphasis is **so what** — operator impact first; bus turn laundry belongs in a collapsed appendix.
+Produce a **browser-open HTML** summary of an agent-bus **continuity house** (root thread with `role:root` / Impresario continuity lane). Emphasis is **so what** — operator impact first; bus turn laundry belongs in a collapsed appendix.
 
 ## Usage
 

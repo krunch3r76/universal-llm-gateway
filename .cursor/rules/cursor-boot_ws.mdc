@@ -32,7 +32,7 @@ Execute the Continue Mode protocol from `mcp-tool-awareness_ulg.mdc` — three
 parallel `CallMcpTool` reads (session summary, activity journal, recent transcripts).
 
 **Do NOT**: call `cortex_brief`, load full transcripts, or read the briefing card.
-**Cost**: ~5-10KB total. Fast enough to not waste context before work starts.
+**Cost:** manifest-first reads only (session summary, activity journal, recent transcripts) — see Continue Mode in `mcp-tool-awareness_ulg.mdc`; no numeric context budget here.
 
 This mode activates on the transcript ID alone — no `@cortex-essentials.mdc`
 attachment required. If `@cortex-essentials.mdc` is also attached, still use
@@ -59,7 +59,7 @@ CallMcpTool(server="vortex-code", toolName="fs", arguments={
 
 When Universal Mode activates:
 1. `cortex_brief(seat="cursor")` (or appropriate seat slug) —
-   returns `briefing_card` (~3-5KB), `sections_available` manifest, and
+   returns `briefing_card`, `sections_available` manifest, and
    `operational_context_ref`
 2. Render `briefing_card` and surface open_items as agenda
 3. Pull deeper sections on demand via manifest hints (todos, sessions, bus, etc.)

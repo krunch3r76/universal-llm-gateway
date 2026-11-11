@@ -62,25 +62,19 @@ def partition_slugs_for_container(
 ) -> tuple[tuple[str, ...], tuple[str, ...]]:
     """Split ordered *(slug, origin)* into (container_mount, inline_overflow).
 
-    The first ``MAX_ANTHROPIC_CONTAINER_SKILLS`` slots mount when indexed; an
-    unindexed ``origin=\"caller\"`` skill in those slots fails closed.
-    Unindexed ``scope_default`` entries overflow to Layer-C inline; index >= 8
-    always overflows without raising.
+    Up to ``MAX_ANTHROPIC_CONTAINER_SKILLS`` **indexed** slugs mount natively.
+    Every other slug (unindexed caller, unindexed scope_default, or indexed
+    beyond the cap) overflows to Layer-C inline — never fails the request.
     """
     mount: list[str] = []
     inline: list[str] = []
-    for idx, (slug, origin) in enumerate(skills):
-        if idx >= MAX_ANTHROPIC_CONTAINER_SKILLS:
-            inline.append(slug)
-            continue
-        if anthropic_skill_index_entry(slug):
+    mount_slots = 0
+    for slug, _origin in skills:
+        if anthropic_skill_index_entry(slug) and mount_slots < MAX_ANTHROPIC_CONTAINER_SKILLS:
             mount.append(slug)
-        elif origin == "scope_default":
-            inline.append(slug)
+            mount_slots += 1
         else:
-            raise AnthropicContainerSkillError(
-                f"anthropic_container skill not indexed: {slug!r}"
-            )
+            inline.append(slug)
     return tuple(mount), tuple(inline)
 
 

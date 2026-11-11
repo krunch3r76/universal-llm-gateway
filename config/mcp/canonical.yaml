@@ -2735,7 +2735,7 @@ tools:
   flat_call_shape:
     tool: fs_read
     substrate_qualified: user-vortex__fs_read
-  fol_descriptor: "∀ path ∈ str: fs(read, …) routes by sandbox∨Share URI.\nOptional offset/limit window (ACI): response includes line_range + total_lines + truncated; returned=0 carries observation explaining empty window ≠ missing file.\nEmpty decoded text carries observation (success, zero content).\nthread (optional): agent-bus thread id. When set with sandbox=\"workspaces\", the operation is rooted in the worktree of that lane's current branch instead of the shared checkout; refuses when the lane has no branch association.\nFor .md runbooks/specs/plans/skills over ~4 KB, prefer md_list then md_read of one section (returns read_sha256) — discipline:lean-context Practice #2.\nSee agent_skill:fs.\n"
+  fol_descriptor: "∀ path ∈ str: fs(read, …) routes by sandbox∨Share URI.\nMarkdown and converted-document reads are manifest-first (md_list). An offset/limit window needs expected_read_sha256 from that manifest. Overrides: section/sections, export=true (+ chunk_cursor to continue paginated export). Non-document paths may use offset/limit without the hash gate.\nEmpty decoded text carries observation (success, zero content).\nthread (optional): agent-bus thread id. When set with sandbox=\"workspaces\", the operation is rooted in the worktree of that lane's current branch instead of the shared checkout; refuses when the lane has no branch association.\nSee agent_skill:fs.\n"
   json_schema:
     type: object
     properties:
@@ -5995,7 +5995,7 @@ tools:
   flat_call_shape:
     tool: fs_read_read
     substrate_qualified: user-vortex__fs_read_read
-  fol_descriptor: "Read-only fs read via fs_read companion.\nFor .md runbooks/specs/plans/skills over ~4 KB, prefer md_list then md_read of one section (returns read_sha256) — discipline:lean-context Practice #2.\n"
+  fol_descriptor: "Read-only fs read via fs_read companion.\nMarkdown and converted-document reads are manifest-first (md_list). An offset/limit window needs expected_read_sha256 from that manifest. Overrides: section/sections, export=true (+ chunk_cursor to continue paginated export). Non-document paths may use offset/limit without the hash gate.\n"
   json_schema:
     type: object
     properties:

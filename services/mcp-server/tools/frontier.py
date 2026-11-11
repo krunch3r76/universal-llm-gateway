@@ -727,6 +727,8 @@ def register_frontier_tools(mcp: FastMCP) -> None:
 
         **generate:** On `seat=cursor-sdk`, omit `wake_lane` and do not pass `reasoning_effort`. `wake_lane_unavailable` / ReadTimeout and `reasoning_effort_not_supported` are call-shape errors, not model outages. Shape: consult-routing § Cursor-sdk generate shape. `wake_lane` remains a numeric `role:root` thread for other seats; a worker closeout pastes a pointer memo there. `contract`∈{GENERATE_JOBS}. **Code review** is this call: `op=generate`, `model` = `impresario.critic` in `config/routing/route_policy.yaml` (default `cdp/opus-5.5`; `cdp/` preferred over `anthropic/*` — no CDP host ⇒ `cdp_fail_route=anthropic` and `anthropic/claude-sonnet-5-5`), `contract=code-review`, `dispatch_thread_id`, one of `prompt`|`packet_path`|`sidecar_ref`, `reasoning_effort=high`; omit `purpose` and `role` (escalate: `cdp/fable-5.1` (consult only), then `anthropic/*` fallback). After-ship review is the same call with `contract=delivery-review`. `purpose=ask` is only the CDP submit tag when `purpose` is omitted; `purpose=review` and `role=reviewer` → 422 `job_unknown`. `contract=implement` is the materialized work-item path (`source_ref` required; the server owns the packet; inline `prompt` → 422 `inline_prompt_not_supported`). It is not a generic repo-write. An ad-hoc edit uses `contract=freeform` with `prompt` or `packet_path`, `lane=B`, and `work_key`. `wrap`/`sketch`/`conductor` are materializer contracts too (`source_ref`, no inline prompt). `wrap` forbids `packet_path`, `density_triage`, `review_opt_out_reason_code`, `auto_review_child`; `dispatch_thread_id` exempt. `seat=cursor` is handoff-only. Manual web seats → **422 `web_seat_not_generate_target`**. `model=cursor/…` still needs `lane=` or **422 `lane_required`**. Lane B is the only checkout for top-level cursor-sdk generate, including `contract=freeform` and plan-mode read-only admits. Lane A is refused at admit (422 `CURSOR_LANE_A_REFUSED`). CHECKPOINT tip: `seat=cursor-sdk`, `model=cursor/grok-4.7`, `contract=freeform`, `lane=B`, `model_knobs.fast=true`. API roles (regen `scripts/gen-mcp-dispatch-role-docs`): reviewer, synthesizer, artisan, skeptic; auto seat `cursor-sdk`.
 
+        **Code dispatch architecture context:** a dispatch that changes repo code (write-class lane-B admits, any `contract`; fix-up and land legs) carries an `arch_context:` line in its packet or prompt pointing at `document:ulg-architecture-context` (cortex://notes/system/architecture/index.md → `agent_skill:architecture-invariants`, `agent_skill:ulg-architecture`, `rule:engineering-kernel`, vision); the worker `md_list`s each source and `md_read`s its Tag index before the first code step, and cites `[universal:*]`/`[ulg:*]` tags in its closeout. Life and non-code dispatches skip it.
+
         **to_thread:** `contract`∈{TO_THREAD_JOBS}. `thread` required.
 
         **cursor-sdk 422:** `nest_under_sdk_only`; `CURSOR_NEST_DEPTH_EXCEEDED` (depth 10, 11th refused, `retryable=false`); `resume_of_sdk_only` (XOR `nest_under`, requires `reuse_thread`); `lane_sdk_only`; `lane_required`; `CURSOR_LANE_A_REFUSED`; `CURSOR_LANE_B_WORKTREE_MISSING`; `workspace_sdk_only`; `reasoning_effort_not_supported`. `work_key` D4: `todo:`|`plan:`|`agent-bus:`|`packet:`|`friction:`|`decision:` (required on write-class / lane B; write-class is the lane admit, not `contract=implement`). Skills: **422** `skills_cursor_unresolvable` | `skills_mcp_predicated` | `cdp_skills_path_sim_rejected`. `force=true` skips Gates 2–4 only, requires `force_reason`, never Gate 1 or the write-lease FIFO.
@@ -961,14 +963,6 @@ def register_frontier_tools(mcp: FastMCP) -> None:
                         ),
                     }
                 }
-            if skills is not None:
-                return {
-                    "error": {
-                        "code": "validation_error",
-                        "message": "skills is not supported when op='handoff'",
-                    },
-                    "field": "skills",
-                }
             handoff_body: dict[str, Any] = {
                 "op": "handoff",
                 "subject": subject,
@@ -983,6 +977,8 @@ def register_frontier_tools(mcp: FastMCP) -> None:
                 handoff_body["source_ref"] = source_ref
             if contract is not None:
                 handoff_body["job"] = contract
+            if skills is not None:
+                handoff_body["skills"] = skills
             for key, val in (
                 ("executor_override", executor_override),
                 ("executor_override_reason_code", executor_override_reason_code),

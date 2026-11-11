@@ -1,10 +1,12 @@
-# Liaison-inbox inbound (BINDING) — load on inbound LIAISON / NOTE / fyi:
+# Impresario-inbox inbound (BINDING) — load on inbound LIAISON / NOTE / fyi:
+
+Legacy path name `liaison-inbound.md`; archetype **impresario-inbox** (`runbook:operator-impresario` for live operator routing).
 
 `from=web-anthropic` on this root is overloaded. Marker + provenance, ¬ DIRECTIVE fields. Specimen: 9638#187. Procedure compose: `runbook:liaison-seat-on-a-lane` (body <2KB / sidecar-first → `agent-bus-discipline` § Body size).
 
 | Act | Shape | Weight |
 |---|---|---|
-| Operator-relayed input to the liaison | subject `LIAISON —` · `send` ¬ `request` · first line `operator-relayed` (voice / chat) · `to=cursor` | Commission. ACK. ¬ `TYPE: DIRECTIVE` |
+| Operator-relayed input to the impresario house | subject `LIAISON —` · `send` ¬ `request` · first line `operator-relayed` (voice / chat) · `to=cursor` | Commission. ACK. ¬ `TYPE: DIRECTIVE` |
 | Seat-own counsel to the lane agent | `TYPE: NOTE` or `fyi:` | Advisory. ¬ BIND |
 | Unmarked web-anthropic prose | chatter / dialectic | Child work thread + one-line pointer on the root |
 | Operator-proxy | `TYPE: DIRECTIVE` | Private request lane only. Never this root |

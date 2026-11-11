@@ -40,8 +40,7 @@ proceed directly per `advisor-timing.mdc` checkpoints.
 Dispatch the `gatherer` role via `team_dispatch`:
 - `reasoning_effort: "high"`
 - `max_tool_turns: 25` (minimum; raise to 50 for complex reads)
-- Brief must be **pathwise** (file path in brief, not inline corpus) when
-  the corpus exceeds ~3000 tokens — per `frontier-dispatch.md`
+- Brief must be **pathwise** (file path in brief, not inline corpus) — pull corpus via `fs` `md_list` → `md_read(section)` per `frontier-dispatch.md`
 - Phase 1 brief MUST prohibit writes explicitly
 
 Phase 1 returns a structured proposal:

@@ -159,7 +159,7 @@ VERIFIER (before body or HOLD_SEND to operator)
 |---|---|---|
 | Draft without SPEC (Fonzi-class miss) | Listed the skill only | Hard gate; Bind on next-pickup |
 | Blame shifted onto signer | Invented narrative | Attested material only; name inversion in limits |
-| Bus voice in first person | Liaison bleed | One body; not liaison/GC voice |
+| Bus voice in first person | Impresario bleed | One body; not impresario/GC voice |
 
 ## Before / after (instruction form)
 
@@ -183,9 +183,9 @@ Per-draft **Signer** in OUTBOUND SPEC remains the outbound first-person anchor. 
 
 Ghostwrite (signer ≠ operator): biography stays on; leak defense is marking, not withholding. L3 is craft duty, not "you are the editor".
 
-## Liaison (operator not at IDE)
+## Impresario / proxy (operator not at IDE)
 
-**Voice-bleed ban:** do not rewrite Stage Manager / Great Conversation / bus commentary into signer first-person on the bus. Liaison voice ≠ Kaywan voice.
+**Voice-bleed ban:** do not rewrite Stage Manager / Great Conversation / bus commentary into signer first-person on the bus. Impresario/proxy voice ≠ Kaywan voice.
 
 **House ownership (Fonzi):** Impresario Fonzi (agent-bus:17007, slug `fonzi-impresario`) owns Fonzi outreach drafts. No parallel Fonzi bot for voice. Other Impresario houses own their lanes the same way.
 

@@ -655,10 +655,18 @@ def test_select_channel_openai_layer_a_anthropic_layer_c_with_mcp() -> None:
         select_skill_delivery_channel("architecture-invariants", remote_ctx)
         == SkillDeliveryChannel.LAYER_C_BODY
     )
-    line = emit_layer_a_fs_line("rule:architecture-invariants")
-    assert "Use the `architecture-invariants` skill" in line
-    assert "fs(" not in line
+    line = emit_layer_a_fs_line("rule:architecture-invariants", ctx=ctx)
+    assert "read entity `agent_skill:architecture-invariants`" in line
+    assert "md_list, then md_read" in line
+    assert "Use the `architecture-invariants` skill" not in line
     assert "agent-skills/" not in line
+    cursor_ctx = build_dispatch_skill_context(
+        model="cursor/composer-2.5",
+        mcp_enabled=True,
+        platform="cursor",
+    )
+    use_line = emit_layer_a_fs_line("architecture-invariants", ctx=cursor_ctx)
+    assert "Use the `architecture-invariants` skill" in use_line
 
 
 @pytest.mark.offline
@@ -771,9 +779,16 @@ def test_t2_emit_layer_a_fs_line_alias_equals_canonical(
 ) -> None:
     if alias == "synthetic-boot-alias":
         monkeypatch.setitem(get_skill_catalog().alias_to_canonical, alias, canonical)
-    assert emit_layer_a_fs_line(alias) == emit_layer_a_fs_line(canonical)
-    assert emit_layer_a_fs_line(f"agent_skill:{alias}") == emit_layer_a_fs_line(
-        f"agent_skill:{canonical}"
+    ctx = build_dispatch_skill_context(
+        model="xai/grok-4.7",
+        mcp_enabled=True,
+        platform="api",
+    )
+    assert emit_layer_a_fs_line(alias, ctx=ctx) == emit_layer_a_fs_line(
+        canonical, ctx=ctx
+    )
+    assert emit_layer_a_fs_line(f"agent_skill:{alias}", ctx=ctx) == emit_layer_a_fs_line(
+        f"agent_skill:{canonical}", ctx=ctx
     )
 
 
@@ -835,7 +850,14 @@ def test_t5_registry_uniformity_over_coding_scope(
             assert select_skill_delivery_channel(form, ctx) == (
                 select_skill_delivery_channel(eid, ctx)
             )
-            assert emit_layer_a_fs_line(form) == emit_layer_a_fs_line(eid)
+            layer_a_ctx = build_dispatch_skill_context(
+                model="google/gemini-3.5-flash",
+                mcp_enabled=True,
+                platform="api",
+            )
+            assert emit_layer_a_fs_line(form, ctx=layer_a_ctx) == emit_layer_a_fs_line(
+                eid, ctx=layer_a_ctx
+            )
 
 
 @pytest.mark.offline

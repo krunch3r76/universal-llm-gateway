@@ -1,5 +1,5 @@
 ---
-description: IDE and house seats wake only on real bus events; the liaison ticker quiesces overnight and digests are deduped.
+description: IDE and house seats wake only on real bus events; the house/impresario ticker quiesces overnight and digests are deduped (legacy script name liaison-tick.py).
 alwaysApply: true
 rule_category: workflow
 apply_tier: required_gate

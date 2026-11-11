@@ -1,9 +1,11 @@
 ---
 name: liaison-cursor
-description: "Attended Cursor IDE house liaison with team_dispatch and the checkout. A played todo admits one conductor. Life implement stays on cursor_request. Load on IDE hop and resume of a liaison root."
+description: "Deprecated legacy alias — use impresario / ide-continuity (runbook:operator-impresario). Was: attended IDE house liaison."
 ---
 
-# Liaison on Cursor
+> **Deprecated legacy alias — use impresario / `ide-continuity` (`runbook:operator-impresario`).** File retained for resolvable slug.
+
+# Liaison on Cursor (legacy alias)
 
 `seat = attended Cursor IDE ∧ holds(team_dispatch) ∧ holds(checkout) ⇒ this`.
 Life, web-anthropic, and any seat without `team_dispatch` use `cursor_request`. Do not load this there.

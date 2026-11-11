@@ -40,10 +40,9 @@ def test_validate_registered_tool_coherence_fixture_missing_entry() -> None:
 
 
 def test_ci_registered_tools_match_canonical_or_allowlist() -> None:
-    from server import _build_server  # noqa: PLC0415
+    from test_derive_coherence import _collect_registered_tool_names  # noqa: PLC0415
 
-    _mcp, pre_prune, _overflow_md, _overflow_reg = _build_server()
-    registered = set(pre_prune.keys())
+    registered = _collect_registered_tool_names()
     drift = validate_registered_tool_coherence(
         registered,
         allowlist=INTENTIONAL_OVERFLOW,
