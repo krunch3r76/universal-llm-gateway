@@ -1,8 +1,10 @@
+> **Deprecated legacy alias of the Impresario gear** — see `runbook:operator-impresario`. Operator-facing name: **Impresario**; `/liaison` remains a resolvable script prefix only.
+
 # /liaison [<root>] [attended|autonomous] [--interval S]
 
 **Impresario gear inference (before any arm step).** This tab's agent is the **Impresario** — infer
-**Light**, **Attended**, or **Overnight** internally. Do not ask the operator to choose between
-`/orchestrate` and `/liaison` or to name a gear. `/orchestrate` and `/liaison` share this same entry
+**Light**, **Attended**, or **Overnight** internally. Do not ask the operator to choose gears by
+legacy slash names. Prefer **Impresario** in prose; `/orchestrate` and `/liaison` share this same entry
 (see `cursor-plugins/ulg-ecosystem/commands/orchestrate.md`).
 
 | Gear | When | Action |
@@ -41,7 +43,7 @@ When steps 1–6 run (**Attended** only):
    detach, then monitor the log (a:38446). Do **not** run `liaison-tick.py --loop` as the agent
    Shell itself (`block_until_ms: 0` on that python process). SIGTERM/harvest exit of a Shell-owned
    loop is a `system_notification` wake that displaces LOCKED harvest SMS (specimen 15420 after #115).
-   Any tab model may seat the liaison (skill § Seat model). This tab becomes the one liaison seat:
+   Any tab model may seat the **Impresario** (skill § Seat model). This tab becomes the one Impresario seat (`/liaison` = legacy script prefix only):
    the loop claims the seat lock as `ide:<transcript_id>` — resolve it with
    `continuity(op=hop, thread=<root>, find_transcript=…)` or
    `scripts/liaison-ide-hop.py --root <root> --find-transcript` on the tab's **first user message**.

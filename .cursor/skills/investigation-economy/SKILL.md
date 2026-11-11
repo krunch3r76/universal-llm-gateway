@@ -39,7 +39,7 @@ If a read clears VOI, read the narrowest useful slice first; widen only if it fa
 
 - **agent_bus:** `fetch(compact=true)` / thread digest → `get(thread, turn_number)` for one body.
 - **cortex:** summary/list/search with small `limit ≤ 7`; `entity_get(intent="card")` before full; deepen one row with `assertion_get` when needed.
-- **fs:** for large docs/sidecars, `md_list`/`md_read(section)` or `read(offset, limit)`, not whole-file read.
+- **fs:** for markdown docs/sidecars, `md_list` → `md_read(section)` — not whole-file read; do not use offset/limit window reads on markdown.
 
 `oversized_pull ⇒ session_context_inflation`; compact-first surfaces exist to prevent this.
 
