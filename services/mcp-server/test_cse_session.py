@@ -77,6 +77,8 @@ def test_per_op_mandate_safety_in_catalog() -> None:
     assert by_name["cse_session_paste"]["mandate_safety"] == "write"
     assert by_name["cse_session_followup"]["mandate_safety"] == "write"
     assert by_name["cse_session_resolve_attended"]["mandate_safety"] == "read_only"
+    assert by_name["cse_session_detach"]["mandate_safety"] == "write"
+    assert by_name["cse_session_retire_binding"]["mandate_safety"] == "write"
 
 
 def _fake_client(body: dict, status: int = 200):

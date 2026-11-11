@@ -39,6 +39,7 @@ from cdp_ask.cse_session_models import (
     HarvestRequest,
     PasteRequest,
     ProvenanceQuery,
+    RetireBindingRequest,
 )
 from cdp_ask.cse_session_paste import execute_paste
 from cdp_ask.cse_session_provenance import resolve_public_provenance
@@ -398,6 +399,25 @@ def create_app(*, store: ExecutionStore | None = None) -> FastAPI:
         await asyncio.to_thread(verify_harvest_root)
         result = await execute_harvest(req, execution_store)
         return result.model_dump(exclude_none=True)
+
+    @app.post("/v1/cse-session/retire-binding")
+    async def cse_session_retire_binding(req: RetireBindingRequest) -> JSONResponse:
+        """Sanctioned dormant CSE URL binding retire — journal close, no Cowork open."""
+        from claude_bundles import cdp_registry
+
+        await asyncio.to_thread(verify_harvest_root)
+        try:
+            body = await asyncio.to_thread(
+                cdp_registry.retire_dormant_binding,
+                registration_id=req.registration_id,
+                chat_url=req.chat_url,
+                reason=req.reason,
+                dry_run=req.dry_run,
+                caller_agent=req.caller_agent,
+            )
+        except ProtocolError as exc:
+            return JSONResponse(status_code=422, content=exc.to_dict())
+        return JSONResponse(status_code=200, content=body)
 
     @app.post("/v1/cse-session/detach")
     async def cse_session_detach(req: DetachRequest) -> JSONResponse:
