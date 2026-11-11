@@ -1,11 +1,11 @@
 # Routing System Architecture — Post-P0 Targeted Refresh (Step 9)
 
-<!-- GENERATED:START generated=2026-11-11 method=targeted-refresh inventory_sha=be33081258a3 source_commit=0d45bbef52c8 refreshed_by=agent-bus:23032 coverage=57/57 -->
+<!-- GENERATED:START generated=2026-11-11 method=targeted-refresh inventory_sha=be33081258a3 source_commit=2b6bc981f316 refreshed_by=agent-bus:23032 coverage=57/57 -->
 _Generated from module docstrings at HEAD; claims reflect what the source **declares**, not verified runtime behavior._
 
 ## Scope of this pass
 
-**Targeted refresh** (Kaywan 2026-11-10) of `docs/architecture/routing.md` against `services/universal-stargate/systems/routing` at source commit `0d45bbef52c8`. This pass adds a **full module inventory (57/57)** and prose for admission/eviction work landed after the prior `generated=2026-07-20` stamp. Detailed class/method sections below remain anchored on the Post-P0 Step 9 subset where noted; symbols in modules outside that subset are summarized only in the inventory table unless called out in **Material changes since 2026-07-20**.
+**Targeted refresh** (Kaywan 2026-11-10) of `docs/architecture/routing.md` against `services/universal-stargate/systems/routing` at source commit `0d45bbef52c8`. This pass maintains a **full module inventory (57/57)** and prose for admission/eviction work landed after the prior `generated=2026-07-20` stamp. **Key Functions**, **Internal import statements**, and **Synthesis** below cover the full production routing tree at HEAD (all production modules under this tree).
 
 **Package path:** `services/universal-stargate/systems/routing` (proxy admission paths that delegate here are covered in `stargate.md` / `systems/proxy/`).
 **Module count (HEAD):** 57 production `.py` modules (excludes `test_*.py` under this tree).

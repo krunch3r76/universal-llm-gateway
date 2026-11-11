@@ -353,6 +353,20 @@ def refresh_routing(workspace: Path, refreshed_by: str = _REFRESHED_BY) -> str:
         f"full module inventory ({mod_n}/{mod_n})",
         pre_key,
     )
+    pre_key = re.sub(
+        r"This pass adds a",
+        "This pass maintains a",
+        pre_key,
+        count=1,
+    )
+    pre_key = re.sub(
+        r"Detailed class/method sections below remain anchored on the Post-P0 Step 9 subset "
+        r"where noted; symbols in modules outside that subset are summarized only in the "
+        r"inventory table unless called out in \*\*Material changes since 2026-07-20\*\*\.",
+        "**Key Functions**, **Internal import statements**, and **Synthesis** below cover the "
+        "full production routing tree at HEAD (all production modules under this tree).",
+        pre_key,
+    )
 
     key_fn_lines = [
         "## Key Functions (full routing tree)",
