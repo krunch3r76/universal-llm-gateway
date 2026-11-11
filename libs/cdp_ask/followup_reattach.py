@@ -622,7 +622,18 @@ async def ensure_cse_attached(
     def attempted_ids() -> tuple[str, ...]:
         return tuple(rid for rid, _ in refusals)
 
+    target_norm = normalize_cse_url(chat_url)
     for lane in _lane_order(lanes, purpose, chat_url):
+        current = (
+            cdp_registry.chat_url_for_registration(lane.registration_id) or ""
+        ).strip()
+        if current and normalize_cse_url(current) != target_norm:
+            logger.info(
+                "reattach skipping %s: lane holds another chat_url",
+                lane.registration_id,
+            )
+            refusals.append((lane.registration_id, "lane_holds_other_chat_url"))
+            continue
         found = await find_page_on_lane(lane.cdp_url, chat_url)
         if found is not None:
             page, pw = found

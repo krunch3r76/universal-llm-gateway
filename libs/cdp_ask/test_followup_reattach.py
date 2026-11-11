@@ -24,6 +24,7 @@ CSE_A = "https://claude.ai/cowork/cse_abc123"
 CSE_PRIOR_38282 = "https://claude.ai/cowork/cse_prior38282"
 CSE_TARGET_38282 = "https://claude.ai/cowork/cse_target38282"
 CSE_K44_SUCC = "https://claude.ai/cowork/cse_k44_successor"
+CSE_OTHER = "https://claude.ai/cowork/cse_otherseat"
 K44_LANE = "12286"
 
 
@@ -211,6 +212,21 @@ def _borrow_seat_mismatch_setup(
     )
     monkeypatch.setattr("cdp_ask.followup_reattach.connect_cdp", _connect_factory())
     return reg, reg_borrowed, reg_holder_id, store
+
+
+def _arm_reattach_mint_lane(monkeypatch: pytest.MonkeyPatch, reg: Any) -> Any:
+    """Pre-register mint fallback — reattach must not launch Chrome under pytest."""
+    minted = reg.register_lane(
+        holder="mint-reattach-fallback",
+        purpose="operator-proxy",
+        launch_chrome=_noop_launch,
+        is_listening=lambda _p: False,
+    )
+    monkeypatch.setattr(
+        "cdp_ask.followup_reattach.cdp_registry.register_lane",
+        lambda **_kwargs: minted,
+    )
+    return minted
 
 
 def _connect_factory(*, fail: bool = False, bad_url: bool = False):
@@ -658,6 +674,156 @@ async def test_reattach_mint_bind_refusal_deregisters_and_lists_attempts(
         minted.registration_id,
     )
     deregister.assert_called_once_with(minted.registration_id)
+
+
+@pytest.mark.asyncio
+@pytest.mark.no_bind_mock
+async def test_reattach_skips_lane_holding_other_chat_url_mints(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Must not CDP-touch a host registered to another seat's CSE URL."""
+    _skip_dormant_wake(monkeypatch)
+    other_bound = _reg("reg-other-chat")
+    unbound = _reg("reg-unbound", cdp="http://127.0.0.1:9224")
+    monkeypatch.setattr(
+        "cdp_ask.followup_reattach.cdp_registry.list_active",
+        lambda: [other_bound, unbound],
+    )
+
+    def _url_for(rid: str) -> str | None:
+        if rid == other_bound.registration_id:
+            return CSE_OTHER
+        return None
+
+    monkeypatch.setattr(
+        "cdp_ask.followup_reattach.cdp_registry.chat_url_for_registration",
+        _url_for,
+    )
+    find_calls: list[str] = []
+    nav_calls: list[str] = []
+
+    async def _find(cdp_url: str, _chat_url: str) -> None:
+        if cdp_url == other_bound.cdp_url:
+            find_calls.append(other_bound.registration_id)
+        return None
+
+    async def _nav(lane: _FakeReg, _chat_url: str) -> tuple[Any, Any]:
+        nav_calls.append(lane.registration_id)
+        page = _FakePage()
+        page.url = _chat_url
+        return page, _FakePw()
+
+    monkeypatch.setattr("cdp_ask.followup_reattach.find_page_on_lane", _find)
+    monkeypatch.setattr("cdp_ask.followup_reattach._navigate_new_page", _nav)
+    monkeypatch.setattr(
+        "cdp_ask.followup_reattach.cdp_registry.bind_chat_url_only",
+        lambda _rid, **_: False,
+    )
+    minted = _reg("reg-minted")
+    register = MagicMock(return_value=minted)
+    monkeypatch.setattr(
+        "cdp_ask.followup_reattach.cdp_registry.register_lane", register
+    )
+
+    def _bind_mint_only(rid: str, *, chat_url: str) -> bool:
+        return rid == minted.registration_id
+
+    monkeypatch.setattr(
+        "cdp_ask.followup_reattach.cdp_registry.bind_chat_url_only",
+        _bind_mint_only,
+    )
+
+    outcome = await ensure_cse_attached(
+        CSE_A,
+        holder="h",
+        parent_thread="22938",
+        allow_mint=True,
+    )
+    assert other_bound.registration_id not in find_calls
+    assert other_bound.registration_id not in nav_calls
+    assert unbound.registration_id in nav_calls
+    assert outcome.ok is True
+    assert outcome.registration_id == minted.registration_id
+    register.assert_called_once_with(
+        holder="h",
+        purpose=None,
+        parent_thread="22938",
+        mission_kind=None,
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.no_bind_mock
+async def test_reattach_same_bound_chat_url_lane_still_used(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _skip_dormant_wake(monkeypatch)
+    bound = _reg("reg-bound-same")
+    monkeypatch.setattr(
+        "cdp_ask.followup_reattach.cdp_registry.list_active",
+        lambda: [bound],
+    )
+    monkeypatch.setattr(
+        "cdp_ask.followup_reattach.cdp_registry.chat_url_for_registration",
+        lambda rid: CSE_A if rid == bound.registration_id else None,
+    )
+    find_calls: list[str] = []
+
+    async def _find(cdp_url: str, _chat_url: str) -> tuple[Any, Any]:
+        find_calls.append(cdp_url)
+        page = _FakePage()
+        page.url = CSE_A
+        return page, _FakePw()
+
+    nav = AsyncMock()
+    monkeypatch.setattr("cdp_ask.followup_reattach.find_page_on_lane", _find)
+    monkeypatch.setattr("cdp_ask.followup_reattach._navigate_new_page", nav)
+    monkeypatch.setattr(
+        "cdp_ask.followup_reattach.cdp_registry.bind_chat_url_only",
+        lambda _rid, **_: True,
+    )
+
+    outcome = await ensure_cse_attached(CSE_A, holder="h", allow_mint=False)
+    assert outcome.ok is True
+    assert find_calls == [bound.cdp_url]
+    nav.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+@pytest.mark.no_bind_mock
+async def test_reattach_unbound_lane_still_navigated(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _skip_dormant_wake(monkeypatch)
+    unbound = _reg("reg-unbound-only")
+    monkeypatch.setattr(
+        "cdp_ask.followup_reattach.cdp_registry.list_active",
+        lambda: [unbound],
+    )
+    monkeypatch.setattr(
+        "cdp_ask.followup_reattach.cdp_registry.chat_url_for_registration",
+        lambda _rid: None,
+    )
+    find = AsyncMock(return_value=None)
+    nav_calls: list[str] = []
+
+    async def _nav(lane: _FakeReg, _chat_url: str) -> tuple[Any, Any]:
+        nav_calls.append(lane.registration_id)
+        page = _FakePage()
+        page.url = _chat_url
+        return page, _FakePw()
+
+    monkeypatch.setattr("cdp_ask.followup_reattach.find_page_on_lane", find)
+    monkeypatch.setattr("cdp_ask.followup_reattach._navigate_new_page", _nav)
+    monkeypatch.setattr(
+        "cdp_ask.followup_reattach.cdp_registry.bind_chat_url_only",
+        lambda _rid, **_: True,
+    )
+
+    outcome = await ensure_cse_attached(CSE_A, holder="h", allow_mint=False)
+    assert outcome.ok is True
+    assert nav_calls == [unbound.registration_id]
+    find.assert_awaited_once()
 
 
 @pytest.mark.asyncio
@@ -2583,10 +2749,11 @@ async def test_borrow_reattach_restores_prior_chat_url_on_seat_mismatch(
     isolated_registry: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Borrow bind to target URL must not stick when second resolve refuses seat."""
+    """Prior-bound host is skipped; minted bind must not stick after seat refusal."""
     reg, reg_borrowed, reg_holder_id, store = _borrow_seat_mismatch_setup(
         isolated_registry, monkeypatch, bind_prior=True
     )
+    minted = _arm_reattach_mint_lane(monkeypatch, reg)
     lane = "15364"
     events: list[Any] = []
 
@@ -2621,13 +2788,10 @@ async def test_borrow_reattach_restores_prior_chat_url_on_seat_mismatch(
     restored_events = _registry_events(
         isolated_registry, event="session_address_restored", registration_id=rid
     )
-    assert [e.get("chat_url") for e in bound_events] == [
-        CSE_PRIOR_38282,
-        CSE_TARGET_38282,
-    ]
-    assert restored_events
-    assert restored_events[-1].get("restore_to") == CSE_PRIOR_38282
+    assert [e.get("chat_url") for e in bound_events] == [CSE_PRIOR_38282]
+    assert restored_events == []
     assert reg.chat_url_for_registration(rid) == CSE_PRIOR_38282
+    assert reg.chat_url_for_registration(minted.registration_id) is None
 
 
 @pytest.mark.asyncio
@@ -2665,10 +2829,11 @@ async def test_borrow_reattach_refusal_with_retain_lane_restores_binding(
     isolated_registry: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """retain_lane=True still restores registry chat_url after seat refusal."""
+    """Prior-bound host is never borrowed; seat refusal does not move its chat_url."""
     reg, reg_borrowed, reg_holder_id, store = _borrow_seat_mismatch_setup(
         isolated_registry, monkeypatch, bind_prior=True
     )
+    _arm_reattach_mint_lane(monkeypatch, reg)
     lane = "15364"
     monkeypatch.setattr("cdp_ask.followup.emit_followup_event", lambda _e: None)
     monkeypatch.setattr("cdp_ask.followup_resolve.emit_followup_event", lambda _e: None)
@@ -2822,10 +2987,11 @@ async def test_second_resolve_exception_runs_restore_teardown(
     isolated_registry: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Snapshot failure after borrow must restore and disconnect Playwright."""
+    """Snapshot failure after minted reattach must restore and disconnect Playwright."""
     reg, reg_borrowed, reg_holder_id, store = _borrow_seat_mismatch_setup(
         isolated_registry, monkeypatch, bind_prior=True
     )
+    _arm_reattach_mint_lane(monkeypatch, reg)
     lane = "15364"
     pw = AsyncMock()
     pw.stop = AsyncMock()
@@ -2891,10 +3057,11 @@ async def test_paste_miss_after_reattach_restores_borrowed_chat_url(
     isolated_registry: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Page gone after lock must restore a borrow bind (finding 6)."""
+    """Prior-bound host skipped for reattach; page miss tears down minted bind only."""
     reg, reg_borrowed, reg_holder_id, store = _borrow_seat_mismatch_setup(
         isolated_registry, monkeypatch, bind_prior=True
     )
+    _arm_reattach_mint_lane(monkeypatch, reg)
     lane = "15364"
 
     async def _snap_ok() -> dict[str, Any]:
@@ -2933,7 +3100,7 @@ async def test_paste_miss_after_reattach_restores_borrowed_chat_url(
         ),
         store,
     )
-    assert resp.error == "cse_not_found_on_lane"
+    assert resp.error == "operator_seat_mismatch"
     assert resp.reattach_used is True
     assert (
         reg.chat_url_for_registration(reg_borrowed.registration_id) == CSE_PRIOR_38282
