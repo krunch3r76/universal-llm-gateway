@@ -63,6 +63,6 @@ Lowest sufficient tier first. ¬ paste this table into system prompts or Grok Bo
 
 ## Constraints (last)
 
-- Friction / todo implementer, greenfield boot, claude.ai maestro cite `Use the lean-dispatch skill` — no local wire table. Grok Bot: `runbook:coding-boot` step 2. `pipeline_id=cursor-paste-resolve` owns mechanics only, ¬ the ladder.
+- Friction / todo implementer, greenfield boot, claude.ai impresario **instance** cite `Use the lean-dispatch skill` — no local wire table. Grok Bot: `runbook:coding-boot` step 2. `pipeline_id=cursor-paste-resolve` owns mechanics only, ¬ the ladder.
 - Wires stay; spoken duty labels are Set D as bound. ¬ collision with the musical-arts set (Sketch, Scoring, Conductor, maestro, ear, music makers); rejects: bare Composer as duty, Score Composer, Orchestrate.
 - ¬ Huxley Alpha→Epsilon speech in new prompts. Checkout process steps → `team_dispatch` `seat=cursor-sdk`. Doctrine only; install/sync is `skill-surface`.

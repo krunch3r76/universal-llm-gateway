@@ -1,8 +1,8 @@
 ---
 name: continuity-thread-shaping
-description: "On role:root birth, resume, catch-up, drop-on-liaison, hub wrap, or inbound LIAISON (not work/worker/MONITOR): shape before details; one named hop; hub + ≥1 runbook; inbound by pointer."
+description: "On role:root birth, resume, catch-up, drop-on-impresario, hub wrap, or inbound LIAISON (not work/worker/MONITOR): shape before details; one named hop; hub + ≥1 runbook; inbound by pointer."
 skill_category: orchestration
-trigger_short: "role:root house ∨ inbound LIAISON/NOTE on liaison-inbox"
+trigger_short: "role:root house ∨ inbound LIAISON/NOTE on impresario-inbox"
 trigger_match_terms:
   - continuity-thread-shaping
   - continuity card
@@ -11,12 +11,12 @@ trigger_match_terms:
   - house runbook
   - catch-up shape
   - continuity hub
-  - drop this on the liaison
+  - drop this on the impresario
   - where do we leave this
   - standing root birth
   - resume preamble
   - sit-journal
-  - liaison inbox
+  - impresario inbox
   - runbook-recall
   - LIAISON
   - operator-relayed
@@ -37,7 +37,7 @@ related_skills:
 # Continuity Thread Shaping
 
 `spine=root ⇒ house(thin_card ∧ hub ∧ |runbook|≥1) ∧ depth=cortex/sidecars`
-`liaison-inbox ∧ inbound(web-anthropic) ⇒ mark(act) ≺ send`
+`impresario-inbox ∧ inbound(web-anthropic) ⇒ mark(act) ≺ send` (legacy filename `liaison-inbound.md`)
 CHECKPOINT = reconstitution **index** (`checkpoint-discipline`). This skill owns the **thin-card motif** on `role:root` houses + hub wrap + runbook association. ¬ field IDs. ¬ a second profile. ¬ DIRECTIVE fields on this root. ¬ agent-bus code.
 
 ## Motif — thin card

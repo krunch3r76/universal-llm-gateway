@@ -20,7 +20,7 @@ identified by its handle and parent association, never inferred from spine.
 ## Root birth
 
 Root birth is the **Attended lowering** when the house is missing — not a separate mode the operator
-chooses manually ahead of `/liaison`. The **Impresario** invokes this gate when gear inference yields
+chooses manually ahead of `/orchestrate` (primary; `/liaison` deprecated alias). The **Impresario** invokes this gate when gear inference yields
 **Attended** and `thread_get` lacks `role:root` (or the root thread does not exist yet), whether the
 operator typed `/orchestrate`, `/liaison <slug> — <objective>`, or opened the tab with a durable objective
 or `todo:`. If `role:root` already exists, skip birth and seat only (`ide-continuity`).

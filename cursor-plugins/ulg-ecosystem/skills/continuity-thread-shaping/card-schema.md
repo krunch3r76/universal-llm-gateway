@@ -50,7 +50,7 @@ Reader-job shape lives on a **sidecar** (or is the house runbook). The card only
 | Reader job | Where the body lives | Default edges | Specimen |
 |---|---|---|---|
 | sit-journal | sidecar `# Current` newest-first | `related_to` worker todos · `references` house runbook | 9582 · `runbook:9582-house` |
-| liaison-inbox | sidecar **Recall** = newest-first `# Current` **full cut** (keys `score · stop · land · live · break · next`), written on `status` / `follow up` / every harvest, never edited. Inbox `owner=` table stays the **drop list**, not the recall surface. Inbound: `liaison-inbound.md`. **Temporary** drop list, ¬ default foreign-work dump. | `references` decisions/frictions · ≥1 runbook | 9638 · `runbook:liaison-seat-on-a-lane` |
+| impresario-inbox (legacy key `liaison-inbox`) | sidecar **Recall** = newest-first `# Current` **full cut** (keys `score · stop · land · live · break · next`), written on `status` / `follow up` / every harvest, never edited. Inbox `owner=` table stays the **drop list**, not the recall surface. Inbound: `liaison-inbound.md`. **Temporary** drop list, ¬ default foreign-work dump. | `references` decisions/frictions · ≥1 runbook | 9638 · `runbook:operator-impresario` (legacy alias `runbook:liaison-seat-on-a-lane`) |
 | runbook-recall | the associated `runbook:*` body + hazards | `references` `runbook:*` | 9732 |
 
 A row exists only with ≥1 living specimen. `screenshot-spec` is a sidecar kind, ¬ a catch-up shape.

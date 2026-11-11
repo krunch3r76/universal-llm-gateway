@@ -139,7 +139,7 @@ Code-surface receivers may keep `workspaces://` pointers as routine.
 Composed path: `web-consult` + cortex mirrors + CDP bus-nudge. Checklist:
 `cortex://notes/system/threads/web-anthropic-code-review-practice.md`.
 
-Binding deltas: lean packet ≤~15KB; corpus-completeness; full files + untruncated sha256; Verdict trichotomy +
+Binding deltas: lean packet — gate large bodies via `md_list` / link-out (¬ numeric KB cap rule); corpus-completeness; full files + untruncated sha256; Verdict trichotomy +
 Amendments + Code-surface follow-ons in `<output_format>`.
 
 ### Frontmatter boot gate

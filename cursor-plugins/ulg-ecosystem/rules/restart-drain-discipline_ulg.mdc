@@ -9,7 +9,7 @@ apply_tier: required_gate
 **Invariant:** `needed(restart) ⇒ fire(restart)` — busy, in-flight work, a peer's stream, a dirty tree, an open Cowork tab, or "this IDE session" is never a reason to skip or park.
 `edit(served_path ∨ env_loaded_by_process) ∧ running(process) ⇒ recycle(process)` same turn; `bind_mount ⇏ live`. That recycle is **not** a work-complete claim.
 
-No service is forced by default (K48). `busy(G1) ⇒ wait(drain)`. A force needs a coordinator `force_reason` announced to Kaywan or maestro first; `manage` refuses caller force over busy G1 without one (409); mcp force is allowed only when busy is life_hot only (`a:39670`).
+No service is forced by default (K48). `busy(G1) ⇒ wait(drain)`. A force needs a coordinator `force_reason` and recorded houseless restart authority (`a:43558`); no announce to legacy Maestro routes — `manage` refuses caller force over busy G1 without `force_reason` (409); mcp force is allowed only when busy is life_hot only (`a:39670`).
 `git_integration_worker`: arm the drain (`status=deferred`, `restart_intent_id`) — never force, never kill. Live cursor-sdk dispatch ⇒ park, ¬ wait (`park_live=true`). `recycle_giw` is park-first at idle; force only on CANCEL_FAILED / NEST_CHAIN / STATE_ROOT_MISSING.
 
 ## Forbidden / Required
