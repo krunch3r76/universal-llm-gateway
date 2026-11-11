@@ -823,6 +823,28 @@ def FrontierSdkReasoningEffortRejected(  # noqa: N802
 
 
 @event_factory
+def DispatchClaudecodeRefused(  # noqa: N802
+    request_id: str,
+    claude_surface: str,
+    model: str | None,
+    entry: str,
+    code: str,
+) -> Event:
+    """Claude Code compose dispatch refused by ``claude_code_dispatch`` policy."""
+    return Event(
+        signal="dispatch.claudecode.refused",
+        payload={
+            "request_id": request_id,
+            "claude_surface": claude_surface,
+            "model": model,
+            "entry": entry,
+            "code": code,
+        },
+        scope="node",
+    )
+
+
+@event_factory
 def FrontierSdkPoolDenied(  # noqa: N802
     request_id: str,
     seat: str,
