@@ -520,6 +520,8 @@ async def execute_followup(
             # value from the address retry. An identity-omitted request stays
             # omitted so the second resolve remains the attended-operator oracle
             # (a dormant wake) instead of a registration-keyed CDP scan.
+            lane_pin["caller_registration_id"] = (req.registration_id or "").strip()
+            lane_pin["caller_chat_url"] = (req.chat_url or "").strip()
             req = req.model_copy(update={"registration_id": outcome_reg})
         lane_pin["reattach_used"] = True
         lane_pin["outcome_reg"] = outcome_reg

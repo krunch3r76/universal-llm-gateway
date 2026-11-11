@@ -693,7 +693,10 @@ async def resolve_followup_target(
 
     chat_url, registration_id, execution_id, cdp_url = identity_keys(req)
 
-    if registration_chat_identity_mismatch(req):
+    reattach_used_pin = bool(
+        isinstance(lane_pin, dict) and lane_pin.get("reattach_used")
+    )
+    if not reattach_used_pin and registration_chat_identity_mismatch(req):
         return (
             None,
             fail_followup("identity_mismatch"),
@@ -763,16 +766,10 @@ async def resolve_followup_target(
 
     chosen = candidates[0]
     if conflicting_keys(req, chosen, mapped_reg=mapped_reg):
-        _chat, _reg, _, _ = identity_keys(req)
-        code = (
-            "identity_mismatch"
-            if _chat and _reg and chosen.registration_id != _reg
-            else "ambiguous_identity"
-        )
         infos = [c.as_info() for c in candidates]
         return (
             None,
-            fail_followup(code, candidates=infos),
+            fail_followup("ambiguous_identity", candidates=infos),
             resolution_path,
             None,
         )

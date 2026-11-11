@@ -1623,6 +1623,70 @@ async def test_k44_superseded_dormant_attach_page_only_on_successor(
 
 @pytest.mark.no_bind_mock
 @pytest.mark.asyncio
+async def test_k44_execute_followup_stored_successor_chat_does_not_identity_mismatch(
+    isolated_registry: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Second resolve after reattach must not treat internal reg rewrite as caller mismatch."""
+    _pred_id, succ_id = _seed_k44_superseded_dormant_predecessor()
+    _restore_dormant_for_chat_url(monkeypatch)
+    _k44_attach_patches(monkeypatch)
+    store = ExecutionStore()
+
+    async def _snap() -> dict[str, Any]:
+        return {
+            "seat_rows": [
+                {
+                    "registration_id": succ_id,
+                    "parent_thread": K44_LANE,
+                    "purpose": "operator-proxy",
+                    "seat_bound_at": 1.0,
+                }
+            ],
+            "rows": [],
+            "observed_at": "t",
+        }
+
+    monkeypatch.setattr(store, "active_work_snapshot", _snap)
+    monkeypatch.setattr(
+        "cdp_ask.followup_resolve.scan_lane_cse_urls",
+        AsyncMock(side_effect=[[], [CSE_A]]),
+    )
+    paste = AsyncMock(
+        return_value={
+            "send_verified": True,
+            "receipt": "dom_paste",
+            "streaming_at_paste": False,
+            "url": CSE_A,
+            "pasted_at": 1.0,
+        }
+    )
+    monkeypatch.setattr("cdp_ask.followup.send_followup_paste_half", paste)
+    monkeypatch.setattr("cdp_ask.followup.emit_followup_event", lambda _e: None)
+    paste_page = _FakePage()
+    paste_page.url = CSE_A
+    monkeypatch.setattr(
+        "cdp_ask.followup.find_page_on_lane",
+        AsyncMock(return_value=(paste_page, _FakePw())),
+    )
+
+    resp = await execute_followup(
+        FollowupProjectAskRequest(
+            chat_url=CSE_A,
+            prompt_text="k44 stored successor chat",
+            parent_thread=K44_LANE,
+        ),
+        store,
+    )
+
+    assert resp.ok is True, f"error={resp.error!r} detail={resp.detail!r}"
+    assert resp.error != "identity_mismatch"
+    paste.assert_awaited_once()
+    del _pred_id, isolated_registry
+
+
+@pytest.mark.no_bind_mock
+@pytest.mark.asyncio
 async def test_k44_followup_reattach_paste_preserves_successor_seat_row(
     isolated_registry: Path,
     monkeypatch: pytest.MonkeyPatch,
