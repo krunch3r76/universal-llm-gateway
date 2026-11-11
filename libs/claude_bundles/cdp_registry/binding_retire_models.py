@@ -8,6 +8,7 @@ from typing import Any
 from universal_protocol.errors import ProtocolError
 
 RETIRE_LOG_EVENT = "dormant_binding_retired"
+UNBIND_FINISHED_LOG_EVENT = "dormant_binding_unbind_finished"
 SATELLITE_RETIRE_HINT = "cse_session(op=retire_binding, ...)"
 
 

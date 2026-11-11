@@ -10,7 +10,11 @@ from claude_bundles.cse_provenance import ProvenanceEpisode
 from claude_bundles.cse_provenance_retire import append_binding_retired_episode
 from claude_bundles.cse_url import normalize_cse_url
 
-from .binding_retire_models import RETIRE_LOG_EVENT, refuse_retire
+from .binding_retire_models import (
+    RETIRE_LOG_EVENT,
+    UNBIND_FINISHED_LOG_EVENT,
+    refuse_retire,
+)
 from .models import STATUS_DORMANT
 
 
@@ -107,14 +111,35 @@ def finish_active_unbind_only(
                 registration_id=rid,
                 chat_url=url,
             )
+        status = str(row.get("status") or "")
+        if status != STATUS_DORMANT:
+            refuse_retire(
+                reason="not_dormant",
+                message=f"refusing unbind finish: status {status!r} is not dormant",
+                registration_id=rid,
+                chat_url=url,
+                status=status or None,
+            )
         prior = str(row.get("chat_url") or "").strip() or None
         if normalize_cse_url(prior or "") != url:
             return False
         if not prior:
             return False
+        audit_before = {"status": status, "chat_url": prior}
         updated = dict(row)
         updated.pop("chat_url", None)
         updated.pop("chat_url_bound_at", None)
         active[rid] = updated
         store.write_active(active)
+        store.append_log(
+            UNBIND_FINISHED_LOG_EVENT,
+            {
+                "registration_id": rid,
+                "prior_chat_url": prior,
+                "chat_url": url,
+                "before": audit_before,
+                "after": {"status": status, "chat_url": None},
+                "ts_audit": time.time(),
+            },
+        )
     return True

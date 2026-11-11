@@ -16,7 +16,10 @@ from claude_bundles.cdp_registry.binding_retire import (
     resolve_retire_target,
     retire_dormant_binding,
 )
-from claude_bundles.cdp_registry.binding_retire_models import RETIRE_LOG_EVENT
+from claude_bundles.cdp_registry.binding_retire_models import (
+    RETIRE_LOG_EVENT,
+    UNBIND_FINISHED_LOG_EVENT,
+)
 from claude_bundles.cse_provenance_retire import append_binding_retired_episode
 
 pytestmark = pytest.mark.offline
@@ -258,11 +261,19 @@ def test_rebind_after_retire_becomes_current(
     assert resolved["state"] == "current"
 
 
-def test_late_retire_a_does_not_shadow_b(
+def test_retired_a_does_not_shadow_current_b(
     isolated_registry: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     rid_a = _dormant_seat(_CSE)
-    rid_b = _dormant_seat(_CSE_B)
+    rid_b = reg.register_lane(
+        holder="dormancy-b",
+        purpose="operator-proxy",
+        launch_chrome=_noop_launch,
+        is_listening=lambda _p: False,
+    ).registration_id
+    reg.bind_chat_url_only(rid_b, chat_url=_CSE)
+    reg._release_driver_lock(rid_b)
+    reg.make_dormant(rid_b, is_listening=lambda _p: False)
     cse_provenance.append_episode(
         chat_url=_CSE,
         registration_id=rid_a,
@@ -273,13 +284,16 @@ def test_late_retire_a_does_not_shadow_b(
         registration_id=rid_b,
         cdp_url="http://127.0.0.1:9246",
     )
-    with pytest.raises(ProtocolError):
-        retire_dormant_binding(registration_id=rid_a, chat_url=_CSE, reason="late")
+    append_binding_retired_episode(
+        chat_url=_CSE, registration_id=rid_a, reason="retire_a"
+    )
     monkeypatch.setattr(
         "claude_bundles.cse_provenance_resolve.is_row_present",
         lambda rid: rid == rid_b,
     )
-    assert cse_provenance.resolve(chat_url=_CSE)["registration_id"] == rid_b
+    resolved = cse_provenance.resolve(chat_url=_CSE)
+    assert resolved["registration_id"] == rid_b
+    assert resolved["state"] == "current"
 
 
 def test_not_registry_authority_fleet_only(
@@ -363,8 +377,77 @@ def test_crash_recovery_unbound_only(isolated_registry: Path) -> None:
     before = _journal_record_count(log_path)
     out = retire_dormant_binding(registration_id=rid, reason="recover")
     assert out["outcome"] == "unbound_only"
-    assert _journal_record_count(log_path) == before
+    assert _journal_record_count(log_path) == before + 1
+    log = log_path.read_text()
+    assert UNBIND_FINISHED_LOG_EVENT in log
     assert not str(reg._store.load_active()[rid].get("chat_url") or "").strip()
+    second = retire_dormant_binding(registration_id=rid, reason="recover2")
+    assert second["outcome"] == "noop"
+    assert _journal_record_count(log_path) == before + 1
+
+
+def test_recovery_refuses_live_row_when_journal_closed(
+    isolated_registry: Path,
+) -> None:
+    rid = _live_seat()
+    prior_url = reg._store.load_active()[rid]["chat_url"]
+    append_binding_retired_episode(
+        chat_url=_CSE, registration_id=rid, reason="closed_journal"
+    )
+    with pytest.raises(ProtocolError) as exc:
+        retire_dormant_binding(registration_id=rid, reason="n")
+    assert exc.value.data.get("reason") == "not_dormant"
+    assert reg._store.load_active()[rid]["chat_url"] == prior_url
+
+
+def test_recovery_refuses_live_row_dry_run(isolated_registry: Path) -> None:
+    rid = _live_seat()
+    prior_url = reg._store.load_active()[rid]["chat_url"]
+    append_binding_retired_episode(
+        chat_url=_CSE, registration_id=rid, reason="closed_journal"
+    )
+    with pytest.raises(ProtocolError) as exc:
+        retire_dormant_binding(registration_id=rid, dry_run=True, reason="n")
+    assert exc.value.data.get("reason") == "not_dormant"
+    assert reg._store.load_active()[rid]["chat_url"] == prior_url
+
+
+def test_dormant_specimen_retire_from_dormant_episode(
+    isolated_registry: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    rid = _dormant_seat()
+    with reg._store.ports_lock():
+        active = reg._store.load_active()
+        row = dict(active[rid])
+        row.pop("chat_url", None)
+        row.pop("chat_url_bound_at", None)
+        active[rid] = row
+        reg._store.write_active(active)
+    cse_provenance.append_episode(
+        chat_url=_CSE,
+        registration_id=rid,
+        cdp_url="http://127.0.0.1:9250",
+        state="dormant",
+        reason="specimen",
+    )
+    log_path = isolated_registry / "registry.jsonl"
+    before = _journal_record_count(log_path)
+    out = retire_dormant_binding(
+        registration_id=rid, chat_url=_CSE, reason="specimen_retire"
+    )
+    assert out["outcome"] == "retired"
+    assert _journal_record_count(log_path) > before
+    monkeypatch.setattr(
+        "claude_bundles.cse_provenance_resolve.is_row_present",
+        lambda _rid: True,
+    )
+    assert cse_provenance.resolve(chat_url=_CSE)["state"] == "unbound"
+    count_after_first = _journal_record_count(log_path)
+    second = retire_dormant_binding(
+        registration_id=rid, chat_url=_CSE, reason="specimen_repeat"
+    )
+    assert second["outcome"] == "noop"
+    assert _journal_record_count(log_path) == count_after_first
 
 
 def test_journal_open_binding_no_registry_row(isolated_registry: Path) -> None:
@@ -426,6 +509,8 @@ def test_retire_absent_target_is_idempotent_noop(isolated_registry: Path) -> Non
         reason="absent",
     )
     assert out["outcome"] == "noop"
+    assert out["detail"]["fleet_read"] == "unavailable"
+    assert out["detail"]["registry_authority"] is True
 
 
 def test_retire_journal_only_when_active_unbound(isolated_registry: Path) -> None:

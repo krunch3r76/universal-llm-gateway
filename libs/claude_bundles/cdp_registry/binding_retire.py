@@ -31,6 +31,21 @@ from .binding_retire_models import (
 from .binding_retire_resolve import local_row, resolve_retire_target
 
 
+def _fleet_read_label() -> str:
+    from claude_bundles.cdp_registry_remote_read import read_fleet_registry
+
+    availability = str(read_fleet_registry().get("availability") or "unavailable")
+    return "ok" if availability == "ok" else "unavailable"
+
+
+def _noop_detail(reason: str) -> dict[str, Any]:
+    return {
+        "reason": reason,
+        "fleet_read": _fleet_read_label(),
+        "registry_authority": store.is_seat_authority(),
+    }
+
+
 def _idempotent_closed(
     *,
     rid: str,
@@ -78,7 +93,7 @@ def retire_dormant_binding(
                 chat_url=None,
                 dry_run=dry_run,
                 idempotent=True,
-                detail={"reason": "target_absent"},
+                detail=_noop_detail("target_absent"),
             )
         )
 
@@ -94,7 +109,7 @@ def retire_dormant_binding(
                 chat_url=url,
                 dry_run=dry_run,
                 idempotent=True,
-                detail={"reason": "no_binding_evidence"},
+                detail=_noop_detail("no_binding_evidence"),
             )
         )
 
@@ -106,6 +121,13 @@ def retire_dormant_binding(
             if local is not None:
                 bound = normalize_cse_url(str(local.get("chat_url") or ""))
                 if bound == url:
+                    status_row = status_source_row(
+                        registration_id=rid,
+                        resolved_row=resolved_row,
+                    )
+                    require_dormant_status(
+                        status_row, registration_id=rid, chat_url=url
+                    )
                     require_registry_authority(will_mutate=True)
                     if dry_run:
                         return result_payload(
@@ -121,10 +143,14 @@ def retire_dormant_binding(
                                 },
                             )
                         )
-                    finish_active_unbind_only(
+                    unbound = finish_active_unbind_only(
                         registration_id=rid,
                         chat_url=url,
                     )
+                    if not unbound:
+                        return _idempotent_closed(
+                            rid=rid, url=url, dry_run=dry_run
+                        )
                     return result_payload(
                         RetireBindingResult(
                             outcome="unbound_only",
@@ -151,7 +177,7 @@ def retire_dormant_binding(
                 chat_url=url,
                 dry_run=dry_run,
                 idempotent=True,
-                detail={"reason": "target_absent"},
+                detail=_noop_detail("target_absent"),
             )
         )
 
