@@ -44,7 +44,41 @@ def shadow_hook_error_count() -> int:
 
 
 def contested_wake_quarantine_count() -> int:
+    """Process-local bump counter (tests); drift uses ``durable_wake_quarantine_count``."""
     return _contested_wake_quarantine_count
+
+
+def durable_wake_quarantine_count() -> int:
+    with connect() as conn:
+        if not conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' "
+            "AND name='thread_seat_wake_quarantine'"
+        ).fetchone():
+            return _contested_wake_quarantine_count
+        row = conn.execute(
+            "SELECT COUNT(*) AS n FROM thread_seat_wake_quarantine"
+        ).fetchone()
+    return int(row["n"]) if row is not None else 0
+
+
+def _record_wake_quarantine(
+    conn: sqlite3.Connection,
+    *,
+    thread_id: str,
+    ledger_row_id: int,
+    epoch: int,
+    created_at: str,
+) -> None:
+    if not conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' "
+        "AND name='thread_seat_wake_quarantine'"
+    ).fetchone():
+        return
+    conn.execute(
+        "INSERT INTO thread_seat_wake_quarantine "
+        "(thread_id, ledger_row_id, epoch, created_at) VALUES (?, ?, ?, ?)",
+        (thread_id, ledger_row_id, epoch, created_at),
+    )
 
 
 def _record_shadow_hook_error(*, where: str, thread_id: str) -> None:
@@ -356,6 +390,13 @@ def transition_seat(
         if state == "contested":
             global _contested_wake_quarantine_count
             _contested_wake_quarantine_count += 1
+            _record_wake_quarantine(
+                conn,
+                thread_id=thread_id,
+                ledger_row_id=row_id,
+                epoch=next_epoch,
+                created_at=ts,
+            )
 
     from ..events.seat_transition import emit_seat_transition
 
@@ -508,36 +549,126 @@ def _subscription_drift(conn: sqlite3.Connection, thread_id: str) -> bool:
 
 
 def seat_drift_summary() -> dict[str, Any]:
-    """GET-only divergence counters: ledger vs CSE fold vs subscriptions vs GIW."""
+    """GET-only divergence counters: ledger vs CSE fold, subscriptions, GIW, registry."""
+    if not seat_ledger_shadow_writes_enabled():
+        return _drift_summary_disabled()
+
+    from .seat_drift_probes import (
+        giw_holder_chat,
+        ledger_matches_chat,
+        probe_giw_holder,
+        probe_registry_chat,
+    )
+
     cse_mismatch = 0
     subscription_mismatch = 0
     giw_mismatch = 0
-    giw_probe: str = "skipped"
+    registry_mismatch = 0
+    giw_probe = "ok"
+    registry_probe = "ok"
     mismatched_threads: list[str] = []
 
+    open_rows = list_open_seats(state="open")
+
     with connect() as conn:
-        open_rows = list_open_seats(state="open")
         for seat in open_rows:
             tid = str(seat["thread_id"])
-            if _cse_fold_mismatch(conn, tid, seat.get("chat_url")):
+            seat_url = seat.get("chat_url")
+            seat_chat_id = seat.get("chat_id")
+            if _cse_fold_mismatch(conn, tid, seat_url):
                 cse_mismatch += 1
                 mismatched_threads.append(tid)
             if _subscription_drift(conn, tid):
                 subscription_mismatch += 1
 
-    # GIW holder rows live in the worker's store; shadow drift records availability only.
-    giw_probe = "unavailable"
+            cse_row = conn.execute(
+                "SELECT cse_registration_id FROM thread_cse_associations "
+                "WHERE thread_id = ? ORDER BY id DESC LIMIT 1",
+                (tid,),
+            ).fetchone()
+            reg_id = (
+                str(cse_row["cse_registration_id"] or "").strip()
+                if cse_row is not None
+                else ""
+            )
+            reg_status, reg_url, reg_chat_id = probe_registry_chat(
+                reg_id or None
+            )
+            if reg_status == "unavailable":
+                registry_probe = "unavailable"
+            elif reg_id and not ledger_matches_chat(
+                seat_chat_url=seat_url,
+                seat_chat_id=seat_chat_id,
+                other_url=reg_url,
+                other_chat_id=reg_chat_id,
+            ):
+                registry_mismatch += 1
+
+    giw_pending: list[tuple[str | None, str | None, dict[str, Any] | None]] = []
+    for seat in open_rows:
+        tid = str(seat["thread_id"])
+        giw_status, holder = probe_giw_holder(tid)
+        if giw_status == "unavailable":
+            giw_probe = "unavailable"
+            break
+        giw_pending.append((seat.get("chat_url"), seat.get("chat_id"), holder))
+    else:
+        for seat_url, seat_chat_id, holder in giw_pending:
+            giw_url, giw_chat_id = giw_holder_chat(holder)
+            if not ledger_matches_chat(
+                seat_chat_url=seat_url,
+                seat_chat_id=seat_chat_id,
+                other_url=giw_url,
+                other_chat_id=giw_chat_id,
+            ):
+                if seat_url or giw_url or seat_chat_id or giw_chat_id:
+                    giw_mismatch += 1
+    if giw_probe == "unavailable":
+        giw_mismatch = 0
 
     return {
         "cse_association_mismatch_count": cse_mismatch,
         "subscription_mismatch_count": subscription_mismatch,
         "giw_holder_mismatch_count": giw_mismatch,
         "giw_probe": giw_probe,
+        "registry_mismatch_count": registry_mismatch,
+        "registry_probe": registry_probe,
         "shadow_hook_error_count": shadow_hook_error_count(),
-        "contested_wake_quarantine_count": contested_wake_quarantine_count(),
+        "contested_wake_quarantine_count": durable_wake_quarantine_count(),
         "mismatched_thread_ids": sorted(set(mismatched_threads)),
-        "open_seat_count": len(list_open_seats(state="open")),
+        "open_seat_count": len(open_rows),
     }
+
+
+def _drift_summary_disabled() -> dict[str, Any]:
+    return {
+        "cse_association_mismatch_count": 0,
+        "subscription_mismatch_count": 0,
+        "giw_holder_mismatch_count": 0,
+        "giw_probe": "disabled",
+        "registry_mismatch_count": 0,
+        "registry_probe": "disabled",
+        "shadow_hook_error_count": 0,
+        "contested_wake_quarantine_count": 0,
+        "mismatched_thread_ids": [],
+        "open_seat_count": 0,
+    }
+
+
+def seat_drift_cli_lines(summary: dict[str, Any] | None = None) -> list[str]:
+    """One ``key=value`` line per drift kind (CLI + tests)."""
+    data = summary if summary is not None else seat_drift_summary()
+    keys = (
+        "cse_association_mismatch_count",
+        "subscription_mismatch_count",
+        "giw_holder_mismatch_count",
+        "registry_mismatch_count",
+        "contested_wake_quarantine_count",
+        "shadow_hook_error_count",
+        "giw_probe",
+        "registry_probe",
+    )
+    return [f"{key}={data.get(key)}" for key in keys]
 
 
 def shadow_hook_associate_cse(

@@ -12,6 +12,9 @@ from agent_bus_store.db.seat_ledger import (
     SeatLedgerError,
     _reset_seat_ledger_counters_for_tests,
     contested_wake_quarantine_count,
+    durable_wake_quarantine_count,
+    seat_drift_cli_lines,
+    seat_drift_summary,
     seat_ledger_shadow_writes_enabled,
     shadow_hook_error_count,
     transition_seat,
@@ -117,6 +120,10 @@ def test_contested_holds_no_chat(bus_client: TestClient) -> None:
     assert row["chat_id"] is None
     assert row["chat_url"] is None
     assert contested_wake_quarantine_count() >= 1
+    durable_before = durable_wake_quarantine_count()
+    _reset_seat_ledger_counters_for_tests()
+    assert contested_wake_quarantine_count() == 0
+    assert durable_wake_quarantine_count() == durable_before >= 1
     cur = bus_client.get(f"/threads/{tid}/seat").json()["current"]
     assert cur["state"] == "contested"
     assert cur["chat_id"] is None
@@ -204,3 +211,90 @@ def test_associate_shadow_does_not_change_outcome(bus_client: TestClient) -> Non
     cur = bus_client.get(f"/threads/{tid}/seat").json()["current"]
     assert cur["state"] == "open"
     assert cur["chat_url"] == _URL_B
+
+
+def test_drift_giw_probe_unavailable_no_crash(
+    bus_client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    tid = _lane(bus_client, "seat-giw-fail")
+    bus_client.post(
+        f"/threads/{tid}/seat",
+        json={
+            "transition": "birth",
+            "chat_url": _URL_A,
+            "actor": "test",
+            "request_id": "giw-birth",
+        },
+    )
+    monkeypatch.setattr(
+        "agent_bus_store.db.seat_drift_probes.probe_giw_holder",
+        lambda *_a, **_k: ("unavailable", None),
+    )
+    summary = bus_client.get("/seats/drift").json()
+    assert summary["giw_probe"] == "unavailable"
+    assert summary["giw_holder_mismatch_count"] == 0
+
+
+def test_drift_giw_mismatch_when_holder_differs(bus_client: TestClient) -> None:
+    tid = _lane(bus_client, "seat-giw-mismatch")
+    bus_client.post(
+        f"/threads/{tid}/seat",
+        json={
+            "transition": "birth",
+            "chat_url": _URL_A,
+            "actor": "test",
+            "request_id": "giw-mismatch-birth",
+        },
+    )
+    holder = {"chat_url": _URL_B, "registration_id": "reg-b"}
+    with patch(
+        "agent_bus_store.db.seat_drift_probes.probe_giw_holder",
+        lambda *_a, **_k: ("ok", holder),
+    ):
+        summary = seat_drift_summary()
+    assert summary["giw_probe"] == "ok"
+    assert summary["giw_holder_mismatch_count"] == 1
+
+
+def test_drift_registry_probe_fail_open(bus_client: TestClient) -> None:
+    tid = _lane(bus_client, "seat-reg-fail")
+    with patch("agent_bus_store.db.cse_associations.emit_cse_bound"):
+        associate_cse(
+            thread_id=tid,
+            cse_chat_url=_URL_A,
+            cse_registration_id="reg-a",
+        )
+    with patch(
+        "agent_bus_store.db.seat_drift_probes.probe_registry_chat",
+        lambda *_a, **_k: ("unavailable", None, None),
+    ):
+        summary = bus_client.get("/seats/drift")
+    assert summary.status_code == 200
+    assert summary.json()["registry_probe"] == "unavailable"
+
+
+def test_drift_registry_mismatch(bus_client: TestClient) -> None:
+    tid = _lane(bus_client, "seat-reg-mismatch")
+    with patch("agent_bus_store.db.cse_associations.emit_cse_bound"):
+        associate_cse(
+            thread_id=tid,
+            cse_chat_url=_URL_A,
+            cse_registration_id="reg-a",
+        )
+    with patch(
+        "agent_bus_store.db.seat_drift_probes.probe_registry_chat",
+        lambda *_a, **_k: ("ok", _URL_B, "cse_01RtRztEY8bgocgT1geurtRx"),
+    ):
+        summary = seat_drift_summary()
+    assert summary["registry_mismatch_count"] == 1
+
+
+def test_seats_drift_cli_matches_route(
+    bus_client: TestClient, monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:
+    db_path = tmp_path / "cli.db"
+    monkeypatch.setenv("AGENT_BUS_DB_PATH", str(db_path))
+    init_db()
+    lines = seat_drift_cli_lines()
+    assert any(line.startswith("cse_association_mismatch_count=") for line in lines)
+    assert any(line.startswith("giw_probe=") for line in lines)
