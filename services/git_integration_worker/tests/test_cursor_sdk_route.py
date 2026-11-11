@@ -332,7 +332,7 @@ def test_dispatch_admits_and_spawns_task(
     "services.git_integration_worker.admission.WorkAdmissionController.create_tracked_task",
     return_value=MagicMock(done=lambda: False),
 )
-def test_dispatch_composer_2_5_alias_admits(
+def test_dispatch_opus_5_5_alias_admits(
     _mock_task: MagicMock, client: TestClient
 ) -> None:
     """Rule A: admitted member bare alias (cursor/COMPOSER-2.5 → composer-2.5)."""
@@ -2766,7 +2766,7 @@ def test_ac_p1_6_conductor_summoning_thread_from_packet_not_worker(
     "services.git_integration_worker.admission.WorkAdmissionController.create_tracked_task",
     return_value=MagicMock(done=lambda: False),
 )
-def test_conductor_explicit_fable_pin_admits(
+def test_conductor_explicit_grok_pin_admits(
     _mock_task: MagicMock, client: TestClient, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Explicit Other Models pin on conductor admits under explicit_pin_only (pins mode)."""

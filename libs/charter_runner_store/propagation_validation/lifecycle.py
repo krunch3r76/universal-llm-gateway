@@ -19,8 +19,10 @@ from ..propagation_activation_events import (
     publish_activation_event,
 )
 from .model import _SUPERSEDED_PREFIX, store_code_ref
-from .queries import latest_validation_for_intent
+from .queries import latest_validation_for_intent, pending_validations
 from .records import advance_validation
+
+_TERMINAL_INTENT_STATUSES = frozenset({"completed", "cancelled", "expired", "failed"})
 
 
 def _pending_reusable(
@@ -279,12 +281,87 @@ def discharge_intents_without_validation(
     return discharged
 
 
+def _service_has_newer_validated(
+    db, *, service: str, created_at: float, exclude_validation_id: str
+) -> bool:
+    row = db.execute(
+        """
+        SELECT 1 FROM propagation_validation
+        WHERE service=? AND outcome='validated' AND created_at > ? AND validation_id<>?
+        LIMIT 1
+        """,
+        (service, created_at, exclude_validation_id),
+    ).fetchone()
+    return row is not None
+
+
+def reconcile_pending_validations_for_terminal_intents(
+    *, store, conn=None
+) -> list[str]:
+    """Resolve or supersede pending validations whose restart intent is terminal."""
+    from deploy_identity.code_ref_relation import code_ref_relation_from_observed
+
+    from services.git_integration_worker.relay.propagation_probe import (
+        probe_process_live,
+    )
+
+    own_conn = conn is None
+    db = conn or open_ledger_db()
+    touched: list[str] = []
+    try:
+        for validation in pending_validations(conn=db):
+            intent_id = validation.restart_intent
+            if not intent_id:
+                continue
+            intent = store.get(str(intent_id))
+            if intent is None or intent.status not in _TERMINAL_INTENT_STATUSES:
+                continue
+            if _service_has_newer_validated(
+                db,
+                service=validation.service,
+                created_at=validation.created_at,
+                exclude_validation_id=validation.validation_id,
+            ):
+                if advance_validation(
+                    validation.validation_id,
+                    outcome="superseded",
+                    failure_reason="superseded_by_newer_validated",
+                    conn=db,
+                ):
+                    touched.append(validation.validation_id)
+                continue
+            payload = probe_process_live(validation.service)
+            if payload is None:
+                continue
+            observed = payload.get("code_version")
+            relation = code_ref_relation_from_observed(validation.code_ref, observed)
+            if relation not in {"equal", "ancestor"}:
+                continue
+            if advance_validation(
+                validation.validation_id,
+                outcome="validated",
+                post_observation=payload,
+                observed_code_version=str(observed) if observed else None,
+                code_ref_relation=relation,
+                identity_measurement="measured",
+                conn=db,
+            ):
+                touched.append(validation.validation_id)
+        if own_conn:
+            db.commit()
+    finally:
+        if own_conn:
+            db.close()
+    return touched
+
+
 def reconcile_pending_validations_at_boot(*, store, logger=None) -> None:
     """Repair supersession pairs and sweep stale pending rows after intent resume."""
     try:
         repair_supersession_pairs(store=store)
         sweep_stale_pending_validations()
         discharge_intents_without_validation(store=store)
+        reconcile_pending_validations_for_terminal_intents(store=store)
     except Exception:
         if logger is not None:
             logger.exception("restart-intent reconcile: validation sweep failed")
@@ -294,6 +371,7 @@ __all__ = [
     "discharge_intents_without_validation",
     "mint_pending_validation_for_intent",
     "reconcile_pending_validations_at_boot",
+    "reconcile_pending_validations_for_terminal_intents",
     "repair_supersession_pairs",
     "sweep_stale_pending_validations",
 ]

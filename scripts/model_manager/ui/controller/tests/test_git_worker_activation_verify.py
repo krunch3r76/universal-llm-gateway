@@ -18,8 +18,10 @@ from scripts.model_manager.ui.controller.git_worker_activation_verify import (
     ACTIVATION_IDLE_TIMEOUT_S,
     arm_verify_after_generation_gone,
     arms_activation_verify,
+    code_ref_master_relation,
     mint_activation_validation,
     record_kill_boundary_and_arm_verify,
+    resolve_validation_after_lifecycle,
     resume_activation_verify,
     run_activation_verify,
 )
@@ -549,3 +551,230 @@ def test_c11_lost_race_still_sets_kill_boundary(tmp_path, monkeypatch) -> None:
     assert got is not None
     assert got.status == "completed"
     assert got.kill_boundary_at
+
+
+_MASTER_TIP = "1111111111111111111111111111111111111111"
+_IMPORT_SEAL = "2222222222222222222222222222222222222222"
+_LANE_TIP = "3333333333333333333333333333333333333333"
+
+
+def _patch_master_resolve(monkeypatch) -> None:
+    from deploy_identity import code_ref_relation as relation_mod
+
+    def _fake(value: str) -> str | None:
+        ref = str(value or "").strip().lower()
+        if ref in {"refs/heads/master", "head"}:
+            return _MASTER_TIP
+        if ref == _LANE_TIP.lower():
+            return _LANE_TIP
+        if len(ref) == 40 and all(char in "0123456789abcdef" for char in ref):
+            return ref
+        return None
+
+    monkeypatch.setattr(relation_mod, "resolve_commit_sha", _fake)
+    monkeypatch.setattr(relation_mod, "_resolve_commit_sha", _fake)
+
+
+def test_head_mint_resolves_master_tip_not_import_seal(tmp_path, monkeypatch) -> None:
+    """HEAD at mint must name refs/heads/master, not manage resolve_code_version()."""
+    _patch_master_resolve(monkeypatch)
+    monkeypatch.setattr(
+        "deploy_identity.code_version.normalize_code_ref",
+        lambda _ref: _IMPORT_SEAL,
+    )
+    monkeypatch.setenv("CHARTER_RUNNER_DATA_DIR", str(tmp_path / "ledger"))
+    monkeypatch.setattr(
+        "services.git_integration_worker.relay.propagation_probe.probe_process_live",
+        lambda _service: {"probe_reachable": False},
+    )
+    store = RestartIntentStore(db_path=tmp_path / "intents.db")
+    intent = store.create_intent(
+        service="mcp",
+        action="sync_restart",
+        deadline_at="d",
+        reason="r",
+    )
+    validation_id = mint_activation_validation(store, intent, code_ref="HEAD")
+    row = get_validation(validation_id)
+    assert row is not None
+    assert row.code_ref == _MASTER_TIP
+    assert row.code_ref != _IMPORT_SEAL
+
+
+def test_off_master_code_ref_mints_with_warning_relation(tmp_path, monkeypatch) -> None:
+    """Lane-tip code_ref must mint; master relation flags descendant-of-observed."""
+    _patch_master_resolve(monkeypatch)
+    with patch(
+        "deploy_identity.code_ref_relation.code_ref_relation",
+        return_value="descendant-of-observed",
+    ):
+        relation = code_ref_master_relation(_LANE_TIP, service="mcp")
+        assert relation == "descendant-of-observed"
+    monkeypatch.setenv("CHARTER_RUNNER_DATA_DIR", str(tmp_path / "ledger"))
+    monkeypatch.setattr(
+        "services.git_integration_worker.relay.propagation_probe.probe_process_live",
+        lambda _service: {"probe_reachable": False},
+    )
+    with patch(
+        "scripts.model_manager.ui.controller.git_worker_activation_verify.code_ref_on_master",
+        return_value=False,
+    ):
+        store = RestartIntentStore(db_path=tmp_path / "intents.db")
+        intent = store.create_intent(
+            service="mcp",
+            action="sync_restart",
+            deadline_at="d",
+            reason="r",
+        )
+        validation_id = mint_activation_validation(store, intent, code_ref=_LANE_TIP)
+    row = get_validation(validation_id)
+    assert row is not None
+    assert row.outcome == "pending"
+    assert row.code_ref == _LANE_TIP
+
+
+def test_resolve_validation_after_lifecycle_validates_equal_probe(
+    tmp_path, monkeypatch
+) -> None:
+    """Generic supervisor path must validate pending rows when probe matches code_ref."""
+    monkeypatch.setenv("CHARTER_RUNNER_DATA_DIR", str(tmp_path))
+    store = RestartIntentStore(db_path=tmp_path / "intents.db")
+    intent = store.create_intent(
+        service="mcp",
+        action="sync_restart",
+        deadline_at="d",
+        reason="r",
+    )
+    store.advance_if_status(
+        intent.intent_id,
+        from_status="pending_drain",
+        to_status="completed",
+        reason="done",
+    )
+    validation_id = mint_pending_validation_for_intent(
+        intent, code_ref=_RESOLVABLE_CODE_REF
+    )
+    reachable = {
+        "probe_reachable": True,
+        "code_version": _RESOLVABLE_CODE_REF,
+        "pid": 1,
+    }
+    with patch(
+        "services.git_integration_worker.relay.propagation_probe.probe_process_live",
+        return_value=reachable,
+    ):
+        _run(
+            resolve_validation_after_lifecycle(
+                store, intent.intent_id, "mcp", idle_timeout_s=1.0
+            )
+        )
+    row = get_validation(validation_id)
+    assert row is not None
+    assert row.outcome == "validated"
+
+
+def test_resolve_validation_after_lifecycle_leaves_unreachable_pending(
+    tmp_path, monkeypatch
+) -> None:
+    monkeypatch.setenv("CHARTER_RUNNER_DATA_DIR", str(tmp_path))
+    store = RestartIntentStore(db_path=tmp_path / "intents.db")
+    intent = store.create_intent(
+        service="stargate",
+        action="sync_restart",
+        deadline_at="d",
+        reason="r",
+    )
+    store.advance_if_status(
+        intent.intent_id,
+        from_status="pending_drain",
+        to_status="completed",
+        reason="done",
+    )
+    validation_id = mint_pending_validation_for_intent(
+        intent, code_ref=_RESOLVABLE_CODE_REF
+    )
+    with patch(
+        "services.git_integration_worker.relay.propagation_probe.probe_process_live",
+        return_value=None,
+    ):
+        _run(
+            resolve_validation_after_lifecycle(
+                store, intent.intent_id, "stargate", idle_timeout_s=0.05
+            )
+        )
+    row = get_validation(validation_id)
+    assert row is not None
+    assert row.outcome == "pending"
+
+
+def test_reconcile_terminal_intent_validates_pending_row(tmp_path, monkeypatch) -> None:
+    from charter_runner_store.propagation_validation.lifecycle import (
+        reconcile_pending_validations_for_terminal_intents,
+    )
+
+    monkeypatch.setenv("CHARTER_RUNNER_DATA_DIR", str(tmp_path))
+    store = RestartIntentStore(db_path=tmp_path / "intents.db")
+    completed = store.create_intent(
+        service="mcp",
+        action="sync_restart",
+        deadline_at="d",
+        reason="r",
+    )
+    store.advance_if_status(
+        completed.intent_id,
+        from_status="pending_drain",
+        to_status="completed",
+        reason="done",
+    )
+    done_vid = mint_pending_validation_for_intent(
+        completed, code_ref=_RESOLVABLE_CODE_REF
+    )
+    live = store.create_intent(
+        service="stargate",
+        action="sync_restart",
+        deadline_at="d2",
+        reason="r2",
+    )
+    live_vid = mint_pending_validation_for_intent(live, code_ref=_RESOLVABLE_CODE_REF)
+    reachable = {
+        "probe_reachable": True,
+        "code_version": _RESOLVABLE_CODE_REF,
+        "pid": 9,
+    }
+    with patch(
+        "services.git_integration_worker.relay.propagation_probe.probe_process_live",
+        return_value=reachable,
+    ):
+        touched = reconcile_pending_validations_for_terminal_intents(store=store)
+    assert done_vid in touched
+    assert get_validation(done_vid).outcome == "validated"
+    assert get_validation(live_vid).outcome == "pending"
+
+
+def test_resolve_validation_after_lifecycle_skips_giw(tmp_path, monkeypatch) -> None:
+    monkeypatch.setenv("CHARTER_RUNNER_DATA_DIR", str(tmp_path))
+    store = RestartIntentStore(db_path=tmp_path / "intents.db")
+    intent = store.create_intent(
+        service="git_integration_worker",
+        action="restart",
+        deadline_at="d",
+        reason="r",
+    )
+    validation_id = mint_pending_validation_for_intent(
+        intent, code_ref=_RESOLVABLE_CODE_REF
+    )
+    reachable = {
+        "probe_reachable": True,
+        "code_version": _RESOLVABLE_CODE_REF,
+        "pid": 1,
+    }
+    with patch(
+        "services.git_integration_worker.relay.propagation_probe.probe_process_live",
+        return_value=reachable,
+    ):
+        _run(
+            resolve_validation_after_lifecycle(
+                store, intent.intent_id, "git_integration_worker", idle_timeout_s=0.1
+            )
+        )
+    assert get_validation(validation_id).outcome == "pending"
