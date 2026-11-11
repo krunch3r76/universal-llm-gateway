@@ -4,13 +4,21 @@ from __future__ import annotations
 
 from typing import Any
 
+from claude_bundles import cdp_registry_store as store
 from claude_bundles.cse_provenance import latest_episode
-from claude_bundles.cse_provenance_retire import latest_binding_closed
+from claude_bundles.cse_provenance_retire import (
+    latest_binding_closed,
+    open_binding_holder_registration,
+)
 from claude_bundles.cse_url import normalize_cse_url
 
-from .binding_retire_commit import commit_dormant_binding_retire
+from .binding_retire_commit import (
+    commit_dormant_binding_retire,
+    finish_active_unbind_only,
+)
 from .binding_retire_guards import (
     require_dormant_status,
+    require_journal_row_when_open,
     require_registry_authority,
     require_url_holder,
     status_source_row,
@@ -21,6 +29,24 @@ from .binding_retire_models import (
     result_payload,
 )
 from .binding_retire_resolve import local_row, resolve_retire_target
+
+
+def _idempotent_closed(
+    *,
+    rid: str,
+    url: str,
+    dry_run: bool,
+) -> dict[str, Any]:
+    return result_payload(
+        RetireBindingResult(
+            outcome="noop",
+            registration_id=rid,
+            chat_url=url,
+            dry_run=dry_run,
+            idempotent=True,
+            detail={"reason": "binding_already_retired"},
+        )
+    )
 
 
 def retire_dormant_binding(
@@ -43,21 +69,6 @@ def retire_dormant_binding(
         registration_id=registration_id,
         chat_url=chat_url,
     )
-
-    if url and latest_binding_closed(chat_url=url):
-        latest = latest_episode(chat_url=url)
-        holder = (rid or "").strip() or None
-        if latest and (holder is None or latest.registration_id == holder):
-            return result_payload(
-                RetireBindingResult(
-                    outcome="noop",
-                    registration_id=rid,
-                    chat_url=url,
-                    dry_run=dry_run,
-                    idempotent=True,
-                    detail={"reason": "binding_already_retired"},
-                )
-            )
 
     if not rid and not url:
         return result_payload(
@@ -88,6 +99,44 @@ def retire_dormant_binding(
         )
 
     local = local_row(rid)
+
+    if url and latest_binding_closed(chat_url=url):
+        latest = latest_episode(chat_url=url)
+        if latest and latest.registration_id == rid:
+            if local is not None:
+                bound = normalize_cse_url(str(local.get("chat_url") or ""))
+                if bound == url:
+                    require_registry_authority(will_mutate=True)
+                    if dry_run:
+                        return result_payload(
+                            RetireBindingResult(
+                                outcome="dry_run",
+                                registration_id=rid,
+                                chat_url=url,
+                                dry_run=True,
+                                idempotent=False,
+                                detail={
+                                    "would_finish_unbind_only": True,
+                                    "registry_authority": store.is_seat_authority(),
+                                },
+                            )
+                        )
+                    finish_active_unbind_only(
+                        registration_id=rid,
+                        chat_url=url,
+                    )
+                    return result_payload(
+                        RetireBindingResult(
+                            outcome="unbound_only",
+                            registration_id=rid,
+                            chat_url=url,
+                            dry_run=False,
+                            idempotent=False,
+                            detail={"reason": "journal_closed_active_still_bound"},
+                        )
+                    )
+            return _idempotent_closed(rid=rid, url=url, dry_run=dry_run)
+
     has_evidence = (
         local is not None
         or resolved_row is not None
@@ -113,6 +162,34 @@ def retire_dormant_binding(
     require_dormant_status(status_row, registration_id=rid, chat_url=url)
     require_url_holder(registration_id=rid, chat_url=url)
 
+    if local is None and resolved_row is not None:
+        refuse_retire(
+            reason="fleet_row_requires_satellite_retire",
+            message=(
+                "refusing retire: binding row exists only on fleet registry; "
+                "use cse_session retire_binding on the satellite"
+            ),
+            registration_id=rid,
+            chat_url=url,
+        )
+
+    require_journal_row_when_open(
+        registration_id=rid,
+        chat_url=url,
+        local_row=local,
+        resolved_row=resolved_row,
+    )
+
+    require_registry_authority(will_mutate=local is not None)
+
+    if local is None:
+        refuse_retire(
+            reason="row_gone",
+            message="refusing retire: registration row is not present locally",
+            registration_id=rid,
+            chat_url=url,
+        )
+
     if dry_run:
         return result_payload(
             RetireBindingResult(
@@ -123,32 +200,12 @@ def retire_dormant_binding(
                 idempotent=False,
                 detail={
                     "would_unbind_active": bool(
-                        local and str(local.get("chat_url") or "").strip()
+                        str(local.get("chat_url") or "").strip()
                     ),
-                    "would_append_provenance": local is not None,
-                    "fleet_row_seen": local is None and resolved_row is not None,
+                    "would_append_provenance": True,
+                    "registry_authority": store.is_seat_authority(),
                 },
             )
-        )
-
-    require_registry_authority(will_mutate=True)
-
-    if local is None:
-        if resolved_row is not None:
-            refuse_retire(
-                reason="not_registry_authority",
-                message=(
-                    "refusing retire: row exists only on fleet registry; "
-                    "use cse_session retire_binding on the satellite"
-                ),
-                registration_id=rid,
-                chat_url=url,
-            )
-        refuse_retire(
-            reason="row_gone",
-            message="refusing retire: registration row is not present locally",
-            registration_id=rid,
-            chat_url=url,
         )
 
     _, unbound = commit_dormant_binding_retire(

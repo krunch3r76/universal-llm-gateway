@@ -413,6 +413,8 @@ def retire_misbound_dormant_attachment(registration_id: str) -> bool:
             cdp_url=str(updated.get("cdp_url") or ""),
             reason="misbound_dormant_attachment_retired",
         )
+        updated.pop("chat_url", None)
+        updated.pop("chat_url_bound_at", None)
         active[rid] = updated
         _store.write_active(active)
         _store.append_log(

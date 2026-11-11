@@ -5,8 +5,7 @@ from __future__ import annotations
 from typing import Any
 
 from claude_bundles import cdp_registry_store as store
-from claude_bundles.cse_provenance import episodes_for_chat_url
-from claude_bundles.cse_provenance_retire import binding_closed_by_episode
+from claude_bundles.cse_provenance_retire import open_binding_holder_registration
 from claude_bundles.cse_url import normalize_cse_url
 
 from .binding_retire_models import refuse_retire
@@ -50,22 +49,43 @@ def require_url_holder(
     registration_id: str,
     chat_url: str,
 ) -> None:
-    """Refuse when the URL's latest open binding belongs to another registration."""
+    """Refuse when the URL's open holder registration differs from ``registration_id``."""
     target = normalize_cse_url(chat_url)
-    for episode in reversed(episodes_for_chat_url(target)):
-        if binding_closed_by_episode(episode):
-            continue
-        if episode.registration_id != registration_id:
-            refuse_retire(
-                reason="registration_mismatch",
-                message=(
-                    "refusing retire: chat_url is bound to a different registration"
-                ),
-                registration_id=registration_id,
-                chat_url=target,
-                holder_registration_id=episode.registration_id,
-            )
+    holder = open_binding_holder_registration(target)
+    if holder is not None and holder != registration_id:
+        refuse_retire(
+            reason="registration_mismatch",
+            message="refusing retire: chat_url open holder is a different registration",
+            registration_id=registration_id,
+            chat_url=target,
+            holder_registration_id=holder,
+        )
+
+
+def require_journal_row_when_open(
+    *,
+    registration_id: str,
+    chat_url: str,
+    local_row: dict[str, Any] | None,
+    resolved_row: dict[str, Any] | None,
+) -> None:
+    """Refuse retire when journal still shows an open binding but no registry row exists.
+
+    Intentional: satellite authority must hold the ``active.json`` row before mutating.
+    """
+    if local_row is not None or resolved_row is not None:
         return
+    holder = open_binding_holder_registration(chat_url)
+    if holder == registration_id:
+        refuse_retire(
+            reason="journal_open_binding_no_registry_row",
+            message=(
+                "refusing retire: provenance shows an open binding but no "
+                "registry row is present on this host"
+            ),
+            registration_id=registration_id,
+            chat_url=chat_url,
+        )
 
 
 def require_registry_authority(*, will_mutate: bool) -> None:

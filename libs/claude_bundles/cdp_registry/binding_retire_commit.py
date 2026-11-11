@@ -8,6 +8,7 @@ from typing import Any
 from claude_bundles import cdp_registry_store as store
 from claude_bundles.cse_provenance import ProvenanceEpisode
 from claude_bundles.cse_provenance_retire import append_binding_retired_episode
+from claude_bundles.cse_url import normalize_cse_url
 
 from .binding_retire_models import RETIRE_LOG_EVENT, refuse_retire
 from .models import STATUS_DORMANT
@@ -77,10 +78,43 @@ def commit_dormant_binding_retire(
                 "before": audit_before,
                 "after": {
                     "status": status,
-                    "chat_url": None if prior_url else prior_url,
+                    "chat_url": None if unbound else prior_url,
                 },
                 "ts_audit": time.time(),
                 **(extra_audit or {}),
             },
         )
     return episode, unbound
+
+
+def finish_active_unbind_only(
+    *,
+    registration_id: str,
+    chat_url: str,
+) -> bool:
+    """Clear ``chat_url`` when journal already retired — no episode or audit row."""
+    rid = registration_id.strip()
+    url = normalize_cse_url(chat_url)
+    if not rid or not url:
+        return False
+    with store.ports_lock():
+        active = store.load_active()
+        row = active.get(rid)
+        if not isinstance(row, dict):
+            refuse_retire(
+                reason="row_gone",
+                message=f"refusing unbind finish: registration {rid!r} missing",
+                registration_id=rid,
+                chat_url=url,
+            )
+        prior = str(row.get("chat_url") or "").strip() or None
+        if normalize_cse_url(prior or "") != url:
+            return False
+        if not prior:
+            return False
+        updated = dict(row)
+        updated.pop("chat_url", None)
+        updated.pop("chat_url_bound_at", None)
+        active[rid] = updated
+        store.write_active(active)
+    return True

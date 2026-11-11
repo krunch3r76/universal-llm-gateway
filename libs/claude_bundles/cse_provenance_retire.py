@@ -27,15 +27,41 @@ def latest_binding_closed(*, chat_url: str | None = None) -> bool:
     return latest is not None and binding_closed_by_episode(latest)
 
 
-def latest_open_binding_episode(chat_url: str) -> ProvenanceEpisode | None:
-    """Newest non-retired episode for the URL, if any."""
+def per_registration_latest_episodes(
+    chat_url: str,
+) -> dict[str, ProvenanceEpisode]:
+    """Latest journal row per ``registration_id`` for one URL (append order)."""
+    by_reg: dict[str, ProvenanceEpisode] = {}
     target = normalize_cse_url(chat_url)
     if not target:
+        return {}
+    for episode in episodes_for_chat_url(target):
+        prior = by_reg.get(episode.registration_id)
+        if prior is None or episode.observed_at >= prior.observed_at:
+            by_reg[episode.registration_id] = episode
+    return by_reg
+
+
+def open_binding_holder_episode(chat_url: str) -> ProvenanceEpisode | None:
+    """Newest open binding among per-registration latest episodes for the URL."""
+    open_eps = [
+        episode
+        for episode in per_registration_latest_episodes(chat_url).values()
+        if not binding_closed_by_episode(episode)
+    ]
+    if not open_eps:
         return None
-    for episode in reversed(episodes_for_chat_url(target)):
-        if not binding_closed_by_episode(episode):
-            return episode
-    return None
+    return max(open_eps, key=lambda episode: episode.observed_at)
+
+
+def open_binding_holder_registration(chat_url: str) -> str | None:
+    episode = open_binding_holder_episode(chat_url)
+    return episode.registration_id if episode is not None else None
+
+
+def latest_open_binding_episode(chat_url: str) -> ProvenanceEpisode | None:
+    """Alias for the per-registration holder episode (N1 shared helper)."""
+    return open_binding_holder_episode(chat_url)
 
 
 def append_binding_retired_episode(

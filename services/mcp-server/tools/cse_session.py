@@ -1,7 +1,7 @@
 """MCP cse_session tool — thin httpx relay to the Jupiter CDP-ask satellite.
 
-Ops: provenance/harvest (read), paste (hop-pair grant), followup (warm CSE
-wake), resolve_attended (read). paste ≠ followup — different satellite routes.
+Ops: provenance, harvest, paste, followup, resolve_attended (read), detach,
+retire_binding (write on satellite). paste ≠ followup — different routes.
 No claude_bundles or cdp_ask imports — relay only per [universal:mcp].
 """
 
@@ -185,7 +185,6 @@ def register_cse_session_tool(mcp: FastMCP) -> None:
                 }.items()
                 if v is not None and v is not False
             }
-            # FastMCP passes dry_run via tool kw only when exposed — accept reason prefix
             result = _relay(
                 "POST",
                 "/v1/cse-session/retire-binding",

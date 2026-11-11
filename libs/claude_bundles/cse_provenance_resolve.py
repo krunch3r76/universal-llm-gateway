@@ -20,7 +20,7 @@ from claude_bundles.cse_provenance_projection import (
 )
 from claude_bundles.cse_provenance_retire import (
     binding_closed_by_episode,
-    latest_open_binding_episode,
+    open_binding_holder_episode,
 )
 from claude_bundles.cse_url import normalize_cse_url
 
@@ -269,7 +269,7 @@ def resolve(
                 ]
 
     newest = episodes[-1]
-    holder = latest_open_binding_episode(target) if target else None
+    holder = open_binding_holder_episode(target) if target else None
     current = newest
     if binding_closed_by_episode(newest):
         if holder is not None and newest.registration_id != holder.registration_id:
