@@ -245,6 +245,14 @@ def close_thread(
                 root=thread_id,
                 reason="close_while_enrolled",
             )
+        try:
+            from .seat_ledger import shadow_hook_thread_close
+
+            shadow_hook_thread_close(thread_id=thread_id)
+        except Exception:
+            from .seat_ledger import _record_shadow_hook_error
+
+            _record_shadow_hook_error(where="close_thread", thread_id=thread_id)
     return detail
 
 
