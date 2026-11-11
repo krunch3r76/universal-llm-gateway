@@ -176,7 +176,7 @@ Use the conductor skill — nest specialists; ¬ hand-code mechanical G-rows.
 def test_conductor_preamble_names_house_critic_in_all_three_blocks(
     house_watch_dir: Path,
 ) -> None:
-    house_model = "cursor/grok-4.7"
+    house_model = "cdp/fable-5.1"
     _write_house_tick(house_watch_dir, "21558", critic_model=house_model, effort="high")
     house_clause = g3_g5_score_ratify_clause(
         resolve_roles(critic_model=house_model, critic_effort="high")

@@ -29,6 +29,15 @@ from services.git_integration_worker.tests.test_cursor_sdk_route import _dispatc
 _UNTRUSTED_CURSOR_MODEL = "cursor/claude-sonnet-5-ultra-fake"
 
 
+def _patch_deny_pool_mode(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Pin Other Models pool fence to deny without mutating route_policy.yaml."""
+    monkeypatch.setattr(
+        "implement_admission.cursor_sdk_other_models_pool."
+        "load_cursor_sdk_other_models_pool_mode",
+        lambda *_a, **_k: "deny",
+    )
+
+
 @pytest.fixture
 def client() -> TestClient:
     return TestClient(create_app())
@@ -98,6 +107,8 @@ def test_enforce_model_set_absent_in_production_giw() -> None:
 def test_http_explicit_other_models_refused_pool_fence(
     client: TestClient, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    """Other Models explicit pin refused when pool mode is deny (test pins deny)."""
+    _patch_deny_pool_mode(monkeypatch)
     bridge = MagicMock()
     monkeypatch.setattr(route_mod, "launch_sdk_bridge", bridge)
     resp = client.post(
@@ -127,6 +138,8 @@ def test_http_admits_composer_primary_pool(
 def test_http_bare_other_models_pool_id_refused(
     client: TestClient, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    """Bare Other Models id refused when pool mode is deny (test pins deny)."""
+    _patch_deny_pool_mode(monkeypatch)
     bridge = MagicMock()
     monkeypatch.setattr(route_mod, "launch_sdk_bridge", bridge)
     resp = client.post(
@@ -231,7 +244,8 @@ def _seed_parked_non_member(
 async def test_t7_1_park_resume_refuses_stored_other_models_pool(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Park re-admit refuses stored Other Models pool rows when policy is deny."""
+    """Park re-admit refuses stored Other Models rows when pool mode is deny (pins deny)."""
+    _patch_deny_pool_mode(monkeypatch)
     bridge = MagicMock()
     monkeypatch.setattr(route_mod, "launch_sdk_bridge", bridge)
     _seed_parked_non_member(

@@ -335,14 +335,14 @@ def test_dispatch_admits_and_spawns_task(
 def test_dispatch_opus_5_5_alias_admits(
     _mock_task: MagicMock, client: TestClient
 ) -> None:
-    """Rule A: member alias under the pair allowlist (was opus-5-5 pre gate)."""
+    """Rule A: admitted member bare alias (cursor/COMPOSER-2.5 → composer-2.5)."""
     resp = client.post(
         "/api/v1/cursor/dispatch",
-        json=_dispatch_body(model="cursor/grok-4.7"),
+        json=_dispatch_body(model="cursor/COMPOSER-2.5"),
     )
     assert resp.status_code == 200
     assert resp.json()["admitted"] is True
-    assert resp.json()["model_id"] == "grok-4.7"
+    assert resp.json()["model_id"] == "composer-2.5"
 
 
 @patch(
@@ -1041,7 +1041,9 @@ async def test_dispatch_consult_zero_tool_calls_not_degraded(
     )
     assert payload["evidence_uris"]["artifact_paths"] == [sidecar_ref]
     sidecar = source_repo / "tmp/reviews/closeouts/disp-consult.md"
-    assert sidecar.read_text(encoding="utf-8").startswith("Findings only")
+    sidecar_text = sidecar.read_text(encoding="utf-8")
+    assert sidecar_text.splitlines()[0] == "## executive_envelope"
+    assert "Findings only" in sidecar_text
     assert emitted[0]["outcome"] == "ok"
 
 
@@ -2748,13 +2750,18 @@ def test_ac_p1_6_conductor_summoning_thread_from_packet_not_worker(
     return_value=MagicMock(done=lambda: False),
 )
 def test_conductor_explicit_grok_pin_admits(
-    _mock_task: MagicMock, client: TestClient
+    _mock_task: MagicMock, client: TestClient, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Explicit grok pin on conductor packet still admits (rare pin path)."""
+    """Explicit Other Models pin on conductor admits under explicit_pin_only (pins mode)."""
+    monkeypatch.setattr(
+        "implement_admission.cursor_sdk_other_models_pool."
+        "load_cursor_sdk_other_models_pool_mode",
+        lambda *_a, **_k: "explicit_pin_only",
+    )
     resp = client.post(
         "/api/v1/cursor/dispatch",
         json=_dispatch_body(
-            model="cursor/grok-4.7",
+            model="cursor/claude-fable-5",
             handoff_contract="none",
             message=(
                 "---\npacket_kind: conductor\ncontract: conductor\n---\n"

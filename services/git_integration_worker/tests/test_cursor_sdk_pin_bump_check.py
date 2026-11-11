@@ -31,9 +31,10 @@ def mod():
     return _load_module()
 
 
-def test_parse_pin_line_reads_requirements(mod, monkeypatch) -> None:
-    req = mod.repo_root() / "requirements.host.txt"
-    assert mod.parse_pin_line(req) == "1.0.31"
+def test_parse_pin_line_reads_requirements(mod, tmp_path: Path) -> None:
+    req = tmp_path / "requirements.host.txt"
+    req.write_text("# pin probe\n.cursor-sdk==ignored\ncursor-sdk==9.8.7\n", encoding="utf-8")
+    assert mod.parse_pin_line(req) == "9.8.7"
 
 
 def test_classify_holds_on_all_pass(mod) -> None:
