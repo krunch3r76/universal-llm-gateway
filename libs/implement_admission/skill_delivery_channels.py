@@ -93,21 +93,29 @@ _FS_SKILL_POINTER_RE = re.compile(
 
 def render_skill_entity_pointer(
     slug_or_entity_id: str,
+    entity_id: str | None = None,
     *,
     leading_newline: bool = False,
     bullet: bool = False,
+    index_marker: bool = False,
 ) -> str:
     """Entity-pointer substitute for skills= on non-Use-line endpoints (ruling 2026-11-10)."""
     slug = canonical_catalog_slug(slug_or_entity_id)
-    entity_id = f"agent_skill:{slug}"
+    resolved_entity_id = entity_id or f"agent_skill:{slug}"
     source_uri = resolve_canonical_source_uri(slug)
     line = (
-        f"Skill `{slug}`: read entity `{entity_id}` at {source_uri} "
+        f"Skill `{slug}`: read entity `{resolved_entity_id}` at {source_uri} "
         f"(fs md_list, then md_read the sections you need; export=true for the whole file)."
     )
     if bullet:
         line = f"- {line}"
-    return f"\n{line}" if leading_newline else line
+    rendered = f"\n{line}" if leading_newline else line
+    if not index_marker:
+        return rendered
+    return (
+        f"\n\n<!-- injected-index:{slug} entity_id={resolved_entity_id} -->"
+        f"\n{line if bullet else f'- {line}'}"
+    )
 
 # Allowlist = workspace-only skills web handoffs require inlined.
 # Web-native skills (e.g. lead-seat-boot) stay pointer/self-fetch.

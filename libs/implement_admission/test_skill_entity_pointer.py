@@ -25,3 +25,15 @@ def test_pointer_only_packet_passes_exactly_one_channel() -> None:
     line = render_skill_entity_pointer("lead-seat-boot", bullet=True)
     packet = f"<invariants>[scope]\n{line}\n</invariants>"
     assert validate_exactly_one_skill_channel(packet) is None
+
+
+@pytest.mark.offline
+def test_index_marker_overflow_no_use_line() -> None:
+    block = render_skill_entity_pointer(
+        "architecture-invariants",
+        "agent_skill:architecture-invariants",
+        index_marker=True,
+    )
+    assert "injected-index:architecture-invariants" in block
+    assert "md_list, then md_read" in block
+    assert "Use the `architecture-invariants` skill" not in block

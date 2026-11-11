@@ -81,4 +81,6 @@ async def test_anthropic_role_path_caller_budget_entity_pointer(
     body = await build_dispatch_body(req, event_publisher=events.append)
     system = body["pipeline_options"]["system"]
     assert "injected-index:architecture-invariants" in system
+    assert "md_list, then md_read" in system
+    assert "Use the `architecture-invariants` skill" not in system
     assert any(e.signal == "dispatch.skills.inline.overflow" for e in events)
