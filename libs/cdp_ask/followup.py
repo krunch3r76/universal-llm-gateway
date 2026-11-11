@@ -183,16 +183,22 @@ def _release_lane(registration_id: str) -> None:
     _lane_targets.pop(registration_id, None)
 
 
-def _commit_reattach_seat(outcome: ReattachOutcome, lane: str) -> str:
+def _commit_reattach_seat(
+    outcome: ReattachOutcome, lane: str, lane_pin: dict | None = None
+) -> str:
     """Post-acquire seat commit. Runs only after the second gate and lane acquire."""
     from claude_bundles.cdp_registry.session_address import commit_reattach_driving_seat
 
+    pin = lane_pin if isinstance(lane_pin, dict) else {}
     return commit_reattach_driving_seat(
         outcome.registration_id or "",
         chat_url=outcome.reattach_bound_chat_url or "",
         lane=lane,
         snapshot_holder_id=outcome.seat_snapshot_holder_id,
         snapshot_seat_bound_at=outcome.seat_snapshot_bound_at,
+        misbound_holder_reg=pin.get("misbound_holder_reg"),
+        misbound_carve_out=bool(pin.get("misbound_carve_out")),
+        gate_seated_at=pin.get("gate_seated_at"),
     )
 
 
@@ -411,9 +417,10 @@ async def _maybe_reattach(
         skipped = skipped_reason_for_miss(
             reason=reason, chat_url=chat_url, outcome_error=outcome.error
         )
+        combined_detail = outcome.detail or reattach_probe_detail
         return outcome, fail_followup(
             outcome.error or "reattach_navigate_failed",
-            detail=reattach_probe_detail,
+            detail=combined_detail,
             url=chat_url,
             reattach_skipped_reason=skipped,
             standdown_token_for=standdown_token_for,
@@ -520,6 +527,8 @@ async def execute_followup(
             # value from the address retry. An identity-omitted request stays
             # omitted so the second resolve remains the attended-operator oracle
             # (a dormant wake) instead of a registration-keyed CDP scan.
+            lane_pin["caller_registration_id"] = (req.registration_id or "").strip()
+            lane_pin["caller_chat_url"] = (req.chat_url or "").strip()
             req = req.model_copy(update={"registration_id": outcome_reg})
         lane_pin["reattach_used"] = True
         lane_pin["outcome_reg"] = outcome_reg
@@ -665,6 +674,7 @@ async def execute_followup(
                     _commit_reattach_seat,
                     reattach_outcome,
                     (req.parent_thread or "").strip(),
+                    lane_pin,
                 )
             )
             try:
