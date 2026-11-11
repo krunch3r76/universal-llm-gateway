@@ -89,7 +89,9 @@ async def test_read_grok_stale_conversation_after_select_not_prior_messages() ->
 
     with (
         patch("cursor_bridge.electron_chat_relay.list_pages", return_value=pages),
-        patch("cursor_bridge.electron_chat_relay.probe_surface", side_effect=_fake_probe),
+        patch(
+            "cursor_bridge.electron_chat_relay.probe_surface", side_effect=_fake_probe
+        ),
         patch(
             "cursor_bridge.electron_chat_relay.select_grok_agent_async",
             new_callable=AsyncMock,
@@ -113,6 +115,74 @@ async def test_read_grok_stale_conversation_after_select_not_prior_messages() ->
     assert snap["ok"] is False
     assert snap["code"] == "conversation_unconfirmed"
     assert stale_line not in (snap.get("recent_messages") or [])
+
+
+@pytest.mark.asyncio
+async def test_grok_select_reprobes_surface_inside_switch_lock_for_prior_generating() -> (
+    None
+):
+    """Break: pre-lock idle snapshot must not be the C2 baseline after a concurrent wake."""
+    ep = ElectronEndpoint(
+        label="gc2",
+        app="grok",
+        display="10",
+        title="Target Bot",
+        agent_id="target-agent-id",
+    )
+    idle = {
+        "state": "chat_list",
+        "active_title": "Other Chat",
+        "active_agent_id": "other-uuid",
+        "titles": ["Other Chat", "Target Bot"],
+        "composer_draft": "",
+        "generating": False,
+        "recent_messages": ["baseline"],
+    }
+    streaming = {
+        **idle,
+        "generating": True,
+        "recent_messages": ["baseline", "x-stream-chunk"],
+    }
+    pages = [{"title": "Grok Bot", "web_socket_debugger_url": "ws://fake"}]
+    probes = [dict(idle), dict(streaming)]
+
+    async def _fake_probe(_ws: str) -> dict[str, Any]:
+        return probes.pop(0) if probes else dict(streaming)
+
+    grok_after = AsyncMock(
+        return_value={
+            "ok": True,
+            "stale_dom": False,
+            "surface": streaming,
+            "verdict": {
+                "ok": True,
+                "active_agent_id": "target-agent-id",
+                "active_title": "Target Bot",
+            },
+        }
+    )
+
+    with (
+        patch("cursor_bridge.electron_chat_relay.list_pages", return_value=pages),
+        patch(
+            "cursor_bridge.electron_chat_relay.probe_surface", side_effect=_fake_probe
+        ),
+        patch(
+            "cursor_bridge.electron_chat_relay.select_grok_agent_async",
+            new_callable=AsyncMock,
+            return_value={"ok": True, "currentAgentId": "target-agent-id"},
+        ),
+        patch(
+            "cursor_bridge.electron_chat_relay.probe_grok_after_select",
+            grok_after,
+        ),
+        patch("cursor_bridge.electron_chat_relay.agent_paste_lock", _noop_lock),
+    ):
+        snap = await read_endpoint_turn(ep, select=True)
+
+    assert snap["ok"] is True
+    grok_after.assert_awaited_once()
+    assert grok_after.await_args.kwargs["prior_generating"] is True
 
 
 @pytest.mark.asyncio
@@ -151,7 +221,9 @@ async def test_read_grok_empty_dom_ok_after_select() -> None:
 
     with (
         patch("cursor_bridge.electron_chat_relay.list_pages", return_value=pages),
-        patch("cursor_bridge.electron_chat_relay.probe_surface", side_effect=_fake_probe),
+        patch(
+            "cursor_bridge.electron_chat_relay.probe_surface", side_effect=_fake_probe
+        ),
         patch(
             "cursor_bridge.electron_chat_relay.select_grok_agent_async",
             new_callable=AsyncMock,

@@ -243,9 +243,41 @@ async def _resolve_and_select_endpoint(
                 "active_agent_id": verdict.get("active_agent_id"),
                 "titles": verdict.get("titles"),
             }
-        prior_fp = messages_fingerprint(surface) if app == "grok" else ""
-        prior_generating = bool(surface.get("generating")) if app == "grok" else None
         async with display_switch_lock(disp):
+            try:
+                surface = await probe_surface(ws_url)
+            except (TimeoutError, RuntimeError, OSError) as exc:
+                return {
+                    "ok": False,
+                    "reason": "surface_probe_failed",
+                    "endpoint": endpoint.label,
+                    "display": disp,
+                    "app": app,
+                    "detail": type(exc).__name__,
+                }
+            verdict = wake_decision(
+                surface,
+                thread=endpoint.thread,
+                slug=endpoint.slug,
+                title=endpoint.title or None,
+                agent_id=endpoint.agent_id or None,
+            )
+            guard = _busy_or_draft_reason(surface)
+            if guard:
+                return {
+                    "ok": False,
+                    "reason": guard,
+                    "endpoint": endpoint.label,
+                    "display": disp,
+                    "app": app,
+                    "active_title": verdict.get("active_title"),
+                    "active_agent_id": verdict.get("active_agent_id"),
+                    "titles": verdict.get("titles"),
+                }
+            prior_fp = messages_fingerprint(surface) if app == "grok" else ""
+            prior_generating = (
+                bool(surface.get("generating")) if app == "grok" else None
+            )
             if app == "grok" and str(endpoint.agent_id or "").strip():
                 cdp_pick = await select_grok_agent_async(disp, str(endpoint.agent_id))
                 if cdp_pick.get("ok"):
