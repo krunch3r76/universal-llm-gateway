@@ -576,6 +576,7 @@ def apply_driving_seat_bind(
     registration_id: str,
     *,
     now: float | None = None,
+    predecessor_close_reason: str = "superseded",
 ) -> tuple[dict[str, Any] | None, list[dict[str, Any]]]:
     """Mutate *active* to bind a driving-operator seat and close predecessors.
 
@@ -605,7 +606,7 @@ def apply_driving_seat_bind(
         if seat_open(other, lane):
             closed = dict(other)
             closed["seat_closed_at"] = ts
-            closed["seat_close_reason"] = "superseded"
+            closed["seat_close_reason"] = predecessor_close_reason
             closed["superseded_by"] = registration_id
             active[other_id] = closed
             released.append(closed)
@@ -681,7 +682,11 @@ def retire_predecessor_identity(
     return released
 
 
-def bind_driving_seat(registration_id: str) -> None:
+def bind_driving_seat(
+    registration_id: str,
+    *,
+    predecessor_close_reason: str = "superseded",
+) -> None:
     """Bind the driving-operator seat for *registration_id* under ``ports_lock``.
 
     No-op when the row is not a driving operator or ``parent_thread`` is empty.
@@ -690,7 +695,11 @@ def bind_driving_seat(registration_id: str) -> None:
     released_rows: list[dict[str, Any]] = []
     with _store.ports_lock():
         active = _store.load_active()
-        bound_row, released_rows = apply_driving_seat_bind(active, registration_id)
+        bound_row, released_rows = apply_driving_seat_bind(
+            active,
+            registration_id,
+            predecessor_close_reason=predecessor_close_reason,
+        )
         if bound_row is not None or released_rows:
             _store.require_seat_authority(operation="bind_driving_seat")
             _store.write_active(active)

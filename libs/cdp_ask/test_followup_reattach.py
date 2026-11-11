@@ -3850,6 +3850,166 @@ def test_closed_same_lane_seat_is_not_carved_out(isolated_registry: Path) -> Non
     assert holder.registration_id != borrowed.registration_id
 
 
+def _dormant_misbound_lane_pair(
+    lane: str,
+    *,
+    holder_chat: str,
+    mint_chat: str | None,
+) -> tuple[Any, Any, Any]:
+    from claude_bundles import cdp_registry as reg
+    from claude_bundles.cdp_registry.models import seat_open
+
+    holder = reg.register_lane(
+        holder="dormant-holder",
+        purpose="operator-proxy",
+        parent_thread=lane,
+        launch_chrome=_noop_launch,
+        is_listening=lambda _p: False,
+    )
+    minted = reg.register_lane(
+        holder="reattach-mint",
+        purpose="operator-proxy",
+        parent_thread=lane,
+        launch_chrome=_noop_launch,
+        is_listening=lambda _p: False,
+    )
+    with reg._store.ports_lock():
+        active = reg._store.load_active()
+        hrow = dict(active[holder.registration_id])
+        hrow["parent_thread"] = lane
+        hrow["seat_lane"] = lane
+        hrow["seat_bound_at"] = 20.0
+        hrow["seat_closed_at"] = None
+        hrow["chat_url"] = holder_chat
+        hrow["chat_url_bound_at"] = 1.0
+        active[holder.registration_id] = hrow
+        mrow = dict(active[minted.registration_id])
+        mrow["parent_thread"] = lane
+        mrow["purpose"] = "operator-proxy"
+        if mint_chat is not None:
+            mrow["chat_url"] = mint_chat
+            mrow["chat_url_bound_at"] = 2.0
+        for key in ("seat_lane", "seat_bound_at", "seat_closed_at"):
+            mrow.pop(key, None)
+        active[minted.registration_id] = mrow
+        reg._store.write_active(active)
+    reg._release_driver_lock(holder.registration_id)
+    assert (
+        reg.make_dormant(holder.registration_id, is_listening=lambda _port: False)
+        is not None
+    )
+    active = reg._store.load_active()
+    assert seat_open(active[holder.registration_id], lane)
+    assert not seat_open(active[minted.registration_id], lane)
+    return reg, holder, minted
+
+
+def test_dormant_misbound_holder_carve_out_seats_mint_without_holder_page(
+    isolated_registry: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Dormant holder on another chat: gate accepts mint and closes predecessor."""
+    from claude_bundles.cdp_registry.models import seat_open
+
+    from cdp_ask.followup_resolve import _lane_seat_followup_gate
+
+    lane = "22778"
+    holder_chat = "https://claude.ai/cowork/cse_01AroaPf5M91QkzySgHNZMKf"
+    mint_chat = CSE_TARGET_38282
+    reg, holder, minted = _dormant_misbound_lane_pair(
+        lane, holder_chat=holder_chat, mint_chat=mint_chat
+    )
+    nav_calls: list[str] = []
+
+    async def _nav(*_args: Any, **_kwargs: Any) -> None:
+        nav_calls.append("nav")
+
+    monkeypatch.setattr("cdp_ask.followup_reattach._navigate_new_page", _nav)
+    req = FollowupProjectAskRequest(
+        prompt_text="memo",
+        parent_thread=lane,
+        chat_url=mint_chat,
+        registration_id=minted.registration_id,
+        purpose="operator-proxy",
+        reattach=True,
+    )
+    _out, err, _path = _lane_seat_followup_gate(
+        req,
+        {"reattach_used": True, "outcome_reg": minted.registration_id},
+        _snap_from_active(reg),
+    )
+    assert err is None
+    active = reg._store.load_active()
+    assert not seat_open(active[holder.registration_id], lane)
+    assert seat_open(active[minted.registration_id], lane)
+    assert active[holder.registration_id].get("seat_close_reason") == (
+        "dormant_holder_misbound"
+    )
+    assert nav_calls == []
+
+
+def test_dormant_same_chat_still_mismatches(
+    isolated_registry: Path,
+) -> None:
+    """Dormant holder on the requested chat keeps operator_seat_mismatch."""
+    from cdp_ask.followup_resolve import _lane_seat_followup_gate
+
+    lane = "22778"
+    chat = CSE_TARGET_38282
+    reg, holder, minted = _dormant_misbound_lane_pair(
+        lane, holder_chat=chat, mint_chat=None
+    )
+    req = FollowupProjectAskRequest(
+        prompt_text="memo",
+        parent_thread=lane,
+        chat_url=chat,
+        registration_id=minted.registration_id,
+        purpose="operator-proxy",
+        reattach=True,
+    )
+    _out, err, _path = _lane_seat_followup_gate(
+        req,
+        {"reattach_used": True, "outcome_reg": minted.registration_id},
+        _snap_from_active(reg),
+    )
+    assert err is not None
+    assert err.error == "operator_seat_mismatch"
+    assert holder.registration_id != minted.registration_id
+
+
+def test_active_holder_still_mismatches(
+    isolated_registry: Path,
+) -> None:
+    """Live holder still refuses a same-lane mint on a different chat."""
+    from cdp_ask.followup_resolve import _lane_seat_followup_gate
+
+    lane = "22778"
+    reg, holder, _borrowed = _open_operator_pair(lane)
+    minted = reg.register_lane(
+        holder="reattach-mint",
+        purpose="operator-proxy",
+        parent_thread=lane,
+        launch_chrome=_noop_launch,
+        is_listening=lambda _p: False,
+    )
+    req = FollowupProjectAskRequest(
+        prompt_text="memo",
+        parent_thread=lane,
+        chat_url=CSE_TARGET_38282,
+        registration_id=minted.registration_id,
+        purpose="operator-proxy",
+        reattach=True,
+    )
+    _out, err, _path = _lane_seat_followup_gate(
+        req,
+        {"reattach_used": True, "outcome_reg": minted.registration_id},
+        _snap_from_active(reg),
+    )
+    assert err is not None
+    assert err.error == "operator_seat_mismatch"
+    assert reg._store.load_active()[holder.registration_id].get("status") == "active"
+
+
 def _vacant_lane_registration(lane: str) -> tuple[Any, Any]:
     """Operator host on *lane* with chat_url bound and no open seat."""
     from claude_bundles import cdp_registry as reg

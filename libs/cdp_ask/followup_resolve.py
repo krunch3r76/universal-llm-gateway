@@ -358,6 +358,54 @@ def _reattach_same_lane_carve_out(
     return seat_open(row, lane)
 
 
+def _dormant_misbound_holder_carve_out(
+    req: FollowupProjectAskRequest,
+    lane: str,
+    reg_id: str,
+    holder_reg: str,
+    *,
+    reattach_used: bool,
+    outcome_reg: str,
+) -> bool:
+    """Accept a same-lane mint over a dormant holder bound to a different CSE.
+
+    Requires ``reattach_used``, identity on the request, the outcome mint id,
+    operator purpose on the minted row, a dormant holder with no in-flight
+    execution, and a normalized ``chat_url`` mismatch vs the request.
+    """
+    if not reattach_used or not identity_supplied(req):
+        return False
+    if not outcome_reg or reg_id != outcome_reg:
+        return False
+    active = cdp_registry._store.load_active()
+    row = active.get(reg_id)
+    holder = active.get(holder_reg)
+    if not isinstance(row, dict) or not isinstance(holder, dict):
+        return False
+    if str(row.get("parent_thread") or "").strip() != lane:
+        return False
+    from claude_bundles.cdp_registry.execution_state import row_execution_in_flight
+    from claude_bundles.cdp_registry.models import STATUS_DORMANT
+    from claude_bundles.what_is_running_view import OPERATOR_PURPOSES
+
+    purpose = str(row.get("purpose") or "").strip()
+    if purpose not in OPERATOR_PURPOSES:
+        return False
+    if str(holder.get("status") or "").strip() != STATUS_DORMANT:
+        return False
+    if row_execution_in_flight(holder) is not None:
+        return False
+    req_url = normalize_cse_url(str(req.chat_url or ""))
+    holder_url = normalize_cse_url(str(holder.get("chat_url") or ""))
+    if not req_url or not holder_url or holder_url == req_url:
+        return False
+    cdp_registry.bind_driving_seat(
+        reg_id,
+        predecessor_close_reason="dormant_holder_misbound",
+    )
+    return True
+
+
 def _lane_seat_followup_gate(
     req: FollowupProjectAskRequest,
     lane_pin: dict | None = None,
@@ -412,6 +460,15 @@ def _lane_seat_followup_gate(
             req,
             lane,
             reg_id,
+            reattach_used=reattach_used,
+            outcome_reg=outcome_reg,
+        ):
+            return req, None, None
+        if _dormant_misbound_holder_carve_out(
+            req,
+            lane,
+            reg_id,
+            holder_reg,
             reattach_used=reattach_used,
             outcome_reg=outcome_reg,
         ):
