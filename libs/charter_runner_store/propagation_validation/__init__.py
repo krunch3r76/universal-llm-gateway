@@ -7,6 +7,7 @@ from .lifecycle import (
     discharge_intents_without_validation,
     mint_pending_validation_for_intent,
     reconcile_pending_validations_at_boot,
+    reconcile_pending_validations_for_terminal_intents,
     repair_supersession_pairs,
     sweep_stale_pending_validations,
 )
@@ -39,6 +40,7 @@ __all__ = [
     "pending_validations",
     "discharge_intents_without_validation",
     "reconcile_pending_validations_at_boot",
+    "reconcile_pending_validations_for_terminal_intents",
     "record_validation",
     "repair_supersession_pairs",
     "set_kill_boundary",
