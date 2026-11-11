@@ -14,7 +14,7 @@ from collections.abc import Callable
 from typing import Any
 
 from .restart_intent_expiry import intent_expired
-from .restart_intent_states import STATUS_PENDING_DRAIN
+from .restart_intent_states import STATUS_EXPIRED, STATUS_PENDING_DRAIN
 
 
 def queue_kw_for_pending_intent(
@@ -70,64 +70,64 @@ def pending_service_intent_status(
     return str(status) if status else None
 
 
+def _expired_row_needs_in_process_release(row: Any) -> bool:
+    if row is None:
+        return False
+    status = getattr(row, "status", None)
+    if status == STATUS_EXPIRED:
+        return True
+    if status == STATUS_PENDING_DRAIN and intent_expired(row):
+        return True
+    return False
+
+
 def release_expired_arm(
     controller: Any,
-    service: str = "git_integration_worker",
     *,
-    loader: Callable[[str], Any] | None = None,
+    get_intent: Callable[[str], Any] | None = None,
 ) -> bool:
-    """Release the in-process GIW arm when the store row is expired but still armed."""
+    """Release the in-process GIW arm keyed on ``controller`` identity, not the live store row."""
     from universal_logging import get_logger
 
     log = get_logger(__name__)
     try:
-        if loader is None and os.environ.get("PYTEST_CURRENT_TEST"):
-            return False
-        if loader is None:
-            from .restart_intent_store import RestartIntentStore
-
-            intent = RestartIntentStore.instance().active_for_service(service)
-        else:
-            intent = loader(service)
-    except Exception:
-        log.warning(
-            "release_expired_arm: intent load failed service=%s",
-            service,
-            exc_info=True,
-        )
-        return False
-    if intent is None:
-        return False
-    if getattr(intent, "status", None) != STATUS_PENDING_DRAIN:
-        return False
-    if not intent_expired(intent):
-        return False
-    if intent.drain_epoch is None:
-        return False
-    try:
         state = controller.drain_state()
     except Exception:
-        log.warning(
-            "release_expired_arm: drain_state failed service=%s",
-            service,
-            exc_info=True,
-        )
+        log.warning("release_expired_arm: drain_state failed", exc_info=True)
         return False
     if not (state.get("draining") or state.get("armed")):
         return False
-    if str(state.get("intent_id")) != intent.intent_id:
+    sid = state.get("intent_id")
+    if not isinstance(sid, str) or not sid.strip():
         return False
-    if int(state.get("drain_epoch") or 0) != int(intent.drain_epoch):
+    epoch = state.get("drain_epoch")
+    if epoch is None:
+        return False
+    if get_intent is None and os.environ.get("PYTEST_CURRENT_TEST"):
         return False
     try:
-        controller.release_drain(
-            intent_id=intent.intent_id, drain_epoch=int(intent.drain_epoch)
+        if get_intent is None:
+            from .restart_intent_store import RestartIntentStore
+
+            row = RestartIntentStore.instance().get(sid)
+        else:
+            row = get_intent(sid)
+    except Exception:
+        log.warning(
+            "release_expired_arm: intent load failed intent_id=%s",
+            sid,
+            exc_info=True,
         )
+        return False
+    if not _expired_row_needs_in_process_release(row):
+        return False
+    try:
+        controller.release_drain(intent_id=sid, drain_epoch=int(epoch))
         return True
     except Exception:
         log.warning(
             "release_expired_arm: release_drain failed intent_id=%s",
-            intent.intent_id,
+            sid,
             exc_info=True,
         )
         return False

@@ -47,11 +47,16 @@ def resolve_cancel_target(
                     "reason": "intent_id_ambiguous",
                     "intent_id": needle,
                     "candidates": [row.intent_id for row in matches],
+                    "error": (
+                        f"prefix {needle!r} matches {len(matches)} pending restart "
+                        "intents; pass a longer id or the full intent_id"
+                    ),
                 }
         return None, {
             "status": "error",
             "reason": "intent_not_found",
             "intent_id": needle,
+            "error": f"no restart intent matches id or prefix {needle!r}",
         }
     if service:
         live = store.active_for_service(service)
@@ -60,12 +65,14 @@ def resolve_cancel_target(
                 "status": "error",
                 "reason": "no_live_intent",
                 "service": service,
+                "error": f"no live pending restart intent for service {service!r}",
             }
         return live, None
     return None, {
         "status": "error",
         "reason": "intent_not_found",
         "intent_id": needle,
+        "error": "cancel_restart_intent requires intent_id or service",
     }
 
 
@@ -73,11 +80,13 @@ def worker_intent_released(state: dict[str, Any], intent_id: str) -> bool:
     """True when GIW drain-state shows this epoch is no longer armed/draining."""
     if not state:
         return False
-    sid = state.get("intent_id")
+    if "draining" not in state and "armed" not in state:
+        return False
     draining = bool(state.get("draining"))
     armed = bool(state.get("armed"))
     if not draining and not armed:
         return True
+    sid = state.get("intent_id")
     if sid and str(sid) != intent_id:
         return True
     return False
@@ -104,6 +113,10 @@ async def orchestrate_cancel_restart_intent(
             "intent_id": resolved_id,
             "service": intent.service,
             "requested_service": service,
+            "error": (
+                f"intent {resolved_id!r} is for service {intent.service!r}, "
+                f"not {service!r}"
+            ),
         }
     if intent.status == STATUS_EXPIRED:
         return {

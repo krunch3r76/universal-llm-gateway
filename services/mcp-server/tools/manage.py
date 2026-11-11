@@ -351,7 +351,11 @@ def note_mcp_pending_intent(
         result, service=service, intent_id=intent_id, armed_id=armed_id
     ):
         return
-    if action == "cancel_restart_intent" and result.get("status") == "cancelled":
+    if action == "cancel_restart_intent" and (
+        result.get("status") == "cancelled"
+        or result.get("already_terminal")
+        or result.get("status") == "expired"
+    ):
         set_pending_mcp_intent(False)
         return
     if result.get("status") == "refused" or result.get("reason") == "intent_not_found":

@@ -10,6 +10,7 @@ import pytest
 from scripts.model_manager.ui.controller.restart_intent_cancel_support import (
     orchestrate_cancel_restart_intent,
     resolve_cancel_target,
+    worker_intent_released,
 )
 from scripts.model_manager.ui.controller.restart_intent_expiry import (
     BOUNDARY_INTENT_TTL_S,
@@ -57,7 +58,15 @@ def test_prefix_cancel_ambiguous(tmp_path, monkeypatch: pytest.MonkeyPatch) -> N
     assert _intent is None
     assert err is not None
     assert err["reason"] == "intent_id_ambiguous"
+    assert err.get("error")
     assert len(err["candidates"]) == 2
+
+
+def test_worker_intent_released_requires_armed_or_draining_keys() -> None:
+    assert not worker_intent_released({"intent_id": None}, "id-1")
+    assert worker_intent_released(
+        {"draining": False, "armed": False, "intent_id": "id-1"}, "id-1"
+    )
 
 
 @pytest.mark.asyncio

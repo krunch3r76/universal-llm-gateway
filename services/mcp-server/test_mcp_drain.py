@@ -414,6 +414,72 @@ async def test_refused_cancel_of_terminal_intent_clears_the_admit_fence() -> Non
         drain.reset_drain_for_tests()
 
 
+@pytest.mark.asyncio
+async def test_expired_cancel_of_terminal_intent_clears_the_admit_fence() -> None:
+    """Idempotent cancel of an already-expired mcp intent reopens tools/call."""
+    from middleware import drain
+    from tools.manage import note_mcp_pending_intent
+
+    drain.reset_drain_for_tests()
+
+    async def app(_scope: Any, _receive: Any, send: Any) -> None:
+        await send({"type": "http.response.start", "status": 200, "headers": []})
+        await send({"type": "http.response.body", "body": b"{}"})
+
+    async def post() -> int:
+        body = json.dumps(
+            {
+                "jsonrpc": "2.0",
+                "id": 6,
+                "method": "tools/call",
+                "params": {"name": "fs", "arguments": {}},
+            }
+        ).encode()
+        messages = [{"type": "http.request", "body": body, "more_body": False}]
+        sent: list[dict[str, Any]] = []
+
+        async def receive() -> dict[str, Any]:
+            return messages.pop(0)
+
+        async def send(message: dict[str, Any]) -> None:
+            sent.append(message)
+
+        await drain.DrainMiddleware(app)(
+            {"type": "http", "path": "/mcp/code", "method": "POST"},
+            receive,
+            send,
+        )
+        return int(sent[0]["status"])
+
+    try:
+        note_mcp_pending_intent(
+            "sync_restart",
+            "mcp",
+            {
+                "status": "deferred",
+                "state": "draining",
+                "service": "mcp",
+                "restart_intent_id": "intent-mcp-expired",
+            },
+        )
+        assert await post() == 503
+        note_mcp_pending_intent(
+            "cancel_restart_intent",
+            "mcp",
+            {
+                "status": "expired",
+                "already_terminal": True,
+                "intent_id": "intent-mcp-expired",
+                "service": "mcp",
+            },
+            intent_id="intent-mcp-expired",
+        )
+        assert drain.pending_mcp_intent_id() is None
+        assert await post() == 200
+    finally:
+        drain.reset_drain_for_tests()
+
+
 def test_unconfirmed_mcp_intent_hold_fails_open_at_max_age() -> None:
     """Without a live confirm, the fence drops after the max hold age.
 
