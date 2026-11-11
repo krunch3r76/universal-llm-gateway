@@ -7,11 +7,14 @@ doc-generate. Consumers: lane-B arch-doc follow-ups; run as a script (__main__).
 
 from __future__ import annotations
 
+import argparse
 import hashlib
 import json
+import os
 import re
 import subprocess
 import sys
+import tempfile
 from collections import defaultdict
 from datetime import date
 from pathlib import Path
@@ -21,8 +24,17 @@ from doc_extraction.inventory import extract_file_inventory, extract_subsystem_i
 
 _GATEWAY_ROOT = "services/_universal-llm-gateway"
 _ROUTING_ROOT = "services/universal-stargate/systems/routing"
-_REFRESHED_BY = "agent-bus:23032"
 SCOPE_SOURCE_COMMIT_PATTERN = r"source commit `[0-9a-f]{7,40}`"
+
+_MARKER_GATEWAY_NARRATIVE_START = re.compile(r"\n## 1\. ")
+_MARKER_GATEWAY_SECTION_11 = re.compile(r"\n## 11\. ")
+_MARKER_ROUTING_KEY_FUNCTIONS = "## Key Functions"
+_MARKER_ROUTING_MODULE_INVENTORY = "## Module Inventory"
+_MARKER_GENERATED_END = "<!-- GENERATED:END -->"
+
+
+class TargetedRefreshError(ValueError):
+    """Expected document structure marker missing or refresh precondition violated."""
 
 
 def _git_head(workspace: Path) -> str:
@@ -32,6 +44,14 @@ def _git_head(workspace: Path) -> str:
         text=True,
     )
     return out.strip()[:12]
+
+
+def _prior_source_commit(existing: str) -> str | None:
+    m = re.search(
+        r"GENERATED:START[^>]*source_commit=([0-9a-f]{7,40})",
+        existing,
+    )
+    return m.group(1) if m else None
 
 
 def _first_line(doc: str) -> str:
@@ -83,7 +103,7 @@ def render_gateway_package_sections(
     workspace: Path,
     gateway_dir: Path,
     py_files: list[Path],
-) -> tuple[str, int, int, str]:
+) -> tuple[str, int, int, int, str]:
     by_pkg: dict[str, list[Path]] = defaultdict(list)
     for py in py_files:
         by_pkg[_package_key(gateway_dir, py)].append(py)
@@ -100,6 +120,7 @@ def render_gateway_package_sections(
     ]
 
     inv_modules: list[dict[str, Any]] = []
+    rendered_module_rows = 0
     for pkg in packages:
         paths = sorted(by_pkg[pkg], key=lambda p: p.name)
         lines.append(f"### `{pkg}`")
@@ -109,6 +130,7 @@ def render_gateway_package_sections(
             inv = extract_file_inventory(py, workspace)
             inv_modules.append({"package": pkg, "path": rel_pkg, "inv": inv})
             lines.append(f"**`{rel_pkg}`** — {_first_line(inv['module_docstring'])}")
+            rendered_module_rows += 1
             if inv["classes"]:
                 lines.append("")
                 lines.append("| Class | Signature |")
@@ -131,49 +153,71 @@ def render_gateway_package_sections(
             lines.append("")
 
     sha = _inventory_sha({"packages": len(packages), "modules": inv_modules})
-    return "\n".join(lines).rstrip() + "\n", len(packages), module_count, sha
+    return (
+        "\n".join(lines).rstrip() + "\n",
+        len(packages),
+        module_count,
+        rendered_module_rows,
+        sha,
+    )
 
 
 def _narrative_through_section_10(existing: str) -> str:
-    m_start = re.search(r"\n## 1\. ", existing)
-    m_end = re.search(r"\n## 11\. ", existing)
+    m_start = _MARKER_GATEWAY_NARRATIVE_START.search(existing)
+    m_end = _MARKER_GATEWAY_SECTION_11.search(existing)
     if not m_start or not m_end:
-        return ""
+        raise TargetedRefreshError(
+            "gateway.md missing required ## 1. or ## 11. section markers"
+        )
     return existing[m_start.start() + 1 : m_end.start()].strip()
 
 
-def refresh_gateway(workspace: Path, refreshed_by: str = _REFRESHED_BY) -> str:
+def _gateway_tail_after_generated_end(existing: str) -> str:
+    parts = existing.rsplit(_MARKER_GENERATED_END, 1)
+    if len(parts) < 2:
+        return "\n\n---\n\n## Coverage Notes\n"
+    return parts[1]
+
+
+def refresh_gateway(workspace: Path, refreshed_by: str) -> str:
     gateway_dir = (workspace / _GATEWAY_ROOT).resolve()
     doc_path = workspace / "docs/architecture/gateway.md"
     existing = doc_path.read_text(encoding="utf-8")
     py_files = _gateway_py_files(gateway_dir)
 
     narrative = _narrative_through_section_10(existing)
+    carried_from = _prior_source_commit(existing) or _git_head(workspace)
+    narrative_wrapped = (
+        f"<!-- AUTHORED carried_from={carried_from} -->\n"
+        f"{narrative.strip()}\n"
+        f"<!-- /AUTHORED carried_from={carried_from} -->"
+    )
 
     head = _git_head(workspace)
     today = date.today().isoformat()
-    pkg_body, pkg_n, mod_n, inv_sha = render_gateway_package_sections(
+    pkg_body, pkg_n, mod_n, rendered_rows, inv_sha = render_gateway_package_sections(
         workspace, gateway_dir, py_files
     )
     stamp = (
         f"<!-- GENERATED:START generated={today} method=targeted-refresh "
-        f"inventory_sha={inv_sha} source_commit={head} refreshed_by={refreshed_by} "
-        f"packages={pkg_n}/{pkg_n} modules={mod_n}/{mod_n} -->"
+        f"regenerated=§11 inventory_sha={inv_sha} source_commit={head} "
+        f"refreshed_by={refreshed_by} packages={pkg_n}/{pkg_n} "
+        f"modules={rendered_rows}/{mod_n} -->"
     )
     disclaimer = (
-        "> **Provenance disclaimer.** §1–§10 summarize high-traffic subsystems from "
-        "**module docstrings** at HEAD. §11 lists every production package with "
-        "module- and entrypoint-level rows grounded in tree-sitter extraction. "
+        "> **Provenance disclaimer.** §1–§10 are **carried** narrative "
+        f"(authored snapshot; see `carried_from={carried_from}`), not re-projected "
+        "at this HEAD. §11 lists every production package with module- and "
+        "entrypoint-level rows grounded in tree-sitter extraction at HEAD. "
         "Claims reflect declarations, not verified runtime behavior."
     )
-    coverage = existing.split("<!-- GENERATED:END -->", 1)
-    tail = coverage[1] if len(coverage) > 1 else "\n\n---\n\n## Coverage Notes\n"
+    tail = _gateway_tail_after_generated_end(existing)
     tail = re.sub(
         r"### missing_coverage\n\n.*?(?=### |\Z)",
         (
             "### missing_coverage\n\n"
             f"None for tree accounting: §11 lists all {pkg_n} packages with "
-            "per-module entrypoint signatures (405 modules).\n\n"
+            f"per-module entrypoint signatures ({mod_n} modules).\n\n"
         ),
         tail,
         count=1,
@@ -188,11 +232,11 @@ def refresh_gateway(workspace: Path, refreshed_by: str = _REFRESHED_BY) -> str:
             "",
             disclaimer,
             "",
-            narrative.strip(),
+            narrative_wrapped,
             "",
             pkg_body.rstrip(),
             "",
-            "<!-- GENERATED:END -->",
+            _MARKER_GENERATED_END,
             tail.lstrip(),
         ]
     )
@@ -231,7 +275,6 @@ def _render_function_inventory(inv: dict[str, Any]) -> list[str]:
 
 def _render_imports_inventory(inv: dict[str, Any]) -> list[str]:
     ext: set[str] = set()
-    internal: set[str] = set()
     for row in inv["imports"]:
         stmt = row["import"]
         if stmt.startswith("from ") or stmt.startswith("import "):
@@ -245,9 +288,7 @@ def _render_imports_inventory(inv: dict[str, Any]) -> list[str]:
                 "__future__",
             }:
                 ext.add(top)
-            elif top.startswith(("universal_", "model_id", "services")):
-                internal.add(stmt)
-            else:
+            elif not top.startswith(("universal_", "model_id", "services")):
                 ext.add(top)
     lines = [
         "## Imports and Dependencies (full routing tree)",
@@ -278,9 +319,84 @@ def _routing_py_files(routing_dir: Path) -> list[Path]:
     return files
 
 
-def refresh_routing(workspace: Path, refreshed_by: str = _REFRESHED_BY) -> str:
+def _render_routing_module_inventory(modules: list[dict[str, Any]], mod_n: int) -> str:
+    rows = sorted(modules, key=lambda m: m["path"])
+    row_n = len(rows)
+    lines = [
+        f"## Module Inventory ({row_n}/{mod_n})",
+        "",
+        "| Module | Description |",
+        "|---|---|",
+    ]
+    for mod in rows:
+        path = mod["path"]
+        desc = _first_line(mod.get("docstring", ""))
+        lines.append(f"| `{path}` | {desc} |")
+    lines.append("")
+    return "\n".join(lines)
+
+
+def _replace_routing_module_inventory(pre_key: str, inventory_block: str) -> str:
+    pattern = re.compile(
+        r"## Module Inventory \(\d+/\d+\)\s*\n.*?(?=\n---\n)",
+        re.DOTALL,
+    )
+    if not pattern.search(pre_key):
+        raise TargetedRefreshError(
+            "routing.md missing ## Module Inventory section before carried prose"
+        )
+    return pattern.sub(inventory_block.rstrip(), pre_key, count=1)
+
+
+def _routing_authored_synthesis(existing: str, mod_n: int) -> str:
+    post_match = re.search(
+        r"(<!-- AUTHORED -->.*?<!-- GENERATED:END -->)\s*\Z",
+        existing,
+        re.DOTALL,
+    )
+    if post_match:
+        block = post_match.group(1)
+        block = re.sub(
+            r"full module inventory \(\d+/\d+\)",
+            f"full module inventory ({mod_n}/{mod_n})",
+            block,
+        )
+        block = re.sub(
+            r"Module Inventory \(\d+/\d+\)",
+            f"Module Inventory ({mod_n}/{mod_n})",
+            block,
+        )
+        block = re.sub(
+            r"grounded in staged modules only",
+            f"grounded in the full {mod_n}/{mod_n} module tree",
+            block,
+        )
+        return block
+    return (
+        "<!-- AUTHORED -->\n"
+        f"## Synthesis: eviction confirmation path (full routing tree)\n\n"
+        "See **Key Functions** and **Module Inventory** for the full routing tree; "
+        "this synthesis summarizes the typed eviction confirmation path declared in "
+        "`eviction/executor.py` and `eviction/event_waiter.py`.\n"
+        f"End-to-end flow beyond this synthesis also involves capacity admission and "
+        f"selection — summarized in **Module Inventory ({mod_n}/{mod_n})** with module "
+        "docstrings as authority.\n"
+        "<!-- GENERATED:END -->"
+    )
+
+
+def refresh_routing(workspace: Path, refreshed_by: str) -> str:
     doc_path = workspace / "docs/architecture/routing.md"
     existing = doc_path.read_text(encoding="utf-8")
+    if _MARKER_ROUTING_KEY_FUNCTIONS not in existing:
+        raise TargetedRefreshError(
+            f"routing.md missing required {_MARKER_ROUTING_KEY_FUNCTIONS!r} marker"
+        )
+    if _MARKER_ROUTING_MODULE_INVENTORY not in existing:
+        raise TargetedRefreshError(
+            f"routing.md missing required {_MARKER_ROUTING_MODULE_INVENTORY!r} marker"
+        )
+
     routing_dir = (workspace / _ROUTING_ROOT).resolve()
     py_files = _routing_py_files(routing_dir)
     mod_n = len(py_files)
@@ -305,38 +421,17 @@ def refresh_routing(workspace: Path, refreshed_by: str = _REFRESHED_BY) -> str:
         }
     )
 
-    pre_key = existing.split("## Key Functions", 1)[0]
-    post_match = re.search(
-        r"(<!-- AUTHORED -->.*?<!-- GENERATED:END -->)",
-        existing,
-        re.DOTALL,
-    )
-    authored_synthesis = post_match.group(1) if post_match else ""
-    if authored_synthesis:
-        authored_synthesis = re.sub(
-            r"grounded in staged modules only",
-            "grounded in the full 57/57 module tree",
-            authored_synthesis,
-        )
-        authored_synthesis = re.sub(
-            r"Synthesis: eviction confirmation path \(grounded in [^)]+\)",
-            "Synthesis: eviction confirmation path (full routing tree)",
-            authored_synthesis,
-        )
-    else:
-        authored_synthesis = (
-            "<!-- AUTHORED -->\n"
-            "## Synthesis: eviction confirmation path (full routing tree)\n\n"
-            "See **Key Functions** and **Module Inventory** for the full routing tree; "
-            "this synthesis summarizes the typed eviction confirmation path declared in "
-            "`eviction/executor.py` and `eviction/event_waiter.py`.\n"
-            "<!-- GENERATED:END -->"
-        )
+    inventory_rows = len(inv["modules"])
+    inventory_block = _render_routing_module_inventory(inv["modules"], mod_n)
+
+    pre_key = existing.split(_MARKER_ROUTING_KEY_FUNCTIONS, 1)[0]
+    pre_key = _replace_routing_module_inventory(pre_key, inventory_block)
 
     stamp = (
         f"<!-- GENERATED:START generated={today} method=targeted-refresh "
-        f"inventory_sha={inv_sha} source_commit={head} refreshed_by={refreshed_by} "
-        f"coverage={mod_n}/{mod_n} -->"
+        f"regenerated=key-functions,imports,module-inventory inventory_sha={inv_sha} "
+        f"source_commit={head} refreshed_by={refreshed_by} "
+        f"coverage={inventory_rows}/{mod_n} -->"
     )
     pre_key = re.sub(
         r"<!-- GENERATED:START.*?-->",
@@ -357,8 +452,8 @@ def refresh_routing(workspace: Path, refreshed_by: str = _REFRESHED_BY) -> str:
         pre_key,
     )
     pre_key = re.sub(
-        r"full module inventory \(57/57\)",
-        f"full module inventory ({mod_n}/{mod_n})",
+        r"\*\*full module inventory \(\d+/\d+\)\*\*",
+        f"**full module inventory ({inventory_rows}/{mod_n})**",
         pre_key,
     )
     pre_key = re.sub(
@@ -385,6 +480,8 @@ def refresh_routing(workspace: Path, refreshed_by: str = _REFRESHED_BY) -> str:
         *_render_function_inventory(inv),
     ]
 
+    authored_synthesis = _routing_authored_synthesis(existing, mod_n)
+
     body = (
         pre_key.rstrip()
         + "\n\n"
@@ -398,22 +495,55 @@ def refresh_routing(workspace: Path, refreshed_by: str = _REFRESHED_BY) -> str:
     return body
 
 
+def _atomic_write_text(path: Path, text: str) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp_name = tempfile.mkstemp(
+        dir=path.parent, prefix=f".{path.name}.", suffix=".tmp"
+    )
+    tmp_path = Path(tmp_name)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            handle.write(text)
+        os.replace(tmp_path, path)
+    except Exception:
+        tmp_path.unlink(missing_ok=True)
+        raise
+
+
+def _parse_args(argv: list[str]) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="Targeted refresh for architecture docs")
+    parser.add_argument("target", choices=["gateway", "routing"])
+    parser.add_argument("workspace_root")
+    parser.add_argument("--refreshed-by", required=True, dest="refreshed_by")
+    return parser.parse_args(argv)
+
+
 def main(argv: list[str] | None = None) -> int:
     argv = argv if argv is not None else sys.argv[1:]
-    if len(argv) != 2 or argv[0] not in {"gateway", "routing"}:
+    if not argv:
         print(
-            "Usage: python targeted_refresh.py <gateway|routing> <workspace_root>",
+            "Usage: python targeted_refresh.py <gateway|routing> <workspace_root> "
+            "--refreshed-by <lane>",
             file=sys.stderr,
         )
         return 2
-    target, workspace_s = argv
-    workspace = Path(workspace_s).resolve()
-    out_path = workspace / "docs/architecture" / f"{target}.md"
-    if target == "gateway":
-        text = refresh_gateway(workspace)
-    else:
-        text = refresh_routing(workspace)
-    out_path.write_text(text, encoding="utf-8")
+    try:
+        args = _parse_args(argv)
+    except SystemExit as exc:
+        return int(exc.code) if isinstance(exc.code, int) else 2
+
+    workspace = Path(args.workspace_root).resolve()
+    out_path = workspace / "docs/architecture" / f"{args.target}.md"
+    try:
+        if args.target == "gateway":
+            text = refresh_gateway(workspace, args.refreshed_by)
+        else:
+            text = refresh_routing(workspace, args.refreshed_by)
+    except TargetedRefreshError as err:
+        print(str(err), file=sys.stderr)
+        return 2
+
+    _atomic_write_text(out_path, text)
     print(out_path)
     return 0
 
