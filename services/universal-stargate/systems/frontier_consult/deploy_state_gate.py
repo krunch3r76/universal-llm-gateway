@@ -203,6 +203,7 @@ def _dual_merge_deploy_identity(
     get_health: dict[str, Any],
     *,
     producer: str,
+    request_id: str = "",
 ) -> dict[str, Any]:
     """Merge manage substrate read with producer GET; non-empty GET wins per field."""
     merged = dict(manage_result)
@@ -216,6 +217,7 @@ def _dual_merge_deploy_identity(
                     field=field,
                     get_value=get_val,
                     manage_value=manage_val,
+                    request_id=request_id,
                 )
             merged[field] = get_val
         elif _field_non_empty(get_val):
@@ -643,7 +645,10 @@ def require_deploy_state(
 
         health = _fetch_producer_health_json(producer)
         merged = _dual_merge_deploy_identity(
-            manage_result, health, producer=producer
+            manage_result,
+            health,
+            producer=producer,
+            request_id=request_id,
         )
         passed, _ = _identity_passes(
             merged,
@@ -652,9 +657,7 @@ def require_deploy_state(
             expected_tree_hash=expected_tree,
         )
         if not passed:
-            stamp_reason = str(manage_result.get("deploy_stamp_reason") or "").strip()
-            suffix = f" ({stamp_reason})" if stamp_reason else ""
-            failures.append(f"{producer}: source identity not fresh{suffix}")
+            failures.append(f"{producer}: source identity not fresh")
 
     if failures:
         logger.warning(

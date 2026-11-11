@@ -13,16 +13,20 @@ def DeployStateGateDualReadMismatch(  # noqa: N802
     field: str,
     get_value: str,
     manage_value: str,
+    request_id: str = "",
 ) -> Event:
     """Manage vs producer GET disagree on a deploy-identity field."""
+    payload: dict[str, str] = {
+        "producer": producer,
+        "field": field,
+        "get_value": get_value,
+        "manage_value": manage_value,
+    }
+    if request_id:
+        payload["request_id"] = request_id
     return Event(
         signal="deploy_state_gate.dual_read_mismatch",
-        payload={
-            "producer": producer,
-            "field": field,
-            "get_value": get_value,
-            "manage_value": manage_value,
-        },
+        payload=payload,
         scope="node",
     )
 
@@ -33,6 +37,7 @@ def emit_deploy_state_gate_dual_read_mismatch(
     field: str,
     get_value: str,
     manage_value: str,
+    request_id: str = "",
 ) -> None:
     publish_frontier_event(
         DeployStateGateDualReadMismatch(
@@ -40,6 +45,7 @@ def emit_deploy_state_gate_dual_read_mismatch(
             field=field,
             get_value=get_value,
             manage_value=manage_value,
+            request_id=request_id,
         )
     )
 
