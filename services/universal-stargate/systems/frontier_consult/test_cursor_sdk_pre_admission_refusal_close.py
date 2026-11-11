@@ -11,6 +11,16 @@ from .cursor_sdk_generate import _finish_prepared_dispatch
 from .cursor_sdk_prepared_handle import PreparedCursorSdkHandle
 
 
+@pytest.fixture(autouse=True)
+def _silence_frontier_telemetry(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Keep frontier.sdk.* refusal/worker events out of live telemetry in tests."""
+    monkeypatch.setattr(
+        "systems.frontier_consult.cursor_sdk_generate_signals.publish_frontier_event",
+        lambda *_a, **_k: None,
+        raising=False,
+    )
+
+
 def _minted_handle(**overrides: object) -> PreparedCursorSdkHandle:
     base = {
         "request_id": "req-pre",

@@ -28,6 +28,18 @@ from services.git_integration_worker.models.cursor_api import (
 
 
 @pytest.fixture(autouse=True)
+def _silence_drain_telemetry(monkeypatch: pytest.MonkeyPatch) -> None:
+    from services.git_integration_worker import git_worker_drain_events as drain_events
+
+    monkeypatch.setattr(
+        drain_events, "emit_drain_started", lambda **_k: None, raising=False
+    )
+    monkeypatch.setattr(
+        drain_events, "emit_drain_completed", lambda **_k: None, raising=False
+    )
+
+
+@pytest.fixture(autouse=True)
 def _reset_terminal_emitted_registry() -> None:
     reset_terminal_emitted_registry()
     yield
@@ -342,11 +354,25 @@ async def test_reclaim_completed_nest_child_resumes_instead_of_failing(
 
 def _draining_admit() -> JSONResponse:
     """503 envelope a live drain returns from ``admit_cursor_dispatch``."""
-    from services.git_integration_worker.admission import Draining503
+    from services.git_integration_worker.admission import (
+        Draining503,
+        WorkAdmissionController,
+    )
+    from services.git_integration_worker.cursor_dispatch_ledger import (
+        CursorDispatchLedger,
+    )
     from services.git_integration_worker.routes.cursor_sdk import _draining_response
 
+    controller = WorkAdmissionController(
+        ledger=CursorDispatchLedger.instance(),
+        worker_id="stub",
+        pid=0,
+        worker_started_at="stub",
+    )
+    controller.begin_drain(reason="stub", intent_id="lifespan-stub", drain_epoch=1)
     return _draining_response(
         Draining503("git-integration-worker is draining (epoch=1)"),
+        controller=controller,
         dispatch_id="stub-dispatch",
         drain_epoch=1,
     )

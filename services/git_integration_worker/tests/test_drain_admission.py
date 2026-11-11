@@ -11,9 +11,11 @@ covered by ``test_gate_serialization.py``.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import pathlib
 from types import SimpleNamespace
+from unittest.mock import MagicMock
 
 import pytest
 from fastapi.testclient import TestClient
@@ -38,6 +40,20 @@ _INTEGRATE_BODY = {
     "expected_diff_sha256": "a" * 64,
     "remove_worktree": False,
 }
+
+
+@pytest.fixture(autouse=True)
+def _silence_drain_telemetry(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Block git_worker.drain.* from reaching live telemetry in unit tests."""
+    monkeypatch.setattr(
+        drain_events, "emit_drain_started", lambda **_k: None, raising=False
+    )
+    monkeypatch.setattr(
+        drain_events, "emit_drain_completed", lambda **_k: None, raising=False
+    )
+    monkeypatch.setattr(
+        drain_events, "emit_admission_rejected", lambda **_k: None, raising=False
+    )
 
 
 @pytest.fixture(autouse=True)
@@ -78,6 +94,35 @@ def _controller() -> WorkAdmissionController:
         pid=1234,
         worker_started_at="2026-01-01T00:00:00+00:00",
     )
+
+
+def _stub_sdk_dispatch_spawn(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Prevent un-awaited _run_sdk_dispatch_gated coroutines from route admit tests."""
+    from services.git_integration_worker.routes import cursor_sdk as route_mod
+
+    async def _noop_runner() -> None:
+        return None
+
+    def _fake_close(
+        coro: object, *, controller: object, op_id: str, **kwargs: object
+    ) -> object:
+        if asyncio.iscoroutine(coro):
+            coro.close()
+        return _noop_runner()
+
+    monkeypatch.setattr(route_mod, "_close_ticket_after", _fake_close)
+
+    def _close_tracked(
+        _self: object, _coro: object, *, op_id: str, **kwargs: object
+    ) -> MagicMock:
+        if asyncio.iscoroutine(_coro):
+            _coro.close()
+        mock = MagicMock()
+        mock.done.return_value = True
+        mock.get_name.return_value = f"tracked-{op_id}"
+        return mock
+
+    monkeypatch.setattr(WorkAdmissionController, "create_tracked_task", _close_tracked)
 
 
 def _ledger_row(dispatch_id: str) -> object | None:
@@ -471,8 +516,16 @@ def test_cursor_draining_503_refused_not_queued_envelope() -> None:
     from services.git_integration_worker.admission import Draining503
     from services.git_integration_worker.routes.cursor_sdk import _draining_response
 
+    controller = _controller()
+    controller.try_admit(
+        "cursor_sdk", op_id="hold-disp", route="/api/v1/cursor/dispatch"
+    )
+    controller.begin_drain(
+        reason="test", intent_id="a6a1cbdd-test", drain_epoch=controller.next_epoch()
+    )
     response = _draining_response(
         Draining503("git-integration-worker is draining (epoch=3)"),
+        controller=controller,
         dispatch_id="disp-refused",
         drain_epoch=3,
     )
@@ -487,15 +540,19 @@ def test_cursor_draining_503_refused_not_queued_envelope() -> None:
     assert data["drain_epoch"] == 3
     assert data["resubmit"] == "safe"
     assert "retry_after_s" in data
-    assert data["fix_hint"]
+    assert data["drain_intent_id"] == "a6a1cbdd-test"
+    assert data["drain_started_at"]
+    assert data["drain_elapsed_s"] is not None
+    assert data["holder_count"] >= 1
+    assert data["holders"][0]["id"] == "hold-disp"
+    assert data["holders"][0]["route"] == "/api/v1/cursor/dispatch"
+    assert "no live ledger row" in data["fix_hint"]
 
 
 def test_cursor_early_drain_leaves_no_ledger_row(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """GIT_WORKER_DRAINING before ledger.admit must not create a dispatch row."""
-    from unittest.mock import MagicMock, patch
-
     from services.git_integration_worker.routes import cursor_sdk as route_mod
 
     app = create_app()
@@ -521,11 +578,7 @@ def test_cursor_early_drain_leaves_no_ledger_row(
         "message": "hello",
     }
     client = TestClient(app)
-    with patch(
-        "services.git_integration_worker.admission.WorkAdmissionController.create_tracked_task",
-        return_value=MagicMock(done=lambda: False),
-    ):
-        resp = client.post("/api/v1/cursor/dispatch", json=dispatch_body)
+    resp = client.post("/api/v1/cursor/dispatch", json=dispatch_body)
     assert resp.status_code == 503
     assert resp.json()["data"]["queued"] is False
     assert _ledger_row("disp-early-drain") is None
@@ -535,8 +588,6 @@ def test_cursor_drain_refusal_then_admit_new_id_one_row(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """After a draining refusal, a new dispatch_id for the same work_key admits once."""
-    from unittest.mock import MagicMock, patch
-
     from services.git_integration_worker.routes import cursor_sdk as route_mod
 
     app = create_app()
@@ -550,6 +601,7 @@ def test_cursor_drain_refusal_then_admit_new_id_one_row(
     monkeypatch.setattr(
         route_mod, "release_or_restore_for_child_sync", lambda *_a, **_k: "released"
     )
+    _stub_sdk_dispatch_spawn(monkeypatch)
 
     work_key = "todo:drain-refusal-idem"
     body_refused = {
@@ -574,11 +626,7 @@ def test_cursor_drain_refusal_then_admit_new_id_one_row(
     assert _ledger_row("disp-refused-a") is None
 
     controller.release_drain(intent_id="i1", drain_epoch=controller.drain_epoch)
-    with patch(
-        "services.git_integration_worker.admission.WorkAdmissionController.create_tracked_task",
-        return_value=MagicMock(done=lambda: False),
-    ):
-        ok = client.post("/api/v1/cursor/dispatch", json=body_admitted)
+    ok = client.post("/api/v1/cursor/dispatch", json=body_admitted)
     assert ok.status_code == 200
     assert _ledger_row("disp-admitted-b") is not None
     ledger = CursorDispatchLedger.instance()
@@ -595,8 +643,6 @@ def test_cursor_resubmit_same_dispatch_id_after_drain_idempotent(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Reusing dispatch_id after drain ends hits ledger fingerprint idempotency."""
-    from unittest.mock import MagicMock, patch
-
     from services.git_integration_worker.routes import cursor_sdk as route_mod
 
     app = create_app()
@@ -610,6 +656,7 @@ def test_cursor_resubmit_same_dispatch_id_after_drain_idempotent(
     monkeypatch.setattr(
         route_mod, "release_or_restore_for_child_sync", lambda *_a, **_k: "released"
     )
+    _stub_sdk_dispatch_spawn(monkeypatch)
 
     payload = {
         "thread_id": "1558",
@@ -624,12 +671,8 @@ def test_cursor_resubmit_same_dispatch_id_after_drain_idempotent(
     assert client.post("/api/v1/cursor/dispatch", json=payload).status_code == 503
 
     controller.release_drain(intent_id="i-idem", drain_epoch=epoch)
-    with patch(
-        "services.git_integration_worker.admission.WorkAdmissionController.create_tracked_task",
-        return_value=MagicMock(done=lambda: False),
-    ):
-        first = client.post("/api/v1/cursor/dispatch", json=payload)
-        second = client.post("/api/v1/cursor/dispatch", json=payload)
+    first = client.post("/api/v1/cursor/dispatch", json=payload)
+    second = client.post("/api/v1/cursor/dispatch", json=payload)
     assert first.status_code == 200
     assert second.status_code == 200
     assert first.json()["dispatch_id"] == second.json()["dispatch_id"] == "disp-idem"
