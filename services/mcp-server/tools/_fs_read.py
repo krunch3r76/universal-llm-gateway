@@ -122,16 +122,16 @@ def register_fs_read_tool(mcp: FastMCP, surface: Surface) -> None:
         size_only: bool = False,
         sections: list[str] | None = None,
         export: bool = False,
-        expected_read_sha256: str = "",
+        expected_read_sha256: str | dict[str, str] = "",
+        chunk_cursor: int | None = None,
         max_response_bytes: int | None = None,
     ) -> dict[str, Any]:
-        """Read-only fs ops — auto-approvable companion to fs.
+        """Read-only companion to fs; non-mutating ops only.
 
-        Same parameters as fs; only non-mutating ops are admitted.
-        For write/delete/move/copy use fs.
-
-        max_response_bytes lowers (never raises) the per-call response ceiling for
-        this invocation; the guard middleware enforces it.
+        Markdown and converted-document reads are manifest-first (md_list).
+        An offset/limit window needs expected_read_sha256 from that manifest.
+        Overrides: section/sections, export=true (+ chunk_cursor to continue).
+        Non-document paths return full decoded bodies. Write paths use fs.
         """
         _ = max_response_bytes
         op_name = str(op or "").strip()
@@ -207,6 +207,7 @@ def register_fs_read_tool(mcp: FastMCP, surface: Surface) -> None:
                 sections=sections,
                 export=export,
                 expected_read_sha256=expected_read_sha256,
+                chunk_cursor=chunk_cursor,
             )
         except Exception as exc:
             err = str(exc) or type(exc).__name__
