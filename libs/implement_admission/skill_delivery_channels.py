@@ -53,6 +53,8 @@ def _inline_block_close_is_structural(text: str, close_idx: int) -> bool:
         "<!-- skill-inline:",
         "</invariants>",
         "- Use the `",
+        "- Skill `",
+        "Skill `",
         "- Skill names for orientation",
         "<task_guidance>",
         "<corpus>",
@@ -79,10 +81,33 @@ _USE_SKILL_RE = re.compile(
     r"Use the `(?P<slug>[a-z0-9][-a-z0-9_]*)` skill",
     re.IGNORECASE,
 )
+_ENTITY_SKILL_POINTER_RE = re.compile(
+    r"Skill `(?P<slug>[a-z0-9][-a-z0-9_]*)`: read entity `agent_skill:",
+    re.IGNORECASE,
+)
 _FS_SKILL_POINTER_RE = re.compile(
     r"fs\(.*agent-skills/(?P<slug>[a-z0-9][-a-z0-9_]*)\.md",
     re.IGNORECASE,
 )
+
+
+def render_skill_entity_pointer(
+    slug_or_entity_id: str,
+    *,
+    leading_newline: bool = False,
+    bullet: bool = False,
+) -> str:
+    """Entity-pointer substitute for skills= on non-Use-line endpoints (ruling 2026-11-10)."""
+    slug = canonical_catalog_slug(slug_or_entity_id)
+    entity_id = f"agent_skill:{slug}"
+    source_uri = resolve_canonical_source_uri(slug)
+    line = (
+        f"Skill `{slug}`: read entity `{entity_id}` at {source_uri} "
+        f"(fs md_list, then md_read the sections you need; export=true for the whole file)."
+    )
+    if bullet:
+        line = f"- {line}"
+    return f"\n{line}" if leading_newline else line
 
 # Allowlist = workspace-only skills web handoffs require inlined.
 # Web-native skills (e.g. lead-seat-boot) stay pointer/self-fetch.
@@ -314,6 +339,8 @@ def packet_skill_slugs(text: str) -> set[str]:
     scan = text_without_inline_payload_regions(text)
     for match in _USE_SKILL_RE.finditer(scan):
         slugs.add(canonical_catalog_slug(match.group("slug")))
+    for match in _ENTITY_SKILL_POINTER_RE.finditer(scan):
+        slugs.add(canonical_catalog_slug(match.group("slug")))
     for match in _FS_SKILL_POINTER_RE.finditer(scan):
         slugs.add(canonical_catalog_slug(match.group("slug")))
     for match in _INLINE_SKILL_HEADER_RE.finditer(text):
@@ -327,6 +354,9 @@ def validate_exactly_one_skill_channel(text: str) -> SkillChannelViolation | Non
     scan = text_without_inline_payload_regions(text)
     pointer = {
         canonical_catalog_slug(m.group("slug")) for m in _USE_SKILL_RE.finditer(scan)
+    } | {
+        canonical_catalog_slug(m.group("slug"))
+        for m in _ENTITY_SKILL_POINTER_RE.finditer(scan)
     } | {
         canonical_catalog_slug(m.group("slug"))
         for m in _FS_SKILL_POINTER_RE.finditer(scan)

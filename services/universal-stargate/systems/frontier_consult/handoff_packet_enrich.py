@@ -27,6 +27,7 @@ from implement_admission.skill_delivery_channels import (
     format_inline_skill_block,
     parse_inline_skill_blocks,
     partition_web_skill_channels,
+    render_skill_entity_pointer,
     replace_inline_block_for_slug,
     resolve_inline_bodies,
     text_without_inline_payload_regions,
@@ -174,12 +175,21 @@ def HandoffSkillInlineBudgetExceeded(  # noqa: N802
     )
 
 
-def _canonical_skill_invariant_line(slug: str) -> str:
-    """One Block-2 line: Use the `<slug>` skill (agent-bus:4888)."""
-    return (
-        f"- Use the `{slug}` skill "
-        f"(canonical slug — seat self-fetches; ¬ fs-read skill body)"
-    )
+def _handoff_skill_invoke_uses_use_line(to_agent: str | None) -> bool:
+    """Use line on Cursor IDE handoffs; entity pointer on web-anthropic."""
+    if is_life_web_receiver(to_agent):
+        return False
+    return True
+
+
+def _canonical_skill_invariant_line(slug: str, *, to_agent: str | None = None) -> str:
+    """One Block-2 skill wiring line — Use line (Cursor) or entity pointer (web)."""
+    if _handoff_skill_invoke_uses_use_line(to_agent):
+        return (
+            f"- Use the `{slug}` skill "
+            f"(canonical slug — seat self-fetches; ¬ fs-read skill body)"
+        )
+    return render_skill_entity_pointer(slug, bullet=True)
 
 
 def _orientation_line(inline_slugs: tuple[str, ...]) -> str:
@@ -405,8 +415,16 @@ def _collect_skill_slugs(
     cortex: CortexEntityReader,
     *,
     handoff_contract: str | None = None,
+    caller_skills: tuple[str, ...] = (),
 ) -> list[str]:
-    slugs: list[str] = list(_DEFAULT_DENSIFY_SLUGS)
+    slugs: list[str] = []
+    for raw in caller_skills:
+        from implement_admission.skill_catalog_resolver import canonical_catalog_slug
+
+        slug = canonical_catalog_slug(raw)
+        if slug not in slugs:
+            slugs.append(slug)
+    slugs.extend(s for s in _DEFAULT_DENSIFY_SLUGS if s not in slugs)
     if handoff_wants_reasoning_posture(text, handoff_contract):
         slugs.insert(0, REASONING_POSTURE_SLUG)
         slugs.insert(0, ULG_FOR_LLMS_SLUG)
@@ -424,12 +442,18 @@ def _collect_skill_slugs(
 
 def _pointer_slug_represented(text: str, slug: str) -> bool:
     scan = text_without_inline_payload_regions(text)
-    pattern = re.compile(
+    use_line = re.compile(
         rf"- Use the `{re.escape(slug)}` skill "
         r"\(canonical slug — seat self-fetches; ¬ fs-read skill body\)",
         re.IGNORECASE,
     )
-    return bool(pattern.search(scan))
+    if use_line.search(scan):
+        return True
+    entity_ptr = re.compile(
+        rf"- Skill `{re.escape(slug)}`: read entity `agent_skill:{re.escape(slug)}`",
+        re.IGNORECASE,
+    )
+    return bool(entity_ptr.search(scan))
 
 
 def _slug_represented_in_text(text: str, slug: str) -> bool:
@@ -502,6 +526,7 @@ def _materialize_inline_skills(
     skill_slugs: list[str],
     *,
     budget_bytes: int,
+    to_agent: str | None = None,
 ) -> _InlineMaterializeResult:
     inline_slugs, pointer_slugs = partition_web_skill_channels(set(skill_slugs))
     if not inline_slugs:
@@ -510,7 +535,10 @@ def _materialize_inline_skills(
             if not _slug_represented_in_text(text, slug):
                 pointer_added.append(slug)
         if pointer_added:
-            lines = [_canonical_skill_invariant_line(slug) for slug in pointer_added]
+            lines = [
+                _canonical_skill_invariant_line(slug, to_agent=to_agent)
+                for slug in pointer_added
+            ]
             text, _ = _merge_block_lines(text, "invariants", lines)
         already = [slug for slug in skill_slugs if slug not in pointer_added]
         return _InlineMaterializeResult(
@@ -543,7 +571,10 @@ def _materialize_inline_skills(
         slug for slug in pointer_slugs if not _pointer_slug_represented(text, slug)
     ]
     if pointer_added:
-        lines = [_canonical_skill_invariant_line(slug) for slug in pointer_added]
+        lines = [
+            _canonical_skill_invariant_line(slug, to_agent=to_agent)
+            for slug in pointer_added
+        ]
         text, _ = _merge_block_lines(text, "invariants", lines)
     already = [
         slug
@@ -570,9 +601,15 @@ def enrich_handoff_packet(
     thread_id: str | None = None,
     skill_delivery: str | None = None,
     handoff_contract: str | None = None,
+    caller_skills: tuple[str, ...] = (),
 ) -> EnrichResult:
     """Non-destructively enrich an MCP-seat handoff packet (web or cursor) in memory."""
-    skill_slugs = _collect_skill_slugs(text, cortex, handoff_contract=handoff_contract)
+    skill_slugs = _collect_skill_slugs(
+        text,
+        cortex,
+        handoff_contract=handoff_contract,
+        caller_skills=caller_skills,
+    )
     inline_materialized = False
     inline_total_bytes = 0
     skills_inlined: list[str] = []
@@ -583,6 +620,7 @@ def enrich_handoff_packet(
                 text,
                 skill_slugs,
                 budget_bytes=HANDOFF_INLINE_BUDGET_BYTES,
+                to_agent=to_agent,
             )
         except SkillInlineBudgetExceeded:
             raise
@@ -604,7 +642,9 @@ def enrich_handoff_packet(
             if _slug_represented_in_text(text, slug):
                 skills_already_wired.append(slug)
             else:
-                invariant_lines.append(_canonical_skill_invariant_line(slug))
+                invariant_lines.append(
+                    _canonical_skill_invariant_line(slug, to_agent=to_agent)
+                )
                 skills_added.append(slug)
         text, _ = _merge_block_lines(text, "invariants", invariant_lines)
 

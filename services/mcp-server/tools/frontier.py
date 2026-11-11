@@ -961,14 +961,6 @@ def register_frontier_tools(mcp: FastMCP) -> None:
                         ),
                     }
                 }
-            if skills is not None:
-                return {
-                    "error": {
-                        "code": "validation_error",
-                        "message": "skills is not supported when op='handoff'",
-                    },
-                    "field": "skills",
-                }
             handoff_body: dict[str, Any] = {
                 "op": "handoff",
                 "subject": subject,
@@ -983,6 +975,8 @@ def register_frontier_tools(mcp: FastMCP) -> None:
                 handoff_body["source_ref"] = source_ref
             if contract is not None:
                 handoff_body["job"] = contract
+            if skills is not None:
+                handoff_body["skills"] = skills
             for key, val in (
                 ("executor_override", executor_override),
                 ("executor_override_reason_code", executor_override_reason_code),

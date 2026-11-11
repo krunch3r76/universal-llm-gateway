@@ -33,6 +33,13 @@ class SkillDeliveryChannel(StrEnum):
     LAYER_C_BODY = "layer_c"
 
 
+class SkillInvokeSurface(StrEnum):
+    """Whether Layer-A emits a Use line or an entity pointer (ruling 2026-11-10)."""
+
+    USE_LINE = "use_line"
+    ENTITY_POINTER = "entity_pointer"
+
+
 @dataclass(frozen=True, slots=True)
 class DispatchSkillContext:
     """Effective per-dispatch context (F3) — after model/mcp/role overrides."""
@@ -88,6 +95,18 @@ def select_skill_delivery_channel(
     return SkillDeliveryChannel.LAYER_A_FS
 
 
+def skill_invoke_surface(ctx: DispatchSkillContext) -> SkillInvokeSurface:
+    """Single selector for Use line vs entity pointer from endpoint identity."""
+    from model_id import ModelId
+
+    backend = ModelId.parse(ctx.model).backend_type
+    if backend == "cursor_sdk":
+        return SkillInvokeSurface.USE_LINE
+    if ctx.platform == "cursor":
+        return SkillInvokeSurface.USE_LINE
+    return SkillInvokeSurface.ENTITY_POINTER
+
+
 def skill_use_instruction(
     slug_or_entity_id: str,
     *,
@@ -109,9 +128,21 @@ def skill_use_instruction(
     return f"\n{line}" if leading_newline else line
 
 
-def emit_layer_a_fs_line(slug_or_entity_id: str) -> str:
-    """Layer-A skill-use instruction for MCP-capable dispatch roles."""
-    return skill_use_instruction(slug_or_entity_id, leading_newline=True)
+def emit_layer_a_skill_line(
+    slug_or_entity_id: str,
+    ctx: DispatchSkillContext,
+) -> str:
+    """Layer-A delivery: Use line on Cursor/cursor-sdk; entity pointer elsewhere."""
+    from implement_admission.skill_delivery_channels import render_skill_entity_pointer
+
+    if skill_invoke_surface(ctx) == SkillInvokeSurface.USE_LINE:
+        return skill_use_instruction(slug_or_entity_id, leading_newline=True)
+    return render_skill_entity_pointer(slug_or_entity_id, leading_newline=True)
+
+
+def emit_layer_a_fs_line(slug_or_entity_id: str, *, ctx: DispatchSkillContext) -> str:
+    """Layer-A skill line for MCP-capable dispatch roles (Use line or entity pointer)."""
+    return emit_layer_a_skill_line(slug_or_entity_id, ctx)
 
 
 def filter_double_load_excluded(
