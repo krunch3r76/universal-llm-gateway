@@ -6,14 +6,21 @@ import re
 import subprocess
 from pathlib import Path
 
-from doc_extraction.targeted_refresh import main, refresh_routing
+from doc_extraction.targeted_refresh import (
+    SCOPE_SOURCE_COMMIT_PATTERN,
+    main,
+    refresh_routing,
+)
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
-_SCOPE_SOURCE_COMMIT_RE = re.compile(r"source commit `[0-9a-f]{7,40}`")
 
 
 def _replace_scope_source_commit(text: str, head: str) -> str:
-    return _SCOPE_SOURCE_COMMIT_RE.sub(f"source commit `{head}`", text)
+    return re.sub(
+        SCOPE_SOURCE_COMMIT_PATTERN,
+        f"source commit `{head}`",
+        text,
+    )
 
 
 def _scope_section(text: str) -> str:
@@ -75,14 +82,11 @@ def test_scope_source_commit_substitution_preserves_surrounding_text() -> None:
 
 
 def test_refresh_routing_scope_source_commit_matches_git_head() -> None:
-    head = (
-        subprocess.check_output(
-            ["git", "rev-parse", "HEAD"],
-            cwd=_REPO_ROOT,
-            text=True,
-        )
-        .strip()[:12]
-    )
+    head = subprocess.check_output(
+        ["git", "rev-parse", "HEAD"],
+        cwd=_REPO_ROOT,
+        text=True,
+    ).strip()[:12]
     text = refresh_routing(_REPO_ROOT)
     scope = _scope_section(text.split("## Key Functions", 1)[0])
     assert f"source commit `{head}`" in scope
