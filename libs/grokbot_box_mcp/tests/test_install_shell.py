@@ -337,6 +337,9 @@ def test_install_self_candidate_strips_login_shell_argv0(tmp_path: Path) -> None
         )
     assert proc.returncode == 0, proc.stderr + proc.stdout
     assert "ok launcher=" in proc.stdout
+    launcher = tmp_path / ".local" / "bin" / "grokbot-mcp-remote-launcher.sh"
+    assert launcher.is_file()
+    assert oct(launcher.stat().st_mode & 0o777) == oct(0o755)
 
 
 @pytest.mark.offline
@@ -349,6 +352,48 @@ def test_print_paste_blob_bin_is_file_exits_nonzero_without_wrote(
     bin_path = home / ".local" / "bin"
     bin_path.parent.mkdir(parents=True)
     bin_path.write_text("not-a-directory\n", encoding="utf-8")
+    env = {
+        **os.environ,
+        "HOME": str(home),
+        "PATH": os.environ.get("PATH", "/usr/bin:/bin"),
+    }
+    print_proc = subprocess.run(
+        ["bash", str(_INSTALL), "--print"],
+        capture_output=True,
+        text=True,
+        check=False,
+        cwd=str(_REPO_ROOT / "scripts"),
+        env={
+            **env,
+            "GROKBOT_LAUNCHER_SRC": str(
+                _REPO_ROOT / "scripts" / "grokbot-mcp-remote-launcher.sh"
+            ),
+        },
+    )
+    assert print_proc.returncode == 0, print_proc.stderr
+    bootstrap = subprocess.run(
+        ["bash", "-s"],
+        input=print_proc.stdout,
+        capture_output=True,
+        text=True,
+        check=False,
+        env=env,
+    )
+    assert bootstrap.returncode != 0, bootstrap.stderr + bootstrap.stdout
+    assert "wrote" not in bootstrap.stderr
+    assert "wrote" not in bootstrap.stdout
+
+
+@pytest.mark.offline
+def test_print_paste_blob_installer_path_is_directory_exits_nonzero_without_wrote(
+    tmp_path: Path,
+) -> None:
+    """N15: subshell failure must not print wrote when INSTALLER path is a directory."""
+    home = tmp_path / "home"
+    home.mkdir()
+    installer_as_dir = home / ".local" / "bin" / "grokbot-box-mcp-install.sh"
+    installer_as_dir.parent.mkdir(parents=True)
+    installer_as_dir.mkdir()
     env = {
         **os.environ,
         "HOME": str(home),
