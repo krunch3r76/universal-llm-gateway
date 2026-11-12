@@ -231,11 +231,13 @@ async def test_an_unsupported_kind_fails_once_without_a_retry(
     )
     loop = EdgeLoop(InProcessClient(journal), kinds=(NEVER_KIND,), lease_wait_s=0.0)
     await loop.run_once()
+    assert await loop.run_once() is None
 
     record = await journal.get(op_id)
     assert record is not None
     assert record.state == "failed"
     assert record.result["code"] == CODE_KIND_UNSUPPORTED
+    assert record.started_at_epoch is not None
 
 
 @pytest.mark.asyncio

@@ -81,9 +81,19 @@ class EdgeLoop:
             self._backoff_s = config.DEFAULT_BACKOFF_INITIAL_SECONDS
 
     async def _execute(self, grant: dict[str, Any]) -> None:
-        """Acknowledge, run, and report one leased op."""
+        """Acknowledge, run, and report one leased op.
+
+        The ``started`` ack goes first for every leased op, handler or not: it
+        is this edge saying the op is its own and must not be redelivered,
+        which is what Stargate's terminal write requires of a ``never`` op. So
+        an unsupported kind acks and then fails once, rather than posting a
+        result Stargate refuses and sitting leased until the fold handed it
+        back to the same handler-less edge.
+        """
         op_id = str(grant.get("op_id"))
         kind = str(grant.get("kind"))
+        if not await self._acknowledge(grant, op_id, kind):
+            return
         handler = self._handlers.get(kind)
         if handler is None:
             await self._client.post_result(
@@ -95,8 +105,6 @@ class EdgeLoop:
                 },
                 outcome="failed",
             )
-            return
-        if not await self._acknowledge(grant, op_id, kind):
             return
         await self._report(handler, grant, op_id, kind)
 

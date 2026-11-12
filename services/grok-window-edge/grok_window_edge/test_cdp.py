@@ -40,6 +40,19 @@ def test_the_neighbours_of_the_allowed_ports_are_not_implied() -> None:
             cdp_endpoint(port)
 
 
+def test_the_new_display_fourteen_port_is_refused() -> None:
+    """CDP 9314 (display :14) appeared after A1 and is on no allowlist.
+
+    It is refused by the same deny-by-default rule as 9341, and this service
+    does not add it: the allowlist stays the two grok ports until a review
+    says otherwise.
+    """
+    for port in (9314, 9341):
+        with pytest.raises(CdpPortRefusedError):
+            cdp_endpoint(port)
+    assert 9314 not in CDP_PORT_ALLOWLIST
+
+
 def test_display_eleven_is_hard_denied() -> None:
     with pytest.raises(CdpPortRefusedError):
         assert_display_allowed(":11")
