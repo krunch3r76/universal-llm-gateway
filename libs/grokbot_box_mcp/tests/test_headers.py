@@ -79,7 +79,9 @@ def test_write_host_header_refuses_overwrite(
     gateway.write_text(format_header_file_body("existing-token"), encoding="utf-8")
     with pytest.raises(HostHeaderRefusedError):
         write_host_header_seed(udd, "new-token", home=home, sand_fallback=False)
-    assert gateway.read_text(encoding="utf-8") == format_header_file_body("existing-token")
+    assert gateway.read_text(encoding="utf-8") == format_header_file_body(
+        "existing-token"
+    )
 
 
 @pytest.mark.offline

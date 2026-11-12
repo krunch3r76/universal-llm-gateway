@@ -83,7 +83,8 @@ def provision_box_mcp_artifacts(
             "host sand-data/bin sync."
         ),
         "box_install_paste_hint": (
-            "bash -s < <(curl …) or paste output of: grokbot-box-mcp-install.sh --print"
+            "pipe host: grokbot-box-mcp-install.sh --print | bash; "
+            "then ~/.local/bin/grokbot-box-mcp-install.sh --header-stdin or --prompt"
         ),
     }
 

@@ -11,7 +11,8 @@ from pathlib import Path
 class HostHeaderRefusedError(RuntimeError):
     """Host header path exists with different content and force was not set."""
 
-# Proven on gc1 healthy sand: box opens /home/box/.gateway/vortex-mcp-headers first.
+
+# Observed on gc1 healthy sand: box opens /home/box/.gateway/vortex-mcp-headers first.
 BOX_HEADER_CANDIDATES: tuple[str, ...] = (
     "/home/box/.gateway/vortex-mcp-headers",
     "/home/box/sand-data/vortex-mcp-headers",
@@ -30,7 +31,7 @@ PROXYSHIM_NODE_REQUIRE = "--require /home/box/.proxyshim/preload.cjs"
 
 
 def host_operator_gateway_header_path(home: Path | None = None) -> Path:
-    """Host path that maps to ``/home/box/.gateway/vortex-mcp-headers`` (gc1-proven)."""
+    """Host path that maps to ``/home/box/.gateway/vortex-mcp-headers`` (gc1 observed)."""
     home = home or Path.home()
     return home / ".gateway" / BOX_GATEWAY_HEADER_NAME
 

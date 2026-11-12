@@ -14,6 +14,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -47,6 +48,10 @@ def _provision_gc2(*, start: bool, seed_mcp: bool = False) -> dict[str, object]:
     written: list[str] = []
     for name, body in units.items():
         path = _SYSTEMD_USER_DIR / name
+        if path.is_file():
+            bak = path.with_name(path.name + ".bak")
+            if not bak.is_file():
+                shutil.copy2(path, bak)
         path.write_text(body, encoding="utf-8")
         written.append(str(path))
     subprocess.run(["systemctl", "--user", "daemon-reload"], check=True)

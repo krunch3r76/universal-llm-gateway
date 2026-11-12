@@ -9,12 +9,17 @@ import time
 from pathlib import Path
 
 import pytest
-
-from io_agent_gc2_browser import format_systemd_environment_block, gc2_service_environment, provision_gc2_browser_config
+from io_agent_gc2_browser import (
+    format_systemd_environment_block,
+    gc2_service_environment,
+    provision_gc2_browser_config,
+)
 
 
 @pytest.mark.offline
-def test_provision_writes_executable_wrapper(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_provision_writes_executable_wrapper(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     home = tmp_path / "home"
     home.mkdir()
     monkeypatch.setenv("HOME", str(home))
@@ -32,7 +37,7 @@ def test_gc2_open_url_launches_chrome_with_profile(tmp_path: Path) -> None:
     script = repo / "io-agent" / "gc2-open-url.sh"
     fake_chrome = tmp_path / "chrome"
     log = tmp_path / "chrome-invocations.log"
-    fake_chrome.write_text(f"#!/bin/sh\necho \"$@\" >> {log}\n", encoding="utf-8")
+    fake_chrome.write_text(f'#!/bin/sh\necho "$@" >> {log}\n', encoding="utf-8")
     fake_chrome.chmod(fake_chrome.stat().st_mode | stat.S_IXUSR)
     env = {
         **os.environ,
@@ -65,5 +70,7 @@ def test_systemd_environment_includes_prepend_path() -> None:
     env = gc2_service_environment(home=Path("/home/io"))
     block = format_systemd_environment_block(env)
     assert "Environment=PATH=/home/io/.config/io-agent-gc2/bin:" in block
-    assert "Environment=BROWSER=/home/io/.config/io-agent-gc2/bin/gc2-open-url.sh" in block
+    assert (
+        "Environment=BROWSER=/home/io/.config/io-agent-gc2/bin/gc2-open-url.sh" in block
+    )
     assert "Environment=XDG_CONFIG_DIRS=/home/io/.config/io-agent-gc2:/etc/xdg" in block

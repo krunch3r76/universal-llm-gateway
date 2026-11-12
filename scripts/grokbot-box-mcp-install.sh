@@ -4,8 +4,16 @@
 # The bearer token must never appear in argv or shell history — use stdin or --prompt (read -rs).
 set -euo pipefail
 
-SELF="${BASH_SOURCE[0]}"
-SELF_DIR="$(cd "$(dirname "${SELF}")" && pwd)"
+_SELF_CAND="${BASH_SOURCE[0]:-$0}"
+SELF=""
+SELF_DIR="${HOME}/.local/bin"
+if [[ -n "${_SELF_CAND}" && "${_SELF_CAND}" != bash && "${_SELF_CAND}" != /bin/bash ]]; then
+  _self_dir="$(dirname "${_SELF_CAND}")"
+  if [[ -f "${_SELF_CAND}" || -f "${_self_dir}/$(basename "${_SELF_CAND}")" ]]; then
+    SELF="$(cd "${_self_dir}" && pwd)/$(basename "${_SELF_CAND}")"
+    SELF_DIR="$(dirname "${SELF}")"
+  fi
+fi
 LAUNCHER_SRC="${GROKBOT_LAUNCHER_SRC:-${SELF_DIR}/grokbot-mcp-remote-launcher.sh}"
 PIN="0.8.6"
 INSTALL_ROOT="${HOME}/.local/share/ulg-mcp-remote/${PIN}"
@@ -25,18 +33,25 @@ usage: grokbot-box-mcp-install.sh [--print] [--header-stdin] [--prompt] [--repla
   --replace         Overwrite an existing header that differs (backs up to .bak first).
   --skip-mcp-remote Skip npm install of mcp-remote@0.8.6.
 
-Token hygiene: never pass the bearer token on the command line. Pipe one line:
-  printf '%s\n' 'Authorization: Bearer <secret>' | grokbot-box-mcp-install.sh --header-stdin
+Token hygiene: never pass the bearer token on the command line. Pipe one header line on stdin:
+  grokbot-box-mcp-install.sh --header-stdin   # paste/type line, then Ctrl-D
 EOF
   exit 2
 }
 
-_print_pasteable() {
+_installer_body_for_embed() {
+  local src="${SELF}"
+  if [[ -z "${src}" || ! -f "${src}" ]]; then
+    src="${SELF_DIR}/grokbot-box-mcp-install.sh"
+  fi
+  if [[ ! -f "${src}" ]]; then
+    echo "grokbot-box-mcp-install: --print requires readable install script on disk" >&2
+    return 1
+  fi
   if [[ -f "${LAUNCHER_SRC}" ]] && command -v python3 >/dev/null 2>&1; then
-    GROKBOT_LAUNCHER_SRC="${LAUNCHER_SRC}" GROKBOT_INSTALL_SELF="${SELF}" python3 <<'PY'
+    GROKBOT_LAUNCHER_SRC="${LAUNCHER_SRC}" GROKBOT_INSTALL_SELF="${src}" python3 <<'PY'
 import os
 import pathlib
-import re
 import sys
 
 self_path = pathlib.Path(os.environ["GROKBOT_INSTALL_SELF"]).resolve()
@@ -52,9 +67,65 @@ if i < 0 or j < 0:
 new_body = body[: i + len(start)] + launcher.rstrip("\n") + body[j:]
 sys.stdout.write(new_body)
 PY
-    return
+    return 0
   fi
-  cat "${SELF}"
+  cat "${src}"
+}
+
+_print_pasteable() {
+  local inst_tmp lch_tmp
+  inst_tmp="$(mktemp)"
+  lch_tmp="$(mktemp)"
+  if ! _installer_body_for_embed >"${inst_tmp}"; then
+    rm -f "${inst_tmp}" "${lch_tmp}"
+    return 1
+  fi
+  if [[ -f "${LAUNCHER_SRC}" ]]; then
+    cp "${LAUNCHER_SRC}" "${lch_tmp}"
+  else
+    : >"${lch_tmp}"
+  fi
+  if command -v python3 >/dev/null 2>&1; then
+    python3 - "${inst_tmp}" "${lch_tmp}" <<'PY'
+import pathlib
+import sys
+
+inst_path = pathlib.Path(sys.argv[1])
+lch_path = pathlib.Path(sys.argv[2])
+installer = inst_path.read_text(encoding="utf-8")
+launcher = lch_path.read_text(encoding="utf-8") if lch_path.stat().st_size else ""
+if not installer.strip():
+    sys.stderr.write("grokbot-box-mcp-install: --print empty installer body\n")
+    raise SystemExit(2)
+marker_i = "GROKBOT_BOX_MCP_INSTALLER_EMBED"
+marker_l = "GROKBOT_BOX_MCP_LAUNCHER_EMBED"
+out = f"""#!/usr/bin/env bash
+# Paste into the Grok Bot box Shell: writes ~/.local/bin installers, then run grokbot-box-mcp-install.sh.
+set -euo pipefail
+BIN_DIR="${{HOME}}/.local/bin"
+mkdir -p "${{BIN_DIR}}"
+INSTALLER="${{BIN_DIR}}/grokbot-box-mcp-install.sh"
+LAUNCHER="${{BIN_DIR}}/grokbot-mcp-remote-launcher.sh"
+cat >"${{INSTALLER}}" <<'{marker_i}'
+{installer.rstrip(chr(10))}
+{marker_i}
+chmod 700 "${{INSTALLER}}"
+"""
+if launcher.strip():
+    out += f"""cat >"${{LAUNCHER}}" <<'{marker_l}'
+{launcher.rstrip(chr(10))}
+{marker_l}
+chmod 755 "${{LAUNCHER}}"
+"""
+out += 'echo "grokbot-box-mcp-install: wrote ${INSTALLER}" >&2\n'
+sys.stdout.write(out)
+PY
+    rm -f "${inst_tmp}" "${lch_tmp}"
+    return 0
+  fi
+  rm -f "${inst_tmp}" "${lch_tmp}"
+  echo "grokbot-box-mcp-install: --print requires python3" >&2
+  return 2
 }
 
 _install_embedded_launcher() {
@@ -140,6 +211,9 @@ GROKBOT_MCP_REMOTE_LAUNCHER_EMBED
 _install_launcher() {
   mkdir -p "${BIN_DIR}"
   if [[ -f "${LAUNCHER_SRC}" ]]; then
+    if [[ "${LAUNCHER_SRC}" -ef "${LAUNCHER_DEST}" ]]; then
+      return 0
+    fi
     install -m 755 "${LAUNCHER_SRC}" "${LAUNCHER_DEST}"
   else
     _install_embedded_launcher
@@ -148,7 +222,8 @@ _install_launcher() {
 
 _validate_header_line() {
   local line="$1"
-  if [[ -z "${line}" ]]; then
+  line="${line%$'\r'}"
+  if [[ -z "${line//[[:space:]]/}" ]]; then
     echo "grokbot-box-mcp-install: empty header line" >&2
     return 1
   fi
@@ -172,6 +247,8 @@ _write_header_from_line() {
   mkdir -p "$(dirname "${HEADER_DEST}")"
   local tmp
   tmp="$(mktemp -p "$(dirname "${HEADER_DEST}")" .vortex-mcp-headers.XXXXXX)"
+  GROKBOT_HEADER_TMP="${tmp}"
+  trap 'rm -f "${GROKBOT_HEADER_TMP:-}"; unset GROKBOT_HEADER_TMP' RETURN
   local prior_umask
   prior_umask="$(umask)"
   umask 077
@@ -186,16 +263,24 @@ _write_header_from_line() {
     old_body="$(cat "${HEADER_DEST}")"
     if [[ "${old_body}" == "${new_body}" ]]; then
       rm -f "${tmp}"
+      trap - RETURN
+      unset GROKBOT_HEADER_TMP
       return 0
     fi
-    cp -p "${HEADER_DEST}" "${HEADER_DEST}.bak"
+    if [[ ! -f "${HEADER_DEST}.bak" ]]; then
+      cp -p "${HEADER_DEST}" "${HEADER_DEST}.bak"
+    fi
     if [[ "${HEADER_REPLACE}" != true ]]; then
       echo "grokbot-box-mcp-install: existing header differs; use --replace to overwrite (backup at .bak)" >&2
       rm -f "${tmp}"
+      trap - RETURN
+      unset GROKBOT_HEADER_TMP
       exit 2
     fi
   fi
   mv -f "${tmp}" "${HEADER_DEST}"
+  trap - RETURN
+  unset GROKBOT_HEADER_TMP
   chmod 600 "${HEADER_DEST}"
 }
 
@@ -208,13 +293,12 @@ _read_header_line() {
     echo "grokbot-box-mcp-install: stdin is a TTY; pipe the header line or use --prompt" >&2
     exit 2
   else
-    if ! IFS= read -r line; then
-      line=""
-    fi
+    IFS= read -r line || true
     if IFS= read -r extra; then
       echo "grokbot-box-mcp-install: refuse multi-line header input" >&2
       exit 2
     fi
+    line="${line%$'\r'}"
   fi
   _write_header_from_line "${line}"
 }
@@ -235,7 +319,7 @@ _install_mcp_remote() {
     local pkg="${INSTALL_ROOT}/node_modules/mcp-remote/package.json"
     if [[ -f "${pkg}" ]] && command -v node >/dev/null 2>&1; then
       local ver
-      ver="$(node -p "require('${pkg}').version" 2>/dev/null || true)"
+      ver="$(NODE_OPTIONS='' node -p "require('${pkg}').version" 2>/dev/null || true)"
       if [[ "${ver}" == "${PIN}" ]]; then
         return 0
       fi
@@ -249,7 +333,7 @@ _install_mcp_remote() {
   (
     cd "${INSTALL_ROOT}"
     npm init -y >/dev/null 2>&1
-    HTTPS_PROXY="${HTTPS_PROXY}" NODE_OPTIONS="${NODE_OPTIONS}" \
+    HTTPS_PROXY="${HTTPS_PROXY}" NODE_OPTIONS='' \
       npm install --no-save "mcp-remote@${PIN}" >/dev/null
   )
 }
