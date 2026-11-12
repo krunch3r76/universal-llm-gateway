@@ -47,6 +47,7 @@ def test_missing_caller_agent_refused_before_spawn_row() -> None:
         "web_claude",
         "frontier-admit",
         "git-integration-worker",
+        "conductor-hop",
     ],
 )
 def test_pseudo_address_caller_refused(pseudo: str) -> None:
@@ -67,6 +68,14 @@ def test_caller_agent_casefold_still_rejects_dispatch() -> None:
 
 def test_cursor_mailbox_is_valid_caller_agent() -> None:
     assert is_valid_cdp_caller_agent("cursor") is True
+
+
+def test_cursor_sdk_is_valid_caller_agent() -> None:
+    assert is_valid_cdp_caller_agent("cursor-sdk") is True
+
+
+def test_conductor_hop_remapped_wake_head_refused() -> None:
+    assert is_valid_cdp_caller_agent("conductor-hop") is False
 
 
 def test_normalize_bus_address_alias_refused() -> None:

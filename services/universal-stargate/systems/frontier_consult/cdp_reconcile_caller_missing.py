@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import uuid
+from collections.abc import Awaitable, Callable
 from typing import Literal
 
 from claude_bundles.cdp_model_endpoint import CdpGenerateResult
@@ -15,6 +16,9 @@ FinalizeVia = Literal["worker", "reconcile", "attest"]
 CALLER_MISSING_REASON = "cdp_caller_agent_missing"
 
 
+TerminateDispatchLink = Callable[..., Awaitable[bool | None]]
+
+
 async def finalize_caller_agent_missing(
     *,
     result: CdpGenerateResult,
@@ -22,11 +26,14 @@ async def finalize_caller_agent_missing(
     thread_id: str,
     pointer_turn: int,
     via: FinalizeVia,
+    terminate_dispatch_link: TerminateDispatchLink | None = None,
 ) -> None:
     """Publish stall once, mark proof, and relay terminal failed (no delivery retry)."""
     holder = f"{via}:{uuid.uuid4().hex[:8]}"
     if not try_claim_proof_publish(execution_id=result.execution_id, holder=holder):
         return
+    if terminate_dispatch_link is not None:
+        await terminate_dispatch_link(terminal_status="failed")
     sat_id = result.satellite_execution_id
     publish_cdp_kwargs(
         CdpGenerateStalled,

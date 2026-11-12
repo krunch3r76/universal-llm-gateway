@@ -40,10 +40,21 @@ def frontier_row_economics(row: dict[str, Any]) -> dict[str, Any]:
         except (TypeError, ValueError):
             wall_s = None
     out: dict[str, Any] = {"substrate": "cdp"}
+
+    def _as_int(val: object) -> int | None:
+        try:
+            return int(val)  # type: ignore[arg-type]
+        except (TypeError, ValueError):
+            return None
+
     if prompt_bytes is not None:
-        out["prompt_bytes"] = int(prompt_bytes)
+        parsed = _as_int(prompt_bytes)
+        if parsed is not None:
+            out["prompt_bytes"] = parsed
     if harvest_chars is not None:
-        out["harvest_chars"] = int(harvest_chars)
+        parsed = _as_int(harvest_chars)
+        if parsed is not None:
+            out["harvest_chars"] = parsed
     if wall_s is not None:
         out["wall_s"] = wall_s
     return out

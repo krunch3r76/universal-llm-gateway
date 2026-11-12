@@ -50,6 +50,18 @@ def test_api_role_row_gains_no_harvest_key() -> None:
     assert out == {}
 
 
+def test_non_numeric_quantities_omitted_without_raise() -> None:
+    rec = {
+        "address": {"kind": "cdp"},
+        "prompt_bytes": "not-a-number",
+        "harvest_chars": [],
+    }
+    out = frontier_row_economics({"record_json": rec})
+    assert out == {"substrate": "cdp"}
+    assert "prompt_bytes" not in out
+    assert "harvest_chars" not in out
+
+
 def test_wall_s_omitted_when_started_at_missing() -> None:
     rec = {"address": {"kind": "cdp"}}
     row = {

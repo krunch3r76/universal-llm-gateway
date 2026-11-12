@@ -120,6 +120,25 @@ def resolve_continuity_hop_job(
     return {"post": True, "job": record.name, "reason": None, "report_job": record.name}
 
 
+def resolve_hop_cdp_caller_agent(
+    from_agent: str,
+    *,
+    explicit_caller_agent: str | None = None,
+) -> str:
+    """Return a CDP-deliverable reply mailbox for hop commissions.
+
+    ``from_agent`` is the bus author (often ``web-anthropic`` on the Life MCP
+  mount); ``caller_agent`` on the generate body must wake a real seat.
+    """
+    from systems.frontier_consult.cdp_admit_identity import is_valid_cdp_caller_agent
+
+    for raw in (explicit_caller_agent, from_agent, "cursor"):
+        cand = (raw or "").strip()
+        if cand and is_valid_cdp_caller_agent(cand):
+            return cand
+    return ""
+
+
 def hop_generate_payload(
     *,
     model: str,
@@ -129,6 +148,7 @@ def hop_generate_payload(
     decision: dict[str, Any],
     predecessor_registration_id: str | None = None,
     reasoning_effort: str | None = None,
+    caller_agent: str | None = None,
 ) -> dict[str, Any]:
     """Commission JSON for a hop POST. Omits ``job`` when the decision omitted it."""
     payload: dict[str, Any] = {
@@ -139,7 +159,9 @@ def hop_generate_payload(
         "mission_kind": "hop",
         "parent_thread": thread_id,
         "dispatch_thread_id": thread_id,
-        "caller_agent": from_agent,
+        "caller_agent": resolve_hop_cdp_caller_agent(
+            from_agent, explicit_caller_agent=caller_agent
+        ),
     }
     if decision.get("job") is not None:
         payload["job"] = decision["job"]
@@ -213,6 +235,7 @@ async def _hop_dispatch(
     request_id: str | None = None,
     after_turn: int = 0,
     subject: str | None = None,
+    caller_agent: str | None = None,
 ) -> dict[str, Any]:
     """Validate + dispatch ``agent_bus.hop``.
 
@@ -416,6 +439,16 @@ async def _hop_dispatch(
     )
     effort = (desired_effort or "").strip()
     wire_effort = effort if effort and effort != "auto" else None
+    wire_caller = resolve_hop_cdp_caller_agent(
+        from_agent, explicit_caller_agent=caller_agent
+    )
+    if not wire_caller:
+        record("mcp.agentbus.hop.rejected", reason="cdp_caller_invalid", thread=thread_id)
+        return {
+            "error": "hop: caller_agent is not a deliverable bus mailbox",
+            "reason": "cdp_caller_agent_required",
+        }
+
     payload = hop_generate_payload(
         model=model,
         prompt=full_body,
@@ -424,6 +457,7 @@ async def _hop_dispatch(
         decision=decision,
         predecessor_registration_id=cse_registration_id,
         reasoning_effort=wire_effort,
+        caller_agent=wire_caller,
     )
 
     async def _poster(body: dict[str, Any]) -> dict[str, Any]:

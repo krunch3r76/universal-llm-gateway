@@ -448,6 +448,7 @@ async def finalize_cdp_generate(
             thread_id=thread_id,
             pointer_turn=pointer_turn,
             via=via,
+            terminate_dispatch_link=_terminate_dispatch_link,
         )
         return
 

@@ -124,7 +124,7 @@ def enforce_review_prompt_gate(
 ) -> None:
     """Refuse tiny or placeholder review packets before worker admit."""
     contract_key = (contract or "").strip().lower()
-    if contract not in REVIEW_CONTRACTS:
+    if contract_key not in REVIEW_CONTRACTS:
         if contract_key not in REVIEW_CLASS_CONTRACTS:
             return
         body, kind, source_ref = author_prompt_source(

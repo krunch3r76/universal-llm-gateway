@@ -4,7 +4,10 @@ from __future__ import annotations
 
 import pytest
 
-from claude_bundles.cdp_review_prompt_gate import CdpStagingError, enforce_review_prompt_gate
+from claude_bundles.cdp_review_prompt_gate import (
+    CdpStagingError,
+    enforce_review_prompt_gate,
+)
 
 _MIN_REVIEW = "x" * 512
 
@@ -44,6 +47,12 @@ def test_size_gate_still_skips_check_review() -> None:
     enforce_review_prompt_gate(contract="check-review", prompt_text="short")
     with pytest.raises(CdpStagingError) as exc:
         enforce_review_prompt_gate(contract="code-review", prompt_text="short")
+    assert exc.value.code == "review_prompt_too_small"
+
+
+def test_casefolded_code_review_contract_gets_size_gate() -> None:
+    with pytest.raises(CdpStagingError) as exc:
+        enforce_review_prompt_gate(contract="Code-Review", prompt_text="short")
     assert exc.value.code == "review_prompt_too_small"
 
 

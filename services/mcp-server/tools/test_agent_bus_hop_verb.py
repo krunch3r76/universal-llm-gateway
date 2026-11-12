@@ -25,7 +25,12 @@ from hop_handoff.body import parse_hop_admitted_at, parse_responsibility
 
 from claude_bundles.operator_proxy_mission import ensure_operator_proxy_mission_prompt
 
-from tools.agent_bus.hop import _hop_dispatch, resolve_hop_successor_model
+from tools.agent_bus.hop import (
+    _hop_dispatch,
+    hop_generate_payload,
+    resolve_hop_cdp_caller_agent,
+    resolve_hop_successor_model,
+)
 from tools.agent_bus.request_intake import reset_request_id_registry_for_tests
 
 
@@ -174,6 +179,28 @@ def test_resolve_hop_successor_model_rejects_whitespace() -> None:
         resolve_hop_successor_model("opus 5")
 
 
+def test_hop_cdp_caller_from_web_anthropic_uses_cursor_mailbox() -> None:
+    assert resolve_hop_cdp_caller_agent("web-anthropic") == "cursor"
+
+
+def test_hop_generate_payload_explicit_caller_passthrough() -> None:
+    decision = {
+        "post": True,
+        "job": "freeform",
+        "reason": None,
+        "report_job": "freeform",
+    }
+    payload = hop_generate_payload(
+        model="cdp/opus-5.5",
+        prompt="TYPE: CONTINUITY_HANDOFF",
+        thread_id="77",
+        from_agent="web-anthropic",
+        decision=decision,
+        caller_agent="cursor-sdk-lane",
+    )
+    assert payload["caller_agent"] == "cursor-sdk-lane"
+
+
 def test_hop_dispatch_sends_caller_model() -> None:
     """The generate body uses the resolved pin, not a hardcoded opus-5."""
     captured: dict[str, Any] = {}
@@ -202,6 +229,7 @@ def test_hop_dispatch_sends_caller_model() -> None:
     result = asyncio.run(run())
     assert result["model"] == "cdp/fable-5.1-high"
     assert captured["body"]["model"] == "cdp/fable-5.1-high"
+    assert captured["body"]["caller_agent"] == "cursor"
     assert result["continuity_hop"] is True
 
 
@@ -1200,7 +1228,9 @@ def test_hop_relay_error_dict_records_thread_read_failed_on_paste() -> None:
         captured.update(kwargs)
         return {"execution_id": "ex-hop-relay-error-dict"}
 
-    def _error_relay(service: str, method: str, path: str, **kwargs: Any) -> dict[str, str]:
+    def _error_relay(
+        service: str, method: str, path: str, **kwargs: Any
+    ) -> dict[str, str]:
         del service, method, path, kwargs
         return {"error": "Connection failed to agent-bus"}
 

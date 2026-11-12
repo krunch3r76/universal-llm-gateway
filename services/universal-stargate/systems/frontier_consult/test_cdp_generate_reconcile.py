@@ -135,11 +135,7 @@ def test_result_from_snapshot_review_induction_keeps_waiting() -> None:
 
 
 def test_result_from_snapshot_review_with_verdict_finalizes() -> None:
-    body = (
-        "## Merits\n"
-        "Gate holds.\n"
-        "VERDICT: PASS\n"
-    )
+    body = "## Merits\nGate holds.\nVERDICT: PASS\n"
     snapshot = {
         "status": "completed",
         "completion_phase": "terminal",
@@ -159,7 +155,9 @@ def test_result_from_snapshot_review_with_verdict_finalizes() -> None:
     assert result.ok is True
 
 
-def test_inflight_leg_persists_purpose(tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_inflight_leg_persists_purpose(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     monkeypatch.setenv("DATA_DIR", str(tmp_path))
     upsert_inflight_leg(
         execution_id="exec-purpose",
@@ -1502,9 +1500,7 @@ async def test_case_l_live_leg_stays_null(monkeypatch: pytest.MonkeyPatch) -> No
     leg = reconcile.read_inflight_leg(execution_id)
     assert leg is not None
     assert not leg.satellite_execution_id
-    await reconcile._reconcile_horizon_leg(
-        leg, horizon=max_open_leg_s(1800.0)
-    )
+    await reconcile._reconcile_horizon_leg(leg, horizon=max_open_leg_s(1800.0))
     assert finalized == []
     assert terminated == []
 
@@ -2266,12 +2262,48 @@ async def test_reconcile_leg_without_caller_agent_fails_closed(
     assert relay_calls
     assert relay_calls[-1]["terminal_status"] == "failed"
     assert relay_calls[-1]["reason"] == "cdp_caller_agent_missing"
-    assert any(
-        s.get("stall_stage") == "cdp_caller_agent_missing" for s in stalled
-    )
+    assert any(s.get("stall_stage") == "cdp_caller_agent_missing" for s in stalled)
     leg = reconcile.read_inflight_leg("exec-no-caller")
     assert leg is not None
     assert leg.proof_emitted
+
+
+@pytest.mark.asyncio
+async def test_caller_missing_terminates_dispatch_link_before_proof(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """NULL caller reconcile must close thread_dispatch_links when admit succeeded."""
+    from systems.frontier_consult.cdp_reconcile_caller_missing import (
+        finalize_caller_agent_missing,
+    )
+
+    terminate = AsyncMock(return_value=True)
+    relay_calls = _relay_finalize_mocks(monkeypatch)
+    monkeypatch.setattr(
+        "systems.frontier_consult.cdp_reconcile_caller_missing.publish_cdp_kwargs",
+        lambda event_cls, **kwargs: None,
+    )
+    upsert_inflight_leg(
+        execution_id="exec-no-caller-link",
+        request_id="req-no-caller-link",
+        thread_id="99002",
+        pointer_turn=1,
+        caller_agent="",
+        prompt_uri="cortex://p.md",
+        model_id="cdp/opus-5",
+        max_wall_s=1800.0,
+    )
+    await finalize_caller_agent_missing(
+        result=_ok_result(execution_id="exec-no-caller-link"),
+        request_id="req-no-caller-link",
+        thread_id="99002",
+        pointer_turn=1,
+        via="reconcile",
+        terminate_dispatch_link=terminate,
+    )
+    terminate.assert_awaited_once()
+    assert terminate.await_args.kwargs["terminal_status"] == "failed"
+    assert relay_calls
 
 
 @pytest.mark.asyncio

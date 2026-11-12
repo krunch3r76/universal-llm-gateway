@@ -285,6 +285,34 @@ def test_attest_route_rejects_extra_archive_uri_field() -> None:
 
 
 @pytest.mark.asyncio
+async def test_attest_refuses_undeliverable_caller_before_finalize(
+    monkeypatch: pytest.MonkeyPatch,
+    cortex_root: Path,
+) -> None:
+    upsert_inflight_leg(
+        execution_id="exec-attest-bad-caller",
+        request_id="req-attest-bad",
+        thread_id="9628",
+        pointer_turn=2,
+        caller_agent="web-anthropic",
+        prompt_uri="cortex://notes/prompt.md",
+        model_id="cdp/opus-5",
+        max_wall_s=1800.0,
+    )
+    uri, digest = _write_proof_file(cortex_root, "notes/test/proof.md", b"proof-bytes")
+    with pytest.raises(ProtocolError) as exc:
+        await attest_cdp_generate_deliverable(
+            execution_id="exec-attest-bad-caller",
+            body=AttestDeliverableRequest(
+                content_proof_uri=uri,
+                written_sha256=digest,
+                attested_by="test-seat",
+            ),
+        )
+    assert exc.value.code == "cdp_attest_caller_undeliverable"
+
+
+@pytest.mark.asyncio
 async def test_attest_idempotent_second_call(
     monkeypatch: pytest.MonkeyPatch,
     cortex_root: Path,

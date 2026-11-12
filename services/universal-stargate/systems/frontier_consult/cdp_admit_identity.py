@@ -8,7 +8,6 @@ from typing import Any
 from agent_seat.registry import normalize_bus_address
 from bus_watch.endpoint_wake_dispatcher import (
     GATE_WAKE_REMAP_ADDRESSES,
-    ROUTINE_DISPATCH_FROM,
     WAKE_BROADCAST_DROP_ADDRESSES,
 )
 from claude_bundles.cdp_model_endpoint import CDP_REPLY_FROM
@@ -36,7 +35,6 @@ def _non_deliverable_caller_addresses() -> frozenset[str]:
     folded: set[str] = set()
     for addr in (
         *GATE_WAKE_REMAP_ADDRESSES,
-        *ROUTINE_DISPATCH_FROM,
         *_CDP_SELF_REPLY_ALIASES,
         *WAKE_BROADCAST_DROP_ADDRESSES,
         "unspecified",
