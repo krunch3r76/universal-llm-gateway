@@ -23,6 +23,7 @@ _POST_RETRY_SLEEP_S = 0.5
 _DEGRADED_SIDECAR_WARNING = (
     "WARNING: sidecar write failed; reply delivered inline (no sidecar_ref/sha256)"
 )
+_DEGRADED_SIDECAR_SUBJECT_PREFIX = "[sidecar write failed] "
 
 
 def degraded_sidecar_delivery_body(body: str) -> bool:
@@ -57,6 +58,7 @@ def _bounded_degraded_fallback(full_body: str) -> str:
         trimmed = full_body[: max(0, len(trimmed) - over)].rstrip()
     return full_body[: max(0, BUS_MAX_BODY_CHARS - 80)].rstrip() + note
 
+
 # Same shape as master_review_owed.CANONICAL_VERDICT_RE (binder contract).
 _CANONICAL_VERDICT_RE = re.compile(
     r"(?im)^VERDICT:[ \t]+(APPROVE|REQUEST_CHANGES)[ \t]+"
@@ -83,10 +85,7 @@ def collapse_identical_unfenced_canonical_verdicts(harvest: str) -> str:
         ):
             offset += len(line)
             continue
-        if (
-            not in_fence
-            and _CANONICAL_VERDICT_RE.fullmatch(stripped) is not None
-        ):
+        if not in_fence and _CANONICAL_VERDICT_RE.fullmatch(stripped) is not None:
             seen.add(stripped)
         kept.append(line)
         offset += len(line)
@@ -239,9 +238,9 @@ async def build_cdp_success_delivery_body(
 ) -> str | None:
     """Build ok=True delivery body; degraded inline when sidecar write failed.
 
-  ``body_mode=compact`` (default) always sidecars harvest and posts a compact
-    pointer. ``inline`` preserves legacy inline harvest up to ``BUS_MAX_BODY_CHARS``.
-    ``pointer_only`` keeps the legacy minimal pointer (no section map / summary).
+    ``body_mode=compact`` (default) always sidecars harvest and posts a compact
+      pointer. ``inline`` preserves legacy inline harvest up to ``BUS_MAX_BODY_CHARS``.
+      ``pointer_only`` keeps the legacy minimal pointer (no section map / summary).
     """
     if pointer_only and body_mode == "compact":
         body_mode = "pointer_only"
@@ -303,9 +302,7 @@ async def build_cdp_success_delivery_body(
                 format_metadata=format_metadata,
             )
 
-        section_map, hidden = (
-            build_section_map(map_source) if map_source else ([], 0)
-        )
+        section_map, hidden = build_section_map(map_source) if map_source else ([], 0)
         original_rows = len(section_map) + hidden
         tail: str | None = None
         if hidden:
@@ -348,10 +345,11 @@ async def _post_degraded_ok_body(
     """Post degraded ok=True body; bus auto-spill handles bodies > brief limit."""
     from .cdp_generate_worker import post_cdp_turn
 
+    degraded_subject = f"{_DEGRADED_SIDECAR_SUBJECT_PREFIX}{subject}"
     primary = await post_cdp_turn(
         thread_id=thread_id,
         to_agent=to_agent,
-        subject=subject,
+        subject=degraded_subject,
         body=full_body,
         request_id=request_id,
         pointer_turn=pointer_turn,
@@ -362,7 +360,7 @@ async def _post_degraded_ok_body(
     return await post_cdp_turn(
         thread_id=thread_id,
         to_agent=to_agent,
-        subject=subject,
+        subject=degraded_subject,
         body=bounded,
         request_id=request_id,
         pointer_turn=pointer_turn,

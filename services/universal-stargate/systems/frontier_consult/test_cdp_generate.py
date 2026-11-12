@@ -510,7 +510,7 @@ async def test_c7_deliver_sidecar_write_none_degraded_inline(
     )
     assert ok is True
     assert len(subjects) == 1
-    assert subjects[0].startswith("cdp reply")
+    assert subjects[0].startswith("[sidecar write failed] cdp reply")
     assert "DELIVERY FAILED" not in subjects[0]
     assert len(posted_bodies) == 1
     body = posted_bodies[0]
@@ -518,6 +518,66 @@ async def test_c7_deliver_sidecar_write_none_degraded_inline(
     assert "inline harvest verdict" in body
     assert "sidecar_ref:" not in body
     assert "sha256:" not in body
+
+
+@pytest.mark.asyncio
+async def test_w3_degraded_subject_marker_happy_path_subject_unchanged(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Degraded inline posts prefix subject; compact happy path subject is unchanged."""
+    from systems.frontier_consult import cdp_onbehalf_delivery as delivery
+    from systems.frontier_consult.cdp_onbehalf_delivery import SidecarResult
+
+    degraded_subjects: list[str] = []
+    happy_subjects: list[str] = []
+
+    async def fake_sidecar_none(**kwargs: object) -> None:
+        return None
+
+    async def fake_sidecar_ok(**kwargs: object) -> SidecarResult:
+        content = str(kwargs.get("content"))
+        return SidecarResult(
+            uri="cortex://notes/system/threads/w3-happy.md",
+            sha256=hashlib.sha256(content.encode()).hexdigest(),
+            body_chars=len(content),
+        )
+
+    async def fake_post_degraded(**kwargs: object) -> PostOutcome:
+        degraded_subjects.append(str(kwargs.get("subject")))
+        return PostOutcome(ok=True, http_status=201)
+
+    async def fake_post_happy(**kwargs: object) -> PostOutcome:
+        happy_subjects.append(str(kwargs.get("subject")))
+        return PostOutcome(ok=True, http_status=201)
+
+    monkeypatch.setattr(delivery, "write_cdp_harvest_sidecar", fake_sidecar_none)
+    monkeypatch.setattr(
+        "systems.frontier_consult.cdp_generate_worker.post_cdp_turn",
+        fake_post_degraded,
+    )
+    await deliver_cdp_result_turn(
+        result=_ok_result_no_archive(body="small harvest"),
+        thread_id="9882",
+        to_agent="dispatch",
+        request_id="r-w3-degraded-subject",
+    )
+    assert len(degraded_subjects) == 1
+    assert degraded_subjects[0].startswith("[sidecar write failed] cdp reply")
+
+    monkeypatch.setattr(delivery, "write_cdp_harvest_sidecar", fake_sidecar_ok)
+    monkeypatch.setattr(
+        "systems.frontier_consult.cdp_generate_worker.post_cdp_turn",
+        fake_post_happy,
+    )
+    await deliver_cdp_result_turn(
+        result=_ok_result(),
+        thread_id="9883",
+        to_agent="dispatch",
+        request_id="r-w3-happy-subject",
+    )
+    assert len(happy_subjects) == 1
+    assert happy_subjects[0].startswith("cdp reply")
+    assert "[sidecar write failed]" not in happy_subjects[0]
 
 
 @pytest.mark.asyncio
