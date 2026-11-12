@@ -243,6 +243,10 @@ async def _resolve_and_select_endpoint(
                 "active_agent_id": verdict.get("active_agent_id"),
                 "titles": verdict.get("titles"),
             }
+        click_res: dict[str, Any] = {"clicked": False}
+        prior_fp = ""
+        prior_generating = False
+        grok_agent = str(endpoint.agent_id or "").strip()
         async with display_switch_lock(disp):
             try:
                 surface = await probe_surface(ws_url)
@@ -275,35 +279,12 @@ async def _resolve_and_select_endpoint(
                     "titles": verdict.get("titles"),
                 }
             prior_fp = messages_fingerprint(surface) if app == "grok" else ""
-            prior_generating = (
-                bool(surface.get("generating")) if app == "grok" else None
-            )
-            if app == "grok" and str(endpoint.agent_id or "").strip():
-                cdp_pick = await select_grok_agent_async(disp, str(endpoint.agent_id))
+            prior_generating = bool(surface.get("generating")) if app == "grok" else False
+            if app == "grok" and grok_agent:
+                cdp_pick = await select_grok_agent_async(disp, grok_agent)
                 if cdp_pick.get("ok"):
                     selected = True
-                    grok_wait = await probe_grok_after_select(
-                        ws_url,
-                        endpoint=endpoint,
-                        expected_agent_id=str(endpoint.agent_id),
-                        prior_message_fp=prior_fp,
-                        prior_generating=prior_generating,
-                    )
-                    surface = grok_wait["surface"]
-                    verdict = grok_wait["verdict"]
-                    if grok_wait.get("stale_dom"):
-                        return {
-                            "ok": False,
-                            "code": "conversation_unconfirmed",
-                            "reason": "conversation DOM stale after select",
-                            "endpoint": endpoint.label,
-                            "display": disp,
-                            "app": app,
-                            "selected": selected,
-                            "active_agent_id": verdict.get("active_agent_id"),
-                            "stale_dom": True,
-                        }
-            if verdict.get("ok"):
+            elif verdict.get("ok"):
                 click_res = {"clicked": False}
             else:
                 click_res = await select_sidebar_target(
@@ -311,6 +292,65 @@ async def _resolve_and_select_endpoint(
                     expected_title=str(verdict.get("expected_title") or ""),
                     expected_agent_id=str(verdict.get("expected_agent_id") or ""),
                 )
+        if app == "grok" and grok_agent and selected:
+            grok_wait = await probe_grok_after_select(
+                ws_url,
+                endpoint=endpoint,
+                expected_agent_id=grok_agent,
+                prior_message_fp=prior_fp,
+                prior_generating=prior_generating,
+            )
+            surface = grok_wait["surface"]
+            verdict = grok_wait["verdict"]
+            if grok_wait.get("stale_dom"):
+                return {
+                    "ok": False,
+                    "code": "conversation_unconfirmed",
+                    "reason": "conversation DOM stale after select",
+                    "endpoint": endpoint.label,
+                    "display": disp,
+                    "app": app,
+                    "selected": selected,
+                    "active_agent_id": verdict.get("active_agent_id"),
+                    "stale_dom": True,
+                }
+            if not verdict.get("ok"):
+                async with display_switch_lock(disp):
+                    try:
+                        surface = await probe_surface(ws_url)
+                    except (TimeoutError, RuntimeError, OSError) as exc:
+                        return {
+                            "ok": False,
+                            "reason": "surface_probe_failed",
+                            "endpoint": endpoint.label,
+                            "display": disp,
+                            "app": app,
+                            "detail": type(exc).__name__,
+                        }
+                    verdict = wake_decision(
+                        surface,
+                        thread=endpoint.thread,
+                        slug=endpoint.slug,
+                        title=endpoint.title or None,
+                        agent_id=endpoint.agent_id or None,
+                    )
+                    guard = _busy_or_draft_reason(surface)
+                    if guard:
+                        return {
+                            "ok": False,
+                            "reason": guard,
+                            "endpoint": endpoint.label,
+                            "display": disp,
+                            "app": app,
+                            "active_title": verdict.get("active_title"),
+                            "active_agent_id": verdict.get("active_agent_id"),
+                            "titles": verdict.get("titles"),
+                        }
+                    click_res = await select_sidebar_target(
+                        ws_url,
+                        expected_title=str(verdict.get("expected_title") or ""),
+                        expected_agent_id=str(verdict.get("expected_agent_id") or ""),
+                    )
         if click_res.get("clicked"):
             selected = True
             await asyncio.sleep(0.25)

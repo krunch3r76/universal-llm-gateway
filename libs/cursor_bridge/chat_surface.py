@@ -298,6 +298,7 @@ def classify_surface(
         "generating": bool(generating),
         "recent_messages": list(recent_messages or []),
         "message_turns": list(message_turns or []),
+        "has_active_chat": has_active_chat,
         "supervision": supervision,
     }
     if emit_events:

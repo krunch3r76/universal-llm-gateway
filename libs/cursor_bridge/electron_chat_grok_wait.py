@@ -26,7 +26,7 @@ def grok_conversation_attributed(
     *,
     expected_agent_id: str,
     prior_message_fp: str,
-    prior_generating: bool | None = None,
+    prior_generating: bool,
 ) -> bool:
     """True when sidebar selection and message pane belong to ``expected_agent_id``."""
     expected = (expected_agent_id or "").strip()
@@ -38,14 +38,12 @@ def grok_conversation_attributed(
         return True
     if prior_message_fp and fp == prior_message_fp:
         return False
-    positive_binding = surface.get("has_active_chat") is True
-    if prior_generating:
-        return False
-    if positive_binding:
+    if not prior_generating:
         return True
-    if prior_generating is False:
-        return True
-    return False
+    return (
+        surface.get("has_active_chat") is True
+        and surface.get("generating") is False
+    )
 
 
 async def probe_grok_after_select(
@@ -54,7 +52,7 @@ async def probe_grok_after_select(
     endpoint: Any,
     expected_agent_id: str,
     prior_message_fp: str,
-    prior_generating: bool | None = None,
+    prior_generating: bool,
 ) -> dict[str, Any]:
     """Re-probe until the conversation DOM matches ``expected_agent_id`` or idles out."""
     meta = {
@@ -84,17 +82,12 @@ async def probe_grok_after_select(
     if state["attributed"] and state["verdict"].get("ok"):
         return {**state, "ok": True, "stale_dom": False}
 
-    prev = messages_fingerprint(first)
     for _ in range(GROK_CONVERSATION_IDLE_ROUNDS):
-        await asyncio.sleep(0)
+        await asyncio.sleep(0.25)
         nxt = await probe_surface(ws_url)
         state = await _classify(nxt)
         if state["attributed"] and state["verdict"].get("ok"):
             return {**state, "ok": True, "stale_dom": False}
-        fp = messages_fingerprint(nxt)
-        if fp == prev:
-            break
-        prev = fp
 
     stale = not state["attributed"]
     return {
