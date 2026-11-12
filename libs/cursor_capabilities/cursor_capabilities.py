@@ -508,6 +508,21 @@ CURSOR_MODEL_CAPABILITIES: Final[dict[str, ModelCapability]] = {
         context_window_tokens=200_000,
         probed_at="2026-10-14",
     ),
+    # Gemini 4 Carbon (Google frontier). Live ListModels probe 2026-11-12:
+    # id=gemini-4-carbon, parameter reasoning_effort accepted=(low, medium, high),
+    # default_variant={reasoning_effort: medium}. Carbon follows Argon with more
+    # thinking per task; context omitted (probe reports no context knob).
+    "gemini-4-carbon": ModelCapability(
+        knobs={
+            "effort": KnobSpec(
+                accepted=("low", "medium", "high"),
+                default="medium",
+            ),
+        },
+        default_variant={"effort": "medium"},
+        instruction_profile="reasoner",
+        probed_at="2026-11-12",
+    ),
     "glm-5.2": ModelCapability(
         knobs={
             "reasoning": KnobSpec(accepted=("high", "max"), default="high"),
