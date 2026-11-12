@@ -104,7 +104,12 @@ def ephemeral_uri_prefix(execution_id: str) -> str:
     return _cortex_uri(f"{_EPHEMERAL_PREFIX}/{execution_id}")
 
 
-def _stamp_owned_ephemeral_notice(uri: str, purpose: str | None) -> None:
+def _stamp_owned_ephemeral_notice(
+    uri: str,
+    purpose: str | None,
+    *,
+    contract: str | None = None,
+) -> None:
     """Append the libs/pipeline notice onto an ephemeral prompt we already own.
 
     Prompt-expand restages ``prompt.md`` and the worker then passes that URI
@@ -118,8 +123,21 @@ def _stamp_owned_ephemeral_notice(uri: str, purpose: str | None) -> None:
         path = path / "prompt.md"
     if not path.is_file():
         return
+    from claude_bundles.sealed_cdp_prefix import (
+        REVIEW_CLASS_CONTRACTS,
+        ensure_review_delivery_footer,
+    )
+
     text = path.read_text(encoding="utf-8")
     updated = ensure_substrate_notice(text)
+    contract_key = (contract or "").strip().lower()
+    if contract_key in REVIEW_CLASS_CONTRACTS:
+        updated = ensure_review_delivery_footer(
+            updated,
+            purpose,
+            author_body=text,
+            contract=contract,
+        )
     if updated == text:
         return
     durable_write_text(path, updated, retain_store_root=cortex_files_root())
@@ -495,7 +513,7 @@ def stage_cdp_prompt_with_skills(
         uri = str(prompt_uri).strip()
         if uri.startswith(prefix) or uri.rstrip("/") == prefix.rstrip("/"):
             root = ephemeral_dir(execution_id)
-            _stamp_owned_ephemeral_notice(uri, purpose)
+            _stamp_owned_ephemeral_notice(uri, purpose, contract=contract)
             # Worker re-entry has no prior omit_slash in scope. Recompute from
             # the same purpose plus the already-staged body (read_prompt_text).
             return StagedPrompt(
@@ -529,6 +547,7 @@ def stage_cdp_prompt_with_skills(
             production_standing_seams,
             standing_handoff_text_for_prompt,
         )
+
         body = ensure_operator_proxy_mission_prompt(
             body,
             standing_handoff_text=standing_handoff_text_for_prompt(body),
@@ -611,9 +630,13 @@ def stage_cdp_prompt_with_skills(
             raise CdpStagingError(exc.reason, code=exc.code) from exc
         if substrate_notice_warrants(purpose=purpose):
             merged = ensure_substrate_notice(merged)
-        if not mission:
-            from claude_bundles.sealed_cdp_prefix import ensure_review_delivery_footer
+        from claude_bundles.sealed_cdp_prefix import (
+            REVIEW_CLASS_CONTRACTS,
+            ensure_review_delivery_footer,
+        )
 
+        contract_key = (contract or "").strip().lower()
+        if contract_key in REVIEW_CLASS_CONTRACTS:
             merged = ensure_review_delivery_footer(
                 merged,
                 purpose,

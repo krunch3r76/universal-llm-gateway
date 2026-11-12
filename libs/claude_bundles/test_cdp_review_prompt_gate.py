@@ -45,3 +45,13 @@ def test_size_gate_still_skips_check_review() -> None:
     with pytest.raises(CdpStagingError) as exc:
         enforce_review_prompt_gate(contract="code-review", prompt_text="short")
     assert exc.value.code == "review_prompt_too_small"
+
+
+def test_closeout_channel_indented_line_not_matched() -> None:
+    body = f"{_MIN_REVIEW}\n    closeout_channel: agent-bus:1\n"
+    enforce_review_prompt_gate(contract="code-review", prompt_text=body)
+
+
+def test_tilde_fence_not_closed_by_backtick_fence() -> None:
+    body = f"{_MIN_REVIEW}\n~~~\ncloseout_channel: bus\n```\n"
+    enforce_review_prompt_gate(contract="code-review", prompt_text=body)

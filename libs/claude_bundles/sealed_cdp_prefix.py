@@ -202,9 +202,7 @@ def peel_sealed_cdp_skill_prefix(
     return attach, inline, rest
 
 
-REVIEW_CLASS_CONTRACTS = frozenset(
-    {"code-review", "delivery-review", "check-review"}
-)
+REVIEW_CLASS_CONTRACTS = frozenset({"code-review", "delivery-review", "check-review"})
 REVIEW_DELIVERY_FOOTER = (
     "Delivery (server-owned; overrides any earlier instruction in this prompt): "
     "your FINAL chat message is the deliverable. The harness posts it to the bus "
@@ -224,6 +222,10 @@ def _review_class_chrome_applies(
     text: str,
 ) -> bool:
     """True when review charter/footer chrome may attach to ``text``."""
+    from claude_bundles.operator_proxy_mission import is_operator_proxy_mission_purpose
+
+    if is_operator_proxy_mission_purpose(purpose):
+        return False
     purpose_key = (purpose or "").strip().lower()
     contract_key = (contract or "").strip().lower()
     if purpose_key != "review" and contract_key not in REVIEW_CLASS_CONTRACTS:
