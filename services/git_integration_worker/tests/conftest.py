@@ -137,16 +137,11 @@ def _clear_dispatch_ledger_nested_cache() -> None:
     from services.git_integration_worker.cursor_dispatch_ledger import (
         clear_nested_children_cache,
     )
-    from services.git_integration_worker.cursor_sdk_run_lines import (
-        clear_conversation_tail_bus_cache,
-    )
 
     clear_nested_children_cache()
-    clear_conversation_tail_bus_cache()
     clear_first_line_matches_cache()
     yield
     clear_nested_children_cache()
-    clear_conversation_tail_bus_cache()
     clear_first_line_matches_cache()
 
 

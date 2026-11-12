@@ -10,12 +10,9 @@ from __future__ import annotations
 import os
 import sqlite3
 import threading
-import time
 from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any
-
-from bus_watch.lru_dict import LruDict
 
 
 @dataclass(frozen=True)
@@ -128,29 +125,9 @@ def conversation_tail(dispatch_id: str, after: int) -> dict[str, Any]:
     }
 
 
-_BUS_TAIL_TERMINAL_STATUSES = frozenset({"completed", "failed", "cancelled"})
-_OPEN_BUS_TAIL_TTL_S = 2.0
-_BUS_TAIL_CACHE_MAX = 256
-_BusTailCacheEntry = tuple[float, dict[str, Any], bool, str | None]
-
-_bus_tail_cache: LruDict[tuple[str, int], _BusTailCacheEntry] = LruDict(
-    _BUS_TAIL_CACHE_MAX
+_TERMINAL_DISPATCH = frozenset(
+    {"completed", "failed", "cancelled", "timeout", "orphaned", "claimed"}
 )
-
-
-def clear_conversation_tail_bus_cache() -> None:
-    """Test hook — drop cached bus-backed conversation tails."""
-    _bus_tail_cache.clear()
-
-
-def _bus_tail_cache_get(key: tuple[str, int]) -> _BusTailCacheEntry | None:
-    return _bus_tail_cache.get(key)
-
-
-def _bus_tail_cache_store(
-    key: tuple[str, int], entry: _BusTailCacheEntry
-) -> None:
-    _bus_tail_cache[key] = entry
 
 
 def _ledger_row(dispatch_id: str) -> tuple[str | None, str | None]:
@@ -175,28 +152,6 @@ def _agent_bus_db_path() -> str:
         "AGENT_BUS_DB_PATH",
         os.path.expanduser("~/.agent-bus/messages.db"),
     )
-
-
-def _thread_closed_sqlite(thread_id: str) -> bool:
-    path = _agent_bus_db_path()
-    if not os.path.isfile(path):
-        return False
-    try:
-        conn = sqlite3.connect(f"file:{path}?mode=ro", uri=True, timeout=2.0)
-        conn.row_factory = sqlite3.Row
-    except sqlite3.Error:
-        return False
-    try:
-        row = conn.execute(
-            "SELECT status FROM threads WHERE id=?", (thread_id,)
-        ).fetchone()
-    except sqlite3.Error:
-        return False
-    finally:
-        conn.close()
-    if row is None:
-        return False
-    return str(row["status"] or "").strip().lower() == "closed"
 
 
 def _bus_turns_sqlite(thread_id: str, after_turn: int, *, limit: int = 80) -> list[dict]:
@@ -247,33 +202,10 @@ def _fetch_bus_turns(thread_id: str, after_turn: int) -> list[dict]:
     return _bus_turns_sqlite(thread_id, after_turn)
 
 
-def _dispatch_tail_frozen(status: str | None, *, thread_id: str) -> bool:
-    if status and status in _BUS_TAIL_TERMINAL_STATUSES:
-        return True
-    return _thread_closed_sqlite(thread_id)
-
-
 def _bus_conversation_tail(dispatch_id: str, after_turn: int) -> dict[str, Any] | None:
-    cache_key = (dispatch_id, after_turn)
-    cached = _bus_tail_cache_get(cache_key)
-    if cached is not None:
-        cached_at, payload, was_frozen, cached_status = cached
-        if was_frozen:
-            return payload
-
     thread_id, status = _ledger_row(dispatch_id)
     if not thread_id:
         return None
-
-    if cached is not None:
-        cached_at, payload, was_frozen, cached_status = cached
-        if (
-            not was_frozen
-            and cached_status == status
-            and (time.monotonic() - cached_at) < _OPEN_BUS_TAIL_TTL_S
-        ):
-            return payload
-
     turns = _fetch_bus_turns(thread_id, after_turn)
     lines: list[dict[str, Any]] = []
     cursor = after_turn
@@ -304,17 +236,12 @@ def _bus_conversation_tail(dispatch_id: str, after_turn: int) -> dict[str, Any] 
 
     live = _live_run(dispatch_id) is not None
     eof = not live and status not in ("running", "parked_waiting", "queued")
-    payload = {
+    return {
         "lines": lines,
         "cursor": cursor,
         "eof": eof,
         "source": "agent-bus.turns",
     }
-    store_frozen = _dispatch_tail_frozen(status, thread_id=thread_id)
-    _bus_tail_cache_store(
-        cache_key, (time.monotonic(), payload, store_frozen, status)
-    )
-    return payload
 
 
 def retain_stream_prose(
