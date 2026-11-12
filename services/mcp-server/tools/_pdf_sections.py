@@ -362,11 +362,11 @@ def resolve_pdf_outline_read(
     """
     from tools._hashing import sha256_hex_equal, sha256_hex_of_bytes
 
+    from ._document_manifest import _page_descriptors
     from ._sparse_document_read import (
         BATCH_MAX_CONTENT_CHARS,
         BATCH_MAX_SECTIONS,
         _chunk_cursor_out_of_range,
-        _page_descriptors,
         finalize_sparse_document_payload,
         param_not_applicable_error,
         sparse_selector_conflict_error,

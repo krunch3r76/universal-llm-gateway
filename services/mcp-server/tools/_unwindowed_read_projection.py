@@ -98,8 +98,8 @@ def build_markdown_unwindowed_payload(
     text: str,
 ) -> dict[str, Any]:
     """Sparse slice 1: delegate oversized markdown reads to the manifest shape."""
+    from tools._document_manifest import build_document_manifest
     from tools._hashing import sha256_hex_of_bytes
-    from tools._sparse_document_read import build_document_manifest
 
     read_sha256 = sha256_hex_of_bytes(text.encode("utf-8"))
     manifest = build_document_manifest(

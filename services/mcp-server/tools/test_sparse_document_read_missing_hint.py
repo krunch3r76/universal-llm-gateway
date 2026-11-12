@@ -9,20 +9,14 @@ import pytest
 from fastmcp import FastMCP
 from markdown_sections import parse_sections
 
+from tools._document_manifest import _assign_section_ids
 from tools._sparse_document_read import (
     _ID_FORMAT_HINT,
-    _assign_section_ids,
     _nearest_section_ids,
 )
 from tools.markdown_tool import register_markdown_tools
 
-SETUP_DOC = (
-    "# Setup\n\n"
-    "## Install\n\n"
-    "install steps\n\n"
-    "## Config\n\n"
-    "config notes\n"
-)
+SETUP_DOC = "# Setup\n\n## Install\n\ninstall steps\n\n## Config\n\nconfig notes\n"
 
 
 @pytest.fixture
