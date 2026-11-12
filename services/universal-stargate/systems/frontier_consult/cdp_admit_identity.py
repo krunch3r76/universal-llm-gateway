@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
+from functools import lru_cache
 from typing import Any
 
+from agent_seat.registry import normalize_bus_address
 from bus_watch.endpoint_wake_dispatcher import (
-    _GATE_WAKE_REMAP_ADDRESSES,
-    _ROUTINE_DISPATCH_FROM,
+    GATE_WAKE_REMAP_ADDRESSES,
+    ROUTINE_DISPATCH_FROM,
+    WAKE_BROADCAST_DROP_ADDRESSES,
 )
 from claude_bundles.cdp_model_endpoint import CDP_REPLY_FROM
 from claude_bundles.sealed_cdp_prefix import REVIEW_CLASS_CONTRACTS
@@ -16,19 +19,32 @@ from .admission import FrontierEndpointError
 
 _WORK_KEY_UTF8_MAX = 256
 
-# Non-mailbox targets: wake remap heads (endpoint_wake_dispatcher.py), routine
-# dispatch from addresses (same module), and CDP self-reply alias (CDP_REPLY_FROM).
-_PSEUDO_CALLER_ADDRESSES = frozenset(
-    addr.casefold()
-    for addr in (
-        *_GATE_WAKE_REMAP_ADDRESSES,
-        *_ROUTINE_DISPATCH_FROM,
+_CDP_SELF_REPLY_ALIASES = frozenset(
+    {
         CDP_REPLY_FROM,
-        "unspecified",
-        "cursor",
-        "all",
-    )
+        "cdp",
+        "web",
+        "web_claude",
+        "claude-web",
+    }
 )
+
+
+@lru_cache(maxsize=1)
+def _non_deliverable_caller_addresses() -> frozenset[str]:
+    """Addresses the wake layer remaps, drops, or cannot deliver to."""
+    folded: set[str] = set()
+    for addr in (
+        *GATE_WAKE_REMAP_ADDRESSES,
+        *ROUTINE_DISPATCH_FROM,
+        *_CDP_SELF_REPLY_ALIASES,
+        *WAKE_BROADCAST_DROP_ADDRESSES,
+        "unspecified",
+        "dispatch",
+    ):
+        folded.add(str(addr).casefold())
+        folded.add(normalize_bus_address(str(addr)).casefold())
+    return frozenset(folded)
 
 
 def normalize_cdp_caller_agent(raw: object) -> str:
@@ -37,11 +53,12 @@ def normalize_cdp_caller_agent(raw: object) -> str:
 
 
 def is_valid_cdp_caller_agent(raw: object) -> bool:
-    """True when ``raw`` is a non-empty bus mailbox, not a pseudo address."""
+    """True when ``raw`` is a non-empty bus mailbox deliverable at wake."""
     val = normalize_cdp_caller_agent(raw)
     if not val:
         return False
-    return val.casefold() not in _PSEUDO_CALLER_ADDRESSES
+    candidates = {val.casefold(), normalize_bus_address(val).casefold()}
+    return not any(c in _non_deliverable_caller_addresses() for c in candidates)
 
 
 def resolve_cdp_reply_to_agent(caller_agent: str | None) -> str | None:

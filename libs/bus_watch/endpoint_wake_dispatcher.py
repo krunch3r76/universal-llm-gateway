@@ -208,10 +208,13 @@ _CURSOR_GATE_WAKE_RE = re.compile(
 _GATE_WAKE_ALL_PLATFORMS_RE = re.compile(
     r"(?i)(?:CLOSEOUT|cdp (?:reply|FAILED|UNVERIFIED|DELIVERY FAILED)\b)"
 )
-_ROUTINE_DISPATCH_FROM = frozenset({"cursor-sdk", "conductor-hop", "dispatch"})
-_GATE_WAKE_REMAP_ADDRESSES = frozenset(
+ROUTINE_DISPATCH_FROM = frozenset({"cursor-sdk", "conductor-hop", "dispatch"})
+GATE_WAKE_REMAP_ADDRESSES = frozenset(
     {"dispatch", "conductor-hop", "git-integration-worker", "frontier-admit"}
 )
+_ROUTINE_DISPATCH_FROM = ROUTINE_DISPATCH_FROM
+_GATE_WAKE_REMAP_ADDRESSES = GATE_WAKE_REMAP_ADDRESSES
+WAKE_BROADCAST_DROP_ADDRESSES = frozenset({"all", "team"})
 _TAB_REMAP_STALE_NAME = "stale_name"
 _TAB_REMAP_BARE_NAME = "bare_name"
 _PEER_WAKE_FROM = frozenset(
@@ -2842,12 +2845,12 @@ def resolve_cse_wake_target(
 ) -> tuple[str, dict[str, Any]] | None:
     """Resolve (delivery lane, holder) for a CSE subscription row.
 
-    For thread-scoped CSE subscriptions with ``wake_thread``, candidates are tried
-  in order: bus association registration, GIW by-thread registration id, then
-    ``agent_id``. Each registration is liveness-gated via
-    ``_holder_for_cse_registration``; GIW by-thread failures are contained and fall
-    through. Otherwise ``agent_id`` is either a driving lane thread or a registration
-    id (houseless mailbox threads).
+      For thread-scoped CSE subscriptions with ``wake_thread``, candidates are tried
+    in order: bus association registration, GIW by-thread registration id, then
+      ``agent_id``. Each registration is liveness-gated via
+      ``_holder_for_cse_registration``; GIW by-thread failures are contained and fall
+      through. Otherwise ``agent_id`` is either a driving lane thread or a registration
+      id (houseless mailbox threads).
     """
     thread = str(wake_thread or "").strip()
     if thread and _cse_sub_thread_scoped(sub, wake_thread=thread):

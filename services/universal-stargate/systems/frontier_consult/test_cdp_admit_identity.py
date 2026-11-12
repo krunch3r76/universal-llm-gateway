@@ -32,7 +32,22 @@ def test_missing_caller_agent_refused_before_spawn_row() -> None:
 
 @pytest.mark.parametrize(
     "pseudo",
-    ["dispatch", "Dispatch", "unspecified", "", "cursor", "all", "web-anthropic"],
+    [
+        "dispatch",
+        "Dispatch",
+        "unspecified",
+        "",
+        "all",
+        "ALL",
+        "team",
+        "web-anthropic",
+        "claude-web",
+        "cdp",
+        "web",
+        "web_claude",
+        "frontier-admit",
+        "git-integration-worker",
+    ],
 )
 def test_pseudo_address_caller_refused(pseudo: str) -> None:
     body = _Body(caller_agent=pseudo)
@@ -48,6 +63,14 @@ def test_reply_addressed_to_caller_agent() -> None:
 
 def test_caller_agent_casefold_still_rejects_dispatch() -> None:
     assert is_valid_cdp_caller_agent("DISPATCH") is False
+
+
+def test_cursor_mailbox_is_valid_caller_agent() -> None:
+    assert is_valid_cdp_caller_agent("cursor") is True
+
+
+def test_normalize_bus_address_alias_refused() -> None:
+    assert is_valid_cdp_caller_agent("claude-web") is False
 
 
 def test_work_key_unparseable_before_mint() -> None:
