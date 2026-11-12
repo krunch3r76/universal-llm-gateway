@@ -503,10 +503,40 @@ def test_refresh_gateway_missing_coverage_preserves_level4_and_level2_tail(
     )
     _write_gateway_doc(hermetic_workspace, body)
     text = refresh_gateway(hermetic_workspace, refreshed_by=_REFRESHED_BY)
+    assert "Stale missing_coverage body." not in text
     assert "#### nested_under_missing" in text
     assert "keep-subheading" in text
     assert "## Later_section" in text
     assert "also-keep" in text
+
+
+def test_refresh_gateway_missing_coverage_empty_body_keeps_next_section(
+    hermetic_workspace: Path,
+) -> None:
+    _init_git_repo(hermetic_workspace)
+    body = _gateway_fixture_doc("eeeeeeeeeeee").replace(
+        "Stale missing_coverage body.\n\n",
+        "",
+    )
+    _write_gateway_doc(hermetic_workspace, body)
+    text = refresh_gateway(hermetic_workspace, refreshed_by=_REFRESHED_BY)
+    assert "### unsupported_claims" in text
+    assert "tail" in text
+
+
+def test_refresh_gateway_missing_coverage_keeps_level5_heading(
+    hermetic_workspace: Path,
+) -> None:
+    _init_git_repo(hermetic_workspace)
+    body = _gateway_fixture_doc("ffffffffffff").replace(
+        "Stale missing_coverage body.",
+        "Stale missing_coverage body.\n\n##### deep_heading\n\nkeep-five",
+    )
+    _write_gateway_doc(hermetic_workspace, body)
+    text = refresh_gateway(hermetic_workspace, refreshed_by=_REFRESHED_BY)
+    assert "##### deep_heading" in text
+    assert "keep-five" in text
+    assert "Stale missing_coverage body." not in text
 
 
 @pytest.mark.parametrize(
@@ -581,8 +611,27 @@ def test_refresh_twice_is_idempotent_ignoring_date(hermetic_workspace: Path) -> 
     assert _normalize_refresh_text(once) == _normalize_refresh_text(twice)
 
 
-def test_refresh_routing_synthesis_bold_module_inventory_count(
+@pytest.mark.parametrize(
+    "synthesis_line,expected",
+    [
+        (
+            "End — summarized in **Module Inventory** (1/1) with authority.",
+            "**Module Inventory** (2/2)",
+        ),
+        (
+            "End — summarized in Module Inventory (1/1) with authority.",
+            "Module Inventory (2/2)",
+        ),
+        (
+            "End — summarized in **Module Inventory (1/1)** with authority.",
+            "**Module Inventory (2/2)**",
+        ),
+    ],
+)
+def test_refresh_routing_synthesis_module_inventory_count_preserves_label_form(
     hermetic_workspace: Path,
+    synthesis_line: str,
+    expected: str,
 ) -> None:
     _init_git_repo(hermetic_workspace)
     routing_root = hermetic_workspace / "services/universal-stargate/systems/routing"
@@ -612,11 +661,15 @@ def test_refresh_routing_synthesis_bold_module_inventory_count(
                 "<!-- AUTHORED -->",
                 "## Synthesis",
                 "",
-                "End — summarized in **Module Inventory** (1/1) with authority.",
+                synthesis_line,
                 "<!-- GENERATED:END -->",
             ]
         ),
         encoding="utf-8",
     )
     text = refresh_routing(hermetic_workspace, refreshed_by=_REFRESHED_BY)
-    assert "**Module Inventory** (2/2)" in text
+    assert expected in text
+    if expected == "**Module Inventory** (2/2)":
+        assert "**Module Inventory (2/2)**" not in text
+    elif expected == "**Module Inventory (2/2)**":
+        assert "**Module Inventory** (2/2)" not in text

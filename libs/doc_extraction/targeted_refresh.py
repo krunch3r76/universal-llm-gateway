@@ -88,15 +88,58 @@ def _inventory_sha(payload: dict[str, Any]) -> str:
 
 _MISSING_COVERAGE_HEADING = re.compile(r"^### missing_coverage\s*$", re.MULTILINE)
 _MISSING_COVERAGE_BODY = re.compile(
-    r"^### missing_coverage\n\n(.*?)(?=\n(?:#### |### |## |# )|\Z)",
+    r"^### missing_coverage\n\n(.*?)(?=^#{1,6} |\Z)",
     re.MULTILINE | re.DOTALL,
 )
-_SYNTHESIS_MODULE_INVENTORY_COUNT = re.compile(
-    r"(?:\*\*)?Module Inventory(?:\*\*)?\s*\(\d+/\d+\)"
+_SYNTHESIS_MODULE_INVENTORY_BOLD_WRAPPED = re.compile(
+    r"\*\*Module Inventory \(\d+/\d+\)\*\*"
 )
-_SYNTHESIS_FULL_MODULE_INVENTORY_COUNT = re.compile(
-    r"full module inventory \(\d+/\d+\)"
+_SYNTHESIS_MODULE_INVENTORY_BOLD_LABEL = re.compile(
+    r"\*\*Module Inventory\*\*\s*\(\d+/\d+\)"
 )
+_SYNTHESIS_MODULE_INVENTORY_PLAIN = re.compile(
+    r"(?<!\*)\bModule Inventory\s*\(\d+/\d+\)"
+)
+_SYNTHESIS_FULL_MODULE_INVENTORY_BOLD_WRAPPED = re.compile(
+    r"\*\*full module inventory \(\d+/\d+\)\*\*"
+)
+_SYNTHESIS_FULL_MODULE_INVENTORY_BOLD_LABEL = re.compile(
+    r"\*\*full module inventory\*\*\s*\(\d+/\d+\)"
+)
+_SYNTHESIS_FULL_MODULE_INVENTORY_PLAIN = re.compile(
+    r"(?<!\*)\bfull module inventory\s*\(\d+/\d+\)"
+)
+
+
+def _substitute_synthesis_inventory_counts(
+    block: str, inventory_rows: int, mod_n: int
+) -> str:
+    counts = f"{inventory_rows}/{mod_n}"
+    block = _SYNTHESIS_FULL_MODULE_INVENTORY_BOLD_WRAPPED.sub(
+        f"**full module inventory ({counts})**",
+        block,
+    )
+    block = _SYNTHESIS_FULL_MODULE_INVENTORY_BOLD_LABEL.sub(
+        f"**full module inventory** ({counts})",
+        block,
+    )
+    block = _SYNTHESIS_FULL_MODULE_INVENTORY_PLAIN.sub(
+        f"full module inventory ({counts})",
+        block,
+    )
+    block = _SYNTHESIS_MODULE_INVENTORY_BOLD_WRAPPED.sub(
+        f"**Module Inventory ({counts})**",
+        block,
+    )
+    block = _SYNTHESIS_MODULE_INVENTORY_BOLD_LABEL.sub(
+        f"**Module Inventory** ({counts})",
+        block,
+    )
+    block = _SYNTHESIS_MODULE_INVENTORY_PLAIN.sub(
+        f"Module Inventory ({counts})",
+        block,
+    )
+    return block
 
 
 def render_gateway_package_sections(
@@ -399,14 +442,7 @@ def _routing_authored_synthesis(
             "routing.md missing AUTHORED synthesis block before GENERATED:END"
         )
     block = post_match.group(1)
-    block = _SYNTHESIS_FULL_MODULE_INVENTORY_COUNT.sub(
-        f"full module inventory ({inventory_rows}/{mod_n})",
-        block,
-    )
-    block = _SYNTHESIS_MODULE_INVENTORY_COUNT.sub(
-        f"**Module Inventory** ({inventory_rows}/{mod_n})",
-        block,
-    )
+    block = _substitute_synthesis_inventory_counts(block, inventory_rows, mod_n)
     block = re.sub(
         r"grounded in staged modules only",
         f"grounded in the full {inventory_rows}/{mod_n} module tree",
