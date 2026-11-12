@@ -407,23 +407,106 @@ def test_refresh_gateway_no_prior_stamp_carried_from_unknown(
     assert _carried_from_value(text) == "unknown"
 
 
-def test_refresh_gateway_unmatched_authored_open_raises(
+def _write_gateway_doc(hermetic_workspace: Path, body: str) -> None:
+    gw_dir = hermetic_workspace / "services/_universal-llm-gateway"
+    gw_dir.mkdir(parents=True, exist_ok=True)
+    (gw_dir / "mod.py").write_text('"""m"""\n', encoding="utf-8")
+    docs = hermetic_workspace / "docs/architecture"
+    docs.mkdir(parents=True, exist_ok=True)
+    (docs / "gateway.md").write_text(body, encoding="utf-8")
+
+
+@pytest.mark.parametrize(
+    "body,match",
+    [
+        (
+            _gateway_fixture_doc("aaaaaaaabbbb").replace(
+                "## 1. Section one",
+                "<!-- AUTHORED carried_from=aaaaaaaabbbb -->\n## 1. Section one",
+            ),
+            "carried_from",
+        ),
+        (
+            _gateway_fixture_doc("aaaaaaaabbbb").replace(
+                "## 1. Section one",
+                "<!-- AUTHORED carried_from=aaaaaaaabbbb -->\n"
+                "<!-- /AUTHORED carried_from=bbbbbbbbbbbb -->\n"
+                "## 1. Section one",
+            ),
+            "mismatch",
+        ),
+        (
+            _gateway_fixture_doc("aaaaaaaabbbb").replace(
+                "## 1. Section one",
+                "<!-- /AUTHORED carried_from=aaaaaaaabbbb -->\n"
+                "<!-- AUTHORED carried_from=aaaaaaaabbbb -->\n"
+                "## 1. Section one",
+            ),
+            "precedes",
+        ),
+        (
+            _gateway_fixture_doc("aaaaaaaabbbb").replace(
+                "## 1. Section one",
+                "<!-- AUTHORED carried_from=aaaaaaaaaaaa -->\n"
+                "## 1. Section one\n"
+                "<!-- /AUTHORED carried_from=aaaaaaaaaaaa -->\n"
+                "<!-- AUTHORED carried_from=bbbbbbbbbbbb -->\n"
+                "extra\n"
+                "<!-- /AUTHORED carried_from=bbbbbbbbbbbb -->\n",
+            ),
+            "exactly one",
+        ),
+        (
+            _gateway_fixture_doc("aaaaaaaabbbb").replace(
+                "## 1. Section one",
+                "<!-- /AUTHORED carried_from=aaaaaaaabbbb -->\n## 1. Section one",
+            ),
+            "exactly one",
+        ),
+        (
+            _gateway_fixture_doc("aaaaaaaabbbb").replace(
+                "### unsupported_claims",
+                "### missing_coverage\n\nsecond\n\n### unsupported_claims",
+            ),
+            "missing_coverage",
+        ),
+        (
+            _gateway_fixture_doc("aaaaaaaabbbb").replace(
+                "### missing_coverage",
+                "",
+            ),
+            "missing_coverage",
+        ),
+    ],
+)
+def test_refresh_gateway_carried_from_and_tail_negative_raises(
+    hermetic_workspace: Path,
+    body: str,
+    match: str,
+) -> None:
+    _init_git_repo(hermetic_workspace)
+    _write_gateway_doc(hermetic_workspace, body)
+    with pytest.raises(TargetedRefreshError, match=match):
+        refresh_gateway(hermetic_workspace, refreshed_by=_REFRESHED_BY)
+
+
+def test_refresh_gateway_missing_coverage_preserves_level4_and_level2_tail(
     hermetic_workspace: Path,
 ) -> None:
     _init_git_repo(hermetic_workspace)
-    gw_dir = hermetic_workspace / "services/_universal-llm-gateway"
-    gw_dir.mkdir(parents=True)
-    (gw_dir / "mod.py").write_text('"""m"""\n', encoding="utf-8")
-    body = _gateway_fixture_doc("aaaaaaaabbbb")
-    body = body.replace(
-        "## 1. Section one",
-        "<!-- AUTHORED carried_from=aaaaaaaabbbb -->\n## 1. Section one",
+    body = _gateway_fixture_doc("dddddddddddd").replace(
+        "Stale missing_coverage body.",
+        "Stale missing_coverage body.\n\n#### nested_under_missing\n\nkeep-subheading",
+    ).replace(
+        "tail",
+        "## Later_section\n\nalso-keep\n\ntail",
     )
-    docs = hermetic_workspace / "docs/architecture"
-    docs.mkdir(parents=True)
-    (docs / "gateway.md").write_text(body, encoding="utf-8")
-    with pytest.raises(TargetedRefreshError, match="carried_from"):
-        refresh_gateway(hermetic_workspace, refreshed_by=_REFRESHED_BY)
+    _write_gateway_doc(hermetic_workspace, body)
+    text = refresh_gateway(hermetic_workspace, refreshed_by=_REFRESHED_BY)
+    assert "#### nested_under_missing" in text
+    assert "keep-subheading" in text
+    assert "## Later_section" in text
+    assert "also-keep" in text
 
 
 @pytest.mark.parametrize(
@@ -496,3 +579,44 @@ def test_refresh_twice_is_idempotent_ignoring_date(hermetic_workspace: Path) -> 
     (docs / "routing.md").write_text(once, encoding="utf-8")
     twice = refresh_routing(hermetic_workspace, refreshed_by=_REFRESHED_BY)
     assert _normalize_refresh_text(once) == _normalize_refresh_text(twice)
+
+
+def test_refresh_routing_synthesis_bold_module_inventory_count(
+    hermetic_workspace: Path,
+) -> None:
+    _init_git_repo(hermetic_workspace)
+    routing_root = hermetic_workspace / "services/universal-stargate/systems/routing"
+    routing_root.mkdir(parents=True)
+    (routing_root / "one.py").write_text('"""One."""\n', encoding="utf-8")
+    (routing_root / "two.py").write_text('"""Two."""\n', encoding="utf-8")
+    docs = hermetic_workspace / "docs/architecture"
+    docs.mkdir(parents=True)
+    (docs / "routing.md").write_text(
+        "\n".join(
+            [
+                "# R",
+                "<!-- GENERATED:START generated=2020-01-01 "
+                "method=targeted-refresh coverage=1/1 -->",
+                "## Scope",
+                "---",
+                "## Module Inventory (1/1)",
+                "",
+                "| Module | Description |",
+                "| `one.py` | One. |",
+                "",
+                "---",
+                "## Key Functions",
+                "x",
+                "## Imports and Dependencies (full routing tree)",
+                "y",
+                "<!-- AUTHORED -->",
+                "## Synthesis",
+                "",
+                "End — summarized in **Module Inventory** (1/1) with authority.",
+                "<!-- GENERATED:END -->",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    text = refresh_routing(hermetic_workspace, refreshed_by=_REFRESHED_BY)
+    assert "**Module Inventory** (2/2)" in text

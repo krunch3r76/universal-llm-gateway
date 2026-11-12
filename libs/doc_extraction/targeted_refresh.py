@@ -12,6 +12,7 @@ import hashlib
 import json
 import os
 import re
+import stat
 import subprocess
 import sys
 import tempfile
@@ -85,20 +86,17 @@ def _inventory_sha(payload: dict[str, Any]) -> str:
     return hashlib.sha256(raw).hexdigest()[:12]
 
 
-def _extract_authored_blocks(text: str) -> list[str]:
-    pattern = re.compile(
-        r"(<!-- AUTHORED -->.*?)(?=<!-- GENERATED:END -->|\Z)",
-        re.DOTALL,
-    )
-    return pattern.findall(text)
-
-
-def _between_markers(text: str, start: str, end: str) -> str:
-    i = text.find(start)
-    j = text.find(end)
-    if i < 0 or j < 0:
-        return ""
-    return text[i + len(start) : j]
+_MISSING_COVERAGE_HEADING = re.compile(r"^### missing_coverage\s*$", re.MULTILINE)
+_MISSING_COVERAGE_BODY = re.compile(
+    r"^### missing_coverage\n\n(.*?)(?=\n(?:#### |### |## |# )|\Z)",
+    re.MULTILINE | re.DOTALL,
+)
+_SYNTHESIS_MODULE_INVENTORY_COUNT = re.compile(
+    r"(?:\*\*)?Module Inventory(?:\*\*)?\s*\(\d+/\d+\)"
+)
+_SYNTHESIS_FULL_MODULE_INVENTORY_COUNT = re.compile(
+    r"full module inventory \(\d+/\d+\)"
+)
 
 
 def render_gateway_package_sections(
@@ -246,17 +244,19 @@ def refresh_gateway(workspace: Path, refreshed_by: str) -> str:
         "Claims reflect declarations, not verified runtime behavior."
     )
     tail = _gateway_tail_after_generated_end(existing)
-    tail, subs = re.subn(
-        r"### missing_coverage\n\n.*?(?=### |\Z)",
-        (
+    missing_coverage_count = len(_MISSING_COVERAGE_HEADING.findall(tail))
+    if missing_coverage_count > 1:
+        raise TargetedRefreshError(
+            "gateway.md tail has multiple ### missing_coverage sections"
+        )
+    def _missing_coverage_repl(_match: re.Match[str]) -> str:
+        return (
             "### missing_coverage\n\n"
             f"None for tree accounting: §11 lists all {pkg_n} packages with "
             f"per-module entrypoint signatures ({mod_n} modules).\n\n"
-        ),
-        tail,
-        count=1,
-        flags=re.DOTALL,
-    )
+        )
+
+    tail, subs = _MISSING_COVERAGE_BODY.subn(_missing_coverage_repl, tail, count=1)
     if subs == 0:
         raise TargetedRefreshError(
             "gateway.md tail missing ### missing_coverage section"
@@ -399,14 +399,12 @@ def _routing_authored_synthesis(
             "routing.md missing AUTHORED synthesis block before GENERATED:END"
         )
     block = post_match.group(1)
-    block = re.sub(
-        r"full module inventory \(\d+/\d+\)",
+    block = _SYNTHESIS_FULL_MODULE_INVENTORY_COUNT.sub(
         f"full module inventory ({inventory_rows}/{mod_n})",
         block,
     )
-    block = re.sub(
-        r"Module Inventory \(\d+/\d+\)",
-        f"Module Inventory ({inventory_rows}/{mod_n})",
+    block = _SYNTHESIS_MODULE_INVENTORY_COUNT.sub(
+        f"**Module Inventory** ({inventory_rows}/{mod_n})",
         block,
     )
     block = re.sub(
@@ -537,9 +535,10 @@ def _atomic_write_text(path: Path, text: str) -> None:
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as handle:
             handle.write(text)
+            handle.flush()
+            if prior_mode is not None:
+                os.fchmod(handle.fileno(), stat.S_IMODE(prior_mode))
         os.replace(tmp_path, path)
-        if prior_mode is not None:
-            os.chmod(path, prior_mode)
     except Exception:
         tmp_path.unlink(missing_ok=True)
         raise
