@@ -315,19 +315,6 @@ def _bus_turns_with_client(
     ]
 
 
-def _bus_thread_is_closed(client: Any, thread_id: str) -> bool:
-    """True when agent-bus reports the thread is closed (or missing)."""
-    resp = client.get(f"/threads/{thread_id}", headers=_bus_auth_headers())
-    if resp.status_code == 404:
-        return False
-    if resp.status_code >= 400:
-        return False
-    payload = resp.json()
-    if not isinstance(payload, dict):
-        return False
-    return str(payload.get("status") or "").lower() == "closed"
-
-
 def _default_bus_turns(thread_id: str, after_turn: int) -> list[dict[str, Any]]:
     """One-shot client for callers outside the await-reply tick loop."""
     from transport_utils import DEFAULT_AGENT_BUS_URL, make_sync_client
@@ -892,162 +879,176 @@ async def resume_await_parked_dispatches(
     When *parent_dispatch_id* is set (closeout immediate pass), only that row
     is considered so other open parks keep their own code_version (F7).
     """
-    from services.git_integration_worker.routes.cursor_sdk import admit_cursor_dispatch
-
     summary = AwaitResumeSummary()
     bus = bus or CursorBusClient()
     clock = now or _now_dt()
     ledger = CursorDispatchLedger.instance()
     ttl = await_reply_ttl_s()
 
-    async def _run_loop(
-        turns_fn: BusTurnsFn,
-        *,
-        thread_closed: Callable[[str], bool] | None,
-    ) -> None:
-        for row in open_await_rows():
-            if parent_dispatch_id is not None and row.dispatch_id != parent_dispatch_id:
-                continue
-            if controller.is_draining():
-                break
-            if row.park.get("expired_at"):
-                continue
-            if _is_conductor_dispatch(row.dispatch_id):
-                summary.skipped_conductor.append(row.dispatch_id)
-                continue
-            existing = _usable_resume_child(row.dispatch_id)
-            if existing is not None:
-                mark_park_resumed(parent_id=row.dispatch_id, child_id=existing)
-                summary.reconciled.append((row.dispatch_id, existing))
-                continue
+    if bus_turns_fn is None:
+        from transport_utils import DEFAULT_AGENT_BUS_URL, make_sync_client
 
-            awaited = _awaited_from_row(row)
-            if thread_closed is not None:
-                houses = {row.thread_id, *(g.thread_id for g in awaited)}
-                if any(thread_closed(t) for t in houses if t):
-                    if await _expire_await(row, bus, reason="bus_thread_closed"):
-                        summary.expired.append(row.dispatch_id)
-                    continue
+        with make_sync_client(DEFAULT_AGENT_BUS_URL, timeout=5.0) as bus_client:
 
-            hits, fetch_failed = await _snapshot_replies(
-                awaited, bus_turns_fn=turns_fn
-            )
-            reply_list = [hits.get(g.execution_id) for g in awaited]
-            all_landed = bool(awaited) and all(h is not None for h in reply_list)
-            timed_out = _ttl_elapsed(row, now=clock)
-            if not all_landed and not timed_out:
-                if fetch_failed:
-                    logger.info(
-                        "cursor-sdk await_reply waiting bus-down parent=%s",
-                        row.dispatch_id,
-                    )
-                summary.waiting.append(row.dispatch_id)
-                continue
+            def turns_fn(thread_id: str, after_turn: int) -> list[dict[str, Any]]:
+                return _bus_turns_with_client(bus_client, thread_id, after_turn)
 
-            reason = resume_eligibility_reason(ledger, parent_id=row.dispatch_id)
-            if reason is not None:
-                if reason in _PERMANENT_INELIGIBLE:
-                    if await _expire_await(row, bus, reason=reason):
-                        summary.expired.append(row.dispatch_id)
-                elif _refusal_cap_elapsed(row, now=clock):
-                    if await _expire_await(
-                        row, bus, reason=f"resume_refused_cap:{reason}"
-                    ):
-                        summary.expired.append(row.dispatch_id)
-                else:
-                    attempt = bump_resume_attempt(parent_id=row.dispatch_id)
-                    record_resume_refusal(parent_id=row.dispatch_id, reason=reason)
-                    emit_sdk_await_reply_resume_refused(
-                        parent_dispatch_id=row.dispatch_id,
-                        reason=reason,
-                        attempt=attempt,
-                    )
-                    summary.refused.append((row.dispatch_id, reason))
-                continue
-
-            attempt = bump_resume_attempt(parent_id=row.dispatch_id)
-            req = build_await_resume_request(
-                row,
-                replies=reply_list,
-                attempt=attempt,
+            bus_turns_fn = turns_fn
+            await _resume_await_parked_loop(
+                bus_turns_fn=bus_turns_fn,
+                summary=summary,
+                controller=controller,
+                bus=bus,
+                cfg=cfg,
                 code_version=code_version,
-                ttl_s=ttl,
-                bus_unreachable=bool(fetch_failed and not all_landed),
-                hub=cfg.source_repo,
+                ledger=ledger,
+                ttl=ttl,
+                clock=clock,
+                parent_dispatch_id=parent_dispatch_id,
             )
-            response = await admit_cursor_dispatch(req, cfg=cfg, controller=controller)
-            if response.status_code not in (200, 202):
-                code = _response_code(response)
-                record_resume_refusal(parent_id=row.dispatch_id, reason=code)
-                emit_sdk_await_reply_resume_refused(
-                    parent_dispatch_id=row.dispatch_id, reason=code, attempt=attempt
-                )
-                summary.refused.append((row.dispatch_id, code))
-                logger.warning(
-                    "cursor-sdk await resume refused parent=%s child=%s code=%s",
-                    row.dispatch_id,
-                    req.dispatch_id,
-                    code,
-                )
-                refreshed = load_park_row(dispatch_id=row.dispatch_id)
-                if refreshed is not None and _refusal_cap_elapsed(refreshed, now=clock):
-                    if await _expire_await(
-                        refreshed, bus, reason=f"resume_refused_cap:{code}"
-                    ):
-                        summary.expired.append(row.dispatch_id)
-                continue
-            mark_park_resumed(parent_id=row.dispatch_id, child_id=req.dispatch_id)
-            outcomes = {
-                g.execution_id: (
-                    hits[g.execution_id].outcome
-                    if hits.get(g.execution_id)
-                    else ("unknown" if fetch_failed else "timeout")
-                )
-                for g in awaited
-            }
-            emit_sdk_await_reply_resume_admitted(
-                parent_dispatch_id=row.dispatch_id,
-                child_dispatch_id=req.dispatch_id,
-                thread_id=row.thread_id,
-                outcomes=outcomes,
-                code_version=code_version,
-                attempt=attempt,
-            )
-            await _post_resumed_turn(
-                bus, row=row, child_id=req.dispatch_id, attempt=attempt
-            )
-            summary.admitted.append((row.dispatch_id, req.dispatch_id))
-            logger.info(
-                "cursor-sdk await resumed parent=%s child=%s code_version=%s",
-                row.dispatch_id,
-                req.dispatch_id,
-                code_version,
-            )
-
-    if bus_turns_fn is not None:
-        await _run_loop(bus_turns_fn, thread_closed=None)
         return summary
 
-    from transport_utils import DEFAULT_AGENT_BUS_URL, make_sync_client
-
-    with make_sync_client(DEFAULT_AGENT_BUS_URL, timeout=5.0) as bus_client:
-        closed_cache: dict[str, bool] = {}
-
-        def _thread_closed(thread_id: str) -> bool:
-            house = str(thread_id or "").strip()
-            if not house:
-                return False
-            if house not in closed_cache:
-                closed_cache[house] = _bus_thread_is_closed(bus_client, house)
-            return closed_cache[house]
-
-        def _turns_fn(thread_id: str, after_turn: int) -> list[dict[str, Any]]:
-            if _thread_closed(thread_id):
-                return []
-            return _bus_turns_with_client(bus_client, thread_id, after_turn)
-
-        await _run_loop(_turns_fn, thread_closed=_thread_closed)
+    await _resume_await_parked_loop(
+        bus_turns_fn=bus_turns_fn,
+        summary=summary,
+        controller=controller,
+        bus=bus,
+        cfg=cfg,
+        code_version=code_version,
+        ledger=ledger,
+        ttl=ttl,
+        clock=clock,
+        parent_dispatch_id=parent_dispatch_id,
+    )
     return summary
+
+
+async def _resume_await_parked_loop(
+    *,
+    bus_turns_fn: BusTurnsFn,
+    summary: AwaitResumeSummary,
+    controller: Any,
+    bus: CursorBusClient,
+    cfg: WorkerConfig,
+    code_version: str,
+    ledger: CursorDispatchLedger,
+    ttl: int,
+    clock: datetime,
+    parent_dispatch_id: str | None,
+) -> None:
+    from services.git_integration_worker.routes.cursor_sdk import admit_cursor_dispatch
+
+    for row in open_await_rows():
+        if parent_dispatch_id is not None and row.dispatch_id != parent_dispatch_id:
+            continue
+        if controller.is_draining():
+            break
+        if row.park.get("expired_at"):
+            continue
+        if _is_conductor_dispatch(row.dispatch_id):
+            summary.skipped_conductor.append(row.dispatch_id)
+            continue
+        existing = _usable_resume_child(row.dispatch_id)
+        if existing is not None:
+            mark_park_resumed(parent_id=row.dispatch_id, child_id=existing)
+            summary.reconciled.append((row.dispatch_id, existing))
+            continue
+
+        awaited = _awaited_from_row(row)
+        hits, fetch_failed = await _snapshot_replies(
+            awaited, bus_turns_fn=bus_turns_fn
+        )
+        reply_list = [hits.get(g.execution_id) for g in awaited]
+        all_landed = bool(awaited) and all(h is not None for h in reply_list)
+        timed_out = _ttl_elapsed(row, now=clock)
+        if not all_landed and not timed_out:
+            if fetch_failed:
+                logger.info(
+                    "cursor-sdk await_reply waiting bus-down parent=%s",
+                    row.dispatch_id,
+                )
+            summary.waiting.append(row.dispatch_id)
+            continue
+
+        reason = resume_eligibility_reason(ledger, parent_id=row.dispatch_id)
+        if reason is not None:
+            if reason in _PERMANENT_INELIGIBLE:
+                if await _expire_await(row, bus, reason=reason):
+                    summary.expired.append(row.dispatch_id)
+            elif _refusal_cap_elapsed(row, now=clock):
+                if await _expire_await(
+                    row, bus, reason=f"resume_refused_cap:{reason}"
+                ):
+                    summary.expired.append(row.dispatch_id)
+            else:
+                attempt = bump_resume_attempt(parent_id=row.dispatch_id)
+                record_resume_refusal(parent_id=row.dispatch_id, reason=reason)
+                emit_sdk_await_reply_resume_refused(
+                    parent_dispatch_id=row.dispatch_id,
+                    reason=reason,
+                    attempt=attempt,
+                )
+                summary.refused.append((row.dispatch_id, reason))
+            continue
+
+        attempt = bump_resume_attempt(parent_id=row.dispatch_id)
+        req = build_await_resume_request(
+            row,
+            replies=reply_list,
+            attempt=attempt,
+            code_version=code_version,
+            ttl_s=ttl,
+            bus_unreachable=bool(fetch_failed and not all_landed),
+            hub=cfg.source_repo,
+        )
+        response = await admit_cursor_dispatch(req, cfg=cfg, controller=controller)
+        if response.status_code not in (200, 202):
+            code = _response_code(response)
+            record_resume_refusal(parent_id=row.dispatch_id, reason=code)
+            emit_sdk_await_reply_resume_refused(
+                parent_dispatch_id=row.dispatch_id, reason=code, attempt=attempt
+            )
+            summary.refused.append((row.dispatch_id, code))
+            logger.warning(
+                "cursor-sdk await resume refused parent=%s child=%s code=%s",
+                row.dispatch_id,
+                req.dispatch_id,
+                code,
+            )
+            refreshed = load_park_row(dispatch_id=row.dispatch_id)
+            if refreshed is not None and _refusal_cap_elapsed(refreshed, now=clock):
+                if await _expire_await(
+                    refreshed, bus, reason=f"resume_refused_cap:{code}"
+                ):
+                    summary.expired.append(row.dispatch_id)
+            continue
+        mark_park_resumed(parent_id=row.dispatch_id, child_id=req.dispatch_id)
+        outcomes = {
+            g.execution_id: (
+                hits[g.execution_id].outcome
+                if hits.get(g.execution_id)
+                else ("unknown" if fetch_failed else "timeout")
+            )
+            for g in awaited
+        }
+        emit_sdk_await_reply_resume_admitted(
+            parent_dispatch_id=row.dispatch_id,
+            child_dispatch_id=req.dispatch_id,
+            thread_id=row.thread_id,
+            outcomes=outcomes,
+            code_version=code_version,
+            attempt=attempt,
+        )
+        await _post_resumed_turn(
+            bus, row=row, child_id=req.dispatch_id, attempt=attempt
+        )
+        summary.admitted.append((row.dispatch_id, req.dispatch_id))
+        logger.info(
+            "cursor-sdk await resumed parent=%s child=%s code_version=%s",
+            row.dispatch_id,
+            req.dispatch_id,
+            code_version,
+        )
 
 
 __all__ = [

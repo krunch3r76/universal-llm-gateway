@@ -39,10 +39,11 @@ from bus_watch.ide_budget_exclude import (
 )
 
 IDE_BUDGET_SOURCE = "ide.transcript"
-_FIRST_LINE_CACHE_TTL_S = 5.0
-_first_line_cache: dict[
-    tuple[str, str], tuple[float, float, tuple[tuple[int, float, str], ...]]
-] = {}
+_FileSig = tuple[float, int]
+_MatchRow = tuple[int, float, str]
+_first_line_cache: dict[tuple[str, str], dict[str, tuple[_FileSig, _MatchRow | None]]] = (
+    {}
+)
 _UUID_RE = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")
 _TOOL_CATEGORY_RE = re.compile(r"tool", re.I)
 _TIP_CP_RE = re.compile(r"tip_cp=(\d+)(?!\d)")
@@ -59,11 +60,12 @@ def ide_holder_transcript(lock: dict[str, Any]) -> str | None:
     return candidate if _UUID_RE.match(candidate) else None
 
 
-def _transcripts_dir_mtime(transcripts_dir: Path) -> float:
+def _file_sig(path: Path) -> _FileSig | None:
     try:
-        return transcripts_dir.stat().st_mtime
+        st = path.stat()
+        return (st.st_mtime, st.st_size)
     except OSError:
-        return 0.0
+        return None
 
 
 def _scan_first_line_matches(
@@ -108,17 +110,39 @@ def first_line_matches(
         # proof needs ``first_line_matches_land`` with an explicit root_id.
         return []
     key = (str(transcripts_dir.resolve()), needle)
-    now = time.monotonic()
-    dir_mtime = _transcripts_dir_mtime(transcripts_dir)
-    cached = _first_line_cache.get(key)
-    if (
-        cached is not None
-        and cached[0] == dir_mtime
-        and (now - cached[1]) < _FIRST_LINE_CACHE_TTL_S
-    ):
-        return list(cached[2])
-    rows = _scan_first_line_matches(needle, transcripts_dir)
-    _first_line_cache[key] = (dir_mtime, now, tuple(rows))
+    per_file = dict(_first_line_cache.get(key, {}))
+    rows: list[_MatchRow] = []
+    seen_tids: set[str] = set()
+    for path in transcripts_dir.glob("*/*.jsonl"):
+        tid = path.parent.name
+        seen_tids.add(tid)
+        sig = _file_sig(path)
+        if sig is None:
+            continue
+        prev = per_file.get(tid)
+        if prev is not None and prev[0] == sig:
+            if prev[1] is not None:
+                rows.append(prev[1])
+            continue
+        try:
+            with path.open(encoding="utf-8") as fh:
+                first_line = fh.readline()
+            mtime = path.stat().st_mtime
+        except OSError:
+            per_file[tid] = (sig, None)
+            continue
+        matched: _MatchRow | None
+        if needle in first_line:
+            m = _TIP_CP_RE.search(first_line)
+            matched = (int(m.group(1)) if m else -1, mtime, tid)
+            rows.append(matched)
+        else:
+            matched = None
+        per_file[tid] = (sig, matched)
+    for tid in list(per_file):
+        if tid not in seen_tids:
+            del per_file[tid]
+    _first_line_cache[key] = per_file
     return rows
 
 

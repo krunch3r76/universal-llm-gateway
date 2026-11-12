@@ -349,61 +349,68 @@ def conductor_hop_watchdog_candidates(
     now_ts = now if now is not None else datetime.now(UTC).timestamp()
     candidates: list[str] = []
     with ledger._connect() as conn:
-        for row in _latest_terminal_conductor_rows(conn):
-            mapped = {k: row[k] for k in row.keys()}
-            dispatch_id = str(mapped.get("dispatch_id") or "")
-            record_json = str(mapped.get("record_json") or "")
-            if not dispatch_id:
-                continue
-            if _successor_admitted(
-                conn, predecessor_id=dispatch_id, record_json=record_json
-            ):
-                continue
-            terminal_ts = _terminal_epoch(mapped)
-            if terminal_ts is None or (now_ts - terminal_ts) < grace:
-                continue
-            try:
-                closeout_tokens = _closeout_tokens_from_row(mapped)
-                from services.git_integration_worker.cursor_sdk_closeout.conductor_stop_service import (
-                    admit_retry_park_unserviced,
-                )
+        from services.git_integration_worker.cursor_dispatch_ledger import (
+            nest_children_watchdog_pass,
+        )
 
-                if admit_retry_park_unserviced(mapped):
-                    candidates.append(dispatch_id)
+        with nest_children_watchdog_pass(conn):
+            for row in _latest_terminal_conductor_rows(conn):
+                mapped = {k: row[k] for k in row.keys()}
+                dispatch_id = str(mapped.get("dispatch_id") or "")
+                record_json = str(mapped.get("record_json") or "")
+                if not dispatch_id:
                     continue
-                verdict = evaluate_hop_budget(mapped, closeout_tokens=closeout_tokens)
-                if verdict.park and verdict.reason:
-                    candidates.append(dispatch_id)
-                    continue
-                if hop_owed(mapped, closeout_tokens=closeout_tokens):
-                    candidates.append(dispatch_id)
-                    continue
-                from services.git_integration_worker.cursor_sdk_closeout.conductor_exit_reasons import (
-                    cdp_probe_indeterminate_watchdog_due,
-                )
-
-                if cdp_probe_indeterminate_watchdog_due(
-                    mapped, now=now_ts
-                ) and hop_owed(
-                    mapped,
-                    closeout_tokens=closeout_tokens,
-                    ignore_probe_indeterminate=True,
+                if _successor_admitted(
+                    conn, predecessor_id=dispatch_id, record_json=record_json
                 ):
-                    candidates.append(dispatch_id)
                     continue
-                from services.git_integration_worker.cursor_sdk_closeout.conductor_exit_reasons import (
-                    row_pinned_stored_harvest,
-                )
+                terminal_ts = _terminal_epoch(mapped)
+                if terminal_ts is None or (now_ts - terminal_ts) < grace:
+                    continue
+                try:
+                    closeout_tokens = _closeout_tokens_from_row(mapped)
+                    from services.git_integration_worker.cursor_sdk_closeout.conductor_stop_service import (
+                        admit_retry_park_unserviced,
+                    )
 
-                if row_pinned_stored_harvest(mapped):
-                    candidates.append(dispatch_id)
-            except Exception as exc:  # noqa: BLE001
-                logger.warning(
-                    "hop watchdog candidate row failed dispatch=%s err=%s",
-                    dispatch_id,
-                    exc.__class__.__name__,
-                )
-                continue
+                    if admit_retry_park_unserviced(mapped):
+                        candidates.append(dispatch_id)
+                        continue
+                    verdict = evaluate_hop_budget(
+                        mapped, closeout_tokens=closeout_tokens
+                    )
+                    if verdict.park and verdict.reason:
+                        candidates.append(dispatch_id)
+                        continue
+                    if hop_owed(mapped, closeout_tokens=closeout_tokens):
+                        candidates.append(dispatch_id)
+                        continue
+                    from services.git_integration_worker.cursor_sdk_closeout.conductor_exit_reasons import (
+                        cdp_probe_indeterminate_watchdog_due,
+                    )
+
+                    if cdp_probe_indeterminate_watchdog_due(
+                        mapped, now=now_ts
+                    ) and hop_owed(
+                        mapped,
+                        closeout_tokens=closeout_tokens,
+                        ignore_probe_indeterminate=True,
+                    ):
+                        candidates.append(dispatch_id)
+                        continue
+                    from services.git_integration_worker.cursor_sdk_closeout.conductor_exit_reasons import (
+                        row_pinned_stored_harvest,
+                    )
+
+                    if row_pinned_stored_harvest(mapped):
+                        candidates.append(dispatch_id)
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning(
+                        "hop watchdog candidate row failed dispatch=%s err=%s",
+                        dispatch_id,
+                        exc.__class__.__name__,
+                    )
+                    continue
     return candidates
 
 

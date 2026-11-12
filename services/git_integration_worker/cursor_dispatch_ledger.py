@@ -17,6 +17,8 @@ import os
 import sqlite3
 import threading
 import time
+from contextlib import contextmanager
+from contextvars import ContextVar
 from dataclasses import dataclass
 from datetime import UTC
 from pathlib import Path
@@ -47,14 +49,57 @@ CURSOR_SDK_DISPATCH_LEDGER_ENV = "CURSOR_SDK_DISPATCH_LEDGER"
 
 logger = get_logger(__name__)
 
-_NESTED_CHILDREN_CACHE_TTL_S = 3.0
-_nested_children_cache: dict[str, tuple[float, tuple[str, ...]]] = {}
-_LEGACY_NEST_JSON_SCAN_LIMIT = 4000
+@dataclass(frozen=True)
+class NestChildrenIndex:
+    """One watchdog-pass map of parent dispatch id → nested child ids."""
+
+    by_parent: dict[str, list[str]]
+    status_by_id: dict[str, str]
+
+
+_nest_children_index: ContextVar[NestChildrenIndex | None] = ContextVar(
+    "nest_children_index", default=None
+)
 
 
 def clear_nested_children_cache() -> None:
-    """Test hook — drop cached nested-child lists."""
-    _nested_children_cache.clear()
+    """Test hook — drop pass-scoped nested-child index."""
+    _nest_children_index.set(None)
+
+
+def build_nest_children_index(conn: sqlite3.Connection) -> NestChildrenIndex:
+    """Single table read for all nest_under edges (indexed column + legacy JSON)."""
+    by_parent: dict[str, list[str]] = {}
+    status_by_id: dict[str, str] = {}
+    rows = conn.execute(
+        "SELECT dispatch_id, nest_under, record_json, status FROM cursor_sdk_dispatches"
+    ).fetchall()
+    for row in rows:
+        dispatch_id = str(row["dispatch_id"])
+        status_by_id[dispatch_id] = str(row["status"] or "")
+        parent = str(row["nest_under"] or "").strip()
+        if not parent:
+            try:
+                data = json.loads(row["record_json"] or "{}")
+            except json.JSONDecodeError:
+                data = None
+            if isinstance(data, dict):
+                parent = str(data.get("nest_under") or "").strip()
+        if not parent or parent == dispatch_id:
+            continue
+        by_parent.setdefault(parent, []).append(dispatch_id)
+    return NestChildrenIndex(by_parent=by_parent, status_by_id=status_by_id)
+
+
+@contextmanager
+def nest_children_watchdog_pass(conn: sqlite3.Connection):
+    """Scope one nest index to nested-witness work inside a watchdog tick."""
+    index = build_nest_children_index(conn)
+    token = _nest_children_index.set(index)
+    try:
+        yield index
+    finally:
+        _nest_children_index.reset(token)
 
 _STATUS_QUEUED = "queued"
 _STATUS_ADMITTED = "admitted"
@@ -2476,17 +2521,17 @@ class CursorDispatchLedger:
     def list_nested_children(self, *, parent_dispatch_id: str) -> list[str]:
         """Return dispatch ids admitted with ``nest_under=parent_dispatch_id``.
 
-        Indexed ``nest_under`` column first; legacy JSON-only rows fall back to a
-        bounded scan. Terminal parents return ``[]`` without a table walk. Short
-        TTL cache avoids repeat scans during nested-witness polling.
+        When a watchdog pass installs :func:`nest_children_watchdog_pass`, reads
+        come from that pass's in-memory index (one table scan per pass). Otherwise
+        uses the indexed ``nest_under`` column with a legacy JSON fallback scan.
         """
         parent = str(parent_dispatch_id or "").strip()
         if not parent:
             return []
-        now = time.monotonic()
-        cached = _nested_children_cache.get(parent)
-        if cached is not None and cached[0] > now:
-            return list(cached[1])
+
+        index = _nest_children_index.get()
+        if index is not None:
+            return list(index.by_parent.get(parent, []))
 
         child_ids: list[str] = []
         with self._connect() as conn:
@@ -2506,8 +2551,8 @@ class CursorDispatchLedger:
             if not child_ids:
                 legacy_rows = conn.execute(
                     "SELECT dispatch_id, record_json FROM cursor_sdk_dispatches "
-                    "WHERE record_json LIKE ? LIMIT ?",
-                    ('%"nest_under"%', _LEGACY_NEST_JSON_SCAN_LIMIT),
+                    "WHERE record_json LIKE ?",
+                    ('%"nest_under"%',),
                 ).fetchall()
                 for row in legacy_rows:
                     dispatch_id = str(row["dispatch_id"])
@@ -2523,11 +2568,6 @@ class CursorDispatchLedger:
                     ):
                         child_ids.append(dispatch_id)
 
-        child_ids = child_ids[:64]
-        _nested_children_cache[parent] = (
-            now + _NESTED_CHILDREN_CACHE_TTL_S,
-            tuple(child_ids),
-        )
         return child_ids
 
     def _nest_under_from_row(self, row: Any) -> str | None:

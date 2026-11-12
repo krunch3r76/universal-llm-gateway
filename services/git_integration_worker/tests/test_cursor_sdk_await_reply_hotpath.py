@@ -2,14 +2,10 @@
 
 from __future__ import annotations
 
-from types import SimpleNamespace
-from unittest.mock import MagicMock
-
 import pytest
 
 from services.git_integration_worker.cursor_sdk_await_reply import (
     AwaitedGenerate,
-    _bus_thread_is_closed,
     _snapshot_replies,
 )
 
@@ -44,9 +40,3 @@ async def test_snapshot_replies_dedupes_thread_after_turn_per_tick() -> None:
     assert calls == [("22613", 3)]
 
 
-def test_bus_thread_is_closed_true_for_closed_status() -> None:
-    client = MagicMock()
-    client.get.return_value = SimpleNamespace(
-        status_code=200, json=lambda: {"status": "closed"}
-    )
-    assert _bus_thread_is_closed(client, "22613") is True
