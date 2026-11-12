@@ -47,7 +47,12 @@ def test_relay_wake_tab_resolves_bound_thread(bus_db: None) -> None:
         {"title": "Other App", "web_socket_debugger_url": "ws://focused/1"},
         {"title": "Cursor Agents", "web_socket_debugger_url": "ws://agents/1"},
     ]
-    target = {"ok": True, "origin": "http://127.0.0.1:9338", "display": "8", "app": "cursor"}
+    target = {
+        "ok": True,
+        "origin": "http://127.0.0.1:9338",
+        "display": "8",
+        "app": "cursor",
+    }
 
     with (
         patch("cursor_bridge.cdp_pages.list_pages", return_value=pages),
@@ -76,7 +81,12 @@ def test_relay_wake_tab_agent_id_no_single_page_fallback() -> None:
     from cursor_bridge.bridge_glass_relay import relay_wake_tab
 
     pages = [{"title": "Random", "web_socket_debugger_url": "ws://only/1"}]
-    target = {"ok": True, "origin": "http://127.0.0.1:9338", "display": "8", "app": "cursor"}
+    target = {
+        "ok": True,
+        "origin": "http://127.0.0.1:9338",
+        "display": "8",
+        "app": "cursor",
+    }
     with (
         patch("cursor_bridge.cdp_pages.list_pages", return_value=pages),
         patch(

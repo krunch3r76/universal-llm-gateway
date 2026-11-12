@@ -136,9 +136,7 @@ def _golden(
     xfail_f: str | None = None,
     body_is_full: bool = False,
 ) -> Any:
-    marks = (
-        [pytest.mark.xfail(strict=True, reason=xfail_f)] if xfail_f else []
-    )
+    marks = [pytest.mark.xfail(strict=True, reason=xfail_f)] if xfail_f else []
     return pytest.param(
         case_id,
         bus_ref,
@@ -153,10 +151,16 @@ def _golden(
 
 
 _GOLDEN_21088 = (
-    _golden("151", "21088#151", _SUBJ_151, _BODY_151, "done", "CLOSEOUT partial:capture"),
-    _golden("128", "21088#128", _SUBJ_128, _BODY_128, "done", "CLOSEOUT partial:consult"),
+    _golden(
+        "151", "21088#151", _SUBJ_151, _BODY_151, "done", "CLOSEOUT partial:capture"
+    ),
+    _golden(
+        "128", "21088#128", _SUBJ_128, _BODY_128, "done", "CLOSEOUT partial:consult"
+    ),
     _golden("97", "21088#97", _SUBJ_97, _BODY_97, "done", "CLOSEOUT partial:capture"),
-    _golden("156", "21088#156", _SUBJ_156, _BODY_156, "done", "CLOSEOUT partial:capture"),
+    _golden(
+        "156", "21088#156", _SUBJ_156, _BODY_156, "done", "CLOSEOUT partial:capture"
+    ),
     _golden(
         "11",
         "21088#11",
@@ -193,7 +197,14 @@ _GOLDEN_21088 = (
     ),
     _golden("37", "21088#37", "STEER directive", _BODY_37, "unknown", "STEER"),
     _golden("152", "21088#152", "cdp reply — 647ddc5e", _BODY_152, "unknown", None),
-    _golden("r3-falsifier", "21088#158", "CLOSEOUT complete", "", "done", "CLOSEOUT complete"),
+    _golden(
+        "r3-falsifier",
+        "21088#158",
+        "CLOSEOUT complete",
+        "",
+        "done",
+        "CLOSEOUT complete",
+    ),
     _golden(
         "F1",
         "21088#162",

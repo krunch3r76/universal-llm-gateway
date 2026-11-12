@@ -35,7 +35,9 @@ def _pick_page_for_wake(
 
     wanted = _WINDOW_TITLE.get(app, "")
     named = [
-        p for p in pages if p.get("title") == wanted and p.get("web_socket_debugger_url")
+        p
+        for p in pages
+        if p.get("title") == wanted and p.get("web_socket_debugger_url")
     ]
     if len(named) == 1:
         return named[0]

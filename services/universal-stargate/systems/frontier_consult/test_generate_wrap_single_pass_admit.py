@@ -8,6 +8,8 @@ from typing import Any
 from unittest.mock import AsyncMock
 
 import pytest
+from fastapi import Response
+from implement_admission.admission_read import compute_packet_sha256
 from spawn_ledger.spawn_endpoint_house_ledger import (
     _fold_spawn_rows,
     _read_rows,
@@ -15,8 +17,6 @@ from spawn_ledger.spawn_endpoint_house_ledger import (
     mint_row_id,
     project_row_status,
 )
-from fastapi import Response
-from implement_admission.admission_read import compute_packet_sha256
 
 from . import conductor_admit_enrich as enrich_mod
 from . import generate_wrap as gw
@@ -221,9 +221,7 @@ async def test_enrich_then_route_single_prepare(
     monkeypatch.setattr(gw, "probe_thread", AsyncMock(return_value=None))
 
     body = _conductor_body()
-    enriched = await enrich_conductor_admit_plan(
-        body=body, plan={}, request_id="r-d"
-    )
+    enriched = await enrich_conductor_admit_plan(body=body, plan={}, request_id="r-d")
     await dispatch_cursor_sdk_generate_route(
         request_id="r-d",
         body=body,
@@ -273,9 +271,7 @@ async def test_birth_rows_from_enrich_reach_commit(
     )
 
     body = _conductor_body()
-    enriched = await enrich_conductor_admit_plan(
-        body=body, plan={}, request_id="r-e"
-    )
+    enriched = await enrich_conductor_admit_plan(body=body, plan={}, request_id="r-e")
     await dispatch_cursor_sdk_generate_route(
         request_id="r-e",
         body=body,
@@ -337,7 +333,9 @@ async def test_dispatch_frontier_error_fails_row_with_code(
     assert rows[0]["state"] == "failed"
     assert rows[0]["stage"] == "dispatch"
     assert rows[0]["reason"] == "restart_busy_deferred"
-    assert project_row_status(rows[0]["row_id"], watch_dir=watch_dir)["status"] == "failed"
+    assert (
+        project_row_status(rows[0]["row_id"], watch_dir=watch_dir)["status"] == "failed"
+    )
 
 
 @pytest.mark.asyncio

@@ -93,7 +93,9 @@ def test_relay_wake_tab_appends_wake(tmp_path) -> None:
     ):
         out = relay_wake_tab(gui_host=":8", agent_id="agent-1", body="wake line")
     assert out["ok"] is True
-    rows = [json.loads(line) for line in ledger.read_text().splitlines() if line.strip()]
+    rows = [
+        json.loads(line) for line in ledger.read_text().splitlines() if line.strip()
+    ]
     wakes = [r for r in rows if r.get("kind") == "wake"]
     assert len(wakes) == 1
     assert wakes[0]["op"] == "wake_tab"
@@ -167,7 +169,9 @@ def test_send_msg_with_agent_id_appends_wake(tmp_path) -> None:
         )
     assert out["op"] == "send_msg"
     assert out["glass_paste"]["ok"] is True
-    rows = [json.loads(line) for line in ledger.read_text().splitlines() if line.strip()]
+    rows = [
+        json.loads(line) for line in ledger.read_text().splitlines() if line.strip()
+    ]
     wakes = [r for r in rows if r.get("kind") == "wake"]
     assert len(wakes) == 1
     assert wakes[0]["agent_id"] == "0b2e33aa"
@@ -199,7 +203,9 @@ def test_send_msg_spawn_tab_then_followup_sequence() -> None:
                 after_turn=None,
                 agent_id=aid,
             )
-    wake.assert_called_once_with(gui_host=":8", agent_id="spawned-aid", body="follow-up")
+    wake.assert_called_once_with(
+        gui_host=":8", agent_id="spawned-aid", body="follow-up"
+    )
     assert msg_out.get("ok") is not False
 
 
