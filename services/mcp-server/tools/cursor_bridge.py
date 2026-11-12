@@ -23,7 +23,6 @@ from mcp_toolprogress import toolprogress_begin, toolprogress_end
 
 from ._cursor_bridge_edge import (
     admit_and_await_cursor_glass,
-    bridge_edge_args,
     edge_glass_wake_rename_enabled,
     fresh_idempotency_key,
 )
@@ -243,11 +242,11 @@ def _wake_tab(
     if edge_glass_wake_rename_enabled():
         res = admit_and_await_cursor_glass(
             op="wake_tab",
-            args=bridge_edge_args(
-                gui_host=gui_host,
-                agent_id=agent_id,
-                body=body_s,
-            ),
+            args={
+                "gui_host": gui_host,
+                "agent_id": agent_id,
+                "body": body_s,
+            },
             idempotency_key=fresh_idempotency_key(),
         )
         if res.get("code") in {
@@ -265,7 +264,9 @@ def _wake_tab(
                 "op_id": res.get("op_id"),
             }
         if res.get("error") == "unknown_target":
-            return _param_error("wake_tab", "unknown_target", str(res.get("detail") or ""))
+            return _param_error(
+                "wake_tab", "unknown_target", str(res.get("detail") or "")
+            )
         record("mcp.cursor_bridge.wake_tab", gui_host=gui_host, ok=bool(res.get("ok")))
         return res
     res = relay_wake_tab(gui_host=gui_host, agent_id=agent_id, body=body_s)
@@ -294,12 +295,12 @@ def _rename_tab(
     if edge_glass_wake_rename_enabled():
         res = admit_and_await_cursor_glass(
             op="rename_tab",
-            args=bridge_edge_args(
-                gui_host=gui_host,
-                agent_id=agent_s,
-                title=title_s,
-                thread=thread_s,
-            ),
+            args={
+                "gui_host": gui_host,
+                "agent_id": agent_s,
+                "title": title_s,
+                "thread": thread_s,
+            },
             idempotency_key=fresh_idempotency_key(),
         )
         if res.get("code") in {
@@ -316,7 +317,9 @@ def _rename_tab(
                 "op": "rename_tab",
                 "op_id": res.get("op_id"),
             }
-        record("mcp.cursor_bridge.rename_tab", gui_host=gui_host, ok=bool(res.get("ok")))
+        record(
+            "mcp.cursor_bridge.rename_tab", gui_host=gui_host, ok=bool(res.get("ok"))
+        )
         return res
     res = relay_rename_tab(
         gui_host=gui_host,

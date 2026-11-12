@@ -70,7 +70,6 @@ def _wake_tab_sync(args: dict[str, Any]) -> dict[str, Any]:
         body=body,
         thread=None,
     )
-    res.pop("paste_attempted", None)
     if res.get("error") == "unknown_target":
         return {
             "ok": False,
@@ -112,7 +111,6 @@ def _rename_tab_sync(args: dict[str, Any]) -> dict[str, Any]:
     except CdpPortRefusedError as exc:
         return _cdp_refusal(op="rename_tab", gui_host=gui_host, exc=exc)
     res = rename_tab_cdp(gui_host=gui_host, agent_id=agent_id, title=title)
-    res.pop("paste_attempted", None)
     return res
 
 

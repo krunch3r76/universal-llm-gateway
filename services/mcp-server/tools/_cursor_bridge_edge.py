@@ -13,8 +13,6 @@ EDGE_OPS_ENABLED_ENV = "EDGE_OPS_ENABLED"
 AWAIT_MAX_SECONDS = 30.0
 CODE_EDGE_PENDING = "edge_pending"
 CODE_EDGE_UNAVAILABLE = "edge_unavailable"
-_BRIDGE_GRANT = "bridge"
-_BRIDGE_AUTH_SOURCE = "mcp:cursor_bridge"
 _ADMIT_PATH = "/api/v1/edge/ops"
 _RESULT_PATH = "/api/v1/edge/ops/{op_id}/result"
 _HTTP_TIMEOUT = AWAIT_MAX_SECONDS + 5.0
@@ -155,16 +153,12 @@ def admit_and_await_cursor_glass(
     return finished
 
 
-def bridge_edge_args(**fields: Any) -> dict[str, Any]:
-    """Default grant fields for cursor_bridge edge admits."""
-    out = dict(fields)
-    out.setdefault("grant", _BRIDGE_GRANT)
-    out.setdefault("authorization_source", _BRIDGE_AUTH_SOURCE)
-    return out
-
-
 def fresh_idempotency_key() -> str:
-    """Per-call idempotency for MCP edge admits."""
+    """Per-call idempotency for MCP edge admits.
+
+    Per ruling, each call uses a fresh key: a content-derived key returns the
+    first op's ok:true for a repeated identical wake without pasting again.
+    """
     return uuid.uuid4().hex
 
 
@@ -172,7 +166,6 @@ __all__ = [
     "AWAIT_MAX_SECONDS",
     "EDGE_GLASS_WAKE_RENAME_ENV",
     "admit_and_await_cursor_glass",
-    "bridge_edge_args",
     "edge_glass_wake_rename_enabled",
     "edge_ops_enabled",
     "fresh_idempotency_key",

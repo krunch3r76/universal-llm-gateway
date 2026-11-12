@@ -67,7 +67,6 @@ CODE_LEASE_STALE = "edge_lease_stale"  # ``lease_id`` no longer matches authorit
 CODE_NOT_STARTED = "edge_not_started"
 CODE_TERMINAL = "edge_op_terminal"
 CODE_IDENTITY_REFUSED = "edge_identity_refused"
-CODE_GRANT_REFUSED = "edge_grant_refused"
 CODE_KIND_DISABLED = "edge_kind_disabled"
 CODE_OP_UNSUPPORTED = "edge_op_unsupported"
 CODE_ARGS_INVALID = "edge_args_invalid"

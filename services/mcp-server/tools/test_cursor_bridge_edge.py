@@ -57,9 +57,7 @@ def test_admit_payload_shape() -> None:
     ):
         out = _cursor_bridge_edge.admit_and_await_cursor_glass(
             op="wake_tab",
-            args=_cursor_bridge_edge.bridge_edge_args(
-                gui_host=":8", agent_id="a", body="wake"
-            ),
+            args={"gui_host": ":8", "agent_id": "a", "body": "wake"},
             idempotency_key="fixed-key",
         )
     assert out["ok"] is True
@@ -68,8 +66,8 @@ def test_admit_payload_shape() -> None:
     assert body["kind"] == "cursor_glass"
     assert body["op"] == "wake_tab"
     assert body["idempotency_key"] == "fixed-key"
-    assert body["args"]["grant"] == "bridge"
-    assert body["args"]["authorization_source"] == "mcp:cursor_bridge"
+    assert "grant" not in body["args"]
+    assert "authorization_source" not in body["args"]
     assert body["deadline_s"] == _cursor_bridge_edge.AWAIT_MAX_SECONDS
 
 

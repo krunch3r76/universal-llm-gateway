@@ -38,7 +38,12 @@ async def test_wake_tab_pastes_with_guarded_cdp(
         ),
         patch(
             "grok_window_edge.cursor_glass.wake_tab_cdp",
-            return_value={"ok": True, "reason": "delivered", "op": "wake_tab"},
+            return_value={
+                "ok": True,
+                "reason": "delivered",
+                "op": "wake_tab",
+                "paste_attempted": True,
+            },
         ) as core,
     ):
         out = await cursor_glass(
@@ -48,6 +53,7 @@ async def test_wake_tab_pastes_with_guarded_cdp(
     core.assert_called_once()
     assert out["ok"] is True
     assert out["op"] == "wake_tab"
+    assert out.get("paste_attempted") is True
 
 
 @pytest.mark.asyncio

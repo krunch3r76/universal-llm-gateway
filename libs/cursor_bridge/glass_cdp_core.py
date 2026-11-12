@@ -114,6 +114,7 @@ def wake_tab_cdp(
             "detail": type(exc).__name__,
             "op": "wake_tab",
             "gui_host": gui_host,
+            "agent_id": aid,
             "paste_attempted": True,
         }
     out = {
