@@ -129,6 +129,7 @@ async def _maybe_relay_registry_heartbeat(leg: InflightLeg) -> None:
         lambda t, eid=leg.execution_id: _registry_hb_task_done(t, eid)
     )
 
+
 # Re-export ledger API so existing callers/tests keep importing this module.
 __all__ = [
     "InflightLeg",
@@ -334,6 +335,45 @@ async def _reconcile_horizon_leg(leg: InflightLeg, *, horizon: float) -> None:
     await _retain_unverifiable_horizon(leg, detail=detail)
 
 
+_CALLER_MISSING_REASON = "cdp_caller_agent_missing"
+
+
+async def _finalize_caller_agent_missing(
+    *,
+    result: CdpGenerateResult,
+    request_id: str,
+    thread_id: str,
+    pointer_turn: int,
+    via: FinalizeVia,
+) -> None:
+    """Fail closed when reply_to cannot be resolved (no mailbox caller)."""
+    holder = f"{via}:{uuid.uuid4().hex[:8]}"
+    if not try_claim_proof_publish(execution_id=result.execution_id, holder=holder):
+        return
+    sat_id = result.satellite_execution_id
+    publish_cdp_kwargs(
+        CdpGenerateStalled,
+        request_id=request_id,
+        execution_id=result.execution_id,
+        satellite_execution_id=sat_id,
+        stall_stage=_CALLER_MISSING_REASON,
+        error=_CALLER_MISSING_REASON,
+        thread_id=thread_id,
+        pointer_turn=pointer_turn,
+    )
+    mark_proof_emitted(result.execution_id)
+    _drop_registry_heartbeat_entry(result.execution_id)
+    from .work_registry_admit_relay import relay_registry_terminal
+
+    await relay_registry_terminal(
+        request_id=request_id,
+        dispatch_id=result.execution_id,
+        terminal_status="failed",
+        reason=_CALLER_MISSING_REASON,
+        harvest_chars=len(str(result.body or "")),
+    )
+
+
 async def finalize_cdp_generate(
     *,
     result: CdpGenerateResult,
@@ -438,6 +478,16 @@ async def finalize_cdp_generate(
     if leg is not None and leg.proof_emitted:
         return
 
+    if reply_to is None and result.stall_stage != WALL_CLOCK_EXCEEDED_ABORT_UNCONFIRMED:
+        await _finalize_caller_agent_missing(
+            result=result,
+            request_id=request_id,
+            thread_id=thread_id,
+            pointer_turn=pointer_turn,
+            via=via,
+        )
+        return
+
     if terminal_event_exists(result.execution_id):
         if result.stall_stage == WALL_CLOCK_EXCEEDED_ABORT_UNCONFIRMED:
             return
@@ -463,18 +513,15 @@ async def finalize_cdp_generate(
         if not try_claim_delivery(execution_id=result.execution_id):
             return
         enriched = _enrich_result(result)
-        if reply_to is None:
-            posted = False
-        else:
-            posted = await deliver_cdp_result_turn(
-                result=enriched,
-                thread_id=thread_id,
-                to_agent=reply_to,
-                request_id=request_id,
-                pointer_turn=pointer_turn,
-                pointer_only=pointer_only,
-                body_mode=body_mode,
-            )
+        posted = await deliver_cdp_result_turn(
+            result=enriched,
+            thread_id=thread_id,
+            to_agent=reply_to,
+            request_id=request_id,
+            pointer_turn=pointer_turn,
+            pointer_only=pointer_only,
+            body_mode=body_mode,
+        )
         if not posted:
             clear_delivery_claim(result.execution_id)
         return
@@ -551,9 +598,7 @@ async def finalize_cdp_generate(
     if not try_claim_delivery(execution_id=result.execution_id):
         return
     posted = False
-    if reply_to is None:
-        await _terminate_dispatch_link(terminal_status="failed")
-    elif result.ok:
+    if result.ok:
         enriched = _enrich_result(result)
         posted = await deliver_cdp_result_turn(
             result=enriched,
