@@ -13,6 +13,7 @@ that set.
 from __future__ import annotations
 
 import os
+from urllib.parse import urlparse
 
 from .config import (
     CDP_PORT_ALLOWLIST,
@@ -24,6 +25,22 @@ from .config import (
 
 class CdpPortRefusedError(Exception):
     """A CDP target this process is not allowed to reach."""
+
+
+def assert_cdp_origin_allowed(origin: str) -> None:
+    """Refuse a CDP origin whose port this process may not dial.
+
+    Raises:
+        CdpPortRefusedError: when the URL port is missing, hard-denied, or not
+            allowlisted.
+    """
+    parsed = urlparse(origin.strip())
+    port = parsed.port
+    if port is None:
+        raise CdpPortRefusedError(
+            f"CDP origin {origin!r} has no port for grok-window-edge"
+        )
+    cdp_endpoint(port)
 
 
 def cdp_endpoint(port: int) -> str:

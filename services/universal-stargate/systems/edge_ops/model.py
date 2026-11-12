@@ -47,7 +47,9 @@ DEFAULT_REDELIVERY: Redelivery = "never"
 
 # Deny-by-default redelivery. ``ping`` opens no CDP connection and has no
 # side effect outside its own reply, so a second delivery is harmless.
-KIND_REDELIVERY: dict[str, Redelivery] = {"ping": "safe"}
+# ``cursor_glass`` is ``never`` because ``wake_tab`` pastes/submits (non-idempotent).
+# ``rename_tab`` alone would be ``safe``; the kind follows the stricter op.
+KIND_REDELIVERY: dict[str, Redelivery] = {"ping": "safe", "cursor_glass": "never"}
 
 Outcome = Literal["completed", "failed"]
 
@@ -64,6 +66,7 @@ CODE_LEASE_MISMATCH = "edge_lease_mismatch"
 CODE_NOT_STARTED = "edge_not_started"
 CODE_TERMINAL = "edge_op_terminal"
 CODE_IDENTITY_REFUSED = "edge_identity_refused"
+CODE_GRANT_REFUSED = "edge_grant_refused"
 
 # Reasons carried on fold transitions and on the matching lifecycle events.
 REASON_DEADLINE = "deadline_while_queued"

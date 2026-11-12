@@ -312,8 +312,8 @@ async def test_the_loop_backs_off_instead_of_retrying_the_op(
     assert len(attempts) == 3
 
 
-def test_only_ping_is_registered_in_a1() -> None:
-    assert set(HANDLERS) == {"ping"}
+def test_ping_and_cursor_glass_are_registered() -> None:
+    assert set(HANDLERS) == {"ping", "cursor_glass"}
 
 
 async def _expired_grant(

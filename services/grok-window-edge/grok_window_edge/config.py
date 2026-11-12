@@ -35,9 +35,9 @@ from __future__ import annotations
 import os
 
 # Explicit set. 9339/9340 are the grok windows A1 serves. 9338 (Cursor :8)
-# joins this set when the cursor kinds go live; 19338 only if a ported
+# is allowlisted for ``cursor_glass`` wake/rename; 19338 only if a ported
 # handler is shown to dial it.
-CDP_PORT_ALLOWLIST: frozenset[int] = frozenset({9339, 9340})
+CDP_PORT_ALLOWLIST: frozenset[int] = frozenset({9338, 9339, 9340})
 
 # Never reachable from this process, whatever else is added above. The port
 # denies are checked before the allowlist, so releasing 9341 into it later —
@@ -56,7 +56,7 @@ DEFAULT_EDGE_ID = "grok-window-edge"
 DEFAULT_LEASE_WAIT_SECONDS = 60.0
 DEFAULT_BACKOFF_INITIAL_SECONDS = 1.0
 DEFAULT_BACKOFF_MAX_SECONDS = 30.0
-DEFAULT_KINDS: tuple[str, ...] = ("ping",)
+DEFAULT_KINDS: tuple[str, ...] = ("ping", "cursor_glass")
 
 
 def edge_id() -> str:

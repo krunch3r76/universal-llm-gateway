@@ -71,6 +71,10 @@ async def admit_op(
     if refused is not None:
         return refused
     try:
+        if body.kind == "cursor_glass":
+            from .kinds.cursor_glass import validate_cursor_glass_admit
+
+            validate_cursor_glass_admit(op=body.op, args=body.args)
         op_id = await admission.admit(
             journal_for(request),
             kind=body.kind,

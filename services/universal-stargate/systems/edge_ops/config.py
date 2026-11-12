@@ -7,6 +7,11 @@ by any function here other than the comparison the auth dependency performs.
     Master gate, default ``false``. Parsed per request rather than at import,
     so the flag needs no mount-time decision: every ``/api/v1/edge/*`` route
     refuses with ``edge_ops_disabled`` while it is off.
+
+``EDGE_GLASS_WAKE_RENAME_ENABLED`` (MCP only, default ``false``)
+    When ``true`` **and** ``EDGE_OPS_ENABLED`` is on, MCP ``cursor_bridge``
+    ``wake_tab`` / ``rename_tab`` admit through Stargate instead of dialing CDP
+    locally. Both must be on; either off keeps the legacy path unchanged.
 ``EDGE_OPS_EDGE_TOKENS``
     Per-edge bearer map, ``<edge_id>:<token>[,<edge_id>:<token>...]``. The
     lease, event, result, release and directive routes accept only the token

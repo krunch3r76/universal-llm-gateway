@@ -21,6 +21,11 @@ from cursor_bridge.lane_ready import assess_lane_readiness
 from mcp_events import record
 from mcp_toolprogress import toolprogress_begin, toolprogress_end
 
+from ._cursor_bridge_edge import (
+    admit_and_await_cursor_glass,
+    bridge_edge_args,
+    edge_glass_wake_rename_enabled,
+)
 from .agent_bus import _fetch_impl, _send_impl
 from .relay import _relay
 
@@ -233,7 +238,30 @@ def _wake_tab(
 ) -> dict[str, Any]:
     if not body or not str(body).strip():
         return _param_error("wake_tab", "body_required", "wake_tab requires body")
-    res = relay_wake_tab(gui_host=gui_host, agent_id=agent_id, body=str(body).strip())
+    body_s = str(body).strip()
+    if edge_glass_wake_rename_enabled():
+        res = admit_and_await_cursor_glass(
+            op="wake_tab",
+            args=bridge_edge_args(
+                gui_host=gui_host,
+                agent_id=agent_id,
+                body=body_s,
+            ),
+        )
+        if res.get("code") in {"edge_unavailable", "edge_pending"}:
+            return {
+                "ok": False,
+                "code": res.get("code"),
+                "detail": res.get("detail", ""),
+                "op": "wake_tab",
+            }
+        if res.get("error") == "unknown_target":
+            return _param_error("wake_tab", "unknown_target", str(res.get("detail") or ""))
+        if "error" in res and res.get("ok") is False and "code" not in res:
+            return res
+        record("mcp.cursor_bridge.wake_tab", gui_host=gui_host, ok=bool(res.get("ok")))
+        return res
+    res = relay_wake_tab(gui_host=gui_host, agent_id=agent_id, body=body_s)
     if res.get("error") == "unknown_target":
         return _param_error("wake_tab", "unknown_target", str(res.get("detail") or ""))
     record("mcp.cursor_bridge.wake_tab", gui_host=gui_host, ok=bool(res.get("ok")))
@@ -253,11 +281,33 @@ def _rename_tab(
         )
     if not title or not str(title).strip():
         return _param_error("rename_tab", "title_required", "rename_tab requires title")
+    agent_s = str(agent_id).strip()
+    title_s = str(title).strip()
+    thread_s = str(thread).strip() if thread else None
+    if edge_glass_wake_rename_enabled():
+        res = admit_and_await_cursor_glass(
+            op="rename_tab",
+            args=bridge_edge_args(
+                gui_host=gui_host,
+                agent_id=agent_s,
+                title=title_s,
+                thread=thread_s,
+            ),
+        )
+        if res.get("code") in {"edge_unavailable", "edge_pending"}:
+            return {
+                "ok": False,
+                "code": res.get("code"),
+                "detail": res.get("detail", ""),
+                "op": "rename_tab",
+            }
+        record("mcp.cursor_bridge.rename_tab", gui_host=gui_host, ok=bool(res.get("ok")))
+        return res
     res = relay_rename_tab(
         gui_host=gui_host,
-        agent_id=str(agent_id).strip(),
-        title=str(title).strip(),
-        thread=str(thread).strip() if thread else None,
+        agent_id=agent_s,
+        title=title_s,
+        thread=thread_s,
     )
     record("mcp.cursor_bridge.rename_tab", gui_host=gui_host, ok=bool(res.get("ok")))
     return res
