@@ -15,6 +15,7 @@ import pytest
 from systems.edge_ops import admission, leasing
 from systems.edge_ops.model import (
     CODE_LEASE_MISMATCH,
+    CODE_LEASE_STALE,
     CODE_NOT_STARTED,
     CODE_TERMINAL,
     EdgeOpRefusedError,
@@ -293,6 +294,43 @@ async def test_directives_long_poll_answers_empty_in_a1(
         journal, op_id=op_id, edge_id="edge-a", lease_id=grant.lease_id, wait_s=0.0
     )
     assert pending == []
+
+
+@pytest.mark.asyncio
+async def test_directives_long_poll_rerejects_an_elapsed_lease_mid_hold(
+    journal: EdgeOpsJournal,
+    clock: ManualClock,
+) -> None:
+    """Each wake re-checks lease ownership and TTL before returning directives."""
+    from systems.edge_ops.waiter import TRANSITION_CHANNEL
+
+    op_id = await _queued(journal)
+    grant = await leasing.lease(journal, edge_id="edge-a", kinds=("ping",), wait_s=0.0)
+    assert grant is not None
+    await leasing.post_event(
+        journal,
+        op_id=op_id,
+        edge_id="edge-a",
+        lease_id=grant.lease_id,
+        event_type="started",
+    )
+
+    async def poll() -> list[dict[str, object]]:
+        return await leasing.directives(
+            journal,
+            op_id=op_id,
+            edge_id="edge-a",
+            lease_id=grant.lease_id,
+            wait_s=2.0,
+        )
+
+    task = asyncio.create_task(poll())
+    await asyncio.sleep(0.05)
+    clock.advance(LEASE_TTL_SECONDS + 1.0)
+    await journal.waiter.notify(TRANSITION_CHANNEL)
+    with pytest.raises(EdgeOpRefusedError) as refusal:
+        await task
+    assert refusal.value.code == CODE_LEASE_STALE
 
 
 @pytest.mark.asyncio

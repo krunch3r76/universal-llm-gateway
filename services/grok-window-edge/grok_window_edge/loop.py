@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Awaitable, Callable
+from contextlib import suppress
 from typing import Any
 
 from universal_logging import get_logger
@@ -28,6 +29,7 @@ from .registry import HANDLERS, Handler
 logger = get_logger(__name__)
 
 STARTED_EVENT_TYPE = "started"
+CANCEL_DIRECTIVE_TYPE = "cancel"
 
 CODE_KIND_UNSUPPORTED = "edge_kind_unsupported"
 CODE_HANDLER_EXCEPTION = "edge_handler_exception"
@@ -43,12 +45,14 @@ class EdgeLoop:
         kinds: tuple[str, ...] | None = None,
         handlers: dict[str, Handler] | None = None,
         lease_wait_s: float = config.DEFAULT_LEASE_WAIT_SECONDS,
+        directive_poll_s: float = config.DEFAULT_DIRECTIVE_POLL_SECONDS,
         sleeper: Callable[[float], Awaitable[None]] = asyncio.sleep,
     ) -> None:
         self._client = client
         self._kinds = kinds if kinds is not None else config.edge_kinds()
         self._handlers = handlers if handlers is not None else HANDLERS
         self._lease_wait_s = lease_wait_s
+        self._directive_poll_s = directive_poll_s
         self._sleeper = sleeper
         self._backoff_s = config.DEFAULT_BACKOFF_INITIAL_SECONDS
 
@@ -214,9 +218,48 @@ class EdgeLoop:
     ) -> None:
         """Run the handler and post its result verbatim, or a failure."""
         args = grant.get("args")
+        handler_task = asyncio.create_task(handler(str(grant.get("op")), args or {}))
+        after = 0
         try:
-            result = await handler(str(grant.get("op")), args or {})
+            while not handler_task.done():
+                try:
+                    directives = await self._client.poll_directives(
+                        op_id=op_id,
+                        lease_id=lease_id,
+                        after=after,
+                        wait_s=0.0
+                        if self._directive_poll_s <= 0
+                        else self._directive_poll_s,
+                    )
+                except EdgeConflictError as exc:
+                    logger.warning(
+                        "directive poll refused for %s (%s), dropping the op: %s",
+                        op_id,
+                        kind,
+                        exc,
+                    )
+                    if not handler_task.done():
+                        handler_task.cancel()
+                        with suppress(asyncio.CancelledError):
+                            await handler_task
+                    return
+                for item in directives:
+                    after = max(after, int(item.get("seq", after)))
+                    if item.get("type") != CANCEL_DIRECTIVE_TYPE:
+                        continue
+                    if handler_task.done():
+                        break
+                    handler_task.cancel()
+                    with suppress(asyncio.CancelledError):
+                        await handler_task
+                    await self._client.expire(op_id=op_id, lease_id=lease_id)
+                    return
+                if not directives:
+                    await asyncio.sleep(0)
+            result = await handler_task
         except Exception as exc:
+            if isinstance(exc, asyncio.CancelledError):
+                raise
             logger.exception("edge handler for %s (%s) raised", op_id, kind)
             await self._client.post_result(
                 op_id=op_id,
