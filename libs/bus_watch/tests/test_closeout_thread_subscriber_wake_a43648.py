@@ -17,7 +17,6 @@ from agent_bus_store.db.endpoint_wake_ledger import (
 from agent_bus_store.testing.wake_cursor_test_support import rewind_wake_cursor_for_test
 from bus_watch.endpoint_wake_dispatcher import qualify, scan_once
 
-
 _THREAD = "22796"
 _HOUSELESS = "monterey-application-houseless"
 
