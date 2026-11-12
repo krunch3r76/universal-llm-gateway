@@ -4,11 +4,31 @@ from __future__ import annotations
 
 from typing import Any
 
+from bus_watch.endpoint_wake_dispatcher import (
+    _GATE_WAKE_REMAP_ADDRESSES,
+    _ROUTINE_DISPATCH_FROM,
+)
+from claude_bundles.cdp_model_endpoint import CDP_REPLY_FROM
 from claude_bundles.sealed_cdp_prefix import REVIEW_CLASS_CONTRACTS
+from work_key_grammar import is_valid_work_key_scheme
 
 from .admission import FrontierEndpointError
 
-_NON_ADDRESS_CALLERS = frozenset({"dispatch", "unspecified"})
+_WORK_KEY_UTF8_MAX = 256
+
+# Non-mailbox targets: wake remap heads (endpoint_wake_dispatcher.py), routine
+# dispatch from addresses (same module), and CDP self-reply alias (CDP_REPLY_FROM).
+_PSEUDO_CALLER_ADDRESSES = frozenset(
+    addr.casefold()
+    for addr in (
+        *_GATE_WAKE_REMAP_ADDRESSES,
+        *_ROUTINE_DISPATCH_FROM,
+        CDP_REPLY_FROM,
+        "unspecified",
+        "cursor",
+        "all",
+    )
+)
 
 
 def normalize_cdp_caller_agent(raw: object) -> str:
@@ -19,7 +39,9 @@ def normalize_cdp_caller_agent(raw: object) -> str:
 def is_valid_cdp_caller_agent(raw: object) -> bool:
     """True when ``raw`` is a non-empty bus mailbox, not a pseudo address."""
     val = normalize_cdp_caller_agent(raw)
-    return bool(val) and val not in _NON_ADDRESS_CALLERS
+    if not val:
+        return False
+    return val.casefold() not in _PSEUDO_CALLER_ADDRESSES
 
 
 def resolve_cdp_reply_to_agent(caller_agent: str | None) -> str | None:
@@ -27,6 +49,36 @@ def resolve_cdp_reply_to_agent(caller_agent: str | None) -> str | None:
     if not is_valid_cdp_caller_agent(caller_agent):
         return None
     return normalize_cdp_caller_agent(caller_agent)
+
+
+def validate_work_key_if_supplied(body: Any, *, request_id: str) -> str | None:
+    """Fail closed on malformed optional ``work_key`` before spawn."""
+    raw = getattr(body, "work_key", None)
+    if raw is None:
+        return None
+    key = str(raw).strip()
+    if not key:
+        return None
+    if len(key.encode("utf-8")) > _WORK_KEY_UTF8_MAX:
+        raise FrontierEndpointError(
+            request_id=request_id,
+            field="work_key",
+            reason="work_key exceeds 256 UTF-8 bytes",
+            status_code=422,
+            code="work_key_unparseable",
+        )
+    if not is_valid_work_key_scheme(key):
+        raise FrontierEndpointError(
+            request_id=request_id,
+            field="work_key",
+            reason=(
+                "work_key must use a scheme prefix "
+                "(todo:, plan:, plan_phase:, packet:, agent-bus:, friction:, decision:)"
+            ),
+            status_code=422,
+            code="work_key_unparseable",
+        )
+    return key
 
 
 def require_cdp_caller_agent(body: Any, *, request_id: str) -> str:
@@ -61,6 +113,7 @@ def require_cdp_review_work_key(
         return
     work_key = str(getattr(body, "work_key", None) or "").strip()
     if work_key:
+        validate_work_key_if_supplied(body, request_id=request_id)
         return
     thread = str(getattr(body, "dispatch_thread_id", "") or "").strip()
     fix = f"agent-bus:{thread}" if thread else "agent-bus:<thread>"

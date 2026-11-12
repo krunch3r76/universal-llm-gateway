@@ -42,6 +42,7 @@ from .admit_provenance import AdmitProvenanceContext
 from .cdp_admit_identity import (
     require_cdp_caller_agent,
     require_cdp_review_work_key,
+    validate_work_key_if_supplied,
 )
 from .cdp_cursor_reroute import REROUTE_ADMIT_SUBSTRATE, resolve_cdp_reroute
 from .cdp_dispatch_envelope import record_cdp_admit
@@ -573,6 +574,7 @@ async def dispatch_cdp_generate(
             code="cdp_prompt_missing",
         )
 
+    validate_work_key_if_supplied(body, request_id=request_id)
     caller_agent = require_cdp_caller_agent(body, request_id=request_id)
     require_cdp_review_work_key(body, contract, request_id=request_id)
     execution_id = str(uuid.uuid4())
@@ -747,7 +749,7 @@ async def dispatch_cdp_generate(
                 to_agent=CDP_REPLY_FROM,
                 subject=thread_subject,
                 pointer_body=pointer_body,
-                caller_agent=body.caller_agent,
+                caller_agent=caller_agent,
                 execution_id=execution_id,
                 pipeline_id="cdp-generate",
                 parent_thread_id=parent_thread,
@@ -763,7 +765,7 @@ async def dispatch_cdp_generate(
                 to_agent=CDP_REPLY_FROM,
                 subject=thread_subject,
                 pointer_body=pointer_body,
-                caller_agent=body.caller_agent,
+                caller_agent=caller_agent,
                 execution_id=execution_id,
                 pipeline_id="cdp-generate",
                 parent_thread_id=parent_thread,
@@ -776,7 +778,7 @@ async def dispatch_cdp_generate(
             to_agent=CDP_REPLY_FROM,
             subject=thread_subject,
             pointer_body=pointer_body,
-            caller_agent=body.caller_agent,
+            caller_agent=caller_agent,
             provenance_missing=provenance_missing,
             tags=[
                 "agent:web-anthropic",
@@ -806,7 +808,7 @@ async def dispatch_cdp_generate(
             thread_id=str(thread_id),
             execution_id=execution_id,
             pipeline_id="cdp-generate",
-            caller_agent=body.caller_agent,
+            caller_agent=caller_agent,
             parent_thread_id=parent_thread,
         )
     record_cdp_admit(
@@ -826,7 +828,7 @@ async def dispatch_cdp_generate(
             request_id=request_id,
             thread_id=str(thread_id),
             pointer_turn=after_turn,
-            caller_agent=body.caller_agent,
+            caller_agent=caller_agent,
             prompt_uri=staged.prompt_uri,
             model_id=str(model),
             max_wall_s=max_wall,
@@ -851,7 +853,7 @@ async def dispatch_cdp_generate(
             "execution_id": execution_id,
             "model_id": str(model),
             "thread_id": str(thread_id),
-            "caller_agent": body.caller_agent,
+            "caller_agent": caller_agent,
             "prompt_uri": staged.prompt_uri,
             "request_id": request_id,
             "pointer_turn": after_turn,
@@ -939,7 +941,7 @@ async def dispatch_cdp_generate(
         to_agent=CDP_REPLY_FROM,
         reply_from_agent=CDP_REPLY_FROM,
         after_turn=after_turn,
-        poll_wait_seconds=resolve_poll_wait_seconds(caller_agent=body.caller_agent),
+        poll_wait_seconds=resolve_poll_wait_seconds(caller_agent=caller_agent),
         completion="proof_reply_from",
         execution_id=execution_id,
     )

@@ -9,8 +9,10 @@ import pytest
 
 from systems.frontier_consult.admission import FrontierEndpointError
 from systems.frontier_consult.cdp_admit_identity import (
+    is_valid_cdp_caller_agent,
     require_cdp_caller_agent,
     require_cdp_review_work_key,
+    validate_work_key_if_supplied,
 )
 
 
@@ -28,7 +30,10 @@ def test_missing_caller_agent_refused_before_spawn_row() -> None:
     assert exc.value.status_code == 422
 
 
-@pytest.mark.parametrize("pseudo", ["dispatch", "unspecified", ""])
+@pytest.mark.parametrize(
+    "pseudo",
+    ["dispatch", "Dispatch", "unspecified", "", "cursor", "all", "web-anthropic"],
+)
 def test_pseudo_address_caller_refused(pseudo: str) -> None:
     body = _Body(caller_agent=pseudo)
     with pytest.raises(FrontierEndpointError) as exc:
@@ -39,6 +44,17 @@ def test_pseudo_address_caller_refused(pseudo: str) -> None:
 def test_reply_addressed_to_caller_agent() -> None:
     body = _Body(caller_agent="cursor-sdk-lane")
     assert require_cdp_caller_agent(body, request_id="req-3") == "cursor-sdk-lane"
+
+
+def test_caller_agent_casefold_still_rejects_dispatch() -> None:
+    assert is_valid_cdp_caller_agent("DISPATCH") is False
+
+
+def test_work_key_unparseable_before_mint() -> None:
+    body = _Body(work_key="not-a-scheme")
+    with pytest.raises(FrontierEndpointError) as exc:
+        validate_work_key_if_supplied(body, request_id="req-wk")
+    assert exc.value.code == "work_key_unparseable"
 
 
 def test_review_class_without_work_key_refused() -> None:
