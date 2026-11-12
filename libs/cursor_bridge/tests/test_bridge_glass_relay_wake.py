@@ -57,12 +57,12 @@ def test_relay_wake_tab_resolves_bound_thread(bus_db: None) -> None:
     with (
         patch("cursor_bridge.cdp_pages.list_pages", return_value=pages),
         patch(
-            "cursor_bridge.glass_cdp_core.subscription_display_for_gui_host",
+            "cursor_bridge.bridge_glass_relay.subscription_display_for_gui_host",
             return_value="8",
         ),
-        patch("cursor_bridge.glass_cdp_core.normalize_target", return_value=target),
+        patch("cursor_bridge.bridge_glass_relay.normalize_target", return_value=target),
         patch(
-            "cursor_bridge.glass_cdp_core.asyncio.run",
+            "cursor_bridge.bridge_glass_relay.asyncio.run",
             return_value={"ok": True, "reason": "delivered"},
         ),
         patch("spawn_ledger.spawn_endpoint_house_ledger.record_tab_wake"),
@@ -90,10 +90,10 @@ def test_relay_wake_tab_agent_id_no_single_page_fallback() -> None:
     with (
         patch("cursor_bridge.cdp_pages.list_pages", return_value=pages),
         patch(
-            "cursor_bridge.glass_cdp_core.subscription_display_for_gui_host",
+            "cursor_bridge.bridge_glass_relay.subscription_display_for_gui_host",
             return_value="8",
         ),
-        patch("cursor_bridge.glass_cdp_core.normalize_target", return_value=target),
+        patch("cursor_bridge.bridge_glass_relay.normalize_target", return_value=target),
     ):
         out = relay_wake_tab(
             gui_host=":8",

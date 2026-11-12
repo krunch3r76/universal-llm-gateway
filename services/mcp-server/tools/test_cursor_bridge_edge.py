@@ -7,13 +7,15 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from tools import _cursor_bridge_edge
-from tools.cursor_bridge import _rename_tab, _wake_tab
+from tools.cursor_bridge import _wake_tab
 
 pytestmark = pytest.mark.offline
 
 
 def test_edge_path_disabled_uses_legacy_wake() -> None:
-    with patch("tools.cursor_bridge.edge_glass_wake_rename_enabled", return_value=False):
+    with patch(
+        "tools.cursor_bridge.edge_glass_wake_rename_enabled", return_value=False
+    ):
         with patch("tools.cursor_bridge.relay_wake_tab") as relay:
             relay.return_value = {"ok": True, "op": "wake_tab"}
             out = _wake_tab(gui_host=":8", agent_id="a", body="line")
@@ -47,7 +49,10 @@ def test_admit_payload_shape() -> None:
     client.__exit__.return_value = None
 
     with (
-        patch.dict("os.environ", {"EDGE_OPS_ENABLED": "true", "EDGE_GLASS_WAKE_RENAME_ENABLED": "true"}),
+        patch.dict(
+            "os.environ",
+            {"EDGE_OPS_ENABLED": "true", "EDGE_GLASS_WAKE_RENAME_ENABLED": "true"},
+        ),
         patch("tools._cursor_bridge_edge.make_sync_client", return_value=client),
     ):
         out = _cursor_bridge_edge.admit_and_await_cursor_glass(
@@ -82,7 +87,10 @@ def test_edge_pending_maps_ok_false() -> None:
     client.__exit__.return_value = None
 
     with (
-        patch.dict("os.environ", {"EDGE_OPS_ENABLED": "true", "EDGE_GLASS_WAKE_RENAME_ENABLED": "true"}),
+        patch.dict(
+            "os.environ",
+            {"EDGE_OPS_ENABLED": "true", "EDGE_GLASS_WAKE_RENAME_ENABLED": "true"},
+        ),
         patch("tools.cursor_bridge.edge_glass_wake_rename_enabled", return_value=True),
         patch("tools._cursor_bridge_edge.make_sync_client", return_value=client),
     ):
@@ -94,7 +102,9 @@ def test_edge_pending_maps_ok_false() -> None:
 def test_shim_does_not_import_systems() -> None:
     from pathlib import Path
 
-    text = Path(__file__).resolve().parent.joinpath("_cursor_bridge_edge.py").read_text()
+    text = (
+        Path(__file__).resolve().parent.joinpath("_cursor_bridge_edge.py").read_text()
+    )
     assert "systems." not in text
     assert "from systems" not in text
 
