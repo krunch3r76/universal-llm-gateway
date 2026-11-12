@@ -461,6 +461,169 @@ async def test_read_grok_in_lock_busy_guard_skips_cdp_select(
 
 
 @pytest.mark.asyncio
+async def test_read_grok_post_wait_verdict_not_ok_reprobe_timeout_surface_probe_failed(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Any
+) -> None:
+    """R6-4: post-wait re-probe TimeoutError => surface_probe_failed, no sidebar re-click."""
+    monkeypatch.setenv("ULG_SUPERVISION_GATE_MODE", "off")
+    monkeypatch.setenv("ULG_DISPLAY_LOCK_DIR", str(tmp_path))
+    ep = ElectronEndpoint(
+        label="gc2",
+        app="grok",
+        display="10",
+        title="Bot Y",
+        agent_id="bot-y",
+    )
+    pages = [{"title": "Grok Bot", "web_socket_debugger_url": "ws://fake"}]
+    pre = {
+        "state": "chat_list",
+        "active_title": "Bot X",
+        "active_agent_id": "bot-x",
+        "titles": ["Bot X", "Bot Y"],
+        "composer_draft": "",
+        "generating": False,
+        "recent_messages": ["idle"],
+    }
+    probe_calls = {"n": 0}
+
+    async def _fake_probe(_ws: str) -> dict[str, Any]:
+        probe_calls["n"] += 1
+        if probe_calls["n"] >= 3:
+            raise TimeoutError("re-probe stalled")
+        return dict(pre)
+
+    select_grok_mock = AsyncMock(return_value={"ok": True, "currentAgentId": "bot-y"})
+    sidebar_mock = AsyncMock(return_value={"clicked": True})
+    not_ok_verdict = {
+        "ok": False,
+        "state": "chat_list",
+        "active_agent_id": "bot-x",
+        "active_title": "Bot X",
+        "expected_agent_id": "bot-y",
+        "expected_title": "Bot Y",
+    }
+
+    with (
+        patch("cursor_bridge.electron_chat_relay.list_pages", return_value=pages),
+        patch(
+            "cursor_bridge.electron_chat_relay.probe_surface", side_effect=_fake_probe
+        ),
+        patch(
+            "cursor_bridge.electron_chat_relay.select_grok_agent_async",
+            select_grok_mock,
+        ),
+        patch(
+            "cursor_bridge.electron_chat_relay.probe_grok_after_select",
+            new_callable=AsyncMock,
+            return_value={
+                "ok": True,
+                "stale_dom": False,
+                "surface": dict(pre),
+                "verdict": dict(not_ok_verdict),
+            },
+        ),
+        patch(
+            "cursor_bridge.electron_chat_relay.select_sidebar_target",
+            sidebar_mock,
+        ),
+        patch("cursor_bridge.electron_chat_relay.agent_paste_lock", _noop_lock),
+    ):
+        snap = await read_endpoint_turn(ep, select=True)
+
+    assert snap["ok"] is False
+    assert snap["reason"] == "surface_probe_failed"
+    assert snap["detail"] == "TimeoutError"
+    select_grok_mock.assert_awaited_once()
+    sidebar_mock.assert_not_awaited()
+    assert probe_calls["n"] == 3
+    assert _DISPLAY_SWITCH_DEPTH.get() == 0
+
+
+@pytest.mark.asyncio
+async def test_read_grok_post_wait_guard_fields_from_fresh_reprobe_not_wait_verdict(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Any
+) -> None:
+    """R6-7: composer guard after wait uses re-probe active marker/title, not wait verdict."""
+    monkeypatch.setenv("ULG_SUPERVISION_GATE_MODE", "off")
+    monkeypatch.setenv("ULG_DISPLAY_LOCK_DIR", str(tmp_path))
+    ep = ElectronEndpoint(
+        label="gc2",
+        app="grok",
+        display="10",
+        title="Bot Y",
+        agent_id="bot-y",
+    )
+    pages = [{"title": "Grok Bot", "web_socket_debugger_url": "ws://fake"}]
+    pre = {
+        "state": "chat_list",
+        "active_title": "Bot X",
+        "active_agent_id": "bot-x",
+        "titles": ["Bot X", "Bot Y"],
+        "composer_draft": "",
+        "generating": False,
+        "recent_messages": ["idle"],
+    }
+    reprobe = {
+        **pre,
+        "active_title": "Bot Z",
+        "active_agent_id": "bot-z",
+        "titles": ["Bot Z", "Bot Y"],
+        "composer_draft": "draft text",
+        "generating": True,
+    }
+    probes = [dict(pre), dict(pre), dict(reprobe)]
+
+    async def _fake_probe(_ws: str) -> dict[str, Any]:
+        return probes.pop(0) if probes else dict(reprobe)
+
+    select_grok_mock = AsyncMock(return_value={"ok": True, "currentAgentId": "bot-y"})
+    sidebar_mock = AsyncMock(return_value={"clicked": True})
+    stale_wait_verdict = {
+        "ok": False,
+        "state": "chat_list",
+        "active_agent_id": "bot-x",
+        "active_title": "Bot X",
+        "expected_agent_id": "bot-y",
+        "expected_title": "Bot Y",
+        "titles": ["Bot X", "Bot Y"],
+    }
+
+    with (
+        patch("cursor_bridge.electron_chat_relay.list_pages", return_value=pages),
+        patch(
+            "cursor_bridge.electron_chat_relay.probe_surface", side_effect=_fake_probe
+        ),
+        patch(
+            "cursor_bridge.electron_chat_relay.select_grok_agent_async",
+            select_grok_mock,
+        ),
+        patch(
+            "cursor_bridge.electron_chat_relay.probe_grok_after_select",
+            new_callable=AsyncMock,
+            return_value={
+                "ok": True,
+                "stale_dom": False,
+                "surface": dict(pre),
+                "verdict": dict(stale_wait_verdict),
+            },
+        ),
+        patch(
+            "cursor_bridge.electron_chat_relay.select_sidebar_target",
+            sidebar_mock,
+        ),
+        patch("cursor_bridge.electron_chat_relay.agent_paste_lock", _noop_lock),
+    ):
+        snap = await read_endpoint_turn(ep, select=True)
+
+    assert snap["ok"] is False
+    assert snap["reason"] == "composer_not_empty"
+    assert snap["active_agent_id"] == "bot-z"
+    assert snap["active_title"] == "Bot Z"
+    assert "Bot Z" in (snap.get("titles") or [])
+    sidebar_mock.assert_not_awaited()
+
+
+@pytest.mark.asyncio
 async def test_read_grok_post_wait_busy_guard_skips_reselect_click(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Any
 ) -> None:
