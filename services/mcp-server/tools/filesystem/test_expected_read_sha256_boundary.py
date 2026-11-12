@@ -7,8 +7,8 @@ from pathlib import Path
 
 import pytest
 from fastmcp import FastMCP
-
 from fs_impl import fs_impl
+
 from tools._hashing import sha256_hex_of_file
 from tools.filesystem._expected_read_sha256_boundary import (
     coerce_expected_read_sha256_for_md,
@@ -200,3 +200,48 @@ def test_coerce_unit_matching_share_uri() -> None:
     )
     assert err is None
     assert digest == "ab" * 32
+
+
+def test_markdown_tool_to_dict_dict_never_attribute_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Direct markdown MCP path must not crash on map-shaped precondition."""
+    root = tmp_path / "files"
+    root.mkdir()
+    rel = "notes/doc.md"
+    target = root / rel
+    target.parent.mkdir(parents=True)
+    target.write_text("# Title\n\nbody\n", encoding="utf-8")
+    live = sha256_hex_of_file(target)
+    md_fn = _md_registry(root, monkeypatch)
+    out = md_fn(
+        op="to_dict",
+        path=rel,
+        sandbox="cortex",
+        expected_read_sha256={rel: live},
+    )
+    assert out.get("code") == "param_not_applicable"
+    assert "AttributeError" not in str(out)
+
+
+def test_markdown_tool_read_section_matching_dict_ok(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    root = tmp_path / "files"
+    root.mkdir()
+    rel = "notes/doc.md"
+    target = root / rel
+    target.parent.mkdir(parents=True)
+    target.write_text("# Title\n\nbody\n", encoding="utf-8")
+    live = sha256_hex_of_file(target)
+    md_fn = _md_registry(root, monkeypatch)
+    out = md_fn(
+        op="read_section",
+        path=rel,
+        sandbox="cortex",
+        section="Title",
+        expected_read_sha256={rel: live},
+    )
+    assert "error" not in out, out
+    assert out.get("code") != "param_not_applicable", out
+    assert "body" in out.get("content", "")

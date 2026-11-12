@@ -37,6 +37,9 @@ from markdown_sections import (
 from mcp_events import record
 
 from tools._hashing import format_sha256_uri, sha256_hex_of_bytes
+from tools.filesystem._expected_read_sha256_boundary import (
+    coerce_expected_read_sha256_for_md,
+)
 from tools.filesystem._house_rules_rotation import rotate_house_rules_to_fit
 from tools.filesystem._write_authority import (
     RULINGS_ARCHIVE_REL,
@@ -535,7 +538,7 @@ def _pdf_section_op(
     sections: list[str] | None = None,
     export: bool = False,
     chunk_cursor: int | None = None,
-    expected_read_sha256: str = "",
+    expected_read_sha256: str | dict[str, str] = "",
 ) -> dict[str, Any]:
     """List/read PDF sections via the outline-driven (TOC) navigator."""
     if not resolved.exists():
@@ -552,7 +555,15 @@ def _pdf_section_op(
             )
             return {"path": path, "sandbox": sandbox, **listing}
         if op == "to_dict":
-            if expected_read_sha256.strip():
+            exp_scalar, exp_err = coerce_expected_read_sha256_for_md(
+                op="md_to_dict",
+                expected=expected_read_sha256,
+                path=path,
+                sandbox=sandbox,
+            )
+            if exp_err is not None:
+                return exp_err
+            if exp_scalar.strip():
                 return param_not_applicable_error(parameter="expected_read_sha256")
             listing = list_pdf_sections(resolved)
             read_sha256 = _read_sha256_for_file(resolved)
@@ -632,7 +643,7 @@ def register_markdown_tools(mcp: FastMCP) -> None:
         sections: list[str] | None = None,
         export: bool = False,
         chunk_cursor: int | None = None,
-        expected_read_sha256: str = "",
+        expected_read_sha256: str | dict[str, str] = "",
     ) -> dict[str, Any]:
         """Section-level markdown: list/read/replace/append/insert/delete/to_dict/from_dict.
 
@@ -675,6 +686,18 @@ def register_markdown_tools(mcp: FastMCP) -> None:
         except ValueError as e:
             return {"error": str(e)}
 
+        coerced_expected_read_sha256 = expected_read_sha256
+        if op in ("read_section", "to_dict"):
+            fs_op = "md_read" if op == "read_section" else "md_to_dict"
+            coerced_expected_read_sha256, exp_err = coerce_expected_read_sha256_for_md(
+                op=fs_op,
+                expected=expected_read_sha256,
+                path=path,
+                sandbox=sandbox,
+            )
+            if exp_err is not None:
+                return exp_err
+
         if (
             op in ("list_sections", "read_section", "to_dict")
             and resolved.suffix.lower() == ".pdf"
@@ -688,7 +711,7 @@ def register_markdown_tools(mcp: FastMCP) -> None:
                 sections=sections,
                 export=export,
                 chunk_cursor=chunk_cursor,
-                expected_read_sha256=expected_read_sha256,
+                expected_read_sha256=coerced_expected_read_sha256,
             )
 
         if op in ("list_sections", "read_section", "to_dict"):
@@ -739,7 +762,7 @@ def register_markdown_tools(mcp: FastMCP) -> None:
                     export=export,
                     chunk_cursor=chunk_cursor,
                     chunk_cursor_provided=chunk_cursor is not None,
-                    expected_read_sha256=expected_read_sha256 or None,
+                    expected_read_sha256=coerced_expected_read_sha256 or None,
                 )
                 if "code" in result:
                     return result
@@ -761,7 +784,15 @@ def register_markdown_tools(mcp: FastMCP) -> None:
                 return sparse_selector_conflict_error(
                     "sections is only valid for read_section / md_read"
                 )
-            if expected_read_sha256.strip():
+            exp_scalar, exp_err = coerce_expected_read_sha256_for_md(
+                op="md_to_dict",
+                expected=expected_read_sha256,
+                path=path,
+                sandbox=sandbox,
+            )
+            if exp_err is not None:
+                return exp_err
+            if exp_scalar.strip():
                 return param_not_applicable_error(parameter="expected_read_sha256")
             try:
                 data = sections_to_dict(text)

@@ -7,7 +7,7 @@ from typing import Any
 from tools._file_helpers import _path_match_keys
 from tools._sparse_document_read import param_not_applicable_error
 
-_MD_OPS_REJECT_MAP = frozenset({"md_to_dict"})
+_MD_OPS_REJECT_MAP = frozenset({"md_to_dict", "to_dict"})
 
 
 def _path_lookup_aliases(path: str, sandbox: str) -> set[str]:
