@@ -26,37 +26,42 @@ async def test_hidden_agent_cdp_select_before_sidebar() -> None:
             "web_socket_debugger_url": "ws://127.0.0.1:9339/devtools/page/1",
         }
     ]
-    surfaces = [
-        {
-            "state": "chat_list",
-            "active_title": "Other",
-            "active_agent_id": "other",
-            "titles": ["Other"],
-            "agent_ids": {"other": "Other"},
-            "composer_draft": "",
-            "generating": False,
-            "recent_messages": ["ok"],
-        },
-        {
-            "state": "chat_list",
-            "active_title": "Hidden",
-            "active_agent_id": "hidden-uuid",
-            "titles": ["Hidden"],
-            "agent_ids": {"hidden-uuid": "Hidden"},
-            "composer_draft": "",
-            "generating": False,
-            "recent_messages": ["latest"],
-        },
-    ]
+    initial = {
+        "state": "chat_list",
+        "active_title": "Other",
+        "active_agent_id": "other",
+        "titles": ["Other"],
+        "agent_ids": {"other": "Other"},
+        "composer_draft": "",
+        "generating": False,
+        "recent_messages": ["ok"],
+    }
+    selected = {
+        "state": "chat_list",
+        "active_title": "Hidden",
+        "active_agent_id": "hidden-uuid",
+        "titles": ["Hidden"],
+        "agent_ids": {"hidden-uuid": "Hidden"},
+        "composer_draft": "",
+        "generating": False,
+        "recent_messages": ["latest"],
+    }
+    surfaces = [dict(initial), dict(initial), dict(selected)]
 
     async def _probe(_ws: str) -> dict[str, Any]:
-        return surfaces.pop(0)
+        if len(surfaces) > 1:
+            return surfaces.pop(0)
+        return dict(surfaces[0])
 
     sidebar = AsyncMock(return_value={"clicked": True})
 
     with (
         patch("cursor_bridge.electron_chat_relay.list_pages", return_value=pages),
         patch("cursor_bridge.electron_chat_relay.probe_surface", side_effect=_probe),
+        patch(
+            "cursor_bridge.electron_chat_grok_wait.probe_surface",
+            side_effect=_probe,
+        ),
         patch(
             "cursor_bridge.electron_chat_relay.select_grok_agent_async",
             new_callable=AsyncMock,

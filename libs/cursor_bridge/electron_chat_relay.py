@@ -279,11 +279,19 @@ async def _resolve_and_select_endpoint(
                     "titles": verdict.get("titles"),
                 }
             prior_fp = messages_fingerprint(surface) if app == "grok" else ""
-            prior_generating = bool(surface.get("generating")) if app == "grok" else False
+            prior_generating = (
+                bool(surface.get("generating")) if app == "grok" else False
+            )
             if app == "grok" and grok_agent:
                 cdp_pick = await select_grok_agent_async(disp, grok_agent)
                 if cdp_pick.get("ok"):
                     selected = True
+                elif not verdict.get("ok"):
+                    click_res = await select_sidebar_target(
+                        ws_url,
+                        expected_title=str(verdict.get("expected_title") or ""),
+                        expected_agent_id=str(verdict.get("expected_agent_id") or ""),
+                    )
             elif verdict.get("ok"):
                 click_res = {"clicked": False}
             else:

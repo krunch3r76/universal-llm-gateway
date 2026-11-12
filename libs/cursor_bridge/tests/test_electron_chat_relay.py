@@ -541,6 +541,73 @@ async def test_reselect_reacquires_display_switch_lock(
 
 
 @pytest.mark.asyncio
+async def test_grok_cdp_select_failure_falls_back_to_sidebar_click(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Break: failed roster CDP select must still sidebar-click under display_switch_lock."""
+    monkeypatch.setenv("ULG_SUPERVISION_GATE_MODE", "off")
+    ep = ElectronEndpoint(
+        label="gc2",
+        app="grok",
+        display="10",
+        title="Bot Y",
+        agent_id="bot-y",
+    )
+    pages = [{"title": "Grok Bot", "web_socket_debugger_url": "ws://fake"}]
+    baseline = _raw_probe(
+        active_agent_id="bot-x",
+        active_title="Bot X",
+        titles=["Bot X", "Bot Y"],
+        recent_messages=["line"],
+        generating=False,
+        has_active_chat=True,
+        agent_ids={"bot-x": "Bot X", "bot-y": "Bot Y"},
+    )
+    after_click = _raw_probe(
+        active_agent_id="bot-y",
+        active_title="Bot Y",
+        titles=["Bot X", "Bot Y"],
+        recent_messages=["y prose"],
+        generating=False,
+        has_active_chat=True,
+        agent_ids={"bot-x": "Bot X", "bot-y": "Bot Y"},
+    )
+    probes = [dict(baseline), dict(baseline), dict(after_click)]
+    depths_at_sidebar: list[int] = []
+
+    async def _eval(_ws: str, expression: str, **_: Any) -> Any:
+        if "sand-message-prose" not in expression:
+            return {"labels": [], "items": []}
+        return probes.pop(0) if probes else dict(after_click)
+
+    async def _select_sidebar(*_a: Any, **_k: Any) -> dict[str, Any]:
+        depths_at_sidebar.append(_DISPLAY_SWITCH_DEPTH.get())
+        return {"clicked": True}
+
+    with (
+        patch("cursor_bridge.electron_chat_relay.list_pages", return_value=pages),
+        patch("cursor_bridge.chat_surface._evaluate_cdp_js", side_effect=_eval),
+        patch(
+            "cursor_bridge.electron_chat_relay.select_grok_agent_async",
+            new_callable=AsyncMock,
+            return_value={"ok": False, "reason": "cdp_select_failed"},
+        ) as cdp_select,
+        patch(
+            "cursor_bridge.electron_chat_relay.select_sidebar_target",
+            side_effect=_select_sidebar,
+        ) as sidebar,
+        patch("cursor_bridge.electron_chat_relay.agent_paste_lock", _noop_lock),
+    ):
+        snap = await read_endpoint_turn(ep, select=True)
+
+    cdp_select.assert_awaited_once()
+    sidebar.assert_awaited_once()
+    assert depths_at_sidebar == [1]
+    assert snap["ok"] is True
+    assert snap["active_agent_id"] == "bot-y"
+
+
+@pytest.mark.asyncio
 async def test_read_grok_empty_dom_ok_after_select() -> None:
     ep = ElectronEndpoint(
         label="gc2",
