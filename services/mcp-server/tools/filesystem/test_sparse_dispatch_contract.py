@@ -224,7 +224,7 @@ def test_read_multi_export_stops_later_paths(tmp_path: Path) -> None:
 
 
 def test_byte_ceiling_boundary_and_over(tmp_path: Path) -> None:
-    from tools._sparse_document_read import (
+    from tools._sparse_payload_envelope import (
         SPARSE_MAX_CONTENT_BYTES,
         finalize_sparse_document_payload,
     )

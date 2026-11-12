@@ -11,7 +11,7 @@ from fastmcp import FastMCP
 from fastmcp.tools.base import ToolResult
 from mcp.types import CallToolRequestParams
 from response_size_guard import ResponseSizeGuard, _node_is_sparse_document_payload
-from tools._sparse_document_read import SPARSE_POLICY_SLICE1
+from tools._sparse_payload_envelope import SPARSE_POLICY_SLICE1
 from tools.markdown_tool import register_markdown_tools
 
 pytestmark = pytest.mark.offline
@@ -180,7 +180,7 @@ def test_large_nondocument_read_multi_is_externalized(
     import re
 
     from response_size_guard import _store, _threshold_for_profile
-    from tools._sparse_document_read import SPARSE_POLICY_SLICE1
+    from tools._sparse_payload_envelope import SPARSE_POLICY_SLICE1
 
     projects = tmp_path / "projects"
     folder = projects / "universal-llm-gateway/notes"
@@ -237,7 +237,7 @@ def test_bounded_document_read_multi_still_passes_through(
 ) -> None:
     """Two small documents keep the inline sparse payload and store nothing."""
     from response_size_guard import _store
-    from tools._sparse_document_read import SPARSE_POLICY_SLICE1
+    from tools._sparse_payload_envelope import SPARSE_POLICY_SLICE1
 
     projects = tmp_path / "projects"
     folder = projects / "universal-llm-gateway/notes"
