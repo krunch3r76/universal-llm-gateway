@@ -558,7 +558,10 @@ def _lanes_missing_open_ledger_seat(
     """Lanes with CSE association or GIW holder but no open ledger seat."""
     missing: set[str] = set()
     cse_rows = conn.execute(
-        "SELECT DISTINCT thread_id FROM thread_cse_associations"
+        "SELECT DISTINCT tca.thread_id AS thread_id "
+        "FROM thread_cse_associations tca "
+        "INNER JOIN threads t ON t.id = tca.thread_id "
+        "WHERE t.status != 'closed'"
     ).fetchall()
     for row in cse_rows:
         tid = str(row["thread_id"])
@@ -566,8 +569,18 @@ def _lanes_missing_open_ledger_seat(
             missing.add(tid)
     if giw_probe == "ok":
         for lane, holder in giw_by_lane.items():
-            if holder and lane not in open_thread_ids:
-                missing.add(lane)
+            if not holder or lane in open_thread_ids:
+                continue
+            thread_row = conn.execute(
+                "SELECT status FROM threads WHERE id = ?",
+                (lane,),
+            ).fetchone()
+            if thread_row is None:
+                # GIW may list lanes absent from bus DB — not countable drift here.
+                continue
+            if str(thread_row["status"]) == "closed":
+                continue
+            missing.add(lane)
     return len(missing)
 
 
@@ -649,7 +662,9 @@ def seat_drift_summary() -> dict[str, Any]:
         for seat in open_rows:
             tid = str(seat["thread_id"])
             holder = giw_by_lane.get(tid)
-            giw_url, giw_chat_id = giw_holder_chat(holder)
+            giw_url, giw_chat_id = giw_holder_chat(
+                holder, registry_active=registry_active
+            )
             if not ledger_matches_chat(
                 seat_chat_url=seat.get("chat_url"),
                 seat_chat_id=seat.get("chat_id"),

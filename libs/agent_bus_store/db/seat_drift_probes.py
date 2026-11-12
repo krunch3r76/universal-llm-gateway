@@ -73,65 +73,70 @@ def _normalize_holder_row(holder: dict[str, Any]) -> dict[str, Any]:
     return out
 
 
+def _cse_holder_replaces_incumbent(
+    incumbent: dict[str, Any], candidate: dict[str, Any]
+) -> bool:
+    """Prefer ``driving`` over ``dormant``; otherwise latest ``bound_at``."""
+    new_state = str(candidate.get("seat_state") or "")
+    old_state = str(incumbent.get("seat_state") or "")
+    if new_state == "driving" and old_state != "driving":
+        return True
+    if old_state == "driving" and new_state != "driving":
+        return False
+    new_ba = str(candidate.get("bound_at") or "")
+    old_ba = str(incumbent.get("bound_at") or "")
+    return new_ba >= old_ba
+
+
 def fetch_giw_holders_map(*, timeout: float = 5.0) -> tuple[str, dict[str, dict[str, Any]]]:
-    """Single GIW HTTP fetch; map lane thread id → holder row (may be partial)."""
+    """Single GIW HTTP fetch; map lane thread id → CSE holder row (may be partial)."""
+    del timeout  # single fetch path; timeout lives on the HTTP client
     try:
-        from bus_watch.roster import (
-            _holders_from_active_work,
-            fetch_giw_active_work_payload,
-        )
+        from bus_watch.roster import fetch_giw_active_work_payload
 
         payload = fetch_giw_active_work_payload()
         if payload is None:
             return "unavailable", {}
+        raw = payload.get("cse_holders")
+        if not isinstance(raw, list):
+            return "ok", {}
         by_lane: dict[str, dict[str, Any]] = {}
-        for holder in _holders_from_active_work(payload):
+        for holder in raw:
+            if not isinstance(holder, dict):
+                continue
             lane = _holder_lane_key(holder)
-            if lane:
-                by_lane[lane] = _normalize_holder_row(holder)
+            if not lane:
+                continue
+            normalized = _normalize_holder_row(holder)
+            existing = by_lane.get(lane)
+            if existing is None or _cse_holder_replaces_incumbent(existing, holder):
+                by_lane[lane] = normalized
         return "ok", by_lane
     except Exception:
         logger.debug("giw holders map unavailable", exc_info=True)
         return "unavailable", {}
 
 
-def probe_giw_holder(lane_thread_id: str, *, timeout: float = 5.0) -> tuple[str, dict[str, Any] | None]:
-    """Return (probe_status, holder) where status is ``ok`` or ``unavailable``."""
-    try:
-        from giw_endpoint import git_integration_worker_base_url
-        from transport_utils import make_sync_client
-
-        base = git_integration_worker_base_url()
-        with make_sync_client(base, timeout=timeout) as client:
-            response = client.get(
-                "/api/v1/git/admin/cse-holders",
-                params={"lane_thread_id": lane_thread_id},
-            )
-        response.raise_for_status()
-        payload = response.json()
-        holder = payload.get("holder") if isinstance(payload, dict) else None
-        if holder is not None and not isinstance(holder, dict):
-            holder = None
-        return "ok", holder
-    except Exception:
-        logger.debug(
-            "giw holder probe unavailable lane_thread_id=%s",
-            lane_thread_id,
-            exc_info=True,
-        )
-        return "unavailable", None
-
-
-def giw_holder_chat(holder: dict[str, Any] | None) -> tuple[str | None, str | None]:
+def giw_holder_chat(
+    holder: dict[str, Any] | None,
+    *,
+    registry_active: dict[str, dict[str, Any]] | None = None,
+) -> tuple[str | None, str | None]:
     if not holder:
         return None, None
     url = _normalize_chat_url(holder.get("chat_url"))
     chat_id = cse_id_from_url(url or "") or None
     reg = str(holder.get("registration_id") or "").strip() or None
     if url is None and reg:
-        url = _normalize_chat_url(chat_url_for_registration(reg))
-        if url:
-            chat_id = cse_id_from_url(url) or chat_id
+        if registry_active is not None:
+            _status, reg_url, reg_chat_id = registry_chat_from_active(registry_active, reg)
+            url = reg_url
+            if reg_chat_id:
+                chat_id = reg_chat_id
+        else:
+            url = _normalize_chat_url(chat_url_for_registration(reg))
+            if url:
+                chat_id = cse_id_from_url(url) or chat_id
     return url, chat_id
 
 

@@ -329,14 +329,7 @@ def test_seats_drift_counts_lane_with_cse_or_giw_holder_and_no_open_ledger_seat(
             cse_registration_id="reg-closed",
         )
 
-    cur = current_seat(thread_id=tid_cse_closed)
-    transition_seat(
-        thread_id=tid_cse_closed,
-        transition="close",
-        expected_epoch=int(cur["epoch"]),
-        actor="test",
-        request_id="close-for-missing",
-    )
+    close_thread(tid_cse_closed, mark_all_read=True)
 
     giw_map = {
         tid_giw_only: {"chat_url": _URL_A, "registration_id": "reg-giw"},
@@ -349,8 +342,237 @@ def test_seats_drift_counts_lane_with_cse_or_giw_holder_and_no_open_ledger_seat(
     ):
         summary = seat_drift_summary()
 
-    assert summary["ledger_missing_count"] == 2
+    assert summary["ledger_missing_count"] == 1
     assert summary["open_seat_count"] >= 1
+
+
+def _active_work_cse_payload(
+    *,
+    lane_a: str,
+    lane_b: str,
+    driving_url: str = _URL_A,
+    dormant_url: str = _URL_B,
+    cursor_lane: str,
+) -> dict:
+    return {
+        "active_count": 2,
+        "active_ops": {
+            cursor_lane: {
+                "op": "cursor_sdk_generate",
+                "thread_id": cursor_lane,
+                "holder_lane": cursor_lane,
+            }
+        },
+        "cse_holders": [
+            {
+                "kind": "cowork_cse",
+                "lane_thread_id": lane_a,
+                "seat_state": "dormant",
+                "chat_url": dormant_url,
+                "bound_at": "2026-01-01T00:00:00Z",
+            },
+            {
+                "kind": "cowork_cse",
+                "lane_thread_id": lane_a,
+                "seat_state": "driving",
+                "chat_url": driving_url,
+                "registration_id": "reg-driving",
+                "bound_at": "2026-01-02T00:00:00Z",
+            },
+            {
+                "kind": "cowork_cse",
+                "lane_thread_id": lane_b,
+                "seat_state": "driving",
+                "chat_url": driving_url,
+                "registration_id": "reg-b",
+                "bound_at": "2026-01-03T00:00:00Z",
+            },
+        ],
+        "running": [],
+    }
+
+
+def test_fetch_giw_holders_map_from_cse_holders_only(bus_client: TestClient) -> None:
+    lane_a = _lane(bus_client, "giw-map-a")
+    lane_b = _lane(bus_client, "giw-map-b")
+    cursor_lane = _lane(bus_client, "giw-map-cursor")
+    body = _active_work_cse_payload(lane_a=lane_a, lane_b=lane_b, cursor_lane=cursor_lane)
+    with patch(
+        "bus_watch.roster.fetch_giw_active_work_payload",
+        return_value=body,
+    ):
+        from agent_bus_store.db.seat_drift_probes import fetch_giw_holders_map
+
+        status, by_lane = fetch_giw_holders_map()
+    assert status == "ok"
+    assert cursor_lane not in by_lane
+    assert by_lane[lane_a]["chat_url"] == _URL_A
+    assert by_lane[lane_b]["chat_url"] == _URL_A
+
+
+def test_drift_giw_zero_when_active_work_matches_driving_holder(
+    bus_client: TestClient,
+) -> None:
+    lane_a = _lane(bus_client, "giw-agree-a")
+    lane_b = _lane(bus_client, "giw-agree-b")
+    cursor_lane = _lane(bus_client, "giw-agree-cursor")
+    bus_client.post(
+        f"/threads/{lane_a}/seat",
+        json={
+            "transition": "birth",
+            "chat_url": _URL_A,
+            "actor": "test",
+            "request_id": "giw-agree-birth-a",
+        },
+    )
+    bus_client.post(
+        f"/threads/{lane_b}/seat",
+        json={
+            "transition": "birth",
+            "chat_url": _URL_B,
+            "actor": "test",
+            "request_id": "giw-agree-birth-b",
+        },
+    )
+    body = _active_work_cse_payload(
+        lane_a=lane_a,
+        lane_b=lane_b,
+        driving_url=_URL_A,
+        dormant_url=_URL_B,
+        cursor_lane=cursor_lane,
+    )
+    body["cse_holders"][-1]["chat_url"] = _URL_B
+    with patch(
+        "bus_watch.roster.fetch_giw_active_work_payload",
+        return_value=body,
+    ):
+        summary = seat_drift_summary()
+    assert summary["giw_holder_mismatch_count"] == 0
+
+    body["cse_holders"][1]["chat_url"] = _URL_B
+    with patch(
+        "bus_watch.roster.fetch_giw_active_work_payload",
+        return_value=body,
+    ):
+        mismatch = seat_drift_summary()
+    assert mismatch["giw_holder_mismatch_count"] == 1
+
+
+def test_closed_lane_not_in_ledger_missing_count(bus_client: TestClient) -> None:
+    tid = _lane(bus_client, "ledger-missing-closed")
+    with patch("agent_bus_store.db.cse_associations.emit_cse_bound"):
+        associate_cse(
+            thread_id=tid,
+            cse_chat_url=_URL_A,
+            cse_registration_id="reg-closed-missing",
+        )
+    close_thread(tid, mark_all_read=True)
+    summary = seat_drift_summary()
+    assert summary["ledger_missing_count"] == 0
+
+
+def test_open_lane_association_without_ledger_seat_still_missing(
+    bus_client: TestClient,
+) -> None:
+    tid = _lane(bus_client, "ledger-missing-open-no-seat")
+    with patch("agent_bus_store.db.cse_associations.emit_cse_bound"):
+        associate_cse(
+            thread_id=tid,
+            cse_chat_url=_URL_A,
+            cse_registration_id="reg-open-no-seat",
+        )
+    cur = current_seat(thread_id=tid)
+    transition_seat(
+        thread_id=tid,
+        transition="close",
+        expected_epoch=int(cur["epoch"]),
+        actor="test",
+        request_id="close-open-no-ledger-seat",
+    )
+    summary = seat_drift_summary()
+    assert summary["ledger_missing_count"] == 1
+
+
+def test_reopen_idempotent_first_turn_fires_shadow_ledger_hook(
+    bus_client: TestClient,
+) -> None:
+    tid = _lane(bus_client, "reopen-idem-hook")
+    insert_turn(
+        thread=tid,
+        from_agent="cursor-auto",
+        to_agent="web-anthropic",
+        subject="seed",
+        body="turn one",
+        idempotent_first_turn=True,
+    )
+    with patch("agent_bus_store.db.cse_associations.emit_cse_bound"):
+        associate_cse(
+            thread_id=tid,
+            cse_chat_url=_URL_A,
+            cse_registration_id="reg-idem",
+        )
+    close_thread(tid, mark_all_read=True)
+    assert current_seat(thread_id=tid)["state"] == "closed"
+
+    insert_turn(
+        thread=tid,
+        from_agent="cursor-auto",
+        to_agent="web-anthropic",
+        subject="seed",
+        body="turn one",
+        idempotent_first_turn=True,
+    )
+    reopened = current_seat(thread_id=tid)
+    assert reopened["state"] == "open"
+    assert reopened["chat_url"] == _URL_A
+
+
+def test_drift_agreement_all_probes_zero(bus_client: TestClient) -> None:
+    open_tid = _lane(bus_client, "agree-open")
+    closed_tid = _lane(bus_client, "agree-closed")
+    with patch("agent_bus_store.db.cse_associations.emit_cse_bound"):
+        associate_cse(
+            thread_id=open_tid,
+            cse_chat_url=_URL_A,
+            cse_registration_id="reg-agree-open",
+        )
+        associate_cse(
+            thread_id=closed_tid,
+            cse_chat_url=_URL_B,
+            cse_registration_id="reg-agree-closed",
+        )
+    close_thread(closed_tid, mark_all_read=True)
+
+    active = {
+        "reg-agree-open": {"chat_url": _URL_A},
+    }
+    body = _active_work_cse_payload(
+        lane_a=open_tid,
+        lane_b="999999",
+        driving_url=_URL_A,
+        dormant_url=_URL_B,
+        cursor_lane=open_tid,
+    )
+    body["cse_holders"] = [
+        h for h in body["cse_holders"] if h.get("lane_thread_id") == open_tid
+    ]
+
+    with (
+        patch(
+            "bus_watch.roster.fetch_giw_active_work_payload",
+            return_value=body,
+        ),
+        patch(
+            "agent_bus_store.db.seat_drift_probes.load_registry_active",
+            return_value=active,
+        ),
+    ):
+        summary = seat_drift_summary()
+
+    assert summary["giw_holder_mismatch_count"] == 0
+    assert summary["ledger_missing_count"] == 0
+    assert summary["cse_association_mismatch_count"] == 0
+    assert summary["registry_mismatch_count"] == 0
 
 
 def test_reopen_closed_thread_restores_or_births_open_ledger_seat(
@@ -468,15 +690,23 @@ def test_seats_drift_fetches_giw_holders_once_and_loads_registry_once(
     def _fake_giw(*_a, **_k):
         nonlocal giw_calls
         giw_calls += 1
-        return (
-            "ok",
-            {tid: {"chat_url": _URL_A, "registration_id": "reg-x"} for tid in tids},
-        )
+        by_lane = {
+            tid: {"chat_url": _URL_A, "registration_id": f"reg-{tid}"} for tid in tids
+        }
+        by_lane[tids[1]] = {"registration_id": f"reg-{tids[1]}"}
+        return "ok", by_lane
 
     def _fake_registry():
         nonlocal registry_loads
         registry_loads += 1
-        return {}
+        return {f"reg-{tid}": {"chat_url": _URL_A} for tid in tids}
+
+    chat_url_loads = 0
+
+    def _counting_chat_url(*_a, **_k):
+        nonlocal chat_url_loads
+        chat_url_loads += 1
+        return _URL_A
 
     with (
         patch(
@@ -487,9 +717,15 @@ def test_seats_drift_fetches_giw_holders_once_and_loads_registry_once(
             "agent_bus_store.db.seat_drift_probes.load_registry_active",
             side_effect=_fake_registry,
         ),
+        patch(
+            "agent_bus_store.db.seat_drift_probes.chat_url_for_registration",
+            side_effect=_counting_chat_url,
+        ),
     ):
         resp = bus_client.get("/seats/drift")
 
     assert resp.status_code == 200
     assert giw_calls == 1
     assert registry_loads == 1
+    assert chat_url_loads == 0
+    assert resp.json()["giw_holder_mismatch_count"] == 0
