@@ -142,6 +142,49 @@ def test_fenced_canonical_verdict_not_collapsed_with_unfenced() -> None:
     assert body.count(_CANON) == 2
 
 
+def test_c5_pointer_only_whole_body_within_budget_with_metadata(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def _sidecar(**kwargs: object) -> object:
+        class _Side:
+            uri = "cortex://notes/harvest.txt"
+            sha256 = "d" * 64
+            body_chars = 3
+
+        return _Side()
+
+    monkeypatch.setattr(
+        "systems.frontier_consult.cdp_onbehalf_delivery.write_cdp_harvest_sidecar",
+        _sidecar,
+    )
+    meta = "\n".join(
+        f"- meta_line_{i}: `{i}`" for i in range(30)
+    )
+    result = CdpGenerateResult(
+        ok=True,
+        body="short harvest",
+        execution_id="exec-c5",
+        satellite_execution_id="sat-c5",
+        prompt_uri="cortex://notes/prompt.txt",
+        picker_model="opus",
+        archive_uri="cortex://notes/arch.md",
+        content_proof_uri="cortex://notes/proof.md",
+    )
+    body = asyncio.run(
+        build_cdp_success_delivery_body(
+            result=result,
+            thread_id="15791",
+            subject="cdp — exec-c5",
+            format_metadata=f"# CDP generate result\n{meta}",
+            pointer_only=True,
+        )
+    )
+    assert body is not None
+    assert len(body) <= 2000
+    assert "meta_line_0" in body
+    assert "satellite_execution_id" in body
+
+
 def test_default_compact_cdp_delivery_omits_harvest(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

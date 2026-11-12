@@ -47,6 +47,31 @@ def test_compact_overflow_sha256_matches_overflow_without_sidecar_load() -> None
     assert match.group(1) == digest
 
 
+def test_c6_coalesced_multi_memo_sha_matches_overflow_ref() -> None:
+    overflow = "joined overflow bytes\n"
+    body = compact_overflow_bus_body(
+        memo=_memo(),
+        overflow_markdown=overflow,
+        coalesced_count=3,
+    )
+    digest = hashlib.sha256(overflow.encode("utf-8")).hexdigest()
+    match = re.search(r"sha256: `([0-9a-f]{64})`", body)
+    assert match is not None
+    assert match.group(1) == digest
+    assert "cortex://notes/closeout/h.md" not in body
+    assert "agent-bus:23222#closeout-overflow" in body
+
+
+def test_w1_no_cortex_cite_without_sidecar_markdown() -> None:
+    overflow = "overflow-only"
+    body = compact_overflow_bus_body(memo=_memo(), overflow_markdown=overflow)
+    assert "cortex://notes/closeout/h.md" not in body
+    digest = hashlib.sha256(overflow.encode("utf-8")).hexdigest()
+    match = re.search(r"sha256: `([0-9a-f]{64})`", body)
+    assert match is not None
+    assert match.group(1) == digest
+
+
 def test_compact_overflow_uses_cortex_uri_when_sidecar_markdown_supplied() -> None:
     overflow = "overflow-only"
     stored = "## real closeout\n\nbytes at cortex\n"

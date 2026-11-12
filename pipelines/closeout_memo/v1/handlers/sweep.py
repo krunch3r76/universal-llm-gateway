@@ -43,7 +43,11 @@ async def _post_overflow(wake_lane: str, memo_ids: list[str], overflow: str) -> 
     row = _ledger.load(memo_ids[0])
     if row is not None:
         memo = CloseoutMemoRequest.model_validate(json.loads(row["payload_json"]))
-        body = compact_overflow_bus_body(memo=memo, overflow_markdown=text)
+        body = compact_overflow_bus_body(
+            memo=memo,
+            overflow_markdown=text,
+            coalesced_count=len(memo_ids),
+        )
     await _transport.post_bus_turn(
         wake_lane=wake_lane,
         subject=f"closeout memo — overflow {memo_ids[0][:8]}",

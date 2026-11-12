@@ -88,6 +88,10 @@ def extract_pointer_summary(content: str, *, max_chars: int = 300) -> str | None
     return out[:max_chars].rstrip()
 
 
+def _metadata_protected_lines(format_metadata: str) -> list[str]:
+    return [ln.strip() for ln in format_metadata.splitlines() if ln.strip()]
+
+
 def build_relocation_pointer(
     result: CdpGenerateResult,
     *,
@@ -96,10 +100,12 @@ def build_relocation_pointer(
     body_chars: int,
     summary: str | None,
     sidecar_markdown: str | None = None,
+    format_metadata: str = "",
 ) -> str:
     """Compact bus turn body citing durable harvest archive."""
     text = sidecar_markdown or ""
     section_map, hidden = build_section_map(text) if text else ([], 0)
+    original_rows = len(section_map) + hidden
     tail: str | None = None
     if hidden:
         rel = sidecar_uri.removeprefix("cortex://")
@@ -116,11 +122,16 @@ def build_relocation_pointer(
     return compact_pointer_body(
         verdict=verdict,
         execution_id=result.execution_id,
+        satellite_execution_id=result.satellite_execution_id,
+        archive_uri=result.archive_uri,
+        content_proof_uri=result.content_proof_uri,
+        protected_lines=_metadata_protected_lines(format_metadata),
         sidecar_uri=sidecar_uri,
         sidecar_sha256=sha256,
         section_map=section_map,
         context_lines=context,
         section_tail=tail,
+        section_map_source_rows=original_rows if text else 0,
     )
 
 
@@ -195,9 +206,11 @@ async def build_cdp_success_delivery_body(
         store_content = harvest
         sidecar_uri: str
         sidecar_sha: str
-        if result.archive_uri:
+        map_source = store_content
+        if result.archive_uri and result.content_proof_sha256:
             sidecar_uri = result.archive_uri
-            sidecar_sha = result.content_proof_sha256 or "unavailable"
+            sidecar_sha = result.content_proof_sha256
+            map_source = ""
         else:
             sidecar = await write_cdp_harvest_sidecar(
                 result=result,
@@ -210,35 +223,47 @@ async def build_cdp_success_delivery_body(
                 return None
             sidecar_uri = sidecar.uri
             sidecar_sha = sidecar.sha256
+            map_source = store_content
+
+        meta_lines = _metadata_protected_lines(format_metadata)
 
         if body_mode == "pointer_only":
-            pointer = build_relocation_pointer(
+            return build_relocation_pointer(
                 result,
                 sidecar_uri=sidecar_uri,
                 sha256=sidecar_sha,
                 body_chars=body_chars,
                 summary=None,
                 sidecar_markdown=None,
+                format_metadata=format_metadata,
             )
-            return f"{format_metadata}\n\n{pointer}"
 
-        section_map, hidden = build_section_map(store_content)
+        section_map, hidden = (
+            build_section_map(map_source) if map_source else ([], 0)
+        )
+        original_rows = len(section_map) + hidden
         tail: str | None = None
         if hidden:
             rel = sidecar_uri.removeprefix("cortex://")
             tail = f"+{hidden} more (md_list {rel})"
         verdict = extract_verdict_line(store_content) or "OK"
-        context = [ln.strip() for ln in format_metadata.splitlines() if ln.strip()][
-            :5
+        context = [
+            f"picker: {result.picker_model}",
+            f"harvest_chars: {body_chars}",
         ]
         pointer = compact_pointer_body(
             verdict=verdict,
             execution_id=result.execution_id,
+            satellite_execution_id=result.satellite_execution_id,
+            archive_uri=result.archive_uri,
+            content_proof_uri=result.content_proof_uri,
+            protected_lines=meta_lines,
             sidecar_uri=sidecar_uri,
             sidecar_sha256=sidecar_sha,
             section_map=section_map,
             context_lines=context,
             section_tail=tail,
+            section_map_source_rows=original_rows,
         )
         return pointer
 

@@ -16,17 +16,22 @@ def compact_overflow_bus_body(
     memo: CloseoutMemoRequest,
     overflow_markdown: str,
     sidecar_markdown: str | None = None,
+    coalesced_count: int = 1,
 ) -> str:
-    """Format overflow / fallback bus text as a compact pointer.
+    """Format overflow / fallback bus text as a compact pointer or inline body.
 
-    When ``sidecar_markdown`` is supplied with ``memo.sidecar``, the pointer cites
-    that URI and sha256 digests those bytes. Otherwise the digest covers
-    ``overflow_markdown`` and ``sidecar_ref`` cites the lane overflow spill label
-    (never ``memo.sidecar`` with a mismatched hash).
+    When ``coalesced_count`` > 1, digest covers ``overflow_markdown`` and
+    ``sidecar_ref`` cites the lane overflow spill label (never ``memo.sidecar``).
+
+    With a single memo, ``sidecar_markdown`` plus ``memo.sidecar`` binds sha to
+    cortex bytes; otherwise overflow bytes and spill label are cited.
     """
-    if memo.sidecar and sidecar_markdown is not None:
+    use_cortex = (
+        coalesced_count == 1 and memo.sidecar is not None and sidecar_markdown is not None
+    )
+    if use_cortex:
         stored_text = sidecar_markdown
-        sidecar_uri = memo.sidecar
+        sidecar_uri: str | None = memo.sidecar
     else:
         stored_text = overflow_markdown
         sidecar_uri = _overflow_sidecar_uri(memo)

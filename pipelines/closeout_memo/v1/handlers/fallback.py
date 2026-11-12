@@ -59,7 +59,11 @@ class CloseoutMemoFallbackHandler(BaseHandler):
                     json.loads(row["payload_json"])
                 )
         body = (
-            compact_overflow_bus_body(memo=memo_model, overflow_markdown=raw)
+            compact_overflow_bus_body(
+                memo=memo_model,
+                overflow_markdown=raw,
+                coalesced_count=len(memo_ids),
+            )
             if memo_model and raw
             else raw
         )

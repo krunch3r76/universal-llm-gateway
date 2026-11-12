@@ -273,7 +273,9 @@ class CloseoutMemoDeliverHandler(BaseHandler):
             if row is not None:
                 memo = CloseoutMemoRequest.model_validate(json.loads(row["payload_json"]))
                 pointer_body = compact_overflow_bus_body(
-                    memo=memo, overflow_markdown=overflow
+                    memo=memo,
+                    overflow_markdown=overflow,
+                    coalesced_count=len(memo_ids),
                 )
             await _transport.post_bus_turn(
                 wake_lane=wake_lane,

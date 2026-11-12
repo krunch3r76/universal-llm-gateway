@@ -14,7 +14,7 @@ MAX_BODY_CHARS = 2000
 TARGET_BODY_CHARS = 1500
 MAX_SECTION_ROWS = 12
 
-_VERDICT_LINE_RE = re.compile(r"(?m)^(VERDICT:[^\n]*)$")
+_VERDICT_LINE_RE = re.compile(r"(?m)^\s*(VERDICT:[^\n]*)$")
 
 
 def extract_verdict_line(text: str) -> str | None:
@@ -98,16 +98,34 @@ def _format_section_table(
     return lines
 
 
+def _recompute_section_tail(
+    *,
+    sidecar_uri: str,
+    original_row_count: int,
+    visible_rows: int,
+) -> str | None:
+    hidden = max(0, original_row_count - visible_rows)
+    if hidden <= 0:
+        return None
+    rel = sidecar_uri.removeprefix("cortex://")
+    return f"+{hidden} more (md_list {rel})"
+
+
 def compact_pointer_body(
     *,
     verdict: str,
     execution_id: str | None = None,
     dispatch_id: str | None = None,
+    satellite_execution_id: str | None = None,
+    archive_uri: str | None = None,
+    content_proof_uri: str | None = None,
+    protected_lines: list[str] | None = None,
     sidecar_uri: str,
     sidecar_sha256: str,
     section_map: list[dict[str, Any]] | None = None,
     context_lines: list[str] | None = None,
     section_tail: str | None = None,
+    section_map_source_rows: int | None = None,
     max_chars: int = MAX_BODY_CHARS,
 ) -> str:
     """YAML-ish compact bus body; truncates section rows then context first."""
@@ -120,18 +138,38 @@ def compact_pointer_body(
     ]
     if execution_id:
         header.append(f"execution_id: `{execution_id}`")
+    if satellite_execution_id:
+        header.append(f"satellite_execution_id: `{satellite_execution_id}`")
     if dispatch_id:
         header.append(f"dispatch_id: `{dispatch_id}`")
+    if archive_uri:
+        header.append(f"archive_uri: `{archive_uri}`")
+    if content_proof_uri:
+        header.append(f"content_proof_uri: `{content_proof_uri}`")
+    for line in protected_lines or []:
+        if line and line not in header:
+            header.append(line)
 
     sections = list(section_map or [])
+    original_section_rows = (
+        section_map_source_rows if section_map_source_rows is not None else len(sections)
+    )
     contexts = [ln.strip() for ln in (context_lines or []) if ln.strip()]
+    tail = section_tail
 
     def _render() -> str:
+        nonlocal tail
+        visible = len(sections)
+        tail = _recompute_section_tail(
+            sidecar_uri=sidecar_uri,
+            original_row_count=original_section_rows,
+            visible_rows=visible,
+        )
         parts = list(header)
-        if sections or section_tail:
+        if sections or tail:
             parts.append("")
             parts.extend(
-                _format_section_table(sections, tail=section_tail),
+                _format_section_table(sections, tail=tail),
             )
         if contexts:
             parts.append("")
@@ -171,11 +209,13 @@ def compact_pointer_body(
     if len(out) > max_chars:
         _shrink_verdict_header()
         out = "\n".join(header)
-    if len(out) > TARGET_BODY_CHARS and sections:
-        while len(out) > TARGET_BODY_CHARS and sections:
-            sections.pop()
-            out = _render()
     return out
+
+
+def _inline_body(text: str, *, max_chars: int = MAX_BODY_CHARS) -> str:
+    if len(text) <= max_chars:
+        return text
+    return text[: max_chars - 1] + "…"
 
 
 def format_closeout_memo_bus_body(
@@ -189,12 +229,14 @@ def format_closeout_memo_bus_body(
     sidecar_text: str,
 ) -> str:
     """Compact bus body for closeout-memo overflow / fallback posts."""
+    if not (sidecar_uri and sidecar_uri.strip()):
+        return _inline_body(sidecar_text)
     digest = hashlib.sha256(sidecar_text.encode("utf-8")).hexdigest()
-    uri = sidecar_uri or f"agent-bus:{wake_lane}#closeout"
     section_map, hidden = build_section_map(sidecar_text)
+    original_rows = len(section_map) + hidden
     tail: str | None = None
     if hidden:
-        rel = uri.removeprefix("cortex://")
+        rel = sidecar_uri.removeprefix("cortex://")
         tail = f"+{hidden} more (md_list {rel})"
     context = [
         f"lane: {wake_lane}",
@@ -204,9 +246,10 @@ def format_closeout_memo_bus_body(
         verdict=f"CLOSEOUT {memo_status.upper()}",
         execution_id=execution_id,
         dispatch_id=dispatch_id,
-        sidecar_uri=uri,
+        sidecar_uri=sidecar_uri,
         sidecar_sha256=digest,
         section_map=section_map,
         context_lines=context,
         section_tail=tail,
+        section_map_source_rows=original_rows,
     )

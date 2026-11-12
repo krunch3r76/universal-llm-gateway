@@ -398,6 +398,91 @@ async def test_deliver_under_limit_inline_unchanged(
 
 
 @pytest.mark.asyncio
+async def test_c3_archive_without_sha_writes_sidecar_not_unavailable(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from systems.frontier_consult import cdp_onbehalf_delivery as delivery
+    from systems.frontier_consult.cdp_onbehalf_delivery import SidecarResult
+
+    sidecar_calls: list[dict[str, object]] = []
+
+    async def fake_sidecar(**kwargs: object) -> SidecarResult:
+        sidecar_calls.append(dict(kwargs))
+        return SidecarResult(
+            uri="cortex://notes/system/threads/arch-fallback.md",
+            sha256="f" * 64,
+            body_chars=10,
+        )
+
+    monkeypatch.setattr(delivery, "write_cdp_harvest_sidecar", fake_sidecar)
+
+    huge = "z" * 170_000
+    result = CdpGenerateResult(
+        ok=True,
+        body=huge,
+        execution_id="c3exec123456789",
+        satellite_execution_id="sat-1",
+        prompt_uri="cortex://notes/prompt.md",
+        picker_model="fable-5",
+        archive_uri="cortex://notes/system/threads/cdp-archive.md",
+        content_proof_sha256=None,
+    )
+    body = await delivery.build_cdp_success_delivery_body(
+        result=result,
+        thread_id="9901",
+        subject="cdp reply — c3",
+        format_metadata=format_cdp_result_body(result),
+        body_mode="compact",
+    )
+    assert body is not None
+    assert len(sidecar_calls) == 1
+    assert f"sha256: `{('f' * 64)}`" in body
+    assert "cortex://notes/system/threads/arch-fallback.md" in body
+
+
+@pytest.mark.asyncio
+async def test_c3_archive_pointer_skips_harvest_section_map(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from systems.frontier_consult import cdp_onbehalf_delivery as delivery
+
+    async def fake_sidecar(**kwargs: object) -> None:
+        raise AssertionError("sidecar write must not run when archive+sha present")
+
+    monkeypatch.setattr(delivery, "write_cdp_harvest_sidecar", fake_sidecar)
+
+    harvest = "## findings\n\nLine.\n## verdict\n\nVERDICT: APPROVE\n"
+    result = CdpGenerateResult(
+        ok=True,
+        body=harvest,
+        execution_id="c3bexec12345678",
+        satellite_execution_id="sat-1",
+        prompt_uri="cortex://notes/prompt.md",
+        picker_model="fable-5",
+        archive_uri="cortex://notes/system/threads/cdp-archive.md",
+        content_proof_sha256="a" * 64,
+    )
+    body = await delivery.build_cdp_success_delivery_body(
+        result=result,
+        thread_id="9902",
+        subject="cdp reply — c3b",
+        format_metadata=format_cdp_result_body(result),
+        body_mode="compact",
+    )
+    assert body is not None
+    assert "## sections" not in body
+    assert "cortex://notes/system/threads/cdp-archive.md" in body
+
+
+@pytest.mark.asyncio
+async def test_c7_deliver_sidecar_write_none_posts_delivery_failed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """C7 — write_cdp_harvest_sidecar -> None -> DELIVERY FAILED terminal."""
+    await test_deliver_oversized_sidecar_fail_terminal(monkeypatch)
+
+
+@pytest.mark.asyncio
 async def test_deliver_oversized_sidecar_fail_terminal(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
