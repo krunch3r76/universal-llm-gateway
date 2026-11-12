@@ -26,6 +26,38 @@ from systems.frontier_consult.cdp_generate_worker import (
     format_onbehalf_delivery_failed_body,
 )
 
+_TEST_CALLER = "cursor-sdk-test-harness"
+_TEST_WORK_KEY = "friction:cdp-generate-test"
+
+
+@pytest.fixture(autouse=True)
+def _cdp_generate_admit_test_defaults(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Hermetic admits in this module carry a mailbox and review work_key."""
+    from claude_bundles.sealed_cdp_prefix import REVIEW_CLASS_CONTRACTS
+
+    import systems.frontier_consult.cdp_admit_identity as ident
+    import systems.frontier_consult.cdp_generate as gen
+
+    orig_caller = ident.require_cdp_caller_agent
+    orig_work_key = ident.require_cdp_review_work_key
+
+    def _caller(body: Any, *, request_id: str) -> str:
+        if not ident.is_valid_cdp_caller_agent(getattr(body, "caller_agent", None)):
+            body.caller_agent = _TEST_CALLER
+        return orig_caller(body, request_id=request_id)
+
+    def _work_key(body: Any, contract: str | None, *, request_id: str) -> None:
+        key = (contract or "").strip().lower()
+        if key in REVIEW_CLASS_CONTRACTS and not str(
+            getattr(body, "work_key", "") or ""
+        ).strip():
+            body.work_key = _TEST_WORK_KEY
+        return orig_work_key(body, contract, request_id=request_id)
+
+    for target in (ident, gen):
+        monkeypatch.setattr(target, "require_cdp_caller_agent", _caller)
+        monkeypatch.setattr(target, "require_cdp_review_work_key", _work_key)
+
 
 def test_is_cdp_model() -> None:
     assert is_cdp_model("cdp/opus-4.8") is True
@@ -1381,7 +1413,7 @@ async def test_finalize_ok_harvest_failed_delivery_terminates_with_archive(
         request_id="req-fail-deliver",
         thread_id="5583",
         pointer_turn=2,
-        caller_agent="dispatch",
+        caller_agent=_TEST_CALLER,
         prompt_uri="cortex://p.md",
         model_id="cdp/fable",
         max_wall_s=1800.0,
@@ -1399,7 +1431,7 @@ async def test_finalize_ok_harvest_failed_delivery_terminates_with_archive(
         result=result,
         request_id="req-fail-deliver",
         thread_id="5583",
-        to_agent="dispatch",
+        to_agent=_TEST_CALLER,
         pointer_turn=2,
         via="worker",
     )
@@ -2692,8 +2724,16 @@ async def test_review_prompt_staged_digest_on_admit(
     from systems.frontier_consult.cdp_generate import dispatch_cdp_generate
     from systems.frontier_consult.route import TeamDispatchGenerateBody
 
-    _plant_sidecar(monkeypatch, tmp_path, _review_body_over_min())
+    review_body = _review_body_over_min()
+    _plant_sidecar(monkeypatch, tmp_path, review_body)
     _stub_cdp_generate_after_gate(monkeypatch, tmp_path / "cortex")
+    import systems.frontier_consult.cdp_generate as cdp_gen_mod
+
+    monkeypatch.setattr(
+        cdp_gen_mod,
+        "prepare_cdp_staging_sources",
+        lambda **_kw: (review_body, None, None, _SPECIMEN_SIDECAR),
+    )
     body = TeamDispatchGenerateBody(
         op="generate",
         job="code-review",

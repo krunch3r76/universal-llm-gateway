@@ -401,7 +401,7 @@ async def run_cdp_worker(
     execution_id: str,
     model_id: str,
     thread_id: str,
-    caller_agent: str | None,
+    caller_agent: str,
     prompt_uri: str,
     request_id: str,
     pointer_turn: int = 1,
@@ -425,7 +425,7 @@ async def run_cdp_worker(
         finalize_cdp_generate,
     )
 
-    to_agent = caller_agent or "dispatch"
+    to_agent = caller_agent
     from .cdp_cursor_reroute import REROUTE_ADMIT_SUBSTRATE, resolve_cdp_reroute
 
     reroute = resolve_cdp_reroute(model_id, impresario_role=impresario_role)

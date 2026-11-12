@@ -25,6 +25,7 @@ async def relay_registry_record(
     resolved_model: str | None = None,
     contract: str | None = None,
     max_wall_s: int | None = None,
+    prompt_bytes: int | None = None,
 ) -> dict[str, Any] | None:
     """POST ``/api/v1/cursor/registry/record``. Failures are logged and swallowed."""
     payload: dict[str, Any] = {
@@ -39,6 +40,7 @@ async def relay_registry_record(
         ("resolved_model", resolved_model),
         ("contract", contract),
         ("max_wall_s", max_wall_s),
+        ("prompt_bytes", prompt_bytes),
     ):
         if val is not None:
             payload[key] = val
@@ -76,19 +78,24 @@ async def relay_registry_terminal(
     dispatch_id: str,
     terminal_status: str,
     reason: str,
+    harvest_chars: int | None = None,
 ) -> dict[str, Any] | None:
     """POST ``/api/v1/cursor/registry/terminal``. Failures are logged and swallowed."""
-    payload = {
+    payload: dict[str, Any] = {
         "dispatch_id": dispatch_id,
         "terminal_status": terminal_status,
         "reason": reason,
     }
+    if harvest_chars is not None:
+        payload["harvest_chars"] = harvest_chars
     for attempt in range(2):
         try:
             async with make_async_client(
                 worker_base_url(), timeout=_WORKER_TIMEOUT
             ) as client:
-                resp = await client.post("/api/v1/cursor/registry/terminal", json=payload)
+                resp = await client.post(
+                    "/api/v1/cursor/registry/terminal", json=payload
+                )
         except httpx.HTTPError as exc:
             if attempt == 0:
                 continue

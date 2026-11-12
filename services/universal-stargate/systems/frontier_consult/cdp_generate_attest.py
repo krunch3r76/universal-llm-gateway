@@ -174,7 +174,7 @@ async def attest_cdp_generate_deliverable(
         result=result,
         request_id=leg.request_id,
         thread_id=leg.thread_id,
-        to_agent=leg.caller_agent or "dispatch",
+        to_agent=leg.caller_agent or "",
         pointer_turn=leg.pointer_turn,
         via="attest",
         attested_by=body.attested_by,

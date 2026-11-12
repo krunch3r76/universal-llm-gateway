@@ -72,6 +72,7 @@ class RegistryTerminalBody(BaseModel):
     dispatch_id: str
     terminal_status: Literal["completed", "failed", "cancelled"]
     reason: str = ""
+    harvest_chars: int | None = None
 
 
 class RegistryHeartbeatBody(BaseModel):
@@ -92,6 +93,7 @@ class RegistryRecordBody(BaseModel):
     resolved_model: str | None = None
     contract: str | None = None
     max_wall_s: int | None = None
+    prompt_bytes: int | None = None
 
 
 class ReleaseBody(BaseModel):
@@ -188,6 +190,7 @@ def post_registry_record(body: RegistryRecordBody) -> Any:
         resolved_model=body.resolved_model,
         contract=body.contract,
         max_wall_s=body.max_wall_s,
+        prompt_bytes=body.prompt_bytes,
     )
     if row_id is None:
         return {"ok": False, "registry_row_id": None}
@@ -287,6 +290,7 @@ def post_registry_terminal(body: RegistryTerminalBody) -> Any:
         body.dispatch_id.strip(),
         body.terminal_status,
         body.reason or "",
+        harvest_chars=body.harvest_chars,
     )
     return {"ok": True, "marked": outcome.get("marked", False)}
 

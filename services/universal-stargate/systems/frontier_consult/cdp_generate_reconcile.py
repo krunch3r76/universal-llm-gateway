@@ -193,7 +193,7 @@ async def _emit_reconcile_abandon(
         result=abandoned,
         request_id=leg.request_id,
         thread_id=leg.thread_id,
-        to_agent=leg.caller_agent or "dispatch",
+        to_agent=leg.caller_agent or "",
         pointer_turn=leg.pointer_turn,
         via="reconcile",
     )
@@ -323,7 +323,7 @@ async def _reconcile_horizon_leg(leg: InflightLeg, *, horizon: float) -> None:
                 result=result,
                 request_id=leg.request_id,
                 thread_id=leg.thread_id,
-                to_agent=leg.caller_agent or "dispatch",
+                to_agent=leg.caller_agent or "",
                 pointer_turn=leg.pointer_turn,
                 via="reconcile",
             )
@@ -349,6 +349,7 @@ async def finalize_cdp_generate(
     An unconfirmed wall-expiry stall (``wall_clock_exceeded_abort_unconfirmed``)
     returns without setting ``proof_emitted``, so reconcile horizon decides death.
     """
+    from .cdp_admit_identity import resolve_cdp_reply_to_agent
     from .cdp_dispatch_envelope import (
         get_cdp_dispatch_envelope,
         record_cdp_dispatch_link_terminal,
@@ -360,6 +361,7 @@ async def finalize_cdp_generate(
     )
     from .handoff import terminate_handoff_dispatch
 
+    reply_to = resolve_cdp_reply_to_agent(to_agent)
     envelope = get_cdp_dispatch_envelope(result.execution_id)
     dispatch_link_terminal: bool | None = None
     leg_for_bus = read_inflight_leg(result.execution_id)
@@ -456,19 +458,23 @@ async def finalize_cdp_generate(
             dispatch_id=result.execution_id,
             terminal_status="completed" if result.ok else "failed",
             reason="cdp_finalize_terminal_event",
+            harvest_chars=len(str(result.body or "")),
         )
         if not try_claim_delivery(execution_id=result.execution_id):
             return
         enriched = _enrich_result(result)
-        posted = await deliver_cdp_result_turn(
-            result=enriched,
-            thread_id=thread_id,
-            to_agent=to_agent,
-            request_id=request_id,
-            pointer_turn=pointer_turn,
-            pointer_only=pointer_only,
-            body_mode=body_mode,
-        )
+        if reply_to is None:
+            posted = False
+        else:
+            posted = await deliver_cdp_result_turn(
+                result=enriched,
+                thread_id=thread_id,
+                to_agent=reply_to,
+                request_id=request_id,
+                pointer_turn=pointer_turn,
+                pointer_only=pointer_only,
+                body_mode=body_mode,
+            )
         if not posted:
             clear_delivery_claim(result.execution_id)
         return
@@ -545,12 +551,14 @@ async def finalize_cdp_generate(
     if not try_claim_delivery(execution_id=result.execution_id):
         return
     posted = False
-    if result.ok:
+    if reply_to is None:
+        await _terminate_dispatch_link(terminal_status="failed")
+    elif result.ok:
         enriched = _enrich_result(result)
         posted = await deliver_cdp_result_turn(
             result=enriched,
             thread_id=thread_id,
-            to_agent=to_agent,
+            to_agent=reply_to,
             request_id=request_id,
             pointer_turn=pointer_turn,
             pointer_only=pointer_only,
@@ -570,7 +578,7 @@ async def finalize_cdp_generate(
         posted = await deliver_cdp_result_turn(
             result=enriched,
             thread_id=thread_id,
-            to_agent=to_agent,
+            to_agent=reply_to,
             request_id=request_id,
             pointer_turn=pointer_turn,
             pointer_only=pointer_only,
@@ -585,6 +593,7 @@ async def finalize_cdp_generate(
         dispatch_id=result.execution_id,
         terminal_status="completed" if result.ok and posted else "failed",
         reason="cdp_finalize",
+        harvest_chars=len(str(result.body or "")),
     )
 
 
@@ -634,7 +643,7 @@ async def _reconcile_leg(leg: InflightLeg) -> None:
         result=result,
         request_id=leg.request_id,
         thread_id=leg.thread_id,
-        to_agent=leg.caller_agent or "dispatch",
+        to_agent=leg.caller_agent or "",
         pointer_turn=leg.pointer_turn,
         via="reconcile",
     )
