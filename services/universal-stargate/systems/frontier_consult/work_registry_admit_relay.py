@@ -2,15 +2,41 @@
 
 from __future__ import annotations
 
+import os
 from typing import Any
 
 import httpx
+from giw_endpoint import git_integration_worker_base_url
 from transport_utils import make_async_client
 from universal_logging import get_logger
 
 from .cursor_sdk_worker_dispatch import _WORKER_TIMEOUT, worker_base_url
 
 logger = get_logger(__name__)
+
+_LIVE_GIW_DEFAULT_URL = "http://127.0.0.1:8091"
+_REGISTRY_RELAY_INERT_MODE = "pytest_inert"
+
+
+def _registry_relay_would_hit_live_giw() -> bool:
+    """True when pytest inert mode is on but env still points at the default GIW."""
+    if os.environ.get("GIW_REGISTRY_RELAY_MODE") != _REGISTRY_RELAY_INERT_MODE:
+        return False
+    return git_integration_worker_base_url() == _LIVE_GIW_DEFAULT_URL
+
+
+def _block_live_registry_relay_under_pytest(
+    *, request_id: str, dispatch_id: str, op: str
+) -> bool:
+    if not _registry_relay_would_hit_live_giw():
+        return False
+    logger.warning(
+        "registry %s relay blocked under pytest inert mode request_id=%s id=%s",
+        op,
+        request_id,
+        dispatch_id,
+    )
+    return True
 
 
 async def relay_registry_record(
@@ -28,6 +54,10 @@ async def relay_registry_record(
     prompt_bytes: int | None = None,
 ) -> dict[str, Any] | None:
     """POST ``/api/v1/cursor/registry/record``. Failures are logged and swallowed."""
+    if _block_live_registry_relay_under_pytest(
+        request_id=request_id, dispatch_id=dispatch_id, op="record"
+    ):
+        return None
     payload: dict[str, Any] = {
         "dispatch_id": dispatch_id,
         "thread_id": thread_id,
@@ -81,6 +111,10 @@ async def relay_registry_terminal(
     harvest_chars: int | None = None,
 ) -> dict[str, Any] | None:
     """POST ``/api/v1/cursor/registry/terminal``. Failures are logged and swallowed."""
+    if _block_live_registry_relay_under_pytest(
+        request_id=request_id, dispatch_id=dispatch_id, op="terminal"
+    ):
+        return None
     payload: dict[str, Any] = {
         "dispatch_id": dispatch_id,
         "terminal_status": terminal_status,
@@ -130,6 +164,10 @@ async def relay_registry_heartbeat(
     dispatch_id: str,
 ) -> dict[str, Any] | None:
     """POST ``/api/v1/cursor/registry/heartbeat``. Failures are logged and swallowed."""
+    if _block_live_registry_relay_under_pytest(
+        request_id=request_id, dispatch_id=dispatch_id, op="heartbeat"
+    ):
+        return None
     payload = {"dispatch_id": dispatch_id}
     for attempt in range(2):
         try:

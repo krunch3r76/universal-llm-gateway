@@ -1,6 +1,6 @@
 """Guard tests for GIW work-registry relay isolation in offline Stargate pytest runs.
 
-Covers dead-port env wiring, relay swallow on connection refusal, and ``live_giw`` opt-out.
+Covers dead-port env wiring, relay swallow on connection refusal, and live_giw opt-out.
 """
 
 from __future__ import annotations
@@ -25,6 +25,29 @@ def test_worker_base_url_uses_dead_port_not_default_8091(giw_dead_port: int) -> 
     url = worker_base_url()
     assert url == f"http://127.0.0.1:{giw_dead_port}"
     assert url != "http://127.0.0.1:8091"
+
+
+@pytest.mark.asyncio
+async def test_pytest_registry_relay_cannot_target_live_giw_base_url(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Under pytest inert mode, default :8091 must not emit registry HTTP."""
+    monkeypatch.delenv("GIT_INTEGRATION_WORKER_URL", raising=False)
+    monkeypatch.delenv("GIT_INTEGRATION_WORKER_PORT", raising=False)
+    monkeypatch.delenv("GIT_INTEGRATION_WORKER_HOST", raising=False)
+    monkeypatch.setenv("GIW_REGISTRY_RELAY_MODE", "pytest_inert")
+    assert git_integration_worker_base_url() == "http://127.0.0.1:8091"
+    with patch(
+        "systems.frontier_consult.work_registry_admit_relay.make_async_client",
+    ) as mock_client:
+        body = await relay_registry_record(
+            request_id="req-guard",
+            dispatch_id="disp-guard",
+            thread_id="23296",
+            work_key="friction:0",
+        )
+    assert body is None
+    mock_client.assert_not_called()
 
 
 @pytest.mark.asyncio
@@ -80,7 +103,7 @@ def test_offline_giw_isolation_uses_env_only() -> None:
 async def test_lane_subscription_cse_holders_uses_resolved_giw_url(
     giw_dead_port: int,
 ) -> None:
-    """Holder probe must hit the dead-port URL from env, not a cached import constant."""
+    """Holder probe uses the dead-port URL from env, not a cached import constant."""
     expected_base = git_integration_worker_base_url()
     assert expected_base == f"http://127.0.0.1:{giw_dead_port}"
 

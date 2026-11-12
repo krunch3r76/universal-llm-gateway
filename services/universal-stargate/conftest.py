@@ -37,6 +37,7 @@ def _isolate_giw_registry_relay(
 ) -> Iterator[None]:
     """Point GIW env at a dead port unless ``live_giw``."""
     if request.node.get_closest_marker("live_giw") is not None:
+        monkeypatch.delenv("GIW_REGISTRY_RELAY_MODE", raising=False)
         yield
         return
 
