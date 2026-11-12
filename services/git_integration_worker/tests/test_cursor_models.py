@@ -188,12 +188,22 @@ def test_card_knob_wire_map_maps_reasoning_effort_pairs() -> None:
     assert set(cm_mod._CARD_KNOB_WIRE_ID.keys()) == {
         ("grok-4.7", "effort"),
         ("gemini-4-argon", "effort"),
+        ("gemini-4-carbon", "effort"),
         ("muse-wonder-1.0", "effort"),
     }
     assert not hasattr(cm_mod, "_PARAM_WIRE_ID")
+    assert cm_mod.card_knob_wire_id("gemini-4-argon", "effort") == "reasoning_effort"
+    assert cm_mod.wire_id_to_card_knob("gemini-4-argon", "reasoning_effort") == "effort"
+    assert cm_mod.card_knob_wire_id("gemini-4-carbon", "effort") == "reasoning_effort"
+    assert (
+        cm_mod.wire_id_to_card_knob("gemini-4-carbon", "reasoning_effort") == "effort"
+    )
     cfg = resolve_cursor("cursor/gemini-4-argon")
     sel = build_model_selection(cfg, {"effort": "high"})
     assert {p.id: p.value for p in sel.params} == {"reasoning_effort": "high"}
+    carbon_cfg = resolve_cursor("cursor/gemini-4-carbon")
+    carbon_sel = build_model_selection(carbon_cfg, {"effort": "high"})
+    assert {p.id: p.value for p in carbon_sel.params} == {"reasoning_effort": "high"}
 
 
 def test_build_model_selection_muse_wonder_maps_effort_wire_id() -> None:
