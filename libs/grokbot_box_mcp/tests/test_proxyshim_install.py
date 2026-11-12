@@ -21,6 +21,13 @@ def _sha256(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
+_UNDICI_STUB_JS = (
+    "function ProxyAgent() {}\n"
+    "function setGlobalDispatcher() {}\n"
+    "module.exports = { ProxyAgent, setGlobalDispatcher };\n"
+)
+
+
 def _stub_undici(shim_dir: Path) -> None:
     undici = shim_dir / "node_modules" / "undici"
     undici.mkdir(parents=True, exist_ok=True)
@@ -29,7 +36,7 @@ def _stub_undici(shim_dir: Path) -> None:
         pkg.write_text('{"name":"undici","version":"6.29.0"}', encoding="utf-8")
     index = undici / "index.js"
     if not index.is_file():
-        index.write_text("module.exports = {};\n", encoding="utf-8")
+        index.write_text(_UNDICI_STUB_JS, encoding="utf-8")
 
 
 _PROVISION = _REPO_ROOT / "scripts" / "grokbot-proxyshim" / "provision.sh"
@@ -158,7 +165,9 @@ def test_empty_undici_package_json_triggers_stubbed_npm_install(tmp_path: Path) 
     npm.write_text(
         "#!/bin/sh\n"
         'mkdir -p "$PWD/node_modules/undici"\n'
-        "printf '%s\\n' 'module.exports = {};' > \"$PWD/node_modules/undici/index.js\"\n"
+        "cat > \"$PWD/node_modules/undici/index.js\" <<'JS'\n"
+        + _UNDICI_STUB_JS
+        + "JS\n"
         'printf \'%s\\n\' \'{"name":"undici","version":"6.29.0"}\' > "$PWD/node_modules/undici/package.json"\n'
         "exit 0\n",
         encoding="utf-8",
@@ -206,6 +215,161 @@ def test_preload_sha_mismatch_keeps_existing_dest_bytes(tmp_path: Path) -> None:
     assert proc.returncode == 1, proc.stderr + proc.stdout
     assert "sha mismatch" in proc.stderr
     assert preload.read_bytes() == prior
+
+
+@pytest.mark.offline
+def test_embed_install_symlink_preload_outside_target_unchanged(tmp_path: Path) -> None:
+    """Paste/embed path must atomically replace a symlink without writing through."""
+    home = tmp_path / "home"
+    home.mkdir()
+    outside = tmp_path / "outside-preload.cjs"
+    outside.write_bytes(b"// must stay byte-identical\n")
+    prior_outside = outside.read_bytes()
+    shim_dir = home / ".proxyshim"
+    shim_dir.mkdir(parents=True)
+    preload = shim_dir / "preload.cjs"
+    preload.symlink_to(outside)
+    _stub_undici(shim_dir)
+    env = {
+        **os.environ,
+        "HOME": str(home),
+        "PATH": os.environ.get("PATH", "/usr/bin:/bin"),
+        "GROKBOT_PROXYSHIM_DIR": str(shim_dir),
+        "GROKBOT_LAUNCHER_SRC": str(
+            _REPO_ROOT / "scripts" / "grokbot-mcp-remote-launcher.sh"
+        ),
+    }
+    print_proc = subprocess.run(
+        ["bash", str(_INSTALL), "--print"],
+        capture_output=True,
+        text=True,
+        check=False,
+        cwd=str(_REPO_ROOT / "scripts"),
+        env=env,
+    )
+    assert print_proc.returncode == 0, print_proc.stderr
+    bootstrap = subprocess.run(
+        ["bash", "-s"],
+        input=print_proc.stdout,
+        capture_output=True,
+        text=True,
+        check=False,
+        env=env,
+    )
+    assert bootstrap.returncode == 0, bootstrap.stderr
+    installer = home / ".local" / "bin" / "grokbot-box-mcp-install.sh"
+    preload_src = home / ".local" / "bin" / "grokbot-proxyshim" / "preload.cjs"
+    pkg_src = home / ".local" / "bin" / "grokbot-proxyshim" / "package.json"
+    assert not preload_src.is_file()
+    install_env = {
+        **env,
+        "GROKBOT_PROXYSHIM_PRELOAD_SRC": str(preload_src),
+        "GROKBOT_PROXYSHIM_PKG_SRC": str(pkg_src),
+    }
+    run = subprocess.run(
+        ["bash", str(installer), "--skip-mcp-remote"],
+        capture_output=True,
+        text=True,
+        check=False,
+        env=install_env,
+    )
+    assert run.returncode == 0, run.stderr + run.stdout
+    assert outside.read_bytes() == prior_outside
+    assert preload.is_file() and not preload.is_symlink()
+    assert _sha256(preload) == _EXPECTED_PRELOAD_SHA
+
+
+@pytest.mark.offline
+def test_parent_node_modules_undici_does_not_satisfy_shim_load_check(
+    tmp_path: Path,
+) -> None:
+    """Parent-directory undici must not skip shim-local npm install."""
+    parent_undici = tmp_path / "node_modules" / "undici"
+    parent_undici.mkdir(parents=True)
+    (parent_undici / "package.json").write_text(
+        '{"name":"undici","version":"6.29.0"}', encoding="utf-8"
+    )
+    (parent_undici / "index.js").write_text(_UNDICI_STUB_JS, encoding="utf-8")
+    shim_dir = tmp_path / "shim"
+    shim_dir.mkdir()
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    npm = fake_bin / "npm"
+    npm.write_text(
+        "#!/bin/sh\n"
+        'mkdir -p "$PWD/node_modules/undici"\n'
+        "cat > \"$PWD/node_modules/undici/index.js\" <<'JS'\n"
+        + _UNDICI_STUB_JS
+        + "JS\n"
+        'printf \'%s\\n\' \'{"name":"undici","version":"6.29.0"}\' > "$PWD/node_modules/undici/package.json"\n'
+        "exit 0\n",
+        encoding="utf-8",
+    )
+    npm.chmod(0o755)
+    proc = subprocess.run(
+        ["bash", str(_INSTALL), "--skip-mcp-remote"],
+        env={
+            "HOME": str(tmp_path),
+            "PATH": f"{fake_bin}:{os.environ.get('PATH', '/usr/bin:/bin')}",
+            "GROKBOT_PROXYSHIM_DIR": str(shim_dir),
+            "GROKBOT_PROXYSHIM_PRELOAD_SRC": str(_PRELOAD_SRC),
+            "GROKBOT_PROXYSHIM_PKG_SRC": str(
+                _REPO_ROOT / "scripts" / "grokbot-proxyshim" / "package.json"
+            ),
+            "GROKBOT_LAUNCHER_SRC": str(
+                _REPO_ROOT / "scripts" / "grokbot-mcp-remote-launcher.sh"
+            ),
+        },
+        capture_output=True,
+        text=True,
+        check=False,
+        cwd=str(tmp_path),
+    )
+    assert proc.returncode == 0, proc.stderr + proc.stdout
+    assert (shim_dir / "node_modules" / "undici" / "index.js").is_file()
+
+
+@pytest.mark.offline
+def test_install_missing_launcher_exits_nonzero(tmp_path: Path) -> None:
+    shim_dir = tmp_path / "shim"
+    _stub_undici(shim_dir)
+    proc = subprocess.run(
+        ["bash", str(_INSTALL), "--skip-mcp-remote"],
+        env={
+            "HOME": str(tmp_path),
+            "PATH": os.environ.get("PATH", "/usr/bin:/bin"),
+            "GROKBOT_PROXYSHIM_DIR": str(shim_dir),
+            "GROKBOT_PROXYSHIM_PRELOAD_SRC": str(_PRELOAD_SRC),
+            "GROKBOT_PROXYSHIM_PKG_SRC": str(
+                _REPO_ROOT / "scripts" / "grokbot-proxyshim" / "package.json"
+            ),
+            "GROKBOT_LAUNCHER_SRC": str(tmp_path / "missing-launcher.sh"),
+        },
+        capture_output=True,
+        text=True,
+        check=False,
+        cwd=str(_REPO_ROOT / "scripts"),
+    )
+    assert proc.returncode == 1
+    assert "missing launcher" in proc.stderr
+
+
+@pytest.mark.offline
+def test_print_missing_launcher_exits_nonzero(tmp_path: Path) -> None:
+    proc = subprocess.run(
+        ["bash", str(_INSTALL), "--print"],
+        env={
+            "HOME": str(tmp_path),
+            "PATH": os.environ.get("PATH", "/usr/bin:/bin"),
+            "GROKBOT_LAUNCHER_SRC": str(tmp_path / "missing-launcher.sh"),
+        },
+        capture_output=True,
+        text=True,
+        check=False,
+        cwd=str(_REPO_ROOT / "scripts"),
+    )
+    assert proc.returncode != 0
+    assert "missing launcher" in proc.stderr
 
 
 @pytest.mark.offline

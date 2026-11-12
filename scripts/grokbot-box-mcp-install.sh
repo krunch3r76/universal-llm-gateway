@@ -18,7 +18,6 @@ if [[ -n "${_SELF_CAND}" && "${_SELF_CAND}" != bash && "${_SELF_CAND}" != /bin/b
   fi
 fi
 LAUNCHER_SRC="${GROKBOT_LAUNCHER_SRC:-${SELF_DIR}/grokbot-mcp-remote-launcher.sh}"
-LAUNCHER_EMBED_SRC="${GROKBOT_LAUNCHER_EMBED_SRC:-${SELF_DIR}/grokbot-proxyshim/mcp-remote-launcher-embed.sh}"
 PIN="0.8.6"
 INSTALL_ROOT="${HOME}/.local/share/ulg-mcp-remote/${PIN}"
 BIN_DIR="${HOME}/.local/bin"
@@ -83,9 +82,9 @@ def splice(body: str, start: str, end: str, content: str) -> str:
     return body[: i + len(start)] + content.rstrip("\n") + body[j:]
 
 
-start_p = "  cat >\"${PROXYSHIM_DIR}/preload.cjs\" <<'GROKBOT_PROXYSHIM_PRELOAD_EMBED'\n"
+start_p = " <<'GROKBOT_PROXYSHIM_PRELOAD_EMBED'\n"
 end_p = "\nGROKBOT_PROXYSHIM_PRELOAD_EMBED\n"
-start_j = "  cat >\"${PROXYSHIM_DIR}/package.json\" <<'GROKBOT_PROXYSHIM_PACKAGE_EMBED'\n"
+start_j = " <<'GROKBOT_PROXYSHIM_PACKAGE_EMBED'\n"
 end_j = "\nGROKBOT_PROXYSHIM_PACKAGE_EMBED\n"
 provision = splice(provision, start_p, end_p, preload)
 provision = splice(provision, start_j, end_j, pkg)
@@ -108,11 +107,12 @@ _print_pasteable() {
     rm -f "${inst_tmp}" "${lch_tmp}" "${prov_tmp}"
     return 1
   fi
-  if [[ -f "${LAUNCHER_SRC}" ]]; then
-    cp "${LAUNCHER_SRC}" "${lch_tmp}"
-  else
-    : >"${lch_tmp}"
+  if [[ ! -f "${LAUNCHER_SRC}" ]]; then
+    rm -f "${inst_tmp}" "${lch_tmp}" "${prov_tmp}"
+    echo "grokbot-box-mcp-install: --print missing launcher (expected ${LAUNCHER_SRC})" >&2
+    return 1
   fi
+  cp "${LAUNCHER_SRC}" "${lch_tmp}"
   if [[ ! -s "${prov_tmp}" && -f "${PROXYSHIM_PROVISION_SRC}" ]]; then
     cp "${PROXYSHIM_PROVISION_SRC}" "${prov_tmp}"
   fi
@@ -154,8 +154,10 @@ cat >"${{PROVISION}}" <<'{marker_p}'
 {marker_p}
 chmod 755 "${{PROVISION}}"
 """
-if launcher.strip():
-    out += f"""cat >"${{LAUNCHER}}" <<'{marker_l}'
+if not launcher.strip():
+    sys.stderr.write("grokbot-box-mcp-install: --print missing launcher body\n")
+    raise SystemExit(2)
+out += f"""cat >"${{LAUNCHER}}" <<'{marker_l}'
 {launcher.rstrip(chr(10))}
 {marker_l}
 chmod 755 "${{LAUNCHER}}"
@@ -175,19 +177,14 @@ PY
 
 _install_launcher() {
   mkdir -p "${BIN_DIR}"
-  local src=""
-  if [[ -f "${LAUNCHER_SRC}" ]]; then
-    src="${LAUNCHER_SRC}"
-  elif [[ -f "${LAUNCHER_EMBED_SRC}" ]]; then
-    src="${LAUNCHER_EMBED_SRC}"
-  else
+  if [[ ! -f "${LAUNCHER_SRC}" ]]; then
     echo "grokbot-box-mcp-install: missing launcher (expected ${LAUNCHER_SRC})" >&2
     exit 1
   fi
-  if [[ "${src}" -ef "${LAUNCHER_DEST}" ]]; then
+  if [[ "${LAUNCHER_SRC}" -ef "${LAUNCHER_DEST}" ]]; then
     return 0
   fi
-  install -m 755 "${src}" "${LAUNCHER_DEST}"
+  install -m 755 "${LAUNCHER_SRC}" "${LAUNCHER_DEST}"
 }
 
 _validate_header_line() {

@@ -18,7 +18,12 @@ def _stub_proxyshim_undici(shim_dir: Path) -> None:
     (undici / "package.json").write_text(
         '{"name":"undici","version":"6.29.0"}', encoding="utf-8"
     )
-    (undici / "index.js").write_text("module.exports = {};\n", encoding="utf-8")
+    (undici / "index.js").write_text(
+        "function ProxyAgent() {}\n"
+        "function setGlobalDispatcher() {}\n"
+        "module.exports = { ProxyAgent, setGlobalDispatcher };\n",
+        encoding="utf-8",
+    )
 
 
 def _run_install(

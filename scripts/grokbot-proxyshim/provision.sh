@@ -15,23 +15,38 @@ grokbot_proxyshim_embed_usable() {
 }
 
 grokbot_proxyshim_install_from_embed() {
-  cat >"${PROXYSHIM_DIR}/preload.cjs" <<'GROKBOT_PROXYSHIM_PRELOAD_EMBED'
+  local dest_preload="${PROXYSHIM_DIR}/preload.cjs"
+  local expected="${PROXYSHIM_PRELOAD_SHA}"
+  local tmp_preload tmp_pkg
+  mkdir -p "${PROXYSHIM_DIR}"
+  tmp_preload="$(mktemp -p "${PROXYSHIM_DIR}" ".preload.cjs.XXXXXX")"
+  tmp_pkg="$(mktemp -p "${PROXYSHIM_DIR}" ".package.json.XXXXXX")"
+  cat >"${tmp_preload}" <<'GROKBOT_PROXYSHIM_PRELOAD_EMBED'
 const proxy = process.env.HTTPS_PROXY || process.env.https_proxy;
 if (proxy) { const { setGlobalDispatcher, ProxyAgent } = require('/home/box/.proxyshim/node_modules/undici'); setGlobalDispatcher(new ProxyAgent(proxy)); }
 GROKBOT_PROXYSHIM_PRELOAD_EMBED
-  cat >"${PROXYSHIM_DIR}/package.json" <<'GROKBOT_PROXYSHIM_PACKAGE_EMBED'
+  cat >"${tmp_pkg}" <<'GROKBOT_PROXYSHIM_PACKAGE_EMBED'
 {"name":"proxyshim","version":"1.0.0","private":true,"dependencies":{"undici":"^6.29.0"}}
 GROKBOT_PROXYSHIM_PACKAGE_EMBED
+  if ! grokbot_proxyshim_atomic_install_file "${tmp_preload}" "${dest_preload}" "${expected}"; then
+    rm -f "${tmp_preload}" "${tmp_pkg}"
+    return 1
+  fi
+  grokbot_proxyshim_atomic_install_file "${tmp_pkg}" "${PROXYSHIM_DIR}/package.json" ""
+  rm -f "${tmp_preload}" "${tmp_pkg}"
 }
 
 grokbot_proxyshim_undici_loadable() {
   if ! command -v node >/dev/null 2>&1; then
     return 1
   fi
-  (
-    cd "${PROXYSHIM_DIR}" || exit 1
-    NODE_OPTIONS='' node -e "require('undici')" >/dev/null 2>&1
-  )
+  local undici_mod="${PROXYSHIM_DIR}/node_modules/undici"
+  NODE_OPTIONS='' NODE_PATH= node -e "
+    const u = require('${undici_mod}');
+    if (typeof u.ProxyAgent !== 'function' || typeof u.setGlobalDispatcher !== 'function') {
+      process.exit(1);
+    }
+  " >/dev/null 2>&1
 }
 
 grokbot_proxyshim_install_deps() {
@@ -102,12 +117,7 @@ grokbot_install_proxyshim() {
     fi
     grokbot_proxyshim_atomic_install_file "${PROXYSHIM_PKG_SRC}" "${PROXYSHIM_DIR}/package.json" ""
   elif grokbot_proxyshim_embed_usable; then
-    mkdir -p "${PROXYSHIM_DIR}"
-    grokbot_proxyshim_install_from_embed
-    local got
-    got="$(grokbot_proxyshim_file_sha256 "${dest_preload}")"
-    if [[ "${got}" != "${expected}" ]]; then
-      echo "grokbot-box-mcp-install: proxyshim preload sha mismatch (got ${got}, want ${expected})" >&2
+    if ! grokbot_proxyshim_install_from_embed; then
       exit 1
     fi
   else
