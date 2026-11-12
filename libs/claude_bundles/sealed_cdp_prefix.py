@@ -249,9 +249,12 @@ def ensure_review_delivery_footer(
     ):
         return text
     footer = REVIEW_DELIVERY_FOOTER.strip()
-    if footer in text:
+    if text.rstrip().endswith(footer):
         return text
-    return f"{text.rstrip()}\n\n{footer}\n"
+    stripped = text
+    while footer in stripped:
+        stripped = stripped.replace(footer, "")
+    return f"{stripped.rstrip()}\n\n{footer}\n"
 
 
 def ensure_review_reading_charter(

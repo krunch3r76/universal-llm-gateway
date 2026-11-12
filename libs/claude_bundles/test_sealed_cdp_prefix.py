@@ -107,6 +107,40 @@ def test_delivery_footer_is_last_on_review_class_contracts() -> None:
         assert merged.rstrip().endswith(REVIEW_DELIVERY_FOOTER.strip())
 
 
+def test_delivery_footer_last_after_ask_reentry_with_substrate_notice() -> None:
+    from claude_bundles.sealed_cdp_prefix import (
+        REVIEW_DELIVERY_FOOTER,
+        restamp_owned_ephemeral_prompt,
+    )
+
+    footer = REVIEW_DELIVERY_FOOTER.strip()
+    admit_body = "Hash these skills\n\n# review\n" + "x" * 480 + f"\n\n{footer}\n"
+    out = restamp_owned_ephemeral_prompt(
+        admit_body,
+        "ask",
+        author_body=admit_body,
+        contract="code-review",
+        substrate_notice=True,
+    )
+    assert out.count(footer) == 1
+    assert out.rstrip().endswith(footer)
+
+
+def test_delivery_footer_already_present_without_notice_stays_last() -> None:
+    from claude_bundles.sealed_cdp_prefix import (
+        REVIEW_DELIVERY_FOOTER,
+        ensure_review_delivery_footer,
+    )
+
+    footer = REVIEW_DELIVERY_FOOTER.strip()
+    body = "Hash these skills\n\nbody with enough context\n\n" + footer + "\n"
+    out = ensure_review_delivery_footer(
+        body, "ask", contract="code-review", author_body=body
+    )
+    assert out.count(footer) == 1
+    assert out.rstrip().endswith(footer)
+
+
 def test_delivery_footer_idempotent_on_restage() -> None:
     from claude_bundles.sealed_cdp_prefix import ensure_review_delivery_footer
 
@@ -169,8 +203,6 @@ def test_delivery_footer_verdict_template_matches_canonical_regex() -> None:
     )
     base = "a" * 40
     head = "b" * 40
-    sample = (
-        f"VERDICT: APPROVE range={base}..{head} head={head}"
-    )
+    sample = f"VERDICT: APPROVE range={base}..{head} head={head}"
     assert pattern.match(sample)
     assert "VERDICT:" in REVIEW_DELIVERY_FOOTER
