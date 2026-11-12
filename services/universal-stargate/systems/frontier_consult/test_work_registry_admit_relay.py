@@ -109,3 +109,37 @@ async def test_relay_registry_heartbeat_posts_dispatch_id() -> None:
         )
     assert captured["url"] == "/api/v1/cursor/registry/heartbeat"
     assert captured["dispatch_id"] == "exec-hb-1"
+
+
+@pytest.mark.asyncio
+async def test_cdp_record_stores_prompt_bytes() -> None:
+    captured: dict[str, Any] = {}
+
+    class _Resp:
+        status_code = 200
+
+        @staticmethod
+        def json() -> dict[str, Any]:
+            return {"ok": True, "registry_row_id": "x"}
+
+    async def _post(_url: str, *, json: dict[str, Any]) -> _Resp:
+        captured.update(json)
+        return _Resp()
+
+    mock_client = AsyncMock()
+    mock_client.post = _post
+    mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+    mock_client.__aexit__ = AsyncMock(return_value=None)
+
+    with patch(
+        "systems.frontier_consult.work_registry_admit_relay.make_async_client",
+        return_value=mock_client,
+    ):
+        await relay_registry_record(
+            request_id="req-pb",
+            dispatch_id="disp-pb",
+            thread_id="23296",
+            caller_agent="cursor-sdk-test",
+            prompt_bytes=1500,
+        )
+    assert captured["prompt_bytes"] == 1500

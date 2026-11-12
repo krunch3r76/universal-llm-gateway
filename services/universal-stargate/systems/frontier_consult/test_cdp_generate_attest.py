@@ -56,7 +56,7 @@ def _seed_open_leg(execution_id: str = "exec-attest-1") -> None:
         request_id="req-attest-1",
         thread_id="9628",
         pointer_turn=2,
-        caller_agent="dispatch",
+        caller_agent="cursor-sdk-test",
         prompt_uri="cortex://notes/prompt.md",
         model_id="cdp/opus-5",
         max_wall_s=1800.0,
@@ -231,7 +231,7 @@ async def test_attest_then_worker_finalize_is_no_op(
         result=worker_result,
         request_id="req-attest-1",
         thread_id="9628",
-        to_agent="dispatch",
+        to_agent="cursor-sdk-test",
         pointer_turn=2,
         via="worker",
     )

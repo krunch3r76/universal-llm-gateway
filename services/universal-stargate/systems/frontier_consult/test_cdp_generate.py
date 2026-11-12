@@ -27,7 +27,7 @@ from systems.frontier_consult.cdp_generate_worker import (
 )
 
 _TEST_CALLER = "cursor-sdk-test-harness"
-_TEST_WORK_KEY = "friction:cdp-generate-test"
+_TEST_WORK_KEY = "friction:0"
 
 
 @pytest.fixture(autouse=True)
@@ -155,6 +155,48 @@ def test_stage_inputs_prepends_claude_slash_skills(tmp_path, monkeypatch) -> Non
     assert "<!--cdp-required-skills:reasoning-posture,consult-posture-->" in text
     assert "## ask" in text
     assert staged.staged is True
+
+
+def test_stage_inputs_review_footer_last_and_skipped_on_mission(
+    tmp_path, monkeypatch
+) -> None:
+    from claude_bundles import cdp_model_endpoint_staging as staging
+    from claude_bundles.sealed_cdp_prefix import REVIEW_DELIVERY_FOOTER
+
+    from systems.frontier_consult.cdp_generate import _stage_inputs
+
+    monkeypatch.setattr(staging, "cortex_files_root", lambda: tmp_path)
+    review_prompt = "x" * 520 + "\n## Review body\n"
+    _stage_inputs(
+        execution_id="exec-review-footer",
+        prompt=review_prompt,
+        sidecar_ref=None,
+        packet_path=None,
+        purpose="review",
+        contract="code-review",
+    )
+    prompt_path = (
+        tmp_path / "notes/system/ephemeral/cdp-endpoint/exec-review-footer/prompt.md"
+    )
+    text = prompt_path.read_text(encoding="utf-8")
+    footer = REVIEW_DELIVERY_FOOTER.strip()
+    assert footer in text
+    assert text.rstrip().endswith(footer)
+
+    _stage_inputs(
+        execution_id="exec-mission-no-footer",
+        prompt="## mission task\n",
+        sidecar_ref=None,
+        packet_path=None,
+        purpose="mission",
+        contract="code-review",
+    )
+    mission_path = (
+        tmp_path
+        / "notes/system/ephemeral/cdp-endpoint/exec-mission-no-footer/prompt.md"
+    )
+    mission_text = mission_path.read_text(encoding="utf-8")
+    assert REVIEW_DELIVERY_FOOTER[:32] not in mission_text
 
 
 def test_stage_inputs_omitted_skills_gets_judgment_skill(tmp_path, monkeypatch) -> None:
@@ -2729,11 +2771,6 @@ async def test_review_prompt_staged_digest_on_admit(
     _stub_cdp_generate_after_gate(monkeypatch, tmp_path / "cortex")
     import systems.frontier_consult.cdp_generate as cdp_gen_mod
 
-    monkeypatch.setattr(
-        cdp_gen_mod,
-        "prepare_cdp_staging_sources",
-        lambda **_kw: (review_body, None, None, _SPECIMEN_SIDECAR),
-    )
     body = TeamDispatchGenerateBody(
         op="generate",
         job="code-review",
